@@ -2,8 +2,10 @@ import type {
   ChatEvent,
   PermissionRequest,
   PermissionResponse,
-  SessionMeta
+  SessionMeta,
+  ThreadSummary
 } from './types'
+import type { ThreadMessageLike } from '@assistant-ui/react'
 
 /**
  * Central registry of IPC channel names. Main and renderer both import
@@ -33,7 +35,45 @@ export const IPC_CHANNELS = {
    * default handler (Finder's "open with default app"). Used by the
    * Files tree's double-click.
    */
-  WORKSPACE_FILE_OPEN: 'workspace:file-open'
+  WORKSPACE_FILE_OPEN: 'workspace:file-open',
+  /**
+   * Renderer → main. Lists all sessions (JSONL transcripts) for the
+   * current workspace, sorted by updatedAt desc. Backed by
+   * `@anthropic-ai/claude-agent-sdk`'s `listSessions({ dir })`.
+   */
+  SESSION_LIST: 'session:list',
+  /**
+   * Renderer → main. Loads a session's full message history from its
+   * JSONL file, mapped into assistant-ui's ThreadMessageLike shape so
+   * the store can drop them in directly.
+   */
+  SESSION_LOAD: 'session:load',
+  /**
+   * Renderer → main. Mints a new session UUID (not yet written to
+   * disk). The caller then calls SESSION_SWITCH with `resume: false`
+   * to actually spawn the CLI on this id.
+   */
+  SESSION_NEW: 'session:new',
+  /**
+   * Renderer → main. Tears down the current fusion-code SDK Query
+   * handle and reopens it on the given sessionId, optionally with
+   * `resume: true` so the CLI reloads the transcript from its JSONL.
+   */
+  SESSION_SWITCH: 'session:switch',
+  /**
+   * Main → renderer. Broadcast whenever the session list may have
+   * changed (new session captured from system init, current session
+   * title updated, etc). Renderer's ThreadListAdapter re-fetches on
+   * receipt.
+   */
+  SESSION_LIST_CHANGED: 'session:list-changed',
+  /**
+   * Renderer → main. Relaunches the Electron app. Used by the
+   * "change workspace" flow — since the engine bakes the fusion-code
+   * child's cwd at spawn time, swapping workspaces means restarting
+   * the whole process so the gate shows again on cold start.
+   */
+  APP_RELAUNCH: 'app:relaunch'
 } as const
 
 /**
@@ -109,6 +149,18 @@ export type WorkspaceFileOpenPayload = { relPath: string }
  * validation rejects the path. Renderer treats empty as "opened fine".
  */
 export type WorkspaceFileOpenResult = { error: string }
+
+/* ─────────────────── Session (thread) channels ─────────────────── */
+
+export type SessionListResult = { threads: readonly ThreadSummary[] }
+
+export type SessionLoadPayload = { sessionId: string }
+export type SessionLoadResult = { messages: readonly ThreadMessageLike[] }
+
+export type SessionNewResult = { sessionId: string }
+
+export type SessionSwitchPayload = { sessionId: string; resume: boolean }
+export type SessionSwitchResult = { sessionId: string }
 
 /**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
@@ -188,4 +240,47 @@ export interface ChatApi {
    * and validate it. On error, `result.error` is non-empty.
    */
   openFile(payload: WorkspaceFileOpenPayload): Promise<WorkspaceFileOpenResult>
+
+  /**
+   * List all sessions under the current workspace, newest first.
+   * Returns an empty array before the workspace is set or when the
+   * workspace has no prior fusion-code transcripts.
+   */
+  listSessions(): Promise<SessionListResult>
+
+  /**
+   * Load a session's full message history. Used by ThreadListAdapter
+   * when the user clicks a row in the sidebar — the result is handed
+   * straight to the chat store's `setSession` action.
+   */
+  loadSession(payload: SessionLoadPayload): Promise<SessionLoadResult>
+
+  /**
+   * Mint a new session UUID. Does not spawn the CLI; the caller
+   * follows up with `switchSession({ sessionId, resume: false })`.
+   */
+  newSession(): Promise<SessionNewResult>
+
+  /**
+   * Tear down the current SDK query handle and reopen it on the given
+   * sessionId. When `resume: true`, the fusion-code CLI reloads the
+   * transcript from JSONL so the model sees the full history.
+   */
+  switchSession(payload: SessionSwitchPayload): Promise<SessionSwitchResult>
+
+  /**
+   * Subscribe to session-list-changed broadcasts from main. Returns an
+   * unsubscribe function. Emitted whenever a session is created,
+   * updated, or the active session changes — the adapter should
+   * re-fetch the list on every invocation.
+   */
+  onSessionListChanged(handler: () => void): () => void
+
+  /**
+   * Relaunch the Electron app. Fire-and-forget — the main process
+   * calls `app.relaunch()` then `app.exit(0)`, so this promise never
+   * resolves in practice (the renderer dies mid-await). Used by the
+   * workspace switcher in the sidebar.
+   */
+  relaunchApp(): Promise<void>
 }

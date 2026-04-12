@@ -9,6 +9,8 @@ import { SkillsDialog } from './components/dialogs/SkillsDialog'
 import { McpDialog } from './components/dialogs/McpDialog'
 import { WorkspaceGate } from './components/workspace/WorkspaceGate'
 import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
+import { useChatStore } from './stores/chat'
+import { AnimatePresence, motion } from 'motion/react'
 
 /**
  * Root renderer component.
@@ -146,15 +148,6 @@ function App(): React.JSX.Element {
         </button>
         <span className="badge">v{version}</span>
         <span className="badge badge-stage">agent-sdk · long-session</span>
-        {/* Workspace badge — shows the basename so the user can glance
-            and confirm they're talking to Claude in the right folder.
-            Full path goes in the tooltip. */}
-        <span
-          className="badge badge-workspace"
-          title={workspace}
-        >
-          {basename(workspace)}
-        </span>
       </header>
       <main className="main">
         <FusionRuntimeProvider>
@@ -162,7 +155,44 @@ function App(): React.JSX.Element {
               split (chats | thread | right rail). flex-1 + min-h-0
               lets it shrink correctly inside the outer column. */}
           <div className="flex min-h-0 flex-1">
-            {sidebarOpen && <ThreadListSidebar />}
+            {/* Sidebar slide — width animates between 0 and 256px so
+                the thread view smoothly reclaims the space. The inner
+                ThreadListSidebar keeps its fixed w-64, and the wrapper
+                clips it during the transition. AnimatePresence lets
+                the exit animation run before unmount. `initial={false}`
+                skips the entrance animation on first mount so the app
+                doesn't slide in from zero on boot. */}
+            {/* Sidebar slide — width animates between 0 and 256px so
+                the thread view smoothly reclaims the space. The inner
+                ThreadListSidebar is absolutely anchored to the right
+                edge of this wrapper so its right border (see
+                `border-r` on ThreadListPrimitive.Root) sits flush with
+                the wrapper edge throughout the animation — otherwise
+                the border would only appear when width reaches 256.
+                Content slides in from behind the ThreadView instead
+                of growing from the left. `initial={false}` skips the
+                first-mount slide-in on boot. */}
+            <AnimatePresence initial={false}>
+              {sidebarOpen && (
+                <motion.div
+                  key="sidebar"
+                  initial={{ width: 0, opacity: 0 }}
+                  animate={{ width: 256, opacity: 1 }}
+                  exit={{ width: 0, opacity: 0 }}
+                  transition={{
+                    type: 'spring',
+                    stiffness: 320,
+                    damping: 34,
+                    mass: 0.9
+                  }}
+                  className="relative h-full shrink-0 overflow-hidden"
+                >
+                  <div className="absolute inset-y-0 right-0 w-64">
+                    <ThreadListSidebar workspace={workspace} />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
             <ThreadView />
             {/* Right rail — single 288px column whose vertical space
                 is split 50/50 between the Todos (top) and the
@@ -188,19 +218,121 @@ function App(): React.JSX.Element {
           level as PermissionDialog so they overlay everything. */}
       <SkillsDialog />
       <McpDialog />
+      {/* Fullscreen loading veil — shown while main is spawning a
+          fusion-code child (new chat / session switch). Kept as its own
+          tiny component so the zustand subscription doesn't re-render
+          the whole App tree on every flip. */}
+      <SessionLoadingOverlay />
     </div>
   )
 }
 
 /**
- * Tiny path basename helper. Avoids pulling `path-browserify` for one
- * call — the workspace path from main is always absolute and either
- * POSIX or Windows-style, and we just want the trailing segment.
+ * Fullscreen overlay shown while `sessionLoading` is true.
+ *
+ * Composition
+ * -----------
+ * - Backdrop fades in/out via `motion` + AnimatePresence so the veil
+ *   doesn't snap on.
+ * - A center "card" scales + translates in with a soft spring.
+ * - Three staggered dots bounce in an infinite loop (wave effect).
+ * - An outer ring pulses behind the dots using opacity + scale keyframes.
+ *
+ * The whole thing is driven by `motion` — no custom CSS keyframes
+ * needed. Respects `prefers-reduced-motion` automatically (motion's
+ * default) so accessibility users still see a static indicator.
  */
-function basename(p: string): string {
-  const trimmed = p.replace(/[\\/]+$/, '')
-  const i = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-  return i >= 0 ? trimmed.slice(i + 1) : trimmed
+function SessionLoadingOverlay(): React.JSX.Element {
+  const sessionLoading = useChatStore((s) => s.sessionLoading)
+
+  return (
+    <AnimatePresence>
+      {sessionLoading && (
+        <motion.div
+          key="session-loading"
+          role="status"
+          aria-live="polite"
+          aria-label="Opening session"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.22, ease: 'easeOut' }}
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 backdrop-blur-md"
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 4 }}
+            transition={{ type: 'spring', stiffness: 320, damping: 26 }}
+            className="flex flex-col items-center gap-6"
+          >
+            {/* Dot cluster — three bouncing dots framed by a pulsing
+                ring. Container is square so the ring is a perfect
+                circle and the dots sit on its vertical midline. */}
+            <div className="relative flex h-16 w-16 items-center justify-center">
+              {/* Pulsing ring */}
+              <motion.span
+                aria-hidden
+                className="absolute inset-0 rounded-full border border-zinc-100/25"
+                animate={{
+                  scale: [1, 1.25, 1],
+                  opacity: [0.55, 0, 0.55]
+                }}
+                transition={{
+                  duration: 1.8,
+                  repeat: Infinity,
+                  ease: 'easeOut'
+                }}
+              />
+              {/* Secondary, slower ring for depth */}
+              <motion.span
+                aria-hidden
+                className="absolute inset-1 rounded-full border border-zinc-100/15"
+                animate={{
+                  scale: [1, 1.15, 1],
+                  opacity: [0.4, 0, 0.4]
+                }}
+                transition={{
+                  duration: 1.8,
+                  repeat: Infinity,
+                  ease: 'easeOut',
+                  delay: 0.4
+                }}
+              />
+              {/* Bouncing dots */}
+              <div className="relative flex items-center gap-1.5">
+                {[0, 1, 2].map((i) => (
+                  <motion.span
+                    key={i}
+                    aria-hidden
+                    className="block size-2 rounded-full bg-zinc-100 shadow-[0_0_12px_rgba(255,255,255,0.35)]"
+                    animate={{ y: [0, -6, 0], opacity: [0.5, 1, 0.5] }}
+                    transition={{
+                      duration: 1.1,
+                      repeat: Infinity,
+                      ease: 'easeInOut',
+                      delay: i * 0.15
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+            <motion.span
+              className="text-[13px] font-medium tracking-wide text-zinc-300"
+              animate={{ opacity: [0.55, 1, 0.55] }}
+              transition={{
+                duration: 1.8,
+                repeat: Infinity,
+                ease: 'easeInOut'
+              }}
+            >
+              Opening session…
+            </motion.span>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  )
 }
 
 export default App

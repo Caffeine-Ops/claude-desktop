@@ -15,6 +15,12 @@ import {
   type ChatSendResult,
   type FileSuggestionsListPayload,
   type FileSuggestionsListResult,
+  type SessionListResult,
+  type SessionLoadPayload,
+  type SessionLoadResult,
+  type SessionNewResult,
+  type SessionSwitchPayload,
+  type SessionSwitchResult,
   type WorkspaceFileOpenPayload,
   type WorkspaceFileOpenResult,
   type WorkspaceSetPayload,
@@ -122,6 +128,42 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.WORKSPACE_FILE_OPEN,
       payload
     ) as Promise<WorkspaceFileOpenResult>
+  },
+
+  listSessions(): Promise<SessionListResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST) as Promise<SessionListResult>
+  },
+
+  loadSession(payload: SessionLoadPayload): Promise<SessionLoadResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SESSION_LOAD,
+      payload
+    ) as Promise<SessionLoadResult>
+  },
+
+  newSession(): Promise<SessionNewResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.SESSION_NEW) as Promise<SessionNewResult>
+  },
+
+  switchSession(payload: SessionSwitchPayload): Promise<SessionSwitchResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SESSION_SWITCH,
+      payload
+    ) as Promise<SessionSwitchResult>
+  },
+
+  onSessionListChanged(handler: () => void): () => void {
+    const listener = (): void => {
+      handler()
+    }
+    ipcRenderer.on(IPC_CHANNELS.SESSION_LIST_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.SESSION_LIST_CHANGED, listener)
+    }
+  },
+
+  relaunchApp(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.APP_RELAUNCH) as Promise<void>
   }
 }
 

@@ -1,4 +1,5 @@
-import { BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import type {
@@ -15,6 +16,12 @@ import {
   type ChatSendResult,
   type FileSuggestionsListPayload,
   type FileSuggestionsListResult,
+  type SessionListResult,
+  type SessionLoadPayload,
+  type SessionLoadResult,
+  type SessionNewResult,
+  type SessionSwitchPayload,
+  type SessionSwitchResult,
   type WorkspaceFileOpenPayload,
   type WorkspaceFileOpenResult,
   type WorkspaceSetPayload,
@@ -23,6 +30,7 @@ import {
 import { getChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
 import { getPermissionBroker } from '../core/permissionBroker'
+import { listSessions, loadSession } from '../core/sessionStore'
 
 /**
  * Registers all IPC handlers and wires the chat engine's event stream to
@@ -42,6 +50,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_GET)
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_SET)
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_FILE_OPEN)
+  ipcMain.removeHandler(IPC_CHANNELS.SESSION_LIST)
+  ipcMain.removeHandler(IPC_CHANNELS.SESSION_LOAD)
+  ipcMain.removeHandler(IPC_CHANNELS.SESSION_NEW)
+  ipcMain.removeHandler(IPC_CHANNELS.SESSION_SWITCH)
+  ipcMain.removeHandler(IPC_CHANNELS.APP_RELAUNCH)
 
   ipcMain.handle(
     IPC_CHANNELS.CHAT_SEND,
@@ -196,12 +209,82 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // Session list / load / new / switch. All guarded by the workspace
+  // gate — listSessions() returns [] when workspace is null, and the
+  // switch handler defers to engine.switchToSession() which throws if
+  // the workspace is unset.
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_LIST,
+    async (): Promise<SessionListResult> => {
+      const workspace = getChatEngine().getWorkspace()
+      const threads = await listSessions(workspace)
+      return { threads }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_LOAD,
+    async (_event, payload: SessionLoadPayload): Promise<SessionLoadResult> => {
+      validateSessionLoadPayload(payload)
+      const workspace = getChatEngine().getWorkspace()
+      const messages = await loadSession(payload.sessionId, workspace)
+      return { messages }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_NEW,
+    async (): Promise<SessionNewResult> => {
+      // Mint a fresh UUID but do NOT spawn the CLI yet — the renderer
+      // follows up with SESSION_SWITCH so the spawn happens only once
+      // and at a known point in the flow.
+      return { sessionId: randomUUID() }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_SWITCH,
+    async (
+      _event,
+      payload: SessionSwitchPayload
+    ): Promise<SessionSwitchResult> => {
+      validateSessionSwitchPayload(payload)
+      // `engine.switchToSession` returns the real session id the cli
+      // ended up using, which may differ from payload.sessionId when
+      // fusion-code silently forks on `--resume` (upstream
+      // claude-code behavior). The renderer uses this id to
+      // re-subscribe chat events under the correct key.
+      const result = await getChatEngine().switchToSession(payload.sessionId, {
+        resume: payload.resume
+      })
+      return { sessionId: result.sessionId }
+    }
+  )
+
+  // Relaunch the app. Used by the workspace switcher — swapping
+  // workspaces means restarting so the fusion-code child respawns
+  // with the new cwd and the gate reappears cold.
+  ipcMain.handle(IPC_CHANNELS.APP_RELAUNCH, async (): Promise<void> => {
+    app.relaunch()
+    app.exit(0)
+  })
+
   // Bridge engine events → renderer.
   const engine = getChatEngine()
   engine.on('chat', (sessionId: string, event: ChatEvent) => {
     if (mainWindow.isDestroyed()) return
     const eventPayload: ChatEventPayload = { sessionId, event }
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_EVENT, eventPayload)
+  })
+
+  // Bridge session-list-changed → renderer. Engine emits this from
+  // switchToSession() and from updateSessionMeta() (first system init
+  // of a brand-new session, which is when the jsonl is created).
+  // removeAllListeners guards against double registration on dev reload.
+  engine.removeAllListeners('sessionListChanged')
+  engine.on('sessionListChanged', () => {
+    if (mainWindow.isDestroyed()) return
+    mainWindow.webContents.send(IPC_CHANNELS.SESSION_LIST_CHANGED)
   })
 
   // Bridge permission requests → renderer. The broker emits one
@@ -360,6 +443,39 @@ function validateFileOpenPayload(
   const segments = v.relPath.split(/[\\/]+/)
   if (segments.some((s) => s === '..')) {
     throw new Error('relPath contains parent-directory segments')
+  }
+}
+
+function validateSessionLoadPayload(
+  value: unknown
+): asserts value is SessionLoadPayload {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('Invalid session-load payload')
+  }
+  const v = value as Record<string, unknown>
+  if (typeof v.sessionId !== 'string' || v.sessionId.length === 0) {
+    throw new Error('Invalid session-load sessionId (empty or missing)')
+  }
+  if (v.sessionId.length > 128) {
+    throw new Error('Invalid session-load sessionId (too long)')
+  }
+}
+
+function validateSessionSwitchPayload(
+  value: unknown
+): asserts value is SessionSwitchPayload {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('Invalid session-switch payload')
+  }
+  const v = value as Record<string, unknown>
+  if (typeof v.sessionId !== 'string' || v.sessionId.length === 0) {
+    throw new Error('Invalid session-switch sessionId (empty or missing)')
+  }
+  if (v.sessionId.length > 128) {
+    throw new Error('Invalid session-switch sessionId (too long)')
+  }
+  if (typeof v.resume !== 'boolean') {
+    throw new Error('Invalid session-switch resume (must be boolean)')
   }
 }
 
