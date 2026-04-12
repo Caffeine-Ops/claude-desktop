@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 env:
-  FUSION_CODE_VERSION: v2.1.87
+  FUSION_CODE_VERSION: v2.1.90
 
 jobs:
   build:
