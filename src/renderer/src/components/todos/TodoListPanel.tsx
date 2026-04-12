@@ -40,8 +40,6 @@ export function TodoListPanel(): React.JSX.Element {
   const sessionId = useChatStore((s) => s.sessionId)
   const todos = useTodosStore((s) => s.todos[sessionId] ?? EMPTY)
   const cycleStatus = useTodosStore((s) => s.cycleStatus)
-  const removeTodo = useTodosStore((s) => s.removeTodo)
-  const clearTodos = useTodosStore((s) => s.clearTodos)
 
   // Counts drive the small "3 / 5" summary next to the header. Kept
   // inline instead of memoized — the list is bounded and re-renders
@@ -51,47 +49,34 @@ export function TodoListPanel(): React.JSX.Element {
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      {/* Header row — section label, count, clear button. Mirrors the
-          Chats header on the left rail for visual symmetry. */}
+      {/* Header row — section label + count only. The list is owned by
+          the LLM via TodoWrite, so there are no manual clear / delete
+          affordances here. */}
       <div className="flex items-center justify-between px-4 pb-2 pt-4">
         <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">
           Todos
         </span>
         {total > 0 && (
-          <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-            <span className="tabular-nums">
-              <span className="text-zinc-300">{completed}</span>
-              <span className="text-zinc-600">{' / '}</span>
-              <span>{total}</span>
-            </span>
-            <button
-              type="button"
-              onClick={() => clearTodos(sessionId)}
-              className="rounded px-1.5 py-0.5 text-zinc-500 transition hover:bg-zinc-800/70 hover:text-zinc-300"
-              aria-label="Clear all todos"
-              title="Clear all"
-            >
-              ×
-            </button>
-          </div>
+          <span className="text-[11px] tabular-nums text-zinc-500">
+            <span className="text-zinc-200">{completed}</span>
+            <span className="text-zinc-600">{' / '}</span>
+            <span>{total}</span>
+          </span>
         )}
       </div>
 
       {/* Scroll region. min-h-0 + flex-1 so the list body can shrink
-          inside the flex-col section without pushing the header off.
-          Extra top padding fills the space where the composer used
-          to sit so the header doesn't hug the first row. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4 pt-2">
+          inside the flex-col section without pushing the header off. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4 pt-1">
         {todos.length === 0 ? (
           <EmptyHint />
         ) : (
-          <ul className="space-y-0.5">
+          <ul className="space-y-1">
             {todos.map((todo, i) => (
               <TodoRow
                 key={`${i}-${todo.content}`}
                 todo={todo}
                 onCycle={() => cycleStatus(sessionId, i)}
-                onRemove={() => removeTodo(sessionId, i)}
               />
             ))}
           </ul>
@@ -123,10 +108,9 @@ function EmptyHint(): React.JSX.Element {
 type RowProps = {
   todo: TodoItem
   onCycle: () => void
-  onRemove: () => void
 }
 
-function TodoRow({ todo, onCycle, onRemove }: RowProps): React.JSX.Element {
+function TodoRow({ todo, onCycle }: RowProps): React.JSX.Element {
   const { icon, iconClass } = getStatusIcon(todo.status)
   const isCompleted = todo.status === 'completed'
   const isInProgress = todo.status === 'in_progress'
@@ -137,13 +121,20 @@ function TodoRow({ todo, onCycle, onRemove }: RowProps): React.JSX.Element {
   const label = isInProgress ? todo.activeForm || todo.content : todo.content
 
   return (
-    <li className="group/todo relative">
-      <div className="flex items-start gap-2 rounded-md px-2 py-1.5 text-[13px] transition hover:bg-zinc-800/40">
+    <li className="relative">
+      <div
+        className={
+          'flex items-start gap-2.5 rounded-md py-1.5 pl-3 pr-2 text-[13px] transition ' +
+          (isInProgress
+            ? 'bg-amber-500/[0.06] ring-1 ring-inset ring-amber-500/20'
+            : 'hover:bg-zinc-800/40')
+        }
+      >
         <button
           type="button"
           onClick={onCycle}
           className={
-            'mt-[1px] flex size-4 shrink-0 items-center justify-center rounded-sm font-mono text-[13px] leading-none transition ' +
+            'mt-[2px] flex size-4 shrink-0 items-center justify-center rounded-sm font-mono text-[13px] leading-none transition ' +
             iconClass
           }
           aria-label={`Toggle status (currently ${todo.status})`}
@@ -155,23 +146,14 @@ function TodoRow({ todo, onCycle, onRemove }: RowProps): React.JSX.Element {
           className={
             'min-w-0 flex-1 whitespace-pre-wrap break-words leading-relaxed ' +
             (isCompleted
-              ? 'text-zinc-600 line-through'
+              ? 'text-zinc-600 line-through decoration-zinc-700'
               : isInProgress
-                ? 'font-medium text-zinc-100'
-                : 'text-zinc-300')
+                ? 'font-medium text-zinc-50'
+                : 'text-zinc-400')
           }
         >
           {label}
         </span>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="mt-[1px] flex size-4 shrink-0 items-center justify-center rounded text-[12px] leading-none text-zinc-600 opacity-0 transition hover:bg-zinc-800 hover:text-zinc-300 group-hover/todo:opacity-100"
-          aria-label="Remove todo"
-          title="Remove"
-        >
-          ×
-        </button>
       </div>
     </li>
   )

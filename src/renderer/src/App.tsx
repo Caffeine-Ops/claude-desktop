@@ -57,6 +57,7 @@ type WorkspaceStatus = 'loading' | null | string
 function App(): React.JSX.Element {
   const [version, setVersion] = useState<string>('loading…')
   const [workspace, setWorkspace] = useState<WorkspaceStatus>('loading')
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.api) {
@@ -117,6 +118,32 @@ function App(): React.JSX.Element {
     <div className="app">
       <header className="header">
         <h1>Claude Desktop</h1>
+        <button
+          type="button"
+          onClick={() => setSidebarOpen((v) => !v)}
+          title={sidebarOpen ? '收起聊天列表' : '展开聊天列表'}
+          aria-label={sidebarOpen ? '收起聊天列表' : '展开聊天列表'}
+          aria-pressed={sidebarOpen}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="2" y="3" width="12" height="10" rx="1.75" />
+            <line x1="6.25" y1="3" x2="6.25" y2="13" />
+            {!sidebarOpen && <line x1="9" y1="6" x2="11.5" y2="8" />}
+            {!sidebarOpen && <line x1="11.5" y1="8" x2="9" y2="10" />}
+          </svg>
+        </button>
         <span className="badge">v{version}</span>
         <span className="badge badge-stage">agent-sdk · long-session</span>
         {/* Workspace badge — shows the basename so the user can glance
@@ -135,7 +162,7 @@ function App(): React.JSX.Element {
               split (chats | thread | right rail). flex-1 + min-h-0
               lets it shrink correctly inside the outer column. */}
           <div className="flex min-h-0 flex-1">
-            <ThreadListSidebar />
+            {sidebarOpen && <ThreadListSidebar />}
             <ThreadView />
             {/* Right rail — single 288px column whose vertical space
                 is split 50/50 between the Todos (top) and the

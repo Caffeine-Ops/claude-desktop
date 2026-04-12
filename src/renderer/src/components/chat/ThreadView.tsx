@@ -155,9 +155,8 @@ function UserMessage(): React.JSX.Element {
  *   paste → imageAttachmentAdapter.send → ImageMessagePart.image
  *         → AppendMessage → chat store.appendUserMessage → here
  *
- * We cap the display size at 220×220 (the natural image gets
- * object-cover clipped if larger); click the thumb to open the full
- * data URL in a new window for when the user wants to zoom.
+ * We cap the thumbnail at 220×220 (object-cover crops overflow); clicking
+ * it opens an in-app lightbox modal — ESC or backdrop click dismisses.
  */
 function UserImagePart({
   image,
@@ -166,20 +165,74 @@ function UserImagePart({
   image: string
   filename?: string
 }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [open])
+
   return (
-    <a
-      href={image}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="inline-block max-w-[80%] overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900/70 transition hover:border-zinc-500"
-      title={filename ?? 'Attached image'}
-    >
-      <img
-        src={image}
-        alt={filename ?? 'Attached image'}
-        className="max-h-[220px] max-w-full object-cover"
-      />
-    </a>
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-block max-w-[80%] cursor-zoom-in overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900/70 transition hover:border-zinc-500"
+        title={filename ?? 'Attached image'}
+      >
+        <img
+          src={image}
+          alt={filename ?? 'Attached image'}
+          className="max-h-[220px] max-w-full object-cover"
+        />
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={filename ?? 'Image preview'}
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8 backdrop-blur-sm"
+        >
+          <img
+            src={image}
+            alt={filename ?? 'Attached image'}
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-full max-w-full cursor-zoom-out rounded-lg shadow-2xl"
+          />
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            aria-label="Close preview"
+            className="fixed right-5 top-5 flex size-9 items-center justify-center rounded-full bg-zinc-900/80 text-zinc-200 backdrop-blur transition hover:bg-zinc-800"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -580,10 +633,22 @@ function Composer(): React.JSX.Element {
                   className="flex size-9 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-zinc-400 transition hover:bg-zinc-700 hover:text-zinc-200"
                   aria-label="Attach image"
                 >
-                  +
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                  </svg>
                 </ComposerPrimitive.AddAttachment>
                 <ComposerPrimitive.Input
-                  placeholder="Ask anything…  (Enter to send · Shift+Enter for newline · / for commands · @ for files · ⌘V to paste image)"
+                  placeholder="Ask anything…   ↵ send · ⇧↵ newline · / commands · @ files"
                   rows={1}
                   className="min-h-[24px] max-h-40 flex-1 resize-none bg-transparent px-1 py-1.5 text-[14px] leading-relaxed text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
                 />
