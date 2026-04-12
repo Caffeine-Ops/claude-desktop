@@ -17,6 +17,37 @@
     "start": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps"
   },
+  "build": {
+    "appId": "com.anthropic.claude-desktop",
+    "productName": "Claude Desktop",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "env.json",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "identity": null
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.98",
     "@assistant-ui/react": "^0.12.24",
