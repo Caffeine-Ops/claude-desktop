@@ -218,8 +218,8 @@ function DialogShell({
       aria-label={`${toolName} permission`}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
     >
-      <div className="w-[560px] max-w-[calc(100vw-32px)] overflow-hidden rounded-xl border border-zinc-800 bg-[#0e0e11] shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
-        <div className="flex items-center gap-2 border-b border-zinc-800 px-5 py-3">
+      <div className="flex max-h-[calc(100vh-32px)] w-[560px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-xl border border-zinc-800 bg-[#0e0e11] shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
+        <div className="flex shrink-0 items-center gap-2 border-b border-zinc-800 px-5 py-3">
           <span className={`inline-block size-2 animate-pulse rounded-full ${dotColor}`} />
           <span className={`text-[11px] font-semibold uppercase tracking-[0.12em] ${textColor}`}>
             {headerLabel}

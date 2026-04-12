@@ -68,6 +68,17 @@ export const IPC_CHANNELS = {
    */
   SESSION_LIST_CHANGED: 'session:list-changed',
   /**
+   * Main → renderer. Broadcast whenever `engine.sessionMeta` changes —
+   * typically on the fusion-code child's first `system init` message
+   * (which carries skills / mcp servers / slash commands) or when the
+   * cli reports a meta refresh mid-session. The renderer's Composer
+   * subscribes so the `/` popover picks up the full slash-command list
+   * the instant the cli finishes its ~30s cold start, instead of
+   * waiting for the first turn to end (which used to be the only time
+   * `getSessionMeta` was re-polled).
+   */
+  SESSION_META_CHANGED: 'session:meta-changed',
+  /**
    * Renderer → main. Relaunches the Electron app. Used by the
    * "change workspace" flow — since the engine bakes the fusion-code
    * child's cwd at spawn time, swapping workspaces means restarting
@@ -275,6 +286,16 @@ export interface ChatApi {
    * re-fetch the list on every invocation.
    */
   onSessionListChanged(handler: () => void): () => void
+
+  /**
+   * Subscribe to session-meta-changed broadcasts from main. Returns
+   * an unsubscribe function. Emitted whenever the cached sessionMeta
+   * updates — typically on fusion-code's first `system init` message,
+   * which is when skills / mcp servers / slash commands finally
+   * arrive. The Composer calls `getSessionMeta()` again on receipt
+   * so the `/` popover instantly reflects the cli's full command set.
+   */
+  onSessionMetaChanged(handler: () => void): () => void
 
   /**
    * Relaunch the Electron app. Fire-and-forget — the main process

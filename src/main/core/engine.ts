@@ -170,10 +170,20 @@ class ChatEngine extends EventEmitter {
   private activeSessionId: string | null = null
 
   /**
+   * "The next lazy openSession on `activeSessionId` should resume vs
+   * start fresh." `switchToSession()` records this and immediately
+   * returns — the actual cli spawn is deferred to the first `send()`
+   * on the new session so the sidebar click doesn't pay the ~3-8s
+   * fusion-code cold start. Null means "no pending cold start" (the
+   * runtime is either already live or nothing's been picked yet).
+   */
+  private pendingResume: boolean | null = null
+
+  /**
    * Set to true for the short window during which `switchToSession()`
-   * is tearing down the previous runtime and spawning the next one.
-   * `send()` rejects while true so a racing click-and-type doesn't
-   * enqueue a turn on a half-torn-down query handle.
+   * is updating session state. With lazy spawn this window is ~0ms,
+   * but we keep the guard so `send()` still rejects cleanly if the
+   * renderer races a click-and-type.
    */
   private switching = false
 
@@ -271,24 +281,32 @@ class ChatEngine extends EventEmitter {
     const messageId = randomUUID()
     const requestId = this.nextRequestId++
 
-    // Open a long-lived SDK session on first send. openSession() spawns
-    // the fusion-code child, starts the pump, and is the only thing that
-    // pays the cold-start tax. All later sends reuse the same process.
-    if (!runtime.queue || !runtime.handle) {
-      try {
-        this.openSession(sessionId, runtime)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error('[engine] openSession failed:', msg)
-        this.emitEvent(sessionId, { type: 'start', messageId })
-        this.emitEvent(sessionId, {
-          type: 'error',
-          messageId,
-          error: msg
-        })
-        this.emitEvent(sessionId, { type: 'end', messageId })
-        return { messageId }
+    // Make sure the cli is spawned and ready. This is a no-op when
+    // the background warmup kicked off in `switchToSession` has
+    // already completed (both queue/handle set AND readyPromise
+    // resolved), a await-on-same-promise when warmup is still in
+    // flight, and a full spawn+wait when nothing has happened yet
+    // (rare — only if the user hit send before the React effect
+    // pipeline committed the switch). ensureSessionReady swallows
+    // its own timeout / pump-failure, so we re-check the runtime
+    // state after the await and throw a clean error when the spawn
+    // didn't stick.
+    try {
+      await this.ensureSessionReady(sessionId)
+      if (!runtime.queue || !runtime.handle) {
+        throw new Error('fusion-code cli failed to start (no ready signal)')
       }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[engine] ensureSessionReady in send failed:', msg)
+      this.emitEvent(sessionId, { type: 'start', messageId })
+      this.emitEvent(sessionId, {
+        type: 'error',
+        messageId,
+        error: msg
+      })
+      this.emitEvent(sessionId, { type: 'end', messageId })
+      return { messageId }
     }
 
     // Register this turn as the active one. The pump looks at
@@ -554,6 +572,16 @@ class ChatEngine extends EventEmitter {
       // Pin fusion-code's session identity. Mutually exclusive: either
       // we're resuming an existing transcript (`resume`) or we're
       // creating a new one with an explicit id (`sessionId`).
+      //
+      // `forkSession: false` is the SDK default but we set it
+      // explicitly so the intent is visible: we want `--resume X` to
+      // keep writing back to X's JSONL, not fork into a new id Y.
+      // See free-code sessionRestore.ts:435-451 — the `!opts.forkSession`
+      // branch calls `switchSession(result.sessionId)` which reuses X.
+      // Without this guarantee, claude-desktop would need a rebind
+      // race handler between `switchToSession` and the first `system
+      // init` message, which defeats the lazy-switch optimization.
+      forkSession: false,
       ...(resume ? { resume: sessionId } : { sessionId })
     }
 
@@ -581,19 +609,25 @@ class ChatEngine extends EventEmitter {
   }
 
   /**
-   * Tear down a live session runtime: interrupt any in-flight turn,
-   * close the message queue so the pump's `for await` loop exits, wait
-   * for the pump to finish its `finally` cleanup, then drop the Map
-   * entry so the next openSession builds a fresh runtime.
+   * Tear down a live runtime object in place: interrupt any in-flight
+   * turn, close the queue so the pump's `for await` exits, await the
+   * pump's `finally` cleanup.
    *
-   * Called by switchToSession() before opening a different session.
-   * Safe to call on a session with no runtime (e.g. the initial
-   * activeSessionId which was never send()-ed) — it's a no-op.
+   * Split from teardownSession() because `switchToSession` wants to
+   * teardown asynchronously WITHOUT holding the sessions map entry
+   * open. The caller is responsible for having already detached
+   * `rt` from `this.sessions` before calling us, so a racing
+   * switchToSession(sessionId) can allocate a fresh empty runtime
+   * under the same key without aliasing the runtime being torn down.
+   *
+   * Passing `sessionId` in is purely for log readability — we never
+   * touch the map here.
    */
-  private async teardownSession(sessionId: string): Promise<void> {
-    const rt = this.sessions.get(sessionId)
-    if (!rt) return
-    console.log('[engine] tearing down session', { sessionId })
+  private async teardownRuntime(
+    sessionId: string,
+    rt: SessionRuntime
+  ): Promise<void> {
+    console.log('[engine] tearing down runtime', { sessionId })
     try {
       const p = rt.handle?.interrupt()
       if (p && typeof (p as Promise<void>).catch === 'function') {
@@ -612,10 +646,6 @@ class ChatEngine extends EventEmitter {
       }
     }
     rt.active = null
-    this.sessions.delete(sessionId)
-    if (this.activeSessionId === sessionId) {
-      this.activeSessionId = null
-    }
   }
 
   /**
@@ -645,32 +675,116 @@ class ChatEngine extends EventEmitter {
     if (this.switching) {
       throw new Error('Another session switch is already in progress.')
     }
+
+    // Lazy switch. The expensive work — spawning a fresh fusion-code
+    // child and waiting for its `system init` — is deferred to the
+    // first send() on this session. Here we only:
+    //
+    //   1. Detach the previous runtime from the sessions map and tear
+    //      it down in the background (fire-and-forget). The user's
+    //      click doesn't wait for the old cli to exit cleanly.
+    //   2. Allocate an empty runtime slot for the new session.
+    //   3. Record the resume flag on `pendingResume` so the lazy
+    //      openSession in send() still gets the right --resume
+    //      semantics.
+    //
+    // The whole function runs in a single microtask (modulo the
+    // `getSession` await which is actually synchronous), so the UI
+    // sees the click complete instantly and can mount the thread's
+    // history immediately. If the user never sends a message, we
+    // never pay the cold start.
     this.switching = true
     try {
       const prev = this.activeSessionId
       if (prev && prev !== newId) {
-        await this.teardownSession(prev)
+        const prevRt = this.sessions.get(prev)
+        if (prevRt) {
+          // Synchronously detach so a later switchToSession(prev)
+          // builds a fresh runtime instead of aliasing the one we're
+          // tearing down. The map key is free the instant we return.
+          this.sessions.delete(prev)
+          if (prevRt.handle || prevRt.queue) {
+            // Fire-and-forget. Errors are logged by teardownRuntime
+            // and runPump; nothing downstream depends on the teardown
+            // completing in any particular window.
+            void this.teardownRuntime(prev, prevRt).catch((err) => {
+              console.warn('[engine] async teardown failed:', err)
+            })
+          }
+          // If the prev runtime had no cli yet (pending switch that
+          // was never sent to), there's nothing to teardown — GC
+          // collects the empty object.
+        }
       }
-      const runtime = await this.getSession(newId)
-      // openSession is synchronous — it schedules the pump and returns
-      // before the cli has actually finished its cold start. We then
-      // wait on the runtime's readyPromise, which is resolved by the
-      // pump on the first `system init` message. That's the exact
-      // moment fusion-code can accept user turns, so holding the UI
-      // `sessionLoading` flag until here gives a proper "switching…"
-      // experience instead of a premature "ready" flicker.
-      this.openSession(newId, runtime, { resume: opts.resume })
+
+      // Allocate (or reuse) an empty runtime slot for the new id.
+      // `getSession` only creates the object; it does NOT spawn a cli.
+      await this.getSession(newId)
       this.activeSessionId = newId
-      await this.waitForSessionReady(runtime, SWITCH_READY_TIMEOUT_MS)
+      this.pendingResume = opts.resume
     } finally {
       this.switching = false
     }
     this.emit('sessionListChanged')
-    // After ready, activeSessionId may have been rebound by
-    // updateSessionMeta (fusion-code's silent fork on --resume).
-    // Return whatever the cli is actually using so the renderer can
-    // resubscribe to the correct IPC key.
-    return { sessionId: this.activeSessionId ?? newId }
+
+    // Background warmup — fire-and-forget a cli spawn so the ~30s
+    // first-run cold start runs in parallel with the user reading
+    // the freshly-mounted thread and typing their first prompt.
+    // Without this, the first `send()` on a brand-new chat pays the
+    // full cold start synchronously (30+s of spinner). ensureSessionReady
+    // is idempotent — if the user hits send while we're still warming
+    // up, `send()` will await the same readyPromise and NOT spawn a
+    // second cli. Errors here are purely advisory; the real error path
+    // lives in `send()` where the user is actively waiting.
+    void this.ensureSessionReady(newId).catch((err) => {
+      console.warn('[engine] background warmup failed:', err)
+    })
+
+    // We never rebind eagerly now. The rebind branch in
+    // updateSessionMeta() is kept as defense-in-depth but cannot fire
+    // under the current SDK defaults (`forkSession: false` → fusion-code
+    // keeps the requested session id; see free-code's
+    // sessionRestore.ts `if (!opts.forkSession)` branch).
+    return { sessionId: newId }
+  }
+
+  /**
+   * Idempotent cli spawn + wait-for-ready.
+   *
+   * Safe to call concurrently from different code paths — only one
+   * actual `openSession` happens per runtime lifetime. Callers:
+   *
+   *   - `send()` on the first send to a freshly-switched session
+   *     ("on-demand" spawn, user is actively waiting)
+   *   - `switchToSession()` fire-and-forget at the end ("background
+   *     warmup" — kicks off the cli cold start in parallel with the
+   *     user reading the UI + typing their prompt, so when they
+   *     finally hit enter several seconds of the ~30s cold start are
+   *     already behind us)
+   *
+   * Resolves when the pump has seen fusion-code's first `system init`
+   * message — i.e. the cli is accepting user turns. Returns normally
+   * on timeout or pump failure (waitForSessionReady swallows the
+   * reject); callers are expected to re-check `runtime.queue` /
+   * `runtime.handle` afterwards and surface a user-visible error if
+   * the spawn didn't stick.
+   */
+  private async ensureSessionReady(sessionId: string): Promise<void> {
+    const runtime = await this.getSession(sessionId)
+    // A live runtime has both a readyPromise (still pending or already
+    // resolved — waitForSessionReady no-ops on already-resolved) and
+    // a queue/handle pair set synchronously by openSession. If the
+    // pump exited for any reason, its `finally` clears readyPromise,
+    // queue, and handle all together, and we fall through to a fresh
+    // spawn below.
+    if (runtime.readyPromise) {
+      await this.waitForSessionReady(runtime, SWITCH_READY_TIMEOUT_MS)
+      return
+    }
+    const resume = this.pendingResume ?? false
+    this.pendingResume = null
+    this.openSession(sessionId, runtime, { resume })
+    await this.waitForSessionReady(runtime, SWITCH_READY_TIMEOUT_MS)
   }
 
   /**
@@ -1458,6 +1572,15 @@ class ChatEngine extends EventEmitter {
     // so the sidebar can pick up the new row (otherwise the user has
     // to cold-restart or manually re-focus for it to appear).
     this.emit('sessionListChanged')
+
+    // Also broadcast that sessionMeta changed. Before this event
+    // existed, the renderer only re-polled `getSessionMeta()` when a
+    // turn ended — so during the first ~30s of a new session the
+    // slash popover had only the hard-coded client commands (/skill,
+    // /mcp) and not the cli's built-in command set. Now the Composer
+    // refreshes the instant the cli finishes warming up, even while
+    // the first turn is still streaming.
+    this.emit('sessionMetaChanged')
   }
 
   /** Coerce any string the CLI hands us into a known status union. */

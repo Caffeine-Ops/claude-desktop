@@ -331,7 +331,7 @@ export function AskUserQuestionView({
   // matches the old PermissionDialog visual — safer than crashing.
   if (questions.length === 0) {
     return (
-      <div className="px-5 pb-4 pt-4">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-4 pt-4">
         <div className="mb-2 text-[14px] font-semibold text-zinc-100">
           Claude has a question
         </div>
@@ -363,8 +363,17 @@ export function AskUserQuestionView({
   if (!current) return <div />
 
   return (
-    <div className="flex flex-col">
-      <div className="px-5 pb-3 pt-4">
+    // Outer shell is `flex-1 min-h-0` so it fills the DialogShell's
+    // max-height budget and lets the inner scroll region actually
+    // shrink. Without `min-h-0`, flex children refuse to shrink below
+    // their content and the overflow gets clipped at the card edge
+    // on short windows.
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* Scrollable body: question prompt + all options. `min-h-0`
+          + `overflow-y-auto` lets this region scroll when the
+          combined height of question text and options exceeds the
+          viewport's remaining budget. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-3 pt-4">
         {/* Header: question counter + optional chip header */}
         <div className="mb-3 flex items-center gap-2 text-[11px] text-zinc-500">
           {totalQuestions > 1 && (
@@ -424,8 +433,10 @@ export function AskUserQuestionView({
         </div>
       </div>
 
-      {/* Footer */}
-      <div className="flex items-center justify-between border-t border-zinc-800 bg-zinc-950/60 px-5 py-2 text-[11px] text-zinc-500">
+      {/* Footer — pinned to the bottom via `shrink-0` so the scrollable
+          body above never overlaps the keyboard hint row, no matter
+          how tall the question / option list gets. */}
+      <div className="flex shrink-0 items-center justify-between border-t border-zinc-800 bg-zinc-950/60 px-5 py-2 text-[11px] text-zinc-500">
         <span className="flex items-center gap-2">
           {otherEditing ? (
             <>

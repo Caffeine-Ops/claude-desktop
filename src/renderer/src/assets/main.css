@@ -75,3 +75,42 @@ body,
   min-height: 0;
   overflow: hidden;
 }
+
+/* Composer textarea is rendered with `color: transparent` because its
+ * visible text is painted by a highlight overlay underneath (see
+ * ComposerHighlightOverlay). The browser, however, uses its own
+ * system colors for selected text regardless of the element's `color`,
+ * so a drag-selection or a just-inserted-and-selected directive would
+ * suddenly reveal the "transparent" text on the system accent color
+ * and visually fight the overlay's chip background.
+ *
+ * Force the selection to paint the text transparently AND use a very
+ * subtle zinc background so the user can still tell *what* is selected
+ * without the system color clobbering the chip highlight below.
+ *
+ * NB: `::selection` on `<textarea>` works in all modern browsers but
+ * silently fails if the selector is too specific (e.g. `name="input"`
+ * when the attribute hasn't been hydrated yet). Targeting any
+ * `textarea` in the main pane is safe — nothing else in the renderer
+ * has a styled textarea.
+ */
+textarea::selection {
+  color: transparent;
+  background: rgba(244, 244, 245, 0.18);
+}
+
+/* Fake caret used by ComposerHighlightOverlay. The textarea's native
+ * caret is hidden so we can draw our own in the overlay and have it
+ * follow pill chips / padding without pixel-math. Steady blink that
+ * pauses briefly to feel like a native caret instead of a metronome.
+ */
+@keyframes caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  99% {
+    opacity: 0;
+  }
+}

@@ -354,6 +354,20 @@ export function FusionRuntimeProvider({
         endAssistantMessage()
         return
       }
+
+      // Pre-flip the spinner so the user sees feedback while the
+      // main-process send awaits the lazy fusion-code cold start.
+      // Background: engine.ts switchToSession is now lazy — it
+      // records pendingResume and returns instantly, so the first
+      // send() on a freshly-switched session is where the ~3-8s
+      // cold start actually lives. Without this pre-flip, the UI
+      // would sit silent for 8s waiting for the main-process
+      // `start` event. startAssistantMessage is idempotent, so the
+      // real `start` event arriving later is a no-op for the turn
+      // meta (see chat.ts:startAssistantMessage).
+      const pendingMessageId = `pending_${Date.now()}`
+      startAssistantMessage(pendingMessageId)
+
       try {
         await window.chatApi.send({
           sessionId,
@@ -367,7 +381,9 @@ export function FusionRuntimeProvider({
         console.error('[runtime] send failed', err)
         const msg = err instanceof Error ? err.message : String(err)
         // Attach to a synthetic assistant message so the user sees
-        // the failure instead of a silent void.
+        // the failure instead of a silent void. Idempotent
+        // startAssistantMessage means this call won't reset the
+        // turn meta set by the pre-flip above.
         startAssistantMessage(`err_${Date.now()}`)
         setError(`err_${Date.now()}`, msg)
         endAssistantMessage()
@@ -460,6 +476,12 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
   const setSessionLoading = useChatStore((s) => s.setSessionLoading)
 
   const [threads, setThreads] = useState<readonly ThreadSummary[]>([])
+  // Flips true once the initial `listSessions()` has returned (success
+  // or failure). The cold-start auto-select effect below waits for this
+  // before deciding "empty workspace → auto-create new chat", otherwise
+  // it would race the in-flight IPC and spawn a spurious new chat on
+  // every launch even when the sidebar already has entries.
+  const [threadsLoaded, setThreadsLoaded] = useState(false)
 
   useEffect(() => {
     if (!window.chatApi) return
@@ -472,6 +494,11 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
         setThreads(result.threads)
       } catch (err) {
         console.error('[runtime] listSessions failed', err)
+      } finally {
+        // Mark the initial load as done even on error so the
+        // auto-select effect still progresses — a listSessions failure
+        // shouldn't leave the user stranded with a null sessionId.
+        if (!cancelled) setThreadsLoaded(true)
       }
     }
 
@@ -510,19 +537,47 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
       if (!window.chatApi) return
       try {
         setSessionLoading(true)
-        const { messages } = await window.chatApi.loadSession({
-          sessionId: id
-        })
-        // Note: switchSession may return a DIFFERENT id than we asked
-        // for. fusion-code's `--resume X` silently forks into a new
-        // id Y (upstream claude-code behavior), and main forwards Y
-        // here so we can update the chat store + resubscribe the IPC
-        // listener under the key main is actually emitting on.
-        const { sessionId: activeId } = await window.chatApi.switchSession({
+
+        // Fire both IPCs in parallel. They don't depend on each other:
+        //   - loadSession reads `<id>.jsonl` off disk and maps it to
+        //     ThreadMessageLike[] (~tens to hundreds of ms, dominated
+        //     by fs + JSON.parse for long transcripts).
+        //   - switchSession tears down the previous fusion-code child
+        //     and spawns a fresh one with `--resume <id>`, then blocks
+        //     until it sees `system init` (~3-8s, the real cold start).
+        //
+        // Running them sequentially used to make loadSession wait
+        // behind switchSession — so the user sat through the full ~8s
+        // looking at a blank thread, even though the history was
+        // readable off disk in under 100ms. Now we render history the
+        // moment loadSession resolves and let the cli cold start
+        // continue in the background; the composer stays disabled via
+        // `sessionLoading` → `useExternalStoreRuntime.isLoading` until
+        // switchSession also resolves, so the user can read but not
+        // send until the cli is actually accepting turns.
+        const loadPromise = window.chatApi.loadSession({ sessionId: id })
+        const switchPromise = window.chatApi.switchSession({
           sessionId: id,
           resume: true
         })
-        setSession(activeId, messages as ThreadMessageLike[])
+
+        // Optimistically mount the thread under the requested id. The
+        // overwhelming majority of the time this is what the cli will
+        // end up using — the silent-fork rebind below is a rare edge
+        // case we still need to handle for correctness.
+        const { messages } = await loadPromise
+        setSession(id, messages as ThreadMessageLike[])
+
+        // Wait for cli ready. In the rare fusion-code `--resume X`
+        // silent-fork case the cli picks a different id Y for the
+        // forward JSONL; main forwards Y here so we can rebind the
+        // chat store + the IPC subscription key to the real id the
+        // cli is emitting on. When activeId === id (the common path),
+        // this second setSession is a no-op-ish rerender.
+        const { sessionId: activeId } = await switchPromise
+        if (activeId !== id) {
+          setSession(activeId, messages as ThreadMessageLike[])
+        }
       } catch (err) {
         console.error('[runtime] switch thread failed', err)
       } finally {
@@ -532,30 +587,48 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     [setSession, setSessionLoading]
   )
 
-  // Cold-start auto-select. On first launch after the workspace gate,
-  // `sessionId` is null and nothing in the sidebar is highlighted —
-  // the user sees a list of chats but can't tell which one is "current"
-  // (because there isn't one). Resume the most recently updated thread
-  // once per mount so the sidebar visually anchors to something real
-  // and the runtime's `mainThreadId` lines up with a row in `threads`.
+  // Cold-start auto-select. Ensures that by the time the user types
+  // into the composer, `sessionId` is already non-null — no "No active
+  // session" errors on an empty workspace, no need to click "New chat"
+  // before typing. Two branches:
   //
-  // Guarded so this runs at most once per app launch:
-  //   - `autoSelectedRef` latches true the instant we trigger, so the
-  //     effect becomes a no-op even if `threads` later resorts.
+  //   - Workspace already has chats → resume the most recently updated
+  //     one. `threads` is sorted newest-first by sessionStore.listSessions,
+  //     so threads[0] is "the chat the user was most recently in".
+  //   - Workspace is empty → auto-create a fresh chat, equivalent to
+  //     clicking the "+ New chat" button at mount time. With engine.ts
+  //     in lazy-spawn mode, this only allocates a sessionId; no cli
+  //     is spawned until the user actually sends a message.
+  //
+  // Guards:
+  //   - `autoSelectedRef` latches true the instant we trigger, so this
+  //     is idempotent even if `threads` changes later in the session.
+  //   - wait for `threadsLoaded` before running — during the initial
+  //     tick `threads` is `[]` because listSessions hasn't returned yet,
+  //     and acting on that stale value would create a spurious new
+  //     chat in every launch of a workspace that actually has history.
   //   - skip if the user has already picked a thread (`sessionId` set)
   //   - skip if a switch is already in flight (`sessionLoading`)
-  //   - skip if there are no threads to pick from (empty workspace)
   const autoSelectedRef = useRef(false)
   useEffect(() => {
     if (autoSelectedRef.current) return
+    if (!threadsLoaded) return
     if (sessionId !== null) return
     if (sessionLoading) return
-    if (threads.length === 0) return
     autoSelectedRef.current = true
-    // `threads` is kept sorted newest-first by sessionStore.listSessions,
-    // so threads[0] is "the chat the user was most recently in".
-    void onSwitchToThread(threads[0].id)
-  }, [threads, sessionId, sessionLoading, onSwitchToThread])
+    if (threads.length > 0) {
+      void onSwitchToThread(threads[0].id)
+    } else {
+      void onSwitchToNewThread()
+    }
+  }, [
+    threads,
+    threadsLoaded,
+    sessionId,
+    sessionLoading,
+    onSwitchToThread,
+    onSwitchToNewThread
+  ])
 
   // Map ThreadSummary[] → ExternalStoreThreadData<'regular'>[] once
   // per threads change. Memoized so the runtime's rerender path

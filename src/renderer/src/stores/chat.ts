@@ -211,11 +211,22 @@ export const useChatStore = create<ChatState>((set) => ({
     // We also mint fresh turn meta (start timestamp + a random verb)
     // so ThinkingSpinner has a stable anchor for its elapsed-seconds
     // counter and the "Cogitating…" label.
-    set({
-      streaming: true,
-      turnStartedAt: Date.now(),
-      turnVerb: sampleSpinnerVerb(),
-      turnHasText: false
+    //
+    // Idempotent — if `streaming` is already true (the renderer
+    // pre-flipped it on send() entry so the user sees feedback
+    // through the ~3-8s lazy fusion-code cold start), we leave
+    // turnStartedAt / turnVerb alone so the spinner's elapsed
+    // counter stays continuous and the random verb doesn't
+    // change mid-turn. The incoming main-process `start` event
+    // is effectively a no-op when it arrives second.
+    set((s) => {
+      if (s.streaming) return s
+      return {
+        streaming: true,
+        turnStartedAt: Date.now(),
+        turnVerb: sampleSpinnerVerb(),
+        turnHasText: false
+      }
     })
   },
 

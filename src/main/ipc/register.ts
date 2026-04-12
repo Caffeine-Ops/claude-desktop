@@ -287,6 +287,18 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     mainWindow.webContents.send(IPC_CHANNELS.SESSION_LIST_CHANGED)
   })
 
+  // Bridge session-meta-changed → renderer. Fires from
+  // updateSessionMeta() on every fusion-code `system init`, which is
+  // when skills / mcp_servers / slash_commands finally populate. The
+  // renderer's Composer re-polls getSessionMeta() on receipt so the
+  // `/` popover reflects the full cli command set instead of waiting
+  // for the first turn to end.
+  engine.removeAllListeners('sessionMetaChanged')
+  engine.on('sessionMetaChanged', () => {
+    if (mainWindow.isDestroyed()) return
+    mainWindow.webContents.send(IPC_CHANNELS.SESSION_META_CHANGED)
+  })
+
   // Bridge permission requests → renderer. The broker emits one
   // `request` event per pending canUseTool call; we forward it to the
   // active BrowserWindow's webContents so PermissionDialog can pick it

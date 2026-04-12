@@ -3,7 +3,8 @@ import {
   ThreadPrimitive,
   MessagePrimitive,
   ComposerPrimitive,
-  AttachmentPrimitive
+  AttachmentPrimitive,
+  useAuiState
 } from '@assistant-ui/react'
 import type { Attachment, Unstable_TriggerItem } from '@assistant-ui/core'
 import { motion } from 'motion/react'
@@ -282,12 +283,18 @@ function AssistantMessage(): React.JSX.Element {
 function AssistantTextRow({ text }: { text: string }): React.JSX.Element {
   return (
     <div className="flex w-full gap-3">
+      {/* Gutter dot. We used to render the `●` character, but its
+          vertical position depends on the font's glyph metrics and
+          ends up sitting above the visual center of the line.
+          Replacing it with a real 6px CSS circle lets us offset it
+          with pixel precision: AssistantMarkdown's first paragraph
+          is `text-[14px] leading-relaxed` (line-height ≈ 22.75px),
+          so the line's visual center is at ~11.4px and a 6px dot
+          wants its top edge at ~8px to sit dead-center. */}
       <span
         aria-hidden
-        className="mt-[3px] shrink-0 select-none font-mono text-[13px] leading-relaxed text-zinc-300"
-      >
-        ●
-      </span>
+        className="mt-[8px] block size-[6px] shrink-0 rounded-full bg-zinc-300"
+      />
       <div className="min-w-0 flex-1">
         <AssistantMarkdown text={text} />
       </div>
@@ -489,6 +496,14 @@ function Composer(): React.JSX.Element {
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [files, setFiles] = useState<readonly string[]>([])
   const streaming = useChatStore((s) => s.streaming)
+  // Caret tracking for the fake overlay cursor. The native textarea
+  // caret is hidden via `caret-color: transparent` in the className
+  // below, because once we let chips have real visual width the
+  // native caret drifts off the apparent character positions. We
+  // track `selectionStart` + focus state here and let the overlay
+  // render its own blinking caret at the correct visual slot.
+  const [caretPos, setCaretPos] = useState(0)
+  const [isFocused, setIsFocused] = useState(false)
 
   // Pull session meta on mount and whenever a turn ends. The first
   // pull (mount) returns empty arrays because fusion-code hasn't
@@ -510,6 +525,35 @@ function Composer(): React.JSX.Element {
       cancelled = true
     }
   }, [streaming])
+
+  // Also refresh sessionMeta the instant main fires
+  // `session:meta-changed` — this is what carries fusion-code's
+  // skills / mcp servers / slash commands, and it arrives on the
+  // first `system init` message (which is ~30s into the initial
+  // cold start, mid-stream). Without this subscription, the `/`
+  // popover would only see the full command set after the first
+  // turn ends and the [streaming] effect above re-polls — a bad
+  // UX when the user is already typing their second prompt while
+  // the first is still rendering. One IPC round-trip per push,
+  // main-side cache keeps it cheap.
+  useEffect(() => {
+    if (!window.chatApi) return
+    let cancelled = false
+    const unsub = window.chatApi.onSessionMetaChanged(() => {
+      window.chatApi
+        .getSessionMeta()
+        .then((meta) => {
+          if (!cancelled) setSessionMeta(meta)
+        })
+        .catch((err) => {
+          console.error('[Composer] getSessionMeta (pushed) failed', err)
+        })
+    })
+    return () => {
+      cancelled = true
+      unsub()
+    }
+  }, [])
 
   // Pull the file list on the same cadence as session meta. Main's
   // 5s TTL cache makes rapid re-fetches cheap, so we don't need to
@@ -556,21 +600,116 @@ function Composer(): React.JSX.Element {
   // calling `e.preventDefault()`, we skip the library's buggy handler.
   const slashCtxRef = useRef<TriggerCtxSnapshot | null>(null)
   const mentionCtxRef = useRef<TriggerCtxSnapshot | null>(null)
+  // Keep a handle to the actual textarea so we can reposition the DOM
+  // cursor after a popover selection (see `advanceCursorToEnd`).
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
-  const handleTriggerEnter = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
-    // Prefer whichever popover is currently open. Only one can be open
-    // at a time because `/` and `@` detect mutually exclusive triggers.
-    const snap = slashCtxRef.current?.open
-      ? slashCtxRef.current
-      : mentionCtxRef.current?.open
-        ? mentionCtxRef.current
-        : null
-    if (!snap) return
-    const item = snap.items[snap.highlightedIndex]
-    if (!item) return
-    e.preventDefault()
-    snap.selectItem(item)
+  /**
+   * After `selectItem` inserts a directive, assistant-ui rewrites the
+   * composer text but does *not* advance its internal `cursorPosition`
+   * state. Because `detectTrigger` re-runs on every state change, the
+   * leftover cursor (still mid-`/sim`) sees the freshly-inserted `/skill`
+   * and happily reports a new trigger — so the popover stays open and
+   * even re-filters against "ski". The visible symptom is: "I clicked
+   * /skill, the text now says /skill, but the popover is still there".
+   *
+   * Fix: move the actual textarea caret to end-of-text and fire a native
+   * `select` event so the library's `onSelect` hook picks up the new
+   * position, updates `cursorPosition`, and `trigger` drops to null —
+   * closing the popover cleanly. Works for both keyboard (Enter) and
+   * mouse (click) selection paths.
+   */
+  const advanceCursorToEnd = (): void => {
+    const el = textareaRef.current
+    if (!el) return
+    const end = el.value.length
+    // Re-focus first — click selection lands focus on the popover
+    // button, so without this the user would have to click back into
+    // the textarea before they could keep typing arguments.
+    el.focus({ preventScroll: true })
+    el.setSelectionRange(end, end)
+    el.dispatchEvent(new Event('select', { bubbles: true }))
+  }
+
+  const handleComposerKey = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    // --- 1. Enter-to-select (popover insertion) -----------------------
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      // Prefer whichever popover is currently open. Only one can be
+      // open at a time because `/` and `@` detect mutually exclusive
+      // triggers.
+      const snap = slashCtxRef.current?.open
+        ? slashCtxRef.current
+        : mentionCtxRef.current?.open
+          ? mentionCtxRef.current
+          : null
+      if (!snap) return
+      const item = snap.items[snap.highlightedIndex]
+      if (!item) return
+      e.preventDefault()
+      snap.selectItem(item)
+      requestAnimationFrame(advanceCursorToEnd)
+      return
+    }
+
+    // --- 2. Atomic token deletion (Backspace / Delete) ---------------
+    //
+    // Even though the underlying input is a plain textarea, we make
+    // slash commands and @mentions *feel* atomic: one Backspace at the
+    // end of `/skill-creator` deletes the whole token (not just the
+    // last `r`). Symmetrically, Delete at the start of a token wipes
+    // the whole token forward. The visible chip in the overlay then
+    // vanishes in one step, matching the user's mental model of a
+    // single "tag" pill.
+    //
+    // We skip this path when there's a live text selection (let the
+    // browser handle range delete normally) or when any modifier is
+    // held (Option-Backspace deletes a word, Cmd-Backspace deletes
+    // the line — both are fine as-is).
+    const isAtomicDeleteKey = e.key === 'Backspace' || e.key === 'Delete'
+    if (
+      isAtomicDeleteKey &&
+      !e.shiftKey &&
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey
+    ) {
+      const el = e.currentTarget
+      if (el.selectionStart !== el.selectionEnd) return
+      const cursor = el.selectionStart ?? 0
+      const text = el.value
+      const hit =
+        e.key === 'Backspace'
+          ? findAtomicTokenEndingAt(text, cursor)
+          : findAtomicTokenStartingAt(text, cursor)
+      if (!hit) return
+      e.preventDefault()
+      const newText = text.slice(0, hit.start) + text.slice(hit.end)
+      // Use the native value setter + synthetic input event so React's
+      // controlled textarea picks up the change and flows it into
+      // `aui.composer().setText(...)` via its onChange plugin — exactly
+      // as if the user had typed the edit themselves. Assigning
+      // `el.value = ...` directly would be overwritten on the next
+      // React render.
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value'
+      )?.set
+      setter?.call(el, newText)
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      // Place the caret where the token used to start and let the
+      // library's onSelect hook sync its internal cursorPosition.
+      el.setSelectionRange(hit.start, hit.start)
+      el.dispatchEvent(new Event('select', { bubbles: true }))
+      return
+    }
+  }
+
+  // Click-path wrapper: the library's own click handler already calls
+  // `selectItem` synchronously, so all we need is to close the popover
+  // after the text-replacement commits. Passed down to TriggerPopoverList
+  // as the onItemClick hook.
+  const handleTriggerItemClick = (): void => {
+    requestAnimationFrame(advanceCursorToEnd)
   }
 
   return (
@@ -596,6 +735,7 @@ function Composer(): React.JSX.Element {
                 <TriggerPopoverList
                   items={items}
                   emptyText="No matching commands"
+                  onItemClick={handleTriggerItemClick}
                 />
               )}
             </ComposerPrimitive.Unstable_TriggerPopoverItems>
@@ -629,6 +769,7 @@ function Composer(): React.JSX.Element {
                         ? 'Loading files…'
                         : 'No matching files'
                     }
+                    onItemClick={handleTriggerItemClick}
                   />
                 )}
               </ComposerPrimitive.Unstable_TriggerPopoverItems>
@@ -683,12 +824,63 @@ function Composer(): React.JSX.Element {
                     <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                   </svg>
                 </ComposerPrimitive.AddAttachment>
-                <ComposerPrimitive.Input
-                  placeholder="Ask anything…   ↵ send · ⇧↵ newline · / commands · @ files"
-                  rows={1}
-                  onKeyDown={handleTriggerEnter}
-                  className="min-h-[24px] max-h-40 flex-1 resize-none bg-transparent px-1 py-1.5 text-[14px] leading-relaxed text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
-                />
+                {/* Highlight overlay wrapper. The overlay div renders
+                    the same text content but with slash / mention
+                    tokens wrapped in styled spans, while the textarea
+                    on top has transparent text (caret still visible
+                    via `caret-zinc-100`) so the overlay's highlights
+                    read as "inline chips" to the user.
+                    Both elements share identical typography and
+                    padding so characters line up pixel-perfect. The
+                    overlay uses `box-shadow` for chip borders instead
+                    of `padding` to avoid shifting text positions. */}
+                <div className="relative min-h-[24px] max-h-40 flex-1 overflow-hidden">
+                  <ComposerHighlightOverlay
+                    caretPos={caretPos}
+                    isFocused={isFocused}
+                  />
+                  <ComposerPrimitive.Input
+                    ref={textareaRef}
+                    placeholder="Ask anything…   ↵ send · ⇧↵ newline · / commands · @ files"
+                    rows={1}
+                    onKeyDown={handleComposerKey}
+                    onFocus={(e) => {
+                      setIsFocused(true)
+                      // Sync caret state on focus so re-entering the
+                      // composer shows the caret at the actual DOM
+                      // selection, not a stale zero position.
+                      setCaretPos(e.currentTarget.selectionStart ?? 0)
+                    }}
+                    onBlur={() => setIsFocused(false)}
+                    onSelect={(e) => {
+                      const el = e.currentTarget
+                      let start = el.selectionStart ?? 0
+                      const end = el.selectionEnd ?? start
+                      // Collapse-to-boundary: when the user's cursor
+                      // lands strictly *inside* a slash/mention token
+                      // (click, arrow, or programmatic), snap it to
+                      // the closer chip edge so chips feel atomic.
+                      // Only applies to collapsed selections — a
+                      // drag-select over a chip stays as-is.
+                      if (start === end) {
+                        const hit = findAtomicTokenContaining(el.value, start)
+                        if (hit) {
+                          const snap =
+                            start - hit.start < hit.end - start
+                              ? hit.start
+                              : hit.end
+                          if (snap !== start) {
+                            start = snap
+                            el.setSelectionRange(snap, snap)
+                          }
+                        }
+                      }
+                      setCaretPos(start)
+                    }}
+                    className="relative z-[1] block min-h-[24px] max-h-40 w-full resize-none bg-transparent px-1 py-1.5 text-[14px] leading-relaxed text-transparent placeholder:text-zinc-600 focus:outline-none"
+                    style={{ caretColor: 'transparent' }}
+                  />
+                </div>
                 <ComposerPrimitive.Send className="flex size-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500">
                   ↑
                 </ComposerPrimitive.Send>
@@ -702,6 +894,310 @@ function Composer(): React.JSX.Element {
       </ComposerPrimitive.Unstable_TriggerPopoverRoot>
     </div>
   )
+}
+
+/**
+ * Highlight layer that sits *behind* the composer textarea and renders
+ * the same text — but with slash commands (`/skill`) and file mentions
+ * (`@src/index.ts`) swapped out for proper pill chips with an icon and
+ * real horizontal padding.
+ *
+ * Alignment strategy
+ * ------------------
+ * Giving chips real width means overlay characters no longer sit on
+ * top of the textarea's character columns, so the native caret would
+ * drift off-screen from the visible text. We solve that by:
+ *
+ *   1. Painting the textarea's text transparent AND hiding its caret
+ *      (`caret-color: transparent`).
+ *   2. Tracking `selectionStart` via `onSelect` and passing it to this
+ *      overlay as `caretPos`.
+ *   3. Rendering our own blinking caret element at the right slot in
+ *      the token stream — inserted *between* token spans so it
+ *      inherits the overlay's actual layout (chip widths included).
+ *
+ * Because the caret is painted in the overlay's flow, it automatically
+ * follows chips, line wraps, and padding without any pixel math.
+ *
+ * Snap-out behavior for chip interiors
+ * ------------------------------------
+ * If the user clicks mid-chip the composer's onSelect handler snaps
+ * `selectionStart` to the closer chip edge before it reaches this
+ * component, so we can treat chips as atomic: the caret never paints
+ * inside a chip.
+ */
+function ComposerHighlightOverlay({
+  caretPos,
+  isFocused
+}: {
+  caretPos: number
+  isFocused: boolean
+}): React.JSX.Element {
+  // `composer` is a dynamically-registered client on AssistantState,
+  // so the mapped type exported from @assistant-ui/store doesn't
+  // surface it statically. Cast through `any` at the selector
+  // boundary — the runtime shape is fixed (composer.text is always
+  // a string or undefined) and re-checking it here would require
+  // pulling in assistant-ui's ClientSchemas.
+  const text = useAuiState((s) => ((s as any).composer?.text as string | undefined) ?? '')
+  const tokens = useMemo(() => tokenizeComposer(text), [text])
+
+  // Walk tokens once, interleaving a <Caret /> at the position that
+  // corresponds to the textarea's `selectionStart`. The caret element
+  // is inserted into the same inline flow as tokens so it picks up
+  // chip widths, text widths, and wrapping automatically.
+  const rendered: React.ReactNode[] = []
+  let caretInserted = false
+  let offset = 0
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]!
+    const tokEnd = offset + tok.value.length
+    const caretInRange = caretPos >= offset && caretPos < tokEnd
+
+    if (!caretInserted && caretInRange) {
+      if (tok.kind === 'text') {
+        const split = caretPos - offset
+        rendered.push(
+          <span key={`t-${i}-a`}>{tok.value.slice(0, split)}</span>
+        )
+        if (isFocused) rendered.push(<Caret key={`caret-${i}`} />)
+        rendered.push(
+          <span key={`t-${i}-b`}>{tok.value.slice(split)}</span>
+        )
+        caretInserted = true
+        offset = tokEnd
+        continue
+      }
+      // Chip token: place caret *before* the chip (onSelect's
+      // snap-out means we only land here when caretPos === offset).
+      if (isFocused) rendered.push(<Caret key={`caret-${i}`} />)
+      caretInserted = true
+    }
+
+    if (tok.kind === 'slash' || tok.kind === 'mention') {
+      rendered.push(
+        <Chip key={`chip-${i}`} variant={tok.kind}>
+          {tok.value}
+        </Chip>
+      )
+    } else {
+      rendered.push(<span key={`t-${i}`}>{tok.value}</span>)
+    }
+    offset = tokEnd
+  }
+  // Tail case: cursor at end of full text.
+  if (!caretInserted && isFocused && caretPos >= text.length) {
+    rendered.push(<Caret key="caret-end" />)
+  }
+
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-0 z-0 whitespace-pre-wrap break-words px-1 py-1.5 text-[14px] leading-relaxed text-zinc-100"
+    >
+      {rendered}
+    </div>
+  )
+}
+
+/**
+ * Blinking fake caret rendered inside the overlay. We use CSS keyframes
+ * (`caret-blink` in main.css) so the blink continues smoothly even when
+ * React isn't re-rendering.
+ *
+ * The caret is an `inline-block` zero-width element — it takes up a
+ * 1px sliver on the line so it's visible without shifting neighbours.
+ * `vertical-align: text-bottom` + `height: 1em` makes it span the
+ * ascender/descender zone, matching the native textarea caret height.
+ */
+function Caret(): React.JSX.Element {
+  return (
+    <span
+      aria-hidden
+      style={{
+        display: 'inline-block',
+        width: '1px',
+        height: '1em',
+        verticalAlign: 'text-bottom',
+        background: '#e4e4e7', // zinc-200
+        marginInline: '0',
+        animation: 'caret-blink 1.1s step-end infinite'
+      }}
+    />
+  )
+}
+
+/**
+ * Real pill chip for a slash command / file mention. Now that the
+ * overlay no longer needs to pixel-align with the textarea (we draw
+ * our own caret), chips can use real padding + an inline icon and
+ * look just like the reference mock.
+ *
+ * The leading `/` or `@` is stripped before rendering — the icon
+ * stands in for it visually while the raw character still lives in
+ * the textarea's text (needed for the library's trigger detection
+ * and for atomic backspace to work via `iterAtomicTokens`).
+ */
+function Chip({
+  variant,
+  children
+}: {
+  variant: 'slash' | 'mention'
+  children: string
+}): React.JSX.Element {
+  const palette =
+    variant === 'slash'
+      ? {
+          text: 'rgb(216, 180, 254)', // violet-200
+          background: 'rgba(139, 92, 246, 0.18)',
+          iconStroke: 'rgb(196, 181, 253)' // violet-300
+        }
+      : {
+          text: 'rgb(167, 243, 208)', // emerald-200
+          background: 'rgba(16, 185, 129, 0.18)',
+          iconStroke: 'rgb(110, 231, 183)' // emerald-300
+        }
+  // Strip the leading `/` or `@` — the icon replaces it.
+  const label = children.slice(1)
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px',
+        padding: '1px 8px 1px 7px',
+        background: palette.background,
+        color: palette.text,
+        fontWeight: 600,
+        borderRadius: '9999px',
+        verticalAlign: 'baseline',
+        lineHeight: '1.35'
+      }}
+    >
+      <svg
+        width="11"
+        height="11"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke={palette.iconStroke}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        style={{ flexShrink: 0 }}
+      >
+        {variant === 'slash' ? (
+          <>
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+            <path d="m3.27 6.96 8.73 5.05 8.73-5.05" />
+            <path d="M12 22.08V12" />
+          </>
+        ) : (
+          <>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <path d="M14 2v6h6" />
+          </>
+        )}
+      </svg>
+      {label}
+    </span>
+  )
+}
+
+type ComposerToken =
+  | { kind: 'text'; value: string }
+  | { kind: 'slash'; value: string }
+  | { kind: 'mention'; value: string }
+
+/**
+ * Split composer text into alternating plain / slash / mention runs.
+ * A "slash" token is `/` followed by one or more word chars (letters,
+ * digits, `_`, `-`), anchored to the start-of-string or whitespace so
+ * URLs like `http://example.com` don't light up.
+ * A "mention" token is `@` followed by any non-whitespace run, same
+ * anchoring rule.
+ *
+ * This runs on every keystroke (memoized on `text`), so keep it cheap:
+ * one regex sweep, no backtracking-heavy patterns.
+ */
+function tokenizeComposer(text: string): ComposerToken[] {
+  if (!text) return [{ kind: 'text', value: '' }]
+  const tokens: ComposerToken[] = []
+  const re = /(^|\s)(\/[A-Za-z0-9_-]+|@\S+)/g
+  let lastIdx = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const tokenStart = m.index + m[1].length
+    if (tokenStart > lastIdx) {
+      tokens.push({ kind: 'text', value: text.slice(lastIdx, tokenStart) })
+    }
+    const value = m[2]
+    tokens.push({
+      kind: value.startsWith('/') ? 'slash' : 'mention',
+      value
+    })
+    lastIdx = tokenStart + value.length
+  }
+  if (lastIdx < text.length) {
+    tokens.push({ kind: 'text', value: text.slice(lastIdx) })
+  }
+  return tokens
+}
+
+/**
+ * Walks through every tokenized slash/mention run in `text` and yields
+ * their absolute `[start, end)` offsets. The tokenizer already knows
+ * the exact rules (must be `/` or `@` at start-of-text or after
+ * whitespace, etc), so we reuse it instead of re-deriving character
+ * classes in two places.
+ */
+function* iterAtomicTokens(
+  text: string
+): Generator<{ start: number; end: number; value: string }> {
+  const tokens = tokenizeComposer(text)
+  let offset = 0
+  for (const tok of tokens) {
+    const end = offset + tok.value.length
+    if (tok.kind === 'slash' || tok.kind === 'mention') {
+      yield { start: offset, end, value: tok.value }
+    }
+    offset = end
+  }
+}
+
+function findAtomicTokenEndingAt(
+  text: string,
+  cursor: number
+): { start: number; end: number; value: string } | null {
+  for (const hit of iterAtomicTokens(text)) {
+    if (hit.end === cursor) return hit
+    if (hit.start > cursor) break
+  }
+  return null
+}
+
+function findAtomicTokenStartingAt(
+  text: string,
+  cursor: number
+): { start: number; end: number; value: string } | null {
+  for (const hit of iterAtomicTokens(text)) {
+    if (hit.start === cursor) return hit
+    if (hit.start > cursor) break
+  }
+  return null
+}
+
+function findAtomicTokenContaining(
+  text: string,
+  cursor: number
+): { start: number; end: number; value: string } | null {
+  for (const hit of iterAtomicTokens(text)) {
+    // Strictly inside — cursor === start or cursor === end is NOT
+    // "inside", those are valid caret slots at the chip boundaries.
+    if (cursor > hit.start && cursor < hit.end) return hit
+    if (hit.start > cursor) break
+  }
+  return null
 }
 
 /**
@@ -774,10 +1270,12 @@ function TriggerCtxSync({
  */
 function TriggerPopoverList({
   items,
-  emptyText
+  emptyText,
+  onItemClick
 }: {
   items: readonly Unstable_TriggerItem[]
   emptyText: string
+  onItemClick?: () => void
 }): React.JSX.Element {
   const ctx = ComposerPrimitive.unstable_useTriggerPopoverContext()
   const listRef = useRef<HTMLUListElement>(null)
@@ -814,6 +1312,7 @@ function TriggerPopoverList({
         >
           <ComposerPrimitive.Unstable_TriggerPopoverItem
             item={item}
+            onClick={onItemClick}
             className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-left text-[13px] outline-none transition-colors hover:bg-zinc-800/60 data-[highlighted]:bg-zinc-800"
           >
             <span className="shrink-0 truncate font-mono text-zinc-100">

@@ -162,6 +162,16 @@ const chatApi: ChatApi = {
     }
   },
 
+  onSessionMetaChanged(handler: () => void): () => void {
+    const listener = (): void => {
+      handler()
+    }
+    ipcRenderer.on(IPC_CHANNELS.SESSION_META_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.SESSION_META_CHANGED, listener)
+    }
+  },
+
   relaunchApp(): Promise<void> {
     return ipcRenderer.invoke(IPC_CHANNELS.APP_RELAUNCH) as Promise<void>
   }
