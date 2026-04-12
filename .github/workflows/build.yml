@@ -9,6 +9,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FUSION_CODE_VERSION: v2.1.87
+
 jobs:
   build:
     name: Build ${{ matrix.platform }}
@@ -18,8 +21,12 @@ jobs:
         include:
           - os: macos-latest
             platform: mac
+            fusion_asset: fusion-code-darwin-arm64
+            fusion_target: fusion-bin/fusion-code-cli
           - os: windows-latest
             platform: win
+            fusion_asset: fusion-code-win32-x64.exe
+            fusion_target: fusion-bin/fusion-code-cli.exe
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -45,6 +52,22 @@ jobs:
           printf '%s' "$ENV_JSON" > env.json
           python -c "import json; json.load(open('env.json'))" \
             || { echo "::error::env.json is not valid JSON"; exit 1; }
+
+      - name: Download fusion-code CLI
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p fusion-bin
+          gh release download "$FUSION_CODE_VERSION" \
+            --repo Caffeine-Ops/fusion-code-install \
+            --pattern "${{ matrix.fusion_asset }}" \
+            --dir fusion-bin
+          mv "fusion-bin/${{ matrix.fusion_asset }}" "${{ matrix.fusion_target }}"
+          if [ "${{ matrix.platform }}" != "win" ]; then
+            chmod +x "${{ matrix.fusion_target }}"
+          fi
+          ls -la fusion-bin/
 
       - name: Type check
         run: bun run typecheck

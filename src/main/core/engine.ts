@@ -1018,11 +1018,13 @@ class ChatEngine extends EventEmitter {
    *
    *   1. `FUSION_CODE_CLI_PATH` env var — highest precedence; set it
    *      in env.json or the shell to pin an explicit path
-   *   2. `<cwd>/../free-code/cli` — typical `bun run dev` layout
+   *   2. `<resourcesPath>/fusion-code-cli[.exe]` — packaged Electron
+   *      app, the CLI is shipped via electron-builder extraResources
+   *   3. `<cwd>/../free-code/cli` — typical `bun run dev` layout
    *      (cwd == claude-desktop/)
-   *   3. `<importer>/../../../free-code/cli` — bundled main at
+   *   4. `<importer>/../../../free-code/cli` — bundled main at
    *      `out/main/index.js`, three levels up lands at claude_code_01/
-   *   4. `<importer>/../../../../free-code/cli` — extra fallback for
+   *   5. `<importer>/../../../../free-code/cli` — extra fallback for
    *      dev when the importer is the source file not the bundle
    *
    * Throws with every candidate listed, so a misconfigured install is
@@ -1040,7 +1042,10 @@ class ChatEngine extends EventEmitter {
     }
 
     const selfDir = dirname(fileURLToPath(import.meta.url))
+    const bundledName = process.platform === 'win32' ? 'fusion-code-cli.exe' : 'fusion-code-cli'
+    const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
     const candidates = [
+      ...(resourcesPath ? [resolve(resourcesPath, bundledName)] : []),
       resolve(process.cwd(), '../free-code/cli'),
       resolve(selfDir, '../../../free-code/cli'),
       resolve(selfDir, '../../../../free-code/cli')

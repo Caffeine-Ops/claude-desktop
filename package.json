@@ -32,14 +32,26 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
-        { "target": "dmg", "arch": ["x64", "arm64"] },
-        { "target": "zip", "arch": ["x64", "arm64"] }
+        { "target": "dmg", "arch": ["arm64"] },
+        { "target": "zip", "arch": ["arm64"] }
       ],
-      "identity": null
+      "identity": null,
+      "extraResources": [
+        {
+          "from": "fusion-bin/fusion-code-cli",
+          "to": "fusion-code-cli"
+        }
+      ]
     },
     "win": {
       "target": [
         { "target": "nsis", "arch": ["x64"] }
+      ],
+      "extraResources": [
+        {
+          "from": "fusion-bin/fusion-code-cli.exe",
+          "to": "fusion-code-cli.exe"
+        }
       ]
     },
     "nsis": {
