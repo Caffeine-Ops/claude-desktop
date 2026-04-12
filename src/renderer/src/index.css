@@ -1,0 +1,24 @@
+/*
+ * Tailwind entrypoint for the renderer. Loaded from main.tsx alongside
+ * the legacy assets/main.css (which still owns the window chrome — header,
+ * badge, traffic-light offset). Everything chat-side is Tailwind now.
+ *
+ * Dark-only for the moment. If we ever add a light mode, add a `.light`
+ * branch with overrides and toggle via a root class.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+}
+
+/*
+ * Assistant message text is now rendered through @assistant-ui/react-markdown.
+ * Each markdown tag (p / h1 / ul / code / pre / ...) has its own Tailwind
+ * class overrides defined inline in `AssistantMarkdown.tsx`, so we no
+ * longer need a global `.fusion-assistant-text` rule block here.
+ */

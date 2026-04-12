@@ -1,0 +1,69 @@
+import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import react from '@vitejs/plugin-react'
+import { resolve, dirname } from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+/**
+ * Vite config for the Electron wrapper.
+ *
+ * History note (Apr 2026): an earlier iteration imported free-code/src/
+ * directly through Vite aliases and a 400-line compat transform plugin
+ * (`freeCodeCompatPlugin`) to bridge Bun-only constructs (`bun:bundle`,
+ * `MACRO.*` defines, `src/`-prefixed baseUrl imports, lazy CJS requires,
+ * NAPI native modules, etc.) into Rollup's ESM output. That stack was
+ * removed when ChatEngine was rewritten on top of `@anthropic-ai/
+ * claude-agent-sdk`'s `query()` API: the SDK spawns the prebuilt
+ * `free-code/cli` binary as a child process and talks to it over the
+ * stream-json protocol, so we no longer need to bundle any free-code
+ * source into the Electron main process.
+ *
+ * The result is the minimal electron-vite config below — just three
+ * targets, three plugins, two aliases.
+ */
+
+const sharedResolve = {
+  alias: [
+    { find: /^@shared\/(.*)$/, replacement: resolve(__dirname, 'src/shared/$1') }
+  ]
+}
+
+export default defineConfig({
+  main: {
+    plugins: [externalizeDepsPlugin({ exclude: [] })],
+    resolve: sharedResolve,
+    build: {
+      rollupOptions: {
+        input: resolve(__dirname, 'src/main/index.ts')
+      },
+      commonjsOptions: { transformMixedEsModules: true }
+    }
+  },
+
+  preload: {
+    plugins: [externalizeDepsPlugin()],
+    resolve: sharedResolve,
+    build: {
+      rollupOptions: {
+        input: resolve(__dirname, 'src/preload/index.ts')
+      }
+    }
+  },
+
+  renderer: {
+    root: resolve(__dirname, 'src/renderer'),
+    plugins: [react()],
+    resolve: {
+      alias: {
+        '@shared': resolve(__dirname, 'src/shared'),
+        '@': resolve(__dirname, 'src/renderer/src')
+      }
+    },
+    build: {
+      rollupOptions: {
+        input: resolve(__dirname, 'src/renderer/index.html')
+      }
+    }
+  }
+})
