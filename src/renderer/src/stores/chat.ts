@@ -56,7 +56,20 @@ type ContentPart = {
 }
 
 interface ChatState {
-  sessionId: string
+  /**
+   * fusion-code UUID of the currently active session, or null before
+   * one has been picked (fresh launch) / while switching is in flight.
+   * Mirrors the `activeSessionId` that main process tracks — the IPC
+   * layer guarantees these stay in sync via `chatApi.switchSession`.
+   */
+  sessionId: string | null
+  /**
+   * True while the chat store is loading a different session's
+   * history or waiting for main to finish spawning a new fusion-code
+   * child. The composer uses this to grey out its send button, and
+   * the sidebar row shows a loading indicator.
+   */
+  sessionLoading: boolean
   messages: ThreadMessageLike[]
   streaming: boolean
 
@@ -140,6 +153,17 @@ interface ChatState {
   endAssistantMessage: () => void
 
   reset: () => void
+
+  /**
+   * Replace the whole thread with the given session id and history.
+   * Called by the ThreadListAdapter after a sidebar click — the
+   * history comes from `chatApi.loadSession`, already mapped to
+   * ThreadMessageLike[] on the main side.
+   */
+  setSession: (sessionId: string, messages: ThreadMessageLike[]) => void
+
+  /** Flip the loading indicator on/off during a session switch. */
+  setSessionLoading: (loading: boolean) => void
 }
 
 function randomId(prefix: string): string {
@@ -147,7 +171,8 @@ function randomId(prefix: string): string {
 }
 
 export const useChatStore = create<ChatState>((set) => ({
-  sessionId: 'default',
+  sessionId: null,
+  sessionLoading: false,
   messages: [],
   streaming: false,
   turnStartedAt: null,
@@ -472,7 +497,22 @@ export const useChatStore = create<ChatState>((set) => ({
       turnStartedAt: null,
       turnVerb: null,
       turnHasText: false
-    })
+    }),
+
+  setSession: (sessionId, messages) =>
+    set({
+      sessionId,
+      messages,
+      // Any in-flight turn was on the previous session — clear so a
+      // stale `streaming: true` doesn't lock the composer on the newly
+      // loaded thread.
+      streaming: false,
+      turnStartedAt: null,
+      turnVerb: null,
+      turnHasText: false
+    }),
+
+  setSessionLoading: (loading) => set({ sessionLoading: loading })
 }))
 
 /**

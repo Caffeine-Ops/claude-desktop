@@ -38,7 +38,9 @@ import { useTodosStore, type TodoItem, type TodoStatus } from '../../stores/todo
  */
 export function TodoListPanel(): React.JSX.Element {
   const sessionId = useChatStore((s) => s.sessionId)
-  const todos = useTodosStore((s) => s.todos[sessionId] ?? EMPTY)
+  const todos = useTodosStore((s) =>
+    sessionId === null ? EMPTY : (s.todos[sessionId] ?? EMPTY)
+  )
   const cycleStatus = useTodosStore((s) => s.cycleStatus)
 
   // Counts drive the small "3 / 5" summary next to the header. Kept
@@ -76,7 +78,10 @@ export function TodoListPanel(): React.JSX.Element {
               <TodoRow
                 key={`${i}-${todo.content}`}
                 todo={todo}
-                onCycle={() => cycleStatus(sessionId, i)}
+                onCycle={() => {
+                  if (sessionId === null) return
+                  cycleStatus(sessionId, i)
+                }}
               />
             ))}
           </ul>

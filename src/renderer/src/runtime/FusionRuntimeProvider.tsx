@@ -1,8 +1,16 @@
-import { ReactNode, useEffect } from 'react'
+import {
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
   type AppendMessage,
+  type ExternalStoreThreadListAdapter,
   type ThreadMessageLike
 } from '@assistant-ui/react'
 
@@ -13,7 +21,7 @@ import {
   extractTodoWriteItems,
   parsePartialToolArgs
 } from '../stores/todos'
-import type { ChatEvent } from '../../../shared/types'
+import type { ChatEvent, ThreadSummary } from '../../../shared/types'
 import type { ChatImagePayload } from '../../../shared/ipc-channels'
 import { imageAttachmentAdapter } from './imageAttachmentAdapter'
 
@@ -47,6 +55,7 @@ export function FusionRuntimeProvider({
   children: ReactNode
 }): React.JSX.Element {
   const sessionId = useChatStore((s) => s.sessionId)
+  const sessionLoading = useChatStore((s) => s.sessionLoading)
   const messages = useChatStore((s) => s.messages)
   const streaming = useChatStore((s) => s.streaming)
   const appendUserMessage = useChatStore((s) => s.appendUserMessage)
@@ -60,6 +69,8 @@ export function FusionRuntimeProvider({
   const setError = useChatStore((s) => s.setError)
   const endAssistantMessage = useChatStore((s) => s.endAssistantMessage)
 
+  const threadListAdapter = useThreadListAdapter()
+
   // ── IPC subscription ────────────────────────────────────────────────
   useEffect(() => {
     if (!window.chatApi) {
@@ -68,6 +79,11 @@ export function FusionRuntimeProvider({
       )
       return
     }
+    // No active session ⇒ nothing to subscribe to. This happens on
+    // cold start (before the user picks a thread) and during the
+    // brief instant a switch is in flight. The effect will re-run as
+    // soon as `sessionId` becomes non-null.
+    if (sessionId === null) return
     // Per-tool-use-id state the subscription needs across events:
     //   - toolNames: start-time name lookup, so a `tool_use_delta` can
     //     tell whether the id is a `TodoWrite` without waiting for end.
@@ -193,6 +209,10 @@ export function FusionRuntimeProvider({
   const runtime = useExternalStoreRuntime({
     messages: messages as ThreadMessageLike[],
     isRunning: streaming,
+    // `isLoading` greys out the thread while main is spawning a new
+    // fusion-code child (session switch) — the composer hides its
+    // send button until the cold-start finishes.
+    isLoading: sessionLoading,
     // IMPORTANT: we MUST pass a convertMessage (even identity), otherwise
     // ExternalStoreRuntimeCore takes the pass-through branch and feeds our
     // raw ThreadMessageLike objects straight into the message repository,
@@ -326,6 +346,14 @@ export function FusionRuntimeProvider({
       // response comes back as ChatEvents via the IPC subscription above;
       // we don't await the full stream here — `start` will arrive as an
       // event and flip `streaming` true.
+      if (sessionId === null) {
+        const msg = 'No active session — create or pick one from the sidebar.'
+        console.error('[runtime]', msg)
+        startAssistantMessage(`err_${Date.now()}`)
+        setError(`err_${Date.now()}`, msg)
+        endAssistantMessage()
+        return
+      }
       try {
         await window.chatApi.send({
           sessionId,
@@ -347,6 +375,7 @@ export function FusionRuntimeProvider({
     },
 
     onCancel: async () => {
+      if (sessionId === null) return
       try {
         await window.chatApi.abort({ sessionId })
       } catch (err) {
@@ -372,7 +401,13 @@ export function FusionRuntimeProvider({
     // That's why onNew above can just read message.content and find
     // both text and image parts inline.
     adapters: {
-      attachments: imageAttachmentAdapter
+      attachments: imageAttachmentAdapter,
+      // Powers the left sidebar. `useThreadListAdapter` reads the
+      // session list from main-process IPC and stays in sync via the
+      // `onSessionListChanged` broadcast. onSwitchToThread /
+      // onSwitchToNewThread route back through IPC to
+      // engine.switchToSession.
+      threadList: threadListAdapter
     }
   })
 
@@ -399,6 +434,154 @@ export function FusionRuntimeProvider({
  * `chatApi.send` so the user can still send free-form text that
  * happens to begin with a slash (e.g. "/Users/foo/bar").
  */
+/**
+ * Powers the left sidebar. Talks only to `window.chatApi` — no direct
+ * knowledge of the main process, file system, or the SDK. State lives
+ * in `useState` + the chat store; this hook just glues them together.
+ *
+ * Lifecycle:
+ *   1. Mount fetches the current list via `chatApi.listSessions()`.
+ *   2. Subscribes to `onSessionListChanged` so new sessions (captured
+ *      from fusion-code's `system init`) appear without a manual
+ *      refresh.
+ *   3. `onSwitchToNewThread` mints a fresh UUID, asks main to spawn
+ *      the CLI on it (without `resume`), and clears the chat store's
+ *      messages — the first user turn will materialize in the JSONL
+ *      and the list will auto-refresh via step 2.
+ *   4. `onSwitchToThread(id)` loads that session's history from main,
+ *      tells main to teardown+respawn with `resume: true`, then
+ *      replaces the chat store with the loaded history. UI pays the
+ *      ~8s cold-start behind a `sessionLoading: true` flag.
+ */
+function useThreadListAdapter(): ExternalStoreThreadListAdapter {
+  const sessionId = useChatStore((s) => s.sessionId)
+  const sessionLoading = useChatStore((s) => s.sessionLoading)
+  const setSession = useChatStore((s) => s.setSession)
+  const setSessionLoading = useChatStore((s) => s.setSessionLoading)
+
+  const [threads, setThreads] = useState<readonly ThreadSummary[]>([])
+
+  useEffect(() => {
+    if (!window.chatApi) return
+    let cancelled = false
+
+    const refresh = async (): Promise<void> => {
+      try {
+        const result = await window.chatApi.listSessions()
+        if (cancelled) return
+        setThreads(result.threads)
+      } catch (err) {
+        console.error('[runtime] listSessions failed', err)
+      }
+    }
+
+    void refresh()
+    const unsub = window.chatApi.onSessionListChanged(() => {
+      void refresh()
+    })
+
+    return () => {
+      cancelled = true
+      unsub()
+    }
+  }, [])
+
+  const onSwitchToNewThread = useCallback(async (): Promise<void> => {
+    if (!window.chatApi) return
+    try {
+      setSessionLoading(true)
+      const { sessionId: newId } = await window.chatApi.newSession()
+      // `--session-id newId` (no resume) — cli should honor it, but
+      // use the returned activeId defensively in case of a rebind.
+      const { sessionId: activeId } = await window.chatApi.switchSession({
+        sessionId: newId,
+        resume: false
+      })
+      setSession(activeId, [])
+    } catch (err) {
+      console.error('[runtime] new thread failed', err)
+    } finally {
+      setSessionLoading(false)
+    }
+  }, [setSession, setSessionLoading])
+
+  const onSwitchToThread = useCallback(
+    async (id: string): Promise<void> => {
+      if (!window.chatApi) return
+      try {
+        setSessionLoading(true)
+        const { messages } = await window.chatApi.loadSession({
+          sessionId: id
+        })
+        // Note: switchSession may return a DIFFERENT id than we asked
+        // for. fusion-code's `--resume X` silently forks into a new
+        // id Y (upstream claude-code behavior), and main forwards Y
+        // here so we can update the chat store + resubscribe the IPC
+        // listener under the key main is actually emitting on.
+        const { sessionId: activeId } = await window.chatApi.switchSession({
+          sessionId: id,
+          resume: true
+        })
+        setSession(activeId, messages as ThreadMessageLike[])
+      } catch (err) {
+        console.error('[runtime] switch thread failed', err)
+      } finally {
+        setSessionLoading(false)
+      }
+    },
+    [setSession, setSessionLoading]
+  )
+
+  // Cold-start auto-select. On first launch after the workspace gate,
+  // `sessionId` is null and nothing in the sidebar is highlighted —
+  // the user sees a list of chats but can't tell which one is "current"
+  // (because there isn't one). Resume the most recently updated thread
+  // once per mount so the sidebar visually anchors to something real
+  // and the runtime's `mainThreadId` lines up with a row in `threads`.
+  //
+  // Guarded so this runs at most once per app launch:
+  //   - `autoSelectedRef` latches true the instant we trigger, so the
+  //     effect becomes a no-op even if `threads` later resorts.
+  //   - skip if the user has already picked a thread (`sessionId` set)
+  //   - skip if a switch is already in flight (`sessionLoading`)
+  //   - skip if there are no threads to pick from (empty workspace)
+  const autoSelectedRef = useRef(false)
+  useEffect(() => {
+    if (autoSelectedRef.current) return
+    if (sessionId !== null) return
+    if (sessionLoading) return
+    if (threads.length === 0) return
+    autoSelectedRef.current = true
+    // `threads` is kept sorted newest-first by sessionStore.listSessions,
+    // so threads[0] is "the chat the user was most recently in".
+    void onSwitchToThread(threads[0].id)
+  }, [threads, sessionId, sessionLoading, onSwitchToThread])
+
+  // Map ThreadSummary[] → ExternalStoreThreadData<'regular'>[] once
+  // per threads change. Memoized so the runtime's rerender path
+  // doesn't fire diff-by-identity on every parent rerender.
+  const threadData = useMemo(
+    () =>
+      threads.map((t) => ({
+        status: 'regular' as const,
+        id: t.id,
+        title: t.title
+      })),
+    [threads]
+  )
+
+  return useMemo<ExternalStoreThreadListAdapter>(
+    () => ({
+      threadId: sessionId ?? undefined,
+      isLoading: sessionLoading,
+      threads: threadData,
+      onSwitchToNewThread,
+      onSwitchToThread
+    }),
+    [sessionId, sessionLoading, threadData, onSwitchToNewThread, onSwitchToThread]
+  )
+}
+
 function matchSlashCommand(text: string): Exclude<DialogKind, null> | null {
   const trimmed = text.trim()
   if (!trimmed.startsWith('/')) return null

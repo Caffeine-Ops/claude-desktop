@@ -25,6 +25,14 @@ import { getPermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
 
 /**
+ * Upper bound on how long `switchToSession` will wait for the
+ * fusion-code cli to become ready (first `system init`). Beyond this
+ * we return anyway — a hung cli shouldn't wedge the UI "loading"
+ * forever; the next `send()` will surface the real failure.
+ */
+const SWITCH_READY_TIMEOUT_MS = 30_000
+
+/**
  * util.inspect options for SDK message dumps in the pump log.
  *
  *   depth: null           → expand every nested object (stream_event
@@ -79,6 +87,18 @@ interface SessionRuntime {
   handle: Query | null
   /** Promise of the background pump task; resolves when the SDK stream ends. */
   pumpPromise: Promise<void> | null
+  /**
+   * Resolves on the first `system init` SDK message for this session —
+   * i.e. the exact moment fusion-code is ready to accept a user turn.
+   * Rejects if the pump exits before init was seen (cli spawn failure).
+   *
+   * `switchToSession()` awaits this so UI `sessionLoading` covers the
+   * whole ~8s cli cold-start rather than just the sync spawn window.
+   */
+  readyPromise: Promise<void> | null
+  readyResolve: (() => void) | null
+  readyReject: ((err: Error) => void) | null
+  readySettled: boolean
 }
 
 interface ActiveTurn {
@@ -138,6 +158,24 @@ class ChatEngine extends EventEmitter {
    * if that turns out to be annoying.
    */
   private workspaceDir: string | null = null
+
+  /**
+   * UUID of the session whose fusion-code child is currently live.
+   * Same string as the JSONL file name in `~/.claude/projects/<cwd>/`.
+   *
+   * Null before the user creates / picks a session in the sidebar.
+   * Populated by `switchToSession()` and mirrored by the SDK `sessionId`
+   * option on each query(), so renderer + main + JSONL all agree.
+   */
+  private activeSessionId: string | null = null
+
+  /**
+   * Set to true for the short window during which `switchToSession()`
+   * is tearing down the previous runtime and spawning the next one.
+   * `send()` rejects while true so a racing click-and-type doesn't
+   * enqueue a turn on a half-torn-down query handle.
+   */
+  private switching = false
 
   /** Snapshot of the cached session meta. Returns a fresh object so
       the renderer cannot accidentally mutate main-process state. */
@@ -215,6 +253,17 @@ class ChatEngine extends EventEmitter {
     if (this.workspaceDir === null) {
       throw new Error(
         'Workspace not set. Drop a folder on the window to pick one first.'
+      )
+    }
+    if (this.switching) {
+      throw new Error('Session switch in progress — please retry in a moment.')
+    }
+    if (this.activeSessionId === null) {
+      throw new Error('No active session — create or open one from the sidebar.')
+    }
+    if (sessionId !== this.activeSessionId) {
+      throw new Error(
+        `Session mismatch: send targeted ${sessionId} but ${this.activeSessionId} is active.`
       )
     }
 
@@ -405,18 +454,27 @@ class ChatEngine extends EventEmitter {
   /**
    * Spawn the long-lived fusion-code child process and wire up the
    * AsyncMessageQueue → query() → pump pipeline. Called once per
-   * session, on the first send. The pump runs in the background until
-   * the SDK stream ends; its `finally` resets `runtime.queue` /
-   * `runtime.handle` / `runtime.pumpPromise` so the next send spawns
-   * a fresh child.
+   * session switch (new or resume). The pump runs in the background
+   * until the SDK stream ends; its `finally` resets `runtime.queue` /
+   * `runtime.handle` / `runtime.pumpPromise` so the next openSession
+   * spawns a fresh child.
    *
-   * Throws if the CLI binary cannot be located. Send() catches and
-   * surfaces the error to the UI.
+   * The `sessionId` is forwarded to the SDK via its `sessionId` option
+   * (or `resume` when `opts.resume` is true), so fusion-code's JSONL
+   * filename matches what the renderer sees in the sidebar.
+   *
+   * Throws if the CLI binary cannot be located.
    */
-  private openSession(sessionId: string, runtime: SessionRuntime): void {
+  private openSession(
+    sessionId: string,
+    runtime: SessionRuntime,
+    opts?: { resume?: boolean }
+  ): void {
     const cliPath = this.resolveFusionCliPath()
+    const resume = opts?.resume === true
     console.log('[engine] opening long-lived SDK session', {
       sessionId,
+      resume,
       cliPath,
       cwd: this.getWorkingDirectory(),
       env: {
@@ -432,6 +490,73 @@ class ChatEngine extends EventEmitter {
     const queue = new AsyncMessageQueue<unknown>()
     runtime.queue = queue
 
+    // Wire up the "ready" promise before the pump can start. It's
+    // resolved on the first `system init` SDK message (see runPump) and
+    // rejected from the pump's finally if the cli exited first.
+    runtime.readySettled = false
+    runtime.readyPromise = new Promise<void>((resolve, reject) => {
+      runtime.readyResolve = () => {
+        if (runtime.readySettled) return
+        runtime.readySettled = true
+        resolve()
+      }
+      runtime.readyReject = (err: Error) => {
+        if (runtime.readySettled) return
+        runtime.readySettled = true
+        reject(err)
+      }
+    })
+
+    // Build the SDK query options. On resume we pass `resume: sessionId`
+    // so fusion-code reloads the JSONL; on new sessions we pass
+    // `sessionId: sessionId` so the CLI uses our UUID as the filename
+    // instead of auto-generating one. The SDK type union forbids
+    // passing both simultaneously, so we branch at the field level.
+    const sdkOptions = {
+      pathToClaudeCodeExecutable: cliPath,
+      cwd: this.getWorkingDirectory(),
+      // Default permission mode + an Electron-native `canUseTool`
+      // callback. The SDK will invoke our callback whenever a tool
+      // call would otherwise need a terminal prompt; we bridge it
+      // through permissionBroker → IPC → renderer's PermissionDialog.
+      // Allow rules added via "allow during session" live in the
+      // SDK's in-process `session` scope, so the dialog only fires
+      // once per { toolName, scope } pair for the lifetime of the
+      // fusion-code child process.
+      permissionMode: 'default' as const,
+      canUseTool: (
+        toolName: string,
+        input: Record<string, unknown>,
+        ctx: {
+          signal: AbortSignal
+          toolUseID: string
+          title?: string
+          displayName?: string
+          description?: string
+        }
+      ) =>
+        this.handleCanUseTool(
+          // Use the live active id, not the original openSession
+          // parameter — fusion-code may have rebound to a new id on
+          // its first `system init` (silent fork). Fall back to the
+          // original if activeSessionId hasn't caught up yet.
+          this.activeSessionId ?? sessionId,
+          toolName,
+          input,
+          ctx
+        ),
+      // Stream text deltas so the UI sees typewriter-style chunks.
+      includePartialMessages: true,
+      // env.json has already been merged into process.env during
+      // bootstrap — forward everything so ANTHROPIC_BASE_URL / auth
+      // tokens / model alias overrides reach the child CLI.
+      env: process.env as Record<string, string>,
+      // Pin fusion-code's session identity. Mutually exclusive: either
+      // we're resuming an existing transcript (`resume`) or we're
+      // creating a new one with an explicit id (`sessionId`).
+      ...(resume ? { resume: sessionId } : { sessionId })
+    }
+
     // The cast on iterable() pins it to SDKUserMessage for the SDK type
     // signature. We don't import SDKUserMessage explicitly because the
     // shape we push (`{ type: 'user', message: { role, content } ... }`)
@@ -444,36 +569,140 @@ class ChatEngine extends EventEmitter {
         parent_tool_use_id: string | null
         session_id: string
       }>,
-      options: {
-        // Spawn our local fusion-code binary instead of the SDK's
-        // bundled upstream claude-code.
-        pathToClaudeCodeExecutable: cliPath,
-        cwd: this.getWorkingDirectory(),
-        // Default permission mode + an Electron-native `canUseTool`
-        // callback. The SDK will invoke our callback whenever a tool
-        // call would otherwise need a terminal prompt; we bridge it
-        // through permissionBroker → IPC → renderer's PermissionDialog.
-        // Allow rules added via "allow during session" live in the
-        // SDK's in-process `session` scope, so the dialog only fires
-        // once per { toolName, scope } pair for the lifetime of the
-        // fusion-code child process.
-        permissionMode: 'default',
-        canUseTool: (toolName, input, ctx) =>
-          this.handleCanUseTool(sessionId, toolName, input, ctx),
-        // Stream text deltas so the UI sees typewriter-style chunks.
-        includePartialMessages: true,
-        // env.json has already been merged into process.env during
-        // bootstrap — forward everything so ANTHROPIC_BASE_URL / auth
-        // tokens / model alias overrides reach the child CLI.
-        env: process.env as Record<string, string>
-      }
+      options: sdkOptions
     })
     runtime.handle = handle
 
     // Launch the pump in the background. The pump owns the lifetime
     // of `runtime.handle` / `runtime.queue` — when it exits (cleanly
-    // or via error), it nulls them out so the next send re-opens.
+    // or via error), it nulls them out so the next openSession
+    // re-opens.
     runtime.pumpPromise = this.runPump(sessionId, runtime, handle)
+  }
+
+  /**
+   * Tear down a live session runtime: interrupt any in-flight turn,
+   * close the message queue so the pump's `for await` loop exits, wait
+   * for the pump to finish its `finally` cleanup, then drop the Map
+   * entry so the next openSession builds a fresh runtime.
+   *
+   * Called by switchToSession() before opening a different session.
+   * Safe to call on a session with no runtime (e.g. the initial
+   * activeSessionId which was never send()-ed) — it's a no-op.
+   */
+  private async teardownSession(sessionId: string): Promise<void> {
+    const rt = this.sessions.get(sessionId)
+    if (!rt) return
+    console.log('[engine] tearing down session', { sessionId })
+    try {
+      const p = rt.handle?.interrupt()
+      if (p && typeof (p as Promise<void>).catch === 'function') {
+        void (p as Promise<void>).catch(() => {})
+      }
+    } catch {
+      // interrupt is best-effort; the queue.close below is the
+      // deterministic teardown path.
+    }
+    rt.queue?.close()
+    if (rt.pumpPromise) {
+      try {
+        await rt.pumpPromise
+      } catch {
+        // pump errors are already logged in runPump itself
+      }
+    }
+    rt.active = null
+    this.sessions.delete(sessionId)
+    if (this.activeSessionId === sessionId) {
+      this.activeSessionId = null
+    }
+  }
+
+  /**
+   * Atomically move from the current active session (if any) to
+   * `newId`. When `opts.resume` is true, the new fusion-code child is
+   * told to reload `<newId>.jsonl` from disk — giving the model full
+   * history of that prior conversation. When false, the child starts
+   * fresh and the jsonl is created on the first user turn.
+   *
+   * Callers:
+   *  - ipc `session:new`  + `session:switch { resume: false }` on the
+   *    "+ New chat" button
+   *  - ipc `session:switch { resume: true }` on a sidebar click
+   *
+   * Guarded by `this.switching` to block concurrent switches. The only
+   * caller that can race is a very fast double-click on the sidebar,
+   * which the adapter already disables via `isLoading`, but we
+   * double-guard here so a buggy renderer can't wedge the engine.
+   */
+  async switchToSession(
+    newId: string,
+    opts: { resume: boolean }
+  ): Promise<{ sessionId: string }> {
+    if (this.workspaceDir === null) {
+      throw new Error('Workspace not set. Drop a folder on the window first.')
+    }
+    if (this.switching) {
+      throw new Error('Another session switch is already in progress.')
+    }
+    this.switching = true
+    try {
+      const prev = this.activeSessionId
+      if (prev && prev !== newId) {
+        await this.teardownSession(prev)
+      }
+      const runtime = await this.getSession(newId)
+      // openSession is synchronous — it schedules the pump and returns
+      // before the cli has actually finished its cold start. We then
+      // wait on the runtime's readyPromise, which is resolved by the
+      // pump on the first `system init` message. That's the exact
+      // moment fusion-code can accept user turns, so holding the UI
+      // `sessionLoading` flag until here gives a proper "switching…"
+      // experience instead of a premature "ready" flicker.
+      this.openSession(newId, runtime, { resume: opts.resume })
+      this.activeSessionId = newId
+      await this.waitForSessionReady(runtime, SWITCH_READY_TIMEOUT_MS)
+    } finally {
+      this.switching = false
+    }
+    this.emit('sessionListChanged')
+    // After ready, activeSessionId may have been rebound by
+    // updateSessionMeta (fusion-code's silent fork on --resume).
+    // Return whatever the cli is actually using so the renderer can
+    // resubscribe to the correct IPC key.
+    return { sessionId: this.activeSessionId ?? newId }
+  }
+
+  /**
+   * Wait for the runtime's readyPromise (resolved on first `system init`)
+   * with a hard timeout. On timeout we log and return rather than throw:
+   * a slow cli shouldn't wedge the UI in "loading" forever, and any
+   * follow-up `send()` will surface the real problem to the user.
+   */
+  private async waitForSessionReady(
+    runtime: SessionRuntime,
+    timeoutMs: number
+  ): Promise<void> {
+    if (!runtime.readyPromise) return
+    let timer: NodeJS.Timeout | null = null
+    const timeout = new Promise<void>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`timeout waiting for session ready (${timeoutMs}ms)`)),
+        timeoutMs
+      )
+    })
+    try {
+      await Promise.race([runtime.readyPromise, timeout])
+    } catch (err) {
+      console.warn('[engine] session ready wait failed:', err)
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  /** The currently live session UUID, or null before one has been opened. */
+  getActiveSessionId(): string | null {
+    return this.activeSessionId
   }
 
   /**
@@ -620,10 +849,18 @@ class ChatEngine extends EventEmitter {
    * `openSession()` again and pay another cold start.
    */
   private async runPump(
-    sessionId: string,
+    initialSessionId: string,
     runtime: SessionRuntime,
     handle: Query
   ): Promise<void> {
+    // `sessionId` is mutable so we can track fusion-code's silent
+    // session-id rebind (cli's `--resume X` actually forks to a new
+    // id Y). `updateSessionMeta` updates `this.activeSessionId` on
+    // rebind; we pick it up here and keep using the new id for every
+    // downstream `emitEvent` / `handleSdkMessage` call so the renderer
+    // (which receives the new id via `switchToSession`'s return value)
+    // subscribes to the same key we're emitting on.
+    let sessionId = initialSessionId
     console.log('[engine] pump started', { sessionId })
     try {
       // Iterate as AsyncIterable<unknown> so downstream duck-typing
@@ -641,6 +878,19 @@ class ChatEngine extends EventEmitter {
           sdkMessage.subtype === 'init'
         ) {
           this.updateSessionMeta(sdkMessage)
+          // updateSessionMeta may have rebound the session id (see its
+          // doc). Pick up the new active id so subsequent emits go to
+          // the right IPC key.
+          if (this.activeSessionId && this.activeSessionId !== sessionId) {
+            console.log('[engine] pump sessionId rebound', {
+              from: sessionId,
+              to: this.activeSessionId
+            })
+            sessionId = this.activeSessionId
+          }
+          // Resolve the ready promise so `switchToSession` unblocks:
+          // the cli is now fully initialized and will accept turns.
+          runtime.readyResolve?.()
         }
 
         const active = runtime.active
@@ -722,6 +972,15 @@ class ChatEngine extends EventEmitter {
       }
       runtime.handle = null
       runtime.pumpPromise = null
+      // If the pump exited before we ever saw `system init`, the cli
+      // never became ready. Reject any awaiters (switchToSession) so
+      // the UI stops its loading spinner instead of hanging forever.
+      if (runtime.readyReject && !runtime.readySettled) {
+        runtime.readyReject(new Error('cli exited before first init'))
+      }
+      runtime.readyPromise = null
+      runtime.readyResolve = null
+      runtime.readyReject = null
       console.log('[engine] session reset after pump exit', { sessionId })
     }
   }
@@ -1006,7 +1265,11 @@ class ChatEngine extends EventEmitter {
       active: null,
       queue: null,
       handle: null,
-      pumpPromise: null
+      pumpPromise: null,
+      readyPromise: null,
+      readyResolve: null,
+      readyReject: null,
+      readySettled: false
     }
     this.sessions.set(sessionId, runtime)
     return runtime
@@ -1153,6 +1416,48 @@ class ChatEngine extends EventEmitter {
       commandCount: slashCommands.length,
       model
     })
+
+    // ── Session ID rebind ────────────────────────────────────────────
+    // fusion-code's `--resume <id>` has a surprising behavior: it
+    // loads the history of <id> into context but writes the new turns
+    // to a FRESH session id (effectively a silent fork). This
+    // contradicts the `--fork-session` flag's help text but matches
+    // upstream claude-code behavior and cannot be changed from our
+    // side. The `system init` message we just received carries the
+    // real session id the cli will use for this conversation.
+    //
+    // If that id differs from the one we opened the runtime under, we
+    // rebind: move the Map entry to the real id and update
+    // `activeSessionId`. Every downstream emitEvent / handleCanUseTool
+    // call looks up the runtime by `this.activeSessionId`, so after
+    // this reassignment the pipeline keeps working under the new id.
+    // The renderer learns the real id via `switchToSession`'s return
+    // value and re-subscribes its IPC listener.
+    const sdkSessionId =
+      typeof initMsg.session_id === 'string' ? initMsg.session_id : undefined
+    if (
+      sdkSessionId &&
+      this.activeSessionId &&
+      sdkSessionId !== this.activeSessionId
+    ) {
+      const prev = this.activeSessionId
+      const rt = this.sessions.get(prev)
+      if (rt) {
+        this.sessions.delete(prev)
+        this.sessions.set(sdkSessionId, rt)
+      }
+      this.activeSessionId = sdkSessionId
+      console.log('[engine] session id rebound from fusion-code init', {
+        from: prev,
+        to: sdkSessionId
+      })
+    }
+
+    // The very first `system init` after a new session spawn is also
+    // the moment fusion-code creates the JSONL file on disk. Broadcast
+    // so the sidebar can pick up the new row (otherwise the user has
+    // to cold-restart or manually re-focus for it to appear).
+    this.emit('sessionListChanged')
   }
 
   /** Coerce any string the CLI hands us into a known status union. */

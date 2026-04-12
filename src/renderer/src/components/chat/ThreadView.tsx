@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ThreadPrimitive,
   MessagePrimitive,
@@ -6,6 +6,7 @@ import {
   AttachmentPrimitive
 } from '@assistant-ui/react'
 import type { Attachment, Unstable_TriggerItem } from '@assistant-ui/core'
+import { motion } from 'motion/react'
 
 import type { SessionMeta } from '../../../../shared/types'
 import { useChatStore } from '../../stores/chat'
@@ -544,6 +545,34 @@ function Composer(): React.JSX.Element {
   )
   const fileAdapter = useMemo(() => buildFileMentionAdapter(files), [files])
 
+  // Shared snapshots of each TriggerPopoverRoot's latest React-rendered
+  // context. We use these from a custom onKeyDown on ComposerPrimitive.Input
+  // to work around a subtle stale-closure bug in assistant-ui's
+  // `tapEffectEvent`: its handler is registered into the ComposerInput
+  // plugin registry but captures the *previous-frame* `highlightedIndex`,
+  // so pressing Enter right after an ArrowDown inserts the wrong slash /
+  // mention item (click works fine because click passes the item object
+  // directly). By handling Enter ourselves with live React state and
+  // calling `e.preventDefault()`, we skip the library's buggy handler.
+  const slashCtxRef = useRef<TriggerCtxSnapshot | null>(null)
+  const mentionCtxRef = useRef<TriggerCtxSnapshot | null>(null)
+
+  const handleTriggerEnter = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+    // Prefer whichever popover is currently open. Only one can be open
+    // at a time because `/` and `@` detect mutually exclusive triggers.
+    const snap = slashCtxRef.current?.open
+      ? slashCtxRef.current
+      : mentionCtxRef.current?.open
+        ? mentionCtxRef.current
+        : null
+    if (!snap) return
+    const item = snap.items[snap.highlightedIndex]
+    if (!item) return
+    e.preventDefault()
+    snap.selectItem(item)
+  }
+
   return (
     <div className="mx-auto w-full max-w-3xl">
       {/* Outer root: `/` slash commands. Its popover JSX lives
@@ -554,6 +583,10 @@ function Composer(): React.JSX.Element {
         adapter={slashAdapter}
         onSelect={{ type: 'insertDirective', formatter: slashFormatter }}
       >
+        {/* Mirror the slash root's latest React context into our ref
+            so handleTriggerEnter can read a fresh snapshot — see the
+            stale-closure note near the ref declaration above. */}
+        <TriggerCtxSync targetRef={slashCtxRef} />
         <div className="relative">
           {/* Slash popover — reads the outer root's context because
               it sits outside the inner `@` root in the tree. */}
@@ -578,6 +611,9 @@ function Composer(): React.JSX.Element {
             adapter={fileAdapter}
             onSelect={{ type: 'insertDirective', formatter: mentionFormatter }}
           >
+            {/* Mirror the mention root's latest React context into its
+                ref — twin of the slash <TriggerCtxSync> above. */}
+            <TriggerCtxSync targetRef={mentionCtxRef} />
             {/* File popover — nested inside the inner root, so
                 useTriggerPopoverContext() resolves to the `@` root.
                 Absolute-positioned inside the same `relative` div
@@ -650,6 +686,7 @@ function Composer(): React.JSX.Element {
                 <ComposerPrimitive.Input
                   placeholder="Ask anything…   ↵ send · ⇧↵ newline · / commands · @ files"
                   rows={1}
+                  onKeyDown={handleTriggerEnter}
                   className="min-h-[24px] max-h-40 flex-1 resize-none bg-transparent px-1 py-1.5 text-[14px] leading-relaxed text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
                 />
                 <ComposerPrimitive.Send className="flex size-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500">
@@ -668,18 +705,68 @@ function Composer(): React.JSX.Element {
 }
 
 /**
+ * Snapshot of a TriggerPopoverRoot's React-rendered state that we care
+ * about for manual Enter handling. See the stale-closure comment in
+ * Composer for why this exists — tl;dr: assistant-ui's internal
+ * `handleKeyDown` captures the wrong `highlightedIndex` in production
+ * builds, so we bypass it and call `selectItem` ourselves with data
+ * sourced from the live React context.
+ */
+type TriggerCtxSnapshot = {
+  open: boolean
+  items: readonly Unstable_TriggerItem[]
+  highlightedIndex: number
+  selectItem: (item: Unstable_TriggerItem) => void
+}
+
+/**
+ * Writes a snapshot of the nearest `TriggerPopoverRoot`'s live context
+ * into `targetRef` after every commit. Rendered as a zero-DOM sibling
+ * inside each root so `useTriggerPopoverContext()` resolves to the
+ * intended root (slash vs mention). The write is in `useLayoutEffect`
+ * so the ref is already current before any subsequent keyboard event.
+ */
+function TriggerCtxSync({
+  targetRef
+}: {
+  targetRef: React.MutableRefObject<TriggerCtxSnapshot | null>
+}): null {
+  const ctx = ComposerPrimitive.unstable_useTriggerPopoverContext()
+  useLayoutEffect(() => {
+    targetRef.current = {
+      open: ctx.open,
+      items: ctx.items,
+      highlightedIndex: ctx.highlightedIndex,
+      selectItem: ctx.selectItem
+    }
+  })
+  return null
+}
+
+/**
  * Shared render-prop for both the `/` and `@` trigger popovers.
- * Lives in a separate component so it can call
- * `unstable_useTriggerPopoverContext()` (which only works inside a
- * TriggerPopoverRoot) and use it to drive a `scrollIntoView` effect
- * on every keyboard navigation step.
  *
- * The popover container has `max-h-72 overflow-y-auto`, so when the
- * filtered list is longer than the visible area we need to actively
- * scroll to keep the highlighted row in view. assistant-ui adds
- * `data-highlighted=""` to the currently focused button — we just
- * query for it and call `scrollIntoView({ block: 'nearest' })` to
- * do the minimal scroll needed.
+ * Two subtle correctness / polish details worth calling out:
+ *
+ * 1. **No explicit `index` prop.** assistant-ui's
+ *    `Unstable_TriggerPopoverItem` accepts an optional `index`, and if
+ *    omitted it computes the item's position via
+ *    `ctx.items.findIndex(i => i.id === item.id)` at render time. Passing
+ *    our own loop index `i` was risky: if the render-prop `items` array
+ *    was ever out of sync with `ctx.items` (even for one frame during
+ *    filter updates), the visually-highlighted row could drift away
+ *    from the row the library's keyboard handler would pick on Enter
+ *    — the classic "I pressed Enter on /skill but it inserted /mcp"
+ *    symptom. Letting the library derive the index from item.id means
+ *    both the visual `data-highlighted` marker and the Enter-to-select
+ *    path resolve the same row through the same lookup.
+ *
+ * 2. **Scroll-to-highlight** uses `ctx.highlightedIndex` + a direct
+ *    child lookup on the `<ul>` rather than a `querySelector` for
+ *    `[data-highlighted]`. With `motion` animating list entries, the
+ *    `data-highlighted` attribute is painted mid-animation and can
+ *    briefly land on the wrong element; indexing into `listRef.children`
+ *    is immune to that.
  *
  * `emptyText` is parameterized so the slash popover can show
  * "No matching commands" while the file popover can show
@@ -696,26 +783,38 @@ function TriggerPopoverList({
   const listRef = useRef<HTMLUListElement>(null)
 
   useEffect(() => {
-    const highlighted = listRef.current?.querySelector(
-      '[data-highlighted]'
-    ) as HTMLElement | null
-    highlighted?.scrollIntoView({ block: 'nearest' })
-  }, [ctx.highlightedIndex, ctx.items])
+    const li = listRef.current?.children[ctx.highlightedIndex] as
+      | HTMLElement
+      | undefined
+    li?.scrollIntoView({ block: 'nearest' })
+  }, [ctx.highlightedIndex, items])
 
   if (items.length === 0) {
     return (
-      <div className="px-4 py-3 text-[12px] text-zinc-500">{emptyText}</div>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.12 }}
+        className="px-4 py-3 text-[12px] text-zinc-500"
+      >
+        {emptyText}
+      </motion.div>
     )
   }
 
   return (
     <ul ref={listRef} className="space-y-0.5 px-1">
-      {items.map((item, i) => (
-        <li key={item.id}>
+      {items.map((item) => (
+        <motion.li
+          key={item.id}
+          layout="position"
+          initial={{ opacity: 0, y: -2 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.14, ease: 'easeOut' }}
+        >
           <ComposerPrimitive.Unstable_TriggerPopoverItem
             item={item}
-            index={i}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-left text-[13px] outline-none transition hover:bg-zinc-800/60 data-[highlighted]:bg-zinc-800"
+            className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-left text-[13px] outline-none transition-colors hover:bg-zinc-800/60 data-[highlighted]:bg-zinc-800"
           >
             <span className="shrink-0 truncate font-mono text-zinc-100">
               {item.label}
@@ -726,7 +825,7 @@ function TriggerPopoverList({
               </span>
             )}
           </ComposerPrimitive.Unstable_TriggerPopoverItem>
-        </li>
+        </motion.li>
       ))}
     </ul>
   )

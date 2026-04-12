@@ -97,9 +97,11 @@ export function WorkspaceTreePanel(): React.JSX.Element {
   // Subscribe to the chat event stream and bump on `tool_result` for
   // tools that might have touched the disk. This is how the tree
   // updates mid-turn while Claude is still running other tools — no
-  // waiting until the whole turn ends.
+  // waiting until the whole turn ends. Skipped when no session is
+  // active (the tree has nothing to react to).
   useEffect(() => {
     if (typeof window === 'undefined' || !window.chatApi) return
+    if (sessionId === null) return
     const unsub = window.chatApi.onEvent(sessionId, (event) => {
       if (
         event.type === 'tool_result' &&

@@ -92,8 +92,11 @@ export function ThinkingSpinner(): React.JSX.Element {
 
   // ESC interrupts the current turn. Active for the lifetime of the
   // spinner — i.e. exactly while the assistant is in the pre-content
-  // gap, which is when interrupting feels most natural.
+  // gap, which is when interrupting feels most natural. No-op when no
+  // session is active (the spinner shouldn't be visible in that case
+  // anyway, but TypeScript needs the narrowing).
   useEffect(() => {
+    if (sessionId === null) return
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
       e.preventDefault()

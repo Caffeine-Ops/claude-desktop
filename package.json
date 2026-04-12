@@ -32,8 +32,14 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
-        { "target": "dmg", "arch": ["arm64"] },
-        { "target": "zip", "arch": ["arm64"] }
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64"]
+        }
       ],
       "identity": null,
       "extraResources": [
@@ -45,7 +51,10 @@
     },
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
       ],
       "extraResources": [
         {
@@ -67,6 +76,7 @@
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
     "electron-updater": "^6.3.9",
+    "motion": "^12.38.0",
     "remark-gfm": "^4.0.1",
     "zod": "^3.23.8",
     "zustand": "^5.0.0"

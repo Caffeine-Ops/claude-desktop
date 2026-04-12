@@ -94,6 +94,33 @@ export interface Session {
 }
 
 /**
+ * One row in the sidebar session list. Distilled from fusion-code's
+ * JSONL transcript (read via `@anthropic-ai/claude-agent-sdk`'s
+ * `listSessions` / `getSessionInfo`) so the renderer can render it
+ * directly without knowing about the SDK's richer SDKSessionInfo shape.
+ *
+ * The id is fusion-code's session UUID (same string that names the
+ * `.jsonl` file). Main uses it as the `resume` argument to `query()`
+ * when the user clicks the row.
+ */
+export interface ThreadSummary {
+  id: string
+  /**
+   * Prefer an explicit title (`custom-title` / `ai-title` entry in the
+   * JSONL). Falls back to a truncated `firstPrompt` when neither is
+   * present, and finally to a literal `"New chat"` on a brand-new
+   * session file with no user turn yet.
+   */
+  title: string
+  /** ms-since-epoch of the last transcript entry. */
+  updatedAt: number
+  /** First user prompt, truncated, for preview rendering. */
+  firstPrompt?: string
+  /** Turn count (user message count), useful for "N messages" meta. */
+  turnCount: number
+}
+
+/**
  * Tool-permission request sent from main → renderer. Mirrors the info
  * Claude Code's terminal dialog shows:
  *
