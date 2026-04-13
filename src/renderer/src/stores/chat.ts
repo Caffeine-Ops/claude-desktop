@@ -503,6 +503,8 @@ export const useChatStore = create<ChatState>((set) => ({
 
   reset: () =>
     set({
+      sessionId: null,
+      sessionLoading: false,
       messages: [],
       streaming: false,
       turnStartedAt: null,

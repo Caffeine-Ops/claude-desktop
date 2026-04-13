@@ -483,17 +483,28 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
   // every launch even when the sidebar already has entries.
   const [threadsLoaded, setThreadsLoaded] = useState(false)
 
+  // Keep the latest sessionId reachable from inside the IPC subscription
+  // closure below without retriggering its effect. The subscription has
+  // empty deps so it only registers once, but the race-fallback retry
+  // needs to read the *current* active session id at fire time.
+  const sessionIdRef = useRef(sessionId)
+  useEffect(() => {
+    sessionIdRef.current = sessionId
+  }, [sessionId])
+
   useEffect(() => {
     if (!window.chatApi) return
     let cancelled = false
 
-    const refresh = async (): Promise<void> => {
+    const refresh = async (): Promise<readonly ThreadSummary[] | null> => {
       try {
         const result = await window.chatApi.listSessions()
-        if (cancelled) return
+        if (cancelled) return null
         setThreads(result.threads)
+        return result.threads
       } catch (err) {
         console.error('[runtime] listSessions failed', err)
+        return null
       } finally {
         // Mark the initial load as done even on error so the
         // auto-select effect still progresses — a listSessions failure
@@ -504,7 +515,23 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
 
     void refresh()
     const unsub = window.chatApi.onSessionListChanged(() => {
-      void refresh()
+      void (async () => {
+        const result = await refresh()
+        // Race fallback: main emits sessionListChanged from
+        // updateSessionMeta() the moment fusion-code sends `system init`,
+        // but the cli's jsonl write to disk and the SDK's directory scan
+        // are not strictly ordered. The first listSessions() can come
+        // back without the active session, leaving the sidebar one chat
+        // behind until the next reload. If the active id is missing,
+        // re-poll once after a short delay.
+        if (!result) return
+        const activeId = sessionIdRef.current
+        if (!activeId) return
+        if (result.some((t) => t.id === activeId)) return
+        setTimeout(() => {
+          if (!cancelled) void refresh()
+        }, 200)
+      })()
     })
 
     return () => {
