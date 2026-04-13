@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import { useT, useTFormat } from '../../i18n'
 import { useChatStore } from '../../stores/chat'
 
 /**
@@ -69,6 +70,8 @@ const POLL_FALLBACK_MS = 15_000
  * re-fetches, so this is cheap.
  */
 export function WorkspaceTreePanel(): React.JSX.Element {
+  const t = useT()
+  const tf = useTFormat()
   const sessionId = useChatStore((s) => s.sessionId)
   const streaming = useChatStore((s) => s.streaming)
 
@@ -171,21 +174,26 @@ export function WorkspaceTreePanel(): React.JSX.Element {
   const empty = !loading && !error && tree.length === 0
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col border-t border-zinc-800/70">
+    <section className="flex min-h-0 flex-1 flex-col border-t border-border/70">
       {/* Header — mirrors the Todos header above for visual symmetry.
           The count shows trailing '+' when the scan hit MAX_ENTRIES
           in main so the user knows the tree is truncated. */}
-      <div className="flex items-center justify-between px-4 pb-2 pt-4">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">
-          Files
-        </span>
+      <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/70">
+            <FilesHeaderIcon />
+          </span>
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/80">
+            {t('filesTitle')}
+          </span>
+        </div>
         {files.length > 0 && (
           <span
-            className="text-[11px] tabular-nums text-zinc-600"
+            className="rounded-full border border-border/80 bg-card/60 px-1.5 py-px text-[10.5px] tabular-nums text-muted-foreground"
             title={
               truncated
-                ? `Showing first ${files.length} files (workspace has more)`
-                : `${files.length} files`
+                ? tf('filesCountTruncated', { count: files.length })
+                : tf('filesCountLabel', { count: files.length })
             }
           >
             {files.length}
@@ -195,25 +203,33 @@ export function WorkspaceTreePanel(): React.JSX.Element {
       </div>
 
       {/* Scroll region — independent from the Todo scroll above. */}
-      <div className="min-h-0 flex-1 overflow-y-auto pb-4">
+      <div className="min-h-0 flex-1 overflow-y-auto pb-4 pt-1">
         {loading && files.length === 0 && (
-          <div className="px-4 py-2 text-[11px] text-zinc-600">Loading…</div>
+          <div className="flex items-center gap-2 px-4 py-2 text-[11px] text-muted-foreground/70">
+            <span className="inline-flex size-3 animate-pulse rounded-full bg-muted-foreground/40" />
+            {t('filesLoading')}
+          </div>
         )}
 
         {error && (
-          <div className="mx-3 my-2 rounded border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-300">
+          <div className="mx-3 my-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
             {error}
           </div>
         )}
 
         {empty && (
-          <div className="mx-3 my-3 rounded-md border border-dashed border-zinc-800/80 px-3 py-4 text-center text-[11px] text-zinc-600">
-            No files in this workspace
+          <div className="mx-3 my-3 flex flex-col items-center gap-2 rounded-lg border border-dashed border-border/80 px-3 py-5 text-center text-[11px] text-muted-foreground/70">
+            <span className="flex size-7 items-center justify-center rounded-full bg-muted/60 text-muted-foreground/80">
+              <FilesHeaderIcon />
+            </span>
+            <div className="font-medium text-muted-foreground">
+              {t('filesEmpty')}
+            </div>
           </div>
         )}
 
         {!loading && !error && tree.length > 0 && (
-          <ul className="select-none">
+          <ul className="select-none px-1">
             {tree.map((node) => (
               <Node
                 key={node.path}
@@ -222,12 +238,30 @@ export function WorkspaceTreePanel(): React.JSX.Element {
                 expanded={expanded}
                 onToggle={toggle}
                 onOpen={openFile}
+                openHint={(p) => tf('filesOpenHint', { path: p })}
               />
             ))}
           </ul>
         )}
       </div>
     </section>
+  )
+}
+
+function FilesHeaderIcon(): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="size-[13px]"
+      aria-hidden
+    >
+      <path d="M2.5 5a1 1 0 0 1 1-1h2.5l1 1.2H12.5a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V5Z" />
+    </svg>
   )
 }
 
@@ -268,7 +302,8 @@ function Node({
   depth,
   expanded,
   onToggle,
-  onOpen
+  onOpen,
+  openHint
 }: {
   node: TreeNode
   depth: number
@@ -276,6 +311,8 @@ function Node({
   onToggle: (path: string) => void
   /** Fired on dbl-click of a file node. Ignored for directories. */
   onOpen: (path: string) => void
+  /** Resolves the localized "<path> — double-click to open" hint. */
+  openHint: (path: string) => string
 }): React.JSX.Element {
   const isOpen = expanded.has(node.path)
 
@@ -288,10 +325,10 @@ function Node({
     <li>
       <div
         className={
-          'group/tree flex items-center gap-1.5 py-[3px] pr-2 text-[12.5px] transition-colors ' +
+          'group/tree flex items-center gap-1.5 rounded-md py-[3px] pr-2 text-[12.5px] transition-colors ' +
           (node.isDir
-            ? 'cursor-pointer text-zinc-300 hover:bg-zinc-800/40 hover:text-zinc-100'
-            : 'cursor-default text-zinc-500 hover:bg-zinc-800/25 hover:text-zinc-300')
+            ? 'cursor-pointer text-foreground/85 hover:bg-muted/50 hover:text-foreground'
+            : 'cursor-default text-muted-foreground hover:bg-muted/35 hover:text-foreground')
         }
         style={indentStyle}
         onClick={node.isDir ? () => onToggle(node.path) : undefined}
@@ -309,19 +346,30 @@ function Node({
         }
         role={node.isDir ? 'button' : undefined}
         aria-expanded={node.isDir ? isOpen : undefined}
-        title={node.isDir ? node.path : `${node.path} — double-click to open`}
+        title={node.isDir ? node.path : openHint(node.path)}
       >
-        {/* Chevron slot — files get an empty placeholder of the same
-            width so their name column aligns with sibling dirs. */}
-        <span className="flex size-[10px] shrink-0 items-center justify-center text-zinc-600">
-          {node.isDir ? (isOpen ? <ChevronDown /> : <ChevronRight />) : null}
+        {/* Chevron slot — single rotating chevron so the open/close
+            transition reads as motion instead of a glyph swap. Files
+            get an invisible placeholder of the same width so their
+            name column aligns with sibling dirs. */}
+        <span className="flex size-[10px] shrink-0 items-center justify-center text-muted-foreground/60">
+          {node.isDir ? (
+            <span
+              className={
+                'inline-flex transition-transform duration-150 ' +
+                (isOpen ? 'rotate-90' : 'rotate-0')
+              }
+            >
+              <ChevronRight />
+            </span>
+          ) : null}
         </span>
 
         {/* Icon slot — amber folder for dirs, ext-colored document
             icon for files so you can eyeball file types at a glance. */}
         <span className="flex size-[14px] shrink-0 items-center justify-center">
           {node.isDir ? (
-            <span className="text-amber-400/80">
+            <span className="text-amber-400/85">
               <FolderIcon />
             </span>
           ) : (
@@ -345,6 +393,7 @@ function Node({
               expanded={expanded}
               onToggle={onToggle}
               onOpen={onOpen}
+              openHint={openHint}
             />
           ))}
         </ul>
@@ -440,24 +489,6 @@ function ChevronRight(): React.JSX.Element {
       aria-hidden
     >
       <polyline points="9 18 15 12 9 6" />
-    </svg>
-  )
-}
-
-function ChevronDown(): React.JSX.Element {
-  return (
-    <svg
-      width="8"
-      height="8"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="3"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <polyline points="6 9 12 15 18 9" />
     </svg>
   )
 }
