@@ -1,5 +1,5 @@
 :root {
-  color-scheme: dark;
+  /* color-scheme is set per-theme by index.css. */
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif;
   font-feature-settings: 'cv11', 'ss01';
   -webkit-font-smoothing: antialiased;
@@ -9,14 +9,50 @@
   box-sizing: border-box;
 }
 
+/* Token-aware scrollbar — thin, transparent track, hover-highlighted
+ * thumb. Reads `--foreground` so it auto-flips between light and dark. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--foreground) / 0.18) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--foreground) / 0.16);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 160ms ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--foreground) / 0.32);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: hsl(var(--foreground) / 0.44);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 html,
 body,
 #root {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: #0b0b0d;
-  color: #e8e8ea;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 .app {
@@ -30,7 +66,8 @@ body,
   align-items: center;
   gap: 12px;
   padding: 12px 20px;
-  border-bottom: 1px solid #1c1c1f;
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
   -webkit-app-region: drag;
   flex-shrink: 0;
 }
@@ -48,19 +85,19 @@ body,
   font-weight: 500;
   padding: 2px 8px;
   border-radius: 999px;
-  background: #1c1c1f;
-  color: #9b9ba1;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
   -webkit-app-region: no-drag;
 }
 
 .badge-stage {
-  background: #1e293b;
-  color: #93c5fd;
+  background: hsl(var(--accent) / 0.18);
+  color: hsl(var(--accent));
 }
 
 .badge-workspace {
-  background: #132318;
-  color: #86efac;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
   max-width: 220px;
   white-space: nowrap;
   overflow: hidden;

@@ -1,10 +1,24 @@
 /*
  * Tailwind entrypoint for the renderer. Loaded from main.tsx alongside
- * the legacy assets/main.css (which still owns the window chrome — header,
- * badge, traffic-light offset). Everything chat-side is Tailwind now.
+ * the legacy assets/main.css (which still owns the window chrome —
+ * header, badge, traffic-light offset).
  *
- * Dark-only for the moment. If we ever add a light mode, add a `.light`
- * branch with overrides and toggle via a root class.
+ * Theming
+ * -------
+ * The app uses a shadcn-style token system: every color is a CSS
+ * variable on `:root` (light) and `.dark` (dark). Tailwind utilities
+ * like `bg-background`, `text-foreground`, `border-border`, `bg-card`,
+ * `text-muted-foreground`, `bg-sidebar` — defined in tailwind.config.js
+ * — read those variables through `hsl(var(--token))`.
+ *
+ * The appearance store + applier mutate the same variables on
+ * `documentElement.style` for per-theme overrides (accent, background,
+ * foreground), so every component re-skins instantly without a single
+ * extra render path. See stores/appearance.ts and
+ * stores/appearance.applier.ts.
+ *
+ * Light theme palette is a desaturated zinc set tuned to roughly match
+ * the previous dark-only design's spacing/contrast feel.
  */
 @tailwind base;
 @tailwind components;
@@ -12,13 +26,168 @@
 
 @layer base {
   :root {
+    /* Light theme */
+    color-scheme: light;
+    --background: 0 0% 100%;
+    --foreground: 240 10% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 10%;
+
+    --primary: 217 91% 55%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 6% 15%;
+
+    --muted: 240 5% 95%;
+    --muted-foreground: 240 4% 42%;
+
+    --accent: 217 91% 60%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 6% 88%;
+    --input: 240 6% 90%;
+    --ring: 217 91% 55%;
+
+    --sidebar: 240 6% 97%;
+    --sidebar-foreground: 240 8% 18%;
+    --sidebar-accent: 240 5% 92%;
+    --sidebar-border: 240 6% 88%;
+
+    /* Composer mention chip — semantic green for "this is a file or
+     * symbol", kept distinct from accent so the two chip variants
+     * stay visually separable regardless of which accent the user
+     * picks. Light value is the readable shade on white; dark value
+     * lifts to stay legible on a dark backdrop. */
+    --chip-mention: 158 64% 40%;
+
+    --ui-font-size: 13px;
+    --code-font-size: 12px;
+  }
+
+  .dark {
     color-scheme: dark;
+    /* Hue 220 instead of 240 — slightly warmer neutral, matches what
+     * Linear / Vercel / Arc use. 240 reads as "cold blue-gray", 220 as
+     * "true dark gray with a hint of blue". */
+
+    /* Background is lifted off OLED black (4% → 7%) so large surfaces
+     * are easier on the eyes and have room for real elevation below. */
+    --background: 220 8% 7%;
+    --foreground: 220 12% 96%;
+
+    /* Card sits +3% above bg; popover +6%. Previous values gave 3% / 5%
+     * steps which made dialogs barely float off the page. Bigger steps
+     * = clearer surface hierarchy. */
+    --card: 220 8% 10%;
+    --card-foreground: 220 12% 96%;
+
+    --popover: 220 8% 13%;
+    --popover-foreground: 220 12% 96%;
+
+    /* Accent button text is near-white, not near-black — a saturated
+     * mid-blue bg (hsl 217 91% 60%) pairs better with light text for
+     * contrast and reads as a "primary CTA" button. */
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 7% 15%;
+    --secondary-foreground: 220 12% 94%;
+
+    /* Muted foreground bumped 60% → 66% so disabled / helper text
+     * stops looking washed out on the lifted background. */
+    --muted: 220 7% 14%;
+    --muted-foreground: 220 8% 66%;
+
+    --accent: 217 91% 60%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Brighter, slightly more saturated destructive red — 0 62% 45%
+     * disappeared into the background on error borders. */
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Borders / inputs both nudged 2 points lighter so outlines and
+     * card edges are visible without being loud. */
+    --border: 220 7% 18%;
+    --input: 220 7% 20%;
+    --ring: 217 91% 60%;
+
+    --sidebar: 220 8% 7%;
+    --sidebar-foreground: 220 12% 92%;
+    --sidebar-accent: 220 7% 15%;
+    --sidebar-border: 220 7% 18%;
+
+    --chip-mention: 158 64% 65%;
+  }
+
+  /* High-contrast modifier — bumps borders, ring, muted text. Toggled
+   * on `<html>` by the applier when contrast slider crosses 60. */
+  html.high-contrast {
+    --border: 240 5% 28%;
+    --input: 240 5% 28%;
+    --ring: 217 91% 70%;
+    --muted-foreground: 240 5% 75%;
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-size: var(--ui-font-size);
+  }
+
+  code,
+  pre,
+  kbd,
+  samp {
+    font-size: var(--code-font-size);
+  }
+
+  /* pointer-cursor mode — toggled by the appearance applier on <html>. */
+  html.pointer-cursor button,
+  html.pointer-cursor [role='button'],
+  html.pointer-cursor [role='switch'],
+  html.pointer-cursor [role='menuitem'],
+  html.pointer-cursor a {
+    cursor: pointer;
+  }
+
+  /* Translucent sidebar — applier toggles `.translucent-sidebar` on
+   * <html>. Lets the OS material show through under the chat list rail
+   * (only meaningful on macOS with vibrancy enabled, but harmless on
+   * other platforms). */
+  html.translucent-sidebar [data-sidebar='true'] {
+    background-color: hsl(var(--sidebar) / 0.6);
+    backdrop-filter: saturate(140%) blur(20px);
+  }
+
+  /* Slider thumb — the contrast slider in Settings → Appearance uses
+   * a native <input type="range"> with `.theme-slider`, so we style
+   * just the thumb (track is painted by an absolute sibling div). */
+  .theme-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    background: hsl(var(--accent));
+    border: 2px solid hsl(var(--background));
+    box-shadow: 0 0 0 1px hsl(var(--border));
+    cursor: pointer;
+  }
+  .theme-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    background: hsl(var(--accent));
+    border: 2px solid hsl(var(--background));
+    box-shadow: 0 0 0 1px hsl(var(--border));
+    cursor: pointer;
   }
 }
-
-/*
- * Assistant message text is now rendered through @assistant-ui/react-markdown.
- * Each markdown tag (p / h1 / ul / code / pre / ...) has its own Tailwind
- * class overrides defined inline in `AssistantMarkdown.tsx`, so we no
- * longer need a global `.fusion-assistant-text` rule block here.
- */
