@@ -32,6 +32,14 @@ export const IPC_CHANNELS = {
   /** Renderer → main. Sets the workspace to a user-picked directory. */
   WORKSPACE_SET: 'workspace:set',
   /**
+   * Renderer → main. Opens the OS native folder picker. Returns the
+   * absolute path the user picked, or null if they cancelled. The
+   * renderer follows up with `WORKSPACE_SET` to actually commit it —
+   * keeping pick and set as separate calls means the renderer can
+   * still surface a validation error from set() in the gate UI.
+   */
+  WORKSPACE_PICK: 'workspace:pick',
+  /**
    * Renderer → main. Opens a workspace-relative file path in the OS
    * default handler (Finder's "open with default app"). Used by the
    * Files tree's double-click.
@@ -61,6 +69,14 @@ export const IPC_CHANNELS = {
    * `resume: true` so the CLI reloads the transcript from its JSONL.
    */
   SESSION_SWITCH: 'session:switch',
+  /**
+   * Renderer → main. Sets a session's display title by appending a
+   * `custom-title` line to its jsonl. Same on-disk shape that
+   * fusion-code's `/rename` slash command writes, so the SDK reader
+   * picks it up identically. After success main also broadcasts
+   * SESSION_LIST_CHANGED so the sidebar re-pulls.
+   */
+  SESSION_RENAME: 'session:rename',
   /**
    * Main → renderer. Broadcast whenever the session list may have
    * changed (new session captured from system init, current session
@@ -98,7 +114,28 @@ export const IPC_CHANNELS = {
    * child's cwd at spawn time, swapping workspaces means restarting
    * the whole process so the gate shows again on cold start.
    */
-  APP_RELAUNCH: 'app:relaunch'
+  APP_RELAUNCH: 'app:relaunch',
+  /**
+   * Renderer → main. Opens `~/.claude` in the OS file manager via
+   * `shell.openPath`. Used by the sidebar user-info menu so the user
+   * can poke at their CLI config / project transcripts directly.
+   */
+  APP_OPEN_CLAUDE_DIR: 'app:open-claude-dir',
+  /**
+   * Renderer → main (fire-and-forget `send`). Notifies the main
+   * process that the user flipped the UI language. Main uses it to
+   * rebuild the tray context menu — renderer stores the choice in its
+   * own zustand + localStorage and is the source of truth, main just
+   * mirrors the current value for surfaces it owns (tray menu, and
+   * eventually native menus / dialogs if we add any).
+   *
+   * Push cadence:
+   *  - Once on renderer mount (App.tsx effect) so main catches up to
+   *    the persisted value after a cold start, where main can't read
+   *    the renderer's localStorage itself.
+   *  - Every time `useI18n.setLang` runs.
+   */
+  LANG_CHANGED: 'lang:changed'
 } as const
 
 /**
@@ -156,6 +193,13 @@ export interface FileSuggestionsListResult {
 export type WorkspaceSetPayload = { path: string }
 
 /**
+ * Result of WORKSPACE_PICK. `path` is null when the user cancelled the
+ * native dialog; otherwise it's the absolute path they picked. The
+ * renderer still has to call `setWorkspace({ path })` to commit it.
+ */
+export type WorkspacePickResult = { path: string | null }
+
+/**
  * Result of WORKSPACE_GET / WORKSPACE_SET.
  *
  * `path` is null before the user has picked a workspace (cold start).
@@ -194,6 +238,15 @@ export type SessionNewResult = { sessionId: string }
 
 export type SessionSwitchPayload = { sessionId: string; resume: boolean }
 export type SessionSwitchResult = { sessionId: string }
+
+export type SessionRenamePayload = { sessionId: string; title: string }
+export type SessionRenameResult = { ok: true }
+
+/**
+ * Payload for LANG_CHANGED. Must match the renderer's `Lang` type in
+ * `src/renderer/src/i18n.ts` — keep in sync.
+ */
+export type LangChangedPayload = { lang: 'zh' | 'en' }
 
 /**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
@@ -255,6 +308,14 @@ export interface ChatApi {
   setWorkspace(payload: WorkspaceSetPayload): Promise<WorkspaceState>
 
   /**
+   * Open the OS native folder picker and resolve to the user's choice.
+   * Returns `{ path: null }` on cancel. The caller is responsible for
+   * the follow-up `setWorkspace({ path })` IPC — separating pick and
+   * set keeps gate-side error surfacing centralized.
+   */
+  pickWorkspace(): Promise<WorkspacePickResult>
+
+  /**
    * Resolve a File object dropped on the window to its absolute path.
    * Backed by Electron 33's `webUtils.getPathForFile` (the successor to
    * the deprecated `File.path`). The `File` type is not structured-clone
@@ -302,6 +363,14 @@ export interface ChatApi {
   switchSession(payload: SessionSwitchPayload): Promise<SessionSwitchResult>
 
   /**
+   * Set a session's display title. Appends a `custom-title` line to
+   * the jsonl on disk (same shape fusion-code's `/rename` writes).
+   * Main re-broadcasts `sessionListChanged` after a successful write
+   * so the sidebar refreshes without a manual reload.
+   */
+  renameSession(payload: SessionRenamePayload): Promise<SessionRenameResult>
+
+  /**
    * Subscribe to session-list-changed broadcasts from main. Returns an
    * unsubscribe function. Emitted whenever a session is created,
    * updated, or the active session changes — the adapter should
@@ -336,4 +405,22 @@ export interface ChatApi {
    * workspace switcher in the sidebar.
    */
   relaunchApp(): Promise<void>
+
+  /**
+   * Open `~/.claude` (the fusion-code config + transcript root) in
+   * Finder / Explorer. Resolves with `{ error: '' }` on success or a
+   * non-empty error string when `shell.openPath` fails.
+   */
+  openClaudeDir(): Promise<{ error: string }>
+
+  /** OS username, read once at preload-load time via `os.userInfo()`. */
+  osUser: string
+
+  /**
+   * Push the user's current UI language to the main process so the
+   * tray context menu (built in the main process) can rebuild its
+   * labels in sync with the renderer. Fire-and-forget — main has no
+   * meaningful reply beyond "received".
+   */
+  setLang(lang: 'zh' | 'en'): void
 }

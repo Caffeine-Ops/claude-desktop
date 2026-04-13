@@ -161,6 +161,11 @@ class ChatEngine extends EventEmitter {
    * Not persisted across process restarts by design: the contract with
    * the UI is "first launch ⇒ pick a folder". Wire a `userData` file
    * if that turns out to be annoying.
+   *
+   * Mid-session swap is allowed via `setWorkspace()` — the engine tears
+   * down every live runtime so the next session spawn picks up the new
+   * cwd. The renderer remounts FusionRuntimeProvider on the change so
+   * UI state (active sessionId, files panel, etc.) follows.
    */
   private workspaceDir: string | null = null
 
@@ -210,13 +215,14 @@ class ChatEngine extends EventEmitter {
   }
 
   /**
-   * Commit a user-picked workspace directory. Called exactly once per
-   * process lifetime by the renderer's `WorkspaceGate` after a drop.
-   * Throws on validation failure so the renderer can surface the error
-   * in the gate UI; throws on a second call because the SDK child has
-   * already baked its cwd at spawn time.
+   * Commit a user-picked workspace directory. First call (from the
+   * cold-start gate) is a fast assignment. Subsequent calls perform a
+   * soft switch: every live SessionRuntime is torn down so the next
+   * `send()` spawns a fresh fusion-code child with the new cwd. The
+   * SDK child's cwd is baked at spawn time, so re-spawning is the only
+   * way to retarget without restarting Electron itself.
    *
-   * Validation rules:
+   * Validation rules (apply to every call):
    *   - must be a non-empty string
    *   - must be an absolute path (renderer has no business sending
    *     relative paths; absolute is what `webUtils.getPathForFile`
@@ -225,14 +231,12 @@ class ChatEngine extends EventEmitter {
    *
    * On success, invalidate the file-suggestions cache so the first
    * `@`-mention popover after the gate reflects the new workspace
-   * instead of stale process.cwd() entries.
+   * instead of stale entries from the previous cwd.
+   *
+   * Re-setting to the same path is a no-op (returns the path without
+   * tearing anything down).
    */
-  setWorkspace(candidate: string): string {
-    if (this.workspaceDir !== null) {
-      throw new Error(
-        'Workspace is already set for this session. Restart to change it.'
-      )
-    }
+  async setWorkspace(candidate: string): Promise<string> {
     if (typeof candidate !== 'string' || candidate.length === 0) {
       throw new Error('Workspace path is required.')
     }
@@ -249,9 +253,67 @@ class ChatEngine extends EventEmitter {
     if (!stat.isDirectory()) {
       throw new Error(`Workspace path is not a directory: ${candidate}`)
     }
-    this.workspaceDir = candidate
-    invalidateFileSuggestions()
-    console.log('[engine] workspace set', { path: candidate })
+
+    // First-time set — fast path, no teardown.
+    if (this.workspaceDir === null) {
+      this.workspaceDir = candidate
+      invalidateFileSuggestions()
+      this.logEvent('workspace:set', { path: candidate, mode: 'initial' })
+      console.log('[engine] workspace set', { path: candidate })
+      return candidate
+    }
+
+    // Same path — nothing to do. Avoids a pointless teardown if the
+    // user re-picks the current workspace from the gate.
+    if (this.workspaceDir === candidate) {
+      return candidate
+    }
+
+    // Soft switch. Reuse the `switching` flag so a racing send() gets
+    // a clean error instead of touching half-torn-down state.
+    if (this.switching) {
+      throw new Error('Another session switch is in progress — retry shortly.')
+    }
+    this.switching = true
+    this.logEvent('workspace:switch:begin', {
+      from: this.workspaceDir,
+      to: candidate
+    })
+    try {
+      // Detach every live runtime first so a teardown reject can't
+      // resurrect a half-dead entry through the map. Fire all teardowns
+      // in parallel and await them — we hold `switching` for the whole
+      // window so the engine surface is quiet while children exit.
+      const entries = Array.from(this.sessions.entries())
+      this.sessions.clear()
+      const teardowns: Promise<void>[] = []
+      for (const [id, rt] of entries) {
+        if (rt.handle || rt.queue) {
+          teardowns.push(
+            this.teardownRuntime(id, rt).catch((err) => {
+              console.warn('[engine] workspace switch teardown failed:', err)
+            })
+          )
+        }
+      }
+      this.activeSessionId = null
+      this.pendingResume = null
+      // Stale cli capabilities — clear so the renderer doesn't reuse
+      // them while waiting for the next session's `system init`.
+      this.sessionMeta = { skills: [], mcpServers: [], slashCommands: [] }
+      await Promise.all(teardowns)
+
+      this.workspaceDir = candidate
+      invalidateFileSuggestions()
+    } finally {
+      this.switching = false
+    }
+    // Renderer cues: thread list reflects the new workspace's sessions,
+    // composer's `/` popover drops the previous cli's commands.
+    this.emit('sessionListChanged')
+    this.emit('sessionMetaChanged')
+    this.logEvent('workspace:switch:end', { path: candidate })
+    console.log('[engine] workspace switched', { path: candidate })
     return candidate
   }
 

@@ -6,10 +6,16 @@
  * already understands (`ThreadSummary` for the sidebar, `ThreadMessageLike`
  * for Thread view restoration).
  *
- * We deliberately do NOT write any session state ourselves. The jsonl
- * files are the single source of truth and fusion-code is the single
- * writer. All the main process does is read + map.
+ * One narrow exception to "read-only": `renameSession` appends a single
+ * `{"type":"custom-title", ...}` line to the existing jsonl. Fusion-code's
+ * own `/rename` slash command writes the exact same line, and the SDK's
+ * listSessions reader greps for `customTitle` regardless of who wrote it,
+ * so this stays compatible with upstream behavior. Append-only means we
+ * never race fusion-code's writes to the active turn.
  */
+import { appendFile, readdir, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import {
   getSessionMessages,
   listSessions as sdkListSessions,
@@ -21,6 +27,11 @@ import type { ThreadMessageLike } from '@assistant-ui/react'
 import type { ThreadSummary } from '../../shared/types'
 
 const TAG = '[sessionStore]'
+
+// Mirrors the SDK's project-dir name cap (sdk.mjs: `_J`). Names whose
+// sanitized form exceeds this get truncated and suffixed with a hash —
+// we handle that case with a prefix scan in `findSessionJsonl` below.
+const PROJECT_NAME_MAX_LEN = 200
 
 /**
  * List all sessions for a workspace, newest first. Wraps the SDK's
@@ -72,6 +83,84 @@ export async function loadSession(
   } catch (err) {
     console.warn(`${TAG} loadSession ${sessionId} failed:`, err)
     return []
+  }
+}
+
+/**
+ * Rename a session by appending a `custom-title` line to its jsonl.
+ *
+ * The SDK's listSessions reads `customTitle` (and `aiTitle`) by grepping
+ * the file text, with the LAST occurrence winning, so multiple renames
+ * just keep working. Fusion-code's own `/rename` slash command writes
+ * the exact same shape, so we stay compatible with the upstream format.
+ *
+ * Throws if the workspace is unset or the jsonl file can't be located.
+ * The caller is expected to broadcast `sessionListChanged` after a
+ * successful rename so the sidebar re-pulls the title.
+ */
+export async function renameSession(
+  sessionId: string,
+  customTitle: string,
+  workspaceDir: string | null
+): Promise<void> {
+  if (!workspaceDir) throw new Error('Workspace not set')
+  const filePath = await findSessionJsonl(workspaceDir, sessionId)
+  if (!filePath) {
+    throw new Error(`Session jsonl not found for ${sessionId}`)
+  }
+  const line =
+    JSON.stringify({ type: 'custom-title', customTitle, sessionId }) + '\n'
+  await appendFile(filePath, line, 'utf8')
+}
+
+/**
+ * Locate the on-disk jsonl for a sessionId under a given workspace.
+ *
+ * The SDK derives the project dir name by replacing every non-alnum
+ * char with `-`. For names ≤ 200 chars that's the whole story; longer
+ * names get truncated to 200 and suffixed with a hash, so for those we
+ * fall back to a prefix scan of `~/.claude/projects`.
+ *
+ * Returns `null` when no matching file exists (caller decides how loud
+ * that is — rename treats it as an error, future "delete session" might
+ * treat it as a no-op).
+ */
+async function findSessionJsonl(
+  workspaceDir: string,
+  sessionId: string
+): Promise<string | null> {
+  const projectsDir = join(homedir(), '.claude', 'projects')
+  const sanitized = workspaceDir.replace(/[^a-zA-Z0-9]/g, '-')
+
+  if (sanitized.length <= PROJECT_NAME_MAX_LEN) {
+    const direct = join(projectsDir, sanitized, `${sessionId}.jsonl`)
+    if (await fileExists(direct)) return direct
+    // Fall through — workspace might have been opened under a sibling
+    // worktree that hashes to a different prefix. Cheap to try the scan.
+  }
+
+  const prefix = sanitized.slice(0, PROJECT_NAME_MAX_LEN)
+  try {
+    const entries = await readdir(projectsDir, { withFileTypes: true })
+    for (const e of entries) {
+      if (!e.isDirectory()) continue
+      // Either an exact short-name match or a "<prefix>-<hash>" long-name match.
+      if (e.name !== sanitized && !e.name.startsWith(`${prefix}-`)) continue
+      const candidate = join(projectsDir, e.name, `${sessionId}.jsonl`)
+      if (await fileExists(candidate)) return candidate
+    }
+  } catch (err) {
+    console.warn(`${TAG} findSessionJsonl scan failed:`, err)
+  }
+  return null
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    const s = await stat(path)
+    return s.isFile()
+  } catch {
+    return false
   }
 }
 

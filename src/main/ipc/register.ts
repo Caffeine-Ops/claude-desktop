@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import type {
   ChatEvent,
@@ -22,17 +23,22 @@ import {
   type SessionLoadPayload,
   type SessionLoadResult,
   type SessionNewResult,
+  type SessionRenamePayload,
+  type SessionRenameResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
   type WorkspaceFileOpenPayload,
   type WorkspaceFileOpenResult,
+  type WorkspacePickResult,
   type WorkspaceSetPayload,
   type WorkspaceState
 } from '../../shared/ipc-channels'
 import { getChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
 import { getPermissionBroker } from '../core/permissionBroker'
-import { listSessions, loadSession } from '../core/sessionStore'
+import { listSessions, loadSession, renameSession } from '../core/sessionStore'
+import { updateTrayLang } from '../tray'
+import type { LangChangedPayload } from '../../shared/ipc-channels'
 
 /**
  * Registers all IPC handlers and wires the chat engine's event stream to
@@ -51,12 +57,29 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.removeHandler(IPC_CHANNELS.FILE_SUGGESTIONS_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_GET)
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_SET)
+  ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_PICK)
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_FILE_OPEN)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LOAD)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_NEW)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_SWITCH)
+  ipcMain.removeHandler(IPC_CHANNELS.SESSION_RENAME)
   ipcMain.removeHandler(IPC_CHANNELS.APP_RELAUNCH)
+  ipcMain.removeHandler(IPC_CHANNELS.APP_OPEN_CLAUDE_DIR)
+  // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
+  // is via removeAllListeners rather than removeHandler. Important on
+  // dev HMR reloads where this function runs more than once per
+  // process lifetime — without it, each reload would stack another
+  // listener and the tray menu would rebuild N times per language flip.
+  ipcMain.removeAllListeners(IPC_CHANNELS.LANG_CHANGED)
+  ipcMain.on(
+    IPC_CHANNELS.LANG_CHANGED,
+    (_event, payload: LangChangedPayload) => {
+      const lang = payload?.lang
+      if (lang !== 'zh' && lang !== 'en') return
+      updateTrayLang(lang)
+    }
+  )
 
   ipcMain.handle(
     IPC_CHANNELS.CHAT_SEND,
@@ -144,8 +167,30 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     IPC_CHANNELS.WORKSPACE_SET,
     async (_event, payload: WorkspaceSetPayload): Promise<WorkspaceState> => {
       validateWorkspaceSetPayload(payload)
-      const next = getChatEngine().setWorkspace(payload.path)
+      const next = await getChatEngine().setWorkspace(payload.path)
       return { path: next }
+    }
+  )
+
+  // Native folder picker. Anchored to the main window so the dialog
+  // is treated as modal and inherits focus correctly on macOS. We
+  // intentionally do NOT call setWorkspace here — the renderer follows
+  // up with WORKSPACE_SET so any validation error surfaces in the gate
+  // UI through the same code path the drag-drop flow uses.
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_PICK,
+    async (): Promise<WorkspacePickResult> => {
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: 'Pick a workspace',
+        properties: ['openDirectory', 'createDirectory'],
+        // Default to the current workspace when re-picking, otherwise
+        // let the OS decide (Finder remembers per-app).
+        defaultPath: getChatEngine().getWorkspace() ?? undefined
+      })
+      if (result.canceled || result.filePaths.length === 0) {
+        return { path: null }
+      }
+      return { path: result.filePaths[0] }
     }
   )
 
@@ -263,6 +308,23 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_RENAME,
+    async (
+      _event,
+      payload: SessionRenamePayload
+    ): Promise<SessionRenameResult> => {
+      validateSessionRenamePayload(payload)
+      const engine = getChatEngine()
+      await renameSession(payload.sessionId, payload.title, engine.getWorkspace())
+      // Trigger sidebar refresh — the SDK reads customTitle on its
+      // next listSessions scan, so rebroadcasting picks up the new
+      // value without any in-memory state to invalidate.
+      engine.emit('sessionListChanged')
+      return { ok: true }
+    }
+  )
+
   // Relaunch the app. Used by the workspace switcher — swapping
   // workspaces means restarting so the fusion-code child respawns
   // with the new cwd and the gate reappears cold.
@@ -270,6 +332,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     app.relaunch()
     app.exit(0)
   })
+
+  // Open `~/.claude` in the OS file manager. The directory is created
+  // by fusion-code on first run, but on a fresh machine it may not
+  // exist yet — `shell.openPath` returns "no such file" in that case,
+  // which we surface verbatim so the user knows to run Claude once.
+  ipcMain.handle(
+    IPC_CHANNELS.APP_OPEN_CLAUDE_DIR,
+    async (): Promise<{ error: string }> => {
+      const target = join(homedir(), '.claude')
+      const shellError = await shell.openPath(target)
+      return { error: shellError }
+    }
+  )
 
   // Bridge engine events → renderer.
   const engine = getChatEngine()
@@ -503,6 +578,36 @@ function validateSessionSwitchPayload(
   if (typeof v.resume !== 'boolean') {
     throw new Error('Invalid session-switch resume (must be boolean)')
   }
+}
+
+function validateSessionRenamePayload(
+  value: unknown
+): asserts value is SessionRenamePayload {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('Invalid session-rename payload')
+  }
+  const v = value as Record<string, unknown>
+  if (typeof v.sessionId !== 'string' || v.sessionId.length === 0) {
+    throw new Error('Invalid session-rename sessionId (empty or missing)')
+  }
+  if (v.sessionId.length > 128) {
+    throw new Error('Invalid session-rename sessionId (too long)')
+  }
+  // Title cap: 200 chars matches the SDK's PROJECT_NAME_MAX_LEN and
+  // gives the sidebar plenty of room without letting a paste-bomb
+  // bloat the jsonl. Newlines would split the appended jsonl line, so
+  // strip them up front rather than reject (less hostile UX).
+  if (typeof v.title !== 'string') {
+    throw new Error('Invalid session-rename title (must be string)')
+  }
+  const trimmed = v.title.replace(/[\r\n]+/g, ' ').trim()
+  if (trimmed.length === 0) {
+    throw new Error('Invalid session-rename title (empty)')
+  }
+  if (trimmed.length > 200) {
+    throw new Error('Invalid session-rename title (too long)')
+  }
+  ;(v as { title: string }).title = trimmed
 }
 
 function validatePermissionResponse(

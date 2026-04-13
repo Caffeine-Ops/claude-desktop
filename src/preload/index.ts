@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import { userInfo } from 'node:os'
 import type {
   ChatEvent,
   LogEvent,
@@ -21,10 +22,13 @@ import {
   type SessionLoadPayload,
   type SessionLoadResult,
   type SessionNewResult,
+  type SessionRenamePayload,
+  type SessionRenameResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
   type WorkspaceFileOpenPayload,
   type WorkspaceFileOpenResult,
+  type WorkspacePickResult,
   type WorkspaceSetPayload,
   type WorkspaceState
 } from '../shared/ipc-channels'
@@ -104,6 +108,12 @@ const chatApi: ChatApi = {
     ) as Promise<WorkspaceState>
   },
 
+  pickWorkspace(): Promise<WorkspacePickResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.WORKSPACE_PICK
+    ) as Promise<WorkspacePickResult>
+  },
+
   /**
    * Resolve a File object to its disk path. `webUtils.getPathForFile`
    * is the Electron 33+ replacement for `File.path`, which is
@@ -154,6 +164,13 @@ const chatApi: ChatApi = {
     ) as Promise<SessionSwitchResult>
   },
 
+  renameSession(payload: SessionRenamePayload): Promise<SessionRenameResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SESSION_RENAME,
+      payload
+    ) as Promise<SessionRenameResult>
+  },
+
   onSessionListChanged(handler: () => void): () => void {
     const listener = (): void => {
       handler()
@@ -186,6 +203,27 @@ const chatApi: ChatApi = {
 
   relaunchApp(): Promise<void> {
     return ipcRenderer.invoke(IPC_CHANNELS.APP_RELAUNCH) as Promise<void>
+  },
+
+  openClaudeDir(): Promise<{ error: string }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_CLAUDE_DIR) as Promise<{
+      error: string
+    }>
+  },
+
+  // Read once at preload load. `os.userInfo()` throws on some sandboxed
+  // OS configs (rare) — fall back to an empty string and let the UI
+  // render a generic placeholder rather than crashing the whole bridge.
+  osUser: ((): string => {
+    try {
+      return userInfo().username || ''
+    } catch {
+      return ''
+    }
+  })(),
+
+  setLang(lang: 'zh' | 'en'): void {
+    ipcRenderer.send(IPC_CHANNELS.LANG_CHANGED, { lang })
   }
 }
 
