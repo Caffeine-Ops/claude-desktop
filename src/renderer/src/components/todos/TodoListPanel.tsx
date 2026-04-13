@@ -1,3 +1,4 @@
+import { useT, useTFormat } from '../../i18n'
 import { useChatStore } from '../../stores/chat'
 import { useTodosStore, type TodoItem, type TodoStatus } from '../../stores/todos'
 
@@ -20,9 +21,9 @@ import { useTodosStore, type TodoItem, type TodoStatus } from '../../stores/todo
  * - Three statuses (pending / in_progress / completed), matching
  *   `free-code/src/utils/todo/types.ts` exactly.
  * - Icon vocabulary lifted from `TaskListV2.tsx:220-241`:
- *     pending     → ○   (hollow circle, muted)
- *     in_progress → ●   (filled circle, accent — Claude orange-ish)
- *     completed   → ✓   (tick, green, strikethrough)
+ *     pending     → ◻   (figures.squareSmall, muted)
+ *     in_progress → ◼   (figures.squareSmallFilled, Claude orange, bold)
+ *     completed   → ✔   (figures.tick, green, strikethrough + dim)
  * - "All done → wipe list" is handled in the store (setTodos), mirroring
  *   `TodoWriteTool.call()` in free-code, so this component never needs
  *   to render an empty "everything's completed" graveyard.
@@ -37,6 +38,7 @@ import { useTodosStore, type TodoItem, type TodoStatus } from '../../stores/todo
  * model is actually tracking, not a hand-maintained parallel list.
  */
 export function TodoListPanel(): React.JSX.Element {
+  const t = useT()
   const sessionId = useChatStore((s) => s.sessionId)
   const todos = useTodosStore((s) =>
     sessionId === null ? EMPTY : (s.todos[sessionId] ?? EMPTY)
@@ -49,23 +51,43 @@ export function TodoListPanel(): React.JSX.Element {
   const completed = todos.filter((t) => t.status === 'completed').length
   const total = todos.length
 
+  const progress = total === 0 ? 0 : Math.round((completed / total) * 100)
+
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      {/* Header row — section label + count only. The list is owned by
-          the LLM via TodoWrite, so there are no manual clear / delete
-          affordances here. */}
-      <div className="flex items-center justify-between px-4 pb-2 pt-4">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">
-          Todos
-        </span>
+      {/* Header row — small section glyph + label on the left, count
+          pill on the right. The pill renders only when there's a list
+          to count, so the empty state stays uncluttered. */}
+      <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/70">
+            <ListIcon />
+          </span>
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/80">
+            {t('todosTitle')}
+          </span>
+        </div>
         {total > 0 && (
-          <span className="text-[11px] tabular-nums text-zinc-500">
-            <span className="text-zinc-200">{completed}</span>
-            <span className="text-zinc-600">{' / '}</span>
+          <span className="rounded-full border border-border/80 bg-card/60 px-1.5 py-px text-[10.5px] tabular-nums text-muted-foreground">
+            <span className="text-foreground">{completed}</span>
+            <span className="px-0.5 text-muted-foreground/50">/</span>
             <span>{total}</span>
           </span>
         )}
       </div>
+
+      {/* Progress bar — thin track that fills with accent. Only shown
+          when there's an actual list, otherwise the empty-state hint
+          gets the vertical room to itself. */}
+      {total > 0 && (
+        <div className="mx-4 mb-2 h-[3px] overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-accent transition-[width] duration-500 ease-out"
+            style={{ width: `${progress}%` }}
+            aria-hidden
+          />
+        </div>
+      )}
 
       {/* Scroll region. min-h-0 + flex-1 so the list body can shrink
           inside the flex-col section without pushing the header off. */}
@@ -73,11 +95,12 @@ export function TodoListPanel(): React.JSX.Element {
         {todos.length === 0 ? (
           <EmptyHint />
         ) : (
-          <ul className="space-y-1">
+          <ul className="space-y-0.5">
             {todos.map((todo, i) => (
               <TodoRow
                 key={`${i}-${todo.content}`}
                 todo={todo}
+                t={t}
                 onCycle={() => {
                   if (sessionId === null) return
                   cycleStatus(sessionId, i)
@@ -94,15 +117,19 @@ export function TodoListPanel(): React.JSX.Element {
 /* ─────────────────── Empty-state hint ─────────────────── */
 
 function EmptyHint(): React.JSX.Element {
+  const t = useT()
   return (
-    <div className="mt-4 rounded-md border border-dashed border-zinc-800/80 px-3 py-4 text-center text-[11px] leading-relaxed text-zinc-600">
-      <div className="mb-1 font-medium text-zinc-500">No todos yet</div>
-      <div>
-        Ask Claude to use
-        <br />
-        <code className="rounded bg-zinc-900 px-1 py-0.5 text-[10.5px] font-mono text-zinc-400">
+    <div className="mx-2 mt-3 flex flex-col items-center gap-2 rounded-lg border border-dashed border-border/80 px-3 py-5 text-center text-[11px] leading-relaxed text-muted-foreground/70">
+      <span className="flex size-7 items-center justify-center rounded-full bg-muted/60 text-muted-foreground/80">
+        <ListIcon />
+      </span>
+      <div className="font-medium text-muted-foreground">{t('todosEmpty')}</div>
+      <div className="text-muted-foreground/70">
+        {t('todosEmptyHintBefore')}
+        <code className="rounded bg-card px-1 py-0.5 text-[10.5px] font-mono text-foreground/80">
           TodoWrite
         </code>
+        {t('todosEmptyHintAfter')}
       </div>
     </div>
   )
@@ -112,11 +139,12 @@ function EmptyHint(): React.JSX.Element {
 
 type RowProps = {
   todo: TodoItem
+  t: (key: import('../../i18n').StringKey) => string
   onCycle: () => void
 }
 
-function TodoRow({ todo, onCycle }: RowProps): React.JSX.Element {
-  const { icon, iconClass } = getStatusIcon(todo.status)
+function TodoRow({ todo, t, onCycle }: RowProps): React.JSX.Element {
+  const tf = useTFormat()
   const isCompleted = todo.status === 'completed'
   const isInProgress = todo.status === 'in_progress'
 
@@ -124,37 +152,49 @@ function TodoRow({ todo, onCycle }: RowProps): React.JSX.Element {
   // of the imperative content ("Run tests") — matches how free-code's
   // TaskListV2 uses activeForm as the spinner label for the running row.
   const label = isInProgress ? todo.activeForm || todo.content : todo.content
+  const statusLabel =
+    todo.status === 'pending'
+      ? t('todoStatusPending')
+      : todo.status === 'in_progress'
+        ? t('todoStatusInProgress')
+        : t('todoStatusCompleted')
 
   return (
     <li className="relative">
       <div
         className={
-          'flex items-start gap-2.5 rounded-md py-1.5 pl-3 pr-2 text-[13px] transition ' +
+          'group/todo relative flex items-start gap-2.5 rounded-md py-1.5 pl-3 pr-2 text-[12.5px] transition-colors ' +
           (isInProgress
-            ? 'bg-amber-500/[0.06] ring-1 ring-inset ring-amber-500/20'
-            : 'hover:bg-zinc-800/40')
+            ? 'bg-accent/10'
+            : 'hover:bg-muted/40')
         }
       >
+        {/* Active-row accent strip — only shown for in_progress so the
+            currently-running task is impossible to miss in a long list. */}
+        {isInProgress && (
+          <span
+            aria-hidden
+            className="absolute inset-y-1 left-0 w-[2px] rounded-full bg-accent"
+          />
+        )}
+
         <button
           type="button"
           onClick={onCycle}
-          className={
-            'mt-[2px] flex size-4 shrink-0 items-center justify-center rounded-sm font-mono text-[13px] leading-none transition ' +
-            iconClass
-          }
-          aria-label={`Toggle status (currently ${todo.status})`}
-          title={`Status: ${todo.status.replace('_', ' ')}`}
+          className="mt-[1px] flex size-[14px] shrink-0 items-center justify-center transition"
+          aria-label={tf('todosToggleStatus', { status: statusLabel })}
+          title={tf('todosStatusTitle', { status: statusLabel })}
         >
-          {icon}
+          <StatusIcon status={todo.status} />
         </button>
         <span
           className={
-            'min-w-0 flex-1 whitespace-pre-wrap break-words leading-relaxed ' +
+            'min-w-0 flex-1 whitespace-pre-wrap break-words leading-snug ' +
             (isCompleted
-              ? 'text-zinc-600 line-through decoration-zinc-700'
+              ? 'text-muted-foreground/50 line-through decoration-muted-foreground/40'
               : isInProgress
-                ? 'font-medium text-zinc-50'
-                : 'text-zinc-400')
+                ? 'font-medium text-foreground'
+                : 'text-foreground/90')
           }
         >
           {label}
@@ -164,30 +204,66 @@ function TodoRow({ todo, onCycle }: RowProps): React.JSX.Element {
   )
 }
 
-/**
- * Map a TodoStatus to an icon glyph + Tailwind class pair.
- *
- * Icons match the free-code CLI vocabulary (see TaskListV2.tsx:220-241,
- * which uses the `figures` package: `figures.tick`, `squareSmallFilled`,
- * `squareSmall`). We use Unicode equivalents that render cleanly in the
- * browser without pulling in the whole `figures` package:
- *
- *   pending     → ○    (empty)
- *   in_progress → ●    (filled, accent color)
- *   completed   → ✓    (tick, success color)
- */
-function getStatusIcon(status: TodoStatus): {
-  icon: string
-  iconClass: string
-} {
-  switch (status) {
-    case 'completed':
-      return { icon: '✓', iconClass: 'text-emerald-500' }
-    case 'in_progress':
-      return { icon: '●', iconClass: 'text-amber-400' }
-    case 'pending':
-      return { icon: '○', iconClass: 'text-zinc-600 hover:text-zinc-400' }
+function StatusIcon({ status }: { status: TodoStatus }): React.JSX.Element {
+  if (status === 'completed') {
+    return (
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="size-full text-emerald-500"
+        aria-hidden
+      >
+        <circle cx="8" cy="8" r="6" fill="rgb(16 185 129 / 0.18)" stroke="none" />
+        <path d="m5.2 8.2 2 2 3.8-4.2" />
+      </svg>
+    )
   }
+  if (status === 'in_progress') {
+    return (
+      <span className="relative flex size-full items-center justify-center">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent/40" />
+        <span className="relative inline-flex size-[8px] rounded-full bg-accent" />
+      </span>
+    )
+  }
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      className="size-full text-muted-foreground/60 transition group-hover/todo:text-muted-foreground"
+      aria-hidden
+    >
+      <circle cx="8" cy="8" r="5.5" />
+    </svg>
+  )
+}
+
+function ListIcon(): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="size-[13px]"
+      aria-hidden
+    >
+      <line x1="6" y1="4" x2="13" y2="4" />
+      <line x1="6" y1="8" x2="13" y2="8" />
+      <line x1="6" y1="12" x2="13" y2="12" />
+      <circle cx="3.5" cy="4" r="0.8" fill="currentColor" />
+      <circle cx="3.5" cy="8" r="0.8" fill="currentColor" />
+      <circle cx="3.5" cy="12" r="0.8" fill="currentColor" />
+    </svg>
+  )
 }
 
 // Stable empty array reference so the zustand selector doesn't treat
