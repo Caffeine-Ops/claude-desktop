@@ -1,7 +1,18 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
+import { useT, useTFormat } from '../../i18n'
 import { useDialogStore } from '../../stores/dialogs'
 import { useLogsStore, type LogEntry } from '../../stores/logs'
+import { useUiLogsStore, type UiLogEntry } from '../../stores/uiLogs'
+
+/**
+ * Which log channel the dialog is currently viewing. `engine` reads the
+ * IPC-fed engine timeline; `ui` reads the renderer-side breadcrumb
+ * trail (rename clicks, dialog opens, etc). The two stores stay
+ * separate so neither side's "Clear" affects the other and the IPC
+ * inflow path doesn't have to know about UI tagging.
+ */
+type LogChannel = 'engine' | 'ui'
 
 /**
  * LogsDialog
@@ -37,10 +48,18 @@ import { useLogsStore, type LogEntry } from '../../stores/logs'
  * explainer pointing at the "send a message to trigger events".
  */
 export function LogsDialog(): React.JSX.Element | null {
+  const t = useT()
+  const tf = useTFormat()
   const open = useDialogStore((s) => s.open === 'logs')
   const close = useDialogStore((s) => s.closeDialog)
-  const entries = useLogsStore((s) => s.entries)
-  const clear = useLogsStore((s) => s.clear)
+  const engineEntries = useLogsStore((s) => s.entries)
+  const clearEngine = useLogsStore((s) => s.clear)
+  const uiEntries = useUiLogsStore((s) => s.entries)
+  const clearUi = useUiLogsStore((s) => s.clear)
+
+  // Active tab. Default to engine because that's the existing behavior
+  // and it's the one with cold-start latency answers.
+  const [channel, setChannel] = useState<LogChannel>('engine')
 
   // Esc closes.
   useEffect(() => {
@@ -55,28 +74,35 @@ export function LogsDialog(): React.JSX.Element | null {
     return () => window.removeEventListener('keydown', onKey)
   }, [open, close])
 
-  // Precompute deltas + absolute-from-first offsets once per open. We
-  // project into a view model so the render pass doesn't need to reach
-  // back into the store for each row.
+  // Engine entries arrive shape-compatible already; UI entries lack the
+  // optional `sessionId` field. Project both into a single TimelineRow
+  // shape so the rendering grid stays one code path.
+  const sourceEntries: ReadonlyArray<LogEntry | UiLogEntry> =
+    channel === 'engine' ? engineEntries : uiEntries
+
   const rows = useMemo<TimelineRow[]>(() => {
-    if (entries.length === 0) return []
-    const first = entries[0]!.ts
+    if (sourceEntries.length === 0) return []
+    const first = sourceEntries[0]!.ts
     const out: TimelineRow[] = []
-    for (let i = 0; i < entries.length; i++) {
-      const e = entries[i]!
-      const prev = i === 0 ? e : entries[i - 1]!
+    for (let i = 0; i < sourceEntries.length; i++) {
+      const e = sourceEntries[i]!
+      const prev = i === 0 ? e : sourceEntries[i - 1]!
       out.push({
         id: e.id,
         ts: e.ts,
         fromStart: e.ts - first,
         deltaPrev: e.ts - prev.ts,
         label: e.label,
-        sessionId: e.sessionId,
+        sessionId:
+          'sessionId' in e ? (e as LogEntry).sessionId : undefined,
         details: formatDetails(e.details)
       })
     }
     return out
-  }, [entries])
+  }, [sourceEntries])
+
+  const activeCount = rows.length
+  const clear = channel === 'engine' ? clearEngine : clearUi
 
   if (!open) return null
 
@@ -84,39 +110,68 @@ export function LogsDialog(): React.JSX.Element | null {
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Engine log timeline"
+      aria-label={t('logsDialogAria')}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) close()
       }}
     >
-      <div className="flex h-[80vh] max-h-[900px] w-[900px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-xl border border-zinc-800 bg-[#0e0e11] shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
-          <div>
-            <div className="text-[14px] font-semibold text-zinc-100">
-              Engine timeline
+      <div className="flex h-[80vh] max-h-[900px] w-[900px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
+        {/* Header — title + tab switcher + clear/close.
+            The two-row layout keeps the title prominent on top while the
+            tabs sit immediately below so switching channels feels like
+            tabs in a browser dev panel rather than a dropdown buried in
+            the corner. */}
+        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[14px] font-semibold text-foreground">
+              {channel === 'engine' ? t('logsHeaderEngine') : t('logsHeaderUi')}
             </div>
-            <div className="text-[11px] text-zinc-500">
-              {entries.length === 0
-                ? 'No events yet — start a chat to record cli lifecycle'
-                : `${entries.length} event${entries.length === 1 ? '' : 's'}`}
+            <div className="text-[11px] text-muted-foreground/80">
+              {channel === 'engine'
+                ? activeCount === 0
+                  ? t('logsEngineEmpty')
+                  : tf('logsEngineCount', { count: activeCount })
+                : activeCount === 0
+                  ? t('logsUiEmpty')
+                  : tf('logsUiCount', { count: activeCount })}
+            </div>
+            <div className="mt-2 flex items-center gap-1">
+              <TabButton
+                active={channel === 'engine'}
+                onClick={() => setChannel('engine')}
+                count={engineEntries.length}
+              >
+                {t('logsTabEngine')}
+              </TabButton>
+              <TabButton
+                active={channel === 'ui'}
+                onClick={() => setChannel('ui')}
+                count={uiEntries.length}
+              >
+                {t('logsTabUi')}
+              </TabButton>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
               onClick={clear}
-              disabled={entries.length === 0}
-              className="rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[11px] font-medium text-zinc-300 transition hover:border-zinc-700 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={activeCount === 0}
+              title={
+                channel === 'engine'
+                  ? t('logsClearTitleEngine')
+                  : t('logsClearTitleUi')
+              }
+              className="rounded-md border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-foreground/80 transition hover:border-input hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Clear
+              {t('logsClear')}
             </button>
             <button
               type="button"
               onClick={close}
-              aria-label="Close"
-              className="flex size-7 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-800/80 hover:text-zinc-200"
+              aria-label={t('logsClose')}
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground/80 transition hover:bg-muted/80 hover:text-foreground"
             >
               ✕
             </button>
@@ -128,20 +183,17 @@ export function LogsDialog(): React.JSX.Element | null {
             different widths. */}
         <div className="flex-1 overflow-y-auto font-mono text-[11.5px]">
           {rows.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center text-[12px] text-zinc-500">
-              <div className="font-medium text-zinc-400">
-                Timeline is empty
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center text-[12px] text-muted-foreground/80">
+              <div className="font-medium text-muted-foreground">
+                {t('logsEmptyTitle')}
               </div>
-              <div className="text-[11px] leading-relaxed text-zinc-600">
-                Events arrive as the engine switches sessions and spawns the
-                cli.
-                <br />
-                Pick a chat or send a message to start recording.
+              <div className="whitespace-pre-line text-[11px] leading-relaxed text-muted-foreground/60">
+                {t('logsEmptyHint')}
               </div>
             </div>
           ) : (
             <div className="grid grid-cols-[auto_auto_auto_1fr] gap-x-3 px-4 py-2">
-              <HeaderRow />
+              <HeaderRow t={t} />
               {rows.map((r) => (
                 <Row key={r.id} row={r} />
               ))}
@@ -150,14 +202,15 @@ export function LogsDialog(): React.JSX.Element | null {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-zinc-800 bg-zinc-950/60 px-5 py-2 text-[11px] text-zinc-500">
+        <div className="flex items-center justify-between border-t border-border bg-background/60 px-5 py-2 text-[11px] text-muted-foreground/80">
           <span>
-            <Kbd>Esc</Kbd> close · newest event at bottom · Δ = gap from
-            previous event · T = offset from first event
+            <Kbd>Esc</Kbd> {t('logsFooterHint')}
           </span>
-          <span className="font-mono text-zinc-600">
+          <span className="font-mono text-muted-foreground/60">
             {rows.length > 0
-              ? `span ${formatMs(rows[rows.length - 1]!.fromStart)}`
+              ? tf('logsFooterSpan', {
+                  span: formatMs(rows[rows.length - 1]!.fromStart)
+                })
               : ''}
           </span>
         </div>
@@ -176,20 +229,65 @@ interface TimelineRow {
   details: string
 }
 
-function HeaderRow(): React.JSX.Element {
+/**
+ * Pill-style tab toggle for the log channel switcher. Active tab gets a
+ * solid bg + light text; inactive stays muted. The `count` chip lets
+ * the user see at a glance whether the other channel has new events
+ * worth checking even without switching to it.
+ */
+function TabButton({
+  active,
+  onClick,
+  count,
+  children
+}: {
+  active: boolean
+  onClick: () => void
+  count: number
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        'flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium transition ' +
+        (active
+          ? 'bg-muted text-foreground'
+          : 'text-muted-foreground/80 hover:bg-muted/60 hover:text-foreground/80')
+      }
+    >
+      <span>{children}</span>
+      <span
+        className={
+          'rounded px-1 text-[10px] tabular-nums ' +
+          (active ? 'bg-secondary text-foreground' : 'bg-card text-muted-foreground/60')
+        }
+      >
+        {count}
+      </span>
+    </button>
+  )
+}
+
+function HeaderRow({
+  t
+}: {
+  t: (key: import('../../i18n').StringKey) => string
+}): React.JSX.Element {
   return (
     <>
-      <div className="border-b border-zinc-800 pb-1 text-[10px] uppercase tracking-wider text-zinc-600">
-        Time
+      <div className="border-b border-border pb-1 text-[10px] uppercase tracking-wider text-muted-foreground/60">
+        {t('logsColTime')}
       </div>
-      <div className="border-b border-zinc-800 pb-1 text-right text-[10px] uppercase tracking-wider text-zinc-600">
-        Δ
+      <div className="border-b border-border pb-1 text-right text-[10px] uppercase tracking-wider text-muted-foreground/60">
+        {t('logsColDelta')}
       </div>
-      <div className="border-b border-zinc-800 pb-1 text-right text-[10px] uppercase tracking-wider text-zinc-600">
-        T
+      <div className="border-b border-border pb-1 text-right text-[10px] uppercase tracking-wider text-muted-foreground/60">
+        {t('logsColFromStart')}
       </div>
-      <div className="border-b border-zinc-800 pb-1 text-[10px] uppercase tracking-wider text-zinc-600">
-        Event
+      <div className="border-b border-border pb-1 text-[10px] uppercase tracking-wider text-muted-foreground/60">
+        {t('logsColEvent')}
       </div>
     </>
   )
@@ -202,25 +300,25 @@ function Row({ row }: { row: TimelineRow }): React.JSX.Element {
   const slow = row.deltaPrev >= 100
   return (
     <>
-      <div className="py-0.5 text-zinc-500">{formatClock(row.ts)}</div>
+      <div className="py-0.5 text-muted-foreground/80">{formatClock(row.ts)}</div>
       <div
         className={
           'py-0.5 text-right tabular-nums ' +
-          (slow ? 'font-semibold text-amber-300' : 'text-zinc-600')
+          (slow ? 'font-semibold text-amber-300' : 'text-muted-foreground/60')
         }
       >
         {formatMs(row.deltaPrev)}
       </div>
-      <div className="py-0.5 text-right tabular-nums text-zinc-500">
+      <div className="py-0.5 text-right tabular-nums text-muted-foreground/80">
         {formatMs(row.fromStart)}
       </div>
-      <div className="py-0.5 text-zinc-200">
+      <div className="py-0.5 text-foreground">
         <span className={labelColorClass(row.label)}>{row.label}</span>
         {row.details ? (
-          <span className="ml-2 text-zinc-500">{row.details}</span>
+          <span className="ml-2 text-muted-foreground/80">{row.details}</span>
         ) : null}
         {row.sessionId ? (
-          <span className="ml-2 text-zinc-700">
+          <span className="ml-2 text-muted-foreground/60">
             [{row.sessionId.slice(0, 8)}]
           </span>
         ) : null}
@@ -242,7 +340,7 @@ function labelColorClass(label: string): string {
   if (label.startsWith('teardown')) return 'text-rose-300'
   if (label.startsWith('send')) return 'text-amber-200'
   if (label.startsWith('turn')) return 'text-amber-200'
-  return 'text-zinc-200'
+  return 'text-foreground'
 }
 
 function formatClock(ts: number): string {
@@ -271,7 +369,9 @@ function formatMs(ms: number): string {
  * Keeps it readable in the single-line row — nested objects are
  * JSON-stringified, arrays are comma-joined.
  */
-function formatDetails(details?: LogEntry['details']): string {
+function formatDetails(
+  details?: Record<string, unknown>
+): string {
   if (!details) return ''
   const parts: string[] = []
   for (const [k, v] of Object.entries(details)) {
@@ -290,7 +390,7 @@ function formatDetails(details?: LogEntry['details']): string {
 
 function Kbd({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <kbd className="rounded border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
+    <kbd className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
       {children}
     </kbd>
   )

@@ -81,12 +81,12 @@ export function SkillsDialog(): React.JSX.Element | null {
         if (e.target === e.currentTarget) close()
       }}
     >
-      <div className="flex h-[70vh] max-h-[640px] w-[560px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-xl border border-zinc-800 bg-[#0e0e11] shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
+      <div className="flex h-[70vh] max-h-[640px] w-[560px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <div>
-            <div className="text-[14px] font-semibold text-zinc-100">Skills</div>
-            <div className="text-[11px] text-zinc-500">
+            <div className="text-[14px] font-semibold text-foreground">Skills</div>
+            <div className="text-[11px] text-muted-foreground/80">
               {loading
                 ? 'Loading…'
                 : isEmptyOnLoad
@@ -98,7 +98,7 @@ export function SkillsDialog(): React.JSX.Element | null {
             type="button"
             onClick={close}
             aria-label="Close"
-            className="flex size-7 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-800/80 hover:text-zinc-200"
+            className="flex size-7 items-center justify-center rounded-md text-muted-foreground/80 transition hover:bg-muted/80 hover:text-foreground"
           >
             ✕
           </button>
@@ -106,14 +106,14 @@ export function SkillsDialog(): React.JSX.Element | null {
 
         {/* Filter input — visible only when there's actually content. */}
         {!isEmptyOnLoad && (
-          <div className="border-b border-zinc-800 px-5 py-2">
+          <div className="border-b border-border px-5 py-2">
             <input
               autoFocus
               type="text"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="Type to filter…"
-              className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-1.5 font-mono text-[12.5px] text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-700 focus:outline-none"
+              className="w-full rounded-md border border-border bg-background px-3 py-1.5 font-mono text-[12.5px] text-foreground placeholder:text-muted-foreground/60 focus:border-input focus:outline-none"
             />
           </div>
         )}
@@ -121,22 +121,22 @@ export function SkillsDialog(): React.JSX.Element | null {
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-2 py-2">
           {loading && (
-            <div className="px-3 py-4 text-[12.5px] text-zinc-500">
+            <div className="px-3 py-4 text-[12.5px] text-muted-foreground/80">
               Loading skills…
             </div>
           )}
 
           {isEmptyOnLoad && (
-            <div className="px-5 py-8 text-center text-[12.5px] text-zinc-500">
-              <div className="mb-2 font-medium text-zinc-400">
+            <div className="px-5 py-8 text-center text-[12.5px] text-muted-foreground/80">
+              <div className="mb-2 font-medium text-muted-foreground">
                 No skills loaded yet
               </div>
-              <div className="text-[11.5px] text-zinc-600">
+              <div className="text-[11.5px] text-muted-foreground/60">
                 Send any message first to start fusion-code, then re-open
                 <br />
                 this dialog. Skills will populate from the session's first
                 <br />
-                <code className="rounded bg-zinc-900 px-1 py-0.5 font-mono text-[10.5px]">
+                <code className="rounded bg-card px-1 py-0.5 font-mono text-[10.5px]">
                   system init
                 </code>{' '}
                 message.
@@ -145,9 +145,9 @@ export function SkillsDialog(): React.JSX.Element | null {
           )}
 
           {!loading && !isEmptyOnLoad && filtered.length === 0 && (
-            <div className="px-3 py-4 text-[12.5px] text-zinc-500">
+            <div className="px-3 py-4 text-[12.5px] text-muted-foreground/80">
               No matches for{' '}
-              <code className="rounded bg-zinc-900 px-1 py-0.5 font-mono text-[11px] text-zinc-300">
+              <code className="rounded bg-card px-1 py-0.5 font-mono text-[11px] text-foreground/80">
                 {filter}
               </code>
             </div>
@@ -157,9 +157,9 @@ export function SkillsDialog(): React.JSX.Element | null {
             <ul className="space-y-0.5">
               {filtered.map((skill) => (
                 <li key={skill}>
-                  <div className="flex items-center gap-3 rounded-md px-3 py-1.5 text-[13px] hover:bg-zinc-800/60">
-                    <span className="size-1.5 shrink-0 rounded-full bg-zinc-600" />
-                    <span className="truncate font-mono text-zinc-200">
+                  <div className="flex items-center gap-3 rounded-md px-3 py-1.5 text-[13px] hover:bg-muted/60">
+                    <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/80" />
+                    <span className="truncate font-mono text-foreground">
                       {skill}
                     </span>
                   </div>
@@ -170,12 +170,12 @@ export function SkillsDialog(): React.JSX.Element | null {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-zinc-800 bg-zinc-950/60 px-5 py-2 text-[11px] text-zinc-500">
+        <div className="flex items-center justify-between border-t border-border bg-background/60 px-5 py-2 text-[11px] text-muted-foreground/80">
           <span>
             <Kbd>Esc</Kbd> close
           </span>
           {meta?.model && (
-            <span className="truncate font-mono text-zinc-600">{meta.model}</span>
+            <span className="truncate font-mono text-muted-foreground/60">{meta.model}</span>
           )}
         </div>
       </div>
@@ -185,7 +185,7 @@ export function SkillsDialog(): React.JSX.Element | null {
 
 function Kbd({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <kbd className="rounded border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
+    <kbd className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
       {children}
     </kbd>
   )

@@ -147,15 +147,15 @@ export function PermissionDialog(): React.JSX.Element | null {
       accent="amber"
     >
       <div className="px-5 pb-4 pt-4">
-        <div className="mb-2 text-[14px] font-semibold text-zinc-100">
+        <div className="mb-2 text-[14px] font-semibold text-foreground">
           {pending.displayName}
         </div>
-        <div className="mb-4 max-h-48 overflow-auto rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-[12px] leading-relaxed text-zinc-300">
+        <div className="mb-4 max-h-48 overflow-auto rounded-md border border-border bg-background px-3 py-2 font-mono text-[12px] leading-relaxed text-foreground/80">
           <pre className="whitespace-pre-wrap break-words">
             {pending.summary || '(no parameters)'}
           </pre>
         </div>
-        <div className="mb-2 text-[13px] text-zinc-300">Do you want to proceed?</div>
+        <div className="mb-2 text-[13px] text-foreground/80">Do you want to proceed?</div>
         <div className="flex flex-col gap-1">
           <DecisionButton
             index={1}
@@ -180,11 +180,11 @@ export function PermissionDialog(): React.JSX.Element | null {
       </div>
 
       {/* Footer keyboard hints */}
-      <div className="flex items-center justify-between border-t border-zinc-800 bg-zinc-950/60 px-5 py-2 text-[11px] text-zinc-500">
+      <div className="flex items-center justify-between border-t border-border bg-background/60 px-5 py-2 text-[11px] text-muted-foreground/80">
         <span>
           <Kbd>Esc</Kbd> cancel · <Kbd>↵</Kbd> yes
         </span>
-        <span className="truncate font-mono text-zinc-600">{pending.toolName}</span>
+        <span className="truncate font-mono text-muted-foreground/60">{pending.toolName}</span>
       </div>
     </DialogShell>
   )
@@ -209,8 +209,8 @@ function DialogShell({
   accent: 'amber' | 'blue'
   children: React.ReactNode
 }): React.JSX.Element {
-  const dotColor = accent === 'amber' ? 'bg-amber-400' : 'bg-blue-400'
-  const textColor = accent === 'amber' ? 'text-amber-400' : 'text-blue-400'
+  const dotColor = accent === 'amber' ? 'bg-accent' : 'bg-accent'
+  const textColor = accent === 'amber' ? 'text-amber-400' : 'text-accent'
   return (
     <div
       role="dialog"
@@ -218,8 +218,8 @@ function DialogShell({
       aria-label={`${toolName} permission`}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
     >
-      <div className="flex max-h-[calc(100vh-32px)] w-[560px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-xl border border-zinc-800 bg-[#0e0e11] shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
-        <div className="flex shrink-0 items-center gap-2 border-b border-zinc-800 px-5 py-3">
+      <div className="flex max-h-[calc(100vh-32px)] w-[560px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-5 py-3">
           <span className={`inline-block size-2 animate-pulse rounded-full ${dotColor}`} />
           <span className={`text-[11px] font-semibold uppercase tracking-[0.12em] ${textColor}`}>
             {headerLabel}
@@ -254,16 +254,16 @@ function DecisionButton({
       className={
         'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left text-[13px] transition focus:outline-none focus:ring-2 focus:ring-offset-0 ' +
         (accent
-          ? 'border-blue-500/40 bg-blue-600/15 text-blue-100 hover:border-blue-500 hover:bg-blue-600/25 focus:ring-blue-500/60'
-          : 'border-zinc-800 bg-zinc-900/60 text-zinc-200 hover:border-zinc-700 hover:bg-zinc-800 focus:ring-zinc-500/50')
+          ? 'border-accent/40 bg-accent/15 text-accent-foreground hover:border-accent hover:bg-accent/25 focus:ring-ring/60'
+          : 'border-border bg-card/60 text-foreground hover:border-input hover:bg-muted focus:ring-ring/50')
       }
     >
       <span
         className={
           'inline-flex size-5 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold ' +
           (accent
-            ? 'bg-blue-500/40 text-blue-100'
-            : 'bg-zinc-800 text-zinc-400')
+            ? 'bg-accent/40 text-accent-foreground'
+            : 'bg-muted text-muted-foreground')
         }
       >
         {index}
@@ -275,7 +275,7 @@ function DecisionButton({
 
 export function Kbd({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <kbd className="rounded border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
+    <kbd className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
       {children}
     </kbd>
   )

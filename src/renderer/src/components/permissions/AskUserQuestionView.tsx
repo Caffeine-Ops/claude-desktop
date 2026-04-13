@@ -332,10 +332,10 @@ export function AskUserQuestionView({
   if (questions.length === 0) {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-4 pt-4">
-        <div className="mb-2 text-[14px] font-semibold text-zinc-100">
+        <div className="mb-2 text-[14px] font-semibold text-foreground">
           Claude has a question
         </div>
-        <div className="mb-4 max-h-48 overflow-auto rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-[12px] leading-relaxed text-zinc-300">
+        <div className="mb-4 max-h-48 overflow-auto rounded-md border border-border bg-background px-3 py-2 font-mono text-[12px] leading-relaxed text-foreground/80">
           <pre className="whitespace-pre-wrap break-words">
             {safeStringify(input)}
           </pre>
@@ -344,14 +344,14 @@ export function AskUserQuestionView({
           <button
             type="button"
             onClick={() => onSubmit({ answers: {} })}
-            className="flex w-full items-center gap-3 rounded-md border border-blue-500/40 bg-blue-600/15 px-3 py-2 text-left text-[13px] text-blue-100 transition hover:border-blue-500 hover:bg-blue-600/25"
+            className="flex w-full items-center gap-3 rounded-md border border-accent/40 bg-accent/15 px-3 py-2 text-left text-[13px] text-accent-foreground transition hover:border-accent hover:bg-accent/25"
           >
             Continue
           </button>
           <button
             type="button"
             onClick={onCancel}
-            className="flex w-full items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-left text-[13px] text-zinc-200 transition hover:border-zinc-700 hover:bg-zinc-800"
+            className="flex w-full items-center gap-3 rounded-md border border-border bg-card/60 px-3 py-2 text-left text-[13px] text-foreground transition hover:border-input hover:bg-muted"
           >
             Cancel
           </button>
@@ -375,14 +375,14 @@ export function AskUserQuestionView({
           viewport's remaining budget. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-3 pt-4">
         {/* Header: question counter + optional chip header */}
-        <div className="mb-3 flex items-center gap-2 text-[11px] text-zinc-500">
+        <div className="mb-3 flex items-center gap-2 text-[11px] text-muted-foreground/80">
           {totalQuestions > 1 && (
             <span className="font-mono tabular-nums">
               Question {qIndex + 1} / {totalQuestions}
             </span>
           )}
           {current.header && (
-            <span className="rounded border border-zinc-800 bg-zinc-900/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-400">
+            <span className="rounded border border-border bg-card/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
               {current.header}
             </span>
           )}
@@ -390,7 +390,7 @@ export function AskUserQuestionView({
 
         {/* The question itself. whitespace-pre-wrap because models
             sometimes drop in \n to group related context. */}
-        <div className="mb-4 whitespace-pre-wrap break-words text-[14px] leading-relaxed text-zinc-100">
+        <div className="mb-4 whitespace-pre-wrap break-words text-[14px] leading-relaxed text-foreground">
           {current.question}
         </div>
 
@@ -436,7 +436,7 @@ export function AskUserQuestionView({
       {/* Footer — pinned to the bottom via `shrink-0` so the scrollable
           body above never overlaps the keyboard hint row, no matter
           how tall the question / option list gets. */}
-      <div className="flex shrink-0 items-center justify-between border-t border-zinc-800 bg-zinc-950/60 px-5 py-2 text-[11px] text-zinc-500">
+      <div className="flex shrink-0 items-center justify-between border-t border-border bg-background/60 px-5 py-2 text-[11px] text-muted-foreground/80">
         <span className="flex items-center gap-2">
           {otherEditing ? (
             <>
@@ -454,7 +454,7 @@ export function AskUserQuestionView({
             </>
           )}
         </span>
-        <span className="truncate font-mono text-zinc-600">AskUserQuestion</span>
+        <span className="truncate font-mono text-muted-foreground/60">AskUserQuestion</span>
       </div>
     </div>
   )
@@ -485,14 +485,14 @@ function OptionRow({
       className={
         'flex w-full items-start gap-3 rounded-md border px-3 py-2 text-left text-[13px] transition focus:outline-none ' +
         (highlighted
-          ? 'border-blue-500/40 bg-blue-600/15 text-blue-100'
-          : 'border-zinc-800 bg-zinc-900/60 text-zinc-200 hover:border-zinc-700 hover:bg-zinc-800')
+          ? 'border-accent/40 bg-accent/15 text-accent-foreground'
+          : 'border-border bg-card/60 text-foreground hover:border-input hover:bg-muted')
       }
     >
       <span
         className={
           'inline-flex size-5 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold ' +
-          (highlighted ? 'bg-blue-500/40 text-blue-100' : 'bg-zinc-800 text-zinc-400')
+          (highlighted ? 'bg-accent/40 text-accent-foreground' : 'bg-muted text-muted-foreground')
         }
       >
         {index}
@@ -500,7 +500,7 @@ function OptionRow({
       <span className="min-w-0 flex-1">
         <div className="truncate font-medium">{label}</div>
         {description && (
-          <div className="mt-0.5 whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-zinc-500">
+          <div className="mt-0.5 whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-muted-foreground/80">
             {description}
           </div>
         )}
@@ -561,17 +561,17 @@ function OtherRow({
         if (!editing) onClickRow()
       }}
       className={
-        'flex w-full cursor-text items-start gap-3 rounded-md border px-3 py-2 text-left text-[13px] transition focus-within:border-blue-500/40 focus-within:bg-blue-600/15 ' +
+        'flex w-full cursor-text items-start gap-3 rounded-md border px-3 py-2 text-left text-[13px] transition focus-within:border-accent/40 focus-within:bg-accent/15 ' +
         (active
-          ? 'border-blue-500/40 bg-blue-600/15 text-blue-100'
-          : 'border-zinc-800 bg-zinc-900/60 text-zinc-200 hover:border-zinc-700 hover:bg-zinc-800')
+          ? 'border-accent/40 bg-accent/15 text-accent-foreground'
+          : 'border-border bg-card/60 text-foreground hover:border-input hover:bg-muted')
       }
     >
       <span
         aria-hidden
         className={
           'inline-flex size-5 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold ' +
-          (active ? 'bg-blue-500/40 text-blue-100' : 'bg-zinc-800 text-zinc-400')
+          (active ? 'bg-accent/40 text-accent-foreground' : 'bg-muted text-muted-foreground')
         }
       >
         {/* Plus glyph so the Other row reads "add your own answer"
@@ -591,20 +591,20 @@ function OtherRow({
             onBlur={onBlur}
             onClick={(e) => e.stopPropagation()}
             placeholder={OTHER_PLACEHOLDER}
-            className="w-full bg-transparent font-medium text-blue-100 placeholder:text-zinc-500 focus:outline-none"
+            className="w-full bg-transparent font-medium text-accent-foreground placeholder:text-muted-foreground/80 focus:outline-none"
           />
         ) : (
           <div
             className={
               'truncate font-medium ' +
-              (active ? 'text-blue-100' : 'text-zinc-300')
+              (active ? 'text-accent-foreground' : 'text-foreground/80')
             }
           >
             {draft.length > 0 ? draft : 'Other'}
           </div>
         )}
         {!editing && (
-          <div className="mt-0.5 whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-zinc-500">
+          <div className="mt-0.5 whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-muted-foreground/80">
             Type your own answer in your own words.
           </div>
         )}
