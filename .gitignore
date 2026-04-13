@@ -8,3 +8,4 @@ dist
 .vite
 env.json
 .gstack/
+*.tsbuildinfo
