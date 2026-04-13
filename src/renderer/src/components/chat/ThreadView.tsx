@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   ThreadPrimitive,
   MessagePrimitive,
@@ -7,9 +14,10 @@ import {
   useAuiState
 } from '@assistant-ui/react'
 import type { Attachment, Unstable_TriggerItem } from '@assistant-ui/core'
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 
 import type { SessionMeta } from '../../../../shared/types'
+import { useT } from '../../i18n'
 import { useChatStore } from '../../stores/chat'
 import { buildSlashAdapter, slashFormatter } from '../../composer/slashAdapter'
 import {
@@ -18,6 +26,7 @@ import {
 } from '../../composer/fileMentionAdapter'
 import { ThinkingSpinner } from './ThinkingSpinner'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import hljs from 'highlight.js/lib/common'
 
 /**
  * ThreadView
@@ -53,19 +62,24 @@ import { AssistantMarkdown } from './AssistantMarkdown'
  */
 export function ThreadView(): React.JSX.Element {
   return (
-    <ThreadPrimitive.Root className="flex h-full min-h-0 w-full flex-1 flex-col bg-transparent">
+    <ThreadPrimitive.Root className="relative flex h-full min-h-0 w-full flex-1 flex-col bg-transparent">
       {/* Scrollable message area. min-h-0 + flex-1 is the canonical
           flexbox pattern that lets the viewport shrink correctly inside
           another flex column. */}
       <ThreadPrimitive.Viewport
         autoScroll
-        className="min-h-0 flex-1 overflow-y-auto"
+        // Bottom mask fades the last ~56px of the scrollable viewport
+        // into transparency so messages don't butt up hard against the
+        // composer. The inner column carries matching `pb-20` so the
+        // final message stays fully legible once you scroll all the
+        // way down — only the padding gets eaten by the mask.
+        className="min-h-0 flex-1 overflow-y-auto [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%-56px),transparent_100%)]"
       >
         {/* Inner column caps reading width and centers messages. The
             `min-h-full` lets the empty-state `flex-1` stretch so the
             hero text lands at the vertical center of the viewport even
             when there are no messages yet. */}
-        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-6 pb-8 pt-8">
+        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-6 pb-20 pt-8">
           <ThreadPrimitive.Empty>
             <EmptyState />
           </ThreadPrimitive.Empty>
@@ -80,33 +94,85 @@ export function ThreadView(): React.JSX.Element {
         </div>
       </ThreadPrimitive.Viewport>
 
+      <ScrollToBottomButton />
+
       {/* Composer dock — outside the scroll viewport so it's always
           pinned to the bottom of Root regardless of message count. */}
-      <div className="shrink-0 border-t border-zinc-800/70 bg-[#0b0b0d]/95 px-6 py-4 backdrop-blur">
+      <div className="shrink-0 border-t border-border/70 bg-background/95 px-6 py-4 backdrop-blur">
         <Composer />
       </div>
     </ThreadPrimitive.Root>
   )
 }
 
+/**
+ * Floating "scroll to bottom" affordance.
+ *
+ * Built on `ThreadPrimitive.ScrollToBottom`, which auto-disables
+ * itself when the viewport is already pinned to the end of the
+ * thread. We key on that `disabled` attribute with Tailwind's
+ * `disabled:` variant to fade + lift the button out of view, so no
+ * extra state subscription is needed — the primitive handles the
+ * scroll math and we just react to the resulting disabled flag.
+ *
+ * Positioned absolutely inside Thread.Root (above the composer dock)
+ * so it floats over the fading bottom of the message list without
+ * pushing other layout around.
+ */
+function ScrollToBottomButton(): React.JSX.Element {
+  return (
+    <ThreadPrimitive.ScrollToBottom asChild>
+      <button
+        type="button"
+        aria-label="Scroll to bottom"
+        className={
+          'pointer-events-auto absolute left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-lg shadow-black/10 backdrop-blur transition-all duration-200 ease-out hover:border-accent/60 hover:bg-background hover:text-accent active:scale-95 ' +
+          // Composer dock height is roughly ~72-88px; 96px keeps the
+          // button floating clearly above it without overlapping.
+          'bottom-[96px] ' +
+          // When already at bottom, the primitive sets `disabled`.
+          // Fade + lift + disable pointer so it doesn't trap clicks.
+          'disabled:pointer-events-none disabled:translate-y-2 disabled:opacity-0'
+        }
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M12 5v14" />
+          <path d="m6 13 6 6 6-6" />
+        </svg>
+      </button>
+    </ThreadPrimitive.ScrollToBottom>
+  )
+}
+
 /* ───────────────────────── EmptyState ───────────────────────── */
 
 function EmptyState(): React.JSX.Element {
+  const t = useT()
   return (
     <div className="flex flex-1 flex-col items-center justify-center text-center">
-      <div className="mb-3 text-[28px] font-semibold text-zinc-100">
-        Fusion Code Desktop
+      <div className="mb-3 text-[28px] font-semibold text-foreground">
+        {t('emptyStateTitle')}
       </div>
-      <p className="max-w-md text-sm text-zinc-500">
-        Ask anything. Try{' '}
-        <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-[12.5px] font-mono text-zinc-300">
-          查看我电脑桌面有哪些文件夹
-        </code>{' '}
-        or{' '}
-        <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-[12.5px] font-mono text-zinc-300">
+      <p className="max-w-md text-sm text-muted-foreground/80">
+        {t('emptyStateHintBefore')}
+        <code className="rounded bg-muted px-1.5 py-0.5 text-[12.5px] font-mono text-foreground/80">
+          {t('emptyStateExampleAsk')}
+        </code>
+        {t('emptyStateHintMiddle')}
+        <code className="rounded bg-muted px-1.5 py-0.5 text-[12.5px] font-mono text-foreground/80">
           /help
         </code>
-        .
+        {t('emptyStateHintAfter')}
       </p>
     </div>
   )
@@ -135,7 +201,7 @@ function UserMessage(): React.JSX.Element {
           Text: () => null
         }}
       />
-      <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl bg-blue-600/90 px-4 py-2.5 text-[14px] leading-relaxed text-white empty:hidden">
+      <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl bg-accent/90 px-4 py-2.5 text-[14px] leading-relaxed text-white empty:hidden">
         <MessagePrimitive.Parts
           unstable_showEmptyOnNonTextEnd={false}
           components={{
@@ -167,7 +233,9 @@ function UserImagePart({
   image: string
   filename?: string
 }): React.JSX.Element {
+  const t = useT()
   const [open, setOpen] = useState(false)
+  const altText = filename ?? t('imageAttachedAlt')
 
   useEffect(() => {
     if (!open) return
@@ -188,52 +256,94 @@ function UserImagePart({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-block max-w-[80%] cursor-zoom-in overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900/70 transition hover:border-zinc-500"
-        title={filename ?? 'Attached image'}
+        className="inline-block max-w-[80%] cursor-zoom-in overflow-hidden rounded-xl border border-input bg-card/70 transition hover:border-input"
+        title={altText}
       >
         <img
           src={image}
-          alt={filename ?? 'Attached image'}
+          alt={altText}
           className="max-h-[220px] max-w-full object-cover"
         />
       </button>
-      {open && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={filename ?? 'Image preview'}
-          onClick={() => setOpen(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8 backdrop-blur-sm"
-        >
-          <img
-            src={image}
-            alt={filename ?? 'Attached image'}
-            onClick={(e) => e.stopPropagation()}
-            className="max-h-full max-w-full cursor-zoom-out rounded-lg shadow-2xl"
-          />
-          <button
-            type="button"
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-label={filename ?? t('imagePreviewAria')}
             onClick={() => setOpen(false)}
-            aria-label="Close preview"
-            className="fixed right-5 top-5 flex size-9 items-center justify-center rounded-full bg-zinc-900/80 text-zinc-200 backdrop-blur transition hover:bg-zinc-800"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            // Full-bleed backdrop: dark tint + strong blur so the chat
+            // behind the modal recedes without being pitch black (pure
+            // black loses all depth cues for photos with black pixels).
+            className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-md"
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+            {/* Image wrapper. stopPropagation so clicks on the image
+                itself don't bubble to the backdrop dismiss. Cap at
+                90vw / 85vh so the image always breathes — the old
+                `max-h/w-full + p-8` left the image cramped against
+                the close button on short viewports. */}
+            <motion.div
+              onClick={(e) => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.97, y: 4 }}
+              transition={{ type: 'spring', stiffness: 260, damping: 26 }}
+              className="relative flex max-h-[85vh] max-w-[90vw] flex-col items-center"
             >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-      )}
+              <img
+                src={image}
+                alt={altText}
+                onClick={() => setOpen(false)}
+                // `rounded-xl` + hairline white ring gives the image a
+                // clean edge against the blurred backdrop; `shadow-2xl`
+                // alone was invisible on a near-black overlay. The
+                // cursor-zoom-out hints that clicking the image closes.
+                className="max-h-[85vh] max-w-[90vw] cursor-zoom-out rounded-xl object-contain shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)] ring-1 ring-white/10"
+              />
+              {/* Filename caption pill. Only shown when we actually
+                  know the name — pasted clipboard images have none. */}
+              {filename && (
+                <div className="mt-3 max-w-full truncate rounded-full border border-border/60 bg-card/80 px-3 py-1 font-mono text-[11px] text-muted-foreground backdrop-blur-sm">
+                  {filename}
+                </div>
+              )}
+            </motion.div>
+
+            {/* Close button — offset from the corner, high-contrast
+                pill that reads on both light + dark themes. Stopping
+                propagation so the button click doesn't double-fire
+                (backdrop dismiss + button handler). */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                setOpen(false)
+              }}
+              aria-label={t('imagePreviewClose')}
+              className="fixed right-6 top-6 flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-lg backdrop-blur-md transition hover:border-input hover:bg-muted"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   )
 }
@@ -256,7 +366,15 @@ function UserImagePart({
 function AssistantMessage(): React.JSX.Element {
   return (
     <MessagePrimitive.Root className="mb-6 flex w-full flex-col gap-3">
+      {/* unstable_showEmptyOnNonTextEnd={false}: without this, Empty
+          (= ThinkingSpinner) fires after every part whose type isn't
+          text — i.e. after every tool-call. A turn that's [Bash, Grep,
+          Glob, Read, ...] would then render a Thinking row between
+          every pair of tools, all reading the same elapsed seconds
+          because they share the global turnStartedAt. We only want
+          the spinner to appear in the genuine "no parts yet" gap. */}
       <MessagePrimitive.Parts
+        unstable_showEmptyOnNonTextEnd={false}
         components={{
           Text: AssistantTextRow,
           tools: {
@@ -293,7 +411,7 @@ function AssistantTextRow({ text }: { text: string }): React.JSX.Element {
           wants its top edge at ~8px to sit dead-center. */}
       <span
         aria-hidden
-        className="mt-[8px] block size-[6px] shrink-0 rounded-full bg-zinc-300"
+        className="mt-[8px] block size-[6px] shrink-0 rounded-full bg-foreground/60"
       />
       <div className="min-w-0 flex-1">
         <AssistantMarkdown text={text} />
@@ -307,7 +425,7 @@ function AssistantTextRow({ text }: { text: string }): React.JSX.Element {
 function SystemMessage(): React.JSX.Element {
   return (
     <MessagePrimitive.Root className="mb-4 flex w-full justify-center">
-      <div className="rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-1.5 text-[11.5px] italic text-zinc-500">
+      <div className="rounded-md border border-border bg-card/50 px-3 py-1.5 text-[11.5px] italic text-muted-foreground/80">
         <MessagePrimitive.Parts />
       </div>
     </MessagePrimitive.Root>
@@ -351,28 +469,32 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   const { toolName, args, argsText, result, status } = props
   const running = status?.type === 'running' || status?.type === 'requires-action'
 
-  // Input-pane display logic
-  // ------------------------
-  // While the tool input is still streaming (`argsText` is a half-open
-  // JSON fragment), show the raw text with a blinking caret at the end
-  // so the user sees the model "typing" the call. Once the block
-  // finalizes and `args` is a real object, pretty-print it.
-  //
-  // Fallback order:
-  //   1. running + argsText present → raw argsText + caret
-  //   2. running + no argsText yet  → "…" placeholder
-  //   3. complete                    → JSON.stringify(args, null, 2)
-  //   4. complete + args parse fail  → argsText verbatim
-  //
-  // This mirrors how assistant-ui's own tools.Fallback passes both
-  // fields through the `ToolFallbackProps` — we just chose to render
-  // them ourselves so we can tune the streaming presentation.
+  // Input-pane display logic — see the original prop-shape comment.
   const hasArgsText = typeof argsText === 'string' && argsText.length > 0
   const inputBody = running
     ? hasArgsText
-      ? argsText
+      ? argsText!
       : '…'
     : safeStringify(args !== undefined ? args : argsText)
+
+  // One-line preview shown next to the tool name while collapsed —
+  // lets the user eyeball the call without expanding. `summarizeArgs`
+  // picks the most informative scalar field (file_path / query /
+  // command / pattern / url …) and falls back to "…" otherwise.
+  const summary = summarizeArgs(args)
+
+  // If this is a file-oriented tool (Read / Write / Edit / MultiEdit)
+  // we know the result is source code and which language to highlight
+  // it as from the `file_path` arg. For everything else (Bash, Grep,
+  // Glob, WebFetch, …) we fall back to the original JsonView.
+  const filePath = pickFilePath(args)
+  const codeLanguage = filePath ? languageFromPath(filePath) : undefined
+  const isCodeResult =
+    filePath !== undefined &&
+    (toolName === 'Read' ||
+      toolName === 'Write' ||
+      toolName === 'Edit' ||
+      toolName === 'MultiEdit')
 
   return (
     <div className="flex w-full gap-3">
@@ -380,7 +502,7 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
         aria-hidden
         className={
           'mt-[3px] shrink-0 select-none font-mono text-[13px] leading-relaxed ' +
-          (running ? 'text-amber-400' : 'text-zinc-600')
+          (running ? 'text-amber-400' : 'text-muted-foreground/60')
         }
       >
         ⎿
@@ -388,55 +510,244 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
       <div className="min-w-0 flex-1">
         <details open={running} className="group/tool">
           <summary className="flex cursor-pointer list-none items-center gap-2 text-[13px]">
-            <span
-              aria-hidden
-              className={
-                running
-                  ? 'inline-block size-1.5 animate-pulse rounded-full bg-amber-400'
-                  : 'inline-block size-1.5 rounded-full bg-emerald-500'
-              }
-            />
-            <span className="font-mono font-medium text-zinc-200">{toolName}</span>
-            <span className="font-mono text-[11.5px] text-zinc-500">
-              {running ? 'running…' : 'done'}
+            <StatusDot running={running} />
+            <span className="font-mono font-medium text-foreground">
+              {toolName}
             </span>
+            <StatusPill running={running} />
+            {summary && (
+              <span className="ml-0.5 min-w-0 truncate font-mono text-[11.5px] text-muted-foreground/70 group-open/tool:hidden">
+                {summary}
+              </span>
+            )}
             <span
               aria-hidden
-              className="ml-1 font-mono text-[10.5px] text-zinc-600 transition group-open/tool:rotate-90"
+              className="ml-auto font-mono text-[10.5px] text-muted-foreground/60 transition group-open/tool:rotate-90"
             >
               ▸
             </span>
           </summary>
-          <div className="mt-2 space-y-2 border-l border-zinc-800 pl-3 text-[12px]">
-            <div>
-              <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                Input
-              </div>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-zinc-300">
-                {inputBody}
-                {running && hasArgsText && (
-                  <span
-                    aria-hidden
-                    className="ml-0.5 inline-block h-[1em] w-[0.5ch] animate-pulse bg-amber-400 align-[-0.1em]"
+
+          <div className="mt-2 space-y-2 text-[12px]">
+            <ToolPane label="Input" copyText={inputBody}>
+              <JsonView text={inputBody} maxHeight />
+              {running && hasArgsText && (
+                <span
+                  aria-hidden
+                  className="ml-0.5 inline-block h-[1em] w-[0.5ch] animate-pulse bg-accent align-[-0.1em]"
+                />
+              )}
+            </ToolPane>
+            {result !== undefined &&
+              (isCodeResult ? (
+                <ToolPane label="Output" copyText={extractText(result)}>
+                  <CodeFileView
+                    text={extractText(result)}
+                    language={codeLanguage}
                   />
-                )}
-              </pre>
-            </div>
-            {result !== undefined && (
-              <div>
-                <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                  Output
-                </div>
-                <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-zinc-300">
-                  {safeStringify(result)}
-                </pre>
-              </div>
-            )}
+                </ToolPane>
+              ) : (
+                <ToolPane label="Output" copyText={safeStringify(result)}>
+                  <JsonView text={safeStringify(result)} maxHeight />
+                </ToolPane>
+              ))}
           </div>
         </details>
       </div>
     </div>
   )
+}
+
+function StatusDot({ running }: { running: boolean }): React.JSX.Element {
+  if (running) {
+    return (
+      <span className="relative inline-flex size-1.5">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent/60" />
+        <span className="relative inline-flex size-full rounded-full bg-accent" />
+      </span>
+    )
+  }
+  return (
+    <span aria-hidden className="inline-block size-1.5 rounded-full bg-emerald-500" />
+  )
+}
+
+function StatusPill({ running }: { running: boolean }): React.JSX.Element {
+  return (
+    <span
+      className={
+        'rounded-full border px-1.5 py-px font-mono text-[10px] uppercase tracking-wider ' +
+        (running
+          ? 'border-accent/40 bg-accent/15 text-accent'
+          : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500')
+      }
+    >
+      {running ? 'running' : 'done'}
+    </span>
+  )
+}
+
+function ToolPane({
+  label,
+  copyText,
+  children
+}: {
+  label: string
+  copyText: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <div className="overflow-hidden rounded-md border border-border bg-card/40">
+      <div className="flex items-center justify-between border-b border-border/70 bg-muted/30 px-2.5 py-1">
+        <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+          {label}
+        </span>
+        <CopyButton text={copyText} />
+      </div>
+      <div className="px-2.5 py-1.5">{children}</div>
+    </div>
+  )
+}
+
+function CopyButton({ text }: { text: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const handle = useCallback(() => {
+    void navigator.clipboard?.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1200)
+  }, [text])
+  return (
+    <button
+      type="button"
+      onClick={handle}
+      className="rounded px-1 font-mono text-[9.5px] uppercase tracking-wider text-muted-foreground/70 transition hover:bg-muted hover:text-foreground"
+      aria-label="Copy to clipboard"
+    >
+      {copied ? 'copied' : 'copy'}
+    </button>
+  )
+}
+
+/**
+ * Lightweight JSON syntax highlighter. Walks a pretty-printed JSON
+ * string with a single regex and wraps each token in a colored span.
+ * No dependency on a prism / shiki bundle — the tool-call card
+ * renders inline in every assistant message, so cheap & dependency-
+ * free wins over the perfect highlight.
+ *
+ * Falls back to plain text if the input is empty or doesn't contain
+ * obvious JSON markers (e.g. raw command output strings from Bash).
+ */
+function JsonView({
+  text,
+  maxHeight
+}: {
+  text: string
+  maxHeight?: boolean
+}): React.JSX.Element {
+  if (!text) {
+    return (
+      <pre className="font-mono text-[11.5px] text-muted-foreground/60">
+        (empty)
+      </pre>
+    )
+  }
+  const looksJson = /^[\s]*[\{\[]/.test(text)
+  return (
+    <pre
+      className={
+        'overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-snug text-foreground/85 ' +
+        // When capped, mask-fade the bottom edge so overflowing
+        // content melts into the pane frame instead of hitting a
+        // hard cut. `pb-5` keeps the final line fully legible once
+        // you scroll all the way down — only the padding is masked.
+        (maxHeight
+          ? 'max-h-80 pb-5 [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%-28px),transparent_100%)]'
+          : '')
+      }
+    >
+      {looksJson ? highlightJson(text) : text}
+    </pre>
+  )
+}
+
+function highlightJson(src: string): React.ReactNode[] {
+  // Single regex pulls out the four JSON token kinds plus runs of
+  // structural / whitespace text in between. Order matters: strings
+  // first so embedded `:`/`,` inside a string don't get mistaken for
+  // structural tokens.
+  const tokenRe =
+    /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+\.?\d*(?:[eE][+-]?\d+)?)/g
+  const out: React.ReactNode[] = []
+  let last = 0
+  let key = 0
+  let m: RegExpExecArray | null
+  while ((m = tokenRe.exec(src)) !== null) {
+    if (m.index > last) {
+      out.push(<span key={key++}>{src.slice(last, m.index)}</span>)
+    }
+    if (m[1] !== undefined) {
+      // Quoted string. If immediately followed by `:`, it's a key.
+      const isKey = m[2] !== undefined
+      out.push(
+        <span
+          key={key++}
+          className={isKey ? 'text-accent' : 'text-emerald-500'}
+        >
+          {m[1]}
+        </span>
+      )
+      if (isKey) out.push(<span key={key++}>{m[2]}</span>)
+    } else if (m[3] !== undefined) {
+      out.push(
+        <span key={key++} className="text-amber-400">
+          {m[3]}
+        </span>
+      )
+    } else if (m[4] !== undefined) {
+      out.push(
+        <span key={key++} className="text-sky-400">
+          {m[4]}
+        </span>
+      )
+    }
+    last = tokenRe.lastIndex
+  }
+  if (last < src.length) {
+    out.push(<span key={key++}>{src.slice(last)}</span>)
+  }
+  return out
+}
+
+/**
+ * Pull a single representative scalar out of a tool-call args object
+ * for the collapsed summary. Picks the first matching field from a
+ * priority list, truncates to ~60 chars, and returns null if no
+ * scalar is found (the summary is then omitted).
+ */
+function summarizeArgs(args: unknown): string | null {
+  if (!args || typeof args !== 'object') return null
+  const obj = args as Record<string, unknown>
+  const keys = [
+    'file_path',
+    'path',
+    'pattern',
+    'query',
+    'command',
+    'cmd',
+    'url',
+    'name',
+    'description'
+  ]
+  for (const k of keys) {
+    const v = obj[k]
+    if (typeof v === 'string' && v.length > 0) {
+      const trimmed = v.length > 60 ? `${v.slice(0, 57)}…` : v
+      return trimmed
+    }
+    if (typeof v === 'number') return String(v)
+  }
+  return null
 }
 
 function safeStringify(value: unknown): string {
@@ -447,6 +758,219 @@ function safeStringify(value: unknown): string {
   } catch {
     return String(value)
   }
+}
+
+/* ───────────── Code-file output highlighting ────────────── */
+
+/**
+ * Pull `file_path` out of an arbitrary tool-args blob. Tools are
+ * free-form JSON so we just poke at the conventional keys the
+ * file-oriented tools use.
+ */
+function pickFilePath(args: unknown): string | undefined {
+  if (!args || typeof args !== 'object') return undefined
+  const obj = args as Record<string, unknown>
+  const v = obj.file_path ?? obj.filePath ?? obj.path
+  return typeof v === 'string' && v.length > 0 ? v : undefined
+}
+
+/**
+ * Unwrap the tool-result payload into a plain string we can feed to
+ * the highlighter. Claude-Code-style tools return the file body as a
+ * top-level string; newer SDKs wrap it in `{ content: [{type:'text',
+ * text: '...'}] }`. Both shapes collapse to the same highlighted view.
+ */
+function extractText(result: unknown): string {
+  if (result === undefined) return ''
+  if (typeof result === 'string') return result
+  if (Array.isArray(result)) {
+    return result
+      .map((part) =>
+        part && typeof part === 'object' && 'text' in part
+          ? String((part as { text?: unknown }).text ?? '')
+          : typeof part === 'string'
+            ? part
+            : ''
+      )
+      .join('')
+  }
+  if (typeof result === 'object') {
+    const obj = result as Record<string, unknown>
+    if (typeof obj.text === 'string') return obj.text
+    if (typeof obj.content === 'string') return obj.content
+    if (Array.isArray(obj.content)) return extractText(obj.content)
+  }
+  return safeStringify(result)
+}
+
+/**
+ * Map a file extension (or basename for Dockerfile / Makefile) to a
+ * highlight.js language id. Only covers the subset bundled in
+ * `highlight.js/lib/common` — anything else falls through to
+ * `undefined` so hljs.highlightAuto can take a guess.
+ */
+function languageFromPath(path: string): string | undefined {
+  const base = path.split(/[\\/]/).pop() ?? path
+  const lower = base.toLowerCase()
+  if (lower === 'dockerfile') return 'dockerfile'
+  if (lower === 'makefile') return 'makefile'
+  const ext = base.includes('.') ? base.split('.').pop()!.toLowerCase() : ''
+  const map: Record<string, string> = {
+    ts: 'typescript',
+    tsx: 'typescript',
+    mts: 'typescript',
+    cts: 'typescript',
+    js: 'javascript',
+    jsx: 'javascript',
+    mjs: 'javascript',
+    cjs: 'javascript',
+    json: 'json',
+    jsonc: 'json',
+    py: 'python',
+    rs: 'rust',
+    go: 'go',
+    rb: 'ruby',
+    java: 'java',
+    kt: 'kotlin',
+    swift: 'swift',
+    c: 'c',
+    h: 'c',
+    cc: 'cpp',
+    cpp: 'cpp',
+    cxx: 'cpp',
+    hpp: 'cpp',
+    cs: 'csharp',
+    sh: 'bash',
+    bash: 'bash',
+    zsh: 'bash',
+    fish: 'bash',
+    yml: 'yaml',
+    yaml: 'yaml',
+    toml: 'ini',
+    ini: 'ini',
+    conf: 'ini',
+    html: 'xml',
+    htm: 'xml',
+    xml: 'xml',
+    svg: 'xml',
+    vue: 'xml',
+    svelte: 'xml',
+    css: 'css',
+    scss: 'scss',
+    less: 'less',
+    md: 'markdown',
+    markdown: 'markdown',
+    sql: 'sql',
+    php: 'php',
+    lua: 'lua'
+  }
+  return map[ext]
+}
+
+/**
+ * Parse Claude Code's `Read` output which is `cat -n` style:
+ *     `     1\timport foo from 'bar'`
+ *
+ * Returns a `{ gutter, code }` pair with matching line counts so the
+ * renderer can show them side-by-side. If the input doesn't match the
+ * numbered format (Write/Edit output, raw files from other tools) we
+ * generate sequential line numbers so every view looks consistent.
+ */
+function splitNumberedLines(text: string): {
+  gutter: number[]
+  code: string
+} {
+  const lines = text.split('\n')
+  const gutter: number[] = []
+  const codeLines: string[] = []
+  let allNumbered = lines.length > 0
+  for (const line of lines) {
+    const m = /^\s*(\d+)\t(.*)$/.exec(line)
+    if (!m) {
+      allNumbered = false
+      break
+    }
+    gutter.push(parseInt(m[1]!, 10))
+    codeLines.push(m[2]!)
+  }
+  if (!allNumbered) {
+    return {
+      gutter: lines.map((_, i) => i + 1),
+      code: text
+    }
+  }
+  return { gutter, code: codeLines.join('\n') }
+}
+
+function CodeFileView({
+  text,
+  language
+}: {
+  text: string
+  language: string | undefined
+}): React.JSX.Element {
+  const { gutter, code, html } = useMemo(() => {
+    const { gutter: g, code: c } = splitNumberedLines(text)
+    // highlight.js throws if you hand it an unregistered language, so
+    // we check `getLanguage` first and otherwise fall back to
+    // `highlightAuto` which scans for the best match across the
+    // bundled set. `ignoreIllegals: true` keeps partial / mid-stream
+    // snippets from tripping the highlighter.
+    let rendered: string
+    try {
+      if (language && hljs.getLanguage(language)) {
+        rendered = hljs.highlight(c, { language, ignoreIllegals: true }).value
+      } else {
+        rendered = hljs.highlightAuto(c).value
+      }
+    } catch {
+      rendered = escapeHtml(c)
+    }
+    return { gutter: g, code: c, html: rendered }
+  }, [text, language])
+
+  if (!text) {
+    return (
+      <pre className="font-mono text-[11.5px] text-muted-foreground/60">
+        (empty)
+      </pre>
+    )
+  }
+
+  return (
+    // Vertical scroll + fade-out mask lives on the outer div so both
+    // the line-number gutter and the code column share the exact same
+    // viewport. `pb-6` leaves enough breathing room that the last line
+    // of code stays fully legible once the user scrolls to the bottom —
+    // only the trailing padding gets eaten by the mask.
+    <div className="max-h-80 overflow-auto rounded-sm bg-card/20 pb-6 [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%-32px),transparent_100%)]">
+      <div className="flex font-mono text-[11.5px] leading-[1.55]">
+        <pre
+          aria-hidden
+          className="select-none whitespace-pre py-1 pl-2 pr-3 text-right tabular-nums text-muted-foreground/50"
+        >
+          {gutter.join('\n')}
+        </pre>
+        <pre
+          className="flex-1 overflow-x-auto whitespace-pre py-1 pr-3 text-foreground/90 [font-feature-settings:'calt','tnum'] [hyphens:none]"
+          // hljs returns already-escaped HTML with <span class="hljs-*">
+          // wrappers. These are the same class names our highlight.css
+          // palette targets, so no extra theming needed here.
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      </div>
+    </div>
+  )
+  // `code` is only used for clipboard parity; suppressed here since
+  // ToolPane's CopyButton uses the outer extractText() value.
+  void code
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 }
 
 /* ───────────────────── Composer ────────────────────────────── */
@@ -493,6 +1017,7 @@ function safeStringify(value: unknown): string {
  * `extractAtMentionedFiles` on the text and auto-attaches each file.
  */
 function Composer(): React.JSX.Element {
+  const t = useT()
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [files, setFiles] = useState<readonly string[]>([])
   const streaming = useChatStore((s) => s.streaming)
@@ -729,12 +1254,12 @@ function Composer(): React.JSX.Element {
         <div className="relative">
           {/* Slash popover — reads the outer root's context because
               it sits outside the inner `@` root in the tree. */}
-          <ComposerPrimitive.Unstable_TriggerPopoverPopover className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-xl border border-zinc-800 bg-[#0e0e11] py-1 shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
+          <ComposerPrimitive.Unstable_TriggerPopoverPopover className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
             <ComposerPrimitive.Unstable_TriggerPopoverItems>
               {(items) => (
                 <TriggerPopoverList
                   items={items}
-                  emptyText="No matching commands"
+                  emptyText={t('composerNoMatchingCommands')}
                   onItemClick={handleTriggerItemClick}
                 />
               )}
@@ -759,15 +1284,15 @@ function Composer(): React.JSX.Element {
                 Absolute-positioned inside the same `relative` div
                 as the slash popover, but only one can be open at
                 a time so they never overlap visually. */}
-            <ComposerPrimitive.Unstable_TriggerPopoverPopover className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-xl border border-zinc-800 bg-[#0e0e11] py-1 shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
+            <ComposerPrimitive.Unstable_TriggerPopoverPopover className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
               <ComposerPrimitive.Unstable_TriggerPopoverItems>
                 {(items) => (
                   <TriggerPopoverList
                     items={items}
                     emptyText={
                       files.length === 0
-                        ? 'Loading files…'
-                        : 'No matching files'
+                        ? t('composerLoadingFiles')
+                        : t('composerNoMatchingFiles')
                     }
                     onItemClick={handleTriggerItemClick}
                   />
@@ -784,7 +1309,7 @@ function Composer(): React.JSX.Element {
                 Pasting images is handled by ComposerPrimitive.Input's
                 built-in `addAttachmentOnPaste` (default true) and does
                 NOT need the dropzone — the two mechanisms coexist. */}
-            <ComposerPrimitive.AttachmentDropzone className="rounded-2xl border border-zinc-800 bg-zinc-900/80 shadow-lg transition-colors focus-within:border-zinc-700 data-[dragging=true]:border-blue-500 data-[dragging=true]:bg-blue-950/20">
+            <ComposerPrimitive.AttachmentDropzone className="rounded-2xl border border-border bg-card/80 shadow-lg transition-colors focus-within:border-input data-[dragging=true]:border-accent data-[dragging=true]:bg-accent/15">
               {/* Attachment chip row. assistant-ui's Attachments
                   primitive is fragment-shaped — it just fans out one
                   render-prop call per attachment without a container,
@@ -807,8 +1332,8 @@ function Composer(): React.JSX.Element {
                     the Input on the left; styled to match Send/Cancel
                     so the row reads as four evenly-sized circles. */}
                 <ComposerPrimitive.AddAttachment
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-zinc-400 transition hover:bg-zinc-700 hover:text-zinc-200"
-                  aria-label="Attach image"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+                  aria-label={t('composerAttachImage')}
                 >
                   <svg
                     width="16"
@@ -828,7 +1353,7 @@ function Composer(): React.JSX.Element {
                     the same text content but with slash / mention
                     tokens wrapped in styled spans, while the textarea
                     on top has transparent text (caret still visible
-                    via `caret-zinc-100`) so the overlay's highlights
+                    via `caret-foreground`) so the overlay's highlights
                     read as "inline chips" to the user.
                     Both elements share identical typography and
                     padding so characters line up pixel-perfect. The
@@ -841,7 +1366,7 @@ function Composer(): React.JSX.Element {
                   />
                   <ComposerPrimitive.Input
                     ref={textareaRef}
-                    placeholder="Ask anything…   ↵ send · ⇧↵ newline · / commands · @ files"
+                    placeholder={t('composerPlaceholder')}
                     rows={1}
                     onKeyDown={handleComposerKey}
                     onFocus={(e) => {
@@ -877,16 +1402,30 @@ function Composer(): React.JSX.Element {
                       }
                       setCaretPos(start)
                     }}
-                    className="relative z-[1] block min-h-[24px] max-h-40 w-full resize-none bg-transparent px-1 py-1.5 text-[14px] leading-relaxed text-transparent placeholder:text-zinc-600 focus:outline-none"
+                    className="relative z-[1] block min-h-[24px] max-h-40 w-full resize-none bg-transparent px-1 py-1.5 text-[14px] leading-relaxed text-transparent placeholder:text-muted-foreground/60 focus:outline-none"
                     style={{ caretColor: 'transparent' }}
                   />
                 </div>
-                <ComposerPrimitive.Send className="flex size-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500">
-                  ↑
-                </ComposerPrimitive.Send>
-                <ComposerPrimitive.Cancel className="flex size-9 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-zinc-300 transition hover:bg-zinc-700">
-                  ■
-                </ComposerPrimitive.Cancel>
+                {/* Mutually exclusive Send / Stop slot — matches the
+                    ChatGPT / Claude.ai pattern. While idle we show
+                    `Send` (disabled when the textarea is empty via
+                    primitive's own logic). Once a turn is in flight,
+                    `ThreadPrimitive.If running` swaps in `Cancel` so
+                    the user can interrupt without having a stale stop
+                    button sitting around between turns. */}
+                <ThreadPrimitive.If running={false}>
+                  <ComposerPrimitive.Send className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground/80">
+                    ↑
+                  </ComposerPrimitive.Send>
+                </ThreadPrimitive.If>
+                <ThreadPrimitive.If running>
+                  <ComposerPrimitive.Cancel
+                    aria-label="Stop generating"
+                    className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-sm transition hover:bg-foreground"
+                  >
+                    <span className="block size-2.5 rounded-[2px] bg-card" />
+                  </ComposerPrimitive.Cancel>
+                </ThreadPrimitive.If>
               </ComposerPrimitive.Root>
             </ComposerPrimitive.AttachmentDropzone>
           </ComposerPrimitive.Unstable_TriggerPopoverRoot>
@@ -993,7 +1532,7 @@ function ComposerHighlightOverlay({
   return (
     <div
       aria-hidden
-      className="pointer-events-none absolute inset-0 z-0 whitespace-pre-wrap break-words px-1 py-1.5 text-[14px] leading-relaxed text-zinc-100"
+      className="pointer-events-none absolute inset-0 z-0 whitespace-pre-wrap break-words px-1 py-1.5 text-[14px] leading-relaxed text-foreground"
     >
       {rendered}
     </div>
@@ -1019,7 +1558,7 @@ function Caret(): React.JSX.Element {
         width: '1px',
         height: '1em',
         verticalAlign: 'text-bottom',
-        background: '#e4e4e7', // zinc-200
+        background: 'hsl(var(--foreground))',
         marginInline: '0',
         animation: 'caret-blink 1.1s step-end infinite'
       }}
@@ -1045,17 +1584,22 @@ function Chip({
   variant: 'slash' | 'mention'
   children: string
 }): React.JSX.Element {
+  // Both palettes read from CSS variables so the chips re-skin with
+  // the theme picker. Slash chips follow the user's accent token;
+  // mention chips use a dedicated `--chip-mention` token (defined in
+  // index.css for both light and dark) so files stay visually
+  // distinct from commands without competing with the accent color.
   const palette =
     variant === 'slash'
       ? {
-          text: 'rgb(216, 180, 254)', // violet-200
-          background: 'rgba(139, 92, 246, 0.18)',
-          iconStroke: 'rgb(196, 181, 253)' // violet-300
+          text: 'hsl(var(--accent))',
+          background: 'hsl(var(--accent) / 0.16)',
+          iconStroke: 'hsl(var(--accent))'
         }
       : {
-          text: 'rgb(167, 243, 208)', // emerald-200
-          background: 'rgba(16, 185, 129, 0.18)',
-          iconStroke: 'rgb(110, 231, 183)' // emerald-300
+          text: 'hsl(var(--chip-mention))',
+          background: 'hsl(var(--chip-mention) / 0.16)',
+          iconStroke: 'hsl(var(--chip-mention))'
         }
   // Strip the leading `/` or `@` — the icon replaces it.
   const label = children.slice(1)
@@ -1293,7 +1837,7 @@ function TriggerPopoverList({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.12 }}
-        className="px-4 py-3 text-[12px] text-zinc-500"
+        className="px-4 py-3 text-[12px] text-muted-foreground/80"
       >
         {emptyText}
       </motion.div>
@@ -1313,13 +1857,13 @@ function TriggerPopoverList({
           <ComposerPrimitive.Unstable_TriggerPopoverItem
             item={item}
             onClick={onItemClick}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-left text-[13px] outline-none transition-colors hover:bg-zinc-800/60 data-[highlighted]:bg-zinc-800"
+            className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-left text-[13px] outline-none transition-colors hover:bg-muted/60 data-[highlighted]:bg-muted"
           >
-            <span className="shrink-0 truncate font-mono text-zinc-100">
+            <span className="shrink-0 truncate font-mono text-foreground">
               {item.label}
             </span>
             {item.description && (
-              <span className="truncate text-[12px] text-zinc-500">
+              <span className="truncate text-[12px] text-muted-foreground/80">
                 {item.description}
               </span>
             )}
@@ -1419,7 +1963,7 @@ function ComposerAttachmentChip({
   const isImage = attachment.type === 'image'
 
   return (
-    <AttachmentPrimitive.Root className="group/att relative flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 p-1.5 pr-6">
+    <AttachmentPrimitive.Root className="group/att relative flex items-center gap-2 rounded-lg border border-border bg-card/60 p-1.5 pr-6">
       {isImage && previewURL ? (
         <img
           src={previewURL}
@@ -1428,17 +1972,17 @@ function ComposerAttachmentChip({
         />
       ) : (
         <div
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-zinc-800 text-[10px] font-mono text-zinc-500"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-mono text-muted-foreground/80"
           title={previewError ?? undefined}
         >
           {previewError ? '!' : attachment.type?.slice(0, 3) ?? 'file'}
         </div>
       )}
-      <span className="max-w-[140px] truncate text-[11px] text-zinc-300">
+      <span className="max-w-[140px] truncate text-[11px] text-foreground/80">
         {attachment.name}
       </span>
       <AttachmentPrimitive.Remove
-        className="absolute right-1 top-1 flex size-4 items-center justify-center rounded-full bg-zinc-800 text-[10px] leading-none text-zinc-400 opacity-0 transition group-hover/att:opacity-100 hover:bg-zinc-700 hover:text-zinc-100"
+        className="absolute right-1 top-1 flex size-4 items-center justify-center rounded-full bg-muted text-[10px] leading-none text-muted-foreground opacity-0 transition group-hover/att:opacity-100 hover:bg-secondary hover:text-foreground"
         aria-label="Remove attachment"
       >
         ×
