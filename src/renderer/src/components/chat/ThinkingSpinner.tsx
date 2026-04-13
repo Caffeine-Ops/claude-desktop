@@ -71,24 +71,22 @@ const SPINNER_FRAMES = ['·', '✢', '✳', '✶', '✻', '✽', '✽', '✻', '
 /** Terminal spinner advances a frame every 120ms. */
 const FRAME_MS = 120
 
-export function ThinkingSpinner(): React.JSX.Element {
+export function ThinkingSpinner(): React.JSX.Element | null {
   const turnStartedAt = useChatStore((s) => s.turnStartedAt)
+  const streaming = useChatStore((s) => s.streaming)
   const turnVerb = useChatStore((s) => s.turnVerb)
   const sessionId = useChatStore((s) => s.sessionId)
 
-  // Defensive fallback in case Empty mounts before the `start` event
-  // has been processed by the store. Captured once per mount.
-  const [mountedAt] = useState(() => Date.now())
-  const startedAt = turnStartedAt ?? mountedAt
-
   // Cheap animation clock — every 80ms we bump a tick state, which
   // causes a re-render that recomputes the frame and elapsed seconds
-  // from `Date.now() - startedAt`.
+  // from `Date.now() - turnStartedAt`. Pauses when no turn is in flight
+  // so a stale spinner can't keep ticking after `endAssistantMessage`.
   const [, setTick] = useState(0)
   useEffect(() => {
+    if (turnStartedAt === null) return
     const id = setInterval(() => setTick((t) => t + 1), 80)
     return () => clearInterval(id)
-  }, [])
+  }, [turnStartedAt])
 
   // ESC interrupts the current turn. Active for the lifetime of the
   // spinner — i.e. exactly while the assistant is in the pre-content
@@ -106,7 +104,15 @@ export function ThinkingSpinner(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [sessionId])
 
-  const elapsedMs = Math.max(0, Date.now() - startedAt)
+  // No live turn ⇒ no spinner. Previously this had a `mountedAt`
+  // fallback that kept the timer running forever after `endAssistantMessage`
+  // cleared `turnStartedAt`, so a turn that ended on a tool-call would
+  // leave a stuck "Thinking… Ns · esc to interrupt" row in the thread.
+  // Placed AFTER all hooks so the early return doesn't violate the
+  // Rules of Hooks.
+  if (!streaming || turnStartedAt === null) return null
+
+  const elapsedMs = Math.max(0, Date.now() - turnStartedAt)
   const elapsedSec = Math.floor(elapsedMs / 1000)
   const frame =
     SPINNER_FRAMES[Math.floor(elapsedMs / FRAME_MS) % SPINNER_FRAMES.length]
@@ -114,7 +120,7 @@ export function ThinkingSpinner(): React.JSX.Element {
 
   return (
     <div
-      className="flex min-w-0 items-baseline gap-3 font-mono text-[13px] leading-relaxed text-zinc-300"
+      className="flex min-w-0 items-baseline gap-3 font-mono text-[13px] leading-relaxed text-foreground/80"
       role="status"
       aria-live="polite"
       aria-label={`${verbLabel}, ${elapsedSec} seconds elapsed`}
@@ -125,8 +131,8 @@ export function ThinkingSpinner(): React.JSX.Element {
       <span aria-hidden className="inline-block w-[1ch] shrink-0 text-emerald-400">
         {frame}
       </span>
-      <span className="text-zinc-100">{verbLabel}…</span>
-      <span className="truncate text-zinc-500">
+      <span className="text-foreground">{verbLabel}…</span>
+      <span className="truncate text-muted-foreground/80">
         <span className="tabular-nums">({elapsedSec}s</span>
         {' · esc to interrupt)'}
       </span>
