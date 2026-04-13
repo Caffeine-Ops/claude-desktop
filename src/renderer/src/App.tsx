@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { FusionRuntimeProvider } from './runtime/FusionRuntimeProvider'
 import { ThreadView } from './components/chat/ThreadView'
@@ -13,6 +13,10 @@ import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
 import { useChatStore } from './stores/chat'
 import { useDialogStore } from './stores/dialogs'
 import { useLogsStore } from './stores/logs'
+import { useTodosStore } from './stores/todos'
+import { useI18n, useT } from './i18n'
+import { useApplyAppearance } from './stores/appearance.applier'
+import { SettingsView } from './components/settings/SettingsView'
 import { AnimatePresence, motion } from 'motion/react'
 
 /**
@@ -64,6 +68,35 @@ function App(): React.JSX.Element {
   const [workspace, setWorkspace] = useState<WorkspaceStatus>('loading')
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
   const openDialog = useDialogStore((s) => s.openDialog)
+  const t = useT()
+  useApplyAppearance()
+
+  // One-shot push of the persisted language to the main process. The
+  // renderer's zustand store is the source of truth (it owns the
+  // localStorage entry), but the tray menu lives in the main process
+  // and has no access to localStorage. Pushing here on cold start
+  // syncs main with whatever the user picked in a previous run; every
+  // subsequent flip pushes again from inside `setLang` itself.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.chatApi?.setLang) return
+    try {
+      window.chatApi.setLang(useI18n.getState().lang)
+    } catch (err) {
+      console.warn('[App] initial setLang push failed', err)
+    }
+  }, [])
+
+  // "Show me the gate again so I can pick a different folder." Wipes
+  // every renderer-side store that is keyed on the current workspace
+  // (chat history, todos) and flips `workspace` back to null. The
+  // engine's setWorkspace() will tear down the live runtime when the
+  // gate completes; we don't pre-tear here so a cancelled drop leaves
+  // the previous session intact.
+  const handleChangeWorkspace = useCallback(() => {
+    useChatStore.getState().reset()
+    useTodosStore.setState({ todos: {} })
+    setWorkspace(null)
+  }, [])
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.api) {
@@ -134,7 +167,7 @@ function App(): React.JSX.Element {
     return (
       <div className="app">
         <header className="header">
-          <h1>Claude Desktop</h1>
+          <h1>{t('appTitle')}</h1>
           <span className="badge">v{version}</span>
           <span className="badge badge-stage">agent-sdk · long-session</span>
         </header>
@@ -146,15 +179,15 @@ function App(): React.JSX.Element {
   return (
     <div className="app">
       <header className="header">
-        <h1>Claude Desktop</h1>
+        <h1>{t('appTitle')}</h1>
         <button
           type="button"
           onClick={() => setSidebarOpen((v) => !v)}
-          title={sidebarOpen ? '收起聊天列表' : '展开聊天列表'}
-          aria-label={sidebarOpen ? '收起聊天列表' : '展开聊天列表'}
+          title={sidebarOpen ? t('collapseSidebar') : t('expandSidebar')}
+          aria-label={sidebarOpen ? t('collapseSidebar') : t('expandSidebar')}
           aria-pressed={sidebarOpen}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100"
+          className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-muted/60 hover:text-foreground"
         >
           <svg
             width="16"
@@ -176,10 +209,10 @@ function App(): React.JSX.Element {
         <button
           type="button"
           onClick={() => openDialog('logs')}
-          title="打开引擎日志 (timeline)"
-          aria-label="打开引擎日志"
+          title={t('openLogsTitle')}
+          aria-label={t('openLogs')}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100"
+          className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-muted/60 hover:text-foreground"
         >
           {/* Clipboard-with-lines icon — intentionally distinct from
               the sidebar toggle's folder-rect. 3 horizontal lines
@@ -204,8 +237,14 @@ function App(): React.JSX.Element {
         <span className="badge">v{version}</span>
         <span className="badge badge-stage">agent-sdk · long-session</span>
       </header>
-      <main className="main">
-        <FusionRuntimeProvider>
+      <main className="main relative">
+        {/* `key={workspace}` forces a full subtree remount whenever the
+            user switches workspaces. The runtime provider's effects
+            re-subscribe to chat events under the new sessionId, the
+            sidebar refetches the new workspace's threads, and the file
+            tree drops its cached scan. Cheaper than restarting Electron
+            and avoids the window-flash. */}
+        <FusionRuntimeProvider key={workspace}>
           {/* .main is flex-col; this inner row does the three-pane
               split (chats | thread | right rail). flex-1 + min-h-0
               lets it shrink correctly inside the outer column. */}
@@ -243,7 +282,10 @@ function App(): React.JSX.Element {
                   className="relative h-full shrink-0 overflow-hidden"
                 >
                   <div className="absolute inset-y-0 right-0 w-64">
-                    <ThreadListSidebar workspace={workspace} />
+                    <ThreadListSidebar
+                      workspace={workspace}
+                      onChangeWorkspace={handleChangeWorkspace}
+                    />
                   </div>
                 </motion.div>
               )}
@@ -256,12 +298,16 @@ function App(): React.JSX.Element {
                 `section flex-1` so they share the column equally.
                 A border-t on WorkspaceTreePanel's root creates the
                 visual divider. */}
-            <aside className="flex h-full w-72 shrink-0 flex-col border-l border-zinc-800/70 bg-[#0a0a0c]">
+            <aside className="flex h-full w-72 shrink-0 flex-col border-l border-border/70 bg-background">
               <TodoListPanel />
               <WorkspaceTreePanel />
             </aside>
           </div>
         </FusionRuntimeProvider>
+        {/* Settings overlay — `absolute inset-0` inside .main so it
+            covers the chat row but leaves the title-bar header
+            untouched. Renders null when the store says closed. */}
+        <SettingsView />
       </main>
       {/* Permission dialog — `fixed inset-0` overlay, kept outside
           <main> so it covers the header and both panes. Listens to
@@ -315,6 +361,9 @@ function App(): React.JSX.Element {
  */
 function SessionLoadingOverlay(): React.JSX.Element {
   const sessionLoading = useChatStore((s) => s.sessionLoading)
+  const t = useT()
+  // Strip the trailing ellipsis so screen readers don't read it aloud.
+  const label = t('openingSession').replace(/[…\.]+$/, '')
 
   return (
     <AnimatePresence>
@@ -323,12 +372,12 @@ function SessionLoadingOverlay(): React.JSX.Element {
           key="session-loading"
           role="status"
           aria-live="polite"
-          aria-label="Opening session"
+          aria-label={label}
           initial={{ opacity: 0, y: 8, scale: 0.96 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 4, scale: 0.96 }}
           transition={{ type: 'spring', stiffness: 340, damping: 28 }}
-          className="pointer-events-none fixed bottom-4 right-4 z-[60] flex items-center gap-2.5 rounded-full border border-zinc-800 bg-zinc-950/90 px-3.5 py-2 shadow-[0_4px_24px_rgba(0,0,0,0.4)] backdrop-blur-sm"
+          className="pointer-events-none fixed bottom-4 right-4 z-[60] flex items-center gap-2.5 rounded-full border border-border bg-background/90 px-3.5 py-2 shadow-[0_4px_24px_rgba(0,0,0,0.4)] backdrop-blur-sm"
         >
           {/* Bouncing dots — shrunk from the old fullscreen version
               (size-2 → size-1.5, y: -6 → -3) so the pill stays tight. */}
@@ -337,7 +386,7 @@ function SessionLoadingOverlay(): React.JSX.Element {
               <motion.span
                 key={i}
                 aria-hidden
-                className="block size-1.5 rounded-full bg-zinc-200"
+                className="block size-1.5 rounded-full bg-foreground"
                 animate={{ y: [0, -3, 0], opacity: [0.5, 1, 0.5] }}
                 transition={{
                   duration: 1.1,
@@ -349,7 +398,7 @@ function SessionLoadingOverlay(): React.JSX.Element {
             ))}
           </div>
           <motion.span
-            className="text-[12px] font-medium tracking-wide text-zinc-200"
+            className="text-[12px] font-medium tracking-wide text-foreground"
             animate={{ opacity: [0.7, 1, 0.7] }}
             transition={{
               duration: 1.8,
@@ -357,7 +406,7 @@ function SessionLoadingOverlay(): React.JSX.Element {
               ease: 'easeInOut'
             }}
           >
-            Opening session…
+            {t('openingSession')}
           </motion.span>
         </motion.div>
       )}
