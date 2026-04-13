@@ -8,6 +8,8 @@ import { fileURLToPath } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 
 import { registerIpcHandlers } from './ipc/register'
+import { createTray, destroyTray } from './tray'
+import appIcon from '../../resources/icon.png?asset'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -18,6 +20,7 @@ function createWindow(): BrowserWindow {
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: 'hiddenInset',
+    icon: appIcon,
     webPreferences: {
       // electron-vite outputs preload as .mjs (ESM). Use the correct
       // extension — an incorrect path silently fails and leaves the
@@ -58,6 +61,7 @@ app.whenReady().then(async () => {
   const mainWindow = createWindow()
 
   registerIpcHandlers(mainWindow)
+  createTray(mainWindow)
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -68,4 +72,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('before-quit', () => {
+  destroyTray()
 })
