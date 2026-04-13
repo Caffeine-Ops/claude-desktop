@@ -7,9 +7,12 @@ import { TodoListPanel } from './components/todos/TodoListPanel'
 import { PermissionDialog } from './components/permissions/PermissionDialog'
 import { SkillsDialog } from './components/dialogs/SkillsDialog'
 import { McpDialog } from './components/dialogs/McpDialog'
+import { LogsDialog } from './components/dialogs/LogsDialog'
 import { WorkspaceGate } from './components/workspace/WorkspaceGate'
 import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
 import { useChatStore } from './stores/chat'
+import { useDialogStore } from './stores/dialogs'
+import { useLogsStore } from './stores/logs'
 import { AnimatePresence, motion } from 'motion/react'
 
 /**
@@ -60,11 +63,35 @@ function App(): React.JSX.Element {
   const [version, setVersion] = useState<string>('loading…')
   const [workspace, setWorkspace] = useState<WorkspaceStatus>('loading')
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
+  const openDialog = useDialogStore((s) => s.openDialog)
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.api) {
       setVersion(window.api.version)
     }
+  }, [])
+
+  // Subscribe to main-process engine log events from the moment the
+  // app mounts so the LogsDialog has a full history available the
+  // first time the user opens it. Runs once per process lifetime —
+  // even before the workspace gate is passed — because the engine
+  // may emit log events on workspace setup that we don't want to
+  // miss. `useLogsStore.getState().push` reads the current action
+  // rather than subscribing, so this effect doesn't rerun on every
+  // push.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.chatApi) return
+    const push = useLogsStore.getState().push
+    const unsub = window.chatApi.onLogEvent((event) => {
+      push({
+        id: `${event.ts}_${Math.random().toString(36).slice(2, 7)}`,
+        ts: event.ts,
+        label: event.label,
+        sessionId: event.sessionId,
+        details: event.details
+      })
+    })
+    return unsub
   }, [])
 
   // Check workspace state on mount. Main's handler is trivial — it just
@@ -146,6 +173,34 @@ function App(): React.JSX.Element {
             {!sidebarOpen && <line x1="11.5" y1="8" x2="9" y2="10" />}
           </svg>
         </button>
+        <button
+          type="button"
+          onClick={() => openDialog('logs')}
+          title="打开引擎日志 (timeline)"
+          aria-label="打开引擎日志"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100"
+        >
+          {/* Clipboard-with-lines icon — intentionally distinct from
+              the sidebar toggle's folder-rect. 3 horizontal lines
+              read as "log entries" at 16px. */}
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="3" y="2.5" width="10" height="11" rx="1.5" />
+            <line x1="5.5" y1="5.5" x2="10.5" y2="5.5" />
+            <line x1="5.5" y1="8" x2="10.5" y2="8" />
+            <line x1="5.5" y1="10.5" x2="8.5" y2="10.5" />
+          </svg>
+        </button>
         <span className="badge">v{version}</span>
         <span className="badge badge-stage">agent-sdk · long-session</span>
       </header>
@@ -218,6 +273,7 @@ function App(): React.JSX.Element {
           level as PermissionDialog so they overlay everything. */}
       <SkillsDialog />
       <McpDialog />
+      <LogsDialog />
       {/* Non-blocking session-loading toast — shown while main is
           spawning a fusion-code child (new chat / session switch).
           Kept as its own tiny component so the zustand subscription

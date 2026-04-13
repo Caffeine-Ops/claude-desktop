@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
   ChatEvent,
+  LogEvent,
   PermissionRequest,
   PermissionResponse,
   SessionMeta
@@ -15,6 +16,7 @@ import {
   type ChatSendResult,
   type FileSuggestionsListPayload,
   type FileSuggestionsListResult,
+  type LogEventPayload,
   type SessionListResult,
   type SessionLoadPayload,
   type SessionLoadResult,
@@ -169,6 +171,16 @@ const chatApi: ChatApi = {
     ipcRenderer.on(IPC_CHANNELS.SESSION_META_CHANGED, listener)
     return () => {
       ipcRenderer.off(IPC_CHANNELS.SESSION_META_CHANGED, listener)
+    }
+  },
+
+  onLogEvent(handler: (event: LogEvent) => void): () => void {
+    const listener = (_: unknown, payload: LogEventPayload): void => {
+      handler(payload.event)
+    }
+    ipcRenderer.on(IPC_CHANNELS.LOG_EVENT, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.LOG_EVENT, listener)
     }
   },
 

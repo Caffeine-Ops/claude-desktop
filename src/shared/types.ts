@@ -212,3 +212,30 @@ export interface SessionMeta {
   /** Working directory the session was opened in. */
   cwd?: string
 }
+
+/**
+ * One instrumentation breadcrumb pushed from the main-process engine
+ * to the renderer over IPC. The LogsDialog renders these as a timeline
+ * so the user can see exactly where the ~30s first-turn latency goes
+ * — cli spawn, first `system init` arrival, first chunk, turn end, etc.
+ *
+ * Fields are kept deliberately minimal so the shape is stable across
+ * process boundaries: a monotonic epoch timestamp, a human-readable
+ * label (dot/colon separated path, e.g. `switchToSession:begin` or
+ * `turn:firstChunk`), the current active session id for correlation,
+ * and an optional bag of extras. No enums — labels are pure strings
+ * so new events don't require a shared type update.
+ */
+export interface LogEvent {
+  /** Epoch milliseconds from `Date.now()` in main. */
+  ts: number
+  /** Human-readable event identifier, e.g. `ensureSessionReady:begin`. */
+  label: string
+  /** Current active session id when the event fired, if any. */
+  sessionId?: string
+  /**
+   * Free-form extras (counts, durations, flags). Must be JSON-serializable
+   * since it crosses the Electron IPC boundary via structured clone.
+   */
+  details?: Record<string, unknown>
+}

@@ -16,6 +16,7 @@ import type {
 import type { ChatImagePayload } from '../../shared/ipc-channels'
 import type {
   ChatEvent,
+  LogEvent,
   McpServerInfo,
   SessionMeta
 } from '../../shared/types'
@@ -24,13 +25,17 @@ import { invalidateFileSuggestions } from './fileSuggestions'
 import { getPermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
 
-/**
- * Upper bound on how long `switchToSession` will wait for the
- * fusion-code cli to become ready (first `system init`). Beyond this
- * we return anyway — a hung cli shouldn't wedge the UI "loading"
- * forever; the next `send()` will surface the real failure.
- */
-const SWITCH_READY_TIMEOUT_MS = 30_000
+// NOTE: there used to be a `SWITCH_READY_TIMEOUT_MS = 30_000` here,
+// used by the now-removed `waitForSessionReady` helper. That helper
+// blocked on `runtime.readyPromise` — which is only resolved after
+// fusion-code's first `system init`, yielded inside submitMessage
+// after a user prompt is pushed. Blocking before push always hit the
+// timeout for no real reason. The SDK's queue is buffered, so send()
+// can safely push userMsgs while the cli is still spawning, and the
+// consumer drains them once stdin is alive. Both the timeout constant
+// and the helper have been deleted — readyPromise stays around as a
+// "first system-init has landed" observation flag used by the
+// `send:begin` log event and the pump/finally bookkeeping.
 
 /**
  * util.inspect options for SDK message dumps in the pump log.
@@ -281,6 +286,13 @@ class ChatEngine extends EventEmitter {
     const messageId = randomUUID()
     const requestId = this.nextRequestId++
 
+    this.logEvent('send:begin', {
+      messageId,
+      textLength: text.length,
+      imageCount: images?.length ?? 0,
+      runtimeReady: !!(runtime.queue && runtime.handle && runtime.readySettled)
+    })
+
     // Make sure the cli is spawned and ready. This is a no-op when
     // the background warmup kicked off in `switchToSession` has
     // already completed (both queue/handle set AND readyPromise
@@ -355,6 +367,7 @@ class ChatEngine extends EventEmitter {
       imageCount: images?.length ?? 0,
       queueSize: runtime.queue!.size
     })
+    this.logEvent('send:queued', { messageId, queueSize: runtime.queue!.size })
 
     return { messageId }
   }
@@ -490,6 +503,7 @@ class ChatEngine extends EventEmitter {
   ): void {
     const cliPath = this.resolveFusionCliPath()
     const resume = opts?.resume === true
+    this.logEvent('openSession:begin', { sessionId, resume, cliPath })
     console.log('[engine] opening long-lived SDK session', {
       sessionId,
       resume,
@@ -568,7 +582,63 @@ class ChatEngine extends EventEmitter {
       // env.json has already been merged into process.env during
       // bootstrap — forward everything so ANTHROPIC_BASE_URL / auth
       // tokens / model alias overrides reach the child CLI.
-      env: process.env as Record<string, string>,
+      //
+      // Two cache-preservation env overrides layered on top of the
+      // parent env:
+      //
+      // 1. CLAUDE_CODE_MCP_INSTR_DELTA=true moves MCP server
+      //    instructions out of the org-scope cached system prompt
+      //    into persisted `mcp_instructions_delta` attachments (see
+      //    free-code utils/mcpInstructionsDelta.ts:37). Without this
+      //    the set of connected MCP servers reaches prompts.ts in
+      //    async-connect order — every fresh cli spawn hashes
+      //    differently and the whole `rest` block cache misses.
+      //    With delta mode the attachment list is name-sorted
+      //    (delta.ts:124) and only injected once per conversation.
+      //
+      // 2. CLAUDE_CODE_ATTRIBUTION_HEADER=false disables the
+      //    `x-anthropic-billing-header` text block that free-code
+      //    prepends as the first system block (splitSysPromptPrefix
+      //    Default-mode branch in utils/api.ts). That header embeds
+      //    a `cch=00000` placeholder which the fetch wrapper
+      //    replaces with an xxHash64 of the request body *before*
+      //    sending — so it changes on every request even when the
+      //    rest of the prompt is bit-identical. Because Anthropic's
+      //    cache_control matcher hashes blocks by sequence prefix,
+      //    a mutating leading block busts every downstream cache
+      //    breakpoint. Trading billing attribution + fast-mode
+      //    attestation for cache stability is the right call here:
+      //    this is a desktop app, we don't use fast mode gating.
+      //    Can be force-enabled via CLAUDE_CODE_ATTRIBUTION_HEADER=true.
+      //
+      // 3. ENABLE_TOOL_SEARCH=true force-enables `tool_reference`
+      //    defer_loading for MCP tools. Free-code's optimistic gate
+      //    (utils/toolSearch.ts:299) auto-disables tool search when
+      //    ANTHROPIC_BASE_URL points at a non-first-party host,
+      //    because many proxies don't forward the `tool_reference`
+      //    beta header/block. Claude-desktop users typically run
+      //    through a proxy (that's why they picked the desktop in
+      //    the first place), so the default gate strips
+      //    defer_loading and the 5 configured MCP servers pour
+      //    their full tool schemas into the request — that's the
+      //    ~15k token bloat measured against a 27k total. Flipping
+      //    this to true makes MCP tools become discoverable via
+      //    `ToolSearchTool` instead of inline, cutting typical
+      //    first-turn input tokens roughly in half. Trade-off: if
+      //    the proxy actually strips the beta, the API returns
+      //    400 — user can set to 'false' to revert.
+      //
+      // All three respect parent-process overrides so ops can flip
+      // them back for diagnostics without recompiling.
+      env: {
+        ...process.env,
+        CLAUDE_CODE_MCP_INSTR_DELTA:
+          process.env.CLAUDE_CODE_MCP_INSTR_DELTA ?? 'true',
+        CLAUDE_CODE_ATTRIBUTION_HEADER:
+          process.env.CLAUDE_CODE_ATTRIBUTION_HEADER ?? 'false',
+        ENABLE_TOOL_SEARCH:
+          process.env.ENABLE_TOOL_SEARCH ?? 'true'
+      } as Record<string, string>,
       // Pin fusion-code's session identity. Mutually exclusive: either
       // we're resuming an existing transcript (`resume`) or we're
       // creating a new one with an explicit id (`sessionId`).
@@ -606,6 +676,7 @@ class ChatEngine extends EventEmitter {
     // or via error), it nulls them out so the next openSession
     // re-opens.
     runtime.pumpPromise = this.runPump(sessionId, runtime, handle)
+    this.logEvent('openSession:queued', { sessionId })
   }
 
   /**
@@ -693,6 +764,11 @@ class ChatEngine extends EventEmitter {
     // sees the click complete instantly and can mount the thread's
     // history immediately. If the user never sends a message, we
     // never pay the cold start.
+    this.logEvent('switchToSession:begin', {
+      newId,
+      prev: this.activeSessionId,
+      resume: opts.resume
+    })
     this.switching = true
     try {
       const prev = this.activeSessionId
@@ -707,6 +783,7 @@ class ChatEngine extends EventEmitter {
             // Fire-and-forget. Errors are logged by teardownRuntime
             // and runPump; nothing downstream depends on the teardown
             // completing in any particular window.
+            this.logEvent('teardownRuntime:async', { sessionId: prev })
             void this.teardownRuntime(prev, prevRt).catch((err) => {
               console.warn('[engine] async teardown failed:', err)
             })
@@ -726,6 +803,7 @@ class ChatEngine extends EventEmitter {
       this.switching = false
     }
     this.emit('sessionListChanged')
+    this.logEvent('switchToSession:end', { newId })
 
     // Background warmup — fire-and-forget a cli spawn so the ~30s
     // first-run cold start runs in parallel with the user reading
@@ -749,69 +827,55 @@ class ChatEngine extends EventEmitter {
   }
 
   /**
-   * Idempotent cli spawn + wait-for-ready.
+   * Idempotent cli spawn.
    *
-   * Safe to call concurrently from different code paths — only one
-   * actual `openSession` happens per runtime lifetime. Callers:
+   * Safe to call concurrently — only one actual `openSession` happens
+   * per runtime lifetime. Callers:
    *
    *   - `send()` on the first send to a freshly-switched session
    *     ("on-demand" spawn, user is actively waiting)
    *   - `switchToSession()` fire-and-forget at the end ("background
    *     warmup" — kicks off the cli cold start in parallel with the
    *     user reading the UI + typing their prompt, so when they
-   *     finally hit enter several seconds of the ~30s cold start are
-   *     already behind us)
+   *     finally hit enter some of the cold start is already behind us)
    *
-   * Resolves when the pump has seen fusion-code's first `system init`
-   * message — i.e. the cli is accepting user turns. Returns normally
-   * on timeout or pump failure (waitForSessionReady swallows the
-   * reject); callers are expected to re-check `runtime.queue` /
-   * `runtime.handle` afterwards and surface a user-visible error if
-   * the spawn didn't stick.
+   * IMPORTANT: this does NOT wait for fusion-code to emit its first
+   * `system init` message. That message is yielded from inside
+   * `QueryEngine.submitMessage` (free-code/src/QueryEngine.ts:540),
+   * which only runs after a user msg has been pushed into the stream.
+   * Waiting on `readyPromise` here before send() has pushed would
+   * always hit the `waitForSessionReady` timeout for no reason — the
+   * earlier "wait for system init as a cli-ready handshake" design
+   * was based on a wrong assumption about cli lifecycle.
+   *
+   * The SDK's `AsyncMessageQueue` is a buffered channel, so send() can
+   * safely push userMsgs into `runtime.queue` while openSession is
+   * still spinning up fusion-code in the background — the queued
+   * msgs get consumed the moment the cli's stdin loop is alive.
+   * Callers should re-check `runtime.queue` / `runtime.handle` after
+   * this resolves (in case openSession threw, which `send()` turns
+   * into a user-visible error event).
    */
   private async ensureSessionReady(sessionId: string): Promise<void> {
     const runtime = await this.getSession(sessionId)
-    // A live runtime has both a readyPromise (still pending or already
-    // resolved — waitForSessionReady no-ops on already-resolved) and
-    // a queue/handle pair set synchronously by openSession. If the
-    // pump exited for any reason, its `finally` clears readyPromise,
-    // queue, and handle all together, and we fall through to a fresh
-    // spawn below.
-    if (runtime.readyPromise) {
-      await this.waitForSessionReady(runtime, SWITCH_READY_TIMEOUT_MS)
+    // Already spawned — either by a prior send(), or by the warmup
+    // kicked off in switchToSession(). openSession assigns queue and
+    // handle synchronously, so "both present" is a reliable signal
+    // that a pump is running in the background. If the pump has
+    // since exited (crash, cli killed), its finally clears both
+    // together and we fall through to a fresh spawn below.
+    if (runtime.handle && runtime.queue) {
+      this.logEvent('ensureSessionReady:alreadySpawned')
       return
     }
     const resume = this.pendingResume ?? false
     this.pendingResume = null
+    this.logEvent('ensureSessionReady:spawn', { resume })
     this.openSession(sessionId, runtime, { resume })
-    await this.waitForSessionReady(runtime, SWITCH_READY_TIMEOUT_MS)
-  }
-
-  /**
-   * Wait for the runtime's readyPromise (resolved on first `system init`)
-   * with a hard timeout. On timeout we log and return rather than throw:
-   * a slow cli shouldn't wedge the UI in "loading" forever, and any
-   * follow-up `send()` will surface the real problem to the user.
-   */
-  private async waitForSessionReady(
-    runtime: SessionRuntime,
-    timeoutMs: number
-  ): Promise<void> {
-    if (!runtime.readyPromise) return
-    let timer: NodeJS.Timeout | null = null
-    const timeout = new Promise<void>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`timeout waiting for session ready (${timeoutMs}ms)`)),
-        timeoutMs
-      )
-    })
-    try {
-      await Promise.race([runtime.readyPromise, timeout])
-    } catch (err) {
-      console.warn('[engine] session ready wait failed:', err)
-    } finally {
-      if (timer) clearTimeout(timer)
-    }
+    // openSession returns synchronously once query() has been called
+    // and the pump has been scheduled. No await — the pump runs in
+    // the background, processes the SDK stream, and will consume any
+    // userMsgs that send() pushes into runtime.queue afterward.
   }
 
   /** The currently live session UUID, or null before one has been opened. */
@@ -991,6 +1055,23 @@ class ChatEngine extends EventEmitter {
           sdkMessage.type === 'system' &&
           sdkMessage.subtype === 'init'
         ) {
+          // The single most important timestamp in the whole pipeline:
+          // this is when fusion-code has finished its cold start
+          // (node spawn + module eval + plugin init + MCP connect)
+          // and is ready to accept user turns. The delta from the
+          // preceding `openSession:queued` event measures the real
+          // cli cold start cost.
+          this.logEvent('systemInit:received', {
+            skillCount: Array.isArray(sdkMessage.skills)
+              ? sdkMessage.skills.length
+              : 0,
+            mcpServerCount: Array.isArray(sdkMessage.mcp_servers)
+              ? sdkMessage.mcp_servers.length
+              : 0,
+            slashCommandCount: Array.isArray(sdkMessage.slash_commands)
+              ? sdkMessage.slash_commands.length
+              : 0
+          })
           this.updateSessionMeta(sdkMessage)
           // updateSessionMeta may have rebound the session id (see its
           // doc). Pick up the new active id so subsequent emits go to
@@ -1049,6 +1130,25 @@ class ChatEngine extends EventEmitter {
               '[engine] turn produced zero text content — UI will show empty assistant bubble'
             )
           }
+          // Pull API-side accounting off the SDK result message so the
+          // LogsDialog can show cache hit/miss + true API latency
+          // alongside our own perceived-latency breadcrumbs. These
+          // fields come straight from the wire protocol; the generated
+          // SDK type is a narrowed subset that doesn't list them, so we
+          // reach through `isRecord` to read them without an `any` cast.
+          const rawResult = sdkMessage as Record<string, unknown>
+          const usage = this.isRecord(rawResult.usage) ? rawResult.usage : {}
+          this.logEvent('turn:end', {
+            messageId: active.messageId,
+            sdkMessageCount: active.sdkMessageCount,
+            sawTextContent: active.sawTextContent,
+            inputTokens: usage.input_tokens as number | undefined,
+            outputTokens: usage.output_tokens as number | undefined,
+            cacheCreate: usage.cache_creation_input_tokens as number | undefined,
+            cacheRead: usage.cache_read_input_tokens as number | undefined,
+            durationMs: rawResult.duration_ms as number | undefined,
+            durationApiMs: rawResult.duration_api_ms as number | undefined
+          })
           this.emitEvent(sessionId, {
             type: 'end',
             messageId: active.messageId
@@ -1218,6 +1318,16 @@ class ChatEngine extends EventEmitter {
 
     if (delta.type === 'text_delta') {
       if (typeof delta.text !== 'string' || delta.text.length === 0) return
+      // First text delta of the turn — emit a log breadcrumb so the
+      // dialog can show "time to first token" (the interval between
+      // `send:queued` and here). We check `sawTextDelta` before
+      // flipping it so repeated deltas don't spam.
+      if (!active.sawTextDelta) {
+        this.logEvent('turn:firstChunk', {
+          messageId: active.messageId,
+          chars: delta.text.length
+        })
+      }
       active.sawTextDelta = true
       active.sawTextContent = true
       this.emitEvent(sessionId, {
@@ -1612,6 +1722,37 @@ class ChatEngine extends EventEmitter {
   private emitEvent(sessionId: string, event: ChatEvent): void {
     this.emit(`chat:${sessionId}`, event)
     this.emit('chat', sessionId, event)
+  }
+
+  /**
+   * Instrumentation breadcrumb. Emits one `log` event on the engine's
+   * EventEmitter which `ipc/register.ts` forwards to the renderer's
+   * LogsDialog. We also mirror to console.log so the live terminal
+   * output still tracks the same moments when the dialog isn't open —
+   * the cost of the extra log line is negligible next to what each
+   * event marks (network, process spawn, API RTT).
+   *
+   * Labels are plain strings, dot/colon-separated by convention
+   * (`switchToSession:begin`, `ensureSessionReady:reuse`,
+   * `turn:firstChunk`, ...). No enum, no shared type — adding a new
+   * event is "call this.logEvent('your:name', details)" and nothing
+   * else. The dialog just renders whatever strings arrive.
+   */
+  private logEvent(label: string, details?: Record<string, unknown>): void {
+    const event: LogEvent = {
+      ts: Date.now(),
+      label,
+      sessionId: this.activeSessionId ?? undefined,
+      ...(details !== undefined ? { details } : {})
+    }
+    this.emit('log', event)
+    // Mirror to console with a short prefix so terminal tails can
+    // still see engine flow without the LogsDialog being open.
+    if (details !== undefined) {
+      console.log(`[engine/log] ${label}`, details)
+    } else {
+      console.log(`[engine/log] ${label}`)
+    }
   }
 
   private isRecord(value: unknown): value is Record<string, any> {

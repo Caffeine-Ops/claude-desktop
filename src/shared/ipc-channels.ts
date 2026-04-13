@@ -1,5 +1,6 @@
 import type {
   ChatEvent,
+  LogEvent,
   PermissionRequest,
   PermissionResponse,
   SessionMeta,
@@ -79,6 +80,19 @@ export const IPC_CHANNELS = {
    */
   SESSION_META_CHANGED: 'session:meta-changed',
   /**
+   * Main → renderer. Per-event instrumentation stream. One message
+   * per engine lifecycle breadcrumb (switchToSession, ensureSessionReady,
+   * systemInit received, turn:start / turn:firstChunk / turn:end, …).
+   * The renderer's LogsDialog subscribes via `onLogEvent` and stores
+   * entries in a rolling buffer so the user can see where the ~30s
+   * first-turn latency is spent — cold start vs API TTFB vs turn
+   * streaming. There's no "replay since start" semantics: events that
+   * fire before the renderer subscribes are simply lost, which is
+   * fine because the only interesting ones happen after the user
+   * clicks something.
+   */
+  LOG_EVENT: 'log:event',
+  /**
    * Renderer → main. Relaunches the Electron app. Used by the
    * "change workspace" flow — since the engine bakes the fusion-code
    * child's cwd at spawn time, swapping workspaces means restarting
@@ -110,6 +124,14 @@ export type ChatSendPayload = {
 export type ChatSendResult = { messageId: string }
 export type ChatAbortPayload = { sessionId: string }
 export type ChatEventPayload = { sessionId: string; event: ChatEvent }
+
+/**
+ * Wrapper for LOG_EVENT IPC payloads. Single field because the event
+ * already carries its own timestamp + sessionId; keeping an envelope
+ * around it leaves room for future metadata (e.g. an ordering seq
+ * number) without breaking the subscription shape.
+ */
+export type LogEventPayload = { event: LogEvent }
 
 /**
  * Payload for the file suggestions list IPC. The renderer passes
@@ -296,6 +318,16 @@ export interface ChatApi {
    * so the `/` popover instantly reflects the cli's full command set.
    */
   onSessionMetaChanged(handler: () => void): () => void
+
+  /**
+   * Subscribe to engine instrumentation events. Returns an unsubscribe
+   * function. Each call to `handler` delivers one `LogEvent` — a
+   * timestamped breadcrumb marking a discrete lifecycle moment
+   * (switch begin, spawn begin, system init received, turn first
+   * chunk, ...). The LogsDialog uses these to render a timeline with
+   * per-event deltas.
+   */
+  onLogEvent(handler: (event: LogEvent) => void): () => void
 
   /**
    * Relaunch the Electron app. Fire-and-forget — the main process

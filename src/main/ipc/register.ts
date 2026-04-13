@@ -4,6 +4,7 @@ import { statSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import type {
   ChatEvent,
+  LogEvent,
   PermissionRequest,
   PermissionResponse
 } from '../../shared/types'
@@ -16,6 +17,7 @@ import {
   type ChatSendResult,
   type FileSuggestionsListPayload,
   type FileSuggestionsListResult,
+  type LogEventPayload,
   type SessionListResult,
   type SessionLoadPayload,
   type SessionLoadResult,
@@ -297,6 +299,18 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   engine.on('sessionMetaChanged', () => {
     if (mainWindow.isDestroyed()) return
     mainWindow.webContents.send(IPC_CHANNELS.SESSION_META_CHANGED)
+  })
+
+  // Bridge log events → renderer. Each call is one instrumentation
+  // breadcrumb (switchToSession:begin, systemInit:received,
+  // turn:firstChunk, etc). The LogsDialog subscribes via
+  // window.chatApi.onLogEvent and renders them on a timeline so the
+  // user can see where first-turn latency is spent.
+  engine.removeAllListeners('log')
+  engine.on('log', (event: LogEvent) => {
+    if (mainWindow.isDestroyed()) return
+    const payload: LogEventPayload = { event }
+    mainWindow.webContents.send(IPC_CHANNELS.LOG_EVENT, payload)
   })
 
   // Bridge permission requests → renderer. The broker emits one
