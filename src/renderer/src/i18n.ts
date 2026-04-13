@@ -182,6 +182,11 @@ const STRINGS = {
       'close · 最新事件在底部 · Δ = 距上一条间隔 · T = 距首条偏移',
     logsFooterSpan: '总跨度 {span}',
 
+    // Image preview lightbox
+    imagePreviewAria: '图片预览',
+    imagePreviewClose: '关闭预览',
+    imageAttachedAlt: '附加图片',
+
     // Tray menu (main process mirrors these via its own tiny table)
     trayShowHide: '显示 / 隐藏',
     trayQuit: '退出'
@@ -312,6 +317,10 @@ const STRINGS = {
     logsFooterHint:
       'close · newest event at bottom · Δ = gap from previous event · T = offset from first event',
     logsFooterSpan: 'span {span}',
+
+    imagePreviewAria: 'Image preview',
+    imagePreviewClose: 'Close preview',
+    imageAttachedAlt: 'Attached image',
 
     trayShowHide: 'Show / Hide',
     trayQuit: 'Quit'
