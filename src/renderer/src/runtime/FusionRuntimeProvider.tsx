@@ -66,6 +66,7 @@ export function FusionRuntimeProvider({
   const appendUserMessage = useChatStore((s) => s.appendUserMessage)
   const startAssistantMessage = useChatStore((s) => s.startAssistantMessage)
   const appendAssistantDelta = useChatStore((s) => s.appendAssistantDelta)
+  const startReasoning = useChatStore((s) => s.startReasoning)
   const appendThinkingDelta = useChatStore((s) => s.appendThinkingDelta)
   const startToolCall = useChatStore((s) => s.startToolCall)
   const appendToolCallArgsDelta = useChatStore((s) => s.appendToolCallArgsDelta)
@@ -111,10 +112,15 @@ export function FusionRuntimeProvider({
           appendAssistantDelta(event.messageId, event.delta)
           break
         case 'thinking_start':
-          // No-op: the chat store creates the reasoning part lazily
-          // on the first thinking_delta. We could pre-create an
-          // empty placeholder here, but that risks an empty card
-          // flashing on screen if the SDK never produces a delta.
+          // Pre-create an empty reasoning part so the "正在思考…"
+          // dot/label appears the moment the SDK opens the thinking
+          // block. Without this we'd wait for the first thinking
+          // delta, and Claude's extended-thinking blocks routinely
+          // sit silent for several seconds before producing any
+          // delta — long enough that the user perceives the UI as
+          // stuck. The chat store keeps this idempotent so a second
+          // thinking_start in the same turn doesn't double-insert.
+          startReasoning(event.messageId)
           break
         case 'thinking_delta':
           appendThinkingDelta(event.messageId, event.delta)

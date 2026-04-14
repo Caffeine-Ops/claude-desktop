@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 
 import { registerIpcHandlers } from './ipc/register'
-import { createTray, destroyTray } from './tray'
+import { clearUnread, createTray, destroyTray } from './tray'
 import appIcon from '../../resources/icon.png?asset'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -39,6 +39,16 @@ function createWindow(): BrowserWindow {
     mainWindow.show()
   })
 
+  // The unread badge in the tray / Dock is the user's only signal that
+  // an assistant reply landed while the window was hidden or unfocused.
+  // The instant they're back on the window, the signal has done its
+  // job — clear it from both `focus` and `show` so we cover (a) bringing
+  // the window to the front from another app and (b) restoring it from
+  // the tray's "Show / Hide" menu item.
+  const onUserReturned = (): void => clearUnread()
+  mainWindow.on('focus', onUserReturned)
+  mainWindow.on('show', onUserReturned)
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -64,13 +74,20 @@ app.whenReady().then(async () => {
   // covers the synchronous `navigator.permissions.query` path and
   // `setPermissionRequestHandler` covers the async prompt path that
   // getUserMedia triggers on first use.
+  //
+  // `clipboard-sanitized-write` is the permission Chromium checks when
+  // the renderer calls `navigator.clipboard.writeText`. Without it the
+  // call silently rejects, which broke the workspace tree's copy-name
+  // button and the assistant code-block copy. Same single-origin
+  // reasoning as `media`: the renderer is our own UI, there is no
+  // untrusted third party whose clipboard writes would need gating.
   const ses = session.defaultSession
+  const ALLOWED_PERMISSIONS = new Set(['media', 'clipboard-sanitized-write'])
   ses.setPermissionRequestHandler((_webContents, permission, callback) => {
-    if (permission === 'media') return callback(true)
-    callback(false)
+    callback(ALLOWED_PERMISSIONS.has(permission))
   })
   ses.setPermissionCheckHandler((_webContents, permission) => {
-    return permission === 'media'
+    return ALLOWED_PERMISSIONS.has(permission)
   })
 
   app.on('browser-window-created', (_, window) => {

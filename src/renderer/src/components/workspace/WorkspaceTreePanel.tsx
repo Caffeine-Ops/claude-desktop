@@ -472,6 +472,8 @@ function Node({
             in the `title` attribute on the row above so hover still
             discloses it. */}
         <span className="min-w-0 flex-1 truncate">{node.name}</span>
+
+        <CopyNameButton name={node.name} />
       </div>
 
       {node.isDir && isOpen && node.children.length > 0 && (
@@ -564,7 +566,97 @@ function buildTree(paths: readonly string[]): TreeNode[] {
   return bake(root)
 }
 
+/* ─────────────────── Per-row copy-name button ─────────────────── */
+
+/**
+ * Hover-revealed icon button that copies a tree node's basename to the
+ * clipboard. Lives inside the row's `group/tree` so it fades in on
+ * row-hover, and stops click/dblclick propagation so it never triggers
+ * the row's own toggle/open handlers.
+ *
+ * Layout-stable: the button always occupies its slot (opacity-0 when
+ * idle), so revealing it on hover doesn't reflow the filename column.
+ */
+function CopyNameButton({ name }: { name: string }): React.JSX.Element {
+  const t = useT()
+  const [copied, setCopied] = useState(false)
+
+  const onCopy = useCallback(
+    async (e: React.MouseEvent) => {
+      // Stop the row's onClick (dir toggle). The row's onDoubleClick
+      // is handled by the button's own onDoubleClick below.
+      e.stopPropagation()
+      try {
+        await navigator.clipboard.writeText(name)
+        setCopied(true)
+        window.setTimeout(() => setCopied(false), 1200)
+      } catch (err) {
+        console.error('[workspace-tree] clipboard copy failed', err)
+      }
+    },
+    [name]
+  )
+
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      onDoubleClick={(e) => e.stopPropagation()}
+      title={copied ? t('filesCopyNameCopied') : t('filesCopyName')}
+      aria-label={t('filesCopyName')}
+      className={
+        'inline-flex size-[16px] shrink-0 items-center justify-center rounded ' +
+        'transition-opacity ' +
+        'opacity-0 group-hover/tree:opacity-100 focus-visible:opacity-100 ' +
+        'hover:bg-muted/60 ' +
+        (copied
+          ? 'text-emerald-500 opacity-100'
+          : 'text-muted-foreground/70 hover:text-foreground')
+      }
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </button>
+  )
+}
+
 /* ─────────────────── Icons (inline SVG, zero deps) ─────────────────── */
+
+function CopyIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  )
+}
+
+function CheckIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  )
+}
 
 function ChevronRight(): React.JSX.Element {
   return (

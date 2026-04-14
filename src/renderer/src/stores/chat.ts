@@ -116,6 +116,16 @@ interface ChatState {
    */
   appendThinkingDelta: (messageId: string, delta: string) => void
   /**
+   * Pre-create an empty reasoning part on the current assistant message.
+   * Called on `thinking_start` so the "正在思考…" indicator appears the
+   * instant the SDK opens a thinking block, instead of waiting for the
+   * first `thinking_delta` (which can lag several seconds while Claude
+   * is actually reasoning). Idempotent: if the trailing part is already
+   * a reasoning, this is a no-op so we don't double-insert when the
+   * engine emits multiple thinking blocks back-to-back.
+   */
+  startReasoning: (messageId: string) => void
+  /**
    * Create an empty tool-call part on the current assistant message.
    * Called on `tool_use_start` — the renderer card appears immediately
    * with the tool name but no args yet. The `argsText` field is the
@@ -280,6 +290,48 @@ export const useChatStore = create<ChatState>((set) => ({
           }
         }),
         ...(flipTurnHasText ? { turnHasText: true } : {})
+      }
+    })
+  },
+
+  startReasoning: (messageId) => {
+    set((s) => {
+      const existing = s.messages.find((m) => m.id === messageId)
+      const emptyReasoningPart: ContentPart = {
+        type: 'reasoning',
+        text: ''
+      }
+      // Lazy assistant message create — same shape as
+      // appendAssistantDelta / appendThinkingDelta. The thinking
+      // block can open before `start` has had a chance to land, or
+      // before any other content, so the message may not exist yet.
+      if (!existing) {
+        const newMessage = {
+          id: messageId,
+          role: 'assistant',
+          content: [emptyReasoningPart]
+        } as unknown as ThreadMessageLike
+        return { messages: [...s.messages, newMessage] }
+      }
+      return {
+        messages: s.messages.map((m) => {
+          if (m.id !== messageId) return m
+          const parts = [...((m.content as unknown) as ContentPart[])]
+          const last = parts[parts.length - 1]
+          // Idempotent: if the last part is already a reasoning
+          // (either an empty one we just opened, or a streaming one
+          // that's already accumulating deltas), don't add a second
+          // empty placeholder. The next thinking_delta will still
+          // append into the existing trailing reasoning part.
+          if (last && last.type === 'reasoning') {
+            return m
+          }
+          parts.push(emptyReasoningPart)
+          return {
+            ...m,
+            content: parts as unknown as ThreadMessageLike['content']
+          }
+        })
       }
     })
   },

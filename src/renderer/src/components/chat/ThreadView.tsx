@@ -90,7 +90,7 @@ export function ThreadView(): React.JSX.Element {
   const contentKey = sessionId ?? '__new__'
 
   return (
-    <ThreadPrimitive.Root className="relative flex h-full min-h-0 w-full flex-1 flex-col bg-transparent">
+    <ThreadPrimitive.Root className="relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-col bg-transparent">
       {/* Top indeterminate progress bar. Absolute at the very top of
           the Thread root so it sits above the viewport mask and the
           composer. Presence-animated so it also fades in/out rather
@@ -864,13 +864,19 @@ function ReasoningCard({
   status?: { type: string }
 }): React.JSX.Element {
   const isStreaming = status?.type === 'running'
+  const hasText = text.length > 0
   // `null` ⇒ user hasn't manually toggled yet — let the streaming
   // flag drive the open state. Once they click, lock to their
   // explicit choice. This way the card auto-expands while thinking
   // and auto-collapses at end-of-turn, but doesn't fight a user
   // who expanded an old card to re-read the chain of thought.
   const [userToggled, setUserToggled] = useState<boolean | null>(null)
-  const open = userToggled ?? isStreaming
+  // Don't auto-open the body until we actually have text to show.
+  // The reasoning part is pre-created on `thinking_start` (so the
+  // dot + label appear instantly), and without this guard we'd
+  // briefly render an empty rounded box before the first delta
+  // lands a few seconds later.
+  const open = userToggled ?? (isStreaming && hasText)
   const charCount = text.length
 
   return (
@@ -879,12 +885,17 @@ function ReasoningCard({
         aria-hidden
         className="mt-[7px] flex size-[6px] shrink-0 items-center justify-center"
       >
+        {/* State indicator dot — mirrors the TodoRow status pattern:
+            in-progress = accent (blue) pulsing, done = emerald.
+            Same colours used for active todos / completed todos in
+            the right rail, so the chat reads as a single visual
+            language across surfaces. */}
         <span
           className={
             'block size-[6px] rounded-full ' +
             (isStreaming
-              ? 'animate-pulse bg-amber-400/80'
-              : 'bg-amber-400/50')
+              ? 'animate-pulse bg-accent'
+              : 'bg-emerald-500')
           }
         />
       </span>
@@ -930,7 +941,7 @@ function ReasoningCard({
               transition={{ duration: 0.18, ease: 'easeOut' }}
               className="overflow-hidden"
             >
-              <div className="mt-1.5 rounded-lg border border-amber-500/15 bg-amber-500/[0.04] px-3 py-2 text-[12.5px] leading-relaxed text-muted-foreground/90">
+              <div className="mt-1.5 rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-[12.5px] leading-relaxed text-muted-foreground/90">
                 <pre className="whitespace-pre-wrap break-words font-sans">
                   {text}
                 </pre>
@@ -1119,15 +1130,21 @@ function ToolPane({
   copyText: string
   children: React.ReactNode
 }): React.JSX.Element {
+  // `min-w-0` on both the outer card and the body wrapper lets the
+  // pane shrink below its child <pre>'s intrinsic width — without it,
+  // a single long unwrappable line in INPUT/OUTPUT would push the
+  // chat column wider than its flex slot and steal pixels from the
+  // right rail on narrow windows. The pre inside JsonView then
+  // owns the actual horizontal scroll.
   return (
-    <div className="overflow-hidden rounded-md border border-border bg-card/40">
+    <div className="min-w-0 overflow-hidden rounded-md border border-border bg-card/40">
       <div className="flex items-center justify-between border-b border-border/70 bg-muted/30 px-2.5 py-1">
         <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
           {label}
         </span>
         <CopyButton text={copyText} />
       </div>
-      <div className="px-2.5 py-1.5">{children}</div>
+      <div className="min-w-0 px-2.5 py-1.5">{children}</div>
     </div>
   )
 }
@@ -1177,15 +1194,18 @@ function JsonView({
   }
   const looksJson = /^[\s]*[\{\[]/.test(text)
   return (
+    // `whitespace-pre` (no wrap) + `overflow-x-auto` so long lines
+    // scroll horizontally inside the pane instead of forcing the
+    // column wider. `max-w-full` + parent `min-w-0` (set on ToolPane)
+    // is what keeps the chat column from bursting and stealing
+    // pixels from the right rail on narrow windows. Vertical
+    // scrolling is opt-in via `maxHeight` for paths where we want
+    // to cap a giant tool result.
     <pre
       className={
-        'overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-snug text-foreground/85 ' +
-        // When capped, mask-fade the bottom edge so overflowing
-        // content melts into the pane frame instead of hitting a
-        // hard cut. `pb-5` keeps the final line fully legible once
-        // you scroll all the way down — only the padding is masked.
+        'max-w-full overflow-x-auto whitespace-pre font-mono text-[11.5px] leading-snug text-foreground/85 ' +
         (maxHeight
-          ? 'max-h-80 pb-5 [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%-28px),transparent_100%)]'
+          ? 'max-h-80 overflow-y-auto pb-5 [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%-28px),transparent_100%)]'
           : '')
       }
     >

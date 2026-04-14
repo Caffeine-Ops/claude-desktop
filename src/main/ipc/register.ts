@@ -40,7 +40,7 @@ import { getChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
 import { getPermissionBroker } from '../core/permissionBroker'
 import { listSessions, loadSession, renameSession } from '../core/sessionStore'
-import { updateTrayLang } from '../tray'
+import { bumpUnread, clearUnread, updateTrayLang } from '../tray'
 import type {
   CliBackendSetPayload,
   CliBackendState,
@@ -117,6 +117,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     async (_event, payload: PermissionResponse): Promise<void> => {
       validatePermissionResponse(payload)
       getPermissionBroker().respond(payload)
+      // The user has clearly noticed the dialog (they just answered
+      // it), so the unread badge has done its job — clear it even if
+      // the window is somehow still in the background.
+      clearUnread()
     }
   )
 
@@ -488,6 +492,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (mainWindow.isDestroyed()) return
     const eventPayload: ChatEventPayload = { sessionId, event }
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_EVENT, eventPayload)
+
+    // Unread-badge bookkeeping. We only care about the moment a reply
+    // is *complete* (`end`) — bumping on `start` or `chunk` would
+    // either fire too early (badge appears before there's anything to
+    // read) or too noisy (one bump per streamed delta). `isFocused()`
+    // also returns false when the window is hidden or minimized, so a
+    // single negative check covers all "user isn't looking" cases.
+    if (event.type === 'end' && !mainWindow.isFocused()) {
+      bumpUnread()
+    }
   })
 
   // Bridge session-list-changed → renderer. Engine emits this from
@@ -534,6 +548,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   broker.on('request', (request: PermissionRequest) => {
     if (mainWindow.isDestroyed()) return
     mainWindow.webContents.send(IPC_CHANNELS.PERMISSION_REQUEST, request)
+    // Permission requests are inherently "user attention needed" —
+    // bump the badge unconditionally so the menubar lights up red
+    // even if the user happens to be looking at the window. We clear
+    // it again from the PERMISSION_RESPOND handler the moment they
+    // answer, so this is just a transient flash for the focused case.
+    bumpUnread()
   })
 
   // When the window is closed (quit, not just hidden), reject every

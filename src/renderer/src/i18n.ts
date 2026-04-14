@@ -170,6 +170,8 @@ const STRINGS = {
     filesCountLabel: '{count} 个文件',
     filesCountTruncated: '只显示前 {count} 个文件（workspace 中还有更多）',
     filesOpenHint: '{path} — 双击打开',
+    filesCopyName: '复制名称',
+    filesCopyNameCopied: '已复制',
 
     // Workspace gate (first-run picker)
     gateTitle: '选择一个 workspace 开始',
@@ -391,6 +393,8 @@ const STRINGS = {
     filesCountLabel: '{count} files',
     filesCountTruncated: 'Showing first {count} files (workspace has more)',
     filesOpenHint: '{path} — double-click to open',
+    filesCopyName: 'Copy name',
+    filesCopyNameCopied: 'Copied',
 
     gateTitle: 'Pick a workspace to start',
     gateDescBefore:

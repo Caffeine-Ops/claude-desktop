@@ -7,6 +7,56 @@ import { useT, useTFormat } from '../../i18n'
 import { AskUserQuestionView } from './AskUserQuestionView'
 
 /**
+ * Module-singleton AudioContext for the permission chime. Lazily created
+ * on first use because Chromium refuses to construct one before any
+ * user gesture, but by the time a permission dialog appears the user
+ * has already sent a message — gesture requirement is satisfied.
+ */
+let chimeCtx: AudioContext | null = null
+
+/**
+ * Two short sine pings at A5 → E6, ~130ms apart, with a fast attack and
+ * an exponential decay. Loud enough to cut through, short enough not to
+ * feel like an alert. Pure synthesis — no audio file in resources/, no
+ * dependency on the OS bell.
+ *
+ * Wrapped in try/catch because (a) some sandboxed contexts have no
+ * AudioContext at all and (b) browsers throttle / reject construction
+ * when the page lacks a user gesture; in either case we'd rather fail
+ * silently than block the dialog from rendering.
+ */
+function playPermissionChime(): void {
+  try {
+    const Ctor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext
+    if (!Ctor) return
+    if (!chimeCtx) chimeCtx = new Ctor()
+    const ctx = chimeCtx
+    if (ctx.state === 'suspended') void ctx.resume()
+
+    const start = ctx.currentTime
+    const tones = [880, 1318.5] // A5, E6 — perfect fifth, friendly chime
+    tones.forEach((freq, i) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.value = freq
+      const t0 = start + i * 0.13
+      gain.gain.setValueAtTime(0, t0)
+      gain.gain.linearRampToValueAtTime(0.18, t0 + 0.012)
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18)
+      osc.connect(gain).connect(ctx.destination)
+      osc.start(t0)
+      osc.stop(t0 + 0.2)
+    })
+  } catch (err) {
+    console.warn('[permission] chime failed', err)
+  }
+}
+
+/**
  * PermissionDialog
  * ----------------
  * Full-screen modal that mirrors the Claude Code terminal dialog. Two
@@ -61,6 +111,10 @@ export function PermissionDialog(): React.JSX.Element | null {
     const unsub = window.chatApi.onPermissionRequest((req) => {
       respondingRef.current = false
       setPending(req)
+      // Audible nudge so the user hears it even when the window is in
+      // the background or on another desktop. The dialog itself stays
+      // the primary signal — this is just to grab attention.
+      playPermissionChime()
     })
     return unsub
   }, [])

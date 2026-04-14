@@ -2,6 +2,8 @@ import { Tray, Menu, app, nativeImage, BrowserWindow } from 'electron'
 import trayTemplate from '../../resources/trayIconTemplate.png?asset'
 import trayIco from '../../resources/icon.ico?asset'
 import trayPng from '../../resources/icon.png?asset'
+import trayUnread from '../../resources/trayIconUnread.png?asset'
+import trayUnread2x from '../../resources/trayIconUnread@2x.png?asset'
 
 type Lang = 'zh' | 'en'
 
@@ -14,13 +16,13 @@ type Lang = 'zh' | 'en'
  * hand; with two languages and two keys the maintenance cost is
  * trivial.
  */
-const TRAY_STRINGS: Record<Lang, { showHide: string; quit: string }> = {
+const TRAY_STRINGS: Record<Lang, { show: string; quit: string }> = {
   zh: {
-    showHide: '显示 / 隐藏',
+    show: '显示',
     quit: '退出'
   },
   en: {
-    showHide: 'Show / Hide',
+    show: 'Show',
     quit: 'Quit'
   }
 }
@@ -31,6 +33,18 @@ let trayWindow: BrowserWindow | null = null
 // renderer pushes the real value via IPC on mount, so any drift is
 // resolved within the first frame after the window is ready.
 let currentLang: Lang = 'zh'
+// Unread assistant-reply counter. Bumped from the chat-event bridge in
+// `ipc/register.ts` when an assistant turn finishes while the window is
+// not focused, cleared from the focus/show listeners in `main/index.ts`.
+let unreadCount = 0
+// Cached idle and unread tray icons. The idle one is the platform icon
+// returned by `buildIcon()`, captured at tray-creation time so we can
+// swap back to it after the badge is cleared without re-resolving the
+// asset path. The unread one is the runtime-generated red dot — we
+// pay the bitmap-build cost once and re-use the NativeImage for every
+// subsequent bump.
+let idleIcon: Electron.NativeImage | null = null
+let unreadIcon: Electron.NativeImage | null = null
 
 function buildIcon(): Electron.NativeImage {
   if (process.platform === 'darwin') {
@@ -44,22 +58,19 @@ function buildIcon(): Electron.NativeImage {
   return nativeImage.createFromPath(trayPng).resize({ width: 22, height: 22 })
 }
 
-function toggleWindow(window: BrowserWindow): void {
+function showWindow(window: BrowserWindow): void {
   if (window.isDestroyed()) return
-  if (window.isVisible() && window.isFocused()) {
-    window.hide()
-  } else {
-    window.show()
-    window.focus()
-  }
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
 }
 
 function buildMenu(window: BrowserWindow, lang: Lang): Menu {
   const labels = TRAY_STRINGS[lang]
   return Menu.buildFromTemplate([
     {
-      label: labels.showHide,
-      click: () => toggleWindow(window)
+      label: labels.show,
+      click: () => showWindow(window)
     },
     { type: 'separator' },
     {
@@ -75,10 +86,11 @@ export function createTray(window: BrowserWindow): Tray {
   if (tray) return tray
 
   trayWindow = window
-  tray = new Tray(buildIcon())
+  idleIcon = buildIcon()
+  tray = new Tray(idleIcon)
   tray.setToolTip('Claude Desktop')
   tray.setContextMenu(buildMenu(window, currentLang))
-  tray.on('click', () => toggleWindow(window))
+  tray.on('click', () => showWindow(window))
 
   return tray
 }
@@ -105,4 +117,99 @@ export function destroyTray(): void {
   }
   tray = null
   trayWindow = null
+}
+
+/**
+ * Bump the unread counter by one and refresh the visible badge. Called
+ * from `ipc/register.ts` when an assistant turn finishes while the user
+ * isn't looking at the window.
+ */
+export function bumpUnread(): void {
+  unreadCount += 1
+  applyUnread()
+}
+
+/**
+ * Reset the unread counter and refresh the visible badge. Called from
+ * `main/index.ts`'s window `focus` / `show` handlers — the moment the
+ * user is back on the window, the badge has done its job.
+ */
+export function clearUnread(): void {
+  if (unreadCount === 0) return
+  unreadCount = 0
+  applyUnread()
+}
+
+/**
+ * Push the current unread count to every surface that can show it:
+ *
+ *   - **Tray icon swap** (`tray.setImage`): the only way to actually
+ *     get a *red* mark in the macOS menubar. `setTitle` text is
+ *     forced to the menubar text color (mono black/white), so a "red
+ *     badge" can't ride on title alone — we generate a red-dot
+ *     NativeImage at runtime and swap it in. When the count drops
+ *     back to zero, we restore the cached idle icon.
+ *   - **Tray title** (`tray.setTitle`): macOS-only. Shows the count
+ *     next to the swapped icon so the user knows *how many* unread,
+ *     not just *whether* there are any.
+ *   - **Dock badge** (`app.setBadgeCount`): macOS Dock icon. Linux
+ *     Unity too if the desktop has libdbusmenu. No-op on Windows.
+ *
+ * Windows tray overlays would need `setOverlayIcon` with a generated
+ * number-PNG — skipped until we hear a real ask.
+ */
+function applyUnread(): void {
+  app.setBadgeCount(unreadCount)
+  if (!tray || tray.isDestroyed()) return
+
+  if (unreadCount > 0) {
+    if (!unreadIcon) unreadIcon = buildUnreadIcon()
+    tray.setImage(unreadIcon)
+    if (process.platform === 'darwin') {
+      tray.setTitle(` ${unreadCount}`)
+    }
+  } else {
+    if (idleIcon) tray.setImage(idleIcon)
+    if (process.platform === 'darwin') {
+      tray.setTitle('')
+    }
+  }
+}
+
+/**
+ * Load the pre-baked red-dot tray icon. Two PNG variants ship in
+ * `resources/`:
+ *
+ *   - `trayIconUnread.png`     — 16×16, used at @1x
+ *   - `trayIconUnread@2x.png`  — 32×32, used at @2x (retina)
+ *
+ * Going through `addRepresentation` instead of `createFromPath` lets
+ * us bind both files to the same logical 16-point image, so the
+ * system picks the right asset for the current display scale and the
+ * dot stays crisp on retina menubars. The image is *not* a template —
+ * we want the red to render as red, not be tinted to the menubar
+ * text color.
+ *
+ * Drawing a real composite of "chat icon + red corner dot" runs into
+ * macOS template-image color rules — templates are tinted to the
+ * menubar text color, so a partial-color overlay can't share an image
+ * with a tinted body. Replacing the whole icon with a single red dot
+ * sidesteps that entirely and gives an unmistakable "needs attention"
+ * signal that works in both light and dark menubars.
+ */
+function buildUnreadIcon(): Electron.NativeImage {
+  const img = nativeImage.createEmpty()
+  img.addRepresentation({
+    scaleFactor: 1.0,
+    width: 16,
+    height: 16,
+    buffer: nativeImage.createFromPath(trayUnread).toPNG()
+  })
+  img.addRepresentation({
+    scaleFactor: 2.0,
+    width: 16,
+    height: 16,
+    buffer: nativeImage.createFromPath(trayUnread2x).toPNG()
+  })
+  return img
 }
