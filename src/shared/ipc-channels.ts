@@ -135,7 +135,18 @@ export const IPC_CHANNELS = {
    *    the renderer's localStorage itself.
    *  - Every time `useI18n.setLang` runs.
    */
-  LANG_CHANGED: 'lang:changed'
+  LANG_CHANGED: 'lang:changed',
+  /**
+   * One-shot audio transcription via the OpenAI compatible
+   * `/audio/transcriptions` endpoint. Renderer records a chunk via
+   * MediaRecorder, ships the raw bytes + mime type through this
+   * channel, main does the authenticated multipart POST against
+   * `OPENAI_BASE_URL` using `OPENAI_API_KEY` from env.json, and
+   * returns `{ text }` (or `{ error }` on any failure). Keeping
+   * the HTTP call in main means the API key never lands in the
+   * renderer — the window can't be snapshotted for the secret.
+   */
+  TRANSCRIBE_AUDIO: 'speech:transcribe'
 } as const
 
 /**
@@ -152,6 +163,19 @@ export interface ChatImagePayload {
   dataUrl: string
   filename?: string
 }
+
+export interface TranscribeAudioPayload {
+  /** Raw audio bytes. MediaRecorder output; main treats them opaquely. */
+  audio: Uint8Array
+  /** MIME type of the audio blob, e.g. `audio/webm;codecs=opus`. */
+  mimeType: string
+  /** Optional ISO language hint (`zh` / `en`) forwarded to Whisper. */
+  language?: string
+}
+
+export type TranscribeAudioResult =
+  | { text: string; error?: undefined }
+  | { text?: undefined; error: string }
 
 export type ChatSendPayload = {
   sessionId: string
@@ -423,4 +447,15 @@ export interface ChatApi {
    * meaningful reply beyond "received".
    */
   setLang(lang: 'zh' | 'en'): void
+
+  /**
+   * Transcribe an audio chunk via the OpenAI compatible Whisper
+   * endpoint. Main reads `OPENAI_BASE_URL` / `OPENAI_API_KEY` /
+   * `OPENAI_TRANSCRIBE_MODEL` from env.json on each call — env
+   * edits are picked up without a relaunch. Returns the recognized
+   * text or a friendly error string the composer surfaces as a log.
+   */
+  transcribeAudio(
+    payload: TranscribeAudioPayload
+  ): Promise<TranscribeAudioResult>
 }

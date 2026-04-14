@@ -153,6 +153,11 @@ const STRINGS = {
     // Composer
     composerPlaceholder: '随便问点什么…   ↵ 发送 · ⇧↵ 换行 · / 命令 · @ 文件',
     composerAttachImage: '附加图片',
+    composerDictate: '语音输入',
+    composerStopDictation: '停止语音输入',
+    composerListening: '正在聆听…',
+    composerCancelDictation: '取消语音输入',
+    composerConfirmDictation: '结束并插入文字',
     composerNoMatchingCommands: '没有匹配的命令',
     composerLoadingFiles: '正在加载文件…',
     composerNoMatchingFiles: '没有匹配的文件',
@@ -289,6 +294,11 @@ const STRINGS = {
     composerPlaceholder:
       'Ask anything…   ↵ send · ⇧↵ newline · / commands · @ files',
     composerAttachImage: 'Attach image',
+    composerDictate: 'Voice input',
+    composerStopDictation: 'Stop voice input',
+    composerListening: 'Listening…',
+    composerCancelDictation: 'Cancel voice input',
+    composerConfirmDictation: 'Finish and insert',
     composerNoMatchingCommands: 'No matching commands',
     composerLoadingFiles: 'Loading files…',
     composerNoMatchingFiles: 'No matching files',

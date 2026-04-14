@@ -27,6 +27,8 @@ import {
   type SessionRenameResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
+  type TranscribeAudioPayload,
+  type TranscribeAudioResult,
   type WorkspaceFileOpenPayload,
   type WorkspaceFileOpenResult,
   type WorkspacePickResult,
@@ -346,6 +348,58 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // OpenAI-compatible audio transcription proxy.
+  //
+  // Routes audio through the Chat Completions endpoint using an
+  // `input_audio` message part. This works with any OpenAI-compatible
+  // provider that offers `gpt-4o-audio-preview` (or equivalent audio
+  // chat model) — including csdn.cloud, which doesn't expose the
+  // dedicated `/audio/transcriptions` + whisper endpoint.
+  //
+  // Renderer records raw PCM via AudioWorklet, encodes it as a 16-bit
+  // mono WAV file, ships the bytes here as a Uint8Array, and main
+  // base64-encodes them into the chat request's `input_audio.data`
+  // field. The system prompt instructs the model to return ONLY the
+  // verbatim transcript with no commentary or quoting, which is the
+  // same contract whisper would give us.
+  //
+  // Env is read per-call so editing env.json takes effect without a
+  // relaunch. Errors are caught and returned as `{ error }` so the
+  // dictation adapter can surface them as a log entry instead of
+  // crashing the IPC.
+  ipcMain.handle(
+    IPC_CHANNELS.TRANSCRIBE_AUDIO,
+    async (
+      _event,
+      payload: TranscribeAudioPayload
+    ): Promise<TranscribeAudioResult> => {
+      console.log('[transcribe] handler invoked', {
+        bytes: payload?.audio?.byteLength ?? 0,
+        mimeType: payload?.mimeType,
+        language: payload?.language
+      })
+      if (!payload?.audio || payload.audio.byteLength === 0) {
+        console.log('[transcribe] rejected: empty audio payload')
+        return { error: 'empty audio payload' }
+      }
+      // Provider selection: Gemini wins when its key is set, otherwise
+      // fall back to the OpenAI-compatible path. Lets users swap
+      // providers by just editing env.json (no code changes, no
+      // relaunch) and keeps both routes on the same IPC surface.
+      if (process.env.GEMINI_API_KEY) {
+        return transcribeViaGemini(payload)
+      }
+      if (process.env.OPENAI_API_KEY) {
+        return transcribeViaOpenAIChat(payload)
+      }
+      console.log('[transcribe] rejected: no STT API key configured')
+      return {
+        error:
+          'No STT API key configured — set GEMINI_API_KEY or OPENAI_API_KEY in env.json.'
+      }
+    }
+  )
+
   // Bridge engine events → renderer.
   const engine = getChatEngine()
   engine.on('chat', (sessionId: string, event: ChatEvent) => {
@@ -639,5 +693,224 @@ function validatePermissionResponse(
     ) {
       throw new Error('Invalid permission response: updatedInput must be an object')
     }
+  }
+}
+
+/**
+ * Map a MIME type to the `format` string expected by
+ * `input_audio` in the OpenAI chat completions API. Only `wav` and
+ * `mp3` are officially supported; everything else falls back to
+ * `wav` since our adapter explicitly encodes WAV via AudioWorklet
+ * before sending.
+ */
+function wavOrMp3FormatHint(mime: string | undefined): 'wav' | 'mp3' {
+  const head = (mime ?? '').split(';')[0]!.trim().toLowerCase()
+  if (head === 'audio/mpeg' || head === 'audio/mp3') return 'mp3'
+  return 'wav'
+}
+
+/**
+ * Gemini (Google AI Studio) transcription path. Uses the generative
+ * language API's `generateContent` endpoint with the audio embedded
+ * as an `inline_data` content part — the same mental model as the
+ * OpenAI chat-audio route but Google's proxy actually forwards the
+ * bytes to the model instead of silently dropping them.
+ *
+ * Auth goes in the `?key=` query string (legacy but still the AI
+ * Studio style). The response text lives at
+ * `candidates[0].content.parts[0].text`.
+ */
+async function transcribeViaGemini(
+  payload: TranscribeAudioPayload
+): Promise<TranscribeAudioResult> {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) return { error: 'GEMINI_API_KEY missing' }
+  const baseUrlRaw =
+    process.env.GEMINI_BASE_URL ?? 'https://generativelanguage.googleapis.com/v1beta'
+  const model = process.env.GEMINI_TRANSCRIBE_MODEL ?? 'gemini-2.5-flash'
+  const baseUrl = baseUrlRaw.replace(/\/+$/, '')
+  const url = `${baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(
+    apiKey
+  )}`
+  console.log('[transcribe:gemini] posting', {
+    url: url.replace(/key=[^&]+/, 'key=***'),
+    model,
+    keyLen: apiKey.length
+  })
+  try {
+    const audioBase64 = Buffer.from(payload.audio).toString('base64')
+    const mimeType = (payload.mimeType || 'audio/wav').split(';')[0]!.trim()
+
+    // Prompt follows Google's canonical audio-understanding example
+    // ("Generate a transcript of the speech.") with a short
+    // appendage that pins the output to the bare transcript. The
+    // docs specifically call this phrasing out as the reference
+    // prompt for verbatim transcription, and in practice it
+    // produces noticeably cleaner output than longer instructions.
+    // Language hint is included when set so Chinese dictation
+    // doesn't get pinyin / English rewrites.
+    const langHint =
+      payload.language === 'zh'
+        ? ' The speech is in Mandarin Chinese; output the transcript in simplified Chinese characters.'
+        : payload.language
+          ? ` The speech is in ${payload.language}.`
+          : ''
+    const promptText =
+      `Generate a transcript of the speech.${langHint} Output only the transcript text — no commentary, no quotes, no markdown, no translation. If the audio is silent or unintelligible, return an empty string.`
+
+    const body = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: promptText },
+            {
+              inline_data: {
+                mime_type: mimeType,
+                data: audioBase64
+              }
+            }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0,
+        // Upper bound for whole-utterance transcripts. A minute of
+        // fast Mandarin is ~250 characters ≈ 400 tokens; we size
+        // generously for multi-minute sessions without letting a
+        // hallucination run forever.
+        maxOutputTokens: 4096
+      }
+    }
+    const bodyJson = JSON.stringify(body)
+    console.log('[transcribe:gemini] body size', bodyJson.length)
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: bodyJson
+    })
+    console.log('[transcribe:gemini] status', res.status)
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '')
+      console.log('[transcribe:gemini] error body', errBody.slice(0, 500))
+      return {
+        error: `gemini ${res.status}: ${errBody.slice(0, 300) || res.statusText}`
+      }
+    }
+    const data = (await res.json()) as {
+      candidates?: Array<{
+        content?: { parts?: Array<{ text?: unknown }> }
+      }>
+      promptFeedback?: { blockReason?: unknown }
+    }
+    if (data.promptFeedback?.blockReason) {
+      return {
+        error: `gemini blocked: ${String(data.promptFeedback.blockReason)}`
+      }
+    }
+    const parts = data.candidates?.[0]?.content?.parts ?? []
+    const raw = parts
+      .map((p) => (typeof p?.text === 'string' ? p.text : ''))
+      .join('')
+    if (!raw) {
+      console.log(
+        '[transcribe:gemini] response shape unexpected',
+        JSON.stringify(data).slice(0, 300)
+      )
+      return { error: 'gemini response missing text' }
+    }
+    const text = raw.trim().replace(/^["'“”‘’]|["'“”‘’]$/g, '').trim()
+    console.log('[transcribe:gemini] ok', { len: text.length })
+    return { text }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.log('[transcribe:gemini] threw', msg)
+    return { error: `gemini transcription failed: ${msg}` }
+  }
+}
+
+/**
+ * OpenAI-compatible chat-completions transcription path (legacy
+ * fallback). Kept around for users who have an OpenAI-style key
+ * without a Gemini one; known NOT to work with proxies that drop
+ * `input_audio` content blocks (e.g. csdn.cloud).
+ */
+async function transcribeViaOpenAIChat(
+  payload: TranscribeAudioPayload
+): Promise<TranscribeAudioResult> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) return { error: 'OPENAI_API_KEY missing' }
+  const baseUrlRaw =
+    process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1'
+  const model = process.env.OPENAI_TRANSCRIBE_MODEL ?? 'gpt-4o-audio-preview'
+  const baseUrl = baseUrlRaw.replace(/\/+$/, '')
+  const url = `${baseUrl}/chat/completions`
+  console.log('[transcribe:openai] posting', { url, model, keyLen: apiKey.length })
+  try {
+    const audioBase64 = Buffer.from(payload.audio).toString('base64')
+    const format = wavOrMp3FormatHint(payload.mimeType)
+    const systemPrompt =
+      'You are a speech-to-text transcriber. Transcribe the audio verbatim. ' +
+      'Output ONLY the transcript, with no commentary, no quoting, no ' +
+      'markdown, no labels, and no trailing punctuation beyond what was ' +
+      'spoken. If the audio is silent or unintelligible, return an ' +
+      'empty string.'
+    const userText =
+      payload.language === 'zh'
+        ? '请把下面这段音频转成文字。'
+        : 'Transcribe the audio.'
+    const body = {
+      model,
+      modalities: ['text'],
+      messages: [
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: userText },
+            {
+              type: 'input_audio',
+              input_audio: { data: audioBase64, format }
+            }
+          ]
+        }
+      ]
+    }
+    const bodyJson = JSON.stringify(body)
+    console.log('[transcribe:openai] body size', bodyJson.length)
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: bodyJson
+    })
+    console.log('[transcribe:openai] status', res.status)
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '')
+      console.log('[transcribe:openai] error body', errBody.slice(0, 500))
+      return {
+        error: `openai ${res.status}: ${errBody.slice(0, 300) || res.statusText}`
+      }
+    }
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: unknown } }>
+    }
+    const raw = data.choices?.[0]?.message?.content
+    if (typeof raw !== 'string') {
+      console.log(
+        '[transcribe:openai] response shape unexpected',
+        JSON.stringify(data).slice(0, 300)
+      )
+      return { error: 'openai response missing `choices[0].message.content`' }
+    }
+    const text = raw.trim().replace(/^["'“”‘’]|["'“”‘’]$/g, '').trim()
+    console.log('[transcribe:openai] ok', { len: text.length })
+    return { text }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.log('[transcribe:openai] threw', msg)
+    return { error: `openai transcription failed: ${msg}` }
   }
 }

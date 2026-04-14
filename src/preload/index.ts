@@ -26,6 +26,8 @@ import {
   type SessionRenameResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
+  type TranscribeAudioPayload,
+  type TranscribeAudioResult,
   type WorkspaceFileOpenPayload,
   type WorkspaceFileOpenResult,
   type WorkspacePickResult,
@@ -224,6 +226,15 @@ const chatApi: ChatApi = {
 
   setLang(lang: 'zh' | 'en'): void {
     ipcRenderer.send(IPC_CHANNELS.LANG_CHANGED, { lang })
+  },
+
+  transcribeAudio(
+    payload: TranscribeAudioPayload
+  ): Promise<TranscribeAudioResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.TRANSCRIBE_AUDIO,
+      payload
+    ) as Promise<TranscribeAudioResult>
   }
 }
 

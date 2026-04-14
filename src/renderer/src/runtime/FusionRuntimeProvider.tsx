@@ -10,11 +10,15 @@ import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
   type AppendMessage,
+  type DictationAdapter,
   type ExternalStoreThreadListAdapter,
   type ThreadMessageLike
 } from '@assistant-ui/react'
 
 import { useChatStore } from '../stores/chat'
+import { useI18n } from '../i18n'
+import { pushUiLog } from '../stores/uiLogs'
+import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
 import { useDialogStore, type DialogKind } from '../stores/dialogs'
 import {
   useTodosStore,
@@ -204,6 +208,33 @@ export function FusionRuntimeProvider({
     setError,
     endAssistantMessage
   ])
+
+  // ── Voice dictation adapter ─────────────────────────────────────────
+  // We don't use assistant-ui's built-in WebSpeechDictationAdapter:
+  // stock Electron's Chromium has no Google Cloud Speech key, so
+  // SpeechRecognition reliably dies with ERR_FAILED at the network
+  // layer. Instead, the custom adapter below records a raw mic
+  // stream, chunks it via MediaRecorder, and proxies each chunk
+  // through the main-process IPC to an OpenAI-compatible
+  // `/audio/transcriptions` endpoint (OPENAI_BASE_URL +
+  // OPENAI_API_KEY from env.json). The same MediaStream also feeds
+  // an AnalyserNode into the audioLevel store for the waveform UI,
+  // so we only open one mic session per dictation turn.
+  //
+  // Recreated whenever the UI language changes so the Whisper call
+  // gets a fresh `language` hint. A thin logging wrapper sits on
+  // top so every lifecycle event lands in the LogsDialog.
+  const lang = useI18n((s) => s.lang)
+  const dictationAdapter = useMemo(() => {
+    const inner = createOpenAIWhisperDictationAdapter({
+      language: lang
+    })
+    pushUiLog('dictation:adapter-ready', {
+      engine: 'openai-whisper',
+      language: lang
+    })
+    return wrapDictationWithLogging(inner)
+  }, [lang])
 
   // ── ExternalStoreRuntime wiring ─────────────────────────────────────
   const runtime = useExternalStoreRuntime({
@@ -423,7 +454,12 @@ export function FusionRuntimeProvider({
       // `onSessionListChanged` broadcast. onSwitchToThread /
       // onSwitchToNewThread route back through IPC to
       // engine.switchToSession.
-      threadList: threadListAdapter
+      threadList: threadListAdapter,
+      // Web Speech API dictation. `undefined` when the browser doesn't
+      // expose SpeechRecognition — ComposerPrimitive.Dictate's
+      // useComposerDictate() returns `null` in that case and the mic
+      // button auto-disables.
+      dictation: dictationAdapter
     }
   })
 
@@ -680,6 +716,91 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     }),
     [sessionId, sessionLoading, threadData, onSwitchToNewThread, onSwitchToThread]
   )
+}
+
+/**
+ * Wrap a DictationAdapter so every lifecycle event flows into the
+ * UI logs store. Preserves the adapter contract exactly — `status`
+ * is exposed as a getter so assistant-ui's internal status polling
+ * still sees the live value from the inner session instead of a
+ * snapshot taken at wrap time.
+ *
+ * Events we surface:
+ *   - `dictation:listen`          session created
+ *   - `dictation:speech-start`    user started speaking
+ *   - `dictation:speech-commit`   a final utterance landed in the composer
+ *   - `dictation:speech-interim`  (throttled) interim partial arrived
+ *   - `dictation:stop`            user hit the stop button
+ *   - `dictation:cancel`          cancel() called by the runtime
+ *   - `dictation:ended`           terminal status observed, with the
+ *                                 reason (stopped / cancelled / error)
+ *
+ * The `ended` event is produced by polling `session.status` at 150ms
+ * intervals — the adapter type doesn't expose a status change
+ * callback, so polling is the only portable option. Polling stops
+ * as soon as the terminal status is observed, so the overhead is
+ * bounded to the active dictation window.
+ */
+function wrapDictationWithLogging(inner: DictationAdapter): DictationAdapter {
+  return {
+    listen() {
+      pushUiLog('dictation:listen')
+      const session = inner.listen()
+
+      let lastInterimLog = 0
+      const unsubSpeechStart = session.onSpeechStart(() => {
+        pushUiLog('dictation:speech-start')
+      })
+      const unsubSpeech = session.onSpeech((result) => {
+        // Throttle interim logs to ~2/s so a single sentence doesn't
+        // flood the ring buffer with 30 near-identical rows.
+        const now = Date.now()
+        if (now - lastInterimLog < 500) return
+        lastInterimLog = now
+        pushUiLog('dictation:speech-interim', {
+          len: result.transcript.length
+        })
+      })
+      const unsubSpeechEnd = session.onSpeechEnd((result) => {
+        pushUiLog('dictation:speech-commit', {
+          len: result.transcript.length,
+          final: result.isFinal ?? true
+        })
+      })
+
+      let lastStatus = session.status.type
+      const pollId = window.setInterval(() => {
+        const current = session.status
+        if (current.type === lastStatus) return
+        lastStatus = current.type
+        if (current.type === 'ended') {
+          pushUiLog('dictation:ended', { reason: current.reason })
+          window.clearInterval(pollId)
+          unsubSpeechStart()
+          unsubSpeech()
+          unsubSpeechEnd()
+        }
+      }, 150)
+
+      return {
+        get status() {
+          return session.status
+        },
+        stop: async () => {
+          pushUiLog('dictation:stop')
+          await session.stop()
+        },
+        cancel: () => {
+          pushUiLog('dictation:cancel')
+          session.cancel()
+        },
+        onSpeechStart: (cb) => session.onSpeechStart(cb),
+        onSpeechEnd: (cb) => session.onSpeechEnd(cb),
+        onSpeech: (cb) => session.onSpeech(cb)
+      }
+    },
+    disableInputDuringDictation: inner.disableInputDuringDictation
+  }
 }
 
 function matchSlashCommand(text: string): Exclude<DialogKind, null> | null {

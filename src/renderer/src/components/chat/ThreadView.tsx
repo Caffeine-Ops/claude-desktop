@@ -6,12 +6,14 @@ import {
   useRef,
   useState
 } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ThreadPrimitive,
   MessagePrimitive,
   ComposerPrimitive,
   AttachmentPrimitive,
-  useAuiState
+  useAuiState,
+  useComposerRuntime
 } from '@assistant-ui/react'
 import type { Attachment, Unstable_TriggerItem } from '@assistant-ui/core'
 import { AnimatePresence, motion } from 'motion/react'
@@ -26,6 +28,7 @@ import {
 } from '../../composer/fileMentionAdapter'
 import { ThinkingSpinner } from './ThinkingSpinner'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import { DictationWaveform } from './DictationWaveform'
 import hljs from 'highlight.js/lib/common'
 
 /**
@@ -265,85 +268,160 @@ function UserImagePart({
           className="max-h-[220px] max-w-full object-cover"
         />
       </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            role="dialog"
-            aria-modal="true"
-            aria-label={filename ?? t('imagePreviewAria')}
-            onClick={() => setOpen(false)}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
-            // Full-bleed backdrop: dark tint + strong blur so the chat
-            // behind the modal recedes without being pitch black (pure
-            // black loses all depth cues for photos with black pixels).
-            className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-md"
-          >
-            {/* Image wrapper. stopPropagation so clicks on the image
-                itself don't bubble to the backdrop dismiss. Cap at
-                90vw / 85vh so the image always breathes — the old
-                `max-h/w-full + p-8` left the image cramped against
-                the close button on short viewports. */}
-            <motion.div
-              onClick={(e) => e.stopPropagation()}
-              initial={{ opacity: 0, scale: 0.96, y: 8 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.97, y: 4 }}
-              transition={{ type: 'spring', stiffness: 260, damping: 26 }}
-              className="relative flex max-h-[85vh] max-w-[90vw] flex-col items-center"
+      {/* Portal the lightbox into document.body so `position: fixed`
+          covers the entire window, not just the ThreadView column.
+          Ancestors in the message tree (motion wrappers, assistant-ui
+          Viewport) set `transform` / `will-change` which turns them
+          into containing blocks for fixed descendants, causing the
+          modal to visually clip to the chat column. Portaling escapes
+          that chain entirely. */}
+      {createPortal(
+        <AnimatePresence>
+          {open && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={filename ?? t('imagePreviewAria')}
+              // `WebkitAppRegion: no-drag` on the outer wrapper — the
+              // app's `.header` has `-webkit-app-region: drag` so the
+              // user can drag the window by the title bar. That
+              // property works in screen coordinates; without a
+              // `no-drag` override on the modal, the top ~48px strip
+              // (overlapping the header) would still be a window-drag
+              // zone and clicks there (backdrop dismiss, image click,
+              // close button top half) would be swallowed by the OS.
+              // `no-drag` inherits through the subtree so every
+              // interactive element in the lightbox is click-safe.
+              //
+              // No onClick here — dismiss-on-backdrop lives on the blur
+              // layer below so the close button's click has a clean
+              // path and doesn't need to fight with this wrapper.
+              style={
+                { WebkitAppRegion: 'no-drag' } as React.CSSProperties
+              }
+              className="fixed inset-0 z-[100] flex items-center justify-center"
             >
-              <img
-                src={image}
-                alt={altText}
+              {/* Blur layer — owns the backdrop dismiss. Static
+                  backdrop-filter isolated in its own layer so Chromium
+                  doesn't re-run the blur on every frame of the opacity
+                  tween (backdrop-filter + animated opacity is the #1
+                  cause of laggy modal transitions in Electron).
+                  Entry and exit share the same tween duration with
+                  entry using easeOutExpo (snappy start, soft stop)
+                  and exit using easeInOutQuad (gentle both ends) so
+                  the close doesn't feel like it's been yanked away. */}
+              <motion.div
+                aria-hidden
                 onClick={() => setOpen(false)}
-                // `rounded-xl` + hairline white ring gives the image a
-                // clean edge against the blurred backdrop; `shadow-2xl`
-                // alone was invisible on a near-black overlay. The
-                // cursor-zoom-out hints that clicking the image closes.
-                className="max-h-[85vh] max-w-[90vw] cursor-zoom-out rounded-xl object-contain shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)] ring-1 ring-white/10"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{
+                  duration: 0.28,
+                  ease: [0.22, 1, 0.36, 1]
+                }}
+                style={{ willChange: 'opacity' }}
+                className="absolute inset-0 z-0 bg-background/78 backdrop-blur-lg"
               />
-              {/* Filename caption pill. Only shown when we actually
-                  know the name — pasted clipboard images have none. */}
-              {filename && (
-                <div className="mt-3 max-w-full truncate rounded-full border border-border/60 bg-card/80 px-3 py-1 font-mono text-[11px] text-muted-foreground backdrop-blur-sm">
-                  {filename}
-                </div>
-              )}
-            </motion.div>
 
-            {/* Close button — offset from the corner, high-contrast
-                pill that reads on both light + dark themes. Stopping
-                propagation so the button click doesn't double-fire
-                (backdrop dismiss + button handler). */}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                setOpen(false)
-              }}
-              aria-label={t('imagePreviewClose')}
-              className="fixed right-6 top-6 flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-lg backdrop-blur-md transition hover:border-input hover:bg-muted"
-            >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
+              {/* Image wrapper. `z-10` sits above the blur layer; the
+                  motion element creates its own stacking context via
+                  `willChange: transform` anyway, but the explicit z
+                  makes hit-test order unambiguous. Tween with
+                  cubic-bezier easeOutExpo — snappier and more
+                  predictable than the old bouncy spring. Exit uses a
+                  gentler scale-down (0.94, matching the entry) so the
+                  reverse motion reads as a true inverse instead of
+                  snapping shut. */}
+              <motion.div
+                onClick={(e) => e.stopPropagation()}
+                initial={{ opacity: 0, scale: 0.94 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.94 }}
+                transition={{
+                  opacity: { duration: 0.28, ease: [0.22, 1, 0.36, 1] },
+                  scale: { duration: 0.36, ease: [0.22, 1, 0.36, 1] }
+                }}
+                style={{ willChange: 'transform, opacity' }}
+                className="relative z-10 flex max-h-[85vh] max-w-[90vw] flex-col items-center transform-gpu"
               >
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                <img
+                  src={image}
+                  alt={altText}
+                  onClick={() => setOpen(false)}
+                  draggable={false}
+                  className="max-h-[85vh] max-w-[90vw] cursor-zoom-out rounded-xl object-contain shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)] ring-1 ring-white/10"
+                />
+                {/* Filename caption pill. Only shown when we actually
+                    know the name — pasted clipboard images have none. */}
+                {filename && (
+                  <div className="mt-3 max-w-full truncate rounded-full border border-border/60 bg-card/80 px-3 py-1 font-mono text-[11px] text-muted-foreground">
+                    {filename}
+                  </div>
+                )}
+              </motion.div>
+
+              {/* Close button — `motion.button` with **opacity-only**
+                  animation. No `scale` / `y` / `rotate`: those would
+                  introduce a transform layer and re-trigger the
+                  earlier hit-test bug where the button's top half was
+                  unclickable (will-change: transform + the image
+                  wrapper's transform-gpu layer made Chromium's
+                  cross-layer hit-test non-deterministic). Pure
+                  opacity fades don't create a transform containing
+                  block, so the hit rect stays exactly the layout box.
+                  Hit target: `p-2.5` extends the clickable region to
+                  60×60 while the visible 40×40 pill is an inner span.
+                  `WebkitAppRegion: no-drag` is inherited from the
+                  parent wrapper but spelled out here defensively —
+                  the app header's drag region would otherwise swallow
+                  clicks on the top half of the button. */}
+              <motion.button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setOpen(false)
+                }}
+                aria-label={t('imagePreviewClose')}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{
+                  duration: 0.28,
+                  ease: [0.22, 1, 0.36, 1]
+                }}
+                style={
+                  {
+                    WebkitAppRegion: 'no-drag',
+                    willChange: 'opacity'
+                  } as React.CSSProperties
+                }
+                className="group/close fixed right-4 top-4 z-50 flex items-center justify-center p-2.5"
+              >
+                <span
+                  aria-hidden
+                  className="flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-lg transition-colors group-hover/close:border-input group-hover/close:bg-muted"
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </span>
+              </motion.button>
+            </div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </>
   )
 }
@@ -1021,6 +1099,14 @@ function Composer(): React.JSX.Element {
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [files, setFiles] = useState<readonly string[]>([])
   const streaming = useChatStore((s) => s.streaming)
+  // Read dictation state at the Composer level (single subscription)
+  // and branch the composer row layout on it. When dictating, the
+  // textarea is replaced by a live waveform, the send + mic slots
+  // become a pair of X / ✓ controls — matching the mutually
+  // exclusive UX in the design reference.
+  const isDictating = useAuiState(
+    (s) => (s as { composer?: { dictation?: unknown } }).composer?.dictation != null
+  )
   // Caret tracking for the fake overlay cursor. The native textarea
   // caret is hidden via `caret-color: transparent` in the className
   // below, because once we let chips have real visual width the
@@ -1349,83 +1435,104 @@ function Composer(): React.JSX.Element {
                     <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                   </svg>
                 </ComposerPrimitive.AddAttachment>
-                {/* Highlight overlay wrapper. The overlay div renders
-                    the same text content but with slash / mention
-                    tokens wrapped in styled spans, while the textarea
-                    on top has transparent text (caret still visible
-                    via `caret-foreground`) so the overlay's highlights
-                    read as "inline chips" to the user.
-                    Both elements share identical typography and
-                    padding so characters line up pixel-perfect. The
-                    overlay uses `box-shadow` for chip borders instead
-                    of `padding` to avoid shifting text positions. */}
-                <div className="relative min-h-[24px] max-h-40 flex-1 overflow-hidden">
-                  <ComposerHighlightOverlay
-                    caretPos={caretPos}
-                    isFocused={isFocused}
+                {isDictating ? (
+                  /* ── Dictation mode row ────────────────────────────
+                     Waveform replaces the textarea, X cancels and
+                     reverts to the pre-dictation text, ✓ confirms
+                     and inserts the committed transcript into the
+                     textarea (which rematerializes when this branch
+                     unmounts). */
+                  <DictationActiveControls
+                    cancelLabel={t('composerCancelDictation')}
+                    confirmLabel={t('composerConfirmDictation')}
                   />
-                  <ComposerPrimitive.Input
-                    ref={textareaRef}
-                    placeholder={t('composerPlaceholder')}
-                    rows={1}
-                    onKeyDown={handleComposerKey}
-                    onFocus={(e) => {
-                      setIsFocused(true)
-                      // Sync caret state on focus so re-entering the
-                      // composer shows the caret at the actual DOM
-                      // selection, not a stale zero position.
-                      setCaretPos(e.currentTarget.selectionStart ?? 0)
-                    }}
-                    onBlur={() => setIsFocused(false)}
-                    onSelect={(e) => {
-                      const el = e.currentTarget
-                      let start = el.selectionStart ?? 0
-                      const end = el.selectionEnd ?? start
-                      // Collapse-to-boundary: when the user's cursor
-                      // lands strictly *inside* a slash/mention token
-                      // (click, arrow, or programmatic), snap it to
-                      // the closer chip edge so chips feel atomic.
-                      // Only applies to collapsed selections — a
-                      // drag-select over a chip stays as-is.
-                      if (start === end) {
-                        const hit = findAtomicTokenContaining(el.value, start)
-                        if (hit) {
-                          const snap =
-                            start - hit.start < hit.end - start
-                              ? hit.start
-                              : hit.end
-                          if (snap !== start) {
-                            start = snap
-                            el.setSelectionRange(snap, snap)
+                ) : (
+                  <>
+                    {/* Highlight overlay wrapper. The overlay div
+                        renders the same text content but with slash
+                        / mention tokens wrapped in styled spans,
+                        while the textarea on top has transparent
+                        text (caret still visible via
+                        `caret-foreground`) so the overlay's
+                        highlights read as "inline chips" to the
+                        user. Both elements share identical
+                        typography and padding so characters line up
+                        pixel-perfect. The overlay uses `box-shadow`
+                        for chip borders instead of `padding` to
+                        avoid shifting text positions. */}
+                    <div className="relative min-h-[24px] max-h-40 flex-1 overflow-hidden">
+                      <ComposerHighlightOverlay
+                        caretPos={caretPos}
+                        isFocused={isFocused}
+                      />
+                      <ComposerPrimitive.Input
+                        ref={textareaRef}
+                        placeholder={t('composerPlaceholder')}
+                        rows={1}
+                        onKeyDown={handleComposerKey}
+                        onFocus={(e) => {
+                          setIsFocused(true)
+                          // Sync caret state on focus so re-entering
+                          // the composer shows the caret at the
+                          // actual DOM selection, not a stale zero
+                          // position.
+                          setCaretPos(e.currentTarget.selectionStart ?? 0)
+                        }}
+                        onBlur={() => setIsFocused(false)}
+                        onSelect={(e) => {
+                          const el = e.currentTarget
+                          let start = el.selectionStart ?? 0
+                          const end = el.selectionEnd ?? start
+                          // Collapse-to-boundary: when the user's
+                          // cursor lands strictly *inside* a slash /
+                          // mention token (click, arrow, or
+                          // programmatic), snap it to the closer
+                          // chip edge so chips feel atomic. Only
+                          // applies to collapsed selections — a
+                          // drag-select over a chip stays as-is.
+                          if (start === end) {
+                            const hit = findAtomicTokenContaining(el.value, start)
+                            if (hit) {
+                              const snap =
+                                start - hit.start < hit.end - start
+                                  ? hit.start
+                                  : hit.end
+                              if (snap !== start) {
+                                start = snap
+                                el.setSelectionRange(snap, snap)
+                              }
+                            }
                           }
-                        }
-                      }
-                      setCaretPos(start)
-                    }}
-                    className="relative z-[1] block min-h-[24px] max-h-40 w-full resize-none bg-transparent px-1 py-1.5 text-[14px] leading-relaxed text-transparent placeholder:text-muted-foreground/60 focus:outline-none"
-                    style={{ caretColor: 'transparent' }}
-                  />
-                </div>
-                {/* Mutually exclusive Send / Stop slot — matches the
-                    ChatGPT / Claude.ai pattern. While idle we show
-                    `Send` (disabled when the textarea is empty via
-                    primitive's own logic). Once a turn is in flight,
-                    `ThreadPrimitive.If running` swaps in `Cancel` so
-                    the user can interrupt without having a stale stop
-                    button sitting around between turns. */}
-                <ThreadPrimitive.If running={false}>
-                  <ComposerPrimitive.Send className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground/80">
-                    ↑
-                  </ComposerPrimitive.Send>
-                </ThreadPrimitive.If>
-                <ThreadPrimitive.If running>
-                  <ComposerPrimitive.Cancel
-                    aria-label="Stop generating"
-                    className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-sm transition hover:bg-foreground"
-                  >
-                    <span className="block size-2.5 rounded-[2px] bg-card" />
-                  </ComposerPrimitive.Cancel>
-                </ThreadPrimitive.If>
+                          setCaretPos(start)
+                        }}
+                        className="relative z-[1] block min-h-[24px] max-h-40 w-full resize-none bg-transparent px-1 py-1.5 text-[14px] leading-relaxed text-transparent placeholder:text-muted-foreground/60 focus:outline-none"
+                        style={{ caretColor: 'transparent' }}
+                      />
+                    </div>
+                    <MicButton label={t('composerDictate')} />
+                    {/* Mutually exclusive Send / Stop slot — matches
+                        the ChatGPT / Claude.ai pattern. While idle we
+                        show `Send` (disabled when the textarea is
+                        empty via primitive's own logic). Once a turn
+                        is in flight, `ThreadPrimitive.If running`
+                        swaps in `Cancel` so the user can interrupt
+                        without having a stale stop button sitting
+                        around between turns. */}
+                    <ThreadPrimitive.If running={false}>
+                      <ComposerPrimitive.Send className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground/80">
+                        ↑
+                      </ComposerPrimitive.Send>
+                    </ThreadPrimitive.If>
+                    <ThreadPrimitive.If running>
+                      <ComposerPrimitive.Cancel
+                        aria-label="Stop generating"
+                        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-sm transition hover:bg-foreground"
+                      >
+                        <span className="block size-2.5 rounded-[2px] bg-card" />
+                      </ComposerPrimitive.Cancel>
+                    </ThreadPrimitive.If>
+                  </>
+                )}
               </ComposerPrimitive.Root>
             </ComposerPrimitive.AttachmentDropzone>
           </ComposerPrimitive.Unstable_TriggerPopoverRoot>
@@ -1465,6 +1572,203 @@ function Composer(): React.JSX.Element {
  * component, so we can treat chips as atomic: the caret never paints
  * inside a chip.
  */
+
+/**
+ * Mic button shown in the normal (non-dictating) composer row.
+ *
+ * `startDictation` is deferred to a microtask so the click event
+ * finishes propagating BEFORE the state change happens. Without the
+ * defer, React synchronously re-renders during the click, the
+ * composer row swaps Normal → Dictation mid-click, and whatever
+ * element lands at the old mic position can receive a secondary
+ * click — exactly the race that kept auto-cancelling the session
+ * before. `queueMicrotask` is bulletproof because JS's event loop
+ * guarantees microtasks run only after the current sync task
+ * (which includes the full click dispatch) is done.
+ */
+function MicButton({ label }: { label: string }): React.JSX.Element {
+  const runtime = useComposerRuntime()
+  const onClick = useCallback(() => {
+    queueMicrotask(() => {
+      runtime.startDictation()
+    })
+  }, [runtime])
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+    >
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="9" y="2" width="6" height="12" rx="3" />
+        <path d="M5 11a7 7 0 0 0 14 0" />
+        <path d="M12 18v4" />
+        <path d="M8 22h8" />
+      </svg>
+    </button>
+  )
+}
+
+/**
+ * Dictation-mode row content — live waveform filling the input slot
+ * plus a cancel (X) and a confirm (✓) button on the right.
+ *
+ * Lifecycle:
+ *  - This component mounts the instant dictation starts. On mount,
+ *    it snapshots the composer text via `useRef` so that cancelling
+ *    can revert to the pre-dictation state. (The first render is
+ *    always at dictation start, so `composer.text` at mount == the
+ *    original user text before any chunk commit.)
+ *  - Confirm (✓): stops the session. Any chunks already transcribed
+ *    stay in the composer text, and when this component unmounts
+ *    the Normal row's textarea rematerializes populated.
+ *  - Cancel (X): stops the session, then resets composer text to
+ *    the snapshot. Drops any committed chunks.
+ *
+ * Both actions defer their runtime calls to `queueMicrotask` so the
+ * click event finishes propagating before React's dictation-state
+ * change tears down this row — exactly the same defense the mic
+ * button uses.
+ */
+function DictationActiveControls({
+  cancelLabel,
+  confirmLabel
+}: {
+  cancelLabel: string
+  confirmLabel: string
+}): React.JSX.Element {
+  const runtime = useComposerRuntime()
+  const currentText = useAuiState(
+    (s) =>
+      ((s as { composer?: { text?: string } }).composer?.text as string | undefined) ?? ''
+  )
+  // Snapshot-on-first-render: captures the composer text AT the
+  // moment dictation starts. Subsequent renders with updated
+  // committed text do NOT overwrite the ref.
+  const preTextRef = useRef<string | null>(null)
+  if (preTextRef.current === null) {
+    preTextRef.current = currentText
+  }
+  // Latched "finishing" state — flips on the first X / ✓ click and
+  // stays on until this component unmounts (which happens once
+  // stopDictation resolves). While finishing, both buttons render
+  // as disabled so a second click can't queue a duplicate
+  // stopDictation call (the adapter guards that as well, but the
+  // visual feedback stops users from mashing the button during the
+  // 1-3s transcribe wait).
+  const [isFinishing, setIsFinishing] = useState(false)
+
+  const onCancel = useCallback(() => {
+    if (isFinishing) return
+    setIsFinishing(true)
+    const preText = preTextRef.current ?? ''
+    queueMicrotask(() => {
+      runtime.stopDictation()
+      runtime.setText(preText)
+    })
+  }, [isFinishing, runtime])
+
+  const onConfirm = useCallback(() => {
+    if (isFinishing) return
+    setIsFinishing(true)
+    queueMicrotask(() => {
+      runtime.stopDictation()
+    })
+  }, [isFinishing, runtime])
+
+  return (
+    <>
+      <div className="flex min-h-[24px] max-h-40 flex-1 items-center overflow-hidden">
+        <DictationWaveform />
+      </div>
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={isFinishing}
+        aria-label={cancelLabel}
+        title={cancelLabel}
+        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M18 6 6 18" />
+          <path d="m6 6 12 12" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        onClick={onConfirm}
+        disabled={isFinishing}
+        aria-label={confirmLabel}
+        title={confirmLabel}
+        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition hover:bg-foreground/90 disabled:cursor-wait"
+      >
+        {isFinishing ? (
+          // Inline spinner while we wait for the tail transcribe to
+          // land. Same animation Composer's attachments use
+          // elsewhere — one stroke rotating around a dim ring.
+          <svg
+            className="size-4 animate-spin"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle
+              cx="12"
+              cy="12"
+              r="9"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeOpacity="0.3"
+            />
+            <path
+              d="M21 12a9 9 0 0 0-9-9"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+            />
+          </svg>
+        ) : (
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        )}
+      </button>
+    </>
+  )
+}
+
 function ComposerHighlightOverlay({
   caretPos,
   isFocused

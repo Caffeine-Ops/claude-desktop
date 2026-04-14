@@ -4,7 +4,15 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+    <!--
+      CSP relaxed to allow `blob:` in script-src so AudioWorklet.addModule()
+      can load the inline PCM capture worklet (see
+      runtime/openaiWhisperDictationAdapter.ts). Without it Chromium
+      refuses the blob URL and the dictation adapter dies with an
+      AbortError before the first chunk. `worker-src blob:` covers the
+      Worker flavor some Chromium versions classify the worklet under.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' blob:;" />
     <title>Claude Desktop</title>
   </head>
   <body>
