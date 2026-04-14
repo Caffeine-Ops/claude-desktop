@@ -344,7 +344,7 @@ export function AskUserQuestionView({
           <button
             type="button"
             onClick={() => onSubmit({ answers: {} })}
-            className="flex w-full items-center gap-3 rounded-md border border-accent/40 bg-accent/15 px-3 py-2 text-left text-[13px] text-accent-foreground transition hover:border-accent hover:bg-accent/25"
+            className="flex w-full items-center gap-3 rounded-md border border-accent/40 bg-accent/15 px-3 py-2 text-left text-[13px] font-medium text-accent transition hover:border-accent hover:bg-accent/25"
           >
             Continue
           </button>
@@ -485,20 +485,20 @@ function OptionRow({
       className={
         'flex w-full items-start gap-3 rounded-md border px-3 py-2 text-left text-[13px] transition focus:outline-none ' +
         (highlighted
-          ? 'border-accent/40 bg-accent/15 text-accent-foreground'
+          ? 'border-accent/50 bg-accent/15 text-accent'
           : 'border-border bg-card/60 text-foreground hover:border-input hover:bg-muted')
       }
     >
       <span
         className={
           'inline-flex size-5 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold ' +
-          (highlighted ? 'bg-accent/40 text-accent-foreground' : 'bg-muted text-muted-foreground')
+          (highlighted ? 'bg-accent text-accent-foreground' : 'bg-muted text-muted-foreground')
         }
       >
         {index}
       </span>
       <span className="min-w-0 flex-1">
-        <div className="truncate font-medium">{label}</div>
+        <div className={'truncate font-medium ' + (highlighted ? 'text-accent' : 'text-foreground')}>{label}</div>
         {description && (
           <div className="mt-0.5 whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-muted-foreground/80">
             {description}
@@ -561,9 +561,9 @@ function OtherRow({
         if (!editing) onClickRow()
       }}
       className={
-        'flex w-full cursor-text items-start gap-3 rounded-md border px-3 py-2 text-left text-[13px] transition focus-within:border-accent/40 focus-within:bg-accent/15 ' +
+        'flex w-full cursor-text items-start gap-3 rounded-md border px-3 py-2 text-left text-[13px] transition focus-within:border-accent/50 focus-within:bg-accent/15 ' +
         (active
-          ? 'border-accent/40 bg-accent/15 text-accent-foreground'
+          ? 'border-accent/50 bg-accent/15 text-accent'
           : 'border-border bg-card/60 text-foreground hover:border-input hover:bg-muted')
       }
     >
@@ -571,7 +571,7 @@ function OtherRow({
         aria-hidden
         className={
           'inline-flex size-5 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold ' +
-          (active ? 'bg-accent/40 text-accent-foreground' : 'bg-muted text-muted-foreground')
+          (active ? 'bg-accent text-accent-foreground' : 'bg-muted text-muted-foreground')
         }
       >
         {/* Plus glyph so the Other row reads "add your own answer"
@@ -591,13 +591,13 @@ function OtherRow({
             onBlur={onBlur}
             onClick={(e) => e.stopPropagation()}
             placeholder={OTHER_PLACEHOLDER}
-            className="w-full bg-transparent font-medium text-accent-foreground placeholder:text-muted-foreground/80 focus:outline-none"
+            className="w-full bg-transparent font-medium text-foreground caret-accent placeholder:text-muted-foreground/80 focus:outline-none"
           />
         ) : (
           <div
             className={
               'truncate font-medium ' +
-              (active ? 'text-accent-foreground' : 'text-foreground/80')
+              (active ? 'text-accent' : 'text-foreground/80')
             }
           >
             {draft.length > 0 ? draft : 'Other'}

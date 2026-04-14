@@ -62,6 +62,8 @@ const STRINGS = {
     openClaudeDir: '打开 ~/.claude',
     expandSidebar: '展开聊天列表',
     collapseSidebar: '收起聊天列表',
+    expandRightRail: '展开右侧栏',
+    collapseRightRail: '收起右侧栏',
     openLogs: '打开引擎日志',
     openLogsTitle: '打开引擎日志 (timeline)',
 
@@ -194,7 +196,19 @@ const STRINGS = {
 
     // Tray menu (main process mirrors these via its own tiny table)
     trayShowHide: '显示 / 隐藏',
-    trayQuit: '退出'
+    trayQuit: '退出',
+
+    // Permission dialog
+    permissionHeader: '需要授权',
+    permissionAskHeader: '回答 Claude 的问题',
+    permissionAriaLabel: '{toolName} 授权',
+    permissionNoParams: '（无参数）',
+    permissionPrompt: '是否继续？',
+    permissionYes: '同意',
+    permissionAllowSession: '同意，本次会话内允许 {scope}',
+    permissionDeny: '不同意，继续对话',
+    permissionFooterEsc: '取消',
+    permissionFooterEnter: '同意'
   },
   en: {
     appTitle: 'Claude Desktop',
@@ -207,6 +221,8 @@ const STRINGS = {
     openClaudeDir: 'Open ~/.claude',
     expandSidebar: 'Expand chat list',
     collapseSidebar: 'Collapse chat list',
+    expandRightRail: 'Show right panel',
+    collapseRightRail: 'Hide right panel',
     openLogs: 'Open engine logs',
     openLogsTitle: 'Open engine logs (timeline)',
 
@@ -333,7 +349,18 @@ const STRINGS = {
     imageAttachedAlt: 'Attached image',
 
     trayShowHide: 'Show / Hide',
-    trayQuit: 'Quit'
+    trayQuit: 'Quit',
+
+    permissionHeader: 'Permission required',
+    permissionAskHeader: "Answer Claude's question",
+    permissionAriaLabel: '{toolName} permission',
+    permissionNoParams: '(no parameters)',
+    permissionPrompt: 'Do you want to proceed?',
+    permissionYes: 'Yes',
+    permissionAllowSession: 'Yes, allow {scope} during this session',
+    permissionDeny: 'No, and keep going',
+    permissionFooterEsc: 'cancel',
+    permissionFooterEnter: 'yes'
   }
 } as const
 

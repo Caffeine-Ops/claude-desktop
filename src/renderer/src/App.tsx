@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { FusionRuntimeProvider } from './runtime/FusionRuntimeProvider'
 import { ThreadView } from './components/chat/ThreadView'
@@ -63,10 +63,83 @@ import { AnimatePresence, motion } from 'motion/react'
  */
 type WorkspaceStatus = 'loading' | null | string
 
+/**
+ * Responsive breakpoints for auto-collapsing the two side rails.
+ *
+ * Left sidebar (chats) auto-hides below `LEFT_RAIL_MIN` because a
+ * ~256px rail eats half the window on a sub-900px viewport; the chat
+ * column needs the space more than the thread picker does.
+ *
+ * Right rail (todos + file tree) needs more elbow room — 288px + 256px
+ * + a reasonable chat column = ~1180px, so that's where we draw the
+ * line. Below it, the right rail collapses first while the user can
+ * still keep the left sidebar around.
+ *
+ * The constants live next to App() so changes are one-liner diffs.
+ */
+const LEFT_RAIL_MIN = '(min-width: 860px)'
+const RIGHT_RAIL_MIN = '(min-width: 1180px)'
+
+/**
+ * Tiny matchMedia hook. Kept inline (no util file) because App.tsx is
+ * currently the only consumer. Initial value is read synchronously so
+ * the first render already reflects the viewport — avoids a mount-time
+ * layout flash on narrow windows.
+ */
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true
+    return window.matchMedia(query).matches
+  })
+  useEffect(() => {
+    const mql = window.matchMedia(query)
+    const handler = (e: MediaQueryListEvent): void => setMatches(e.matches)
+    mql.addEventListener('change', handler)
+    return () => mql.removeEventListener('change', handler)
+  }, [query])
+  return matches
+}
+
 function App(): React.JSX.Element {
-  const [version, setVersion] = useState<string>('loading…')
   const [workspace, setWorkspace] = useState<WorkspaceStatus>('loading')
-  const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
+
+  // Both rails initialize to "open iff viewport is wide enough". This
+  // handles the cold-boot case (user opens an already-narrow window)
+  // without needing an extra effect — the very first render is correct.
+  const wideEnoughForLeft = useMediaQuery(LEFT_RAIL_MIN)
+  const wideEnoughForRight = useMediaQuery(RIGHT_RAIL_MIN)
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() =>
+    typeof window === 'undefined'
+      ? true
+      : window.matchMedia(LEFT_RAIL_MIN).matches
+  )
+  const [rightRailOpen, setRightRailOpen] = useState<boolean>(() =>
+    typeof window === 'undefined'
+      ? true
+      : window.matchMedia(RIGHT_RAIL_MIN).matches
+  )
+
+  // Auto-collapse on descent only — VSCode-style. We explicitly do NOT
+  // auto-open on ascent: once the user has manually opened or closed a
+  // rail, widening the window back shouldn't override that choice.
+  // `useRef` tracks the previous breakpoint value so an effect that
+  // runs on every render can fire exactly once per descending edge.
+  const prevWideLeft = useRef(wideEnoughForLeft)
+  useEffect(() => {
+    if (prevWideLeft.current && !wideEnoughForLeft) {
+      setSidebarOpen(false)
+    }
+    prevWideLeft.current = wideEnoughForLeft
+  }, [wideEnoughForLeft])
+
+  const prevWideRight = useRef(wideEnoughForRight)
+  useEffect(() => {
+    if (prevWideRight.current && !wideEnoughForRight) {
+      setRightRailOpen(false)
+    }
+    prevWideRight.current = wideEnoughForRight
+  }, [wideEnoughForRight])
+
   const openDialog = useDialogStore((s) => s.openDialog)
   const t = useT()
   useApplyAppearance()
@@ -96,12 +169,6 @@ function App(): React.JSX.Element {
     useChatStore.getState().reset()
     useTodosStore.setState({ todos: {} })
     setWorkspace(null)
-  }, [])
-
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.api) {
-      setVersion(window.api.version)
-    }
   }, [])
 
   // Subscribe to main-process engine log events from the moment the
@@ -168,8 +235,6 @@ function App(): React.JSX.Element {
       <div className="app">
         <header className="header">
           <h1>{t('appTitle')}</h1>
-          <span className="badge">v{version}</span>
-          <span className="badge badge-stage">agent-sdk · long-session</span>
         </header>
         <WorkspaceGate onReady={(path) => setWorkspace(path)} />
       </div>
@@ -208,6 +273,36 @@ function App(): React.JSX.Element {
         </button>
         <button
           type="button"
+          onClick={() => setRightRailOpen((v) => !v)}
+          title={rightRailOpen ? t('collapseRightRail') : t('expandRightRail')}
+          aria-label={
+            rightRailOpen ? t('collapseRightRail') : t('expandRightRail')
+          }
+          aria-pressed={rightRailOpen}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-muted/60 hover:text-foreground"
+        >
+          {/* Mirror of the left-sidebar folder-rect, flipped so the
+              divider sits on the right. Reads as "right rail toggle". */}
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="2" y="3" width="12" height="10" rx="1.75" />
+            <line x1="9.75" y1="3" x2="9.75" y2="13" />
+            {!rightRailOpen && <line x1="7" y1="6" x2="4.5" y2="8" />}
+            {!rightRailOpen && <line x1="4.5" y1="8" x2="7" y2="10" />}
+          </svg>
+        </button>
+        <button
+          type="button"
           onClick={() => openDialog('logs')}
           title={t('openLogsTitle')}
           aria-label={t('openLogs')}
@@ -234,8 +329,6 @@ function App(): React.JSX.Element {
             <line x1="5.5" y1="10.5" x2="8.5" y2="10.5" />
           </svg>
         </button>
-        <span className="badge">v{version}</span>
-        <span className="badge badge-stage">agent-sdk · long-session</span>
       </header>
       <main className="main relative">
         {/* `key={workspace}` forces a full subtree remount whenever the
@@ -297,11 +390,37 @@ function App(): React.JSX.Element {
                 border + background chrome; both panels inside are
                 `section flex-1` so they share the column equally.
                 A border-t on WorkspaceTreePanel's root creates the
-                visual divider. */}
-            <aside className="flex h-full w-72 shrink-0 flex-col border-l border-border/70 bg-background">
-              <TodoListPanel />
-              <WorkspaceTreePanel />
-            </aside>
+                visual divider.
+                Wrapped in AnimatePresence so it can slide out smoothly
+                on narrow windows (auto-collapse at < 1180px, manual
+                toggle from the header button). The inner aside is
+                absolutely anchored to the right edge of the animating
+                wrapper — same pattern as the left sidebar — so the
+                left border of the aside stays flush with the wrapper
+                edge throughout the width animation instead of
+                appearing only once width reaches 288px. */}
+            <AnimatePresence initial={false}>
+              {rightRailOpen && (
+                <motion.div
+                  key="right-rail"
+                  initial={{ width: 0, opacity: 0 }}
+                  animate={{ width: 288, opacity: 1 }}
+                  exit={{ width: 0, opacity: 0 }}
+                  transition={{
+                    type: 'spring',
+                    stiffness: 320,
+                    damping: 34,
+                    mass: 0.9
+                  }}
+                  className="relative h-full shrink-0 overflow-hidden"
+                >
+                  <aside className="absolute inset-y-0 right-0 flex h-full w-72 flex-col bg-background/45 backdrop-blur-xl backdrop-saturate-150">
+                    <TodoListPanel />
+                    <WorkspaceTreePanel />
+                  </aside>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </FusionRuntimeProvider>
         {/* Settings overlay — `absolute inset-0` inside .main so it

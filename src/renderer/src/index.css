@@ -143,6 +143,72 @@
     font-size: var(--ui-font-size);
   }
 
+  /* Light-theme decorative backdrop.
+   * Stacked layers (top to bottom):
+   *   1. Three soft radial gradient blobs — blue top-left, pink top-right,
+   *      mint bottom-center — together forming a muted aurora tint.
+   *   2. A 32px x 32px colored grid that only shows where the gradients
+   *      don't dominate. Line color is a cool slate with ~6% alpha so it
+   *      reads as "paper ruling" rather than "wireframe".
+   *   3. The base --background color under everything.
+   * background-attachment:fixed keeps the pattern anchored to the
+   * viewport so scrolling the chat doesn't drag the grid along.
+   *
+   * Target is `#root` (not `body`) because assets/main.css gives #root an
+   * opaque background color that sits above body and would hide any body
+   * background-image. Setting the layers on #root puts them on the
+   * topmost element in the stack; panels like sidebar / right rail set
+   * their own opaque `bg-sidebar` / `bg-background`, so they cover the
+   * decoration and only the chat area (ThreadPrimitive.Root is
+   * bg-transparent) lets it show through.
+   *
+   * `.dark #root` overrides to none — dark theme stays untouched. */
+  :root:not(.dark) #root {
+    background-image:
+      radial-gradient(
+        1100px 620px at 8% -10%,
+        hsla(217, 92%, 62%, 0.45),
+        transparent 62%
+      ),
+      radial-gradient(
+        900px 540px at 100% 0%,
+        hsla(320, 90%, 72%, 0.38),
+        transparent 60%
+      ),
+      radial-gradient(
+        900px 520px at 50% 120%,
+        hsla(160, 75%, 62%, 0.38),
+        transparent 62%
+      ),
+      linear-gradient(
+        to right,
+        hsla(224, 35%, 60%, 0.055) 1px,
+        transparent 1px
+      ),
+      linear-gradient(
+        to bottom,
+        hsla(224, 35%, 60%, 0.055) 1px,
+        transparent 1px
+      );
+    background-size:
+      auto,
+      auto,
+      auto,
+      32px 32px,
+      32px 32px;
+    background-position:
+      0 0,
+      0 0,
+      0 0,
+      0 0,
+      0 0;
+    background-attachment: fixed;
+  }
+
+  .dark #root {
+    background-image: none;
+  }
+
   code,
   pre,
   kbd,

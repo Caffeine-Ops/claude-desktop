@@ -59,6 +59,42 @@ type SpeechResult = {
 }
 
 /**
+ * Module-level handle to the currently-active dictation session, set by
+ * `listen()` at session start and cleared by `teardown()`. Exposed via
+ * `cancelActiveDictation()` so the composer UI can bypass assistant-ui's
+ * runtime (which only exposes `stopDictation`, and that always runs the
+ * flush/transcribe path) to request a true cancel — immediate teardown
+ * with no transcribe, no commit.
+ *
+ * Safe to keep as a single variable because the composer runtime only
+ * ever allows one active dictation session at a time: `startDictation()`
+ * in `base-composer-runtime-core.js` explicitly tears down any existing
+ * `_dictationSession` before opening a new one (see the `if
+ * (this._dictationSession)` branch at ~line 237). We mirror that
+ * invariant here — every `listen()` overwrites the previous ref, and
+ * `teardown()` clears it when the session ends.
+ */
+let activeCancel: (() => void) | null = null
+
+/**
+ * Cancel the current dictation session without transcribing the tail.
+ * The runtime's internal `statusInterval` polls `session.status` at
+ * 100ms and, on seeing `ended`, fires `_cleanupDictation` which unsets
+ * the composer's `dictation` flag — so the React tree automatically
+ * swaps the DictationActiveControls row back to the normal composer
+ * a few frames after this call returns.
+ *
+ * Returns true if a session was active and cancellation was issued.
+ */
+export function cancelActiveDictation(): boolean {
+  if (!activeCancel) return false
+  const fn = activeCancel
+  activeCancel = null
+  fn()
+  return true
+}
+
+/**
  * AudioWorklet processor source — loaded as a Blob at runtime so we
  * don't need a separate worklet file in the Vite tree. The worklet
  * runs in the audio thread, forwards every 128-sample frame of the
@@ -135,6 +171,14 @@ export function createOpenAIWhisperDictationAdapter(options: {
       let pcmChunks: Float32Array[] = []
       let pcmSampleCount = 0
       let sampleRate = 48000 // overwritten once AudioContext exists
+
+      // Stable identity for the cancel-from-outside handle. Declared
+      // here so the teardown closure (above) can compare `activeCancel`
+      // against this exact function when clearing the module-level
+      // ref — prevents clobbering a newer session's handle if two
+      // teardowns race.
+      // eslint-disable-next-line prefer-const
+      let sessionCancelRef: (() => void) | null = null
 
       const emitStart = (): void => {
         if (state !== 'starting') return
@@ -227,6 +271,12 @@ export function createOpenAIWhisperDictationAdapter(options: {
         torn = true
         endReason = finalReason
         state = 'ended'
+        // Clear the module-level cancel handle if this session owns it.
+        // Guard against clobbering a newer session that may have
+        // registered its own handle mid-teardown.
+        if (activeCancel === sessionCancelRef) {
+          activeCancel = null
+        }
         // Stack trace is super useful here: auto-cancel symptoms are
         // almost always "teardown was called from an unexpected code
         // path and we need to know which one".
@@ -452,6 +502,14 @@ export function createOpenAIWhisperDictationAdapter(options: {
           return () => speechListeners.delete(callback)
         }
       }
+
+      // Publish this session's cancel handle so the composer UI can
+      // request a true cancel-without-transcribe from outside the
+      // runtime. Bound to `sessionMethods.cancel` (not a recreated
+      // arrow) so the identity matches the `teardown` guard's
+      // `activeCancel === sessionCancelRef` comparison.
+      sessionCancelRef = sessionMethods.cancel
+      activeCancel = sessionCancelRef
 
       return sessionMethods
     }

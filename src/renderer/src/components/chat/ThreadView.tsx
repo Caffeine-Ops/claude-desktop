@@ -29,6 +29,7 @@ import {
 import { ThinkingSpinner } from './ThinkingSpinner'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { DictationWaveform } from './DictationWaveform'
+import { cancelActiveDictation } from '../../runtime/openaiWhisperDictationAdapter'
 import hljs from 'highlight.js/lib/common'
 
 /**
@@ -101,7 +102,7 @@ export function ThreadView(): React.JSX.Element {
 
       {/* Composer dock — outside the scroll viewport so it's always
           pinned to the bottom of Root regardless of message count. */}
-      <div className="shrink-0 border-t border-border/70 bg-background/95 px-6 py-4 backdrop-blur">
+      <div className="shrink-0 bg-background/45 px-6 py-4 backdrop-blur-xl backdrop-saturate-150">
         <Composer />
       </div>
     </ThreadPrimitive.Root>
@@ -1650,17 +1651,6 @@ function DictationActiveControls({
   confirmLabel: string
 }): React.JSX.Element {
   const runtime = useComposerRuntime()
-  const currentText = useAuiState(
-    (s) =>
-      ((s as { composer?: { text?: string } }).composer?.text as string | undefined) ?? ''
-  )
-  // Snapshot-on-first-render: captures the composer text AT the
-  // moment dictation starts. Subsequent renders with updated
-  // committed text do NOT overwrite the ref.
-  const preTextRef = useRef<string | null>(null)
-  if (preTextRef.current === null) {
-    preTextRef.current = currentText
-  }
   // Latched "finishing" state — flips on the first X / ✓ click and
   // stays on until this component unmounts (which happens once
   // stopDictation resolves). While finishing, both buttons render
@@ -1673,12 +1663,25 @@ function DictationActiveControls({
   const onCancel = useCallback(() => {
     if (isFinishing) return
     setIsFinishing(true)
-    const preText = preTextRef.current ?? ''
+    // True cancel — bypass `runtime.stopDictation()` because that
+    // path always flushes the tail audio through Gemini and commits
+    // the transcript into the composer. We want to throw away the
+    // recorded audio without touching the textarea.
+    //
+    // `cancelActiveDictation()` calls `session.cancel()` on the
+    // adapter, which tears down immediately with no transcribe. The
+    // composer runtime's internal 100ms status poll will notice
+    // `session.status === 'ended'` a few frames later and fire
+    // `_cleanupDictation`, which drops the `composer.dictation` flag
+    // — at which point this component unmounts and the normal
+    // textarea row rematerializes showing the pre-dictation text
+    // unchanged. No setText needed because this single-shot adapter
+    // never commits anything until `stop()`, so `_text` is still
+    // whatever it was when startDictation ran.
     queueMicrotask(() => {
-      runtime.stopDictation()
-      runtime.setText(preText)
+      cancelActiveDictation()
     })
-  }, [isFinishing, runtime])
+  }, [isFinishing])
 
   const onConfirm = useCallback(() => {
     if (isFinishing) return

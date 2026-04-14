@@ -54,7 +54,7 @@ export function ThreadListSidebar({
   }, [onChangeWorkspace, t])
 
   return (
-    <ThreadListPrimitive.Root className="relative flex h-full w-64 shrink-0 flex-col border-r border-border/70 bg-background">
+    <ThreadListPrimitive.Root className="relative flex h-full w-64 shrink-0 flex-col bg-background/45 backdrop-blur-xl backdrop-saturate-150">
       {/* Workspace row — shows the current folder's basename, full
           path in the tooltip. Clicking re-opens the gate so the user
           can drop a different folder; the engine soft-switches the
@@ -65,24 +65,28 @@ export function ThreadListSidebar({
           type="button"
           onClick={onSwitchWorkspace}
           title={`${workspace}\n${t('switchWorkspaceTooltip')}`}
-          className="group flex w-full items-center gap-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-left transition hover:border-input hover:bg-muted/80"
+          className="group relative flex w-full items-center gap-2.5 overflow-hidden rounded-xl border border-border/60 bg-gradient-to-br from-card/80 to-card/40 px-3 py-2.5 text-left shadow-[0_1px_2px_rgba(17,24,39,0.04),inset_0_1px_0_rgba(255,255,255,0.5)] backdrop-blur-sm transition-all duration-200 hover:-translate-y-px hover:border-accent/40 hover:from-card hover:to-card/60 hover:shadow-[0_4px_14px_-2px_hsl(var(--accent)/0.18),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-none dark:hover:shadow-[0_4px_14px_-2px_hsl(var(--accent)/0.25)]"
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="shrink-0 text-muted-foreground/80 group-hover:text-foreground/80"
-            aria-hidden
-          >
-            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
-          </svg>
+          {/* Folder icon in a tinted rounded square — echoes the
+              aurora palette so the button feels native to the light
+              theme backdrop. Accent takes over on hover. */}
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-accent/15 to-accent/5 text-accent transition-colors group-hover:from-accent/25 group-hover:to-accent/10">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+            </svg>
+          </span>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[12.5px] font-medium text-foreground">
+            <div className="truncate text-[12.5px] font-semibold text-foreground">
               {basename(workspace)}
             </div>
             <div className="truncate text-[10.5px] text-muted-foreground/80">
@@ -98,7 +102,7 @@ export function ThreadListSidebar({
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
-            className="shrink-0 text-muted-foreground/60 group-hover:text-muted-foreground"
+            className="shrink-0 text-muted-foreground/50 transition-colors group-hover:text-accent"
             aria-hidden
           >
             <path d="M8 9l4-4 4 4" />
@@ -116,14 +120,35 @@ export function ThreadListSidebar({
 
       {/* New chat button — wired to runtime.switchToNewThread() via the
           ThreadListPrimitive.New primitive. Dimmed while a session
-          switch is in flight so rapid double-clicks don't stack. */}
+          switch is in flight so rapid double-clicks don't stack.
+          Primary CTA: diagonal accent→violet gradient that mirrors
+          the aurora backdrop, white text, soft colored glow. The
+          subtle `hover:-translate-y-px` + shadow bump makes it
+          feel like it floats a hair above the sidebar. */}
       <div className="px-3 pb-3">
         <ThreadListPrimitive.New
           disabled={sessionLoading}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-card/80 px-3 py-2 text-[13px] font-medium text-foreground shadow-sm transition hover:border-input hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          className="group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-xl border border-accent/20 bg-gradient-to-br from-accent/12 via-accent/8 to-accent/4 px-3 py-2.5 text-[13px] font-semibold text-foreground shadow-[0_1px_2px_rgba(17,24,39,0.04),inset_0_1px_0_rgba(255,255,255,0.5)] transition-all duration-200 hover:-translate-y-px hover:border-accent/35 hover:from-accent/18 hover:via-accent/12 hover:to-accent/6 hover:shadow-[0_4px_14px_-4px_hsl(var(--accent)/0.25),inset_0_1px_0_rgba(255,255,255,0.6)] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 dark:text-foreground dark:shadow-none dark:hover:shadow-[0_4px_14px_-4px_hsl(var(--accent)/0.3)]"
         >
-          <span className="text-base leading-none">+</span>
-          <span>{t('sidebarNewChat')}</span>
+          {/* Plus glyph in an accent-tinted chip — echoes the folder
+              chip on the workspace button above for visual symmetry. */}
+          <span className="flex size-5 items-center justify-center rounded-md bg-accent/15 text-accent transition-colors group-hover:bg-accent/25">
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M12 5v14" />
+              <path d="M5 12h14" />
+            </svg>
+          </span>
+          <span className="tracking-wide">{t('sidebarNewChat')}</span>
         </ThreadListPrimitive.New>
       </div>
 

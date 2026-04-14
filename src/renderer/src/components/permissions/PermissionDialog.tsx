@@ -3,6 +3,7 @@ import type {
   PermissionDecisionKind,
   PermissionRequest
 } from '../../../../shared/types'
+import { useT, useTFormat } from '../../i18n'
 import { AskUserQuestionView } from './AskUserQuestionView'
 
 /**
@@ -47,6 +48,8 @@ import { AskUserQuestionView } from './AskUserQuestionView'
  * Keyboard (AskUserQuestion branch) lives inside AskUserQuestionView.
  */
 export function PermissionDialog(): React.JSX.Element | null {
+  const t = useT()
+  const tf = useTFormat()
   const [pending, setPending] = useState<PermissionRequest | null>(null)
   // Tracks whether a respond call is in-flight so a double-click can't
   // race the IPC round-trip and double-resolve.
@@ -126,8 +129,8 @@ export function PermissionDialog(): React.JSX.Element | null {
   if (isAskUserQuestion) {
     return (
       <DialogShell
-        toolName={pending.toolName}
-        headerLabel="Answer Claude's question"
+        headerLabel={t('permissionAskHeader')}
+        ariaLabel={tf('permissionAriaLabel', { toolName: pending.toolName })}
         accent="blue"
       >
         <AskUserQuestionView
@@ -142,8 +145,8 @@ export function PermissionDialog(): React.JSX.Element | null {
   // ── Default allow/deny branch ───────────────────────────────────────
   return (
     <DialogShell
-      toolName={pending.toolName}
-      headerLabel="Permission required"
+      headerLabel={t('permissionHeader')}
+      ariaLabel={tf('permissionAriaLabel', { toolName: pending.toolName })}
       accent="amber"
     >
       <div className="px-5 pb-4 pt-4">
@@ -152,14 +155,14 @@ export function PermissionDialog(): React.JSX.Element | null {
         </div>
         <div className="mb-4 max-h-48 overflow-auto rounded-md border border-border bg-background px-3 py-2 font-mono text-[12px] leading-relaxed text-foreground/80">
           <pre className="whitespace-pre-wrap break-words">
-            {pending.summary || '(no parameters)'}
+            {pending.summary || t('permissionNoParams')}
           </pre>
         </div>
-        <div className="mb-2 text-[13px] text-foreground/80">Do you want to proceed?</div>
+        <div className="mb-2 text-[13px] text-foreground/80">{t('permissionPrompt')}</div>
         <div className="flex flex-col gap-1">
           <DecisionButton
             index={1}
-            label="Yes"
+            label={t('permissionYes')}
             onClick={() => respond('allow-once')}
             accent
             autoFocus
@@ -167,13 +170,13 @@ export function PermissionDialog(): React.JSX.Element | null {
           {pending.scopeLabel && (
             <DecisionButton
               index={2}
-              label={`Yes, allow ${pending.scopeLabel} during this session`}
+              label={tf('permissionAllowSession', { scope: pending.scopeLabel })}
               onClick={() => respond('allow-session')}
             />
           )}
           <DecisionButton
             index={pending.scopeLabel ? 3 : 2}
-            label="No, and keep going"
+            label={t('permissionDeny')}
             onClick={() => respond('deny')}
           />
         </div>
@@ -182,7 +185,7 @@ export function PermissionDialog(): React.JSX.Element | null {
       {/* Footer keyboard hints */}
       <div className="flex items-center justify-between border-t border-border bg-background/60 px-5 py-2 text-[11px] text-muted-foreground/80">
         <span>
-          <Kbd>Esc</Kbd> cancel · <Kbd>↵</Kbd> yes
+          <Kbd>Esc</Kbd> {t('permissionFooterEsc')} · <Kbd>↵</Kbd> {t('permissionFooterEnter')}
         </span>
         <span className="truncate font-mono text-muted-foreground/60">{pending.toolName}</span>
       </div>
@@ -199,13 +202,13 @@ export function PermissionDialog(): React.JSX.Element | null {
  * frame (and so color accents are centralized).
  */
 function DialogShell({
-  toolName,
   headerLabel,
+  ariaLabel,
   accent,
   children
 }: {
-  toolName: string
   headerLabel: string
+  ariaLabel: string
   accent: 'amber' | 'blue'
   children: React.ReactNode
 }): React.JSX.Element {
@@ -215,7 +218,7 @@ function DialogShell({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`${toolName} permission`}
+      aria-label={ariaLabel}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
     >
       <div className="flex max-h-[calc(100vh-32px)] w-[560px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
@@ -252,9 +255,9 @@ function DecisionButton({
       onClick={onClick}
       autoFocus={autoFocus}
       className={
-        'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left text-[13px] transition focus:outline-none focus:ring-2 focus:ring-offset-0 ' +
+        'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left text-[13px] font-medium transition focus:outline-none focus:ring-2 focus:ring-offset-0 ' +
         (accent
-          ? 'border-accent/40 bg-accent/15 text-accent-foreground hover:border-accent hover:bg-accent/25 focus:ring-ring/60'
+          ? 'border-accent/50 bg-accent/15 text-accent hover:border-accent hover:bg-accent/25 focus:ring-ring/60'
           : 'border-border bg-card/60 text-foreground hover:border-input hover:bg-muted focus:ring-ring/50')
       }
     >
@@ -262,7 +265,7 @@ function DecisionButton({
         className={
           'inline-flex size-5 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold ' +
           (accent
-            ? 'bg-accent/40 text-accent-foreground'
+            ? 'bg-accent text-accent-foreground'
             : 'bg-muted text-muted-foreground')
         }
       >
