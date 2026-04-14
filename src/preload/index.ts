@@ -26,6 +26,8 @@ import {
   type SessionRenameResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
+  type CliBackendSetPayload,
+  type CliBackendState,
   type TranscribeAudioPayload,
   type TranscribeAudioResult,
   type WorkspaceFileOpenPayload,
@@ -235,6 +237,17 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.TRANSCRIBE_AUDIO,
       payload
     ) as Promise<TranscribeAudioResult>
+  },
+
+  getCliBackend(): Promise<CliBackendState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.CLI_BACKEND_GET) as Promise<CliBackendState>
+  },
+
+  setCliBackend(payload: CliBackendSetPayload): Promise<CliBackendState> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.CLI_BACKEND_SET,
+      payload
+    ) as Promise<CliBackendState>
   }
 }
 

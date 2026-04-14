@@ -208,7 +208,23 @@ const STRINGS = {
     permissionAllowSession: '同意，本次会话内允许 {scope}',
     permissionDeny: '不同意，继续对话',
     permissionFooterEsc: '取消',
-    permissionFooterEnter: '同意'
+    permissionFooterEnter: '同意',
+
+    // Settings → General → CLI backend
+    cliBackendTitle: 'CLI 后端',
+    cliBackendDesc:
+      '选择 Agent SDK 要启动哪个 CLI 二进制。切换后从下一次新建会话开始生效。',
+    cliBackendBundled: '内置 fusion-code',
+    cliBackendBundledDesc:
+      '随应用打包的版本，已针对 prompt cache 和 MCP 工具做了优化',
+    cliBackendSystem: '系统 Claude Code',
+    cliBackendSystemDesc:
+      '使用本机安装的 claude 命令（失去 fusion-code 的 token 优化，按 ~/.claude 配置运行）',
+    cliBackendNotInstalled: '未检测到本机安装的 claude',
+    cliBackendDetected: '已检测到',
+    cliBackendVersion: '版本',
+    cliBackendPath: '路径',
+    cliBackendApplyHint: '切换将在下一次新建会话生效'
   },
   en: {
     appTitle: 'Claude Desktop',
@@ -360,7 +376,22 @@ const STRINGS = {
     permissionAllowSession: 'Yes, allow {scope} during this session',
     permissionDeny: 'No, and keep going',
     permissionFooterEsc: 'cancel',
-    permissionFooterEnter: 'yes'
+    permissionFooterEnter: 'yes',
+
+    cliBackendTitle: 'CLI backend',
+    cliBackendDesc:
+      'Choose which CLI binary the Agent SDK spawns. Takes effect on the next new chat.',
+    cliBackendBundled: 'Bundled fusion-code',
+    cliBackendBundledDesc:
+      'The CLI shipped with the app — tuned for prompt cache and MCP tool loading',
+    cliBackendSystem: 'System Claude Code',
+    cliBackendSystemDesc:
+      'Use the claude binary installed on your machine (no fusion-code token optimizations; runs under your own ~/.claude config)',
+    cliBackendNotInstalled: 'No system claude detected',
+    cliBackendDetected: 'Detected',
+    cliBackendVersion: 'Version',
+    cliBackendPath: 'Path',
+    cliBackendApplyHint: 'Will apply on the next new chat'
   }
 } as const
 

@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
+import type { CliBackendState } from '../../../../shared/ipc-channels'
 import { useT } from '../../i18n'
 import { useSettingsStore } from '../../stores/settings'
 import {
@@ -107,6 +108,8 @@ export function SettingsView(): React.JSX.Element | null {
           <div className="mx-auto max-w-[820px] px-10 py-8">
             {activeCategory === 'appearance' ? (
               <AppearanceSection />
+            ) : activeCategory === 'general' ? (
+              <GeneralSection />
             ) : (
               <PlaceholderSection
                 title={categories.find((c) => c.id === activeCategory)?.label ?? ''}
@@ -255,6 +258,167 @@ function AppearanceSection(): React.JSX.Element {
         />
       </Section>
     </section>
+  )
+}
+
+/* ─────────────────── General ─────────────────── */
+
+/**
+ * General settings category. Currently hosts just the CLI backend
+ * picker — lets the user swap between the bundled fusion-code binary
+ * and a system-installed Claude Code. State lives in main (persisted
+ * to userData/settings.json); we pull it once on mount and again
+ * after every set() so the version badge reflects whatever `claude
+ * --version` last returned.
+ */
+function GeneralSection(): React.JSX.Element {
+  const t = useT()
+  const [state, setState] = useState<CliBackendState | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    window.chatApi
+      .getCliBackend()
+      .then((s) => {
+        if (!cancelled) setState(s)
+      })
+      .catch((err) => {
+        console.error('[settings] getCliBackend failed', err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const setMode = async (mode: 'bundled' | 'system'): Promise<void> => {
+    if (busy || !state || state.mode === mode) return
+    // Guard: if there's no system claude installed we can't let the
+    // user flip to it. The radio is disabled anyway but this catches
+    // a programmatic hit via keyboard.
+    if (mode === 'system' && !state.systemInfo) return
+    setBusy(true)
+    try {
+      const next = await window.chatApi.setCliBackend({ mode })
+      setState(next)
+    } catch (err) {
+      console.error('[settings] setCliBackend failed', err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="space-y-8">
+      <h1 className="text-[20px] font-semibold text-foreground">
+        {t('catGeneral')}
+      </h1>
+
+      <Section title={t('cliBackendTitle')} description={t('cliBackendDesc')}>
+        <div className="space-y-2">
+          <CliBackendOption
+            active={state?.mode === 'bundled'}
+            disabled={busy || !state}
+            onClick={() => setMode('bundled')}
+            label={t('cliBackendBundled')}
+            description={t('cliBackendBundledDesc')}
+            pathLabel={t('cliBackendPath')}
+            path={state?.bundledPath ?? null}
+          />
+          <CliBackendOption
+            active={state?.mode === 'system'}
+            disabled={busy || !state || !state.systemInfo}
+            onClick={() => setMode('system')}
+            label={t('cliBackendSystem')}
+            description={t('cliBackendSystemDesc')}
+            pathLabel={t('cliBackendPath')}
+            path={state?.systemInfo?.path ?? null}
+            badge={
+              state?.systemInfo
+                ? state.systemInfo.version
+                  ? `${t('cliBackendVersion')} ${state.systemInfo.version}`
+                  : t('cliBackendDetected')
+                : t('cliBackendNotInstalled')
+            }
+          />
+          <p className="pt-1 text-[11px] text-muted-foreground/70">
+            {t('cliBackendApplyHint')}
+          </p>
+        </div>
+      </Section>
+    </section>
+  )
+}
+
+function CliBackendOption({
+  active,
+  disabled,
+  onClick,
+  label,
+  description,
+  pathLabel,
+  path,
+  badge
+}: {
+  active: boolean
+  disabled: boolean
+  onClick: () => void
+  label: string
+  description: string
+  pathLabel: string
+  path: string | null
+  badge?: string
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      className={
+        'group relative flex w-full flex-col items-start gap-1 rounded-xl border px-4 py-3 text-left transition-all ' +
+        (active
+          ? 'border-accent/50 bg-accent/8 shadow-[inset_0_0_0_1px_hsl(var(--accent)/0.15)]'
+          : 'border-border/60 bg-card/40 hover:border-accent/30 hover:bg-card/60') +
+        ' disabled:cursor-not-allowed disabled:opacity-50'
+      }
+    >
+      <div className="flex w-full items-center gap-2">
+        <span
+          className={
+            'flex size-4 shrink-0 items-center justify-center rounded-full border ' +
+            (active
+              ? 'border-accent bg-accent text-accent-foreground'
+              : 'border-border bg-background')
+          }
+        >
+          {active && (
+            <span className="block size-1.5 rounded-full bg-accent-foreground" />
+          )}
+        </span>
+        <span className="text-[13px] font-medium text-foreground">{label}</span>
+        {badge && (
+          <span
+            className={
+              'ml-auto rounded-full px-2 py-0.5 text-[10.5px] font-medium ' +
+              (path
+                ? 'bg-accent/15 text-accent'
+                : 'bg-muted text-muted-foreground/80')
+            }
+          >
+            {badge}
+          </span>
+        )}
+      </div>
+      <p className="pl-6 text-[11.5px] text-muted-foreground/80">
+        {description}
+      </p>
+      {path && (
+        <p className="pl-6 font-mono text-[10.5px] text-muted-foreground/60">
+          {pathLabel}: {path}
+        </p>
+      )}
+    </button>
   )
 }
 

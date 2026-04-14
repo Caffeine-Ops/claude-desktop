@@ -21,6 +21,8 @@ import type {
   SessionMeta
 } from '../../shared/types'
 import { AsyncMessageQueue } from './asyncMessageQueue'
+import { getAppSettings, type CliBackend } from './appSettings'
+import { detectSystemClaude } from './cliDetect'
 import { invalidateFileSuggestions } from './fileSuggestions'
 import { getPermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
@@ -563,9 +565,10 @@ class ChatEngine extends EventEmitter {
     runtime: SessionRuntime,
     opts?: { resume?: boolean }
   ): void {
-    const cliPath = this.resolveFusionCliPath()
+    const backend = getAppSettings().cliBackend
+    const cliPath = this.resolveCliPath(backend)
     const resume = opts?.resume === true
-    this.logEvent('openSession:begin', { sessionId, resume, cliPath })
+    this.logEvent('openSession:begin', { sessionId, resume, cliPath, backend })
     console.log('[engine] opening long-lived SDK session', {
       sessionId,
       resume,
@@ -692,15 +695,24 @@ class ChatEngine extends EventEmitter {
       //
       // All three respect parent-process overrides so ops can flip
       // them back for diagnostics without recompiling.
-      env: {
-        ...process.env,
-        CLAUDE_CODE_MCP_INSTR_DELTA:
-          process.env.CLAUDE_CODE_MCP_INSTR_DELTA ?? 'true',
-        CLAUDE_CODE_ATTRIBUTION_HEADER:
-          process.env.CLAUDE_CODE_ATTRIBUTION_HEADER ?? 'false',
-        ENABLE_TOOL_SEARCH:
-          process.env.ENABLE_TOOL_SEARCH ?? 'true'
-      } as Record<string, string>,
+      //
+      // Only injected when running the bundled fusion-code CLI.
+      // Upstream claude-code from the user's system doesn't implement
+      // these feature flags (they're fusion-code-specific patches), so
+      // pushing them to vanilla claude is a no-op at best and a
+      // spurious "unknown env" warning at worst. System-backend users
+      // get their own `~/.claude/settings.json` instead.
+      env: (backend === 'bundled'
+        ? {
+            ...process.env,
+            CLAUDE_CODE_MCP_INSTR_DELTA:
+              process.env.CLAUDE_CODE_MCP_INSTR_DELTA ?? 'true',
+            CLAUDE_CODE_ATTRIBUTION_HEADER:
+              process.env.CLAUDE_CODE_ATTRIBUTION_HEADER ?? 'false',
+            ENABLE_TOOL_SEARCH:
+              process.env.ENABLE_TOOL_SEARCH ?? 'true'
+          }
+        : { ...process.env }) as Record<string, string>,
       // Pin fusion-code's session identity. Mutually exclusive: either
       // we're resuming an existing transcript (`resume`) or we're
       // creating a new one with an explicit id (`sessionId`).
@@ -1562,8 +1574,71 @@ class ChatEngine extends EventEmitter {
   }
 
   /**
-   * Locate the fusion-code ./cli binary the agent SDK should spawn as
-   * the child process. Resolution order:
+   * Locate the CLI binary the Agent SDK should spawn. Dispatches on
+   * the user's cliBackend setting:
+   *
+   *   - `bundled` (default): locates the shipped fusion-code CLI
+   *     (`FUSION_CODE_CLI_PATH` env override → resourcesPath →
+   *     dev-layout siblings).
+   *
+   *   - `system`: uses whatever path `cliDetect` resolved on startup
+   *     (cached in `cachedSystemClaudePath`, refreshed via the
+   *     CLI_BACKEND_GET IPC). If the user flipped to system mode but
+   *     no binary is installed, we fall back to the bundled path
+   *     instead of throwing — the settings UI already greys out the
+   *     system radio when detection fails, so hitting this branch
+   *     means the user's install disappeared between toggling and the
+   *     next session spawn, and falling back silently is strictly
+   *     better than bricking the chat.
+   */
+  private resolveCliPath(backend: CliBackend): string {
+    if (backend === 'system') {
+      const systemPath = this.cachedSystemClaudePath
+      if (systemPath && existsSync(systemPath)) return systemPath
+      console.warn(
+        '[engine] cliBackend=system but no system claude detected; falling back to bundled fusion-code'
+      )
+    }
+    return this.resolveFusionCliPath()
+  }
+
+  /**
+   * Last-known absolute path of the user's system `claude` binary,
+   * refreshed every time the renderer polls CLI_BACKEND_GET. Kept on
+   * the engine instance (not a module-level singleton) because the
+   * engine already owns the lifecycle other main-side state depends
+   * on, and the IPC handler already has an engine reference.
+   */
+  public cachedSystemClaudePath: string | null = null
+
+  /**
+   * Resolve the bundled fusion-code CLI path (same logic the engine
+   * uses internally on spawn). Exposed so the IPC layer can show the
+   * current binary location in the settings UI without duplicating
+   * the resolution order. Throws with the full candidate list if no
+   * bundled binary is found.
+   */
+  getBundledCliPath(): string {
+    return this.resolveFusionCliPath()
+  }
+
+  /**
+   * Refresh `cachedSystemClaudePath` from `cliDetect`. Called by the
+   * CLI_BACKEND_GET IPC before each reply, so the renderer's settings
+   * page always sees fresh info without the engine doing a subprocess
+   * spawn on every query (cliDetect caches for 30s internally).
+   */
+  async refreshSystemClaudeDetection(): Promise<{
+    path: string | null
+    version: string | null
+  }> {
+    const info = await detectSystemClaude()
+    this.cachedSystemClaudePath = info?.path ?? null
+    return { path: info?.path ?? null, version: info?.version ?? null }
+  }
+
+  /**
+   * Locate the bundled fusion-code ./cli binary. Resolution order:
    *
    *   1. `FUSION_CODE_CLI_PATH` env var — highest precedence; set it
    *      in env.json or the shell to pin an explicit path

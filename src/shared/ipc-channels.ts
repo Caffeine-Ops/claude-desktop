@@ -146,7 +146,20 @@ export const IPC_CHANNELS = {
    * the HTTP call in main means the API key never lands in the
    * renderer — the window can't be snapshotted for the secret.
    */
-  TRANSCRIBE_AUDIO: 'speech:transcribe'
+  TRANSCRIBE_AUDIO: 'speech:transcribe',
+  /**
+   * Renderer → main. Reads the current CLI backend choice plus
+   * detection info for the user's system `claude` binary. Called by
+   * the settings page every time the CLI backend section opens so the
+   * UI can grey out the "system" radio when no binary is installed.
+   */
+  CLI_BACKEND_GET: 'cli-backend:get',
+  /**
+   * Renderer → main. Persists the user's CLI backend choice. Takes
+   * effect on the next `openSession` — no relaunch, but an in-flight
+   * turn on the old backend is unaffected until it finishes.
+   */
+  CLI_BACKEND_SET: 'cli-backend:set'
 } as const
 
 /**
@@ -271,6 +284,32 @@ export type SessionRenameResult = { ok: true }
  * `src/renderer/src/i18n.ts` — keep in sync.
  */
 export type LangChangedPayload = { lang: 'zh' | 'en' }
+
+/**
+ * Which CLI binary the engine spawns for the Agent SDK child.
+ * - `bundled` — the fusion-code CLI shipped inside the Electron app.
+ * - `system`  — the `claude` binary detected on the user's PATH.
+ */
+export type CliBackendMode = 'bundled' | 'system'
+
+/**
+ * Result of CLI_BACKEND_GET. Carries the current mode plus everything
+ * the settings UI needs to render the picker in one round trip.
+ *
+ * - `bundledPath`: absolute path of the fusion-code binary the engine
+ *   would spawn if mode were bundled. null when resolution failed
+ *   (the settings UI shows a warning).
+ * - `systemInfo`:  detection result for the user's system claude —
+ *   `null` when nothing is installed, else `{path, version}`. The
+ *   version may be `null` if `claude --version` failed to parse.
+ */
+export interface CliBackendState {
+  mode: CliBackendMode
+  bundledPath: string | null
+  systemInfo: { path: string; version: string | null } | null
+}
+
+export type CliBackendSetPayload = { mode: CliBackendMode }
 
 /**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
@@ -458,4 +497,18 @@ export interface ChatApi {
   transcribeAudio(
     payload: TranscribeAudioPayload
   ): Promise<TranscribeAudioResult>
+
+  /**
+   * Read the current CLI backend setting plus fresh detection info
+   * for the user's system `claude` binary. Called by the settings
+   * page each time its CLI-backend section opens.
+   */
+  getCliBackend(): Promise<CliBackendState>
+
+  /**
+   * Persist the user's CLI backend choice. Resolves to the updated
+   * state (same shape as getCliBackend) so the settings UI can
+   * refresh without a second round-trip.
+   */
+  setCliBackend(payload: CliBackendSetPayload): Promise<CliBackendState>
 }

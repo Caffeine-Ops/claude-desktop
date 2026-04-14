@@ -35,12 +35,17 @@ import {
   type WorkspaceSetPayload,
   type WorkspaceState
 } from '../../shared/ipc-channels'
+import { getAppSettings, updateAppSettings } from '../core/appSettings'
 import { getChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
 import { getPermissionBroker } from '../core/permissionBroker'
 import { listSessions, loadSession, renameSession } from '../core/sessionStore'
 import { updateTrayLang } from '../tray'
-import type { LangChangedPayload } from '../../shared/ipc-channels'
+import type {
+  CliBackendSetPayload,
+  CliBackendState,
+  LangChangedPayload
+} from '../../shared/ipc-channels'
 
 /**
  * Registers all IPC handlers and wires the chat engine's event stream to
@@ -68,6 +73,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_RENAME)
   ipcMain.removeHandler(IPC_CHANNELS.APP_RELAUNCH)
   ipcMain.removeHandler(IPC_CHANNELS.APP_OPEN_CLAUDE_DIR)
+  ipcMain.removeHandler(IPC_CHANNELS.CLI_BACKEND_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.CLI_BACKEND_SET)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -396,6 +403,65 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return {
         error:
           'No STT API key configured — set GEMINI_API_KEY or OPENAI_API_KEY in env.json.'
+      }
+    }
+  )
+
+  // CLI backend — get/set the choice between bundled fusion-code and
+  // the user's system claude. Detection is refreshed through the
+  // engine on every GET so the settings page always sees fresh info
+  // without the caller doing an extra subprocess spawn round.
+  ipcMain.handle(
+    IPC_CHANNELS.CLI_BACKEND_GET,
+    async (): Promise<CliBackendState> => {
+      const eng = getChatEngine()
+      const [{ cliBackend }, detection] = await Promise.all([
+        Promise.resolve(getAppSettings()),
+        eng.refreshSystemClaudeDetection()
+      ])
+      let bundledPath: string | null = null
+      try {
+        bundledPath = eng.getBundledCliPath()
+      } catch (err) {
+        console.warn('[cli-backend] bundled cli not found', {
+          message: err instanceof Error ? err.message : String(err)
+        })
+      }
+      return {
+        mode: cliBackend,
+        bundledPath,
+        systemInfo: detection.path
+          ? { path: detection.path, version: detection.version }
+          : null
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CLI_BACKEND_SET,
+    async (
+      _event,
+      payload: CliBackendSetPayload
+    ): Promise<CliBackendState> => {
+      const mode = payload?.mode
+      if (mode !== 'bundled' && mode !== 'system') {
+        throw new Error(`Invalid cli backend mode: ${String(mode)}`)
+      }
+      updateAppSettings({ cliBackend: mode })
+      const eng = getChatEngine()
+      const detection = await eng.refreshSystemClaudeDetection()
+      let bundledPath: string | null = null
+      try {
+        bundledPath = eng.getBundledCliPath()
+      } catch {
+        /* bundled resolution failure is non-fatal here — surface null */
+      }
+      return {
+        mode,
+        bundledPath,
+        systemInfo: detection.path
+          ? { path: detection.path, version: detection.version }
+          : null
       }
     }
   )
