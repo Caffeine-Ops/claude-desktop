@@ -28,6 +28,7 @@ import {
 import type { ChatEvent, ThreadSummary } from '../../../shared/types'
 import type { ChatImagePayload } from '../../../shared/ipc-channels'
 import { imageAttachmentAdapter } from './imageAttachmentAdapter'
+import { confirmStreamingInterrupt } from './streamingGuard'
 
 /**
  * Bridges our zustand chat store ↔ assistant-ui's ExternalStoreRuntime.
@@ -65,6 +66,7 @@ export function FusionRuntimeProvider({
   const appendUserMessage = useChatStore((s) => s.appendUserMessage)
   const startAssistantMessage = useChatStore((s) => s.startAssistantMessage)
   const appendAssistantDelta = useChatStore((s) => s.appendAssistantDelta)
+  const appendThinkingDelta = useChatStore((s) => s.appendThinkingDelta)
   const startToolCall = useChatStore((s) => s.startToolCall)
   const appendToolCallArgsDelta = useChatStore((s) => s.appendToolCallArgsDelta)
   const finalizeToolCall = useChatStore((s) => s.finalizeToolCall)
@@ -107,6 +109,21 @@ export function FusionRuntimeProvider({
           break
         case 'chunk':
           appendAssistantDelta(event.messageId, event.delta)
+          break
+        case 'thinking_start':
+          // No-op: the chat store creates the reasoning part lazily
+          // on the first thinking_delta. We could pre-create an
+          // empty placeholder here, but that risks an empty card
+          // flashing on screen if the SDK never produces a delta.
+          break
+        case 'thinking_delta':
+          appendThinkingDelta(event.messageId, event.delta)
+          break
+        case 'thinking_end':
+          // No-op: the reasoning part is already complete the moment
+          // the last delta appended into it. The visible "thinking"
+          // shimmer is driven off `streaming` (turn-level), not a
+          // per-block flag, so there's nothing to flip here.
           break
         case 'tool_use_start':
           toolNames.set(event.toolUseId, event.toolName)
@@ -200,6 +217,7 @@ export function FusionRuntimeProvider({
     sessionId,
     startAssistantMessage,
     appendAssistantDelta,
+    appendThinkingDelta,
     startToolCall,
     appendToolCallArgsDelta,
     finalizeToolCall,
@@ -578,6 +596,11 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
 
   const onSwitchToNewThread = useCallback(async (): Promise<void> => {
     if (!window.chatApi) return
+    // Mid-turn guard: the runtime calls this both from cold-start
+    // auto-select (streaming === false, no prompt) and from the
+    // sidebar's New chat button (potentially mid-turn). Only the
+    // latter sees the confirm.
+    if (!(await confirmStreamingInterrupt())) return
     try {
       setSessionLoading(true)
       const { sessionId: newId } = await window.chatApi.newSession()
@@ -598,6 +621,9 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
   const onSwitchToThread = useCallback(
     async (id: string): Promise<void> => {
       if (!window.chatApi) return
+      // Same mid-turn guard as new-thread: skip when not streaming
+      // (cold-start auto-select path) and prompt otherwise.
+      if (!(await confirmStreamingInterrupt())) return
       try {
         setSessionLoading(true)
 

@@ -19,7 +19,7 @@ import type { Attachment, Unstable_TriggerItem } from '@assistant-ui/core'
 import { AnimatePresence, motion } from 'motion/react'
 
 import type { SessionMeta } from '../../../../shared/types'
-import { useT } from '../../i18n'
+import { useT, type StringKey } from '../../i18n'
 import { useChatStore } from '../../stores/chat'
 import { buildSlashAdapter, slashFormatter } from '../../composer/slashAdapter'
 import {
@@ -29,6 +29,8 @@ import {
 import { ThinkingSpinner } from './ThinkingSpinner'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { DictationWaveform } from './DictationWaveform'
+import { WorkspacePill } from '../workspace/WorkspacePill'
+import { useWorkspaceStore } from '../../stores/workspace'
 import { cancelActiveDictation } from '../../runtime/openaiWhisperDictationAdapter'
 import hljs from 'highlight.js/lib/common'
 
@@ -264,25 +266,246 @@ function TopProgressBar(): React.JSX.Element {
 
 /* ───────────────────────── EmptyState ───────────────────────── */
 
+/**
+ * Scenario prompt cards for the empty thread state.
+ *
+ * Clicking a card fills the composer with `prompt` and focuses the
+ * textarea, mirroring how ChatGPT / Claude.ai handle their landing
+ * suggestion tiles. The cards are intentionally a *starting line*,
+ * not a full template — the user is expected to edit the bracketed
+ * placeholder before sending.
+ *
+ * Localised copy lives in i18n.ts under the `scenarioCard*` keys so
+ * the EN/CN versions can diverge in tone.
+ *
+ * Adding a new card: append an entry here + add the matching i18n
+ * keys in *both* locales. Keep the list short — a scrollable grid
+ * defeats the purpose of a "pick a starting point" view.
+ */
+type ScenarioCard = {
+  key: string
+  iconClass: string
+  icon: React.ReactNode
+  titleKey: StringKey
+  descKey: StringKey
+  promptKey: StringKey
+}
+
+const SCENARIO_CARDS: ScenarioCard[] = [
+  {
+    key: 'ppt',
+    iconClass: 'from-rose-500/20 to-rose-500/5 text-rose-400',
+    icon: <PptIcon />,
+    titleKey: 'scenarioPptTitle',
+    descKey: 'scenarioPptDesc',
+    promptKey: 'scenarioPptPrompt'
+  },
+  {
+    key: 'officeHours',
+    iconClass: 'from-amber-500/20 to-amber-500/5 text-amber-400',
+    icon: <LightbulbIcon />,
+    titleKey: 'scenarioOfficeHoursTitle',
+    descKey: 'scenarioOfficeHoursDesc',
+    promptKey: 'scenarioOfficeHoursPrompt'
+  },
+  {
+    key: 'resumeScreen',
+    iconClass: 'from-indigo-500/20 to-indigo-500/5 text-indigo-400',
+    icon: <UserCheckIcon />,
+    titleKey: 'scenarioResumeTitle',
+    descKey: 'scenarioResumeDesc',
+    promptKey: 'scenarioResumePrompt'
+  },
+  {
+    key: 'analyze',
+    iconClass: 'from-emerald-500/20 to-emerald-500/5 text-emerald-400',
+    icon: <ChartIcon />,
+    titleKey: 'scenarioAnalyzeTitle',
+    descKey: 'scenarioAnalyzeDesc',
+    promptKey: 'scenarioAnalyzePrompt'
+  }
+]
+
 function EmptyState(): React.JSX.Element {
   const t = useT()
+  // Composer runtime — exposed by the parent ThreadPrimitive.Root so
+  // EmptyState can shove text directly into the textarea on card
+  // click. The composer subtree is mounted as a sibling of the
+  // viewport (see ThreadPrimitive.Root in this file's main render),
+  // so the runtime context is in scope here.
+  const composer = useComposerRuntime()
+
+  const onPickScenario = useCallback(
+    (promptKey: StringKey) => {
+      const text = t(promptKey)
+      composer.setText(text)
+      // Focus the actual textarea so the user can immediately edit
+      // the bracketed placeholder. assistant-ui's
+      // ComposerPrimitive.Input renders a plain <textarea> with no
+      // marker attribute we can rely on, but the chat UI only ever
+      // mounts one textarea (the composer), so a top-level query
+      // is unambiguous. Wait one microtask so React has flushed the
+      // setText commit before we try to position the caret.
+      queueMicrotask(() => {
+        const el = document.querySelector<HTMLTextAreaElement>('textarea')
+        if (el) {
+          el.focus()
+          const len = el.value.length
+          el.setSelectionRange(len, len)
+        }
+      })
+    },
+    [composer, t]
+  )
+
   return (
-    <div className="flex flex-1 flex-col items-center justify-center text-center">
-      <div className="mb-3 text-[28px] font-semibold text-foreground">
+    <div className="mx-auto flex max-w-3xl flex-1 flex-col items-center justify-center px-6 py-12 text-center">
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: 'easeOut' }}
+        className="mb-2 text-[28px] font-semibold tracking-tight text-foreground"
+      >
         {t('emptyStateTitle')}
+      </motion.div>
+      <motion.p
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.06, duration: 0.35 }}
+        className="mb-8 max-w-md text-[13px] text-muted-foreground/80"
+      >
+        {t('emptyStateScenarioHint')}
+      </motion.p>
+      <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+        {SCENARIO_CARDS.map((card, i) => (
+          <motion.button
+            key={card.key}
+            type="button"
+            onClick={() => onPickScenario(card.promptKey)}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.12 + i * 0.05, duration: 0.35 }}
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.985 }}
+            className="group relative flex items-start gap-3 overflow-hidden rounded-2xl border border-border/60 bg-card/50 p-4 text-left shadow-sm backdrop-blur-sm transition-colors hover:border-accent/50 hover:bg-card/80 hover:shadow-[0_10px_30px_-12px_hsl(var(--accent)/0.35)]"
+          >
+            <span
+              className={
+                'flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ' +
+                card.iconClass
+              }
+            >
+              {card.icon}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-semibold text-foreground">
+                {t(card.titleKey)}
+              </div>
+              <div className="mt-0.5 line-clamp-2 text-[11.5px] leading-relaxed text-muted-foreground">
+                {t(card.descKey)}
+              </div>
+            </div>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="mt-1 shrink-0 text-muted-foreground/40 transition-all group-hover:translate-x-0.5 group-hover:text-accent"
+              aria-hidden
+            >
+              <path d="M5 12h14" />
+              <path d="m12 5 7 7-7 7" />
+            </svg>
+          </motion.button>
+        ))}
       </div>
-      <p className="max-w-md text-sm text-muted-foreground/80">
-        {t('emptyStateHintBefore')}
-        <code className="rounded bg-muted px-1.5 py-0.5 text-[12.5px] font-mono text-foreground/80">
-          {t('emptyStateExampleAsk')}
-        </code>
-        {t('emptyStateHintMiddle')}
-        <code className="rounded bg-muted px-1.5 py-0.5 text-[12.5px] font-mono text-foreground/80">
-          /help
-        </code>
-        {t('emptyStateHintAfter')}
-      </p>
     </div>
+  )
+}
+
+function PptIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="3" y="4" width="18" height="14" rx="2" />
+      <path d="M3 18h18" />
+      <path d="M8 22h8" />
+      <path d="M12 18v4" />
+      <path d="M8 11h4" />
+      <path d="M8 8h8" />
+    </svg>
+  )
+}
+
+function LightbulbIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M9 18h6" />
+      <path d="M10 22h4" />
+      <path d="M12 2a7 7 0 0 0-4 12.74V17h8v-2.26A7 7 0 0 0 12 2Z" />
+    </svg>
+  )
+}
+
+function UserCheckIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="m16 11 2 2 4-4" />
+    </svg>
+  )
+}
+
+function ChartIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 3v18h18" />
+      <path d="M7 14l4-4 4 4 5-6" />
+    </svg>
   )
 }
 
@@ -560,6 +783,12 @@ function AssistantMessage(): React.JSX.Element {
         unstable_showEmptyOnNonTextEnd={false}
         components={{
           Text: AssistantTextRow,
+          // Reasoning (extended-thinking) parts. assistant-ui's
+          // default for this slot is `() => null`, which is why
+          // thinking blocks were invisible before. Our custom card
+          // makes them collapsible so they don't overwhelm the chat
+          // when the model thinks for a long time.
+          Reasoning: ReasoningCard,
           tools: {
             Fallback: ToolCallCard
           },
@@ -598,6 +827,117 @@ function AssistantTextRow({ text }: { text: string }): React.JSX.Element {
       />
       <div className="min-w-0 flex-1">
         <AssistantMarkdown text={text} />
+      </div>
+    </div>
+  )
+}
+
+/* ─────────────────── Reasoning (thinking) card ─────────────── */
+
+/**
+ * Collapsible card for an extended-thinking part. The Anthropic API
+ * streams `content_block_delta.thinking_delta` events for any
+ * thinking block; the engine pipes them into ChatEvent.thinking_delta
+ * and the chat store accumulates them into a `reasoning` part on the
+ * assistant message. Without this component the part would be
+ * invisible — assistant-ui ships a default `Reasoning: () => null`
+ * for the slot, presumably because most apps want to hide raw chain
+ * of thought.
+ *
+ * Behavior
+ * --------
+ * - While the turn is streaming, the card auto-expands so the user
+ *   can watch the model think in real time.
+ * - Once the turn ends, it auto-collapses to a one-line summary
+ *   ("Thinking · 12s · 482 chars"). The user can click to re-expand.
+ * - The expand state is per-card local — the user's collapse choice
+ *   on one message doesn't affect another.
+ *
+ * `status` arrives from assistant-ui's MessagePartState. We treat
+ * `running` as "still streaming" for the auto-expand decision.
+ */
+function ReasoningCard({
+  text,
+  status
+}: {
+  text: string
+  status?: { type: string }
+}): React.JSX.Element {
+  const isStreaming = status?.type === 'running'
+  // `null` ⇒ user hasn't manually toggled yet — let the streaming
+  // flag drive the open state. Once they click, lock to their
+  // explicit choice. This way the card auto-expands while thinking
+  // and auto-collapses at end-of-turn, but doesn't fight a user
+  // who expanded an old card to re-read the chain of thought.
+  const [userToggled, setUserToggled] = useState<boolean | null>(null)
+  const open = userToggled ?? isStreaming
+  const charCount = text.length
+
+  return (
+    <div className="flex w-full gap-3">
+      <span
+        aria-hidden
+        className="mt-[7px] flex size-[6px] shrink-0 items-center justify-center"
+      >
+        <span
+          className={
+            'block size-[6px] rounded-full ' +
+            (isStreaming
+              ? 'animate-pulse bg-amber-400/80'
+              : 'bg-amber-400/50')
+          }
+        />
+      </span>
+      <div className="min-w-0 flex-1">
+        <button
+          type="button"
+          onClick={() => setUserToggled(!open)}
+          aria-expanded={open}
+          className="group/reason flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={
+              'shrink-0 transition-transform ' + (open ? 'rotate-90' : '')
+            }
+            aria-hidden
+          >
+            <path d="m9 6 6 6-6 6" />
+          </svg>
+          <span className="font-medium tracking-tight">
+            {isStreaming ? '正在思考…' : '思考过程'}
+          </span>
+          {!isStreaming && (
+            <span className="text-[11px] text-muted-foreground/60">
+              · {charCount} 字
+            </span>
+          )}
+        </button>
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              key="reasoning-body"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="overflow-hidden"
+            >
+              <div className="mt-1.5 rounded-lg border border-amber-500/15 bg-amber-500/[0.04] px-3 py-2 text-[12.5px] leading-relaxed text-muted-foreground/90">
+                <pre className="whitespace-pre-wrap break-words font-sans">
+                  {text}
+                </pre>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   )
@@ -1430,6 +1770,14 @@ function Composer(): React.JSX.Element {
 
   return (
     <div className="mx-auto w-full max-w-3xl">
+      {/* Inline workspace pill — sits above the composer card as a
+          subtle affordance. Reads the current folder from the
+          workspace store and commits switches through its own
+          popover, so the sidebar "switch workspace" button is just
+          one of several equivalent entry points now. */}
+      <WorkspacePill
+        onSwitch={(path) => useWorkspaceStore.getState().switchTo(path)}
+      />
       {/* Outer root: `/` slash commands. Its popover JSX lives
           *between* the two roots so `useTriggerPopoverContext()`
           inside SlashPopoverList resolves to this root. */}
@@ -1914,89 +2262,162 @@ function ComposerHighlightOverlay({
   // pulling in assistant-ui's ClientSchemas.
   const text = useAuiState((s) => ((s as any).composer?.text as string | undefined) ?? '')
   const tokens = useMemo(() => tokenizeComposer(text), [text])
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const caretRef = useRef<HTMLSpanElement | null>(null)
 
-  // Walk tokens once, interleaving a <Caret /> at the position that
-  // corresponds to the textarea's `selectionStart`. The caret element
-  // is inserted into the same inline flow as tokens so it picks up
-  // chip widths, text widths, and wrapping automatically.
+  // Position the fake caret via DOM measurement so the overlay text
+  // can render as continuous, unsplit token spans. Rationale:
+  //
+  //   1. An inline-block 1px caret consumes 1px of horizontal space,
+  //      which shifts every glyph to its right by 1px — the shift
+  //      flips on/off as the cursor crosses each character, producing
+  //      a per-keystroke jitter.
+  //   2. Splitting a text node into two adjacent <span>s on the caret
+  //      offset breaks cross-boundary kerning and causes the browser
+  //      to recompute subpixel positions on the right half. The text
+  //      visibly micro-jitters as the split point moves.
+  //
+  // Both go away if we keep each text token in a single, never-split
+  // span and place the caret as an absolutely-positioned overlay
+  // child whose left/top come from `Range.getBoundingClientRect()`
+  // measured against the actual rendered text. The measurement runs
+  // in `useLayoutEffect` so the caret is in place before paint.
+  useLayoutEffect(() => {
+    const container = containerRef.current
+    const caretEl = caretRef.current
+    if (!container || !caretEl) return
+    if (!isFocused) {
+      caretEl.style.opacity = '0'
+      return
+    }
+
+    const containerRect = container.getBoundingClientRect()
+    let measured: { left: number; top: number; height: number } | null = null
+
+    let offset = 0
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i]!
+      const tokStart = offset
+      const tokEnd = offset + tok.value.length
+      const isLast = i === tokens.length - 1
+      const inRange =
+        caretPos >= tokStart && (caretPos < tokEnd || (isLast && caretPos === tokEnd))
+      offset = tokEnd
+      if (!inRange) continue
+
+      const node = container.querySelector(
+        `[data-token-start="${tokStart}"]`
+      ) as HTMLElement | null
+      if (!node) break
+
+      if (tok.kind === 'text') {
+        // Range over the token's text node — collapsed at the local
+        // offset gives a zero-width rect at the caret position. Fall
+        // back to the span rect when the range collapses to (0,0)
+        // (happens for empty tokens or right after a wrap break).
+        const textNode = node.firstChild
+        if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+          const local = caretPos - tokStart
+          const range = document.createRange()
+          range.setStart(textNode, local)
+          range.setEnd(textNode, local)
+          const r = range.getBoundingClientRect()
+          if (r.height > 0 || r.left !== 0 || r.top !== 0) {
+            measured = { left: r.left, top: r.top, height: r.height }
+            break
+          }
+        }
+        const sr = node.getBoundingClientRect()
+        measured = { left: sr.left, top: sr.top, height: sr.height }
+        break
+      }
+
+      // Chip token. The composer's `onSelect` snaps the textarea
+      // selection out of any chip interior, so we only ever measure
+      // chip boundaries (start vs. end). Use the chip element's own
+      // bounding rect — already accounts for its padding + icon.
+      const cr = node.getBoundingClientRect()
+      measured = {
+        left: caretPos === tokStart ? cr.left : cr.right,
+        top: cr.top,
+        height: cr.height
+      }
+      break
+    }
+
+    if (!measured) {
+      // Empty text or out-of-range fallback: pin the caret to the
+      // top-left of the content box (the overlay's padding inset).
+      const cs = window.getComputedStyle(container)
+      const padLeft = parseFloat(cs.paddingLeft) || 0
+      const padTop = parseFloat(cs.paddingTop) || 0
+      const lh = parseFloat(cs.lineHeight) || 22
+      caretEl.style.left = `${padLeft}px`
+      caretEl.style.top = `${padTop}px`
+      caretEl.style.height = `${lh}px`
+      caretEl.style.opacity = '1'
+      return
+    }
+
+    caretEl.style.left = `${measured.left - containerRect.left}px`
+    caretEl.style.top = `${measured.top - containerRect.top}px`
+    caretEl.style.height = `${measured.height || 22}px`
+    caretEl.style.opacity = '1'
+  }, [tokens, caretPos, isFocused, text])
+
+  // Render: each token as a single, unsplit element with a
+  // `data-token-start` attribute so the measurement loop above can
+  // find it without re-tokenising the DOM. Chips get wrapped in a
+  // marker span so we don't have to widen the Chip prop type just
+  // for measurement.
   const rendered: React.ReactNode[] = []
-  let caretInserted = false
-  let offset = 0
+  let off = 0
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i]!
-    const tokEnd = offset + tok.value.length
-    const caretInRange = caretPos >= offset && caretPos < tokEnd
-
-    if (!caretInserted && caretInRange) {
-      if (tok.kind === 'text') {
-        const split = caretPos - offset
-        rendered.push(
-          <span key={`t-${i}-a`}>{tok.value.slice(0, split)}</span>
-        )
-        if (isFocused) rendered.push(<Caret key={`caret-${i}`} />)
-        rendered.push(
-          <span key={`t-${i}-b`}>{tok.value.slice(split)}</span>
-        )
-        caretInserted = true
-        offset = tokEnd
-        continue
-      }
-      // Chip token: place caret *before* the chip (onSelect's
-      // snap-out means we only land here when caretPos === offset).
-      if (isFocused) rendered.push(<Caret key={`caret-${i}`} />)
-      caretInserted = true
-    }
-
+    const start = off
     if (tok.kind === 'slash' || tok.kind === 'mention') {
       rendered.push(
-        <Chip key={`chip-${i}`} variant={tok.kind}>
-          {tok.value}
-        </Chip>
+        <span key={`chip-${i}`} data-token-start={start}>
+          <Chip variant={tok.kind}>{tok.value}</Chip>
+        </span>
       )
     } else {
-      rendered.push(<span key={`t-${i}`}>{tok.value}</span>)
+      rendered.push(
+        <span key={`t-${i}`} data-token-start={start}>
+          {tok.value}
+        </span>
+      )
     }
-    offset = tokEnd
-  }
-  // Tail case: cursor at end of full text.
-  if (!caretInserted && isFocused && caretPos >= text.length) {
-    rendered.push(<Caret key="caret-end" />)
+    off += tok.value.length
   }
 
   return (
     <div
+      ref={containerRef}
       aria-hidden
       className="pointer-events-none absolute inset-0 z-0 whitespace-pre-wrap break-words px-1 py-1.5 text-[14px] leading-relaxed text-foreground"
     >
       {rendered}
+      {/* Absolutely-positioned caret. left/top/height are set in the
+          layout effect above; opacity flips on focus. The element
+          itself never changes position relative to inline flow, so
+          neither it nor neighbouring text shifts as the caret moves. */}
+      <span
+        ref={caretRef}
+        aria-hidden
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          width: '1px',
+          height: '1em',
+          background: 'hsl(var(--foreground))',
+          opacity: 0,
+          pointerEvents: 'none',
+          animation: 'caret-blink 1.1s step-end infinite'
+        }}
+      />
     </div>
-  )
-}
-
-/**
- * Blinking fake caret rendered inside the overlay. We use CSS keyframes
- * (`caret-blink` in main.css) so the blink continues smoothly even when
- * React isn't re-rendering.
- *
- * The caret is an `inline-block` zero-width element — it takes up a
- * 1px sliver on the line so it's visible without shifting neighbours.
- * `vertical-align: text-bottom` + `height: 1em` makes it span the
- * ascender/descender zone, matching the native textarea caret height.
- */
-function Caret(): React.JSX.Element {
-  return (
-    <span
-      aria-hidden
-      style={{
-        display: 'inline-block',
-        width: '1px',
-        height: '1em',
-        verticalAlign: 'text-bottom',
-        background: 'hsl(var(--foreground))',
-        marginInline: '0',
-        animation: 'caret-blink 1.1s step-end infinite'
-      }}
-    />
   )
 }
 

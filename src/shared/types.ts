@@ -49,6 +49,18 @@ export interface Message {
 export type ChatEvent =
   | { type: 'start'; messageId: string }
   | { type: 'chunk'; messageId: string; delta: string }
+  /**
+   * Extended-thinking lifecycle. Mirrors the Anthropic API's
+   * `content_block_start`/`thinking_delta`/`content_block_stop` events
+   * for blocks of `type: 'thinking'`. The renderer accumulates the
+   * deltas into a `reasoning` part on the active assistant message
+   * and renders it as a collapsible "Thinking…" card. Thinking text
+   * comes interleaved with `chunk` (text) and `tool_use*` events
+   * inside the same turn — order is preserved as parts array order.
+   */
+  | { type: 'thinking_start'; messageId: string }
+  | { type: 'thinking_delta'; messageId: string; delta: string }
+  | { type: 'thinking_end'; messageId: string }
   | {
       type: 'tool_use_start'
       messageId: string

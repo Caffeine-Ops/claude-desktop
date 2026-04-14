@@ -134,6 +134,27 @@ interface ActiveTurn {
    * back to the right toolUseId. Cleared on `content_block_stop`.
    */
   toolUseIdByBlockIndex: Map<number, string>
+  /**
+   * Set of content-block indices that opened as `thinking` blocks.
+   * Anthropic's API streams extended-thinking text via
+   * `content_block_delta` with `delta.type === 'thinking_delta'`, but
+   * the delta event only carries the index — we need this set to know
+   * whether a given index is a thinking block (vs a tool_use/text
+   * block) when routing deltas. Index is added on
+   * `content_block_start.thinking` and removed on
+   * `content_block_stop`. We don't track per-block message IDs because
+   * the renderer accumulates all thinking deltas into a single
+   * `reasoning` part on the active turn's assistant message.
+   */
+  thinkingBlockIndices: Set<number>
+  /**
+   * True once we've emitted `thinking_start` for the current turn.
+   * The renderer creates the reasoning part lazily on the first
+   * delta, so we use this flag to avoid spamming start/end if the
+   * model emits multiple separate thinking blocks back-to-back —
+   * they all roll into one visible card. Reset between turns.
+   */
+  emittedThinkingStart: boolean
 }
 
 class ChatEngine extends EventEmitter {
@@ -395,7 +416,9 @@ class ChatEngine extends EventEmitter {
       sawTextContent: false,
       sdkMessageCount: 0,
       streamedToolUseIds: new Set(),
-      toolUseIdByBlockIndex: new Map()
+      toolUseIdByBlockIndex: new Map(),
+      thinkingBlockIndices: new Set(),
+      emittedThinkingStart: false
     }
     this.emitEvent(sessionId, { type: 'start', messageId })
 
@@ -1365,6 +1388,16 @@ class ChatEngine extends EventEmitter {
     if (index === null || !block) return
     if (typeof block.type !== 'string') return
 
+    // Diagnostic breadcrumb — one line per opened block so we can see
+    // in the engine log whether thinking blocks are being routed
+    // through the new branch below. Tagged `[engine]` to match the
+    // existing pump logging.
+    console.log('[engine] content_block_start', {
+      sessionId,
+      index,
+      blockType: block.type
+    })
+
     if (block.type === 'tool_use' || block.type === 'server_tool_use') {
       if (typeof block.id !== 'string' || typeof block.name !== 'string') return
       active.toolUseIdByBlockIndex.set(index, block.id)
@@ -1376,6 +1409,27 @@ class ChatEngine extends EventEmitter {
         toolUseId: block.id,
         toolName: block.name
       })
+      return
+    }
+
+    if (block.type === 'thinking') {
+      // Extended-thinking block opened. The actual text arrives via
+      // `content_block_delta` with `delta.type === 'thinking_delta'`,
+      // so we only need to remember that this index is a thinking
+      // block (so deltas know how to route) and emit a one-shot
+      // `thinking_start` for the renderer to spin up the card.
+      // Subsequent thinking blocks in the same turn reuse the same
+      // reasoning part on the renderer side, so we suppress repeat
+      // starts via `emittedThinkingStart`.
+      active.thinkingBlockIndices.add(index)
+      if (!active.emittedThinkingStart) {
+        active.emittedThinkingStart = true
+        this.emitEvent(sessionId, {
+          type: 'thinking_start',
+          messageId: active.messageId
+        })
+      }
+      return
     }
     // text blocks don't need a start event — renderer still lazily
     // creates the assistant message on first `chunk` delta.
@@ -1428,7 +1482,39 @@ class ChatEngine extends EventEmitter {
         toolUseId,
         partialJson: delta.partial_json
       })
+      return
     }
+
+    if (delta.type === 'thinking_delta') {
+      // Extended-thinking text fragment. The SDK gives us
+      // `delta.thinking: string` (matches the Anthropic API
+      // ThinkingDelta shape exactly).
+      if (typeof delta.thinking !== 'string' || delta.thinking.length === 0) return
+      console.log('[engine] thinking_delta', {
+        sessionId,
+        index,
+        chars: delta.thinking.length,
+        knownIndex: index !== null && active.thinkingBlockIndices.has(index)
+      })
+      // Index check is best-effort — if for some reason we didn't
+      // see the matching content_block_start (out-of-order delivery,
+      // a future SDK that emits deltas without a start), still
+      // forward the delta so the user sees the thinking text. The
+      // renderer accumulates by messageId, not by index, so it's
+      // safe to drop the gating.
+      this.emitEvent(sessionId, {
+        type: 'thinking_delta',
+        messageId: active.messageId,
+        delta: delta.thinking
+      })
+      return
+    }
+
+    // signature_delta carries the cryptographic signature attached to
+    // the thinking block. The renderer doesn't display it, so we
+    // intentionally drop it on the floor here. The signature still
+    // round-trips to the SDK's transcript via the `assistant`
+    // message that arrives at end-of-turn.
   }
 
   private handleContentBlockStop(
@@ -1438,6 +1524,18 @@ class ChatEngine extends EventEmitter {
   ): void {
     const index = typeof event.index === 'number' ? event.index : null
     if (index === null) return
+
+    // Thinking block close: drop the index from the active set. We
+    // do NOT emit a `thinking_end` per close — the renderer treats
+    // every thinking block in a turn as a single rolling card, and
+    // the final close (along with the streaming spinner) happens at
+    // turn end. Multiple thinking blocks from the same turn append
+    // into the same reasoning part separated by blank lines.
+    if (active.thinkingBlockIndices.has(index)) {
+      active.thinkingBlockIndices.delete(index)
+      return
+    }
+
     const toolUseId = active.toolUseIdByBlockIndex.get(index)
     if (!toolUseId) return
     active.toolUseIdByBlockIndex.delete(index)

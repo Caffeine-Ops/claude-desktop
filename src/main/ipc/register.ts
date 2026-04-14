@@ -355,6 +355,22 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // Open the current workspace directory in the OS file manager. The
+  // path comes from the engine — never the renderer — so the user can
+  // never coax this into opening an arbitrary directory. Returns the
+  // shell.openPath error verbatim on failure.
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_OPEN,
+    async (): Promise<{ error: string }> => {
+      const workspace = getChatEngine().getWorkspace()
+      if (!workspace) {
+        return { error: 'Workspace not set.' }
+      }
+      const shellError = await shell.openPath(workspace)
+      return { error: shellError }
+    }
+  )
+
   // OpenAI-compatible audio transcription proxy.
   //
   // Routes audio through the Chat Completions endpoint using an

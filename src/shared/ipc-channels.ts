@@ -122,6 +122,14 @@ export const IPC_CHANNELS = {
    */
   APP_OPEN_CLAUDE_DIR: 'app:open-claude-dir',
   /**
+   * Renderer → main. Opens the current workspace directory in the OS
+   * file manager via `shell.openPath`. Used by the Files panel header
+   * chip — clicking the workspace path reveals the folder. Main reads
+   * the workspace from the engine, so the renderer never sends a path
+   * (and can't trick main into opening an arbitrary directory).
+   */
+  WORKSPACE_OPEN: 'workspace:open',
+  /**
    * Renderer → main (fire-and-forget `send`). Notifies the main
    * process that the user flipped the UI language. Main uses it to
    * rebuild the tray context menu — renderer stores the choice in its
@@ -475,6 +483,13 @@ export interface ChatApi {
    * non-empty error string when `shell.openPath` fails.
    */
   openClaudeDir(): Promise<{ error: string }>
+
+  /**
+   * Open the current workspace directory in the OS file manager.
+   * Main reads the path from the engine, so no payload is needed.
+   * Resolves with `{ error: '' }` on success.
+   */
+  openWorkspace(): Promise<{ error: string }>
 
   /** OS username, read once at preload-load time via `os.userInfo()`. */
   osUser: string

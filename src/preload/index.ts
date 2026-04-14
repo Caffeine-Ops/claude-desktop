@@ -215,6 +215,12 @@ const chatApi: ChatApi = {
     }>
   },
 
+  openWorkspace(): Promise<{ error: string }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_OPEN) as Promise<{
+      error: string
+    }>
+  },
+
   // Read once at preload load. `os.userInfo()` throws on some sandboxed
   // OS configs (rare) — fall back to an empty string and let the UI
   // render a generic placeholder rather than crashing the whole bridge.

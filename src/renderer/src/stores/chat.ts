@@ -107,6 +107,15 @@ interface ChatState {
   startAssistantMessage: (messageId: string) => void
   appendAssistantDelta: (messageId: string, delta: string) => void
   /**
+   * Append an extended-thinking text fragment to a `reasoning` part
+   * on the active assistant message. Multiple thinking blocks in the
+   * same turn roll into a single rolling reasoning part — separated
+   * by a blank line if the engine opens a new block. The first
+   * delta lazily creates the assistant message if it doesn't exist
+   * yet, mirroring `appendAssistantDelta`'s lazy-create path.
+   */
+  appendThinkingDelta: (messageId: string, delta: string) => void
+  /**
    * Create an empty tool-call part on the current assistant message.
    * Called on `tool_use_start` — the renderer card appears immediately
    * with the tool name but no args yet. The `argsText` field is the
@@ -271,6 +280,56 @@ export const useChatStore = create<ChatState>((set) => ({
           }
         }),
         ...(flipTurnHasText ? { turnHasText: true } : {})
+      }
+    })
+  },
+
+  appendThinkingDelta: (messageId, delta) => {
+    if (!delta) return
+    set((s) => {
+      const existing = s.messages.find((m) => m.id === messageId)
+      // Lazy assistant message create — same shape as
+      // appendAssistantDelta. A turn can open with a thinking block
+      // before any text or tool_use, so the message may not exist
+      // yet on the first thinking delta.
+      const reasoningPart: ContentPart = {
+        type: 'reasoning',
+        text: delta
+      }
+      if (!existing) {
+        const newMessage = {
+          id: messageId,
+          role: 'assistant',
+          content: [reasoningPart]
+        } as unknown as ThreadMessageLike
+        return { messages: [...s.messages, newMessage] }
+      }
+      return {
+        messages: s.messages.map((m) => {
+          if (m.id !== messageId) return m
+          const parts = [...((m.content as unknown) as ContentPart[])]
+          const last = parts[parts.length - 1]
+          if (last && last.type === 'reasoning') {
+            // Same trailing-reasoning part — append into it.
+            parts[parts.length - 1] = {
+              ...last,
+              text: ((last.text as string) ?? '') + delta
+            }
+          } else {
+            // The model interleaved a text or tool_use block between
+            // two thinking blocks. Start a new reasoning part rather
+            // than reaching back into the previous one — that would
+            // re-order the visible parts and break the chronology
+            // ("model thought, then said X, then thought again" is
+            // a meaningfully different story from "model thought
+            // twice and then said X").
+            parts.push(reasoningPart)
+          }
+          return {
+            ...m,
+            content: parts as unknown as ThreadMessageLike['content']
+          }
+        })
       }
     })
   },

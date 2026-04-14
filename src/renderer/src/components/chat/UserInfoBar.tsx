@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n, useT, useTFormat } from '../../i18n'
+import { useDialogStore } from '../../stores/dialogs'
 import { useSettingsStore } from '../../stores/settings'
 
 /**
@@ -25,6 +26,7 @@ export function UserInfoBar(): React.JSX.Element {
   const lang = useI18n((s) => s.lang)
   const setLang = useI18n((s) => s.setLang)
   const openSettings = useSettingsStore((s) => s.openSettings)
+  const openDialog = useDialogStore((s) => s.openDialog)
   const [open, setOpen] = useState(false)
   const wrapperRef = useRef<HTMLDivElement | null>(null)
 
@@ -70,6 +72,11 @@ export function UserInfoBar(): React.JSX.Element {
       }
     })
   }, [])
+
+  const handleOpenLogs = useCallback(() => {
+    setOpen(false)
+    openDialog('logs')
+  }, [openDialog])
 
   return (
     <div
@@ -149,6 +156,11 @@ export function UserInfoBar(): React.JSX.Element {
             label={t('openClaudeDir')}
             onSelect={handleOpenClaudeDir}
             icon={<FolderIcon className="size-[15px]" />}
+          />
+          <MenuItem
+            label={t('openLogs')}
+            onSelect={handleOpenLogs}
+            icon={<LogsIcon className="size-[15px]" />}
           />
 
           <div className="my-1 h-px bg-muted" />
@@ -293,6 +305,26 @@ function FolderIcon({ className }: { className?: string }): React.JSX.Element {
       aria-hidden
     >
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+    </svg>
+  )
+}
+
+function LogsIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <line x1="8" y1="8" x2="16" y2="8" />
+      <line x1="8" y1="12" x2="16" y2="12" />
+      <line x1="8" y1="16" x2="13" y2="16" />
     </svg>
   )
 }

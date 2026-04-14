@@ -71,10 +71,24 @@ const STRINGS = {
     sidebarChats: '对话',
     sidebarNewChat: '新建对话',
     sidebarSwitchingSession: '正在切换会话…',
+
+    // Sidebar — quick actions (TODO: wire to real dialogs)
+    // Short forms for the single-row toolbar; full forms live in
+    // `*Tooltip` keys and are shown on hover via the button title.
+    quickActionSkills: '技能',
+    quickActionSkillsTooltip: '技能市场',
+    quickActionMcp: 'MCP',
+    quickActionMcpTooltip: 'MCP 市场',
+    quickActionPrompts: '提示词',
+    quickActionPromptsTooltip: '提示词库',
+    quickActionPlugins: '插件',
+    quickActionPluginsTooltip: '插件市场',
     openingSession: '正在打开会话…',
     switchWorkspaceTooltip: '点击切换 workspace',
     confirmSwitchWorkspace:
       '切换 workspace 会结束当前会话的进行中回合，未发送的草稿会丢失。确定继续吗？',
+    confirmInterruptStreaming:
+      '当前对话还在进行中，继续将中断本次回合。确定吗？',
 
     // Rename flow
     renameChat: '重命名',
@@ -85,8 +99,27 @@ const STRINGS = {
     // Thread empty state
     emptyStateHintBefore: '随便问点什么。试试 ',
     emptyStateHintMiddle: ' 或 ',
-    emptyStateHintAfter: '。',
+    emptyStateHintAfter: ' 查看所有命令。',
     emptyStateExampleAsk: '查看我电脑桌面有哪些文件夹',
+    emptyStateScenarioHint: '选个场景开始，或直接输入你的问题',
+
+    // Scenario cards (clickable starter prompts)
+    scenarioPptTitle: '生成幻灯片',
+    scenarioPptDesc: '现代风格的 PPT，包含封面、目录和内容页',
+    scenarioPptPrompt:
+      '帮我做一个关于 [主题] 的现代风格 PPT，包含封面、目录、5 页主要内容和总结页。每页给我 3-5 个 bullet 要点。',
+    scenarioOfficeHoursTitle: '产品构思 (Office Hours)',
+    scenarioOfficeHoursDesc: '用 /office-hours 跟我对谈，帮我把想法打磨清楚',
+    scenarioOfficeHoursPrompt:
+      '/office-hours 我想做一个 [想法]，帮我用 6 个核心问题挑战这个想法，把它打磨成可以动手的版本。',
+    scenarioResumeTitle: '简历筛选',
+    scenarioResumeDesc: '批量阅读当前文件夹里的简历，按岗位要求打分排序',
+    scenarioResumePrompt:
+      '岗位是 [岗位名称]，要求 [核心要求，例如 3 年以上后端经验 / 熟悉 Python]。帮我读一下当前 workspace 里的所有简历，输出一个表格：候选人姓名、最高学历、相关年限、亮点、不匹配项、综合评分（1-10）。最后按评分从高到低排序，前 3 名标红。',
+    scenarioAnalyzeTitle: '看懂表格数据',
+    scenarioAnalyzeDesc: '把当前文件夹里的 Excel 表格读一遍，告诉你重点和趋势',
+    scenarioAnalyzePrompt:
+      '帮我看一下当前文件夹里的 [文件名]。用大白话告诉我：1）这张表里有什么数据、有没有缺失或异常 2）最值得注意的 3 个发现 3）如果要做图给老板看，建议画哪几张。',
 
     // Code block copy affordance
     codeBlockCopy: '复制',
@@ -163,6 +196,26 @@ const STRINGS = {
     composerNoMatchingCommands: '没有匹配的命令',
     composerLoadingFiles: '正在加载文件…',
     composerNoMatchingFiles: '没有匹配的文件',
+
+    // Workspace pill (inline switcher above the composer)
+    workspacePillLabel: '在文件夹中工作',
+    workspacePillEmpty: '未选择文件夹',
+    workspacePillOpen: '切换文件夹',
+    workspacePillSwitching: '正在切换',
+    workspacePillRecent: '最近',
+    workspacePillBrowse: '选择其他文件夹…',
+    workspacePillDisconnect: '断开当前文件夹',
+    workspacePillCurrent: '当前',
+    workspaceDropRelease: '松开以使用此文件夹',
+    workspaceDropHint: 'Claude 将在此目录运行',
+    workspaceSwitchFailed: '切换文件夹失败',
+
+    // Cold-start empty state (no workspace yet)
+    emptyWorkspaceTitle: '选择一个文件夹开始',
+    emptyWorkspaceDesc: 'Claude 会在这个目录里运行——它会成为本次会话所有工具调用的工作目录。',
+    emptyWorkspaceButton: '选择文件夹',
+    emptyWorkspaceDragHint: '或把文件夹拖到窗口任意位置',
+    emptyWorkspaceComposerHint: '选择一个文件夹后即可开始对话',
 
     // Logs dialog
     logsDialogAria: '引擎日志时间线',
@@ -245,20 +298,51 @@ const STRINGS = {
     sidebarChats: 'Chats',
     sidebarNewChat: 'New chat',
     sidebarSwitchingSession: 'Switching session…',
+
+    // Sidebar — quick actions (TODO: wire to real dialogs)
+    quickActionSkills: 'Skills',
+    quickActionSkillsTooltip: 'Skills marketplace',
+    quickActionMcp: 'MCP',
+    quickActionMcpTooltip: 'MCP marketplace',
+    quickActionPrompts: 'Prompts',
+    quickActionPromptsTooltip: 'Prompt library',
+    quickActionPlugins: 'Plugins',
+    quickActionPluginsTooltip: 'Plugin marketplace',
     openingSession: 'Opening session…',
     switchWorkspaceTooltip: 'Click to switch workspace',
     confirmSwitchWorkspace:
       'Switching workspace will abort the in-flight turn and discard unsent drafts. Continue?',
+    confirmInterruptStreaming:
+      'A chat turn is still in progress. Continuing will interrupt it. Are you sure?',
 
     renameChat: 'Rename',
     renameChatPrompt: 'Enter a new name for this chat',
     renameChatFailed: 'Rename failed',
     renameChatSave: 'Save name',
 
-    emptyStateHintBefore: 'Ask anything. Try ',
+    emptyStateHintBefore: 'Ask anything. Type ',
     emptyStateHintMiddle: ' or ',
-    emptyStateHintAfter: '.',
+    emptyStateHintAfter: ' to browse commands.',
     emptyStateExampleAsk: 'list folders on my desktop',
+    emptyStateScenarioHint: 'Pick a scenario or just type your question',
+
+    // Scenario cards (clickable starter prompts)
+    scenarioPptTitle: 'Generate slides',
+    scenarioPptDesc: 'Modern slide deck with cover, agenda, and content',
+    scenarioPptPrompt:
+      'Make me a modern PPT about [topic] with a cover, agenda, 5 content slides and a summary. Give 3-5 bullet points per slide.',
+    scenarioOfficeHoursTitle: 'Product brainstorm (Office Hours)',
+    scenarioOfficeHoursDesc: 'Use /office-hours to pressure-test an idea with 6 questions',
+    scenarioOfficeHoursPrompt:
+      "/office-hours I want to build [idea]. Pressure-test it with 6 core questions and help me sharpen it into something I could actually start on.",
+    scenarioResumeTitle: 'Screen resumes',
+    scenarioResumeDesc: 'Bulk-read every resume in the folder and rank them against your role',
+    scenarioResumePrompt:
+      'The role is [role title], requiring [key requirements, e.g. 3+ years backend / strong Python]. Read every resume in my workspace and produce a table with: name, highest degree, years of relevant experience, highlights, gaps, overall score (1-10). Sort by score descending and flag the top 3.',
+    scenarioAnalyzeTitle: 'Make sense of a spreadsheet',
+    scenarioAnalyzeDesc: 'Read an Excel file in the folder and explain what matters in plain English',
+    scenarioAnalyzePrompt:
+      'Take a look at [file name] in my folder. In plain English, tell me: 1) what data is in this sheet and whether anything is missing or odd, 2) the 3 most important findings, 3) which charts I should make if I need to show this to my boss.',
 
     codeBlockCopy: 'Copy',
     codeBlockCopied: '✓ Copied',
@@ -334,6 +418,26 @@ const STRINGS = {
     composerNoMatchingCommands: 'No matching commands',
     composerLoadingFiles: 'Loading files…',
     composerNoMatchingFiles: 'No matching files',
+
+    // Workspace pill (inline switcher above the composer)
+    workspacePillLabel: 'Work in a folder',
+    workspacePillEmpty: 'No folder selected',
+    workspacePillOpen: 'Switch folder',
+    workspacePillSwitching: 'Switching',
+    workspacePillRecent: 'Recent',
+    workspacePillBrowse: 'Choose another folder…',
+    workspacePillDisconnect: 'Disconnect current folder',
+    workspacePillCurrent: 'Current',
+    workspaceDropRelease: 'Release to use this folder',
+    workspaceDropHint: 'Claude will run in this directory',
+    workspaceSwitchFailed: 'Failed to switch folder',
+
+    // Cold-start empty state (no workspace yet)
+    emptyWorkspaceTitle: 'Pick a folder to start',
+    emptyWorkspaceDesc: 'Claude runs inside this directory — it becomes the working directory for every tool call this session.',
+    emptyWorkspaceButton: 'Choose folder',
+    emptyWorkspaceDragHint: 'Or drop a folder anywhere in the window',
+    emptyWorkspaceComposerHint: 'Pick a folder to start chatting',
 
     logsDialogAria: 'Engine log timeline',
     logsTabEngine: 'Engine',

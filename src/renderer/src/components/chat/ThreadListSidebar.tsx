@@ -27,90 +27,19 @@ import { UserInfoBar } from './UserInfoBar'
  * App.tsx is a horizontal flex row, and the main `<ThreadView />` sits
  * beside this sidebar with `flex-1` consuming the remaining width.
  */
-export function ThreadListSidebar({
-  workspace,
-  onChangeWorkspace
-}: {
-  workspace: string
-  /**
-   * Hand the gate back to the user so they can pick a different
-   * folder. App.tsx wires this to a callback that wipes renderer
-   * stores and flips the workspace state to null. The engine's
-   * `setWorkspace()` will tear down the live runtime when the gate
-   * commits, so we don't preemptively kill anything here.
-   */
-  onChangeWorkspace: () => void
-}): React.JSX.Element {
+export function ThreadListSidebar(): React.JSX.Element {
   const sessionLoading = useChatStore((s) => s.sessionLoading)
   const t = useT()
 
-  // Bring the workspace gate back. Confirm first because any in-flight
-  // turn on the current workspace will be torn down when the user
-  // commits a new folder. Cancelling the drop leaves the previous
-  // session untouched.
-  const onSwitchWorkspace = useCallback(() => {
-    const ok = window.confirm(t('confirmSwitchWorkspace'))
-    if (!ok) return
-    onChangeWorkspace()
-  }, [onChangeWorkspace, t])
-
   return (
     <ThreadListPrimitive.Root className="relative flex h-full w-64 shrink-0 flex-col bg-background/45 backdrop-blur-xl backdrop-saturate-150">
-      {/* Workspace row — shows the current folder's basename, full
-          path in the tooltip. Clicking re-opens the gate so the user
-          can drop a different folder; the engine soft-switches the
-          fusion-code child without restarting Electron. Lives above
-          "Chats" so it reads as "these chats belong to this workspace". */}
-      <div className="px-3 pb-3 pt-4">
-        <button
-          type="button"
-          onClick={onSwitchWorkspace}
-          title={`${workspace}\n${t('switchWorkspaceTooltip')}`}
-          className="group relative flex w-full items-center gap-2.5 overflow-hidden rounded-xl border border-border/60 bg-gradient-to-br from-card/80 to-card/40 px-3 py-2.5 text-left shadow-[0_1px_2px_rgba(17,24,39,0.04),inset_0_1px_0_rgba(255,255,255,0.5)] backdrop-blur-sm transition-all duration-200 hover:-translate-y-px hover:border-accent/40 hover:from-card hover:to-card/60 hover:shadow-[0_4px_14px_-2px_hsl(var(--accent)/0.18),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-none dark:hover:shadow-[0_4px_14px_-2px_hsl(var(--accent)/0.25)]"
-        >
-          {/* Folder icon in a tinted rounded square — echoes the
-              aurora palette so the button feels native to the light
-              theme backdrop. Accent takes over on hover. */}
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-accent/15 to-accent/5 text-accent transition-colors group-hover:from-accent/25 group-hover:to-accent/10">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-            >
-              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
-            </svg>
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[12.5px] font-semibold text-foreground">
-              {basename(workspace)}
-            </div>
-            <div className="truncate text-[10.5px] text-muted-foreground/80">
-              {workspace}
-            </div>
-          </div>
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="shrink-0 text-muted-foreground/50 transition-colors group-hover:text-accent"
-            aria-hidden
-          >
-            <path d="M8 9l4-4 4 4" />
-            <path d="M8 15l4 4 4-4" />
-          </svg>
-        </button>
-      </div>
+      {/* Quick actions row — replaced the old workspace button now
+          that the inline WorkspacePill (above the composer) owns
+          folder switching. This grid is a 2x2 of entry points for
+          "markets/libraries" that will be wired up later. For now
+          every handler is a TODO stub so the menu UX can be
+          validated without waiting on the backing features. */}
+      <QuickActionsGrid />
 
       {/* Header row — section label, could grow to hold filters later. */}
       <div className="flex items-center justify-between border-t border-border/70 px-4 pb-2 pt-3">
@@ -205,10 +134,191 @@ export function ThreadListSidebar({
   )
 }
 
-function basename(p: string): string {
-  const trimmed = p.replace(/[\\/]+$/, '')
-  const i = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-  return i >= 0 ? trimmed.slice(i + 1) : trimmed
+/* ─────────────────── Quick actions grid ─────────────────── */
+
+/**
+ * Sidebar top section — replaces the old workspace card now that the
+ * inline WorkspacePill (above the composer) owns folder switching.
+ * A 2x2 grid of "market / library" entry points. Each tile is a
+ * placeholder: the `onClick` logs a TODO breadcrumb and returns. The
+ * actual dialogs will be wired up once the backing features exist.
+ *
+ * Why a 2x2 grid instead of a flat list: the sidebar is only 256px
+ * wide, and a vertical list of 4+ rows would crowd the chat list
+ * area. A compact 2-column grid with small icon + label tiles fits
+ * exactly four shortcuts inside the ~120px vertical budget we had
+ * for the workspace card.
+ */
+type QuickAction = {
+  key: string
+  labelKey:
+    | 'quickActionSkills'
+    | 'quickActionMcp'
+    | 'quickActionPrompts'
+    | 'quickActionPlugins'
+  tooltipKey:
+    | 'quickActionSkillsTooltip'
+    | 'quickActionMcpTooltip'
+    | 'quickActionPromptsTooltip'
+    | 'quickActionPluginsTooltip'
+  icon: React.ReactNode
+}
+
+const QUICK_ACTIONS: QuickAction[] = [
+  {
+    key: 'skills',
+    labelKey: 'quickActionSkills',
+    tooltipKey: 'quickActionSkillsTooltip',
+    icon: <SparklesIcon />
+  },
+  {
+    key: 'mcp',
+    labelKey: 'quickActionMcp',
+    tooltipKey: 'quickActionMcpTooltip',
+    icon: <PlugIcon />
+  },
+  {
+    key: 'prompts',
+    labelKey: 'quickActionPrompts',
+    tooltipKey: 'quickActionPromptsTooltip',
+    icon: <BookmarkIcon />
+  },
+  {
+    key: 'plugins',
+    labelKey: 'quickActionPlugins',
+    tooltipKey: 'quickActionPluginsTooltip',
+    icon: <PuzzleIcon />
+  }
+]
+
+function QuickActionsGrid(): React.JSX.Element {
+  const t = useT()
+  const onClick = (key: string): void => {
+    // TODO(quick-actions): wire each key to its real dialog:
+    //   - skills   → open Skills Marketplace dialog (browse + install)
+    //   - mcp      → open MCP Servers marketplace (discover + add)
+    //   - prompts  → open Prompt Library (saved templates / variables)
+    //   - plugins  → open Plugins marketplace (Claude Code style)
+    // Also consider: workflows (multi-step), archive (archived
+    // threads), usage (token stats). Keep the row capped at 4 tiles —
+    // overflow items should live behind a "更多" menu.
+    console.debug('[QuickActions] TODO: implement', key)
+  }
+  return (
+    // Single horizontal row — 4 evenly-split tiles inside the 256px
+    // sidebar (~56px each with gaps). Each tile is icon-first with a
+    // 10px label underneath. Chrome is deliberately lighter than the
+    // old 2x2 card grid: no gradient borders, just a hairline tint
+    // that lifts to a solid accent-bordered ring on hover. Reads as
+    // "toolbar" rather than "cards".
+    <div className="flex items-stretch gap-1 px-2 pb-2.5 pt-3">
+      {QUICK_ACTIONS.map((action) => {
+        const label = t(action.labelKey)
+        const tooltip = t(action.tooltipKey)
+        return (
+          <button
+            key={action.key}
+            type="button"
+            onClick={() => onClick(action.key)}
+            title={tooltip}
+            aria-label={tooltip}
+            className="group relative flex flex-1 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-center transition-colors hover:bg-accent/8 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50"
+          >
+            <span className="flex size-8 items-center justify-center rounded-lg border border-border/50 bg-card/60 text-muted-foreground shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] transition-all group-hover:-translate-y-px group-hover:border-accent/40 group-hover:bg-accent/10 group-hover:text-accent group-hover:shadow-[0_4px_12px_-4px_hsl(var(--accent)/0.35)]">
+              {action.icon}
+            </span>
+            <span className="block w-full truncate text-[10px] font-medium leading-none tracking-tight text-muted-foreground/85 transition-colors group-hover:text-foreground">
+              {label}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function SparklesIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 3v3" />
+      <path d="M12 18v3" />
+      <path d="M3 12h3" />
+      <path d="M18 12h3" />
+      <path d="m5.64 5.64 2.12 2.12" />
+      <path d="m16.24 16.24 2.12 2.12" />
+      <path d="m5.64 18.36 2.12-2.12" />
+      <path d="m16.24 7.76 2.12-2.12" />
+    </svg>
+  )
+}
+
+function PlugIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 22v-5" />
+      <path d="M9 7V2" />
+      <path d="M15 7V2" />
+      <path d="M6 13V8a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v5a5 5 0 0 1-10 0Z" />
+    </svg>
+  )
+}
+
+function BookmarkIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16Z" />
+    </svg>
+  )
+}
+
+function PuzzleIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M19.43 12.98a2 2 0 1 1-2.42 2.42l-.74-.74a1 1 0 0 0-1.42 0l-.74.74a2 2 0 0 1-2.83-2.83l.74-.74a1 1 0 0 0 0-1.42l-.74-.74A2 2 0 0 1 13.1 6.84l.74.74a1 1 0 0 0 1.42 0l.74-.74a2 2 0 1 1 2.42 2.42l-.74.74a1 1 0 0 0 0 1.42l.74.74Z" />
+      <path d="M8 17H5a2 2 0 0 1-2-2v-3" />
+      <path d="M8 7H5a2 2 0 0 0-2 2v3" />
+    </svg>
+  )
 }
 
 /* ─────────────────── Individual thread row ─────────────────── */

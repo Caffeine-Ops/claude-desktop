@@ -8,12 +8,12 @@ import { PermissionDialog } from './components/permissions/PermissionDialog'
 import { SkillsDialog } from './components/dialogs/SkillsDialog'
 import { McpDialog } from './components/dialogs/McpDialog'
 import { LogsDialog } from './components/dialogs/LogsDialog'
-import { WorkspaceGate } from './components/workspace/WorkspaceGate'
 import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
+import { WorkspaceDropLayer } from './components/workspace/WorkspaceDropLayer'
+import { EmptyWorkspaceShell } from './components/workspace/EmptyWorkspaceShell'
 import { useChatStore } from './stores/chat'
-import { useDialogStore } from './stores/dialogs'
 import { useLogsStore } from './stores/logs'
-import { useTodosStore } from './stores/todos'
+import { useWorkspaceStore } from './stores/workspace'
 import { useI18n, useT } from './i18n'
 import { useApplyAppearance } from './stores/appearance.applier'
 import { SettingsView } from './components/settings/SettingsView'
@@ -140,7 +140,6 @@ function App(): React.JSX.Element {
     prevWideRight.current = wideEnoughForRight
   }, [wideEnoughForRight])
 
-  const openDialog = useDialogStore((s) => s.openDialog)
   const t = useT()
   useApplyAppearance()
 
@@ -159,17 +158,24 @@ function App(): React.JSX.Element {
     }
   }, [])
 
-  // "Show me the gate again so I can pick a different folder." Wipes
-  // every renderer-side store that is keyed on the current workspace
-  // (chat history, todos) and flips `workspace` back to null. The
-  // engine's setWorkspace() will tear down the live runtime when the
-  // gate completes; we don't pre-tear here so a cancelled drop leaves
-  // the previous session intact.
-  const handleChangeWorkspace = useCallback(() => {
-    useChatStore.getState().reset()
-    useTodosStore.setState({ todos: {} })
-    setWorkspace(null)
-  }, [])
+  // Inline workspace switch — thin wrapper around the store's
+  // `switchTo` action. The store owns IPC + renderer store wipes +
+  // recent/current updates; App.tsx only needs to expose a callable
+  // form for children that want to handle their own errors (sidebar,
+  // drop layer). The useEffect subscription below keeps our React
+  // `workspace` state in sync whenever anyone calls `switchTo` —
+  // including the pill, which hits the store directly.
+  //
+  // No confirm() guard: the switch is always gated behind an
+  // explicit user action (picking a path or dropping a folder).
+  // Unsent composer drafts live in the runtime subtree that remounts
+  // after this lands, so they're lost either way.
+  const handleSwitchWorkspace = useCallback(
+    (path: string): Promise<void> => {
+      return useWorkspaceStore.getState().switchTo(path)
+    },
+    []
+  )
 
   // Subscribe to main-process engine log events from the moment the
   // app mounts so the LogsDialog has a full history available the
@@ -194,6 +200,22 @@ function App(): React.JSX.Element {
     return unsub
   }, [])
 
+  // Mirror the workspace store's `current` into our React state so
+  // any caller (pill, drop layer, sidebar row) that commits via
+  // `useWorkspaceStore.getState().switchTo(path)` automatically flows
+  // into FusionRuntimeProvider's `key={workspace}` remount. Without
+  // this subscription the store would update in isolation and the
+  // runtime subtree would stay bound to the old cwd.
+  useEffect(() => {
+    const unsub = useWorkspaceStore.subscribe((state, prev) => {
+      if (state.current === prev.current) return
+      if (state.current !== null) {
+        setWorkspace(state.current)
+      }
+    })
+    return unsub
+  }, [])
+
   // Check workspace state on mount. Main's handler is trivial — it just
   // reads the in-memory engine field — so we don't need to debounce or
   // retry. On HMR reload the main process stays alive and will return
@@ -204,7 +226,12 @@ function App(): React.JSX.Element {
     window.chatApi
       .getWorkspace()
       .then((state) => {
-        if (!cancelled) setWorkspace(state.path)
+        if (cancelled) return
+        setWorkspace(state.path)
+        if (state.path) {
+          useWorkspaceStore.getState().setCurrent(state.path)
+          useWorkspaceStore.getState().pushRecent(state.path)
+        }
       })
       .catch((err) => {
         console.error('[App] getWorkspace failed', err)
@@ -223,23 +250,16 @@ function App(): React.JSX.Element {
     return <div className="app" />
   }
 
-  // Gate slice: no workspace yet. Render *only* the gate — we do NOT
-  // mount FusionRuntimeProvider, because doing so would:
-  //  - trigger the composer's mount-time getSessionMeta / listFileSuggestions
-  //    IPCs, which would scan process.cwd() instead of the user's folder
-  //  - risk a misclicked send() firing chat:send while workspaceDir is
-  //    still null, which the engine would reject
-  // The header badge is kept so the user still sees the version label.
-  if (workspace === null) {
-    return (
-      <div className="app">
-        <header className="header">
-          <h1>{t('appTitle')}</h1>
-        </header>
-        <WorkspaceGate onReady={(path) => setWorkspace(path)} />
-      </div>
-    )
-  }
+  // Cold-start slice: no workspace yet. We still render the *full*
+  // chat shell (header, buttons, main area) so the first-run flow
+  // feels like "empty chat waiting for a folder" instead of jumping
+  // to a separate gate page. The FusionRuntimeProvider is gated
+  // behind `hasWorkspace` below — we do NOT mount it with a null
+  // workspace, because its mount-time IPCs (getSessionMeta,
+  // listFileSuggestions) would scan process.cwd() instead of the
+  // user's folder, and the engine rejects `send()` until
+  // workspaceDir is set.
+  const hasWorkspace = workspace !== null
 
   return (
     <div className="app">
@@ -301,42 +321,17 @@ function App(): React.JSX.Element {
             {!rightRailOpen && <line x1="4.5" y1="8" x2="7" y2="10" />}
           </svg>
         </button>
-        <button
-          type="button"
-          onClick={() => openDialog('logs')}
-          title={t('openLogsTitle')}
-          aria-label={t('openLogs')}
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-muted/60 hover:text-foreground"
-        >
-          {/* Clipboard-with-lines icon — intentionally distinct from
-              the sidebar toggle's folder-rect. 3 horizontal lines
-              read as "log entries" at 16px. */}
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <rect x="3" y="2.5" width="10" height="11" rx="1.5" />
-            <line x1="5.5" y1="5.5" x2="10.5" y2="5.5" />
-            <line x1="5.5" y1="8" x2="10.5" y2="8" />
-            <line x1="5.5" y1="10.5" x2="8.5" y2="10.5" />
-          </svg>
-        </button>
       </header>
       <main className="main relative">
+        {!hasWorkspace && <EmptyWorkspaceShell />}
         {/* `key={workspace}` forces a full subtree remount whenever the
             user switches workspaces. The runtime provider's effects
             re-subscribe to chat events under the new sessionId, the
             sidebar refetches the new workspace's threads, and the file
             tree drops its cached scan. Cheaper than restarting Electron
-            and avoids the window-flash. */}
+            and avoids the window-flash. Not mounted at all until a
+            workspace exists — see the comment on `hasWorkspace`. */}
+        {hasWorkspace && (
         <FusionRuntimeProvider key={workspace}>
           {/* .main is flex-col; this inner row does the three-pane
               split (chats | thread | right rail). flex-1 + min-h-0
@@ -375,10 +370,7 @@ function App(): React.JSX.Element {
                   className="relative h-full shrink-0 overflow-hidden"
                 >
                   <div className="absolute inset-y-0 right-0 w-64">
-                    <ThreadListSidebar
-                      workspace={workspace}
-                      onChangeWorkspace={handleChangeWorkspace}
-                    />
+                    <ThreadListSidebar />
                   </div>
                 </motion.div>
               )}
@@ -414,7 +406,7 @@ function App(): React.JSX.Element {
                   }}
                   className="relative h-full shrink-0 overflow-hidden"
                 >
-                  <aside className="absolute inset-y-0 right-0 flex h-full w-72 flex-col bg-background/45 backdrop-blur-xl backdrop-saturate-150">
+                  <aside className="absolute inset-y-0 right-0 flex h-full w-72 flex-col gap-3 border-l border-border/55 bg-background/75 p-3 backdrop-blur-2xl backdrop-saturate-150">
                     <TodoListPanel />
                     <WorkspaceTreePanel />
                   </aside>
@@ -423,6 +415,7 @@ function App(): React.JSX.Element {
             </AnimatePresence>
           </div>
         </FusionRuntimeProvider>
+        )}
         {/* Settings overlay — `absolute inset-0` inside .main so it
             covers the chat row but leaves the title-bar header
             untouched. Renders null when the store says closed. */}
@@ -439,6 +432,11 @@ function App(): React.JSX.Element {
       <SkillsDialog />
       <McpDialog />
       <LogsDialog />
+      {/* Global folder-drop layer — listens at window level and shows
+          an overlay only when a Finder drag carries at least one
+          directory entry. Image drops fall through to the composer's
+          AttachmentDropzone, so this coexists with attachment drops. */}
+      <WorkspaceDropLayer onDropFolder={handleSwitchWorkspace} />
       {/* Non-blocking session-loading toast — shown while main is
           spawning a fusion-code child (new chat / session switch).
           Kept as its own tiny component so the zustand subscription

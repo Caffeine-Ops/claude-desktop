@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { useT, useTFormat } from '../../i18n'
 import { useChatStore } from '../../stores/chat'
+import { useWorkspaceStore } from '../../stores/workspace'
 
 /**
  * Tools whose completion means "files on disk probably changed".
@@ -74,6 +75,7 @@ export function WorkspaceTreePanel(): React.JSX.Element {
   const tf = useTFormat()
   const sessionId = useChatStore((s) => s.sessionId)
   const streaming = useChatStore((s) => s.streaming)
+  const workspace = useWorkspaceStore((s) => s.current)
 
   const [files, setFiles] = useState<readonly string[]>([])
   const [truncated, setTruncated] = useState(false)
@@ -174,36 +176,42 @@ export function WorkspaceTreePanel(): React.JSX.Element {
   const empty = !loading && !error && tree.length === 0
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col border-t border-border/70">
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/55 bg-card/45 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
       {/* Header — mirrors the Todos header above for visual symmetry.
           The count shows trailing '+' when the scan hit MAX_ENTRIES
-          in main so the user knows the tree is truncated. */}
-      <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/70">
-            <FilesHeaderIcon />
-          </span>
-          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/80">
-            {t('filesTitle')}
-          </span>
+          in main so the user knows the tree is truncated. A second
+          line shows the active workspace path (home-shortened, full
+          path on hover) so the user always knows which folder the
+          tree below is rooted at. */}
+      <div className="flex flex-col gap-1 px-3 pb-2 pt-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-amber-400/15 text-amber-500 dark:text-amber-400">
+              <FilesHeaderIcon />
+            </span>
+            <span className="text-[12px] font-semibold tracking-tight text-foreground">
+              {t('filesTitle')}
+            </span>
+          </div>
+          {files.length > 0 && (
+            <span
+              className="rounded-full bg-muted/70 px-2 py-[2px] text-[10.5px] font-medium tabular-nums text-muted-foreground"
+              title={
+                truncated
+                  ? tf('filesCountTruncated', { count: files.length })
+                  : tf('filesCountLabel', { count: files.length })
+              }
+            >
+              {files.length}
+              {truncated && '+'}
+            </span>
+          )}
         </div>
-        {files.length > 0 && (
-          <span
-            className="rounded-full border border-border/80 bg-card/60 px-1.5 py-px text-[10.5px] tabular-nums text-muted-foreground"
-            title={
-              truncated
-                ? tf('filesCountTruncated', { count: files.length })
-                : tf('filesCountLabel', { count: files.length })
-            }
-          >
-            {files.length}
-            {truncated && '+'}
-          </span>
-        )}
+        {workspace && <WorkspacePathChip path={workspace} />}
       </div>
 
       {/* Scroll region — independent from the Todo scroll above. */}
-      <div className="min-h-0 flex-1 overflow-y-auto pb-4 pt-1">
+      <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2 pt-0.5">
         {loading && files.length === 0 && (
           <div className="flex items-center gap-2 px-4 py-2 text-[11px] text-muted-foreground/70">
             <span className="inline-flex size-3 animate-pulse rounded-full bg-muted-foreground/40" />
@@ -218,8 +226,8 @@ export function WorkspaceTreePanel(): React.JSX.Element {
         )}
 
         {empty && (
-          <div className="mx-3 my-3 flex flex-col items-center gap-2 rounded-lg border border-dashed border-border/80 px-3 py-5 text-center text-[11px] text-muted-foreground/70">
-            <span className="flex size-7 items-center justify-center rounded-full bg-muted/60 text-muted-foreground/80">
+          <div className="mx-2 my-2 flex flex-col items-center gap-2 rounded-lg border border-dashed border-border/60 bg-muted/20 px-3 py-5 text-center text-[11px] text-muted-foreground/70">
+            <span className="flex size-7 items-center justify-center rounded-full bg-muted/70 text-muted-foreground/80">
               <FilesHeaderIcon />
             </span>
             <div className="font-medium text-muted-foreground">
@@ -245,6 +253,89 @@ export function WorkspaceTreePanel(): React.JSX.Element {
         )}
       </div>
     </section>
+  )
+}
+
+/**
+ * Replace the `/Users/<name>` (or `/home/<name>`) prefix with `~` so
+ * the workspace path subline reads more like a shell prompt and saves
+ * horizontal room in the narrow rail. Renderer has no access to
+ * `os.homedir()`, so we sniff the prefix from the path itself.
+ */
+function abbreviateHome(p: string): string {
+  const m = p.match(/^(\/Users\/[^/]+|\/home\/[^/]+)(\/|$)/)
+  if (m) return '~' + p.slice(m[1].length)
+  return p
+}
+
+/**
+ * Workspace path chip rendered under the "Files" header. Clicking the
+ * chip asks main to open the workspace folder in the OS file manager
+ * (Finder / Explorer) via `shell.openPath`. Goals:
+ *  - basename pops (foreground, medium weight) — that's the part the
+ *    user actually scans for when verifying "am I in the right repo"
+ *  - parent fades back so it reads as breadcrumb context, not noise
+ *  - overflow truncates from the *left* (the parent end) so the
+ *    basename is always visible even on long monorepo paths
+ */
+function WorkspacePathChip({ path }: { path: string }): React.JSX.Element {
+  const display = abbreviateHome(path)
+  const lastSlash = display.lastIndexOf('/')
+  const parent = lastSlash >= 0 ? display.slice(0, lastSlash + 1) : ''
+  const basename = lastSlash >= 0 ? display.slice(lastSlash + 1) : display
+
+  const onOpen = useCallback(() => {
+    if (typeof window === 'undefined' || !window.chatApi) return
+    window.chatApi
+      .openWorkspace()
+      .then((result) => {
+        if (result.error) {
+          console.warn('[workspace-tree] openWorkspace failed:', result.error)
+        }
+      })
+      .catch((err: unknown) => {
+        console.error('[workspace-tree] openWorkspace threw:', err)
+      })
+  }, [])
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={path}
+      className="group/path ml-7 flex max-w-[calc(100%-1.75rem)] items-center gap-1.5 self-start rounded-md border border-border/40 bg-muted/35 px-1.5 py-[3px] text-left transition-colors hover:border-border/70 hover:bg-muted/60"
+    >
+      <span className="flex size-3 shrink-0 items-center justify-center text-muted-foreground/70 group-hover/path:text-muted-foreground">
+        <HomeMiniIcon />
+      </span>
+      <span
+        className="min-w-0 flex-1 truncate font-mono text-[10.5px] leading-tight"
+        dir="rtl"
+        style={{ textAlign: 'left', unicodeBidi: 'plaintext' }}
+      >
+        <span className="text-muted-foreground/55">{parent}</span>
+        <span className="font-medium text-foreground/85">{basename}</span>
+      </span>
+    </button>
+  )
+}
+
+function HomeMiniIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M2.5 7.5 8 3l5.5 4.5" />
+      <path d="M4 7v5.5a.5.5 0 0 0 .5.5h7a.5.5 0 0 0 .5-.5V7" />
+    </svg>
   )
 }
 
@@ -327,8 +418,8 @@ function Node({
         className={
           'group/tree flex items-center gap-1.5 rounded-md py-[3px] pr-2 text-[12.5px] transition-colors ' +
           (node.isDir
-            ? 'cursor-pointer text-foreground/85 hover:bg-muted/50 hover:text-foreground'
-            : 'cursor-default text-muted-foreground hover:bg-muted/35 hover:text-foreground')
+            ? 'cursor-pointer text-foreground/90 hover:bg-muted/55 hover:text-foreground'
+            : 'cursor-default text-muted-foreground hover:bg-muted/40 hover:text-foreground')
         }
         style={indentStyle}
         onClick={node.isDir ? () => onToggle(node.path) : undefined}

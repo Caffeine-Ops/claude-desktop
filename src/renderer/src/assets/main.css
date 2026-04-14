@@ -116,26 +116,35 @@ body,
 }
 
 /* Composer textarea is rendered with `color: transparent` because its
- * visible text is painted by a highlight overlay underneath (see
- * ComposerHighlightOverlay). The browser, however, uses its own
- * system colors for selected text regardless of the element's `color`,
- * so a drag-selection or a just-inserted-and-selected directive would
- * suddenly reveal the "transparent" text on the system accent color
- * and visually fight the overlay's chip background.
+ * visible text is painted by ComposerHighlightOverlay underneath. The
+ * browser would normally apply its own system selection colors to the
+ * textarea text — which on transparent text means it briefly REVEALS
+ * the transparent character cells on top of the overlay, fighting the
+ * chip backgrounds and looking like a half-painted band (the bug we
+ * had: a hard horizontal stripe over the first line of selected text).
  *
- * Force the selection to paint the text transparently AND use a very
- * subtle zinc background so the user can still tell *what* is selected
- * without the system color clobbering the chip highlight below.
+ * Fix: keep the selection text transparent so the overlay keeps
+ * owning the rendered glyphs, and paint a theme-aware accent tint
+ * underneath so the user can still see *what* is selected. Using
+ * `hsl(var(--accent) / X)` makes the highlight track the active
+ * theme — the old rgba(244,244,245,0.18) was practically invisible
+ * on the light theme card surface.
  *
- * NB: `::selection` on `<textarea>` works in all modern browsers but
- * silently fails if the selector is too specific (e.g. `name="input"`
- * when the attribute hasn't been hydrated yet). Targeting any
- * `textarea` in the main pane is safe — nothing else in the renderer
- * has a styled textarea.
+ * Both ::selection and the legacy ::-moz-selection are listed even
+ * though modern Firefox accepts ::selection; spelling out the prefix
+ * keeps older builds and the Electron Linux fallback in line.
+ *
+ * NB: targeting any `textarea` in the renderer is safe — only the
+ * composer ever mounts one. If that changes, scope this to the
+ * composer card via a class.
  */
 textarea::selection {
   color: transparent;
-  background: rgba(244, 244, 245, 0.18);
+  background: hsl(var(--accent) / 0.28);
+}
+textarea::-moz-selection {
+  color: transparent;
+  background: hsl(var(--accent) / 0.28);
 }
 
 /* Fake caret used by ComposerHighlightOverlay. The textarea's native
