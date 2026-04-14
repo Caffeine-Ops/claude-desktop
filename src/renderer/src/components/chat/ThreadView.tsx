@@ -65,8 +65,38 @@ import hljs from 'highlight.js/lib/common'
  * parts render an inline collapsible card (ToolCallCard).
  */
 export function ThreadView(): React.JSX.Element {
+  // Session transition signals from the chat store.
+  //   - sessionId      : switches when loadSession resolves (~100ms),
+  //                      drives the keyed content remount that plays
+  //                      the entrance tween.
+  //   - sessionLoading : stays true until switchSession resolves
+  //                      (~3-8s cold start). Drives ONLY the thin
+  //                      top progress bar — no full-column veil, no
+  //                      content hide. Old content stays visible
+  //                      until the new messages arrive, then swaps
+  //                      in a single graceful enter animation.
+  // Rationale: the full-screen loading overlay was reading as a hard
+  // interrupt — eye jumped to the center, waited, jumped back. A
+  // thin top bar is standard "something is loading" signal that
+  // keeps the user's focus anchored on content, while the keyed
+  // enter on swap preserves the sense of "the view changed".
+  const sessionId = useChatStore((s) => s.sessionId)
+  const sessionLoading = useChatStore((s) => s.sessionLoading)
+  // Content key: sessionId plus a sentinel so the null → id case (first
+  // session, or after a hard reset) still flips the key and replays
+  // the entrance animation.
+  const contentKey = sessionId ?? '__new__'
+
   return (
     <ThreadPrimitive.Root className="relative flex h-full min-h-0 w-full flex-1 flex-col bg-transparent">
+      {/* Top indeterminate progress bar. Absolute at the very top of
+          the Thread root so it sits above the viewport mask and the
+          composer. Presence-animated so it also fades in/out rather
+          than popping. */}
+      <AnimatePresence>
+        {sessionLoading && <TopProgressBar />}
+      </AnimatePresence>
+
       {/* Scrollable message area. min-h-0 + flex-1 is the canonical
           flexbox pattern that lets the viewport shrink correctly inside
           another flex column. */}
@@ -81,9 +111,25 @@ export function ThreadView(): React.JSX.Element {
       >
         {/* Inner column caps reading width and centers messages. The
             `min-h-full` lets the empty-state `flex-1` stretch so the
-            hero text lands at the vertical center of the viewport even
-            when there are no messages yet. */}
-        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-6 pb-20 pt-8">
+            hero text lands at the vertical center of the viewport
+            even when there are no messages yet.
+
+            Session-switch animation: motion.div keyed on sessionId.
+            No AnimatePresence / exit animation — ThreadPrimitive.Messages
+            subscribes to the runtime context, so any "exit" frame would
+            already be showing the NEW session's messages. Enter-only
+            animation sits on top of the instant content swap and reads
+            as a clean "page transition" without the snapshot headache. */}
+        <motion.div
+          key={`content-${contentKey}`}
+          initial={{ opacity: 0, y: 14, filter: 'blur(6px)' }}
+          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+          transition={{
+            duration: 0.38,
+            ease: [0.22, 1, 0.36, 1]
+          }}
+          className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-6 pb-20 pt-8"
+        >
           <ThreadPrimitive.Empty>
             <EmptyState />
           </ThreadPrimitive.Empty>
@@ -95,7 +141,7 @@ export function ThreadView(): React.JSX.Element {
               SystemMessage
             }}
           />
-        </div>
+        </motion.div>
       </ThreadPrimitive.Viewport>
 
       <ScrollToBottomButton />
@@ -155,6 +201,64 @@ function ScrollToBottomButton(): React.JSX.Element {
         </svg>
       </button>
     </ThreadPrimitive.ScrollToBottom>
+  )
+}
+
+/* ───────────────────────── TopProgressBar ───────────────────────── */
+
+/**
+ * Thin indeterminate progress bar pinned to the top of ThreadView.
+ * Shown while a session switch / new-session IPC is in flight
+ * (see FusionRuntimeProvider.onSwitchToThread / onSwitchToNewThread —
+ * both toggle `sessionLoading` on the chat store).
+ *
+ * Replaces the old full-column SessionLoadingView: that one read as a
+ * hard interrupt (focus jumped to center, waited, jumped back). A
+ * 2px top bar is the standard "something is loading" signal for modern
+ * apps — keeps the user's focus on content and lets the existing keyed
+ * enter animation do the "view changed" work on its own.
+ *
+ * Visual anatomy:
+ *   - Track: full-width line, transparent so it only reads as the
+ *            moving segment on top of the thread.
+ *   - Segment: 35%-wide accent-colored strip that slides left → right
+ *              in a 1.1s loop. The segment has a soft box-shadow in
+ *              the accent color so it looks like a faint glow trailing
+ *              the leading edge, echoing browser loading bars.
+ *   - Fade in/out: the whole container fades 0 → 1 / 1 → 0 via
+ *                  AnimatePresence in ThreadView. Keeps the bar from
+ *                  popping in harshly for very fast switches.
+ */
+function TopProgressBar(): React.JSX.Element {
+  return (
+    <motion.div
+      role="progressbar"
+      aria-label="Loading session"
+      aria-busy="true"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.18, ease: 'easeOut' }}
+      className="pointer-events-none absolute inset-x-0 top-0 z-30 h-[2px] overflow-hidden"
+    >
+      {/* Inner slider is absolutely positioned inside the track (which
+          is already `absolute`, so it's the positioning context). A
+          35%-wide accent segment animates from off-screen left to
+          off-screen right in a 1.1s loop — the track's `overflow-hidden`
+          clips the ends so it reads as a sliding highlight rather
+          than a wrapping strip. Box-shadow in accent gives the
+          leading edge a soft glow trail. */}
+      <motion.div
+        className="absolute top-0 h-full w-[35%] rounded-r-full bg-accent shadow-[0_0_10px_0_hsl(var(--accent)/0.55)]"
+        initial={{ left: '-40%' }}
+        animate={{ left: '100%' }}
+        transition={{
+          duration: 1.1,
+          repeat: Infinity,
+          ease: [0.42, 0, 0.58, 1]
+        }}
+      />
+    </motion.div>
   )
 }
 
@@ -1520,8 +1624,31 @@ function Composer(): React.JSX.Element {
                         without having a stale stop button sitting
                         around between turns. */}
                     <ThreadPrimitive.If running={false}>
-                      <ComposerPrimitive.Send className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground/80">
-                        ↑
+                      <ComposerPrimitive.Send
+                        aria-label="Send message"
+                        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground/80"
+                      >
+                        {/* Lucide-style arrow-up stroke icon, matching
+                            the ScrollToBottomButton (arrow-down) and
+                            MicButton convention: 24x24 viewBox,
+                            stroke="currentColor", fill="none", rounded
+                            caps/joins. Unified stroke width 2.2 so it
+                            sits at the same visual weight as the other
+                            composer/thread icons. */}
+                        <svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M12 19V5" />
+                          <path d="m6 11 6-6 6 6" />
+                        </svg>
                       </ComposerPrimitive.Send>
                     </ThreadPrimitive.If>
                     <ThreadPrimitive.If running>

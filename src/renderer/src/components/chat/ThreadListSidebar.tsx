@@ -4,6 +4,7 @@ import {
   ThreadListItemPrimitive,
   useThreadListItem
 } from '@assistant-ui/react'
+import { motion } from 'motion/react'
 
 import { useChatStore } from '../../stores/chat'
 import { useT } from '../../i18n'
@@ -165,14 +166,24 @@ export function ThreadListSidebar({
           current theme — without it, the last chat row visually runs
           straight into the pinned settings button. */}
       <div className="relative min-h-0 flex-1">
-        <div
+        {/* Chat list itself. The dim + pointer-events lockout during a
+            session switch now animates via a motion.div so the fade is
+            smooth instead of a class-toggle flick. aria-busy mirrors
+            the loading flag for screen readers. */}
+        <motion.div
+          aria-busy={sessionLoading}
+          animate={{
+            opacity: sessionLoading ? 0.45 : 1,
+            filter: sessionLoading ? 'saturate(0.6)' : 'saturate(1)'
+          }}
+          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
           className={
             'h-full overflow-y-auto px-2 pb-6 ' +
-            (sessionLoading ? 'pointer-events-none opacity-60' : '')
+            (sessionLoading ? 'pointer-events-none' : '')
           }
         >
           <ThreadListPrimitive.Items components={{ ThreadListItem }} />
-        </div>
+        </motion.div>
         <div
           aria-hidden
           className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-background via-background/80 to-transparent"
@@ -184,44 +195,13 @@ export function ThreadListSidebar({
           its own popup menu (logs, ~/.claude, version line). */}
       <UserInfoBar />
 
-      {/* Full-rail loading veil shown while the runtime swaps sessions.
-          Sits inside `ThreadListPrimitive.Root` (which is `relative`)
-          so it covers workspace row + chats + settings button without
-          escaping the sidebar. Backdrop blur + dim so the underlying
-          rows still suggest "you're switching to one of these" instead
-          of vanishing entirely. */}
-      {sessionLoading && <SidebarLoadingVeil />}
+      {/* No full-rail loading veil — replaced by ThreadView's thin
+          top progress bar plus the in-place list dim above. The old
+          veil (card + dots + label) read as a hard interrupt that
+          yanked focus away from the content column; the new
+          combination keeps the user's eye anchored on the main pane
+          while still telegraphing "something is switching". */}
     </ThreadListPrimitive.Root>
-  )
-}
-
-function SidebarLoadingVeil(): React.JSX.Element {
-  const t = useT()
-  const label = t('sidebarSwitchingSession').replace(/[…\.]+$/, '')
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      aria-label={label}
-      className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/70 backdrop-blur-sm"
-    >
-      <div className="flex items-center gap-1.5">
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            aria-hidden
-            className="block size-1.5 rounded-full bg-foreground"
-            style={{
-              animation: 'caret-blink 1.1s ease-in-out infinite',
-              animationDelay: `${i * 0.15}s`
-            }}
-          />
-        ))}
-      </div>
-      <span className="text-[12px] font-medium tracking-wide text-foreground">
-        {t('sidebarSwitchingSession')}
-      </span>
-    </div>
   )
 }
 
