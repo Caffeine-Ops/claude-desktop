@@ -40,6 +40,7 @@ import { detectSystemClaude } from './cliDetect'
 import { invalidateFileSuggestions } from './fileSuggestions'
 import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
+import { seedSkillsFromDisk } from './seedSkills'
 
 // NOTE: there used to be a `SWITCH_READY_TIMEOUT_MS = 30_000` here,
 // used by the now-removed `waitForSessionReady` helper. That helper
@@ -210,6 +211,15 @@ export class ChatEngine extends EventEmitter {
     mcpServers: [],
     slashCommands: []
   }
+
+  /**
+   * True once fusion-code's authoritative `system init` has landed at
+   * least once. Until then, `sessionMeta` holds a disk-scanned seed (so
+   * the `/` popover and SkillsDialog aren't empty on first open). Used
+   * to avoid overwriting real data with stale seed if setWorkspace
+   * races a fast first-turn.
+   */
+  private systemInitSeen = false
 
   /**
    * User-selected workspace directory. Null until the renderer's
@@ -444,6 +454,7 @@ export class ChatEngine extends EventEmitter {
       invalidateFileSuggestions()
       this.logEvent('workspace:set', { path: candidate, mode: 'initial' })
       console.log('[engine] workspace set', { path: candidate })
+      void this.seedSessionMetaFromDisk()
       return candidate
     }
 
@@ -458,6 +469,35 @@ export class ChatEngine extends EventEmitter {
     throw new Error(
       `Window is already bound to workspace "${this.workspaceDir}". Open a new workspace window to use "${candidate}".`
     )
+  }
+
+  /**
+   * Seed `sessionMeta.skills` / `slashCommands` by scanning skill dirs
+   * on disk, so the `/` composer popover and SkillsDialog show content
+   * before fusion-code's first `system init` arrives (which only fires
+   * after the first user turn). Best-effort: errors are logged and
+   * swallowed. The authoritative list from `updateSessionMeta()` later
+   * overwrites this seed — the `systemInitSeen` guard prevents a
+   * late-returning seed from clobbering real data in the opposite race.
+   */
+  private async seedSessionMetaFromDisk(): Promise<void> {
+    try {
+      const skills = await seedSkillsFromDisk(this.workspaceDir)
+      if (this.systemInitSeen) return // real data already landed — drop seed
+      if (skills.length === 0) return
+      this.sessionMeta = {
+        ...this.sessionMeta,
+        skills,
+        slashCommands: skills
+      }
+      console.log('[engine] sessionMeta seeded from disk', {
+        skillCount: skills.length
+      })
+      this.logEvent('sessionMeta:seeded', { skillCount: skills.length })
+      this.emit('sessionMetaChanged')
+    } catch (err) {
+      console.warn('[engine] seedSessionMetaFromDisk failed:', err)
+    }
   }
 
   async send(
@@ -2102,6 +2142,7 @@ export class ChatEngine extends EventEmitter {
     const cwd = typeof initMsg.cwd === 'string' ? initMsg.cwd : undefined
 
     this.sessionMeta = { skills, mcpServers, slashCommands, model, cwd }
+    this.systemInitSeen = true
     console.log('[engine] sessionMeta cached', {
       skillCount: skills.length,
       serverCount: mcpServers.length,
