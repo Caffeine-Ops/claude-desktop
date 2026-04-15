@@ -28,6 +28,13 @@ import {
   type SessionSwitchResult,
   type CliBackendSetPayload,
   type CliBackendState,
+  type PermissionModeChangedPayload,
+  type PermissionModeGetResult,
+  type PermissionModeSetPayload,
+  type UiPermissionMode,
+  type TabApi,
+  type TabDescriptor,
+  type TabListResult,
   type TranscribeAudioPayload,
   type TranscribeAudioResult,
   type WorkspaceFileOpenPayload,
@@ -78,6 +85,16 @@ const chatApi: ChatApi = {
     ipcRenderer.on(IPC_CHANNELS.PERMISSION_REQUEST, listener)
     return () => {
       ipcRenderer.off(IPC_CHANNELS.PERMISSION_REQUEST, listener)
+    }
+  },
+
+  onPermissionCancelled(handler: (requestId: string) => void): () => void {
+    const listener = (_e: unknown, requestId: string): void => {
+      handler(requestId)
+    }
+    ipcRenderer.on(IPC_CHANNELS.PERMISSION_CANCELLED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.PERMISSION_CANCELLED, listener)
     }
   },
 
@@ -209,6 +226,10 @@ const chatApi: ChatApi = {
     return ipcRenderer.invoke(IPC_CHANNELS.APP_RELAUNCH) as Promise<void>
   },
 
+  newWorkspaceTab(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.TAB_NEW) as Promise<void>
+  },
+
   openClaudeDir(): Promise<{ error: string }> {
     return ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_CLAUDE_DIR) as Promise<{
       error: string
@@ -254,6 +275,66 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.CLI_BACKEND_SET,
       payload
     ) as Promise<CliBackendState>
+  },
+
+  getPermissionMode(): Promise<PermissionModeGetResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PERMISSION_MODE_GET
+    ) as Promise<PermissionModeGetResult>
+  },
+
+  setPermissionMode(payload: PermissionModeSetPayload): Promise<void> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PERMISSION_MODE_SET,
+      payload
+    ) as Promise<void>
+  },
+
+  onPermissionModeChanged(
+    handler: (mode: UiPermissionMode) => void
+  ): () => void {
+    const listener = (_e: unknown, payload: PermissionModeChangedPayload): void => {
+      handler(payload.mode)
+    }
+    ipcRenderer.on(IPC_CHANNELS.PERMISSION_MODE_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.PERMISSION_MODE_CHANGED, listener)
+    }
+  }
+}
+
+/**
+ * Tab bar API for the shell renderer (query string ?shell=1). The
+ * same preload serves both the shell and each tab's workspace
+ * renderer, so we expose `tabApi` globally — workspace renderers
+ * simply don't import it. Keeping one preload means one contextBridge
+ * surface to review for security.
+ */
+const tabApi: TabApi = {
+  newTab(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.TAB_NEW) as Promise<void>
+  },
+
+  switchTab(id: number): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.TAB_SWITCH, { id }) as Promise<void>
+  },
+
+  closeTab(id: number): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.TAB_CLOSE, { id }) as Promise<void>
+  },
+
+  listTabs(): Promise<TabListResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.TAB_LIST_GET) as Promise<TabListResult>
+  },
+
+  onTabListChanged(handler: (tabs: TabDescriptor[]) => void): () => void {
+    const listener = (_e: unknown, payload: TabDescriptor[]): void => {
+      handler(payload)
+    }
+    ipcRenderer.on(IPC_CHANNELS.TAB_LIST_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.TAB_LIST_CHANGED, listener)
+    }
   }
 }
 
@@ -266,6 +347,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('api', api)
     contextBridge.exposeInMainWorld('chatApi', chatApi)
+    contextBridge.exposeInMainWorld('tabApi', tabApi)
   } catch (error) {
     console.error(error)
   }
@@ -276,4 +358,6 @@ if (process.contextIsolated) {
   window.api = api
   // @ts-ignore (define in dts)
   window.chatApi = chatApi
+  // @ts-ignore (define in dts)
+  window.tabApi = tabApi
 }

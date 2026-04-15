@@ -63,23 +63,27 @@ body,
 
 .header {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 20px;
+  /* Children stretch to the full header height; the tab strip
+     uses `items-end` inside to bottom-align Chrome-style pills,
+     while the panel toggles align themselves centered. */
+  align-items: stretch;
+  gap: 8px;
+  /* 150px left padding reserves the macOS traffic-light gutter
+     plus extra breathing room on the left before the first tab
+     pill — matches Chrome's spacing on macOS where the window
+     controls have a generous cushion before the tab strip
+     starts. Bottom padding is 0 so the active tab's rounded
+     shoulders rest flush against the header's bottom edge —
+     that's what lets its box-shadow paint over the header's
+     border-bottom and merge the tab into the viewport below. */
+  padding: 8px 20px 0 150px;
   border-bottom: 1px solid hsl(var(--border) / 0.7);
-  background-color: hsl(var(--background) / 0.45);
+  background-color: hsl(var(--muted) / 0.35);
   backdrop-filter: saturate(160%) blur(22px);
   -webkit-backdrop-filter: saturate(160%) blur(22px);
   -webkit-app-region: drag;
   flex-shrink: 0;
-}
-
-.header h1 {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin: 0;
-  margin-left: 68px; /* leave room for macOS traffic lights */
+  min-height: 44px;
 }
 
 .badge {

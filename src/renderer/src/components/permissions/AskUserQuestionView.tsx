@@ -6,7 +6,19 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
-import { Kbd } from './PermissionDialog'
+/**
+ * Keyboard cap pill used in the footer hints. Inlined here (instead
+ * of imported) so this view doesn't depend on the legacy
+ * `PermissionDialog` module, which has been replaced by the inline
+ * prompt flow in `InlinePermissionPrompt`.
+ */
+function Kbd({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return (
+    <kbd className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+      {children}
+    </kbd>
+  )
+}
 
 /**
  * AskUserQuestionView

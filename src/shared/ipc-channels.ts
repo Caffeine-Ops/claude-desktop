@@ -21,6 +21,13 @@ export const IPC_CHANNELS = {
   CHAT_EVENT: 'chat:event',
   /** Main → renderer. Asks the user to approve a pending tool call. */
   PERMISSION_REQUEST: 'permission:request',
+  /**
+   * Main → renderer. Fires when main-side cancels a pending permission
+   * request (signal aborted, window closing, session torn down, …).
+   * Renderer drops the matching entry so the inline prompt disappears
+   * instead of dangling forever.
+   */
+  PERMISSION_CANCELLED: 'permission:cancelled',
   /** Renderer → main. Delivers the user's decision for a permission request. */
   PERMISSION_RESPOND: 'permission:respond',
   /** Renderer → main. Pulls the cached session meta (skills, mcp, …). */
@@ -115,6 +122,42 @@ export const IPC_CHANNELS = {
    * the whole process so the gate shows again on cold start.
    */
   APP_RELAUNCH: 'app:relaunch',
+  // (Legacy WINDOW_OPEN_WORKSPACE removed in the multi-tab refactor —
+  // use TAB_NEW below.)
+  /**
+   * Shell renderer → main. Create a new tab. The new tab hosts its
+   * own WebContentsView + ChatEngine bound to a null workspace; the
+   * workspace renderer inside the view drives the first
+   * `setWorkspace` through the gate. Used by the `+` button in the
+   * tab bar and the `File → New Tab` menu item.
+   */
+  TAB_NEW: 'tab:new',
+  /**
+   * Shell renderer → main. Activate the tab with the given id. All
+   * other tabs are hidden (view `setVisible(false)`) but their
+   * engines keep running in the background.
+   */
+  TAB_SWITCH: 'tab:switch',
+  /**
+   * Shell renderer → main. Close the tab with the given id. The
+   * engine is disposed (fusion-code children exited, permission
+   * requests cancelled) before the view is removed from the shell
+   * window. Closing the last tab closes the shell.
+   */
+  TAB_CLOSE: 'tab:close',
+  /**
+   * Shell renderer → main. One-shot pull of the current tab list so
+   * the TabBar can hydrate its React state on mount. After mount the
+   * TAB_LIST_CHANGED broadcast keeps it in sync.
+   */
+  TAB_LIST_GET: 'tab:list-get',
+  /**
+   * Main → shell renderer. Broadcast any time the tab list mutates
+   * (new / closed / activated / title change). Payload is the full
+   * `TabDescriptor[]`, not a diff — the TabBar is the source of
+   * truth for rendering and just re-reads the latest list.
+   */
+  TAB_LIST_CHANGED: 'tab:list-changed',
   /**
    * Renderer → main. Opens `~/.claude` in the OS file manager via
    * `shell.openPath`. Used by the sidebar user-info menu so the user
@@ -167,7 +210,40 @@ export const IPC_CHANNELS = {
    * effect on the next `openSession` — no relaunch, but an in-flight
    * turn on the old backend is unaffected until it finishes.
    */
-  CLI_BACKEND_SET: 'cli-backend:set'
+  CLI_BACKEND_SET: 'cli-backend:set',
+  /**
+   * Renderer → main. Reads the engine's current UI permission mode.
+   * Called once on renderer mount to hydrate the picker. The renderer
+   * is actually the source of truth (persisted in localStorage) and
+   * pushes its value back via PERMISSION_MODE_SET on mount — this
+   * getter is a fallback for hot-reload scenarios.
+   */
+  PERMISSION_MODE_GET: 'permission-mode:get',
+  /**
+   * Renderer → main. Sets the engine's UI permission mode. The engine
+   * updates its own field and also calls `query.setPermissionMode()`
+   * on every live runtime so the change takes effect mid-session
+   * without a restart. For bypass / plan modes the SDK handles tool
+   * gating internally; for default / dontAsk / acceptEdits the engine's
+   * canUseTool callback is still invoked for the cases the SDK doesn't
+   * auto-resolve.
+   */
+  PERMISSION_MODE_SET: 'permission-mode:set',
+  /**
+   * Main → renderer. Broadcast whenever the engine's UI permission
+   * mode changes from the *main* side rather than the renderer.
+   *
+   * The only current trigger is the ExitPlanMode auto-transition: when
+   * the assistant calls `ExitPlanMode` and the user approves it via
+   * the permission dialog, the SDK internally transitions out of
+   * `plan` mode — we mirror that on our side by flipping the engine
+   * field to `default` and broadcasting, so the picker and its
+   * localStorage catch up without the user having to re-click.
+   *
+   * Renderer-initiated changes (user clicks the picker) do NOT
+   * re-broadcast — there's no one to tell, the renderer already knows.
+   */
+  PERMISSION_MODE_CHANGED: 'permission-mode:changed'
 } as const
 
 /**
@@ -183,6 +259,35 @@ export const IPC_CHANNELS = {
 export interface ChatImagePayload {
   dataUrl: string
   filename?: string
+}
+
+/**
+ * Snapshot of one tab shown in the shell window's tab bar. Produced
+ * by `tabRegistry.listTabs()` and broadcast on every mutation via
+ * `TAB_LIST_CHANGED`. The shell renderer reads this list verbatim
+ * and renders one pill per entry.
+ */
+export interface TabDescriptor {
+  /** Stable id — matches the hosting WebContentsView's webContents.id. */
+  id: number
+  /** User-facing label; basename of the workspace, or "New Workspace". */
+  title: string
+  /** Absolute workspace path, or null before the gate has been passed. */
+  workspacePath: string | null
+  /** True for the single currently-visible tab. */
+  active: boolean
+}
+
+export interface TabSwitchPayload {
+  id: number
+}
+
+export interface TabClosePayload {
+  id: number
+}
+
+export interface TabListResult {
+  tabs: TabDescriptor[]
 }
 
 export interface TranscribeAudioPayload {
@@ -320,6 +425,36 @@ export interface CliBackendState {
 export type CliBackendSetPayload = { mode: CliBackendMode }
 
 /**
+ * UI-facing permission mode. Mirrors the Agent SDK's `PermissionMode`
+ * type minus `'auto'` (which uses a model classifier and is out of
+ * scope for the visible picker). The mapping to the SDK is identity —
+ * engine casts `UiPermissionMode` directly to the SDK type when
+ * calling `query()` or `setPermissionMode()`.
+ *
+ * Semantics (enforced by the SDK, not by our broker):
+ * - `default`           — prompts on dangerous tools, via canUseTool.
+ * - `plan`              — only read-only tools, assistant emits a plan
+ *                         block and waits for the user to exit plan
+ *                         mode before running anything.
+ * - `acceptEdits`       — Edit / Write / NotebookEdit auto-allowed,
+ *                         everything else still prompts.
+ * - `bypassPermissions` — no prompts at all (requires the engine to
+ *                         pass `allowDangerouslySkipPermissions: true`).
+ * - `dontAsk`           — no prompts; anything that isn't pre-approved
+ *                         is denied outright.
+ */
+export type UiPermissionMode =
+  | 'default'
+  | 'plan'
+  | 'acceptEdits'
+  | 'bypassPermissions'
+  | 'dontAsk'
+
+export type PermissionModeGetResult = { mode: UiPermissionMode }
+export type PermissionModeSetPayload = { mode: UiPermissionMode }
+export type PermissionModeChangedPayload = { mode: UiPermissionMode }
+
+/**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
  * interface on both sides via the shared type.
  */
@@ -333,12 +468,23 @@ export interface ChatApi {
   onEvent(sessionId: string, handler: (event: ChatEvent) => void): () => void
 
   /**
-   * Subscribe to tool-permission requests from main. The dialog layer
-   * calls this once at mount and returns its teardown. Only one request
-   * is ever in-flight at a time — the SDK's `canUseTool` blocks the
-   * current turn until we respond, so there's no need to queue.
+   * Subscribe to tool-permission requests from main. The renderer's
+   * permission store calls this once at mount and pushes every request
+   * into a requestId-keyed Map. Multiple parallel requests can be in
+   * flight when the assistant emits a tool_use block with several tool
+   * calls — each gets its own inline prompt on its tool card, so the
+   * subscriber must never collapse them.
    */
   onPermissionRequest(handler: (request: PermissionRequest) => void): () => void
+
+  /**
+   * Subscribe to cancellation notices from main. Fires when a pending
+   * permission request is aborted from the main side (signal tripped,
+   * window closing, cli torn down). Renderer removes the matching entry
+   * so the inline prompt vanishes instead of leaving the user staring
+   * at buttons that no longer do anything.
+   */
+  onPermissionCancelled(handler: (requestId: string) => void): () => void
 
   /** Reply to an open permission request. */
   respondPermission(response: PermissionResponse): Promise<void>
@@ -478,6 +624,15 @@ export interface ChatApi {
   relaunchApp(): Promise<void>
 
   /**
+   * Open a fresh workspace tab in the shell window. The new tab
+   * hosts its own WebContentsView + ChatEngine bound to a null
+   * workspace; the renderer's WorkspaceGate drives the first
+   * setWorkspace from there. Used by the `+` button in the tab bar
+   * and the `File → New Tab` menu item.
+   */
+  newWorkspaceTab(): Promise<void>
+
+  /**
    * Open `~/.claude` (the fusion-code config + transcript root) in
    * Finder / Explorer. Resolves with `{ error: '' }` on success or a
    * non-empty error string when `shell.openPath` fails.
@@ -526,4 +681,55 @@ export interface ChatApi {
    * refresh without a second round-trip.
    */
   setCliBackend(payload: CliBackendSetPayload): Promise<CliBackendState>
+
+  /**
+   * Read the engine's current UI permission mode. The renderer's
+   * picker store calls this on mount as a fallback when localStorage
+   * is empty (first launch / hot-reload). Renderer is still the
+   * source of truth — on mount it pushes its persisted value back
+   * via setPermissionMode so main catches up.
+   */
+  getPermissionMode(): Promise<PermissionModeGetResult>
+
+  /**
+   * Push a UI permission mode into the engine. Applies to every live
+   * SDK runtime via `query.setPermissionMode()` so mid-session
+   * switches work without tearing down. Resolves when main has
+   * updated its field and forwarded the mode to the SDK.
+   */
+  setPermissionMode(payload: PermissionModeSetPayload): Promise<void>
+
+  /**
+   * Subscribe to main-initiated permission mode changes — currently
+   * only the ExitPlanMode auto-transition fires this. Returns an
+   * unsubscribe function. The handler MUST apply the new mode
+   * directly to the store without re-pushing back to main, otherwise
+   * the renderer would echo the broadcast into an infinite loop.
+   */
+  onPermissionModeChanged(
+    handler: (mode: UiPermissionMode) => void
+  ): () => void
+}
+
+/**
+ * Tab bar API exposed via contextBridge to the shell renderer.
+ * Surface is intentionally tiny — the shell only needs to list,
+ * create, switch, and close tabs. Everything else (chat, workspace,
+ * permissions) is handled by each tab's own renderer via `chatApi`.
+ */
+export interface TabApi {
+  /** Create a fresh tab and activate it. */
+  newTab(): Promise<void>
+  /** Activate the tab with the given id. */
+  switchTab(id: number): Promise<void>
+  /** Close the tab with the given id (disposes its engine). */
+  closeTab(id: number): Promise<void>
+  /** One-shot pull of the current tab list. */
+  listTabs(): Promise<TabListResult>
+  /**
+   * Subscribe to tab-list-changed broadcasts. The payload is the
+   * full list; the shell renderer is the source of truth for
+   * rendering and just re-reads the latest. Returns an unsubscribe.
+   */
+  onTabListChanged(handler: (tabs: TabDescriptor[]) => void): () => void
 }

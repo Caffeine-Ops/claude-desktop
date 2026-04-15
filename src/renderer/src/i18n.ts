@@ -265,6 +265,15 @@ const STRINGS = {
     permissionFooterEsc: '取消',
     permissionFooterEnter: '同意',
 
+    // Tool-call card — labels for the default input/output panes and
+    // the raw-data toggle that friendly-view tool cards show at the
+    // bottom for power users.
+    toolPaneInputLabel: 'Input',
+    toolPaneOutputLabel: 'Output',
+    toolRawDataSummary: '原始数据',
+    toolStatusRunning: '运行中',
+    toolStatusDone: '完成',
+
     // Settings → General → CLI backend
     cliBackendTitle: 'CLI 后端',
     cliBackendDesc:
@@ -486,6 +495,12 @@ const STRINGS = {
     permissionFooterEsc: 'cancel',
     permissionFooterEnter: 'yes',
 
+    toolPaneInputLabel: 'Input',
+    toolPaneOutputLabel: 'Output',
+    toolRawDataSummary: 'Raw data',
+    toolStatusRunning: 'running',
+    toolStatusDone: 'done',
+
     cliBackendTitle: 'CLI backend',
     cliBackendDesc:
       'Choose which CLI binary the Agent SDK spawns. Takes effect on the next new chat.',
@@ -533,4 +548,55 @@ export function useTFormat(): (
       name in vars ? String(vars[name]) : `{${name}}`
     )
   }
+}
+
+// Tool-name display labels. Kept out of STRINGS because the key space is
+// the tool registry (dozens of entries) rather than UI copy, and because
+// unknown tools (e.g. MCP `mcp__server__name`) must fall through to the
+// raw identifier instead of showing a `{toolName}`-style placeholder.
+const TOOL_LABELS_ZH: Record<string, string> = {
+  Agent: '子代理',
+  AskUserQuestion: '询问用户',
+  Bash: '运行命令',
+  CronCreate: '创建定时任务',
+  CronDelete: '删除定时任务',
+  CronList: '定时任务列表',
+  Edit: '编辑',
+  EnterPlanMode: '进入规划模式',
+  EnterWorktree: '进入 Worktree',
+  ExitPlanMode: '退出规划模式',
+  ExitWorktree: '退出 Worktree',
+  Glob: '文件查找',
+  Grep: '内容搜索',
+  LSP: 'LSP',
+  Monitor: '监控',
+  MultiEdit: '批量编辑',
+  NotebookEdit: 'Notebook 编辑',
+  Read: '读取文件',
+  RemoteTrigger: '远程触发',
+  ScheduleWakeup: '计划唤醒',
+  Skill: '技能',
+  TaskCreate: '创建任务',
+  TaskGet: '查询任务',
+  TaskList: '任务列表',
+  TaskOutput: '任务输出',
+  TaskStop: '停止任务',
+  TaskUpdate: '更新任务',
+  TodoWrite: '待办事项',
+  ToolSearch: '工具搜索',
+  WebFetch: '网页获取',
+  WebSearch: '网页搜索',
+  Write: '写入文件'
+}
+
+/**
+ * Resolve a tool name to its display label for the current language.
+ * English keeps the raw identifier (tool names are proper-noun-ish);
+ * Chinese looks up `TOOL_LABELS_ZH` and falls back to the raw name for
+ * unknown tools (notably MCP tools, which follow `mcp__server__name`).
+ */
+export function useToolLabel(): (toolName: string) => string {
+  const lang = useI18n((s) => s.lang)
+  return (toolName) =>
+    lang === 'zh' ? (TOOL_LABELS_ZH[toolName] ?? toolName) : toolName
 }

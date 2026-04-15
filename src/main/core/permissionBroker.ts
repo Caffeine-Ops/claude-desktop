@@ -102,6 +102,10 @@ class PermissionBroker extends EventEmitter {
           const stillPending = this.pending.get(requestId)
           if (!stillPending) return
           this.pending.delete(requestId)
+          // Tell the renderer to drop its inline prompt — otherwise
+          // the user is staring at buttons that will never do anything
+          // because the engine has already moved on to deny.
+          this.emit('cancel', requestId)
           reject(new Error('Permission request aborted by signal.'))
         }
         signal.addEventListener('abort', entry.abortHandler, { once: true })
@@ -134,19 +138,18 @@ class PermissionBroker extends EventEmitter {
 
   /** Reject every pending request. Used at app shutdown / window close. */
   cancelAll(reason = 'Permission broker cancelled.'): void {
-    for (const [, entry] of this.pending) {
+    for (const [requestId, entry] of this.pending) {
       if (entry.abortHandler && entry.signal) {
         entry.signal.removeEventListener('abort', entry.abortHandler)
       }
+      // Emit first so any renderer subscriber can clear its inline
+      // prompt before we reject — the reject() itself only unblocks
+      // the engine's handleCanUseTool callback.
+      this.emit('cancel', requestId)
       entry.reject(new Error(reason))
     }
     this.pending.clear()
   }
 }
 
-let instance: PermissionBroker | null = null
-export function getPermissionBroker(): PermissionBroker {
-  if (!instance) instance = new PermissionBroker()
-  return instance
-}
 export { PermissionBroker }

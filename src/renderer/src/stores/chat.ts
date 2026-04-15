@@ -55,6 +55,19 @@ type ContentPart = {
   [key: string]: unknown
 }
 
+/**
+ * Placeholder text inserted by `startReasoning` when a thinking
+ * block opens. Must be non-empty after `.trim()` so assistant-ui's
+ * `fromThreadMessageLike` doesn't filter the part out (see
+ * @assistant-ui/core/.../thread-message-like.js:42). Zero-width
+ * space is invisible when rendered and not considered whitespace
+ * by `String.prototype.trim`, so it survives the filter without
+ * leaving a visual artifact. `ReasoningCard` treats a text equal
+ * to this constant as "no content yet" for the open/collapsed
+ * decision.
+ */
+export const REASONING_PLACEHOLDER = '\u200B'
+
 interface ChatState {
   /**
    * fusion-code UUID of the currently active session, or null before
@@ -297,9 +310,24 @@ export const useChatStore = create<ChatState>((set) => ({
   startReasoning: (messageId) => {
     set((s) => {
       const existing = s.messages.find((m) => m.id === messageId)
+      // IMPORTANT: the placeholder must NOT be an empty string.
+      // assistant-ui's `fromThreadMessageLike` in
+      // @assistant-ui/core filters out any reasoning part whose
+      // `text.trim().length === 0`, so `text: ''` would be silently
+      // dropped before the renderer ever sees it — the "正在思考…"
+      // card would never appear for blocks that are slow to emit a
+      // delta (or that emit only a signature_delta, which we drop).
+      //
+      // `\u200B` (zero-width space) is a non-whitespace, invisible
+      // character. It survives `.trim()` so the part stays in the
+      // message, but it renders as nothing in the card body.
+      // `appendThinkingDelta` below detects the placeholder prefix
+      // and replaces it with the first real delta instead of
+      // concatenating, so the user never sees a stray ZWSP lurking
+      // in the reasoning text.
       const emptyReasoningPart: ContentPart = {
         type: 'reasoning',
-        text: ''
+        text: REASONING_PLACEHOLDER
       }
       // Lazy assistant message create — same shape as
       // appendAssistantDelta / appendThinkingDelta. The thinking
@@ -362,10 +390,18 @@ export const useChatStore = create<ChatState>((set) => ({
           const parts = [...((m.content as unknown) as ContentPart[])]
           const last = parts[parts.length - 1]
           if (last && last.type === 'reasoning') {
-            // Same trailing-reasoning part — append into it.
+            // Same trailing-reasoning part — append into it. Drop
+            // the ZWSP placeholder `startReasoning` inserted (see the
+            // comment there) so the final text doesn't carry an
+            // invisible stray character. Any already-streamed content
+            // past the placeholder is preserved.
+            const prev = ((last.text as string) ?? '').replace(
+              REASONING_PLACEHOLDER,
+              ''
+            )
             parts[parts.length - 1] = {
               ...last,
-              text: ((last.text as string) ?? '') + delta
+              text: prev + delta
             }
           } else {
             // The model interleaved a text or tool_use block between

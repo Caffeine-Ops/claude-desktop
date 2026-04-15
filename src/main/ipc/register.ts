@@ -1,24 +1,17 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative, sep } from 'node:path'
-import type {
-  ChatEvent,
-  LogEvent,
-  PermissionRequest,
-  PermissionResponse
-} from '../../shared/types'
+import type { PermissionResponse } from '../../shared/types'
 import {
   IPC_CHANNELS,
   type ChatAbortPayload,
-  type ChatEventPayload,
   type ChatImagePayload,
   type ChatSendPayload,
   type ChatSendResult,
   type FileSuggestionsListPayload,
   type FileSuggestionsListResult,
-  type LogEventPayload,
   type SessionListResult,
   type SessionLoadPayload,
   type SessionLoadResult,
@@ -27,6 +20,9 @@ import {
   type SessionRenameResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
+  type TabClosePayload,
+  type TabListResult,
+  type TabSwitchPayload,
   type TranscribeAudioPayload,
   type TranscribeAudioResult,
   type WorkspaceFileOpenPayload,
@@ -36,25 +32,80 @@ import {
   type WorkspaceState
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
-import { getChatEngine } from '../core/engine'
+import type { ChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
-import { getPermissionBroker } from '../core/permissionBroker'
 import { listSessions, loadSession, renameSession } from '../core/sessionStore'
-import { bumpUnread, clearUnread, updateTrayLang } from '../tray'
+import { clearUnread, updateTrayLang } from '../tray'
+import {
+  canAddTab,
+  closeTab,
+  describeSenderMismatch,
+  getContextForSender,
+  getShellWindow,
+  listTabs,
+  MAX_TABS,
+  newTab,
+  activateTab
+} from '../tabRegistry'
 import type {
   CliBackendSetPayload,
   CliBackendState,
-  LangChangedPayload
+  LangChangedPayload,
+  PermissionModeGetResult,
+  PermissionModeSetPayload,
+  UiPermissionMode
 } from '../../shared/ipc-channels'
 
 /**
- * Registers all IPC handlers and wires the chat engine's event stream to
- * the renderer. Call once at app startup with the main window.
+ * Resolve the ChatEngine for the window that sent this IPC event.
+ * Every chat/session/workspace handler routes through this so the
+ * right per-window engine handles the request — a `send` from window
+ * A can never touch window B's session map.
+ *
+ * Throws when the sender isn't a registered workspace window
+ * (shouldn't happen with our preload gate, but a clean error beats a
+ * silent wrong-window write if it does).
+ */
+function resolveEngine(event: IpcMainInvokeEvent): ChatEngine {
+  const ctx = getContextForSender(event)
+  if (!ctx) {
+    throw new Error(`IPC received from an unknown tab (${describeSenderMismatch(event)}).`)
+  }
+  return ctx.engine
+}
+
+function resolveBrowserWindow(event: IpcMainInvokeEvent): BrowserWindow {
+  // Native dialogs need a BrowserWindow reference — the folder
+  // picker is modal to the shell window. WebContentsView senders
+  // don't have a direct `BrowserWindow.fromWebContents` mapping
+  // because the views are child content, not top-level windows, so
+  // we fall back to `BrowserWindow.fromWebContents(event.sender)`
+  // and return the first result (it's the shell).
+  const parent = BrowserWindow.fromWebContents(event.sender)
+  if (parent) return parent
+  // Fallback: any focused window. This only triggers for the shell
+  // webContents itself, which does produce a BrowserWindow from
+  // fromWebContents, so in practice we never hit this branch.
+  const all = BrowserWindow.getAllWindows()
+  if (all.length > 0) return all[0]!
+  throw new Error('No window available for dialog anchoring.')
+}
+
+/**
+ * Registers all IPC handlers. Call once at app startup — handlers use
+ * `event.sender` to resolve the target ChatEngine from the window
+ * registry on every invoke, so this function is window-agnostic and
+ * doesn't need to be re-run when a new workspace window opens.
+ *
+ * Engine-to-renderer event forwarding (chat events, log events,
+ * session list changes, permission requests) is wired inside the
+ * ChatEngine constructor, not here — each engine bridges its own
+ * events to its own bound window's webContents.
  *
  * IMPORTANT: keep the surface here minimal. Each exposed procedure is a
  * potential attack surface — validate every input.
  */
-export function registerIpcHandlers(mainWindow: BrowserWindow): void {
+export function registerIpcHandlers(): void {
   // Remove any stale handlers from previous dev reloads to avoid
   // "Attempted to register a second handler" errors.
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_SEND)
@@ -72,9 +123,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_SWITCH)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_RENAME)
   ipcMain.removeHandler(IPC_CHANNELS.APP_RELAUNCH)
+  ipcMain.removeHandler(IPC_CHANNELS.TAB_NEW)
+  ipcMain.removeHandler(IPC_CHANNELS.TAB_SWITCH)
+  ipcMain.removeHandler(IPC_CHANNELS.TAB_CLOSE)
+  ipcMain.removeHandler(IPC_CHANNELS.TAB_LIST_GET)
   ipcMain.removeHandler(IPC_CHANNELS.APP_OPEN_CLAUDE_DIR)
   ipcMain.removeHandler(IPC_CHANNELS.CLI_BACKEND_GET)
   ipcMain.removeHandler(IPC_CHANNELS.CLI_BACKEND_SET)
+  ipcMain.removeHandler(IPC_CHANNELS.PERMISSION_MODE_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.PERMISSION_MODE_SET)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -92,20 +149,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.CHAT_SEND,
-    async (_event, payload: ChatSendPayload): Promise<ChatSendResult> => {
+    async (event, payload: ChatSendPayload): Promise<ChatSendResult> => {
       validateSessionId(payload?.sessionId)
       validateText(payload?.text)
       const images = validateImages(payload?.images)
-      const engine = getChatEngine()
+      const engine = resolveEngine(event)
       return await engine.send(payload.sessionId, payload.text, images)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.CHAT_ABORT,
-    async (_event, payload: ChatAbortPayload): Promise<void> => {
+    async (event, payload: ChatAbortPayload): Promise<void> => {
       validateSessionId(payload?.sessionId)
-      getChatEngine().abort(payload.sessionId)
+      resolveEngine(event).abort(payload.sessionId)
     }
   )
 
@@ -114,9 +171,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // here we only shape-check the payload surface.
   ipcMain.handle(
     IPC_CHANNELS.PERMISSION_RESPOND,
-    async (_event, payload: PermissionResponse): Promise<void> => {
+    async (event, payload: PermissionResponse): Promise<void> => {
       validatePermissionResponse(payload)
-      getPermissionBroker().respond(payload)
+      resolveEngine(event).permissionBroker.respond(payload)
       // The user has clearly noticed the dialog (they just answered
       // it), so the unread badge has done its job — clear it even if
       // the window is somehow still in the background.
@@ -127,8 +184,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Session metadata pull. Backed by ChatEngine.sessionMeta which is
   // populated lazily from the first `system init` SDK message.
   // Returns empty arrays before fusion-code has been spawned.
-  ipcMain.handle(IPC_CHANNELS.SESSION_META_GET, async () => {
-    return getChatEngine().getSessionMeta()
+  ipcMain.handle(IPC_CHANNELS.SESSION_META_GET, async (event) => {
+    return resolveEngine(event).getSessionMeta()
   })
 
   // File suggestions list for the composer's `@`-mention popover. We
@@ -142,7 +199,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(
     IPC_CHANNELS.FILE_SUGGESTIONS_LIST,
     async (
-      _event,
+      event,
       payload: FileSuggestionsListPayload
     ): Promise<FileSuggestionsListResult> => {
       // Resolve the cwd to scan in priority order:
@@ -155,7 +212,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       //   3. process.cwd() — last-ditch fallback, only hit when the
       //      renderer somehow fires this IPC before the workspace is
       //      set (the gate is supposed to prevent that).
-      const engine = getChatEngine()
+      const engine = resolveEngine(event)
       const meta = engine.getSessionMeta()
       const cwd =
         meta.cwd && meta.cwd.length > 0
@@ -171,34 +228,37 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // a single source of truth without a second round-trip.
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_GET,
-    async (): Promise<WorkspaceState> => {
-      return { path: getChatEngine().getWorkspace() }
+    async (event): Promise<WorkspaceState> => {
+      return { path: resolveEngine(event).getWorkspace() }
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_SET,
-    async (_event, payload: WorkspaceSetPayload): Promise<WorkspaceState> => {
+    async (event, payload: WorkspaceSetPayload): Promise<WorkspaceState> => {
       validateWorkspaceSetPayload(payload)
-      const next = await getChatEngine().setWorkspace(payload.path)
+      const next = await resolveEngine(event).setWorkspace(payload.path)
       return { path: next }
     }
   )
 
-  // Native folder picker. Anchored to the main window so the dialog
-  // is treated as modal and inherits focus correctly on macOS. We
-  // intentionally do NOT call setWorkspace here — the renderer follows
-  // up with WORKSPACE_SET so any validation error surfaces in the gate
-  // UI through the same code path the drag-drop flow uses.
+  // Native folder picker. Anchored to the sender window so the dialog
+  // is treated as modal to that window and inherits focus correctly on
+  // macOS. We intentionally do NOT call setWorkspace here — the
+  // renderer follows up with WORKSPACE_SET so any validation error
+  // surfaces in the gate UI through the same code path the drag-drop
+  // flow uses.
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_PICK,
-    async (): Promise<WorkspacePickResult> => {
-      const result = await dialog.showOpenDialog(mainWindow, {
+    async (event): Promise<WorkspacePickResult> => {
+      const window = resolveBrowserWindow(event)
+      const engine = resolveEngine(event)
+      const result = await dialog.showOpenDialog(window, {
         title: 'Pick a workspace',
         properties: ['openDirectory', 'createDirectory'],
         // Default to the current workspace when re-picking, otherwise
         // let the OS decide (Finder remembers per-app).
-        defaultPath: getChatEngine().getWorkspace() ?? undefined
+        defaultPath: engine.getWorkspace() ?? undefined
       })
       if (result.canceled || result.filePaths.length === 0) {
         return { path: null }
@@ -217,11 +277,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_FILE_OPEN,
     async (
-      _event,
+      event,
       payload: WorkspaceFileOpenPayload
     ): Promise<WorkspaceFileOpenResult> => {
       validateFileOpenPayload(payload)
-      const workspace = getChatEngine().getWorkspace()
+      const workspace = resolveEngine(event).getWorkspace()
       if (!workspace) {
         return { error: 'Workspace not set.' }
       }
@@ -275,8 +335,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // the workspace is unset.
   ipcMain.handle(
     IPC_CHANNELS.SESSION_LIST,
-    async (): Promise<SessionListResult> => {
-      const workspace = getChatEngine().getWorkspace()
+    async (event): Promise<SessionListResult> => {
+      const workspace = resolveEngine(event).getWorkspace()
       const threads = await listSessions(workspace)
       return { threads }
     }
@@ -284,9 +344,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.SESSION_LOAD,
-    async (_event, payload: SessionLoadPayload): Promise<SessionLoadResult> => {
+    async (event, payload: SessionLoadPayload): Promise<SessionLoadResult> => {
       validateSessionLoadPayload(payload)
-      const workspace = getChatEngine().getWorkspace()
+      const workspace = resolveEngine(event).getWorkspace()
       const messages = await loadSession(payload.sessionId, workspace)
       return { messages }
     }
@@ -305,7 +365,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(
     IPC_CHANNELS.SESSION_SWITCH,
     async (
-      _event,
+      event,
       payload: SessionSwitchPayload
     ): Promise<SessionSwitchResult> => {
       validateSessionSwitchPayload(payload)
@@ -314,7 +374,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // fusion-code silently forks on `--resume` (upstream
       // claude-code behavior). The renderer uses this id to
       // re-subscribe chat events under the correct key.
-      const result = await getChatEngine().switchToSession(payload.sessionId, {
+      const result = await resolveEngine(event).switchToSession(payload.sessionId, {
         resume: payload.resume
       })
       return { sessionId: result.sessionId }
@@ -324,11 +384,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(
     IPC_CHANNELS.SESSION_RENAME,
     async (
-      _event,
+      event,
       payload: SessionRenamePayload
     ): Promise<SessionRenameResult> => {
       validateSessionRenamePayload(payload)
-      const engine = getChatEngine()
+      const engine = resolveEngine(event)
       await renameSession(payload.sessionId, payload.title, engine.getWorkspace())
       // Trigger sidebar refresh — the SDK reads customTitle on its
       // next listSessions scan, so rebroadcasting picks up the new
@@ -345,6 +405,43 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     app.relaunch()
     app.exit(0)
   })
+
+  // Tab management. `newTab` creates a fresh WebContentsView, its
+  // own engine, and activates it. `switchTab` brings a tab to the
+  // foreground. `closeTab` disposes the engine and removes the view.
+  // `listTabs` is a one-shot hydrate for the shell TabBar on mount;
+  // after that it reads updates off the TAB_LIST_CHANGED broadcast
+  // that tabRegistry emits on every mutation.
+  ipcMain.handle(IPC_CHANNELS.TAB_NEW, async (): Promise<void> => {
+    if (!canAddTab()) {
+      await showMaxTabsDialog()
+      return
+    }
+    newTab()
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.TAB_SWITCH,
+    async (_event, payload: TabSwitchPayload): Promise<void> => {
+      validateTabId(payload?.id)
+      activateTab(payload.id)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.TAB_CLOSE,
+    async (_event, payload: TabClosePayload): Promise<void> => {
+      validateTabId(payload?.id)
+      await closeTab(payload.id)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.TAB_LIST_GET,
+    async (): Promise<TabListResult> => {
+      return { tabs: listTabs() }
+    }
+  )
 
   // Open `~/.claude` in the OS file manager. The directory is created
   // by fusion-code on first run, but on a fresh machine it may not
@@ -365,8 +462,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // shell.openPath error verbatim on failure.
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_OPEN,
-    async (): Promise<{ error: string }> => {
-      const workspace = getChatEngine().getWorkspace()
+    async (event): Promise<{ error: string }> => {
+      const workspace = resolveEngine(event).getWorkspace()
       if (!workspace) {
         return { error: 'Workspace not set.' }
       }
@@ -433,8 +530,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // without the caller doing an extra subprocess spawn round.
   ipcMain.handle(
     IPC_CHANNELS.CLI_BACKEND_GET,
-    async (): Promise<CliBackendState> => {
-      const eng = getChatEngine()
+    async (event): Promise<CliBackendState> => {
+      const eng = resolveEngine(event)
       const [{ cliBackend }, detection] = await Promise.all([
         Promise.resolve(getAppSettings()),
         eng.refreshSystemClaudeDetection()
@@ -460,7 +557,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(
     IPC_CHANNELS.CLI_BACKEND_SET,
     async (
-      _event,
+      event,
       payload: CliBackendSetPayload
     ): Promise<CliBackendState> => {
       const mode = payload?.mode
@@ -468,7 +565,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         throw new Error(`Invalid cli backend mode: ${String(mode)}`)
       }
       updateAppSettings({ cliBackend: mode })
-      const eng = getChatEngine()
+      const eng = resolveEngine(event)
       const detection = await eng.refreshSystemClaudeDetection()
       let bundledPath: string | null = null
       try {
@@ -486,87 +583,91 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
-  // Bridge engine events → renderer.
-  const engine = getChatEngine()
-  engine.on('chat', (sessionId: string, event: ChatEvent) => {
-    if (mainWindow.isDestroyed()) return
-    const eventPayload: ChatEventPayload = { sessionId, event }
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_EVENT, eventPayload)
-
-    // Unread-badge bookkeeping. We only care about the moment a reply
-    // is *complete* (`end`) — bumping on `start` or `chunk` would
-    // either fire too early (badge appears before there's anything to
-    // read) or too noisy (one bump per streamed delta). `isFocused()`
-    // also returns false when the window is hidden or minimized, so a
-    // single negative check covers all "user isn't looking" cases.
-    if (event.type === 'end' && !mainWindow.isFocused()) {
-      bumpUnread()
+  // Permission-mode picker: get / set the engine's current UI
+  // permission mode. The renderer's picker store is the source of
+  // truth (persisted in localStorage) — on mount it reads its own
+  // localStorage, calls setPermissionMode to push it to main, and
+  // uses the getter only as a fallback after hot-reload.
+  ipcMain.handle(
+    IPC_CHANNELS.PERMISSION_MODE_GET,
+    async (event): Promise<PermissionModeGetResult> => {
+      return { mode: resolveEngine(event).getPermissionMode() }
     }
-  })
+  )
 
-  // Bridge session-list-changed → renderer. Engine emits this from
-  // switchToSession() and from updateSessionMeta() (first system init
-  // of a brand-new session, which is when the jsonl is created).
-  // removeAllListeners guards against double registration on dev reload.
-  engine.removeAllListeners('sessionListChanged')
-  engine.on('sessionListChanged', () => {
-    if (mainWindow.isDestroyed()) return
-    mainWindow.webContents.send(IPC_CHANNELS.SESSION_LIST_CHANGED)
-  })
+  ipcMain.handle(
+    IPC_CHANNELS.PERMISSION_MODE_SET,
+    async (event, payload: PermissionModeSetPayload): Promise<void> => {
+      const mode = payload?.mode
+      if (!isValidPermissionMode(mode)) {
+        throw new Error(`Invalid permission mode: ${String(mode)}`)
+      }
+      await resolveEngine(event).setPermissionMode(mode)
+    }
+  )
 
-  // Bridge session-meta-changed → renderer. Fires from
-  // updateSessionMeta() on every fusion-code `system init`, which is
-  // when skills / mcp_servers / slash_commands finally populate. The
-  // renderer's Composer re-polls getSessionMeta() on receipt so the
-  // `/` popover reflects the full cli command set instead of waiting
-  // for the first turn to end.
-  engine.removeAllListeners('sessionMetaChanged')
-  engine.on('sessionMetaChanged', () => {
-    if (mainWindow.isDestroyed()) return
-    mainWindow.webContents.send(IPC_CHANNELS.SESSION_META_CHANGED)
-  })
+  // Engine-to-renderer event forwarding lives in the ChatEngine
+  // constructor (see engine.ts `wireWindowBridges`) — each per-window
+  // engine ships its own chat/log/session/permission events to its
+  // own bound webContents. Engine dispose() on window close cancels
+  // in-flight permission requests and removes listeners, so there's
+  // nothing to wire here anymore.
+}
 
-  // Bridge log events → renderer. Each call is one instrumentation
-  // breadcrumb (switchToSession:begin, systemInit:received,
-  // turn:firstChunk, etc). The LogsDialog subscribes via
-  // window.chatApi.onLogEvent and renders them on a timeline so the
-  // user can see where first-turn latency is spent.
-  engine.removeAllListeners('log')
-  engine.on('log', (event: LogEvent) => {
-    if (mainWindow.isDestroyed()) return
-    const payload: LogEventPayload = { event }
-    mainWindow.webContents.send(IPC_CHANNELS.LOG_EVENT, payload)
-  })
+const VALID_PERMISSION_MODES: readonly UiPermissionMode[] = [
+  'default',
+  'plan',
+  'acceptEdits',
+  'bypassPermissions',
+  'dontAsk'
+]
 
-  // Bridge permission requests → renderer. The broker emits one
-  // `request` event per pending canUseTool call; we forward it to the
-  // active BrowserWindow's webContents so PermissionDialog can pick it
-  // up via the preload channel. removeAllListeners guards against
-  // duplicate registrations on dev reload.
-  const broker = getPermissionBroker()
-  broker.removeAllListeners('request')
-  broker.on('request', (request: PermissionRequest) => {
-    if (mainWindow.isDestroyed()) return
-    mainWindow.webContents.send(IPC_CHANNELS.PERMISSION_REQUEST, request)
-    // Permission requests are inherently "user attention needed" —
-    // bump the badge unconditionally so the menubar lights up red
-    // even if the user happens to be looking at the window. We clear
-    // it again from the PERMISSION_RESPOND handler the moment they
-    // answer, so this is just a transient flash for the focused case.
-    bumpUnread()
-  })
-
-  // When the window is closed (quit, not just hidden), reject every
-  // outstanding permission request so the SDK stops waiting on a
-  // dialog that can never answer.
-  mainWindow.once('closed', () => {
-    broker.cancelAll('Main window closed.')
-  })
+function isValidPermissionMode(value: unknown): value is UiPermissionMode {
+  return (
+    typeof value === 'string' &&
+    (VALID_PERMISSION_MODES as readonly string[]).includes(value)
+  )
 }
 
 function validateSessionId(value: unknown): asserts value is string {
   if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
     throw new Error(`Invalid sessionId`)
+  }
+}
+
+function validateTabId(value: unknown): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`Invalid tab id`)
+  }
+}
+
+/**
+ * Shared "tab cap reached" dialog. Shown from both the IPC
+ * handler (clicking the `+` button in any tab's TabBar) and the
+ * menu accelerator (⌘T) so the user always sees the same
+ * message regardless of how they tried to open the tab. Anchored
+ * to the shell window so it's treated as modal on macOS.
+ */
+export async function showMaxTabsDialog(): Promise<void> {
+  const shell = getShellWindow()
+  const opts = {
+    type: 'info' as const,
+    title: 'Maximum tabs reached',
+    message: `You can open up to ${MAX_TABS} workspace tabs at once.`,
+    detail:
+      'Close an existing tab before opening a new workspace so the host stays responsive.',
+    buttons: ['OK'],
+    defaultId: 0,
+    noLink: true
+  }
+  try {
+    if (shell && !shell.isDestroyed()) {
+      await dialog.showMessageBox(shell, opts)
+    } else {
+      await dialog.showMessageBox(opts)
+    }
+  } catch (err) {
+    console.warn('[ipc] max-tabs dialog failed:', err)
   }
 }
 

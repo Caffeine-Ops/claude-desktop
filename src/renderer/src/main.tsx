@@ -1,11 +1,23 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import ShellApp from './shell/ShellApp'
 // Tailwind entrypoint — must come before assets/main.css so our own
 // layer rules (window chrome, header) sit on top of Tailwind preflight.
 import './index.css'
 import './assets/main.css'
 import './assets/highlight.css'
+
+/**
+ * The shell BrowserWindow loads this same renderer bundle with
+ * `?shell=1` — it mounts an empty component just to keep the shell
+ * webContents alive. The tab bar used to live in the shell but now
+ * renders inline inside each tab's workspace header, so the shell
+ * UI is intentionally blank.
+ */
+const isShell =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('shell') === '1'
 
 // FOUC prevention: read the persisted appearance state synchronously
 // before React mounts, so the right `dark` class and per-theme color
@@ -114,7 +126,5 @@ import './assets/highlight.css'
 })()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
+  <React.StrictMode>{isShell ? <ShellApp /> : <App />}</React.StrictMode>
 )

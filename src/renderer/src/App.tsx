@@ -4,10 +4,11 @@ import { FusionRuntimeProvider } from './runtime/FusionRuntimeProvider'
 import { ThreadView } from './components/chat/ThreadView'
 import { ThreadListSidebar } from './components/chat/ThreadListSidebar'
 import { TodoListPanel } from './components/todos/TodoListPanel'
-import { PermissionDialog } from './components/permissions/PermissionDialog'
+import { PermissionBridge } from './components/permissions/PermissionBridge'
 import { SkillsDialog } from './components/dialogs/SkillsDialog'
 import { McpDialog } from './components/dialogs/McpDialog'
 import { LogsDialog } from './components/dialogs/LogsDialog'
+import TabBar from './components/tabs/TabBar'
 import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
 import { WorkspaceDropLayer } from './components/workspace/WorkspaceDropLayer'
 import { EmptyWorkspaceShell } from './components/workspace/EmptyWorkspaceShell'
@@ -264,63 +265,80 @@ function App(): React.JSX.Element {
   return (
     <div className="app">
       <header className="header">
-        <h1>{t('appTitle')}</h1>
-        <button
-          type="button"
-          onClick={() => setSidebarOpen((v) => !v)}
-          title={sidebarOpen ? t('collapseSidebar') : t('expandSidebar')}
-          aria-label={sidebarOpen ? t('collapseSidebar') : t('expandSidebar')}
-          aria-pressed={sidebarOpen}
+        {/* Workspace tab strip. Source of truth lives in main's
+            tabRegistry; this component subscribes to
+            TAB_LIST_CHANGED via window.tabApi and renders one pill
+            per open workspace + a `+` button to create new ones.
+            The first child of `.header` takes the traffic-light
+            gutter via padding-left on .header itself (see
+            assets/main.css). */}
+        <TabBar />
+        {/* Panel toggles live on the far right, past the TabBar's
+            spacer. `self-center` keeps them vertically centered
+            inside the `items-stretch` header even though the
+            TabBar's pills bottom-align. */}
+        <div
+          className="flex shrink-0 items-center gap-1 self-center pb-[8px]"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-muted/60 hover:text-foreground"
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
+          <button
+            type="button"
+            onClick={() => setSidebarOpen((v) => !v)}
+            title={sidebarOpen ? t('collapseSidebar') : t('expandSidebar')}
+            aria-label={sidebarOpen ? t('collapseSidebar') : t('expandSidebar')}
+            aria-pressed={sidebarOpen}
+            className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-muted/60 hover:text-foreground"
           >
-            <rect x="2" y="3" width="12" height="10" rx="1.75" />
-            <line x1="6.25" y1="3" x2="6.25" y2="13" />
-            {!sidebarOpen && <line x1="9" y1="6" x2="11.5" y2="8" />}
-            {!sidebarOpen && <line x1="11.5" y1="8" x2="9" y2="10" />}
-          </svg>
-        </button>
-        <button
-          type="button"
-          onClick={() => setRightRailOpen((v) => !v)}
-          title={rightRailOpen ? t('collapseRightRail') : t('expandRightRail')}
-          aria-label={
-            rightRailOpen ? t('collapseRightRail') : t('expandRightRail')
-          }
-          aria-pressed={rightRailOpen}
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-muted/60 hover:text-foreground"
-        >
-          {/* Mirror of the left-sidebar folder-rect, flipped so the
-              divider sits on the right. Reads as "right rail toggle". */}
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="2" y="3" width="12" height="10" rx="1.75" />
+              <line x1="6.25" y1="3" x2="6.25" y2="13" />
+              {!sidebarOpen && <line x1="9" y1="6" x2="11.5" y2="8" />}
+              {!sidebarOpen && <line x1="11.5" y1="8" x2="9" y2="10" />}
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => setRightRailOpen((v) => !v)}
+            title={
+              rightRailOpen ? t('collapseRightRail') : t('expandRightRail')
+            }
+            aria-label={
+              rightRailOpen ? t('collapseRightRail') : t('expandRightRail')
+            }
+            aria-pressed={rightRailOpen}
+            className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-muted/60 hover:text-foreground"
           >
-            <rect x="2" y="3" width="12" height="10" rx="1.75" />
-            <line x1="9.75" y1="3" x2="9.75" y2="13" />
-            {!rightRailOpen && <line x1="7" y1="6" x2="4.5" y2="8" />}
-            {!rightRailOpen && <line x1="4.5" y1="8" x2="7" y2="10" />}
-          </svg>
-        </button>
+            {/* Mirror of the left-sidebar folder-rect, flipped so
+                the divider sits on the right. Reads as "right rail
+                toggle". */}
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="2" y="3" width="12" height="10" rx="1.75" />
+              <line x1="9.75" y1="3" x2="9.75" y2="13" />
+              {!rightRailOpen && <line x1="7" y1="6" x2="4.5" y2="8" />}
+              {!rightRailOpen && <line x1="4.5" y1="8" x2="7" y2="10" />}
+            </svg>
+          </button>
+        </div>
       </header>
       <main className="main relative">
         {!hasWorkspace && <EmptyWorkspaceShell />}
@@ -421,11 +439,13 @@ function App(): React.JSX.Element {
             untouched. Renders null when the store says closed. */}
         <SettingsView />
       </main>
-      {/* Permission dialog — `fixed inset-0` overlay, kept outside
-          <main> so it covers the header and both panes. Listens to
-          main-process permission requests via preload IPC, so it does
-          not need an assistant-ui runtime context. */}
-      <PermissionDialog />
+      {/* Permission bridge — headless component that subscribes the
+          permission store to main-process IPC events. The actual
+          decision UI lives inline inside each tool's ToolCallCard
+          (see InlinePermissionPrompt), so this component renders
+          nothing visible. Kept at App root so a single subscription
+          serves every tool card in the tree. */}
+      <PermissionBridge />
       {/* Slash-command dialogs. Each subscribes to the dialog store
           and renders only when its kind is open. They sit at the same
           level as PermissionDialog so they overlay everything. */}

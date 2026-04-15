@@ -1,11 +1,17 @@
 import { randomUUID } from 'crypto'
 import { EventEmitter } from 'events'
+import type { WebContents } from 'electron'
 import { existsSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { inspect } from 'node:util'
 
-import { query, type PermissionResult, type Query } from '@anthropic-ai/claude-agent-sdk'
+import {
+  query,
+  type PermissionMode,
+  type PermissionResult,
+  type Query
+} from '@anthropic-ai/claude-agent-sdk'
 import type {
   ContentBlockParam,
   ImageBlockParam,
@@ -13,18 +19,26 @@ import type {
   TextBlockParam
 } from '@anthropic-ai/sdk/resources'
 
-import type { ChatImagePayload } from '../../shared/ipc-channels'
+import {
+  IPC_CHANNELS,
+  type ChatEventPayload,
+  type ChatImagePayload,
+  type LogEventPayload,
+  type UiPermissionMode
+} from '../../shared/ipc-channels'
 import type {
   ChatEvent,
   LogEvent,
   McpServerInfo,
+  PermissionRequest,
   SessionMeta
 } from '../../shared/types'
+import { bumpUnread } from '../tray'
 import { AsyncMessageQueue } from './asyncMessageQueue'
 import { getAppSettings, type CliBackend } from './appSettings'
 import { detectSystemClaude } from './cliDetect'
 import { invalidateFileSuggestions } from './fileSuggestions'
-import { getPermissionBroker } from './permissionBroker'
+import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
 
 // NOTE: there used to be a `SWITCH_READY_TIMEOUT_MS = 30_000` here,
@@ -147,17 +161,41 @@ interface ActiveTurn {
    * `reasoning` part on the active turn's assistant message.
    */
   thinkingBlockIndices: Set<number>
-  /**
-   * True once we've emitted `thinking_start` for the current turn.
-   * The renderer creates the reasoning part lazily on the first
-   * delta, so we use this flag to avoid spamming start/end if the
-   * model emits multiple separate thinking blocks back-to-back —
-   * they all roll into one visible card. Reset between turns.
-   */
-  emittedThinkingStart: boolean
 }
 
-class ChatEngine extends EventEmitter {
+/**
+ * Optional hooks the tabRegistry injects into each engine. `shouldBumpOnTurnEnd`
+ * gates the tray unread-badge bump so it only fires when the user
+ * genuinely isn't looking at this tab — i.e. the shell window is
+ * unfocused OR this tab isn't the currently active one. Without this
+ * hook the engine falls back to `webContents.isFocused()`, which is
+ * meaningless for a WebContentsView embedded under a shell window.
+ */
+export interface ChatEngineOptions {
+  shouldBumpOnTurnEnd?: () => boolean
+}
+
+export class ChatEngine extends EventEmitter {
+  /**
+   * The WebContents this engine is bound to. In the multi-tab model
+   * each tab is a `WebContentsView` with its own webContents, and the
+   * engine ships all IPC events (chat, log, session, permission) to
+   * this one. Two tabs with two engines can each run their own
+   * workspace in full isolation.
+   */
+  private readonly webContents: WebContents
+
+  private readonly opts: ChatEngineOptions
+
+  /**
+   * Per-engine PermissionBroker. Was a module-level singleton before the
+   * per-window refactor; now each window has its own so a permission
+   * request in window A never leaks to window B's PermissionDialog.
+   * Exposed as `public` so the IPC layer can call `respond()` after
+   * resolving the target engine from the sender webContents.
+   */
+  public readonly permissionBroker: PermissionBroker
+
   private sessions = new Map<string, SessionRuntime>()
   private nextRequestId = 1
   /**
@@ -220,6 +258,130 @@ class ChatEngine extends EventEmitter {
    */
   private switching = false
 
+  /**
+   * Current UI permission mode. Passed straight to the Agent SDK as
+   * `permissionMode` on each new `query()` call and also forwarded to
+   * every live runtime via `handle.setPermissionMode()` when the
+   * renderer flips the picker mid-session.
+   *
+   * Source of truth: the renderer's localStorage-backed store. On
+   * mount the renderer pushes its persisted value here via the
+   * PERMISSION_MODE_SET IPC. Before that happens the engine's default
+   * is `'default'`, which matches the pre-picker behaviour.
+   */
+  private uiPermissionMode: UiPermissionMode = 'bypassPermissions'
+
+  constructor(webContents: WebContents, opts: ChatEngineOptions = {}) {
+    super()
+    this.webContents = webContents
+    this.opts = opts
+    this.permissionBroker = new PermissionBroker()
+    this.wireWebContentsBridges()
+  }
+
+  /**
+   * Forward engine/broker events to the bound WebContents. Replaces
+   * the ipc/register.ts listener block from the singleton era — each
+   * engine is responsible for shipping its own events to its own
+   * tab's webContents, so a broadcast in tab A can never reach tab B.
+   */
+  private wireWebContentsBridges(): void {
+    this.on('chat', (sessionId: string, event: ChatEvent) => {
+      if (this.webContents.isDestroyed()) return
+      const payload: ChatEventPayload = { sessionId, event }
+      this.webContents.send(IPC_CHANNELS.CHAT_EVENT, payload)
+      // Unread badge: bump on `end` of a complete turn only when the
+      // user isn't looking at this tab right now. The default check is
+      // webContents.isFocused(), but inside a WebContentsView that
+      // returns nonsense — the tabRegistry injects a proper resolver
+      // that accounts for "shell window focused AND this tab active".
+      if (event.type === 'end' && this.shouldBumpOnTurnEnd()) {
+        bumpUnread()
+      }
+    })
+
+    this.on('sessionListChanged', () => {
+      if (this.webContents.isDestroyed()) return
+      this.webContents.send(IPC_CHANNELS.SESSION_LIST_CHANGED)
+    })
+
+    this.on('sessionMetaChanged', () => {
+      if (this.webContents.isDestroyed()) return
+      this.webContents.send(IPC_CHANNELS.SESSION_META_CHANGED)
+    })
+
+    this.on('log', (event: LogEvent) => {
+      if (this.webContents.isDestroyed()) return
+      const payload: LogEventPayload = { event }
+      this.webContents.send(IPC_CHANNELS.LOG_EVENT, payload)
+    })
+
+    this.on('permissionModeChanged', (mode: UiPermissionMode) => {
+      if (this.webContents.isDestroyed()) return
+      this.webContents.send(IPC_CHANNELS.PERMISSION_MODE_CHANGED, { mode })
+    })
+
+    this.permissionBroker.on('request', (request: PermissionRequest) => {
+      if (this.webContents.isDestroyed()) return
+      this.webContents.send(IPC_CHANNELS.PERMISSION_REQUEST, request)
+      // Permission requests are always user-attention — bump unread
+      // even if the tab is focused so the tray gives a transient
+      // flash. Cleared from the PERMISSION_RESPOND handler when the
+      // user answers.
+      bumpUnread()
+    })
+
+    // Forward cancellations so the renderer can tear down any inline
+    // prompt bound to the dead requestId. Without this the user would
+    // see a stale "allow/deny" row on a tool card whose engine has
+    // already given up and moved on to deny.
+    this.permissionBroker.on('cancel', (requestId: string) => {
+      if (this.webContents.isDestroyed()) return
+      this.webContents.send(IPC_CHANNELS.PERMISSION_CANCELLED, requestId)
+    })
+  }
+
+  /**
+   * True when the tray should bump its unread counter on the next
+   * turn-end. The tabRegistry injects a resolver that returns
+   * `false` when the shell window is focused AND this tab is the
+   * active one. Falls back to `webContents.isFocused()` when no
+   * hook was provided (shouldn't happen in production).
+   */
+  private shouldBumpOnTurnEnd(): boolean {
+    if (this.opts.shouldBumpOnTurnEnd) {
+      return this.opts.shouldBumpOnTurnEnd()
+    }
+    return !this.webContents.isFocused()
+  }
+
+  /**
+   * Tear down the engine — called when the owning window closes.
+   * Cancels every pending permission request, shuts down every live
+   * fusion-code child, and unbinds all listeners. Safe to call multiple
+   * times; sessions map is cleared and subsequent calls become no-ops.
+   */
+  async dispose(): Promise<void> {
+    this.permissionBroker.cancelAll('Window closing')
+    const entries = Array.from(this.sessions.entries())
+    this.sessions.clear()
+    const teardowns: Promise<void>[] = []
+    for (const [id, rt] of entries) {
+      if (rt.handle || rt.queue) {
+        teardowns.push(
+          this.teardownRuntime(id, rt).catch((err) => {
+            console.warn('[engine] dispose teardown failed:', err)
+          })
+        )
+      }
+    }
+    this.activeSessionId = null
+    this.pendingResume = null
+    await Promise.all(teardowns)
+    this.removeAllListeners()
+    this.permissionBroker.removeAllListeners()
+  }
+
   /** Snapshot of the cached session meta. Returns a fresh object so
       the renderer cannot accidentally mutate main-process state. */
   getSessionMeta(): SessionMeta {
@@ -238,26 +400,25 @@ class ChatEngine extends EventEmitter {
   }
 
   /**
-   * Commit a user-picked workspace directory. First call (from the
-   * cold-start gate) is a fast assignment. Subsequent calls perform a
-   * soft switch: every live SessionRuntime is torn down so the next
-   * `send()` spawns a fresh fusion-code child with the new cwd. The
-   * SDK child's cwd is baked at spawn time, so re-spawning is the only
-   * way to retarget without restarting Electron itself.
+   * Commit a user-picked workspace directory.
    *
-   * Validation rules (apply to every call):
+   * In the per-window engine model this is a **once-only** bind: each
+   * window has a single workspace for its whole lifetime. Calling with
+   * the same path re-returns it as a no-op so the renderer's cold-start
+   * gate stays idempotent. Calling with a different path throws — the
+   * renderer should open a new workspace window via
+   * `openWorkspaceWindow` IPC instead.
+   *
+   * Validation rules:
    *   - must be a non-empty string
    *   - must be an absolute path (renderer has no business sending
    *     relative paths; absolute is what `webUtils.getPathForFile`
    *     returns)
    *   - must exist on disk and be a directory
    *
-   * On success, invalidate the file-suggestions cache so the first
-   * `@`-mention popover after the gate reflects the new workspace
-   * instead of stale entries from the previous cwd.
-   *
-   * Re-setting to the same path is a no-op (returns the path without
-   * tearing anything down).
+   * On first successful set, invalidate the file-suggestions cache so
+   * the first `@`-mention popover after the gate reflects the new
+   * workspace instead of stale entries.
    */
   async setWorkspace(candidate: string): Promise<string> {
     if (typeof candidate !== 'string' || candidate.length === 0) {
@@ -277,7 +438,7 @@ class ChatEngine extends EventEmitter {
       throw new Error(`Workspace path is not a directory: ${candidate}`)
     }
 
-    // First-time set — fast path, no teardown.
+    // First-time set — fast path.
     if (this.workspaceDir === null) {
       this.workspaceDir = candidate
       invalidateFileSuggestions()
@@ -286,58 +447,17 @@ class ChatEngine extends EventEmitter {
       return candidate
     }
 
-    // Same path — nothing to do. Avoids a pointless teardown if the
-    // user re-picks the current workspace from the gate.
+    // Same path — no-op. The gate may re-call with the current path.
     if (this.workspaceDir === candidate) {
       return candidate
     }
 
-    // Soft switch. Reuse the `switching` flag so a racing send() gets
-    // a clean error instead of touching half-torn-down state.
-    if (this.switching) {
-      throw new Error('Another session switch is in progress — retry shortly.')
-    }
-    this.switching = true
-    this.logEvent('workspace:switch:begin', {
-      from: this.workspaceDir,
-      to: candidate
-    })
-    try {
-      // Detach every live runtime first so a teardown reject can't
-      // resurrect a half-dead entry through the map. Fire all teardowns
-      // in parallel and await them — we hold `switching` for the whole
-      // window so the engine surface is quiet while children exit.
-      const entries = Array.from(this.sessions.entries())
-      this.sessions.clear()
-      const teardowns: Promise<void>[] = []
-      for (const [id, rt] of entries) {
-        if (rt.handle || rt.queue) {
-          teardowns.push(
-            this.teardownRuntime(id, rt).catch((err) => {
-              console.warn('[engine] workspace switch teardown failed:', err)
-            })
-          )
-        }
-      }
-      this.activeSessionId = null
-      this.pendingResume = null
-      // Stale cli capabilities — clear so the renderer doesn't reuse
-      // them while waiting for the next session's `system init`.
-      this.sessionMeta = { skills: [], mcpServers: [], slashCommands: [] }
-      await Promise.all(teardowns)
-
-      this.workspaceDir = candidate
-      invalidateFileSuggestions()
-    } finally {
-      this.switching = false
-    }
-    // Renderer cues: thread list reflects the new workspace's sessions,
-    // composer's `/` popover drops the previous cli's commands.
-    this.emit('sessionListChanged')
-    this.emit('sessionMetaChanged')
-    this.logEvent('workspace:switch:end', { path: candidate })
-    console.log('[engine] workspace switched', { path: candidate })
-    return candidate
+    // Different path on an already-bound engine. Refuse — the UX
+    // contract is "one workspace per window". The renderer should
+    // open a new window for the new workspace.
+    throw new Error(
+      `Window is already bound to workspace "${this.workspaceDir}". Open a new workspace window to use "${candidate}".`
+    )
   }
 
   async send(
@@ -417,8 +537,7 @@ class ChatEngine extends EventEmitter {
       sdkMessageCount: 0,
       streamedToolUseIds: new Set(),
       toolUseIdByBlockIndex: new Map(),
-      thinkingBlockIndices: new Set(),
-      emittedThinkingStart: false
+      thinkingBlockIndices: new Set()
     }
     this.emitEvent(sessionId, { type: 'start', messageId })
 
@@ -635,15 +754,25 @@ class ChatEngine extends EventEmitter {
     const sdkOptions = {
       pathToClaudeCodeExecutable: cliPath,
       cwd: this.getWorkingDirectory(),
-      // Default permission mode + an Electron-native `canUseTool`
-      // callback. The SDK will invoke our callback whenever a tool
-      // call would otherwise need a terminal prompt; we bridge it
-      // through permissionBroker → IPC → renderer's PermissionDialog.
+      // UI-picked permission mode. Values:
+      //   - default           → canUseTool → broker → dialog (current flow)
+      //   - plan              → SDK restricts to read-only tools, assistant
+      //                          emits a plan block
+      //   - acceptEdits       → SDK auto-allows Edit/Write/NotebookEdit,
+      //                          broker still fires for everything else
+      //   - bypassPermissions → SDK skips every prompt (requires
+      //                          allowDangerouslySkipPermissions below)
+      //   - dontAsk           → SDK denies anything not pre-approved
+      //
       // Allow rules added via "allow during session" live in the
       // SDK's in-process `session` scope, so the dialog only fires
       // once per { toolName, scope } pair for the lifetime of the
       // fusion-code child process.
-      permissionMode: 'default' as const,
+      permissionMode: this.uiPermissionMode as PermissionMode,
+      // Required for bypassPermissions to take effect. It's a no-op
+      // under every other mode so we set it unconditionally — the
+      // mode field is the actual gate.
+      allowDangerouslySkipPermissions: true,
       canUseTool: (
         toolName: string,
         input: Record<string, unknown>,
@@ -772,7 +901,20 @@ class ChatEngine extends EventEmitter {
     // of `runtime.handle` / `runtime.queue` — when it exits (cleanly
     // or via error), it nulls them out so the next openSession
     // re-opens.
-    runtime.pumpPromise = this.runPump(sessionId, runtime, handle)
+    const pumpPromise = this.runPump(sessionId, runtime, handle)
+    runtime.pumpPromise = pumpPromise
+    // Defensive no-op rejection handler. If the pump rejects BEFORE
+    // any caller awaits `pumpPromise` (the classic case: a fast
+    // switchToSession races the cli's cold start and `runPump` blows
+    // up with "cli exited before first init" while no one has yet
+    // entered the try/catch inside `teardownRuntime`), Node would
+    // raise an UnhandledPromiseRejectionWarning — noisy in dev and
+    // fatal under `--unhandled-rejections=strict`. Attaching this
+    // handler doesn't swallow the error for the real awaiter: the
+    // original promise still rejects into `teardownRuntime`'s
+    // `await rt.pumpPromise`, which logs it. We just stop Node from
+    // thinking nobody has signed up for the error yet.
+    pumpPromise.catch(() => {})
     this.logEvent('openSession:queued', { sessionId })
   }
 
@@ -980,6 +1122,66 @@ class ChatEngine extends EventEmitter {
     return this.activeSessionId
   }
 
+  /** Current UI permission mode. */
+  getPermissionMode(): UiPermissionMode {
+    return this.uiPermissionMode
+  }
+
+  /**
+   * Internal: update the field + emit the `permissionModeChanged`
+   * event. Does NOT forward to any live SDK runtime. Used for cases
+   * where the SDK transitions its own internal mode (e.g. ExitPlanMode
+   * approval) and we just need to mirror the change on the engine
+   * side so the picker stays honest.
+   *
+   * Idempotent: returns false without emitting when the mode is
+   * already the requested value.
+   */
+  private applyPermissionMode(mode: UiPermissionMode): boolean {
+    if (this.uiPermissionMode === mode) return false
+    this.uiPermissionMode = mode
+    this.emit('permissionModeChanged', mode)
+    this.logEvent('permissionMode:apply', { mode })
+    return true
+  }
+
+  /**
+   * Update the UI permission mode. Stores the new value on the engine
+   * so the next `openSession()` picks it up, AND forwards it to every
+   * live runtime via `query.setPermissionMode()` so in-flight sessions
+   * switch immediately instead of waiting for a restart.
+   *
+   * The SDK's `setPermissionMode` is async but we deliberately don't
+   * await each one in parallel — the forwarding is best-effort. If a
+   * runtime's handle has already torn down (pump exited, cli crashed)
+   * the call throws; we swallow it and move on so a single dead
+   * session can't block the rest.
+   *
+   * Renderer-initiated — the renderer already knows the new value, so
+   * we do NOT re-broadcast a `permissionModeChanged` event here. The
+   * event is reserved for main-initiated changes (ExitPlanMode).
+   */
+  async setPermissionMode(mode: UiPermissionMode): Promise<void> {
+    if (this.uiPermissionMode === mode) return
+    this.uiPermissionMode = mode
+    const sdkMode = mode as PermissionMode
+    const failures: string[] = []
+    for (const [sessionId, rt] of this.sessions) {
+      const handle = rt.handle
+      if (!handle) continue
+      try {
+        await handle.setPermissionMode(sdkMode)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        failures.push(`${sessionId}: ${msg}`)
+      }
+    }
+    if (failures.length > 0) {
+      console.warn('[engine] setPermissionMode forwarding failed', failures)
+    }
+    this.logEvent('permissionMode:set', { mode })
+  }
+
   /**
    * SDK `canUseTool` callback. Called by the Agent SDK for every tool
    * invocation the CLI would otherwise need to prompt on.
@@ -1033,7 +1235,7 @@ class ChatEngine extends EventEmitter {
     })
 
     try {
-      const outcome = await getPermissionBroker().request(
+      const outcome = await this.permissionBroker.request(
         {
           sessionId,
           toolUseId,
@@ -1055,6 +1257,29 @@ class ChatEngine extends EventEmitter {
           interrupt: false,
           decisionClassification: 'user_reject'
         }
+      }
+
+      // ExitPlanMode auto-transition. When the assistant calls
+      // ExitPlanMode and the user approves, the SDK/CLI internally
+      // flips its own permissionMode out of `plan` (implementation
+      // detail of the upstream fusion-code CLI — see cli.js `ExitPlanMode`
+      // handler). We mirror that on our side so the renderer's picker
+      // and its localStorage catch up without the user re-clicking.
+      //
+      // We don't `setPermissionMode('default')` here, only
+      // `applyPermissionMode('default')` — the SDK is already doing the
+      // real work; calling the forwarding variant would send a
+      // redundant control request back into the CLI, and worse, race
+      // with its own transition. `applyPermissionMode` just updates
+      // the engine field + emits `permissionModeChanged` so the
+      // renderer picks it up via the PERMISSION_MODE_CHANGED IPC.
+      //
+      // Target mode is hardcoded to `default` to match the CLI's
+      // post-plan behaviour. If we ever want to expose "after plan go
+      // to X" as a setting, the X lives in a user preference and is
+      // read here.
+      if (toolName === 'ExitPlanMode' && this.uiPermissionMode === 'plan') {
+        this.applyPermissionMode('default')
       }
 
       // `updatedInput` is typed as optional in @anthropic-ai/claude-agent-sdk's
@@ -1413,22 +1638,30 @@ class ChatEngine extends EventEmitter {
     }
 
     if (block.type === 'thinking') {
-      // Extended-thinking block opened. The actual text arrives via
+      // Extended-thinking block opened. Text arrives via
       // `content_block_delta` with `delta.type === 'thinking_delta'`,
-      // so we only need to remember that this index is a thinking
-      // block (so deltas know how to route) and emit a one-shot
-      // `thinking_start` for the renderer to spin up the card.
-      // Subsequent thinking blocks in the same turn reuse the same
-      // reasoning part on the renderer side, so we suppress repeat
-      // starts via `emittedThinkingStart`.
+      // so we remember this index routes to the reasoning slot and
+      // emit `thinking_start` for the renderer to spin up the card.
+      //
+      // We emit on EVERY thinking block — not once per turn. A single
+      // user turn can span multiple assistant messages interleaved
+      // with tool calls, and each post-tool assistant message may
+      // open its own thinking block. Suppressing later starts left
+      // the renderer with no signal to open a new reasoning card,
+      // so the second round of "thinking" silently disappeared into
+      // the chat store without any visible "正在思考…" label.
+      //
+      // `startReasoning` in the chat store is idempotent: if the
+      // current message's trailing part is already a reasoning part
+      // (streaming first block in the same message) it no-ops; if
+      // the trailing part is a tool-call (tool run between two
+      // thinking blocks) it pushes a fresh empty reasoning part.
+      // Both branches are what we want here.
       active.thinkingBlockIndices.add(index)
-      if (!active.emittedThinkingStart) {
-        active.emittedThinkingStart = true
-        this.emitEvent(sessionId, {
-          type: 'thinking_start',
-          messageId: active.messageId
-        })
-      }
+      this.emitEvent(sessionId, {
+        type: 'thinking_start',
+        messageId: active.messageId
+      })
       return
     }
     // text blocks don't need a start event — renderer still lazily
@@ -1995,9 +2228,22 @@ class ChatEngine extends EventEmitter {
   }
 }
 
-let instance: ChatEngine | null = null
-export function getChatEngine(): ChatEngine {
-  if (!instance) instance = new ChatEngine()
-  return instance
+/**
+ * Construct a fresh ChatEngine bound to a WebContents.
+ *
+ * Each call produces an independent engine with its own sessions Map,
+ * its own PermissionBroker, and its own event routing to the given
+ * webContents. The tabRegistry owns the mapping from webContents.id →
+ * engine so IPC handlers can resolve the right one via `event.sender`.
+ *
+ * `opts.shouldBumpOnTurnEnd` lets the caller override the tray
+ * badge-bump gate (see ChatEngine.shouldBumpOnTurnEnd) — pass a
+ * resolver that checks both "shell window focused" and "this tab
+ * active" so badges only fire when the user isn't looking.
+ */
+export function createChatEngine(
+  webContents: WebContents,
+  opts: ChatEngineOptions = {}
+): ChatEngine {
+  return new ChatEngine(webContents, opts)
 }
-export type { ChatEngine }

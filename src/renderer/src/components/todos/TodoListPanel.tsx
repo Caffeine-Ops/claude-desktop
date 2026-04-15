@@ -31,11 +31,12 @@ import { useTodosStore, type TodoItem, type TodoStatus } from '../../stores/todo
  * Write path
  * ----------
  * The LLM writes the whole list in one go via `setTodos`, wired in
- * FusionRuntimeProvider by intercepting `TodoWrite` tool calls. Users
- * can click a row's icon to cycle pending → in_progress → completed →
- * pending and delete rows, but there's no "add todo" composer — that
- * path was removed intentionally so the panel always reflects what the
- * model is actually tracking, not a hand-maintained parallel list.
+ * FusionRuntimeProvider by intercepting `TodoWrite` tool calls. The
+ * panel is strictly read-only on the user side — there's no "add
+ * todo" composer and the row icons are not clickable. The agent is
+ * the single source of truth for the task list, so surfacing a click
+ * affordance would just let users drift the UI out of sync with what
+ * the model believes it's tracking.
  */
 export function TodoListPanel(): React.JSX.Element {
   const t = useT()
@@ -43,8 +44,6 @@ export function TodoListPanel(): React.JSX.Element {
   const todos = useTodosStore((s) =>
     sessionId === null ? EMPTY : (s.todos[sessionId] ?? EMPTY)
   )
-  const cycleStatus = useTodosStore((s) => s.cycleStatus)
-
   // Counts drive the small "3 / 5" summary next to the header. Kept
   // inline instead of memoized — the list is bounded and re-renders
   // only on explicit mutations, so the arithmetic is negligible.
@@ -101,10 +100,6 @@ export function TodoListPanel(): React.JSX.Element {
                 key={`${i}-${todo.content}`}
                 todo={todo}
                 t={t}
-                onCycle={() => {
-                  if (sessionId === null) return
-                  cycleStatus(sessionId, i)
-                }}
               />
             ))}
           </ul>
@@ -140,10 +135,9 @@ function EmptyHint(): React.JSX.Element {
 type RowProps = {
   todo: TodoItem
   t: (key: import('../../i18n').StringKey) => string
-  onCycle: () => void
 }
 
-function TodoRow({ todo, t, onCycle }: RowProps): React.JSX.Element {
+function TodoRow({ todo, t }: RowProps): React.JSX.Element {
   const tf = useTFormat()
   const isCompleted = todo.status === 'completed'
   const isInProgress = todo.status === 'in_progress'
@@ -164,9 +158,7 @@ function TodoRow({ todo, t, onCycle }: RowProps): React.JSX.Element {
       <div
         className={
           'group/todo relative flex items-start gap-2.5 rounded-lg py-1.5 pl-2.5 pr-2 text-[12.5px] transition-colors ' +
-          (isInProgress
-            ? 'bg-accent/10 ring-1 ring-inset ring-accent/15'
-            : 'hover:bg-muted/50')
+          (isInProgress ? 'bg-accent/10 ring-1 ring-inset ring-accent/15' : '')
         }
       >
         {/* Active-row accent strip — only shown for in_progress so the
@@ -178,15 +170,17 @@ function TodoRow({ todo, t, onCycle }: RowProps): React.JSX.Element {
           />
         )}
 
-        <button
-          type="button"
-          onClick={onCycle}
-          className="mt-[1px] flex size-[14px] shrink-0 items-center justify-center transition"
-          aria-label={tf('todosToggleStatus', { status: statusLabel })}
+        {/* Status icon is presentational only — the todo list is
+            owned by the agent via TodoWrite tool calls, so the user
+            cannot cycle or edit individual rows. `title` still gives
+            the screen-reader / hover-tooltip label. */}
+        <span
+          aria-label={tf('todosStatusTitle', { status: statusLabel })}
           title={tf('todosStatusTitle', { status: statusLabel })}
+          className="mt-[1px] flex size-[14px] shrink-0 items-center justify-center"
         >
           <StatusIcon status={todo.status} />
-        </button>
+        </span>
         <span
           className={
             'min-w-0 flex-1 whitespace-pre-wrap break-words leading-snug ' +

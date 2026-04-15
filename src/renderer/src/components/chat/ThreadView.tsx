@@ -19,8 +19,8 @@ import type { Attachment, Unstable_TriggerItem } from '@assistant-ui/core'
 import { AnimatePresence, motion } from 'motion/react'
 
 import type { SessionMeta } from '../../../../shared/types'
-import { useT, type StringKey } from '../../i18n'
-import { useChatStore } from '../../stores/chat'
+import { useI18n, useT, useToolLabel, type StringKey } from '../../i18n'
+import { REASONING_PLACEHOLDER, useChatStore } from '../../stores/chat'
 import { buildSlashAdapter, slashFormatter } from '../../composer/slashAdapter'
 import {
   buildFileMentionAdapter,
@@ -29,8 +29,11 @@ import {
 import { ThinkingSpinner } from './ThinkingSpinner'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { DictationWaveform } from './DictationWaveform'
-import { WorkspacePill } from '../workspace/WorkspacePill'
-import { useWorkspaceStore } from '../../stores/workspace'
+import { extractText, safeStringify } from './toolHelpers'
+import { friendlyToolView } from './ToolFormatters'
+import { PermissionModePicker } from '../permissions/PermissionModePicker'
+import { InlinePermissionPrompt } from '../permissions/InlinePermissionPrompt'
+import { usePermissionForToolUseId } from '../../stores/permissions'
 import { cancelActiveDictation } from '../../runtime/openaiWhisperDictationAdapter'
 import hljs from 'highlight.js/lib/common'
 
@@ -864,7 +867,13 @@ function ReasoningCard({
   status?: { type: string }
 }): React.JSX.Element {
   const isStreaming = status?.type === 'running'
-  const hasText = text.length > 0
+  // A ZWSP-only reasoning part is our "pre-show placeholder" — the
+  // card label should appear immediately, but the body should stay
+  // collapsed until a real delta replaces the placeholder. We also
+  // strip the ZWSP out of the rendered text below so a late-arriving
+  // copy-paste doesn't surface an invisible character.
+  const displayText = text.replace(REASONING_PLACEHOLDER, '')
+  const hasText = displayText.length > 0
   // `null` ⇒ user hasn't manually toggled yet — let the streaming
   // flag drive the open state. Once they click, lock to their
   // explicit choice. This way the card auto-expands while thinking
@@ -943,7 +952,7 @@ function ReasoningCard({
             >
               <div className="mt-1.5 rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-[12.5px] leading-relaxed text-muted-foreground/90">
                 <pre className="whitespace-pre-wrap break-words font-sans">
-                  {text}
+                  {displayText}
                 </pre>
               </div>
             </motion.div>
@@ -1000,8 +1009,25 @@ type ToolFallbackProps = {
 }
 
 function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
-  const { toolName, args, argsText, result, status } = props
+  const { toolName, toolCallId, args, argsText, result, status } = props
+  const toolLabel = useToolLabel()
+  const t = useT()
+  const lang = useI18n((s) => s.lang)
   const running = status?.type === 'running' || status?.type === 'requires-action'
+  // Look up any pending tool-permission request whose `toolUseId` matches
+  // this card. When present we render an inline `InlinePermissionPrompt`
+  // below the Input pane instead of the old fullscreen modal — one
+  // prompt per tool call means parallel tool_use blocks all get their
+  // own decision UI and the assistant never stalls waiting on a lost
+  // sibling request. See stores/permissions.ts for the store shape.
+  const pendingPermission = usePermissionForToolUseId(toolCallId)
+  // AskUserQuestion is a special beast — its "args" are the questions
+  // themselves and the InlinePermissionPrompt renders the dedicated
+  // view that lets the user pick answers. Showing the raw JSON Input
+  // pane above that view is redundant and makes the card look noisy,
+  // so we hide the Input pane while AskUserQuestion is pending.
+  const hideInputPane =
+    pendingPermission !== null && toolName === 'AskUserQuestion'
 
   // Input-pane display logic — see the original prop-shape comment.
   const hasArgsText = typeof argsText === 'string' && argsText.length > 0
@@ -1030,6 +1056,44 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
       toolName === 'Edit' ||
       toolName === 'MultiEdit')
 
+  // Friendly (human-readable) view, if the tool has a formatter. See
+  // ToolFormatters.tsx for the per-tool rules. The formatter owns the
+  // panes it sets; anything it leaves `undefined` falls through to the
+  // raw JSON / CodeFileView default below, and explicit `null` hides
+  // the pane entirely. Formatters gracefully return null when `args`
+  // is still a streaming text blob (we don't memoize for the same
+  // reason — args can mutate mid-stream).
+  const friendly = friendlyToolView(toolName, {
+    args,
+    argsText,
+    result,
+    running,
+    lang
+  })
+
+  // Decide what goes into the input slot.
+  //   - friendly.input === undefined ⇒ default JSON pane (honouring
+  //     hideInputPane from the AskUserQuestion special-case)
+  //   - friendly.input === null      ⇒ no input pane at all
+  //   - friendly.input === object    ⇒ friendly replacement
+  const useFriendlyInput = Boolean(friendly?.input)
+  const hideDefaultInput =
+    hideInputPane || friendly?.input === null || useFriendlyInput
+
+  // Same semantics for the output slot, with the extra wrinkle that
+  // the default output splits into CodeFileView vs JsonView based on
+  // `isCodeResult`. Friendly formatters for Read leave `output`
+  // undefined so Read's CodeFileView continues to render.
+  const useFriendlyOutput = Boolean(friendly?.output)
+  const hideDefaultOutput =
+    friendly?.output === null || useFriendlyOutput || result === undefined
+
+  // The "raw data" fallback toggle is only meaningful when we actually
+  // replaced at least one of the default panes with a friendly one.
+  // Otherwise the default panes are already on screen and there's
+  // nothing to "reveal".
+  const showRawDataToggle = useFriendlyInput || useFriendlyOutput
+
   return (
     <div className="flex w-full gap-3">
       <span
@@ -1046,7 +1110,7 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
           <summary className="flex cursor-pointer list-none items-center gap-2 text-[13px]">
             <StatusDot running={running} />
             <span className="font-mono font-medium text-foreground">
-              {toolName}
+              {toolLabel(toolName)}
             </span>
             <StatusPill running={running} />
             {summary && (
@@ -1063,28 +1127,97 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
           </summary>
 
           <div className="mt-2 space-y-2 text-[12px]">
-            <ToolPane label="Input" copyText={inputBody}>
-              <JsonView text={inputBody} maxHeight />
-              {running && hasArgsText && (
-                <span
-                  aria-hidden
-                  className="ml-0.5 inline-block h-[1em] w-[0.5ch] animate-pulse bg-accent align-[-0.1em]"
-                />
-              )}
-            </ToolPane>
-            {result !== undefined &&
+            {friendly?.headline && (
+              <div className="text-[12.5px] leading-relaxed text-foreground/85">
+                {friendly.headline}
+              </div>
+            )}
+
+            {useFriendlyInput && friendly?.input && (
+              <ToolPane
+                label={friendly.input.label}
+                copyText={friendly.input.copyText}
+              >
+                {friendly.input.content}
+              </ToolPane>
+            )}
+
+            {!hideDefaultInput && (
+              <ToolPane label={t('toolPaneInputLabel')} copyText={inputBody}>
+                <JsonView text={inputBody} maxHeight />
+                {running && hasArgsText && (
+                  <span
+                    aria-hidden
+                    className="ml-0.5 inline-block h-[1em] w-[0.5ch] animate-pulse bg-accent align-[-0.1em]"
+                  />
+                )}
+              </ToolPane>
+            )}
+
+            {pendingPermission && (
+              <InlinePermissionPrompt request={pendingPermission} />
+            )}
+
+            {useFriendlyOutput && friendly?.output && (
+              <ToolPane
+                label={friendly.output.label}
+                copyText={friendly.output.copyText}
+              >
+                {friendly.output.content}
+              </ToolPane>
+            )}
+
+            {!hideDefaultOutput &&
               (isCodeResult ? (
-                <ToolPane label="Output" copyText={extractText(result)}>
+                <ToolPane
+                  label={t('toolPaneOutputLabel')}
+                  copyText={extractText(result)}
+                >
                   <CodeFileView
                     text={extractText(result)}
                     language={codeLanguage}
                   />
                 </ToolPane>
               ) : (
-                <ToolPane label="Output" copyText={safeStringify(result)}>
+                <ToolPane
+                  label={t('toolPaneOutputLabel')}
+                  copyText={safeStringify(result)}
+                >
                   <JsonView text={safeStringify(result)} maxHeight />
                 </ToolPane>
               ))}
+
+            {showRawDataToggle && (
+              <details className="group/raw">
+                <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground/60 transition hover:text-muted-foreground">
+                  <span
+                    aria-hidden
+                    className="inline-block transition group-open/raw:rotate-90"
+                  >
+                    ▸
+                  </span>
+                  {t('toolRawDataSummary')}
+                </summary>
+                <div className="mt-1.5 space-y-2">
+                  {!hideInputPane && (
+                    <ToolPane
+                      label={t('toolPaneInputLabel')}
+                      copyText={inputBody}
+                    >
+                      <JsonView text={inputBody} maxHeight />
+                    </ToolPane>
+                  )}
+                  {result !== undefined && (
+                    <ToolPane
+                      label={t('toolPaneOutputLabel')}
+                      copyText={safeStringify(result)}
+                    >
+                      <JsonView text={safeStringify(result)} maxHeight />
+                    </ToolPane>
+                  )}
+                </div>
+              </details>
+            )}
           </div>
         </details>
       </div>
@@ -1107,16 +1240,27 @@ function StatusDot({ running }: { running: boolean }): React.JSX.Element {
 }
 
 function StatusPill({ running }: { running: boolean }): React.JSX.Element {
+  const t = useT()
+  const lang = useI18n((s) => s.lang)
+  // English pills keep the original mono-uppercase look; Chinese pills
+  // drop the uppercase / wide-tracking classes since neither apply to
+  // CJK glyphs (they just inflate the label box).
+  const typographyClasses =
+    lang === 'zh'
+      ? 'font-sans text-[10px]'
+      : 'font-mono text-[10px] uppercase tracking-wider'
   return (
     <span
       className={
-        'rounded-full border px-1.5 py-px font-mono text-[10px] uppercase tracking-wider ' +
+        'rounded-full border px-1.5 py-px ' +
+        typographyClasses +
+        ' ' +
         (running
           ? 'border-accent/40 bg-accent/15 text-accent'
           : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500')
       }
     >
-      {running ? 'running' : 'done'}
+      {running ? t('toolStatusRunning') : t('toolStatusDone')}
     </span>
   )
 }
@@ -1293,16 +1437,6 @@ function summarizeArgs(args: unknown): string | null {
   return null
 }
 
-function safeStringify(value: unknown): string {
-  if (value === undefined) return ''
-  if (typeof value === 'string') return value
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
-}
-
 /* ───────────── Code-file output highlighting ────────────── */
 
 /**
@@ -1315,35 +1449,6 @@ function pickFilePath(args: unknown): string | undefined {
   const obj = args as Record<string, unknown>
   const v = obj.file_path ?? obj.filePath ?? obj.path
   return typeof v === 'string' && v.length > 0 ? v : undefined
-}
-
-/**
- * Unwrap the tool-result payload into a plain string we can feed to
- * the highlighter. Claude-Code-style tools return the file body as a
- * top-level string; newer SDKs wrap it in `{ content: [{type:'text',
- * text: '...'}] }`. Both shapes collapse to the same highlighted view.
- */
-function extractText(result: unknown): string {
-  if (result === undefined) return ''
-  if (typeof result === 'string') return result
-  if (Array.isArray(result)) {
-    return result
-      .map((part) =>
-        part && typeof part === 'object' && 'text' in part
-          ? String((part as { text?: unknown }).text ?? '')
-          : typeof part === 'string'
-            ? part
-            : ''
-      )
-      .join('')
-  }
-  if (typeof result === 'object') {
-    const obj = result as Record<string, unknown>
-    if (typeof obj.text === 'string') return obj.text
-    if (typeof obj.content === 'string') return obj.content
-    if (Array.isArray(obj.content)) return extractText(obj.content)
-  }
-  return safeStringify(result)
 }
 
 /**
@@ -1794,10 +1899,20 @@ function Composer(): React.JSX.Element {
           subtle affordance. Reads the current folder from the
           workspace store and commits switches through its own
           popover, so the sidebar "switch workspace" button is just
-          one of several equivalent entry points now. */}
-      <WorkspacePill
-        onSwitch={(path) => useWorkspaceStore.getState().switchTo(path)}
-      />
+          one of several equivalent entry points now.
+
+          PermissionModePicker shares the row, anchored to the right
+          edge via absolute positioning so WorkspacePill's own
+          `w-full` flex layout doesn't have to change. The pill's
+          internal `py-1.5` sets the row height; the picker is
+          centered vertically to match. */}
+      <div className="relative mb-2 min-h-[30px]">
+        <div className="pointer-events-none absolute right-1 top-0 flex h-[30px] items-center">
+          <div className="pointer-events-auto">
+            <PermissionModePicker />
+          </div>
+        </div>
+      </div>
       {/* Outer root: `/` slash commands. Its popover JSX lives
           *between* the two roots so `useTriggerPopoverContext()`
           inside SlashPopoverList resolves to this root. */}

@@ -112,14 +112,14 @@ export function FusionRuntimeProvider({
           appendAssistantDelta(event.messageId, event.delta)
           break
         case 'thinking_start':
-          // Pre-create an empty reasoning part so the "正在思考…"
-          // dot/label appears the moment the SDK opens the thinking
-          // block. Without this we'd wait for the first thinking
-          // delta, and Claude's extended-thinking blocks routinely
-          // sit silent for several seconds before producing any
-          // delta — long enough that the user perceives the UI as
-          // stuck. The chat store keeps this idempotent so a second
-          // thinking_start in the same turn doesn't double-insert.
+          // Pre-create a reasoning part so the "正在思考…" dot/label
+          // appears the moment the SDK opens the thinking block.
+          // Without this we'd wait for the first thinking delta, and
+          // Claude's extended-thinking blocks routinely sit silent
+          // for several seconds before producing any delta — long
+          // enough that the user perceives the UI as stuck. The chat
+          // store is idempotent so a second thinking_start in the
+          // same message is a no-op.
           startReasoning(event.messageId)
           break
         case 'thinking_delta':

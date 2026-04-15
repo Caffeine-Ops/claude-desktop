@@ -28,7 +28,14 @@ const TRAY_STRINGS: Record<Lang, { show: string; quit: string }> = {
 }
 
 let tray: Tray | null = null
-let trayWindow: BrowserWindow | null = null
+/**
+ * Resolver that returns the BrowserWindow the tray should target for
+ * "Show" / click-to-front actions. In the multi-workspace refactor
+ * there is no single "main window" anymore — the tray asks the
+ * windowRegistry for the most recently focused workspace window each
+ * time the user interacts. Null means "no workspace windows open".
+ */
+let targetWindowResolver: (() => BrowserWindow | null) | null = null
 // Default to Chinese to match the renderer's persisted default. The
 // renderer pushes the real value via IPC on mount, so any drift is
 // resolved within the first frame after the window is ready.
@@ -65,12 +72,18 @@ function showWindow(window: BrowserWindow): void {
   window.focus()
 }
 
-function buildMenu(window: BrowserWindow, lang: Lang): Menu {
+function showResolvedWindow(): void {
+  if (!targetWindowResolver) return
+  const target = targetWindowResolver()
+  if (target) showWindow(target)
+}
+
+function buildMenu(lang: Lang): Menu {
   const labels = TRAY_STRINGS[lang]
   return Menu.buildFromTemplate([
     {
       label: labels.show,
-      click: () => showWindow(window)
+      click: () => showResolvedWindow()
     },
     { type: 'separator' },
     {
@@ -82,15 +95,21 @@ function buildMenu(window: BrowserWindow, lang: Lang): Menu {
   ])
 }
 
-export function createTray(window: BrowserWindow): Tray {
+/**
+ * Build the tray. `resolver` is called on every user interaction to
+ * pick which workspace window to bring forward — in the multi-window
+ * world, that's usually the most recently focused one. The tray
+ * itself stays a process-level singleton.
+ */
+export function createTray(resolver: () => BrowserWindow | null): Tray {
   if (tray) return tray
 
-  trayWindow = window
+  targetWindowResolver = resolver
   idleIcon = buildIcon()
   tray = new Tray(idleIcon)
   tray.setToolTip('Claude Desktop')
-  tray.setContextMenu(buildMenu(window, currentLang))
-  tray.on('click', () => showWindow(window))
+  tray.setContextMenu(buildMenu(currentLang))
+  tray.on('click', () => showResolvedWindow())
 
   return tray
 }
@@ -105,10 +124,8 @@ export function createTray(window: BrowserWindow): Tray {
  */
 export function updateTrayLang(lang: Lang): void {
   currentLang = lang
-  if (!tray || tray.isDestroyed() || !trayWindow || trayWindow.isDestroyed()) {
-    return
-  }
-  tray.setContextMenu(buildMenu(trayWindow, lang))
+  if (!tray || tray.isDestroyed()) return
+  tray.setContextMenu(buildMenu(lang))
 }
 
 export function destroyTray(): void {
@@ -116,7 +133,7 @@ export function destroyTray(): void {
     tray.destroy()
   }
   tray = null
-  trayWindow = null
+  targetWindowResolver = null
 }
 
 /**
