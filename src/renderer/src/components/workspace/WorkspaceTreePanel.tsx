@@ -176,31 +176,38 @@ export function WorkspaceTreePanel(): React.JSX.Element {
   const empty = !loading && !error && tree.length === 0
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/55 bg-card/45 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+    <section
+      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-foreground/[0.03] dark:bg-white/[0.04]"
+      style={{ letterSpacing: '-0.01em' }}
+    >
       {/* Header — mirrors the Todos header above for visual symmetry.
           The count shows trailing '+' when the scan hit MAX_ENTRIES
           in main so the user knows the tree is truncated. A second
           line shows the active workspace path (home-shortened, full
           path on hover) so the user always knows which folder the
           tree below is rooted at. */}
-      <div className="flex flex-col gap-1 px-3 pb-2 pt-3">
+      <div className="flex flex-col gap-1.5 px-3.5 pb-2 pt-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-amber-400/15 text-amber-500 dark:text-amber-400">
+            <span className="flex size-[18px] shrink-0 items-center justify-center text-muted-foreground">
               <FilesHeaderIcon />
             </span>
-            <span className="text-[12px] font-semibold tracking-tight text-foreground">
+            <span
+              className="font-semibold text-foreground"
+              style={{ fontSize: '13px', letterSpacing: '-0.012em' }}
+            >
               {t('filesTitle')}
             </span>
           </div>
           {files.length > 0 && (
             <span
-              className="rounded-full bg-muted/70 px-2 py-[2px] text-[10.5px] font-medium tabular-nums text-muted-foreground"
+              className="rounded-full bg-foreground/[0.08] px-2 py-[2px] text-[10.5px] font-medium tabular-nums text-muted-foreground dark:bg-white/[0.1]"
               title={
                 truncated
                   ? tf('filesCountTruncated', { count: files.length })
                   : tf('filesCountLabel', { count: files.length })
               }
+              style={{ letterSpacing: '-0.01em' }}
             >
               {files.length}
               {truncated && '+'}
@@ -211,26 +218,35 @@ export function WorkspaceTreePanel(): React.JSX.Element {
       </div>
 
       {/* Scroll region — independent from the Todo scroll above. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2 pt-0.5">
+      <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2 pt-0.5">
         {loading && files.length === 0 && (
-          <div className="flex items-center gap-2 px-4 py-2 text-[11px] text-muted-foreground/70">
+          <div
+            className="flex items-center gap-2 px-4 py-2 text-muted-foreground"
+            style={{ fontSize: '11px', letterSpacing: '-0.01em' }}
+          >
             <span className="inline-flex size-3 animate-pulse rounded-full bg-muted-foreground/40" />
             {t('filesLoading')}
           </div>
         )}
 
         {error && (
-          <div className="mx-3 my-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
+          <div
+            className="mx-3 my-2 rounded-lg bg-red-500/[0.12] px-3 py-2 text-red-500"
+            style={{ fontSize: '11px', lineHeight: 1.47, letterSpacing: '-0.01em' }}
+          >
             {error}
           </div>
         )}
 
         {empty && (
-          <div className="mx-2 my-2 flex flex-col items-center gap-2 rounded-lg border border-dashed border-border/60 bg-muted/20 px-3 py-5 text-center text-[11px] text-muted-foreground/70">
-            <span className="flex size-7 items-center justify-center rounded-full bg-muted/70 text-muted-foreground/80">
+          <div
+            className="mx-2 my-2 flex flex-col items-center gap-2.5 rounded-xl px-3 py-6 text-center text-muted-foreground"
+            style={{ fontSize: '11.5px', letterSpacing: '-0.01em' }}
+          >
+            <span className="flex size-8 items-center justify-center rounded-full bg-foreground/[0.06] text-muted-foreground/80 dark:bg-white/[0.08]">
               <FilesHeaderIcon />
             </span>
-            <div className="font-medium text-muted-foreground">
+            <div className="font-medium text-foreground/75">
               {t('filesEmpty')}
             </div>
           </div>
@@ -303,18 +319,23 @@ function WorkspacePathChip({ path }: { path: string }): React.JSX.Element {
       type="button"
       onClick={onOpen}
       title={path}
-      className="group/path ml-7 flex max-w-[calc(100%-1.75rem)] items-center gap-1.5 self-start rounded-md border border-border/40 bg-muted/35 px-1.5 py-[3px] text-left transition-colors hover:border-border/70 hover:bg-muted/60"
+      className="group/path ml-[26px] flex max-w-[calc(100%-1.75rem)] items-center gap-1.5 self-start rounded-lg bg-foreground/[0.05] px-2 py-1 text-left transition-colors hover:bg-foreground/[0.08] dark:bg-white/[0.06] dark:hover:bg-white/[0.1]"
     >
       <span className="flex size-3 shrink-0 items-center justify-center text-muted-foreground/70 group-hover/path:text-muted-foreground">
         <HomeMiniIcon />
       </span>
       <span
-        className="min-w-0 flex-1 truncate font-mono text-[10.5px] leading-tight"
+        className="min-w-0 flex-1 truncate leading-tight"
         dir="rtl"
-        style={{ textAlign: 'left', unicodeBidi: 'plaintext' }}
+        style={{
+          textAlign: 'left',
+          unicodeBidi: 'plaintext',
+          fontSize: '10.5px',
+          letterSpacing: '-0.01em'
+        }}
       >
-        <span className="text-muted-foreground/55">{parent}</span>
-        <span className="font-medium text-foreground/85">{basename}</span>
+        <span className="text-muted-foreground/60">{parent}</span>
+        <span className="font-semibold text-foreground/90">{basename}</span>
       </span>
     </button>
   )
@@ -416,12 +437,12 @@ function Node({
     <li>
       <div
         className={
-          'group/tree flex items-center gap-1.5 rounded-md py-[3px] pr-2 text-[12.5px] transition-colors ' +
+          'group/tree flex items-center gap-1.5 rounded-lg py-[3px] pr-2 transition-colors ' +
           (node.isDir
-            ? 'cursor-pointer text-foreground/90 hover:bg-muted/55 hover:text-foreground'
-            : 'cursor-default text-muted-foreground hover:bg-muted/40 hover:text-foreground')
+            ? 'cursor-pointer text-foreground/90 hover:bg-foreground/[0.06] hover:text-foreground dark:hover:bg-white/[0.08]'
+            : 'cursor-default text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground dark:hover:bg-white/[0.06]')
         }
-        style={indentStyle}
+        style={{ ...indentStyle, fontSize: '12.5px', letterSpacing: '-0.012em' }}
         onClick={node.isDir ? () => onToggle(node.path) : undefined}
         onDoubleClick={
           !node.isDir

@@ -52,113 +52,80 @@ export function EmptyWorkspaceShell(): React.JSX.Element {
   }, [busy])
 
   return (
-    <div className="relative flex h-full min-h-0 w-full flex-1 flex-col bg-transparent">
-      {/* Ambient background — two soft accent blobs + a fine dotted
-          grid. Pure decoration. */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div
-          className="absolute inset-0 opacity-[0.035] dark:opacity-[0.06]"
-          style={{
-            backgroundImage:
-              'radial-gradient(hsl(var(--foreground)) 1px, transparent 1px)',
-            backgroundSize: '22px 22px'
-          }}
-        />
-        <motion.div
-          className="absolute -left-24 -top-24 size-[460px] rounded-full bg-accent/20 blur-[120px]"
-          animate={{ scale: [1, 1.06, 1] }}
-          transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
-        />
-        <motion.div
-          className="absolute -bottom-32 -right-24 size-[520px] rounded-full bg-sky-500/15 blur-[140px]"
-          animate={{ scale: [1, 1.08, 1] }}
-          transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut' }}
-        />
-      </div>
-
-      {/* Message area — matches the real ThreadView viewport vibe so
-          cold start reads as "empty chat" not "separate page". */}
+    <div className="relative flex h-full min-h-0 w-full flex-1 flex-col bg-background">
       <div className="relative flex flex-1 items-center justify-center overflow-y-auto px-6">
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: 'easeOut' }}
-          className="flex max-w-md flex-col items-center gap-5 text-center"
+          transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
+          className="flex max-w-[460px] flex-col items-center text-center"
         >
-          <motion.div
-            animate={{ y: [0, -4, 0] }}
-            transition={{ duration: 3.2, repeat: Infinity, ease: 'easeInOut' }}
-            className="flex size-14 items-center justify-center rounded-2xl border border-border/80 bg-background/70 text-foreground/70 shadow-sm"
-          >
+          <div className="flex size-16 items-center justify-center rounded-[22px] bg-muted/60 text-foreground/75">
             <svg
-              width="26"
-              height="26"
+              width="30"
+              height="30"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
-              strokeWidth="1.6"
+              strokeWidth="1.5"
               strokeLinecap="round"
               strokeLinejoin="round"
               aria-hidden
             >
               <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
             </svg>
-          </motion.div>
-          <div>
-            <div className="text-[15px] font-semibold tracking-tight text-foreground">
-              {t('emptyWorkspaceTitle')}
-            </div>
-            <div className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
-              {t('emptyWorkspaceDesc')}
-            </div>
           </div>
+
+          <h1
+            className="mt-7 font-semibold text-foreground"
+            style={{
+              fontSize: '32px',
+              lineHeight: 1.1,
+              letterSpacing: '-0.012em'
+            }}
+          >
+            {t('emptyWorkspaceTitle')}
+          </h1>
+
+          <p
+            className="mt-3 max-w-[400px] text-muted-foreground"
+            style={{
+              fontSize: '15px',
+              lineHeight: 1.47,
+              letterSpacing: '-0.012em'
+            }}
+          >
+            {t('emptyWorkspaceDesc')}
+          </p>
+
           <motion.button
             type="button"
             onClick={pick}
             disabled={busy}
-            whileHover={busy ? undefined : { y: -1 }}
-            whileTap={busy ? undefined : { scale: 0.985 }}
-            className="group relative inline-flex items-center gap-2 rounded-full border border-accent/30 bg-gradient-to-br from-accent/15 to-accent/5 px-5 py-2.5 text-[13px] font-semibold text-foreground shadow-sm transition-colors hover:border-accent/50 hover:from-accent/20 hover:to-accent/8 disabled:cursor-wait disabled:opacity-70"
+            whileTap={busy ? undefined : { scale: 0.97 }}
+            transition={{ duration: 0.15, ease: [0.4, 0, 0.2, 1] }}
+            className="mt-8 inline-flex items-center justify-center rounded-full bg-[#0071e3] px-[22px] py-[11px] font-normal text-white transition-colors hover:bg-[#0077ed] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071e3] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-wait disabled:opacity-70"
+            style={{ fontSize: '15px', letterSpacing: '-0.012em' }}
           >
-            <span className="flex size-4 items-center justify-center text-accent">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
-              </svg>
-            </span>
             {t('emptyWorkspaceButton')}
           </motion.button>
-          <div className="text-[11.5px] text-muted-foreground/70">
+
+          <p
+            className="mt-5 text-muted-foreground/60"
+            style={{ fontSize: '12px', letterSpacing: '-0.01em' }}
+          >
             {t('emptyWorkspaceDragHint')}
-          </div>
+          </p>
+
           {error && (
-            <div className="w-full rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11.5px] text-red-400">
+            <div
+              className="mt-5 w-full rounded-lg bg-red-500/10 px-3 py-2 text-red-500"
+              style={{ fontSize: '12px', lineHeight: 1.47 }}
+            >
               {error}
             </div>
           )}
         </motion.div>
-      </div>
-
-      {/* Disabled composer stand-in — reads as "chat page, waiting
-          for a folder" instead of a dead empty state. No runtime is
-          mounted, so this is purely visual. */}
-      <div className="relative shrink-0 bg-background/45 px-6 py-4 backdrop-blur-xl backdrop-saturate-150">
-        <div className="mx-auto w-full max-w-3xl">
-          <div className="pointer-events-none rounded-2xl border border-border/60 bg-card/60 px-4 py-3 shadow-sm">
-            <div className="text-[13px] text-muted-foreground/70">
-              {t('emptyWorkspaceComposerHint')}
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   )

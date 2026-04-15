@@ -10,37 +10,32 @@ import { sampleSpinnerVerb } from '../constants/spinnerVerbs'
  * `convertMessage` step — mutations we apply here are visible to the
  * Thread component on the next render.
  *
- * Streaming model
- * ---------------
+ * Multi-runtime model
+ * -------------------
+ * This store holds a per-session slot map (`perSession`), so multiple
+ * background agent sessions can each accumulate their own messages
+ * while only one is visible on screen at a time. The top-level
+ * `messages` / `streaming` / `turn*` fields are a **mirror** of the
+ * foreground session's slot — readers keep working unchanged
+ * (`useChatStore(s => s.messages)` still returns the current thread).
+ *
+ * All streaming actions take an explicit `sessionId` as their first
+ * argument so events from background runtimes can still write into
+ * their own slot without clobbering what's on screen. FusionRuntimeProvider
+ * subscribes to each live runtime by id and passes that id into every
+ * action call inside the subscription handler.
+ *
+ * Streaming event flow (per session)
+ * ----------------------------------
  *   1. User turn:
- *      appendUserMessage(text)
- *        → push { role: 'user', content: [{ type: 'text', text }] }
- *
- *   2. Assistant turn begins (main-process `start` event):
- *      startAssistantMessage(messageId)
- *        → push { role: 'assistant', content: [{ type: 'text', text: '' }] }
- *        → streaming = true
- *
- *   3. Text deltas (main-process `chunk` events):
- *      appendAssistantDelta(messageId, delta)
- *        → append into the trailing text part, or start a new text part
- *          if the previous part was a tool-call. This lets the same
- *          assistant turn contain `[text, tool-call, text, tool-call]`
- *          interleaved, matching how the model actually emitted them.
- *
- *   4. Tool calls (main-process `tool_use` / `tool_result` events):
- *      addToolCall(messageId, toolUseId, toolName, args)
- *      updateToolCallResult(toolUseId, result)
- *        → the runtime pairs tool-call with tool-result by toolCallId.
- *          We append a tool-call part to the current assistant message
- *          and later patch `result` onto it.
- *
- *   5. Error (main-process `error`):
- *      setError(messageId, error)
- *        → append a short error line as the last text part.
- *
- *   6. Turn end (main-process `end`):
- *      endAssistantMessage() → streaming = false
+ *      appendUserMessage(sessionId, content)
+ *   2. Assistant turn begins:
+ *      startAssistantMessage(sessionId, messageId)
+ *   3. Text deltas:
+ *      appendAssistantDelta(sessionId, messageId, delta)
+ *   4. Thinking / tool call deltas — analogous.
+ *   5. Turn end:
+ *      endAssistantMessage(sessionId)
  *
  * Type note
  * ---------
@@ -68,29 +63,16 @@ type ContentPart = {
  */
 export const REASONING_PLACEHOLDER = '\u200B'
 
-interface ChatState {
-  /**
-   * fusion-code UUID of the currently active session, or null before
-   * one has been picked (fresh launch) / while switching is in flight.
-   * Mirrors the `activeSessionId` that main process tracks — the IPC
-   * layer guarantees these stay in sync via `chatApi.switchSession`.
-   */
-  sessionId: string | null
-  /**
-   * True while the chat store is loading a different session's
-   * history or waiting for main to finish spawning a new fusion-code
-   * child. The composer uses this to grey out its send button, and
-   * the sidebar row shows a loading indicator.
-   */
-  sessionLoading: boolean
+/**
+ * All per-session streaming state. A slot is created lazily on first
+ * write and persists until `reset()` or `dropSession(sid)` clears it.
+ */
+interface PerSessionState {
   messages: ThreadMessageLike[]
   streaming: boolean
-
   /**
    * Wall-clock timestamp (ms since epoch) when the current assistant
-   * turn started, or null when no turn is in flight. Driven by the
-   * main-process `start` event. Used by ThinkingSpinner to show
-   * "(12s · esc to interrupt)" while the turn is thinking.
+   * turn started, or null when no turn is in flight.
    */
   turnStartedAt: number | null
   /**
@@ -105,94 +87,138 @@ interface ChatState {
    * text itself replaces the placeholder.
    */
   turnHasText: boolean
+  /**
+   * Per-session accumulated usage, reported at the end of each turn.
+   * `contextTokens` is the full prompt size fed into the model for
+   * the latest turn (input + cache_read + cache_create) — i.e. the
+   * value the sidebar badge uses for a "xk / 200k" indicator.
+   * `null` until the first turn completes for this session.
+   */
+  usage: { contextTokens: number; outputTokens: number } | null
+}
+
+const EMPTY_SLOT: PerSessionState = {
+  messages: [],
+  streaming: false,
+  turnStartedAt: null,
+  turnVerb: null,
+  turnHasText: false,
+  usage: null
+}
+
+interface ChatState {
+  /**
+   * fusion-code UUID of the session currently on screen (foreground),
+   * or null before one has been picked. "Foreground" in the
+   * multi-runtime world — there may be many sessions with live
+   * runtimes in the background; only this one has its slot mirrored
+   * into the top-level fields below.
+   */
+  sessionId: string | null
+  /**
+   * True while the store is loading a different session's history or
+   * waiting for main to finish spawning a new fusion-code child.
+   * Foreground-scoped — a background session's spawn does NOT flip
+   * this.
+   */
+  sessionLoading: boolean
+  /**
+   * Per-session state map. Each slot holds the messages + streaming
+   * flags for a session that's been visited / has a live runtime.
+   * Keys are fusion-code session UUIDs.
+   */
+  perSession: Record<string, PerSessionState>
+
+  /**
+   * Mirror of `perSession[sessionId ?? '']` for legacy readers. Every
+   * slot mutation that targets the foreground session also refreshes
+   * these top-level fields so `useChatStore(s => s.messages)` etc.
+   * keep working unchanged.
+   */
+  messages: ThreadMessageLike[]
+  streaming: boolean
+  turnStartedAt: number | null
+  turnVerb: string | null
+  turnHasText: boolean
 
   // User input ─────────────────────────────────────────────────────────
   /**
-   * Push a user turn into the store. `content` is a pre-built part
-   * array so the caller can mix text and image parts — FusionRuntimeProvider
-   * extracts text + image attachments from assistant-ui's AppendMessage
-   * and passes both through here. Pass a single text part for text-only
-   * turns (the common case).
+   * Push a user turn into the given session's slot. `content` is a
+   * pre-built part array so the caller can mix text and image parts.
    */
-  appendUserMessage: (content: ContentPart[]) => void
+  appendUserMessage: (sessionId: string, content: ContentPart[]) => void
 
   // Assistant streaming ────────────────────────────────────────────────
-  startAssistantMessage: (messageId: string) => void
-  appendAssistantDelta: (messageId: string, delta: string) => void
-  /**
-   * Append an extended-thinking text fragment to a `reasoning` part
-   * on the active assistant message. Multiple thinking blocks in the
-   * same turn roll into a single rolling reasoning part — separated
-   * by a blank line if the engine opens a new block. The first
-   * delta lazily creates the assistant message if it doesn't exist
-   * yet, mirroring `appendAssistantDelta`'s lazy-create path.
-   */
-  appendThinkingDelta: (messageId: string, delta: string) => void
-  /**
-   * Pre-create an empty reasoning part on the current assistant message.
-   * Called on `thinking_start` so the "正在思考…" indicator appears the
-   * instant the SDK opens a thinking block, instead of waiting for the
-   * first `thinking_delta` (which can lag several seconds while Claude
-   * is actually reasoning). Idempotent: if the trailing part is already
-   * a reasoning, this is a no-op so we don't double-insert when the
-   * engine emits multiple thinking blocks back-to-back.
-   */
-  startReasoning: (messageId: string) => void
-  /**
-   * Create an empty tool-call part on the current assistant message.
-   * Called on `tool_use_start` — the renderer card appears immediately
-   * with the tool name but no args yet. The `argsText` field is the
-   * streaming buffer that subsequent deltas append into.
-   */
+  startAssistantMessage: (sessionId: string, messageId: string) => void
+  appendAssistantDelta: (
+    sessionId: string,
+    messageId: string,
+    delta: string
+  ) => void
+  appendThinkingDelta: (
+    sessionId: string,
+    messageId: string,
+    delta: string
+  ) => void
+  startReasoning: (sessionId: string, messageId: string) => void
   startToolCall: (
+    sessionId: string,
     messageId: string,
     toolUseId: string,
     toolName: string
   ) => void
-  /**
-   * Append a raw JSON fragment to the streaming `argsText` buffer of
-   * an existing tool-call part. The fragment is almost always partial
-   * (half-open strings, missing brackets), so we NEVER try to JSON.parse
-   * it here — that happens on finalize. Components that want to react
-   * to partial state (e.g. the TodoWrite → right rail sync) run their
-   * own lenient parse on the accumulating argsText string.
-   */
-  appendToolCallArgsDelta: (toolUseId: string, delta: string) => void
-  /**
-   * Mark a streaming tool-call as complete. Tries to JSON.parse the
-   * accumulated argsText and, if successful, stores it as `args` for
-   * pretty-printing. On parse failure the argsText stays as the
-   * display source (better than dropping the content). Does not need
-   * a toolName because the part already has it from start.
-   */
-  finalizeToolCall: (toolUseId: string) => void
-  /**
-   * Add a tool-call part in one shot with a fully-formed input. This
-   * is the non-streaming path (when engine.ts emits a finalizing
-   * `tool_use` event because the SDK skipped the stream_event fan-out).
-   * If a streamed part with this toolUseId already exists — meaning
-   * start/delta/end have already flowed through — the call becomes a
-   * no-op to prevent double rendering.
-   */
+  appendToolCallArgsDelta: (
+    sessionId: string,
+    toolUseId: string,
+    delta: string
+  ) => void
+  finalizeToolCall: (sessionId: string, toolUseId: string) => void
   addToolCall: (
+    sessionId: string,
     messageId: string,
     toolUseId: string,
     toolName: string,
     args: unknown
   ) => void
-  updateToolCallResult: (toolUseId: string, result: unknown) => void
-  setError: (messageId: string, error: string) => void
-  endAssistantMessage: () => void
+  updateToolCallResult: (
+    sessionId: string,
+    toolUseId: string,
+    result: unknown
+  ) => void
+  setError: (sessionId: string, messageId: string, error: string) => void
+  endAssistantMessage: (sessionId: string) => void
+  /**
+   * Store the context/output token counts reported at the end of an
+   * assistant turn. Replaces the previous value (we only show the
+   * *latest* per-turn prompt size, not a running sum).
+   */
+  setUsage: (
+    sessionId: string,
+    usage: { contextTokens: number; outputTokens: number }
+  ) => void
 
+  /** Wipe every session slot and foreground state. */
   reset: () => void
 
+  /** Drop a single session's slot (e.g. on closeSessionRuntime). */
+  dropSession: (sessionId: string) => void
+
   /**
-   * Replace the whole thread with the given session id and history.
-   * Called by the ThreadListAdapter after a sidebar click — the
-   * history comes from `chatApi.loadSession`, already mapped to
-   * ThreadMessageLike[] on the main side.
+   * Replace a session's messages with the given history and make it
+   * the foreground. If the slot already exists with live state (e.g.
+   * the user is switching back to a background-running session), the
+   * existing slot is kept and the history is ignored — live state
+   * takes precedence so we don't clobber streaming deltas with stale
+   * JSONL.
    */
   setSession: (sessionId: string, messages: ThreadMessageLike[]) => void
+
+  /**
+   * Switch which session's slot is mirrored into top-level fields,
+   * without touching its messages. Used for fast foreground swap
+   * between sessions that both already have slots.
+   */
+  setForegroundSession: (sessionId: string | null) => void
 
   /** Flip the loading indicator on/off during a session switch. */
   setSessionLoading: (loading: boolean) => void
@@ -202,21 +228,60 @@ function randomId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
 }
 
+/**
+ * Apply an immutable update to a session's slot, and if that session
+ * is the current foreground, sync the top-level mirror fields in the
+ * same set() call. `updater` returning the same reference is the
+ * "no change" signal and short-circuits the set().
+ */
+function updateSlot(
+  state: ChatState,
+  sessionId: string,
+  updater: (slot: PerSessionState) => PerSessionState
+): Partial<ChatState> | null {
+  const prev = state.perSession[sessionId] ?? EMPTY_SLOT
+  const next = updater(prev)
+  if (next === prev) return null
+  const perSession = { ...state.perSession, [sessionId]: next }
+  if (sessionId === state.sessionId) {
+    return {
+      perSession,
+      messages: next.messages,
+      streaming: next.streaming,
+      turnStartedAt: next.turnStartedAt,
+      turnVerb: next.turnVerb,
+      turnHasText: next.turnHasText
+    }
+  }
+  return { perSession }
+}
+
+function mirrorFromSlot(slot: PerSessionState): Partial<ChatState> {
+  return {
+    messages: slot.messages,
+    streaming: slot.streaming,
+    turnStartedAt: slot.turnStartedAt,
+    turnVerb: slot.turnVerb,
+    turnHasText: slot.turnHasText
+  }
+}
+
 export const useChatStore = create<ChatState>((set) => ({
   sessionId: null,
   sessionLoading: false,
+  perSession: {},
   messages: [],
   streaming: false,
   turnStartedAt: null,
   turnVerb: null,
   turnHasText: false,
 
-  appendUserMessage: (content) => {
+  appendUserMessage: (sessionId, content) => {
     // Guard: an empty content array would crash assistant-ui's
     // fromThreadMessageLike (it filters empty parts and the message
-    // would end up with content: [], same problem as startAssistantMessage).
-    // Fall back to a whitespace placeholder so the user turn renders
-    // even if something upstream passed nothing.
+    // would end up with content: []). Fall back to a whitespace
+    // placeholder so the user turn renders even if something upstream
+    // passed nothing.
     const safeContent: ContentPart[] =
       content.length > 0 ? content : [{ type: 'text', text: ' ' }]
     const message: ThreadMessageLike = {
@@ -224,68 +289,62 @@ export const useChatStore = create<ChatState>((set) => ({
       role: 'user',
       content: safeContent as unknown as ThreadMessageLike['content']
     }
-    set((s) => ({ messages: [...s.messages, message] }))
+    set((s) => {
+      const patch = updateSlot(s, sessionId, (slot) => ({
+        ...slot,
+        messages: [...slot.messages, message]
+      }))
+      return patch ?? {}
+    })
   },
 
-  startAssistantMessage: (_messageId) => {
+  startAssistantMessage: (sessionId, _messageId) => {
     // Only flip the streaming flag. We deliberately DO NOT push a
     // placeholder assistant message here — assistant-ui's
     // `fromThreadMessageLike` filters out empty text parts
     // (`part.text.trim().length === 0 → null`), which would leave
-    // the message with `content: []` and break runtime internals
-    // (`getState()` returns undefined → `_getMessageRuntime` crashes
-    // on `undefined.submittedFeedback`).
+    // the message with `content: []` and break runtime internals.
     //
     // Instead, the first real chunk / tool_use creates the message
-    // lazily via the helper below. Streaming state still flips
-    // immediately so the composer disables its send button.
+    // lazily. Streaming state flips immediately so the composer
+    // disables its send button.
     //
-    // We also mint fresh turn meta (start timestamp + a random verb)
-    // so ThinkingSpinner has a stable anchor for its elapsed-seconds
-    // counter and the "Cogitating…" label.
-    //
-    // Idempotent — if `streaming` is already true (the renderer
-    // pre-flipped it on send() entry so the user sees feedback
-    // through the ~3-8s lazy fusion-code cold start), we leave
-    // turnStartedAt / turnVerb alone so the spinner's elapsed
-    // counter stays continuous and the random verb doesn't
-    // change mid-turn. The incoming main-process `start` event
-    // is effectively a no-op when it arrives second.
+    // Idempotent: if `streaming` is already true, leave turn meta
+    // alone so the spinner elapsed counter stays continuous.
     set((s) => {
-      if (s.streaming) return s
-      return {
-        streaming: true,
-        turnStartedAt: Date.now(),
-        turnVerb: sampleSpinnerVerb(),
-        turnHasText: false
-      }
+      const patch = updateSlot(s, sessionId, (slot) => {
+        if (slot.streaming) return slot
+        return {
+          ...slot,
+          streaming: true,
+          turnStartedAt: Date.now(),
+          turnVerb: sampleSpinnerVerb(),
+          turnHasText: false
+        }
+      })
+      return patch ?? {}
     })
   },
 
-  appendAssistantDelta: (messageId, delta) => {
+  appendAssistantDelta: (sessionId, messageId, delta) => {
     set((s) => {
-      // First non-empty delta of this turn ⇒ tell the spinner to hide.
-      const flipTurnHasText = !s.turnHasText && delta.length > 0
-      const existing = s.messages.find((m) => m.id === messageId)
-      if (!existing) {
-        // First chunk — create the assistant message with this delta
-        // as its initial text part. `delta` is the SDK's raw output,
-        // which may legitimately start with whitespace; if every
-        // chunk is whitespace-only we still don't push (would be
-        // filtered by fromThreadMessageLike anyway).
-        if (delta.length === 0) return s
-        const newMessage = {
-          id: messageId,
-          role: 'assistant',
-          content: [{ type: 'text', text: delta }]
-        } as unknown as ThreadMessageLike
-        return {
-          messages: [...s.messages, newMessage],
-          ...(flipTurnHasText ? { turnHasText: true } : {})
+      const patch = updateSlot(s, sessionId, (slot) => {
+        const flipTurnHasText = !slot.turnHasText && delta.length > 0
+        const existing = slot.messages.find((m) => m.id === messageId)
+        if (!existing) {
+          if (delta.length === 0) return slot
+          const newMessage = {
+            id: messageId,
+            role: 'assistant',
+            content: [{ type: 'text', text: delta }]
+          } as unknown as ThreadMessageLike
+          return {
+            ...slot,
+            messages: [...slot.messages, newMessage],
+            turnHasText: flipTurnHasText ? true : slot.turnHasText
+          }
         }
-      }
-      return {
-        messages: s.messages.map((m) => {
+        const messages = slot.messages.map((m) => {
           if (m.id !== messageId) return m
           const parts = [...((m.content as unknown) as ContentPart[])]
           const last = parts[parts.length - 1]
@@ -301,56 +360,45 @@ export const useChatStore = create<ChatState>((set) => ({
             ...m,
             content: parts as unknown as ThreadMessageLike['content']
           }
-        }),
-        ...(flipTurnHasText ? { turnHasText: true } : {})
-      }
+        })
+        return {
+          ...slot,
+          messages,
+          turnHasText: flipTurnHasText ? true : slot.turnHasText
+        }
+      })
+      return patch ?? {}
     })
   },
 
-  startReasoning: (messageId) => {
+  startReasoning: (sessionId, messageId) => {
     set((s) => {
-      const existing = s.messages.find((m) => m.id === messageId)
-      // IMPORTANT: the placeholder must NOT be an empty string.
-      // assistant-ui's `fromThreadMessageLike` in
-      // @assistant-ui/core filters out any reasoning part whose
-      // `text.trim().length === 0`, so `text: ''` would be silently
-      // dropped before the renderer ever sees it — the "正在思考…"
-      // card would never appear for blocks that are slow to emit a
-      // delta (or that emit only a signature_delta, which we drop).
-      //
-      // `\u200B` (zero-width space) is a non-whitespace, invisible
-      // character. It survives `.trim()` so the part stays in the
-      // message, but it renders as nothing in the card body.
-      // `appendThinkingDelta` below detects the placeholder prefix
-      // and replaces it with the first real delta instead of
-      // concatenating, so the user never sees a stray ZWSP lurking
-      // in the reasoning text.
-      const emptyReasoningPart: ContentPart = {
-        type: 'reasoning',
-        text: REASONING_PLACEHOLDER
-      }
-      // Lazy assistant message create — same shape as
-      // appendAssistantDelta / appendThinkingDelta. The thinking
-      // block can open before `start` has had a chance to land, or
-      // before any other content, so the message may not exist yet.
-      if (!existing) {
-        const newMessage = {
-          id: messageId,
-          role: 'assistant',
-          content: [emptyReasoningPart]
-        } as unknown as ThreadMessageLike
-        return { messages: [...s.messages, newMessage] }
-      }
-      return {
-        messages: s.messages.map((m) => {
+      const patch = updateSlot(s, sessionId, (slot) => {
+        // IMPORTANT: the placeholder must NOT be an empty string.
+        // assistant-ui's `fromThreadMessageLike` filters out any
+        // reasoning part whose `text.trim().length === 0`, so
+        // `text: ''` would be silently dropped. `\u200B`
+        // (zero-width space) is non-whitespace and invisible.
+        const emptyReasoningPart: ContentPart = {
+          type: 'reasoning',
+          text: REASONING_PLACEHOLDER
+        }
+        const existing = slot.messages.find((m) => m.id === messageId)
+        if (!existing) {
+          const newMessage = {
+            id: messageId,
+            role: 'assistant',
+            content: [emptyReasoningPart]
+          } as unknown as ThreadMessageLike
+          return { ...slot, messages: [...slot.messages, newMessage] }
+        }
+        const messages = slot.messages.map((m) => {
           if (m.id !== messageId) return m
           const parts = [...((m.content as unknown) as ContentPart[])]
           const last = parts[parts.length - 1]
-          // Idempotent: if the last part is already a reasoning
-          // (either an empty one we just opened, or a streaming one
-          // that's already accumulating deltas), don't add a second
-          // empty placeholder. The next thinking_delta will still
-          // append into the existing trailing reasoning part.
+          // Idempotent: if the trailing part is already a reasoning
+          // part, don't push a duplicate placeholder. Next thinking
+          // delta appends into it.
           if (last && last.type === 'reasoning') {
             return m
           }
@@ -360,57 +408,39 @@ export const useChatStore = create<ChatState>((set) => ({
             content: parts as unknown as ThreadMessageLike['content']
           }
         })
-      }
+        return { ...slot, messages }
+      })
+      return patch ?? {}
     })
   },
 
-  appendThinkingDelta: (messageId, delta) => {
+  appendThinkingDelta: (sessionId, messageId, delta) => {
     if (!delta) return
     set((s) => {
-      const existing = s.messages.find((m) => m.id === messageId)
-      // Lazy assistant message create — same shape as
-      // appendAssistantDelta. A turn can open with a thinking block
-      // before any text or tool_use, so the message may not exist
-      // yet on the first thinking delta.
-      const reasoningPart: ContentPart = {
-        type: 'reasoning',
-        text: delta
-      }
-      if (!existing) {
-        const newMessage = {
-          id: messageId,
-          role: 'assistant',
-          content: [reasoningPart]
-        } as unknown as ThreadMessageLike
-        return { messages: [...s.messages, newMessage] }
-      }
-      return {
-        messages: s.messages.map((m) => {
+      const patch = updateSlot(s, sessionId, (slot) => {
+        const reasoningPart: ContentPart = { type: 'reasoning', text: delta }
+        const existing = slot.messages.find((m) => m.id === messageId)
+        if (!existing) {
+          const newMessage = {
+            id: messageId,
+            role: 'assistant',
+            content: [reasoningPart]
+          } as unknown as ThreadMessageLike
+          return { ...slot, messages: [...slot.messages, newMessage] }
+        }
+        const messages = slot.messages.map((m) => {
           if (m.id !== messageId) return m
           const parts = [...((m.content as unknown) as ContentPart[])]
           const last = parts[parts.length - 1]
           if (last && last.type === 'reasoning') {
-            // Same trailing-reasoning part — append into it. Drop
-            // the ZWSP placeholder `startReasoning` inserted (see the
-            // comment there) so the final text doesn't carry an
-            // invisible stray character. Any already-streamed content
-            // past the placeholder is preserved.
+            // Drop the ZWSP placeholder `startReasoning` inserted so
+            // the final text doesn't carry an invisible stray char.
             const prev = ((last.text as string) ?? '').replace(
               REASONING_PLACEHOLDER,
               ''
             )
-            parts[parts.length - 1] = {
-              ...last,
-              text: prev + delta
-            }
+            parts[parts.length - 1] = { ...last, text: prev + delta }
           } else {
-            // The model interleaved a text or tool_use block between
-            // two thinking blocks. Start a new reasoning part rather
-            // than reaching back into the previous one — that would
-            // re-order the visible parts and break the chronology
-            // ("model thought, then said X, then thought again" is
-            // a meaningfully different story from "model thought
-            // twice and then said X").
             parts.push(reasoningPart)
           }
           return {
@@ -418,160 +448,41 @@ export const useChatStore = create<ChatState>((set) => ({
             content: parts as unknown as ThreadMessageLike['content']
           }
         })
-      }
-    })
-  },
-
-  startToolCall: (messageId, toolUseId, toolName) => {
-    set((s) => {
-      // Lazy message creation — matches addToolCall / appendAssistantDelta.
-      // A turn can start directly with a tool call and no text, and
-      // the assistant message needs to exist before the tool-call part
-      // can hang off it.
-      const existing = s.messages.find((m) => m.id === messageId)
-      // Build a tool-call part with an empty `argsText` buffer. We
-      // intentionally omit `args` until finalize — ToolCallCard reads
-      // argsText first when running, args second when complete, so
-      // leaving args undefined at start prevents a stale "{}" flash.
-      const toolCallPart: ContentPart = {
-        type: 'tool-call',
-        toolCallId: toolUseId,
-        toolName,
-        argsText: ''
-      }
-      if (!existing) {
-        const newMessage = {
-          id: messageId,
-          role: 'assistant',
-          content: [toolCallPart]
-        } as unknown as ThreadMessageLike
-        return { messages: [...s.messages, newMessage] }
-      }
-      // Guard against duplicate start (can happen if the SDK re-delivers
-      // a block). Leave the existing part untouched.
-      const existingParts = (existing.content as unknown) as ContentPart[]
-      if (
-        existingParts.some(
-          (p) => p.type === 'tool-call' && p.toolCallId === toolUseId
-        )
-      ) {
-        return s
-      }
-      return {
-        messages: s.messages.map((m) => {
-          if (m.id !== messageId) return m
-          const parts = [...((m.content as unknown) as ContentPart[]), toolCallPart]
-          return {
-            ...m,
-            content: parts as unknown as ThreadMessageLike['content']
-          }
-        })
-      }
-    })
-  },
-
-  appendToolCallArgsDelta: (toolUseId, delta) => {
-    if (!delta) return
-    set((s) => {
-      let changed = false
-      const messages = s.messages.map((m) => {
-        if (!Array.isArray(m.content)) return m
-        const parts = ((m.content as unknown) as ContentPart[]).map((p) => {
-          if (p.type === 'tool-call' && p.toolCallId === toolUseId) {
-            changed = true
-            const prev = typeof p.argsText === 'string' ? p.argsText : ''
-            return { ...p, argsText: prev + delta }
-          }
-          return p
-        })
-        if (!changed) return m
-        return { ...m, content: parts as unknown as ThreadMessageLike['content'] }
+        return { ...slot, messages }
       })
-      if (!changed) return s
-      return { messages }
+      return patch ?? {}
     })
   },
 
-  finalizeToolCall: (toolUseId) => {
+  startToolCall: (sessionId, messageId, toolUseId, toolName) => {
     set((s) => {
-      let changed = false
-      const messages = s.messages.map((m) => {
-        if (!Array.isArray(m.content)) return m
-        const parts = ((m.content as unknown) as ContentPart[]).map((p) => {
-          if (p.type === 'tool-call' && p.toolCallId === toolUseId) {
-            changed = true
-            // Try to parse the accumulated argsText. On success store
-            // the parsed object as `args`; on failure leave argsText
-            // as the display source. Either way we mark `argsComplete`
-            // so ToolCallCard can flip its presentation from
-            // "streaming raw" to "parsed pretty".
-            const text = typeof p.argsText === 'string' ? p.argsText : ''
-            let parsed: unknown = undefined
-            if (text.length > 0) {
-              try {
-                parsed = JSON.parse(text)
-              } catch {
-                // leave parsed undefined; UI falls back on argsText
-              }
-            } else {
-              parsed = {}
-            }
-            return {
-              ...p,
-              args: parsed ?? normalizeArgs(undefined),
-              argsComplete: true
-            }
-          }
-          return p
-        })
-        if (!changed) return m
-        return { ...m, content: parts as unknown as ThreadMessageLike['content'] }
-      })
-      if (!changed) return s
-      return { messages }
-    })
-  },
-
-  addToolCall: (messageId, toolUseId, toolName, args) => {
-    set((s) => {
-      const existing = s.messages.find((m) => m.id === messageId)
-      // If a streamed tool-call part with this id already exists,
-      // start/delta/end already covered it — avoid appending a
-      // duplicate card. (Engine.ts suppresses the finalize tool_use
-      // in the same situation, but we guard here as a belt-and-braces
-      // defense against out-of-order events.)
-      if (existing) {
+      const patch = updateSlot(s, sessionId, (slot) => {
+        const toolCallPart: ContentPart = {
+          type: 'tool-call',
+          toolCallId: toolUseId,
+          toolName,
+          argsText: ''
+        }
+        const existing = slot.messages.find((m) => m.id === messageId)
+        if (!existing) {
+          const newMessage = {
+            id: messageId,
+            role: 'assistant',
+            content: [toolCallPart]
+          } as unknown as ThreadMessageLike
+          return { ...slot, messages: [...slot.messages, newMessage] }
+        }
+        // Duplicate guard: if a tool-call part with this id already
+        // exists, the SDK re-delivered the block — leave it alone.
         const existingParts = (existing.content as unknown) as ContentPart[]
         if (
           existingParts.some(
             (p) => p.type === 'tool-call' && p.toolCallId === toolUseId
           )
         ) {
-          return s
+          return slot
         }
-      }
-      const toolCallPart: ContentPart = {
-        type: 'tool-call',
-        toolCallId: toolUseId,
-        toolName,
-        args: normalizeArgs(args),
-        argsComplete: true
-      }
-      if (!existing) {
-        // Turn opened directly with a tool call (no text first).
-        // Creating the assistant message with just the tool-call part
-        // is fine — fromThreadMessageLike keeps tool-call parts.
-        const newMessage = {
-          id: messageId,
-          role: 'assistant',
-          content: [toolCallPart]
-        } as unknown as ThreadMessageLike
-        return {
-          messages: [...s.messages, newMessage]
-        }
-      }
-      return {
-        messages: s.messages.map((m) => {
+        const messages = slot.messages.map((m) => {
           if (m.id !== messageId) return m
           const parts = [
             ...((m.content as unknown) as ContentPart[]),
@@ -582,50 +493,170 @@ export const useChatStore = create<ChatState>((set) => ({
             content: parts as unknown as ThreadMessageLike['content']
           }
         })
-      }
+        return { ...slot, messages }
+      })
+      return patch ?? {}
     })
   },
 
-  updateToolCallResult: (toolUseId, result) => {
-    set((s) => ({
-      messages: s.messages.map((m) => {
-        if (!Array.isArray(m.content)) return m
+  appendToolCallArgsDelta: (sessionId, toolUseId, delta) => {
+    if (!delta) return
+    set((s) => {
+      const patch = updateSlot(s, sessionId, (slot) => {
         let changed = false
-        const parts = ((m.content as unknown) as ContentPart[]).map((p) => {
-          if (p.type === 'tool-call' && p.toolCallId === toolUseId) {
-            changed = true
-            return { ...p, result }
+        const messages = slot.messages.map((m) => {
+          if (!Array.isArray(m.content)) return m
+          const parts = ((m.content as unknown) as ContentPart[]).map((p) => {
+            if (p.type === 'tool-call' && p.toolCallId === toolUseId) {
+              changed = true
+              const prev = typeof p.argsText === 'string' ? p.argsText : ''
+              return { ...p, argsText: prev + delta }
+            }
+            return p
+          })
+          if (!changed) return m
+          return {
+            ...m,
+            content: parts as unknown as ThreadMessageLike['content']
           }
-          return p
         })
-        if (!changed) return m
-        return {
-          ...m,
-          content: parts as unknown as ThreadMessageLike['content']
-        }
+        if (!changed) return slot
+        return { ...slot, messages }
       })
-    }))
+      return patch ?? {}
+    })
   },
 
-  setError: (messageId, error) => {
+  finalizeToolCall: (sessionId, toolUseId) => {
     set((s) => {
-      const existing = s.messages.find((m) => m.id === messageId)
-      const errorText = `⚠️ ${error}`
-      if (!existing) {
-        // Turn errored before any text or tool call was emitted. Show
-        // the error as a standalone assistant message so the user
-        // actually sees what went wrong.
-        const newMessage = {
-          id: messageId,
-          role: 'assistant',
-          content: [{ type: 'text', text: errorText }]
-        } as unknown as ThreadMessageLike
-        return {
-          messages: [...s.messages, newMessage]
+      const patch = updateSlot(s, sessionId, (slot) => {
+        let changed = false
+        const messages = slot.messages.map((m) => {
+          if (!Array.isArray(m.content)) return m
+          const parts = ((m.content as unknown) as ContentPart[]).map((p) => {
+            if (p.type === 'tool-call' && p.toolCallId === toolUseId) {
+              changed = true
+              // Try to parse accumulated argsText. On success store
+              // parsed object as `args`; on failure leave argsText
+              // as display source.
+              const text = typeof p.argsText === 'string' ? p.argsText : ''
+              let parsed: unknown = undefined
+              if (text.length > 0) {
+                try {
+                  parsed = JSON.parse(text)
+                } catch {
+                  // leave undefined; UI falls back on argsText
+                }
+              } else {
+                parsed = {}
+              }
+              return {
+                ...p,
+                args: parsed ?? normalizeArgs(undefined),
+                argsComplete: true
+              }
+            }
+            return p
+          })
+          if (!changed) return m
+          return {
+            ...m,
+            content: parts as unknown as ThreadMessageLike['content']
+          }
+        })
+        if (!changed) return slot
+        return { ...slot, messages }
+      })
+      return patch ?? {}
+    })
+  },
+
+  addToolCall: (sessionId, messageId, toolUseId, toolName, args) => {
+    set((s) => {
+      const patch = updateSlot(s, sessionId, (slot) => {
+        const existing = slot.messages.find((m) => m.id === messageId)
+        if (existing) {
+          const existingParts = (existing.content as unknown) as ContentPart[]
+          if (
+            existingParts.some(
+              (p) => p.type === 'tool-call' && p.toolCallId === toolUseId
+            )
+          ) {
+            return slot
+          }
         }
-      }
-      return {
-        messages: s.messages.map((m) => {
+        const toolCallPart: ContentPart = {
+          type: 'tool-call',
+          toolCallId: toolUseId,
+          toolName,
+          args: normalizeArgs(args),
+          argsComplete: true
+        }
+        if (!existing) {
+          const newMessage = {
+            id: messageId,
+            role: 'assistant',
+            content: [toolCallPart]
+          } as unknown as ThreadMessageLike
+          return { ...slot, messages: [...slot.messages, newMessage] }
+        }
+        const messages = slot.messages.map((m) => {
+          if (m.id !== messageId) return m
+          const parts = [
+            ...((m.content as unknown) as ContentPart[]),
+            toolCallPart
+          ]
+          return {
+            ...m,
+            content: parts as unknown as ThreadMessageLike['content']
+          }
+        })
+        return { ...slot, messages }
+      })
+      return patch ?? {}
+    })
+  },
+
+  updateToolCallResult: (sessionId, toolUseId, result) => {
+    set((s) => {
+      const patch = updateSlot(s, sessionId, (slot) => {
+        let changed = false
+        const messages = slot.messages.map((m) => {
+          if (!Array.isArray(m.content)) return m
+          const parts = ((m.content as unknown) as ContentPart[]).map((p) => {
+            if (p.type === 'tool-call' && p.toolCallId === toolUseId) {
+              changed = true
+              return { ...p, result }
+            }
+            return p
+          })
+          if (!changed) return m
+          return {
+            ...m,
+            content: parts as unknown as ThreadMessageLike['content']
+          }
+        })
+        if (!changed) return slot
+        return { ...slot, messages }
+      })
+      return patch ?? {}
+    })
+  },
+
+  setError: (sessionId, messageId, error) => {
+    set((s) => {
+      const errorText = `⚠️ ${error}`
+      const patch = updateSlot(s, sessionId, (slot) => {
+        const existing = slot.messages.find((m) => m.id === messageId)
+        if (!existing) {
+          const newMessage = {
+            id: messageId,
+            role: 'assistant',
+            content: [{ type: 'text', text: errorText }]
+          } as unknown as ThreadMessageLike
+          return { ...slot, messages: [...slot.messages, newMessage] }
+        }
+        const messages = slot.messages.map((m) => {
           if (m.id !== messageId) return m
           const parts = [
             ...((m.content as unknown) as ContentPart[]),
@@ -636,40 +667,102 @@ export const useChatStore = create<ChatState>((set) => ({
             content: parts as unknown as ThreadMessageLike['content']
           }
         })
-      }
+        return { ...slot, messages }
+      })
+      return patch ?? {}
     })
   },
 
-  endAssistantMessage: () =>
-    set({
-      streaming: false,
-      turnStartedAt: null,
-      turnVerb: null,
-      turnHasText: false
-    }),
+  endAssistantMessage: (sessionId) => {
+    set((s) => {
+      const patch = updateSlot(s, sessionId, (slot) => ({
+        ...slot,
+        streaming: false,
+        turnStartedAt: null,
+        turnVerb: null,
+        turnHasText: false
+      }))
+      return patch ?? {}
+    })
+  },
+
+  setUsage: (sessionId, usage) => {
+    set((s) => {
+      const patch = updateSlot(s, sessionId, (slot) => {
+        const prev = slot.usage
+        if (
+          prev &&
+          prev.contextTokens === usage.contextTokens &&
+          prev.outputTokens === usage.outputTokens
+        ) {
+          return slot
+        }
+        return { ...slot, usage: { ...usage } }
+      })
+      return patch ?? {}
+    })
+  },
 
   reset: () =>
     set({
       sessionId: null,
       sessionLoading: false,
-      messages: [],
-      streaming: false,
-      turnStartedAt: null,
-      turnVerb: null,
-      turnHasText: false
+      perSession: {},
+      ...EMPTY_SLOT
+    }),
+
+  dropSession: (sessionId) =>
+    set((s) => {
+      if (!(sessionId in s.perSession)) return {}
+      const { [sessionId]: _dropped, ...rest } = s.perSession
+      const patch: Partial<ChatState> = { perSession: rest }
+      if (s.sessionId === sessionId) {
+        // The dropped session was the foreground — clear top-level
+        // mirror so the thread view empties. Caller picks a new
+        // foreground (or leaves it null to drop back to the empty
+        // thread).
+        patch.sessionId = null
+        Object.assign(patch, EMPTY_SLOT)
+      }
+      return patch
     }),
 
   setSession: (sessionId, messages) =>
-    set({
-      sessionId,
-      messages,
-      // Any in-flight turn was on the previous session — clear so a
-      // stale `streaming: true` doesn't lock the composer on the newly
-      // loaded thread.
-      streaming: false,
-      turnStartedAt: null,
-      turnVerb: null,
-      turnHasText: false
+    set((s) => {
+      const existing = s.perSession[sessionId]
+      // Live state takes precedence over freshly-loaded JSONL history.
+      // A background-running session already has its streaming slot
+      // accumulating deltas; re-loading history would clobber those
+      // with stale JSONL contents from before the turn started.
+      const slot: PerSessionState =
+        existing && existing.messages.length > 0
+          ? existing
+          : {
+              messages,
+              streaming: false,
+              turnStartedAt: null,
+              turnVerb: null,
+              turnHasText: false,
+              usage: null
+            }
+      return {
+        sessionId,
+        perSession: { ...s.perSession, [sessionId]: slot },
+        ...mirrorFromSlot(slot)
+      }
+    }),
+
+  setForegroundSession: (sessionId) =>
+    set((s) => {
+      if (sessionId === null) {
+        return { sessionId: null, ...EMPTY_SLOT }
+      }
+      const slot = s.perSession[sessionId] ?? EMPTY_SLOT
+      const perSession =
+        sessionId in s.perSession
+          ? s.perSession
+          : { ...s.perSession, [sessionId]: slot }
+      return { sessionId, perSession, ...mirrorFromSlot(slot) }
     }),
 
   setSessionLoading: (loading) => set({ sessionLoading: loading })

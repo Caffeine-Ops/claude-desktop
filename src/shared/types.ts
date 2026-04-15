@@ -93,6 +93,21 @@ export type ChatEvent =
       toolName: string
       output: unknown
     }
+  | {
+      /**
+       * Emitted once at the end of each assistant turn with the
+       * accumulated context size for the *session*. `contextTokens` is
+       * the full prompt size fed into the model for this turn
+       * (input_tokens + cache_read + cache_create), i.e. the number
+       * the sidebar badge should show as "how much of the 200k
+       * window am I using right now". `outputTokens` is this turn's
+       * output only — not cumulative.
+       */
+      type: 'usage'
+      messageId: string
+      contextTokens: number
+      outputTokens: number
+    }
   | { type: 'end'; messageId: string }
   | { type: 'error'; messageId: string; error: string }
 

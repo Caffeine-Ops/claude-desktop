@@ -53,21 +53,30 @@ export function TodoListPanel(): React.JSX.Element {
   const progress = total === 0 ? 0 : Math.round((completed / total) * 100)
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/55 bg-card/45 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+    <section
+      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-foreground/[0.03] dark:bg-white/[0.04]"
+      style={{ letterSpacing: '-0.01em' }}
+    >
       {/* Header row — small section glyph + label on the left, count
           pill on the right. The pill renders only when there's a list
           to count, so the empty state stays uncluttered. */}
-      <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-3">
+      <div className="flex items-center justify-between gap-2 px-3.5 pb-2 pt-3">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-sky-400/15 text-sky-500 dark:text-sky-400">
+          <span className="flex size-[18px] shrink-0 items-center justify-center text-muted-foreground">
             <ListIcon />
           </span>
-          <span className="text-[12px] font-semibold tracking-tight text-foreground">
+          <span
+            className="font-semibold text-foreground"
+            style={{ fontSize: '13px', letterSpacing: '-0.012em' }}
+          >
             {t('todosTitle')}
           </span>
         </div>
         {total > 0 && (
-          <span className="rounded-full bg-muted/70 px-2 py-[2px] text-[10.5px] font-medium tabular-nums text-muted-foreground">
+          <span
+            className="rounded-full bg-foreground/[0.08] px-2 py-[2px] text-[10.5px] font-medium tabular-nums text-muted-foreground dark:bg-white/[0.1]"
+            style={{ letterSpacing: '-0.01em' }}
+          >
             <span className="text-foreground">{completed}</span>
             <span className="px-0.5 text-muted-foreground/50">/</span>
             <span>{total}</span>
@@ -79,9 +88,9 @@ export function TodoListPanel(): React.JSX.Element {
           when there's an actual list, otherwise the empty-state hint
           gets the vertical room to itself. */}
       {total > 0 && (
-        <div className="mx-3 mb-2 h-[3px] overflow-hidden rounded-full bg-border/50">
+        <div className="mx-3.5 mb-2 h-[3px] overflow-hidden rounded-full bg-foreground/[0.08] dark:bg-white/[0.1]">
           <div
-            className="h-full rounded-full bg-gradient-to-r from-accent/80 to-accent transition-[width] duration-500 ease-out"
+            className="h-full rounded-full bg-accent transition-[width] duration-500 ease-out"
             style={{ width: `${progress}%` }}
             aria-hidden
           />
@@ -114,14 +123,20 @@ export function TodoListPanel(): React.JSX.Element {
 function EmptyHint(): React.JSX.Element {
   const t = useT()
   return (
-    <div className="mx-2 mt-2 flex flex-col items-center gap-2 rounded-lg border border-dashed border-border/60 bg-muted/20 px-3 py-5 text-center text-[11px] leading-relaxed text-muted-foreground/70">
-      <span className="flex size-7 items-center justify-center rounded-full bg-muted/70 text-muted-foreground/80">
+    <div
+      className="mx-2 mt-1 flex flex-col items-center gap-2.5 rounded-xl px-3 py-6 text-center text-muted-foreground"
+      style={{ fontSize: '11.5px', lineHeight: 1.47, letterSpacing: '-0.01em' }}
+    >
+      <span className="flex size-8 items-center justify-center rounded-full bg-foreground/[0.06] text-muted-foreground/80 dark:bg-white/[0.08]">
         <ListIcon />
       </span>
-      <div className="font-medium text-muted-foreground">{t('todosEmpty')}</div>
+      <div className="font-medium text-foreground/75">{t('todosEmpty')}</div>
       <div className="text-muted-foreground/70">
         {t('todosEmptyHintBefore')}
-        <code className="rounded bg-card px-1 py-0.5 text-[10.5px] font-mono text-foreground/80">
+        <code
+          className="rounded-[5px] bg-foreground/[0.08] px-1 py-0.5 font-mono text-foreground/80 dark:bg-white/[0.1]"
+          style={{ fontSize: '10.5px' }}
+        >
           TodoWrite
         </code>
         {t('todosEmptyHintAfter')}
@@ -157,9 +172,10 @@ function TodoRow({ todo, t }: RowProps): React.JSX.Element {
     <li className="relative">
       <div
         className={
-          'group/todo relative flex items-start gap-2.5 rounded-lg py-1.5 pl-2.5 pr-2 text-[12.5px] transition-colors ' +
-          (isInProgress ? 'bg-accent/10 ring-1 ring-inset ring-accent/15' : '')
+          'group/todo relative flex items-start gap-2.5 rounded-lg py-1.5 pl-2.5 pr-2 transition-colors ' +
+          (isInProgress ? 'bg-accent/[0.1] dark:bg-accent/[0.15]' : '')
         }
+        style={{ fontSize: '12.5px', letterSpacing: '-0.012em' }}
       >
         {/* Active-row accent strip — only shown for in_progress so the
             currently-running task is impossible to miss in a long list. */}

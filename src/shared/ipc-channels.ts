@@ -92,6 +92,28 @@ export const IPC_CHANNELS = {
    */
   SESSION_LIST_CHANGED: 'session:list-changed',
   /**
+   * Renderer → main. Returns the set of session ids whose fusion-code
+   * runtime is currently alive (i.e. a pump is running in the
+   * background). The renderer uses this to render "still running"
+   * badges in ThreadListSidebar and to decide which session ids it
+   * needs a subscription on in the multi-runtime model.
+   *
+   * "Alive" means the runtime has a handle or queue — pure empty
+   * slots from a never-sent lazy switch are excluded.
+   */
+  SESSION_LIST_ACTIVE_RUNTIMES: 'session:list-active-runtimes',
+  /**
+   * Renderer → main. Tear down a session's background runtime without
+   * deleting its transcript. The cli process exits and the sessions
+   * map entry is removed; the JSONL on disk is untouched, so a later
+   * click on the row still resumes cleanly. Used by the "X" button
+   * the sidebar shows on running rows.
+   *
+   * Safe to call on a session that's already dead — main treats it
+   * as a no-op so the UI can fire-and-forget.
+   */
+  SESSION_CLOSE_RUNTIME: 'session:close-runtime',
+  /**
    * Main → renderer. Broadcast whenever `engine.sessionMeta` changes —
    * typically on the fusion-code child's first `system init` message
    * (which carries skills / mcp servers / slash commands) or when the
@@ -158,6 +180,21 @@ export const IPC_CHANNELS = {
    * truth for rendering and just re-reads the latest list.
    */
   TAB_LIST_CHANGED: 'tab:list-changed',
+  /**
+   * Renderer → main. One-shot query for the shell window's current
+   * fullscreen state, called once on renderer mount to hydrate the
+   * `data-fullscreen` attribute on `<html>` before the CSS evaluates.
+   * After mount the SHELL_FULLSCREEN_CHANGED broadcast keeps it live.
+   */
+  SHELL_FULLSCREEN_GET: 'shell:fullscreen-get',
+  /**
+   * Main → all tab renderers. Fired on enter/leave-full-screen on the
+   * shell BrowserWindow. Payload is a single boolean. Renderers toggle
+   * `document.documentElement.dataset.fullscreen` in response so
+   * platform-conditional CSS (e.g. hiding the macOS traffic-light
+   * gutter when fullscreen hides the window chrome) can react.
+   */
+  SHELL_FULLSCREEN_CHANGED: 'shell:fullscreen-changed',
   /**
    * Renderer → main. Opens `~/.claude` in the OS file manager via
    * `shell.openPath`. Used by the sidebar user-info menu so the user
@@ -276,6 +313,16 @@ export interface TabDescriptor {
   workspacePath: string | null
   /** True for the single currently-visible tab. */
   active: boolean
+  /**
+   * Aggregate count of unresolved tool-permission requests currently
+   * held by this tab's engine (sum across every session runtime in
+   * that workspace). The shell TabBar paints an Apple-style red
+   * notification badge carrying this number on any tab where it's
+   * > 0, so a pending permission on a background session in
+   * workspace A is visible even while the user is looking at
+   * workspace B. Always 0 for a tab that has no pending tool calls.
+   */
+  pendingPermissionCount: number
 }
 
 export interface TabSwitchPayload {
@@ -391,6 +438,11 @@ export type SessionSwitchResult = { sessionId: string }
 
 export type SessionRenamePayload = { sessionId: string; title: string }
 export type SessionRenameResult = { ok: true }
+
+export type SessionCloseRuntimePayload = { sessionId: string }
+export type SessionCloseRuntimeResult = { ok: true }
+
+export type SessionListActiveRuntimesResult = { sessionIds: readonly string[] }
 
 /**
  * Payload for LANG_CHANGED. Must match the renderer's `Lang` type in
@@ -588,6 +640,24 @@ export interface ChatApi {
   renameSession(payload: SessionRenamePayload): Promise<SessionRenameResult>
 
   /**
+   * List session ids that currently have a live fusion-code runtime
+   * in this tab's engine (i.e. a background agent task still
+   * running). Polled by the sidebar alongside `onSessionListChanged`
+   * to paint "running" badges on the relevant rows.
+   */
+  listActiveRuntimeIds(): Promise<SessionListActiveRuntimesResult>
+
+  /**
+   * Close a session's background runtime. Cli process exits, runtime
+   * map entry is removed, and `sessionListChanged` is broadcast so
+   * the sidebar drops the running badge. The JSONL transcript is
+   * left on disk — the user can still click the row to resume.
+   */
+  closeSessionRuntime(
+    payload: SessionCloseRuntimePayload
+  ): Promise<SessionCloseRuntimeResult>
+
+  /**
    * Subscribe to session-list-changed broadcasts from main. Returns an
    * unsubscribe function. Emitted whenever a session is created,
    * updated, or the active session changes — the adapter should
@@ -732,4 +802,13 @@ export interface TabApi {
    * rendering and just re-reads the latest. Returns an unsubscribe.
    */
   onTabListChanged(handler: (tabs: TabDescriptor[]) => void): () => void
+  /** One-shot query for the shell window's current fullscreen state. */
+  getFullscreen(): Promise<boolean>
+  /**
+   * Subscribe to shell fullscreen enter/leave events. Returns an
+   * unsubscribe. Used by the renderer to toggle a CSS hook that
+   * hides the macOS traffic-light gutter when the window chrome is
+   * gone in fullscreen.
+   */
+  onFullscreenChanged(handler: (fullscreen: boolean) => void): () => void
 }

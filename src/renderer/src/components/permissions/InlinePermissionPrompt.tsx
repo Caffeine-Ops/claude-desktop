@@ -78,7 +78,7 @@ export function InlinePermissionPrompt({ request }: Props): React.JSX.Element {
     return (
       <div
         ref={containerRef}
-        className="rounded-md border border-accent/40 bg-accent/5 p-3"
+        className="overflow-hidden rounded-2xl bg-muted/40 ring-1 ring-black/[0.06] dark:ring-white/[0.06]"
         aria-label={tf('permissionAriaLabel', { toolName: request.toolName })}
       >
         <AskUserQuestionView

@@ -62,14 +62,12 @@ import { useChatStore } from '../../stores/chat'
  */
 
 /**
- * macOS spinner glyph sequence, ported verbatim from
- * free-code/src/components/Spinner/utils.ts → getDefaultCharacters().
- * Forward + reverse makes a 12-frame smooth breathing loop.
+ * Static glyph. The old terminal-style cycling spinner
+ * (`·✢✳✶✻✽`, 120ms per frame) was dropped — the user found the
+ * constant re-render noisy. A single eight-pointed star anchors
+ * the row without any motion.
  */
-const SPINNER_FRAMES = ['·', '✢', '✳', '✶', '✻', '✽', '✽', '✻', '✶', '✳', '✢', '·']
-
-/** Terminal spinner advances a frame every 120ms. */
-const FRAME_MS = 120
+const SPINNER_GLYPH = '✻'
 
 export function ThinkingSpinner(): React.JSX.Element | null {
   const turnStartedAt = useChatStore((s) => s.turnStartedAt)
@@ -77,14 +75,14 @@ export function ThinkingSpinner(): React.JSX.Element | null {
   const turnVerb = useChatStore((s) => s.turnVerb)
   const sessionId = useChatStore((s) => s.sessionId)
 
-  // Cheap animation clock — every 80ms we bump a tick state, which
-  // causes a re-render that recomputes the frame and elapsed seconds
-  // from `Date.now() - turnStartedAt`. Pauses when no turn is in flight
-  // so a stale spinner can't keep ticking after `endAssistantMessage`.
+  // Elapsed-seconds ticker. Re-renders every 1000ms only (was 80ms
+  // for the frame-cycle animation, now unnecessary since the glyph
+  // is static). Pauses when no turn is in flight so a stale row
+  // can't keep ticking after `endAssistantMessage`.
   const [, setTick] = useState(0)
   useEffect(() => {
     if (turnStartedAt === null) return
-    const id = setInterval(() => setTick((t) => t + 1), 80)
+    const id = setInterval(() => setTick((t) => t + 1), 1000)
     return () => clearInterval(id)
   }, [turnStartedAt])
 
@@ -114,8 +112,6 @@ export function ThinkingSpinner(): React.JSX.Element | null {
 
   const elapsedMs = Math.max(0, Date.now() - turnStartedAt)
   const elapsedSec = Math.floor(elapsedMs / 1000)
-  const frame =
-    SPINNER_FRAMES[Math.floor(elapsedMs / FRAME_MS) % SPINNER_FRAMES.length]
   const verbLabel = turnVerb ?? 'Thinking'
 
   return (
@@ -125,11 +121,11 @@ export function ThinkingSpinner(): React.JSX.Element | null {
       aria-live="polite"
       aria-label={`${verbLabel}, ${elapsedSec} seconds elapsed`}
     >
-      {/* Animated gutter glyph — same column as ● / ⎿ on adjacent
+      {/* Static gutter glyph — same column as ● / ⎿ on adjacent
           assistant rows so the visual tree down the left edge stays
           aligned no matter what the row type is. */}
-      <span aria-hidden className="inline-block w-[1ch] shrink-0 text-emerald-400">
-        {frame}
+      <span aria-hidden className="inline-block w-[1ch] shrink-0 text-emerald-500">
+        {SPINNER_GLYPH}
       </span>
       <span className="text-foreground">{verbLabel}…</span>
       <span className="truncate text-muted-foreground/80">

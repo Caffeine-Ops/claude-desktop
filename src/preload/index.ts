@@ -18,6 +18,9 @@ import {
   type FileSuggestionsListPayload,
   type FileSuggestionsListResult,
   type LogEventPayload,
+  type SessionCloseRuntimePayload,
+  type SessionCloseRuntimeResult,
+  type SessionListActiveRuntimesResult,
   type SessionListResult,
   type SessionLoadPayload,
   type SessionLoadResult,
@@ -192,6 +195,21 @@ const chatApi: ChatApi = {
     ) as Promise<SessionRenameResult>
   },
 
+  listActiveRuntimeIds(): Promise<SessionListActiveRuntimesResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SESSION_LIST_ACTIVE_RUNTIMES
+    ) as Promise<SessionListActiveRuntimesResult>
+  },
+
+  closeSessionRuntime(
+    payload: SessionCloseRuntimePayload
+  ): Promise<SessionCloseRuntimeResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SESSION_CLOSE_RUNTIME,
+      payload
+    ) as Promise<SessionCloseRuntimeResult>
+  },
+
   onSessionListChanged(handler: () => void): () => void {
     const listener = (): void => {
       handler()
@@ -334,6 +352,20 @@ const tabApi: TabApi = {
     ipcRenderer.on(IPC_CHANNELS.TAB_LIST_CHANGED, listener)
     return () => {
       ipcRenderer.off(IPC_CHANNELS.TAB_LIST_CHANGED, listener)
+    }
+  },
+
+  getFullscreen(): Promise<boolean> {
+    return ipcRenderer.invoke(IPC_CHANNELS.SHELL_FULLSCREEN_GET) as Promise<boolean>
+  },
+
+  onFullscreenChanged(handler: (fullscreen: boolean) => void): () => void {
+    const listener = (_e: unknown, payload: boolean): void => {
+      handler(payload)
+    }
+    ipcRenderer.on(IPC_CHANNELS.SHELL_FULLSCREEN_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.SHELL_FULLSCREEN_CHANGED, listener)
     }
   }
 }

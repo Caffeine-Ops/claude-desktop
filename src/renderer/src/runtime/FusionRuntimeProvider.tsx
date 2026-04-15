@@ -28,7 +28,6 @@ import {
 import type { ChatEvent, ThreadSummary } from '../../../shared/types'
 import type { ChatImagePayload } from '../../../shared/ipc-channels'
 import { imageAttachmentAdapter } from './imageAttachmentAdapter'
-import { confirmStreamingInterrupt } from './streamingGuard'
 
 /**
  * Bridges our zustand chat store ↔ assistant-ui's ExternalStoreRuntime.
@@ -75,10 +74,65 @@ export function FusionRuntimeProvider({
   const updateToolCallResult = useChatStore((s) => s.updateToolCallResult)
   const setError = useChatStore((s) => s.setError)
   const endAssistantMessage = useChatStore((s) => s.endAssistantMessage)
+  const setUsage = useChatStore((s) => s.setUsage)
+
+  // Track which sessions currently have a live runtime in main. Seeded
+  // from listActiveRuntimeIds() on mount and refreshed on every
+  // sessionListChanged broadcast. The foreground sessionId is always
+  // added to this set even if main hasn't reported it yet, so the first
+  // user turn on a fresh session is still captured by an active
+  // subscription.
+  const [activeRuntimeIds, setActiveRuntimeIds] = useState<readonly string[]>(
+    []
+  )
+
+  useEffect(() => {
+    if (!window.chatApi) return
+    let cancelled = false
+    const refresh = async (): Promise<void> => {
+      try {
+        const res = await window.chatApi.listActiveRuntimeIds()
+        if (cancelled) return
+        setActiveRuntimeIds(res.sessionIds)
+      } catch (err) {
+        console.warn('[runtime] listActiveRuntimeIds failed', err)
+      }
+    }
+    void refresh()
+    const unsub = window.chatApi.onSessionListChanged(() => {
+      void refresh()
+    })
+    return () => {
+      cancelled = true
+      unsub()
+    }
+  }, [])
+
+  // Union of main-reported runtimes + foreground session — sorted +
+  // stringified so the multi-subscription effect below only re-runs
+  // when the set actually changes, not on every parent rerender.
+  const subscribedIdsKey = useMemo(() => {
+    const merged = new Set<string>(activeRuntimeIds)
+    if (sessionId) merged.add(sessionId)
+    return Array.from(merged).sort().join('|')
+  }, [activeRuntimeIds, sessionId])
 
   const threadListAdapter = useThreadListAdapter()
 
-  // ── IPC subscription ────────────────────────────────────────────────
+  // ── Multi-runtime IPC subscription ──────────────────────────────────
+  //
+  // Each active runtime gets its own `onEvent(sid)` subscription so
+  // events from background agent tasks still land in their own
+  // perSession slot even when the user has switched the foreground to
+  // a different thread. A shared reconciler map keeps the registered
+  // set in sync with `subscribedIdsKey` — new ids get a fresh
+  // subscription, dropped ids get unsub'd.
+  //
+  // Per-tool-use state (toolNames / argsBuffers) lives INSIDE each
+  // session's handler closure so TodoWrite partial parsing doesn't
+  // cross-contaminate between concurrent sessions streaming tool
+  // calls at the same time.
+  const subsRef = useRef<Map<string, () => void>>(new Map())
   useEffect(() => {
     if (!window.chatApi) {
       console.error(
@@ -86,143 +140,49 @@ export function FusionRuntimeProvider({
       )
       return
     }
-    // No active session ⇒ nothing to subscribe to. This happens on
-    // cold start (before the user picks a thread) and during the
-    // brief instant a switch is in flight. The effect will re-run as
-    // soon as `sessionId` becomes non-null.
-    if (sessionId === null) return
-    // Per-tool-use-id state the subscription needs across events:
-    //   - toolNames: start-time name lookup, so a `tool_use_delta` can
-    //     tell whether the id is a `TodoWrite` without waiting for end.
-    //   - argsBuffers: accumulated argsText per tool-use, mirror of
-    //     the chat store's argsText but kept here so the TodoWrite
-    //     partial parser can run on every delta without reaching into
-    //     React state.
-    // Both live inside this effect closure so they reset naturally
-    // when the subscription re-mounts (e.g. on sessionId change).
-    const toolNames = new Map<string, string>()
-    const argsBuffers = new Map<string, string>()
+    const desired = new Set(
+      subscribedIdsKey.length > 0 ? subscribedIdsKey.split('|') : []
+    )
+    const current = subsRef.current
 
-    const unsub = window.chatApi.onEvent(sessionId, (event: ChatEvent) => {
-      switch (event.type) {
-        case 'start':
-          startAssistantMessage(event.messageId)
-          break
-        case 'chunk':
-          appendAssistantDelta(event.messageId, event.delta)
-          break
-        case 'thinking_start':
-          // Pre-create a reasoning part so the "正在思考…" dot/label
-          // appears the moment the SDK opens the thinking block.
-          // Without this we'd wait for the first thinking delta, and
-          // Claude's extended-thinking blocks routinely sit silent
-          // for several seconds before producing any delta — long
-          // enough that the user perceives the UI as stuck. The chat
-          // store is idempotent so a second thinking_start in the
-          // same message is a no-op.
-          startReasoning(event.messageId)
-          break
-        case 'thinking_delta':
-          appendThinkingDelta(event.messageId, event.delta)
-          break
-        case 'thinking_end':
-          // No-op: the reasoning part is already complete the moment
-          // the last delta appended into it. The visible "thinking"
-          // shimmer is driven off `streaming` (turn-level), not a
-          // per-block flag, so there's nothing to flip here.
-          break
-        case 'tool_use_start':
-          toolNames.set(event.toolUseId, event.toolName)
-          argsBuffers.set(event.toolUseId, '')
-          startToolCall(event.messageId, event.toolUseId, event.toolName)
-          // Reset the right rail proactively when the model begins
-          // writing a new TodoWrite call. Otherwise the previous list
-          // would hang on screen until the first parsable partial
-          // arrives, producing a confusing "stuck then jump" feel.
-          if (event.toolName === 'TodoWrite') {
-            useTodosStore.getState().setTodos(sessionId, [])
-          }
-          break
-        case 'tool_use_delta': {
-          appendToolCallArgsDelta(event.toolUseId, event.partialJson)
-          // Run the lenient partial parser for TodoWrite every delta
-          // so the right-rail panel fills in row by row as the model
-          // types. Non-TodoWrite tool calls just accumulate argsText
-          // for the inline card, nothing else to do on delta.
-          const toolName = toolNames.get(event.toolUseId)
-          if (toolName !== 'TodoWrite') break
-          const prev = argsBuffers.get(event.toolUseId) ?? ''
-          const next = prev + event.partialJson
-          argsBuffers.set(event.toolUseId, next)
-          const parsed = parsePartialToolArgs(next)
-          if (parsed !== null) {
-            const items = extractTodoWriteItems(parsed, /* partial */ true)
-            if (items) {
-              useTodosStore.getState().setTodos(sessionId, items)
-            }
-          }
-          break
-        }
-        case 'tool_use_end':
-          finalizeToolCall(event.toolUseId)
-          // On finalize, run the non-partial extractor against the
-          // fully closed JSON for TodoWrite. This upgrades any
-          // "best-effort" partial state to the authoritative list.
-          if (toolNames.get(event.toolUseId) === 'TodoWrite') {
-            const text = argsBuffers.get(event.toolUseId) ?? ''
-            try {
-              const final = JSON.parse(text)
-              const items = extractTodoWriteItems(final, /* partial */ false)
-              if (items) {
-                useTodosStore.getState().setTodos(sessionId, items)
-              }
-            } catch {
-              // Keep whatever the partial parser produced last — the
-              // finalize path isn't supposed to blank the panel.
-            }
-          }
-          toolNames.delete(event.toolUseId)
-          argsBuffers.delete(event.toolUseId)
-          break
-        case 'tool_use':
-          // Non-streaming path: SDK handed us the completed tool_use
-          // block without the content_block_start/delta/stop fan-out.
-          // Add the card in one shot and mirror TodoWrite into the
-          // right rail. Engine.ts guarantees this event is NOT emitted
-          // for ids that already went through the streaming path, so
-          // we don't need to dedupe here.
-          addToolCall(
-            event.messageId,
-            event.toolUseId,
-            event.toolName,
-            event.input
-          )
-          if (event.toolName === 'TodoWrite') {
-            const items = extractTodoWriteItems(event.input)
-            if (items) {
-              useTodosStore.getState().setTodos(sessionId, items)
-            }
-          }
-          break
-        case 'tool_result':
-          updateToolCallResult(event.toolUseId, event.output)
-          break
-        case 'end':
-          endAssistantMessage()
-          break
-        case 'error':
-          setError(event.messageId, event.error)
-          endAssistantMessage()
-          break
-        default:
-          break
+    // Remove subscriptions for ids no longer in the desired set.
+    for (const [sid, unsub] of current) {
+      if (!desired.has(sid)) {
+        unsub()
+        current.delete(sid)
       }
-    })
-    return unsub
+    }
+
+    // Add subscriptions for new ids.
+    for (const sid of desired) {
+      if (current.has(sid)) continue
+      const handler = makeSessionEventHandler(sid, {
+        startAssistantMessage,
+        appendAssistantDelta,
+        startReasoning,
+        appendThinkingDelta,
+        startToolCall,
+        appendToolCallArgsDelta,
+        finalizeToolCall,
+        addToolCall,
+        updateToolCallResult,
+        setError,
+        endAssistantMessage,
+        setUsage
+      })
+      const unsub = window.chatApi.onEvent(sid, handler)
+      current.set(sid, unsub)
+    }
+    // Do NOT unsub on effect cleanup — only unmount should tear down
+    // subscriptions. Effect cleanup runs on every deps change and
+    // would churn the whole map even though the reconciler above
+    // already computed an exact diff.
+    return undefined
   }, [
-    sessionId,
+    subscribedIdsKey,
     startAssistantMessage,
     appendAssistantDelta,
+    startReasoning,
     appendThinkingDelta,
     startToolCall,
     appendToolCallArgsDelta,
@@ -230,8 +190,20 @@ export function FusionRuntimeProvider({
     addToolCall,
     updateToolCallResult,
     setError,
-    endAssistantMessage
+    endAssistantMessage,
+    setUsage
   ])
+
+  // Component unmount cleanup — tear down every live subscription so
+  // the renderer doesn't keep IPC listeners around after FusionRuntimeProvider
+  // disappears (tab close / HMR).
+  useEffect(() => {
+    const subs = subsRef.current
+    return () => {
+      for (const unsub of subs.values()) unsub()
+      subs.clear()
+    }
+  }, [])
 
   // ── Voice dictation adapter ─────────────────────────────────────────
   // We don't use assistant-ui's built-in WebSpeechDictationAdapter:
@@ -395,8 +367,6 @@ export function FusionRuntimeProvider({
           ...(img.filename ? { filename: img.filename } : {})
         })
       }
-      appendUserMessage(storeContent)
-
       // 2) Hand the prompt to the main-process ChatEngine. The assistant
       // response comes back as ChatEvents via the IPC subscription above;
       // we don't await the full stream here — `start` will arrive as an
@@ -404,11 +374,14 @@ export function FusionRuntimeProvider({
       if (sessionId === null) {
         const msg = 'No active session — create or pick one from the sidebar.'
         console.error('[runtime]', msg)
-        startAssistantMessage(`err_${Date.now()}`)
-        setError(`err_${Date.now()}`, msg)
-        endAssistantMessage()
         return
       }
+
+      // Foreground session is the target of the composer. Bind a
+      // local alias so every action below gets the right sid without
+      // re-reading an outer closure that could theoretically drift.
+      const targetSid = sessionId
+      appendUserMessage(targetSid, storeContent)
 
       // Pre-flip the spinner so the user sees feedback while the
       // main-process send awaits the lazy fusion-code cold start.
@@ -421,11 +394,11 @@ export function FusionRuntimeProvider({
       // real `start` event arriving later is a no-op for the turn
       // meta (see chat.ts:startAssistantMessage).
       const pendingMessageId = `pending_${Date.now()}`
-      startAssistantMessage(pendingMessageId)
+      startAssistantMessage(targetSid, pendingMessageId)
 
       try {
         await window.chatApi.send({
-          sessionId,
+          sessionId: targetSid,
           // Engine validator accepts empty strings when images are present.
           // We still pass an empty string (not undefined) so the wire
           // shape stays stable.
@@ -439,9 +412,10 @@ export function FusionRuntimeProvider({
         // the failure instead of a silent void. Idempotent
         // startAssistantMessage means this call won't reset the
         // turn meta set by the pre-flip above.
-        startAssistantMessage(`err_${Date.now()}`)
-        setError(`err_${Date.now()}`, msg)
-        endAssistantMessage()
+        const errMessageId = `err_${Date.now()}`
+        startAssistantMessage(targetSid, errMessageId)
+        setError(targetSid, errMessageId, msg)
+        endAssistantMessage(targetSid)
       }
     },
 
@@ -602,11 +576,12 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
 
   const onSwitchToNewThread = useCallback(async (): Promise<void> => {
     if (!window.chatApi) return
-    // Mid-turn guard: the runtime calls this both from cold-start
-    // auto-select (streaming === false, no prompt) and from the
-    // sidebar's New chat button (potentially mid-turn). Only the
-    // latter sees the confirm.
-    if (!(await confirmStreamingInterrupt())) return
+    // Multi-runtime: switching away from a streaming session is now
+    // non-destructive — the prev runtime keeps running in the
+    // background and its deltas accumulate in its own perSession slot.
+    // No interrupt confirmation needed; the old streamingGuard call
+    // was a holdover from the single-runtime era when switching
+    // teardowned the prev cli.
     try {
       setSessionLoading(true)
       const { sessionId: newId } = await window.chatApi.newSession()
@@ -627,9 +602,9 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
   const onSwitchToThread = useCallback(
     async (id: string): Promise<void> => {
       if (!window.chatApi) return
-      // Same mid-turn guard as new-thread: skip when not streaming
-      // (cold-start auto-select path) and prompt otherwise.
-      if (!(await confirmStreamingInterrupt())) return
+      // Multi-runtime: non-destructive switch. See onSwitchToNewThread
+      // for the rationale — the prev session keeps its cli alive in
+      // the background, so there's nothing to interrupt.
       try {
         setSessionLoading(true)
 
@@ -832,6 +807,162 @@ function wrapDictationWithLogging(inner: DictationAdapter): DictationAdapter {
       }
     },
     disableInputDuringDictation: inner.disableInputDuringDictation
+  }
+}
+
+/**
+ * Build a ChatEvent handler bound to a single session id. The closure
+ * owns per-tool-use state (toolNames / argsBuffers) so concurrent
+ * sessions streaming TodoWrite can't cross-contaminate their right-rail
+ * partial-parse state. Every mutation targets the captured `sid`,
+ * which is what keeps background runtimes writing into their own
+ * perSession slot instead of the foreground.
+ */
+function makeSessionEventHandler(
+  sid: string,
+  actions: {
+    startAssistantMessage: (sid: string, messageId: string) => void
+    appendAssistantDelta: (
+      sid: string,
+      messageId: string,
+      delta: string
+    ) => void
+    startReasoning: (sid: string, messageId: string) => void
+    appendThinkingDelta: (
+      sid: string,
+      messageId: string,
+      delta: string
+    ) => void
+    startToolCall: (
+      sid: string,
+      messageId: string,
+      toolUseId: string,
+      toolName: string
+    ) => void
+    appendToolCallArgsDelta: (
+      sid: string,
+      toolUseId: string,
+      delta: string
+    ) => void
+    finalizeToolCall: (sid: string, toolUseId: string) => void
+    addToolCall: (
+      sid: string,
+      messageId: string,
+      toolUseId: string,
+      toolName: string,
+      input: unknown
+    ) => void
+    updateToolCallResult: (
+      sid: string,
+      toolUseId: string,
+      output: unknown
+    ) => void
+    setError: (sid: string, messageId: string, error: string) => void
+    endAssistantMessage: (sid: string) => void
+    setUsage: (
+      sid: string,
+      usage: { contextTokens: number; outputTokens: number }
+    ) => void
+  }
+): (event: ChatEvent) => void {
+  const toolNames = new Map<string, string>()
+  const argsBuffers = new Map<string, string>()
+  return (event: ChatEvent) => {
+    switch (event.type) {
+      case 'start':
+        actions.startAssistantMessage(sid, event.messageId)
+        break
+      case 'chunk':
+        actions.appendAssistantDelta(sid, event.messageId, event.delta)
+        break
+      case 'thinking_start':
+        actions.startReasoning(sid, event.messageId)
+        break
+      case 'thinking_delta':
+        actions.appendThinkingDelta(sid, event.messageId, event.delta)
+        break
+      case 'thinking_end':
+        break
+      case 'tool_use_start':
+        toolNames.set(event.toolUseId, event.toolName)
+        argsBuffers.set(event.toolUseId, '')
+        actions.startToolCall(
+          sid,
+          event.messageId,
+          event.toolUseId,
+          event.toolName
+        )
+        if (event.toolName === 'TodoWrite') {
+          useTodosStore.getState().setTodos(sid, [])
+        }
+        break
+      case 'tool_use_delta': {
+        actions.appendToolCallArgsDelta(sid, event.toolUseId, event.partialJson)
+        const toolName = toolNames.get(event.toolUseId)
+        if (toolName !== 'TodoWrite') break
+        const prev = argsBuffers.get(event.toolUseId) ?? ''
+        const next = prev + event.partialJson
+        argsBuffers.set(event.toolUseId, next)
+        const parsed = parsePartialToolArgs(next)
+        if (parsed !== null) {
+          const items = extractTodoWriteItems(parsed, /* partial */ true)
+          if (items) {
+            useTodosStore.getState().setTodos(sid, items)
+          }
+        }
+        break
+      }
+      case 'tool_use_end':
+        actions.finalizeToolCall(sid, event.toolUseId)
+        if (toolNames.get(event.toolUseId) === 'TodoWrite') {
+          const text = argsBuffers.get(event.toolUseId) ?? ''
+          try {
+            const final = JSON.parse(text)
+            const items = extractTodoWriteItems(final, /* partial */ false)
+            if (items) {
+              useTodosStore.getState().setTodos(sid, items)
+            }
+          } catch {
+            // Keep whatever the partial parser produced last.
+          }
+        }
+        toolNames.delete(event.toolUseId)
+        argsBuffers.delete(event.toolUseId)
+        break
+      case 'tool_use':
+        actions.addToolCall(
+          sid,
+          event.messageId,
+          event.toolUseId,
+          event.toolName,
+          event.input
+        )
+        if (event.toolName === 'TodoWrite') {
+          const items = extractTodoWriteItems(event.input)
+          if (items) {
+            useTodosStore.getState().setTodos(sid, items)
+          }
+        }
+        break
+      case 'tool_result':
+        actions.updateToolCallResult(sid, event.toolUseId, event.output)
+        break
+      case 'usage':
+        actions.setUsage(sid, {
+          contextTokens: event.contextTokens,
+          outputTokens: event.outputTokens
+        })
+        break
+      case 'end':
+        actions.endAssistantMessage(sid)
+        break
+      case 'error':
+        actions.setError(sid, event.messageId, event.error)
+        actions.endAssistantMessage(sid)
+        break
+      default:
+        break
+    }
   }
 }
 

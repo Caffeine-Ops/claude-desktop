@@ -70,6 +70,10 @@ const STRINGS = {
     // Sidebar — chats column
     sidebarChats: '对话',
     sidebarNewChat: '新建对话',
+    sidebarStatusRunning: '运行中',
+    sidebarStatusAwaitingPermission: '等待授权',
+    sidebarStatusIdle: '空闲',
+    sidebarCloseRuntime: '停止后台运行',
     sidebarSwitchingSession: '正在切换会话…',
 
     // Sidebar — quick actions (TODO: wire to real dialogs)
@@ -217,7 +221,6 @@ const STRINGS = {
     emptyWorkspaceDesc: 'Claude 会在这个目录里运行——它会成为本次会话所有工具调用的工作目录。',
     emptyWorkspaceButton: '选择文件夹',
     emptyWorkspaceDragHint: '或把文件夹拖到窗口任意位置',
-    emptyWorkspaceComposerHint: '选择一个文件夹后即可开始对话',
 
     // Logs dialog
     logsDialogAria: '引擎日志时间线',
@@ -308,6 +311,10 @@ const STRINGS = {
 
     sidebarChats: 'Chats',
     sidebarNewChat: 'New chat',
+    sidebarStatusRunning: 'Running',
+    sidebarStatusAwaitingPermission: 'Awaiting permission',
+    sidebarStatusIdle: 'Idle',
+    sidebarCloseRuntime: 'Stop background runtime',
     sidebarSwitchingSession: 'Switching session…',
 
     // Sidebar — quick actions (TODO: wire to real dialogs)
@@ -450,7 +457,6 @@ const STRINGS = {
     emptyWorkspaceDesc: 'Claude runs inside this directory — it becomes the working directory for every tool call this session.',
     emptyWorkspaceButton: 'Choose folder',
     emptyWorkspaceDragHint: 'Or drop a folder anywhere in the window',
-    emptyWorkspaceComposerHint: 'Pick a folder to start chatting',
 
     logsDialogAria: 'Engine log timeline',
     logsTabEngine: 'Engine',

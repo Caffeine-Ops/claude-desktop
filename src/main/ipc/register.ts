@@ -12,6 +12,9 @@ import {
   type ChatSendResult,
   type FileSuggestionsListPayload,
   type FileSuggestionsListResult,
+  type SessionCloseRuntimePayload,
+  type SessionCloseRuntimeResult,
+  type SessionListActiveRuntimesResult,
   type SessionListResult,
   type SessionLoadPayload,
   type SessionLoadResult,
@@ -37,10 +40,12 @@ import { listFileSuggestions } from '../core/fileSuggestions'
 import { listSessions, loadSession, renameSession } from '../core/sessionStore'
 import { clearUnread, updateTrayLang } from '../tray'
 import {
+  broadcastTabList,
   canAddTab,
   closeTab,
   describeSenderMismatch,
   getContextForSender,
+  getShellFullscreen,
   getShellWindow,
   listTabs,
   MAX_TABS,
@@ -127,6 +132,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.TAB_SWITCH)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_CLOSE)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_LIST_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.SHELL_FULLSCREEN_GET)
   ipcMain.removeHandler(IPC_CHANNELS.APP_OPEN_CLAUDE_DIR)
   ipcMain.removeHandler(IPC_CHANNELS.CLI_BACKEND_GET)
   ipcMain.removeHandler(IPC_CHANNELS.CLI_BACKEND_SET)
@@ -238,6 +244,11 @@ export function registerIpcHandlers(): void {
     async (event, payload: WorkspaceSetPayload): Promise<WorkspaceState> => {
       validateWorkspaceSetPayload(payload)
       const next = await resolveEngine(event).setWorkspace(payload.path)
+      // Refresh the shell's tab strip so the title pill picks up the
+      // new folder's basename immediately. Without this, the tab keeps
+      // showing "New Workspace" until some unrelated event (tab click,
+      // did-finish-load) re-triggers a broadcast.
+      broadcastTabList()
       return { path: next }
     }
   )
@@ -398,6 +409,35 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // Multi-runtime support. Returns the set of sessions currently
+  // backed by a live fusion-code process in this tab's engine, so
+  // the sidebar can paint "still running" badges on the matching
+  // rows and the renderer's ChatEvent bridge knows which ids it
+  // needs a subscription on (background runtimes emit events even
+  // when they aren't the foreground session).
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_LIST_ACTIVE_RUNTIMES,
+    async (event): Promise<SessionListActiveRuntimesResult> => {
+      return { sessionIds: resolveEngine(event).listActiveRuntimeIds() }
+    }
+  )
+
+  // Explicit "close this background session" handler. Tears down
+  // the runtime (cli exits) but leaves the JSONL on disk so the
+  // row can still be reopened from the sidebar. Fires
+  // sessionListChanged so the renderer drops the running badge.
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_CLOSE_RUNTIME,
+    async (
+      event,
+      payload: SessionCloseRuntimePayload
+    ): Promise<SessionCloseRuntimeResult> => {
+      validateSessionCloseRuntimePayload(payload)
+      await resolveEngine(event).closeSessionRuntime(payload.sessionId)
+      return { ok: true }
+    }
+  )
+
   // Relaunch the app. Used by the workspace switcher — swapping
   // workspaces means restarting so the fusion-code child respawns
   // with the new cwd and the gate reappears cold.
@@ -440,6 +480,17 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.TAB_LIST_GET,
     async (): Promise<TabListResult> => {
       return { tabs: listTabs() }
+    }
+  )
+
+  // One-shot hydrate for the shell window's fullscreen state. The
+  // renderer calls this on mount to set `data-fullscreen` on <html>
+  // before the CSS evaluates; SHELL_FULLSCREEN_CHANGED broadcasts
+  // keep it live after that.
+  ipcMain.handle(
+    IPC_CHANNELS.SHELL_FULLSCREEN_GET,
+    async (): Promise<boolean> => {
+      return getShellFullscreen()
     }
   )
 
@@ -834,6 +885,21 @@ function validateSessionSwitchPayload(
   }
   if (typeof v.resume !== 'boolean') {
     throw new Error('Invalid session-switch resume (must be boolean)')
+  }
+}
+
+function validateSessionCloseRuntimePayload(
+  value: unknown
+): asserts value is SessionCloseRuntimePayload {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('Invalid session-close-runtime payload')
+  }
+  const v = value as Record<string, unknown>
+  if (typeof v.sessionId !== 'string' || v.sessionId.length === 0) {
+    throw new Error('Invalid session-close-runtime sessionId (empty or missing)')
+  }
+  if (v.sessionId.length > 128) {
+    throw new Error('Invalid session-close-runtime sessionId (too long)')
   }
 }
 

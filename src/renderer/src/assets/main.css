@@ -1,8 +1,21 @@
 :root {
   /* color-scheme is set per-theme by index.css. */
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif;
+  /* Apple DESIGN.md §3: SF Pro Text < 19px, SF Pro Display ≥ 20px.
+   * `-apple-system` on macOS resolves to SF Pro with the system's
+   * optical-size mechanism, so the font physically switches variants
+   * by size. `font-optical-sizing: auto` makes sure a user on a newer
+   * OS/browser honors that switch instead of locking to one axis. */
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-optical-sizing: auto;
   font-feature-settings: 'cv11', 'ss01';
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Apple tracks text tight at every size. Setting a negative default
+   * here means every element inherits Apple-correct body tracking
+   * (-0.022em ≈ -0.374px @ 17px) unless a component overrides it for a
+   * specific optical size. */
+  letter-spacing: -0.022em;
 }
 
 * {
@@ -63,27 +76,62 @@ body,
 
 .header {
   display: flex;
-  /* Children stretch to the full header height; the tab strip
-     uses `items-end` inside to bottom-align Chrome-style pills,
-     while the panel toggles align themselves centered. */
-  align-items: stretch;
+  /* Apple-style toolbar: all children (tab pills + panel toggles)
+     sit centered inside a single-row material strip. No more
+     Chrome-style "active tab shoulders merge with content" — the
+     tab pills are fully rounded and float inside the toolbar. */
+  align-items: center;
   gap: 8px;
-  /* 150px left padding reserves the macOS traffic-light gutter
-     plus extra breathing room on the left before the first tab
-     pill — matches Chrome's spacing on macOS where the window
-     controls have a generous cushion before the tab strip
-     starts. Bottom padding is 0 so the active tab's rounded
-     shoulders rest flush against the header's bottom edge —
-     that's what lets its box-shadow paint over the header's
-     border-bottom and merge the tab into the viewport below. */
-  padding: 8px 20px 0 150px;
-  border-bottom: 1px solid hsl(var(--border) / 0.7);
-  background-color: hsl(var(--muted) / 0.35);
-  backdrop-filter: saturate(160%) blur(22px);
-  -webkit-backdrop-filter: saturate(160%) blur(22px);
+  /* Default left padding for Windows / Linux — no traffic-light
+     gutter to reserve, so the first tab pill sits flush with a
+     standard 14px inset. macOS overrides this below to reserve
+     space for the red/yellow/green buttons. Symmetric 10px
+     top/bottom keeps the pills centered in the material band. */
+  padding: 10px 20px 10px 14px;
+  /* Apple-style hairline separator — visible but understated.
+     Pure black at 12% alpha reads as a clear 1px rule on the
+     light material while still feeling "frost edge" rather than
+     "hard chrome border". */
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+  /* Translucent frost: the toolbar is close to the background but
+     not identical, so content scrolled under it reads through a
+     light vibrancy. Stronger saturation + larger blur than Chrome
+     gives the Safari/Finder material feel. */
+  background-color: hsl(var(--background) / 0.72);
+  backdrop-filter: saturate(180%) blur(28px);
+  -webkit-backdrop-filter: saturate(180%) blur(28px);
   -webkit-app-region: drag;
   flex-shrink: 0;
-  min-height: 44px;
+  min-height: 48px;
+}
+
+/* Dark theme: black alpha is invisible on a dark background.
+ * White at 12% alpha gives the inverted Apple hairline. */
+.dark .header {
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+
+/* macOS traffic-light gutter. The three window-control circles
+ * span ~68px from the left edge (offset ~8px, three 12px dots
+ * with 8px gaps), so 82px leaves a ~14px breathing gap before
+ * the first tab pill. Windows / Linux keep the default 14px
+ * inset since their controls live on the right. `data-platform`
+ * is set in main.tsx before React mounts, so the first paint
+ * is already correct — no post-mount reflow. */
+html[data-platform='darwin'] .header {
+  padding-left: 82px;
+}
+
+/* In macOS native fullscreen the traffic-light buttons slide out
+ * of the window chrome entirely — reserving 82px for them would
+ * leave an awkward dead zone on the left. The `data-fullscreen`
+ * attribute is maintained by main.tsx's bootFullscreen() block,
+ * which subscribes to the shell window's enter/leave-full-screen
+ * broadcasts. (Chromium's `display-mode: fullscreen` media query
+ * is unreliable for Electron's BrowserWindow.setFullScreen — it
+ * only reports display-mode for `element.requestFullscreen`.) */
+html[data-platform='darwin'][data-fullscreen='true'] .header {
+  padding-left: 14px;
 }
 
 .badge {

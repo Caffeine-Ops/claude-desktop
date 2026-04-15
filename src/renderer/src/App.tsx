@@ -277,8 +277,22 @@ function App(): React.JSX.Element {
             spacer. `self-center` keeps them vertically centered
             inside the `items-stretch` header even though the
             TabBar's pills bottom-align. */}
+        {/* Panel toggles — only meaningful when the chat runtime is
+            mounted. Cold start (no workspace yet) renders the
+            EmptyWorkspaceShell instead of the three-pane layout, so
+            the buttons are a dead affordance until a folder is
+            picked. We keep them in the layout tree the whole time
+            (`invisible` = `visibility: hidden`, which reserves space)
+            so picking a folder doesn't shrink the TabBar by 60px in
+            a single frame and jitter the pill row. `aria-hidden` +
+            `pointer-events-none` keep them off the tab order and
+            un-clickable during cold start. */}
         <div
-          className="flex shrink-0 items-center gap-1 self-center pb-[8px]"
+          className={
+            'flex shrink-0 items-center gap-1 self-center ' +
+            (hasWorkspace ? '' : 'invisible pointer-events-none')
+          }
+          aria-hidden={hasWorkspace ? undefined : true}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <button
@@ -424,7 +438,7 @@ function App(): React.JSX.Element {
                   }}
                   className="relative h-full shrink-0 overflow-hidden"
                 >
-                  <aside className="absolute inset-y-0 right-0 flex h-full w-72 flex-col gap-3 border-l border-border/55 bg-background/75 p-3 backdrop-blur-2xl backdrop-saturate-150">
+                  <aside className="absolute inset-y-0 right-0 flex h-full w-72 flex-col gap-4 bg-background/70 p-3.5 backdrop-blur-2xl backdrop-saturate-150 shadow-[inset_1px_0_0_rgba(0,0,0,0.06)] dark:shadow-[inset_1px_0_0_rgba(255,255,255,0.08)]">
                     <TodoListPanel />
                     <WorkspaceTreePanel />
                   </aside>

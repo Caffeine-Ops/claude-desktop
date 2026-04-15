@@ -121,6 +121,21 @@ interface SessionRuntime {
   readyResolve: (() => void) | null
   readyReject: ((err: Error) => void) | null
   readySettled: boolean
+  /**
+   * Per-runtime equivalent of the old class-level `pendingResume`.
+   * Multi-runtime means two concurrent warmups may each need different
+   * resume semantics, so resolve it from the runtime the lazy spawn is
+   * operating on rather than a single class field.
+   */
+  pendingResume: boolean
+  /**
+   * True once `send()` has pushed at least one real user turn into the
+   * queue. Used as the "worth keeping alive in the background" signal
+   * for warmup-cancel in `switchToSession`: a runtime that was only
+   * eagerly warmed but never actually sent to can be safely torn down
+   * when the user switches away.
+   */
+  openedViaSend: boolean
 }
 
 interface ActiveTurn {
@@ -241,24 +256,20 @@ export class ChatEngine extends EventEmitter {
   private workspaceDir: string | null = null
 
   /**
-   * UUID of the session whose fusion-code child is currently live.
-   * Same string as the JSONL file name in `~/.claude/projects/<cwd>/`.
+   * UUID of the session currently shown in the foreground of this
+   * tab's UI. In the multi-runtime model the engine may have many
+   * runtimes alive at once (background agent tasks on sessions the
+   * user has switched away from); `activeSessionId` only identifies
+   * the one whose thread is on screen, NOT the only one with a
+   * running cli. The foreground session is the target of composer
+   * send() calls from the UI, but `send()` itself accepts any
+   * runtime id that exists in the sessions map.
    *
    * Null before the user creates / picks a session in the sidebar.
    * Populated by `switchToSession()` and mirrored by the SDK `sessionId`
    * option on each query(), so renderer + main + JSONL all agree.
    */
   private activeSessionId: string | null = null
-
-  /**
-   * "The next lazy openSession on `activeSessionId` should resume vs
-   * start fresh." `switchToSession()` records this and immediately
-   * returns — the actual cli spawn is deferred to the first `send()`
-   * on the new session so the sidebar click doesn't pay the ~3-8s
-   * fusion-code cold start. Null means "no pending cold start" (the
-   * runtime is either already live or nothing's been picked yet).
-   */
-  private pendingResume: boolean | null = null
 
   /**
    * Set to true for the short window during which `switchToSession()`
@@ -386,10 +397,62 @@ export class ChatEngine extends EventEmitter {
       }
     }
     this.activeSessionId = null
-    this.pendingResume = null
     await Promise.all(teardowns)
     this.removeAllListeners()
     this.permissionBroker.removeAllListeners()
+  }
+
+  /**
+   * Return the set of session ids currently backed by a live (or
+   * warming-up) fusion-code runtime. "Live" here means the pump
+   * hasn't exited — either handle or queue is still set. Empty slots
+   * from a new-session click that never got send()'d are excluded.
+   *
+   * Used by the renderer to render running-badges in ThreadListSidebar
+   * (so the user can see which threads still have agent work in
+   * flight) and to decide what to subscribe to in the multi-runtime
+   * IPC bridge.
+   */
+  listActiveRuntimeIds(): string[] {
+    const ids: string[] = []
+    for (const [id, rt] of this.sessions) {
+      if (rt.handle || rt.queue) ids.push(id)
+    }
+    return ids
+  }
+
+  /**
+   * Explicitly tear down a session's runtime without deleting its
+   * JSONL on disk. User-facing "close this background session"
+   * action: the row stays in the sidebar (the transcript is still
+   * readable) but the cli process exits and future clicks will
+   * resume from disk rather than pick up where it left off.
+   *
+   * Safe to call on an unknown or already-closed id — both are
+   * silent no-ops so the UI can fire-and-forget.
+   */
+  async closeSessionRuntime(sessionId: string): Promise<void> {
+    const rt = this.sessions.get(sessionId)
+    if (!rt) return
+    // Detach first so a racing switchToSession(sessionId) builds a
+    // fresh slot rather than aliasing the one we're tearing down.
+    this.sessions.delete(sessionId)
+    this.logEvent('closeSessionRuntime', { sessionId })
+    if (rt.handle || rt.queue) {
+      try {
+        await this.teardownRuntime(sessionId, rt)
+      } catch (err) {
+        console.warn('[engine] closeSessionRuntime teardown failed:', err)
+      }
+    }
+    // If the user just closed the foreground session, clear the
+    // pointer so subsequent send() calls don't target a dead slot.
+    // The renderer should immediately pick a new foreground or drop
+    // back to the empty thread view.
+    if (this.activeSessionId === sessionId) {
+      this.activeSessionId = null
+    }
+    this.emit('sessionListChanged')
   }
 
   /** Snapshot of the cached session meta. Returns a fresh object so
@@ -518,20 +581,24 @@ export class ChatEngine extends EventEmitter {
     if (this.switching) {
       throw new Error('Session switch in progress — please retry in a moment.')
     }
-    if (this.activeSessionId === null) {
-      throw new Error('No active session — create or open one from the sidebar.')
-    }
-    if (sessionId !== this.activeSessionId) {
-      throw new Error(
-        `Session mismatch: send targeted ${sessionId} but ${this.activeSessionId} is active.`
-      )
+    if (!sessionId) {
+      throw new Error('No session — create or open one from the sidebar.')
     }
 
+    // Multi-runtime: the target session may be the foreground one OR a
+    // background task the user started earlier. Either way, as long as
+    // the runtime slot exists we're allowed to push a turn into it.
+    // `getSession` lazily creates the slot if missing (new session path).
     const runtime = await this.getSession(sessionId)
+    // Mark the runtime as "has real work" — this is the signal
+    // `switchToSession` uses to keep the runtime alive when the user
+    // switches away (warmup-cancel only kills never-sent runtimes).
+    runtime.openedViaSend = true
     const messageId = randomUUID()
     const requestId = this.nextRequestId++
 
     this.logEvent('send:begin', {
+      sessionId,
       messageId,
       textLength: text.length,
       imageCount: images?.length ?? 0,
@@ -824,16 +891,13 @@ export class ChatEngine extends EventEmitter {
           description?: string
         }
       ) =>
-        this.handleCanUseTool(
-          // Use the live active id, not the original openSession
-          // parameter — fusion-code may have rebound to a new id on
-          // its first `system init` (silent fork). Fall back to the
-          // original if activeSessionId hasn't caught up yet.
-          this.activeSessionId ?? sessionId,
-          toolName,
-          input,
-          ctx
-        ),
+        // Multi-runtime: route by the openSession closure's own id,
+        // NOT this.activeSessionId — the foreground session may be a
+        // different runtime at the moment this callback fires. The
+        // pump-local `sessionId` already tracks any rebinds that
+        // updateSessionMeta applies, so the closure capture is the
+        // correct binding.
+        this.handleCanUseTool(sessionId, toolName, input, ctx),
       // Stream text deltas so the UI sees typewriter-style chunks.
       includePartialMessages: true,
       // env.json has already been merged into process.env during
@@ -1026,17 +1090,25 @@ export class ChatEngine extends EventEmitter {
       throw new Error('Another session switch is already in progress.')
     }
 
-    // Lazy switch. The expensive work — spawning a fresh fusion-code
-    // child and waiting for its `system init` — is deferred to the
-    // first send() on this session. Here we only:
+    // Multi-runtime switch. The expensive work — spawning a fresh
+    // fusion-code child and waiting for its `system init` — is deferred
+    // to the first send() on the new session. Here we only:
     //
-    //   1. Detach the previous runtime from the sessions map and tear
-    //      it down in the background (fire-and-forget). The user's
-    //      click doesn't wait for the old cli to exit cleanly.
-    //   2. Allocate an empty runtime slot for the new session.
-    //   3. Record the resume flag on `pendingResume` so the lazy
-    //      openSession in send() still gets the right --resume
-    //      semantics.
+    //   1. For the previous foreground session, decide whether it's
+    //      worth keeping its runtime alive in the background:
+    //        - openedViaSend = true  → real agent task, leave running
+    //          so the user can come back and find accumulated messages
+    //        - openedViaSend = false → only warmed up speculatively;
+    //          kill the warmup to reclaim the CLI process. This is the
+    //          "flipping through old sessions" case, which would
+    //          otherwise leak one idle cli per visited session.
+    //   2. Allocate (or reuse) a runtime slot for the new session.
+    //      Reused slots keep their handle/queue/pumpPromise intact,
+    //      so switching back to a background-running session is
+    //      instantaneous and lossless.
+    //   3. Record the resume flag on the runtime itself so the lazy
+    //      openSession in send() / warmup gets the right --resume
+    //      semantics without a shared class field.
     //
     // The whole function runs in a single microtask (modulo the
     // `getSession` await which is actually synchronous), so the UI
@@ -1053,31 +1125,25 @@ export class ChatEngine extends EventEmitter {
       const prev = this.activeSessionId
       if (prev && prev !== newId) {
         const prevRt = this.sessions.get(prev)
-        if (prevRt) {
-          // Synchronously detach so a later switchToSession(prev)
-          // builds a fresh runtime instead of aliasing the one we're
-          // tearing down. The map key is free the instant we return.
+        if (prevRt && !prevRt.openedViaSend && (prevRt.handle || prevRt.queue)) {
+          // Warmup cancel: prev had a cli spawned but the user never
+          // actually sent a message. Detach and teardown so we don't
+          // leak idle processes when the user flips through old
+          // sessions. Runtimes that have been send()'d stay put.
           this.sessions.delete(prev)
-          if (prevRt.handle || prevRt.queue) {
-            // Fire-and-forget. Errors are logged by teardownRuntime
-            // and runPump; nothing downstream depends on the teardown
-            // completing in any particular window.
-            this.logEvent('teardownRuntime:async', { sessionId: prev })
-            void this.teardownRuntime(prev, prevRt).catch((err) => {
-              console.warn('[engine] async teardown failed:', err)
-            })
-          }
-          // If the prev runtime had no cli yet (pending switch that
-          // was never sent to), there's nothing to teardown — GC
-          // collects the empty object.
+          this.logEvent('switchToSession:warmupCancel', { sessionId: prev })
+          void this.teardownRuntime(prev, prevRt).catch((err) => {
+            console.warn('[engine] warmup-cancel teardown failed:', err)
+          })
         }
       }
 
-      // Allocate (or reuse) an empty runtime slot for the new id.
-      // `getSession` only creates the object; it does NOT spawn a cli.
-      await this.getSession(newId)
+      // Allocate (or reuse) a runtime slot for the new id. Existing
+      // slots keep their pump and messages intact, so switching back
+      // to a background-running session picks up where we left off.
+      const rt = await this.getSession(newId)
+      rt.pendingResume = opts.resume
       this.activeSessionId = newId
-      this.pendingResume = opts.resume
     } finally {
       this.switching = false
     }
@@ -1147,9 +1213,9 @@ export class ChatEngine extends EventEmitter {
       this.logEvent('ensureSessionReady:alreadySpawned')
       return
     }
-    const resume = this.pendingResume ?? false
-    this.pendingResume = null
-    this.logEvent('ensureSessionReady:spawn', { resume })
+    const resume = runtime.pendingResume
+    runtime.pendingResume = false
+    this.logEvent('ensureSessionReady:spawn', { resume, sessionId })
     this.openSession(sessionId, runtime, { resume })
     // openSession returns synchronously once query() has been called
     // and the pump has been scheduled. No await — the pump runs in
@@ -1434,16 +1500,21 @@ export class ChatEngine extends EventEmitter {
               ? sdkMessage.slash_commands.length
               : 0
           })
-          this.updateSessionMeta(sdkMessage)
-          // updateSessionMeta may have rebound the session id (see its
-          // doc). Pick up the new active id so subsequent emits go to
-          // the right IPC key.
-          if (this.activeSessionId && this.activeSessionId !== sessionId) {
-            console.log('[engine] pump sessionId rebound', {
-              from: sessionId,
-              to: this.activeSessionId
-            })
-            sessionId = this.activeSessionId
+          this.updateSessionMeta(sdkMessage, sessionId)
+          // updateSessionMeta may have moved our Map entry to a new
+          // key. Pick up the new id by reverse-lookup against the
+          // runtime object so subsequent emits target the right key.
+          // (activeSessionId is the foreground pointer — unreliable
+          // in multi-runtime mode.)
+          for (const [id, rt] of this.sessions) {
+            if (rt === runtime && id !== sessionId) {
+              console.log('[engine] pump sessionId rebound', {
+                from: sessionId,
+                to: id
+              })
+              sessionId = id
+              break
+            }
           }
           // Resolve the ready promise so `switchToSession` unblocks:
           // the cli is now fully initialized and will accept turns.
@@ -1511,6 +1582,28 @@ export class ChatEngine extends EventEmitter {
             durationMs: rawResult.duration_ms as number | undefined,
             durationApiMs: rawResult.duration_api_ms as number | undefined
           })
+          // Surface the per-turn context size to the renderer so the
+          // sidebar can show a "xk / 200k" badge per session. We sum
+          // the three input buckets because the wire protocol splits
+          // one logical "prompt size" across input_tokens (fresh),
+          // cache_read_input_tokens (hit), and cache_creation_input_tokens
+          // (write) — only the sum matches what gets charged against
+          // the model's context window.
+          const inputTokens = (usage.input_tokens as number | undefined) ?? 0
+          const cacheRead =
+            (usage.cache_read_input_tokens as number | undefined) ?? 0
+          const cacheCreate =
+            (usage.cache_creation_input_tokens as number | undefined) ?? 0
+          const outputTokens = (usage.output_tokens as number | undefined) ?? 0
+          const contextTokens = inputTokens + cacheRead + cacheCreate
+          if (contextTokens > 0 || outputTokens > 0) {
+            this.emitEvent(sessionId, {
+              type: 'usage',
+              messageId: active.messageId,
+              contextTokens,
+              outputTokens
+            })
+          }
           this.emitEvent(sessionId, {
             type: 'end',
             messageId: active.messageId
@@ -1938,7 +2031,9 @@ export class ChatEngine extends EventEmitter {
       readyPromise: null,
       readyResolve: null,
       readyReject: null,
-      readySettled: false
+      readySettled: false,
+      pendingResume: false,
+      openedViaSend: false
     }
     this.sessions.set(sessionId, runtime)
     return runtime
@@ -2120,7 +2215,10 @@ export class ChatEngine extends EventEmitter {
    *     ...
    *   }
    */
-  private updateSessionMeta(initMsg: Record<string, unknown>): void {
+  private updateSessionMeta(
+    initMsg: Record<string, unknown>,
+    pumpedSessionId: string
+  ): void {
     const skills = Array.isArray(initMsg.skills)
       ? initMsg.skills.filter((s): s is string => typeof s === 'string')
       : []
@@ -2153,35 +2251,31 @@ export class ChatEngine extends EventEmitter {
     // ── Session ID rebind ────────────────────────────────────────────
     // fusion-code's `--resume <id>` has a surprising behavior: it
     // loads the history of <id> into context but writes the new turns
-    // to a FRESH session id (effectively a silent fork). This
-    // contradicts the `--fork-session` flag's help text but matches
-    // upstream claude-code behavior and cannot be changed from our
-    // side. The `system init` message we just received carries the
-    // real session id the cli will use for this conversation.
+    // to a FRESH session id (effectively a silent fork). The
+    // `forkSession: false` SDK option is supposed to prevent this, so
+    // under normal circumstances the rebind branch is a no-op — but
+    // we keep it as defense-in-depth.
     //
-    // If that id differs from the one we opened the runtime under, we
-    // rebind: move the Map entry to the real id and update
-    // `activeSessionId`. Every downstream emitEvent / handleCanUseTool
-    // call looks up the runtime by `this.activeSessionId`, so after
-    // this reassignment the pipeline keeps working under the new id.
-    // The renderer learns the real id via `switchToSession`'s return
-    // value and re-subscribes its IPC listener.
+    // Multi-runtime: the rebind target is the specific pump calling
+    // us, NOT this.activeSessionId (which may point at a different
+    // foreground session in a multi-runtime scenario). The pump
+    // passes its own current id as `pumpedSessionId`.
     const sdkSessionId =
       typeof initMsg.session_id === 'string' ? initMsg.session_id : undefined
-    if (
-      sdkSessionId &&
-      this.activeSessionId &&
-      sdkSessionId !== this.activeSessionId
-    ) {
-      const prev = this.activeSessionId
-      const rt = this.sessions.get(prev)
+    if (sdkSessionId && sdkSessionId !== pumpedSessionId) {
+      const rt = this.sessions.get(pumpedSessionId)
       if (rt) {
-        this.sessions.delete(prev)
+        this.sessions.delete(pumpedSessionId)
         this.sessions.set(sdkSessionId, rt)
       }
-      this.activeSessionId = sdkSessionId
+      // Only move the foreground pointer if the rebinding runtime
+      // was in fact the foreground one. Otherwise leave activeSessionId
+      // alone — a background runtime rebind shouldn't yank the UI.
+      if (this.activeSessionId === pumpedSessionId) {
+        this.activeSessionId = sdkSessionId
+      }
       console.log('[engine] session id rebound from fusion-code init', {
-        from: prev,
+        from: pumpedSessionId,
         to: sdkSessionId
       })
     }

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   ThreadListPrimitive,
   ThreadListItemPrimitive,
@@ -8,8 +16,95 @@ import { motion } from 'motion/react'
 
 import { useChatStore } from '../../stores/chat'
 import { useT } from '../../i18n'
+import { usePendingPermissionCountsBySession } from '../../stores/permissions'
 import { pushUiLog } from '../../stores/uiLogs'
+import { NotificationBadge } from '../common/NotificationBadge'
 import { UserInfoBar } from './UserInfoBar'
+
+/**
+ * Per-row session status flags, computed from:
+ *   - running:             `listActiveRuntimeIds()` from main
+ *   - awaitingPermission:  `usePermissionStore` entries keyed by sid
+ *
+ * Both signals drive the two-line row layout below: title on top,
+ * status text + colored dot underneath. A slot for "paused" is
+ * reserved for when the engine grows a real pause concept —
+ * currently the row just falls back to `idle` when neither running
+ * nor awaiting.
+ */
+type SessionStatus =
+  | 'idle'
+  | 'running'
+  | 'awaitingPermission'
+
+/**
+ * Hook: poll + subscribe main for the set of session ids that currently
+ * have a live fusion-code runtime in this tab. Re-fetches on every
+ * `onSessionListChanged` broadcast so closing / opening a session
+ * elsewhere (e.g. clicking the X on a row) updates the badges
+ * immediately.
+ *
+ * Kept inside ThreadListSidebar so FusionRuntimeProvider doesn't need
+ * to plumb the set through React context — each consumer subscribes
+ * for itself. The IPC is a tiny one-shot getter so the cost of two
+ * subscribers doesn't matter in practice.
+ */
+function useActiveRuntimeIds(): ReadonlySet<string> {
+  const [ids, setIds] = useState<ReadonlySet<string>>(() => new Set())
+  useEffect(() => {
+    if (!window.chatApi) return
+    let cancelled = false
+    const refresh = async (): Promise<void> => {
+      try {
+        const res = await window.chatApi.listActiveRuntimeIds()
+        if (cancelled) return
+        setIds(new Set(res.sessionIds))
+      } catch (err) {
+        console.warn('[sidebar] listActiveRuntimeIds failed', err)
+      }
+    }
+    void refresh()
+    const unsub = window.chatApi.onSessionListChanged(() => {
+      void refresh()
+    })
+    return () => {
+      cancelled = true
+      unsub()
+    }
+  }, [])
+  return ids
+}
+
+/**
+ * Context so each ThreadListItem row can read the combined status
+ * state (running + pending-permission counts) without each row
+ * re-subscribing main-process IPC or the permission store. Set once
+ * at the sidebar level via `useActiveRuntimeIds` +
+ * `usePendingPermissionCountsBySession`.
+ *
+ * `awaitingPermissionCounts` is a plain Record so rows can read
+ * both "is anything pending?" (value > 0) and "how many?" (the
+ * number painted inside the red badge).
+ */
+interface SidebarStatusMap {
+  running: ReadonlySet<string>
+  awaitingPermissionCounts: Readonly<Record<string, number>>
+}
+const SidebarStatusContext = createContext<SidebarStatusMap>({
+  running: new Set(),
+  awaitingPermissionCounts: {}
+})
+
+function resolveStatus(
+  sessionId: string,
+  statusMap: SidebarStatusMap
+): SessionStatus {
+  if ((statusMap.awaitingPermissionCounts[sessionId] ?? 0) > 0) {
+    return 'awaitingPermission'
+  }
+  if (statusMap.running.has(sessionId)) return 'running'
+  return 'idle'
+}
 
 /**
  * ThreadListSidebar
@@ -30,47 +125,51 @@ import { UserInfoBar } from './UserInfoBar'
 export function ThreadListSidebar(): React.JSX.Element {
   const sessionLoading = useChatStore((s) => s.sessionLoading)
   const t = useT()
+  const activeRuntimeIds = useActiveRuntimeIds()
+  const awaitingPermissionCounts = usePendingPermissionCountsBySession()
+  // Freeze the context value inside useMemo so ThreadListItem's
+  // lookup has a stable reference across renders — otherwise every
+  // row's status derivation would re-run on every parent rerender.
+  const statusMap = useMemo<SidebarStatusMap>(
+    () => ({
+      running: activeRuntimeIds,
+      awaitingPermissionCounts
+    }),
+    [activeRuntimeIds, awaitingPermissionCounts]
+  )
 
   return (
-    <ThreadListPrimitive.Root className="relative flex h-full w-64 shrink-0 flex-col bg-background/45 backdrop-blur-xl backdrop-saturate-150">
-      {/* Header row — section label, could grow to hold filters later. */}
-      <div className="flex items-center justify-between px-4 pb-2 pt-3">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/80">
+    <SidebarStatusContext.Provider value={statusMap}>
+    <ThreadListPrimitive.Root className="relative flex h-full w-64 shrink-0 flex-col border-r border-border/60 bg-sidebar/90 backdrop-blur-2xl backdrop-saturate-150">
+      {/* Header — Apple-Mail-style section header: muted uppercase
+          label on the left, plain-icon "+" action button on the
+          right. Replaces the old full-width gradient CTA with a
+          calmer layout that reads as "sidebar toolbar" rather
+          than "marketing hero". */}
+      <div className="flex items-center justify-between px-4 pb-1.5 pt-3">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
           {t('sidebarChats')}
         </span>
-      </div>
-
-      {/* New chat button — wired to runtime.switchToNewThread() via the
-          ThreadListPrimitive.New primitive. Dimmed while a session
-          switch is in flight so rapid double-clicks don't stack.
-          Primary CTA: diagonal accent→violet gradient that mirrors
-          the aurora backdrop, white text, soft colored glow. The
-          subtle `hover:-translate-y-px` + shadow bump makes it
-          feel like it floats a hair above the sidebar. */}
-      <div className="px-3 pb-3">
         <ThreadListPrimitive.New
           disabled={sessionLoading}
-          className="group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-xl border border-accent/20 bg-gradient-to-br from-accent/12 via-accent/8 to-accent/4 px-3 py-2.5 text-[13px] font-semibold text-foreground shadow-[0_1px_2px_rgba(17,24,39,0.04),inset_0_1px_0_rgba(255,255,255,0.5)] transition-all duration-200 hover:-translate-y-px hover:border-accent/35 hover:from-accent/18 hover:via-accent/12 hover:to-accent/6 hover:shadow-[0_4px_14px_-4px_hsl(var(--accent)/0.25),inset_0_1px_0_rgba(255,255,255,0.6)] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 dark:text-foreground dark:shadow-none dark:hover:shadow-[0_4px_14px_-4px_hsl(var(--accent)/0.3)]"
+          aria-label={t('sidebarNewChat')}
+          title={t('sidebarNewChat')}
+          className="group flex size-6 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {/* Plus glyph in an accent-tinted chip — echoes the folder
-              chip on the workspace button above for visual symmetry. */}
-          <span className="flex size-5 items-center justify-center rounded-md bg-accent/15 text-accent transition-colors group-hover:bg-accent/25">
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-            >
-              <path d="M12 5v14" />
-              <path d="M5 12h14" />
-            </svg>
-          </span>
-          <span className="tracking-wide">{t('sidebarNewChat')}</span>
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M12 5v14" />
+            <path d="M5 12h14" />
+          </svg>
         </ThreadListPrimitive.New>
       </div>
 
@@ -99,15 +198,17 @@ export function ThreadListSidebar(): React.JSX.Element {
           }}
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
           className={
-            'h-full overflow-y-auto px-2 pb-6 ' +
+            'h-full overflow-y-auto px-2 pb-6 pt-1 ' +
             (sessionLoading ? 'pointer-events-none' : '')
           }
         >
           <ThreadListPrimitive.Items components={{ ThreadListItem }} />
         </motion.div>
+        {/* Bottom fade — reads from the sidebar token so it matches
+            the solid sidebar surface, not the chat canvas. */}
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-background via-background/80 to-transparent"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[hsl(var(--sidebar))] via-[hsl(var(--sidebar)/0.8)] to-transparent"
         />
       </div>
 
@@ -123,6 +224,7 @@ export function ThreadListSidebar(): React.JSX.Element {
           combination keeps the user's eye anchored on the main pane
           while still telegraphing "something is switching". */}
     </ThreadListPrimitive.Root>
+    </SidebarStatusContext.Provider>
   )
 }
 
@@ -163,6 +265,44 @@ function ThreadListItem(): React.JSX.Element {
   const itemId = useThreadListItem((s) => s.id)
   const t = useT()
   const itemTitle = useThreadListItem((s) => s.title) ?? t('sidebarNewChat')
+  const statusMap = useContext(SidebarStatusContext)
+  const status = resolveStatus(itemId, statusMap)
+  // Read this session's latest context size from the chat store.
+  // Undefined until the first turn completes for the session. The
+  // selector subscribes to just the usage slice so rows without a
+  // live runtime don't re-render on every message delta in other
+  // sessions.
+  const contextTokens = useChatStore(
+    (s) => s.perSession[itemId]?.usage?.contextTokens
+  )
+  const pendingCount = statusMap.awaitingPermissionCounts[itemId] ?? 0
+  const isAwaitingPermission = pendingCount > 0
+  const isRunning = status === 'running' || isAwaitingPermission
+  const [closing, setClosing] = useState(false)
+  const closeRuntime = useCallback(
+    async (e: React.MouseEvent): Promise<void> => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (closing) return
+      setClosing(true)
+      try {
+        await window.chatApi.closeSessionRuntime({ sessionId: itemId })
+        pushUiLog('runtime:close', { threadId: itemId })
+        // Drop the renderer-side per-session slot too so the thread
+        // viewer doesn't keep stale messages when the user switches
+        // back later (main will serve fresh JSONL history on the
+        // next open).
+        useChatStore.getState().dropSession(itemId)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error('[sidebar] closeSessionRuntime failed', err)
+        pushUiLog('runtime:closeError', { threadId: itemId, message: msg })
+      } finally {
+        setClosing(false)
+      }
+    },
+    [closing, itemId]
+  )
 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(itemTitle)
@@ -274,7 +414,7 @@ function ThreadListItem(): React.JSX.Element {
         // we don't want clicking the input to fire a session switch.
         // Layout mirrors the trigger (same paddings, same dot prefix)
         // so the row doesn't visibly jump on enter/exit edit.
-        <div className="flex w-full items-center gap-2 rounded-md bg-muted py-1.5 pl-3 pr-1.5 text-[13px] text-foreground">
+        <div className="flex w-full items-center gap-2 rounded-lg bg-foreground/[0.08] py-1.5 pl-3 pr-1.5 text-[13px] text-foreground">
           <span className="size-1.5 shrink-0 rounded-full bg-foreground/60" />
           <input
             ref={inputRef}
@@ -309,29 +449,105 @@ function ThreadListItem(): React.JSX.Element {
         </div>
       ) : (
         // ── Default mode ─────────────────────────────────────────────
+        // Two-line Apple-Mail-style row:
+        //   [status dot] [title                           ]
+        //                [status text · (optional meta)   ]
+        // The status dot colors track the resolved status:
+        //   running             → emerald + ping animation
+        //   awaitingPermission  → amber   + solid pulse (no ping)
+        //   idle                → muted gray
+        // Row height lands around 56px so titles and statuses each
+        // get a comfortable reading line without crowding.
         <>
           <ThreadListItemPrimitive.Trigger
-            title={itemTitle}
-            className="flex w-full items-center gap-2 rounded-md py-2 pl-3 pr-9 text-left text-[13px] text-foreground/80 transition hover:bg-muted/70 group-data-[active]/thread:bg-muted group-data-[active]/thread:text-foreground"
+            title={
+              status === 'running'
+                ? `${itemTitle} · ${t('sidebarStatusRunning')}`
+                : status === 'awaitingPermission'
+                  ? `${itemTitle} · ${t('sidebarStatusAwaitingPermission')}`
+                  : itemTitle
+            }
+            className="flex w-full items-center gap-2.5 rounded-lg py-2.5 pl-3 pr-16 text-left transition-colors hover:bg-foreground/[0.05] group-data-[active]/thread:bg-foreground/[0.08]"
           >
-            <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/80 transition group-data-[active]/thread:bg-foreground/60" />
-            <span className="min-w-0 flex-1 truncate">
-              <ThreadListItemPrimitive.Title fallback={t('sidebarNewChat')} />
-            </span>
+            <StatusDot status={status} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[13px] font-medium leading-[1.2] text-foreground/80 group-data-[active]/thread:text-foreground">
+                <ThreadListItemPrimitive.Title fallback={t('sidebarNewChat')} />
+              </div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] leading-[1.3]">
+                <span
+                  className={'truncate ' + statusTextClass(status)}
+                >
+                  {statusLabel(status, t)}
+                </span>
+                {typeof contextTokens === 'number' ? (
+                  <>
+                    <span
+                      aria-hidden
+                      className="text-muted-foreground/40"
+                    >
+                      ·
+                    </span>
+                    <span
+                      className={
+                        'tabular-nums ' + contextPercentClass(contextTokens)
+                      }
+                      title={`${contextTokens.toLocaleString()} tokens / ${CONTEXT_WINDOW_TOKENS.toLocaleString()}`}
+                    >
+                      {formatContextPercent(contextTokens)}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+            </div>
           </ThreadListItemPrimitive.Trigger>
-          {/* Hover edit icon. Absolutely positioned over the right
-              edge of the trigger so it doesn't have to live inside
-              the trigger button (nested buttons are invalid HTML).
-              Becomes visible on row hover OR when the row is the
-              active session, so the user always has a visible
-              affordance for the current chat. */}
+          {/* Notification badge — Apple-style red pill with the
+              count, always visible when the session has at least
+              one pending permission request. Occupies the right
+              edge; the X/pencil hover actions sit to its left so
+              they don't collide. Rendered as a plain span on the
+              absolute layer because it isn't clickable — tapping
+              the row still switches to the session, which is what
+              the user needs to do to answer the permission. */}
+          {isAwaitingPermission ? (
+            <NotificationBadge
+              count={pendingCount}
+              className="absolute right-2 top-1/2 -translate-y-1/2"
+            />
+          ) : null}
+
+          {/* Hover-revealed actions cluster on the right edge. The
+              close X only shows when a background runtime is live
+              but NOT awaiting permission — if the user is already
+              being asked to approve a tool, stopping the runtime
+              would orphan that request, so hiding the X routes them
+              into the permission dialog instead. Pencil (rename)
+              stays available in all states. Both live outside
+              ThreadListItemPrimitive.Trigger so clicking them
+              doesn't fire a session switch. */}
+          {isRunning && !isAwaitingPermission ? (
+            <button
+              type="button"
+              aria-label={t('sidebarCloseRuntime')}
+              title={t('sidebarCloseRuntime')}
+              disabled={closing}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => void closeRuntime(e)}
+              className="absolute right-8 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground/80 transition hover:bg-secondary hover:text-foreground focus:outline-none disabled:opacity-40 opacity-100"
+            >
+              <StopIcon />
+            </button>
+          ) : null}
           <button
             type="button"
             aria-label={t('renameChat')}
             title={t('renameChat')}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={startEdit}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground/80 opacity-0 transition hover:bg-secondary hover:text-foreground focus:opacity-100 focus:outline-none group-hover/thread:opacity-100 group-data-[active]/thread:opacity-100"
+            className={
+              'absolute top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground/80 opacity-0 transition hover:bg-secondary hover:text-foreground focus:opacity-100 focus:outline-none group-hover/thread:opacity-100 group-data-[active]/thread:opacity-100 ' +
+              (isAwaitingPermission ? 'right-8' : 'right-1.5')
+            }
           >
             <PencilIcon />
           </button>
@@ -394,6 +610,143 @@ function PencilIcon(): React.JSX.Element {
     >
       <path d="M12 20h9" />
       <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5Z" />
+    </svg>
+  )
+}
+
+/**
+ * Per-row colored dot keyed on resolved `SessionStatus`.
+ *
+ * - running:            emerald-500, with a ping animation to draw
+ *                       the eye to a still-streaming background turn
+ * - awaitingPermission: amber-500 solid (no ping — the "attention
+ *                       needed" state should look steady, not
+ *                       frantic, or it competes with the running pulse)
+ * - idle:               muted gray, subtly lighter when the row is
+ *                       the active selection so it still reads as
+ *                       "selected but nothing running"
+ */
+function StatusDot({
+  status
+}: {
+  status: SessionStatus
+}): React.JSX.Element {
+  if (status === 'running') {
+    return (
+      <span className="mt-[5px] size-2 shrink-0 self-start rounded-full bg-emerald-500" />
+    )
+  }
+  if (status === 'awaitingPermission') {
+    return (
+      <span className="mt-[5px] size-2 shrink-0 self-start rounded-full bg-amber-500" />
+    )
+  }
+  return (
+    <span className="mt-[5px] size-2 shrink-0 self-start rounded-full bg-muted-foreground/60 group-data-[active]/thread:bg-foreground/50" />
+  )
+}
+
+/**
+ * Human-readable status label pulled through i18n. Returns the
+ * string the subtitle row should show.
+ */
+function statusLabel(
+  status: SessionStatus,
+  t: (key: 'sidebarStatusRunning' | 'sidebarStatusAwaitingPermission' | 'sidebarStatusIdle') => string
+): string {
+  switch (status) {
+    case 'running':
+      return t('sidebarStatusRunning')
+    case 'awaitingPermission':
+      return t('sidebarStatusAwaitingPermission')
+    case 'idle':
+      return t('sidebarStatusIdle')
+  }
+}
+
+/**
+ * Claude's effective context window in tokens. Used as the
+ * denominator when turning a raw input-token count into the
+ * percentage the sidebar shows. If a future model family extends
+ * this, bump it here.
+ */
+const CONTEXT_WINDOW_TOKENS = 200_000
+
+/**
+ * Fraction of the window currently in use, clamped to [0, 1] so a
+ * freak overshoot (e.g. the SDK briefly reporting a prompt slightly
+ * bigger than the advertised window) doesn't push the label past
+ * "100%" or render as negative on math drift.
+ */
+function contextFraction(tokens: number): number {
+  if (tokens <= 0) return 0
+  const f = tokens / CONTEXT_WINDOW_TOKENS
+  if (f < 0) return 0
+  if (f > 1) return 1
+  return f
+}
+
+/**
+ * Format the context usage as an integer percent ("0%", "24%",
+ * "100%"). Keeps the width stable enough that the sidebar row
+ * doesn't shift as the session grows. Floor rather than round so a
+ * 79.9% session still reads as yellow rather than briefly tipping
+ * into the red tier on a color boundary.
+ */
+function formatContextPercent(tokens: number): string {
+  const pct = Math.floor(contextFraction(tokens) * 100)
+  return `${pct}%`
+}
+
+/**
+ * Color band for the percent label:
+ *   - <40%  → green  (plenty of headroom)
+ *   - 40-80% → amber (getting warm)
+ *   - ≥80%  → red    (near the cap — consider /compact or a new session)
+ */
+function contextPercentClass(tokens: number): string {
+  const pct = contextFraction(tokens) * 100
+  if (pct < 40) return 'text-emerald-600 dark:text-emerald-400'
+  if (pct < 80) return 'text-amber-600 dark:text-amber-400'
+  return 'text-red-600 dark:text-red-400'
+}
+
+/** Tailwind class for the subtitle text, matched to the dot color. */
+function statusTextClass(status: SessionStatus): string {
+  switch (status) {
+    case 'running':
+      return 'text-emerald-600 dark:text-emerald-400'
+    case 'awaitingPermission':
+      return 'text-amber-600 dark:text-amber-400'
+    case 'idle':
+      return 'text-muted-foreground/70'
+  }
+}
+
+/**
+ * Stop icon — Apple SF-Symbols-style `stop.circle` glyph: a 1-line
+ * outer circle with a filled rounded square inside. Semantically
+ * reads as "stop running" (not "close" / "delete"), which is what
+ * the sidebar button actually does: tears down the background cli
+ * but leaves the jsonl transcript on disk for later resume.
+ *
+ * Sized at 13×13 to match the old close button's visual weight.
+ */
+function StopIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="9" />
+      <rect x="8.5" y="8.5" width="7" height="7" rx="1" fill="currentColor" stroke="none" />
     </svg>
   )
 }

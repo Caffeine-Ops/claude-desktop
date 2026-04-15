@@ -112,27 +112,30 @@ export function ThreadView(): React.JSX.Element {
         // composer. The inner column carries matching `pb-20` so the
         // final message stays fully legible once you scroll all the
         // way down — only the padding gets eaten by the mask.
-        className="min-h-0 flex-1 overflow-y-auto [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%-56px),transparent_100%)]"
+        //
+        // `scrollbar-gutter: stable` reserves the scrollbar track slot
+        // whether or not the content actually overflows. Without it,
+        // the empty state's content can land exactly at the "just fits"
+        // boundary, and any sub-pixel wobble (font-metric changes,
+        // motion animations, font loading) causes the scrollbar to
+        // flicker in and out → horizontal reflow → visible jitter.
+        // Stable gutter kills that class of bug outright by pre-
+        // committing the 15px scrollbar lane.
+        className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%-56px),transparent_100%)]"
       >
         {/* Inner column caps reading width and centers messages. The
             `min-h-full` lets the empty-state `flex-1` stretch so the
             hero text lands at the vertical center of the viewport
             even when there are no messages yet.
 
-            Session-switch animation: motion.div keyed on sessionId.
-            No AnimatePresence / exit animation — ThreadPrimitive.Messages
-            subscribes to the runtime context, so any "exit" frame would
-            already be showing the NEW session's messages. Enter-only
-            animation sits on top of the instant content swap and reads
-            as a clean "page transition" without the snapshot headache. */}
-        <motion.div
+            No session-switch animation: the previous y-translate +
+            blur intro caused the empty-state content to briefly push
+            the scroll container past its viewport, flickering the
+            scrollbar and jittering the page horizontally. An
+            instant content swap is calmer and matches Apple's
+            "no surprise motion" sensibility. */}
+        <div
           key={`content-${contentKey}`}
-          initial={{ opacity: 0, y: 14, filter: 'blur(6px)' }}
-          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-          transition={{
-            duration: 0.38,
-            ease: [0.22, 1, 0.36, 1]
-          }}
           className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-6 pb-20 pt-8"
         >
           <ThreadPrimitive.Empty>
@@ -146,7 +149,7 @@ export function ThreadView(): React.JSX.Element {
               SystemMessage
             }}
           />
-        </motion.div>
+        </div>
       </ThreadPrimitive.Viewport>
 
       <ScrollToBottomButton />
@@ -363,33 +366,23 @@ function EmptyState(): React.JSX.Element {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-1 flex-col items-center justify-center px-6 py-12 text-center">
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: 'easeOut' }}
-        className="mb-2 text-[28px] font-semibold tracking-tight text-foreground"
-      >
+      {/* Mount animations removed entirely: the previous y-translate
+       * fade-in caused the scrollbar to flicker on / off as the content
+       * settled, which read as page-wide horizontal jitter. A still
+       * empty state is the Apple-calm choice anyway — the page appears
+       * and sits. */}
+      <div className="mb-2 text-[28px] font-semibold tracking-tight text-foreground">
         {t('emptyStateTitle')}
-      </motion.div>
-      <motion.p
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.06, duration: 0.35 }}
-        className="mb-8 max-w-md text-[13px] text-muted-foreground/80"
-      >
+      </div>
+      <p className="mb-8 max-w-md text-[13px] text-muted-foreground/80">
         {t('emptyStateScenarioHint')}
-      </motion.p>
+      </p>
       <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
-        {SCENARIO_CARDS.map((card, i) => (
-          <motion.button
+        {SCENARIO_CARDS.map((card) => (
+          <button
             key={card.key}
             type="button"
             onClick={() => onPickScenario(card.promptKey)}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.12 + i * 0.05, duration: 0.35 }}
-            whileHover={{ y: -2 }}
-            whileTap={{ scale: 0.985 }}
             className="group relative flex items-start gap-3 overflow-hidden rounded-2xl border border-border/60 bg-card/50 p-4 text-left shadow-sm backdrop-blur-sm transition-colors hover:border-accent/50 hover:bg-card/80 hover:shadow-[0_10px_30px_-12px_hsl(var(--accent)/0.35)]"
           >
             <span
@@ -423,7 +416,7 @@ function EmptyState(): React.JSX.Element {
               <path d="M5 12h14" />
               <path d="m12 5 7 7-7 7" />
             </svg>
-          </motion.button>
+          </button>
         ))}
       </div>
     </div>
@@ -535,7 +528,13 @@ function UserMessage(): React.JSX.Element {
           Text: () => null
         }}
       />
-      <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl bg-accent/90 px-4 py-2.5 text-[14px] leading-relaxed text-white empty:hidden">
+      {/* Apple iMessage-style user bubble. rounded-[22px] is the
+          softer inner curve iMessage/Messages uses. Pure `bg-accent`
+          (Apple Blue, no alpha) is DESIGN.md §2's mandate: Apple Blue
+          is the singular interactive accent and should never be
+          diluted. 15px body with apple-body tracking gives the
+          signature tight-but-readable Apple rhythm. */}
+      <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-[22px] bg-accent px-4 py-2.5 text-[15px] leading-[1.47] tracking-apple-body text-white empty:hidden">
         <MessagePrimitive.Parts
           unstable_showEmptyOnNonTextEnd={false}
           components={{
@@ -873,7 +872,11 @@ function ReasoningCard({
   // strip the ZWSP out of the rendered text below so a late-arriving
   // copy-paste doesn't surface an invisible character.
   const displayText = text.replace(REASONING_PLACEHOLDER, '')
-  const hasText = displayText.length > 0
+  // Trim so a single stray whitespace / newline delta doesn't light
+  // up an empty rounded box under the label ("思考过程 · 1 字" with
+  // nothing inside).
+  const trimmedText = displayText.trim()
+  const hasText = trimmedText.length > 0
   // `null` ⇒ user hasn't manually toggled yet — let the streaming
   // flag drive the open state. Once they click, lock to their
   // explicit choice. This way the card auto-expands while thinking
@@ -884,9 +887,9 @@ function ReasoningCard({
   // The reasoning part is pre-created on `thinking_start` (so the
   // dot + label appear instantly), and without this guard we'd
   // briefly render an empty rounded box before the first delta
-  // lands a few seconds later.
-  const open = userToggled ?? (isStreaming && hasText)
-  const charCount = text.length
+  // lands a few seconds later. Empty reasoning always stays closed.
+  const open = hasText && (userToggled ?? isStreaming)
+  const charCount = trimmedText.length
 
   return (
     <div className="flex w-full gap-3">
@@ -902,39 +905,43 @@ function ReasoningCard({
         <span
           className={
             'block size-[6px] rounded-full ' +
-            (isStreaming
-              ? 'animate-pulse bg-accent'
-              : 'bg-emerald-500')
+            (isStreaming ? 'bg-accent' : 'bg-emerald-500')
           }
         />
       </span>
       <div className="min-w-0 flex-1">
         <button
           type="button"
-          onClick={() => setUserToggled(!open)}
+          onClick={() => hasText && setUserToggled(!open)}
           aria-expanded={open}
-          className="group/reason flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+          disabled={!hasText}
+          className={
+            'group/reason flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-[12px] text-muted-foreground transition-colors ' +
+            (hasText ? 'hover:text-foreground' : 'cursor-default')
+          }
         >
-          <svg
-            width="11"
-            height="11"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={
-              'shrink-0 transition-transform ' + (open ? 'rotate-90' : '')
-            }
-            aria-hidden
-          >
-            <path d="m9 6 6 6-6 6" />
-          </svg>
+          {hasText && (
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={
+                'shrink-0 transition-transform ' + (open ? 'rotate-90' : '')
+              }
+              aria-hidden
+            >
+              <path d="m9 6 6 6-6 6" />
+            </svg>
+          )}
           <span className="font-medium tracking-tight">
             {isStreaming ? '正在思考…' : '思考过程'}
           </span>
-          {!isStreaming && (
+          {!isStreaming && hasText && (
             <span className="text-[11px] text-muted-foreground/60">
               · {charCount} 字
             </span>
@@ -950,7 +957,13 @@ function ReasoningCard({
               transition={{ duration: 0.18, ease: 'easeOut' }}
               className="overflow-hidden"
             >
-              <div className="mt-1.5 rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-[12.5px] leading-relaxed text-muted-foreground/90">
+              {/* Apple card (DESIGN.md §4): no border, subtle bg
+                  contrast supplies elevation. `bg-muted` sits 1-2
+                  shades off the canvas on both themes, so the card
+                  reads as "inset" without any visible stroke. 13px
+                  text with apple-micro tracking is Apple's smallest
+                  comfortable reading size — tight but legible. */}
+              <div className="mt-1.5 rounded-apple-lg bg-muted px-4 py-3 text-[13px] leading-[1.47] tracking-apple-micro text-muted-foreground">
                 <pre className="whitespace-pre-wrap break-words font-sans">
                   {displayText}
                 </pre>
@@ -968,7 +981,11 @@ function ReasoningCard({
 function SystemMessage(): React.JSX.Element {
   return (
     <MessagePrimitive.Root className="mb-4 flex w-full justify-center">
-      <div className="rounded-md border border-border bg-card/50 px-3 py-1.5 text-[11.5px] italic text-muted-foreground/80">
+      {/* Borderless Apple pill (DESIGN.md §4). `rounded-pill` is the
+          signature 980px capsule shape used for Apple CTA links; a
+          system message is informational, not interactive, so we keep
+          the shape but use `bg-muted` with no accent tint. */}
+      <div className="rounded-pill bg-muted px-4 py-1.5 text-[12px] tracking-apple-micro text-muted-foreground">
         <MessagePrimitive.Parts />
       </div>
     </MessagePrimitive.Root>
@@ -1100,7 +1117,10 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
         aria-hidden
         className={
           'mt-[3px] shrink-0 select-none font-mono text-[13px] leading-relaxed ' +
-          (running ? 'text-amber-400' : 'text-muted-foreground/60')
+          // DESIGN.md §2: Apple Blue is the ONLY chromatic accent;
+          // no amber/yellow anywhere in the palette. The gutter glyph
+          // turns accent-blue while streaming and neutral when done.
+          (running ? 'text-accent' : 'text-muted-foreground/60')
         }
       >
         ⎿
@@ -1145,12 +1165,6 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
             {!hideDefaultInput && (
               <ToolPane label={t('toolPaneInputLabel')} copyText={inputBody}>
                 <JsonView text={inputBody} maxHeight />
-                {running && hasArgsText && (
-                  <span
-                    aria-hidden
-                    className="ml-0.5 inline-block h-[1em] w-[0.5ch] animate-pulse bg-accent align-[-0.1em]"
-                  />
-                )}
               </ToolPane>
             )}
 
@@ -1226,16 +1240,14 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
 }
 
 function StatusDot({ running }: { running: boolean }): React.JSX.Element {
-  if (running) {
-    return (
-      <span className="relative inline-flex size-1.5">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent/60" />
-        <span className="relative inline-flex size-full rounded-full bg-accent" />
-      </span>
-    )
-  }
   return (
-    <span aria-hidden className="inline-block size-1.5 rounded-full bg-emerald-500" />
+    <span
+      aria-hidden
+      className={
+        'inline-block size-1.5 rounded-full ' +
+        (running ? 'bg-accent' : 'bg-emerald-500')
+      }
+    />
   )
 }
 
@@ -1249,15 +1261,22 @@ function StatusPill({ running }: { running: boolean }): React.JSX.Element {
     lang === 'zh'
       ? 'font-sans text-[10px]'
       : 'font-mono text-[10px] uppercase tracking-wider'
+  // Apple pill (DESIGN.md §4): fully rounded 980px capsule, no
+  // border, color comes from a tinted bg + matching tinted text.
+  // Running = Apple accent (the ONLY chromatic interactive color);
+  // done = emerald (universal success signal — DESIGN.md reserves
+  // blue for interactive elements, so completion state uses the
+  // conventional macOS "check" green instead of spending accent on
+  // a non-interactive indicator).
   return (
     <span
       className={
-        'rounded-full border px-1.5 py-px ' +
+        'rounded-pill px-2 py-[2px] ' +
         typographyClasses +
         ' ' +
         (running
-          ? 'border-accent/40 bg-accent/15 text-accent'
-          : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500')
+          ? 'bg-accent/15 text-accent'
+          : 'bg-emerald-500/10 text-emerald-500')
       }
     >
       {running ? t('toolStatusRunning') : t('toolStatusDone')}
@@ -1280,15 +1299,21 @@ function ToolPane({
   // chat column wider than its flex slot and steal pixels from the
   // right rail on narrow windows. The pre inside JsonView then
   // owns the actual horizontal scroll.
+  // Apple card (DESIGN.md §4): no border, elevation comes from bg
+  // contrast alone. Outer card = `bg-muted` (one shade off canvas),
+  // label strip = `bg-card` (card surface, same as message content
+  // cards). The two tones create an implied separation where we
+  // used to draw a border-b. Radius bumps to apple-md (11px) — the
+  // DESIGN.md value for "inputs / filter controls".
   return (
-    <div className="min-w-0 overflow-hidden rounded-md border border-border bg-card/40">
-      <div className="flex items-center justify-between border-b border-border/70 bg-muted/30 px-2.5 py-1">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+    <div className="min-w-0 overflow-hidden rounded-apple-md bg-muted">
+      <div className="flex items-center justify-between bg-card/80 px-3 py-1.5">
+        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
           {label}
         </span>
         <CopyButton text={copyText} />
       </div>
-      <div className="min-w-0 px-2.5 py-1.5">{children}</div>
+      <div className="min-w-0 px-3 py-2">{children}</div>
     </div>
   )
 }
@@ -1685,6 +1710,19 @@ function Composer(): React.JSX.Element {
   // render its own blinking caret at the correct visual slot.
   const [caretPos, setCaretPos] = useState(0)
   const [isFocused, setIsFocused] = useState(false)
+  // Composer text length — drives the "native caret vs overlay
+  // caret" switch. When the textarea is empty, the overlay has no
+  // tokens to align against and its fallback caret drifts from the
+  // placeholder's real x position (box-model + padding differences
+  // between the overlay div and the textarea). Letting the native
+  // browser caret show in that case eliminates the misalignment
+  // without any measurement — the browser draws it at the exact
+  // pixel where the first placeholder character would sit. Once
+  // the user types anything, we flip back to the overlay caret so
+  // chip alignment continues to work.
+  const composerIsEmpty = useAuiState(
+    (s) => !((s as { composer?: { text?: string } }).composer?.text)
+  )
 
   // Pull session meta on mount and whenever a turn ends. The first
   // pull (mount) returns empty arrays because fusion-code hasn't
@@ -1928,7 +1966,7 @@ function Composer(): React.JSX.Element {
         <div className="relative">
           {/* Slash popover — reads the outer root's context because
               it sits outside the inner `@` root in the tree. */}
-          <ComposerPrimitive.Unstable_TriggerPopoverPopover className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
+          <ComposerPrimitive.Unstable_TriggerPopoverPopover className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-2xl bg-popover/95 py-1.5 ring-1 ring-black/[0.08] backdrop-blur-2xl backdrop-saturate-150 shadow-[0_16px_48px_-12px_rgba(0,0,0,0.22),0_4px_12px_-4px_rgba(0,0,0,0.1)] dark:ring-white/[0.08] dark:shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
             <ComposerPrimitive.Unstable_TriggerPopoverItems>
               {(items) => (
                 <TriggerPopoverList
@@ -1958,7 +1996,7 @@ function Composer(): React.JSX.Element {
                 Absolute-positioned inside the same `relative` div
                 as the slash popover, but only one can be open at
                 a time so they never overlap visually. */}
-            <ComposerPrimitive.Unstable_TriggerPopoverPopover className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
+            <ComposerPrimitive.Unstable_TriggerPopoverPopover className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-2xl bg-popover/95 py-1.5 ring-1 ring-black/[0.08] backdrop-blur-2xl backdrop-saturate-150 shadow-[0_16px_48px_-12px_rgba(0,0,0,0.22),0_4px_12px_-4px_rgba(0,0,0,0.1)] dark:ring-white/[0.08] dark:shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
               <ComposerPrimitive.Unstable_TriggerPopoverItems>
                 {(items) => (
                   <TriggerPopoverList
@@ -1983,7 +2021,15 @@ function Composer(): React.JSX.Element {
                 Pasting images is handled by ComposerPrimitive.Input's
                 built-in `addAttachmentOnPaste` (default true) and does
                 NOT need the dropzone — the two mechanisms coexist. */}
-            <ComposerPrimitive.AttachmentDropzone className="rounded-2xl border border-border bg-card/80 shadow-lg transition-colors focus-within:border-input data-[dragging=true]:border-accent data-[dragging=true]:bg-accent/15">
+            {/* Apple-style composer card. Translucent vibrancy
+                material instead of a solid border, hairline ring
+                for the edge, and a multi-layer soft drop shadow so
+                it reads as "floating above the page" like the
+                iMessage compose field. Focus state bumps the ring
+                to Apple Blue at low alpha — calm feedback, no
+                outline flash. Drag-over (file drop) gets a thicker
+                accent ring + tinted fill. */}
+            <ComposerPrimitive.AttachmentDropzone className="rounded-2xl bg-popover/90 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--accent)/0.35)] shadow-[0_4px_16px_-6px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--accent)/0.5)] data-[dragging=true]:bg-accent/[0.08] dark:ring-white/[0.08]">
               {/* Attachment chip row. assistant-ui's Attachments
                   primitive is fragment-shaped — it just fans out one
                   render-prop call per attachment without a container,
@@ -2006,7 +2052,7 @@ function Composer(): React.JSX.Element {
                     the Input on the left; styled to match Send/Cancel
                     so the row reads as four evenly-sized circles. */}
                 <ComposerPrimitive.AddAttachment
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground/80 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
                   aria-label={t('composerAttachImage')}
                 >
                   <svg
@@ -2051,7 +2097,7 @@ function Composer(): React.JSX.Element {
                     <div className="relative min-h-[24px] max-h-40 flex-1 overflow-hidden">
                       <ComposerHighlightOverlay
                         caretPos={caretPos}
-                        isFocused={isFocused}
+                        isFocused={isFocused && !composerIsEmpty}
                       />
                       <ComposerPrimitive.Input
                         ref={textareaRef}
@@ -2094,7 +2140,20 @@ function Composer(): React.JSX.Element {
                           setCaretPos(start)
                         }}
                         className="relative z-[1] block min-h-[24px] max-h-40 w-full resize-none bg-transparent px-1 py-1.5 text-[14px] leading-relaxed text-transparent placeholder:text-muted-foreground/60 focus:outline-none"
-                        style={{ caretColor: 'transparent' }}
+                        style={{
+                          // Show the native browser caret when the
+                          // input is empty so it visually aligns
+                          // with the placeholder's first character
+                          // (the overlay's fake caret drifts in
+                          // the empty-state fallback branch since
+                          // there are no tokens to measure). Flip
+                          // to transparent once the user types so
+                          // the overlay caret can take over and
+                          // stay glued to rendered chip edges.
+                          caretColor: composerIsEmpty
+                            ? 'hsl(var(--foreground))'
+                            : 'transparent'
+                        }}
                       />
                     </div>
                     <MicButton label={t('composerDictate')} />
@@ -2109,7 +2168,7 @@ function Composer(): React.JSX.Element {
                     <ThreadPrimitive.If running={false}>
                       <ComposerPrimitive.Send
                         aria-label="Send message"
-                        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground/80"
+                        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-white shadow-[0_1px_2px_rgba(0,0,0,0.08),0_2px_8px_-2px_hsl(var(--accent)/0.3)] ring-1 ring-black/[0.06] transition-all hover:brightness-[1.08] active:brightness-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.06] disabled:text-muted-foreground/50 disabled:shadow-none disabled:ring-0"
                       >
                         {/* Lucide-style arrow-up stroke icon, matching
                             the ScrollToBottomButton (arrow-down) and
@@ -2137,7 +2196,7 @@ function Composer(): React.JSX.Element {
                     <ThreadPrimitive.If running>
                       <ComposerPrimitive.Cancel
                         aria-label="Stop generating"
-                        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-sm transition hover:bg-foreground"
+                        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.15)] ring-1 ring-black/[0.06] transition-all hover:brightness-[1.1] active:brightness-95"
                       >
                         <span className="block size-2.5 rounded-[2px] bg-card" />
                       </ComposerPrimitive.Cancel>
@@ -2210,7 +2269,7 @@ function MicButton({ label }: { label: string }): React.JSX.Element {
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+      className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground/80 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
     >
       <svg
         width="16"
@@ -2422,9 +2481,19 @@ function ComposerHighlightOverlay({
     const caretEl = caretRef.current
     if (!container || !caretEl) return
     if (!isFocused) {
-      caretEl.style.opacity = '0'
+      // IMPORTANT: `visibility` (not `opacity`) is the kill switch
+      // here because the `caret-blink` keyframe below animates the
+      // `opacity` property on every cycle — per CSS spec, an
+      // animated property's value comes from the keyframes, not from
+      // inline style, while the animation is running. That makes
+      // `caretEl.style.opacity = '0'` a no-op: the blink animation
+      // keeps flipping the caret on and off every 550ms regardless.
+      // `visibility` is NOT in the keyframe, so an inline
+      // `visibility: hidden` actually wins.
+      caretEl.style.visibility = 'hidden'
       return
     }
+    caretEl.style.visibility = 'visible'
 
     const containerRect = container.getBoundingClientRect()
     let measured: { left: number; top: number; height: number } | null = null
@@ -2490,14 +2559,12 @@ function ComposerHighlightOverlay({
       caretEl.style.left = `${padLeft}px`
       caretEl.style.top = `${padTop}px`
       caretEl.style.height = `${lh}px`
-      caretEl.style.opacity = '1'
       return
     }
 
     caretEl.style.left = `${measured.left - containerRect.left}px`
     caretEl.style.top = `${measured.top - containerRect.top}px`
     caretEl.style.height = `${measured.height || 22}px`
-    caretEl.style.opacity = '1'
   }, [tokens, caretPos, isFocused, text])
 
   // Render: each token as a single, unsplit element with a
@@ -2547,7 +2614,14 @@ function ComposerHighlightOverlay({
           width: '1px',
           height: '1em',
           background: 'hsl(var(--foreground))',
-          opacity: 0,
+          // `visibility`, not `opacity`, is the kill switch — the
+          // `caret-blink` keyframe animates opacity on every cycle,
+          // so an inline `opacity: 0` is overridden by the animation
+          // and the caret would stay visible (blinking) even when
+          // we try to hide it. Visibility is not in the keyframe,
+          // so the inline value actually sticks. The measurement
+          // effect above flips this to 'visible' when isFocused.
+          visibility: 'hidden',
           pointerEvents: 'none',
           animation: 'caret-blink 1.1s step-end infinite'
         }}
@@ -2823,42 +2897,31 @@ function TriggerPopoverList({
 
   if (items.length === 0) {
     return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.12 }}
-        className="px-4 py-3 text-[12px] text-muted-foreground/80"
-      >
+      <div className="px-4 py-3 text-[12px] text-muted-foreground/80">
         {emptyText}
-      </motion.div>
+      </div>
     )
   }
 
   return (
-    <ul ref={listRef} className="space-y-0.5 px-1">
+    <ul ref={listRef} className="space-y-[1px] px-1.5">
       {items.map((item) => (
-        <motion.li
-          key={item.id}
-          layout="position"
-          initial={{ opacity: 0, y: -2 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.14, ease: 'easeOut' }}
-        >
+        <li key={item.id}>
           <ComposerPrimitive.Unstable_TriggerPopoverItem
             item={item}
             onClick={onItemClick}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-left text-[13px] outline-none transition-colors hover:bg-muted/60 data-[highlighted]:bg-muted"
+            className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] outline-none transition-colors hover:bg-foreground/[0.05] data-[highlighted]:bg-foreground/[0.08]"
           >
             <span className="shrink-0 truncate font-mono text-foreground">
               {item.label}
             </span>
             {item.description && (
-              <span className="truncate text-[12px] text-muted-foreground/80">
+              <span className="truncate text-[11.5px] text-muted-foreground/70">
                 {item.description}
               </span>
             )}
           </ComposerPrimitive.Unstable_TriggerPopoverItem>
-        </motion.li>
+        </li>
       ))}
     </ul>
   )

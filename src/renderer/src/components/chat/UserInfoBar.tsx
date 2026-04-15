@@ -81,7 +81,7 @@ export function UserInfoBar(): React.JSX.Element {
   return (
     <div
       ref={wrapperRef}
-      className="relative shrink-0 bg-background"
+      className="relative shrink-0 border-t border-border/60 bg-transparent px-2 pb-2 pt-1.5"
     >
       <button
         type="button"
@@ -89,8 +89,10 @@ export function UserInfoBar(): React.JSX.Element {
         aria-haspopup="menu"
         aria-expanded={open}
         className={
-          'flex w-full items-center gap-2.5 px-4 py-3 text-left text-[13px] font-medium text-foreground transition-colors ' +
-          (open ? 'bg-muted/70' : 'hover:bg-muted/50')
+          'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] font-medium text-foreground/80 transition-colors ' +
+          (open
+            ? 'bg-foreground/[0.08] text-foreground'
+            : 'hover:bg-foreground/[0.05] hover:text-foreground')
         }
       >
         <GearIcon className="size-[15px] shrink-0 text-muted-foreground" />
@@ -98,13 +100,15 @@ export function UserInfoBar(): React.JSX.Element {
       </button>
 
       {/* Popup menu — anchored above the bar so it grows up into the
-          sidebar instead of clipping under the OS dock. Right edge
-          slightly outside the sidebar (translate-x) so the panel
-          visually lifts off the rail like the reference design. */}
+          sidebar instead of clipping under the OS dock. Apple-style
+          elevated card: rounded, ring-instead-of-border, and a soft
+          drop shadow tuned for light mode (the previous 0.6-alpha
+          pure-black shadow was a dark-only value that cast a brick
+          on the new light material). */}
       {open && (
         <div
           role="menu"
-          className="absolute bottom-[calc(100%+6px)] left-2 right-2 z-30 overflow-hidden rounded-2xl border border-border bg-popover py-2 shadow-[0_18px_60px_rgba(0,0,0,0.6)]"
+          className="absolute bottom-[calc(100%+6px)] left-2 right-2 z-30 overflow-hidden rounded-2xl bg-popover py-2 ring-1 ring-black/[0.08] shadow-[0_12px_40px_-8px_rgba(0,0,0,0.18),0_2px_8px_-2px_rgba(0,0,0,0.08)] dark:ring-white/[0.08] dark:shadow-[0_18px_60px_rgba(0,0,0,0.6)]"
         >
           {/* Header — avatar + username + role label. The username
               substitutes for an account email since the app has no

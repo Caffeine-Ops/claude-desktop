@@ -108,8 +108,14 @@ export function createShellWindow(): BrowserWindow {
   // `leave-full-screen` on macOS change the content height even
   // without a width change, so we layout on those too.
   win.on('resize', () => layoutActiveTab())
-  win.on('enter-full-screen', () => layoutActiveTab())
-  win.on('leave-full-screen', () => layoutActiveTab())
+  win.on('enter-full-screen', () => {
+    layoutActiveTab()
+    broadcastFullscreen(true)
+  })
+  win.on('leave-full-screen', () => {
+    layoutActiveTab()
+    broadcastFullscreen(false)
+  })
 
   // Shutdown path: closing the shell is equivalent to quitting the
   // app's UI. Dispose every tab's engine (each disposes its own
@@ -189,6 +195,13 @@ export function newTab(): TabContext {
   tabs.set(view.webContents.id, ctx)
   tabOrder.push(view.webContents.id)
 
+  // Broadcast the new pill to existing tabs BEFORE we start loading
+  // the new renderer. Without this, the user clicks "+" and sees no
+  // feedback until 200-500 ms later when the new renderer finishes
+  // painting. With this, the currently-active tab's TabBar gets the
+  // inactive pill immediately so the chrome feels responsive.
+  broadcastTabList()
+
   // Load the main workspace renderer (no shell query string). Dev
   // uses the HMR server URL; prod loads the built index.html. The
   // same preload and renderer bundle serve both the tab and the
@@ -210,7 +223,59 @@ export function newTab(): TabContext {
     broadcastTabList()
   })
 
-  activateTab(view.webContents.id)
+  // Fan the engine's pending-permission count onto every tab's
+  // TabBar. When a background session inside THIS tab triggers a
+  // tool-permission request (or the user resolves one), we need
+  // every OTHER tab's TabBar to re-render and show / hide the red
+  // notification badge. Piggyback on `broadcastTabList()` so the
+  // count ships inside TabDescriptor — no new IPC channel needed.
+  //
+  // Unsubscribe on tab close is implicit: engine.dispose() calls
+  // broker.removeAllListeners(), which drops this handler.
+  engine.permissionBroker.on('pendingChanged', () => {
+    broadcastTabList()
+  })
+
+  // Activation policy — the whole point of the deferral below is to
+  // keep the previously-active tab on screen until the new renderer
+  // is actually ready to draw a TabBar + header. If we swap blindly
+  // at creation time, the user sees the chrome disappear for a beat
+  // because the new WebContentsView is still blank.
+  //
+  //   - First boot (no active tab yet): nothing else to show, so we
+  //     must activate immediately — otherwise the shell window sits
+  //     behind an empty content area forever.
+  //   - Subsequent new-tab clicks: keep the previous view attached
+  //     and defer `activateTab(newId)` until the new renderer fires
+  //     `did-finish-load`. That's the earliest reliable moment React
+  //     has mounted the header/TabBar inside the new view, so the
+  //     hand-off is seamless.
+  if (activeTabId === null) {
+    activateTab(view.webContents.id)
+  } else {
+    const targetId = view.webContents.id
+    const promoteIfStillPending = (): void => {
+      // Guard against: (a) the tab being closed during load,
+      // (b) the user having already switched to this (or another)
+      // tab via a click in the meantime. In both cases calling
+      // activateTab would be wrong.
+      if (!tabs.has(targetId)) return
+      if (activeTabId === targetId) return
+      activateTab(targetId)
+    }
+    if (view.webContents.isLoading()) {
+      view.webContents.once('did-finish-load', promoteIfStillPending)
+    } else {
+      // Already loaded — fall through to immediate activation.
+      promoteIfStillPending()
+    }
+    // Safety net: if `did-finish-load` is never emitted for any
+    // reason (renderer crash, HMR reconnect swallowing the event)
+    // the new tab must still become visible within a bounded time
+    // or the user is stuck watching the old tab with a phantom
+    // pill in the TabBar.
+    setTimeout(promoteIfStillPending, 1500)
+  }
   return ctx
 }
 
@@ -376,7 +441,12 @@ function snapshotTabList(): TabDescriptor[] {
         id,
         title: ctx.title,
         workspacePath: ctx.engine.getWorkspace(),
-        active: id === activeTabId
+        active: id === activeTabId,
+        // Aggregate across every session in this tab's engine.
+        // `pendingCount` lives on the per-engine PermissionBroker
+        // and is updated by its `pendingChanged` event, which
+        // `newTab()` wires into `broadcastTabList()` below.
+        pendingPermissionCount: ctx.engine.permissionBroker.pendingCount
       }
     })
     .filter((d): d is TabDescriptor => d !== null)
@@ -391,7 +461,7 @@ export function listTabs(): TabDescriptor[] {
   return snapshotTabList()
 }
 
-function broadcastTabList(): void {
+export function broadcastTabList(): void {
   if (!shellWindow || shellWindow.isDestroyed()) return
 
   // Refresh titles from each engine's live workspace first so the
@@ -429,6 +499,29 @@ function broadcastTabList(): void {
     if (!ctx) continue
     if (ctx.view.webContents.isDestroyed()) continue
     ctx.view.webContents.send(IPC_CHANNELS.TAB_LIST_CHANGED, list)
+  }
+}
+
+/** Read the shell window's current fullscreen state, defaulting to
+ *  false if the window isn't alive yet (early boot paths). */
+export function getShellFullscreen(): boolean {
+  if (!shellWindow || shellWindow.isDestroyed()) return false
+  return shellWindow.isFullScreen()
+}
+
+/** Fan the fullscreen boolean out to every tab renderer + the shell.
+ *  Same fan-out pattern as `broadcastTabList` so a tab that was
+ *  created while the user was already in fullscreen still learns
+ *  the current state on its next `getFullscreen` call — see the
+ *  renderer's `main.tsx` hydrate logic. */
+function broadcastFullscreen(fullscreen: boolean): void {
+  if (!shellWindow || shellWindow.isDestroyed()) return
+  shellWindow.webContents.send(IPC_CHANNELS.SHELL_FULLSCREEN_CHANGED, fullscreen)
+  for (const id of tabOrder) {
+    const ctx = tabs.get(id)
+    if (!ctx) continue
+    if (ctx.view.webContents.isDestroyed()) continue
+    ctx.view.webContents.send(IPC_CHANNELS.SHELL_FULLSCREEN_CHANGED, fullscreen)
   }
 }
 

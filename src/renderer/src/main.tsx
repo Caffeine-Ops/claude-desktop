@@ -125,6 +125,50 @@ const isShell =
   }
 })()
 
+// Platform tag — so CSS can conditionally reserve the traffic-light
+// gutter on macOS. `window.electron.process.platform` comes from
+// @electron-toolkit/preload (see src/preload/index.ts). We mirror it
+// onto `<html>` as a data attribute early — before React mounts — so
+// the very first paint of .header already has the correct padding
+// and doesn't shift after the first effect runs.
+;(function bootPlatform(): void {
+  try {
+    const p = window.electron?.process?.platform
+    if (p) document.documentElement.dataset.platform = p
+  } catch (err) {
+    console.warn('[boot] platform detection failed', err)
+  }
+})()
+
+// Fullscreen hydration + live subscription. On macOS the traffic-light
+// buttons slide out of the window chrome when the user fullscreens,
+// so reserving 82px for them leaves a visible dead zone on the left.
+// We flip `data-fullscreen` on <html> and let the CSS below collapse
+// the gutter. Electron's own `display-mode: fullscreen` media query
+// is unreliable for `BrowserWindow.setFullScreen` (Chromium only
+// reports display-mode for `element.requestFullscreen`), so the
+// source of truth is an IPC broadcast driven by the shell window's
+// enter-/leave-full-screen events.
+;(function bootFullscreen(): void {
+  if (typeof window === 'undefined' || !window.tabApi) return
+  const apply = (fullscreen: boolean): void => {
+    if (fullscreen) {
+      document.documentElement.dataset.fullscreen = 'true'
+    } else {
+      delete document.documentElement.dataset.fullscreen
+    }
+  }
+  // Initial hydrate — the window might already be in fullscreen when
+  // the tab was created (e.g. opening a new tab while the app is
+  // fullscreened). This is a one-shot IPC and returns ~immediately.
+  window.tabApi.getFullscreen().then(apply).catch((err) => {
+    console.warn('[boot] getFullscreen failed', err)
+  })
+  // Live subscription — tabRegistry broadcasts on every enter/leave.
+  // No unsubscribe needed; this listener lives for the process lifetime.
+  window.tabApi.onFullscreenChanged(apply)
+})()
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>{isShell ? <ShellApp /> : <App />}</React.StrictMode>
 )

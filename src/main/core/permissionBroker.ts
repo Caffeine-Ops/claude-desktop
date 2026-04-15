@@ -70,6 +70,28 @@ class PermissionBroker extends EventEmitter {
   >()
 
   /**
+   * Current number of unresolved permission requests held in this
+   * broker. Read by the tab registry to paint an aggregate-count
+   * notification badge on each workspace's tab pill — one tab can
+   * host many sessions, so the tab-level count is the sum across
+   * every session in that engine, which conveniently is exactly
+   * `pending.size` (the broker is engine-scoped, not session-scoped).
+   */
+  get pendingCount(): number {
+    return this.pending.size
+  }
+
+  /**
+   * Emit a `pendingChanged` event with the current count. Called
+   * after every mutation (request / respond / cancelAll / abort-
+   * handler removal) so subscribers don't have to stitch together
+   * `request` + `cancel` streams to track a running total.
+   */
+  private emitPendingChanged(): void {
+    this.emit('pendingChanged', this.pending.size)
+  }
+
+  /**
    * Ask the renderer to confirm a tool call. Returns a promise that
    * resolves with the user's choice (plus any input rewrite), or
    * rejects if the request was aborted / the broker was cancelled.
@@ -106,6 +128,7 @@ class PermissionBroker extends EventEmitter {
           // the user is staring at buttons that will never do anything
           // because the engine has already moved on to deny.
           this.emit('cancel', requestId)
+          this.emitPendingChanged()
           reject(new Error('Permission request aborted by signal.'))
         }
         signal.addEventListener('abort', entry.abortHandler, { once: true })
@@ -113,6 +136,7 @@ class PermissionBroker extends EventEmitter {
 
       this.pending.set(requestId, entry)
       this.emit('request', full)
+      this.emitPendingChanged()
     })
   }
 
@@ -134,10 +158,12 @@ class PermissionBroker extends EventEmitter {
       decision: response.decision,
       updatedInput: response.updatedInput
     })
+    this.emitPendingChanged()
   }
 
   /** Reject every pending request. Used at app shutdown / window close. */
   cancelAll(reason = 'Permission broker cancelled.'): void {
+    const hadPending = this.pending.size > 0
     for (const [requestId, entry] of this.pending) {
       if (entry.abortHandler && entry.signal) {
         entry.signal.removeEventListener('abort', entry.abortHandler)
@@ -149,6 +175,7 @@ class PermissionBroker extends EventEmitter {
       entry.reject(new Error(reason))
     }
     this.pending.clear()
+    if (hadPending) this.emitPendingChanged()
   }
 }
 

@@ -14,7 +14,10 @@ import {
  */
 function Kbd({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <kbd className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+    <kbd
+      className="inline-flex min-w-[18px] items-center justify-center rounded-[5px] bg-foreground/[0.08] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground dark:bg-white/10"
+      style={{ letterSpacing: '-0.01em' }}
+    >
       {children}
     </kbd>
   )
@@ -385,28 +388,36 @@ export function AskUserQuestionView({
           + `overflow-y-auto` lets this region scroll when the
           combined height of question text and options exceeds the
           viewport's remaining budget. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-3 pt-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-5">
         {/* Header: question counter + optional chip header */}
-        <div className="mb-3 flex items-center gap-2 text-[11px] text-muted-foreground/80">
-          {totalQuestions > 1 && (
-            <span className="font-mono tabular-nums">
-              Question {qIndex + 1} / {totalQuestions}
-            </span>
-          )}
-          {current.header && (
-            <span className="rounded border border-border bg-card/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-              {current.header}
-            </span>
-          )}
-        </div>
+        {(totalQuestions > 1 || current.header) && (
+          <div className="mb-3 flex items-center gap-2 text-[11px] text-muted-foreground">
+            {totalQuestions > 1 && (
+              <span className="tabular-nums" style={{ letterSpacing: '-0.01em' }}>
+                {qIndex + 1} / {totalQuestions}
+              </span>
+            )}
+            {current.header && (
+              <span
+                className="rounded-full bg-foreground/[0.06] px-2 py-0.5 text-[10px] font-medium text-muted-foreground dark:bg-white/[0.08]"
+                style={{ letterSpacing: '-0.01em' }}
+              >
+                {current.header}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* The question itself. whitespace-pre-wrap because models
             sometimes drop in \n to group related context. */}
-        <div className="mb-4 whitespace-pre-wrap break-words text-[14px] leading-relaxed text-foreground">
+        <div
+          className="mb-5 whitespace-pre-wrap break-words text-foreground"
+          style={{ fontSize: '15px', lineHeight: 1.47, letterSpacing: '-0.012em' }}
+        >
           {current.question}
         </div>
 
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1.5">
           {current.options.map((opt, i) => (
             <OptionRow
               key={`${qIndex}-${i}-${opt.label}`}
@@ -446,27 +457,51 @@ export function AskUserQuestionView({
       </div>
 
       {/* Footer — pinned to the bottom via `shrink-0` so the scrollable
-          body above never overlaps the keyboard hint row, no matter
-          how tall the question / option list gets. */}
-      <div className="flex shrink-0 items-center justify-between border-t border-border bg-background/60 px-5 py-2 text-[11px] text-muted-foreground/80">
-        <span className="flex items-center gap-2">
+          body above never overlaps the keyboard hint row. Hairline
+          divider via a subtle inner border instead of a full
+          `border-t` to match Apple's "barely-there separator" style. */}
+      <div
+        className="flex shrink-0 items-center justify-between px-5 py-2.5 text-[11px] text-muted-foreground"
+        style={{
+          letterSpacing: '-0.01em',
+          boxShadow: 'inset 0 1px 0 rgba(0,0,0,0.06)'
+        }}
+      >
+        <span className="flex items-center gap-1.5">
           {otherEditing ? (
             <>
-              <Kbd>↵</Kbd> submit · <Kbd>Esc</Kbd> back to list
+              <Kbd>↵</Kbd>
+              <span>submit</span>
+              <span className="text-muted-foreground/40">·</span>
+              <Kbd>Esc</Kbd>
+              <span>back to list</span>
             </>
           ) : (
             <>
-              <Kbd>Esc</Kbd> cancel · <Kbd>↵</Kbd> select · <Kbd>1-{current.options.length}</Kbd> pick
+              <Kbd>Esc</Kbd>
+              <span>cancel</span>
+              <span className="text-muted-foreground/40">·</span>
+              <Kbd>↵</Kbd>
+              <span>select</span>
+              <span className="text-muted-foreground/40">·</span>
+              <Kbd>1-{current.options.length}</Kbd>
+              <span>pick</span>
               {qIndex > 0 && (
                 <>
-                  {' · '}
-                  <Kbd>⌫</Kbd> back
+                  <span className="text-muted-foreground/40">·</span>
+                  <Kbd>⌫</Kbd>
+                  <span>back</span>
                 </>
               )}
             </>
           )}
         </span>
-        <span className="truncate font-mono text-muted-foreground/60">AskUserQuestion</span>
+        <span
+          className="truncate text-muted-foreground/50"
+          style={{ letterSpacing: '-0.01em' }}
+        >
+          AskUserQuestion
+        </span>
       </div>
     </div>
   )
@@ -495,24 +530,38 @@ function OptionRow({
       onClick={onClick}
       onMouseEnter={onHover}
       className={
-        'flex w-full items-start gap-3 rounded-md border px-3 py-2 text-left text-[13px] transition focus:outline-none ' +
+        'group flex w-full items-start gap-3 rounded-xl px-3.5 py-3 text-left transition-colors duration-150 focus:outline-none ' +
         (highlighted
-          ? 'border-accent/50 bg-accent/15 text-accent'
-          : 'border-border bg-card/60 text-foreground hover:border-input hover:bg-muted')
+          ? 'bg-accent/[0.12] dark:bg-accent/[0.18]'
+          : 'bg-transparent hover:bg-foreground/[0.04] dark:hover:bg-white/[0.05]')
       }
+      style={{ letterSpacing: '-0.012em' }}
     >
       <span
         className={
-          'inline-flex size-5 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold ' +
-          (highlighted ? 'bg-accent text-accent-foreground' : 'bg-muted text-muted-foreground')
+          'mt-0.5 inline-flex size-[22px] shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-colors duration-150 ' +
+          (highlighted
+            ? 'bg-accent text-accent-foreground'
+            : 'bg-foreground/[0.08] text-muted-foreground group-hover:bg-foreground/[0.12] dark:bg-white/[0.1] dark:group-hover:bg-white/[0.14]')
         }
       >
         {index}
       </span>
       <span className="min-w-0 flex-1">
-        <div className={'truncate font-medium ' + (highlighted ? 'text-accent' : 'text-foreground')}>{label}</div>
+        <div
+          className={
+            'truncate font-medium ' +
+            (highlighted ? 'text-accent' : 'text-foreground')
+          }
+          style={{ fontSize: '14px', lineHeight: 1.35 }}
+        >
+          {label}
+        </div>
         {description && (
-          <div className="mt-0.5 whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-muted-foreground/80">
+          <div
+            className="mt-1 whitespace-pre-wrap break-words text-muted-foreground"
+            style={{ fontSize: '12.5px', lineHeight: 1.47, letterSpacing: '-0.01em' }}
+          >
             {description}
           </div>
         )}
@@ -573,22 +622,22 @@ function OtherRow({
         if (!editing) onClickRow()
       }}
       className={
-        'flex w-full cursor-text items-start gap-3 rounded-md border px-3 py-2 text-left text-[13px] transition focus-within:border-accent/50 focus-within:bg-accent/15 ' +
+        'group flex w-full cursor-text items-start gap-3 rounded-xl px-3.5 py-3 text-left transition-colors duration-150 ' +
         (active
-          ? 'border-accent/50 bg-accent/15 text-accent'
-          : 'border-border bg-card/60 text-foreground hover:border-input hover:bg-muted')
+          ? 'bg-accent/[0.12] dark:bg-accent/[0.18]'
+          : 'bg-transparent hover:bg-foreground/[0.04] dark:hover:bg-white/[0.05]')
       }
+      style={{ letterSpacing: '-0.012em' }}
     >
       <span
         aria-hidden
         className={
-          'inline-flex size-5 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold ' +
-          (active ? 'bg-accent text-accent-foreground' : 'bg-muted text-muted-foreground')
+          'mt-0.5 inline-flex size-[22px] shrink-0 items-center justify-center rounded-full text-[13px] font-semibold leading-none transition-colors duration-150 ' +
+          (active
+            ? 'bg-accent text-accent-foreground'
+            : 'bg-foreground/[0.08] text-muted-foreground group-hover:bg-foreground/[0.12] dark:bg-white/[0.1] dark:group-hover:bg-white/[0.14]')
         }
       >
-        {/* Plus glyph so the Other row reads "add your own answer"
-            even without the sidebar hint — distinct from numbered
-            option rows above. */}
         +
       </span>
       <span className="min-w-0 flex-1">
@@ -603,20 +652,25 @@ function OtherRow({
             onBlur={onBlur}
             onClick={(e) => e.stopPropagation()}
             placeholder={OTHER_PLACEHOLDER}
-            className="w-full bg-transparent font-medium text-foreground caret-accent placeholder:text-muted-foreground/80 focus:outline-none"
+            className="w-full bg-transparent font-medium text-foreground caret-accent placeholder:text-muted-foreground focus:outline-none"
+            style={{ fontSize: '14px', lineHeight: 1.35, letterSpacing: '-0.012em' }}
           />
         ) : (
           <div
             className={
               'truncate font-medium ' +
-              (active ? 'text-accent' : 'text-foreground/80')
+              (active ? 'text-accent' : 'text-foreground/85')
             }
+            style={{ fontSize: '14px', lineHeight: 1.35 }}
           >
             {draft.length > 0 ? draft : 'Other'}
           </div>
         )}
         {!editing && (
-          <div className="mt-0.5 whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-muted-foreground/80">
+          <div
+            className="mt-1 whitespace-pre-wrap break-words text-muted-foreground"
+            style={{ fontSize: '12.5px', lineHeight: 1.47, letterSpacing: '-0.01em' }}
+          >
             Type your own answer in your own words.
           </div>
         )}

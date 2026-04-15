@@ -1,34 +1,40 @@
 import React, { useEffect, useState } from 'react'
 import type { TabDescriptor } from '../../../../shared/ipc-channels'
+import { NotificationBadge } from '../common/NotificationBadge'
 
 /**
- * Chrome-style tab strip rendered inside each tab renderer's
- * `<header>`, right next to the panel-toggle buttons. Source of
- * truth lives in main's tabRegistry; this component just subscribes
- * to `TAB_LIST_CHANGED` and renders.
+ * Safari / macOS-style tab strip — rendered inside each tab
+ * renderer's `<header>`, right next to the panel-toggle buttons.
+ * Source of truth lives in main's tabRegistry; this component
+ * subscribes to `TAB_LIST_CHANGED` and renders.
  *
- * Visual model — faithful to desktop Chrome:
+ * Visual model — Apple-inspired:
  *
- *   - Inactive tabs are **fully rounded** (`rounded-lg`) and sit as
- *     floating pills, slightly shorter than the active tab so they
- *     read as recessed into the header band.
- *   - The active tab is `rounded-t-lg` only and reaches all the way
- *     to the header's bottom border, painting a 1px box-shadow in
- *     the same color as the workspace background below — that's
- *     what makes its bottom edge disappear into the content area.
- *   - Between adjacent inactive tabs a thin vertical divider sits
- *     in the seam. A tab's right-side divider is hidden when either
- *     it or its right neighbor is active OR hovered, so dragging
- *     the mouse across the strip feels like Chrome: the line
- *     closest to the cursor vanishes.
- *   - Each tab carries a color chip (single letter of the workspace
- *     basename) as a favicon stand-in, and a close `×` that's
- *     always visible on the active tab / fades in on hover for
- *     inactives.
+ *   - All tabs are **uniformly rounded** (rounded-lg) pills that
+ *     float inside the toolbar material. No Chrome-style "active
+ *     tab merges into content" shoulder trick — that was a
+ *     skeuomorphic cue from desktop browsers that Apple's own
+ *     Safari 15+ abandoned in favor of a cleaner Ferris-wheel of
+ *     identically-shaped pills.
+ *   - The **active** pill gets a white / near-white fill and a
+ *     soft drop shadow (card-like elevation). The title text
+ *     flips to full foreground so it reads with clear emphasis
+ *     over the toolbar material.
+ *   - **Inactive** pills are transparent; hover adds a gentle
+ *     gray fill. No vertical dividers between them — just gaps.
+ *     The row reads as "a bar of breathing pills" rather than
+ *     Chrome's "segmented contiguous strip".
+ *   - Favicon chip is desaturated (pastel) rather than the
+ *     bright rainbow it used to be — Apple's chrome is
+ *     near-monochrome, and a loud hue here would fight the
+ *     Apple Blue accent that lives on interactive elements.
+ *   - Close `×` fades in on hover for inactive tabs, always
+ *     visible on the active one.
+ *   - The `+` New-tab button is a round, icon-only button
+ *     following Apple's toolbar button idiom.
  */
 export default function TabBar(): React.ReactElement {
   const [tabs, setTabs] = useState<readonly TabDescriptor[]>([])
-  const [hoveredId, setHoveredId] = useState<number | null>(null)
 
   useEffect(() => {
     const api = window.tabApi
@@ -67,36 +73,26 @@ export default function TabBar(): React.ReactElement {
     void window.tabApi?.closeTab(id)
   }
 
-  const shouldShowDividerRightOf = (idx: number): boolean => {
-    if (idx >= tabs.length - 1) return false
-    const me = tabs[idx]!
-    const next = tabs[idx + 1]!
-    if (me.active || next.active) return false
-    if (me.id === hoveredId || next.id === hoveredId) return false
-    return true
-  }
-
   return (
     <>
       {/* Tab strip proper: grows to fill whatever horizontal
           space the panel-toggles cluster leaves free, then lets
           its children (pills) distribute that width evenly via
-          their own `flex-1`. `overflow-hidden` clips any
-          residual overflow when even the pills' min-widths
-          exceed the available band, so a packed row of tabs can
-          never push the panel toggles off-screen. Individual
-          pills and the `+` button mark themselves `no-drag` so
-          clicks still route through the header drag region. */}
-      <div className="flex min-w-0 flex-1 items-end self-stretch overflow-hidden">
-        {tabs.map((tab, idx) => (
+          `flex-1` + `min-w-0`, which is what keeps the row from
+          pushing the panel toggles off-screen without needing
+          an overflow clip. We intentionally do NOT use
+          `overflow-hidden` here — the active pill's drop shadow
+          extends 1-2px above and below its box, and any vertical
+          clip on this container would slice the shadow off the
+          top/bottom edges. `gap-1` gives the Safari-style "pills
+          float with air between them" rhythm. Individual pills
+          and the `+` button mark themselves `no-drag` so clicks
+          still route through the header drag region. */}
+      <div className="flex min-w-0 flex-1 items-center gap-1 self-stretch">
+        {tabs.map((tab) => (
           <TabPill
             key={tab.id}
             tab={tab}
-            showRightDivider={shouldShowDividerRightOf(idx)}
-            onMouseEnter={() => setHoveredId(tab.id)}
-            onMouseLeave={() =>
-              setHoveredId((current) => (current === tab.id ? null : current))
-            }
             onClick={() => onSwitchTab(tab.id)}
             onClose={(e) => onCloseTab(tab.id, e)}
           />
@@ -105,7 +101,7 @@ export default function TabBar(): React.ReactElement {
           type="button"
           onClick={onNewTab}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          className="mb-[5px] ml-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground"
+          className="ml-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
           aria-label="New tab"
           title="New tab"
         >
@@ -128,7 +124,11 @@ export default function TabBar(): React.ReactElement {
   )
 }
 
-/** 8-hue palette used for the per-tab color chip. */
+/** 8-hue palette used for the per-tab color chip. Desaturated
+ *  from the previous bright values so the chips read as pastel
+ *  letter tiles instead of rainbow emoji — Apple's chrome is
+ *  monochromatic and a loud hue here would fight the Apple Blue
+ *  accent reserved for interactive elements. */
 const CHIP_HUES = [212, 150, 32, 340, 264, 10, 180, 280] as const
 
 function chipColor(key: string): { bg: string; fg: string } {
@@ -138,8 +138,8 @@ function chipColor(key: string): { bg: string; fg: string } {
   }
   const hue = CHIP_HUES[Math.abs(hash) % CHIP_HUES.length]!
   return {
-    bg: `hsl(${hue} 65% 62%)`,
-    fg: 'white'
+    bg: `hsl(${hue} 38% 88%)`,
+    fg: `hsl(${hue} 52% 32%)`
   }
 }
 
@@ -153,58 +153,39 @@ function chipLetter(title: string): string {
 
 function TabPill({
   tab,
-  showRightDivider,
-  onMouseEnter,
-  onMouseLeave,
   onClick,
   onClose
 }: {
   tab: TabDescriptor
-  showRightDivider: boolean
-  onMouseEnter: () => void
-  onMouseLeave: () => void
   onClick: () => void
   onClose: (e: React.MouseEvent<HTMLButtonElement>) => void
 }): React.ReactElement {
   const chip = chipColor(tab.workspacePath ?? String(tab.id))
   const letter = chipLetter(tab.title)
 
-  // All tabs: flex row with favicon + title + close. `flex-1`
-  // (grow 1, shrink 1, basis 0) lets every pill share the tab
-  // strip's available width equally — with a few tabs each one
-  // stretches up to its `max-w`, and when the strip is packed
-  // they all contract together down to `min-w`. That's Chrome's
-  // adaptive feel.
+  // All tabs share the same shape — uniformly rounded pills that
+  // `flex-1` into the available width. Height is 28px (h-7) for a
+  // compact Safari feel. Min-width is tight so a packed strip
+  // collapses down to just the favicon + truncated letters.
   const sharedClass =
-    'group relative flex flex-1 items-center gap-2 pl-3 pr-2 text-[12.5px] leading-none transition-colors cursor-default select-none'
+    'group relative flex flex-1 h-7 items-center gap-2 pl-2.5 pr-1.5 rounded-lg text-[12.5px] leading-none transition-colors cursor-default select-none min-w-[56px] max-w-[240px]'
 
+  // Active: white fill + soft elevation shadow + full-weight
+  // foreground text. This is what makes a pill "pop" off the
+  // translucent toolbar material — same contrast trick Safari
+  // and Finder use for the selected row in their chrome.
   const activeClass =
-    // Active tab: taller (h-9), rounded top only, flush with the
-    // header's bottom border. The box-shadow is a 1px bar the same
-    // color as the workspace background — it sits on top of the
-    // header's `border-bottom` directly under this tab, painting
-    // over it so the active tab flows seamlessly into the content
-    // area below. `min-w-[64px]` is narrower than an inactive
-    // pill's floor so the active tab visually "wins" when the
-    // strip is packed.
-    'h-9 min-w-[64px] max-w-[240px] rounded-t-lg bg-background text-foreground shadow-[0_1px_0_0_hsl(var(--background))] z-[1] before:absolute before:inset-x-0 before:-top-px before:h-px before:rounded-t-lg before:bg-border/40'
+    'bg-background text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_0_rgba(255,255,255,0.8)_inset] ring-1 ring-black/[0.08] dark:ring-white/[0.08]'
 
+  // Inactive: transparent, with a gentle hover wash. No border,
+  // no divider — the gap-1 on the parent does all the separation.
   const inactiveClass =
-    // Inactive tab: shorter (h-7), fully rounded, margin-bottom
-    // so there's a gap between the pill bottom and the header's
-    // border. Min-width is tight (`52px`) so a crowded strip
-    // collapses tabs down to just the favicon chip — the title
-    // truncates with `…` in the middle and the close × hides
-    // entirely below the hover threshold (see `opacity-0` on
-    // the button further down).
-    'h-7 min-w-[52px] max-w-[220px] mb-[5px] rounded-lg text-muted-foreground/80 hover:bg-foreground/[0.06] hover:text-foreground/90'
+    'bg-transparent text-muted-foreground/80 hover:bg-foreground/[0.05] hover:text-foreground/90'
 
   return (
     <div
       role="button"
       tabIndex={0}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
       onClick={onClick}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') onClick()
@@ -213,29 +194,34 @@ function TabPill({
       className={`${sharedClass} ${tab.active ? activeClass : inactiveClass}`}
       title={tab.workspacePath ?? tab.title}
     >
-      {/* Right-edge vertical divider between adjacent inactive
-          tabs. Parent decides visibility based on active / hover
-          state of this tab and the next one, so neighbouring
-          dividers disappear when the cursor lands on a pill. */}
-      {showRightDivider && (
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute right-0 top-1/2 h-4 w-px -translate-y-1/2 bg-border/70"
-        />
-      )}
-
       <span
         aria-hidden="true"
-        className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] text-[9px] font-semibold"
+        className="flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-[4px] text-[9px] font-semibold"
         style={{ backgroundColor: chip.bg, color: chip.fg }}
       >
         {letter}
       </span>
       <span className="min-w-0 flex-1 truncate">{tab.title}</span>
+      {/* Apple-style red notification badge — only rendered when the
+          tab's engine has at least one unresolved tool-permission
+          request across any of its session runtimes. The ring color
+          matches whichever pill state the tab is in (active = white
+          fill, inactive = toolbar material) so the badge reads as
+          "pinned to this tab" rather than floating above it. */}
+      {tab.pendingPermissionCount > 0 ? (
+        <NotificationBadge
+          count={tab.pendingPermissionCount}
+          ringClassName={
+            tab.active
+              ? 'ring-[hsl(var(--background))]'
+              : 'ring-[hsl(var(--background)/0.72)]'
+          }
+        />
+      ) : null}
       <button
         type="button"
         onClick={onClose}
-        className={`ml-1 flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-opacity hover:bg-foreground/15 hover:text-foreground ${
+        className={`ml-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full text-muted-foreground/60 transition-all hover:bg-foreground/10 hover:text-foreground ${
           tab.active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
         }`}
         aria-label={`Close ${tab.title}`}

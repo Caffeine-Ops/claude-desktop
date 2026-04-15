@@ -26,40 +26,60 @@
 
 @layer base {
   :root {
-    /* Light theme */
+    /* Light theme — Apple-inspired palette.
+     *
+     * Base canvas is `#f5f5f7` (hsl 240 7% 97%) — Apple's signature
+     * light gray that sits just off pure white. The slight blue-gray
+     * tint prevents sterility and creates a subtle contrast so white
+     * cards (popover/card tokens) feel like they're *floating* above
+     * the page instead of blending into it. This is the whole point
+     * of Apple's light sections: the background retreats so product
+     * surfaces step forward.
+     *
+     * Foreground pinned to `#1d1d1f` (hsl 240 3% 12%) — Apple's
+     * near-black, slightly warmer than pure black so long reading
+     * passes don't feel harsh.
+     */
     color-scheme: light;
-    --background: 0 0% 100%;
-    --foreground: 240 10% 10%;
+    --background: 240 7% 97%;
+    --foreground: 240 3% 12%;
 
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 10%;
+    --card-foreground: 240 3% 12%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 10%;
+    --popover-foreground: 240 3% 12%;
 
-    --primary: 217 91% 55%;
+    /* Apple Blue (#0071e3) — the ONLY chromatic color in Apple's
+     * interface, reserved for interactive elements. HSL: 211 100% 45%. */
+    --primary: 211 100% 45%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 240 5% 96%;
-    --secondary-foreground: 240 6% 15%;
+    --secondary: 240 6% 94%;
+    --secondary-foreground: 240 3% 18%;
 
-    --muted: 240 5% 95%;
-    --muted-foreground: 240 4% 42%;
+    --muted: 240 5% 93%;
+    --muted-foreground: 240 4% 40%;
 
-    --accent: 217 91% 60%;
+    --accent: 211 100% 45%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 72% 50%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 240 6% 88%;
-    --input: 240 6% 90%;
-    --ring: 217 91% 55%;
+    /* Border tokens tuned for the new #f5f5f7 base. The previous
+     * 240 6% 90% was only ~3 points darker than the background
+     * and effectively invisible. 240 6% 84% (~#d3d3d8) reads as a
+     * clear hairline without going loud — roughly what Apple's
+     * own light-mode separators land on. */
+    --border: 240 6% 84%;
+    --input: 240 6% 86%;
+    --ring: 211 100% 45%;
 
-    --sidebar: 240 6% 97%;
-    --sidebar-foreground: 240 8% 18%;
-    --sidebar-accent: 240 5% 92%;
-    --sidebar-border: 240 6% 88%;
+    --sidebar: 240 7% 96%;
+    --sidebar-foreground: 240 4% 18%;
+    --sidebar-accent: 240 6% 90%;
+    --sidebar-border: 240 6% 84%;
 
     /* Composer mention chip — semantic green for "this is a file or
      * symbol", kept distinct from accent so the two chip variants
@@ -74,67 +94,80 @@
 
   .dark {
     color-scheme: dark;
-    /* Hue 220 instead of 240 — slightly warmer neutral, matches what
-     * Linear / Vercel / Arc use. 240 reads as "cold blue-gray", 220 as
-     * "true dark gray with a hint of blue". */
+    /* Dark theme — Apple-inspired (DESIGN.md §2, §6).
+     *
+     * Apple's dark sections are cinematic: a pure-black canvas
+     * (`#000000`) that feels like an OLED gallery wall, with product
+     * cards lifted on near-black surfaces (`#272729`–`#2a2a2d`) that
+     * are 1-2 shades warmer than the backdrop. The only chromatic
+     * color is Apple Bright Blue (`#2997ff`) — the dark-bg variant of
+     * the Apple Blue accent, luminance-lifted so blue interactive
+     * elements stay unmistakable on pure black.
+     *
+     * Neutral hue is 240 (just a hair cool) with near-zero saturation,
+     * so surfaces read as warm gray instead of the Linear/Vercel blue
+     * cast we had before.
+     */
 
-    /* Background is lifted off OLED black (4% → 7%) so large surfaces
-     * are easier on the eyes and have room for real elevation below. */
-    --background: 220 8% 7%;
-    --foreground: 220 12% 96%;
+    /* Pure black canvas — Apple's signature hero background. */
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
 
-    /* Card sits +3% above bg; popover +6%. Previous values gave 3% / 5%
-     * steps which made dialogs barely float off the page. Bigger steps
-     * = clearer surface hierarchy. */
-    --card: 220 8% 10%;
-    --card-foreground: 220 12% 96%;
+    /* Card = Dark Surface 1 (#272729). Popover = Dark Surface 4
+     * (#2a2a2d) — a hair higher to signal dialogs/menus float above
+     * inline cards. These are Apple's exact surface tokens from
+     * DESIGN.md §2. */
+    --card: 240 3% 16%;
+    --card-foreground: 0 0% 100%;
 
-    --popover: 220 8% 13%;
-    --popover-foreground: 220 12% 96%;
+    --popover: 240 3% 17%;
+    --popover-foreground: 0 0% 100%;
 
-    /* Accent button text is near-white, not near-black — a saturated
-     * mid-blue bg (hsl 217 91% 60%) pairs better with light text for
-     * contrast and reads as a "primary CTA" button. */
-    --primary: 217 91% 60%;
+    /* Apple Bright Blue (#2997ff) — the dark-bg accent. HSL 210 100% 58%.
+     * This is the ONLY chromatic color in the interface (DESIGN.md §2). */
+    --primary: 210 100% 58%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 220 7% 15%;
-    --secondary-foreground: 220 12% 94%;
+    /* Secondary surfaces = Dark Surface 2 (#262628). */
+    --secondary: 240 3% 15%;
+    --secondary-foreground: 0 0% 100%;
 
-    /* Muted foreground bumped 60% → 66% so disabled / helper text
-     * stops looking washed out on the lifted background. */
-    --muted: 220 7% 14%;
-    --muted-foreground: 220 8% 66%;
+    /* Muted canvas stays a hair below card so sidebar/rail surfaces
+     * feel inset from floating cards. Muted foreground ≈ Apple's
+     * "white at 66% opacity" secondary text. */
+    --muted: 240 3% 13%;
+    --muted-foreground: 0 0% 66%;
 
-    --accent: 217 91% 60%;
+    --accent: 210 100% 58%;
     --accent-foreground: 0 0% 100%;
 
-    /* Brighter, slightly more saturated destructive red — 0 62% 45%
-     * disappeared into the background on error borders. */
     --destructive: 0 72% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    /* Borders / inputs both nudged 2 points lighter so outlines and
-     * card edges are visible without being loud. */
-    --border: 220 7% 18%;
-    --input: 220 7% 20%;
-    --ring: 217 91% 60%;
+    /* Border ≈ white @ 14% on pure black — matches Apple's nav
+     * hairline rule. Input a hair brighter for form affordance. */
+    --border: 0 0% 18%;
+    --input: 0 0% 22%;
+    --ring: 210 100% 58%;
 
-    --sidebar: 220 8% 7%;
-    --sidebar-foreground: 220 12% 92%;
-    --sidebar-accent: 220 7% 15%;
-    --sidebar-border: 220 7% 18%;
+    /* Sidebar matches the pure-black nav surface so the left rail
+     * reads as the same Apple "glass navigation" plane as the toolbar. */
+    --sidebar: 0 0% 0%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-accent: 240 3% 15%;
+    --sidebar-border: 0 0% 18%;
 
     --chip-mention: 158 64% 65%;
   }
 
   /* High-contrast modifier — bumps borders, ring, muted text. Toggled
-   * on `<html>` by the applier when contrast slider crosses 60. */
+   * on `<html>` by the applier when contrast slider crosses 60.
+   * Ring stays on Apple Bright Blue, just luminance-lifted for AA+. */
   html.high-contrast {
-    --border: 240 5% 28%;
-    --input: 240 5% 28%;
-    --ring: 217 91% 70%;
-    --muted-foreground: 240 5% 75%;
+    --border: 0 0% 32%;
+    --input: 0 0% 32%;
+    --ring: 210 100% 70%;
+    --muted-foreground: 0 0% 80%;
   }
 
   body {
@@ -143,65 +176,43 @@
     font-size: var(--ui-font-size);
   }
 
-  /* Light-theme decorative backdrop.
-   * Stacked layers (top to bottom):
-   *   1. Three soft radial gradient blobs — blue top-left, pink top-right,
-   *      mint bottom-center — together forming a muted aurora tint.
-   *   2. A 32px x 32px colored grid that only shows where the gradients
-   *      don't dominate. Line color is a cool slate with ~6% alpha so it
-   *      reads as "paper ruling" rather than "wireframe".
-   *   3. The base --background color under everything.
-   * background-attachment:fixed keeps the pattern anchored to the
-   * viewport so scrolling the chat doesn't drag the grid along.
+  /* Light-theme decorative backdrop — Apple-inspired.
    *
-   * Target is `#root` (not `body`) because assets/main.css gives #root an
-   * opaque background color that sits above body and would hide any body
-   * background-image. Setting the layers on #root puts them on the
-   * topmost element in the stack; panels like sidebar / right rail set
-   * their own opaque `bg-sidebar` / `bg-background`, so they cover the
-   * decoration and only the chat area (ThreadPrimitive.Root is
-   * bg-transparent) lets it show through.
+   * Apple's design language is reductive: no colorful aurora blobs,
+   * no grid rulers, no textures. Instead the canvas is a solid
+   * `#f5f5f7` (the --background token) with one whisper-thin overhead
+   * halo that mimics a cinematic gallery spotlight — it makes the
+   * center of the viewport feel subtly brighter than the edges,
+   * which in turn makes the chat content (where the user's attention
+   * lives) feel subtly elevated. The effect is so soft you don't
+   * notice it consciously, you just feel the page breathe.
    *
-   * `.dark #root` overrides to none — dark theme stays untouched. */
+   * Two stacked radial gradients:
+   *   1. A wide overhead halo from 50% -20% — near-white at center,
+   *      fading to the base light gray. Simulates overhead studio
+   *      lighting on a product page.
+   *   2. A vignette from 50% 120% — a hair darker at the bottom edge
+   *      than at the middle, so the content region reads as the
+   *      brightest zone. Pulls the eye upward toward the composer.
+   *
+   * `background-attachment: fixed` pins the halo to the viewport so
+   * scrolling the thread doesn't drag it.
+   *
+   * Target is `#root` (not `body`) because assets/main.css gives
+   * #root an opaque background color that would hide any body
+   * background-image. `.dark #root` stays `none`. */
   :root:not(.dark) #root {
     background-image:
       radial-gradient(
-        1100px 620px at 8% -10%,
-        hsla(217, 92%, 62%, 0.45),
-        transparent 62%
+        1600px 900px at 50% -20%,
+        hsla(0, 0%, 100%, 1) 0%,
+        hsla(240, 7%, 97%, 0) 65%
       ),
       radial-gradient(
-        900px 540px at 100% 0%,
-        hsla(320, 90%, 72%, 0.38),
-        transparent 60%
-      ),
-      radial-gradient(
-        900px 520px at 50% 120%,
-        hsla(160, 75%, 62%, 0.38),
-        transparent 62%
-      ),
-      linear-gradient(
-        to right,
-        hsla(224, 35%, 60%, 0.055) 1px,
-        transparent 1px
-      ),
-      linear-gradient(
-        to bottom,
-        hsla(224, 35%, 60%, 0.055) 1px,
-        transparent 1px
+        1400px 900px at 50% 120%,
+        hsla(240, 6%, 92%, 0.7) 0%,
+        hsla(240, 7%, 97%, 0) 55%
       );
-    background-size:
-      auto,
-      auto,
-      auto,
-      32px 32px,
-      32px 32px;
-    background-position:
-      0 0,
-      0 0,
-      0 0,
-      0 0,
-      0 0;
     background-attachment: fixed;
   }
 

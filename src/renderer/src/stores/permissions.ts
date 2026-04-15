@@ -156,6 +156,31 @@ export function usePermissionBridge(): void {
 }
 
 /**
+ * Return a map of { sessionId → number of pending permission
+ * requests } — used by the sidebar to render Apple-style red
+ * notification badges on session rows whose background agent
+ * task blocked on a tool approval the user hasn't answered yet.
+ *
+ * Returned as a plain Record (not a Map) so `useShallow` can do
+ * its standard key/value shallow diff: consumers only re-render
+ * when the count changes on some session, not on every unrelated
+ * permission traffic.
+ */
+export function usePendingPermissionCountsBySession(): Readonly<
+  Record<string, number>
+> {
+  return usePermissionStore(
+    useShallow((state): Record<string, number> => {
+      const counts: Record<string, number> = {}
+      for (const req of state.requests.values()) {
+        counts[req.sessionId] = (counts[req.sessionId] ?? 0) + 1
+      }
+      return counts
+    })
+  )
+}
+
+/**
  * Look up the pending permission request for a given tool_use id.
  * Returns `null` when no request is attached to this tool.
  *
