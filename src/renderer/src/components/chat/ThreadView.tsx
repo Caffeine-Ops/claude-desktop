@@ -938,9 +938,11 @@ function ReasoningCard({
               <path d="m9 6 6 6-6 6" />
             </svg>
           )}
-          <span className="font-medium tracking-tight">
-            {isStreaming ? '正在思考…' : '思考过程'}
-          </span>
+          {isStreaming ? (
+            <ShimmerText>正在思考…</ShimmerText>
+          ) : (
+            <span className="font-medium tracking-tight">思考过程</span>
+          )}
           {!isStreaming && hasText && (
             <span className="text-[11px] text-muted-foreground/60">
               · {charCount} 字
@@ -989,6 +991,61 @@ function SystemMessage(): React.JSX.Element {
         <MessagePrimitive.Parts />
       </div>
     </MessagePrimitive.Root>
+  )
+}
+
+/**
+ * ShimmerText
+ * -----------
+ * Apple-style text shimmer — a bright highlight sweeps through the
+ * characters while the dimmer base color stays put, producing the
+ * same "breathing" label effect used on iOS loading states and the
+ * Apple homepage hero headlines during async data loads.
+ *
+ * How it works
+ * ------------
+ * 1. The `<motion.span>` has its background painted with a 3-stop
+ *    horizontal gradient: muted at both ends, foreground at the
+ *    center, so the middle third is brighter than the edges.
+ * 2. `background-size: 200% 100%` makes the gradient twice as wide
+ *    as the text, so there's room to slide the bright center in
+ *    and out of view.
+ * 3. `background-clip: text` + `color: transparent` clips the
+ *    gradient to the letterforms — you see the gradient only where
+ *    there's a glyph, so the effect looks like the letters
+ *    themselves are breathing, not a rectangle pulsing behind them.
+ * 4. Motion interpolates `backgroundPositionX` from `200%` to
+ *    `-200%` over 2.4s on a linear repeat, sliding the bright
+ *    center of the gradient right-to-left across the element.
+ *    (Motion parses percentage string keyframes and smoothly
+ *    animates them.)
+ *
+ * Respects `prefers-reduced-motion` indirectly: motion honors the
+ * user's OS setting and will fall back to the final frame instead
+ * of animating when `Reduce Motion` is on.
+ */
+function ShimmerText({
+  children
+}: {
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <motion.span
+      className="font-medium tracking-tight"
+      style={{
+        backgroundImage:
+          'linear-gradient(90deg, hsl(var(--muted-foreground) / 0.35) 0%, hsl(var(--foreground)) 50%, hsl(var(--muted-foreground) / 0.35) 100%)',
+        backgroundSize: '200% 100%',
+        WebkitBackgroundClip: 'text',
+        backgroundClip: 'text',
+        color: 'transparent'
+      }}
+      initial={{ backgroundPositionX: '200%' }}
+      animate={{ backgroundPositionX: '-200%' }}
+      transition={{ duration: 2.4, ease: 'linear', repeat: Infinity }}
+    >
+      {children}
+    </motion.span>
   )
 }
 
