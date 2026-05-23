@@ -600,12 +600,6 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
 
   return (
     <section className="home-hero" data-testid="home-hero">
-      <div className="home-hero__brand" aria-hidden>
-        <span className="home-hero__brand-mark">
-          <img src="/app-icon.svg" alt="" draggable={false} />
-        </span>
-        <span className="home-hero__brand-name">Open Design</span>
-      </div>
       <h1 className="home-hero__title">{t('homeHero.title')}</h1>
       <p className="home-hero__subtitle">
         {t('homeHero.subtitlePrefix')} <kbd>Enter</kbd>.

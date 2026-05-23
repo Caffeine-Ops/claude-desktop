@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { FusionRuntimeProvider } from './runtime/FusionRuntimeProvider'
 import { ThreadView } from './components/chat/ThreadView'
@@ -13,7 +13,10 @@ import { useChatStore } from './stores/chat'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
 import { useI18n, useT } from './i18n'
+import { useSettingsStore } from './stores/settings'
+import { useDialogStore } from './stores/dialogs'
 import { useApplyAppearance } from './stores/appearance.applier'
+import { hydrateAppearanceFromDaemon } from './stores/appearance'
 import { SettingsView } from './components/settings/SettingsView'
 import { AnimatePresence, motion } from 'motion/react'
 
@@ -60,85 +63,45 @@ import { AnimatePresence, motion } from 'motion/react'
  */
 type WorkspaceStatus = 'loading' | null | string
 
-/**
- * Responsive breakpoints for auto-collapsing the two side rails.
- *
- * Left sidebar (chats) auto-hides below `LEFT_RAIL_MIN` because a
- * ~256px rail eats half the window on a sub-900px viewport; the chat
- * column needs the space more than the thread picker does.
- *
- * Right rail (todos + file tree) needs more elbow room — 288px + 256px
- * + a reasonable chat column = ~1180px, so that's where we draw the
- * line. Below it, the right rail collapses first while the user can
- * still keep the left sidebar around.
- *
- * The constants live next to App() so changes are one-liner diffs.
- */
-const LEFT_RAIL_MIN = '(min-width: 860px)'
-const RIGHT_RAIL_MIN = '(min-width: 1180px)'
-
-/**
- * Tiny matchMedia hook. Kept inline (no util file) because App.tsx is
- * currently the only consumer. Initial value is read synchronously so
- * the first render already reflects the viewport — avoids a mount-time
- * layout flash on narrow windows.
- */
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return true
-    return window.matchMedia(query).matches
-  })
-  useEffect(() => {
-    const mql = window.matchMedia(query)
-    const handler = (e: MediaQueryListEvent): void => setMatches(e.matches)
-    mql.addEventListener('change', handler)
-    return () => mql.removeEventListener('change', handler)
-  }, [query])
-  return matches
-}
-
 function App(): React.JSX.Element {
   const [workspace, setWorkspace] = useState<WorkspaceStatus>('loading')
 
-  // Both rails initialize to "open iff viewport is wide enough". This
-  // handles the cold-boot case (user opens an already-narrow window)
-  // without needing an extra effect — the very first render is correct.
-  const wideEnoughForLeft = useMediaQuery(LEFT_RAIL_MIN)
-  const wideEnoughForRight = useMediaQuery(RIGHT_RAIL_MIN)
-  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() =>
-    typeof window === 'undefined'
-      ? true
-      : window.matchMedia(LEFT_RAIL_MIN).matches
-  )
-  const [rightRailOpen, setRightRailOpen] = useState<boolean>(() =>
-    typeof window === 'undefined'
-      ? true
-      : window.matchMedia(RIGHT_RAIL_MIN).matches
-  )
-
-  // Auto-collapse on descent only — VSCode-style. We explicitly do NOT
-  // auto-open on ascent: once the user has manually opened or closed a
-  // rail, widening the window back shouldn't override that choice.
-  // `useRef` tracks the previous breakpoint value so an effect that
-  // runs on every render can fire exactly once per descending edge.
-  const prevWideLeft = useRef(wideEnoughForLeft)
-  useEffect(() => {
-    if (prevWideLeft.current && !wideEnoughForLeft) {
-      setSidebarOpen(false)
-    }
-    prevWideLeft.current = wideEnoughForLeft
-  }, [wideEnoughForLeft])
-
-  const prevWideRight = useRef(wideEnoughForRight)
-  useEffect(() => {
-    if (prevWideRight.current && !wideEnoughForRight) {
-      setRightRailOpen(false)
-    }
-    prevWideRight.current = wideEnoughForRight
-  }, [wideEnoughForRight])
-
-  const t = useT()
+  // 三个工作区面板（左对话列表、右代办、右文件树）现在**默认常开、不可收起**。
+  // 以前 header 里有两个折叠按钮 + 随窗口宽度自动收起的逻辑（sidebarOpen /
+  // rightRailOpen state + useMediaQuery 断点 + AnimatePresence 滑入滑出），
+  // 已全部移除——面板恒定渲染为固定宽度的静态列。整条 .header--tab 也一并删了，
+  // chat 内容直接顶到顶部 shell tab 条下方。
   useApplyAppearance()
+
+  // One-shot: adopt the daemon's shared appearance as the source of truth.
+  // The applier above has already rendered the localStorage cache (no flash);
+  // this overwrites it with the daemon copy once the daemon is reachable, so
+  // a theme set in the embedded web tab shows up here too. No-op when the
+  // daemon is offline — the cache stays. Runs after mount so window.chatApi
+  // is bound.
+  useEffect(() => {
+    void hydrateAppearanceFromDaemon()
+  }, [])
+
+  // Subscribe to settings-menu actions forwarded from the shell's tab-strip
+  // menu (the menu used to live in this renderer's sidebar; it now lives in
+  // the shell, a separate webContents). Each action maps onto a local store:
+  // open the settings overlay, open the logs dialog, or toggle language.
+  // Only the active chat tab receives these. We read/dispatch via getState so
+  // this effect has no store deps and runs exactly once.
+  useEffect(() => {
+    if (!window.chatApi?.onShellMenuAction) return
+    return window.chatApi.onShellMenuAction((action) => {
+      if (action === 'open-settings') {
+        useSettingsStore.getState().openSettings()
+      } else if (action === 'open-logs') {
+        useDialogStore.getState().openDialog('logs')
+      } else if (action === 'toggle-lang') {
+        const cur = useI18n.getState().lang
+        useI18n.getState().setLang(cur === 'zh' ? 'en' : 'zh')
+      }
+    })
+  }, [])
 
   // One-shot push of the persisted language to the main process. The
   // renderer's zustand store is the source of truth (it owns the
@@ -246,100 +209,9 @@ function App(): React.JSX.Element {
 
   return (
     <div className="app">
-      <header className="header header--tab">
-        {/* Tab strip moved OUT of this header into the persistent
-            shell chrome strip (shell/ShellApp.tsx), which is pinned
-            above every content tab's WebContentsView so both the
-            chat and Open Design pills stay visible/clickable no
-            matter which tab is foreground. The Open Design web tab
-            can't render a TabBar (external origin, no tabApi
-            preload), so a tab-local strip would have stranded the
-            user there. This header now holds only the panel toggles,
-            sits *below* the shell strip, and therefore no longer
-            reserves the macOS traffic-light gutter (the lights
-            overlay the shell strip above). See `.header--tab` in
-            assets/main.css. */}
-        {/* Spacer pushes the panel toggles to the far right, keeping
-            the same right-aligned placement they had when the TabBar
-            occupied the left of this row. */}
-        <div className="min-w-0 flex-1" />
-        {/* Panel toggles — meaningful once the chat runtime is mounted.
-            `hasWorkspace` is effectively always true now (the engine
-            defaults to the Desktop), so the `invisible` branch below is
-            a harmless leftover from the old cold-start gate; we keep the
-            conditional so the layout stays robust if `hasWorkspace` ever
-            goes false again (e.g. a getWorkspace() IPC error). `invisible`
-            = `visibility: hidden`, which reserves space so a state flip
-            doesn't shrink the TabBar by 60px in a single frame and jitter
-            the pill row. `aria-hidden` + `pointer-events-none` keep the
-            buttons off the tab order and un-clickable while hidden. */}
-        <div
-          className={
-            'flex shrink-0 items-center gap-1 self-center ' +
-            (hasWorkspace ? '' : 'invisible pointer-events-none')
-          }
-          aria-hidden={hasWorkspace ? undefined : true}
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        >
-          <button
-            type="button"
-            onClick={() => setSidebarOpen((v) => !v)}
-            title={sidebarOpen ? t('collapseSidebar') : t('expandSidebar')}
-            aria-label={sidebarOpen ? t('collapseSidebar') : t('expandSidebar')}
-            aria-pressed={sidebarOpen}
-            className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-muted/60 hover:text-foreground"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <rect x="2" y="3" width="12" height="10" rx="1.75" />
-              <line x1="6.25" y1="3" x2="6.25" y2="13" />
-              {!sidebarOpen && <line x1="9" y1="6" x2="11.5" y2="8" />}
-              {!sidebarOpen && <line x1="11.5" y1="8" x2="9" y2="10" />}
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => setRightRailOpen((v) => !v)}
-            title={
-              rightRailOpen ? t('collapseRightRail') : t('expandRightRail')
-            }
-            aria-label={
-              rightRailOpen ? t('collapseRightRail') : t('expandRightRail')
-            }
-            aria-pressed={rightRailOpen}
-            className="group inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-muted/60 hover:text-foreground"
-          >
-            {/* Mirror of the left-sidebar folder-rect, flipped so
-                the divider sits on the right. Reads as "right rail
-                toggle". */}
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <rect x="2" y="3" width="12" height="10" rx="1.75" />
-              <line x1="9.75" y1="3" x2="9.75" y2="13" />
-              {!rightRailOpen && <line x1="7" y1="6" x2="4.5" y2="8" />}
-              {!rightRailOpen && <line x1="4.5" y1="8" x2="7" y2="10" />}
-            </svg>
-          </button>
-        </div>
-      </header>
+      {/* 旧的 .header--tab 整条已移除——它只承载左右面板的折叠按钮，而面板
+          现在常开不可收起，按钮失去意义。chat 内容直接顶到顶部 shell tab 条
+          （shell/ShellApp.tsx）下方，省掉一条横栏。 */}
       <main className="main relative">
         {/* `key={workspace}` keys the runtime subtree to the workspace
             path so it remounts cleanly if the bound path ever changes.
@@ -355,82 +227,21 @@ function App(): React.JSX.Element {
               split (chats | thread | right rail). flex-1 + min-h-0
               lets it shrink correctly inside the outer column. */}
           <div className="flex min-h-0 flex-1">
-            {/* Sidebar slide — width animates between 0 and 256px so
-                the thread view smoothly reclaims the space. The inner
-                ThreadListSidebar keeps its fixed w-64, and the wrapper
-                clips it during the transition. AnimatePresence lets
-                the exit animation run before unmount. `initial={false}`
-                skips the entrance animation on first mount so the app
-                doesn't slide in from zero on boot. */}
-            {/* Sidebar slide — width animates between 0 and 256px so
-                the thread view smoothly reclaims the space. The inner
-                ThreadListSidebar is absolutely anchored to the right
-                edge of this wrapper so its right border (see
-                `border-r` on ThreadListPrimitive.Root) sits flush with
-                the wrapper edge throughout the animation — otherwise
-                the border would only appear when width reaches 256.
-                Content slides in from behind the ThreadView instead
-                of growing from the left. `initial={false}` skips the
-                first-mount slide-in on boot. */}
-            <AnimatePresence initial={false}>
-              {sidebarOpen && (
-                <motion.div
-                  key="sidebar"
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: 256, opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
-                  transition={{
-                    type: 'spring',
-                    stiffness: 320,
-                    damping: 34,
-                    mass: 0.9
-                  }}
-                  className="relative h-full shrink-0 overflow-hidden"
-                >
-                  <div className="absolute inset-y-0 right-0 w-64">
-                    <ThreadListSidebar />
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {/* 左对话列表 — 固定 256px 常驻列，不再可收起。以前包在
+                AnimatePresence 里随窗口宽度滑入滑出，现已改为静态列：始终
+                渲染。ThreadListSidebar 自带 w-64 + 右边框。 */}
+            <div className="h-full w-64 shrink-0">
+              <ThreadListSidebar />
+            </div>
             <ThreadView />
-            {/* Right rail — single 288px column whose vertical space
-                is split 50/50 between the Todos (top) and the
-                Workspace file tree (bottom). The rail owns the
-                border + background chrome; both panels inside are
-                `section flex-1` so they share the column equally.
-                A border-t on WorkspaceTreePanel's root creates the
-                visual divider.
-                Wrapped in AnimatePresence so it can slide out smoothly
-                on narrow windows (auto-collapse at < 1180px, manual
-                toggle from the header button). The inner aside is
-                absolutely anchored to the right edge of the animating
-                wrapper — same pattern as the left sidebar — so the
-                left border of the aside stays flush with the wrapper
-                edge throughout the width animation instead of
-                appearing only once width reaches 288px. */}
-            <AnimatePresence initial={false}>
-              {rightRailOpen && (
-                <motion.div
-                  key="right-rail"
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: 288, opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
-                  transition={{
-                    type: 'spring',
-                    stiffness: 320,
-                    damping: 34,
-                    mass: 0.9
-                  }}
-                  className="relative h-full shrink-0 overflow-hidden"
-                >
-                  <aside className="absolute inset-y-0 right-0 flex h-full w-72 flex-col gap-4 bg-background/70 p-3.5 backdrop-blur-2xl backdrop-saturate-150 shadow-[inset_1px_0_0_rgba(0,0,0,0.06)] dark:shadow-[inset_1px_0_0_rgba(255,255,255,0.08)]">
-                    <TodoListPanel />
-                    <WorkspaceTreePanel />
-                  </aside>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {/* 右栏 — 固定 288px 常驻列，纵向 50/50 分给代办（上）和工作区
+                文件树（下）。同样去掉了 AnimatePresence 收起逻辑，始终渲染。
+                两个面板都是 `section flex-1` 平分这一列；WorkspaceTreePanel
+                的 border-t 作为分隔线。 */}
+            <aside className="flex h-full w-72 shrink-0 flex-col gap-4 bg-background/70 p-3.5 backdrop-blur-2xl backdrop-saturate-150 shadow-[inset_1px_0_0_rgba(0,0,0,0.06)] dark:shadow-[inset_1px_0_0_rgba(255,255,255,0.08)]">
+              <TodoListPanel />
+              <WorkspaceTreePanel />
+            </aside>
           </div>
         </FusionRuntimeProvider>
         )}

@@ -1,6 +1,7 @@
 import React from 'react'
 
 import TabBar from '../components/tabs/TabBar'
+import { UserInfoBar } from '../components/chat/UserInfoBar'
 
 /**
  * Shell renderer — mounted by the shell BrowserWindow's own
@@ -30,6 +31,12 @@ export default function ShellApp(): React.ReactElement {
   return (
     <div className="shell-chrome">
       <TabBar />
+      {/* Settings menu — pinned to the far right of the tab strip. Moved
+          here from the chat sidebar's bottom-left footer so it's reachable
+          from any tab (including the Open Design web tab, which renders no
+          chrome of its own). Its chat-tab actions route through
+          window.tabApi.triggerMenuAction → the active chat tab. */}
+      <UserInfoBar />
     </div>
   )
 }

@@ -316,6 +316,14 @@ export interface AppConfig {
   designSystemId: string | null;
   theme?: AppTheme;
   accentColor?: string;
+  // Desktop-only appearance prefs, surfaced in the embedded settings overlay
+  // and persisted to the daemon's `appearance` so the Electron shell renderer
+  // (which owns the actual UI) picks them up. Undefined in a plain browser —
+  // the controls only render inside the desktop overlay. uiFontSize / code
+  // FontSize are px; usePointerCursor toggles a pointer cursor on clickables.
+  uiFontSize?: number;
+  codeFontSize?: number;
+  usePointerCursor?: boolean;
   // True once the user has been through the welcome onboarding modal at
   // least once (saved or skipped). Bootstrap skips the auto-popup when
   // this is set so refreshing the page doesn't re-prompt.

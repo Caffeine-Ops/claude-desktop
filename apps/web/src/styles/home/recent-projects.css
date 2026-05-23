@@ -16,18 +16,22 @@
 }
 .recent-projects__title {
   margin: 0;
-  font-family: var(--serif);
-  font-size: 18px;
+  /* Section head in SF Pro Display (--sans), not serif — Apple's display
+     grammar with negative tracking. */
+  font-family: var(--sans);
+  font-size: 21px;
   font-weight: 600;
   color: var(--text-strong);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 .recent-projects__view-all {
   appearance: none;
   background: transparent;
   border: none;
-  color: var(--text-muted);
-  font-size: 12.5px;
+  /* "View all" is a text link — Apple Action Blue. */
+  color: var(--accent);
+  font-size: 14px;
+  letter-spacing: -0.012em;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -36,8 +40,8 @@
   border-radius: var(--radius-sm);
 }
 .recent-projects__view-all:hover {
-  color: var(--text);
-  background: var(--bg-subtle);
+  color: var(--accent-strong);
+  background: var(--accent-tint);
 }
 .recent-projects__empty {
   color: var(--text-muted);
@@ -59,7 +63,8 @@
   gap: 8px;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  /* Apple store-utility-card radius: lg (18px). */
+  border-radius: 18px;
   background: var(--bg-panel);
   cursor: pointer;
   text-align: left;
@@ -67,23 +72,29 @@
   transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
 }
 .recent-projects__card:hover {
+  /* Hover lifts through the hairline border, not a drop-shadow — Apple
+     cards stay flat; only product imagery carries the system shadow. */
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
+}
+.recent-projects__card:active {
+  transform: scale(0.99);
 }
 .recent-projects__card.is-design-system-project {
   border-color: color-mix(in srgb, var(--red) 62%, var(--border));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 42%, transparent);
 }
 .recent-projects__card.is-design-system-project:hover {
+  /* Keep the functional 1px color ring (it flags a design-system
+     project), drop the decorative soft shadow. */
   border-color: var(--red);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--red) 54%, transparent),
-    var(--shadow-sm);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 54%, transparent);
 }
 .recent-projects__card-thumb {
   aspect-ratio: 16 / 9;
-  background: linear-gradient(135deg, var(--accent-tint) 0%, var(--bg-subtle) 100%);
+  /* Apple uses no decorative gradients — the thumb canvas is a flat
+     parchment/pearl surface; the glyph + Action Blue carry the identity. */
+  background: var(--bg-subtle);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -118,11 +129,13 @@
   background: #fff;
 }
 .recent-projects__card-glyph {
-  font-family: var(--serif);
-  font-size: 32px;
+  /* SF Pro Display, not serif — Apple's display face for the project
+     initial. Action Blue is the single accent. */
+  font-family: var(--sans);
+  font-size: 34px;
   font-weight: 600;
   color: var(--accent);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.022em;
 }
 .recent-projects__card-meta {
   display: flex;
@@ -132,8 +145,10 @@
   min-width: 0;
 }
 .recent-projects__card-name {
-  font-size: 13px;
-  font-weight: 500;
+  /* Apple caption-strong: 14px / 600 (the ladder skips 500). */
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.016em;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -154,7 +169,8 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-weight: 500;
+  /* Apple ladder: 500 is absent — emphasized captions use 600. */
+  font-weight: 600;
 }
 .recent-projects__card-status-running {
   color: var(--accent);

@@ -105,6 +105,7 @@ import {
   resolveAccentColor,
 } from '../state/appearance';
 import { isAutosaveDraftOnlyChange } from '../App';
+import type { DesktopCliBackendState } from '../App';
 import {
   FAILURE_SOUNDS,
   SUCCESS_SOUNDS,
@@ -5825,7 +5826,208 @@ function AppearanceSection({
           />
         </div>
       </div>
+
+      {/* Desktop-only appearance controls — font sizes, pointer cursor, and
+          the CLI backend. These were the native Electron settings; they now
+          live in this one overlay. Font size / cursor round-trip through the
+          daemon `appearance` (the Electron renderer reads it). The CLI backend
+          goes through the `settings` preload bridge. The whole block renders
+          only inside the desktop settings overlay (window.electronSettings
+          present) — a plain browser never sees it. */}
+      <DesktopAppearanceControls cfg={cfg} setCfg={setCfg} />
     </section>
+  );
+}
+
+const UI_FONT_MIN = 11;
+const UI_FONT_MAX = 18;
+const CODE_FONT_MIN = 10;
+const CODE_FONT_MAX = 18;
+const DEFAULT_UI_FONT = 13;
+const DEFAULT_CODE_FONT = 12;
+
+function clampFont(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, Math.round(n)));
+}
+
+/**
+ * Desktop-only appearance controls embedded in the settings overlay.
+ * Renders nothing in a plain browser (no `window.electronSettings`).
+ *
+ * Font size / pointer cursor live on the shared AppConfig and persist to the
+ * daemon `appearance` via the normal config save path, so the Electron shell
+ * renderer picks them up. The CLI backend (bundled fusion-code vs system
+ * claude) is Electron-only state read/written through the settings preload
+ * bridge (`window.electronSettings.get/setCliBackend`).
+ */
+function DesktopAppearanceControls({
+  cfg,
+  setCfg,
+}: {
+  cfg: AppConfig;
+  setCfg: Dispatch<SetStateAction<AppConfig>>;
+}) {
+  const bridge =
+    typeof window !== 'undefined' ? window.electronSettings : undefined;
+  const [cliBackend, setCliBackend] = useState<DesktopCliBackendState | null>(null);
+  const [cliBusy, setCliBusy] = useState(false);
+
+  useEffect(() => {
+    if (!bridge?.getCliBackend) return;
+    let cancelled = false;
+    bridge
+      .getCliBackend()
+      .then((s) => {
+        if (!cancelled) setCliBackend(s);
+      })
+      .catch(() => {
+        /* overlay-only; ignore in browser / on error */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bridge]);
+
+  // Not in the desktop overlay → render nothing.
+  if (!bridge) return null;
+
+  const uiFont = cfg.uiFontSize ?? DEFAULT_UI_FONT;
+  const codeFont = cfg.codeFontSize ?? DEFAULT_CODE_FONT;
+  const pointer = cfg.usePointerCursor ?? false;
+
+  const setUiFont = (n: number) =>
+    setCfg((c) => ({ ...c, uiFontSize: clampFont(n, UI_FONT_MIN, UI_FONT_MAX) }));
+  const setCodeFont = (n: number) =>
+    setCfg((c) => ({
+      ...c,
+      codeFontSize: clampFont(n, CODE_FONT_MIN, CODE_FONT_MAX),
+    }));
+  const setPointer = (v: boolean) =>
+    setCfg((c) => ({ ...c, usePointerCursor: v }));
+
+  const switchCliBackend = async (mode: 'bundled' | 'system') => {
+    if (cliBusy || !bridge.setCliBackend || cliBackend?.mode === mode) return;
+    if (mode === 'system' && !cliBackend?.systemInfo) return;
+    setCliBusy(true);
+    try {
+      const next = await bridge.setCliBackend({ mode });
+      setCliBackend(next);
+    } catch {
+      /* ignore */
+    } finally {
+      setCliBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="field">
+        <span className="field-label">UI font size</span>
+        <FontStepper
+          value={uiFont}
+          min={UI_FONT_MIN}
+          max={UI_FONT_MAX}
+          onChange={setUiFont}
+          ariaLabel="UI font size"
+        />
+      </div>
+      <div className="field">
+        <span className="field-label">Code font size</span>
+        <FontStepper
+          value={codeFont}
+          min={CODE_FONT_MIN}
+          max={CODE_FONT_MAX}
+          onChange={setCodeFont}
+          ariaLabel="Code font size"
+        />
+      </div>
+      <div className="field">
+        <label className="settings-checkbox-row">
+          <input
+            type="checkbox"
+            checked={pointer}
+            onChange={(e) => setPointer(e.target.checked)}
+          />
+          <span>Use pointer cursor on clickable elements</span>
+        </label>
+      </div>
+
+      {cliBackend ? (
+        <div className="field">
+          <span className="field-label">CLI backend</span>
+          <div className="seg-control" role="group" aria-label="CLI backend">
+            <button
+              type="button"
+              className={'seg-btn' + (cliBackend.mode === 'bundled' ? ' active' : '')}
+              aria-pressed={cliBackend.mode === 'bundled'}
+              disabled={cliBusy}
+              onClick={() => void switchCliBackend('bundled')}
+            >
+              <span className="seg-title">Bundled (fusion-code)</span>
+            </button>
+            <button
+              type="button"
+              className={'seg-btn' + (cliBackend.mode === 'system' ? ' active' : '')}
+              aria-pressed={cliBackend.mode === 'system'}
+              disabled={cliBusy || !cliBackend.systemInfo}
+              onClick={() => void switchCliBackend('system')}
+            >
+              <span className="seg-title">
+                System claude
+                {cliBackend.systemInfo?.version
+                  ? ` (v${cliBackend.systemInfo.version})`
+                  : !cliBackend.systemInfo
+                    ? ' (not installed)'
+                    : ''}
+              </span>
+            </button>
+          </div>
+          <p className="hint">
+            Takes effect on the next session — an in-flight turn keeps its
+            current backend.
+          </p>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/** Small +/- stepper for the desktop font-size controls. */
+function FontStepper({
+  value,
+  min,
+  max,
+  onChange,
+  ariaLabel,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  onChange: (n: number) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <div className="font-stepper" role="group" aria-label={ariaLabel}>
+      <button
+        type="button"
+        aria-label={`${ariaLabel} decrease`}
+        disabled={value <= min}
+        onClick={() => onChange(value - 1)}
+      >
+        −
+      </button>
+      <span className="font-stepper-value" aria-live="polite">
+        {value}px
+      </span>
+      <button
+        type="button"
+        aria-label={`${ariaLabel} increase`}
+        disabled={value >= max}
+        onClick={() => onChange(value + 1)}
+      >
+        +
+      </button>
+    </div>
   );
 }
 

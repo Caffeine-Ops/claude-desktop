@@ -1,10 +1,54 @@
 import { execFile, type ExecFileException } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
+
+/**
+ * Resolve the absolute path of the bundled fusion-code CLI binary. Pure
+ * env + path resolution — no engine instance state — so it can be called
+ * from any context (the per-engine CLI_BACKEND_GET handler AND the
+ * engine-free settings-overlay handler both use it). Throws with the list
+ * of tried locations when the binary can't be found.
+ *
+ * Kept in sync with ChatEngine.resolveFusionCliPath(), which delegates here.
+ */
+export function resolveBundledCliPath(): string {
+  const envOverride = process.env.FUSION_CODE_CLI_PATH
+  if (envOverride) {
+    if (!existsSync(envOverride)) {
+      throw new Error(
+        `FUSION_CODE_CLI_PATH is set to "${envOverride}" but that file does not exist.`
+      )
+    }
+    return envOverride
+  }
+
+  const selfDir = dirname(fileURLToPath(import.meta.url))
+  const bundledName =
+    process.platform === 'win32' ? 'fusion-code-cli.exe' : 'fusion-code-cli'
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
+    .resourcesPath
+  const candidates = [
+    ...(resourcesPath ? [resolve(resourcesPath, bundledName)] : []),
+    resolve(process.cwd(), '../free-code/cli'),
+    resolve(process.cwd(), '../../../free-code/cli'),
+    resolve(selfDir, '../../../free-code/cli'),
+    resolve(selfDir, '../../../../free-code/cli'),
+    resolve(selfDir, '../../../../../free-code/cli')
+  ]
+  for (const p of candidates) {
+    if (existsSync(p)) return p
+  }
+  throw new Error(
+    'Fusion Code CLI binary not found. Tried:\n' +
+      candidates.map((c) => `  - ${c}`).join('\n') +
+      '\nSet FUSION_CODE_CLI_PATH in env.json (or the shell) to override.'
+  )
+}
 
 /**
  * Detection layer for the user's system-installed Claude Code CLI.

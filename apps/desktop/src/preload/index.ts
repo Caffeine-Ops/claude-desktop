@@ -35,6 +35,11 @@ import {
   type PermissionModeGetResult,
   type PermissionModeSetPayload,
   type UiPermissionMode,
+  type AppearanceGetResult,
+  type AppearanceSetPayload,
+  type AppearanceSetResult,
+  type ShellMenuAction,
+  type ShellMenuActionPayload,
   type TabApi,
   type TabDescriptor,
   type TabListResult,
@@ -42,6 +47,10 @@ import {
   type TranscribeAudioResult,
   type WorkspaceFileOpenPayload,
   type WorkspaceFileOpenResult,
+  type ShellOpenPathPayload,
+  type ShellOpenPathResult,
+  type ShellStatFilesPayload,
+  type ShellStatFilesResult,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
   type WorkspaceState
@@ -164,6 +173,20 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.WORKSPACE_FILE_OPEN,
       payload
     ) as Promise<WorkspaceFileOpenResult>
+  },
+
+  openPath(payload: ShellOpenPathPayload): Promise<ShellOpenPathResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SHELL_OPEN_PATH,
+      payload
+    ) as Promise<ShellOpenPathResult>
+  },
+
+  statFiles(payload: ShellStatFilesPayload): Promise<ShellStatFilesResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SHELL_STAT_FILES,
+      payload
+    ) as Promise<ShellStatFilesResult>
   },
 
   listSessions(): Promise<SessionListResult> {
@@ -318,6 +341,33 @@ const chatApi: ChatApi = {
     return () => {
       ipcRenderer.off(IPC_CHANNELS.PERMISSION_MODE_CHANGED, listener)
     }
+  },
+
+  getAppearance(): Promise<AppearanceGetResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.APPEARANCE_GET
+    ) as Promise<AppearanceGetResult>
+  },
+
+  setAppearance(payload: AppearanceSetPayload): Promise<AppearanceSetResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.APPEARANCE_SET,
+      payload
+    ) as Promise<AppearanceSetResult>
+  },
+
+  onShellMenuAction(handler: (action: ShellMenuAction) => void): () => void {
+    const listener = (_e: unknown, payload: ShellMenuActionPayload): void => {
+      handler(payload.action)
+    }
+    ipcRenderer.on(IPC_CHANNELS.SHELL_MENU_ACTION, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.SHELL_MENU_ACTION, listener)
+    }
+  },
+
+  closeSettingsWindow(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE) as Promise<void>
   }
 }
 
@@ -353,6 +403,16 @@ const tabApi: TabApi = {
     return () => {
       ipcRenderer.off(IPC_CHANNELS.TAB_LIST_CHANGED, listener)
     }
+  },
+
+  triggerMenuAction(action: ShellMenuAction): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.TAB_TRIGGER_MENU_ACTION, {
+      action
+    }) as Promise<void>
+  },
+
+  openSettingsWindow(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_WINDOW_OPEN) as Promise<void>
   },
 
   getFullscreen(): Promise<boolean> {

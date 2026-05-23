@@ -420,7 +420,8 @@
   background: var(--bg-subtle);
   color: var(--text);
   font-size: 12px;
-  font-weight: 650;
+  /* Apple weight ladder is 300/400/600/700 — utility button label sits at 600. */
+  font-weight: 600;
   cursor: pointer;
   transition:
     background-color 120ms cubic-bezier(0.23, 1, 0.32, 1),
@@ -691,7 +692,8 @@
 .automation-ingest-recent span {
   color: var(--text);
   font-size: 12px;
-  font-weight: 650;
+  /* Strong inline label → Apple weight 600 (no mid-weight 5x0). */
+  font-weight: 600;
 }
 
 .automation-ingest-recent small,
@@ -1001,7 +1003,8 @@
 
 .automation-modal__title-input::placeholder {
   color: var(--text-faint);
-  font-weight: 560;
+  /* Placeholder is quiet body text → Apple weight 400. */
+  font-weight: 400;
 }
 
 .automation-modal__title-input:focus {
@@ -1283,7 +1286,8 @@
   background: var(--bg-panel);
   color: var(--text);
   font-size: 12px;
-  font-weight: 650;
+  /* Chip label → Apple weight 600. */
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -1374,7 +1378,8 @@
 
 .automation-pill__tz {
   color: var(--text-muted);
-  font-weight: 500;
+  /* Secondary timezone label → quiet Apple weight 400. */
+  font-weight: 400;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1688,16 +1693,13 @@
 }
 
 .automation-popover__field > select {
-  background-image:
-    linear-gradient(45deg, transparent 50%, currentColor 50%),
-    linear-gradient(135deg, currentColor 50%, transparent 50%);
-  background-position:
-    calc(100% - 15px) 50%,
-    calc(100% - 10px) 50%;
+  /* Functional ▾ disclosure caret as a single inline SVG glyph — not a
+     decorative gradient. Replaces the prior twin linear-gradient triangle
+     so the file carries zero CSS gradient tokens (Apple: no gradients). */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: calc(100% - 10px) 50%;
   background-repeat: no-repeat;
-  background-size:
-    5px 5px,
-    5px 5px;
+  background-size: 9px 6px;
 }
 
 .automation-popover__done {

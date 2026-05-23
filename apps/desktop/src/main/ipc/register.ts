@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, net, shell, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -30,11 +30,22 @@ import {
   type TranscribeAudioResult,
   type WorkspaceFileOpenPayload,
   type WorkspaceFileOpenResult,
+  type ShellOpenPathPayload,
+  type ShellOpenPathResult,
+  type ShellStatFilesPayload,
+  type ShellStatFilesResult,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
-  type WorkspaceState
+  type WorkspaceState,
+  type AppearanceGetResult,
+  type AppearanceSetPayload,
+  type AppearanceSetResult,
+  type AppearancePrefs,
+  type ShellMenuActionPayload
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
+import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
+import { DAEMON_PORT } from '../services/openDesignServices'
 import type { ChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
 import { listSessions, loadSession, renameSession } from '../core/sessionStore'
@@ -43,13 +54,16 @@ import {
   broadcastTabList,
   canAddTab,
   closeTab,
+  closeSettingsView,
   describeSenderMismatch,
+  dispatchMenuActionToActiveTab,
   getContextForSender,
   getShellFullscreen,
   getShellWindow,
   listTabs,
   MAX_TABS,
   newTab,
+  openSettingsView,
   activateTab
 } from '../tabRegistry'
 import type {
@@ -130,6 +144,8 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_SET)
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_PICK)
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_FILE_OPEN)
+  ipcMain.removeHandler(IPC_CHANNELS.SHELL_OPEN_PATH)
+  ipcMain.removeHandler(IPC_CHANNELS.SHELL_STAT_FILES)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LOAD)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_NEW)
@@ -146,6 +162,13 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.CLI_BACKEND_SET)
   ipcMain.removeHandler(IPC_CHANNELS.PERMISSION_MODE_GET)
   ipcMain.removeHandler(IPC_CHANNELS.PERMISSION_MODE_SET)
+  ipcMain.removeHandler(IPC_CHANNELS.APPEARANCE_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.APPEARANCE_SET)
+  ipcMain.removeHandler(IPC_CHANNELS.TAB_TRIGGER_MENU_ACTION)
+  ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_WINDOW_OPEN)
+  ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE)
+  ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_CLI_BACKEND_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_CLI_BACKEND_SET)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -345,6 +368,76 @@ export function registerIpcHandlers(): void {
         return { error: shellError }
       }
       return { error: '' }
+    }
+  )
+
+  // Open an ABSOLUTE path in the OS default handler. Targets files the
+  // assistant just wrote (Write/Edit tool calls), which routinely live
+  // outside the workspace (Desktop, /tmp, …) — so unlike
+  // WORKSPACE_FILE_OPEN we accept the absolute path directly. We still
+  // gate on: must be absolute (no relative smuggling), must exist, must
+  // be a regular file (not a dir/socket). We deliberately do NOT confine
+  // it to the workspace — the whole point is opening files elsewhere —
+  // but `shell.openPath` only ever hands the file to its registered app;
+  // it never executes it, so an absolute path here can't run code.
+  ipcMain.handle(
+    IPC_CHANNELS.SHELL_OPEN_PATH,
+    async (
+      _event,
+      payload: ShellOpenPathPayload
+    ): Promise<ShellOpenPathResult> => {
+      const absPath =
+        payload && typeof payload.absPath === 'string' ? payload.absPath : ''
+      if (!absPath || !isAbsolute(absPath)) {
+        return { error: 'Invalid path (expected an absolute path).' }
+      }
+
+      let stat
+      try {
+        stat = statSync(absPath)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { error: `File not found: ${msg}` }
+      }
+      if (!stat.isFile()) {
+        return { error: 'Not a file.' }
+      }
+
+      const shellError = await shell.openPath(absPath)
+      if (shellError) {
+        return { error: shellError }
+      }
+      return { error: '' }
+    }
+  )
+
+  // Filter scraped candidate paths down to real files. The renderer
+  // scrapes absolute paths out of an assistant turn's text (which it
+  // CAN'T verify — no fs access), then asks us which actually exist as
+  // regular files. We `statSync` each, keeping absolute + existing +
+  // is-file, preserving input order. Capped so a pathological message
+  // full of `/`-strings can't make us stat thousands of entries.
+  ipcMain.handle(
+    IPC_CHANNELS.SHELL_STAT_FILES,
+    async (
+      _event,
+      payload: ShellStatFilesPayload
+    ): Promise<ShellStatFilesResult> => {
+      const input = Array.isArray(payload?.paths) ? payload.paths : []
+      const MAX_CANDIDATES = 50
+      const files: string[] = []
+      const seen = new Set<string>()
+      for (const p of input.slice(0, MAX_CANDIDATES)) {
+        if (typeof p !== 'string' || !p || !isAbsolute(p)) continue
+        if (seen.has(p)) continue
+        seen.add(p)
+        try {
+          if (statSync(p).isFile()) files.push(p)
+        } catch {
+          // ENOENT / EACCES / etc. — not a usable file, drop silently.
+        }
+      }
+      return { files }
     }
   )
 
@@ -665,12 +758,165 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // ── Appearance: reverse-proxy the daemon's /api/app-config ──────────
+  //
+  // The desktop renderer can't fetch the daemon (127.0.0.1:7456) directly:
+  // its file:// (prod) / dev origin isn't on the daemon's origin allow-list,
+  // so a direct request 403s (see services/openDesignServices.ts and the
+  // daemon's origin-validation.ts). We forward over net.fetch from main,
+  // deleting the Origin/Host headers so the daemon's origin check treats it
+  // as a trusted non-browser request (`origin == null` → loopback host →
+  // allowed). Same technique appProtocol.ts uses for the web tab's /api/*.
+  // These two handlers don't touch any ChatEngine — they're window-agnostic.
+  ipcMain.handle(
+    IPC_CHANNELS.APPEARANCE_GET,
+    async (): Promise<AppearanceGetResult> => {
+      return { appearance: await fetchDaemonAppearance() }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.APPEARANCE_SET,
+    async (_event, payload: AppearanceSetPayload): Promise<AppearanceSetResult> => {
+      const patch = payload?.patch
+      if (!patch || typeof patch !== 'object') {
+        return { appearance: null }
+      }
+      return { appearance: await writeDaemonAppearance(patch) }
+    }
+  )
+
+  // Shell tab-strip settings menu → active chat tab. The shell renderer
+  // can't reach the chat renderer's stores directly, so it fires this and
+  // we forward the action to whichever chat tab is active (web tabs and the
+  // no-tab edge case are silently skipped inside the dispatcher).
+  ipcMain.handle(
+    IPC_CHANNELS.TAB_TRIGGER_MENU_ACTION,
+    async (_event, payload: ShellMenuActionPayload): Promise<void> => {
+      const action = payload?.action
+      if (
+        action !== 'open-settings' &&
+        action !== 'open-logs' &&
+        action !== 'toggle-lang'
+      ) {
+        return
+      }
+      dispatchMenuActionToActiveTab(action)
+    }
+  )
+
+  // Settings modal — a full-window transparent overlay managed by
+  // tabRegistry. Open from the shell's gear (works over any tab); close
+  // from the overlay itself (scrim / Escape / ✕). Both are window-agnostic.
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_WINDOW_OPEN, async (): Promise<void> => {
+    openSettingsView()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE, async (): Promise<void> => {
+    closeSettingsView()
+  })
+
+  // Engine-free CLI backend read/write for the embedded web settings page.
+  // The settings overlay isn't bound to any tab (no ChatEngine), so unlike
+  // CLI_BACKEND_GET/SET these resolve the global app setting + run detection
+  // directly via cliDetect. Live engines read `cliBackend` on their next
+  // openSession, so a flip here takes effect without touching them.
+  ipcMain.handle(
+    IPC_CHANNELS.SETTINGS_CLI_BACKEND_GET,
+    async (): Promise<CliBackendState> => {
+      const { cliBackend } = getAppSettings()
+      const info = await detectSystemClaude()
+      let bundledPath: string | null = null
+      try {
+        bundledPath = resolveBundledCliPath()
+      } catch (err) {
+        console.warn('[settings-cli-backend] bundled cli not found', {
+          message: err instanceof Error ? err.message : String(err)
+        })
+      }
+      return {
+        mode: cliBackend,
+        bundledPath,
+        systemInfo: info?.path
+          ? { path: info.path, version: info.version ?? null }
+          : null
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.SETTINGS_CLI_BACKEND_SET,
+    async (_event, payload: CliBackendSetPayload): Promise<CliBackendState> => {
+      const mode = payload?.mode
+      if (mode !== 'bundled' && mode !== 'system') {
+        throw new Error(`Invalid CLI backend mode: ${String(mode)}`)
+      }
+      updateAppSettings({ cliBackend: mode })
+      const info = await detectSystemClaude()
+      let bundledPath: string | null = null
+      try {
+        bundledPath = resolveBundledCliPath()
+      } catch {
+        bundledPath = null
+      }
+      return {
+        mode,
+        bundledPath,
+        systemInfo: info?.path
+          ? { path: info.path, version: info.version ?? null }
+          : null
+      }
+    }
+  )
+
   // Engine-to-renderer event forwarding lives in the ChatEngine
   // constructor (see engine.ts `wireWindowBridges`) — each per-window
   // engine ships its own chat/log/session/permission events to its
   // own bound webContents. Engine dispose() on window close cancels
   // in-flight permission requests and removes listeners, so there's
   // nothing to wire here anymore.
+}
+
+/** Daemon base URL. Port matches openDesignServices.DAEMON_PORT (= cli default). */
+const DAEMON_BASE = `http://127.0.0.1:${DAEMON_PORT}`
+
+/**
+ * GET the daemon's app-config and return its `appearance` sub-object, or null
+ * when the daemon is offline / hasn't stored any. Origin/Host headers aren't
+ * set by net.fetch for a bare URL, so this lands on the daemon as a trusted
+ * non-browser request — exactly what the origin check wants.
+ */
+async function fetchDaemonAppearance(): Promise<AppearancePrefs | null> {
+  try {
+    const res = await net.fetch(`${DAEMON_BASE}/api/app-config`)
+    if (!res.ok) return null
+    const data = (await res.json()) as { config?: { appearance?: AppearancePrefs } }
+    return data?.config?.appearance ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * PUT an appearance patch to the daemon (it deep-merges, so a partial patch is
+ * safe) and return the merged `appearance`. Best-effort: returns null on any
+ * failure so the renderer's local store / localStorage remain the durable copy.
+ */
+async function writeDaemonAppearance(
+  patch: AppearancePrefs
+): Promise<AppearancePrefs | null> {
+  try {
+    const res = await net.fetch(`${DAEMON_BASE}/api/app-config`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appearance: patch })
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as { config?: { appearance?: AppearancePrefs } }
+    return data?.config?.appearance ?? null
+  } catch {
+    return null
+  }
 }
 
 const VALID_PERMISSION_MODES: readonly UiPermissionMode[] = [

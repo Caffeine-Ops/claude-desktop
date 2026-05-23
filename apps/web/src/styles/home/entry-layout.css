@@ -226,41 +226,6 @@
   background: var(--accent);
   transition: width 180ms cubic-bezier(0.23, 1, 0.32, 1);
 }
-.entry-nav-rail__logo {
-  appearance: none;
-  width: 36px;
-  height: 36px;
-  padding: 3px;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  background: transparent;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  margin-bottom: 2px;
-  transition: background-color 120ms ease, border-color 120ms ease,
-    transform 120ms ease;
-}
-.entry-nav-rail__logo:hover {
-  background: var(--bg-subtle);
-}
-.entry-nav-rail__logo:active {
-  transform: scale(0.96);
-}
-.entry-nav-rail__logo:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-.entry-nav-rail__logo-img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-  user-select: none;
-  -webkit-user-drag: none;
-  pointer-events: none;
-}
 .entry-nav-rail__btn {
   appearance: none;
   width: 38px;
@@ -492,7 +457,7 @@
   width: 20px;
   height: 20px;
   border-radius: 6px;
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  background: var(--accent);
   color: var(--accent-tint);
 }
 .inline-switcher__chip-text {
@@ -732,7 +697,7 @@
 }
 .entry-section__title {
   margin: 0;
-  font-family: var(--serif);
+  font-family: var(--sans);
   font-size: 22px;
   font-weight: 600;
   color: var(--text-strong);
@@ -832,7 +797,7 @@
   color: inherit;
   font: inherit;
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 600;
   text-align: left;
   cursor: pointer;
 }
@@ -1032,7 +997,7 @@
   min-height: 38px;
   padding: 0 14px;
   border-radius: 8px;
-  font-weight: 650;
+  font-weight: 600;
   font-size: 13px;
   cursor: pointer;
   transition: background-color 160ms cubic-bezier(0.23, 1, 0.32, 1), border-color 160ms cubic-bezier(0.23, 1, 0.32, 1), color 160ms cubic-bezier(0.23, 1, 0.32, 1), transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
@@ -1179,7 +1144,7 @@
   background: var(--bg-panel);
   font: inherit;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
   box-shadow: var(--shadow-xs);
 }
@@ -1310,7 +1275,7 @@
   min-width: 0;
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .onboarding-view__inline-field input {
@@ -1324,7 +1289,7 @@
   background: var(--bg-panel);
   font: inherit;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 400;
   box-shadow: var(--shadow-xs);
 }
 
@@ -1419,14 +1384,9 @@
   grid-template-columns: 56px minmax(0, 1fr) auto;
   min-height: 168px;
   padding: 22px 24px;
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--accent) 13%, var(--bg-panel)) 0%,
-      var(--bg-panel) 54%
-    );
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel));
   border-color: color-mix(in srgb, var(--accent) 44%, var(--border));
-  box-shadow: 0 18px 40px color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: none;
 }
 
 .onboarding-view__card.is-selected {
@@ -1435,12 +1395,7 @@
 }
 
 .onboarding-view__card--featured.is-selected {
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--accent) 16%, var(--bg-panel)) 0%,
-      color-mix(in srgb, var(--bg-panel) 96%, var(--accent) 4%) 54%
-    );
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-panel));
 }
 
 .onboarding-view__card:hover {
@@ -1483,7 +1438,7 @@
   padding: 0 8px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .onboarding-view__badge {
@@ -1698,7 +1653,7 @@
 .onboarding-view__select-option.is-selected {
   color: var(--accent-strong);
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .onboarding-view__select-option svg {

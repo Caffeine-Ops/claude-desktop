@@ -53,6 +53,27 @@ export const IPC_CHANNELS = {
    */
   WORKSPACE_FILE_OPEN: 'workspace:file-open',
   /**
+   * Renderer → main. Opens an ABSOLUTE file path in the OS default
+   * handler (`shell.openPath`). Unlike WORKSPACE_FILE_OPEN (which only
+   * accepts workspace-relative paths and re-joins them under the
+   * workspace root), this accepts a full absolute path because the
+   * files it targets — produced by the assistant this turn — frequently
+   * live OUTSIDE the workspace (e.g. the user's Desktop). Main still
+   * validates the path is absolute, exists, and is a regular file
+   * before handing it to the OS. Used by the file cards rendered under
+   * a completed assistant turn.
+   */
+  SHELL_OPEN_PATH: 'shell:open-path',
+  /**
+   * Renderer → main. Given a batch of candidate absolute paths scraped
+   * from an assistant turn's text, return only those that exist on disk
+   * AND are regular files. The renderer has no filesystem access, so it
+   * can't tell a real generated file from a path the model merely
+   * mentioned — main does the `statSync` filtering. Used to decide which
+   * file cards to render under a completed assistant turn.
+   */
+  SHELL_STAT_FILES: 'shell:stat-files',
+  /**
    * Renderer → main. Lists all sessions (JSONL transcripts) for the
    * current workspace, sorted by updatedAt desc. Backed by
    * `@anthropic-ai/claude-agent-sdk`'s `listSessions({ dir })`.
@@ -280,7 +301,75 @@ export const IPC_CHANNELS = {
    * Renderer-initiated changes (user clicks the picker) do NOT
    * re-broadcast — there's no one to tell, the renderer already knows.
    */
-  PERMISSION_MODE_CHANGED: 'permission-mode:changed'
+  PERMISSION_MODE_CHANGED: 'permission-mode:changed',
+  /**
+   * Renderer → main. Reads the shared appearance prefs from the Open
+   * Design daemon's `/api/app-config` so the desktop shell and the
+   * embedded web tab render the same theme. Main reverse-proxies the
+   * daemon over `net.fetch` (stripping Origin/Host so the daemon's
+   * origin check treats it as a trusted non-browser request — the
+   * renderer can't reach the daemon directly because its file:// /
+   * dev origin isn't on the daemon allow-list). Returns the
+   * `appearance` sub-object, or null when the daemon is offline /
+   * hasn't stored any (the renderer then keeps its localStorage cache).
+   */
+  /**
+   * Shell renderer → main (invoke). The settings menu now lives in the
+   * shell's tab strip (ShellApp), but the things it triggers — the
+   * SettingsView overlay, the LogsDialog, the i18n language toggle — are
+   * all state owned by the *chat tab's* renderer, a separate webContents
+   * the shell can't reach directly. So the shell fires this with a menu
+   * action and main forwards it (via SHELL_MENU_ACTION) to whichever chat
+   * tab is currently active. Web tabs are skipped — they own no such state.
+   */
+  TAB_TRIGGER_MENU_ACTION: 'tab:trigger-menu-action',
+  /**
+   * Shell renderer → main (invoke). Open the settings modal — a transparent
+   * WebContentsView that main lays over the *whole* window (above the tab
+   * strip and every tab), loading the renderer with `?settings=1`. Works
+   * from any tab because the overlay lives in the shell's contentView tree,
+   * not inside a tab. Idempotent (re-opening just refocuses).
+   */
+  SETTINGS_WINDOW_OPEN: 'settings-window:open',
+  /**
+   * Settings-overlay renderer → main (invoke). Close the settings modal —
+   * main detaches and destroys the overlay view. Fired by the modal itself
+   * on scrim click / Escape / the ✕ button.
+   */
+  SETTINGS_WINDOW_CLOSE: 'settings-window:close',
+  /**
+   * Settings-overlay renderer → main (invoke). Read the CLI backend state
+   * (bundled fusion-code vs system claude) for the embedded web settings
+   * page. Engine-free counterpart of CLI_BACKEND_GET: the overlay isn't
+   * bound to any tab, so this reads the global app setting + runs detection
+   * directly instead of resolving a per-tab ChatEngine.
+   */
+  SETTINGS_CLI_BACKEND_GET: 'settings:cli-backend-get',
+  /**
+   * Settings-overlay renderer → main (invoke). Persist the CLI backend
+   * choice from the embedded web settings page. Engine-free counterpart of
+   * CLI_BACKEND_SET — writes the global app setting; live engines pick the
+   * new backend up on their next openSession.
+   */
+  SETTINGS_CLI_BACKEND_SET: 'settings:cli-backend-set',
+  /**
+   * Main → active chat tab renderer. The forwarded counterpart of
+   * TAB_TRIGGER_MENU_ACTION. The chat renderer subscribes once on mount
+   * and maps each action onto its local store (open settings / open logs /
+   * toggle language). Only the active chat tab receives it.
+   */
+  SHELL_MENU_ACTION: 'shell:menu-action',
+  APPEARANCE_GET: 'appearance:get',
+  /**
+   * Renderer → main. Patches the shared appearance prefs into the
+   * daemon (PUT /api/app-config with `{ appearance: <patch> }`). The
+   * daemon deep-merges the patch so a single-field change (e.g. just
+   * `themeMode`) doesn't clobber the per-mode colors. Returns the
+   * daemon's merged `appearance` on success, or null on failure — the
+   * renderer treats the local store + localStorage as the durable copy
+   * either way, so a failed write is non-fatal (best-effort sync).
+   */
+  APPEARANCE_SET: 'appearance:set'
 } as const
 
 /**
@@ -424,6 +513,34 @@ export type WorkspaceFileOpenPayload = { relPath: string }
  */
 export type WorkspaceFileOpenResult = { error: string }
 
+/**
+ * Payload for SHELL_OPEN_PATH. `absPath` is an absolute on-disk path
+ * (typically a file the assistant just wrote, which may live outside
+ * the workspace). Main validates absolute + exists + is-a-file before
+ * `shell.openPath`.
+ */
+export type ShellOpenPathPayload = { absPath: string }
+
+/**
+ * Result of SHELL_OPEN_PATH. `error` is '' on success, non-empty on
+ * failure (validation rejection or shell.openPath error). Same contract
+ * as WorkspaceFileOpenResult.
+ */
+export type ShellOpenPathResult = { error: string }
+
+/**
+ * Payload for SHELL_STAT_FILES. `paths` is a batch of candidate absolute
+ * paths scraped from assistant text (deduped by the caller).
+ */
+export type ShellStatFilesPayload = { paths: readonly string[] }
+
+/**
+ * Result of SHELL_STAT_FILES. `files` is the subset of the input that
+ * exists on disk AND is a regular file, in the same order as the input.
+ * Non-absolute / missing / directory entries are dropped.
+ */
+export type ShellStatFilesResult = { files: readonly string[] }
+
 /* ─────────────────── Session (thread) channels ─────────────────── */
 
 export type SessionListResult = { threads: readonly ThreadSummary[] }
@@ -505,6 +622,55 @@ export type UiPermissionMode =
 export type PermissionModeGetResult = { mode: UiPermissionMode }
 export type PermissionModeSetPayload = { mode: UiPermissionMode }
 export type PermissionModeChangedPayload = { mode: UiPermissionMode }
+
+/**
+ * One theme's color/contrast overrides as stored in the daemon. Mirror of
+ * `@open-design/contracts` `ThemeOverridesPrefs` — desktop keeps its own copy
+ * because the renderer / main / preload share this file but don't depend on
+ * the contracts package. Colors are `#rrggbb` hex (the desktop applier turns
+ * them into `"H S% L%"`). Keep in sync with the contracts type and with the
+ * renderer's `ThemeOverrides` in `stores/appearance.ts`.
+ */
+export interface ThemeOverridesPrefs {
+  presetName?: string
+  accent?: string
+  background?: string
+  foreground?: string
+  contrast?: number
+  translucentSidebar?: boolean
+}
+
+/**
+ * Shared appearance prefs persisted by the daemon and read/written by both
+ * the desktop shell and the web tab. Mirror of the contracts `AppearancePrefs`.
+ * All fields optional — a patch carries only what changed and an absent field
+ * falls back to the local default.
+ */
+export interface AppearancePrefs {
+  themeMode?: 'light' | 'dark' | 'system'
+  light?: ThemeOverridesPrefs
+  dark?: ThemeOverridesPrefs
+  uiFontSize?: number
+  codeFontSize?: number
+  usePointerCursor?: boolean
+}
+
+/**
+ * Actions the shell's tab-strip settings menu can trigger on the active
+ * chat tab. `toggle-lang` flips zh↔en; the others open the corresponding
+ * overlay/dialog. Kept as a small closed union so both ends stay in sync.
+ */
+export type ShellMenuAction = 'open-settings' | 'open-logs' | 'toggle-lang'
+
+/** Payload for SHELL_MENU_ACTION / TAB_TRIGGER_MENU_ACTION. */
+export type ShellMenuActionPayload = { action: ShellMenuAction }
+
+/** Result of APPEARANCE_GET — null when the daemon is offline or empty. */
+export type AppearanceGetResult = { appearance: AppearancePrefs | null }
+/** Payload for APPEARANCE_SET — a partial patch the daemon deep-merges. */
+export type AppearanceSetPayload = { patch: AppearancePrefs }
+/** Result of APPEARANCE_SET — the daemon's merged appearance, or null on failure. */
+export type AppearanceSetResult = { appearance: AppearancePrefs | null }
 
 /**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
@@ -605,6 +771,24 @@ export interface ChatApi {
    * and validate it. On error, `result.error` is non-empty.
    */
   openFile(payload: WorkspaceFileOpenPayload): Promise<WorkspaceFileOpenResult>
+
+  /**
+   * Open an ABSOLUTE file path in the OS default handler. Used by the
+   * file cards under a completed assistant turn — the assistant's
+   * Write/Edit tool calls carry full absolute `file_path`s that often
+   * sit outside the workspace, so unlike `openFile` this takes the
+   * absolute path directly. Main validates + delegates to
+   * `shell.openPath`. On error, `result.error` is non-empty.
+   */
+  openPath(payload: ShellOpenPathPayload): Promise<ShellOpenPathResult>
+
+  /**
+   * Filter a batch of candidate absolute paths down to those that exist
+   * on disk and are regular files. Used by the assistant file cards to
+   * decide which scraped paths are real generated files (vs. paths the
+   * model merely mentioned). Returns the surviving subset in input order.
+   */
+  statFiles(payload: ShellStatFilesPayload): Promise<ShellStatFilesResult>
 
   /**
    * List all sessions under the current workspace, newest first.
@@ -781,6 +965,39 @@ export interface ChatApi {
   onPermissionModeChanged(
     handler: (mode: UiPermissionMode) => void
   ): () => void
+
+  /**
+   * Read the shared appearance prefs from the Open Design daemon. The
+   * desktop appearance store calls this once on boot (after applying its
+   * localStorage cache so there's no flash) and adopts the daemon copy as
+   * the source of truth. Resolves `{ appearance: null }` when the daemon
+   * is offline or has none stored yet — the renderer keeps its cache.
+   */
+  getAppearance(): Promise<AppearanceGetResult>
+
+  /**
+   * Push an appearance patch to the daemon. Fire-and-forget from the
+   * renderer's perspective (the local store + localStorage are the durable
+   * copy), so a rejected promise / `{ appearance: null }` just means the
+   * daemon was unreachable and the next change will retry. The daemon
+   * deep-merges the patch, so sending only the field that changed is safe.
+   */
+  setAppearance(payload: AppearanceSetPayload): Promise<AppearanceSetResult>
+
+  /**
+   * Subscribe to menu actions forwarded from the shell's tab-strip
+   * settings menu (open settings / open logs / toggle language). Returns
+   * an unsubscribe. The chat renderer maps each action onto its own store;
+   * only the active chat tab receives these. Web tabs never see them.
+   */
+  onShellMenuAction(handler: (action: ShellMenuAction) => void): () => void
+
+  /**
+   * Close the settings modal overlay. Called by the settings overlay
+   * renderer (`?settings=1`) on scrim click / Escape / the ✕ button.
+   * Resolves once main has torn the overlay view down.
+   */
+  closeSettingsWindow(): Promise<void>
 }
 
 /**
@@ -804,6 +1021,20 @@ export interface TabApi {
    * rendering and just re-reads the latest. Returns an unsubscribe.
    */
   onTabListChanged(handler: (tabs: TabDescriptor[]) => void): () => void
+  /**
+   * Trigger a settings-menu action on the active chat tab. The shell's
+   * tab-strip menu can't reach the chat renderer's stores directly, so it
+   * fires this and main forwards it to the active chat tab (web tabs are
+   * skipped). Fire-and-forget — resolves once main has dispatched.
+   */
+  triggerMenuAction(action: ShellMenuAction): Promise<void>
+
+  /**
+   * Open the settings modal — a full-window transparent overlay that works
+   * over any tab. Resolves once main has created/shown the overlay view.
+   */
+  openSettingsWindow(): Promise<void>
+
   /** One-shot query for the shell window's current fullscreen state. */
   getFullscreen(): Promise<boolean>
   /**

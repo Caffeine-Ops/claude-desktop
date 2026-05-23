@@ -125,6 +125,113 @@ export const APPEARANCE_DEFAULTS = {
   dark: DARK_DEFAULTS
 } as const
 
+/* ──────────────────── Daemon sync (shared theme) ────────────────────
+ *
+ * The Open Design daemon is the single source of truth for theme so the
+ * desktop shell and the embedded web tab stay in lockstep. The zustand
+ * `persist` above is kept purely as an offline cache: on boot the applier
+ * renders the cached value immediately (no flash), then `hydrateAppearance
+ * FromDaemon()` overwrites it with the daemon copy if the daemon is up.
+ * Every subsequent change is pushed back to the daemon (best-effort).
+ *
+ * The renderer can't reach the daemon directly (its origin isn't on the
+ * daemon allow-list), so both directions go through the main-process
+ * reverse-proxy IPC: `window.chatApi.getAppearance` / `setAppearance`.
+ */
+
+// The shape the daemon stores. Partial mirror of the contracts AppearancePrefs;
+// we only declare what we read/write here to avoid coupling to that package.
+interface DaemonAppearance {
+  themeMode?: ThemeMode
+  light?: Partial<ThemeOverrides>
+  dark?: Partial<ThemeOverrides>
+  uiFontSize?: number
+  codeFontSize?: number
+  usePointerCursor?: boolean
+}
+
+// Guards the subscribe-push below from firing while we're applying the
+// daemon's own values back into the store (which would echo them straight
+// back to the daemon — harmless but wasteful, and it would race a
+// concurrent web-tab edit).
+let isHydrating = false
+
+/** Serialize the persisted slice of the store into the daemon shape. */
+function snapshotForDaemon(s: AppearanceState): DaemonAppearance {
+  return {
+    themeMode: s.themeMode,
+    light: s.light,
+    dark: s.dark,
+    uiFontSize: s.uiFontSize,
+    codeFontSize: s.codeFontSize,
+    usePointerCursor: s.usePointerCursor
+  }
+}
+
+/**
+ * Pull the daemon's appearance and adopt it as the source of truth. Called
+ * once from the App root after mount. No-op (keeps the localStorage cache)
+ * when the daemon is offline or has nothing stored. Merges per-mode overrides
+ * onto the local defaults so a daemon copy missing a field (e.g. written by
+ * the web tab, which only sets `accent`) still yields a complete ThemeOverrides.
+ */
+export async function hydrateAppearanceFromDaemon(): Promise<void> {
+  const api = window.chatApi
+  if (!api?.getAppearance) return
+  let remote: DaemonAppearance | null = null
+  try {
+    const res = await api.getAppearance()
+    remote = res?.appearance ?? null
+  } catch {
+    remote = null
+  }
+  if (!remote) return
+
+  isHydrating = true
+  try {
+    useAppearanceStore.setState((s) => ({
+      themeMode: remote.themeMode ?? s.themeMode,
+      light: { ...s.light, ...remote.light },
+      dark: { ...s.dark, ...remote.dark },
+      uiFontSize:
+        typeof remote.uiFontSize === 'number'
+          ? clamp(remote.uiFontSize, UI_MIN, UI_MAX)
+          : s.uiFontSize,
+      codeFontSize:
+        typeof remote.codeFontSize === 'number'
+          ? clamp(remote.codeFontSize, CODE_MIN, CODE_MAX)
+          : s.codeFontSize,
+      usePointerCursor: remote.usePointerCursor ?? s.usePointerCursor
+    }))
+  } finally {
+    isHydrating = false
+  }
+}
+
+/**
+ * Push the full persisted slice to the daemon. Fire-and-forget — the local
+ * store + localStorage are the durable copy, so a failed write just means the
+ * daemon was down and the next change retries. We send the whole slice (not a
+ * diff) because the store actions don't tell us which field changed; the
+ * daemon deep-merges, so a full snapshot is also a safe partial.
+ */
+function pushAppearanceToDaemon(): void {
+  const api = window.chatApi
+  if (!api?.setAppearance) return
+  const patch = snapshotForDaemon(useAppearanceStore.getState())
+  void api.setAppearance({ patch }).catch(() => {
+    // Daemon offline; localStorage holds the user's copy for the next push.
+  })
+}
+
+// Push on every change to a persisted theme field. The applier already reacts
+// to the same store for the DOM side; this is the persistence side. Skips the
+// echo while hydrating. zustand fires this synchronously after each set().
+useAppearanceStore.subscribe(() => {
+  if (isHydrating) return
+  pushAppearanceToDaemon()
+})
+
 /**
  * Convert `#rrggbb` to the `"H S% L%"` string format that CSS variables
  * defined as `hsl(var(--token))` consume. Exported so the applier and

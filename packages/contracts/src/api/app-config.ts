@@ -19,6 +19,48 @@ export interface OrbitConfigPrefs {
   templateSkillId?: string | null;
 }
 
+/**
+ * One theme's color/contrast overrides. Modelled on the desktop app's
+ * `ThemeOverrides` so the daemon can hold the richer desktop shape as a
+ * superset; the web frontend (single accent + theme) maps onto a subset.
+ *
+ * Colors are `#rrggbb` hex strings — they round-trip cleanly to/from JSON
+ * and both frontends convert them to their own CSS variable formats (the
+ * desktop applier turns hex into `"H S% L%"`, the web one feeds hex into
+ * `color-mix`). Keeping the canonical store as hex avoids baking either
+ * frontend's CSS representation into the cross-process contract.
+ */
+export interface ThemeOverridesPrefs {
+  presetName?: string;
+  accent?: string;
+  background?: string;
+  foreground?: string;
+  contrast?: number;
+  translucentSidebar?: boolean;
+}
+
+/**
+ * Cross-process appearance preferences. The daemon is the single source of
+ * truth for theme so the desktop shell and the embedded Open Design web tab
+ * stay in lockstep — both read this on boot and write every change back.
+ *
+ * The shape is a superset of what either frontend exposes today:
+ *  - desktop drives all of it (per-mode overrides + font sizes + cursor).
+ *  - web maps `themeMode` ↔ its `theme`, and writes its single accent into
+ *    whichever mode (`light`/`dark`) is currently effective.
+ *
+ * Every field is optional so a partial PUT only patches what changed and an
+ * older daemon config (missing `appearance`) rehydrates without crashing.
+ */
+export interface AppearancePrefs {
+  themeMode?: 'light' | 'dark' | 'system';
+  light?: ThemeOverridesPrefs;
+  dark?: ThemeOverridesPrefs;
+  uiFontSize?: number;
+  codeFontSize?: number;
+  usePointerCursor?: boolean;
+}
+
 export interface AppConfigPrefs {
   onboardingCompleted?: boolean;
   agentId?: string | null;
@@ -40,6 +82,12 @@ export interface AppConfigPrefs {
   privacyDecisionAt?: number | null;
   orbit?: OrbitConfigPrefs;
   customInstructions?: string | null;
+  /**
+   * Theme / appearance preferences shared between the desktop shell and the
+   * embedded web tab. See `AppearancePrefs`. Absent on configs written before
+   * this field existed — both frontends fall back to their local defaults.
+   */
+  appearance?: AppearancePrefs;
 }
 
 export interface AppConfigResponse {

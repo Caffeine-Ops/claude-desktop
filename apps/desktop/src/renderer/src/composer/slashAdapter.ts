@@ -1,8 +1,5 @@
-import type {
-  Unstable_DirectiveFormatter,
-  Unstable_TriggerAdapter,
-  Unstable_TriggerItem
-} from '@assistant-ui/core'
+import type { SuggestionItem } from './suggestionPlugin'
+import type { SuggestionAdapter } from './ProseMirrorComposerInput'
 
 import type { SessionMeta } from '../../../shared/types'
 
@@ -21,17 +18,11 @@ import type { SessionMeta } from '../../../shared/types'
  *      only gives us names, so we render a generic "Built-in command"
  *      description.
  *
- * Selection behavior is "insert directive": picking an item replaces
- * the `/<query>` token in the input with the command's label and
- * appends a trailing space, so the user can continue typing arguments.
- * This matches fusion-code's terminal `/` UX — picking a command does
- * NOT auto-submit; the user still has to press Enter to send.
- *
- * The actual submit/dispatch logic lives upstream:
- *   - Client commands → `FusionRuntimeProvider.matchSlashCommand` →
- *     opens a dialog
- *   - CLI commands    → fall through to `chatApi.send`, which routes
- *     the raw `/cmd` to fusion-code as a normal user prompt
+ * Picking an item inserts a `slash` atom node carrying the literal
+ * `/cmd` value, plus a trailing space (see `insertSuggestion`). The
+ * doc serializes that node back to the verbatim `/cmd` string, so
+ * `matchSlashCommand` downstream keeps working. Picking does NOT
+ * auto-submit; the user still presses Enter to send.
  */
 
 interface ClientCommand {
@@ -52,17 +43,15 @@ const CLIENT_COMMANDS: readonly ClientCommand[] = [
   }
 ]
 
-export function buildSlashAdapter(
-  sessionMeta: SessionMeta | null
-): Unstable_TriggerAdapter {
-  const items: Unstable_TriggerItem[] = []
+export function buildSlashAdapter(sessionMeta: SessionMeta | null): SuggestionAdapter {
+  const items: SuggestionItem[] = []
   const seen = new Set<string>()
 
   // 1) Client commands — top of list, with custom descriptions.
   for (const cmd of CLIENT_COMMANDS) {
     items.push({
       id: `client-${cmd.name}`,
-      type: 'slash',
+      value: `/${cmd.name}`,
       label: `/${cmd.name}`,
       description: cmd.description
     })
@@ -76,19 +65,13 @@ export function buildSlashAdapter(
     if (seen.has(name)) continue
     items.push({
       id: `fc-${name}`,
-      type: 'slash',
+      value: `/${name}`,
       label: `/${name}`,
       description: 'Built-in command'
     })
   }
 
-  // IMPORTANT: empty `categories` forces the popover into search
-  // mode immediately on `/`. With a non-empty array the primitive
-  // would render a category picker first and the items render-prop
-  // would never fire (`TriggerPopoverItems.js:13`).
   return {
-    categories: () => [],
-    categoryItems: () => items,
     search: (query) => {
       if (!query) return items
       const q = query.toLowerCase()
@@ -99,23 +82,4 @@ export function buildSlashAdapter(
       )
     }
   }
-}
-
-/**
- * Directive formatter for slash command insertion.
- *
- * `unstable_defaultDirectiveFormatter` from @assistant-ui/core
- * serializes items as `:type[label]{name=id}` — that's the mention
- * chip format used by `@`-mentions, not what we want for slash
- * commands. We want the literal command name (`/skill`) inserted
- * verbatim so the existing `matchSlashCommand` dispatch in
- * FusionRuntimeProvider keeps working.
- *
- * `parse` returns the entire string as a single text segment because
- * we never want any portion of the composer text to be re-rendered as
- * a "mention chip" — slash commands are plain text, full stop.
- */
-export const slashFormatter: Unstable_DirectiveFormatter = {
-  serialize: (item) => item.label,
-  parse: (text) => (text ? [{ kind: 'text', text }] : [])
 }

@@ -15,9 +15,15 @@ import './assets/highlight.css'
  * renders inline inside each tab's workspace header, so the shell
  * UI is intentionally blank.
  */
-const isShell =
-  typeof window !== 'undefined' &&
-  new URLSearchParams(window.location.search).get('shell') === '1'
+const search =
+  typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams()
+const isShell = search.get('shell') === '1'
+// Note: the settings modal is NOT a renderer-bundle route. It's the Open
+// Design web app loaded with `?settings=1` inside a full-window overlay
+// WebContentsView (see desktop tabRegistry.openSettingsView + apps/web
+// App.tsx). So this bundle only ever renders the shell strip or a chat tab.
 
 // FOUC prevention: read the persisted appearance state synchronously
 // before React mounts, so the right `dark` class and per-theme color
@@ -170,5 +176,11 @@ const isShell =
 })()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>{isShell ? <ShellApp /> : <App />}</React.StrictMode>
+  <React.StrictMode>
+    {isShell ? (
+      <ShellApp />
+    ) : (
+      <App />
+    )}
+  </React.StrictMode>
 )

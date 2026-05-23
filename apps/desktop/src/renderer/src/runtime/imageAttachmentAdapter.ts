@@ -5,35 +5,58 @@ import type {
 } from '@assistant-ui/core'
 
 /**
- * Image attachment adapter for the composer.
+ * Unified attachment adapter for the composer — handles BOTH images and
+ * arbitrary files. Hands assistant-ui an AttachmentAdapter so the
+ * built-in paste / drop / file-picker machinery (the composer's
+ * addAttachmentOnPaste, AttachmentDropzone, our custom AddAttachment
+ * button) all route every dropped/picked file through us.
  *
- * Hands assistant-ui an AttachmentAdapter so the built-in paste / drop /
- * file-picker machinery (ComposerPrimitive.Input's `addAttachmentOnPaste`,
- * AttachmentDropzone, AddAttachment) all route image files through us.
+ * Two attachment kinds, distinguished by `attachment.type`:
  *
- * What we do differently from the upstream SimpleImageAttachmentAdapter:
+ *  ── Images (`type: 'image'`) ─────────────────────────────────────────
+ *  Resized + base64-encoded to a data URL and sent to the model as a
+ *  vision block. What we do differently from the upstream
+ *  SimpleImageAttachmentAdapter:
  *
- *  1. **Dimension clamp**: Anthropic's vision docs recommend ≤ 1568px on
- *     the long edge. Larger images get resized on the GPU via
- *     createImageBitmap + OffscreenCanvas so we don't ship 4000px
- *     screenshots over IPC and into the API.
+ *   1. **Dimension clamp**: Anthropic's vision docs recommend ≤ 1568px on
+ *      the long edge. Larger images get resized on the GPU via
+ *      createImageBitmap + OffscreenCanvas so we don't ship 4000px
+ *      screenshots over IPC and into the API.
+ *   2. **Size clamp**: the API rejects anything over 5MB base64 per image.
+ *      After resizing to PNG we check the encoded length; if it's still
+ *      over the ~3.75MB raw budget (which would become ~5MB base64) we
+ *      re-encode as JPEG q=0.85 and keep dropping quality until it fits
+ *      or we hit a minimum quality floor.
+ *   3. **Data URL output**: the Complete attachment's content uses
+ *      `{ type: 'image', image: dataURL }`. The main process parses it
+ *      back into `{ media_type, data }` when building the SDK user
+ *      message, so the wire format is a single string all the way
+ *      through.
  *
- *  2. **Size clamp**: the API rejects anything over 5MB base64 per image.
- *     After resizing to PNG we check the encoded length; if it's still
- *     over the ~3.75MB raw budget (which would become ~5MB base64) we
- *     re-encode as JPEG q=0.85 and keep dropping quality until it fits
- *     or we hit a minimum quality floor.
+ *  ── Files (`type: 'file'`) ───────────────────────────────────────────
+ *  NON-image files do NOT ship their bytes. Instead we resolve the
+ *  on-disk **absolute path** (Electron's webUtils.getPathForFile, exposed
+ *  as chatApi.pathForFile) at add()-time, and the Complete attachment
+ *  carries it in a FileMessagePart `{ type: 'file', data: <path>,
+ *  mimeType: FILE_PATH_MIME }`. FusionRuntimeProvider.onNew picks the
+ *  path out and appends it to the prompt as an `@"path"` mention, so
+ *  fusion-code's extractAtMentionedFiles reads the file itself with the
+ *  Read tool. "The model receives the path", per the feature request.
  *
- *  3. **Data URL output**: the Complete attachment's content uses
- *     `{ type: 'image', image: dataURL }` — a standard data URL
- *     (`data:image/png;base64,...`). The main process parses it back
- *     into `{ media_type, data }` when building the SDK user message,
- *     so the wire format is a single string all the way through.
+ *  The composer chip (ComposerAttachmentChip) already renders non-image
+ *  attachments as a labelled pill showing `attachment.name` (the file
+ *  name) instead of a thumbnail, so files appear in the same row above
+ *  the input as images.
  *
  * Mirrors free-code's imagePaste.ts behavior at the CLI level, minus the
  * osascript / native NSPasteboard paths — the browser's native DOM
  * paste/drop events already give us `File` objects directly.
  */
+
+// Sentinel mimeType marking a FileMessagePart whose `data` is an on-disk
+// absolute path (not base64 bytes). onNew matches on this to know it
+// should emit an `@"path"` mention rather than try to read inline data.
+export const FILE_PATH_MIME = 'application/x-fusion-file-path'
 
 // Anthropic's own vision guide: 1568px is the sweet spot. Going larger
 // doesn't improve model accuracy but costs more tokens. free-code uses
@@ -52,42 +75,103 @@ const JPEG_QUALITY_START = 0.9
 const JPEG_QUALITY_FLOOR = 0.5
 const JPEG_QUALITY_STEP = 0.1
 
+/** True for files we treat as inline vision images. */
+function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/')
+}
+
 /**
  * The adapter itself is a plain object, not a class — assistant-ui only
  * looks at its public methods. An exported constant is easier to memoize
  * in the runtime provider than a `new Adapter()` call on every render.
  */
-export const imageAttachmentAdapter: AttachmentAdapter = {
-  accept: 'image/*',
+export const fileAttachmentAdapter: AttachmentAdapter = {
+  // Accept anything. The picker / dropzone no longer filter by type;
+  // we branch on the file's MIME at add()-time instead.
+  accept: '*',
 
   async add({ file }: { file: File }): Promise<PendingAttachment> {
-    // At add-time we only mark it as "pending, waiting for send". The
-    // actual resize + encode happens in send() so the UI shows the
-    // attachment chip immediately without blocking on GPU work.
-    console.log('[imageAdapter] add', {
+    if (isImageFile(file)) {
+      // At add-time we only mark it as "pending, waiting for send". The
+      // actual resize + encode happens in send() so the UI shows the
+      // attachment chip immediately without blocking on GPU work.
+      console.log('[fileAdapter] add image', {
+        name: file.name,
+        size: file.size,
+        type: file.type
+      })
+      return {
+        id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        type: 'image',
+        name: file.name || 'Pasted image',
+        contentType: file.type || 'image/png',
+        file,
+        status: { type: 'requires-action', reason: 'composer-send' }
+      }
+    }
+
+    // Non-image: resolve the disk path NOW, while the File reference is
+    // fresh. webUtils.getPathForFile (via chatApi.pathForFile) needs the
+    // original native File from the drop/picker event; stashing the path
+    // here means send() doesn't depend on the File still being valid.
+    const path = window.chatApi?.pathForFile(file) ?? ''
+    console.log('[fileAdapter] add file', {
       name: file.name,
       size: file.size,
-      type: file.type
+      type: file.type,
+      path
     })
     return {
-      id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      type: 'image',
-      name: file.name || 'Pasted image',
-      contentType: file.type || 'image/png',
+      id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      type: 'file',
+      name: file.name || 'File',
+      contentType: file.type || 'application/octet-stream',
       file,
+      // Stash the resolved path on the pending attachment's content so
+      // send() can echo it through without re-resolving. The chip reads
+      // `name`, not this, so it's invisible in the UI until send.
+      content: path
+        ? [{ type: 'file', filename: file.name, data: path, mimeType: FILE_PATH_MIME }]
+        : [],
       status: { type: 'requires-action', reason: 'composer-send' }
     }
   },
 
   async send(attachment: PendingAttachment): Promise<CompleteAttachment> {
-    console.log('[imageAdapter] send start', {
+    // ── File branch: emit the path-carrying FileMessagePart ───────────
+    if (attachment.type === 'file') {
+      const stashed = attachment.content?.find(
+        (p): p is { type: 'file'; data: string; mimeType: string; filename?: string } =>
+          p.type === 'file' && p.mimeType === FILE_PATH_MIME
+      )
+      // Fall back to re-resolving from the File if the stash is missing
+      // (defensive — add() always sets it when a path was available).
+      const path = stashed?.data || window.chatApi?.pathForFile(attachment.file) || ''
+      if (!path) {
+        // No disk path (blob-backed / synthetic File). We can't mention
+        // something that isn't on disk — surface a clear error rather
+        // than silently sending an empty attachment.
+        throw new Error(`Cannot resolve a disk path for "${attachment.name}"`)
+      }
+      console.log('[fileAdapter] send file', { name: attachment.name, path })
+      return {
+        ...attachment,
+        status: { type: 'complete' },
+        content: [
+          { type: 'file', filename: attachment.name, data: path, mimeType: FILE_PATH_MIME }
+        ]
+      }
+    }
+
+    // ── Image branch: resize + base64-encode to a data URL ────────────
+    console.log('[fileAdapter] send image start', {
       name: attachment.name,
       fileSize: attachment.file.size,
       fileType: attachment.file.type
     })
     try {
       const dataURL = await processImageFile(attachment.file)
-      console.log('[imageAdapter] send success', {
+      console.log('[fileAdapter] send image success', {
         name: attachment.name,
         dataUrlLength: dataURL.length,
         mediaType: dataURL.slice(5, dataURL.indexOf(';'))
@@ -104,7 +188,7 @@ export const imageAttachmentAdapter: AttachmentAdapter = {
         ]
       }
     } catch (err) {
-      console.error('[imageAdapter] send failed', err)
+      console.error('[fileAdapter] send image failed', err)
       throw err
     }
   },

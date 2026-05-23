@@ -32,11 +32,14 @@
 }
 .plugins-home__title {
   margin: 0;
-  font-family: var(--serif);
-  font-size: 18px;
+  /* "Community" section head in SF Pro Display, matching the recent-
+     projects head. The serif in the preview tiles below is content
+     (rendered design artifacts), not UI chrome, and stays untouched. */
+  font-family: var(--sans);
+  font-size: 21px;
   font-weight: 600;
   color: var(--text-strong);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 .plugins-home__count {
   font-size: 11.5px;
@@ -408,7 +411,8 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  /* Apple store-utility-card radius: lg (18px). */
+  border-radius: 18px;
   background: var(--bg-panel);
   overflow: hidden;
   transition: border-color 120ms ease, box-shadow 160ms ease,
@@ -416,8 +420,10 @@
   isolation: isolate;
 }
 .plugins-home__card:hover {
+  /* Flat card — hover reads through the hairline border + a small lift,
+     no decorative drop-shadow (Apple reserves shadow for product imagery,
+     here the preview thumbnail). */
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-md, 0 12px 32px rgba(0, 0, 0, 0.08));
   transform: translateY(-2px);
 }
 .plugins-home__card.is-active {
@@ -480,7 +486,9 @@
   color: color-mix(in srgb, var(--accent) 74%, var(--text));
   font-family: var(--serif);
   font-size: 56px;
-  font-weight: 650;
+  /* Content-preview serif stays; only the off-ladder weight snaps to the
+     Apple step (300/400/600/700) — 700 for this oversized display glyph. */
+  font-weight: 700;
   line-height: 1;
   opacity: 0.86;
 }
@@ -674,7 +682,9 @@
   position: relative;
   font-size: 18px;
   line-height: 1.18;
-  font-weight: 500;
+  /* Snap off-ladder 500 to the Apple headline step (600). The serif +
+     gradient of this design-showcase tile is content and stays. */
+  font-weight: 600;
   color: white;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
   z-index: 1;
@@ -891,13 +901,19 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  font-size: 12.5px;
-  font-weight: 500;
+  padding: 7px 14px;
+  /* Apple utility-button grammar: pill-shaped action, 14px / 600 label
+     (the ladder skips 500). */
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.016em;
   cursor: pointer;
   transition: background-color 120ms ease, border-color 120ms ease,
-    color 120ms ease;
+    color 120ms ease, transform 120ms ease;
+}
+.plugins-home__action:active {
+  transform: scale(0.95);
 }
 .plugins-home__action--compact {
   flex: 1;

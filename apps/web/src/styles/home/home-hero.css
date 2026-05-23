@@ -24,61 +24,36 @@
   gap: 14px;
   padding: 32px 0 8px;
 }
-.home-hero__brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-.home-hero__brand-mark {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  padding: 2px;
-}
-.home-hero__brand-mark img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  user-select: none;
-  -webkit-user-drag: none;
-}
-.home-hero__brand-name {
-  font-family: var(--serif);
-  font-weight: 600;
-  font-size: 16px;
-  color: var(--text-strong);
-}
 .home-hero__title {
   margin: 0;
-  font-family: var(--serif);
+  font-family: var(--sans);
   font-weight: 600;
-  font-size: 30px;
-  letter-spacing: -0.02em;
+  /* hero-display: 40px / 600 / -0.28px tracking — the signature
+     "Apple tight" cadence at the top of the gallery. */
+  font-size: 40px;
+  line-height: 1.08;
+  letter-spacing: -0.021em;
   color: var(--text-strong);
   text-align: center;
 }
 .home-hero__subtitle {
   margin: 0;
   color: var(--text-muted);
-  font-size: 13.5px;
+  /* Apple runs body copy at 17px (not 13/16) — the brand's "reading,
+     not scanning" pace. SF Pro Text default tracking, 1.47 leading. */
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: -0.012em;
   text-align: center;
-  max-width: 540px;
-  line-height: 1.55;
+  max-width: 560px;
+  line-height: 1.47;
 }
 .home-hero__subtitle kbd {
   font: inherit;
-  font-size: 11.5px;
-  padding: 1px 5px;
+  font-size: 13px;
+  padding: 1px 6px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 5px;
   background: var(--bg-subtle);
 }
 /* ---------- Output-type tab bar ----------
@@ -112,11 +87,14 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg-panel) 92%, var(--bg-subtle));
   color: var(--text-muted);
-  font-size: 12.5px;
-  font-weight: 580;
+  /* Apple weight ladder is 300/400/600/700 — 500/580 are deliberately
+     absent. Utility labels sit at 400 with negative tracking. */
+  font-size: 14px;
+  font-weight: 400;
   line-height: 1.3;
-  letter-spacing: 0;
-  box-shadow: var(--shadow-xs);
+  letter-spacing: -0.012em;
+  /* No shadow on chrome — Apple reserves the single drop-shadow for
+     product imagery. Hierarchy comes from surface color, not elevation. */
   cursor: pointer;
   transition:
     color 120ms ease,
@@ -131,18 +109,21 @@
   background: var(--bg-panel);
   transform: translateY(-0.5px);
 }
+.home-hero__type-tab:active:not(:disabled) {
+  transform: scale(0.95);
+}
 .home-hero__type-tab.is-active {
+  /* Selected state reads through accent tint + accent border, not a
+     decorative drop-shadow (Apple keeps chrome flat). */
   background: var(--accent-tint);
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
   color: var(--accent);
-  box-shadow:
-    0 1px 0 color-mix(in srgb, var(--accent) 16%, transparent),
-    var(--shadow-xs);
 }
 .home-hero:focus-within .home-hero__type-tab.is-active {
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent),
-    var(--shadow-xs);
+  /* Focus ring is functional, not decorative — Apple uses it too
+     (button-primary-focus: a 2px solid accent outline). Keep just the
+     ring, drop the shadow underlay. */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .home-hero__type-tab.is-active:hover:not(:disabled) {
   background: var(--accent-tint);
@@ -257,8 +238,10 @@
   max-width: 720px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  /* Apple lg radius (18px) for the input shell; chrome stays flat so the
+     surface reads as a hairline-bordered card, not an elevated panel. */
+  border-radius: 18px;
+  box-shadow: none;
   padding: 14px 14px 10px;
   display: flex;
   flex-direction: column;
@@ -271,8 +254,9 @@
   padding-block: 12px 10px;
 }
 .home-hero__input-card:focus-within {
+  /* Focus = accent border + a functional ring, not a soft drop-shadow. */
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .home-hero__input-card.is-drag-active {
   border-color: color-mix(in srgb, var(--accent) 56%, var(--border));
@@ -364,8 +348,11 @@
   min-width: 0;
   max-height: var(--home-hero-prompt-max-height);
   overflow: hidden;
-  --home-hero-prompt-font-size: 15px;
-  --home-hero-prompt-line-height: 1.85;
+  /* Apple body copy is 17px — the prompt editor adopts the same reading
+     pace so the composer feels like Apple's editorial body, not a 13px
+     SaaS input. */
+  --home-hero-prompt-font-size: 17px;
+  --home-hero-prompt-line-height: 1.6;
   --home-hero-prompt-padding: 6px 6px;
 }
 .home-hero__prompt-highlight,
@@ -944,7 +931,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: var(--shadow-xs);
+  /* Flat chrome — no drop-shadow on the utility button (Apple). */
+  box-shadow: none;
   transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
 .home-hero__attach:hover {
@@ -952,6 +940,9 @@
   border-color: var(--border-strong);
   color: var(--accent);
   transform: translateY(-0.5px);
+}
+.home-hero__attach:active {
+  transform: scale(0.95);
 }
 .home-hero__working-dir-wrap {
   position: relative;
@@ -967,16 +958,21 @@
   height: 32px;
   max-width: 220px;
   min-width: 0;
-  padding: 0 12px;
+  padding: 0 14px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  /* Flat pill utility button — no chrome shadow (Apple). */
+  box-shadow: none;
   color: var(--text-muted);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  font-size: 14px;
+  letter-spacing: -0.012em;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+.home-hero__working-dir:active {
+  transform: scale(0.95);
 }
 .home-hero__working-dir:hover {
   background: var(--bg-subtle);
@@ -1715,6 +1711,11 @@
 .home-hero__submit:hover:not(:disabled) {
   background: var(--accent-strong);
   transform: translateY(-0.5px);
+}
+/* Apple's system-wide micro-interaction: every button presses to
+   scale(0.95) on :active. The single most recognizable Apple gesture. */
+.home-hero__submit:active:not(:disabled) {
+  transform: scale(0.95);
 }
 .home-hero__submit:disabled {
   background: var(--bg-muted);

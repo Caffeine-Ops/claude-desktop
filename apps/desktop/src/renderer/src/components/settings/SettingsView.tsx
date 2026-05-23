@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import type { CliBackendState } from '../../../../shared/ipc-channels'
-import { useT } from '../../i18n'
+import { useI18n, useT } from '../../i18n'
 import { useSettingsStore } from '../../stores/settings'
 import {
   APPEARANCE_LIMITS,
@@ -28,24 +28,8 @@ export function SettingsView(): React.JSX.Element | null {
   const open = useSettingsStore((s) => s.open)
   const closeSettings = useSettingsStore((s) => s.closeSettings)
   const t = useT()
-  const [activeCategory, setActiveCategory] =
-    useState<CategoryId>('appearance')
 
   if (!open) return null
-
-  const categories: { id: CategoryId; label: string; icon: React.ReactNode }[] =
-    [
-      { id: 'general', label: t('catGeneral'), icon: <CircleIcon /> },
-      { id: 'appearance', label: t('catAppearance'), icon: <SunIcon /> },
-      { id: 'configuration', label: t('catConfiguration'), icon: <SlidersIcon /> },
-      { id: 'personalization', label: t('catPersonalization'), icon: <PersonIcon /> },
-      { id: 'usage', label: t('catUsage'), icon: <BarChartIcon /> },
-      { id: 'mcp', label: t('catMcpServers'), icon: <ServerIcon /> },
-      { id: 'git', label: t('catGit'), icon: <GitIcon /> },
-      { id: 'environment', label: t('catEnvironment'), icon: <TerminalIcon /> },
-      { id: 'worktrees', label: t('catWorktrees'), icon: <FolderTreeIcon /> },
-      { id: 'archived', label: t('catArchivedThreads'), icon: <ArchiveIcon /> }
-    ]
 
   return (
     <div
@@ -71,51 +55,85 @@ export function SettingsView(): React.JSX.Element | null {
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1">
-        {/* Category rail — fixed 200px column. Only one category is
-            active at a time; the rest are visually rendered but their
-            content panes are placeholder. */}
-        <nav className="w-[200px] shrink-0 overflow-y-auto px-3 py-4">
-          {categories.map((cat) => (
-            <button
-              key={cat.id}
-              type="button"
-              onClick={() => setActiveCategory(cat.id)}
+      <SettingsBody />
+    </div>
+  )
+}
+
+/**
+ * The settings content proper — the category rail + the active section's
+ * pane. Used by the in-chat fullscreen overlay (`SettingsView`). Kept as a
+ * separate component so the rail + panes can be reused by any future shell
+ * that wants the same content with different surrounding chrome.
+ *
+ * (The desktop gear now opens the full Open Design web settings in an
+ * overlay WebContentsView instead — see desktop tabRegistry.openSettingsView.
+ * This native view remains for the legacy in-chat entry point.)
+ */
+export function SettingsBody(): React.JSX.Element {
+  const t = useT()
+  const [activeCategory, setActiveCategory] =
+    useState<CategoryId>('appearance')
+
+  const categories: { id: CategoryId; label: string; icon: React.ReactNode }[] =
+    [
+      { id: 'general', label: t('catGeneral'), icon: <CircleIcon /> },
+      { id: 'appearance', label: t('catAppearance'), icon: <SunIcon /> },
+      { id: 'configuration', label: t('catConfiguration'), icon: <SlidersIcon /> },
+      { id: 'personalization', label: t('catPersonalization'), icon: <PersonIcon /> },
+      { id: 'usage', label: t('catUsage'), icon: <BarChartIcon /> },
+      { id: 'mcp', label: t('catMcpServers'), icon: <ServerIcon /> },
+      { id: 'git', label: t('catGit'), icon: <GitIcon /> },
+      { id: 'environment', label: t('catEnvironment'), icon: <TerminalIcon /> },
+      { id: 'worktrees', label: t('catWorktrees'), icon: <FolderTreeIcon /> },
+      { id: 'archived', label: t('catArchivedThreads'), icon: <ArchiveIcon /> }
+    ]
+
+  return (
+    <div className="flex min-h-0 flex-1">
+      {/* Category rail — fixed 200px column. Only one category is
+          active at a time; the rest are visually rendered but their
+          content panes are placeholder. */}
+      <nav className="w-[200px] shrink-0 overflow-y-auto px-3 py-4">
+        {categories.map((cat) => (
+          <button
+            key={cat.id}
+            type="button"
+            onClick={() => setActiveCategory(cat.id)}
+            className={
+              'mb-0.5 flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[12.5px] transition-colors ' +
+              (activeCategory === cat.id
+                ? 'bg-muted/80 text-foreground'
+                : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')
+            }
+          >
+            <span
               className={
-                'mb-0.5 flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[12.5px] transition-colors ' +
-                (activeCategory === cat.id
-                  ? 'bg-muted/80 text-foreground'
-                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')
+                'flex size-4 shrink-0 items-center justify-center ' +
+                (activeCategory === cat.id ? 'text-foreground' : 'text-muted-foreground/80')
               }
             >
-              <span
-                className={
-                  'flex size-4 shrink-0 items-center justify-center ' +
-                  (activeCategory === cat.id ? 'text-foreground' : 'text-muted-foreground/80')
-                }
-              >
-                {cat.icon}
-              </span>
-              <span className="flex-1 truncate">{cat.label}</span>
-            </button>
-          ))}
-        </nav>
+              {cat.icon}
+            </span>
+            <span className="flex-1 truncate">{cat.label}</span>
+          </button>
+        ))}
+      </nav>
 
-        {/* Content scroll region. Centered card column matches the
-            reference layout (the content sits in a max-w container,
-            not edge-to-edge). */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-[820px] px-10 py-8">
-            {activeCategory === 'appearance' ? (
-              <AppearanceSection />
-            ) : activeCategory === 'general' ? (
-              <GeneralSection />
-            ) : (
-              <PlaceholderSection
-                title={categories.find((c) => c.id === activeCategory)?.label ?? ''}
-              />
-            )}
-          </div>
+      {/* Content scroll region. Centered card column matches the
+          reference layout (the content sits in a max-w container,
+          not edge-to-edge). */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-[820px] px-10 py-8">
+          {activeCategory === 'appearance' ? (
+            <AppearanceSection />
+          ) : activeCategory === 'general' ? (
+            <GeneralSection />
+          ) : (
+            <PlaceholderSection
+              title={categories.find((c) => c.id === activeCategory)?.label ?? ''}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -273,6 +291,8 @@ function AppearanceSection(): React.JSX.Element {
  */
 function GeneralSection(): React.JSX.Element {
   const t = useT()
+  const lang = useI18n((s) => s.lang)
+  const setLang = useI18n((s) => s.setLang)
   const [state, setState] = useState<CliBackendState | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -313,6 +333,26 @@ function GeneralSection(): React.JSX.Element {
       <h1 className="text-[20px] font-semibold text-foreground">
         {t('catGeneral')}
       </h1>
+
+      {/* Language — moved here from the old bottom-bar dropdown when the
+          settings menu became a modal. Binary toggle: clicking either
+          chip switches to that language. */}
+      <Section title={t('language')} description="">
+        <div className="flex gap-2">
+          <ModeButton
+            active={lang === 'zh'}
+            onClick={() => setLang('zh')}
+            icon={null}
+            label="中文"
+          />
+          <ModeButton
+            active={lang === 'en'}
+            onClick={() => setLang('en')}
+            icon={null}
+            label="English"
+          />
+        </div>
+      </Section>
 
       <Section title={t('cliBackendTitle')} description={t('cliBackendDesc')}>
         <div className="space-y-2">

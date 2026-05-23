@@ -4,6 +4,7 @@ import { isOpenAICompatible } from '../providers/openai-compatible';
 import type {
   ApiProtocol,
   AppConfig,
+  AppTheme,
   MediaProviderCredentials,
   NotificationsConfig,
   OrbitConfig,
@@ -668,6 +669,26 @@ export function mergeDaemonConfig(
   if (daemonConfig.customInstructions !== undefined) {
     next.customInstructions = daemonConfig.customInstructions ?? undefined;
   }
+  // Daemon is the source of truth for shared theme. Map its richer appearance
+  // shape back onto the web app's single theme + accent: adopt themeMode, then
+  // pick the accent from whichever mode is effective now (the desktop shell may
+  // have set light/dark independently — we surface the one the user sees).
+  if (daemonConfig.appearance) {
+    const ap = daemonConfig.appearance;
+    if (ap.themeMode) next.theme = ap.themeMode;
+    const mode = effectiveThemeMode(next.theme);
+    const accent = normalizeAccentColor(
+      mode === 'dark' ? ap.dark?.accent : ap.light?.accent,
+    );
+    if (accent) next.accentColor = accent;
+    // Desktop-only prefs round-trip through the daemon so the embedded
+    // settings overlay reflects whatever the Electron shell last wrote.
+    if (typeof ap.uiFontSize === 'number') next.uiFontSize = ap.uiFontSize;
+    if (typeof ap.codeFontSize === 'number') next.codeFontSize = ap.codeFontSize;
+    if (typeof ap.usePointerCursor === 'boolean') {
+      next.usePointerCursor = ap.usePointerCursor;
+    }
+  }
   return next;
 }
 
@@ -764,6 +785,44 @@ export async function fetchDaemonConfig(): Promise<AppConfigPrefs | null> {
   }
 }
 
+// Resolve which theme mode is *effective* right now. The web app exposes a
+// single accent, but the daemon stores per-mode accents (the desktop shell
+// uses both). When the user is on 'system' we read the OS preference so a
+// write lands on the mode the user is actually looking at.
+function effectiveThemeMode(theme: AppTheme | undefined): 'light' | 'dark' {
+  if (theme === 'light' || theme === 'dark') return theme;
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light';
+  }
+  return 'light';
+}
+
+// Map the web config's single accent + theme onto the daemon's richer
+// appearance shape. We only write the accent into the *currently effective*
+// mode (per the agreed mapping) so the desktop shell's other-mode accent is
+// left untouched; the daemon deep-merges, so this partial is safe.
+function appearanceForDaemon(config: AppConfig): AppConfigPrefs['appearance'] {
+  const mode = effectiveThemeMode(config.theme);
+  const accent = normalizeAccentColor(config.accentColor) ?? undefined;
+  return {
+    themeMode: config.theme ?? 'system',
+    ...(accent ? { [mode]: { accent } } : {}),
+    // Desktop-only prefs — only include when set so a plain browser save
+    // (where these are undefined) doesn't overwrite the desktop's values.
+    ...(typeof config.uiFontSize === 'number'
+      ? { uiFontSize: config.uiFontSize }
+      : {}),
+    ...(typeof config.codeFontSize === 'number'
+      ? { codeFontSize: config.codeFontSize }
+      : {}),
+    ...(typeof config.usePointerCursor === 'boolean'
+      ? { usePointerCursor: config.usePointerCursor }
+      : {}),
+  };
+}
+
 export async function syncConfigToDaemon(
   config: AppConfig,
   options?: { throwOnError?: boolean },
@@ -782,6 +841,7 @@ export async function syncConfigToDaemon(
     telemetry: config.telemetry,
     privacyDecisionAt: config.privacyDecisionAt,
     customInstructions: config.customInstructions ?? null,
+    appearance: appearanceForDaemon(config),
   };
   try {
     const response = await fetch('/api/app-config', {

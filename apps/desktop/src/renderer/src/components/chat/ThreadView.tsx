@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ThreadPrimitive,
@@ -13,20 +6,20 @@ import {
   ComposerPrimitive,
   AttachmentPrimitive,
   useAuiState,
-  useComposerRuntime
+  useComposerRuntime,
+  useMessage
 } from '@assistant-ui/react'
-import type { Attachment, Unstable_TriggerItem } from '@assistant-ui/core'
+import type { Attachment } from '@assistant-ui/core'
 import { AnimatePresence, motion } from 'motion/react'
 
 import type { SessionMeta } from '../../../../shared/types'
 import { useI18n, useT, useToolLabel, type StringKey } from '../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../stores/chat'
-import { buildSlashAdapter, slashFormatter } from '../../composer/slashAdapter'
-import {
-  buildFileMentionAdapter,
-  mentionFormatter
-} from '../../composer/fileMentionAdapter'
+import { buildSlashAdapter } from '../../composer/slashAdapter'
+import { buildFileMentionAdapter } from '../../composer/fileMentionAdapter'
+import { ProseMirrorComposerInput } from '../../composer/ProseMirrorComposerInput'
 import { ThinkingSpinner } from './ThinkingSpinner'
+import { FileTypeIcon } from './FileTypeIcon'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { DictationWaveform } from './DictationWaveform'
 import { extractText, safeStringify } from './toolHelpers'
@@ -107,11 +100,12 @@ export function ThreadView(): React.JSX.Element {
           another flex column. */}
       <ThreadPrimitive.Viewport
         autoScroll
-        // Bottom mask fades the last ~56px of the scrollable viewport
-        // into transparency so messages don't butt up hard against the
-        // composer. The inner column carries matching `pb-20` so the
-        // final message stays fully legible once you scroll all the
-        // way down — only the padding gets eaten by the mask.
+        // Top + bottom mask fades the first ~44px and last ~56px of the
+        // scrollable viewport into transparency. 去掉折叠 header 后，chat
+        // 内容直接顶到顶部 shell tab 条下方——没有这个顶部渐隐，往上滚的消息
+        // 会硬撞到 tab 条下沿。底部同理避免撞到 composer。inner column 的
+        // `pt-8` / `pb-20` 内边距与 mask 区域匹配，所以滚到两端时首/末条消息
+        // 仍完整可读，被吃掉的只是 padding。
         //
         // `scrollbar-gutter: stable` reserves the scrollbar track slot
         // whether or not the content actually overflows. Without it,
@@ -121,7 +115,7 @@ export function ThreadView(): React.JSX.Element {
         // flicker in and out → horizontal reflow → visible jitter.
         // Stable gutter kills that class of bug outright by pre-
         // committing the 15px scrollbar lane.
-        className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%-56px),transparent_100%)]"
+        className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] [mask-image:linear-gradient(to_bottom,transparent_0,black_44px,black_calc(100%-56px),transparent_100%)]"
       >
         {/* Inner column caps reading width and centers messages. The
             `min-h-full` lets the empty-state `flex-1` stretch so the
@@ -151,6 +145,18 @@ export function ThreadView(): React.JSX.Element {
           />
         </div>
       </ThreadPrimitive.Viewport>
+
+      {/* 顶部渐进模糊带。viewport 的 mask 只把顶部文字「渐隐」（变透明），
+          但你要的是和左侧侧栏一致的「毛玻璃模糊」观感。所以在 viewport 顶部
+          再叠一层 backdrop-blur，并用 `mask-image` 把模糊强度从顶部（全模糊）
+          向下渐隐到 0——这样往上滚的消息穿过这条带时被柔化，而不是硬边界。
+          z-10 压在消息之上、但低于 TopProgressBar(z-30) 和 ScrollToBottom
+          按钮(z-20)；pointer-events-none 不挡滚动 / 选区。绝对定位在 Root
+          顶部，宽度满铺，高度 44px 与 mask 的顶部渐隐区对齐。 */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 z-10 h-11 backdrop-blur-sm [mask-image:linear-gradient(to_bottom,black_0,black_35%,transparent_100%)]"
+      />
 
       <ScrollToBottomButton />
 
@@ -540,14 +546,90 @@ function UserMessage(): React.JSX.Element {
           components={{
             // Within the bubble, skip image parts — they're already
             // rendered above. We provide a no-op Image component so
-            // nothing appears here, and let Text render normally via
-            // the default (string passthrough).
-            Image: () => null
+            // nothing appears here, and render Text via UserBubbleText
+            // so `@"path"` file mentions become inline file chips
+            // instead of raw absolute paths.
+            Image: () => null,
+            Text: UserBubbleText
           }}
         />
       </div>
     </MessagePrimitive.Root>
   )
+}
+
+/**
+ * Render the user bubble's text, turning `@"/abs/path"` / `@/abs/path`
+ * file mentions into inline chips (document glyph + file name) instead
+ * of dumping the raw absolute path into the blue bubble.
+ *
+ * Why here and not upstream: the wire format sent to fusion-code MUST
+ * stay `@"path"` (extractAtMentionedFiles parses it), and the chat
+ * store keeps that verbatim text so a reload re-renders identically.
+ * The chip is a pure *display* transform applied at render time — the
+ * stored/sent string is untouched, exactly like the composer's own
+ * mention chips (chipNodeView) are a view layer over the same text.
+ *
+ * Matching mirrors fusion-code's own regexes (and pmSchema's TOKEN_RE):
+ *   - quoted:  @"path with spaces.pdf"
+ *   - bare:    @src/foo.ts   (runs to the next whitespace)
+ * A mention is only recognized at start-of-string or after whitespace,
+ * so `a@b` / `http://x` don't false-trigger.
+ */
+const USER_MENTION_RE = /(^|\s)(@"[^"]+"|@\S+)/g
+
+function basenameOf(path: string): string {
+  const trimmed = path.replace(/\/+$/, '')
+  const slash = trimmed.lastIndexOf('/')
+  const name = slash >= 0 ? trimmed.slice(slash + 1) : trimmed
+  return name || path
+}
+
+function UserBubbleText({ text }: { text: string }): React.JSX.Element {
+  // Split into alternating plain-text / mention segments. We keep the
+  // leading-whitespace capture group so spacing around chips is faithful.
+  const nodes: React.ReactNode[] = []
+  let last = 0
+  let key = 0
+  let m: RegExpExecArray | null
+  USER_MENTION_RE.lastIndex = 0
+  while ((m = USER_MENTION_RE.exec(text)) !== null) {
+    const lead = m[1] ?? ''
+    const token = m[2]!
+    const tokenStart = m.index + lead.length
+    // Plain text before this mention (including the captured leading WS).
+    if (tokenStart > last) {
+      nodes.push(text.slice(last, tokenStart))
+    }
+    // Strip the `@` and any surrounding quotes to get the raw path.
+    const raw = token.slice(1)
+    const path =
+      raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw
+    nodes.push(
+      <span
+        key={`fm-${key++}`}
+        title={path}
+        className="mx-0.5 inline-flex max-w-[220px] items-center gap-1 rounded-md bg-white/20 px-1.5 py-0.5 align-baseline text-[13px] font-medium ring-1 ring-white/25"
+      >
+        {/* Per-type glyph, but NOT coloured — the chip sits on the blue
+            user bubble where the icon inherits the bubble's white text;
+            a type accent colour would read as dirty here. */}
+        <FileTypeIcon
+          pathOrName={path}
+          size={12}
+          className="shrink-0 opacity-90"
+        />
+        <span className="truncate">{basenameOf(path)}</span>
+      </span>
+    )
+    last = tokenStart + token.length
+  }
+  if (last < text.length) {
+    nodes.push(text.slice(last))
+  }
+  // No mentions → render the string as-is (keeps the common path cheap).
+  if (nodes.length === 0) return <>{text}</>
+  return <>{nodes}</>
 }
 
 /**
@@ -802,7 +884,185 @@ function AssistantMessage(): React.JSX.Element {
           Empty: ThinkingSpinner
         }}
       />
+      {/* File cards for any files the assistant wrote this turn. Renders
+          only once the turn completes (see AssistantFileCards). */}
+      <AssistantFileCards />
     </MessagePrimitive.Root>
+  )
+}
+
+/**
+ * Match absolute file paths inside assistant text. The assistant often
+ * writes files via a Bash/python heredoc (no `file_path` tool arg to
+ * scrape), so the only reliable signal is the path it prints in prose,
+ * e.g. "已保存为 `/Users/me/Desktop/方案/报告.docx`". We therefore scrape
+ * the TEXT, not tool args.
+ *
+ * The path:
+ *   - starts at `/` that's at string start or preceded by whitespace,
+ *     a backtick, or a quote (so we catch `…` / "…" wrapped paths and
+ *     bare ones, but not a `//` inside a URL's `http://`).
+ *   - runs over any non-whitespace, non-quote, non-backtick chars —
+ *     this includes CJK, spaces are NOT allowed (a path with spaces in
+ *     prose is usually backtick/quote-wrapped, handled by the boundary).
+ *   - must contain a filename with an extension in the last segment, so
+ *     we don't card a bare directory like `/Users/me/Desktop`.
+ *
+ * Existence is verified server-side (chatApi.statFiles) — this regex
+ * only proposes candidates; main drops anything that isn't a real file.
+ */
+const ABS_PATH_RE = /(?:^|[\s`"'(])(\/[^\s`"'()]*\/[^\s`"'()/]+\.[A-Za-z0-9]+)/g
+
+function scrapeAbsolutePaths(text: string): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  let m: RegExpExecArray | null
+  ABS_PATH_RE.lastIndex = 0
+  while ((m = ABS_PATH_RE.exec(text)) !== null) {
+    let path = m[1]!
+    // Trim trailing sentence punctuation the regex may have swept in
+    // (e.g. "保存为 /a/b.docx。" → drop the 。/,/) etc.).
+    path = path.replace(/[。，、,.;:)）】」"'`]+$/, '')
+    if (!path || seen.has(path)) continue
+    seen.add(path)
+    out.push(path)
+  }
+  return out
+}
+
+/**
+ * Render a card per file the assistant produced this turn, beneath the
+ * message body — appearing only AFTER the turn finishes so cards don't
+ * pop in mid-stream while the model is still writing.
+ *
+ * Pipeline:
+ *   1. Concatenate this message's text parts.
+ *   2. Scrape candidate absolute paths out of the prose (scrapeAbsolutePaths).
+ *   3. Ask main which of those actually exist as files (chatApi.statFiles)
+ *      — the renderer has no fs access, and we don't want to card a path
+ *      the model merely mentioned but never created.
+ *   4. Render a card per surviving file; clicking opens it with the OS
+ *      default app (chatApi.openPath → shell.openPath).
+ */
+function AssistantFileCards(): React.JSX.Element | null {
+  const message = useMessage()
+
+  // Gate on completion. A streaming assistant message has
+  // `status.type === 'running'`; we only verify + render once it's done.
+  const status = (message as { status?: { type?: string } }).status
+  const isRunning = status?.type === 'running'
+
+  // Candidate paths scraped from this message's text parts. Memoized on
+  // the message identity so we don't re-scrape on unrelated rerenders.
+  const candidates = useMemo(() => {
+    const content = (message as { content?: readonly unknown[] }).content
+    if (!Array.isArray(content)) return [] as string[]
+    let text = ''
+    for (const part of content) {
+      const p = part as { type?: string; text?: string }
+      if (p.type === 'text' && typeof p.text === 'string') {
+        text += (text ? '\n' : '') + p.text
+      }
+    }
+    return text ? scrapeAbsolutePaths(text) : []
+  }, [message])
+
+  // Verified subset (exists + is-file), resolved by main. Empty until
+  // the async statFiles round-trip resolves.
+  const [files, setFiles] = useState<readonly string[]>([])
+
+  useEffect(() => {
+    // Only verify after the turn completes and only if we found any
+    // candidates — keeps the IPC chatter to one call per finished turn
+    // that actually mentions a path.
+    if (isRunning || candidates.length === 0) {
+      setFiles([])
+      return
+    }
+    let cancelled = false
+    window.chatApi
+      .statFiles({ paths: candidates })
+      .then((res) => {
+        if (!cancelled) setFiles(res.files)
+      })
+      .catch((err) => {
+        console.error('[AssistantFileCards] statFiles failed', err)
+        if (!cancelled) setFiles([])
+      })
+    return () => {
+      cancelled = true
+    }
+    // candidates is a fresh array each render but its *contents* only
+    // change when the message text changes; join to a stable dep key.
+  }, [isRunning, candidates.join(' ')]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (isRunning || files.length === 0) return null
+
+  return (
+    // Indented to line up under the text column (gutter dot is size-6
+    // + gap-3 ≈ the `ml-9` here), so cards sit flush with the prose.
+    <div className="ml-9 flex flex-col gap-2">
+      {files.map((path) => (
+        <AssistantFileCard key={path} path={path} />
+      ))}
+    </div>
+  )
+}
+
+/**
+ * One file card: document glyph + file name + a type sub-label, the
+ * whole row clickable to open the file. Visual reference is the
+ * attachment-list card style (rounded border, muted icon tile, name +
+ * meta stacked). On click we call chatApi.openPath; a non-empty error
+ * is surfaced inline so a missing/unhandled file isn't a silent no-op.
+ */
+function AssistantFileCard({ path }: { path: string }): React.JSX.Element {
+  const [error, setError] = useState<string | null>(null)
+  const [opening, setOpening] = useState(false)
+
+  const name = basenameOf(path)
+  // Reuse the composer's extension→language map only for a friendly
+  // upper-case type tag; fall back to the bare extension.
+  const ext = name.includes('.') ? name.split('.').pop()!.toUpperCase() : ''
+  const lang = languageFromPath(path)
+  const typeLabel = lang ? `${lang} · ${ext}` : ext || 'FILE'
+
+  const handleOpen = useCallback(async () => {
+    if (opening) return
+    setOpening(true)
+    setError(null)
+    try {
+      const res = await window.chatApi.openPath({ absPath: path })
+      if (res.error) setError(res.error)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setOpening(false)
+    }
+  }, [opening, path])
+
+  return (
+    <button
+      type="button"
+      onClick={handleOpen}
+      title={path}
+      className="group/fc flex w-full max-w-md items-center gap-3 rounded-xl border border-border bg-card/60 p-2.5 text-left transition-colors hover:border-accent/40 hover:bg-accent/[0.04] disabled:opacity-60"
+      disabled={opening}
+    >
+      {/* Icon tile — coloured per file type (sits on a neutral surface). */}
+      <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+        <FileTypeIcon pathOrName={path} size={22} />
+      </div>
+      {/* Name + meta */}
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13px] font-medium text-foreground">
+          {name}
+        </div>
+        <div className="truncate text-[11px] text-muted-foreground/70">
+          {error ? error : typeLabel}
+        </div>
+      </div>
+    </button>
   )
 }
 
@@ -1097,11 +1357,18 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   const pendingPermission = usePermissionForToolUseId(toolCallId)
   // AskUserQuestion is a special beast — its "args" are the questions
   // themselves and the InlinePermissionPrompt renders the dedicated
-  // view that lets the user pick answers. Showing the raw JSON Input
-  // pane above that view is redundant and makes the card look noisy,
-  // so we hide the Input pane while AskUserQuestion is pending.
-  const hideInputPane =
+  // interactive view that lets the user pick answers. While that prompt
+  // is pending, ANY static preview of the same questions above it is
+  // pure duplication (the user sees the question list twice — once as a
+  // read-only card, once as the live picker). So when AskUserQuestion is
+  // pending we suppress not just the raw JSON Input pane but ALSO the
+  // friendly headline + friendly input pane (the AskUserQuestion
+  // formatter's question preview). After the user answers,
+  // pendingPermission clears and the friendly summary comes back so the
+  // resolved turn still shows what was asked.
+  const askPending =
     pendingPermission !== null && toolName === 'AskUserQuestion'
+  const hideInputPane = askPending
 
   // Input-pane display logic — see the original prop-shape comment.
   const hasArgsText = typeof argsText === 'string' && argsText.length > 0
@@ -1165,8 +1432,11 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   // The "raw data" fallback toggle is only meaningful when we actually
   // replaced at least one of the default panes with a friendly one.
   // Otherwise the default panes are already on screen and there's
-  // nothing to "reveal".
-  const showRawDataToggle = useFriendlyInput || useFriendlyOutput
+  // nothing to "reveal". Suppressed while AskUserQuestion is pending so
+  // the user can't expand a duplicate JSON copy of the questions the
+  // interactive prompt is already showing.
+  const showRawDataToggle =
+    !askPending && (useFriendlyInput || useFriendlyOutput)
 
   return (
     <div className="flex w-full gap-3">
@@ -1204,13 +1474,17 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
           </summary>
 
           <div className="mt-2 space-y-2 text-[12px]">
-            {friendly?.headline && (
+            {/* While AskUserQuestion is pending, hide the static question
+                preview (headline + friendly input) — the interactive
+                InlinePermissionPrompt below already shows the questions,
+                so rendering both duplicates the whole list. */}
+            {!askPending && friendly?.headline && (
               <div className="text-[12.5px] leading-relaxed text-foreground/85">
                 {friendly.headline}
               </div>
             )}
 
-            {useFriendlyInput && friendly?.input && (
+            {!askPending && useFriendlyInput && friendly?.input && (
               <ToolPane
                 label={friendly.input.label}
                 copyText={friendly.input.copyText}
@@ -1759,27 +2033,9 @@ function Composer(): React.JSX.Element {
   const isDictating = useAuiState(
     (s) => (s as { composer?: { dictation?: unknown } }).composer?.dictation != null
   )
-  // Caret tracking for the fake overlay cursor. The native textarea
-  // caret is hidden via `caret-color: transparent` in the className
-  // below, because once we let chips have real visual width the
-  // native caret drifts off the apparent character positions. We
-  // track `selectionStart` + focus state here and let the overlay
-  // render its own blinking caret at the correct visual slot.
-  const [caretPos, setCaretPos] = useState(0)
-  const [isFocused, setIsFocused] = useState(false)
-  // Composer text length — drives the "native caret vs overlay
-  // caret" switch. When the textarea is empty, the overlay has no
-  // tokens to align against and its fallback caret drifts from the
-  // placeholder's real x position (box-model + padding differences
-  // between the overlay div and the textarea). Letting the native
-  // browser caret show in that case eliminates the misalignment
-  // without any measurement — the browser draws it at the exact
-  // pixel where the first placeholder character would sit. Once
-  // the user types anything, we flip back to the overlay caret so
-  // chip alignment continues to work.
-  const composerIsEmpty = useAuiState(
-    (s) => !((s as { composer?: { text?: string } }).composer?.text)
-  )
+  // Composer runtime — used to submit via the same path Send uses
+  // (the ProseMirror input's onSubmit calls composerRuntime.send()).
+  const composerRuntime = useComposerRuntime()
 
   // Pull session meta on mount and whenever a turn ends. The first
   // pull (mount) returns empty arrays because fusion-code hasn't
@@ -1865,128 +2121,42 @@ function Composer(): React.JSX.Element {
   )
   const fileAdapter = useMemo(() => buildFileMentionAdapter(files), [files])
 
-  // Shared snapshots of each TriggerPopoverRoot's latest React-rendered
-  // context. We use these from a custom onKeyDown on ComposerPrimitive.Input
-  // to work around a subtle stale-closure bug in assistant-ui's
-  // `tapEffectEvent`: its handler is registered into the ComposerInput
-  // plugin registry but captures the *previous-frame* `highlightedIndex`,
-  // so pressing Enter right after an ArrowDown inserts the wrong slash /
-  // mention item (click works fine because click passes the item object
-  // directly). By handling Enter ourselves with live React state and
-  // calling `e.preventDefault()`, we skip the library's buggy handler.
-  const slashCtxRef = useRef<TriggerCtxSnapshot | null>(null)
-  const mentionCtxRef = useRef<TriggerCtxSnapshot | null>(null)
-  // Keep a handle to the actual textarea so we can reposition the DOM
-  // cursor after a popover selection (see `advanceCursorToEnd`).
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  // ── Attachment "+" button: any file, images OR path-only files ──────
+  // The native ComposerPrimitive.AddAttachment hard-wires the adapter's
+  // accept ('image/*' on the old image-only adapter) and only opens a
+  // file picker filtered to that. We replace it with our own hidden
+  // <input> (no accept filter) so the user can pick ANY file, and route
+  // every pick through the same runtime.addAttachment the unified
+  // fileAttachmentAdapter consumes (see fileAttachmentAdapter.ts):
+  //
+  //   - image/*  → resized + base64-encoded → inline thumbnail chip →
+  //     sent to the model as a vision block.
+  //   - any other file → resolved to its on-disk absolute path → shown
+  //     above the input as a chip carrying the FILE NAME (not a
+  //     thumbnail) → on send, the path (not the bytes) is appended to
+  //     the prompt as an `@"path"` mention so fusion-code's
+  //     extractAtMentionedFiles reads the file itself.
+  //
+  // Both kinds therefore appear in the SAME attachments row above the
+  // composer, exactly like pasted/dropped images already do.
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  /**
-   * After `selectItem` inserts a directive, assistant-ui rewrites the
-   * composer text but does *not* advance its internal `cursorPosition`
-   * state. Because `detectTrigger` re-runs on every state change, the
-   * leftover cursor (still mid-`/sim`) sees the freshly-inserted `/skill`
-   * and happily reports a new trigger — so the popover stays open and
-   * even re-filters against "ski". The visible symptom is: "I clicked
-   * /skill, the text now says /skill, but the popover is still there".
-   *
-   * Fix: move the actual textarea caret to end-of-text and fire a native
-   * `select` event so the library's `onSelect` hook picks up the new
-   * position, updates `cursorPosition`, and `trigger` drops to null —
-   * closing the popover cleanly. Works for both keyboard (Enter) and
-   * mouse (click) selection paths.
-   */
-  const advanceCursorToEnd = (): void => {
-    const el = textareaRef.current
-    if (!el) return
-    const end = el.value.length
-    // Re-focus first — click selection lands focus on the popover
-    // button, so without this the user would have to click back into
-    // the textarea before they could keep typing arguments.
-    el.focus({ preventScroll: true })
-    el.setSelectionRange(end, end)
-    el.dispatchEvent(new Event('select', { bubbles: true }))
-  }
-
-  const handleComposerKey = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
-    // --- 1. Enter-to-select (popover insertion) -----------------------
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      // Prefer whichever popover is currently open. Only one can be
-      // open at a time because `/` and `@` detect mutually exclusive
-      // triggers.
-      const snap = slashCtxRef.current?.open
-        ? slashCtxRef.current
-        : mentionCtxRef.current?.open
-          ? mentionCtxRef.current
-          : null
-      if (!snap) return
-      const item = snap.items[snap.highlightedIndex]
-      if (!item) return
-      e.preventDefault()
-      snap.selectItem(item)
-      requestAnimationFrame(advanceCursorToEnd)
-      return
-    }
-
-    // --- 2. Atomic token deletion (Backspace / Delete) ---------------
-    //
-    // Even though the underlying input is a plain textarea, we make
-    // slash commands and @mentions *feel* atomic: one Backspace at the
-    // end of `/skill-creator` deletes the whole token (not just the
-    // last `r`). Symmetrically, Delete at the start of a token wipes
-    // the whole token forward. The visible chip in the overlay then
-    // vanishes in one step, matching the user's mental model of a
-    // single "tag" pill.
-    //
-    // We skip this path when there's a live text selection (let the
-    // browser handle range delete normally) or when any modifier is
-    // held (Option-Backspace deletes a word, Cmd-Backspace deletes
-    // the line — both are fine as-is).
-    const isAtomicDeleteKey = e.key === 'Backspace' || e.key === 'Delete'
-    if (
-      isAtomicDeleteKey &&
-      !e.shiftKey &&
-      !e.altKey &&
-      !e.ctrlKey &&
-      !e.metaKey
-    ) {
-      const el = e.currentTarget
-      if (el.selectionStart !== el.selectionEnd) return
-      const cursor = el.selectionStart ?? 0
-      const text = el.value
-      const hit =
-        e.key === 'Backspace'
-          ? findAtomicTokenEndingAt(text, cursor)
-          : findAtomicTokenStartingAt(text, cursor)
-      if (!hit) return
-      e.preventDefault()
-      const newText = text.slice(0, hit.start) + text.slice(hit.end)
-      // Use the native value setter + synthetic input event so React's
-      // controlled textarea picks up the change and flows it into
-      // `aui.composer().setText(...)` via its onChange plugin — exactly
-      // as if the user had typed the edit themselves. Assigning
-      // `el.value = ...` directly would be overwritten on the next
-      // React render.
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype,
-        'value'
-      )?.set
-      setter?.call(el, newText)
-      el.dispatchEvent(new Event('input', { bubbles: true }))
-      // Place the caret where the token used to start and let the
-      // library's onSelect hook sync its internal cursorPosition.
-      el.setSelectionRange(hit.start, hit.start)
-      el.dispatchEvent(new Event('select', { bubbles: true }))
-      return
-    }
-  }
-
-  // Click-path wrapper: the library's own click handler already calls
-  // `selectItem` synchronously, so all we need is to close the popover
-  // after the text-replacement commits. Passed down to TriggerPopoverList
-  // as the onItemClick hook.
-  const handleTriggerItemClick = (): void => {
-    requestAnimationFrame(advanceCursorToEnd)
-  }
+  const handleFilesPicked = useCallback(
+    async (fileList: FileList | null): Promise<void> => {
+      if (!fileList || fileList.length === 0) return
+      const picked = Array.from(fileList)
+      await Promise.all(
+        picked.map((file) =>
+          composerRuntime.addAttachment(file).catch((err) => {
+            console.error('[Composer] addAttachment failed', err)
+          })
+        )
+      )
+      // Reset the input so re-picking the same file fires `change` again.
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    },
+    [composerRuntime]
+  )
 
   return (
     <div className="mx-auto w-full max-w-3xl">
@@ -2002,263 +2172,126 @@ function Composer(): React.JSX.Element {
           </div>
         </div>
       </div>
-      {/* Outer root: `/` slash commands. Its popover JSX lives
-          *between* the two roots so `useTriggerPopoverContext()`
-          inside SlashPopoverList resolves to this root. */}
-      <ComposerPrimitive.Unstable_TriggerPopoverRoot
-        trigger="/"
-        adapter={slashAdapter}
-        onSelect={{ type: 'insertDirective', formatter: slashFormatter }}
-      >
-        {/* Mirror the slash root's latest React context into our ref
-            so handleTriggerEnter can read a fresh snapshot — see the
-            stale-closure note near the ref declaration above. */}
-        <TriggerCtxSync targetRef={slashCtxRef} />
-        <div className="relative">
-          {/* Slash popover — reads the outer root's context because
-              it sits outside the inner `@` root in the tree. */}
-          <ComposerPrimitive.Unstable_TriggerPopoverPopover className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-2xl bg-popover/95 py-1.5 ring-1 ring-black/[0.08] backdrop-blur-2xl backdrop-saturate-150 shadow-[0_16px_48px_-12px_rgba(0,0,0,0.22),0_4px_12px_-4px_rgba(0,0,0,0.1)] dark:ring-white/[0.08] dark:shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
-            <ComposerPrimitive.Unstable_TriggerPopoverItems>
-              {(items) => (
-                <TriggerPopoverList
-                  items={items}
-                  emptyText={t('composerNoMatchingCommands')}
-                  onItemClick={handleTriggerItemClick}
-                />
+      {/* Composer card. The slash/mention popovers are no longer
+          assistant-ui TriggerPopoverRoots — they're driven by the
+          ProseMirror suggestion plugin inside ProseMirrorComposerInput
+          (which renders its own popover anchored to the caret). Only
+          the assistant-ui pieces that read the composer *store*
+          (AttachmentDropzone / Attachments / AddAttachment / Send /
+          Cancel / Dictation) remain, untouched. */}
+      <div className="relative">
+        {/* AttachmentDropzone is the outer "card" — owns the border +
+            background + rounded corners so drag-over highlights the
+            whole composer. */}
+        <ComposerPrimitive.AttachmentDropzone className="rounded-2xl bg-popover/90 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--accent)/0.35)] shadow-[0_4px_16px_-6px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--accent)/0.5)] data-[dragging=true]:bg-accent/[0.08] dark:ring-white/[0.08]">
+          <div className="flex flex-wrap gap-2 px-3 pt-3 empty:hidden">
+            <ComposerPrimitive.Attachments>
+              {({ attachment }) => (
+                <ComposerAttachmentChip attachment={attachment} />
               )}
-            </ComposerPrimitive.Unstable_TriggerPopoverItems>
-          </ComposerPrimitive.Unstable_TriggerPopoverPopover>
+            </ComposerPrimitive.Attachments>
+          </div>
 
-          {/* Inner root: `@` file mentions. Nesting is intentional —
-              both roots wrap the same ComposerPrimitive.Input below,
-              and the multi-trigger support is documented on
-              Unstable_TriggerPopoverRoot ("Multiple trigger roots
-              can coexist around the same input."). */}
-          <ComposerPrimitive.Unstable_TriggerPopoverRoot
-            trigger="@"
-            adapter={fileAdapter}
-            onSelect={{ type: 'insertDirective', formatter: mentionFormatter }}
-          >
-            {/* Mirror the mention root's latest React context into its
-                ref — twin of the slash <TriggerCtxSync> above. */}
-            <TriggerCtxSync targetRef={mentionCtxRef} />
-            {/* File popover — nested inside the inner root, so
-                useTriggerPopoverContext() resolves to the `@` root.
-                Absolute-positioned inside the same `relative` div
-                as the slash popover, but only one can be open at
-                a time so they never overlap visually. */}
-            <ComposerPrimitive.Unstable_TriggerPopoverPopover className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-72 overflow-y-auto rounded-2xl bg-popover/95 py-1.5 ring-1 ring-black/[0.08] backdrop-blur-2xl backdrop-saturate-150 shadow-[0_16px_48px_-12px_rgba(0,0,0,0.22),0_4px_12px_-4px_rgba(0,0,0,0.1)] dark:ring-white/[0.08] dark:shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
-              <ComposerPrimitive.Unstable_TriggerPopoverItems>
-                {(items) => (
-                  <TriggerPopoverList
-                    items={items}
-                    emptyText={
-                      files.length === 0
-                        ? t('composerLoadingFiles')
-                        : t('composerNoMatchingFiles')
-                    }
-                    onItemClick={handleTriggerItemClick}
+          <ComposerPrimitive.Root className="flex w-full items-end gap-2 px-3 py-2">
+            {/* Attachment "+" button. We do NOT use
+                ComposerPrimitive.AddAttachment here — it hard-wires the
+                adapter's accept ('image/*') and only ever calls
+                runtime.addAttachment. Our own hidden input accepts any
+                file and routes images vs. other files differently (see
+                handleFilesPicked above). The hidden input is `multiple`
+                so a single pick can mix screenshots + a PDF, etc. */}
+            <button
+              type="button"
+              className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground/80 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+              aria-label={t('composerAttachFile')}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              </svg>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              aria-hidden="true"
+              tabIndex={-1}
+              onChange={(e) => {
+                void handleFilesPicked(e.target.files)
+              }}
+            />
+            {isDictating ? (
+              <DictationActiveControls
+                cancelLabel={t('composerCancelDictation')}
+                confirmLabel={t('composerConfirmDictation')}
+              />
+            ) : (
+              <>
+                {/* ProseMirror-backed input. slash/mention tokens are
+                    real atom-node pills (see chipNodeView); the caret
+                    is drawn by the browser at real node boundaries, so
+                    no overlay / fake caret / token-snapping is needed.
+                    Submitting goes through onSubmit → composer.send(),
+                    which is the same path Send uses.
+                    Route A: this component bridges the PM doc to the
+                    assistant-ui store —
+                    PROSEMIRROR-MIGRATION: composer.text writeback via setText
+                    (the actual setText call lives in ProseMirrorComposerInput). */}
+                <div className="min-h-[24px] max-h-40 flex-1 overflow-y-auto px-1 py-1.5 text-[14px] leading-relaxed">
+                  <ProseMirrorComposerInput
+                    placeholder={t('composerPlaceholder')}
+                    slashAdapter={slashAdapter}
+                    mentionAdapter={fileAdapter}
+                    onSubmit={() => composerRuntime.send()}
                   />
-                )}
-              </ComposerPrimitive.Unstable_TriggerPopoverItems>
-            </ComposerPrimitive.Unstable_TriggerPopoverPopover>
-
-            {/* AttachmentDropzone is the outer "card" — it owns the
-                border + background + rounded corners so drag-over can
-                highlight the whole composer in one shot (not just the
-                form). The primitive sets `data-dragging="true"` on
-                its root div while files are being dragged over, which
-                we style with Tailwind's `data-[dragging=true]:` modifier.
-                Pasting images is handled by ComposerPrimitive.Input's
-                built-in `addAttachmentOnPaste` (default true) and does
-                NOT need the dropzone — the two mechanisms coexist. */}
-            {/* Apple-style composer card. Translucent vibrancy
-                material instead of a solid border, hairline ring
-                for the edge, and a multi-layer soft drop shadow so
-                it reads as "floating above the page" like the
-                iMessage compose field. Focus state bumps the ring
-                to Apple Blue at low alpha — calm feedback, no
-                outline flash. Drag-over (file drop) gets a thicker
-                accent ring + tinted fill. */}
-            <ComposerPrimitive.AttachmentDropzone className="rounded-2xl bg-popover/90 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--accent)/0.35)] shadow-[0_4px_16px_-6px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--accent)/0.5)] data-[dragging=true]:bg-accent/[0.08] dark:ring-white/[0.08]">
-              {/* Attachment chip row. assistant-ui's Attachments
-                  primitive is fragment-shaped — it just fans out one
-                  render-prop call per attachment without a container,
-                  so we wrap it in a flex row here. `empty:hidden`
-                  collapses the padding when no attachments exist:
-                  React renders zero DOM nodes for an empty Attachments
-                  list, which matches the :empty CSS pseudo-class (JSX
-                  whitespace doesn't produce text nodes). */}
-              <div className="flex flex-wrap gap-2 px-3 pt-3 empty:hidden">
-                <ComposerPrimitive.Attachments>
-                  {({ attachment }) => (
-                    <ComposerAttachmentChip attachment={attachment} />
-                  )}
-                </ComposerPrimitive.Attachments>
-              </div>
-
-              <ComposerPrimitive.Root className="flex w-full items-end gap-2 px-3 py-2">
-                {/* "+" button: opens the OS file picker filtered by
-                    the adapter's `accept: "image/*"`. Sits flush with
-                    the Input on the left; styled to match Send/Cancel
-                    so the row reads as four evenly-sized circles. */}
-                <ComposerPrimitive.AddAttachment
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground/80 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
-                  aria-label={t('composerAttachImage')}
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
+                </div>
+                <MicButton label={t('composerDictate')} />
+                {/* Mutually exclusive Send / Stop slot. */}
+                <ThreadPrimitive.If running={false}>
+                  <ComposerPrimitive.Send
+                    aria-label="Send message"
+                    className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-white shadow-[0_1px_2px_rgba(0,0,0,0.08),0_2px_8px_-2px_hsl(var(--accent)/0.3)] ring-1 ring-black/[0.06] transition-all hover:brightness-[1.08] active:brightness-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.06] disabled:text-muted-foreground/50 disabled:shadow-none disabled:ring-0"
                   >
-                    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                  </svg>
-                </ComposerPrimitive.AddAttachment>
-                {isDictating ? (
-                  /* ── Dictation mode row ────────────────────────────
-                     Waveform replaces the textarea, X cancels and
-                     reverts to the pre-dictation text, ✓ confirms
-                     and inserts the committed transcript into the
-                     textarea (which rematerializes when this branch
-                     unmounts). */
-                  <DictationActiveControls
-                    cancelLabel={t('composerCancelDictation')}
-                    confirmLabel={t('composerConfirmDictation')}
-                  />
-                ) : (
-                  <>
-                    {/* Highlight overlay wrapper. The overlay div
-                        renders the same text content but with slash
-                        / mention tokens wrapped in styled spans,
-                        while the textarea on top has transparent
-                        text (caret still visible via
-                        `caret-foreground`) so the overlay's
-                        highlights read as "inline chips" to the
-                        user. Both elements share identical
-                        typography and padding so characters line up
-                        pixel-perfect. The overlay uses `box-shadow`
-                        for chip borders instead of `padding` to
-                        avoid shifting text positions. */}
-                    <div className="relative min-h-[24px] max-h-40 flex-1 overflow-hidden">
-                      <ComposerHighlightOverlay
-                        caretPos={caretPos}
-                        isFocused={isFocused && !composerIsEmpty}
-                      />
-                      <ComposerPrimitive.Input
-                        ref={textareaRef}
-                        placeholder={t('composerPlaceholder')}
-                        rows={1}
-                        onKeyDown={handleComposerKey}
-                        onFocus={(e) => {
-                          setIsFocused(true)
-                          // Sync caret state on focus so re-entering
-                          // the composer shows the caret at the
-                          // actual DOM selection, not a stale zero
-                          // position.
-                          setCaretPos(e.currentTarget.selectionStart ?? 0)
-                        }}
-                        onBlur={() => setIsFocused(false)}
-                        onSelect={(e) => {
-                          const el = e.currentTarget
-                          let start = el.selectionStart ?? 0
-                          const end = el.selectionEnd ?? start
-                          // Collapse-to-boundary: when the user's
-                          // cursor lands strictly *inside* a slash /
-                          // mention token (click, arrow, or
-                          // programmatic), snap it to the closer
-                          // chip edge so chips feel atomic. Only
-                          // applies to collapsed selections — a
-                          // drag-select over a chip stays as-is.
-                          if (start === end) {
-                            const hit = findAtomicTokenContaining(el.value, start)
-                            if (hit) {
-                              const snap =
-                                start - hit.start < hit.end - start
-                                  ? hit.start
-                                  : hit.end
-                              if (snap !== start) {
-                                start = snap
-                                el.setSelectionRange(snap, snap)
-                              }
-                            }
-                          }
-                          setCaretPos(start)
-                        }}
-                        className="relative z-[1] block min-h-[24px] max-h-40 w-full resize-none bg-transparent px-1 py-1.5 text-[14px] leading-relaxed text-transparent placeholder:text-muted-foreground/60 focus:outline-none"
-                        style={{
-                          // Show the native browser caret when the
-                          // input is empty so it visually aligns
-                          // with the placeholder's first character
-                          // (the overlay's fake caret drifts in
-                          // the empty-state fallback branch since
-                          // there are no tokens to measure). Flip
-                          // to transparent once the user types so
-                          // the overlay caret can take over and
-                          // stay glued to rendered chip edges.
-                          caretColor: composerIsEmpty
-                            ? 'hsl(var(--foreground))'
-                            : 'transparent'
-                        }}
-                      />
-                    </div>
-                    <MicButton label={t('composerDictate')} />
-                    {/* Mutually exclusive Send / Stop slot — matches
-                        the ChatGPT / Claude.ai pattern. While idle we
-                        show `Send` (disabled when the textarea is
-                        empty via primitive's own logic). Once a turn
-                        is in flight, `ThreadPrimitive.If running`
-                        swaps in `Cancel` so the user can interrupt
-                        without having a stale stop button sitting
-                        around between turns. */}
-                    <ThreadPrimitive.If running={false}>
-                      <ComposerPrimitive.Send
-                        aria-label="Send message"
-                        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-white shadow-[0_1px_2px_rgba(0,0,0,0.08),0_2px_8px_-2px_hsl(var(--accent)/0.3)] ring-1 ring-black/[0.06] transition-all hover:brightness-[1.08] active:brightness-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.06] disabled:text-muted-foreground/50 disabled:shadow-none disabled:ring-0"
-                      >
-                        {/* Lucide-style arrow-up stroke icon, matching
-                            the ScrollToBottomButton (arrow-down) and
-                            MicButton convention: 24x24 viewBox,
-                            stroke="currentColor", fill="none", rounded
-                            caps/joins. Unified stroke width 2.2 so it
-                            sits at the same visual weight as the other
-                            composer/thread icons. */}
-                        <svg
-                          width="16"
-                          height="16"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          aria-hidden="true"
-                        >
-                          <path d="M12 19V5" />
-                          <path d="m6 11 6-6 6 6" />
-                        </svg>
-                      </ComposerPrimitive.Send>
-                    </ThreadPrimitive.If>
-                    <ThreadPrimitive.If running>
-                      <ComposerPrimitive.Cancel
-                        aria-label="Stop generating"
-                        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.15)] ring-1 ring-black/[0.06] transition-all hover:brightness-[1.1] active:brightness-95"
-                      >
-                        <span className="block size-2.5 rounded-[2px] bg-card" />
-                      </ComposerPrimitive.Cancel>
-                    </ThreadPrimitive.If>
-                  </>
-                )}
-              </ComposerPrimitive.Root>
-            </ComposerPrimitive.AttachmentDropzone>
-          </ComposerPrimitive.Unstable_TriggerPopoverRoot>
-        </div>
-      </ComposerPrimitive.Unstable_TriggerPopoverRoot>
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M12 19V5" />
+                      <path d="m6 11 6-6 6 6" />
+                    </svg>
+                  </ComposerPrimitive.Send>
+                </ThreadPrimitive.If>
+                <ThreadPrimitive.If running>
+                  <ComposerPrimitive.Cancel
+                    aria-label="Stop generating"
+                    className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.15)] ring-1 ring-black/[0.06] transition-all hover:brightness-[1.1] active:brightness-95"
+                  >
+                    <span className="block size-2.5 rounded-[2px] bg-card" />
+                  </ComposerPrimitive.Cancel>
+                </ThreadPrimitive.If>
+              </>
+            )}
+          </ComposerPrimitive.Root>
+        </ComposerPrimitive.AttachmentDropzone>
+      </div>
     </div>
   )
 }
@@ -2492,492 +2525,6 @@ function DictationActiveControls({
   )
 }
 
-function ComposerHighlightOverlay({
-  caretPos,
-  isFocused
-}: {
-  caretPos: number
-  isFocused: boolean
-}): React.JSX.Element {
-  // `composer` is a dynamically-registered client on AssistantState,
-  // so the mapped type exported from @assistant-ui/store doesn't
-  // surface it statically. Cast through `any` at the selector
-  // boundary — the runtime shape is fixed (composer.text is always
-  // a string or undefined) and re-checking it here would require
-  // pulling in assistant-ui's ClientSchemas.
-  const text = useAuiState((s) => ((s as any).composer?.text as string | undefined) ?? '')
-  const tokens = useMemo(() => tokenizeComposer(text), [text])
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  const caretRef = useRef<HTMLSpanElement | null>(null)
-
-  // Position the fake caret via DOM measurement so the overlay text
-  // can render as continuous, unsplit token spans. Rationale:
-  //
-  //   1. An inline-block 1px caret consumes 1px of horizontal space,
-  //      which shifts every glyph to its right by 1px — the shift
-  //      flips on/off as the cursor crosses each character, producing
-  //      a per-keystroke jitter.
-  //   2. Splitting a text node into two adjacent <span>s on the caret
-  //      offset breaks cross-boundary kerning and causes the browser
-  //      to recompute subpixel positions on the right half. The text
-  //      visibly micro-jitters as the split point moves.
-  //
-  // Both go away if we keep each text token in a single, never-split
-  // span and place the caret as an absolutely-positioned overlay
-  // child whose left/top come from `Range.getBoundingClientRect()`
-  // measured against the actual rendered text. The measurement runs
-  // in `useLayoutEffect` so the caret is in place before paint.
-  useLayoutEffect(() => {
-    const container = containerRef.current
-    const caretEl = caretRef.current
-    if (!container || !caretEl) return
-    if (!isFocused) {
-      // IMPORTANT: `visibility` (not `opacity`) is the kill switch
-      // here because the `caret-blink` keyframe below animates the
-      // `opacity` property on every cycle — per CSS spec, an
-      // animated property's value comes from the keyframes, not from
-      // inline style, while the animation is running. That makes
-      // `caretEl.style.opacity = '0'` a no-op: the blink animation
-      // keeps flipping the caret on and off every 550ms regardless.
-      // `visibility` is NOT in the keyframe, so an inline
-      // `visibility: hidden` actually wins.
-      caretEl.style.visibility = 'hidden'
-      return
-    }
-    caretEl.style.visibility = 'visible'
-
-    const containerRect = container.getBoundingClientRect()
-    let measured: { left: number; top: number; height: number } | null = null
-
-    let offset = 0
-    for (let i = 0; i < tokens.length; i++) {
-      const tok = tokens[i]!
-      const tokStart = offset
-      const tokEnd = offset + tok.value.length
-      const isLast = i === tokens.length - 1
-      const inRange =
-        caretPos >= tokStart && (caretPos < tokEnd || (isLast && caretPos === tokEnd))
-      offset = tokEnd
-      if (!inRange) continue
-
-      const node = container.querySelector(
-        `[data-token-start="${tokStart}"]`
-      ) as HTMLElement | null
-      if (!node) break
-
-      if (tok.kind === 'text') {
-        // Range over the token's text node — collapsed at the local
-        // offset gives a zero-width rect at the caret position. Fall
-        // back to the span rect when the range collapses to (0,0)
-        // (happens for empty tokens or right after a wrap break).
-        const textNode = node.firstChild
-        if (textNode && textNode.nodeType === Node.TEXT_NODE) {
-          const local = caretPos - tokStart
-          const range = document.createRange()
-          range.setStart(textNode, local)
-          range.setEnd(textNode, local)
-          const r = range.getBoundingClientRect()
-          if (r.height > 0 || r.left !== 0 || r.top !== 0) {
-            measured = { left: r.left, top: r.top, height: r.height }
-            break
-          }
-        }
-        const sr = node.getBoundingClientRect()
-        measured = { left: sr.left, top: sr.top, height: sr.height }
-        break
-      }
-
-      // Chip token. The composer's `onSelect` snaps the textarea
-      // selection out of any chip interior, so we only ever measure
-      // chip boundaries (start vs. end). Use the chip element's own
-      // bounding rect — already accounts for its padding + icon.
-      const cr = node.getBoundingClientRect()
-      measured = {
-        left: caretPos === tokStart ? cr.left : cr.right,
-        top: cr.top,
-        height: cr.height
-      }
-      break
-    }
-
-    if (!measured) {
-      // Empty text or out-of-range fallback: pin the caret to the
-      // top-left of the content box (the overlay's padding inset).
-      const cs = window.getComputedStyle(container)
-      const padLeft = parseFloat(cs.paddingLeft) || 0
-      const padTop = parseFloat(cs.paddingTop) || 0
-      const lh = parseFloat(cs.lineHeight) || 22
-      caretEl.style.left = `${padLeft}px`
-      caretEl.style.top = `${padTop}px`
-      caretEl.style.height = `${lh}px`
-      return
-    }
-
-    caretEl.style.left = `${measured.left - containerRect.left}px`
-    caretEl.style.top = `${measured.top - containerRect.top}px`
-    caretEl.style.height = `${measured.height || 22}px`
-  }, [tokens, caretPos, isFocused, text])
-
-  // Render: each token as a single, unsplit element with a
-  // `data-token-start` attribute so the measurement loop above can
-  // find it without re-tokenising the DOM. Chips get wrapped in a
-  // marker span so we don't have to widen the Chip prop type just
-  // for measurement.
-  const rendered: React.ReactNode[] = []
-  let off = 0
-  for (let i = 0; i < tokens.length; i++) {
-    const tok = tokens[i]!
-    const start = off
-    if (tok.kind === 'slash' || tok.kind === 'mention') {
-      rendered.push(
-        <span key={`chip-${i}`} data-token-start={start}>
-          <Chip variant={tok.kind}>{tok.value}</Chip>
-        </span>
-      )
-    } else {
-      rendered.push(
-        <span key={`t-${i}`} data-token-start={start}>
-          {tok.value}
-        </span>
-      )
-    }
-    off += tok.value.length
-  }
-
-  return (
-    <div
-      ref={containerRef}
-      aria-hidden
-      className="pointer-events-none absolute inset-0 z-0 whitespace-pre-wrap break-words px-1 py-1.5 text-[14px] leading-relaxed text-foreground"
-    >
-      {rendered}
-      {/* Absolutely-positioned caret. left/top/height are set in the
-          layout effect above; opacity flips on focus. The element
-          itself never changes position relative to inline flow, so
-          neither it nor neighbouring text shifts as the caret moves. */}
-      <span
-        ref={caretRef}
-        aria-hidden
-        style={{
-          position: 'absolute',
-          left: 0,
-          top: 0,
-          width: '1px',
-          height: '1em',
-          background: 'hsl(var(--foreground))',
-          // `visibility`, not `opacity`, is the kill switch — the
-          // `caret-blink` keyframe animates opacity on every cycle,
-          // so an inline `opacity: 0` is overridden by the animation
-          // and the caret would stay visible (blinking) even when
-          // we try to hide it. Visibility is not in the keyframe,
-          // so the inline value actually sticks. The measurement
-          // effect above flips this to 'visible' when isFocused.
-          visibility: 'hidden',
-          pointerEvents: 'none',
-          animation: 'caret-blink 1.1s step-end infinite'
-        }}
-      />
-    </div>
-  )
-}
-
-/**
- * Real pill chip for a slash command / file mention. Now that the
- * overlay no longer needs to pixel-align with the textarea (we draw
- * our own caret), chips can use real padding + an inline icon and
- * look just like the reference mock.
- *
- * The leading `/` or `@` is stripped before rendering — the icon
- * stands in for it visually while the raw character still lives in
- * the textarea's text (needed for the library's trigger detection
- * and for atomic backspace to work via `iterAtomicTokens`).
- */
-function Chip({
-  variant,
-  children
-}: {
-  variant: 'slash' | 'mention'
-  children: string
-}): React.JSX.Element {
-  // Both palettes read from CSS variables so the chips re-skin with
-  // the theme picker. Slash chips follow the user's accent token;
-  // mention chips use a dedicated `--chip-mention` token (defined in
-  // index.css for both light and dark) so files stay visually
-  // distinct from commands without competing with the accent color.
-  const palette =
-    variant === 'slash'
-      ? {
-          text: 'hsl(var(--accent))',
-          background: 'hsl(var(--accent) / 0.16)',
-          iconStroke: 'hsl(var(--accent))'
-        }
-      : {
-          text: 'hsl(var(--chip-mention))',
-          background: 'hsl(var(--chip-mention) / 0.16)',
-          iconStroke: 'hsl(var(--chip-mention))'
-        }
-  // Strip the leading `/` or `@` — the icon replaces it.
-  const label = children.slice(1)
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '4px',
-        padding: '1px 8px 1px 7px',
-        background: palette.background,
-        color: palette.text,
-        fontWeight: 600,
-        borderRadius: '9999px',
-        verticalAlign: 'baseline',
-        lineHeight: '1.35'
-      }}
-    >
-      <svg
-        width="11"
-        height="11"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke={palette.iconStroke}
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-        style={{ flexShrink: 0 }}
-      >
-        {variant === 'slash' ? (
-          <>
-            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-            <path d="m3.27 6.96 8.73 5.05 8.73-5.05" />
-            <path d="M12 22.08V12" />
-          </>
-        ) : (
-          <>
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <path d="M14 2v6h6" />
-          </>
-        )}
-      </svg>
-      {label}
-    </span>
-  )
-}
-
-type ComposerToken =
-  | { kind: 'text'; value: string }
-  | { kind: 'slash'; value: string }
-  | { kind: 'mention'; value: string }
-
-/**
- * Split composer text into alternating plain / slash / mention runs.
- * A "slash" token is `/` followed by one or more word chars (letters,
- * digits, `_`, `-`), anchored to the start-of-string or whitespace so
- * URLs like `http://example.com` don't light up.
- * A "mention" token is `@` followed by any non-whitespace run, same
- * anchoring rule.
- *
- * This runs on every keystroke (memoized on `text`), so keep it cheap:
- * one regex sweep, no backtracking-heavy patterns.
- */
-function tokenizeComposer(text: string): ComposerToken[] {
-  if (!text) return [{ kind: 'text', value: '' }]
-  const tokens: ComposerToken[] = []
-  const re = /(^|\s)(\/[A-Za-z0-9_-]+|@\S+)/g
-  let lastIdx = 0
-  let m: RegExpExecArray | null
-  while ((m = re.exec(text)) !== null) {
-    const tokenStart = m.index + m[1].length
-    if (tokenStart > lastIdx) {
-      tokens.push({ kind: 'text', value: text.slice(lastIdx, tokenStart) })
-    }
-    const value = m[2]
-    tokens.push({
-      kind: value.startsWith('/') ? 'slash' : 'mention',
-      value
-    })
-    lastIdx = tokenStart + value.length
-  }
-  if (lastIdx < text.length) {
-    tokens.push({ kind: 'text', value: text.slice(lastIdx) })
-  }
-  return tokens
-}
-
-/**
- * Walks through every tokenized slash/mention run in `text` and yields
- * their absolute `[start, end)` offsets. The tokenizer already knows
- * the exact rules (must be `/` or `@` at start-of-text or after
- * whitespace, etc), so we reuse it instead of re-deriving character
- * classes in two places.
- */
-function* iterAtomicTokens(
-  text: string
-): Generator<{ start: number; end: number; value: string }> {
-  const tokens = tokenizeComposer(text)
-  let offset = 0
-  for (const tok of tokens) {
-    const end = offset + tok.value.length
-    if (tok.kind === 'slash' || tok.kind === 'mention') {
-      yield { start: offset, end, value: tok.value }
-    }
-    offset = end
-  }
-}
-
-function findAtomicTokenEndingAt(
-  text: string,
-  cursor: number
-): { start: number; end: number; value: string } | null {
-  for (const hit of iterAtomicTokens(text)) {
-    if (hit.end === cursor) return hit
-    if (hit.start > cursor) break
-  }
-  return null
-}
-
-function findAtomicTokenStartingAt(
-  text: string,
-  cursor: number
-): { start: number; end: number; value: string } | null {
-  for (const hit of iterAtomicTokens(text)) {
-    if (hit.start === cursor) return hit
-    if (hit.start > cursor) break
-  }
-  return null
-}
-
-function findAtomicTokenContaining(
-  text: string,
-  cursor: number
-): { start: number; end: number; value: string } | null {
-  for (const hit of iterAtomicTokens(text)) {
-    // Strictly inside — cursor === start or cursor === end is NOT
-    // "inside", those are valid caret slots at the chip boundaries.
-    if (cursor > hit.start && cursor < hit.end) return hit
-    if (hit.start > cursor) break
-  }
-  return null
-}
-
-/**
- * Snapshot of a TriggerPopoverRoot's React-rendered state that we care
- * about for manual Enter handling. See the stale-closure comment in
- * Composer for why this exists — tl;dr: assistant-ui's internal
- * `handleKeyDown` captures the wrong `highlightedIndex` in production
- * builds, so we bypass it and call `selectItem` ourselves with data
- * sourced from the live React context.
- */
-type TriggerCtxSnapshot = {
-  open: boolean
-  items: readonly Unstable_TriggerItem[]
-  highlightedIndex: number
-  selectItem: (item: Unstable_TriggerItem) => void
-}
-
-/**
- * Writes a snapshot of the nearest `TriggerPopoverRoot`'s live context
- * into `targetRef` after every commit. Rendered as a zero-DOM sibling
- * inside each root so `useTriggerPopoverContext()` resolves to the
- * intended root (slash vs mention). The write is in `useLayoutEffect`
- * so the ref is already current before any subsequent keyboard event.
- */
-function TriggerCtxSync({
-  targetRef
-}: {
-  targetRef: React.MutableRefObject<TriggerCtxSnapshot | null>
-}): null {
-  const ctx = ComposerPrimitive.unstable_useTriggerPopoverContext()
-  useLayoutEffect(() => {
-    targetRef.current = {
-      open: ctx.open,
-      items: ctx.items,
-      highlightedIndex: ctx.highlightedIndex,
-      selectItem: ctx.selectItem
-    }
-  })
-  return null
-}
-
-/**
- * Shared render-prop for both the `/` and `@` trigger popovers.
- *
- * Two subtle correctness / polish details worth calling out:
- *
- * 1. **No explicit `index` prop.** assistant-ui's
- *    `Unstable_TriggerPopoverItem` accepts an optional `index`, and if
- *    omitted it computes the item's position via
- *    `ctx.items.findIndex(i => i.id === item.id)` at render time. Passing
- *    our own loop index `i` was risky: if the render-prop `items` array
- *    was ever out of sync with `ctx.items` (even for one frame during
- *    filter updates), the visually-highlighted row could drift away
- *    from the row the library's keyboard handler would pick on Enter
- *    — the classic "I pressed Enter on /skill but it inserted /mcp"
- *    symptom. Letting the library derive the index from item.id means
- *    both the visual `data-highlighted` marker and the Enter-to-select
- *    path resolve the same row through the same lookup.
- *
- * 2. **Scroll-to-highlight** uses `ctx.highlightedIndex` + a direct
- *    child lookup on the `<ul>` rather than a `querySelector` for
- *    `[data-highlighted]`. With `motion` animating list entries, the
- *    `data-highlighted` attribute is painted mid-animation and can
- *    briefly land on the wrong element; indexing into `listRef.children`
- *    is immune to that.
- *
- * `emptyText` is parameterized so the slash popover can show
- * "No matching commands" while the file popover can show
- * "No matching files" (or "Loading files…" on cold start).
- */
-function TriggerPopoverList({
-  items,
-  emptyText,
-  onItemClick
-}: {
-  items: readonly Unstable_TriggerItem[]
-  emptyText: string
-  onItemClick?: () => void
-}): React.JSX.Element {
-  const ctx = ComposerPrimitive.unstable_useTriggerPopoverContext()
-  const listRef = useRef<HTMLUListElement>(null)
-
-  useEffect(() => {
-    const li = listRef.current?.children[ctx.highlightedIndex] as
-      | HTMLElement
-      | undefined
-    li?.scrollIntoView({ block: 'nearest' })
-  }, [ctx.highlightedIndex, items])
-
-  if (items.length === 0) {
-    return (
-      <div className="px-4 py-3 text-[12px] text-muted-foreground/80">
-        {emptyText}
-      </div>
-    )
-  }
-
-  return (
-    <ul ref={listRef} className="space-y-[1px] px-1.5">
-      {items.map((item) => (
-        <li key={item.id}>
-          <ComposerPrimitive.Unstable_TriggerPopoverItem
-            item={item}
-            onClick={onItemClick}
-            className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] outline-none transition-colors hover:bg-foreground/[0.05] data-[highlighted]:bg-foreground/[0.08]"
-          >
-            <span className="shrink-0 truncate font-mono text-foreground">
-              {item.label}
-            </span>
-            {item.description && (
-              <span className="truncate text-[11.5px] text-muted-foreground/70">
-                {item.description}
-              </span>
-            )}
-          </ComposerPrimitive.Unstable_TriggerPopoverItem>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
 /* ───────────── Composer attachment chip ────────────────────── */
 
 /**
@@ -3027,11 +2574,17 @@ function ComposerAttachmentChip({
       ? attachment.file
       : null
 
+  const isImage = attachment.type === 'image'
+
   const [previewURL, setPreviewURL] = useState<string | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!file) {
+    // Only images get a thumbnail preview. Reading a non-image file
+    // (which could be hundreds of MB) into a data URL would waste
+    // memory for a preview we never render — the file chip shows the
+    // name + a generic glyph instead.
+    if (!file || !isImage) {
       setPreviewURL(null)
       setPreviewError(null)
       return
@@ -3062,9 +2615,7 @@ function ComposerAttachmentChip({
         // abort can throw DOMException if already done — ignore
       }
     }
-  }, [file])
-
-  const isImage = attachment.type === 'image'
+  }, [file, isImage])
 
   return (
     <AttachmentPrimitive.Root className="group/att relative flex items-center gap-2 rounded-lg border border-border bg-card/60 p-1.5 pr-6">
@@ -3076,10 +2627,17 @@ function ComposerAttachmentChip({
         />
       ) : (
         <div
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-mono text-muted-foreground/80"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground/80"
           title={previewError ?? undefined}
         >
-          {previewError ? '!' : attachment.type?.slice(0, 3) ?? 'file'}
+          {previewError ? (
+            <span className="text-[10px] font-mono">!</span>
+          ) : (
+            // Per-type file glyph for non-image attachments. The file
+            // name is shown to the right; the icon signals the file kind
+            // (PDF / Word / code / …) without previewing unknown bytes.
+            <FileTypeIcon pathOrName={attachment.name} size={22} />
+          )}
         </div>
       )}
       <span className="max-w-[140px] truncate text-[11px] text-foreground/80">

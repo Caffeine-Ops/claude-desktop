@@ -166,9 +166,50 @@ export function resolveSettingsCloseConfig(
   return base.onboardingCompleted ? base : { ...base, onboardingCompleted: true };
 }
 
+/**
+ * CLI backend state mirrored from the desktop `settings` preload bridge.
+ * Structural copy of the Electron-side `CliBackendState` (desktop owns the
+ * canonical type; web can't import across the app boundary). Keep in sync.
+ */
+export interface DesktopCliBackendState {
+  mode: 'bundled' | 'system';
+  bundledPath: string | null;
+  systemInfo: { path: string; version: string | null } | null;
+}
+
+declare global {
+  interface Window {
+    /**
+     * Present only when this web app is loaded inside the desktop shell's
+     * settings overlay (the `settings` preload exposes it — see desktop
+     * apps/desktop/src/preload/settings.ts). Absent in a normal browser, so
+     * always call it optionally: `window.electronSettings?.close?.()`.
+     */
+    electronSettings?: {
+      close: () => void;
+      getCliBackend: () => Promise<DesktopCliBackendState>;
+      setCliBackend: (payload: {
+        mode: 'bundled' | 'system';
+      }) => Promise<DesktopCliBackendState>;
+    };
+  }
+}
+
 export function App() {
   const { t } = useI18n();
   const clientType = useMemo(() => detectClientType(), []);
+  // Settings-overlay mode: the desktop shell loads this same web app with
+  // `?settings=1` inside a full-window WebContentsView, to show the complete
+  // settings UI as a modal over any tab (see desktop tabRegistry
+  // .openSettingsView). In this mode we keep all the normal App init (config
+  // load, daemon sync, agents) so SettingsDialog has real data, but render
+  // ONLY the dialog over a dimming scrim — no workspace/entry chrome.
+  const isSettingsOverlay = useMemo(
+    () =>
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('settings') === '1',
+    [],
+  );
   const [config, setConfig] = useState<AppConfig>(() => loadConfig());
   const configRef = useRef(config);
   configRef.current = config;
@@ -1113,6 +1154,27 @@ export function App() {
     setSettingsOpen(true);
   }, []);
 
+  // In settings-overlay mode, open the dialog as soon as we mount so the
+  // desktop shell's gear click lands straight on the settings UI. Also tag
+  // <html> so the page background goes transparent (the hosting overlay view
+  // is transparent — see index.css `.settings-overlay`).
+  //
+  // Default to the **appearance** section, NOT execution: the desktop-only
+  // controls migrated from Electron's native settings (UI/code font size,
+  // pointer cursor, CLI backend) live inside AppearanceSection, plus the
+  // daemon-backed theme/accent. Landing the gear click straight on Appearance
+  // is what makes those desktop settings discoverable — opening on execution
+  // hid them behind a sidebar click the user never knew to make.
+  useEffect(() => {
+    if (!isSettingsOverlay) return;
+    setSettingsInitialSection('appearance');
+    setSettingsOpen(true);
+    document.documentElement.classList.add('settings-overlay');
+    return () => {
+      document.documentElement.classList.remove('settings-overlay');
+    };
+  }, [isSettingsOverlay]);
+
   const openMcpSettings = useCallback(() => {
     setIntegrationInitialTab('mcp');
     navigate({ kind: 'home', view: 'integrations' });
@@ -1389,6 +1451,54 @@ export function App() {
         onOpenSettings={openSettings}
         onCompleteOnboarding={handleCompleteOnboarding}
       />
+    );
+  }
+  // Settings-overlay mode: render ONLY the settings dialog over a dimming
+  // scrim — no workspace/entry chrome. The hosting WebContentsView is
+  // transparent, so the scrim dims the desktop tab showing through behind
+  // it. SettingsDialog already renders as a centered modal; closing it tells
+  // the desktop shell (via the `settings` preload bridge) to tear the
+  // overlay view down. All the normal App init above still ran, so the
+  // dialog has real config / agents / daemon data.
+  if (isSettingsOverlay) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/40">
+        {settingsOpen ? (
+          <SettingsDialog
+            initial={config}
+            agents={agents}
+            daemonLive={daemonLive}
+            appVersionInfo={appVersionInfo}
+            welcome={false}
+            initialSection={settingsInitialSection}
+            composioConfigLoading={composioConfigLoading}
+            onPersist={handleConfigPersist}
+            onPersistComposioKey={handleConfigPersistComposioKey}
+            onClose={() => {
+              // Persist on close (same as the in-app dialog), then ask the
+              // desktop shell to remove the overlay view. In a plain browser
+              // `electronSettings` is absent and the call no-ops.
+              const next = resolveSettingsCloseConfig(
+                config,
+                latestPersistedConfigRef.current,
+              );
+              if (!next.onboardingCompleted || !config.onboardingCompleted) {
+                latestPersistedConfigRef.current = next;
+                saveConfig(next);
+                void syncConfigToDaemon(next);
+                setConfig(next);
+              }
+              setSettingsOpen(false);
+              window.electronSettings?.close?.();
+            }}
+            onRefreshAgents={refreshAgents}
+            daemonMediaProviders={daemonMediaProviders}
+            daemonMediaProvidersFetchState={daemonMediaProvidersFetchState}
+            mediaProvidersNotice={mediaProvidersNotice}
+            onReloadMediaProviders={reloadMediaProvidersFromDaemon}
+          />
+        ) : null}
+      </div>
     );
   }
   return (

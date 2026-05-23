@@ -19,7 +19,6 @@ import { useT } from '../../i18n'
 import { usePendingPermissionCountsBySession } from '../../stores/permissions'
 import { pushUiLog } from '../../stores/uiLogs'
 import { NotificationBadge } from '../common/NotificationBadge'
-import { UserInfoBar } from './UserInfoBar'
 
 /**
  * Per-row session status flags, computed from:
@@ -204,18 +203,31 @@ export function ThreadListSidebar(): React.JSX.Element {
         >
           <ThreadListPrimitive.Items components={{ ThreadListItem }} />
         </motion.div>
-        {/* Bottom fade — reads from the sidebar token so it matches
-            the solid sidebar surface, not the chat canvas. */}
+        {/* 底部渐隐 + 渐进模糊。两层叠加：
+            ① 模糊层：backdrop-blur 把滚到底部的列表项透过一层毛玻璃柔化。
+               单靠 backdrop-filter 无法做「越往下越模糊」，所以用一个
+               `mask-image` 渐变把模糊强度从底部（不透明 mask = 全模糊）
+               向上渐隐到 0（透明 mask = 不模糊），这样过渡才自然，不会有
+               一条生硬的模糊边界线。
+            ② 着色层：在模糊之上再叠一层 sidebar 底色的纵向渐变，让最底部
+               几乎实色、向上渐透明——既盖住模糊层可能透出的半行文字，也保留
+               原来那种「列表柔和淡出、不直接撞到边缘」的观感。
+            两层都 pointer-events-none，不挡列表的滚动 / 点击。 */}
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[hsl(var(--sidebar))] via-[hsl(var(--sidebar)/0.8)] to-transparent"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-12 backdrop-blur-sm [mask-image:linear-gradient(to_top,black_0,black_30%,transparent_100%)]"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[hsl(var(--sidebar))] via-[hsl(var(--sidebar)/0.7)] to-transparent"
         />
       </div>
 
-      {/* User info row pinned to the bottom — shrink-0 keeps it from
-          being squeezed when the chat list grows. The component owns
-          its own popup menu (logs, ~/.claude, version line). */}
-      <UserInfoBar />
+      {/* The settings menu (UserInfoBar) used to be pinned here at the
+          bottom-left of the sidebar. It moved to the shell's tab strip
+          (ShellApp) so it's reachable from any tab — see UserInfoBar's
+          header comment. Nothing replaces it here; the chat list now
+          runs to the bottom of the rail. */}
 
       {/* No full-rail loading veil — replaced by ThreadView's thin
           top progress bar plus the in-place list dim above. The old

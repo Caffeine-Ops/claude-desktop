@@ -11,8 +11,12 @@ import { is } from '@electron-toolkit/utils'
 import appIcon from '../../resources/icon.png?asset'
 import { ChatEngine, createChatEngine } from './core/engine'
 import { clearUnread } from './tray'
-import { resolveWebTabUrl } from './services/openDesignServices'
-import { IPC_CHANNELS, type TabDescriptor } from '../shared/ipc-channels'
+import { resolveWebTabUrl, resolveWebSettingsUrl } from './services/openDesignServices'
+import {
+  IPC_CHANNELS,
+  type ShellMenuAction,
+  type TabDescriptor
+} from '../shared/ipc-channels'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -119,6 +123,19 @@ interface TabContext {
 let shellWindow: BrowserWindow | null = null
 const tabs = new Map<number, TabContext>()
 const tabOrder: number[] = []
+
+/**
+ * The settings modal's WebContentsView, or null when closed. It's a
+ * per-shell-window singleton that, when open, covers the *entire* window
+ * (y = 0, over the tab strip and every tab) so the modal can render a
+ * dimming backdrop + centered card. The view's background is transparent
+ * (same trick the tab views use) so the tab underneath shows through and
+ * the renderer's semi-opaque scrim reads as "the window went dark".
+ *
+ * Reachable from any tab — chat or web — because it sits in the shell's
+ * own contentView tree, not inside a tab. See openSettingsView below.
+ */
+let settingsView: WebContentsView | null = null
 let activeTabId: number | null = null
 
 /** True while another workspace tab can still be opened. */
@@ -173,13 +190,18 @@ export function createShellWindow(): BrowserWindow {
   // size. `resize` fires for user drags; `enter-full-screen` /
   // `leave-full-screen` on macOS change the content height even
   // without a width change, so we layout on those too.
-  win.on('resize', () => layoutActiveTab())
+  win.on('resize', () => {
+    layoutActiveTab()
+    layoutSettingsView()
+  })
   win.on('enter-full-screen', () => {
     layoutActiveTab()
+    layoutSettingsView()
     broadcastFullscreen(true)
   })
   win.on('leave-full-screen', () => {
     layoutActiveTab()
+    layoutSettingsView()
     broadcastFullscreen(false)
   })
 
@@ -192,6 +214,9 @@ export function createShellWindow(): BrowserWindow {
     tabs.clear()
     tabOrder.length = 0
     activeTabId = null
+    // The settings overlay (if open) is torn down with the window; just
+    // drop our reference so a later close/relayout doesn't touch a dead view.
+    settingsView = null
     shellWindow = null
     for (const ctx of all) {
       // web tab 没有 engine —— 跳过。
@@ -471,6 +496,18 @@ export function activateTab(id: number): void {
 
   activeTabId = id
   layoutActiveTab()
+
+  // If the settings modal is open, switching tabs just re-added a tab view
+  // on top of it — re-raise the overlay so it stays the topmost child.
+  if (settingsView && !settingsView.webContents.isDestroyed()) {
+    try {
+      shellWindow.contentView.addChildView(settingsView)
+      layoutSettingsView()
+    } catch (err) {
+      console.warn('[tabRegistry] re-raise settings on activate failed:', err)
+    }
+  }
+
   broadcastTabList()
 }
 
@@ -561,6 +598,23 @@ export function describeSenderMismatch(
 /** Returns the BrowserWindow that sent this IPC (always the shell). */
 export function getShellWindow(): BrowserWindow | null {
   return shellWindow
+}
+
+/**
+ * Forward a settings-menu action from the shell's tab strip to the active
+ * chat tab's renderer. The shell can't reach the chat renderer's stores
+ * (separate webContents), so it routes through main: we look up the active
+ * tab and, if it's a chat tab, send SHELL_MENU_ACTION to its webContents.
+ *
+ * No-op when the active tab is a web tab (it owns no settings/logs/i18n
+ * state) or when there's no active tab — the menu item simply does nothing
+ * in that edge case rather than throwing back at the shell.
+ */
+export function dispatchMenuActionToActiveTab(action: ShellMenuAction): void {
+  if (activeTabId === null) return
+  const ctx = tabs.get(activeTabId)
+  if (!ctx || ctx.kind !== 'chat') return
+  ctx.view.webContents.send(IPC_CHANNELS.SHELL_MENU_ACTION, { action })
 }
 
 /** All registered tab contexts, in insertion order. */
@@ -679,6 +733,89 @@ function layoutActiveTab(): void {
     width: bounds.width,
     height: Math.max(0, bounds.height - TAB_BAR_HEIGHT)
   })
+}
+
+/** Size the settings overlay to fill the *entire* window (covers the tab
+ *  strip too, so the modal's dimming scrim reaches the very top). */
+function layoutSettingsView(): void {
+  if (!shellWindow || shellWindow.isDestroyed() || !settingsView) return
+  const bounds = shellWindow.getContentBounds()
+  settingsView.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height })
+}
+
+/**
+ * Open the settings modal. Lazily creates a transparent WebContentsView
+ * that loads the **Open Design web app** with `?settings=1` (the web app
+ * boots straight into a full-screen SettingsDialog modal — it paints its
+ * own dimming scrim + centered card). The view is added as the topmost
+ * child of the shell's contentView so it covers both the tab strip and the
+ * active tab, and is sized to the full window. Idempotent: calling it while
+ * already open just refocuses.
+ *
+ * Why the web app and not a desktop-native page: it gives the overlay the
+ * full, always-in-sync settings feature set (providers / connectors / MCP /
+ * skills / notifications / appearance / …) backed by the daemon, with no
+ * reimplementation in the desktop renderer. The overlay gets a minimal
+ * `settings` preload exposing only `electronSettings.close()` — the web
+ * page calls it to dismiss, and main tears the view down.
+ *
+ * Works regardless of which tab is active — the overlay lives in the shell
+ * tree, not in a tab, so a web tab can summon it just the same.
+ */
+export function openSettingsView(): void {
+  if (!shellWindow || shellWindow.isDestroyed()) return
+  if (settingsView && !settingsView.webContents.isDestroyed()) {
+    // Already open — bring focus back to it (e.g. the gear was clicked twice).
+    settingsView.webContents.focus()
+    return
+  }
+
+  const view = new WebContentsView({
+    webPreferences: {
+      // Minimal preload — only `electronSettings.close()`, NOT the full
+      // chatApi (this loads the external-origin web app). See settings.ts.
+      preload: join(__dirname, '../preload/settings.mjs'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      // Transparent so the dimmed tab shows through the web modal's scrim.
+      transparent: true
+    }
+  })
+  view.setBackgroundColor('#00000000')
+  forceDetachedDevTools(view.webContents)
+  settingsView = view
+
+  // Topmost child → paints over the active tab view and the strip.
+  shellWindow.contentView.addChildView(view)
+  layoutSettingsView()
+
+  // Load the Open Design web app's settings entry (dev: localhost:3000,
+  // prod: app://). loadIntoWebContents handles both URL shapes.
+  loadIntoWebContents(view.webContents, resolveWebSettingsUrl())
+}
+
+/**
+ * Close the settings modal: detach + destroy the overlay view. Safe to
+ * call when already closed (no-op). Triggered by the renderer (scrim
+ * click / Escape / ✕) via the SETTINGS_WINDOW_CLOSE IPC.
+ */
+export function closeSettingsView(): void {
+  const view = settingsView
+  settingsView = null
+  if (!view) return
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    try {
+      shellWindow.contentView.removeChildView(view)
+    } catch (err) {
+      console.warn('[tabRegistry] removeChildView(settings) failed:', err)
+    }
+  }
+  try {
+    view.webContents.close()
+  } catch (err) {
+    console.warn('[tabRegistry] settings view close failed:', err)
+  }
 }
 
 /**

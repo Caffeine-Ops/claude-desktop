@@ -2,8 +2,7 @@ import { randomUUID } from 'crypto'
 import { EventEmitter } from 'events'
 import { app, type WebContents } from 'electron'
 import { existsSync, statSync } from 'node:fs'
-import { dirname, isAbsolute, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { isAbsolute } from 'node:path'
 import { inspect } from 'node:util'
 
 import {
@@ -36,7 +35,7 @@ import type {
 import { bumpUnread } from '../tray'
 import { AsyncMessageQueue } from './asyncMessageQueue'
 import { getAppSettings, type CliBackend } from './appSettings'
-import { detectSystemClaude } from './cliDetect'
+import { detectSystemClaude, resolveBundledCliPath } from './cliDetect'
 import { invalidateFileSuggestions } from './fileSuggestions'
 import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
@@ -2179,35 +2178,9 @@ export class ChatEngine extends EventEmitter {
    * easy to diagnose from the console error shown in the UI.
    */
   private resolveFusionCliPath(): string {
-    const envOverride = process.env.FUSION_CODE_CLI_PATH
-    if (envOverride) {
-      if (!existsSync(envOverride)) {
-        throw new Error(
-          `FUSION_CODE_CLI_PATH is set to "${envOverride}" but that file does not exist.`
-        )
-      }
-      return envOverride
-    }
-
-    const selfDir = dirname(fileURLToPath(import.meta.url))
-    const bundledName = process.platform === 'win32' ? 'fusion-code-cli.exe' : 'fusion-code-cli'
-    const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
-    const candidates = [
-      ...(resourcesPath ? [resolve(resourcesPath, bundledName)] : []),
-      resolve(process.cwd(), '../free-code/cli'),
-      resolve(process.cwd(), '../../../free-code/cli'),
-      resolve(selfDir, '../../../free-code/cli'),
-      resolve(selfDir, '../../../../free-code/cli'),
-      resolve(selfDir, '../../../../../free-code/cli')
-    ]
-    for (const p of candidates) {
-      if (existsSync(p)) return p
-    }
-    throw new Error(
-      'Fusion Code CLI binary not found. Tried:\n' +
-        candidates.map((c) => `  - ${c}`).join('\n') +
-        '\nSet FUSION_CODE_CLI_PATH in env.json (or the shell) to override.'
-    )
+    // Delegates to the engine-free resolver in cliDetect so the same logic
+    // serves both this per-engine path and the settings-overlay handler.
+    return resolveBundledCliPath()
   }
 
   private getContentBlocks(sdkMessage: Record<string, unknown>): unknown[] {

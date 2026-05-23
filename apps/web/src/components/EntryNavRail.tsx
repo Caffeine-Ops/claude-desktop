@@ -56,28 +56,12 @@ function NavButton({ active, ariaLabel, tooltip, onClick, testId, children }: Na
 
 export function EntryNavRail({ view, onViewChange, onNewProject }: Props) {
   const t = useT();
-  const brandLabel = t('app.brand');
   const homeLabel = t('entry.navHome');
   const isHome = view === 'home';
 
   return (
     <nav className="entry-nav-rail" aria-label="Primary">
       <div className="entry-nav-rail__group">
-        <button
-          type="button"
-          className="entry-nav-rail__logo"
-          onClick={() => onViewChange('home')}
-          aria-label={brandLabel}
-          data-tooltip={brandLabel}
-          data-testid="entry-nav-logo"
-        >
-          <img
-            src="/app-icon.svg"
-            alt=""
-            className="entry-nav-rail__logo-img"
-            draggable={false}
-          />
-        </button>
         <NavButton
           active={isHome}
           ariaLabel={homeLabel}

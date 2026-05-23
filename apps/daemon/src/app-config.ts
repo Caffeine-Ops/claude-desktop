@@ -78,6 +78,28 @@ export interface OrbitConfigPrefs {
   templateSkillId?: string | null;
 }
 
+// Mirror of @open-design/contracts ThemeOverridesPrefs / AppearancePrefs.
+// The daemon keeps its own copy (it doesn't import the contracts package) so
+// the validators below can run without a dependency on the shared types.
+// Keep these two in sync with packages/contracts/src/api/app-config.ts.
+export interface ThemeOverridesPrefs {
+  presetName?: string;
+  accent?: string;
+  background?: string;
+  foreground?: string;
+  contrast?: number;
+  translucentSidebar?: boolean;
+}
+
+export interface AppearancePrefs {
+  themeMode?: 'light' | 'dark' | 'system';
+  light?: ThemeOverridesPrefs;
+  dark?: ThemeOverridesPrefs;
+  uiFontSize?: number;
+  codeFontSize?: number;
+  usePointerCursor?: boolean;
+}
+
 export interface AppConfigPrefs {
   onboardingCompleted?: boolean;
   agentId?: string | null;
@@ -92,6 +114,7 @@ export interface AppConfigPrefs {
   privacyDecisionAt?: number | null;
   orbit?: OrbitConfigPrefs;
   customInstructions?: string | null;
+  appearance?: AppearancePrefs;
 }
 
 const ALLOWED_KEYS: ReadonlySet<keyof AppConfigPrefs> = new Set([
@@ -108,6 +131,7 @@ const ALLOWED_KEYS: ReadonlySet<keyof AppConfigPrefs> = new Set([
   'privacyDecisionAt',
   'orbit',
   'customInstructions',
+  'appearance',
 ] as const);
 
 function configFile(dataDir: string): string {
@@ -228,6 +252,95 @@ function validateOrbit(raw: unknown): OrbitConfigPrefs | undefined {
   return orbit;
 }
 
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+const THEME_OVERRIDE_KEYS: ReadonlySet<string> = new Set([
+  'presetName',
+  'accent',
+  'background',
+  'foreground',
+  'contrast',
+  'translucentSidebar',
+]);
+
+// Font-size bounds mirror the desktop appearance store's clamps so a value
+// written by either frontend stays inside the range the other will render.
+const UI_FONT_MIN = 11;
+const UI_FONT_MAX = 18;
+const CODE_FONT_MIN = 10;
+const CODE_FONT_MAX = 18;
+
+function clampNumber(value: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, Math.round(value)));
+}
+
+function validateThemeOverrides(raw: unknown): ThemeOverridesPrefs | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const result: Record<string, unknown> = Object.create(null);
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (k === '__proto__' || k === 'constructor') continue;
+    if (!THEME_OVERRIDE_KEYS.has(k)) continue;
+    if (k === 'presetName') {
+      if (typeof v === 'string') result[k] = v.slice(0, 64);
+    } else if (k === 'accent' || k === 'background' || k === 'foreground') {
+      // Only accept #rrggbb. A malformed color would otherwise be written onto
+      // documentElement.style verbatim and silently break the theme.
+      if (typeof v === 'string' && HEX_COLOR.test(v.trim())) {
+        result[k] = v.trim().toLowerCase();
+      }
+    } else if (k === 'contrast') {
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        result[k] = clampNumber(v, 0, 100);
+      }
+    } else if (k === 'translucentSidebar') {
+      if (typeof v === 'boolean') result[k] = v;
+    }
+  }
+  return Object.keys(result).length > 0
+    ? (result as ThemeOverridesPrefs)
+    : undefined;
+}
+
+function validateAppearance(raw: unknown): AppearancePrefs | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const result: AppearancePrefs = Object.create(null);
+
+  if (
+    obj.themeMode === 'light' ||
+    obj.themeMode === 'dark' ||
+    obj.themeMode === 'system'
+  ) {
+    result.themeMode = obj.themeMode;
+  }
+
+  const light = validateThemeOverrides(obj.light);
+  if (light) result.light = light;
+  const dark = validateThemeOverrides(obj.dark);
+  if (dark) result.dark = dark;
+
+  if (typeof obj.uiFontSize === 'number' && Number.isFinite(obj.uiFontSize)) {
+    result.uiFontSize = clampNumber(obj.uiFontSize, UI_FONT_MIN, UI_FONT_MAX);
+  }
+  if (
+    typeof obj.codeFontSize === 'number' &&
+    Number.isFinite(obj.codeFontSize)
+  ) {
+    result.codeFontSize = clampNumber(
+      obj.codeFontSize,
+      CODE_FONT_MIN,
+      CODE_FONT_MAX,
+    );
+  }
+  if (typeof obj.usePointerCursor === 'boolean') {
+    result.usePointerCursor = obj.usePointerCursor;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 export function agentCliEnvForAgent(
   prefs: AgentCliEnvPrefs | undefined,
   agentId: string,
@@ -311,6 +424,26 @@ function applyConfigValue(
     } else if (value === null) {
       target[key] = value;
     }
+    return;
+  }
+  if (key === 'appearance') {
+    const validated = validateAppearance(value);
+    if (validated === undefined) return;
+    // Deep-merge into any existing appearance so a partial PUT (e.g. the web
+    // tab sending only `{ themeMode }`) doesn't wipe the per-mode colors the
+    // desktop shell wrote earlier. `light`/`dark` are merged one level deeper
+    // for the same reason — patching `light.accent` must not drop
+    // `light.background`. (`target` is a shallow clone of the stored config in
+    // doWrite, so reading target.appearance here gives the prior value.)
+    const prev = (target[key] as AppearancePrefs | undefined) ?? {};
+    const merged: AppearancePrefs = { ...prev, ...validated };
+    if (prev.light || validated.light) {
+      merged.light = { ...prev.light, ...validated.light };
+    }
+    if (prev.dark || validated.dark) {
+      merged.dark = { ...prev.dark, ...validated.dark };
+    }
+    target[key] = merged;
     return;
   }
 }

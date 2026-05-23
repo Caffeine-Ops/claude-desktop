@@ -176,18 +176,6 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
   padding-left: 14px;
 }
 
-/* Chat tab's own header now sits *below* the shell chrome strip, so
- * the macOS traffic lights overlay the strip — not this header. Drop
- * the 82px gutter (the only thing it reserved space for was the TabBar
- * clearing the lights, and the TabBar has moved to the shell strip).
- * The panel toggles it still holds are right-aligned, so reverting to
- * the standard 14px inset just tightens the left edge. Higher
- * specificity than the platform rule above so it wins regardless of
- * source order. */
-html[data-platform='darwin'] .header.header--tab {
-  padding-left: 14px;
-}
-
 .badge {
   font-size: 11px;
   font-weight: 500;

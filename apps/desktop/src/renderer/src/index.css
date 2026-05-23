@@ -131,3 +131,45 @@
     cursor: pointer;
   }
 }
+
+/*
+ * ProseMirror composer input. The editor is a contenteditable div; the
+ * browser draws a default focus outline (the stray orange box) which we
+ * kill here — focus feedback is owned by the composer card's ring
+ * (AttachmentDropzone focus-within). Paragraphs render with no margin so
+ * multi-line input doesn't add vertical gaps between lines.
+ */
+.pm-composer-input:focus,
+.pm-composer-input:focus-visible {
+  outline: none;
+}
+.pm-composer-input p {
+  margin: 0;
+}
+.pm-composer-input {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/*
+ * Placeholder: an absolutely-positioned ::before on the editor root,
+ * shown only when `.is-empty`. It reads the editor's own
+ * `data-placeholder` attr (set imperatively in ProseMirrorComposerInput),
+ * so `attr()` resolves on the same element. Positioned at the root's
+ * top-left — exactly where the first character / caret sits, since the
+ * editor root has no padding of its own (padding lives on the wrapper).
+ * Vertically it inherits the editor's line-height so it centers on the
+ * text row instead of floating with a hard-coded top offset (the old bug).
+ */
+.pm-composer-input {
+  position: relative;
+}
+.pm-composer-input.is-empty::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: hsl(var(--muted-foreground) / 0.6);
+  pointer-events: none;
+  line-height: inherit;
+}

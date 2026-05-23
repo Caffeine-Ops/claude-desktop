@@ -27,7 +27,7 @@ import {
 } from '../stores/todos'
 import type { ChatEvent, ThreadSummary } from '../../../shared/types'
 import type { ChatImagePayload } from '../../../shared/ipc-channels'
-import { imageAttachmentAdapter } from './imageAttachmentAdapter'
+import { fileAttachmentAdapter, FILE_PATH_MIME } from './imageAttachmentAdapter'
 
 /**
  * Bridges our zustand chat store ↔ assistant-ui's ExternalStoreRuntime.
@@ -293,20 +293,28 @@ export function FusionRuntimeProvider({
           readonly type: string
           readonly image?: string
           readonly filename?: string
+          readonly data?: string
+          readonly mimeType?: string
         }[]
       }> =
         message.role === 'user' && 'attachments' in message
           ? (message.attachments ?? [])
           : []
 
-      // Flatten attachment.content[] into image parts. Every attachment
-      // may in theory carry multiple parts (text + image), but our
-      // imageAttachmentAdapter always produces a single image part —
-      // still, iterate defensively in case a future adapter fans out.
+      // Flatten attachment.content[] into image parts AND file-path
+      // parts. Every attachment may in theory carry multiple parts —
+      // our fileAttachmentAdapter produces a single part each, but we
+      // iterate defensively in case a future adapter fans out.
+      //   - image part  → vision block (base64 data URL)
+      //   - file  part  → on-disk absolute path (mimeType ===
+      //     FILE_PATH_MIME), which we turn into an `@"path"` mention so
+      //     fusion-code reads the file with its Read tool. The bytes
+      //     never cross IPC; "the model receives the path".
       const imageParts: Array<{
         image: string
         filename?: string
       }> = []
+      const filePaths: string[] = []
       for (const att of rawAttachments) {
         if (!att.content) continue
         for (const part of att.content) {
@@ -315,25 +323,47 @@ export function FusionRuntimeProvider({
               image: part.image,
               filename: part.filename ?? att.name
             })
+          } else if (
+            part.type === 'file' &&
+            part.mimeType === FILE_PATH_MIME &&
+            typeof part.data === 'string' &&
+            part.data.length > 0
+          ) {
+            filePaths.push(part.data)
           }
         }
       }
 
-      const text = textParts.map((p) => p.text).join('\n').trim()
+      const baseText = textParts.map((p) => p.text).join('\n').trim()
       const images: ChatImagePayload[] = imageParts.map((p) => ({
         dataUrl: p.image,
         filename: p.filename
       }))
 
+      // Append each attached file as an `@"path"` mention. Quote
+      // unconditionally — absolute paths can contain spaces, and the
+      // quotes are stripped by fusion-code's quotedAtMentionRegex for
+      // paths that don't. Mentions go AFTER the user's typed text so
+      // the prompt reads naturally ("look at this: @/a/b.pdf").
+      const mentionSuffix = filePaths.map((p) => `@"${p}"`).join(' ')
+      const text =
+        mentionSuffix.length > 0
+          ? baseText
+            ? `${baseText} ${mentionSuffix}`
+            : mentionSuffix
+          : baseText
+
       console.log('[runtime] onNew', {
         textLength: text.length,
         contentPartCount: message.content.length,
         attachmentCount: rawAttachments.length,
-        imageCount: images.length
+        imageCount: images.length,
+        fileCount: filePaths.length
       })
 
-      // Allow empty text when images are attached — "just sending a
-      // screenshot" is a valid flow. Only error when BOTH are empty.
+      // Allow empty typed text when images OR files are attached —
+      // "just sending a screenshot / a file" is a valid flow. Only
+      // error when ALL three are empty.
       if (!text && images.length === 0) {
         throw new Error('Empty user message')
       }
@@ -342,10 +372,12 @@ export function FusionRuntimeProvider({
       // Mirrors fusion-code's terminal behavior: when the user types
       // a `/cmd` we know about, open a local dialog instead of
       // sending the prompt to the model. Skip when the user attached
-      // images — a `/skill` with a screenshot is almost certainly a
-      // typo and definitely not a recognized slash-command flow.
-      if (images.length === 0) {
-        const dialogKind = matchSlashCommand(text)
+      // images or files — a `/skill` with an attachment is almost
+      // certainly a typo and definitely not a recognized slash-command
+      // flow. (Match on baseText: the appended @mentions would never
+      // be a slash command anyway, but baseText is the user's intent.)
+      if (images.length === 0 && filePaths.length === 0) {
+        const dialogKind = matchSlashCommand(baseText)
         if (dialogKind) {
           useDialogStore.getState().openDialog(dialogKind)
           return
@@ -446,7 +478,7 @@ export function FusionRuntimeProvider({
     // That's why onNew above can just read message.content and find
     // both text and image parts inline.
     adapters: {
-      attachments: imageAttachmentAdapter,
+      attachments: fileAttachmentAdapter,
       // Powers the left sidebar. `useThreadListAdapter` reads the
       // session list from main-process IPC and stays in sync via the
       // `onSessionListChanged` broadcast. onSwitchToThread /

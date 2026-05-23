@@ -57,20 +57,8 @@ export default function TabBar(): React.ReactElement {
     }
   }, [])
 
-  const onNewTab = (): void => {
-    void window.tabApi?.newTab()
-  }
-
   const onSwitchTab = (id: number): void => {
     void window.tabApi?.switchTab(id)
-  }
-
-  const onCloseTab = (
-    id: number,
-    e: React.MouseEvent<HTMLButtonElement>
-  ): void => {
-    e.stopPropagation()
-    void window.tabApi?.closeTab(id)
   }
 
   return (
@@ -86,39 +74,20 @@ export default function TabBar(): React.ReactElement {
           clip on this container would slice the shadow off the
           top/bottom edges. `gap-1` gives the Safari-style "pills
           float with air between them" rhythm. Individual pills
-          and the `+` button mark themselves `no-drag` so clicks
-          still route through the header drag region. */}
+          mark themselves `no-drag` so clicks still route through
+          the header drag region.
+
+          关闭 `×` 和新建 `+` 按钮已移除：tab 集合是固定的（chat + Open
+          Design），由主进程在启动时建好，用户不应增删，所以 pill 只能点击
+          切换，不再可关闭，也没有新建入口。 */}
       <div className="flex min-w-0 flex-1 items-center gap-1 self-stretch">
         {tabs.map((tab) => (
           <TabPill
             key={tab.id}
             tab={tab}
             onClick={() => onSwitchTab(tab.id)}
-            onClose={(e) => onCloseTab(tab.id, e)}
           />
         ))}
-        <button
-          type="button"
-          onClick={onNewTab}
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          className="ml-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
-          aria-label="New tab"
-          title="New tab"
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-            aria-hidden="true"
-          >
-            <line x1="8" y1="3" x2="8" y2="13" />
-            <line x1="3" y1="8" x2="13" y2="8" />
-          </svg>
-        </button>
       </div>
     </>
   )
@@ -153,12 +122,10 @@ function chipLetter(title: string): string {
 
 function TabPill({
   tab,
-  onClick,
-  onClose
+  onClick
 }: {
   tab: TabDescriptor
   onClick: () => void
-  onClose: (e: React.MouseEvent<HTMLButtonElement>) => void
 }): React.ReactElement {
   const chip = chipColor(tab.workspacePath ?? String(tab.id))
   const letter = chipLetter(tab.title)
@@ -218,28 +185,8 @@ function TabPill({
           }
         />
       ) : null}
-      <button
-        type="button"
-        onClick={onClose}
-        className={`ml-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full text-muted-foreground/60 transition-all hover:bg-foreground/10 hover:text-foreground ${
-          tab.active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-        }`}
-        aria-label={`Close ${tab.title}`}
-      >
-        <svg
-          width="10"
-          height="10"
-          viewBox="0 0 10 10"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.75"
-          strokeLinecap="round"
-          aria-hidden="true"
-        >
-          <line x1="2" y1="2" x2="8" y2="8" />
-          <line x1="8" y1="2" x2="2" y2="8" />
-        </svg>
-      </button>
+      {/* 关闭 `×` 按钮已移除：tab 集合固定（chat + Open Design），由主进程
+          建好，用户不可关闭——pill 只用于切换。 */}
     </div>
   )
 }

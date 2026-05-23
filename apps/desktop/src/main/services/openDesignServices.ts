@@ -281,3 +281,20 @@ export function stopOpenDesignServices(): void {
 export function resolveWebTabUrl(): string {
   return is.dev ? WEB_DEV_ORIGIN : `${APP_PROTOCOL_ORIGIN}/`
 }
+
+/**
+ * URL for the embedded settings overlay — the same Open Design web app as
+ * the web tab, but loaded with `?settings=1` so it boots straight into a
+ * full-screen SettingsDialog modal (see apps/web App.tsx). Reusing the web
+ * app means the settings overlay has the full, always-in-sync feature set
+ * (providers / connectors / MCP / skills / notifications / …) backed by the
+ * daemon, with zero reimplementation in the desktop renderer.
+ *
+ * dev keeps the next-dev origin (HMR); prod uses the app:// protocol root
+ * with the query appended.
+ */
+export function resolveWebSettingsUrl(): string {
+  return is.dev
+    ? `${WEB_DEV_ORIGIN}/?settings=1`
+    : `${APP_PROTOCOL_ORIGIN}/?settings=1`
+}

@@ -46,7 +46,15 @@ export default defineConfig({
     resolve: sharedResolve,
     build: {
       rollupOptions: {
-        input: resolve(__dirname, 'src/preload/index.ts')
+        // Two preloads: the main one (chatApi/tabApi for chat tabs + shell)
+        // and a tiny `settings` preload for the embedded web settings
+        // overlay, which only needs a single `electronSettings.close()`
+        // bridge — it must NOT get the full chatApi surface since it loads
+        // the (external-origin) Open Design web app.
+        input: {
+          index: resolve(__dirname, 'src/preload/index.ts'),
+          settings: resolve(__dirname, 'src/preload/settings.ts')
+        }
       }
     }
   },
