@@ -1,12 +1,12 @@
 :root {
   /* color-scheme is set per-theme by index.css. */
   /* Apple DESIGN.md §3: SF Pro Text < 19px, SF Pro Display ≥ 20px.
-   * `-apple-system` on macOS resolves to SF Pro with the system's
-   * optical-size mechanism, so the font physically switches variants
-   * by size. `font-optical-sizing: auto` makes sure a user on a newer
-   * OS/browser honors that switch instead of locking to one axis. */
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
-    'Helvetica Neue', Helvetica, Arial, sans-serif;
+   * The stack itself lives in the shared design tokens (--font-sans,
+   * imported via index.css before this file) so desktop and web share one
+   * source of truth. `-apple-system` in that stack resolves to SF Pro on
+   * macOS with the OS optical-size mechanism, and `font-optical-sizing: auto`
+   * below makes a newer OS/browser honor the Text↔Display switch. */
+  font-family: var(--font-sans);
   font-optical-sizing: auto;
   font-feature-settings: 'cv11', 'ss01';
   -webkit-font-smoothing: antialiased;
@@ -210,7 +210,7 @@ html[data-platform='darwin'] .header.header--tab {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .main {

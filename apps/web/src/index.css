@@ -91,8 +91,14 @@
   --selected-soft: rgba(37, 99, 235, 0.16);
 
   --serif: 'Source Serif Pro', 'Source Serif 4', 'Iowan Old Style', 'Apple Garamond', Georgia, 'Times New Roman', serif;
-  --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  /* Sans / mono now derive from the shared design tokens
+     (packages/design-tokens/tokens.css → --font-sans / --font-mono, the
+     desktop SF Pro stack) so web renders the same type as the desktop app.
+     The locale comfort passes below (:lang(zh|ja|ko) and [dir="rtl"]) still
+     override --sans with CJK / Cairo stacks — those are intentional and
+     unchanged. */
+  --sans: var(--font-sans);
+  --mono: var(--font-mono);
 }
 
 /* Dark theme variables — shared between explicit [data-theme="dark"] and the
@@ -115,11 +121,16 @@
   --text-soft: #6e6b65;
   --text-faint: #4e4b46;
 
-  --accent: #d97a56;
-  --accent-strong: #e8896a;
-  --accent-soft: #3d2318;
-  --accent-tint: #2e1a12;
-  --accent-hover: #e8896a;
+  /* Accent — aligned to the desktop dark-mode Apple Bright Blue (#2997ff,
+     hsl 210 100% 58%), matching the shared tokens' .dark accent. This web app
+     drives dark mode through [data-theme="dark"] (not the .dark class the
+     shared tokens use), so the value is inlined here rather than read from
+     var(--accent); the alpha variants mirror the light-theme mapping. */
+  --accent: hsl(210 100% 58%);
+  --accent-strong: hsl(210 100% 58% / 0.92);
+  --accent-soft: hsl(210 100% 58% / 0.18);
+  --accent-tint: hsl(210 100% 58% / 0.1);
+  --accent-hover: hsl(210 100% 58% / 0.92);
 
   --green: #4caf72;
   --green-bg: #0f2a18;
@@ -162,11 +173,13 @@
     --text-soft: #6e6b65;
     --text-faint: #4e4b46;
 
-    --accent: #d97a56;
-    --accent-strong: #e8896a;
-    --accent-soft: #3d2318;
-    --accent-tint: #2e1a12;
-    --accent-hover: #e8896a;
+    /* Accent — desktop dark Apple Bright Blue (#2997ff), same as the explicit
+       [data-theme="dark"] block above; see that note for why it's inlined. */
+    --accent: hsl(210 100% 58%);
+    --accent-strong: hsl(210 100% 58% / 0.92);
+    --accent-soft: hsl(210 100% 58% / 0.18);
+    --accent-tint: hsl(210 100% 58% / 0.1);
+    --accent-hover: hsl(210 100% 58% / 0.92);
 
     --green: #4caf72;
     --green-bg: #0f2a18;

@@ -82,6 +82,20 @@
 
   --ui-font-size: 13px;
   --code-font-size: 12px;
+
+  /* Type families — the single source of truth for fonts across both apps.
+   * Sans is Apple's SF Pro stack: `-apple-system` resolves to SF Pro on macOS
+   * with the OS optical-size mechanism (Text < 19px, Display ≥ 20px); the
+   * explicit SF Pro Text/Display + Helvetica fallbacks cover cross-platform
+   * builds that don't resolve `-apple-system`. Mono leads with JetBrains Mono,
+   * then SF Mono / Menlo. apps/desktop (tailwind.config.js fontFamily) and
+   * apps/web (its --sans / --mono tokens) both derive from these so the two
+   * surfaces render identical type. NOTE: apps/web intentionally overrides
+   * --sans under `[dir="rtl"]` with the Cairo Arabic/Persian stack — that
+   * locale-specific choice is deliberate and left untouched. */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
 }
 
 .dark {

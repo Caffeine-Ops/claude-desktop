@@ -11,21 +11,13 @@ export default {
     extend: {
       fontFamily: {
         // Apple DESIGN.md §3: SF Pro with automatic optical sizing.
-        // `-apple-system` is the magic keyword that on macOS maps to
-        // SF Pro and lets the OS pick Display/Text variants by size.
-        // We list SF Pro Text / Display explicitly as fallbacks for
-        // cross-platform builds that don't resolve -apple-system.
-        sans: [
-          '-apple-system',
-          'BlinkMacSystemFont',
-          'SF Pro Text',
-          'SF Pro Display',
-          'Helvetica Neue',
-          'Helvetica',
-          'Arial',
-          'sans-serif'
-        ],
-        mono: ['JetBrains Mono', 'SF Mono', 'Menlo', 'monospace']
+        // The actual stack now lives in the shared design tokens
+        // (packages/design-tokens/tokens.css → --font-sans / --font-mono,
+        // imported by index.css) so apps/web and apps/desktop render the
+        // same type. These utilities just resolve to those CSS variables:
+        // `font-sans` → `font-family: var(--font-sans)`, etc.
+        sans: ['var(--font-sans)'],
+        mono: ['var(--font-mono)']
       },
       // Apple DESIGN.md §5: tight, context-specific border-radii.
       // The signature 980px "pill" radius is reserved for CTA links;
