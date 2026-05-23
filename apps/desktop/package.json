@@ -1,0 +1,108 @@
+{
+  "name": "@claude-desktop/desktop",
+  "version": "0.0.9",
+  "description": "Electron desktop wrapper around free-code CLI",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "build:icons": "bash scripts/build-icons.sh",
+    "build:mac": "bun run build:icons && electron-vite build && electron-builder --mac",
+    "build:win": "bun run build:icons && electron-vite build && electron-builder --win",
+    "build:linux": "bun run build:icons && electron-vite build && electron-builder --linux",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "bun run typecheck:node && bun run typecheck:web",
+    "start": "electron-vite preview",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "build": {
+    "appId": "com.anthropic.claude-desktop",
+    "productName": "Claude Desktop",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "env.json",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "artifactName": "Claude-Desktop-${version}-${arch}-${os}.${ext}",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64"]
+        }
+      ],
+      "identity": null,
+      "extraResources": [
+        {
+          "from": "fusion-bin/fusion-code-cli",
+          "to": "fusion-code-cli"
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "fusion-bin/fusion-code-cli.exe",
+          "to": "fusion-code-cli.exe"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.98",
+    "@anthropic-ai/sdk": "^0.93.0",
+    "@assistant-ui/core": "^0.1.13",
+    "@assistant-ui/react": "^0.12.24",
+    "@assistant-ui/react-markdown": "^0.12.8",
+    "react-markdown": "^10.1.0",
+    "@electron-toolkit/preload": "^3.0.1",
+    "@electron-toolkit/utils": "^3.0.0",
+    "electron-updater": "^6.3.9",
+    "highlight.js": "^11.11.1",
+    "motion": "^12.38.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
+    "zod": "^3.23.8",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "^1.0.1",
+    "@types/node": "^22.9.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.27",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "postcss": "^8.5.9",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}
