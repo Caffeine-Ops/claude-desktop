@@ -1,13 +1,35 @@
 import React from 'react'
 
+import TabBar from '../components/tabs/TabBar'
+
 /**
- * The shell BrowserWindow hosts nothing the user ever sees — the
- * active tab's WebContentsView covers the entire window area.
- * This component exists only so the shell's main webContents has
- * a valid React tree to mount; it renders nothing. The tab bar
- * itself lives inside each tab's own workspace renderer header
- * (see components/tabs/TabBar.tsx).
+ * Shell renderer — mounted by the shell BrowserWindow's own
+ * webContents (loaded with `?shell=1`).
+ *
+ * It now owns the **persistent chrome tab strip** pinned to the top
+ * of the window. Every content tab's WebContentsView is laid out
+ * starting at `y = TAB_BAR_HEIGHT` (44px, see tabRegistry), so this
+ * strip is the only band of the shell renderer the user ever sees —
+ * the rest sits underneath the active content view.
+ *
+ * Why the strip lives here and not inside each tab's header anymore:
+ * the Open Design web tab loads an external origin with no
+ * chatApi/tabApi preload, so it cannot render a TabBar of its own.
+ * When that tab was foreground the user lost every way to switch
+ * back. A single shell-owned strip is always visible/clickable no
+ * matter which tab is foreground. See tabRegistry's TAB_BAR_HEIGHT
+ * comment for the full rationale.
+ *
+ * The strip reuses the exact same `<TabBar />` component the
+ * workspace header used to host, so pill styling / notification
+ * badges / the `+` button behave identically — only the mount point
+ * moved. `window.tabApi` is available here because the shell window
+ * is created with the standard preload (see createShellWindow).
  */
 export default function ShellApp(): React.ReactElement {
-  return <></>
+  return (
+    <div className="shell-chrome">
+      <TabBar />
+    </div>
+  )
 }

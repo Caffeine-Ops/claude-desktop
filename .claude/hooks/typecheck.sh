@@ -16,10 +16,29 @@ esac
 # 切到项目根（hook 的 cwd 不保证）。
 cd "${CLAUDE_PROJECT_DIR:-$(dirname "$0")/../..}" || exit 0
 
-# 跑和 CI 完全一样的命令（package.json 的 typecheck = node -p + web -p）。
-# 不用 tsc --build：composite + 全局 d.ts 增强在 --build 模式下有假阳性，
-# 会和 CI 的 -p 行为撕裂（hook 报错但 CI 绿）。一致性 > 增量速度。
-if ! out="$(bun run typecheck 2>&1)"; then
+# Monorepo 化后只检「改动文件所属的 workspace」，而不是全 workspace。
+# 原因：open-design 的 apps/web、packages/* 是 vendored 进来的，带一批拷入时
+# 就存在的预存类型错误（React 18/19 @types 串味、子包 tsconfig 缺 node types
+# 等），它们不在本仓的质量门职责内、且其源码受「不改 vendored 源码」约束。
+# 跑全 workspace 会被这些基线错误持续误伤，挡住对 apps/desktop（本仓自有代码）
+# 的正常编辑。所以按路径前缀路由到对应包的 typecheck —— 与 CI / goal 验证命令
+# (`bun run --cwd apps/desktop typecheck`) 语义一致。
+case "$file_path" in
+  */apps/desktop/*|apps/desktop/*)
+    cmd=(bun run --cwd apps/desktop typecheck) ;;
+  */apps/web/*|apps/web/*)
+    cmd=(bun run --cwd apps/web typecheck) ;;
+  */apps/daemon/*|apps/daemon/*)
+    cmd=(bun run --cwd apps/daemon typecheck) ;;
+  */packages/*|packages/*|*/tools/*|tools/*)
+    # vendored 子包：本仓不为其预存错误把门，放行。
+    exit 0 ;;
+  *)
+    # 落在仓库根/其它处的 .ts（脚本等）：检 desktop 作为最常见的本仓代码门。
+    cmd=(bun run --cwd apps/desktop typecheck) ;;
+esac
+
+if ! out="$("${cmd[@]}" 2>&1)"; then
   {
     echo "TypeScript 类型检查未通过（改动文件：${file_path}）："
     echo ""

@@ -56,6 +56,21 @@ interface CacheEntry {
 let cache: CacheEntry | null = null
 let inflight: Promise<CacheEntry> | null = null
 
+/**
+ * cwd 集合：已确认「不是 git 仓库 / 没有 git 二进制」的目录。命中后直接走
+ * readdir，不再 spawn git、不再打日志。
+ *
+ * 为什么需要：默认 workspace 是 OS 桌面（见 engine.resolveDefaultWorkspace），
+ * 桌面通常不是 git 仓库。而 fileSuggestions 有 5s TTL，会周期性重扫——若每次
+ * 都重试注定失败的 `git ls-files`，既白 spawn 一个进程，又把那行 git 报错刷满
+ * dev 日志。这里记住稳定的「非仓库」判定来掐掉两者。
+ *
+ * 按 absoluteCwd 区分：换 workspace 到真 git 项目时不会误用旧判定。只缓存稳定
+ * 失败（exit 128 = 非仓库 / ENOENT = 无 git）；非稳定失败（如超时）不缓存，
+ * 下次仍会重试。
+ */
+const knownNonGitDirs = new Set<string>()
+
 export interface FileSuggestionsResult {
   /** Working directory the list was scanned from (absolute path). */
   cwd: string
@@ -139,6 +154,9 @@ async function scan(absoluteCwd: string): Promise<CacheEntry> {
 }
 
 async function tryGit(cwd: string): Promise<string[] | null> {
+  // 已知非 git 仓库 / 无 git：直接放弃，不 spawn、不打日志（见 knownNonGitDirs）。
+  if (knownNonGitDirs.has(cwd)) return null
+
   try {
     // core.quotepath=false → keep non-ASCII filenames readable.
     // --cached lists tracked files, --others --exclude-standard adds
@@ -160,14 +178,31 @@ async function tryGit(cwd: string): Promise<string[] | null> {
     if (lines.length === 0) {
       // Empty result could mean "not a git repo" or "empty repo". Fall
       // through to the readdir path so we still get something useful.
+      // 不缓存——空仓库下加文件后应能恢复 git 路径。
       return null
     }
     return lines
   } catch (err) {
-    // ENOENT → no git binary; exit code 128 → not a repo. Both land here
-    // and both mean "fall back to readdir".
-    const msg = err instanceof Error ? err.message : String(err)
-    console.log(`[fileSuggestions] git ls-files unavailable: ${msg}`)
+    // 区分稳定失败与瞬时失败：
+    //   - ENOENT（无 git 二进制）/ exit code 128（不是 git 仓库）→ 稳定，缓存到
+    //     knownNonGitDirs，后续直接走 readdir 不再重试。这俩占了"桌面当 workspace"
+    //     这一最常见场景，掐掉每 5s 一次的无用 spawn + 日志刷屏。
+    //   - 其它（超时、maxBuffer 溢出等）→ 可能瞬时，不缓存，下次仍重试。
+    // execFile 失败时 err.code 形态不一：spawn 找不到 git 二进制 → 字符串 'ENOENT'；
+    // git 进程非零退出 → 数字退出码（128 = 不是 git 仓库）。两种都要识别为稳定失败，
+    // 所以用 unknown 接、分别比对字符串与数字，避免类型窄化把数字分支判成永不相等。
+    const code: unknown = (err as { code?: unknown })?.code
+    const stable = code === 'ENOENT' || code === 128
+    if (stable) {
+      knownNonGitDirs.add(cwd)
+      // 每个非 git 目录只 log 一次（首次判定时），之后命中上面的早退、彻底静默。
+      console.log(
+        `[fileSuggestions] ${cwd} 不是 git 仓库（或无 git）→ 改用 readdir，后续不再重试`
+      )
+    } else {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.log(`[fileSuggestions] git ls-files 失败（瞬时，将重试）: ${msg}`)
+    }
     return null
   }
 }

@@ -8,7 +8,6 @@ import { PermissionBridge } from './components/permissions/PermissionBridge'
 import { SkillsDialog } from './components/dialogs/SkillsDialog'
 import { McpDialog } from './components/dialogs/McpDialog'
 import { LogsDialog } from './components/dialogs/LogsDialog'
-import TabBar from './components/tabs/TabBar'
 import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
 import { useChatStore } from './stores/chat'
 import { useLogsStore } from './stores/logs'
@@ -247,19 +246,23 @@ function App(): React.JSX.Element {
 
   return (
     <div className="app">
-      <header className="header">
-        {/* Workspace tab strip. Source of truth lives in main's
-            tabRegistry; this component subscribes to
-            TAB_LIST_CHANGED via window.tabApi and renders one pill
-            per open workspace + a `+` button to create new ones.
-            The first child of `.header` takes the traffic-light
-            gutter via padding-left on .header itself (see
-            assets/main.css). */}
-        <TabBar />
-        {/* Panel toggles live on the far right, past the TabBar's
-            spacer. `self-center` keeps them vertically centered
-            inside the `items-stretch` header even though the
-            TabBar's pills bottom-align. */}
+      <header className="header header--tab">
+        {/* Tab strip moved OUT of this header into the persistent
+            shell chrome strip (shell/ShellApp.tsx), which is pinned
+            above every content tab's WebContentsView so both the
+            chat and Open Design pills stay visible/clickable no
+            matter which tab is foreground. The Open Design web tab
+            can't render a TabBar (external origin, no tabApi
+            preload), so a tab-local strip would have stranded the
+            user there. This header now holds only the panel toggles,
+            sits *below* the shell strip, and therefore no longer
+            reserves the macOS traffic-light gutter (the lights
+            overlay the shell strip above). See `.header--tab` in
+            assets/main.css. */}
+        {/* Spacer pushes the panel toggles to the far right, keeping
+            the same right-aligned placement they had when the TabBar
+            occupied the left of this row. */}
+        <div className="min-w-0 flex-1" />
         {/* Panel toggles — meaningful once the chat runtime is mounted.
             `hasWorkspace` is effectively always true now (the engine
             defaults to the Desktop), so the `invisible` branch below is

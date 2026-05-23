@@ -28,7 +28,18 @@
     "paths": {
       "@/*": [
         "./*"
-      ]
+      ],
+      // monorepo 里同时装了 @types/react@18（本包钉死）和 @types/react@19
+      // （apps/desktop 用）。tsc 的类型解析会沿 node_modules 向上穿透到根目录
+      // hoist 的 19 版，于是代码里的 React.ReactNode 被解析成 React 19 的
+      // ReactNode（含 bigint），与本包声明的 react@18.3.1 期望的 18 版 ReactNode
+      // 不兼容 → 一堆 TS2322/TS2786。把 react / react-dom 的类型解析显式钉到本包
+      // 自己 node_modules 的 18 版，切断穿透。见 [[删bunlock重装致依赖版本向上漂移]]
+      // 同源的 monorepo hoist 串扰类问题。
+      "react": ["./node_modules/@types/react"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"]
     }
   },
   "include": [

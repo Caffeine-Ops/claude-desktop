@@ -76,6 +76,14 @@ function resolveEngine(event: IpcMainInvokeEvent): ChatEngine {
   if (!ctx) {
     throw new Error(`IPC received from an unknown tab (${describeSenderMismatch(event)}).`)
   }
+  // web tab（Open Design web UI）没有 ChatEngine —— 它加载外部 origin，不挂
+  // chatApi preload，本不该调用任何需要 engine 的 IPC。若真有调用到达（异常路径），
+  // 抛明确错误而不是让 null 流下去崩在更深处。
+  if (!ctx.engine) {
+    throw new Error(
+      `IPC requiring a ChatEngine arrived from a web tab (id=${event.sender.id}), which has none.`
+    )
+  }
   return ctx.engine
 }
 

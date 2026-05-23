@@ -111,6 +111,48 @@ body,
   border-bottom-color: rgba(255, 255, 255, 0.12);
 }
 
+/* Persistent chrome tab strip — rendered by the shell window's own
+ * webContents (?shell=1, see shell/ShellApp.tsx). Pinned to the top
+ * 44px band of the window; every content tab's WebContentsView is laid
+ * out below it (y = TAB_BAR_HEIGHT in tabRegistry). It carries the same
+ * Apple toolbar material + macOS traffic-light gutter the old in-header
+ * TabBar used, so the pill row looks unchanged — only the owner moved
+ * from each tab's header to this single shared strip.
+ *
+ * Height is fixed to TAB_BAR_HEIGHT (44px) so the renderer band lines
+ * up exactly with the px the main process reserves; a mismatch would
+ * leave a sliver of bare shell background or clip the pills. */
+.shell-chrome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  box-sizing: border-box;
+  padding: 8px 20px 8px 14px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+  background-color: hsl(var(--background) / 0.72);
+  backdrop-filter: saturate(180%) blur(28px);
+  -webkit-backdrop-filter: saturate(180%) blur(28px);
+  -webkit-app-region: drag;
+}
+
+.dark .shell-chrome {
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+
+/* macOS traffic-light gutter — same 82px reserve as .header so the
+ * first pill clears the red/yellow/green buttons. data-platform is set
+ * in main.tsx before React mounts (first paint already correct). */
+html[data-platform='darwin'] .shell-chrome {
+  padding-left: 82px;
+}
+
+/* Fullscreen: traffic lights slide out, reclaim the gutter. Same
+ * data-fullscreen mechanism as .header. */
+html[data-platform='darwin'][data-fullscreen='true'] .shell-chrome {
+  padding-left: 14px;
+}
+
 /* macOS traffic-light gutter. The three window-control circles
  * span ~68px from the left edge (offset ~8px, three 12px dots
  * with 8px gaps), so 82px leaves a ~14px breathing gap before
@@ -131,6 +173,18 @@ html[data-platform='darwin'] .header {
  * is unreliable for Electron's BrowserWindow.setFullScreen — it
  * only reports display-mode for `element.requestFullscreen`.) */
 html[data-platform='darwin'][data-fullscreen='true'] .header {
+  padding-left: 14px;
+}
+
+/* Chat tab's own header now sits *below* the shell chrome strip, so
+ * the macOS traffic lights overlay the strip — not this header. Drop
+ * the 82px gutter (the only thing it reserved space for was the TabBar
+ * clearing the lights, and the TabBar has moved to the shell strip).
+ * The panel toggles it still holds are right-aligned, so reverting to
+ * the standard 14px inset just tightens the left edge. Higher
+ * specificity than the platform rule above so it wins regardless of
+ * source order. */
+html[data-platform='darwin'] .header.header--tab {
   padding-left: 14px;
 }
 

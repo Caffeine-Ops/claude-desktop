@@ -2,31 +2,19 @@
 //
 // Mirrors the Lovart-style "?" affordance shown in the bottom-left
 // corner of the workspace: a single round button that opens a small
-// popover with the four external help links we want every user to be
-// one click away from — GitHub issues for help, GitHub PRs for feature
-// requests, releases for the changelog, and the desktop download.
-//
-// The links open in a new tab (with safe `noopener` rel) and are
-// labeled via the i18n dictionary so locale switching keeps the menu
-// in the user's language.
+// popover with the external links we want every user to be one click
+// away from. The links open in a new tab (with safe `noopener` rel).
 
 import { useEffect, useRef, useState } from 'react';
 import { useAnalytics } from '../analytics/provider';
 import {
-  trackHelpPopoverClick,
   trackHelpPopoverSurfaceView,
   trackHomeNavClick,
 } from '../analytics/events';
 import { Icon } from './Icon';
 import { useT } from '../i18n';
 
-const REPO = 'https://github.com/nexu-io/open-design';
-const ISSUES_URL = `${REPO}/issues/new`;
-const PRS_URL = `${REPO}/pulls`;
-const RELEASES_URL = `${REPO}/releases`;
-const LATEST_RELEASE_URL = `${REPO}/releases/latest`;
 const X_URL = 'https://x.com/nexudotio';
-const DISCORD_URL = 'https://discord.gg/mHAjSMV6gz';
 
 const ext = { target: '_blank', rel: 'noreferrer noopener' } as const;
 
@@ -101,88 +89,6 @@ export function EntryHelpMenu() {
         >
           <a
             className="entry-help-popover__item"
-            href={ISSUES_URL}
-            {...ext}
-            role="menuitem"
-            onClick={() => {
-              trackHelpPopoverClick(analytics.track, {
-                page_name: 'home',
-                area: 'help_resources_popover',
-                element: 'get_help_on_github',
-                surface: 'popover',
-              });
-              setOpen(false);
-            }}
-          >
-            <span className="entry-help-popover__icon" aria-hidden>
-              <Icon name="comment" size={14} />
-            </span>
-            <span>{t('entry.helpGetHelp')}</span>
-          </a>
-          <a
-            className="entry-help-popover__item"
-            href={PRS_URL}
-            {...ext}
-            role="menuitem"
-            onClick={() => {
-              trackHelpPopoverClick(analytics.track, {
-                page_name: 'home',
-                area: 'help_resources_popover',
-                element: 'submit_a_feature_request',
-                surface: 'popover',
-              });
-              setOpen(false);
-            }}
-          >
-            <span className="entry-help-popover__icon" aria-hidden>
-              <Icon name="sparkles" size={14} />
-            </span>
-            <span>{t('entry.helpSubmitFeature')}</span>
-          </a>
-          <a
-            className="entry-help-popover__item"
-            href={LATEST_RELEASE_URL}
-            {...ext}
-            role="menuitem"
-            onClick={() => {
-              trackHelpPopoverClick(analytics.track, {
-                page_name: 'home',
-                area: 'help_resources_popover',
-                element: 'whats_new',
-                surface: 'popover',
-              });
-              setOpen(false);
-            }}
-          >
-            <span className="entry-help-popover__icon" aria-hidden>
-              <Icon name="bell" size={14} />
-            </span>
-            <span>{t('entry.helpWhatsNew')}</span>
-          </a>
-          <div className="entry-help-popover__divider" aria-hidden />
-          <a
-            className="entry-help-popover__item"
-            href={RELEASES_URL}
-            {...ext}
-            role="menuitem"
-            onClick={() => {
-              trackHelpPopoverClick(analytics.track, {
-                page_name: 'home',
-                area: 'help_resources_popover',
-                element: 'download_desktop_app',
-                surface: 'popover',
-              });
-              setOpen(false);
-            }}
-          >
-            <span className="entry-help-popover__icon" aria-hidden>
-              <Icon name="download" size={14} />
-            </span>
-            <span>{t('entry.helpDownloadDesktop')}</span>
-          </a>
-          <div className="entry-help-popover__divider" aria-hidden />
-          <a
-            className="entry-help-popover__item"
             href={X_URL}
             {...ext}
             role="menuitem"
@@ -192,18 +98,6 @@ export function EntryHelpMenu() {
               <Icon name="external-link" size={14} />
             </span>
             <span>Follow @nexudotio on X</span>
-          </a>
-          <a
-            className="entry-help-popover__item"
-            href={DISCORD_URL}
-            {...ext}
-            role="menuitem"
-            onClick={() => setOpen(false)}
-          >
-            <span className="entry-help-popover__icon" aria-hidden>
-              <Icon name="discord" size={14} />
-            </span>
-            <span>Join Discord</span>
           </a>
         </div>
       ) : null}

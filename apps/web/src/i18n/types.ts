@@ -1203,9 +1203,6 @@ export interface Dict {
   'entry.helpWhatsNew': string;
   'entry.helpDownloadDesktop': string;
   // GitHub star pill in the top bar
-  'entry.githubStarLabel': string;
-  'entry.githubStarTitle': string;
-  'entry.githubStarAria': string;
 
   // Connectors tab
   'connectors.title': string;

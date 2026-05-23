@@ -440,9 +440,6 @@ export const id: Dict = {
   'entry.helpSubmitFeature': 'Ajukan fitur',
   'entry.helpWhatsNew': 'Apa yang baru',
   'entry.helpDownloadDesktop': 'Unduh aplikasi desktop',
-  'entry.githubStarLabel': 'Star',
-  'entry.githubStarTitle': 'Klik untuk memberi star di GitHub',
-  'entry.githubStarAria': 'Beri star Open Design di GitHub',
   'entry.tabImageTemplates': 'Templat gambar',
   'entry.tabVideoTemplates': 'Templat video',
 

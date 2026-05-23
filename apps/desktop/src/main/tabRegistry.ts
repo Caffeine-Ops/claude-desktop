@@ -1,7 +1,8 @@
 import {
   BrowserWindow,
   WebContentsView,
-  type IpcMainInvokeEvent
+  type IpcMainInvokeEvent,
+  type WebContents
 } from 'electron'
 import { basename, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
@@ -10,20 +11,74 @@ import { is } from '@electron-toolkit/utils'
 import appIcon from '../../resources/icon.png?asset'
 import { ChatEngine, createChatEngine } from './core/engine'
 import { clearUnread } from './tray'
+import { resolveWebTabUrl } from './services/openDesignServices'
 import { IPC_CHANNELS, type TabDescriptor } from '../shared/ipc-channels'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 /**
- * The shell window no longer reserves any vertical band for a
- * chrome-style tab bar — each tab's workspace renderer draws its
- * own tab strip inside its existing `<header>` row, right next to
- * the panel toggle buttons. That means the WebContentsView fills
- * the entire shell window and macOS traffic lights overlay the
- * tab renderer directly (the renderer's `.header` reserves
- * padding on the left so nothing collides).
+ * 强制某个 webContents 的 DevTools 以 detach（独立窗口）模式打开。
+ *
+ * 为什么必须 detach：每个 tab 是一个**覆盖整个 shell 窗口**的 WebContentsView
+ * （见下方 activateTab 的 swap 不变量）。Electron 默认 DevTools 以 mode:'right'
+ * 内嵌停靠，但停靠区是相对触发它的 webContents 的——而 WebContentsView 不像
+ * 普通 BrowserWindow 那样有 DevTools 停靠槽，停靠面板会被 view 自身全屏内容盖住，
+ * 表现为「DevTools 被页面挡住」。detach 让 DevTools 单独成窗，不与 view 抢渲染区。
+ *
+ * 实现：只拦快捷键（⌘⌥I / F12 / ⌘⌥J）自己用 detach 打开。
+ *
+ * 不要用 `devtools-opened` 事件去「关掉重开成 detach」（历史踩坑）：openDevTools
+ * 触发的 devtools-opened 是异步派发的，任何「同步重置的 reentry 标志」都挡不住
+ * 递归——close→open→devtools-opened→close→open… 无限循环，主进程日志里那条
+ * DevTools 内部的 `presentUI` 噪音会被刷爆（每秒上千行）。快捷键这一条路径已经
+ * 覆盖绝大多数打开方式；右键「检查」走默认停靠是可接受的折中，远好过死循环。
  */
-const TAB_BAR_HEIGHT = 0
+function forceDetachedDevTools(wc: WebContents): void {
+  wc.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    const key = input.key.toLowerCase()
+    const isToggle =
+      key === 'f12' ||
+      // macOS: ⌘⌥I / ⌘⌥J；其它平台 Ctrl+Shift+I / Ctrl+Shift+J
+      ((input.meta || input.control) && input.alt && (key === 'i' || key === 'j')) ||
+      ((input.control || input.meta) && input.shift && (key === 'i' || key === 'j'))
+    if (!isToggle) return
+    event.preventDefault()
+    if (wc.isDestroyed()) return
+    if (wc.isDevToolsOpened()) {
+      wc.closeDevTools()
+    } else {
+      wc.openDevTools({ mode: 'detach' })
+    }
+  })
+}
+
+/**
+ * Height (in CSS px) of the persistent chrome tab strip rendered by
+ * the shell window's own webContents (the `?shell=1` renderer), which
+ * sits pinned at the very top of the window above every content tab's
+ * WebContentsView.
+ *
+ * History: this used to be 0 — each tab drew its own TabBar inside its
+ * workspace header, and the content view filled the whole window. That
+ * broke once we added the Open Design web tab: that tab loads an
+ * external origin with NO chatApi/tabApi preload, so it can't render a
+ * TabBar. Whenever it was foreground the user lost every entry point to
+ * switch back. Pinning a single chrome strip — owned by the shell, not
+ * any one tab — keeps both pills always visible/clickable regardless of
+ * which tab is foreground.
+ *
+ * Content views are laid out starting at y = TAB_BAR_HEIGHT (see
+ * layoutActiveTab) so they sit *below* the strip. The shell's own
+ * webContents spans the full window underneath, but only this top band
+ * is ever uncovered, so that's all the user sees of it.
+ *
+ * 44px = the strip's content (28px pills + 8px top/bottom padding)
+ * matches the old in-header TabBar rhythm; the macOS traffic lights
+ * overlay this band directly (the chrome renderer reserves left padding
+ * so nothing collides — same trick the workspace header used).
+ */
+const TAB_BAR_HEIGHT = 44
 
 /**
  * Maximum number of simultaneously open workspace tabs. Each tab
@@ -48,8 +103,17 @@ export const MAX_TABS = 9
  */
 interface TabContext {
   view: WebContentsView
-  engine: ChatEngine
+  /**
+   * 驱动该 tab fusion-code 会话的 ChatEngine。**仅 chat tab 有**；
+   * web tab（加载 Open Design web UI 的第二个 tab）没有 engine —— 它的
+   * webContents 渲染的是一个外部 origin（dev: localhost:3000 / prod: daemon
+   * 同源页面），靠 daemon HTTP API 工作，不经过我们的 ChatEngine / IPC。
+   * 所有读 engine 的地方都必须判空。
+   */
+  engine: ChatEngine | null
   title: string
+  /** tab 类型：'chat' 是原有工作区聊天 tab；'web' 是嵌 Open Design web 的 tab。 */
+  kind: 'chat' | 'web'
 }
 
 let shellWindow: BrowserWindow | null = null
@@ -94,6 +158,8 @@ export function createShellWindow(): BrowserWindow {
   })
 
   shellWindow = win
+  // DevTools 强制 detach，避免被覆盖全窗的 WebContentsView 遮挡（见函数注释）。
+  forceDetachedDevTools(win.webContents)
 
   win.on('ready-to-show', () => {
     win.show()
@@ -128,7 +194,8 @@ export function createShellWindow(): BrowserWindow {
     activeTabId = null
     shellWindow = null
     for (const ctx of all) {
-      void ctx.engine.dispose().catch((err) => {
+      // web tab 没有 engine —— 跳过。
+      void ctx.engine?.dispose().catch((err) => {
         console.warn('[tabRegistry] engine.dispose failed on shell close:', err)
       })
     }
@@ -177,6 +244,7 @@ export function newTab(): TabContext {
   // Transparent background so the shell's theme shows through during
   // the brief interval before the renderer paints its first frame.
   view.setBackgroundColor('#00000000')
+  forceDetachedDevTools(view.webContents)
 
   const engine = createChatEngine(view.webContents, {
     shouldBumpOnTurnEnd: () => {
@@ -190,7 +258,8 @@ export function newTab(): TabContext {
   const ctx: TabContext = {
     view,
     engine,
-    title: 'New Workspace'
+    title: 'New Workspace',
+    kind: 'chat'
   }
   tabs.set(view.webContents.id, ctx)
   tabOrder.push(view.webContents.id)
@@ -280,6 +349,75 @@ export function newTab(): TabContext {
 }
 
 /**
+ * 创建「Open Design web」tab —— 第二个 tab。和 chat tab 的本质区别：
+ *
+ *  - **不创建 ChatEngine**：它的 webContents 加载的是 Open Design 的 web UI
+ *    （dev: localhost:3000 / prod: app://open-design 自定义协议读磁盘，见
+ *    appProtocol.ts），那套前端靠本地 daemon 的 HTTP API 工作（prod 下经
+ *    app:// handler 反代给 daemon），完全不经过我们的 ChatEngine / fusion-code / IPC。
+ *  - **不挂 chatApi preload**：web tab 是个受控的外部 origin，没必要也不应该把
+ *    我们的 IPC 桥暴露给它，所以用默认 webPreferences（仍开 contextIsolation、
+ *    关 nodeIntegration 以保持沙箱）。
+ *  - **标题固定** "Open Design"，不跟随工作区 basename（它没有工作区概念）。
+ *
+ * 由主进程在 daemon/web 就绪后调用（见 main/index.ts），URL 由
+ * openDesignServices.resolveWebTabUrl() 决定。
+ */
+export function newWebTab(): TabContext {
+  if (!shellWindow || shellWindow.isDestroyed()) {
+    throw new Error('Shell window is not initialized.')
+  }
+  if (!canAddTab()) {
+    throw new Error(`Maximum of ${MAX_TABS} tabs already open.`)
+  }
+
+  const view = new WebContentsView({
+    webPreferences: {
+      // 不挂 chatApi preload：见上方注释。保持沙箱默认值。
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+  view.setBackgroundColor('#00000000')
+  forceDetachedDevTools(view.webContents)
+
+  const ctx: TabContext = {
+    view,
+    engine: null,
+    title: 'Open Design',
+    kind: 'web'
+  }
+  tabs.set(view.webContents.id, ctx)
+  tabOrder.push(view.webContents.id)
+  broadcastTabList()
+
+  // 加载 Open Design web。dev 走 web dev server（http），prod 走 app:// 自定义协议。
+  // 两者都是非 file:// URL，loadIntoWebContents 走 loadURL 分支即可。
+  loadIntoWebContents(view.webContents, resolveWebTabUrl())
+
+  view.webContents.on('did-finish-load', () => {
+    broadcastTabList()
+  })
+
+  // 激活策略与 chat tab **故意不同**：web tab 是 app 启动时由主进程在后台
+  // 自动创建的（不是用户点 "+" 触发的），所以它绝不能抢占前台——否则用户
+  // 一开 app 就被甩到 Open Design，而那个 tab 没有 TabBar、回不到 chat
+  // （历史 bug，见 [[2026-05-23-daemon-origin校验拒跨源致web调api全403]] 同会话）。
+  //
+  //   - 冷启动时 chat tab 已先建并激活（activeTabId 非空）→ 这里什么都不做，
+  //     web tab 安静地留在后台，等用户从顶部常驻 TabBar 点 "Open Design" pill
+  //     才切过去（activateTab 由 TAB_SWITCH IPC 调）。
+  //   - 万一 web tab 竟成了首个 tab（activeTabId 为空，理论上不该发生，因为
+  //     index.ts 保证 chat 先建）——才立即激活，避免窗口空着没有可见内容。
+  if (activeTabId === null) {
+    activateTab(view.webContents.id)
+  }
+  // 已有前台 tab（正常路径）：不做 deferred 抢占激活，仅靠上面的
+  // did-finish-load → broadcastTabList 让顶部 TabBar 显示出第二个 pill。
+  return ctx
+}
+
+/**
  * Bring a tab to the foreground.
  *
  * Instead of relying on `setVisible(false)` to hide the inactive
@@ -359,7 +497,8 @@ export async function closeTab(id: number): Promise<void> {
     console.warn('[tabRegistry] removeChildView failed:', err)
   }
 
-  await ctx.engine.dispose().catch((err) => {
+  // web tab 无 engine —— 跳过 dispose。
+  await ctx.engine?.dispose().catch((err) => {
     console.warn('[tabRegistry] engine.dispose failed:', err)
   })
 
@@ -440,13 +579,15 @@ function snapshotTabList(): TabDescriptor[] {
       return {
         id,
         title: ctx.title,
-        workspacePath: ctx.engine.getWorkspace(),
+        // web tab 无 engine / 无工作区概念 —— workspacePath 恒为 null。
+        workspacePath: ctx.engine?.getWorkspace() ?? null,
         active: id === activeTabId,
         // Aggregate across every session in this tab's engine.
         // `pendingCount` lives on the per-engine PermissionBroker
         // and is updated by its `pendingChanged` event, which
         // `newTab()` wires into `broadcastTabList()` below.
-        pendingPermissionCount: ctx.engine.permissionBroker.pendingCount
+        // web tab 没有权限请求，恒为 0。
+        pendingPermissionCount: ctx.engine?.permissionBroker.pendingCount ?? 0
       }
     })
     .filter((d): d is TabDescriptor => d !== null)
@@ -469,6 +610,8 @@ export function broadcastTabList(): void {
   for (const id of tabOrder) {
     const ctx = tabs.get(id)
     if (!ctx) continue
+    // web tab 标题固定（"Open Design"），不跟随工作区 basename。
+    if (!ctx.engine) continue
     const ws = ctx.engine.getWorkspace()
     if (ws) {
       const name = basename(ws) || ws
