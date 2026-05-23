@@ -2162,12 +2162,18 @@ export class ChatEngine extends EventEmitter {
    *      in env.json or the shell to pin an explicit path
    *   2. `<resourcesPath>/fusion-code-cli[.exe]` — packaged Electron
    *      app, the CLI is shipped via electron-builder extraResources
-   *   3. `<cwd>/../free-code/cli` — typical `bun run dev` layout
-   *      (cwd == claude-desktop/)
-   *   4. `<importer>/../../../free-code/cli` — bundled main at
+   *   3. `<cwd>/../free-code/cli` — pre-monorepo `bun run dev` layout
+   *      (cwd == claude-desktop/), kept for backward compat
+   *   4. `<cwd>/../../../free-code/cli` — bun monorepo `bun run dev`
+   *      layout: cwd == claude-desktop/apps/desktop/, so three levels
+   *      up lands at claude_code_01/, where free-code/ is a sibling of
+   *      claude-desktop/
+   *   5. `<importer>/../../../free-code/cli` — bundled main at
    *      `out/main/index.js`, three levels up lands at claude_code_01/
-   *   5. `<importer>/../../../../free-code/cli` — extra fallback for
+   *   6. `<importer>/../../../../free-code/cli` — extra fallback for
    *      dev when the importer is the source file not the bundle
+   *   7. `<importer>/../../../../../free-code/cli` — monorepo variant of
+   *      (6): bundle now lives at apps/desktop/out/main/, one level deeper
    *
    * Throws with every candidate listed, so a misconfigured install is
    * easy to diagnose from the console error shown in the UI.
@@ -2189,8 +2195,10 @@ export class ChatEngine extends EventEmitter {
     const candidates = [
       ...(resourcesPath ? [resolve(resourcesPath, bundledName)] : []),
       resolve(process.cwd(), '../free-code/cli'),
+      resolve(process.cwd(), '../../../free-code/cli'),
       resolve(selfDir, '../../../free-code/cli'),
-      resolve(selfDir, '../../../../free-code/cli')
+      resolve(selfDir, '../../../../free-code/cli'),
+      resolve(selfDir, '../../../../../free-code/cli')
     ]
     for (const p of candidates) {
       if (existsSync(p)) return p

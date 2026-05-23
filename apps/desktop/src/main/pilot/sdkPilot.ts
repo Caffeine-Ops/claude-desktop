@@ -35,10 +35,11 @@ import { query } from '@anthropic-ai/claude-agent-sdk'
 
 // ─────────────────── configuration ───────────────────
 const SELF_DIR = dirname(fileURLToPath(import.meta.url))
-// src/main/pilot/sdkPilot.ts  →  claude-desktop/
+// apps/desktop/src/main/pilot/sdkPilot.ts  →  apps/desktop/ (bun monorepo)
 const PROJECT_ROOT = resolve(SELF_DIR, '../../..')
-// claude-desktop/../free-code/cli
-const FUSION_CLI_PATH = resolve(PROJECT_ROOT, '../free-code/cli')
+// apps/desktop/ → up three more (claude-desktop, claude_code_01) → free-code/cli,
+// a sibling of claude-desktop under claude_code_01/
+const FUSION_CLI_PATH = resolve(PROJECT_ROOT, '../../../free-code/cli')
 const PROMPT = process.argv.slice(2).join(' ').trim() || 'hi'
 const TAG = '[pilot]'
 
