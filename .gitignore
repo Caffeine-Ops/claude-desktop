@@ -9,6 +9,12 @@ build/
 # .github/workflows/build.yml 的 FUSION_CODE_VERSION），不是源码，不入库。
 apps/desktop/fusion-bin/
 
+# prebundle 打包产物 (~160M)：scripts/prebundle-daemon.mjs 生成（每次先 rm 重建），
+# 内容全是从 repo 别处复制来的（daemon bundle + apps/web/out + skills/
+# design-systems/… 等根目录资源），无唯一副本。electron-builder 打包时用，
+# 重新生成用 `bun run prebundle:daemon`。不入库。
+apps/desktop/prebundled/
+
 .env
 .env.local
 .vite
