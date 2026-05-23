@@ -11,11 +11,15 @@ function cssBlock(selector: string): string {
 }
 
 describe('default app background colors', () => {
-  it('uses the release light background color by default', () => {
+  it('uses the shared design-token light background by default', () => {
     const root = cssBlock(':root');
 
-    expect(root).toContain('--bg: #faf9f7;');
-    expect(root).toContain('--bg-app: #faf9f7;');
+    // The light surface palette now derives from the shared design tokens
+    // (packages/design-tokens/tokens.css) so web matches the desktop app.
+    // --bg / --bg-app resolve through the shared --background token
+    // (hsl 240 7% 97% ≈ Apple's #f5f5f7) instead of the old hard-coded hex.
+    expect(root).toContain('--bg: hsl(var(--background));');
+    expect(root).toContain('--bg-app: hsl(var(--background));');
   });
 
   it('keeps the dark theme background unchanged', () => {

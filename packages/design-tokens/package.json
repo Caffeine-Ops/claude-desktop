@@ -1,0 +1,13 @@
+{
+  "name": "@claude-desktop/design-tokens",
+  "version": "0.0.9",
+  "private": true,
+  "description": "Shared CSS design tokens (single source of truth for color) consumed by apps/desktop and apps/web.",
+  "type": "module",
+  "files": [
+    "tokens.css"
+  ],
+  "exports": {
+    "./tokens.css": "./tokens.css"
+  }
+}

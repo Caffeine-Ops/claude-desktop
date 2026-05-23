@@ -2,12 +2,32 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const indexCss = readFileSync(new URL('../../src/index.css', import.meta.url), 'utf8');
+// The light surface/text tokens now derive from the shared design tokens
+// (packages/design-tokens/tokens.css) — e.g. --text: hsl(var(--foreground)).
+// Load that file too so we can follow those indirections down to a real color
+// and still verify the WCAG contrast invariant. The dark theme below is still
+// hand-authored hex in index.css, so it resolves without the shared file.
+const sharedTokensCss = readFileSync(
+  new URL('../../../../packages/design-tokens/tokens.css', import.meta.url),
+  'utf8',
+);
 
 function cssBlock(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`).exec(indexCss);
   if (!match) throw new Error(`Missing CSS block for ${selector}`);
   return match[1] ?? '';
+}
+
+// Reads a bare HSL-triplet token (e.g. `--foreground: 240 3% 12%`) from the
+// shared tokens file's `:root`. Used to resolve the `hsl(var(--token))`
+// indirections that the light palette now points at.
+function sharedHslToken(name: string): [number, number, number] {
+  const rootMatch = /:root\s*\{([\s\S]*?)\n\}/.exec(sharedTokensCss);
+  if (!rootMatch) throw new Error('Missing :root block in shared tokens');
+  const m = new RegExp(`${name}:\\s*([\\d.]+)\\s+([\\d.]+)%\\s+([\\d.]+)%`).exec(rootMatch[1]!);
+  if (!m) throw new Error(`Missing shared HSL token ${name}`);
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
 }
 
 function cssVar(block: string, name: string): string {
@@ -32,9 +52,28 @@ function resolveVar(value: string, variables: Record<string, string>): string {
   return resolved;
 }
 
-function hexToRgb(hex: string): [number, number, number] {
-  const normalized = hex.trim().replace(/^#/, '');
-  if (!/^[0-9a-f]{6}$/i.test(normalized)) throw new Error(`Expected #rrggbb, got ${hex}`);
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const sat = s / 100;
+  const lig = l / 100;
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = sat * Math.min(lig, 1 - lig);
+  const f = (n: number) => lig - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+  return [Math.round(255 * f(0)), Math.round(255 * f(8)), Math.round(255 * f(4))];
+}
+
+// Accepts either a #rrggbb literal (dark theme, still hand-authored) or a
+// `hsl(var(--token))` reference into the shared tokens (light theme). The
+// latter is followed down to the shared HSL triplet and converted to RGB so
+// the WCAG contrast math below stays identical.
+function colorToRgb(value: string): [number, number, number] {
+  const trimmed = value.trim();
+  const sharedRef = /^hsl\(var\((--[a-z-]+)\)\)$/.exec(trimmed);
+  if (sharedRef) {
+    const [h, s, l] = sharedHslToken(sharedRef[1]!);
+    return hslToRgb(h, s, l);
+  }
+  const normalized = trimmed.replace(/^#/, '');
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) throw new Error(`Expected #rrggbb or hsl(var(--…)), got ${value}`);
   return [
     Number.parseInt(normalized.slice(0, 2), 16),
     Number.parseInt(normalized.slice(2, 4), 16),
@@ -53,8 +92,8 @@ function luminance([r, g, b]: [number, number, number]): number {
 }
 
 function contrastRatio(foreground: string, background: string): number {
-  const first = luminance(hexToRgb(foreground));
-  const second = luminance(hexToRgb(background));
+  const first = luminance(colorToRgb(foreground));
+  const second = luminance(colorToRgb(background));
   const lighter = Math.max(first, second);
   const darker = Math.min(first, second);
   return (lighter + 0.05) / (darker + 0.05);

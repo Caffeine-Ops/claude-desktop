@@ -11,165 +11,28 @@
  * `text-muted-foreground`, `bg-sidebar` — defined in tailwind.config.js
  * — read those variables through `hsl(var(--token))`.
  *
+ * The token VALUES themselves now live in the shared
+ * `@claude-desktop/design-tokens` package (../../../../../packages/
+ * design-tokens/tokens.css), imported at the very top below — the same
+ * file apps/web imports, so both surfaces share one palette. This file
+ * keeps only the desktop-specific application styles (body, decorative
+ * backdrop, cursor/slider modifiers) that build on those tokens.
+ *
  * The appearance store + applier mutate the same variables on
  * `documentElement.style` for per-theme overrides (accent, background,
  * foreground), so every component re-skins instantly without a single
  * extra render path. See stores/appearance.ts and
  * stores/appearance.applier.ts.
- *
- * Light theme palette is a desaturated zinc set tuned to roughly match
- * the previous dark-only design's spacing/contrast feel.
  */
+/* Shared color tokens (:root / .dark / html.high-contrast). Must precede
+ * @tailwind so the cascade order matches the old in-file @layer placement. */
+@import '../../../../../packages/design-tokens/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  :root {
-    /* Light theme — Apple-inspired palette.
-     *
-     * Base canvas is `#f5f5f7` (hsl 240 7% 97%) — Apple's signature
-     * light gray that sits just off pure white. The slight blue-gray
-     * tint prevents sterility and creates a subtle contrast so white
-     * cards (popover/card tokens) feel like they're *floating* above
-     * the page instead of blending into it. This is the whole point
-     * of Apple's light sections: the background retreats so product
-     * surfaces step forward.
-     *
-     * Foreground pinned to `#1d1d1f` (hsl 240 3% 12%) — Apple's
-     * near-black, slightly warmer than pure black so long reading
-     * passes don't feel harsh.
-     */
-    color-scheme: light;
-    --background: 240 7% 97%;
-    --foreground: 240 3% 12%;
-
-    --card: 0 0% 100%;
-    --card-foreground: 240 3% 12%;
-
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 3% 12%;
-
-    /* Apple Blue (#0071e3) — the ONLY chromatic color in Apple's
-     * interface, reserved for interactive elements. HSL: 211 100% 45%. */
-    --primary: 211 100% 45%;
-    --primary-foreground: 0 0% 100%;
-
-    --secondary: 240 6% 94%;
-    --secondary-foreground: 240 3% 18%;
-
-    --muted: 240 5% 93%;
-    --muted-foreground: 240 4% 40%;
-
-    --accent: 211 100% 45%;
-    --accent-foreground: 0 0% 100%;
-
-    --destructive: 0 72% 50%;
-    --destructive-foreground: 0 0% 100%;
-
-    /* Border tokens tuned for the new #f5f5f7 base. The previous
-     * 240 6% 90% was only ~3 points darker than the background
-     * and effectively invisible. 240 6% 84% (~#d3d3d8) reads as a
-     * clear hairline without going loud — roughly what Apple's
-     * own light-mode separators land on. */
-    --border: 240 6% 84%;
-    --input: 240 6% 86%;
-    --ring: 211 100% 45%;
-
-    --sidebar: 240 7% 96%;
-    --sidebar-foreground: 240 4% 18%;
-    --sidebar-accent: 240 6% 90%;
-    --sidebar-border: 240 6% 84%;
-
-    /* Composer mention chip — semantic green for "this is a file or
-     * symbol", kept distinct from accent so the two chip variants
-     * stay visually separable regardless of which accent the user
-     * picks. Light value is the readable shade on white; dark value
-     * lifts to stay legible on a dark backdrop. */
-    --chip-mention: 158 64% 40%;
-
-    --ui-font-size: 13px;
-    --code-font-size: 12px;
-  }
-
-  .dark {
-    color-scheme: dark;
-    /* Dark theme — Apple-inspired (DESIGN.md §2, §6).
-     *
-     * Apple's dark sections are cinematic: a pure-black canvas
-     * (`#000000`) that feels like an OLED gallery wall, with product
-     * cards lifted on near-black surfaces (`#272729`–`#2a2a2d`) that
-     * are 1-2 shades warmer than the backdrop. The only chromatic
-     * color is Apple Bright Blue (`#2997ff`) — the dark-bg variant of
-     * the Apple Blue accent, luminance-lifted so blue interactive
-     * elements stay unmistakable on pure black.
-     *
-     * Neutral hue is 240 (just a hair cool) with near-zero saturation,
-     * so surfaces read as warm gray instead of the Linear/Vercel blue
-     * cast we had before.
-     */
-
-    /* Pure black canvas — Apple's signature hero background. */
-    --background: 0 0% 0%;
-    --foreground: 0 0% 100%;
-
-    /* Card = Dark Surface 1 (#272729). Popover = Dark Surface 4
-     * (#2a2a2d) — a hair higher to signal dialogs/menus float above
-     * inline cards. These are Apple's exact surface tokens from
-     * DESIGN.md §2. */
-    --card: 240 3% 16%;
-    --card-foreground: 0 0% 100%;
-
-    --popover: 240 3% 17%;
-    --popover-foreground: 0 0% 100%;
-
-    /* Apple Bright Blue (#2997ff) — the dark-bg accent. HSL 210 100% 58%.
-     * This is the ONLY chromatic color in the interface (DESIGN.md §2). */
-    --primary: 210 100% 58%;
-    --primary-foreground: 0 0% 100%;
-
-    /* Secondary surfaces = Dark Surface 2 (#262628). */
-    --secondary: 240 3% 15%;
-    --secondary-foreground: 0 0% 100%;
-
-    /* Muted canvas stays a hair below card so sidebar/rail surfaces
-     * feel inset from floating cards. Muted foreground ≈ Apple's
-     * "white at 66% opacity" secondary text. */
-    --muted: 240 3% 13%;
-    --muted-foreground: 0 0% 66%;
-
-    --accent: 210 100% 58%;
-    --accent-foreground: 0 0% 100%;
-
-    --destructive: 0 72% 55%;
-    --destructive-foreground: 0 0% 100%;
-
-    /* Border ≈ white @ 14% on pure black — matches Apple's nav
-     * hairline rule. Input a hair brighter for form affordance. */
-    --border: 0 0% 18%;
-    --input: 0 0% 22%;
-    --ring: 210 100% 58%;
-
-    /* Sidebar matches the pure-black nav surface so the left rail
-     * reads as the same Apple "glass navigation" plane as the toolbar. */
-    --sidebar: 0 0% 0%;
-    --sidebar-foreground: 0 0% 95%;
-    --sidebar-accent: 240 3% 15%;
-    --sidebar-border: 0 0% 18%;
-
-    --chip-mention: 158 64% 65%;
-  }
-
-  /* High-contrast modifier — bumps borders, ring, muted text. Toggled
-   * on `<html>` by the applier when contrast slider crosses 60.
-   * Ring stays on Apple Bright Blue, just luminance-lifted for AA+. */
-  html.high-contrast {
-    --border: 0 0% 32%;
-    --input: 0 0% 32%;
-    --ring: 210 100% 70%;
-    --muted-foreground: 0 0% 80%;
-  }
-
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));

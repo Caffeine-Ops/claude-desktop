@@ -1,35 +1,59 @@
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap');
+/* Shared color tokens — the same file apps/desktop imports. Defines the
+ * desktop shadcn-style HSL palette on :root / .dark. The legacy --bg / --text
+ * / --accent names below are remapped to derive from these so this app's ~27k
+ * lines of CSS keep working while adopting the unified desktop color values. */
+@import '../../../packages/design-tokens/tokens.css';
 @import './styles/design-system-flow.css';
 
 /* ============================================================
    Open Design — neutral product workspace
    ============================================================ */
 :root {
-  /* Surface palette — neutral app chrome that does not bias generated artifacts.
-     Keep warm/brand colors out of preview backgrounds; generated product UI
-     must choose its own palette through the active skill/design brief. */
-  --bg: #faf9f7;
-  --bg-app: #faf9f7;
-  --bg-panel: #ffffff;
-  --bg-subtle: #eef1f5;
-  --bg-muted: #e4e8ef;
-  --bg-elevated: #ffffff;
-  --border: #e1e5eb;
-  --border-strong: #c9d0da;
-  --border-soft: #edf0f4;
+  /* Surface / text / accent palette — derived from the shared design tokens
+     (packages/design-tokens/tokens.css, the desktop shadcn HSL system imported
+     above) so this web app matches the desktop app's exact color values. The
+     legacy --bg / --text / --accent NAMES are preserved (the ~27k lines below
+     reference them); only their VALUES now point at the unified tokens.
 
-  --text: #1a1916;
-  --text-strong: #0d0c0a;
-  --text-muted: #74716b;
-  --text-soft: #989590;
-  --text-faint: #b3b0a8;
+     Mapping rationale:
+       --bg / --bg-app        → --background (page canvas)
+       --bg-panel/-elevated   → --card       (floating white surfaces)
+       --bg-subtle            → --secondary  (inset chrome)
+       --bg-muted             → --muted      (rails / quiet fills)
+       --text / --text-strong → --foreground (primary copy)
+       --text-muted/-soft/-faint → --muted-foreground at descending alpha
+       --accent*              → --accent     (Apple Blue, desktop's sole hue)
+     The semantic status colors (green/blue/red/…), shadows, radii and fonts
+     below are intentionally left as-is: the desktop token set has no equivalent
+     for them, so keeping them avoids regressing status pills and elevation. */
+  --bg: hsl(var(--background));
+  --bg-app: hsl(var(--background));
+  --bg-panel: hsl(var(--card));
+  --bg-subtle: hsl(var(--secondary));
+  --bg-muted: hsl(var(--muted));
+  --bg-elevated: hsl(var(--card));
+  /* --border / --accent collide by name with the shared tokens, so they
+     derive from collision-free aliases: --hairline (same value as the shared
+     --border) and --primary (the desktop accent's twin, identical value).
+     Using var(--border)/var(--accent) here would self-reference and break. */
+  --border: hsl(var(--hairline));
+  --border-strong: hsl(var(--hairline-strong));
+  --border-soft: hsl(var(--hairline) / 0.6);
 
-  /* Accent — Open Design action color for app chrome only. */
-  --accent: #c96442;
-  --accent-strong: #b45a3b;
-  --accent-soft: #f5d8cb;
-  --accent-tint: #fbeee5;
-  --accent-hover: #b45a3b;
+  --text: hsl(var(--foreground));
+  --text-strong: hsl(var(--foreground));
+  --text-muted: hsl(var(--muted-foreground));
+  --text-soft: hsl(var(--muted-foreground) / 0.8);
+  --text-faint: hsl(var(--muted-foreground) / 0.55);
+
+  /* Accent — the desktop Apple Blue accent (the only chromatic hue). Derived
+     from --primary (same value as the shared --accent) to avoid self-ref. */
+  --accent: hsl(var(--primary));
+  --accent-strong: hsl(var(--primary) / 0.92);
+  --accent-soft: hsl(var(--primary) / 0.18);
+  --accent-tint: hsl(var(--primary) / 0.1);
+  --accent-hover: hsl(var(--primary) / 0.92);
 
   /* Semantic accent tints used by tool / status pills. */
   --green: #1f7a3a;
