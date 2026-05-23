@@ -1,7 +1,17 @@
+// @vitest-environment jsdom
+//
+// This suite hand-rolls a JSDOM instance per test (the repo's default vitest
+// environment is `node`). Under React 19 that combination broke: React 19's
+// controlled-input value tracker resolves its native value setter against the
+// realm React was imported into, which under a `node` global env is NOT the
+// hand-rolled JSDOM realm — so a native-setter write + dispatched input event
+// was judged "unchanged" and onChange never fired (it did under React 18's
+// now-removed `Simulate`, which bypassed the tracker entirely). Pinning this
+// file to the `jsdom` environment aligns those realms so the tracker sees the
+// real value change. The per-test `new JSDOM()` setup below still works as-is.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { Simulate } from 'react-dom/test-utils';
 import { JSDOM } from 'jsdom';
 import { ManualEditPanel, emptyManualEditDraft, manualEditPatchSummary, normalizeManualEditStyles, type ManualEditDraft } from '../../src/components/ManualEditPanel';
 import { emptyManualEditStyles, type ManualEditPatch, type ManualEditStyles, type ManualEditTarget } from '../../src/edit-mode/types';
@@ -295,9 +305,19 @@ describe('ManualEditPanel', () => {
       ?.querySelector('input') as HTMLInputElement | null;
     if (!lineInput) throw new Error('Line input not found');
 
+    // React 19 removed `react-dom/test-utils` (and its `Simulate`). To drive a
+    // controlled <input> we set the value through the prototype's native setter
+    // — this defeats React's internal value tracker, which otherwise swallows a
+    // plain `.value = …` + dispatch as "unchanged" — then dispatch the bubbling
+    // `input` event React synthesizes onChange from. The setter is taken from
+    // the input's own jsdom realm (`dom.window`) so the prototype matches.
     act(() => {
-      lineInput.value = '49px';
-      Simulate.change(lineInput);
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        dom.window.HTMLInputElement.prototype,
+        'value',
+      )?.set;
+      nativeValueSetter?.call(lineInput, '49px');
+      lineInput.dispatchEvent(new dom.window.InputEvent('input', { bubbles: true }));
     });
 
     expect(onError).toHaveBeenCalledWith('');

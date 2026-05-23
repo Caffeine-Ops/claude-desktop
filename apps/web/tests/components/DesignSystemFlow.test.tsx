@@ -2105,6 +2105,14 @@ describe('DesignSystemDetailView', () => {
       </I18nProvider>,
     );
 
+    // The active conversation id is set three async effects deep
+    // (fetchDesignSystem → resolve workspace project → listConversations).
+    // Under React 19's effect scheduling the send button renders before that
+    // chain settles, so we must wait for listConversations to have run — that
+    // is what populates activeConversationId with the existing conversation.
+    // Clicking earlier would fall into the createConversation branch and the
+    // asserted conversationId ('conv-design-system') would never be used.
+    await waitFor(() => expect(mocks.listConversations).toHaveBeenCalledWith(project.id));
     await waitFor(() => expect(screen.getByTestId('design-system-chat-send')).toBeTruthy());
     fireEvent.click(screen.getByTestId('design-system-chat-send'));
 

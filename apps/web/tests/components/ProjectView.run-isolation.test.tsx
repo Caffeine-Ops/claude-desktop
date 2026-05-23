@@ -309,6 +309,13 @@ describe('ProjectView conversation run isolation', () => {
     renderProjectView();
 
     await waitFor(() => expect(screen.getByTestId('active-conversation').textContent).toBe('conv-a'));
+    // Wait until conv-a's messages have actually loaded into state (the running
+    // assistant flips streaming on). handleNewConversation's "don't create a
+    // duplicate empty conversation" guard early-returns when messages.length is
+    // still 0 for the active conversation — under React 19's effect scheduling
+    // the active id is set before listMessages resolves, so without this wait
+    // the first click would hit that guard and conv-c would never be created.
+    await waitFor(() => expect(screen.getByTestId('streaming-state').textContent).toBe('streaming'));
 
     fireEvent.click(screen.getByTestId('new-conversation'));
     await waitFor(() => expect(screen.getByTestId('active-conversation').textContent).toBe('conv-c'));
@@ -329,6 +336,11 @@ describe('ProjectView conversation run isolation', () => {
     renderProjectView();
 
     await waitFor(() => expect(screen.getByTestId('active-conversation').textContent).toBe('conv-a'));
+    // Same React 19 ordering caveat as the duplicate-empty test above: wait
+    // for conv-a's messages to land (streaming on) so the first click enters
+    // createConversation instead of being short-circuited by the empty-active
+    // guard — otherwise neither click would reach createConversation at all.
+    await waitFor(() => expect(screen.getByTestId('streaming-state').textContent).toBe('streaming'));
 
     fireEvent.click(screen.getByTestId('new-conversation'));
     fireEvent.click(screen.getByTestId('new-conversation'));
