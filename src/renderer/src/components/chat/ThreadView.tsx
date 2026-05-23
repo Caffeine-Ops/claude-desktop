@@ -1990,17 +1990,11 @@ function Composer(): React.JSX.Element {
 
   return (
     <div className="mx-auto w-full max-w-3xl">
-      {/* Inline workspace pill — sits above the composer card as a
-          subtle affordance. Reads the current folder from the
-          workspace store and commits switches through its own
-          popover, so the sidebar "switch workspace" button is just
-          one of several equivalent entry points now.
-
-          PermissionModePicker shares the row, anchored to the right
-          edge via absolute positioning so WorkspacePill's own
-          `w-full` flex layout doesn't have to change. The pill's
-          internal `py-1.5` sets the row height; the picker is
-          centered vertically to match. */}
+      {/* Strip above the composer card. Holds only the
+          PermissionModePicker now (the inline workspace switcher was
+          removed when the app moved to a fixed default workspace).
+          The picker is anchored to the right edge via absolute
+          positioning; the `min-h-[30px]` reserves the row height. */}
       <div className="relative mb-2 min-h-[30px]">
         <div className="pointer-events-none absolute right-1 top-0 flex h-[30px] items-center">
           <div className="pointer-events-auto">

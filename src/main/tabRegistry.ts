@@ -148,9 +148,9 @@ export function createShellWindow(): BrowserWindow {
 /**
  * Create a new tab: spin up a WebContentsView for the workspace
  * renderer, create its engine, attach the view to the shell window,
- * and activate it. The renderer will show the WorkspaceGate until
- * the user picks a folder, after which the engine's `setWorkspace`
- * locks this tab to that directory.
+ * and activate it. The engine defaults its workspace to the OS Desktop
+ * at construction (see engine.ts `resolveDefaultWorkspace`), so the new
+ * tab opens straight into a usable chat UI with no folder-picker step.
  */
 export function newTab(): TabContext {
   if (!shellWindow || shellWindow.isDestroyed()) {

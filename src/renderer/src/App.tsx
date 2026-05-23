@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { FusionRuntimeProvider } from './runtime/FusionRuntimeProvider'
 import { ThreadView } from './components/chat/ThreadView'
@@ -10,8 +10,6 @@ import { McpDialog } from './components/dialogs/McpDialog'
 import { LogsDialog } from './components/dialogs/LogsDialog'
 import TabBar from './components/tabs/TabBar'
 import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
-import { WorkspaceDropLayer } from './components/workspace/WorkspaceDropLayer'
-import { EmptyWorkspaceShell } from './components/workspace/EmptyWorkspaceShell'
 import { useChatStore } from './stores/chat'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
@@ -41,26 +39,25 @@ import { AnimatePresence, motion } from 'motion/react'
  * keeping it inside the row gives the three panes a single shared flex
  * parent for consistent full-height sizing.
  *
- * Workspace gate
- * --------------
- * Before the main layout mounts, we check `getWorkspace()`. If the
- * user has not yet picked a folder (`path === null`), we render
- * `<WorkspaceGate>` in place of the chat UI. The engine hard-rejects
- * `send()` until a workspace is set, and mounting FusionRuntimeProvider
- * prematurely would fire mount-time IPCs scoped to process.cwd() —
- * wrong on a packaged .app, and wasteful anywhere. So the gate is the
- * only thing on screen until the user drops a folder.
+ * Workspace
+ * ---------
+ * Before the main layout mounts, we read `getWorkspace()`. The engine
+ * defaults every tab to the OS Desktop, so this returns a real path on
+ * cold start — there is no "pick a folder" gate anymore. We still wait
+ * for the IPC to resolve before mounting FusionRuntimeProvider, because
+ * its mount-time IPCs are scoped to that path and we don't want them
+ * firing against a stale/null cwd.
  */
 
 /**
  * Tri-state workspace status:
  *   - 'loading'      → the initial getWorkspace() IPC has not resolved yet.
- *                      We show nothing during this window (a few ms) so
- *                      there's no flash of the gate for users on a warm
- *                      main process (HMR reload on top of an already-set
- *                      workspace).
- *   - null           → main replied with { path: null } — show the gate.
- *   - string         → workspace is set — render the real chat UI.
+ *                      We render an empty `.app` during this window (a few
+ *                      ms) so there's no flash before the chat UI mounts.
+ *   - null           → the getWorkspace() IPC errored. Should-never-happen
+ *                      now that main always defaults to the Desktop; we
+ *                      render an empty `.app` rather than a null-cwd runtime.
+ *   - string          → workspace path is known — render the real chat UI.
  */
 type WorkspaceStatus = 'loading' | null | string
 
@@ -159,25 +156,6 @@ function App(): React.JSX.Element {
     }
   }, [])
 
-  // Inline workspace switch — thin wrapper around the store's
-  // `switchTo` action. The store owns IPC + renderer store wipes +
-  // recent/current updates; App.tsx only needs to expose a callable
-  // form for children that want to handle their own errors (sidebar,
-  // drop layer). The useEffect subscription below keeps our React
-  // `workspace` state in sync whenever anyone calls `switchTo` —
-  // including the pill, which hits the store directly.
-  //
-  // No confirm() guard: the switch is always gated behind an
-  // explicit user action (picking a path or dropping a folder).
-  // Unsent composer drafts live in the runtime subtree that remounts
-  // after this lands, so they're lost either way.
-  const handleSwitchWorkspace = useCallback(
-    (path: string): Promise<void> => {
-      return useWorkspaceStore.getState().switchTo(path)
-    },
-    []
-  )
-
   // Subscribe to main-process engine log events from the moment the
   // app mounts so the LogsDialog has a full history available the
   // first time the user opens it. Runs once per process lifetime —
@@ -201,12 +179,12 @@ function App(): React.JSX.Element {
     return unsub
   }, [])
 
-  // Mirror the workspace store's `current` into our React state so
-  // any caller (pill, drop layer, sidebar row) that commits via
-  // `useWorkspaceStore.getState().switchTo(path)` automatically flows
-  // into FusionRuntimeProvider's `key={workspace}` remount. Without
-  // this subscription the store would update in isolation and the
-  // runtime subtree would stay bound to the old cwd.
+  // Mirror the workspace store's `current` into our React state so a
+  // future "change folder" commit (via the store's `switchTo`) flows
+  // into FusionRuntimeProvider's `key={workspace}` remount. Without this
+  // subscription the store would update in isolation and the runtime
+  // subtree would stay bound to the old cwd. Harmless no-op today since
+  // there is no live switch entry point.
   useEffect(() => {
     const unsub = useWorkspaceStore.subscribe((state, prev) => {
       if (state.current === prev.current) return
@@ -217,10 +195,11 @@ function App(): React.JSX.Element {
     return unsub
   }, [])
 
-  // Check workspace state on mount. Main's handler is trivial — it just
-  // reads the in-memory engine field — so we don't need to debounce or
-  // retry. On HMR reload the main process stays alive and will return
-  // the path the user already picked, skipping the gate entirely.
+  // Read workspace state on mount. Main's handler is trivial — it just
+  // reads the in-memory engine field, which is defaulted to the OS
+  // Desktop at construction — so this resolves to a real path with no
+  // debounce/retry needed. On HMR reload the main process stays alive
+  // and returns the same path.
   useEffect(() => {
     if (typeof window === 'undefined' || !window.chatApi) return
     let cancelled = false
@@ -236,8 +215,9 @@ function App(): React.JSX.Element {
       })
       .catch((err) => {
         console.error('[App] getWorkspace failed', err)
-        // Treat an IPC error the same as "not set" so the user gets a
-        // visible gate instead of staring at a blank window forever.
+        // Should-never-happen now that main always defaults to the
+        // Desktop. On an IPC error we set null, which renders an empty
+        // `.app` rather than mounting the runtime against an unknown cwd.
         if (!cancelled) setWorkspace(null)
       })
     return () => {
@@ -251,16 +231,19 @@ function App(): React.JSX.Element {
     return <div className="app" />
   }
 
-  // Cold-start slice: no workspace yet. We still render the *full*
-  // chat shell (header, buttons, main area) so the first-run flow
-  // feels like "empty chat waiting for a folder" instead of jumping
-  // to a separate gate page. The FusionRuntimeProvider is gated
-  // behind `hasWorkspace` below — we do NOT mount it with a null
-  // workspace, because its mount-time IPCs (getSessionMeta,
-  // listFileSuggestions) would scan process.cwd() instead of the
-  // user's folder, and the engine rejects `send()` until
-  // workspaceDir is set.
+  // No-workspace slice. The engine now defaults every tab to the OS
+  // Desktop, so `getWorkspace()` returns a real path on cold start and
+  // there is no "pick a folder" gate anymore. `workspace === null` can
+  // therefore only mean the getWorkspace() IPC itself errored (handled
+  // in the effect's catch) — a should-never-happen state. We render an
+  // empty `.app` (same as the loading slice) rather than mount the
+  // runtime with a null cwd, whose mount-time IPCs would scan the wrong
+  // directory. `hasWorkspace` still gates FusionRuntimeProvider below as
+  // defense-in-depth.
   const hasWorkspace = workspace !== null
+  if (!hasWorkspace) {
+    return <div className="app" />
+  }
 
   return (
     <div className="app">
@@ -277,16 +260,16 @@ function App(): React.JSX.Element {
             spacer. `self-center` keeps them vertically centered
             inside the `items-stretch` header even though the
             TabBar's pills bottom-align. */}
-        {/* Panel toggles — only meaningful when the chat runtime is
-            mounted. Cold start (no workspace yet) renders the
-            EmptyWorkspaceShell instead of the three-pane layout, so
-            the buttons are a dead affordance until a folder is
-            picked. We keep them in the layout tree the whole time
-            (`invisible` = `visibility: hidden`, which reserves space)
-            so picking a folder doesn't shrink the TabBar by 60px in
-            a single frame and jitter the pill row. `aria-hidden` +
-            `pointer-events-none` keep them off the tab order and
-            un-clickable during cold start. */}
+        {/* Panel toggles — meaningful once the chat runtime is mounted.
+            `hasWorkspace` is effectively always true now (the engine
+            defaults to the Desktop), so the `invisible` branch below is
+            a harmless leftover from the old cold-start gate; we keep the
+            conditional so the layout stays robust if `hasWorkspace` ever
+            goes false again (e.g. a getWorkspace() IPC error). `invisible`
+            = `visibility: hidden`, which reserves space so a state flip
+            doesn't shrink the TabBar by 60px in a single frame and jitter
+            the pill row. `aria-hidden` + `pointer-events-none` keep the
+            buttons off the tab order and un-clickable while hidden. */}
         <div
           className={
             'flex shrink-0 items-center gap-1 self-center ' +
@@ -355,9 +338,9 @@ function App(): React.JSX.Element {
         </div>
       </header>
       <main className="main relative">
-        {!hasWorkspace && <EmptyWorkspaceShell />}
-        {/* `key={workspace}` forces a full subtree remount whenever the
-            user switches workspaces. The runtime provider's effects
+        {/* `key={workspace}` keys the runtime subtree to the workspace
+            path so it remounts cleanly if the bound path ever changes.
+            The runtime provider's effects
             re-subscribe to chat events under the new sessionId, the
             sidebar refetches the new workspace's threads, and the file
             tree drops its cached scan. Cheaper than restarting Electron
@@ -466,11 +449,6 @@ function App(): React.JSX.Element {
       <SkillsDialog />
       <McpDialog />
       <LogsDialog />
-      {/* Global folder-drop layer — listens at window level and shows
-          an overlay only when a Finder drag carries at least one
-          directory entry. Image drops fall through to the composer's
-          AttachmentDropzone, so this coexists with attachment drops. */}
-      <WorkspaceDropLayer onDropFolder={handleSwitchWorkspace} />
       {/* Non-blocking session-loading toast — shown while main is
           spawning a fusion-code child (new chat / session switch).
           Kept as its own tiny component so the zustand subscription

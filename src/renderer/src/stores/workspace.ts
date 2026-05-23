@@ -5,17 +5,19 @@ import { useTodosStore } from './todos'
 import { confirmStreamingInterrupt } from '../runtime/streamingGuard'
 
 /**
- * Current workspace + recent-folder ring + inline switch action. Fed
- * by App.tsx on cold start and mutated by any UI that asks to switch
- * folders (WorkspacePill, sidebar row, global drop layer). Recent list
- * is persisted to localStorage so the composer popover can show "最近"
- * entries across restarts without a main-process round-trip.
+ * Current workspace path + recent-folder ring + commit action.
  *
- * `switchTo` is the single commit path — it calls the engine's
- * setWorkspace IPC, wipes per-workspace renderer stores, pushes to
- * recent, and updates `current`. App.tsx subscribes to `current` and
- * mirrors it into the React tree so FusionRuntimeProvider's
- * `key={workspace}` remounts the runtime under the new cwd.
+ * `current` is the renderer-side mirror of the engine's workspace path
+ * (defaulted to the OS Desktop in main). App.tsx seeds it from
+ * `getWorkspace()` on mount; WorkspaceTreePanel reads it to scope its
+ * file scan. Recent list is persisted to localStorage.
+ *
+ * `switchTo` remains as the single commit path that calls the engine's
+ * setWorkspace IPC, wipes per-workspace renderer stores, and updates
+ * `current`. With the folder-picker UI removed it currently has no live
+ * caller, but is kept so a future "change folder" affordance can reuse
+ * it: App.tsx subscribes to `current` and mirrors it into the React tree
+ * so FusionRuntimeProvider's `key={workspace}` remounts under the new cwd.
  */
 
 const STORAGE_KEY = 'workspace.recent.v1'
@@ -26,12 +28,11 @@ type WorkspaceStore = {
   recent: string[]
   /**
    * In-flight commit target. Non-null while `switchTo` is awaiting
-   * the main-process setWorkspace IPC + wiping renderer state.
-   * Consumers (WorkspacePill, EmptyWorkspaceShell) read this to show
-   * a clearly-visible loading indicator while the switch lands,
-   * since the IPC can take several hundred ms and the subsequent
-   * FusionRuntimeProvider remount can take a few seconds more on
-   * the fusion-code cold start.
+   * the main-process setWorkspace IPC + wiping renderer state. A future
+   * "change folder" affordance can read this to show a loading
+   * indicator while the switch lands, since the IPC can take several
+   * hundred ms and the subsequent FusionRuntimeProvider remount can take
+   * a few seconds more on the fusion-code cold start.
    */
   switching: string | null
   setCurrent: (path: string | null) => void
@@ -39,9 +40,8 @@ type WorkspaceStore = {
   removeRecent: (path: string) => void
   /**
    * Commit a new workspace path through the engine and refresh all
-   * per-workspace renderer state. Throws on main-side rejection so
-   * callers can surface the error in their own UI (the pill shows it
-   * inline in the popover, the drop layer swallows it silently).
+   * per-workspace renderer state. Throws on main-side rejection so a
+   * future caller can surface the error in its own UI.
    */
   switchTo: (path: string) => Promise<void>
 }
@@ -93,9 +93,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     const api = window.chatApi
     if (!api) throw new Error('chatApi unavailable')
     // Mid-turn guard: if a chat is currently streaming, prompt the
-    // user before tearing down the engine. Cold-start callers
-    // (WorkspaceGate / EmptyWorkspaceShell) hit this with
-    // streaming === false and pass through without a dialog.
+    // user before tearing down the engine. A first-commit caller hits
+    // this with streaming === false and passes through without a dialog.
     // Returning false silently aborts the switch — no error toast,
     // since the user just clicked "cancel".
     if (!(await confirmStreamingInterrupt())) return

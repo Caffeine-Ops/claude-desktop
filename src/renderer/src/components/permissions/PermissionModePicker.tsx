@@ -6,9 +6,9 @@ import { usePermissionModeStore } from '../../stores/permissionMode'
 import type { UiPermissionMode } from '../../../../shared/ipc-channels'
 
 /**
- * Permission mode picker — a small pill that sits in the empty strip
- * to the right of `<WorkspacePill />`, above the composer card. It
- * mirrors Claude Code's terminal-side mode indicator (`default`,
+ * Permission mode picker — a small pill anchored to the right edge of
+ * the strip above the composer card. It mirrors Claude Code's
+ * terminal-side mode indicator (`default`,
  * `plan`, `acceptEdits`, `bypassPermissions`, `dontAsk`) and lets the
  * user flip mode mid-conversation without retyping a slash command.
  *
@@ -22,8 +22,7 @@ import type { UiPermissionMode } from '../../../../shared/ipc-channels'
  *   - dontAsk:          red    (silent deny — risk of getting stuck)
  *
  * The pill itself only shows a colored dot + the short label. The
- * long description lives in the popover rows so the pill stays
- * compact enough to share the row with WorkspacePill.
+ * long description lives in the popover rows so the pill stays compact.
  */
 
 type ModeColor = 'muted' | 'blue' | 'green' | 'red'

@@ -561,18 +561,20 @@ export interface ChatApi {
   ): Promise<FileSuggestionsListResult>
 
   /**
-   * Read the workspace state. Returns `{ path: null }` before the user
-   * has picked a folder via the first-run drag-drop gate. App.tsx uses
-   * this to decide whether to render `<WorkspaceGate>` or the chat UI.
+   * Read the workspace state. The engine defaults to the OS Desktop, so
+   * this returns a real path on cold start (`{ path: null }` only on an
+   * unexpected engine error). App.tsx reads it to scope the runtime to
+   * the bound workspace path before mounting.
    */
   getWorkspace(): Promise<WorkspaceState>
 
   /**
-   * Set the workspace to an absolute directory path. Called by
-   * `WorkspaceGate` after the user drops a folder on the window. Main
-   * re-validates (absolute + stat + isDirectory) and resolves to the
-   * final state. Subsequent calls after the workspace has been set
-   * reject — by design this is a one-shot in the current session.
+   * Set the workspace to an absolute directory path. Main re-validates
+   * (absolute + stat + isDirectory) and resolves to the final state.
+   * Subsequent calls with a different path after the workspace has been
+   * bound reject — by design this is a one-shot per engine. Currently
+   * unused from the renderer (the folder-picker UI was removed), but the
+   * IPC is kept for a future "change folder" affordance.
    */
   setWorkspace(payload: WorkspaceSetPayload): Promise<WorkspaceState>
 
@@ -694,11 +696,11 @@ export interface ChatApi {
   relaunchApp(): Promise<void>
 
   /**
-   * Open a fresh workspace tab in the shell window. The new tab
-   * hosts its own WebContentsView + ChatEngine bound to a null
-   * workspace; the renderer's WorkspaceGate drives the first
-   * setWorkspace from there. Used by the `+` button in the tab bar
-   * and the `File → New Tab` menu item.
+   * Open a fresh workspace tab in the shell window. The new tab hosts
+   * its own WebContentsView + ChatEngine, which defaults its workspace
+   * to the OS Desktop at construction — so the tab opens straight into a
+   * usable chat UI. Used by the `+` button in the tab bar and the
+   * `File → New Tab` menu item.
    */
   newWorkspaceTab(): Promise<void>
 

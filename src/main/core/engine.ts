@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { EventEmitter } from 'events'
-import type { WebContents } from 'electron'
+import { app, type WebContents } from 'electron'
 import { existsSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -41,6 +41,56 @@ import { invalidateFileSuggestions } from './fileSuggestions'
 import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
 import { seedSkillsFromDisk } from './seedSkills'
+
+/**
+ * Resolve the default workspace directory used on every new tab/engine.
+ *
+ * Product contract (since the "drop a folder to start" gate was removed):
+ * the app opens straight into the user's desktop folder so there's never
+ * a picker page on cold start. We resolve it via Electron's
+ * `app.getPath('desktop')` — never by concatenating the home dir with a
+ * literal folder name — because getPath is the only cross-platform-correct
+ * source: on Windows the desktop folder can be OneDrive-redirected or
+ * localized, and getPath consults the OS shell folder registry to return
+ * the real path. macOS returns the expected location under the home dir.
+ *
+ * Fallback: if the Desktop path can't be resolved or isn't a real
+ * directory (locked-down enterprise profiles, exotic shell folder
+ * redirection, a transient FS error), we silently fall back to the user
+ * home (`app.getPath('home')`) so the engine still binds a valid cwd and
+ * the user never sees a blank window. We deliberately do NOT fall back to
+ * `process.cwd()` — in a packaged .app that points inside the bundle,
+ * which is read-only and wrong.
+ *
+ * Must be called after `app.whenReady()` (getPath throws before ready).
+ * The only caller is the ChatEngine constructor, and engines are only
+ * created from `newTab()`, which runs well after whenReady — so this is
+ * always safe in practice.
+ */
+function resolveDefaultWorkspace(): string {
+  const tryDir = (p: string | undefined): string | null => {
+    if (!p) return null
+    try {
+      return statSync(p).isDirectory() ? p : null
+    } catch {
+      return null
+    }
+  }
+
+  let desktop: string | undefined
+  try {
+    desktop = app.getPath('desktop')
+  } catch {
+    desktop = undefined
+  }
+  const desktopDir = tryDir(desktop)
+  if (desktopDir) return desktopDir
+
+  // Desktop unusable — fall back to the user home. getPath('home') is
+  // about as reliable as it gets; if even this throws we let it
+  // propagate, since an engine with no valid cwd can't function anyway.
+  return app.getPath('home')
+}
 
 // NOTE: there used to be a `SWITCH_READY_TIMEOUT_MS = 30_000` here,
 // used by the now-removed `waitForSessionReady` helper. That helper
@@ -237,23 +287,25 @@ export class ChatEngine extends EventEmitter {
   private systemInitSeen = false
 
   /**
-   * User-selected workspace directory. Null until the renderer's
-   * `WorkspaceGate` drops a folder on the window and calls
-   * `setWorkspace()`. This is the *only* source of truth for the cwd
-   * passed to `query()` — `send()` refuses to spawn the SDK until it
-   * is set, so the fusion-code child is guaranteed to start inside
-   * the directory the user picked.
+   * Workspace directory — the cwd passed to `query()` for every session
+   * this engine spawns. This is the *only* source of truth for the cwd.
    *
-   * Not persisted across process restarts by design: the contract with
-   * the UI is "first launch ⇒ pick a folder". Wire a `userData` file
-   * if that turns out to be annoying.
+   * Defaulted to the OS Desktop (see `resolveDefaultWorkspace`) at
+   * construction time rather than left null: the old "drop a folder to
+   * start" gate has been removed, so the app opens straight into a usable
+   * workspace with no picker page. Because this is non-null from birth,
+   * `getWorkspace()` always returns a path, the renderer's cold-start
+   * branch never fires, and `send()` / `getWorkingDirectory()` never hit
+   * their null guards (kept as defense-in-depth only).
    *
-   * Mid-session swap is allowed via `setWorkspace()` — the engine tears
-   * down every live runtime so the next session spawn picks up the new
-   * cwd. The renderer remounts FusionRuntimeProvider on the change so
-   * UI state (active sessionId, files panel, etc.) follows.
+   * Typed `string | null` purely to preserve the existing null guards
+   * downstream; in practice it is always a string after the constructor.
+   *
+   * Not persisted across process restarts by design — every launch
+   * re-resolves the Desktop. Wire a `userData` file if a sticky
+   * last-used folder turns out to be wanted.
    */
-  private workspaceDir: string | null = null
+  private workspaceDir: string | null = resolveDefaultWorkspace()
 
   /**
    * UUID of the session currently shown in the foreground of this
