@@ -10,3 +10,4 @@ build/
 env.json
 .gstack/
 *.tsbuildinfo
+.claude/settings.local.json
