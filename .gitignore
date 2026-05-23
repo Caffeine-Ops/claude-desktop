@@ -11,3 +11,12 @@ env.json
 .gstack/
 *.tsbuildinfo
 .claude/settings.local.json
+
+# open-design 运行时产物 (daemon/web 生成, 不入库)
+.od
+.od-e2e
+.next
+.next-*/
+.tmp/
+apps/web/out
+e2e/.od-data
