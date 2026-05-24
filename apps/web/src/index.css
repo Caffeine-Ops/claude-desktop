@@ -581,7 +581,16 @@ code {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 36px minmax(0, 1fr);
+  /* Row 1 must match the real tab-strip height. `.workspace-tabs-chrome`
+     is `height: 46px` (min-height: 46px), so a 36px track here is too
+     short: the strip's own min-height forces it to 46px and the 10px
+     overflow eats into row 2's body inside this `overflow: hidden`
+     grid, clipping a sliver off the top of `.app`. (This was latent —
+     the track stayed 36px when the strip grew from 36→46px to match the
+     prototype — and any extra strip height made it visible.) Use `auto`
+     so the row always fits the strip's intrinsic height, immune to
+     future strip-height changes. */
+  grid-template-rows: auto minmax(0, 1fr);
   background: var(--bg-app);
   overflow: hidden;
 }
@@ -596,16 +605,21 @@ code {
   min-height: 0;
 }
 
+/* Top multi-tab bar — visual language lifted 1:1 from
+   prototypes/open-design-nav-v0.html `.tabbar`: a 46px browser-style
+   strip with a translucent saturate+blur backdrop. Accent tokens are
+   untouched; only chrome geometry and neutral surfaces changed. */
 .workspace-tabs-chrome.app-chrome-header {
   min-width: 0;
   max-width: 100%;
-  min-height: 38px;
-  height: 38px;
-  padding: 0 8px 0 12px;
-  gap: 0;
-  background: color-mix(in srgb, var(--bg-panel) 88%, var(--bg-subtle));
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--bg-panel) 80%, transparent) inset;
+  min-height: 46px;
+  height: 46px;
+  padding: 0 10px;
+  gap: 6px;
+  background: color-mix(in srgb, var(--bg-panel) 70%, var(--bg));
+  border-bottom: 1px solid var(--border);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
   user-select: none;
   -webkit-app-region: drag;
   overflow: hidden;
@@ -615,31 +629,17 @@ code {
 .workspace-tabs-chrome .workspace-tabs-traffic {
   margin-right: calc(var(--app-chrome-traffic-margin) + 8px);
 }
-.workspace-tabs-new-btn {
-  width: 24px;
-  height: 24px;
+/* Right-side action cluster (prototype `.tabbar__actions`): + (new) and
+   search are both 32px square buttons sharing one neutral hover, with a
+   1px divider between them. */
+.workspace-tabs-new-btn,
+.workspace-tabs-icon-btn {
+  position: relative;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-faint);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  -webkit-app-region: no-drag;
-  transition: background 100ms ease, color 100ms ease;
-}
-.workspace-tabs-new-btn:hover {
-  background: color-mix(in srgb, var(--bg-panel) 72%, var(--bg-subtle));
-  color: var(--text);
-}
-.workspace-tabs-icon-btn {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border-radius: 6px;
-  border-color: transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   display: inline-flex;
@@ -647,12 +647,17 @@ code {
   justify-content: center;
   flex: 0 0 auto;
   -webkit-app-region: no-drag;
+  transition: background 120ms ease, color 120ms ease, transform 120ms ease;
 }
+.workspace-tabs-new-btn:hover,
 .workspace-tabs-icon-btn:hover:not(:disabled),
 .workspace-tabs-icon-btn.is-active {
-  color: var(--text-strong);
-  background: color-mix(in srgb, var(--bg-panel) 78%, var(--bg-subtle));
-  border-color: var(--border);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+.workspace-tabs-new-btn:active,
+.workspace-tabs-icon-btn:active {
+  transform: scale(0.92);
 }
 .workspace-tabs-strip {
   align-self: stretch;
@@ -660,7 +665,9 @@ code {
   flex: 1 1 0;
   display: flex;
   align-items: center;
-  gap: 0;
+  /* 4px gaps between independent pill tabs (prototype `.tabbar__scroll`),
+     replacing the old gap:0 connected-row + sibling divider model. */
+  gap: 4px;
   padding-left: 0;
   /* Horizontal scroll inside the strip — tabs keep their natural width
      and the strip itself scrolls when it overflows the chrome. This
@@ -682,17 +689,22 @@ code {
 }
 .workspace-tab {
   position: relative;
-  height: 24px;
-  /* Fixed width — never shrink. The strip scrolls when the tabs
-     don't fit anymore. */
-  width: 156px;
-  flex: 0 0 156px;
+  height: 32px;
+  /* Content-fit width capped at 200px (prototype `.tab`): the tab is a
+     standalone pill that grows with its label and shrinks for short
+     ones, instead of a fixed 156px slot. The strip still scrolls
+     horizontally once the pills overflow the chrome. */
+  max-width: 200px;
+  min-width: 0;
+  flex: 0 0 auto;
+  /* Padding lives on the inner __main / __close so the click targets fill
+     the pill; the pill itself just bounds them. */
   padding: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 22px;
+  display: inline-flex;
   align-items: center;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  gap: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   overflow: hidden;
@@ -710,27 +722,19 @@ code {
 .workspace-tab:active .workspace-tab__main {
   transform: scale(0.97);
 }
-.workspace-tab + .workspace-tab::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  width: 1px;
-  height: 14px;
-  background: color-mix(in srgb, var(--border) 70%, transparent);
-  transform: translateY(-50%);
-  pointer-events: none;
-}
+/* Independent pills need no sibling divider (prototype relies on the 4px
+   gap), and hover is a subtle neutral tint rather than a panel fill +
+   border swap. Active is the browser convention: solid panel fill, a
+   real border, and a hairline shadow lifting it off the bar. */
 .workspace-tab:hover {
-  background: color-mix(in srgb, var(--bg-panel) 64%, transparent);
-  border-color: color-mix(in srgb, var(--border) 60%, transparent);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
   color: var(--text);
 }
 .workspace-tab.is-active {
-  background: color-mix(in srgb, var(--bg-panel) 92%, var(--bg-subtle));
-  border-color: color-mix(in srgb, var(--border-strong) 52%, transparent);
+  background: var(--bg-panel);
+  border-color: var(--border);
   color: var(--text-strong);
-  box-shadow: 0 1px 1px color-mix(in srgb, var(--text) 6%, transparent);
+  box-shadow: var(--shadow-xs);
 }
 /* Active tab echoes the rail's accent language: its leading icon goes
    accent and the label firms to medium, so "which tab am I on" reads at
@@ -745,16 +749,14 @@ code {
 .workspace-tab__main:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px var(--accent);
-  border-radius: 6px;
-}
-.workspace-tab:hover::before,
-.workspace-tab.is-active::before {
-  opacity: 0;
+  border-radius: var(--radius-sm);
 }
 .workspace-tab__main {
   min-width: 0;
   height: 100%;
-  padding: 0 6px 0 9px;
+  /* 11px lead-in matches the prototype `.tab`; 8px icon↔label gap. The
+     trailing 4px leaves a hair of breathing room before the close glyph. */
+  padding: 0 4px 0 11px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -762,7 +764,7 @@ code {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 8px;
   text-align: left;
 }
 .workspace-tab__main:hover:not(:disabled) {
@@ -776,7 +778,7 @@ code {
   align-items: center;
   justify-content: center;
   color: currentColor;
-  opacity: 0.74;
+  opacity: 0.7;
   flex: 0 0 auto;
   line-height: 0;
 }
@@ -791,14 +793,19 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
-  font-weight: 400;
-  letter-spacing: 0;
+  /* Prototype `.tab__label`: 13px / 500 / -0.01em. The active-state rule
+     below no longer needs to bump weight since the resting weight is
+     already medium. */
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 .workspace-tab__close {
   width: 18px;
   height: 18px;
-  margin-right: 4px;
+  /* Sits flush at the pill's right edge with the prototype's 8px inset. */
+  margin-right: 8px;
+  margin-left: 1px;
   padding: 0;
   border: 0;
   border-radius: 5px;
@@ -808,10 +815,10 @@ code {
   align-items: center;
   justify-content: center;
   opacity: 0;
-  /* Slightly shrunk while hidden so it scales in rather than popping. */
-  transform: scale(0.82);
+  /* Hidden until hover / active, scaling in from 0.85 (prototype). */
+  transform: scale(0.85);
   flex: 0 0 auto;
-  transition: opacity 120ms ease, transform 140ms cubic-bezier(0.32, 0.72, 0, 1),
+  transition: opacity 120ms ease, transform 120ms ease,
     background-color 120ms ease, color 120ms ease;
 }
 .workspace-tab:hover .workspace-tab__close,
@@ -822,7 +829,7 @@ code {
 }
 .workspace-tab__close:hover {
   color: var(--text);
-  background: var(--bg-subtle);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
 }
 .workspace-tab__close:focus-visible {
   outline: none;
@@ -842,13 +849,38 @@ code {
   align-self: stretch;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   flex: 0 0 auto;
-  margin-left: 8px;
+  margin-left: 4px;
   padding-left: 4px;
   z-index: 35;
   -webkit-app-region: no-drag;
 }
+/* 1px divider between the + (new) and search buttons (prototype
+   `.tabbar__sep`). Rendered as a pseudo-element so we don't have to add a
+   DOM node: the search button gets 9px of left room and the hairline is
+   centered in it. */
+.workspace-tabs-new-btn + .workspace-tabs-icon-btn {
+  margin-left: 9px;
+}
+.workspace-tabs-new-btn + .workspace-tabs-icon-btn::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+/* ── Search-tabs popover — Apple redesign ──────────────────────────────
+   Reworked against the project's Apple DESIGN.md (Apple-design-analysis):
+   Action Blue #0066cc / focus #0071e3, SF Pro caption type, hairline
+   dividers, recessed rounded selection fills (no edge-to-edge color bars),
+   and generous list-row breathing room. Chrome itself stays shadow-free
+   except this floating layer, which is one of the few surfaces allowed the
+   single signature drop shadow. DOM/behaviour unchanged — visual only. */
 .workspace-tabs-popover {
   /* Anchored to the viewport, not to .workspace-tabs-actions, because the
      actions group sits next to the tab strip on the left side of the chrome
@@ -857,13 +889,14 @@ code {
      edge of the window. Fixed positioning keeps it inside the viewport
      regardless of where the actions group lands as tabs accumulate. */
   position: fixed;
-  top: calc(var(--workspace-tabs-chrome-height, 38px) + 7px);
+  top: calc(var(--workspace-tabs-chrome-height, 46px) + 8px);
   right: max(10px, env(safe-area-inset-right));
   width: min(380px, calc(100vw - 24px));
-  max-height: min(620px, calc(100vh - var(--workspace-tabs-chrome-height, 38px) - 24px));
+  max-height: min(620px, calc(100vh - var(--workspace-tabs-chrome-height, 46px) - 24px));
+  /* DESIGN.md spacing.xs (8) outer pad, rounded.md (11) corners. */
   padding: 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--bg-panel);
   box-shadow: var(--shadow-lg);
   display: flex;
@@ -876,40 +909,55 @@ code {
 .workspace-tabs-popover * {
   -webkit-app-region: no-drag;
 }
+/* Search field: a calm hairline pill at rest; on focus it gets Apple's
+   restrained Action-Blue ring (border firms to #0071e3 + a soft 4px halo)
+   instead of the heavy always-on blue box it had before. */
 .workspace-tabs-search {
-  height: 34px;
+  height: 38px;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 9px;
-  border: 1px solid var(--selected);
-  border-radius: 7px;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text-muted);
-  box-shadow: 0 0 0 3px var(--selected-soft);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.workspace-tabs-search:focus-within {
+  border-color: #0071e3;
+  box-shadow: 0 0 0 4px rgba(0, 102, 204, 0.16);
 }
 .workspace-tabs-search input {
-  height: 30px;
+  flex: 1;
+  min-width: 0;
+  height: 36px;
   padding: 0;
   border: 0;
   background: transparent;
   box-shadow: none;
   color: var(--text);
-  font-size: 13px;
+  /* DESIGN.md caption: 14 / -0.224em. */
+  font-size: 14px;
+  letter-spacing: -0.224px;
 }
 .workspace-tabs-search input:focus {
   border: 0;
   box-shadow: none;
 }
+.workspace-tabs-search input::placeholder {
+  color: var(--text-faint);
+}
+/* Section header ("Open tabs · 19"): DESIGN.md caption-strong, tracked in. */
 .workspace-tabs-popover__section {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 5px 0;
+  padding: 4px 6px 2px;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0;
+  letter-spacing: -0.08px;
 }
 .workspace-tabs-list {
   min-height: 0;
@@ -917,33 +965,38 @@ code {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   scrollbar-width: thin;
   contain: layout style paint;
 }
+/* Rows get real vertical room (title + meta breathe) and a recessed
+   rounded fill on hover/selection — Apple's pearl/parchment grey, never an
+   edge-to-edge tinted bar. */
 .workspace-tabs-list__item {
-  min-height: 34px;
-  border-radius: 7px;
+  min-height: 46px;
+  border-radius: var(--radius-sm);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 26px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
   contain: layout style;
 }
-.workspace-tabs-list__item:hover,
+.workspace-tabs-list__item:hover {
+  background: var(--bg-subtle);
+}
 .workspace-tabs-list__item.is-active {
-  background: color-mix(in srgb, var(--selected) 9%, var(--bg-subtle));
+  background: var(--bg-muted);
 }
 .workspace-tabs-list__main {
   min-width: 0;
-  height: 34px;
-  padding: 0 7px;
+  height: 100%;
+  padding: 7px 10px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 11px;
   text-align: left;
 }
 .workspace-tabs-list__main:hover:not(:disabled) {
@@ -951,9 +1004,9 @@ code {
   border-color: transparent;
 }
 .workspace-tabs-list__icon {
-  width: 17px;
-  height: 17px;
-  color: var(--text-muted);
+  width: 18px;
+  height: 18px;
+  color: var(--text-soft);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -970,7 +1023,7 @@ code {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 .workspace-tabs-list__title,
 .workspace-tabs-list__meta {
@@ -979,115 +1032,64 @@ code {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Title = DESIGN.md caption-strong (14/600/-0.224); meta = caption (13/400
+   muted). Softer pairing than the old bold-title + grey-link contrast. */
 .workspace-tabs-list__title {
-  color: var(--text-strong);
-  font-size: 12.5px;
+  color: var(--text);
+  font-size: 14px;
   font-weight: 600;
+  letter-spacing: -0.224px;
 }
 .workspace-tabs-list__meta {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 13px;
+  letter-spacing: -0.08px;
 }
 .workspace-tabs-list__close {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-faint);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: background-color 150ms ease, color 150ms ease;
 }
 .workspace-tabs-list__close:hover:not(:disabled) {
   color: var(--text);
-  background: var(--bg-muted);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 .workspace-tabs-empty {
-  padding: 18px 8px;
+  padding: 24px 8px;
   text-align: center;
   color: var(--text-muted);
-  font-size: 12.5px;
-}
-.workspace-tab-preview {
-  position: fixed;
-  z-index: 140;
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 9px 11px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--bg-panel);
-  box-shadow: var(--shadow-lg);
-  pointer-events: none;
-  animation: workspace-tab-preview-in 130ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-.workspace-tab-preview__icon {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: var(--bg-subtle);
-  color: var(--text-muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-}
-.workspace-tab-preview__text {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.workspace-tab-preview__title {
-  color: var(--text-strong);
-  font-size: 12.5px;
-  font-weight: 600;
-  line-height: 1.25;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  word-break: break-word;
-}
-.workspace-tab-preview__meta {
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.3;
-}
-.workspace-tab-preview__detail {
-  margin-top: 3px;
-  color: var(--text-muted);
-  font-size: 11.5px;
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
-}
-@keyframes workspace-tab-preview-in {
-  from { opacity: 0; transform: translateY(-3px); }
-  to { opacity: 1; transform: translateY(0); }
+  font-size: 14px;
+  letter-spacing: -0.224px;
 }
 @media (max-width: 720px) {
   .workspace-tabs-chrome.app-chrome-header {
     padding-right: 6px;
   }
+  /* Narrow-screen degrade: collapse pills to icon-only. Prefixed with
+     `.workspace-shell` so it out-specifies the shell tab rules that
+     otherwise paint the bar (the bar only mounts inside the shell). */
+  .workspace-shell .workspace-tab,
   .workspace-tab {
     min-width: 40px;
     max-width: 44px;
-    flex-basis: 44px;
-    grid-template-columns: 1fr;
+    flex: 0 0 44px;
     padding: 0;
   }
+  .workspace-shell .workspace-tab__main,
   .workspace-tab__main {
     justify-content: center;
     padding: 0;
   }
+  .workspace-shell .workspace-tab__label,
+  .workspace-shell .workspace-tab__close,
   .workspace-tab__label,
   .workspace-tab__close {
     display: none;
@@ -2220,24 +2222,90 @@ a.avatar-item:visited {
     box-shadow: 0 -14px 28px -12px rgba(0, 0, 0, 0.65);
   }
 }
+/* Composer shell — aligned to the desktop app's ProseMirror composer
+ * card (apps/desktop ThreadView's ComposerPrimitive.AttachmentDropzone):
+ * a translucent, frosted-glass rounded card sitting on a hairline ring
+ * with a soft two-layer drop shadow, accent-tinted on focus/drag.
+ *
+ * The desktop card is `rounded-2xl bg-popover/90 ring-1 ring-black/.08
+ * backdrop-blur-xl backdrop-saturate-150` + a layered shadow, with
+ * `focus-within:ring-[hsl(var(--accent)/.35)]` and a stronger accent
+ * ring while dragging. We reproduce those exact values here in plain
+ * CSS (no Tailwind on this app's composer) using the SAME shared design
+ * tokens, so the colour re-skins with the in-app theme picker just like
+ * desktop. `border` is dropped in favour of a `box-shadow` ring so the
+ * 1px hairline + the elevation shadow compose without doubling the edge. */
 .composer-shell {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  border: none;
+  /* 16px == Tailwind rounded-2xl, the desktop card's corner radius. */
+  border-radius: 16px;
+  /* Translucent popover surface so the frosted blur reads through. */
+  background: hsl(var(--popover) / 0.9);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  backdrop-filter: blur(24px) saturate(1.5);
+  /* ring-1 ring-black/.08 (inset hairline) + desktop's soft two-layer
+   * elevation shadow. */
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 4px 16px -6px rgba(0, 0, 0, 0.12),
+    0 1px 3px -1px rgba(0, 0, 0, 0.06);
   padding: 8px 10px 6px;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition: box-shadow 120ms ease, background-color 120ms ease;
 }
+/* Dark mode: the black inset ring vanishes against the dark popover, so
+ * switch it to a faint white hairline — mirrors desktop's
+ * `dark:ring-white/.08`. Both the explicit [data-theme] and the system
+ * media query are covered (this app drives dark mode through both). */
+[data-theme="dark"] .composer-shell {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4px 16px -6px rgba(0, 0, 0, 0.4),
+    0 1px 3px -1px rgba(0, 0, 0, 0.3);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .composer-shell {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 4px 16px -6px rgba(0, 0, 0, 0.4),
+      0 1px 3px -1px rgba(0, 0, 0, 0.3);
+  }
+}
+/* focus-within:ring-[hsl(var(--accent)/.35)] — accent hairline when the
+ * input is focused. Keep the elevation shadow underneath. */
 .composer-shell:focus-within {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--primary) / 0.35),
+    0 4px 16px -6px rgba(0, 0, 0, 0.12),
+    0 1px 3px -1px rgba(0, 0, 0, 0.06);
 }
+/* Dark focus ring keeps the accent hairline but with dark's stronger
+ * drop shadow underneath. */
+[data-theme="dark"] .composer-shell:focus-within {
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--primary) / 0.35),
+    0 4px 16px -6px rgba(0, 0, 0, 0.4),
+    0 1px 3px -1px rgba(0, 0, 0, 0.3);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .composer-shell:focus-within {
+    box-shadow:
+      inset 0 0 0 1px hsl(var(--primary) / 0.35),
+      0 4px 16px -6px rgba(0, 0, 0, 0.4),
+      0 1px 3px -1px rgba(0, 0, 0, 0.3);
+  }
+}
+/* drag-active: stronger 2px accent ring + faint accent wash on the card,
+ * mirroring desktop's `data-[dragging=true]:ring-2 ring-[hsl(var(--accent)
+ * /.5)] bg-accent/.08`. */
 .composer.drag-active .composer-shell {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: hsl(var(--primary) / 0.08);
+  box-shadow:
+    inset 0 0 0 2px hsl(var(--primary) / 0.5),
+    0 4px 16px -6px rgba(0, 0, 0, 0.12),
+    0 1px 3px -1px rgba(0, 0, 0, 0.06);
 }
 .composer textarea {
   min-height: 88px;
@@ -2285,18 +2353,39 @@ a.avatar-item:visited {
   background: color-mix(in srgb, var(--accent) 24%, transparent);
   color: transparent;
 }
+/* Inline @mention highlight — aligned to the desktop composer's chip
+ * (apps/desktop chipNodeView): a rounded filled pill in the accent tint.
+ *
+ * HARD CONSTRAINT: this span is an overlay mirrored on top of a
+ * transparent <textarea>; its glyph geometry must match the textarea's
+ * plain text exactly or the highlight drifts off the caret. So unlike
+ * desktop's real atom-node pill, we CANNOT add padding / line-height /
+ * font changes here — only the fill, ring and corner radius are tuned to
+ * read as a pill. Desktop fills the chip at ~16% accent with an accent
+ * label; we match that fill weight and bump the radius toward a pill,
+ * keeping all box metrics inherited (overlay alignment intact). */
 .composer-inline-mention {
   display: inline;
   max-width: none;
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 6px;
+  /* Softer fill than before (16% read as a solid block). */
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  /* Two-layer box-shadow does the heavy lifting WITHOUT touching glyph
+   * geometry (shadows don't participate in layout, so the overlay stays
+   * pixel-aligned with the textarea — the hard constraint above holds):
+   *   1) a +2px-spread same-tint fill that visually pads the pill sideways,
+   *      faking the inner padding we're forbidden from adding;
+   *   2) a 1px accent ring on top for a crisp chip outline. */
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  color: color-mix(in srgb, var(--accent) 62%, var(--text));
+  /* Higher contrast so the label reads clearly instead of washing out. */
+  color: color-mix(in srgb, var(--accent) 88%, var(--text));
   font: inherit;
   font-size: inherit;
   font-weight: inherit;
@@ -2313,45 +2402,54 @@ a.avatar-item:visited {
   gap: 6px;
   padding-top: 4px;
 }
+/* Row icon buttons (tools "@" trigger, attach) — aligned to desktop's
+ * round size-9 ghost icon button: a 36px circle, muted glyph, soft
+ * foreground-tinted hover fill (no border, no square corners). */
 .composer-row .icon-btn {
-  width: 28px; height: 28px;
+  width: 36px; height: 36px;
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 6px;
-  color: var(--text-muted);
+  border-radius: 9999px;
+  color: hsl(var(--muted-foreground) / 0.8);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 14px;
+  transition: background-color 120ms ease, color 120ms ease;
 }
-.composer-row .icon-btn:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text); }
+.composer-row .icon-btn:hover:not(:disabled) { background: hsl(var(--foreground) / 0.06); color: hsl(var(--foreground)); }
 .composer-spacer { flex: 1; }
+/* web-only pill buttons (import / research). These carry text + an `.on`
+ * toggle state, so they stay pills rather than becoming round icon discs,
+ * but adopt desktop's softer chrome: borderless, pill radius, gentle
+ * foreground-tinted hover. The accent `.on` state is preserved. */
 .composer-import {
   background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 4px 12px;
+  border: none;
+  border-radius: 9999px;
+  padding: 5px 12px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: hsl(var(--muted-foreground) / 0.8);
+  transition: background-color 120ms ease, color 120ms ease;
 }
-.composer-import:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text); }
+.composer-import:hover:not(:disabled) { background: hsl(var(--foreground) / 0.06); color: hsl(var(--foreground)); }
 .composer-research {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 4px 10px;
+  border: none;
+  border-radius: 9999px;
+  padding: 5px 12px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: hsl(var(--muted-foreground) / 0.8);
   cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
 }
-.composer-research:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text); }
+.composer-research:hover:not(:disabled) { background: hsl(var(--foreground) / 0.06); color: hsl(var(--foreground)); }
 .composer-research.on {
-  background: color-mix(in oklab, var(--accent) 12%, transparent);
-  border-color: var(--accent);
+  background: hsl(var(--primary) / 0.12);
   color: var(--accent);
 }
 .composer-research-dot {
@@ -2360,20 +2458,67 @@ a.avatar-item:visited {
   border-radius: 50%;
   background: var(--accent);
 }
+/* Send / Stop button — aligned to the desktop app's circular icon button
+ * (apps/desktop ComposerPrimitive.Send / .Cancel): a 36px (size-9) round
+ * solid-accent disc holding only an icon, with a soft accent-tinted
+ * shadow. The web button's JSX still renders an <Icon> + a text <span>;
+ * we keep the markup untouched (functionality unchanged) and visually
+ * hide the label via an accessible sr-only technique, so the disc shows
+ * the icon alone while screen readers still announce "Send" / "Stop".
+ *
+ * The icon glyph itself stays web's own paper-plane / square (changing it
+ * would mean editing the Icon component / JSX); only the button *shape*
+ * is aligned. */
 .composer-send {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 9999px;
   background: var(--accent);
-  border-color: var(--accent);
   color: white;
-  font-weight: 400;
-  padding: 4px 14px;
-  font-size: 12.5px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.08),
+    0 2px 8px -2px hsl(var(--primary) / 0.3),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  transition: filter 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
 }
-.composer-send:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
-.composer-send.stop { background: var(--text); border-color: var(--text); color: var(--bg); }
-.composer-send.stop:hover { background: var(--text-strong); border-color: var(--text-strong); color: var(--bg); }
+/* Visually hide the text label but keep it for assistive tech. */
+.composer-send > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.composer-send:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+.composer-send:active:not(:disabled) { filter: brightness(0.95); }
+/* Disabled: desktop fades the disc to a faint neutral fill with no shadow. */
+.composer-send:disabled {
+  background: hsl(var(--foreground) / 0.06);
+  color: hsl(var(--muted-foreground) / 0.5);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+/* Stop state: solid foreground disc (desktop's ComposerPrimitive.Cancel). */
+.composer-send.stop {
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.1),
+    0 2px 8px -2px rgba(0, 0, 0, 0.15),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+.composer-send.stop:hover { filter: brightness(1.1); background: hsl(var(--foreground)); color: hsl(var(--background)); }
 .composer-hint {
   font-size: 11px;
   color: var(--text-faint);
@@ -13512,7 +13657,10 @@ button.ghost.mcp-copy-btn:hover:not(:disabled) {
   gap: 8px;
   min-width: 0;
 }
-.prose-block { line-height: 1.6; color: var(--text); }
+/* Body copy sized to apps/desktop's AssistantMarkdown (14px / relaxed leading)
+   so the two surfaces read at the same rhythm. Headings keep web's existing
+   scale — desktop's only differs at h1 (19px vs 18px), close enough to leave. */
+.prose-block { font-size: 14px; line-height: 1.6; color: var(--text); }
 .prose-block .md-p { margin: 0; }
 .prose-block .md-p + .md-p { margin-top: 8px; }
 .prose-block .md-h { margin: 10px 0 4px; line-height: 1.3; font-weight: 600; }
@@ -13530,15 +13678,19 @@ button.ghost.mcp-copy-btn:hover:not(:disabled) {
   font-family: var(--mono);
   font-size: 0.92em;
 }
+/* Code block sized/rounded to apps/desktop's AssistantMarkdown fenced block:
+   rounded-apple-lg (12px ≈ --radius) on a muted fill, 12.5px mono. Desktop
+   drops the hard stroke for a soft border; web keeps a hairline so the block
+   stays legible on its lighter --bg-subtle canvas. */
 .prose-block .md-code {
-  background: var(--bg-subtle);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  background: var(--bg-muted);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 12px 14px;
   margin: 6px 0;
   overflow-x: auto;
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 12.5px;
+  line-height: 1.55;
 }
 .prose-block .md-code code { font-family: var(--mono); }
 .prose-block .md-link {
@@ -13606,28 +13758,35 @@ button.ghost.mcp-copy-btn:hover:not(:disabled) {
   font-style: italic;
 }
 
-/* Thinking blocks */
+/* Thinking blocks — aligned to apps/desktop's ReasoningCard (ThreadView.tsx).
+   Desktop uses a borderless layout: the toggle row sits flush on the canvas
+   (no chrome), and only the expanded body gets a `bg-muted` rounded card so
+   contrast — not a stroke — supplies the elevation (DESIGN.md §4). The old
+   hardcoded purple (rgba(108,58,166,…)) predated the shared Apple-blue token
+   system and was the one surface the palette switch couldn't reach, so it's
+   removed entirely in favour of accent/muted tokens. */
 .thinking-block {
-  background: rgba(108, 58, 166, 0.04);
-  border: 1px solid rgba(108, 58, 166, 0.16);
-  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  border-radius: 0;
 }
 .thinking-toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  padding: 7px 12px;
+  padding: 2px 0;
   background: transparent;
   border: none;
   text-align: left;
   font-size: 12px;
-  color: var(--text);
+  color: var(--text-muted);
   border-radius: var(--radius-sm);
+  transition: color 120ms ease;
 }
-.thinking-toggle:hover { background: rgba(108, 58, 166, 0.05); border-color: transparent; }
-.thinking-icon { color: var(--purple); }
-.thinking-label { font-weight: 400; }
+.thinking-toggle:hover { background: transparent; border-color: transparent; color: var(--text); }
+.thinking-icon { color: var(--accent); }
+.thinking-label { font-weight: 500; letter-spacing: -0.01em; }
 .thinking-preview {
   flex: 1;
   color: var(--text-muted);
@@ -13638,31 +13797,38 @@ button.ghost.mcp-copy-btn:hover:not(:disabled) {
 }
 .thinking-chev { color: var(--text-muted); font-size: 10px; }
 .thinking-body {
-  margin: 0;
-  padding: 0 14px 12px 14px;
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 1.55;
+  margin: 6px 0 0 0;
+  padding: 12px 16px;
+  background: var(--bg-muted);
+  border-radius: var(--radius);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.47;
+  letter-spacing: -0.01em;
   color: var(--text-muted);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-/* Status pills */
+/* Status pills — aligned to apps/desktop's SystemMessage (ThreadView.tsx):
+   a borderless, centered `bg-muted` capsule. Desktop treats the "initializing
+   …" line as an informational system notice, centered in the column with no
+   stroke (DESIGN.md §4 — contrast supplies the shape, not a border). */
 .status-pill {
   display: inline-flex;
-  align-self: flex-start;
+  align-self: center;
   align-items: center;
   gap: 6px;
-  padding: 3px 12px;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border);
+  padding: 4px 16px;
+  background: var(--bg-muted);
+  border: none;
   border-radius: var(--radius-pill);
-  font-size: 11.5px;
+  font-size: 12px;
+  letter-spacing: -0.01em;
   color: var(--text-muted);
 }
-.status-label { letter-spacing: 0.02em; }
-.status-detail { color: var(--text); }
+.status-label { letter-spacing: -0.01em; }
+.status-detail { color: var(--text-muted); }
 
 /* Grouped tool / action card — the collapsible pill from screenshot 9 */
 .action-card {
@@ -18838,8 +19004,8 @@ body.desktop-pet-shell .pet-task-item {
   transform: translateY(-0.5px);
 }
 .composer-tools-trigger.active {
-  background: var(--bg-subtle);
-  color: var(--text);
+  background: hsl(var(--foreground) / 0.06);
+  color: hsl(var(--foreground));
 }
 .composer-tools-menu {
   position: absolute;
@@ -23328,14 +23494,15 @@ body.desktop-pet-shell .pet-task-item {
   --trust-bg: var(--amber-bg);
   --trust-border: color-mix(in srgb, var(--amber) 28%, var(--border));
 }
+/* `overlay` variant once rendered on a black hover scrim, so it forced a
+   white-on-translucent-white chip. The plugins-home hover panel is now a
+   light frosted surface (see plugins-home.css), where white-on-white is
+   invisible. Drop the white override and let the badge keep its per-tier
+   semantic color (official=blue / trusted=green / restricted=amber); the
+   variant survives only as a sizing hook for the in-panel placement. */
 .plugin-trust-badge--overlay {
-  --trust-fg: #fff;
-  --trust-bg: rgba(255, 255, 255, 0.18);
-  --trust-border: rgba(255, 255, 255, 0.24);
-  --trust-dot: #fff;
-
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  padding-block: 1px;
+  font-size: 10px;
 }
 
 /* xAI OAuth paste-back: shown while a Sign in flow is in flight, in case
@@ -26384,46 +26551,52 @@ body.desktop-pet-shell .pet-task-item {
 .palette-tweaks-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .palette-tweaks-check { display: inline-flex; align-items: center; color: var(--text-muted); }
 
-/* Project page audit pass: one final rule set for the active project shell.
-   Keep the outer panes flat; only controls and repeated items get radius. */
+/* Project-shell tab bar.
+   `WorkspaceTabsBar` only ever mounts inside `.workspace-shell` (see
+   App.tsx), so THIS is the rule set that actually paints the visible
+   navbar — the un-prefixed base block above is the shared fallback. We
+   align it 1:1 with prototypes/open-design-nav-v0.html `.tabbar`: a 46px
+   translucent browser-style strip of content-fit pill tabs. The earlier
+   compact 36px / fixed-width / divider-row treatment is gone. */
 .workspace-shell .workspace-tabs-chrome.app-chrome-header {
-  --workspace-tabs-chrome-height: 36px;
-  height: 36px;
-  min-height: 36px;
+  --workspace-tabs-chrome-height: 46px;
+  height: 46px;
+  min-height: 46px;
   padding: 0 10px;
-  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--bg-panel) 70%, var(--bg));
   border-bottom: 1px solid var(--border);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
   box-shadow: none;
 }
 .workspace-shell .workspace-tabs-strip {
   gap: 4px;
 }
 .workspace-shell .workspace-tab {
-  height: 24px;
-  min-height: 24px;
-  min-width: 96px;
-  max-width: 168px;
-  flex: 1 1 148px;
-  grid-template-columns: minmax(0, 1fr) 24px;
-  border-radius: 6px;
+  height: 32px;
+  min-height: 32px;
+  /* Content-fit pill, capped at 200px — not a stretched fixed slot. */
+  min-width: 0;
+  max-width: 200px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
   background: transparent;
   box-shadow: none;
 }
-.workspace-shell .workspace-tab + .workspace-tab::before {
-  height: 12px;
-}
 .workspace-shell .workspace-tab.is-active {
-  background: var(--bg-subtle);
+  background: var(--bg-panel);
   border-color: var(--border);
+  box-shadow: var(--shadow-xs);
 }
 .workspace-shell .workspace-tab__main {
-  gap: 6px;
-  padding-inline: 9px 4px;
+  gap: 8px;
+  padding-inline: 11px 4px;
 }
 .workspace-shell .workspace-tab__label {
-  font-size: 12px;
-  font-weight: 400;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 .workspace-shell .workspace-tab__close {
   width: 18px;
@@ -26432,9 +26605,9 @@ body.desktop-pet-shell .pet-task-item {
 }
 .workspace-shell .workspace-tabs-new-btn,
 .workspace-shell .workspace-tabs-icon-btn {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
 }
 
 .app {
@@ -26752,19 +26925,64 @@ body.desktop-pet-shell .pet-task-item {
   background: var(--bg-panel);
   border-top: 1px solid var(--border);
 }
+/* In-app composer chrome — this `.app`-scoped layer wins over the bare
+ * `.composer-*` rules above (higher specificity), so the desktop-aligned
+ * look must be expressed HERE too. We mirror the desktop ProseMirror
+ * composer card: frosted rounded card on a hairline ring + soft shadow,
+ * round 36px icon buttons, a round solid-accent send disc. Border is
+ * dropped (the ring lives in box-shadow) so the frosted edge stays clean.
+ * Values intentionally duplicate the bare-rule intent; both must agree. */
 .app .composer-shell {
-  padding: 8px 9px 7px;
-  border-color: var(--border);
-  border-radius: 10px;
-  box-shadow: none;
+  padding: 8px 10px 6px;
+  border: none;
+  border-radius: 16px;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 4px 16px -6px rgba(0, 0, 0, 0.12),
+    0 1px 3px -1px rgba(0, 0, 0, 0.06);
+}
+[data-theme="dark"] .app .composer-shell {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4px 16px -6px rgba(0, 0, 0, 0.4),
+    0 1px 3px -1px rgba(0, 0, 0, 0.3);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app .composer-shell {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 4px 16px -6px rgba(0, 0, 0, 0.4),
+      0 1px 3px -1px rgba(0, 0, 0, 0.3);
+  }
 }
 .app .composer-shell:focus-within {
-  border-color: var(--border-strong);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 4%, transparent);
+  border-color: transparent;
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--primary) / 0.35),
+    0 4px 16px -6px rgba(0, 0, 0, 0.12),
+    0 1px 3px -1px rgba(0, 0, 0, 0.06);
+}
+[data-theme="dark"] .app .composer-shell:focus-within {
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--primary) / 0.35),
+    0 4px 16px -6px rgba(0, 0, 0, 0.4),
+    0 1px 3px -1px rgba(0, 0, 0, 0.3);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app .composer-shell:focus-within {
+    box-shadow:
+      inset 0 0 0 1px hsl(var(--primary) / 0.35),
+      0 4px 16px -6px rgba(0, 0, 0, 0.4),
+      0 1px 3px -1px rgba(0, 0, 0, 0.3);
+  }
 }
 .app .composer.drag-active .composer-shell {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 9%, transparent);
+  border-color: transparent;
+  background: hsl(var(--primary) / 0.08);
+  box-shadow:
+    inset 0 0 0 2px hsl(var(--primary) / 0.5),
+    0 4px 16px -6px rgba(0, 0, 0, 0.12),
+    0 1px 3px -1px rgba(0, 0, 0, 0.06);
 }
 .app .composer textarea {
   min-height: 88px;
@@ -26776,29 +26994,34 @@ body.desktop-pet-shell .pet-task-item {
   padding-top: 6px;
   border-top: 1px solid var(--border-soft);
 }
-.app .composer-row .icon-btn,
+/* web-only pill buttons keep a pill radius; the real icon buttons and the
+ * send button are round discs (handled below). */
 .app .composer-import,
-.app .composer-research,
-.app .composer-send {
-  border-radius: 9px;
+.app .composer-research {
+  border-radius: 9999px;
 }
 .app .composer-row .icon-btn {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
 }
 .app .composer-send {
-  height: 30px;
-  min-height: 30px;
-  padding: 0 12px;
-  font-size: 12.5px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 9999px;
   font-weight: 600;
-  box-shadow: none;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.08),
+    0 2px 8px -2px hsl(var(--primary) / 0.3),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 .app .composer-send:disabled {
-  background: var(--bg-subtle);
-  border-color: var(--border);
-  color: var(--text-faint);
-  cursor: default;
+  background: hsl(var(--foreground) / 0.06);
+  color: hsl(var(--muted-foreground) / 0.5);
+  box-shadow: none;
+  cursor: not-allowed;
 }
 .app .working-dir-pill {
   position: relative;
@@ -26810,7 +27033,7 @@ body.desktop-pet-shell .pet-task-item {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 220px;
+  max-width: 140px;
   height: 28px;
   padding: 3px 9px 3px 10px;
   border: 1px solid var(--border);
@@ -26835,9 +27058,15 @@ body.desktop-pet-shell .pet-task-item {
 .app .working-dir-pill-menu {
   position: absolute;
   bottom: calc(100% + 6px);
-  left: 0;
+  /* Anchor to the pill's RIGHT edge and expand LEFTWARD. The composer lives
+   * inside `.pane` (overflow:hidden); a left-anchored 260px menu opened past
+   * the pane's right edge and got clipped. Right-anchoring keeps the whole
+   * menu inside the pane because the pill sits well to the right of the
+   * pane's left edge. */
+  right: 0;
+  left: auto;
   z-index: 40;
-  min-width: 260px;
+  min-width: 220px;
   max-width: 340px;
   padding: 6px;
   border: 1px solid var(--border);
@@ -27682,5 +27911,202 @@ body.desktop-pet-shell .pet-task-item {
     width: calc(100vw - 24px);
     height: calc(100vh - 24px);
     border-radius: 10px;
+  }
+}
+
+/* ============================================================
+   APPLE LANGUAGE — project chrome header
+   Source: project-root DESIGN.md (name: Apple-design-analysis).
+   Restyles the ProjectView AppChromeHeader (the strip the user
+   framed) to Apple's "near-invisible UI" grammar WITHOUT touching
+   the .tsx markup or the handoff/picker interaction logic — pure
+   visual override scoped to `.app .app-chrome-header` so it wins
+   over the neutral chrome rules above (those use a bare/lower
+   specificity selector; the `.app` ancestor here out-specifies
+   them — same lesson as the composer rework).
+
+   Apple decisions applied:
+   - chrome RECEDES: no shadow, parchment-frosted bar, hairline
+     border at #e0e0e0 (light) — DESIGN.md "no shadows on chrome".
+   - SINGLE Action Blue (#0066cc) carries the one primary action
+     (交付给 Finder → solid blue pill). Anchored to Apple's blue,
+     NOT the app's theme --accent, because the single-accent rule
+     is "non-negotiable" per DESIGN.md. Press = scale(0.95),
+     focus ring = 2px solid #0071e3 (Focus Blue).
+   - TWO button grammars only: blue pill CTA + pearl utility
+     capsule (rounded.md 11px, surface-pearl #fafafc).
+   - SF Pro tight tracking on the title (-0.01em) + caption meta.
+   ============================================================ */
+/* `:not(.workspace-tabs-chrome)` is load-bearing: `.app-chrome-header`
+   is shared by BOTH the project chrome row AND the top workspace-tabs
+   strip. The tab strip is a fixed 46px `height`; applying `min-height:
+   52px` here would win over that height (min > height) and push the
+   whole tab bar 6px taller, clipping a sliver off the `.app` body. So
+   the Apple restyle is scoped to the project header only. */
+.app .app-chrome-header:not(.workspace-tabs-chrome) {
+  /* Apple palette anchored locally so this strip speaks Apple's
+     blue regardless of the app's themeable --accent. */
+  --apple-blue: #0066cc;
+  --apple-blue-focus: #0071e3;
+  --apple-ink: #1d1d1f;
+  --apple-pearl: #fafafc;
+  --apple-hairline: #e0e0e0;
+  --apple-font: "SF Pro Text", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+
+  min-height: 52px;                 /* DESIGN.md sub-nav-frosted height */
+  /* Parchment-frosted bar; chrome carries NO shadow, only a hairline. */
+  background: color-mix(in srgb, var(--bg-panel) 72%, var(--bg));
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--apple-hairline);
+  box-shadow: none;
+}
+[data-theme="dark"] .app .app-chrome-header:not(.workspace-tabs-chrome) {
+  --apple-blue: #2997ff;            /* Sky Link Blue — Apple's on-dark blue */
+  --apple-blue-focus: #2997ff;
+  --apple-pearl: #2a2a2c;           /* surface-tile-2 */
+  --apple-hairline: #2e2e30;
+}
+
+/* Title — SF Pro tight tracking; the meta ("自由设计") to caption. */
+.app .app-chrome-header .app-project-title .title {
+  font-family: "SF Pro Display", var(--apple-font);
+  letter-spacing: -0.014em;
+  color: var(--text-strong);
+}
+.app .app-chrome-header .app-project-title .meta {
+  font-family: var(--apple-font);
+  font-size: 12.5px;
+  letter-spacing: -0.224px;
+  color: var(--text-muted);
+}
+
+/* "选择设计系统" → pearl utility capsule (button-pearl-capsule:
+   surface-pearl bg, ink-muted text, rounded.md 11px). The picked
+   state keeps a quiet Apple-blue ring rather than a loud fill. */
+.app .app-chrome-header .project-ds-picker-trigger {
+  font-family: var(--apple-font);
+  border-radius: 11px;
+  border: 1px solid var(--apple-hairline);
+  background: var(--apple-pearl);
+  color: var(--text);
+  letter-spacing: -0.224px;
+  transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.app .app-chrome-header .project-ds-picker-trigger:hover {
+  background: color-mix(in srgb, var(--apple-ink) 4%, var(--apple-pearl));
+  border-color: color-mix(in srgb, var(--apple-ink) 10%, var(--apple-hairline));
+}
+.app .app-chrome-header .project-ds-picker-trigger:active {
+  transform: scale(0.95);            /* DESIGN.md system-wide press */
+}
+.app .app-chrome-header .project-ds-picker-trigger.picked {
+  background: var(--apple-pearl);
+  border-color: color-mix(in srgb, var(--apple-blue) 40%, var(--apple-hairline));
+  color: var(--text-strong);
+}
+.app .app-chrome-header .project-ds-picker-trigger:focus-visible {
+  outline: 2px solid var(--apple-blue-focus);
+  outline-offset: 1px;
+}
+
+/* "交付给 Finder" → THE single Action Blue solid pill CTA.
+   Recolor the existing handoff split/solo chrome to blue; the
+   markup and the caret-menu logic are untouched. */
+.app .app-chrome-header .handoff-split,
+.app .app-chrome-header .handoff-trigger--solo {
+  border-radius: 9999px;             /* pill */
+  border-color: var(--apple-blue);
+  background: var(--apple-blue);
+  box-shadow: none;
+  transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.app .app-chrome-header .handoff-split:hover,
+.app .app-chrome-header .handoff-trigger--solo:hover {
+  border-color: var(--apple-blue);
+  background: color-mix(in srgb, #000 8%, var(--apple-blue));
+}
+.app .app-chrome-header .handoff-split:has(.handoff-trigger:active),
+.app .app-chrome-header .handoff-trigger--solo:active {
+  transform: scale(0.95);
+}
+/* Inner buttons go transparent so the pill's blue shows through,
+   and all text/icons flip to on-primary white. */
+.app .app-chrome-header .handoff-trigger,
+.app .app-chrome-header .handoff-caret,
+.app .app-chrome-header .handoff-trigger--solo {
+  font-family: var(--apple-font);
+  letter-spacing: -0.224px;
+  color: #fff;
+  background: transparent;
+}
+.app .app-chrome-header .handoff-trigger:hover,
+.app .app-chrome-header .handoff-caret:hover {
+  background: color-mix(in srgb, #fff 14%, transparent);
+  color: #fff;
+}
+.app .app-chrome-header .handoff-trigger svg,
+.app .app-chrome-header .handoff-caret svg,
+.app .app-chrome-header .handoff-trigger--solo svg {
+  color: #fff;
+}
+/* The editor-icon tile inside the trigger: drop its inset ring so
+   it reads as part of the solid pill rather than a chip-on-chip. */
+.app .app-chrome-header .handoff-trigger .editor-icon,
+.app .app-chrome-header .handoff-trigger--solo .editor-icon {
+  box-shadow: none;
+  background: color-mix(in srgb, #fff 18%, transparent);
+}
+.app .app-chrome-header .handoff-trigger:focus-visible,
+.app .app-chrome-header .handoff-caret:focus-visible,
+.app .app-chrome-header .handoff-trigger--solo:focus-visible {
+  outline: 2px solid var(--apple-blue-focus);
+  outline-offset: 2px;
+}
+/* Disabled keeps the pill shape but drops to Apple's disabled grey. */
+.app .app-chrome-header .handoff-trigger:disabled,
+.app .app-chrome-header .handoff-caret:disabled {
+  opacity: 1;
+  color: color-mix(in srgb, #fff 60%, transparent);
+}
+
+/* Back chevron + the pencil "项目指令" toggle: quiet ink, Apple press. */
+.app .app-chrome-header .app-chrome-back,
+.app .app-chrome-header .project-instructions-toggle,
+.app .app-chrome-header .project-instructions-chip {
+  font-family: var(--apple-font);
+  transition: background 160ms ease, color 160ms ease,
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.app .app-chrome-header .app-chrome-back:active,
+.app .app-chrome-header .project-instructions-toggle:active,
+.app .app-chrome-header .project-instructions-chip:active {
+  transform: scale(0.95);
+}
+.app .app-chrome-header .project-instructions-chip {
+  border-radius: 9999px;
+  border-color: color-mix(in srgb, var(--apple-blue) 30%, var(--apple-hairline));
+  color: color-mix(in srgb, var(--apple-blue) 80%, var(--text-strong));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app .app-chrome-header .handoff-split,
+  .app .app-chrome-header .handoff-trigger--solo,
+  .app .app-chrome-header .project-ds-picker-trigger,
+  .app .app-chrome-header .app-chrome-back,
+  .app .app-chrome-header .project-instructions-toggle,
+  .app .app-chrome-header .project-instructions-chip {
+    transition-duration: 1ms;
+  }
+  .app .app-chrome-header .handoff-split:has(.handoff-trigger:active),
+  .app .app-chrome-header .handoff-trigger--solo:active,
+  .app .app-chrome-header .project-ds-picker-trigger:active,
+  .app .app-chrome-header .app-chrome-back:active,
+  .app .app-chrome-header .project-instructions-toggle:active,
+  .app .app-chrome-header .project-instructions-chip:active {
+    transform: none;
   }
 }

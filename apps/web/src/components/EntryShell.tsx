@@ -523,7 +523,16 @@ export function EntryShell({
           onViewChange={changeView}
           onNewProject={() => openNewProject()}
         />
-        <main className="entry-main entry-main--scroll">
+        {/* In the Electron shell `avatarMenu` is null (the desktop tab strip
+            already owns the settings gear), so the topbar collapses to an
+            empty strip. Mark it so CSS can drop both the topbar's height and
+            the sticky offset (--entry-topbar-h) to 0 — otherwise the sticky
+            filter bar reserves 44px of empty space above itself that only
+            shows up on desktop. */}
+        <main
+          className="entry-main entry-main--scroll"
+          data-topbar={avatarMenu ? 'present' : 'empty'}
+        >
           <div className="entry-main__topbar">
             <div className="entry-main__topbar-chips" />
             {avatarMenu}

@@ -14,7 +14,7 @@
 // override live in `./plugins-home/usePluginFacets.ts`. This file
 // owns layout only.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { InstalledPluginRecord } from '@open-design/contracts';
 import { useT } from '../i18n';
 import type { PluginShareAction } from '../state/projects';
@@ -70,6 +70,12 @@ export function PluginsHomeSection({
   const t = useT();
   const { savedPluginIds, savePluginId } = useSavedPluginIds();
   const [saveToast, setSaveToast] = useState<string | null>(null);
+  // Sticky filter bar pinned-state. A zero-height sentinel sits just above
+  // the bar; once it scrolls out under the topbar the bar is "pinned" and
+  // gets its hairline divider (Apple toolbar behaviour — seamless until it
+  // actually sticks). IntersectionObserver avoids a scroll listener.
+  const facetsRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
   const {
     visiblePlugins,
     savedList,
@@ -90,6 +96,35 @@ export function PluginsHomeSection({
     preferDefaultFacet,
     presetSelection,
   });
+
+  // Sticky filter bar pinned-state. A zero-height sentinel sits just above
+  // the bar; once it scrolls out under the topbar the bar is "pinned" and
+  // gets its hairline divider (Apple toolbar behaviour — seamless until it
+  // actually sticks). IntersectionObserver avoids a scroll listener.
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const facets = facetsRef.current;
+    if (!sentinel || !facets || typeof IntersectionObserver === 'undefined') return;
+    // The flip must happen exactly when the bar reaches its sticky offset,
+    // which equals --entry-topbar-h. Read it live (it's 44px today but is a
+    // token) rather than hard-coding, so the hairline never appears early or
+    // late if the topbar height changes.
+    const topbarH =
+      parseInt(
+        getComputedStyle(facets).getPropertyValue('--entry-topbar-h'),
+        10,
+      ) || 44;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        facets.classList.toggle('is-pinned', !entry.isIntersecting);
+      },
+      { threshold: 0, rootMargin: `-${topbarH}px 0px 0px 0px` },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loading, visiblePlugins.length]);
 
   function handleSavePlugin(record: InstalledPluginRecord): void {
     const result = savePluginId(record.id);
@@ -133,10 +168,14 @@ export function PluginsHomeSection({
         </div>
       ) : (
         <>
+          {/* Sentinel: when this scrolls out of view under the topbar, the
+              IntersectionObserver pins the bar (adds its hairline). */}
+          <div className="plugins-home__facets-sentinel" ref={sentinelRef} aria-hidden />
           <div
             className="plugins-home__facets"
             role="group"
             aria-label="Plugin filters"
+            ref={facetsRef}
           >
             <CategoryRow
               options={catalog.category}

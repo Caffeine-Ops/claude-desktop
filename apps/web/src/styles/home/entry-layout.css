@@ -62,6 +62,13 @@
   gap: 5px;
   width: 100%;
 }
+/* Extra breathing room above the first icon (home), mirroring the
+   prototype's `.rail__top { padding-top: 26px }` macOS traffic-light
+   clearance. Only the leading group gets it; the bottom group (settings)
+   stays pinned by the rail's `justify-content: space-between`. */
+.entry-nav-rail__group:first-child {
+  padding-top: 18px;
+}
 /* ---------- Right-side hover tooltip (rail items only) ----------
    The rail is icon-only, so each button advertises its label via a
    `data-tooltip` attribute. The label slides in from the right on
@@ -166,6 +173,15 @@
   transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease,
     transform 120ms ease;
 }
+/* Lock the glyph to its intrinsic 19×19 box. The button is a flex
+   container, so without this the SVG is a flex item and gets squeezed on
+   the main axis (we measured it collapsing from 19px to ~12px wide, which
+   read as a thin, undersized icon). `flex: none` opts it out of grow/shrink
+   so it renders at the authored size — matching the prototype 1:1. */
+.entry-nav-rail__btn svg {
+  flex: none;
+  display: block;
+}
 .entry-nav-rail__btn:hover {
   background: var(--bg-subtle);
   color: var(--text);
@@ -178,10 +194,18 @@
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 18%, transparent);
 }
-/* The "new project" button is an action, not a destination, so its hover
-   borrows the accent affordance (tint fill + accent ring) to read as a
-   create button — distinct from the neutral hover the destination icons
-   get. It never carries `.is-active` (it opens a modal, not a view). */
+/* The "new project" button is an action, not a destination, so it reads
+   distinctly from the neutral destination icons (source: open-design-nav-v0
+   `.rail__btn--new`):
+   - resting state is a touch lighter (`--text-soft`) than the other icons'
+     `--text-muted`, marking it as an affordance rather than a peer view;
+   - hover borrows the accent affordance (tint fill + accent ring) to read
+     as a create button.
+   It never carries `.is-active` (it opens a modal, not a view). The accent
+   token itself is untouched — only the resting neutral color changed. */
+.entry-nav-rail__btn--action {
+  color: var(--text-soft);
+}
 .entry-nav-rail__btn--action:hover {
   background: var(--accent-tint);
   color: var(--accent);
@@ -244,6 +268,17 @@
      pin themselves directly below the sticky topbar. Mirrors the
      topbar's vertical footprint (12px top + 32px chip). */
   --entry-topbar-h: 44px;
+}
+/* Electron shell: the desktop tab strip already owns the settings gear, so
+   `avatarMenu` is null and the topbar renders empty. An empty 44px strip
+   left a blank band above the sticky filter bar (it reserved space for a
+   control that isn't there). When the topbar is empty, remove it from flow
+   and zero the sticky offset so descendants pin to the very top. */
+.entry-main--scroll[data-topbar='empty'] {
+  --entry-topbar-h: 0px;
+}
+.entry-main--scroll[data-topbar='empty'] .entry-main__topbar {
+  display: none;
 }
 .entry-main__inner {
   width: 100%;

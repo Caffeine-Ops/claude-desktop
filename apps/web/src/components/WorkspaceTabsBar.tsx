@@ -239,53 +239,15 @@ function normalizeSearch(value: string): string {
   return value.trim().toLocaleLowerCase();
 }
 
-interface HoverPreviewState {
-  tabId: string;
-  anchorLeft: number;
-  anchorRight: number;
-  anchorBottom: number;
-}
-
-const HOVER_PREVIEW_DELAY_MS = 380;
-
 export function WorkspaceTabsBar({ route, projects }: Props) {
   const t = useT();
   const [state, setState] = useState<WorkspaceTabsState>(() => initialTabsState(route));
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [hoverPreview, setHoverPreview] = useState<HoverPreviewState | null>(null);
   const stripRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const hoverTimerRef = useRef<number | null>(null);
-
-  function clearHoverTimer() {
-    if (hoverTimerRef.current !== null) {
-      window.clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-  }
-
-  function scheduleHoverPreview(tabId: string, element: HTMLElement) {
-    clearHoverTimer();
-    hoverTimerRef.current = window.setTimeout(() => {
-      const rect = element.getBoundingClientRect();
-      setHoverPreview({
-        tabId,
-        anchorLeft: rect.left,
-        anchorRight: rect.right,
-        anchorBottom: rect.bottom,
-      });
-    }, HOVER_PREVIEW_DELAY_MS);
-  }
-
-  function dismissHoverPreview() {
-    clearHoverTimer();
-    setHoverPreview(null);
-  }
-
-  useEffect(() => () => clearHoverTimer(), []);
 
   const projectById = useMemo(
     () => new Map(projects.map((project) => [project.id, project])),
@@ -406,7 +368,6 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
       activeTabId: tab.id,
     }));
     setTabsMenuOpen(false);
-    dismissHoverPreview();
     navigate(routeForTab(tab));
   }
 
@@ -421,7 +382,6 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
   }
 
   function closeTab(tabId: string) {
-    dismissHoverPreview();
     const normalized = normalizeTabsState(state);
     const closingIndex = normalized.tabs.findIndex((tab) => tab.id === tabId);
     if (closingIndex < 0) return;
@@ -468,16 +428,11 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
               className={`workspace-tab${active ? ' is-active' : ''}`}
               role="tab"
               aria-selected={active}
-              aria-describedby={hoverPreview?.tabId === tab.id ? 'workspace-tab-preview' : undefined}
-              onMouseEnter={(event) => scheduleHoverPreview(tab.id, event.currentTarget)}
-              onMouseLeave={dismissHoverPreview}
             >
               <button
                 type="button"
                 className="workspace-tab__main"
                 onClick={() => openTab(tab)}
-                onFocus={(event) => scheduleHoverPreview(tab.id, event.currentTarget.parentElement ?? event.currentTarget)}
-                onBlur={dismissHoverPreview}
               >
                 <span className="workspace-tab__icon" aria-hidden>
                   <Icon name={display.icon} size={14} />
@@ -584,65 +539,8 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
             )
           : null}
       </div>
-      {hoverPreview && typeof document !== 'undefined' && !tabsMenuOpen
-        ? createPortal(
-            (() => {
-              const previewTab = state.tabs.find((tab) => tab.id === hoverPreview.tabId);
-              if (!previewTab) return null;
-              const previewDisplay = displayTabById.get(previewTab.id)
-                ?? displayTabFor(previewTab, projectById, t);
-              const previewDetail = describePreviewDetail(previewTab, projectById);
-              const previewWidth = 240;
-              const anchorCenter = (hoverPreview.anchorLeft + hoverPreview.anchorRight) / 2;
-              const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024;
-              const left = Math.max(
-                10,
-                Math.min(viewportWidth - previewWidth - 10, anchorCenter - previewWidth / 2),
-              );
-              return (
-                <div
-                  id="workspace-tab-preview"
-                  className="workspace-tab-preview"
-                  role="tooltip"
-                  style={{ left, top: hoverPreview.anchorBottom + 6, width: previewWidth }}
-                >
-                  <div className="workspace-tab-preview__icon" aria-hidden>
-                    <Icon name={previewDisplay.icon} size={16} />
-                  </div>
-                  <div className="workspace-tab-preview__text">
-                    <div className="workspace-tab-preview__title">{previewDisplay.title}</div>
-                    <div className="workspace-tab-preview__meta">{previewDisplay.meta}</div>
-                    {previewDetail ? (
-                      <div className="workspace-tab-preview__detail">{previewDetail}</div>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })(),
-            document.body,
-          )
-        : null}
     </header>
   );
-}
-
-function describePreviewDetail(
-  tab: WorkspaceChromeTab,
-  projectById: Map<string, Project>,
-): string | null {
-  if (tab.kind === 'project') {
-    if (tab.fileName) return tab.fileName;
-    const project = projectById.get(tab.projectId);
-    const brief = project?.pendingPrompt?.trim() || project?.customInstructions?.trim();
-    if (brief) {
-      return brief.length > 120 ? `${brief.slice(0, 117)}…` : brief;
-    }
-    return null;
-  }
-  if (tab.kind === 'marketplace') {
-    return tab.pluginId ? tab.pluginId : null;
-  }
-  return null;
 }
 
 function displayTabFor(
