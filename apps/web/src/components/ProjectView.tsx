@@ -48,7 +48,7 @@ import { useAnalytics } from '../analytics/provider';
 import { trackPageView } from '../analytics/events';
 import { navigate } from '../router';
 import { agentDisplayName, agentModelDisplayName } from '../utils/agentLabels';
-import { isMacPlatform } from '../utils/platform';
+import { isEmbeddedInDesktopShell, isMacPlatform } from '../utils/platform';
 import {
   canAutoRenameProjectFromPrompt,
   summarizeProjectNameFromPrompt,
@@ -3578,17 +3578,24 @@ export function ProjectView({
         actions={(
           <>
             <HandoffButton projectId={project.id} />
-            <AvatarMenu
-              config={config}
-              agents={agents}
-              daemonLive={daemonLive}
-              onModeChange={onModeChange}
-              onAgentChange={onAgentChange}
-              onAgentModelChange={onAgentModelChange}
-              onOpenSettings={onOpenSettings}
-              onRefreshAgents={onRefreshAgents}
-              onBack={onBack}
-            />
+            {/* The Electron desktop shell pins its own settings gear in the
+                top tab strip (UserInfoBar), so the AvatarMenu's gear would be
+                a duplicate. Hide the whole menu when embedded — mode/agent/
+                model are still reachable from the settings page. In a plain
+                browser it stays (no shell chrome to duplicate). */}
+            {isEmbeddedInDesktopShell() ? null : (
+              <AvatarMenu
+                config={config}
+                agents={agents}
+                daemonLive={daemonLive}
+                onModeChange={onModeChange}
+                onAgentChange={onAgentChange}
+                onAgentModelChange={onAgentModelChange}
+                onOpenSettings={onOpenSettings}
+                onRefreshAgents={onRefreshAgents}
+                onBack={onBack}
+              />
+            )}
           </>
         )}
       >

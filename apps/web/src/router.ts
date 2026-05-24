@@ -141,10 +141,17 @@ export function navigate(route: Route, opts: { replace?: boolean } = {}): void {
   const target = buildPath(route);
   const current = window.location.pathname;
   if (target === current) return;
+  // Preserve the existing query string across in-app view switches. Routes
+  // only carry pathname info, but boot-time flags like `?host=desktop`
+  // (set by the Electron shell so the embedded web tab can hide its
+  // duplicate settings cog) and `?settings=1` must survive navigation —
+  // otherwise pushState would drop them and the flag-gated UI would flip
+  // back on the first nav. Path comparison above stays pathname-only.
+  const targetWithQuery = target + window.location.search;
   if (opts.replace) {
-    window.history.replaceState(null, '', target);
+    window.history.replaceState(null, '', targetWithQuery);
   } else {
-    window.history.pushState(null, '', target);
+    window.history.pushState(null, '', targetWithQuery);
   }
   window.dispatchEvent(new PopStateEvent('popstate'));
 }

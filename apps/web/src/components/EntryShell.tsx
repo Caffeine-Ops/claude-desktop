@@ -15,10 +15,10 @@ import {
   type InstalledPluginRecord,
 } from '@open-design/contracts';
 import type { OpenDesignHostProjectImportSuccess } from '@open-design/host';
+import { isEmbeddedInDesktopShell } from '../utils/platform';
 import { useAnalytics } from '../analytics/provider';
 import {
   trackHomeNavClick,
-  trackHomeToolbarClick,
   trackPageView,
 } from '../analytics/events';
 import {
@@ -64,7 +64,6 @@ import type { PluginUseAction } from './plugins-home/useActions';
 import { Icon } from './Icon';
 import { AgentIcon } from './AgentIcon';
 import { IntegrationsView, type IntegrationTab } from './IntegrationsView';
-import { InlineModelSwitcher } from './InlineModelSwitcher';
 import { NewProjectModal } from './NewProjectModal';
 import { PluginsView } from './PluginsView';
 import type { CreateInput, CreateTab } from './NewProjectPanel';
@@ -193,8 +192,8 @@ interface Props {
   designSystemsLoading?: boolean;
   projectsLoading?: boolean;
   // Execution / model-switching context. Threaded down from `App` so the
-  // top-bar `InlineModelSwitcher` can render the active mode/agent/model
-  // and persist changes through the same callbacks the project view uses.
+  // onboarding flow and project views can render the active mode/agent/model
+  // and persist changes through the same callbacks.
   config: AppConfig;
   agents: AgentInfo[];
   daemonLive: boolean;
@@ -476,7 +475,11 @@ export function EntryShell({
     changeView('home');
   }
 
-  const avatarMenu = (
+  // The Electron desktop shell already renders a persistent settings gear
+  // in its top tab strip (UserInfoBar), so showing our own settings cog
+  // here would be a duplicate. Render it only in a plain browser. See
+  // isEmbeddedInDesktopShell for how the embedded tab is detected.
+  const avatarMenu = isEmbeddedInDesktopShell() ? null : (
     <button
       type="button"
       className="settings-icon-btn"
@@ -522,41 +525,7 @@ export function EntryShell({
         />
         <main className="entry-main entry-main--scroll">
           <div className="entry-main__topbar">
-            <div className="entry-main__topbar-chips">
-              <InlineModelSwitcher
-                config={config}
-                agents={agents}
-                daemonLive={daemonLive}
-                onModeChange={onModeChange}
-                onAgentChange={onAgentChange}
-                onAgentModelChange={onAgentModelChange}
-                onApiProtocolChange={onApiProtocolChange}
-                onApiModelChange={onApiModelChange}
-                onOpenSettings={onOpenSettings}
-              />
-              <button
-                type="button"
-                className="use-everywhere-chip"
-                onClick={() => {
-                  trackHomeToolbarClick(analytics.track, {
-                    page_name: 'home',
-                    area: 'toolbar',
-                    element: 'use_everywhere',
-                  });
-                  openIntegrationTab('use-everywhere');
-                }}
-                title={t('entry.useEverywhereTitle')}
-                aria-label={t('entry.useEverywhereAria')}
-                data-testid="entry-use-everywhere-button"
-              >
-                <span className="use-everywhere-chip__icon" aria-hidden>
-                  <Icon name="hammer" size={13} />
-                </span>
-                <span className="use-everywhere-chip__label">
-                  {t('entry.useEverywhereTitle')}
-                </span>
-              </button>
-            </div>
+            <div className="entry-main__topbar-chips" />
             {avatarMenu}
           </div>
           <div

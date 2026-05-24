@@ -105,7 +105,7 @@ import {
   resolveAccentColor,
 } from '../state/appearance';
 import { isAutosaveDraftOnlyChange } from '../App';
-import type { DesktopCliBackendState } from '../App';
+import type { DesktopCliBackendState, DesktopRuntimeLogEntry } from '../App';
 import {
   FAILURE_SOUNDS,
   SUCCESS_SOUNDS,
@@ -132,6 +132,7 @@ export type SettingsSection =
   | 'skills'
   | 'designSystems'
   | 'memory'
+  | 'logAnalysis'
   | 'privacy'
   // 'library' is consumed by the EntryShell library route — App opens it
   // via this same openSettings entry point, so SettingsSection must
@@ -1936,6 +1937,7 @@ export function SettingsDialog({
       subtitle: t('settings.designSystemsHint'),
     },
     memory: { title: t('settings.memory'), subtitle: t('settings.memoryHint') },
+    logAnalysis: { title: '日志分析', subtitle: '查看与分析会话日志' },
     // 'library' is opened via EntryShell route — SettingsDialog doesn't
     // render it but SettingsSection must accept the token (see type def).
     library: { title: '', subtitle: '' },
@@ -2185,6 +2187,17 @@ export function SettingsDialog({
               <span>
                 <strong>{t('settings.privacy')}</strong>
                 <small>{t('settings.privacyHint')}</small>
+              </span>
+            </button>
+            <button
+              type="button"
+              className={`settings-nav-item${activeSection === 'logAnalysis' ? ' active' : ''}`}
+              onClick={() => setActiveSection('logAnalysis')}
+            >
+              <Icon name="history" size={18} />
+              <span>
+                <strong>日志分析</strong>
+                <small>查看与分析会话日志</small>
               </span>
             </button>
             <button
@@ -3393,6 +3406,8 @@ export function SettingsDialog({
               chatModel={selectedMemoryChatModel}
             />
           ) : null}
+
+          {activeSection === 'logAnalysis' ? <LogAnalysisSection /> : null}
 
           {activeSection === 'privacy' ? (
             <PrivacySection cfg={cfg} setCfg={setCfg} />
@@ -5848,6 +5863,275 @@ const DEFAULT_CODE_FONT = 12;
 
 function clampFont(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.round(n)));
+}
+
+/** Keep the panel's local buffer in step with the main-process ring cap. */
+const LOG_VIEW_MAX = 2000;
+
+const LOG_SOURCE_COLOR: Record<DesktopRuntimeLogEntry['source'], string> = {
+  main: '#7dd3fc', // sky — Electron main
+  daemon: '#c4b5fd', // violet — daemon child
+  web: '#86efac', // green — web dev server
+  renderer: '#fcd34d', // amber — renderer console
+};
+
+function logLevelColor(level: DesktopRuntimeLogEntry['level']): string {
+  if (level === 'error') return '#f87171';
+  if (level === 'warn') return '#fbbf24';
+  if (level === 'debug') return 'var(--muted-foreground, #9ca3af)';
+  return 'var(--foreground, #e5e7eb)';
+}
+
+function formatLogTime(ts: number): string {
+  const d = new Date(ts);
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(
+    d.getMilliseconds(),
+    3,
+  )}`;
+}
+
+/**
+ * 「日志分析」section — a live tail of the desktop runtime logs (main process
+ * console, daemon child stdout/stderr, web dev server, and renderer consoles),
+ * fed by the `electronSettings` bridge. Pulls a snapshot on mount, then appends
+ * streamed lines; deduped by `seq` so the snapshot and the live stream can't
+ * double-count an entry that straddles subscribe time.
+ *
+ * Desktop-overlay only: in a plain browser `window.electronSettings` is absent,
+ * so we render a short "desktop only" empty state instead of a dead console.
+ */
+function LogAnalysisSection() {
+  const bridge =
+    typeof window !== 'undefined' ? window.electronSettings : undefined;
+  const [logs, setLogs] = useState<DesktopRuntimeLogEntry[]>([]);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [activeSource, setActiveSource] = useState<
+    'all' | DesktopRuntimeLogEntry['source']
+  >('all');
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const lastSeqRef = useRef<number>(-1);
+
+  useEffect(() => {
+    if (!bridge?.getLogs || !bridge.onLog) return;
+    let cancelled = false;
+
+    // Append helper shared by snapshot + stream. Drops entries we've already
+    // shown (seq <= lastSeq) and trims to the ring cap.
+    const append = (incoming: DesktopRuntimeLogEntry[]) => {
+      setLogs((prev) => {
+        const fresh = incoming.filter((e) => e.seq > lastSeqRef.current);
+        const last = fresh[fresh.length - 1];
+        if (!last) return prev;
+        lastSeqRef.current = last.seq;
+        const next = prev.concat(fresh);
+        return next.length > LOG_VIEW_MAX
+          ? next.slice(next.length - LOG_VIEW_MAX)
+          : next;
+      });
+    };
+
+    bridge
+      .getLogs()
+      .then((snapshot) => {
+        if (!cancelled) append(snapshot);
+      })
+      .catch(() => {
+        /* overlay-only; ignore in browser / on error */
+      });
+
+    const unsubscribe = bridge.onLog((entry) => {
+      if (!cancelled) append([entry]);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [bridge]);
+
+  // Stick to the bottom as new lines arrive (and when switching source tabs),
+  // unless the user scrolled up.
+  useEffect(() => {
+    if (!autoScroll) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [logs, autoScroll, activeSource]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Within 24px of the bottom counts as "following"; scrolling up pauses
+    // auto-scroll so the user can read history without it yanking back down.
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    setAutoScroll(atBottom);
+  };
+
+  const handleClear = () => {
+    void bridge?.clearLogs?.();
+    setLogs([]);
+    lastSeqRef.current = -1;
+  };
+
+  if (!bridge?.getLogs) {
+    return (
+      <section className="settings-section">
+        <div className="empty-card">仅在桌面应用内可用（需要 Electron 运行时）。</div>
+      </section>
+    );
+  }
+
+  // Per-source counts for the tab badges, plus the rows the active tab shows.
+  const counts: Record<DesktopRuntimeLogEntry['source'], number> = {
+    main: 0,
+    daemon: 0,
+    web: 0,
+    renderer: 0,
+  };
+  for (const e of logs) counts[e.source] += 1;
+  const visible =
+    activeSource === 'all' ? logs : logs.filter((e) => e.source === activeSource);
+
+  const tabs: { id: 'all' | DesktopRuntimeLogEntry['source']; label: string }[] = [
+    { id: 'all', label: '全部' },
+    { id: 'main', label: 'main' },
+    { id: 'daemon', label: 'daemon' },
+    { id: 'web', label: 'web' },
+    { id: 'renderer', label: 'renderer' },
+  ];
+
+  return (
+    <section className="settings-section">
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          marginBottom: 10,
+        }}
+      >
+        <div
+          className="seg-control"
+          role="tablist"
+          aria-label="日志来源"
+          style={{ ['--seg-cols' as string]: tabs.length } as CSSProperties}
+        >
+          {tabs.map((tab) => {
+            const active = activeSource === tab.id;
+            const count = tab.id === 'all' ? logs.length : counts[tab.id];
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={'seg-btn seg-btn--inline' + (active ? ' active' : '')}
+                onClick={() => setActiveSource(tab.id)}
+              >
+                <span
+                  className="seg-title"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                >
+                  {tab.id !== 'all' ? (
+                    <span
+                      style={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: 999,
+                        background: LOG_SOURCE_COLOR[tab.id],
+                        display: 'inline-block',
+                      }}
+                    />
+                  ) : null}
+                  {tab.label}
+                  <span style={{ opacity: 0.6, fontVariantNumeric: 'tabular-nums' }}>
+                    {count}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          onClick={handleClear}
+          title="清空内存日志并删除磁盘上的日志文件"
+        >
+          清空
+        </button>
+      </div>
+
+      {!autoScroll ? (
+        <div
+          style={{
+            fontSize: 11,
+            color: 'var(--muted-foreground, #9ca3af)',
+            marginBottom: 6,
+          }}
+        >
+          已暂停跟随（滚动到底部可恢复自动跟随）
+        </div>
+      ) : null}
+
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        style={{
+          height: 'min(60vh, 520px)',
+          overflowY: 'auto',
+          borderRadius: 8,
+          border: '1px solid var(--border, #2a2a2a)',
+          background: 'var(--card, #0c0c0c)',
+          padding: '8px 10px',
+          fontFamily:
+            'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+          fontSize: 11.5,
+          lineHeight: 1.55,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        }}
+      >
+        {visible.length === 0 ? (
+          <div style={{ color: 'var(--muted-foreground, #9ca3af)', padding: 6 }}>
+            {logs.length === 0
+              ? '暂无日志。运行时输出会实时出现在这里。'
+              : `${activeSource} 暂无日志。`}
+          </div>
+        ) : (
+          visible.map((entry) => (
+            <div key={entry.seq} style={{ display: 'flex', gap: 8 }}>
+              <span
+                style={{
+                  color: 'var(--muted-foreground, #6b7280)',
+                  flexShrink: 0,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {formatLogTime(entry.ts)}
+              </span>
+              {activeSource === 'all' ? (
+                <span
+                  style={{
+                    color: LOG_SOURCE_COLOR[entry.source],
+                    flexShrink: 0,
+                    width: 64,
+                    display: 'inline-block',
+                  }}
+                >
+                  {entry.source}
+                </span>
+              ) : null}
+              <span style={{ color: logLevelColor(entry.level), flex: 1 }}>
+                {entry.text}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
 }
 
 /**

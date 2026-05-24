@@ -29,7 +29,6 @@ import {
   updateCurrentApiProtocolConfig,
   type SettingsSection,
 } from './components/SettingsDialog';
-import { PrivacyConsentModal } from './components/PrivacyConsentModal';
 import {
   daemonIsLive,
   fetchAppVersionInfo,
@@ -177,6 +176,19 @@ export interface DesktopCliBackendState {
   systemInfo: { path: string; version: string | null } | null;
 }
 
+/**
+ * Structural copy of the Electron-side `RuntimeLogEntry` (desktop's
+ * shared/ipc-channels owns the canonical type; web can't import across the
+ * app boundary). Feeds the「日志分析」settings section. Keep in sync.
+ */
+export interface DesktopRuntimeLogEntry {
+  seq: number;
+  ts: number;
+  source: 'main' | 'daemon' | 'web' | 'renderer';
+  level: 'info' | 'warn' | 'error' | 'debug';
+  text: string;
+}
+
 declare global {
   interface Window {
     /**
@@ -191,6 +203,12 @@ declare global {
       setCliBackend: (payload: {
         mode: 'bundled' | 'system';
       }) => Promise<DesktopCliBackendState>;
+      /** Runtime-log ring snapshot for the「日志分析」panel's initial fill. */
+      getLogs: () => Promise<DesktopRuntimeLogEntry[]>;
+      /** Clear the in-memory log ring (on-disk log file untouched). */
+      clearLogs: () => Promise<void>;
+      /** Subscribe to live log lines; returns an unsubscribe fn. */
+      onLog: (handler: (entry: DesktopRuntimeLogEntry) => void) => () => void;
     };
   }
 }
@@ -360,8 +378,6 @@ export function App() {
   // {active:false} if this hasn't run.
   const activeProjectId = route.kind === 'project' ? route.projectId : null;
   const activeFileName = route.kind === 'project' ? route.fileName : null;
-  const showPrivacyConsent =
-    daemonConfigLoaded && config.privacyDecisionAt == null && !settingsOpen;
   useEffect(() => {
     const body = activeProjectId
       ? { projectId: activeProjectId, fileName: activeFileName }
@@ -677,6 +693,32 @@ export function App() {
       syncConfigToDaemon(persisted),
     ]);
   }, [daemonMediaProviders, daemonMediaProvidersFetchState]);
+
+  // First-run privacy decision, resolved silently. The dismissable banner
+  // that used to ask for acknowledgement has been removed; we now commit the
+  // same default-opt-in the banner's "I get it" button committed, so the
+  // telemetry gate and the onboarding hand-off (both keyed off
+  // privacyDecisionAt) keep working. The user can still flip telemetry off
+  // any time from Settings → Privacy. Gated on daemonConfigLoaded because
+  // privacyDecisionAt is daemon-owned and stripped from localStorage — acting
+  // before hydration would write a decision on top of an existing one.
+  const privacyDecidedRef = useRef(false);
+  useEffect(() => {
+    if (!daemonConfigLoaded) return;
+    if (latestPersistedConfigRef.current.privacyDecisionAt != null) return;
+    if (privacyDecidedRef.current) return;
+    privacyDecidedRef.current = true;
+    const installationId = generateInstallationIdSafe();
+    void handleConfigPersist({
+      ...latestPersistedConfigRef.current,
+      installationId,
+      privacyDecisionAt: Date.now(),
+      telemetry: { metrics: true, content: true, artifactManifest: false },
+    });
+    if (!latestPersistedConfigRef.current.onboardingCompleted) {
+      navigate({ kind: 'home', view: 'onboarding' });
+    }
+  }, [daemonConfigLoaded, handleConfigPersist, navigate]);
 
   /**
    * Explicit Composio API-key save. Called from the section-local
@@ -1554,30 +1596,10 @@ export function App() {
         />
       ) : null}
       <MemoryToast onOpenMemory={() => openSettings('memory')} />
-      {/* First-run privacy consent banner. It waits for daemon config
-          hydration because privacyDecisionAt is daemon-owned and stripped
-          from localStorage. It also yields while Settings is open so the
-          floating banner never intercepts modal interactions. */}
-      {showPrivacyConsent ? (
-        <PrivacyConsentModal
-          onAccept={() => {
-            // Default opt-in: clicking "I get it" enables the same telemetry
-            // surface the previous two-button "Share usage data" path opted
-            // into. The banner footer + PrivacySection give the user a
-            // one-click path to flip everything off later.
-            const installationId = generateInstallationIdSafe();
-            void handleConfigPersist({
-              ...latestPersistedConfigRef.current,
-              installationId,
-              privacyDecisionAt: Date.now(),
-              telemetry: { metrics: true, content: true, artifactManifest: false },
-            });
-            if (!latestPersistedConfigRef.current.onboardingCompleted) {
-              navigate({ kind: 'home', view: 'onboarding' });
-            }
-          }}
-        />
-      ) : null}
+      {/* First-run privacy consent is now resolved silently — see the
+          auto-accept effect near handleConfigPersist. No banner UI is
+          rendered; the user still controls data sharing from
+          Settings → Privacy (PrivacySection.tsx). */}
     </>
   );
 }

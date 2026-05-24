@@ -96,6 +96,40 @@
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
     'Helvetica Neue', Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+
+  /* ── Semantic weight tokens ───────────────────────────────────────────
+   * The entry/home surface uses a slightly heavier "strong" weight (650) for
+   * headings and a "medium" weight (500) for de-emphasized labels. Naming
+   * them as tokens keeps the values in one place so both apps render the same
+   * type rhythm and the entry-layout.css consumers don't re-hardcode 650/500.
+   * Mirrored 1:1 with the open-design monorepo's design-tokens. */
+  --font-weight-medium: 500;
+  --font-weight-strong: 650;
+
+  /* ── Accent surface tokens ────────────────────────────────────────────
+   * Derived from the accent so they re-skin live when the accent changes.
+   * `--accent-gradient`     : the 135° accent→accent-strong fill used by
+   *                           primary CTAs and selected affordances.
+   * `--surface-accent-tint` : a soft accent-tinted panel wash (cards that
+   *                           want a hint of accent without a solid fill).
+   * `--shadow-accent`       : the accent-colored elevation under tinted
+   *                           surfaces so they lift off the page warmly.
+   * These reference the legacy --accent / --accent-strong / --bg-panel names
+   * that apps/web derives (see apps/web/src/index.css), so they resolve
+   * correctly there. apps/desktop, which has no --accent-strong / --bg-panel,
+   * falls back to the shared accent via the var() fallbacks. */
+  --accent-gradient: linear-gradient(
+    135deg,
+    var(--accent, hsl(var(--primary))) 0%,
+    var(--accent-strong, hsl(var(--primary))) 100%
+  );
+  --surface-accent-tint: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent, hsl(var(--primary))) 13%, var(--bg-panel, hsl(var(--card)))) 0%,
+    var(--bg-panel, hsl(var(--card))) 54%
+  );
+  --shadow-accent: 0 18px 40px
+    color-mix(in srgb, var(--accent, hsl(var(--primary))) 10%, transparent);
 }
 
 .dark {

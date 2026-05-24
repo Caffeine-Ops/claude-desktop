@@ -1,15 +1,12 @@
 // Lovart-style left navigation rail for the entry view.
 //
-// Renders a narrow icon-only column. The first slot is the brand logo,
-// followed by the primary destinations users expect to keep in reach:
-// Home, new project, projects, automations, design systems, plugins,
-// and integrations. Footer controls are reserved for lower-frequency
-// support affordances such as the help launcher.
+// Renders a narrow icon-only column of the primary destinations users
+// expect to keep in reach: Home, new project, projects, automations,
+// design systems, plugins, and integrations.
 // Language switching and other account-scoped controls live behind the
 // floating settings cog in the top-right corner of the main content.
 
 import type { ReactNode } from 'react';
-import { EntryHelpMenu } from './EntryHelpMenu';
 import { Icon } from './Icon';
 import { UpdaterPopup } from './UpdaterPopup';
 import { useT } from '../i18n';
@@ -125,10 +122,6 @@ export function EntryNavRail({ view, onViewChange, onNewProject }: Props) {
         >
           <Icon name="link" size={18} />
         </NavButton>
-      </div>
-      <div className="entry-nav-rail__footer">
-        <div className="entry-nav-rail__divider" role="separator" />
-        <EntryHelpMenu />
       </div>
     </nav>
   );
