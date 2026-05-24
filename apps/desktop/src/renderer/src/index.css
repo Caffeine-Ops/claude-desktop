@@ -25,12 +25,164 @@
  * stores/appearance.applier.ts.
  */
 /* Shared color tokens (:root / .dark / html.high-contrast). Must precede
- * @tailwind so the cascade order matches the old in-file @layer placement. */
+ * the `tailwindcss` import so the cascade order matches the old in-file
+ * @layer placement: the variables exist before any utility reads them. */
 @import '../../../../../packages/design-tokens/tokens.css';
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Tailwind v4 entrypoint. One import replaces the old
+ * `@tailwind base/components/utilities` trio and pulls in Preflight +
+ * the utility/component layers. The theme below was migrated out of the
+ * deleted `tailwind.config.js` into the CSS-first `@theme` block. */
+@import 'tailwindcss';
+
+/* Selector-based dark mode. v3 declared `darkMode: 'class'`; v4 expresses
+ * the same thing as a custom `dark` variant. `:where(...)` keeps the
+ * variant at zero specificity so it never out-weighs a plain utility,
+ * matching v3 behaviour. The `.dark` class is toggled on <html> by the
+ * appearance applier. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Content sources. v4 auto-detects template files, but the renderer lives
+ * several levels up from this CSS file, so we declare it explicitly to
+ * guarantee every `bg-card` / `text-apple-body` / dialog class is seen by
+ * the scanner and never purged. We deliberately do NOT scan node_modules:
+ * the @assistant-ui/react primitives we import are unstyled — every class
+ * name in the Thread view lives in our own files. */
+@source '../**/*.{ts,tsx,html}';
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Theme — migrated verbatim from the former tailwind.config.js. Apple
+ * DESIGN.md type/radius/shadow scale + the shadcn-style HSL token system.
+ * Every color reads a CSS variable defined in design-tokens/tokens.css
+ * (and per-user-overridable on documentElement.style), so `bg-accent`,
+ * `text-muted-foreground/80`, etc. re-skin instantly. v4 supports the
+ * `/N` opacity modifier on any `--color-*` natively, so the v3
+ * `<alpha-value>` placeholder is gone.
+ *
+ * The whole block is `@theme inline` — and that is load-bearing, not
+ * cosmetic. Our color/font theme variables REFERENCE other variables
+ * (`hsl(var(--border))`, `var(--font-sans)`) that are (a) redefined under
+ * `.dark` for dark mode and (b) live-mutated on documentElement.style by
+ * the appearance applier. Without `inline`, v4 would freeze the resolved
+ * value into `:root` at build time, so `.dark` overrides and the live
+ * re-skin would silently stop working — exactly the "bg-accent re-skins
+ * instantly" invariant from CLAUDE.md. `inline` makes each utility emit
+ * `var(--border)` directly, so it re-resolves against whatever the cascade
+ * (or the applier) currently holds. It also fixes the `--font-sans:
+ * var(--font-sans)` self-reference: inline emits `var(--font-sans)` into
+ * the utility, resolving against design-tokens' :root definition. */
+@theme inline {
+  /* Apple DESIGN.md §3: SF Pro stack resolved through shared tokens, so
+     apps/web and apps/desktop render the same type. */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  /* Apple DESIGN.md §5: tight, context-specific border-radii. The 980px
+     "pill" is reserved for CTA links; everyday components sit 5–12px. */
+  --radius-apple-xs: 5px;
+  --radius-apple-sm: 8px;
+  --radius-apple-md: 11px;
+  --radius-apple-lg: 12px;
+  --radius-pill: 980px;
+
+  /* Apple DESIGN.md §6: one soft diffused shadow or nothing. */
+  --shadow-apple: rgba(0, 0, 0, 0.22) 3px 5px 30px 0px;
+
+  /* Apple DESIGN.md §3: negative tracking at all sizes. */
+  --tracking-apple-display: -0.005em;
+  --tracking-apple-body: -0.022em;
+  --tracking-apple-caption: -0.016em;
+  --tracking-apple-micro: -0.010em;
+
+  /* Apple DESIGN.md §3: the full hierarchy as ready-to-use presets. Each
+     bakes in line-height + tracking + weight so `text-apple-body` gets
+     Apple-correct rhythm for free. */
+  --text-apple-display: 56px;
+  --text-apple-display--line-height: 1.07;
+  --text-apple-display--letter-spacing: -0.005em;
+  --text-apple-display--font-weight: 600;
+
+  --text-apple-section: 40px;
+  --text-apple-section--line-height: 1.10;
+  --text-apple-section--letter-spacing: 0;
+  --text-apple-section--font-weight: 600;
+
+  --text-apple-tile: 28px;
+  --text-apple-tile--line-height: 1.14;
+  --text-apple-tile--letter-spacing: 0.007em;
+  --text-apple-tile--font-weight: 400;
+
+  --text-apple-card-title: 21px;
+  --text-apple-card-title--line-height: 1.19;
+  --text-apple-card-title--letter-spacing: 0.011em;
+  --text-apple-card-title--font-weight: 700;
+
+  --text-apple-body: 17px;
+  --text-apple-body--line-height: 1.47;
+  --text-apple-body--letter-spacing: -0.022em;
+  --text-apple-body--font-weight: 400;
+
+  --text-apple-body-emph: 17px;
+  --text-apple-body-emph--line-height: 1.24;
+  --text-apple-body-emph--letter-spacing: -0.022em;
+  --text-apple-body-emph--font-weight: 600;
+
+  --text-apple-caption: 14px;
+  --text-apple-caption--line-height: 1.43;
+  --text-apple-caption--letter-spacing: -0.016em;
+  --text-apple-caption--font-weight: 400;
+
+  --text-apple-caption-emph: 14px;
+  --text-apple-caption-emph--line-height: 1.29;
+  --text-apple-caption-emph--letter-spacing: -0.016em;
+  --text-apple-caption-emph--font-weight: 600;
+
+  --text-apple-micro: 12px;
+  --text-apple-micro--line-height: 1.33;
+  --text-apple-micro--letter-spacing: -0.010em;
+  --text-apple-micro--font-weight: 400;
+
+  --text-apple-nano: 10px;
+  --text-apple-nano--line-height: 1.47;
+  --text-apple-nano--letter-spacing: -0.008em;
+  --text-apple-nano--font-weight: 400;
+
+  /* shadcn-style HSL token system. Each reads a `--token` from
+     design-tokens/tokens.css through hsl(); v4 layers `/N` opacity on
+     top automatically. Nested v3 keys (primary.foreground, sidebar.accent,
+     …) flatten to dash-joined names. */
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+}
 
 @layer base {
   body {
