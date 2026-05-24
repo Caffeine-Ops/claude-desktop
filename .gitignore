@@ -34,3 +34,6 @@ e2e/.od-data
 
 # 设计原型稿 (一次性方向稿, 不入库)
 prototypes/
+
+# 一次性分析脚本 (与本项目无关：读别的项目数据生成 Excel，输出路径写死本机桌面)
+scripts/export_his_analysis.py
