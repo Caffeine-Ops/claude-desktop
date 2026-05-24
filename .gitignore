@@ -31,3 +31,6 @@ env.json
 .tmp/
 apps/web/out
 e2e/.od-data
+
+# 设计原型稿 (一次性方向稿, 不入库)
+prototypes/

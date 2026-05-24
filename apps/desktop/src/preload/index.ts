@@ -356,6 +356,14 @@ const chatApi: ChatApi = {
     ) as Promise<AppearanceSetResult>
   },
 
+  onAppearanceChanged(handler: () => void): () => void {
+    const listener = (): void => handler()
+    ipcRenderer.on(IPC_CHANNELS.APPEARANCE_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.APPEARANCE_CHANGED, listener)
+    }
+  },
+
   onShellMenuAction(handler: (action: ShellMenuAction) => void): () => void {
     const listener = (_e: unknown, payload: ShellMenuActionPayload): void => {
       handler(payload.action)

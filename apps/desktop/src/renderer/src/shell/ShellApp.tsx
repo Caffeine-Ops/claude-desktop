@@ -1,7 +1,9 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 
 import TabBar from '../components/tabs/TabBar'
 import { UserInfoBar } from '../components/chat/UserInfoBar'
+import { useApplyAppearance } from '../stores/appearance.applier'
+import { hydrateAppearanceFromDaemon } from '../stores/appearance'
 
 /**
  * Shell renderer — mounted by the shell BrowserWindow's own
@@ -28,6 +30,25 @@ import { UserInfoBar } from '../components/chat/UserInfoBar'
  * is created with the standard preload (see createShellWindow).
  */
 export default function ShellApp(): React.ReactElement {
+  // The shell renderer is its own webContents with its own appearance store
+  // instance, so it needs the same theming wiring the chat App has — otherwise
+  // the tab strip keeps whatever theme it booted with (main.tsx's bootAppearance
+  // applied the localStorage cache once at startup, but nothing updates it at
+  // runtime). useApplyAppearance keeps <html> in sync with this renderer's
+  // store; the effect below seeds that store from the daemon on mount and
+  // re-pulls whenever main broadcasts a change (theme switched in the settings
+  // overlay / a tab). Without this the strip was the one surface that didn't
+  // follow a live theme switch.
+  useApplyAppearance()
+
+  useEffect(() => {
+    void hydrateAppearanceFromDaemon()
+    if (!window.chatApi?.onAppearanceChanged) return
+    return window.chatApi.onAppearanceChanged(() => {
+      void hydrateAppearanceFromDaemon()
+    })
+  }, [])
+
   return (
     <div className="shell-chrome">
       <TabBar />

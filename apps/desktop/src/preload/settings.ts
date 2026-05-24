@@ -70,6 +70,30 @@ const electronSettings = {
       handler(entry)
     ipcRenderer.on(IPC_CHANNELS.LOGS_STREAM, listener)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.LOGS_STREAM, listener)
+  },
+
+  /**
+   * Subscribe to "shared appearance changed in the daemon" pushes from main.
+   * The overlay is its own webContents with its own React state, so when the
+   * theme is changed elsewhere (a chat tab, or another surface) main fires
+   * this and the embedded web app re-fetches /api/app-config to re-apply.
+   * Returns an unsubscribe the web app calls on unmount. Dormant in a plain
+   * browser (global absent → no-op).
+   */
+  onAppearanceChanged(handler: () => void): () => void {
+    const listener = (): void => handler()
+    ipcRenderer.on(IPC_CHANNELS.APPEARANCE_CHANGED, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.APPEARANCE_CHANGED, listener)
+  },
+
+  /**
+   * Tell main the overlay just wrote appearance/config straight to the daemon
+   * (its /api/app-config PUT bypasses main), so main broadcasts the change to
+   * the other windows. Called from the web app's syncConfigToDaemon after a
+   * successful PUT. Fire-and-forget.
+   */
+  notifyAppearanceChanged(): void {
+    void ipcRenderer.invoke(IPC_CHANNELS.APPEARANCE_BROADCAST)
   }
 }
 

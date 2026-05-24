@@ -51,6 +51,7 @@ import { listFileSuggestions } from '../core/fileSuggestions'
 import { listSessions, loadSession, renameSession } from '../core/sessionStore'
 import { clearUnread, updateTrayLang } from '../tray'
 import {
+  broadcastAppearanceChanged,
   broadcastTabList,
   canAddTab,
   closeTab,
@@ -166,6 +167,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.PERMISSION_MODE_SET)
   ipcMain.removeHandler(IPC_CHANNELS.APPEARANCE_GET)
   ipcMain.removeHandler(IPC_CHANNELS.APPEARANCE_SET)
+  ipcMain.removeHandler(IPC_CHANNELS.APPEARANCE_BROADCAST)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_TRIGGER_MENU_ACTION)
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_WINDOW_OPEN)
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE)
@@ -781,14 +783,32 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.APPEARANCE_SET,
-    async (_event, payload: AppearanceSetPayload): Promise<AppearanceSetResult> => {
+    async (event, payload: AppearanceSetPayload): Promise<AppearanceSetResult> => {
       const patch = payload?.patch
       if (!patch || typeof patch !== 'object') {
         return { appearance: null }
       }
-      return { appearance: await writeDaemonAppearance(patch) }
+      const appearance = await writeDaemonAppearance(patch)
+      // Only broadcast on a real daemon write (null = daemon offline, nothing
+      // changed). Pass the writer's webContents so it's skipped — it already
+      // applied the change locally and re-pulling would be a wasteful echo
+      // (and the desktop store's isHydrating guard relies on us not feeding
+      // it back what it just pushed). web tabs have no preload, so the
+      // broadcaster reaches them via executeJavaScript instead.
+      if (appearance) broadcastAppearanceChanged(event.sender.id)
+      return { appearance }
     }
   )
+
+  // Appearance written straight to the daemon by a renderer (the settings
+  // overlay's /api/app-config PUT), bypassing the main process. The renderer
+  // pings this so main can broadcast to the OTHER windows — without it the
+  // change only landed in the writer until a reload (see APPEARANCE_BROADCAST
+  // doc in ipc-channels). We skip the caller for the same skip-the-writer
+  // reason as APPEARANCE_SET above.
+  ipcMain.handle(IPC_CHANNELS.APPEARANCE_BROADCAST, async (event): Promise<void> => {
+    broadcastAppearanceChanged(event.sender.id)
+  })
 
   // Shell tab-strip settings menu → active chat tab. The shell renderer
   // can't reach the chat renderer's stores directly, so it fires this and

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { Node as PMNode } from 'prosemirror-model'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { history, undo, redo } from 'prosemirror-history'
@@ -131,6 +132,73 @@ export function ProseMirrorComposerInput({
       // schema). Without this the only Enter binding above would
       // submit and you could never add a line.
       'Shift-Enter': (state, dispatch) => splitBlock(state, dispatch),
+      // Backspace on a chip (or its auto-inserted trailing space):
+      // delete it in ONE keypress.
+      //
+      // Two distinct two-step deletes were conflated as "have to press
+      // delete twice":
+      //
+      //   1. baseKeymap's default Backspace chain ends in
+      //      `selectNodeBackward`, which for a `selectable` atom (our
+      //      slash/mention pills) merely turns it into a NodeSelection on
+      //      the first press — a SECOND Backspace then deletes the now-
+      //      selected node. PM's safety net against fat-fingering a node,
+      //      but for a single-glyph pill it reads as a bug.
+      //   2. `insertSuggestion` appends a trailing space after the chip
+      //      (so you can keep typing). Right after inserting, the caret
+      //      sits AFTER that space, so the first Backspace eats the space
+      //      — the green chip stays put and *looks* unchanged — and only
+      //      the second Backspace reaches the chip. THIS is what the user
+      //      actually hit (#2 masking #1); the chip's own colour, not a
+      //      selection highlight, is why "it just changed style".
+      //
+      // Fix both: when the caret is right after a chip, delete the chip;
+      // when it's right after the single trailing space that follows a
+      // chip, delete the space AND the chip together. Everything else
+      // (plain text, multi-char runs) falls through to baseKeymap.
+      Backspace: (state, dispatch) => {
+        const { selection } = state
+        if (!selection.empty) return false
+        const { $from } = selection
+        const before = $from.nodeBefore
+        if (!before) return false
+
+        const isChip = (n: PMNode | null | undefined): boolean =>
+          !!n && (n.type.name === 'slash' || n.type.name === 'mention')
+
+        // Case 1: caret directly after a chip → delete the chip.
+        if (isChip(before)) {
+          if (dispatch) {
+            const pos = $from.pos
+            dispatch(state.tr.delete(pos - before.nodeSize, pos).scrollIntoView())
+          }
+          return true
+        }
+
+        // Case 2: caret after the lone trailing space that
+        // `insertSuggestion` adds, and the node before that space is a
+        // chip → delete space + chip in one go. We only special-case a
+        // *single* space (the inserter's exact output); a longer text
+        // run means the user typed more, so we don't swallow the chip.
+        if (before.isText && before.text === ' ') {
+          // Resolve the position just before the space to inspect what
+          // precedes it.
+          const beforeSpace = state.doc.resolve($from.pos - before.nodeSize).nodeBefore
+          if (isChip(beforeSpace)) {
+            if (dispatch) {
+              const pos = $from.pos
+              dispatch(
+                state.tr
+                  .delete(pos - before.nodeSize - beforeSpace!.nodeSize, pos)
+                  .scrollIntoView()
+              )
+            }
+            return true
+          }
+        }
+
+        return false
+      },
       Escape: () => {
         if (!liveRef.current.suggestion) return false
         // Close the popover without inserting: collapse trigger by

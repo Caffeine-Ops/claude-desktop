@@ -832,6 +832,63 @@ export function closeSettingsView(): void {
 }
 
 /**
+ * Tell every other window the shared appearance changed so it re-pulls and
+ * re-applies the daemon copy at runtime. Called from the APPEARANCE_SET
+ * handler after a successful daemon write (see register.ts).
+ *
+ * Three classes of target, each reached differently because they don't all
+ * carry the same preload:
+ *  - **chat tabs + shell** (full `index.mjs` preload): get the APPEARANCE_CHANGED
+ *    IPC; their renderer's `onAppearanceChanged` re-runs hydrateAppearanceFromDaemon.
+ *  - **settings overlay** (minimal `settings.mjs` preload, still has ipcRenderer):
+ *    same IPC channel; the embedded web app re-fetches /api/app-config.
+ *  - **web tabs** (NO preload — external origin, see newWebTab): can't receive
+ *    IPC at all, so we inject a `window` CustomEvent via executeJavaScript and
+ *    the web App listens for `od:appearance-changed`.
+ *
+ * `sourceWebContentsId` is the writer — skipped on every path. It already
+ * applied the change locally; re-pulling would be a wasteful echo, and on the
+ * desktop side it would feed the store back what it just pushed (the store's
+ * own isHydrating guard assumes we don't do that).
+ */
+export function broadcastAppearanceChanged(sourceWebContentsId: number): void {
+  // Shell renderer (hosts the gear; harmless if it has no appearance store).
+  if (
+    shellWindow &&
+    !shellWindow.isDestroyed() &&
+    shellWindow.webContents.id !== sourceWebContentsId
+  ) {
+    shellWindow.webContents.send(IPC_CHANNELS.APPEARANCE_CHANGED)
+  }
+
+  // Settings overlay — minimal preload, receives the IPC.
+  if (
+    settingsView &&
+    !settingsView.webContents.isDestroyed() &&
+    settingsView.webContents.id !== sourceWebContentsId
+  ) {
+    settingsView.webContents.send(IPC_CHANNELS.APPEARANCE_CHANGED)
+  }
+
+  // Tabs: chat tabs get the IPC; web tabs (no preload) get an injected event.
+  for (const ctx of tabs.values()) {
+    const wc = ctx.view.webContents
+    if (wc.isDestroyed() || wc.id === sourceWebContentsId) continue
+    if (ctx.kind === 'web') {
+      // No preload here — bridge via a window event the web App subscribes to.
+      // Best-effort: a tab still loading (no document yet) silently no-ops.
+      wc.executeJavaScript(
+        "window.dispatchEvent(new CustomEvent('od:appearance-changed'))"
+      ).catch(() => {
+        /* tab navigating / destroyed mid-call — next mount re-pulls anyway */
+      })
+    } else {
+      wc.send(IPC_CHANNELS.APPEARANCE_CHANGED)
+    }
+  }
+}
+
+/**
  * Resolve the renderer URL — dev uses electron-vite's HMR server,
  * production loads the bundled index.html off disk. The returned
  * value is whatever Electron expects for `loadURL` (dev) or the

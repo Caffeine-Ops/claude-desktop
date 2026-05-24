@@ -388,7 +388,36 @@ export const IPC_CHANNELS = {
    * renderer treats the local store + localStorage as the durable copy
    * either way, so a failed write is non-fatal (best-effort sync).
    */
-  APPEARANCE_SET: 'appearance:set'
+  APPEARANCE_SET: 'appearance:set',
+  /**
+   * Main → every renderer that can receive IPC (desktop chat renderers +
+   * the settings overlay). Fired after a successful APPEARANCE_SET write to
+   * the daemon so windows OTHER than the one that made the change re-pull
+   * and re-apply the shared appearance at runtime — without it only the
+   * writing webContents reflects the new theme until a reload.
+   *
+   * Carries no payload: receivers re-fetch the daemon copy themselves
+   * (desktop via hydrateAppearanceFromDaemon, the overlay via /api/app-config)
+   * so there's a single canonical read path and no risk of a partial patch
+   * racing the merged daemon state.
+   *
+   * The web tab (?host=desktop) has NO preload and can't receive this — main
+   * reaches it separately by injecting a `window` event via executeJavaScript
+   * (see tabRegistry.broadcastAppearanceChanged).
+   */
+  APPEARANCE_CHANGED: 'appearance:changed',
+  /**
+   * Renderer → main. "I just wrote the shared appearance/config straight to
+   * the daemon (via /api/app-config), please broadcast APPEARANCE_CHANGED to
+   * the OTHER windows." Fired by the settings overlay's syncConfigToDaemon
+   * after a successful PUT — that write bypasses the main process entirely
+   * (it's an HTTP call proxied to the daemon, not an IPC), so main has no
+   * other way to learn the theme changed. The handler calls
+   * broadcastAppearanceChanged, skipping the caller (event.sender) since it
+   * already applied the change locally. Distinct from APPEARANCE_SET, which
+   * is the desktop renderer's own write-through-main path (also broadcasts).
+   */
+  APPEARANCE_BROADCAST: 'appearance:broadcast'
 } as const
 
 /**
@@ -1025,6 +1054,15 @@ export interface ChatApi {
    * deep-merges the patch, so sending only the field that changed is safe.
    */
   setAppearance(payload: AppearanceSetPayload): Promise<AppearanceSetResult>
+
+  /**
+   * Subscribe to "the shared appearance changed in the daemon" pushes. Fired
+   * by main after ANY window writes appearance, so this renderer re-pulls and
+   * re-applies even though it wasn't the one that changed it. The handler
+   * should just re-run the daemon hydrate (the change source is guarded
+   * against echoing its own write back). Returns an unsubscribe.
+   */
+  onAppearanceChanged(handler: () => void): () => void
 
   /**
    * Subscribe to menu actions forwarded from the shell's tab-strip

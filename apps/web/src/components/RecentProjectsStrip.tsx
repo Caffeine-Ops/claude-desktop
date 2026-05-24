@@ -139,6 +139,9 @@ export function RecentProjectsStrip({
           const status: ProjectDisplayStatus = project.status?.value ?? 'not_started';
           const isActive =
             status === 'running' || status === 'queued' || status === 'awaiting_input';
+          const hasMedia =
+            (cover.kind === 'image' || cover.kind === 'logo' || cover.kind === 'video') &&
+            Boolean(cover.src);
           return (
             <button
               key={project.id}
@@ -150,9 +153,8 @@ export function RecentProjectsStrip({
               data-project-id={project.id}
             >
               <div
-                className={`recent-projects__card-thumb recent-projects__card-thumb-${cover.kind}`}
+                className={`recent-projects__card-thumb recent-projects__card-thumb-${cover.kind}${hasMedia ? ' has-media' : ''}`}
                 style={cover.style}
-                aria-hidden
               >
                 {(cover.kind === 'image' || cover.kind === 'logo') && cover.src ? (
                   <img
@@ -160,6 +162,7 @@ export function RecentProjectsStrip({
                     src={cover.src}
                     alt=""
                     loading="lazy"
+                    aria-hidden
                   />
                 ) : cover.kind === 'video' && cover.src ? (
                   <video
@@ -168,6 +171,7 @@ export function RecentProjectsStrip({
                     muted
                     preload="metadata"
                     playsInline
+                    aria-hidden
                   />
                 ) : cover.kind === 'html' && cover.src ? (
                   <iframe
@@ -177,10 +181,31 @@ export function RecentProjectsStrip({
                     loading="lazy"
                     sandbox="allow-scripts"
                     tabIndex={-1}
+                    aria-hidden
                   />
                 ) : (
-                  <span className="recent-projects__card-glyph">{cover.initial}</span>
+                  <span className="recent-projects__card-glyph" aria-hidden>{cover.initial}</span>
                 )}
+
+                {/* Active status floats over the cover as a frosted pill — it's
+                    the one piece of state worth surfacing before the user even
+                    reads the title. Resting (succeeded/failed/idle) states stay
+                    in the meta row below to keep the cover clean. */}
+                {isActive ? (
+                  <span
+                    className={`recent-projects__card-badge recent-projects__card-badge-${status}`}
+                  >
+                    <span className="recent-projects__card-status-dot" aria-hidden />
+                    {statusLabel(status, t)}
+                  </span>
+                ) : null}
+
+                {/* Hover affordance: a frosted "open" disc in the corner so the
+                    whole card reads as a launch target. aria-hidden because the
+                    card button already carries the accessible action. */}
+                <span className="recent-projects__card-open" aria-hidden>
+                  <Icon name="arrow-up" size={15} />
+                </span>
               </div>
               <div className="recent-projects__card-meta">
                 <div className="design-card-tag-row">
@@ -192,15 +217,16 @@ export function RecentProjectsStrip({
                 </div>
                 <div className="recent-projects__card-name">{project.name}</div>
                 <div className="recent-projects__card-time">
-                  <span
-                    className={`recent-projects__card-status recent-projects__card-status-${status}`}
-                  >
-                    {isActive ? (
-                      <span className="recent-projects__card-status-dot" aria-hidden />
-                    ) : null}
-                    {statusLabel(status, t)}
-                  </span>
-                  <span className="recent-projects__card-sep" aria-hidden>·</span>
+                  {!isActive ? (
+                    <>
+                      <span
+                        className={`recent-projects__card-status recent-projects__card-status-${status}`}
+                      >
+                        {statusLabel(status, t)}
+                      </span>
+                      <span className="recent-projects__card-sep" aria-hidden>·</span>
+                    </>
+                  ) : null}
                   {relativeTime(project.updatedAt, t)}
                 </div>
               </div>
@@ -245,10 +271,12 @@ function projectCover(
     h = (h * 31 + project.id.charCodeAt(i)) >>> 0;
   }
   const hue = h % 360;
-  const hue2 = (hue + 38) % 360;
-  const style: CSSProperties = {
-    background: `radial-gradient(circle at 30% 28%, hsl(${hue} 70% 78% / 0.55), transparent 42%), linear-gradient(135deg, hsl(${hue} 65% 88%), hsl(${hue2} 70% 90%))`,
-  };
+  // The cover canvas stays a flat parchment surface (set in CSS) — Apple's
+  // store cards never carry decorative gradients. The per-project hash only
+  // tints the fallback initial, so each project still reads as distinct
+  // without painting the whole thumb. `--cover-hue` is consumed by the
+  // glyph rule in recent-projects.css.
+  const style = { '--cover-hue': String(hue) } as CSSProperties;
   const trimmed = project.name.trim();
   const initial = (trimmed ? Array.from(trimmed)[0]! : '?').toUpperCase();
   if (override) {

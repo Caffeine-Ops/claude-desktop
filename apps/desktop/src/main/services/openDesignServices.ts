@@ -58,8 +58,21 @@ function pipeChildToCollector(child: ChildProcess, source: LogSource): void {
 
 /** daemon 绑定端口。与 apps/daemon/src/cli.ts 默认值一致。 */
 export const DAEMON_PORT = 7456
-/** dev 下 web dev server（next dev）的端口。next 默认 3000。 */
-export const WEB_DEV_PORT = 3000
+/**
+ * dev 下 web dev server（next dev）的端口。**单一源头**——下面 WEB_DEV_ORIGIN、
+ * daemon 跨源白名单（OD_ALLOWED_ORIGINS/OD_WEB_PORT）、waitForWebReady 探活、
+ * resolveWebTabUrl / resolveWebSettingsUrl 全部派生自它，改这一处即四处一致。
+ *
+ * 默认 3200（**刻意避开 next 默认 3000**），因为同机常并行跑 open-design 这类
+ * 同源 fork，它们也钉 3000；两个 next dev 抢同一端口时，先起的占住、后起的
+ * waitForWebReady 会探到那个「冒牌 3000」（返回 200 就算 ready）→ Electron
+ * loadURL 加载到别人的页面 = 卡片样式串味。换端口从根上杜绝。
+ * 见 sessions/2026-05-24-claude-desktop（open-design 抢 3000 致 Electron 串味）。
+ *
+ * `OD_WEB_DEV_PORT` 可覆盖（spawnWebDev 会把它作为 PORT 注入 next dev 子进程，
+ * 所以 next 真正监听的端口与这里恒等）。
+ */
+export const WEB_DEV_PORT = Number(process.env.OD_WEB_DEV_PORT) || 3200
 
 const DAEMON_ORIGIN = `http://127.0.0.1:${DAEMON_PORT}`
 const WEB_DEV_ORIGIN = `http://localhost:${WEB_DEV_PORT}`
@@ -331,7 +344,11 @@ function spawnWebDev(repoRoot: string): void {
     env: {
       ...process.env,
       // 让 next.config 的代理把 /api 指向我们的 daemon 端口。
-      OD_PORT: String(DAEMON_PORT)
+      OD_PORT: String(DAEMON_PORT),
+      // next dev 认 PORT 环境变量。注入 WEB_DEV_PORT 让 next 真正监听的端口与
+      // 上面那个被 Electron 探活/加载的常量恒等——否则 next 仍跑默认 3000，
+      // Electron 探新端口就连不上（这正是换端口的全部意义所在）。
+      PORT: String(WEB_DEV_PORT)
     },
     // 同 daemon：pipe stdout/stderr 进 collector（next dev 的 Local URL /
     // 编译日志），pipeChildToCollector 仍回显到终端。

@@ -73,14 +73,21 @@ function App(): React.JSX.Element {
   // chat 内容直接顶到顶部 shell tab 条下方。
   useApplyAppearance()
 
-  // One-shot: adopt the daemon's shared appearance as the source of truth.
-  // The applier above has already rendered the localStorage cache (no flash);
-  // this overwrites it with the daemon copy once the daemon is reachable, so
-  // a theme set in the embedded web tab shows up here too. No-op when the
-  // daemon is offline — the cache stays. Runs after mount so window.chatApi
-  // is bound.
+  // Adopt the daemon's shared appearance as the source of truth — once on
+  // mount, then again every time main says it changed (APPEARANCE_CHANGED,
+  // fired after ANY window edits appearance). The applier above has already
+  // rendered the localStorage cache (no flash); the mount hydrate overwrites
+  // it with the daemon copy when reachable, and the subscription keeps this
+  // renderer in lockstep with a theme switch made in the settings overlay or
+  // another tab — without it the change only landed here on a reload. No-op
+  // when the daemon is offline (cache stays). main skips the window that made
+  // the change, and hydrate's own isHydrating guard prevents an echo back.
   useEffect(() => {
     void hydrateAppearanceFromDaemon()
+    if (!window.chatApi?.onAppearanceChanged) return
+    return window.chatApi.onAppearanceChanged(() => {
+      void hydrateAppearanceFromDaemon()
+    })
   }, [])
 
   // Subscribe to settings-menu actions forwarded from the shell's tab-strip

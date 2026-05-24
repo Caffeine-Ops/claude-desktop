@@ -17,6 +17,13 @@ import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, Menu, protocol, session, webContents, type MenuItemConstructorOptions } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 
+// TEMP-DEBUG: dev 下开远程调试端口，便于用 Chrome DevTools 连进 web tab 的
+// webContents 对比渲染差异。定根后移除。必须在 app ready 前 append。
+if (is.dev) {
+  app.commandLine.appendSwitch('remote-debugging-port', '9222')
+  app.commandLine.appendSwitch('remote-allow-origins', 'http://localhost:9222')
+}
+
 import { registerIpcHandlers, showMaxTabsDialog } from './ipc/register'
 import { createTray, destroyTray } from './tray'
 import {

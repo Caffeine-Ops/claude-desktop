@@ -209,6 +209,21 @@ declare global {
       clearLogs: () => Promise<void>;
       /** Subscribe to live log lines; returns an unsubscribe fn. */
       onLog: (handler: (entry: DesktopRuntimeLogEntry) => void) => () => void;
+      /**
+       * Subscribe to "shared appearance changed in the daemon" pushes from
+       * main (fired after any window edits appearance). The overlay re-pulls
+       * /api/app-config and re-applies so a theme change made in a chat tab
+       * shows here at runtime. Returns an unsubscribe fn.
+       */
+      onAppearanceChanged: (handler: () => void) => () => void;
+      /**
+       * Tell the desktop shell the shared config/appearance was just written
+       * to the daemon (via /api/app-config, which bypasses the main process),
+       * so main broadcasts APPEARANCE_CHANGED to the other windows. Called
+       * from syncConfigToDaemon after a successful PUT. No-op outside the
+       * desktop settings overlay.
+       */
+      notifyAppearanceChanged: () => void;
     };
   }
 }
@@ -370,6 +385,46 @@ export function App() {
       accentColor: config.accentColor,
     });
   }, [config.theme, config.accentColor]);
+
+  // Re-pull the shared appearance when main says it changed elsewhere. This
+  // web app runs in two desktop surfaces, each its own webContents with its
+  // own React state, reached by a different bridge:
+  //   - settings overlay: `electronSettings.onAppearanceChanged` (its preload
+  //     forwards the APPEARANCE_CHANGED IPC).
+  //   - web tab: no preload, so main injects a `od:appearance-changed` window
+  //     event via executeJavaScript.
+  // Both just re-fetch the daemon config and merge its theme/accent in; the
+  // useLayoutEffect above then re-applies to <html>. We only setConfig when
+  // theme or accent actually moved so this can't echo a redundant write back
+  // to the daemon (a plain browser fires neither path, so this is a no-op
+  // there). Reuses configRef to read the latest config without re-subscribing.
+  useEffect(() => {
+    let cancelled = false;
+    const repull = (): void => {
+      void fetchDaemonConfig().then((daemonConfig) => {
+        if (cancelled || !daemonConfig) return;
+        setConfig((prev) => {
+          const next = mergeDaemonConfig(prev, daemonConfig);
+          if (next.theme === prev.theme && next.accentColor === prev.accentColor) {
+            return prev; // nothing appearance-relevant changed — avoid re-render + echo
+          }
+          saveConfig(next);
+          return next;
+        });
+      });
+    };
+
+    const onWindowEvent = (): void => repull();
+    window.addEventListener('od:appearance-changed', onWindowEvent);
+    const unsubscribeBridge =
+      window.electronSettings?.onAppearanceChanged?.(repull);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('od:appearance-changed', onWindowEvent);
+      unsubscribeBridge?.();
+    };
+  }, []);
 
   // Tell the daemon what the user is currently looking at, so the MCP
   // server can surface it as `get_active_context` to a coding agent in

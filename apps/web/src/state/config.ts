@@ -850,6 +850,15 @@ export async function syncConfigToDaemon(
       body: JSON.stringify(prefs),
     });
     if (!response.ok) throw new Error(`Failed to sync app config (${response.status})`);
+    // Tell the desktop shell the shared config (incl. appearance) just changed
+    // so it broadcasts to the other windows (chat renderer / web tab) and they
+    // re-pull at runtime. Without this the theme only updated in whichever
+    // window made the change until a reload — this write goes straight to the
+    // daemon over /api/app-config and never touches the desktop main process,
+    // so main had no other way to learn it happened. The bridge exists only
+    // inside the settings overlay (settings preload); a plain browser or the
+    // web tab has no electronSettings, so this is a no-op there.
+    window.electronSettings?.notifyAppearanceChanged?.();
   } catch (error) {
     if (options?.throwOnError) throw error;
     // Daemon offline; localStorage keeps the user's copy for the next save.

@@ -60,7 +60,7 @@
   appearance: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   padding: 0;
   border: 1px solid var(--border);
   /* Apple store-utility-card radius: lg (18px). */
@@ -69,16 +69,32 @@
   cursor: pointer;
   text-align: left;
   overflow: hidden;
-  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+  /* Resting state carries the faintest hairline shadow so the card reads as
+     a discrete surface against the parchment page — the lift on hover then
+     has somewhere to go. */
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 .recent-projects__card:hover {
-  /* Hover lifts through the hairline border, not a drop-shadow — Apple
-     cards stay flat; only product imagery carries the system shadow. */
+  /* Hover lifts the card and warms the hairline; the soft system shadow is
+     reserved for this raised state only (Apple keeps resting cards flat). */
   border-color: var(--border-strong);
-  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-3px);
 }
 .recent-projects__card:active {
-  transform: scale(0.99);
+  transform: translateY(-1px) scale(0.992);
+  box-shadow: var(--shadow-sm);
+}
+.recent-projects__card:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px var(--accent-tint),
+    var(--shadow-md);
 }
 .recent-projects__card.is-design-system-project {
   border-color: color-mix(in srgb, var(--red) 62%, var(--border));
@@ -100,6 +116,9 @@
   justify-content: center;
   position: relative;
   overflow: hidden;
+  /* Hairline divider between cover and meta, so the cover reads as a framed
+     window rather than bleeding into the card body. */
+  border-bottom: 1px solid var(--border);
 }
 .recent-projects__card-thumb-html,
 .recent-projects__card-thumb-image,
@@ -117,6 +136,31 @@
 }
 .recent-projects__thumb-media {
   object-fit: cover;
+  /* Slow Ken-Burns-style push on hover — only real cover imagery moves; the
+     fallback glyph stays put (it's chrome, not content). */
+  transition: transform 420ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.recent-projects__card:hover .recent-projects__thumb-media {
+  transform: scale(1.04);
+}
+/* Cover with real media gets a bottom scrim so the floating status pill and
+   open-disc stay legible over arbitrary imagery. Fallback/glyph covers skip
+   it — their flat surface needs no protection. */
+.recent-projects__card-thumb.has-media::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.22) 0%,
+    rgba(0, 0, 0, 0) 38%
+  );
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.recent-projects__card:hover .recent-projects__card-thumb.has-media::after {
+  opacity: 1;
 }
 .recent-projects__card-thumb-logo .recent-projects__thumb-media {
   inset: 22%;
@@ -130,18 +174,108 @@
 }
 .recent-projects__card-glyph {
   /* SF Pro Display, not serif — Apple's display face for the project
-     initial. Action Blue is the single accent. */
+     initial. The flat parchment thumb carries no gradient; instead the
+     initial is tinted by --cover-hue (a per-project hash set inline) so
+     each fallback cover still reads as distinct. Falls back to the accent
+     hue when no cover-hue is provided. */
   font-family: var(--sans);
-  font-size: 34px;
+  font-size: 38px;
   font-weight: 600;
-  color: var(--accent);
+  color: hsl(var(--cover-hue, 210) 58% 52%);
   letter-spacing: -0.022em;
+  transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+/* Dark: lift saturation + lightness so the tinted initial reads on the dark
+   parchment thumb. Mirrors the project's two-track dark scheme — explicit
+   [data-theme="dark"] and system mode (no data-theme attr). */
+[data-theme='dark'] .recent-projects__card-glyph {
+  color: hsl(var(--cover-hue, 210) 62% 68%);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .recent-projects__card-glyph {
+    color: hsl(var(--cover-hue, 210) 62% 68%);
+  }
+}
+.recent-projects__card:hover .recent-projects__card-glyph {
+  transform: scale(1.06);
+}
+
+/* Active status pill floating over the cover (top-left). Frosted so it sits
+   on any imagery; the dot + Action-Blue/amber tint read as "live" at a
+   glance without crowding the meta row. */
+.recent-projects__card-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: -0.008em;
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-xs);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  backdrop-filter: saturate(180%) blur(12px);
+}
+.recent-projects__card-badge .recent-projects__card-status-dot {
+  width: 6px;
+  height: 6px;
+}
+.recent-projects__card-badge-running {
+  color: var(--accent);
+}
+.recent-projects__card-badge-awaiting_input {
+  color: var(--amber);
+}
+.recent-projects__card-badge-queued {
+  color: var(--text-muted);
+}
+
+/* Hover "open" disc, bottom-right of the cover. Action-Blue frosted target
+   that translates in from below — turns the whole card into an obvious
+   launch surface without adding a competing click target (it's aria-hidden;
+   the card button owns the action). */
+.recent-projects__card-open {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--accent);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  transform: translateY(6px) scale(0.85);
+  transition:
+    opacity 160ms ease,
+    transform 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+/* arrow-up rotated 45° → an up-right "open / launch" glyph, the macOS
+   "open in new" grammar. */
+.recent-projects__card-open svg {
+  transform: rotate(45deg);
+}
+.recent-projects__card:hover .recent-projects__card-open,
+.recent-projects__card:focus-visible .recent-projects__card-open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
 }
 .recent-projects__card-meta {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px 12px;
+  gap: 5px;
+  padding: 11px 12px 13px;
   min-width: 0;
 }
 .recent-projects__card-name {
@@ -149,7 +283,7 @@
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.016em;
-  color: var(--text);
+  color: var(--text-strong);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -196,10 +330,33 @@
   background: currentColor;
   flex-shrink: 0;
 }
-.recent-projects__card-status-running .recent-projects__card-status-dot {
+.recent-projects__card-status-running .recent-projects__card-status-dot,
+.recent-projects__card-badge-running .recent-projects__card-status-dot {
   animation: recent-projects-pulse 1.4s ease-in-out infinite;
 }
 @keyframes recent-projects-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+/* Honour reduced-motion: drop the cover push, the disc slide, and the pulse.
+   Opacity/position end-states still apply so hover affordances remain. */
+@media (prefers-reduced-motion: reduce) {
+  .recent-projects__card,
+  .recent-projects__thumb-media,
+  .recent-projects__card-glyph,
+  .recent-projects__card-open {
+    transition-duration: 1ms;
+  }
+  .recent-projects__card:hover {
+    transform: none;
+  }
+  .recent-projects__card:hover .recent-projects__thumb-media,
+  .recent-projects__card:hover .recent-projects__card-glyph {
+    transform: none;
+  }
+  .recent-projects__card-status-running .recent-projects__card-status-dot,
+  .recent-projects__card-badge-running .recent-projects__card-status-dot {
+    animation: none;
+  }
 }
