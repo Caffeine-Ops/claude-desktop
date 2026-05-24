@@ -56,7 +56,9 @@ function pipeChildToCollector(child: ChildProcess, source: LogSource): void {
   })
 }
 
-/** daemon 绑定端口。与 apps/daemon/src/cli.ts 默认值一致。 */
+/** daemon 绑定端口。与 apps/daemon/src/cli.ts 默认值一致。
+ *  注意：core/externalMcp.ts 故意不 import 这个常量（避免反向拉进 electron-app
+ *  依赖链），而是写死同一个 7456——改这里要同步改那边。 */
 export const DAEMON_PORT = 7456
 /**
  * dev 下 web dev server（next dev）的端口。**单一源头**——下面 WEB_DEV_ORIGIN、

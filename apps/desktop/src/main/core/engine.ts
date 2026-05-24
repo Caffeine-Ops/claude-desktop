@@ -36,6 +36,10 @@ import { bumpUnread } from '../tray'
 import { AsyncMessageQueue } from './asyncMessageQueue'
 import { getAppSettings, type CliBackend } from './appSettings'
 import { detectSystemClaude, resolveBundledCliPath } from './cliDetect'
+import {
+  loadExternalMcpServers,
+  type SdkExternalMcpServers
+} from './externalMcp'
 import { invalidateFileSuggestions } from './fileSuggestions'
 import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
@@ -343,12 +347,69 @@ export class ChatEngine extends EventEmitter {
    */
   private uiPermissionMode: UiPermissionMode = 'bypassPermissions'
 
+  /**
+   * External MCP servers the user configured in Open Design's
+   * Settings → External MCP (stored daemon-side, fetched over HTTP via
+   * `fetchExternalMcpServers`). Mirrored into the SDK `mcpServers` query
+   * option on every `openSession` so the desktop tab's fusion-code can
+   * call the same tools the Open Design web tab gets.
+   *
+   * Cached (not fetched per-spawn) because `openSession` is synchronous —
+   * it can't await an HTTP round-trip without serialising cold start.
+   * Refreshed in the background: once at construction, and again at the
+   * top of every `send()` so toggling a server in Settings takes effect
+   * on the next turn rather than only on app restart. Empty `{}` until
+   * the first successful fetch — which matches the product contract that
+   * the chat tab opens immediately without waiting on the daemon.
+   */
+  private externalMcpServers: SdkExternalMcpServers = {}
+
+  /** In-flight refresh dedupe so a burst of sends issues one fetch. */
+  private externalMcpRefresh: Promise<void> | null = null
+
   constructor(webContents: WebContents, opts: ChatEngineOptions = {}) {
     super()
     this.webContents = webContents
     this.opts = opts
     this.permissionBroker = new PermissionBroker()
     this.wireWebContentsBridges()
+    // Warm the external-MCP cache in the background. Fire-and-forget: the
+    // daemon may not be ready yet (chat tab opens before daemon ready), in
+    // which case the fetch fails silently and the cache stays empty until
+    // the next refresh. Never throws (fetchExternalMcpServers swallows).
+    void this.refreshExternalMcpServers()
+  }
+
+  /**
+   * Re-pull external MCP config from the daemon into `externalMcpServers`.
+   * Deduped via `externalMcpRefresh` so concurrent callers share one fetch.
+   * Always resolves (errors are absorbed downstream) so callers can `void`
+   * it without an unhandled-rejection risk.
+   *
+   * `waitForDaemon` makes the load poll until the daemon is reachable (capped
+   * at ~8s) instead of giving up on the first connection refusal. Use it on
+   * the spawn path (warmup / cold first send) where the daemon may still be
+   * booting — without it, the very first spawn races ahead with an empty map
+   * and the configured servers never reach fusion-code (which won't reload
+   * MCP config mid-process). Steady-state background refreshes pass false.
+   */
+  private refreshExternalMcpServers(
+    opts: { waitForDaemon?: boolean } = {}
+  ): Promise<void> {
+    if (this.externalMcpRefresh) return this.externalMcpRefresh
+    const task = loadExternalMcpServers(opts)
+      .then((servers) => {
+        this.externalMcpServers = servers
+      })
+      .catch(() => {
+        // loadExternalMcpServers already degrades to {} on failure; this
+        // catch is belt-and-suspenders so a future throw can't leak.
+      })
+      .finally(() => {
+        if (this.externalMcpRefresh === task) this.externalMcpRefresh = null
+      })
+    this.externalMcpRefresh = task
+    return task
   }
 
   /**
@@ -636,6 +697,25 @@ export class ChatEngine extends EventEmitter {
       throw new Error('No session — create or open one from the sidebar.')
     }
 
+    // Refresh the external-MCP cache BEFORE we might spawn fusion-code, so
+    // the SDK `mcpServers` option in openSession reflects the user's current
+    // Settings → External MCP list. The SDK only emits `--mcp-config` when
+    // the map is non-empty, so a stale-empty cache here means the server
+    // (e.g. mysql-hospital) silently never reaches the CLI.
+    //
+    // We await — but with a hard cap baked into fetchExternalMcpServers —
+    // ONLY when the cache is still empty (cold first turn, or daemon wasn't
+    // ready at construction). Once we have a non-empty cache we just kick a
+    // background refresh and proceed, so steady-state sends pay nothing.
+    // The await is bounded (fetch has its own AbortController timeout) so a
+    // down daemon can't wedge a turn — worst case we proceed with `{}` and
+    // the user retries after the daemon is up.
+    if (Object.keys(this.externalMcpServers).length === 0) {
+      await this.refreshExternalMcpServers({ waitForDaemon: true })
+    } else {
+      void this.refreshExternalMcpServers()
+    }
+
     // Multi-runtime: the target session may be the foreground one OR a
     // background task the user started earlier. Either way, as long as
     // the runtime slot exists we're allowed to push a turn into it.
@@ -881,7 +961,11 @@ export class ChatEngine extends EventEmitter {
         ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL ?? '(unset)',
         ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL ?? '(unset)',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? '(unset)'
-      }
+      },
+      // Diagnostic: which external MCP servers (from Settings → External MCP)
+      // are being wired into THIS spawn. Empty array = the cache was still
+      // cold when we built sdkOptions, so `--mcp-config` won't be emitted.
+      externalMcpServers: Object.keys(this.externalMcpServers)
     })
 
     const queue = new AsyncMessageQueue<unknown>()
@@ -1033,6 +1117,19 @@ export class ChatEngine extends EventEmitter {
       // race handler between `switchToSession` and the first `system
       // init` message, which defeats the lazy-switch optimization.
       forkSession: false,
+      // External MCP servers configured in Open Design's Settings → External
+      // MCP. Read from the per-engine cache (warmed in the background from the
+      // daemon — see refreshExternalMcpServers). Empty `{}` is a no-op: the
+      // SDK simply wires no extra servers. This is what lets the desktop tab's
+      // fusion-code reach the same tools (e.g. the local MySQL MCP) the Open
+      // Design web tab gets, from one shared config. We pass via the SDK
+      // option rather than writing a `.mcp.json` into the workspace cwd
+      // because the desktop tab's cwd is the user's own folder (default: the
+      // Desktop), not a daemon-managed project dir — writing there could
+      // clobber a `.mcp.json` the user keeps in their own source tree. The
+      // daemon side writes `.mcp.json` only because it targets PROJECTS_DIR
+      // (see daemon server.ts isManagedProjectCwd gating).
+      mcpServers: this.externalMcpServers,
       ...(resume ? { resume: sessionId } : { sessionId })
     }
 
@@ -1210,7 +1307,20 @@ export class ChatEngine extends EventEmitter {
     // up, `send()` will await the same readyPromise and NOT spawn a
     // second cli. Errors here are purely advisory; the real error path
     // lives in `send()` where the user is actively waiting.
-    void this.ensureSessionReady(newId).catch((err) => {
+    //
+    // Crucial ordering: warm the external-MCP cache BEFORE the spawn when
+    // it's still empty. The warmup is what actually spawns fusion-code on a
+    // fresh tab, so if we let it race ahead with an empty cache the CLI
+    // comes up WITHOUT `--mcp-config` and the later `send()` finds the
+    // process already ready (no re-spawn) — the user-configured servers
+    // would never load. Bounded by fetch's own timeout so a down daemon
+    // can't stall warmup. A non-empty cache skips the await entirely.
+    void (async () => {
+      if (Object.keys(this.externalMcpServers).length === 0) {
+        await this.refreshExternalMcpServers({ waitForDaemon: true })
+      }
+      await this.ensureSessionReady(newId)
+    })().catch((err) => {
       console.warn('[engine] background warmup failed:', err)
     })
 
