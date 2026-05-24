@@ -3109,6 +3109,52 @@ a.avatar-item:visited {
   flex-shrink: 0;
 }
 
+/* Settings bottom status strip. A quiet hairline-topped row that
+   closes the dialog frame the same way the reference does: an
+   `Esc · close` keycap hint pinned left, a muted version marker
+   pinned right. It is informational only — it never grabs focus
+   and carries no interactive controls (the real close affordances
+   are the corner X, the backdrop, and the global Escape handler).
+   `flex-shrink: 0` keeps it from collapsing as the body scrolls. */
+.settings-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px var(--modal-padding) 10px;
+  border-top: 1px solid var(--border-soft, var(--border));
+  flex-shrink: 0;
+  user-select: none;
+}
+.settings-foot-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.settings-foot-hint kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", monospace;
+  font-size: 10.5px;
+  line-height: 1;
+}
+.settings-foot-version {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", monospace;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  letter-spacing: 0.01em;
+}
+
 /* Top-right chrome strip for the Settings dialog. Floats above the
    sidebar/content rhythm so the close affordance and the autosave
    indicator never compete with the title or sidebar nav. The strip
@@ -3129,11 +3175,12 @@ a.avatar-item:visited {
   pointer-events: auto;
 }
 
-/* Close button. Minimal circular icon button with a hairline ring
-   that warms on hover and snaps to the accent on focus-visible.
-   Sized to read as a passive corner control rather than a primary
-   CTA — the autosave indicator next to it carries any system
-   feedback the user might need. */
+/* Close button. Bare hairline-weight X with no chrome of its own —
+   matching the reference dialog's quiet top-right glyph. It reads as
+   a passive corner control: a muted stroke that warms to full text
+   color on hover and picks up a faint hover plate so the hit target
+   stays legible without the heavier ringed-pill treatment we used
+   before. The autosave pill beside it carries any system feedback. */
 .settings-close {
   display: inline-flex;
   align-items: center;
@@ -3141,23 +3188,20 @@ a.avatar-item:visited {
   width: 28px;
   height: 28px;
   padding: 0;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-panel) 90%, transparent);
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  transition: color 140ms ease, background-color 140ms ease, transform 140ms ease;
 }
 .settings-close:hover {
   color: var(--text);
-  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
-  background: var(--bg-panel);
-  transform: scale(1.04);
+  background: var(--bg-subtle);
+  transform: none;
 }
 .settings-close:active {
-  transform: scale(0.96);
+  transform: scale(0.94);
 }
 .settings-close:focus-visible {
   outline: 2px solid var(--accent);
@@ -3165,7 +3209,7 @@ a.avatar-item:visited {
   color: var(--text);
 }
 @media (prefers-reduced-motion: reduce) {
-  .settings-close { transition: color 80ms linear, border-color 80ms linear; transform: none !important; }
+  .settings-close { transition: color 80ms linear, background-color 80ms linear; transform: none !important; }
 }
 
 /* Autosave status pill. Lives in the chrome strip now (next to the
@@ -3248,9 +3292,17 @@ a.avatar-item:visited {
 
 /* Make sure header copy doesn't crash into the close button on
    narrow viewports. The kicker/title/subtitle should keep their
-   normal width but reserve right-side gutter for the chrome. */
+   normal width but reserve right-side gutter for the chrome.
+
+   The hairline bottom rule + tightened vertical padding give the
+   header the calm, ledger-like banding of the reference dialog: a
+   title block clearly separated from the body by a single divider,
+   not a soft gradient of whitespace. */
 .modal-settings .modal-head {
   padding-right: calc(var(--modal-padding) + 56px);
+  padding-top: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-soft, var(--border));
 }
 
 /* Compact settings header: place subtitle on the same line as the h2

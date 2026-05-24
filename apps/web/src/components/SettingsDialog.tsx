@@ -3472,6 +3472,23 @@ export function SettingsDialog({
           ) : null}
           </div>
         </div>
+
+        {/* Bottom status strip — mirrors the reference dialog: a hairline
+            rule, an `Esc · close` keycap hint on the left, and a muted
+            version marker on the right. Purely informational; the actual
+            close affordances stay the corner X, backdrop click, and the
+            global Escape handler above. */}
+        <footer className="settings-foot" aria-hidden="false">
+          <span className="settings-foot-hint">
+            <kbd>Esc</kbd>
+            <span>{t('common.close')}</span>
+          </span>
+          {appVersionInfo?.version ? (
+            <span className="settings-foot-version">
+              v{appVersionInfo.version}
+            </span>
+          ) : null}
+        </footer>
       </div>
     </div>
   );
