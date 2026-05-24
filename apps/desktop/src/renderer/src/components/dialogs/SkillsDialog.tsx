@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { DialogShell } from '@open-design/ui'
 
 import type { SessionMeta } from '../../../../shared/types'
 import { useDialogStore } from '../../stores/dialogs'
@@ -49,19 +50,6 @@ export function SkillsDialog(): React.JSX.Element | null {
       .finally(() => setLoading(false))
   }, [open])
 
-  // Esc closes.
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        close()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, close])
-
   if (!open) return null
 
   const allSkills = meta?.skills ?? []
@@ -71,55 +59,39 @@ export function SkillsDialog(): React.JSX.Element | null {
   const isEmptyOnLoad = !loading && allSkills.length === 0
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Skills picker"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
-      onClick={(e) => {
-        // Click-outside-to-close. Stop propagation in the inner card.
-        if (e.target === e.currentTarget) close()
-      }}
+    <DialogShell
+      label="Skills picker"
+      onClose={close}
+      sizeClassName="h-[70vh] max-h-[640px] w-[560px] max-w-[calc(100vw-32px)]"
     >
-      <div className="flex h-[70vh] max-h-[640px] w-[560px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-5 py-3">
-          <div>
-            <div className="text-[14px] font-semibold text-foreground">Skills</div>
-            <div className="text-[11px] text-muted-foreground/80">
-              {loading
-                ? 'Loading…'
-                : isEmptyOnLoad
-                  ? 'No skills loaded yet'
-                  : `${filtered.length} of ${allSkills.length} skills`}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={close}
-            aria-label="Close"
-            className="flex size-7 items-center justify-center rounded-md text-muted-foreground/80 transition hover:bg-muted/80 hover:text-foreground"
-          >
-            ✕
-          </button>
+      <DialogShell.Header
+        title="Skills"
+        subtitle={
+          loading
+            ? 'Loading…'
+            : isEmptyOnLoad
+              ? 'No skills loaded yet'
+              : `${filtered.length} of ${allSkills.length} skills`
+        }
+        onClose={close}
+      />
+
+      {/* Filter input — visible only when there's actually content. */}
+      {!isEmptyOnLoad && (
+        <div className="border-b border-border px-5 py-2">
+          <input
+            autoFocus
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Type to filter…"
+            className="w-full rounded-md border border-border bg-background px-3 py-1.5 font-mono text-[12.5px] text-foreground placeholder:text-muted-foreground/60 focus:border-input focus:outline-none"
+          />
         </div>
+      )}
 
-        {/* Filter input — visible only when there's actually content. */}
-        {!isEmptyOnLoad && (
-          <div className="border-b border-border px-5 py-2">
-            <input
-              autoFocus
-              type="text"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="Type to filter…"
-              className="w-full rounded-md border border-border bg-background px-3 py-1.5 font-mono text-[12.5px] text-foreground placeholder:text-muted-foreground/60 focus:border-input focus:outline-none"
-            />
-          </div>
-        )}
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-2 py-2">
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto px-2 py-2">
           {loading && (
             <div className="px-3 py-4 text-[12.5px] text-muted-foreground/80">
               Loading skills…
@@ -167,26 +139,9 @@ export function SkillsDialog(): React.JSX.Element | null {
               ))}
             </ul>
           )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t border-border bg-background/60 px-5 py-2 text-[11px] text-muted-foreground/80">
-          <span>
-            <Kbd>Esc</Kbd> close
-          </span>
-          {meta?.model && (
-            <span className="truncate font-mono text-muted-foreground/60">{meta.model}</span>
-          )}
-        </div>
       </div>
-    </div>
-  )
-}
 
-function Kbd({ children }: { children: React.ReactNode }): React.JSX.Element {
-  return (
-    <kbd className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-      {children}
-    </kbd>
+      <DialogShell.Footer hint="close" trailing={meta?.model} />
+    </DialogShell>
   )
 }

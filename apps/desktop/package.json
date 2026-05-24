@@ -80,6 +80,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.98",
     "@anthropic-ai/sdk": "^0.93.0",
+    "@open-design/ui": "workspace:*",
     "@assistant-ui/core": "^0.1.13",
     "@assistant-ui/react": "^0.12.24",
     "@assistant-ui/react-markdown": "^0.12.8",

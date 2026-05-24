@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { DialogShell } from '@open-design/ui'
 
 import { useT, useTFormat } from '../../i18n'
 import { useDialogStore } from '../../stores/dialogs'
@@ -61,19 +62,6 @@ export function LogsDialog(): React.JSX.Element | null {
   // and it's the one with cold-start latency answers.
   const [channel, setChannel] = useState<LogChannel>('engine')
 
-  // Esc closes.
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        close()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, close])
-
   // Engine entries arrive shape-compatible already; UI entries lack the
   // optional `sessionId` field. Project both into a single TimelineRow
   // shape so the rendering grid stays one code path.
@@ -107,21 +95,16 @@ export function LogsDialog(): React.JSX.Element | null {
   if (!open) return null
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={t('logsDialogAria')}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) close()
-      }}
+    <DialogShell
+      label={t('logsDialogAria')}
+      onClose={close}
+      sizeClassName="h-[80vh] max-h-[900px] w-[900px] max-w-[calc(100vw-32px)]"
     >
-      <div className="flex h-[80vh] max-h-[900px] w-[900px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.7)]">
-        {/* Header — title + tab switcher + clear/close.
-            The two-row layout keeps the title prominent on top while the
-            tabs sit immediately below so switching channels feels like
-            tabs in a browser dev panel rather than a dropdown buried in
-            the corner. */}
+        {/* Header — LogsDialog keeps its own bespoke header (title + tab
+            switcher + Clear) rather than DialogShell.Header, which only
+            covers the simple title/subtitle/✕ shape. The two-row layout
+            keeps the title prominent with the channel tabs right below,
+            like tabs in a browser dev panel. */}
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-3">
           <div className="min-w-0 flex-1">
             <div className="text-[14px] font-semibold text-foreground">
@@ -201,21 +184,17 @@ export function LogsDialog(): React.JSX.Element | null {
           )}
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t border-border bg-background/60 px-5 py-2 text-[11px] text-muted-foreground/80">
-          <span>
-            <Kbd>Esc</Kbd> {t('logsFooterHint')}
-          </span>
-          <span className="font-mono text-muted-foreground/60">
-            {rows.length > 0
+        <DialogShell.Footer
+          hint={t('logsFooterHint')}
+          trailing={
+            rows.length > 0
               ? tf('logsFooterSpan', {
                   span: formatMs(rows[rows.length - 1]!.fromStart)
                 })
-              : ''}
-          </span>
-        </div>
-      </div>
-    </div>
+              : undefined
+          }
+        />
+    </DialogShell>
   )
 }
 
@@ -386,12 +365,4 @@ function formatDetails(
     parts.push(`${k}=${str}`)
   }
   return parts.join(' ')
-}
-
-function Kbd({ children }: { children: React.ReactNode }): React.JSX.Element {
-  return (
-    <kbd className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-      {children}
-    </kbd>
-  )
 }

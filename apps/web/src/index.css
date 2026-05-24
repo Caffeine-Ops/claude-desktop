@@ -1,10 +1,46 @@
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap');
+
+/* Tailwind v4 — utilities ONLY, Preflight deliberately omitted.
+ *
+ * This app's UI is ~27k lines of hand-written CSS that style bare
+ * `button` / `input` / `*` elements directly. Tailwind's Preflight reset
+ * would clobber those, so we import just the theme + utilities layers and
+ * skip `tailwindcss/preflight.css`. The result: shared components from
+ * @open-design/ui get their Tailwind utility classes generated here,
+ * while the existing stylesheet is untouched.
+ *
+ * The explicit `@layer` order keeps utilities winning over the legacy
+ * un-layered rules where intended, without Preflight in the cascade. */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
 /* Shared color tokens — the same file apps/desktop imports. Defines the
  * desktop shadcn-style HSL palette on :root / .dark. The legacy --bg / --text
  * / --accent names below are remapped to derive from these so this app's ~27k
  * lines of CSS keep working while adopting the unified desktop color values. */
 @import '../../../packages/design-tokens/tokens.css';
 @import './styles/design-system-flow.css';
+
+/* Theme for the shared @open-design/ui components. `inline` so each utility
+ * emits `var(--token)` and re-resolves against the .dark overrides + any
+ * runtime mutation (same rationale as apps/desktop). Only the tokens the
+ * shared components actually use are mapped — this app drives its own
+ * 27k-line palette through the legacy --bg/--text names, not these. */
+@theme inline {
+  --color-border: hsl(var(--border));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+}
+
+/* Shared UI primitives live under packages/ (symlinked into node_modules,
+ * which v4 won't scan) — point the scanner at the package src so the
+ * components' classes are generated and not purged. */
+@source '../../../packages/ui/src/**/*.{ts,tsx}';
 
 /* ============================================================
    Open Design — neutral product workspace

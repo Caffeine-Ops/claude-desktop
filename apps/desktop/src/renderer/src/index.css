@@ -50,6 +50,13 @@
  * name in the Thread view lives in our own files. */
 @source '../**/*.{ts,tsx,html}';
 
+/* Shared UI primitives (@open-design/ui) are consumed as source, but they
+ * live under packages/ — outside this renderer tree and (as a workspace
+ * dependency) symlinked into node_modules, which v4 does not scan. Point
+ * the scanner straight at the package src so DialogShell's `bg-card` /
+ * `border-border` etc. are generated here and not purged. */
+@source '../../../../../packages/ui/src/**/*.{ts,tsx}';
+
 /* ─────────────────────────────────────────────────────────────────────
  * Theme — migrated verbatim from the former tailwind.config.js. Apple
  * DESIGN.md type/radius/shadow scale + the shadcn-style HSL token system.

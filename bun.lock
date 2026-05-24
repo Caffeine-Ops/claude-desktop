@@ -54,6 +54,7 @@
         "@assistant-ui/react-markdown": "^0.12.8",
         "@electron-toolkit/preload": "^3.0.1",
         "@electron-toolkit/utils": "^3.0.0",
+        "@open-design/ui": "workspace:*",
         "electron-updater": "^6.3.9",
         "highlight.js": "^11.11.1",
         "motion": "^12.38.0",
@@ -98,6 +99,7 @@
         "@open-design/platform": "workspace:*",
         "@open-design/sidecar": "workspace:*",
         "@open-design/sidecar-proto": "workspace:*",
+        "@open-design/ui": "workspace:*",
         "lucide-react": "1.16.0",
         "next": "16.2.6",
         "openai": "6.38.0",
@@ -226,6 +228,21 @@
         "esbuild": "0.28.0",
         "typescript": "6.0.3",
         "vitest": "4.1.6",
+      },
+    },
+    "packages/ui": {
+      "name": "@open-design/ui",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/react": "19.2.14",
+        "@types/react-dom": "19.2.3",
+        "react": "19.2.5",
+        "react-dom": "19.2.5",
+        "typescript": "5.9.3",
+      },
+      "peerDependencies": {
+        "react": ">=19",
+        "react-dom": ">=19",
       },
     },
     "tools/dev": {
@@ -624,6 +641,8 @@
     "@open-design/tools-pr": ["@open-design/tools-pr@workspace:tools/pr"],
 
     "@open-design/tools-serve": ["@open-design/tools-serve@workspace:tools/serve"],
+
+    "@open-design/ui": ["@open-design/ui@workspace:packages/ui"],
 
     "@open-design/web": ["@open-design/web@workspace:apps/web"],
 
