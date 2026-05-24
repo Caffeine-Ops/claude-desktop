@@ -161,20 +161,42 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+  /* transform is in the list so the :active press animates rather than
+     snapping (Apple's system-wide scale(0.94) press gesture). */
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease,
+    transform 120ms ease;
 }
 .entry-nav-rail__btn:hover {
   background: var(--bg-subtle);
   color: var(--text);
+}
+.entry-nav-rail__btn:active {
+  transform: scale(0.94);
 }
 .entry-nav-rail__btn.is-active {
   background: var(--accent-tint);
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 18%, transparent);
 }
+/* The "new project" button is an action, not a destination, so its hover
+   borrows the accent affordance (tint fill + accent ring) to read as a
+   create button — distinct from the neutral hover the destination icons
+   get. It never carries `.is-active` (it opens a modal, not a view). */
+.entry-nav-rail__btn--action:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
 .entry-nav-rail__btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  /* Double ring (panel-colored inner gap + accent outer) keeps the focus
+     state legible even when it lands on the accent-tinted active button,
+     where a single 2px accent outline would blend into the fill. */
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .entry-nav-rail__btn { transition-duration: 1ms; }
+  .entry-nav-rail__btn:active { transform: none; }
 }
 
 /* Avatar / settings dropdown — language picker section.

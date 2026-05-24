@@ -661,8 +661,18 @@ code {
   color: var(--text-muted);
   overflow: hidden;
   contain: layout style;
-  transition: background 100ms ease, border-color 100ms ease, color 100ms ease;
+  /* transform joins the list so the :active press animates; new tabs
+     fade+rise in via the keyframe below. */
+  transition: background 100ms ease, border-color 100ms ease, color 100ms ease,
+    transform 120ms cubic-bezier(0.32, 0.72, 0, 1);
+  animation: workspace-tab-in 200ms cubic-bezier(0.32, 0.72, 0, 1);
   -webkit-app-region: no-drag;
+}
+@keyframes workspace-tab-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.97); }
+}
+.workspace-tab:active .workspace-tab__main {
+  transform: scale(0.97);
 }
 .workspace-tab + .workspace-tab::before {
   content: '';
@@ -685,6 +695,21 @@ code {
   border-color: color-mix(in srgb, var(--border-strong) 52%, transparent);
   color: var(--text-strong);
   box-shadow: 0 1px 1px color-mix(in srgb, var(--text) 6%, transparent);
+}
+/* Active tab echoes the rail's accent language: its leading icon goes
+   accent and the label firms to medium, so "which tab am I on" reads at
+   a glance and the chrome stays consistent with the active rail button. */
+.workspace-tab.is-active .workspace-tab__icon {
+  color: var(--accent);
+  opacity: 1;
+}
+.workspace-tab.is-active .workspace-tab__label {
+  font-weight: 500;
+}
+.workspace-tab__main:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+  border-radius: 6px;
 }
 .workspace-tab:hover::before,
 .workspace-tab.is-active::before {
@@ -747,15 +772,34 @@ code {
   align-items: center;
   justify-content: center;
   opacity: 0;
+  /* Slightly shrunk while hidden so it scales in rather than popping. */
+  transform: scale(0.82);
   flex: 0 0 auto;
+  transition: opacity 120ms ease, transform 140ms cubic-bezier(0.32, 0.72, 0, 1),
+    background-color 120ms ease, color 120ms ease;
 }
 .workspace-tab:hover .workspace-tab__close,
-.workspace-tab.is-active .workspace-tab__close {
+.workspace-tab.is-active .workspace-tab__close,
+.workspace-tab__close:focus-visible {
   opacity: 1;
+  transform: scale(1);
 }
 .workspace-tab__close:hover {
   color: var(--text);
   background: var(--bg-subtle);
+}
+.workspace-tab__close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-tab,
+  .workspace-tab__close,
+  .workspace-tab .workspace-tab__main {
+    animation: none;
+    transition-duration: 1ms;
+  }
+  .workspace-tab:active .workspace-tab__main { transform: none; }
 }
 .workspace-tabs-actions {
   position: relative;

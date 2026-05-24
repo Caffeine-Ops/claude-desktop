@@ -28,6 +28,10 @@ interface Props {
 
 interface NavButtonProps {
   active?: boolean;
+  /** Action buttons (e.g. "new project") open a flow rather than switch
+   *  views — they get the accent-tinted create affordance on hover and
+   *  never carry `is-active`/`aria-current`. */
+  action?: boolean;
   ariaLabel: string;
   tooltip: string;
   onClick: () => void;
@@ -35,11 +39,11 @@ interface NavButtonProps {
   children: ReactNode;
 }
 
-function NavButton({ active, ariaLabel, tooltip, onClick, testId, children }: NavButtonProps) {
+function NavButton({ active, action, ariaLabel, tooltip, onClick, testId, children }: NavButtonProps) {
   return (
     <button
       type="button"
-      className={`entry-nav-rail__btn${active ? ' is-active' : ''}`}
+      className={`entry-nav-rail__btn${active ? ' is-active' : ''}${action ? ' entry-nav-rail__btn--action' : ''}`}
       onClick={onClick}
       aria-label={ariaLabel}
       aria-current={active ? 'page' : undefined}
@@ -70,6 +74,7 @@ export function EntryNavRail({ view, onViewChange, onNewProject }: Props) {
         </NavButton>
         <UpdaterPopup />
         <NavButton
+          action
           ariaLabel={t('entry.navNewProject')}
           tooltip={t('entry.navNewProject')}
           onClick={onNewProject}
