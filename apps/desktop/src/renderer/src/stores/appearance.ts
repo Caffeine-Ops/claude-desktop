@@ -43,13 +43,33 @@ const LIGHT_DEFAULTS: ThemeOverrides = {
   translucentSidebar: true
 }
 
+// Dark defaults aligned 1:1 with the web app's dark palette
+// (apps/web/src/index.css `[data-theme="dark"]`): warm-black canvas
+// `--bg` #1a1917, warm off-white text `--text` #e8e4dc, and the Apple
+// Bright Blue dark accent #2997ff (web's `--accent: hsl(210 100% 58%)`).
+// The applier derives the lifted card/popover surfaces from `background`
+// (one shade warmer), so picking this canvas reproduces web's
+// background↔card hierarchy without storing every surface here.
 const DARK_DEFAULTS: ThemeOverrides = {
-  presetName: 'Dracula',
-  accent: '#ff79c6',
-  background: '#282a36',
-  foreground: '#bfbfb2',
+  presetName: 'Warm Black',
+  accent: '#2997ff',
+  background: '#1a1917',
+  foreground: '#e8e4dc',
   contrast: 0,
   translucentSidebar: false
+}
+
+// Fingerprint of the pre-v3 cool "Dracula" dark default. Used both by the
+// persist migration and the daemon hydrate to replace ONLY the stale default
+// with the new warm-black one — a user who picked some other custom dark
+// color won't match this and is left untouched.
+function isStaleDarkDefault(d: Partial<ThemeOverrides> | undefined): boolean {
+  if (!d) return false
+  return (
+    d.presetName === 'Dracula' ||
+    d.background?.toLowerCase() === '#282a36' ||
+    d.accent?.toLowerCase() === '#ff79c6'
+  )
 }
 
 interface AppearanceState {
@@ -93,10 +113,16 @@ export const useAppearanceStore = create<AppearanceState>()(
     }),
     {
       name: 'claude-desktop:appearance',
-      version: 2,
+      version: 3,
       // v1 only had themeMode/uiFontSize/codeFontSize/usePointerCursor.
       // Backfill the new theme objects so persisted v1 users don't crash
       // before they touch any color picker.
+      //
+      // v3: the dark default flipped from the old cool "Dracula" palette
+      // (#282a36 canvas, pink accent) to the warm-black palette shared with
+      // the web app. Anyone still on the OLD dark default must be reset to
+      // the new one so desktop matches web; users who deliberately picked a
+      // custom dark color are left alone (only the stale default is replaced).
       migrate: (persisted: unknown, version: number): AppearanceState => {
         const base = (persisted ?? {}) as Partial<AppearanceState>
         if (version < 2) {
@@ -108,6 +134,9 @@ export const useAppearanceStore = create<AppearanceState>()(
             codeFontSize: base.codeFontSize ?? 12,
             usePointerCursor: base.usePointerCursor ?? false
           } as AppearanceState
+        }
+        if (version < 3 && isStaleDarkDefault(base.dark)) {
+          return { ...base, dark: DARK_DEFAULTS } as AppearanceState
         }
         return base as AppearanceState
       }
@@ -187,12 +216,20 @@ export async function hydrateAppearanceFromDaemon(): Promise<void> {
   }
   if (!remote) return
 
+  // The daemon may still hold the pre-v3 cool "Dracula" dark default (the
+  // local persist migration only fixes localStorage, not the daemon copy that
+  // gets adopted here). If so, drop the remote dark slice and keep our new
+  // warm-black default, then push it back so the daemon — and the embedded web
+  // tab that shares it — converge on the new value. Only the stale default is
+  // overridden; a genuinely custom dark color won't match the fingerprint.
+  const remoteDarkIsStale = isStaleDarkDefault(remote.dark)
+
   isHydrating = true
   try {
     useAppearanceStore.setState((s) => ({
       themeMode: remote.themeMode ?? s.themeMode,
       light: { ...s.light, ...remote.light },
-      dark: { ...s.dark, ...remote.dark },
+      dark: remoteDarkIsStale ? DARK_DEFAULTS : { ...s.dark, ...remote.dark },
       uiFontSize:
         typeof remote.uiFontSize === 'number'
           ? clamp(remote.uiFontSize, UI_MIN, UI_MAX)
@@ -206,6 +243,11 @@ export async function hydrateAppearanceFromDaemon(): Promise<void> {
   } finally {
     isHydrating = false
   }
+
+  // If we just replaced a stale daemon dark default, persist the new one back
+  // so the daemon stops serving the old palette on the next boot. Done outside
+  // the isHydrating guard so the push actually fires.
+  if (remoteDarkIsStale) pushAppearanceToDaemon()
 }
 
 /**

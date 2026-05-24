@@ -4,7 +4,8 @@
 // (LocalStorage) and a dropdown listing the rest. Detection runs on
 // the daemon; this component just renders.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type {
   HostEditor,
   HostEditorId,
@@ -49,6 +50,15 @@ export function HandoffButton({ projectId, onRequestRevealInFinder }: Props) {
   const [busy, setBusy] = useState<HostEditorId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  // The split control we anchor the portaled menu to, and the menu node
+  // itself (lives under document.body, outside wrapRef's subtree).
+  const splitRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  // Viewport coordinates for the fixed-positioned menu. Right-aligned to the
+  // trigger's right edge so the menu hangs down from under the caret.
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -72,7 +82,11 @@ export function HandoffButton({ projectId, onRequestRevealInFinder }: Props) {
   useEffect(() => {
     if (!open) return;
     function onPointer(e: MouseEvent) {
-      if (wrapRef.current?.contains(e.target as Node)) return;
+      const target = e.target as Node;
+      // The menu is portaled to body, so it's NOT inside wrapRef — check it
+      // separately or the first click inside the open menu would dismiss it.
+      if (wrapRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
       setOpen(false);
     }
     function onKey(e: KeyboardEvent) {
@@ -83,6 +97,36 @@ export function HandoffButton({ projectId, onRequestRevealInFinder }: Props) {
     return () => {
       document.removeEventListener('mousedown', onPointer);
       document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  // Position the fixed menu under the trigger when it opens, and recompute on
+  // resize. A fixed menu doesn't follow scroll, so we close on scroll instead
+  // of re-tracking — the standard dropdown behaviour and far cheaper than a
+  // scroll-synced reposition. useLayoutEffect measures before paint so the
+  // menu never flashes at (0,0).
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuPos(null);
+      return;
+    }
+    function place() {
+      const el = splitRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setMenuPos({ top: r.bottom + 6, right: window.innerWidth - r.right });
+    }
+    place();
+    window.addEventListener('resize', place);
+    function onScroll() {
+      setOpen(false);
+    }
+    // Capture-phase so we catch scrolls on any ancestor scroll container,
+    // not just the window.
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', onScroll, true);
     };
   }, [open]);
 
@@ -154,7 +198,7 @@ export function HandoffButton({ projectId, onRequestRevealInFinder }: Props) {
           editor, the right caret opens the picker. Sibling buttons
           (instead of a nested caret) so the caret has its own real
           tap target and so we don't render an invalid button-in-button. */}
-      <div className="handoff-split">
+      <div className="handoff-split" ref={splitRef}>
         <button
           type="button"
           className="handoff-trigger"
@@ -194,8 +238,20 @@ export function HandoffButton({ projectId, onRequestRevealInFinder }: Props) {
           <Icon name="chevron-down" size={14} />
         </button>
       </div>
-      {open ? (
-        <div className="handoff-menu" role="menu" data-testid="handoff-menu">
+      {open && menuPos && typeof document !== 'undefined'
+        ? createPortal(
+        <div
+          className="handoff-menu"
+          role="menu"
+          data-testid="handoff-menu"
+          ref={menuRef}
+          // Portaled to <body> to escape the ChatPane header's stacking
+          // context — the menu's own z-index could never beat the chrome
+          // while it lived inside that low-layer subtree (same fix as
+          // PreviewModal). Fixed-position coords are measured from the
+          // trigger so it still hangs directly under the caret.
+          style={{ position: 'fixed', top: menuPos.top, right: menuPos.right }}
+        >
           {available.map((editor) => (
             <button
               key={editor.id}
@@ -240,8 +296,10 @@ export function HandoffButton({ projectId, onRequestRevealInFinder }: Props) {
               <div className="handoff-menu-error">{error}</div>
             </>
           ) : null}
-        </div>
-      ) : null}
+        </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

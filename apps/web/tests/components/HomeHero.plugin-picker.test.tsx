@@ -101,9 +101,13 @@ describe('HomeHero plugin picker', () => {
     expect(screen.getByText('My plugin')).toBeTruthy();
     fireEvent.mouseDown(screen.getByRole('option', { name: /sample user plugin/i }));
 
+    // New behavior: picking a plugin no longer injects an `@token` into the
+    // prompt body — it only surfaces a top chip (via onPickPlugin, which the
+    // parent turns into the active-plugin chip). The in-flight `@sam` query
+    // the user typed is stripped, so the next prompt is just the prose.
     expect(onPickPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'sample-user-plugin' }),
-      'Make @Sample User Plugin',
+      'Make',
     );
   });
 
@@ -200,8 +204,11 @@ describe('HomeHero plugin picker', () => {
       />,
     );
 
+    // New behavior: picking a skill surfaces a top chip only (no `@token`
+    // injected into the prompt body). The in-flight `@proto` query is
+    // stripped, leaving just the prose.
     fireEvent.mouseDown(screen.getByRole('option', { name: /prototype lab/i }));
-    expect(onPickSkill).toHaveBeenCalledWith(skill, 'Make @Prototype Lab');
+    expect(onPickSkill).toHaveBeenCalledWith(skill, 'Make');
 
     rerender(
       <HomeHero
@@ -228,8 +235,10 @@ describe('HomeHero plugin picker', () => {
       />,
     );
 
+    // The whole prompt was just the `@lin` query, so stripping it leaves
+    // an empty prompt — and again no `@token` is injected.
     fireEvent.mouseDown(screen.getByRole('option', { name: /linear/i }));
-    expect(onPickMcp).toHaveBeenCalledWith(mcp, '@Linear');
+    expect(onPickMcp).toHaveBeenCalledWith(mcp, '');
   });
 
   it('does not submit while an IME composition is confirming text with Enter', () => {

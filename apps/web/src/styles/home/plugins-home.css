@@ -197,11 +197,23 @@
   font-size: 14px;
   letter-spacing: -0.016em;
   cursor: pointer;
-  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+  /* DESIGN.md motion: spring easing + transform in the list so the
+     scale(0.95) press animates rather than snapping. */
+  transition: border-color 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    background-color 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .plugins-home__chip:hover {
   border-color: var(--border-strong);
   color: var(--text);
+}
+.plugins-home__chip:active {
+  transform: scale(0.95);              /* Apple system-wide press */
+}
+.plugins-home__chip:focus-visible {
+  outline: 2px solid var(--apple-blue-focus, #0071e3);
+  outline-offset: 2px;
 }
 .plugins-home__chip-count {
   /* Counts sit one step below the label on the Apple scale (fine-print 12px)
@@ -211,18 +223,24 @@
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
+/* Saved resting: a quiet Apple-blue-tinted affordance. */
 .plugins-home__chip--saved {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-  color: var(--accent);
-  background: var(--accent-tint);
+  border-color: color-mix(in srgb, var(--apple-blue, #0066cc) 32%, var(--border));
+  color: var(--apple-blue, #0066cc);
+  background: color-mix(in srgb, var(--apple-blue, #0066cc) 8%, var(--bg-panel));
 }
+.plugins-home__chip--saved:hover {
+  border-color: color-mix(in srgb, var(--apple-blue, #0066cc) 48%, var(--border));
+  color: var(--apple-blue, #0066cc);
+}
+/* Saved active = the single Action Blue solid (unified with .pill.is-active). */
 .plugins-home__chip--saved.is-active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: white;
+  background: var(--apple-blue, #0066cc);
+  border-color: var(--apple-blue, #0066cc);
+  color: #fff;
 }
 .plugins-home__chip--saved.is-active .plugins-home__chip-count {
-  color: white;
+  color: #fff;
   opacity: 0.85;
 }
 
@@ -251,6 +269,13 @@
   pointer-events: none;
 }
 .plugins-home__facets {
+  /* Apple Action Blue anchored locally so every selected chip speaks the
+     one brand blue (DESIGN.md), independent of the app's themeable
+     --accent. Dark surfaces use Sky Link Blue for contrast. The chips
+     inherit these from this ancestor. */
+  --apple-blue: #0066cc;
+  --apple-blue-focus: #0071e3;
+
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -285,6 +310,33 @@
      base rule keeps it invisible so the bar is seamless before it sticks. */
   border-bottom: 1px solid transparent;
   transition: border-color 200ms ease, background-color 200ms ease;
+}
+/* Dark surfaces: Sky Link Blue (#2997ff) keeps the selected-chip contrast
+   on near-black, mirroring the project header's on-dark blue. Two tracks
+   — explicit toggle + OS media scoped to html:not([data-theme]) — because
+   this app drives dark mode both ways (a bare media query would miss the
+   explicit toggle and misfire under "explicit light + OS dark"). */
+[data-theme="dark"] .plugins-home__facets {
+  --apple-blue: #2997ff;
+  --apple-blue-focus: #2997ff;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .plugins-home__facets {
+    --apple-blue: #2997ff;
+    --apple-blue-focus: #2997ff;
+  }
+}
+/* Honor reduced-motion: keep the color transitions but drop the press
+   scale + spring so nothing animates positionally. */
+@media (prefers-reduced-motion: reduce) {
+  .plugins-home__chip,
+  .plugins-home__pill {
+    transition-duration: 1ms;
+  }
+  .plugins-home__chip:active,
+  .plugins-home__pill:active {
+    transform: none;
+  }
 }
 /* When the bar has scrolled up against its sticky offset, a hairline
    separates it from the tiles sliding beneath. Toggled by an
@@ -369,19 +421,33 @@
   font-size: 14px;
   letter-spacing: -0.016em;
   cursor: pointer;
-  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+  /* Same spring + transform-aware transition as .chip (DESIGN.md motion). */
+  transition: border-color 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    background-color 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .plugins-home__pill:hover {
   border-color: var(--border-strong);
   color: var(--text);
 }
+.plugins-home__pill:active {
+  transform: scale(0.95);              /* Apple system-wide press */
+}
+.plugins-home__pill:focus-visible {
+  outline: 2px solid var(--apple-blue-focus, #0071e3);
+  outline-offset: 2px;
+}
+/* Single Action Blue carries EVERY selected chip (DESIGN.md: one accent,
+   non-negotiable). Was `--text` (near-black) here while --all/saved went
+   accent — two selection languages. Now unified to Apple blue. */
 .plugins-home__pill.is-active {
-  background: var(--text);
-  border-color: var(--text);
-  color: var(--bg-panel);
+  background: var(--apple-blue, #0066cc);
+  border-color: var(--apple-blue, #0066cc);
+  color: #fff;
 }
 .plugins-home__pill.is-active .plugins-home__pill-count {
-  color: var(--bg-panel);
+  color: #fff;
   opacity: 0.8;
 }
 .plugins-home__pill-count {
@@ -390,19 +456,16 @@
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
+/* "All" resting: quiet blue-tinted affordance; active inherits the unified
+   blue solid from .is-active above (no per-variant override needed). */
 .plugins-home__pill--all {
-  background: var(--accent-tint);
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
-  color: var(--accent);
+  background: color-mix(in srgb, var(--apple-blue, #0066cc) 8%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--apple-blue, #0066cc) 28%, var(--border));
+  color: var(--apple-blue, #0066cc);
 }
-.plugins-home__pill--all.is-active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: white;
-}
-.plugins-home__pill--all.is-active .plugins-home__pill-count {
-  color: white;
-  opacity: 0.85;
+.plugins-home__pill--all:hover {
+  border-color: color-mix(in srgb, var(--apple-blue, #0066cc) 44%, var(--border));
+  color: var(--apple-blue, #0066cc);
 }
 .plugins-home__pill--sub-all {
   background: var(--bg-subtle);

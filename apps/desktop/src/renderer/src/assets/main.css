@@ -130,14 +130,29 @@ body,
   box-sizing: border-box;
   padding: 8px 20px 8px 14px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.12);
-  background-color: hsl(var(--background) / 0.72);
+  /* Strip material — must match the web "Open Design" tab's own top tab
+     bar (.workspace-tabs-chrome in apps/web/src/index.css), since both
+     render the SAME multi-tab strip and the user wants them visually
+     identical. The default below covers light mode via shared tokens; the
+     dark-mode value is overridden in `.dark .shell-chrome` to the web
+     strip's exact warm-black material rather than the shared token's pure
+     black — see that block for why. */
+  background-color: hsl(var(--background));
   backdrop-filter: saturate(180%) blur(28px);
   -webkit-backdrop-filter: saturate(180%) blur(28px);
   -webkit-app-region: drag;
 }
 
+/* Dark theme: align the strip 1:1 with web's `.workspace-tabs-chrome`, whose
+   material is a hair-lifted warm black: `color-mix(--bg-panel 70%, --bg)`.
+   Now that the warm-black palette lives in the shared design-tokens .dark
+   scope (--card = web --bg-panel #222120, --background = web --bg #1a1917),
+   we read it through the tokens instead of hardcoding the hex — same result
+   (≈ #201f1d), single source of truth. The strip ends up one shade above the
+   page canvas, exactly like web's tab bar floats over its content. */
 .dark .shell-chrome {
   border-bottom-color: rgba(255, 255, 255, 0.12);
+  background-color: color-mix(in srgb, hsl(var(--card)) 70%, hsl(var(--background)));
 }
 
 /* macOS traffic-light gutter — same 82px reserve as .header so the

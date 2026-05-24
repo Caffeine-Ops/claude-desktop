@@ -880,6 +880,18 @@ export function HomeView({
     }
   }
 
+  // MCP / connector contexts no longer leave an `@token` in the prompt, so
+  // removing one is just dropping it from the selection state — no prompt
+  // surgery needed (unlike removePluginContext, which still strips legacy
+  // plugin mentions that may exist in the body).
+  function removeMcpContext(serverId: string) {
+    setSelectedMcpContexts((prev) => prev.filter((item) => item.server.id !== serverId));
+  }
+
+  function removeConnectorContext(connectorId: string) {
+    setSelectedConnectorContexts((prev) => prev.filter((item) => item.connector.id !== connectorId));
+  }
+
   function handlePromptChange(nextPrompt: string) {
     setPrompt(nextPrompt);
     setPromptEditedByUser(true);
@@ -989,9 +1001,16 @@ export function HomeView({
   function useSkill(skill: SkillSummary, nextPrompt: string | null) {
     setActiveSkill(skill);
     setError(null);
-    const replacement = nextPrompt ?? skill.examplePrompt ?? '';
-    if (replacement.trim().length > 0) {
-      setPrompt(replacement);
+    if (nextPrompt !== null && nextPrompt !== undefined) {
+      // An explicit nextPrompt (even '') is the picker telling us the new
+      // body after stripping the in-flight `@query`. Honor it verbatim —
+      // including clearing to '' — now that picking a skill no longer
+      // injects an `@token`. Only fall back to the example prompt when the
+      // picker passed nothing (null).
+      setPrompt(nextPrompt);
+      setPromptEditedByUser(false);
+    } else if ((skill.examplePrompt ?? '').trim().length > 0) {
+      setPrompt(skill.examplePrompt!);
       setPromptEditedByUser(false);
     }
     focusPromptAtEnd();
@@ -1169,7 +1188,17 @@ export function HomeView({
 
   async function submit() {
     const trimmed = prompt.trim();
-    if (!trimmed && stagedFiles.length === 0) return;
+    // A picked skill / plugin / context surface now lives only as a chip
+    // (no `@token` in the prompt body), so an empty prompt + an active
+    // selection is still a valid turn. Mirror HomeHero's canSubmit, or
+    // "pick a skill then hit send" would be silently dropped here.
+    const hasActiveSelection =
+      Boolean(active) ||
+      Boolean(activeSkill) ||
+      selectedPluginContexts.length > 0 ||
+      selectedMcpContexts.length > 0 ||
+      selectedConnectorContexts.length > 0;
+    if (!trimmed && stagedFiles.length === 0 && !hasActiveSelection) return;
     // P0 ui_click area=chat_composer element=send_button. Fires before the
     // async plugin-apply roundtrip so the click count reflects user intent
     // even when the run is rejected (missing inputs, apply failure). The
@@ -1276,6 +1305,10 @@ export function HomeView({
         onClearActiveSkill={() => setActiveSkill(null)}
         selectedPluginContexts={selectedPluginContexts.map((item) => item.record)}
         onRemovePluginContext={removePluginContext}
+        selectedMcpServers={selectedMcpContexts.map((item) => item.server)}
+        onRemoveMcpServer={removeMcpContext}
+        selectedConnectors={selectedConnectorContexts.map((item) => item.connector)}
+        onRemoveConnector={removeConnectorContext}
         onOpenPluginDetails={setDetailsRecord}
         pluginInputFields={active?.inputFields ?? []}
         pluginInputValues={active?.inputs ?? {}}

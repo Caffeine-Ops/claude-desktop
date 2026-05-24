@@ -155,8 +155,12 @@ describe('HomeView context picker', () => {
     fireEvent.change(input, { target: { value: 'Build @chart' } });
     fireEvent.mouseDown(await screen.findByRole('option', { name: /chart plugin/i }));
 
+    // New behavior: picking a context plugin surfaces a top chip only; it no
+    // longer injects an `@token` into the prompt body. The in-flight `@chart`
+    // query is stripped, leaving just the prose `Build`. The chip
+    // (home-hero-context-plugin-*) remains the visible anchor.
     await waitFor(() => {
-      expect((input as HTMLTextAreaElement).value).toBe('Build @Chart Plugin');
+      expect((input as HTMLTextAreaElement).value).toBe('Build');
       expect(screen.getByTestId('home-hero-context-plugin-chart-plugin')).toBeTruthy();
     });
 
@@ -164,7 +168,7 @@ describe('HomeView context picker', () => {
     fireEvent.mouseDown(await screen.findByRole('option', { name: /deck plugin/i }));
 
     await waitFor(() => {
-      expect((input as HTMLTextAreaElement).value).toBe('Build @Chart Plugin @Deck Plugin');
+      expect((input as HTMLTextAreaElement).value).toBe('Build');
       expect(screen.getByTestId('home-hero-context-plugin-chart-plugin')).toBeTruthy();
       expect(screen.getByTestId('home-hero-context-plugin-deck-plugin')).toBeTruthy();
     });
@@ -173,8 +177,10 @@ describe('HomeView context picker', () => {
 
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
+    // The selection is carried by `contextPlugins`, not the prompt text —
+    // that is the whole point of dropping the body token.
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: 'Build @Chart Plugin @Deck Plugin',
+      prompt: 'Build',
       pluginId: DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID,
       contextPlugins: [
         expect.objectContaining({ id: 'chart-plugin', title: 'Chart Plugin' }),
@@ -220,15 +226,18 @@ describe('HomeView context picker', () => {
     fireEvent.change(input, { target: { value: '@proto' } });
     fireEvent.mouseDown(screen.getByRole('option', { name: /prototype lab/i }));
 
+    // New behavior: picking a skill surfaces the active-skill chip only; no
+    // `@token` is injected. The whole prompt was just the `@proto` query, so
+    // stripping it leaves an empty prompt. The skill is carried by `skillId`.
     await waitFor(() => {
-      expect((input as HTMLTextAreaElement).value).toBe('@Prototype Lab');
+      expect((input as HTMLTextAreaElement).value).toBe('');
       expect(screen.getByTestId('home-hero-active-skill')).toBeTruthy();
     });
 
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: '@Prototype Lab',
+      prompt: '',
       pluginId: DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID,
       skillId: SKILL.id,
       projectKind: 'prototype',

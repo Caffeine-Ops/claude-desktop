@@ -196,7 +196,7 @@ describe('ChatComposer context pickers', () => {
     expect(screen.getByText('Search plugins, skills, MCP servers, connectors, and Design Files.')).toBeTruthy();
   });
 
-  it('selects an MCP server from @ search and keeps the inline token visible', async () => {
+  it('selects an MCP server from @ search and stages it without leaving a body token', async () => {
     renderComposer();
     const input = screen.getByTestId('chat-composer-input') as HTMLTextAreaElement;
 
@@ -207,8 +207,17 @@ describe('ChatComposer context pickers', () => {
     await waitFor(() => expect(screen.getByText('Slack MCP')).toBeTruthy());
     fireEvent.click(screen.getByText('Slack MCP'));
 
-    expect(input.value).toBe('@Slack MCP ');
-    expect(screen.getByTestId('chat-composer-mention-overlay').textContent).toContain('@Slack MCP');
+    // New behavior: picking a context surface adds a top chip (staged-mcp)
+    // only; it no longer injects an `@token` into the prompt body. The
+    // in-flight `@sl` query the user typed is stripped, so the prompt is
+    // clean (the backend learns the selection via context fields).
+    expect(input.value.trim()).toBe('');
+    // The picker (mention-popover) closes after a successful pick…
+    expect(screen.queryByTestId('mention-popover')).toBeNull();
+    // …and the staged MCP chip is now the visible anchor for the selection.
+    const mcpChip = screen.getByTestId('staged-mcp');
+    expect(mcpChip).toBeTruthy();
+    expect(mcpChip.textContent).toContain('Slack MCP');
   });
 
   it('applies a skill from @ search and reports the active project skill', async () => {
@@ -223,9 +232,12 @@ describe('ChatComposer context pickers', () => {
     await waitFor(() => expect(screen.getByText('Deck Builder')).toBeTruthy());
     fireEvent.click(screen.getByText('Deck Builder'));
 
+    // The side effect (applying the project skill) still fires — that is
+    // how the backend learns the selection.
     await waitFor(() => expect(onProjectSkillChange).toHaveBeenCalledWith('deck-builder'));
-    expect(input.value).toBe('@Deck Builder ');
-    expect(screen.getByTestId('chat-composer-mention-overlay').textContent).toContain('@Deck Builder');
+    // New behavior: no `@token` is injected into the prompt body; the
+    // in-flight `@deck` query is stripped, leaving a clean prompt.
+    expect(input.value.trim()).toBe('');
   });
 
   it('shows all matching skills and ranks exact prefix matches first', async () => {
@@ -269,7 +281,7 @@ describe('ChatComposer context pickers', () => {
     expect(skillNames.indexOf('Audit Helper 9')).toBeLessThan(skillNames.indexOf('Accessibility Review'));
   });
 
-  it('applies a plugin from @ search and keeps the plugin token inline', async () => {
+  it('applies a plugin from @ search without leaving a body token', async () => {
     renderComposer();
     const input = screen.getByTestId('chat-composer-input') as HTMLTextAreaElement;
 
@@ -280,8 +292,10 @@ describe('ChatComposer context pickers', () => {
     await waitFor(() => expect(screen.getByText('My Export')).toBeTruthy());
     fireEvent.click(screen.getByText('My Export'));
 
-    await waitFor(() => expect(input.value).toBe('@My Export '));
-    expect(screen.getByTestId('chat-composer-mention-overlay').textContent).toContain('@My Export');
+    // New behavior: applying the plugin stages it (and applies the plugin
+    // context) but does not inject an `@token`; the `@export` query is
+    // stripped so the prompt body stays clean.
+    await waitFor(() => expect(input.value.trim()).toBe(''));
   });
 
   it('lets the tools panel switch between Official and My plugins', async () => {

@@ -2162,3 +2162,45 @@
     grid-template-rows: 96px minmax(0, 1fr);
   }
 }
+
+/* ============================================================
+   HomeHero ProseMirror editor — the visible free-text /
+   @-mention surface (replaces the transparent textarea +
+   highlight overlay). Slot mode keeps the legacy surface and
+   hides this via .pm-composer-mirror. Mirrors the textarea's
+   17px Apple-body metrics so chips line up and the card keeps
+   its shape.
+   ============================================================ */
+.home-hero__pm {
+  position: relative;
+}
+.home-hero__pm .pm-composer-input {
+  min-height: calc(17px * 1.6 * 3); /* ~3 rows, matches textarea rows={3} */
+  max-height: var(--home-hero-prompt-max-height);
+  overflow-y: auto;
+  padding: var(--home-hero-prompt-padding, 6px 6px);
+  font-size: var(--home-hero-prompt-font-size, 17px);
+  line-height: var(--home-hero-prompt-line-height, 1.6);
+  color: var(--text);
+  caret-color: var(--text);
+  background: transparent;
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.home-hero__pm .pm-composer-input p {
+  margin: 0;
+}
+.home-hero__pm .pm-composer-input.is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted, hsl(var(--muted-foreground) / 0.6));
+  pointer-events: none;
+  position: absolute;
+}
+/* HomeHero mention chips read at the 17px body scale; reuse the PM chip
+   pill but bump to match the prompt font so they sit on the baseline. */
+.home-hero__pm .pm-composer-chip {
+  font-size: var(--home-hero-prompt-font-size, 17px);
+  line-height: var(--home-hero-prompt-line-height, 1.6);
+}

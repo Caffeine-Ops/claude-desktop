@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { APP_CHROME_FILE_ACTIONS_ID } from './AppChromeHeader';
+import { usePortalMenuPosition } from './usePortalMenuPosition';
 import {
   anonymizeArtifactId,
   artifactKindToTracking,
@@ -729,30 +730,19 @@ export function LiveArtifactViewer({
   const [refreshHistory, setRefreshHistory] = useState<LiveArtifactRefreshLogEntry[]>([]);
   const [presentMenuOpen, setPresentMenuOpen] = useState(false);
   const [inTabPresent, setInTabPresent] = useState(false);
-  const presentWrapRef = useRef<HTMLDivElement | null>(null);
+  // Present menu portals to <body> to clear the chrome stacking context (the
+  // dropdown was painted under the viewer toolbar otherwise). The hook owns
+  // the fixed positioning measured from presentWrapRef + outside-click/Escape.
+  const {
+    wrapRef: presentWrapRef,
+    menuRef: presentMenuRef,
+    menuPos: presentMenuPos,
+  } = usePortalMenuPosition(presentMenuOpen, setPresentMenuOpen);
   const [chromeActionsHost, setChromeActionsHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
     if (typeof document === 'undefined') return;
     setChromeActionsHost(document.getElementById(APP_CHROME_FILE_ACTIONS_ID));
   }, []);
-  useEffect(() => {
-    if (!presentMenuOpen) return;
-    const onPointer = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest('.present-wrap')) return;
-      setPresentMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPresentMenuOpen(false);
-    };
-    document.addEventListener('mousedown', onPointer);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onPointer);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [presentMenuOpen]);
 
   useEffect(() => {
     setRefreshError(null);
@@ -953,8 +943,14 @@ export function LiveArtifactViewer({
             <span>{t('fileViewer.present')}</span>
             <Icon name="chevron-down" size={11} />
           </button>
-          {presentMenuOpen ? (
-            <div className="present-menu" role="menu">
+          {presentMenuOpen && presentMenuPos && typeof document !== 'undefined'
+            ? createPortal(
+            <div
+              className="present-menu"
+              role="menu"
+              ref={presentMenuRef}
+              style={{ position: 'fixed', top: presentMenuPos.top, right: presentMenuPos.right }}
+            >
               <button role="menuitem" onClick={presentInThisTab}>
                 <span className="present-icon"><Icon name="eye" size={13} /></span>{' '}
                 {t('fileViewer.presentInTab')}
@@ -967,8 +963,10 @@ export function LiveArtifactViewer({
                 <span className="present-icon"><Icon name="share" size={13} /></span>{' '}
                 {t('fileViewer.presentNewTab')}
               </button>
-            </div>
-          ) : null}
+            </div>,
+                document.body,
+              )
+            : null}
         </div>
       )}
       {inTabPresent ? (
@@ -3139,7 +3137,13 @@ function ReactComponentViewer({
   const [srcDoc, setSrcDoc] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
-  const shareRef = useRef<HTMLDivElement | null>(null);
+  // Share menu portals to <body> so it isn't clipped behind the viewer body
+  // below it (same stacking-context fix as the present menu / handoff picker).
+  const {
+    wrapRef: shareRef,
+    menuRef: shareMenuRef,
+    menuPos: shareMenuPos,
+  } = usePortalMenuPosition(shareMenuOpen, setShareMenuOpen);
 
   useEffect(() => {
     setSource(null);
@@ -3151,23 +3155,6 @@ function ReactComponentViewer({
       cancelled = true;
     };
   }, [projectId, file.name, file.mtime, reloadKey]);
-
-  useEffect(() => {
-    if (!shareMenuOpen) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (!shareRef.current) return;
-      if (!shareRef.current.contains(e.target as Node)) setShareMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setShareMenuOpen(false);
-    };
-    document.addEventListener('mousedown', onDocClick);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDocClick);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [shareMenuOpen]);
 
   const exportTitle = file.name.replace(/\.(jsx|tsx)$/i, '') || file.name;
   const sourceExtension = file.name.toLowerCase().endsWith('.tsx') ? '.tsx' : '.jsx';
@@ -3248,8 +3235,14 @@ function ReactComponentViewer({
                   <span>{t('fileViewer.shareLabel')}</span>
                   <Icon name="chevron-down" size={11} />
                 </button>
-                {shareMenuOpen ? (
-                  <div className="share-menu-popover" role="menu">
+                {shareMenuOpen && shareMenuPos && typeof document !== 'undefined'
+                  ? createPortal(
+                  <div
+                    className="share-menu-popover"
+                    role="menu"
+                    ref={shareMenuRef}
+                    style={{ position: 'fixed', top: shareMenuPos.top, right: shareMenuPos.right }}
+                  >
                     <button
                       type="button"
                       className="share-menu-item"
@@ -3287,8 +3280,10 @@ function ReactComponentViewer({
                       <span className="share-menu-icon"><Icon name="download" size={14} /></span>
                       <span>{t('fileViewer.exportZip')}</span>
                     </button>
-                  </div>
-                ) : null}
+                  </div>,
+                      document.body,
+                    )
+                  : null}
               </div>
             </>
           ) : null}
@@ -3558,6 +3553,19 @@ function HtmlViewer({
   const zoomMenuRef = useRef<HTMLDivElement | null>(null);
   const [presentMenuOpen, setPresentMenuOpen] = useState(false);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  // Both menus portal to <body> to escape the chrome stacking context (the
+  // dropdowns were painted under the viewer toolbar). The hook owns fixed
+  // positioning + outside-click/Escape; see usePortalMenuPosition.
+  const {
+    wrapRef: presentWrapRef,
+    menuRef: presentMenuRef,
+    menuPos: presentMenuPos,
+  } = usePortalMenuPosition(presentMenuOpen, setPresentMenuOpen);
+  const {
+    wrapRef: shareRef,
+    menuRef: shareMenuRef,
+    menuPos: shareMenuPos,
+  } = usePortalMenuPosition(shareMenuOpen, setShareMenuOpen);
   const [exportReadyNudge, setExportReadyNudge] = useState(false);
   const exportReadyNudgeSeenRef = useRef<Set<string>>(new Set());
   // Template save UX. We surface a transient "Saved" pill in the share
@@ -3914,7 +3922,6 @@ function HtmlViewer({
     () => htmlPreviewSlideState.get(previewStateKey) ?? null,
   );
   const overlayPreviewScale = effectivePreviewScale(previewViewport, previewScale, previewBodySize);
-  const shareRef = useRef<HTMLDivElement | null>(null);
   const [chromeActionsHost, setChromeActionsHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -5120,25 +5127,6 @@ function HtmlViewer({
   }, [effectiveDeck, mode]);
 
   useEffect(() => {
-    if (!presentMenuOpen) return;
-    const onPointer = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest('.present-wrap')) return;
-      setPresentMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPresentMenuOpen(false);
-    };
-    document.addEventListener('mousedown', onPointer);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onPointer);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [presentMenuOpen]);
-
-  useEffect(() => {
     if (!modeMenuOpen) return;
     const onDocClick = (e: MouseEvent) => {
       if (!modeMenuRef.current) return;
@@ -5171,23 +5159,6 @@ function HtmlViewer({
       document.removeEventListener('keydown', onKey);
     };
   }, [zoomMenuOpen]);
-
-  useEffect(() => {
-    if (!shareMenuOpen) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (!shareRef.current) return;
-      if (!shareRef.current.contains(e.target as Node)) setShareMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setShareMenuOpen(false);
-    };
-    document.addEventListener('mousedown', onDocClick);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDocClick);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [shareMenuOpen]);
 
   useEffect(() => {
     if (!inTabPresent) return;
@@ -5983,7 +5954,7 @@ function HtmlViewer({
         chromeActionsHost ? createPortal(filePrimaryActions, chromeActionsHost) : filePrimaryActions
       ))(<>
           {showPresent ? (
-            <div className="present-wrap chrome-present-wrap">
+            <div className="present-wrap chrome-present-wrap" ref={presentWrapRef}>
               <button
                 className="chrome-action chrome-action-secondary present-trigger"
                 aria-haspopup="menu"
@@ -5997,8 +5968,14 @@ function HtmlViewer({
                 <span>{t('fileViewer.present')}</span>
                 <Icon name="chevron-down" size={11} />
               </button>
-              {presentMenuOpen ? (
-                <div className="present-menu" role="menu">
+              {presentMenuOpen && presentMenuPos && typeof document !== 'undefined'
+                ? createPortal(
+                <div
+                  className="present-menu"
+                  role="menu"
+                  ref={presentMenuRef}
+                  style={{ position: 'fixed', top: presentMenuPos.top, right: presentMenuPos.right }}
+                >
                   <button role="menuitem" onClick={() => { firePresentPopoverClick('in_this_tab'); presentInThisTab(); }}>
                     <span className="present-icon"><Icon name="eye" size={13} /></span>{' '}
                     {t('fileViewer.presentInTab')}
@@ -6011,8 +5988,10 @@ function HtmlViewer({
                     <span className="present-icon"><Icon name="share" size={13} /></span>{' '}
                     {t('fileViewer.presentNewTab')}
                   </button>
-                </div>
-              ) : null}
+                </div>,
+                    document.body,
+                  )
+                : null}
             </div>
           ) : null}
           {canShare ? (
@@ -6030,8 +6009,14 @@ function HtmlViewer({
                 <span>{t('fileViewer.shareLabel')}</span>
                 <Icon name="chevron-down" size={11} />
               </button>
-              {shareMenuOpen ? (
-                <div className="share-menu-popover" role="menu">
+              {shareMenuOpen && shareMenuPos && typeof document !== 'undefined'
+                ? createPortal(
+                <div
+                  className="share-menu-popover"
+                  role="menu"
+                  ref={shareMenuRef}
+                  style={{ position: 'fixed', top: shareMenuPos.top, right: shareMenuPos.right }}
+                >
                   <button
                     type="button"
                     className="share-menu-item"
@@ -6211,8 +6196,10 @@ function HtmlViewer({
                       <span>{copyDeployMenuLabel(item.providerLabel, item.url)}</span>
                     </button>
                   ))}
-                </div>
-              ) : null}
+                </div>,
+                    document.body,
+                  )
+                : null}
             </div>
           ) : null}
         </>)}

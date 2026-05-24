@@ -41,6 +41,12 @@ import {
 } from '../utils/inlineMentions';
 import { isImeComposing } from '../utils/imeComposing';
 import { ANNOTATION_EVENT, type AnnotationEventDetail } from "./PreviewDrawOverlay";
+import {
+  ProseMirrorComposerInput,
+  type ProseMirrorComposerHandle,
+  type SuggestionAdapter,
+} from "../composer/ProseMirrorComposerInput";
+import type { SuggestionItem } from "../composer/suggestionPlugin";
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
@@ -265,6 +271,11 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     const [toolsTab, setToolsTab] = useState<ToolsTab>('plugins');
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+    // The visible ProseMirror editor. The textarea above is now a hidden
+    // controlled mirror (kept for the test suite + AT + IME + the
+    // selection-based insert helpers); PM is what the user actually sees
+    // and edits. Both are downstream of `draft`.
+    const pmRef = useRef<ProseMirrorComposerHandle | null>(null);
     const composingRef = useRef(false);
     const toolsMenuRef = useRef<HTMLDivElement | null>(null);
     const toolsTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -388,6 +399,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     const composerMentionParts = useMemo(
       () => buildInlineMentionParts(draft, composerMentionEntities),
       [composerMentionEntities, draft],
+    );
+    // Literal `@<label>` tokens the PM editor should render as chips even
+    // when they contain spaces (e.g. `@Slack MCP`). Derived from the same
+    // entity set that powers the (legacy) overlay highlight.
+    const knownMentionTokens = useMemo(
+      () => composerMentionEntities.map((e) => e.token ?? `@${e.label}`),
+      [composerMentionEntities],
     );
 
     function resizeTextarea() {
@@ -725,10 +743,17 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       return true;
     }
 
+    // Picking a skill / plugin / MCP / connector adds ONLY a staged chip
+    // (StagedSkills row / context state); it no longer injects an `@token`
+    // into the prompt body. The chip is the single visible anchor + remove
+    // affordance, and the backend identifies the selection via the
+    // dedicated context fields (skillIds / mcpServerIds / …), not the
+    // prompt text. We still strip the in-flight `@query` the user typed to
+    // open the picker (empty replacement) so no stray `@de` is left.
     async function insertSkillMention(skill: SkillSummary) {
       const applied = await applyProjectSkill(skill);
       if (!applied) return;
-      replaceMentionWithText(`${inlineMentionToken(skill.name)} `);
+      replaceMentionWithText('');
     }
 
     function removeStagedSkill(id: string) {
@@ -955,20 +980,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       const value = e.target.value;
       const cursor = e.target.selectionStart;
       setDraft(value);
-      // Keep the staged-skill chips in sync with the draft. If the user
-      // hand-deletes an `@<id>` token from the textarea, the chip must
-      // disappear too — otherwise submit() would still forward that id in
-      // skillIds and the daemon would compose a skill the prompt no
-      // longer references. Mirror the removeStagedSkill() boundary
-      // (whitespace or string edge) so partial matches don't keep a chip
-      // alive accidentally. We do not run the same prune for `staged`
-      // file attachments because users frequently attach files via the
-      // upload button without leaving an `@<path>` token in the draft.
-      setStagedSkills((prev) =>
-        prev.filter((s) =>
-          new RegExp(`(^|\\s)@${escapeRegExp(s.id)}(\\s|$)`).test(value),
-        ),
-      );
+      // NOTE: we used to prune staged-skill chips whenever the draft no
+      // longer contained their `@<id>` token. That coupling is gone now
+      // that picking a skill adds ONLY a chip (no `@token` in the body) —
+      // the token-presence check would delete every freshly-staged skill on
+      // the next keystroke. The chip is now removed solely via its own ×
+      // button (removeStagedSkill), and submit() reads stagedSkills
+      // directly, so it stays in sync without mirroring the prompt text.
       // Detect a fresh @ at start or after whitespace; capture the typed
       // query up to the cursor.
       const before = value.slice(0, cursor);
@@ -1017,8 +1035,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     }
 
     async function insertPluginMention(record: InstalledPluginRecord) {
-      const inserted = replaceMentionWithText(`${inlineMentionToken(record.title)} `);
-      if (!inserted) return;
+      const cleared = replaceMentionWithText('');
+      if (!cleared) return;
       await pluginsSectionRef.current?.applyById(record.id, record);
     }
 
@@ -1045,14 +1063,14 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       setStagedMcpServers((current) => (
         current.some((item) => item.id === server.id) ? current : [...current, server]
       ));
-      replaceMentionWithText(`${inlineMentionToken(server.label || server.id)} `);
+      replaceMentionWithText('');
     }
 
     function insertConnectorMention(connector: ConnectorDetail) {
       setStagedConnectors((current) => (
         current.some((item) => item.id === connector.id) ? current : [...current, connector]
       ));
-      replaceMentionWithText(`${inlineMentionToken(connector.name)} `);
+      replaceMentionWithText('');
     }
 
     async function applyProjectSkill(skill: SkillSummary): Promise<boolean> {
@@ -1183,6 +1201,91 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           .sort((a, b) => skillMentionRank(a, mentionQuery) - skillMentionRank(b, mentionQuery))
       : [];
 
+    // --- ProseMirror suggestion adapters --------------------------------
+    // Drive the in-editor `@`/`/` popover (keystrokes that originate
+    // inside the PM editor — real users). The legacy MentionPopover /
+    // SlashPopover stay wired to the hidden mirror textarea so the test
+    // suite is unaffected. Items carry a `value` (the literal text to
+    // insert) and an `id` namespaced by source so `handlePmPickItem` can
+    // replay the same side effects the textarea-path insert helpers do.
+    const slashAdapter = useMemo<SuggestionAdapter>(
+      () => ({
+        search: (query: string): SuggestionItem[] => {
+          const q = query.toLowerCase();
+          return slashCommands
+            .filter((c) => !q || c.label.toLowerCase().includes(q))
+            .map((c) => ({
+              id: `slash:${c.id}`,
+              // Insert the canonical command form as a single slash atom.
+              // We strip a trailing space (the chip + insertSuggestion's
+              // own trailing space replaces it) and keep the leading `/`.
+              value: c.insert.trimEnd(),
+              label: c.label,
+              description: t(c.descKey),
+            }));
+        },
+      }),
+      [slashCommands, t],
+    );
+    const mentionAdapter = useMemo<SuggestionAdapter>(
+      () => ({
+        search: (query: string): SuggestionItem[] => {
+          const q = query.toLowerCase();
+          const out: SuggestionItem[] = [];
+          for (const p of pluginsForComposer) {
+            if (q && !pluginMatchesQuery(p, q)) continue;
+            out.push({ id: `plugin:${p.id}`, value: inlineMentionToken(p.title), label: p.title, description: p.manifest?.description ?? p.id });
+          }
+          for (const s of skills) {
+            if (stagedSkillIds.has(s.id)) continue;
+            if (q && !skillMatchesQuery(s, q)) continue;
+            out.push({ id: `skill:${s.id}`, value: inlineMentionToken(s.name), label: s.name, description: s.description || s.id });
+          }
+          for (const s of enabledMcpServers) {
+            const label = s.label || s.id;
+            if (q && !mcpServerMatchesQuery(s, q)) continue;
+            out.push({ id: `mcp:${s.id}`, value: inlineMentionToken(label), label, description: s.transport });
+          }
+          for (const c of connectors) {
+            if (q && ![c.id, c.name, c.provider, c.category].join(' ').toLowerCase().includes(q)) continue;
+            out.push({ id: `connector:${c.id}`, value: inlineMentionToken(c.name), label: c.name, description: c.description || c.provider });
+          }
+          for (const f of projectFiles) {
+            if (f.type !== undefined && f.type !== 'file') continue;
+            const key = f.path ?? f.name;
+            if (q && !key.toLowerCase().includes(q)) continue;
+            out.push({ id: `file:${key}`, value: inlineMentionToken(key), label: key });
+            if (out.length > 40) break;
+          }
+          return out;
+        },
+      }),
+      [pluginsForComposer, skills, stagedSkillIds, enabledMcpServers, connectors, projectFiles],
+    );
+    // Replay the textarea-path side effects when the user picks an item
+    // inside the PM editor (text insertion already done by the editor).
+    function handlePmPickItem(item: SuggestionItem) {
+      const [source, ...rest] = item.id.split(':');
+      const id = rest.join(':');
+      if (source === 'plugin') {
+        const record = installedPlugins.find((p) => p.id === id);
+        if (record) void pluginsSectionRef.current?.applyById(record.id, record);
+      } else if (source === 'skill') {
+        const skill = skills.find((s) => s.id === id);
+        if (skill) void applyProjectSkill(skill);
+      } else if (source === 'mcp') {
+        const server = enabledMcpServers.find((s) => s.id === id);
+        if (server) setStagedMcpServers((cur) => (cur.some((x) => x.id === server.id) ? cur : [...cur, server]));
+      } else if (source === 'connector') {
+        const connector = connectors.find((c) => c.id === id);
+        if (connector) setStagedConnectors((cur) => (cur.some((x) => x.id === connector.id) ? cur : [...cur, connector]));
+      } else if (source === 'file') {
+        if (!staged.some((s) => s.path === id)) {
+          setStaged((s) => [...s, { path: id, name: id.split('/').pop() || id, kind: looksLikeImage(id) ? 'image' : 'file' }]);
+        }
+      }
+    }
+
     return (
       <div
         className={`composer${dragActive ? " drag-active" : ""}`}
@@ -1199,6 +1302,22 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             <StagedSkills
               skills={stagedSkills}
               onRemove={removeStagedSkill}
+              t={t}
+            />
+          ) : null}
+          {stagedMcpServers.length > 0 ? (
+            <StagedContextChips
+              kind="mcp"
+              items={stagedMcpServers.map((s) => ({ id: s.id, label: s.label || s.id }))}
+              onRemove={(id) => setStagedMcpServers((prev) => prev.filter((s) => s.id !== id))}
+              t={t}
+            />
+          ) : null}
+          {stagedConnectors.length > 0 ? (
+            <StagedContextChips
+              kind="connector"
+              items={stagedConnectors.map((c) => ({ id: c.id, label: c.name }))}
+              onRemove={(id) => setStagedConnectors((prev) => prev.filter((c) => c.id !== id))}
               t={t}
             />
           ) : null}
@@ -1319,12 +1438,42 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             }`}
           >
             <div className="composer-textarea-layer">
+              {/*
+                The visible editor is now ProseMirror (chips are real atom
+                nodes, no drifting overlay). The <textarea> below is kept
+                as a hidden, controlled mirror of `draft` so:
+                  - the test suite drives it (`fireEvent.change` + `.value`),
+                  - AT / IME / the selection-based insert helpers
+                    (insertMention etc.) keep a real form control, and
+                  - paste-of-files + slash/mention popover keyboard nav
+                    keep their existing wiring.
+                PM edits write `draft` via onChange; `draft` flows back into
+                both surfaces, so they never diverge.
+              */}
+              <ProseMirrorComposerInput
+                ref={pmRef}
+                value={draft}
+                placeholder={t('chat.composerPlaceholder')}
+                slashAdapter={slashAdapter}
+                mentionAdapter={mentionAdapter}
+                knownMentionTokens={knownMentionTokens}
+                onChange={(text) => setDraft(text)}
+                onSubmit={() => void submit()}
+                onPickItem={handlePmPickItem}
+                onPasteFiles={(files) => void uploadFiles(files)}
+              />
+              {/*
+                Hidden semantic mirror of the parsed mention parts. The PM
+                editor now renders chips visually; this node carries the
+                same `@token` text for AT + the existing test assertions
+                that read `chat-composer-mention-overlay`.textContent. It is
+                visually clipped (pm-composer-mirror) — not a visible layer.
+              */}
               {composerMentionParts ? (
                 <div
-                  className="composer-input-overlay"
+                  className="pm-composer-mirror--hidden"
                   data-testid="chat-composer-mention-overlay"
                   aria-hidden="true"
-                  style={{ ['--composer-input-scroll' as string]: `${composerScrollTop}px` }}
                 >
                   <div className="composer-input-overlay-inner">
                     {composerMentionParts.map((part, index) =>
@@ -1349,9 +1498,17 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                 // ph-no-capture: prompt content is the most sensitive
                 // surface in the product. PostHog autocapture skips this
                 // element + subtree entirely.
-                className="ph-no-capture"
+                // pm-composer-mirror: visually hidden (clipped) but still a
+                // real, focusable, controlled textarea — NOT the visible
+                // editor. See the comment above; PM is what the user sees.
+                className="ph-no-capture pm-composer-mirror"
+                aria-hidden="true"
+                tabIndex={-1}
                 value={draft}
-                placeholder={t('chat.composerPlaceholder')}
+                // No placeholder: this textarea is the hidden mirror; the
+                // visible PM editor renders the placeholder. A placeholder
+                // here leaked over the PM text when a high-specificity rule
+                // re-expanded the textarea.
                 spellCheck={false}
                 onChange={handleChange}
                 onPaste={handlePaste}
@@ -1896,6 +2053,50 @@ function StagedSkills({
             onClick={() => onRemove(s.id)}
             title={t('common.delete')}
             aria-label={`Remove skill ${s.id}`}
+          >
+            <Icon name="close" size={11} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Top chips for staged MCP servers / connectors. Skills already have
+// StagedSkills; MCP + connectors previously had NO visible chip and relied
+// solely on an `@token` in the prompt body. Now that picking a context
+// surface no longer injects that token, this chip is their visible anchor
+// + remove affordance (parallel to StagedSkills). The selection is still
+// carried to the backend via meta.context (mcpServerIds / connectorIds).
+function StagedContextChips({
+  kind,
+  items,
+  onRemove,
+  t,
+}: {
+  kind: 'mcp' | 'connector';
+  items: { id: string; label: string }[];
+  onRemove: (id: string) => void;
+  t: TranslateFn;
+}) {
+  return (
+    <div
+      className={`staged-row staged-context-row staged-context-row--${kind}`}
+      data-testid={`staged-${kind}`}
+    >
+      {items.map((item) => (
+        <div key={item.id} className={`staged-chip staged-context staged-context--${kind}`}>
+          <span className="staged-icon" aria-hidden>
+            <Icon name="link" size={12} />
+          </span>
+          <span className="staged-name" title={item.label}>
+            {item.label}
+          </span>
+          <button
+            className="staged-remove"
+            onClick={() => onRemove(item.id)}
+            title={t('common.delete')}
+            aria-label={`Remove ${kind} ${item.label}`}
           >
             <Icon name="close" size={11} />
           </button>

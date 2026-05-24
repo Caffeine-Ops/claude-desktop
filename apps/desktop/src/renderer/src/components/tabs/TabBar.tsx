@@ -133,21 +133,30 @@ function TabPill({
   // All tabs share the same shape — uniformly rounded pills that
   // `flex-1` into the available width. Height is 28px (h-7) for a
   // compact Safari feel. Min-width is tight so a packed strip
-  // collapses down to just the favicon + truncated letters.
+  // collapses down to just the favicon + truncated letters. A 1px
+  // transparent border keeps inactive/active the same box size so the
+  // active border doesn't nudge layout — mirrors web `.workspace-tab`
+  // (border: 1px solid transparent → border-color on .is-active).
   const sharedClass =
-    'group relative flex flex-1 h-7 items-center gap-2 pl-2.5 pr-1.5 rounded-lg text-[12.5px] leading-none transition-colors cursor-default select-none min-w-[56px] max-w-[240px]'
+    'group relative flex flex-1 h-7 items-center gap-2 pl-2.5 pr-1.5 rounded-lg border border-transparent text-[12.5px] leading-none transition-colors cursor-default select-none min-w-[56px] max-w-[240px]'
 
-  // Active: white fill + soft elevation shadow + full-weight
-  // foreground text. This is what makes a pill "pop" off the
-  // translucent toolbar material — same contrast trick Safari
-  // and Finder use for the selected row in their chrome.
+  // Active: the strip itself is the web Open Design tab's warm black (see
+  // `.dark .shell-chrome` in main.css), so a solid gray card fill would
+  // clash with it. Instead the active pill
+  // lifts off the bar with a very faint FOREGROUND wash (≈7%) plus a
+  // hairline foreground border — enough to read as "selected" without
+  // breaking the pure-black aesthetic. Using `foreground` (not literal
+  // white) keeps it correct in BOTH themes: a faint dark tint on the
+  // light bar, a faint white tint on the black bar — the same
+  // theme-agnostic trick web's `.workspace-tab` uses with
+  // `color-mix(--text …, transparent)`. Text firms to full foreground.
   const activeClass =
-    'bg-background text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_0_rgba(255,255,255,0.8)_inset] ring-1 ring-black/[0.08] dark:ring-white/[0.08]'
+    'bg-foreground/[0.07] text-foreground border-foreground/[0.1]'
 
-  // Inactive: transparent, with a gentle hover wash. No border,
-  // no divider — the gap-1 on the parent does all the separation.
+  // Inactive: transparent, with a gentle neutral hover wash. Border stays
+  // transparent so only the active pill shows a hairline.
   const inactiveClass =
-    'bg-transparent text-muted-foreground/80 hover:bg-foreground/[0.05] hover:text-foreground/90'
+    'bg-transparent text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground/90'
 
   return (
     <div
@@ -168,7 +177,14 @@ function TabPill({
       >
         {letter}
       </span>
-      <span className="min-w-0 flex-1 truncate">{tab.title}</span>
+      {/* Active label firms to medium (500), echoing web
+          `.workspace-tab.is-active .workspace-tab__label { font-weight: 500 }`
+          so "which tab am I on" reads at a glance — the same emphasis
+          cue the web chrome uses now that the fill is a subtle lifted
+          card rather than a high-contrast white. */}
+      <span className={`min-w-0 flex-1 truncate ${tab.active ? 'font-medium' : ''}`}>
+        {tab.title}
+      </span>
       {/* Apple-style red notification badge — only rendered when the
           tab's engine has at least one unresolved tool-permission
           request across any of its session runtimes. The ring color

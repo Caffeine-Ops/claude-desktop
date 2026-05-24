@@ -70,9 +70,14 @@ const isShell = search.get('shell') === '1'
       }
       if (background) {
         const bg = hexToHsl(background)
+        // Mirror the applier: canvas = chosen bg; card one elevation step up,
+        // popover (menus + the composer card) two steps up, so floating
+        // surfaces read as distinct planes instead of flattening to one hex.
+        const card = shiftL(bg, isDark ? 3 : -2)
+        const popover = shiftL(bg, isDark ? 6 : -4)
         root.style.setProperty('--background', bg)
-        root.style.setProperty('--card', bg)
-        root.style.setProperty('--popover', bg)
+        root.style.setProperty('--card', card)
+        root.style.setProperty('--popover', popover)
         root.style.setProperty('--sidebar', bg)
       }
       if (foreground) {
@@ -128,6 +133,15 @@ const isShell = search.get('shell') === '1'
       h *= 60
     }
     return `${Math.round(h)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`
+  }
+
+  // Lift/lower the lightness of an "h s% l%" triplet — mirror of the
+  // applier's shiftLightness (boot is a standalone IIFE so it can't import).
+  function shiftL(hsl: string, deltaL: number): string {
+    const mm = /^(\d+)\s+(\d+)%\s+(\d+)%$/.exec(hsl.trim())
+    if (!mm) return hsl
+    const ll = Math.max(0, Math.min(100, Number(mm[3]) + deltaL))
+    return `${mm[1]} ${mm[2]}% ${ll}%`
   }
 })()
 
