@@ -11,6 +11,7 @@ import { is } from '@electron-toolkit/utils'
 import appIcon from '../../resources/icon.png?asset'
 import { ChatEngine, createChatEngine } from './core/engine'
 import { clearUnread } from './tray'
+import { addLogSubscriber, removeLogSubscriber } from './core/logCollector'
 import { resolveWebTabUrl, resolveWebSettingsUrl } from './services/openDesignServices'
 import {
   IPC_CHANNELS,
@@ -793,6 +794,14 @@ export function openSettingsView(): void {
   // Load the Open Design web app's settings entry (dev: localhost:3000,
   // prod: app://). loadIntoWebContents handles both URL shapes.
   loadIntoWebContents(view.webContents, resolveWebSettingsUrl())
+
+  // Register the overlay as a live log-stream target so the「日志分析」panel
+  // receives lines as they're produced. Registering here (not on
+  // did-finish-load) is fine: the panel pulls a full snapshot via getLogs on
+  // mount, covering anything streamed before its listener attached. Being in
+  // the subscriber set also tells attachRendererCapture to skip this view's
+  // own console, so the panel doesn't echo its own render noise.
+  addLogSubscriber(view.webContents)
 }
 
 /**
@@ -804,6 +813,10 @@ export function closeSettingsView(): void {
   const view = settingsView
   settingsView = null
   if (!view) return
+  // Stop live log pushes to this view before tearing it down. The collector
+  // also self-cleans on the webContents' `destroyed` event, but unsubscribing
+  // explicitly here keeps the close path unambiguous.
+  removeLogSubscriber(view.webContents)
   if (shellWindow && !shellWindow.isDestroyed()) {
     try {
       shellWindow.contentView.removeChildView(view)

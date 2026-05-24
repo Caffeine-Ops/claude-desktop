@@ -353,6 +353,25 @@ export const IPC_CHANNELS = {
    */
   SETTINGS_CLI_BACKEND_SET: 'settings:cli-backend-set',
   /**
+   * Settings-overlay renderer → main (invoke). Pull the current runtime-log
+   * ring buffer snapshot so the「日志分析」panel can paint its initial view.
+   * Engine-free — reads the process-global logCollector directly.
+   */
+  LOGS_GET: 'settings:logs-get',
+  /**
+   * Settings-overlay renderer → main (invoke). Clear the in-memory log ring
+   * (does not touch the on-disk log file). Returns nothing.
+   */
+  LOGS_CLEAR: 'settings:logs-clear',
+  /**
+   * Main → settings-overlay renderer (send). One runtime-log line, pushed
+   * live as it is produced (main console / daemon child / renderer console).
+   * The overlay subscribes via `electronSettings.onLog` and appends each
+   * entry. Only fires while the overlay is registered as a log subscriber
+   * (open); torn down on close so a destroyed view never receives sends.
+   */
+  LOGS_STREAM: 'settings:logs-stream',
+  /**
    * Main → active chat tab renderer. The forwarded counterpart of
    * TAB_TRIGGER_MENU_ACTION. The chat renderer subscribes once on mount
    * and maps each action onto its local store (open settings / open logs /
@@ -592,6 +611,29 @@ export interface CliBackendState {
 }
 
 export type CliBackendSetPayload = { mode: CliBackendMode }
+
+/**
+ * Origin of a runtime-log line shown in the「日志分析」panel.
+ * - `main`     — this Electron main process's console.* (patched).
+ * - `daemon`   — the spawned Open Design daemon child's stdout/stderr.
+ * - `web`      — the dev-only web dev server (next dev) child's output.
+ * - `renderer` — a tab/overlay renderer process's console-message.
+ */
+export type LogSource = 'main' | 'daemon' | 'web' | 'renderer'
+
+/**
+ * One line of runtime log. `seq` is a monotonically increasing id used as a
+ * stable React key and to dedupe the initial snapshot against live-streamed
+ * lines. `ts` is epoch ms. `text` is a single line (the collector splits
+ * multi-line output before emitting), already ANSI-stripped and length-capped.
+ */
+export interface RuntimeLogEntry {
+  seq: number
+  ts: number
+  source: LogSource
+  level: 'info' | 'warn' | 'error' | 'debug'
+  text: string
+}
 
 /**
  * UI-facing permission mode. Mirrors the Agent SDK's `PermissionMode`

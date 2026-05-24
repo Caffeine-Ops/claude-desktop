@@ -72,8 +72,10 @@ import type {
   LangChangedPayload,
   PermissionModeGetResult,
   PermissionModeSetPayload,
+  RuntimeLogEntry,
   UiPermissionMode
 } from '../../shared/ipc-channels'
+import { clearLogs, getLogs } from '../core/logCollector'
 
 /**
  * Resolve the ChatEngine for the window that sent this IPC event.
@@ -169,6 +171,8 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE)
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_CLI_BACKEND_GET)
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_CLI_BACKEND_SET)
+  ipcMain.removeHandler(IPC_CHANNELS.LOGS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.LOGS_CLEAR)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -814,6 +818,17 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE, async (): Promise<void> => {
     closeSettingsView()
+  })
+
+  // Runtime-log read/clear for the「日志分析」settings section. Engine-free —
+  // they touch the process-global logCollector directly. Live streaming is a
+  // separate `send` channel (LOGS_STREAM); the overlay registers as a push
+  // subscriber in openSettingsView and unregisters in closeSettingsView.
+  ipcMain.handle(IPC_CHANNELS.LOGS_GET, async (): Promise<RuntimeLogEntry[]> => {
+    return getLogs()
+  })
+  ipcMain.handle(IPC_CHANNELS.LOGS_CLEAR, async (): Promise<void> => {
+    clearLogs()
   })
 
   // Engine-free CLI backend read/write for the embedded web settings page.

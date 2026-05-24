@@ -24,10 +24,37 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { homedir } from 'node:os'
+import { app } from 'electron'
 import { is } from '@electron-toolkit/utils'
+
+import { pushLog } from '../core/logCollector'
+import type { LogSource } from '../../shared/ipc-channels'
+
+/**
+ * Pipe a spawned child's stdout/stderr into the runtime-log collector while
+ * still echoing it to our own terminal. Replaces the previous `stdio:
+ * 'inherit'`, which gave the child our fds directly so main never saw the
+ * bytes — the「日志分析」panel needs the content, not just the terminal.
+ *
+ * stdin stays inherited; only the two output streams are piped. stderr is
+ * tagged `error` level so daemon crashes (e.g. the ECONNREFUSED dump) stand
+ * out in the panel.
+ */
+function pipeChildToCollector(child: ChildProcess, source: LogSource): void {
+  child.stdout?.on('data', (chunk: Buffer) => {
+    const text = chunk.toString('utf8')
+    process.stdout.write(text)
+    pushLog(source, 'info', text)
+  })
+  child.stderr?.on('data', (chunk: Buffer) => {
+    const text = chunk.toString('utf8')
+    process.stderr.write(text)
+    pushLog(source, 'error', text)
+  })
+}
 
 /** daemon 绑定端口。与 apps/daemon/src/cli.ts 默认值一致。 */
 export const DAEMON_PORT = 7456
@@ -52,11 +79,26 @@ let cachedRepoRoot: string | null = null
 const APP_PROTOCOL_ORIGIN = 'app://open-design'
 
 /**
- * 定位 monorepo 仓库根。dev 下主进程 bundle 在 apps/desktop/out/main，
- * 往上三级到仓库根（free-code/cli 的路径解析同款逻辑，见 engine.ts）。
- * prod 下走 process.resourcesPath（打包时 daemon 随 app 资源一起发）。
+ * 定位「仓库根」——即一个能 join('apps','daemon','dist',...) / join('apps','web','out')
+ * 找到 daemon bundle、web 静态产物、skills/design-systems 等资源的根目录。
+ *
+ * - **prod（打包后）**：资源由 electron-builder 的 extraResources 投放到
+ *   `process.resourcesPath/prebundled`，内部刻意复刻 monorepo 的 `apps/daemon/dist`、
+ *   `apps/web/out`、`skills/` 等布局，让 daemon 的 resolveProjectRoot(__dirname) 算出
+ *   的 PROJECT_ROOT 正好落在这个 prebundled 根上（见 prebundle-daemon.mjs）。daemon
+ *   的资源安全校验（OD_RESOURCE_ROOT 必须在 PROJECT_ROOT 之下）也因此天然满足。
+ * - **dev**：主进程 bundle 在 apps/desktop/out/main，往上三级到仓库根；兜底用 cwd。
+ *
+ * app.isPackaged 比 is.dev 更权威（is.dev 看的是 ELECTRON_RENDERER_URL，prebundle
+ * 阶段未必置位）。
  */
 function resolveRepoRoot(selfDir: string): string {
+  if (app.isPackaged) {
+    const prebundled = join(process.resourcesPath, 'prebundled')
+    // prod 必须能找到 daemon bundle；找不到说明打包漏投，直接返回该路径让上层
+    // spawnDaemon 的 existsSync 检查报「daemon cli not found」而非静默走 dev 路径。
+    return prebundled
+  }
   // apps/desktop/out/main → ../../.. = repo 根
   const fromBundle = join(selfDir, '../../..')
   if (existsSync(join(fromBundle, 'apps', 'daemon'))) return fromBundle
@@ -71,32 +113,69 @@ function resolveRepoRoot(selfDir: string): string {
  * 二进制，ABI 与 better-sqlite3 不匹配）。
  *
  * 不变量：daemon 的 better-sqlite3 .node 按仓库 .nvmrc 钉的 Node 版本（当前 24 =
- * ABI 137）编译。所以这里**不能**裸返回 'node' 赌 PATH——GUI 启动的 Electron 继承的
- * 父 shell PATH 可能是别的 nvm 版本（实测踩过：父 shell 是 Node 22/ABI 127，daemon
- * dlopen 那份 ABI 137 的 .node 直接 ERR_DLOPEN_FAILED 崩掉）。
+ * ABI 137）编译。所以这里**绝不能裸返回 'node' 赌 PATH**——这是踩过两次的坑：
+ *  - dev：GUI 启动的 Electron 继承的父 shell PATH 可能是别的 nvm 版本。
+ *  - prod：`spawnDaemon` 给 daemon 的 PATH 里拼了 `buildAgentDetectionPath()`，
+ *    它枚举了 nvm **所有**版本的 bin（v18/v22/v24…），裸 'node' 会按字典序撞上
+ *    **第一个**（v18/v22 而非 v24），ABI 错配 → ERR_DLOPEN_FAILED → daemon 立即
+ *    exit 1 → waitForDaemonReady 等满 30s 超时 → web tab「无法连接本地 daemon」+
+ *    总启动卡 ~40s。
+ *    见 [[2026-05-23-prod缺nvmrc回退裸node撞ABI致daemon起不来]]、
+ *    [[2026-05-23-daemon子进程裸node赌PATH撞ABI错配崩溃]]。
  *
- * 优先级：① OD_NODE_BIN 显式覆盖 → ② 读 .nvmrc 钉的版本，拼 nvm 绝对路径（命中即用，
- * 保证 ABI 与编译期一致）→ ③ 兜底裸 'node'（nvm 布局不存在时退回旧行为，不比从前差）。
+ * prod 下 repoRoot == <prebundled>，prebundle-daemon.mjs 已把仓库 .nvmrc 拷进去，
+ * 所以这里读 `repoRoot/.nvmrc` 在 dev/prod 都能拿到钉死的版本。
+ *
+ * 优先级：① OD_NODE_BIN 显式覆盖 → ② 读 .nvmrc 钉的版本，拼 nvm 绝对路径 →
+ * ③ .nvmrc 读不到/那个版本没装时，扫 nvm 目录挑**最高**版本（绝不挑随机版本，
+ * 至少避开按字典序撞 v18）→ ④ 实在没有 nvm 才裸 'node'（赌运行环境，最后手段）。
  */
 function resolveNodeBin(repoRoot: string): string {
   const override = process.env.OD_NODE_BIN
   if (override && existsSync(override)) return override
 
-  // 读仓库根 .nvmrc 钉的版本，拼 ~/.nvm/versions/node/v<ver>/bin/node。
+  const nvmNodeDir = join(homedir(), '.nvm', 'versions', 'node')
+
+  // ② 读 .nvmrc 钉的版本，拼 ~/.nvm/versions/node/v<ver>/bin/node。
   // .nvmrc 可能写 "24.16.0" 或 "v24.16.0"，统一去掉前缀 v 再补回。
   try {
     const nvmrc = readFileSync(join(repoRoot, '.nvmrc'), 'utf8').trim()
     if (nvmrc) {
       const ver = nvmrc.replace(/^v/, '')
-      const pinned = join(homedir(), '.nvm', 'versions', 'node', `v${ver}`, 'bin', 'node')
+      const pinned = join(nvmNodeDir, `v${ver}`, 'bin', 'node')
       if (existsSync(pinned)) return pinned
-      console.warn(`[od-services] .nvmrc 钉 v${ver} 但 ${pinned} 不存在，回退 PATH 上的 node`)
+      console.warn(`[od-services] .nvmrc 钉 v${ver} 但 ${pinned} 不存在，尝试 nvm 最高版本`)
     }
   } catch {
-    // 没 .nvmrc 或读不动，回退裸 'node'
+    // 没 .nvmrc 或读不动，落到 ③
   }
 
-  // 兜底：PATH 上找 node。spawn 时 shell:false，给裸 'node' 让 spawn 用 PATH 解析。
+  // ③ 扫 nvm 目录挑最高的 major（语义版本降序）。better-sqlite3 通常向上兼容到
+  // 更高的 Node major（ABI 单调递增），挑最高比挑字典序第一（可能是 v18）安全得多。
+  try {
+    const versions = readdirSync(nvmNodeDir)
+      .filter((v) => /^v\d+/.test(v))
+      .sort((a, b) => {
+        const pa = a.slice(1).split('.').map(Number)
+        const pb = b.slice(1).split('.').map(Number)
+        for (let i = 0; i < 3; i++) {
+          if ((pb[i] ?? 0) !== (pa[i] ?? 0)) return (pb[i] ?? 0) - (pa[i] ?? 0)
+        }
+        return 0
+      })
+    for (const v of versions) {
+      const cand = join(nvmNodeDir, v, 'bin', 'node')
+      if (existsSync(cand)) {
+        console.warn(`[od-services] 用 nvm 最高版本 node: ${cand}`)
+        return cand
+      }
+    }
+  } catch {
+    // 没装 nvm，落到 ④
+  }
+
+  // ④ 实在没有 nvm 布局，裸 'node' 赌 PATH（spawn shell:false 用 PATH 解析）。最后手段。
+  console.warn('[od-services] 找不到 nvm node，回退裸 node（ABI 可能不匹配）')
   return 'node'
 }
 
@@ -110,26 +189,85 @@ function resolveBunBin(): string {
 }
 
 /**
+ * 构造一段「补丁 PATH」，拼到 daemon 子进程 PATH 之后，让 daemon 的 agent 检测
+ * （detectAgents：probe `claude`/`codex`/`gemini`/`opencode`/`cursor-agent`/…）
+ * 能在 GUI 启动场景下找到这些 CLI。
+ *
+ * 为什么必须补：GUI（Finder/Dock）启动的 Electron 继承的是 launchd 的精简 PATH
+ * （`/usr/bin:/bin:/usr/sbin:/sbin`），**不含**用户 shell rc 里注入的 nvm / bun /
+ * homebrew / ~/.local/bin 等目录。而本机 agent CLI 恰恰几乎全装在这些目录里
+ * （实测：claude→~/.local/bin，gemini→~/.nvm/.../bin，codex/opencode→/opt/homebrew/bin，
+ * cursor-agent→~/.local/bin）。不补全 PATH，daemon 的 `which <agent>` 全部 ENOENT，
+ * 设置页就报「尚未检测到任何代理」，且每个 agent 都要走完一次失败 probe 拖慢启动。
+ *
+ * nvm 是按版本分目录的（versions/node/v<x>/bin），用户机上可能有多版本，所以
+ * 枚举整个 versions/node/ 把每个版本的 bin 都加进去（哪个版本装了全局 CLI 事先不知）。
+ * 全部用 existsSync 守卫，目录不存在就跳过——补丁 PATH 只增不减，不会破坏已有解析。
+ */
+function buildAgentDetectionPath(): string {
+  const home = process.env.HOME ?? homedir()
+  const dirs = [
+    join(home, '.local', 'bin'), // claude, cursor-agent
+    join(home, '.bun', 'bin'), // bun 装的全局 CLI
+    '/opt/homebrew/bin', // Apple Silicon homebrew：codex, opencode
+    '/usr/local/bin' // Intel homebrew / 手动安装
+  ]
+
+  // nvm：枚举每个已安装 Node 版本的 bin（gemini 等 npm 全局 CLI 落在这）。
+  const nvmVersions = join(home, '.nvm', 'versions', 'node')
+  try {
+    for (const ver of readdirSync(nvmVersions)) {
+      dirs.push(join(nvmVersions, ver, 'bin'))
+    }
+  } catch {
+    // 没装 nvm 或读不动，跳过
+  }
+
+  return dirs.filter((d) => existsSync(d)).join(delimiter)
+}
+
+/**
  * 拉起 daemon 子进程。注入 origin 白名单（含 web dev origin），cwd 设为仓库根
  * 以便 daemon 的 resolveProjectRoot 能找到 skills/design-systems 等资产。
+ *
+ * prod 与 dev 的 daemon 入口/数据布局不同：
+ *  - **dev**：跑仓库内 `apps/daemon/dist/cli.js`，数据写仓库 `.od/`，资源就在仓库里。
+ *  - **prod**：跑 prebundle 出的单文件 `apps/daemon/dist/daemon-cli.mjs`（esbuild 把
+ *    daemon 全部 JS 依赖打成一个 mjs，仅 better-sqlite3/blake3-wasm 留作 external，
+ *    随包带原生 .node）。此时必须额外注入：
+ *      · OD_BIN —— daemon 自我 spawn 子命令（MCP/artifacts CLI）时用，bundle 后
+ *        require.resolve('@open-design/daemon') 失效，靠这个逃生口指回 mjs 自己。
+ *      · OD_DATA_DIR —— 项目数据目录。app 资源目录是只读的（/Applications 下），
+ *        不能往里写 .od/，所以指到用户可写的 userData。
+ *      · OD_RESOURCE_ROOT —— skills/design-systems 等资源根。daemon 有安全校验
+ *        （必须在 PROJECT_ROOT 之下），prebundled 布局已让 PROJECT_ROOT == repoRoot，
+ *        所以这里传 repoRoot 即合法。
  */
 function spawnDaemon(repoRoot: string): void {
   if (daemonProc && !daemonProc.killed) return
 
-  const cliPath = join(repoRoot, 'apps', 'daemon', 'dist', 'cli.js')
+  // prod 跑 prebundle 单文件 mjs；dev 跑仓库内 tsc 产物 cli.js。
+  const cliPath = app.isPackaged
+    ? join(repoRoot, 'apps', 'daemon', 'dist', 'daemon-cli.mjs')
+    : join(repoRoot, 'apps', 'daemon', 'dist', 'cli.js')
   if (!existsSync(cliPath)) {
     console.warn(`[od-services] daemon cli not found at ${cliPath} — skipping spawn`)
     return
   }
 
   const nodeBin = resolveNodeBin(repoRoot)
-  // PATH 兜底：dev 下 GUI 启动的 Electron 可能拿不到 nvm 注入的 PATH，
-  // 补上 ~/.nvm 当前 node 目录与 /usr/local/bin、/opt/homebrew/bin。
-  const extraPath = [
-    join(process.env.HOME ?? '', '.bun', 'bin'),
-    '/opt/homebrew/bin',
-    '/usr/local/bin'
-  ].join(delimiter)
+  const extraPath = buildAgentDetectionPath()
+
+  // prod：项目数据写到用户可写目录（app 资源目录只读）。dev 留空，daemon 默认写
+  // 仓库 .od/。提前建好，避免 daemon 首次 mkdir 时 race。
+  const prodDataDir = app.isPackaged ? join(app.getPath('userData'), 'od-data') : null
+  if (prodDataDir) {
+    try {
+      mkdirSync(prodDataDir, { recursive: true })
+    } catch (err) {
+      console.warn('[od-services] failed to create prod data dir:', err)
+    }
+  }
 
   daemonProc = spawn(nodeBin, [cliPath, '--no-open'], {
     cwd: repoRoot,
@@ -146,10 +284,23 @@ function spawnDaemon(repoRoot: string): void {
       // 非浏览器请求放行（server.ts: origin==null → next()），根本不走白名单。
       OD_ALLOWED_ORIGINS: `${WEB_DEV_ORIGIN},http://127.0.0.1:${WEB_DEV_PORT}`,
       OD_WEB_PORT: String(WEB_DEV_PORT),
-      OD_PORT: String(DAEMON_PORT)
+      OD_PORT: String(DAEMON_PORT),
+      // prod 专属：daemon bundle 后的自我定位 + 可写数据目录 + 资源根。dev 不设，
+      // 让 daemon 走仓库内默认路径。
+      ...(app.isPackaged
+        ? {
+            OD_BIN: cliPath,
+            OD_DATA_DIR: prodDataDir as string,
+            OD_RESOURCE_ROOT: repoRoot
+          }
+        : {})
     },
-    stdio: 'inherit'
+    // stdin inherited, stdout/stderr piped so the「日志分析」panel can capture
+    // the daemon's output (the ECONNREFUSED dump etc.) — pipeChildToCollector
+    // still echoes both to our terminal, so `bun run dev` reads the same.
+    stdio: ['inherit', 'pipe', 'pipe']
   })
+  pipeChildToCollector(daemonProc, 'daemon')
 
   daemonProc.on('exit', (code, signal) => {
     console.log(`[od-services] daemon exited code=${code} signal=${signal}`)
@@ -182,8 +333,11 @@ function spawnWebDev(repoRoot: string): void {
       // 让 next.config 的代理把 /api 指向我们的 daemon 端口。
       OD_PORT: String(DAEMON_PORT)
     },
-    stdio: 'inherit'
+    // 同 daemon：pipe stdout/stderr 进 collector（next dev 的 Local URL /
+    // 编译日志），pipeChildToCollector 仍回显到终端。
+    stdio: ['inherit', 'pipe', 'pipe']
   })
+  pipeChildToCollector(webProc, 'web')
 
   webProc.on('exit', (code, signal) => {
     console.log(`[od-services] web dev exited code=${code} signal=${signal}`)
@@ -277,9 +431,18 @@ export function stopOpenDesignServices(): void {
  *  - prod：app:// 自定义协议（appProtocol.ts），直接读磁盘 out/，不占端口、
  *    不再让 daemon serve 页面（daemon 只保留作 /api 后端）。结尾的 / 是必需的，
  *    standard scheme 下 app://open-design 不带路径会被当成无 path 而非根。
+ *
+ * 末尾的 `?host=desktop` 是给嵌入的 web 应用的「我在桌面壳里」信号：这个
+ * web tab **故意不挂任何 preload**（见 newWebTab 注释），所以 web 端没有
+ * 任何注入的全局对象（`__od__` / `electronSettings` / `chatApi` 全都没有）
+ * 可供识别宿主——只能靠 URL 查询参数。web 端 EntryShell 读到它后会隐藏
+ * 自己的设置齿轮，避免和 shell 顶栏常驻的设置入口（UserInfoBar）重复。
+ * 沿用 resolveWebSettingsUrl 的 `?settings=1` 同款查询参数约定。
  */
 export function resolveWebTabUrl(): string {
-  return is.dev ? WEB_DEV_ORIGIN : `${APP_PROTOCOL_ORIGIN}/`
+  return is.dev
+    ? `${WEB_DEV_ORIGIN}/?host=desktop`
+    : `${APP_PROTOCOL_ORIGIN}/?host=desktop`
 }
 
 /**

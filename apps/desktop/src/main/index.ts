@@ -2,6 +2,15 @@
 // any module that reads auth tokens / model overrides / base URLs runs.
 import './bootstrap/loadEnv'
 
+import { patchConsole, attachRendererCapture } from './core/logCollector'
+
+// Tap this process's console.* as early as possible so the「日志分析」panel
+// captures everything after env load. Idempotent; the file sink opens lazily
+// on first write (after app ready), so calling it here is safe. The two
+// `[loadEnv]` lines printed by the import above run before this and aren't
+// captured — an acceptable gap for the very first startup lines.
+patchConsole()
+
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -155,6 +164,15 @@ app.whenReady().then(async () => {
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
+  })
+
+  // Forward every renderer's console into the runtime-log collector so the
+  // 「日志分析」panel sees tab / shell / overlay console output too. One hook
+  // covers all WebContentsViews (tabs, shell, settings overlay) without
+  // touching each creation site; the collector skips the overlay's own
+  // console to avoid feeding the panel its own render noise.
+  app.on('web-contents-created', (_event, contents) => {
+    attachRendererCapture(contents)
   })
 
   Menu.setApplicationMenu(buildMenu())

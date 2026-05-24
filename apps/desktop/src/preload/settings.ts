@@ -1,9 +1,10 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 import {
   IPC_CHANNELS,
   type CliBackendSetPayload,
-  type CliBackendState
+  type CliBackendState,
+  type RuntimeLogEntry
 } from '../shared/ipc-channels'
 
 /**
@@ -42,6 +43,33 @@ const electronSettings = {
       IPC_CHANNELS.SETTINGS_CLI_BACKEND_SET,
       payload
     ) as Promise<CliBackendState>
+  },
+
+  /**
+   * Snapshot the current runtime-log ring buffer — the「日志分析」panel's
+   * initial fill. Live lines after this point arrive via `onLog`.
+   */
+  getLogs(): Promise<RuntimeLogEntry[]> {
+    return ipcRenderer.invoke(IPC_CHANNELS.LOGS_GET) as Promise<RuntimeLogEntry[]>
+  },
+
+  /** Clear the in-memory log ring (the on-disk file is untouched). */
+  clearLogs(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.LOGS_CLEAR) as Promise<void>
+  },
+
+  /**
+   * Subscribe to live runtime-log lines. Returns an unsubscribe function the
+   * panel calls on unmount — without it, repeated open/close of the settings
+   * overlay would stack duplicate listeners. main only sends while this view
+   * is registered as a subscriber (open), so the listener is dormant
+   * otherwise.
+   */
+  onLog(handler: (entry: RuntimeLogEntry) => void): () => void {
+    const listener = (_event: IpcRendererEvent, entry: RuntimeLogEntry): void =>
+      handler(entry)
+    ipcRenderer.on(IPC_CHANNELS.LOGS_STREAM, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.LOGS_STREAM, listener)
   }
 }
 

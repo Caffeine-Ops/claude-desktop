@@ -9,9 +9,11 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "build:icons": "bash scripts/build-icons.sh",
-    "build:mac": "bun run build:icons && electron-vite build && electron-builder --mac",
-    "build:win": "bun run build:icons && electron-vite build && electron-builder --win",
-    "build:linux": "bun run build:icons && electron-vite build && electron-builder --linux",
+    "prebundle:daemon": "bun scripts/prebundle-daemon.mjs",
+    "verify:fusion": "bun scripts/verify-fusion-bin.mjs",
+    "build:mac": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --mac",
+    "build:win": "bun run verify:fusion win && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --win",
+    "build:linux": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --linux",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "bun run typecheck:node && bun run typecheck:web",
@@ -48,6 +50,10 @@
         {
           "from": "fusion-bin/fusion-code-cli",
           "to": "fusion-code-cli"
+        },
+        {
+          "from": "prebundled",
+          "to": "prebundled"
         }
       ]
     },
@@ -104,6 +110,7 @@
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
+    "esbuild": "^0.28.0",
     "postcss": "^8.5.9",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
