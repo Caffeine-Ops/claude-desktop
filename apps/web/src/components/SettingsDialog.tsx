@@ -2001,7 +2001,10 @@ export function SettingsDialog({
             aria-label={t('common.close')}
             title={t('common.close')}
           >
-            <Icon name="close" size={16} strokeWidth={2} />
+            {/* `✕` glyph (not an SVG icon) to match apps/desktop's shared
+                DialogShell close button, so the close affordance reads the
+                same across desktop dialogs and the web settings modal. */}
+            ✕
           </button>
         </div>
         <header className="modal-head" id="settings-dialog-title">

@@ -2804,7 +2804,11 @@ a.avatar-item:visited {
    =========================================================== */
 .modal-backdrop {
   position: fixed; inset: 0;
-  background: rgba(28, 27, 26, 0.42);
+  /* Match apps/desktop's shared DialogShell backdrop (`bg-black/70
+     backdrop-blur-sm`): a black 70% scrim, not the lighter warm-grey 42%
+     this used before, so the dim behind every web modal reads the same as
+     the desktop dialogs. blur stays 4px (== Tailwind's backdrop-blur-sm). */
+  background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   -webkit-app-region: no-drag;
@@ -3211,12 +3215,13 @@ a.avatar-item:visited {
   pointer-events: auto;
 }
 
-/* Close button. Bare hairline-weight X with no chrome of its own —
-   matching the reference dialog's quiet top-right glyph. It reads as
-   a passive corner control: a muted stroke that warms to full text
-   color on hover and picks up a faint hover plate so the hit target
-   stays legible without the heavier ringed-pill treatment we used
-   before. The autosave pill beside it carries any system feedback. */
+/* Close button. A `✕` glyph in a 28px rounded-md hit target — a 1:1
+   match for apps/desktop's shared DialogShell close button
+   (`size-7 rounded-md text-muted-foreground/80`, hover `bg-muted/80` +
+   `text-foreground`) so the close affordance reads identically across
+   the desktop dialogs and this web settings modal. The token mapping:
+   --text-soft == desktop's muted-foreground/80, --bg-muted == its
+   bg-muted, --text == its foreground. */
 .settings-close {
   display: inline-flex;
   align-items: center;
@@ -3224,16 +3229,18 @@ a.avatar-item:visited {
   width: 28px;
   height: 28px;
   padding: 0;
-  border-radius: 8px;
-  border: 1px solid transparent;
+  border-radius: 6px;
+  border: 0;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1;
   cursor: pointer;
   transition: color 140ms ease, background-color 140ms ease, transform 140ms ease;
 }
 .settings-close:hover {
   color: var(--text);
-  background: var(--bg-subtle);
+  background: color-mix(in srgb, var(--bg-muted) 80%, transparent);
   transform: none;
 }
 .settings-close:active {
