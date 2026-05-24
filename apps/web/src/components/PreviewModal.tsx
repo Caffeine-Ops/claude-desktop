@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import { exportAsHtml, exportAsPdf, exportAsZip, openSandboxedPreviewInNewTab } from '../runtime/exports';
 import { buildSrcdoc } from '../runtime/srcdoc';
@@ -321,7 +322,18 @@ export function PreviewModal({
 
   const showTabs = views.length > 1;
 
-  return (
+  // Render through a portal into <body>. The modal's chrome (z-index: 900
+  // on .ds-modal-backdrop) lives deep inside `.workspace-shell__body`
+  // (grid row 2). The workspace tab strip and the project chrome header
+  // sit in their own stacking contexts (z-index: 120/140) at the shell
+  // level — so an in-tree backdrop, however high its z-index, can never
+  // paint over those siblings (z-index only compares within a shared
+  // stacking context). Portaling to <body> lifts the backdrop out of the
+  // shell subtree so its 900 truly wins against the chrome. Same pattern
+  // as WorkspaceTabsBar's search popover.
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
     <div className="ds-modal-backdrop" role="dialog" aria-modal="true" aria-label={`${title} preview`}>
       <div className={`ds-modal ${fullscreen ? 'ds-modal-fullscreen' : ''}`}>
         <header className="ds-modal-header">
@@ -590,6 +602,7 @@ export function PreviewModal({
           ) : null}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

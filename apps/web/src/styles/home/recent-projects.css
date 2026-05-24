@@ -60,54 +60,81 @@
   appearance: none;
   display: flex;
   flex-direction: column;
-  gap: 0;
+  /* Gallery mode: the card chrome dissolves. There is no card body, no
+     border, no resting shadow — the cover image IS the artifact and the meta
+     text sits bare on the parchment page beneath it (Apple's homepage tile
+     grammar: UI recedes, the product speaks). The lift on hover is the only
+     elevation, and it lands on the cover alone. */
+  gap: 10px;
   padding: 0;
-  border: 1px solid var(--border);
-  /* Apple store-utility-card radius: lg (18px). */
-  border-radius: 18px;
-  background: var(--bg-panel);
+  /* The global `button {}` base rule (index.css) gives every button a panel
+     background, a 1px border and an 8px radius — and `button:hover` repaints
+     it with --bg-subtle + a border. That hover rule (specificity 0,2,1) wins
+     over our `.recent-projects__card:hover` (0,2,0), which is exactly what
+     drew the grey block wrapping the whole card on hover. We neutralise the
+     base button chrome in BOTH resting and hover states below. */
+  border: none;
+  border-radius: 0;
+  background: transparent;
   cursor: pointer;
   text-align: left;
-  overflow: hidden;
-  /* Resting state carries the faintest hairline shadow so the card reads as
-     a discrete surface against the parchment page — the lift on hover then
-     has somewhere to go. */
-  box-shadow: var(--shadow-xs);
-  transition:
-    border-color 160ms ease,
-    box-shadow 160ms ease,
-    transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
+  /* No clip here — clipping moves onto the thumb so its rounded cover can lift
+     and cast the single system shadow without the meta text being masked. */
+  overflow: visible;
+  box-shadow: none;
+  transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
 }
+/* Beat the global `button:hover:not(:disabled)` (0,2,1) — match its specificity
+   and keep the card chrome invisible; only the cover lifts/shadows. */
+.recent-projects__card:hover:not(:disabled),
 .recent-projects__card:hover {
-  /* Hover lifts the card and warms the hairline; the soft system shadow is
-     reserved for this raised state only (Apple keeps resting cards flat). */
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-md);
+  background: transparent;
+  border-color: transparent;
   transform: translateY(-3px);
 }
 .recent-projects__card:active {
+  background: transparent;
   transform: translateY(-1px) scale(0.992);
+}
+/* Resting cover is flat (Apple keeps surfaces flat); only the raised state
+   carries the single soft system shadow — and it rests under the cover, the
+   way Apple's one drop-shadow sits beneath product imagery. */
+.recent-projects__card:hover .recent-projects__card-thumb {
+  box-shadow: var(--shadow-md);
+}
+.recent-projects__card:active .recent-projects__card-thumb {
   box-shadow: var(--shadow-sm);
 }
 .recent-projects__card:focus-visible {
   outline: none;
-  border-color: var(--accent);
+}
+.recent-projects__card:focus-visible .recent-projects__card-thumb {
+  /* Focus ring lives on the cover (the visible surface), in Action Blue. */
   box-shadow:
     0 0 0 3px var(--accent-tint),
+    0 0 0 1px var(--accent);
+}
+/* Design-system projects keep their functional red ring — but on the cover,
+   not a now-absent card border. */
+.recent-projects__card.is-design-system-project .recent-projects__card-thumb {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 48%, transparent);
+}
+.recent-projects__card.is-design-system-project:hover .recent-projects__card-thumb {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--red) 60%, transparent),
     var(--shadow-md);
 }
-.recent-projects__card.is-design-system-project {
-  border-color: color-mix(in srgb, var(--red) 62%, var(--border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 42%, transparent);
-}
-.recent-projects__card.is-design-system-project:hover {
-  /* Keep the functional 1px color ring (it flags a design-system
-     project), drop the decorative soft shadow. */
-  border-color: var(--red);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 54%, transparent);
-}
 .recent-projects__card-thumb {
-  aspect-ratio: 16 / 9;
+  /* The card is a <button>, whose UA flex default is align-items:flex-start
+     (NOT stretch). With the old card-body box gone, the thumb is now a direct
+     flex item of that button — so it won't stretch to the column width on its
+     own, and aspect-ratio would collapse to the glyph's content width (a tiny
+     20px chip). Pin width:100% so the cover fills the grid column and
+     aspect-ratio has a real basis to derive its height from. */
+  width: 100%;
+  /* Taller, more generous cover now that it's the card's whole presence —
+     Apple's product renders breathe at 4:3, not a cramped 16:9 strip. */
+  aspect-ratio: 4 / 3;
   /* Apple uses no decorative gradients — the thumb canvas is a flat
      parchment/pearl surface; the glyph + Action Blue carry the identity. */
   background: var(--bg-subtle);
@@ -115,10 +142,16 @@
   align-items: center;
   justify-content: center;
   position: relative;
+  /* Rounding moved off the card and onto the cover (Apple store-utility-card
+     lg = 18px). The cover is now the framed artifact; meta sits bare beneath
+     it. overflow:hidden keeps media/iframe within the rounded cover. */
+  border-radius: 18px;
   overflow: hidden;
-  /* Hairline divider between cover and meta, so the cover reads as a framed
-     window rather than bleeding into the card body. */
-  border-bottom: 1px solid var(--border);
+  /* The cover carries its own faint resting edge so it reads as a discrete
+     surface on the parchment page without a heavy frame — a hairline ring,
+     not a shadow (shadow is reserved for the hover lift). */
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+  transition: box-shadow 160ms ease;
 }
 .recent-projects__card-thumb-html,
 .recent-projects__card-thumb-image,
@@ -275,7 +308,14 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  padding: 11px 12px 13px;
+  /* Same flex-start caveat as the thumb: the meta column must claim the full
+     card width or the title's ellipsis has no width to truncate against and
+     long names overflow into the neighbouring card. */
+  width: 100%;
+  /* Meta now sits bare on the page beneath the cover — no card-body padding.
+     A small left inset (2px) keeps the text optically aligned with the
+     cover's rounded edge rather than its mathematical bounding box. */
+  padding: 2px 2px 0;
   min-width: 0;
 }
 .recent-projects__card-name {
