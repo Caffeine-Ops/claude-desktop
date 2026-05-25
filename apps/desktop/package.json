@@ -66,6 +66,10 @@
         {
           "from": "prebundled",
           "to": "prebundled"
+        },
+        {
+          "from": "node-runtime/mac",
+          "to": "node-runtime"
         }
       ]
     },
@@ -84,6 +88,10 @@
         {
           "from": "prebundled",
           "to": "prebundled"
+        },
+        {
+          "from": "node-runtime/win",
+          "to": "node-runtime"
         }
       ]
     },

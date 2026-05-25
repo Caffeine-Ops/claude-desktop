@@ -11,6 +11,10 @@ permissions:
 
 env:
   FUSION_CODE_VERSION: v2.1.90
+  # Node version bundled INTO the app to run the daemon. Must match .nvmrc
+  # (the version better-sqlite3 is compiled for, ABI 137) — see the
+  # "Bundle Node runtime" step.
+  BUNDLED_NODE_VERSION: v24.16.0
 
 jobs:
   build:
@@ -23,10 +27,12 @@ jobs:
             platform: mac
             fusion_asset: fusion-code-darwin-arm64
             fusion_target: apps/desktop/fusion-bin/fusion-code-cli
+            node_dist: darwin-arm64
           - os: windows-latest
             platform: win
             fusion_asset: fusion-code-win32-x64.exe
             fusion_target: apps/desktop/fusion-bin/fusion-code-cli.exe
+            node_dist: win-x64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -104,6 +110,42 @@ jobs:
             chmod +x "${{ matrix.fusion_target }}"
           fi
           ls -la apps/desktop/fusion-bin/
+
+      # Bundle a standalone Node 24 (ABI 137) INTO the app so the daemon runs
+      # against the exact ABI its better-sqlite3 was compiled for — never the
+      # user's machine Node (uncontrollable; Windows users often have Node 22 =
+      # ABI 127 on PATH → ERR_DLOPEN_FAILED). resolveNodeBin() picks
+      # <resources>/node-runtime/node[.exe] in prod. Only the single `node`
+      # binary is kept (npm/corepack/headers dropped) to keep the size down.
+      - name: Bundle Node runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="$BUNDLED_NODE_VERSION"
+          dist="${{ matrix.node_dist }}"
+          dest="apps/desktop/node-runtime/${{ matrix.platform }}"
+          mkdir -p "$dest"
+          if [ "${{ matrix.platform }}" = "win" ]; then
+            url="https://nodejs.org/dist/${ver}/node-${ver}-${dist}.zip"
+            curl -fsSL "$url" -o node.zip
+            unzip -q node.zip
+            cp "node-${ver}-${dist}/node.exe" "$dest/node.exe"
+          else
+            url="https://nodejs.org/dist/${ver}/node-${ver}-${dist}.tar.gz"
+            curl -fsSL "$url" -o node.tar.gz
+            tar -xzf node.tar.gz
+            cp "node-${ver}-${dist}/bin/node" "$dest/node"
+            chmod +x "$dest/node"
+          fi
+          ls -la "$dest"
+          # Assert the bundled Node's ABI is 137 (Node 24) — the daemon's
+          # better-sqlite3 is compiled for exactly this.
+          abi=$("$dest"/node* -e "process.stdout.write(process.versions.modules)")
+          echo "bundled node ABI: $abi"
+          if [ "$abi" != "137" ]; then
+            echo "::error::Bundled Node ABI is $abi, expected 137"
+            exit 1
+          fi
 
       # Only typecheck the package this workflow actually ships: the
       # Electron app. Its tsconfig project-references pull in every

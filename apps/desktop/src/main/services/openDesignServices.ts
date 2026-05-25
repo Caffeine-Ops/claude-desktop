@@ -141,13 +141,32 @@ function resolveRepoRoot(selfDir: string): string {
  * prod 下 repoRoot == <prebundled>，prebundle-daemon.mjs 已把仓库 .nvmrc 拷进去，
  * 所以这里读 `repoRoot/.nvmrc` 在 dev/prod 都能拿到钉死的版本。
  *
- * 优先级：① OD_NODE_BIN 显式覆盖 → ② 读 .nvmrc 钉的版本，拼 nvm 绝对路径 →
- * ③ .nvmrc 读不到/那个版本没装时，扫 nvm 目录挑**最高**版本（绝不挑随机版本，
- * 至少避开按字典序撞 v18）→ ④ 实在没有 nvm 才裸 'node'（赌运行环境，最后手段）。
+ * 优先级：① OD_NODE_BIN 显式覆盖 → ② **prod：app 自带的 Node**（见下）→
+ * ③ 读 .nvmrc 钉的版本，拼 nvm 绝对路径 → ④ 扫 nvm 目录挑最高版本 →
+ * ⑤ 实在没有才裸 'node'（赌运行环境，最后手段）。
+ *
+ * 为什么 prod 必须自带 Node（②）：daemon 的 better-sqlite3 .node 在 CI 按 Node 24
+ * （ABI 137）编译，但**用户机器装的 Node 版本不可控**——尤其 Windows 没有 nvm 布局，
+ * 旧逻辑会落到裸 'node' 撞上系统 Node 22（ABI 127）→ ERR_DLOPEN_FAILED → daemon
+ * 崩。把对应平台的 Node 24 二进制打进包（CI 下载，electron-builder extraResources
+ * 投到 <resources>/node-runtime/），daemon 固定用它跑，彻底不赌用户环境。
+ * 见 [[2026-05-25-daemon自带Node彻底摆脱用户机器Node版本ABI错配]]。
  */
 function resolveNodeBin(repoRoot: string): string {
   const override = process.env.OD_NODE_BIN
   if (override && existsSync(override)) return override
+
+  // ② prod：app 自带的 Node 24（与 better-sqlite3 编译期 ABI 一致）。
+  //    electron-builder 把它投到 process.resourcesPath/node-runtime/。
+  if (app.isPackaged) {
+    const bundledNode = join(
+      process.resourcesPath,
+      'node-runtime',
+      process.platform === 'win32' ? 'node.exe' : 'node'
+    )
+    if (existsSync(bundledNode)) return bundledNode
+    console.warn(`[od-services] 自带 Node 缺失：${bundledNode}，回退 nvm/裸 node（ABI 可能不匹配）`)
+  }
 
   const nvmNodeDir = join(homedir(), '.nvm', 'versions', 'node')
 
