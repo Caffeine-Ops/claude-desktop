@@ -1,10 +1,11 @@
 import {
   BrowserWindow,
   WebContentsView,
+  shell,
   type IpcMainInvokeEvent,
   type WebContents
 } from 'electron'
-import { basename, dirname, join } from 'path'
+import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { is } from '@electron-toolkit/utils'
 
@@ -59,6 +60,38 @@ function forceDetachedDevTools(wc: WebContents): void {
 }
 
 /**
+ * Route http(s) links a page tries to open in a NEW window/tab to the
+ * user's default browser, instead of letting Electron spawn a bare
+ * frameless child window inside the app (which is what an
+ * `<a target="_blank">` or `window.open()` does by default — the user
+ * saw a blank `@claude-desktop/desktop` popup when clicking a link the
+ * assistant printed).
+ *
+ * Scope is deliberately narrow:
+ *   - We only hook `setWindowOpenHandler` (the new-window path). We do
+ *     NOT hook `will-navigate`, because the Open Design web tab / the
+ *     settings overlay load a real web app whose own in-app navigation
+ *     IS http(s); blanket-redirecting top-level navigation would kick
+ *     the app's own router out to the browser. New-window opens, by
+ *     contrast, are never part of normal in-app routing here.
+ *   - Only `http:` / `https:` go to the external browser. Anything else
+ *     (about:, data:, the `app://` custom scheme, devtools:, …) is
+ *     denied outright so a crafted link can't ask the OS to launch an
+ *     arbitrary handler.
+ *
+ * Either branch returns `{ action: 'deny' }` so no in-app child window
+ * is ever created.
+ */
+function attachExternalLinkHandler(wc: WebContents): void {
+  wc.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      void shell.openExternal(url)
+    }
+    return { action: 'deny' }
+  })
+}
+
+/**
  * Height (in CSS px) of the persistent chrome tab strip rendered by
  * the shell window's own webContents (the `?shell=1` renderer), which
  * sits pinned at the very top of the window above every content tab's
@@ -99,7 +132,7 @@ export const MAX_TABS = 9
  * Per-tab runtime. One entry per open tab: the WebContentsView that
  * hosts the workspace renderer, the ChatEngine that drives its
  * fusion-code session, and a user-facing title (basename of the
- * chosen workspace, or "New workspace" before the gate has been
+ * chosen workspace, or "智能助手" before the gate has been
  * passed).
  *
  * The registry is keyed by `webContents.id` — the same identifier
@@ -178,6 +211,7 @@ export function createShellWindow(): BrowserWindow {
   shellWindow = win
   // DevTools 强制 detach，避免被覆盖全窗的 WebContentsView 遮挡（见函数注释）。
   forceDetachedDevTools(win.webContents)
+  attachExternalLinkHandler(win.webContents)
 
   win.on('ready-to-show', () => {
     win.show()
@@ -271,6 +305,7 @@ export function newTab(): TabContext {
   // the brief interval before the renderer paints its first frame.
   view.setBackgroundColor('#00000000')
   forceDetachedDevTools(view.webContents)
+  attachExternalLinkHandler(view.webContents)
 
   const engine = createChatEngine(view.webContents, {
     shouldBumpOnTurnEnd: () => {
@@ -284,7 +319,7 @@ export function newTab(): TabContext {
   const ctx: TabContext = {
     view,
     engine,
-    title: 'New Workspace',
+    title: '智能助手',
     kind: 'chat'
   }
   tabs.set(view.webContents.id, ctx)
@@ -384,7 +419,7 @@ export function newTab(): TabContext {
  *  - **不挂 chatApi preload**：web tab 是个受控的外部 origin，没必要也不应该把
  *    我们的 IPC 桥暴露给它，所以用默认 webPreferences（仍开 contextIsolation、
  *    关 nodeIntegration 以保持沙箱）。
- *  - **标题固定** "Open Design"，不跟随工作区 basename（它没有工作区概念）。
+ *  - **标题固定** "工作画布"，不跟随工作区 basename（它没有工作区概念）。
  *
  * 由主进程在 daemon/web 就绪后调用（见 main/index.ts），URL 由
  * openDesignServices.resolveWebTabUrl() 决定。
@@ -406,11 +441,12 @@ export function newWebTab(): TabContext {
   })
   view.setBackgroundColor('#00000000')
   forceDetachedDevTools(view.webContents)
+  attachExternalLinkHandler(view.webContents)
 
   const ctx: TabContext = {
     view,
     engine: null,
-    title: 'Open Design',
+    title: '工作画布',
     kind: 'web'
   }
   tabs.set(view.webContents.id, ctx)
@@ -660,20 +696,9 @@ export function listTabs(): TabDescriptor[] {
 export function broadcastTabList(): void {
   if (!shellWindow || shellWindow.isDestroyed()) return
 
-  // Refresh titles from each engine's live workspace first so the
-  // snapshot we send out reflects the latest basename labels.
-  for (const id of tabOrder) {
-    const ctx = tabs.get(id)
-    if (!ctx) continue
-    // web tab 标题固定（"Open Design"），不跟随工作区 basename。
-    if (!ctx.engine) continue
-    const ws = ctx.engine.getWorkspace()
-    if (ws) {
-      const name = basename(ws) || ws
-      if (ctx.title !== name) ctx.title = name
-    }
-  }
-
+  // 两个 tab 的标题都固定（chat = "智能助手"，web = "工作画布"），不跟随
+  // 工作区 basename —— 面向医院信息科用户，固定中文名比文件夹名（如 "Desktop"）
+  // 更易懂。标题在各自创建时定死，这里无需再从 engine.getWorkspace() 刷新。
   const list = snapshotTabList()
 
   // Fan the broadcast out to every renderer that might display the
@@ -785,6 +810,7 @@ export function openSettingsView(): void {
   })
   view.setBackgroundColor('#00000000')
   forceDetachedDevTools(view.webContents)
+  attachExternalLinkHandler(view.webContents)
   settingsView = view
 
   // Topmost child → paints over the active tab view and the strip.
