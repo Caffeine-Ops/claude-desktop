@@ -101,52 +101,29 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run dist:${{ matrix.platform }}
 
-      # electron-builder runs inside apps/desktop (build.directories.output
-      # = "dist", relative to that package), so the installers land in
-      # apps/desktop/dist/ — NOT the repo root. The path must include the
-      # apps/desktop/ prefix or upload-artifact finds nothing (same
-      # repo-root-vs-app-dir gotcha as the fusion-bin download path).
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      # Upload the installers straight to the GitHub Release instead of
+      # staging them as Actions artifacts. Why: artifacts count against the
+      # account's Actions storage quota (which we hit — a ~hundreds-of-MB
+      # dmg + the win exe per run fills it fast), AND they were only ever a
+      # hand-off to a separate release job that re-downloaded them. Release
+      # assets don't count against that quota, so attaching directly here
+      # removes both the quota failure and the artifact→download→release
+      # round-trip. electron-builder writes to apps/desktop/dist/ (its
+      # build.directories.output is relative to the package, not the repo
+      # root). Both matrix jobs target the same tag; action-gh-release is
+      # idempotent per tag — the first creates the release, the second
+      # appends its files — so mac and win can publish in parallel.
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
         with:
-          name: claude-desktop-${{ matrix.platform }}
-          path: |
+          files: |
             apps/desktop/dist/*.dmg
             apps/desktop/dist/*.zip
             apps/desktop/dist/*.exe
             apps/desktop/dist/*.blockmap
             apps/desktop/dist/latest*.yml
-          if-no-files-found: error
-          retention-days: 14
-
-  release:
-    name: Publish GitHub Release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Flatten artifacts
-        run: |
-          mkdir -p release
-          find artifacts -type f \( \
-            -name '*.dmg' -o \
-            -name '*.zip' -o \
-            -name '*.exe' -o \
-            -name '*.blockmap' -o \
-            -name 'latest*.yml' \
-          \) -exec cp {} release/ \;
-          ls -la release/
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release/*
           generate_release_notes: true
           draft: false
           prerelease: false
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
