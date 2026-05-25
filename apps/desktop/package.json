@@ -80,6 +80,10 @@
         {
           "from": "fusion-bin/fusion-code-cli.exe",
           "to": "fusion-code-cli.exe"
+        },
+        {
+          "from": "prebundled",
+          "to": "prebundled"
         }
       ]
     },
