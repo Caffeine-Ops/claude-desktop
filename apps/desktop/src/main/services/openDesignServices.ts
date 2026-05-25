@@ -332,7 +332,11 @@ function spawnDaemon(repoRoot: string): void {
     // stdin inherited, stdout/stderr piped so the「日志分析」panel can capture
     // the daemon's output (the ECONNREFUSED dump etc.) — pipeChildToCollector
     // still echoes both to our terminal, so `bun run dev` reads the same.
-    stdio: ['inherit', 'pipe', 'pipe']
+    stdio: ['inherit', 'pipe', 'pipe'],
+    // Windows：spawn 一个控制台程序（自带的 node.exe）默认会弹出一个
+    // cmd 窗口。windowsHide 让子进程的控制台隐藏，daemon 在后台静默运行。
+    // 非 Windows 平台忽略此选项。
+    windowsHide: true
   })
   pipeChildToCollector(daemonProc, 'daemon')
 
@@ -373,7 +377,9 @@ function spawnWebDev(repoRoot: string): void {
     },
     // 同 daemon：pipe stdout/stderr 进 collector（next dev 的 Local URL /
     // 编译日志），pipeChildToCollector 仍回显到终端。
-    stdio: ['inherit', 'pipe', 'pipe']
+    stdio: ['inherit', 'pipe', 'pipe'],
+    // Windows 隐藏控制台窗口（dev 才走这里，但保持与 daemon 一致）。
+    windowsHide: true
   })
   pipeChildToCollector(webProc, 'web')
 

@@ -158,7 +158,7 @@ async function detectUncached(): Promise<SystemClaudeInfo | null> {
 async function findViaPath(): Promise<string | null> {
   const cmd = process.platform === 'win32' ? 'where' : 'which'
   try {
-    const { stdout } = await execFileP(cmd, ['claude'], { timeout: 2000 })
+    const { stdout } = await execFileP(cmd, ['claude'], { timeout: 2000, windowsHide: true })
     const first = stdout.split(/\r?\n/).map((l) => l.trim()).find(Boolean)
     if (first && existsSync(first)) return first
   } catch {
@@ -221,6 +221,7 @@ async function getVersion(path: string): Promise<string | null> {
   try {
     const { stdout } = await execFileP(path, ['--version'], {
       timeout: 3000,
+      windowsHide: true,
       // Some claude installers wrap the binary in a shell script that
       // sources config on startup — keep env pristine to avoid
       // accidentally inheriting ANTHROPIC_AUTH_TOKEN from the Electron

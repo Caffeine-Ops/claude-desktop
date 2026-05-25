@@ -172,7 +172,7 @@ async function tryGit(cwd: string): Promise<string[] | null> {
         '--others',
         '--exclude-standard'
       ],
-      { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 }
+      { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024, windowsHide: true }
     )
     const lines = stdout.split('\n').filter(Boolean)
     if (lines.length === 0) {
