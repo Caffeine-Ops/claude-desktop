@@ -1,0 +1,7 @@
+{
+  "name": "claude-desktop",
+  "version": "0.0.10",
+  "description": "Bundled functional skills shipped with Claude Desktop — exposes the repo-root skills/ directory to the fusion-code chat agent as plugin skills (namespaced claude-desktop:<skill>).",
+  "license": "MIT",
+  "skills": "./"
+}

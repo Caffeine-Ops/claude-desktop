@@ -35,7 +35,12 @@ import type {
 import { bumpUnread } from '../tray'
 import { AsyncMessageQueue } from './asyncMessageQueue'
 import { getAppSettings, type CliBackend } from './appSettings'
-import { detectSystemClaude, detectSystemClaudeSync, resolveBundledCliPath } from './cliDetect'
+import {
+  detectSystemClaude,
+  detectSystemClaudeSync,
+  resolveBundledCliPath,
+  resolveBundledSkillsPluginDir
+} from './cliDetect'
 import { envJsonInjectedKeys } from '../bootstrap/loadEnv'
 import {
   loadExternalMcpServers,
@@ -90,12 +95,39 @@ import { seedSkillsFromDisk } from './seedSkills'
  * actually set, and loadEnv skips keys already present in the shell,
  * cleanly separating "env.json leak" from "deliberate user config".
  */
+/**
+ * env.json-injected keys that are SAFE to keep even under the system backend,
+ * because they configure SKILL subprocesses (image generation, transcription),
+ * NOT the claude model the user logs into. The reason systemBackendEnv strips
+ * env.json at all is to stop vanilla claude from being hijacked onto the csdn
+ * gateway + gpt-5.4 — that hijack is driven exclusively by the ANTHROPIC_*
+ * keys (BASE_URL / AUTH_TOKEN / *_MODEL). The OPENAI_* / GEMINI_* keys never
+ * touch claude's model routing; they're read only by skills like gpt-image-2
+ * (scripts/shared.js → OPENAI_API_KEY / OPENAI_BASE_URL). So allow-listing
+ * them back lets `/gpt-image-2` reach Mode A under system claude too, without
+ * weakening the anti-hijack guarantee. Deliberately does NOT include any
+ * ANTHROPIC_* key.
+ */
+const SKILL_PASSTHROUGH_KEYS: ReadonlySet<string> = new Set([
+  'OPENAI_API_KEY',
+  'OPENAI_BASE_URL',
+  'OPENAI_IMAGE_MODEL',
+  'OPENAI_TRANSCRIBE_MODEL',
+  'GEMINI_API_KEY',
+  'GEMINI_BASE_URL',
+  'GEMINI_TRANSCRIBE_MODEL',
+  'ENABLE_GARDEN_IMAGEGEN'
+])
+
 function systemBackendEnv(): Record<string, string> {
   const injected = envJsonInjectedKeys()
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined) continue
-    if (injected.has(key)) continue // env.json-injected → not for system claude
+    // Strip env.json-injected keys so system claude isn't hijacked onto the
+    // csdn gateway — EXCEPT skill-only keys (image/transcribe creds), which
+    // never affect claude's model routing and are needed by skill scripts.
+    if (injected.has(key) && !SKILL_PASSTHROUGH_KEYS.has(key)) continue
     env[key] = value
   }
   return env
@@ -1066,6 +1098,10 @@ export class ChatEngine extends EventEmitter {
   ): void {
     const backend = getAppSettings().cliBackend
     const cliPath = this.resolveCliPath(backend)
+    // Repo-root skills/ packaged as a local plugin (see
+    // resolveBundledSkillsPluginDir). null when the manifest is missing — we
+    // then omit the `plugins` option entirely rather than pass an empty array.
+    const skillsPluginDir = resolveBundledSkillsPluginDir()
     const resume = opts?.resume === true
     this.logEvent('openSession:begin', { sessionId, resume, cliPath, backend })
     // Report the env the CHILD will actually see, not raw process.env:
@@ -1089,7 +1125,10 @@ export class ChatEngine extends EventEmitter {
       // Diagnostic: which external MCP servers (from Settings → External MCP)
       // are being wired into THIS spawn. Empty array = the cache was still
       // cold when we built sdkOptions, so `--mcp-config` won't be emitted.
-      externalMcpServers: Object.keys(this.externalMcpServers)
+      externalMcpServers: Object.keys(this.externalMcpServers),
+      // null here means the repo-root skills/ plugin manifest wasn't found,
+      // so its skills won't appear in the `/` popover for this session.
+      skillsPluginDir: skillsPluginDir ?? '(none)'
     })
 
     const queue = new AsyncMessageQueue<unknown>()
@@ -1261,6 +1300,16 @@ export class ChatEngine extends EventEmitter {
       // daemon side writes `.mcp.json` only because it targets PROJECTS_DIR
       // (see daemon server.ts isManagedProjectCwd gating).
       mcpServers: this.externalMcpServers,
+      // Repo-root skills/ wired in as a local plugin so its SKILL.md entries
+      // become `/`-triggerable in this chat tab (namespaced
+      // `claude-desktop:<skill>`). Spread-omit when null: the SDK type allows
+      // `plugins?: SdkPluginConfig[]`, and passing `undefined` is the same as
+      // not setting it, so a missing manifest degrades to "no extra plugin"
+      // instead of a load error. Independent of the daemon, which reads the
+      // SAME dir over /api/skills for the Settings → Skills panel.
+      ...(skillsPluginDir
+        ? { plugins: [{ type: 'local' as const, path: skillsPluginDir }] }
+        : {}),
       ...(resume ? { resume: sessionId } : { sessionId })
     }
 
