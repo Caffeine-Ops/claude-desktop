@@ -101,16 +101,21 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run dist:${{ matrix.platform }}
 
+      # electron-builder runs inside apps/desktop (build.directories.output
+      # = "dist", relative to that package), so the installers land in
+      # apps/desktop/dist/ — NOT the repo root. The path must include the
+      # apps/desktop/ prefix or upload-artifact finds nothing (same
+      # repo-root-vs-app-dir gotcha as the fusion-bin download path).
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: claude-desktop-${{ matrix.platform }}
           path: |
-            dist/*.dmg
-            dist/*.zip
-            dist/*.exe
-            dist/*.blockmap
-            dist/latest*.yml
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.blockmap
+            apps/desktop/dist/latest*.yml
           if-no-files-found: error
           retention-days: 14
 
