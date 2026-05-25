@@ -69,8 +69,18 @@ jobs:
           fi
           ls -la fusion-bin/
 
+      # Only typecheck the package this workflow actually ships: the
+      # Electron app. Its tsconfig project-references pull in every
+      # @open-design/* package it depends on, so their types get checked
+      # transitively. We deliberately do NOT run the repo-wide
+      # `bun run typecheck` here: it fans out to ALL workspaces including
+      # @open-design/daemon, whose own `typecheck` script shells out to
+      # `pnpm` — and this runner only has bun (oven-sh/setup-bun), so
+      # daemon's step dies with `pnpm: command not found` (exit 127).
+      # The daemon is a standalone service, not part of the desktop
+      # bundle, so it has no business gating the desktop build.
       - name: Type check
-        run: bun run typecheck
+        run: bun run --filter='@claude-desktop/desktop' typecheck
 
       - name: Build (${{ matrix.platform }})
         env:
