@@ -931,17 +931,77 @@ function scrapeAbsolutePaths(text: string): string[] {
 }
 
 /**
+ * Extract absolute file paths a tool call PRODUCED or MODIFIED — the
+ * reliable source for "what file did this turn leave on disk", since
+ * it's the path the model passed to the tool, not prose it wrote after.
+ *
+ *   - Write/Edit/MultiEdit/NotebookEdit → the `file_path` arg.
+ *   - Bash → absolute paths inside the `command` string, but ONLY when
+ *     the command looks like it WRITES (mv/cp/touch/tee/install/… or a
+ *     `>`/`>>` redirect). A read-only `cat /a/x.txt` / `grep … /a/y.log`
+ *     must not card files it merely inspected, and those paths usually
+ *     still exist so statFiles wouldn't catch them. The source path of a
+ *     `mv` is included too, but statFiles drops it (it no longer exists),
+ *     so only the resulting file ends up carded.
+ *
+ * Deliberately NOT Read: a turn that merely reads files shouldn't card
+ * them — the cards mean "here's what I made for you", and a read file
+ * almost always still exists, so it would survive statFiles and spam a
+ * card per file the model glanced at.
+ *
+ * Returns only absolute (`/…`) paths so statFiles gets resolvable input;
+ * a bare `file_path: "src/foo.ts"` from a relative-cwd tool is skipped
+ * (we can't resolve cwd here) rather than stat'd against the wrong root.
+ */
+const FILE_WRITING_TOOLS = new Set([
+  'Write',
+  'Edit',
+  'MultiEdit',
+  'NotebookEdit'
+])
+
+// A Bash command is treated as file-producing if it invokes a known
+// write/move verb OR contains an output redirect. Word-boundary anchored
+// so `cat`/`category` don't match a `cp`-style verb by substring; the
+// redirect alternative catches `cmd > /abs/out` regardless of the verb.
+const BASH_WRITE_RE =
+  /(?:^|[\s;&|(])(?:mv|cp|touch|tee|install|dd|rsync|ln|mkdir|convert|ffmpeg|pandoc|zip|tar|sed\s+-i)\b|>>?/
+
+function pathsFromToolCall(toolName?: string, args?: unknown): string[] {
+  if (!args || typeof args !== 'object') return []
+  const obj = args as Record<string, unknown>
+  if (toolName === 'Bash') {
+    const cmd = obj.command
+    if (typeof cmd !== 'string' || !BASH_WRITE_RE.test(cmd)) return []
+    return scrapeAbsolutePaths(cmd)
+  }
+  if (toolName && FILE_WRITING_TOOLS.has(toolName)) {
+    const fp = pickFilePath(args)
+    return fp && fp.startsWith('/') ? [fp] : []
+  }
+  return []
+}
+
+/**
  * Render a card per file the assistant produced this turn, beneath the
  * message body — appearing only AFTER the turn finishes so cards don't
  * pop in mid-stream while the model is still writing.
  *
  * Pipeline:
- *   1. Concatenate this message's text parts.
- *   2. Scrape candidate absolute paths out of the prose (scrapeAbsolutePaths).
- *   3. Ask main which of those actually exist as files (chatApi.statFiles)
+ *   1. Collect candidate absolute paths from this turn from TWO sources:
+ *      a) the tool calls the assistant actually ran — `file_path` of
+ *         Write/Edit/MultiEdit/NotebookEdit, and any absolute path inside
+ *         a Bash `command` (so a `mv …/a.docx …/b.docx` cards the result).
+ *         This is the reliable source: it's the path the model operated
+ *         on, not whatever it happened to spell out in prose afterwards.
+ *      b) the prose text parts (scrapeAbsolutePaths) — a fallback for
+ *         turns that produced a file via a tool we don't special-case but
+ *         still named the absolute path in the reply.
+ *   2. Ask main which of those actually exist as files (chatApi.statFiles)
  *      — the renderer has no fs access, and we don't want to card a path
- *      the model merely mentioned but never created.
- *   4. Render a card per surviving file; clicking opens it with the OS
+ *      the model merely mentioned/read but didn't leave on disk (a renamed
+ *      file's old path is gone, so only the survivor cards).
+ *   3. Render a card per surviving file; clicking opens it with the OS
  *      default app (chatApi.openPath → shell.openPath).
  */
 function AssistantFileCards(): React.JSX.Element | null {
@@ -952,19 +1012,32 @@ function AssistantFileCards(): React.JSX.Element | null {
   const status = (message as { status?: { type?: string } }).status
   const isRunning = status?.type === 'running'
 
-  // Candidate paths scraped from this message's text parts. Memoized on
-  // the message identity so we don't re-scrape on unrelated rerenders.
+  // Candidate paths for this turn, drawn from the tool calls the model
+  // actually ran (reliable) plus a prose fallback. Memoized on message
+  // identity so we don't re-scrape on unrelated rerenders.
   const candidates = useMemo(() => {
     const content = (message as { content?: readonly unknown[] }).content
     if (!Array.isArray(content)) return [] as string[]
+    const out: string[] = []
     let text = ''
     for (const part of content) {
-      const p = part as { type?: string; text?: string }
+      const p = part as {
+        type?: string
+        text?: string
+        toolName?: string
+        args?: unknown
+      }
       if (p.type === 'text' && typeof p.text === 'string') {
         text += (text ? '\n' : '') + p.text
+      } else if (p.type === 'tool-call') {
+        out.push(...pathsFromToolCall(p.toolName, p.args))
       }
     }
-    return text ? scrapeAbsolutePaths(text) : []
+    // Prose paths come after tool paths so tool-derived candidates (the
+    // ones we trust most) sort first; the final dedupe keeps first-seen.
+    if (text) out.push(...scrapeAbsolutePaths(text))
+    // Dedupe while preserving order.
+    return out.filter((p, i) => out.indexOf(p) === i)
   }, [message])
 
   // Verified subset (exists + is-file), resolved by main. Empty until
