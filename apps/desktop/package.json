@@ -1,6 +1,6 @@
 {
   "name": "@claude-desktop/desktop",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "Electron desktop wrapper around free-code CLI",
   "private": true,
   "type": "module",

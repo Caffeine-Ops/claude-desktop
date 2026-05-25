@@ -1,6 +1,6 @@
 {
   "name": "claude-desktop-monorepo",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "Claude Desktop (Electron) + Open Design — bun monorepo workspace root",
   "private": true,
   "type": "module",
