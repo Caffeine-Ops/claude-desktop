@@ -3,6 +3,11 @@
   "version": "0.0.10",
   "description": "Electron desktop wrapper around free-code CLI",
   "private": true,
+  "author": "Caffeine-Ops",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Caffeine-Ops/claude-desktop.git"
+  },
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -11,9 +16,9 @@
     "build:icons": "bash scripts/build-icons.sh",
     "prebundle:daemon": "bun scripts/prebundle-daemon.mjs",
     "verify:fusion": "bun scripts/verify-fusion-bin.mjs",
-    "build:mac": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --mac",
-    "build:win": "bun run verify:fusion win && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --win",
-    "build:linux": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --linux",
+    "build:mac": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --mac --publish never",
+    "build:win": "bun run verify:fusion win && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --win --publish never",
+    "build:linux": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --linux --publish never",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "bun run typecheck:node && bun run typecheck:web",
@@ -23,6 +28,13 @@
   "build": {
     "appId": "com.anthropic.claude-desktop",
     "productName": "Claude Desktop",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Caffeine-Ops",
+        "repo": "claude-desktop"
+      }
+    ],
     "directories": {
       "output": "dist",
       "buildResources": "build"
