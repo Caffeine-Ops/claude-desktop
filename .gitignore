@@ -17,6 +17,11 @@ apps/desktop/prebundled/
 
 .env
 .env.local
+# Exception: gpt-image-2 ships a secret-free `.env` carrying ONLY the
+# ENABLE_GARDEN_IMAGEGEN switch (the API key stays in env.json/host env). It
+# must be tracked so it rides along into the packaged app — otherwise Mode A
+# never turns on for end users. Safe because it holds no credentials.
+!skills/gpt-image-2/.env
 .vite
 env.json
 .gstack/

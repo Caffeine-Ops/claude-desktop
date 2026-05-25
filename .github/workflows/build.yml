@@ -37,8 +37,40 @@ jobs:
         with:
           bun-version: latest
 
+      # Pin Node to the version the daemon RUNS under (.nvmrc → 24, ABI 137).
+      # Without this the runner uses the Node that ships with setup-bun (22,
+      # ABI 127); `bun install` then compiles daemon's better-sqlite3 native
+      # addon for ABI 127, prebundle copies that .node into the app, and at
+      # runtime the daemon (spawned with Node 24) fails to dlopen it:
+      #   "compiled against NODE_MODULE_VERSION 127 … requires 137"
+      #   → ERR_DLOPEN_FAILED → daemon dies → settings/web /api all break.
+      # Install-time Node MUST equal run-time Node for native addons.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # Fail fast if the native addon's ABI doesn't match the daemon's
+      # runtime Node (24 / ABI 137). The whole point of the Setup Node step
+      # above is to make `bun install` compile better-sqlite3 for 137 — this
+      # asserts it actually happened, so a mis-pinned runner can never ship a
+      # package whose daemon dies with ERR_DLOPEN_FAILED at the user's machine.
+      - name: Verify better-sqlite3 ABI matches daemon runtime
+        run: |
+          node -e "
+            const { createRequire } = require('node:module');
+            const req = createRequire(require('node:path').resolve('apps/daemon/package.json'));
+            req('better-sqlite3');
+            const abi = process.versions.modules;
+            console.log('node ' + process.version + ' — better-sqlite3 ABI ' + abi);
+            if (abi !== '137') {
+              console.error('::error::better-sqlite3 ABI is ' + abi + ', expected 137 (Node 24). Daemon will fail to dlopen at runtime.');
+              process.exit(1);
+            }
+          "
 
       - name: Write env.json from secret
         shell: bash
