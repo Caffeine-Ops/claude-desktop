@@ -58,6 +58,7 @@ import {
   closeSettingsView,
   describeSenderMismatch,
   dispatchMenuActionToActiveTab,
+  getAllTabs,
   getContextForSender,
   getShellFullscreen,
   getShellWindow,
@@ -102,6 +103,39 @@ function resolveEngine(event: IpcMainInvokeEvent): ChatEngine {
     )
   }
   return ctx.engine
+}
+
+/**
+ * Recycle every open tab's live runtimes so the next turn re-spawns
+ * under the freshly-saved `cliBackend`. Shared by BOTH backend-set
+ * paths:
+ *
+ *   - CLI_BACKEND_SET (engine-bound, fired from a tab's own settings),
+ *   - SETTINGS_CLI_BACKEND_SET (engine-free overlay path).
+ *
+ * The overlay path has no engine reference at all, and even the
+ * engine-bound path only knows the SENDER's engine — but a backend flip
+ * is a global app setting, so EVERY tab's engine must recycle, not just
+ * the one that happened to send the IPC. We iterate all tabs (web tabs
+ * have no engine → skipped) and let each engine decide which of its
+ * runtimes are safe to recycle (in-flight turns are preserved inside
+ * restartRuntimesForBackendChange). Best-effort: one engine throwing
+ * must not block the rest, and the setting is already persisted, so a
+ * failed recycle just degrades to the old "restart to apply" behavior
+ * for that one tab rather than losing the change.
+ */
+async function recycleAllEnginesForBackendChange(): Promise<void> {
+  const engines = getAllTabs()
+    .map((ctx) => ctx.engine)
+    .filter((e): e is ChatEngine => e !== null)
+  await Promise.all(
+    engines.map((eng) =>
+      eng.restartRuntimesForBackendChange().catch((err) => {
+        console.warn('[cli-backend] runtime recycle failed for a tab:', err)
+        return 0
+      })
+    )
+  )
 }
 
 function resolveBrowserWindow(event: IpcMainInvokeEvent): BrowserWindow {
@@ -723,6 +757,11 @@ export function registerIpcHandlers(): void {
         throw new Error(`Invalid cli backend mode: ${String(mode)}`)
       }
       updateAppSettings({ cliBackend: mode })
+      // Apply NOW instead of "on the next app restart": recycle every
+      // tab's live runtimes so the next turn cold-starts on the new
+      // backend. In-flight turns keep their current backend (see
+      // ChatEngine.restartRuntimesForBackendChange).
+      await recycleAllEnginesForBackendChange()
       const eng = resolveEngine(event)
       const detection = await eng.refreshSystemClaudeDetection()
       let bundledPath: string | null = null
@@ -854,8 +893,10 @@ export function registerIpcHandlers(): void {
   // Engine-free CLI backend read/write for the embedded web settings page.
   // The settings overlay isn't bound to any tab (no ChatEngine), so unlike
   // CLI_BACKEND_GET/SET these resolve the global app setting + run detection
-  // directly via cliDetect. Live engines read `cliBackend` on their next
-  // openSession, so a flip here takes effect without touching them.
+  // directly via cliDetect. On SET we still recycle every tab's runtimes
+  // (via recycleAllEnginesForBackendChange) so the flip applies on the next
+  // turn — `backend` is only read at spawn time, so a reused runtime would
+  // otherwise keep the old backend until an app restart.
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_CLI_BACKEND_GET,
     async (): Promise<CliBackendState> => {
@@ -887,6 +928,9 @@ export function registerIpcHandlers(): void {
         throw new Error(`Invalid CLI backend mode: ${String(mode)}`)
       }
       updateAppSettings({ cliBackend: mode })
+      // Same as CLI_BACKEND_SET: apply immediately by recycling live
+      // runtimes across all tabs (the overlay has no engine of its own).
+      await recycleAllEnginesForBackendChange()
       const info = await detectSystemClaude()
       let bundledPath: string | null = null
       try {

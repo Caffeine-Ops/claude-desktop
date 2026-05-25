@@ -35,7 +35,8 @@ import type {
 import { bumpUnread } from '../tray'
 import { AsyncMessageQueue } from './asyncMessageQueue'
 import { getAppSettings, type CliBackend } from './appSettings'
-import { detectSystemClaude, resolveBundledCliPath } from './cliDetect'
+import { detectSystemClaude, detectSystemClaudeSync, resolveBundledCliPath } from './cliDetect'
+import { envJsonInjectedKeys } from '../bootstrap/loadEnv'
 import {
   loadExternalMcpServers,
   type SdkExternalMcpServers
@@ -70,6 +71,36 @@ import { seedSkillsFromDisk } from './seedSkills'
  * created from `newTab()`, which runs well after whenReady — so this is
  * always safe in practice.
  */
+/**
+ * Build the child env for the SYSTEM claude backend.
+ *
+ * env.json is the BUNDLED fusion-code backend's config — it points that
+ * CLI at the csdn proxy (ANTHROPIC base URL / auth / default model aliases,
+ * plus the OPENAI and GEMINI keys for media). The user's own `claude`
+ * install must NOT inherit any of it: system claude should run on the
+ * user's ~/.claude login + default Anthropic models, not be hijacked onto
+ * csdn / gpt-5.4.
+ *
+ * So: pass through the parent/shell env but DROP every key that loadEnv
+ * injected from env.json. We strip the whole env.json key set (not a
+ * hand-maintained gateway allowlist that could miss the OPENAI / GEMINI /
+ * future keys). PATH, HOME, etc. survive (they came from the shell, not
+ * env.json), so the child still launches. A key the user exported in their
+ * OWN shell also survives — `envJsonInjectedKeys()` only holds keys loadEnv
+ * actually set, and loadEnv skips keys already present in the shell,
+ * cleanly separating "env.json leak" from "deliberate user config".
+ */
+function systemBackendEnv(): Record<string, string> {
+  const injected = envJsonInjectedKeys()
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue
+    if (injected.has(key)) continue // env.json-injected → not for system claude
+    env[key] = value
+  }
+  return env
+}
+
 function resolveDefaultWorkspace(): string {
   const tryDir = (p: string | undefined): string | null => {
     if (!p) return null
@@ -534,6 +565,94 @@ export class ChatEngine extends EventEmitter {
   }
 
   /**
+   * Recycle every live runtime so the NEXT turn re-spawns under the
+   * current `cliBackend` setting. Called by CLI_BACKEND_SET when the
+   * user flips between bundled fusion-code and system claude.
+   *
+   * Why this is needed: `backend` is read exactly once, inside
+   * `openSession()` at spawn time. A runtime, once spawned, is reused
+   * verbatim for the rest of its life — `ensureSessionReady` short-
+   * circuits the moment `handle && queue` are set. So without an
+   * explicit recycle, a backend flip only took effect after an app
+   * restart cleared the whole sessions map. (That's the "must restart
+   * to switch" bug.) Here we proactively tear the runtimes down so the
+   * next `send()` cold-starts on the new backend.
+   *
+   * What we keep:
+   *   - The sessions map ENTRY (we don't `delete`) and its on-disk
+   *     `.jsonl` transcript. We replace the runtime's live fields with
+   *     a fresh empty slot and set `pendingResume = true`, so the next
+   *     send re-spawns with `--resume <id>` and the full history is
+   *     reloaded under the new backend. Deleting the entry would lose
+   *     the resume intent and silently start the session from scratch.
+   *   - An IN-FLIGHT runtime (one with an `active` turn awaiting the
+   *     model). Tearing that down mid-turn would abort the user's
+   *     request; the settings UI promises "an in-flight turn keeps its
+   *     current backend". Those finish on the old backend and only the
+   *     turn AFTER completion picks up the new one (the pump's finally
+   *     clears handle/queue → next send re-spawns).
+   *
+   * Returns the count of runtimes actually recycled (for logging).
+   */
+  async restartRuntimesForBackendChange(): Promise<number> {
+    const targets: Array<[string, SessionRuntime]> = []
+    for (const [id, rt] of this.sessions) {
+      // Empty slots (never sent to) carry no live child — skip; their
+      // first send will naturally read the new backend.
+      if (!rt.handle && !rt.queue) continue
+      // In-flight turn: keep its current backend (see doc above).
+      if (rt.active) continue
+      targets.push([id, rt])
+    }
+    if (targets.length === 0) {
+      this.logEvent('backendChange:noRuntimesToRecycle')
+      return 0
+    }
+    this.logEvent('backendChange:recycle', {
+      count: targets.length,
+      ids: targets.map(([id]) => id)
+    })
+    await Promise.all(
+      targets.map(async ([id, rt]) => {
+        // Detach the live fields BEFORE the async teardown so a racing
+        // send()/switchToSession sees an empty slot (and re-spawns)
+        // rather than aliasing the runtime we're killing. We reuse the
+        // SAME object identity and just null its live handles, so any
+        // code already holding this runtime reference (e.g. a pending
+        // getSession await) transparently observes the reset.
+        const dying = {
+          handle: rt.handle,
+          queue: rt.queue,
+          pumpPromise: rt.pumpPromise
+        }
+        rt.handle = null
+        rt.queue = null
+        rt.pumpPromise = null
+        rt.readyPromise = null
+        rt.readyResolve = null
+        rt.readyReject = null
+        rt.readySettled = false
+        rt.active = null
+        rt.openedViaSend = false
+        // Next send must reload the transcript so history survives the
+        // backend swap.
+        rt.pendingResume = true
+        // Tear down the detached child with the live fields we just
+        // captured. teardownRuntime mutates a runtime, so feed it a
+        // throwaway carrying only the old handles — the real `rt` is
+        // already reset above and must not be touched again.
+        const throwaway = { ...rt, ...dying } as SessionRuntime
+        try {
+          await this.teardownRuntime(id, throwaway)
+        } catch (err) {
+          console.warn('[engine] backend-change teardown failed:', err)
+        }
+      })
+    )
+    return targets.length
+  }
+
+  /**
    * Explicitly tear down a session's runtime without deleting its
    * JSONL on disk. User-facing "close this background session"
    * action: the row stays in the sidebar (the transcript is still
@@ -949,18 +1068,23 @@ export class ChatEngine extends EventEmitter {
     const cliPath = this.resolveCliPath(backend)
     const resume = opts?.resume === true
     this.logEvent('openSession:begin', { sessionId, resume, cliPath, backend })
+    // Report the env the CHILD will actually see, not raw process.env:
+    // for the system backend the gateway keys are stripped, so this log
+    // must reflect that (otherwise it falsely shows csdn for system claude).
+    const childEnvForLog = backend === 'bundled' ? process.env : systemBackendEnv()
     console.log('[engine] opening long-lived SDK session', {
       sessionId,
       resume,
       cliPath,
+      backend,
       cwd: this.getWorkingDirectory(),
       env: {
-        ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL ?? '(unset)',
-        ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN ? '(set)' : '(unset)',
-        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ? '(set)' : '(unset)',
-        ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL ?? '(unset)',
-        ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL ?? '(unset)',
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? '(unset)'
+        ANTHROPIC_BASE_URL: childEnvForLog.ANTHROPIC_BASE_URL ?? '(unset)',
+        ANTHROPIC_AUTH_TOKEN: childEnvForLog.ANTHROPIC_AUTH_TOKEN ? '(set)' : '(unset)',
+        ANTHROPIC_API_KEY: childEnvForLog.ANTHROPIC_API_KEY ? '(set)' : '(unset)',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: childEnvForLog.ANTHROPIC_DEFAULT_SONNET_MODEL ?? '(unset)',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: childEnvForLog.ANTHROPIC_DEFAULT_OPUS_MODEL ?? '(unset)',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: childEnvForLog.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? '(unset)'
       },
       // Diagnostic: which external MCP servers (from Settings → External MCP)
       // are being wired into THIS spawn. Empty array = the cache was still
@@ -1093,6 +1217,13 @@ export class ChatEngine extends EventEmitter {
       // pushing them to vanilla claude is a no-op at best and a
       // spurious "unknown env" warning at worst. System-backend users
       // get their own `~/.claude/settings.json` instead.
+      // Bundled fusion-code keeps the full parent env (incl. the env.json
+      // csdn gateway — that's its whole point) plus the cache-preservation
+      // flags. System claude instead gets the gateway env.json keys stripped
+      // (see systemBackendEnv) so it uses the user's own ~/.claude login and
+      // default Anthropic models, not csdn / gpt-5.4. A gateway var the user
+      // exported in their OWN shell still survives — only the env.json leak
+      // is removed.
       env: (backend === 'bundled'
         ? {
             ...process.env,
@@ -1103,7 +1234,7 @@ export class ChatEngine extends EventEmitter {
             ENABLE_TOOL_SEARCH:
               process.env.ENABLE_TOOL_SEARCH ?? 'true'
           }
-        : { ...process.env }) as Record<string, string>,
+        : systemBackendEnv()) as Record<string, string>,
       // Pin fusion-code's session identity. Mutually exclusive: either
       // we're resuming an existing transcript (`resume`) or we're
       // creating a new one with an explicit id (`sessionId`).
@@ -2222,6 +2353,18 @@ export class ChatEngine extends EventEmitter {
     if (backend === 'system') {
       const systemPath = this.cachedSystemClaudePath
       if (systemPath && existsSync(systemPath)) return systemPath
+      // `cachedSystemClaudePath` is only populated by the engine-backed
+      // CLI_BACKEND_GET IPC. The settings OVERLAY toggles backend via the
+      // engine-free SETTINGS_CLI_BACKEND_GET/SET path, which never touches
+      // this engine instance — so after flipping to "system" from the
+      // overlay, the cache is still null here and we'd wrongly fall back to
+      // bundled fusion-code (→ csdn / gpt-5.4). Recover with a synchronous,
+      // PATH-independent scan of common install locations before giving up.
+      const syncPath = detectSystemClaudeSync()
+      if (syncPath && existsSync(syncPath)) {
+        this.cachedSystemClaudePath = syncPath
+        return syncPath
+      }
       console.warn(
         '[engine] cliBackend=system but no system claude detected; falling back to bundled fusion-code'
       )

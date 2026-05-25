@@ -281,7 +281,7 @@ const STRINGS = {
     // Settings → General → CLI backend
     cliBackendTitle: 'CLI 后端',
     cliBackendDesc:
-      '选择 Agent SDK 要启动哪个 CLI 二进制。切换后从下一次新建会话开始生效。',
+      '选择 Agent SDK 要启动哪个 CLI 二进制。切换立即生效——正在进行的对话回合会保持当前后端，下一回合起切换到新后端。',
     cliBackendBundled: '内置 fusion-code',
     cliBackendBundledDesc:
       '随应用打包的版本，已针对 prompt cache 和 MCP 工具做了优化',
@@ -292,7 +292,7 @@ const STRINGS = {
     cliBackendDetected: '已检测到',
     cliBackendVersion: '版本',
     cliBackendPath: '路径',
-    cliBackendApplyHint: '切换将在下一次新建会话生效'
+    cliBackendApplyHint: '立即生效——正在进行的对话回合保持当前后端'
   },
   en: {
     appTitle: 'Claude Desktop',
@@ -511,7 +511,7 @@ const STRINGS = {
 
     cliBackendTitle: 'CLI backend',
     cliBackendDesc:
-      'Choose which CLI binary the Agent SDK spawns. Takes effect on the next new chat.',
+      'Choose which CLI binary the Agent SDK spawns. Takes effect immediately — an in-flight turn keeps its current backend; the next turn switches.',
     cliBackendBundled: 'Bundled fusion-code',
     cliBackendBundledDesc:
       'The CLI shipped with the app — tuned for prompt cache and MCP tool loading',
@@ -522,7 +522,7 @@ const STRINGS = {
     cliBackendDetected: 'Detected',
     cliBackendVersion: 'Version',
     cliBackendPath: 'Path',
-    cliBackendApplyHint: 'Will apply on the next new chat'
+    cliBackendApplyHint: 'Applies immediately — an in-flight turn keeps its current backend'
   }
 } as const
 

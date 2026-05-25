@@ -40,6 +40,50 @@ test('spawnEnvForAgent applies configured Claude Code env before auth stripping'
   assert.equal(env.PATH, '/usr/bin');
 });
 
+// The desktop shell loads env.json (a csdn.cloud gateway + gpt-5.4 model
+// aliases) into process.env for the fusion-code tab; the daemon inherits it.
+// Picking "Local CLI / Claude Code" must NOT inherit that gateway — strip the
+// whole ambient ANTHROPIC_* set so the local `claude` CLI uses its own
+// anthropic.com login instead of reporting gpt-5.4.
+test('spawnEnvForAgent strips an ambient csdn gateway for the claude adapter', () => {
+  const env = spawnEnvForAgent('claude', {
+    ANTHROPIC_BASE_URL: 'https://csdn.cloud',
+    ANTHROPIC_AUTH_TOKEN: 'sk-csdn',
+    ANTHROPIC_API_KEY: 'sk-csdn',
+    ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-5.4',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'gpt-5.4',
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-5.4',
+    PATH: '/usr/bin',
+  });
+
+  assert.equal('ANTHROPIC_BASE_URL' in env, false);
+  assert.equal('ANTHROPIC_AUTH_TOKEN' in env, false);
+  assert.equal('ANTHROPIC_API_KEY' in env, false);
+  assert.equal('ANTHROPIC_DEFAULT_OPUS_MODEL' in env, false);
+  assert.equal('ANTHROPIC_DEFAULT_SONNET_MODEL' in env, false);
+  assert.equal('ANTHROPIC_DEFAULT_HAIKU_MODEL' in env, false);
+  assert.equal(env.PATH, '/usr/bin');
+});
+
+// A base URL configured via the per-agent panel IS an intentional gateway —
+// keep the whole set so the child can authenticate against it.
+test('spawnEnvForAgent keeps a panel-configured Anthropic gateway for claude', () => {
+  const env = spawnEnvForAgent(
+    'claude',
+    {
+      PATH: '/usr/bin',
+    },
+    {
+      ANTHROPIC_BASE_URL: 'https://my-proxy.example.com',
+      ANTHROPIC_API_KEY: 'sk-proxy',
+    },
+  );
+
+  assert.equal(env.ANTHROPIC_BASE_URL, 'https://my-proxy.example.com');
+  assert.equal(env.ANTHROPIC_API_KEY, 'sk-proxy');
+  assert.equal(env.PATH, '/usr/bin');
+});
+
 test('spawnEnvForAgent applies configured Codex env without mutating the base env', () => {
   const base = { PATH: '/usr/bin' };
   const env = spawnEnvForAgent('codex', base, {
@@ -722,12 +766,21 @@ test('spawnEnvForAgent strips stale configured OPENAI_API_KEY when configured ba
   assert.equal(env.PATH, '/usr/bin');
 });
 
-test('spawnEnvForAgent preserves ANTHROPIC_API_KEY when ANTHROPIC_BASE_URL is set', () => {
-  const env = spawnEnvForAgent('claude', {
-    ANTHROPIC_API_KEY: 'sk-kimi',
-    ANTHROPIC_BASE_URL: 'https://api.moonshot.cn/v1',
-    PATH: '/usr/bin',
-  });
+// A custom gateway is honored only when it comes from the per-agent panel
+// config (configuredEnv) — that is the user intentionally routing Claude Code
+// at a Kimi/Moonshot-style proxy. An ambient base URL (leaked from env.json's
+// fusion-code gateway) is NOT honored; see the csdn-stripping test above.
+test('spawnEnvForAgent preserves ANTHROPIC_API_KEY for a panel-configured base URL', () => {
+  const env = spawnEnvForAgent(
+    'claude',
+    {
+      PATH: '/usr/bin',
+    },
+    {
+      ANTHROPIC_API_KEY: 'sk-kimi',
+      ANTHROPIC_BASE_URL: 'https://api.moonshot.cn/v1',
+    },
+  );
 
   assert.equal(env.ANTHROPIC_API_KEY, 'sk-kimi');
   assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.moonshot.cn/v1');

@@ -10,10 +10,20 @@ type RuntimeEnvMap = NodeJS.ProcessEnv | Record<string, string>;
 // launched from a shell that exported the key for SDK or scripting use.
 // See issue #398.
 //
-// However, when ANTHROPIC_BASE_URL is set the user is intentionally
-// routing Claude Code to a custom endpoint (e.g. a Kimi/Moonshot proxy).
-// In that case claude login is meaningless, so preserve the API key so
-// the child can authenticate against the custom base URL.
+// A custom ANTHROPIC_BASE_URL normally signals the user is intentionally
+// routing Claude Code to a third-party gateway, in which case `claude login`
+// is meaningless and the API key must be preserved. BUT we only honor that
+// signal when it comes from the per-agent panel config (`configuredEnv`),
+// NOT when it merely leaked in from the ambient process env. In this app the
+// desktop shell loads env.json (a csdn.cloud gateway + gpt-5.4 model aliases)
+// into process.env for the *fusion-code* desktop tab — and the daemon, spawned
+// by that shell, inherits it. Without this distinction, picking "Local CLI /
+// Claude Code" (the user's real anthropic.com login) gets silently hijacked
+// onto csdn.cloud and reports gpt-5.4. So for the bundled-fusion-code use case
+// the user explicitly wants: fusion-code keeps env.json, the local `claude`
+// CLI does NOT. We therefore strip the whole ambient ANTHROPIC_* gateway set
+// (base URL, auth token, API key, and the DEFAULT_*_MODEL aliases that force
+// gpt-5.4) unless the panel config itself sets a base URL.
 //
 // The codex adapter has the symmetric problem: a stale BYOK
 // OPENAI_API_KEY / CODEX_API_KEY left behind in app-config.json silently
@@ -33,12 +43,28 @@ export function spawnEnvForAgent(
   baseEnv: RuntimeEnvMap,
   configuredEnv: unknown = {},
 ): NodeJS.ProcessEnv {
+  const configured = expandConfiguredEnv(configuredEnv);
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,
-    ...expandConfiguredEnv(configuredEnv),
+    ...configured,
   };
   if (agentId === 'claude') {
-    stripUnlessCustomBaseUrl(env, 'ANTHROPIC_BASE_URL', ['ANTHROPIC_API_KEY']);
+    // Only an ANTHROPIC_BASE_URL coming from the panel config counts as an
+    // intentional gateway. A base URL that merely leaked in from the ambient
+    // process env (env.json's csdn.cloud, meant for the fusion-code desktop
+    // tab) does NOT — strip the whole gateway set so the local `claude` CLI
+    // falls back to its own anthropic.com login instead of being hijacked
+    // onto csdn.cloud + gpt-5.4.
+    if (!hasNonEmpty(configured, 'ANTHROPIC_BASE_URL')) {
+      deleteKeys(env, [
+        'ANTHROPIC_BASE_URL',
+        'ANTHROPIC_AUTH_TOKEN',
+        'ANTHROPIC_API_KEY',
+        'ANTHROPIC_DEFAULT_OPUS_MODEL',
+        'ANTHROPIC_DEFAULT_SONNET_MODEL',
+        'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+      ]);
+    }
     return env;
   }
   if (agentId === 'codex') {
@@ -49,6 +75,26 @@ export function spawnEnvForAgent(
     return env;
   }
   return env;
+}
+
+// Case-insensitive "is this key set to a non-empty string" — same Windows
+// casing caveat as stripUnlessCustomBaseUrl below.
+function hasNonEmpty(env: RuntimeEnvMap, key: string): boolean {
+  const upper = key.toUpperCase();
+  return Object.keys(env).some(
+    (k) =>
+      k.toUpperCase() === upper &&
+      typeof env[k] === 'string' &&
+      (env[k] as string).trim() !== '',
+  );
+}
+
+// Case-insensitive delete of every key in `keys` from `env`.
+function deleteKeys(env: NodeJS.ProcessEnv, keys: readonly string[]): void {
+  const upper = new Set(keys.map((k) => k.toUpperCase()));
+  for (const key of Object.keys(env)) {
+    if (upper.has(key.toUpperCase())) delete env[key];
+  }
 }
 
 // Remove `secretKeys` from `env` unless `baseUrlKey` is set to a non-empty

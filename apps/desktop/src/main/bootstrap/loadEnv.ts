@@ -23,6 +23,27 @@ import { fileURLToPath } from 'node:url'
 
 const TAG = '[loadEnv]'
 
+/**
+ * Keys this module actually injected from env.json (i.e. keys NOT already
+ * present in the shell env). Lets consumers tell an "ambient leak from
+ * env.json" apart from "the user deliberately exported this in their
+ * shell" — the latter we must respect, the former we may strip for a
+ * specific child process.
+ *
+ * Concretely: env.json carries a csdn gateway (ANTHROPIC_BASE_URL +
+ * ANTHROPIC_DEFAULT_*_MODEL=gpt-5.4) meant ONLY for the bundled
+ * fusion-code backend. When the user picks "System claude", the engine
+ * strips the env.json-injected ANTHROPIC_* keys so vanilla claude falls
+ * back to its own ~/.claude login instead of being hijacked onto csdn.
+ * A key the user exported themselves stays put (it's not in this set).
+ */
+const injectedKeys = new Set<string>()
+
+/** Keys injected from env.json (not pre-existing in the shell). */
+export function envJsonInjectedKeys(): ReadonlySet<string> {
+  return injectedKeys
+}
+
 function candidatePaths(): string[] {
   const cwd = process.cwd()
   const selfDir = dirname(fileURLToPath(import.meta.url))
@@ -63,6 +84,7 @@ function loadEnvFromFile(): void {
         continue
       }
       process.env[key] = value
+      injectedKeys.add(key)
       injected++
     }
     console.log(

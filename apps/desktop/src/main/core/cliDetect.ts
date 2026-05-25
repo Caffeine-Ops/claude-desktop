@@ -122,6 +122,27 @@ async function findViaPath(): Promise<string | null> {
   return null
 }
 
+/**
+ * Synchronous, PATH-independent detection of the system `claude` binary.
+ *
+ * Only scans the hand-maintained common install locations via `existsSync`
+ * (no `which`, no subprocess, no async). Used as a SPAWN-TIME fallback by
+ * the engine: the async `detectSystemClaude()` result is cached on the
+ * engine instance only when the *engine-backed* CLI_BACKEND_GET IPC runs,
+ * but the settings OVERLAY uses the engine-free SETTINGS_CLI_BACKEND_GET
+ * path — so after toggling backend from the overlay, the engine's
+ * `cachedSystemClaudePath` can still be null at spawn. This lets
+ * `resolveCliPath` recover the path synchronously instead of silently
+ * falling back to bundled fusion-code (which would keep using csdn).
+ *
+ * Returns null only when claude truly isn't in any known location; the
+ * common case (`~/.local/bin/claude`, official installer, homebrew) is
+ * covered without depending on the GUI process's stripped PATH.
+ */
+export function detectSystemClaudeSync(): string | null {
+  return findInCommonPaths()
+}
+
 function findInCommonPaths(): string | null {
   const home = homedir()
   const candidates =

@@ -6287,8 +6287,8 @@ function DesktopAppearanceControls({
             </button>
           </div>
           <p className="hint">
-            Takes effect on the next session — an in-flight turn keeps its
-            current backend.
+            Takes effect immediately — an in-flight turn keeps its current
+            backend; the next turn switches.
           </p>
         </div>
       ) : null}
