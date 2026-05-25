@@ -408,7 +408,7 @@ export const zhCN: Dict = {
   'workspaceTabs.project': '项目',
   'workspaceTabs.pluginDetails': '插件详情',
   'workspaceTabs.marketplace': '插件市场',
-  'homeHero.title': '你想设计什么？',
+  'homeHero.title': '说说你的需求吧',
   'homeHero.subtitlePrefix': "描述你想生成的内容，然后按",
   'homeHero.placeholder': '描述你想生成的内容…',
   'homeHero.placeholderActive': '编辑示例请求，或写下你自己的需求…',

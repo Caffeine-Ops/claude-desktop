@@ -159,8 +159,6 @@ const STRINGS = {
     // Right rail — Todos
     todosTitle: '待办',
     todosEmpty: '暂无待办事项',
-    todosEmptyHintBefore: '让 Claude 使用 ',
-    todosEmptyHintAfter: ' 创建',
     todosToggleStatus: '切换状态（当前 {status}）',
     todosStatusTitle: '状态：{status}',
     todoStatusPending: '待办',
@@ -396,8 +394,6 @@ const STRINGS = {
 
     todosTitle: 'Todos',
     todosEmpty: 'No todos yet',
-    todosEmptyHintBefore: 'Ask Claude to use ',
-    todosEmptyHintAfter: '',
     todosToggleStatus: 'Toggle status (currently {status})',
     todosStatusTitle: 'Status: {status}',
     todoStatusPending: 'pending',

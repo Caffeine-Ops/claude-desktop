@@ -131,16 +131,6 @@ function EmptyHint(): React.JSX.Element {
         <ListIcon />
       </span>
       <div className="font-medium text-foreground/75">{t('todosEmpty')}</div>
-      <div className="text-muted-foreground/70">
-        {t('todosEmptyHintBefore')}
-        <code
-          className="rounded-[5px] bg-foreground/[0.08] px-1 py-0.5 font-mono text-foreground/80 dark:bg-white/[0.1]"
-          style={{ fontSize: '10.5px' }}
-        >
-          TodoWrite
-        </code>
-        {t('todosEmptyHintAfter')}
-      </div>
     </div>
   )
 }

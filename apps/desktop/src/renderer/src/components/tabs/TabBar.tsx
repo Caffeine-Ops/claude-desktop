@@ -112,12 +112,40 @@ function chipColor(key: string): { bg: string; fg: string } {
   }
 }
 
-function chipLetter(title: string): string {
-  const trimmed = title.trim()
-  if (!trimmed) return '?'
-  const match = trimmed.match(/[\p{L}\p{N}]/u)
-  if (match) return match[0]!.toUpperCase()
-  return trimmed[0]!.toUpperCase()
+/** 对话气泡 —— chat tab（"智能助手"）的 chip 图标。线性单色，
+ *  `currentColor` 继承 chip 前景色，和原来的字母 tile 共用同一套
+ *  pastel 配色，所以换成图标后整条 strip 的色彩节奏不变。 */
+function ChatBubbleIcon(): React.ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" aria-hidden="true">
+      <path
+        d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 16.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/** 画板 —— web tab（"工作画布"）的 chip 图标。画框 + 内部
+ *  对角构图线，呼应可视化画布的语义。 */
+function DesignBoardIcon(): React.ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" aria-hidden="true">
+      <rect
+        x="3.5"
+        y="4.5"
+        width="17"
+        height="15"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.6"
+      />
+      <path d="M3.5 15l4.5-4 3 2.5 4-4.5 5 6" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx="9" cy="9" r="1.4" fill="currentColor" />
+    </svg>
+  )
 }
 
 function TabPill({
@@ -128,7 +156,11 @@ function TabPill({
   onClick: () => void
 }): React.ReactElement {
   const chip = chipColor(tab.workspacePath ?? String(tab.id))
-  const letter = chipLetter(tab.title)
+  // web tab 标题在主进程固定为 "工作画布"（见 tabRegistry，不跟随工作区
+  // basename），据此区分两个固定 tab 的 chip 图标：设计 web tab 用设计画板，
+  // 其余（chat "智能助手"）用对话气泡。用固定标题判定比 workspacePath 更稳
+  // —— chat tab 在 gate 未过的极早期 workspacePath 也可能为 null。
+  const isWebTab = tab.title === '工作画布'
 
   // All tabs share the same shape — uniformly rounded pills that
   // `flex-1` into the available width. Height is 28px (h-7) for a
@@ -172,10 +204,10 @@ function TabPill({
     >
       <span
         aria-hidden="true"
-        className="flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-[4px] text-[9px] font-semibold"
+        className="flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-[4px]"
         style={{ backgroundColor: chip.bg, color: chip.fg }}
       >
-        {letter}
+        {isWebTab ? <DesignBoardIcon /> : <ChatBubbleIcon />}
       </span>
       {/* Active label firms to medium (500), echoing web
           `.workspace-tab.is-active .workspace-tab__label { font-weight: 500 }`
