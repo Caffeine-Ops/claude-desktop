@@ -194,6 +194,36 @@ export function fileTypeIconPaths(pathOrName: string): readonly IconPath[] {
   return pathsForExt(extOf(pathOrName))
 }
 
+/**
+ * The same Icons8 colour tables, addressable by a stable key rather
+ * than a file extension. The slash-skill chip registry
+ * (`skillChipRegistry.ts`) uses this to give a known skill the matching
+ * coloured file glyph — e.g. `/ppt-master` reuses the PowerPoint icon —
+ * instead of a single-stroke Lucide glyph.
+ */
+export type FileIconKey = 'ppt' | 'word' | 'excel' | 'pdf' | 'html' | 'image' | 'archive' | 'code'
+
+export function fileIconPathsByKey(key: FileIconKey): readonly IconPath[] {
+  switch (key) {
+    case 'ppt':
+      return PPT
+    case 'word':
+      return WORD
+    case 'excel':
+      return EXCEL
+    case 'pdf':
+      return PDF
+    case 'html':
+      return HTML
+    case 'image':
+      return IMAGE
+    case 'archive':
+      return ARCHIVE
+    case 'code':
+      return CODE
+  }
+}
+
 export function FileTypeIcon({
   pathOrName,
   size = 18,

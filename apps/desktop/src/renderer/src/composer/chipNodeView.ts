@@ -1,7 +1,8 @@
 import type { Node as PMNode } from 'prosemirror-model'
 import type { NodeView } from 'prosemirror-view'
 
-import { fileTypeIconPaths } from '../components/chat/FileTypeIcon'
+import { fileIconPathsByKey, fileTypeIconPaths, type IconPath } from '../components/chat/FileTypeIcon'
+import { findSkillChipSpec } from './skillChipRegistry'
 
 /**
  * NodeView for the `slash` / `mention` atom nodes. Renders the same pill
@@ -29,9 +30,74 @@ const SLASH_ICON_PATHS = [
 const NS = 'http://www.w3.org/2000/svg'
 
 /**
+ * The `gradient` skill-chip appearance (the larger card the user picked
+ * for `/ppt-master`) needs a `::before` pseudo-element for its
+ * accent-gradient border — a 1.5px gradient frame masked into a ring
+ * with `mask-composite: exclude`. A pseudo-element can't be expressed
+ * via inline `style` on an imperative-DOM node, so we inject one shared
+ * stylesheet the first time such a chip mounts. Idempotent: a module
+ * flag plus an id check means repeated mounts (and HMR) never duplicate
+ * it.
+ *
+ * The gradient runs `--accent` → a same-hue darker stop derived with
+ * `color-mix` (the same technique the design-tokens sheet already uses),
+ * so it re-skins with the theme picker and introduces no new token.
+ */
+const GRADIENT_CHIP_STYLE_ID = 'skill-chip-gradient-style'
+let gradientChipStyleInjected = false
+function ensureGradientChipStyle(): void {
+  if (gradientChipStyleInjected || document.getElementById(GRADIENT_CHIP_STYLE_ID)) {
+    gradientChipStyleInjected = true
+    return
+  }
+  const style = document.createElement('style')
+  style.id = GRADIENT_CHIP_STYLE_ID
+  style.textContent = `
+.skill-chip-gradient {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px 7px 11px;
+  border-radius: 13px;
+  background: hsl(var(--card));
+  color: hsl(var(--accent));
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  vertical-align: middle;
+  user-select: none;
+  box-shadow: 0 1px 3px hsl(220 40% 2% / 0.08);
+  transition: background 0.18s ease;
+}
+.skill-chip-gradient::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: linear-gradient(120deg,
+    hsl(var(--accent)),
+    color-mix(in oklch, hsl(var(--accent)) 62%, hsl(240 30% 12%)));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.skill-chip-gradient:hover { background: hsl(var(--accent) / 0.05); }
+.skill-chip-gradient svg { flex-shrink: 0; display: block; }
+`
+  document.head.appendChild(style)
+  gradientChipStyleInjected = true
+}
+
+/**
  * Slash-command chip glyph: a single-colour Lucide stroke icon tinted
- * with the accent `stroke`. (Mentions use a different builder below
- * because they now draw multi-colour Icons8 fills, not strokes.)
+ * with the accent `stroke`. (Mentions — and registered skills — use the
+ * coloured builder below because they draw multi-colour Icons8 fills,
+ * not strokes.)
  */
 function buildSlashIcon(stroke: string): SVGSVGElement {
   const svg = document.createElementNS(NS, 'svg')
@@ -54,20 +120,21 @@ function buildSlashIcon(stroke: string): SVGSVGElement {
 }
 
 /**
- * File-mention chip glyph: the per-type coloured Icons8 icon picked
- * from the mentioned path's extension, shared with the React chips/
- * cards via `fileTypeIconPaths`. Each path carries its own `fill`, so
- * unlike the slash glyph this is a self-coloured 48×48 SVG (no stroke,
- * no accent tint). `value` is the `@path` (or `@"path"`) attr.
+ * Coloured Icons8 glyph builder, shared by file mentions and registered
+ * slash skills. Each path carries its own `fill`, so this is a
+ * self-coloured 48×48 SVG (no stroke, no accent tint) that looks the
+ * same on any surface. File mentions pass the per-extension table; a
+ * registered skill (see `skillChipRegistry.ts`) passes the table for
+ * its `icon` key — e.g. `/ppt-master` reuses the PowerPoint glyph.
  */
-function buildMentionIcon(value: string): SVGSVGElement {
+function buildColorIcon(paths: readonly IconPath[], size = 12): SVGSVGElement {
   const svg = document.createElementNS(NS, 'svg')
-  svg.setAttribute('width', '12')
-  svg.setAttribute('height', '12')
+  svg.setAttribute('width', String(size))
+  svg.setAttribute('height', String(size))
   svg.setAttribute('viewBox', '0 0 48 48')
   svg.setAttribute('aria-hidden', 'true')
   svg.style.flexShrink = '0'
-  for (const spec of fileTypeIconPaths(value.replace(/^@"?|"$/g, ''))) {
+  for (const spec of paths) {
     const p = document.createElementNS(NS, 'path')
     p.setAttribute('d', spec.d)
     p.setAttribute('fill', spec.fill)
@@ -82,6 +149,39 @@ function buildMentionIcon(value: string): SVGSVGElement {
  */
 export function createChipNodeView(variant: 'slash' | 'mention') {
   return (node: PMNode): NodeView => {
+    const raw = (node.attrs.value as string) ?? ''
+
+    // A known slash skill (e.g. `/ppt-master`) swaps the glyph for its
+    // coloured Icons8 icon and gives the pill a friendly label. The pill
+    // itself keeps the default accent palette — the coloured icon
+    // already carries the brand cue, so tinting the pill too would
+    // over-saturate it. Everything else — and all mentions — keeps the
+    // default token-driven look. Lookup is by the verbatim `value`, so
+    // this is purely visual; serialization is untouched.
+    const skill = variant === 'slash' ? findSkillChipSpec(raw) : null
+
+    const dom = document.createElement('span')
+    dom.setAttribute(variant === 'slash' ? 'data-pm-slash' : 'data-pm-mention', node.attrs.value as string)
+
+    // ── Gradient-border appearance (the larger card the user picked for
+    // `/ppt-master`). A class drives the look because the gradient frame
+    // needs a `::before` pseudo (see `ensureGradientChipStyle`); the
+    // bigger 22px coloured glyph + label go inside. Everything that
+    // serializes is untouched — purely visual.
+    if (skill?.appearance === 'gradient') {
+      ensureGradientChipStyle()
+      dom.className = 'skill-chip-gradient'
+      dom.appendChild(buildColorIcon(fileIconPathsByKey(skill.icon), 22))
+      const gLabel = document.createElement('span')
+      gLabel.textContent = skill.label ?? raw.slice(1)
+      dom.appendChild(gLabel)
+      return {
+        dom,
+        ignoreMutation: () => true,
+        update: (updated) => updated.type === node.type
+      }
+    }
+
     // Slash chips follow the accent token; mention chips use the
     // dedicated `--chip-mention` token — same split the old <Chip> used
     // so files stay visually distinct from commands and both re-skin
@@ -90,8 +190,6 @@ export function createChipNodeView(variant: 'slash' | 'mention') {
     const text = `hsl(var(${colorVar}))`
     const background = `hsl(var(${colorVar}) / 0.16)`
 
-    const dom = document.createElement('span')
-    dom.setAttribute(variant === 'slash' ? 'data-pm-slash' : 'data-pm-mention', node.attrs.value as string)
     Object.assign(dom.style, {
       display: 'inline-flex',
       alignItems: 'center',
@@ -109,13 +207,23 @@ export function createChipNodeView(variant: 'slash' | 'mention') {
       userSelect: 'none'
     } satisfies Partial<CSSStyleDeclaration>)
 
-    const raw = (node.attrs.value as string) ?? ''
-    dom.appendChild(
-      variant === 'slash' ? buildSlashIcon(text) : buildMentionIcon(raw)
-    )
-    // Strip the leading `/` or `@` — the icon replaces it visually.
+    // Icon: a registered skill → its coloured Icons8 glyph; a file
+    // mention → the per-extension coloured glyph; everything else → the
+    // accent-tinted Lucide box.
+    let icon: SVGSVGElement
+    if (skill) {
+      icon = buildColorIcon(fileIconPathsByKey(skill.icon))
+    } else if (variant === 'mention') {
+      icon = buildColorIcon(fileTypeIconPaths(raw.replace(/^@"?|"$/g, '')))
+    } else {
+      icon = buildSlashIcon(text)
+    }
+    dom.appendChild(icon)
+
+    // Strip the leading `/` or `@` — the icon replaces it visually. A
+    // registered skill supplies its own friendly label instead.
     const label = document.createElement('span')
-    label.textContent = raw.slice(1)
+    label.textContent = skill?.label ?? raw.slice(1)
     dom.appendChild(label)
 
     return {
