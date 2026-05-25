@@ -22,11 +22,11 @@ jobs:
           - os: macos-latest
             platform: mac
             fusion_asset: fusion-code-darwin-arm64
-            fusion_target: fusion-bin/fusion-code-cli
+            fusion_target: apps/desktop/fusion-bin/fusion-code-cli
           - os: windows-latest
             platform: win
             fusion_asset: fusion-code-win32-x64.exe
-            fusion_target: fusion-bin/fusion-code-cli.exe
+            fusion_target: apps/desktop/fusion-bin/fusion-code-cli.exe
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -58,16 +58,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p fusion-bin
+          # The desktop package (verify:fusion + electron-builder
+          # extraResources) resolves fusion-bin/ relative to apps/desktop,
+          # so the CLI must land there — NOT in the repo root. (Pre-monorepo
+          # the app WAS the repo root; the path didn't move in this workflow.)
+          mkdir -p apps/desktop/fusion-bin
           gh release download "$FUSION_CODE_VERSION" \
             --repo Caffeine-Ops/fusion-code-install \
             --pattern "${{ matrix.fusion_asset }}" \
-            --dir fusion-bin
-          mv "fusion-bin/${{ matrix.fusion_asset }}" "${{ matrix.fusion_target }}"
+            --dir apps/desktop/fusion-bin
+          mv "apps/desktop/fusion-bin/${{ matrix.fusion_asset }}" "${{ matrix.fusion_target }}"
           if [ "${{ matrix.platform }}" != "win" ]; then
             chmod +x "${{ matrix.fusion_target }}"
           fi
-          ls -la fusion-bin/
+          ls -la apps/desktop/fusion-bin/
 
       # Only typecheck the package this workflow actually ships: the
       # Electron app. Its tsconfig project-references pull in every
@@ -82,11 +86,20 @@ jobs:
       - name: Type check
         run: bun run --filter='@claude-desktop/desktop' typecheck
 
+      # Use `dist:<platform>`, NOT `build:<platform>`. The desktop
+      # `build:*` chain assumes apps/daemon/dist/cli.js and apps/web/out
+      # already exist (its prebundle:daemon step only COPIES them) — true
+      # locally where they linger from a previous build, but a clean CI
+      # checkout has neither. `dist:*` runs `prebuild:resources` first to
+      # build the daemon (tsc) and the web static export. The library
+      # packages daemon/web import from `dist/` are already built by the
+      # root postinstall (runs during `bun install`), so we don't repeat
+      # them here.
       - name: Build (${{ matrix.platform }})
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun run build:${{ matrix.platform }}
+        run: bun run dist:${{ matrix.platform }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
