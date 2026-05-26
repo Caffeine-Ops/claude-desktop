@@ -90,44 +90,56 @@ export function resolveJsRuntimeBin(): string | null {
 }
 
 /**
- * 把系统 claude 的「可执行入口」规整成一个能被 `node <entry>` 直接跑的 **JS 文件**。
+ * 把系统 claude 的「可执行入口」规整成一个 SDK 能直接 spawn 的真实目标。
  *
- * 背景：mac/Linux 上系统 claude 是无后缀脚本（shebang 指向 node），SDK 默认
- * `node <script>` 能跑，原样返回即可。但 **Windows 上 npm 全局安装的 claude 是
- * `claude.cmd`**（批处理 shim）——Node 不带 `shell:true` 的 spawn/execFile **无法执行
- * .cmd/.bat**（CVE-2024-27980 之后收紧），传给 SDK 当 `pathToClaudeCodeExecutable`
- * 会被 `node claude.cmd` 调用而 spawn EINVAL。
+ * 背景：mac/Linux 上系统 claude 是原生二进制（或无后缀脚本），SDK 直接 spawn 即可，
+ * 原样返回。但 **Windows 上 npm 全局安装的 claude 是 `claude.cmd`**（批处理 shim）——
+ * Node 不带 `shell:true` 的 spawn/execFile **无法执行 .cmd/.bat**（CVE-2024-27980 之后
+ * 收紧），SDK 的 Fx() 又把 `.cmd`（不以 .js/.mjs/.ts 结尾）当 native binary 裸 spawn
+ * → spawn EINVAL（errno -4071）。见 [[2026-05-25-windows系统claude.cmd经SDK裸node-spawn-EINVAL]]。
  *
- * 修法不是给 spawn 加 shell（参数转义/注入面 + 还得各路径单独处理），而是**顺着
- * shim 找到它真正调用的 cli.js**，把那个 JS 路径交给 SDK。npm 生成的 `.cmd` shim 是
- * 固定模板，内部用 `"%dp0%\node_modules\@anthropic-ai\claude-code\cli.js"` 之类指向
- * 真实入口；我们既按标准布局直接拼，也读 .cmd 文本兜底解析。
+ * 关键：现代 `@anthropic-ai/claude-code`（≥2.x）的 npm 包 `bin` 字段指向
+ * `bin/claude.exe`——一个 **bun 编译的原生二进制**，postinstall 从平台包
+ * (`@anthropic-ai/claude-code-win32-x64`) 复制真二进制覆盖占位符。**它没有 cli.js**。
+ * 所以 .cmd shim 内部调的是 `node_modules\@anthropic-ai\claude-code\bin\claude.exe`，
+ * 而非旧版的 `node ...\cli.js`。
  *
- * 解析失败（找不到 cli.js）时返回原始路径——让上层照旧尝试，至少错误信息明确，
- * 不静默吞掉。非 .cmd/.exe（mac/Linux 脚本、或已是 .js）一律原样返回，mac 不受影响。
+ * 修法：把 .cmd 解析成它真正调用的目标——**优先 bin/claude.exe（现代，真二进制，
+ * SDK 直接 spawn .exe 合法不报错），cli.js 作为旧版兜底**。两条都按标准 npm 布局直接
+ * 拼，再读 .cmd 文本兜底（同时匹配 .exe 和 .js 字面量路径）。
+ *
+ * 返回 .exe 时上层 engine 不会套 `executable: node`（那只给 .js 入口），SDK 直接 spawn
+ * 这个 exe。解析失败时返回原始 .cmd——让上层照旧尝试，错误信息明确不静默吞。非 .cmd/.bat
+ * （mac/Linux 脚本、原生二进制、或已是 .js）一律原样返回，mac 不受影响。
  */
 export function resolveSystemClaudeJsEntry(cliPath: string): string {
-  // 已经是 JS 入口（含 dev 下的无后缀脚本由 node 经 shebang 跑）→ 原样返回。
-  // 只对 Windows 的 .cmd/.bat/.exe shim 做解析。
+  // 非 Windows shim（mac/Linux 脚本、原生二进制、已是 .js）→ 原样返回。
+  // 只对 Windows 的 .cmd/.bat/.ps1 做解析。
   if (!/\.(cmd|bat|ps1)$/i.test(cliPath)) return cliPath
 
   const dir = dirname(cliPath)
+  const pkgBin = join(dir, 'node_modules', '@anthropic-ai', 'claude-code')
 
-  // ① 标准 npm 全局布局：<npmPrefix>\node_modules\@anthropic-ai\claude-code\cli.js
-  //    （claude.cmd 与 node_modules 同级）。也覆盖未来可能的 cli.mjs。
-  const standard = [
-    join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js'),
-    join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.mjs')
+  // ① 标准 npm 全局布局，按优先级直接拼真实入口（claude.cmd 与 node_modules 同级）：
+  //    - 现代（≥2.x）：bin/claude.exe（postinstall 复制的原生二进制，真 spawn 目标）
+  //    - 旧版：cli.js / cli.mjs（node 跑的 JS 入口）
+  const candidates = [
+    join(pkgBin, 'bin', 'claude.exe'),
+    join(pkgBin, 'cli.js'),
+    join(pkgBin, 'cli.mjs')
   ]
-  for (const p of standard) {
+  for (const p of candidates) {
     if (existsSync(p)) return p
   }
 
-  // ② 读 .cmd shim 文本兜底：npm shim 里会出现 "...\cli.js" 的字面量路径。
-  //    抠出第一个以 .js/.mjs 结尾、含 claude-code 的路径片段，相对 dir 解析。
+  // ② 读 .cmd shim 文本兜底：shim 里会出现 "...\bin\claude.exe" 或 "...\cli.js" 字面量。
+  //    抠出第一个含 claude-code 且以 .exe/.js/.mjs 结尾的路径片段，相对 dir 解析。
+  //    .exe 优先于 .js（现代包二者不会并存，但万一布局异常，真二进制更稳）。
   try {
     const text = readFileSync(cliPath, 'utf8')
-    const m = text.match(/[^"'\s]*claude-code[^"'\s]*\.m?js/i)
+    const m =
+      text.match(/[^"'\s]*claude-code[^"'\s]*\.exe/i) ||
+      text.match(/[^"'\s]*claude-code[^"'\s]*\.m?js/i)
     if (m) {
       const raw = m[0].replace(/%~?dp0%\\?/i, '').replace(/^["']|["']$/g, '')
       const resolved = resolve(dir, raw)
@@ -138,7 +150,7 @@ export function resolveSystemClaudeJsEntry(cliPath: string): string {
   }
 
   console.warn(
-    `[cliDetect] 无法从 ${cliPath} 解析出 cli.js，原样交给 SDK（Windows 上可能 spawn EINVAL）`
+    `[cliDetect] 无法从 ${cliPath} 解析出 claude.exe/cli.js，原样交给 SDK（Windows 上可能 spawn EINVAL）`
   )
   return cliPath
 }
@@ -362,12 +374,15 @@ function findInCommonPaths(): string | null {
  */
 async function getVersion(path: string): Promise<string | null> {
   // Windows 上 path 可能是 claude.cmd（批处理 shim）。execFile 不带 shell 跑不了
-  // .cmd → spawn EINVAL。解析到真实 cli.js 后用 node 跑它，绕开 .cmd。非 Windows /
-  // 已是 JS 的情况下 entry === path，行为不变。
+  // .cmd → spawn EINVAL。解析成真实入口绕开 .cmd：
+  //   - 现代 claude → bin/claude.exe（真二进制）：直接 execFile 它，不套 node。
+  //   - 旧版 claude → cli.js：用 node 跑。
+  // usesNode 只认 .js/.mjs（决定要不要 node 前缀），不能用 `entry !== path`——那对
+  // .exe 会误判成要 node 跑。非 Windows / 已是脚本时 entry === path，行为不变。
   const entry = resolveSystemClaudeJsEntry(path)
-  const runtime = resolveJsRuntimeBin()
-  const usesNode = entry !== path || (runtime !== null && /\.m?js$/i.test(entry))
-  const file = usesNode ? (runtime ?? 'node') : path
+  const usesNode = /\.m?js$/i.test(entry)
+  const runtime = usesNode ? resolveJsRuntimeBin() : null
+  const file = usesNode ? (runtime ?? 'node') : entry
   const args = usesNode ? [entry, '--version'] : ['--version']
   try {
     const { stdout } = await execFileP(file, args, {
