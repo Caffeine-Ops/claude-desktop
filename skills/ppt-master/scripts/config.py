@@ -56,6 +56,16 @@ def get_env_candidates() -> list[Path]:
         Path.cwd() / '.env',
         REPO_ROOT / '.env',
         USER_ENV_FILE,
+        # Lowest priority: the skill's own bundled .env. Ships with the
+        # claude-desktop app and carries ONLY non-secret switches
+        # (IMAGE_BACKEND / OPENAI_MODEL) so AI image generation works out of
+        # the box on a fresh install — the API key/base_url are injected into
+        # the process env by the host (env.json → engine), which always wins
+        # over any .env. On a machine that already has a user-level
+        # ~/.ppt-master/.env (or a cwd/repo .env), that one is picked first and
+        # this is never read — intentional, since "first existing wins, no
+        # merge". Mirrors the gpt-image-2 skill's bundled-.env approach.
+        PROJECT_ROOT / '.env',
     ]
 
 

@@ -13,6 +13,16 @@ apps/desktop/fusion-bin/
 # （版本钉在 build.yml 的 BUNDLED_NODE_VERSION），打进包给 daemon 用，不入库。
 apps/desktop/node-runtime/
 
+# 自带 Python 3.12 runtime (~40-50M/平台)：CI 从 astral-sh/python-build-standalone
+# 下载（版本钉在 build.yml 的 PYTHON_STANDALONE_TAG/VERSION），打进包给 ppt-master
+# skill 的 ensure-python 脚本当 venv base 用，不是源码，不入库。
+apps/desktop/python-runtime/
+
+# ppt-master skill 的运行时产物（本机跑 skill 时生成，非源码）：
+# projects/ 是生成的 PPT 工程，__pycache__/ 是 Python 字节码缓存。
+skills/ppt-master/projects/
+skills/ppt-master/**/__pycache__/
+
 # prebundle 打包产物 (~160M)：scripts/prebundle-daemon.mjs 生成（每次先 rm 重建），
 # 内容全是从 repo 别处复制来的（daemon bundle + apps/web/out + skills/
 # design-systems/… 等根目录资源），无唯一副本。electron-builder 打包时用，
@@ -26,6 +36,11 @@ apps/desktop/prebundled/
 # must be tracked so it rides along into the packaged app — otherwise Mode A
 # never turns on for end users. Safe because it holds no credentials.
 !skills/gpt-image-2/.env
+# Exception: same pattern for ppt-master — a secret-free `.env` carrying ONLY
+# IMAGE_BACKEND/OPENAI_MODEL switches so AI image gen works out of the box on a
+# fresh install. Credentials come from env.json/host env. Must be tracked to
+# ride into the package.
+!skills/ppt-master/.env
 .vite
 env.json
 .gstack/

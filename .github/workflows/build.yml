@@ -15,6 +15,16 @@ env:
   # (the version better-sqlite3 is compiled for, ABI 137) — see the
   # "Bundle Node runtime" step.
   BUNDLED_NODE_VERSION: v24.16.0
+  # Standalone Python bundled INTO the app for the ppt-master skill (a Python
+  # skill with native-extension deps: PyMuPDF/Pillow/numpy). python-build-
+  # standalone (astral, what uv uses) ships relocatable, install_only tarballs.
+  # PINNED to 3.12 deliberately: it has mature cp312 wheels for every dep, so
+  # the per-user `pip install` hits prebuilt wheels instead of source-compiling
+  # (the py3.14 hang — see the project's error log). The release tag is a date;
+  # bump both together. Verified 20260510 carries 3.12.13 for BOTH mac-arm64
+  # and win-x64 install_only.
+  PYTHON_STANDALONE_TAG: '20260510'
+  PYTHON_STANDALONE_VERSION: '3.12.13'
 
 jobs:
   build:
@@ -28,11 +38,13 @@ jobs:
             fusion_asset: fusion-code-darwin-arm64
             fusion_target: apps/desktop/fusion-bin/fusion-code-cli
             node_dist: darwin-arm64
+            python_dist: aarch64-apple-darwin
           - os: windows-latest
             platform: win
             fusion_asset: fusion-code-win32-x64.exe
             fusion_target: apps/desktop/fusion-bin/fusion-code-cli.exe
             node_dist: win-x64
+            python_dist: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -144,6 +156,46 @@ jobs:
           echo "bundled node ABI: $abi"
           if [ "$abi" != "137" ]; then
             echo "::error::Bundled Node ABI is $abi, expected 137"
+            exit 1
+          fi
+
+      # Bundle a standalone Python 3.12 INTO the app for the ppt-master skill.
+      # python-build-standalone install_only tarballs are relocatable (a top
+      # `python/` dir holding bin/python3 + lib/) — we drop that dir's CONTENTS
+      # into python-runtime/<platform>/ so the interpreter lands at
+      # python-runtime/<platform>/bin/python3 (mac) / python-runtime/<platform>/
+      # python.exe (win) — matching resolveBundledPythonHome() in cliDetect.ts.
+      # The skill's bin/ensure-python.sh uses this as the base to build a
+      # per-user venv at ~/.ppt-master/venv on first run. Not run directly here.
+      - name: Bundle Python runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$PYTHON_STANDALONE_TAG"
+          ver="$PYTHON_STANDALONE_VERSION"
+          dist="${{ matrix.python_dist }}"
+          dest="apps/desktop/python-runtime/${{ matrix.platform }}"
+          asset="cpython-${ver}+${tag}-${dist}-install_only.tar.gz"
+          url="https://github.com/astral-sh/python-build-standalone/releases/download/${tag}/${asset}"
+          mkdir -p "$dest"
+          echo "Downloading $url"
+          curl -fsSL "$url" -o python.tar.gz
+          # tarball has a single top-level `python/` dir; strip it so its
+          # contents (bin/, lib/, …) land directly in $dest.
+          tar -xzf python.tar.gz --strip-components=1 -C "$dest"
+          if [ "${{ matrix.platform }}" = "win" ]; then
+            py="$dest/python.exe"
+          else
+            py="$dest/bin/python3"
+          fi
+          ls -la "$dest"
+          # Assert the bundled interpreter runs and is the pinned 3.12 — a wrong
+          # version would let the user's first-run pip hit the py3.14 no-wheel
+          # source-compile hang we pin 3.12 specifically to avoid.
+          got=$("$py" -c 'import sys;print("%d.%d"%sys.version_info[:2])')
+          echo "bundled python: $got"
+          if [ "$got" != "3.12" ]; then
+            echo "::error::Bundled Python is $got, expected 3.12"
             exit 1
           fi
 

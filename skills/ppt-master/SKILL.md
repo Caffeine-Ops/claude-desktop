@@ -14,6 +14,26 @@ description: >
 **Core Pipeline**: `Source Document → Create Project → [Template] → Strategist → [Image_Generator] → Executor Live Preview → Quality Check → Post-processing → Export`
 
 > [!CAUTION]
+> ## 🐍 Python Environment (RUN FIRST, ONCE PER SESSION)
+>
+> Every command in this skill that starts with `python3 ${SKILL_DIR}/scripts/...`
+> MUST run inside this skill's own virtualenv — NOT the machine's bare `python3`
+> (which may be missing, or a too-new version with no prebuilt wheels for
+> PyMuPDF/Pillow/numpy). Before running ANY python command, bootstrap once:
+>
+> - **macOS / Linux** — `source ${SKILL_DIR}/bin/ensure-python.sh`
+>   It prepares `~/.ppt-master/venv` (first run: creates it + `pip install -r
+>   requirements.txt`, a few minutes; later runs: instant) and exports
+>   `$PPT_PY`. Then **replace every `python3` in this document with `$PPT_PY`**
+>   — e.g. `$PPT_PY ${SKILL_DIR}/scripts/project_manager.py init …`.
+> - **Windows** — run `${SKILL_DIR}\bin\ensure-python.cmd`; its last stdout line
+>   is `PPT_PY=<path>`. Use that path in place of `python3` for the rest of the
+>   session.
+>
+> If the bootstrap prints an error (no interpreter / pip failed), surface it to
+> the user and stop — do NOT fall back to a bare `python3`, the deps won't be there.
+
+> [!CAUTION]
 > ## 🚨 Global Execution Discipline (MANDATORY)
 >
 > **This workflow is a strict serial pipeline. The following rules have the highest priority — violating any one of them constitutes execution failure:**

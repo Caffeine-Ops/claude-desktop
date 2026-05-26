@@ -39,7 +39,10 @@ import {
   detectSystemClaude,
   detectSystemClaudeSync,
   resolveBundledCliPath,
-  resolveBundledSkillsPluginDir
+  resolveBundledPythonHome,
+  resolveBundledSkillsPluginDir,
+  resolveJsRuntimeBin,
+  resolveSystemClaudeJsEntry
 } from './cliDetect'
 import { envJsonInjectedKeys } from '../bootstrap/loadEnv'
 import {
@@ -1097,11 +1100,32 @@ export class ChatEngine extends EventEmitter {
     opts?: { resume?: boolean }
   ): void {
     const backend = getAppSettings().cliBackend
-    const cliPath = this.resolveCliPath(backend)
+    const rawCliPath = this.resolveCliPath(backend)
+    // Windows 上系统 claude 是 claude.cmd（批处理 shim）。claude-agent-sdk 的
+    // Fx() 判断「路径不以 .js/.mjs/.ts… 结尾 → 当 native binary 直接 spawn」，
+    // 于是它会裸 spawn(claude.cmd) → spawn EINVAL（Node 不带 shell 执行不了 .cmd）。
+    // 把 shim 解析成它真正调用的 cli.js（非 Windows / 已是脚本则原样返回），这样
+    // Fx() 返回 false，SDK 改走 `executable cli.js` 路径，再配合下面显式指定的
+    // executable（自带 node）就能正常起。fusion-code-cli[.exe] 不是 .cmd，原样穿过。
+    // 见 [[2026-05-25-windows系统claude.cmd经SDK裸node-spawn-EINVAL]]。
+    const cliPath = resolveSystemClaudeJsEntry(rawCliPath)
+    // 当 cliPath 是 JS 入口（Windows 系统 claude 解析后、或未来任何 .js cli）时，SDK
+    // 需要一个 node 去跑它，默认取裸 'node'——但打包 Electron 的精简 PATH 里常无
+    // node.exe → spawn EINVAL。显式指到 app 自带的 node-runtime（绝对路径，绕开 PATH）。
+    // 对非 JS 入口（fusion-code-cli[.exe]、mac 无后缀 claude 脚本）SDK 直接执行二进制，
+    // executable 不参与，给了也无害；但仅在确有自带 node 且确是 JS 入口时才设，避免
+    // 改变现状行为。
+    const jsRuntimeBin = /\.m?js$/i.test(cliPath) ? resolveJsRuntimeBin() : null
     // Repo-root skills/ packaged as a local plugin (see
     // resolveBundledSkillsPluginDir). null when the manifest is missing — we
     // then omit the `plugins` option entirely rather than pass an empty array.
     const skillsPluginDir = resolveBundledSkillsPluginDir()
+    // Bundled standalone Python home for the ppt-master skill's bootstrap.
+    // Injected as PPT_MASTER_PYTHON_HOME into BOTH backends' child env (see the
+    // env: block below) so `bin/ensure-python.sh` can build its venv off our
+    // pinned 3.12 instead of the machine's bare python3. null in dev / on a
+    // platform we don't bundle — the bootstrap then falls back to system python.
+    const pythonHome = resolveBundledPythonHome()
     const resume = opts?.resume === true
     this.logEvent('openSession:begin', { sessionId, resume, cliPath, backend })
     // Report the env the CHILD will actually see, not raw process.env:
@@ -1128,7 +1152,10 @@ export class ChatEngine extends EventEmitter {
       externalMcpServers: Object.keys(this.externalMcpServers),
       // null here means the repo-root skills/ plugin manifest wasn't found,
       // so its skills won't appear in the `/` popover for this session.
-      skillsPluginDir: skillsPluginDir ?? '(none)'
+      skillsPluginDir: skillsPluginDir ?? '(none)',
+      // null = no bundled Python runtime (dev / unbundled platform); the
+      // ppt-master bootstrap then falls back to system python3.
+      pythonHome: pythonHome ?? '(none)'
     })
 
     const queue = new AsyncMessageQueue<unknown>()
@@ -1158,6 +1185,9 @@ export class ChatEngine extends EventEmitter {
     // passing both simultaneously, so we branch at the field level.
     const sdkOptions = {
       pathToClaudeCodeExecutable: cliPath,
+      // 仅当 cliPath 是 JS 入口且我们有自带 node 时设置：让 SDK 用它（而非裸 'node'）
+      // 去跑那个 .js。undefined 时 SDK 回退默认（dev 下裸 'node' 通常能在 PATH 命中）。
+      ...(jsRuntimeBin ? { executable: jsRuntimeBin as 'node' } : {}),
       cwd: this.getWorkingDirectory(),
       // UI-picked permission mode. Values:
       //   - default           → canUseTool → broker → dialog (current flow)
@@ -1271,9 +1301,29 @@ export class ChatEngine extends EventEmitter {
             CLAUDE_CODE_ATTRIBUTION_HEADER:
               process.env.CLAUDE_CODE_ATTRIBUTION_HEADER ?? 'false',
             ENABLE_TOOL_SEARCH:
-              process.env.ENABLE_TOOL_SEARCH ?? 'true'
+              process.env.ENABLE_TOOL_SEARCH ?? 'true',
+            // ppt-master skill bootstrap reads this to pick its venv base
+            // interpreter. Respect a user-exported override; otherwise hand
+            // over the bundled 3.12 home (omitted when null so the bootstrap
+            // falls back to system python on its own).
+            ...(process.env.PPT_MASTER_PYTHON_HOME
+              ? {}
+              : pythonHome
+                ? { PPT_MASTER_PYTHON_HOME: pythonHome }
+                : {})
           }
-        : systemBackendEnv()) as Record<string, string>,
+        : {
+            ...systemBackendEnv(),
+            // Same passthrough under system claude: PPT_MASTER_PYTHON_HOME is a
+            // main-process runtime path, not an env.json gateway key, so it
+            // never affects claude's model routing — safe to hand over so the
+            // ppt-master skill works under the system backend too.
+            ...(process.env.PPT_MASTER_PYTHON_HOME
+              ? {}
+              : pythonHome
+                ? { PPT_MASTER_PYTHON_HOME: pythonHome }
+                : {})
+          }) as Record<string, string>,
       // Pin fusion-code's session identity. Mutually exclusive: either
       // we're resuming an existing transcript (`resume`) or we're
       // creating a new one with an explicit id (`sessionId`).
