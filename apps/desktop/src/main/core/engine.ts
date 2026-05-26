@@ -119,7 +119,11 @@ const SKILL_PASSTHROUGH_KEYS: ReadonlySet<string> = new Set([
   'GEMINI_API_KEY',
   'GEMINI_BASE_URL',
   'GEMINI_TRANSCRIBE_MODEL',
-  'ENABLE_GARDEN_IMAGEGEN'
+  'ENABLE_GARDEN_IMAGEGEN',
+  // ppt-master web image search (scripts/image_search.py → PIXABAY_API_KEY).
+  // A stock-photo API key, not a model-routing credential — same rationale as
+  // the OPENAI_/GEMINI_ keys above, safe under the system backend.
+  'PIXABAY_API_KEY'
 ])
 
 function systemBackendEnv(): Record<string, string> {
