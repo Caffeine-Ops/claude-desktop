@@ -1,7 +1,11 @@
 import type { SuggestionItem } from './suggestionPlugin'
 import type { SuggestionAdapter } from './ProseMirrorComposerInput'
+import { findSkillChipSpec } from './skillChipRegistry'
 
 import type { SessionMeta } from '../../../shared/types'
+
+const GROUP_SKILL = '技能'
+const GROUP_COMMAND = '命令'
 
 /**
  * Slash command adapter for the composer's `/` autocomplete popover.
@@ -44,12 +48,28 @@ const CLIENT_COMMANDS: readonly ClientCommand[] = [
 ]
 
 export function buildSlashAdapter(sessionMeta: SessionMeta | null): SuggestionAdapter {
-  const items: SuggestionItem[] = []
+  // Collect into two buckets so the 「技能」 group (commands with a bespoke chip
+  // icon — gpt-image-2 / ppt-master) floats to the top, and everything else
+  // falls under 「命令」. The popover draws a heading whenever `group` changes
+  // between consecutive items, so same-group entries MUST stay contiguous —
+  // hence concatenating skills first, commands second.
+  const skills: SuggestionItem[] = []
+  const commands: SuggestionItem[] = []
   const seen = new Set<string>()
 
-  // 1) Client commands — top of list, with custom descriptions.
+  const push = (item: Omit<SuggestionItem, 'group'>): void => {
+    // A command with a registered chip spec is a "skill" surface; otherwise a
+    // plain command. Lookup is by the literal value, same key the chip uses.
+    if (findSkillChipSpec(item.value)) {
+      skills.push({ ...item, group: GROUP_SKILL })
+    } else {
+      commands.push({ ...item, group: GROUP_COMMAND })
+    }
+  }
+
+  // 1) Client commands — custom descriptions.
   for (const cmd of CLIENT_COMMANDS) {
-    items.push({
+    push({
       id: `client-${cmd.name}`,
       value: `/${cmd.name}`,
       label: `/${cmd.name}`,
@@ -63,13 +83,15 @@ export function buildSlashAdapter(sessionMeta: SessionMeta | null): SuggestionAd
   const fusionCmds = sessionMeta?.slashCommands ?? []
   for (const name of fusionCmds) {
     if (seen.has(name)) continue
-    items.push({
+    push({
       id: `fc-${name}`,
       value: `/${name}`,
       label: `/${name}`,
       description: 'Built-in command'
     })
   }
+
+  const items = [...skills, ...commands]
 
   return {
     search: (query) => {

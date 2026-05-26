@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { resolveBundledSkillsPluginDir } from './cliDetect'
 
 /**
  * Pre-warm the skill list from disk so the `/` composer popover and the
@@ -8,20 +9,29 @@ import { join } from 'node:path'
  * `system init` SDK message has landed (that message only fires after
  * the user sends their first prompt — see engine.ts ensureSessionReady).
  *
- * Discovery mirrors fusion-code's skill loader, in three buckets:
+ * Discovery mirrors fusion-code's skill loader, in four buckets:
  *   1. User-level:  `~/.claude/skills/<name>/SKILL.md`          → `<name>`
  *   2. Project:     `<workspace>/.claude/skills/<name>/SKILL.md` → `<name>`
- *   3. Plugins:     read `~/.claude/plugins/installed_plugins.json`,
+ *   3. Bundled plugin: the repo-root `skills/` we ship as a local plugin
+ *                   (see resolveBundledSkillsPluginDir / engine `plugins`
+ *                   option). Its `.claude-plugin/plugin.json` has
+ *                   `"name": "claude-desktop"`, so fusion-code exposes each
+ *                   `<dir>/<name>/SKILL.md` as `claude-desktop:<name>`. This
+ *                   is where gpt-image-2 / ppt-master live — the bucket that
+ *                   was previously missing, which is why the `/` popover was
+ *                   empty until the first turn.
+ *   4. Other plugins: read `~/.claude/plugins/installed_plugins.json`,
  *                   for each installed plugin scan
  *                   `<installPath>/skills/<name>/SKILL.md` and
  *                   `<installPath>/.claude/skills/<name>/SKILL.md` →
  *                   `<plugin-short-name>:<name>` (matches fusion-code's
  *                   namespace format, e.g. `vercel:deploy`).
  *
- * Not covered: bundled skills (compiled into the free-code binary) —
- * those only appear in the real `system init` list after the first
- * user turn. The seed's job is cosmetic: make the `/` popover useful
- * on cold start; the authoritative list wins later.
+ * Not covered: skills compiled into the free-code binary itself — those
+ * only appear in the real `system init` list after the first user turn.
+ * The seed's job is to make the `/` popover useful on cold start; the
+ * authoritative list wins later (the `systemInitSeen` guard in engine
+ * keeps a late seed from clobbering it).
  *
  * Best-effort: any unreadable path is silently skipped.
  */
@@ -37,7 +47,17 @@ export async function seedSkillsFromDisk(workspaceDir: string | null): Promise<s
     bareRoots.map((root) => scanSkillsRoot(root, null, found))
   )
 
-  // Plugin skills — driven by installed_plugins.json so we never show
+  // Bundled plugin (the repo-root skills/ shipped with the app). The plugin
+  // manifest's name is `claude-desktop`, and `"skills": "./"` makes each
+  // immediate subdir a skill — so they surface as `claude-desktop:<name>`,
+  // exactly the value fusion-code's `system init` later reports, so the seed
+  // and the authoritative list use identical strings (no flicker / dupes).
+  const bundledPluginDir = resolveBundledSkillsPluginDir()
+  if (bundledPluginDir) {
+    await scanSkillsRoot(bundledPluginDir, 'claude-desktop', found)
+  }
+
+  // Other plugin skills — driven by installed_plugins.json so we never show
   // stale cached plugin versions the user uninstalled.
   const plugins = await readInstalledPlugins()
   await Promise.all(

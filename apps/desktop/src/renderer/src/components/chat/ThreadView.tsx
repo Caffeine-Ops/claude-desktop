@@ -19,7 +19,8 @@ import { buildSlashAdapter } from '../../composer/slashAdapter'
 import { buildFileMentionAdapter } from '../../composer/fileMentionAdapter'
 import { ProseMirrorComposerInput } from '../../composer/ProseMirrorComposerInput'
 import { ThinkingSpinner } from './ThinkingSpinner'
-import { FileTypeIcon } from './FileTypeIcon'
+import { FileTypeIcon, fileIconPathsByKey } from './FileTypeIcon'
+import { findSkillChipSpec } from '../../composer/skillChipRegistry'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { DictationWaveform } from './DictationWaveform'
 import { extractText, safeStringify } from './toolHelpers'
@@ -585,14 +586,47 @@ function basenameOf(path: string): string {
   return name || path
 }
 
+/**
+ * A leading slash command, e.g. `/claude-desktop:ppt-master rest...`. Only the
+ * command token at the very start is matched — a `/` mid-text is left alone.
+ * The command may carry a plugin namespace (`claude-desktop:`) and hyphens.
+ */
+const USER_SLASH_RE = /^(\/[\w:-]+)(\s|$)/
+
 function UserBubbleText({ text }: { text: string }): React.JSX.Element {
   // Split into alternating plain-text / mention segments. We keep the
   // leading-whitespace capture group so spacing around chips is faithful.
   const nodes: React.ReactNode[] = []
   let last = 0
   let key = 0
+
+  // Leading skill command → friendly chip (icon + 「制作PPT」/「生成图片」),
+  // mirroring the composer chip. Pure display transform: the stored/sent text
+  // keeps the raw `/claude-desktop:…` verbatim. Only known skills (those in the
+  // chip registry) get the treatment; other `/cmd` stays plain text.
+  const slashMatch = USER_SLASH_RE.exec(text)
+  const slashSkill = slashMatch ? findSkillChipSpec(slashMatch[1]!) : null
+  if (slashMatch && slashSkill) {
+    nodes.push(
+      <span
+        key={`sk-${key++}`}
+        title={slashMatch[1]}
+        className="mr-0.5 inline-flex items-center gap-1 rounded-md bg-white/20 px-1.5 py-0.5 align-baseline text-[13px] font-medium ring-1 ring-white/25"
+      >
+        <svg width={12} height={12} viewBox="0 0 48 48" aria-hidden="true" className="shrink-0">
+          {fileIconPathsByKey(slashSkill.icon).map((p, pi) => (
+            <path key={pi} d={p.d} fill={p.fill} />
+          ))}
+        </svg>
+        <span>{slashSkill.label}</span>
+      </span>
+    )
+    // Skip past the command token (keep the separating space as plain text).
+    last = slashMatch[1]!.length
+  }
+
   let m: RegExpExecArray | null
-  USER_MENTION_RE.lastIndex = 0
+  USER_MENTION_RE.lastIndex = last
   while ((m = USER_MENTION_RE.exec(text)) !== null) {
     const lead = m[1] ?? ''
     const token = m[2]!

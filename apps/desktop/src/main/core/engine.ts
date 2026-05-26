@@ -360,6 +360,16 @@ export class ChatEngine extends EventEmitter {
   private systemInitSeen = false
 
   /**
+   * True once we've kicked off a disk seed (success or not), so the lazy
+   * trigger in `getSessionMeta()` fires at most once. The original seed was
+   * only wired to `setWorkspace()`, but a tab that resumes an existing
+   * session never calls setWorkspace — so its `/` popover stayed empty until
+   * the first turn. getSessionMeta is the one call the renderer always makes
+   * when the composer mounts, so seeding from there covers the resume path.
+   */
+  private seedAttempted = false
+
+  /**
    * Workspace directory — the cwd passed to `query()` for every session
    * this engine spawns. This is the *only* source of truth for the cwd.
    *
@@ -728,6 +738,14 @@ export class ChatEngine extends EventEmitter {
   /** Snapshot of the cached session meta. Returns a fresh object so
       the renderer cannot accidentally mutate main-process state. */
   getSessionMeta(): SessionMeta {
+    // Lazy disk seed: the composer always calls this on mount. If no seed
+    // has been attempted and the authoritative list hasn't arrived, kick one
+    // off (fire-and-forget; it emits `sessionMetaChanged` when done so the
+    // renderer re-pulls). Covers the resume path where setWorkspace — the
+    // original seed trigger — is never called.
+    if (!this.seedAttempted && !this.systemInitSeen) {
+      void this.seedSessionMetaFromDisk()
+    }
     return {
       skills: [...this.sessionMeta.skills],
       mcpServers: this.sessionMeta.mcpServers.map((s) => ({ ...s })),
@@ -814,6 +832,9 @@ export class ChatEngine extends EventEmitter {
    * late-returning seed from clobbering real data in the opposite race.
    */
   private async seedSessionMetaFromDisk(): Promise<void> {
+    // Mark immediately (not after the await) so a second getSessionMeta call
+    // that races in while this scan is in flight doesn't kick off a duplicate.
+    this.seedAttempted = true
     try {
       const skills = await seedSkillsFromDisk(this.workspaceDir)
       if (this.systemInitSeen) return // real data already landed — drop seed

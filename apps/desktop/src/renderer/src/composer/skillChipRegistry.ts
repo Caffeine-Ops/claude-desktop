@@ -50,14 +50,31 @@ export interface SkillChipSpec {
  * Add new skills here; the NodeView picks them up automatically.
  */
 export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
+  // ppt-master — both the plugin-namespaced value (bundled fusion-code
+  // exposes it as `claude-desktop:ppt-master`, so the chip value is
+  // `/claude-desktop:ppt-master`) and the bare name (other backends /
+  // user-installed copies surface it without the namespace).
+  {
+    match: '/claude-desktop:ppt-master',
+    icon: 'ppt',
+    label: '制作PPT',
+    appearance: 'gradient'
+  },
   {
     match: '/ppt-master',
     icon: 'ppt',
     label: '制作PPT',
     appearance: 'gradient'
   },
+  // gpt-image-2 — image generation. Same namespaced + bare pair.
   {
-    match: '/imagen-2',
+    match: '/claude-desktop:gpt-image-2',
+    icon: 'image',
+    label: '生成图片',
+    appearance: 'gradient'
+  },
+  {
+    match: '/gpt-image-2',
     icon: 'image',
     label: '生成图片',
     appearance: 'gradient'

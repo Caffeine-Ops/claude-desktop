@@ -9,6 +9,8 @@ import { useAuiState, useComposerRuntime } from '@assistant-ui/react'
 
 import { composerSchema, serializeDoc, parseText } from './pmSchema'
 import { createChipNodeView } from './chipNodeView'
+import { findSkillChipSpec } from './skillChipRegistry'
+import { fileIconPathsByKey } from '../components/chat/FileTypeIcon'
 import {
   createSuggestionPlugin,
   insertSuggestion,
@@ -354,27 +356,60 @@ function SuggestionPopover({
       className="fixed z-30 max-h-72 w-72 overflow-y-auto rounded-2xl bg-popover/95 py-1.5 ring-1 ring-black/[0.08] backdrop-blur-2xl shadow-[0_16px_48px_-12px_rgba(0,0,0,0.22)] dark:ring-white/[0.08]"
       style={{ left: coords.left, bottom: window.innerHeight - coords.bottom + 24 }}
     >
-      {items.map((item, i) => (
-        <button
-          key={item.id}
-          type="button"
-          className={`flex w-full flex-col items-start gap-0.5 px-3 py-1.5 text-left text-[13px] ${
-            i === highlighted ? 'bg-accent/[0.12]' : ''
-          }`}
-          onMouseEnter={() => onHover(i)}
-          onMouseDown={(e) => {
-            // mousedown (not click) so we insert before the editor
-            // loses focus / selection.
-            e.preventDefault()
-            onPick(item)
-          }}
-        >
-          <span className="font-medium text-foreground">{item.label}</span>
-          {item.description && (
-            <span className="truncate text-muted-foreground/70">{item.description}</span>
-          )}
-        </button>
-      ))}
+      {items.map((item, i) => {
+        // A known skill (e.g. /claude-desktop:gpt-image-2) shows its coloured
+        // icon + friendly label here, mirroring the inserted chip — same
+        // registry, so the popover row and the chip stay in lockstep. Unknown
+        // items keep the raw value label.
+        const skill = findSkillChipSpec(item.value)
+        // Group heading: drawn when this item's group differs from the previous
+        // one. It is NOT a selectable row — keyboard nav still indexes into
+        // `items` (the heading carries no index), so ↑↓/Enter behaviour is
+        // unchanged. Items are pre-grouped contiguously by the adapter.
+        const showHeading = !!item.group && item.group !== items[i - 1]?.group
+        return (
+          <div key={item.id}>
+            {showHeading && (
+              <div className="px-3 pb-0.5 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60 first:pt-0.5">
+                {item.group}
+              </div>
+            )}
+            <button
+              type="button"
+              className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] ${
+                i === highlighted ? 'bg-accent/[0.12]' : ''
+              }`}
+              onMouseEnter={() => onHover(i)}
+              onMouseDown={(e) => {
+                // mousedown (not click) so we insert before the editor
+                // loses focus / selection.
+                e.preventDefault()
+                onPick(item)
+              }}
+            >
+              {skill && (
+                <svg
+                  width={18}
+                  height={18}
+                  viewBox="0 0 48 48"
+                  aria-hidden="true"
+                  className="shrink-0"
+                >
+                  {fileIconPathsByKey(skill.icon).map((p, pi) => (
+                    <path key={pi} d={p.d} fill={p.fill} />
+                  ))}
+                </svg>
+              )}
+              <span className="flex min-w-0 flex-col items-start gap-0.5">
+                <span className="font-medium text-foreground">{skill?.label ?? item.label}</span>
+                {item.description && (
+                  <span className="truncate text-muted-foreground/70">{item.description}</span>
+                )}
+              </span>
+            </button>
+          </div>
+        )
+      })}
     </div>
   )
 }

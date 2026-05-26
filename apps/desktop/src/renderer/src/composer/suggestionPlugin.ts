@@ -54,6 +54,14 @@ export interface SuggestionItem {
   /** Display text in the popover row (usually same as value). */
   label: string
   description?: string
+  /**
+   * Optional group heading the item belongs to (e.g. `技能` / `命令`). The
+   * popover inserts a non-selectable heading row whenever this changes between
+   * consecutive items. Purely visual — items stay a flat list so keyboard nav
+   * (which indexes into the array) is untouched. Items must already be ordered
+   * so that same-group entries are contiguous.
+   */
+  group?: string
 }
 
 interface SuggestionPluginOptions {
