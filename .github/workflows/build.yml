@@ -99,8 +99,18 @@ jobs:
             echo "::error::ENV_JSON secret is empty. Configure it in Settings → Secrets → Actions."
             exit 1
           fi
-          printf '%s' "$ENV_JSON" > env.json
-          python -c "import json; json.load(open('env.json'))" \
+          # MUST write to apps/desktop/env.json, NOT the repo root. Two reasons:
+          #   1. electron-builder's `files: ["env.json"]` is relative to the
+          #      package dir (apps/desktop), so a repo-root env.json never gets
+          #      packed into the asar → loadEnv finds nothing in prod → every
+          #      env.json-backed feature (gpt-image-2 OPENAI_API_KEY, fusion-code
+          #      ANTHROPIC_* gateway) silently degrades.
+          #   2. loadEnv's packaged candidate is <asar>/env.json, fed by exactly
+          #      this packed copy.
+          # The monorepo move left this writing to the old repo-root location;
+          # see [[2026-05-25-monorepo打包CI逐层路径未从根迁到appsdesktop]].
+          printf '%s' "$ENV_JSON" > apps/desktop/env.json
+          python -c "import json; json.load(open('apps/desktop/env.json'))" \
             || { echo "::error::env.json is not valid JSON"; exit 1; }
 
       - name: Download fusion-code CLI
