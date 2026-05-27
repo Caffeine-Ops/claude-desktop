@@ -1349,6 +1349,18 @@ export class ChatEngine extends EventEmitter {
                 ? { PPT_MASTER_PYTHON_HOME: pythonHome }
                 : {})
           }) as Record<string, string>,
+      // 用 preset 形式追加中文回复指令，而不是用字符串整体覆盖。
+      // 整体覆盖会丢掉 claude_code preset 自带的工具说明 / 权限语义 /
+      // 环境上下文，得不偿失；`{ type:'preset', preset:'claude_code', append }`
+      // 保留原系统提示词，只在末尾拼一段。append 内容是常量，每次 spawn
+      // 都 bit 一致，落在 prompt 尾部不影响上面那几个 cache_control 断点
+      // （与 CLAUDE_CODE_ATTRIBUTION_HEADER=false 的缓存保护互不冲突）。
+      systemPrompt: {
+        type: 'preset' as const,
+        preset: 'claude_code' as const,
+        append:
+          '始终用中文回复。所有解释、注释、与用户的交流都用中文。技术术语和代码标识符保留原形。'
+      },
       // Pin fusion-code's session identity. Mutually exclusive: either
       // we're resuming an existing transcript (`resume`) or we're
       // creating a new one with an explicit id (`sessionId`).
