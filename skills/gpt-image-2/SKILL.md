@@ -17,14 +17,40 @@ description: 面向 GPT Image 2 的图像生成 / 编辑技能。可在 3 种环
 - 一级：分类目录
 - 二级：单模板 Markdown 文件
 
+> [!IMPORTANT]
+> ## 🐍 运行时（动手前先确定用哪个解释器）
+>
+> 本 Skill 的脚本有**两套等价实现**，**默认用 Python**（首选，零额外依赖、与 ppt-master 共用同一份 app 自带的 Python 3.12 runtime）：
+>
+> - **Python（默认）**：`scripts/check_mode.py` / `generate.py` / `edit.py`，只用标准库，不需要 `pip install` 任何东西。
+> - **Node（备选）**：`scripts/check-mode.js` / `generate.js` / `edit.js`，逻辑完全一致，仅在没有 Python、只有 Node 的宿主里用。
+>
+> **挑解释器（按顺序，命中即用，记到 `$IMG_PY`）**：
+> 1. app 自带 runtime（claude-desktop 主进程会注入 `PPT_MASTER_PYTHON_HOME`）：
+>    - macOS/Linux：`$PPT_MASTER_PYTHON_HOME/bin/python3`
+>    - Windows：`$PPT_MASTER_PYTHON_HOME\python.exe`
+> 2. 没注入则回退系统 `python3`（任何 3.8+ 都行，脚本只用标准库，对版本不挑）。
+> 3. 两者都没有，才退到 Node 版（`node scripts/check-mode.js …`）。
+>
+> 一行搞定（macOS/Linux）：
+> ```bash
+> IMG_PY="${PPT_MASTER_PYTHON_HOME:+$PPT_MASTER_PYTHON_HOME/bin/python3}"; [ -x "$IMG_PY" ] || IMG_PY="$(command -v python3)"
+> ```
+> 下文所有命令默认写成 `$IMG_PY skills/gpt-image-2/scripts/*.py`；把 `$IMG_PY` 换成上面挑好的解释器即可。
+>
+> **代理注意**：Python 版默认**尊重** `HTTP_PROXY`/`HTTPS_PROXY` 环境变量（Node `fetch` 版不走环境代理，这是两套实现的唯一行为差异）。若你的网关需要直连、不走系统代理，给生图/改图命令加 `--no-proxy`。
+
 ## 运行模式（必读，做任何事之前先确定）
 
 本 Skill 自带一个轻量探测脚本，先跑一次，再根据结果决定怎么干活：
 
 ```bash
-node skills/gpt-image-2/scripts/check-mode.js
+# 默认（Python）：
+$IMG_PY skills/gpt-image-2/scripts/check_mode.py
 # 想拿结构化结果给上层程序用：
-node skills/gpt-image-2/scripts/check-mode.js --json
+$IMG_PY skills/gpt-image-2/scripts/check_mode.py --json
+# 没有 Python、只有 Node 时的备选：
+# node skills/gpt-image-2/scripts/check-mode.js [--json]
 ```
 
 输出会给出 `mode = A` / `A?` / `B-or-C` 以及 `recommendation`。三个模式定义如下：
@@ -35,7 +61,7 @@ node skills/gpt-image-2/scripts/check-mode.js --json
 
 **行为**：完整端到端跑通"选模板 → 写 prompt → 调用脚本 → 出图落盘"。
 
-- 用 `scripts/generate.js` 文本生图、`scripts/edit.js` 编辑现有图。
+- 用 `scripts/generate.py` 文本生图、`scripts/edit.py` 编辑现有图（没 Python 时用同名 `.js`）。
 - prompt 默认落盘到 `garden-gpt-image-2/prompt/`、图片落盘到 `garden-gpt-image-2/image/`。
 - 这是最强的模式：你是图像工具的"持有者"。
 
@@ -52,7 +78,7 @@ node skills/gpt-image-2/scripts/check-mode.js --json
 **行为**：本 Skill **退化成提示词工程指引**——
 
 1. 仍按"选模板 → 填字段 → 渲染最终 prompt"的流程走。
-2. **不要调用 `node scripts/generate.js`**（没有 API key、必失败）。
+2. **不要调用 `generate.py` / `generate.js`**（没有 API key、必失败）。
 3. 直接调用宿主自带的图像工具，把渲染好的 prompt 作为输入。
 4. 如用户希望可顺手把 prompt 文件保存到 `garden-gpt-image-2/prompt/`，但图片去向由宿主决定，不强制。
 
@@ -71,7 +97,7 @@ node skills/gpt-image-2/scripts/check-mode.js --json
 
 | 条件 | 模式 | 调用脚本？ | 落盘 prompt？ | 落盘图片？ |
 |---|---|---|---|---|
-| `ENABLE_GARDEN_IMAGEGEN=1` + 有 KEY | **A** | ✅ `generate.js` / `edit.js` | ✅ 自动 | ✅ 自动 |
+| `ENABLE_GARDEN_IMAGEGEN=1` + 有 KEY | **A** | ✅ `generate.py` / `edit.py` | ✅ 自动 | ✅ 自动 |
 | `ENABLE_GARDEN_IMAGEGEN=1` 但没 KEY | A? | ❌（先要 KEY） | — | — |
 | 未启用 + 宿主有图像工具 | **B** | ❌（用宿主工具） | 可选 | 由宿主决定 |
 | 未启用 + 宿主无图像工具 | **C** | ❌ | ✅ 必须 | ❌（无法） |
@@ -79,7 +105,7 @@ node skills/gpt-image-2/scripts/check-mode.js --json
 ### 模式不确定时
 
 - 如果你判断不清自己是 B 还是 C，**直接问用户一句**："是用你环境里的图像工具出图，还是只要我写好提示词？"
-- Mode A 调脚本失败（401 / 网络 / 配额）→ 报错并询问"切到 B / C 吗？"
+- Mode A 调脚本失败（401 / 网络 / 配额）→ 报错并询问"切到 B / C 吗？"。若报错像被代理劫持（网关本应直连却走了系统代理，常见 502 / 连接异常），重试时加 `--no-proxy`。
 
 ## 用户输入工具
 
@@ -91,21 +117,24 @@ node skills/gpt-image-2/scripts/check-mode.js --json
 
 ## 技能结构
 
-- `scripts/check-mode.js`：**先跑这个**，检测运行模式（A / B / C）
-- `scripts/generate.js`：文本生图（仅 Mode A 使用）
-- `scripts/edit.js`：基于原图 / 遮罩改图（仅 Mode A 使用）
-- `scripts/shared.js`：共享请求、保存、环境变量读取逻辑
+默认 Python，Node 为等价备选（同名 `.js`，逻辑一致）：
+
+- `scripts/check_mode.py`（备选 `check-mode.js`）：**先跑这个**，检测运行模式（A / B / C）
+- `scripts/generate.py`（备选 `generate.js`）：文本生图（仅 Mode A 使用）
+- `scripts/edit.py`（备选 `edit.js`）：基于原图 / 遮罩改图（仅 Mode A 使用）
+- `scripts/_shared.py`（备选 `shared.js`）：共享请求、保存、环境变量读取逻辑
 - `references/`：分层结构化提示词模板（A / B / C 三模式都用）
 
 ## 环境变量
 
-按以下顺序读取配置：
+按以下顺序读取配置（Python 与 Node 两版一致）：
 
 1. CLI 参数
-2. `process.env`
+2. 进程环境变量（`os.environ` / `process.env`）
 3. `<cwd>/.env`
 4. `<cwd>/.gateway.env`
 5. `~/.gateway.env`
+6. 本 Skill 自带的 `.env`（只放 `ENABLE_GARDEN_IMAGEGEN` 开关，不放密钥；前面任何来源都能覆盖它）
 
 核心变量：
 
@@ -171,18 +200,20 @@ Mode B 由宿主图像工具决定保存方式；Mode C 不产生图片。
 
 ## 快速用法
 
+> 下列命令默认用 `$IMG_PY`（见顶部「🐍 运行时」段挑好的解释器）。没有 Python 只有 Node 时，把 `$IMG_PY …/xxx.py` 换成 `node …/xxx.js`，参数完全一致。
+
 ### 0. 检测运行模式（**任何任务的第一步**）
 
 ```bash
-node skills/gpt-image-2/scripts/check-mode.js
+$IMG_PY skills/gpt-image-2/scripts/check_mode.py
 ```
 
-输出会告诉你当前是 Mode A / B / C，决定后续是否调用 `generate.js` / `edit.js`。下面 1~4 仅在 **Mode A** 下使用。
+输出会告诉你当前是 Mode A / B / C，决定后续是否调用 `generate.py` / `edit.py`。下面 1~4 仅在 **Mode A** 下使用。
 
 ### 1. 文本生图（Mode A）
 
 ```bash
-node skills/gpt-image-2/scripts/generate.js \
+$IMG_PY skills/gpt-image-2/scripts/generate.py \
   --prompt "A cute baby sea otter" \
   --size 1024x1024 \
   --quality high
@@ -191,14 +222,14 @@ node skills/gpt-image-2/scripts/generate.js \
 ### 2. 用提示词文件生图（Mode A）
 
 ```bash
-node skills/gpt-image-2/scripts/generate.js \
+$IMG_PY skills/gpt-image-2/scripts/generate.py \
   --promptfile garden-gpt-image-2/prompt/poster-20260424-153045.md
 ```
 
 ### 3. 编辑已有图片（Mode A）
 
 ```bash
-node skills/gpt-image-2/scripts/edit.js \
+$IMG_PY skills/gpt-image-2/scripts/edit.py \
   --image assets/source.png \
   --prompt "Replace the background with a clean studio scene"
 ```
@@ -206,7 +237,7 @@ node skills/gpt-image-2/scripts/edit.js \
 ### 4. 带遮罩的局部编辑（Mode A）
 
 ```bash
-node skills/gpt-image-2/scripts/edit.js \
+$IMG_PY skills/gpt-image-2/scripts/edit.py \
   --image assets/source.png \
   --mask assets/mask.png \
   --prompt "Replace only the masked area with a glass vase"
@@ -337,7 +368,7 @@ node skills/gpt-image-2/scripts/edit.js \
 
 ### 9. Editing Workflows (`references/editing-workflows/`)
 
-适合“基于现有图片做编辑”的图改任务（对应 `scripts/edit.js`）。当前已落地：
+适合“基于现有图片做编辑”的图改任务（对应 `scripts/edit.py`，备选 `edit.js`）。当前已落地：
 
 - `background-replacement.md` — 背景替换（商品 / 人像 / 户外 / 棚景）
 - `local-object-replacement.md` — 局部对象替换（配合或不配合蒙版）
@@ -456,7 +487,7 @@ CS / CV / ML 方向：
 
 无论 A / B / C，**前 6 步是共用的**；区别只在第 7-8 步如何"出图"。
 
-1. **跑 `check-mode.js` 确定模式**（A / B / C）。
+1. **跑 `check_mode.py` 确定模式**（A / B / C；没 Python 用 `check-mode.js`）。
 2. 判断任务是生图还是改图。
 3. 识别它属于哪个分类目录（参考下方"模板索引"）。
 4. 只读取对应的具体模板文件，**不要一次读整个 references/**。
@@ -465,7 +496,7 @@ CS / CV / ML 方向：
 
 到此 prompt 已渲染好。下面按模式分叉：
 
-7-A. **Mode A**：把最终 prompt 保存到 `garden-gpt-image-2/prompt/`，调用 `scripts/generate.js` 或 `scripts/edit.js`，图片落到 `garden-gpt-image-2/image/`。
+7-A. **Mode A**：把最终 prompt 保存到 `garden-gpt-image-2/prompt/`，调用 `$IMG_PY scripts/generate.py` 或 `scripts/edit.py`（没 Python 用同名 `.js`），图片落到 `garden-gpt-image-2/image/`。
 7-B. **Mode B**：把最终 prompt 直接传给宿主的图像工具调用；按需保存 prompt 副本到 `garden-gpt-image-2/prompt/`。
 7-C. **Mode C**：把最终 prompt 保存到 `garden-gpt-image-2/prompt/<task-slug>-<timestamp>.md`，并把完整 prompt 在对话中展示给用户，附一句简短的"如何使用 / 推荐工具"建议。
 

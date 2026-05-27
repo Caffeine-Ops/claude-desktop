@@ -18,10 +18,11 @@ apps/desktop/node-runtime/
 # skill 的 ensure-python 脚本当 venv base 用，不是源码，不入库。
 apps/desktop/python-runtime/
 
-# ppt-master skill 的运行时产物（本机跑 skill 时生成，非源码）：
-# projects/ 是生成的 PPT 工程，__pycache__/ 是 Python 字节码缓存。
+# skill 的运行时产物（本机跑 skill 时生成，非源码）：
+# ppt-master/projects/ 是生成的 PPT 工程；__pycache__/ 是 Python 字节码缓存
+# （gpt-image-2 移植成 Python 后也会产生，统一按所有 skill 忽略）。
 skills/ppt-master/projects/
-skills/ppt-master/**/__pycache__/
+skills/**/__pycache__/
 
 # prebundle 打包产物 (~160M)：scripts/prebundle-daemon.mjs 生成（每次先 rm 重建），
 # 内容全是从 repo 别处复制来的（daemon bundle + apps/web/out + skills/
