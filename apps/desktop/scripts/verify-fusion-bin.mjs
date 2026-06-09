@@ -38,15 +38,88 @@ if (!existsSync(binPath)) {
 
 const size = statSync(binPath).size
 
-// Windows binaries are PE, not Mach-O — we can't do the segment check, so just
-// guard against an obviously-truncated file (a real fusion-code .exe is tens
-// of MB; anything under 10MB is a failed download).
+// ── Windows PE integrity: same fail-fast intent as the Mach-O branch below ──
+// The .exe is the SAME kind of bun --compile single-file binary as the mac
+// build — only the container is PE instead of Mach-O. The mac branch caught a
+// truncated download via "code-signature segment ends past EOF" (error -88 at
+// runtime, see the header note). On Windows a truncated bun-compiled exe does
+// NOT get rejected by the kernel — it spawns, then the bun runtime can't read
+// its embedded asset trailer and the process dies with `exit code 1` /
+// "cli exited before first init" (the exact Windows-only failure we hit, the
+// mirror of the mac -88 truncation bug). The old guard here was just
+// `size < 10MB`, which a 30–90MB half-download sailed straight through. So we
+// do the PE equivalent of the Mach-O check: walk every section header and
+// assert its raw data lies INSIDE the file, plus an absolute floor for the
+// part PE walking can't see.
 if (isWin) {
-  if (size < 10_000_000) {
-    console.error(`[verify-fusion-bin] ${binPath} is only ${size} bytes — looks truncated`)
+  // Two complementary checks:
+  //  (a) PE section walk — catches a truncation that lands mid-binary (a
+  //      section's PointerToRawData + SizeOfRawData points past EOF), the
+  //      direct analogue of the Mach-O LC_CODE_SIGNATURE bounds check.
+  //  (b) Absolute size floor — bun appends its embedded asset trailer (the
+  //      JS bundle + resources) AFTER the last PE section, so a download cut
+  //      off inside that trailer leaves every PE section intact yet the file
+  //      is still fatally short. PE walking is blind to the trailer; the floor
+  //      is the only thing that catches a trailer-region truncation. The
+  //      complete win32-x64 exe is ~177MB like its mac sibling; 120MB is a
+  //      generous floor that still rejects the 30–90MB half-downloads.
+  const WIN_MIN_BYTES = 120_000_000
+  if (size < WIN_MIN_BYTES) {
+    console.error(
+      `[verify-fusion-bin] ${binPath} is only ${size} bytes (< ${WIN_MIN_BYTES}) — ` +
+        `the bun-compiled fusion-code .exe should be ~177MB.\n` +
+        `  The download is incomplete — re-download a full copy.\n` +
+        `  (A truncated .exe spawns but exits with code 1 / "cli exited before first init" at runtime.)`
+    )
     process.exit(1)
   }
-  console.log(`[verify-fusion-bin] ok (win, ${size} bytes)`)
+
+  // ── PE section-bounds walk ──
+  // DOS header @0 has 'MZ'; e_lfanew @0x3C points to the PE signature.
+  // PE sig is "PE\0\0", then a 20-byte COFF header (NumberOfSections @+6,
+  // SizeOfOptionalHeader @+16), then the optional header, then the section
+  // table (40 bytes per IMAGE_SECTION_HEADER; SizeOfRawData @+16,
+  // PointerToRawData @+20).
+  const fd = openSync(binPath, 'r')
+  try {
+    const dos = Buffer.alloc(0x40)
+    readSync(fd, dos, 0, 0x40, 0)
+    if (dos.readUInt16LE(0) !== 0x5a4d /* 'MZ' */) {
+      console.error(`[verify-fusion-bin] ${binPath} is not a PE file (no MZ header) — corrupt download`)
+      process.exit(1)
+    }
+    const peOff = dos.readUInt32LE(0x3c)
+    // Read the PE signature + COFF header (4 + 20 bytes).
+    const coff = Buffer.alloc(24)
+    readSync(fd, coff, 0, 24, peOff)
+    if (coff.readUInt32LE(0) !== 0x00004550 /* 'PE\0\0' */) {
+      console.error(`[verify-fusion-bin] ${binPath} has no PE signature at e_lfanew — corrupt download`)
+      process.exit(1)
+    }
+    const numSections = coff.readUInt16LE(6)
+    const sizeOfOptionalHeader = coff.readUInt16LE(20)
+    const sectionTableOff = peOff + 24 + sizeOfOptionalHeader
+
+    const sections = Buffer.alloc(numSections * 40)
+    readSync(fd, sections, 0, sections.length, sectionTableOff)
+    for (let i = 0; i < numSections; i++) {
+      const base = i * 40
+      const sizeOfRawData = sections.readUInt32LE(base + 16)
+      const pointerToRawData = sections.readUInt32LE(base + 20)
+      if (pointerToRawData !== 0 && pointerToRawData + sizeOfRawData > size) {
+        console.error(
+          `[verify-fusion-bin] TRUNCATED binary: ${binPath}\n` +
+            `  PE section #${i} raw data ends at ${pointerToRawData + sizeOfRawData} but file is only ${size} bytes.\n` +
+            `  The fusion-code CLI download is incomplete — re-download a full copy.`
+        )
+        process.exit(1)
+      }
+    }
+  } finally {
+    closeSync(fd)
+  }
+
+  console.log(`[verify-fusion-bin] ok (win PE, ${size} bytes, all sections within bounds)`)
   process.exit(0)
 }
 

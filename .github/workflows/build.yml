@@ -122,6 +122,7 @@ jobs:
           # extraResources) resolves fusion-bin/ relative to apps/desktop,
           # so the CLI must land there — NOT in the repo root. (Pre-monorepo
           # the app WAS the repo root; the path didn't move in this workflow.)
+          set -euo pipefail
           mkdir -p apps/desktop/fusion-bin
           gh release download "$FUSION_CODE_VERSION" \
             --repo Caffeine-Ops/fusion-code-install \
@@ -132,6 +133,32 @@ jobs:
             chmod +x "${{ matrix.fusion_target }}"
           fi
           ls -la apps/desktop/fusion-bin/
+
+          # Integrity gate, RIGHT HERE next to the download — do not wait for the
+          # build step's verify:fusion. The CLI is a bun --compile single-file
+          # binary (~177MB); `gh release download` can leave a TRUNCATED file on
+          # a flaky fetch, and a half-download is otherwise invisible (it's still
+          # a valid-looking Mach-O/PE). On macOS a truncated binary spawns with
+          # error -88; on Windows it spawns then dies with "exit code 1 / cli
+          # exited before first init" — both shipped to users before this gate
+          # existed. We assert the on-disk size equals the size GitHub recorded
+          # for the asset (its authoritative byte count), so a partial fetch
+          # fails the build here instead of silently entering the package.
+          # See errors/2026-05-23-fusion-code-cli截断致spawn-88.md.
+          expected=$(gh release view "$FUSION_CODE_VERSION" \
+            --repo Caffeine-Ops/fusion-code-install \
+            --json assets \
+            --jq ".assets[] | select(.name == \"${{ matrix.fusion_asset }}\") | .size")
+          actual=$(wc -c < "${{ matrix.fusion_target }}" | tr -d '[:space:]')
+          echo "fusion-code asset: expected=$expected actual=$actual bytes"
+          if [ -z "$expected" ]; then
+            echo "::error::Could not read expected size for asset ${{ matrix.fusion_asset }} from release $FUSION_CODE_VERSION"
+            exit 1
+          fi
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::fusion-code download is truncated: expected $expected bytes, got $actual. Re-run the job."
+            exit 1
+          fi
 
       # Bundle a standalone Node 24 (ABI 137) INTO the app so the daemon runs
       # against the exact ABI its better-sqlite3 was compiled for — never the
