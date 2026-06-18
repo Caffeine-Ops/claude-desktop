@@ -89,6 +89,13 @@ const STRINGS = {
     quickActionPlugins: '插件',
     quickActionPluginsTooltip: '插件市场',
     openingSession: '正在打开会话…',
+
+    // Login wall — shown in the chat area when auth has hydrated but the user
+    // is signed out. Replaces the chat runtime until the user logs in.
+    loginWallTitle: '请先登录',
+    loginWallSubtitle: '登录后即可开始对话。你的对话与设置仅你自己可见。',
+    loginWallButton: '登录',
+
     switchWorkspaceTooltip: '点击切换 workspace',
     confirmSwitchWorkspace:
       '切换 workspace 会结束当前会话的进行中回合，未发送的草稿会丢失。确定继续吗？',
@@ -327,6 +334,13 @@ const STRINGS = {
     quickActionPlugins: 'Plugins',
     quickActionPluginsTooltip: 'Plugin marketplace',
     openingSession: 'Opening session…',
+
+    // Login wall — shown in the chat area when auth has hydrated but the user
+    // is signed out. Replaces the chat runtime until the user logs in.
+    loginWallTitle: 'Please sign in',
+    loginWallSubtitle: 'Sign in to start chatting. Your conversations and settings are visible only to you.',
+    loginWallButton: 'Sign in',
+
     switchWorkspaceTooltip: 'Click to switch workspace',
     confirmSwitchWorkspace:
       'Switching workspace will abort the in-flight turn and discard unsent drafts. Continue?',

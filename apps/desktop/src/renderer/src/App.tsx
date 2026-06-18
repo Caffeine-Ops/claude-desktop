@@ -19,7 +19,8 @@ import { useSettingsStore } from './stores/settings'
 import { useDialogStore } from './stores/dialogs'
 import { useApplyAppearance } from './stores/appearance.applier'
 import { hydrateAppearanceFromDaemon } from './stores/appearance'
-import { hydrateAuthFromMain, subscribeAuthChanges } from './stores/auth'
+import { hydrateAuthFromMain, subscribeAuthChanges, useAuthStore } from './stores/auth'
+import { LoginWall } from './components/auth/LoginWall'
 import { SettingsView } from './components/settings/SettingsView'
 import { AnimatePresence, motion } from 'motion/react'
 
@@ -75,6 +76,14 @@ function App(): React.JSX.Element {
   // 已全部移除——面板恒定渲染为固定宽度的静态列。整条 .header--tab 也一并删了，
   // chat 内容直接顶到顶部 shell tab 条下方。
   useApplyAppearance()
+
+  // Auth state — read unconditionally (React hooks rule: no early returns before
+  // hooks). `hydrated` prevents the login wall from flashing before the initial
+  // AUTH_GET from main settles; once true it will not revert. `loggedIn` gates
+  // FusionRuntimeProvider so the engine is never spawned for unauthenticated
+  // users (the wall blocks them at the UI layer before they can hit send).
+  const loggedIn = useAuthStore((s) => s.loggedIn)
+  const hydrated = useAuthStore((s) => s.hydrated)
 
   // Adopt the daemon's shared appearance as the source of truth — once on
   // mount, then again every time main says it changed (APPEARANCE_CHANGED,
@@ -210,9 +219,12 @@ function App(): React.JSX.Element {
     }
   }, [])
 
-  // Loading slice: brief flash-prevention. `.app` keeps the window
-  // chrome / background consistent with the mounted state.
-  if (workspace === 'loading') {
+  // Loading slice: brief flash-prevention. `.app` keeps the window chrome /
+  // background consistent with the mounted state. We also wait here while auth
+  // has not yet hydrated from main (hydrateAuthFromMain() is in-flight) so the
+  // login wall never flashes before auth settles — a few extra milliseconds on
+  // first mount, invisible to the user.
+  if (workspace === 'loading' || !hydrated) {
     return <div className="app" />
   }
 
@@ -244,7 +256,12 @@ function App(): React.JSX.Element {
             tree drops its cached scan. Cheaper than restarting Electron
             and avoids the window-flash. Not mounted at all until a
             workspace exists — see the comment on `hasWorkspace`. */}
-        {hasWorkspace && (
+        {/* Chat runtime — only mounted when workspace AND login are both
+            ready. Keeping these two guards together means the runtime is
+            never spawned (no warmup, no engine IPC, no fusion-code child)
+            until the user is authenticated. The login wall below covers
+            the case where workspace is known but the user is signed out. */}
+        {hasWorkspace && loggedIn && (
         <FusionRuntimeProvider key={workspace}>
           {/* .main is flex-col; this inner row does the three-pane
               split (chats | thread | right rail). flex-1 + min-h-0
@@ -268,6 +285,12 @@ function App(): React.JSX.Element {
           </div>
         </FusionRuntimeProvider>
         )}
+        {/* Login wall — shown when the workspace is known but the user is
+            signed out. Occupies the same flex-1 area the runtime would fill,
+            so the three-pane layout never forms (and the runtime is never
+            spawned). LoginDialog is still mounted below and responds to the
+            wall's button click via the dialog store. */}
+        {hasWorkspace && !loggedIn && <LoginWall />}
         {/* Settings overlay — `absolute inset-0` inside .main so it
             covers the chat row but leaves the title-bar header
             untouched. Renders null when the store says closed. */}
