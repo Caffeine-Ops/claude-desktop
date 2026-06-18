@@ -129,7 +129,11 @@ async function findSessionJsonl(
   workspaceDir: string,
   sessionId: string
 ): Promise<string | null> {
-  const projectsDir = join(homedir(), '.claude', 'projects')
+  // 与 fusion-code CLI 的 A7() 一致：projects 目录 = CLAUDE_CONFIG_DIR/projects。
+  // 租户激活时 CLAUDE_CONFIG_DIR 已指向 <userData>/tenants/<tid>/.claude，所以
+  // 这里读到的是当前租户的会话；无租户时回退默认 ~/.claude（守卫下不会发生）。
+  const configRoot = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+  const projectsDir = join(configRoot, 'projects')
   const sanitized = workspaceDir.replace(/[^a-zA-Z0-9]/g, '-')
 
   if (sanitized.length <= PROJECT_NAME_MAX_LEN) {
