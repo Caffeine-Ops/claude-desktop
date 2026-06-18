@@ -647,14 +647,17 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // Open `~/.claude` in the OS file manager. The directory is created
-  // by fusion-code on first run, but on a fresh machine it may not
-  // exist yet — `shell.openPath` returns "no such file" in that case,
-  // which we surface verbatim so the user knows to run Claude once.
+  // Open the active tenant's `.claude` in the OS file manager. Post tenant
+  // isolation the user's real sessions/credentials live under
+  // <userData>/tenants/<tid>/.claude (= CLAUDE_CONFIG_DIR), NOT ~/.claude — so
+  // open that. Falls back to ~/.claude only when signed out (CLAUDE_CONFIG_DIR
+  // unset). The directory is created by fusion-code on first run, but on a
+  // fresh machine it may not exist yet — `shell.openPath` returns "no such
+  // file" in that case, surfaced verbatim so the user knows to run Claude once.
   ipcMain.handle(
     IPC_CHANNELS.APP_OPEN_CLAUDE_DIR,
     async (): Promise<{ error: string }> => {
-      const target = join(homedir(), '.claude')
+      const target = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
       const shellError = await shell.openPath(target)
       return { error: shellError }
     }

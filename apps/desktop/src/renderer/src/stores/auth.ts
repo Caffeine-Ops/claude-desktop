@@ -118,6 +118,17 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
     // written with a null tenantId on login.
     set({ loggedIn: true, phone, nickname, tenantId: null })
     void computeTenantId(rawPhone).then((tenantId) => {
+      if (!tenantId) {
+        // Web Crypto failed (essentially unreachable in Electron's renderer,
+        // but defensive). Without a tenantId main can't route CLAUDE_CONFIG_DIR,
+        // and pushing { loggedIn: true, tenantId: null } would be read by main
+        // as a LOGOUT (setAuthState treats a null tenantId as signed-out) —
+        // leaving the renderer thinking it's logged in while main isn't. So we
+        // revert the optimistic local login instead of pushing an inconsistent
+        // state; the user can retry. (No pushToMain — main was never touched.)
+        set({ loggedIn: false, phone: null, nickname: null, tenantId: null })
+        return
+      }
       set({ tenantId })
       pushToMain({ loggedIn: true, phone, nickname, tenantId })
     })
