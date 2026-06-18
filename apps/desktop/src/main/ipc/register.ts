@@ -883,9 +883,10 @@ export function registerIpcHandlers(): void {
   )
 
   // Sign-in state — main is the single source of truth (persisted in
-  // settings.json) so the shell login entry and the chat renderers stay in
-  // lockstep across separate webContents. AUTH_GET seeds a renderer's store
-  // on mount; AUTH_SET writes + persists + broadcasts to the other windows.
+  // auth.json via authStore，独立于每租户 settings.json) so the shell login
+  // entry and the chat renderers stay in lockstep across separate webContents.
+  // AUTH_GET seeds a renderer's store on mount; AUTH_SET writes + persists +
+  // broadcasts to the other windows，并在租户变化时触发整机软重置。
   ipcMain.handle(IPC_CHANNELS.AUTH_GET, async (): Promise<AuthState> => {
     return getAuthState()
   })
