@@ -110,14 +110,15 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
     // another's login on the same running app.
     const samePhone = get().phone === phone
     const nickname = samePhone ? (get().nickname ?? DEFAULT_NICKNAME) : DEFAULT_NICKNAME
-    // Compute tenantId async, then update state and push to main. The local
-    // loggedIn/phone/nickname update is immediate (so UI reflects login at
-    // once); the tenantId arrives a microtask later and is similarly instant in
-    // practice (sha256 of 11 bytes is sub-millisecond). Main uses tenantId to
-    // route CLAUDE_CONFIG_DIR — it must not be null when auth.json is written,
-    // so we push to main only after computeTenantId resolves.
+    // Flip the UI synchronously (same render cycle) so the caller sees loggedIn
+    // immediately — tenantId backfills a microtask later. Splitting it this way
+    // (rather than deferring the whole set into .then) preserves the original
+    // instant-login UX. We push to main only AFTER computeTenantId resolves:
+    // main routes CLAUDE_CONFIG_DIR by tenantId, so auth.json must never be
+    // written with a null tenantId on login.
+    set({ loggedIn: true, phone, nickname, tenantId: null })
     void computeTenantId(rawPhone).then((tenantId) => {
-      set({ loggedIn: true, phone, nickname, tenantId })
+      set({ tenantId })
       pushToMain({ loggedIn: true, phone, nickname, tenantId })
     })
   },
