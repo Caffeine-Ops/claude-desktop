@@ -23,6 +23,8 @@ import { createWriteStream, mkdirSync, readdirSync, rmSync, type WriteStream } f
 import { join } from 'node:path'
 
 import { IPC_CHANNELS, type RuntimeLogEntry, type LogSource } from '../../shared/ipc-channels'
+import { getActiveTenantId } from './authStore'
+import { tenantPaths } from './tenantPaths'
 
 /** 环形缓冲容量。够覆盖一次冷启动 + 一阵子操作，又不至于吃内存。 */
 const RING_CAPACITY = 2000
@@ -56,9 +58,10 @@ let originalConsole: {
   debug: typeof console.debug
 } | null = null
 
-/** 日志文件目录：`<userData>/logs`。openFileStream 与 clearLogs 共用。 */
+/** 日志目录：登录后 <userData>/tenants/<tid>/logs；未登录回退 <userData>/logs。 */
 function logsDir(): string {
-  return join(app.getPath('userData'), 'logs')
+  const tid = getActiveTenantId()
+  return tid ? tenantPaths(tid).logsDir : join(app.getPath('userData'), 'logs')
 }
 
 function openFileStream(): void {
@@ -165,6 +168,23 @@ export function clearLogs(): void {
   } catch {
     // 目录不存在（从没落过盘）等情况——无所谓，内存已清空。
   }
+}
+
+/**
+ * 切换租户时调用：关掉当前日志写流并置空，使下一条 push 触发 openFileStream
+ * 在新租户的 logs/ 目录重建当天文件。内存环形缓冲不动（切换会随即 reload
+ * 渲染进程，面板自会重新拉取）。
+ */
+export function reopenLogFile(): void {
+  if (fileStream) {
+    try {
+      fileStream.end()
+    } catch {
+      /* ignore */
+    }
+    fileStream = null
+  }
+  fileStreamFailed = false
 }
 
 /** 注册一个实时推送目标（settings overlay 打开时调用）。 */

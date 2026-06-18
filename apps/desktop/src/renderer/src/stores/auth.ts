@@ -43,6 +43,12 @@ interface AuthStoreState {
   phone: string | null
   /** User-editable display name. Null when signed out. */
   nickname: string | null
+  /**
+   * Stable per-tenant key — sha256(rawPhone) first 16 hex chars, computed in
+   * the renderer so the raw phone never leaves this process. Null when signed
+   * out. Matches AuthState.tenantId in ipc-channels.ts.
+   */
+  tenantId: string | null
   /** Sign in. Pass the raw 11-digit phone; it's masked before storing. */
   login: (rawPhone: string) => void
   /** Rename the signed-in user. No-op when signed out / blank. */
@@ -62,6 +68,25 @@ function maskPhone(raw: string): string {
   return '*'.repeat(raw.length)
 }
 
+/**
+ * Compute tenantId = sha256(rawPhone).slice(0, 16) using the Web Crypto API.
+ * The raw phone never leaves the renderer — only this 16-hex-char prefix does.
+ * Returns null if Web Crypto is unavailable (should not happen in Electron's
+ * Chromium renderer, but defensive coding is cheaper than a crash).
+ */
+async function computeTenantId(rawPhone: string): Promise<string | null> {
+  try {
+    const encoded = new TextEncoder().encode(rawPhone)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoded)
+    const hex = Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+    return hex.slice(0, 16)
+  } catch {
+    return null
+  }
+}
+
 function pushToMain(state: AuthIpcState): void {
   // Fire-and-forget: the local set already happened, and main's settings.json
   // is the durable copy. A failed write just means main was unreachable.
@@ -75,6 +100,7 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
   hydrated: false,
   phone: null,
   nickname: null,
+  tenantId: null,
   login: (rawPhone) => {
     const phone = maskPhone(rawPhone)
     // Preserve a previously-set nickname ONLY when the SAME phone re-logs in
@@ -84,25 +110,35 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
     // another's login on the same running app.
     const samePhone = get().phone === phone
     const nickname = samePhone ? (get().nickname ?? DEFAULT_NICKNAME) : DEFAULT_NICKNAME
-    set({ loggedIn: true, phone, nickname })
-    pushToMain({ loggedIn: true, phone, nickname })
+    // Compute tenantId async, then update state and push to main. The local
+    // loggedIn/phone/nickname update is immediate (so UI reflects login at
+    // once); the tenantId arrives a microtask later and is similarly instant in
+    // practice (sha256 of 11 bytes is sub-millisecond). Main uses tenantId to
+    // route CLAUDE_CONFIG_DIR — it must not be null when auth.json is written,
+    // so we push to main only after computeTenantId resolves.
+    void computeTenantId(rawPhone).then((tenantId) => {
+      set({ loggedIn: true, phone, nickname, tenantId })
+      pushToMain({ loggedIn: true, phone, nickname, tenantId })
+    })
   },
   setNickname: (name) => {
     const nickname = name.trim()
     if (!get().loggedIn || nickname === '') return
     const phone = get().phone
+    const tenantId = get().tenantId
     set({ nickname })
-    pushToMain({ loggedIn: true, phone, nickname })
+    pushToMain({ loggedIn: true, phone, nickname, tenantId })
   },
   logout: () => {
-    set({ loggedIn: false, phone: null, nickname: null })
-    pushToMain({ loggedIn: false, phone: null, nickname: null })
+    set({ loggedIn: false, phone: null, nickname: null, tenantId: null })
+    pushToMain({ loggedIn: false, phone: null, nickname: null, tenantId: null })
   },
   _adopt: (state) =>
     set({
       loggedIn: state.loggedIn,
       phone: state.phone,
-      nickname: state.nickname
+      nickname: state.nickname,
+      tenantId: state.tenantId
     })
 }))
 

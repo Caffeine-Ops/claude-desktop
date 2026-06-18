@@ -916,6 +916,68 @@ export function broadcastAppearanceChanged(sourceWebContentsId: number): void {
 }
 
 /**
+ * 切换租户（登录/登出/切号）时的整机软重置：dispose 全部 engine（杀掉各自钉在
+ * 旧 CLAUDE_CONFIG_DIR 的 fusion-code 子进程）、销毁全部 tab 视图、清空注册表，
+ * 然后开一个干净 tab 并 reload shell 渲染进程。
+ *
+ * 为什么 newTab() 在 reload() 之前：shell 的 TabBar 在 mount 时先发 TAB_LIST_GET
+ * （主动拉取一次初始快照），再订阅 TAB_LIST_CHANGED 推送。如果先 reload 再建 tab，
+ * shell 重载后 TabBar 立刻拉取——此时注册表为空，tab strip 空白；随后 newTab()
+ * 的 broadcastTabList() 虽然会推过来，但这是一条竞态：reload 完成与 TAB_LIST_GET
+ * 的时序没有保证。先建 tab 再 reload，可以确保无论 TabBar 哪个时刻拉取，注册表
+ * 里都已经有了那个干净 tab，tab strip 不会出现瞬间为空的状态。
+ *
+ * 为什么 reload 而非就地 rehydrate：新租户的 CLAUDE_CONFIG_DIR 已切换，旧 engine
+ * 必须重起；且渲染进程的 localStorage 偏好按 tid 命名空间，reload 后 preload 取到
+ * 新 tid、boot 读新键，比就地重置每个 store 干净得多、bug 面小得多。
+ */
+export async function resetForTenantSwitch(): Promise<void> {
+  const all = Array.from(tabs.values())
+  // 先清空 map 和顺序数组，避免拆卸期间有人看到半销毁的 engine。
+  tabs.clear()
+  tabOrder.length = 0
+  activeTabId = null
+
+  for (const ctx of all) {
+    // dispose engine：杀掉对应的 fusion-code 子进程（钉在旧 CLAUDE_CONFIG_DIR）。
+    // 与 shell-close 路径（win.on('closed')）的 dispose 模式一致：fire-and-forget，
+    // 单个 engine 抛错不阻断其余。
+    void ctx.engine?.dispose().catch((err) => {
+      console.warn('[tabRegistry] engine.dispose failed on tenant switch:', err)
+    })
+
+    // 从 shell contentView 移除（与 closeTab 第 570 行一致）。guard：重置期间
+    // shellWindow 可能已在销毁（极端情况），或者该 tab 的 view 从未被激活而不在
+    // contentView 子树里——两种情况都吞掉错误，不阻断流程。
+    if (shellWindow && !shellWindow.isDestroyed()) {
+      try {
+        shellWindow.contentView.removeChildView(ctx.view)
+      } catch {
+        /* view 可能不在 contentView 子树里（未激活过）—— 忽略 */
+      }
+    }
+
+    // 销毁 WebContents（与 closeTab 第 585 行一致）。
+    try {
+      ctx.view.webContents.close()
+    } catch {
+      /* 视图可能已在销毁 */
+    }
+  }
+
+  // 先建干净 tab，再 reload shell。原因见上方长注释：TabBar mount 时主动
+  // TAB_LIST_GET 拉取，只要 tab 在注册表里，无论 reload 快慢都能立即看到。
+  // newTab() 内部会把 activeTabId 设为新 tab 的 id（首个 tab → activateTab 立即调）。
+  newTab()
+
+  // reload shell 渲染进程：它重新 hydrate auth（已是新租户/登出态），登录墙据此
+  // 显示或放行。reload 后 TabBar mount 会 TAB_LIST_GET → 拿到上面已建的 tab。
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    shellWindow.webContents.reload()
+  }
+}
+
+/**
  * Broadcast a sign-in-state change to every renderer EXCEPT the writer.
  *
  * Auth (unlike appearance) is a desktop-internal concern, not shared with
