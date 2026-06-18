@@ -1,66 +1,46 @@
-import { app } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
+
+import { getActiveTenantId } from './authStore'
+import { tenantPaths } from './tenantPaths'
 
 /**
- * Tiny main-process settings store for preferences that need to survive
- * app restarts AND be readable from the engine before the renderer has
- * mounted (so localStorage in the renderer is not an option).
+ * 每租户应用偏好。文件位于 <userData>/tenants/<activeTenantId>/settings.json。
+ * 登录态本身不在这里（见 authStore.ts / auth.json）——那是定位本文件所需的前置，
+ * 不能再塞回来，否则又变回鸡生蛋。
  *
- * Currently a single field — `cliBackend` — so the file is small, no
- * schema migrations, no locking, no debounce. If this ever grows past
- * a handful of fields, consider switching to `electron-store`.
- *
- * On-disk shape:
- *   {
- *     "cliBackend": "bundled" | "system",
- *     "authLoggedIn": boolean,
- *     "authPhone": string | null,    // masked, e.g. "138****8888"
- *     "authNickname": string | null  // user-editable display name
- *   }
- *
- * Location: `<userData>/settings.json`. Electron maps `userData` to
- * the standard per-OS config directory (`~/Library/Application
- * Support/claude-desktop` on macOS, `%APPDATA%/claude-desktop` on
- * Windows). Corrupt or missing files fall back to defaults — we log
- * a warning and keep going rather than crash the main process.
+ * 未登录（无 activeTenantId）时：读返回 DEFAULTS、写是 no-op（没有租户目录可落）。
+ * 切换租户时 authStore.activateTenant() 会调用 invalidateSettingsCache()，
+ * 使下一次读重新从新租户的文件加载。
  */
 export type CliBackend = 'bundled' | 'system'
 
 export interface AppSettings {
   cliBackend: CliBackend
-  /** Phone-login sign-in flag. The masked phone lives in `authPhone`. */
-  authLoggedIn: boolean
-  /** Masked phone for display (e.g. "138****8888"); null when signed out. */
-  authPhone: string | null
-  /** User-editable display name; null when signed out. */
-  authNickname: string | null
 }
 
 const DEFAULTS: AppSettings = {
-  cliBackend: 'bundled',
-  authLoggedIn: false,
-  authPhone: null,
-  authNickname: null
+  cliBackend: 'bundled'
 }
 
 let cached: AppSettings | null = null
 
-function settingsPath(): string {
-  return join(app.getPath('userData'), 'settings.json')
+function settingsPath(): string | null {
+  const tid = getActiveTenantId()
+  return tid ? tenantPaths(tid).settingsPath : null
 }
 
 function load(): AppSettings {
   if (cached) return cached
   const path = settingsPath()
+  if (!path) {
+    // 未登录——返回默认，且不缓存（登录后路径会变）。
+    return { ...DEFAULTS }
+  }
   try {
-    const raw = readFileSync(path, 'utf8')
-    const parsed = JSON.parse(raw) as Partial<AppSettings>
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<AppSettings>
     cached = { ...DEFAULTS, ...normalize(parsed) }
   } catch (err) {
-    // ENOENT on first run is expected — log at debug only. Any other
-    // error (permission denied, invalid JSON) we surface so the user
-    // can fix it; we still fall back to defaults so the app boots.
     const e = err as NodeJS.ErrnoException
     if (e.code !== 'ENOENT') {
       console.warn('[appSettings] load failed — using defaults', {
@@ -73,24 +53,10 @@ function load(): AppSettings {
   return cached
 }
 
-/**
- * Defensive field-by-field copy so a malformed file that e.g. sets
- * `cliBackend: 42` doesn't poison the rest of the engine. Unknown keys
- * are dropped; invalid values are coerced to the default for that key.
- */
 function normalize(raw: Partial<AppSettings>): Partial<AppSettings> {
   const out: Partial<AppSettings> = {}
   if (raw.cliBackend === 'bundled' || raw.cliBackend === 'system') {
     out.cliBackend = raw.cliBackend
-  }
-  if (typeof raw.authLoggedIn === 'boolean') {
-    out.authLoggedIn = raw.authLoggedIn
-  }
-  if (typeof raw.authPhone === 'string' || raw.authPhone === null) {
-    out.authPhone = raw.authPhone
-  }
-  if (typeof raw.authNickname === 'string' || raw.authNickname === null) {
-    out.authNickname = raw.authNickname
   }
   return out
 }
@@ -100,15 +66,24 @@ export function getAppSettings(): AppSettings {
 }
 
 export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
+  const path = settingsPath()
+  if (!path) {
+    // 未登录时不该有人写设置（UI 被登录墙挡住）；防御性地 no-op。
+    console.warn('[appSettings] update ignored — no active tenant')
+    return { ...DEFAULTS }
+  }
   const next = { ...load(), ...normalize(patch) }
   cached = next
-  const path = settingsPath()
   try {
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, JSON.stringify(next, null, 2) + '\n', 'utf8')
   } catch (err) {
-    const e = err as NodeJS.ErrnoException
-    console.error('[appSettings] write failed', { path, message: e.message })
+    console.error('[appSettings] write failed', { path, message: (err as Error).message })
   }
   return { ...next }
+}
+
+/** 切换租户时调用，丢弃当前租户的缓存，下一次读重新加载新租户文件。 */
+export function invalidateSettingsCache(): void {
+  cached = null
 }
