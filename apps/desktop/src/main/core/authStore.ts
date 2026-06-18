@@ -48,6 +48,9 @@ function load(): AuthFile {
     cached = {
       activeTenantId:
         typeof parsed.activeTenantId === 'string' ? parsed.activeTenantId : null,
+      // 信任边界：users 的形状只做浅校验（是对象就收）。即便某条身份被外部
+      // 改坏（如 phone 非串），租户隔离也不受影响——路径键来自 activeTenantId，
+      // 不来自 users；users 仅供 UI 显示掩码号/昵称。UX 级隔离不做深校验。
       users:
         parsed.users && typeof parsed.users === 'object'
           ? (parsed.users as AuthFile['users'])
@@ -109,8 +112,11 @@ export function getAuthState(): AuthSnapshot {
   const u = tid ? f.users[tid] : undefined
   return {
     loggedIn: tid != null,
-    phone: u?.phone ?? null,
-    nickname: u?.nickname ?? null,
+    // `|| null`（而非 `?? null`）把退化的空串也规整成 null，与 AuthSnapshot
+    // 的 `string | null` 类型一致——空串不是合法掩码号，调用方 `if (phone)`
+    // 不该被它误判为有值。
+    phone: u?.phone || null,
+    nickname: u?.nickname || null,
     tenantId: tid
   }
 }
