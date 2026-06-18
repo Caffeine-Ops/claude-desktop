@@ -378,6 +378,10 @@ const chatApi: ChatApi = {
     }
   },
 
+  // 同步取一次 tid（preload 在 renderer 脚本前运行，sendSync 可用）。渲染进程
+  // 切租户时整页 reload，preload 重新执行 → 重新取到新 tid。
+  tenantId: ipcRenderer.sendSync(IPC_CHANNELS.TENANT_ID_GET) as string | null,
+
   getAuth(): Promise<AuthState> {
     return ipcRenderer.invoke(IPC_CHANNELS.AUTH_GET) as Promise<AuthState>
   },

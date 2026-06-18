@@ -48,6 +48,11 @@ import {
   type AuthVerifyCodePayload
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
+import {
+  getAuthState,
+  setAuthState,
+  getActiveTenantId
+} from '../core/authStore'
 import { requestCode, checkCode } from '../core/authCodeService'
 import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
 import { DAEMON_PORT } from '../services/openDesignServices'
@@ -72,7 +77,8 @@ import {
   MAX_TABS,
   newTab,
   openSettingsView,
-  activateTab
+  activateTab,
+  resetForTenantSwitch
 } from '../tabRegistry'
 import type {
   CliBackendSetPayload,
@@ -881,32 +887,30 @@ export function registerIpcHandlers(): void {
   // lockstep across separate webContents. AUTH_GET seeds a renderer's store
   // on mount; AUTH_SET writes + persists + broadcasts to the other windows.
   ipcMain.handle(IPC_CHANNELS.AUTH_GET, async (): Promise<AuthState> => {
-    const s = getAppSettings()
-    return {
-      loggedIn: s.authLoggedIn,
-      phone: s.authPhone,
-      nickname: s.authNickname
-    }
+    return getAuthState()
   })
 
   ipcMain.handle(
     IPC_CHANNELS.AUTH_SET,
     async (event, state: AuthState): Promise<AuthState> => {
-      // Defensive normalize: a signed-out state carries no phone/nickname.
-      const next: AuthState = state?.loggedIn
-        ? {
-            loggedIn: true,
-            phone: state.phone ?? null,
-            nickname: state.nickname ?? null
-          }
-        : { loggedIn: false, phone: null, nickname: null }
-      updateAppSettings({
-        authLoggedIn: next.loggedIn,
-        authPhone: next.phone,
-        authNickname: next.nickname
+      const prevTid = getActiveTenantId()
+      // setAuthState 内部在租户变化时已调用 activateTenant（切 CLAUDE_CONFIG_DIR、
+      // 失效设置缓存、重开日志流）。
+      const next = setAuthState({
+        loggedIn: !!state?.loggedIn,
+        phone: state?.phone ?? null,
+        nickname: state?.nickname ?? null,
+        tenantId: state?.loggedIn ? (state?.tenantId ?? null) : null
       })
-      // Tell every OTHER renderer; the writer already updated locally.
+
+      // 广播给其它窗口（写入方已本地更新）。
       broadcastAuthChanged(event.sender.id, next)
+
+      // 租户真的换了（含登出）→ 杀掉所有 engine 子进程、拆 tab、reload 渲染进程。
+      // 仅改昵称（同租户）不触发，避免无谓重置。
+      if (next.tenantId !== prevTid) {
+        await resetForTenantSwitch()
+      }
       return next
     }
   )
@@ -941,6 +945,11 @@ export function registerIpcHandlers(): void {
       }
     }
   )
+
+  // 同步：preload 启动时取 tid 拼 localStorage 命名空间键。
+  ipcMain.on(IPC_CHANNELS.TENANT_ID_GET, (event) => {
+    event.returnValue = getActiveTenantId()
+  })
 
   // Settings modal — a full-window transparent overlay managed by
   // tabRegistry. Open from the shell's gear (works over any tab); close

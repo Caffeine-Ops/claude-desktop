@@ -461,7 +461,13 @@ export const IPC_CHANNELS = {
    * this channel only gates that step, it does NOT itself mark the user
    * signed in. Same stub-now / real-endpoint-later split as AUTH_SEND_CODE.
    */
-  AUTH_VERIFY_CODE: 'auth:verify-code'
+  AUTH_VERIFY_CODE: 'auth:verify-code',
+  /**
+   * 同步取当前 activeTenantId（preload 用 ipcRenderer.sendSync）。渲染进程的
+   * localStorage 偏好键要在首帧前（bootAppearance / store 创建）就拼上 tid，
+   * 异步 invoke 来不及，故用 sendSync。
+   */
+  TENANT_ID_GET: 'tenant:id-get'
 } as const
 
 /**
@@ -805,6 +811,12 @@ export type AuthState = {
   loggedIn: boolean
   phone: string | null
   nickname: string | null
+  /**
+   * 稳定的租户唯一键 = sha256(原始手机号) 前 16 hex（在渲染进程算，原号绝不
+   * 离开渲染进程——只有这个哈希离开）。掩码号会撞，不能当键，故单列此字段。
+   * null 表示登出。
+   */
+  tenantId: string | null
 }
 
 /**
@@ -1156,6 +1168,9 @@ export interface ChatApi {
    * against echoing its own write back). Returns an unsubscribe.
    */
   onAppearanceChanged(handler: () => void): () => void
+
+  /** 当前租户 id 的同步快照（preload 在加载时经 sendSync 取得）。null=登出。 */
+  tenantId: string | null
 
   /** One-shot pull of the current sign-in state from main (settings.json). */
   getAuth(): Promise<AuthState>
