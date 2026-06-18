@@ -17,7 +17,8 @@ import { resolveWebTabUrl, resolveWebSettingsUrl } from './services/openDesignSe
 import {
   IPC_CHANNELS,
   type ShellMenuAction,
-  type TabDescriptor
+  type TabDescriptor,
+  type AuthState
 } from '../shared/ipc-channels'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -911,6 +912,40 @@ export function broadcastAppearanceChanged(sourceWebContentsId: number): void {
     } else {
       wc.send(IPC_CHANNELS.APPEARANCE_CHANGED)
     }
+  }
+}
+
+/**
+ * Broadcast a sign-in-state change to every renderer EXCEPT the writer.
+ *
+ * Auth (unlike appearance) is a desktop-internal concern, not shared with
+ * the embedded web tab, so this is simpler than broadcastAppearanceChanged:
+ * we carry the new state in the payload (receivers update their store
+ * directly, no follow-up AUTH_GET) and skip web tabs entirely — they have no
+ * preload and no interest in desktop sign-in.
+ *
+ * The shell renderer (login entry) is the main consumer: it learns of a
+ * login that happened in a chat tab's modal. Chat tabs receive it too so a
+ * logout from the shell account menu propagates to any chat-side UI.
+ * `sourceWebContentsId` is the writer — it already updated locally.
+ */
+export function broadcastAuthChanged(
+  sourceWebContentsId: number,
+  state: AuthState
+): void {
+  if (
+    shellWindow &&
+    !shellWindow.isDestroyed() &&
+    shellWindow.webContents.id !== sourceWebContentsId
+  ) {
+    shellWindow.webContents.send(IPC_CHANNELS.AUTH_CHANGED, state)
+  }
+
+  for (const ctx of tabs.values()) {
+    const wc = ctx.view.webContents
+    if (wc.isDestroyed() || wc.id === sourceWebContentsId) continue
+    if (ctx.kind === 'web') continue // no preload; auth is desktop-internal
+    wc.send(IPC_CHANNELS.AUTH_CHANGED, state)
   }
 }
 

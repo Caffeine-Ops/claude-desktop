@@ -1,9 +1,10 @@
 import React, { useEffect } from 'react'
 
 import TabBar from '../components/tabs/TabBar'
-import { UserInfoBar } from '../components/chat/UserInfoBar'
+import { LoginEntry } from '../components/chat/LoginEntry'
 import { useApplyAppearance } from '../stores/appearance.applier'
 import { hydrateAppearanceFromDaemon } from '../stores/appearance'
+import { hydrateAuthFromMain, subscribeAuthChanges } from '../stores/auth'
 
 /**
  * Shell renderer — mounted by the shell BrowserWindow's own
@@ -49,15 +50,26 @@ export default function ShellApp(): React.ReactElement {
     })
   }, [])
 
+  // Sign-in state for the login entry. The shell is a separate webContents
+  // from the chat renderer, so it learns of a login (done in a chat tab's
+  // modal) via main's AUTH_CHANGED broadcast — seed once, then subscribe.
+  useEffect(() => {
+    void hydrateAuthFromMain()
+    return subscribeAuthChanges()
+  }, [])
+
   return (
     <div className="shell-chrome">
       <TabBar />
-      {/* Settings menu — pinned to the far right of the tab strip. Moved
-          here from the chat sidebar's bottom-left footer so it's reachable
-          from any tab (including the Open Design web tab, which renders no
-          chrome of its own). Its chat-tab actions route through
-          window.tabApi.triggerMenuAction → the active chat tab. */}
-      <UserInfoBar />
+      {/* Account entry — the single chrome control at the far right of the
+          tab strip. It's a pure trigger (the strip is 44px tall and the
+          tab's native WebContentsView covers everything below it, so no
+          dropdown can render here); clicking it fires the open-account
+          shell-menu action and the active chat tab renders the menu under
+          it (AccountMenu). Settings now lives inside that menu — the old
+          standalone gear (UserInfoBar) was removed so there's a single
+          entry point, not two. */}
+      <LoginEntry />
     </div>
   )
 }

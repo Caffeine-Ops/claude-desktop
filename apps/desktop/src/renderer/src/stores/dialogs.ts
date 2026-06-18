@@ -14,8 +14,22 @@ import { create } from 'zustand'
  *
  * Only one dialog can be open at a time. Opening a new one replaces
  * whichever was open before — `null` means none.
+ *
+ * `'login'` / `'account'` are the odd ones out: they aren't slash commands,
+ * they're opened from the shell tab strip's login entry (via the `open-login`
+ * / `open-account` shell-menu actions). `'account'` is the signed-in account
+ * menu — it has to render in the chat renderer rather than the shell because
+ * the shell's 44px strip can't host a dropdown (the tab's native
+ * WebContentsView covers everything below it). Both reuse this store only for
+ * the "one overlay at a time" behavior — see LoginDialog / AccountMenu.
  */
-export type DialogKind = 'skills' | 'mcp' | 'logs' | null
+export type DialogKind =
+  | 'skills'
+  | 'mcp'
+  | 'logs'
+  | 'login'
+  | 'account'
+  | null
 
 interface DialogState {
   open: DialogKind

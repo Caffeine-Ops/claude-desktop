@@ -40,6 +40,10 @@ import {
   type AppearanceSetResult,
   type ShellMenuAction,
   type ShellMenuActionPayload,
+  type AuthState,
+  type AuthCodeResult,
+  type AuthSendCodePayload,
+  type AuthVerifyCodePayload,
   type TabApi,
   type TabDescriptor,
   type TabListResult,
@@ -372,6 +376,39 @@ const chatApi: ChatApi = {
     return () => {
       ipcRenderer.off(IPC_CHANNELS.SHELL_MENU_ACTION, listener)
     }
+  },
+
+  getAuth(): Promise<AuthState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.AUTH_GET) as Promise<AuthState>
+  },
+
+  setAuth(state: AuthState): Promise<AuthState> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.AUTH_SET,
+      state
+    ) as Promise<AuthState>
+  },
+
+  onAuthChanged(handler: (state: AuthState) => void): () => void {
+    const listener = (_e: unknown, state: AuthState): void => handler(state)
+    ipcRenderer.on(IPC_CHANNELS.AUTH_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.AUTH_CHANGED, listener)
+    }
+  },
+
+  sendCode(payload: AuthSendCodePayload): Promise<AuthCodeResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.AUTH_SEND_CODE,
+      payload
+    ) as Promise<AuthCodeResult>
+  },
+
+  verifyCode(payload: AuthVerifyCodePayload): Promise<AuthCodeResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.AUTH_VERIFY_CODE,
+      payload
+    ) as Promise<AuthCodeResult>
   },
 
   closeSettingsWindow(): Promise<void> {

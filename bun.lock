@@ -45,7 +45,7 @@
     },
     "apps/desktop": {
       "name": "@claude-desktop/desktop",
-      "version": "0.0.9",
+      "version": "0.0.16",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "^0.2.98",
         "@anthropic-ai/sdk": "^0.93.0",

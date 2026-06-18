@@ -417,7 +417,51 @@ export const IPC_CHANNELS = {
    * already applied the change locally. Distinct from APPEARANCE_SET, which
    * is the desktop renderer's own write-through-main path (also broadcasts).
    */
-  APPEARANCE_BROADCAST: 'appearance:broadcast'
+  APPEARANCE_BROADCAST: 'appearance:broadcast',
+  /**
+   * Renderer → main. One-shot pull of the current sign-in state. Both the
+   * shell renderer (login entry) and each chat renderer call this on mount
+   * to seed their auth store from main's durable copy (settings.json).
+   */
+  AUTH_GET: 'auth:get',
+  /**
+   * Renderer → main. Write the new sign-in state (after a successful login
+   * in LoginDialog, or a logout from the shell account menu). Main persists
+   * it to settings.json and broadcasts AUTH_CHANGED to every OTHER renderer
+   * so the shell entry and chat side stay in lockstep. Returns the stored
+   * state.
+   */
+  AUTH_SET: 'auth:set',
+  /**
+   * Main → every renderer except the writer. Carries the new auth state so
+   * receivers update their store directly (no follow-up AUTH_GET needed).
+   * This is how the shell entry reflects a login that happened in the chat
+   * renderer's modal, and how the chat side reflects a logout from the
+   * shell account menu.
+   */
+  AUTH_CHANGED: 'auth:changed',
+  /**
+   * Renderer → main. Request an SMS verification code for a phone number.
+   * Carries the RAW 11-digit phone (the only place it crosses IPC) — main
+   * holds it transiently in the code service and never persists it. Replaces
+   * LoginDialog's local-only resend countdown: the real throttle now lives in
+   * main so it can't be bypassed by re-opening the modal. Returns ok, or a
+   * structured AuthCodeError ('rate_limited' on too-frequent resends).
+   *
+   * Backend note: today main answers from a replaceable stub
+   * (authCodeService) that generates + logs a code locally. Swapping in a real
+   * SMS endpoint touches only that service — this channel, its payload, and
+   * the error contract stay fixed.
+   */
+  AUTH_SEND_CODE: 'auth:send-code',
+  /**
+   * Renderer → main. Verify a phone + 6-digit code pair. Returns ok on match,
+   * or an AuthCodeError ('invalid_code' / 'expired' / 'too_many_attempts').
+   * On success the renderer proceeds to its existing AUTH_SET login path —
+   * this channel only gates that step, it does NOT itself mark the user
+   * signed in. Same stub-now / real-endpoint-later split as AUTH_SEND_CODE.
+   */
+  AUTH_VERIFY_CODE: 'auth:verify-code'
 } as const
 
 /**
@@ -729,9 +773,15 @@ export interface AppearancePrefs {
 /**
  * Actions the shell's tab-strip settings menu can trigger on the active
  * chat tab. `toggle-lang` flips zh↔en; the others open the corresponding
- * overlay/dialog. Kept as a small closed union so both ends stay in sync.
+ * overlay/dialog (`open-login` opens the phone-login modal). Kept as a
+ * small closed union so both ends stay in sync.
  */
-export type ShellMenuAction = 'open-settings' | 'open-logs' | 'toggle-lang'
+export type ShellMenuAction =
+  | 'open-settings'
+  | 'open-logs'
+  | 'toggle-lang'
+  | 'open-login'
+  | 'open-account'
 
 /** Payload for SHELL_MENU_ACTION / TAB_TRIGGER_MENU_ACTION. */
 export type ShellMenuActionPayload = { action: ShellMenuAction }
@@ -742,6 +792,49 @@ export type AppearanceGetResult = { appearance: AppearancePrefs | null }
 export type AppearanceSetPayload = { patch: AppearancePrefs }
 /** Result of APPEARANCE_SET — the daemon's merged appearance, or null on failure. */
 export type AppearanceSetResult = { appearance: AppearancePrefs | null }
+
+/**
+ * Sign-in state, the payload shared across AUTH_GET / AUTH_SET / AUTH_CHANGED.
+ * `phone` is the **masked** display form (e.g. "138****8888"); the raw number
+ * is never sent over IPC or persisted. `nickname` is the user-editable display
+ * name shown in the chrome (backend has no username field yet, so it defaults
+ * to a placeholder and is editable from the account menu). No token yet — the
+ * fusion-code backend is env-driven, so this is an identity marker.
+ */
+export type AuthState = {
+  loggedIn: boolean
+  phone: string | null
+  nickname: string | null
+}
+
+/**
+ * Failure reasons for the send-code / verify-code flow. A small closed union
+ * so the LoginDialog can map each to a specific message and both ends stay in
+ * sync. `network` covers an unreachable backend (or a thrown IPC handler);
+ * the rest are domain errors the (current stub or future real) backend
+ * returns deliberately.
+ */
+export type AuthCodeError =
+  | 'rate_limited' // resend asked for before the cooldown elapsed
+  | 'invalid_phone' // phone failed server-side shape check
+  | 'invalid_code' // code didn't match the one on file
+  | 'expired' // code existed but its TTL passed
+  | 'too_many_attempts' // too many wrong codes for this phone
+  | 'network' // backend unreachable / handler threw
+
+/** Send-code request. `phone` is the RAW 11-digit number (see AUTH_SEND_CODE). */
+export type AuthSendCodePayload = { phone: string }
+
+/** Verify-code request. `phone` raw + the 6-digit `code` the user typed. */
+export type AuthVerifyCodePayload = { phone: string; code: string }
+
+/**
+ * Result of AUTH_SEND_CODE / AUTH_VERIFY_CODE. A discriminated union so a
+ * caller checks `ok` once and TypeScript narrows `error` in the failure arm.
+ */
+export type AuthCodeResult =
+  | { ok: true }
+  | { ok: false; error: AuthCodeError }
 
 /**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
@@ -1063,6 +1156,38 @@ export interface ChatApi {
    * against echoing its own write back). Returns an unsubscribe.
    */
   onAppearanceChanged(handler: () => void): () => void
+
+  /** One-shot pull of the current sign-in state from main (settings.json). */
+  getAuth(): Promise<AuthState>
+
+  /**
+   * Write the new sign-in state to main, which persists it and broadcasts
+   * AUTH_CHANGED to every other renderer. Returns the stored state. Called
+   * by LoginDialog on success and by the shell account menu on logout.
+   */
+  setAuth(state: AuthState): Promise<AuthState>
+
+  /**
+   * Subscribe to sign-in-state changes made in another window. The handler
+   * receives the new state directly. Returns an unsubscribe. Lets the shell
+   * login entry reflect a login from the chat modal (and vice-versa).
+   */
+  onAuthChanged(handler: (state: AuthState) => void): () => void
+
+  /**
+   * Request an SMS code for `phone` (raw 11-digit). Main throttles resends
+   * and answers from the replaceable code service. Resolves ok, or a failure
+   * carrying an AuthCodeError ('rate_limited' on too-frequent resends).
+   * Called by LoginDialog's 获取验证码 button.
+   */
+  sendCode(payload: AuthSendCodePayload): Promise<AuthCodeResult>
+
+  /**
+   * Verify `phone` + `code`. Resolves ok on match, else a failure with an
+   * AuthCodeError. The dialog only proceeds to its AUTH_SET login path when
+   * ok is true — this call gates login, it does not perform it.
+   */
+  verifyCode(payload: AuthVerifyCodePayload): Promise<AuthCodeResult>
 
   /**
    * Subscribe to menu actions forwarded from the shell's tab-strip

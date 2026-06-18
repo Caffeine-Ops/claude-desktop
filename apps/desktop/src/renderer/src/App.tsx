@@ -8,6 +8,8 @@ import { PermissionBridge } from './components/permissions/PermissionBridge'
 import { SkillsDialog } from './components/dialogs/SkillsDialog'
 import { McpDialog } from './components/dialogs/McpDialog'
 import { LogsDialog } from './components/dialogs/LogsDialog'
+import { LoginDialog } from './components/dialogs/LoginDialog'
+import { AccountMenu } from './components/chat/AccountMenu'
 import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
 import { useChatStore } from './stores/chat'
 import { useLogsStore } from './stores/logs'
@@ -17,6 +19,7 @@ import { useSettingsStore } from './stores/settings'
 import { useDialogStore } from './stores/dialogs'
 import { useApplyAppearance } from './stores/appearance.applier'
 import { hydrateAppearanceFromDaemon } from './stores/appearance'
+import { hydrateAuthFromMain, subscribeAuthChanges } from './stores/auth'
 import { SettingsView } from './components/settings/SettingsView'
 import { AnimatePresence, motion } from 'motion/react'
 
@@ -90,6 +93,15 @@ function App(): React.JSX.Element {
     })
   }, [])
 
+  // Sign-in state: seed from main once, then stay in lockstep with the shell
+  // (a logout from the shell account menu must reflect here, and a login in
+  // this renderer's modal pushes the other way via the store). Mirrors the
+  // appearance wiring above.
+  useEffect(() => {
+    void hydrateAuthFromMain()
+    return subscribeAuthChanges()
+  }, [])
+
   // Subscribe to settings-menu actions forwarded from the shell's tab-strip
   // menu (the menu used to live in this renderer's sidebar; it now lives in
   // the shell, a separate webContents). Each action maps onto a local store:
@@ -103,6 +115,10 @@ function App(): React.JSX.Element {
         useSettingsStore.getState().openSettings()
       } else if (action === 'open-logs') {
         useDialogStore.getState().openDialog('logs')
+      } else if (action === 'open-login') {
+        useDialogStore.getState().openDialog('login')
+      } else if (action === 'open-account') {
+        useDialogStore.getState().openDialog('account')
       } else if (action === 'toggle-lang') {
         const cur = useI18n.getState().lang
         useI18n.getState().setLang(cur === 'zh' ? 'en' : 'zh')
@@ -270,6 +286,16 @@ function App(): React.JSX.Element {
       <SkillsDialog />
       <McpDialog />
       <LogsDialog />
+      {/* Phone-login modal — bespoke two-pane premium chrome (not
+          DialogShell). Opened via the shell tab strip's login entry
+          (open-login shell-menu action → onShellMenuAction above). */}
+      <LoginDialog />
+      {/* Signed-in account menu — a top-right popover anchored just under
+          the shell's avatar. Lives here (not in the shell) because the
+          shell's 44px strip can't host a dropdown; this renderer's content
+          view fills everything below the strip, so its top-right corner sits
+          right under the avatar. Opened via the open-account shell action. */}
+      <AccountMenu />
       {/* Non-blocking session-loading toast — shown while main is
           spawning a fusion-code child (new chat / session switch).
           Kept as its own tiny component so the zustand subscription

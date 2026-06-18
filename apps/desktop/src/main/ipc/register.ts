@@ -41,9 +41,14 @@ import {
   type AppearanceSetPayload,
   type AppearanceSetResult,
   type AppearancePrefs,
-  type ShellMenuActionPayload
+  type ShellMenuActionPayload,
+  type AuthState,
+  type AuthCodeResult,
+  type AuthSendCodePayload,
+  type AuthVerifyCodePayload
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
+import { requestCode, checkCode } from '../core/authCodeService'
 import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
 import { DAEMON_PORT } from '../services/openDesignServices'
 import type { ChatEngine } from '../core/engine'
@@ -52,6 +57,7 @@ import { listSessions, loadSession, renameSession } from '../core/sessionStore'
 import { clearUnread, updateTrayLang } from '../tray'
 import {
   broadcastAppearanceChanged,
+  broadcastAuthChanged,
   broadcastTabList,
   canAddTab,
   closeTab,
@@ -860,11 +866,79 @@ export function registerIpcHandlers(): void {
       if (
         action !== 'open-settings' &&
         action !== 'open-logs' &&
-        action !== 'toggle-lang'
+        action !== 'toggle-lang' &&
+        action !== 'open-login' &&
+        action !== 'open-account'
       ) {
         return
       }
       dispatchMenuActionToActiveTab(action)
+    }
+  )
+
+  // Sign-in state — main is the single source of truth (persisted in
+  // settings.json) so the shell login entry and the chat renderers stay in
+  // lockstep across separate webContents. AUTH_GET seeds a renderer's store
+  // on mount; AUTH_SET writes + persists + broadcasts to the other windows.
+  ipcMain.handle(IPC_CHANNELS.AUTH_GET, async (): Promise<AuthState> => {
+    const s = getAppSettings()
+    return {
+      loggedIn: s.authLoggedIn,
+      phone: s.authPhone,
+      nickname: s.authNickname
+    }
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUTH_SET,
+    async (event, state: AuthState): Promise<AuthState> => {
+      // Defensive normalize: a signed-out state carries no phone/nickname.
+      const next: AuthState = state?.loggedIn
+        ? {
+            loggedIn: true,
+            phone: state.phone ?? null,
+            nickname: state.nickname ?? null
+          }
+        : { loggedIn: false, phone: null, nickname: null }
+      updateAppSettings({
+        authLoggedIn: next.loggedIn,
+        authPhone: next.phone,
+        authNickname: next.nickname
+      })
+      // Tell every OTHER renderer; the writer already updated locally.
+      broadcastAuthChanged(event.sender.id, next)
+      return next
+    }
+  )
+
+  // Send / verify SMS code — both delegate to the replaceable authCodeService
+  // (a local stub today; a real SMS endpoint later). These are plain
+  // request/response: no broadcast, since a code flow is scoped to the one
+  // window driving the login modal. The raw phone arrives here and goes no
+  // further than the service's in-memory map — it's never persisted and never
+  // re-broadcast. A thrown service call collapses to a `network` error so the
+  // dialog always gets a structured result to render.
+  ipcMain.handle(
+    IPC_CHANNELS.AUTH_SEND_CODE,
+    async (_event, payload: AuthSendCodePayload): Promise<AuthCodeResult> => {
+      try {
+        return requestCode(payload?.phone ?? '')
+      } catch (err) {
+        console.error('[ipc] AUTH_SEND_CODE failed:', err)
+        return { ok: false, error: 'network' }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUTH_VERIFY_CODE,
+    async (_event, payload: AuthVerifyCodePayload): Promise<AuthCodeResult> => {
+      try {
+        return checkCode(payload?.phone ?? '', payload?.code ?? '')
+      } catch (err) {
+        console.error('[ipc] AUTH_VERIFY_CODE failed:', err)
+        return { ok: false, error: 'network' }
+      }
     }
   )
 

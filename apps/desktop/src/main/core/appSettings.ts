@@ -12,7 +12,12 @@ import { dirname, join } from 'node:path'
  * a handful of fields, consider switching to `electron-store`.
  *
  * On-disk shape:
- *   { "cliBackend": "bundled" | "system" }
+ *   {
+ *     "cliBackend": "bundled" | "system",
+ *     "authLoggedIn": boolean,
+ *     "authPhone": string | null,    // masked, e.g. "138****8888"
+ *     "authNickname": string | null  // user-editable display name
+ *   }
  *
  * Location: `<userData>/settings.json`. Electron maps `userData` to
  * the standard per-OS config directory (`~/Library/Application
@@ -24,10 +29,19 @@ export type CliBackend = 'bundled' | 'system'
 
 export interface AppSettings {
   cliBackend: CliBackend
+  /** Phone-login sign-in flag. The masked phone lives in `authPhone`. */
+  authLoggedIn: boolean
+  /** Masked phone for display (e.g. "138****8888"); null when signed out. */
+  authPhone: string | null
+  /** User-editable display name; null when signed out. */
+  authNickname: string | null
 }
 
 const DEFAULTS: AppSettings = {
-  cliBackend: 'bundled'
+  cliBackend: 'bundled',
+  authLoggedIn: false,
+  authPhone: null,
+  authNickname: null
 }
 
 let cached: AppSettings | null = null
@@ -68,6 +82,15 @@ function normalize(raw: Partial<AppSettings>): Partial<AppSettings> {
   const out: Partial<AppSettings> = {}
   if (raw.cliBackend === 'bundled' || raw.cliBackend === 'system') {
     out.cliBackend = raw.cliBackend
+  }
+  if (typeof raw.authLoggedIn === 'boolean') {
+    out.authLoggedIn = raw.authLoggedIn
+  }
+  if (typeof raw.authPhone === 'string' || raw.authPhone === null) {
+    out.authPhone = raw.authPhone
+  }
+  if (typeof raw.authNickname === 'string' || raw.authNickname === null) {
+    out.authNickname = raw.authNickname
   }
   return out
 }
