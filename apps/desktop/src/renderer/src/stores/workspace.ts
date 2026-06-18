@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import { useChatStore } from './chat'
 import { useTodosStore } from './todos'
 import { confirmStreamingInterrupt } from '../runtime/streamingGuard'
+import { tenantKey } from '../lib/tenantKey'
 
 /**
  * Current workspace path + recent-folder ring + commit action.
@@ -20,7 +21,7 @@ import { confirmStreamingInterrupt } from '../runtime/streamingGuard'
  * so FusionRuntimeProvider's `key={workspace}` remounts under the new cwd.
  */
 
-const STORAGE_KEY = 'workspace.recent.v1'
+const STORAGE_KEY = tenantKey('workspace.recent.v1')
 const MAX_RECENT = 6
 
 type WorkspaceStore = {

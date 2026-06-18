@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { tenantKey } from '../lib/tenantKey'
 
 /**
  * Appearance store — drives the Settings → Appearance panel.
@@ -112,7 +113,7 @@ export const useAppearanceStore = create<AppearanceState>()(
         set({ [mode]: mode === 'light' ? LIGHT_DEFAULTS : DARK_DEFAULTS })
     }),
     {
-      name: 'claude-desktop:appearance',
+      name: tenantKey('claude-desktop:appearance'),
       version: 3,
       // v1 only had themeMode/uiFontSize/codeFontSize/usePointerCursor.
       // Backfill the new theme objects so persisted v1 users don't crash

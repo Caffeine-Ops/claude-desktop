@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import ShellApp from './shell/ShellApp'
+import { tenantKey } from './lib/tenantKey'
 // Tailwind entrypoint — must come before assets/main.css so our own
 // layer rules (window chrome, header) sit on top of Tailwind preflight.
 import './index.css'
@@ -34,7 +35,7 @@ const isShell = search.get('shell') === '1'
 // vice versa).
 ;(function bootAppearance(): void {
   try {
-    const raw = localStorage.getItem('claude-desktop:appearance')
+    const raw = localStorage.getItem(tenantKey('claude-desktop:appearance'))
     if (!raw) {
       // No persisted choice — default to system mode and let the
       // applier resolve once it mounts. Pre-set the class to match

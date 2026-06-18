@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 import type { UiPermissionMode } from '../../../shared/ipc-channels'
+import { tenantKey } from '../lib/tenantKey'
 
 /**
  * UI permission mode store.
@@ -74,7 +75,7 @@ export const usePermissionModeStore = create<PermissionModeState>()(
       }
     }),
     {
-      name: 'claude-desktop:permission-mode',
+      name: tenantKey('claude-desktop:permission-mode'),
       version: 2,
       migrate: (state, fromVersion) => {
         if (fromVersion < 2 && (state as PermissionModeState | undefined)?.mode === 'default') {

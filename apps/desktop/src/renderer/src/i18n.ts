@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { tenantKey } from './lib/tenantKey'
 
 /**
  * Tiny in-app i18n. Two languages, hand-maintained translation map,
@@ -43,7 +44,7 @@ export const useI18n = create<I18nState>()(
         }
       }
     }),
-    { name: 'claude-desktop:lang' }
+    { name: tenantKey('claude-desktop:lang') }
   )
 )
 
