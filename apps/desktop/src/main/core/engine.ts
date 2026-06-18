@@ -53,6 +53,8 @@ import { invalidateFileSuggestions } from './fileSuggestions'
 import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
 import { seedSkillsFromDisk } from './seedSkills'
+import { getActiveTenantId } from './authStore'
+import { tenantPaths } from './tenantPaths'
 
 /**
  * Resolve the default workspace directory used on every new tab/engine.
@@ -1124,6 +1126,13 @@ export class ChatEngine extends EventEmitter {
     runtime: SessionRuntime,
     opts?: { resume?: boolean }
   ): void {
+    // 未登录绝不 spawn：登录墙本就挡住 send/warmup，这里再加显式断言，确保没有
+    // 任何代码路径在无租户时把子进程的会话写进默认 ~/.claude（会污染全局）。
+    const tenantId = getActiveTenantId()
+    if (!tenantId) {
+      throw new Error('openSession blocked: no active tenant')
+    }
+    const claudeConfigDir = tenantPaths(tenantId).claudeConfigDir
     const backend = getAppSettings().cliBackend
     const rawCliPath = this.resolveCliPath(backend)
     // Windows 上系统 claude 是 claude.cmd（批处理 shim）。claude-agent-sdk 的
@@ -1321,6 +1330,9 @@ export class ChatEngine extends EventEmitter {
       env: (backend === 'bundled'
         ? {
             ...process.env,
+            // 租户隔离：子进程把会话 JSONL / todos / 凭据写到这个目录。
+            // 激活时已设进 process.env，这里显式重申以防 env 过滤误删。
+            CLAUDE_CONFIG_DIR: claudeConfigDir,
             CLAUDE_CODE_MCP_INSTR_DELTA:
               process.env.CLAUDE_CODE_MCP_INSTR_DELTA ?? 'true',
             CLAUDE_CODE_ATTRIBUTION_HEADER:
@@ -1339,6 +1351,8 @@ export class ChatEngine extends EventEmitter {
           }
         : {
             ...systemBackendEnv(),
+            // system claude 的凭据/会话也按租户隔离（已确认：每租户各自登录一次）。
+            CLAUDE_CONFIG_DIR: claudeConfigDir,
             // Same passthrough under system claude: PPT_MASTER_PYTHON_HOME is a
             // main-process runtime path, not an env.json gateway key, so it
             // never affects claude's model routing — safe to hand over so the
