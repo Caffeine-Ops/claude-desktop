@@ -24,6 +24,7 @@ if (is.dev) {
   app.commandLine.appendSwitch('remote-allow-origins', 'http://localhost:9222')
 }
 
+import { initTenantOnBoot } from './core/authStore'
 import { registerIpcHandlers, showMaxTabsDialog } from './ipc/register'
 import { createTray, destroyTray } from './tray'
 import {
@@ -200,6 +201,11 @@ app.whenReady().then(async () => {
   if (!is.dev) {
     registerAppProtocol()
   }
+
+  // 按持久化的 activeTenantId 设好 CLAUDE_CONFIG_DIR，让后续 engine / sdk
+  // 读侧落到正确租户目录。必须在 createShellWindow / newTab 之前，以保证
+  // 第一个 ChatEngine 实例化时已处于正确的租户上下文。
+  initTenantOnBoot()
 
   // Boot the single shell window (tab bar) then open the first tab
   // so the user lands directly in a workspace gate rather than an
