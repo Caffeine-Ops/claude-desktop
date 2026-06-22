@@ -385,6 +385,15 @@ export function FusionRuntimeProvider({
         }
       }
 
+      // Token 门控：发送消息是唯一消耗租户 token 的动作。未登录时不发送，改弹
+      // 登录框。放在 slash 拦截之后——/skills /mcp 只开本地弹窗、不消耗 token，
+      // 未登录也放行。用 getState() 即时读最新登录态（非 hook 订阅）。engine 的
+      // openSession 无 tenant 守卫仍是兜底，但拦截在此完成，未登录永远走不到 send。
+      if (!useAuthStore.getState().loggedIn) {
+        useDialogStore.getState().openDialog('login')
+        return
+      }
+
       // 1) Push user turn into the store — Thread shows it instantly.
       // Build the content-part array we want the UI to render: the
       // text (if any) followed by image thumbnails. This mirrors what
