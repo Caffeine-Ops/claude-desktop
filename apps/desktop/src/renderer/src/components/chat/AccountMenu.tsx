@@ -34,6 +34,10 @@ export function AccountMenu(): React.JSX.Element | null {
   const setNickname = useAuthStore((s) => s.setNickname)
 
   const [editing, setEditing] = useState(false)
+  // 退出登录是 destructive 且不可一键撤销，但入口是个 dropdown——弹独立全屏
+  // modal 会脱离 dropdown 语境、显得突兀，所以改为「菜单内就地二次确认」：
+  // 点「退出登录」先切到确认视图（取消/确认），确认后才真正 logout。
+  const [confirmingLogout, setConfirmingLogout] = useState(false)
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   // Guards the commit/cancel path: leaving edit mode (Enter / Escape) unmounts
@@ -45,15 +49,21 @@ export function AccountMenu(): React.JSX.Element | null {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && !editing) close()
+      if (e.key !== 'Escape' || editing) return
+      // Escape 优先收起确认视图（退一步），没有确认时才关菜单。
+      if (confirmingLogout) setConfirmingLogout(false)
+      else close()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, close, editing])
+  }, [open, close, editing, confirmingLogout])
 
-  // Reset the edit affordance whenever the menu closes.
+  // Reset transient affordances whenever the menu closes.
   useEffect(() => {
-    if (!open) setEditing(false)
+    if (!open) {
+      setEditing(false)
+      setConfirmingLogout(false)
+    }
   }, [open])
 
   useEffect(() => {
@@ -176,25 +186,53 @@ export function AccountMenu(): React.JSX.Element | null {
         {/* items */}
         <div className="p-1.5">
           {loggedIn ? (
-            <>
-              <MenuItem
-                icon={<GearIcon />}
-                label="账户设置"
-                onClick={() => {
-                  close()
-                  void window.tabApi?.openSettingsWindow()
-                }}
-              />
-              <MenuItem
-                icon={<LogoutIcon />}
-                label="退出登录"
-                destructive
-                onClick={() => {
-                  close()
-                  logout()
-                }}
-              />
-            </>
+            confirmingLogout ? (
+              <div className="px-2 pb-1 pt-1.5">
+                <p className="text-[13px] font-medium text-foreground">
+                  确定要退出登录吗？
+                </p>
+                <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                  退出后需要重新登录才能继续同步账户。
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingLogout(false)}
+                    className="flex-1 rounded-lg border border-border px-3 py-1.5 text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/[0.06]"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    autoFocus
+                    onClick={() => {
+                      close()
+                      logout()
+                    }}
+                    className="flex-1 rounded-lg bg-destructive px-3 py-1.5 text-[13px] font-semibold text-destructive-foreground transition-colors hover:bg-destructive/90"
+                  >
+                    退出登录
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <MenuItem
+                  icon={<GearIcon />}
+                  label="账户设置"
+                  onClick={() => {
+                    close()
+                    void window.tabApi?.openSettingsWindow()
+                  }}
+                />
+                <MenuItem
+                  icon={<LogoutIcon />}
+                  label="退出登录"
+                  destructive
+                  onClick={() => setConfirmingLogout(true)}
+                />
+              </>
+            )
           ) : (
             <>
               <MenuItem
