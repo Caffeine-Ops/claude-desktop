@@ -1597,6 +1597,10 @@ export class ChatEngine extends EventEmitter {
     // would never load. Bounded by fetch's own timeout so a down daemon
     // can't stall warmup. A non-empty cache skips the await entirely.
     void (async () => {
+      // 无租户（未登录）不预热：openSession 会因无 tenant 抛错、被下面 catch 成
+      // 噪声 warning。发送门控在渲染层 onNew 完成、openSession 硬守卫仍兜底，这里
+      // 直接 skip。未登录用户建/切会话时不再刷 openSession blocked。
+      if (!getActiveTenantId()) return
       if (Object.keys(this.externalMcpServers).length === 0) {
         await this.refreshExternalMcpServers({ waitForDaemon: true })
       }
