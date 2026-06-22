@@ -135,6 +135,134 @@ function LegalPanel({
   )
 }
 
+/**
+ * PanelRain — the "赛博雨幕"
+ * -------------------------
+ * A cyan digital-rain canvas that fills the left brand panel, sitting behind
+ * the logo/copy (z-0). Pure 2D canvas + requestAnimationFrame, no library:
+ * columns of katakana/code glyphs fall at varied speeds, a bright cyan-white
+ * head trailing into cyan via a translucent per-frame wash. The canvas is
+ * kept semi-transparent (CSS opacity) so the panel's navy gradient + cyan
+ * glows still read through it, giving the rain depth instead of a flat black
+ * field.
+ *
+ * Sizing uses clientWidth/clientHeight (the layout box, which excludes the
+ * dialog's pop-in transform — getBoundingClientRect would bake in the 0.975
+ * scale and leave the canvas permanently sub-pixel blurry) plus a DPR cap of
+ * 2 so it stays crisp without over-allocating on retina. A ResizeObserver
+ * re-seeds on any layout change.
+ *
+ * Respects prefers-reduced-motion: paints a single static, sparse field and
+ * never starts the loop. It's mounted only while the dialog is open (the
+ * panel unmounts with the modal), so there's no stray rAF once closed.
+ */
+function PanelRain(): React.JSX.Element {
+  const ref = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    const canvas = ref.current
+    const ctx = canvas?.getContext('2d')
+    if (!canvas || !ctx) return
+
+    // Latin letters + digits — a clean alphanumeric stream (no katakana).
+    const GLYPHS =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'.split('')
+    const CELL = 11 // glyph cell size in CSS px (smaller = finer, denser rain)
+    const FONT = `${CELL}px "SF Mono","JetBrains Mono",ui-monospace,monospace`
+    const reduce = !!window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+    const pick = (): string => GLYPHS[(Math.random() * GLYPHS.length) | 0]
+    // Tech-blue stream: a per-glyph luminance gradient stepping down from a
+    // pale azure head through an electric mid blue to deep navy. The per-frame
+    // wash carries the tail the rest of the way to the panel's near-black, so
+    // each column reads as a graded ribbon rather than a flat run of one tone.
+    const TRAIL = [
+      'rgba(208,232,255,0.95)', // pale azure-white — head
+      'rgba(96,176,255,0.62)', //  light blue
+      'rgba(42,140,250,0.42)', //  base electric blue
+      'rgba(24,96,200,0.26)', //   mid blue
+      'rgba(14,56,128,0.16)' //     deep navy — tail
+    ]
+
+    let w = 0
+    let h = 0
+    let drops: number[] = [] // head position per column, in cell units (can be < 0)
+    let speeds: number[] = [] // cells advanced per frame, per column
+    let raf = 0
+
+    const seed = (): void => {
+      const cols = Math.max(1, Math.ceil(w / CELL))
+      const rows = Math.max(1, h / CELL)
+      drops = Array.from({ length: cols }, () => Math.random() * rows * -1)
+      speeds = Array.from({ length: cols }, () => 0.12 + Math.random() * 0.28)
+    }
+
+    const paintStatic = (): void => {
+      // reduced-motion fallback: a quiet, evenly-spaced scatter, no movement.
+      ctx.font = FONT
+      ctx.textBaseline = 'top'
+      const rows = Math.ceil(h / CELL)
+      for (let i = 0; i < drops.length; i++) {
+        for (let k = 0; k < rows; k += 3) {
+          ctx.fillStyle = `rgba(42,140,250,${0.06 + Math.random() * 0.1})`
+          ctx.fillText(pick(), i * CELL, k * CELL)
+        }
+      }
+    }
+
+    const resize = (): void => {
+      // layout box (no transform) — see the doc comment on why not getBBCR.
+      w = canvas.clientWidth
+      h = canvas.clientHeight
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      canvas.width = Math.max(1, Math.round(w * dpr))
+      canvas.height = Math.max(1, Math.round(h * dpr))
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      seed()
+      ctx.fillStyle = '#0d0d0d'
+      ctx.fillRect(0, 0, w, h)
+      if (reduce) paintStatic()
+    }
+
+    const draw = (): void => {
+      // translucent wash → existing glyphs fade toward the panel's near-black,
+      // leaving a soft trail under each falling head.
+      ctx.fillStyle = 'rgba(13,13,13,0.10)'
+      ctx.fillRect(0, 0, w, h)
+      ctx.font = FONT
+      ctx.textBaseline = 'top'
+      for (let i = 0; i < drops.length; i++) {
+        const x = i * CELL
+        const y = Math.floor(drops[i]) * CELL
+        // draw the graded bronze ribbon: head first, then each dimmer tone
+        // stacked one cell above, so the column fades pale-gold → deep bronze.
+        for (let t = 0; t < TRAIL.length; t++) {
+          const ty = y - t * CELL
+          if (ty < 0) break
+          ctx.fillStyle = TRAIL[t]
+          ctx.fillText(pick(), x, ty)
+        }
+        drops[i] += speeds[i]
+        // once a column runs past the bottom, randomly recycle it to the top
+        // (the random gate staggers columns so they don't reset in lockstep).
+        if (y > h && Math.random() > 0.972) drops[i] = Math.random() * -16
+      }
+      raf = requestAnimationFrame(draw)
+    }
+
+    resize()
+    const ro = new ResizeObserver(resize)
+    ro.observe(canvas)
+    if (!reduce) raf = requestAnimationFrame(draw)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
+  }, [])
+
+  return <canvas ref={ref} className="od-prain-canvas" aria-hidden="true" />
+}
+
 export function LoginDialog(): React.JSX.Element | null {
   const open = useDialogStore((s) => s.open === 'login')
   const close = useDialogStore((s) => s.closeDialog)
@@ -315,6 +443,8 @@ export function LoginDialog(): React.JSX.Element | null {
 
         {/* left: brand ink panel (decorative; hidden on narrow widths) */}
         <aside className="od-login-panel" aria-hidden="true">
+          <PanelRain />
+          <div className="od-pscrim" />
           <div className="od-pglow1" />
           <div className="od-pglow2" />
           <div className="od-pgrain" />

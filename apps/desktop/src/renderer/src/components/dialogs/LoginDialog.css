@@ -23,11 +23,29 @@
 
 .od-login-overlay {
   /* ---- local design tokens (not in the global palette) ---- */
-  --brand-accent-h: 14 65% 47%; /* terracotta, HSL channels */
-  --panel-1: #211d18; /* ink gradient top */
-  --panel-2: #14110e; /* ink gradient bottom */
-  --panel-fg: #efe9df; /* warm off-white text on the panel */
-  --panel-cross: #db6a38; /* the logo's accent cross */
+  /* cyber-rain panel: a cool cyan accent over deep-navy ink. The accent
+     (--brand-accent-h) also tints the whole card's outer bloom, so the
+     terracotta→cyan swap re-lights the dialog to match the new panel and
+     harmonise with the form's apple-blue primary. */
+  /* one warm bronze accent unifies both panes — the cool cyan that used to
+     live here clashed with both the warm rain and the form's apple-blue, which
+     is what read as "突兀". The panel's logo/copy and the form's button/links/
+     focus ring now all resolve to this same bronze family. */
+  --brand-accent-h: 210 80% 50%; /* electric tech-blue — tints the whole-card bloom */
+  --panel-1: #0d0d0d; /* #0d0d0d base ink */
+  --panel-2: #090909; /* a hair darker at the bottom for faint depth */
+  --panel-fg: #dbe6f5; /* clean cool blue-white text on the panel */
+  --panel-cyan: 208 85% 64%; /* azure accent for the logo / supertitle glow */
+  --panel-cross: #8fc2f7; /* the logo's accent cross (pale azure) */
+
+  /* form-side accent, scoped to this dialog only — does NOT touch the global
+     --primary, so the rest of the app keeps its own apple-blue token. A clean,
+     saturated azure (hue ~210) reads as 科技感 without the purple cast indigo
+     had. */
+  --od-accent: 210 88% 52%; /* tech blue: buttons / checkbox / focus ring */
+  --od-accent-2: 212 90% 44%; /* darker gradient stop for the submit button */
+  --od-accent-link: 210 88% 50%; /* text links / 获取验证码 */
+  --od-accent-fg: 205 40% 97%; /* cool near-white text on the blue */
 
   --od-radius-sm: 8px;
   --od-radius-md: 11px;
@@ -46,9 +64,13 @@
   animation: od-fade 0.3s ease both;
 }
 .dark .od-login-overlay {
-  --brand-accent-h: 16 70% 55%;
-  --panel-1: #1b1815;
-  --panel-2: #100e0c;
+  --brand-accent-h: 208 88% 62%;
+  --panel-1: #0d0d0d;
+  --panel-2: #070707;
+  /* brighter azure on the dark form so the accent keeps its contrast */
+  --od-accent: 208 92% 64%;
+  --od-accent-2: 210 90% 54%;
+  --od-accent-link: 206 95% 68%;
   background: rgba(0, 0, 0, 0.6);
 }
 @keyframes od-fade {
@@ -143,26 +165,32 @@
   flex-direction: column;
   color: var(--panel-fg);
   background: linear-gradient(155deg, var(--panel-1), var(--panel-2));
+  /* a faint warm hairline at the seam softens the dark→light transition so
+     the two panes read as one card, not two stuck together. */
+  box-shadow: inset -1px 0 0 hsl(208 50% 72% / 0.07);
 }
+/* a small, contained electric-blue bloom in the lower-left — enough to tint
+   the corner behind the copy without lifting the panel off its #0d0d0d black. */
 .od-login-panel .od-pglow1 {
   position: absolute;
-  width: 360px;
-  height: 360px;
+  width: 240px;
+  height: 240px;
   border-radius: 50%;
-  filter: blur(70px);
-  bottom: -120px;
-  left: -100px;
-  background: hsl(var(--brand-accent-h) / 0.45);
+  filter: blur(62px);
+  bottom: -70px;
+  left: -60px;
+  background: hsl(210 90% 55% / 0.22);
 }
+/* a smaller, fainter blue hint at the top-right corner to balance it. */
 .od-login-panel .od-pglow2 {
   position: absolute;
-  width: 300px;
-  height: 300px;
+  width: 170px;
+  height: 170px;
   border-radius: 50%;
-  filter: blur(80px);
-  top: -110px;
-  right: -90px;
-  background: hsl(210 90% 55% / 0.22);
+  filter: blur(68px);
+  top: -60px;
+  right: -55px;
+  background: hsl(208 88% 58% / 0.12);
 }
 .od-login-panel .od-pgrain {
   position: absolute;
@@ -176,6 +204,58 @@
   z-index: 1;
 }
 
+/* ---- 赛博雨幕 (cyber digital rain) ---- */
+/* The canvas sits behind the glows + copy (z-0). It's kept semi-transparent
+   so the navy gradient and cyan glows read through the rain — the depth comes
+   from that layering, not a flat black field. pointer-events:none because the
+   whole panel is decorative (aria-hidden). The two-class selector beats the
+   `> *` rule above, so this z-index:0 / position:absolute actually wins. */
+.od-login-panel .od-prain-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.72;
+  pointer-events: none;
+}
+/* Readability scrim: lets the rain stay lively up top, then darkens toward the
+   headline/lede so moving glyphs never fight the copy. The radial adds a faint
+   cyan crown at the top edge to seat the logo. */
+.od-login-panel .od-pscrim {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  /* neutral grayscale only — pure black darkening toward the copy, with a
+     faint neutral-white crown up top so the field reads as black → slightly
+     lighter/darker black, no colour cast. */
+  background:
+    linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0) 28%,
+      rgba(0, 0, 0, 0.5) 70%,
+      rgba(0, 0, 0, 0.82) 100%
+    ),
+    radial-gradient(120% 70% at 50% -8%, hsl(0 0% 100% / 0.05), transparent 60%);
+}
+/* Faint CRT scanlines for terminal texture — screen-blended so they only ever
+   lighten, keeping the field from looking like a flat overlay. */
+.od-login-panel .od-pscrim::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    180deg,
+    hsl(0 0% 100% / 0.04) 0px,
+    hsl(0 0% 100% / 0.04) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  opacity: 0.4;
+  mix-blend-mode: screen;
+}
+
 .od-plogo {
   width: 46px;
   height: 46px;
@@ -183,7 +263,12 @@
 .od-plogo .od-cross {
   transform-origin: 32px 32px;
   animation: od-cross-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.25s both;
-  filter: drop-shadow(0 0 8px hsl(var(--brand-accent-h) / 0.5));
+  filter: drop-shadow(0 0 8px hsl(var(--panel-cyan) / 0.4));
+}
+/* the corner-bracket frame picks up a whisper of cool glow, reading as a
+   targeting reticle rather than a flat logo. */
+.od-plogo > g:first-child {
+  filter: drop-shadow(0 0 5px hsl(var(--panel-cyan) / 0.15));
 }
 @keyframes od-cross-in {
   from {
@@ -200,12 +285,14 @@
   flex: 1;
 }
 .od-login-panel .od-supertitle {
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: var(--panel-fg);
-  opacity: 0.55;
+  color: hsl(208 32% 86%);
+  opacity: 0.72;
+  text-shadow: 0 0 10px hsl(var(--panel-cyan) / 0.22);
 }
 .od-login-panel h2 {
   margin: 14px 0 0;
@@ -214,14 +301,17 @@
   line-height: 1.22;
   letter-spacing: -0.01em;
   text-wrap: balance;
+  /* lift the headline off the moving rain so it stays legible */
+  text-shadow: 0 1px 16px rgba(0, 0, 0, 0.75);
 }
 .od-login-panel .od-lede {
   margin: 14px 0 0;
   font-size: 13px;
   line-height: 1.6;
   color: var(--panel-fg);
-  opacity: 0.62;
+  opacity: 0.72;
   max-width: 22ch;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.7);
 }
 .od-login-panel .od-pfoot {
   font-size: 11px;
@@ -236,6 +326,12 @@
   padding: 46px 44px 30px;
   display: flex;
   flex-direction: column;
+  /* a faint warm wash over the card so the right pane shares the rain's
+     warmth instead of reading as stark white beside the dark panel. Layered
+     over hsl(--card) so it tints correctly in both light and dark themes. */
+  background:
+    linear-gradient(180deg, hsl(210 65% 55% / 0.05), hsl(210 60% 50% / 0.02)),
+    hsl(var(--card));
 }
 .od-login-head {
   margin-bottom: 26px;
@@ -287,9 +383,9 @@
     background-color 0.16s ease;
 }
 .od-field:focus-within {
-  border-color: hsl(var(--ring));
+  border-color: hsl(var(--od-accent));
   box-shadow:
-    0 0 0 3px hsl(var(--ring) / 0.16),
+    0 0 0 3px hsl(var(--od-accent) / 0.16),
     inset 0 1px 2px hsl(var(--foreground) / 0);
 }
 .od-field.od-invalid {
@@ -339,7 +435,7 @@
   border: 0;
   background: transparent;
   border-radius: var(--od-radius-sm);
-  color: hsl(var(--primary));
+  color: hsl(var(--od-accent-link));
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -359,10 +455,10 @@
   background: hsl(var(--border));
 }
 .od-code-btn:hover:not(:disabled) {
-  background: hsl(var(--primary) / 0.1);
+  background: hsl(var(--od-accent) / 0.1);
 }
 .od-code-btn:active:not(:disabled) {
-  background: hsl(var(--primary) / 0.16);
+  background: hsl(var(--od-accent) / 0.16);
 }
 .od-code-btn:disabled {
   color: hsl(var(--muted-foreground));
@@ -394,8 +490,8 @@
   height: 48px;
   border: 0;
   border-radius: var(--od-radius-md);
-  background: linear-gradient(180deg, hsl(var(--primary) / 1) 0%, hsl(var(--primary) / 0.92) 100%);
-  color: hsl(var(--primary-foreground));
+  background: linear-gradient(180deg, hsl(var(--od-accent)) 0%, hsl(var(--od-accent-2)) 100%);
+  color: hsl(var(--od-accent-fg));
   font-family: inherit;
   font-size: 15.5px;
   font-weight: 600;
@@ -406,8 +502,8 @@
   justify-content: center;
   gap: 8px;
   box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.25) inset,
-    0 8px 20px -8px hsl(var(--primary) / 0.6);
+    0 1px 0 hsl(0 0% 100% / 0.2) inset,
+    0 8px 20px -8px hsl(var(--od-accent) / 0.55);
   transition:
     filter 0.16s ease,
     transform 0.07s ease,
@@ -429,7 +525,7 @@
   filter: brightness(1.05);
   box-shadow:
     0 1px 0 hsl(0 0% 100% / 0.3) inset,
-    0 12px 28px -8px hsl(var(--primary) / 0.7);
+    0 12px 28px -8px hsl(var(--od-accent) / 0.65);
 }
 .od-submit:hover:not(:disabled)::after {
   left: 120%;
@@ -446,8 +542,8 @@
 .od-spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid hsl(var(--primary-foreground) / 0.35);
-  border-top-color: hsl(var(--primary-foreground));
+  border: 2px solid hsl(var(--od-accent-fg) / 0.4);
+  border-top-color: hsl(var(--od-accent-fg));
   border-radius: 50%;
   animation: od-spin 0.6s linear infinite;
 }
@@ -482,8 +578,8 @@
     border-color 0.15s ease;
 }
 .od-agree .od-box.od-checked {
-  background: hsl(var(--primary));
-  border-color: hsl(var(--primary));
+  background: hsl(var(--od-accent));
+  border-color: hsl(var(--od-accent));
 }
 .od-agree .od-box svg {
   opacity: 0;
@@ -515,7 +611,7 @@
   cursor: pointer;
 }
 .od-agree a:hover {
-  color: hsl(var(--primary));
+  color: hsl(var(--od-accent-link));
 }
 
 .od-login-spacer {
@@ -529,7 +625,7 @@
   color: hsl(var(--muted-foreground));
 }
 .od-login-switch a {
-  color: hsl(var(--primary));
+  color: hsl(var(--od-accent-link));
   text-decoration: none;
   font-weight: 500;
   cursor: pointer;
@@ -550,10 +646,10 @@
   width: 60px;
   height: 60px;
   border-radius: 50%;
-  background: hsl(var(--primary) / 0.12);
+  background: hsl(var(--od-accent) / 0.14);
   display: grid;
   place-items: center;
-  color: hsl(var(--primary));
+  color: hsl(var(--od-accent));
 }
 .od-done h2 {
   margin: 0;
@@ -700,7 +796,7 @@
     background-color 0.16s ease;
 }
 .od-support-card:hover {
-  border-color: hsl(var(--ring));
+  border-color: hsl(var(--od-accent) / 0.6);
   background: hsl(var(--muted) / 0.7);
 }
 .od-support-ico {
@@ -710,8 +806,8 @@
   display: grid;
   place-items: center;
   border-radius: var(--od-radius-sm);
-  background: hsl(var(--primary) / 0.12);
-  color: hsl(var(--primary));
+  background: hsl(var(--od-accent) / 0.14);
+  color: hsl(var(--od-accent));
 }
 .od-support-text {
   display: flex;
