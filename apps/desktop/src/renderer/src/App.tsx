@@ -20,7 +20,6 @@ import { useDialogStore } from './stores/dialogs'
 import { useApplyAppearance } from './stores/appearance.applier'
 import { hydrateAppearanceFromDaemon } from './stores/appearance'
 import { hydrateAuthFromMain, subscribeAuthChanges, useAuthStore } from './stores/auth'
-import { LoginWall } from './components/auth/LoginWall'
 import { SettingsView } from './components/settings/SettingsView'
 import { AnimatePresence, motion } from 'motion/react'
 
@@ -78,11 +77,9 @@ function App(): React.JSX.Element {
   useApplyAppearance()
 
   // Auth state — read unconditionally (React hooks rule: no early returns before
-  // hooks). `hydrated` prevents the login wall from flashing before the initial
-  // AUTH_GET from main settles; once true it will not revert. `loggedIn` gates
-  // FusionRuntimeProvider so the engine is never spawned for unauthenticated
-  // users (the wall blocks them at the UI layer before they can hit send).
-  const loggedIn = useAuthStore((s) => s.loggedIn)
+  // hooks). `hydrated` prevents a flash before the initial AUTH_GET from main
+  // settles; once true it will not revert. `loggedIn` has been removed — the
+  // runtime now mounts regardless of auth state (send is gated in onNew).
   const hydrated = useAuthStore((s) => s.hydrated)
 
   // Adopt the daemon's shared appearance as the source of truth — once on
@@ -256,12 +253,12 @@ function App(): React.JSX.Element {
             tree drops its cached scan. Cheaper than restarting Electron
             and avoids the window-flash. Not mounted at all until a
             workspace exists — see the comment on `hasWorkspace`. */}
-        {/* Chat runtime — only mounted when workspace AND login are both
-            ready. Keeping these two guards together means the runtime is
-            never spawned (no warmup, no engine IPC, no fusion-code child)
-            until the user is authenticated. The login wall below covers
-            the case where workspace is known but the user is signed out. */}
-        {hasWorkspace && loggedIn && (
+        {/* Chat runtime — 只要 workspace 就绪即挂载，未登录也挂。engine 是
+            lazy-spawn：switchToSession 只切指针、不起 cli，真正的子进程冷启动
+            延迟到第一次 send()。未登录时 send 在 FusionRuntimeProvider.onNew
+            被拦截弹登录框（唯一 token 门控点），所以挂载 runtime 不会 spawn、
+            不耗 token。以前用 loggedIn 门控 + LoginWall 挡住整块的写法已移除。 */}
+        {hasWorkspace && (
         <FusionRuntimeProvider key={workspace}>
           {/* .main is flex-col; this inner row does the three-pane
               split (chats | thread | right rail). flex-1 + min-h-0
@@ -285,12 +282,6 @@ function App(): React.JSX.Element {
           </div>
         </FusionRuntimeProvider>
         )}
-        {/* Login wall — shown when the workspace is known but the user is
-            signed out. Occupies the same flex-1 area the runtime would fill,
-            so the three-pane layout never forms (and the runtime is never
-            spawned). LoginDialog is still mounted below and responds to the
-            wall's button click via the dialog store. */}
-        {hasWorkspace && !loggedIn && <LoginWall />}
         {/* Settings overlay — `absolute inset-0` inside .main so it
             covers the chat row but leaves the title-bar header
             untouched. Renders null when the store says closed. */}
