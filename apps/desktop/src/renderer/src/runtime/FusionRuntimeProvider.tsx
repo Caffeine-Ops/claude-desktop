@@ -234,6 +234,14 @@ export function FusionRuntimeProvider({
   }, [lang])
 
   // ── ExternalStoreRuntime wiring ─────────────────────────────────────
+  // Stable handle to the runtime so onNew (defined below, inside the config)
+  // can call back into the composer — e.g. restore a draft after the login
+  // gate fires. A ref (not the `runtime` const directly) avoids the TDZ /
+  // use-before-declaration tangle of referencing `runtime` inside its own
+  // initializer; by the time onNew actually runs, runtimeRef.current is set.
+  const runtimeRef = useRef<ReturnType<typeof useExternalStoreRuntime> | null>(
+    null
+  )
   const runtime = useExternalStoreRuntime({
     messages: messages as ThreadMessageLike[],
     isRunning: streaming,
@@ -385,12 +393,28 @@ export function FusionRuntimeProvider({
         }
       }
 
-      // Token 门控：发送消息是唯一消耗租户 token 的动作。未登录时不发送，改弹
-      // 登录框。放在 slash 拦截之后——/skills /mcp 只开本地弹窗、不消耗 token，
-      // 未登录也放行。用 getState() 即时读最新登录态（非 hook 订阅）。engine 的
-      // openSession 无 tenant 守卫仍是兜底，但拦截在此完成，未登录永远走不到 send。
-      if (!useAuthStore.getState().loggedIn) {
+      // Token 门控：发送消息是唯一消耗租户 token 的动作。放在 slash 拦截之后——
+      // /skills /mcp 只开本地弹窗、不消耗 token，未登录也放行。用 getState() 即时
+      // 读最新登录态（非 hook 订阅）。engine 的 openSession 无 tenant 守卫仍是兜底，
+      // 但拦截在此完成，未登录/无租户永远走不到 send。
+      //
+      // 草稿回填：composer 的 send() 在调用本回调前已 _emptyTextAndAttachments()
+      // 清空了输入框（见 @assistant-ui/core base-composer-runtime-core）。所以门控
+      // 命中时把用户刚输入的文本写回 composer——这样用户「先不登录、关掉弹窗」后草稿
+      // 还在。真正完成登录会触发整机软重置 reload，草稿随之清掉，那是预期的上下文切换。
+      const auth = useAuthStore.getState()
+      if (!auth.loggedIn) {
         useDialogStore.getState().openDialog('login')
+        if (baseText) runtimeRef.current?.thread.composer.setText(baseText)
+        return
+      }
+      // 登录回填窗口：login() 同步把 loggedIn 翻 true，但 tenantId 要等 computeTenantId
+      // 这个微任务算完才回填到主进程（见 stores/auth.ts login）。这段间隙里若发送，
+      // 主进程 getActiveTenantId() 仍是 null → openSession 抛 'openSession blocked'，
+      // 用户刚登录就吃一条原始报错。此时用户其实已登录、不该再弹登录框，故静默丢弃
+      // 本次发送并回填草稿，等 tenantId 落定后重发即可（窗口仅几毫秒，极少命中）。
+      if (!auth.tenantId) {
+        if (baseText) runtimeRef.current?.thread.composer.setText(baseText)
         return
       }
 
@@ -502,6 +526,9 @@ export function FusionRuntimeProvider({
       dictation: dictationAdapter
     }
   })
+  // Keep the ref current every render so onNew's deferred callbacks (login-gate
+  // draft restore) always reach the live runtime.
+  runtimeRef.current = runtime
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
