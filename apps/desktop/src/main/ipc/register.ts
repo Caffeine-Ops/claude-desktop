@@ -515,6 +515,10 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.SESSION_LOAD,
     async (event, payload: SessionLoadPayload): Promise<SessionLoadResult> => {
       validateSessionLoadPayload(payload)
+      // Tenant 兜底：与 SESSION_LIST 对称。未登录无租户时 CLAUDE_CONFIG_DIR 回退默认
+      // ~/.claude，loadSession 会读出系统全局会话；任何传入的 sessionId（缓存、历史
+      // 恢复、未来调用方）都可能跨上下文读到他人记录。无租户直接返回空，不落盘读。
+      if (!getActiveTenantId()) return { messages: [] }
       const workspace = resolveEngine(event).getWorkspace()
       const messages = await loadSession(payload.sessionId, workspace)
       return { messages }
