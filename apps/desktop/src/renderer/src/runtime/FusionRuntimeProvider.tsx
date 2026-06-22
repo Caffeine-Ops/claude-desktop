@@ -636,6 +636,10 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
         // behind until the next reload. If the active id is missing,
         // re-poll once after a short delay.
         if (!result) return
+        // 登出态：listSessions 被短路、result 恒为空且永远不含 activeId。若不在此
+        // 返回，登出 auto-select 造出 sessionId 后每次都会多调度一次毫无意义的 200ms
+        // 重试（重试同样落到登出短路）。直接跳过 race-fallback。
+        if (!useAuthStore.getState().loggedIn) return
         const activeId = sessionIdRef.current
         if (!activeId) return
         if (result.some((t) => t.id === activeId)) return
