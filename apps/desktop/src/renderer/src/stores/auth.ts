@@ -155,6 +155,16 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
 }))
 
 /**
+ * Snapshot read of "is a tenant signed in right now". For non-React call sites
+ * — event callbacks, assistant-ui adapters — that can't use the hook selector
+ * and need a point-in-time value (NOT a subscription). Centralizes the gate so
+ * the token-gating call sites don't each inline `useAuthStore.getState().loggedIn`.
+ */
+export function isLoggedIn(): boolean {
+  return useAuthStore.getState().loggedIn
+}
+
+/**
  * Seed the store from main's persisted copy. Call once on mount (both the
  * chat App and the shell). No-op when the preload bridge is missing.
  */

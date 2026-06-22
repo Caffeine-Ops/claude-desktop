@@ -20,7 +20,7 @@ import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
 import { useDialogStore, type DialogKind } from '../stores/dialogs'
-import { useAuthStore } from '../stores/auth'
+import { isLoggedIn, useAuthStore } from '../stores/auth'
 import {
   useTodosStore,
   extractTodoWriteItems,
@@ -603,7 +603,7 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
       // 未登录无租户：跳过 listSessions。登出时 activateTenant(null) 删除了
       // CLAUDE_CONFIG_DIR，listSessions 会落到默认 ~/.claude 读出系统全局会话
       // 并泄漏到侧栏。返回空列表并标记已加载，让下游 auto-select 起一个空会话。
-      if (!useAuthStore.getState().loggedIn) {
+      if (!isLoggedIn()) {
         setThreads([])
         setThreadsLoaded(true)
         return []
@@ -639,7 +639,7 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
         // 登出态：listSessions 被短路、result 恒为空且永远不含 activeId。若不在此
         // 返回，登出 auto-select 造出 sessionId 后每次都会多调度一次毫无意义的 200ms
         // 重试（重试同样落到登出短路）。直接跳过 race-fallback。
-        if (!useAuthStore.getState().loggedIn) return
+        if (!isLoggedIn()) return
         const activeId = sessionIdRef.current
         if (!activeId) return
         if (result.some((t) => t.id === activeId)) return
