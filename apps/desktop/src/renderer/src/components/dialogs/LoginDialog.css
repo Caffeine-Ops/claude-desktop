@@ -23,14 +23,11 @@
 
 .od-login-overlay {
   /* ---- local design tokens (not in the global palette) ---- */
-  /* cyber-rain panel: a cool cyan accent over deep-navy ink. The accent
-     (--brand-accent-h) also tints the whole card's outer bloom, so the
-     terracotta→cyan swap re-lights the dialog to match the new panel and
-     harmonise with the form's apple-blue primary. */
-  /* one warm bronze accent unifies both panes — the cool cyan that used to
-     live here clashed with both the warm rain and the form's apple-blue, which
-     is what read as "突兀". The panel's logo/copy and the form's button/links/
-     focus ring now all resolve to this same bronze family. */
+  /* cyber-rain panel: one electric tech-blue accent over deep-near-black ink.
+     A single blue family (hue ~208–212) unifies both panes — the panel's
+     logo/copy and the form's button/links/focus ring all resolve to it, so
+     nothing reads as "突兀". The accent (--brand-accent-h) also tints the whole
+     card's outer bloom, keeping the dialog lit to match the rain. */
   --brand-accent-h: 210 80% 50%; /* electric tech-blue — tints the whole-card bloom */
   --panel-1: #0d0d0d; /* #0d0d0d base ink */
   --panel-2: #090909; /* a hair darker at the bottom for faint depth */
@@ -65,7 +62,8 @@
 }
 .dark .od-login-overlay {
   --brand-accent-h: 208 88% 62%;
-  --panel-1: #0d0d0d;
+  /* --panel-1 inherits the base block (#0d0d0d) — redeclaring it to the same
+     value was a no-op. Only --panel-2 is nudged a hair darker for dark mode. */
   --panel-2: #070707;
   /* brighter azure on the dark form so the accent keeps its contrast */
   --od-accent: 208 92% 64%;
