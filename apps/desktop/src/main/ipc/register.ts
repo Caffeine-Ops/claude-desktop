@@ -500,6 +500,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.SESSION_LIST,
     async (event): Promise<SessionListResult> => {
+      // Tenant 兜底：未登录无租户时不列举会话。登出时 CLAUDE_CONFIG_DIR 被删、
+      // 回退默认 ~/.claude，listSessions 会读出系统全局会话。渲染层已先跳过
+      // （FusionRuntimeProvider），这里再加一道与 openSession 无-tenant 守卫对称的
+      // 主进程兜底，任何未来调用方忘记门控也不会泄漏。
+      if (!getActiveTenantId()) return { threads: [] }
       const workspace = resolveEngine(event).getWorkspace()
       const threads = await listSessions(workspace)
       return { threads }
