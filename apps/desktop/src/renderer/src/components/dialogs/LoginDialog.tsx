@@ -135,16 +135,22 @@ function LegalPanel({
   )
 }
 
+// Rain glyph set + picker — module-level constants so they're allocated once
+// for the process, not rebuilt (via split('')) on every PanelRain mount.
+const RAIN_GLYPHS =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'.split('')
+const pickGlyph = (): string => RAIN_GLYPHS[(Math.random() * RAIN_GLYPHS.length) | 0]
+
 /**
  * PanelRain — the "赛博雨幕"
  * -------------------------
- * A cyan digital-rain canvas that fills the left brand panel, sitting behind
- * the logo/copy (z-0). Pure 2D canvas + requestAnimationFrame, no library:
- * columns of katakana/code glyphs fall at varied speeds, a bright cyan-white
- * head trailing into cyan via a translucent per-frame wash. The canvas is
- * kept semi-transparent (CSS opacity) so the panel's navy gradient + cyan
- * glows still read through it, giving the rain depth instead of a flat black
- * field.
+ * A tech-blue digital-rain canvas that fills the left brand panel, sitting
+ * behind the logo/copy (z-0). Pure 2D canvas + requestAnimationFrame, no
+ * library: columns of alphanumeric glyphs fall at varied speeds, a bright
+ * azure-white head trailing into deep navy via a translucent per-frame wash.
+ * The canvas is kept semi-transparent (CSS opacity) so the panel's navy
+ * gradient + blue glows still read through it, giving the rain depth instead
+ * of a flat black field.
  *
  * Sizing uses clientWidth/clientHeight (the layout box, which excludes the
  * dialog's pop-in transform — getBoundingClientRect would bake in the 0.975
@@ -164,13 +170,9 @@ function PanelRain(): React.JSX.Element {
     const ctx = canvas?.getContext('2d')
     if (!canvas || !ctx) return
 
-    // Latin letters + digits — a clean alphanumeric stream (no katakana).
-    const GLYPHS =
-      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'.split('')
     const CELL = 11 // glyph cell size in CSS px (smaller = finer, denser rain)
     const FONT = `${CELL}px "SF Mono","JetBrains Mono",ui-monospace,monospace`
     const reduce = !!window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
-    const pick = (): string => GLYPHS[(Math.random() * GLYPHS.length) | 0]
     // Tech-blue stream: a per-glyph luminance gradient stepping down from a
     // pale azure head through an electric mid blue to deep navy. The per-frame
     // wash carries the tail the rest of the way to the panel's near-black, so
@@ -204,7 +206,7 @@ function PanelRain(): React.JSX.Element {
       for (let i = 0; i < drops.length; i++) {
         for (let k = 0; k < rows; k += 3) {
           ctx.fillStyle = `rgba(42,140,250,${0.06 + Math.random() * 0.1})`
-          ctx.fillText(pick(), i * CELL, k * CELL)
+          ctx.fillText(pickGlyph(), i * CELL, k * CELL)
         }
       }
     }
@@ -233,18 +235,28 @@ function PanelRain(): React.JSX.Element {
       for (let i = 0; i < drops.length; i++) {
         const x = i * CELL
         const y = Math.floor(drops[i]) * CELL
-        // draw the graded bronze ribbon: head first, then each dimmer tone
-        // stacked one cell above, so the column fades pale-gold → deep bronze.
+        // draw the graded blue ribbon: head first, then each dimmer tone
+        // stacked one cell above, so the column fades azure-white → deep navy.
+        // ty decreases monotonically with t, so once it's above the top edge
+        // every higher t is too → break. A runaway column (head far below the
+        // bottom) has its top trail cells still off-screen-bottom → skip those
+        // (continue) instead of issuing wasted off-canvas fillText/pickGlyph.
         for (let t = 0; t < TRAIL.length; t++) {
           const ty = y - t * CELL
           if (ty < 0) break
+          if (ty >= h) continue
           ctx.fillStyle = TRAIL[t]
-          ctx.fillText(pick(), x, ty)
+          ctx.fillText(pickGlyph(), x, ty)
         }
         drops[i] += speeds[i]
-        // once a column runs past the bottom, randomly recycle it to the top
-        // (the random gate staggers columns so they don't reset in lockstep).
-        if (y > h && Math.random() > 0.972) drops[i] = Math.random() * -16
+        // once a column runs past the bottom, recycle it to the top. The random
+        // gate staggers columns so they don't reset in lockstep; the hard cap
+        // (y > h + CELL*8) guarantees a column recycles promptly instead of
+        // drifting far off-screen and being iterated for dozens of frames while
+        // it waits on the 2.8% gate.
+        if (y > h && (Math.random() > 0.972 || y > h + CELL * 8)) {
+          drops[i] = Math.random() * -16
+        }
       }
       raf = requestAnimationFrame(draw)
     }
