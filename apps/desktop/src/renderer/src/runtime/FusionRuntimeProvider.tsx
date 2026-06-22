@@ -20,6 +20,7 @@ import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
 import { useDialogStore, type DialogKind } from '../stores/dialogs'
+import { useAuthStore } from '../stores/auth'
 import {
   useTodosStore,
   extractTodoWriteItems,
@@ -563,6 +564,14 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     let cancelled = false
 
     const refresh = async (): Promise<readonly ThreadSummary[] | null> => {
+      // 未登录无租户：跳过 listSessions。登出时 activateTenant(null) 删除了
+      // CLAUDE_CONFIG_DIR，listSessions 会落到默认 ~/.claude 读出系统全局会话
+      // 并泄漏到侧栏。返回空列表并标记已加载，让下游 auto-select 起一个空会话。
+      if (!useAuthStore.getState().loggedIn) {
+        setThreads([])
+        setThreadsLoaded(true)
+        return []
+      }
       try {
         const result = await window.chatApi.listSessions()
         if (cancelled) return null
