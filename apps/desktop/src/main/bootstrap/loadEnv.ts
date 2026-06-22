@@ -52,7 +52,16 @@ function candidatePaths(): string[] {
     resolve(cwd, 'env.json'),
     // Packaged / bundled fallback: main bundle lives at out/main/index.js,
     // so two levels up lands at the project root.
-    resolve(selfDir, '../../env.json')
+    resolve(selfDir, '../../env.json'),
+    // bun monorepo (current layout): root `bun run dev` delegates via
+    // `--filter='@claude-desktop/desktop' dev`, which runs electron-vite with
+    // cwd = apps/desktop AND the dev bundle at apps/desktop/out/main. Both
+    // candidates above therefore resolve INSIDE apps/desktop/, but the real
+    // env.json lives at the monorepo root (apps/desktop has none). Climb one
+    // more level from each base to reach the root. existsSync-gated and last
+    // in line, so the prod/single-package hits above still win first.
+    resolve(cwd, '../../env.json'),
+    resolve(selfDir, '../../../../env.json')
   ]
 }
 
