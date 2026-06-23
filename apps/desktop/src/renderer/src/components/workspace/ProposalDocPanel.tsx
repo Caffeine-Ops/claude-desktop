@@ -15,7 +15,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         <button className="rounded px-2 py-0.5 hover:bg-neutral-800"
           onClick={() => setEditing((v) => !v)}>{editing ? '预览' : '编辑'}</button>
         <button className="rounded px-2 py-0.5 hover:bg-neutral-800"
-          onClick={() => window.chatApi.exportProposal({ markdown: doc, format: 'md' })}>导出</button>
+          onClick={() => { void window.chatApi.exportProposal({ markdown: doc, format: 'md' }).catch((err) => console.error('[export]', err)) }}>导出</button>
       </div>
       <div className="flex-1 overflow-auto p-3">
         {editing
