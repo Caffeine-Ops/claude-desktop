@@ -53,7 +53,9 @@ import {
   type ShellStatFilesResult,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
-  type WorkspaceState
+  type WorkspaceState,
+  type ProposalExportPayload,
+  type ProposalExportResult
 } from '../shared/ipc-channels'
 
 // Visible in the Electron terminal if the preload actually loads.
@@ -391,6 +393,13 @@ const chatApi: ChatApi = {
 
   readKbIndex() {
     return ipcRenderer.invoke(IPC_CHANNELS.KB_INDEX_READ)
+  },
+
+  exportProposal(payload: ProposalExportPayload): Promise<ProposalExportResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_EXPORT,
+      payload
+    ) as Promise<ProposalExportResult>
   }
 }
 

@@ -437,7 +437,17 @@ export const IPC_CHANNELS = {
    * exist yet (index not yet built). The renderer uses this to
    * decide whether to show the "build index" CTA or the ready state.
    */
-  KB_INDEX_READ: 'kb:index-read'
+  KB_INDEX_READ: 'kb:index-read',
+  /**
+   * Renderer → main. Exports the proposal document via the OS native
+   * save dialog. Main writes the file and returns the absolute path;
+   * returns `{ path: null }` when the user cancelled the dialog.
+   *
+   * `format` is a closed union (`ExportFormat` in proposalExport.ts):
+   * MVP only `'md'` is implemented. Word/PDF adapters go in the same
+   * switch — no IPC changes needed when the union grows.
+   */
+  PROPOSAL_EXPORT: 'proposal:export'
 } as const
 
 /**
@@ -778,6 +788,26 @@ export type AppearanceGetResult = { appearance: AppearancePrefs | null }
 export type AppearanceSetPayload = { patch: AppearancePrefs }
 /** Result of APPEARANCE_SET — the daemon's merged appearance, or null on failure. */
 export type AppearanceSetResult = { appearance: AppearancePrefs | null }
+
+/**
+ * Supported export formats for a proposal document. Defined here (shared)
+ * so the renderer payload, the preload type, and the main-side
+ * proposalExport.ts can all reference the same closed union without
+ * circular imports. MVP is `'md'`; extend to `'docx' | 'pdf'` when those
+ * adapters land — the IPC surface requires no changes.
+ */
+export type ProposalExportFormat = 'md' // 进阶加 'docx' | 'pdf'
+
+/** Payload for PROPOSAL_EXPORT. */
+export interface ProposalExportPayload {
+  markdown: string
+  format: ProposalExportFormat
+}
+
+/** Result of PROPOSAL_EXPORT. `path` is null when the user cancelled. */
+export interface ProposalExportResult {
+  path: string | null
+}
 
 /**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
@@ -1136,6 +1166,17 @@ export interface ChatApi {
    * the ready state.
    */
   readKbIndex(): Promise<import('./kbIndex').KbIndex | null>
+
+  /**
+   * Export the proposal document via the OS native save dialog.
+   * Main pops the dialog, writes the file, and returns the absolute
+   * path on success. Returns `{ path: null }` when the user cancels.
+   *
+   * `format` drives the file-type filter and the write adapter — MVP
+   * only `'md'` is wired; Word/PDF adapters extend the same channel
+   * without any IPC surface changes.
+   */
+  exportProposal(payload: ProposalExportPayload): Promise<ProposalExportResult>
 }
 
 /**

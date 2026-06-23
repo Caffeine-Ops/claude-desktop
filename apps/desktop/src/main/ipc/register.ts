@@ -80,6 +80,8 @@ import type {
 import { clearLogs, getLogs } from '../core/logCollector'
 import { getKbRoot, setKbRoot, readKbIndex, kbOutDir } from '../core/kbIndexStore'
 import type { KbIndex } from '../../shared/kbIndex'
+import { exportProposal } from '../core/proposalExport'
+import type { ProposalExportPayload, ProposalExportResult } from '../../shared/ipc-channels'
 
 /**
  * Resolve the ChatEngine for the window that sent this IPC event.
@@ -214,6 +216,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_PATH_GET)
   ipcMain.removeHandler(IPC_CHANNELS.KB_PATH_SET)
   ipcMain.removeHandler(IPC_CHANNELS.KB_INDEX_READ)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -988,6 +991,28 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.KB_INDEX_READ,
     async (): Promise<KbIndex | null> => readKbIndex()
+  )
+
+  // ── Proposal document export ─────────────────────────────────────────
+  //
+  // Engine-free: the renderer ships the full markdown string, main pops
+  // the OS native save dialog anchored to the sender's BrowserWindow
+  // (modal on macOS), writes the file via proposalExport.ts, and returns
+  // the path. `{ path: null }` signals user cancellation. The format
+  // field is a closed union (currently only `'md'`); future adapters for
+  // Word/PDF extend the switch inside proposalExport.ts without touching
+  // this IPC surface.
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_EXPORT,
+    async (event, payload: ProposalExportPayload): Promise<ProposalExportResult> => {
+      const markdown =
+        typeof payload?.markdown === 'string' ? payload.markdown : ''
+      // Only `'md'` is valid in ExportFormat today; coerce defensively so
+      // a malformed payload can't reach the write path with an unexpected value.
+      const format = payload?.format === 'md' ? 'md' : 'md'
+      const win = BrowserWindow.fromWebContents(event.sender)!
+      return exportProposal(win, markdown, format)
+    }
   )
 
   // Engine-to-renderer event forwarding lives in the ChatEngine
