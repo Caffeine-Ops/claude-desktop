@@ -13,7 +13,7 @@ import type { Attachment } from '@assistant-ui/core'
 import { AnimatePresence, motion } from 'motion/react'
 
 import type { SessionMeta } from '../../../../shared/types'
-import { useI18n, useT, useToolLabel, type StringKey } from '../../i18n'
+import { useI18n, useT, useToolLabel } from '../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../stores/chat'
 import { buildSlashAdapter } from '../../composer/slashAdapter'
 import { buildFileMentionAdapter } from '../../composer/fileMentionAdapter'
@@ -81,13 +81,32 @@ export function ThreadView(): React.JSX.Element {
   // enter on swap preserves the sense of "the view changed".
   const sessionId = useChatStore((s) => s.sessionId)
   const sessionLoading = useChatStore((s) => s.sessionLoading)
+  // Whether the active thread has zero messages. Drives the centered
+  // empty-state layout: on a fresh thread the composer floats up to the
+  // vertical middle (right under the hero title) and grows taller so it
+  // reads as the primary call-to-action — the ChatGPT / Claude.ai
+  // landing pattern. Once the first message lands, isEmpty flips false
+  // and the composer settles back into its bottom dock at normal height.
+  // `s.thread.isEmpty` is the same signal ThreadPrimitive.Empty reads.
+  const isEmpty = useAuiState(
+    (s) => (s as { thread?: { isEmpty?: boolean } }).thread?.isEmpty ?? false
+  )
   // Content key: sessionId plus a sentinel so the null → id case (first
   // session, or after a hard reset) still flips the key and replays
   // the entrance animation.
   const contentKey = sessionId ?? '__new__'
 
   return (
-    <ThreadPrimitive.Root className="relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-col bg-transparent">
+    <ThreadPrimitive.Root
+      className={
+        'relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-col bg-transparent ' +
+        // Empty thread: center the [viewport(hero) + composer dock] group
+        // vertically so the taller composer sits in the visual middle.
+        // Non-empty: default top-aligned column — the flex-1 viewport
+        // fills and pins the dock to the bottom.
+        (isEmpty ? 'justify-center' : '')
+      }
+    >
       {/* Top indeterminate progress bar. Absolute at the very top of
           the Thread root so it sits above the viewport mask and the
           composer. Presence-animated so it also fades in/out rather
@@ -116,12 +135,27 @@ export function ThreadView(): React.JSX.Element {
         // flicker in and out → horizontal reflow → visible jitter.
         // Stable gutter kills that class of bug outright by pre-
         // committing the 15px scrollbar lane.
-        className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] [mask-image:linear-gradient(to_bottom,transparent_0,black_44px,black_calc(100%-56px),transparent_100%)]"
+        className={
+          'min-h-0 overflow-y-auto [scrollbar-gutter:stable] ' +
+          // Empty: shrink the viewport to the hero's own height
+          // (flex-none) so the Root's justify-center can lift the
+          // composer up next to it; drop the scroll mask so the hero
+          // copy isn't faded at the edges of a short viewport.
+          // Non-empty: fill the column (flex-1) with the top/bottom
+          // fade mask over the scrolling message list.
+          (isEmpty
+            ? 'flex-none'
+            : 'flex-1 [mask-image:linear-gradient(to_bottom,transparent_0,black_44px,black_calc(100%-56px),transparent_100%)]')
+        }
       >
-        {/* Inner column caps reading width and centers messages. The
-            `min-h-full` lets the empty-state `flex-1` stretch so the
-            hero text lands at the vertical center of the viewport
-            even when there are no messages yet.
+        {/* Inner column caps reading width and centers messages.
+
+            The empty-state hero (title) no longer lives here — it moved
+            into the composer dock below so the title sits directly above
+            the input as a single centered group (see EmptyHero). On an
+            empty thread this column therefore renders nothing and
+            collapses to zero height, letting the Root's justify-center
+            center the dock group on its own.
 
             No session-switch animation: the previous y-translate +
             blur intro caused the empty-state content to briefly push
@@ -131,12 +165,14 @@ export function ThreadView(): React.JSX.Element {
             "no surprise motion" sensibility. */}
         <div
           key={`content-${contentKey}`}
-          className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-6 pb-20 pt-8"
+          className={
+            'mx-auto flex w-full max-w-3xl flex-col px-6 ' +
+            // Empty: collapse to zero height (nothing to show here).
+            // Non-empty: full-height stretch + top/bottom padding so the
+            // message list scrolls behind the top fade and bottom dock.
+            (isEmpty ? 'min-h-0' : 'min-h-full pb-20 pt-8')
+          }
         >
-          <ThreadPrimitive.Empty>
-            <EmptyState />
-          </ThreadPrimitive.Empty>
-
           <ThreadPrimitive.Messages
             components={{
               UserMessage,
@@ -161,10 +197,41 @@ export function ThreadView(): React.JSX.Element {
 
       <ScrollToBottomButton />
 
-      {/* Composer dock — outside the scroll viewport so it's always
-          pinned to the bottom of Root regardless of message count. */}
-      <div className="shrink-0 bg-background/45 px-6 py-4 backdrop-blur-xl backdrop-saturate-150">
-        <Composer />
+      {/* Composer dock — outside the scroll viewport. Non-empty: pinned
+          to the bottom of Root with a translucent blur band so messages
+          scrolling underneath fade out behind it. Empty: the Root's
+          justify-center floats this group to the vertical middle, so we
+          drop the band (there's nothing scrolling behind it) and let the
+          composer grow taller (`tall`) to read as the primary CTA. */}
+      <div
+        className={
+          'shrink-0 px-6 py-4 ' +
+          (isEmpty
+            ? ''
+            : 'bg-background/45 backdrop-blur-xl backdrop-saturate-150')
+        }
+      >
+        {/* Empty thread: the COMPOSER is the centering anchor. The hero
+            title is absolutely positioned right above it (EmptyHero uses
+            `absolute bottom-full`), so it adds no flow height — that keeps
+            the input itself on the Root's justify-center middle line, with
+            the title floating directly above it (KIMI-style landing).
+            `relative` here is the positioning context for that title. */}
+        {isEmpty ? (
+          // `-translate-y-[19px]` pulls the group up by half the height of
+          // the permission-mode strip that sits above the input card
+          // (~38px: 30px row + 8px margin). Without it, that strip's flow
+          // height pushes the INPUT CARD's center ~19px below the Root's
+          // justify-center midline; compensating lands the card's
+          // geometric center exactly on the vertical 50% line. The title
+          // (absolute) rides along since it's positioned off this wrapper.
+          <div className="relative mx-auto w-full max-w-3xl -translate-y-[19px]">
+            <EmptyHero />
+            <Composer tall />
+          </div>
+        ) : (
+          <Composer />
+        )}
       </div>
     </ThreadPrimitive.Root>
   )
@@ -277,238 +344,36 @@ function TopProgressBar(): React.JSX.Element {
   )
 }
 
-/* ───────────────────────── EmptyState ───────────────────────── */
+/* ───────────────────────── EmptyHero ───────────────────────── */
 
 /**
- * Scenario prompt cards for the empty thread state.
+ * Empty-thread hero title, floated directly above the composer — the
+ * KIMI / ChatGPT landing layout: large centered product name, then the
+ * input right below it.
  *
- * Clicking a card fills the composer with `prompt` and focuses the
- * textarea, mirroring how ChatGPT / Claude.ai handle their landing
- * suggestion tiles. The cards are intentionally a *starting line*,
- * not a full template — the user is expected to edit the bracketed
- * placeholder before sending.
+ * Positioning: `absolute bottom-full` pins the title's bottom edge to
+ * the composer's top edge (its `relative` parent wraps both — see the
+ * dock render). Being absolute, the title contributes NO height to the
+ * dock's flow, so the Root's justify-center centers the *input* on the
+ * vertical middle line rather than the [title+input] pair — which is
+ * what makes the input read as truly centered. `left-0 right-0
+ * text-center` centers the title across the composer's width.
  *
- * Localised copy lives in i18n.ts under the `scenarioCard*` keys so
- * the EN/CN versions can diverge in tone.
- *
- * Adding a new card: append an entry here + add the matching i18n
- * keys in *both* locales. Keep the list short — a scrollable grid
- * defeats the purpose of a "pick a starting point" view.
+ * The scenario starter cards moved to the sidebar's "quick start" block
+ * (see ScenarioQuickStart); the old prose hint was dropped to keep the
+ * landing as clean as the reference: title, then input.
  */
-type ScenarioCard = {
-  key: string
-  iconClass: string
-  icon: React.ReactNode
-  titleKey: StringKey
-  descKey: StringKey
-  promptKey: StringKey
-}
-
-const SCENARIO_CARDS: ScenarioCard[] = [
-  {
-    key: 'ppt',
-    iconClass: 'from-rose-500/20 to-rose-500/5 text-rose-400',
-    icon: <PptIcon />,
-    titleKey: 'scenarioPptTitle',
-    descKey: 'scenarioPptDesc',
-    promptKey: 'scenarioPptPrompt'
-  },
-  {
-    key: 'officeHours',
-    iconClass: 'from-amber-500/20 to-amber-500/5 text-amber-400',
-    icon: <LightbulbIcon />,
-    titleKey: 'scenarioOfficeHoursTitle',
-    descKey: 'scenarioOfficeHoursDesc',
-    promptKey: 'scenarioOfficeHoursPrompt'
-  },
-  {
-    key: 'resumeScreen',
-    iconClass: 'from-indigo-500/20 to-indigo-500/5 text-indigo-400',
-    icon: <UserCheckIcon />,
-    titleKey: 'scenarioResumeTitle',
-    descKey: 'scenarioResumeDesc',
-    promptKey: 'scenarioResumePrompt'
-  },
-  {
-    key: 'analyze',
-    iconClass: 'from-emerald-500/20 to-emerald-500/5 text-emerald-400',
-    icon: <ChartIcon />,
-    titleKey: 'scenarioAnalyzeTitle',
-    descKey: 'scenarioAnalyzeDesc',
-    promptKey: 'scenarioAnalyzePrompt'
-  }
-]
-
-function EmptyState(): React.JSX.Element {
+function EmptyHero(): React.JSX.Element {
   const t = useT()
-  // Composer runtime — exposed by the parent ThreadPrimitive.Root so
-  // EmptyState can shove text directly into the textarea on card
-  // click. The composer subtree is mounted as a sibling of the
-  // viewport (see ThreadPrimitive.Root in this file's main render),
-  // so the runtime context is in scope here.
-  const composer = useComposerRuntime()
-
-  const onPickScenario = useCallback(
-    (promptKey: StringKey) => {
-      const text = t(promptKey)
-      composer.setText(text)
-      // Focus the actual textarea so the user can immediately edit
-      // the bracketed placeholder. assistant-ui's
-      // ComposerPrimitive.Input renders a plain <textarea> with no
-      // marker attribute we can rely on, but the chat UI only ever
-      // mounts one textarea (the composer), so a top-level query
-      // is unambiguous. Wait one microtask so React has flushed the
-      // setText commit before we try to position the caret.
-      queueMicrotask(() => {
-        const el = document.querySelector<HTMLTextAreaElement>('textarea')
-        if (el) {
-          el.focus()
-          const len = el.value.length
-          el.setSelectionRange(len, len)
-        }
-      })
-    },
-    [composer, t]
-  )
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-1 flex-col items-center justify-center px-6 py-12 text-center">
-      {/* Mount animations removed entirely: the previous y-translate
-       * fade-in caused the scrollbar to flicker on / off as the content
-       * settled, which read as page-wide horizontal jitter. A still
-       * empty state is the Apple-calm choice anyway — the page appears
-       * and sits. */}
-      <div className="mb-2 text-[28px] font-semibold tracking-tight text-foreground">
+    // Mount animations intentionally omitted — a still landing avoids the
+    // scrollbar flicker the old y-translate fade caused (see history).
+    <div className="absolute bottom-full left-0 right-0 mb-5 px-1 text-center">
+      <div className="text-[34px] font-semibold leading-tight tracking-tight text-foreground">
         {t('emptyStateTitle')}
       </div>
-      <p className="mb-8 max-w-md text-[13px] text-muted-foreground/80">
-        {t('emptyStateScenarioHint')}
-      </p>
-      <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
-        {SCENARIO_CARDS.map((card) => (
-          <button
-            key={card.key}
-            type="button"
-            onClick={() => onPickScenario(card.promptKey)}
-            className="group relative flex items-start gap-3 overflow-hidden rounded-2xl border border-border/60 bg-card/50 p-4 text-left shadow-sm backdrop-blur-sm transition-colors hover:border-accent/50 hover:bg-card/80 hover:shadow-[0_10px_30px_-12px_hsl(var(--accent)/0.35)]"
-          >
-            <span
-              className={
-                'flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ' +
-                card.iconClass
-              }
-            >
-              {card.icon}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-semibold text-foreground">
-                {t(card.titleKey)}
-              </div>
-              <div className="mt-0.5 line-clamp-2 text-[11.5px] leading-relaxed text-muted-foreground">
-                {t(card.descKey)}
-              </div>
-            </div>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="mt-1 shrink-0 text-muted-foreground/40 transition-all group-hover:translate-x-0.5 group-hover:text-accent"
-              aria-hidden
-            >
-              <path d="M5 12h14" />
-              <path d="m12 5 7 7-7 7" />
-            </svg>
-          </button>
-        ))}
-      </div>
     </div>
-  )
-}
-
-function PptIcon(): React.JSX.Element {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <rect x="3" y="4" width="18" height="14" rx="2" />
-      <path d="M3 18h18" />
-      <path d="M8 22h8" />
-      <path d="M12 18v4" />
-      <path d="M8 11h4" />
-      <path d="M8 8h8" />
-    </svg>
-  )
-}
-
-function LightbulbIcon(): React.JSX.Element {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M9 18h6" />
-      <path d="M10 22h4" />
-      <path d="M12 2a7 7 0 0 0-4 12.74V17h8v-2.26A7 7 0 0 0 12 2Z" />
-    </svg>
-  )
-}
-
-function UserCheckIcon(): React.JSX.Element {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="m16 11 2 2 4-4" />
-    </svg>
-  )
-}
-
-function ChartIcon(): React.JSX.Element {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M3 3v18h18" />
-      <path d="M7 14l4-4 4 4 5-6" />
-    </svg>
   )
 }
 
@@ -2127,7 +1992,7 @@ function escapeHtml(s: string): string {
  * presses Enter to submit — at which point free-code's CLI runs
  * `extractAtMentionedFiles` on the text and auto-attaches each file.
  */
-function Composer(): React.JSX.Element {
+function Composer({ tall = false }: { tall?: boolean }): React.JSX.Element {
   const t = useT()
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [files, setFiles] = useState<readonly string[]>([])
@@ -2290,7 +2155,20 @@ function Composer(): React.JSX.Element {
         {/* AttachmentDropzone is the outer "card" — owns the border +
             background + rounded corners so drag-over highlights the
             whole composer. */}
-        <ComposerPrimitive.AttachmentDropzone className="rounded-2xl bg-popover/90 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--accent)/0.35)] shadow-[0_4px_16px_-6px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--accent)/0.5)] data-[dragging=true]:bg-accent/[0.08] dark:ring-white/[0.08]">
+        <ComposerPrimitive.AttachmentDropzone
+          className={
+            'rounded-2xl transition-all focus-within:ring-[hsl(var(--accent)/0.35)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--accent)/0.5)] data-[dragging=true]:bg-accent/[0.08] ' +
+            (tall
+              ? // Empty-state hero input: a solid white card with a visible
+                // gray border and a pronounced drop shadow so it reads as
+                // the primary call-to-action. No backdrop-blur — the card
+                // is opaque, there's nothing behind it to blur.
+                'bg-card ring-1 ring-black/[0.18] shadow-[0_12px_36px_-10px_rgba(0,0,0,0.24),0_4px_12px_-4px_rgba(0,0,0,0.12)] dark:ring-white/[0.20] '
+              : // Bottom dock: translucent blurred panel that blends with
+                // the message list scrolling behind it.
+                'bg-popover/90 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 shadow-[0_4px_16px_-6px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] dark:ring-white/[0.08] ')
+          }
+        >
           <div className="flex flex-wrap gap-2 px-3 pt-3 empty:hidden">
             <ComposerPrimitive.Attachments>
               {({ attachment }) => (
@@ -2355,7 +2233,15 @@ function Composer(): React.JSX.Element {
                     assistant-ui store —
                     PROSEMIRROR-MIGRATION: composer.text writeback via setText
                     (the actual setText call lives in ProseMirrorComposerInput). */}
-                <div className="min-h-[24px] max-h-40 flex-1 overflow-y-auto px-1 py-1.5 text-[14px] leading-relaxed">
+                <div
+                  className={
+                    'max-h-40 flex-1 overflow-y-auto px-1 py-1.5 text-[14px] leading-relaxed ' +
+                    // Empty thread: a taller minimum so the composer reads
+                    // as the centered hero CTA. Otherwise the compact
+                    // single-row height (grows with content up to max-h-40).
+                    (tall ? 'min-h-[92px]' : 'min-h-[24px]')
+                  }
+                >
                   <ProseMirrorComposerInput
                     placeholder={t('composerPlaceholder')}
                     slashAdapter={slashAdapter}
