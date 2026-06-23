@@ -9,6 +9,7 @@ import { SkillsDialog } from './components/dialogs/SkillsDialog'
 import { McpDialog } from './components/dialogs/McpDialog'
 import { LogsDialog } from './components/dialogs/LogsDialog'
 import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
+import { ProposalDocPanel } from './components/workspace/ProposalDocPanel'
 import { useChatStore } from './stores/chat'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
@@ -249,6 +250,11 @@ function App(): React.JSX.Element {
               <TodoListPanel />
               <WorkspaceTreePanel />
             </aside>
+            {/* 方案文档面板 — 仅当 proposal.active 为真时渲染，组件内部按
+                active 返回 null，不影响非方案模式的现有布局。宽度 w-96 固定，
+                紧跟右栏 aside 之后形成第四列。不包在 aside 里，避免撑宽右栏
+                影响 TodoListPanel 与 WorkspaceTreePanel 的排列。 */}
+            <ProposalDocPanel />
           </div>
         </FusionRuntimeProvider>
         )}
