@@ -45,15 +45,17 @@ import {
   type AuthState,
   type AuthCodeResult,
   type AuthSendCodePayload,
-  type AuthVerifyCodePayload
+  type AuthVerifyCodePayload,
+  type AuthLoginPayload
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
 import {
   getAuthState,
   setAuthState,
+  loginTenant,
   getActiveTenantId
 } from '../core/authStore'
-import { requestCode, checkCode } from '../core/authCodeService'
+import { requestCode, checkCode, consumeVerifiedPhone } from '../core/authCodeService'
 import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
 import { DAEMON_PORT } from '../services/openDesignServices'
 import type { ChatEngine } from '../core/engine'
@@ -903,12 +905,13 @@ export function registerIpcHandlers(): void {
     return getAuthState()
   })
 
+  // AUTH_SET：只处理登出与改名。登入走 AUTH_LOGIN（main 自派生 tid，不信任渲染
+  // 进程自报）。setAuthState 拒绝引入新 tid，故这里唯一会改 tid 的情形是登出
+  // （tid → null），仍需软重置。
   ipcMain.handle(
     IPC_CHANNELS.AUTH_SET,
     async (event, state: AuthState): Promise<AuthState> => {
       const prevTid = getActiveTenantId()
-      // setAuthState 内部在租户变化时已调用 activateTenant（切 CLAUDE_CONFIG_DIR、
-      // 失效设置缓存、重开日志流）。
       const next = setAuthState({
         loggedIn: !!state?.loggedIn,
         phone: state?.phone ?? null,
@@ -919,7 +922,7 @@ export function registerIpcHandlers(): void {
       // 广播给其它窗口（写入方已本地更新）。
       broadcastAuthChanged(event.sender.id, next)
 
-      // 租户真的换了（含登出）→ 杀掉所有 engine 子进程、拆 tab、reload 渲染进程。
+      // 登出（tid → null）→ 杀掉所有 engine 子进程、拆 tab、reload 渲染进程。
       // 仅改昵称（同租户）不触发，避免无谓重置。
       if (next.tenantId !== prevTid) {
         await resetForTenantSwitch()
@@ -956,6 +959,29 @@ export function registerIpcHandlers(): void {
         console.error('[ipc] AUTH_VERIFY_CODE failed:', err)
         return { ok: false, error: 'network' }
       }
+    }
+  )
+
+  // AUTH_LOGIN：用刚验证过的【原始手机号】提交登录。main 自己派生 tenantId
+  // （loginTenant），并先 consume 一次性验证证明——没有有效证明就不改任何状态、
+  // 回当前快照（防止被改的渲染进程跳过验证码直接 commit 任意号）。提交成功则切
+  // 租户、广播、整机软重置，返回权威 AuthState（loggedIn 与 tenantId 同拍，渲染
+  // 进程直接 adopt，不再有 tenantId 异步回填窗口）。
+  ipcMain.handle(
+    IPC_CHANNELS.AUTH_LOGIN,
+    async (event, payload: AuthLoginPayload): Promise<AuthState> => {
+      const phone = payload?.phone ?? ''
+      if (!consumeVerifiedPhone(phone)) {
+        // 未验证 / 证明过期 / 重放 —— 不动状态，回当前（通常登出）快照。
+        return getAuthState()
+      }
+      const prevTid = getActiveTenantId()
+      const next = loginTenant(phone)
+      broadcastAuthChanged(event.sender.id, next)
+      if (next.tenantId !== prevTid) {
+        await resetForTenantSwitch()
+      }
+      return next
     }
   )
 

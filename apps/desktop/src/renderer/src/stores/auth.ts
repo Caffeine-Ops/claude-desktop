@@ -15,21 +15,19 @@ import type { AuthState as AuthIpcState } from '../../../shared/ipc-channels'
  *   - `hydrateAuthFromMain()` seeds the store on mount (AUTH_GET).
  *   - `subscribeAuthChanges()` keeps it live: when ANY window writes auth,
  *     main broadcasts AUTH_CHANGED to the others and the handler applies it.
- *   - `login` / `logout` push to main (AUTH_SET); main persists + broadcasts.
- *     We also update locally right away so the writer's own UI is instant
- *     (main skips the writer in its broadcast, so there's no echo back).
+ *   - `login` calls `commitLogin` (AUTH_LOGIN) and ADOPTS main's authoritative
+ *     snapshot — main derives the tenantId, so loggedIn + tenantId land together
+ *     (no local sha256, no optimistic loggedIn-without-tenantId window).
+ *   - `logout` / rename push to main (AUTH_SET); main persists + broadcasts.
+ *     We update locally right away so the writer's own UI is instant (main
+ *     skips the writer in its broadcast, so there's no echo back).
  *
- * Only the **masked** phone (138****8888) ever leaves this module — the raw
- * number is masked here before it's sent to main. There's no token yet (the
- * fusion-code backend is env-driven), so this is an identity marker.
+ * The raw phone reaches main only via the verify + commit flow (sendCode /
+ * verifyCode / commitLogin); it is never persisted and never broadcast. Main
+ * derives the masked phone (138****8888) and tenantId, and only those leave
+ * main. There's no token yet (the fusion-code backend is env-driven), so this
+ * is an identity marker.
  */
-/**
- * Default display name on first sign-in. The backend has no username field,
- * so a new user starts with this placeholder and can rename from the account
- * menu. It deliberately differs from the phone so the two-line chrome chip
- * (nickname over phone) doesn't show the same string twice.
- */
-const DEFAULT_NICKNAME = 'Open Design 用户'
 
 interface AuthStoreState {
   loggedIn: boolean
@@ -44,47 +42,21 @@ interface AuthStoreState {
   /** User-editable display name. Null when signed out. */
   nickname: string | null
   /**
-   * Stable per-tenant key — sha256(rawPhone) first 16 hex chars, computed in
-   * the renderer so the raw phone never leaves this process. Null when signed
-   * out. Matches AuthState.tenantId in ipc-channels.ts.
+   * Stable per-tenant key — sha256(rawPhone) first 16 hex chars, **derived by
+   * main** and mirrored here from its snapshot (the renderer never computes it).
+   * Null when signed out. Matches AuthState.tenantId in ipc-channels.ts.
    */
   tenantId: string | null
-  /** Sign in. Pass the raw 11-digit phone; it's masked before storing. */
+  /**
+   * Sign in. Pass the raw 11-digit phone (already SMS-verified). main derives
+   * the identity and returns the authoritative snapshot, which we adopt.
+   */
   login: (rawPhone: string) => void
   /** Rename the signed-in user. No-op when signed out / blank. */
   setNickname: (name: string) => void
   logout: () => void
   /** Adopt a state pushed from main (hydrate / AUTH_CHANGED). Internal. */
   _adopt: (state: AuthIpcState) => void
-}
-
-/** 138****8888 — keep the first 3 and last 4 digits, mask the middle 4. */
-function maskPhone(raw: string): string {
-  // Happy path: an 11-digit phone (login() only runs post PHONE_RE).
-  if (raw.length === 11) return `${raw.slice(0, 3)}****${raw.slice(7)}`
-  // Defense-in-depth: anything else slipped past validation. NEVER return the
-  // raw digits (that would defeat this module's "only the masked phone leaves
-  // here" invariant) — fully mask instead.
-  return '*'.repeat(raw.length)
-}
-
-/**
- * Compute tenantId = sha256(rawPhone).slice(0, 16) using the Web Crypto API.
- * The raw phone never leaves the renderer — only this 16-hex-char prefix does.
- * Returns null if Web Crypto is unavailable (should not happen in Electron's
- * Chromium renderer, but defensive coding is cheaper than a crash).
- */
-async function computeTenantId(rawPhone: string): Promise<string | null> {
-  try {
-    const encoded = new TextEncoder().encode(rawPhone)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', encoded)
-    const hex = Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('')
-    return hex.slice(0, 16)
-  } catch {
-    return null
-  }
 }
 
 function pushToMain(state: AuthIpcState): void {
@@ -102,44 +74,37 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
   nickname: null,
   tenantId: null,
   login: (rawPhone) => {
-    const phone = maskPhone(rawPhone)
-    // Preserve a previously-set nickname ONLY when the SAME phone re-logs in
-    // (a returning user who renamed before). A different phone is a different
-    // account — never inherit the prior user's name, or a stale store (e.g. a
-    // cross-window logout not yet adopted) would leak one user's nickname onto
-    // another's login on the same running app.
-    const samePhone = get().phone === phone
-    const nickname = samePhone ? (get().nickname ?? DEFAULT_NICKNAME) : DEFAULT_NICKNAME
-    // Flip the UI synchronously (same render cycle) so the caller sees loggedIn
-    // immediately — tenantId backfills a microtask later. Splitting it this way
-    // (rather than deferring the whole set into .then) preserves the original
-    // instant-login UX. We push to main only AFTER computeTenantId resolves:
-    // main routes CLAUDE_CONFIG_DIR by tenantId, so auth.json must never be
-    // written with a null tenantId on login.
-    set({ loggedIn: true, phone, nickname, tenantId: null })
-    void computeTenantId(rawPhone).then((tenantId) => {
-      if (!tenantId) {
-        // Web Crypto failed (essentially unreachable in Electron's renderer,
-        // but defensive). Without a tenantId main can't route CLAUDE_CONFIG_DIR,
-        // and pushing { loggedIn: true, tenantId: null } would be read by main
-        // as a LOGOUT (setAuthState treats a null tenantId as signed-out) —
-        // leaving the renderer thinking it's logged in while main isn't. So we
-        // revert the optimistic local login instead of pushing an inconsistent
-        // state; the user can retry. (No pushToMain — main was never touched.)
-        set({ loggedIn: false, phone: null, nickname: null, tenantId: null })
-        return
-      }
-      set({ tenantId })
-      pushToMain({ loggedIn: true, phone, nickname, tenantId })
-    })
+    // Identity derivation lives in main now. commitLogin hands main the raw
+    // (already SMS-verified) phone; main re-derives the tenantId, preserves a
+    // returning user's nickname (or defaults a new one), persists + activates
+    // the tenant, and returns the authoritative snapshot. We adopt it so
+    // loggedIn + tenantId land together — there's no longer a "logged in but
+    // tenantId not yet computed" window for the send gate to defend against.
+    //
+    // A successful commit triggers a full tenant-switch reset (reload); this
+    // renderer is rebuilt and re-hydrates from main, so the local adopt below
+    // mostly covers the instant before that. On failure (expired proof, main
+    // unreachable) main returns the signed-out snapshot and we stay logged out.
+    void window.chatApi
+      ?.commitLogin?.({ phone: rawPhone })
+      .then((state) => {
+        if (state) get()._adopt(state)
+      })
+      .catch(() => {
+        /* main unreachable / preload missing — stay signed out, user retries */
+      })
   },
   setNickname: (name) => {
     const nickname = name.trim()
     if (!get().loggedIn || nickname === '') return
-    const phone = get().phone
-    const tenantId = get().tenantId
+    // Optimistic local update; main is authoritative for the rest. We still
+    // send the full AuthState shape (the AUTH_SET contract), but main IGNORES
+    // the identity fields (tenantId / phone) and renames only its *active*
+    // tenant — so a stale tenantId here (mid cross-window transition) can't
+    // misroute the rename or get it rejected. phone/tenantId go along only to
+    // satisfy the type; their values don't matter.
     set({ nickname })
-    pushToMain({ loggedIn: true, phone, nickname, tenantId })
+    pushToMain({ loggedIn: true, phone: get().phone, nickname, tenantId: get().tenantId })
   },
   logout: () => {
     set({ loggedIn: false, phone: null, nickname: null, tenantId: null })

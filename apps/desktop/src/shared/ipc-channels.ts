@@ -425,11 +425,14 @@ export const IPC_CHANNELS = {
    */
   AUTH_GET: 'auth:get',
   /**
-   * Renderer → main. Write the new sign-in state (after a successful login
-   * in LoginDialog, or a logout from the shell account menu). Main persists
-   * it to settings.json and broadcasts AUTH_CHANGED to every OTHER renderer
-   * so the shell entry and chat side stay in lockstep. Returns the stored
-   * state.
+   * Renderer → main. **Logout and rename only** — NOT login. Main does not
+   * trust the renderer-supplied identity fields: logout is keyed purely on the
+   * `loggedIn` flag, and a rename updates only main's *active* tenant — the
+   * incoming `tenantId` / `phone` are ignored. So a tampered renderer can't
+   * forge a tenant, and a stale tenantId (mid cross-window transition) can't
+   * misroute a rename into a logout. Login (tenant derivation + activation)
+   * goes through AUTH_LOGIN instead, gated by a real SMS verification. Main
+   * persists, broadcasts AUTH_CHANGED to every OTHER renderer, returns state.
    */
   AUTH_SET: 'auth:set',
   /**
@@ -457,11 +460,23 @@ export const IPC_CHANNELS = {
   /**
    * Renderer → main. Verify a phone + 6-digit code pair. Returns ok on match,
    * or an AuthCodeError ('invalid_code' / 'expired' / 'too_many_attempts').
-   * On success the renderer proceeds to its existing AUTH_SET login path —
-   * this channel only gates that step, it does NOT itself mark the user
-   * signed in. Same stub-now / real-endpoint-later split as AUTH_SEND_CODE.
+   * On success main records a short-lived single-use "verified" proof for that
+   * phone; the renderer then commits the login via AUTH_LOGIN. This channel
+   * gates login (and arms the proof), it does NOT itself mark the user signed
+   * in. Same stub-now / real-endpoint-later split as AUTH_SEND_CODE.
    */
   AUTH_VERIFY_CODE: 'auth:verify-code',
+  /**
+   * Renderer → main. Commit a login for a just-verified phone. Carries the RAW
+   * phone; main re-derives the tenantId itself (the renderer never computes or
+   * supplies it) and requires a fresh single-use proof from AUTH_VERIFY_CODE,
+   * so the login can't be forged or replayed. Main persists the active tenant,
+   * activates its CLAUDE_CONFIG_DIR, broadcasts AUTH_CHANGED, triggers the
+   * tenant-switch reset, and returns the authoritative AuthState (loggedIn +
+   * tenantId together — no async backfill window). A missing/expired proof
+   * leaves state unchanged and returns the current (signed-out) snapshot.
+   */
+  AUTH_LOGIN: 'auth:login',
   /**
    * 同步取当前 activeTenantId（preload 用 ipcRenderer.sendSync）。渲染进程的
    * localStorage 偏好键要在首帧前（bootAppearance / store 创建）就拼上 tid，
@@ -812,9 +827,9 @@ export type AuthState = {
   phone: string | null
   nickname: string | null
   /**
-   * 稳定的租户唯一键 = sha256(原始手机号) 前 16 hex（在渲染进程算，原号绝不
-   * 离开渲染进程——只有这个哈希离开）。掩码号会撞，不能当键，故单列此字段。
-   * null 表示登出。
+   * 稳定的租户唯一键 = sha256(原始手机号) 前 16 hex。**由 main 派生**（见
+   * authStore.loginTenant），渲染进程只 mirror main 回传的快照、不自己计算。
+   * 掩码号会撞，不能当键，故单列此字段。null 表示登出。
    */
   tenantId: string | null
 }
@@ -839,6 +854,13 @@ export type AuthSendCodePayload = { phone: string }
 
 /** Verify-code request. `phone` raw + the 6-digit `code` the user typed. */
 export type AuthVerifyCodePayload = { phone: string; code: string }
+
+/**
+ * Commit-login request (AUTH_LOGIN). `phone` is the RAW number that just
+ * passed AUTH_VERIFY_CODE; main re-derives the tenantId from it. No tenantId
+ * is sent — deriving it in the renderer is exactly what this design removes.
+ */
+export type AuthLoginPayload = { phone: string }
 
 /**
  * Result of AUTH_SEND_CODE / AUTH_VERIFY_CODE. A discriminated union so a
@@ -1176,9 +1198,10 @@ export interface ChatApi {
   getAuth(): Promise<AuthState>
 
   /**
-   * Write the new sign-in state to main, which persists it and broadcasts
-   * AUTH_CHANGED to every other renderer. Returns the stored state. Called
-   * by LoginDialog on success and by the shell account menu on logout.
+   * Write a logout or a rename to main (NOT a login — see commitLogin). Main
+   * persists, broadcasts AUTH_CHANGED, and returns the stored state. Called by
+   * the shell account menu on logout and on nickname change. A write that tries
+   * to introduce a different tenant is rejected by main.
    */
   setAuth(state: AuthState): Promise<AuthState>
 
@@ -1199,10 +1222,19 @@ export interface ChatApi {
 
   /**
    * Verify `phone` + `code`. Resolves ok on match, else a failure with an
-   * AuthCodeError. The dialog only proceeds to its AUTH_SET login path when
-   * ok is true — this call gates login, it does not perform it.
+   * AuthCodeError. On ok main arms a short-lived proof; the dialog then calls
+   * commitLogin. This call gates login, it does not perform it.
    */
   verifyCode(payload: AuthVerifyCodePayload): Promise<AuthCodeResult>
+
+  /**
+   * Commit a login for a just-verified `phone` (raw). Main re-derives the
+   * tenantId, requires the AUTH_VERIFY_CODE proof, persists + activates the
+   * tenant, and returns the authoritative AuthState (loggedIn + tenantId set
+   * together). The renderer adopts it; it never computes a tenantId itself.
+   * Called by LoginDialog once the success animation finishes.
+   */
+  commitLogin(payload: AuthLoginPayload): Promise<AuthState>
 
   /**
    * Subscribe to menu actions forwarded from the shell's tab-strip

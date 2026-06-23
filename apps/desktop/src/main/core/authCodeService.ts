@@ -33,6 +33,14 @@ const RESEND_COOLDOWN_MS = 60_000
 const CODE_TTL_MS = 5 * 60_000
 /** Wrong-code tries allowed before the phone is locked out (re-request needed). */
 const MAX_ATTEMPTS = 5
+/**
+ * How long a *verified* phone stays committable after `checkCode` succeeds.
+ * The login flow is two-step: verifyCode (here) then commitLogin (AUTH_LOGIN),
+ * separated by the dialog's success animation. This TTL spans that gap with
+ * room to spare; long enough never to bite a real user, short enough that a
+ * stale proof can't be replayed minutes later.
+ */
+const VERIFIED_TTL_MS = 2 * 60_000
 
 interface CodeRecord {
   code: string
@@ -50,6 +58,16 @@ interface CodeRecord {
  * persist (a code surviving a restart would be a liability, not a feature).
  */
 const records = new Map<string, CodeRecord>()
+
+/**
+ * phone(raw) → epoch-ms expiry of a successful verification. This is the trust
+ * root for login: a phone lands here ONLY when `checkCode` passed, and the
+ * AUTH_LOGIN handler must `consumeVerifiedPhone` it before main will commit a
+ * tenant. Keeping the proof in main (not trusting a renderer-supplied tenantId)
+ * is what stops a tampered renderer from forging another tenant's identity
+ * without ever passing the SMS code.
+ */
+const verified = new Map<string, number>()
 
 type Result = { ok: true } | { ok: false; error: AuthCodeError }
 
@@ -119,5 +137,22 @@ export function checkCode(phone: string, code: string): Result {
 
   // Single-use: a verified code can't be replayed.
   records.delete(phone)
+  // Record a short-lived "this phone just proved itself" token. commitLogin
+  // (AUTH_LOGIN) consumes it before main derives + activates the tenant.
+  verified.set(phone, Date.now() + VERIFIED_TTL_MS)
   return { ok: true }
+}
+
+/**
+ * Single-use check that `phone` passed `checkCode` within VERIFIED_TTL_MS.
+ * Consumes the proof on success so it can't be replayed. Returns false when
+ * there's no proof or it has expired — the caller must NOT commit the login.
+ * This is the gate that keeps tenant identity derivation honest: only a phone
+ * that actually verified can be turned into an active tenant.
+ */
+export function consumeVerifiedPhone(phone: string): boolean {
+  const expiresAt = verified.get(phone)
+  if (expiresAt == null) return false
+  verified.delete(phone)
+  return Date.now() <= expiresAt
 }

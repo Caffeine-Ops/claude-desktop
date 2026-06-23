@@ -44,6 +44,7 @@ import {
   type AuthCodeResult,
   type AuthSendCodePayload,
   type AuthVerifyCodePayload,
+  type AuthLoginPayload,
   type TabApi,
   type TabDescriptor,
   type TabListResult,
@@ -413,6 +414,13 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.AUTH_VERIFY_CODE,
       payload
     ) as Promise<AuthCodeResult>
+  },
+
+  commitLogin(payload: AuthLoginPayload): Promise<AuthState> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.AUTH_LOGIN,
+      payload
+    ) as Promise<AuthState>
   },
 
   closeSettingsWindow(): Promise<void> {
