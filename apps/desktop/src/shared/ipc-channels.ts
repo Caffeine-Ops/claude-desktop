@@ -529,12 +529,12 @@ export type ChatSendPayload = {
    * send()。把 flag 挂在 send 上，能保证「首次 send 触发 spawn」那一刻 engine 就读
    * 得到方案模式，append 与 additionalDirectories 才来得及生效。
    *
-   * 已知局限（MVP 可接受）：switchToSession 的后台 warmup 可能在用户选产品/开方案
-   * 模式之前就 warm-spawn 了子进程；那个进程的 append 不含方案纪律。但 warmup 只
-   * spawn 从未 send 过的 runtime，一旦用户真正发出首条方案消息，若该 runtime 已被
-   * warm-spawn，则这条消息复用旧进程、append 不重新烘焙。实践中用户进方案模式后的
-   * 第一条消息通常落在新 session 上，影响有限；彻底修复需在 warmup 阶段也透传方案
-   * 信号，超出本任务范围。
+   * warm-spawn 处理：switchToSession 的后台 warmup 可能在用户选产品之前就 spawn 了
+   * 子进程，那个进程的 append 不含方案纪律。engine.send() 检测到「本次 proposalMode=
+   * true，但该 runtime 的活进程不带方案 append」（runtime.spawnedWithProposal !== true）
+   * 时，会把方案纪律 + 镜像绝对路径注入到本次用户消息里（见 engine.send 的 warm-spawn
+   * grounding）。比"杀掉重启该 session"稳——重启一个刚被 kill 的同 id 会话会让 claude
+   * exit 1。fresh spawn 的 runtime 此刻 spawnedWithProposal 已为 true，不重复注入。
    */
   proposalMode?: boolean
 }

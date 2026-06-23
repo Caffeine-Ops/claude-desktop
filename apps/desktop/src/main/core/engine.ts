@@ -261,6 +261,18 @@ interface SessionRuntime {
    * when the user switches away.
    */
   openedViaSend: boolean
+  /**
+   * True if the live child was spawned while proposal-writing mode was
+   * active — i.e. its `systemPrompt.append` carries the proposal discipline
+   * + mirror dir. Lets `send()` detect a WARM child that was spawned
+   * WITHOUT proposal mode (the background warmup fires before the user picks
+   * a product) and, for that turn only, inject the same grounding into the
+   * user message instead (the append can't be hot-updated and re-spawning
+   * is fragile). Without this flag the common "boot → first thread → pick
+   * product → send" path silently sends on a non-proposal child and the AI
+   * never receives the mirror path / cite-source discipline.
+   */
+  spawnedWithProposal: boolean
 }
 
 interface ActiveTurn {
@@ -459,8 +471,10 @@ export class ChatEngine extends EventEmitter {
    * 读标志」这条链路成立。每次 send 都重写，所以它反映的是最近一次发送的意图。
    *
    * 注意：这是「下一次 spawn 生效」的语义，不是「立即对已 spawn 的进程生效」。
-   * 已 spawn 的子进程其 append 已烘焙、无法热更新（见 ChatSendPayload.proposalMode
-   * 注释里的 warmup 局限）。
+   * 已 spawn 的子进程其 append 已烘焙、无法热更新。为此 send() 对「已 warm-spawn 但
+   * 当时不带方案」的 runtime（`spawnedWithProposal === false`），把方案纪律+镜像绝对
+   * 路径注入到本次用户消息里（见 send() 里的 warm-spawn grounding）——否则「开 app→
+   * 首个 thread 选产品→发送」这条常见路径会落在非方案进程上、AI 拿不到镜像路径。
    */
   private proposalMode = false
 
@@ -981,6 +995,22 @@ export class ChatEngine extends EventEmitter {
     }
     this.emitEvent(sessionId, { type: 'start', messageId })
 
+    // warm-spawn grounding: the proposal discipline + absolute mirror dir
+    // normally ride in systemPrompt.append, baked at spawn (openSession,
+    // gated on `proposalActive`). But the background warmup can spawn this
+    // session's child BEFORE the user picks a product — that child carries
+    // NO proposal append (the common "boot → first thread → pick product →
+    // send" path). Re-spawning the live child to re-bake it is fragile
+    // (resuming a just-killed same-id session makes `claude` exit 1), so we
+    // instead inject the same instructions into THIS user message — spawn-
+    // timing-independent. We skip injection when the live child already
+    // baked the append (`spawnedWithProposal` — i.e. it was (re)spawned
+    // under proposal mode, including a fresh first-send spawn just now via
+    // ensureSessionReady above), to avoid duplicating the block.
+    const groundedText =
+      proposalMode && !runtime.spawnedWithProposal
+        ? `${buildProposalAppend(kbOutDir())}\n\n---\n\n${text}`
+        : text
     // Build the SDK user message. Text-only turns keep the string
     // short-path (fusion-code expects this for slash commands and
     // zero-image prompts). Image turns switch to a ContentBlockParam[]
@@ -992,8 +1022,8 @@ export class ChatEngine extends EventEmitter {
     // when they come after the prompt sentence describing them.
     const messageContent: MessageParam['content'] =
       images && images.length > 0
-        ? this.buildMultimodalContent(text, images)
-        : text
+        ? this.buildMultimodalContent(groundedText, images)
+        : groundedText
 
     const userMsg = {
       type: 'user' as const,
@@ -1458,6 +1488,11 @@ export class ChatEngine extends EventEmitter {
       options: sdkOptions
     })
     runtime.handle = handle
+    // Record whether THIS spawn baked the proposal append (see
+    // `proposalActive` above). send() reads it to decide whether a warm
+    // child spawned outside proposal mode needs the grounding injected into
+    // the message for a proposal turn.
+    runtime.spawnedWithProposal = proposalActive
 
     // Launch the pump in the background. The pump owns the lifetime
     // of `runtime.handle` / `runtime.queue` — when it exits (cleanly
@@ -2504,7 +2539,8 @@ export class ChatEngine extends EventEmitter {
       readyReject: null,
       readySettled: false,
       pendingResume: false,
-      openedViaSend: false
+      openedViaSend: false,
+      spawnedWithProposal: false
     }
     this.sessions.set(sessionId, runtime)
     return runtime
