@@ -990,9 +990,47 @@ function makeSessionEventHandler(
           outputTokens: event.outputTokens
         })
         break
-      case 'end':
+      case 'end': {
+        // Proposal mode: accumulate completed assistant text into the
+        // right-side document panel. We read the accumulated text HERE,
+        // before endAssistantMessage() flips streaming=false, because
+        // the messages array in the store already holds the fully
+        // assembled text (each 'chunk' event appended into it via
+        // appendAssistantDelta). Reading at 'end' (once per message)
+        // is the correct anti-duplication point — never on 'chunk',
+        // which fires for every streaming token.
+        if (useProposalStore.getState().active) {
+          const slot = useChatStore.getState().perSession[sid]
+          if (slot) {
+            // Find the last assistant message in this session's message
+            // list. That's the one that just finished streaming.
+            const msgs = slot.messages
+            let lastAssistantText = ''
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              const msg = msgs[i] as { role: string; content: unknown[] }
+              if (msg.role === 'assistant') {
+                // Content is an array of parts: { type: string; text?: string; ... }
+                // Collect all 'text' parts (skip 'reasoning' / tool-call parts).
+                lastAssistantText = (
+                  msg.content as Array<{ type: string; text?: string }>
+                )
+                  .filter((p) => p.type === 'text' && p.text)
+                  .map((p) => p.text!)
+                  .join('')
+                break
+              }
+            }
+            if (lastAssistantText.trim()) {
+              const cur = useProposalStore.getState().docMarkdown
+              useProposalStore
+                .getState()
+                .setDoc(`${cur}\n\n${lastAssistantText}`.trimStart())
+            }
+          }
+        }
         actions.endAssistantMessage(sid)
         break
+      }
       case 'error':
         actions.setError(sid, event.messageId, event.error)
         actions.endAssistantMessage(sid)
