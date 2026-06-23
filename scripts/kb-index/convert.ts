@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import type { ScanEntry } from './scan.ts'
+import { extractDataUriImages } from './assets.ts'
 
 export interface ConvertResult {
   markdown: string
@@ -11,14 +12,14 @@ export interface ConvertResult {
 }
 
 function tryMarkitdown(src: string, assetsDir: string): { md: string; assets: string[] } {
-  // markitdown 把文档转 markdown 到 stdout；--keep-data-uris 关闭，改用 -o 落盘可控
+  // markitdown 0.1.6 默认把 data-uri 截断为 "..."，必须传 --keep-data-uris 才保留完整 base64。
+  // Task 3 的 extractDataUriImages 依赖完整 base64，因此这里加该标志。
   mkdirSync(assetsDir, { recursive: true })
-  const md = execFileSync('markitdown', [src], {
+  const md = execFileSync('markitdown', ['--keep-data-uris', src], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024
   })
-  // markitdown 当前版本不单独导图；内嵌图以 data-uri 形式留在 md 里，
-  // 由 Task 3 统一抽取落盘。这里 assets 先返回空。
+  // 内嵌图以 data-uri 形式留在 md 里，由 extractDataUriImages 统一抽取落盘。
   return { md, assets: [] }
 }
 
@@ -38,8 +39,10 @@ export async function convertFile(entry: ScanEntry, outDir: string): Promise<Con
     return { markdown: readFileSync(entry.sourcePath, 'utf8'), assets: [], ok: true }
   }
   try {
-    const { md, assets } = tryMarkitdown(entry.sourcePath, assetsDir)
-    if (md.trim().length > 0) return { markdown: md, assets, ok: true }
+    const { md } = tryMarkitdown(entry.sourcePath, assetsDir)
+    const extracted = extractDataUriImages(md, assetsDir)
+    if (extracted.markdown.trim().length > 0)
+      return { markdown: extracted.markdown, assets: extracted.assets, ok: true }
     throw new Error('markitdown 输出为空')
   } catch (e) {
     try {
