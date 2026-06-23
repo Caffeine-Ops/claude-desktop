@@ -119,8 +119,12 @@ export function ScenarioQuickStart(): React.JSX.Element {
   // panel won't be visible anyway.
   const activeSessionId = useChatStore((s) => s.sessionId) ?? ''
 
+  const resetProposal = useProposalStore((s) => s.reset)
+
   const onPickScenario = useCallback(
     (promptKey: StringKey) => {
+      // 切到非方案场景时退出方案模式，避免 proposalMode 泄漏到普通会话。
+      resetProposal()
       const text = t(promptKey)
       composer.setText(text)
       // Focus the editor so the user can immediately edit the bracketed
@@ -133,7 +137,7 @@ export function ScenarioQuickStart(): React.JSX.Element {
         el?.focus()
       })
     },
-    [composer, t]
+    [composer, resetProposal, t]
   )
 
   // Called once the user picks a product in the dialog.
@@ -146,7 +150,11 @@ export function ScenarioQuickStart(): React.JSX.Element {
   //  4. Focus ProseMirror so the user is ready to hit Enter.
   const onPickProduct = useCallback(
     (productLine: string, product: string) => {
-      startProposal(productLine, product)
+      // 传入当前前台 sessionId，绑定方案模式到发起它的会话；
+      // activeSessionId 为 '' 说明还没有 session，此时本就不应触发方案，
+      // 但 early-return 在 ProductPickerDialog 之前不易做，所以透传 ''——
+      // FusionRuntimeProvider 那侧的门控（ps.sessionId === targetSid）天然排掉它。
+      startProposal(productLine, product, activeSessionId)
       setTodos(
         activeSessionId,
         PROPOSAL_TEMPLATE.sections.map((sec) => ({

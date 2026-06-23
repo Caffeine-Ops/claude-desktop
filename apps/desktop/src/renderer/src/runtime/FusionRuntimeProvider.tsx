@@ -440,7 +440,12 @@ export function FusionRuntimeProvider({
           // 透传方案写作模式：engine 在本次 spawn 时据此烘焙方案专家系统提示词 +
           // 把知识库镜像目录加进可读范围。读最新快照（getState，非订阅）即可——
           // 只在发送瞬间求值，不需要让 send 闭包随 store 变化重建。
-          proposalMode: useProposalStore.getState().active
+          // 门控：只有当前正在发送的 targetSid 与方案绑定的 sessionId 相同时
+          // 才为 true，防止方案模式泄漏到其他会话（多 tab / 后台 agent）。
+          proposalMode: (() => {
+            const ps = useProposalStore.getState()
+            return ps.active && ps.sessionId === targetSid
+          })()
         })
       } catch (err) {
         console.error('[runtime] send failed', err)
@@ -999,7 +1004,10 @@ function makeSessionEventHandler(
         // appendAssistantDelta). Reading at 'end' (once per message)
         // is the correct anti-duplication point — never on 'chunk',
         // which fires for every streaming token.
-        if (useProposalStore.getState().active) {
+        // 门控：只把方案绑定会话（ps.sessionId === sid）的输出累积进草稿，
+        // 防止别的会话（多 tab / 后台 agent）的 end 事件污染 docMarkdown。
+        const _ps = useProposalStore.getState()
+        if (_ps.active && _ps.sessionId === sid) {
           const slot = useChatStore.getState().perSession[sid]
           if (slot) {
             // Find the last assistant message in this session's message

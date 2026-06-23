@@ -1,20 +1,14 @@
 import { dialog, BrowserWindow } from 'electron'
 import { writeFileSync } from 'node:fs'
-
-/**
- * Supported export formats for a proposal document.
- *
- * MVP implements only `'md'` (raw markdown, written directly to disk).
- * To add Word or PDF support later, extend this union and add a matching
- * arm to the switch below — the IPC surface (`format` field on the
- * payload) and the preload signature are already parameterised on this
- * type, so no IPC changes are needed.
- */
-export type ExportFormat = 'md' // 进阶加 'docx' | 'pdf'
+import type { ProposalExportFormat } from '../../shared/ipc-channels'
 
 /**
  * Show the OS native save dialog and, if the user confirms, write the
  * proposal document to disk in the requested format.
+ *
+ * Uses `ProposalExportFormat` from shared/ipc-channels (the single source of
+ * truth for this union) instead of a local duplicate — the two were identical
+ * (`'md'`) but maintaining them separately risked drift when new formats land.
  *
  * @param win      - The BrowserWindow to anchor the dialog to (modal on macOS).
  * @param markdown - The raw markdown string from the renderer's doc store.
@@ -28,7 +22,7 @@ export type ExportFormat = 'md' // 进阶加 'docx' | 'pdf'
 export async function exportProposal(
   win: BrowserWindow,
   markdown: string,
-  format: ExportFormat
+  format: ProposalExportFormat
 ): Promise<{ path: string | null }> {
   const filters =
     format === 'md' ? [{ name: 'Markdown', extensions: ['md'] }] : []
@@ -49,7 +43,7 @@ export async function exportProposal(
     // future: case 'pdf':  await convertToPdf(r.filePath, markdown);  break
     default: {
       // TypeScript exhaustiveness guard — compile-time error if a new
-      // ExportFormat variant is added without a handler here.
+      // ProposalExportFormat variant is added without a handler here.
       const _exhaustive: never = format
       throw new Error(`Unsupported export format: ${String(_exhaustive)}`)
     }
