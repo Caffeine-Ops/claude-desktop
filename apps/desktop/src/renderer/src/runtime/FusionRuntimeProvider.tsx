@@ -21,6 +21,7 @@ import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
 import { useDialogStore, type DialogKind } from '../stores/dialogs'
 import { isLoggedIn, useAuthStore } from '../stores/auth'
+import { useSessionListStore } from '../stores/sessionList'
 import {
   useTodosStore,
   extractTodoWriteItems,
@@ -408,15 +409,9 @@ export function FusionRuntimeProvider({
         if (baseText) runtimeRef.current?.thread.composer.setText(baseText)
         return
       }
-      // 登录回填窗口：login() 同步把 loggedIn 翻 true，但 tenantId 要等 computeTenantId
-      // 这个微任务算完才回填到主进程（见 stores/auth.ts login）。这段间隙里若发送，
-      // 主进程 getActiveTenantId() 仍是 null → openSession 抛 'openSession blocked'，
-      // 用户刚登录就吃一条原始报错。此时用户其实已登录、不该再弹登录框，故静默丢弃
-      // 本次发送并回填草稿，等 tenantId 落定后重发即可（窗口仅几毫秒，极少命中）。
-      if (!auth.tenantId) {
-        if (baseText) runtimeRef.current?.thread.composer.setText(baseText)
-        return
-      }
+      // 注：曾有「loggedIn 已翻 true 但 tenantId 还没回填」的微任务窗口需要在此
+      // 兜底。现在身份派生收归主进程（login → commitLogin → adopt 权威快照），
+      // loggedIn 与 tenantId 同拍落地，该窗口不复存在，故无需再单独判 tenantId。
 
       // 1) Push user turn into the store — Thread shows it instantly.
       // Build the content-part array we want the UI to render: the
@@ -606,15 +601,27 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
       if (!isLoggedIn()) {
         setThreads([])
         setThreadsLoaded(true)
+        // Signed-out isn't an error — clear any stale banner so it doesn't
+        // linger over the (correctly) empty rail after a logout.
+        useSessionListStore.getState().setLoadError(null)
         return []
       }
       try {
         const result = await window.chatApi.listSessions()
         if (cancelled) return null
         setThreads(result.threads)
+        useSessionListStore.getState().setLoadError(null)
         return result.threads
       } catch (err) {
         console.error('[runtime] listSessions failed', err)
+        // Surface the failure so the sidebar can show a banner + retry
+        // instead of a blank rail indistinguishable from "no chats". Guard
+        // on `cancelled` so a late rejection after unmount doesn't write
+        // back into a torn-down tree's store slice.
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : String(err)
+          useSessionListStore.getState().setLoadError(msg)
+        }
         return null
       } finally {
         // Mark the initial load as done even on error so the
@@ -625,6 +632,11 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     }
 
     void refresh()
+    // Expose a stable retry for the sidebar's error banner. The effect has
+    // empty deps so `refresh` is fixed for this mount; the cleanup nulls it.
+    useSessionListStore.getState().setRetry(() => {
+      void refresh()
+    })
     const unsub = window.chatApi.onSessionListChanged(() => {
       void (async () => {
         const result = await refresh()
@@ -652,6 +664,12 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     return () => {
       cancelled = true
       unsub()
+      // Drop the retry + any error banner: `refresh` closes over the now-
+      // stale `cancelled`, so leaving them around would let the sidebar
+      // fire a no-op retry against a torn-down effect.
+      const s = useSessionListStore.getState()
+      s.setRetry(null)
+      s.setLoadError(null)
     }
   }, [])
 
@@ -784,15 +802,35 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
   // Map ThreadSummary[] → ExternalStoreThreadData<'regular'>[] once
   // per threads change. Memoized so the runtime's rerender path
   // doesn't fire diff-by-identity on every parent rerender.
-  const threadData = useMemo(
-    () =>
-      threads.map((t) => ({
-        status: 'regular' as const,
-        id: t.id,
-        title: t.title
-      })),
-    [threads]
-  )
+  //
+  // CRITICAL invariant: assistant-ui derives `mainThreadId` straight from
+  // `adapter.threadId` (= our sessionId), then looks that id up in this
+  // `threads` array (useExternalStoreRuntime → ThreadListRuntimeImpl). If
+  // `threadId` has no matching entry here, ThreadList construction throws
+  // `Entry not available in the store` — and with no error boundary above
+  // FusionRuntimeProvider that unmounts the entire tree (blank window).
+  // That id-not-in-list state is reachable two ways:
+  //   1. logged-out: refresh() short-circuits listSessions and returns [],
+  //      yet cold-start auto-select still mints a session and sets it as
+  //      sessionId → the new id can never appear in this (empty) list.
+  //   2. logged-in race: onSwitchToNewThread sets sessionId before the
+  //      onSessionListChanged → listSessions round-trip folds the new id
+  //      into `threads`, so there's a frame where threadId ∉ threads.
+  // Close the gap by synthesizing a placeholder entry for the active
+  // sessionId whenever it isn't (yet) in `threads`. A later listSessions
+  // carrying the real title supersedes it (same id); in the logged-out
+  // case it simply stays as the single current chat.
+  const threadData = useMemo(() => {
+    const mapped = threads.map((t) => ({
+      status: 'regular' as const,
+      id: t.id,
+      title: t.title
+    }))
+    if (sessionId && !threads.some((t) => t.id === sessionId)) {
+      mapped.unshift({ status: 'regular' as const, id: sessionId, title: 'New chat' })
+    }
+    return mapped
+  }, [threads, sessionId])
 
   return useMemo<ExternalStoreThreadListAdapter>(
     () => ({
