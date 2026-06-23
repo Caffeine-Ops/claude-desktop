@@ -16,6 +16,7 @@ import {
 } from '@assistant-ui/react'
 
 import { useChatStore } from '../stores/chat'
+import { useProposalStore } from '../stores/proposal'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
@@ -435,7 +436,11 @@ export function FusionRuntimeProvider({
           // We still pass an empty string (not undefined) so the wire
           // shape stays stable.
           text: text,
-          images: images.length > 0 ? images : undefined
+          images: images.length > 0 ? images : undefined,
+          // 透传方案写作模式：engine 在本次 spawn 时据此烘焙方案专家系统提示词 +
+          // 把知识库镜像目录加进可读范围。读最新快照（getState，非订阅）即可——
+          // 只在发送瞬间求值，不需要让 send 闭包随 store 变化重建。
+          proposalMode: useProposalStore.getState().active
         })
       } catch (err) {
         console.error('[runtime] send failed', err)

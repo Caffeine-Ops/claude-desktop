@@ -236,7 +236,14 @@ export function registerIpcHandlers(): void {
       validateText(payload?.text)
       const images = validateImages(payload?.images)
       const engine = resolveEngine(event)
-      return await engine.send(payload.sessionId, payload.text, images)
+      // proposalMode is a plain boolean flag; coerce defensively so a
+      // malformed renderer payload can't smuggle a non-bool through.
+      return await engine.send(
+        payload.sessionId,
+        payload.text,
+        images,
+        payload?.proposalMode === true
+      )
     }
   )
 

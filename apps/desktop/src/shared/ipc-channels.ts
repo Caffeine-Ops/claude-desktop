@@ -511,6 +511,22 @@ export type ChatSendPayload = {
   sessionId: string
   text: string
   images?: readonly ChatImagePayload[]
+  /**
+   * 方案写作模式开关。渲染层在 send 时透传 `useProposalStore.getState().active`。
+   *
+   * 为什么走 send payload 而不是单独一条 IPC：方案 append 是在 fusion-code 子进程
+   * spawn 时（openSession）烘焙的，而本项目 lazy spawn——真正的冷启动延迟到首次
+   * send()。把 flag 挂在 send 上，能保证「首次 send 触发 spawn」那一刻 engine 就读
+   * 得到方案模式，append 与 additionalDirectories 才来得及生效。
+   *
+   * 已知局限（MVP 可接受）：switchToSession 的后台 warmup 可能在用户选产品/开方案
+   * 模式之前就 warm-spawn 了子进程；那个进程的 append 不含方案纪律。但 warmup 只
+   * spawn 从未 send 过的 runtime，一旦用户真正发出首条方案消息，若该 runtime 已被
+   * warm-spawn，则这条消息复用旧进程、append 不重新烘焙。实践中用户进方案模式后的
+   * 第一条消息通常落在新 session 上，影响有限；彻底修复需在 warmup 阶段也透传方案
+   * 信号，超出本任务范围。
+   */
+  proposalMode?: boolean
 }
 export type ChatSendResult = { messageId: string }
 export type ChatAbortPayload = { sessionId: string }

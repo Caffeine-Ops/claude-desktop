@@ -50,8 +50,10 @@ import {
   type SdkExternalMcpServers
 } from './externalMcp'
 import { invalidateFileSuggestions } from './fileSuggestions'
+import { kbOutDir } from './kbIndexStore'
 import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
+import { buildProposalAppend } from './proposalPrompt'
 import { seedSkillsFromDisk } from './seedSkills'
 
 /**
@@ -446,6 +448,21 @@ export class ChatEngine extends EventEmitter {
 
   /** In-flight refresh dedupe so a burst of sends issues one fetch. */
   private externalMcpRefresh: Promise<void> | null = null
+
+  /**
+   * 方案写作模式开关。由 send() 在每次发送时从 payload 透传写入，openSession 在
+   * spawn 烘焙 systemPrompt.append / additionalDirectories 时读取。
+   *
+   * 为什么是 per-engine 字段而非 send 参数直传 openSession：openSession 由
+   * ensureSessionReady → 走 lazy spawn 路径触发，调用栈里不携带 send 的局部变量；
+   * 把它落成实例字段，让「首次 send 设标志 → ensureSessionReady spawn → openSession
+   * 读标志」这条链路成立。每次 send 都重写，所以它反映的是最近一次发送的意图。
+   *
+   * 注意：这是「下一次 spawn 生效」的语义，不是「立即对已 spawn 的进程生效」。
+   * 已 spawn 的子进程其 append 已烘焙、无法热更新（见 ChatSendPayload.proposalMode
+   * 注释里的 warmup 局限）。
+   */
+  private proposalMode = false
 
   constructor(webContents: WebContents, opts: ChatEngineOptions = {}) {
     super()
@@ -857,8 +874,14 @@ export class ChatEngine extends EventEmitter {
   async send(
     sessionId: string,
     text: string,
-    images?: readonly ChatImagePayload[]
+    images?: readonly ChatImagePayload[],
+    proposalMode = false
   ): Promise<{ messageId: string }> {
+    // Record the proposal-mode intent for THIS turn BEFORE anything below
+    // can trigger a spawn (ensureSessionReady → openSession reads it). Set
+    // unconditionally so leaving proposal mode also takes effect on the
+    // next fresh spawn. See the field doc for the "next spawn" semantics.
+    this.proposalMode = proposalMode
     // Hard gate: the workspace must have been picked via the drag-drop
     // gate before we spawn anything. The renderer already refuses to
     // render the composer until getWorkspace() returns a non-null path,
@@ -1183,6 +1206,18 @@ export class ChatEngine extends EventEmitter {
       pythonHome: pythonHome ?? '(none)'
     })
 
+    // 方案写作模式：在常量中文 append 之后再拼一段「方案专家纪律」，并把知识库
+    // 文本镜像目录（userData/kb-index）的绝对路径写进提示词。镜像目录本身在下面
+    // 通过 additionalDirectories 加进可读范围——cwd 绝不改动（不变量）。
+    // proposalMode 由 send() 在本次 spawn 前写入（lazy spawn 语义见字段注释）。
+    const baseChineseAppend =
+      '始终用中文回复。所有解释、注释、与用户的交流都用中文。技术术语和代码标识符保留原形。'
+    const proposalActive = this.proposalMode
+    const mirrorDir = kbOutDir()
+    const systemPromptAppend = proposalActive
+      ? `${baseChineseAppend}\n\n${buildProposalAppend(mirrorDir)}`
+      : baseChineseAppend
+
     const queue = new AsyncMessageQueue<unknown>()
     runtime.queue = queue
 
@@ -1214,6 +1249,12 @@ export class ChatEngine extends EventEmitter {
       // 去跑那个 .js。undefined 时 SDK 回退默认（dev 下裸 'node' 通常能在 PATH 命中）。
       ...(jsRuntimeBin ? { executable: jsRuntimeBin as 'node' } : {}),
       cwd: this.getWorkingDirectory(),
+      // 方案模式才扩大可读范围到知识库镜像目录（绝对路径）。SDK 0.2.98 的字段是
+      // `additionalDirectories?: string[]`（sdk.d.ts:962，注释「Additional directories
+      // Claude can access beyond the current working directory. Paths should be
+      // absolute.」）。spread-omit：非方案模式不传，等价于不设——绝不通过这个字段
+      // 或 cwd 改变默认可读范围（cwd 不变量）。
+      ...(proposalActive ? { additionalDirectories: [mirrorDir] } : {}),
       // UI-picked permission mode. Values:
       //   - default           → canUseTool → broker → dialog (current flow)
       //   - plan              → SDK restricts to read-only tools, assistant
@@ -1355,11 +1396,13 @@ export class ChatEngine extends EventEmitter {
       // 保留原系统提示词，只在末尾拼一段。append 内容是常量，每次 spawn
       // 都 bit 一致，落在 prompt 尾部不影响上面那几个 cache_control 断点
       // （与 CLAUDE_CODE_ATTRIBUTION_HEADER=false 的缓存保护互不冲突）。
+      // 方案模式时 append = 中文指令 + 方案专家纪律（见上面 systemPromptAppend
+      // 的构造）；普通模式只有中文指令。始终保留 preset+append 模式，绝不整体
+      // 覆盖 systemPrompt——否则会丢掉 claude_code preset 自带的工具说明 / 权限语义。
       systemPrompt: {
         type: 'preset' as const,
         preset: 'claude_code' as const,
-        append:
-          '始终用中文回复。所有解释、注释、与用户的交流都用中文。技术术语和代码标识符保留原形。'
+        append: systemPromptAppend
       },
       // Pin fusion-code's session identity. Mutually exclusive: either
       // we're resuming an existing transcript (`resume`) or we're
