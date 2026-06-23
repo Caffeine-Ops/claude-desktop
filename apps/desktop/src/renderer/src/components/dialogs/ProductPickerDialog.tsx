@@ -55,7 +55,7 @@ export function ProductPickerDialog({
     if (f.product) tree.get(f.productLine)!.add(f.product)
   }
 
-  const isEmpty = tree.size === 0
+  const isEmpty = [...tree.values()].every((set) => set.size === 0)
 
   return (
     <div

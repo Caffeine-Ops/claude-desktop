@@ -155,7 +155,9 @@ export function ScenarioQuickStart(): React.JSX.Element {
           status: 'pending' as const
         }))
       )
-      const prompt = t('scenarioProposalPrompt').replace('[产品]', product)
+      const prompt = t('scenarioProposalPrompt')
+        .replace('[产品]', product)
+        .replace('[product]', product)
       composer.setText(prompt)
       queueMicrotask(() => {
         const el = document.querySelector<HTMLElement>('.ProseMirror')
