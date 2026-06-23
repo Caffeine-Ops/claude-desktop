@@ -417,7 +417,27 @@ export const IPC_CHANNELS = {
    * already applied the change locally. Distinct from APPEARANCE_SET, which
    * is the desktop renderer's own write-through-main path (also broadcasts).
    */
-  APPEARANCE_BROADCAST: 'appearance:broadcast'
+  APPEARANCE_BROADCAST: 'appearance:broadcast',
+  /**
+   * Renderer → main. Returns the current KB root path (or null when
+   * not yet configured) plus the fixed output directory for index
+   * artefacts (`userData/kb-index`). Called by the settings page to
+   * hydrate the KB path picker.
+   */
+  KB_PATH_GET: 'kb:path-get',
+  /**
+   * Renderer → main. Persists the user-picked KB root path to
+   * `userData/kb-config.json`. Takes effect immediately — subsequent
+   * KB_PATH_GET and KB_INDEX_READ calls reflect the new root.
+   */
+  KB_PATH_SET: 'kb:path-set',
+  /**
+   * Renderer → main. Reads `userData/kb-index/index.json` and
+   * returns the parsed KbIndex, or null when the file doesn't
+   * exist yet (index not yet built). The renderer uses this to
+   * decide whether to show the "build index" CTA or the ready state.
+   */
+  KB_INDEX_READ: 'kb:index-read'
 } as const
 
 /**
@@ -1078,6 +1098,28 @@ export interface ChatApi {
    * Resolves once main has torn the overlay view down.
    */
   closeSettingsWindow(): Promise<void>
+
+  /**
+   * Read the current KB root path and the fixed output directory.
+   * `kbRoot` is null when the user hasn't picked one yet.
+   * `outDir` is always `userData/kb-index` (computed in main).
+   */
+  getKbPath(): Promise<{ kbRoot: string | null; outDir: string }>
+
+  /**
+   * Persist the user-picked KB root path. Main writes it to
+   * `userData/kb-config.json`; subsequent getKbPath / readKbIndex
+   * calls reflect the update immediately.
+   */
+  setKbPath(kbRoot: string): Promise<void>
+
+  /**
+   * Read the built knowledge-base index from `userData/kb-index/index.json`.
+   * Returns null when the file doesn't exist yet (index not yet built).
+   * The renderer uses this to decide whether to show the build CTA or
+   * the ready state.
+   */
+  readKbIndex(): Promise<import('./kbIndex').KbIndex | null>
 }
 
 /**

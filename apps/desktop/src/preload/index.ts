@@ -376,6 +376,21 @@ const chatApi: ChatApi = {
 
   closeSettingsWindow(): Promise<void> {
     return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE) as Promise<void>
+  },
+
+  getKbPath(): Promise<{ kbRoot: string | null; outDir: string }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_PATH_GET) as Promise<{
+      kbRoot: string | null
+      outDir: string
+    }>
+  },
+
+  setKbPath(kbRoot: string): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_PATH_SET, kbRoot) as Promise<void>
+  },
+
+  readKbIndex() {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_INDEX_READ)
   }
 }
 

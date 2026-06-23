@@ -78,6 +78,8 @@ import type {
   UiPermissionMode
 } from '../../shared/ipc-channels'
 import { clearLogs, getLogs } from '../core/logCollector'
+import { getKbRoot, setKbRoot, readKbIndex, kbOutDir } from '../core/kbIndexStore'
+import type { KbIndex } from '../../shared/kbIndex'
 
 /**
  * Resolve the ChatEngine for the window that sent this IPC event.
@@ -209,6 +211,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_CLI_BACKEND_SET)
   ipcMain.removeHandler(IPC_CHANNELS.LOGS_GET)
   ipcMain.removeHandler(IPC_CHANNELS.LOGS_CLEAR)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_PATH_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_PATH_SET)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_INDEX_READ)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -946,6 +951,36 @@ export function registerIpcHandlers(): void {
           : null
       }
     }
+  )
+
+  // ── Knowledge-base path configuration and index reading ─────────────
+  //
+  // Engine-free: these handlers touch only the app-global userData
+  // directory, not any per-tab ChatEngine. The KB root path is written
+  // to `userData/kb-config.json` by KB_PATH_SET and re-read by
+  // KB_PATH_GET alongside the fixed `outDir` so the renderer can
+  // populate its settings UI in a single round-trip. KB_INDEX_READ
+  // loads the Phase-A build output from `outDir/index.json` and
+  // returns null when it doesn't exist yet — the renderer treats null
+  // as "not ready" and shows the build CTA.
+  ipcMain.handle(
+    IPC_CHANNELS.KB_PATH_GET,
+    async (): Promise<{ kbRoot: string | null; outDir: string }> => ({
+      kbRoot: getKbRoot(),
+      outDir: kbOutDir()
+    })
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.KB_PATH_SET,
+    async (_e, kbRoot: string): Promise<void> => {
+      setKbRoot(kbRoot)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.KB_INDEX_READ,
+    async (): Promise<KbIndex | null> => readKbIndex()
   )
 
   // Engine-to-renderer event forwarding lives in the ChatEngine
