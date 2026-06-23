@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="zh-CN" class="">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Open Design · 登录入口 + 弹窗</title>
+<style>
+  /* ============================================================
+     设计 token —— 取自 packages/design-tokens/tokens.css
+     ============================================================ */
+  :root {
+    --background: 240 7% 97%;
+    --foreground: 240 3% 12%;
+    --card: 0 0% 100%;
+    --primary: 211 100% 45%;
+    --primary-foreground: 0 0% 100%;
+    --muted: 240 5% 93%;
+    --muted-foreground: 240 4% 40%;
+    --border: 240 6% 84%;
+    --input: 240 6% 86%;
+    --ring: 211 100% 45%;
+    --destructive: 0 72% 50%;
+    --sidebar: 240 7% 96%;
+    --chip-mention: 158 64% 40%;
+
+    --brand-ink: #1f1b16;
+    --brand-accent: #c2532d;
+    --brand-accent-h: 14 65% 47%;
+
+    --panel-1: #211d18;
+    --panel-2: #14110e;
+    --panel-fg: #efe9df;
+    --panel-cross: #db6a38;
+
+    --radius-sm: 8px;
+    --radius-md: 11px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+    --radius-pill: 980px;
+
+    --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+      'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+    color-scheme: light;
+  }
+  html.dark {
+    --background: 40 6% 10%;
+    --foreground: 40 21% 89%;
+    --card: 30 3% 13%;
+    --primary: 210 100% 58%;
+    --primary-foreground: 0 0% 100%;
+    --muted: 36 6% 17%;
+    --muted-foreground: 36 5% 58%;
+    --border: 49 12% 18%;
+    --input: 42 8% 25%;
+    --ring: 210 100% 58%;
+    --sidebar: 40 6% 10%;
+    --chip-mention: 158 55% 48%;
+    --brand-ink: #e8e4dc;
+    --brand-accent-h: 16 70% 55%;
+    --panel-1: #1b1815;
+    --panel-2: #100e0c;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    color: hsl(var(--foreground));
+    background: hsl(var(--background));
+    overflow: hidden;
+  }
+  /* 项目签名光晕背景 */
+  body::before { content: ''; position: fixed; inset: 0; z-index: -1;
+    background-image:
+      radial-gradient(1500px 850px at 50% -24%, hsla(0,0%,100%,1) 0%, hsla(240,7%,97%,0) 62%),
+      radial-gradient(1300px 850px at 50% 124%, hsla(240,6%,90%,.7) 0%, hsla(240,7%,97%,0) 52%);
+    background-attachment: fixed; }
+  html.dark body::before { background-image: radial-gradient(1100px 760px at 50% -28%, hsla(40,9%,16%,.7) 0%, hsla(40,6%,10%,0) 58%); }
+
+  /* ============================================================
+     应用外壳
+     ============================================================ */
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  .chrome {
+    height: 46px; flex: none; display: flex; align-items: center; gap: 12px;
+    padding: 0 14px; border-bottom: 1px solid hsl(var(--border));
+    background: hsl(var(--background) / .72); backdrop-filter: saturate(180%) blur(28px);
+  }
+  .lights { display: flex; gap: 8px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .lights .r { background: #ff5f57; } .lights .y { background: #febc2e; } .lights .g { background: #28c840; }
+  .tab { margin-left: 10px; height: 28px; padding: 0 12px; display: flex; align-items: center; gap: 7px; border-radius: var(--radius-sm); background: hsl(var(--muted) / .8); font-size: 12.5px; font-weight: 500; }
+  .tab .dot { width: 6px; height: 6px; border-radius: 50%; background: hsl(var(--chip-mention)); }
+  .chrome .spacer { flex: 1; }
+  .gear { width: 28px; height: 28px; display: grid; place-items: center; border: 0; background: transparent; border-radius: var(--radius-sm); color: hsl(var(--muted-foreground) / .7); cursor: pointer; transition: background-color .15s ease, color .15s ease; }
+  .gear:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+
+  .body { flex: 1; display: flex; min-height: 0; }
+
+  /* ---------------- 侧栏 ---------------- */
+  .sidebar { width: 266px; flex: none; display: flex; flex-direction: column; background: hsl(var(--sidebar)); border-right: 1px solid hsl(var(--border)); }
+  .side-top { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .newchat { height: 36px; display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid hsl(var(--border)); background: hsl(var(--card)); border-radius: var(--radius-md); font-size: 13px; font-weight: 600; color: hsl(var(--foreground)); cursor: pointer; transition: background-color .15s ease, border-color .15s ease; }
+  .newchat:hover { border-color: hsl(var(--input)); background: hsl(var(--card)); }
+  .search { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid hsl(var(--input)); border-radius: var(--radius-md); background: hsl(var(--card) / .6); color: hsl(var(--muted-foreground)); font-size: 12.5px; }
+
+  .side-scroll { flex: 1; overflow: auto; padding: 6px 8px 10px; }
+  .side-label { padding: 8px 8px 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; color: hsl(var(--muted-foreground) / .8); }
+  .conv { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: var(--radius-md); cursor: pointer; transition: background-color .12s ease; }
+  .conv:hover { background: hsl(var(--foreground) / .05); }
+  .conv.active { background: hsl(var(--foreground) / .07); }
+  .conv .ic { flex: none; margin-top: 1px; color: hsl(var(--muted-foreground) / .8); }
+  .conv .meta { min-width: 0; flex: 1; }
+  .conv .title { font-size: 13px; color: hsl(var(--foreground)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .conv .sub { margin-top: 2px; font-size: 11px; color: hsl(var(--muted-foreground)); display: flex; align-items: center; gap: 5px; }
+  .conv .sdot { width: 6px; height: 6px; border-radius: 50%; }
+  .sdot.run { background: hsl(var(--chip-mention)); box-shadow: 0 0 0 3px hsl(var(--chip-mention) / .18); }
+  .sdot.wait { background: #f5a623; box-shadow: 0 0 0 3px hsl(38 90% 55% / .2); }
+
+  /* ====== 顶栏右侧图标钮（登录 / 待办 / 设置 同排） ====== */
+  .icon-btn { position: relative; width: 30px; height: 30px; display: grid; place-items: center; border: 0; background: transparent; border-radius: var(--radius-sm); color: hsl(var(--muted-foreground) / .7); cursor: pointer; transition: background-color .15s ease, color .15s ease; }
+  .icon-btn:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+  .badge-dot { position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--primary)); border: 1.5px solid hsl(var(--background)); }
+
+  /* 登录入口：头像图标钮 */
+  .acct { position: relative; }
+  .acct-avatar { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; }
+  /* 未登录：中性实心圈 + 人形（克制、专业） */
+  .acct-avatar.out { background: hsl(var(--muted)); border: 1px solid hsl(var(--border)); color: hsl(var(--muted-foreground)); }
+  /* 已登录：深墨实心 + 品牌十字星（呼应弹窗墨栏） */
+  .acct-avatar.in { background: linear-gradient(150deg, #2a2520, #15110d); box-shadow: inset 0 1px 0 hsl(0 0% 100% / .08); }
+
+  /* 账户下拉菜单（向下展开，右对齐） */
+  .menu {
+    position: absolute; top: calc(100% + 8px); right: 0; width: 232px;
+    background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: var(--radius-md);
+    box-shadow: 0 18px 44px -14px rgba(0,0,0,.45); padding: 6px; z-index: 30;
+    opacity: 0; transform: translateY(-6px); pointer-events: none; transition: opacity .15s ease, transform .15s ease;
+  }
+  .menu.show { opacity: 1; transform: none; pointer-events: auto; }
+  .menu-head { display: flex; align-items: center; gap: 10px; padding: 8px 9px 10px; }
+  .mh-title { display: block; font-size: 13px; font-weight: 600; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; }
+  .mh-sub { display: block; margin-top: 1px; font-size: 11px; color: hsl(var(--muted-foreground)); }
+  .menu-div { height: 1px; background: hsl(var(--border)); margin: 2px 4px 4px; }
+  .menu button { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 9px; border: 0; background: transparent; border-radius: var(--radius-sm); font-family: inherit; font-size: 12.5px; color: hsl(var(--foreground)); cursor: pointer; transition: background-color .12s ease; }
+  .menu button:hover { background: hsl(var(--foreground) / .06); }
+  .menu button.danger { color: hsl(var(--destructive)); }
+  .menu button.danger:hover { background: hsl(var(--destructive) / .1); }
+
+  /* ---------------- 主区（占位对话，弱化） ---------------- */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .thread { flex: 1; overflow: auto; padding: 40px 18%; display: flex; flex-direction: column; gap: 16px; opacity: .9; }
+  .bubble { max-width: 80%; padding: 14px 16px; border-radius: 16px; border: 1px solid hsl(var(--border)); background: hsl(var(--card)); font-size: 14px; line-height: 1.6; color: hsl(var(--foreground)); }
+  .bubble.me { align-self: flex-end; background: hsl(var(--primary) / .1); border-color: transparent; }
+  .composer { flex: none; padding: 14px 18%; }
+  .composer .box { height: 52px; border: 1px solid hsl(var(--input)); border-radius: var(--radius-lg); background: hsl(var(--card) / .7); display: flex; align-items: center; padding: 0 16px; color: hsl(var(--muted-foreground)); font-size: 14px; }
+
+  /* ============================================================
+     登录弹窗 v2（已定稿）
+     ============================================================ */
+  .overlay { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; padding: 24px; background: rgba(0,0,0,.5); backdrop-filter: blur(7px); }
+  .overlay.show { display: flex; animation: fade .3s ease both; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  html.dark .overlay { background: rgba(0,0,0,.6); }
+
+  .dialog { position: relative; width: 760px; max-width: 100%; display: grid; grid-template-columns: 320px 1fr; border-radius: var(--radius-xl); overflow: hidden; background: hsl(var(--card));
+    box-shadow: 0 0 0 1px hsl(var(--border)), 0 50px 130px -30px rgba(0,0,0,.55), 0 18px 50px -24px hsl(var(--brand-accent-h) / .35);
+    animation: pop .42s cubic-bezier(.16,1,.3,1) both; }
+  @keyframes pop { from { opacity: 0; transform: translateY(12px) scale(.975); } to { opacity: 1; transform: none; } }
+  .dialog::before { content: ''; position: absolute; inset: 0; z-index: 4; pointer-events: none; border-radius: inherit; padding: 1px;
+    background: linear-gradient(180deg, hsl(0 0% 100% / .5), hsl(0 0% 100% / 0) 22%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+  html.dark .dialog::before { background: linear-gradient(180deg, hsl(0 0% 100% / .08), hsl(0 0% 100% / 0) 22%); }
+
+  .close { position: absolute; top: 14px; right: 14px; z-index: 6; width: 30px; height: 30px; display: grid; place-items: center; border: 0; background: transparent; border-radius: var(--radius-sm); color: hsl(var(--muted-foreground) / .85); font-size: 15px; cursor: pointer; transition: background-color .15s ease, color .15s ease; }
+  .close:hover { background: hsl(var(--muted) / .8); color: hsl(var(--foreground)); }
+
+  .panel { position: relative; overflow: hidden; padding: 38px 30px; display: flex; flex-direction: column; color: var(--panel-fg); background: linear-gradient(155deg, var(--panel-1), var(--panel-2)); }
+  .panel .pglow1 { position: absolute; width: 360px; height: 360px; border-radius: 50%; filter: blur(70px); bottom: -120px; left: -100px; background: hsl(var(--brand-accent-h) / .45); }
+  .panel .pglow2 { position: absolute; width: 300px; height: 300px; border-radius: 50%; filter: blur(80px); top: -110px; right: -90px; background: hsl(210 90% 55% / .22); }
+  .panel .pgrain { position: absolute; inset: 0; opacity: .5; mix-blend-mode: soft-light; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E"); }
+  .panel > * { position: relative; z-index: 1; }
+  .plogo { width: 46px; height: 46px; }
+  .plogo .cross { transform-origin: 32px 32px; animation: cross-in .8s cubic-bezier(.16,1,.3,1) .25s both; filter: drop-shadow(0 0 8px hsl(var(--brand-accent-h) / .5)); }
+  @keyframes cross-in { from { opacity: 0; transform: rotate(-40deg) scale(.5); } to { opacity: 1; transform: none; } }
+  .panel .grow { flex: 1; }
+  .supertitle { font-size: 11px; font-weight: 600; letter-spacing: .22em; text-transform: uppercase; opacity: .55; }
+  .panel h2 { margin: 14px 0 0; font-weight: 600; font-size: 27px; line-height: 1.22; letter-spacing: -.01em; text-wrap: balance; }
+  .panel .lede { margin: 14px 0 0; font-size: 13px; line-height: 1.6; opacity: .62; max-width: 22ch; }
+  .panel .pfoot { font-size: 11px; opacity: .42; font-family: var(--font-mono); }
+
+  .form-wrap { padding: 46px 44px 30px; display: flex; flex-direction: column; }
+  .head { margin-bottom: 26px; }
+  .head .supertitle { color: hsl(var(--muted-foreground)); opacity: .8; }
+  .head h1 { margin: 8px 0 0; font-size: 24px; font-weight: 700; letter-spacing: -.012em; }
+  .head p { margin: 6px 0 0; font-size: 13px; color: hsl(var(--muted-foreground)); }
+
+  form { display: flex; flex-direction: column; gap: 12px; }
+  .label { font-size: 12px; font-weight: 600; color: hsl(var(--foreground) / .7); margin: 2px 0 -4px; }
+  .field { display: flex; align-items: center; height: 48px; border: 1px solid hsl(var(--input)); border-radius: var(--radius-md); background: hsl(var(--card)); box-shadow: inset 0 1px 2px hsl(var(--foreground) / .04); transition: border-color .16s ease, box-shadow .16s ease; }
+  .field:focus-within { border-color: hsl(var(--ring)); box-shadow: 0 0 0 3px hsl(var(--ring) / .16); }
+  .field.invalid { border-color: hsl(var(--destructive)); box-shadow: 0 0 0 3px hsl(var(--destructive) / .15); }
+  .cc { display: flex; align-items: center; gap: 4px; padding: 0 12px 0 15px; height: 22px; margin-right: 2px; border-right: 1px solid hsl(var(--border)); font-size: 15px; font-variant-numeric: tabular-nums; user-select: none; }
+  .cc svg { opacity: .5; }
+  .field input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; height: 100%; padding: 0 15px; font-family: inherit; font-size: 15px; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+  .field input::placeholder { color: hsl(var(--muted-foreground) / .75); letter-spacing: 0; }
+  .code-btn { flex: none; margin-right: 6px; padding: 0 12px; height: 34px; border: 0; background: transparent; border-radius: var(--radius-sm); color: hsl(var(--primary)); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background-color .15s ease, color .15s ease; }
+  .code-btn::before { content:''; display:inline-block; width:1px; height:18px; vertical-align:middle; margin-right:12px; background:hsl(var(--border)); }
+  .code-btn:hover:not(:disabled) { background: hsl(var(--primary) / .1); }
+  .code-btn:disabled { color: hsl(var(--muted-foreground)); cursor: not-allowed; font-variant-numeric: tabular-nums; }
+  .error { min-height: 15px; margin: -6px 2px 0; font-size: 12px; color: hsl(var(--destructive)); opacity: 0; transform: translateY(-2px); transition: opacity .15s ease, transform .15s ease; }
+  .error.show { opacity: 1; transform: none; }
+  .submit { position: relative; overflow: hidden; margin-top: 6px; height: 48px; border: 0; border-radius: var(--radius-md); background: linear-gradient(180deg, hsl(var(--primary)) 0%, hsl(var(--primary) / .92) 100%); color: hsl(var(--primary-foreground)); font-family: inherit; font-size: 15.5px; font-weight: 600; letter-spacing: -.01em; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 1px 0 hsl(0 0% 100% / .25) inset, 0 8px 20px -8px hsl(var(--primary) / .6); transition: filter .16s ease, transform .07s ease, box-shadow .16s ease, opacity .16s ease; }
+  .submit::after { content: ''; position: absolute; top: 0; left: -60%; width: 40%; height: 100%; background: linear-gradient(100deg, transparent, hsl(0 0% 100% / .35), transparent); transform: skewX(-18deg); transition: left .55s ease; }
+  .submit:hover:not(:disabled) { filter: brightness(1.05); box-shadow: 0 1px 0 hsl(0 0% 100% / .3) inset, 0 12px 28px -8px hsl(var(--primary) / .7); }
+  .submit:hover:not(:disabled)::after { left: 120%; }
+  .submit:active:not(:disabled) { transform: scale(.99); filter: brightness(.97); }
+  .submit:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+  .spinner { width: 16px; height: 16px; border: 2px solid hsl(var(--primary-foreground)/.35); border-top-color: hsl(var(--primary-foreground)); border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg);} }
+  .agree { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; font-size: 12px; line-height: 1.5; color: hsl(var(--muted-foreground)); }
+  .agree .box { flex: none; margin-top: 1px; width: 16px; height: 16px; border: 1.5px solid hsl(var(--input)); border-radius: 5px; display: grid; place-items: center; cursor: pointer; transition: background-color .15s ease, border-color .15s ease; }
+  .agree .box.checked { background: hsl(var(--primary)); border-color: hsl(var(--primary)); }
+  .agree .box svg { opacity: 0; transition: opacity .12s ease; }
+  .agree .box.checked svg { opacity: 1; }
+  .agree.shake { animation: shake .4s; }
+  @keyframes shake { 10%,90%{transform:translateX(-1px)} 30%,70%{transform:translateX(2px)} 50%{transform:translateX(-2px)} }
+  .agree a { color: hsl(var(--foreground)); text-decoration: none; font-weight: 500; }
+  .agree a:hover { color: hsl(var(--primary)); }
+  .spacer { flex: 1; min-height: 14px; }
+  .switch { margin-top: 8px; text-align: center; font-size: 12px; color: hsl(var(--muted-foreground)); }
+  .switch a { color: hsl(var(--primary)); text-decoration: none; font-weight: 500; }
+  .done { display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px; height: 100%; text-align: center; animation: pop .4s cubic-bezier(.16,1,.3,1) both; }
+  .done.show { display: flex; }
+  .done .ring { width: 60px; height: 60px; border-radius: 50%; background: hsl(var(--primary) / .12); display: grid; place-items: center; color: hsl(var(--primary)); }
+  .done h2 { margin: 0; font-size: 19px; font-weight: 600; }
+  .done p { margin: 0; font-size: 13px; color: hsl(var(--muted-foreground)); }
+  @media (max-width: 680px) { .dialog { grid-template-columns: 1fr; width: 400px; } .panel { display: none; } .form-wrap { padding: 40px 32px 26px; } }
+
+  /* Toast */
+  .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(12px); z-index: 70; padding: 10px 16px; border-radius: var(--radius-pill); background: hsl(var(--foreground)); color: hsl(var(--background)); font-size: 13px; font-weight: 500; box-shadow: 0 12px 30px -8px rgba(0,0,0,.45); opacity: 0; pointer-events: none; transition: opacity .25s ease, transform .25s ease; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* Tweaks */
+  .tweaks { position: fixed; top: 56px; right: 16px; z-index: 60; display: flex; align-items: center; gap: 6px; padding: 5px; border: 1px solid hsl(var(--border)); background: hsl(var(--card) / .7); backdrop-filter: saturate(180%) blur(20px); border-radius: var(--radius-pill); }
+  .tweaks button { height: 28px; padding: 0 11px; border: 0; background: transparent; border-radius: var(--radius-pill); color: hsl(var(--muted-foreground)); font-family: inherit; font-size: 12px; font-weight: 500; cursor: pointer; display: grid; place-items: center; transition: background-color .15s ease, color .15s ease; }
+  .tweaks button:hover { color: hsl(var(--foreground)); }
+  .tweaks button.on { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+  .tweaks .sep { width: 1px; height: 18px; background: hsl(var(--border)); }
+</style>
+</head>
+<body>
+
+  <div class="tweaks">
+    <button id="stateToggle" title="预览登录态">未登录</button>
+    <span class="sep"></span>
+    <button id="themeToggle" title="切换亮/暗">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="3.2"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M13 3l-1.1 1.1M4.1 11.9 3 13"/></svg>
+    </button>
+  </div>
+
+  <!-- ============ 应用外壳 ============ -->
+  <div class="app">
+    <div class="chrome">
+      <div class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+      <div class="tab"><span class="dot"></span>重构 monorepo 骨架</div>
+      <div class="spacer"></div>
+
+      <!-- 登录入口：头像图标钮（待办左侧） -->
+      <div class="acct" id="acct">
+        <button class="icon-btn" id="loginEntry" title="登录账户" aria-label="登录账户">
+          <span class="acct-avatar out" id="avOut">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="5.5" r="2.6"/><path d="M3.2 13c.6-2.4 2.5-3.6 4.8-3.6s4.2 1.2 4.8 3.6"/></svg>
+          </span>
+          <span class="acct-avatar in" id="avIn" style="display:none">
+            <svg width="15" height="15" viewBox="0 0 64 64" fill="none"><g stroke="var(--panel-cross)" stroke-width="4" stroke-linecap="round"><line x1="32" y1="22" x2="32" y2="42"/><line x1="22" y1="32" x2="42" y2="32"/><line x1="25" y1="25" x2="39" y2="39"/><line x1="39" y1="25" x2="25" y2="39"/></g></svg>
+          </span>
+        </button>
+        <div class="menu" id="menu">
+          <div class="menu-head">
+            <span class="acct-avatar in" style="width:36px;height:36px;flex:none">
+              <svg width="19" height="19" viewBox="0 0 64 64" fill="none"><g stroke="var(--panel-cross)" stroke-width="4" stroke-linecap="round"><line x1="32" y1="22" x2="32" y2="42"/><line x1="22" y1="32" x2="42" y2="32"/><line x1="25" y1="25" x2="39" y2="39"/><line x1="39" y1="25" x2="25" y2="39"/></g></svg>
+            </span>
+            <span style="min-width:0">
+              <span class="mh-title" id="mhPhone">138****8888</span>
+              <span class="mh-sub">已登录</span>
+            </span>
+          </div>
+          <div class="menu-div"></div>
+          <button><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="5.5" r="2.6"/><path d="M3.2 13c.6-2.4 2.5-3.6 4.8-3.6s4.2 1.2 4.8 3.6"/></svg>账户设置</button>
+          <button class="danger" id="logoutBtn"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 14H3.5v-12H6M10 11l3-3-3-3M13 8H6"/></svg>退出登录</button>
+        </div>
+      </div>
+
+      <!-- 待办 -->
+      <button class="icon-btn" id="todoBtn" title="待办" aria-label="待办">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h7.5M6 8h7.5M6 12h7.5"/><path d="m2.3 3.6.7.8 1.3-1.6M2.3 7.6l.7.8 1.3-1.6M2.3 11.6l.7.8 1.3-1.6"/></svg>
+        <span class="badge-dot"></span>
+      </button>
+
+      <button class="gear" title="设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+
+    <div class="body">
+      <!-- 侧栏 -->
+      <aside class="sidebar">
+        <div class="side-top">
+          <button class="newchat">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+            新建对话
+          </button>
+          <div class="search">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.2"/><path d="m11 11 3 3"/></svg>
+            搜索对话
+          </div>
+        </div>
+
+        <div class="side-scroll">
+          <div class="side-label">最近</div>
+          <div class="conv active">
+            <span class="ic"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg></span>
+            <div class="meta"><div class="title">重构 monorepo 骨架</div><div class="sub"><span class="sdot run"></span>运行中</div></div>
+          </div>
+          <div class="conv">
+            <span class="ic"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg></span>
+            <div class="meta"><div class="title">登录页设计稿评审</div><div class="sub"><span class="sdot wait"></span>待授权</div></div>
+          </div>
+          <div class="conv">
+            <span class="ic"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg></span>
+            <div class="meta"><div class="title">fusion-code 缓存问题排查</div><div class="sub">2 小时前</div></div>
+          </div>
+          <div class="conv">
+            <span class="ic"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg></span>
+            <div class="meta"><div class="title">图标导出脚本</div><div class="sub">昨天</div></div>
+          </div>
+          <div class="conv">
+            <span class="ic"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg></span>
+            <div class="meta"><div class="title">周报草稿</div><div class="sub">3 天前</div></div>
+          </div>
+        </div>
+
+      </aside>
+
+      <!-- 主区 -->
+      <main class="main">
+        <div class="thread">
+          <div class="bubble me">帮我把 monorepo 的包拆分梳理一下。</div>
+          <div class="bubble">已经分析了 packages 目录，建议按 design-tokens / ui / shared 三层来组织，这样 renderer 和 main 都能复用同一套设计 token……</div>
+          <div class="bubble me">登录页的弹窗能不能再高级一点？</div>
+        </div>
+        <div class="composer"><div class="box">输入消息…</div></div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ============ 登录弹窗 v2 ============ -->
+  <div class="overlay" id="overlay">
+    <div class="dialog" role="dialog" aria-modal="true" aria-label="登录 Open Design">
+      <button class="close" id="close" aria-label="关闭">✕</button>
+      <aside class="panel" aria-hidden="true">
+        <div class="pglow1"></div><div class="pglow2"></div><div class="pgrain"></div>
+        <svg class="plogo" viewBox="0 0 64 64" fill="none">
+          <g stroke="var(--panel-fg)" stroke-width="3.4" stroke-linecap="square"><path d="M10 24 L10 10 L24 10"/><path d="M40 10 L54 10 L54 24"/><path d="M54 40 L54 54 L40 54"/><path d="M24 54 L10 54 L10 40"/></g>
+          <g class="cross" stroke="var(--panel-cross)" stroke-width="3" stroke-linecap="round"><line x1="32" y1="20" x2="32" y2="44"/><line x1="20" y1="32" x2="44" y2="32"/><line x1="23.51" y1="23.51" x2="40.49" y2="40.49"/><line x1="40.49" y1="23.51" x2="23.51" y2="40.49"/></g>
+        </svg>
+        <div class="grow"></div>
+        <div class="supertitle">OPEN&nbsp;DESIGN</div>
+        <h2>为创作而生的<br/>智能体工作台</h2>
+        <p class="lede">登录后即可调用 fusion-code，把想法变成成品。</p>
+        <div class="grow"></div>
+        <div class="pfoot">© 2026 · 由 fusion-code 驱动</div>
+      </aside>
+
+      <div class="form-wrap">
+        <div id="loginView" style="display:flex;flex-direction:column;flex:1">
+          <div class="head">
+            <div class="supertitle">欢迎使用</div>
+            <h1>手机号登录</h1>
+            <p>未注册的手机号将自动创建账户</p>
+          </div>
+          <form id="form" novalidate>
+            <div class="label">手机号</div>
+            <div class="field" id="phoneField">
+              <span class="cc">+86 <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 4.5 6 7.5 9 4.5"/></svg></span>
+              <input id="phone" type="tel" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="请输入手机号" />
+            </div>
+            <div class="error" id="phoneErr">请输入正确的 11 位手机号</div>
+            <div class="label">验证码</div>
+            <div class="field" id="codeField">
+              <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 位短信验证码" />
+              <button type="button" class="code-btn" id="codeBtn" disabled>获取验证码</button>
+            </div>
+            <button type="submit" class="submit" id="submit" disabled>登 录</button>
+            <label class="agree" id="agree">
+              <span class="box" id="agreeBox" role="checkbox" aria-checked="false" tabindex="0">
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2 4.8 8.5 9.5 3.5"/></svg>
+              </span>
+              <span>我已阅读并同意 <a href="#" onclick="return false">《用户协议》</a> 和 <a href="#" onclick="return false">《隐私政策》</a></span>
+            </label>
+          </form>
+          <div class="spacer"></div>
+          <div class="switch">遇到问题？<a href="#" onclick="return false">联系支持</a></div>
+        </div>
+        <div class="done" id="doneView">
+          <div class="ring"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5 9 17.5 20 6.5"/></svg></div>
+          <h2>登录成功</h2><p>正在进入工作台…</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">已登录</div>
+
+<script>
+  const root = document.documentElement;
+  document.getElementById('themeToggle').addEventListener('click', () => root.classList.toggle('dark'));
+
+  /* ---------- 登录入口（顶栏）↔ 弹窗 ---------- */
+  const overlay = document.getElementById('overlay');
+  const entry = document.getElementById('loginEntry');
+  const acct = document.getElementById('acct');
+  const menu = document.getElementById('menu');
+  const avOut = document.getElementById('avOut'), avIn = document.getElementById('avIn');
+  const mhPhone = document.getElementById('mhPhone');
+  const toast = document.getElementById('toast');
+  let loggedIn = false;
+
+  function openDialog() { overlay.classList.add('show'); resetForm(); setTimeout(() => phone.focus(), 60); }
+  function closeDialog() { overlay.classList.remove('show'); }
+
+  entry.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!loggedIn) openDialog();
+    else menu.classList.toggle('show');
+  });
+  document.addEventListener('click', e => { if (!acct.contains(e.target)) menu.classList.remove('show'); });
+
+  function setLoggedIn(phoneStr) {
+    loggedIn = true;
+    avOut.style.display = 'none'; avIn.style.display = 'grid';
+    mhPhone.textContent = phoneStr;
+    entry.title = phoneStr;
+  }
+  function setLoggedOut() {
+    loggedIn = false; menu.classList.remove('show');
+    avOut.style.display = 'grid'; avIn.style.display = 'none';
+    entry.title = '登录账户';
+  }
+  document.getElementById('logoutBtn').addEventListener('click', () => { setLoggedOut(); showToast('已退出登录'); });
+
+  function showToast(msg) { toast.textContent = msg; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2200); }
+
+  /* 预览态切换 (Tweaks) */
+  document.getElementById('stateToggle').addEventListener('click', function() {
+    if (loggedIn) { setLoggedOut(); this.textContent = '未登录'; }
+    else { setLoggedIn('138****8888'); this.textContent = '已登录'; }
+  });
+
+  /* ---------- 弹窗表单逻辑 ---------- */
+  const phone = document.getElementById('phone');
+  const code = document.getElementById('code');
+  const phoneField = document.getElementById('phoneField');
+  const phoneErr = document.getElementById('phoneErr');
+  const codeBtn = document.getElementById('codeBtn');
+  const submit = document.getElementById('submit');
+  const agree = document.getElementById('agree');
+  const agreeBox = document.getElementById('agreeBox');
+  const form = document.getElementById('form');
+  const loginView = document.getElementById('loginView');
+  const doneView = document.getElementById('doneView');
+  let agreed = false, counting = false, timer = null;
+
+  const phoneValid = () => /^1[3-9]\d{9}$/.test(phone.value);
+  const codeValid = () => /^\d{6}$/.test(code.value);
+
+  [phone, code].forEach(el => el.addEventListener('input', () => { el.value = el.value.replace(/\D/g, ''); refresh(); }));
+  function refresh() { codeBtn.disabled = !phoneValid() || counting; submit.disabled = !(phoneValid() && codeValid() && agreed); }
+
+  phone.addEventListener('blur', () => { if (phone.value && !phoneValid()) { phoneField.classList.add('invalid'); phoneErr.classList.add('show'); } });
+  phone.addEventListener('focus', () => { phoneField.classList.remove('invalid'); phoneErr.classList.remove('show'); });
+
+  codeBtn.addEventListener('click', () => {
+    if (codeBtn.disabled) return;
+    let left = 60; counting = true; refresh(); codeBtn.textContent = left + 's 后重发';
+    timer = setInterval(() => { left -= 1; if (left <= 0) { clearInterval(timer); counting = false; codeBtn.textContent = '重新获取'; refresh(); } else codeBtn.textContent = left + 's 后重发'; }, 1000);
+    code.focus();
+  });
+
+  function toggleAgree() { agreed = !agreed; agreeBox.classList.toggle('checked', agreed); agreeBox.setAttribute('aria-checked', String(agreed)); agree.classList.remove('shake'); refresh(); }
+  agreeBox.addEventListener('click', toggleAgree);
+  agreeBox.addEventListener('keydown', e => { if (e.key===' '||e.key==='Enter'){ e.preventDefault(); toggleAgree(); } });
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    if (!agreed) { agree.classList.add('shake'); return; }
+    if (submit.disabled) return;
+    submit.disabled = true; submit.innerHTML = '<span class="spinner"></span>验证中';
+    setTimeout(() => {
+      loginView.style.display = 'none'; doneView.classList.add('show');
+      const masked = phone.value.slice(0,3) + '****' + phone.value.slice(7);
+      setTimeout(() => { closeDialog(); setLoggedIn(masked); showToast('已登录 ' + masked); document.getElementById('stateToggle').textContent = '已登录'; }, 900);
+    }, 1000);
+  });
+
+  function resetForm() {
+    if (timer) clearInterval(timer);
+    counting = false; agreed = false;
+    loginView.style.display = 'flex'; doneView.classList.remove('show');
+    form.reset(); phone.value = ''; code.value = '';
+    agreeBox.classList.remove('checked'); agreeBox.setAttribute('aria-checked','false');
+    phoneField.classList.remove('invalid'); phoneErr.classList.remove('show');
+    submit.innerHTML = '登 录'; codeBtn.textContent = '获取验证码';
+    refresh();
+  }
+
+  window.addEventListener('keydown', e => { if (e.key === 'Escape') closeDialog(); });
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeDialog(); });
+  document.getElementById('close').addEventListener('click', closeDialog);
+
+  refresh();
+</script>
+</body>
+</html>

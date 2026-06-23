@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>登录页左侧面板 · 赛博雨幕预览</title>
+    <!--
+      Standalone preview of the redesigned LoginDialog left panel.
+      Mirrors apps/desktop/src/renderer/src/components/dialogs/LoginDialog.{tsx,css}
+      so the 赛博雨幕 can be eyeballed in a plain browser without booting Electron.
+      Not shipped — design/ is a scratch dir. Source of truth is the .tsx/.css.
+    -->
+    <style>
+      :root {
+        --panel-1: #0d0d0d;
+        --panel-2: #090909;
+        --panel-fg: #dbe6f5;
+        --panel-cyan: 208 85% 64%;
+        --panel-cross: #8fc2f7;
+        --brand-accent-h: 210 80% 50%;
+        --od-accent: 210 88% 52%;
+        --od-accent-2: 212 90% 44%;
+        --od-accent-link: 210 88% 50%;
+        --od-accent-fg: 205 40% 97%;
+        --font-mono: 'SF Mono', 'JetBrains Mono', ui-monospace, monospace;
+        --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Helvetica, Arial, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #16181d;
+        font-family: var(--font-sans);
+      }
+      /* the two-pane card, abbreviated to the left panel + a stub form */
+      .card {
+        display: grid;
+        grid-template-columns: 320px 360px;
+        border-radius: 16px;
+        overflow: hidden;
+        background: #fff;
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.15),
+          0 50px 130px -30px rgba(0, 0, 0, 0.55),
+          0 18px 50px -24px hsl(var(--brand-accent-h) / 0.4);
+      }
+
+      .panel {
+        position: relative;
+        overflow: hidden;
+        padding: 38px 30px;
+        display: flex;
+        flex-direction: column;
+        color: var(--panel-fg);
+        background: linear-gradient(155deg, var(--panel-1), var(--panel-2));
+        box-shadow: inset -1px 0 0 hsl(208 50% 72% / 0.07);
+      }
+      .panel > * { position: relative; z-index: 1; }
+
+      .rain {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0.72;
+        pointer-events: none;
+      }
+      .glow1 {
+        position: absolute;
+        width: 240px; height: 240px;
+        border-radius: 50%;
+        filter: blur(62px);
+        bottom: -70px; left: -60px;
+        background: hsl(210 90% 55% / 0.22);
+      }
+      .glow2 {
+        position: absolute;
+        width: 170px; height: 170px;
+        border-radius: 50%;
+        filter: blur(68px);
+        top: -60px; right: -55px;
+        background: hsl(208 88% 58% / 0.12);
+      }
+      .scrim {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(180deg, rgba(0,0,0,0) 28%, rgba(0,0,0,0.5) 70%, rgba(0,0,0,0.82) 100%),
+          radial-gradient(120% 70% at 50% -8%, hsl(0 0% 100% / 0.05), transparent 60%);
+      }
+      .scrim::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: repeating-linear-gradient(180deg,
+          hsl(0 0% 100% / 0.04) 0px, hsl(0 0% 100% / 0.04) 1px,
+          transparent 1px, transparent 3px);
+        opacity: 0.4;
+        mix-blend-mode: screen;
+      }
+
+      .logo { width: 46px; height: 46px; }
+      .logo .frame { filter: drop-shadow(0 0 5px hsl(var(--panel-cyan) / 0.15)); }
+      .logo .cross {
+        transform-origin: 32px 32px;
+        animation: cross-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.25s both;
+        filter: drop-shadow(0 0 8px hsl(var(--panel-cyan) / 0.4));
+      }
+      @keyframes cross-in {
+        from { opacity: 0; transform: rotate(-40deg) scale(0.5); }
+        to { opacity: 1; transform: none; }
+      }
+
+      .grow { flex: 1; }
+      .supertitle {
+        font-family: var(--font-mono);
+        font-size: 11px; font-weight: 600;
+        letter-spacing: 0.28em; text-transform: uppercase;
+        color: hsl(208 32% 86%); opacity: 0.72;
+        text-shadow: 0 0 10px hsl(var(--panel-cyan) / 0.22);
+      }
+      h2 {
+        margin: 14px 0 0; font-weight: 600; font-size: 27px;
+        line-height: 1.22; letter-spacing: -0.01em;
+        text-shadow: 0 1px 16px rgba(0, 0, 0, 0.75);
+      }
+      .lede {
+        margin: 14px 0 0; font-size: 13px; line-height: 1.6;
+        color: var(--panel-fg); opacity: 0.72; max-width: 22ch;
+        text-shadow: 0 1px 12px rgba(0, 0, 0, 0.7);
+      }
+      .pfoot {
+        font-size: 11px; color: var(--panel-fg); opacity: 0.42;
+        font-family: var(--font-mono);
+      }
+
+      /* stub form so the contrast reads like the real dialog */
+      .form {
+        padding: 46px 40px;
+        display: flex; flex-direction: column; gap: 14px;
+        color: #1d1d1f;
+        /* cool tech-blue wash over the white card — mirrors .od-form-wrap */
+        background: linear-gradient(180deg, hsl(210 65% 55% / 0.05), hsl(210 60% 50% / 0.02)), #fff;
+      }
+      .form .st { font: 600 11px/1 var(--font-mono); letter-spacing: 0.22em; color: #6b7a8e; text-transform: uppercase; }
+      .form h1 { margin: 8px 0 0; font-size: 24px; }
+      .form .sub { margin: 6px 0 18px; font-size: 13px; color: #6b7a8e; }
+      .input { height: 48px; border: 1px solid #cdd8e6; border-radius: 11px; }
+      .btn {
+        height: 48px; border: 0; border-radius: 11px;
+        background: linear-gradient(180deg, hsl(var(--od-accent)), hsl(var(--od-accent-2)));
+        color: hsl(var(--od-accent-fg)); font-size: 15px; font-weight: 600;
+        box-shadow: 0 8px 20px -8px hsl(var(--od-accent) / 0.55);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <aside class="panel">
+        <canvas class="rain"></canvas>
+        <div class="scrim"></div>
+        <div class="glow1"></div>
+        <div class="glow2"></div>
+        <svg class="logo" viewBox="0 0 64 64" fill="none">
+          <g class="frame" stroke="var(--panel-fg)" stroke-width="3.4" stroke-linecap="square">
+            <path d="M10 24 L10 10 L24 10" />
+            <path d="M40 10 L54 10 L54 24" />
+            <path d="M54 40 L54 54 L40 54" />
+            <path d="M24 54 L10 54 L10 40" />
+          </g>
+          <g class="cross" stroke="var(--panel-cross)" stroke-width="3" stroke-linecap="round">
+            <line x1="32" y1="20" x2="32" y2="44" />
+            <line x1="20" y1="32" x2="44" y2="32" />
+            <line x1="23.51" y1="23.51" x2="40.49" y2="40.49" />
+            <line x1="40.49" y1="23.51" x2="23.51" y2="40.49" />
+          </g>
+        </svg>
+        <div class="grow"></div>
+        <div class="supertitle">OPEN&nbsp;DESIGN</div>
+        <h2>为创作而生的<br />智能体工作台</h2>
+        <p class="lede">登录后即可调用 fusion-code，把想法变成成品。</p>
+        <div class="grow"></div>
+        <div class="pfoot">© 2026 · 由 fusion-code 驱动</div>
+      </aside>
+
+      <div class="form">
+        <div class="st">欢迎使用</div>
+        <h1>手机号登录</h1>
+        <div class="sub">未注册的手机号将自动创建账户</div>
+        <div class="input"></div>
+        <div class="input"></div>
+        <button class="btn">登 录</button>
+      </div>
+    </div>
+
+    <script>
+      // Faithful copy of PanelRain (LoginDialog.tsx) so the preview matches.
+      const canvas = document.querySelector('.rain')
+      const ctx = canvas.getContext('2d')
+      const GLYPHS =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'.split('')
+      const CELL = 11
+      const FONT = `${CELL}px "SF Mono","JetBrains Mono",ui-monospace,monospace`
+      const pick = () => GLYPHS[(Math.random() * GLYPHS.length) | 0]
+      // warm bronze stream: pale-gold head → #a58a62 base → deep bronze tail
+      const TRAIL = [
+        'rgba(208,232,255,0.95)',
+        'rgba(96,176,255,0.62)',
+        'rgba(42,140,250,0.42)',
+        'rgba(24,96,200,0.26)',
+        'rgba(14,56,128,0.16)'
+      ]
+      let w = 0, h = 0, drops = [], speeds = [], raf = 0
+
+      function seed() {
+        const cols = Math.max(1, Math.ceil(w / CELL))
+        const rows = Math.max(1, h / CELL)
+        drops = Array.from({ length: cols }, () => Math.random() * rows * -1)
+        speeds = Array.from({ length: cols }, () => 0.12 + Math.random() * 0.28)
+      }
+      function resize() {
+        w = canvas.clientWidth
+        h = canvas.clientHeight
+        const dpr = Math.min(window.devicePixelRatio || 1, 2)
+        canvas.width = Math.max(1, Math.round(w * dpr))
+        canvas.height = Math.max(1, Math.round(h * dpr))
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        seed()
+        ctx.fillStyle = '#0d0d0d'
+        ctx.fillRect(0, 0, w, h)
+      }
+      function draw() {
+        ctx.fillStyle = 'rgba(13,13,13,0.10)'
+        ctx.fillRect(0, 0, w, h)
+        ctx.font = FONT
+        ctx.textBaseline = 'top'
+        for (let i = 0; i < drops.length; i++) {
+          const x = i * CELL
+          const y = Math.floor(drops[i]) * CELL
+          for (let t = 0; t < TRAIL.length; t++) {
+            const ty = y - t * CELL
+            if (ty < 0) break
+            ctx.fillStyle = TRAIL[t]
+            ctx.fillText(pick(), x, ty)
+          }
+          drops[i] += speeds[i]
+          if (y > h && Math.random() > 0.972) drops[i] = Math.random() * -16
+        }
+        raf = requestAnimationFrame(draw)
+      }
+      resize()
+      new ResizeObserver(resize).observe(canvas)
+      raf = requestAnimationFrame(draw)
+    </script>
+  </body>
+</html>
