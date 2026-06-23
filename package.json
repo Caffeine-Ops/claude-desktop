@@ -27,7 +27,8 @@
     "//checks": "------ 全 workspace 质量门 ------",
     "typecheck": "bun run --filter='*' --if-present typecheck",
     "//lifecycle": "------ 安装后构建 workspace 包 + 校验 better-sqlite3 ABI (骨架阶段为 no-op) ------",
-    "postinstall": "node ./scripts/postinstall.mjs"
+    "postinstall": "node ./scripts/postinstall.mjs",
+    "kb:index": "bun scripts/build-kb-index.ts"
   },
   "//note-overrides": "从 open-design pnpm.overrides 平移；bun 用顶层 overrides 字段。版本钉死是安全/兼容补丁，勿动。open-design 包拷入后这些才真正生效。",
   "overrides": {
