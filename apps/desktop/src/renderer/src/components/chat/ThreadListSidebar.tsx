@@ -16,9 +16,11 @@ import { motion } from 'motion/react'
 
 import { useChatStore } from '../../stores/chat'
 import { useT } from '../../i18n'
+import { useSessionListStore } from '../../stores/sessionList'
 import { usePendingPermissionCountsBySession } from '../../stores/permissions'
 import { pushUiLog } from '../../stores/uiLogs'
 import { NotificationBadge } from '../common/NotificationBadge'
+import { ScenarioQuickStart } from './ScenarioQuickStart'
 
 /**
  * Per-row session status flags, computed from:
@@ -126,6 +128,11 @@ export function ThreadListSidebar(): React.JSX.Element {
   const t = useT()
   const activeRuntimeIds = useActiveRuntimeIds()
   const awaitingPermissionCounts = usePendingPermissionCountsBySession()
+  // listSessions() failure surfaced by FusionRuntimeProvider's refresh.
+  // When set, render a banner + retry above the list instead of letting a
+  // failed load read as an empty rail (see stores/sessionList).
+  const loadError = useSessionListStore((s) => s.loadError)
+  const retryLoad = useSessionListStore((s) => s.retry)
   // Freeze the context value inside useMemo so ThreadListItem's
   // lookup has a stable reference across renders — otherwise every
   // row's status derivation would re-run on every parent rerender.
@@ -140,6 +147,14 @@ export function ThreadListSidebar(): React.JSX.Element {
   return (
     <SidebarStatusContext.Provider value={statusMap}>
     <ThreadListPrimitive.Root className="relative flex h-full w-64 shrink-0 flex-col border-r border-border/60 bg-sidebar/90 backdrop-blur-2xl backdrop-saturate-150">
+      {/* Quick-start scenarios — moved here from the central EmptyState
+          hero so the starter prompts sit ABOVE the conversation list and
+          stay reachable at any point, not only on a fresh thread. The
+          chat list below shrinks accordingly (flex-1 over the remaining
+          height). A hairline divider separates the two sections. */}
+      <ScenarioQuickStart />
+      <div className="mx-3 border-t border-border/50" />
+
       {/* Header — Apple-Mail-style section header: muted uppercase
           label on the left, plain-icon "+" action button on the
           right. Replaces the old full-width gradient CTA with a
@@ -171,6 +186,30 @@ export function ThreadListSidebar(): React.JSX.Element {
           </svg>
         </ThreadListPrimitive.New>
       </div>
+
+      {/* Load-failure banner. Sits between the header and the scroll area
+          (pinned, doesn't scroll away) so a failed listSessions() reads as
+          "something broke, retry" rather than a silently empty rail.
+          role="alert" so screen readers announce it; the full error rides
+          on the title tooltip while the row shows a short localized line. */}
+      {loadError ? (
+        <div
+          role="alert"
+          className="mx-2 mb-1 mt-0.5 flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-600 dark:text-red-400"
+        >
+          <span className="min-w-0 flex-1 truncate" title={loadError}>
+            {t('sidebarLoadFailed')}
+          </span>
+          <button
+            type="button"
+            onClick={() => retryLoad?.()}
+            disabled={!retryLoad}
+            className="shrink-0 rounded px-1.5 py-0.5 font-medium underline-offset-2 hover:underline focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {t('sidebarRetry')}
+          </button>
+        </div>
+      ) : null}
 
       {/* Scrollable list. min-h-0 + flex-1 so the list body can shrink
           inside the flex-col sidebar instead of pushing the header off

@@ -71,11 +71,14 @@ const STRINGS = {
     // Sidebar — chats column
     sidebarChats: '对话',
     sidebarNewChat: '新建对话',
+    sidebarQuickStart: '快速开始',
     sidebarStatusRunning: '运行中',
     sidebarStatusAwaitingPermission: '等待授权',
     sidebarStatusIdle: '空闲',
     sidebarCloseRuntime: '停止后台运行',
     sidebarSwitchingSession: '正在切换会话…',
+    sidebarLoadFailed: '加载对话列表失败',
+    sidebarRetry: '重试',
 
     // Sidebar — quick actions (TODO: wire to real dialogs)
     // Short forms for the single-row toolbar; full forms live in
@@ -107,7 +110,7 @@ const STRINGS = {
     emptyStateHintMiddle: ' 或 ',
     emptyStateHintAfter: ' 查看所有命令。',
     emptyStateExampleAsk: '查看我电脑桌面有哪些文件夹',
-    emptyStateScenarioHint: '选个场景开始，或直接输入你的问题',
+    emptyStateScenarioHint: '从左侧「快速开始」选个场景，或直接输入你的问题',
 
     // Scenario cards (clickable starter prompts)
     scenarioPptTitle: '生成幻灯片',
@@ -312,11 +315,14 @@ const STRINGS = {
 
     sidebarChats: 'Chats',
     sidebarNewChat: 'New chat',
+    sidebarQuickStart: 'Quick start',
     sidebarStatusRunning: 'Running',
     sidebarStatusAwaitingPermission: 'Awaiting permission',
     sidebarStatusIdle: 'Idle',
     sidebarCloseRuntime: 'Stop background runtime',
     sidebarSwitchingSession: 'Switching session…',
+    sidebarLoadFailed: 'Failed to load chats',
+    sidebarRetry: 'Retry',
 
     // Sidebar — quick actions (TODO: wire to real dialogs)
     quickActionSkills: 'Skills',
@@ -344,7 +350,7 @@ const STRINGS = {
     emptyStateHintMiddle: ' or ',
     emptyStateHintAfter: ' to browse commands.',
     emptyStateExampleAsk: 'list folders on my desktop',
-    emptyStateScenarioHint: 'Pick a scenario or just type your question',
+    emptyStateScenarioHint: 'Pick a scenario from “Quick start” on the left, or just type your question',
 
     // Scenario cards (clickable starter prompts)
     scenarioPptTitle: 'Generate slides',
