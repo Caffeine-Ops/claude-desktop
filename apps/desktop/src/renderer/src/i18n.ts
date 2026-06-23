@@ -127,6 +127,10 @@ const STRINGS = {
     scenarioAnalyzeDesc: '把当前文件夹里的 Excel 表格读一遍，告诉你重点和趋势',
     scenarioAnalyzePrompt:
       '帮我看一下当前文件夹里的 [文件名]。用大白话告诉我：1）这张表里有什么数据、有没有缺失或异常 2）最值得注意的 3 个发现 3）如果要做图给老板看，建议画哪几张。',
+    scenarioProposalTitle: '写方案',
+    scenarioProposalDesc: '基于公司知识库，对话式生成建设方案草稿',
+    scenarioProposalPrompt:
+      '我要写一份关于 [产品] 的建设方案。请严格基于知识库资料，从「建设背景」开始，一段一段地问我要点并起草，每段标注来源文件；知识库里查不到的内容请标"⚠️ 资料缺失"，不要编造。',
 
     // Code block copy affordance
     codeBlockCopy: '复制',
@@ -366,6 +370,10 @@ const STRINGS = {
     scenarioAnalyzeDesc: 'Read an Excel file in the folder and explain what matters in plain English',
     scenarioAnalyzePrompt:
       'Take a look at [file name] in my folder. In plain English, tell me: 1) what data is in this sheet and whether anything is missing or odd, 2) the 3 most important findings, 3) which charts I should make if I need to show this to my boss.',
+    scenarioProposalTitle: 'Write a proposal',
+    scenarioProposalDesc: 'Use the company knowledge base to co-author a construction proposal draft',
+    scenarioProposalPrompt:
+      'I need to write a construction proposal for [product]. Working strictly from the knowledge base, start with the "Background" section — ask me for key points section by section and draft each one, citing the source file. Flag anything missing from the knowledge base as "⚠️ Missing source" — do not fabricate.',
 
     codeBlockCopy: 'Copy',
     codeBlockCopied: '✓ Copied',
