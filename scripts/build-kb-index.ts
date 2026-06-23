@@ -19,7 +19,7 @@ function sha1OfFile(path: string): string {
 async function main(): Promise<void> {
   const kbRoot = arg('kb')
   const outDir = arg('out')
-  const builtAtMs = Number(arg('now', String(0))) // 调用方传时间戳；脚本不调 Date.now
+  const builtAtMs = Number(arg('now')) // 必填：调用方传时间戳；脚本不调 Date.now，缺失直接抛异常而非静默写 0（1970）
 
   const prevByPath = new Map<string, KbIndexFile>()
   const indexPath = join(outDir, 'index.json')
@@ -34,8 +34,13 @@ async function main(): Promise<void> {
 
   for (const e of entries) {
     const st = statSync(e.sourcePath)
-    const sha1 = sha1OfFile(e.sourcePath)
     const prev = prevByPath.get(e.sourcePath)
+    // 快路径：mtime 未变且上次成功且镜像还在 → 信任旧 sha1，跳过读文件（避免 3GB 语料每次全量算 sha1）
+    if (prev && prev.ok && prev.mtimeMs === st.mtimeMs && existsSync(prev.mirrorPath)) {
+      files.push(prev); skipped++; continue
+    }
+    // mtime 变了（或无 prev）：算 sha1 做内容级判断（兼顾"touch 但内容没改"的情形）
+    const sha1 = sha1OfFile(e.sourcePath)
     if (prev && prev.sha1 === sha1 && prev.ok && existsSync(prev.mirrorPath)) {
       files.push(prev); skipped++; continue
     }
