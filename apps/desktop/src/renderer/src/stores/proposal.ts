@@ -7,6 +7,12 @@ export interface ProposalProduct {
   product: string
 }
 
+export interface ProposalSection {
+  // 稳定 id：React key + 增删/重排定位。renderer 浏览器环境可用 crypto.randomUUID()。
+  id: string
+  markdown: string
+}
+
 interface ProposalState {
   active: boolean
   // 方案绑定的会话 ID——只有该 session 的 send 才带 proposalMode=true，
@@ -26,12 +32,19 @@ interface ProposalState {
   // 已累积进 docMarkdown 的 assistant 消息 id 集合。end 事件可能对同一 messageId
   // 二次触发（异常路径重发等）；按 id 去重，避免同一段正文被重复 append 进草稿。
   consumedDraftIds: Set<string>
+  // 分节草稿：每个 AI 哨兵块一节。新模型；docMarkdown/setDoc 为旧路径，Task 6 删。
+  sections: ProposalSection[]
   start: (sessionId: string) => void
   setProducts: (products: ProposalProduct[]) => void
   // 首发播种：写入产品集并置 seeded=true（与 setProducts 区分——后者是 chip 编辑）。
   seedProducts: (products: ProposalProduct[]) => void
   setDoc: (md: string) => void
   markDraftConsumed: (messageId: string) => void
+  // 哨兵块 → 节：messageId 去重后，每块成一节追加到尾部。
+  appendSections: (messageId: string, blocks: string[]) => void
+  updateSection: (id: string, markdown: string) => void
+  removeSection: (id: string) => void
+  moveSection: (id: string, dir: 'up' | 'down') => void
   reset: () => void
 }
 
@@ -42,6 +55,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   seeded: false,
   docMarkdown: '',
   consumedDraftIds: new Set(),
+  sections: [],
   start: (sessionId) =>
     set({
       active: true,
@@ -49,7 +63,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       products: [],
       seeded: false,
       docMarkdown: '',
-      consumedDraftIds: new Set()
+      consumedDraftIds: new Set(),
+      sections: []
     }),
   setProducts: (products) => set({ products }),
   seedProducts: (products) => set({ products, seeded: true }),
@@ -60,6 +75,31 @@ export const useProposalStore = create<ProposalState>((set) => ({
       next.add(messageId)
       return { consumedDraftIds: next }
     }),
+  appendSections: (messageId, blocks) =>
+    set((s) => {
+      // 消息级去重：end 对同一 messageId 二次触发时不重复入节（沿用原 consumedDraftIds 语义）。
+      if (s.consumedDraftIds.has(messageId)) return s
+      const consumed = new Set(s.consumedDraftIds)
+      consumed.add(messageId)
+      const added = blocks.map((markdown) => ({ id: crypto.randomUUID(), markdown }))
+      return { sections: [...s.sections, ...added], consumedDraftIds: consumed }
+    }),
+  updateSection: (id, markdown) =>
+    set((s) => ({
+      sections: s.sections.map((sec) => (sec.id === id ? { ...sec, markdown } : sec))
+    })),
+  removeSection: (id) =>
+    set((s) => ({ sections: s.sections.filter((sec) => sec.id !== id) })),
+  moveSection: (id, dir) =>
+    set((s) => {
+      const i = s.sections.findIndex((sec) => sec.id === id)
+      if (i < 0) return s
+      const j = dir === 'up' ? i - 1 : i + 1
+      if (j < 0 || j >= s.sections.length) return s // 越界 no-op
+      const next = s.sections.slice()
+      ;[next[i], next[j]] = [next[j], next[i]]
+      return { sections: next }
+    }),
   reset: () =>
     set({
       active: false,
@@ -67,7 +107,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       products: [],
       seeded: false,
       docMarkdown: '',
-      consumedDraftIds: new Set()
+      consumedDraftIds: new Set(),
+      sections: []
     })
 }))
 
