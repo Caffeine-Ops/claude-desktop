@@ -15,7 +15,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import type { SessionMeta } from '../../../../shared/types'
 import { useI18n, useT, useToolLabel } from '../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../stores/chat'
-import { THINKING_TOKEN_BUDGET, CHARS_PER_THINKING_TOKEN } from '../../../../shared/thinking'
+import { THINKING_PROGRESS_FULL_TOKENS, CHARS_PER_THINKING_TOKEN } from '../../../../shared/thinking'
 import { buildSlashAdapter } from '../../composer/slashAdapter'
 import { buildFileMentionAdapter } from '../../composer/fileMentionAdapter'
 import { ProseMirrorComposerInput } from '../../composer/ProseMirrorComposerInput'
@@ -1134,12 +1134,15 @@ function ReasoningCard({
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
 
-  // 真分母（MAX_THINKING_TOKENS 预算，shared 常量）+ 估分子（已累积字符 ÷ 系数）。
-  // 流式中封顶 99%，避免估算误差把条冲到 100% 后还在写；thinking_end 落地
-  // （isStreaming 变 false）后才允许 100%。
+  // 分子 = 已累积思考字符 ÷ 字符系数（估的 token，流式拿不到官方实时数）。
+  // 分母 = THINKING_PROGRESS_FULL_TOKENS，进度条满格对应的典型思考量，与思考上限
+  // （MAX_THINKING_TOKENS）解耦：早先共用上限当分母，上限够大（不截断思考）时典型
+  // 思考占比个位数甚至 round 成 0%、进度条不动；改用贴近典型思考量的满格基准后常见
+  // 思考能有意义地走动。流式中封顶 99%（估算误差 + 超长思考都停在 99%），thinking_end
+  // 落地（isStreaming 变 false）后才 100%。
   const estTokens = trimmedText.length / CHARS_PER_THINKING_TOKEN
   const pct = isStreaming
-    ? Math.min(99, Math.round((estTokens / THINKING_TOKEN_BUDGET) * 100))
+    ? Math.min(99, Math.round((estTokens / THINKING_PROGRESS_FULL_TOKENS) * 100))
     : 100
 
   return (
