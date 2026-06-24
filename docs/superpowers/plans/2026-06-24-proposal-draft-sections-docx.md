@@ -122,14 +122,14 @@ Expected: typecheck 通过。
 **Interfaces:**
 - Produces:
   - `interface ProposalSection { id: string; markdown: string }`
-  - store 字段 `sections: ProposalSection[]`（取代 `docMarkdown: string`）
+  - store 新增字段 `sections: ProposalSection[]`（**本任务先并存，不删 `docMarkdown`/`setDoc`**——它们仍被 runtime 与 panel 引用，删早了 typecheck 当场红。最后一个消费方在 Task 6 迁移完后，由 Task 6 顺手删除这对死字段，保证每个提交都 typecheck 绿）。
   - `appendSections(messageId: string, blocks: string[]): void` — messageId 已消费则跳过；否则每块生成 `{ id: crypto.randomUUID(), markdown }` push 到尾部，并把 messageId 记入 `consumedDraftIds`。
   - `updateSection(id: string, markdown: string): void`
   - `removeSection(id: string): void`
   - `moveSection(id: string, dir: 'up' | 'down'): void` — 与相邻节交换；越界 no-op。
 - Consumes: `crypto.randomUUID()`（renderer 浏览器环境原生可用）。
 
-- [ ] **Step 1: 改接口与字段**
+- [ ] **Step 1: 改接口与字段（新增，不删旧）**
 
 编辑 `apps/desktop/src/renderer/src/stores/proposal.ts`。在 `ProposalProduct` 下新增：
 
@@ -141,25 +141,26 @@ export interface ProposalSection {
 }
 ```
 
-把 `ProposalState` 里的 `docMarkdown: string` 改为 `sections: ProposalSection[]`，并把
-`setDoc` 这条 action 删除，替换为下面四条声明：
+`ProposalState` 里**保留** `docMarkdown: string` 与 `setDoc`（runtime/panel 仍在用，
+Task 6 迁移完后再删），**新增** `sections` 字段与四条 action 声明：
 
 ```ts
+  // 分节草稿：每个 AI 哨兵块一节。新模型；docMarkdown/setDoc 为旧路径，Task 6 删。
   sections: ProposalSection[]
-  // ...（consumedDraftIds、start、setProducts、seedProducts 保持）
-  // 哨兵块 → 节：messageId 去重后，每块成一节追加到尾部。取代原 setDoc 字符串拼接。
+  // 哨兵块 → 节：messageId 去重后，每块成一节追加到尾部。
   appendSections: (messageId: string, blocks: string[]) => void
   updateSection: (id: string, markdown: string) => void
   removeSection: (id: string) => void
   moveSection: (id: string, dir: 'up' | 'down') => void
 ```
 
-（`markDraftConsumed` 保留——零正文消息仍要记账，见 Task 3。）
+（`docMarkdown`/`setDoc`/`markDraftConsumed` 全部保留不动。）
 
-- [ ] **Step 2: 改实现**
+- [ ] **Step 2: 改实现（新增，不删旧）**
 
-把 `create<ProposalState>` 里的 `docMarkdown: ''` 改为 `sections: []`；`start` 与
-`reset` 的 `docMarkdown: ''` 都改为 `sections: []`。删除 `setDoc` 实现，新增：
+`create<ProposalState>` 里**保留** `docMarkdown: ''` 与 `setDoc` 实现；在初始 state 里
+**新增** `sections: []`；`start` 与 `reset` 的返回对象里**新增** `sections: []`（`docMarkdown: ''`
+那行一并保留）。新增四条 action：
 
 ```ts
   appendSections: (messageId, blocks) =>
@@ -189,22 +190,23 @@ export interface ProposalSection {
     }),
 ```
 
-保留 `markDraftConsumed` 实现不变。
+保留 `markDraftConsumed` 与 `setDoc` 实现不变（新增是纯追加，不动旧字段）。
 
-- [ ] **Step 3: typecheck（会暴露 Task 3/6 的引用断裂，预期）**
+- [ ] **Step 3: typecheck（应保持绿）**
 
 Run: `cd /Users/kika/Desktop/project/Electron/claude-desktop && bun run typecheck`
-Expected: 报错集中在 `FusionRuntimeProvider.tsx`（用 `setDoc`/`docMarkdown`）与 `ProposalDocPanel.tsx`（用 `docMarkdown`/`setDoc`）——这两处在 Task 3、Task 6 修。**store 文件本身不应有错。** 若 store 文件内有错则修正后重跑。
+Expected: **通过**。因为本任务只追加新字段/action，未删任何旧字段，runtime 与 panel
+对 `docMarkdown`/`setDoc` 的引用仍成立。若报错则修正后重跑。
 
-- [ ] **Step 4: 提交（与 Task 3 连续，但 store 改动自洽，可单独 commit）**
+- [ ] **Step 4: 提交**
 
 ```bash
 git add apps/desktop/src/renderer/src/stores/proposal.ts
-git commit -m "feat(proposal): store 升级为 ProposalSection[] 分节模型
+git commit -m "feat(proposal): store 新增 ProposalSection[] 分节模型（与旧 docMarkdown 并存）
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
-Expected: 提交成功（typecheck 暂不绿，待 Task 3/6 修复——故此 commit 与后续紧邻）。
+Expected: typecheck 绿、提交成功。
 
 ---
 
@@ -665,13 +667,15 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 6: ProposalDocPanel 重做（主题文档区 + 分节编辑 + 双格式导出）
+### Task 6: ProposalDocPanel 重做（主题文档区 + 分节编辑 + 双格式导出）+ 清除旧字段
 
 **Files:**
 - Modify (整体重写): `apps/desktop/src/renderer/src/components/workspace/ProposalDocPanel.tsx`
+- Modify (删死字段): `apps/desktop/src/renderer/src/stores/proposal.ts`
 
 **Interfaces:**
 - Consumes: store 的 `sections`/`updateSection`/`removeSection`/`moveSection`（Task 2）、`products`/`setProducts`、`useProposalForeground`；`window.chatApi.exportProposal`；`AssistantMarkdown`。
+- Produces: 面板不再引用 `docMarkdown`/`setDoc`；panel 是 `docMarkdown`/`setDoc` 的最后一个消费方（runtime 已在 Task 3 切走），故本任务一并从 store 删除这对死字段（接口声明 + 初始 state + `start`/`reset` 里的 `docMarkdown: ''` + `setDoc` 实现）。删完全树无引用，typecheck 仍绿。
 
 - [ ] **Step 1: 整体重写组件**
 
@@ -848,16 +852,30 @@ export function ProposalDocPanel(): React.JSX.Element | null {
 }
 ```
 
-- [ ] **Step 2: typecheck**
+- [ ] **Step 2: 删除 store 里的死字段 `docMarkdown`/`setDoc`**
+
+panel 重写后已无人引用 `docMarkdown`/`setDoc`（runtime 在 Task 3 已切走）。编辑
+`apps/desktop/src/renderer/src/stores/proposal.ts` 删除：
+- `ProposalState` 接口里的 `docMarkdown: string` 与 `setDoc: (md: string) => void`；
+- 初始 state 里的 `docMarkdown: ''`；
+- `start` 与 `reset` 返回对象里的 `docMarkdown: ''`；
+- `setDoc: (md) => set({ docMarkdown: md }),` 实现。
+
+保留 `sections`/`appendSections`/`updateSection`/`removeSection`/`moveSection`/
+`consumedDraftIds`/`markDraftConsumed`/`seeded`/`seedProducts`/`products`/`setProducts`。
+
+- [ ] **Step 3: typecheck**
 
 Run: `cd /Users/kika/Desktop/project/Electron/claude-desktop && bun run typecheck`
-Expected: 全绿（node + web 都通过）。若 `bg-card` 等类在本项目主题里不存在，改用已有的 `bg-muted`/`bg-background`（Step 3 验收时按实际主题确认）。
+Expected: 全绿（node + web 都通过；删字段后若仍报 `docMarkdown`/`setDoc` 未定义，说明
+还有遗漏引用，全局 grep `docMarkdown\|setDoc` 定位补修）。若 `bg-card` 等类在本项目主题里
+不存在，改用已有的 `bg-muted`/`bg-background`（Step 4 验收时按实际主题确认）。
 
-- [ ] **Step 3: 提交**
+- [ ] **Step 4: 提交**
 
 ```bash
-git add apps/desktop/src/renderer/src/components/workspace/ProposalDocPanel.tsx
-git commit -m "feat(proposal): 草稿面板重做为主题文档区 + 分节编辑 + 双格式导出
+git add apps/desktop/src/renderer/src/components/workspace/ProposalDocPanel.tsx apps/desktop/src/renderer/src/stores/proposal.ts
+git commit -m "feat(proposal): 草稿面板重做为主题文档区 + 分节编辑 + 双格式导出（删旧 docMarkdown）
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
