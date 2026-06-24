@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { EventEmitter } from 'events'
 import { app, type WebContents } from 'electron'
 import { existsSync, statSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { inspect } from 'node:util'
 
 import {
@@ -477,6 +477,16 @@ export class ChatEngine extends EventEmitter {
    * 首个 thread 选产品→发送」这条常见路径会落在非方案进程上、AI 拿不到镜像路径。
    */
   private proposalMode = false
+  // 本次 turn 识别到的产品集（send() 写入，openSession/warm-spawn 读取）。
+  // 空 = 未识别 → 检索范围退回整个镜像根目录。与 proposalMode 同生命周期。
+  private proposalProducts: readonly { productLine: string; product: string }[] = []
+
+  // 把识别到的产品映射成镜像子目录绝对路径：<kbOutDir>/<产品线>/<产品>。
+  // 镜像目录结构由阶段 A 索引器固定（见 build-kb-index.ts）。
+  private proposalProductDirs(): string[] {
+    const root = kbOutDir()
+    return this.proposalProducts.map((p) => join(root, p.productLine, p.product))
+  }
 
   constructor(webContents: WebContents, opts: ChatEngineOptions = {}) {
     super()
@@ -889,13 +899,15 @@ export class ChatEngine extends EventEmitter {
     sessionId: string,
     text: string,
     images?: readonly ChatImagePayload[],
-    proposalMode = false
+    proposalMode = false,
+    proposalProducts: readonly { productLine: string; product: string }[] = []
   ): Promise<{ messageId: string }> {
     // Record the proposal-mode intent for THIS turn BEFORE anything below
     // can trigger a spawn (ensureSessionReady → openSession reads it). Set
     // unconditionally so leaving proposal mode also takes effect on the
     // next fresh spawn. See the field doc for the "next spawn" semantics.
     this.proposalMode = proposalMode
+    this.proposalProducts = proposalProducts
     // Hard gate: the workspace must have been picked via the drag-drop
     // gate before we spawn anything. The renderer already refuses to
     // render the composer until getWorkspace() returns a non-null path,
@@ -1009,7 +1021,7 @@ export class ChatEngine extends EventEmitter {
     // ensureSessionReady above), to avoid duplicating the block.
     const groundedText =
       proposalMode && !runtime.spawnedWithProposal
-        ? `${buildProposalAppend(kbOutDir())}\n\n---\n\n${text}`
+        ? `${buildProposalAppend(kbOutDir(), this.proposalProductDirs())}\n\n---\n\n${text}`
         : text
     // Build the SDK user message. Text-only turns keep the string
     // short-path (fusion-code expects this for slash commands and
@@ -1244,8 +1256,9 @@ export class ChatEngine extends EventEmitter {
       '始终用中文回复。所有解释、注释、与用户的交流都用中文。技术术语和代码标识符保留原形。'
     const proposalActive = this.proposalMode
     const mirrorDir = kbOutDir()
+    const productDirs = this.proposalProductDirs()
     const systemPromptAppend = proposalActive
-      ? `${baseChineseAppend}\n\n${buildProposalAppend(mirrorDir)}`
+      ? `${baseChineseAppend}\n\n${buildProposalAppend(mirrorDir, productDirs)}`
       : baseChineseAppend
 
     const queue = new AsyncMessageQueue<unknown>()
@@ -1284,7 +1297,9 @@ export class ChatEngine extends EventEmitter {
       // Claude can access beyond the current working directory. Paths should be
       // absolute.」）。spread-omit：非方案模式不传，等价于不设——绝不通过这个字段
       // 或 cwd 改变默认可读范围（cwd 不变量）。
-      ...(proposalActive ? { additionalDirectories: [mirrorDir] } : {}),
+      ...(proposalActive
+        ? { additionalDirectories: productDirs.length > 0 ? productDirs : [mirrorDir] }
+        : {}),
       // UI-picked permission mode. Values:
       //   - default           → canUseTool → broker → dialog (current flow)
       //   - plan              → SDK restricts to read-only tools, assistant

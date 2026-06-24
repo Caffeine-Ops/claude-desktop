@@ -537,6 +537,13 @@ export type ChatSendPayload = {
    * exit 1。fresh spawn 的 runtime 此刻 spawnedWithProposal 已为 true，不重复注入。
    */
   proposalMode?: boolean
+  /**
+   * 方案模式下识别到的产品集（{productLine, product}）。渲染层在 send 时用
+   * matchProducts 对用户文本匹配后透传。main 据此把这些产品的镜像子目录加进
+   * additionalDirectories 并在方案提示词里点名，收窄检索范围。
+   * 缺省/空数组 = 未识别到 → main 退回整个镜像根目录由 AI 自行 Grep 定位。
+   */
+  proposalProducts?: readonly { productLine: string; product: string }[]
 }
 export type ChatSendResult = { messageId: string }
 export type ChatAbortPayload = { sessionId: string }

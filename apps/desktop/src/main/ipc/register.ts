@@ -245,7 +245,9 @@ export function registerIpcHandlers(): void {
         payload.sessionId,
         payload.text,
         images,
-        payload?.proposalMode === true
+        payload?.proposalMode === true,
+        // 防御：只接受数组形状，过滤畸形 renderer payload。
+        Array.isArray(payload?.proposalProducts) ? payload.proposalProducts : undefined
       )
     }
   )
