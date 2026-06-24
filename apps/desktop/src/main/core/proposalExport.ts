@@ -48,6 +48,8 @@ export async function exportProposal(
       break
     }
     default: {
+      // TypeScript 穷尽性守卫：若给 ProposalExportFormat 加新格式却漏改此 switch 分支，
+      // 编译期当场报错 `never` 类型检查，避免运行期才发现的漏处理。
       const _exhaustive: never = format
       throw new Error(`Unsupported export format: ${String(_exhaustive)}`)
     }

@@ -1023,7 +1023,7 @@ function makeSessionEventHandler(
         //
         // 三道门，缺一不可：
         //   1. 会话门控：只累积方案绑定会话（ps.sessionId === sid）的输出，防止别的
-        //      会话（多 tab / 后台 agent）的 end 污染 docMarkdown。
+        //      会话（多 tab / 后台 agent）的 end 污染方案草稿 sections。
         //   2. 消息级去重：按 event.messageId 记账，end 对同一 messageId 二次触发
         //      （异常路径重发等）时不重复累积同一段（修复草稿重复）。
         //   3. 精确定位：用 event.messageId 找到刚结束的那条消息（store 里消息 id
@@ -1047,7 +1047,7 @@ function makeSessionEventHandler(
               .join('')
             // 每个哨兵块映射为一节。提问 / 过程对话不带哨兵 → 空数组 → 不入节
             // （修复提问污染文档）。哨兵与抽取器在 shared/proposal.ts，与提示词规则 6 同源。
-            // appendSections 内部按 messageId 去重并记账（替代原 setDoc 字符串拼接）。
+            // appendSections 内部按 messageId 去重并记账，分节入 store。
             const blocks = extractProposalDraftBlocks(fullText)
             if (blocks.length) {
               useProposalStore.getState().appendSections(event.messageId, blocks)

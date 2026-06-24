@@ -27,7 +27,7 @@ export function extractProposalDraftBlocks(text: string): string[] {
     if (b < 0) break
     const contentStart = b + PROPOSAL_DRAFT_BEGIN.length
     const e = text.indexOf(PROPOSAL_DRAFT_END, contentStart)
-    if (e < 0) break // 未闭合：忽略，避免把后续提问吞进草稿
+    if (e < 0) break // 未闭合：忽略，避免把后续提问也吞进草稿
     const section = text.slice(contentStart, e).trim()
     if (section) out.push(section)
     from = e + PROPOSAL_DRAFT_END.length

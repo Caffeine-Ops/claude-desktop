@@ -31,7 +31,7 @@ interface ProposalState {
   // 已累积进 sections 的 assistant 消息 id 集合。end 事件可能对同一 messageId
   // 二次触发（异常路径重发等）；按 id 去重，避免同一段正文被重复 append 进节。
   consumedDraftIds: Set<string>
-  // 分节草稿：每个 AI 哨兵块一节（Task 6 已删旧 docMarkdown/setDoc 路径）。
+  // 分节草稿：每个 AI 哨兵块一节（旧的 docMarkdown/setDoc 单串路径已移除）。
   sections: ProposalSection[]
   start: (sessionId: string) => void
   setProducts: (products: ProposalProduct[]) => void

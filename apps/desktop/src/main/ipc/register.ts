@@ -1001,9 +1001,8 @@ export function registerIpcHandlers(): void {
   // the OS native save dialog anchored to the sender's BrowserWindow
   // (modal on macOS), writes the file via proposalExport.ts, and returns
   // the path. `{ path: null }` signals user cancellation. The format
-  // field is a closed union (currently only `'md'`); future adapters for
-  // Word/PDF extend the switch inside proposalExport.ts without touching
-  // this IPC surface.
+  // field is a closed union (`'md'` | `'docx'`); extending to new formats
+  // requires only updating the switch inside proposalExport.ts, not this IPC surface.
   ipcMain.handle(
     IPC_CHANNELS.PROPOSAL_EXPORT,
     async (event, payload: ProposalExportPayload): Promise<ProposalExportResult> => {
