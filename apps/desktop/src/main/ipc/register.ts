@@ -1009,9 +1009,10 @@ export function registerIpcHandlers(): void {
     async (event, payload: ProposalExportPayload): Promise<ProposalExportResult> => {
       const markdown =
         typeof payload?.markdown === 'string' ? payload.markdown : ''
-      // Only `'md'` is valid in ExportFormat today; reject non-'md' format
-      // to prevent unexpected values from reaching the write path.
-      if (payload?.format !== 'md') return { path: null }
+      // 校验 format 落在已支持联合内，挡掉意外值流入写路径。
+      if (payload?.format !== 'md' && payload?.format !== 'docx') {
+        return { path: null }
+      }
       const format = payload.format
       // Runtime guard: BrowserWindow may be null if the window was closed
       // between IPC message send and handler execution.

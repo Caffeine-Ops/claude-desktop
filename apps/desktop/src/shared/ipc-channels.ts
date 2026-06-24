@@ -803,7 +803,7 @@ export type AppearanceSetResult = { appearance: AppearancePrefs | null }
  * circular imports. MVP is `'md'`; extend to `'docx' | 'pdf'` when those
  * adapters land — the IPC surface requires no changes.
  */
-export type ProposalExportFormat = 'md' // 进阶加 'docx' | 'pdf'
+export type ProposalExportFormat = 'md' | 'docx' // 进阶可再加 'pdf'
 
 /** Payload for PROPOSAL_EXPORT. */
 export interface ProposalExportPayload {

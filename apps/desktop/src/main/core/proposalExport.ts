@@ -1,6 +1,7 @@
 import { dialog, BrowserWindow } from 'electron'
 import { writeFileSync } from 'node:fs'
 import type { ProposalExportFormat } from '../../shared/ipc-channels'
+import { markdownToDocxBuffer } from './proposalDocx'
 
 /**
  * Show the OS native save dialog and, if the user confirms, write the
@@ -25,25 +26,28 @@ export async function exportProposal(
   format: ProposalExportFormat
 ): Promise<{ path: string | null }> {
   const filters =
-    format === 'md' ? [{ name: 'Markdown', extensions: ['md'] }] : []
+    format === 'docx'
+      ? [{ name: 'Word', extensions: ['docx'] }]
+      : [{ name: 'Markdown', extensions: ['md'] }]
 
   const r = await dialog.showSaveDialog(win, {
     filters,
-    defaultPath: '方案草稿.md'
+    defaultPath: format === 'docx' ? '方案草稿.docx' : '方案草稿.md'
   })
 
   if (r.canceled || !r.filePath) return { path: null }
 
-  // MVP：md 直接落盘。进阶按 format 走不同 adapter（markdown→docx/pdf）。
   switch (format) {
     case 'md':
       writeFileSync(r.filePath, markdown, 'utf8')
       break
-    // future: case 'docx': await convertToDocx(r.filePath, markdown); break
-    // future: case 'pdf':  await convertToPdf(r.filePath, markdown);  break
+    case 'docx': {
+      // markdown → 真 .docx（逐 mdast 节点构造，见 proposalDocx.ts）。
+      const buf = await markdownToDocxBuffer(markdown)
+      writeFileSync(r.filePath, buf)
+      break
+    }
     default: {
-      // TypeScript exhaustiveness guard — compile-time error if a new
-      // ProposalExportFormat variant is added without a handler here.
       const _exhaustive: never = format
       throw new Error(`Unsupported export format: ${String(_exhaustive)}`)
     }
