@@ -129,8 +129,7 @@ const STRINGS = {
       '帮我看一下当前文件夹里的 [文件名]。用大白话告诉我：1）这张表里有什么数据、有没有缺失或异常 2）最值得注意的 3 个发现 3）如果要做图给老板看，建议画哪几张。',
     scenarioProposalTitle: '写方案',
     scenarioProposalDesc: '基于公司知识库，对话式生成建设方案草稿',
-    scenarioProposalPrompt:
-      '要写的产品：\n内容分几部分写：\n1. \n2. \n3. \n（哪部分要一条条介绍，就在该部分后面标注「一条条介绍」）',
+    scenarioProposalPrompt: '要写哪个产品的方案、给哪个客户或什么场景用；想分成哪几部分、每部分重点写什么。',
 
     // Code block copy affordance
     codeBlockCopy: '复制',
@@ -373,7 +372,7 @@ const STRINGS = {
     scenarioProposalTitle: 'Write a proposal',
     scenarioProposalDesc: 'Use the company knowledge base to co-author a construction proposal draft',
     scenarioProposalPrompt:
-      'Products to cover: \nSections to write:\n1. \n2. \n3. \n(Mark any section that should be itemized with "list one by one")',
+      'Which product the proposal is for, and which customer or scenario; how to split it into sections, and what each section should focus on.',
 
     codeBlockCopy: 'Copy',
     codeBlockCopied: '✓ Copied',
