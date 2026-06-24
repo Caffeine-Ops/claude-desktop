@@ -14,16 +14,12 @@ export const PROPOSAL_DRAFT_BEGIN = '===方案正文开始==='
 export const PROPOSAL_DRAFT_END = '===方案正文结束==='
 
 /**
- * 从一条 assistant 消息文本里抽取所有「方案正文」段（哨兵之间的内容）并拼接。
- *
- * - 无任何完整哨兵对 → 返回 ''（纯提问 / 过程对话不含哨兵，不会被收入草稿）。
- * - 支持一条消息里多个哨兵块（AI 一次推进多个部分时）。
- * - 容错：起始哨兵后找不到结束哨兵（流式截断 / AI 漏写）→ 该残块忽略，不猜测边界。
- *
- * 纯函数：同输入同输出、无副作用，便于两端复用与单测。
+ * 抽取所有「方案正文」段（哨兵之间内容）为数组，顺序与出现顺序一致。
+ * 分节化的来源：每个闭合哨兵块 = 一节。无哨兵对 → []。未闭合残块忽略。
+ * 纯函数，main 与 renderer 共享。
  */
-export function extractProposalDraft(text: string): string {
-  if (!text) return ''
+export function extractProposalDraftBlocks(text: string): string[] {
+  if (!text) return []
   const out: string[] = []
   let from = 0
   for (;;) {
@@ -31,10 +27,23 @@ export function extractProposalDraft(text: string): string {
     if (b < 0) break
     const contentStart = b + PROPOSAL_DRAFT_BEGIN.length
     const e = text.indexOf(PROPOSAL_DRAFT_END, contentStart)
-    if (e < 0) break // 未闭合：忽略，避免把后续提问也吞进草稿
+    if (e < 0) break // 未闭合：忽略，避免把后续提问吞进草稿
     const section = text.slice(contentStart, e).trim()
     if (section) out.push(section)
     from = e + PROPOSAL_DRAFT_END.length
   }
-  return out.join('\n\n').trim()
+  return out
+}
+
+/**
+ * 从一条 assistant 消息文本里抽取所有「方案正文」段（哨兵之间的内容）并拼接。
+ *
+ * - 无任何完整哨兵对 → 返回 ''（纯提问 / 过程对话不含哨兵，不会被收入草稿）。
+ * - 支持一条消息里多个哨兵块（AI 一次推进多个部分时）。
+ * - 容错：起始哨兵后找不到结束哨兵（流式截断 / AI 漏写）→ 该残块忽略，不猜测边界。
+ *
+ * 向后兼容：把各正文段以空行拼成单串。行为与重构前一致。
+ */
+export function extractProposalDraft(text: string): string {
+  return extractProposalDraftBlocks(text).join('\n\n').trim()
 }
