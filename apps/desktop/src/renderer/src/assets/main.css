@@ -271,3 +271,18 @@ textarea::-moz-selection {
     opacity: 0;
   }
 }
+
+/* 方案生成进度条。AI 在运行时才决定方案分几部分，总段数不可预知，所以这里用
+ * indeterminate（不定量）滑动条而非百分比——给「确实在进行」的安全感，又不谎报
+ * 精确进度（假百分比会卡在 90% 那种更焦虑）。一条占轨道 1/3 宽的色块来回滑过。 */
+@keyframes proposal-indeterminate {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(410%);
+  }
+}
+.proposal-progress-indeterminate {
+  animation: proposal-indeterminate 1.4s ease-in-out infinite;
+}

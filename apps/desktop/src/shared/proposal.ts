@@ -36,6 +36,40 @@ export function extractProposalDraftBlocks(text: string): string[] {
 }
 
 /**
+ * 流式进度探针：在一条【尚未结束】的 assistant 消息文本里数哨兵，给右侧面板的
+ * 生成进度条用——不等 'end' 就能知道「现在在写第几部分」。与上面的抽取器同源，
+ * 避免两套数法漂移。
+ *
+ * - completed：已闭合的哨兵块数 = 本轮已起草完的部分数。
+ * - drafting：是否存在一个【已开始但未闭合】的哨兵块 = 此刻正在起草中。
+ *
+ * 注意语义差异：抽取器对「未闭合残块」是忽略（要的是定稿正文，不猜边界）；进度探针
+ * 对未闭合块记为 drafting（要的是「正在发生什么」）。目的不同，故各自都正确。
+ */
+export function countProposalDraftProgress(text: string): {
+  completed: number
+  drafting: boolean
+} {
+  if (!text) return { completed: 0, drafting: false }
+  let completed = 0
+  let from = 0
+  let drafting = false
+  for (;;) {
+    const b = text.indexOf(PROPOSAL_DRAFT_BEGIN, from)
+    if (b < 0) break
+    const contentStart = b + PROPOSAL_DRAFT_BEGIN.length
+    const e = text.indexOf(PROPOSAL_DRAFT_END, contentStart)
+    if (e < 0) {
+      drafting = true // 起始哨兵后还没收到结束哨兵 → 正在写这一块
+      break
+    }
+    completed++
+    from = e + PROPOSAL_DRAFT_END.length
+  }
+  return { completed, drafting }
+}
+
+/**
  * 从一条 assistant 消息文本里抽取所有「方案正文」段（哨兵之间的内容）并拼接。
  *
  * - 无任何完整哨兵对 → 返回 ''（纯提问 / 过程对话不含哨兵，不会被收入草稿）。
