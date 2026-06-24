@@ -32,6 +32,7 @@ import type {
   PermissionRequest,
   SessionMeta
 } from '../../shared/types'
+import { THINKING_TOKEN_BUDGET } from '../../shared/thinking'
 import { bumpUnread } from '../tray'
 import { AsyncMessageQueue } from './asyncMessageQueue'
 import { getAppSettings, type CliBackend } from './appSettings'
@@ -1424,6 +1425,11 @@ export class ChatEngine extends EventEmitter {
               process.env.CLAUDE_CODE_ATTRIBUTION_HEADER ?? 'false',
             ENABLE_TOOL_SEARCH:
               process.env.ENABLE_TOOL_SEARCH ?? 'true',
+            // 给扩展思考钉一个 token 预算上限，作为思考进度条的分母。
+            // 这是做"真进度"的代价：思考超过该预算会被 CLI 截断。尊重用户
+            // 在自己 shell 里导出的覆盖。值与 renderer 算百分比共用 shared 常量。
+            MAX_THINKING_TOKENS:
+              process.env.MAX_THINKING_TOKENS ?? String(THINKING_TOKEN_BUDGET),
             // ppt-master skill bootstrap reads this to pick its venv base
             // interpreter. Respect a user-exported override; otherwise hand
             // over the bundled 3.12 home (omitted when null so the bootstrap
@@ -1436,6 +1442,11 @@ export class ChatEngine extends EventEmitter {
           }
         : {
             ...systemBackendEnv(),
+            // 给扩展思考钉一个 token 预算上限，作为思考进度条的分母。
+            // 这是做"真进度"的代价：思考超过该预算会被 CLI 截断。尊重用户
+            // 在自己 shell 里导出的覆盖。值与 renderer 算百分比共用 shared 常量。
+            MAX_THINKING_TOKENS:
+              process.env.MAX_THINKING_TOKENS ?? String(THINKING_TOKEN_BUDGET),
             // Same passthrough under system claude: PPT_MASTER_PYTHON_HOME is a
             // main-process runtime path, not an env.json gateway key, so it
             // never affects claude's model routing — safe to hand over so the
