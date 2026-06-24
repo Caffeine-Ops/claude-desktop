@@ -19,7 +19,7 @@ import { useChatStore } from '../stores/chat'
 import { useProposalStore } from '../stores/proposal'
 import type { ProposalProduct } from '../stores/proposal'
 import { matchProducts } from '../lib/kbProductMatch'
-import { extractProposalDraft } from '@shared/proposal'
+import { extractProposalDraftBlocks } from '@shared/proposal'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
@@ -1045,17 +1045,17 @@ function makeSessionEventHandler(
               .filter((p) => p.type === 'text' && p.text)
               .map((p) => p.text!)
               .join('')
-            // 只累积 AI 用哨兵显式标记为「正文」的部分。提问 / 过程对话不带哨兵 →
-            // extractProposalDraft 返回 '' → 不写进草稿（修复提问污染文档）。哨兵与
-            // 抽取器在 shared/proposal.ts，与提示词规则 6 同源。
-            const draft = extractProposalDraft(fullText)
-            if (draft) {
-              const cur = useProposalStore.getState().docMarkdown
-              useProposalStore.getState().setDoc(`${cur}\n\n${draft}`.trimStart())
+            // 每个哨兵块映射为一节。提问 / 过程对话不带哨兵 → 空数组 → 不入节
+            // （修复提问污染文档）。哨兵与抽取器在 shared/proposal.ts，与提示词规则 6 同源。
+            // appendSections 内部按 messageId 去重并记账（替代原 setDoc 字符串拼接）。
+            const blocks = extractProposalDraftBlocks(fullText)
+            if (blocks.length) {
+              useProposalStore.getState().appendSections(event.messageId, blocks)
+            } else {
+              // 零正文消息（纯提问）也要记账，使同一 messageId 的 end 不再二次处理。
+              useProposalStore.getState().markDraftConsumed(event.messageId)
             }
           }
-          // 记账：无论是否抽到正文都标记已处理——同一 messageId 的 end 不再二次累积。
-          useProposalStore.getState().markDraftConsumed(event.messageId)
         }
         actions.endAssistantMessage(sid)
         break
