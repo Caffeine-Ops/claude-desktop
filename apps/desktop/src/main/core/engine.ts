@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { EventEmitter } from 'events'
 import { app, type WebContents } from 'electron'
 import { existsSync, statSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, resolve, sep } from 'node:path'
 import { inspect } from 'node:util'
 
 import {
@@ -273,6 +273,21 @@ interface SessionRuntime {
    * never receives the mirror path / cite-source discipline.
    */
   spawnedWithProposal: boolean
+  /**
+   * 本 runtime 的方案写作意图。由 send() 在每次发送时按 sessionId 写到 THIS
+   * runtime（不是 engine 全局字段），openSession 在 spawn 烘焙 systemPrompt.append /
+   * additionalDirectories 时从 `runtime` 读取，handleCanUseTool 据它决定是否对镜像
+   * 目录的读放行。
+   *
+   * 为什么必须 per-runtime 而非 per-engine：一个 engine 多 runtime。
+   * switchToSession 的后台 warmup 会对「另一个」会话 fire-and-forget 跑
+   * ensureSessionReady → openSession；若意图存在 engine 全局字段上，warmup 会读到
+   * 上一次 send（可能是别的会话）写的值，把方案纪律/镜像可读目录烘焙进一个用户从未
+   * 置于方案模式的会话——跨会话泄漏。挂在 runtime 上，spawn 永远消费与它配对的那份
+   * 意图，免疫交错与 warmup 抢读。新建 runtime 默认 false（普通会话）。
+   */
+  proposalMode: boolean
+  proposalProducts: readonly { productLine: string; product: string }[]
 }
 
 interface ActiveTurn {
@@ -461,31 +476,14 @@ export class ChatEngine extends EventEmitter {
   /** In-flight refresh dedupe so a burst of sends issues one fetch. */
   private externalMcpRefresh: Promise<void> | null = null
 
-  /**
-   * 方案写作模式开关。由 send() 在每次发送时从 payload 透传写入，openSession 在
-   * spawn 烘焙 systemPrompt.append / additionalDirectories 时读取。
-   *
-   * 为什么是 per-engine 字段而非 send 参数直传 openSession：openSession 由
-   * ensureSessionReady → 走 lazy spawn 路径触发，调用栈里不携带 send 的局部变量；
-   * 把它落成实例字段，让「首次 send 设标志 → ensureSessionReady spawn → openSession
-   * 读标志」这条链路成立。每次 send 都重写，所以它反映的是最近一次发送的意图。
-   *
-   * 注意：这是「下一次 spawn 生效」的语义，不是「立即对已 spawn 的进程生效」。
-   * 已 spawn 的子进程其 append 已烘焙、无法热更新。为此 send() 对「已 warm-spawn 但
-   * 当时不带方案」的 runtime（`spawnedWithProposal === false`），把方案纪律+镜像绝对
-   * 路径注入到本次用户消息里（见 send() 里的 warm-spawn grounding）——否则「开 app→
-   * 首个 thread 选产品→发送」这条常见路径会落在非方案进程上、AI 拿不到镜像路径。
-   */
-  private proposalMode = false
-  // 本次 turn 识别到的产品集（send() 写入，openSession/warm-spawn 读取）。
-  // 空 = 未识别 → 检索范围退回整个镜像根目录。与 proposalMode 同生命周期。
-  private proposalProducts: readonly { productLine: string; product: string }[] = []
-
   // 把识别到的产品映射成镜像子目录绝对路径：<kbOutDir>/<产品线>/<产品>。
-  // 镜像目录结构由阶段 A 索引器固定（见 build-kb-index.ts）。
-  private proposalProductDirs(): string[] {
+  // 镜像目录结构由阶段 A 索引器固定（见 build-kb-index.ts）。纯函数，产品集由调用方
+  // 从对应 runtime 取出传入——绝不读 engine 全局字段（per-engine 会被 warmup 跨会话抢读）。
+  private proposalProductDirs(
+    products: readonly { productLine: string; product: string }[]
+  ): string[] {
     const root = kbOutDir()
-    return this.proposalProducts.map((p) => join(root, p.productLine, p.product))
+    return products.map((p) => join(root, p.productLine, p.product))
   }
 
   constructor(webContents: WebContents, opts: ChatEngineOptions = {}) {
@@ -902,12 +900,6 @@ export class ChatEngine extends EventEmitter {
     proposalMode = false,
     proposalProducts: readonly { productLine: string; product: string }[] = []
   ): Promise<{ messageId: string }> {
-    // Record the proposal-mode intent for THIS turn BEFORE anything below
-    // can trigger a spawn (ensureSessionReady → openSession reads it). Set
-    // unconditionally so leaving proposal mode also takes effect on the
-    // next fresh spawn. See the field doc for the "next spawn" semantics.
-    this.proposalMode = proposalMode
-    this.proposalProducts = proposalProducts
     // Hard gate: the workspace must have been picked via the drag-drop
     // gate before we spawn anything. The renderer already refuses to
     // render the composer until getWorkspace() returns a non-null path,
@@ -949,6 +941,15 @@ export class ChatEngine extends EventEmitter {
     // the runtime slot exists we're allowed to push a turn into it.
     // `getSession` lazily creates the slot if missing (new session path).
     const runtime = await this.getSession(sessionId)
+    // Record the proposal-mode intent for THIS turn on the TARGET runtime
+    // (not an engine-global field) BEFORE anything below can trigger a spawn
+    // — ensureSessionReady → openSession reads it off `runtime`. Writing it
+    // per-runtime is what keeps switchToSession's background warmup (which
+    // spawns a DIFFERENT session) from baking the wrong intent. Set
+    // unconditionally so leaving proposal mode also takes effect on the next
+    // fresh spawn of this runtime.
+    runtime.proposalMode = proposalMode
+    runtime.proposalProducts = proposalProducts
     // Mark the runtime as "has real work" — this is the signal
     // `switchToSession` uses to keep the runtime alive when the user
     // switches away (warmup-cancel only kills never-sent runtimes).
@@ -1019,9 +1020,17 @@ export class ChatEngine extends EventEmitter {
     // baked the append (`spawnedWithProposal` — i.e. it was (re)spawned
     // under proposal mode, including a fresh first-send spawn just now via
     // ensureSessionReady above), to avoid duplicating the block.
+    // Slash commands (e.g. /compact, /clear) must reach fusion-code with '/'
+    // at offset 0 — the CLI's short-path detection is prefix-sensitive. Never
+    // inject the proposal grounding ahead of one, or the leading '/' is no
+    // longer at the start and the command silently runs as ordinary prose
+    // (评审 #10). Such turns aren't drafting proposal content anyway, so
+    // skipping the grounding costs nothing — the next non-slash turn re-injects
+    // it (spawnedWithProposal is still false on the warm child).
+    const isSlashCommand = text.trimStart().startsWith('/')
     const groundedText =
-      proposalMode && !runtime.spawnedWithProposal
-        ? `${buildProposalAppend(kbOutDir(), this.proposalProductDirs())}\n\n---\n\n${text}`
+      proposalMode && !runtime.spawnedWithProposal && !isSlashCommand
+        ? `${buildProposalAppend(kbOutDir(), this.proposalProductDirs(runtime.proposalProducts))}\n\n---\n\n${text}`
         : text
     // Build the SDK user message. Text-only turns keep the string
     // short-path (fusion-code expects this for slash commands and
@@ -1251,12 +1260,14 @@ export class ChatEngine extends EventEmitter {
     // 方案写作模式：在常量中文 append 之后再拼一段「方案专家纪律」，并把知识库
     // 文本镜像目录（userData/kb-index）的绝对路径写进提示词。镜像目录本身在下面
     // 通过 additionalDirectories 加进可读范围——cwd 绝不改动（不变量）。
-    // proposalMode 由 send() 在本次 spawn 前写入（lazy spawn 语义见字段注释）。
+    // 意图从 THIS runtime 读（send() 在本次 spawn 前写到该 runtime）——绝不读 engine
+    // 全局字段，否则 warmup 跑别的会话的 openSession 会抢到错误意图（见 SessionRuntime
+    // .proposalMode 注释）。
     const baseChineseAppend =
       '始终用中文回复。所有解释、注释、与用户的交流都用中文。技术术语和代码标识符保留原形。'
-    const proposalActive = this.proposalMode
+    const proposalActive = runtime.proposalMode
     const mirrorDir = kbOutDir()
-    const productDirs = this.proposalProductDirs()
+    const productDirs = this.proposalProductDirs(runtime.proposalProducts)
     const systemPromptAppend = proposalActive
       ? `${baseChineseAppend}\n\n${buildProposalAppend(mirrorDir, productDirs)}`
       : baseChineseAppend
@@ -1810,6 +1821,31 @@ export class ChatEngine extends EventEmitter {
   }
 
   /**
+   * True when a tool call is a READ-only access (Read/Grep/Glob) whose target
+   * path resolves inside the knowledge-base text mirror (`kbOutDir()`).
+   *
+   * Used by handleCanUseTool to silently allow proposal-mode KB reads without
+   * a dialog, closing the warm-spawn permission gap (the live child may not
+   * have baked `additionalDirectories`). Deliberately read-only — the mirror
+   * is reference material, never written through this path.
+   *
+   * Containment uses resolved absolute paths with a separator boundary so a
+   * sibling like `<userData>/kb-index-evil` can't masquerade as the mirror.
+   * Relative / missing paths return false (they'd be cwd-relative, not the
+   * mirror) and fall through to the normal broker.
+   */
+  private isKbMirrorRead(toolName: string, input: Record<string, unknown>): boolean {
+    let raw: unknown
+    if (toolName === 'Read') raw = input.file_path
+    else if (toolName === 'Grep' || toolName === 'Glob') raw = input.path
+    else return false
+    if (typeof raw !== 'string' || !raw || !isAbsolute(raw)) return false
+    const target = resolve(raw)
+    const root = resolve(kbOutDir())
+    return target === root || target.startsWith(root + sep)
+  }
+
+  /**
    * SDK `canUseTool` callback. Called by the Agent SDK for every tool
    * invocation the CLI would otherwise need to prompt on.
    *
@@ -1854,6 +1890,27 @@ export class ChatEngine extends EventEmitter {
   ): Promise<PermissionResult> {
     const scope = deriveScope(toolName, input)
     const toolUseId = ctx.toolUseID ?? ''
+
+    // 方案模式：对知识库镜像目录（userData/kb-index）内的「读类」工具静默放行，
+    // 不进 broker / 不弹窗。
+    //
+    // 为什么需要它：可读范围本应由 spawn 时的 additionalDirectories 烘焙，但那是
+    // spawn 冻结的——warmup 在用户选产品前就 spawn 了子进程（spawnedWithProposal=
+    // false），那个活进程没烘焙镜像目录。send() 的 warm-spawn grounding 只把镜像
+    // 绝对路径注入进消息（告知去哪检索），却补不上可读范围；若不在这里放行，AI 对
+    // 镜像目录的 Read/Grep/Glob（cwd 之外）就会触发权限弹窗，用户取消即读不到知识库
+    // → 退回「资料缺失」或臆想，正是本功能要避免的。在此放行让「是否在 spawn 烘焙了
+    // additionalDirectories」不再影响读取结果：cold-spawn（已烘焙）下 CLI 自行放行、
+    // 本回调对镜像读根本不触发；warm-spawn（没烘焙）下由本回调兜底。两条路径一致。
+    //
+    // 严格限定：仅 proposalMode 的 runtime、仅读类工具（Read/Grep/Glob，绝不含
+    // Write/Edit——镜像是只读参考料）、仅路径确实落在 kbOutDir() 之内。其余一律照常
+    // 走 broker。绝不放宽到 cwd 之外的任意目录（cwd 可读范围不变量）。
+    if (this.sessions.get(sessionId)?.proposalMode && this.isKbMirrorRead(toolName, input)) {
+      console.log('[engine] canUseTool → auto-allow (proposal KB read)', { sessionId, toolName })
+      return { behavior: 'allow', updatedInput: input, decisionClassification: 'user_temporary' }
+    }
+
     console.log('[engine] canUseTool', {
       sessionId,
       toolName,
@@ -2555,7 +2612,9 @@ export class ChatEngine extends EventEmitter {
       readySettled: false,
       pendingResume: false,
       openedViaSend: false,
-      spawnedWithProposal: false
+      spawnedWithProposal: false,
+      proposalMode: false,
+      proposalProducts: []
     }
     this.sessions.set(sessionId, runtime)
     return runtime

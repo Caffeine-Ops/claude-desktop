@@ -1,24 +1,79 @@
-import { useState } from 'react'
-import { useProposalStore } from '../../stores/proposal'
+import { useEffect, useState } from 'react'
+import { useProposalStore, useProposalForeground } from '../../stores/proposal'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 
 export function ProposalDocPanel(): React.JSX.Element | null {
-  const active = useProposalStore((s) => s.active)
+  // 与 App.tsx 隐藏右栏同一门控：只对【当前前台会话】是方案会话时显示，避免 tab
+  // 内切到别的会话后还显示着旧会话的草稿（评审 #8）。
+  const show = useProposalForeground()
   const doc = useProposalStore((s) => s.docMarkdown)
   const setDoc = useProposalStore((s) => s.setDoc)
   const products = useProposalStore((s) => s.products)
   const setProducts = useProposalStore((s) => s.setProducts)
   const [editing, setEditing] = useState(false)
-  if (!active) return null
+  // 导出反馈：成功显路径 / 取消显「已取消」/ 失败显错误，4s 后自动消失。原来三种
+  // 结果都只 console.error，用户无从区分成功、取消、失败（评审 #7）。
+  const [exporting, setExporting] = useState(false)
+  const [exportMsg, setExportMsg] = useState<{
+    tone: 'ok' | 'err' | 'muted'
+    text: string
+  } | null>(null)
+  useEffect(() => {
+    if (!exportMsg) return
+    const id = setTimeout(() => setExportMsg(null), 4000)
+    return () => clearTimeout(id)
+  }, [exportMsg])
+
+  async function handleExport(): Promise<void> {
+    if (exporting) return
+    if (!doc.trim()) {
+      setExportMsg({ tone: 'muted', text: '草稿为空，无内容可导出' })
+      return
+    }
+    setExporting(true)
+    try {
+      const r = await window.chatApi.exportProposal({ markdown: doc, format: 'md' })
+      setExportMsg(
+        r.path
+          ? { tone: 'ok', text: `已导出：${r.path}` }
+          : { tone: 'muted', text: '已取消导出' }
+      )
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err)
+      console.error('[export]', err)
+      setExportMsg({ tone: 'err', text: `导出失败：${m}` })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  if (!show) return null
   return (
     <div className="flex w-96 flex-col border-l border-neutral-800 bg-neutral-950">
       <div className="flex items-center justify-between px-3 py-2 text-xs text-neutral-400">
         <span>方案草稿</span>
         <button className="rounded px-2 py-0.5 hover:bg-neutral-800"
           onClick={() => setEditing((v) => !v)}>{editing ? '预览' : '编辑'}</button>
-        <button className="rounded px-2 py-0.5 hover:bg-neutral-800"
-          onClick={() => { void window.chatApi.exportProposal({ markdown: doc, format: 'md' }).catch((err) => console.error('[export]', err)) }}>导出</button>
+        <button className="rounded px-2 py-0.5 hover:bg-neutral-800 disabled:opacity-50"
+          disabled={exporting}
+          onClick={() => { void handleExport() }}>{exporting ? '导出中…' : '导出'}</button>
       </div>
+      {/* 导出结果反馈条：truncate + title 兜住长路径，避免撑破 w-96 面板。 */}
+      {exportMsg && (
+        <div
+          className={
+            'truncate border-b border-neutral-800 px-3 pb-1.5 text-[11px] ' +
+            (exportMsg.tone === 'ok'
+              ? 'text-emerald-400'
+              : exportMsg.tone === 'err'
+                ? 'text-rose-400'
+                : 'text-neutral-500')
+          }
+          title={exportMsg.text}
+        >
+          {exportMsg.text}
+        </div>
+      )}
       {/* 识别到的产品 chip：方案首发时由 matchProducts 写入。可删——删除即从
           store 移除，后续 turn 不再把它列入可读目录（召回优先下用于纠误配）。
           空集时提示 AI 会自行在知识库定位（整库兜底）。 */}

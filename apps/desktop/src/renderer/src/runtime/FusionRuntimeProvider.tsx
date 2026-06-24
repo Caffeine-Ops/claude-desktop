@@ -19,6 +19,7 @@ import { useChatStore } from '../stores/chat'
 import { useProposalStore } from '../stores/proposal'
 import type { ProposalProduct } from '../stores/proposal'
 import { matchProducts } from '../lib/kbProductMatch'
+import { extractProposalDraft } from '@shared/proposal'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
@@ -438,13 +439,15 @@ export function FusionRuntimeProvider({
         const isProposal = ps.active && ps.sessionId === targetSid
         let proposalProducts: ProposalProduct[] | undefined
         if (isProposal) {
-          if (ps.products.length === 0) {
-            // 方案首发：对用户文本匹配产品播种产品集，并持久化——后续 turn（逐部分
-            // 推进）复用这套已确认的集合，chip 删除也据此生效。召回优先：多命中无害
-            // （多一个可读目录，AI 仍按用户文字写），可在 ProposalDocPanel 的 chip 删。
+          if (!ps.seeded) {
+            // 方案首发：仅在尚未播种时对用户文本匹配产品并【一次性】播种——即便零命中
+            // 也置 seeded，从此固定这套集合。后续 turn（逐部分推进）一律复用，不再
+            // readKbIndex/matchProducts，也不会在会话中途忽然命中而骤然收窄检索范围。
+            // 召回优先：多命中无害（多一个可读目录，AI 仍按用户文字写），可在
+            // ProposalDocPanel 的 chip 删（走 setProducts，不重置 seeded）。
             const idx = await window.chatApi.readKbIndex()
             const matched = matchProducts(text, idx)
-            if (matched.length > 0) useProposalStore.getState().setProducts(matched)
+            useProposalStore.getState().seedProducts(matched)
             proposalProducts = matched
           } else {
             proposalProducts = ps.products
@@ -1012,45 +1015,47 @@ function makeSessionEventHandler(
         })
         break
       case 'end': {
-        // Proposal mode: accumulate completed assistant text into the
-        // right-side document panel. We read the accumulated text HERE,
-        // before endAssistantMessage() flips streaming=false, because
-        // the messages array in the store already holds the fully
-        // assembled text (each 'chunk' event appended into it via
-        // appendAssistantDelta). Reading at 'end' (once per message)
-        // is the correct anti-duplication point — never on 'chunk',
-        // which fires for every streaming token.
-        // 门控：只把方案绑定会话（ps.sessionId === sid）的输出累积进草稿，
-        // 防止别的会话（多 tab / 后台 agent）的 end 事件污染 docMarkdown。
+        // Proposal mode: accumulate the just-finished assistant message's
+        // DRAFT sections into the right-side document panel. We read HERE
+        // (at 'end', once per message) rather than on 'chunk', because the
+        // store already holds the fully assembled text and 'end' is the
+        // correct once-per-message point.
+        //
+        // 三道门，缺一不可：
+        //   1. 会话门控：只累积方案绑定会话（ps.sessionId === sid）的输出，防止别的
+        //      会话（多 tab / 后台 agent）的 end 污染 docMarkdown。
+        //   2. 消息级去重：按 event.messageId 记账，end 对同一 messageId 二次触发
+        //      （异常路径重发等）时不重复累积同一段（修复草稿重复）。
+        //   3. 精确定位：用 event.messageId 找到刚结束的那条消息（store 里消息 id
+        //      就是 messageId，见 chat.ts appendAssistantDelta），而非倒序抓「最后
+        //      一条 assistant」——后者会误抓错误占位等尾随消息、把报错写进草稿。
         const _ps = useProposalStore.getState()
-        if (_ps.active && _ps.sessionId === sid) {
+        if (
+          _ps.active &&
+          _ps.sessionId === sid &&
+          !_ps.consumedDraftIds.has(event.messageId)
+        ) {
           const slot = useChatStore.getState().perSession[sid]
-          if (slot) {
-            // Find the last assistant message in this session's message
-            // list. That's the one that just finished streaming.
-            const msgs = slot.messages
-            let lastAssistantText = ''
-            for (let i = msgs.length - 1; i >= 0; i--) {
-              const msg = msgs[i] as { role: string; content: unknown[] }
-              if (msg.role === 'assistant') {
-                // Content is an array of parts: { type: string; text?: string; ... }
-                // Collect all 'text' parts (skip 'reasoning' / tool-call parts).
-                lastAssistantText = (
-                  msg.content as Array<{ type: string; text?: string }>
-                )
-                  .filter((p) => p.type === 'text' && p.text)
-                  .map((p) => p.text!)
-                  .join('')
-                break
-              }
-            }
-            if (lastAssistantText.trim()) {
+          const msg = slot?.messages.find((m) => m.id === event.messageId) as
+            | { role: string; content: Array<{ type: string; text?: string }> }
+            | undefined
+          if (msg && msg.role === 'assistant') {
+            // Collect all 'text' parts (skip 'reasoning' / tool-call parts).
+            const fullText = msg.content
+              .filter((p) => p.type === 'text' && p.text)
+              .map((p) => p.text!)
+              .join('')
+            // 只累积 AI 用哨兵显式标记为「正文」的部分。提问 / 过程对话不带哨兵 →
+            // extractProposalDraft 返回 '' → 不写进草稿（修复提问污染文档）。哨兵与
+            // 抽取器在 shared/proposal.ts，与提示词规则 6 同源。
+            const draft = extractProposalDraft(fullText)
+            if (draft) {
               const cur = useProposalStore.getState().docMarkdown
-              useProposalStore
-                .getState()
-                .setDoc(`${cur}\n\n${lastAssistantText}`.trimStart())
+              useProposalStore.getState().setDoc(`${cur}\n\n${draft}`.trimStart())
             }
           }
+          // 记账：无论是否抽到正文都标记已处理——同一 messageId 的 end 不再二次累积。
+          useProposalStore.getState().markDraftConsumed(event.messageId)
         }
         actions.endAssistantMessage(sid)
         break

@@ -34,7 +34,9 @@ function tryLibreOffice(src: string, tmpDir: string): string {
 }
 
 export async function convertFile(entry: ScanEntry, outDir: string): Promise<ConvertResult> {
-  const assetsDir = join(outDir, 'assets', `${entry.productLine}__${entry.product}__${entry.title}`)
+  // 资产目录按相对源路径唯一化，与 mirrorPath 同源——避免同名不同扩展 / 深层同名
+  // 文件的内嵌图（img-1.png…）落进同一目录互相覆盖（与 #4 镜像碰撞同根）。
+  const assetsDir = join(outDir, 'assets', entry.relPath)
   if (entry.ext === '.txt') {
     return { markdown: readFileSync(entry.sourcePath, 'utf8'), assets: [], ok: true }
   }

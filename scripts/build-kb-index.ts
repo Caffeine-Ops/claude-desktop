@@ -35,16 +35,30 @@ async function main(): Promise<void> {
   for (const e of entries) {
     const st = statSync(e.sourcePath)
     const prev = prevByPath.get(e.sourcePath)
-    // 快路径：mtime 未变且上次成功且镜像还在 → 信任旧 sha1，跳过读文件（避免 3GB 语料每次全量算 sha1）
-    if (prev && prev.ok && prev.mtimeMs === st.mtimeMs && existsSync(prev.mirrorPath)) {
+    // 忠实镜像源码树：<outDir>/<相对源路径含扩展名>.md。给【完整文件名】追加 .md
+    // （方案.docx → 方案.docx.md），而非用去扩展名的 title——否则同目录 方案.docx 与
+    // 方案.pdf 都落到 方案.md 互相覆盖、深层子目录同名文件也会 flatten 撞车（数据丢失）。
+    // 产品目录仍是 <outDir>/<产品线>/<产品>，文件可嵌在其下，AI 递归 Grep 不受影响。
+    const mirrorPath = `${join(outDir, e.relPath)}.md`
+    // 增量跳过的前提里追加 `prev.mirrorPath === mirrorPath`：修复前的旧索引按老布局
+    // （<title>.md）算出的路径与新算法不同，强制 fall through 重转，把可能曾互相覆盖
+    // 的镜像迁移到唯一新路径自愈——否则纯增量构建会一直信任旧条目、碰撞不自愈。
+    // 快路径：mtime 未变且上次成功且路径一致且镜像还在 → 信任旧 sha1，跳过读文件
+    // （避免 3GB 语料每次全量算 sha1）。
+    if (
+      prev && prev.ok && prev.mtimeMs === st.mtimeMs &&
+      prev.mirrorPath === mirrorPath && existsSync(prev.mirrorPath)
+    ) {
       files.push(prev); skipped++; continue
     }
     // mtime 变了（或无 prev）：算 sha1 做内容级判断（兼顾"touch 但内容没改"的情形）
     const sha1 = sha1OfFile(e.sourcePath)
-    if (prev && prev.sha1 === sha1 && prev.ok && existsSync(prev.mirrorPath)) {
+    if (
+      prev && prev.sha1 === sha1 && prev.ok &&
+      prev.mirrorPath === mirrorPath && existsSync(prev.mirrorPath)
+    ) {
       files.push(prev); skipped++; continue
     }
-    const mirrorPath = join(outDir, e.productLine, e.product, `${e.title}.md`)
     const r = await convertFile(e, outDir)
     if (r.ok) {
       mkdirSync(dirname(mirrorPath), { recursive: true })

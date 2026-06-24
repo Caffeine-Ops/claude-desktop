@@ -50,10 +50,14 @@ export function matchProducts(text: string, index: KbIndex | null): MatchedProdu
 
   // 1) 从索引抽出所有 distinct {productLine, product}（product 非空——空 product
   //    是产品线级文档，不作为可选产品）。
+  //    只数转换成功（f.ok）的文件：转换失败的条目仍留在 index.json（供增量重试，
+  //    其 mirrorPath 从未写出），但不能作为可选产品——否则一个只有失败文档的产品
+  //    会被匹配、加进可读目录/chip，AI 去那个不存在的镜像里检索一无所获（评审 #9）。
+  //    某产品只要有一个 ok 文件就仍是候选（其目录有可读内容）。
   const candidates: MatchedProduct[] = []
   const seen = new Set<string>()
   for (const f of index.files) {
-    if (!f.product) continue
+    if (!f.ok || !f.product) continue
     const key = `${f.productLine}::${f.product}`
     if (seen.has(key)) continue
     seen.add(key)

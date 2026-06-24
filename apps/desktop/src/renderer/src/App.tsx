@@ -11,7 +11,7 @@ import { LogsDialog } from './components/dialogs/LogsDialog'
 import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
 import { ProposalDocPanel } from './components/workspace/ProposalDocPanel'
 import { useChatStore } from './stores/chat'
-import { useProposalStore } from './stores/proposal'
+import { useProposalForeground } from './stores/proposal'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
 import { useI18n, useT } from './i18n'
@@ -201,9 +201,12 @@ function App(): React.JSX.Element {
   // 只剩 ~140px——composer 几乎没法输入（实测回归）。方案写作时 Todos 本就为空
   // （对话驱动不再写死章节）、工作区树也非重点，所以方案激活时隐藏这个右栏，让
   // 方案面板顶替成第 3 列，回到正常 3 列布局、composer 保持可用宽度。
+  // 用 useProposalForeground（active + 绑定 sessionId === 前台 sessionId），而非裸
+  // active：否则 tab 内切到别的会话后右栏仍被隐藏（评审 #8）。与 ProposalDocPanel
+  // 同一门控，保证「藏右栏」与「显方案面板」同进同出。
   // 注意：此 hook 必须在下面任何提前 return 之前调用，否则加载态/无工作区态会少调
   // 一个 hook，触发 React「Rendered more hooks than during the previous render」。
-  const proposalActive = useProposalStore((s) => s.active)
+  const proposalForeground = useProposalForeground()
 
   // Loading slice: brief flash-prevention. `.app` keeps the window
   // chrome / background consistent with the mounted state.
@@ -256,7 +259,7 @@ function App(): React.JSX.Element {
                 文件树（下）。两个面板都是 `section flex-1` 平分这一列；
                 WorkspaceTreePanel 的 border-t 作为分隔线。
                 方案模式下隐藏：让方案草稿面板顶替成右栏，避免 4 列挤垮 composer。 */}
-            {!proposalActive && (
+            {!proposalForeground && (
               <aside className="flex h-full w-72 shrink-0 flex-col gap-4 bg-background/70 p-3.5 backdrop-blur-2xl backdrop-saturate-150 shadow-[inset_1px_0_0_rgba(0,0,0,0.06)] dark:shadow-[inset_1px_0_0_rgba(255,255,255,0.08)]">
                 <TodoListPanel />
                 <WorkspaceTreePanel />
