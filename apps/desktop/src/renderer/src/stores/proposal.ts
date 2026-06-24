@@ -11,6 +11,9 @@ export interface ProposalSection {
   // 稳定 id：React key + 增删/重排定位。renderer 浏览器环境可用 crypto.randomUUID()。
   id: string
   markdown: string
+  // 该节由「截断恢复」产生：AI 写了起始哨兵但流被截断、无结束哨兵，内容可能不完整。
+  // 面板对其打「疑似截断」徽标提示用户复核。正常闭合块不带此标志（undefined）。
+  truncated?: boolean
 }
 
 interface ProposalState {
@@ -38,8 +41,9 @@ interface ProposalState {
   // 首发播种：写入产品集并置 seeded=true（与 setProducts 区分——后者是 chip 编辑）。
   seedProducts: (products: ProposalProduct[]) => void
   markDraftConsumed: (messageId: string) => void
-  // 哨兵块 → 节：messageId 去重后，每块成一节追加到尾部。
-  appendSections: (messageId: string, blocks: string[]) => void
+  // 哨兵块 → 节：messageId 去重后，每块成一节追加到尾部。truncated 为截断恢复的残文
+  // （非空时）额外追加一节并标记 truncated:true，避免半截正文被静默丢弃（B2）。
+  appendSections: (messageId: string, blocks: string[], truncated?: string | null) => void
   updateSection: (id: string, markdown: string) => void
   removeSection: (id: string) => void
   moveSection: (id: string, dir: 'up' | 'down') => void
@@ -70,13 +74,20 @@ export const useProposalStore = create<ProposalState>((set) => ({
       next.add(messageId)
       return { consumedDraftIds: next }
     }),
-  appendSections: (messageId, blocks) =>
+  appendSections: (messageId, blocks, truncated) =>
     set((s) => {
       // 消息级去重：end 对同一 messageId 二次触发时不重复入节（沿用原 consumedDraftIds 语义）。
       if (s.consumedDraftIds.has(messageId)) return s
       const consumed = new Set(s.consumedDraftIds)
       consumed.add(messageId)
-      const added = blocks.map((markdown) => ({ id: crypto.randomUUID(), markdown }))
+      const added: ProposalSection[] = blocks.map((markdown) => ({
+        id: crypto.randomUUID(),
+        markdown
+      }))
+      // 截断残文恢复成一节并标记，绝不静默丢内容（B2）。
+      if (truncated) {
+        added.push({ id: crypto.randomUUID(), markdown: truncated, truncated: true })
+      }
       return { sections: [...s.sections, ...added], consumedDraftIds: consumed }
     }),
   updateSection: (id, markdown) =>

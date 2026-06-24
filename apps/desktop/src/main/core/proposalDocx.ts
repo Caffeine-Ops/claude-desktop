@@ -39,11 +39,25 @@ const HEADING_BY_DEPTH = [
   HeadingLevel.HEADING_6
 ] as const
 
+// 列表最大嵌套层级（0-indexed）。Word 的有序/无序列表上限是 9 级，故 0..8。
+// numbering config 注册到这一级；listItemParagraphs 对超深嵌套 clamp 到此，
+// 绝不引用未注册的 level（否则 Word/LibreOffice 报 numbering reference not found）。
+const MAX_LIST_LEVEL = 8
+
 // 内联样式累积：递归下传 bold/italics/code 标志，叶子 text 据此产出 TextRun。
 interface InlineStyle {
   bold?: boolean
   italics?: boolean
   code?: boolean
+}
+
+// 块级上下文：blockquote 把「左缩进 + 斜体基样式」下传给递归出来的子块，
+// 从构造时就带上——而不是事后拿 Paragraph 改（docx 的 Paragraph 构造后不可变，
+// 也正是 A1 数据损坏的根因：旧实现丢弃 blockToDocx(child) 的结果重建段落，
+// 把嵌套 list 压平/重复、把 table 打成乱段）。
+interface BlockContext {
+  indent?: { left: number }
+  baseStyle?: InlineStyle
 }
 
 function inlineRuns(nodes: PhrasingContent[], style: InlineStyle = {}): TextRun[] {
@@ -87,26 +101,32 @@ function inlineRuns(nodes: PhrasingContent[], style: InlineStyle = {}): TextRun[
 }
 
 // 列表项 → 段落数组。ordered 用编号引用，unordered 用项目符号；嵌套靠 level。
+// baseStyle 用于引用块内的列表（斜体）；缩进交给 numbering/bullet 的 level，不另加
+// indent.left，避免覆盖编号自带的缩进。
 function listItemParagraphs(
   item: ListItem,
   ordered: boolean,
-  level: number
+  level: number,
+  baseStyle?: InlineStyle
 ): Paragraph[] {
   const out: Paragraph[] = []
+  // 超过 Word 上限的深层嵌套 clamp 到 MAX_LIST_LEVEL：宁可让最深几级共用同一编号级别，
+  // 也绝不引用未注册的 level（那会让 Word 打开时报 numbering reference not found）。
+  const safeLevel = Math.min(level, MAX_LIST_LEVEL)
   for (const child of item.children) {
     if (child.type === 'paragraph') {
       out.push(
         new Paragraph({
-          children: inlineRuns(child.children),
+          children: inlineRuns(child.children, baseStyle),
           ...(ordered
-            ? { numbering: { reference: 'proposal-ordered', level } }
-            : { bullet: { level } })
+            ? { numbering: { reference: 'proposal-ordered', level: safeLevel } }
+            : { bullet: { level: safeLevel } })
         })
       )
     } else if (child.type === 'list') {
       // 嵌套列表：递归，level+1。
       for (const sub of child.children) {
-        out.push(...listItemParagraphs(sub, Boolean(child.ordered), level + 1))
+        out.push(...listItemParagraphs(sub, Boolean(child.ordered), level + 1, baseStyle))
       }
     }
   }
@@ -118,43 +138,39 @@ function tableCellContent(cell: MdTableCell): Paragraph[] {
 }
 
 // 顶层块节点 → docx 元素（Paragraph | Table）。
-function blockToDocx(node: RootContent): Array<Paragraph | Table> {
+// ctx 由 blockquote 下传（左缩进 + 斜体基样式），其余调用走默认 undefined。
+function blockToDocx(node: RootContent, ctx?: BlockContext): Array<Paragraph | Table> {
   switch (node.type) {
     case 'heading':
       return [
         new Paragraph({
-          heading: HEADING_BY_DEPTH[Math.min(node.depth, 6) - 1],
-          children: inlineRuns(node.children)
+          // 上界 clamp 到 6、下界 clamp 到 0：remark 标准不产 depth0，但万一上游传入
+          // depth0 会让 `-1` 索引出 undefined → 标题静默降级普通段、丢目录条目（C3）。
+          heading: HEADING_BY_DEPTH[Math.max(0, Math.min(node.depth, 6) - 1)],
+          children: inlineRuns(node.children, ctx?.baseStyle),
+          indent: ctx?.indent
         })
       ]
     case 'paragraph':
-      return [new Paragraph({ children: inlineRuns(node.children) })]
+      return [new Paragraph({ children: inlineRuns(node.children, ctx?.baseStyle), indent: ctx?.indent })]
     case 'list': {
       const out: Paragraph[] = []
       for (const item of node.children) {
-        out.push(...listItemParagraphs(item, Boolean(node.ordered), 0))
+        out.push(...listItemParagraphs(item, Boolean(node.ordered), 0, ctx?.baseStyle))
       }
       return out
     }
     case 'blockquote': {
-      // 引用：缩进 + 斜体，逐子段处理。
+      // 引用：缩进 + 斜体。直接复用 blockToDocx(child) 的递归结果（保留嵌套 list 的
+      // 编号/项目符号结构、table 的行列），只把引用上下文下传，绝不拿强转的
+      // child.children 重建段落——那正是 A1 丢内容/重复/损坏的根因。
+      const quoteCtx: BlockContext = {
+        indent: { left: 480 },
+        baseStyle: { ...ctx?.baseStyle, italics: true }
+      }
       const out: Array<Paragraph | Table> = []
       for (const child of node.children) {
-        for (const el of blockToDocx(child)) {
-          if (el instanceof Paragraph) {
-            out.push(
-              new Paragraph({
-                children: inlineRuns(
-                  'children' in child ? (child.children as PhrasingContent[]) : []
-                ),
-                indent: { left: 480 },
-                style: undefined
-              })
-            )
-          } else {
-            out.push(el)
-          }
-        }
+        out.push(...blockToDocx(child, quoteCtx))
       }
       return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
     }
@@ -195,8 +211,13 @@ function blockToDocx(node: RootContent): Array<Paragraph | Table> {
   }
 }
 
+// markdown 解析器（remark + GFM）提为模块级单例：processor 链与插件注册一次即可，
+// 不必每次导出都重建。.parse() 只跑分词（含 remarkGfm 注册的 micromark 扩展，覆盖
+// 表格/删除线等 GFM 语法），与原先 unified().use().use().parse() 行为一致。
+const mdProcessor = unified().use(remarkParse).use(remarkGfm)
+
 export async function markdownToDocxBuffer(markdown: string): Promise<Buffer> {
-  const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown) as Root
+  const tree = mdProcessor.parse(markdown) as Root
   const children: Array<Paragraph | Table> = []
   for (const node of tree.children) {
     children.push(...blockToDocx(node))
@@ -207,7 +228,8 @@ export async function markdownToDocxBuffer(markdown: string): Promise<Buffer> {
       config: [
         {
           reference: 'proposal-ordered',
-          levels: [0, 1, 2, 3].map((lvl) => ({
+          // 注册 0..MAX_LIST_LEVEL 全部级别，覆盖 Word 支持的最深有序嵌套。
+          levels: Array.from({ length: MAX_LIST_LEVEL + 1 }, (_, lvl) => ({
             level: lvl,
             format: LevelFormat.DECIMAL,
             text: `%${lvl + 1}.`,

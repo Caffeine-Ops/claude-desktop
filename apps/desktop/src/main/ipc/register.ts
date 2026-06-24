@@ -80,7 +80,7 @@ import type {
 import { clearLogs, getLogs } from '../core/logCollector'
 import { getKbRoot, setKbRoot, readKbIndex, kbOutDir } from '../core/kbIndexStore'
 import type { KbIndex } from '../../shared/kbIndex'
-import { exportProposal } from '../core/proposalExport'
+import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
 import type { ProposalExportPayload, ProposalExportResult } from '../../shared/ipc-channels'
 
 /**
@@ -1001,18 +1001,22 @@ export function registerIpcHandlers(): void {
   // the OS native save dialog anchored to the sender's BrowserWindow
   // (modal on macOS), writes the file via proposalExport.ts, and returns
   // the path. `{ path: null }` signals user cancellation. The format
-  // field is a closed union (`'md'` | `'docx'`); extending to new formats
-  // requires only updating the switch inside proposalExport.ts, not this IPC surface.
+  // field is a closed union (`'md'` | `'docx'`). Extending to a new format
+  // is driven entirely from proposalExport.ts: add a FORMAT_META key (dialog
+  // filters/defaultPath + this IPC guard's whitelist both derive from it) and
+  // a write-switch case (its `never` default flags the omission). This IPC
+  // guard auto-follows, so nothing here needs touching.
   ipcMain.handle(
     IPC_CHANNELS.PROPOSAL_EXPORT,
     async (event, payload: ProposalExportPayload): Promise<ProposalExportResult> => {
       const markdown =
         typeof payload?.markdown === 'string' ? payload.markdown : ''
-      // 校验 format 落在已支持联合内，挡掉意外值流入写路径。
-      if (payload?.format !== 'md' && payload?.format !== 'docx') {
+      // 校验 format 落在已支持联合内，挡掉意外值流入写路径。白名单由 FORMAT_META
+      // 派生（单一真相源，见 proposalExport.ts），加新格式时无需同步改这里。
+      const format = payload?.format
+      if (!isProposalExportFormat(format)) {
         return { path: null }
       }
-      const format = payload.format
       // Runtime guard: BrowserWindow may be null if the window was closed
       // between IPC message send and handler execution.
       const win = BrowserWindow.fromWebContents(event.sender)

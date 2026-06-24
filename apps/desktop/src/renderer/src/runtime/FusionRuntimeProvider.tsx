@@ -19,7 +19,7 @@ import { useChatStore } from '../stores/chat'
 import { useProposalStore } from '../stores/proposal'
 import type { ProposalProduct } from '../stores/proposal'
 import { matchProducts } from '../lib/kbProductMatch'
-import { extractProposalDraftBlocks } from '@shared/proposal'
+import { extractProposalDraftResult } from '@shared/proposal'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
@@ -1045,17 +1045,26 @@ function makeSessionEventHandler(
               .filter((p) => p.type === 'text' && p.text)
               .map((p) => p.text!)
               .join('')
-            // 每个哨兵块映射为一节。提问 / 过程对话不带哨兵 → 空数组 → 不入节
-            // （修复提问污染文档）。哨兵与抽取器在 shared/proposal.ts，与提示词规则 6 同源。
-            // appendSections 内部按 messageId 去重并记账，分节入 store。
-            const blocks = extractProposalDraftBlocks(fullText)
-            if (blocks.length) {
-              useProposalStore.getState().appendSections(event.messageId, blocks)
+            // 每个闭合哨兵块映射为一节；提问 / 过程对话不带哨兵 → 不入节（修复提问污染
+            // 文档）。哨兵与抽取器在 shared/proposal.ts，与提示词规则 6 同源。appendSections
+            // 内部按 messageId 去重并记账，分节入 store。
+            //
+            // 三态分流（B2）：
+            //   - 有闭合块或截断残文 → appendSections（截断残文恢复成一节并标记，绝不静默丢）。
+            //   - 完全无哨兵（纯对话轮）→ 仅记账，使同一 messageId 的 end 不再二次处理。
+            const { blocks, truncated } = extractProposalDraftResult(fullText)
+            if (blocks.length || truncated) {
+              useProposalStore.getState().appendSections(event.messageId, blocks, truncated)
             } else {
-              // 零正文消息（纯提问）也要记账，使同一 messageId 的 end 不再二次处理。
               useProposalStore.getState().markDraftConsumed(event.messageId)
             }
           }
+          // C4：msg 未找到（end 早于消息入 store 的竞态）或 role 非 assistant 时，
+          // 刻意【不】记账。重构前这里有一条无条件兜底 markDraftConsumed，但那与 B2 相悖：
+          // 若 end 对同一 messageId 二次触发（见上方注释「异常路径重发」），第一次 msg
+          // 尚未就绪就记账，会让第二次 msg 已就绪的正文被 consumedDraftIds 挡掉而永久丢失。
+          // 不记账则第一次空跑、第二次正常 append——只有「确实读到正文/截断/确认纯对话」
+          // 才记账，更安全。未记账的孤儿 id 也无害：除本 handler 外无人读 consumedDraftIds。
         }
         actions.endAssistantMessage(sid)
         break

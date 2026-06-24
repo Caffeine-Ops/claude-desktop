@@ -13,26 +13,58 @@
 export const PROPOSAL_DRAFT_BEGIN = '===方案正文开始==='
 export const PROPOSAL_DRAFT_END = '===方案正文结束==='
 
+export interface ProposalDraftExtraction {
+  /** 已闭合哨兵块（定稿正文段），顺序与出现一致。 */
+  blocks: string[]
+  /**
+   * 截断残文：有【起始哨兵但其后再无结束哨兵】（流被截断 / 超 token / AI 漏写）时，
+   * 起始哨兵之后到结尾的内容（trim 后非空）；否则 null。
+   *
+   * 为什么要单独返回它，而不像抽取器那样直接忽略：忽略会让调用侧把「截断」误判成
+   * 「纯对话轮」→ 记账 + 永久丢弃半截正文，用户既看不到也无从补回（评审 B2）。
+   * 暴露此标志后，调用侧可降级恢复（恢复成一节并标记疑似截断），绝不静默丢内容。
+   */
+  truncated: string | null
+}
+
 /**
- * 抽取所有「方案正文」段（哨兵之间内容）为数组，顺序与出现顺序一致。
- * 分节化的来源：每个闭合哨兵块 = 一节。无哨兵对 → []。未闭合残块忽略。
- * 纯函数，main 与 renderer 共享。
+ * 抽取「方案正文」结构：闭合哨兵块数组 + 截断残文标志。main 与 renderer 共享的纯函数。
+ *
+ * - 每个闭合哨兵块 = 一节（定稿正文）。
+ * - 完全无起始哨兵 → { blocks: [], truncated: null }（纯提问 / 过程对话）。
+ * - 有起始哨兵但无结束哨兵 → truncated 带回残文，blocks 为该残块之前已闭合的部分。
  */
-export function extractProposalDraftBlocks(text: string): string[] {
-  if (!text) return []
-  const out: string[] = []
+export function extractProposalDraftResult(text: string): ProposalDraftExtraction {
+  if (!text) return { blocks: [], truncated: null }
+  const blocks: string[] = []
   let from = 0
+  let truncated: string | null = null
   for (;;) {
     const b = text.indexOf(PROPOSAL_DRAFT_BEGIN, from)
     if (b < 0) break
     const contentStart = b + PROPOSAL_DRAFT_BEGIN.length
     const e = text.indexOf(PROPOSAL_DRAFT_END, contentStart)
-    if (e < 0) break // 未闭合：忽略，避免把后续提问也吞进草稿
+    if (e < 0) {
+      // 未闭合 = 截断。恢复残文交调用侧降级，而非丢弃（B2 核心修复）。
+      const tail = text.slice(contentStart).trim()
+      truncated = tail || null
+      break
+    }
     const section = text.slice(contentStart, e).trim()
-    if (section) out.push(section)
+    if (section) blocks.push(section)
     from = e + PROPOSAL_DRAFT_END.length
   }
-  return out
+  return { blocks, truncated }
+}
+
+/**
+ * 抽取所有「方案正文」段（哨兵之间内容）为数组，顺序与出现顺序一致。
+ * 分节化的来源：每个闭合哨兵块 = 一节。无哨兵对 → []。未闭合残块忽略（截断恢复
+ * 走 extractProposalDraftResult，本函数维持「只取定稿块」的旧语义、向后兼容）。
+ * 纯函数，main 与 renderer 共享。
+ */
+export function extractProposalDraftBlocks(text: string): string[] {
+  return extractProposalDraftResult(text).blocks
 }
 
 /**
