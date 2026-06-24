@@ -1126,7 +1126,9 @@ function ReasoningCard({
 
   // 思考流按段落（双换行）切成"一步一气泡"。段落是流式增量文本里最自然、
   // 最稳健的步边界——前 N-1 段已定，最后一段随 delta 增长。空段过滤掉。
-  // 注：engine 把多个 thinking block 之间也用空行拼接，故此切法对单/多块一致。
+  // 注：段落边界来自模型思考文本自身的双换行；engine 不在 thinking block 之间
+  // 注入分隔符（多个 block 之间隔着工具调用时，由 startReasoning 推一个独立
+  // reasoning part / 独立 ReasoningCard 承载，不会拼进同一段文本）。
   const paragraphs = trimmedText
     .split(/\n{2,}/)
     .map((p) => p.trim())
@@ -1233,6 +1235,10 @@ function ReasoningCard({
               <div className="mt-1.5 flex flex-col gap-1.5">
                 {paragraphs.map((para, i) => {
                   const writing = isStreaming && i === paragraphs.length - 1
+                  // index-as-key is safe here: the thinking stream is append-only —
+                  // earlier paragraphs are stable; only the last one grows. There is
+                  // no mid-list insertion or reordering that would make index keys
+                  // produce stale state or mis-keyed reconciliation.
                   // Apple card (DESIGN.md §4): no border, subtle bg contrast supplies elevation.
                   // `bg-muted` sits 1-2 shades off the canvas on both themes, so the card reads
                   // as "inset" without any visible stroke. 13px text with apple-micro tracking is
