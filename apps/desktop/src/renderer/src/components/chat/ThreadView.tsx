@@ -15,7 +15,6 @@ import { AnimatePresence, motion } from 'motion/react'
 import type { SessionMeta } from '../../../../shared/types'
 import { useI18n, useT, useToolLabel } from '../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../stores/chat'
-import { THINKING_PROGRESS_FULL_TOKENS, CHARS_PER_THINKING_TOKEN } from '../../../../shared/thinking'
 import { buildSlashAdapter } from '../../composer/slashAdapter'
 import { buildFileMentionAdapter } from '../../composer/fileMentionAdapter'
 import { ProseMirrorComposerInput } from '../../composer/ProseMirrorComposerInput'
@@ -1122,7 +1121,6 @@ function ReasoningCard({
   // briefly render an empty rounded box before the first delta
   // lands a few seconds later. Empty reasoning always stays closed.
   const open = hasText && (userToggled ?? isStreaming)
-  const charCount = trimmedText.length
 
   // 思考流按段落（双换行）切成"一步一气泡"。段落是流式增量文本里最自然、
   // 最稳健的步边界——前 N-1 段已定，最后一段随 delta 增长。空段过滤掉。
@@ -1134,16 +1132,11 @@ function ReasoningCard({
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
 
-  // 分子 = 已累积思考字符 ÷ 字符系数（估的 token，流式拿不到官方实时数）。
-  // 分母 = THINKING_PROGRESS_FULL_TOKENS，进度条满格对应的典型思考量，与思考上限
-  // （MAX_THINKING_TOKENS）解耦：早先共用上限当分母，上限够大（不截断思考）时典型
-  // 思考占比个位数甚至 round 成 0%、进度条不动；改用贴近典型思考量的满格基准后常见
-  // 思考能有意义地走动。流式中封顶 99%（估算误差 + 超长思考都停在 99%），thinking_end
-  // 落地（isStreaming 变 false）后才 100%。
-  const estTokens = trimmedText.length / CHARS_PER_THINKING_TOKEN
-  const pct = isStreaming
-    ? Math.min(99, Math.round((estTokens / THINKING_PROGRESS_FULL_TOKENS) * 100))
-    : 100
+  // 已展开的思考步数 = 段落数。放弃了百分比进度条——思考没有可靠的"完成度"，
+  // 分母怎么取都不对：贴着思考上限取大则典型思考恒 0%，取小又会因思考量波动失真。
+  // 改用"步数 + 逐条冒出的气泡 + 末步光标"传递推进感：步数递增、气泡增多、文字
+  // 增长三重变化让用户始终看到"在产出"，不依赖任何估算的完成度。
+  const stepCount = paragraphs.length
 
   return (
     <div className="flex w-full gap-3">
@@ -1195,29 +1188,20 @@ function ReasoningCard({
           {isStreaming ? (
             <>
               <ShimmerText>思考中</ShimmerText>
-              <span className="ml-1 tabular-nums text-[11px] text-muted-foreground/70">
-                {pct}%
-              </span>
-              {/* 进度条：细长胶囊，沿用 accent 作为"进行中"色，与思考点一致。 */}
-              <span
-                className="ml-1.5 inline-block h-1 w-16 overflow-hidden rounded-full bg-muted-foreground/20"
-                role="progressbar"
-                aria-valuenow={pct}
-                aria-valuemin={0}
-                aria-valuemax={100}
-              >
-                <span
-                  className="block h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
-                  style={{ width: `${pct}%` }}
-                />
-              </span>
+              {/* 动态步数：随段落数递增，让用户在标题上就看到"又推进了一步"，
+                  替代原先恒 0% 的百分比进度条。 */}
+              {stepCount > 0 && (
+                <span className="ml-1 tabular-nums text-[11px] text-muted-foreground/70">
+                  · 第 {stepCount} 步
+                </span>
+              )}
             </>
           ) : (
             <>
               <span className="font-medium tracking-tight">思考过程</span>
-              {hasText && (
+              {stepCount > 0 && (
                 <span className="text-[11px] text-muted-foreground/60">
-                  · {charCount} 字
+                  · {stepCount} 步
                 </span>
               )}
             </>
@@ -1249,9 +1233,13 @@ function ReasoningCard({
                   return (
                     <div
                       key={i}
-                      className="rounded-apple-lg bg-muted px-4 py-2.5 text-[13px] leading-[1.47] tracking-apple-micro text-muted-foreground"
+                      className="rounded-apple-lg bg-muted px-4 py-2.5 text-muted-foreground"
                     >
-                      <pre className="whitespace-pre-wrap break-words font-sans">
+                      {/* 步骤序号标签：让"一步一步"显式可数，配合标题里递增的步数。 */}
+                      <div className="mb-1 text-[11px] font-medium tracking-tight text-accent">
+                        步骤 {i + 1}
+                      </div>
+                      <pre className="whitespace-pre-wrap break-words font-sans text-[13px] leading-[1.47] tracking-apple-micro">
                         {para}
                         {writing && (
                           <span
