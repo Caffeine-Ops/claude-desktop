@@ -11,6 +11,7 @@ import { LogsDialog } from './components/dialogs/LogsDialog'
 import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
 import { ProposalDocPanel } from './components/workspace/ProposalDocPanel'
 import { useChatStore } from './stores/chat'
+import { useProposalStore } from './stores/proposal'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
 import { useI18n, useT } from './i18n'
@@ -195,6 +196,15 @@ function App(): React.JSX.Element {
     }
   }, [])
 
+  // 方案模式下，方案草稿面板（w-96）会作为右栏出现。若同时保留 Todos+工作区
+  // 那个 w-72 右栏，4 个固定列在常见窗宽（≈1280）下会把中间 ThreadView 挤到
+  // 只剩 ~140px——composer 几乎没法输入（实测回归）。方案写作时 Todos 本就为空
+  // （对话驱动不再写死章节）、工作区树也非重点，所以方案激活时隐藏这个右栏，让
+  // 方案面板顶替成第 3 列，回到正常 3 列布局、composer 保持可用宽度。
+  // 注意：此 hook 必须在下面任何提前 return 之前调用，否则加载态/无工作区态会少调
+  // 一个 hook，触发 React「Rendered more hooks than during the previous render」。
+  const proposalActive = useProposalStore((s) => s.active)
+
   // Loading slice: brief flash-prevention. `.app` keeps the window
   // chrome / background consistent with the mounted state.
   if (workspace === 'loading') {
@@ -243,17 +253,18 @@ function App(): React.JSX.Element {
             </div>
             <ThreadView />
             {/* 右栏 — 固定 288px 常驻列，纵向 50/50 分给代办（上）和工作区
-                文件树（下）。同样去掉了 AnimatePresence 收起逻辑，始终渲染。
-                两个面板都是 `section flex-1` 平分这一列；WorkspaceTreePanel
-                的 border-t 作为分隔线。 */}
-            <aside className="flex h-full w-72 shrink-0 flex-col gap-4 bg-background/70 p-3.5 backdrop-blur-2xl backdrop-saturate-150 shadow-[inset_1px_0_0_rgba(0,0,0,0.06)] dark:shadow-[inset_1px_0_0_rgba(255,255,255,0.08)]">
-              <TodoListPanel />
-              <WorkspaceTreePanel />
-            </aside>
-            {/* 方案文档面板 — 仅当 proposal.active 为真时渲染，组件内部按
-                active 返回 null，不影响非方案模式的现有布局。宽度 w-96 固定，
-                紧跟右栏 aside 之后形成第四列。不包在 aside 里，避免撑宽右栏
-                影响 TodoListPanel 与 WorkspaceTreePanel 的排列。 */}
+                文件树（下）。两个面板都是 `section flex-1` 平分这一列；
+                WorkspaceTreePanel 的 border-t 作为分隔线。
+                方案模式下隐藏：让方案草稿面板顶替成右栏，避免 4 列挤垮 composer。 */}
+            {!proposalActive && (
+              <aside className="flex h-full w-72 shrink-0 flex-col gap-4 bg-background/70 p-3.5 backdrop-blur-2xl backdrop-saturate-150 shadow-[inset_1px_0_0_rgba(0,0,0,0.06)] dark:shadow-[inset_1px_0_0_rgba(255,255,255,0.08)]">
+                <TodoListPanel />
+                <WorkspaceTreePanel />
+              </aside>
+            )}
+            {/* 方案文档面板 — 仅当 proposal.active 为真时渲染（组件内部按 active
+                返回 null）。方案激活时上面的右栏 aside 被隐藏，本面板顶替成第 3 列，
+                不再形成会挤垮 composer 的第 4 列。宽度 w-96 固定。 */}
             <ProposalDocPanel />
           </div>
         </FusionRuntimeProvider>
