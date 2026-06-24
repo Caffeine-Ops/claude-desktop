@@ -130,7 +130,7 @@ const STRINGS = {
     scenarioProposalTitle: '写方案',
     scenarioProposalDesc: '基于公司知识库，对话式生成建设方案草稿',
     scenarioProposalPrompt:
-      '我要写一份关于 [产品] 的建设方案。请严格基于知识库资料，从「建设背景」开始，一段一段地问我要点并起草，每段标注来源文件；知识库里查不到的内容请标"⚠️ 资料缺失"，不要编造。',
+      '要写的产品：\n内容分几部分写：\n1. \n2. \n3. \n（哪部分要一条条介绍，就在该部分后面标注「一条条介绍」）',
 
     // Code block copy affordance
     codeBlockCopy: '复制',
@@ -373,7 +373,7 @@ const STRINGS = {
     scenarioProposalTitle: 'Write a proposal',
     scenarioProposalDesc: 'Use the company knowledge base to co-author a construction proposal draft',
     scenarioProposalPrompt:
-      'I need to write a construction proposal for [product]. Working strictly from the knowledge base, start with the "Background" section — ask me for key points section by section and draft each one, citing the source file. Flag anything missing from the knowledge base as "⚠️ Missing source" — do not fabricate.',
+      'Products to cover: \nSections to write:\n1. \n2. \n3. \n(Mark any section that should be itemized with "list one by one")',
 
     codeBlockCopy: 'Copy',
     codeBlockCopied: '✓ Copied',

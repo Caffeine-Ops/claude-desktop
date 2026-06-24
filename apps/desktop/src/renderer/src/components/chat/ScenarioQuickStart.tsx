@@ -1,12 +1,9 @@
-import { useCallback, useState } from 'react'
+import { useCallback } from 'react'
 import { useComposerRuntime } from '@assistant-ui/react'
 
 import { useT, type StringKey } from '../../i18n'
-import { ProductPickerDialog } from '../dialogs/ProductPickerDialog'
 import { useProposalStore } from '../../stores/proposal'
-import { useTodosStore } from '../../stores/todos'
 import { useChatStore } from '../../stores/chat'
-import { PROPOSAL_TEMPLATE } from '../../constants/proposalTemplates'
 
 /**
  * ScenarioQuickStart
@@ -84,11 +81,8 @@ const SCENARIO_CARDS: ScenarioCard[] = [
     icon: <DocIcon />,
     titleKey: 'scenarioProposalTitle',
     descKey: 'scenarioProposalDesc',
-    // promptKey is not used for this card — clicking opens the product
-    // picker dialog instead of inserting a prompt directly. The field is
-    // required by ScenarioCard's type, so we reuse scenarioProposalPrompt
-    // as a sentinel; it is substituted with the real product name in
-    // onPickProduct before being handed to composer.setText().
+    // 点击这张卡不再弹产品选择器，而是直接激活方案模式 + 把引导模板预填进
+    // composer（见 onStartProposal）。scenarioProposalPrompt 现在就是那段引导模板。
     promptKey: 'scenarioProposalPrompt'
   }
 ]
@@ -100,15 +94,9 @@ export function ScenarioQuickStart(): React.JSX.Element {
   // sidebar click prefill the central composer without prop-drilling.
   const composer = useComposerRuntime()
 
-  // Proposal flow — product picker dialog state
-  const [pickerOpen, setPickerOpen] = useState(false)
-
   // Proposal store: record the chosen product so the rest of the app knows
   // a proposal session is active and which product is being written about.
   const startProposal = useProposalStore((s) => s.start)
-
-  // Todos store: seed the right-rail panel with the proposal chapter list.
-  const setTodos = useTodosStore((s) => s.setTodos)
 
   // Active session ID — the foreground session that the composer and the
   // right-rail todos panel are both bound to. `useChatStore` exposes
@@ -140,88 +128,60 @@ export function ScenarioQuickStart(): React.JSX.Element {
     [composer, resetProposal, t]
   )
 
-  // Called once the user picks a product in the dialog.
-  // Order matters:
-  //  1. Mark the proposal store active so downstream components can adapt.
-  //  2. Seed the todos panel with the chapter skeleton so the user can see
-  //     progress as the model drafts each section.
-  //  3. Push the guide prompt into the composer so the user can review and
-  //     send without typing.
-  //  4. Focus ProseMirror so the user is ready to hit Enter.
-  const onPickProduct = useCallback(
-    (productLine: string, product: string) => {
-      // 传入当前前台 sessionId，绑定方案模式到发起它的会话；
-      // activeSessionId 为 '' 说明还没有 session，此时本就不应触发方案，
-      // 但 early-return 在 ProductPickerDialog 之前不易做，所以透传 ''——
-      // FusionRuntimeProvider 那侧的门控（ps.sessionId === targetSid）天然排掉它。
-      startProposal(productLine, product, activeSessionId)
-      setTodos(
-        activeSessionId,
-        PROPOSAL_TEMPLATE.sections.map((sec) => ({
-          content: `撰写「${sec}」`,
-          activeForm: `正在撰写「${sec}」`,
-          status: 'pending' as const
-        }))
-      )
-      const prompt = t('scenarioProposalPrompt')
-        .replace('[产品]', product)
-        .replace('[product]', product)
-      composer.setText(prompt)
-      queueMicrotask(() => {
-        const el = document.querySelector<HTMLElement>('.ProseMirror')
-        el?.focus()
-      })
-    },
-    [activeSessionId, composer, startProposal, setTodos, t]
-  )
+  // 点「写方案」卡：直接激活方案模式（绑定当前前台 sessionId），把引导模板
+  // 预填进 composer，聚焦编辑器。不再弹任何选择器——产品由用户在对话里说，
+  // 发送时由 matchProducts 识别（见 FusionRuntimeProvider）。
+  // activeSessionId 为 '' 说明还没有 session，此时本就不应触发方案；透传 '' 无害，
+  // FusionRuntimeProvider 的门控（ps.sessionId === targetSid）会天然排掉它。
+  const onStartProposal = useCallback(() => {
+    startProposal(activeSessionId)
+    composer.setText(t('scenarioProposalPrompt'))
+    queueMicrotask(() => {
+      const el = document.querySelector<HTMLElement>('.ProseMirror')
+      el?.focus()
+    })
+  }, [activeSessionId, composer, startProposal, t])
 
   return (
-    <>
-      <div className="shrink-0 px-2 pb-2 pt-2">
-        <div className="px-2 pb-1">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
-            {t('sidebarQuickStart')}
-          </span>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          {SCENARIO_CARDS.map((card) => (
-            <button
-              key={card.key}
-              type="button"
-              onClick={
-                card.key === 'proposal'
-                  ? () => setPickerOpen(true)
-                  : () => onPickScenario(card.promptKey)
-              }
-              title={t(card.descKey)}
-              className="group flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-foreground/[0.06]"
-            >
-              <span
-                className={
-                  'flex size-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ' +
-                  card.iconClass
-                }
-              >
-                {card.icon}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[12px] font-medium text-foreground/85 group-hover:text-foreground">
-                  {t(card.titleKey)}
-                </div>
-                <div className="truncate text-[10.5px] leading-tight text-muted-foreground/70">
-                  {t(card.descKey)}
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
+    <div className="shrink-0 px-2 pb-2 pt-2">
+      <div className="px-2 pb-1">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
+          {t('sidebarQuickStart')}
+        </span>
       </div>
-      <ProductPickerDialog
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        onPick={onPickProduct}
-      />
-    </>
+      <div className="flex flex-col gap-0.5">
+        {SCENARIO_CARDS.map((card) => (
+          <button
+            key={card.key}
+            type="button"
+            onClick={
+              card.key === 'proposal'
+                ? onStartProposal
+                : () => onPickScenario(card.promptKey)
+            }
+            title={t(card.descKey)}
+            className="group flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-foreground/[0.06]"
+          >
+            <span
+              className={
+                'flex size-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ' +
+                card.iconClass
+              }
+            >
+              {card.icon}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[12px] font-medium text-foreground/85 group-hover:text-foreground">
+                {t(card.titleKey)}
+              </div>
+              <div className="truncate text-[10.5px] leading-tight text-muted-foreground/70">
+                {t(card.descKey)}
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
   )
 }
 
