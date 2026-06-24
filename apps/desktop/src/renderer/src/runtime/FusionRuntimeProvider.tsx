@@ -17,6 +17,8 @@ import {
 
 import { useChatStore } from '../stores/chat'
 import { useProposalStore } from '../stores/proposal'
+import type { ProposalProduct } from '../stores/proposal'
+import { matchProducts } from '../lib/kbProductMatch'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
@@ -430,6 +432,25 @@ export function FusionRuntimeProvider({
       startAssistantMessage(targetSid, pendingMessageId)
 
       try {
+        // 方案模式：门控同 proposalMode——只有当前发送的 targetSid 与方案绑定
+        // 的 sessionId 相同才算（防泄漏到其他 tab / 后台 agent）。
+        const ps = useProposalStore.getState()
+        const isProposal = ps.active && ps.sessionId === targetSid
+        let proposalProducts: ProposalProduct[] | undefined
+        if (isProposal) {
+          if (ps.products.length === 0) {
+            // 方案首发：对用户文本匹配产品播种产品集，并持久化——后续 turn（逐部分
+            // 推进）复用这套已确认的集合，chip 删除也据此生效。召回优先：多命中无害
+            // （多一个可读目录，AI 仍按用户文字写），可在 ProposalDocPanel 的 chip 删。
+            const idx = await window.chatApi.readKbIndex()
+            const matched = matchProducts(text, idx)
+            if (matched.length > 0) useProposalStore.getState().setProducts(matched)
+            proposalProducts = matched
+          } else {
+            proposalProducts = ps.products
+          }
+        }
+
         await window.chatApi.send({
           sessionId: targetSid,
           // Engine validator accepts empty strings when images are present.
@@ -437,15 +458,10 @@ export function FusionRuntimeProvider({
           // shape stays stable.
           text: text,
           images: images.length > 0 ? images : undefined,
-          // 透传方案写作模式：engine 在本次 spawn 时据此烘焙方案专家系统提示词 +
-          // 把知识库镜像目录加进可读范围。读最新快照（getState，非订阅）即可——
-          // 只在发送瞬间求值，不需要让 send 闭包随 store 变化重建。
-          // 门控：只有当前正在发送的 targetSid 与方案绑定的 sessionId 相同时
-          // 才为 true，防止方案模式泄漏到其他会话（多 tab / 后台 agent）。
-          proposalMode: (() => {
-            const ps = useProposalStore.getState()
-            return ps.active && ps.sessionId === targetSid
-          })()
+          // 方案模式：透传给 engine，本次 spawn 据此烘焙方案系统提示词 +
+          // 把识别产品的镜像子目录加进可读范围（零命中退回整库）。
+          proposalMode: isProposal,
+          proposalProducts
         })
       } catch (err) {
         console.error('[runtime] send failed', err)
