@@ -1099,10 +1099,28 @@ function ReasoningCard({
   status?: { type: string }
 }): React.JSX.Element {
   const isStreaming = status?.type === 'running'
+  // A ZWSP-only reasoning part is our "pre-show placeholder" — the
+  // card label should appear immediately, but the body should stay
+  // collapsed until a real delta replaces the placeholder. We also
+  // strip the ZWSP out of the rendered text below so a late-arriving
+  // copy-paste doesn't surface an invisible character.
   const displayText = text.replace(REASONING_PLACEHOLDER, '')
+  // Trim so a single stray whitespace / newline delta doesn't light
+  // up an empty rounded box under the label ("思考过程 · 1 字" with
+  // nothing inside).
   const trimmedText = displayText.trim()
   const hasText = trimmedText.length > 0
+  // `null` ⇒ user hasn't manually toggled yet — let the streaming
+  // flag drive the open state. Once they click, lock to their
+  // explicit choice. This way the card auto-expands while thinking
+  // and auto-collapses at end-of-turn, but doesn't fight a user
+  // who expanded an old card to re-read the chain of thought.
   const [userToggled, setUserToggled] = useState<boolean | null>(null)
+  // Don't auto-open the body until we actually have text to show.
+  // The reasoning part is pre-created on `thinking_start` (so the
+  // dot + label appear instantly), and without this guard we'd
+  // briefly render an empty rounded box before the first delta
+  // lands a few seconds later. Empty reasoning always stays closed.
   const open = hasText && (userToggled ?? isStreaming)
   const charCount = trimmedText.length
 
@@ -1128,6 +1146,11 @@ function ReasoningCard({
         aria-hidden
         className="mt-[7px] flex size-[6px] shrink-0 items-center justify-center"
       >
+        {/* State indicator dot — mirrors the TodoRow status pattern:
+            in-progress = accent (blue) pulsing, done = emerald.
+            Same colours used for active todos / completed todos in
+            the right rail, so the chat reads as a single visual
+            language across surfaces. */}
         <span
           className={
             'block size-[6px] rounded-full ' +
@@ -1210,6 +1233,10 @@ function ReasoningCard({
               <div className="mt-1.5 flex flex-col gap-1.5">
                 {paragraphs.map((para, i) => {
                   const writing = isStreaming && i === paragraphs.length - 1
+                  // Apple card (DESIGN.md §4): no border, subtle bg contrast supplies elevation.
+                  // `bg-muted` sits 1-2 shades off the canvas on both themes, so the card reads
+                  // as "inset" without any visible stroke. 13px text with apple-micro tracking is
+                  // Apple's smallest comfortable reading size — tight but legible.
                   return (
                     <div
                       key={i}
