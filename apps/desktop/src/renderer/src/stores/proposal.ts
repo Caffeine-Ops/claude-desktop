@@ -16,7 +16,7 @@ export interface ProposalSection {
 interface ProposalState {
   active: boolean
   // 方案绑定的会话 ID——只有该 session 的 send 才带 proposalMode=true，
-  // 只有该 session 的 end 事件输出才被累积进 docMarkdown。
+  // 只有该 session 的 end 事件输出才被累积进 sections。
   // null 表示当前没有活跃方案会话。
   sessionId: string | null
   // 本次方案识别到的产品集（可空）。发送时由 matchProducts 写入，chip 删除时更新。
@@ -28,17 +28,15 @@ interface ProposalState {
   // 「未播种」，零命中时会每个 turn 反复重匹配并可能突变。chip 删除走 setProducts，
   // 不触碰本标志（用户清空 chip 后仍维持已播种、不重新匹配）。
   seeded: boolean
-  docMarkdown: string
-  // 已累积进 docMarkdown 的 assistant 消息 id 集合。end 事件可能对同一 messageId
-  // 二次触发（异常路径重发等）；按 id 去重，避免同一段正文被重复 append 进草稿。
+  // 已累积进 sections 的 assistant 消息 id 集合。end 事件可能对同一 messageId
+  // 二次触发（异常路径重发等）；按 id 去重，避免同一段正文被重复 append 进节。
   consumedDraftIds: Set<string>
-  // 分节草稿：每个 AI 哨兵块一节。新模型；docMarkdown/setDoc 为旧路径，Task 6 删。
+  // 分节草稿：每个 AI 哨兵块一节（Task 6 已删旧 docMarkdown/setDoc 路径）。
   sections: ProposalSection[]
   start: (sessionId: string) => void
   setProducts: (products: ProposalProduct[]) => void
   // 首发播种：写入产品集并置 seeded=true（与 setProducts 区分——后者是 chip 编辑）。
   seedProducts: (products: ProposalProduct[]) => void
-  setDoc: (md: string) => void
   markDraftConsumed: (messageId: string) => void
   // 哨兵块 → 节：messageId 去重后，每块成一节追加到尾部。
   appendSections: (messageId: string, blocks: string[]) => void
@@ -53,7 +51,6 @@ export const useProposalStore = create<ProposalState>((set) => ({
   sessionId: null,
   products: [],
   seeded: false,
-  docMarkdown: '',
   consumedDraftIds: new Set(),
   sections: [],
   start: (sessionId) =>
@@ -62,13 +59,11 @@ export const useProposalStore = create<ProposalState>((set) => ({
       sessionId,
       products: [],
       seeded: false,
-      docMarkdown: '',
       consumedDraftIds: new Set(),
       sections: []
     }),
   setProducts: (products) => set({ products }),
   seedProducts: (products) => set({ products, seeded: true }),
-  setDoc: (md) => set({ docMarkdown: md }),
   markDraftConsumed: (messageId) =>
     set((s) => {
       const next = new Set(s.consumedDraftIds)
@@ -106,7 +101,6 @@ export const useProposalStore = create<ProposalState>((set) => ({
       sessionId: null,
       products: [],
       seeded: false,
-      docMarkdown: '',
       consumedDraftIds: new Set(),
       sections: []
     })
