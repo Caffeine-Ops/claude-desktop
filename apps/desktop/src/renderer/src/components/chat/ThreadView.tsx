@@ -15,6 +15,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import type { SessionMeta } from '../../../../shared/types'
 import { useI18n, useT, useToolLabel } from '../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../stores/chat'
+import { THINKING_TOKEN_BUDGET, CHARS_PER_THINKING_TOKEN } from '../../../../shared/thinking'
 import { buildSlashAdapter } from '../../composer/slashAdapter'
 import { buildFileMentionAdapter } from '../../composer/fileMentionAdapter'
 import { ProseMirrorComposerInput } from '../../composer/ProseMirrorComposerInput'
@@ -1098,30 +1099,28 @@ function ReasoningCard({
   status?: { type: string }
 }): React.JSX.Element {
   const isStreaming = status?.type === 'running'
-  // A ZWSP-only reasoning part is our "pre-show placeholder" — the
-  // card label should appear immediately, but the body should stay
-  // collapsed until a real delta replaces the placeholder. We also
-  // strip the ZWSP out of the rendered text below so a late-arriving
-  // copy-paste doesn't surface an invisible character.
   const displayText = text.replace(REASONING_PLACEHOLDER, '')
-  // Trim so a single stray whitespace / newline delta doesn't light
-  // up an empty rounded box under the label ("思考过程 · 1 字" with
-  // nothing inside).
   const trimmedText = displayText.trim()
   const hasText = trimmedText.length > 0
-  // `null` ⇒ user hasn't manually toggled yet — let the streaming
-  // flag drive the open state. Once they click, lock to their
-  // explicit choice. This way the card auto-expands while thinking
-  // and auto-collapses at end-of-turn, but doesn't fight a user
-  // who expanded an old card to re-read the chain of thought.
   const [userToggled, setUserToggled] = useState<boolean | null>(null)
-  // Don't auto-open the body until we actually have text to show.
-  // The reasoning part is pre-created on `thinking_start` (so the
-  // dot + label appear instantly), and without this guard we'd
-  // briefly render an empty rounded box before the first delta
-  // lands a few seconds later. Empty reasoning always stays closed.
   const open = hasText && (userToggled ?? isStreaming)
   const charCount = trimmedText.length
+
+  // 思考流按段落（双换行）切成"一步一气泡"。段落是流式增量文本里最自然、
+  // 最稳健的步边界——前 N-1 段已定，最后一段随 delta 增长。空段过滤掉。
+  // 注：engine 把多个 thinking block 之间也用空行拼接，故此切法对单/多块一致。
+  const paragraphs = trimmedText
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+
+  // 真分母（MAX_THINKING_TOKENS 预算，shared 常量）+ 估分子（已累积字符 ÷ 系数）。
+  // 流式中封顶 99%，避免估算误差把条冲到 100% 后还在写；thinking_end 落地
+  // （isStreaming 变 false）后才允许 100%。
+  const estTokens = trimmedText.length / CHARS_PER_THINKING_TOKEN
+  const pct = isStreaming
+    ? Math.min(99, Math.round((estTokens / THINKING_TOKEN_BUDGET) * 100))
+    : 100
 
   return (
     <div className="flex w-full gap-3">
@@ -1129,11 +1128,6 @@ function ReasoningCard({
         aria-hidden
         className="mt-[7px] flex size-[6px] shrink-0 items-center justify-center"
       >
-        {/* State indicator dot — mirrors the TodoRow status pattern:
-            in-progress = accent (blue) pulsing, done = emerald.
-            Same colours used for active todos / completed todos in
-            the right rail, so the chat reads as a single visual
-            language across surfaces. */}
         <span
           className={
             'block size-[6px] rounded-full ' +
@@ -1171,14 +1165,34 @@ function ReasoningCard({
             </svg>
           )}
           {isStreaming ? (
-            <ShimmerText>正在思考…</ShimmerText>
+            <>
+              <ShimmerText>思考中</ShimmerText>
+              <span className="ml-1 tabular-nums text-[11px] text-muted-foreground/70">
+                {pct}%
+              </span>
+              {/* 进度条：细长胶囊，沿用 accent 作为"进行中"色，与思考点一致。 */}
+              <span
+                className="ml-1.5 inline-block h-1 w-16 overflow-hidden rounded-full bg-muted-foreground/20"
+                role="progressbar"
+                aria-valuenow={pct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
+                <span
+                  className="block h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
+                  style={{ width: `${pct}%` }}
+                />
+              </span>
+            </>
           ) : (
-            <span className="font-medium tracking-tight">思考过程</span>
-          )}
-          {!isStreaming && hasText && (
-            <span className="text-[11px] text-muted-foreground/60">
-              · {charCount} 字
-            </span>
+            <>
+              <span className="font-medium tracking-tight">思考过程</span>
+              {hasText && (
+                <span className="text-[11px] text-muted-foreground/60">
+                  · {charCount} 字
+                </span>
+              )}
+            </>
           )}
         </button>
         <AnimatePresence initial={false}>
@@ -1191,16 +1205,30 @@ function ReasoningCard({
               transition={{ duration: 0.18, ease: 'easeOut' }}
               className="overflow-hidden"
             >
-              {/* Apple card (DESIGN.md §4): no border, subtle bg
-                  contrast supplies elevation. `bg-muted` sits 1-2
-                  shades off the canvas on both themes, so the card
-                  reads as "inset" without any visible stroke. 13px
-                  text with apple-micro tracking is Apple's smallest
-                  comfortable reading size — tight but legible. */}
-              <div className="mt-1.5 rounded-apple-lg bg-muted px-4 py-3 text-[13px] leading-[1.47] tracking-apple-micro text-muted-foreground">
-                <pre className="whitespace-pre-wrap break-words font-sans">
-                  {displayText}
-                </pre>
+              {/* 多气泡列表：每段思考一条独立气泡，顺序排列，像 AI 逐句口述
+                  思路。末段在流式中带一个脉冲光标，表示"正在写这一条"。 */}
+              <div className="mt-1.5 flex flex-col gap-1.5">
+                {paragraphs.map((para, i) => {
+                  const writing = isStreaming && i === paragraphs.length - 1
+                  return (
+                    <div
+                      key={i}
+                      className="rounded-apple-lg bg-muted px-4 py-2.5 text-[13px] leading-[1.47] tracking-apple-micro text-muted-foreground"
+                    >
+                      <pre className="whitespace-pre-wrap break-words font-sans">
+                        {para}
+                        {writing && (
+                          <span
+                            aria-hidden
+                            className="ml-0.5 inline-block animate-pulse text-accent"
+                          >
+                            ●
+                          </span>
+                        )}
+                      </pre>
+                    </div>
+                  )
+                })}
               </div>
             </motion.div>
           )}
