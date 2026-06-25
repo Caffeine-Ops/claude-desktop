@@ -13,6 +13,21 @@
 export const PROPOSAL_DRAFT_BEGIN = '===方案正文开始==='
 export const PROPOSAL_DRAFT_END = '===方案正文结束==='
 
+/**
+ * 方案的三个生成阶段 / 三类草稿节。封面→目录→正文有序推进，每个哨兵块按其到达时的
+ * 阶段打 kind（见 stores/proposal.ts appendSections）。放 shared 是因为 store（renderer）
+ * 与 docx 拼接器都要用，避免两端各写一份漂移。
+ */
+export type ProposalKind = 'cover' | 'toc' | 'content'
+
+/**
+ * 导出/预览时插在 kind 边界的「分页」标记。单独成行时 remark 解析为一个块级 html 节点，
+ * proposalDocx 识别它产出真 PageBreak（封面单独一页、目录单独一页、正文起新页）。
+ * 用 html 注释而非 thematicBreak：注释在 .md 里不可见、在 docx 里被我们专门拦截，
+ * 不会污染正文，也不和用户写的 `---` 分割线冲突。
+ */
+export const PROPOSAL_PAGEBREAK = '<!--proposal-pagebreak-->'
+
 export interface ProposalDraftExtraction {
   /** 已闭合哨兵块（定稿正文段），顺序与出现一致。 */
   blocks: string[]
@@ -78,4 +93,33 @@ export function extractProposalDraftBlocks(text: string): string[] {
  */
 export function extractProposalDraft(text: string): string {
   return extractProposalDraftBlocks(text).join('\n\n').trim()
+}
+
+/**
+ * 把分节草稿拼成单串 markdown，供「导出 Word」与「真预览」同源消费（两处原先各自
+ * `sections.map(s=>s.markdown).join('\n\n')`，现统一到此，保证预览=导出逐像素一致）。
+ *
+ * pageBreaks=true 时，在相邻节「kind 发生变化」的边界插入 PROPOSAL_PAGEBREAK——即
+ * 封面→目录、目录→正文之间各一处分页（docx 渲染为真 PageBreak）。同 kind 的多节之间
+ * 不插（正文各章连续排版）。pageBreaks=false（.md 导出）时纯空行拼接，不留任何标记。
+ *
+ * 纯函数，main 与 renderer 共享。空数组 → ''。
+ */
+export function buildProposalMarkdown(
+  sections: Array<{ markdown: string; kind: ProposalKind }>,
+  opts?: { pageBreaks?: boolean }
+): string {
+  const pageBreaks = opts?.pageBreaks ?? false
+  const parts: string[] = []
+  let prevKind: ProposalKind | null = null
+  for (const sec of sections) {
+    const md = sec.markdown.trim()
+    if (!md) continue
+    if (pageBreaks && prevKind !== null && sec.kind !== prevKind) {
+      parts.push(PROPOSAL_PAGEBREAK)
+    }
+    parts.push(md)
+    prevKind = sec.kind
+  }
+  return parts.join('\n\n').trim()
 }
