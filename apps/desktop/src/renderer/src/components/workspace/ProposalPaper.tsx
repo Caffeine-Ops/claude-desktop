@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useProposalStore } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
+import type { ProposalKind } from '@shared/proposal'
 
 /**
  * 编辑态：一张连续的 A4 宽长纸，分节无缝拼接、向下滚动不分页。
@@ -28,6 +29,79 @@ export function ProposalPaper(): React.JSX.Element {
   const toolBtn =
     'grid size-6 place-items-center rounded-md border border-neutral-300 bg-white text-[12px] text-neutral-600 hover:border-accent hover:text-accent disabled:opacity-30'
 
+  // 中文区名：每个 kind 对应面板里显示的分区标题。
+  const KIND_LABEL: Record<ProposalKind, string> = {
+    cover: '封面',
+    toc: '目录',
+    content: '正文'
+  }
+  // 保持 sections 原有顺序的前提下按 kind 切组（同 kind 连续，故顺序天然分块）。
+  const groups: Array<{ kind: ProposalKind; items: typeof sections }> = []
+  for (const sec of sections) {
+    const last = groups[groups.length - 1]
+    if (last && last.kind === sec.kind) last.items.push(sec)
+    else groups.push({ kind: sec.kind, items: [sec] })
+  }
+
+  // 单节渲染辅助：参数用「全局下标」以保留上移/下移的边界判断（首尾禁用依赖 sections
+  // 全局长度，不能用组内下标——跨组时组内下标会从 0 重置、错误地允许跨组第一节上移）。
+  const renderSection = (sec: (typeof sections)[number], globalIndex: number): React.JSX.Element => (
+    <section key={sec.id} className="group relative py-0.5">
+      <div className="absolute -right-[58px] top-1.5 hidden flex-col gap-1 group-hover:flex">
+        <button
+          className={toolBtn}
+          onClick={() => setEditingId(editingId === sec.id ? null : sec.id)}
+          aria-label={editingId === sec.id ? '完成' : '编辑'}
+        >
+          {editingId === sec.id ? '✓' : '✎'}
+        </button>
+        <button
+          className={toolBtn}
+          disabled={globalIndex === 0}
+          onClick={() => moveSection(sec.id, 'up')}
+          aria-label="上移"
+        >
+          ↑
+        </button>
+        <button
+          className={toolBtn}
+          disabled={globalIndex === sections.length - 1}
+          onClick={() => moveSection(sec.id, 'down')}
+          aria-label="下移"
+        >
+          ↓
+        </button>
+        <button
+          className="grid size-6 place-items-center rounded-md border border-neutral-300 bg-white text-[12px] text-rose-500 hover:border-rose-400"
+          onClick={() => {
+            if (editingId === sec.id) setEditingId(null)
+            removeSection(sec.id)
+          }}
+          aria-label="删除"
+        >
+          ×
+        </button>
+      </div>
+
+      {sec.truncated && (
+        <div className="mb-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600">
+          ⚠ 本段疑似截断（AI 未写结束标记），内容可能不完整，请复核或重新生成
+        </div>
+      )}
+
+      {editingId === sec.id ? (
+        <textarea
+          className="min-h-[120px] w-full resize-none rounded-sm bg-accent/5 font-serif text-[14.5px] leading-[1.95] text-[#1d1d1f] outline-none"
+          value={sec.markdown}
+          autoFocus
+          onChange={(e) => updateSection(sec.id, e.target.value)}
+        />
+      ) : (
+        <AssistantMarkdown text={sec.markdown} />
+      )}
+    </section>
+  )
+
   return (
     <div className="flex-1 overflow-auto bg-black/10 py-7 dark:bg-black/25">
       <div className="proposal-paper mx-auto w-[min(794px,calc(100%-48px))] rounded-sm bg-white px-[clamp(28px,6%,76px)] py-16 text-[#1d1d1f] shadow-[0_1px_0_rgba(0,0,0,0.04),0_12px_34px_rgba(0,0,0,0.30)]">
@@ -36,62 +110,20 @@ export function ProposalPaper(): React.JSX.Element {
             {generating ? '方案正在生成，完成的部分会陆续出现在这里…' : '等待 AI 起草…'}
           </div>
         ) : (
-          sections.map((sec, i) => (
-            <section key={sec.id} className="group relative py-0.5">
-              <div className="absolute -right-[58px] top-1.5 hidden flex-col gap-1 group-hover:flex">
-                <button
-                  className={toolBtn}
-                  onClick={() => setEditingId(editingId === sec.id ? null : sec.id)}
-                  aria-label={editingId === sec.id ? '完成' : '编辑'}
-                >
-                  {editingId === sec.id ? '✓' : '✎'}
-                </button>
-                <button
-                  className={toolBtn}
-                  disabled={i === 0}
-                  onClick={() => moveSection(sec.id, 'up')}
-                  aria-label="上移"
-                >
-                  ↑
-                </button>
-                <button
-                  className={toolBtn}
-                  disabled={i === sections.length - 1}
-                  onClick={() => moveSection(sec.id, 'down')}
-                  aria-label="下移"
-                >
-                  ↓
-                </button>
-                <button
-                  className="grid size-6 place-items-center rounded-md border border-neutral-300 bg-white text-[12px] text-rose-500 hover:border-rose-400"
-                  onClick={() => {
-                    if (editingId === sec.id) setEditingId(null)
-                    removeSection(sec.id)
-                  }}
-                  aria-label="删除"
-                >
-                  ×
-                </button>
-              </div>
-
-              {sec.truncated && (
-                <div className="mb-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600">
-                  ⚠ 本段疑似截断（AI 未写结束标记），内容可能不完整，请复核或重新生成
+          (() => {
+            let running = -1 // 跨组累计全局下标，喂给 renderSection 做首尾禁用判断
+            return groups.map((g) => (
+              <div key={g.kind} className="mb-2">
+                <div className="mb-1 border-b border-neutral-200 pb-0.5 text-[11px] font-medium tracking-wide text-neutral-400">
+                  {KIND_LABEL[g.kind]}
                 </div>
-              )}
-
-              {editingId === sec.id ? (
-                <textarea
-                  className="min-h-[120px] w-full resize-none rounded-sm bg-accent/5 font-serif text-[14.5px] leading-[1.95] text-[#1d1d1f] outline-none"
-                  value={sec.markdown}
-                  autoFocus
-                  onChange={(e) => updateSection(sec.id, e.target.value)}
-                />
-              ) : (
-                <AssistantMarkdown text={sec.markdown} />
-              )}
-            </section>
-          ))
+                {g.items.map((sec) => {
+                  running += 1
+                  return renderSection(sec, running)
+                })}
+              </div>
+            ))
+          })()
         )}
       </div>
     </div>

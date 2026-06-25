@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useProposalStore, useProposalWorkspace } from '../../stores/proposal'
 import type { ProposalExportFormat } from '@shared/ipc-channels'
 import { buildProposalMarkdown } from '@shared/proposal'
+import { sendProposalStageMessage } from '../../lib/sendProposalStageMessage'
 import { ProposalPaper } from './ProposalPaper'
 import { ProposalPreview } from './ProposalPreview'
 
@@ -21,6 +22,13 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   const sections = useProposalStore((s) => s.sections)
   const products = useProposalStore((s) => s.products)
   const { setProducts } = useProposalStore.getState()
+  // 订阅当前阶段，驱动阶段条高亮与推进按钮渲染。advancePhase 是 zustand 稳定引用，
+  // 从 getState() 取——不订阅（避免 phase 每次变化都多跑一遍 selector）。
+  const phase = useProposalStore((s) => s.phase)
+  const { advancePhase } = useProposalStore.getState()
+  // 各区是否已有内容，决定推进按钮是否可用（空区 → 禁用，避免误推进）。
+  const hasCover = sections.some((s) => s.kind === 'cover')
+  const hasToc = sections.some((s) => s.kind === 'toc')
   const [exporting, setExporting] = useState(false)
   const [exportMsg, setExportMsg] = useState<{ tone: 'ok' | 'err' | 'muted'; text: string } | null>(null)
 
@@ -29,6 +37,25 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     const id = setTimeout(() => setExportMsg(null), 4000)
     return () => clearTimeout(id)
   }, [exportMsg])
+
+  // 阶段一→二：先把 phase 推到 toc（使后续哨兵块落入目录区），再让 AI 生成目录大纲。
+  function confirmCover(): void {
+    advancePhase('toc')
+    void sendProposalStageMessage(
+      '封面已确认。请进入【阶段二·目录】：参考知识库里该产品的资料结构与售前方案常见章节，给出一份章节目录大纲（有序列表逐章列出），用方案正文哨兵包裹。'
+    )
+  }
+  // 阶段二→三：把已确认的目录正文带给 AI（目录驱动正文），phase 推到 content。
+  function confirmToc(): void {
+    const tocMd = buildProposalMarkdown(
+      sections.filter((s) => s.kind === 'toc'),
+      { pageBreaks: false }
+    )
+    advancePhase('content')
+    void sendProposalStageMessage(
+      `目录已确认，最终目录如下：\n\n${tocMd}\n\n请进入【阶段三·正文】：严格按上面目录逐章撰写正文，章节标题与顺序以目录为准，一次聚焦一章，每章用方案正文哨兵包裹。`
+    )
+  }
 
   async function handleExport(format: ProposalExportFormat): Promise<void> {
     if (exporting) return
@@ -105,6 +132,37 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             .md
           </button>
         </div>
+      </div>
+
+      {/* 阶段条：封面 → 目录 → 正文，显式按钮门控推进，一次只推进一阶段。 */}
+      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-[11px]">
+        <span className={phase === 'cover' ? 'font-medium text-foreground' : 'text-muted-foreground'}>① 封面</span>
+        <span className="text-muted-foreground">→</span>
+        <span className={phase === 'toc' ? 'font-medium text-foreground' : 'text-muted-foreground'}>② 目录</span>
+        <span className="text-muted-foreground">→</span>
+        <span className={phase === 'content' ? 'font-medium text-foreground' : 'text-muted-foreground'}>③ 正文</span>
+        <span className="flex-1" />
+        {phase === 'cover' && (
+          <button
+            className="rounded bg-accent px-2 py-0.5 text-white disabled:opacity-40"
+            disabled={!hasCover}
+            onClick={confirmCover}
+            title={hasCover ? '' : '封面尚未生成'}
+          >
+            确认封面，生成目录
+          </button>
+        )}
+        {phase === 'toc' && (
+          <button
+            className="rounded bg-accent px-2 py-0.5 text-white disabled:opacity-40"
+            disabled={!hasToc}
+            onClick={confirmToc}
+            title={hasToc ? '' : '目录尚未生成'}
+          >
+            确认目录，开始正文
+          </button>
+        )}
+        {phase === 'content' && <span className="text-muted-foreground">正文撰写中</span>}
       </div>
 
       {exportMsg && (
