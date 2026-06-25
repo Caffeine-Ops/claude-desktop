@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { ProposalKind } from '@shared/proposal'
+import type { ProposalDraftBlock, ProposalKind } from '@shared/proposal'
 import { useChatStore } from './chat'
 
 export interface ProposalProduct {
@@ -15,8 +15,9 @@ export interface ProposalSection {
   // 该节由「截断恢复」产生：AI 写了起始哨兵但流被截断、无结束哨兵，内容可能不完整。
   // 面板对其打「疑似截断」徽标提示用户复核。正常闭合块不带此标志（undefined）。
   truncated?: boolean
-  // 该节属于哪个阶段（封面/目录/正文）。由 appendSections 按「该哨兵块到达时的
-  // store.phase」打——阶段被按钮死锁、一次只有一个活跃，故不会错标。决定草稿分区
+  // 该节属于哪个阶段（封面/目录/正文）。由 appendSections 取自【哨兵块自带的 kind】
+  // （AI 用封面/目录/正文哨兵声明），不再依赖 store.phase——这样聊天驱动阶段（phase
+  // 未推进）时目录也归到目录区，不会错塞进封面区（重复目录的根因修复）。决定草稿分区
   // 渲染（ProposalPaper）与导出分页（buildProposalMarkdown）。
   kind: ProposalKind
 }
@@ -57,9 +58,13 @@ interface ProposalState {
   // 首发播种：写入产品集并置 seeded=true（与 setProducts 区分——后者是 chip 编辑）。
   seedProducts: (products: ProposalProduct[]) => void
   markDraftConsumed: (messageId: string) => void
-  // 哨兵块 → 节：messageId 去重后，每块成一节追加到尾部。truncated 为截断恢复的残文
-  // （非空时）额外追加一节并标记 truncated:true，避免半截正文被静默丢弃（B2）。
-  appendSections: (messageId: string, blocks: string[], truncated?: string | null) => void
+  // 哨兵块 → 节：messageId 去重后，每块成一节追加到尾部，kind 取自块自带标签。truncated
+  // 为截断恢复的残块（非空时）额外追加一节并标记 truncated:true，避免半截正文被静默丢弃（B2）。
+  appendSections: (
+    messageId: string,
+    blocks: ProposalDraftBlock[],
+    truncated?: ProposalDraftBlock | null
+  ) => void
   // 推进到目标阶段（cover→toc→content）。只改 phase，不动 sections——已生成的封面/
   // 目录节保持原 kind。按钮在调用本方法后另发推进消息给 AI。
   advancePhase: (to: ProposalKind) => void
@@ -107,17 +112,30 @@ export const useProposalStore = create<ProposalState>((set) => ({
       if (s.consumedDraftIds.has(messageId)) return s
       const consumed = new Set(s.consumedDraftIds)
       consumed.add(messageId)
-      // 按当前阶段打 kind：封面阶段的块=cover、目录阶段=toc、正文阶段=content。
-      const kind = s.phase
-      const added: ProposalSection[] = blocks.map((markdown) => ({
+      // kind 取自每个哨兵块自带的标签（AI 在哨兵里声明封面/目录/正文），不再取自全局 phase。
+      // 这样无论用户走右侧按钮还是直接在聊天里驱动阶段，草稿都按内容真实归档。
+      const added: ProposalSection[] = blocks.map((b) => ({
         id: crypto.randomUUID(),
-        markdown,
-        kind
+        markdown: b.markdown,
+        kind: b.kind
       }))
       if (truncated) {
-        added.push({ id: crypto.randomUUID(), markdown: truncated, kind, truncated: true })
+        added.push({
+          id: crypto.randomUUID(),
+          markdown: truncated.markdown,
+          kind: truncated.kind,
+          truncated: true
+        })
       }
-      return { sections: [...s.sections, ...added], consumedDraftIds: consumed }
+      // 阶段条同步真实进度：把 phase 推进到本轮新块里最靠后的 kind（cover<toc<content，
+      // 绝不回退）。聊天驱动阶段时 phase 不再卡在 cover，阶段条与推进按钮随之反映实际
+      // 进展；按钮流里 phase 已被提前推进，此处取 max 不会回退、无冲突。
+      const order: Record<ProposalKind, number> = { cover: 0, toc: 1, content: 2 }
+      let phase = s.phase
+      for (const sec of added) {
+        if (order[sec.kind] > order[phase]) phase = sec.kind
+      }
+      return { sections: [...s.sections, ...added], consumedDraftIds: consumed, phase }
     }),
   advancePhase: (to) => set({ phase: to }),
   updateSection: (id, markdown) =>

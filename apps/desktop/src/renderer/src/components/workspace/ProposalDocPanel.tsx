@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react'
 import { useProposalStore, useProposalWorkspace } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
 import type { ProposalExportFormat } from '@shared/ipc-channels'
-import { buildProposalMarkdown } from '@shared/proposal'
+import type { ProposalStyleConfig } from '@shared/proposalStyle'
+import { buildProposalMarkdown, PROPOSAL_DRAFT_BEGIN, PROPOSAL_DRAFT_END } from '@shared/proposal'
 import { sendProposalStageMessage } from '../../lib/sendProposalStageMessage'
 import { ProposalPaper } from './ProposalPaper'
 import { ProposalPreview } from './ProposalPreview'
+import { ProposalStyleModal } from './ProposalStyleModal'
 
 export function ProposalDocPanel(): React.JSX.Element | null {
   // 与 App.tsx 隐藏右栏同一门控：仅当方案工作台接管时（active+前台+workspaceOpen）显示。
@@ -29,8 +31,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   const { advancePhase } = useProposalStore.getState()
   // 订阅方案会话 ID，用于下方流式状态判断。proposalSid 已是 store 的稳定切片。
   const proposalSid = useProposalStore((s) => s.sessionId)
-  // 方案会话流式期间禁止推进阶段：appendSections 按当时的 phase 打 kind 标签，mid-stream
-  // 推进会让进行中的前一阶段块落入新阶段区（mis-zoned）；待当轮 'end' 落地后再允许推进。
+  // 方案会话流式期间禁止推进阶段：推进按钮会另发一轮 AI 消息，mid-stream 点会和进行中
+  // 的那轮叠在一起（重复请求）；待当轮 'end' 落地后再允许推进。（kind 现由哨兵自描述，
+  // 不再有「按 phase 错标」之虞，但「别在流式中叠发」仍成立。）
   const generating = useChatStore((s) => (proposalSid ? (s.perSession[proposalSid]?.streaming ?? false) : false))
   // 各区是否已有非空内容，决定推进按钮是否可用（空区或仅空白 → 禁用，避免误推进）。
   // 注：用 .trim().length > 0 而非仅 .some(kind===X)——纯空白区段依然无法驱动 AI 生成。
@@ -38,6 +41,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   const hasToc = sections.some((s) => s.kind === 'toc' && s.markdown.trim().length > 0)
   const [exporting, setExporting] = useState(false)
   const [exportMsg, setExportMsg] = useState<{ tone: 'ok' | 'err' | 'muted'; text: string } | null>(null)
+  // 「导出 Word」改为先弹样式模板面板（选模板 + 实时预览 + 微调），用户在弹窗里点导出
+  // 才真正落盘。.md 仍直出（纯文本无样式）。
+  const [styleModalOpen, setStyleModalOpen] = useState(false)
 
   useEffect(() => {
     if (!exportMsg) return
@@ -45,11 +51,12 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     return () => clearTimeout(id)
   }, [exportMsg])
 
-  // 阶段一→二：先把 phase 推到 toc（使后续哨兵块落入目录区），再让 AI 生成目录大纲。
+  // 阶段一→二：先把 phase 推到 toc（驱动阶段条/按钮 UI），再让 AI 生成目录大纲。
+  // 归档不再靠 phase 而靠哨兵类型，故消息里点名【目录哨兵】，让 AI 用对那对标记。
   function confirmCover(): void {
     advancePhase('toc')
     void sendProposalStageMessage(
-      '封面已确认。请进入【阶段二·目录】：参考知识库里该产品的资料结构与售前方案常见章节，给出一份章节目录大纲（有序列表逐章列出），用方案正文哨兵包裹。'
+      `封面已确认。请进入【阶段二·目录】：参考知识库里该产品的资料结构与售前方案常见章节，给出一份章节目录大纲（有序列表逐章列出），用方案【目录】哨兵包裹（${PROPOSAL_DRAFT_BEGIN.toc} … ${PROPOSAL_DRAFT_END.toc}）。`
     )
   }
   // 阶段二→三：把已确认的目录正文带给 AI（目录驱动正文），phase 推到 content。
@@ -60,11 +67,14 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     )
     advancePhase('content')
     void sendProposalStageMessage(
-      `目录已确认，最终目录如下：\n\n${tocMd}\n\n请进入【阶段三·正文】：严格按上面目录逐章撰写正文，章节标题与顺序以目录为准，一次聚焦一章，每章用方案正文哨兵包裹。`
+      `目录已确认，最终目录如下：\n\n${tocMd}\n\n请进入【阶段三·正文】：严格按上面目录逐章撰写正文，章节标题与顺序以目录为准，一次聚焦一章，每章用方案【正文】哨兵包裹（${PROPOSAL_DRAFT_BEGIN.content} … ${PROPOSAL_DRAFT_END.content}）。`
     )
   }
 
-  async function handleExport(format: ProposalExportFormat): Promise<void> {
+  async function handleExport(
+    format: ProposalExportFormat,
+    style?: ProposalStyleConfig
+  ): Promise<void> {
     if (exporting) return
     // docx 走分页标记（kind 边界分页）；.md 是纯文本，不插标记（否则注释外漏）。
     const markdown = buildProposalMarkdown(sections, { pageBreaks: format === 'docx' })
@@ -74,7 +84,8 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     }
     setExporting(true)
     try {
-      const r = await window.chatApi.exportProposal({ markdown, format })
+      // style 仅 docx 用得到（驱动样式模板）；.md 透传 undefined，main 端忽略。
+      const r = await window.chatApi.exportProposal({ markdown, format, style })
       setExportMsg(
         r.path ? { tone: 'ok', text: `已导出：${r.path}` } : { tone: 'muted', text: '已取消导出' }
       )
@@ -123,9 +134,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           <button
             className="rounded px-2 py-0.5 hover:bg-muted disabled:opacity-50"
             disabled={exporting}
-            onClick={() => {
-              void handleExport('docx')
-            }}
+            onClick={() => setStyleModalOpen(true)}
           >
             {exporting ? '导出中…' : '导出 Word'}
           </button>
@@ -229,6 +238,15 @@ export function ProposalDocPanel(): React.JSX.Element | null {
       <div className={'flex min-h-0 flex-1 flex-col ' + (mode === 'preview' ? '' : 'hidden')}>
         <ProposalPreview active={mode === 'preview'} />
       </div>
+
+      {/* 导出样式模板弹窗：弹窗内点「导出 Word」时提交 draft 样式并走 handleExport('docx', style)。 */}
+      <ProposalStyleModal
+        open={styleModalOpen}
+        onClose={() => setStyleModalOpen(false)}
+        onExport={(style) => {
+          void handleExport('docx', style)
+        }}
+      />
     </div>
   )
 }
