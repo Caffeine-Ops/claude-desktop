@@ -9,7 +9,9 @@ import {
   TableCell,
   WidthType,
   LevelFormat,
-  AlignmentType
+  AlignmentType,
+  Footer,
+  PageNumber
 } from 'docx'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
@@ -238,7 +240,32 @@ export async function markdownToDocxBuffer(markdown: string): Promise<Buffer> {
         }
       ]
     },
-    sections: [{ children: children.length ? children : [new Paragraph({ children: [new TextRun('')] })] }]
+    sections: [
+      {
+        // 页脚：每页底部居中「— 当前页码 —」。size 18 = 9pt（half-points），
+        // 灰色 9a9a9e 与正文区分。页码字段由 Word/LibreOffice/ docx-preview 在
+        // 渲染/翻页时各自计算，故导出成品与预览的页码完全一致。
+        footers: {
+          default: new Footer({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [
+                  new TextRun({
+                    children: ['— ', PageNumber.CURRENT, ' —'],
+                    size: 18,
+                    color: '9a9a9e'
+                  })
+                ]
+              })
+            ]
+          })
+        },
+        children: children.length
+          ? children
+          : [new Paragraph({ children: [new TextRun('')] })]
+      }
+    ]
   })
   return Packer.toBuffer(doc)
 }
