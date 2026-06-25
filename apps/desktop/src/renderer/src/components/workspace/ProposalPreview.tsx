@@ -34,13 +34,14 @@ export function ProposalPreview(): React.JSX.Element {
 
     let cancelled = false
     setStatus('loading')
+    // 提前清空 host：避免被取代的渲染在 renderAsync 中途被 cancelled 后，status 卡在 loading 而 host 残留半渲染态
+    if (hostRef.current) hostRef.current.innerHTML = ''
     void (async () => {
       try {
         const { bytes } = await window.chatApi.renderProposal({ markdown })
         if (cancelled) return
         const host = hostRef.current
         if (!host) return
-        host.innerHTML = ''
         // Wrap in a fresh Uint8Array backed by a concrete ArrayBuffer so TypeScript's
         // BlobPart constraint is satisfied — IPC returns Uint8Array<ArrayBufferLike>
         // which TS strict-lib rejects directly as a BlobPart.
