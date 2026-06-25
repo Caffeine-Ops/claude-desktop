@@ -289,6 +289,19 @@ interface SessionRuntime {
    */
   proposalMode: boolean
   proposalProducts: readonly { productLine: string; product: string }[]
+  /**
+   * 「这个活进程当前被 grounding 过的产品集签名」——记录最近一次把方案产品清单送达
+   * AI 时所用的产品集（无论经 spawn 烘焙进 systemPrompt.append，还是经 send 注入进
+   * 用户消息）。空串表示尚未 grounding 过任何产品集。
+   *
+   * 为什么需要它：systemPrompt.append 在 spawn 那一刻烘焙、之后不可热更新（不变量）。
+   * 用户在 ProposalDocPanel 增删产品 chip 后，烘焙进 systemPrompt 的产品清单就过时了，
+   * 但活进程不会重 spawn。send() 比对「当前产品集签名 ≠ 已 grounding 的签名」即可发现
+   * 过时，于是把最新产品清单注入【本轮消息】覆盖旧的（读取始终由 isKbMirrorRead 放行
+   * 整库，故只需补 prompt 里「该读哪些文件」这层）。注入后更新本字段，使产品集稳定的
+   * 会话只在 chip 变动后注入一次、不每轮重注入（评审发现 2）。
+   */
+  proposalGroundedKey: string
 }
 
 interface ActiveTurn {
@@ -489,9 +502,28 @@ export class ChatEngine extends EventEmitter {
   // 纯度/缓存：products 取自同一份索引快照，索引不变则文件清单 bit 一致，落 prompt
   // 尾部不破坏上游 cache_control 断点。绝不读 engine 全局字段——products 由调用方从对应
   // runtime 取出传入（per-engine 字段会被 warmup 跨会话抢读）。
+  /**
+   * 产品集的稳定签名：排序后拼接 `productLine::product`，与顺序无关、只看成员集合。
+   * 用于比对 spawn 烘焙 / 上次注入的产品集与本轮是否一致（见 runtime.proposalGroundedKey）。
+   * 空集 → 空串。
+   */
+  private proposalProductsKey(
+    products: readonly { productLine: string; product: string }[]
+  ): string {
+    return products
+      .map((p) => `${p.productLine}::${p.product}`)
+      .sort()
+      .join('|')
+  }
+
   private proposalProductScopes(
     products: readonly { productLine: string; product: string }[]
   ): ProposalProductScope[] {
+    // 空产品集（非方案会话、或零命中）直接短路，绝不读盘：readKbIndex() 每调用都
+    // existsSync + readFileSync + JSON.parse 整份索引。本方法曾在每次 spawn（含所有
+    // 普通非方案会话）被无条件调用，让普通聊天的 spawn 热路径白读一遍 index.json 再丢弃
+    // （评审发现 7）。空集时 map 本就返回 []，提前返回省掉那次同步读盘/解析。
+    if (products.length === 0) return []
     const root = kbOutDir()
     const index = readKbIndex()
     return products.map((p) => {
@@ -1039,7 +1071,8 @@ export class ChatEngine extends EventEmitter {
     // timing-independent. We skip injection when the live child already
     // baked the append (`spawnedWithProposal` — i.e. it was (re)spawned
     // under proposal mode, including a fresh first-send spawn just now via
-    // ensureSessionReady above), to avoid duplicating the block.
+    // ensureSessionReady above) AND the baked product set is still current,
+    // to avoid duplicating the block (see the stale-products case (b) below).
     // Slash commands (e.g. /compact, /clear) must reach fusion-code with '/'
     // at offset 0 — the CLI's short-path detection is prefix-sensitive. Never
     // inject the proposal grounding ahead of one, or the leading '/' is no
@@ -1047,11 +1080,26 @@ export class ChatEngine extends EventEmitter {
     // (评审 #10). Such turns aren't drafting proposal content anyway, so
     // skipping the grounding costs nothing — the next non-slash turn re-injects
     // it (spawnedWithProposal is still false on the warm child).
+    //
+    // 注入触发有两种情形（都靠注入本轮消息修复，绝不重 spawn / 热改 systemPrompt）：
+    //   (a) 活进程根本没烘焙方案 append（warmup 在选产品前就 spawn 了）——即
+    //       !spawnedWithProposal，原有逻辑。
+    //   (b) 烘焙过，但用户随后增删了产品 chip，烘焙进 systemPrompt 的产品集已过时——
+    //       当前产品集签名 ≠ 已 grounding 的签名（proposalGroundedKey）。此前这种改动
+    //       对 warm 会话完全不生效，AI 一直按首发的产品清单写（评审发现 2）。
+    // 注入后把 proposalGroundedKey 更新为当前签名：产品集稳定的会话只在 chip 变动后
+    // 注入一次，不每轮重注入（warm-spawn (a) 情形 spawnedWithProposal 恒 false，仍按
+    // 原行为每轮注入，符合既有预期）。
     const isSlashCommand = text.trimStart().startsWith('/')
-    const groundedText =
-      proposalMode && !runtime.spawnedWithProposal && !isSlashCommand
-        ? `${buildProposalAppend(kbOutDir(), this.proposalProductScopes(runtime.proposalProducts))}\n\n---\n\n${text}`
-        : text
+    const proposalKey = proposalMode ? this.proposalProductsKey(runtime.proposalProducts) : ''
+    const needsGrounding =
+      proposalMode &&
+      !isSlashCommand &&
+      (!runtime.spawnedWithProposal || proposalKey !== runtime.proposalGroundedKey)
+    const groundedText = needsGrounding
+      ? `${buildProposalAppend(kbOutDir(), this.proposalProductScopes(runtime.proposalProducts))}\n\n---\n\n${text}`
+      : text
+    if (needsGrounding) runtime.proposalGroundedKey = proposalKey
     // Build the SDK user message. Text-only turns keep the string
     // short-path (fusion-code expects this for slash commands and
     // zero-image prompts). Image turns switch to a ContentBlockParam[]
@@ -1287,7 +1335,12 @@ export class ChatEngine extends EventEmitter {
       '始终用中文回复。所有解释、注释、与用户的交流都用中文。技术术语和代码标识符保留原形。'
     const proposalActive = runtime.proposalMode
     const mirrorDir = kbOutDir()
-    const productScopes = this.proposalProductScopes(runtime.proposalProducts)
+    // productScopes 只在方案模式下计算——非方案会话不调用 proposalProductScopes，避免
+    // 普通会话的 spawn 热路径也白读一遍 KB 索引再丢弃（评审发现 7）。下面 systemPromptAppend
+    // 与 additionalDirectories 两处共用本次结果。
+    const productScopes = proposalActive
+      ? this.proposalProductScopes(runtime.proposalProducts)
+      : []
     const systemPromptAppend = proposalActive
       ? `${baseChineseAppend}\n\n${buildProposalAppend(mirrorDir, productScopes)}`
       : baseChineseAppend
@@ -1552,6 +1605,11 @@ export class ChatEngine extends EventEmitter {
     // child spawned outside proposal mode needs the grounding injected into
     // the message for a proposal turn.
     runtime.spawnedWithProposal = proposalActive
+    // 记录本次 spawn 烘焙进 systemPrompt 的产品集签名（非方案 spawn 为空串）。send()
+    // 据它发现「用户随后改了产品 chip → 烘焙的清单已过时」并注入最新 grounding（发现 2）。
+    runtime.proposalGroundedKey = proposalActive
+      ? this.proposalProductsKey(runtime.proposalProducts)
+      : ''
 
     // Launch the pump in the background. The pump owns the lifetime
     // of `runtime.handle` / `runtime.queue` — when it exits (cleanly
@@ -2647,7 +2705,8 @@ export class ChatEngine extends EventEmitter {
       openedViaSend: false,
       spawnedWithProposal: false,
       proposalMode: false,
-      proposalProducts: []
+      proposalProducts: [],
+      proposalGroundedKey: ''
     }
     this.sessions.set(sessionId, runtime)
     return runtime

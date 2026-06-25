@@ -132,6 +132,12 @@ export const useProposalStore = create<ProposalState>((set) => ({
       if (i < 0) return s
       const j = dir === 'up' ? i - 1 : i + 1
       if (j < 0 || j >= s.sections.length) return s // 越界 no-op
+      // 仅允许同 kind 组内移动：sections 天然按 kind 连续（appendSections 按阶段顺序
+      // 追加，phase 只前进），跨 kind 交换会打破「同 kind 连续」不变量，进而让
+      // buildProposalMarkdown 在错误边界插分页、ProposalPaper 出现两个不相邻的同 kind
+      // 分区标题（评审发现 1）。封面/目录/正文是有序阶段，跨区移动一节本就无意义，
+      // 故邻居 kind 不同时 no-op；同 kind 内交换则保持连续性。
+      if (s.sections[i].kind !== s.sections[j].kind) return s
       const next = s.sections.slice()
       ;[next[i], next[j]] = [next[j], next[i]]
       return { sections: next }

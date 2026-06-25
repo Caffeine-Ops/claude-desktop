@@ -19,6 +19,7 @@ import { useChatStore } from '../stores/chat'
 import { useProposalStore } from '../stores/proposal'
 import type { ProposalProduct } from '../stores/proposal'
 import { matchProducts } from '../lib/kbProductMatch'
+import { dispatchChatTurn } from '../lib/dispatchChatTurn'
 import { extractProposalDraftResult } from '@shared/proposal'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
@@ -66,7 +67,6 @@ export function FusionRuntimeProvider({
   const sessionLoading = useChatStore((s) => s.sessionLoading)
   const messages = useChatStore((s) => s.messages)
   const streaming = useChatStore((s) => s.streaming)
-  const appendUserMessage = useChatStore((s) => s.appendUserMessage)
   const startAssistantMessage = useChatStore((s) => s.startAssistantMessage)
   const appendAssistantDelta = useChatStore((s) => s.appendAssistantDelta)
   const startReasoning = useChatStore((s) => s.startReasoning)
@@ -417,67 +417,61 @@ export function FusionRuntimeProvider({
       // local alias so every action below gets the right sid without
       // re-reading an outer closure that could theoretically drift.
       const targetSid = sessionId
-      appendUserMessage(targetSid, storeContent)
 
-      // Pre-flip the spinner so the user sees feedback while the
-      // main-process send awaits the lazy fusion-code cold start.
-      // Background: engine.ts switchToSession is now lazy — it
-      // records pendingResume and returns instantly, so the first
-      // send() on a freshly-switched session is where the ~3-8s
-      // cold start actually lives. Without this pre-flip, the UI
-      // would sit silent for 8s waiting for the main-process
-      // `start` event. startAssistantMessage is idempotent, so the
-      // real `start` event arriving later is a no-op for the turn
-      // meta (see chat.ts:startAssistantMessage).
-      const pendingMessageId = `pending_${Date.now()}`
-      startAssistantMessage(targetSid, pendingMessageId)
+      // append 用户气泡 → 预翻转 spinner（应对 lazy 冷启动的静默期）→ send → 失败兜底，
+      // 统一走 dispatchChatTurn（与阶段按钮 sendProposalStageMessage 共享，见发现 10）。
+      // payload 用 thunk：方案产品匹配须在【预翻转之后】跑，保住「spinner 立刻亮、匹配在其
+      // 后」的时序；其内 await 抛错也由 dispatchChatTurn 的 catch 兜底。
+      await dispatchChatTurn({
+        sessionId: targetSid,
+        storeContent,
+        logTag: '[runtime]',
+        payload: async () => {
+          // 方案模式：门控同 proposalMode——只有当前发送的 targetSid 与方案绑定
+          // 的 sessionId 相同才算（防泄漏到其他 tab / 后台 agent）。
+          const ps = useProposalStore.getState()
+          const isProposal = ps.active && ps.sessionId === targetSid
+          let proposalProducts: ProposalProduct[] | undefined
+          if (isProposal) {
+            if (!ps.seeded) {
+              // 方案首发：仅在尚未播种时对用户文本匹配产品并【一次性】播种——即便零命中
+              // 也置 seeded，从此固定这套集合。后续 turn（逐部分推进）一律复用，不再
+              // readKbIndex/matchProducts，也不会在会话中途忽然命中而骤然收窄检索范围。
+              // 召回优先：多命中无害（多一个可读目录，AI 仍按用户文字写），可在
+              // ProposalDocPanel 的 chip 删（走 setProducts，不重置 seeded）。
+              const idx = await window.chatApi.readKbIndex()
+              // await 期间可能有并发的另一首发轮也已进入本分支（两轮都在 await 前读到
+              // seeded=false）。await 之后这段 check+seed 没有 await、是同步原子执行的
+              // （JS 单线程），故先再查一次：若已被那一轮播种，直接复用其产品集，绝不
+              // 二次 matchProducts 覆盖——否则两轮各自匹配、后者覆盖前者，store/chip 与
+              // 实际已发送的产品集发生分叉（评审发现 3）。
+              const cur = useProposalStore.getState()
+              if (cur.seeded) {
+                proposalProducts = cur.products
+              } else {
+                const matched = matchProducts(text, idx)
+                cur.seedProducts(matched)
+                proposalProducts = matched
+              }
+            } else {
+              proposalProducts = ps.products
+            }
+          }
 
-      try {
-        // 方案模式：门控同 proposalMode——只有当前发送的 targetSid 与方案绑定
-        // 的 sessionId 相同才算（防泄漏到其他 tab / 后台 agent）。
-        const ps = useProposalStore.getState()
-        const isProposal = ps.active && ps.sessionId === targetSid
-        let proposalProducts: ProposalProduct[] | undefined
-        if (isProposal) {
-          if (!ps.seeded) {
-            // 方案首发：仅在尚未播种时对用户文本匹配产品并【一次性】播种——即便零命中
-            // 也置 seeded，从此固定这套集合。后续 turn（逐部分推进）一律复用，不再
-            // readKbIndex/matchProducts，也不会在会话中途忽然命中而骤然收窄检索范围。
-            // 召回优先：多命中无害（多一个可读目录，AI 仍按用户文字写），可在
-            // ProposalDocPanel 的 chip 删（走 setProducts，不重置 seeded）。
-            const idx = await window.chatApi.readKbIndex()
-            const matched = matchProducts(text, idx)
-            useProposalStore.getState().seedProducts(matched)
-            proposalProducts = matched
-          } else {
-            proposalProducts = ps.products
+          return {
+            sessionId: targetSid,
+            // Engine validator accepts empty strings when images are present.
+            // We still pass an empty string (not undefined) so the wire
+            // shape stays stable.
+            text: text,
+            images: images.length > 0 ? images : undefined,
+            // 方案模式：透传给 engine，本次 spawn 据此烘焙方案系统提示词 +
+            // 把识别产品的镜像子目录加进可读范围（零命中退回整库）。
+            proposalMode: isProposal,
+            proposalProducts
           }
         }
-
-        await window.chatApi.send({
-          sessionId: targetSid,
-          // Engine validator accepts empty strings when images are present.
-          // We still pass an empty string (not undefined) so the wire
-          // shape stays stable.
-          text: text,
-          images: images.length > 0 ? images : undefined,
-          // 方案模式：透传给 engine，本次 spawn 据此烘焙方案系统提示词 +
-          // 把识别产品的镜像子目录加进可读范围（零命中退回整库）。
-          proposalMode: isProposal,
-          proposalProducts
-        })
-      } catch (err) {
-        console.error('[runtime] send failed', err)
-        const msg = err instanceof Error ? err.message : String(err)
-        // Attach to a synthetic assistant message so the user sees
-        // the failure instead of a silent void. Idempotent
-        // startAssistantMessage means this call won't reset the
-        // turn meta set by the pre-flip above.
-        const errMessageId = `err_${Date.now()}`
-        startAssistantMessage(targetSid, errMessageId)
-        setError(targetSid, errMessageId, msg)
-        endAssistantMessage(targetSid)
-      }
+      })
     },
 
     onCancel: async () => {

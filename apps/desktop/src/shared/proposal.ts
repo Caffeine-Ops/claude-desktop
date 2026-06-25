@@ -73,29 +73,6 @@ export function extractProposalDraftResult(text: string): ProposalDraftExtractio
 }
 
 /**
- * 抽取所有「方案正文」段（哨兵之间内容）为数组，顺序与出现顺序一致。
- * 分节化的来源：每个闭合哨兵块 = 一节。无哨兵对 → []。未闭合残块忽略（截断恢复
- * 走 extractProposalDraftResult，本函数维持「只取定稿块」的旧语义、向后兼容）。
- * 纯函数，main 与 renderer 共享。
- */
-export function extractProposalDraftBlocks(text: string): string[] {
-  return extractProposalDraftResult(text).blocks
-}
-
-/**
- * 从一条 assistant 消息文本里抽取所有「方案正文」段（哨兵之间的内容）并拼接。
- *
- * - 无任何完整哨兵对 → 返回 ''（纯提问 / 过程对话不含哨兵，不会被收入草稿）。
- * - 支持一条消息里多个哨兵块（AI 一次推进多个部分时）。
- * - 容错：起始哨兵后找不到结束哨兵（流式截断 / AI 漏写）→ 该残块忽略，不猜测边界。
- *
- * 向后兼容：把各正文段以空行拼成单串。行为与重构前一致。
- */
-export function extractProposalDraft(text: string): string {
-  return extractProposalDraftBlocks(text).join('\n\n').trim()
-}
-
-/**
  * 把分节草稿拼成单串 markdown，供「导出 Word」与「真预览」同源消费（两处原先各自
  * `sections.map(s=>s.markdown).join('\n\n')`，现统一到此，保证预览=导出逐像素一致）。
  *
@@ -103,10 +80,15 @@ export function extractProposalDraft(text: string): string {
  * 封面→目录、目录→正文之间各一处分页（docx 渲染为真 PageBreak）。同 kind 的多节之间
  * 不插（正文各章连续排版）。pageBreaks=false（.md 导出）时纯空行拼接，不留任何标记。
  *
+ * 截断残文（truncated=true）不参与分页边界判定：它是「疑似不完整、待用户复核」的临时
+ * 内容，常是某阶段末轮被流截断的尾巴，其 kind 可能与逻辑归属不符。若拿它的 kind 去和
+ * 邻节比对，会在它前后插出把同一逻辑段劈到分页两侧的硬分页（评审发现 6）。故对它：照常
+ * 输出内容，但既不触发分页、也不推进 prevKind——分页边界只由正式定稿块决定。
+ *
  * 纯函数，main 与 renderer 共享。空数组 → ''。
  */
 export function buildProposalMarkdown(
-  sections: Array<{ markdown: string; kind: ProposalKind }>,
+  sections: Array<{ markdown: string; kind: ProposalKind; truncated?: boolean }>,
   opts?: { pageBreaks?: boolean }
 ): string {
   const pageBreaks = opts?.pageBreaks ?? false
@@ -115,6 +97,11 @@ export function buildProposalMarkdown(
   for (const sec of sections) {
     const md = sec.markdown.trim()
     if (!md) continue
+    // 截断残文：输出内容但不参与分页（不触发、不更新 prevKind），见上方注释。
+    if (sec.truncated) {
+      parts.push(md)
+      continue
+    }
     if (pageBreaks && prevKind !== null && sec.kind !== prevKind) {
       parts.push(PROPOSAL_PAGEBREAK)
     }

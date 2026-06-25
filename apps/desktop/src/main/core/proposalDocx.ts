@@ -187,18 +187,30 @@ function blockToDocx(node: RootContent, ctx?: BlockContext): Array<Paragraph | T
             new Paragraph({ children: [new TextRun({ text: line, font: 'Consolas' })] })
         )
     case 'table': {
-      const rows = node.children.map(
-        (row) =>
-          new TableRow({
-            children: row.children.map(
-              (cell) =>
-                new TableCell({
-                  children: tableCellContent(cell),
-                  width: { size: 0, type: WidthType.AUTO }
-                })
-            )
-          })
-      )
+      const rows: TableRow[] = []
+      for (const row of node.children) {
+        const cells = row.children.map(
+          (cell) =>
+            new TableCell({
+              children: tableCellContent(cell),
+              width: { size: 0, type: WidthType.AUTO }
+            })
+        )
+        // 无单元格的行（畸形/空 GFM 行）会让 docx 在 Packer 阶段抛错、整篇导出与预览
+        // 全文失败。补一个空单元格降级，与本文件其它分支「绝不抛错中断导出」的契约一致
+        // （评审发现 5）：宁可多一个空格，也不让一张坏表打掉整篇文档。
+        if (cells.length === 0) {
+          cells.push(
+            new TableCell({
+              children: [new Paragraph({ children: [new TextRun('')] })],
+              width: { size: 0, type: WidthType.AUTO }
+            })
+          )
+        }
+        rows.push(new TableRow({ children: cells }))
+      }
+      // 整张表没有任何行（同样会让 Packer 抛错）→ 直接忽略，不产出空 Table。
+      if (rows.length === 0) return []
       return [new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE } })]
     }
     case 'html':

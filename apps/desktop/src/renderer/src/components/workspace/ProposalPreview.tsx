@@ -22,11 +22,15 @@ import { buildProposalMarkdown } from '@shared/proposal'
  *     渲染进一个「离屏」detached <div>，渲染完、过了 cancelled 闸门之后才整体搬进
  *     host。旧渲染永远碰不到 host。（docx-preview 的分页是按 XML 结构切的、不量 DOM，
  *     故离屏渲染与挂在 host 渲染逐像素等价。）
- *  2) 防抖：流式生成时 sections 每个 token 都变，若每次都全量「IPC 生成 docx + 解析
- *     渲染」会冲击主进程、叠加并发、host 反复闪白。这里合并 DEBOUNCE_MS 内的连续变化，
- *     只在内容稳定后渲染最新一帧；流式期间预览保持上一帧（不闪 spinner）。
+ *  2) 防抖：sections 并非逐 token 变——它只在每条 assistant 消息的 'end' 整批更新
+ *     （appendSections，一次可加该消息的多个哨兵块），加上「逐部分推进」时多条消息会
+ *     接连 end、以及编辑态 textarea 改字（updateSection 每次按键）。这些更新可能成簇到来，
+ *     若每次都全量「IPC 生成 docx + 解析渲染」会冲击主进程、叠加并发、host 反复闪白。
+ *     这里合并 DEBOUNCE_MS 内的连续变化，只在内容稳定后渲染最新一帧；成簇更新期间预览
+ *     保持上一帧（不闪 spinner）。
  */
-// 防抖窗口：流式 append 通常 <100ms/次，300ms 足以等到一段落定再渲。
+// 防抖窗口：成簇的 sections 变更（连续多条消息 end / 连续按键）通常间隔很短，
+// 300ms 足以等到一簇落定再渲。
 const DEBOUNCE_MS = 300
 type Status = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
 
@@ -55,9 +59,9 @@ export function ProposalPreview({ active }: { active: boolean }): React.JSX.Elem
     if (markdown === lastRendered.current) return // 该内容已渲染，跳过
 
     let cancelled = false
-    // 防抖：合并 DEBOUNCE_MS 内的连续 sections 变化，只渲染最新一帧。流式期间不在此
-    // 提前置 loading——保持上一帧（status 仍 ready），等内容落定后 run 才翻 loading，
-    // 避免每个 token 闪一次 spinner。
+    // 防抖：合并 DEBOUNCE_MS 内的连续 sections 变化（多条消息接连 end / 编辑态连续按键），
+    // 只渲染最新一帧。这之前不提前置 loading——保持上一帧（status 仍 ready），等内容落定后
+    // run 才翻 loading，避免成簇更新期间每次都闪一下 spinner。
     const timer = window.setTimeout(() => {
       void (async () => {
         setStatus('loading')
