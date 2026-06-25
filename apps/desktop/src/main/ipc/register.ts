@@ -81,7 +81,8 @@ import { clearLogs, getLogs } from '../core/logCollector'
 import { getKbRoot, setKbRoot, readKbIndex, kbOutDir } from '../core/kbIndexStore'
 import type { KbIndex } from '../../shared/kbIndex'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
-import type { ProposalExportPayload, ProposalExportResult } from '../../shared/ipc-channels'
+import { markdownToDocxBuffer } from '../core/proposalDocx'
+import type { ProposalExportPayload, ProposalExportResult, ProposalRenderPayload, ProposalRenderResult } from '../../shared/ipc-channels'
 
 /**
  * Resolve the ChatEngine for the window that sent this IPC event.
@@ -217,6 +218,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_PATH_SET)
   ipcMain.removeHandler(IPC_CHANNELS.KB_INDEX_READ)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_RENDER)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -1022,6 +1024,19 @@ export function registerIpcHandlers(): void {
       const win = BrowserWindow.fromWebContents(event.sender)
       if (!win) return { path: null }
       return exportProposal(win, markdown, format)
+    }
+  )
+
+  // 预览专用：复用与「导出 Word」完全相同的引擎（markdownToDocxBuffer），
+  // 保证 docx-preview 渲染出的分页 = 导出成品逐像素一致。不弹保存框、不落盘——
+  // 只把 .docx 字节回给渲染层喂给 docx-preview。生成异常直接抛出（reject），
+  // 渲染层 try/catch 后显示错误态，而不是静默吞掉。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_RENDER,
+    async (_event, payload: ProposalRenderPayload): Promise<ProposalRenderResult> => {
+      const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
+      const bytes = await markdownToDocxBuffer(markdown)
+      return { bytes }
     }
   )
 

@@ -55,7 +55,9 @@ import {
   type WorkspaceSetPayload,
   type WorkspaceState,
   type ProposalExportPayload,
-  type ProposalExportResult
+  type ProposalExportResult,
+  type ProposalRenderPayload,
+  type ProposalRenderResult
 } from '../shared/ipc-channels'
 
 // Visible in the Electron terminal if the preload actually loads.
@@ -400,6 +402,13 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PROPOSAL_EXPORT,
       payload
     ) as Promise<ProposalExportResult>
+  },
+
+  renderProposal(payload: ProposalRenderPayload): Promise<ProposalRenderResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_RENDER,
+      payload
+    ) as Promise<ProposalRenderResult>
   }
 }
 

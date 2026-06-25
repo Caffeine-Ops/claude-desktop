@@ -447,7 +447,14 @@ export const IPC_CHANNELS = {
    * MVP only `'md'` is implemented. Word/PDF adapters go in the same
    * switch — no IPC changes needed when the union grows.
    */
-  PROPOSAL_EXPORT: 'proposal:export'
+  PROPOSAL_EXPORT: 'proposal:export',
+  /**
+   * Renderer → main. Renders the proposal markdown to a .docx binary
+   * IN MEMORY (no save dialog, no disk write), so the renderer can paint a
+   * docx-preview pagination view that matches the exported Word file
+   * byte-for-byte — same `markdownToDocxBuffer` engine as PROPOSAL_EXPORT.
+   */
+  PROPOSAL_RENDER: 'proposal:render'
 } as const
 
 /**
@@ -814,6 +821,20 @@ export interface ProposalExportPayload {
 /** Result of PROPOSAL_EXPORT. `path` is null when the user cancelled. */
 export interface ProposalExportResult {
   path: string | null
+}
+
+/** Payload for PROPOSAL_RENDER. */
+export interface ProposalRenderPayload {
+  markdown: string
+}
+
+/**
+ * Result of PROPOSAL_RENDER. `bytes` is the .docx binary — a Node `Buffer`
+ * on the main side, which structured-clones across IPC as a `Uint8Array`.
+ * The renderer wraps it in a `Blob` for docx-preview.
+ */
+export interface ProposalRenderResult {
+  bytes: Uint8Array
 }
 
 /**
@@ -1184,6 +1205,13 @@ export interface ChatApi {
    * without any IPC surface changes.
    */
   exportProposal(payload: ProposalExportPayload): Promise<ProposalExportResult>
+  /**
+   * Render the proposal markdown to a .docx binary in-memory (no save
+   * dialog, no disk write). The preview tab feeds the bytes to docx-preview
+   * to paint paginated A4 that matches the exported Word exactly. Rejects
+   * on render failure — the renderer shows an error state.
+   */
+  renderProposal(payload: ProposalRenderPayload): Promise<ProposalRenderResult>
 }
 
 /**
