@@ -2,6 +2,7 @@ import {
   Document,
   Packer,
   Paragraph,
+  PageBreak,
   TextRun,
   HeadingLevel,
   Table,
@@ -13,6 +14,7 @@ import {
   Footer,
   PageNumber
 } from 'docx'
+import { PROPOSAL_PAGEBREAK } from '../../shared/proposal'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
@@ -199,6 +201,14 @@ function blockToDocx(node: RootContent, ctx?: BlockContext): Array<Paragraph | T
       )
       return [new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE } })]
     }
+    case 'html':
+      // 块级 html 节点：唯一我们关心的是分页标记（renderer 拼接时插在 kind 边界）。
+      // 命中 → 产一个只含 PageBreak 的段落，得到真分页；其它 html（用户极少在方案里写）
+      // 降级为可见文本，不静默吞。
+      if (node.value.trim() === PROPOSAL_PAGEBREAK) {
+        return [new Paragraph({ children: [new PageBreak()] })]
+      }
+      return [new Paragraph({ children: [new TextRun(node.value)] })]
     case 'thematicBreak':
       return [new Paragraph({ children: [new TextRun('———')], alignment: AlignmentType.CENTER })]
     default:
