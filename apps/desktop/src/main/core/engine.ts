@@ -51,10 +51,10 @@ import {
   type SdkExternalMcpServers
 } from './externalMcp'
 import { invalidateFileSuggestions } from './fileSuggestions'
-import { kbOutDir } from './kbIndexStore'
+import { kbOutDir, readKbIndex } from './kbIndexStore'
 import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
-import { buildProposalAppend } from './proposalPrompt'
+import { buildProposalAppend, type ProposalProductScope } from './proposalPrompt'
 import { seedSkillsFromDisk } from './seedSkills'
 
 /**
@@ -477,14 +477,33 @@ export class ChatEngine extends EventEmitter {
   /** In-flight refresh dedupe so a burst of sends issues one fetch. */
   private externalMcpRefresh: Promise<void> | null = null
 
-  // 把识别到的产品映射成镜像子目录绝对路径：<kbOutDir>/<产品线>/<产品>。
-  // 镜像目录结构由阶段 A 索引器固定（见 build-kb-index.ts）。纯函数，产品集由调用方
-  // 从对应 runtime 取出传入——绝不读 engine 全局字段（per-engine 会被 warmup 跨会话抢读）。
-  private proposalProductDirs(
+  // 把识别到的产品映射成「镜像子目录绝对路径 + 该产品在索引里的文件清单」，喂给
+  // buildProposalAppend 前置进提示词，让 AI 直接 Read 命中、跳过 Glob/Grep 探路
+  // （写方案反复翻文件慢的根因）。镜像目录结构 <kbOutDir>/<产品线>/<产品> 由阶段 A
+  // 索引器固定（见 build-kb-index.ts）。
+  //
+  // 读 index.json 一次（openSession 首发 spawn 与 warm-spawn send 各调一次，非热路径，
+  // 不缓存以保持简单）。索引缺失（未建）或某产品未命中文件时，files 退为空数组——提示词
+  // 渲染层会退回「只给目录、让 AI 自查」的旧行为，功能不降级、仅少了加速。
+  //
+  // 纯度/缓存：products 取自同一份索引快照，索引不变则文件清单 bit 一致，落 prompt
+  // 尾部不破坏上游 cache_control 断点。绝不读 engine 全局字段——products 由调用方从对应
+  // runtime 取出传入（per-engine 字段会被 warmup 跨会话抢读）。
+  private proposalProductScopes(
     products: readonly { productLine: string; product: string }[]
-  ): string[] {
+  ): ProposalProductScope[] {
     const root = kbOutDir()
-    return products.map((p) => join(root, p.productLine, p.product))
+    const index = readKbIndex()
+    return products.map((p) => {
+      const dir = join(root, p.productLine, p.product)
+      const files =
+        index?.files
+          .filter(
+            (f) => f.ok && f.productLine === p.productLine && f.product === p.product
+          )
+          .map((f) => ({ title: f.title, mirrorPath: f.mirrorPath })) ?? []
+      return { dir, productLine: p.productLine, product: p.product, files }
+    })
   }
 
   constructor(webContents: WebContents, opts: ChatEngineOptions = {}) {
@@ -1031,7 +1050,7 @@ export class ChatEngine extends EventEmitter {
     const isSlashCommand = text.trimStart().startsWith('/')
     const groundedText =
       proposalMode && !runtime.spawnedWithProposal && !isSlashCommand
-        ? `${buildProposalAppend(kbOutDir(), this.proposalProductDirs(runtime.proposalProducts))}\n\n---\n\n${text}`
+        ? `${buildProposalAppend(kbOutDir(), this.proposalProductScopes(runtime.proposalProducts))}\n\n---\n\n${text}`
         : text
     // Build the SDK user message. Text-only turns keep the string
     // short-path (fusion-code expects this for slash commands and
@@ -1268,9 +1287,9 @@ export class ChatEngine extends EventEmitter {
       '始终用中文回复。所有解释、注释、与用户的交流都用中文。技术术语和代码标识符保留原形。'
     const proposalActive = runtime.proposalMode
     const mirrorDir = kbOutDir()
-    const productDirs = this.proposalProductDirs(runtime.proposalProducts)
+    const productScopes = this.proposalProductScopes(runtime.proposalProducts)
     const systemPromptAppend = proposalActive
-      ? `${baseChineseAppend}\n\n${buildProposalAppend(mirrorDir, productDirs)}`
+      ? `${baseChineseAppend}\n\n${buildProposalAppend(mirrorDir, productScopes)}`
       : baseChineseAppend
 
     const queue = new AsyncMessageQueue<unknown>()
@@ -1310,7 +1329,10 @@ export class ChatEngine extends EventEmitter {
       // absolute.」）。spread-omit：非方案模式不传，等价于不设——绝不通过这个字段
       // 或 cwd 改变默认可读范围（cwd 不变量）。
       ...(proposalActive
-        ? { additionalDirectories: productDirs.length > 0 ? productDirs : [mirrorDir] }
+        ? {
+            additionalDirectories:
+              productScopes.length > 0 ? productScopes.map((p) => p.dir) : [mirrorDir]
+          }
         : {}),
       // UI-picked permission mode. Values:
       //   - default           → canUseTool → broker → dialog (current flow)

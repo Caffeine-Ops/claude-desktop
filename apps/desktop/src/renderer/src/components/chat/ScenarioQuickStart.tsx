@@ -134,6 +134,16 @@ export function ScenarioQuickStart(): React.JSX.Element {
   // activeSessionId 为 '' 说明还没有 session，此时本就不应触发方案；透传 '' 无害，
   // FusionRuntimeProvider 的门控（ps.sessionId === targetSid）会天然排掉它。
   const onStartProposal = useCallback(() => {
+    // 再入分支：若已有绑定【当前前台会话】的活跃方案（用户点过「返回」离开工作台、
+    // 草稿仍在），只重开 workspaceOpen 回到工作台，绝不调 start()——start 会清空
+    // sections/products，把用户已写的草稿冲掉。这是「返回后再入不丢草稿」的落点。
+    // 也不重填引导模板：写到一半不该被模板覆盖。
+    const ps = useProposalStore.getState()
+    if (ps.active && ps.sessionId === activeSessionId) {
+      ps.setWorkspaceOpen(true)
+      return
+    }
+    // 首发：开新方案 + 预填引导模板 + 聚焦编辑器。
     startProposal(activeSessionId)
     composer.setText(t('scenarioProposalPrompt'))
     queueMicrotask(() => {

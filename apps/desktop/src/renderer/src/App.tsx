@@ -11,7 +11,7 @@ import { LogsDialog } from './components/dialogs/LogsDialog'
 import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
 import { ProposalDocPanel } from './components/workspace/ProposalDocPanel'
 import { useChatStore } from './stores/chat'
-import { useProposalForeground, useProposalWorkspace, useProposalStore } from './stores/proposal'
+import { useProposalWorkspace, useProposalStore } from './stores/proposal'
 import { PaneSplitter } from './components/workspace/PaneSplitter'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
@@ -203,17 +203,20 @@ function App(): React.JSX.Element {
     }
   }, [])
 
-  // 方案模式下，方案草稿面板（w-96）会作为右栏出现。若同时保留 Todos+工作区
-  // 那个 w-72 右栏，4 个固定列在常见窗宽（≈1280）下会把中间 ThreadView 挤到
-  // 只剩 ~140px——composer 几乎没法输入（实测回归）。方案写作时 Todos 本就为空
-  // （对话驱动不再写死章节）、工作区树也非重点，所以方案激活时隐藏这个右栏，让
-  // 方案面板顶替成第 3 列，回到正常 3 列布局、composer 保持可用宽度。
-  // 用 useProposalForeground（active + 绑定 sessionId === 前台 sessionId），而非裸
-  // active：否则 tab 内切到别的会话后右栏仍被隐藏（评审 #8）。与 ProposalDocPanel
-  // 同一门控，保证「藏右栏」与「显方案面板」同进同出。
-  // 注意：此 hook 必须在下面任何提前 return 之前调用，否则加载态/无工作区态会少调
-  // 一个 hook，触发 React「Rendered more hooks than during the previous render」。
-  const proposalForeground = useProposalForeground()
+  // 右栏（Todos「步骤」+ 工作区「文件夹」）与方案草稿面板互斥占第 3 列。门控用
+  // useProposalWorkspace（active + 绑定 sessionId===前台 + workspaceOpen），而非
+  // useProposalForeground——关键区别在 workspaceOpen：
+  //   · 进入工作台（workspaceOpen=true）：隐藏右栏，方案面板顶替成第 3 列。为什么藏？
+  //     4 个固定列并存时，常见窗宽（≈1280）会把中间 ThreadView 挤到 ~140px、composer
+  //     几乎没法输入（实测回归）；方案写作时 Todos 本为空、工作区树也非重点，故让位。
+  //   · 点「返回」(workspaceOpen=false，但 active 仍真、草稿仍在)：右栏恢复成 Todos+
+  //     文件树，方案面板隐藏——这正是本次修复点。旧门控用 proposalForeground 不看
+  //     workspaceOpen，返回后右栏仍被藏、草稿仍占右侧，与「返回=回正常界面」相悖。
+  //     草稿不丢（active 未 reset），点左侧「写方案」卡即以 workspaceOpen=true 再入。
+  // 与 ProposalDocPanel 同一门控（useProposalWorkspace），保证「藏右栏」与「显方案
+  // 面板」严格同进同出。
+  // 注意：useProposalWorkspace 内部调 hook，必须在下面任何提前 return 之前求值，否则
+  // 加载态/无工作区态会少调一个 hook，触发 React「Rendered more hooks than before」。
   const proposalWorkspace = useProposalWorkspace()
   const setWorkspaceOpen = useProposalStore((s) => s.setWorkspaceOpen)
   const rowRef = useRef<HTMLDivElement | null>(null)
@@ -379,18 +382,20 @@ function App(): React.JSX.Element {
             {/* 右栏 — 固定 288px 常驻列，纵向 50/50 分给代办（上）和工作区
                 文件树（下）。两个面板都是 `section flex-1` 平分这一列；
                 WorkspaceTreePanel 的 border-t 作为分隔线。
-                方案模式下隐藏：让方案草稿面板顶替成右栏，避免 4 列挤垮 composer。 */}
-            {!proposalForeground && (
+                仅工作台接管时隐藏（!proposalWorkspace）：让方案草稿面板顶替成右栏、
+                避免 4 列挤垮 composer。点「返回」后 proposalWorkspace 转 false，本栏即
+                恢复——返回回到的就是「文件夹+步骤」正常右栏，而非停靠的方案草稿。 */}
+            {!proposalWorkspace && (
               <aside className="flex h-full w-72 shrink-0 flex-col gap-4 bg-background/70 p-3.5 backdrop-blur-2xl backdrop-saturate-150 shadow-[inset_1px_0_0_rgba(0,0,0,0.06)] dark:shadow-[inset_1px_0_0_rgba(255,255,255,0.08)]">
                 <TodoListPanel />
                 <WorkspaceTreePanel />
               </aside>
             )}
-            {/* 方案文档面板 — 仅当【当前前台会话是方案会话】时渲染（组件内部按
-                useProposalForeground 返回 null，见 ProposalDocPanel）。方案前台时上面的
-                右栏 aside 被隐藏，本面板顶替成第 3 列，不再形成会挤垮 composer 的第 4 列。
-                宽度自适应：工作台模式（useProposalWorkspace）为 flex-1 吃满，返回态为 w-96
-                靠右停靠——宽度切换在组件内部，故这里只挂组件、不传宽度。 */}
+            {/* 方案文档面板 — 仅当【方案工作台接管时】渲染（组件内部按
+                useProposalWorkspace 返回 null，见 ProposalDocPanel）。工作台时上面的右栏
+                aside 被隐藏，本面板顶替成第 3 列（flex-1 吃满），不再形成会挤垮 composer
+                的第 4 列。点「返回」(workspaceOpen=false) 后本面板与右栏同步互换：面板隐藏、
+                右栏恢复。草稿不随之销毁（active 仍真），再入由左侧「写方案」卡触发。 */}
             <ProposalDocPanel />
           </div>
         </FusionRuntimeProvider>
