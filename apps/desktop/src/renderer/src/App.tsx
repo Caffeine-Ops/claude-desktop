@@ -44,6 +44,12 @@ import { AnimatePresence, motion } from 'motion/react'
  * keeping it inside the row gives the three panes a single shared flex
  * parent for consistent full-height sizing.
  *
+ * Proposal-workspace mode (useProposalWorkspace): the chat-history rail is
+ * hidden, ThreadView moves into a collapsible column (with a 返回 header and a
+ * collapse toggle), a PaneSplitter sits between it and the widened
+ * ProposalDocPanel, and a floating 返回/展开 cluster appears when collapsed.
+ * ThreadView keeps a stable key so it never remounts across the mode toggle.
+ *
  * Workspace
  * ---------
  * Before the main layout mounts, we read `getWorkspace()`. The engine
@@ -277,7 +283,7 @@ function App(): React.JSX.Element {
           {/* .main is flex-col; this inner row does the three-pane
               split (chats | thread | right rail). flex-1 + min-h-0
               lets it shrink correctly inside the outer column. */}
-          <div ref={rowRef} className="flex min-h-0 flex-1">
+          <div ref={rowRef} className="relative flex min-h-0 flex-1">
             {/* 左对话列表 — 固定 256px 常驻列。工作台模式下隐藏（方案面板
                 铺满行宽，历史栏会把对话列挤垮），返回普通模式后复现。 */}
             {!proposalWorkspace && (
