@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { FusionRuntimeProvider } from './runtime/FusionRuntimeProvider'
 import { ThreadView } from './components/chat/ThreadView'
@@ -11,7 +11,8 @@ import { LogsDialog } from './components/dialogs/LogsDialog'
 import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
 import { ProposalDocPanel } from './components/workspace/ProposalDocPanel'
 import { useChatStore } from './stores/chat'
-import { useProposalForeground } from './stores/proposal'
+import { useProposalForeground, useProposalWorkspace, useProposalStore } from './stores/proposal'
+import { PaneSplitter } from './components/workspace/PaneSplitter'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
 import { useI18n, useT } from './i18n'
@@ -207,6 +208,35 @@ function App(): React.JSX.Element {
   // 注意：此 hook 必须在下面任何提前 return 之前调用，否则加载态/无工作区态会少调
   // 一个 hook，触发 React「Rendered more hooks than during the previous render」。
   const proposalForeground = useProposalForeground()
+  const proposalWorkspace = useProposalWorkspace()
+  const setWorkspaceOpen = useProposalStore((s) => s.setWorkspaceOpen)
+  const rowRef = useRef<HTMLDivElement | null>(null)
+
+  // 对话列宽度/折叠：持久化到 localStorage（每 tab 一个 renderer，天然按 tab 隔离）。
+  // 初值用惰性 initializer 读 localStorage，避免每次渲染重读。
+  const [chatColWidth, setChatColWidth] = useState<number>(() => {
+    const v = Number(localStorage.getItem('proposal:chatColWidth'))
+    return Number.isFinite(v) && v >= 320 ? v : 420
+  })
+  const [chatCollapsed, setChatCollapsed] = useState<boolean>(
+    () => localStorage.getItem('proposal:chatCollapsed') === '1'
+  )
+  useEffect(() => {
+    localStorage.setItem('proposal:chatColWidth', String(chatColWidth))
+  }, [chatColWidth])
+  useEffect(() => {
+    localStorage.setItem('proposal:chatCollapsed', chatCollapsed ? '1' : '0')
+  }, [chatCollapsed])
+
+  // 分隔条拖动：clientX → 对话列宽度（钳制在 [320, 行宽-A4(794)-留白(64)-条(7)]）。
+  function onSplitDrag(clientX: number): void {
+    const row = rowRef.current
+    if (!row) return
+    const r = row.getBoundingClientRect()
+    const max = Math.max(320, r.width - 794 - 64 - 7)
+    const w = Math.max(320, Math.min(clientX - r.left, max))
+    setChatColWidth(w)
+  }
 
   // Loading slice: brief flash-prevention. `.app` keeps the window
   // chrome / background consistent with the mounted state.
@@ -247,14 +277,78 @@ function App(): React.JSX.Element {
           {/* .main is flex-col; this inner row does the three-pane
               split (chats | thread | right rail). flex-1 + min-h-0
               lets it shrink correctly inside the outer column. */}
-          <div className="flex min-h-0 flex-1">
-            {/* 左对话列表 — 固定 256px 常驻列，不再可收起。以前包在
-                AnimatePresence 里随窗口宽度滑入滑出，现已改为静态列：始终
-                渲染。ThreadListSidebar 自带 w-64 + 右边框。 */}
-            <div className="h-full w-64 shrink-0">
-              <ThreadListSidebar />
+          <div ref={rowRef} className="flex min-h-0 flex-1">
+            {/* 左对话列表 — 固定 256px 常驻列。工作台模式下隐藏（方案面板
+                铺满行宽，历史栏会把对话列挤垮），返回普通模式后复现。 */}
+            {!proposalWorkspace && (
+              <div className="h-full w-64 shrink-0">
+                <ThreadListSidebar />
+              </div>
+            )}
+            {/* ── 可折叠对话列 ──────────────────────────────────────────────────
+                包裹 div 与 ThreadView key="main-thread" 在两种模式下都渲染于
+                同一位置，仅切 className/宽度；稳定 key 保证工作台头部
+                出现/消失时 ThreadView 原地协调（不重挂、不丢滚动位置）。
+                ⚠️ 禁止写 proposalWorkspace ? <A/> : <B/>，会让 ThreadView
+                  在两个父节点间漂移，触发 assistant-ui runtime 重连 + 历史
+                  闪断（历史教训）。                                          */}
+            <div
+              className={
+                proposalWorkspace
+                  ? 'relative flex h-full min-h-0 flex-col overflow-hidden border-r border-border'
+                  : 'flex min-h-0 flex-1 flex-col'
+              }
+              style={
+                proposalWorkspace
+                  ? {
+                      width: chatCollapsed ? 0 : chatColWidth,
+                      transition: 'width .26s cubic-bezier(.4,0,.2,1)'
+                    }
+                  : undefined
+              }
+            >
+              {proposalWorkspace && (
+                <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                  <button
+                    className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] font-medium hover:bg-muted"
+                    onClick={() => setWorkspaceOpen(false)}
+                  >
+                    ← 返回
+                  </button>
+                  <button
+                    className="grid size-7 place-items-center rounded-md border border-border text-muted-foreground hover:border-accent hover:text-accent"
+                    title="折叠对话"
+                    onClick={() => setChatCollapsed(true)}
+                  >
+                    «
+                  </button>
+                </div>
+              )}
+              <ThreadView key="main-thread" />
             </div>
-            <ThreadView />
+
+            {/* 折叠态浮动簇：返回 + 展开对话，悬纸张左上角、不挡正文 */}
+            {proposalWorkspace && chatCollapsed && (
+              <div className="absolute left-0 top-12 z-30 flex flex-col gap-2 p-2">
+                <button
+                  className="grid size-9 place-items-center rounded-lg border border-border bg-card text-foreground shadow-lg hover:border-accent hover:text-accent"
+                  title="返回"
+                  onClick={() => setWorkspaceOpen(false)}
+                >
+                  ←
+                </button>
+                <button
+                  className="grid size-9 place-items-center rounded-lg border border-border bg-card text-foreground shadow-lg hover:border-accent hover:text-accent"
+                  title="展开对话"
+                  onClick={() => setChatCollapsed(false)}
+                >
+                  ▤
+                </button>
+              </div>
+            )}
+
+            {/* 分隔条：仅工作台且未折叠 */}
+            {proposalWorkspace && !chatCollapsed && <PaneSplitter onDrag={onSplitDrag} />}
             {/* 右栏 — 固定 288px 常驻列，纵向 50/50 分给代办（上）和工作区
                 文件树（下）。两个面板都是 `section flex-1` 平分这一列；
                 WorkspaceTreePanel 的 border-t 作为分隔线。
