@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { FusionRuntimeProvider } from './runtime/FusionRuntimeProvider'
 import { ThreadView } from './components/chat/ThreadView'
@@ -234,15 +234,36 @@ function App(): React.JSX.Element {
     localStorage.setItem('proposal:chatCollapsed', chatCollapsed ? '1' : '0')
   }, [chatCollapsed])
 
-  // 分隔条拖动：clientX → 对话列宽度（钳制在 [320, 行宽-A4(794)-留白(64)-条(7)]）。
+  // 对话列宽钳制：[320, 行宽 - 纸面可用最小(480) - 留白(64) - 分隔条(7)]。拖动与挂载/
+  // 缩放复位共用。预留的是纸面「可用最小宽」480 而非整页 A4(794)——纸面本身已能缩
+  // （编辑态 w-[min(794,100%-48)]）/横滚（预览态 overflow-auto），故钳制只需保证纸面不
+  // 窄到不可用即可。若仍硬留 794，窄窗口（行宽 < 320+794+71 ≈ 1185）会令 max 撞到 320
+  // 下限、分隔条零行程、chat 被钉死（评审 #7）；降到 480 后死区阈值降到约 871px。
+  const clampChatWidth = useCallback((w: number): number => {
+    const row = rowRef.current
+    if (!row) return Math.max(320, w)
+    const max = Math.max(320, row.getBoundingClientRect().width - 480 - 64 - 7)
+    return Math.max(320, Math.min(w, max))
+  }, [])
+
+  // 分隔条拖动：clientX → 对话列宽度（经 clampChatWidth 钳制）。
   function onSplitDrag(clientX: number): void {
     const row = rowRef.current
     if (!row) return
-    const r = row.getBoundingClientRect()
-    const max = Math.max(320, r.width - 794 - 64 - 7)
-    const w = Math.max(320, Math.min(clientX - r.left, max))
-    setChatColWidth(w)
+    setChatColWidth(clampChatWidth(clientX - row.getBoundingClientRect().left))
   }
+
+  // 复位钳制：持久化的宽度只在拖动时被钳制——若在大窗口拖宽并存盘、再在小窗口启动或
+  // 缩窗，存回的宽值不会自动收窄，会把 A4(794) 挤出可视区（评审 #4）。这里在进入工作台
+  // 与窗口 resize 时各夹一次，把宽度复位进当前行宽的合法区间。宽度已合法时 clamp 返回
+  // 原值、setState 同值 React 自动 bail，无重渲循环。
+  useEffect(() => {
+    if (!proposalWorkspace) return
+    const reclamp = (): void => setChatColWidth((w) => clampChatWidth(w))
+    reclamp()
+    window.addEventListener('resize', reclamp)
+    return () => window.removeEventListener('resize', reclamp)
+  }, [proposalWorkspace, clampChatWidth])
 
   // Loading slice: brief flash-prevention. `.app` keeps the window
   // chrome / background consistent with the mounted state.

@@ -9,7 +9,10 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   const show = useProposalForeground()
   const isWorkspace = useProposalWorkspace()
   const setWorkspaceOpen = useProposalStore((s) => s.setWorkspaceOpen)
-  const [mode, setMode] = useState<'edit' | 'preview'>('edit')
+  // 「编辑｜预览」视图提到 store——面板在前台会话切走时会整体卸载，本地 state 会丢、
+  // 切回被拽回编辑态（评审 #3）。store 化后跨卸载存活。
+  const mode = useProposalStore((s) => s.viewMode)
+  const setMode = useProposalStore((s) => s.setViewMode)
   // 只订阅会变的状态切片（sections / products）。下面 4 个 action 是 zustand 稳定引用、
   // 永不变，单独 selector 订阅纯属空跑（store 每次更新都白跑一遍）——改从 getState()
   // 一次性取出、不订阅（C5）。
@@ -157,9 +160,19 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         )}
       </div>
 
-      {/* 分节文档区：edit 模式渲染 ProposalPaper（连续长纸 + 悬停工具条 + 就地编辑），
-          preview 模式渲染 ProposalPreview（A4 分页预览，与导出 Word 同源）。 */}
-      {mode === 'edit' ? <ProposalPaper /> : <ProposalPreview />}
+      {/* 分节文档区：ProposalPaper（连续长纸 + 悬停工具条 + 就地编辑）与 ProposalPreview
+          （A4 分页预览，与导出 Word 同源）两者【都常驻挂载】，仅用 CSS hidden 切显隐——
+          不再 `mode==='edit' ? <A/> : <B/>` 条件渲染（评审 #2）：那会让 ProposalPreview 每次
+          切换都卸载、其 lastRendered 缓存随之销毁，「来回切不重复生成」的优化形同虚设、
+          每次切预览都从零跑一遍 IPC 生成 docx + 渲染。常驻后缓存存活：内容没变时切回预览
+          即时复现已渲染的页面。预览常驻于后台时不能空跑——传 active 闸，非激活不渲染
+          （见 ProposalPreview）。 */}
+      <div className={'flex min-h-0 flex-1 flex-col ' + (mode === 'edit' ? '' : 'hidden')}>
+        <ProposalPaper />
+      </div>
+      <div className={'flex min-h-0 flex-1 flex-col ' + (mode === 'preview' ? '' : 'hidden')}>
+        <ProposalPreview active={mode === 'preview'} />
+      </div>
     </div>
   )
 }

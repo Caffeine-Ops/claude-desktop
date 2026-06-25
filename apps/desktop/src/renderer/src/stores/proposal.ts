@@ -39,6 +39,10 @@ interface ProposalState {
   // 方案工作台是否接管布局（撤对话历史栏 + 可折叠对话列 + 宽纸张区）。
   // 与 active 分离：「返回」只关工作台、不销毁草稿，可再入。start() 时置 true。
   workspaceOpen: boolean
+  // 文档面板「编辑｜预览」视图。提到 store 而非 ProposalDocPanel 本地 state：面板在
+  // 前台会话切走时会整体卸载（!show → return null），本地 state 会被重置回 edit，
+  // 用户切回会被悄悄拽回编辑态。放 store 里跨卸载存活（评审 #3）。
+  viewMode: 'edit' | 'preview'
   start: (sessionId: string) => void
   setProducts: (products: ProposalProduct[]) => void
   // 首发播种：写入产品集并置 seeded=true（与 setProducts 区分——后者是 chip 编辑）。
@@ -51,6 +55,7 @@ interface ProposalState {
   removeSection: (id: string) => void
   moveSection: (id: string, dir: 'up' | 'down') => void
   setWorkspaceOpen: (open: boolean) => void
+  setViewMode: (mode: 'edit' | 'preview') => void
   reset: () => void
 }
 
@@ -62,6 +67,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   consumedDraftIds: new Set(),
   sections: [],
   workspaceOpen: false,
+  viewMode: 'edit',
   start: (sessionId) =>
     set({
       active: true,
@@ -70,7 +76,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       seeded: false,
       consumedDraftIds: new Set(),
       sections: [],
-      workspaceOpen: true
+      workspaceOpen: true,
+      viewMode: 'edit'
     }),
   setProducts: (products) => set({ products }),
   seedProducts: (products) => set({ products, seeded: true }),
@@ -113,6 +120,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       return { sections: next }
     }),
   setWorkspaceOpen: (open) => set({ workspaceOpen: open }),
+  setViewMode: (mode) => set({ viewMode: mode }),
   reset: () =>
     set({
       active: false,
@@ -121,7 +129,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       seeded: false,
       consumedDraftIds: new Set(),
       sections: [],
-      workspaceOpen: false
+      workspaceOpen: false,
+      viewMode: 'edit'
     })
 }))
 

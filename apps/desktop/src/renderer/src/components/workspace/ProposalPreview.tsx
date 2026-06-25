@@ -11,10 +11,25 @@ import { useProposalStore } from '../../stores/proposal'
  * lastRendered 缓存上次成功渲染的 markdown，未变则跳过重渲（来回切 tab 不重复生成）。
  * effect 只依赖 [sections, nonce]——nonce 仅由「重试」自增，避免把 status 放进依赖
  * 造成的重渲循环。
+ *
+ * 并发与防抖（两个曾经的真 bug，务必一起看）：
+ *  1) 离屏渲染 + 原子替换：docx-preview 的 renderAsync 内部会 `host.innerHTML=''`
+ *     后追加、且一旦开始不可中断。若直接渲染进 host，一个已被取代（cancelled）的旧
+ *     渲染只要比新渲染晚完成，就会把旧内容刷回 host——而 cancelled 检查只在 await
+ *     之后才生效、拦不住 renderAsync 内部那次 DOM 改写。于是 host 显示旧页、
+ *     lastRendered/status 却记成最新，guard 从此跳过重渲，预览永久卡在旧页。修法：
+ *     渲染进一个「离屏」detached <div>，渲染完、过了 cancelled 闸门之后才整体搬进
+ *     host。旧渲染永远碰不到 host。（docx-preview 的分页是按 XML 结构切的、不量 DOM，
+ *     故离屏渲染与挂在 host 渲染逐像素等价。）
+ *  2) 防抖：流式生成时 sections 每个 token 都变，若每次都全量「IPC 生成 docx + 解析
+ *     渲染」会冲击主进程、叠加并发、host 反复闪白。这里合并 DEBOUNCE_MS 内的连续变化，
+ *     只在内容稳定后渲染最新一帧；流式期间预览保持上一帧（不闪 spinner）。
  */
+// 防抖窗口：流式 append 通常 <100ms/次，300ms 足以等到一段落定再渲。
+const DEBOUNCE_MS = 300
 type Status = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
 
-export function ProposalPreview(): React.JSX.Element {
+export function ProposalPreview({ active }: { active: boolean }): React.JSX.Element {
   const sections = useProposalStore((s) => s.sections)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const lastRendered = useRef<string | null>(null)
@@ -23,6 +38,10 @@ export function ProposalPreview(): React.JSX.Element {
   const [nonce, setNonce] = useState(0)
 
   useEffect(() => {
+    // 常驻但隐藏（在编辑态后台）时不空跑：ProposalDocPanel 让本组件常驻以保住
+    // lastRendered 缓存，但只有当前是预览视图（active）才该生成/渲染。否则流式期间
+    // 用户在编辑态，这里也会每次 sections 变都白跑一遍 IPC+渲染（评审 #2/#6）。
+    if (!active) return
     const markdown = sections.map((s) => s.markdown).join('\n\n').trim()
     if (!markdown) {
       lastRendered.current = null
@@ -33,44 +52,54 @@ export function ProposalPreview(): React.JSX.Element {
     if (markdown === lastRendered.current) return // 该内容已渲染，跳过
 
     let cancelled = false
-    setStatus('loading')
-    // 提前清空 host：避免被取代的渲染在 renderAsync 中途被 cancelled 后，status 卡在 loading 而 host 残留半渲染态
-    if (hostRef.current) hostRef.current.innerHTML = ''
-    void (async () => {
-      try {
-        const { bytes } = await window.chatApi.renderProposal({ markdown })
-        if (cancelled) return
-        const host = hostRef.current
-        if (!host) return
-        // Wrap in a fresh Uint8Array backed by a concrete ArrayBuffer so TypeScript's
-        // BlobPart constraint is satisfied — IPC returns Uint8Array<ArrayBufferLike>
-        // which TS strict-lib rejects directly as a BlobPart.
-        const blob = new Blob([new Uint8Array(bytes)], {
-          type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        })
-        // inWrapper + breakPages：得到带页间留白、阴影、真分页的 A4 页面。
-        // 样式注入限定在 host 容器内（renderAsync 第 2 参即挂载容器），卸载/重渲前
-        // 清空 innerHTML，避免污染应用其它部分。
-        await renderAsync(blob, host, undefined, {
-          inWrapper: true,
-          breakPages: true,
-          ignoreWidth: false,
-          ignoreHeight: false,
-          className: 'docx'
-        })
-        if (cancelled) return
-        lastRendered.current = markdown
-        setStatus('ready')
-      } catch (err) {
-        if (cancelled) return
-        setErrMsg(err instanceof Error ? err.message : String(err))
-        setStatus('error')
-      }
-    })()
+    // 防抖：合并 DEBOUNCE_MS 内的连续 sections 变化，只渲染最新一帧。流式期间不在此
+    // 提前置 loading——保持上一帧（status 仍 ready），等内容落定后 run 才翻 loading，
+    // 避免每个 token 闪一次 spinner。
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setStatus('loading')
+        try {
+          const { bytes } = await window.chatApi.renderProposal({ markdown })
+          if (cancelled) return
+          const host = hostRef.current
+          if (!host) return
+          // Wrap in a fresh Uint8Array backed by a concrete ArrayBuffer so TypeScript's
+          // BlobPart constraint is satisfied — IPC returns Uint8Array<ArrayBufferLike>
+          // which TS strict-lib rejects directly as a BlobPart.
+          const blob = new Blob([new Uint8Array(bytes)], {
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          })
+          // 渲染进「离屏」detached 容器（见顶部注释 1）：renderAsync 会 stage.innerHTML=''
+          // 后追加，碰不到 host；样式节点也注入在 stage 内（第 3 参 undefined → styleContainer
+          // 回退到第 2 参），随 stage 一起搬运、scope 不外泄。
+          const stage = document.createElement('div')
+          // inWrapper + breakPages：得到带页间留白、阴影、真分页的 A4 页面。
+          await renderAsync(blob, stage, undefined, {
+            inWrapper: true,
+            breakPages: true,
+            ignoreWidth: false,
+            ignoreHeight: false,
+            className: 'docx'
+          })
+          if (cancelled) return // 已被取代：丢弃 stage，绝不触碰 host
+          // 原子替换：此刻才把渲染好的整棵子树搬进 host。Array.from 先固化，避免
+          // replaceChildren 在搬运 live NodeList 时边移边塌。
+          host.replaceChildren(...Array.from(stage.childNodes))
+          lastRendered.current = markdown
+          setStatus('ready')
+        } catch (err) {
+          if (cancelled) return
+          setErrMsg(err instanceof Error ? err.message : String(err))
+          setStatus('error')
+        }
+      })()
+    }, DEBOUNCE_MS)
+
     return () => {
       cancelled = true
+      clearTimeout(timer)
     }
-  }, [sections, nonce])
+  }, [sections, nonce, active])
 
   return (
     <div className="relative flex-1 overflow-hidden">
