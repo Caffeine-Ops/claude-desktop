@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
-import { useProposalStore, useProposalForeground } from '../../stores/proposal'
+import { useProposalStore, useProposalForeground, useProposalWorkspace } from '../../stores/proposal'
 import type { ProposalExportFormat } from '@shared/ipc-channels'
 import { ProposalPaper } from './ProposalPaper'
+import { ProposalPreview } from './ProposalPreview'
 
 export function ProposalDocPanel(): React.JSX.Element | null {
   // 与 App.tsx 隐藏右栏同一门控：只对【当前前台会话】是方案会话时显示（评审 #8）。
   const show = useProposalForeground()
+  const isWorkspace = useProposalWorkspace()
+  const setWorkspaceOpen = useProposalStore((s) => s.setWorkspaceOpen)
+  const [mode, setMode] = useState<'edit' | 'preview'>('edit')
   // 只订阅会变的状态切片（sections / products）。下面 4 个 action 是 zustand 稳定引用、
   // 永不变，单独 selector 订阅纯属空跑（store 每次更新都白跑一遍）——改从 getState()
   // 一次性取出、不订阅（C5）。
@@ -46,21 +50,63 @@ export function ProposalDocPanel(): React.JSX.Element | null {
 
   if (!show) return null
   return (
-    <div className="flex w-96 flex-col border-l border-border bg-background text-foreground">
+    <div
+      className={
+        'flex flex-col border-l border-border bg-background text-foreground ' +
+        (isWorkspace ? 'flex-1 min-w-0' : 'w-96')
+      }
+    >
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
-        <span>方案草稿</span>
+        <span className="font-medium text-foreground">方案草稿</span>
+
+        {/* 编辑 ｜ 预览 segmented */}
+        <div className="inline-flex rounded-lg border border-border bg-card p-0.5">
+          <button
+            className={
+              'rounded-md px-3 py-1 ' +
+              (mode === 'edit' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground')
+            }
+            onClick={() => setMode('edit')}
+          >
+            ✎ 编辑
+          </button>
+          <button
+            className={
+              'rounded-md px-3 py-1 ' +
+              (mode === 'preview' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground')
+            }
+            onClick={() => setMode('preview')}
+          >
+            ▤ 预览
+          </button>
+        </div>
+
         <div className="flex items-center gap-1">
+          {/* 返回态（非工作台）显示再入按钮：把工作台重新打开，不丢草稿 */}
+          {!isWorkspace && (
+            <button
+              className="rounded px-2 py-0.5 hover:bg-muted"
+              onClick={() => setWorkspaceOpen(true)}
+              title="展开为方案工作台"
+            >
+              ⤢ 工作台
+            </button>
+          )}
           <button
             className="rounded px-2 py-0.5 hover:bg-muted disabled:opacity-50"
             disabled={exporting}
-            onClick={() => { void handleExport('docx') }}
+            onClick={() => {
+              void handleExport('docx')
+            }}
           >
             {exporting ? '导出中…' : '导出 Word'}
           </button>
           <button
             className="rounded px-2 py-0.5 hover:bg-muted disabled:opacity-50"
             disabled={exporting}
-            onClick={() => { void handleExport('md') }}
+            onClick={() => {
+              void handleExport('md')
+            }}
           >
             .md
           </button>
@@ -111,9 +157,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         )}
       </div>
 
-      {/* 分节文档区：已移入 ProposalPaper（连续长纸 + 悬停工具条 + 就地编辑），
-          数据模型不变，仅换皮。 */}
-      <ProposalPaper />
+      {/* 分节文档区：edit 模式渲染 ProposalPaper（连续长纸 + 悬停工具条 + 就地编辑），
+          preview 模式渲染 ProposalPreview（A4 分页预览，与导出 Word 同源）。 */}
+      {mode === 'edit' ? <ProposalPaper /> : <ProposalPreview />}
     </div>
   )
 }
