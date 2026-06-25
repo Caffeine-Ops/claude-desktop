@@ -365,9 +365,11 @@ function App(): React.JSX.Element {
                 <WorkspaceTreePanel />
               </aside>
             )}
-            {/* 方案文档面板 — 仅当 proposal.active 为真时渲染（组件内部按 active
-                返回 null）。方案激活时上面的右栏 aside 被隐藏，本面板顶替成第 3 列，
-                不再形成会挤垮 composer 的第 4 列。宽度 w-96 固定。 */}
+            {/* 方案文档面板 — 仅当【当前前台会话是方案会话】时渲染（组件内部按
+                useProposalForeground 返回 null，见 ProposalDocPanel）。方案前台时上面的
+                右栏 aside 被隐藏，本面板顶替成第 3 列，不再形成会挤垮 composer 的第 4 列。
+                宽度自适应：工作台模式（useProposalWorkspace）为 flex-1 吃满，返回态为 w-96
+                靠右停靠——宽度切换在组件内部，故这里只挂组件、不传宽度。 */}
             <ProposalDocPanel />
           </div>
         </FusionRuntimeProvider>
