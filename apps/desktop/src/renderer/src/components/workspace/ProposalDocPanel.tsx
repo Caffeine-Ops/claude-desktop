@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useProposalStore, useProposalWorkspace } from '../../stores/proposal'
+import { useChatStore } from '../../stores/chat'
 import type { ProposalExportFormat } from '@shared/ipc-channels'
 import { buildProposalMarkdown } from '@shared/proposal'
 import { sendProposalStageMessage } from '../../lib/sendProposalStageMessage'
@@ -26,9 +27,15 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   // 从 getState() 取——不订阅（避免 phase 每次变化都多跑一遍 selector）。
   const phase = useProposalStore((s) => s.phase)
   const { advancePhase } = useProposalStore.getState()
-  // 各区是否已有内容，决定推进按钮是否可用（空区 → 禁用，避免误推进）。
-  const hasCover = sections.some((s) => s.kind === 'cover')
-  const hasToc = sections.some((s) => s.kind === 'toc')
+  // 订阅方案会话 ID，用于下方流式状态判断。proposalSid 已是 store 的稳定切片。
+  const proposalSid = useProposalStore((s) => s.sessionId)
+  // 方案会话流式期间禁止推进阶段：appendSections 按当时的 phase 打 kind 标签，mid-stream
+  // 推进会让进行中的前一阶段块落入新阶段区（mis-zoned）；待当轮 'end' 落地后再允许推进。
+  const generating = useChatStore((s) => (proposalSid ? (s.perSession[proposalSid]?.streaming ?? false) : false))
+  // 各区是否已有非空内容，决定推进按钮是否可用（空区或仅空白 → 禁用，避免误推进）。
+  // 注：用 .trim().length > 0 而非仅 .some(kind===X)——纯空白区段依然无法驱动 AI 生成。
+  const hasCover = sections.some((s) => s.kind === 'cover' && s.markdown.trim().length > 0)
+  const hasToc = sections.some((s) => s.kind === 'toc' && s.markdown.trim().length > 0)
   const [exporting, setExporting] = useState(false)
   const [exportMsg, setExportMsg] = useState<{ tone: 'ok' | 'err' | 'muted'; text: string } | null>(null)
 
@@ -145,9 +152,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         {phase === 'cover' && (
           <button
             className="rounded bg-accent px-2 py-0.5 text-white disabled:opacity-40"
-            disabled={!hasCover}
+            disabled={generating || !hasCover}
             onClick={confirmCover}
-            title={hasCover ? '' : '封面尚未生成'}
+            title={generating ? 'AI 生成中，请稍候' : hasCover ? '' : '封面尚未生成'}
           >
             确认封面，生成目录
           </button>
@@ -155,9 +162,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         {phase === 'toc' && (
           <button
             className="rounded bg-accent px-2 py-0.5 text-white disabled:opacity-40"
-            disabled={!hasToc}
+            disabled={generating || !hasToc}
             onClick={confirmToc}
-            title={hasToc ? '' : '目录尚未生成'}
+            title={generating ? 'AI 生成中，请稍候' : hasToc ? '' : '目录尚未生成'}
           >
             确认目录，开始正文
           </button>
