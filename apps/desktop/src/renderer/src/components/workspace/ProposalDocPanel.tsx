@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react'
-import { useProposalStore, useProposalForeground, useProposalWorkspace } from '../../stores/proposal'
+import { useProposalStore, useProposalWorkspace } from '../../stores/proposal'
 import type { ProposalExportFormat } from '@shared/ipc-channels'
+import { buildProposalMarkdown } from '@shared/proposal'
 import { ProposalPaper } from './ProposalPaper'
 import { ProposalPreview } from './ProposalPreview'
 
 export function ProposalDocPanel(): React.JSX.Element | null {
-  // 与 App.tsx 隐藏右栏同一门控：只对【当前前台会话】是方案会话时显示（评审 #8）。
-  const show = useProposalForeground()
-  const isWorkspace = useProposalWorkspace()
-  const setWorkspaceOpen = useProposalStore((s) => s.setWorkspaceOpen)
+  // 与 App.tsx 隐藏右栏同一门控：仅当方案工作台接管时（active+前台+workspaceOpen）显示。
+  // 改自旧的 useProposalForeground——点「返回」(workspaceOpen=false) 后本面板须隐藏、把
+  // 右栏让回 Todos+文件树，而草稿不丢（active 仍真），再入由左侧「写方案」卡触发。两栏
+  // 必须严格互斥同进同出，故与 App.tsx 右栏门控统一为 useProposalWorkspace。
+  const show = useProposalWorkspace()
   // 「编辑｜预览」视图提到 store——面板在前台会话切走时会整体卸载，本地 state 会丢、
   // 切回被拽回编辑态（评审 #3）。store 化后跨卸载存活。
   const mode = useProposalStore((s) => s.viewMode)
@@ -30,8 +32,8 @@ export function ProposalDocPanel(): React.JSX.Element | null {
 
   async function handleExport(format: ProposalExportFormat): Promise<void> {
     if (exporting) return
-    // 各节现算成单串 markdown 再交给主进程（IPC payload 形状不变）。
-    const markdown = sections.map((s) => s.markdown).join('\n\n').trim()
+    // docx 走分页标记（kind 边界分页）；.md 是纯文本，不插标记（否则注释外漏）。
+    const markdown = buildProposalMarkdown(sections, { pageBreaks: format === 'docx' })
     if (!markdown) {
       setExportMsg({ tone: 'muted', text: '草稿为空，无内容可导出' })
       return
@@ -53,12 +55,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
 
   if (!show) return null
   return (
-    <div
-      className={
-        'flex flex-col border-l border-border bg-background text-foreground ' +
-        (isWorkspace ? 'flex-1 min-w-0' : 'w-96')
-      }
-    >
+    // 只在工作台接管时渲染（show=useProposalWorkspace），故恒为顶替右栏的第 3 列：
+    // flex-1 吃满。旧的「返回态 w-96 靠右停靠」分支已随门控统一而消失。
+    <div className="flex min-w-0 flex-1 flex-col border-l border-border bg-background text-foreground">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">方案草稿</span>
 
@@ -85,16 +84,8 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         </div>
 
         <div className="flex items-center gap-1">
-          {/* 返回态（非工作台）显示再入按钮：把工作台重新打开，不丢草稿 */}
-          {!isWorkspace && (
-            <button
-              className="rounded px-2 py-0.5 hover:bg-muted"
-              onClick={() => setWorkspaceOpen(true)}
-              title="展开为方案工作台"
-            >
-              ⤢ 工作台
-            </button>
-          )}
+          {/* 再入入口不在此处——面板只在工作台接管时存在，「返回」后整个隐藏，故再入
+              由左侧「写方案」卡触发（已 active 时只重开 workspaceOpen、不清草稿）。 */}
           <button
             className="rounded px-2 py-0.5 hover:bg-muted disabled:opacity-50"
             disabled={exporting}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { renderAsync } from 'docx-preview'
 import { useProposalStore } from '../../stores/proposal'
+import { buildProposalMarkdown } from '@shared/proposal'
 
 /**
  * 预览态：把当前草稿拼成 markdown → 走与「导出 Word」完全相同的引擎
@@ -42,7 +43,9 @@ export function ProposalPreview({ active }: { active: boolean }): React.JSX.Elem
     // lastRendered 缓存，但只有当前是预览视图（active）才该生成/渲染。否则流式期间
     // 用户在编辑态，这里也会每次 sections 变都白跑一遍 IPC+渲染（评审 #2/#6）。
     if (!active) return
-    const markdown = sections.map((s) => s.markdown).join('\n\n').trim()
+    // 与「导出 Word」同源：用 buildProposalMarkdown 在 kind 边界插分页标记，
+    // 故预览的封面/目录/正文分页与最终 Word 逐像素一致。
+    const markdown = buildProposalMarkdown(sections, { pageBreaks: true })
     if (!markdown) {
       lastRendered.current = null
       if (hostRef.current) hostRef.current.innerHTML = ''
