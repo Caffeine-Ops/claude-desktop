@@ -119,6 +119,7 @@
     "@electron-toolkit/utils": "^3.0.0",
     "@open-design/ui": "workspace:*",
     "docx": "^9.7.1",
+    "docx-preview": "^0.3.7",
     "electron-updater": "^6.3.9",
     "highlight.js": "^11.11.1",
     "motion": "^12.38.0",
