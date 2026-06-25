@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 
+import type { ProposalKind } from '@shared/proposal'
 import { useChatStore } from './chat'
 
 export interface ProposalProduct {
@@ -14,6 +15,10 @@ export interface ProposalSection {
   // 该节由「截断恢复」产生：AI 写了起始哨兵但流被截断、无结束哨兵，内容可能不完整。
   // 面板对其打「疑似截断」徽标提示用户复核。正常闭合块不带此标志（undefined）。
   truncated?: boolean
+  // 该节属于哪个阶段（封面/目录/正文）。由 appendSections 按「该哨兵块到达时的
+  // store.phase」打——阶段被按钮死锁、一次只有一个活跃，故不会错标。决定草稿分区
+  // 渲染（ProposalPaper）与导出分页（buildProposalMarkdown）。
+  kind: ProposalKind
 }
 
 interface ProposalState {
@@ -36,6 +41,10 @@ interface ProposalState {
   consumedDraftIds: Set<string>
   // 分节草稿：每个 AI 哨兵块一节（旧的 docMarkdown/setDoc 单串路径已移除）。
   sections: ProposalSection[]
+  // 当前生成阶段，封面→目录→正文有序推进，是给哨兵块打 kind 与驱动阶段条 UI 的
+  // 单一真相源。start() 起为 'cover'。仅由 advancePhase 推进（草稿面板按钮调用，
+  // 按钮先推进 phase 再给 AI 发推进消息，保证该轮哨兵输出落到对应区）。
+  phase: ProposalKind
   // 方案工作台是否接管布局（撤对话历史栏 + 可折叠对话列 + 宽纸张区）。
   // 与 active 分离：「返回」只关工作台、不销毁草稿，可再入。start() 时置 true。
   workspaceOpen: boolean
@@ -51,6 +60,9 @@ interface ProposalState {
   // 哨兵块 → 节：messageId 去重后，每块成一节追加到尾部。truncated 为截断恢复的残文
   // （非空时）额外追加一节并标记 truncated:true，避免半截正文被静默丢弃（B2）。
   appendSections: (messageId: string, blocks: string[], truncated?: string | null) => void
+  // 推进到目标阶段（cover→toc→content）。只改 phase，不动 sections——已生成的封面/
+  // 目录节保持原 kind。按钮在调用本方法后另发推进消息给 AI。
+  advancePhase: (to: ProposalKind) => void
   updateSection: (id: string, markdown: string) => void
   removeSection: (id: string) => void
   moveSection: (id: string, dir: 'up' | 'down') => void
@@ -66,6 +78,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   seeded: false,
   consumedDraftIds: new Set(),
   sections: [],
+  phase: 'cover',
   workspaceOpen: false,
   viewMode: 'edit',
   start: (sessionId) =>
@@ -76,6 +89,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       seeded: false,
       consumedDraftIds: new Set(),
       sections: [],
+      phase: 'cover',
       workspaceOpen: true,
       viewMode: 'edit'
     }),
@@ -93,16 +107,19 @@ export const useProposalStore = create<ProposalState>((set) => ({
       if (s.consumedDraftIds.has(messageId)) return s
       const consumed = new Set(s.consumedDraftIds)
       consumed.add(messageId)
+      // 按当前阶段打 kind：封面阶段的块=cover、目录阶段=toc、正文阶段=content。
+      const kind = s.phase
       const added: ProposalSection[] = blocks.map((markdown) => ({
         id: crypto.randomUUID(),
-        markdown
+        markdown,
+        kind
       }))
-      // 截断残文恢复成一节并标记，绝不静默丢内容（B2）。
       if (truncated) {
-        added.push({ id: crypto.randomUUID(), markdown: truncated, truncated: true })
+        added.push({ id: crypto.randomUUID(), markdown: truncated, kind, truncated: true })
       }
       return { sections: [...s.sections, ...added], consumedDraftIds: consumed }
     }),
+  advancePhase: (to) => set({ phase: to }),
   updateSection: (id, markdown) =>
     set((s) => ({
       sections: s.sections.map((sec) => (sec.id === id ? { ...sec, markdown } : sec))
@@ -129,6 +146,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       seeded: false,
       consumedDraftIds: new Set(),
       sections: [],
+      phase: 'cover',
       workspaceOpen: false,
       viewMode: 'edit'
     })
