@@ -73,6 +73,27 @@ interface ProposalState {
   moveSection: (id: string, dir: 'up' | 'down') => void
   setWorkspaceOpen: (open: boolean) => void
   setViewMode: (mode: 'edit' | 'preview') => void
+  // 再入：把方案重绑到给定会话并重开工作台，但【绝不动】sections/products/phase/seeded。
+  // 「返回」后重新进入时调它——哪怕中途切过会话致 sessionId 与前台漂移、或误点别的场景
+  // 卡致 active 被关，reopen 都把方案重绑到【当前前台会话】再打开，草稿原样保留。这是
+  // 「再入永不丢草稿」的落点，取代旧的「条件不满足就 start()」——start 会清空 sections。
+  reopen: (sessionId: string) => void
+  // 退出方案模式但【保留草稿数据】：切到别的场景卡时用。关掉 active/workspaceOpen 以防
+  // proposalMode 泄漏进普通会话，但 sections/products/phase 原样留存，仍可由 reopen 再入。
+  // 与 reset 的区别：reset 是用户显式丢弃（彻底清空），leaveMode 只是「收起、不丢」。
+  leaveMode: () => void
+  // 从已保存的 transcript 重建草稿（app 重启 / 打开历史方案会话时用）。草稿正文都带哨兵
+  // 存进了会话 JSONL，但 sections 只活在内存、从不持久化——故重开历史会话需据 transcript
+  // 重建。整体替换当前草稿状态并接管工作台；调用方（FusionRuntimeProvider）已前置判断
+  // 「内存里没有该会话的未保存草稿」才调它，故这里直接 set、不合并。products 无法从
+  // transcript 还原（发送时才 matchProducts）→ 置空 + seeded=true（不再中途重匹配）；
+  // consumedDraftIds 填入所有已归档消息 id，使它们若再触发 live 'end' 不被二次累积。
+  restoreFromTranscript: (payload: {
+    sessionId: string
+    sections: ProposalSection[]
+    consumedDraftIds: Set<string>
+    phase: ProposalKind
+  }) => void
   reset: () => void
 }
 
@@ -162,6 +183,20 @@ export const useProposalStore = create<ProposalState>((set) => ({
     }),
   setWorkspaceOpen: (open) => set({ workspaceOpen: open }),
   setViewMode: (mode) => set({ viewMode: mode }),
+  reopen: (sessionId) => set({ active: true, sessionId, workspaceOpen: true }),
+  leaveMode: () => set({ active: false, workspaceOpen: false }),
+  restoreFromTranscript: ({ sessionId, sections, consumedDraftIds, phase }) =>
+    set({
+      active: true,
+      sessionId,
+      products: [],
+      seeded: true,
+      consumedDraftIds,
+      sections,
+      phase,
+      workspaceOpen: true,
+      viewMode: 'edit'
+    }),
   reset: () =>
     set({
       active: false,

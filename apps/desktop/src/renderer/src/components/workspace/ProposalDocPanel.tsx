@@ -41,6 +41,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   const hasToc = sections.some((s) => s.kind === 'toc' && s.markdown.trim().length > 0)
   const [exporting, setExporting] = useState(false)
   const [exportMsg, setExportMsg] = useState<{ tone: 'ok' | 'err' | 'muted'; text: string } | null>(null)
+  // 「新建」二次确认：清空是破坏性的（丢掉整份草稿），故点一下先morph成确认条，再点才真清。
+  // 内联确认而非 modal——与本工具栏其余轻量控件一致，不为一个动作引一层弹窗。
+  const [confirmingNew, setConfirmingNew] = useState(false)
   // 「导出 Word」改为先弹样式模板面板（选模板 + 实时预览 + 微调），用户在弹窗里点导出
   // 才真正落盘。.md 仍直出（纯文本无样式）。
   const [styleModalOpen, setStyleModalOpen] = useState(false)
@@ -131,6 +134,47 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         <div className="flex items-center gap-1">
           {/* 再入入口不在此处——面板只在工作台接管时存在，「返回」后整个隐藏，故再入
               由左侧「写方案」卡触发（已 active 时只重开 workspaceOpen、不清草稿）。 */}
+          {/* 新建/清空：唯一显式丢弃草稿的入口（reopen/leaveMode 都保草稿，只有这里调 start
+              彻底清空并在【当前会话】重开一份空白方案）。二次确认 + 流式期间禁用。 */}
+          {confirmingNew ? (
+            <span className="mr-1 inline-flex items-center gap-1">
+              <span className="text-[11px] text-muted-foreground">清空当前草稿？</span>
+              <button
+                className="rounded bg-rose-500 px-2 py-0.5 text-white hover:bg-rose-600"
+                onClick={() => {
+                  // proposalSid 在 show=true 时恒非空（门控要求 sessionId===前台会话）；
+                  // 仍守一手 null，绝不把 start('') 透出去污染 gating。
+                  if (proposalSid) useProposalStore.getState().start(proposalSid)
+                  setConfirmingNew(false)
+                }}
+              >
+                确认清空
+              </button>
+              <button
+                className="rounded px-2 py-0.5 hover:bg-muted"
+                onClick={() => setConfirmingNew(false)}
+              >
+                取消
+              </button>
+            </span>
+          ) : (
+            <button
+              className="mr-1 rounded px-2 py-0.5 hover:bg-muted disabled:opacity-50"
+              // 草稿为空（sections 无内容）时没什么可清，置灰避免空操作 + 误触发二次确认条；
+              // 流式期间也禁用（清空和进行中的那轮叠加会乱）。
+              disabled={generating || sections.length === 0}
+              title={
+                generating
+                  ? 'AI 生成中，无法清空'
+                  : sections.length === 0
+                    ? '草稿为空，无需清空'
+                    : '清空当前草稿，重新开始一份'
+              }
+              onClick={() => setConfirmingNew(true)}
+            >
+              清空草稿
+            </button>
+          )}
           <button
             className="rounded px-2 py-0.5 hover:bg-muted disabled:opacity-50"
             disabled={exporting}

@@ -107,12 +107,14 @@ export function ScenarioQuickStart(): React.JSX.Element {
   // panel won't be visible anyway.
   const activeSessionId = useChatStore((s) => s.sessionId) ?? ''
 
-  const resetProposal = useProposalStore((s) => s.reset)
+  const leaveProposalMode = useProposalStore((s) => s.leaveMode)
 
   const onPickScenario = useCallback(
     (promptKey: StringKey) => {
-      // 切到非方案场景时退出方案模式，避免 proposalMode 泄漏到普通会话。
-      resetProposal()
+      // 切到非方案场景时退出方案模式（active=false），避免 proposalMode 泄漏到普通会话。
+      // 用 leaveMode 而非 reset：只收起、不清空 sections——否则用户若手滑点了别的场景卡，
+      // 写到一半的方案草稿会被静默丢弃，再点「写方案」也回不来（丢草稿的根因之一）。
+      leaveProposalMode()
       const text = t(promptKey)
       composer.setText(text)
       // Focus the editor so the user can immediately edit the bracketed
@@ -125,7 +127,7 @@ export function ScenarioQuickStart(): React.JSX.Element {
         el?.focus()
       })
     },
-    [composer, resetProposal, t]
+    [composer, leaveProposalMode, t]
   )
 
   // 点「写方案」卡：直接激活方案模式（绑定当前前台 sessionId），把引导模板
@@ -134,13 +136,18 @@ export function ScenarioQuickStart(): React.JSX.Element {
   // activeSessionId 为 '' 说明还没有 session，此时本就不应触发方案；透传 '' 无害，
   // FusionRuntimeProvider 的门控（ps.sessionId === targetSid）会天然排掉它。
   const onStartProposal = useCallback(() => {
-    // 再入分支：若已有绑定【当前前台会话】的活跃方案（用户点过「返回」离开工作台、
-    // 草稿仍在），只重开 workspaceOpen 回到工作台，绝不调 start()——start 会清空
-    // sections/products，把用户已写的草稿冲掉。这是「返回后再入不丢草稿」的落点。
-    // 也不重填引导模板：写到一半不该被模板覆盖。
+    // 再入分支：只要还存在一份未被显式丢弃的草稿（active 为真，或 sections 非空），
+    // 一律 reopen 回到工作台，【绝不】调 start()——start 会清空 sections/products 把
+    // 用户已写的草稿冲掉。这是「再入永不丢草稿」的落点。
+    //
+    // 为什么不再校验 ps.sessionId === activeSessionId（旧逻辑）：那个等式在用户「返回」
+    // 后切过会话 / resume 静默 fork 重绑 / 误点别的场景卡（active 关、sessionId 仍旧）时
+    // 会为假，旧代码就坠入 start() 把草稿清空——正是丢草稿的根因。reopen 把方案重绑到
+    // 【当前前台会话】再打开，sessionId 漂移也能安全回到草稿，且不重填引导模板（写到
+    // 一半不该被模板覆盖）。
     const ps = useProposalStore.getState()
-    if (ps.active && ps.sessionId === activeSessionId) {
-      ps.setWorkspaceOpen(true)
+    if (ps.active || ps.sections.length > 0) {
+      ps.reopen(activeSessionId)
       return
     }
     // 首发：开新方案 + 预填引导模板 + 聚焦编辑器。

@@ -17,7 +17,7 @@ import {
 
 import { useChatStore } from '../stores/chat'
 import { useProposalStore } from '../stores/proposal'
-import type { ProposalProduct } from '../stores/proposal'
+import type { ProposalProduct, ProposalSection } from '../stores/proposal'
 import { matchProducts } from '../lib/kbProductMatch'
 import { dispatchChatTurn } from '../lib/dispatchChatTurn'
 import { extractProposalDraftResult } from '@shared/proposal'
@@ -33,6 +33,67 @@ import {
 import type { ChatEvent, ThreadSummary } from '../../../shared/types'
 import type { ChatImagePayload } from '../../../shared/ipc-channels'
 import { fileAttachmentAdapter, FILE_PATH_MIME } from './imageAttachmentAdapter'
+
+/**
+ * 打开一个会话后，按其已保存的 transcript 重建方案草稿。
+ *
+ * 为什么需要：方案草稿（sections）只活在内存 zustand、从不持久化，但草稿正文都带着
+ * 方案哨兵（PROPOSAL_DRAFT_*）写进了会话 JSONL。app 重启 / 切到别的历史方案会话后，
+ * 内存里没有那份 sections，旧代码也不在载入时重建——于是「点之前生成草稿的对话，却
+ * 看不到草稿」。这里在 loadSession 拿到 messages 后，从 assistant 消息里抽哨兵块重建。
+ *
+ * 关键前置（不覆盖内存手改）：若内存里【已】持有该会话的草稿（active && 同 sessionId &&
+ * sections 非空），一律不重建——用户在纸面上的手改 / 重排 / 删节没进 transcript，用
+ * transcript 覆盖会把这些编辑抹掉。此时只确保工作台可见即可。仅当内存里没有该会话草稿
+ * （重启 / 跨会话）才据 transcript 重建。非方案会话（抽不到任何哨兵块）则完全不碰 store。
+ */
+function rebuildProposalFromTranscript(
+  sessionId: string,
+  messages: ThreadMessageLike[]
+): void {
+  const ps = useProposalStore.getState()
+  if (ps.active && ps.sessionId === sessionId && ps.sections.length > 0) {
+    if (!ps.workspaceOpen) ps.setWorkspaceOpen(true)
+    return
+  }
+  const sections: ProposalSection[] = []
+  const consumed = new Set<string>()
+  for (const m of messages) {
+    const mm = m as unknown as { id?: string; role?: string; content?: unknown }
+    if (mm.role !== 'assistant') continue
+    // assistant content 是 {type:'text', text} 分块（见 sessionStore.convertAssistantContent），
+    // 与 live 'end' 处理同源：拼接全部 text 块后跑同一个 extractProposalDraftResult。
+    const text = Array.isArray(mm.content)
+      ? (mm.content as Array<{ type?: string; text?: string }>)
+          .filter((p) => p?.type === 'text' && p.text)
+          .map((p) => p.text as string)
+          .join('')
+      : typeof mm.content === 'string'
+        ? mm.content
+        : ''
+    if (!text) continue
+    const { blocks, truncated } = extractProposalDraftResult(text)
+    if (!blocks.length && !truncated) continue
+    for (const b of blocks) {
+      sections.push({ id: crypto.randomUUID(), markdown: b.markdown, kind: b.kind })
+    }
+    if (truncated) {
+      sections.push({
+        id: crypto.randomUUID(),
+        markdown: truncated.markdown,
+        kind: truncated.kind,
+        truncated: true
+      })
+    }
+    if (mm.id) consumed.add(mm.id)
+  }
+  if (sections.length === 0) return // 非方案会话：不碰 store
+  // 阶段取最后一节的 kind——重开时阶段条停在用户上次推进到的阶段（封面/目录/正文）。
+  const phase = sections[sections.length - 1].kind
+  useProposalStore
+    .getState()
+    .restoreFromTranscript({ sessionId, sections, consumedDraftIds: consumed, phase })
+}
 
 /**
  * Bridges our zustand chat store ↔ assistant-ui's ExternalStoreRuntime.
@@ -692,6 +753,9 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
         // case we still need to handle for correctness.
         const { messages } = await loadPromise
         setSession(id, messages as ThreadMessageLike[])
+        // 历史会话载入即重建方案草稿（若该会话是方案会话）。用 messages（已在内存，无需
+        // 等 cli 冷启动），故草稿与聊天历史同时出现，不必等 ~8s 的 switchSession 落地。
+        rebuildProposalFromTranscript(id, messages as ThreadMessageLike[])
 
         // Wait for cli ready. In the rare fusion-code `--resume X`
         // silent-fork case the cli picks a different id Y for the
@@ -702,6 +766,10 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
         const { sessionId: activeId } = await switchPromise
         if (activeId !== id) {
           setSession(activeId, messages as ThreadMessageLike[])
+          // 静默 fork 重绑：草稿也重绑到真实 id。rebuild 的「已在内存则不覆盖」前置会让
+          // 它把上面以 id 重建的草稿迁到 activeId（首次 ps.sessionId===id≠activeId 不命中
+          // 跳过分支，正常按 activeId 重建一份）。
+          rebuildProposalFromTranscript(activeId, messages as ThreadMessageLike[])
         }
       } catch (err) {
         console.error('[runtime] switch thread failed', err)
