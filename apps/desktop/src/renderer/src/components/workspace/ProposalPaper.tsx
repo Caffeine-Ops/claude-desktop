@@ -112,8 +112,10 @@ export function ProposalPaper(): React.JSX.Element {
         ) : (
           (() => {
             let running = -1 // 跨组累计全局下标，喂给 renderSection 做首尾禁用判断
-            return groups.map((g) => (
-              <div key={g.kind} className="mb-2">
+            return groups.map((g, gi) => (
+              // key 用组下标而非 g.kind：moveSection 可跨区移动节，导致同一 kind 出现两个不相邻的组，
+              // 若用 g.kind 作 key 则两组冲突；组下标在本次渲染中永远唯一且与 sections 顺序一致。
+              <div key={gi} className="mb-2">
                 <div className="mb-1 border-b border-neutral-200 pb-0.5 text-[11px] font-medium tracking-wide text-neutral-400">
                   {KIND_LABEL[g.kind]}
                 </div>
