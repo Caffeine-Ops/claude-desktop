@@ -332,3 +332,16 @@
   pointer-events: none;
   line-height: inherit;
 }
+
+/* 方案纸张：白纸黑字。AssistantMarkdown 用 hsl(var(--foreground)) 等主题 token 上色，
+   暗色主题下前景是暖白、落到白纸上几乎不可见。这里在纸张作用域内把前景/次级/边框
+   token 覆盖为纸墨色，子树所有 text-foreground/border-border 自动变深，无需逐元素
+   !important。仅覆盖正文相关 token；accent 不覆盖，保留主题强调色。 */
+.proposal-paper {
+  --foreground: 0 0% 11%;
+  --muted-foreground: 0 0% 40%;
+  --border: 0 0% 85%;
+  --card: 0 0% 96%;
+  --muted: 0 0% 96%;
+  font-family: 'Songti SC', 'SimSun', Georgia, 'Times New Roman', serif;
+}
