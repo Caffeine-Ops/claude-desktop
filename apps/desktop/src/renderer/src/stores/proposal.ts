@@ -36,6 +36,9 @@ interface ProposalState {
   consumedDraftIds: Set<string>
   // 分节草稿：每个 AI 哨兵块一节（旧的 docMarkdown/setDoc 单串路径已移除）。
   sections: ProposalSection[]
+  // 方案工作台是否接管布局（撤对话历史栏 + 可折叠对话列 + 宽纸张区）。
+  // 与 active 分离：「返回」只关工作台、不销毁草稿，可再入。start() 时置 true。
+  workspaceOpen: boolean
   start: (sessionId: string) => void
   setProducts: (products: ProposalProduct[]) => void
   // 首发播种：写入产品集并置 seeded=true（与 setProducts 区分——后者是 chip 编辑）。
@@ -47,6 +50,7 @@ interface ProposalState {
   updateSection: (id: string, markdown: string) => void
   removeSection: (id: string) => void
   moveSection: (id: string, dir: 'up' | 'down') => void
+  setWorkspaceOpen: (open: boolean) => void
   reset: () => void
 }
 
@@ -57,6 +61,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   seeded: false,
   consumedDraftIds: new Set(),
   sections: [],
+  workspaceOpen: false,
   start: (sessionId) =>
     set({
       active: true,
@@ -64,7 +69,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       products: [],
       seeded: false,
       consumedDraftIds: new Set(),
-      sections: []
+      sections: [],
+      workspaceOpen: true
     }),
   setProducts: (products) => set({ products }),
   seedProducts: (products) => set({ products, seeded: true }),
@@ -106,6 +112,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       ;[next[i], next[j]] = [next[j], next[i]]
       return { sections: next }
     }),
+  setWorkspaceOpen: (open) => set({ workspaceOpen: open }),
   reset: () =>
     set({
       active: false,
@@ -113,7 +120,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       products: [],
       seeded: false,
       consumedDraftIds: new Set(),
-      sections: []
+      sections: [],
+      workspaceOpen: false
     })
 }))
 
@@ -133,4 +141,16 @@ export function useProposalForeground(): boolean {
   const proposalSid = useProposalStore((s) => s.sessionId)
   const foregroundSid = useChatStore((s) => s.sessionId)
   return active && proposalSid !== null && proposalSid === foregroundSid
+}
+
+/**
+ * 方案工作台是否应接管布局。在「前台是方案会话」(useProposalForeground) 之上再叠加
+ * workspaceOpen——「返回」把 workspaceOpen 置 false 即退出接管、回到正常三栏，但
+ * sections/products 仍在，可由再入按钮重新打开。与 useProposalForeground 分离，确保
+ * 「返回」不等于销毁草稿。
+ */
+export function useProposalWorkspace(): boolean {
+  const foreground = useProposalForeground()
+  const open = useProposalStore((s) => s.workspaceOpen)
+  return foreground && open
 }
