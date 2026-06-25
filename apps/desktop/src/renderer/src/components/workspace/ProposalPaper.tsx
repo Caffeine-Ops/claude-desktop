@@ -16,6 +16,8 @@ import { AssistantMarkdown } from '../chat/AssistantMarkdown'
  */
 export function ProposalPaper(): React.JSX.Element {
   const sections = useProposalStore((s) => s.sections)
+  // 这三个 action 是 zustand 稳定引用、永不变——从 getState() 一次性取出、不订阅，
+  // 避免每次 store 更新（如流式 append 新节）都白跑一遍 selector。
   const { updateSection, removeSection, moveSection } = useProposalStore.getState()
   const proposalSid = useProposalStore((s) => s.sessionId)
   const generating = useChatStore((s) =>
