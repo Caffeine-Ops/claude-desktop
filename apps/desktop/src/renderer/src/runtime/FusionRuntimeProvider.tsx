@@ -35,7 +35,7 @@ import type { ChatImagePayload } from '../../../shared/ipc-channels'
 import { fileAttachmentAdapter, FILE_PATH_MIME } from './imageAttachmentAdapter'
 
 /**
- * 打开一个会话后，按其已保存的 transcript 重建方案草稿。
+ * 打开一个会话后，按优先级重建方案草稿（内存→盘→transcript→非方案清空，四级）。
  *
  * 为什么需要：方案草稿（sections）只活在内存 zustand、从不持久化，但草稿正文都带着
  * 方案哨兵（PROPOSAL_DRAFT_*）写进了会话 JSONL。app 重启 / 切到别的历史方案会话后，
@@ -45,24 +45,35 @@ import { fileAttachmentAdapter, FILE_PATH_MIME } from './imageAttachmentAdapter'
  * 关键前置（不覆盖内存手改）：若内存里【已】持有该会话的草稿（active && 同 sessionId &&
  * sections 非空），一律不重建——用户在纸面上的手改 / 重排 / 删节没进 transcript，用
  * transcript 覆盖会把这些编辑抹掉。此时只确保工作台可见即可。仅当内存里没有该会话草稿
- * （重启 / 跨会话）才据 transcript 重建。非方案会话（抽不到任何哨兵块）则完全不碰 store。
+ * （重启 / 跨会话）才据 transcript 重建。非方案会话（抽不到任何哨兵块）则清空前台 store，
+ * 避免陈旧草稿被「写方案」误 reopen（第 4 级）。
  */
-function rebuildProposalFromTranscript(
+async function rebuildProposalFromTranscript(
   sessionId: string,
   messages: ThreadMessageLike[]
-): void {
+): Promise<void> {
   const ps = useProposalStore.getState()
+  // 1. 内存里已有该会话草稿（含未保存手改，比盘上新）→ 保留，仅确保工作台可见。
   if (ps.active && ps.sessionId === sessionId && ps.sections.length > 0) {
     if (!ps.workspaceOpen) ps.setWorkspaceOpen(true)
     return
   }
+  // 2. 盘上有持久草稿（含手改/产品/phase）→ 优先恢复。I/O 失败降级到 transcript，不抛。
+  try {
+    const rec = await window.chatApi.loadProposalDraft({ sessionId })
+    if (rec && rec.sections.length > 0) {
+      useProposalStore.getState().restoreFromDisk(rec)
+      return
+    }
+  } catch (err) {
+    console.warn('[runtime] loadProposalDraft failed:', err)
+  }
+  // 3. transcript 兜底：从 assistant 消息抽哨兵块重建（仅 AI 正文，不含手改）。
   const sections: ProposalSection[] = []
   const consumed = new Set<string>()
   for (const m of messages) {
     const mm = m as unknown as { id?: string; role?: string; content?: unknown }
     if (mm.role !== 'assistant') continue
-    // assistant content 是 {type:'text', text} 分块（见 sessionStore.convertAssistantContent），
-    // 与 live 'end' 处理同源：拼接全部 text 块后跑同一个 extractProposalDraftResult。
     const text = Array.isArray(mm.content)
       ? (mm.content as Array<{ type?: string; text?: string }>)
           .filter((p) => p?.type === 'text' && p.text)
@@ -87,8 +98,12 @@ function rebuildProposalFromTranscript(
     }
     if (mm.id) consumed.add(mm.id)
   }
-  if (sections.length === 0) return // 非方案会话：不碰 store
-  // 阶段取最后一节的 kind——重开时阶段条停在用户上次推进到的阶段（封面/目录/正文）。
+  if (sections.length === 0) {
+    // 4. 非方案会话：清空前台 store（旧草稿已在盘上、无损），避免陈旧草稿被「写方案」误 reopen。
+    if (useProposalStore.getState().active) useProposalStore.getState().reset()
+    return
+  }
+  // transcript 重建出的草稿：写进 store；订阅器（Task 5）随后自动落盘建档。
   const phase = sections[sections.length - 1].kind
   useProposalStore
     .getState()
@@ -708,6 +723,9 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
         resume: false
       })
       setSession(activeId, [])
+      // 新建空会话：以空 messages 走同一重建（盘上无该 id 草稿 → 走第 4 级 reset），清掉
+      // 前台可能残留的别会话草稿，避免「写方案」把旧草稿 reopen 到新会话（陈旧草稿劫持）。
+      await rebuildProposalFromTranscript(activeId, [])
     } catch (err) {
       console.error('[runtime] new thread failed', err)
     } finally {
@@ -753,9 +771,8 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
         // case we still need to handle for correctness.
         const { messages } = await loadPromise
         setSession(id, messages as ThreadMessageLike[])
-        // 历史会话载入即重建方案草稿（若该会话是方案会话）。用 messages（已在内存，无需
-        // 等 cli 冷启动），故草稿与聊天历史同时出现，不必等 ~8s 的 switchSession 落地。
-        rebuildProposalFromTranscript(id, messages as ThreadMessageLike[])
+        // 历史会话载入即重建方案草稿（盘优先、transcript 兜底）。await 确保草稿与历史一起就绪。
+        await rebuildProposalFromTranscript(id, messages as ThreadMessageLike[])
 
         // Wait for cli ready. In the rare fusion-code `--resume X`
         // silent-fork case the cli picks a different id Y for the
@@ -766,10 +783,8 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
         const { sessionId: activeId } = await switchPromise
         if (activeId !== id) {
           setSession(activeId, messages as ThreadMessageLike[])
-          // 静默 fork 重绑：草稿也重绑到真实 id。rebuild 的「已在内存则不覆盖」前置会让
-          // 它把上面以 id 重建的草稿迁到 activeId（首次 ps.sessionId===id≠activeId 不命中
-          // 跳过分支，正常按 activeId 重建一份）。
-          rebuildProposalFromTranscript(activeId, messages as ThreadMessageLike[])
+          // 静默 fork 重绑：草稿也重绑到真实 id。
+          await rebuildProposalFromTranscript(activeId, messages as ThreadMessageLike[])
         }
       } catch (err) {
         console.error('[runtime] switch thread failed', err)
