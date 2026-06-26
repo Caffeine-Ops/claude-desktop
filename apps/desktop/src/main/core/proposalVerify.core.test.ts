@@ -43,4 +43,14 @@ describe('verifyCitationsCore', () => {
     expect(r.citedFileCount).toBe(2) // A、B 去重后 2 个文件
     expect(r.verdicts).toHaveLength(3) // 引用条数：A、A、B
   })
+
+  it('表格段落与原文同款表格 → supported', () => {
+    const tableMd =
+      '| 模块 | 说明 |\n| --- | --- |\n| 分诊 | 智能分诊建议 |\n| 预问诊 | 多轮对话采集 |\n（据《白皮书》）'
+    const mirror =
+      '产品参数表：\n| 模块 | 说明 |\n| --- | --- |\n| 分诊 | 智能分诊建议 |\n| 预问诊 | 多轮对话采集 |\n以上为核心模块。'
+    const r = verifyCitationsCore(tableMd, (f) => (f === '白皮书' ? mirror : null))
+    expect(r.citedFileCount).toBe(1)
+    expect(r.verdicts[0].status).toBe('supported')
+  })
 })
