@@ -31,8 +31,13 @@ export function verifyCitations(markdown: string): SectionVerification {
     }
     // title → mirrorPath，仅纳入转换成功（ok）的文件；同名取首个。
     const titleToPath = new Map<string, string>()
+    // title → assets（图片绝对路径数组），同样仅 ok 文件、同名取首个——供图片接地核对。
+    const titleToAssets = new Map<string, string[]>()
     for (const f of index.files) {
-      if (f.ok && !titleToPath.has(f.title)) titleToPath.set(f.title, f.mirrorPath)
+      if (f.ok && !titleToPath.has(f.title)) {
+        titleToPath.set(f.title, f.mirrorPath)
+        titleToAssets.set(f.title, f.assets ?? [])
+      }
     }
     // 镜像内容读取缓存：一节里多段可能引同一文件，避免重复读盘。null = 不存在/读失败。
     const contentCache = new Map<string, string | null>()
@@ -50,7 +55,12 @@ export function verifyCitations(markdown: string): SectionVerification {
       contentCache.set(path, text)
       return text
     }
-    return verifyCitationsCore(typeof markdown === 'string' ? markdown : '', resolveContent)
+    const resolveAssets = (file: string): string[] => titleToAssets.get(file) ?? []
+    return verifyCitationsCore(
+      typeof markdown === 'string' ? markdown : '',
+      resolveContent,
+      resolveAssets
+    )
   } catch (err) {
     console.warn('[proposalVerify] verifyCitations failed:', err)
     return { verdicts: [], citedFileCount: 0, degraded: true }

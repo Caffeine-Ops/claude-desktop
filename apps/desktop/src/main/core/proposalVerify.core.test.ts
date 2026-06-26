@@ -54,3 +54,35 @@ describe('verifyCitationsCore', () => {
     expect(r.verdicts[0].status).toBe('supported')
   })
 })
+
+describe('verifyCitationsCore 图片接地', () => {
+  it('图属本节所引文件的 assets → grounded', () => {
+    const md = '本系统架构如下。（据《白皮书》）\n\n![架构图](/kb/a/img-1.png)'
+    const r = verifyCitationsCore(
+      md,
+      (f) => (f === '白皮书' ? '架构如下，包含分诊与预问诊。' : null),
+      (f) => (f === '白皮书' ? ['/kb/a/img-1.png', '/kb/a/img-2.png'] : [])
+    )
+    expect(r.imageVerdicts).toEqual([{ path: '/kb/a/img-1.png', status: 'grounded' }])
+  })
+
+  it('图不属任何本节所引文件的 assets → ungrounded', () => {
+    const md = '本系统架构如下。（据《白皮书》）\n\n![盗图](/kb/other/img-9.png)'
+    const r = verifyCitationsCore(
+      md,
+      (f) => (f === '白皮书' ? '架构如下。' : null),
+      (f) => (f === '白皮书' ? ['/kb/a/img-1.png'] : [])
+    )
+    expect(r.imageVerdicts).toEqual([{ path: '/kb/other/img-9.png', status: 'ungrounded' }])
+  })
+
+  it('无图 → 不带 imageVerdicts（向后兼容）', () => {
+    const r = verifyCitationsCore('纯文字。（据《白皮书》）', () => '纯文字。', () => ['/x.png'])
+    expect(r.imageVerdicts).toBeUndefined()
+  })
+
+  it('不传 resolveAssets 时仍可用（旧签名，有图则全 ungrounded）', () => {
+    const r = verifyCitationsCore('文。（据《白皮书》）\n\n![图](/kb/a/img-1.png)', () => '文。')
+    expect(r.imageVerdicts).toEqual([{ path: '/kb/a/img-1.png', status: 'ungrounded' }])
+  })
+})
