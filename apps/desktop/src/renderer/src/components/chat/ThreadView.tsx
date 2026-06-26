@@ -12,13 +12,23 @@ import {
 import type { Attachment } from '@assistant-ui/core'
 import { AnimatePresence, motion } from 'motion/react'
 
-import type { SessionMeta } from '../../../../shared/types'
-import { useI18n, useT, useToolLabel, type StringKey } from '../../i18n'
-import { REASONING_PLACEHOLDER, useChatStore } from '../../stores/chat'
+import type { SessionMeta, WorkflowTask, PermissionRequest } from '../../../../shared/types'
+import { useI18n, useT, useToolLabel } from '../../i18n'
+import {
+  REASONING_PLACEHOLDER,
+  useChatStore,
+  useToolCallTasks,
+  useStreamingAskArgsText
+} from '../../stores/chat'
+import { useComposerModeStore, type ComposerModeId } from '../../stores/composerMode'
+import { parsePartialToolArgs } from '../../stores/todos'
+import { useComposerOverlayStore } from '../../stores/composerOverlay'
+import { useSessionTitleStore } from '../../stores/sessionTitle'
 import { buildSlashAdapter } from '../../composer/slashAdapter'
 import { buildFileMentionAdapter } from '../../composer/fileMentionAdapter'
 import { ProseMirrorComposerInput } from '../../composer/ProseMirrorComposerInput'
 import { ThinkingSpinner } from './ThinkingSpinner'
+import { AppleGlowEffect } from './AppleGlowEffect'
 import { FileTypeIcon, fileIconPathsByKey } from './FileTypeIcon'
 import { findSkillChipSpec } from '../../composer/skillChipRegistry'
 import { AssistantMarkdown } from './AssistantMarkdown'
@@ -27,7 +37,16 @@ import { extractText, safeStringify } from './toolHelpers'
 import { friendlyToolView } from './ToolFormatters'
 import { PermissionModePicker } from '../permissions/PermissionModePicker'
 import { InlinePermissionPrompt } from '../permissions/InlinePermissionPrompt'
-import { usePermissionForToolUseId } from '../../stores/permissions'
+import {
+  usePermissionForToolUseId,
+  usePendingAskUserQuestion,
+  usePermissionStore
+} from '../../stores/permissions'
+import {
+  parseQuestions,
+  seedAnswers,
+  type AskUserQuestionItem
+} from '../permissions/AskUserQuestionView'
 import { cancelActiveDictation } from '../../runtime/openaiWhisperDictationAdapter'
 import hljs from 'highlight.js/lib/common'
 
@@ -63,6 +82,124 @@ import hljs from 'highlight.js/lib/common'
  * text parts render as plain text (whitespace-pre-wrap), tool-call
  * parts render an inline collapsible card (ToolCallCard).
  */
+
+// Chat-rail width bounds (px). The min keeps the composer + messages
+// readable; the max stops the rail from swallowing the slides pane. The
+// default matches the old hard-coded `w-[560px]`.
+const CHAT_COL_MIN = 380
+const CHAT_COL_MAX = 880
+const CHAT_COL_DEFAULT = 560
+const CHAT_COL_STORAGE_KEY = 'slides.chatColWidth'
+
+/**
+ * Resizable width state for the slides-mode chat rail.
+ *
+ * Returns the current width (px) and an `onResizeStart` to wire to the
+ * gutter handle's `onPointerDown`. The width is seeded from localStorage so
+ * a drag persists across reloads and session switches, and written back when
+ * a drag ends (not on every move — one write per gesture).
+ *
+ * The drag tracks raw `clientX` deltas against the width captured at
+ * pointer-down (held in a ref so the move handler isn't re-created per
+ * render), clamps to [MIN, MAX], and uses Pointer Events + setPointerCapture
+ * so the gesture keeps tracking even if the cursor outruns the thin handle.
+ */
+function useResizableChatColumn(): {
+  width: number
+  onResizeStart: (e: React.PointerEvent<HTMLDivElement>) => void
+} {
+  const [width, setWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return CHAT_COL_DEFAULT
+    const raw = window.localStorage.getItem(CHAT_COL_STORAGE_KEY)
+    const parsed = raw === null ? NaN : Number.parseInt(raw, 10)
+    if (Number.isNaN(parsed)) return CHAT_COL_DEFAULT
+    // Clamp on read too — a persisted value can fall out of range if the
+    // bounds change between versions.
+    return Math.min(CHAT_COL_MAX, Math.max(CHAT_COL_MIN, parsed))
+  })
+
+  // Drag bookkeeping. Refs (not state) so the listeners are stable and the
+  // move handler reads live values without re-subscribing per frame.
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null)
+
+  const onResizeStart = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      // Left button / primary pointer only.
+      if (e.button !== 0) return
+      e.preventDefault()
+      dragRef.current = { startX: e.clientX, startW: width }
+      const handleEl = e.currentTarget
+      handleEl.setPointerCapture(e.pointerId)
+
+      const onMove = (ev: PointerEvent): void => {
+        const drag = dragRef.current
+        if (drag === null) return
+        // The handle sits to the RIGHT of the chat rail, so dragging right
+        // (positive delta) widens the rail.
+        const next = drag.startW + (ev.clientX - drag.startX)
+        setWidth(Math.min(CHAT_COL_MAX, Math.max(CHAT_COL_MIN, next)))
+      }
+      const onUp = (): void => {
+        dragRef.current = null
+        handleEl.releasePointerCapture?.(e.pointerId)
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        // Persist once per gesture. Read the freshest width via the setter's
+        // functional form so we never write a stale closure value.
+        setWidth((w) => {
+          window.localStorage.setItem(CHAT_COL_STORAGE_KEY, String(Math.round(w)))
+          return w
+        })
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    },
+    [width]
+  )
+
+  return { width, onResizeStart }
+}
+
+/**
+ * Drag handle / gutter between the chat rail and the slides pane.
+ *
+ * This is what replaced the `border-r` hairline. It is a fixed-width
+ * transparent gutter (so the two panes read as separated blocks across a
+ * gap, per design figure 2) whose center reveals a faint vertical divider on
+ * hover / during a drag, and which carries `cursor-col-resize` + the resize
+ * gesture. `shrink-0` so flex never collapses the gutter; `group` so the
+ * inner divider can react to the gutter's own hover.
+ */
+function ChatColumnResizeHandle({
+  onResizeStart
+}: {
+  onResizeStart: (e: React.PointerEvent<HTMLDivElement>) => void
+}): React.JSX.Element {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      onPointerDown={onResizeStart}
+      // w-1.5 = 6px transparent gutter between the two white panes. Because the
+      // gutter is transparent and the panes are bg-white, this strip reveals
+      // the .app background behind them — that's what makes the two cards read
+      // as separated. The hit area spans the whole gutter so the handle is easy
+      // to grab; touch-none stops scroll/pan hijacking the drag; `group` drives
+      // the child divider's hover reveal.
+      className="group relative flex h-full w-1.5 shrink-0 cursor-col-resize touch-none items-stretch justify-center"
+    >
+      {/* The visible divider: a soft accent (green) line, invisible at rest,
+          fading in on hover and while dragging (group-active). A vertical
+          mask-image gradient fades the line's TOP and BOTTOM ends out to
+          transparent so it does NOT run edge-to-edge — it's strongest in the
+          middle and dissolves at both ends. A gentle accent glow keeps it
+          reading as the highlighted drag affordance. Centered in the gutter so
+          the whitespace splits evenly between the two panes. */}
+      <div className="h-full w-px bg-accent/80 opacity-0 shadow-[0_0_8px_2px_hsl(var(--accent)/0.3)] transition-opacity duration-150 [mask-image:linear-gradient(to_bottom,transparent_0,black_18%,black_82%,transparent_100%)] group-hover:opacity-100 group-active:opacity-100" />
+    </div>
+  )
+}
+
 export function ThreadView(): React.JSX.Element {
   // Session transition signals from the chat store.
   //   - sessionId      : switches when loadSession resolves (~100ms),
@@ -81,13 +218,69 @@ export function ThreadView(): React.JSX.Element {
   // enter on swap preserves the sense of "the view changed".
   const sessionId = useChatStore((s) => s.sessionId)
   const sessionLoading = useChatStore((s) => s.sessionLoading)
+  // Slides two-pane layout is bound PER SESSION, not to the live composer
+  // picker: a session shows the right-hand slides workspace only if it was
+  // *started* in slides mode (marked on first send — see the composer send
+  // path / markSlidesSession). So switching to a slides session splits the
+  // layout; switching to any other session keeps it single-column,
+  // regardless of what the picker currently says. We subscribe to the
+  // whole map so re-marking the active session re-renders this.
+  const slidesSessions = useComposerModeStore((s) => s.slidesSessions)
+  const isSlidesMode =
+    sessionId !== null && slidesSessions[sessionId] === true
+  // Slides two-pane split is user-resizable. The chat rail used to be a
+  // hard `w-[560px]` with a `border-r` hairline between the panes; per design
+  // the hairline is gone (the panes now read as two separated blocks across a
+  // gutter), and the boundary is a drag handle. `chatColWidth` is the chat
+  // rail's width in px, persisted to localStorage so a drag survives reloads
+  // and session switches. See useResizableChatColumn for the clamp + persist.
+  const { width: chatColWidth, onResizeStart } = useResizableChatColumn()
+  // Hide the composer's frosted transition strip while any composer popover
+  // (mode / permission picker) is open — its backdrop-blur otherwise sliced a
+  // blurred band across the open menu (see stores/composerOverlay).
+  const composerOverlayOpen = useComposerOverlayStore((s) => s.openCount > 0)
   // Content key: sessionId plus a sentinel so the null → id case (first
   // session, or after a hard reset) still flips the key and replays
   // the entrance animation.
   const contentKey = sessionId ?? '__new__'
 
   return (
-    <ThreadPrimitive.Root className="relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-col bg-transparent">
+    <ThreadPrimitive.Root
+      className={
+        'relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-row bg-transparent ' +
+        // Slides mode: a 4px inset keeps the two white cards off the .app edges
+        // so each card's own `rounded` corners show in full — without it the
+        // outer corners get clipped by .app's radius and fight the card radius.
+        // The transparent inset reveals the .app background between/around the
+        // cards. Normal single-column chat keeps zero inset (fills the surface).
+        (isSlidesMode ? 'p-1' : '')
+      }
+    >
+      {/* Left column: the chat itself (progress bar + message viewport +
+          composer dock). In normal modes it's flex-1 and fills the whole
+          width — visually identical to the old single column. In slides
+          mode it shrinks to a fixed-width chat rail card and the slides
+          workspace card takes the rest (figure 27). */}
+      <div
+        className={
+          'relative flex h-full min-h-0 flex-col ' +
+          (isSlidesMode
+            ? 'shrink-0 overflow-hidden rounded bg-white'
+            : 'min-w-0 flex-1 bg-white')
+        }
+        // Slides mode: width is user-controlled (drag handle below) and
+        // persisted. The old fixed `w-[560px]` + `border-r` hairline are both
+        // gone — the gutter handle now provides the visual separation. In
+        // normal modes width stays flex-driven, so leave style unset.
+        style={isSlidesMode ? { width: chatColWidth } : undefined}
+      >
+      {/* Chat header — the current session's title over a muted "内容由 AI
+          生成" subtitle, pinned to the top of the chat column. shrink-0 so it
+          never gets squeezed by the scrolling viewport below. Sits above the
+          viewport's top mask, so it reads as a fixed banner the messages
+          scroll under. */}
+      <ChatHeader />
+
       {/* Top indeterminate progress bar. Absolute at the very top of
           the Thread root so it sits above the viewport mask and the
           composer. Presence-animated so it also fades in/out rather
@@ -101,22 +294,19 @@ export function ThreadView(): React.JSX.Element {
           another flex column. */}
       <ThreadPrimitive.Viewport
         autoScroll
-        // Top + bottom mask fades the first ~44px and last ~56px of the
-        // scrollable viewport into transparency. 去掉折叠 header 后，chat
-        // 内容直接顶到顶部 shell tab 条下方——没有这个顶部渐隐，往上滚的消息
-        // 会硬撞到 tab 条下沿。底部同理避免撞到 composer。inner column 的
-        // `pt-8` / `pb-20` 内边距与 mask 区域匹配，所以滚到两端时首/末条消息
-        // 仍完整可读，被吃掉的只是 padding。
+        // (Removed) top/bottom fade mask. The viewport used to fade its first
+        // ~44px and last ~56px to transparent so scrolling text dissolved
+        // near the header / composer; per design that fade-out is gone, so
+        // messages now cut off cleanly at the edges. The inner column's
+        // `pt-8` / `pb-20` padding still keeps the first/last message clear of
+        // the header and composer dock.
         //
-        // `scrollbar-gutter: stable` reserves the scrollbar track slot
-        // whether or not the content actually overflows. Without it,
-        // the empty state's content can land exactly at the "just fits"
-        // boundary, and any sub-pixel wobble (font-metric changes,
-        // motion animations, font loading) causes the scrollbar to
-        // flicker in and out → horizontal reflow → visible jitter.
-        // Stable gutter kills that class of bug outright by pre-
-        // committing the 15px scrollbar lane.
-        className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] [mask-image:linear-gradient(to_bottom,transparent_0,black_44px,black_calc(100%-56px),transparent_100%)]"
+        // `scrollbar-gutter: stable` (kept) reserves the scrollbar track slot
+        // whether or not the content overflows. Without it, the empty state
+        // can land at the "just fits" boundary and any sub-pixel wobble
+        // (font-metric changes, motion, font loading) flickers the scrollbar
+        // in/out → horizontal reflow → visible jitter.
+        className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
       >
         {/* Inner column caps reading width and centers messages. The
             `min-h-full` lets the empty-state `flex-1` stretch so the
@@ -131,7 +321,7 @@ export function ThreadView(): React.JSX.Element {
             "no surprise motion" sensibility. */}
         <div
           key={`content-${contentKey}`}
-          className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-6 pb-20 pt-8"
+          className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-3 pb-20 pt-8"
         >
           <ThreadPrimitive.Empty>
             <EmptyState />
@@ -147,25 +337,85 @@ export function ThreadView(): React.JSX.Element {
         </div>
       </ThreadPrimitive.Viewport>
 
-      {/* 顶部渐进模糊带。viewport 的 mask 只把顶部文字「渐隐」（变透明），
-          但你要的是和左侧侧栏一致的「毛玻璃模糊」观感。所以在 viewport 顶部
-          再叠一层 backdrop-blur，并用 `mask-image` 把模糊强度从顶部（全模糊）
-          向下渐隐到 0——这样往上滚的消息穿过这条带时被柔化，而不是硬边界。
-          z-10 压在消息之上、但低于 TopProgressBar(z-30) 和 ScrollToBottom
-          按钮(z-20)；pointer-events-none 不挡滚动 / 选区。绝对定位在 Root
-          顶部，宽度满铺，高度 44px 与 mask 的顶部渐隐区对齐。 */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 z-10 h-11 backdrop-blur-sm [mask-image:linear-gradient(to_bottom,black_0,black_35%,transparent_100%)]"
-      />
+      {/* (Removed) 顶部渐进模糊带 — the backdrop-blur strip over the viewport
+          top was dropped per design. The viewport's own top mask-image still
+          fades the first ~44px of text to transparent so messages don't hit a
+          hard edge as they scroll up; only the frosted blur layer is gone. */}
 
       <ScrollToBottomButton />
 
-      {/* Composer dock — outside the scroll viewport so it's always
-          pinned to the bottom of Root regardless of message count. */}
-      <div className="shrink-0 bg-background/45 px-6 py-4 backdrop-blur-xl backdrop-saturate-150">
-        <Composer />
+      {/* Composer dock — pinned to the bottom of Root, but ONLY once the
+          thread has messages. While empty, the composer is rendered inside
+          the centered EmptyState block instead (figure 26), so the dock is
+          hidden to avoid a second Composer instance.
+
+          `relative` so the frosted transition strip can absolutely position
+          itself directly ABOVE the dock (bottom-full). The strip is a thin
+          backdrop-blur band whose blur + opacity fade UPWARD to zero via a
+          mask, so messages scrolling toward the composer soften and dissolve
+          into it instead of hitting a hard edge — the bottom counterpart of
+          the (removed) top blur band. pointer-events-none so it never blocks
+          scrolling or text selection underneath. */}
+      <ThreadPrimitive.If empty={false}>
+        {/* Wrapper carries NO backdrop-filter of its own — critical, because a
+            backdrop-filter on an ancestor cancels a descendant's
+            backdrop-filter (CSS spec). The earlier strip lived INSIDE the
+            blurred dock and so never blurred anything. Here the strip is a
+            child of this clean wrapper, with the blur kept on the inner dock,
+            so the strip's own backdrop-blur actually applies to the messages
+            behind it. */}
+        <div className="relative shrink-0">
+          {/* Frosted transition strip — sits directly above the dock
+              (bottom-full), blur + opacity fading UPWARD via the mask, so
+              messages soften and dissolve into the composer instead of a hard
+              edge. pointer-events-none so it never blocks scroll / selection. */}
+          {/* Geometry: `bottom` is measured from the WRAPPER's bottom, and the
+              wrapper hugs the dock, so bottom:100% puts the strip's bottom edge
+              at the dock's TOP. The dock's pt-4 is 16px, so to drop the strip
+              down to ~1px above the input we offset by (16px − 1px) = 15px:
+              bottom-[calc(100%-15px)]. This covers the dock's pale pt-4
+              background gap while leaving a 1px sliver for the input's top
+              border. (Earlier 1px offset barely entered the dock → full gap;
+              16px reached the input → blurred its border.) */}
+          {!composerOverlayOpen ? (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 bottom-[calc(100%-15px)] z-10 h-14 backdrop-blur-md [mask-image:linear-gradient(to_top,black_0,black_40%,transparent_100%)]"
+            />
+          ) : null}
+          {/* rounded-b matches the card's bottom corners. The dock's
+              `backdrop-blur` rasterizes independently of the card's
+              overflow-hidden + rounded clip (Chromium behavior), so without its
+              OWN bottom radius the dock's square corners punched through and the
+              card's bottom-left/right read as square. Rounding the dock itself
+              restores the corners. */}
+          <div className="rounded-b bg-background/45 px-3 pb-3 pt-4 backdrop-blur-xl backdrop-saturate-150">
+            <Composer />
+          </div>
+        </div>
+      </ThreadPrimitive.If>
       </div>
+
+      {/* Drag handle + gutter between the chat rail and the slides pane.
+          Replaces the old `border-r` hairline: it carries the visual gap
+          (a transparent gutter that reveals a faint divider on hover) AND
+          the resize affordance. Gated on the same empty={false} as the pane
+          so it only appears once the layout actually splits. */}
+      {isSlidesMode ? (
+        <ThreadPrimitive.If empty={false}>
+          <ChatColumnResizeHandle onResizeStart={onResizeStart} />
+        </ThreadPrimitive.If>
+      ) : null}
+
+      {/* Right pane: slides workspace. Only in slides mode AND once the
+          thread has messages (empty={false}) — so picking 幻灯片 on the
+          empty state keeps the centered hero until the first message is
+          sent, then the layout splits (figure 27). */}
+      {isSlidesMode ? (
+        <ThreadPrimitive.If empty={false}>
+          <SlidesWorkspace />
+        </ThreadPrimitive.If>
+      ) : null}
     </ThreadPrimitive.Root>
   )
 }
@@ -192,9 +442,11 @@ function ScrollToBottomButton(): React.JSX.Element {
         aria-label="Scroll to bottom"
         className={
           'pointer-events-auto absolute left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-lg shadow-black/10 backdrop-blur transition-all duration-200 ease-out hover:border-accent/60 hover:bg-background hover:text-accent active:scale-95 ' +
-          // Composer dock height is roughly ~72-88px; 96px keeps the
-          // button floating clearly above it without overlapping.
-          'bottom-[96px] ' +
+          // Float just above the composer dock. The dock got shorter after its
+          // bottom padding was trimmed (pb-7 → pb-3, ~16px less), so the old
+          // bottom-[96px] dropped the button down into the composer; 80px puts
+          // it clearly above the (now shorter) dock again.
+          'bottom-[80px] ' +
           // When already at bottom, the primitive sets `disabled`.
           // Fade + lift + disable pointer so it doesn't trap clicks.
           'disabled:pointer-events-none disabled:translate-y-2 disabled:opacity-0'
@@ -277,238 +529,468 @@ function TopProgressBar(): React.JSX.Element {
   )
 }
 
-/* ───────────────────────── EmptyState ───────────────────────── */
+/* ─────────────────────────── Chat header ─────────────────────── */
 
 /**
- * Scenario prompt cards for the empty thread state.
+ * Chat column header: the current session's title on one line, with a muted
+ * "内容由 AI 生成" subtitle beneath it. Title comes from the shared
+ * sessionTitle store (fed by FusionRuntimeProvider's thread-list adapter from
+ * the active session's ThreadSummary). Falls back to a placeholder while no
+ * session is selected or a freshly-minted one hasn't surfaced in the list yet.
  *
- * Clicking a card fills the composer with `prompt` and focuses the
- * textarea, mirroring how ChatGPT / Claude.ai handle their landing
- * suggestion tiles. The cards are intentionally a *starting line*,
- * not a full template — the user is expected to edit the bracketed
- * placeholder before sending.
- *
- * Localised copy lives in i18n.ts under the `scenarioCard*` keys so
- * the EN/CN versions can diverge in tone.
- *
- * Adding a new card: append an entry here + add the matching i18n
- * keys in *both* locales. Keep the list short — a scrollable grid
- * defeats the purpose of a "pick a starting point" view.
+ * `shrink-0` keeps it from being compressed by the scrolling viewport; the
+ * messages scroll underneath. Title truncates on one line so a long session
+ * name can't push the layout or wrap into the subtitle.
  */
-type ScenarioCard = {
-  key: string
-  iconClass: string
-  icon: React.ReactNode
-  titleKey: StringKey
-  descKey: StringKey
-  promptKey: StringKey
+function ChatHeader(): React.JSX.Element {
+  const t = useT()
+  const title = useSessionTitleStore((s) => s.title)
+  const display = title && title.trim() ? title : t('chatHeaderUntitled')
+  return (
+    // Window drag region. The chat WebContentsView is positioned at y≈gap
+    // (tabRegistry.setBounds) on a `titleBarStyle: 'hiddenInset'` window, so
+    // its top strip IS the title-bar zone — the macOS traffic lights float
+    // over its top-left. The shell's `-webkit-app-region: drag` only covers
+    // the LEFT rail (a separate webContents), so the chat surface's own header
+    // never moved the window. Marking the header a drag region fixes that. The
+    // WHOLE header (title + subtitle included) stays draggable — the text does
+    // NOT opt out — and `select-none` keeps the text from being selected so a
+    // press-drag on it always moves the window instead of starting a selection.
+    <div className="shrink-0 select-none p-3 [-webkit-app-region:drag]">
+      <h1
+        className="truncate text-[16px] font-semibold leading-tight text-foreground"
+        title={display}
+      >
+        {display}
+      </h1>
+      <p className="mt-1 text-[12px] leading-none text-muted-foreground">
+        {t('chatHeaderSubtitle')}
+      </p>
+    </div>
+  )
 }
 
-const SCENARIO_CARDS: ScenarioCard[] = [
-  {
-    key: 'ppt',
-    iconClass: 'from-rose-500/20 to-rose-500/5 text-rose-400',
-    icon: <PptIcon />,
-    titleKey: 'scenarioPptTitle',
-    descKey: 'scenarioPptDesc',
-    promptKey: 'scenarioPptPrompt'
-  },
-  {
-    key: 'officeHours',
-    iconClass: 'from-amber-500/20 to-amber-500/5 text-amber-400',
-    icon: <LightbulbIcon />,
-    titleKey: 'scenarioOfficeHoursTitle',
-    descKey: 'scenarioOfficeHoursDesc',
-    promptKey: 'scenarioOfficeHoursPrompt'
-  },
-  {
-    key: 'resumeScreen',
-    iconClass: 'from-indigo-500/20 to-indigo-500/5 text-indigo-400',
-    icon: <UserCheckIcon />,
-    titleKey: 'scenarioResumeTitle',
-    descKey: 'scenarioResumeDesc',
-    promptKey: 'scenarioResumePrompt'
-  },
-  {
-    key: 'analyze',
-    iconClass: 'from-emerald-500/20 to-emerald-500/5 text-emerald-400',
-    icon: <ChartIcon />,
-    titleKey: 'scenarioAnalyzeTitle',
-    descKey: 'scenarioAnalyzeDesc',
-    promptKey: 'scenarioAnalyzePrompt'
-  }
-]
+/* ─────────────────────── Slides workspace ───────────────────── */
 
-function EmptyState(): React.JSX.Element {
-  const t = useT()
-  // Composer runtime — exposed by the parent ThreadPrimitive.Root so
-  // EmptyState can shove text directly into the textarea on card
-  // click. The composer subtree is mounted as a sibling of the
-  // viewport (see ThreadPrimitive.Root in this file's main render),
-  // so the runtime context is in scope here.
-  const composer = useComposerRuntime()
+type CanvasTab = 'slides' | 'outline' | 'files' | 'questions'
 
-  const onPickScenario = useCallback(
-    (promptKey: StringKey) => {
-      const text = t(promptKey)
-      composer.setText(text)
-      // Focus the actual textarea so the user can immediately edit
-      // the bracketed placeholder. assistant-ui's
-      // ComposerPrimitive.Input renders a plain <textarea> with no
-      // marker attribute we can rely on, but the chat UI only ever
-      // mounts one textarea (the composer), so a top-level query
-      // is unambiguous. Wait one microtask so React has flushed the
-      // setText commit before we try to position the caret.
-      queueMicrotask(() => {
-        const el = document.querySelector<HTMLTextAreaElement>('textarea')
-        if (el) {
-          el.focus()
-          const len = el.value.length
-          el.setSelectionRange(len, len)
-        }
-      })
-    },
-    [composer, t]
+const CANVAS_TAB_ICONS: Record<CanvasTab, React.ReactNode> = {
+  slides: (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="4" width="18" height="13" rx="2" />
+      <path d="M8 21h8M12 17v4" />
+    </svg>
+  ),
+  outline: (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
+      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+    </svg>
+  ),
+  files: (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
+  ),
+  questions: (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .9-1 1.7M12 17h.01" />
+    </svg>
   )
+}
+
+/**
+ * Right-hand canvas workspace, shown beside the chat in slides mode. Tabs:
+ * 幻灯片 / 大纲 / 文件 are still static shells; 「问题」is live — it appears
+ * only while this session has a pending AskUserQuestion and hosts the
+ * questionnaire there (instead of inline in the chat stream — ThreadView
+ * suppresses the inline prompt for AskUserQuestion, see suppressAskInline).
+ * When a question arrives we auto-switch to 「问题」; after the user submits,
+ * the tab disappears and we fall back to 幻灯片.
+ */
+function SlidesWorkspace(): React.JSX.Element {
+  const sessionId = useChatStore((s) => s.sessionId)
+  // Two sources for the 问题 tab, covering the whole AskUserQuestion lifecycle:
+  //   - streamingArgs: the tool's input WHILE it streams (no requestId yet →
+  //     read-only preview, rendered from half-open JSON via parsePartialToolArgs).
+  //   - pendingAsk: the permission request once canUseTool fires (has requestId
+  //     → the form becomes answerable). pendingAsk supersedes streamingArgs.
+  const pendingAsk = usePendingAskUserQuestion(sessionId)
+  const streamingArgs = useStreamingAskArgsText()
+  const hasQuestions = pendingAsk !== null || streamingArgs !== null
+  const [tab, setTab] = useState<CanvasTab>('slides')
+
+  // Auto-focus 问题 the moment a questionnaire appears (streaming OR pending);
+  // when it fully clears, drop back to 幻灯片 if we were on 问题.
+  useEffect(() => {
+    if (hasQuestions) setTab('questions')
+    else setTab((t) => (t === 'questions' ? 'slides' : t))
+  }, [hasQuestions])
+
+  const tabs: { id: CanvasTab; label: string }[] = [
+    { id: 'slides', label: '幻灯片' },
+    { id: 'outline', label: '大纲' },
+    { id: 'files', label: '文件' },
+    // 问题 tab exists while a questionnaire is streaming or pending.
+    ...(hasQuestions ? [{ id: 'questions' as const, label: '问题' }] : [])
+  ]
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-1 flex-col items-center justify-center px-6 py-12 text-center">
-      {/* Mount animations removed entirely: the previous y-translate
-       * fade-in caused the scrollbar to flicker on / off as the content
-       * settled, which read as page-wide horizontal jitter. A still
-       * empty state is the Apple-calm choice anyway — the page appears
-       * and sits. */}
-      <div className="mb-2 text-[28px] font-semibold tracking-tight text-foreground">
-        {t('emptyStateTitle')}
-      </div>
-      <p className="mb-8 max-w-md text-[13px] text-muted-foreground/80">
-        {t('emptyStateScenarioHint')}
-      </p>
-      <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
-        {SCENARIO_CARDS.map((card) => (
-          <button
-            key={card.key}
-            type="button"
-            onClick={() => onPickScenario(card.promptKey)}
-            className="group relative flex items-start gap-3 overflow-hidden rounded-2xl border border-border/60 bg-card/50 p-4 text-left shadow-sm backdrop-blur-sm transition-colors hover:border-accent/50 hover:bg-card/80 hover:shadow-[0_10px_30px_-12px_hsl(var(--accent)/0.35)]"
-          >
-            <span
+    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded bg-white">
+      {/* Tab bar */}
+      <div className="flex shrink-0 items-center gap-0.5 border-b border-border/60 px-2 py-1.5">
+        {tabs.map((tDef) => {
+          const active = tDef.id === tab
+          return (
+            <button
+              key={tDef.id}
+              type="button"
+              onClick={() => setTab(tDef.id)}
               className={
-                'flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ' +
-                card.iconClass
+                'flex items-center gap-1 rounded-md px-2 py-1 text-[12px] transition-colors ' +
+                (active
+                  ? 'bg-foreground/[0.06] font-medium text-foreground'
+                  : 'text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground/90')
               }
             >
-              {card.icon}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-semibold text-foreground">
-                {t(card.titleKey)}
-              </div>
-              <div className="mt-0.5 line-clamp-2 text-[11.5px] leading-relaxed text-muted-foreground">
-                {t(card.descKey)}
-              </div>
-            </div>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="mt-1 shrink-0 text-muted-foreground/40 transition-all group-hover:translate-x-0.5 group-hover:text-accent"
-              aria-hidden
-            >
-              <path d="M5 12h14" />
-              <path d="m12 5 7 7-7 7" />
-            </svg>
-          </button>
-        ))}
+              {CANVAS_TAB_ICONS[tDef.id]}
+              {tDef.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Body */}
+      {tab === 'questions' && hasQuestions ? (
+        <CanvasQuestionnaire
+          request={pendingAsk}
+          streamingArgsText={streamingArgs}
+        />
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          <div className="text-[15px] font-semibold text-foreground">未命名</div>
+          <div className="mt-1 text-[13px] text-muted-foreground">
+            确认大纲后将在此处展示幻灯片
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Canvas questionnaire — the AskUserQuestion form rendered in the 问题 tab
+ * (the full-form layout from the reference: numbered questions, option cards
+ * with descriptions, an 其他 free-text row, and a 提交答案 / AI 自行决定 bar).
+ *
+ * Answers ride the SAME permission-broker path the inline prompt uses — there
+ * is no separate channel. Submit → respond(requestId, 'allow-once', {answers})
+ * feeds the answers back as the tool's updatedInput; 「AI 自行决定」→
+ * respond(requestId, 'deny') cancels the question so the model proceeds on its
+ * own. (We must NOT send a user message / fabricate a tool_result — the broker
+ * would hang and the text would be swallowed; see the project's error notes.)
+ */
+function CanvasQuestionnaire({
+  request,
+  streamingArgsText
+}: {
+  request: PermissionRequest | null
+  streamingArgsText: string | null
+}): React.JSX.Element {
+  const respond = usePermissionStore((s) => s.respond)
+  // answerable once the permission request exists (has a requestId); during the
+  // pure-streaming phase it's a read-only preview.
+  const answerable = request !== null
+
+  // Hold the last successfully-parsed questions so a streaming frame that
+  // lands mid-`\uXXXX` escape (parsePartialToolArgs returns null that tick)
+  // doesn't blank the preview — we keep showing the previous good parse.
+  const lastQuestionsRef = useRef<AskUserQuestionItem[]>([])
+  const questions = useMemo(() => {
+    // Prefer the finalized permission input; fall back to the streaming text.
+    if (request) {
+      const qs = parseQuestions(request.input)
+      lastQuestionsRef.current = qs
+      return qs
+    }
+    if (streamingArgsText) {
+      const partial = parsePartialToolArgs(streamingArgsText)
+      const qs = parseQuestions(partial)
+      // Only adopt a non-empty parse; otherwise keep the last good one.
+      if (qs.length > 0) lastQuestionsRef.current = qs
+    }
+    return lastQuestionsRef.current
+  }, [request, streamingArgsText])
+  // Per-question selection: question text → chosen option label (or the user's
+  // free-text for 其他). Seeded from any prior answers on the input (resume).
+  const [answers, setAnswers] = useState<Record<string, string>>(() =>
+    request ? seedAnswers(request.input) : {}
+  )
+  // Per-question 其他 draft text, kept separate so toggling between a preset
+  // option and 其他 doesn't lose what was typed.
+  const [otherDraft, setOtherDraft] = useState<Record<string, string>>({})
+
+  const pick = (q: string, label: string): void =>
+    setAnswers((a) => ({ ...a, [q]: label }))
+
+  const typeOther = (q: string, text: string): void => {
+    setOtherDraft((d) => ({ ...d, [q]: text }))
+    // Selecting 其他 means the answer IS the typed text.
+    setAnswers((a) => ({ ...a, [q]: text }))
+  }
+
+  const submit = (): void => {
+    if (!request) return // still streaming — not answerable yet
+    // Build answers in question order for a stable tool_result.
+    const out: Record<string, string> = {}
+    for (const q of questions) {
+      const a = answers[q.question]
+      if (a && a.trim()) out[q.question] = a
+    }
+    void respond(request.requestId, 'allow-once', { answers: out })
+  }
+
+  const letAi = (): void => {
+    if (!request) return
+    // Cancel the question — the model proceeds without an explicit answer.
+    void respond(request.requestId, 'deny')
+  }
+
+  if (questions.length === 0) {
+    // Streaming but nothing parseable yet → "generating"; finalized but empty
+    // → a real parse failure.
+    return (
+      <div className="relative min-h-0 flex-1 overflow-y-auto px-8 py-6">
+        {!answerable ? <AppleGlowEffect /> : null}
+        <h2 className="text-[20px] font-bold text-foreground">请回答以下问题</h2>
+        <p
+          className={
+            'mt-3 text-[13px] ' +
+            // While streaming, the "generating" line gets the shimmer sweep; a
+            // real parse failure is a static muted message.
+            (answerable ? 'text-muted-foreground' : 'shimmer-text font-medium')
+          }
+        >
+          {answerable ? '无法解析问题内容。' : 'AI 正在生成问题…'}
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* Siri / Apple-Intelligence edge glow — a rotating conic-gradient ring
+          hugging the panel's inner border while the questionnaire is still
+          streaming (!answerable). Pure CSS (.siri-edge in main.css); removed
+          once answering is possible. */}
+      {!answerable ? <AppleGlowEffect /> : null}
+      <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+        <h2 className="text-[20px] font-bold text-foreground">请回答以下问题</h2>
+        <p className="mt-1 text-[13px] text-muted-foreground">问题</p>
+
+        {/* While streaming (!answerable) the whole questionnaire breathes — a
+            gentle opacity pulse signalling「生成中」— and each freshly-arrived
+            question fades + slides in. Both stop once the form is answerable.
+            motion respects prefers-reduced-motion automatically. */}
+        <motion.div
+          className="mt-6 flex flex-col gap-8"
+          animate={answerable ? { opacity: 1 } : { opacity: [0.72, 1, 0.72] }}
+          transition={
+            answerable
+              ? { duration: 0.2 }
+              : { duration: 1.8, repeat: Infinity, ease: 'easeInOut' }
+          }
+        >
+          {questions.map((q, i) => {
+            const otherText = otherDraft[q.question] ?? ''
+            const otherSelected =
+              answers[q.question] !== undefined &&
+              answers[q.question] === otherText &&
+              otherText.length > 0
+            return (
+              <motion.div
+                // Index key (not question text): during streaming the last
+                // question's text mutates token-by-token, so a text key would
+                // make that row re-mount and replay its enter animation every
+                // tick (flicker). Index is stable — questions only append,
+                // never reorder — so only a genuinely NEW row animates in.
+                key={i}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.28, ease: 'easeOut' }}
+              >
+                <div className="text-[13px] font-medium text-muted-foreground">
+                  {String(i + 1).padStart(2, '0')}
+                </div>
+                <h3 className="mt-1 text-[17px] font-bold text-foreground">
+                  {q.header ?? q.question}
+                </h3>
+                {q.header ? (
+                  <p className="mt-1 text-[14px] text-muted-foreground">
+                    {q.question}
+                  </p>
+                ) : null}
+                <p className="mt-2 text-[12.5px] text-muted-foreground">单选</p>
+
+                <div className="mt-2 flex flex-col gap-2">
+                  {q.options.map((opt) => {
+                    const selected = answers[q.question] === opt.label
+                    return (
+                      <button
+                        key={opt.label}
+                        type="button"
+                        disabled={!answerable}
+                        onClick={() => answerable && pick(q.question, opt.label)}
+                        className={
+                          'flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition-colors ' +
+                          (selected
+                            ? 'border-accent bg-accent/[0.06]'
+                            : 'border-border hover:border-foreground/20 hover:bg-foreground/[0.02]') +
+                          (!answerable ? ' cursor-default opacity-70' : '')
+                        }
+                      >
+                        <span
+                          className={
+                            'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border ' +
+                            (selected ? 'border-accent' : 'border-muted-foreground/40')
+                          }
+                          aria-hidden
+                        >
+                          {selected ? (
+                            <span className="size-2 rounded-full bg-accent" />
+                          ) : null}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[14px] font-semibold text-foreground">
+                            {opt.label}
+                          </span>
+                          {opt.description ? (
+                            <span className="mt-0.5 block text-[13px] text-muted-foreground">
+                              {opt.description}
+                            </span>
+                          ) : null}
+                        </span>
+                      </button>
+                    )
+                  })}
+
+                  {/* 其他 free-text row. */}
+                  <input
+                    type="text"
+                    value={otherText}
+                    disabled={!answerable}
+                    onChange={(e) => typeOther(q.question, e.target.value)}
+                    placeholder="其他（请填写）"
+                    className={
+                      'w-full rounded-xl border px-4 py-3 text-[14px] text-foreground placeholder:text-muted-foreground/60 outline-none transition-colors disabled:opacity-70 ' +
+                      (otherSelected
+                        ? 'border-accent bg-accent/[0.06]'
+                        : 'border-border focus:border-foreground/30')
+                    }
+                  />
+                </div>
+              </motion.div>
+            )
+          })}
+        </motion.div>
+      </div>
+
+      {/* Action bar. Disabled while streaming (no requestId yet → can't answer);
+          enabled once the permission request lands. */}
+      <div className="flex shrink-0 items-center gap-3 border-t border-border px-8 py-4">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={!answerable}
+          className="rounded-full bg-foreground px-5 py-2 text-[13px] font-medium text-background transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          提交答案
+        </button>
+        <button
+          type="button"
+          onClick={letAi}
+          disabled={!answerable}
+          className="text-[13px] text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          AI 自行决定
+        </button>
+        {!answerable ? (
+          <span className="text-[12.5px] text-muted-foreground">
+            AI 正在生成问题…
+          </span>
+        ) : null}
       </div>
     </div>
   )
 }
 
-function PptIcon(): React.JSX.Element {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <rect x="3" y="4" width="18" height="14" rx="2" />
-      <path d="M3 18h18" />
-      <path d="M8 22h8" />
-      <path d="M12 18v4" />
-      <path d="M8 11h4" />
-      <path d="M8 8h8" />
-    </svg>
-  )
-}
+/* ───────────────────────── EmptyState ───────────────────────── */
 
-function LightbulbIcon(): React.JSX.Element {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M9 18h6" />
-      <path d="M10 22h4" />
-      <path d="M12 2a7 7 0 0 0-4 12.74V17h8v-2.26A7 7 0 0 0 12 2Z" />
-    </svg>
-  )
-}
+/* The scenario prompt-card grid was removed from the empty state — it's now
+   just the title + hint, and the user starts by typing in the composer.
+   The card definitions (SCENARIO_CARDS), the onPickScenario handler, and the
+   per-card icon components (PptIcon / LightbulbIcon / UserCheckIcon /
+   ChartIcon) were deleted with it; the `scenario*` i18n keys are left in
+   i18n.ts. Restore from git history to bring the grid back. */
 
-function UserCheckIcon(): React.JSX.Element {
+/**
+ * Empty thread state (figure 26): a vertically-centered block of
+ * mascot → title → subtitle → composer → promo banner. The composer is
+ * rendered HERE (not in the bottom dock) so it sits in the centered group;
+ * the bottom dock is hidden while empty (ThreadPrimitive.If empty={false}
+ * in the main render) so there's only ever one Composer instance. Once the
+ * thread has messages, the dock takes over and the composer pins to the
+ * bottom as usual.
+ */
+function EmptyState(): React.JSX.Element {
+  const t = useT()
   return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="m16 11 2 2 4-4" />
-    </svg>
-  )
-}
+    <div className="flex flex-1 flex-col items-stretch justify-center py-10">
+      {/* Mascot — green chat-bubble glyph. */}
+      <div className="mb-5 flex size-14 items-center justify-center rounded-2xl bg-[var(--rail-accent-soft,#dcf5e6)]">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 16.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z"
+            stroke="var(--rail-accent-ink,#0f7a38)"
+            strokeWidth="1.6"
+            strokeLinejoin="round"
+          />
+          <circle cx="9" cy="11" r="1" fill="var(--rail-accent-ink,#0f7a38)" />
+          <circle cx="15" cy="11" r="1" fill="var(--rail-accent-ink,#0f7a38)" />
+        </svg>
+      </div>
+      <h1 className="mb-2.5 text-[30px] font-bold tracking-tight text-foreground">
+        {t('emptyStateTitle')}
+      </h1>
+      <p className="mb-7 text-[14px] text-muted-foreground/80">
+        {t('emptyStateScenarioHint')}
+      </p>
 
-function ChartIcon(): React.JSX.Element {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M3 3v18h18" />
-      <path d="M7 14l4-4 4 4 5-6" />
-    </svg>
+      {/* Composer sits inside the centered block (not the bottom dock). */}
+      <Composer />
+
+      {/* Promo banner (figure 26) — VISUAL-ONLY placeholder; the desktop app
+          has no credits/PRO system behind it. */}
+      <div className="mt-7 flex items-center gap-4 rounded-2xl bg-foreground/[0.03] px-5 py-4 ring-1 ring-black/[0.04] dark:ring-white/[0.06]">
+        <div className="size-11 shrink-0 rounded-xl bg-gradient-to-br from-sky-200 to-emerald-200" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <div className="text-[13.5px] font-semibold text-foreground">
+            新用户首登立领2000积分，教师/学生认证再送4000积分
+          </div>
+          <div className="mt-0.5 text-[12px] text-muted-foreground">
+            2000积分含新用户注册时赠送的300积分，查看{' '}
+            <span className="text-[var(--rail-accent-ink,#0f7a38)]">教师/学生认证</span> 和{' '}
+            <span className="text-[var(--rail-accent-ink,#0f7a38)]">活动规则</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="shrink-0 rounded-full bg-foreground px-4 py-2 text-[12.5px] font-medium text-background"
+        >
+          领取PRO
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -540,8 +1022,110 @@ function UserMessage(): React.JSX.Element {
           (Apple Blue, no alpha) is DESIGN.md §2's mandate: Apple Blue
           is the singular interactive accent and should never be
           diluted. 15px body with apple-body tracking gives the
-          signature tight-but-readable Apple rhythm. */}
-      <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-[22px] bg-accent px-4 py-2.5 text-[15px] leading-[1.47] tracking-apple-body text-white empty:hidden">
+          signature tight-but-readable Apple rhythm.
+
+          ClampedUserBubble caps the height of a very long message so one
+          giant paste can't fill the whole transcript — it clamps to
+          USER_BUBBLE_MAX_PX and fades the overflow out at the bottom. */}
+      <ClampedUserBubble />
+    </MessagePrimitive.Root>
+  )
+}
+
+/**
+ * Max rendered height (px) of a user bubble before it clamps. ~6 lines at
+ * the bubble's 15px/1.47 rhythm plus its py-2.5 padding. A long paste gets
+ * cut here so it can't dominate the transcript; shorter messages render in
+ * full and never clamp.
+ */
+const USER_BUBBLE_MAX_PX = 150
+
+/** Join a user message's text parts into the full raw string (for the
+ *  full-text modal + copy). Mirrors the content-walk in AssistantFileCards. */
+function useUserMessageText(): string {
+  const message = useMessage()
+  return useMemo(() => {
+    const content = (message as { content?: readonly unknown[] }).content
+    if (!Array.isArray(content)) return ''
+    let text = ''
+    for (const part of content) {
+      const p = part as { type?: string; text?: string }
+      if (p.type === 'text' && typeof p.text === 'string') {
+        text += (text ? '\n' : '') + p.text
+      }
+    }
+    return text
+  }, [message])
+}
+
+/**
+ * The user bubble body, height-clamped when it overflows. We measure the
+ * content's natural scrollHeight against USER_BUBBLE_MAX_PX (re-measuring on
+ * resize) and only then apply the max-height + a bottom fade mask — so a
+ * short message keeps clean edges and only a genuinely long one gets the
+ * truncation + fade.
+ *
+ * When clamped, the bubble becomes clickable: a click opens a modal showing
+ * the full message text (scrollable) with a copy button and close affordances
+ * (✕ / backdrop / Esc). Short, un-clamped bubbles aren't clickable.
+ */
+function ClampedUserBubble(): React.JSX.Element {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [clamped, setClamped] = useState(false)
+  const [open, setOpen] = useState(false)
+  const fullText = useUserMessageText()
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = (): void => {
+      // scrollHeight is the full content height regardless of max-height;
+      // compare against the cap to decide whether to clamp + fade.
+      setClamped(el.scrollHeight > USER_BUBBLE_MAX_PX + 1)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  return (
+    <>
+      <div
+        ref={ref}
+        onClick={clamped ? () => setOpen(true) : undefined}
+        role={clamped ? 'button' : undefined}
+        tabIndex={clamped ? 0 : undefined}
+        onKeyDown={
+          clamped
+            ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setOpen(true)
+                }
+              }
+            : undefined
+        }
+        title={clamped ? '点击查看完整内容' : undefined}
+        style={
+          clamped
+            ? {
+                maxHeight: `${USER_BUBBLE_MAX_PX}px`,
+                // Fade the bottom ~40px to transparent so the cut reads as
+                // "there's more" rather than a hard slice. WebkitMaskImage for
+                // Chromium (Electron's renderer).
+                WebkitMaskImage:
+                  'linear-gradient(to bottom, black 0, black calc(100% - 40px), transparent 100%)',
+                maskImage:
+                  'linear-gradient(to bottom, black 0, black calc(100% - 40px), transparent 100%)'
+              }
+            : undefined
+        }
+        className={
+          'max-w-[80%] overflow-hidden whitespace-pre-wrap break-words rounded-[22px] bg-accent px-4 py-2.5 text-[15px] leading-[1.47] tracking-apple-body text-white empty:hidden ' +
+          (clamped ? 'cursor-pointer transition hover:brightness-[1.06]' : '')
+        }
+      >
         <MessagePrimitive.Parts
           unstable_showEmptyOnNonTextEnd={false}
           components={{
@@ -555,7 +1139,98 @@ function UserMessage(): React.JSX.Element {
           }}
         />
       </div>
-    </MessagePrimitive.Root>
+      {open ? (
+        <UserMessageModal text={fullText} onClose={() => setOpen(false)} />
+      ) : null}
+    </>
+  )
+}
+
+/**
+ * Full-text modal for a clamped user message. Portal'd to <body> over a
+ * blurred backdrop (same lightbox pattern as the image viewer). Dismisses on
+ * ✕ / backdrop click / Esc. A copy button lifts the raw text to the clipboard.
+ */
+function UserMessageModal({
+  text,
+  onClose
+}: {
+  text: string
+  onClose: () => void
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const copy = (): void => {
+    void navigator.clipboard?.writeText(text)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-8">
+      {/* Backdrop — owns dismiss-on-click. */}
+      <div
+        className="absolute inset-0 bg-background/78 backdrop-blur-lg"
+        onClick={onClose}
+        aria-hidden
+      />
+      {/* Card */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="relative z-10 flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_30px_80px_-20px_rgba(0,0,0,0.4)]"
+      >
+        {/* Header: copy + close. */}
+        <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border px-3 py-2">
+          <button
+            type="button"
+            onClick={copy}
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          >
+            <CopyGlyph />
+            {copied ? '已复制' : '复制'}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭"
+            className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          >
+            <CloseGlyph />
+          </button>
+        </div>
+        {/* Full text — scrollable, preserves wrapping. */}
+        <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words px-5 py-4 text-[14px] leading-[1.6] text-foreground">
+          {text}
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+function CopyGlyph(): React.JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V5a2 2 0 0 1 2-2h8" />
+    </svg>
+  )
+}
+
+function CloseGlyph(): React.JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
   )
 }
 
@@ -1462,6 +2137,11 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   // own decision UI and the assistant never stalls waiting on a lost
   // sibling request. See stores/permissions.ts for the store shape.
   const pendingPermission = usePermissionForToolUseId(toolCallId)
+  // Workflow/Task subagents spawned by THIS tool call (Task / Workflow
+  // tools). Looked up by id from the chat store — same indirection as
+  // the permission prompt above, since assistant-ui's Fallback props
+  // don't carry the part's `tasks` field. Empty for ordinary tools.
+  const subtasks = useToolCallTasks(toolCallId)
   // AskUserQuestion is a special beast — its "args" are the questions
   // themselves and the InlinePermissionPrompt renders the dedicated
   // interactive view that lets the user pick answers. While that prompt
@@ -1475,7 +2155,21 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   // resolved turn still shows what was asked.
   const askPending =
     pendingPermission !== null && toolName === 'AskUserQuestion'
-  const hideInputPane = askPending
+  // In slides sessions the canvas's 问题 tab hosts the WHOLE AskUserQuestion
+  // lifecycle — the streaming input preview AND the answerable form. So for
+  // any AskUserQuestion call in a slides session, suppress this card's inline
+  // surfaces entirely (input pane, friendly headline, inline prompt): the
+  // canvas owns it. This covers the streaming phase too (pendingPermission is
+  // still null then), which is why it keys off toolName, not askPending.
+  // Outside slides sessions (no canvas) the inline prompt stays the only place
+  // to answer. Subscribed (not getState) so flipping into slides mode re-renders.
+  const cardSessionId = useChatStore((s) => s.sessionId)
+  const cardIsSlides = useComposerModeStore((s) =>
+    cardSessionId ? s.slidesSessions[cardSessionId] === true : false
+  )
+  const askHandledByCanvas =
+    toolName === 'AskUserQuestion' && cardIsSlides
+  const hideInputPane = askPending || askHandledByCanvas
 
   // Input-pane display logic — see the original prop-shape comment.
   const hasArgsText = typeof argsText === 'string' && argsText.length > 0
@@ -1545,6 +2239,12 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   const showRawDataToggle =
     !askPending && (useFriendlyInput || useFriendlyOutput)
 
+  // Slides-session AskUserQuestion is rendered entirely in the canvas's 问题
+  // tab (streaming preview + answerable form), so this inline card — headline,
+  // streaming JSON, prompt and all — would be a duplicate. Render nothing.
+  // All hooks above have already run, so this early return is hook-safe.
+  if (askHandledByCanvas) return <></>
+
   return (
     <div className="flex w-full gap-3">
       <span
@@ -1606,9 +2306,11 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
               </ToolPane>
             )}
 
-            {pendingPermission && (
+            {pendingPermission && !askHandledByCanvas && (
               <InlinePermissionPrompt request={pendingPermission} />
             )}
+
+            {subtasks.length > 0 && <WorkflowTaskList tasks={subtasks} />}
 
             {useFriendlyOutput && friendly?.output && (
               <ToolPane
@@ -1674,6 +2376,175 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
         </details>
       </div>
     </div>
+  )
+}
+
+/**
+ * Live sub-agent list rendered inside a Task/Workflow tool card, styled
+ * after Claude Code's terminal output: a `⎿` gutter, one row per spawned
+ * agent (status glyph + name + right-aligned `tok · tool · elapsed`
+ * metadata), with a header line summarising `done/total agents · total
+ * elapsed`. Fed by the `task_update` event stream (see stores/chat.ts
+ * `updateToolCallTasks`). Deliberately flat — an at-a-glance strip, not
+ * a nested transcript.
+ */
+function WorkflowTaskList({
+  tasks
+}: {
+  tasks: WorkflowTask[]
+}): React.JSX.Element {
+  const t = useT()
+  const done = tasks.filter(
+    (task) =>
+      task.status === 'completed' ||
+      task.status === 'failed' ||
+      task.status === 'stopped'
+  ).length
+  // Header elapsed = the longest single agent's elapsed (they run
+  // concurrently, so summing would overstate wall-clock).
+  const elapsedMs = tasks.reduce(
+    (max, task) => Math.max(max, task.durationMs ?? 0),
+    0
+  )
+  return (
+    <div className="mt-1 border-l border-border/50 pl-3">
+      <div className="flex items-center gap-2 pb-1.5 font-mono text-[11px] text-muted-foreground/70">
+        <span className="tabular-nums">
+          {done}/{tasks.length} {t('toolWorkflowAgentsLabel')}
+        </span>
+        {elapsedMs > 0 && (
+          <>
+            <span className="text-muted-foreground/30">·</span>
+            <span className="tabular-nums">{formatWfDuration(elapsedMs)}</span>
+          </>
+        )}
+      </div>
+      <div className="space-y-1.5">
+        {tasks.map((task) => (
+          <WorkflowTaskRow key={task.taskId} task={task} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** One agent row: status glyph + name + right-aligned token/tool/elapsed
+ * metadata, with an optional second line (progress summary / error) and
+ * an expandable result block when the agent has completed. */
+function WorkflowTaskRow({ task }: { task: WorkflowTask }): React.JSX.Element {
+  const t = useT()
+  const label =
+    task.workflowName || task.description || task.subagentType || task.taskId
+  const secondary = task.error || task.summary
+  const meta = formatWfMeta(task)
+  // Only completed tasks carry a meaningful deliverable to expand; while
+  // running, `summary` (the live progress line) already shows above.
+  const hasResult =
+    task.status === 'completed' &&
+    Boolean(task.result) &&
+    task.result !== task.summary
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center gap-2 font-mono text-[12px]">
+        <WorkflowTaskGlyph status={task.status} />
+        <span className="min-w-0 truncate font-medium text-foreground/90">
+          {label}
+        </span>
+        {task.subagentType && task.subagentType !== label && (
+          <span className="shrink-0 text-[10.5px] text-muted-foreground/40">
+            {task.subagentType}
+          </span>
+        )}
+        {meta && (
+          <span className="ml-auto shrink-0 text-[10.5px] tabular-nums text-muted-foreground/50">
+            {meta}
+          </span>
+        )}
+      </div>
+      {secondary && (
+        <div
+          className={
+            'pl-5 text-[11px] leading-snug ' +
+            (task.error
+              ? 'text-red-500/85'
+              : 'line-clamp-2 text-muted-foreground/65')
+          }
+        >
+          {secondary}
+        </div>
+      )}
+      {hasResult && (
+        <details className="group/wfres pl-5">
+          <summary className="flex cursor-pointer list-none items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground/55 transition hover:text-muted-foreground">
+            <span
+              aria-hidden
+              className="inline-block transition group-open/wfres:rotate-90"
+            >
+              ▸
+            </span>
+            {t('toolWorkflowResultLabel')}
+          </summary>
+          <div className="mt-1 whitespace-pre-wrap rounded-md bg-muted/30 p-2 text-[11.5px] leading-relaxed text-foreground/80">
+            {task.result}
+          </div>
+        </details>
+      )}
+    </div>
+  )
+}
+
+/** Right-aligned `27.2k tok · 1 tool · 16s` metadata for an agent row. */
+function formatWfMeta(task: WorkflowTask): string {
+  const bits: string[] = []
+  if (typeof task.tokens === 'number' && task.tokens > 0) {
+    bits.push(`${formatWfTokens(task.tokens)} tok`)
+  }
+  if (typeof task.toolUses === 'number' && task.toolUses > 0) {
+    bits.push(`${task.toolUses} tool${task.toolUses === 1 ? '' : 's'}`)
+  }
+  if (typeof task.durationMs === 'number' && task.durationMs > 0) {
+    bits.push(formatWfDuration(task.durationMs))
+  }
+  return bits.join(' · ')
+}
+
+/** 27200 → "27.2k", 950 → "950". */
+function formatWfTokens(n: number): string {
+  if (n < 1000) return String(n)
+  return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
+}
+
+/** 16000 → "16s", 95000 → "1m35s". */
+function formatWfDuration(ms: number): string {
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  const rem = s % 60
+  return rem === 0 ? `${m}m` : `${m}m${rem}s`
+}
+
+/**
+ * Monospace status glyph echoing Claude Code's terminal vocabulary:
+ * `✔` done · `✗` failed · `⊘` stopped · `◐` (pulsing) running ·
+ * `○` pending. Coloured per state; only the running glyph animates.
+ */
+function WorkflowTaskGlyph({
+  status
+}: {
+  status: WorkflowTask['status']
+}): React.JSX.Element {
+  const map = {
+    completed: { glyph: '✔', cls: 'text-emerald-500' },
+    failed: { glyph: '✗', cls: 'text-red-500' },
+    stopped: { glyph: '⊘', cls: 'text-muted-foreground/60' },
+    pending: { glyph: '○', cls: 'text-muted-foreground/40' },
+    running: { glyph: '◐', cls: 'text-accent animate-pulse' }
+  } as const
+  const { glyph, cls } = map[status]
+  return (
+    <span aria-hidden className={'w-3 shrink-0 text-center ' + cls}>
+      {glyph}
+    </span>
   )
 }
 
@@ -2132,6 +3003,16 @@ function Composer(): React.JSX.Element {
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [files, setFiles] = useState<readonly string[]>([])
   const streaming = useChatStore((s) => s.streaming)
+  // Slides binding: when the user sends while the global picker is on
+  // 幻灯片, mark the CURRENT session as a slides session so ThreadView
+  // shows its two-pane layout from then on (per-session, not global).
+  // Called on every send path (Enter → onSubmit, and the Send button's
+  // onClick); markSlidesSession is idempotent so double-calls are fine.
+  const composerSessionId = useChatStore((s) => s.sessionId)
+  const markIfSlides = useCallback(() => {
+    const st = useComposerModeStore.getState()
+    if (st.mode === 'slides') st.markSlidesSession(composerSessionId ?? '')
+  }, [composerSessionId])
   // Read dictation state at the Composer level (single subscription)
   // and branch the composer row layout on it. When dictating, the
   // textarea is replaced by a live waveform, the send + mic slots
@@ -2266,32 +3147,26 @@ function Composer(): React.JSX.Element {
   )
 
   return (
-    <div className="mx-auto w-full max-w-3xl">
-      {/* Strip above the composer card. Holds only the
-          PermissionModePicker now (the inline workspace switcher was
-          removed when the app moved to a fixed default workspace).
-          The picker is anchored to the right edge via absolute
-          positioning; the `min-h-[30px]` reserves the row height. */}
-      <div className="relative mb-2 min-h-[30px]">
-        <div className="pointer-events-none absolute right-1 top-0 flex h-[30px] items-center">
-          <div className="pointer-events-auto">
-            <PermissionModePicker />
-          </div>
-        </div>
-      </div>
-      {/* Composer card. The slash/mention popovers are no longer
-          assistant-ui TriggerPopoverRoots — they're driven by the
-          ProseMirror suggestion plugin inside ProseMirrorComposerInput
-          (which renders its own popover anchored to the caret). Only
-          the assistant-ui pieces that read the composer *store*
-          (AttachmentDropzone / Attachments / AddAttachment / Send /
-          Cancel / Dictation) remain, untouched. */}
+    <div className="mx-auto w-full max-w-4xl">
+      {/* Two-row composer (per docs/ui-prototype-composer.html): a large
+          multi-line input on top, then a dedicated toolbar row below. The
+          PermissionModePicker moved OUT of a strip above the card and INTO
+          the toolbar's right cluster (it sits where the prototype's "Auto"
+          pill is). All assistant-ui wiring is preserved — only the layout
+          (rows/positions/classNames) changed.
+
+          The slash/mention popovers are driven by the ProseMirror
+          suggestion plugin inside ProseMirrorComposerInput; only the
+          assistant-ui pieces that read the composer *store*
+          (AttachmentDropzone / Attachments / Send / Cancel / Dictation)
+          remain. */}
       <div className="relative">
         {/* AttachmentDropzone is the outer "card" — owns the border +
             background + rounded corners so drag-over highlights the
-            whole composer. */}
-        <ComposerPrimitive.AttachmentDropzone className="rounded-2xl bg-popover/90 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--accent)/0.35)] shadow-[0_4px_16px_-6px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--accent)/0.5)] data-[dragging=true]:bg-accent/[0.08] dark:ring-white/[0.08]">
-          <div className="flex flex-wrap gap-2 px-3 pt-3 empty:hidden">
+            whole composer. Bigger radius to match the prototype. */}
+        <ComposerPrimitive.AttachmentDropzone className="rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--accent)/0.35)] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--accent)/0.5)] data-[dragging=true]:bg-accent/[0.08] dark:ring-white/[0.08]">
+          {/* Attachment preview row (pasted / dropped / picked). */}
+          <div className="flex flex-wrap gap-2 px-4 pt-3 empty:hidden">
             <ComposerPrimitive.Attachments>
               {({ attachment }) => (
                 <ComposerAttachmentChip attachment={attachment} />
@@ -2299,34 +3174,11 @@ function Composer(): React.JSX.Element {
             </ComposerPrimitive.Attachments>
           </div>
 
-          <ComposerPrimitive.Root className="flex w-full items-end gap-2 px-3 py-2">
-            {/* Attachment "+" button. We do NOT use
-                ComposerPrimitive.AddAttachment here — it hard-wires the
-                adapter's accept ('image/*') and only ever calls
-                runtime.addAttachment. Our own hidden input accepts any
-                file and routes images vs. other files differently (see
-                handleFilesPicked above). The hidden input is `multiple`
-                so a single pick can mix screenshots + a PDF, etc. */}
-            <button
-              type="button"
-              className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground/80 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
-              aria-label={t('composerAttachFile')}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-              </svg>
-            </button>
+          {/* ComposerPrimitive.Root is the composer form context. We lay it
+              out as a column: input row on top, toolbar row beneath. */}
+          <ComposerPrimitive.Root className="flex w-full flex-col">
+            {/* Hidden file input — shared by the toolbar "+" button. Kept
+                here (inside Root) so it lives in the form context. */}
             <input
               ref={fileInputRef}
               type="file"
@@ -2338,68 +3190,341 @@ function Composer(): React.JSX.Element {
                 void handleFilesPicked(e.target.files)
               }}
             />
+
             {isDictating ? (
-              <DictationActiveControls
-                cancelLabel={t('composerCancelDictation')}
-                confirmLabel={t('composerConfirmDictation')}
-              />
+              // Dictation takes over the whole composer body (input + mic +
+              // send slot) — same as before, just hosted in the column.
+              <div className="flex items-end gap-2 px-3 py-2">
+                <DictationActiveControls
+                  cancelLabel={t('composerCancelDictation')}
+                  confirmLabel={t('composerConfirmDictation')}
+                />
+              </div>
             ) : (
               <>
-                {/* ProseMirror-backed input. slash/mention tokens are
-                    real atom-node pills (see chipNodeView); the caret
-                    is drawn by the browser at real node boundaries, so
-                    no overlay / fake caret / token-snapping is needed.
-                    Submitting goes through onSubmit → composer.send(),
-                    which is the same path Send uses.
-                    Route A: this component bridges the PM doc to the
-                    assistant-ui store —
-                    PROSEMIRROR-MIGRATION: composer.text writeback via setText
-                    (the actual setText call lives in ProseMirrorComposerInput). */}
-                <div className="min-h-[24px] max-h-40 flex-1 overflow-y-auto px-1 py-1.5 text-[14px] leading-relaxed">
+                {/* —— Top row: the multi-line input —— */}
+                <div className="min-h-[52px] max-h-52 overflow-y-auto px-5 pb-1 pt-4 text-[15px] leading-relaxed">
                   <ProseMirrorComposerInput
                     placeholder={t('composerPlaceholder')}
                     slashAdapter={slashAdapter}
                     mentionAdapter={fileAdapter}
-                    onSubmit={() => composerRuntime.send()}
+                    onSubmit={() => {
+                      markIfSlides()
+                      composerRuntime.send()
+                    }}
                   />
                 </div>
-                <MicButton label={t('composerDictate')} />
-                {/* Mutually exclusive Send / Stop slot. */}
-                <ThreadPrimitive.If running={false}>
-                  <ComposerPrimitive.Send
-                    aria-label="Send message"
-                    className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-white shadow-[0_1px_2px_rgba(0,0,0,0.08),0_2px_8px_-2px_hsl(var(--accent)/0.3)] ring-1 ring-black/[0.06] transition-all hover:brightness-[1.08] active:brightness-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.06] disabled:text-muted-foreground/50 disabled:shadow-none disabled:ring-0"
+
+                {/* —— Bottom row: toolbar —— */}
+                <div className="flex items-center gap-2 px-3 pb-3 pt-1">
+                  {/* Left: attachment "+". We do NOT use
+                      ComposerPrimitive.AddAttachment (it hard-wires
+                      accept='image/*'); the hidden input above accepts any
+                      file and routes images vs. other files via
+                      handleFilesPicked. */}
+                  <button
+                    type="button"
+                    className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground/80 ring-1 ring-black/[0.06] transition-colors hover:bg-foreground/[0.06] hover:text-foreground dark:ring-white/[0.08]"
+                    aria-label={t('composerAttachFile')}
+                    onClick={() => fileInputRef.current?.click()}
                   >
                     <svg
-                      width="16"
-                      height="16"
+                      width="18"
+                      height="18"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
-                      strokeWidth="2.2"
+                      strokeWidth="1.9"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       aria-hidden="true"
                     >
-                      <path d="M12 19V5" />
-                      <path d="m6 11 6-6 6 6" />
+                      <path d="M12 5v14M5 12h14" />
                     </svg>
-                  </ComposerPrimitive.Send>
-                </ThreadPrimitive.If>
-                <ThreadPrimitive.If running>
-                  <ComposerPrimitive.Cancel
-                    aria-label="Stop generating"
-                    className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.15)] ring-1 ring-black/[0.06] transition-all hover:brightness-[1.1] active:brightness-95"
-                  >
-                    <span className="block size-2.5 rounded-[2px] bg-card" />
-                  </ComposerPrimitive.Cancel>
-                </ThreadPrimitive.If>
+                  </button>
+
+                  {/* Composer mode picker (通用 / 设计 / 幻灯片 / 写作). The
+                      幻灯片 option is the slides entry point: choosing it sets
+                      mode='slides', and sending then marks the session as a
+                      slides session → ThreadView's two-pane layout. Replaces
+                      the old single monitor-icon slides toggle. */}
+                  <ComposerModePicker />
+
+                  {/* Spacer pushes the rest to the right edge. */}
+                  <div className="flex-1" />
+
+                  {/* Right cluster: permission mode (prototype "Auto"
+                      slot) · mic · send. */}
+                  <PermissionModePicker />
+                  <MicButton label={t('composerDictate')} />
+                  {/* Mutually exclusive Send / Stop slot. */}
+                  <ThreadPrimitive.If running={false}>
+                    <ComposerPrimitive.Send
+                      aria-label="Send message"
+                      onClick={markIfSlides}
+                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.18)] transition-all hover:brightness-[1.12] active:scale-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.08] disabled:text-muted-foreground/50 disabled:shadow-none"
+                    >
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M12 19V5" />
+                        <path d="m6 11 6-6 6 6" />
+                      </svg>
+                    </ComposerPrimitive.Send>
+                  </ThreadPrimitive.If>
+                  <ThreadPrimitive.If running>
+                    <ComposerPrimitive.Cancel
+                      aria-label="Stop generating"
+                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.15)] transition-all hover:brightness-[1.1] active:scale-95"
+                    >
+                      <span className="block size-2.5 rounded-[2px] bg-card" />
+                    </ComposerPrimitive.Cancel>
+                  </ThreadPrimitive.If>
+                </div>
               </>
             )}
           </ComposerPrimitive.Root>
         </ComposerPrimitive.AttachmentDropzone>
+
+        {/* Below-card chips (figure 18): 选择工作目录 · 语气 创意. Like the
+            decor cluster above, these are VISUAL-ONLY placeholders for now —
+            no backing feature on the desktop side. They sit just under the
+            card, matching the mockup. */}
+        <div className="mt-3 flex items-center gap-4 px-2">
+          <ComposerBelowChip
+            label="选择工作目录"
+            icon={
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              </svg>
+            }
+          />
+          <ComposerBelowChip
+            label="语气 创意"
+            icon={
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden="true">
+                <path d="m12 3 2.5 5.5L20 11l-5.5 2.5L12 19l-2.5-5.5L4 11l5.5-2.5z" />
+              </svg>
+            }
+          />
+        </div>
       </div>
     </div>
+  )
+}
+
+/** Composer mode metadata for the picker (通用 / 设计 / 幻灯片 / 写作). */
+interface ComposerModeMeta {
+  id: ComposerModeId
+  label: string
+  beta?: boolean
+  icon: React.ReactNode
+}
+
+const COMPOSER_MODES: readonly ComposerModeMeta[] = [
+  {
+    id: 'general',
+    label: '通用',
+    icon: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
+        <path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z" />
+      </svg>
+    )
+  },
+  {
+    id: 'design',
+    label: '设计',
+    icon: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
+        <rect x="4" y="4" width="16" height="16" rx="2" />
+        <path d="M4 9h16M9 9v11" />
+      </svg>
+    )
+  },
+  {
+    id: 'slides',
+    label: '幻灯片',
+    beta: true,
+    icon: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
+        <rect x="3" y="4.5" width="18" height="12" rx="2" />
+        <path d="M8 20.5h8M12 16.5v4" />
+      </svg>
+    )
+  },
+  {
+    id: 'writing',
+    label: '写作',
+    beta: true,
+    icon: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M16.5 3.5 20.5 7.5 8 20 3.5 20.5 4 16z" />
+        <path d="M14 6 18 10" />
+      </svg>
+    )
+  }
+]
+
+/**
+ * Composer mode picker in the toolbar — a pill showing the current mode
+ * (icon + label, e.g.「通用」) that opens a popover to switch between
+ * 通用 / 设计 / 幻灯片 / 写作. Replaces the old single monitor-icon slides
+ * toggle: the popover's 幻灯片 row is now the slides entry point (picking it
+ * sets mode='slides'; sending then marks the session as a slides session via
+ * markIfSlides → ThreadView's two-pane layout).
+ *
+ * Reuses PermissionModePicker's interaction shape: upward popover (the
+ * composer sits at the window bottom), click-outside + Esc to close, motion
+ * fade, a check on the selected row. 幻灯片 / 写作 carry a blue "Beta" tag.
+ */
+function ComposerModePicker(): React.JSX.Element {
+  const mode = useComposerModeStore((s) => s.mode)
+  const setMode = useComposerModeStore((s) => s.setMode)
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  const current =
+    COMPOSER_MODES.find((m) => m.id === mode) ?? COMPOSER_MODES[0]!
+
+  useEffect(() => {
+    if (!open) return
+    // Hold an "overlay open" count while this popover is up so the composer's
+    // blur strip hides (its backdrop-blur otherwise slices across the menu).
+    // +1 on open, -1 in cleanup → balanced (open→false runs the cleanup, then
+    // the early return skips re-incrementing).
+    const overlay = useComposerOverlayStore.getState()
+    overlay.setOpen(true)
+    const onDown = (e: MouseEvent): void => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      overlay.setOpen(false)
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const choose = (next: ComposerModeId): void => {
+    setMode(next)
+    setOpen(false)
+  }
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="对话模式"
+        className={
+          'group inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[12.5px] transition-colors ' +
+          'border-border/70 bg-card/70 text-muted-foreground hover:border-accent/50 hover:bg-card hover:text-foreground ' +
+          (open ? ' border-accent/60 text-foreground' : '')
+        }
+      >
+        <span className="flex shrink-0 items-center">{current.icon}</span>
+        <span className="leading-none">{current.label}</span>
+        <svg
+          width="10" height="10" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          className={'opacity-60 transition-transform ' + (open ? 'rotate-180' : '')}
+          aria-hidden
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.98 }}
+            transition={{ duration: 0.12, ease: 'easeOut' }}
+            className="absolute bottom-full left-0 z-40 mb-1.5 w-56 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+            role="listbox"
+          >
+            {COMPOSER_MODES.map((meta) => {
+              const selected = meta.id === mode
+              return (
+                <button
+                  key={meta.id}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  onClick={() => choose(meta.id)}
+                  className={
+                    'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors ' +
+                    (selected
+                      ? 'bg-accent/15 text-foreground'
+                      : 'text-muted-foreground hover:bg-accent/10 hover:text-foreground')
+                  }
+                >
+                  <span className="flex shrink-0 items-center">{meta.icon}</span>
+                  <span className="font-medium">{meta.label}</span>
+                  {meta.beta ? (
+                    <span className="rounded-md bg-sky-500/15 px-1.5 py-0.5 text-[10.5px] font-semibold leading-none text-sky-500">
+                      Beta
+                    </span>
+                  ) : null}
+                  <span className="flex-1" />
+                  {selected ? (
+                    <svg
+                      width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                      className="shrink-0 text-accent"
+                      aria-hidden
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : null}
+                </button>
+              )
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/**
+ * A below-card placeholder chip (选择工作目录 / 语气 创意 in figure 18).
+ * VISUAL-ONLY for now.
+ */
+function ComposerBelowChip({
+  label,
+  icon
+}: {
+  label: string
+  icon: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <span
+      className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70"
+      aria-hidden="true"
+    >
+      {icon}
+      {label}
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground/40">
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </span>
   )
 }
 

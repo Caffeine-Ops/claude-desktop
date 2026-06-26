@@ -198,45 +198,9 @@
     font-size: var(--ui-font-size);
   }
 
-  /* Light-theme decorative backdrop — Apple-inspired.
-   *
-   * Apple's design language is reductive: no colorful aurora blobs,
-   * no grid rulers, no textures. Instead the canvas is a solid
-   * `#f5f5f7` (the --background token) with one whisper-thin overhead
-   * halo that mimics a cinematic gallery spotlight — it makes the
-   * center of the viewport feel subtly brighter than the edges,
-   * which in turn makes the chat content (where the user's attention
-   * lives) feel subtly elevated. The effect is so soft you don't
-   * notice it consciously, you just feel the page breathe.
-   *
-   * Two stacked radial gradients:
-   *   1. A wide overhead halo from 50% -20% — near-white at center,
-   *      fading to the base light gray. Simulates overhead studio
-   *      lighting on a product page.
-   *   2. A vignette from 50% 120% — a hair darker at the bottom edge
-   *      than at the middle, so the content region reads as the
-   *      brightest zone. Pulls the eye upward toward the composer.
-   *
-   * `background-attachment: fixed` pins the halo to the viewport so
-   * scrolling the thread doesn't drag it.
-   *
-   * Target is `#root` (not `body`) because assets/main.css gives
-   * #root an opaque background color that would hide any body
-   * background-image. `.dark #root` stays `none`. */
-  :root:not(.dark) #root {
-    background-image:
-      radial-gradient(
-        1600px 900px at 50% -20%,
-        hsla(0, 0%, 100%, 1) 0%,
-        hsla(240, 7%, 97%, 0) 65%
-      ),
-      radial-gradient(
-        1400px 900px at 50% 120%,
-        hsla(240, 6%, 92%, 0.7) 0%,
-        hsla(240, 7%, 97%, 0) 55%
-      );
-    background-attachment: fixed;
-  }
+  /* Light-theme decorative backdrop removed per request — the root now
+     stays a flat background color (assets/main.css #root). The old
+     two-radial-gradient overhead halo + vignette is gone. */
 
   .dark #root {
     background-image: none;

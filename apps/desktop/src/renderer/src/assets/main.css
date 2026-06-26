@@ -64,14 +64,75 @@ body,
   margin: 0;
   padding: 0;
   height: 100%;
-  background-color: hsl(var(--background));
+  /* Root surface fixed to #e8eaee instead of the theme token, per request.
+     The per-surface overrides below (shell / chat) still take precedence
+     where they apply — and are kept at the SAME #e8eaee so the whole window
+     reads as one flat background. */
+  background-color: #e8eaee;
   color: hsl(var(--foreground));
+}
+
+/* Shell-window surface only. The chat card floats with an 8px gap on all
+   sides (tabRegistry CHAT_CARD_GAP), and that gap reveals the SHELL window's
+   root behind the transparent chat view. To make the gap blend seamlessly
+   into the left nav rail, the shell root must paint the SAME colour as the
+   rail (.shell-chrome's --rail-bg) rather than the generic --background.
+   ⚠️ These values are duplicated from .shell-chrome / .dark .shell-chrome's
+   --rail-bg below — there's no shared root-level token, so edit both together
+   (same caveat as NAV_RAIL_WIDTH's CSS/TS duplication). */
+html[data-surface='shell'],
+html[data-surface='shell'] body,
+html[data-surface='shell'] #root {
+  background-color: #e8eaee;
+}
+/* `.dark` is toggled on the <html> element itself (see main.tsx
+   bootAppearance), so it's the SAME node as [data-surface='shell'] — use a
+   compound selector (html.dark[...]), not a descendant one. */
+html.dark[data-surface='shell'],
+html.dark[data-surface='shell'] body,
+html.dark[data-surface='shell'] #root {
+  background-color: color-mix(in srgb, hsl(var(--card)) 70%, hsl(var(--background)));
+}
+
+/* Chat-tab surface only (tagged in main.tsx). The chat WebContentsView now
+   floats as a rounded card with an 8px gap on every side (see tabRegistry.
+   layoutActiveTab), and that gap has to reveal what's UNDER the view — the
+   shell window's own surface. The view paints transparent (setBackgroundColor
+   '#00000000'), so we make the chat renderer's root transparent too; the
+   actual card background lives on `.app` below. Scoped to data-surface='chat'
+   so the shell strip + settings overlay (same bundle) keep their opaque bg. */
+html[data-surface='chat'],
+html[data-surface='chat'] body,
+html[data-surface='chat'] #root {
+  background-color: transparent;
 }
 
 .app {
   display: flex;
   flex-direction: column;
   height: 100vh;
+}
+
+/* The chat surface's `.app` is the floating card itself: it carries the
+   rounded corners + background + a hairline ring, and clips its content
+   (ThreadView, which in slides mode splits into a chat column + the
+   SlidesWorkspace pane) so it inherits the rounded silhouette. The 8px gap
+   that lets the shell show through is applied to the native view bounds in
+   tabRegistry, not here — so .app fills its (already inset) view. */
+html[data-surface='chat'] .app {
+  height: 100%;
+  overflow: hidden;
+  /* 4px to match the inner panes' `rounded` (ThreadView). When it was 12px,
+     the .app clip rounded the slides panes' outer corners to 12px while their
+     own corners stayed 4px — so a pane read with mismatched corners. Keeping
+     all three radii at 4px makes every corner uniform. */
+  border-radius: 4px;
+  /* Background-color removed per request — the chat card no longer paints its
+     own surface; whatever sits behind it (the shell root) shows through. */
+  /* No box-shadow and no outline: the card is defined purely by its rounded
+     silhouette against the rail-coloured backdrop. The drop shadow bled past
+     the corners as square edges, and the hairline border read as an unwanted
+     frame — both removed, leaving a clean borderless card. */
 }
 
 .header {
@@ -119,53 +180,80 @@ body,
  * TabBar used, so the pill row looks unchanged — only the owner moved
  * from each tab's header to this single shared strip.
  *
- * Height is fixed to TAB_BAR_HEIGHT (44px) so the renderer band lines
- * up exactly with the px the main process reserves; a mismatch would
- * leave a sliver of bare shell background or clip the pills. */
+ * Width is fixed to NAV_RAIL_WIDTH (220px) so the renderer band lines
+ * up exactly with the px the main process reserves (tabRegistry.ts); a
+ * mismatch would leave a sliver of bare shell background or clip the
+ * nav. It's a VERTICAL left rail now (was a 44px-tall top strip). */
 .shell-chrome {
+  /* —— Rail palette (light) — matches docs/ui-prototype-sidebar.html ——
+     Scoped to the rail so the chat/canvas areas keep the daemon theme;
+     only this left column adopts the prototype's fixed greys + green so
+     it reads exactly like the mockup. The .dark block below swaps in a
+     dark-friendly set so hardcoded light greys don't bleed into dark mode.
+     Components (TabBar / ShellSessionList / UserInfoBar) read these vars. */
+  --rail-bg: #e8eaee;          /* rail background — kept == shell root (#e8eaee) so the chat-card gap blends seamlessly */
+  --rail-border: #ececeb;      /* right divider / borders */
+  --rail-hover: #ececeb;       /* row hover wash */
+  --rail-active: #e7e7e6;      /* selected row fill (prototype --bg-active) */
+  --rail-text: #1a1a18;        /* primary text */
+  --rail-text-soft: #5f5f5b;   /* secondary text */
+  --rail-muted: #9b9b96;       /* group labels / inactive rows */
+  --rail-accent: #16a34a;      /* green accent (new chat / selection bar) */
+  --rail-accent-soft: #dcf5e6; /* green tint (new-chat hover / avatar bg) */
+  --rail-accent-ink: #0f7a38;  /* darker green (new-chat text / avatar fg) */
+
   display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 44px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 220px;
+  height: 100%;
   box-sizing: border-box;
-  padding: 8px 20px 8px 14px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
-  /* Strip material — must match the web "Open Design" tab's own top tab
-     bar (.workspace-tabs-chrome in apps/web/src/index.css), since both
-     render the SAME multi-tab strip and the user wants them visually
-     identical. The default below covers light mode via shared tokens; the
-     dark-mode value is overridden in `.dark .shell-chrome` to the web
-     strip's exact warm-black material rather than the shared token's pure
-     black — see that block for why. */
-  background-color: hsl(var(--background));
-  backdrop-filter: saturate(180%) blur(28px);
-  -webkit-backdrop-filter: saturate(180%) blur(28px);
+  /* Top padding clears the macOS traffic lights (they live top-left and
+     would otherwise overlap the first nav item). Left/bottom give the rail
+     its inner gutter; right padding is 0 so rows run flush to the rail's
+     right edge. macOS override below bumps padding-top. */
+  padding: 8px 0 10px 10px;
+  /* No right divider and no own background: the shell root already paints
+     --rail-bg (see main.css html[data-surface='shell']), so the rail just
+     lets that show through and blends seamlessly into the gap around the
+     floating chat card. A self-painted bg + a 1px line would both break that
+     continuity. (--rail-bg is still the source of truth — the root copies
+     its value; keep the two in sync.) */
   -webkit-app-region: drag;
 }
 
-/* Dark theme: align the strip 1:1 with web's `.workspace-tabs-chrome`, whose
-   material is a hair-lifted warm black: `color-mix(--bg-panel 70%, --bg)`.
-   Now that the warm-black palette lives in the shared design-tokens .dark
-   scope (--card = web --bg-panel #222120, --background = web --bg #1a1917),
-   we read it through the tokens instead of hardcoding the hex — same result
-   (≈ #201f1d), single source of truth. The strip ends up one shade above the
-   page canvas, exactly like web's tab bar floats over its content. */
+/* Dark theme: a dark-friendly rail palette aligned with web's
+   `.workspace-tabs-chrome` warm black, so the prototype's light greys
+   don't bleed into dark mode. Same variable names → components don't
+   branch on theme. */
 .dark .shell-chrome {
-  border-bottom-color: rgba(255, 255, 255, 0.12);
-  background-color: color-mix(in srgb, hsl(var(--card)) 70%, hsl(var(--background)));
+  --rail-bg: color-mix(in srgb, hsl(var(--card)) 70%, hsl(var(--background)));
+  --rail-border: rgba(255, 255, 255, 0.12);
+  --rail-hover: rgba(255, 255, 255, 0.06);
+  --rail-active: rgba(255, 255, 255, 0.1);
+  --rail-text: hsl(var(--foreground));
+  --rail-text-soft: hsl(var(--foreground) / 0.7);
+  --rail-muted: hsl(var(--foreground) / 0.5);
+  --rail-accent: #2ec96b;
+  --rail-accent-soft: rgba(46, 201, 107, 0.16);
+  --rail-accent-ink: #57d98a;
 }
 
-/* macOS traffic-light gutter — same 82px reserve as .header so the
- * first pill clears the red/yellow/green buttons. data-platform is set
- * in main.tsx before React mounts (first paint already correct). */
+/* macOS traffic-light gutter — the three window controls live top-left,
+ * directly over where the first nav item would paint. Reserve vertical
+ * space at the TOP of the rail (≈44px) so the first item clears them.
+ * data-platform is set in main.tsx before React mounts (first paint
+ * already correct). (Was padding-LEFT:82px when the rail was a top
+ * strip and the lights sat to the left of the first pill.) */
 html[data-platform='darwin'] .shell-chrome {
-  padding-left: 82px;
+  padding-top: 44px;
 }
 
-/* Fullscreen: traffic lights slide out, reclaim the gutter. Same
+/* Fullscreen: traffic lights slide out, reclaim the top gutter. Same
  * data-fullscreen mechanism as .header. */
 html[data-platform='darwin'][data-fullscreen='true'] .shell-chrome {
-  padding-left: 14px;
+  padding-top: 8px;
 }
 
 /* macOS traffic-light gutter. The three window-control circles
@@ -269,5 +357,44 @@ textarea::-moz-selection {
   50%,
   99% {
     opacity: 0;
+  }
+}
+
+
+/* ─────────────── Shimmer text (generating…) ───────────────
+ * A highlight sweeps left→right across the text while content is being
+ * generated — the ChatGPT / Apple "thinking" treatment. The text is painted
+ * with a horizontal gradient (muted base → bright sweep → muted base) clipped
+ * to the glyphs; animating background-position slides the bright band through.
+ * Falls back to a static muted colour under prefers-reduced-motion. */
+@keyframes shimmer-sweep {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.shimmer-text {
+  background: linear-gradient(
+    100deg,
+    hsl(var(--muted-foreground)) 0%,
+    hsl(var(--muted-foreground)) 35%,
+    hsl(var(--foreground)) 50%,
+    hsl(var(--muted-foreground)) 65%,
+    hsl(var(--muted-foreground)) 100%
+  );
+  background-size: 200% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: shimmer-sweep 1.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-text {
+    animation: none;
+    -webkit-text-fill-color: hsl(var(--muted-foreground));
+    color: hsl(var(--muted-foreground));
   }
 }
