@@ -201,9 +201,9 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
   switch (node.type) {
     case 'heading': {
       // 文档里第一个一级标题 → 封面标题样式（居中放大）。其余标题按层级套 HeadingN。
-      // 守卫不含 !ctx?.baseStyle && !ctx?.indent（而非旧的 !ctx）：封面节传 forceAlign-only
-      // ctx，既要保留 Title 样式又要追加居中对齐；blockquote ctx 带 indent/baseStyle，
-      // 仍被排除在外，故双方不变量均满足。
+      // 守卫改为 !ctx?.baseStyle && !ctx?.indent（而非旧的 !ctx）：封面节传入仅含 forceAlign
+      // 的 ctx（truthy），旧的 !ctx 会把封面首个 h1 挡在 Title 分支外；新守卫放行只带
+      // forceAlign 的 ctx，仍排除 blockquote 那种带 baseStyle/indent 的 ctx。
       if (node.depth === 1 && !env.walk.titleConsumed && !ctx?.baseStyle && !ctx?.indent) {
         env.walk.titleConsumed = true
         return [
@@ -490,7 +490,7 @@ function stripLeadingTocHeading(nodes: RootContent[]): RootContent[] {
 // 封面节让首个 h1 走 Title 放大样式（titleConsumed=false）；目录/正文节的 h1 → HeadingN。
 function buildSectionChildren(
   group: SectionGroup,
-  _style: ProposalStyleConfig, // Task 4 将用它注入目录专属排版，此处留位
+  _style: ProposalStyleConfig, // _style 暂未被任何分支消费（封面用 forceAlign、目录用固定 'Title' 样式名、正文走默认）；保留下划线前缀以过 noUnusedLocals。仅 plan 中未应用的竖向居中兜底会用到 style.margin。
   bodyFirstLine: number
 ): Array<Paragraph | Table> {
   const env: WalkEnv = {
