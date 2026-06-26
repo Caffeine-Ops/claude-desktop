@@ -40,6 +40,7 @@ import {
   waitForWebReady
 } from './services/openDesignServices'
 import { APP_SCHEME, registerAppProtocol } from './services/appProtocol'
+import { KB_ASSET_SCHEME, registerKbAssetProtocol } from './services/kbAssetProtocol'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -60,6 +61,15 @@ protocol.registerSchemesAsPrivileged([
       supportFetchAPI: true,
       stream: true,
       codeCache: true
+    }
+  },
+  {
+    scheme: KB_ASSET_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true
     }
   }
 ])
@@ -200,6 +210,8 @@ app.whenReady().then(async () => {
   if (!is.dev) {
     registerAppProtocol()
   }
+
+  registerKbAssetProtocol()
 
   // Boot the single shell window (tab bar) then open the first tab
   // so the user lands directly in a workspace gate rather than an
