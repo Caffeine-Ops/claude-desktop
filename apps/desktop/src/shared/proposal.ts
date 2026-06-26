@@ -280,3 +280,135 @@ export function trigramOverlap(a: string, b: string): number {
   for (const g of A) if (B.has(g)) hit++
   return hit / A.size
 }
+
+// ── M-0 埋点：可交付率代理 + 引用准确度（backlog docs/.../2026-06-26-proposal-optimization-backlog.md）──
+//
+// 北极星=「方案可直接交付率」。当前优先级是假设驱动的，没有真实数据。M-0 在【每次导出】落
+// 一条本地记录（不外传），让后续 backlog 重排有数可依。两个核心数：
+//   ① 可交付率代理：从 AI 生成到导出之间，用户对正文净改了多少字（改得越多 → 越不能直接交付）。
+//   ② 引用准确度：复用 P0-1 已落地的 verification（supported/unsupported/file-not-found 三态），
+//      在导出这一刻把当前各章的引用核对结论快照下来，算编造率（unsupported）/引错率（file-not-found）。
+// 纯函数放 shared 供 renderer 打点与单测共用；真正写盘（appendFile 到 jsonl）在 main（proposalMetricsStore）。
+
+/**
+ * 埋点要读的最小 section 结构（与 renderer 的 ProposalSection 结构兼容，但不依赖其类型）。
+ * - `baselineMarkdown`：该节【AI 生成时的原文】。appendSections/restore 时设，updateSection 不动它，
+ *   故它与 `markdown` 的差就是用户编辑量。缺省（理论不该发生）时退化为「无编辑」。
+ * - `verification`：P0-1 引用核对结论；undefined=导出时尚未校验完，degraded=校验降级（都不计入准确度分母）。
+ */
+export interface ProposalMetricSection {
+  markdown: string
+  baselineMarkdown?: string
+  kind: ProposalKind
+  verification?: SectionVerification
+}
+
+/**
+ * 一条导出埋点记录（v1）。append 一行到 userData/proposal-metrics.jsonl。
+ * 刻意只存聚合数，不存正文片段——埋点是统计信号，不该把客户方案内容沉到这层。
+ */
+export interface ProposalMetricRecord {
+  version: 1
+  /** 落点时间戳（renderer 侧 Date.now()）。 */
+  ts: number
+  sessionId: string
+  /** 触发本记录的导出格式。与 ipc-channels 的 ProposalExportFormat 同源，内联避免 shared 内循环依赖。 */
+  format: 'md' | 'docx'
+  /** 草稿总节数。 */
+  sectionCount: number
+  /** 各 kind 段落数（封面/目录/正文）。 */
+  kindCounts: Record<ProposalKind, number>
+  /**
+   * 可交付率代理。net=Σ|len(当前)−len(生成原文)| 跨所有节的字符净长度变化（廉价代理，非编辑距离：
+   * 等长替换记 0、来回改回原样记 0——契合「交付前到底改了多少」而非「改了几次」）。
+   * 比例 net/generated 越高 → AI 初稿离可直接交付越远。
+   */
+  deliverability: {
+    generatedChars: number
+    finalChars: number
+    netEditedChars: number
+  }
+  /**
+   * 引用准确度快照（仅统计 content 节）。degraded/未校验节排除出 totals 分母——绝不把「没校验」
+   * 误算成「无编造」。编造率=unsupported/totalCitations；引错率=fileNotFound/totalCitations。
+   */
+  citation: {
+    /** 参与统计的 content 节数（有 verification 且非 degraded）。 */
+    verifiedSections: number
+    /** 校验降级、未计入的 content 节数。 */
+    degradedSections: number
+    /** 导出时 verification 仍 undefined（校验未跑完）的 content 节数。 */
+    unverifiedSections: number
+    /** verifiedSections 中 citedFileCount===0（一处来源都没引）的节数——覆盖度红灯。 */
+    zeroCitationSections: number
+    /** 所有 verdict 条数（同一文件跨段多次引用计多条）。 */
+    totalCitations: number
+    supported: number
+    /** 疑似编造/过度改写（重叠率低于阈值）。 */
+    unsupported: number
+    /** 引错文件名 / 镜像读不到。 */
+    fileNotFound: number
+  }
+}
+
+/**
+ * 由当前草稿 sections 组装一条导出埋点记录（纯函数，无 IO）。renderer 在导出成功后调用，
+ * 把结果经 IPC 交给 main 写盘。
+ */
+export function buildProposalMetric(
+  sections: ProposalMetricSection[],
+  meta: { ts: number; sessionId: string; format: 'md' | 'docx' }
+): ProposalMetricRecord {
+  const kindCounts: Record<ProposalKind, number> = { cover: 0, toc: 0, content: 0 }
+  let generatedChars = 0
+  let finalChars = 0
+  let netEditedChars = 0
+  const citation = {
+    verifiedSections: 0,
+    degradedSections: 0,
+    unverifiedSections: 0,
+    zeroCitationSections: 0,
+    totalCitations: 0,
+    supported: 0,
+    unsupported: 0,
+    fileNotFound: 0
+  }
+
+  for (const sec of sections) {
+    kindCounts[sec.kind] += 1
+    const baseline = sec.baselineMarkdown ?? sec.markdown
+    generatedChars += baseline.length
+    finalChars += sec.markdown.length
+    netEditedChars += Math.abs(sec.markdown.length - baseline.length)
+
+    // 引用准确度只对正文有意义（封面/目录不标来源）。
+    if (sec.kind !== 'content') continue
+    if (!sec.verification) {
+      citation.unverifiedSections += 1
+      continue
+    }
+    if (sec.verification.degraded) {
+      citation.degradedSections += 1
+      continue
+    }
+    citation.verifiedSections += 1
+    if (sec.verification.citedFileCount === 0) citation.zeroCitationSections += 1
+    for (const v of sec.verification.verdicts) {
+      citation.totalCitations += 1
+      if (v.status === 'supported') citation.supported += 1
+      else if (v.status === 'unsupported') citation.unsupported += 1
+      else citation.fileNotFound += 1
+    }
+  }
+
+  return {
+    version: 1,
+    ts: meta.ts,
+    sessionId: meta.sessionId,
+    format: meta.format,
+    sectionCount: sections.length,
+    kindCounts,
+    deliverability: { generatedChars, finalChars, netEditedChars },
+    citation
+  }
+}

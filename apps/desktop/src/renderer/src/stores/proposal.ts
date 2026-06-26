@@ -26,6 +26,11 @@ export interface ProposalSection {
   // 「未校验」灰态）。【不持久化】：不进 ProposalDraftRecord，重开会话后按需重算或留空——
   // 它是派生信号，沉到盘上只会与正文漂移。
   verification?: SectionVerification
+  // 该节【AI 生成时的原文】，M-0 埋点的可交付率代理基准：导出时 markdown 与它的字数差
+  // = 用户从生成到交付改了多少。appendSections 时设为 AI 产出原文；restore 路径无从知晓
+  // 真原文，退而以重建出的 markdown 为基准（编辑量从重开后算起）。updateSection 故意不动它。
+  // 【不持久化】：同 verification，是派生信号，不进 ProposalDraftRecord。
+  baselineMarkdown?: string
 }
 
 interface ProposalState {
@@ -148,17 +153,20 @@ export const useProposalStore = create<ProposalState>((set) => ({
       consumed.add(messageId)
       // kind 取自每个哨兵块自带的标签（AI 在哨兵里声明封面/目录/正文），不再取自全局 phase。
       // 这样无论用户走右侧按钮还是直接在聊天里驱动阶段，草稿都按内容真实归档。
+      // baselineMarkdown 在此设为 AI 产出原文，作 M-0 可交付率代理基准（后续 updateSection 不动它）。
       const added: ProposalSection[] = blocks.map((b) => ({
         id: crypto.randomUUID(),
         markdown: b.markdown,
-        kind: b.kind
+        kind: b.kind,
+        baselineMarkdown: b.markdown
       }))
       if (truncated) {
         added.push({
           id: crypto.randomUUID(),
           markdown: truncated.markdown,
           kind: truncated.kind,
-          truncated: true
+          truncated: true,
+          baselineMarkdown: truncated.markdown
         })
       }
       // 阶段条同步真实进度：把 phase 推进到本轮新块里最靠后的 kind（cover<toc<content，
@@ -209,7 +217,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       products: [],
       seeded: true,
       consumedDraftIds,
-      sections,
+      // 重建时无从知晓 AI 原文，以重建出的 markdown 作埋点基准（编辑量从重开后算起）。
+      sections: sections.map((s) => ({ ...s, baselineMarkdown: s.baselineMarkdown ?? s.markdown })),
       phase,
       workspaceOpen: true,
       viewMode: 'preview'
@@ -221,7 +230,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       products: record.products,
       seeded: true,
       consumedDraftIds: new Set(),
-      sections: record.sections,
+      // 盘上不存 baselineMarkdown（不持久化）；以盘载 markdown 作埋点基准，编辑量从本次重开算起。
+      sections: record.sections.map((s) => ({ ...s, baselineMarkdown: s.markdown })),
       phase: record.phase,
       workspaceOpen: true,
       viewMode: 'preview'

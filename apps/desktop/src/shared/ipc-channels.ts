@@ -8,7 +8,7 @@ import type {
 } from './types'
 import type { ThreadMessageLike } from '@assistant-ui/react'
 import type { ProposalStyleConfig } from './proposalStyle'
-import type { ProposalKind, SectionVerification } from './proposal'
+import type { ProposalKind, ProposalMetricRecord, SectionVerification } from './proposal'
 
 /**
  * Central registry of IPC channel names. Main and renderer both import
@@ -466,7 +466,13 @@ export const IPC_CHANNELS = {
    * （trigram 重叠），返回每条引用的 verdict + 覆盖度。校验须在主进程（要读 userData
    * 镜像文件）；renderer 仅取结果用于标红/覆盖度徽标。失败降级（degraded:true），绝不阻塞。
    */
-  PROPOSAL_VERIFY: 'proposal:verify'
+  PROPOSAL_VERIFY: 'proposal:verify',
+  /**
+   * Renderer → main. M-0 埋点：每次导出成功后 append 一条聚合记录到
+   * userData/proposal-metrics/metrics.jsonl（可交付率代理 + 引用准确度）。本地不外传，
+   * 失败静默——埋点是旁路信号，绝不阻塞导出。
+   */
+  PROPOSAL_METRIC_LOG: 'proposal:metric-log'
 } as const
 
 /**
@@ -906,6 +912,10 @@ export interface ProposalDeleteDraftPayload {
 export interface ProposalSaveDraftResult {
   ok: boolean
 }
+/** Result of PROPOSAL_METRIC_LOG。payload 直接是 ProposalMetricRecord（见 shared/proposal.ts）。 */
+export interface ProposalMetricLogResult {
+  ok: boolean
+}
 export interface ProposalDeleteDraftResult {
   ok: boolean
 }
@@ -1300,6 +1310,12 @@ export interface ChatApi {
   saveProposalDraft(record: ProposalDraftRecord): Promise<ProposalSaveDraftResult>
   loadProposalDraft(payload: ProposalLoadDraftPayload): Promise<ProposalDraftRecord | null>
   deleteProposalDraft(payload: ProposalDeleteDraftPayload): Promise<ProposalDeleteDraftResult>
+
+  /**
+   * M-0 埋点：每次导出成功后 append 一条聚合记录（可交付率代理 + 引用准确度）到本地
+   * jsonl。本地不外传，失败返回 ok:false（绝不抛）——埋点是旁路信号，不阻塞导出。
+   */
+  logProposalMetric(record: ProposalMetricRecord): Promise<ProposalMetricLogResult>
 }
 
 /**

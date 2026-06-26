@@ -64,8 +64,10 @@ import {
   type ProposalLoadDraftPayload,
   type ProposalDeleteDraftPayload,
   type ProposalSaveDraftResult,
-  type ProposalDeleteDraftResult
+  type ProposalDeleteDraftResult,
+  type ProposalMetricLogResult
 } from '../shared/ipc-channels'
+import type { ProposalMetricRecord } from '../shared/proposal'
 
 // Visible in the Electron terminal if the preload actually loads.
 console.log('[preload] loaded — exposing chatApi')
@@ -444,6 +446,12 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PROPOSAL_DELETE_DRAFT,
       payload
     ) as Promise<ProposalDeleteDraftResult>
+  },
+  logProposalMetric(record: ProposalMetricRecord): Promise<ProposalMetricLogResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_METRIC_LOG,
+      record
+    ) as Promise<ProposalMetricLogResult>
   }
 }
 

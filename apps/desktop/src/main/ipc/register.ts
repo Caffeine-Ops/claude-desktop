@@ -88,6 +88,7 @@ import {
   loadProposalDraft,
   deleteProposalDraft
 } from '../core/proposalDraftStore'
+import { appendProposalMetric } from '../core/proposalMetricsStore'
 import type {
   ProposalExportPayload,
   ProposalExportResult,
@@ -99,8 +100,10 @@ import type {
   ProposalLoadDraftPayload,
   ProposalDeleteDraftPayload,
   ProposalSaveDraftResult,
-  ProposalDeleteDraftResult
+  ProposalDeleteDraftResult,
+  ProposalMetricLogResult
 } from '../../shared/ipc-channels'
+import type { ProposalMetricRecord } from '../../shared/proposal'
 
 /**
  * Resolve the ChatEngine for the window that sent this IPC event.
@@ -240,6 +243,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_SAVE_DRAFT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_LOAD_DRAFT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_DELETE_DRAFT)
+  // VERIFY 此前漏登记清理——dev HMR 重跑本函数时会因 handler 已存在而 throw「second handler」。补上。
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_VERIFY)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_METRIC_LOG)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -1132,6 +1138,24 @@ export function registerIpcHandlers(): void {
         return { ok: true }
       } catch (err) {
         console.warn('[ipc] deleteProposalDraft failed:', err)
+        return { ok: false }
+      }
+    }
+  )
+
+  // M-0 埋点（backlog 度量层）：每次导出成功后落一条聚合记录到 userData/proposal-metrics/。
+  // 防御式：非法载荷直接 ok:false，append 失败 catch 后降级——埋点是旁路信号，绝不阻塞导出。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_METRIC_LOG,
+    async (_event, record: ProposalMetricRecord): Promise<ProposalMetricLogResult> => {
+      if (!record || record.version !== 1 || typeof record.sessionId !== 'string') {
+        return { ok: false }
+      }
+      try {
+        await appendProposalMetric(record)
+        return { ok: true }
+      } catch (err) {
+        console.warn('[ipc] logProposalMetric failed:', err)
         return { ok: false }
       }
     }

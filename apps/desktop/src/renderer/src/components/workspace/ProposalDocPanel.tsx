@@ -3,7 +3,12 @@ import { useProposalStore, useProposalWorkspace } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
 import type { ProposalExportFormat } from '@shared/ipc-channels'
 import type { ProposalStyleConfig } from '@shared/proposalStyle'
-import { buildProposalMarkdown, PROPOSAL_DRAFT_BEGIN, PROPOSAL_DRAFT_END } from '@shared/proposal'
+import {
+  buildProposalMarkdown,
+  buildProposalMetric,
+  PROPOSAL_DRAFT_BEGIN,
+  PROPOSAL_DRAFT_END
+} from '@shared/proposal'
 import { sendProposalStageMessage } from '../../lib/sendProposalStageMessage'
 import { ProposalPaper } from './ProposalPaper'
 import { ProposalPreview } from './ProposalPreview'
@@ -89,6 +94,14 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     try {
       // style 仅 docx 用得到（驱动样式模板）；.md 透传 undefined，main 端忽略。
       const r = await window.chatApi.exportProposal({ markdown, format, style })
+      // M-0 埋点：仅在真导出（r.path 非 null，非取消）时落一条本地记录。从 getState() 取最新
+      // sections（含 baseline/verification）与 sessionId，不依赖闭包旧值；fire-and-forget 不阻塞。
+      if (r.path) {
+        const { sections: latest, sessionId } = useProposalStore.getState()
+        void window.chatApi.logProposalMetric(
+          buildProposalMetric(latest, { ts: Date.now(), sessionId: sessionId ?? '', format })
+        )
+      }
       setExportMsg(
         r.path ? { tone: 'ok', text: `已导出：${r.path}` } : { tone: 'muted', text: '已取消导出' }
       )

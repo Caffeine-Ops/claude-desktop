@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test'
 
-import { parseCitations, trigramOverlap } from './proposal'
+import { parseCitations, trigramOverlap, buildProposalMetric } from './proposal'
+import type { ProposalMetricSection } from './proposal'
 
 describe('parseCitations', () => {
   it('无引用 → 空数组', () => {
@@ -66,5 +67,101 @@ describe('trigramOverlap', () => {
 
   it('忽略空白后比较', () => {
     expect(trigramOverlap('智 能 预 问 诊', '智能预问诊')).toBe(1)
+  })
+})
+
+describe('buildProposalMetric', () => {
+  const META = { ts: 1000, sessionId: 's1', format: 'docx' as const }
+
+  it('空草稿 → 全 0', () => {
+    const r = buildProposalMetric([], META)
+    expect(r.sectionCount).toBe(0)
+    expect(r.kindCounts).toEqual({ cover: 0, toc: 0, content: 0 })
+    expect(r.deliverability).toEqual({ generatedChars: 0, finalChars: 0, netEditedChars: 0 })
+    expect(r.citation.totalCitations).toBe(0)
+    expect(r.ts).toBe(1000)
+    expect(r.format).toBe('docx')
+  })
+
+  it('各 kind 段落数按 kind 计', () => {
+    const secs: ProposalMetricSection[] = [
+      { markdown: 'a', kind: 'cover' },
+      { markdown: 'b', kind: 'toc' },
+      { markdown: 'c', kind: 'content' },
+      { markdown: 'd', kind: 'content' }
+    ]
+    expect(buildProposalMetric(secs, META).kindCounts).toEqual({ cover: 1, toc: 1, content: 2 })
+  })
+
+  it('净编辑字数=Σ|len(当前)−len(生成原文)|，无 baseline 记 0', () => {
+    const secs: ProposalMetricSection[] = [
+      { markdown: '1234567890', baselineMarkdown: '12345' }, // 生成5字→改成10字，净+5
+      { markdown: '12', baselineMarkdown: '12345' }, // 生成5字→删成2字，净3
+      { markdown: 'xyz' } // 无 baseline → 净 0
+    ].map((s) => ({ ...s, kind: 'content' as const }))
+    const r = buildProposalMetric(secs, META)
+    expect(r.deliverability.generatedChars).toBe(5 + 5 + 3) // 无 baseline 退化为当前长
+    expect(r.deliverability.finalChars).toBe(10 + 2 + 3)
+    expect(r.deliverability.netEditedChars).toBe(5 + 3 + 0)
+  })
+
+  it('引用三态聚合，仅统计 content、按 verdict 累加', () => {
+    const secs: ProposalMetricSection[] = [
+      // 封面有 verification 也不计入引用统计
+      {
+        markdown: 'cover',
+        kind: 'cover',
+        verification: { verdicts: [{ file: 'X', status: 'supported', overlap: 0.9 }], citedFileCount: 1 }
+      },
+      {
+        markdown: 'c1',
+        kind: 'content',
+        verification: {
+          verdicts: [
+            { file: 'A', status: 'supported', overlap: 0.8 },
+            { file: 'B', status: 'unsupported', overlap: 0.1 }
+          ],
+          citedFileCount: 2
+        }
+      },
+      {
+        markdown: 'c2',
+        kind: 'content',
+        verification: { verdicts: [{ file: 'C', status: 'file-not-found' }], citedFileCount: 1 }
+      }
+    ]
+    const r = buildProposalMetric(secs, META)
+    expect(r.citation.verifiedSections).toBe(2)
+    expect(r.citation.totalCitations).toBe(3)
+    expect(r.citation.supported).toBe(1)
+    expect(r.citation.unsupported).toBe(1)
+    expect(r.citation.fileNotFound).toBe(1)
+  })
+
+  it('degraded / 未校验的 content 节排除出分母', () => {
+    const secs: ProposalMetricSection[] = [
+      { markdown: 'a', kind: 'content', verification: { verdicts: [], citedFileCount: 0, degraded: true } },
+      { markdown: 'b', kind: 'content' }, // 未校验
+      {
+        markdown: 'c',
+        kind: 'content',
+        verification: { verdicts: [{ file: 'A', status: 'supported', overlap: 0.9 }], citedFileCount: 1 }
+      }
+    ]
+    const r = buildProposalMetric(secs, META)
+    expect(r.citation.degradedSections).toBe(1)
+    expect(r.citation.unverifiedSections).toBe(1)
+    expect(r.citation.verifiedSections).toBe(1)
+    expect(r.citation.totalCitations).toBe(1)
+  })
+
+  it('已校验但 0 引用 → 覆盖度红灯计数', () => {
+    const secs: ProposalMetricSection[] = [
+      { markdown: 'a', kind: 'content', verification: { verdicts: [], citedFileCount: 0 } }
+    ]
+    const r = buildProposalMetric(secs, META)
+    expect(r.citation.verifiedSections).toBe(1)
+    expect(r.citation.zeroCitationSections).toBe(1)
+    expect(r.citation.totalCitations).toBe(0)
   })
 })
