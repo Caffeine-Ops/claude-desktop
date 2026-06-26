@@ -48,6 +48,24 @@ describe('chunkText', () => {
     expect(chunkText('')).toEqual([])
     expect(chunkText('   \n\n   ')).toEqual([])
   })
+
+  it('大表格不被窗口硬切，整块保留且分隔行完好', () => {
+    // markdown 表格行间无空行 → 本是一个 block；其长度远超 CHUNK_MAX，
+    // 旧逻辑会按 600 字窗口硬切（劈碎行/单元格），新逻辑应整块保留。
+    const header = '| 指标 | 数值 | 说明 |\n| --- | --- | --- |\n'
+    const row = '| 某项目某项目 | 一二三四五六 | 这是一行较长的说明文字用于把表格撑过长度上限 |\n'
+    const table = header + row.repeat(40) // 约 1800+ 字，远超 CHUNK_MAX
+    const chunks = chunkText(table)
+    expect(chunks).toHaveLength(1)
+    expect(chunks[0]).toContain('| --- | --- | --- |')
+  })
+
+  it('超长非表格段仍按窗口硬切（无回归，分割线 --- 不算表格）', () => {
+    // 纯 --- 分隔线无管道符，不应被当作表格；超长纯文本仍按窗口切。
+    const long = '甲'.repeat(CHUNK_MAX + 50) + '\n\n---\n\n' + '乙'.repeat(CHUNK_MAX + 50)
+    const chunks = chunkText(long)
+    expect(chunks.length).toBeGreaterThanOrEqual(2)
+  })
 })
 
 describe('rankChunks', () => {

@@ -52,6 +52,17 @@ export function tokenize(s: string): string[] {
 }
 
 /**
+ * 判定一个块是否为 GFM 表格：存在一行「分隔行」——只由 | : - 空白组成、含至少一段 ≥3 个
+ * 连字符、且含管道符 `|`。要求含 `|` 是为把表格分隔行与普通水平分割线 `---`（thematicBreak，
+ * 无管道符）区分开，后者不该被当表格、仍走窗口硬切。
+ */
+function isTableBlock(block: string): boolean {
+  return block
+    .split('\n')
+    .some((line) => line.includes('|') && /^\s*\|?[\s|:-]*-{3,}[\s|:-]*\|?\s*$/.test(line))
+}
+
+/**
  * 把一篇文本切成检索块：先按空行切段，连续短段合并到 ≥ {@link CHUNK_MIN}（但不超
  * {@link CHUNK_MAX}），单段超 CHUNK_MAX 的按定长窗口硬切。返回非空块数组。
  */
@@ -71,7 +82,11 @@ export function chunkText(text: string): string[] {
   for (const b of blocks) {
     if (b.length >= CHUNK_MAX) {
       flush()
-      for (let i = 0; i < b.length; i += CHUNK_MAX) chunks.push(b.slice(i, i + CHUNK_MAX))
+      // 表格保形：大表整块保留，绝不按定长窗口硬切（那会把行/单元格/分隔行劈碎，召回片段
+      // 里表格就不成形了）。代价是单个巨表块可能超 CHUNK_MAX——可接受：上游 retrievePassages
+      // 还有 MAX_FILES / MAX_TOTAL_BYTES 兜注入预算，且巨表本就该整块呈现。
+      if (isTableBlock(b)) chunks.push(b)
+      else for (let i = 0; i < b.length; i += CHUNK_MAX) chunks.push(b.slice(i, i + CHUNK_MAX))
       continue
     }
     const merged = buf ? `${buf}\n\n${b}` : b
