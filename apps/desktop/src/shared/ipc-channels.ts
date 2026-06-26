@@ -8,7 +8,7 @@ import type {
 } from './types'
 import type { ThreadMessageLike } from '@assistant-ui/react'
 import type { ProposalStyleConfig } from './proposalStyle'
-import type { ProposalKind } from './proposal'
+import type { ProposalKind, SectionVerification } from './proposal'
 
 /**
  * Central registry of IPC channel names. Main and renderer both import
@@ -460,7 +460,13 @@ export const IPC_CHANNELS = {
   /** Renderer → main. 写入/读出/删除某会话的持久化草稿（userData/proposal-drafts/<id>.json）。 */
   PROPOSAL_SAVE_DRAFT: 'proposal:save-draft',
   PROPOSAL_LOAD_DRAFT: 'proposal:load-draft',
-  PROPOSAL_DELETE_DRAFT: 'proposal:delete-draft'
+  PROPOSAL_DELETE_DRAFT: 'proposal:delete-draft',
+  /**
+   * Renderer → main. 核对一节正文里的 `（据《X》）` 引用是否真出自所引镜像原文
+   * （trigram 重叠），返回每条引用的 verdict + 覆盖度。校验须在主进程（要读 userData
+   * 镜像文件）；renderer 仅取结果用于标红/覆盖度徽标。失败降级（degraded:true），绝不阻塞。
+   */
+  PROPOSAL_VERIFY: 'proposal:verify'
 } as const
 
 /**
@@ -557,6 +563,16 @@ export type ChatSendPayload = {
    * 缺省/空数组 = 未识别到 → main 退回整个镜像根目录由 AI 自行 Grep 定位。
    */
   proposalProducts?: readonly { productLine: string; product: string }[]
+  /**
+   * 内容级召回开关（#2）：封面阶段外（phase !== 'cover'，即目录+正文回合）由渲染层置 true。
+   * 为真时 engine 用本回合文本对已限定产品的镜像原文做关键词召回，把命中的真实片段注入本
+   * 回合上下文（与文件清单并存、增量），治「知识库有料却没引到」。
+   *
+   * 为什么是「非封面」而非「仅正文」：phase 只在点阶段按钮时前进，用户手敲推进语时 phase
+   * 滞后会漏掉首个正文回合的召回（实测踩到）。放宽到非封面后手敲/点按钮都触发。封面回合
+   * （首发播种、问客户名）不召回。缺省/false = 不召回，回落到「只给文件清单让 AI 自查」。
+   */
+  proposalRetrieve?: boolean
 }
 export type ChatSendResult = { messageId: string }
 export type ChatAbortPayload = { sessionId: string }
@@ -873,6 +889,13 @@ export interface ProposalDraftRecord {
   phase: ProposalKind
   updatedAt: number
 }
+
+/** Payload for PROPOSAL_VERIFY：待核对的一节正文 markdown（含 `（据《X》）` 引用）。 */
+export interface ProposalVerifyPayload {
+  markdown: string
+}
+/** Result of PROPOSAL_VERIFY：引用核对汇总（见 shared/proposal.ts 的 SectionVerification）。 */
+export type ProposalVerifyResult = SectionVerification
 
 export interface ProposalLoadDraftPayload {
   sessionId: string
@@ -1262,6 +1285,12 @@ export interface ChatApi {
    * on render failure — the renderer shows an error state.
    */
   renderProposal(payload: ProposalRenderPayload): Promise<ProposalRenderResult>
+
+  /**
+   * 核对一节正文的引用是否真出自所引镜像原文。renderer 在每段正文生成后异步调用，
+   * 拿结果给 ProposalPaper 标红/打覆盖度徽标。失败返回 degraded:true（UI 显示「未校验」）。
+   */
+  verifyProposalCitations(payload: ProposalVerifyPayload): Promise<ProposalVerifyResult>
 
   /**
    * 持久化草稿三件套。saveProposalDraft 写盘并跑 LRU；loadProposalDraft 不存在返回 null；

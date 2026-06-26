@@ -58,6 +58,8 @@ import {
   type ProposalExportResult,
   type ProposalRenderPayload,
   type ProposalRenderResult,
+  type ProposalVerifyPayload,
+  type ProposalVerifyResult,
   type ProposalDraftRecord,
   type ProposalLoadDraftPayload,
   type ProposalDeleteDraftPayload,
@@ -414,6 +416,12 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PROPOSAL_RENDER,
       payload
     ) as Promise<ProposalRenderResult>
+  },
+  verifyProposalCitations(payload: ProposalVerifyPayload): Promise<ProposalVerifyResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_VERIFY,
+      payload
+    ) as Promise<ProposalVerifyResult>
   },
   saveProposalDraft(record: ProposalDraftRecord): Promise<ProposalSaveDraftResult> {
     return ipcRenderer.invoke(

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { ProposalDraftBlock, ProposalKind } from '@shared/proposal'
+import type { ProposalDraftBlock, ProposalKind, SectionVerification } from '@shared/proposal'
 import type { ProposalDraftRecord } from '@shared/ipc-channels'
 import { useChatStore } from './chat'
 
@@ -21,6 +21,11 @@ export interface ProposalSection {
   // 未推进）时目录也归到目录区，不会错塞进封面区（重复目录的根因修复）。决定草稿分区
   // 渲染（ProposalPaper）与导出分页（buildProposalMarkdown）。
   kind: ProposalKind
+  // 引用落地校验结果（#1）：仅 content 节有意义，由 FusionRuntimeProvider 在该节生成后
+  // 异步经 IPC 取回、setSectionVerification 回填。undefined = 尚未校验/校验中（UI 显示
+  // 「未校验」灰态）。【不持久化】：不进 ProposalDraftRecord，重开会话后按需重算或留空——
+  // 它是派生信号，沉到盘上只会与正文漂移。
+  verification?: SectionVerification
 }
 
 interface ProposalState {
@@ -51,8 +56,9 @@ interface ProposalState {
   // 与 active 分离：「返回」只关工作台、不销毁草稿，可再入。start() 时置 true。
   workspaceOpen: boolean
   // 文档面板「编辑｜预览」视图。提到 store 而非 ProposalDocPanel 本地 state：面板在
-  // 前台会话切走时会整体卸载（!show → return null），本地 state 会被重置回 edit，
-  // 用户切回会被悄悄拽回编辑态。放 store 里跨卸载存活（评审 #3）。
+  // 前台会话切走时会整体卸载（!show → return null），本地 state 会被重置回默认态，
+  // 用户切回会被悄悄拽回。放 store 里跨卸载存活（评审 #3）。
+  // 默认值为 'preview'（进页面先看预览，可经切换按钮切到 'edit'）——见各初始化点。
   viewMode: 'edit' | 'preview'
   start: (sessionId: string) => void
   setProducts: (products: ProposalProduct[]) => void
@@ -70,6 +76,8 @@ interface ProposalState {
   // 目录节保持原 kind。按钮在调用本方法后另发推进消息给 AI。
   advancePhase: (to: ProposalKind) => void
   updateSection: (id: string, markdown: string) => void
+  // 回填某节的引用校验结果（#1）。section 可能已被删/重排，故按 id 查找；找不到则 no-op。
+  setSectionVerification: (id: string, verification: SectionVerification) => void
   removeSection: (id: string) => void
   moveSection: (id: string, dir: 'up' | 'down') => void
   setWorkspaceOpen: (open: boolean) => void
@@ -111,7 +119,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   sections: [],
   phase: 'cover',
   workspaceOpen: false,
-  viewMode: 'edit',
+  viewMode: 'preview',
   start: (sessionId) =>
     set({
       active: true,
@@ -122,7 +130,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       sections: [],
       phase: 'cover',
       workspaceOpen: true,
-      viewMode: 'edit'
+      viewMode: 'preview'
     }),
   setProducts: (products) => set({ products }),
   seedProducts: (products) => set({ products, seeded: true }),
@@ -168,6 +176,10 @@ export const useProposalStore = create<ProposalState>((set) => ({
     set((s) => ({
       sections: s.sections.map((sec) => (sec.id === id ? { ...sec, markdown } : sec))
     })),
+  setSectionVerification: (id, verification) =>
+    set((s) => ({
+      sections: s.sections.map((sec) => (sec.id === id ? { ...sec, verification } : sec))
+    })),
   removeSection: (id) =>
     set((s) => ({ sections: s.sections.filter((sec) => sec.id !== id) })),
   moveSection: (id, dir) =>
@@ -200,7 +212,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       sections,
       phase,
       workspaceOpen: true,
-      viewMode: 'edit'
+      viewMode: 'preview'
     }),
   restoreFromDisk: (record) =>
     set({
@@ -212,7 +224,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       sections: record.sections,
       phase: record.phase,
       workspaceOpen: true,
-      viewMode: 'edit'
+      viewMode: 'preview'
     }),
   reset: () =>
     set({
@@ -224,7 +236,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       sections: [],
       phase: 'cover',
       workspaceOpen: false,
-      viewMode: 'edit'
+      viewMode: 'preview'
     })
 }))
 

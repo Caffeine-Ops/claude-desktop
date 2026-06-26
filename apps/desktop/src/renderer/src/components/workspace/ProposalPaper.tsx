@@ -1,8 +1,60 @@
 import { useState } from 'react'
-import { useProposalStore } from '../../stores/proposal'
+import { useProposalStore, type ProposalSection } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 import type { ProposalKind } from '@shared/proposal'
+
+/**
+ * 引用落地校验（#1）的节级提示条。仅对正文节（content）渲染：
+ *  - verification 尚未回填（undefined）→ 不渲染（校验中，避免闪烁）。
+ *  - degraded → 灰「未校验」（索引缺失/异常，≠「无编造」，绝不报绿）。
+ *  - 有 file-not-found / unsupported → 红，逐文件列出，提示人工核对。
+ *  - citedFileCount===0 → 红「本段未引用任何来源」。
+ *  - 全 supported 且有引用 → 淡绿「N 处来源已核对」，给正向反馈。
+ * 封面/目录节不标来源（提示词规则 3），一律不渲染。
+ */
+function renderVerification(sec: ProposalSection): React.JSX.Element | null {
+  if (sec.kind !== 'content') return null
+  const v = sec.verification
+  if (!v) return null
+  if (v.degraded) {
+    return (
+      <div className="mb-1 rounded bg-neutral-500/10 px-1.5 py-0.5 text-[11px] text-neutral-500">
+        来源未校验（知识库索引不可用）
+      </div>
+    )
+  }
+  if (v.citedFileCount === 0) {
+    return (
+      <div className="mb-1 rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
+        ⚠ 本段未引用任何来源，无法溯源，请核对是否凭空生成
+      </div>
+    )
+  }
+  const notFound = [...new Set(v.verdicts.filter((d) => d.status === 'file-not-found').map((d) => d.file))]
+  const unsupported = [...new Set(v.verdicts.filter((d) => d.status === 'unsupported').map((d) => d.file))]
+  if (notFound.length === 0 && unsupported.length === 0) {
+    return (
+      <div className="mb-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600">
+        ✓ {v.citedFileCount} 处来源已核对
+      </div>
+    )
+  }
+  return (
+    <div className="mb-1 space-y-0.5">
+      {unsupported.length > 0 && (
+        <div className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
+          ⚠ 这段在{unsupported.map((f) => `《${f}》`).join('、')}里没找到（重叠率低），疑似编造，请核对
+        </div>
+      )}
+      {notFound.length > 0 && (
+        <div className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
+          ⚠ {notFound.map((f) => `《${f}》`).join('、')}不在知识库索引里，无法核对来源
+        </div>
+      )}
+    </div>
+  )
+}
 
 /**
  * 编辑态：一张连续的 A4 宽长纸，分节无缝拼接、向下滚动不分页。
@@ -88,6 +140,8 @@ export function ProposalPaper(): React.JSX.Element {
           ⚠ 本段疑似截断（AI 未写结束标记），内容可能不完整，请复核或重新生成
         </div>
       )}
+
+      {renderVerification(sec)}
 
       {editingId === sec.id ? (
         <textarea

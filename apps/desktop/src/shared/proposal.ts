@@ -184,3 +184,99 @@ export function buildProposalMarkdown(
   }
   return parts.join('\n\n').trim()
 }
+
+// ───────────────────────── 引用落地校验（#1） ─────────────────────────
+//
+// 正文每段末尾按提示词规则 3 标 `（据《文件名》）`，但这标注是 AI 写完才贴的、无人验真。
+// 客户级方案里一处编造即灾难。下面这套把「段落正文」与它所引「镜像原文」做 trigram 重叠
+// 核对：忠实搬运 → 高重叠（supported）；编造/过度改写 → 低重叠（unsupported）。
+// 纯函数（parseCitations / trigramOverlap）放 shared 供 main 核对与单测共用；真正读镜像
+// 文件的 verifyCitations 在 main（proposalVerify.ts），renderer 经 IPC 取结果。
+
+/**
+ * 一条引用的核对结论。`file` 是《》里的文件 title（= KB 索引的 title）。
+ * - `supported`：段落正文与所引文件原文的字符 trigram 重叠率 ≥ 阈值。
+ * - `unsupported`：重叠率低于阈值（疑似编造或过度改写）。
+ * - `file-not-found`：该 title 不在 KB 索引（ok 文件）里，或镜像文件读不到。
+ */
+export interface CitationVerdict {
+  file: string
+  status: 'supported' | 'unsupported' | 'file-not-found'
+  /** trigram 重叠率，supported/unsupported 时有；file-not-found 时无。 */
+  overlap?: number
+}
+
+/**
+ * 一节正文的引用核对汇总。`degraded=true` 表示校验整体失败（索引缺失 / 异常降级），
+ * UI 应显示「未校验」灰标而非红/绿结论——绝不能把降级误判成「无编造」。
+ */
+export interface SectionVerification {
+  verdicts: CitationVerdict[]
+  /** 段内去重后引用的文件数（覆盖度）；content 段为 0 = 未引用任何来源。 */
+  citedFileCount: number
+  degraded?: boolean
+}
+
+/** 一段正文 + 它末尾引用的文件名集合（解析自 `（据《X》《Y》）`）。 */
+export interface ParsedCitationParagraph {
+  paragraph: string
+  files: string[]
+}
+
+// 引用组：中文括号「（据…）」，组内可含多个《》。组前面紧邻的正文是被它支持的段落。
+// 用 indexOf 不够（要捕获组内文件名），用正则；`（` `）` `《` `》` 非正则元字符，安全。
+const CITATION_GROUP_RE = /（据([^）]*)）/g
+const CITATION_FILE_RE = /《([^》]+)》/g
+
+/**
+ * 解析正文里的引用：以每个「（据…）」引用组为锚，引用归属于它前面紧邻的正文片段
+ * （到上一个引用组结束或文本开头）。返回每段正文及其引用的文件名集合（去重、保序）。
+ * 引用组内无《》或正文为空仍计入（files 可空时跳过该组）。无引用组 → []。
+ * main 与 renderer 共享的纯函数。
+ */
+export function parseCitations(markdown: string): ParsedCitationParagraph[] {
+  if (!markdown) return []
+  const out: ParsedCitationParagraph[] = []
+  let lastEnd = 0
+  CITATION_GROUP_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = CITATION_GROUP_RE.exec(markdown)) !== null) {
+    const paragraph = markdown.slice(lastEnd, m.index).trim()
+    const files: string[] = []
+    CITATION_FILE_RE.lastIndex = 0
+    let fm: RegExpExecArray | null
+    while ((fm = CITATION_FILE_RE.exec(m[1])) !== null) {
+      const name = fm[1].trim()
+      if (name && !files.includes(name)) files.push(name)
+    }
+    if (files.length) out.push({ paragraph, files })
+    lastEnd = m.index + m[0].length
+  }
+  return out
+}
+
+/**
+ * a 的字符 trigram 集合被 b 覆盖的比例（|A∩B| / |A|）。中文按字符 3-gram，忽略空白。
+ * a 规整后不足 3 字时退化为「a 是否为 b 的子串」（1 或 0）。任一空串 → 0。
+ *
+ * 用于「这段正文是否真出自所引原文」：忠实搬运 → 高重叠；编造 → 低重叠。方向性是有意的
+ * （只问 a 的 gram 有多少在 b 里，不对称）：原文 b 通常远长于段落 a，用 |A| 作分母才不会
+ * 被 b 的长度稀释。
+ */
+export function trigramOverlap(a: string, b: string): number {
+  const norm = (s: string): string => s.replace(/\s+/g, '')
+  const na = norm(a)
+  const nb = norm(b)
+  if (!na || !nb) return 0
+  if (na.length < 3) return nb.includes(na) ? 1 : 0
+  const gramsOf = (s: string): Set<string> => {
+    const set = new Set<string>()
+    for (let i = 0; i + 3 <= s.length; i++) set.add(s.slice(i, i + 3))
+    return set
+  }
+  const A = gramsOf(na)
+  const B = gramsOf(nb)
+  let hit = 0
+  for (const g of A) if (B.has(g)) hit++
+  return hit / A.size
+}

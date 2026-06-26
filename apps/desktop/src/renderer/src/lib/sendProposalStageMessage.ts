@@ -28,7 +28,13 @@ export async function sendProposalStageMessage(text: string): Promise<void> {
       sessionId: sid,
       text,
       proposalMode: true,
-      proposalProducts: ps.products
+      proposalProducts: ps.products,
+      // 内容级召回（#2）：封面阶段外都开（phase !== 'cover'，即目录+正文）。原先卡死
+      // phase==='content'，但 phase 只在点阶段按钮时才前进——用户【手敲】推进语（而非点
+      // 按钮）时 phase 滞后，首个正文回合会漏召回（实测踩到）。放宽到「非封面」后，无论
+      // 点按钮还是手敲，进了目录/正文都触发；封面回合（首发播种、问客户名）仍不召回。
+      // 安全保底：召回零命中时不注入（renderRetrievedBlock 返回空串），偶尔在目录回合触发亦无害。
+      proposalRetrieve: ps.phase !== 'cover'
     }
   })
 }

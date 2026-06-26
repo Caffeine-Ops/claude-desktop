@@ -544,7 +544,12 @@ export function FusionRuntimeProvider({
             // 方案模式：透传给 engine，本次 spawn 据此烘焙方案系统提示词 +
             // 把识别产品的镜像子目录加进可读范围（零命中退回整库）。
             proposalMode: isProposal,
-            proposalProducts
+            proposalProducts,
+            // 内容级召回（#2）：封面阶段外都开（phase !== 'cover'，即目录+正文）。composer
+            // 自由输入也走这里——用户手敲推进语而非点按钮时 phase 滞后，卡 'content' 会漏掉首个
+            // 正文回合的召回（实测踩到）。放宽到「非封面」让手敲/点按钮都触发；封面回合（首发
+            // 播种）不召回。零命中不注入，偶发目录回合触发无害。
+            proposalRetrieve: isProposal && useProposalStore.getState().phase !== 'cover'
           }
         }
       })
@@ -1175,6 +1180,11 @@ function makeSessionEventHandler(
             const { blocks, truncated } = extractProposalDraftResult(fullText)
             if (blocks.length || truncated) {
               useProposalStore.getState().appendSections(event.messageId, blocks, truncated)
+              // 引用落地校验（#1）：appendSections 内部生成节 id，这里无法直接拿到新节，
+              // 故扫一遍 store 对「未校验的正文节」异步触发——已校验的（verification!==undefined）
+              // 与在飞的（verifyingSectionIds）天然跳过，故重复调用幂等、只补新节。封面/目录
+              // 与截断残节不校验（前者无来源标注，后者内容本就不完整）。
+              triggerProposalCitationVerification()
             } else {
               useProposalStore.getState().markDraftConsumed(event.messageId)
             }
@@ -1196,6 +1206,38 @@ function makeSessionEventHandler(
       default:
         break
     }
+  }
+}
+
+// 引用落地校验（#1）的「在飞」去重集：同一节的校验 IPC 未回来前不重复发起（多条 end
+// 接连触发时会重复扫 store）。模块级即可——校验是全局副作用、与组件实例无关。
+const verifyingSectionIds = new Set<string>()
+
+/**
+ * 对当前草稿里「未校验的正文节」逐个异步发起引用落地校验，回填到 store。
+ * 幂等：已校验（verification 非空）、在飞、非 content、截断残节都跳过。失败静默降级
+ * （留 verification=undefined，UI 显示「未校验」灰态），绝不阻塞。
+ */
+function triggerProposalCitationVerification(): void {
+  if (!window.chatApi?.verifyProposalCitations) return
+  const { sections } = useProposalStore.getState()
+  for (const sec of sections) {
+    if (
+      sec.kind !== 'content' ||
+      sec.truncated ||
+      sec.verification !== undefined ||
+      verifyingSectionIds.has(sec.id)
+    ) {
+      continue
+    }
+    verifyingSectionIds.add(sec.id)
+    void window.chatApi
+      .verifyProposalCitations({ markdown: sec.markdown })
+      .then((v) => useProposalStore.getState().setSectionVerification(sec.id, v))
+      .catch(() => {
+        /* 降级：留作未校验，绝不阻塞 */
+      })
+      .finally(() => verifyingSectionIds.delete(sec.id))
   }
 }
 

@@ -82,6 +82,7 @@ import { getKbRoot, setKbRoot, readKbIndex, kbOutDir } from '../core/kbIndexStor
 import type { KbIndex } from '../../shared/kbIndex'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
 import { markdownToDocxBuffer } from '../core/proposalDocx'
+import { verifyCitations } from '../core/proposalVerify'
 import {
   saveProposalDraft,
   loadProposalDraft,
@@ -92,6 +93,8 @@ import type {
   ProposalExportResult,
   ProposalRenderPayload,
   ProposalRenderResult,
+  ProposalVerifyPayload,
+  ProposalVerifyResult,
   ProposalDraftRecord,
   ProposalLoadDraftPayload,
   ProposalDeleteDraftPayload,
@@ -267,7 +270,9 @@ export function registerIpcHandlers(): void {
         images,
         payload?.proposalMode === true,
         // 防御：只接受数组形状，过滤畸形 renderer payload。
-        Array.isArray(payload?.proposalProducts) ? payload.proposalProducts : undefined
+        Array.isArray(payload?.proposalProducts) ? payload.proposalProducts : undefined,
+        // 内容级召回开关（#2）：仅正文回合为真，engine 据此对镜像原文做关键词召回注入。
+        payload?.proposalRetrieve === true
       )
     }
   )
@@ -1057,6 +1062,22 @@ export function registerIpcHandlers(): void {
       const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
       const bytes = await markdownToDocxBuffer(markdown, payload?.style)
       return { bytes }
+    }
+  )
+
+  // 引用落地校验（#1）：核对一节正文的 `（据《X》）` 是否真出自镜像原文。verifyCitations
+  // 内部全程防御式（索引缺失/读失败/异常 → degraded），这里再兜一道 catch 保证绝不 reject——
+  // 校验是叠加信号，任何失败都只降级为「未校验」，绝不阻塞正文生成或导出。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_VERIFY,
+    async (_event, payload: ProposalVerifyPayload): Promise<ProposalVerifyResult> => {
+      const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
+      try {
+        return verifyCitations(markdown)
+      } catch (err) {
+        console.warn('[ipc] verifyProposalCitations failed:', err)
+        return { verdicts: [], citedFileCount: 0, degraded: true }
+      }
     }
   )
 

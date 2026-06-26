@@ -55,6 +55,7 @@ import { kbOutDir, readKbIndex } from './kbIndexStore'
 import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
 import { buildProposalAppend, type ProposalProductScope } from './proposalPrompt'
+import { retrievePassages, renderRetrievedBlock } from './proposalRetrieve'
 import { seedSkillsFromDisk } from './seedSkills'
 
 /**
@@ -950,7 +951,8 @@ export class ChatEngine extends EventEmitter {
     text: string,
     images?: readonly ChatImagePayload[],
     proposalMode = false,
-    proposalProducts: readonly { productLine: string; product: string }[] = []
+    proposalProducts: readonly { productLine: string; product: string }[] = [],
+    proposalRetrieve = false
   ): Promise<{ messageId: string }> {
     // Hard gate: the workspace must have been picked via the drag-drop
     // gate before we spawn anything. The renderer already refuses to
@@ -1096,9 +1098,33 @@ export class ChatEngine extends EventEmitter {
       proposalMode &&
       !isSlashCommand &&
       (!runtime.spawnedWithProposal || proposalKey !== runtime.proposalGroundedKey)
+    // 内容级召回（#2）：目录+正文回合（renderer 在 phase !== 'cover' 时置 proposalRetrieve）
+    // 对已限定产品的镜像原文做关键词召回，把命中片段注入本回合（与文件清单并存、增量），治
+    // 「知识库有料却没引到」。slash 命令不注入（同 grounding：注入会顶走开头的 '/'，CLI 短
+    // 路检测失效）。召回失败/空 → 不注入，回落到「只给文件清单让 AI 自查」。
+    const wantsRetrieval = proposalMode && proposalRetrieve && !isSlashCommand
+    // scopes 在 grounding 或召回任一需要时读一次（proposalProductScopes 对空集已短路、不读盘）。
+    const scopes =
+      needsGrounding || wantsRetrieval
+        ? this.proposalProductScopes(runtime.proposalProducts)
+        : []
+    let retrievalBlock = ''
+    if (wantsRetrieval) {
+      const passages = retrievePassages(text, scopes)
+      retrievalBlock = renderRetrievedBlock(passages)
+      // 调试可观测：让 dev 终端能看到召回有没有命中、抓了哪些文件（#2 手测靠它，因为
+      // 召回注入在主进程消息里、UI 看不见）。命中为空也打，便于区分「没触发」和「触发但零命中」。
+      console.log('[engine] proposal retrieval', {
+        query: text.slice(0, 40),
+        scopes: scopes.length,
+        hits: passages.length,
+        titles: passages.map((p) => p.title)
+      })
+    }
+    const retrievedText = retrievalBlock ? `${retrievalBlock}\n\n---\n\n${text}` : text
     const groundedText = needsGrounding
-      ? `${buildProposalAppend(kbOutDir(), this.proposalProductScopes(runtime.proposalProducts))}\n\n---\n\n${text}`
-      : text
+      ? `${buildProposalAppend(kbOutDir(), scopes)}\n\n---\n\n${retrievedText}`
+      : retrievedText
     if (needsGrounding) runtime.proposalGroundedKey = proposalKey
     // Build the SDK user message. Text-only turns keep the string
     // short-path (fusion-code expects this for slash commands and
