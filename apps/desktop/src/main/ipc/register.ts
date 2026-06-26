@@ -82,7 +82,22 @@ import { getKbRoot, setKbRoot, readKbIndex, kbOutDir } from '../core/kbIndexStor
 import type { KbIndex } from '../../shared/kbIndex'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
 import { markdownToDocxBuffer } from '../core/proposalDocx'
-import type { ProposalExportPayload, ProposalExportResult, ProposalRenderPayload, ProposalRenderResult } from '../../shared/ipc-channels'
+import {
+  saveProposalDraft,
+  loadProposalDraft,
+  deleteProposalDraft
+} from '../core/proposalDraftStore'
+import type {
+  ProposalExportPayload,
+  ProposalExportResult,
+  ProposalRenderPayload,
+  ProposalRenderResult,
+  ProposalDraftRecord,
+  ProposalLoadDraftPayload,
+  ProposalDeleteDraftPayload,
+  ProposalSaveDraftResult,
+  ProposalDeleteDraftResult
+} from '../../shared/ipc-channels'
 
 /**
  * Resolve the ChatEngine for the window that sent this IPC event.
@@ -219,6 +234,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_INDEX_READ)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_RENDER)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_SAVE_DRAFT)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_LOAD_DRAFT)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_DELETE_DRAFT)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -1039,6 +1057,54 @@ export function registerIpcHandlers(): void {
       const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
       const bytes = await markdownToDocxBuffer(markdown, payload?.style)
       return { bytes }
+    }
+  )
+
+  // 草稿持久化三件套。全部防御式：非法载荷直接 ok:false/null，I/O 异常 catch 后同样
+  // 降级返回——持久化是尽力而为，绝不让 reject 阻塞渲染层的会话切换。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_SAVE_DRAFT,
+    async (_event, record: ProposalDraftRecord): Promise<ProposalSaveDraftResult> => {
+      if (
+        !record ||
+        record.version !== 1 ||
+        typeof record.sessionId !== 'string' ||
+        !record.sessionId ||
+        !Array.isArray(record.sections)
+      ) {
+        return { ok: false }
+      }
+      try {
+        await saveProposalDraft(record)
+        return { ok: true }
+      } catch (err) {
+        console.warn('[ipc] saveProposalDraft failed:', err)
+        return { ok: false }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_LOAD_DRAFT,
+    async (_event, payload: ProposalLoadDraftPayload): Promise<ProposalDraftRecord | null> => {
+      const sid = payload?.sessionId
+      if (typeof sid !== 'string' || !sid) return null
+      return loadProposalDraft(sid)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_DELETE_DRAFT,
+    async (_event, payload: ProposalDeleteDraftPayload): Promise<ProposalDeleteDraftResult> => {
+      const sid = payload?.sessionId
+      if (typeof sid !== 'string' || !sid) return { ok: false }
+      try {
+        await deleteProposalDraft(sid)
+        return { ok: true }
+      } catch (err) {
+        console.warn('[ipc] deleteProposalDraft failed:', err)
+        return { ok: false }
+      }
     }
   )
 

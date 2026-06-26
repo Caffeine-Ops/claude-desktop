@@ -57,7 +57,12 @@ import {
   type ProposalExportPayload,
   type ProposalExportResult,
   type ProposalRenderPayload,
-  type ProposalRenderResult
+  type ProposalRenderResult,
+  type ProposalDraftRecord,
+  type ProposalLoadDraftPayload,
+  type ProposalDeleteDraftPayload,
+  type ProposalSaveDraftResult,
+  type ProposalDeleteDraftResult
 } from '../shared/ipc-channels'
 
 // Visible in the Electron terminal if the preload actually loads.
@@ -409,6 +414,28 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PROPOSAL_RENDER,
       payload
     ) as Promise<ProposalRenderResult>
+  },
+  saveProposalDraft(record: ProposalDraftRecord): Promise<ProposalSaveDraftResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_SAVE_DRAFT,
+      record
+    ) as Promise<ProposalSaveDraftResult>
+  },
+  loadProposalDraft(
+    payload: ProposalLoadDraftPayload
+  ): Promise<ProposalDraftRecord | null> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_LOAD_DRAFT,
+      payload
+    ) as Promise<ProposalDraftRecord | null>
+  },
+  deleteProposalDraft(
+    payload: ProposalDeleteDraftPayload
+  ): Promise<ProposalDeleteDraftResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_DELETE_DRAFT,
+      payload
+    ) as Promise<ProposalDeleteDraftResult>
   }
 }
 
