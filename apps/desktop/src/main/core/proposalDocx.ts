@@ -12,11 +12,13 @@ import {
   LevelFormat,
   LineRuleType,
   AlignmentType,
+  VerticalAlignSection,
   Footer,
   PageNumber
 } from 'docx'
 import type { IStylesOptions, INumberingOptions, ISectionOptions } from 'docx'
-import { PROPOSAL_PAGEBREAK } from '../../shared/proposal'
+import { PROPOSAL_PAGEBREAK, PROPOSAL_SECTION_RE } from '../../shared/proposal'
+import type { ProposalKind } from '../../shared/proposal'
 import {
   CN_SIZE_PT,
   FONT_DOCX,
@@ -411,53 +413,113 @@ function buildNumbering(style: ProposalStyleConfig): INumberingOptions {
 // 表格/删除线等 GFM 语法），与原先 unified().use().use().parse() 行为一致。
 const mdProcessor = unified().use(remarkParse).use(remarkGfm)
 
+// 一个区段分组：kind（来自区段标记）+ 它包含的顶层 mdast 节点。
+interface SectionGroup {
+  kind: ProposalKind
+  nodes: RootContent[]
+}
+
+// 按 PROPOSAL_SECTION_MARK 标记把顶层节点切成有序分组。标记节点本身剔除（不渲染）。
+// 无任何标记（旧调用 / 裸 markdown）→ 单组 content，向后兼容。
+function groupBySectionMarks(nodes: RootContent[]): SectionGroup[] {
+  const groups: SectionGroup[] = []
+  let current: SectionGroup | null = null
+  for (const node of nodes) {
+    if (node.type === 'html') {
+      const m = node.value.trim().match(PROPOSAL_SECTION_RE)
+      if (m) {
+        current = { kind: m[1] as ProposalKind, nodes: [] }
+        groups.push(current)
+        continue // 标记本身不进内容
+      }
+    }
+    if (!current) {
+      // 第一个标记之前的游离节点（裸 markdown / 异常输入）→ content 兜底组。
+      current = { kind: 'content', nodes: [] }
+      groups.push(current)
+    }
+    current.nodes.push(node)
+  }
+  return groups.length ? groups : [{ kind: 'content', nodes: [] }]
+}
+
+// 正文页脚：每页底部居中「— 当前页码 —」（封面/目录节不挂此页脚，故无页码）。
+function pageNumberFooter(): { default: Footer } {
+  return {
+    default: new Footer({
+      children: [
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [
+            new TextRun({ children: ['— ', PageNumber.CURRENT, ' —'], size: 18, color: '9a9a9e' })
+          ]
+        })
+      ]
+    })
+  }
+}
+
+// 一个区段分组 → 该 Section 的子节点。本任务 cover/toc 暂用默认渲染（Task 3/4 加专属版式）。
+// 封面节让首个 h1 走 Title 放大样式（titleConsumed=false）；目录/正文节的 h1 → HeadingN。
+function buildSectionChildren(
+  group: SectionGroup,
+  _style: ProposalStyleConfig, // Task 3/4 将用它注入封面/目录专属排版，此处留位
+  bodyFirstLine: number
+): Array<Paragraph | Table> {
+  const env: WalkEnv = {
+    walk: { titleConsumed: group.kind !== 'cover' },
+    bodyFirstLine
+  }
+  const out: Array<Paragraph | Table> = []
+  for (const node of group.nodes) {
+    out.push(...blockToDocx(node, env))
+  }
+  return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
+}
+
 export async function markdownToDocxBuffer(
   markdown: string,
   style: ProposalStyleConfig = defaultProposalStyle()
 ): Promise<Buffer> {
   const tree = mdProcessor.parse(markdown) as Root
-  const env: WalkEnv = {
-    walk: { titleConsumed: false },
-    bodyFirstLine: style.body.indentChars
-      ? Math.round(style.body.indentChars * CN_SIZE_PT[style.body.size] * 20)
-      : 0
-  }
-  const children: Array<Paragraph | Table> = []
-  for (const node of tree.children) {
-    children.push(...blockToDocx(node, env))
-  }
+  const bodyFirstLine = style.body.indentChars
+    ? Math.round(style.body.indentChars * CN_SIZE_PT[style.body.size] * 20)
+    : 0
 
   const margin = MARGIN_TWIPS[style.margin]
-  const section: ISectionOptions = {
-    properties: {
-      page: { margin: { top: margin, right: margin, bottom: margin, left: margin } }
-    },
-    // 页脚：每页底部居中「— 当前页码 —」。size 18 = 9pt（half-points），灰色 9a9a9e
-    // 与正文区分。页码字段由 Word/LibreOffice/docx-preview 在渲染/翻页时各自计算，
-    // 故导出成品与预览的页码完全一致。
-    footers: {
-      default: new Footer({
-        children: [
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({
-                children: ['— ', PageNumber.CURRENT, ' —'],
-                size: 18,
-                color: '9a9a9e'
-              })
-            ]
-          })
-        ]
-      })
-    },
-    children: children.length ? children : [new Paragraph({ children: [new TextRun('')] })]
-  }
+  const pageMargin = { top: margin, right: margin, bottom: margin, left: margin }
+
+  // 按区段标记分组 → 每组一个 Word Section（默认 NEXT_PAGE，天然各自起新页）。
+  // 封面/目录节不挂页码页脚；正文节挂「— N —」页脚。
+  const groups = groupBySectionMarks(tree.children)
+  const sections: ISectionOptions[] = groups.map((group) => {
+    const children = buildSectionChildren(group, style, bodyFirstLine)
+    const safeChildren = children.length
+      ? children
+      : [new Paragraph({ children: [new TextRun('')] })]
+    // 封面节竖向居中（verticalAlign）——封面段落水平居中在 Task 3 加。
+    const properties =
+      group.kind === 'cover'
+        ? { page: { margin: pageMargin }, verticalAlign: VerticalAlignSection.CENTER }
+        : { page: { margin: pageMargin } }
+    return {
+      properties,
+      ...(group.kind === 'content' ? { footers: pageNumberFooter() } : {}),
+      children: safeChildren
+    }
+  })
 
   const doc = new Document({
     styles: buildDocStyles(style),
     numbering: buildNumbering(style),
-    sections: [section]
+    sections: sections.length
+      ? sections
+      : [
+          {
+            properties: { page: { margin: pageMargin } },
+            children: [new Paragraph({ children: [new TextRun('')] })]
+          }
+        ]
   })
   return Packer.toBuffer(doc)
 }
