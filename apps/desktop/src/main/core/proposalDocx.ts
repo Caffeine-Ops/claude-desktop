@@ -12,7 +12,9 @@ import {
   LevelFormat,
   LineRuleType,
   AlignmentType,
-  VerticalAlignSection,
+  VerticalAlignTable,
+  HeightRule,
+  BorderStyle,
   Footer,
   PageNumber
 } from 'docx'
@@ -486,11 +488,118 @@ function stripLeadingTocHeading(nodes: RootContent[]): RootContent[] {
   return nodes
 }
 
-// 一个区段分组 → 该 Section 的子节点。封面节强制居中（Task 3）；目录/正文节默认渲染。
-// 封面节让首个 h1 走 Title 放大样式（titleConsumed=false）；目录/正文节的 h1 → HeadingN。
+// A4 页高（twips）= docx 默认页面高度（210×297mm 的 297mm；docx 不设 page.size 时即此值）。
+// 封面整页布局据此算「版心高度」= 页高 − 上下页边距。
+const A4_PAGE_HEIGHT_TWIPS = 16838
+
+// 识别封面「落款」行（编制单位 / 日期等）。当 AI 没给显式 `---` 分隔时，用它把尾部连续的
+// 落款行归到页面底部块。匹配从宽：覆盖编制/拟制/起草/供应商/承建/投标/乙方等单位类，
+// 以及含「年/月」或四位年份的日期类。
+const COVER_FOOTER_RE = /编制|拟制|起草|供应商|承建|投标|乙方|日期|\d{4}\s*年|\d{1,2}\s*月/
+
+// 把封面节点切成「上块（标题/客户）+ 下块（落款）」。优先按显式 thematicBreak（`---`）切；
+// 无分隔线时退而把【尾部连续的落款行】归为下块；都不命中则下块为空（调用方退化为整体居中）。
+function splitCoverNodes(nodes: RootContent[]): { top: RootContent[]; bottom: RootContent[] } {
+  const hr = nodes.findIndex((n) => n.type === 'thematicBreak')
+  if (hr >= 0) return { top: nodes.slice(0, hr), bottom: nodes.slice(hr + 1) }
+  let i = nodes.length
+  while (i > 0) {
+    const n = nodes[i - 1]
+    if (n.type !== 'paragraph') break
+    const text = (n.children as PhrasingContent[])
+      .map((c) => ('value' in c && typeof c.value === 'string' ? c.value : ''))
+      .join('')
+    if (!COVER_FOOTER_RE.test(text)) break
+    i--
+  }
+  // 全部行都像落款（无标题，极端）或没有任何落款行 → 不切，全归上块、下块空。
+  if (i <= 0 || i >= nodes.length) return { top: nodes, bottom: [] }
+  return { top: nodes.slice(0, i), bottom: nodes.slice(i) }
+}
+
+// 封面整页布局：用一张占满版心、无边框的表格做竖向分布。【不】依赖 Section.verticalAlign——
+// docx-preview 不渲染节级竖向居中，会把内容顶到页首、下方留一大片空白（实测）；而表格单元格
+// 的竖向对齐两端渲染器都支持，故预览与导出 Word 一致。
+//   - 有落款（下块非空）：两行——上行占 ~58% 版心、单元格竖向居中（标题块落上中部），
+//     下行占其余、单元格底对齐（落款贴页面底部），整页铺满。
+//   - 无落款：单行占满版心、竖向居中（整体居中庄重，作为 AI 未给落款时的优雅退化）。
+// 所有段落水平居中（forceAlign）；首个 h1 经 titleConsumed=false 套 Title 放大样式，
+// 渲染完上块后 env.titleConsumed 已 true，下块落款不会误套 Title。
+function buildCoverChildren(
+  group: SectionGroup,
+  style: ProposalStyleConfig,
+  bodyFirstLine: number
+): Array<Paragraph | Table> {
+  const env: WalkEnv = { walk: { titleConsumed: false }, bodyFirstLine }
+  const render = (nodes: RootContent[]): Array<Paragraph | Table> => {
+    const acc: Array<Paragraph | Table> = []
+    for (const node of nodes) acc.push(...blockToDocx(node, env, { forceAlign: AlignmentType.CENTER }))
+    return acc
+  }
+
+  const contentHeight = A4_PAGE_HEIGHT_TWIPS - 2 * MARGIN_TWIPS[style.margin]
+  const noBorder = { style: BorderStyle.NONE, size: 0, color: 'auto' }
+  const cellMargins = { top: 0, bottom: 0, left: 0, right: 0 }
+  const mkCell = (
+    children: Array<Paragraph | Table>,
+    valign: (typeof VerticalAlignTable)[keyof typeof VerticalAlignTable]
+  ): TableCell =>
+    new TableCell({
+      children: children.length ? children : [new Paragraph({ children: [new TextRun('')] })],
+      verticalAlign: valign,
+      margins: cellMargins,
+      width: { size: 100, type: WidthType.PERCENTAGE }
+    })
+
+  const { top, bottom } = splitCoverNodes(group.nodes)
+  const topChildren = render(top)
+  const bottomChildren = bottom.length ? render(bottom) : []
+
+  const rows: TableRow[] = []
+  if (bottomChildren.length) {
+    const topH = Math.round(contentHeight * 0.58)
+    rows.push(
+      new TableRow({
+        children: [mkCell(topChildren, VerticalAlignTable.CENTER)],
+        height: { value: topH, rule: HeightRule.EXACT }
+      })
+    )
+    rows.push(
+      new TableRow({
+        children: [mkCell(bottomChildren, VerticalAlignTable.BOTTOM)],
+        height: { value: contentHeight - topH, rule: HeightRule.EXACT }
+      })
+    )
+  } else {
+    rows.push(
+      new TableRow({
+        children: [mkCell(topChildren, VerticalAlignTable.CENTER)],
+        height: { value: contentHeight, rule: HeightRule.EXACT }
+      })
+    )
+  }
+
+  return [
+    new Table({
+      rows,
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: {
+        top: noBorder,
+        bottom: noBorder,
+        left: noBorder,
+        right: noBorder,
+        insideHorizontal: noBorder,
+        insideVertical: noBorder
+      }
+    })
+  ]
+}
+
+// 一个区段分组 → 该 Section 的子节点。封面节走整页表格布局（buildCoverChildren）；
+// 目录节注入「目录」标题；正文节默认渲染。封面/目录的 titleConsumed 已在各自路径处理。
 function buildSectionChildren(
   group: SectionGroup,
-  _style: ProposalStyleConfig, // _style 暂未被任何分支消费（封面用 forceAlign、目录用固定 'Title' 样式名、正文走默认）；保留下划线前缀以过 noUnusedLocals。仅 plan 中未应用的竖向居中兜底会用到 style.margin。
+  style: ProposalStyleConfig,
   bodyFirstLine: number
 ): Array<Paragraph | Table> {
   const env: WalkEnv = {
@@ -500,11 +609,8 @@ function buildSectionChildren(
   const out: Array<Paragraph | Table> = []
 
   if (group.kind === 'cover') {
-    // 封面：所有段落水平居中（forceAlign）；竖向居中靠 Section.verticalAlign。
-    for (const node of group.nodes) {
-      out.push(...blockToDocx(node, env, { forceAlign: AlignmentType.CENTER }))
-    }
-    return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
+    // 封面整页布局（标题上中、落款贴底、铺满），见 buildCoverChildren 注释。
+    return buildCoverChildren(group, style, bodyFirstLine)
   }
 
   if (group.kind === 'toc') {
@@ -559,11 +665,9 @@ export async function markdownToDocxBuffer(
     const safeChildren = children.length
       ? children
       : [new Paragraph({ children: [new TextRun('')] })]
-    // 封面节竖向居中（verticalAlign）——封面段落水平居中在 Task 3 加。
-    const properties =
-      group.kind === 'cover'
-        ? { page: { margin: pageMargin }, verticalAlign: VerticalAlignSection.CENTER }
-        : { page: { margin: pageMargin } }
+    // 所有节同样的页边距。封面的竖向分布由 buildCoverChildren 的整页表格承担，【不】用
+    // Section.verticalAlign（docx-preview 不渲染节级竖向居中，会把封面顶到页首、下方留白）。
+    const properties = { page: { margin: pageMargin } }
     return {
       properties,
       ...(group.kind === 'content' ? { footers: pageNumberFooter() } : {}),
