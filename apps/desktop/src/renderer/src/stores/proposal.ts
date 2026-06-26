@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import type { ProposalDraftBlock, ProposalKind } from '@shared/proposal'
+import type { ProposalDraftRecord } from '@shared/ipc-channels'
 import { useChatStore } from './chat'
 
 export interface ProposalProduct {
@@ -94,6 +95,10 @@ interface ProposalState {
     consumedDraftIds: Set<string>
     phase: ProposalKind
   }) => void
+  // 从磁盘持久草稿恢复（载入优先级第 2 级，盘上有记录时用）。整体替换草稿状态并接管
+  // 工作台。products/phase/sections 全来自盘上（含用户手改）；consumedDraftIds 置空集
+  // （单次运行内去重即可，resume 不重放历史 end）；seeded=true 不再中途重匹配产品。
+  restoreFromDisk: (record: ProposalDraftRecord) => void
   reset: () => void
 }
 
@@ -194,6 +199,18 @@ export const useProposalStore = create<ProposalState>((set) => ({
       consumedDraftIds,
       sections,
       phase,
+      workspaceOpen: true,
+      viewMode: 'edit'
+    }),
+  restoreFromDisk: (record) =>
+    set({
+      active: true,
+      sessionId: record.sessionId,
+      products: record.products,
+      seeded: true,
+      consumedDraftIds: new Set(),
+      sections: record.sections,
+      phase: record.phase,
       workspaceOpen: true,
       viewMode: 'edit'
     }),
