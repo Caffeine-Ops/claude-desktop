@@ -470,6 +470,22 @@ function pageNumberFooter(): { default: Footer } {
   }
 }
 
+// 剥掉 AI 在目录大纲里自带的「目录」标题（导出器会统一注入，避免重复）。
+// 仅当首个节点是 heading 且其纯文本（去空白）等于「目录」时剥除首节点；否则原样返回。
+// 注意 mdast heading 的 children 是 PhrasingContent[]，取 text 值要安全处理（c.value 只在
+// text / inlineCode 节点上存在，其余节点无 value，故用 'value' in c 守卫）。
+function stripLeadingTocHeading(nodes: RootContent[]): RootContent[] {
+  const first = nodes[0]
+  if (first && first.type === 'heading') {
+    const text = (first.children as PhrasingContent[])
+      .map((c) => ('value' in c && typeof c.value === 'string' ? c.value : ''))
+      .join('')
+      .replace(/\s/g, '')
+    if (text === '目录') return nodes.slice(1)
+  }
+  return nodes
+}
+
 // 一个区段分组 → 该 Section 的子节点。封面节强制居中（Task 3）；目录/正文节默认渲染。
 // 封面节让首个 h1 走 Title 放大样式（titleConsumed=false）；目录/正文节的 h1 → HeadingN。
 function buildSectionChildren(
@@ -489,6 +505,32 @@ function buildSectionChildren(
       out.push(...blockToDocx(node, env, { forceAlign: AlignmentType.CENTER }))
     }
     return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
+  }
+
+  if (group.kind === 'toc') {
+    // 目录节首部注入居中「目录」大标题（复用 Title 量级样式），紧跟一条浅色分隔线。
+    // 导出器统一注入，避免 AI 大纲里自带的「目录」标题造成重复——故先用
+    // stripLeadingTocHeading 剥掉首节点（若其纯文本等于「目录」）再遍历剩余大纲。
+    out.push(
+      new Paragraph({
+        style: 'Title', // 复用内置 Title 样式（buildDocStyles 已按模板覆盖字体/字号/对齐）
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun('目录')]
+      })
+    )
+    out.push(
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 240 },
+        children: [new TextRun({ text: '————————', color: '9a9a9e' })]
+      })
+    )
+    // 大纲列表/标题沿用默认 blockToDocx 渲染（list→numbering 自带层级缩进）；
+    // stripLeadingTocHeading 只剥「目录」标题，其余节点原样渲染。
+    for (const node of stripLeadingTocHeading(group.nodes)) {
+      out.push(...blockToDocx(node, env))
+    }
+    return out
   }
 
   for (const node of group.nodes) {
