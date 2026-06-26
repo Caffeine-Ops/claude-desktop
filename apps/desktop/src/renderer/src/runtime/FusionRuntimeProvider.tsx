@@ -705,6 +705,45 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     }
   }, [])
 
+  // 防抖写盘：草稿任一改动后 ~800ms 落盘一次（合并连续键入）。timer 放 ref 以便切换会话
+  // 前同步 flush（防最后几笔手改还没落盘就被新会话覆盖）。
+  const proposalSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const flushProposalSave = useCallback((): void => {
+    if (proposalSaveTimer.current) {
+      clearTimeout(proposalSaveTimer.current)
+      proposalSaveTimer.current = null
+    }
+    const s = useProposalStore.getState()
+    // 只存「有内容的活跃草稿」；空草稿不建档（避免起草前就生成空文件）。
+    if (!s.active || !s.sessionId || s.sections.length === 0) return
+    void window.chatApi.saveProposalDraft({
+      version: 1,
+      sessionId: s.sessionId,
+      sections: s.sections,
+      products: s.products,
+      phase: s.phase,
+      updatedAt: Date.now()
+    })
+  }, [])
+
+  // 订阅草稿 store：任一改动重置 800ms 防抖计时，到点落盘。卸载时清计时 + 退订。
+  useEffect(() => {
+    const unsub = useProposalStore.subscribe(() => {
+      const s = useProposalStore.getState()
+      if (!s.active || !s.sessionId || s.sections.length === 0) return
+      if (proposalSaveTimer.current) clearTimeout(proposalSaveTimer.current)
+      proposalSaveTimer.current = setTimeout(() => {
+        proposalSaveTimer.current = null
+        flushProposalSave()
+      }, 800)
+    })
+    return () => {
+      if (proposalSaveTimer.current) clearTimeout(proposalSaveTimer.current)
+      unsub()
+    }
+  }, [flushProposalSave])
+
   const onSwitchToNewThread = useCallback(async (): Promise<void> => {
     if (!window.chatApi) return
     // Multi-runtime: switching away from a streaming session is now
@@ -714,6 +753,8 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     // was a holdover from the single-runtime era when switching
     // teardowned the prev cli.
     try {
+      // 切走前把当前会话草稿的最后改动落盘（防抖可能还没触发）。
+      flushProposalSave()
       setSessionLoading(true)
       const { sessionId: newId } = await window.chatApi.newSession()
       // `--session-id newId` (no resume) — cli should honor it, but
@@ -731,7 +772,7 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     } finally {
       setSessionLoading(false)
     }
-  }, [setSession, setSessionLoading])
+  }, [setSession, setSessionLoading, flushProposalSave])
 
   const onSwitchToThread = useCallback(
     async (id: string): Promise<void> => {
@@ -740,6 +781,8 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
       // for the rationale — the prev session keeps its cli alive in
       // the background, so there's nothing to interrupt.
       try {
+        // 切走前把当前会话草稿的最后改动落盘（防抖可能还没触发）。
+        flushProposalSave()
         setSessionLoading(true)
 
         // Fire both IPCs in parallel. They don't depend on each other:
@@ -792,7 +835,7 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
         setSessionLoading(false)
       }
     },
-    [setSession, setSessionLoading]
+    [setSession, setSessionLoading, flushProposalSave]
   )
 
   // Cold-start auto-select. Ensures that by the time the user types
