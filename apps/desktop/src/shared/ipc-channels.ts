@@ -8,6 +8,7 @@ import type {
 } from './types'
 import type { ThreadMessageLike } from '@assistant-ui/react'
 import type { ProposalStyleConfig } from './proposalStyle'
+import type { ProposalKind } from './proposal'
 
 /**
  * Central registry of IPC channel names. Main and renderer both import
@@ -455,7 +456,11 @@ export const IPC_CHANNELS = {
    * docx-preview pagination view that matches the exported Word file
    * byte-for-byte — same `markdownToDocxBuffer` engine as PROPOSAL_EXPORT.
    */
-  PROPOSAL_RENDER: 'proposal:render'
+  PROPOSAL_RENDER: 'proposal:render',
+  /** Renderer → main. 写入/读出/删除某会话的持久化草稿（userData/proposal-drafts/<id>.json）。 */
+  PROPOSAL_SAVE_DRAFT: 'proposal:save-draft',
+  PROPOSAL_LOAD_DRAFT: 'proposal:load-draft',
+  PROPOSAL_DELETE_DRAFT: 'proposal:delete-draft'
 } as const
 
 /**
@@ -850,6 +855,39 @@ export interface ProposalRenderResult {
 }
 
 /**
+ * 一份持久化的方案草稿记录（v1）。写入 userData/proposal-drafts/<sessionId>.json。
+ * sections/products 结构与 renderer 的 ProposalSection/ProposalProduct 同构——本文件是
+ * shared、不能 import renderer 类型，故在此内联其结构（字段须与 renderer 保持一致）。
+ * consumedDraftIds/viewMode/workspaceOpen 刻意不持久化（见设计 spec「数据模型」）。
+ */
+export interface ProposalDraftRecord {
+  version: 1
+  sessionId: string
+  sections: Array<{
+    id: string
+    markdown: string
+    kind: ProposalKind
+    truncated?: boolean
+  }>
+  products: Array<{ productLine: string; product: string }>
+  phase: ProposalKind
+  updatedAt: number
+}
+
+export interface ProposalLoadDraftPayload {
+  sessionId: string
+}
+export interface ProposalDeleteDraftPayload {
+  sessionId: string
+}
+export interface ProposalSaveDraftResult {
+  ok: boolean
+}
+export interface ProposalDeleteDraftResult {
+  ok: boolean
+}
+
+/**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
  * interface on both sides via the shared type.
  */
@@ -1224,6 +1262,15 @@ export interface ChatApi {
    * on render failure — the renderer shows an error state.
    */
   renderProposal(payload: ProposalRenderPayload): Promise<ProposalRenderResult>
+
+  /**
+   * 持久化草稿三件套。saveProposalDraft 写盘并跑 LRU；loadProposalDraft 不存在返回 null；
+   * deleteProposalDraft 删除该会话草稿文件（「清空草稿」用）。失败一律返回 ok:false / null，
+   * 绝不抛——持久化是「尽力而为」，不得阻塞会话切换。
+   */
+  saveProposalDraft(record: ProposalDraftRecord): Promise<ProposalSaveDraftResult>
+  loadProposalDraft(payload: ProposalLoadDraftPayload): Promise<ProposalDraftRecord | null>
+  deleteProposalDraft(payload: ProposalDeleteDraftPayload): Promise<ProposalDeleteDraftResult>
 }
 
 /**
