@@ -16,7 +16,7 @@ import json
 import html
 from pathlib import Path
 from typing import List, Dict, Tuple
-from collections import defaultdict
+from collections import Counter, defaultdict
 from xml.etree import ElementTree as ET
 
 try:
@@ -43,6 +43,7 @@ except ImportError:
 
 
 HEX_VALUE_RE = re.compile(r"#[0-9A-Fa-f]{3,8}")
+SVG_NS = "http://www.w3.org/2000/svg"
 
 # Ramp envelope for font-size drift detection.
 # From design_spec_reference.md §IV — Font Size Hierarchy: the ramp spans
@@ -53,6 +54,39 @@ HEX_VALUE_RE = re.compile(r"#[0-9A-Fa-f]{3,8}")
 # values outside every band — i.e. outside this envelope — are drift.
 RAMP_MIN_RATIO = 0.5
 RAMP_MAX_RATIO = 5.0
+
+# Modes / visual styles that legitimately use unbounded hero / poster type
+# (huge cover numerals, act dividers, single-number reveals). For these the
+# size-drift upper bound is dropped — the oversize is the design, not Executor
+# drift. The lower bound still applies.
+POSTER_SIZE_MODES = {'showcase'}
+POSTER_SIZE_STYLES = {'zine'}
+
+
+def _design_spec_is_brand(spec_path: Path) -> bool:
+    """Return True when a design_spec.md frontmatter declares ``kind: brand``.
+
+    Lightweight detector that does not require PyYAML — scans only the
+    frontmatter block (``---`` delimited) for a ``kind:`` line whose value
+    contains ``brand``. Used by ``check_directory`` to skip SVG validation
+    on brand-only template directories.
+    """
+    try:
+        text = spec_path.read_text(encoding='utf-8')
+    except OSError:
+        return False
+    if not text.startswith('---\n'):
+        return False
+    end = text.find('\n---\n', 4)
+    if end == -1:
+        return False
+    fm_block = text[4:end]
+    for line in fm_block.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('kind:'):
+            value = stripped.split(':', 1)[1].strip().strip('"\'')
+            return value == 'brand'
+    return False
 
 
 def _parse_placeholders_fallback(block: str) -> Dict[str, Tuple[str, ...]]:
@@ -230,28 +264,34 @@ class SVGQualityChecker:
                 # 2. Check forbidden elements
                 self._check_forbidden_elements(content, result)
 
-                # 3. Check fonts
+                # 3. Check font-size values
+                self._check_font_size_values(content, result)
+
+                # 4. Check fonts
                 self._check_fonts(content, result)
 
-                # 4. Check width/height consistency with viewBox
+                # 5. Check width/height consistency with viewBox
                 self._check_dimensions(content, result)
 
-                # 5. Check text wrapping methods
+                # 6. Check text wrapping methods
                 self._check_text_elements(content, result)
 
-                # 6. Check image references (file existence and resolution)
+                # 7. Check image references (file existence and resolution)
                 self._check_image_references(content, svg_path, result)
 
-                # 7. Check object-level animation anchor quality.
+                # 8. Check object-level animation anchor quality.
                 self._check_animation_group_ids(content, result)
 
-                # 8. Check spec_lock drift (colors / font-family / font-size).
+                # 8b. Check <pattern> elements declare a PPTX preset.
+                self._check_pattern_fills(content, result)
+
+                # 9. Check spec_lock drift (colors / font-family / font-size).
                 #    Templates do not ship a spec_lock.md, so skip in template
                 #    mode to avoid noise.
                 if not self.template_mode:
                     self._check_spec_lock_drift(content, svg_path, result)
 
-                # 9. Check web-sourced image attribution. Templates don't carry
+                # 10. Check web-sourced image attribution. Templates don't carry
                 #    image_sources.json; skip in template mode.
                 if not self.template_mode:
                     self._check_sourced_image_attribution(content, svg_path, result)
@@ -423,6 +463,31 @@ class SVGQualityChecker:
         if re.search(r'<image[^>]*\sopacity\s*=', content_lower):
             result['errors'].append("Detected forbidden <image opacity> (use overlay mask approach)")
 
+    def _check_font_size_values(self, content: str, result: Dict):
+        """Require font-size values to be unitless numeric SVG px values."""
+        numeric_re = re.compile(r'^(?:\d+(?:\.\d+)?|\.\d+)$')
+        bad_values = set()
+
+        for match in re.finditer(r'\bfont-size\s*=\s*(["\'])(.*?)\1', content, re.IGNORECASE):
+            raw = match.group(2).strip()
+            if not numeric_re.fullmatch(raw):
+                bad_values.add(raw)
+
+        for match in re.finditer(r'\bfont-size\s*:\s*([^;"\']+)', content, re.IGNORECASE):
+            raw = match.group(1).strip()
+            if not numeric_re.fullmatch(raw):
+                bad_values.add(raw)
+
+        if bad_values:
+            shown_values = sorted(bad_values)
+            shown = ', '.join(shown_values[:5])
+            more = len(shown_values) - 5
+            suffix = f" (+{more} more)" if more > 0 else ""
+            result['errors'].append(
+                f"font-size must be a unitless numeric px value; found {shown}{suffix}. "
+                "Write e.g. font-size=\"28\", never font-size=\"28px\" or \"21pt\"."
+            )
+
     def _check_fonts(self, content: str, result: Dict):
         """Check font usage.
 
@@ -443,6 +508,7 @@ class SVGQualityChecker:
         # this set survives the PPTX round-trip on any viewer machine.
         ppt_safe_tail = {
             'microsoft yahei', 'simhei', 'simsun', 'kaiti', 'fangsong',
+            'dengxian', 'microsoft jhenghei',
             'pingfang sc', 'heiti sc', 'songti sc', 'stsong',
             'arial', 'arial black', 'calibri', 'segoe ui', 'verdana',
             'helvetica', 'helvetica neue', 'tahoma', 'trebuchet ms',
@@ -590,6 +656,68 @@ class SVGQualityChecker:
                     "object-level animation config cannot reference it"
                 )
 
+    # OOXML ST_PresetPatternVal enum — anything outside this set produces a
+    # PPTX schema violation ("PowerPoint found a problem with the content").
+    _OOXML_PATTERN_PRESETS = frozenset({
+        'pct5', 'pct10', 'pct20', 'pct25', 'pct30', 'pct40', 'pct50', 'pct60',
+        'pct70', 'pct75', 'pct80', 'pct90',
+        'horz', 'vert', 'ltHorz', 'ltVert', 'dkHorz', 'dkVert',
+        'narHorz', 'narVert', 'dashHorz', 'dashVert',
+        'cross', 'dnDiag', 'upDiag', 'ltDnDiag', 'ltUpDiag', 'dkDnDiag',
+        'dkUpDiag', 'wdDnDiag', 'wdUpDiag',
+        'dashDnDiag', 'dashUpDiag', 'diagCross',
+        'smCheck', 'lgCheck', 'smGrid', 'lgGrid', 'dotGrid', 'smConfetti',
+        'lgConfetti', 'horzBrick', 'diagBrick', 'solidDmnd', 'openDmnd',
+        'dotDmnd', 'plaid', 'sphere', 'weave', 'wave', 'trellis', 'zigZag',
+        'divot', 'shingle',
+    })
+
+    def _check_pattern_fills(self, content: str, result: Dict):
+        """Audit <pattern> defs that drive PPTX <a:pattFill> output.
+
+        svg_to_pptx maps <pattern fill> to native <a:pattFill prst="...">. The
+        preset name comes from `data-pptx-pattern` (e.g. `lgGrid` / `smGrid` /
+        `dkUpDiag`). Two failure modes worth catching pre-export:
+
+        1. Missing annotation → converter silently falls back to `ltUpDiag`
+           (diagonal stripes) and picks `bg = #FFFFFF` when the pattern has
+           no child <rect>, turning a hand-authored grid into white-on-stripes
+           in PPTX.
+        2. Invalid preset name → PPTX schema rejects the file; PowerPoint
+           opens it with "needs to be repaired". OOXML
+           `ST_PresetPatternVal` is a closed enum — only the names in
+           `_OOXML_PATTERN_PRESETS` are legal. Inventing `ltGrid` (no such
+           value) is the canonical mistake; the only grids are `smGrid` /
+           `lgGrid` / `dotGrid`.
+        """
+        try:
+            root = ET.fromstring(content)
+        except ET.ParseError:
+            return
+
+        for pattern in root.iter(f'{{{SVG_NS}}}pattern'):
+            pat_id = pattern.get('id', '<unnamed>')
+            prst = pattern.get('data-pptx-pattern')
+            if not prst:
+                result['warnings'].append(
+                    f"<pattern id=\"{pat_id}\"> has no data-pptx-pattern attribute — "
+                    "PPTX export will fall back to `ltUpDiag` (diagonal stripes), "
+                    "not your custom geometry. Add data-pptx-pattern=\"lgGrid\" / "
+                    "\"smGrid\" / etc. plus a <rect fill=\"<bg>\"/> child so the "
+                    "preset and bg color match your design."
+                )
+                continue
+            if prst not in self._OOXML_PATTERN_PRESETS:
+                result['errors'].append(
+                    f"<pattern id=\"{pat_id}\"> uses data-pptx-pattern=\"{prst}\" "
+                    "which is not in OOXML ST_PresetPatternVal — exported PPTX "
+                    "will fail schema validation ('needs to be repaired'). "
+                    "Use one of: smGrid / lgGrid / dotGrid (grids), "
+                    "ltUpDiag / dkUpDiag / cross / diagCross / weave / plaid / "
+                    "horzBrick (others); full enum in svg_quality_checker.py "
+                    "_OOXML_PATTERN_PRESETS."
+                )
+
     def _get_spec_lock(self, svg_path: Path):
         """Locate and parse spec_lock.md near the SVG. Returns dict or None.
 
@@ -634,6 +762,22 @@ class SVGQualityChecker:
                 allowed_colors.add(v.upper())
 
         typo = lock.get('typography', {})
+        numeric_size_re = re.compile(r'^(?:\d+(?:\.\d+)?|\.\d+)$')
+        invalid_lock_sizes = []
+        for k, v in typo.items():
+            if k == 'font_family' or k.endswith('_family'):
+                continue
+            if not numeric_size_re.fullmatch(v.strip()):
+                invalid_lock_sizes.append(f"{k}: {v}")
+        if invalid_lock_sizes:
+            shown = ', '.join(invalid_lock_sizes[:5])
+            more = len(invalid_lock_sizes) - 5
+            suffix = f" (+{more} more)" if more > 0 else ""
+            result['errors'].append(
+                f"spec_lock typography sizes must be unitless numeric px values; "
+                f"found {shown}{suffix}."
+            )
+
         # Font families: default `font_family` plus any per-role `*_family`
         # override (title_family / body_family / emphasis_family / code_family,
         # per spec_lock_reference.md). Any of these is a legitimate declared
@@ -642,7 +786,7 @@ class SVGQualityChecker:
         if typo:
             default_font = typo.get('font_family', '').strip()
             if default_font:
-                allowed_fonts.add(default_font)
+                allowed_fonts.add(self._normalize_font_stack(default_font))
             for k, v in typo.items():
                 if k == 'font_family' or not k.endswith('_family'):
                     continue
@@ -650,7 +794,7 @@ class SVGQualityChecker:
                 # Skip placeholder text like "same as body (omit if identical)"
                 if not v_clean or v_clean.lower().startswith('same as'):
                     continue
-                allowed_fonts.add(v_clean)
+                allowed_fonts.add(self._normalize_font_stack(v_clean))
 
         # Sizes: declared slots are anchors; body is the ramp baseline.
         allowed_sizes = set()
@@ -675,26 +819,40 @@ class SVGQualityChecker:
                     color_drifts.add(val)
 
         font_drifts = set()
-        for m in re.finditer(r'font-family\s*=\s*["\']([^"\']+)["\']', content):
-            val = m.group(1).strip()
-            if allowed_fonts and val not in allowed_fonts:
+        # Capture to the matching delimiter (group 1) so a double-quoted stack
+        # containing single-quoted family names is not truncated at the inner quote.
+        for m in re.finditer(r'font-family\s*=\s*(["\'])(.*?)\1', content):
+            val = m.group(2).strip()
+            if allowed_fonts and self._normalize_font_stack(val) not in allowed_fonts:
                 font_drifts.add(val)
 
+        # Poster / showcase contexts use unbounded hero type — drop the ceiling.
+        mode = (lock.get('mode', {}).get('mode') or '').strip().lower()
+        vstyle = (lock.get('visual_style', {}).get('visual_style') or '').strip().lower()
+        max_ratio = (float('inf') if mode in POSTER_SIZE_MODES or vstyle in POSTER_SIZE_STYLES
+                     else RAMP_MAX_RATIO)
+
         size_drifts = set()
+        used_sizes = []
         for m in re.finditer(r'font-size\s*=\s*["\']([^"\']+)["\']', content):
             val = self._normalize_size(m.group(1))
+            used_sizes.append(val)
             if not allowed_sizes or val in allowed_sizes:
                 continue
             # Intermediate values are allowed when they sit inside the ramp
-            # envelope (ratio to body within [RAMP_MIN_RATIO, RAMP_MAX_RATIO]).
+            # envelope (ratio to body within [RAMP_MIN_RATIO, max_ratio]).
             if body_px and body_px > 0:
                 try:
                     ratio = float(val) / body_px
-                    if RAMP_MIN_RATIO <= ratio <= RAMP_MAX_RATIO:
+                    if RAMP_MIN_RATIO <= ratio <= max_ratio:
                         continue
                 except ValueError:
                     pass
             size_drifts.add(val)
+
+        template_size_drift = self._detect_template_size_drift(
+            used_sizes, allowed_sizes, body_px
+        )
 
         # Record in run-wide aggregation
         fname = svg_path.name
@@ -718,6 +876,72 @@ class SVGQualityChecker:
                 f"spec_lock drift: {', '.join(parts)} not in spec_lock.md "
                 "(see drift summary for details)"
             )
+        if template_size_drift:
+            result['warnings'].append(template_size_drift)
+
+    def _detect_template_size_drift(self, used_sizes, allowed_sizes, body_px):
+        """Warn when template-like small sizes bypass the locked type ramp.
+
+        The normal drift check deliberately permits in-ramp feature sizes, so
+        it should not hard-fail valid hero numbers or one-off labels. This
+        warning targets the common executor failure mode: copying a template's
+        compact 12/15/16px text stack instead of mapping content roles to
+        spec_lock typography, then reflowing from those locked px values.
+        """
+        if not allowed_sizes or not body_px or body_px <= 0:
+            return None
+
+        try:
+            declared_min = min(float(v) for v in allowed_sizes)
+        except ValueError:
+            declared_min = None
+
+        # Stay narrow on purpose: real decks carry legitimate undeclared
+        # sub-body sizes (intermediate levels, labels, emphasis) just below the
+        # locked body, so "any size < body" floods the warning and destroys its
+        # credibility. Only flag values that read as genuine template leftovers
+        # — at or below `body * 0.75`, or below the smallest declared slot. This
+        # under-warns (a stray 15/16 against a body of 18 can slip through) in
+        # exchange for not crying wolf on valid intermediate type.
+        template_like_limit = body_px * 0.75
+        template_like_sub_body = []
+        for raw in used_sizes:
+            if raw in allowed_sizes:
+                continue
+            try:
+                size = float(raw)
+            except (TypeError, ValueError):
+                continue
+            below_declared_floor = declared_min is not None and size < declared_min
+            if size <= template_like_limit or below_declared_floor:
+                template_like_sub_body.append(raw)
+
+        if not template_like_sub_body:
+            return None
+
+        counts = Counter(template_like_sub_body)
+        distinct = sorted(counts, key=lambda v: float(v))
+        repeated_total = sum(counts.values())
+
+        below_declared_floor = []
+        if declared_min is not None:
+            below_declared_floor = [v for v in distinct if float(v) < declared_min]
+
+        if len(distinct) < 2 and repeated_total < 4 and not below_declared_floor:
+            return None
+
+        sample = ', '.join(
+            f"{v}x{counts[v]}" if counts[v] > 1 else v
+            for v in distinct[:5]
+        )
+        more = len(distinct) - 5
+        suffix = f" (+{more} more)" if more > 0 else ""
+        return (
+            "possible template font-size drift: undeclared sub-body size(s) "
+            f"{sample}{suffix}. Map each text item to a spec_lock typography "
+            "role first, then reflow card height / y / dy / line-height from "
+            "the locked px values."
+        )
 
     def _find_image_sources_manifest(self, svg_path: Path) -> Path | None:
         """Locate image_sources.json for a project SVG.
@@ -785,13 +1009,25 @@ class SVGQualityChecker:
 
     @staticmethod
     def _normalize_size(value: str) -> str:
-        """Normalize a font-size value for comparison: lowercase, strip spaces,
-        strip trailing 'px'. Other units (em / rem / %) are kept as-is so that
-        e.g. '1.5em' vs '24' stay distinct."""
+        """Normalize a font-size value for drift comparison.
+
+        Unit-bearing SVG values are reported as errors before drift checking.
+        The legacy `px` strip remains to avoid a duplicate drift warning after
+        the hard error has already identified the unit problem.
+        """
         v = value.strip().lower()
         if v.endswith('px'):
             v = v[:-2].strip()
         return v
+
+    @staticmethod
+    def _normalize_font_stack(stack: str) -> str:
+        """Normalize a font-family stack for comparison: split on commas, strip
+        quotes / whitespace, lowercase, rejoin. Collapses cosmetic differences
+        (comma spacing, single vs double quotes, case) so that
+        `Consolas,'Courier New',monospace` matches `Consolas, "Courier New", monospace`."""
+        parts = [p.strip().strip('"\'').lower() for p in stack.split(',')]
+        return ','.join(p for p in parts if p)
 
     def _categorize_issue(self, error_msg: str) -> str:
         """Categorize issue type"""
@@ -823,12 +1059,29 @@ class SVGQualityChecker:
             print(f"[ERROR] Directory does not exist: {directory}")
             return []
 
+        # Brand-only template directories (templates/brands/<id>/) have no SVG
+        # roster — design_spec.md frontmatter declares `kind: brand`. Skip SVG
+        # checks entirely; brand validation lives in register_template.py.
+        if self.template_mode and dir_path.is_dir():
+            spec = dir_path / 'design_spec.md'
+            if spec.exists() and _design_spec_is_brand(spec):
+                print(
+                    f"[INFO] Brand directory detected (kind: brand) — "
+                    f"SVG checks skipped."
+                )
+                print(
+                    f"[INFO] Validate brand specs via: "
+                    f"python3 scripts/register_template.py "
+                    f"--kind brand <brand_id> --dry-run"
+                )
+                return self.results
+
         # Find all SVG files
         if dir_path.is_file():
             svg_files = [dir_path]
         else:
             if self.template_mode:
-                # Template directories live at templates/layouts/<id>/.
+                # Template directories live at templates/{layouts,decks}/<id>/.
                 svg_files = sorted(dir_path.glob('*.svg'))
             else:
                 svg_output = dir_path / \
@@ -1306,10 +1559,11 @@ def print_usage() -> None:
     print("  python3 scripts/svg_quality_checker.py examples/project/svg_output/slide_01.svg")
     print("  python3 scripts/svg_quality_checker.py examples/project/svg_output")
     print("  python3 scripts/svg_quality_checker.py examples/project")
-    print("  python3 scripts/svg_quality_checker.py templates/layouts/anthropic --template-mode")
+    print("  python3 scripts/svg_quality_checker.py templates/layouts/academic_defense --template-mode")
+    print("  python3 scripts/svg_quality_checker.py templates/decks/招商银行 --template-mode")
     print("\nOptions:")
     print("  --format <ppt169|ppt43|...>   Expected canvas format")
-    print("  --template-mode               Validate a templates/layouts/<id> directory:")
+    print("  --template-mode               Validate a templates/{layouts,decks}/<id> directory:")
     print("                                  glob *.svg directly, skip spec_lock checks,")
     print("                                  enforce roster ↔ design_spec.md Page Roster consistency,")
     print("                                  and emit advisory placeholder-convention warnings.")

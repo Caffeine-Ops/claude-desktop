@@ -44,6 +44,14 @@ EA_FONTS = {
     'WenQuanYi Micro Hei', 'WenQuanYi Zen Hei',
     'YouYuan', 'LiSu', 'HuaWenKaiTi',
     'Songti SC', 'Songti TC',
+    # Windows 10/11 + Office default / common Simplified Chinese
+    'DengXian', 'DengXian Light', 'DengXian Bold', 'Microsoft YaHei UI',
+    # Office display Chinese (华文 / 方正) — usually title-only, not on every client
+    'STXingkai', 'STLiti', 'STXinwei', 'STHupo', 'STCaiyun',
+    'FZShuTi', 'FZYaoti',
+    # Common Traditional Chinese (Office)
+    'DFKai-SB', 'MingLiU', 'PMingLiU', 'MingLiU-ExtB', 'PMingLiU-ExtB',
+    'Microsoft JhengHei UI',
     # Japanese fonts (Windows-available)
     'Yu Gothic', 'Yu Gothic UI', 'Yu Mincho',
     'Meiryo', 'Meiryo UI', 'メイリオ',
@@ -433,6 +441,21 @@ def is_cjk_char(ch: str) -> bool:
             0x20000 <= cp <= 0x2A6DF)
 
 
+def detect_text_lang(text: str) -> str:
+    """Return a DrawingML language tag for a text run."""
+    return 'zh-CN' if any(is_cjk_char(ch) for ch in text) else 'en-US'
+
+
+def resolve_text_run_fonts(text: str, fonts: dict[str, str]) -> dict[str, str]:
+    """Return DrawingML latin/ea/cs typefaces for one text run."""
+    latin = fonts['latin']
+    if detect_text_lang(text) == 'zh-CN':
+        ea = fonts['ea']
+    else:
+        ea = latin
+    return {'latin': latin, 'ea': ea, 'cs': latin}
+
+
 def estimate_text_width(text: str, font_size: float, font_weight: str = '400') -> float:
     """Estimate text width in SVG pixels."""
     width = 0.0
@@ -441,10 +464,15 @@ def estimate_text_width(text: str, font_size: float, font_weight: str = '400') -
             width += font_size
         elif ch == ' ':
             width += font_size * 0.3
-        elif ch in 'mMwWOQ':
+        elif ch in 'mMwWOQ%':
             width += font_size * 0.75
-        elif ch in 'iIlj1!|':
+        elif ch in 'iIlj!|':
             width += font_size * 0.3
+        elif ch.isdigit():
+            # digits are tabular (uniform ~0.55em) in most UI fonts, including
+            # '1' — classing it with 'il|' under-sizes the box and makes
+            # renderers that ignore wrap="none" (LibreOffice) wrap the line
+            width += font_size * 0.55
         else:
             width += font_size * 0.55
 
