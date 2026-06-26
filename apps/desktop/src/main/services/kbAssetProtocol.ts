@@ -39,35 +39,38 @@ const MIME: Record<string, string> = {
 }
 
 function mimeFor(filePath: string): string {
-  const ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+  const idx = filePath.lastIndexOf('.')
+  if (idx === -1) return 'application/octet-stream'
+  const ext = filePath.slice(idx).toLowerCase()
   return MIME[ext] ?? 'application/octet-stream'
 }
 
 /**
  * 注册 kbasset:// handler。app.whenReady() 之后调用一次；registerSchemesAsPrivileged 必须
  * 已在 ready 前跑过（见 index.ts）。命中 → 流式读盘；越界/不存在 → 404，绝不抛。
+ *
+ * 改用 async 返回 Promise<void>：避免 fire-and-forget IIFE 吞掉 import 错误，
+ * 同时确保 handler 注册时机确定（而非延迟到微任务队列）。调用方在 app.whenReady 回调里 await。
  */
-export function registerKbAssetProtocol(): void {
+export async function registerKbAssetProtocol(): Promise<void> {
   // 动态导入 electron 和 kbOutDir，避免模块顶层加载（影响测试）。该函数只在 app.ready 回调里调用，
   // 那时 electron 和 app 都已加载完毕。
-  void (async () => {
-    const { protocol } = await import('electron')
-    const { kbOutDir } = await import('../core/kbIndexStore')
+  const { protocol } = await import('electron')
+  const { kbOutDir } = await import('../core/kbIndexStore')
 
-    protocol.handle(KB_ASSET_SCHEME, async (request) => {
-      try {
-        const url = new URL(request.url)
-        // pathname 形如 /<encodeURIComponent(绝对路径)>；去前导 / 再解码还原绝对路径。
-        const absPath = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
-        const root = kbOutDir()
-        if (!isPathInsideKbRoot(absPath, root)) return new Response('Forbidden', { status: 403 })
-        const abs = normalize(absPath)
-        if (!existsSync(abs) || !statSync(abs).isFile()) return new Response('Not Found', { status: 404 })
-        const body = Readable.toWeb(createReadStream(abs)) as ReadableStream
-        return new Response(body, { headers: { 'content-type': mimeFor(abs) } })
-      } catch {
-        return new Response('Not Found', { status: 404 })
-      }
-    })
-  })()
+  protocol.handle(KB_ASSET_SCHEME, async (request) => {
+    try {
+      const url = new URL(request.url)
+      // pathname 形如 /<encodeURIComponent(绝对路径)>；去前导 / 再解码还原绝对路径。
+      const absPath = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
+      const root = kbOutDir()
+      if (!isPathInsideKbRoot(absPath, root)) return new Response('Forbidden', { status: 403 })
+      const abs = normalize(absPath)
+      if (!existsSync(abs) || !statSync(abs).isFile()) return new Response('Not Found', { status: 404 })
+      const body = Readable.toWeb(createReadStream(abs)) as ReadableStream
+      return new Response(body, { headers: { 'content-type': mimeFor(abs) } })
+    } catch {
+      return new Response('Not Found', { status: 404 })
+    }
+  })
 }

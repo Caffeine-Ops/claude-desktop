@@ -211,7 +211,7 @@ app.whenReady().then(async () => {
     registerAppProtocol()
   }
 
-  registerKbAssetProtocol()
+  await registerKbAssetProtocol()
 
   // Boot the single shell window (tab bar) then open the first tab
   // so the user lands directly in a workspace gate rather than an
