@@ -44,6 +44,21 @@ const KIND_SCAN_ORDER: ProposalKind[] = ['cover', 'toc', 'content']
  */
 export const PROPOSAL_PAGEBREAK = '<!--proposal-pagebreak-->'
 
+/**
+ * 区段起始标记（begin-only）：docx 导出/预览时插在每个 kind 区段的最前，让
+ * proposalDocx 在丢失 kind 的扁平 markdown 里重新识别「这段是封面/目录/正文」，
+ * 据此为每段构造独立 Word Section（封面竖向居中、目录注标题、正文带页码）。
+ *
+ * 与 PROPOSAL_PAGEBREAK 同款：单独成行的 HTML 注释 → remark 解析为块级 html 节点，
+ * 在聊天/.md 里不可见。取代了旧的「kind 边界插 PROPOSAL_PAGEBREAK」——分页改由 Word
+ * 分节天然完成（每个 section 默认起新页），不必再单独插分页标记。
+ */
+export const PROPOSAL_SECTION_MARK = (kind: ProposalKind): string =>
+  `<!--proposal-section:${kind}-->`
+
+/** 反解析区段标记（proposalDocx 侧 trim 后整行匹配）。 */
+export const PROPOSAL_SECTION_RE = /^<!--proposal-section:(cover|toc|content)-->$/
+
 /** 一个已抽取的草稿块：正文 + 它自带的 kind（来自哨兵类型，不再依赖外部 phase）。 */
 export interface ProposalDraftBlock {
   markdown: string
@@ -131,14 +146,14 @@ export function extractProposalDraftResult(text: string): ProposalDraftExtractio
  * 把分节草稿拼成单串 markdown，供「导出 Word」与「真预览」同源消费（两处原先各自
  * `sections.map(s=>s.markdown).join('\n\n')`，现统一到此，保证预览=导出逐像素一致）。
  *
- * pageBreaks=true 时，在相邻节「kind 发生变化」的边界插入 PROPOSAL_PAGEBREAK——即
- * 封面→目录、目录→正文之间各一处分页（docx 渲染为真 PageBreak）。同 kind 的多节之间
- * 不插（正文各章连续排版）。pageBreaks=false（.md 导出）时纯空行拼接，不留任何标记。
+ * pageBreaks=true 即 docx 模式：每个 kind 区段起始插一行区段标记（PROPOSAL_SECTION_MARK），
+ * proposalDocx 据此分节；分页由 Word 分节天然完成，故不再插 PROPOSAL_PAGEBREAK。
+ * pageBreaks=false（.md 导出）：纯空行拼接，绝不含任何标记。
  *
- * 截断残文（truncated=true）不参与分页边界判定：它是「疑似不完整、待用户复核」的临时
- * 内容，常是某阶段末轮被流截断的尾巴，其 kind 可能与逻辑归属不符。若拿它的 kind 去和
- * 邻节比对，会在它前后插出把同一逻辑段劈到分页两侧的硬分页（评审发现 6）。故对它：照常
- * 输出内容，但既不触发分页、也不推进 prevKind——分页边界只由正式定稿块决定。
+ * 截断残文（truncated=true）不参与分节：它是「疑似不完整、待用户复核」的临时内容，
+ * 常是某阶段末轮被流截断的尾巴，其 kind 可能与逻辑归属不符。若拿它的 kind 去切区段，
+ * 会把同一逻辑段劈到两节。故照常输出内容但既不触发标记、也不更新 prevKind，分节边界只由
+ * 正式定稿块决定。
  *
  * 纯函数，main 与 renderer 共享。空数组 → ''。
  */
@@ -146,19 +161,23 @@ export function buildProposalMarkdown(
   sections: Array<{ markdown: string; kind: ProposalKind; truncated?: boolean }>,
   opts?: { pageBreaks?: boolean }
 ): string {
+  // pageBreaks=true 即 docx 模式：每个 kind 区段起始插一行区段标记（PROPOSAL_SECTION_MARK），
+  // proposalDocx 据此分节；分页由 Word 分节天然完成，故不再插 PROPOSAL_PAGEBREAK。
+  // pageBreaks=false（.md 导出）：纯空行拼接，绝不含任何标记。
   const pageBreaks = opts?.pageBreaks ?? false
   const parts: string[] = []
   let prevKind: ProposalKind | null = null
   for (const sec of sections) {
     const md = sec.markdown.trim()
     if (!md) continue
-    // 截断残文：输出内容但不参与分页（不触发、不更新 prevKind），见上方注释。
+    // 截断残文：输出内容但不参与分节（不插标记、不更新 prevKind），与原分页逻辑一致——
+    // 它 kind 可能与逻辑归属不符，拿它切区段会把同一逻辑段劈到两节。
     if (sec.truncated) {
       parts.push(md)
       continue
     }
-    if (pageBreaks && prevKind !== null && sec.kind !== prevKind) {
-      parts.push(PROPOSAL_PAGEBREAK)
+    if (pageBreaks && sec.kind !== prevKind) {
+      parts.push(PROPOSAL_SECTION_MARK(sec.kind))
     }
     parts.push(md)
     prevKind = sec.kind
