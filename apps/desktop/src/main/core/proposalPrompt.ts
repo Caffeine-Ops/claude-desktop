@@ -20,7 +20,7 @@ export interface ProposalProductScope {
   dir: string
   productLine: string
   product: string
-  files: { title: string; mirrorPath: string }[]
+  files: { title: string; mirrorPath: string; assets: string[] }[]
 }
 
 /**
@@ -29,6 +29,11 @@ export interface ProposalProductScope {
  * 用 Glob 自查剩余——宁可少列也不让提示词无界膨胀（撑爆缓存断点又拖慢首字）。
  */
 const MAX_FILES_PER_PRODUCT = 50
+
+/**
+ * 每个文件最多在提示词里列多少张图，防御异常多图把提示词撑爆；超出标注让 AI 知道还有更多。
+ */
+const MAX_IMAGES_PER_FILE = 12
 
 /**
  * 方案写作模式的系统提示词追加段（main-process side）。
@@ -77,6 +82,9 @@ export function buildProposalAppend(mirrorDir: string, products: ProposalProduct
     // 表里每个值都必须来自镜像原文，空缺写「—」而非编造（客户据此采购，编表与编文等害）。
     // 用表 vs 用段的判断权交给 AI（与「AI 自动、数据支持就用」一致），拿不准走 AskUserQuestion。
     '【正文·结构化数据用表格】当某节要呈现的源料是结构化数据（参数/规格、功能或方案对比、分项清单、实施/时间计划、报价或配置项等），用 GFM markdown 表格组织，不要摊成大段文字——表格更直观，也保留源料原本的结构。表头用源料里的字段名，单元格只填知识库查到的真值，查不到的留空或写「—」，绝不为凑满表格而编造数据。表格紧接的下一行仍按第 3 条标注（据《文件名》）来源。是否该用表格由你按源料形态判断；拿不准时用 AskUserQuestion 问用户（遵守提问纪律），不要默认堆成散文。',
+    // 嵌图：图与文同源。只许用本段已 （据《X》） 引用过文件的 assets（上面文件清单里列在该
+    // 文件名下的「图：」路径），防止往客户方案塞 logo/截图/无关装饰图。封面/目录不插图。
+    '【正文·按需嵌入知识库配图】当某段引用了某文件、且该文件名下列有配图、且某张图能直观佐证本段内容时，从【该文件的图清单】里挑相关图，按 `![图说](图的绝对路径)` 单独成行嵌入，图说一句话说明图意。硬性约束：只能用你在本段已 （据《…》） 引用过文件名下列出的图，绝不挪用别处的图、绝不编造图路径；图是否要插由你按相关性判断，拿不准就用 AskUserQuestion 问用户。封面、目录一律不插图。',
     // 哨兵规则：把「要收入文档的正文」与「提问/过程对话」物理分开。renderer 只把哨兵
     // 之间的内容累积进右侧方案文档；不带哨兵的输出（提问、确认、说明）不会进文档。
     // 编号从 5 改为 6 以延续「哨兵/中文」两条硬纪律的既有措辞，与阶段块混排是有意的
@@ -101,7 +109,16 @@ function renderProductBlock(p: ProposalProductScope): string {
     return `${head}\n     （该产品暂无可用文件清单，请用 Grep/Glob 在上面目录内检索）`
   }
   const shown = p.files.slice(0, MAX_FILES_PER_PRODUCT)
-  const lines = shown.map((f) => `     - 《${f.title}》 → ${f.mirrorPath}`)
+  const lines = shown.map((f) => {
+    const head = `     - 《${f.title}》 → ${f.mirrorPath}`
+    if (!f.assets || f.assets.length === 0) return head
+    const imgs = f.assets.slice(0, MAX_IMAGES_PER_FILE).map((a) => `         · 图：${a}`)
+    if (f.assets.length > MAX_IMAGES_PER_FILE) {
+      imgs.push(`         · …（共 ${f.assets.length} 张图，上面只列前 ${MAX_IMAGES_PER_FILE} 张）`)
+    }
+    // 文件行 + 其名下可用图，缩进区分层级，让 AI 一眼看到「这个文件配了哪些图」。
+    return `${head}\n${imgs.join('\n')}`
+  })
   if (p.files.length > MAX_FILES_PER_PRODUCT) {
     lines.push(
       `     - …（共 ${p.files.length} 个文件，上面只列了前 ${MAX_FILES_PER_PRODUCT} 个，其余请用 Glob 在该目录内自查）`

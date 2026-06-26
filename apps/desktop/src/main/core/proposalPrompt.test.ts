@@ -15,3 +15,23 @@ describe('buildProposalAppend 表格纪律', () => {
     expect(buildProposalAppend('/mirror', [])).toContain('全程中文')
   })
 })
+
+describe('buildProposalAppend 图片暴露与规则', () => {
+  const scope = {
+    dir: '/kb/线/品',
+    productLine: '线',
+    product: '品',
+    files: [{ title: '白皮书', mirrorPath: '/kb/线/品/wp.txt', assets: ['/kb/线/品/assets/img-1.png'] }]
+  }
+
+  it('文件清单下列出其可用图路径', () => {
+    const out = buildProposalAppend('/kb', [scope])
+    expect(out).toContain('/kb/线/品/assets/img-1.png')
+  })
+
+  it('含「只用本段所引文件的图」嵌图规则', () => {
+    const out = buildProposalAppend('/kb', [scope])
+    expect(out).toContain('![图说]')
+    expect(out).toContain('绝不挪用别处的图')
+  })
+})

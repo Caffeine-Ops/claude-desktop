@@ -534,7 +534,7 @@ export class ChatEngine extends EventEmitter {
           .filter(
             (f) => f.ok && f.productLine === p.productLine && f.product === p.product
           )
-          .map((f) => ({ title: f.title, mirrorPath: f.mirrorPath })) ?? []
+          .map((f) => ({ title: f.title, mirrorPath: f.mirrorPath, assets: f.assets })) ?? []
       return { dir, productLine: p.productLine, product: p.product, files }
     })
   }
