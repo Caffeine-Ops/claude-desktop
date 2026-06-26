@@ -1089,7 +1089,15 @@ export function registerIpcHandlers(): void {
     async (_event, payload: ProposalLoadDraftPayload): Promise<ProposalDraftRecord | null> => {
       const sid = payload?.sessionId
       if (typeof sid !== 'string' || !sid) return null
-      return loadProposalDraft(sid)
+      // 与 save/delete 一致：handler 层兜一道 catch。loadProposalDraft 内部已对
+      // readFile/JSON.parse 防御，但 existsSync/draftPath 在内部 try 之外——OS 级异常
+      // 逃逸会让本 handler reject，违反「绝不阻塞会话切换」契约。降级返回 null。
+      try {
+        return await loadProposalDraft(sid)
+      } catch (err) {
+        console.warn('[ipc] loadProposalDraft failed:', err)
+        return null
+      }
     }
   )
 
