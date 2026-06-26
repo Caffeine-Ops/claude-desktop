@@ -517,31 +517,66 @@ function splitCoverNodes(nodes: RootContent[]): { top: RootContent[]; bottom: Ro
   return { top: nodes.slice(0, i), bottom: nodes.slice(i) }
 }
 
-// 封面整页布局：用一张占满版心、无边框的表格做竖向分布。【不】依赖 Section.verticalAlign——
+// 封面行 → 纯文本（递归取 inline 文本）。封面按角色强排字号、不走 blockToDocx 的节点样式，
+// 也不依赖 AI 是否用 `#` 写标题，故只需取出文字本身。
+function inlineText(nodes: PhrasingContent[]): string {
+  let s = ''
+  for (const n of nodes) {
+    if ('value' in n && typeof n.value === 'string') s += n.value
+    else if ('children' in n && Array.isArray(n.children)) s += inlineText(n.children as PhrasingContent[])
+  }
+  return s
+}
+function nodeText(node: RootContent): string {
+  if ('children' in node && Array.isArray(node.children)) return inlineText(node.children as PhrasingContent[])
+  if ('value' in node && typeof node.value === 'string') return node.value
+  return ''
+}
+
+// 一行封面文字 → 居中段落，按给定层级（title/h1/h3）【显式上字号】，从而排出「标题 > 抬头 >
+// 落款」的字号层次——而非全用正文字号（用户反馈：旧版封面各行字号一样、无层次）。keepColor
+// 仅标题保留模板点缀色（如商务靛蓝）；抬头/落款去色更干净。
+function coverLine(
+  text: string,
+  level: ProposalLevelStyle,
+  style: ProposalStyleConfig,
+  opts: { keepColor: boolean; bold: boolean; spacingAfterPt: number }
+): Paragraph {
+  return new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: {
+      line: Math.round(style.lineMultiple * 240),
+      lineRule: LineRuleType.AUTO,
+      after: Math.round(opts.spacingAfterPt * 20)
+    },
+    children: [
+      new TextRun({
+        text,
+        font: runFont(level.font),
+        size: Math.round(CN_SIZE_PT[level.size] * 2), // half-points
+        bold: opts.bold,
+        ...(opts.keepColor && level.color ? { color: level.color } : {})
+      })
+    ]
+  })
+}
+
+// 封面整页布局：占满版心、无边框的表格做竖向分布。【不】依赖 Section.verticalAlign——
 // docx-preview 不渲染节级竖向居中，会把内容顶到页首、下方留一大片空白（实测）；而表格单元格
-// 的竖向对齐两端渲染器都支持，故预览与导出 Word 一致。
+// 竖向对齐两端渲染器都支持，故预览与导出 Word 一致。字号层次由 coverLine 按角色强排
+// （标题 title 级 > 抬头 h1 级 > 落款 h3 级），不依赖 AI 是否用 `#` 写标题。
 //   - 有落款（下块非空）：两行——上行占 ~58% 版心、单元格竖向居中（标题块落上中部），
 //     下行占其余、单元格底对齐（落款贴页面底部），整页铺满。
 //   - 无落款：单行占满版心、竖向居中（整体居中庄重，作为 AI 未给落款时的优雅退化）。
-// 所有段落水平居中（forceAlign）；首个 h1 经 titleConsumed=false 套 Title 放大样式，
-// 渲染完上块后 env.titleConsumed 已 true，下块落款不会误套 Title。
 function buildCoverChildren(
   group: SectionGroup,
-  style: ProposalStyleConfig,
-  bodyFirstLine: number
+  style: ProposalStyleConfig
 ): Array<Paragraph | Table> {
-  const env: WalkEnv = { walk: { titleConsumed: false }, bodyFirstLine }
-  const render = (nodes: RootContent[]): Array<Paragraph | Table> => {
-    const acc: Array<Paragraph | Table> = []
-    for (const node of nodes) acc.push(...blockToDocx(node, env, { forceAlign: AlignmentType.CENTER }))
-    return acc
-  }
-
   const contentHeight = A4_PAGE_HEIGHT_TWIPS - 2 * MARGIN_TWIPS[style.margin]
   const noBorder = { style: BorderStyle.NONE, size: 0, color: 'auto' }
   const cellMargins = { top: 0, bottom: 0, left: 0, right: 0 }
   const mkCell = (
-    children: Array<Paragraph | Table>,
+    children: Paragraph[],
     valign: (typeof VerticalAlignTable)[keyof typeof VerticalAlignTable]
   ): TableCell =>
     new TableCell({
@@ -552,8 +587,36 @@ function buildCoverChildren(
     })
 
   const { top, bottom } = splitCoverNodes(group.nodes)
-  const topChildren = render(top)
-  const bottomChildren = bottom.length ? render(bottom) : []
+
+  // 上块：首个非空行 = 方案标题（title 级：放大加粗、保留点缀色），其下一条细分隔线强化层次；
+  // 其余行 = 抬头/客户信息（h1 级：中等字号、去色不加粗）。
+  const topChildren: Paragraph[] = []
+  let titleDone = false
+  for (const node of top) {
+    const text = nodeText(node).trim()
+    if (!text) continue
+    if (!titleDone) {
+      titleDone = true
+      topChildren.push(coverLine(text, style.title, style, { keepColor: true, bold: true, spacingAfterPt: 6 }))
+      topChildren.push(
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { after: Math.round(12 * 20) },
+          children: [new TextRun({ text: '————————', color: '9a9a9e' })]
+        })
+      )
+    } else {
+      topChildren.push(coverLine(text, style.h1, style, { keepColor: false, bold: false, spacingAfterPt: 4 }))
+    }
+  }
+
+  // 下块：落款（h3 级：较小字号、去色不加粗）。
+  const bottomChildren: Paragraph[] = []
+  for (const node of bottom) {
+    const text = nodeText(node).trim()
+    if (!text) continue
+    bottomChildren.push(coverLine(text, style.h3, style, { keepColor: false, bold: false, spacingAfterPt: 4 }))
+  }
 
   const rows: TableRow[] = []
   if (bottomChildren.length) {
@@ -609,8 +672,8 @@ function buildSectionChildren(
   const out: Array<Paragraph | Table> = []
 
   if (group.kind === 'cover') {
-    // 封面整页布局（标题上中、落款贴底、铺满），见 buildCoverChildren 注释。
-    return buildCoverChildren(group, style, bodyFirstLine)
+    // 封面整页布局（标题上中、落款贴底、铺满、按角色排字号层次），见 buildCoverChildren 注释。
+    return buildCoverChildren(group, style)
   }
 
   if (group.kind === 'toc') {
