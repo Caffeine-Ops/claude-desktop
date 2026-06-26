@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test'
 
-import { parseCitations, trigramOverlap, buildProposalMetric } from './proposal'
+import { parseCitations, trigramOverlap, buildProposalMetric, parseImages } from './proposal'
 import type { ProposalMetricSection } from './proposal'
 
 describe('parseCitations', () => {
@@ -163,5 +163,25 @@ describe('buildProposalMetric', () => {
     expect(r.citation.verifiedSections).toBe(1)
     expect(r.citation.zeroCitationSections).toBe(1)
     expect(r.citation.totalCitations).toBe(0)
+  })
+})
+
+describe('parseImages', () => {
+  it('抽取多张图的 alt 与 path', () => {
+    const md = '正文一。\n\n![架构图](/kb/assets/a/img-1.png)\n\n更多。\n\n![流程](/kb/assets/a/img-2.jpg)'
+    expect(parseImages(md)).toEqual([
+      { alt: '架构图', path: '/kb/assets/a/img-1.png' },
+      { alt: '流程', path: '/kb/assets/a/img-2.jpg' }
+    ])
+  })
+
+  it('与引用标注（据《X》）共存、互不干扰；普通链接不算图', () => {
+    const md = '某段（据《白皮书》）\n\n![图](/kb/assets/a/img-1.png)\n\n[纯链接](/not-an-image)'
+    expect(parseImages(md)).toEqual([{ alt: '图', path: '/kb/assets/a/img-1.png' }])
+  })
+
+  it('无图 → 空数组', () => {
+    expect(parseImages('纯文字，无图。')).toEqual([])
+    expect(parseImages('')).toEqual([])
   })
 })

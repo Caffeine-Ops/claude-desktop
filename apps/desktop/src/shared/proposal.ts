@@ -207,6 +207,16 @@ export interface CitationVerdict {
 }
 
 /**
+ * 一张图的接地核对结论。`path` 是 markdown `![alt](path)` 里的图路径。
+ * - `grounded`：该图属于本节已 `（据《X》）` 引用过文件的 assets（图与文同源）。
+ * - `ungrounded`：不属任何本节所引文件的 assets（疑似挪用/编造，UI 标红但保留）。
+ */
+export interface ImageVerdict {
+  path: string
+  status: 'grounded' | 'ungrounded'
+}
+
+/**
  * 一节正文的引用核对汇总。`degraded=true` 表示校验整体失败（索引缺失 / 异常降级），
  * UI 应显示「未校验」灰标而非红/绿结论——绝不能把降级误判成「无编造」。
  */
@@ -215,6 +225,8 @@ export interface SectionVerification {
   /** 段内去重后引用的文件数（覆盖度）；content 段为 0 = 未引用任何来源。 */
   citedFileCount: number
   degraded?: boolean
+  /** 本节图片接地核对结论（无图时省略）。grounded=图属本节所引文件的 assets；ungrounded=不属。 */
+  imageVerdicts?: ImageVerdict[]
 }
 
 /** 一段正文 + 它末尾引用的文件名集合（解析自 `（据《X》《Y》）`）。 */
@@ -251,6 +263,25 @@ export function parseCitations(markdown: string): ParsedCitationParagraph[] {
     }
     if (files.length) out.push({ paragraph, files })
     lastEnd = m.index + m[0].length
+  }
+  return out
+}
+
+// markdown 图片：`![alt](path)`。path 取到首个 `)` 前——KB 图为 img-N.png 类路径、不含 `)`。
+// 要求前置 `!`，故普通链接 `[text](url)` 不会被误抽（无 `!`）。alt 可空。
+const IMAGE_RE = /!\[([^\]]*)\]\(([^)]+)\)/g
+
+/**
+ * 抽取正文里的所有图片：返回 {alt, path} 数组（保序）。无图 → []。
+ * 与 parseCitations 解析的 `（据…）` 引用组互不干扰（语法不同）。main 与 renderer 共享纯函数。
+ */
+export function parseImages(markdown: string): { alt: string; path: string }[] {
+  if (!markdown) return []
+  const out: { alt: string; path: string }[] = []
+  IMAGE_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = IMAGE_RE.exec(markdown)) !== null) {
+    out.push({ alt: m[1].trim(), path: m[2].trim() })
   }
   return out
 }
