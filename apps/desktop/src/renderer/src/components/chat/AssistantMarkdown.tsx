@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 
 import { useT } from '../../i18n'
+import { toKbAssetUrl } from '../../lib/kbAssetUrl'
 
 /**
  * AssistantMarkdown
@@ -121,6 +122,15 @@ const components: Components = {
     >
       {children}
     </a>
+  ),
+
+  // KB 本地图经 kbasset:// 协议加载（绝对路径直接当 <img src> 会被当相对 URL、加载失败）。
+  img: ({ src, alt }) => (
+    <img
+      src={typeof src === 'string' ? toKbAssetUrl(src) : (src as string | undefined)}
+      alt={alt ?? ''}
+      className="my-2 max-w-full rounded"
+    />
   ),
 
   // Tables live in a horizontal scroll shell so wide tables stay
