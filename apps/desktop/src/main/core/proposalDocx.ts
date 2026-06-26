@@ -105,6 +105,8 @@ interface InlineStyle {
 interface BlockContext {
   indent?: { left: number }
   baseStyle?: InlineStyle
+  // 强制段落水平对齐（封面节用 CENTER 覆盖模板自带 align，使标题/落款都居中）。
+  forceAlign?: (typeof AlignmentType)[keyof typeof AlignmentType]
 }
 
 // 遍历级环境：跨整篇文档共享的状态 + 由 style 预算出的常量。
@@ -199,14 +201,16 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
   switch (node.type) {
     case 'heading': {
       // 文档里第一个一级标题 → 封面标题样式（居中放大）。其余标题按层级套 HeadingN。
-      if (node.depth === 1 && !env.walk.titleConsumed && !ctx) {
+      // 守卫不含 !ctx?.baseStyle && !ctx?.indent（而非旧的 !ctx）：封面节传 forceAlign-only
+      // ctx，既要保留 Title 样式又要追加居中对齐；blockquote ctx 带 indent/baseStyle，
+      // 仍被排除在外，故双方不变量均满足。
+      if (node.depth === 1 && !env.walk.titleConsumed && !ctx?.baseStyle && !ctx?.indent) {
         env.walk.titleConsumed = true
-        // 此分支由 `!ctx` 守卫，ctx 必为 undefined（封面标题不会出现在引用块里），
-        // 故无 baseStyle 可传。
         return [
           new Paragraph({
             style: 'Title', // 内置 Title 样式，由 styles.default.title 覆盖（见 buildDocStyles）
-            children: inlineRuns(node.children)
+            children: inlineRuns(node.children),
+            ...(ctx?.forceAlign ? { alignment: ctx.forceAlign } : {})
           })
         ]
       }
@@ -216,7 +220,8 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
           // depth0 会让 `-1` 索引出 undefined → 标题静默降级普通段、丢目录条目（C3）。
           heading: HEADING_BY_DEPTH[Math.max(0, Math.min(node.depth, 6) - 1)],
           children: inlineRuns(node.children, ctx?.baseStyle),
-          indent: ctx?.indent
+          indent: ctx?.indent,
+          ...(ctx?.forceAlign ? { alignment: ctx.forceAlign } : {})
         })
       ]
     }
@@ -224,9 +229,15 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
       return [
         new Paragraph({
           children: inlineRuns(node.children, ctx?.baseStyle),
-          // 引用块的左缩进优先；普通正文段落施加模板的首行缩进（不进 Normal 样式，
-          // 故列表/标题不会继承到首行缩进）。
-          indent: ctx?.indent ?? (env.bodyFirstLine ? { firstLine: env.bodyFirstLine } : undefined)
+          // 引用块左缩进优先；居中段落（封面）不施加首行缩进；其余正文段落施加模板首行缩进。
+          indent:
+            ctx?.indent ??
+            (ctx?.forceAlign
+              ? undefined
+              : env.bodyFirstLine
+                ? { firstLine: env.bodyFirstLine }
+                : undefined),
+          ...(ctx?.forceAlign ? { alignment: ctx.forceAlign } : {})
         })
       ]
     case 'list': {
@@ -459,11 +470,11 @@ function pageNumberFooter(): { default: Footer } {
   }
 }
 
-// 一个区段分组 → 该 Section 的子节点。本任务 cover/toc 暂用默认渲染（Task 3/4 加专属版式）。
+// 一个区段分组 → 该 Section 的子节点。封面节强制居中（Task 3）；目录/正文节默认渲染。
 // 封面节让首个 h1 走 Title 放大样式（titleConsumed=false）；目录/正文节的 h1 → HeadingN。
 function buildSectionChildren(
   group: SectionGroup,
-  _style: ProposalStyleConfig, // Task 3/4 将用它注入封面/目录专属排版，此处留位
+  _style: ProposalStyleConfig, // Task 4 将用它注入目录专属排版，此处留位
   bodyFirstLine: number
 ): Array<Paragraph | Table> {
   const env: WalkEnv = {
@@ -471,6 +482,15 @@ function buildSectionChildren(
     bodyFirstLine
   }
   const out: Array<Paragraph | Table> = []
+
+  if (group.kind === 'cover') {
+    // 封面：所有段落水平居中（forceAlign）；竖向居中靠 Section.verticalAlign。
+    for (const node of group.nodes) {
+      out.push(...blockToDocx(node, env, { forceAlign: AlignmentType.CENTER }))
+    }
+    return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
+  }
+
   for (const node of group.nodes) {
     out.push(...blockToDocx(node, env))
   }
