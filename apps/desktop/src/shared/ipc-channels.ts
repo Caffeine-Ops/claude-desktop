@@ -378,6 +378,43 @@ export const IPC_CHANNELS = {
    * toggle language). Only the active chat tab receives it.
    */
   SHELL_MENU_ACTION: 'shell:menu-action',
+  /**
+   * Shell renderer → main (invoke). The session list now lives in the
+   * shell's left nav rail (a single column with the nav above it), but the
+   * sessions belong to the *active chat tab's* engine — and the shell has
+   * no engine of its own, so it can't go through the per-tab `resolveEngine`
+   * path the regular SESSION_LIST handler uses. This handler reads the
+   * active chat tab's workspace directly and lists its sessions off disk
+   * (listSessions is a stateless workspace-dir scan), returning a
+   * SessionListResult. Returns `{ threads: [] }` when the active tab is a
+   * web tab / there is no active chat tab.
+   */
+  SHELL_SESSION_LIST: 'shell:session-list',
+  /**
+   * Shell renderer → main (invoke). Forwarded counterpart that mirrors
+   * TAB_TRIGGER_MENU_ACTION: the shell asks main to switch the active chat
+   * tab to a given sessionId (or to a brand-new session). main sends
+   * SHELL_SESSION_SWITCH to the active chat tab's webContents; the chat
+   * renderer runs its existing onSwitchToThread/onSwitchToNewThread so all
+   * the chat-store sync (setSession / loadSession / sessionLoading) happens
+   * correctly. Doing the switch in the chat renderer — not via a direct
+   * engine call from the shell — is what keeps the Thread view in lockstep.
+   */
+  SHELL_SESSION_SWITCH_REQUEST: 'shell:session-switch-request',
+  /**
+   * Main → active chat tab renderer (send). The forwarded switch command
+   * carrying `{ sessionId }` (null = new chat). The chat renderer subscribes
+   * once and routes it into its runtime's switch handler.
+   */
+  SHELL_SESSION_SWITCH: 'shell:session-switch',
+  /**
+   * Main → shell renderer (send). Fired whenever the active chat tab's
+   * session list changes (new session / rename / close / tab switch) so the
+   * shell's session list re-pulls via SHELL_SESSION_LIST. This is the
+   * fan-out the plain SESSION_LIST_CHANGED lacks — that one only reaches the
+   * chat tab's own webContents, never the shell.
+   */
+  SHELL_SESSION_LIST_CHANGED: 'shell:session-list-changed',
   APPEARANCE_GET: 'appearance:get',
   /**
    * Renderer → main. Patches the shared appearance prefs into the
@@ -1073,6 +1110,14 @@ export interface ChatApi {
   onShellMenuAction(handler: (action: ShellMenuAction) => void): () => void
 
   /**
+   * Subscribe to session-switch commands forwarded from the shell's
+   * session list. `sessionId` null = new chat. The chat renderer routes it
+   * into its runtime's existing switch flow so all chat-store sync happens
+   * there. Only the active chat tab receives these. Returns an unsubscribe.
+   */
+  onShellSessionSwitch(handler: (sessionId: string | null) => void): () => void
+
+  /**
    * Close the settings modal overlay. Called by the settings overlay
    * renderer (`?settings=1`) on scrim click / Escape / the ✕ button.
    * Resolves once main has torn the overlay view down.
@@ -1124,4 +1169,24 @@ export interface TabApi {
    * gone in fullscreen.
    */
   onFullscreenChanged(handler: (fullscreen: boolean) => void): () => void
+
+  /**
+   * One-shot pull of the ACTIVE chat tab's session list. main reads the
+   * active chat tab's workspace and scans it off disk — the shell has no
+   * engine of its own, so this bypasses the per-tab resolveEngine path.
+   * Resolves `{ threads: [] }` when no chat tab is active.
+   */
+  listShellSessions(): Promise<SessionListResult>
+  /**
+   * Ask main to switch the active chat tab to `sessionId` (or to a fresh
+   * chat when `sessionId` is null). main forwards it to the active chat
+   * tab's renderer, which runs its existing switch flow so all chat-store
+   * sync happens there. Fire-and-forget.
+   */
+  switchShellSession(sessionId: string | null): Promise<void>
+  /**
+   * Subscribe to "active chat tab's session list changed" so the shell can
+   * re-pull via listShellSessions. Returns an unsubscribe.
+   */
+  onShellSessionListChanged(handler: () => void): () => void
 }

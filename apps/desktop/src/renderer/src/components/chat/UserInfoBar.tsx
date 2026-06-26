@@ -5,17 +5,21 @@ import { useT } from '../../i18n'
 /**
  * UserInfoBar
  * -----------
- * The settings entry point, mounted in the shell's tab strip (ShellApp) at
- * the far right of the tab row. It used to be a dropdown menu pinned to the
- * bottom-left of the chat sidebar; it's now a single gear button that opens
- * the settings *modal* directly.
+ * Account footer pinned to the BOTTOM of the shell's vertical nav rail
+ * (ShellApp). Layout: [avatar] [name / plan] [gear]. The gear is the
+ * settings entry point; it opens the settings *modal* directly.
+ *
+ * It used to be a single gear button at the far right of the old
+ * horizontal tab strip. Now that the strip is a left rail, it became a
+ * full-width footer row matching the rail's nav rhythm.
  *
  * The modal is a full-window transparent overlay managed by main (see
  * tabRegistry.openSettingsView), so it works over any tab — chat or web —
- * and renders as a dimmed backdrop + centered card. The dropdown's old
- * items moved into the settings page: language lives under General; the
- * .claude folder / logs / version line were dropped from the chrome (the
- * settings page is now the single home for preferences).
+ * and renders as a dimmed backdrop + centered card.
+ *
+ * Note: name/plan are placeholders — there is no signed-in user model in
+ * the desktop app yet. They mirror the reference design's footer; wiring
+ * real account data is a separate concern.
  *
  * `window.tabApi` is available here because the shell window uses the
  * standard preload.
@@ -28,16 +32,33 @@ export function UserInfoBar(): React.JSX.Element {
   }, [])
 
   return (
-    <button
-      type="button"
-      onClick={openSettings}
-      title={t('settings')}
-      aria-label={t('settings')}
+    <div
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+      className="flex items-center gap-2.5 rounded-lg px-2 py-2"
     >
-      <GearIcon className="size-[15px] shrink-0" />
-    </button>
+      {/* Avatar — placeholder initial chip. Rail-green so it matches the
+          prototype's accent rather than the daemon theme color. */}
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--rail-accent-soft)] text-[12px] font-semibold text-[color:var(--rail-accent-ink)]">
+        我
+      </span>
+      <div className="min-w-0 flex-1 leading-tight">
+        <div className="truncate text-[12.5px] font-semibold text-[color:var(--rail-text)]">
+          我爱啦啦哈哈
+        </div>
+        <div className="truncate text-[11px] text-[color:var(--rail-muted)]">
+          Pro trial Plan
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={openSettings}
+        title={t('settings')}
+        aria-label={t('settings')}
+        className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-[color:var(--rail-text-soft)] transition-colors hover:bg-[var(--rail-hover)] hover:text-[color:var(--rail-text)]"
+      >
+        <GearIcon className="size-[15px] shrink-0" />
+      </button>
+    </div>
   )
 }
 

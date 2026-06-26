@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>输入框原型 · Composer</title>
+<style>
+  /* ============================================================
+     输入框（composer）原型 —— 对照参考图15 重做：
+       · 两段式大输入框：上方多行占位输入区 + 下方独立工具栏
+       · 工具栏左：+ 圆钮 · 圆形工具图标组 · 「写作 Beta ⌄」胶囊
+       · 工具栏右：⚡Auto⌄ · 🎤麦克风 · 黑色圆形发送（向上箭头）
+       · 框下：📁选择工作目录⌄ · ✨语气 创意⌄ 两个小胶囊
+       · 大圆角、留白多、focus 淡绿光晕
+     配色沿用 ui-prototype-sidebar.html 的体系。
+     ============================================================ */
+  :root {
+    --bg-app: #ffffff;
+    --bg-input: #ffffff;
+    --bg-hover: #f1f1f0;
+
+    --border: #e6e6e4;
+    --border-soft: #efefee;
+
+    --text: #1a1a18;
+    --text-soft: #5f5f5b;
+    --text-muted: #9b9b96;
+    --text-faint: #b8b8b3;
+
+    --accent: #16a34a;
+    --accent-soft: #dcf5e6;
+    --accent-ink: #0f7a38;
+
+    --blue: #2f6df6;            /* "Beta" 徽标蓝 */
+    --blue-soft: #e8f0ff;
+
+    --radius-input: 22px;
+    --radius-pill: 999px;
+
+    --shadow-input: 0 1px 2px rgba(0,0,0,.03), 0 8px 30px rgba(0,0,0,.06);
+
+    --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    color: var(--text);
+    background: #f0f0ee;
+    -webkit-font-smoothing: antialiased;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 40px;
+  }
+
+  .stage { width: min(960px, 100%); }
+
+  /* ===== 大输入框 ===== */
+  .composer {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-input);
+    box-shadow: var(--shadow-input);
+    transition: border-color .16s, box-shadow .16s;
+  }
+  /* focus 淡绿光晕 */
+  .composer.is-focus {
+    border-color: #c7e8d4;
+    box-shadow: 0 0 0 4px rgba(22,163,74,.10), var(--shadow-input);
+  }
+
+  /* 上方：多行占位输入区 */
+  .composer-field {
+    padding: 20px 22px 6px;
+    min-height: 72px;
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--text);
+    outline: none;
+  }
+  .composer-field:empty::before {
+    content: "描述任务，/ 快捷调用，@ 添加上下文";
+    color: var(--text-faint);
+    pointer-events: none;
+  }
+
+  /* 下方：工具栏 */
+  .composer-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px 14px;
+  }
+  .bar-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .bar-spacer { flex: 1; }
+  .bar-right { display: flex; align-items: center; gap: 10px; }
+
+  /* 圆形图标按钮 */
+  .round {
+    width: 34px; height: 34px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border); background: #fff;
+    color: var(--text-soft); cursor: pointer;
+    transition: background .12s, border-color .12s;
+    flex-shrink: 0;
+  }
+  .round:hover { background: var(--bg-hover); }
+
+  /* 重叠圆形工具图标组（参考图左侧那串半透明叠放） */
+  .tool-cluster { display: flex; align-items: center; }
+  .tool-cluster .round { margin-left: -10px; background: #fff; }
+  .tool-cluster .round:first-child { margin-left: 0; }
+  .tool-cluster .round:hover { z-index: 2; }
+
+  /* 胶囊按钮（写作 Beta / Auto / 选择工作目录 / 语气） */
+  .pill {
+    height: 34px; padding: 0 12px;
+    border-radius: var(--radius-pill);
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 13.5px; color: var(--text-soft);
+    background: #fff; border: 1px solid var(--border);
+    cursor: pointer; transition: background .12s;
+  }
+  .pill:hover { background: var(--bg-hover); }
+  .pill .caret { color: var(--text-faint); }
+  .pill .beta {
+    font-size: 11px; font-weight: 600;
+    color: var(--blue); background: var(--blue-soft);
+    padding: 2px 6px; border-radius: 5px;
+  }
+  /* 右下 Auto 胶囊（无边框，更轻） */
+  .pill.ghost { border-color: transparent; background: transparent; }
+  .pill.ghost:hover { background: var(--bg-hover); }
+
+  /* 发送按钮：黑色实心圆 + 向上箭头 */
+  .send {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--text); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    border: none; cursor: pointer; flex-shrink: 0;
+    transition: opacity .12s, transform .06s;
+  }
+  .send:hover { opacity: .88; }
+  .send:active { transform: scale(.96); }
+
+  /* ===== 框下小胶囊行 ===== */
+  .below {
+    display: flex; align-items: center; gap: 18px;
+    padding: 12px 6px 0;
+  }
+  .below .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 13.5px; color: var(--text-muted);
+    cursor: pointer; background: transparent; border: none;
+    transition: color .12s;
+  }
+  .below .chip:hover { color: var(--text-soft); }
+  .below .chip .caret { color: var(--text-faint); }
+
+  .hint { margin-top: 26px; text-align: center; font-size: 12px; color: var(--text-faint); }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="composer" id="composer">
+      <!-- 多行占位输入区（contenteditable 模拟） -->
+      <div class="composer-field" contenteditable="true" id="field"></div>
+
+      <!-- 工具栏 -->
+      <div class="composer-bar">
+        <div class="bar-left">
+          <!-- + 新增 -->
+          <button class="round" title="添加">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <!-- 重叠工具图标组 -->
+          <div class="tool-cluster">
+            <button class="round" title="工具 A">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+            </button>
+            <button class="round" title="工具 B">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a9 9 0 1 0 9 9c0-.5 0-1-.1-1.5A5 5 0 0 1 12 3Z"/></svg>
+            </button>
+            <button class="round" title="电脑/环境">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            </button>
+          </div>
+          <!-- 写作 Beta 胶囊 -->
+          <button class="pill" title="模式">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            写作
+            <span class="beta">Beta</span>
+            <svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+        </div>
+
+        <div class="bar-spacer"></div>
+
+        <div class="bar-right">
+          <!-- Auto -->
+          <button class="pill ghost" title="模型">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m13 2-9 12h7l-1 8 9-12h-7z"/></svg>
+            Auto
+            <svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <!-- 麦克风 -->
+          <button class="round" style="border-color:transparent;background:transparent" title="语音">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          </button>
+          <!-- 发送 -->
+          <button class="send" title="发送">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 框下小胶囊 -->
+    <div class="below">
+      <button class="chip" title="选择工作目录">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        选择工作目录
+        <svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <button class="chip" title="语气">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="m12 3 2.5 5.5L20 11l-5.5 2.5L12 19l-2.5-5.5L4 11l5.5-2.5z"/></svg>
+        语气 创意
+        <svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+    </div>
+
+    <div class="hint">点输入框看 focus 绿光晕 · 这是 composer 原型，对照参考图15</div>
+  </div>
+
+  <script>
+    // focus 光晕：contenteditable 聚焦/失焦切类
+    const composer = document.getElementById('composer')
+    const field = document.getElementById('field')
+    field.addEventListener('focus', () => composer.classList.add('is-focus'))
+    field.addEventListener('blur', () => composer.classList.remove('is-focus'))
+  </script>
+</body>
+</html>

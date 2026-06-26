@@ -110,6 +110,109 @@ export type ChatEvent =
     }
   | { type: 'end'; messageId: string }
   | { type: 'error'; messageId: string; error: string }
+  /**
+   * Workflow / Task subagent lifecycle. fusion-code (SDK ≥0.3) emits a
+   * family of `system` messages — `task_started` / `task_progress` /
+   * `task_updated` / `task_notification` — as Task-tool subagents and
+   * `local_workflow` scripts run. We collapse all four into this single
+   * event so the renderer can render a live sub-task list *inside* the
+   * Task tool card that spawned them.
+   *
+   * Keying notes (why this event is shaped unlike the others above):
+   *   - It carries NO `messageId`. These messages can arrive *after* the
+   *     parent turn's `result` (a backgrounded workflow keeps emitting
+   *     once the foreground turn ended), so there is frequently no active
+   *     turn to attribute them to. The renderer routes purely by
+   *     `toolUseId` → the existing tool-call part, independent of turn.
+   *   - `taskId` is always present; `toolUseId` is OPTIONAL because the
+   *     SDK's `task_updated` patch carries only `task_id` (no
+   *     `tool_use_id`). The renderer learns the `taskId → toolUseId`
+   *     mapping from the first `started` event and falls back to it for
+   *     later `updated` events that omit the tool id.
+   */
+  | {
+      type: 'task_update'
+      /**
+       * Which lifecycle message this came from. `started` installs the
+       * task (and the taskId→toolUseId mapping); `progress`/`updated`
+       * patch it; `notification` is the terminal record.
+       */
+      phase: 'started' | 'progress' | 'updated' | 'notification'
+      /** SDK `task_id` — stable across the task's whole lifecycle. */
+      taskId: string
+      /**
+       * The Task/Workflow tool-call that spawned this subtask. Present on
+       * `started`/`progress`/`notification`; absent on `updated`.
+       */
+      toolUseId?: string
+      /** Coarse run state. Derived per-phase (see engine mapping). */
+      status?: WorkflowTaskStatus
+      /** Human label for the subtask (e.g. the Task description). */
+      description?: string
+      /** Latest one-line progress summary, when the SDK supplies one. */
+      summary?: string
+      /** Subagent type ('Explore', 'general-purpose', …) when present. */
+      subagentType?: string
+      /** Workflow meta.name (only for `task_type: 'local_workflow'`). */
+      workflowName?: string
+      /** Terminal error message, when the task failed. */
+      error?: string
+      /**
+       * Terminal result text, parsed from the `<task-notification>`
+       * completion message a backgrounded workflow injects. For a
+       * `local_workflow` this is the workflow's return value (often a
+       * JSON blob with a `summary`); we surface it in the card so the
+       * user sees the deliverable without digging into the transcript.
+       */
+      result?: string
+      /** Absolute path to the task's full output file, when provided. */
+      outputFile?: string
+      /** Cumulative output tokens this subtask has spent (from usage). */
+      tokens?: number
+      /** Number of tool calls this subtask has made (from usage). */
+      toolUses?: number
+      /** Wall-clock ms this subtask has been running (from usage). */
+      durationMs?: number
+      /** Name of the most recent tool the subtask invoked. */
+      lastToolName?: string
+      /** Ambient/housekeeping task — renderer may hide from the card. */
+      skipTranscript?: boolean
+    }
+
+/** Coarse, UI-facing run state for a workflow/Task subtask. */
+export type WorkflowTaskStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'stopped'
+
+/**
+ * One workflow/Task subtask as accumulated by the renderer from the
+ * `task_update` event stream. Stored on the spawning tool-call part
+ * (keyed by `taskId`) and rendered as a row in the card's subtask list.
+ */
+export interface WorkflowTask {
+  taskId: string
+  status: WorkflowTaskStatus
+  description?: string
+  summary?: string
+  subagentType?: string
+  workflowName?: string
+  error?: string
+  /** Terminal result text (workflow return value / task output). */
+  result?: string
+  /** Absolute path to the task's full output file. */
+  outputFile?: string
+  /** Cumulative output tokens this subtask has spent. */
+  tokens?: number
+  /** Number of tool calls this subtask has made. */
+  toolUses?: number
+  /** Wall-clock ms this subtask has been running. */
+  durationMs?: number
+  /** Name of the most recent tool the subtask invoked. */
+  lastToolName?: string
+}
 
 /** Simple conversation container. */
 export interface Session {

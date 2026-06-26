@@ -201,3 +201,31 @@ export function usePermissionForToolUseId(
     })
   )
 }
+
+/**
+ * The pending AskUserQuestion request for a given session, or null.
+ *
+ * Used by the canvas's「问题」tab to render the questionnaire there instead of
+ * inline in the chat stream. AskUserQuestion rides the SAME permission-broker
+ * flow as any other tool gate (see InlinePermissionPrompt) — so the pending
+ * request, with its `input` (the questions) and `requestId` (needed to answer
+ * via `respond`), already lives in this store. We just filter to this
+ * session's AskUserQuestion entries and return the first (a session shows one
+ * questionnaire at a time). `useShallow` keeps consumers from re-rendering on
+ * unrelated permission traffic.
+ */
+export function usePendingAskUserQuestion(
+  sessionId: string | null
+): PermissionRequest | null {
+  return usePermissionStore(
+    useShallow((state): PermissionRequest | null => {
+      if (!sessionId) return null
+      for (const req of state.requests.values()) {
+        if (req.sessionId === sessionId && req.toolName === 'AskUserQuestion') {
+          return req
+        }
+      }
+      return null
+    })
+  )
+}

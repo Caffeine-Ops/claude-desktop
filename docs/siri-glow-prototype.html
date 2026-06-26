@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Siri 辉光边框 · 3 变体对比</title>
+<style>
+  :root {
+    /* Blue–violet–cyan spectrum (no pink — keeps it premium). */
+    --c1: #3b82f6; /* blue   */
+    --c2: #8b5cf6; /* violet */
+    --c3: #22d3ee; /* cyan   */
+    --ink: #1a1a18;
+    --ink-soft: #5f5f5b;
+    --ink-mute: #9b9b96;
+    --border: #ececeb;
+    --accent: #16a34a;
+    --radius: 16px;
+
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
+    letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #f0f0ef;
+    color: var(--ink);
+    min-height: 100vh;
+    padding: 48px 32px 80px;
+  }
+
+  .page-head { text-align: center; margin-bottom: 8px; }
+  .page-head h1 { font-size: 22px; font-weight: 700; }
+  .page-head p { margin-top: 6px; font-size: 13.5px; color: var(--ink-mute); }
+
+  .grid {
+    margin: 40px auto 0;
+    max-width: 1320px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 40px;
+  }
+  @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; max-width: 460px; } }
+
+  .variant { display: flex; flex-direction: column; gap: 14px; }
+  .variant-label {
+    display: flex; align-items: baseline; gap: 8px;
+    font-size: 13px; color: var(--ink-soft); padding-left: 4px;
+  }
+  .variant-label b { font-size: 14.5px; font-weight: 600; color: var(--ink); }
+  .variant-label span { font-size: 12px; color: var(--ink-mute); }
+
+  /* ── The questionnaire panel (shared shell) ───────────────────── */
+  .panel-wrap { position: relative; border-radius: var(--radius); }
+  .panel {
+    position: relative;
+    z-index: 1;
+    background: #fff;
+    border-radius: var(--radius);
+    height: 560px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .panel-body { flex: 1; overflow-y: auto; padding: 28px 28px 8px; }
+  .panel h2 { font-size: 20px; font-weight: 700; }
+  .panel .sub { margin-top: 4px; font-size: 13px; color: var(--ink-mute); }
+  .q-num { margin-top: 26px; font-size: 13px; color: var(--ink-mute); }
+  .q-title { margin-top: 4px; font-size: 17px; font-weight: 700; }
+  .q-desc { margin-top: 4px; font-size: 14px; color: var(--ink-soft); }
+  .q-kind { margin-top: 10px; font-size: 12.5px; color: var(--ink-mute); }
+  .options { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+  .opt {
+    display: flex; align-items: flex-start; gap: 12px;
+    border: 1px solid var(--border); border-radius: 14px;
+    padding: 13px 16px;
+  }
+  .opt .dot {
+    margin-top: 2px; width: 16px; height: 16px; border-radius: 999px;
+    border: 1.5px solid var(--ink-mute); flex: none;
+  }
+  .opt .o-label { font-size: 14px; font-weight: 600; }
+  .opt .o-desc { margin-top: 2px; font-size: 13px; color: var(--ink-soft); }
+  .other {
+    border: 1px solid var(--border); border-radius: 14px;
+    padding: 13px 16px; font-size: 14px; color: var(--ink-mute);
+  }
+  .bar {
+    flex: none; display: flex; align-items: center; gap: 14px;
+    border-top: 1px solid var(--border); padding: 16px 28px;
+  }
+  .btn-submit {
+    background: var(--ink); color: #fff; border: none;
+    border-radius: 999px; padding: 9px 20px; font-size: 13px; font-weight: 500;
+    opacity: .45; cursor: default;
+  }
+  .bar .ai { font-size: 13px; color: var(--ink-mute); }
+  .bar .gen { font-size: 12.5px; color: var(--ink-mute); display: inline-flex; align-items: center; gap: 6px; }
+  .gen .pip {
+    width: 6px; height: 6px; border-radius: 999px;
+    background: linear-gradient(120deg, var(--c1), var(--c3));
+    animation: pip 1.4s ease-in-out infinite;
+  }
+  @keyframes pip { 0%,100%{ opacity:.3; transform:scale(.8) } 50%{ opacity:1; transform:scale(1) } }
+
+  /* ════════════════════════════════════════════════════════════════
+     VARIANT 1 — 柔雾辉光 (blurred rotating conic ring)
+     A conic gradient rotated slowly, masked to a ring, then HEAVILY
+     blurred so the colour bleeds inward & outward as soft fog — no
+     hard edge. A second wider-blur layer adds the outer halo.
+     ════════════════════════════════════════════════════════════════ */
+  @property --ang1 { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+  @keyframes spin1 { to { --ang1: 360deg; } }
+  @keyframes breathe1 { 0%,100%{ opacity:.55 } 50%{ opacity:1 } }
+
+  /* Rotating soft-fog colour ring (the base glow). */
+  .v1 .glow, .v1 .glow::after {
+    content: ""; position: absolute; inset: -3px; border-radius: calc(var(--radius) + 3px);
+    pointer-events: none;
+    background: conic-gradient(from var(--ang1),
+      var(--c1), var(--c2), var(--c3), var(--c2), var(--c1));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    padding: 3px;
+    animation: spin1 9s linear infinite, breathe1 4s ease-in-out infinite;
+  }
+  .v1 .glow { filter: blur(7px); }
+  .v1 .glow::after { padding: 3px; filter: blur(18px); opacity: .55; }
+
+  /* OUTER halo — sits BELOW the opaque panel (default z), so its coloured
+     box-shadow spread bleeds out past the panel edges → panel reads as lit and
+     floating above the background. */
+  .v1 .glow-depth {
+    position: absolute; inset: 0; border-radius: var(--radius);
+    pointer-events: none;
+    box-shadow:
+      0 0 22px -2px rgba(59,130,246,.45),
+      0 0 48px 4px  rgba(139,92,246,.30);
+    animation: breathe1 4s ease-in-out infinite;
+  }
+  /* INNER glow — must sit ABOVE the panel (z:2) or the white panel would hide
+     the inset shadows. Colour seeps inward from the edge, giving the ring
+     volume/nearness instead of a flat outline. pointer-events:none so it
+     never blocks the form underneath. */
+  .v1 .glow-inner {
+    position: absolute; inset: 0; border-radius: var(--radius);
+    pointer-events: none; z-index: 2;
+    box-shadow:
+      inset 0 0 16px -3px rgba(34,211,238,.45),
+      inset 0 0 34px -12px rgba(139,92,246,.38);
+    animation: breathe1 4s ease-in-out infinite;
+  }
+
+  /* ════════════════════════════════════════════════════════════════
+     VARIANT 2 — 流光呼吸 (drifting colour blobs)
+     Three big soft-blurred colour blobs orbit just inside the edge on
+     different paths/speeds; clipped to the panel by overflow + radius.
+     This reads most like Siri/Apple-Intelligence "alive" flow.
+     ════════════════════════════════════════════════════════════════ */
+  .v2 .glow {
+    position: absolute; inset: 0; border-radius: var(--radius);
+    overflow: hidden; pointer-events: none;
+    /* feather the inner area so blobs only show as an edge band */
+    -webkit-mask: radial-gradient(120% 120% at 50% 50%, transparent 58%, #000 80%);
+    mask: radial-gradient(120% 120% at 50% 50%, transparent 58%, #000 80%);
+  }
+  .v2 .blob { position: absolute; width: 55%; aspect-ratio: 1; border-radius: 999px; filter: blur(34px); opacity: .8; }
+  .v2 .b1 { background: var(--c1); animation: drift1 11s ease-in-out infinite; }
+  .v2 .b2 { background: var(--c2); animation: drift2 14s ease-in-out infinite; }
+  .v2 .b3 { background: var(--c3); animation: drift3 9s  ease-in-out infinite; }
+  @keyframes drift1 {
+    0%   { top: -18%; left: -12%; }
+    33%  { top: 60%;  left: -16%; }
+    66%  { top: 75%;  left: 55%;  }
+    100% { top: -18%; left: -12%; }
+  }
+  @keyframes drift2 {
+    0%   { top: 70%;  left: 65%;  }
+    33%  { top: -16%; left: 60%;  }
+    66%  { top: -12%; left: -10%; }
+    100% { top: 70%;  left: 65%;  }
+  }
+  @keyframes drift3 {
+    0%   { top: -14%; left: 55%;  }
+    50%  { top: 68%;  left: -8%;  }
+    100% { top: -14%; left: 55%;  }
+  }
+
+  /* ════════════════════════════════════════════════════════════════
+     VARIANT 3 — 内辉描边 (restrained inset glow + faint ring)
+     The most understated: a barely-there gradient ring (low opacity,
+     gentle blur) + a soft inset glow that breathes. No spinning fog —
+     just a quiet shimmer that says "thinking" without shouting.
+     ════════════════════════════════════════════════════════════════ */
+  @property --ang3 { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+  @keyframes spin3 { to { --ang3: 360deg; } }
+  @keyframes innerbreathe3 { 0%,100%{ opacity:.4 } 50%{ opacity:.85 } }
+
+  .v3 .ring {
+    content:""; position: absolute; inset: 0; border-radius: var(--radius);
+    pointer-events: none; padding: 1.5px;
+    background: conic-gradient(from var(--ang3),
+      transparent, var(--c1) 20%, var(--c3) 40%, transparent 60%, var(--c2) 80%, transparent);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    filter: blur(1.5px);
+    opacity: .7;
+    animation: spin3 12s linear infinite;
+  }
+  .v3 .inner {
+    position: absolute; inset: 0; border-radius: var(--radius);
+    pointer-events: none;
+    box-shadow:
+      inset 0 0 18px -4px rgba(59,130,246,.5),
+      inset 0 0 40px -10px rgba(139,92,246,.45);
+    animation: innerbreathe3 3.6s ease-in-out infinite;
+  }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <h1>Siri 辉光边框 · 3 变体对比</h1>
+    <p>「AI 正在生成问题」时面板四周的辉光。挑一个，或告诉我混搭哪些点。</p>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+<script>
+  // One questionnaire shell, reused for all three variants.
+  function panelHTML() {
+    return `
+      <div class="panel">
+        <div class="panel-body">
+          <h2>请回答以下问题</h2>
+          <div class="sub">问题</div>
+          <div class="q-num">01</div>
+          <div class="q-title">画布</div>
+          <div class="q-desc">画布格式?</div>
+          <div class="q-kind">单选</div>
+          <div class="options">
+            <div class="opt"><span class="dot"></span><span><span class="o-label">PPT 16:9</span><span class="o-desc">标准宽屏演示 1280x720，项目介绍首选。</span></span></div>
+            <div class="opt"><span class="dot"></span><span><span class="o-label">PPT 4:3</span><span class="o-desc">传统投影比例 1024x768。</span></span></div>
+            <div class="opt"><span class="dot"></span><span><span class="o-label">小红书 3:4</span><span class="o-desc">竖版社交卡片，适合手机。</span></span></div>
+            <div class="other">其他（请填写）</div>
+          </div>
+        </div>
+        <div class="bar">
+          <button class="btn-submit">提交答案</button>
+          <span class="ai">AI 自行决定</span>
+          <span class="gen"><span class="pip"></span>AI 正在生成问题…</span>
+        </div>
+      </div>`;
+  }
+
+  const variants = [
+    { cls: 'v1', name: '柔雾辉光', desc: '旋转锥形 + 内外辉光阴影', glow: '<div class="glow-depth"></div><div class="glow"></div><div class="glow-inner"></div>' },
+    { cls: 'v2', name: '流光呼吸', desc: '彩色光斑沿边游走，最像 Siri', glow: '<div class="glow"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div></div>' },
+    { cls: 'v3', name: '内辉描边', desc: '极淡细环 + 内辉呼吸，克制', glow: '<div class="ring"></div><div class="inner"></div>' },
+  ];
+
+  document.getElementById('grid').innerHTML = variants.map((v, i) => `
+    <div class="variant ${v.cls}">
+      <div class="variant-label"><b>变体 ${i+1} · ${v.name}</b><span>${v.desc}</span></div>
+      <div class="panel-wrap">
+        ${v.glow}
+        ${panelHTML()}
+      </div>
+    </div>
+  `).join('');
+</script>
+</body>
+</html>

@@ -16,6 +16,8 @@ import {
 } from '@assistant-ui/react'
 
 import { useChatStore } from '../stores/chat'
+import { useSessionTitleStore } from '../stores/sessionTitle'
+import { useComposerModeStore } from '../stores/composerMode'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
@@ -72,6 +74,7 @@ export function FusionRuntimeProvider({
   const finalizeToolCall = useChatStore((s) => s.finalizeToolCall)
   const addToolCall = useChatStore((s) => s.addToolCall)
   const updateToolCallResult = useChatStore((s) => s.updateToolCallResult)
+  const updateToolCallTasks = useChatStore((s) => s.updateToolCallTasks)
   const setError = useChatStore((s) => s.setError)
   const endAssistantMessage = useChatStore((s) => s.endAssistantMessage)
   const setUsage = useChatStore((s) => s.setUsage)
@@ -166,6 +169,7 @@ export function FusionRuntimeProvider({
         finalizeToolCall,
         addToolCall,
         updateToolCallResult,
+        updateToolCallTasks,
         setError,
         endAssistantMessage,
         setUsage
@@ -189,6 +193,7 @@ export function FusionRuntimeProvider({
     finalizeToolCall,
     addToolCall,
     updateToolCallResult,
+    updateToolCallTasks,
     setError,
     endAssistantMessage,
     setUsage
@@ -346,12 +351,27 @@ export function FusionRuntimeProvider({
       // paths that don't. Mentions go AFTER the user's typed text so
       // the prompt reads naturally ("look at this: @/a/b.pdf").
       const mentionSuffix = filePaths.map((p) => `@"${p}"`).join(' ')
-      const text =
+      let text =
         mentionSuffix.length > 0
           ? baseText
             ? `${baseText} ${mentionSuffix}`
             : mentionSuffix
           : baseText
+
+      // Slides mode → drive the ppt-master skill. When the composer's mode
+      // picker is on 幻灯片, prepend the skill's slash invocation so fusion-code
+      // runs ppt-master for this turn. The bundled backend exposes it under the
+      // plugin namespace as `/claude-desktop:ppt-master` (the chip registry
+      // renders that verbatim as a「制作PPT」chip in the user bubble). Skip if
+      // the user already typed a ppt-master slash so we never double-prefix.
+      // Note: composerMode is read via getState() (not subscribed) — onNew runs
+      // imperatively at send time, so a snapshot is exactly right.
+      const SLIDES_SLASH = '/claude-desktop:ppt-master'
+      const slidesMode = useComposerModeStore.getState().mode === 'slides'
+      const alreadyPptSlash = /^\/(claude-desktop:)?ppt-master\b/.test(baseText)
+      if (slidesMode && !alreadyPptSlash) {
+        text = text ? `${SLIDES_SLASH} ${text}` : SLIDES_SLASH
+      }
 
       console.log('[runtime] onNew', {
         textLength: text.length,
@@ -516,6 +536,28 @@ export function FusionRuntimeProvider({
  * `chatApi.send` so the user can still send free-form text that
  * happens to begin with a slash (e.g. "/Users/foo/bar").
  */
+/**
+ * Bucket a thread's `updatedAt` (ms-since-epoch) into a coarse,
+ * human-readable date group for the sidebar headings: 今天 / 昨天 /
+ * 7 天内 / 更早. Compared against local-midnight boundaries so "今天"
+ * means "since 00:00 today" rather than "within the last 24h" — matches
+ * how users read a chat list. Anything in the future (clock skew) falls
+ * into 今天.
+ */
+function dateGroupLabel(updatedAt: number): string {
+  const now = new Date()
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  ).getTime()
+  const dayMs = 24 * 60 * 60 * 1000
+  if (updatedAt >= startOfToday) return '今天'
+  if (updatedAt >= startOfToday - dayMs) return '昨天'
+  if (updatedAt >= startOfToday - 7 * dayMs) return '7 天内'
+  return '更早'
+}
+
 /**
  * Powers the left sidebar. Talks only to `window.chatApi` — no direct
  * knowledge of the main process, file system, or the SDK. State lives
@@ -732,18 +774,66 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     onSwitchToNewThread
   ])
 
+  // Shell-driven session switching. The session list now lives in the
+  // shell's left rail (a separate webContents with no runtime of its own),
+  // so when the user clicks a session there, main forwards the request here
+  // (SHELL_SESSION_SWITCH). We run the SAME switch handlers a click in the
+  // old in-tab sidebar would have — so setSession / loadSession /
+  // sessionLoading all fire and the Thread view stays in lockstep. `null`
+  // means "new chat". Only the active chat tab is targeted by main.
+  useEffect(() => {
+    if (!window.chatApi?.onShellSessionSwitch) return
+    return window.chatApi.onShellSessionSwitch((id) => {
+      if (id === null) {
+        void onSwitchToNewThread()
+      } else {
+        void onSwitchToThread(id)
+      }
+    })
+  }, [onSwitchToThread, onSwitchToNewThread])
+
   // Map ThreadSummary[] → ExternalStoreThreadData<'regular'>[] once
   // per threads change. Memoized so the runtime's rerender path
   // doesn't fire diff-by-identity on every parent rerender.
-  const threadData = useMemo(
-    () =>
-      threads.map((t) => ({
+  //
+  // We stash per-row date-grouping metadata in `custom` (assistant-ui
+  // passes ThreadData.custom straight through to the row, readable via
+  // useAuiState(s => s.threadListItem.custom)). `groupLabel` is the
+  // bucket this row falls in (今天/昨天/7 天内/更早) computed from its
+  // `updatedAt`; `isGroupFirst` is true only for the FIRST row of each
+  // bucket, so the sidebar row can render a sticky group heading above
+  // itself. `threads` is already sorted newest-first by main
+  // (sessionStore.listSessions), so a single forward scan suffices and
+  // the buckets come out in chronological order without re-sorting.
+  const threadData = useMemo(() => {
+    let prevGroup: string | null = null
+    return threads.map((t) => {
+      const groupLabel = dateGroupLabel(t.updatedAt)
+      const isGroupFirst = groupLabel !== prevGroup
+      prevGroup = groupLabel
+      return {
         status: 'regular' as const,
         id: t.id,
-        title: t.title
-      })),
-    [threads]
-  )
+        title: t.title,
+        custom: { groupLabel, isGroupFirst }
+      }
+    })
+  }, [threads])
+
+  // Mirror the foreground session's title into the shared title store so the
+  // chat header (ThreadView) can render it. The title lives in `threads` (the
+  // ThreadSummary the sidebar uses), keyed by the chat store's `sessionId`;
+  // ThreadView is a sibling under the runtime provider and can't take it as a
+  // prop, so this is the seam. null when no session is selected yet, or while
+  // a freshly-minted session isn't in `threads` yet (its first turn hasn't
+  // hit the JSONL, so listSessions hasn't surfaced it) — the header falls back
+  // to a placeholder in that window.
+  useEffect(() => {
+    const current = sessionId
+      ? (threads.find((t) => t.id === sessionId)?.title ?? null)
+      : null
+    useSessionTitleStore.getState().setTitle(current)
+  }, [threads, sessionId])
 
   return useMemo<ExternalStoreThreadListAdapter>(
     () => ({
@@ -889,6 +979,10 @@ function makeSessionEventHandler(
       toolUseId: string,
       output: unknown
     ) => void
+    updateToolCallTasks: (
+      sid: string,
+      ev: Extract<ChatEvent, { type: 'task_update' }>
+    ) => void
     setError: (sid: string, messageId: string, error: string) => void
     endAssistantMessage: (sid: string) => void
     setUsage: (
@@ -978,6 +1072,12 @@ function makeSessionEventHandler(
         break
       case 'tool_result':
         actions.updateToolCallResult(sid, event.toolUseId, event.output)
+        break
+      case 'task_update':
+        // Workflow/Task subagent lifecycle — merge into the spawning
+        // Task card's sub-task list. Routed by toolUseId/taskId inside
+        // the store, independent of any active assistant turn.
+        actions.updateToolCallTasks(sid, event)
         break
       case 'usage':
         actions.setUsage(sid, {

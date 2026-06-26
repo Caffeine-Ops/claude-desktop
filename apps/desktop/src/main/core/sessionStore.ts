@@ -24,7 +24,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk'
 import type { ThreadMessageLike } from '@assistant-ui/react'
 
-import type { ThreadSummary } from '../../shared/types'
+import type { ThreadSummary, WorkflowTask } from '../../shared/types'
 
 const TAG = '[sessionStore]'
 
@@ -213,18 +213,33 @@ export function convertSdkMessages(
   raws: readonly SessionMessage[]
 ): ThreadMessageLike[] {
   const resultByToolUseId = new Map<string, unknown>()
+  // Workflow/Task completion records, keyed by the spawning Workflow
+  // tool-call's id. On a live run these subtasks arrive as `task_update`
+  // events and the renderer merges them onto the card; on history replay
+  // there are no such events, so we reconstruct them here from the
+  // `<task-notification>` user message the workflow injected at
+  // completion — otherwise the deliverable vanishes after a reload.
+  const tasksByToolUseId = new Map<string, WorkflowTask[]>()
 
   for (const raw of raws) {
     if (raw.type !== 'user') continue
     const blocks = extractContentBlocks(raw.message)
-    if (!blocks) continue
-    for (const block of blocks) {
-      if (!isRecord(block)) continue
-      if (block.type !== 'tool_result') continue
-      const toolUseId = block.tool_use_id
-      if (typeof toolUseId !== 'string') continue
-      resultByToolUseId.set(toolUseId, normalizeToolResultContent(block.content))
+    if (blocks) {
+      for (const block of blocks) {
+        if (!isRecord(block)) continue
+        if (block.type !== 'tool_result') continue
+        const toolUseId = block.tool_use_id
+        if (typeof toolUseId !== 'string') continue
+        resultByToolUseId.set(
+          toolUseId,
+          normalizeToolResultContent(block.content)
+        )
+      }
     }
+    // The completion notification is a plain-text user message, not a
+    // block array, so it isn't in `blocks` above — pull it off the raw
+    // string content separately.
+    collectTaskNotification(raw.message, tasksByToolUseId)
   }
 
   const out: ThreadMessageLike[] = []
@@ -244,7 +259,11 @@ export function convertSdkMessages(
     }
 
     if (raw.type === 'assistant') {
-      const parts = convertAssistantContent(raw.message, resultByToolUseId)
+      const parts = convertAssistantContent(
+        raw.message,
+        resultByToolUseId,
+        tasksByToolUseId
+      )
       if (parts.length === 0) continue
       out.push({
         id: raw.uuid,
@@ -257,9 +276,76 @@ export function convertSdkMessages(
   return out
 }
 
+/**
+ * If `message` is a workflow's `<task-notification>` completion record,
+ * parse it into a `WorkflowTask` and stash it under its spawning
+ * tool-use id. Mirrors engine.ts `parseTaskNotification` so live and
+ * replayed cards look identical. No-op for anything else.
+ */
+function collectTaskNotification(
+  message: unknown,
+  into: Map<string, WorkflowTask[]>
+): void {
+  const content = isRecord(message) ? message.content : undefined
+  if (typeof content !== 'string') return
+  if (!content.includes('<task-notification>')) return
+
+  const tag = (name: string): string | undefined => {
+    const m = content.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))
+    return m ? m[1].trim() : undefined
+  }
+  const taskId = tag('task-id')
+  const toolUseId = tag('tool-use-id')
+  if (!taskId || !toolUseId) return
+
+  const rawStatus = tag('status')
+  const status: WorkflowTask['status'] =
+    rawStatus === 'completed'
+      ? 'completed'
+      : rawStatus === 'stopped'
+        ? 'stopped'
+        : 'failed'
+
+  const rawResult = tag('result')
+  let result = rawResult
+  if (rawResult) {
+    try {
+      const parsed = JSON.parse(rawResult)
+      if (isRecord(parsed) && typeof parsed.summary === 'string') {
+        result = parsed.summary
+      }
+    } catch {
+      // keep raw
+    }
+  }
+
+  const task: WorkflowTask = {
+    taskId,
+    status,
+    summary: tag('summary'),
+    result,
+    outputFile: tag('output-file')
+  }
+  const list = into.get(toolUseId) ?? []
+  list.push(task)
+  into.set(toolUseId, list)
+}
+
 /* ─────────────────── content mapping ─────────────────── */
 
 type ContentPart = { type: string; [key: string]: unknown }
+
+/**
+ * True for `user` messages that are fusion-code housekeeping injections
+ * rather than human input — currently the `<task-notification>` block a
+ * backgrounded task/workflow posts on completion. These belong on the
+ * spawning tool card, not in the transcript as a user bubble. Matched on
+ * the leading tag (trimmed) so we don't accidentally hide a real message
+ * that merely mentions the word elsewhere.
+ */
+function isInjectedAgentMessage(text: string): boolean {
+  return text.trimStart().startsWith('<task-notification>')
+}
 
 function convertUserContent(message: unknown): ContentPart[] {
   const parts: ContentPart[] = []
@@ -268,6 +354,14 @@ function convertUserContent(message: unknown): ContentPart[] {
   // array of content blocks (mixed text/image/tool_result).
   const raw = isRecord(message) ? message.content : undefined
   if (typeof raw === 'string') {
+    // A backgrounded task/workflow's completion is injected into the
+    // agent loop as a `user` message whose content is a
+    // `<task-notification>…</task-notification>` block — it is NOT
+    // something the human typed. The live path routes it into the
+    // spawning tool card (engine `tryEmitTaskUpdate`); on history replay
+    // we must drop it here too, otherwise the raw XML resurfaces as a
+    // blue user bubble. Returning no parts makes the caller skip it.
+    if (isInjectedAgentMessage(raw)) return parts
     if (raw.length > 0) parts.push({ type: 'text', text: raw })
     return parts
   }
@@ -276,6 +370,7 @@ function convertUserContent(message: unknown): ContentPart[] {
   for (const block of raw) {
     if (!isRecord(block)) continue
     if (block.type === 'text' && typeof block.text === 'string') {
+      if (isInjectedAgentMessage(block.text)) continue
       if (block.text.length > 0) parts.push({ type: 'text', text: block.text })
       continue
     }
@@ -293,7 +388,8 @@ function convertUserContent(message: unknown): ContentPart[] {
 
 function convertAssistantContent(
   message: unknown,
-  resultByToolUseId: Map<string, unknown>
+  resultByToolUseId: Map<string, unknown>,
+  tasksByToolUseId: Map<string, WorkflowTask[]>
 ): ContentPart[] {
   const parts: ContentPart[] = []
   const raw = isRecord(message) ? message.content : undefined
@@ -322,6 +418,10 @@ function convertAssistantContent(
       }
       const result = resultByToolUseId.get(id)
       if (result !== undefined) part.result = result
+      // Re-attach any workflow subtasks reconstructed from completion
+      // notifications so the replayed card shows them just like live.
+      const tasks = tasksByToolUseId.get(id)
+      if (tasks && tasks.length > 0) part.tasks = tasks
       parts.push(part)
       continue
     }

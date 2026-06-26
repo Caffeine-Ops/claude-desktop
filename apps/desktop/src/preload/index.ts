@@ -374,6 +374,18 @@ const chatApi: ChatApi = {
     }
   },
 
+  onShellSessionSwitch(
+    handler: (sessionId: string | null) => void
+  ): () => void {
+    const listener = (_e: unknown, payload: { sessionId: string | null }): void => {
+      handler(payload?.sessionId ?? null)
+    }
+    ipcRenderer.on(IPC_CHANNELS.SHELL_SESSION_SWITCH, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.SHELL_SESSION_SWITCH, listener)
+    }
+  },
+
   closeSettingsWindow(): Promise<void> {
     return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE) as Promise<void>
   }
@@ -434,6 +446,28 @@ const tabApi: TabApi = {
     ipcRenderer.on(IPC_CHANNELS.SHELL_FULLSCREEN_CHANGED, listener)
     return () => {
       ipcRenderer.off(IPC_CHANNELS.SHELL_FULLSCREEN_CHANGED, listener)
+    }
+  },
+
+  listShellSessions(): Promise<SessionListResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SHELL_SESSION_LIST
+    ) as Promise<SessionListResult>
+  },
+
+  switchShellSession(sessionId: string | null): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.SHELL_SESSION_SWITCH_REQUEST, {
+      sessionId
+    }) as Promise<void>
+  },
+
+  onShellSessionListChanged(handler: () => void): () => void {
+    const listener = (): void => {
+      handler()
+    }
+    ipcRenderer.on(IPC_CHANNELS.SHELL_SESSION_LIST_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.SHELL_SESSION_LIST_CHANGED, listener)
     }
   }
 }

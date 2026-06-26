@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react'
 
 import TabBar from '../components/tabs/TabBar'
+import { ShellSessionList } from './ShellSessionList'
 import { UserInfoBar } from '../components/chat/UserInfoBar'
 import { useApplyAppearance } from '../stores/appearance.applier'
 import { hydrateAppearanceFromDaemon } from '../stores/appearance'
@@ -51,12 +52,16 @@ export default function ShellApp(): React.ReactElement {
 
   return (
     <div className="shell-chrome">
+      {/* Top: the vertical nav rail (新对话 + tab rows + 更多/设置). */}
       <TabBar />
-      {/* Settings menu — pinned to the far right of the tab strip. Moved
-          here from the chat sidebar's bottom-left footer so it's reachable
-          from any tab (including the Open Design web tab, which renders no
-          chrome of its own). Its chat-tab actions route through
-          window.tabApi.triggerMenuAction → the active chat tab. */}
+      {/* Middle: the active chat tab's session list, grouped by date. It
+          fills the remaining height between the nav and the footer and
+          scrolls on its own. Lives here (not in the chat tab) so nav +
+          sessions read as one continuous left column. */}
+      <ShellSessionList />
+      {/* Bottom: user/account footer pinned to the base of the rail. Holds
+          the settings entry point — reachable from any tab (including the
+          Open Design web tab, which renders no chrome of its own). */}
       <UserInfoBar />
     </div>
   )

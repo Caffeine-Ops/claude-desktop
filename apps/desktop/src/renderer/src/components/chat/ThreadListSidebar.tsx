@@ -145,8 +145,12 @@ export function ThreadListSidebar(): React.JSX.Element {
           right. Replaces the old full-width gradient CTA with a
           calmer layout that reads as "sidebar toolbar" rather
           than "marketing hero". */}
-      <div className="flex items-center justify-between px-4 pb-1.5 pt-3">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
+      {/* Header — kept in sync with the shell rail's "更多" group label
+          style (12px, medium, muted) so the chat list reads as a
+          continuation of the same left column rather than a separate
+          pane. The `+` mints a new chat. */}
+      <div className="flex items-center justify-between px-3 pb-1 pt-3">
+        <span className="text-[12px] font-medium tracking-wide text-muted-foreground/60">
           {t('sidebarChats')}
         </span>
         <ThreadListPrimitive.New
@@ -273,10 +277,31 @@ export function ThreadListSidebar(): React.JSX.Element {
  * sidebar doesn't accidentally collide with a stray `.group` higher
  * up the tree.
  */
+/**
+ * Date-grouping metadata stashed in each thread's `custom` by
+ * useThreadListAdapter (FusionRuntimeProvider). `groupLabel` is the row's
+ * bucket (今天/昨天/7 天内/更早); `isGroupFirst` marks the first row of a
+ * bucket so it can render the heading above itself.
+ */
+interface ThreadGroupMeta {
+  groupLabel: string
+  isGroupFirst: boolean
+}
+
 function ThreadListItem(): React.JSX.Element {
   const itemId = useThreadListItem((s) => s.id)
   const t = useT()
   const itemTitle = useThreadListItem((s) => s.title) ?? t('sidebarNewChat')
+  // Date-group metadata, set in the runtime's threadData mapping
+  // (ExternalStoreThreadData.custom). assistant-ui carries `custom`
+  // through to the row state at runtime, but this version's
+  // `ThreadListItemState` type doesn't declare it — so we read it off a
+  // widened view of the state. Undefined defensively (e.g. a row
+  // mid-creation before the adapter remaps), in which case no heading is
+  // drawn.
+  const groupMeta = useThreadListItem(
+    (s) => (s as { custom?: ThreadGroupMeta }).custom
+  )
   const statusMap = useContext(SidebarStatusContext)
   const status = resolveStatus(itemId, statusMap)
   // Read this session's latest context size from the chat store.
@@ -413,13 +438,22 @@ function ThreadListItem(): React.JSX.Element {
   }, [draft, itemId, itemTitle, t])
 
   return (
-    <ThreadListItemPrimitive.Root
-      // ref the wrapper div so the outside-click effect above can
-      // discriminate "click landed inside this row" from "click
-      // landed somewhere else in the document".
-      ref={rowRef}
-      className="group/thread relative mb-0.5"
-    >
+    <>
+      {/* Date-group heading — rendered only above the first row of each
+          bucket (今天 / 昨天 / 7 天内 / 更早). Sits outside the row Root so
+          it doesn't inherit the row's hover/active styling. */}
+      {groupMeta?.isGroupFirst ? (
+        <div className="px-3 pb-1 pt-3 text-[12px] font-medium text-muted-foreground/55 first:pt-1">
+          {groupMeta.groupLabel}
+        </div>
+      ) : null}
+      <ThreadListItemPrimitive.Root
+        // ref the wrapper div so the outside-click effect above can
+        // discriminate "click landed inside this row" from "click
+        // landed somewhere else in the document".
+        ref={rowRef}
+        className="group/thread relative mb-0.5"
+      >
       {editing ? (
         // ── Edit mode ────────────────────────────────────────────────
         // Sibling div instead of the Trigger — Trigger is a button and
@@ -461,15 +495,13 @@ function ThreadListItem(): React.JSX.Element {
         </div>
       ) : (
         // ── Default mode ─────────────────────────────────────────────
-        // Two-line Apple-Mail-style row:
-        //   [status dot] [title                           ]
-        //                [status text · (optional meta)   ]
-        // The status dot colors track the resolved status:
-        //   running             → emerald + ping animation
-        //   awaitingPermission  → amber   + solid pulse (no ping)
-        //   idle                → muted gray
-        // Row height lands around 56px so titles and statuses each
-        // get a comfortable reading line without crowding.
+        // Single-line row (reference design): just the title. The old
+        // two-line layout (title + "空闲/运行中" status subline + context %)
+        // was dropped for a calmer, denser list. Running / awaiting-permission
+        // state still shows — as a tiny colored dot prefixed before the title
+        // (only when NOT idle), so a streaming background turn is still
+        // legible without spending a whole subline on it. A `···` more button
+        // (rename) fades in on hover / when active.
         <>
           <ThreadListItemPrimitive.Trigger
             title={
@@ -479,39 +511,26 @@ function ThreadListItem(): React.JSX.Element {
                   ? `${itemTitle} · ${t('sidebarStatusAwaitingPermission')}`
                   : itemTitle
             }
-            className="flex w-full items-center gap-2.5 rounded-lg py-2.5 pl-3 pr-16 text-left transition-colors hover:bg-foreground/[0.05] group-data-[active]/thread:bg-foreground/[0.08]"
+            className="flex h-9 w-full items-center gap-2 rounded-lg pl-3 pr-9 text-left text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground/90 group-data-[active]/thread:bg-foreground/[0.08] group-data-[active]/thread:text-foreground"
           >
-            <StatusDot status={status} />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] font-medium leading-[1.2] text-foreground/80 group-data-[active]/thread:text-foreground">
-                <ThreadListItemPrimitive.Title fallback={t('sidebarNewChat')} />
-              </div>
-              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] leading-[1.3]">
-                <span
-                  className={'truncate ' + statusTextClass(status)}
-                >
-                  {statusLabel(status, t)}
-                </span>
-                {typeof contextTokens === 'number' ? (
-                  <>
-                    <span
-                      aria-hidden
-                      className="text-muted-foreground/40"
-                    >
-                      ·
-                    </span>
-                    <span
-                      className={
-                        'tabular-nums ' + contextPercentClass(contextTokens)
-                      }
-                      title={`${contextTokens.toLocaleString()} tokens / ${CONTEXT_WINDOW_TOKENS.toLocaleString()}`}
-                    >
-                      {formatContextPercent(contextTokens)}
-                    </span>
-                  </>
-                ) : null}
-              </div>
-            </div>
+            {/* Status dot only when something is happening; idle rows omit
+                it so the list reads as plain titles per the reference. */}
+            {status !== 'idle' ? <InlineStatusDot status={status} /> : null}
+            <span className="min-w-0 flex-1 truncate text-[14px] leading-none">
+              <ThreadListItemPrimitive.Title fallback={t('sidebarNewChat')} />
+            </span>
+            {/* Context % chip kept but demoted: only shown when near the cap
+                (≥80%), as a quiet warning. Below that it's hidden to keep the
+                single-line row clean. */}
+            {typeof contextTokens === 'number' &&
+            contextFraction(contextTokens) * 100 >= 80 ? (
+              <span
+                className={'shrink-0 text-[11px] tabular-nums ' + contextPercentClass(contextTokens)}
+                title={`${contextTokens.toLocaleString()} tokens / ${CONTEXT_WINDOW_TOKENS.toLocaleString()}`}
+              >
+                {formatContextPercent(contextTokens)}
+              </span>
+            ) : null}
           </ThreadListItemPrimitive.Trigger>
           {/* Notification badge — Apple-style red pill with the
               count, always visible when the session has at least
@@ -561,11 +580,12 @@ function ThreadListItem(): React.JSX.Element {
               (isAwaitingPermission ? 'right-8' : 'right-1.5')
             }
           >
-            <PencilIcon />
+            <MoreIcon />
           </button>
         </>
       )}
-    </ThreadListItemPrimitive.Root>
+      </ThreadListItemPrimitive.Root>
+    </>
   )
 }
 
@@ -607,73 +627,36 @@ function IconButton({
   )
 }
 
-function PencilIcon(): React.JSX.Element {
+/**
+ * Horizontal three-dot "more" glyph — the row's hover/active affordance.
+ * Replaces the old pencil; clicking it still opens inline rename (the only
+ * per-row action today), but the dots read as a generic "more" menu cue
+ * matching the reference design's session list.
+ */
+function MoreIcon(): React.JSX.Element {
   return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5Z" />
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <circle cx="5" cy="12" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="19" cy="12" r="1.6" />
     </svg>
   )
 }
 
 /**
- * Per-row colored dot keyed on resolved `SessionStatus`.
- *
- * - running:            emerald-500, with a ping animation to draw
- *                       the eye to a still-streaming background turn
- * - awaitingPermission: amber-500 solid (no ping — the "attention
- *                       needed" state should look steady, not
- *                       frantic, or it competes with the running pulse)
- * - idle:               muted gray, subtly lighter when the row is
- *                       the active selection so it still reads as
- *                       "selected but nothing running"
+ * Compact inline status dot, prefixed before the title on non-idle rows
+ * (running / awaiting-permission). Smaller than the old standalone
+ * StatusDot since it now shares the single title line rather than owning a
+ * gutter column. Idle rows render no dot at all (see the Trigger above).
  */
-function StatusDot({
-  status
-}: {
-  status: SessionStatus
-}): React.JSX.Element {
-  if (status === 'running') {
-    return (
-      <span className="mt-[5px] size-2 shrink-0 self-start rounded-full bg-emerald-500" />
-    )
-  }
-  if (status === 'awaitingPermission') {
-    return (
-      <span className="mt-[5px] size-2 shrink-0 self-start rounded-full bg-amber-500" />
-    )
-  }
-  return (
-    <span className="mt-[5px] size-2 shrink-0 self-start rounded-full bg-muted-foreground/60 group-data-[active]/thread:bg-foreground/50" />
-  )
-}
-
-/**
- * Human-readable status label pulled through i18n. Returns the
- * string the subtitle row should show.
- */
-function statusLabel(
-  status: SessionStatus,
-  t: (key: 'sidebarStatusRunning' | 'sidebarStatusAwaitingPermission' | 'sidebarStatusIdle') => string
-): string {
-  switch (status) {
-    case 'running':
-      return t('sidebarStatusRunning')
-    case 'awaitingPermission':
-      return t('sidebarStatusAwaitingPermission')
-    case 'idle':
-      return t('sidebarStatusIdle')
-  }
+function InlineStatusDot({ status }: { status: SessionStatus }): React.JSX.Element {
+  const color =
+    status === 'running'
+      ? 'bg-emerald-500'
+      : status === 'awaitingPermission'
+        ? 'bg-amber-500'
+        : 'bg-muted-foreground/50'
+  return <span className={`size-1.5 shrink-0 rounded-full ${color}`} />
 }
 
 /**
@@ -721,18 +704,6 @@ function contextPercentClass(tokens: number): string {
   if (pct < 40) return 'text-emerald-600 dark:text-emerald-400'
   if (pct < 80) return 'text-amber-600 dark:text-amber-400'
   return 'text-red-600 dark:text-red-400'
-}
-
-/** Tailwind class for the subtitle text, matched to the dot color. */
-function statusTextClass(status: SessionStatus): string {
-  switch (status) {
-    case 'running':
-      return 'text-emerald-600 dark:text-emerald-400'
-    case 'awaitingPermission':
-      return 'text-amber-600 dark:text-amber-400'
-    case 'idle':
-      return 'text-muted-foreground/70'
-  }
 }
 
 /**

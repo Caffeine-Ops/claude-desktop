@@ -2,13 +2,10 @@ import { useEffect, useState } from 'react'
 
 import { FusionRuntimeProvider } from './runtime/FusionRuntimeProvider'
 import { ThreadView } from './components/chat/ThreadView'
-import { ThreadListSidebar } from './components/chat/ThreadListSidebar'
-import { TodoListPanel } from './components/todos/TodoListPanel'
 import { PermissionBridge } from './components/permissions/PermissionBridge'
 import { SkillsDialog } from './components/dialogs/SkillsDialog'
 import { McpDialog } from './components/dialogs/McpDialog'
 import { LogsDialog } from './components/dialogs/LogsDialog'
-import { WorkspaceTreePanel } from './components/workspace/WorkspaceTreePanel'
 import { useChatStore } from './stores/chat'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
@@ -32,14 +29,15 @@ import { AnimatePresence, motion } from 'motion/react'
  *         horizontal flex row
  *           ThreadListSidebar   (w-64, left rail — chats)
  *           ThreadView          (flex-1, main chat area)
- *           TodoListPanel       (w-72, right rail — todos)
  *
  * The horizontal flex row lives *inside* the runtime provider so both
  * the sidebar (ThreadListPrimitive) and the chat view (ThreadPrimitive)
  * share the same AssistantRuntime — otherwise the sidebar couldn't
- * resolve its context. TodoListPanel doesn't depend on the runtime, but
- * keeping it inside the row gives the three panes a single shared flex
- * parent for consistent full-height sizing.
+ * resolve its context.
+ *
+ * The right rail (待办 TodoListPanel + 文件 WorkspaceTreePanel) was
+ * removed — ThreadView now fills the full width to the right of the
+ * chat list. Both component files still exist but are no longer mounted.
  *
  * Workspace
  * ---------
@@ -66,11 +64,11 @@ type WorkspaceStatus = 'loading' | null | string
 function App(): React.JSX.Element {
   const [workspace, setWorkspace] = useState<WorkspaceStatus>('loading')
 
-  // 三个工作区面板（左对话列表、右代办、右文件树）现在**默认常开、不可收起**。
-  // 以前 header 里有两个折叠按钮 + 随窗口宽度自动收起的逻辑（sidebarOpen /
-  // rightRailOpen state + useMediaQuery 断点 + AnimatePresence 滑入滑出），
-  // 已全部移除——面板恒定渲染为固定宽度的静态列。整条 .header--tab 也一并删了，
-  // chat 内容直接顶到顶部 shell tab 条下方。
+  // 现在 chat tab 内只剩两栏：左对话列表（常驻 256px）+ 右聊天区。右侧的
+  // 代办 / 文件树面板已整列移除（用户不再需要）。更早以前 header 里有折叠
+  // 按钮 + 随窗口宽度自动收起的逻辑（sidebarOpen / rightRailOpen state +
+  // useMediaQuery + AnimatePresence），随面板一并删除；整条 .header--tab 也
+  // 早已删了，chat 内容直接顶到 shell 左导航栏右侧。
   useApplyAppearance()
 
   // Adopt the daemon's shared appearance as the source of truth — once on
@@ -230,25 +228,19 @@ function App(): React.JSX.Element {
             workspace exists — see the comment on `hasWorkspace`. */}
         {hasWorkspace && (
         <FusionRuntimeProvider key={workspace}>
-          {/* .main is flex-col; this inner row does the three-pane
-              split (chats | thread | right rail). flex-1 + min-h-0
-              lets it shrink correctly inside the outer column. */}
+          {/* chat tab is a single ThreadView. It splits ITSELF into a chat
+              column + a right-hand 幻灯片/大纲/文件 workspace (SlidesWorkspace),
+              but ONLY for sessions started in slides mode and once they have
+              messages — that gating lives inside ThreadView (isSlidesMode),
+              not here. Ordinary chats stay single-column.
+
+              The session list moved OUT of this renderer into the shell's
+              left nav rail (a separate webContents); clicks there reach this
+              runtime via SHELL_SESSION_SWITCH (see FusionRuntimeProvider's
+              useThreadListAdapter). The runtime provider stays mounted
+              because it still owns the chat runtime + switch subscription. */}
           <div className="flex min-h-0 flex-1">
-            {/* 左对话列表 — 固定 256px 常驻列，不再可收起。以前包在
-                AnimatePresence 里随窗口宽度滑入滑出，现已改为静态列：始终
-                渲染。ThreadListSidebar 自带 w-64 + 右边框。 */}
-            <div className="h-full w-64 shrink-0">
-              <ThreadListSidebar />
-            </div>
             <ThreadView />
-            {/* 右栏 — 固定 288px 常驻列，纵向 50/50 分给代办（上）和工作区
-                文件树（下）。同样去掉了 AnimatePresence 收起逻辑，始终渲染。
-                两个面板都是 `section flex-1` 平分这一列；WorkspaceTreePanel
-                的 border-t 作为分隔线。 */}
-            <aside className="flex h-full w-72 shrink-0 flex-col gap-4 bg-background/70 p-3.5 backdrop-blur-2xl backdrop-saturate-150 shadow-[inset_1px_0_0_rgba(0,0,0,0.06)] dark:shadow-[inset_1px_0_0_rgba(255,255,255,0.08)]">
-              <TodoListPanel />
-              <WorkspaceTreePanel />
-            </aside>
           </div>
         </FusionRuntimeProvider>
         )}

@@ -58,6 +58,8 @@ import {
   closeSettingsView,
   describeSenderMismatch,
   dispatchMenuActionToActiveTab,
+  dispatchSessionSwitchToActiveTab,
+  getActiveChatWorkspace,
   getAllTabs,
   getContextForSender,
   getShellFullscreen,
@@ -203,6 +205,8 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.APPEARANCE_SET)
   ipcMain.removeHandler(IPC_CHANNELS.APPEARANCE_BROADCAST)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_TRIGGER_MENU_ACTION)
+  ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_LIST)
+  ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_SWITCH_REQUEST)
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_WINDOW_OPEN)
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE)
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_CLI_BACKEND_GET)
@@ -865,6 +869,34 @@ export function registerIpcHandlers(): void {
         return
       }
       dispatchMenuActionToActiveTab(action)
+    }
+  )
+
+  // Shell session list (shell renderer → main). The shell renders the
+  // active chat tab's session list but has no engine of its own, so this
+  // bypasses resolveEngine: it reads the active chat tab's workspace
+  // directly and scans it off disk (listSessions is stateless). Returns an
+  // empty list when no chat tab is active (web tab foreground / nothing
+  // open) rather than throwing — the shell just shows an empty list.
+  ipcMain.handle(
+    IPC_CHANNELS.SHELL_SESSION_LIST,
+    async (): Promise<SessionListResult> => {
+      const workspace = getActiveChatWorkspace()
+      if (!workspace) return { threads: [] }
+      const threads = await listSessions(workspace)
+      return { threads }
+    }
+  )
+
+  // Shell session switch (shell renderer → main → active chat tab). Mirrors
+  // TAB_TRIGGER_MENU_ACTION: main forwards the request to the active chat
+  // tab's renderer, which runs its existing switch flow so all chat-store
+  // sync happens there (a direct engine switch from the shell would leave
+  // the Thread view stale). `sessionId` null = new chat.
+  ipcMain.handle(
+    IPC_CHANNELS.SHELL_SESSION_SWITCH_REQUEST,
+    async (_event, payload: { sessionId: string | null }): Promise<void> => {
+      dispatchSessionSwitchToActiveTab(payload?.sessionId ?? null)
     }
   )
 

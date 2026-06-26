@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Siri 辉光 · Motion 驱动版</title>
+<style>
+  :root {
+    --c1: #3b82f6; --c2: #8b5cf6; --c3: #22d3ee;
+    --ink: #1a1a18; --ink-soft: #5f5f5b; --ink-mute: #9b9b96;
+    --border: #ececeb; --radius: 16px;
+    /* Driven by Motion at runtime: */
+    --ang: 0deg;        /* ring rotation     */
+    --glow: 0.7;        /* breathing strength */
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
+    letter-spacing: -0.01em; -webkit-font-smoothing: antialiased;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f0f0ef; color: var(--ink); min-height: 100vh; display: grid; place-items: center; padding: 48px; }
+  .stage { width: 460px; }
+  .head { text-align: center; margin-bottom: 24px; }
+  .head h1 { font-size: 19px; font-weight: 700; }
+  .head p { margin-top: 6px; font-size: 13px; color: var(--ink-mute); }
+
+  .panel-wrap { position: relative; border-radius: var(--radius); }
+  .panel {
+    position: relative; z-index: 1; background: #fff; border-radius: var(--radius);
+    height: 560px; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .panel-body { flex: 1; overflow-y: auto; padding: 28px 28px 8px; }
+  .panel h2 { font-size: 20px; font-weight: 700; }
+  .panel .sub { margin-top: 4px; font-size: 13px; color: var(--ink-mute); }
+  .q-num { margin-top: 26px; font-size: 13px; color: var(--ink-mute); }
+  .q-title { margin-top: 4px; font-size: 17px; font-weight: 700; }
+  .q-desc { margin-top: 4px; font-size: 14px; color: var(--ink-soft); }
+  .q-kind { margin-top: 10px; font-size: 12.5px; color: var(--ink-mute); }
+  .options { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+  .opt { display: flex; align-items: flex-start; gap: 12px; border: 1px solid var(--border); border-radius: 14px; padding: 13px 16px; }
+  .opt .dot { margin-top: 2px; width: 16px; height: 16px; border-radius: 999px; border: 1.5px solid var(--ink-mute); flex: none; }
+  .opt .o-label { font-size: 14px; font-weight: 600; }
+  .opt .o-desc { margin-top: 2px; font-size: 13px; color: var(--ink-soft); }
+  .other { border: 1px solid var(--border); border-radius: 14px; padding: 13px 16px; font-size: 14px; color: var(--ink-mute); }
+  .bar { flex: none; display: flex; align-items: center; gap: 14px; border-top: 1px solid var(--border); padding: 16px 28px; }
+  .btn-submit { background: var(--ink); color: #fff; border: none; border-radius: 999px; padding: 9px 20px; font-size: 13px; font-weight: 500; opacity: .45; cursor: default; }
+  .bar .ai { font-size: 13px; color: var(--ink-mute); }
+  .bar .gen { font-size: 12.5px; color: var(--ink-mute); display: inline-flex; align-items: center; gap: 6px; }
+  .gen .pip { width: 6px; height: 6px; border-radius: 999px; background: linear-gradient(120deg, var(--c1), var(--c3)); }
+
+  /* ── Siri glow, three layers, all driven by --ang and --glow ──────── */
+
+  /* 1) Rotating soft-fog colour ring. */
+  .glow, .glow::after {
+    content: ""; position: absolute; inset: -3px; border-radius: calc(var(--radius) + 3px);
+    pointer-events: none;
+    background: conic-gradient(from var(--ang),
+      var(--c1), var(--c2), var(--c3), var(--c2), var(--c1));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    padding: 3px;
+  }
+  .glow { filter: blur(7px); opacity: var(--glow); }
+  .glow::after { padding: 3px; filter: blur(18px); opacity: .55; }
+
+  /* 2) Outer halo (below panel) — coloured spread, breathing. */
+  .glow-depth {
+    position: absolute; inset: 0; border-radius: var(--radius); pointer-events: none;
+    box-shadow:
+      0 0 22px -2px rgba(59,130,246,.45),
+      0 0 48px 4px  rgba(139,92,246,.30);
+    opacity: var(--glow);
+  }
+  /* 3) Inner glow (above panel) — colour seeping inward. */
+  .glow-inner {
+    position: absolute; inset: 0; border-radius: var(--radius); pointer-events: none; z-index: 2;
+    box-shadow:
+      inset 0 0 16px -3px rgba(34,211,238,.45),
+      inset 0 0 34px -12px rgba(139,92,246,.38);
+    opacity: var(--glow);
+  }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="head">
+      <h1>Siri 辉光 · Motion 驱动版</h1>
+      <p>角度旋转 + 呼吸 + 光强微扰，全部由 Motion 驱动（非 CSS keyframes）</p>
+    </div>
+    <div class="panel-wrap" id="wrap">
+      <div class="glow-depth"></div>
+      <div class="glow"></div>
+      <div class="glow-inner"></div>
+      <div class="panel">
+        <div class="panel-body">
+          <h2>请回答以下问题</h2>
+          <div class="sub">问题</div>
+          <div class="q-num">01</div>
+          <div class="q-title">画布</div>
+          <div class="q-desc">画布格式?</div>
+          <div class="q-kind">单选</div>
+          <div class="options">
+            <div class="opt"><span class="dot"></span><span><span class="o-label">PPT 16:9</span><span class="o-desc">标准宽屏演示 1280x720，项目介绍首选。</span></span></div>
+            <div class="opt"><span class="dot"></span><span><span class="o-label">PPT 4:3</span><span class="o-desc">传统投影比例 1024x768。</span></span></div>
+            <div class="opt"><span class="dot"></span><span><span class="o-label">小红书 3:4</span><span class="o-desc">竖版社交卡片，适合手机。</span></span></div>
+            <div class="other">其他（请填写）</div>
+          </div>
+        </div>
+        <div class="bar">
+          <button class="btn-submit">提交答案</button>
+          <span class="ai">AI 自行决定</span>
+          <span class="gen"><span class="pip"></span>AI 正在生成问题…</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<!-- UMD build → global `Motion` (works under file:// without ES-module CORS). -->
+<script src="https://cdn.jsdelivr.net/npm/motion@11.11.13/dist/motion.js"></script>
+<script>
+  const { animate, motionValue } = window.Motion;
+
+  const root = document.documentElement;
+
+  // ── Rotation: a motion value sweeping 0→360°, looped, linear (steady flow).
+  const angle = motionValue(0);
+  angle.on("change", (v) => root.style.setProperty("--ang", v + "deg"));
+  animate(angle, 360, {
+    duration: 9,
+    ease: "linear",
+    repeat: Infinity,
+    repeatType: "loop",
+  });
+
+  // ── Breathing: glow strength oscillating, mirrored, eased — softer and more
+  // "alive" than a CSS keyframe because it eases in/out at the turn points.
+  const glow = motionValue(0.55);
+  glow.on("change", (v) => root.style.setProperty("--glow", String(v)));
+  animate(glow, 1, {
+    duration: 2.4,
+    ease: "easeInOut",
+    repeat: Infinity,
+    repeatType: "mirror",
+  });
+
+  // ── Pip dot pulse (the "AI 正在生成" indicator) — its own little life.
+  const pip = document.querySelector(".pip");
+  animate(pip, { opacity: [0.3, 1, 0.3], scale: [0.8, 1, 0.8] }, {
+    duration: 1.4,
+    ease: "easeInOut",
+    repeat: Infinity,
+  });
+</script>
+</body>
+</html>

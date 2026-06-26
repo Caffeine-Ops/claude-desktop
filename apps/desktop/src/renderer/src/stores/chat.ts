@@ -1,7 +1,9 @@
 import { create } from 'zustand'
+import { useShallow } from 'zustand/react/shallow'
 import type { ThreadMessageLike } from '@assistant-ui/react'
 
 import { sampleSpinnerVerb } from '../constants/spinnerVerbs'
+import type { ChatEvent, WorkflowTask } from '../../../shared/types'
 
 /**
  * Renderer-side chat state, shaped to feed assistant-ui's
@@ -185,6 +187,17 @@ interface ChatState {
     toolUseId: string,
     result: unknown
   ) => void
+  /**
+   * Merge a workflow/Task subtask update (from the `task_update`
+   * ChatEvent) into the spawning tool-call part's `tasks` list. Keyed by
+   * the event's `toolUseId` when present; for `updated`-phase events that
+   * omit it, falls back to scanning every tool-call part for one that
+   * already tracks `ev.taskId`. No-op if neither locates a part.
+   */
+  updateToolCallTasks: (
+    sessionId: string,
+    ev: Extract<ChatEvent, { type: 'task_update' }>
+  ) => void
   setError: (sessionId: string, messageId: string, error: string) => void
   endAssistantMessage: (sessionId: string) => void
   /**
@@ -226,6 +239,39 @@ interface ChatState {
 
 function randomId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+}
+
+/**
+ * Fold one `task_update` event into a tool-call part's task list,
+ * returning a NEW array (callers rely on referential change to trigger
+ * re-render). Matches the existing task by `taskId`; inserts a fresh row
+ * when unseen (so a `progress` that races ahead of `started` still
+ * shows). Only non-empty event fields overwrite — later sparse patches
+ * (e.g. an `updated` carrying just a status) must not blank out the
+ * `description`/`summary` an earlier event established.
+ */
+function mergeWorkflowTask(
+  existing: WorkflowTask[],
+  ev: Extract<ChatEvent, { type: 'task_update' }>
+): WorkflowTask[] {
+  const prev = existing.find((t) => t.taskId === ev.taskId)
+  const merged: WorkflowTask = {
+    taskId: ev.taskId,
+    status: ev.status ?? prev?.status ?? 'running',
+    description: ev.description ?? prev?.description,
+    summary: ev.summary ?? prev?.summary,
+    subagentType: ev.subagentType ?? prev?.subagentType,
+    workflowName: ev.workflowName ?? prev?.workflowName,
+    error: ev.error ?? prev?.error,
+    result: ev.result ?? prev?.result,
+    outputFile: ev.outputFile ?? prev?.outputFile,
+    tokens: ev.tokens ?? prev?.tokens,
+    toolUses: ev.toolUses ?? prev?.toolUses,
+    durationMs: ev.durationMs ?? prev?.durationMs,
+    lastToolName: ev.lastToolName ?? prev?.lastToolName
+  }
+  if (!prev) return [...existing, merged]
+  return existing.map((t) => (t.taskId === ev.taskId ? merged : t))
 }
 
 /**
@@ -643,6 +689,43 @@ export const useChatStore = create<ChatState>((set) => ({
     })
   },
 
+  updateToolCallTasks: (sessionId, ev) => {
+    set((s) => {
+      const patch = updateSlot(s, sessionId, (slot) => {
+        let changed = false
+        const messages = slot.messages.map((m) => {
+          if (!Array.isArray(m.content)) return m
+          const parts = ((m.content as unknown) as ContentPart[]).map((p) => {
+            if (p.type !== 'tool-call') return p
+            // Route to the spawning part: by toolUseId when the event
+            // carries one (started/progress/notification), else fall
+            // back to "the part already tracking this taskId" (the
+            // updated-phase patch omits tool_use_id).
+            const byId = ev.toolUseId && p.toolCallId === ev.toolUseId
+            const existing = Array.isArray(p.tasks)
+              ? (p.tasks as WorkflowTask[])
+              : []
+            const tracksTask =
+              !ev.toolUseId && existing.some((t) => t.taskId === ev.taskId)
+            if (!byId && !tracksTask) return p
+
+            changed = true
+            const tasks = mergeWorkflowTask(existing, ev)
+            return { ...p, tasks }
+          })
+          if (!changed) return m
+          return {
+            ...m,
+            content: parts as unknown as ThreadMessageLike['content']
+          }
+        })
+        if (!changed) return slot
+        return { ...slot, messages }
+      })
+      return patch ?? {}
+    })
+  },
+
   setError: (sessionId, messageId, error) => {
     set((s) => {
       const errorText = `⚠️ ${error}`
@@ -777,4 +860,74 @@ export const useChatStore = create<ChatState>((set) => ({
 function normalizeArgs(args: unknown): unknown {
   if (args === undefined || args === null) return {}
   return args
+}
+
+/** Stable empty result so the selector doesn't allocate every render. */
+const NO_TASKS: WorkflowTask[] = []
+
+/**
+ * Workflow/Task subtasks attached to the tool-call part with this
+ * `toolUseId`, in the *foreground* session. Mirrors
+ * `usePermissionForToolUseId` (stores/permissions.ts): the ToolCallCard
+ * can't read the part's extra `tasks` field through assistant-ui's
+ * Fallback props (those carry only the standard tool fields), so it
+ * looks them up here by id instead. Returns the stable empty array when
+ * the part has no subtasks, and uses `useShallow` so a card only
+ * re-renders when ITS task list changes.
+ */
+export function useToolCallTasks(
+  toolUseId: string | undefined
+): WorkflowTask[] {
+  return useChatStore(
+    useShallow((s): WorkflowTask[] => {
+      if (!toolUseId) return NO_TASKS
+      for (const m of s.messages) {
+        if (!Array.isArray(m.content)) continue
+        for (const p of (m.content as unknown) as ContentPart[]) {
+          if (
+            p.type === 'tool-call' &&
+            p.toolCallId === toolUseId &&
+            Array.isArray(p.tasks) &&
+            p.tasks.length > 0
+          ) {
+            return p.tasks as WorkflowTask[]
+          }
+        }
+      }
+      return NO_TASKS
+    })
+  )
+}
+
+/**
+ * The raw `argsText` of the foreground session's STILL-STREAMING
+ * AskUserQuestion tool call, or null when none is mid-stream.
+ *
+ * Lets the canvas's 问题 tab render the questionnaire *as the input streams*
+ * — before canUseTool fires and a permission request (with a requestId) even
+ * exists. We find the tool-call part whose toolName is 'AskUserQuestion' and
+ * which hasn't been finalized yet (`argsComplete !== true`); its `argsText`
+ * is the half-open JSON the model is still writing. Callers run it through
+ * parsePartialToolArgs for a best-effort preview (read-only — answering needs
+ * the requestId, which only arrives once the tool actually calls canUseTool).
+ * Returns the string itself so zustand's shallow compare re-renders only when
+ * the streamed text grows. Mirrors useToolCallTasks's store-walk.
+ */
+export function useStreamingAskArgsText(): string | null {
+  return useChatStore((s): string | null => {
+    for (const m of s.messages) {
+      if (!Array.isArray(m.content)) continue
+      for (const p of (m.content as unknown) as ContentPart[]) {
+        if (
+          p.type === 'tool-call' &&
+          p.toolName === 'AskUserQuestion' &&
+          p.argsComplete !== true &&
+          typeof p.argsText === 'string'
+        ) {
+          return p.argsText as string
+        }
+      }
+    }
+    return null
+  })
 }

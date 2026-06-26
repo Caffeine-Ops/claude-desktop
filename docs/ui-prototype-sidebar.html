@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Claude Desktop · 左侧栏切换布局原型</title>
+<style>
+  /* ============================================================
+     设计目标：把图1 顶部水平 tab（智能助手 / 工作画布）改成
+     「左侧垂直导航切换」。视觉贴合参考图2：浅灰侧栏、绿色点缀、
+     大圆角输入框、留白多。
+
+     —— 本版调整（按用户要求）——
+     对话列表不再单独开二级栏，而是直接并进左侧一级导航栏，跟在
+     「设置」下方。左侧栏从上到下：
+       新对话 → 智能助手 → 工作画布 → 更多(定时任务/设置)
+              → 对话(列表，可滚) → 底部用户区
+     对话列表只在「智能助手」视图显示；切到其它视图时隐藏，主区
+     直接铺满。待办+文件仍收在最右侧可折叠副栏。
+     ============================================================ */
+
+  :root {
+    --bg-app: #ffffff;
+    --bg-sidebar: #f6f6f5;        /* 一级导航：浅灰 */
+    --bg-aside: #fbfbfa;          /* 右侧副栏 */
+    --bg-hover: #ececeb;
+    --bg-active: #e7e7e6;         /* 选中项底色 */
+    --bg-input: #ffffff;
+
+    --border: #ececeb;
+    --border-soft: #f0f0ef;
+
+    --text: #1a1a18;
+    --text-soft: #5f5f5b;
+    --text-muted: #9b9b96;
+    --text-faint: #bdbdb8;
+
+    --accent: #16a34a;            /* 绿色点缀 */
+    --accent-soft: #dcf5e6;
+    --accent-ink: #0f7a38;
+
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 18px;
+    --radius-pill: 999px;
+
+    --shadow-card: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.05);
+    --shadow-input: 0 1px 2px rgba(0,0,0,.03), 0 6px 22px rgba(0,0,0,.06);
+
+    --sidebar-w: 260px;
+    --aside-w: 300px;
+
+    --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+
+  body {
+    font-family: var(--font);
+    color: var(--text);
+    background: #e9e9e7;
+    -webkit-font-smoothing: antialiased;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 24px;
+  }
+
+  /* —— 模拟一个 macOS 窗口外壳 —— */
+  .window {
+    width: min(1280px, 100%);
+    height: min(820px, calc(100vh - 48px));
+    background: var(--bg-app);
+    border-radius: 14px;
+    box-shadow: 0 30px 80px rgba(0,0,0,.22), 0 4px 12px rgba(0,0,0,.10);
+    overflow: hidden;
+    display: flex;
+    border: 1px solid rgba(0,0,0,.06);
+  }
+
+  /* ========== 一级侧栏（导航 + 对话列表合体） ========== */
+  .sidebar {
+    width: var(--sidebar-w);
+    flex-shrink: 0;
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    transition: width .2s ease;
+  }
+  /* 收起态：整条左侧栏宽度归零隐藏（红绿灯+导航+对话列表全收），
+     此时窗口外壳上的「浮动顶部条」接管红绿灯 + 展开/搜索/新建 */
+  .window.nav-collapsed .sidebar { width: 0; border-right-color: transparent; }
+
+  /* 顶部：红绿灯 + 搜索/折叠 */
+  .sidebar-top {
+    height: 46px;
+    display: flex; align-items: center;
+    padding: 0 14px; gap: 10px;
+    flex-shrink: 0;
+  }
+  .traffic { display: flex; gap: 8px; align-items: center; }
+  .traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .traffic .r { background: #ff5f57; }
+  .traffic .y { background: #febc2e; }
+  .traffic .g { background: #28c840; }
+  .sidebar-top-actions { margin-left: auto; display: flex; gap: 4px; }
+
+  .icon-btn {
+    width: 28px; height: 28px;
+    border-radius: var(--radius-sm);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); cursor: pointer;
+    border: none; background: transparent;
+    transition: background .12s, color .12s;
+  }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--text-soft); }
+
+  /* 固定导航段（不滚动） */
+  .nav {
+    padding: 6px 10px 4px;
+    display: flex; flex-direction: column; gap: 1px;
+    flex-shrink: 0;
+  }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 11px;
+    height: 38px; padding: 0 11px;
+    border-radius: var(--radius-sm);
+    color: var(--text-soft); font-size: 14px;
+    cursor: pointer; user-select: none;
+    transition: background .12s, color .12s;
+    border: none; background: transparent; width: 100%; text-align: left;
+    position: relative;
+  }
+  .nav-item:hover { background: var(--bg-hover); }
+  .nav-item svg { flex-shrink: 0; }
+
+  /* 选中态：浅灰底 + 左侧绿色短条 + 文字加深 */
+  .nav-item.active {
+    background: var(--bg-active);
+    color: var(--text); font-weight: 600;
+  }
+  .nav-item.active::before {
+    content: ""; position: absolute;
+    left: 3px; top: 50%; transform: translateY(-50%);
+    width: 3px; height: 18px; border-radius: 2px;
+    background: var(--accent);
+  }
+  .nav-item .badge {
+    margin-left: auto;
+    min-width: 18px; height: 18px; padding: 0 5px;
+    border-radius: var(--radius-pill);
+    background: #ff5f57; color: #fff;
+    font-size: 11px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .nav-item.primary { color: var(--accent-ink); font-weight: 600; margin-bottom: 4px; }
+  .nav-item.primary svg { color: var(--accent); }
+  .nav-item.primary:hover { background: var(--accent-soft); }
+
+  .nav-section-label {
+    font-size: 11px; color: var(--text-faint);
+    letter-spacing: .04em;
+    padding: 12px 12px 4px;
+  }
+
+  /* —— 对话列表段：在导航之后，跟在「设置」下方，占满剩余高度并独立滚动 —— */
+  .conv-block {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+    border-top: 1px solid var(--border);
+    margin-top: 6px;
+  }
+  .conv-head {
+    height: 38px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px 0 13px;
+  }
+  .conv-head .title { font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: .02em; }
+  .conv-list {
+    flex: 1; overflow-y: auto;
+    padding: 0 10px 14px;
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  /* 日期分组标题：浅灰小字（今天 / 昨天 …） */
+  .conv-group {
+    font-size: 12px; color: var(--text-faint);
+    font-weight: 500;
+    padding: 14px 11px 4px;
+  }
+  .conv-group:first-child { padding-top: 6px; }
+  /* 单行会话项：只一行标题，无圆点、无副行。
+     默认灰色、选中变黑加底；右侧 ··· 仅 hover/选中显示。 */
+  .conv {
+    display: flex; align-items: center;
+    height: 36px; padding: 0 11px;
+    border-radius: var(--radius-sm);
+    cursor: pointer; transition: background .12s, color .12s;
+    color: var(--text-soft);
+  }
+  .conv:hover { background: var(--bg-hover); }
+  .conv.active { background: var(--bg-active); color: var(--text); }
+  .conv .t {
+    flex: 1; min-width: 0;
+    font-size: 14px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .conv .more {
+    flex-shrink: 0;
+    width: 24px; height: 24px; margin-right: -4px;
+    display: none; align-items: center; justify-content: center;
+    border-radius: 6px; color: var(--text-muted);
+    border: none; background: transparent; cursor: pointer;
+  }
+  .conv:hover .more, .conv.active .more { display: flex; }
+  .conv .more:hover { background: rgba(0,0,0,.06); color: var(--text-soft); }
+
+  /* 当不在「智能助手」视图时，整段对话列表隐藏，导航段下方留白 */
+  .sidebar.no-conv .conv-block { display: none; }
+
+  /* 底部用户区 */
+  .sidebar-foot {
+    border-top: 1px solid var(--border);
+    padding: 10px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent-ink);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; flex-shrink: 0;
+  }
+  .user-meta { min-width: 0; line-height: 1.25; }
+  .user-meta .name { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .user-meta .plan { font-size: 11px; color: var(--text-muted); }
+  .sidebar-foot .icon-btn { margin-left: auto; }
+
+  /* ========== 主内容区 ========== */
+  .main {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column;
+    position: relative; background: var(--bg-app);
+  }
+  .main-top {
+    height: 46px; display: flex; align-items: center;
+    padding: 0 14px; gap: 6px;
+    flex-shrink: 0;
+  }
+  /* 收起态才出现的浮动顶部图标条（红绿灯 + 展开 + 搜索 + 新建）。
+     左侧栏收起后红绿灯随之消失，这条把它接管回来。默认隐藏，仅
+     .window.nav-collapsed 时显示。 */
+  .floating-top { display: none; align-items: center; gap: 10px; }
+  .window.nav-collapsed .floating-top { display: flex; }
+  .floating-top .traffic { margin-right: 4px; }
+  .floating-top .sep { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
+
+  .view { flex: 1; min-height: 0; display: none; flex-direction: column; }
+  .view.show { display: flex; }
+
+  /* —— 智能助手：空状态（欢迎 + 大输入框） —— */
+  .hero {
+    flex: 1;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 0 40px 60px;
+  }
+  .hero-inner { width: min(860px, 100%); }
+  .mascot {
+    width: 56px; height: 56px; border-radius: 16px;
+    background: var(--accent-soft);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 22px;
+  }
+  .hero h1 { font-size: 30px; letter-spacing: -.01em; color: var(--text); }
+  .hero .sub { margin-top: 10px; font-size: 14px; color: var(--text-muted); }
+
+  .composer {
+    margin-top: 28px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-input);
+    padding: 16px 18px 12px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .composer:focus-within { border-color: #cfe9d8; box-shadow: 0 0 0 4px rgba(22,163,74,.08), var(--shadow-input); }
+  .composer .field { font-size: 15px; color: var(--text-faint); min-height: 26px; }
+  .composer-bar { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+  .round {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border); background: #fff; color: var(--text-soft);
+    cursor: pointer;
+  }
+  .round:hover { background: var(--bg-hover); }
+  .seg {
+    height: 32px; padding: 0 12px; border-radius: var(--radius-pill);
+    border: 1px solid var(--border); background: #fff;
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12.5px; color: var(--text-soft); cursor: pointer;
+  }
+  .seg:hover { background: var(--bg-hover); }
+  .composer-bar .spacer { flex: 1; }
+  .send {
+    width: 34px; height: 34px; border-radius: 50%;
+    background: var(--text); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    border: none; cursor: pointer;
+  }
+  .workdir {
+    margin-top: 14px; font-size: 12.5px; color: var(--text-muted);
+    display: flex; align-items: center; gap: 6px; cursor: pointer;
+  }
+  .workdir:hover { color: var(--text-soft); }
+
+  .promo {
+    margin: 0 auto 26px; width: min(860px, 100%);
+    background: #f7f7f6; border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .promo .thumb { width: 44px; height: 44px; border-radius: 10px; background: linear-gradient(135deg,#dbe7ff,#c9e8d6); flex-shrink: 0; }
+  .promo .ptxt { flex: 1; min-width: 0; }
+  .promo .ptxt b { font-size: 13.5px; }
+  .promo .ptxt p { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+  .promo .ptxt a { color: var(--accent-ink); text-decoration: none; }
+  .promo .cta { background: #1a1a18; color: #fff; border: none; height: 32px; padding: 0 16px; border-radius: var(--radius-pill); font-size: 12.5px; cursor: pointer; flex-shrink: 0; }
+
+  /* —— 工作画布 / 占位视图 —— */
+  .canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; background:
+      repeating-linear-gradient(0deg, transparent, transparent 23px, var(--border-soft) 24px),
+      repeating-linear-gradient(90deg, transparent, transparent 23px, var(--border-soft) 24px),
+      var(--bg-app);
+  }
+  .plain-wrap { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--bg-app); }
+  .empty { text-align: center; color: var(--text-muted); }
+  .empty .ci { width: 56px; height: 56px; margin: 0 auto 16px; border-radius: 14px; background: #fff; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; color: var(--text-faint); box-shadow: var(--shadow-card); }
+  .empty h2 { font-size: 17px; color: var(--text); }
+  .empty p { font-size: 13px; margin-top: 6px; }
+
+  /* ========== 右侧副栏：待办 + 文件（可折叠） ========== */
+  .aside {
+    width: var(--aside-w); flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    background: var(--bg-aside);
+    display: flex; flex-direction: column; overflow: hidden;
+    transition: width .2s ease, opacity .2s ease;
+  }
+  .aside.collapsed { width: 0; opacity: 0; border-left-color: transparent; }
+  .panel { display: flex; flex-direction: column; }
+  .panel + .panel { border-top: 1px solid var(--border); }
+  .panel-head { height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 16px; color: var(--text-soft); font-size: 13px; font-weight: 600; }
+  .panel-head .count { margin-left: auto; font-size: 11px; color: var(--text-faint); font-weight: 500; }
+  .panel-head .head-icon { color: var(--text-soft); }
+  .todo-body { padding: 8px 16px 18px; }
+  .todo-empty { text-align: center; color: var(--text-muted); padding: 26px 0; }
+  .todo-empty .te { width: 40px; height: 40px; margin: 0 auto 12px; border-radius: 10px; background: #f0f0ef; display: flex; align-items: center; justify-content: center; color: var(--text-faint); }
+  .todo-empty p { font-size: 12.5px; }
+  .file-crumb { padding: 0 16px 8px; }
+  .file-crumb span { font-size: 11.5px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 5px; background: #f0f0ef; padding: 4px 9px; border-radius: var(--radius-pill); }
+  .file-body { padding: 0 8px 16px; overflow-y: auto; }
+  .file-row { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: var(--radius-sm); font-size: 13px; color: var(--text-soft); cursor: pointer; }
+  .file-row:hover { background: var(--bg-hover); }
+  .file-row svg { color: var(--text-faint); flex-shrink: 0; }
+  .file-row .chev { margin-left: auto; color: var(--text-faint); }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,0,0,.12); border-radius: 9px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.2); background-clip: padding-box; }
+
+  .hint {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: rgba(26,26,24,.9); color: #fff; font-size: 12px;
+    padding: 8px 14px; border-radius: var(--radius-pill);
+  }
+  .hint b { color: #7ee0a3; }
+</style>
+</head>
+<body>
+  <div class="window">
+
+    <!-- ===================== 一级侧栏（导航 + 对话列表合体） ===================== -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-top">
+        <div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+        <div class="sidebar-top-actions">
+          <button class="icon-btn" id="toggleNav" title="收起侧边栏">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+          </button>
+          <button class="icon-btn" title="搜索">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 固定导航段 -->
+      <nav class="nav">
+        <button class="nav-item primary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          新对话
+        </button>
+
+        <button class="nav-item active" data-view="assistant">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 16.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z"/></svg>
+          智能助手
+        </button>
+
+        <button class="nav-item" data-view="canvas">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 15l4.5-4 3 2.5 4-4.5 5 6"/><circle cx="9" cy="9" r="1.3" fill="currentColor"/></svg>
+          工作画布
+        </button>
+
+        <div class="nav-section-label">更多</div>
+
+        <button class="nav-item" data-view="cron">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>
+          定时任务
+          <span class="badge">2</span>
+        </button>
+
+        <button class="nav-item" data-view="settings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1A2 2 0 1 1 6.9 4.2l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+          设置
+        </button>
+      </nav>
+
+      <!-- 对话列表段：跟在「设置」下方，占满剩余高度独立滚动；
+           仅「智能助手」视图显示（由 .sidebar.no-conv 控制） -->
+      <div class="conv-block">
+        <div class="conv-head">
+          <span class="title">对话</span>
+          <button class="icon-btn" title="新建对话">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <!-- 会话列表：按日期分组（今天/昨天/…），每条单行标题，
+             选中变黑+底色，hover/选中时右侧出现 ··· 更多。
+             ··· SVG 抽成下方 <template> 的内容由脚本注入，避免重复。 -->
+        <div class="conv-list">
+          <div class="conv-group">今天</div>
+          <div class="conv"><span class="t">hi</span></div>
+          <div class="conv"><span class="t">/deep-research 研究下…</span></div>
+          <div class="conv"><span class="t">Check server 154.21.1…</span></div>
+
+          <div class="conv-group">昨天</div>
+          <div class="conv active"><span class="t">/deep-research sora2 …</span></div>
+          <div class="conv"><span class="t">跑完了吗</span></div>
+          <div class="conv"><span class="t">报告在哪</span></div>
+          <div class="conv"><span class="t">Understand CodeGrap…</span></div>
+
+          <div class="conv-group">7 天内</div>
+          <div class="conv"><span class="t">民警打电话的常见问题</span></div>
+          <div class="conv"><span class="t">分析 CSDN Cloud 账户…</span></div>
+          <div class="conv"><span class="t">Godot GDScript 设计模…</span></div>
+        </div>
+      </div>
+
+      <div class="sidebar-foot">
+        <div class="avatar">我</div>
+        <div class="user-meta">
+          <div class="name">我爱啦啦哈哈</div>
+          <div class="plan">Pro trial Plan</div>
+        </div>
+        <button class="icon-btn" title="账户设置">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ===================== 主内容区 ===================== -->
+    <main class="main">
+      <!-- 顶栏：左侧栏收起时，这条浮动图标条接管红绿灯 + 展开/搜索/新建。
+           （已按要求去掉「签到/邀请」「问题反馈」） -->
+      <div class="main-top">
+        <div class="floating-top">
+          <div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+          <button class="icon-btn" id="expandNav" title="展开侧边栏">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+          </button>
+          <button class="icon-btn" title="搜索">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+          </button>
+          <button class="icon-btn" title="新对话">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 视图：智能助手（空状态） -->
+      <section class="view show" id="view-assistant">
+        <div class="hero">
+          <div class="hero-inner">
+            <div class="mascot">
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--accent-ink)" stroke-width="1.6" stroke-linejoin="round"><path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 16.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z"/><circle cx="9" cy="11" r="1" fill="var(--accent-ink)" stroke="none"/><circle cx="14" cy="11" r="1" fill="var(--accent-ink)" stroke="none"/></svg>
+            </div>
+            <h1>不止聊天，搞定一切</h1>
+            <div class="sub">本地运行、自主规划、安全可控的 AI 工作搭子</div>
+
+            <div class="composer">
+              <div class="field">描述任务，/ 快捷调用，@ 添加上下文</div>
+              <div class="composer-bar">
+                <button class="round" title="附件">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 11.5 12 20a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8"/></svg>
+                </button>
+                <button class="round" title="工具">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="13" rx="2"/><path d="M8 21h8"/></svg>
+                </button>
+                <button class="seg">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  通用
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
+                <div class="spacer"></div>
+                <button class="seg">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m13 2-9 12h7l-1 8 9-12h-7z"/></svg>
+                  Auto
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
+                <button class="round" title="语音">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+                </button>
+                <button class="send" title="发送">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="workdir">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+              选择工作目录
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+        </div>
+
+        <div class="promo">
+          <div class="thumb"></div>
+          <div class="ptxt">
+            <b>新用户首登立领2000积分，教师/学生认证再送4000积分</b>
+            <p>2000积分含新用户注册时赠送的300积分，查看 <a href="#">教师/学生认证</a> 和 <a href="#">活动规则</a></p>
+          </div>
+          <button class="cta">领取PRO</button>
+        </div>
+      </section>
+
+      <!-- 视图：工作画布 -->
+      <section class="view" id="view-canvas">
+        <div class="canvas-wrap">
+          <div class="empty">
+            <div class="ci"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 15l4.5-4 3 2.5 4-4.5 5 6"/><circle cx="9" cy="9" r="1.3" fill="currentColor"/></svg></div>
+            <h2>工作画布</h2>
+            <p>可视化你的任务产物 —— 文档、图表、网页都在这里展开</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 视图：定时任务（占位） -->
+      <section class="view" id="view-cron">
+        <div class="plain-wrap">
+          <div class="empty">
+            <div class="ci"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg></div>
+            <h2>定时任务</h2>
+            <p>到点自动跑的后台任务都列在这里</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 视图：设置（占位） -->
+      <section class="view" id="view-settings">
+        <div class="plain-wrap">
+          <div class="empty">
+            <div class="ci"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/></svg></div>
+            <h2>设置</h2>
+            <p>外观、模型后端、权限策略</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ===================== 右侧副栏：待办 + 文件 ===================== -->
+    <aside class="aside" id="aside">
+      <div class="panel">
+        <div class="panel-head">
+          待办
+        </div>
+        <div class="todo-body">
+          <div class="todo-empty">
+            <div class="te"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div>
+            <p>暂无待办事项</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" style="flex:1; min-height:0;">
+        <div class="panel-head">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          文件
+          <span class="count">5000</span>
+        </div>
+        <div class="file-crumb">
+          <span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 10.5 12 3l9 7.5M5 9v11h14V9"/></svg> ~/Desktop</span>
+        </div>
+        <div class="file-body">
+          <div class="file-row"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>_待删除候选<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div>
+          <div class="file-row"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>方案分类<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div>
+          <div class="file-row"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>ai-ppt<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div>
+          <div class="file-row"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>bid-assistant<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div>
+          <div class="file-row"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>cc-2.1.169-workflows逆向<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div>
+          <div class="file-row"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>cc-2.1.170-analysis<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div>
+          <div class="file-row"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>claude_code_01<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div>
+        </div>
+      </div>
+    </aside>
+
+  </div>
+
+  <div class="hint">左上角 ▢ 收起左侧栏（收起后窗口左上出现浮动图标条，点 ▢ 展开）· 左侧菜单切视图</div>
+
+  <script>
+    const navItems = document.querySelectorAll('.nav-item[data-view]');
+    const sidebar = document.getElementById('sidebar');
+    const windowEl = document.querySelector('.window');
+    const views = {
+      assistant: document.getElementById('view-assistant'),
+      canvas: document.getElementById('view-canvas'),
+      cron: document.getElementById('view-cron'),
+      settings: document.getElementById('view-settings'),
+    };
+
+    function activate(view) {
+      navItems.forEach(n => n.classList.toggle('active', n.dataset.view === view));
+      Object.entries(views).forEach(([k, el]) => el.classList.toggle('show', k === view));
+      // 对话列表只在「智能助手」视图显示 —— 其它视图给侧栏加 no-conv 隐藏整段
+      sidebar.classList.toggle('no-conv', view !== 'assistant');
+    }
+    navItems.forEach(n => n.addEventListener('click', () => activate(n.dataset.view)));
+
+    // 左上角折叠按钮 → 收起整条左侧栏（窗口加 .nav-collapsed）
+    document.getElementById('toggleNav').addEventListener('click', () => {
+      windowEl.classList.add('nav-collapsed');
+    });
+    // 收起态浮动条上的展开按钮 → 还原左侧栏
+    document.getElementById('expandNav').addEventListener('click', () => {
+      windowEl.classList.remove('nav-collapsed');
+    });
+
+    // —— 会话列表：给每条注入 ··· 更多按钮 + 点选高亮 ——
+    const MORE_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>';
+    const convs = document.querySelectorAll('.conv-list .conv');
+    convs.forEach(c => {
+      const more = document.createElement('button');
+      more.className = 'more';
+      more.title = '更多';
+      more.innerHTML = MORE_SVG;
+      more.addEventListener('click', (e) => e.stopPropagation()); // 别触发选中
+      c.appendChild(more);
+      c.addEventListener('click', () => {
+        convs.forEach(x => x.classList.remove('active'));
+        c.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

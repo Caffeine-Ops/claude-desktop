@@ -20,6 +20,17 @@ const search =
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams()
 const isShell = search.get('shell') === '1'
+// Mark the document so CSS can scope chat-only surface rules. The chat tab's
+// content now floats as a rounded card with an 8px gap on all sides (see
+// tabRegistry.layoutActiveTab), and the gap must reveal the shell nav rail
+// UNDERNEATH the chat WebContentsView — which means the chat renderer's root
+// background has to be transparent there. We can't make html/body globally
+// transparent (the shell strip and settings overlay reuse this same bundle
+// and rely on an opaque background), so we tag only the chat surface and let
+// main.css flip the root transparent for `html[data-surface='chat']` alone.
+if (typeof document !== 'undefined') {
+  document.documentElement.dataset.surface = isShell ? 'shell' : 'chat'
+}
 // Note: the settings modal is NOT a renderer-bundle route. It's the Open
 // Design web app loaded with `?settings=1` inside a full-window overlay
 // WebContentsView (see desktop tabRegistry.openSettingsView + apps/web

@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react'
 
 import { useI18n } from '../../i18n'
 import { usePermissionModeStore } from '../../stores/permissionMode'
+import { useComposerOverlayStore } from '../../stores/composerOverlay'
 import type { UiPermissionMode } from '../../../../shared/ipc-channels'
 
 /**
@@ -125,6 +126,10 @@ export function PermissionModePicker(): React.JSX.Element {
 
   useEffect(() => {
     if (!open) return
+    // Hide the composer's blur strip while this popover is open — its
+    // backdrop-blur otherwise slices a blurred band across the menu.
+    const overlay = useComposerOverlayStore.getState()
+    overlay.setOpen(true)
     const onDown = (e: MouseEvent): void => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setOpen(false)
@@ -136,6 +141,7 @@ export function PermissionModePicker(): React.JSX.Element {
     window.addEventListener('mousedown', onDown)
     window.addEventListener('keydown', onKey)
     return () => {
+      overlay.setOpen(false)
       window.removeEventListener('mousedown', onDown)
       window.removeEventListener('keydown', onKey)
     }

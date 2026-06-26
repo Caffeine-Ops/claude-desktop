@@ -91,16 +91,20 @@ function Kbd({ children }: { children: React.ReactNode }): React.JSX.Element {
  *   Esc         → cancel (sends 'deny' through the broker)
  */
 
-type Option = {
+export type AskUserOption = {
   label: string
   description?: string
 }
 
-type Question = {
+export type AskUserQuestionItem = {
   question: string
   header?: string
-  options: Option[]
+  options: AskUserOption[]
 }
+
+// Internal aliases keep the rest of this file unchanged.
+type Option = AskUserOption
+type Question = AskUserQuestionItem
 
 type Props = {
   input: unknown
@@ -688,7 +692,7 @@ function OtherRow({
  * drop garbage, lenient enough to survive trivial variations (missing
  * `header`, missing `description`, etc.).
  */
-function parseQuestions(input: unknown): Question[] {
+export function parseQuestions(input: unknown): Question[] {
   if (!input || typeof input !== 'object') return []
   const raw = (input as { questions?: unknown }).questions
   if (!Array.isArray(raw)) return []
@@ -724,7 +728,7 @@ function parseQuestions(input: unknown): Question[] {
   return out
 }
 
-function seedAnswers(input: unknown): Record<string, string> {
+export function seedAnswers(input: unknown): Record<string, string> {
   if (!input || typeof input !== 'object') return {}
   const maybe = (input as { answers?: unknown }).answers
   if (!maybe || typeof maybe !== 'object') return {}

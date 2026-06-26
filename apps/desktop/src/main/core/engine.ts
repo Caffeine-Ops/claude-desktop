@@ -30,7 +30,8 @@ import type {
   LogEvent,
   McpServerInfo,
   PermissionRequest,
-  SessionMeta
+  SessionMeta,
+  WorkflowTaskStatus
 } from '../../shared/types'
 import { bumpUnread } from '../tray'
 import { AsyncMessageQueue } from './asyncMessageQueue'
@@ -1959,6 +1960,17 @@ export class ChatEngine extends EventEmitter {
             ? sdkMessage.subtype
             : ''
 
+        // Workflow/Task lifecycle messages (task_started/_progress/
+        // _updated/_notification) are routed by `tool_use_id` to the
+        // spawning Task card, NOT by active turn — a backgrounded
+        // workflow keeps emitting these *after* its parent turn's
+        // `result` cleared `runtime.active`. Forward them regardless of
+        // turn state so the card's sub-task list stays live; only then
+        // fall through to the active-turn check for everything else.
+        if (this.tryEmitTaskUpdate(sessionId, sdkMessage)) {
+          continue
+        }
+
         if (!active) {
           // Stragglers between turns — log the full message anyway so
           // we can see what the SDK emitted, then drop.
@@ -2079,6 +2091,264 @@ export class ChatEngine extends EventEmitter {
       runtime.readyResolve = null
       runtime.readyReject = null
       console.log('[engine] session reset after pump exit', { sessionId })
+    }
+  }
+
+  /**
+   * Recognize the SDK's workflow/Task lifecycle messages and re-emit
+   * them to the renderer as a single `task_update` ChatEvent. Returns
+   * `true` when `sdkMessage` was one of them (so the pump can `continue`
+   * without falling through to the active-turn drop), `false` otherwise.
+   *
+   * The four SDK shapes (sdk.d.ts):
+   *   - `task_started`   → installs the subtask; carries tool_use_id,
+   *                        description, subagent_type, task_type,
+   *                        workflow_name.
+   *   - `task_progress`  → live progress; carries description, summary,
+   *                        last_tool_name.
+   *   - `task_updated`   → status patch; carries ONLY task_id + patch
+   *                        (no tool_use_id — renderer back-fills from
+   *                        the started event's mapping).
+   *   - `task_notification` → terminal record; carries status
+   *                        (completed/failed/stopped) + summary.
+   *
+   * All four are `type: 'system'`; we discriminate on `subtype`. Any
+   * non-task system message (e.g. `init`, handled separately upstream)
+   * returns false and is left for the normal switch to ignore.
+   */
+  private tryEmitTaskUpdate(sessionId: string, sdkMessage: unknown): boolean {
+    if (!this.isRecord(sdkMessage)) return false
+
+    // A backgrounded workflow/task reports completion NOT as a system
+    // message but as a plain-text `user` message whose content is a
+    // `<task-notification>…</task-notification>` block (it's injected
+    // into the agent loop so the model reacts to it). The normal
+    // `handleUserMessage` path only forwards `tool_result` blocks, so
+    // without this branch the workflow's actual result — the whole
+    // point — never reaches the renderer. Parse it here and re-emit as
+    // the terminal `notification` phase so it lands on the spawning card.
+    if (sdkMessage.type === 'user') {
+      const text = this.getUserMessageText(sdkMessage)
+      if (text && text.includes('<task-notification>')) {
+        const ev = this.parseTaskNotification(text)
+        if (ev) {
+          console.log(
+            `[engine] task_update notification ${ev.taskId} ${ev.status ?? ''}`,
+            { toolUseId: ev.toolUseId, sessionId }
+          )
+          this.emitEvent(sessionId, ev)
+          return true
+        }
+      }
+      return false
+    }
+
+    if (
+      sdkMessage.type !== 'system' ||
+      typeof sdkMessage.subtype !== 'string'
+    ) {
+      return false
+    }
+
+    const taskId =
+      typeof sdkMessage.task_id === 'string' ? sdkMessage.task_id : undefined
+    if (!taskId) return false
+
+    const toolUseId =
+      typeof sdkMessage.tool_use_id === 'string'
+        ? sdkMessage.tool_use_id
+        : undefined
+    const str = (v: unknown): string | undefined =>
+      typeof v === 'string' && v.length > 0 ? v : undefined
+    // `usage` is `{ total_tokens, tool_uses, duration_ms }` on
+    // task_progress / task_notification; pull the numbers so the card
+    // can show per-agent token/tool/elapsed metadata (Claude Code style).
+    const usage = this.isRecord(sdkMessage.usage) ? sdkMessage.usage : {}
+    const num = (v: unknown): number | undefined =>
+      typeof v === 'number' && Number.isFinite(v) ? v : undefined
+
+    let event: ChatEvent | null = null
+
+    switch (sdkMessage.subtype) {
+      case 'task_started':
+        event = {
+          type: 'task_update',
+          phase: 'started',
+          taskId,
+          toolUseId,
+          status: 'running',
+          description: str(sdkMessage.description),
+          subagentType: str(sdkMessage.subagent_type),
+          workflowName: str(sdkMessage.workflow_name),
+          skipTranscript: sdkMessage.skip_transcript === true
+        }
+        break
+
+      case 'task_progress':
+        event = {
+          type: 'task_update',
+          phase: 'progress',
+          taskId,
+          toolUseId,
+          status: 'running',
+          description: str(sdkMessage.description),
+          summary: str(sdkMessage.summary),
+          subagentType: str(sdkMessage.subagent_type),
+          lastToolName: str(sdkMessage.last_tool_name),
+          tokens: num(usage.total_tokens),
+          toolUses: num(usage.tool_uses),
+          durationMs: num(usage.duration_ms)
+        }
+        break
+
+      case 'task_updated': {
+        // patch carries the wire-safe subset of TaskState; map its
+        // status enum (pending/running/completed/failed/killed/paused)
+        // onto our coarser UI union.
+        const patch = this.isRecord(sdkMessage.patch) ? sdkMessage.patch : {}
+        event = {
+          type: 'task_update',
+          phase: 'updated',
+          taskId,
+          toolUseId,
+          status: this.mapTaskPatchStatus(patch.status),
+          description: str(patch.description),
+          error: str(patch.error)
+        }
+        break
+      }
+
+      case 'task_notification':
+        event = {
+          type: 'task_update',
+          phase: 'notification',
+          taskId,
+          toolUseId,
+          status: this.mapNotificationStatus(sdkMessage.status),
+          summary: str(sdkMessage.summary),
+          outputFile: str(sdkMessage.output_file),
+          tokens: num(usage.total_tokens),
+          toolUses: num(usage.tool_uses),
+          durationMs: num(usage.duration_ms)
+        }
+        break
+
+      default:
+        return false
+    }
+
+    if (!event) return false
+    console.log(
+      `[engine] task_update ${event.phase} ${taskId}` +
+        `${event.status ? ' ' + event.status : ''}`,
+      { toolUseId, sessionId }
+    )
+    this.emitEvent(sessionId, event)
+    return true
+  }
+
+  /** Map `task_updated.patch.status` → coarse UI status. */
+  private mapTaskPatchStatus(value: unknown): WorkflowTaskStatus | undefined {
+    switch (value) {
+      case 'pending':
+        return 'pending'
+      case 'running':
+      case 'paused':
+        return 'running'
+      case 'completed':
+        return 'completed'
+      case 'failed':
+      case 'killed':
+        return 'failed'
+      default:
+        return undefined
+    }
+  }
+
+  /** Map `task_notification.status` → coarse UI status. */
+  private mapNotificationStatus(value: unknown): WorkflowTaskStatus {
+    switch (value) {
+      case 'completed':
+        return 'completed'
+      case 'stopped':
+        return 'stopped'
+      case 'failed':
+      default:
+        return 'failed'
+    }
+  }
+
+  /**
+   * Flatten a `user` SDK message's content to a single string. The
+   * content is either a bare string (the workflow-notification case) or
+   * an array of blocks — we concatenate the text of any `text` blocks.
+   */
+  private getUserMessageText(sdkMessage: Record<string, unknown>): string {
+    const message = this.isRecord(sdkMessage.message) ? sdkMessage.message : null
+    const content = message?.content
+    if (typeof content === 'string') return content
+    if (!Array.isArray(content)) return ''
+    const parts: string[] = []
+    for (const block of content) {
+      if (this.isRecord(block) && typeof block.text === 'string') {
+        parts.push(block.text)
+      }
+    }
+    return parts.join('\n')
+  }
+
+  /**
+   * Parse a `<task-notification>…</task-notification>` block into a
+   * terminal `task_update` event. The block is the line-oriented XML-ish
+   * format fusion-code injects when a backgrounded task settles:
+   *
+   *   <task-notification>
+   *   <task-id>…</task-id>
+   *   <tool-use-id>…</tool-use-id>   (the spawning Workflow/Task call)
+   *   <output-file>…</output-file>
+   *   <status>completed|failed|stopped</status>
+   *   <summary>…</summary>
+   *   <result>…(workflow return value, often JSON)…</result>
+   *   </task-notification>
+   *
+   * Returns null when the block lacks a task-id (nothing to attribute).
+   * For a JSON `<result>` we prefer its top-level `summary` field as the
+   * human-readable deliverable; otherwise we keep the raw text.
+   */
+  private parseTaskNotification(
+    text: string
+  ): Extract<ChatEvent, { type: 'task_update' }> | null {
+    const tag = (name: string): string | undefined => {
+      // [\s\S] so the value can span newlines (the result JSON does).
+      const m = text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))
+      return m ? m[1].trim() : undefined
+    }
+
+    const taskId = tag('task-id')
+    if (!taskId) return null
+
+    const rawResult = tag('result')
+    let result = rawResult
+    if (rawResult) {
+      try {
+        const parsed = JSON.parse(rawResult)
+        if (this.isRecord(parsed) && typeof parsed.summary === 'string') {
+          result = parsed.summary
+        }
+      } catch {
+        // Not JSON (or partial) — keep the raw result text as-is.
+      }
+    }
+
+    return {
+      type: 'task_update',
+      phase: 'notification',
+      taskId,
+      toolUseId: tag('tool-use-id'),
+      status: this.mapNotificationStatus(tag('status')),
+      summary: tag('summary'),
+      result,
+      outputFile: tag('output-file')
     }
   }
 

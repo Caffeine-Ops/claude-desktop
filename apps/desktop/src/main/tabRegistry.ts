@@ -92,31 +92,34 @@ function attachExternalLinkHandler(wc: WebContents): void {
 }
 
 /**
- * Height (in CSS px) of the persistent chrome tab strip rendered by
- * the shell window's own webContents (the `?shell=1` renderer), which
- * sits pinned at the very top of the window above every content tab's
+ * Width (in CSS px) of the persistent chrome **navigation rail** rendered
+ * by the shell window's own webContents (the `?shell=1` renderer), pinned
+ * to the LEFT edge of the window beside every content tab's
  * WebContentsView.
  *
- * History: this used to be 0 — each tab drew its own TabBar inside its
- * workspace header, and the content view filled the whole window. That
- * broke once we added the Open Design web tab: that tab loads an
- * external origin with NO chatApi/tabApi preload, so it can't render a
- * TabBar. Whenever it was foreground the user lost every entry point to
- * switch back. Pinning a single chrome strip — owned by the shell, not
- * any one tab — keeps both pills always visible/clickable regardless of
- * which tab is foreground.
+ * History: this band used to be a 44px HORIZONTAL strip pinned to the
+ * top (a row of tab pills). It moved to a vertical left rail so the two
+ * fixed tabs ("智能助手" / "工作画布") read as a sidebar nav instead of
+ * browser tabs — the chat tab's own session list then butts right up
+ * against it so the two webContents read as one continuous left column.
  *
- * Content views are laid out starting at y = TAB_BAR_HEIGHT (see
- * layoutActiveTab) so they sit *below* the strip. The shell's own
- * webContents spans the full window underneath, but only this top band
- * is ever uncovered, so that's all the user sees of it.
+ * Why the rail lives in the SHELL and not inside a tab: the Open Design
+ * web tab loads an external origin with NO chatApi/tabApi preload, so it
+ * can't render nav of its own. Whenever it was foreground the user lost
+ * every entry point to switch back. A single shell-owned rail — visible
+ * regardless of which tab is foreground — fixes that.
  *
- * 44px = the strip's content (28px pills + 8px top/bottom padding)
- * matches the old in-header TabBar rhythm; the macOS traffic lights
- * overlay this band directly (the chrome renderer reserves left padding
- * so nothing collides — same trick the workspace header used).
+ * Content views are laid out starting at x = NAV_RAIL_WIDTH (see
+ * layoutActiveTab) so they sit to the *right* of the rail. The shell's
+ * own webContents spans the full window underneath, but only this left
+ * band is ever uncovered, so that's all the user sees of it.
+ *
+ * ⚠️ This value is duplicated as a hard-coded `width: 220px` in
+ * `renderer/src/assets/main.css` (`.shell-chrome`). There is NO shared
+ * constant — the two must be edited together or the rail will either
+ * leave a sliver of bare shell background or clip its own content.
  */
-const TAB_BAR_HEIGHT = 44
+const NAV_RAIL_WIDTH = 220
 
 /**
  * Maximum number of simultaneously open workspace tabs. Each tab
@@ -199,7 +202,12 @@ export function createShellWindow(): BrowserWindow {
     // the buttons don't overlap any content.
     trafficLightPosition: { x: 14, y: 16 },
     icon: appIcon,
-    backgroundColor: '#ffffff',
+    // Match the nav rail's --rail-bg (#f6f6f5) so the brief pre-paint frame
+    // and the 8px gap around the floating chat card read as one continuous
+    // rail-coloured surface instead of flashing white. (Light value; dark mode
+    // repaints via the renderer root once it mounts — see main.css
+    // html[data-surface='shell'].)
+    backgroundColor: '#f6f6f5',
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
@@ -304,6 +312,15 @@ export function newTab(): TabContext {
   // Transparent background so the shell's theme shows through during
   // the brief interval before the renderer paints its first frame.
   view.setBackgroundColor('#00000000')
+  // Round the NATIVE view layer to match the floating chat card (main.css
+  // gives .app the same 12px radius). This is the real fix for the square
+  // drop-shadow that macOS composited around the inset view: the view layer
+  // was a sharp rectangle, so the system shadow it cast was rectangular and
+  // poked past the renderer's CSS-rounded corners. Rounding the layer itself
+  // makes the shadow follow the rounded shape (no more square corners).
+  // setBorderRadius needs Electron ≥35 — guarded so a downgrade can't crash
+  // (the method simply won't exist on older builds).
+  view.setBorderRadius?.(12)
   forceDetachedDevTools(view.webContents)
   attachExternalLinkHandler(view.webContents)
 
@@ -324,6 +341,19 @@ export function newTab(): TabContext {
   }
   tabs.set(view.webContents.id, ctx)
   tabOrder.push(view.webContents.id)
+
+  // Fan-out this tab's session-list changes to the SHELL renderer too.
+  // The engine already sends SESSION_LIST_CHANGED to its own webContents
+  // (wireWebContentsBridges in engine.ts), but the shell now renders the
+  // session list and is a separate webContents that never receives that.
+  // We only relay when THIS tab is the active one, since the shell only
+  // ever shows the active chat tab's sessions. Switching tabs re-pulls via
+  // activateTab's broadcast below, so a background tab's churn is ignored.
+  engine.on('sessionListChanged', () => {
+    if (activeTabId === view.webContents.id) {
+      broadcastShellSessionListChanged()
+    }
+  })
 
   // Broadcast the new pill to existing tabs BEFORE we start loading
   // the new renderer. Without this, the user clicks "+" and sees no
@@ -546,6 +576,9 @@ export function activateTab(id: number): void {
   }
 
   broadcastTabList()
+  // The active tab changed, so the shell's session list (which shows the
+  // active chat tab's sessions) is now stale — tell it to re-pull.
+  broadcastShellSessionListChanged()
 }
 
 /**
@@ -654,6 +687,47 @@ export function dispatchMenuActionToActiveTab(action: ShellMenuAction): void {
   ctx.view.webContents.send(IPC_CHANNELS.SHELL_MENU_ACTION, { action })
 }
 
+/**
+ * The active chat tab's workspace dir, or null when no chat tab is active
+ * (web tab foreground / nothing open). Used by the SHELL_SESSION_LIST
+ * handler so the shell can list the *active* tab's sessions off disk
+ * without owning an engine — listSessions is a stateless workspace scan.
+ */
+export function getActiveChatWorkspace(): string | null {
+  if (activeTabId === null) return null
+  const ctx = tabs.get(activeTabId)
+  if (!ctx || ctx.kind !== 'chat' || !ctx.engine) return null
+  return ctx.engine.getWorkspace()
+}
+
+/**
+ * Forward a session-switch request from the shell's session list to the
+ * active chat tab's renderer (mirrors dispatchMenuActionToActiveTab). The
+ * chat renderer runs its own onSwitchToThread/onSwitchToNewThread so the
+ * chat store (setSession / loadSession / sessionLoading) stays in sync —
+ * a direct engine call from the shell would skip all of that. `sessionId`
+ * null means "new chat". No-op when no chat tab is active.
+ */
+export function dispatchSessionSwitchToActiveTab(
+  sessionId: string | null
+): void {
+  if (activeTabId === null) return
+  const ctx = tabs.get(activeTabId)
+  if (!ctx || ctx.kind !== 'chat') return
+  ctx.view.webContents.send(IPC_CHANNELS.SHELL_SESSION_SWITCH, { sessionId })
+}
+
+/**
+ * Tell the shell renderer that the active chat tab's session list changed
+ * so it re-pulls via SHELL_SESSION_LIST. The plain SESSION_LIST_CHANGED
+ * only reaches the chat tab's own webContents; this is the explicit
+ * fan-out to the shell (same pattern broadcastTabList uses).
+ */
+export function broadcastShellSessionListChanged(): void {
+  if (!shellWindow || shellWindow.isDestroyed()) return
+  shellWindow.webContents.send(IPC_CHANNELS.SHELL_SESSION_LIST_CHANGED)
+}
+
 /** All registered tab contexts, in insertion order. */
 export function getAllTabs(): TabContext[] {
   return tabOrder
@@ -748,16 +822,34 @@ function broadcastFullscreen(fullscreen: boolean): void {
   }
 }
 
+// Gap (px) left around the CHAT tab's content view so it reads as a floating
+// rounded card hovering over the shell surface — the shell nav rail / window
+// background shows through the gap. The card's rounding + shadow live in the
+// chat renderer's CSS (.app under html[data-surface='chat']); the view itself
+// can't round its corners, so it paints transparent and the inset gap reveals
+// the shell underneath. Web tabs (工作画布, an external origin) don't float —
+// they keep butting against the rail edge with no gap.
+const CHAT_CARD_GAP = 8
+
 function layoutActiveTab(): void {
   if (!shellWindow || shellWindow.isDestroyed() || activeTabId === null) return
   const ctx = tabs.get(activeTabId)
   if (!ctx) return
   const bounds = shellWindow.getContentBounds()
+  // Content view sits to the RIGHT of the left nav rail: shift x by the
+  // rail width and shrink width by the same amount. (Was: shift y / shrink
+  // height by TAB_BAR_HEIGHT when the rail was a top strip.)
+  //
+  // Chat tabs float as a card — inset by CHAT_CARD_GAP on all four sides so
+  // the shell shows through the gap (incl. a sliver of rail to the LEFT of
+  // the card). Web tabs stay flush (gap 0). Math.max guards a tiny window
+  // from producing a negative width/height.
+  const gap = ctx.kind === 'chat' ? CHAT_CARD_GAP : 0
   ctx.view.setBounds({
-    x: 0,
-    y: TAB_BAR_HEIGHT,
-    width: bounds.width,
-    height: Math.max(0, bounds.height - TAB_BAR_HEIGHT)
+    x: NAV_RAIL_WIDTH + gap,
+    y: gap,
+    width: Math.max(0, bounds.width - NAV_RAIL_WIDTH - gap * 2),
+    height: Math.max(0, bounds.height - gap * 2)
   })
 }
 
