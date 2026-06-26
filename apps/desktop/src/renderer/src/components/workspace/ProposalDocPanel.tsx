@@ -144,7 +144,12 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                 onClick={() => {
                   // proposalSid 在 show=true 时恒非空（门控要求 sessionId===前台会话）；
                   // 仍守一手 null，绝不把 start('') 透出去污染 gating。
-                  if (proposalSid) useProposalStore.getState().start(proposalSid)
+                  if (proposalSid) {
+                    // 先删盘再清内存：否则清完一刷新/切回，草稿又从盘上 restoreFromDisk 回来。
+                    // start() 把 sections 清空，订阅器因空草稿不再写盘，故不会复活该文件。
+                    void window.chatApi.deleteProposalDraft({ sessionId: proposalSid })
+                    useProposalStore.getState().start(proposalSid)
+                  }
                   setConfirmingNew(false)
                 }}
               >
