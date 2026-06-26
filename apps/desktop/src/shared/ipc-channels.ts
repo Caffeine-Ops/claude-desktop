@@ -7,6 +7,7 @@ import type {
   ThreadSummary
 } from './types'
 import type { ThreadMessageLike } from '@assistant-ui/react'
+import type { ProposalStyleConfig } from './proposalStyle'
 
 /**
  * Central registry of IPC channel names. Main and renderer both import
@@ -816,6 +817,12 @@ export type ProposalExportFormat = 'md' | 'docx' // 进阶可再加 'pdf'
 export interface ProposalExportPayload {
   markdown: string
   format: ProposalExportFormat
+  /**
+   * 选中的 Word 样式模板配置（字体/字号/对齐/缩进/行距/页边距/列表符号）。纯数据，
+   * 结构化克隆安全。仅 `'docx'` 用得到（驱动 markdownToDocxBuffer 的样式）；`'md'`
+   * 是纯文本无样式，忽略此字段。省略时 main 端回退默认模板（经典正式）。
+   */
+  style?: ProposalStyleConfig
 }
 
 /** Result of PROPOSAL_EXPORT. `path` is null when the user cancelled. */
@@ -826,6 +833,11 @@ export interface ProposalExportResult {
 /** Payload for PROPOSAL_RENDER. */
 export interface ProposalRenderPayload {
   markdown: string
+  /**
+   * 实时预览用的样式模板配置——与 PROPOSAL_EXPORT 的 style 同源同义，保证「预览=导出
+   * 逐像素一致」。省略时回退默认模板（经典正式）。
+   */
+  style?: ProposalStyleConfig
 }
 
 /**

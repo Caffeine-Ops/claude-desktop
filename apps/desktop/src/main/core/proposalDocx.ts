@@ -10,11 +10,21 @@ import {
   TableCell,
   WidthType,
   LevelFormat,
+  LineRuleType,
   AlignmentType,
   Footer,
   PageNumber
 } from 'docx'
+import type { IStylesOptions, INumberingOptions, ISectionOptions } from 'docx'
 import { PROPOSAL_PAGEBREAK } from '../../shared/proposal'
+import {
+  CN_SIZE_PT,
+  FONT_DOCX,
+  MARGIN_TWIPS,
+  defaultProposalStyle,
+  type ProposalStyleConfig,
+  type ProposalLevelStyle
+} from '../../shared/proposalStyle'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
@@ -32,7 +42,13 @@ import type {
  * 为什么走 mdast 而不是 html→docx：对标题层级、有序/无序列表、表格、加粗/斜体有
  * 完全控制，最接近最终 Word 成品。未知节点降级为纯文本段，绝不抛错中断导出。
  *
- * 主进程专用（依赖 Node）。renderer 永远只传 markdown 字符串过来。
+ * 样式模板（style 参数）：所有字体/字号/对齐/缩进/行距/页边距/列表符号都由传入的
+ * ProposalStyleConfig 决定，编译进 Document 的 styles + numbering + section.page。
+ * 预览（renderProposal IPC）与导出（exportProposal）传同一份 style，故「预览=导出
+ * 逐像素一致」这条不变量在加了模板后依然成立。style 省略时回退默认模板（经典正式），
+ * 让任何旧调用点（不传 style）也立刻拿到好看的默认排版，而非 Word 裸默认。
+ *
+ * 主进程专用（依赖 Node）。renderer 永远只传 markdown 字符串 + 纯数据 style 过来。
  */
 const HEADING_BY_DEPTH = [
   HeadingLevel.HEADING_1,
@@ -48,6 +64,31 @@ const HEADING_BY_DEPTH = [
 // 绝不引用未注册的 level（否则 Word/LibreOffice 报 numbering reference not found）。
 const MAX_LIST_LEVEL = 8
 
+// 有序 / 无序列表的 numbering 实例引用名。两者都走 numbering（而非 docx 内置 bullet），
+// 这样项目符号字形（●/○/■）与编号格式（1./a./i.）都能由模板配置控制。
+const ORDERED_REF = 'proposal-ordered'
+const UNORDERED_REF = 'proposal-unordered'
+
+const ALIGN = {
+  left: AlignmentType.LEFT,
+  center: AlignmentType.CENTER,
+  justify: AlignmentType.JUSTIFIED
+} as const
+
+const OL_FORMAT = {
+  decimal: LevelFormat.DECIMAL,
+  lowerLetter: LevelFormat.LOWER_LETTER,
+  lowerRoman: LevelFormat.LOWER_ROMAN
+} as const
+
+const UL_GLYPH = { disc: '●', circle: '○', square: '■' } as const
+
+// 西文/中文双字体：eastAsia 给中文字形，ascii/hAnsi 给西文与数字，观感协调。
+function runFont(name: ProposalLevelStyle['font']): { ascii: string; eastAsia: string; hAnsi: string } {
+  const f = FONT_DOCX[name]
+  return { ascii: f.ascii, eastAsia: f.eastAsia, hAnsi: f.ascii }
+}
+
 // 内联样式累积：递归下传 bold/italics/code 标志，叶子 text 据此产出 TextRun。
 interface InlineStyle {
   bold?: boolean
@@ -62,6 +103,17 @@ interface InlineStyle {
 interface BlockContext {
   indent?: { left: number }
   baseStyle?: InlineStyle
+}
+
+// 遍历级环境：跨整篇文档共享的状态 + 由 style 预算出的常量。
+//  - walk.titleConsumed：「文档里第一个一级标题」用封面标题样式（ProposalTitle），
+//    其余一级标题用 Heading1。真实方案的封面大标题就是首个 `#`，故以此规则把它单独
+//    放大居中，无需在 markdown 里另加标记。
+//  - bodyFirstLine：正文首行缩进 twips，只施加在正文段落上（不进 Normal 样式，
+//    以免列表项/标题继承到首行缩进）。
+interface WalkEnv {
+  walk: { titleConsumed: boolean }
+  bodyFirstLine: number
 }
 
 function inlineRuns(nodes: PhrasingContent[], style: InlineStyle = {}): TextRun[] {
@@ -104,9 +156,9 @@ function inlineRuns(nodes: PhrasingContent[], style: InlineStyle = {}): TextRun[
   return runs.length ? runs : [new TextRun('')]
 }
 
-// 列表项 → 段落数组。ordered 用编号引用，unordered 用项目符号；嵌套靠 level。
-// baseStyle 用于引用块内的列表（斜体）；缩进交给 numbering/bullet 的 level，不另加
-// indent.left，避免覆盖编号自带的缩进。
+// 列表项 → 段落数组。ordered / unordered 都引用各自的 numbering 实例（编号格式与项目
+// 符号字形由模板的 ol/ul 决定）；嵌套靠 level。baseStyle 用于引用块内的列表（斜体）。
+// 缩进交给 numbering 各级的 indent，不另加 indent.left，避免覆盖编号自带缩进。
 function listItemParagraphs(
   item: ListItem,
   ordered: boolean,
@@ -122,9 +174,7 @@ function listItemParagraphs(
       out.push(
         new Paragraph({
           children: inlineRuns(child.children, baseStyle),
-          ...(ordered
-            ? { numbering: { reference: 'proposal-ordered', level: safeLevel } }
-            : { bullet: { level: safeLevel } })
+          numbering: { reference: ordered ? ORDERED_REF : UNORDERED_REF, level: safeLevel }
         })
       )
     } else if (child.type === 'list') {
@@ -142,10 +192,22 @@ function tableCellContent(cell: MdTableCell): Paragraph[] {
 }
 
 // 顶层块节点 → docx 元素（Paragraph | Table）。
-// ctx 由 blockquote 下传（左缩进 + 斜体基样式），其余调用走默认 undefined。
-function blockToDocx(node: RootContent, ctx?: BlockContext): Array<Paragraph | Table> {
+// env 跨整篇共享（首个 h1 当封面标题 + 正文首行缩进）；ctx 由 blockquote 下传。
+function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array<Paragraph | Table> {
   switch (node.type) {
-    case 'heading':
+    case 'heading': {
+      // 文档里第一个一级标题 → 封面标题样式（居中放大）。其余标题按层级套 HeadingN。
+      if (node.depth === 1 && !env.walk.titleConsumed && !ctx) {
+        env.walk.titleConsumed = true
+        // 此分支由 `!ctx` 守卫，ctx 必为 undefined（封面标题不会出现在引用块里），
+        // 故无 baseStyle 可传。
+        return [
+          new Paragraph({
+            style: 'Title', // 内置 Title 样式，由 styles.default.title 覆盖（见 buildDocStyles）
+            children: inlineRuns(node.children)
+          })
+        ]
+      }
       return [
         new Paragraph({
           // 上界 clamp 到 6、下界 clamp 到 0：remark 标准不产 depth0，但万一上游传入
@@ -155,8 +217,16 @@ function blockToDocx(node: RootContent, ctx?: BlockContext): Array<Paragraph | T
           indent: ctx?.indent
         })
       ]
+    }
     case 'paragraph':
-      return [new Paragraph({ children: inlineRuns(node.children, ctx?.baseStyle), indent: ctx?.indent })]
+      return [
+        new Paragraph({
+          children: inlineRuns(node.children, ctx?.baseStyle),
+          // 引用块的左缩进优先；普通正文段落施加模板的首行缩进（不进 Normal 样式，
+          // 故列表/标题不会继承到首行缩进）。
+          indent: ctx?.indent ?? (env.bodyFirstLine ? { firstLine: env.bodyFirstLine } : undefined)
+        })
+      ]
     case 'list': {
       const out: Paragraph[] = []
       for (const item of node.children) {
@@ -174,7 +244,7 @@ function blockToDocx(node: RootContent, ctx?: BlockContext): Array<Paragraph | T
       }
       const out: Array<Paragraph | Table> = []
       for (const child of node.children) {
-        out.push(...blockToDocx(child, quoteCtx))
+        out.push(...blockToDocx(child, env, quoteCtx))
       }
       return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
     }
@@ -235,59 +305,159 @@ function blockToDocx(node: RootContent, ctx?: BlockContext): Array<Paragraph | T
   }
 }
 
+// 一个层级配置 → docx 段落样式的 run + paragraph 属性。
+// spacingBeforePt 给标题留段前距（正文传 0）；onlyRun/skipIndent 用不到时省略。
+function levelStyle(
+  l: ProposalLevelStyle,
+  style: ProposalStyleConfig,
+  spacingBeforePt: number,
+  applyIndent: boolean
+): { run: Record<string, unknown>; paragraph: Record<string, unknown> } {
+  const sizePt = CN_SIZE_PT[l.size]
+  const firstLine = applyIndent && l.indentChars ? Math.round(l.indentChars * sizePt * 20) : 0
+  return {
+    run: {
+      font: runFont(l.font),
+      size: Math.round(sizePt * 2), // half-points
+      bold: l.bold,
+      ...(l.color ? { color: l.color } : {})
+    },
+    paragraph: {
+      alignment: ALIGN[l.align],
+      spacing: {
+        line: Math.round(style.lineMultiple * 240),
+        lineRule: LineRuleType.AUTO,
+        before: Math.round(spacingBeforePt * 20),
+        after: Math.round(style.spaceAfterPt * 20)
+      },
+      ...(firstLine ? { indent: { firstLine } } : {})
+    }
+  }
+}
+
+// 模板配置 → Document.styles。
+//
+// 关键坑（实测）：内置 Heading1-6 / Title 这些样式【无法】用同名 id 放进 paragraphStyles
+// 覆盖——docx 仍会注入它自己的默认（如 Heading1 的蓝色 2E74B5、sz32），把我们的字体/
+// 加粗全部丢掉。这些内置样式必须走 styles.default.heading1/2/3/title。而 Normal 走
+// paragraphStyles 覆盖是生效的（实测字体/字号/对齐都正确），故混合：Normal 留
+// paragraphStyles，标题与封面标题走 default。
+//
+// 正文首行缩进【不】写进 Normal（改为逐正文段落施加），以免列表项/标题继承首行缩进。
+function buildDocStyles(style: ProposalStyleConfig): IStylesOptions {
+  const normal = levelStyle(style.body, style, 0, false)
+  const titleBase = levelStyle(style.title, style, 0, true)
+  return {
+    default: {
+      // 封面标题：套用内置 'Title' 样式（blockToDocx 首个 h1 用 style:'Title'）。
+      title: {
+        run: titleBase.run,
+        paragraph: {
+          ...titleBase.paragraph,
+          // 额外给充裕段前/段后距，和正文拉开。
+          spacing: {
+            line: Math.round(style.lineMultiple * 240),
+            lineRule: LineRuleType.AUTO,
+            before: Math.round(6 * 20),
+            after: Math.round(18 * 20)
+          }
+        }
+      },
+      heading1: levelStyle(style.h1, style, 12, true),
+      heading2: levelStyle(style.h2, style, 10, true),
+      heading3: levelStyle(style.h3, style, 8, true)
+    },
+    paragraphStyles: [
+      { id: 'Normal', name: 'Normal', run: normal.run, paragraph: normal.paragraph }
+    ]
+  }
+}
+
+// 模板配置 → numbering：有序（格式由 ol 定）+ 无序（项目符号字形由 ul 定）。
+// 每级带 left/hanging 缩进，保证编号悬挂对齐、逐级递进。
+function buildNumbering(style: ProposalStyleConfig): INumberingOptions {
+  const indentFor = (lvl: number): { left: number; hanging: number } => ({
+    left: 540 + lvl * 360,
+    hanging: 360
+  })
+  return {
+    config: [
+      {
+        reference: ORDERED_REF,
+        levels: Array.from({ length: MAX_LIST_LEVEL + 1 }, (_, lvl) => ({
+          level: lvl,
+          format: OL_FORMAT[style.ol],
+          text: `%${lvl + 1}.`,
+          alignment: AlignmentType.START,
+          style: { paragraph: { indent: indentFor(lvl) } }
+        }))
+      },
+      {
+        reference: UNORDERED_REF,
+        levels: Array.from({ length: MAX_LIST_LEVEL + 1 }, (_, lvl) => ({
+          level: lvl,
+          format: LevelFormat.BULLET,
+          text: UL_GLYPH[style.ul],
+          alignment: AlignmentType.START,
+          style: { paragraph: { indent: indentFor(lvl) } }
+        }))
+      }
+    ]
+  }
+}
+
 // markdown 解析器（remark + GFM）提为模块级单例：processor 链与插件注册一次即可，
 // 不必每次导出都重建。.parse() 只跑分词（含 remarkGfm 注册的 micromark 扩展，覆盖
 // 表格/删除线等 GFM 语法），与原先 unified().use().use().parse() 行为一致。
 const mdProcessor = unified().use(remarkParse).use(remarkGfm)
 
-export async function markdownToDocxBuffer(markdown: string): Promise<Buffer> {
+export async function markdownToDocxBuffer(
+  markdown: string,
+  style: ProposalStyleConfig = defaultProposalStyle()
+): Promise<Buffer> {
   const tree = mdProcessor.parse(markdown) as Root
+  const env: WalkEnv = {
+    walk: { titleConsumed: false },
+    bodyFirstLine: style.body.indentChars
+      ? Math.round(style.body.indentChars * CN_SIZE_PT[style.body.size] * 20)
+      : 0
+  }
   const children: Array<Paragraph | Table> = []
   for (const node of tree.children) {
-    children.push(...blockToDocx(node))
+    children.push(...blockToDocx(node, env))
   }
-  const doc = new Document({
-    // 有序列表编号实例：1. 2. 3. …，多级递进。
-    numbering: {
-      config: [
-        {
-          reference: 'proposal-ordered',
-          // 注册 0..MAX_LIST_LEVEL 全部级别，覆盖 Word 支持的最深有序嵌套。
-          levels: Array.from({ length: MAX_LIST_LEVEL + 1 }, (_, lvl) => ({
-            level: lvl,
-            format: LevelFormat.DECIMAL,
-            text: `%${lvl + 1}.`,
-            alignment: AlignmentType.START
-          }))
-        }
-      ]
+
+  const margin = MARGIN_TWIPS[style.margin]
+  const section: ISectionOptions = {
+    properties: {
+      page: { margin: { top: margin, right: margin, bottom: margin, left: margin } }
     },
-    sections: [
-      {
-        // 页脚：每页底部居中「— 当前页码 —」。size 18 = 9pt（half-points），
-        // 灰色 9a9a9e 与正文区分。页码字段由 Word/LibreOffice/ docx-preview 在
-        // 渲染/翻页时各自计算，故导出成品与预览的页码完全一致。
-        footers: {
-          default: new Footer({
+    // 页脚：每页底部居中「— 当前页码 —」。size 18 = 9pt（half-points），灰色 9a9a9e
+    // 与正文区分。页码字段由 Word/LibreOffice/docx-preview 在渲染/翻页时各自计算，
+    // 故导出成品与预览的页码完全一致。
+    footers: {
+      default: new Footer({
+        children: [
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
             children: [
-              new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [
-                  new TextRun({
-                    children: ['— ', PageNumber.CURRENT, ' —'],
-                    size: 18,
-                    color: '9a9a9e'
-                  })
-                ]
+              new TextRun({
+                children: ['— ', PageNumber.CURRENT, ' —'],
+                size: 18,
+                color: '9a9a9e'
               })
             ]
           })
-        },
-        children: children.length
-          ? children
-          : [new Paragraph({ children: [new TextRun('')] })]
-      }
-    ]
+        ]
+      })
+    },
+    children: children.length ? children : [new Paragraph({ children: [new TextRun('')] })]
+  }
+
+  const doc = new Document({
+    styles: buildDocStyles(style),
+    numbering: buildNumbering(style),
+    sections: [section]
   })
   return Packer.toBuffer(doc)
 }

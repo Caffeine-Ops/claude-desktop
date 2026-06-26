@@ -1,6 +1,7 @@
 import { dialog, BrowserWindow } from 'electron'
 import { writeFileSync } from 'node:fs'
 import type { ProposalExportFormat } from '../../shared/ipc-channels'
+import type { ProposalStyleConfig } from '../../shared/proposalStyle'
 import { markdownToDocxBuffer } from './proposalDocx'
 
 /**
@@ -47,13 +48,17 @@ export function isProposalExportFormat(v: unknown): v is ProposalExportFormat {
  *                   pandoc or going markdown→html→docx: no external runtime
  *                   dependency, and full control over headings / lists / tables
  *                   / bold-italic so the output matches the final Word product.
+ * @param style    - Selected Word style template (fonts/sizes/indent/…). Only
+ *                   used for `'docx'`; `'md'` is plain text. Undefined falls back
+ *                   to the default template (经典正式) inside markdownToDocxBuffer.
  * @returns `{ path: string }` with the absolute path written on success, or
  *          `{ path: null }` when the user cancelled the save dialog.
  */
 export async function exportProposal(
   win: BrowserWindow,
   markdown: string,
-  format: ProposalExportFormat
+  format: ProposalExportFormat,
+  style?: ProposalStyleConfig
 ): Promise<{ path: string | null }> {
   const meta = FORMAT_META[format]
   const r = await dialog.showSaveDialog(win, {
@@ -68,8 +73,8 @@ export async function exportProposal(
       writeFileSync(r.filePath, markdown, 'utf8')
       break
     case 'docx': {
-      // markdown → 真 .docx（逐 mdast 节点构造，见 proposalDocx.ts）。
-      const buf = await markdownToDocxBuffer(markdown)
+      // markdown → 真 .docx（逐 mdast 节点构造，见 proposalDocx.ts），按选中模板排版。
+      const buf = await markdownToDocxBuffer(markdown, style)
       writeFileSync(r.filePath, buf)
       break
     }

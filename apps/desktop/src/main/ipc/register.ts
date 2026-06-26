@@ -1023,7 +1023,9 @@ export function registerIpcHandlers(): void {
       // between IPC message send and handler execution.
       const win = BrowserWindow.fromWebContents(event.sender)
       if (!win) return { path: null }
-      return exportProposal(win, markdown, format)
+      // style 是纯数据（字体/字号/缩进…），仅 docx 用得到；undefined 时 markdownToDocxBuffer
+      // 回退默认模板（经典正式）。
+      return exportProposal(win, markdown, format, payload?.style)
     }
   )
 
@@ -1035,7 +1037,7 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.PROPOSAL_RENDER,
     async (_event, payload: ProposalRenderPayload): Promise<ProposalRenderResult> => {
       const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
-      const bytes = await markdownToDocxBuffer(markdown)
+      const bytes = await markdownToDocxBuffer(markdown, payload?.style)
       return { bytes }
     }
   )
