@@ -1,6 +1,6 @@
 import { dialog, BrowserWindow } from 'electron'
 import { writeFileSync } from 'node:fs'
-import type { ProposalExportFormat } from '../../shared/ipc-channels'
+import type { ProposalExportFormat, MermaidImage } from '../../shared/ipc-channels'
 import type { ProposalStyleConfig } from '../../shared/proposalStyle'
 import { markdownToDocxBuffer } from './proposalDocx'
 import { collectUngroundedImagePaths } from './proposalVerify'
@@ -59,7 +59,9 @@ export async function exportProposal(
   win: BrowserWindow,
   markdown: string,
   format: ProposalExportFormat,
-  style?: ProposalStyleConfig
+  style?: ProposalStyleConfig,
+  // 预渲 mermaid 图（code→PNG）：仅 docx 用，透传给 markdownToDocxBuffer 直接嵌入。
+  mermaidImages?: Record<string, MermaidImage>
 ): Promise<{ path: string | null }> {
   const meta = FORMAT_META[format]
   const r = await dialog.showSaveDialog(win, {
@@ -78,7 +80,7 @@ export async function exportProposal(
       // 接地闸门：先算未接地图全集，传给嵌图器把 ungrounded 图降级为占位——交付的 Word 里
       // 绝不出现「不属本节所引文件」的挪用/无关图（评审 AL3）。索引不可用 → 空集、不挡。
       const ungrounded = collectUngroundedImagePaths(markdown)
-      const buf = await markdownToDocxBuffer(markdown, style, ungrounded)
+      const buf = await markdownToDocxBuffer(markdown, style, ungrounded, mermaidImages)
       writeFileSync(r.filePath, buf)
       break
     }

@@ -11,6 +11,7 @@ import {
   PROPOSAL_DRAFT_END
 } from '@shared/proposal'
 import { sendProposalStageMessage } from '../../lib/sendProposalStageMessage'
+import { extractMermaidBlocks, renderMermaidImageMap } from '../../lib/mermaidRender'
 import { ProposalPaper } from './ProposalPaper'
 import { ProposalPreview } from './ProposalPreview'
 import { ProposalStyleModal } from './ProposalStyleModal'
@@ -127,8 +128,12 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     }
     setExporting(true)
     try {
+      // 预渲 mermaid 图（仅 docx 需要）：main 无 DOM 渲不了 mermaid，故 renderer 渲成 PNG（canvas
+      // 栅格、中文不缺字）传给 main 直接嵌入。.md 是纯文本，不需要。
+      const mermaidImages =
+        format === 'docx' ? await renderMermaidImageMap(extractMermaidBlocks(markdown)) : undefined
       // style 仅 docx 用得到（驱动样式模板）；.md 透传 undefined，main 端忽略。
-      const r = await window.chatApi.exportProposal({ markdown, format, style })
+      const r = await window.chatApi.exportProposal({ markdown, format, style, mermaidImages })
       // 先定导出结果反馈——埋点绝不能影响它（见下）。
       setExportMsg(
         r.path ? { tone: 'ok', text: `已导出：${r.path}` } : { tone: 'muted', text: '已取消导出' }

@@ -840,6 +840,19 @@ export type AppearanceSetResult = { appearance: AppearancePrefs | null }
  */
 export type ProposalExportFormat = 'md' | 'docx' // 进阶可再加 'pdf'
 
+/**
+ * 一张预渲的 mermaid 图：renderer 把 mermaid 渲成 SVG，再用 canvas 栅格成 PNG（base64，无
+ * `data:` 前缀），连同像素尺寸传给 main 直接 ImageRun 嵌入。为什么栅格化放 renderer 而非 main：
+ * ① 不必引入 sharp 等原生依赖；② Chromium 用与屏幕预览同一套字体栅格，导出位图里的中文绝不
+ * 缺字（main 侧若用 librsvg 渲 SVG，依赖系统字体，中文易变方框）。
+ */
+export interface MermaidImage {
+  /** PNG 字节的 base64（不含 `data:image/png;base64,` 前缀）。main 端 Buffer.from(png,'base64') 还原后 ImageRun。 */
+  png: string
+  width: number
+  height: number
+}
+
 /** Payload for PROPOSAL_EXPORT. */
 export interface ProposalExportPayload {
   markdown: string
@@ -850,6 +863,12 @@ export interface ProposalExportPayload {
    * 是纯文本无样式，忽略此字段。省略时 main 端回退默认模板（经典正式）。
    */
   style?: ProposalStyleConfig
+  /**
+   * 预渲的 mermaid 图（mermaid 源码 trim → {@link MermaidImage}）。mermaid 只能在 renderer 渲成
+   * 图，main 直接嵌入其 PNG（见 proposalDocx）。仅 `'docx'` 用；省略 → mermaid 块降级文字占位。
+   * key = mermaid 源码（trim 后），与 main 侧 mdast code 节点 node.value.trim() 对齐。
+   */
+  mermaidImages?: Record<string, MermaidImage>
 }
 
 /** Result of PROPOSAL_EXPORT. `path` is null when the user cancelled. */
@@ -865,6 +884,8 @@ export interface ProposalRenderPayload {
    * 逐像素一致」。省略时回退默认模板（经典正式）。
    */
   style?: ProposalStyleConfig
+  /** 预渲的 mermaid 图（code→{@link MermaidImage}）。与 PROPOSAL_EXPORT 同义，保证「预览=导出一致」。 */
+  mermaidImages?: Record<string, MermaidImage>
 }
 
 /**

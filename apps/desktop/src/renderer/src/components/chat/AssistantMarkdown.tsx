@@ -1,10 +1,11 @@
-import { isValidElement, memo, useCallback, useState, type ReactNode } from 'react'
+import { isValidElement, memo, useCallback, useEffect, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 
 import { useT } from '../../i18n'
 import { toKbAssetUrl } from '../../lib/kbAssetUrl'
+import { renderMermaid } from '../../lib/mermaidRender'
 import { isEmbeddableImagePath } from '@shared/proposal'
 
 /**
@@ -219,6 +220,11 @@ const components: Components = {
     const language = match?.[1]
     const highlighted = codeProps?.children ?? children
     const rawCode = reactNodeToText(highlighted)
+    // mermaid 围栏块 → 渲成图（方案一二期），不进代码卡片。rawCode 是 reactNodeToText 拍平的
+    // 原始 mermaid 源码（rehype-highlight 不识别 mermaid 语言、ignoreMissing 下原样透传）。
+    if (language === 'mermaid') {
+      return <MermaidBlock code={rawCode} />
+    }
     return (
       <CodeBlockCard
         language={language}
@@ -287,6 +293,52 @@ function CodeBlockCard({
         <code className={codeClassName}>{children}</code>
       </pre>
     </div>
+  )
+}
+
+/* ─────────────── Mermaid diagram block (方案一二期) ─────────────── */
+
+/**
+ * 把 ```mermaid 代码块渲成图（编辑/聊天态可见）。渲染在 renderer 异步完成；流式未闭合或语法
+ * 错误时降级显示源码（不报错打断阅读）。导出时另由 main 用 sharp 把同一份 SVG 位图化进 docx，
+ * 故两端视觉同源。
+ */
+function MermaidBlock({ code }: { code: string }): React.JSX.Element {
+  const [svg, setSvg] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let alive = true
+    setFailed(false)
+    renderMermaid(code)
+      .then((s) => {
+        if (alive) setSvg(s)
+      })
+      .catch(() => {
+        // 流式未闭合 / 语法错误：降级源码。边流式边解析时半截 mermaid 报错属预期，不打断阅读。
+        if (alive) {
+          setSvg(null)
+          setFailed(true)
+        }
+      })
+    return () => {
+      alive = false
+    }
+  }, [code])
+
+  if (svg && !failed) {
+    // dangerouslySetInnerHTML：mermaid 以 securityLevel:'strict' 渲染并消毒过 SVG，来源是
+    // KB 接地文本，可信。白底容器让 neutral 主题在深色聊天界面里也清晰。
+    return (
+      <div
+        className="my-3 flex justify-center overflow-x-auto rounded-lg border border-border/60 bg-white p-3"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    )
+  }
+  return (
+    <pre className="my-3 overflow-x-auto rounded-lg border border-border/60 bg-muted/30 px-4 py-3 text-[12.5px] leading-[1.55] text-muted-foreground [font-family:ui-monospace,Menlo,Consolas,monospace]">
+      <code>{code}</code>
+    </pre>
   )
 }
 

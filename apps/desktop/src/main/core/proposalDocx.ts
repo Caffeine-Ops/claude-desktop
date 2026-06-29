@@ -24,6 +24,7 @@ import imageSize from 'image-size'
 import type { IStylesOptions, INumberingOptions, ISectionOptions } from 'docx'
 import { PROPOSAL_PAGEBREAK, PROPOSAL_SECTION_RE, isEmbeddableImagePath } from '../../shared/proposal'
 import type { ProposalKind } from '../../shared/proposal'
+import type { MermaidImage } from '../../shared/ipc-channels'
 import {
   CN_SIZE_PT,
   FONT_DOCX,
@@ -138,6 +139,9 @@ interface WalkEnv {
   // 未接地图的绝对路径全集（接地闸门）：命中的图不嵌入、降级为带标注的文字占位。
   // 由 collectUngroundedImagePaths（main）算好传入；缺省（裸调用 / 无索引）→ 不挡任何图。
   ungroundedImagePaths?: ReadonlySet<string>
+  // 预渲的 mermaid 位图（mermaid 源码 trim → PNG buffer + 像素尺寸）。renderer 渲 SVG → main
+  // 用 sharp 转 PNG 后填入。case 'code' 的 mermaid 分支据此居中嵌图；缺省 / 查不到 → 降级文字。
+  mermaidImages?: ReadonlyMap<string, { data: Buffer; width: number; height: number }>
 }
 
 function inlineRuns(nodes: PhrasingContent[], style: InlineStyle = {}): TextRun[] {
@@ -373,14 +377,42 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
       }
       return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
     }
-    case 'code':
-      // 代码块：逐行等宽段落。
+    case 'code': {
+      // mermaid 围栏块 → 嵌入预渲位图（方案一二期）。renderer 已把 SVG 渲好、main 用 sharp 转成
+      // PNG 填进 env.mermaidImages；查得到就居中嵌图（等比缩放到版心宽，与 imageParagraphs 同款），
+      // 查不到（renderer 没渲成 / sharp 转换失败 / 未传）就降级一行文字占位，绝不把 mermaid 源码
+      // 堆进交付 Word。
+      if (node.lang === 'mermaid') {
+        const png = env.mermaidImages?.get(node.value.trim())
+        if (png) {
+          const maxWidthPx = Math.round(((A4_PAGE_WIDTH_TWIPS - 2 * env.imgMarginTwips) / 1440) * 96)
+          const scale = png.width > maxWidthPx ? maxWidthPx / png.width : 1
+          return [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new ImageRun({
+                  type: 'png',
+                  data: png.data,
+                  transformation: {
+                    width: Math.round(png.width * scale),
+                    height: Math.round(png.height * scale)
+                  }
+                })
+              ]
+            })
+          ]
+        }
+        return [new Paragraph({ children: [new TextRun({ text: '[图示]', color: '9a9a9e' })] })]
+      }
+      // 非 mermaid 代码块：逐行等宽段落。
       return node.value
         .split('\n')
         .map(
           (line) =>
             new Paragraph({ children: [new TextRun({ text: line, font: 'Consolas' })] })
         )
+    }
     case 'table': {
       const rows: TableRow[] = []
       for (const row of node.children) {
@@ -770,13 +802,15 @@ function buildSectionChildren(
   group: SectionGroup,
   style: ProposalStyleConfig,
   bodyFirstLine: number,
-  ungroundedImagePaths?: ReadonlySet<string>
+  ungroundedImagePaths?: ReadonlySet<string>,
+  mermaidImages?: ReadonlyMap<string, { data: Buffer; width: number; height: number }>
 ): Array<Paragraph | Table> {
   const env: WalkEnv = {
     walk: { titleConsumed: group.kind !== 'cover' },
     bodyFirstLine,
     imgMarginTwips: MARGIN_TWIPS[style.margin],
-    ungroundedImagePaths
+    ungroundedImagePaths,
+    mermaidImages
   }
   const out: Array<Paragraph | Table> = []
 
@@ -817,13 +851,43 @@ function buildSectionChildren(
   return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
 }
 
+/**
+ * 把 IPC 传来的预渲 mermaid 图（PNG base64 + 尺寸）解成 code→{Buffer,尺寸} map，供 case 'code'
+ * 同步查表嵌图。栅格化已在 renderer 的 canvas 里完成（用与屏幕预览同一套字体，故中文绝不缺字、
+ * 也无需引入 sharp）；main 这里只做 base64 解码、不渲染。空输入 → undefined（不挡）。
+ */
+function decodeMermaidImages(
+  mermaidImages?: Record<string, MermaidImage>
+): ReadonlyMap<string, { data: Buffer; width: number; height: number }> | undefined {
+  if (!mermaidImages) return undefined
+  const entries = Object.entries(mermaidImages)
+  if (entries.length === 0) return undefined
+  const map = new Map<string, { data: Buffer; width: number; height: number }>()
+  for (const [code, img] of entries) {
+    try {
+      const data = Buffer.from(img.png, 'base64')
+      if (data.length && img.width > 0 && img.height > 0) {
+        map.set(code.trim(), { data, width: img.width, height: img.height })
+      }
+    } catch {
+      // 坏 base64 → 跳过，case 'code' 降级文字占位。
+    }
+  }
+  return map.size ? map : undefined
+}
+
 export async function markdownToDocxBuffer(
   markdown: string,
   style: ProposalStyleConfig = defaultProposalStyle(),
   // 接地闸门：未接地图的绝对路径全集（collectUngroundedImagePaths 算出）。命中的图降级为占位、
   // 不嵌入。缺省 → 不挡任何图（裸调用 / 索引不可用时退化为旧行为，导出绝不被校验阻塞）。
-  ungroundedImagePaths?: ReadonlySet<string>
+  ungroundedImagePaths?: ReadonlySet<string>,
+  // 预渲 mermaid 图（mermaid 源码 trim→PNG base64+尺寸）。mermaid 只能在 renderer 渲，main 直接
+  // 嵌入其 PNG（renderer canvas 栅格，故无需 sharp、中文字体也正确）。省略 → mermaid 块降级文字。
+  mermaidImages?: Record<string, MermaidImage>
 ): Promise<Buffer> {
+  // base64 PNG → Buffer，建 code→{data,尺寸} map 供 case 'code' 的 mermaid 分支同步查表嵌图。
+  const mermaidImageMap = decodeMermaidImages(mermaidImages)
   const tree = mdProcessor.parse(markdown) as Root
   const bodyFirstLine = style.body.indentChars
     ? Math.round(style.body.indentChars * CN_SIZE_PT[style.body.size] * 20)
@@ -836,7 +900,7 @@ export async function markdownToDocxBuffer(
   // 封面/目录节不挂页码页脚；正文节挂「— N —」页脚。
   const groups = groupBySectionMarks(tree.children)
   const sections: ISectionOptions[] = groups.map((group) => {
-    const children = buildSectionChildren(group, style, bodyFirstLine, ungroundedImagePaths)
+    const children = buildSectionChildren(group, style, bodyFirstLine, ungroundedImagePaths, mermaidImageMap)
     const safeChildren = children.length
       ? children
       : [new Paragraph({ children: [new TextRun('')] })]

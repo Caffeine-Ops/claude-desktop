@@ -1054,7 +1054,7 @@ export function registerIpcHandlers(): void {
       if (!win) return { path: null }
       // style 是纯数据（字体/字号/缩进…），仅 docx 用得到；undefined 时 markdownToDocxBuffer
       // 回退默认模板（经典正式）。
-      return exportProposal(win, markdown, format, payload?.style)
+      return exportProposal(win, markdown, format, payload?.style, payload?.mermaidImages)
     }
   )
 
@@ -1069,7 +1069,7 @@ export function registerIpcHandlers(): void {
       // 预览也过同一接地闸门（与导出共用 collectUngroundedImagePaths）：未接地图在 docx 预览里
       // 同样降级为占位，保证「预览=导出一致」——绝不出现预览有图、成品 Word 没图（评审 AL3）。
       const ungrounded = collectUngroundedImagePaths(markdown)
-      const bytes = await markdownToDocxBuffer(markdown, payload?.style, ungrounded)
+      const bytes = await markdownToDocxBuffer(markdown, payload?.style, ungrounded, payload?.mermaidImages)
       return { bytes }
     }
   )
