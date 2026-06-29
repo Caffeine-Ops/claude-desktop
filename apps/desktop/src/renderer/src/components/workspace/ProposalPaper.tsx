@@ -113,9 +113,15 @@ export function ProposalPaper(): React.JSX.Element {
     else groups.push({ kind: sec.kind, items: [sec] })
   }
 
-  // 单节渲染辅助：参数用「全局下标」以保留上移/下移的边界判断（首尾禁用依赖 sections
-  // 全局长度，不能用组内下标——跨组时组内下标会从 0 重置、错误地允许跨组第一节上移）。
-  const renderSection = (sec: (typeof sections)[number], globalIndex: number): React.JSX.Element => (
+  // 单节渲染辅助：参数用「全局下标」定位邻居。上移/下移按 kind 边界禁用——moveSection 只
+  // 在【同 kind 内】交换（跨区段移动被 no-op，见其注释），故按钮可用性必须与之精确对齐：
+  // 邻居同 kind 才亮、否则置灰。原先按「全局首尾」判断（globalIndex===0 / ===length-1）会让
+  // 正文区第一章的「上移」亮着却点击无效（邻居是目录、被 moveSection 静默 no-op，P1-3 缺陷）。
+  const renderSection = (sec: (typeof sections)[number], globalIndex: number): React.JSX.Element => {
+    const canMoveUp = globalIndex > 0 && sections[globalIndex - 1].kind === sec.kind
+    const canMoveDown =
+      globalIndex < sections.length - 1 && sections[globalIndex + 1].kind === sec.kind
+    return (
     <section key={sec.id} className="group relative py-0.5">
       <div className="absolute -right-[58px] top-1.5 hidden flex-col gap-1 group-hover:flex">
         {/* AI 修订组：仅正文节（封面/目录无修订语义）。点击发起【整节替换】式重写，流式中禁用。 */}
@@ -159,16 +165,18 @@ export function ProposalPaper(): React.JSX.Element {
         </button>
         <button
           className={toolBtn}
-          disabled={globalIndex === 0}
+          disabled={!canMoveUp}
           onClick={() => moveSection(sec.id, 'up')}
+          title={canMoveUp ? '上移' : '已是本区段第一节，不能跨区段上移'}
           aria-label="上移"
         >
           ↑
         </button>
         <button
           className={toolBtn}
-          disabled={globalIndex === sections.length - 1}
+          disabled={!canMoveDown}
           onClick={() => moveSection(sec.id, 'down')}
+          title={canMoveDown ? '下移' : '已是本区段最后一节，不能跨区段下移'}
           aria-label="下移"
         >
           ↓
@@ -188,13 +196,17 @@ export function ProposalPaper(): React.JSX.Element {
       {sec.truncated && (
         <div className="mb-1 flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600">
           <span>这一段较长，生成被中断，内容可能不完整。</span>
-          <button
-            className="whitespace-nowrap underline hover:text-amber-800 disabled:opacity-40"
-            disabled={generating}
-            onClick={() => void reviseProposalSection(sec.id, 'resume')}
-          >
-            继续写完
-          </button>
+          {/* 续写只对正文节有意义（reviseProposalSection 对非 content 直接 no-op）；封面/目录极少
+              截断，若真发生则只提示不给按钮，避免一个点了没反应的死按钮。 */}
+          {sec.kind === 'content' && (
+            <button
+              className="whitespace-nowrap underline hover:text-amber-800 disabled:opacity-40"
+              disabled={generating}
+              onClick={() => void reviseProposalSection(sec.id, 'resume')}
+            >
+              继续写完
+            </button>
+          )}
         </div>
       )}
 
@@ -211,7 +223,8 @@ export function ProposalPaper(): React.JSX.Element {
         <AssistantMarkdown text={sec.markdown} />
       )}
     </section>
-  )
+    )
+  }
 
   return (
     <div className="flex-1 overflow-auto bg-black/10 py-7 dark:bg-black/25">
