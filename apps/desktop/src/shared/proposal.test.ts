@@ -11,7 +11,10 @@ import {
   sortSectionsByKind,
   gateDraftBlocksByPhase,
   isDraftBlockAheadOfPhase,
-  laterPhase
+  laterPhase,
+  decideProposalStageConfirm,
+  PROPOSAL_COVER_CONFIRM_HEADER,
+  PROPOSAL_TOC_CONFIRM_HEADER
 } from './proposal'
 import type { ProposalMetricSection, ProposalDraftBlock } from './proposal'
 
@@ -415,5 +418,61 @@ describe('sortSectionsByKind（维持同 kind 连续不变量）', () => {
     const inp = [S('toc', 'b'), S('cover', 'a')]
     sortSectionsByKind(inp)
     expect(inp.map((s) => s.id)).toEqual(['b', 'a']) // 原数组未被原地改
+  })
+})
+
+describe('decideProposalStageConfirm', () => {
+  const tocInput = (firstLabel: string): unknown => ({
+    questions: [
+      {
+        question: '目录确认？',
+        header: PROPOSAL_TOC_CONFIRM_HEADER,
+        options: [{ label: firstLabel }, { label: '我要调整目录' }]
+      }
+    ]
+  })
+
+  it('目录确认·选放行项（首选项）→ advance-content', () => {
+    expect(
+      decideProposalStageConfirm(tocInput('确认目录，开始撰写正文'), {
+        '目录确认？': '确认目录，开始撰写正文'
+      })
+    ).toBe('advance-content')
+  })
+
+  it('目录确认·选修改项 → none（不推进）', () => {
+    expect(
+      decideProposalStageConfirm(tocInput('确认目录，开始撰写正文'), {
+        '目录确认？': '我要调整目录'
+      })
+    ).toBe('none')
+  })
+
+  it('封面确认·选放行项 → clear-only', () => {
+    const input = {
+      questions: [
+        {
+          question: '封面确认？',
+          header: PROPOSAL_COVER_CONFIRM_HEADER,
+          options: [{ label: '确认封面，生成目录' }, { label: '我要调整封面' }]
+        }
+      ]
+    }
+    expect(decideProposalStageConfirm(input, { '封面确认？': '确认封面，生成目录' })).toBe(
+      'clear-only'
+    )
+  })
+
+  it('非方案确认 header → none', () => {
+    const input = {
+      questions: [{ question: '随便问？', header: '其它', options: [{ label: 'A' }] }]
+    }
+    expect(decideProposalStageConfirm(input, { '随便问？': 'A' })).toBe('none')
+  })
+
+  it('畸形输入 → none', () => {
+    expect(decideProposalStageConfirm(null, {})).toBe('none')
+    expect(decideProposalStageConfirm({}, {})).toBe('none')
+    expect(decideProposalStageConfirm({ questions: 'x' }, {})).toBe('none')
   })
 })

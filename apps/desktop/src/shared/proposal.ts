@@ -33,6 +33,58 @@ export const PROPOSAL_DRAFT_END: Record<ProposalKind, string> = {
   content: '===方案正文结束==='
 }
 
+// ── 阶段确认（聊天内 AskUserQuestion 驱动）─────────────────────────────
+// 旧设计靠右侧面板按钮调 advancePhase 推进阶段；现改为 AI 在聊天里用 AskUserQuestion
+// 发起确认，用户点选放行项时由渲染层推进。两个 header 是「确认问题」的身份标记：
+// 提示词用它们填 AskUserQuestion 的 header，渲染层用它们识别「这是阶段确认、且选了放行项」。
+// 值必须前后端一字不差，故集中定义在 shared。
+export const PROPOSAL_COVER_CONFIRM_HEADER = '封面确认'
+export const PROPOSAL_TOC_CONFIRM_HEADER = '目录确认'
+
+// 决策结果：advance-content=推进到正文阶段（toc 确认放行）；clear-only=仅清跳阶提示
+// （cover 确认放行）；none=不是阶段确认放行项，什么都不做。
+export type ProposalStageConfirm = 'advance-content' | 'clear-only' | 'none'
+
+/**
+ * 纯函数：给定 AskUserQuestion 的原始 input 与用户答案 map（questionText→selectedLabel），
+ * 判断是否命中「阶段确认放行」。判定 = header 命中两个确认常量之一 且 用户选中的 label
+ * 恰等于该问题 options[0].label（放行项约定排首位）。toc 确认优先（命中即返回 advance-content）。
+ *
+ * 故意不硬编码放行项文案：放行项 label 取自同一份 input 的 options[0]，无论 AI 措辞如何，
+ * 只要用户点的是首选项即匹配——唯一硬编码的是 header 常量（提示词据此填值，可靠）。
+ */
+export function decideProposalStageConfirm(
+  input: unknown,
+  answers: Record<string, string>
+): ProposalStageConfirm {
+  if (!input || typeof input !== 'object') return 'none'
+  const raw = (input as { questions?: unknown }).questions
+  if (!Array.isArray(raw)) return 'none'
+  let result: ProposalStageConfirm = 'none'
+  for (const q of raw) {
+    if (!q || typeof q !== 'object') continue
+    const rq = q as Record<string, unknown>
+    const header = typeof rq.header === 'string' ? rq.header : null
+    const question = typeof rq.question === 'string' ? rq.question : null
+    if (!header || !question) continue
+    if (header !== PROPOSAL_COVER_CONFIRM_HEADER && header !== PROPOSAL_TOC_CONFIRM_HEADER)
+      continue
+    const opts = rq.options
+    if (!Array.isArray(opts) || opts.length === 0) continue
+    const first = opts[0]
+    const proceedLabel =
+      first && typeof first === 'object' && typeof (first as Record<string, unknown>).label === 'string'
+        ? ((first as Record<string, unknown>).label as string)
+        : null
+    if (!proceedLabel) continue
+    if (answers[question] !== proceedLabel) continue
+    // 选了该确认问题的首选项（放行项）
+    if (header === PROPOSAL_TOC_CONFIRM_HEADER) return 'advance-content'
+    result = 'clear-only'
+  }
+  return result
+}
+
 // 抽取时按此顺序找「位置最靠前」的起始哨兵（顺序本身不影响正确性，只是遍历用）。
 const KIND_SCAN_ORDER: ProposalKind[] = ['cover', 'toc', 'content']
 
