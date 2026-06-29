@@ -127,6 +127,7 @@ const components: Components = {
   // KB 本地图经 kbasset:// 协议加载（绝对路径直接当 <img src> 会被当相对 URL、加载失败）。
   img: ({ src, alt }) => (
     <img
+      // 非 string 的 src（罕见，react-markdown 类型上允许 undefined）原样透传给 <img>。
       src={typeof src === 'string' ? toKbAssetUrl(src) : (src as string | undefined)}
       alt={alt ?? ''}
       className="my-2 max-w-full rounded"

@@ -292,7 +292,8 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
     }
     case 'paragraph': {
       // 独占一行的图（children 仅 image，忽略纯空白 text）→ 居中嵌图 + 图说。
-      // 混排（图夹在文字中）不在 v1 范围，退回下面的普通段落渲染（image 经 inlineRuns 取 alt）。
+      // 混排（图夹在文字中）不在 v1 范围，退回下面的普通段落渲染；其中 image 节点被 inlineRuns
+      // 静默忽略（image mdast 无 children、alt 在 .alt 上，default 分支取不到）——v1 不支持混排嵌图。
       const imgs = node.children.filter((c) => c.type === 'image')
       const nonEmpty = node.children.filter(
         (c) => !(c.type === 'text' && c.value.trim() === '')

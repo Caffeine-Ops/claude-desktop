@@ -110,14 +110,15 @@ function renderProductBlock(p: ProposalProductScope): string {
   }
   const shown = p.files.slice(0, MAX_FILES_PER_PRODUCT)
   const lines = shown.map((f) => {
-    const head = `     - 《${f.title}》 → ${f.mirrorPath}`
-    if (!f.assets || f.assets.length === 0) return head
+    // fileHead：单个文件的行（区别于上面产品级的 head），避免同名遮蔽看混。
+    const fileHead = `     - 《${f.title}》 → ${f.mirrorPath}`
+    if (!f.assets || f.assets.length === 0) return fileHead
     const imgs = f.assets.slice(0, MAX_IMAGES_PER_FILE).map((a) => `         · 图：${a}`)
     if (f.assets.length > MAX_IMAGES_PER_FILE) {
       imgs.push(`         · …（共 ${f.assets.length} 张图，上面只列前 ${MAX_IMAGES_PER_FILE} 张）`)
     }
     // 文件行 + 其名下可用图，缩进区分层级，让 AI 一眼看到「这个文件配了哪些图」。
-    return `${head}\n${imgs.join('\n')}`
+    return `${fileHead}\n${imgs.join('\n')}`
   })
   if (p.files.length > MAX_FILES_PER_PRODUCT) {
     lines.push(
