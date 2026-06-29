@@ -621,26 +621,26 @@ function pageNumberFooter(): { default: Footer } {
   }
 }
 
-// 品牌页眉横幅（P2-1）：Fusion Ai logo + 分隔线，铺正文/目录每页顶部。宽度等于版心宽（页宽减两
-// 侧边距），高度按原图比例等比缩放，故横幅左右恰好贴版心、分隔线满宽。封面节不挂此页眉（封面用
-// 顶部居中 logo，见 buildCoverChildren）——三大区段各自独立 Section，只给 content/toc 加 headers。
-function brandBannerHeader(style: ProposalStyleConfig): { default: Header } {
-  const contentWidthPx = Math.round(
-    ((A4_PAGE_WIDTH_TWIPS - 2 * MARGIN_TWIPS[style.margin]) / 1440) * 96
-  )
-  const heightPx = Math.round(
-    contentWidthPx * (FUSION_HEADER_BANNER.height / FUSION_HEADER_BANNER.width)
-  )
+// EMU → px（docx ImageRun.transformation 用 px）：1px = 9525 EMU（96dpi）。用户要求 logo 完全
+// 照搬源 Word 的展示，故下列尺寸/对齐【精确复刻源文档】，不再按版心或固定值自行缩放。
+const EMU_PER_PX = 9525
+
+// 品牌页眉横幅（P2-1）：铺正文/目录每页顶部。源文档 header inline 图 5181600×598805 EMU
+// （5.67×0.655 英寸）、段落【居中】——照搬其原始尺寸与居中对齐，不再缩放到版心宽。封面节不挂
+// 此页眉（封面用顶部右对齐 logo，见 buildCoverChildren）——三区段各独立 Section，只给 content/toc 加。
+const BANNER_W_PX = Math.round(5181600 / EMU_PER_PX) // 544
+const BANNER_H_PX = Math.round(598805 / EMU_PER_PX) // 63
+function brandBannerHeader(): { default: Header } {
   return {
     default: new Header({
       children: [
         new Paragraph({
-          alignment: AlignmentType.LEFT,
+          alignment: AlignmentType.CENTER,
           children: [
             new ImageRun({
               type: 'png',
               data: Buffer.from(FUSION_HEADER_BANNER.base64, 'base64'),
-              transformation: { width: contentWidthPx, height: heightPx }
+              transformation: { width: BANNER_W_PX, height: BANNER_H_PX }
             })
           ]
         })
@@ -649,21 +649,22 @@ function brandBannerHeader(style: ProposalStyleConfig): { default: Header } {
   }
 }
 
-// 封面顶部居中 logo（P2-1）：完整 Fusion Ai 标志。固定约 4.5cm 宽、等比高。放进封面顶部块
-// 第一行（在大标题之上），随整页表格的竖向居中一起排，不额外增高、不触发封面溢出第二页。
-const COVER_LOGO_WIDTH_PX = 170
+// 封面 logo（P2-1）：完整 Fusion Ai 标志。源文档封面 inline 图 1457960×330200 EMU
+// （1.59×0.36 英寸）、段落【右对齐】、位于封面顶部——照搬其尺寸与右对齐，放在封面页【最顶】
+// （在整页表格之上），而非与标题一起竖向居中。spacingAfter 给一点呼吸；其占高在 buildCoverChildren
+// 里从表格高度扣除，避免封面溢出第二页。
+const COVER_LOGO_W_PX = Math.round(1457960 / EMU_PER_PX) // 153
+const COVER_LOGO_H_PX = Math.round(330200 / EMU_PER_PX) // 35
+const COVER_LOGO_SPACE_AFTER_TWIPS = Math.round(12 * 20)
 function coverLogoParagraph(): Paragraph {
-  const heightPx = Math.round(
-    COVER_LOGO_WIDTH_PX * (FUSION_COVER_LOGO.height / FUSION_COVER_LOGO.width)
-  )
   return new Paragraph({
-    alignment: AlignmentType.CENTER,
-    spacing: { after: Math.round(14 * 20) },
+    alignment: AlignmentType.RIGHT,
+    spacing: { after: COVER_LOGO_SPACE_AFTER_TWIPS },
     children: [
       new ImageRun({
         type: 'png',
         data: Buffer.from(FUSION_COVER_LOGO.base64, 'base64'),
-        transformation: { width: COVER_LOGO_WIDTH_PX, height: heightPx }
+        transformation: { width: COVER_LOGO_W_PX, height: COVER_LOGO_H_PX }
       })
     ]
   })
@@ -773,7 +774,11 @@ function buildCoverChildren(
   // 其高度，再加 480 twips 缓冲（兜底 Word 偶发隐式段落 / 渲染差异）。落款本就底对齐，整体上移约
   // 1.5cm，观感等同正常下边距。
   const sectBreakParaTwips = Math.round(style.lineMultiple * 240 + style.spaceAfterPt * 20) + 480
-  const contentHeight = A4_PAGE_HEIGHT_TWIPS - 2 * MARGIN_TWIPS[style.margin] - sectBreakParaTwips
+  // 品牌封面 logo 占高（P2-1）：图高 px→twips（1px=15twips）+ 段后距。放在表格之上，故从可用
+  // 版心高里扣掉它，整页表格相应缩短——否则「logo 段 + 满高表格 + 分节段」超版心，封面又被切两页。
+  const coverLogoTwips = style.brand ? COVER_LOGO_H_PX * 15 + COVER_LOGO_SPACE_AFTER_TWIPS : 0
+  const contentHeight =
+    A4_PAGE_HEIGHT_TWIPS - 2 * MARGIN_TWIPS[style.margin] - sectBreakParaTwips - coverLogoTwips
   const noBorder = { style: BorderStyle.NONE, size: 0, color: 'auto' }
   const cellMargins = { top: 0, bottom: 0, left: 0, right: 0 }
   const mkCell = (
@@ -811,10 +816,6 @@ function buildCoverChildren(
     }
   }
 
-  // 品牌封面 logo（P2-1）：置于上块最顶（标题之上）。topChildren 走整页表格上格的竖向居中，
-  // 故 logo+标题+抬头作为一个块整体居中，不增表格高度、不触发封面溢出第二页。
-  if (style.brand) topChildren.unshift(coverLogoParagraph())
-
   // 下块：落款（h3 级：较小字号、去色不加粗）。
   const bottomChildren: Paragraph[] = []
   for (const node of bottom) {
@@ -847,20 +848,20 @@ function buildCoverChildren(
     )
   }
 
-  return [
-    new Table({
-      rows,
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      borders: {
-        top: noBorder,
-        bottom: noBorder,
-        left: noBorder,
-        right: noBorder,
-        insideHorizontal: noBorder,
-        insideVertical: noBorder
-      }
-    })
-  ]
+  const coverTable = new Table({
+    rows,
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: {
+      top: noBorder,
+      bottom: noBorder,
+      left: noBorder,
+      right: noBorder,
+      insideHorizontal: noBorder,
+      insideVertical: noBorder
+    }
+  })
+  // 品牌封面 logo 置于封面页【最顶】、右对齐（精确复刻源文档），其后是占满剩余版心的标题/落款表格。
+  return style.brand ? [coverLogoParagraph(), coverTable] : [coverTable]
 }
 
 // 一个区段分组 → 该 Section 的子节点。封面节走整页表格布局（buildCoverChildren）；
@@ -977,7 +978,7 @@ export async function markdownToDocxBuffer(
     return {
       properties,
       // 品牌页眉横幅（P2-1）：正文/目录每页挂，封面不挂（封面用顶部居中 logo）。brand 关 → 不挂。
-      ...(style.brand && group.kind !== 'cover' ? { headers: brandBannerHeader(style) } : {}),
+      ...(style.brand && group.kind !== 'cover' ? { headers: brandBannerHeader() } : {}),
       ...(group.kind === 'content' ? { footers: pageNumberFooter() } : {}),
       children: safeChildren
     }
