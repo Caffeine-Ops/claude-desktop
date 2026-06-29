@@ -5,6 +5,7 @@ import {
   PageBreak,
   TextRun,
   HeadingLevel,
+  ImageRun,
   Table,
   TableRow,
   TableCell,
@@ -18,6 +19,8 @@ import {
   Footer,
   PageNumber
 } from 'docx'
+import { readFileSync } from 'node:fs'
+import imageSize from 'image-size'
 import type { IStylesOptions, INumberingOptions, ISectionOptions } from 'docx'
 import { PROPOSAL_PAGEBREAK, PROPOSAL_SECTION_RE } from '../../shared/proposal'
 import type { ProposalKind } from '../../shared/proposal'
@@ -87,6 +90,16 @@ const OL_FORMAT = {
 
 const UL_GLYPH = { disc: '●', circle: '○', square: '■' } as const
 
+// A4 页宽（twips，210mm）。嵌图最大宽 = 版心宽（页宽 − 左右页边距），换算成 px（96dpi）。
+const A4_PAGE_WIDTH_TWIPS = 11906
+// 扩展名 → docx ImageRun 的 type。SVG 不在内（v1 不嵌 SVG，降级文字）。
+const IMG_TYPE: Record<string, 'png' | 'jpg' | 'gif'> = {
+  '.png': 'png',
+  '.jpg': 'jpg',
+  '.jpeg': 'jpg',
+  '.gif': 'gif'
+}
+
 // 西文/中文双字体：eastAsia 给中文字形，ascii/hAnsi 给西文与数字，观感协调。
 function runFont(name: ProposalLevelStyle['font']): { ascii: string; eastAsia: string; hAnsi: string } {
   const f = FONT_DOCX[name]
@@ -120,6 +133,8 @@ interface BlockContext {
 interface WalkEnv {
   walk: { titleConsumed: boolean }
   bodyFirstLine: number
+  // 当前模板的页边距（twips），嵌图算版心宽用。
+  imgMarginTwips: number
 }
 
 function inlineRuns(nodes: PhrasingContent[], style: InlineStyle = {}): TextRun[] {
@@ -197,6 +212,54 @@ function tableCellContent(cell: MdTableCell): Paragraph[] {
   return [new Paragraph({ children: inlineRuns(cell.children) })]
 }
 
+// 一个 image mdast 节点 → docx 段落数组：成功则 [居中 ImageRun 段, 居中图说段]；
+// 不可嵌（svg/未知扩展/读盘失败/尺寸读不出）则降级为 [「[图：alt]」文字段]，绝不抛错。
+// maxWidthPx 为版心宽（px），图按原始像素等比缩放到不超过它。
+function imageParagraphs(alt: string, path: string, maxWidthPx: number): Paragraph[] {
+  const caption = (alt || path.slice(path.lastIndexOf('/') + 1)).trim()
+  const degrade = (): Paragraph[] => [
+    new Paragraph({ children: [new TextRun({ text: `[图：${caption}]`, color: '9a9a9e' })] })
+  ]
+  const ext = path.slice(path.lastIndexOf('.')).toLowerCase()
+  const type = IMG_TYPE[ext]
+  if (!type) return degrade() // svg / 未知扩展 → 降级
+  let data: Buffer
+  try {
+    data = readFileSync(path)
+  } catch {
+    return degrade() // 读不到 → 降级
+  }
+  let w: number, h: number
+  try {
+    const dim = imageSize(data)
+    if (!dim.width || !dim.height) return degrade()
+    w = dim.width
+    h = dim.height
+  } catch {
+    return degrade() // 尺寸读不出 → 降级
+  }
+  // 等比缩放：宽超版心则按比例缩小，否则原尺寸。
+  const scale = w > maxWidthPx ? maxWidthPx / w : 1
+  const width = Math.round(w * scale)
+  const height = Math.round(h * scale)
+  const out: Paragraph[] = [
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new ImageRun({ type, data, transformation: { width, height } })]
+    })
+  ]
+  if (caption) {
+    out.push(
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 120 },
+        children: [new TextRun({ text: caption, size: 18, color: '9a9a9e' })]
+      })
+    )
+  }
+  return out
+}
+
 // 顶层块节点 → docx 元素（Paragraph | Table）。
 // env 跨整篇共享（首个 h1 当封面标题 + 正文首行缩进）；ctx 由 blockquote 下传。
 function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array<Paragraph | Table> {
@@ -227,7 +290,24 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
         })
       ]
     }
-    case 'paragraph':
+    case 'paragraph': {
+      // 独占一行的图（children 仅 image，忽略纯空白 text）→ 居中嵌图 + 图说。
+      // 混排（图夹在文字中）不在 v1 范围，退回下面的普通段落渲染（image 经 inlineRuns 取 alt）。
+      const imgs = node.children.filter((c) => c.type === 'image')
+      const nonEmpty = node.children.filter(
+        (c) => !(c.type === 'text' && c.value.trim() === '')
+      )
+      if (imgs.length > 0 && nonEmpty.every((c) => c.type === 'image')) {
+        // env.imgMarginTwips 已是 twips 值（= MARGIN_TWIPS[style.margin]），直接用、勿再 index。
+        const maxWidthPx = Math.round(
+          ((A4_PAGE_WIDTH_TWIPS - 2 * env.imgMarginTwips) / 1440) * 96
+        )
+        const out: Paragraph[] = []
+        for (const img of imgs) {
+          if (img.type === 'image') out.push(...imageParagraphs(img.alt ?? '', img.url, maxWidthPx))
+        }
+        return out
+      }
       return [
         new Paragraph({
           children: inlineRuns(node.children, ctx?.baseStyle),
@@ -242,6 +322,7 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
           ...(ctx?.forceAlign ? { alignment: ctx.forceAlign } : {})
         })
       ]
+    }
     case 'list': {
       const out: Paragraph[] = []
       for (const item of node.children) {
@@ -667,7 +748,8 @@ function buildSectionChildren(
 ): Array<Paragraph | Table> {
   const env: WalkEnv = {
     walk: { titleConsumed: group.kind !== 'cover' },
-    bodyFirstLine
+    bodyFirstLine,
+    imgMarginTwips: MARGIN_TWIPS[style.margin]
   }
   const out: Array<Paragraph | Table> = []
 
