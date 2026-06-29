@@ -5,9 +5,9 @@ import type {
   PermissionRequest
 } from '../../../../shared/types'
 import { useT, useTFormat } from '../../i18n'
+import { applyProposalStageConfirm } from '../../lib/proposalStageConfirm'
 import { usePermissionStore } from '../../stores/permissions'
 import { AskUserQuestionView } from './AskUserQuestionView'
-import { applyProposalStageConfirm } from '../../lib/proposalStageConfirm'
 
 /**
  * InlinePermissionPrompt

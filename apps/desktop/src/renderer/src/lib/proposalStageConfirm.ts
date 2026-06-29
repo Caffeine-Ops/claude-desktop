@@ -18,6 +18,9 @@ export function applyProposalStageConfirm(
   if (!ps.active) return
   const decision = decideProposalStageConfirm(input, answers)
   if (decision === 'advance-content') {
+    // 防御：只从 toc 阶段推进到 content（目录确认卡只在 toc 阶段发出，此处显式守一手，
+    // 杜绝异常态下越过 toc 直接跳 content）。
+    if (ps.phase !== 'toc') return
     ps.clearStageSkip()
     ps.advancePhase('content')
   } else if (decision === 'clear-only') {

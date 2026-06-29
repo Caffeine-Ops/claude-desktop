@@ -148,7 +148,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   }, [stageSkip, phase, generating, autoTocFix])
 
   // 跳阶补救：AI 在目录阶段直接吐正文被阶段门拦下（stageSkip 非空）时，重发「只生成目录」
-  // 指令把 AI 拉回目录。phase 已是 toc（confirmCover 推进过），不再 advancePhase。
+  // 指令把 AI 拉回目录。phase 已是 toc（目录哨兵块经 laterPhase 自动推进），不再 advancePhase。
   function regenerateToc(): void {
     clearStageSkip()
     void sendProposalStageMessage(
