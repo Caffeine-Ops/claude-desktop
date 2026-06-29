@@ -35,3 +35,23 @@ describe('buildProposalAppend 图片暴露与规则', () => {
     expect(out).toContain('绝不挪用别处的图')
   })
 })
+
+describe('buildProposalAppend 阶段确认走 AskUserQuestion', () => {
+  const out = buildProposalAppend('/mirror', [])
+
+  it('每阶段完成后用 AskUserQuestion 确认才推进', () => {
+    expect(out).toContain('每完成一个阶段')
+    expect(out).toContain('AskUserQuestion')
+  })
+
+  it('封面/目录确认问题用固定 header 与放行项首选项文案', () => {
+    expect(out).toContain('封面确认')
+    expect(out).toContain('确认封面，生成目录')
+    expect(out).toContain('目录确认')
+    expect(out).toContain('确认目录，开始撰写正文')
+  })
+
+  it('不再宣称界面按钮推进（无回归）', () => {
+    expect(out).not.toContain('界面按钮发来')
+  })
+})
