@@ -49,6 +49,12 @@ export interface ProposalStyleConfig {
   ol: 'decimal' | 'lowerLetter' | 'lowerRoman'
   /** 无序列表项目符号。 */
   ul: 'disc' | 'circle' | 'square'
+  /**
+   * 品牌化导出（P2-1）：是否加 Fusion Ai 品牌——正文/目录每页页眉横幅 logo + 封面顶部 logo。
+   * 独立于排版模板（品牌与字体字号正交），故放顶层而非 ProposalLevelStyle。默认开。关掉则回退
+   * 当前裸样式，不破坏现有方案。资产见 proposalBrand.ts。
+   */
+  brand: boolean
 }
 
 /** 中文字号 → Word 磅值（pt）。docx 用 half-points，故生成时再 ×2。 */
@@ -142,7 +148,8 @@ export const PROPOSAL_TEMPLATES: Record<ProposalTemplateKey, ProposalStyleConfig
     spaceAfterPt: 6,
     margin: 'normal',
     ol: 'decimal',
-    ul: 'disc'
+    ul: 'disc',
+    brand: true
   },
   business: {
     templateKey: 'business',
@@ -156,7 +163,8 @@ export const PROPOSAL_TEMPLATES: Record<ProposalTemplateKey, ProposalStyleConfig
     spaceAfterPt: 8,
     margin: 'normal',
     ol: 'decimal',
-    ul: 'square'
+    ul: 'square',
+    brand: true
   },
   academic: {
     templateKey: 'academic',
@@ -170,7 +178,8 @@ export const PROPOSAL_TEMPLATES: Record<ProposalTemplateKey, ProposalStyleConfig
     spaceAfterPt: 4,
     margin: 'wide',
     ol: 'decimal',
-    ul: 'circle'
+    ul: 'circle',
+    brand: true
   }
 }
 
@@ -244,6 +253,8 @@ export function coerceProposalStyle(raw: unknown): ProposalStyleConfig {
     spaceAfterPt: typeof p.spaceAfterPt === 'number' ? p.spaceAfterPt : d.spaceAfterPt,
     margin: pick(p.margin, MARGIN_VALUES, d.margin),
     ol: pick(p.ol, OL_VALUES, d.ol),
-    ul: pick(p.ul, UL_VALUES, d.ul)
+    ul: pick(p.ul, UL_VALUES, d.ul),
+    // 旧持久化配置无 brand 字段 → 默认开（品牌化是本次新增、用户要的默认行为）。
+    brand: typeof p.brand === 'boolean' ? p.brand : d.brand
   }
 }

@@ -168,6 +168,19 @@ export function ProposalStyleModal({
                 </div>
               </div>
 
+              {/* 品牌化开关（P2-1）：Fusion Ai 页眉横幅 logo + 封面 logo。左侧预览实时反映；
+                  关掉回退裸样式（无品牌），不破坏现有方案。 */}
+              <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={draft.brand}
+                  onChange={(e) => patchField({ brand: e.target.checked })}
+                  className="size-4 accent-accent"
+                />
+                <span className="text-[12.5px] font-medium text-foreground">Fusion Ai 品牌</span>
+                <span className="text-[10.5px] text-muted-foreground">每页页眉 logo + 封面 logo</span>
+              </label>
+
               {/* 风格名 + 还原 */}
               <div className="flex items-end gap-3">
                 <label className="flex-1">

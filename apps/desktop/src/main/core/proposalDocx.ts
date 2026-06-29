@@ -16,6 +16,7 @@ import {
   VerticalAlignTable,
   HeightRule,
   BorderStyle,
+  Header,
   Footer,
   PageNumber
 } from 'docx'
@@ -25,6 +26,7 @@ import type { IStylesOptions, INumberingOptions, ISectionOptions } from 'docx'
 import { PROPOSAL_PAGEBREAK, PROPOSAL_SECTION_RE, isEmbeddableImagePath } from '../../shared/proposal'
 import type { ProposalKind } from '../../shared/proposal'
 import type { MermaidImage } from '../../shared/ipc-channels'
+import { FUSION_HEADER_BANNER, FUSION_COVER_LOGO } from '../../shared/proposalBrand'
 import {
   CN_SIZE_PT,
   FONT_DOCX,
@@ -619,6 +621,54 @@ function pageNumberFooter(): { default: Footer } {
   }
 }
 
+// 品牌页眉横幅（P2-1）：Fusion Ai logo + 分隔线，铺正文/目录每页顶部。宽度等于版心宽（页宽减两
+// 侧边距），高度按原图比例等比缩放，故横幅左右恰好贴版心、分隔线满宽。封面节不挂此页眉（封面用
+// 顶部居中 logo，见 buildCoverChildren）——三大区段各自独立 Section，只给 content/toc 加 headers。
+function brandBannerHeader(style: ProposalStyleConfig): { default: Header } {
+  const contentWidthPx = Math.round(
+    ((A4_PAGE_WIDTH_TWIPS - 2 * MARGIN_TWIPS[style.margin]) / 1440) * 96
+  )
+  const heightPx = Math.round(
+    contentWidthPx * (FUSION_HEADER_BANNER.height / FUSION_HEADER_BANNER.width)
+  )
+  return {
+    default: new Header({
+      children: [
+        new Paragraph({
+          alignment: AlignmentType.LEFT,
+          children: [
+            new ImageRun({
+              type: 'png',
+              data: Buffer.from(FUSION_HEADER_BANNER.base64, 'base64'),
+              transformation: { width: contentWidthPx, height: heightPx }
+            })
+          ]
+        })
+      ]
+    })
+  }
+}
+
+// 封面顶部居中 logo（P2-1）：完整 Fusion Ai 标志。固定约 4.5cm 宽、等比高。放进封面顶部块
+// 第一行（在大标题之上），随整页表格的竖向居中一起排，不额外增高、不触发封面溢出第二页。
+const COVER_LOGO_WIDTH_PX = 170
+function coverLogoParagraph(): Paragraph {
+  const heightPx = Math.round(
+    COVER_LOGO_WIDTH_PX * (FUSION_COVER_LOGO.height / FUSION_COVER_LOGO.width)
+  )
+  return new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { after: Math.round(14 * 20) },
+    children: [
+      new ImageRun({
+        type: 'png',
+        data: Buffer.from(FUSION_COVER_LOGO.base64, 'base64'),
+        transformation: { width: COVER_LOGO_WIDTH_PX, height: heightPx }
+      })
+    ]
+  })
+}
+
 // 剥掉 AI 在目录大纲里自带的「目录」标题（导出器会统一注入，避免重复）。
 // 仅当首个节点是 heading 且其纯文本（去空白）等于「目录」时剥除首节点；否则原样返回。
 // 用下方 nodeText 递归取文本：标题文字可能被 **加粗**（AI 写 `# **目录**`），strong/emphasis
@@ -760,6 +810,10 @@ function buildCoverChildren(
       topChildren.push(coverLine(text, style.h1, style, { keepColor: false, bold: false, spacingAfterPt: 4 }))
     }
   }
+
+  // 品牌封面 logo（P2-1）：置于上块最顶（标题之上）。topChildren 走整页表格上格的竖向居中，
+  // 故 logo+标题+抬头作为一个块整体居中，不增表格高度、不触发封面溢出第二页。
+  if (style.brand) topChildren.unshift(coverLogoParagraph())
 
   // 下块：落款（h3 级：较小字号、去色不加粗）。
   const bottomChildren: Paragraph[] = []
@@ -922,6 +976,8 @@ export async function markdownToDocxBuffer(
     const properties = { page: { margin: pageMargin } }
     return {
       properties,
+      // 品牌页眉横幅（P2-1）：正文/目录每页挂，封面不挂（封面用顶部居中 logo）。brand 关 → 不挂。
+      ...(style.brand && group.kind !== 'cover' ? { headers: brandBannerHeader(style) } : {}),
       ...(group.kind === 'content' ? { footers: pageNumberFooter() } : {}),
       children: safeChildren
     }

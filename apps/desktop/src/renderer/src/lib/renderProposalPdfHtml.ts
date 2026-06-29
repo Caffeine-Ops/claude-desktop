@@ -50,6 +50,9 @@ export async function renderProposalPdfHtml(
     breakPages: true,
     ignoreWidth: false,
     ignoreHeight: false,
+    // 品牌横幅 logo（P2-1）+ 页码在 header/footer，PDF 必须渲染它们才与导出/预览一致。
+    renderHeaders: true,
+    renderFooters: true,
     useBase64URL: true,
     className: PDF_DOCX_CLASS
   })
