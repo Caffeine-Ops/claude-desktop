@@ -1,7 +1,12 @@
 import { create } from 'zustand'
 
 import type { ProposalDraftBlock, ProposalKind, SectionVerification } from '@shared/proposal'
-import { gateDraftBlocksByPhase, isDraftBlockAheadOfPhase, laterPhase } from '@shared/proposal'
+import {
+  gateDraftBlocksByPhase,
+  isDraftBlockAheadOfPhase,
+  laterPhase,
+  sortSectionsByKind
+} from '@shared/proposal'
 import type { ProposalDraftRecord } from '@shared/ipc-channels'
 import { useChatStore } from './chat'
 
@@ -197,7 +202,11 @@ export const useProposalStore = create<ProposalState>((set) => ({
         }
       }
       return {
-        sections: [...s.sections, ...added],
+        // sortSectionsByKind：把追加块按阶段序归并回各自区段，维持「同 kind 连续」不变量——
+        // 正文阶段 AI 回发的封面块（不被阶段门拦）若直接追加到末尾，会让 buildProposalMarkdown
+        // 产生两个封面分节、ProposalPaper 出现两个封面组头、moveSection 失效（评审发现）。稳定
+        // 排序，故同 kind 内既有顺序（逐章正文、用户 moveSection 的调整）保持不变。
+        sections: sortSectionsByKind([...s.sections, ...added]),
         consumedDraftIds: consumed,
         phase,
         // 本轮有越界块被拦才更新提示；否则保留既有 stageSkip（不被无关轮次悄悄清掉，
@@ -246,7 +255,10 @@ export const useProposalStore = create<ProposalState>((set) => ({
       seeded: true,
       consumedDraftIds,
       // 重建时无从知晓 AI 原文，以重建出的 markdown 作埋点基准（编辑量从重开后算起）。
-      sections: sections.map((s) => ({ ...s, baselineMarkdown: s.baselineMarkdown ?? s.markdown })),
+      // sortSectionsByKind 加固：历史 transcript 若含非连续 kind 也归并回区段，保不变量。
+      sections: sortSectionsByKind(
+        sections.map((s) => ({ ...s, baselineMarkdown: s.baselineMarkdown ?? s.markdown }))
+      ),
       phase,
       workspaceOpen: true,
       viewMode: 'preview',
@@ -260,7 +272,10 @@ export const useProposalStore = create<ProposalState>((set) => ({
       seeded: true,
       consumedDraftIds: new Set(),
       // 盘上不存 baselineMarkdown（不持久化）；以盘载 markdown 作埋点基准，编辑量从本次重开算起。
-      sections: record.sections.map((s) => ({ ...s, baselineMarkdown: s.markdown })),
+      // sortSectionsByKind 加固：盘载历史若含非连续 kind 也归并回区段，保不变量。
+      sections: sortSectionsByKind(
+        record.sections.map((s) => ({ ...s, baselineMarkdown: s.markdown }))
+      ),
       phase: record.phase,
       workspaceOpen: true,
       viewMode: 'preview',

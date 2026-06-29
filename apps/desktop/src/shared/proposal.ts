@@ -182,6 +182,24 @@ export function laterPhase(a: ProposalKind, b: ProposalKind): ProposalKind {
   return PROPOSAL_PHASE_ORDER[b] > PROPOSAL_PHASE_ORDER[a] ? b : a
 }
 
+/**
+ * 稳定按阶段序（cover<toc<content）排序节，维持「同 kind 连续、每 kind 至多一组」不变量。
+ *
+ * appendSections 是纯追加，而块的 kind 取自哨兵、不保证连续：用户在【正文阶段】让 AI「重写
+ * 封面」时，AI 发的 cover 块不被阶段门拦（封面可反复改），追加后 sections 变成
+ * [cover, toc, content…, cover]——kind 非连续。下游全都假设它连续：buildProposalMarkdown 会
+ * 在尾部 cover 再插一个区段标记 → 两个封面 Word 分节；ProposalPaper 渲两个「封面」组头；
+ * moveSection 的「同 kind 相邻交换」也失效（评审发现）。故 append/restore 后统一过此函数把
+ * 散落的 kind 归并回各自区段。
+ *
+ * 用稳定排序（Array.prototype.sort 在现代引擎稳定）：同 kind 内的既有相对顺序——包括用户经
+ * moveSection 做的调整、以及逐章正文的先后——一律保持不变，只把跨区的「迟到块」移回其区段。
+ * 返回新数组，不原地改入参。main 与 renderer 共享纯函数。
+ */
+export function sortSectionsByKind<T extends { kind: ProposalKind }>(sections: T[]): T[] {
+  return [...sections].sort((a, b) => PROPOSAL_PHASE_ORDER[a.kind] - PROPOSAL_PHASE_ORDER[b.kind])
+}
+
 /** gateDraftBlocksByPhase 的结果：放行的块、被拦的越界块、过门后应推进到的 phase。 */
 export interface ProposalGateResult {
   /** 允许入区的块（保持原顺序）。 */
@@ -348,6 +366,12 @@ export function parseCitations(markdown: string): ParsedCitationParagraph[] {
 // 要求前置 `!`，故普通链接 `[text](url)` 不会被误抽（无 `!`）。alt 可空。
 const IMAGE_RE = /!\[([^\]]*)\]\(([^)]+)\)/g
 
+// markdown 图片的可选 title：url 后【空白分隔】的 `"..."` / `'...'`（`![alt](url "title")`）。解析
+// path 时剥掉它，否则 path 夹带 ` "title"`、与 KB asset 绝对路径精确比较必不等，合法配图被误判
+// ungrounded（评审发现）。要求 title 前有空白，故路径【自身含空格但无 title】（userData 路径可能
+// 含空格）不会被误剥——其结尾不是引号、不匹配。
+const IMAGE_TITLE_SUFFIX_RE = /\s+(?:"[^"]*"|'[^']*')\s*$/
+
 /**
  * 抽取正文里的所有图片：返回 {alt, path} 数组（保序）。无图 → []。
  * 与 parseCitations 解析的 `（据…）` 引用组互不干扰（语法不同）。main 与 renderer 共享纯函数。
@@ -358,7 +382,8 @@ export function parseImages(markdown: string): { alt: string; path: string }[] {
   IMAGE_RE.lastIndex = 0
   let m: RegExpExecArray | null
   while ((m = IMAGE_RE.exec(markdown)) !== null) {
-    out.push({ alt: m[1].trim(), path: m[2].trim() })
+    const path = m[2].trim().replace(IMAGE_TITLE_SUFFIX_RE, '').trim()
+    out.push({ alt: m[1].trim(), path })
   }
   return out
 }

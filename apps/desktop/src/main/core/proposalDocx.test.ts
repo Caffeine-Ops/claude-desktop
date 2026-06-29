@@ -2,8 +2,9 @@ import { describe, it, expect } from 'bun:test'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import type { RootContent } from 'mdast'
 
-import { markdownToDocxBuffer } from './proposalDocx'
+import { markdownToDocxBuffer, stripLeadingTocHeading, splitCoverNodes } from './proposalDocx'
 
 // 仓库无 zip 库、表格导出代码（case 'table'）本就存在未改，故这里只做冒烟：含 GFM 表格的
 // 正文 markdown 过真实导出器不抛错、产出合法 docx（zip）。
@@ -41,5 +42,53 @@ describe('markdownToDocxBuffer 嵌图', () => {
       '<!--proposal-section:content-->\n\n![矢量图](/nope/x.svg)\n\n![缺图](/nope/missing.png)'
     const buf = await markdownToDocxBuffer(md)
     expect(buf.length).toBeGreaterThan(500)
+  })
+})
+
+// mdast 节点构造小工具：测试 stripLeadingTocHeading / splitCoverNodes 对【粗体包裹】文本的
+// 递归提取（评审发现：旧内联实现只读直接子节点的 value，strong/emphasis 包裹的文字读成空串）。
+const text = (v: string): RootContent =>
+  ({ type: 'paragraph', children: [{ type: 'text', value: v }] }) as unknown as RootContent
+const heading = (v: string): RootContent =>
+  ({ type: 'heading', depth: 1, children: [{ type: 'text', value: v }] }) as unknown as RootContent
+const boldHeading = (v: string): RootContent =>
+  ({
+    type: 'heading',
+    depth: 1,
+    children: [{ type: 'strong', children: [{ type: 'text', value: v }] }]
+  }) as unknown as RootContent
+const boldPara = (v: string): RootContent =>
+  ({
+    type: 'paragraph',
+    children: [{ type: 'strong', children: [{ type: 'text', value: v }] }]
+  }) as unknown as RootContent
+
+describe('stripLeadingTocHeading', () => {
+  it('剥掉粗体包裹的「目录」标题（# **目录**）', () => {
+    const rest = text('1. 第一章')
+    expect(stripLeadingTocHeading([boldHeading('目录'), rest])).toEqual([rest])
+  })
+  it('纯文本「目录」标题仍剥（回归）', () => {
+    const rest = text('1. 第一章')
+    expect(stripLeadingTocHeading([heading('目录'), rest])).toEqual([rest])
+  })
+  it('非「目录」标题不剥', () => {
+    expect(stripLeadingTocHeading([boldHeading('第一章 概述')])).toHaveLength(1)
+  })
+})
+
+describe('splitCoverNodes', () => {
+  it('粗体落款（**编制单位：X**）归为封面下块', () => {
+    const title = text('某某系统建设方案')
+    const footer = boldPara('编制单位：某某公司')
+    const { top, bottom } = splitCoverNodes([title, footer])
+    expect(top).toEqual([title])
+    expect(bottom).toEqual([footer])
+  })
+  it('纯文本落款仍识别（回归）', () => {
+    const title = text('某某系统建设方案')
+    const footer = text('编制单位：某某公司')
+    const { bottom } = splitCoverNodes([title, footer])
+    expect(bottom).toEqual([footer])
   })
 })

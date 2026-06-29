@@ -7,6 +7,7 @@ import {
   parseImages,
   isEmbeddableImagePath,
   extractProposalDraftResult,
+  sortSectionsByKind,
   gateDraftBlocksByPhase,
   isDraftBlockAheadOfPhase,
   laterPhase
@@ -194,6 +195,21 @@ describe('parseImages', () => {
     expect(parseImages('纯文字，无图。')).toEqual([])
     expect(parseImages('')).toEqual([])
   })
+
+  it('剥离 markdown title 语法，path 不夹带（防合法配图误判 ungrounded）', () => {
+    expect(parseImages('![架构图](/kb/assets/a/img-1.png "系统架构")')).toEqual([
+      { alt: '架构图', path: '/kb/assets/a/img-1.png' }
+    ])
+    expect(parseImages("![图](/kb/assets/a/img-2.png '说明文字')")).toEqual([
+      { alt: '图', path: '/kb/assets/a/img-2.png' }
+    ])
+  })
+
+  it('路径含空格但无 title → 不误剥（userData 路径可能含空格）', () => {
+    expect(parseImages('![图](/Users/a b/kb-index/assets/img.png)')).toEqual([
+      { alt: '图', path: '/Users/a b/kb-index/assets/img.png' }
+    ])
+  })
 })
 
 describe('isEmbeddableImagePath（可嵌 docx 的位图格式·预览=导出同源谓词）', () => {
@@ -315,5 +331,32 @@ describe('laterPhase（阶段绝不回退）', () => {
     expect(laterPhase('toc', 'cover')).toBe('toc') // 不回退
     expect(laterPhase('content', 'toc')).toBe('content')
     expect(laterPhase('cover', 'cover')).toBe('cover')
+  })
+})
+
+describe('sortSectionsByKind（维持同 kind 连续不变量）', () => {
+  const S = (kind: ProposalDraftBlock['kind'], id: string): { kind: ProposalDraftBlock['kind']; id: string } => ({ kind, id })
+
+  it('非连续 kind（content 阶段回发封面块）归并回 cover 区段', () => {
+    const out = sortSectionsByKind([S('cover', 'a'), S('toc', 'b'), S('content', 'c'), S('cover', 'd')])
+    expect(out.map((s) => s.kind)).toEqual(['cover', 'cover', 'toc', 'content'])
+    expect(out.map((s) => s.id)).toEqual(['a', 'd', 'b', 'c']) // 稳定：a 仍在 d 前
+  })
+
+  it('已连续 → 顺序不变', () => {
+    const inp = [S('cover', 'a'), S('toc', 'b'), S('content', 'c'), S('content', 'd')]
+    expect(sortSectionsByKind(inp).map((s) => s.id)).toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  it('稳定：同 kind 内既有顺序（含 moveSection 调整）保持', () => {
+    const out = sortSectionsByKind([S('content', 'c2'), S('content', 'c1'), S('cover', 'a')])
+    expect(out.map((s) => s.id)).toEqual(['a', 'c2', 'c1']) // cover 提前、content 内 c2/c1 保序
+  })
+
+  it('空数组 → 空数组；不修改入参（返回新数组）', () => {
+    expect(sortSectionsByKind([])).toEqual([])
+    const inp = [S('toc', 'b'), S('cover', 'a')]
+    sortSectionsByKind(inp)
+    expect(inp.map((s) => s.id)).toEqual(['b', 'a']) // 原数组未被原地改
   })
 })

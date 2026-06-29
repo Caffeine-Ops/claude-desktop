@@ -584,16 +584,13 @@ function pageNumberFooter(): { default: Footer } {
 
 // 剥掉 AI 在目录大纲里自带的「目录」标题（导出器会统一注入，避免重复）。
 // 仅当首个节点是 heading 且其纯文本（去空白）等于「目录」时剥除首节点；否则原样返回。
-// 注意 mdast heading 的 children 是 PhrasingContent[]，取 text 值要安全处理（c.value 只在
-// text / inlineCode 节点上存在，其余节点无 value，故用 'value' in c 守卫）。
-function stripLeadingTocHeading(nodes: RootContent[]): RootContent[] {
+// 用下方 nodeText 递归取文本：标题文字可能被 **加粗**（AI 写 `# **目录**`），strong/emphasis
+// 把文字套进更深一层 children，旧的「只读直接子节点 value」会读成空串、漏剥（评审发现）。
+// nodeText 与封面 / 正文取文本逻辑同源，不再各写一套非递归提取。
+export function stripLeadingTocHeading(nodes: RootContent[]): RootContent[] {
   const first = nodes[0]
-  if (first && first.type === 'heading') {
-    const text = (first.children as PhrasingContent[])
-      .map((c) => ('value' in c && typeof c.value === 'string' ? c.value : ''))
-      .join('')
-      .replace(/\s/g, '')
-    if (text === '目录') return nodes.slice(1)
+  if (first && first.type === 'heading' && nodeText(first).replace(/\s/g, '') === '目录') {
+    return nodes.slice(1)
   }
   return nodes
 }
@@ -609,17 +606,16 @@ const COVER_FOOTER_RE = /编制|拟制|起草|供应商|承建|投标|乙方|日
 
 // 把封面节点切成「上块（标题/客户）+ 下块（落款）」。优先按显式 thematicBreak（`---`）切；
 // 无分隔线时退而把【尾部连续的落款行】归为下块；都不命中则下块为空（调用方退化为整体居中）。
-function splitCoverNodes(nodes: RootContent[]): { top: RootContent[]; bottom: RootContent[] } {
+export function splitCoverNodes(nodes: RootContent[]): { top: RootContent[]; bottom: RootContent[] } {
   const hr = nodes.findIndex((n) => n.type === 'thematicBreak')
   if (hr >= 0) return { top: nodes.slice(0, hr), bottom: nodes.slice(hr + 1) }
   let i = nodes.length
   while (i > 0) {
     const n = nodes[i - 1]
     if (n.type !== 'paragraph') break
-    const text = (n.children as PhrasingContent[])
-      .map((c) => ('value' in c && typeof c.value === 'string' ? c.value : ''))
-      .join('')
-    if (!COVER_FOOTER_RE.test(text)) break
+    // nodeText 递归取文本：落款可能被 **加粗**（`**编制单位：X**`），旧内联提取读成空串、
+    // 识别不到落款、封面上下块切分错位（评审发现）。
+    if (!COVER_FOOTER_RE.test(nodeText(n))) break
     i--
   }
   // 全部行都像落款（无标题，极端）或没有任何落款行 → 不切，全归上块、下块空。

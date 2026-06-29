@@ -725,7 +725,17 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     void window.chatApi.saveProposalDraft({
       version: 1,
       sessionId: s.sessionId,
-      sections: s.sections,
+      // 只持久化 ProposalDraftRecord 声明的字段。【显式裁剪】而非透传 s.sections：verification
+      // （异步回填、易陈旧）与 baselineMarkdown（= markdown 的副本，restoreFromDisk 会重新派生）
+      // 都标注【不持久化】，但直接传 s.sections 这个加宽变量会跳过 TS 的 excess-property 检查、
+      // 把它们一起写盘——违反持久化契约、盘上体积近翻倍（评审发现）。改用对象字面量 map：多余
+      // 字段会被 excess-property 检查当场拦下，反过来兜住此类越界。
+      sections: s.sections.map((sec) => ({
+        id: sec.id,
+        markdown: sec.markdown,
+        kind: sec.kind,
+        truncated: sec.truncated
+      })),
       products: s.products,
       phase: s.phase,
       updatedAt: Date.now()
