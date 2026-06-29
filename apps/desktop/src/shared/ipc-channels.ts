@@ -457,6 +457,15 @@ export const IPC_CHANNELS = {
    * byte-for-byte — same `markdownToDocxBuffer` engine as PROPOSAL_EXPORT.
    */
   PROPOSAL_RENDER: 'proposal:render',
+  /**
+   * Renderer → main. 导出 PDF（P2-2）。与 md/docx 不同：PDF 不是从 markdown 在 main 直接生成
+   * bytes，而是 renderer 先用 docx-preview 把【同一份 docx buffer】渲成自包含 HTML（样式内联、
+   * 图 base64），main 再用隐藏 BrowserWindow + webContents.printToPDF 打成 A4 PDF。故走独立通道、
+   * 不挤进 ProposalExportFormat 联合（那条 switch 的产物是 markdown→bytes，结构上容不下 PDF）。
+   * 选 Chromium printToPDF 而非外部 LibreOffice：开箱即用、零外部依赖、中文字体由 Chromium 处理、
+   * 且 PDF 与预览同源（同一 docx-preview 渲染）逐像素一致。
+   */
+  PROPOSAL_EXPORT_PDF: 'proposal:export-pdf',
   /** Renderer → main. 写入/读出/删除某会话的持久化草稿（userData/proposal-drafts/<id>.json）。 */
   PROPOSAL_SAVE_DRAFT: 'proposal:save-draft',
   PROPOSAL_LOAD_DRAFT: 'proposal:load-draft',
@@ -844,7 +853,9 @@ export type AppearanceSetResult = { appearance: AppearancePrefs | null }
  * circular imports. MVP is `'md'`; extend to `'docx' | 'pdf'` when those
  * adapters land — the IPC surface requires no changes.
  */
-export type ProposalExportFormat = 'md' | 'docx' // 进阶可再加 'pdf'
+// md/docx 都是「markdown → bytes 在 main 直出」的格式。PDF 不在此列：它要 renderer 先 docx-preview
+// 渲成 HTML、main 再 printToPDF（main 无 DOM），结构不同，走独立的 PROPOSAL_EXPORT_PDF 通道。
+export type ProposalExportFormat = 'md' | 'docx'
 
 /**
  * 一张预渲的 mermaid 图：renderer 把 mermaid 渲成 SVG，再用 canvas 栅格成 PNG（base64，无
@@ -879,6 +890,21 @@ export interface ProposalExportPayload {
 
 /** Result of PROPOSAL_EXPORT. `path` is null when the user cancelled. */
 export interface ProposalExportResult {
+  path: string | null
+}
+
+/**
+ * Payload for PROPOSAL_EXPORT_PDF（P2-2）。`html` 是 renderer 用 docx-preview 渲好的【自包含】
+ * HTML 文档串（docx-preview 注入的 `<style>` + base64 内联图 + 打印用 @page A4 复位 CSS），main
+ * 不再依赖任何外部资源即可在隐藏窗口直接 printToPDF。`defaultPath` 是保存对话框默认文件名。
+ */
+export interface ProposalExportPdfPayload {
+  html: string
+  defaultPath?: string
+}
+
+/** Result of PROPOSAL_EXPORT_PDF. `path` is null when the user cancelled the save dialog. */
+export interface ProposalExportPdfResult {
   path: string | null
 }
 
@@ -1345,6 +1371,12 @@ export interface ChatApi {
    * without any IPC surface changes.
    */
   exportProposal(payload: ProposalExportPayload): Promise<ProposalExportResult>
+  /**
+   * 导出 PDF（P2-2）。renderer 传入用 docx-preview 渲好的自包含 HTML，main 弹保存对话框、用隐藏
+   * BrowserWindow + printToPDF 打成 A4 PDF 落盘。取消返回 `{ path: null }`。与 exportProposal 分流
+   * 是因为 PDF 的产物来自 renderer 渲染（main 无 DOM），不能从 markdown 直接生成——见通道注释。
+   */
+  exportProposalPdf(payload: ProposalExportPdfPayload): Promise<ProposalExportPdfResult>
   /**
    * Render the proposal markdown to a .docx binary in-memory (no save
    * dialog, no disk write). The preview tab feeds the bytes to docx-preview

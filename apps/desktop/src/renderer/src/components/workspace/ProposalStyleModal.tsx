@@ -48,12 +48,15 @@ export function ProposalStyleModal({
   open,
   onClose,
   onExport,
+  onExportPdf,
   onExportMd
 }: {
   open: boolean
   onClose: () => void
   // 提交导出：弹窗已把 draft 提交进 store，这里把同一份 style 交给面板的导出逻辑。
   onExport: (style: ProposalStyleConfig) => void
+  // 导出 PDF（P2-2）：与导出 Word 同款 style（PDF 同源于 docx），故也先提交 draft 再导出。
+  onExportPdf?: (style: ProposalStyleConfig) => void
   // .md 归位到导出弹窗（从主工具栏移出，方案二）：纯文本无样式，故只触发导出 + 关弹窗，不提交 draft。
   onExportMd?: () => void
 }): React.JSX.Element | null {
@@ -87,6 +90,14 @@ export function ProposalStyleModal({
     onClose()
   }
 
+  // 导出 PDF：与 doExport 同样先提交 draft（PDF 用同一份样式渲染），再交给面板的 PDF 链路。
+  const doExportPdf = (): void => {
+    if (!onExportPdf) return
+    setConfig(draft)
+    onExportPdf(draft)
+    onClose()
+  }
+
   const selectCls =
     'h-7 rounded-md border border-border bg-card px-1.5 text-[12px] text-foreground outline-none focus:border-accent'
 
@@ -106,7 +117,7 @@ export function ProposalStyleModal({
           <div>
             <div className="text-[15px] font-medium text-foreground">导出文档 · 样式模板</div>
             <div className="mt-0.5 text-[11px] text-muted-foreground">
-              选择风格 → 左侧实时预览 → 微调字体字号 → 导出 Word
+              选择风格 → 左侧实时预览 → 微调字体字号 → 导出 Word / PDF
             </div>
           </div>
           <button
@@ -375,6 +386,15 @@ export function ProposalStyleModal({
                   title="导出为纯文本 Markdown（无样式，便于版本管理）"
                 >
                   导出 Markdown
+                </button>
+              )}
+              {onExportPdf && (
+                <button
+                  className="rounded-lg border border-border px-3.5 py-2 text-[12.5px] text-foreground hover:bg-muted"
+                  onClick={doExportPdf}
+                  title="导出为 PDF（用当前样式，排版与左侧预览一致）"
+                >
+                  导出 PDF
                 </button>
               )}
               <button

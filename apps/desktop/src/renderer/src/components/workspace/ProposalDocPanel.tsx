@@ -13,6 +13,7 @@ import {
 } from '@shared/proposal'
 import { sendProposalStageMessage } from '../../lib/sendProposalStageMessage'
 import { extractMermaidBlocks, renderMermaidImageMap } from '../../lib/mermaidRender'
+import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
 import { ProposalPaper } from './ProposalPaper'
 import { ProposalPreview } from './ProposalPreview'
 import { ProposalStyleModal } from './ProposalStyleModal'
@@ -197,6 +198,32 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err)
       console.error('[export]', err)
+      setExportMsg({ tone: 'err', text: `导出失败：${m}` })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  // 导出 PDF（P2-2）：与 docx 同源——同一 markdown + 样式 + mermaid 图，但走 renderer 端
+  // docx-preview 渲 HTML → main printToPDF 的独立链路（main 无 DOM，不能从 markdown 直出 PDF）。
+  async function handleExportPdf(style?: ProposalStyleConfig): Promise<void> {
+    if (exporting) return
+    const markdown = buildProposalMarkdown(sections, { pageBreaks: true })
+    if (!markdown) {
+      setExportMsg({ tone: 'muted', text: '草稿为空，无内容可导出' })
+      return
+    }
+    setExporting(true)
+    try {
+      const mermaidImages = await renderMermaidImageMap(extractMermaidBlocks(markdown))
+      const html = await renderProposalPdfHtml(markdown, style, mermaidImages)
+      const r = await window.chatApi.exportProposalPdf({ html, defaultPath: '方案草稿.pdf' })
+      setExportMsg(
+        r.path ? { tone: 'ok', text: `已导出：${r.path}` } : { tone: 'muted', text: '已取消导出' }
+      )
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err)
+      console.error('[export pdf]', err)
       setExportMsg({ tone: 'err', text: `导出失败：${m}` })
     } finally {
       setExporting(false)
@@ -547,6 +574,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         onExport={(style) => {
           void handleExport('docx', style)
         }}
+        onExportPdf={(style) => void handleExportPdf(style)}
         onExportMd={() => void handleExport('md')}
       />
     </div>

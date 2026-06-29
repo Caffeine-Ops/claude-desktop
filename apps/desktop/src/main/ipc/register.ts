@@ -81,6 +81,7 @@ import { clearLogs, getLogs } from '../core/logCollector'
 import { getKbRoot, setKbRoot, readKbIndex, kbOutDir } from '../core/kbIndexStore'
 import type { KbIndex } from '../../shared/kbIndex'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
+import { exportProposalPdf } from '../core/proposalPdf'
 import { markdownToDocxBuffer } from '../core/proposalDocx'
 import { verifyCitations, collectUngroundedImagePaths } from '../core/proposalVerify'
 import { retrievePassages } from '../core/proposalRetrieve'
@@ -94,6 +95,8 @@ import { appendProposalMetric } from '../core/proposalMetricsStore'
 import type {
   ProposalExportPayload,
   ProposalExportResult,
+  ProposalExportPdfPayload,
+  ProposalExportPdfResult,
   ProposalRenderPayload,
   ProposalRenderResult,
   ProposalVerifyPayload,
@@ -243,6 +246,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_PATH_SET)
   ipcMain.removeHandler(IPC_CHANNELS.KB_INDEX_READ)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT_PDF)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_RENDER)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_SAVE_DRAFT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_LOAD_DRAFT)
@@ -1060,6 +1064,20 @@ export function registerIpcHandlers(): void {
       // style 是纯数据（字体/字号/缩进…），仅 docx 用得到；undefined 时 markdownToDocxBuffer
       // 回退默认模板（经典正式）。
       return exportProposal(win, markdown, format, payload?.style, payload?.mermaidImages)
+    }
+  )
+
+  // 导出 PDF（P2-2）：renderer 已用 docx-preview 把 docx 渲成自包含 HTML，这里弹保存框 +
+  // 隐藏窗口 printToPDF 落盘。html 非串 → 视为非法、返回取消语义（不抛，导出反馈走「已取消」）。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_EXPORT_PDF,
+    async (event, payload: ProposalExportPdfPayload): Promise<ProposalExportPdfResult> => {
+      const html = typeof payload?.html === 'string' ? payload.html : ''
+      if (!html) return { path: null }
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { path: null }
+      const defaultPath = typeof payload?.defaultPath === 'string' ? payload.defaultPath : undefined
+      return exportProposalPdf(win, html, defaultPath)
     }
   )
 

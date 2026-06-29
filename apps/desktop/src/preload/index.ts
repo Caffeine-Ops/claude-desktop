@@ -56,6 +56,8 @@ import {
   type WorkspaceState,
   type ProposalExportPayload,
   type ProposalExportResult,
+  type ProposalExportPdfPayload,
+  type ProposalExportPdfResult,
   type ProposalRenderPayload,
   type ProposalRenderResult,
   type ProposalVerifyPayload,
@@ -413,6 +415,13 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PROPOSAL_EXPORT,
       payload
     ) as Promise<ProposalExportResult>
+  },
+
+  exportProposalPdf(payload: ProposalExportPdfPayload): Promise<ProposalExportPdfResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_EXPORT_PDF,
+      payload
+    ) as Promise<ProposalExportPdfResult>
   },
 
   renderProposal(payload: ProposalRenderPayload): Promise<ProposalRenderResult> {
