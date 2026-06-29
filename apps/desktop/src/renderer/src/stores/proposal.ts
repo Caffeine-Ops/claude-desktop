@@ -60,8 +60,9 @@ interface ProposalState {
   // 分节草稿：每个 AI 哨兵块一节（旧的 docMarkdown/setDoc 单串路径已移除）。
   sections: ProposalSection[]
   // 当前生成阶段，封面→目录→正文有序推进，是给哨兵块打 kind 与驱动阶段条 UI 的
-  // 单一真相源。start() 起为 'cover'。仅由 advancePhase 推进（草稿面板按钮调用，
-  // 按钮先推进 phase 再给 AI 发推进消息，保证该轮哨兵输出落到对应区）。
+  // 单一真相源。start() 起为 'cover'。cover→toc 由 AI 目录哨兵块经 laterPhase 自动推进；
+  // toc→content 由用户在聊天里点选 AskUserQuestion 的「确认目录」放行项时，经
+  // applyProposalStageConfirm 调 advancePhase('content') 推进（不再有右侧确认按钮）。
   phase: ProposalKind
   // 方案工作台是否接管布局（撤对话历史栏 + 可折叠对话列 + 宽纸张区）。
   // 与 active 分离：「返回」只关工作台、不销毁草稿，可再入。start() 时置 true。
