@@ -47,12 +47,15 @@ const ALIGN_OPTS: { value: ProposalAlign; label: string }[] = [
 export function ProposalStyleModal({
   open,
   onClose,
-  onExport
+  onExport,
+  onExportMd
 }: {
   open: boolean
   onClose: () => void
   // 提交导出：弹窗已把 draft 提交进 store，这里把同一份 style 交给面板的导出逻辑。
   onExport: (style: ProposalStyleConfig) => void
+  // .md 归位到导出弹窗（从主工具栏移出，方案二）：纯文本无样式，故只触发导出 + 关弹窗，不提交 draft。
+  onExportMd?: () => void
 }): React.JSX.Element | null {
   const committed = useProposalStyleStore((s) => s.config)
   const setConfig = useProposalStyleStore((s) => s.setConfig)
@@ -186,6 +189,13 @@ export function ProposalStyleModal({
                 </button>
               </div>
 
+              {/* 高级折叠（方案二）：模板默认值覆盖 99% 场景，逐级字体/字号/排版微调收进
+                  details 默认折叠，把「导出」从重弹窗解放出来——选个模板就能导出，无需逐级调。 */}
+              <details className="rounded-lg border border-border bg-card/40 px-3 py-2">
+                <summary className="cursor-pointer select-none text-[12px] text-muted-foreground">
+                  高级 · 逐级字体字号与排版（一般无需调整）
+                </summary>
+                <div className="mt-3 space-y-5">
               {/* 格式表 */}
               <div>
                 <div className="mb-2 text-[13px] font-semibold text-foreground">标题格式</div>
@@ -343,6 +353,8 @@ export function ProposalStyleModal({
                   </div>
                 </div>
               </div>
+                </div>
+              </details>
             </div>
 
             {/* 底部操作 */}
@@ -353,6 +365,18 @@ export function ProposalStyleModal({
               >
                 取消
               </button>
+              {onExportMd && (
+                <button
+                  className="rounded-lg border border-border px-3.5 py-2 text-[12.5px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                  onClick={() => {
+                    onExportMd()
+                    onClose()
+                  }}
+                  title="导出为纯文本 Markdown（无样式，便于版本管理）"
+                >
+                  导出 Markdown
+                </button>
+              )}
               <button
                 className="rounded-lg bg-accent px-5 py-2 text-[13px] font-semibold text-white hover:opacity-90"
                 onClick={doExport}

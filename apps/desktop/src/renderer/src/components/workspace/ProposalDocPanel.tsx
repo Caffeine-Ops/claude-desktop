@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useProposalStore, useProposalWorkspace } from '../../stores/proposal'
+import { useProposalStyleStore } from '../../stores/proposalStyle'
 import { useChatStore } from '../../stores/chat'
 import type { ProposalExportFormat } from '@shared/ipc-channels'
 import type { ProposalStyleConfig } from '@shared/proposalStyle'
@@ -56,12 +57,32 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   // 「导出 Word」改为先弹样式模板面板（选模板 + 实时预览 + 微调），用户在弹窗里点导出
   // 才真正落盘。.md 仍直出（纯文本无样式）。
   const [styleModalOpen, setStyleModalOpen] = useState(false)
+  // 跳阶自动补救计数（方案二·软化 stageSkip）：AI 越过目录门吐正文被阶段门拦时，静默自动重发
+  // 「只生成目录」最多两次，不再弹红条暴露内部状态机。两次仍跳阶才露一行温和提示兜底。
+  const [autoTocFix, setAutoTocFix] = useState(0)
 
   useEffect(() => {
     if (!exportMsg) return
     const id = setTimeout(() => setExportMsg(null), 4000)
     return () => clearTimeout(id)
   }, [exportMsg])
+
+  // 跳阶静默补救（方案二）：stageSkip 非空（AI 在目录阶段直接吐正文被阶段门拦下）时，自动重发
+  // 「只生成目录」把 AI 拉回，而非弹红条暴露内部状态机。regenerateToc 内部先 clearStageSkip 再
+  // 发，故下一轮 stageSkip 归 null、本 effect 不空转；二次仍跳阶（autoTocFix>=2）则停手、改露
+  // 温和兜底提示。generating 期间不发（regenerateToc 会和进行中的那轮叠发）。回到 content 阶段
+  // （用户已确认目录）后计数清零，下次新方案重新计。
+  useEffect(() => {
+    if (phase === 'content') {
+      if (autoTocFix !== 0) setAutoTocFix(0)
+      return
+    }
+    if (!stageSkip || generating || autoTocFix >= 2) return
+    setAutoTocFix((n) => n + 1)
+    regenerateToc()
+    // regenerateToc / setAutoTocFix 均为稳定调用；deps 只追驱动信号，避免把函数引用塞进依赖。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageSkip, phase, generating, autoTocFix])
 
   // 阶段一→二：先把 phase 推到 toc（驱动阶段条/按钮 UI），再让 AI 生成目录大纲。
   // 归档不再靠 phase 而靠哨兵类型，故消息里点名【目录哨兵】，让 AI 用对那对标记。
@@ -215,21 +236,23 @@ export function ProposalDocPanel(): React.JSX.Element | null {
               清空草稿
             </button>
           )}
+          {/* 导出 Word：一键直出，用已生效样式（useProposalStyleStore，跨会话持久），不再
+              强制过样式弹窗（方案二·导出一键化）。要调样式/导出 .md 走右侧 ⚙。 */}
+          <button
+            className="rounded bg-accent px-2 py-0.5 text-white hover:opacity-90 disabled:opacity-50"
+            disabled={exporting}
+            onClick={() => void handleExport('docx', useProposalStyleStore.getState().config)}
+          >
+            {exporting ? '导出中…' : '导出 Word'}
+          </button>
+          {/* 样式 / 更多导出：开样式弹窗微调模板，.md 也归位在弹窗里（从主栏移出）。 */}
           <button
             className="rounded px-2 py-0.5 hover:bg-muted disabled:opacity-50"
             disabled={exporting}
             onClick={() => setStyleModalOpen(true)}
+            title="样式模板与更多导出选项"
           >
-            {exporting ? '导出中…' : '导出 Word'}
-          </button>
-          <button
-            className="rounded px-2 py-0.5 hover:bg-muted disabled:opacity-50"
-            disabled={exporting}
-            onClick={() => {
-              void handleExport('md')
-            }}
-          >
-            .md
+            ⚙
           </button>
         </div>
       </div>
@@ -265,13 +288,11 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         {phase === 'content' && <span className="text-muted-foreground">正文撰写中</span>}
       </div>
 
-      {/* 阶段门拦截提示：AI 跳过目录直接写正文被拦下时（stageSkip），红条提示并给「重新生成
-          目录」一键补救。content 阶段（用户已确认目录、正文合法）不显示。 */}
-      {stageSkip && phase !== 'content' && (
-        <div className="flex items-center gap-2 border-b border-border bg-rose-500/5 px-3 py-1 text-[11px] text-rose-500">
-          <span className="flex-1">
-            ⚠️ AI 跳过目录、直接写了正文，已忽略本轮 {stageSkip.count} 段。请先生成并确认目录再进正文。
-          </span>
+      {/* 跳阶提示（方案二·软化）：默认静默自动补救（见上方 effect），不再暴露「AI 跳过目录」
+          这种内部状态机斗争。仅当自动补救两次仍跳阶（autoTocFix>=2）才露一行温和兜底 + 手动入口。 */}
+      {stageSkip && phase !== 'content' && autoTocFix >= 2 && (
+        <div className="flex items-center gap-2 border-b border-border bg-amber-500/5 px-3 py-1 text-[11px] text-amber-600">
+          <span className="flex-1">正在整理目录，请稍候…若反复未生成，可手动重试。</span>
           <button
             className="rounded bg-accent px-2 py-0.5 text-white disabled:opacity-40"
             disabled={generating}
@@ -355,6 +376,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         onExport={(style) => {
           void handleExport('docx', style)
         }}
+        onExportMd={() => void handleExport('md')}
       />
     </div>
   )

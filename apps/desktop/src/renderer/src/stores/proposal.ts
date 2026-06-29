@@ -76,6 +76,10 @@ interface ProposalState {
   // 「AI 跳过了目录，请先生成确认目录」。null=无待提示。纯 UI 瞬时信号，不持久化、不进
   // ProposalDraftRecord——它描述的是「刚发生的一次跳阶」，重开会话无意义。
   stageSkip: { count: number } | null
+  // 定向修订指针：非空时，下一轮 end 的 content 产出【整节替换】该 section（而非 append
+  // 新节）。节修订（重写/展开/精简）、据来源修正、截断续写三处共用。瞬时 UI 信号，不
+  // 持久化、不进 ProposalDraftRecord——它描述「刚发起的一次定向修订」，重开会话无意义。
+  pendingRevision: { sectionId: string } | null
   start: (sessionId: string) => void
   setProducts: (products: ProposalProduct[]) => void
   // 首发播种：写入产品集并置 seeded=true（与 setProducts 区分——后者是 chip 编辑）。
@@ -94,6 +98,11 @@ interface ProposalState {
   // 清除阶段门拦截提示（用户点关闭、或阶段推进动作 confirmCover/confirmToc 调用以抹掉
   // 陈旧提示）。
   clearStageSkip: () => void
+  // 标记/清除「下一轮产出要替换哪一节」。reviseProposalSection 发起修订前置，end 分流后清。
+  setPendingRevision: (sectionId: string | null) => void
+  // 用 AI 新产出整节替换指定节：同步把 baselineMarkdown 也更新成新原文（否则 M-0 埋点会把
+  // 「AI 重写」误算成用户编辑量），并重置 verification=undefined 触发重校验、清 truncated。
+  reviseSection: (id: string, markdown: string) => void
   updateSection: (id: string, markdown: string) => void
   // 回填某节的引用校验结果（#1）。section 可能已被删/重排，故按 id 查找；找不到则 no-op。
   setSectionVerification: (id: string, verification: SectionVerification) => void
@@ -140,6 +149,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   workspaceOpen: false,
   viewMode: 'preview',
   stageSkip: null,
+  pendingRevision: null,
   start: (sessionId) =>
     set({
       active: true,
@@ -151,7 +161,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       phase: 'cover',
       workspaceOpen: true,
       viewMode: 'preview',
-      stageSkip: null
+      stageSkip: null,
+      pendingRevision: null
     }),
   setProducts: (products) => set({ products }),
   seedProducts: (products) => set({ products, seeded: true }),
@@ -216,6 +227,16 @@ export const useProposalStore = create<ProposalState>((set) => ({
     }),
   advancePhase: (to) => set({ phase: to }),
   clearStageSkip: () => set({ stageSkip: null }),
+  setPendingRevision: (sectionId) =>
+    set({ pendingRevision: sectionId ? { sectionId } : null }),
+  reviseSection: (id, markdown) =>
+    set((s) => ({
+      sections: s.sections.map((sec) =>
+        sec.id === id
+          ? { ...sec, markdown, baselineMarkdown: markdown, verification: undefined, truncated: false }
+          : sec
+      )
+    })),
   updateSection: (id, markdown) =>
     set((s) => ({
       sections: s.sections.map((sec) => (sec.id === id ? { ...sec, markdown } : sec))
@@ -245,8 +266,9 @@ export const useProposalStore = create<ProposalState>((set) => ({
   setWorkspaceOpen: (open) => set({ workspaceOpen: open }),
   setViewMode: (mode) => set({ viewMode: mode }),
   // 再入清陈旧跳阶提示：stageSkip 描述「刚发生的一次跳阶」，再入一个旧会话时无意义。
-  reopen: (sessionId) => set({ active: true, sessionId, workspaceOpen: true, stageSkip: null }),
-  leaveMode: () => set({ active: false, workspaceOpen: false }),
+  reopen: (sessionId) =>
+    set({ active: true, sessionId, workspaceOpen: true, stageSkip: null, pendingRevision: null }),
+  leaveMode: () => set({ active: false, workspaceOpen: false, pendingRevision: null }),
   restoreFromTranscript: ({ sessionId, sections, consumedDraftIds, phase }) =>
     set({
       active: true,
@@ -262,7 +284,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       phase,
       workspaceOpen: true,
       viewMode: 'preview',
-      stageSkip: null
+      stageSkip: null,
+      pendingRevision: null
     }),
   restoreFromDisk: (record) =>
     set({
@@ -279,7 +302,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       phase: record.phase,
       workspaceOpen: true,
       viewMode: 'preview',
-      stageSkip: null
+      stageSkip: null,
+      pendingRevision: null
     }),
   reset: () =>
     set({
@@ -292,7 +316,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       phase: 'cover',
       workspaceOpen: false,
       viewMode: 'preview',
-      stageSkip: null
+      stageSkip: null,
+      pendingRevision: null
     })
 }))
 

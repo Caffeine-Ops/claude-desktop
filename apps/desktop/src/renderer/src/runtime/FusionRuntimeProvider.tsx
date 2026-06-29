@@ -1188,15 +1188,39 @@ function makeSessionEventHandler(
             //   - 有闭合块或截断残文 → appendSections（截断残文恢复成一节并标记，绝不静默丢）。
             //   - 完全无哨兵（纯对话轮）→ 仅记账，使同一 messageId 的 end 不再二次处理。
             const { blocks, truncated } = extractProposalDraftResult(fullText)
-            if (blocks.length || truncated) {
-              useProposalStore.getState().appendSections(event.messageId, blocks, truncated)
-              // 引用落地校验（#1）：appendSections 内部生成节 id，这里无法直接拿到新节，
-              // 故扫一遍 store 对「未校验的正文节」异步触发——已校验的（verification!==undefined）
-              // 与在飞的（verifyingSectionIds）天然跳过，故重复调用幂等、只补新节。封面/目录
-              // 与截断残节不校验（前者无来源标注，后者内容本就不完整）。
+            // 定向修订分流（方案一）：pendingRevision 非空 = 上一动作（节重写/展开/精简/据来源
+            // 修正/截断续写）要求本轮产出【整节替换】某节，而非 append 新节。三种结局：
+            //   ① 目标节仍在 + 拿到 content 块 → reviseSection 整节替换，清指针，重新校验。
+            //   ② 目标节仍在 + 本轮无可用产出（修订被截断/空）→ 放弃替换，原节不动，仅记账。
+            //   ③ 目标节已不在（pending stale：节被删 / reopen 切到别的会话残留指针）→ 回退
+            //      正常累积路径，绝不让产出走 reviseSection 的 no-op 而被静默吞掉（评审：
+            //      reopen 新会话后 stale pending 会吃掉新会话首段正文）。
+            const pending = useProposalStore.getState().pendingRevision
+            const target = pending
+              ? useProposalStore.getState().sections.find((s) => s.id === pending.sectionId)
+              : undefined
+            const revised = blocks.find((b) => b.kind === 'content') ?? blocks[0]
+            if (pending && target && revised) {
+              useProposalStore.getState().setPendingRevision(null)
+              useProposalStore.getState().reviseSection(pending.sectionId, revised.markdown)
               triggerProposalCitationVerification()
-            } else {
+            } else if (pending && target) {
+              // 修订轮被截断 / 空产出：保留原节（不变量：绝不用半截覆盖好内容），清指针 + 记账。
+              useProposalStore.getState().setPendingRevision(null)
               useProposalStore.getState().markDraftConsumed(event.messageId)
+            } else {
+              // 无 pending，或 pending 已 stale → 回归正常累积。stale 指针在此一并清除。
+              if (pending) useProposalStore.getState().setPendingRevision(null)
+              if (blocks.length || truncated) {
+                useProposalStore.getState().appendSections(event.messageId, blocks, truncated)
+                // 引用落地校验（#1）：appendSections 内部生成节 id，这里无法直接拿到新节，
+                // 故扫一遍 store 对「未校验的正文节」异步触发——已校验的（verification!==undefined）
+                // 与在飞的（verifyingSectionIds）天然跳过，故重复调用幂等、只补新节。封面/目录
+                // 与截断残节不校验（前者无来源标注，后者内容本就不完整）。
+                triggerProposalCitationVerification()
+              } else {
+                useProposalStore.getState().markDraftConsumed(event.messageId)
+              }
             }
           }
           // C4：msg 未找到（end 早于消息入 store 的竞态）或 role 非 assistant 时，

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useProposalStore, type ProposalSection } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
+import { reviseProposalSection } from '../../lib/sendProposalSectionRevision'
 import type { ProposalKind } from '@shared/proposal'
 
 /**
@@ -13,21 +14,32 @@ import type { ProposalKind } from '@shared/proposal'
  *  - 全 supported 且有引用 → 淡绿「N 处来源已核对」，给正向反馈。
  * 封面/目录节不标来源（提示词规则 3），一律不渲染。
  */
-function renderVerification(sec: ProposalSection): React.JSX.Element | null {
+function renderVerification(sec: ProposalSection, generating: boolean): React.JSX.Element | null {
   if (sec.kind !== 'content') return null
   const v = sec.verification
   if (!v) return null
+  // 「据来源修正」：把发现的溯源问题接回 AI——只依据所引《来源》原文重写本节（方案一·闭环）。
+  // 流式中禁用，避免与进行中的那轮叠发。措辞产品化：不再向用户暴露 trigram/重叠率/索引等工程词。
+  const fixBtn = (
+    <button
+      className="ml-1 whitespace-nowrap underline hover:text-rose-800 disabled:opacity-40"
+      disabled={generating}
+      onClick={() => void reviseProposalSection(sec.id, 'fixSource')}
+    >
+      据来源修正
+    </button>
+  )
   if (v.degraded) {
     return (
       <div className="mb-1 rounded bg-neutral-500/10 px-1.5 py-0.5 text-[11px] text-neutral-500">
-        来源未校验（知识库索引不可用）
+        来源核对暂不可用
       </div>
     )
   }
   if (v.citedFileCount === 0) {
     return (
       <div className="mb-1 rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
-        ⚠ 本段未引用任何来源，无法溯源，请核对是否凭空生成
+        ⚠️ 本段未标注来源，建议补充或核对是否凭空生成{fixBtn}
       </div>
     )
   }
@@ -45,17 +57,17 @@ function renderVerification(sec: ProposalSection): React.JSX.Element | null {
     <div className="mb-1 space-y-0.5">
       {unsupported.length > 0 && (
         <div className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
-          ⚠ 这段在{unsupported.map((f) => `《${f}》`).join('、')}里没找到（重叠率低），疑似编造，请核对
+          ⚠️ 这段内容在{unsupported.map((f) => `《${f}》`).join('、')}里没找到对应依据，建议核对或{fixBtn}
         </div>
       )}
       {notFound.length > 0 && (
         <div className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
-          ⚠ {notFound.map((f) => `《${f}》`).join('、')}不在知识库索引里，无法核对来源
+          ⚠️ 引用的{notFound.map((f) => `《${f}》`).join('、')}不在当前知识库，来源待确认
         </div>
       )}
       {ungroundedImgs.length > 0 && (
         <div className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
-          ⚠ 有 {ungroundedImgs.length} 张配图不属本段所引文件，疑似挪用/无关图，请核对
+          ⚠️ 有 {ungroundedImgs.length} 张配图与本段来源不符，建议替换
         </div>
       )}
     </div>
@@ -106,6 +118,38 @@ export function ProposalPaper(): React.JSX.Element {
   const renderSection = (sec: (typeof sections)[number], globalIndex: number): React.JSX.Element => (
     <section key={sec.id} className="group relative py-0.5">
       <div className="absolute -right-[58px] top-1.5 hidden flex-col gap-1 group-hover:flex">
+        {/* AI 修订组：仅正文节（封面/目录无修订语义）。点击发起【整节替换】式重写，流式中禁用。 */}
+        {sec.kind === 'content' && (
+          <>
+            <button
+              className={toolBtn}
+              disabled={generating}
+              onClick={() => void reviseProposalSection(sec.id, 'rewrite')}
+              title="AI 重写本章"
+              aria-label="AI 重写本章"
+            >
+              ↻
+            </button>
+            <button
+              className={toolBtn}
+              disabled={generating}
+              onClick={() => void reviseProposalSection(sec.id, 'expand')}
+              title="AI 展开（更详尽）"
+              aria-label="AI 展开本章"
+            >
+              ⊕
+            </button>
+            <button
+              className={toolBtn}
+              disabled={generating}
+              onClick={() => void reviseProposalSection(sec.id, 'shorten')}
+              title="AI 精简（去冗余）"
+              aria-label="AI 精简本章"
+            >
+              ⊖
+            </button>
+          </>
+        )}
         <button
           className={toolBtn}
           onClick={() => setEditingId(editingId === sec.id ? null : sec.id)}
@@ -142,12 +186,19 @@ export function ProposalPaper(): React.JSX.Element {
       </div>
 
       {sec.truncated && (
-        <div className="mb-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600">
-          ⚠ 本段疑似截断（AI 未写结束标记），内容可能不完整，请复核或重新生成
+        <div className="mb-1 flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600">
+          <span>这一段较长，生成被中断，内容可能不完整。</span>
+          <button
+            className="whitespace-nowrap underline hover:text-amber-800 disabled:opacity-40"
+            disabled={generating}
+            onClick={() => void reviseProposalSection(sec.id, 'resume')}
+          >
+            继续写完
+          </button>
         </div>
       )}
 
-      {renderVerification(sec)}
+      {renderVerification(sec, generating)}
 
       {editingId === sec.id ? (
         <textarea
