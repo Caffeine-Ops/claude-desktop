@@ -33,7 +33,8 @@ function renderVerification(sec: ProposalSection): React.JSX.Element | null {
   }
   const notFound = [...new Set(v.verdicts.filter((d) => d.status === 'file-not-found').map((d) => d.file))]
   const unsupported = [...new Set(v.verdicts.filter((d) => d.status === 'unsupported').map((d) => d.file))]
-  if (notFound.length === 0 && unsupported.length === 0) {
+  const ungroundedImgs = [...new Set((v.imageVerdicts ?? []).filter((d) => d.status === 'ungrounded').map((d) => d.path))]
+  if (notFound.length === 0 && unsupported.length === 0 && ungroundedImgs.length === 0) {
     return (
       <div className="mb-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600">
         ✓ {v.citedFileCount} 处来源已核对
@@ -50,6 +51,11 @@ function renderVerification(sec: ProposalSection): React.JSX.Element | null {
       {notFound.length > 0 && (
         <div className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
           ⚠ {notFound.map((f) => `《${f}》`).join('、')}不在知识库索引里，无法核对来源
+        </div>
+      )}
+      {ungroundedImgs.length > 0 && (
+        <div className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
+          ⚠ 有 {ungroundedImgs.length} 张配图不属本段所引文件，疑似挪用/无关图，请核对
         </div>
       )}
     </div>
