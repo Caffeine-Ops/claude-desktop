@@ -29,9 +29,13 @@ function getMermaid(): Promise<MermaidApi> {
         // KB 接地文本，仍按最严级别处理）。
         securityLevel: 'strict',
         theme: 'neutral',
-        // 见文件头：纯 SVG <text>，sharp/librsvg 才能在导出时栅格出文字。
+        // 见文件头：纯 SVG <text>，栅格化时才能渲出文字。
         htmlLabels: false,
-        flowchart: { htmlLabels: false, useMaxWidth: true }
+        flowchart: { htmlLabels: false, useMaxWidth: true },
+        // 【关键】语法错误时不要把「Syntax error」炸弹图注入 document.body——默认行为会让
+        // 失败的渲染把一张炸弹 SVG 漏到页面（流式期间半截 mermaid 反复解析失败，炸弹会成片
+        // 堆积，实测 bug）。关掉后 render() 出错只抛异常，由调用侧 catch 降级显示源码。
+        suppressErrorRendering: true
       })
       return mermaid
     })
@@ -50,8 +54,16 @@ let seq = 0
 export async function renderMermaid(code: string): Promise<string> {
   const mermaid = await getMermaid()
   seq += 1
-  const { svg } = await mermaid.render(`proposal-mermaid-${seq}`, code)
-  return svg
+  const id = `proposal-mermaid-${seq}`
+  try {
+    const { svg } = await mermaid.render(id, code)
+    return svg
+  } finally {
+    // 防御兜底：mermaid 偶尔把临时渲染容器 / 残留图遗留在 document.body。按 id 清掉，杜绝
+    // DOM 泄漏堆积到页面（suppressErrorRendering 已堵主路，这里再兜一道，覆盖成功/失败两路）。
+    document.getElementById(id)?.remove()
+    document.getElementById('d' + id)?.remove()
+  }
 }
 
 // 抽取 markdown 里所有 ```mermaid 围栏块的源码（trim 后）。导出/真预览前用它扫出待预渲的图，

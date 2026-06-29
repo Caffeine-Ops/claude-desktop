@@ -92,6 +92,7 @@ const OL_FORMAT = {
 const UL_GLYPH = { disc: '●', circle: '○', square: '■' } as const
 
 // A4 页宽（twips，210mm）。嵌图最大宽 = 版心宽（页宽 − 左右页边距），换算成 px（96dpi）。
+// 注：A4_PAGE_HEIGHT_TWIPS 在本文件后段已定义（封面整页布局用），嵌图高度约束直接复用，不重复声明。
 const A4_PAGE_WIDTH_TWIPS = 11906
 // 扩展名 → docx ImageRun 的 type。SVG 不在内（v1 不嵌 SVG，降级文字）。
 const IMG_TYPE: Record<string, 'png' | 'jpg' | 'gif'> = {
@@ -386,7 +387,11 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
         const png = env.mermaidImages?.get(node.value.trim())
         if (png) {
           const maxWidthPx = Math.round(((A4_PAGE_WIDTH_TWIPS - 2 * env.imgMarginTwips) / 1440) * 96)
-          const scale = png.width > maxWidthPx ? maxWidthPx / png.width : 1
+          // 也按版心高约束：竖向流程图常比一页还高，仅缩宽会撑破页面、图被页底截断（实测 bug）。
+          // 版心高留 0.9 余量给本节标题/页脚，避免图占满整页把后文挤到下页或贴边裁切。取宽/高
+          // 两个缩放比的较小者，等比缩到【宽和高都放得下】，绝不放大（上限 1）。
+          const maxHeightPx = Math.round((((A4_PAGE_HEIGHT_TWIPS - 2 * env.imgMarginTwips) / 1440) * 96) * 0.9)
+          const scale = Math.min(maxWidthPx / png.width, maxHeightPx / png.height, 1)
           return [
             new Paragraph({
               alignment: AlignmentType.CENTER,
@@ -710,7 +715,15 @@ function buildCoverChildren(
   group: SectionGroup,
   style: ProposalStyleConfig
 ): Array<Paragraph | Table> {
-  const contentHeight = A4_PAGE_HEIGHT_TWIPS - 2 * MARGIN_TWIPS[style.margin]
+  // 封面溢出第二页的真因（解 docx XML 实测）：封面【不是最后一个节】（后有目录/正文），docx 会在
+  // 封面表格后【单独加一个空段落承载分节符 sectPr】，该段落用 Normal 样式（行距 = lineMultiple×240、
+  // 段后 = spaceAfterPt×20，实测约 516 twips）。「满高表格 + 这个分节段落」> 版心 → 封面被切成两页。
+  // （单节文档里封面恰是末节、sectPr 直接进 body 不补段落，故最初复现不出；自加小段落也没用——库
+  // 无论如何都会再单独补一个分节段落。）故表格高度必须给这个分节段落让出位置：按 Normal 样式精确算
+  // 其高度，再加 480 twips 缓冲（兜底 Word 偶发隐式段落 / 渲染差异）。落款本就底对齐，整体上移约
+  // 1.5cm，观感等同正常下边距。
+  const sectBreakParaTwips = Math.round(style.lineMultiple * 240 + style.spaceAfterPt * 20) + 480
+  const contentHeight = A4_PAGE_HEIGHT_TWIPS - 2 * MARGIN_TWIPS[style.margin] - sectBreakParaTwips
   const noBorder = { style: BorderStyle.NONE, size: 0, color: 'auto' }
   const cellMargins = { top: 0, bottom: 0, left: 0, right: 0 }
   const mkCell = (
