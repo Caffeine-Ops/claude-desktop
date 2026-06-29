@@ -43,10 +43,10 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   const sections = useProposalStore((s) => s.sections)
   const products = useProposalStore((s) => s.products)
   const { setProducts } = useProposalStore.getState()
-  // 订阅当前阶段，驱动阶段条高亮与推进按钮渲染。advancePhase 是 zustand 稳定引用，
-  // 从 getState() 取——不订阅（避免 phase 每次变化都多跑一遍 selector）。
+  // 订阅当前阶段，驱动阶段条高亮（只读）。阶段推进已不在本面板：cover→toc 由 AI 目录
+  // 哨兵自动推进，toc→content 由聊天内 AskUserQuestion「确认目录」放行项触发
+  // （applyProposalStageConfirm），故本面板不再解构/调用 advancePhase。
   const phase = useProposalStore((s) => s.phase)
-  const { advancePhase } = useProposalStore.getState()
   // 阶段门拦截提示：AI 越过「目录确认门」直接吐正文被 appendSections 拦下时非空。订阅以
   // 驱动下方红条提示。clearStageSkip 是稳定引用，从 getState 取、不订阅。
   const stageSkip = useProposalStore((s) => s.stageSkip)
@@ -60,10 +60,6 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   // 的那轮叠在一起（重复请求）；待当轮 'end' 落地后再允许推进。（kind 现由哨兵自描述，
   // 不再有「按 phase 错标」之虞，但「别在流式中叠发」仍成立。）
   const generating = useChatStore((s) => (proposalSid ? (s.perSession[proposalSid]?.streaming ?? false) : false))
-  // 各区是否已有非空内容，决定推进按钮是否可用（空区或仅空白 → 禁用，避免误推进）。
-  // 注：用 .trim().length > 0 而非仅 .some(kind===X)——纯空白区段依然无法驱动 AI 生成。
-  const hasCover = sections.some((s) => s.kind === 'cover' && s.markdown.trim().length > 0)
-  const hasToc = sections.some((s) => s.kind === 'toc' && s.markdown.trim().length > 0)
   // 资料缺失聚合（P3-2 阶段一）：扫各节正文里 AI 写下的「⚠️ 资料缺失：…」标记，连同所在章节
   // 标题汇成一张清单——把原本散落在正文各处、容易被忽略的缺口，集中暴露在面板顶部供用户复核。
   // 锚定到 sectionId，为阶段二「定点补料续写」预留入口。纯派生，不入 store（随 sections 重算）。
@@ -151,15 +147,6 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageSkip, phase, generating, autoTocFix])
 
-  // 阶段一→二：先把 phase 推到 toc（驱动阶段条/按钮 UI），再让 AI 生成目录大纲。
-  // 归档不再靠 phase 而靠哨兵类型，故消息里点名【目录哨兵】，让 AI 用对那对标记。
-  function confirmCover(): void {
-    clearStageSkip()
-    advancePhase('toc')
-    void sendProposalStageMessage(
-      `封面已确认。请进入【阶段二·目录】：参考知识库里该产品的资料结构与售前方案常见章节，给出一份章节目录大纲（有序列表逐章列出），用方案【目录】哨兵包裹（${PROPOSAL_DRAFT_BEGIN.toc} … ${PROPOSAL_DRAFT_END.toc}）。`
-    )
-  }
   // 跳阶补救：AI 在目录阶段直接吐正文被阶段门拦下（stageSkip 非空）时，重发「只生成目录」
   // 指令把 AI 拉回目录。phase 已是 toc（confirmCover 推进过），不再 advancePhase。
   function regenerateToc(): void {
@@ -168,19 +155,6 @@ export function ProposalDocPanel(): React.JSX.Element | null {
       `上一轮直接写了正文、跳过了目录。请【先只输出章节目录大纲】（有序列表逐章列出），用方案【目录】哨兵包裹（${PROPOSAL_DRAFT_BEGIN.toc} … ${PROPOSAL_DRAFT_END.toc}）；目录经我确认前不要写正文。`
     )
   }
-  // 阶段二→三：把已确认的目录正文带给 AI（目录驱动正文），phase 推到 content。
-  function confirmToc(): void {
-    clearStageSkip()
-    const tocMd = buildProposalMarkdown(
-      sections.filter((s) => s.kind === 'toc'),
-      { pageBreaks: false }
-    )
-    advancePhase('content')
-    void sendProposalStageMessage(
-      `目录已确认，最终目录如下：\n\n${tocMd}\n\n请进入【阶段三·正文】：严格按上面目录逐章撰写正文，章节标题与顺序以目录为准，一次聚焦一章，每章用方案【正文】哨兵包裹（${PROPOSAL_DRAFT_BEGIN.content} … ${PROPOSAL_DRAFT_END.content}）。`
-    )
-  }
-
   async function handleExport(
     format: ProposalExportFormat,
     style?: ProposalStyleConfig
@@ -415,7 +389,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         </div>
       </div>
 
-      {/* 阶段条：封面 → 目录 → 正文，显式按钮门控推进，一次只推进一阶段。 */}
+      {/* 阶段条：封面 → 目录 → 正文，只读状态显示。阶段推进已移到左侧聊天——AI 每完成
+          一阶段用 AskUserQuestion 发确认卡片，用户点「确认」放行项后推进（见
+          applyProposalStageConfirm），本条不再承载可点按钮。 */}
       <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-[11px]">
         <span className={phase === 'cover' ? 'font-medium text-foreground' : 'text-muted-foreground'}>① 封面</span>
         <span className="text-muted-foreground">→</span>
@@ -423,26 +399,8 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         <span className="text-muted-foreground">→</span>
         <span className={phase === 'content' ? 'font-medium text-foreground' : 'text-muted-foreground'}>③ 正文</span>
         <span className="flex-1" />
-        {phase === 'cover' && (
-          <button
-            className="rounded bg-accent px-2 py-0.5 text-white disabled:opacity-40"
-            disabled={generating || !hasCover}
-            onClick={confirmCover}
-            title={generating ? 'AI 生成中，请稍候' : hasCover ? '' : '封面尚未生成'}
-          >
-            确认封面，生成目录
-          </button>
-        )}
-        {phase === 'toc' && (
-          <button
-            className="rounded bg-accent px-2 py-0.5 text-white disabled:opacity-40"
-            disabled={generating || !hasToc}
-            onClick={confirmToc}
-            title={generating ? 'AI 生成中，请稍候' : hasToc ? '' : '目录尚未生成'}
-          >
-            确认目录，开始正文
-          </button>
-        )}
+        {phase === 'cover' && <span className="text-muted-foreground">封面撰写中</span>}
+        {phase === 'toc' && <span className="text-muted-foreground">目录整理中</span>}
         {phase === 'content' && <span className="text-muted-foreground">正文撰写中</span>}
       </div>
 
