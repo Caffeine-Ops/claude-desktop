@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useProposalStore, useProposalWorkspace } from '../../stores/proposal'
+import { useProposalStore, useProposalWorkspace, type ProposalProduct } from '../../stores/proposal'
 import { useProposalStyleStore } from '../../stores/proposalStyle'
 import { useChatStore } from '../../stores/chat'
-import type { ProposalExportFormat } from '@shared/ipc-channels'
+import { listKbProducts } from '../../lib/kbProductMatch'
+import type { ProposalExportFormat, ProposalRetrievedPassage } from '@shared/ipc-channels'
 import type { ProposalStyleConfig } from '@shared/proposalStyle'
 import {
   buildProposalMarkdown,
@@ -61,6 +62,43 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   // 跳阶自动补救计数（方案二·软化 stageSkip）：AI 越过目录门吐正文被阶段门拦时，静默自动重发
   // 「只生成目录」最多两次，不再弹红条暴露内部状态机。两次仍跳阶才露一行温和提示兜底。
   const [autoTocFix, setAutoTocFix] = useState(0)
+  // 产品 chip 可增（方案三）：从知识库索引列出全部可选产品，让用户手动追加 matchProducts 没识别
+  // 到的产品——把「用哪些产品写」的控制权还给用户（原先只能删 chip、不能增）。
+  const [productPickerOpen, setProductPickerOpen] = useState(false)
+  const [allKbProducts, setAllKbProducts] = useState<ProposalProduct[]>([])
+  async function loadKbProducts(): Promise<void> {
+    try {
+      const idx = await window.chatApi.readKbIndex()
+      setAllKbProducts(listKbProducts(idx))
+    } catch {
+      setAllKbProducts([])
+    }
+  }
+  // 召回预览（方案三·只读）：输关键词 + 当前产品集 → 知识库 top 召回片段，让用户看到检索到底命中
+  // 什么、判断检索质量、决定要不要加产品。不写盘、不注入提示词，纯探查。
+  const [retrievalOpen, setRetrievalOpen] = useState(false)
+  const [peekQuery, setPeekQuery] = useState('')
+  const [peekLoading, setPeekLoading] = useState(false)
+  const [peekResults, setPeekResults] = useState<ProposalRetrievedPassage[] | null>(null)
+  // 诊断：本次扫描到的产品资料文件数。0 = 产品与索引对不上（没料可搜）；>0 但结果空 = 词面没命中。
+  // 据此把空态分成两种文案，让「为什么没召回」对用户可见，也方便我们排障定位。
+  const [peekScanned, setPeekScanned] = useState<number | null>(null)
+  async function runPeek(): Promise<void> {
+    if (peekLoading) return
+    const q = peekQuery.trim()
+    if (!q) return
+    setPeekLoading(true)
+    try {
+      const r = await window.chatApi.peekProposalRetrieval({ query: q, products })
+      setPeekResults(r.passages)
+      setPeekScanned(r.scannedFiles ?? null)
+    } catch {
+      setPeekResults([])
+      setPeekScanned(null)
+    } finally {
+      setPeekLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (!exportMsg) return
@@ -358,7 +396,121 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             </span>
           ))
         )}
+        {/* + 添加产品（方案三·chip 可增）：从 KB 索引列出全部可选产品，补 matchProducts 漏识别的，
+            把「用哪些产品写」的决策权交还用户。空集时也显示，便于零识别时手动指定。 */}
+        <div className="relative">
+          <button
+            type="button"
+            className="rounded border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-accent hover:text-accent"
+            onClick={() => {
+              if (!productPickerOpen) void loadKbProducts()
+              setProductPickerOpen(!productPickerOpen)
+            }}
+            title="手动添加知识库里的产品"
+          >
+            + 添加产品
+          </button>
+          {productPickerOpen && (
+            <div className="absolute left-0 top-full z-20 mt-1 max-h-64 w-72 overflow-auto rounded-lg border border-border bg-background p-1 shadow-lg">
+              {(() => {
+                const picked = new Set(products.map((p) => `${p.productLine}::${p.product}`))
+                const avail = allKbProducts.filter(
+                  (p) => !picked.has(`${p.productLine}::${p.product}`)
+                )
+                if (avail.length === 0) {
+                  return (
+                    <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                      没有更多可添加的产品（或知识库索引为空）
+                    </div>
+                  )
+                }
+                return avail.map((p) => (
+                  <button
+                    type="button"
+                    key={`${p.productLine}::${p.product}`}
+                    className="block w-full truncate rounded px-2 py-1 text-left text-[11px] hover:bg-muted"
+                    onClick={() => {
+                      setProducts([...products, p])
+                      setProductPickerOpen(false)
+                    }}
+                    title={`${p.productLine} / ${p.product}`}
+                  >
+                    <span className="text-muted-foreground">{p.productLine} / </span>
+                    {p.product}
+                  </button>
+                ))
+              })()}
+            </div>
+          )}
+        </div>
+        {/* 召回预览开关（方案三·只读）：看知识库针对当前产品/关键词会召回哪些原文片段。 */}
+        <button
+          type="button"
+          className="rounded border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-accent hover:text-accent"
+          onClick={() => setRetrievalOpen((v) => !v)}
+          title="预览知识库召回片段"
+        >
+          🔍 召回预览
+        </button>
       </div>
+
+      {/* 召回预览面板（方案三·只读）：输关键词 → 显示当前产品集下知识库 top 召回片段。让「检索
+          命中什么」对用户可见，不再只靠正文红条反推。 */}
+      {retrievalOpen && (
+        <div className="space-y-1.5 border-b border-border px-3 py-2">
+          {/* 说明文字（方案三）：先讲清这是什么、不影响生成，降低「召不回是不是坏了」的误会。 */}
+          <div className="text-[10.5px] leading-snug text-muted-foreground">
+            预览知识库会为关键词从<b>当前选中的产品</b>里挑出哪些原文片段——只读探查，不写盘、不影响实际生成。
+            按词面匹配（BM25），关键词尽量贴近资料里的说法。
+          </div>
+          <div className="flex items-center gap-1">
+            <input
+              value={peekQuery}
+              onChange={(e) => setPeekQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void runPeek()
+              }}
+              placeholder={
+                products.length === 0
+                  ? '先添加产品，再输关键词预览召回…'
+                  : '输入关键词，预览知识库召回片段…'
+              }
+              className="h-7 flex-1 rounded-md border border-border bg-card px-2 text-[12px] text-foreground outline-none focus:border-accent"
+            />
+            <button
+              type="button"
+              className="rounded bg-accent px-2 py-1 text-[11px] text-white hover:opacity-90 disabled:opacity-40"
+              disabled={peekLoading || !peekQuery.trim() || products.length === 0}
+              onClick={() => void runPeek()}
+            >
+              {peekLoading ? '检索中…' : '预览'}
+            </button>
+          </div>
+          {peekResults !== null &&
+            (peekResults.length === 0 ? (
+              // 空态分三种：null = IPC 调用抛错（多半 dev 没整体重启、新通道还没注册）；
+              // 0 = 产品/索引没对上料（不是检索没命中），引导重选产品；>0 = 有料但词面没命中，引导换词。
+              <div className="text-[11px] leading-snug text-muted-foreground">
+                {peekScanned === null
+                  ? '召回服务没响应 —— 召回预览是新功能，需要把 dev 完整重启一次（改了主进程/preload）才会生效。'
+                  : peekScanned === 0
+                    ? '这些产品在知识库里没有对应的资料文件 —— 多半是产品和索引对不上：删掉上面的产品 chip，用「+ 添加产品」重新从列表里选。'
+                    : `扫描了 ${peekScanned} 个资料文件，但没匹配到这个关键词。换个更贴近资料原文的说法再试（按词面匹配，同义词/英文缩写可能召不回）。`}
+              </div>
+            ) : (
+              <div className="max-h-56 space-y-1.5 overflow-auto">
+                {peekResults.map((p, i) => (
+                  <div key={i} className="rounded-md border border-border bg-card/50 px-2 py-1.5">
+                    <div className="mb-0.5 text-[10.5px] font-medium text-accent">《{p.title}》</div>
+                    <div className="max-h-24 overflow-hidden whitespace-pre-wrap text-[11px] leading-snug text-foreground/80">
+                      {p.text}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+        </div>
+      )}
 
       {/* 分节文档区：ProposalPaper（连续长纸 + 悬停工具条 + 就地编辑）与 ProposalPreview
           （A4 分页预览，与导出 Word 同源）两者【都常驻挂载】，仅用 CSS hidden 切显隐——

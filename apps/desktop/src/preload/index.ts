@@ -65,7 +65,9 @@ import {
   type ProposalDeleteDraftPayload,
   type ProposalSaveDraftResult,
   type ProposalDeleteDraftResult,
-  type ProposalMetricLogResult
+  type ProposalMetricLogResult,
+  type ProposalPeekRetrievalPayload,
+  type ProposalPeekRetrievalResult
 } from '../shared/ipc-channels'
 import type { ProposalMetricRecord } from '../shared/proposal'
 
@@ -452,6 +454,14 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PROPOSAL_METRIC_LOG,
       record
     ) as Promise<ProposalMetricLogResult>
+  },
+  peekProposalRetrieval(
+    payload: ProposalPeekRetrievalPayload
+  ): Promise<ProposalPeekRetrievalResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_PEEK_RETRIEVAL,
+      payload
+    ) as Promise<ProposalPeekRetrievalResult>
   }
 }
 

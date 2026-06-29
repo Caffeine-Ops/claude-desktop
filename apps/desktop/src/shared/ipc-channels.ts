@@ -472,7 +472,13 @@ export const IPC_CHANNELS = {
    * userData/proposal-metrics/metrics.jsonl（可交付率代理 + 引用准确度）。本地不外传，
    * 失败静默——埋点是旁路信号，绝不阻塞导出。
    */
-  PROPOSAL_METRIC_LOG: 'proposal:metric-log'
+  PROPOSAL_METRIC_LOG: 'proposal:metric-log',
+  /**
+   * Renderer → main. 「召回预览」（方案三·只读）：给定关键词 + 当前产品集，返回知识库 top
+   * 召回片段，供用户随时探库、判断检索质量、决定要不要加产品。与生成时的内容级召回共用
+   * retrievePassages，但【只读、不注入提示词、不写盘】。
+   */
+  PROPOSAL_PEEK_RETRIEVAL: 'proposal:peek-retrieval'
 } as const
 
 /**
@@ -924,6 +930,28 @@ export interface ProposalVerifyPayload {
 /** Result of PROPOSAL_VERIFY：引用核对汇总（见 shared/proposal.ts 的 SectionVerification）。 */
 export type ProposalVerifyResult = SectionVerification
 
+/** 「召回预览」一条片段（方案三·只读，UI 展示用最小形：来源文件名 + 片段文本 + BM25 分）。 */
+export interface ProposalRetrievedPassage {
+  title: string
+  text: string
+  score: number
+}
+/** Payload for PROPOSAL_PEEK_RETRIEVAL：关键词 + 当前产品集（收窄检索范围）。 */
+export interface ProposalPeekRetrievalPayload {
+  query: string
+  products: ReadonlyArray<{ productLine: string; product: string }>
+}
+/** Result of PROPOSAL_PEEK_RETRIEVAL：top 召回片段；空 query / 无产品 / 索引不可用 → 空数组。 */
+export interface ProposalPeekRetrievalResult {
+  passages: ProposalRetrievedPassage[]
+  /**
+   * 诊断（方案三）：本次扫描到的【产品资料文件数】（= 当前产品集在知识库索引里匹配到的 ok 文件数）。
+   * 0 = 产品与索引对不上 / 索引为空（根本没料可搜，不是检索没命中）；>0 但 passages 空 = 有料但关键词
+   * 词面没匹配上（BM25 按词面）。UI 据此给不同的空态文案，便于用户与排障判断到底卡在哪。
+   */
+  scannedFiles: number
+}
+
 export interface ProposalLoadDraftPayload {
   sessionId: string
 }
@@ -1298,6 +1326,14 @@ export interface ChatApi {
    * the ready state.
    */
   readKbIndex(): Promise<import('./kbIndex').KbIndex | null>
+
+  /**
+   * 「召回预览」（方案三·只读）：给定关键词 + 当前产品集，返回知识库 top 召回片段。让用户
+   * 随时探库、判断检索质量、决定要不要加产品。绝不写盘、绝不注入提示词。
+   */
+  peekProposalRetrieval(
+    payload: ProposalPeekRetrievalPayload
+  ): Promise<ProposalPeekRetrievalResult>
 
   /**
    * Export the proposal document via the OS native save dialog.

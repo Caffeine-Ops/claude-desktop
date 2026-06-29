@@ -83,6 +83,8 @@ import type { KbIndex } from '../../shared/kbIndex'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
 import { markdownToDocxBuffer } from '../core/proposalDocx'
 import { verifyCitations, collectUngroundedImagePaths } from '../core/proposalVerify'
+import { retrievePassages } from '../core/proposalRetrieve'
+import { buildProposalProductScopes } from '../core/proposalScopes'
 import {
   saveProposalDraft,
   loadProposalDraft,
@@ -101,7 +103,9 @@ import type {
   ProposalDeleteDraftPayload,
   ProposalSaveDraftResult,
   ProposalDeleteDraftResult,
-  ProposalMetricLogResult
+  ProposalMetricLogResult,
+  ProposalPeekRetrievalPayload,
+  ProposalPeekRetrievalResult
 } from '../../shared/ipc-channels'
 import type { ProposalMetricRecord } from '../../shared/proposal'
 
@@ -246,6 +250,7 @@ export function registerIpcHandlers(): void {
   // VERIFY 此前漏登记清理——dev HMR 重跑本函数时会因 handler 已存在而 throw「second handler」。补上。
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_VERIFY)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_METRIC_LOG)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_PEEK_RETRIEVAL)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -1071,6 +1076,30 @@ export function registerIpcHandlers(): void {
       const ungrounded = collectUngroundedImagePaths(markdown)
       const bytes = await markdownToDocxBuffer(markdown, payload?.style, ungrounded, payload?.mermaidImages)
       return { bytes }
+    }
+  )
+
+  // 「召回预览」（方案三·只读）：给定关键词 + 产品集 → 知识库 top 召回片段。与生成时的内容级
+  // 召回共用 buildProposalProductScopes + retrievePassages，但【只读、不注入提示词、不写盘】。
+  // 全程防御式：空 query / 无产品 / 索引不可用 / 任意异常 → 空数组，绝不 reject（叠加信号）。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_PEEK_RETRIEVAL,
+    async (_event, payload: ProposalPeekRetrievalPayload): Promise<ProposalPeekRetrievalResult> => {
+      try {
+        const query = typeof payload?.query === 'string' ? payload.query : ''
+        const products = Array.isArray(payload?.products) ? payload.products : []
+        if (!query.trim() || products.length === 0) return { passages: [], scannedFiles: 0 }
+        const scopes = buildProposalProductScopes(products)
+        // 诊断：当前产品集在索引里匹配到的资料文件总数。0 = 产品/索引对不上（没料可搜）。
+        const scannedFiles = scopes.reduce((n, s) => n + s.files.length, 0)
+        const passages = retrievePassages(query, scopes, { topK: 8 })
+        return {
+          passages: passages.map((p) => ({ title: p.title, text: p.text, score: p.score })),
+          scannedFiles
+        }
+      } catch {
+        return { passages: [], scannedFiles: 0 }
+      }
     }
   )
 

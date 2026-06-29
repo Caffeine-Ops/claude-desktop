@@ -45,24 +45,31 @@ function productCoreFragments(product: string): string[] {
  *
  * 纯函数：同输入同输出，无副作用、不读全局。
  */
-export function matchProducts(text: string, index: KbIndex | null): MatchedProduct[] {
-  if (!index || !text) return []
-
-  // 1) 从索引抽出所有 distinct {productLine, product}（product 非空——空 product
-  //    是产品线级文档，不作为可选产品）。
-  //    只数转换成功（f.ok）的文件：转换失败的条目仍留在 index.json（供增量重试，
-  //    其 mirrorPath 从未写出），但不能作为可选产品——否则一个只有失败文档的产品
-  //    会被匹配、加进可读目录/chip，AI 去那个不存在的镜像里检索一无所获（评审 #9）。
-  //    某产品只要有一个 ok 文件就仍是候选（其目录有可读内容）。
-  const candidates: MatchedProduct[] = []
+/**
+ * 列出知识库里所有【可选产品】：distinct {productLine, product}，只取有 ok 文件的。
+ * 空 product 是产品线级文档、不作可选产品；只数 f.ok 的文件——只有失败文档的产品其镜像
+ * 从未写出，选了也检索不到（评审 #9）。「产品 chip 可增」（方案三）的候选源，与 matchProducts
+ * 的候选提取共用同一套规则（只此一处定义，避免两边漂移）。纯函数。
+ */
+export function listKbProducts(index: KbIndex | null): MatchedProduct[] {
+  if (!index) return []
+  const out: MatchedProduct[] = []
   const seen = new Set<string>()
   for (const f of index.files) {
     if (!f.ok || !f.product) continue
     const key = `${f.productLine}::${f.product}`
     if (seen.has(key)) continue
     seen.add(key)
-    candidates.push({ productLine: f.productLine, product: f.product })
+    out.push({ productLine: f.productLine, product: f.product })
   }
+  return out
+}
+
+export function matchProducts(text: string, index: KbIndex | null): MatchedProduct[] {
+  if (!index || !text) return []
+
+  // 1) 候选 = 索引里所有可选产品（distinct、只取有 ok 文件的）。提取规则见 listKbProducts。
+  const candidates = listKbProducts(index)
 
   // 2) 把用户文本切成 token（长度 ≥2 才算，避免单字误命中）。
   const tokens = text.split(TOKEN_SPLIT).filter((t) => t.length >= 2)

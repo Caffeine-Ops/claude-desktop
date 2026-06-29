@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { EventEmitter } from 'events'
 import { app, type WebContents } from 'electron'
 import { existsSync, statSync } from 'node:fs'
-import { isAbsolute, join, resolve, sep } from 'node:path'
+import { isAbsolute, resolve, sep } from 'node:path'
 import { inspect } from 'node:util'
 
 import {
@@ -51,11 +51,12 @@ import {
   type SdkExternalMcpServers
 } from './externalMcp'
 import { invalidateFileSuggestions } from './fileSuggestions'
-import { kbOutDir, readKbIndex } from './kbIndexStore'
+import { kbOutDir } from './kbIndexStore'
 import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
 import { buildProposalAppend, type ProposalProductScope } from './proposalPrompt'
 import { retrievePassages, renderRetrievedBlock } from './proposalRetrieve'
+import { buildProposalProductScopes } from './proposalScopes'
 import { seedSkillsFromDisk } from './seedSkills'
 
 /**
@@ -520,23 +521,9 @@ export class ChatEngine extends EventEmitter {
   private proposalProductScopes(
     products: readonly { productLine: string; product: string }[]
   ): ProposalProductScope[] {
-    // 空产品集（非方案会话、或零命中）直接短路，绝不读盘：readKbIndex() 每调用都
-    // existsSync + readFileSync + JSON.parse 整份索引。本方法曾在每次 spawn（含所有
-    // 普通非方案会话）被无条件调用，让普通聊天的 spawn 热路径白读一遍 index.json 再丢弃
-    // （评审发现 7）。空集时 map 本就返回 []，提前返回省掉那次同步读盘/解析。
-    if (products.length === 0) return []
-    const root = kbOutDir()
-    const index = readKbIndex()
-    return products.map((p) => {
-      const dir = join(root, p.productLine, p.product)
-      const files =
-        index?.files
-          .filter(
-            (f) => f.ok && f.productLine === p.productLine && f.product === p.product
-          )
-          .map((f) => ({ title: f.title, mirrorPath: f.mirrorPath, assets: f.assets })) ?? []
-      return { dir, productLine: p.productLine, product: p.product, files }
-    })
+    // 抽到 proposalScopes.buildProposalProductScopes 共享：send 热路径（本方法）与「召回预览」
+    // 只读 IPC（方案三）走同一份 scope 构建，避免两边漂移。空集短路、不读盘的优化也在那里。
+    return buildProposalProductScopes(products)
   }
 
   constructor(webContents: WebContents, opts: ChatEngineOptions = {}) {
