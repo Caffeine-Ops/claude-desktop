@@ -289,15 +289,26 @@ export function buildProposalMarkdown(
 // 文件的 verifyCitations 在 main（proposalVerify.ts），renderer 经 IPC 取结果。
 
 /**
+ * 保留来源名（P3-2 阶段二·补料）：用户为「资料缺失」缺口补充的外部资料，AI 据它写的内容
+ * 标 `（据《用户补充资料》）`。校验侧（verifyCitationsCore）识别这个保留名，给出独立的
+ * `user-supplied` 判定——既不当编造红灯（它是用户授权注入的真实资料），也不静默绕过校验
+ * （仍计入引用、在 UI 中明示「非知识库、请自行确认」），溯源透明。与真实 KB 文件 title 撞名
+ * 的概率可忽略且无害。main 与 renderer 同源，写进补料指令与校验分支。
+ */
+export const USER_SUPPLIED_SOURCE = '用户补充资料'
+
+/**
  * 一条引用的核对结论。`file` 是《》里的文件 title（= KB 索引的 title）。
  * - `supported`：段落正文与所引文件原文的字符 trigram 重叠率 ≥ 阈值。
  * - `unsupported`：重叠率低于阈值（疑似编造或过度改写）。
  * - `file-not-found`：该 title 不在 KB 索引（ok 文件）里，或镜像文件读不到。
+ * - `user-supplied`：引用的是 {@link USER_SUPPLIED_SOURCE}（用户补料）——非 KB、无从 trigram
+ *   核对，但属用户授权的真实资料；UI 标中性提示，不计编造/引错。
  */
 export interface CitationVerdict {
   file: string
-  status: 'supported' | 'unsupported' | 'file-not-found'
-  /** trigram 重叠率，supported/unsupported 时有；file-not-found 时无。 */
+  status: 'supported' | 'unsupported' | 'file-not-found' | 'user-supplied'
+  /** trigram 重叠率，supported/unsupported 时有；file-not-found / user-supplied 时无。 */
   overlap?: number
 }
 
@@ -384,6 +395,44 @@ export function parseImages(markdown: string): { alt: string; path: string }[] {
   while ((m = IMAGE_RE.exec(markdown)) !== null) {
     const path = m[2].trim().replace(IMAGE_TITLE_SUFFIX_RE, '').trim()
     out.push({ alt: m[1].trim(), path })
+  }
+  return out
+}
+
+// ───────────────────────── 资料缺失标记（P3-2） ─────────────────────────
+//
+// 「只用知识库、绝不臆造」（proposalPrompt 规则 2）的产物：AI 写正文时遇到知识库查不到的
+// 内容，不编造、也不跳过，而是在【缺料的那一行】单独成行写 `⚠️ 资料缺失：<缺什么>`。
+//
+// 关键变化（相对旧版）：这条标记【就留在正文哨兵块内】，不再像旧版那样甩在对话里飘走——
+// 这样它① 天然锚定到所在章节（含它的那一节 section），② 随草稿持久化/重建，③ 在预览与
+// 导出里原样可见，提醒「这里有个洞、待补」。renderer 据此把全篇缺口聚合成一张清单
+// （P3-2 阶段一·让缺失可见），后续「补料 → 定点续写」（阶段二）也以这条标记为锚定位。
+//
+// 解析容忍 AI 的措辞抖动：⚠ 警告符后可带/不带变体选择符 ️、可有/无空格，「资料缺失」
+// 后全角「：」或半角「:」皆可，描述取冒号后到行尾。要求 ⚠ 前缀是安全阀——绝不让正文里
+// 讨论「资料缺失」的普通行（如目录里某章叫「资料缺失分析」）被误当成缺口标记。
+// 行首容忍前导空白与常见列表/引用符（AI 偶尔把它写成 `- ⚠️…` 或 `> ⚠️…`）。
+
+/** 资料缺失标记的可见前缀（写进提示词，main 与 renderer 同源，避免两端措辞漂移）。 */
+export const PROPOSAL_GAP_PREFIX = '⚠️ 资料缺失：'
+
+// 整行匹配：行首可选列表/引用符 + 警告符（变体选择符可选）+ 「资料缺失」 + 冒号 + 描述。
+const GAP_RE = /^[ \t]*(?:[-*>]\s*)?⚠️?\s*资料缺失\s*[:：]\s*(.+?)\s*$/gm
+
+/**
+ * 抽取一段正文里的所有「资料缺失」缺口描述（冒号后的文本，保序）。无缺口 → []。
+ * 与 parseCitations / parseImages 互不干扰（语法各异）。main 与 renderer 共享纯函数。
+ * 同一节内重复的缺口不去重——AI 可能在一章里标多处缺料，每处都该单独列出供用户补。
+ */
+export function parseGaps(markdown: string): string[] {
+  if (!markdown) return []
+  const out: string[] = []
+  GAP_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = GAP_RE.exec(markdown)) !== null) {
+    const desc = m[1].trim()
+    if (desc) out.push(desc)
   }
   return out
 }
@@ -501,6 +550,8 @@ export interface ProposalMetricRecord {
     unsupported: number
     /** 引错文件名 / 镜像读不到。 */
     fileNotFound: number
+    /** 引用《用户补充资料》（P3-2 补料）的条数——非 KB、不计编造/引错，单列以观察补料用量。 */
+    userSupplied: number
   }
 }
 
@@ -524,7 +575,8 @@ export function buildProposalMetric(
     totalCitations: 0,
     supported: 0,
     unsupported: 0,
-    fileNotFound: 0
+    fileNotFound: 0,
+    userSupplied: 0
   }
 
   for (const sec of sections) {
@@ -550,6 +602,7 @@ export function buildProposalMetric(
       citation.totalCitations += 1
       if (v.status === 'supported') citation.supported += 1
       else if (v.status === 'unsupported') citation.unsupported += 1
+      else if (v.status === 'user-supplied') citation.userSupplied += 1
       else citation.fileNotFound += 1
     }
   }

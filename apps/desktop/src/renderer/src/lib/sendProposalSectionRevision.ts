@@ -1,4 +1,5 @@
 import { useProposalStore } from '../stores/proposal'
+import { USER_SUPPLIED_SOURCE } from '@shared/proposal'
 import { sendProposalStageMessage } from './sendProposalStageMessage'
 
 /**
@@ -43,5 +44,39 @@ export async function reviseProposalSection(
   await sendProposalStageMessage(
     `【定向修订·只重写这一章，不要改动其它任何章节】${instruction}：\n\n${sec.markdown}\n\n` +
       `仍用方案【正文】哨兵包裹（与逐章撰写同款），段末按既有规则标注《来源》，绝不臆造。`
+  )
+}
+
+/**
+ * 资料缺失·补料续写（P3-2 阶段二）：用户为某章里某条「⚠️ 资料缺失：…」缺口补充了资料，
+ * 让 AI【只重写这一章】、把补料融进缺口处、删掉那条缺失标记，产出整章替换原节。
+ *
+ * 复用与 reviseProposalSection 同一套机制（pendingRevision 指针 + end 分流整节替换 + 自动
+ * 重新校验），区别只在指令：明确告知缺口描述与用户补料，并规定溯源——据【外部补料】写的内容
+ * 标《${USER_SUPPLIED_SOURCE}》（校验侧识别为 user-supplied 中性态）；用户补料里若指认了知识库
+ * 文件（如「见《某文件》」），则照常去 Read 该文件、按真实《文件名》标来源。两条路都不臆造。
+ *
+ * 仅对 content 节生效；非方案前台 / 目标节不存在 / 补料为空时静默 no-op。
+ */
+export async function fillProposalGap(
+  sectionId: string,
+  gapDesc: string,
+  material: string
+): Promise<void> {
+  const trimmed = material.trim()
+  if (!trimmed) return
+  const ps = useProposalStore.getState()
+  const sec = ps.sections.find((s) => s.id === sectionId)
+  if (!sec || sec.kind !== 'content') return
+
+  ps.setPendingRevision(sectionId)
+  await sendProposalStageMessage(
+    `【资料缺失·补料续写·只重写这一章，不要改动其它任何章节】本章里有一处标注的缺口：「⚠️ 资料缺失：${gapDesc}」。` +
+      `用户为此补充了以下资料：\n\n${trimmed}\n\n` +
+      `请把这段补料自然融入本章对应位置、并【删除那一行「⚠️ 资料缺失：${gapDesc}」标记】，重写并【整章完整输出】。溯源纪律：` +
+      `① 据上面这段【外部补料文字】写出的内容，段末标注（据《${USER_SUPPLIED_SOURCE}》）；` +
+      `② 若补料里指认了知识库中的某个文件，请实际 Read 该文件、据其原文撰写并按真实《文件名》标注来源；` +
+      `③ 本章其它原有内容与其《来源》标注保持不变；④ 绝不臆造补料和知识库之外的内容。` +
+      `仍用方案【正文】哨兵包裹（与逐章撰写同款）。`
   )
 }

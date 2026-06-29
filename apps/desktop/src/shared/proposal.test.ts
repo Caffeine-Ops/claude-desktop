@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test'
 
 import {
   parseCitations,
+  parseGaps,
   trigramOverlap,
   buildProposalMetric,
   parseImages,
@@ -45,6 +46,40 @@ describe('parseCitations', () => {
 
   it('空引用组（无《》）跳过', () => {
     expect(parseCitations('正文。（据无名）')).toEqual([])
+  })
+})
+
+describe('parseGaps', () => {
+  it('无缺口 → 空数组', () => {
+    expect(parseGaps('普通正文，没有缺口标记。（据《A》）')).toEqual([])
+    expect(parseGaps('')).toEqual([])
+  })
+
+  it('标准格式 → 抽出冒号后的描述', () => {
+    expect(parseGaps('正文。\n⚠️ 资料缺失：2024 年三甲医院部署数量\n继续。')).toEqual([
+      '2024 年三甲医院部署数量'
+    ])
+  })
+
+  it('容忍措辞抖动：无空格 / 半角冒号 / 无变体选择符', () => {
+    expect(parseGaps('⚠️资料缺失:具体报价')).toEqual(['具体报价'])
+    expect(parseGaps('⚠资料缺失：服务条款')).toEqual(['服务条款'])
+  })
+
+  it('容忍行首列表/引用符与前导空白', () => {
+    expect(parseGaps('- ⚠️ 资料缺失：A\n  > ⚠️ 资料缺失：B')).toEqual(['A', 'B'])
+  })
+
+  it('一节多处缺口按出现顺序保留、不去重', () => {
+    expect(parseGaps('⚠️ 资料缺失：同一项\n⚠️ 资料缺失：同一项')).toEqual(['同一项', '同一项'])
+  })
+
+  it('安全阀：不带 ⚠ 前缀的普通行不误判（如目录里「资料缺失分析」一章）', () => {
+    expect(parseGaps('3. 资料缺失分析\n本章讨论资料缺失：问题。')).toEqual([])
+  })
+
+  it('冒号后为空 → 跳过该行', () => {
+    expect(parseGaps('⚠️ 资料缺失：   ')).toEqual([])
   })
 })
 
@@ -164,6 +199,28 @@ describe('buildProposalMetric', () => {
     expect(r.citation.unverifiedSections).toBe(1)
     expect(r.citation.verifiedSections).toBe(1)
     expect(r.citation.totalCitations).toBe(1)
+  })
+
+  it('引用《用户补充资料》→ 计入 userSupplied，不混进 supported/unsupported/fileNotFound', () => {
+    const secs: ProposalMetricSection[] = [
+      {
+        markdown: 'c',
+        kind: 'content',
+        verification: {
+          verdicts: [
+            { file: 'A', status: 'supported', overlap: 0.9 },
+            { file: '用户补充资料', status: 'user-supplied' }
+          ],
+          citedFileCount: 2
+        }
+      }
+    ]
+    const r = buildProposalMetric(secs, META)
+    expect(r.citation.totalCitations).toBe(2)
+    expect(r.citation.supported).toBe(1)
+    expect(r.citation.userSupplied).toBe(1)
+    expect(r.citation.unsupported).toBe(0)
+    expect(r.citation.fileNotFound).toBe(0)
   })
 
   it('已校验但 0 引用 → 覆盖度红灯计数', () => {

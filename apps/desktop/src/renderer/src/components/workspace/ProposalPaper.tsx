@@ -46,10 +46,29 @@ function renderVerification(sec: ProposalSection, generating: boolean): React.JS
   const notFound = [...new Set(v.verdicts.filter((d) => d.status === 'file-not-found').map((d) => d.file))]
   const unsupported = [...new Set(v.verdicts.filter((d) => d.status === 'unsupported').map((d) => d.file))]
   const ungroundedImgs = [...new Set((v.imageVerdicts ?? []).filter((d) => d.status === 'ungrounded').map((d) => d.path))]
+  // 用户补料（P3-2 阶段二）：引用《用户补充资料》的条数（按出现处计，可多处）。非 KB、不红
+  // 不绿，单独一行中性蓝条明示「据你补充的资料、不在知识库、请自行确认」，在红/绿态下都附带显示。
+  const suppliedCount = v.verdicts.filter((d) => d.status === 'user-supplied').length
+  // 绿灯只数【真 KB 文件】（排除补料保留名后去重）——补料无从 trigram 核对，不该混进「已核对」计数。
+  const kbFileCount = new Set(
+    v.verdicts.filter((d) => d.status !== 'user-supplied').map((d) => d.file)
+  ).size
+  const suppliedLine =
+    suppliedCount > 0 ? (
+      <div className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[11px] text-sky-600">
+        ℹ️ 有 {suppliedCount} 处据你补充的资料撰写（不在知识库，请自行确认准确性）
+      </div>
+    ) : null
   if (notFound.length === 0 && unsupported.length === 0 && ungroundedImgs.length === 0) {
     return (
-      <div className="mb-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600">
-        ✓ {v.citedFileCount} 处来源已核对
+      <div className="mb-1 space-y-0.5">
+        {/* KB 来源全部核对通过才报绿；补料不参与「已核对」绿灯（它无从 trigram 核对），单列蓝条。 */}
+        {kbFileCount > 0 && (
+          <div className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600">
+            ✓ {kbFileCount} 处来源已核对
+          </div>
+        )}
+        {suppliedLine}
       </div>
     )
   }
@@ -70,6 +89,7 @@ function renderVerification(sec: ProposalSection, generating: boolean): React.JS
           ⚠️ 有 {ungroundedImgs.length} 张配图与本段来源不符，建议替换
         </div>
       )}
+      {suppliedLine}
     </div>
   )
 }

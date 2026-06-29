@@ -39,6 +39,26 @@ describe('verifyCitationsCore', () => {
     expect(r.verdicts[0].overlap).toBeUndefined()
   })
 
+  it('引用《用户补充资料》→ user-supplied，不查原文、不算缺文件，仍计入覆盖度', () => {
+    // resolveContent 返回 null（保留名本就不在 KB）；但 user-supplied 分支应在查询前命中，
+    // 故不落 file-not-found，且 citedFileCount 计 1（避免误报「本段未标注来源」）。
+    const r = verifyCitationsCore('据用户提供的部署数据撰写。（据《用户补充资料》）', () => null)
+    expect(r.citedFileCount).toBe(1)
+    expect(r.verdicts).toHaveLength(1)
+    expect(r.verdicts[0].status).toBe('user-supplied')
+    expect(r.verdicts[0].overlap).toBeUndefined()
+  })
+
+  it('同段混引 KB 文件与《用户补充资料》→ 各得其判', () => {
+    const r = verifyCitationsCore(
+      '智能预问诊系统支持多轮对话。（据《白皮书》《用户补充资料》）',
+      (f) => (f === '白皮书' ? '智能预问诊系统支持多轮对话，覆盖门诊全流程。' : null)
+    )
+    expect(r.citedFileCount).toBe(2)
+    expect(r.verdicts.find((v) => v.file === '白皮书')?.status).toBe('supported')
+    expect(r.verdicts.find((v) => v.file === '用户补充资料')?.status).toBe('user-supplied')
+  })
+
   it('跨段引同一文件 → 覆盖度按文件去重', () => {
     const r = verifyCitationsCore(
       '第一段。（据《A》）\n\n第二段。（据《A》《B》）',

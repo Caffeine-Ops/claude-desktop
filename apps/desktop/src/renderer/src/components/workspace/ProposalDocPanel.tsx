@@ -8,15 +8,24 @@ import type { ProposalStyleConfig } from '@shared/proposalStyle'
 import {
   buildProposalMarkdown,
   buildProposalMetric,
+  parseGaps,
   PROPOSAL_DRAFT_BEGIN,
   PROPOSAL_DRAFT_END
 } from '@shared/proposal'
 import { sendProposalStageMessage } from '../../lib/sendProposalStageMessage'
+import { fillProposalGap } from '../../lib/sendProposalSectionRevision'
 import { extractMermaidBlocks, renderMermaidImageMap } from '../../lib/mermaidRender'
 import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
 import { ProposalPaper } from './ProposalPaper'
 import { ProposalPreview } from './ProposalPreview'
 import { ProposalStyleModal } from './ProposalStyleModal'
+
+// 取一节的展示标题：正文首个 markdown 标题行（# ～ ######）的文字，用于资料缺失清单里
+// 标明「这处缺口在哪一章」。无标题（理论少见）退化为占位串。模块级纯函数，不依赖组件状态。
+function sectionTitle(markdown: string): string {
+  const m = markdown.match(/^#{1,6}\s+(.+?)\s*$/m)
+  return m ? m[1].trim() : '（未命名章节）'
+}
 
 export function ProposalDocPanel(): React.JSX.Element | null {
   // 与 App.tsx 隐藏右栏同一门控：仅当方案工作台接管时（active+前台+workspaceOpen）显示。
@@ -55,6 +64,12 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   // 注：用 .trim().length > 0 而非仅 .some(kind===X)——纯空白区段依然无法驱动 AI 生成。
   const hasCover = sections.some((s) => s.kind === 'cover' && s.markdown.trim().length > 0)
   const hasToc = sections.some((s) => s.kind === 'toc' && s.markdown.trim().length > 0)
+  // 资料缺失聚合（P3-2 阶段一）：扫各节正文里 AI 写下的「⚠️ 资料缺失：…」标记，连同所在章节
+  // 标题汇成一张清单——把原本散落在正文各处、容易被忽略的缺口，集中暴露在面板顶部供用户复核。
+  // 锚定到 sectionId，为阶段二「定点补料续写」预留入口。纯派生，不入 store（随 sections 重算）。
+  const gaps = sections.flatMap((sec) =>
+    parseGaps(sec.markdown).map((desc) => ({ sectionId: sec.id, title: sectionTitle(sec.markdown), desc }))
+  )
   const [exporting, setExporting] = useState(false)
   const [exportMsg, setExportMsg] = useState<{ tone: 'ok' | 'err' | 'muted'; text: string } | null>(null)
   // 「新建」二次确认：清空是破坏性的（丢掉整份草稿），故点一下先morph成确认条，再点才真清。
@@ -71,6 +86,12 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   const [autoTocFix, setAutoTocFix] = useState(0)
   // 产品 chip 可增（方案三）：从知识库索引列出全部可选产品，让用户手动追加 matchProducts 没识别
   // 到的产品——把「用哪些产品写」的控制权还给用户（原先只能删 chip、不能增）。
+  // 资料缺失清单展开态（P3-2）：默认收起，只露一行「⚠️ 资料缺失 N 处」摘要条，点开看明细。
+  const [gapsOpen, setGapsOpen] = useState(false)
+  // 补料编辑态（P3-2 阶段二）：当前正在为哪条缺口补料（key=`${sectionId}:${i}`，同一时刻只开一个）
+  // 及输入框内容。提交后置空、清编辑态——补料经 fillProposalGap 走定点续写，AI 重写该章删掉缺口标记。
+  const [fillingKey, setFillingKey] = useState<string | null>(null)
+  const [fillText, setFillText] = useState('')
   const [productPickerOpen, setProductPickerOpen] = useState(false)
   const [allKbProducts, setAllKbProducts] = useState<ProposalProduct[]>([])
   async function loadKbProducts(): Promise<void> {
@@ -456,6 +477,99 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           title="草稿写盘失败（磁盘空间/权限/路径问题）。你的修改仍在内存，切换会话或关闭可能丢失；建议先导出备份，问题排除后改动会在下次自动保存时落盘。"
         >
           ⚠️ 草稿未保存（写盘失败）——改动仍在，建议先导出备份
+        </div>
+      )}
+
+      {/* 资料缺失清单（P3-2 阶段一·让缺失可见）：AI 遇知识库查不到的内容时不编造，而在正文里
+          标「⚠️ 资料缺失：…」；这些缺口原本散落正文、易被忽略，这里集中汇成一张清单暴露在顶部。
+          仅在有缺口时出现；默认收起为一行摘要，点开看每处缺口在哪一章、缺什么。后续阶段二会在每条
+          缺口旁加「补充资料」入口做定点续写——此处先把缺失变可见。 */}
+      {gaps.length > 0 && (
+        <div className="border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 text-left"
+            onClick={() => setGapsOpen((v) => !v)}
+            title="知识库未覆盖、AI 未编造的缺口；待补料后续写"
+          >
+            <span className="font-medium">⚠️ 资料缺失 {gaps.length} 处</span>
+            <span className="text-amber-600/70 dark:text-amber-400/70">
+              — 知识库没查到、AI 未编造，待补料
+            </span>
+            <span className="flex-1" />
+            <span className="text-amber-600/80 dark:text-amber-400/80">{gapsOpen ? '收起 ▴' : '展开 ▾'}</span>
+          </button>
+          {gapsOpen && (
+            <ul className="mt-1.5 max-h-60 space-y-1 overflow-auto">
+              {gaps.map((g, i) => {
+                const key = `${g.sectionId}:${i}`
+                return (
+                  <li
+                    key={key}
+                    className="rounded-md border border-amber-500/30 bg-background/60 px-2 py-1"
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10px] text-muted-foreground">{g.title}</div>
+                        <div className="text-foreground/90">{g.desc}</div>
+                      </div>
+                      {/* 补料入口（阶段二）：开一个就地输入框，提交后经 fillProposalGap 让 AI 定点续写。
+                          流式中禁用（与其它修订动作一致，避免和进行中的那轮叠发）。 */}
+                      {fillingKey !== key && (
+                        <button
+                          type="button"
+                          className="shrink-0 rounded border border-amber-500/40 px-1.5 py-0.5 text-[10.5px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-40 dark:text-amber-400"
+                          disabled={generating}
+                          title={generating ? 'AI 生成中，请稍候' : '补充这段缺失的资料，让 AI 续写'}
+                          onClick={() => {
+                            setFillingKey(key)
+                            setFillText('')
+                          }}
+                        >
+                          补充资料
+                        </button>
+                      )}
+                    </div>
+                    {fillingKey === key && (
+                      <div className="mt-1.5 space-y-1">
+                        <textarea
+                          value={fillText}
+                          autoFocus
+                          onChange={(e) => setFillText(e.target.value)}
+                          placeholder="贴入这段缺失的资料原文；或指认知识库文件（如：见《某产品白皮书》的部署章节）。AI 会据此续写并标注来源。"
+                          className="min-h-[72px] w-full resize-y rounded-md border border-border bg-card px-2 py-1 text-[12px] leading-snug text-foreground outline-none focus:border-accent"
+                        />
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            className="rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+                            onClick={() => {
+                              setFillingKey(null)
+                              setFillText('')
+                            }}
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded bg-accent px-2 py-0.5 text-[11px] text-white hover:opacity-90 disabled:opacity-40"
+                            disabled={generating || !fillText.trim()}
+                            onClick={() => {
+                              void fillProposalGap(g.sectionId, g.desc, fillText)
+                              setFillingKey(null)
+                              setFillText('')
+                            }}
+                          >
+                            提交补料，让 AI 续写
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
         </div>
       )}
 

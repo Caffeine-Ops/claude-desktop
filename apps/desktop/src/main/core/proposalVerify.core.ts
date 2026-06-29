@@ -3,6 +3,7 @@ import {
   parseImages,
   trigramOverlap,
   PROPOSAL_SECTION_RE,
+  USER_SUPPLIED_SOURCE,
   type CitationVerdict,
   type ImageVerdict,
   type SectionVerification
@@ -55,6 +56,13 @@ export function verifyCitationsCore(
   for (const { paragraph, files } of paras) {
     for (const file of files) {
       citedFiles.add(file)
+      // 用户补料（P3-2 阶段二）：引用的是保留来源名《用户补充资料》——非 KB、无原文可 trigram
+      // 核对，但属用户授权的真实资料。给独立 user-supplied 判定（不查 resolveContent、不当
+      // file-not-found 红灯），仍计入 citedFiles 故不会触发「本段未标注来源」。
+      if (file === USER_SUPPLIED_SOURCE) {
+        verdicts.push({ file, status: 'user-supplied' })
+        continue
+      }
       const content = resolveContent(file)
       if (content === null) {
         verdicts.push({ file, status: 'file-not-found' })
