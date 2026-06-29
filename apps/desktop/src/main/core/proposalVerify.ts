@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import type { SectionVerification } from '../../shared/proposal'
 import { readKbIndex } from './kbIndexStore'
-import { verifyCitationsCore } from './proposalVerify.core'
+import { verifyCitationsCore, collectUngroundedImagePathsCore } from './proposalVerify.core'
 
 /**
  * 核对一节正文 markdown 里的所有引用：把每段正文与其末尾 `（据《X》）` 所指的镜像原文
@@ -64,5 +64,37 @@ export function verifyCitations(markdown: string): SectionVerification {
   } catch (err) {
     console.warn('[proposalVerify] verifyCitations failed:', err)
     return { verdicts: [], citedFileCount: 0, degraded: true }
+  }
+}
+
+/**
+ * 导出/预览闸门：算整篇方案 markdown 里所有【未接地】图的绝对路径（per-section 接地，与
+ * {@link verifyCitations} 的 UI 红条同源）。markdownToDocxBuffer 据此把 ungrounded 图降级为
+ * 文字占位——让「图必属本节所引文件 assets」这条接地底线不止是 UI 红条、更是 docx 导出的
+ * 强制闸门（评审：接地校验本是安全底线，却没建在导出的必经收口上，ungrounded 图照样进交付）。
+ *
+ * 防御式：索引不可用 / 任意异常 → 空集（degraded 不强制挡）。导出绝不被校验阻塞——宁可嵌一张
+ * 存疑的图、也不漏导出；degraded 时 UI 另有灰标提示「来源未校验」，不致让用户误以为已接地。
+ * 仅主进程可调（要读 userData 下的镜像索引）。
+ */
+export function collectUngroundedImagePaths(markdown: string): Set<string> {
+  try {
+    const index = readKbIndex()
+    if (!index) return new Set()
+    // title → assets，仅 ok 文件、同名取首个（与 verifyCitations 一致）。
+    const titleToAssets = new Map<string, string[]>()
+    for (const f of index.files) {
+      if (f.ok && !titleToAssets.has(f.title)) titleToAssets.set(f.title, f.assets ?? [])
+    }
+    const resolveAssets = (file: string): string[] => titleToAssets.get(file) ?? []
+    // 接地只用 citedFiles + assets，不读镜像 content，故 resolveContent 传 () => null。
+    return collectUngroundedImagePathsCore(
+      typeof markdown === 'string' ? markdown : '',
+      () => null,
+      resolveAssets
+    )
+  } catch (err) {
+    console.warn('[proposalVerify] collectUngroundedImagePaths failed:', err)
+    return new Set()
   }
 }

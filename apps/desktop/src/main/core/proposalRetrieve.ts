@@ -4,6 +4,7 @@ import type { ProposalProductScope } from './proposalPrompt'
 import {
   chunkText,
   rankChunks,
+  clampPassageText,
   type RetrievalChunk,
   type RetrievedPassage,
   type RetrieveOpts
@@ -63,7 +64,8 @@ export function retrievePassages(
 export function renderRetrievedBlock(passages: readonly RetrievedPassage[]): string {
   if (passages.length === 0) return ''
   const body = passages
-    .map((p) => `《${p.title}》\n${p.text}`)
+    // clampPassageText：单片段超 PASSAGE_MAX_CHARS（病态巨表）按行边界截断，防独占注入预算/撑爆提示词。
+    .map((p) => `《${p.title}》\n${clampPassageText(p.text)}`)
     .join('\n\n- - -\n\n')
   return [
     '【知识库召回·以下是与本章最相关的原文片段，优先据此撰写、并按既有规则在段末标注来源；',

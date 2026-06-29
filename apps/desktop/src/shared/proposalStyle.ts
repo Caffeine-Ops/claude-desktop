@@ -185,3 +185,65 @@ export function cloneProposalStyle(key: ProposalTemplateKey): ProposalStyleConfi
 export function defaultProposalStyle(): ProposalStyleConfig {
   return cloneProposalStyle(DEFAULT_PROPOSAL_STYLE_KEY)
 }
+
+// 反序列化校验用的合法值集合（与各联合类型同源）。持久化数据可能是旧 schema / 任意损坏，
+// 故逐字段校验值合法性，非法即回退默认——而非信任 `as ProposalStyleConfig`。
+const ALIGN_VALUES: readonly ProposalAlign[] = ['left', 'center', 'justify']
+const MARGIN_VALUES: readonly ProposalStyleConfig['margin'][] = ['narrow', 'normal', 'wide']
+const OL_VALUES: readonly ProposalStyleConfig['ol'][] = ['decimal', 'lowerLetter', 'lowerRoman']
+const UL_VALUES: readonly ProposalStyleConfig['ul'][] = ['disc', 'circle', 'square']
+const TEMPLATE_KEYS: readonly ProposalTemplateKey[] = ['classic', 'business', 'academic']
+
+/** 取 v（若是 allowed 里的合法值）否则 base。用于把任意持久化值收敛回联合类型。 */
+function pick<T extends string>(v: unknown, allowed: readonly T[], base: T): T {
+  return typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : base
+}
+
+/**
+ * 把任意来源的（可能旧 schema / 部分损坏 / 缺字段的）样式数据强制补全成完整 ProposalStyleConfig。
+ * 持久化反序列化（store 的 loadPersisted）必经此函数：缺哪个字段就用默认模板对应字段兜底、
+ * 枚举值非法也回退——绝不让半残配置喂进 docx 生成。否则 main 侧 levelStyle 解引用 undefined.size
+ * 抛 TypeError、MARGIN_TWIPS[undefined]/OL_FORMAT[undefined] 产 NaN/undefined，导出 Word 直接失败
+ * （评审发现：旧浅校验只看 templateKey/title/body 在不在，缺 h1/h2/h3/margin/ol/ul 照样直用）。
+ *
+ * 合并到【字段级】（每个层级的 font/size/… 缺一个补一个），不是整块替换：用户只改过 body.size
+ * 的旧配置仍保留其改动、同时补回新增字段。纯函数、可单测、无副作用。main 与 renderer 共享。
+ */
+export function coerceProposalStyle(raw: unknown): ProposalStyleConfig {
+  const d = defaultProposalStyle()
+  if (!raw || typeof raw !== 'object') return d
+  const p = raw as Record<string, unknown>
+  const lvl = (
+    key: 'title' | 'h1' | 'h2' | 'h3' | 'body',
+    base: ProposalLevelStyle
+  ): ProposalLevelStyle => {
+    const v = p[key]
+    if (!v || typeof v !== 'object') return base
+    const o = v as Record<string, unknown>
+    const merged: ProposalLevelStyle = {
+      font: pick(o.font, FONT_ORDER, base.font),
+      size: pick(o.size, SIZE_ORDER, base.size),
+      bold: typeof o.bold === 'boolean' ? o.bold : base.bold,
+      align: pick(o.align, ALIGN_VALUES, base.align),
+      indentChars: typeof o.indentChars === 'number' ? o.indentChars : base.indentChars
+    }
+    // color 可选：合法 string 用之，否则沿用 base 的（可能本就无）。
+    const color = typeof o.color === 'string' ? o.color : base.color
+    if (color) merged.color = color
+    return merged
+  }
+  return {
+    templateKey: pick(p.templateKey, TEMPLATE_KEYS, d.templateKey),
+    name: typeof p.name === 'string' ? p.name : d.name,
+    title: lvl('title', d.title),
+    h1: lvl('h1', d.h1),
+    h2: lvl('h2', d.h2),
+    h3: lvl('h3', d.h3),
+    body: lvl('body', d.body),
+    lineMultiple: typeof p.lineMultiple === 'number' ? p.lineMultiple : d.lineMultiple,
+    spaceAfterPt: typeof p.spaceAfterPt === 'number' ? p.spaceAfterPt : d.spaceAfterPt,
+    margin: pick(p.margin, MARGIN_VALUES, d.margin),
+    ol: pick(p.ol, OL_VALUES, d.ol),
+    ul: pick(p.ul, UL_VALUES, d.ul)
+  }
+}

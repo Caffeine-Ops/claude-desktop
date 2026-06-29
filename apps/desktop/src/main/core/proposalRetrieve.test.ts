@@ -74,4 +74,13 @@ describe('renderRetrievedBlock', () => {
     expect(block).toContain('《建设背景与目标》')
     expect(block).toContain('正文片段')
   })
+
+  it('巨表片段被截断注入（防撑爆提示词）', () => {
+    const bigTable = Array.from({ length: 3000 }, (_, i) => `| 行${i} | 值 |`).join('\n')
+    const block = renderRetrievedBlock([
+      { title: '大表', mirrorPath: '/x', text: bigTable, score: 2 }
+    ])
+    expect(block).toContain('…（片段过长，余下已省略）')
+    expect(block.length).toBeLessThan(bigTable.length) // 确实变短了
+  })
 })

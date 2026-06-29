@@ -88,15 +88,31 @@ export interface ProposalDraftExtraction {
  *
  * 规则：
  *   - `<br>` / `<br/>` / `<br />`（不分大小写）→ 换行（它们语义上就是换行）。
- *   - 其余 HTML 标签（`<div …>`、`</div>`、`<span>`、`<center>` 等）整体删除。
- *     正则只匹配「`<` 紧跟字母的标签名」，故 markdown 的自动链接 `<https://…>`、`<a@b.com>`
- *     不会被误删（`<` 后是 `https`/`a` 但紧跟 `:`/`@`，不满足「标签名后接空白或 `>`」）。
+ *   - 其余【已知排版 HTML 标签】（白名单 HTML_TAG_NAMES：div/span/center/table/font/h1-6…）
+ *     整体删除、只留可见文本。【刻意按白名单删，不删任意 `<字母…>`】：否则正文里的泛型
+ *     `List<String>`、比较式 `当 A<B 且 C>D 时` 会被静默吞成 `List`、`当 A D 时`（评审发现）。
+ *     白名单天然放过 markdown 自动链接 `<https://…>`（https 非标签名）。【单字母标签
+ *     b/i/u/p/a/s/q 不列入】——它们与单字母变量名/泛型参数（`A<B…>`、`Map<K,V>`）无法靠形式
+ *     区分，且 AI 几乎只用 markdown 语法（`**粗体**`）而非 `<b>`；宁可漏删一个可见标签，
+ *     也绝不错删不可见的正文。
  *   - 清洗后把 3+ 连续换行压成 2 个（删标签可能留下成片空行），首尾 trim。
  */
+// 已知排版 HTML 标签白名单（≥2 字母，故不与单字母变量/泛型参数冲突）。模块级一次编译，
+// stripDraftHtml 高频调用复用；`.replace` 全局正则每次自重置 lastIndex，共享安全。
+const HTML_TAG_NAMES = [
+  'div', 'span', 'center', 'br', 'strong', 'em', 'ins', 'del', 'mark', 'small', 'big',
+  'sub', 'sup', 'font', 'strike', 'hr', 'ul', 'ol', 'li', 'dl', 'dt', 'dd', 'table',
+  'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'caption', 'col', 'colgroup', 'img',
+  'figure', 'figcaption', 'blockquote', 'pre', 'code', 'kbd', 'samp', 'var', 'abbr',
+  'cite', 'section', 'article', 'aside', 'header', 'footer', 'nav', 'main', 'details',
+  'summary', 'wbr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
+].join('|')
+const HTML_TAG_RE = new RegExp(`</?(?:${HTML_TAG_NAMES})(?:\\s[^>]*)?/?>`, 'gi')
+
 function stripDraftHtml(s: string): string {
   return s
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^>]*)?\/?>/g, '')
+    .replace(HTML_TAG_RE, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
@@ -140,6 +156,67 @@ export function extractProposalDraftResult(text: string): ProposalDraftExtractio
     from = e + PROPOSAL_DRAFT_END[kind].length
   }
   return { blocks, truncated }
+}
+
+// 阶段有序权重：cover < toc < content。只此一处定义，门护栏与 store 推进同源。
+const PROPOSAL_PHASE_ORDER: Record<ProposalKind, number> = { cover: 0, toc: 1, content: 2 }
+
+/**
+ * 阶段门谓词：判断某 kind 的草稿块在当前 phase 下是否「越过了用户确认门」。
+ *
+ * 三阶段里唯一【必须用户点按钮（confirmToc）】才能跨的门是 toc→content：正文必须基于
+ * 用户确认过的目录来写。cover→toc 不是门——允许 AI 哨兵自动推进（用户在聊天里确认封面、
+ * 让 AI 出目录是设计内的「聊天驱动阶段」，见 PROPOSAL_DRAFT_BEGIN 注释）。
+ *
+ * 故规则极简：content 块仅当 phase 已是 content（confirmToc 已显式推进过）才合法；
+ * 在 cover/toc 阶段收到 content 块 = AI 自行跳过了目录门（本次根因：用户点「生成目录」后
+ * AI 直接冒正文，appendSections 取 max 把 phase 一把顶到 content，目录确认按钮与目录回灌
+ * 全被绕过）。cover/toc 块在任何阶段都不越界（封面可反复改、目录可回头改）。
+ */
+export function isDraftBlockAheadOfPhase(phase: ProposalKind, kind: ProposalKind): boolean {
+  return kind === 'content' && phase !== 'content'
+}
+
+/** 取两阶段里更靠后的（cover<toc<content）。阶段「绝不回退」语义的单一实现。 */
+export function laterPhase(a: ProposalKind, b: ProposalKind): ProposalKind {
+  return PROPOSAL_PHASE_ORDER[b] > PROPOSAL_PHASE_ORDER[a] ? b : a
+}
+
+/** gateDraftBlocksByPhase 的结果：放行的块、被拦的越界块、过门后应推进到的 phase。 */
+export interface ProposalGateResult {
+  /** 允许入区的块（保持原顺序）。 */
+  accepted: ProposalDraftBlock[]
+  /** 越过未确认目录门被拦下的 content 块——不入文档，交调用侧提示用户先生成确认目录。 */
+  skippedAhead: ProposalDraftBlock[]
+  /**
+   * 接受块后 phase 应推进到的目标：在 accepted 块的 kind 上取 max，绝不回退，也绝不自动
+   * 跨 toc→content（越界 content 块已被剔出 accepted，故不会把 phase 顶过门）。
+   * 注意以【入参 phase】（用户当前确认到的阶段）判越界，而非边遍历边推进——否则同一条
+   * 消息里 toc 块先把游标推到 toc、其后的 content 块就会被误放行（混排攻击面）。
+   */
+  nextPhase: ProposalKind
+}
+
+/**
+ * 阶段门护栏：按当前 phase 过滤 AI 一轮产出的草稿块，剔除越过「目录确认门」的正文块，
+ * 并算出绝不跨门的 nextPhase。main 与 renderer 共享的纯函数（store.appendSections 调用）。
+ */
+export function gateDraftBlocksByPhase(
+  phase: ProposalKind,
+  blocks: ProposalDraftBlock[]
+): ProposalGateResult {
+  const accepted: ProposalDraftBlock[] = []
+  const skippedAhead: ProposalDraftBlock[] = []
+  let nextPhase = phase
+  for (const b of blocks) {
+    if (isDraftBlockAheadOfPhase(phase, b.kind)) {
+      skippedAhead.push(b)
+      continue
+    }
+    accepted.push(b)
+    if (PROPOSAL_PHASE_ORDER[b.kind] > PROPOSAL_PHASE_ORDER[nextPhase]) nextPhase = b.kind
+  }
+  return { accepted, skippedAhead, nextPhase }
 }
 
 /**
@@ -284,6 +361,26 @@ export function parseImages(markdown: string): { alt: string; path: string }[] {
     out.push({ alt: m[1].trim(), path: m[2].trim() })
   }
   return out
+}
+
+/**
+ * 可原生嵌入 docx 的位图扩展名。docx 的 `ImageRun.type` 仅支持 jpg/png/gif/bmp；webp/svg
+ * 无法原生嵌入（svg 需另走 fallback API，本版不做）。bmp 虽被 docx 支持，但 proposalDocx 的
+ * IMG_TYPE 暂不映射它，故这里也【不】收 bmp——保持「可嵌集合 ⊆ IMG_TYPE 可映射集合」，绝不
+ * 让预览放行一张导出仍会降级的图。
+ */
+export const EMBEDDABLE_IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif'] as const
+
+/**
+ * 这张图能否进 Word（决定预览与导出是否真正显示它）。导出侧（proposalDocx.imageParagraphs）
+ * 与预览侧（AssistantMarkdown 的 KB 图 `<img>`）共用此谓词：不可嵌的图两侧都降级为文字占位，
+ * 杜绝「预览有图、成品 Word 没图」的静默丢失——这是「预览=导出一致」不变量在图片上的落点。
+ * 无扩展名（lastIndexOf('.') 为 -1）→ false，顺带堵掉无后缀名的越界路径。main 与 renderer 共享。
+ */
+export function isEmbeddableImagePath(path: string): boolean {
+  const dot = path.lastIndexOf('.')
+  if (dot < 0) return false
+  return (EMBEDDABLE_IMAGE_EXTS as readonly string[]).includes(path.slice(dot).toLowerCase())
 }
 
 /**

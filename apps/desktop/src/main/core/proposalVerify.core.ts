@@ -2,6 +2,7 @@ import {
   parseCitations,
   parseImages,
   trigramOverlap,
+  PROPOSAL_SECTION_RE,
   type CitationVerdict,
   type ImageVerdict,
   type SectionVerification
@@ -14,6 +15,15 @@ import {
  * 可据人工核对基线（backlog M-0）调参。
  */
 export const TRIGRAM_THRESHOLD = 0.5
+
+/**
+ * 可靠核对所需的最小正文长度（去空白字符数）。低于此的极短段——如引用组间的「。」、章节
+ * 小标题式的「概述」——没有可靠的 trigram 信号：trigramOverlap 对 <3 字退化为「子串判定」，
+ * 短串几乎恒命中返 1，若直接信它会让这类段恒判 supported、绕过编造核对（评审发现）。故过短
+ * 段一律【不给 supported 绿灯】，落 unsupported 提示人工核对（客户级方案宁可误报、不可漏报）。
+ * 取 3 与 trigram 的 3-gram 边界一致：恰好 3 字起就有真 trigram、走正常重叠核对。
+ */
+const MIN_VERIFIABLE_CHARS = 3
 
 /**
  * verifyCitations 的纯核心：不碰 fs / electron / 索引，只靠注入的 `resolveContent` 取
@@ -51,9 +61,13 @@ export function verifyCitationsCore(
         continue
       }
       const overlap = trigramOverlap(paragraph, content)
+      // 过短段（去空白 <MIN_VERIFIABLE_CHARS）即便 overlap 达标也不判 supported：trigramOverlap
+      // 对其退化为子串判定、几乎恒命中，信它即漏报。overlap 仍记真实值（它确实可能=1，只是段
+      // 太短不足以据此判忠实搬运）——status 与 overlap 不矛盾：重叠高但样本过短，故不予绿灯。
+      const tooShort = paragraph.replace(/\s+/g, '').length < MIN_VERIFIABLE_CHARS
       verdicts.push({
         file,
-        status: overlap >= TRIGRAM_THRESHOLD ? 'supported' : 'unsupported',
+        status: !tooShort && overlap >= TRIGRAM_THRESHOLD ? 'supported' : 'unsupported',
         overlap
       })
     }
@@ -75,4 +89,54 @@ export function verifyCitationsCore(
 
   const base: SectionVerification = { verdicts, citedFileCount: citedFiles.size }
   return imageVerdicts ? { ...base, imageVerdicts } : base
+}
+
+/**
+ * 把（docx 模式带 `<!--proposal-section:*-->` 标记的）整篇方案 markdown 按标记切成各节字符串，
+ * 标记行本身剔除。无标记（裸 markdown / .md 模式）→ 整篇当一节。空串 → []。纯函数、可单测。
+ * 接地是 per-section 概念（图必属【本节】所引文件 assets），故汇总 ungrounded 前要先按节切。
+ */
+export function splitMarkdownBySections(markdown: string): string[] {
+  const safe = typeof markdown === 'string' ? markdown : ''
+  if (!safe) return []
+  const out: string[] = []
+  let current: string[] = []
+  let sawMark = false
+  for (const line of safe.split('\n')) {
+    if (PROPOSAL_SECTION_RE.test(line.trim())) {
+      sawMark = true
+      if (current.length) out.push(current.join('\n'))
+      current = []
+    } else {
+      current.push(line)
+    }
+  }
+  if (current.length) out.push(current.join('\n'))
+  return sawMark ? out : [safe]
+}
+
+/**
+ * 导出/预览闸门用：对整篇方案 markdown 按节算图片接地，汇总所有【未接地】图的绝对路径。
+ * 每节复用 {@link verifyCitationsCore} 的 per-section 接地判定，故结论与 UI 红条同源一致。
+ * 注入式 resolve（同 verifyCitationsCore），不碰 fs/electron，可纯单测；main 的 IO 包装见
+ * proposalVerify.ts。接地只用 citedFiles + assets，不读 content，故调用方可对 resolveContent
+ * 传 `() => null`（citation verdicts 在此被丢弃，只取 imageVerdicts）。
+ *
+ * 返回的是【路径全集】（不分节）：imageParagraphs 按 path 查它。若同一 path 图在某节判
+ * ungrounded、另一节判 grounded，保守取「只要任一节未接地即降级」——符合「宁可多降级也不放过
+ * 来路不明的图」的安全默认（同一图跨节且接地结论相反极罕见）。
+ */
+export function collectUngroundedImagePathsCore(
+  markdown: string,
+  resolveContent: (file: string) => string | null,
+  resolveAssets: (file: string) => string[]
+): Set<string> {
+  const out = new Set<string>()
+  for (const section of splitMarkdownBySections(markdown)) {
+    const v = verifyCitationsCore(section, resolveContent, resolveAssets)
+    for (const iv of v.imageVerdicts ?? []) {
+      if (iv.status === 'ungrounded') out.add(iv.path)
+    }
+  }
+  return out
 }

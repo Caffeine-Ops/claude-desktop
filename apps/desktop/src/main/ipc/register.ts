@@ -82,7 +82,7 @@ import { getKbRoot, setKbRoot, readKbIndex, kbOutDir } from '../core/kbIndexStor
 import type { KbIndex } from '../../shared/kbIndex'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
 import { markdownToDocxBuffer } from '../core/proposalDocx'
-import { verifyCitations } from '../core/proposalVerify'
+import { verifyCitations, collectUngroundedImagePaths } from '../core/proposalVerify'
 import {
   saveProposalDraft,
   loadProposalDraft,
@@ -1066,7 +1066,10 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.PROPOSAL_RENDER,
     async (_event, payload: ProposalRenderPayload): Promise<ProposalRenderResult> => {
       const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
-      const bytes = await markdownToDocxBuffer(markdown, payload?.style)
+      // 预览也过同一接地闸门（与导出共用 collectUngroundedImagePaths）：未接地图在 docx 预览里
+      // 同样降级为占位，保证「预览=导出一致」——绝不出现预览有图、成品 Word 没图（评审 AL3）。
+      const ungrounded = collectUngroundedImagePaths(markdown)
+      const bytes = await markdownToDocxBuffer(markdown, payload?.style, ungrounded)
       return { bytes }
     }
   )

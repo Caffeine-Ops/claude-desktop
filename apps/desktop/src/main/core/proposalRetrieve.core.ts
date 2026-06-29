@@ -28,6 +28,28 @@ export interface RetrieveOpts {
 
 /** 单块长度上限（字符）：超长块按窗口切，避免一个巨块吃满注入预算。 */
 export const CHUNK_MAX = 600
+
+/**
+ * 单条召回片段【注入提示词】的字符硬上限。远大于 {@link CHUNK_MAX}：普通块（≤600）从不触及，
+ * 给整块表格留足空间。设它是因为表格块在 chunkText 里【整块保形、绕过 CHUNK_MAX】（见那里
+ * 注释），而下游 rankChunks 只按 topK 截【条数】、无 per-passage 字节上限——一个 xlsx/spec 转
+ * 出的病态巨表（几十 KB）会成单个无界块，进 top-K 后被原样拼进用户回合，独占注入预算、挤掉
+ * 其它召回甚至撑爆提示词（评审发现）。故在注入收口按行边界把单片段截到此上限。
+ */
+export const PASSAGE_MAX_CHARS = 4000
+
+/**
+ * 把单条召回片段截到 {@link PASSAGE_MAX_CHARS} 以内再注入。未超限 → 原样。超限 → 截到上限内
+ * 的【最后一个换行边界】（保完整行、不切碎表格最后一行），尾部补省略标记。纯函数、可单测。
+ * 只影响【注入呈现】，不改 chunkText 的块（BM25 仍对整块打分）——保形与防爆两者兼得。
+ */
+export function clampPassageText(text: string): string {
+  if (text.length <= PASSAGE_MAX_CHARS) return text
+  const head = text.slice(0, PASSAGE_MAX_CHARS)
+  const lastNl = head.lastIndexOf('\n')
+  const kept = lastNl > 0 ? head.slice(0, lastNl) : head
+  return `${kept}\n…（片段过长，余下已省略）`
+}
 /** 合并短块的下限：连续短段拼到 ≥ 此长度再断，避免一句一块的碎片。 */
 export const CHUNK_MIN = 80
 

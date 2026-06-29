@@ -22,7 +22,7 @@ import {
 import { readFileSync } from 'node:fs'
 import imageSize from 'image-size'
 import type { IStylesOptions, INumberingOptions, ISectionOptions } from 'docx'
-import { PROPOSAL_PAGEBREAK, PROPOSAL_SECTION_RE } from '../../shared/proposal'
+import { PROPOSAL_PAGEBREAK, PROPOSAL_SECTION_RE, isEmbeddableImagePath } from '../../shared/proposal'
 import type { ProposalKind } from '../../shared/proposal'
 import {
   CN_SIZE_PT,
@@ -135,6 +135,9 @@ interface WalkEnv {
   bodyFirstLine: number
   // 当前模板的页边距（twips），嵌图算版心宽用。
   imgMarginTwips: number
+  // 未接地图的绝对路径全集（接地闸门）：命中的图不嵌入、降级为带标注的文字占位。
+  // 由 collectUngroundedImagePaths（main）算好传入；缺省（裸调用 / 无索引）→ 不挡任何图。
+  ungroundedImagePaths?: ReadonlySet<string>
 }
 
 function inlineRuns(nodes: PhrasingContent[], style: InlineStyle = {}): TextRun[] {
@@ -215,14 +218,35 @@ function tableCellContent(cell: MdTableCell): Paragraph[] {
 // 一个 image mdast 节点 → docx 段落数组：成功则 [居中 ImageRun 段, 居中图说段]；
 // 不可嵌（svg/未知扩展/读盘失败/尺寸读不出）则降级为 [「[图：alt]」文字段]，绝不抛错。
 // maxWidthPx 为版心宽（px），图按原始像素等比缩放到不超过它。
-function imageParagraphs(alt: string, path: string, maxWidthPx: number): Paragraph[] {
+function imageParagraphs(
+  alt: string,
+  path: string,
+  maxWidthPx: number,
+  ungrounded = false
+): Paragraph[] {
   const caption = (alt || path.slice(path.lastIndexOf('/') + 1)).trim()
   const degrade = (): Paragraph[] => [
     new Paragraph({ children: [new TextRun({ text: `[图：${caption}]`, color: '9a9a9e' })] })
   ]
+  // 接地闸门：未接地图（不属本节所引文件 assets，疑似挪用 / 无关装饰）即便文件在盘上也【不嵌入】，
+  // 降级为带标注的文字占位——让「图与文同源」这条接地底线成为导出的强制闸门，而非仅 UI 红条
+  // （评审：接地是安全底线，却没建在导出必经收口上，ungrounded 图照样进交付 Word）。
+  if (ungrounded) {
+    return [
+      new Paragraph({
+        children: [
+          new TextRun({ text: `[图（未接地·疑似挪用，已据接地校验略去）：${caption}]`, color: '9a9a9e' })
+        ]
+      })
+    ]
+  }
+  // 「能否进 Word」由 shared 的 isEmbeddableImagePath 统一判定（与预览侧 AssistantMarkdown 的
+  // KB 图 <img> 同源），保证「预览=导出一致」：webp/svg/无扩展名两侧都降级文字，绝不出现
+  // 「预览有图、成品 Word 没图」的静默丢失（评审发现）。命中后再取 docx ImageRun 的 type。
+  if (!isEmbeddableImagePath(path)) return degrade()
   const ext = path.slice(path.lastIndexOf('.')).toLowerCase()
   const type = IMG_TYPE[ext]
-  if (!type) return degrade() // svg / 未知扩展 → 降级
+  if (!type) return degrade() // 双保险：isEmbeddableImagePath 为真即 ext∈IMG_TYPE，仍留守卫做类型收窄
   let data: Buffer
   try {
     data = readFileSync(path)
@@ -305,7 +329,11 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
         )
         const out: Paragraph[] = []
         for (const img of imgs) {
-          if (img.type === 'image') out.push(...imageParagraphs(img.alt ?? '', img.url, maxWidthPx))
+          if (img.type === 'image') {
+            // 接地闸门：本图路径在未接地全集里 → imageParagraphs 降级为占位（详见其注释）。
+            const isUngrounded = env.ungroundedImagePaths?.has(img.url) ?? false
+            out.push(...imageParagraphs(img.alt ?? '', img.url, maxWidthPx, isUngrounded))
+          }
         }
         return out
       }
@@ -745,12 +773,14 @@ function buildCoverChildren(
 function buildSectionChildren(
   group: SectionGroup,
   style: ProposalStyleConfig,
-  bodyFirstLine: number
+  bodyFirstLine: number,
+  ungroundedImagePaths?: ReadonlySet<string>
 ): Array<Paragraph | Table> {
   const env: WalkEnv = {
     walk: { titleConsumed: group.kind !== 'cover' },
     bodyFirstLine,
-    imgMarginTwips: MARGIN_TWIPS[style.margin]
+    imgMarginTwips: MARGIN_TWIPS[style.margin],
+    ungroundedImagePaths
   }
   const out: Array<Paragraph | Table> = []
 
@@ -793,7 +823,10 @@ function buildSectionChildren(
 
 export async function markdownToDocxBuffer(
   markdown: string,
-  style: ProposalStyleConfig = defaultProposalStyle()
+  style: ProposalStyleConfig = defaultProposalStyle(),
+  // 接地闸门：未接地图的绝对路径全集（collectUngroundedImagePaths 算出）。命中的图降级为占位、
+  // 不嵌入。缺省 → 不挡任何图（裸调用 / 索引不可用时退化为旧行为，导出绝不被校验阻塞）。
+  ungroundedImagePaths?: ReadonlySet<string>
 ): Promise<Buffer> {
   const tree = mdProcessor.parse(markdown) as Root
   const bodyFirstLine = style.body.indentChars
@@ -807,7 +840,7 @@ export async function markdownToDocxBuffer(
   // 封面/目录节不挂页码页脚；正文节挂「— N —」页脚。
   const groups = groupBySectionMarks(tree.children)
   const sections: ISectionOptions[] = groups.map((group) => {
-    const children = buildSectionChildren(group, style, bodyFirstLine)
+    const children = buildSectionChildren(group, style, bodyFirstLine, ungroundedImagePaths)
     const safeChildren = children.length
       ? children
       : [new Paragraph({ children: [new TextRun('')] })]

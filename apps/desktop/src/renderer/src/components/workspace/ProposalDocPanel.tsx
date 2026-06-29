@@ -34,6 +34,10 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   // 从 getState() 取——不订阅（避免 phase 每次变化都多跑一遍 selector）。
   const phase = useProposalStore((s) => s.phase)
   const { advancePhase } = useProposalStore.getState()
+  // 阶段门拦截提示：AI 越过「目录确认门」直接吐正文被 appendSections 拦下时非空。订阅以
+  // 驱动下方红条提示。clearStageSkip 是稳定引用，从 getState 取、不订阅。
+  const stageSkip = useProposalStore((s) => s.stageSkip)
+  const { clearStageSkip } = useProposalStore.getState()
   // 订阅方案会话 ID，用于下方流式状态判断。proposalSid 已是 store 的稳定切片。
   const proposalSid = useProposalStore((s) => s.sessionId)
   // 方案会话流式期间禁止推进阶段：推进按钮会另发一轮 AI 消息，mid-stream 点会和进行中
@@ -62,13 +66,23 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   // 阶段一→二：先把 phase 推到 toc（驱动阶段条/按钮 UI），再让 AI 生成目录大纲。
   // 归档不再靠 phase 而靠哨兵类型，故消息里点名【目录哨兵】，让 AI 用对那对标记。
   function confirmCover(): void {
+    clearStageSkip()
     advancePhase('toc')
     void sendProposalStageMessage(
       `封面已确认。请进入【阶段二·目录】：参考知识库里该产品的资料结构与售前方案常见章节，给出一份章节目录大纲（有序列表逐章列出），用方案【目录】哨兵包裹（${PROPOSAL_DRAFT_BEGIN.toc} … ${PROPOSAL_DRAFT_END.toc}）。`
     )
   }
+  // 跳阶补救：AI 在目录阶段直接吐正文被阶段门拦下（stageSkip 非空）时，重发「只生成目录」
+  // 指令把 AI 拉回目录。phase 已是 toc（confirmCover 推进过），不再 advancePhase。
+  function regenerateToc(): void {
+    clearStageSkip()
+    void sendProposalStageMessage(
+      `上一轮直接写了正文、跳过了目录。请【先只输出章节目录大纲】（有序列表逐章列出），用方案【目录】哨兵包裹（${PROPOSAL_DRAFT_BEGIN.toc} … ${PROPOSAL_DRAFT_END.toc}）；目录经我确认前不要写正文。`
+    )
+  }
   // 阶段二→三：把已确认的目录正文带给 AI（目录驱动正文），phase 推到 content。
   function confirmToc(): void {
+    clearStageSkip()
     const tocMd = buildProposalMarkdown(
       sections.filter((s) => s.kind === 'toc'),
       { pageBreaks: false }
@@ -250,6 +264,31 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         )}
         {phase === 'content' && <span className="text-muted-foreground">正文撰写中</span>}
       </div>
+
+      {/* 阶段门拦截提示：AI 跳过目录直接写正文被拦下时（stageSkip），红条提示并给「重新生成
+          目录」一键补救。content 阶段（用户已确认目录、正文合法）不显示。 */}
+      {stageSkip && phase !== 'content' && (
+        <div className="flex items-center gap-2 border-b border-border bg-rose-500/5 px-3 py-1 text-[11px] text-rose-500">
+          <span className="flex-1">
+            ⚠️ AI 跳过目录、直接写了正文，已忽略本轮 {stageSkip.count} 段。请先生成并确认目录再进正文。
+          </span>
+          <button
+            className="rounded bg-accent px-2 py-0.5 text-white disabled:opacity-40"
+            disabled={generating}
+            onClick={regenerateToc}
+            title={generating ? 'AI 生成中，请稍候' : '让 AI 重新只生成目录'}
+          >
+            重新生成目录
+          </button>
+          <button
+            className="text-muted-foreground hover:text-foreground"
+            onClick={clearStageSkip}
+            title="忽略此提示"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {exportMsg && (
         <div

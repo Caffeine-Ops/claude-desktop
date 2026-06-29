@@ -5,6 +5,7 @@ import rehypeHighlight from 'rehype-highlight'
 
 import { useT } from '../../i18n'
 import { toKbAssetUrl } from '../../lib/kbAssetUrl'
+import { isEmbeddableImagePath } from '@shared/proposal'
 
 /**
  * AssistantMarkdown
@@ -125,14 +126,21 @@ const components: Components = {
   ),
 
   // KB 本地图经 kbasset:// 协议加载（绝对路径直接当 <img src> 会被当相对 URL、加载失败）。
-  img: ({ src, alt }) => (
-    <img
-      // 非 string 的 src（罕见，react-markdown 类型上允许 undefined）原样透传给 <img>。
-      src={typeof src === 'string' ? toKbAssetUrl(src) : (src as string | undefined)}
-      alt={alt ?? ''}
-      className="my-2 max-w-full rounded"
-    />
-  ),
+  img: ({ src, alt }) => {
+    if (typeof src === 'string') {
+      const kbUrl = toKbAssetUrl(src)
+      // KB 本地图若非 docx 可嵌格式（webp/svg…），导出 Word 会降级为文字占位；预览此处同步降级，
+      // 避免「预览有图、成品 Word 没图」的静默不一致——与 proposalDocx.imageParagraphs 共用同一个
+      // isEmbeddableImagePath 谓词（评审发现）。仅对 KB 资产图（kbUrl 被改写）生效，不影响外链图。
+      if (kbUrl !== src && !isEmbeddableImagePath(src)) {
+        const caption = (alt && alt.trim()) || src.slice(src.lastIndexOf('/') + 1)
+        return <span className="my-2 inline-block text-[13px] text-neutral-400">[图：{caption}]</span>
+      }
+      return <img src={kbUrl} alt={alt ?? ''} className="my-2 max-w-full rounded" />
+    }
+    // 非 string 的 src（罕见，react-markdown 类型上允许 undefined）原样透传给 <img>。
+    return <img src={src as string | undefined} alt={alt ?? ''} className="my-2 max-w-full rounded" />
+  },
 
   // Tables live in a horizontal scroll shell so wide tables stay
   // usable inside the narrow chat bubble. `table-auto` lets the browser

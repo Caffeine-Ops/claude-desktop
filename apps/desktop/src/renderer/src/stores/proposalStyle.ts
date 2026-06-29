@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import {
+  coerceProposalStyle,
   defaultProposalStyle,
   type ProposalStyleConfig
 } from '@shared/proposalStyle'
@@ -21,11 +22,10 @@ function loadPersisted(): ProposalStyleConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return defaultProposalStyle()
-    const parsed = JSON.parse(raw) as Partial<ProposalStyleConfig>
-    // 浅校验关键字段在；缺字段（旧版本/损坏）一律回退默认，避免半残配置喂进 docx 生成。
-    if (parsed && parsed.templateKey && parsed.title && parsed.body) {
-      return parsed as ProposalStyleConfig
-    }
+    // coerceProposalStyle 字段级补全：缺字段（旧 schema / 损坏）或非法枚举值逐项回退默认，
+    // 绝不把半残配置 `as` 直用——否则缺 h1/margin/ol 会让 main 侧 docx 生成解引用 undefined
+    // 抛错 / 产 NaN twips、导出 Word 直接失败（评审发现）。旧浅校验只看 templateKey/title/body。
+    return coerceProposalStyle(JSON.parse(raw))
   } catch {
     // localStorage 不可用 / JSON 损坏 → 默认模板。
   }

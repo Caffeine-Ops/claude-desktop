@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'bun:test'
 
-import { tokenize, chunkText, rankChunks, CHUNK_MAX } from './proposalRetrieve.core'
+import {
+  tokenize,
+  chunkText,
+  rankChunks,
+  clampPassageText,
+  CHUNK_MAX,
+  PASSAGE_MAX_CHARS
+} from './proposalRetrieve.core'
 
 describe('tokenize', () => {
   it('CJK 取字符 bigram', () => {
@@ -98,5 +105,30 @@ describe('rankChunks', () => {
 
   it('零命中（query 与所有块无交集）→ 空', () => {
     expect(rankChunks('量子区块链元宇宙', chunks)).toEqual([])
+  })
+})
+
+describe('clampPassageText（单片段注入上限·防巨表撑爆提示词）', () => {
+  it('未超限 → 原样返回', () => {
+    expect(clampPassageText('短表格内容')).toBe('短表格内容')
+    const justUnder = 'x'.repeat(PASSAGE_MAX_CHARS)
+    expect(clampPassageText(justUnder)).toBe(justUnder)
+  })
+
+  it('超限 → 截断、长度受控、带省略标记、保留头部（表头）', () => {
+    const big = Array.from({ length: 2000 }, (_, i) => `| 行${i} | 值 |`).join('\n')
+    expect(big.length).toBeGreaterThan(PASSAGE_MAX_CHARS)
+    const out = clampPassageText(big)
+    expect(out.startsWith('| 行0 | 值 |')).toBe(true) // 表头/前部保留
+    expect(out.endsWith('…（片段过长，余下已省略）')).toBe(true)
+    expect(out.length).toBeLessThanOrEqual(PASSAGE_MAX_CHARS + 20) // 截到上限内 + 短标记
+  })
+
+  it('超限时在换行边界截断，不切碎最后一行', () => {
+    const big = Array.from({ length: 2000 }, (_, i) => `| 行${i} | 值 |`).join('\n')
+    const out = clampPassageText(big)
+    const body = out.replace(/\n…（片段过长，余下已省略）$/, '')
+    // 保留部分应以完整的一行结尾（最后一行不是被中途切断的半行）。
+    expect(body.endsWith(' |')).toBe(true)
   })
 })

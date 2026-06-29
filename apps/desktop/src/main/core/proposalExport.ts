@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs'
 import type { ProposalExportFormat } from '../../shared/ipc-channels'
 import type { ProposalStyleConfig } from '../../shared/proposalStyle'
 import { markdownToDocxBuffer } from './proposalDocx'
+import { collectUngroundedImagePaths } from './proposalVerify'
 
 /**
  * 各导出格式的元数据：保存对话框的文件类型过滤器 + 默认文件名。
@@ -74,7 +75,10 @@ export async function exportProposal(
       break
     case 'docx': {
       // markdown → 真 .docx（逐 mdast 节点构造，见 proposalDocx.ts），按选中模板排版。
-      const buf = await markdownToDocxBuffer(markdown, style)
+      // 接地闸门：先算未接地图全集，传给嵌图器把 ungrounded 图降级为占位——交付的 Word 里
+      // 绝不出现「不属本节所引文件」的挪用/无关图（评审 AL3）。索引不可用 → 空集、不挡。
+      const ungrounded = collectUngroundedImagePaths(markdown)
+      const buf = await markdownToDocxBuffer(markdown, style, ungrounded)
       writeFileSync(r.filePath, buf)
       break
     }

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import type { ProposalDraftBlock, ProposalKind, SectionVerification } from '@shared/proposal'
+import { gateDraftBlocksByPhase, isDraftBlockAheadOfPhase, laterPhase } from '@shared/proposal'
 import type { ProposalDraftRecord } from '@shared/ipc-channels'
 import { useChatStore } from './chat'
 
@@ -65,6 +66,11 @@ interface ProposalState {
   // 用户切回会被悄悄拽回。放 store 里跨卸载存活（评审 #3）。
   // 默认值为 'preview'（进页面先看预览，可经切换按钮切到 'edit'）——见各初始化点。
   viewMode: 'edit' | 'preview'
+  // 阶段门拦截提示：AI 越过「目录确认门」（唯一被 gate 的转换 toc→content）直接吐正文、
+  // 被 appendSections 的阶段门拦下时，记本轮被拦的越界块数，供面板显示一行红字提示用户
+  // 「AI 跳过了目录，请先生成确认目录」。null=无待提示。纯 UI 瞬时信号，不持久化、不进
+  // ProposalDraftRecord——它描述的是「刚发生的一次跳阶」，重开会话无意义。
+  stageSkip: { count: number } | null
   start: (sessionId: string) => void
   setProducts: (products: ProposalProduct[]) => void
   // 首发播种：写入产品集并置 seeded=true（与 setProducts 区分——后者是 chip 编辑）。
@@ -80,6 +86,9 @@ interface ProposalState {
   // 推进到目标阶段（cover→toc→content）。只改 phase，不动 sections——已生成的封面/
   // 目录节保持原 kind。按钮在调用本方法后另发推进消息给 AI。
   advancePhase: (to: ProposalKind) => void
+  // 清除阶段门拦截提示（用户点关闭、或阶段推进动作 confirmCover/confirmToc 调用以抹掉
+  // 陈旧提示）。
+  clearStageSkip: () => void
   updateSection: (id: string, markdown: string) => void
   // 回填某节的引用校验结果（#1）。section 可能已被删/重排，故按 id 查找；找不到则 no-op。
   setSectionVerification: (id: string, verification: SectionVerification) => void
@@ -125,6 +134,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   phase: 'cover',
   workspaceOpen: false,
   viewMode: 'preview',
+  stageSkip: null,
   start: (sessionId) =>
     set({
       active: true,
@@ -135,7 +145,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       sections: [],
       phase: 'cover',
       workspaceOpen: true,
-      viewMode: 'preview'
+      viewMode: 'preview',
+      stageSkip: null
     }),
   setProducts: (products) => set({ products }),
   seedProducts: (products) => set({ products, seeded: true }),
@@ -151,35 +162,51 @@ export const useProposalStore = create<ProposalState>((set) => ({
       if (s.consumedDraftIds.has(messageId)) return s
       const consumed = new Set(s.consumedDraftIds)
       consumed.add(messageId)
+      // 阶段门护栏：剔除越过「目录确认门」（唯一被 gate 的转换 toc→content）的正文块——
+      // AI 在 cover/toc 阶段自行吐 content（用户点「生成目录」后 AI 直接冒正文）时，这些块
+      // 【不入文档、不推进 phase】，只把被拦数记进 stageSkip 供面板提示用户先生成确认目录。
+      // 没有这道门时，越界 content 块会被「取 max 自动推进」一把把 phase 顶到 content，目录
+      // 确认按钮与 confirmToc 的目录回灌全被绕过、目录整段被跳（本次根因）。cover→toc 不是
+      // 门，仍允许 AI 哨兵自动推进（聊天驱动封面→目录是设计内行为）；gate 内部据此放行。
+      const gate = gateDraftBlocksByPhase(s.phase, blocks)
+      let skipped = gate.skippedAhead.length
       // kind 取自每个哨兵块自带的标签（AI 在哨兵里声明封面/目录/正文），不再取自全局 phase。
       // 这样无论用户走右侧按钮还是直接在聊天里驱动阶段，草稿都按内容真实归档。
       // baselineMarkdown 在此设为 AI 产出原文，作 M-0 可交付率代理基准（后续 updateSection 不动它）。
-      const added: ProposalSection[] = blocks.map((b) => ({
+      const added: ProposalSection[] = gate.accepted.map((b) => ({
         id: crypto.randomUUID(),
         markdown: b.markdown,
         kind: b.kind,
         baselineMarkdown: b.markdown
       }))
+      // phase 取 gate 算出的「绝不跨门」目标；再叠上被接受的截断残块（laterPhase 不回退）。
+      // 截断的越界正文（AI 在目录阶段写了未闭合的正文哨兵）同样被门拦下、记入 skipped。
+      let phase = gate.nextPhase
       if (truncated) {
-        added.push({
-          id: crypto.randomUUID(),
-          markdown: truncated.markdown,
-          kind: truncated.kind,
-          truncated: true,
-          baselineMarkdown: truncated.markdown
-        })
+        if (isDraftBlockAheadOfPhase(s.phase, truncated.kind)) {
+          skipped += 1
+        } else {
+          added.push({
+            id: crypto.randomUUID(),
+            markdown: truncated.markdown,
+            kind: truncated.kind,
+            truncated: true,
+            baselineMarkdown: truncated.markdown
+          })
+          phase = laterPhase(phase, truncated.kind)
+        }
       }
-      // 阶段条同步真实进度：把 phase 推进到本轮新块里最靠后的 kind（cover<toc<content，
-      // 绝不回退）。聊天驱动阶段时 phase 不再卡在 cover，阶段条与推进按钮随之反映实际
-      // 进展；按钮流里 phase 已被提前推进，此处取 max 不会回退、无冲突。
-      const order: Record<ProposalKind, number> = { cover: 0, toc: 1, content: 2 }
-      let phase = s.phase
-      for (const sec of added) {
-        if (order[sec.kind] > order[phase]) phase = sec.kind
+      return {
+        sections: [...s.sections, ...added],
+        consumedDraftIds: consumed,
+        phase,
+        // 本轮有越界块被拦才更新提示；否则保留既有 stageSkip（不被无关轮次悄悄清掉，
+        // 由用户关闭或阶段推进动作 confirmCover/confirmToc 清）。
+        stageSkip: skipped > 0 ? { count: skipped } : s.stageSkip
       }
-      return { sections: [...s.sections, ...added], consumedDraftIds: consumed, phase }
     }),
   advancePhase: (to) => set({ phase: to }),
+  clearStageSkip: () => set({ stageSkip: null }),
   updateSection: (id, markdown) =>
     set((s) => ({
       sections: s.sections.map((sec) => (sec.id === id ? { ...sec, markdown } : sec))
@@ -208,7 +235,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
     }),
   setWorkspaceOpen: (open) => set({ workspaceOpen: open }),
   setViewMode: (mode) => set({ viewMode: mode }),
-  reopen: (sessionId) => set({ active: true, sessionId, workspaceOpen: true }),
+  // 再入清陈旧跳阶提示：stageSkip 描述「刚发生的一次跳阶」，再入一个旧会话时无意义。
+  reopen: (sessionId) => set({ active: true, sessionId, workspaceOpen: true, stageSkip: null }),
   leaveMode: () => set({ active: false, workspaceOpen: false }),
   restoreFromTranscript: ({ sessionId, sections, consumedDraftIds, phase }) =>
     set({
@@ -221,7 +249,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       sections: sections.map((s) => ({ ...s, baselineMarkdown: s.baselineMarkdown ?? s.markdown })),
       phase,
       workspaceOpen: true,
-      viewMode: 'preview'
+      viewMode: 'preview',
+      stageSkip: null
     }),
   restoreFromDisk: (record) =>
     set({
@@ -234,7 +263,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       sections: record.sections.map((s) => ({ ...s, baselineMarkdown: s.markdown })),
       phase: record.phase,
       workspaceOpen: true,
-      viewMode: 'preview'
+      viewMode: 'preview',
+      stageSkip: null
     }),
   reset: () =>
     set({
@@ -246,7 +276,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       sections: [],
       phase: 'cover',
       workspaceOpen: false,
-      viewMode: 'preview'
+      viewMode: 'preview',
+      stageSkip: null
     })
 }))
 
