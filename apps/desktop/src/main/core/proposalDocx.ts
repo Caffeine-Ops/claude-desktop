@@ -18,7 +18,10 @@ import {
   BorderStyle,
   Header,
   Footer,
-  PageNumber
+  PageNumber,
+  HorizontalPositionRelativeFrom,
+  VerticalPositionRelativeFrom,
+  TextWrappingType
 } from 'docx'
 import { readFileSync } from 'node:fs'
 import imageSize from 'image-size'
@@ -26,7 +29,7 @@ import type { IStylesOptions, INumberingOptions, ISectionOptions } from 'docx'
 import { PROPOSAL_PAGEBREAK, PROPOSAL_SECTION_RE, isEmbeddableImagePath } from '../../shared/proposal'
 import type { ProposalKind } from '../../shared/proposal'
 import type { MermaidImage } from '../../shared/ipc-channels'
-import { FUSION_HEADER_BANNER, FUSION_COVER_LOGO } from '../../shared/proposalBrand'
+import { FUSION_HEADER_BANNER, FUSION_COVER_LOGO, FUSION_COVER_FLAME } from '../../shared/proposalBrand'
 import {
   CN_SIZE_PT,
   FONT_DOCX,
@@ -656,11 +659,34 @@ function brandBannerHeader(): { default: Header } {
 const COVER_LOGO_W_PX = Math.round(1457960 / EMU_PER_PX) // 153
 const COVER_LOGO_H_PX = Math.round(330200 / EMU_PER_PX) // 35
 const COVER_LOGO_SPACE_AFTER_TWIPS = Math.round(12 * 20)
+
+// 封面左侧火焰装饰（P2-1）：源文档 anchor 浮动图 711200×1422400 EMU（75×149px，0.78×1.56"），
+// 【水平贴版心左边（column 偏移 0）、垂直距页顶 1 英寸（914400 EMU）、文字后方（behindDoc）、不绕排】。
+// 照搬其锚定参数。浮动图不占行内空间，故不影响封面表格高度，安全。
+const FLAME_W_PX = Math.round(711200 / EMU_PER_PX) // 75
+const FLAME_H_PX = Math.round(1422400 / EMU_PER_PX) // 149
+function coverFlameRun(): ImageRun {
+  return new ImageRun({
+    type: 'png',
+    data: Buffer.from(FUSION_COVER_FLAME.base64, 'base64'),
+    transformation: { width: FLAME_W_PX, height: FLAME_H_PX },
+    floating: {
+      horizontalPosition: { relative: HorizontalPositionRelativeFrom.COLUMN, offset: 0 },
+      verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: 914400 },
+      behindDocument: true,
+      allowOverlap: true,
+      wrap: { type: TextWrappingType.NONE }
+    }
+  })
+}
+
+// 封面顶部块首段：左侧浮动火焰（绝对定位、不占行内）+ 右对齐完整 logo。
 function coverLogoParagraph(): Paragraph {
   return new Paragraph({
     alignment: AlignmentType.RIGHT,
     spacing: { after: COVER_LOGO_SPACE_AFTER_TWIPS },
     children: [
+      coverFlameRun(),
       new ImageRun({
         type: 'png',
         data: Buffer.from(FUSION_COVER_LOGO.base64, 'base64'),
