@@ -80,6 +80,11 @@ interface ProposalState {
   // 新节）。节修订（重写/展开/精简）、据来源修正、截断续写三处共用。瞬时 UI 信号，不
   // 持久化、不进 ProposalDraftRecord——它描述「刚发起的一次定向修订」，重开会话无意义。
   pendingRevision: { sectionId: string } | null
+  // 草稿写盘是否处于失败态（P3-3）：flushProposalSave 拿到 {ok:false} 或 IPC 抛错时置 true，
+  // 下次成功落盘置 false。面板据此显示「草稿未保存」常驻提示——写盘失败（磁盘满/权限/路径）
+  // 原本是 fire-and-forget 静默吞掉，用户误以为已存、切走就丢。非阻塞、不持久化，纯运行时
+  // 健壮性信号；重开/新建方案各路径都清回 false（旧会话的失败态不泄漏到新草稿）。
+  draftSaveFailed: boolean
   start: (sessionId: string) => void
   setProducts: (products: ProposalProduct[]) => void
   // 首发播种：写入产品集并置 seeded=true（与 setProducts 区分——后者是 chip 编辑）。
@@ -100,6 +105,8 @@ interface ProposalState {
   clearStageSkip: () => void
   // 标记/清除「下一轮产出要替换哪一节」。reviseProposalSection 发起修订前置，end 分流后清。
   setPendingRevision: (sectionId: string | null) => void
+  // 标记/清除草稿写盘失败态（P3-3）。flushProposalSave 落盘后调用：失败 true、成功 false。
+  setDraftSaveFailed: (failed: boolean) => void
   // 用 AI 新产出整节替换指定节：同步把 baselineMarkdown 也更新成新原文（否则 M-0 埋点会把
   // 「AI 重写」误算成用户编辑量），并重置 verification=undefined 触发重校验、清 truncated。
   reviseSection: (id: string, markdown: string) => void
@@ -150,6 +157,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   viewMode: 'preview',
   stageSkip: null,
   pendingRevision: null,
+  draftSaveFailed: false,
   start: (sessionId) =>
     set({
       active: true,
@@ -162,7 +170,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       workspaceOpen: true,
       viewMode: 'preview',
       stageSkip: null,
-      pendingRevision: null
+      pendingRevision: null,
+      draftSaveFailed: false
     }),
   setProducts: (products) => set({ products }),
   seedProducts: (products) => set({ products, seeded: true }),
@@ -186,19 +195,29 @@ export const useProposalStore = create<ProposalState>((set) => ({
       // 门，仍允许 AI 哨兵自动推进（聊天驱动封面→目录是设计内行为）；gate 内部据此放行。
       const gate = gateDraftBlocksByPhase(s.phase, blocks)
       let skipped = gate.skippedAhead.length
+      // P3-4 内容级幂等兜底：messageId 去重（上面那行）只在【单次运行内】有效——restoreFromDisk
+      // 重开会话时 consumedDraftIds 被清空（盘上不存 messageId），若 SDK resume 意外重放某条历史
+      // assistant 'end'，messageId 去重会漏、同一段正文被二次 append 成重复节。再加一道「同 kind 且
+      // markdown 逐字相同」的块级防线：方案写作里两节正文逐字一致几乎不可能是有意产出，故可安全
+      // 当作重放丢弃。key 用 NUL 连接 kind 与 markdown（正文不含 NUL，绝不会把不同内容误判同一）。
+      const dupKey = (kind: ProposalKind, markdown: string): string => `${kind}\u0000${markdown}`
+      const existingKeys = new Set(s.sections.map((sec) => dupKey(sec.kind, sec.markdown)))
       // kind 取自每个哨兵块自带的标签（AI 在哨兵里声明封面/目录/正文），不再取自全局 phase。
       // 这样无论用户走右侧按钮还是直接在聊天里驱动阶段，草稿都按内容真实归档。
       // baselineMarkdown 在此设为 AI 产出原文，作 M-0 可交付率代理基准（后续 updateSection 不动它）。
-      const added: ProposalSection[] = gate.accepted.map((b) => ({
-        id: crypto.randomUUID(),
-        markdown: b.markdown,
-        kind: b.kind,
-        baselineMarkdown: b.markdown
-      }))
+      const added: ProposalSection[] = gate.accepted
+        .filter((b) => !existingKeys.has(dupKey(b.kind, b.markdown)))
+        .map((b) => ({
+          id: crypto.randomUUID(),
+          markdown: b.markdown,
+          kind: b.kind,
+          baselineMarkdown: b.markdown
+        }))
       // phase 取 gate 算出的「绝不跨门」目标；再叠上被接受的截断残块（laterPhase 不回退）。
       // 截断的越界正文（AI 在目录阶段写了未闭合的正文哨兵）同样被门拦下、记入 skipped。
       let phase = gate.nextPhase
-      if (truncated) {
+      if (truncated && !existingKeys.has(dupKey(truncated.kind, truncated.markdown))) {
+        // 截断残块同样过内容级去重（P3-4）：resume 重放时半截正文也可能二次到达。
         if (isDraftBlockAheadOfPhase(s.phase, truncated.kind)) {
           skipped += 1
         } else {
@@ -229,6 +248,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   clearStageSkip: () => set({ stageSkip: null }),
   setPendingRevision: (sectionId) =>
     set({ pendingRevision: sectionId ? { sectionId } : null }),
+  setDraftSaveFailed: (failed) => set({ draftSaveFailed: failed }),
   reviseSection: (id, markdown) =>
     set((s) => ({
       sections: s.sections.map((sec) =>
@@ -285,7 +305,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       workspaceOpen: true,
       viewMode: 'preview',
       stageSkip: null,
-      pendingRevision: null
+      pendingRevision: null,
+      draftSaveFailed: false
     }),
   restoreFromDisk: (record) =>
     set({
@@ -303,7 +324,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       workspaceOpen: true,
       viewMode: 'preview',
       stageSkip: null,
-      pendingRevision: null
+      pendingRevision: null,
+      draftSaveFailed: false
     }),
   reset: () =>
     set({
@@ -317,7 +339,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       workspaceOpen: false,
       viewMode: 'preview',
       stageSkip: null,
-      pendingRevision: null
+      pendingRevision: null,
+      draftSaveFailed: false
     })
 }))
 

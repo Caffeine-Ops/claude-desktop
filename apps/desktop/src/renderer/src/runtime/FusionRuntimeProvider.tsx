@@ -722,24 +722,30 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     const s = useProposalStore.getState()
     // 只存「有内容的活跃草稿」；空草稿不建档（避免起草前就生成空文件）。
     if (!s.active || !s.sessionId || s.sections.length === 0) return
-    void window.chatApi.saveProposalDraft({
-      version: 1,
-      sessionId: s.sessionId,
-      // 只持久化 ProposalDraftRecord 声明的字段。【显式裁剪】而非透传 s.sections：verification
-      // （异步回填、易陈旧）与 baselineMarkdown（= markdown 的副本，restoreFromDisk 会重新派生）
-      // 都标注【不持久化】，但直接传 s.sections 这个加宽变量会跳过 TS 的 excess-property 检查、
-      // 把它们一起写盘——违反持久化契约、盘上体积近翻倍（评审发现）。改用对象字面量 map：多余
-      // 字段会被 excess-property 检查当场拦下，反过来兜住此类越界。
-      sections: s.sections.map((sec) => ({
-        id: sec.id,
-        markdown: sec.markdown,
-        kind: sec.kind,
-        truncated: sec.truncated
-      })),
-      products: s.products,
-      phase: s.phase,
-      updatedAt: Date.now()
-    })
+    // P3-3：不再 fire-and-forget。写盘是「尽力而为」（失败绝不阻塞会话切换/键入），但结果要回写
+    // store 的 draftSaveFailed——失败（磁盘满/权限/路径）原本被静默吞掉，用户误以为已存、切走就丢。
+    // 拿到 {ok:false} 或 IPC 抛错都置 true（面板显示「草稿未保存」常驻提示）；成功落盘置 false 自愈。
+    window.chatApi
+      .saveProposalDraft({
+        version: 1,
+        sessionId: s.sessionId,
+        // 只持久化 ProposalDraftRecord 声明的字段。【显式裁剪】而非透传 s.sections：verification
+        // （异步回填、易陈旧）与 baselineMarkdown（= markdown 的副本，restoreFromDisk 会重新派生）
+        // 都标注【不持久化】，但直接传 s.sections 这个加宽变量会跳过 TS 的 excess-property 检查、
+        // 把它们一起写盘——违反持久化契约、盘上体积近翻倍（评审发现）。改用对象字面量 map：多余
+        // 字段会被 excess-property 检查当场拦下，反过来兜住此类越界。
+        sections: s.sections.map((sec) => ({
+          id: sec.id,
+          markdown: sec.markdown,
+          kind: sec.kind,
+          truncated: sec.truncated
+        })),
+        products: s.products,
+        phase: s.phase,
+        updatedAt: Date.now()
+      })
+      .then((r) => useProposalStore.getState().setDraftSaveFailed(!r.ok))
+      .catch(() => useProposalStore.getState().setDraftSaveFailed(true))
   }, [])
 
   // 订阅草稿 store：任一改动重置 800ms 防抖计时，到点落盘。卸载时清计时 + 退订。

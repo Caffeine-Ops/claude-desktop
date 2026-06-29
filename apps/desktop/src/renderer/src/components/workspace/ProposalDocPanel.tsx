@@ -41,6 +41,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   // 驱动下方红条提示。clearStageSkip 是稳定引用，从 getState 取、不订阅。
   const stageSkip = useProposalStore((s) => s.stageSkip)
   const { clearStageSkip } = useProposalStore.getState()
+  // 草稿写盘失败态（P3-3）：FusionRuntimeProvider.flushProposalSave 落盘失败时置 true、成功置 false。
+  // 订阅以驱动下方常驻红条——不像 exportMsg 那样 4s 自动消失，要一直留到下次成功保存（自愈）。
+  const draftSaveFailed = useProposalStore((s) => s.draftSaveFailed)
   // 订阅方案会话 ID，用于下方流式状态判断。proposalSid 已是 store 的稳定切片。
   const proposalSid = useProposalStore((s) => s.sessionId)
   // 方案会话流式期间禁止推进阶段：推进按钮会另发一轮 AI 消息，mid-stream 点会和进行中
@@ -351,6 +354,17 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {/* 草稿未保存常驻提示（P3-3）：写盘失败时一直显示，提醒用户改动还在内存、切走会丢，
+          可手动导出备份。下次成功保存后 draftSaveFailed 自动置 false、本条消失。 */}
+      {draftSaveFailed && (
+        <div
+          className="border-b border-rose-500/30 bg-rose-500/10 px-3 pb-1.5 pt-1 text-[11px] text-rose-500"
+          title="草稿写盘失败（磁盘空间/权限/路径问题）。你的修改仍在内存，切换会话或关闭可能丢失；建议先导出备份，问题排除后改动会在下次自动保存时落盘。"
+        >
+          ⚠️ 草稿未保存（写盘失败）——改动仍在，建议先导出备份
         </div>
       )}
 
