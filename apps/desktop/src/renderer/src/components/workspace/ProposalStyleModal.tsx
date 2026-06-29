@@ -15,11 +15,14 @@ import { useProposalStyleStore } from '../../stores/proposalStyle'
 import { ProposalPreview } from './ProposalPreview'
 
 /**
- * 导出前的「Word 样式模板」弹窗：左侧实时预览（复用 ProposalPreview 的真 docx 渲染，
- * 传入本地 draft 样式，故边调边看、且与最终导出逐像素一致），右侧模板选择 + 逐级别微调。
+ * 「样式模板」弹窗：左侧实时预览（复用 ProposalPreview 的真 docx 渲染，传入本地 draft 样式，
+ * 故边调边看、且与最终导出逐像素一致），右侧模板选择 + 逐级别微调。
  *
- * draft 模式：进入时从 store 的已生效样式拷一份 draft，所有微调只动 draft；点「导出」
- * 才 setConfig(draft) 提交（让编辑/预览面板也跟着更新）并触发导出。点「取消」丢弃 draft，
+ * 重设计 A 后【纯调样式、不再是导出入口】——导出统一收敛到草稿页顶栏的「导出 ▾」下拉，消除
+ * 「两处导出」。本弹窗只负责把样式调好并【应用】到 store；应用后用户回下拉选格式导出。
+ *
+ * draft 模式：进入时从 store 的已生效样式拷一份 draft，所有微调只动 draft；点「应用样式」
+ * 才 setConfig(draft) 提交（让编辑/预览面板与后续导出都用新样式）。点「取消」丢弃 draft，
  * store 不变。
  */
 
@@ -46,19 +49,10 @@ const ALIGN_OPTS: { value: ProposalAlign; label: string }[] = [
 
 export function ProposalStyleModal({
   open,
-  onClose,
-  onExport,
-  onExportPdf,
-  onExportMd
+  onClose
 }: {
   open: boolean
   onClose: () => void
-  // 提交导出：弹窗已把 draft 提交进 store，这里把同一份 style 交给面板的导出逻辑。
-  onExport: (style: ProposalStyleConfig) => void
-  // 导出 PDF（P2-2）：与导出 Word 同款 style（PDF 同源于 docx），故也先提交 draft 再导出。
-  onExportPdf?: (style: ProposalStyleConfig) => void
-  // .md 归位到导出弹窗（从主工具栏移出，方案二）：纯文本无样式，故只触发导出 + 关弹窗，不提交 draft。
-  onExportMd?: () => void
 }): React.JSX.Element | null {
   const committed = useProposalStyleStore((s) => s.config)
   const setConfig = useProposalStyleStore((s) => s.setConfig)
@@ -84,17 +78,10 @@ export function ProposalStyleModal({
   const patchField = (patch: Partial<ProposalStyleConfig>): void =>
     setDraft((d) => ({ ...d, ...patch }))
 
-  const doExport = (): void => {
-    setConfig(draft) // 提交：编辑/预览面板随后也用新样式
-    onExport(draft)
-    onClose()
-  }
-
-  // 导出 PDF：与 doExport 同样先提交 draft（PDF 用同一份样式渲染），再交给面板的 PDF 链路。
-  const doExportPdf = (): void => {
-    if (!onExportPdf) return
+  // 应用样式：把 draft 提交进 store（编辑/预览面板与后续导出都随之用新样式），然后关闭。
+  // 不再触发导出——导出走草稿页顶栏的「导出 ▾」下拉。
+  const doApply = (): void => {
     setConfig(draft)
-    onExportPdf(draft)
     onClose()
   }
 
@@ -115,9 +102,9 @@ export function ProposalStyleModal({
         {/* 头部 */}
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div>
-            <div className="text-[15px] font-medium text-foreground">导出文档 · 样式模板</div>
+            <div className="text-[15px] font-medium text-foreground">样式模板</div>
             <div className="mt-0.5 text-[11px] text-muted-foreground">
-              选择风格 → 左侧实时预览 → 微调字体字号 → 导出 Word / PDF
+              选择风格 → 左侧实时预览 → 微调字体字号 → 应用（导出走顶栏「导出 ▾」）
             </div>
           </div>
           <button
@@ -376,32 +363,12 @@ export function ProposalStyleModal({
               >
                 取消
               </button>
-              {onExportMd && (
-                <button
-                  className="rounded-lg border border-border px-3.5 py-2 text-[12.5px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                  onClick={() => {
-                    onExportMd()
-                    onClose()
-                  }}
-                  title="导出为纯文本 Markdown（无样式，便于版本管理）"
-                >
-                  导出 Markdown
-                </button>
-              )}
-              {onExportPdf && (
-                <button
-                  className="rounded-lg border border-border px-3.5 py-2 text-[12.5px] text-foreground hover:bg-muted"
-                  onClick={doExportPdf}
-                  title="导出为 PDF（用当前样式，排版与左侧预览一致）"
-                >
-                  导出 PDF
-                </button>
-              )}
               <button
                 className="rounded-lg bg-accent px-5 py-2 text-[13px] font-semibold text-white hover:opacity-90"
-                onClick={doExport}
+                onClick={doApply}
+                title="把当前样式应用到草稿，之后用顶栏「导出 ▾」导出 Word / PDF"
               >
-                导出 Word
+                应用样式
               </button>
             </div>
           </div>

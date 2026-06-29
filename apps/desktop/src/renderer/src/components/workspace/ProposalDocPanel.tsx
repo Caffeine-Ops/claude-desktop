@@ -60,8 +60,11 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   // 「新建」二次确认：清空是破坏性的（丢掉整份草稿），故点一下先morph成确认条，再点才真清。
   // 内联确认而非 modal——与本工具栏其余轻量控件一致，不为一个动作引一层弹窗。
   const [confirmingNew, setConfirmingNew] = useState(false)
-  // 「导出 Word」改为先弹样式模板面板（选模板 + 实时预览 + 微调），用户在弹窗里点导出
-  // 才真正落盘。.md 仍直出（纯文本无样式）。
+  // 导出下拉菜单（重设计 A）：顶栏唯一导出入口，点开列 Word/PDF/Markdown（各带用途说明）+
+  // 「调整样式模板…」。取代旧的「导出 Word 按钮 + ⚙ 两处散落 + 弹窗里又一组导出」的混乱布局。
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  // 样式模板弹窗：现退化为【纯调样式】（选模板 + 实时预览 + 微调 + 应用），不再是导出入口——
+  // 导出统一收敛到上面的下拉，消除「两处导出」。由下拉里的「调整样式模板…」打开。
   const [styleModalOpen, setStyleModalOpen] = useState(false)
   // 跳阶自动补救计数（方案二·软化 stageSkip）：AI 越过目录门吐正文被阶段门拦时，静默自动重发
   // 「只生成目录」最多两次，不再弹红条暴露内部状态机。两次仍跳阶才露一行温和提示兜底。
@@ -309,24 +312,85 @@ export function ProposalDocPanel(): React.JSX.Element | null {
               清空草稿
             </button>
           )}
-          {/* 导出 Word：一键直出，用已生效样式（useProposalStyleStore，跨会话持久），不再
-              强制过样式弹窗（方案二·导出一键化）。要调样式/导出 .md 走右侧 ⚙。 */}
-          <button
-            className="rounded bg-accent px-2 py-0.5 text-white hover:opacity-90 disabled:opacity-50"
-            disabled={exporting}
-            onClick={() => void handleExport('docx', useProposalStyleStore.getState().config)}
-          >
-            {exporting ? '导出中…' : '导出 Word'}
-          </button>
-          {/* 样式 / 更多导出：开样式弹窗微调模板，.md 也归位在弹窗里（从主栏移出）。 */}
-          <button
-            className="rounded px-2 py-0.5 hover:bg-muted disabled:opacity-50"
-            disabled={exporting}
-            onClick={() => setStyleModalOpen(true)}
-            title="样式模板与更多导出选项"
-          >
-            ⚙
-          </button>
+          {/* 导出下拉（重设计 A）：唯一导出入口。三格式各带一句用途说明，让「这个按钮干嘛用」
+              一目了然；分隔线下「调整样式模板…」打开纯调样式弹窗。Word/PDF 用当前已生效样式
+              （useProposalStyleStore，跨会话持久）；先调样式就先走「调整样式模板…」应用再导出。 */}
+          <div className="relative">
+            <button
+              className="rounded bg-accent px-2 py-0.5 text-white hover:opacity-90 disabled:opacity-50"
+              disabled={exporting}
+              onClick={() => setExportMenuOpen((o) => !o)}
+              title="导出方案（Word / PDF / Markdown）"
+            >
+              {exporting ? '导出中…' : '导出 ▾'}
+            </button>
+            {exportMenuOpen && (
+              <>
+                {/* 点击空白处关闭（全屏透明捕获层，置于菜单下方）。 */}
+                <button
+                  type="button"
+                  aria-label="关闭导出菜单"
+                  className="fixed inset-0 z-20 cursor-default"
+                  onClick={() => setExportMenuOpen(false)}
+                />
+                <div className="absolute right-0 top-full z-30 mt-1 w-60 overflow-hidden rounded-lg border border-border bg-background py-1 text-foreground shadow-lg">
+                  <button
+                    type="button"
+                    className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-muted"
+                    onClick={() => {
+                      setExportMenuOpen(false)
+                      void handleExport('docx', useProposalStyleStore.getState().config)
+                    }}
+                  >
+                    <span className="mt-px">📄</span>
+                    <span className="min-w-0">
+                      <span className="block text-[12.5px] font-medium">Word（.docx）</span>
+                      <span className="block text-[10.5px] text-muted-foreground">交付客户、可继续编辑</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-muted"
+                    onClick={() => {
+                      setExportMenuOpen(false)
+                      void handleExportPdf(useProposalStyleStore.getState().config)
+                    }}
+                  >
+                    <span className="mt-px">📕</span>
+                    <span className="min-w-0">
+                      <span className="block text-[12.5px] font-medium">PDF</span>
+                      <span className="block text-[10.5px] text-muted-foreground">定稿发送、排版固定</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-muted"
+                    onClick={() => {
+                      setExportMenuOpen(false)
+                      void handleExport('md')
+                    }}
+                  >
+                    <span className="mt-px">📝</span>
+                    <span className="min-w-0">
+                      <span className="block text-[12.5px] font-medium">Markdown</span>
+                      <span className="block text-[10.5px] text-muted-foreground">纯文本、便于版本管理</span>
+                    </span>
+                  </button>
+                  <div className="my-1 border-t border-border" />
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onClick={() => {
+                      setExportMenuOpen(false)
+                      setStyleModalOpen(true)
+                    }}
+                  >
+                    ⚙ 调整样式模板…
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -567,16 +631,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         <ProposalPreview active={mode === 'preview'} />
       </div>
 
-      {/* 导出样式模板弹窗：弹窗内点「导出 Word」时提交 draft 样式并走 handleExport('docx', style)。 */}
-      <ProposalStyleModal
-        open={styleModalOpen}
-        onClose={() => setStyleModalOpen(false)}
-        onExport={(style) => {
-          void handleExport('docx', style)
-        }}
-        onExportPdf={(style) => void handleExportPdf(style)}
-        onExportMd={() => void handleExport('md')}
-      />
+      {/* 样式模板弹窗（重设计 A：纯调样式、非导出入口）：由「导出 ▾」下拉里的「调整样式模板…」
+          打开，点「应用样式」把 draft 提交进 store，之后导出走顶栏下拉。 */}
+      <ProposalStyleModal open={styleModalOpen} onClose={() => setStyleModalOpen(false)} />
     </div>
   )
 }
