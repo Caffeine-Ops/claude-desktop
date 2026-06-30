@@ -29,12 +29,12 @@ description: Start the browser SVG editor when it is not running, and apply subm
 **Precondition**: no preview service running on this project.
 
 ```bash
-python3 ${SKILL_DIR}/scripts/svg_editor/server.py <project_path> --daemon
+python3 ${SKILL_DIR}/scripts/svg_editor/server.py <project_path> --daemon --no-browser
 ```
 
 (Plain mode — no `--live`. The `--live` flag is reserved for Step 6's auto-startup.)
 
-The launcher binds `127.0.0.1:5050` (or the next free port), starts the server in the background, writes runtime files under `<project_path>/live_preview/`, opens the browser on a local desktop when possible, and edits `<project_path>/svg_output/` in place. After it prints the running URL, tell the user in their language, in one short message:
+The launcher binds `127.0.0.1:5050` (or the next free port), starts the server in the background, writes runtime files under `<project_path>/live_preview/`, and edits `<project_path>/svg_output/` in place. `--no-browser` suppresses the system browser window — the Claude Desktop host detects this `svg_editor/server.py` launch and embeds the editor in an in-app 「浏览器」canvas tab automatically. After it prints the running URL, tell the user in their language, in one short message:
 
 - editor is at the URL reported by the launcher, e.g. `http://localhost:5050`
 - **Direct edit** (deterministic tweaks — wording, color, coordinates, SVG attributes): select an element → change the controls in the right panel → preview updates immediately, but nothing is written to `svg_output/` until **Apply changes**. `Ctrl+Z` or the **Undo** button drops staged edits step by step; applied changes are logged to `<project>/live_preview/edits.jsonl`. Re-export stays chat-driven: say "re-export" / "重新导出" to refresh the PPTX.

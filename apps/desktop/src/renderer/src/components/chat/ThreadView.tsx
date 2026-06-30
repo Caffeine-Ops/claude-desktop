@@ -10,7 +10,7 @@ import {
   useMessage
 } from '@assistant-ui/react'
 import type { Attachment } from '@assistant-ui/core'
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, motion, useAnimate } from 'motion/react'
 
 import type { SessionMeta, WorkflowTask, PermissionRequest } from '../../../../shared/types'
 import { useI18n, useT, useToolLabel } from '../../i18n'
@@ -18,7 +18,14 @@ import {
   REASONING_PLACEHOLDER,
   useChatStore,
   useToolCallTasks,
-  useStreamingAskArgsText
+  useToolCallTiming,
+  usePendingAskTiming,
+  useTurnActivity,
+  useStreamingAskArgsText,
+  usePreviewServer,
+  useWrittenFiles,
+  useDelayedSessionLoading,
+  type WrittenFile
 } from '../../stores/chat'
 import { useComposerModeStore, type ComposerModeId } from '../../stores/composerMode'
 import { parsePartialToolArgs } from '../../stores/todos'
@@ -35,6 +42,8 @@ import { AssistantMarkdown } from './AssistantMarkdown'
 import { DictationWaveform } from './DictationWaveform'
 import { extractText, safeStringify } from './toolHelpers'
 import { friendlyToolView } from './ToolFormatters'
+import { CanvasConfirm } from './CanvasConfirm'
+import { LivePreviewEditor } from './LivePreviewEditor'
 import { PermissionModePicker } from '../permissions/PermissionModePicker'
 import { InlinePermissionPrompt } from '../permissions/InlinePermissionPrompt'
 import {
@@ -202,22 +211,30 @@ function ChatColumnResizeHandle({
 
 export function ThreadView(): React.JSX.Element {
   // Session transition signals from the chat store.
-  //   - sessionId      : switches when loadSession resolves (~100ms),
-  //                      drives the keyed content remount that plays
-  //                      the entrance tween.
+  //   - sessionId      : switches when loadSession resolves (~100ms, or
+  //                      synchronously on a history-cache hit). Drives the
+  //                      controlled opacity fade-in below (NOT a keyed
+  //                      remount — see the content column).
   //   - sessionLoading : stays true until switchSession resolves
   //                      (~3-8s cold start). Drives ONLY the thin
   //                      top progress bar — no full-column veil, no
   //                      content hide. Old content stays visible
   //                      until the new messages arrive, then swaps
-  //                      in a single graceful enter animation.
+  //                      with a soft fade.
   // Rationale: the full-screen loading overlay was reading as a hard
   // interrupt — eye jumped to the center, waited, jumped back. A
   // thin top bar is standard "something is loading" signal that
-  // keeps the user's focus anchored on content, while the keyed
-  // enter on swap preserves the sense of "the view changed".
+  // keeps the user's focus anchored on content, while the fade on
+  // swap preserves the sense of "the view changed".
   const sessionId = useChatStore((s) => s.sessionId)
-  const sessionLoading = useChatStore((s) => s.sessionLoading)
+  // Debounced variant for the *visual* progress bar only: a fast switch
+  // (cache hit / lazy engine) clears `sessionLoading` within a frame or
+  // two, and lighting the bar for that flicker reads as "always busy".
+  // `useDelayedSessionLoading` only returns true once loading has held
+  // for ~200ms, so a quick switch shows no bar at all while a real cold
+  // start still surfaces it. The raw `sessionLoading` is kept for any
+  // logic that must react immediately.
+  const sessionLoadingChrome = useDelayedSessionLoading()
   // Slides two-pane layout is bound PER SESSION, not to the live composer
   // picker: a session shows the right-hand slides workspace only if it was
   // *started* in slides mode (marked on first send — see the composer send
@@ -239,22 +256,53 @@ export function ThreadView(): React.JSX.Element {
   // (mode / permission picker) is open — its backdrop-blur otherwise sliced a
   // blurred band across the open menu (see stores/composerOverlay).
   const composerOverlayOpen = useComposerOverlayStore((s) => s.openCount > 0)
-  // Content key: sessionId plus a sentinel so the null → id case (first
-  // session, or after a hard reset) still flips the key and replays
-  // the entrance animation.
-  const contentKey = sessionId ?? '__new__'
+  // Session-switch fade-in (replaces the old keyed content remount).
+  //
+  // The previous design keyed the content column by sessionId, which
+  // unmounted + rebuilt the ENTIRE message subtree on every switch — for a
+  // long transcript that meant hundreds of message components re-mounting and
+  // every code block re-running highlight.js in a single frame (the "switch
+  // jank"). Now the column keeps a stable identity so assistant-ui can diff
+  // the message list by id and reuse DOM; we play a short controlled opacity
+  // fade on the existing node instead.
+  //
+  // Why a fade FROM 0.55 (not 0): the old content is still on screen at the
+  // moment of switch, so starting near-opaque reads as "the new view settles
+  // in" rather than a blink-to-black. Pure opacity (no y-translate, no blur)
+  // is a compositor-only property — it can't push the scroll container or
+  // flicker the scrollbar, which is exactly the regression that killed the
+  // earlier y+blur intro (see the viewport comment below).
+  const [scope, animate] = useAnimate()
+  useEffect(() => {
+    const node = scope.current
+    if (!node) return
+    // prefers-reduced-motion: skip the tween, snap to fully visible.
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      node.style.opacity = '1'
+      return
+    }
+    void animate(node, { opacity: [0.55, 1] }, { duration: 0.16, ease: [0.22, 1, 0.36, 1] })
+    // Re-run on every session change. Intentionally NOT keyed on message
+    // content — we fade on switch, not on each streamed delta.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId])
 
   return (
     <ThreadPrimitive.Root
-      className={
-        'relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-row bg-transparent ' +
-        // Slides mode: a 4px inset keeps the two white cards off the .app edges
-        // so each card's own `rounded` corners show in full — without it the
-        // outer corners get clipped by .app's radius and fight the card radius.
-        // The transparent inset reveals the .app background between/around the
-        // cards. Normal single-column chat keeps zero inset (fills the surface).
-        (isSlidesMode ? 'p-1' : '')
-      }
+      // No mode-dependent padding. Both normal and slides modes fill the
+      // surface edge-to-edge, so the root's box is IDENTICAL across a switch —
+      // that's what stops the page "jolting" when toggling between a normal
+      // (single-column) session and a slides (two-pane) session: previously
+      // slides mode added a 4px `p-1` inset that normal mode lacked, so every
+      // cross-mode switch animated the whole layout in/out by 4px on all sides.
+      //
+      // The cards' outer corners are now clipped by `.app`'s own 4px radius
+      // (overflow:hidden in main.css) — which is exactly 4px, the same as each
+      // card's `rounded-[4px]`, so the clip and the card radius coincide and no
+      // corner reads as mismatched. The two slides panes stay visually
+      // separated by the 6px transparent gutter in ChatColumnResizeHandle, which
+      // reveals the `.app` background between them — it never needed the inset.
+      className="relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-row bg-transparent"
     >
       {/* Left column: the chat itself (progress bar + message viewport +
           composer dock). In normal modes it's flex-1 and fills the whole
@@ -264,8 +312,10 @@ export function ThreadView(): React.JSX.Element {
       <div
         className={
           'relative flex h-full min-h-0 flex-col ' +
+          // 4px (the smallest radius, matching .app's clip) — explicit so it
+          // can't drift if Tailwind's bare `rounded` default ever changes.
           (isSlidesMode
-            ? 'shrink-0 overflow-hidden rounded bg-white'
+            ? 'shrink-0 overflow-hidden rounded-[4px] bg-white'
             : 'min-w-0 flex-1 bg-white')
         }
         // Slides mode: width is user-controlled (drag handle below) and
@@ -286,7 +336,7 @@ export function ThreadView(): React.JSX.Element {
           composer. Presence-animated so it also fades in/out rather
           than popping. */}
       <AnimatePresence>
-        {sessionLoading && <TopProgressBar />}
+        {sessionLoadingChrome && <TopProgressBar />}
       </AnimatePresence>
 
       {/* Scrollable message area. min-h-0 + flex-1 is the canonical
@@ -313,14 +363,16 @@ export function ThreadView(): React.JSX.Element {
             hero text lands at the vertical center of the viewport
             even when there are no messages yet.
 
-            No session-switch animation: the previous y-translate +
-            blur intro caused the empty-state content to briefly push
-            the scroll container past its viewport, flickering the
-            scrollbar and jittering the page horizontally. An
-            instant content swap is calmer and matches Apple's
-            "no surprise motion" sensibility. */}
+            Session-switch transition is a compositor-only opacity fade
+            driven by `useAnimate` above (ref={scope}) — NOT a y-translate
+            or blur. The earlier y+blur intro briefly pushed the scroll
+            container past its viewport, flickering the scrollbar and
+            jittering the page horizontally; a pure-opacity fade can't move
+            layout, so it stays calm while still signalling "the view
+            changed". The node identity is stable (no `key`) so the message
+            list diffs by id instead of remounting the whole subtree. */}
         <div
-          key={`content-${contentKey}`}
+          ref={scope}
           className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-3 pb-20 pt-8"
         >
           <ThreadPrimitive.Empty>
@@ -383,13 +435,13 @@ export function ThreadView(): React.JSX.Element {
               className="pointer-events-none absolute inset-x-0 bottom-[calc(100%-15px)] z-10 h-14 backdrop-blur-md [mask-image:linear-gradient(to_top,black_0,black_40%,transparent_100%)]"
             />
           ) : null}
-          {/* rounded-b matches the card's bottom corners. The dock's
-              `backdrop-blur` rasterizes independently of the card's
-              overflow-hidden + rounded clip (Chromium behavior), so without its
-              OWN bottom radius the dock's square corners punched through and the
-              card's bottom-left/right read as square. Rounding the dock itself
-              restores the corners. */}
-          <div className="rounded-b bg-background/45 px-3 pb-3 pt-4 backdrop-blur-xl backdrop-saturate-150">
+          {/* rounded-b-[4px] matches the card's bottom corners (the unified 4px
+              radius). The dock's `backdrop-blur` rasterizes independently of the
+              card's overflow-hidden + rounded clip (Chromium behavior), so
+              without its OWN bottom radius the dock's square corners punched
+              through and the card's bottom-left/right read as square. Rounding
+              the dock itself to the same 4px restores the corners. */}
+          <div className="rounded-b-[4px] bg-background/45 px-3 pb-3 pt-4 backdrop-blur-xl backdrop-saturate-150">
             <Composer />
           </div>
         </div>
@@ -572,7 +624,7 @@ function ChatHeader(): React.JSX.Element {
 
 /* ─────────────────────── Slides workspace ───────────────────── */
 
-type CanvasTab = 'slides' | 'outline' | 'files' | 'questions'
+type CanvasTab = 'slides' | 'outline' | 'files' | 'questions' | 'browser'
 
 const CANVAS_TAB_ICONS: Record<CanvasTab, React.ReactNode> = {
   slides: (
@@ -596,6 +648,12 @@ const CANVAS_TAB_ICONS: Record<CanvasTab, React.ReactNode> = {
       <circle cx="12" cy="12" r="9" />
       <path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .9-1 1.7M12 17h.01" />
     </svg>
+  ),
+  browser: (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18" />
+    </svg>
   )
 }
 
@@ -618,27 +676,94 @@ function SlidesWorkspace(): React.JSX.Element {
   const pendingAsk = usePendingAskUserQuestion(sessionId)
   const streamingArgs = useStreamingAskArgsText()
   const hasQuestions = pendingAsk !== null || streamingArgs !== null
+  // Active ppt-master server (kind + URL) when one is up, else null. Two phases:
+  //   - kind 'confirm' → the Eight-Confirmations page, embedded as an <iframe>
+  //     in the 「浏览器」tab (it's an interactive form).
+  //   - kind 'preview' → Executor live preview, rendered NATIVELY in 「幻灯片」
+  //     (SlidesLivePreview fetches the server's SVG and paints it itself).
+  // See usePreviewServer in stores/chat.
+  const server = usePreviewServer()
+  const hasConfirm = server?.kind === 'confirm'
+  const hasPreview = server?.kind === 'preview'
+  // Every file this session has written via Write — drives the 文件 tab and the
+  // auto-focus on each new write. See useWrittenFiles in stores/chat.
+  const writtenFiles = useWrittenFiles()
+  const hasFiles = writtenFiles.length > 0
   const [tab, setTab] = useState<CanvasTab>('slides')
 
-  // Auto-focus 问题 the moment a questionnaire appears (streaming OR pending);
-  // when it fully clears, drop back to 幻灯片 if we were on 问题.
+  // Auto-focus 问题 the moment a questionnaire OR the confirm server appears.
+  // The confirm Eight-Confirmations page now renders NATIVELY in the 问题 tab
+  // (CanvasConfirm), not as an iframe in 浏览器 — so both an AskUserQuestion
+  // questionnaire and a confirm server drive focus to 问题. When both clear,
+  // drop back to 幻灯片 if we were on 问题.
+  const wantsQuestionsTab = hasQuestions || hasConfirm
   useEffect(() => {
-    if (hasQuestions) setTab('questions')
+    if (wantsQuestionsTab) setTab('questions')
     else setTab((t) => (t === 'questions' ? 'slides' : t))
-  }, [hasQuestions])
+  }, [wantsQuestionsTab])
+
+  // Auto-focus the right tab for the live-preview server phase (unless the 问题
+  // tab is commanding focus): preview → 幻灯片 (which renders the live SVG
+  // itself). The confirm phase is handled above (native 问题 tab), so it no
+  // longer targets 浏览器. The 浏览器/iframe path remains only as a fallback.
+  useEffect(() => {
+    if (wantsQuestionsTab) return
+    if (hasPreview) setTab('slides')
+    else setTab((t) => (t === 'browser' ? 'slides' : t))
+  }, [hasPreview, wantsQuestionsTab])
+
+  // Auto-focus 文件 on each new write so the user watches files land as they're
+  // written (mirrors the 浏览器/问题 auto-focus). Keyed off a "write signature"
+  // — file count + the newest file's path — so it fires when a NEW file appears
+  // or a fresh Write starts, but NOT on every streaming-content tick of a file
+  // we've already focused (which would yank the user back if they switched away
+  // mid-stream).
+  //
+  // Focus precedence: 问题 (questionnaire/confirm) AND 幻灯片 (live preview) both
+  // outrank 文件. Once the live-preview server is up, the deck has entered the
+  // "generate SVG pages, watch them render" phase — every Write is an SVG page,
+  // and the user wants to watch it appear in 幻灯片, NOT be yanked into 文件 to
+  // read raw SVG source on each write. Before preview is up (the spec phase,
+  // writing design_spec.md / spec_lock.md), focusing 文件 on write is still the
+  // right call. So we suppress the 文件 grab while hasPreview is true. Distinct
+  // deps from the server effects above, so they never fight each render.
+  const lastWriteSigRef = useRef<string>('')
+  const newestFile = writtenFiles[writtenFiles.length - 1]
+  const writeSig = `${writtenFiles.length}|${newestFile?.path ?? ''}`
+  useEffect(() => {
+    if (writeSig === lastWriteSigRef.current) return
+    lastWriteSigRef.current = writeSig
+    if (!hasFiles || wantsQuestionsTab || hasPreview) return
+    setTab('files')
+  }, [writeSig, hasFiles, wantsQuestionsTab, hasPreview])
 
   const tabs: { id: CanvasTab; label: string }[] = [
     { id: 'slides', label: '幻灯片' },
     { id: 'outline', label: '大纲' },
     { id: 'files', label: '文件' },
-    // 问题 tab exists while a questionnaire is streaming or pending.
-    ...(hasQuestions ? [{ id: 'questions' as const, label: '问题' }] : [])
+    // 问题 tab: while a questionnaire is streaming/pending, OR while the
+    // confirm server is up (the Eight-Confirmations page renders natively here
+    // via CanvasConfirm — see body below).
+    ...(wantsQuestionsTab ? [{ id: 'questions' as const, label: '问题' }] : []),
+    // 浏览器 tab is kept ONLY as a fallback during the confirm phase: the native
+    // 问题 tab is now the primary surface, but the iframe path stays reachable
+    // (manual click) in case native rendering misbehaves. It carries no
+    // auto-focus anymore.
+    ...(hasConfirm ? [{ id: 'browser' as const, label: '浏览器' }] : [])
   ]
 
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded bg-white">
-      {/* Tab bar */}
-      <div className="flex shrink-0 items-center gap-0.5 border-b border-border/60 px-2 py-1.5">
+    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-white">
+      {/* Tab bar. Doubles as a window drag handle: the window is frameless
+          (titleBarStyle 'hiddenInset'), so the empty space of this bar is an
+          app-region drag surface (-webkit-app-region: drag) — grabbing it moves
+          the whole window. `select-none` stops the labels from being text-
+          selected while dragging. Each tab button opts BACK OUT with no-drag so
+          clicks still register (a drag region swallows click events). */}
+      <div
+        className="flex shrink-0 select-none items-center gap-0.5 border-b border-border/60 px-2 py-1.5"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      >
         {tabs.map((tDef) => {
           const active = tDef.id === tab
           return (
@@ -646,6 +771,7 @@ function SlidesWorkspace(): React.JSX.Element {
               key={tDef.id}
               type="button"
               onClick={() => setTab(tDef.id)}
+              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
               className={
                 'flex items-center gap-1 rounded-md px-2 py-1 text-[12px] transition-colors ' +
                 (active
@@ -661,11 +787,51 @@ function SlidesWorkspace(): React.JSX.Element {
       </div>
 
       {/* Body */}
-      {tab === 'questions' && hasQuestions ? (
+      {tab === 'questions' && hasConfirm && server ? (
+        // Confirm phase: the Eight-Confirmations page rendered NATIVELY (not an
+        // iframe). CanvasConfirm fetches the same Flask server's
+        // /api/catalogs + /api/recommendations off `server.url`, lets the user
+        // pick, and POSTs the SAME contract back to /api/confirm — the server's
+        // --wait-only loop (watching result.json) is unchanged. confirm takes
+        // precedence over a questionnaire here (the two never coincide, but if
+        // they did, the active confirm phase is the right surface).
+        <CanvasConfirm key={server.url} baseUrl={server.url} />
+      ) : tab === 'questions' && hasQuestions ? (
         <CanvasQuestionnaire
           request={pendingAsk}
           streamingArgsText={streamingArgs}
         />
+      ) : tab === 'browser' && hasConfirm && server ? (
+        // Confirm phase only: the Eight-Confirmations page embedded in-app
+        // instead of the system Chrome window the skill used to open.
+        // `key={server.url}` forces a fresh load if the URL changes. No
+        // `sandbox` attribute: the page is a local Flask app this app itself
+        // launches on a trusted loopback origin, and it confirms via
+        // `fetch('/api/confirm', {method:'POST'})` — a sandbox (even with
+        // allow-same-origin) gave the framed page an opaque origin that
+        // silently broke that same-origin POST, leaving it stuck on the
+        // "deriving…" spinner. CSP frame-src already scopes loads to loopback
+        // (see renderer/index.html).
+        <iframe
+          key={server.url}
+          src={server.url}
+          title="ppt-master 确认设计方案"
+          className="min-h-0 w-full flex-1 border-0 bg-white"
+        />
+      ) : tab === 'slides' && hasPreview && server ? (
+        // Live-preview phase: the native editor (replaces the old read-only
+        // SlidesLivePreview). Fetches the svg_editor server's SVG and renders
+        // it natively WITH the annotation/edit interactions (element select →
+        // edit instruction → annotate / 应用修改 / 撤销 / 退出), the same flow the
+        // browser editor at :5050 offered. See LivePreviewEditor.
+        <LivePreviewEditor baseUrl={server.url} />
+      ) : tab === 'files' && hasFiles ? (
+        // 文件 tab: the full content of files written this session, two-pane
+        // (file list + content) like SlidesLivePreview. The inline Write card's
+        // content preview is suppressed in slides mode (see writeHandledByCanvas
+        // in ToolCallCard) precisely so this is the single place that content
+        // lives — no duplication.
+        <WrittenFilesPanel files={writtenFiles} newestPath={newestFile?.path} />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           <div className="text-[15px] font-semibold text-foreground">未命名</div>
@@ -679,16 +845,196 @@ function SlidesWorkspace(): React.JSX.Element {
 }
 
 /**
+ * 文件 canvas tab body: every file written this session in a two-pane layout
+ * (file list left, selected file's content right), mirroring SlidesLivePreview's
+ * shape. Until the user manually picks a file it follows the newest write, so
+ * each Write surfaces its content immediately; a manual pick pins the view.
+ *
+ * The content is the same text the inline Write card would have shown — but in
+ * slides mode that inline preview is suppressed (writeHandledByCanvas), so this
+ * is the one place it renders. Streaming writes show a live, growing preview.
+ */
+function WrittenFilesPanel({
+  files,
+  newestPath
+}: {
+  files: WrittenFile[]
+  newestPath?: string
+}): React.JSX.Element {
+  const [active, setActive] = useState<string | null>(null)
+  // True until the user clicks a file — while true the view auto-follows the
+  // newest write so generation is watchable; a manual pick pins it.
+  const followLatestRef = useRef(true)
+
+  // Follow the newest write while unpinned (and seed the initial selection).
+  useEffect(() => {
+    if (followLatestRef.current && newestPath) setActive(newestPath)
+  }, [newestPath])
+
+  // Resolve the selected file; fall back to the newest if the pinned path
+  // vanished (shouldn't happen — writes only accumulate — but stay defensive).
+  const selected =
+    files.find((f) => f.path === active) ?? files[files.length - 1] ?? null
+
+  const pick = (path: string): void => {
+    followLatestRef.current = false // manual pick pins the view
+    setActive(path)
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      {/* File list */}
+      <div className="w-44 shrink-0 overflow-y-auto border-r border-border/60 py-1.5">
+        {files.map((f, i) => {
+          const on = f.path === selected?.path
+          return (
+            <button
+              key={f.path}
+              type="button"
+              onClick={() => pick(f.path)}
+              className={
+                'flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[12px] transition-colors ' +
+                (on
+                  ? 'bg-foreground/[0.06] font-medium text-foreground'
+                  : 'text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground/90')
+              }
+              title={f.path}
+            >
+              <span className="shrink-0 tabular-nums text-muted-foreground/50">
+                {String(i + 1).padStart(2, '0')}
+              </span>
+              <span className="min-w-0 truncate">{f.name}</span>
+              {f.streaming && (
+                <span
+                  aria-hidden
+                  className="ml-auto size-1.5 shrink-0 animate-pulse rounded-full bg-accent"
+                />
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Selected file content */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {selected ? (
+          <>
+            <div className="flex shrink-0 items-baseline gap-2 border-b border-border/60 px-4 py-2">
+              <code className="min-w-0 truncate font-mono text-[12px] text-foreground" title={selected.path}>
+                {selected.name}
+              </code>
+              <span className="shrink-0 text-[11px] text-muted-foreground/60">
+                {selected.streaming
+                  ? '写入中…'
+                  : `${selected.content.split('\n').length} 行`}
+              </span>
+            </div>
+            {/* Keyed by path so switching files resets the scroll/follow state
+                (a fresh mount), while same-file streaming updates re-render in
+                place and keep auto-scrolling. */}
+            <WrittenFileContent key={selected.path} file={selected} />
+          </>
+        ) : (
+          <div className="flex flex-1 items-center justify-center text-[13px] text-muted-foreground">
+            选择左侧文件查看内容
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The selected written file's body, rendered richly rather than as raw text:
+ *   - Markdown files (.md) → AssistantMarkdown, so the deck outline reads as a
+ *     real document (headings, lists, tables) instead of a `#`/`-` soup.
+ *   - Everything else → highlight.js syntax highlighting (same hljs + palette
+ *     as CodeFileView, but in a full-height scroll area, no max-h/fade mask).
+ *
+ * Auto-scroll-to-bottom: while a file is still streaming we follow the tail so
+ * the newest lines stay in view — UNLESS the user has scrolled up to read
+ * earlier content, in which case we leave them where they are (re-engaging only
+ * when they scroll back near the bottom). Mounted with `key={path}` by the
+ * parent, so each file starts at the top with follow re-armed.
+ */
+function WrittenFileContent({ file }: { file: WrittenFile }): React.JSX.Element {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // Whether to keep pinning the view to the bottom as content grows. Starts
+  // true; a manual scroll-up turns it off, scrolling back near the bottom
+  // turns it on again. A ref (not state) so the scroll handler and the
+  // post-render effect share it without extra renders.
+  const followBottomRef = useRef(true)
+
+  const isMarkdown = /\.(md|markdown)$/i.test(file.path)
+  const language = languageFromPath(file.path)
+
+  // hljs highlight (skipped for markdown, which AssistantMarkdown handles).
+  const html = useMemo(() => {
+    if (isMarkdown) return ''
+    try {
+      if (language && hljs.getLanguage(language)) {
+        return hljs.highlight(file.content, { language, ignoreIllegals: true }).value
+      }
+      return hljs.highlightAuto(file.content).value
+    } catch {
+      return escapeHtml(file.content)
+    }
+  }, [file.content, language, isMarkdown])
+
+  // Track whether the user is near the bottom; only then do we auto-follow.
+  const onScroll = useCallback((): void => {
+    const el = scrollRef.current
+    if (!el) return
+    const nearBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 40
+    followBottomRef.current = nearBottom
+  }, [])
+
+  // After each content update, if we're still following (and the file is
+  // actively streaming), stick to the bottom so new lines stay visible.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    if (file.streaming && followBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [file.content, file.streaming])
+
+  return (
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="min-h-0 flex-1 overflow-auto px-4 py-3"
+    >
+      {isMarkdown ? (
+        <AssistantMarkdown text={file.content} />
+      ) : (
+        <pre
+          className="whitespace-pre font-mono text-[11.5px] leading-[1.55] text-foreground/90 [font-feature-settings:'calt','tnum']"
+          // hljs returns escaped HTML with <span class="hljs-*"> wrappers that
+          // our highlight.css palette already targets — same as CodeFileView.
+          dangerouslySetInnerHTML={{ __html: html || escapeHtml(file.content) }}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
  * Canvas questionnaire — the AskUserQuestion form rendered in the 问题 tab
  * (the full-form layout from the reference: numbered questions, option cards
- * with descriptions, an 其他 free-text row, and a 提交答案 / AI 自行决定 bar).
+ * with descriptions, an 其他 free-text row, and a 提交答案 bar).
  *
  * Answers ride the SAME permission-broker path the inline prompt uses — there
  * is no separate channel. Submit → respond(requestId, 'allow-once', {answers})
- * feeds the answers back as the tool's updatedInput; 「AI 自行决定」→
- * respond(requestId, 'deny') cancels the question so the model proceeds on its
- * own. (We must NOT send a user message / fabricate a tool_result — the broker
- * would hang and the text would be swallowed; see the project's error notes.)
+ * feeds the answers back as the tool's updatedInput. (We must NOT send a user
+ * message / fabricate a tool_result — the broker would hang and the text would
+ * be swallowed; see the project's error notes.)
+ *
+ * Note: there is intentionally no「AI 自行决定」escape hatch here. An earlier
+ * version had one that went through respond('deny'), which the model read as
+ * 「user refused」and answered every question with its first option. The button
+ * was removed rather than reworked — the user must answer explicitly.
  */
 function CanvasQuestionnaire({
   request,
@@ -701,6 +1047,11 @@ function CanvasQuestionnaire({
   // answerable once the permission request exists (has a requestId); during the
   // pure-streaming phase it's a read-only preview.
   const answerable = request !== null
+  // Elapsed timer for the questionnaire header. The inline ToolCallCard (which
+  // normally carries this) is suppressed in slides mode, so we read the same
+  // AskUserQuestion timing here and show it next to「请回答以下问题」. Still
+  // running until the user submits and the tool result lands (endedAt).
+  const { startedAt: askStartedAt, endedAt: askEndedAt } = usePendingAskTiming()
 
   // Hold the last successfully-parsed questions so a streaming frame that
   // lands mid-`\uXXXX` escape (parsePartialToolArgs returns null that tick)
@@ -739,8 +1090,18 @@ function CanvasQuestionnaire({
     setAnswers((a) => ({ ...a, [q]: text }))
   }
 
+  // Every question must carry a non-empty answer before submit is allowed.
+  // (A chosen option label, or non-blank 其他 text — both land in `answers`.)
+  const allAnswered =
+    questions.length > 0 &&
+    questions.every((q) => {
+      const a = answers[q.question]
+      return typeof a === 'string' && a.trim().length > 0
+    })
+
   const submit = (): void => {
     if (!request) return // still streaming — not answerable yet
+    if (!allAnswered) return // guard: must answer every question first
     // Build answers in question order for a stable tool_result.
     const out: Record<string, string> = {}
     for (const q of questions) {
@@ -750,19 +1111,21 @@ function CanvasQuestionnaire({
     void respond(request.requestId, 'allow-once', { answers: out })
   }
 
-  const letAi = (): void => {
-    if (!request) return
-    // Cancel the question — the model proceeds without an explicit answer.
-    void respond(request.requestId, 'deny')
-  }
-
   if (questions.length === 0) {
     // Streaming but nothing parseable yet → "generating"; finalized but empty
     // → a real parse failure.
     return (
       <div className="relative min-h-0 flex-1 overflow-y-auto px-8 py-6">
         {!answerable ? <AppleGlowEffect /> : null}
-        <h2 className="text-[20px] font-bold text-foreground">请回答以下问题</h2>
+        <div className="flex items-baseline gap-3">
+          <h2 className="text-[20px] font-bold text-foreground">请回答以下问题</h2>
+          <ToolElapsed
+            startedAt={askStartedAt}
+            endedAt={askEndedAt}
+            running={askEndedAt === undefined}
+            className="ml-auto self-center"
+          />
+        </div>
         <p
           className={
             'mt-3 text-[13px] ' +
@@ -785,7 +1148,15 @@ function CanvasQuestionnaire({
           once answering is possible. */}
       {!answerable ? <AppleGlowEffect /> : null}
       <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
-        <h2 className="text-[20px] font-bold text-foreground">请回答以下问题</h2>
+        <div className="flex items-baseline gap-3">
+          <h2 className="text-[20px] font-bold text-foreground">请回答以下问题</h2>
+          <ToolElapsed
+            startedAt={askStartedAt}
+            endedAt={askEndedAt}
+            running={askEndedAt === undefined}
+            className="ml-auto self-center"
+          />
+        </div>
         <p className="mt-1 text-[13px] text-muted-foreground">问题</p>
 
         {/* While streaming (!answerable) the whole questionnaire breathes — a
@@ -883,9 +1254,10 @@ function CanvasQuestionnaire({
                     placeholder="其他（请填写）"
                     className={
                       'w-full rounded-xl border px-4 py-3 text-[14px] text-foreground placeholder:text-muted-foreground/60 outline-none transition-colors disabled:opacity-70 ' +
+                      'focus:border-accent focus:bg-accent/[0.06] focus:ring-2 focus:ring-accent/20 ' +
                       (otherSelected
                         ? 'border-accent bg-accent/[0.06]'
-                        : 'border-border focus:border-foreground/30')
+                        : 'border-border hover:border-foreground/20')
                     }
                   />
                 </div>
@@ -901,22 +1273,18 @@ function CanvasQuestionnaire({
         <button
           type="button"
           onClick={submit}
-          disabled={!answerable}
+          disabled={!answerable || !allAnswered}
           className="rounded-full bg-foreground px-5 py-2 text-[13px] font-medium text-background transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
         >
           提交答案
         </button>
-        <button
-          type="button"
-          onClick={letAi}
-          disabled={!answerable}
-          className="text-[13px] text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          AI 自行决定
-        </button>
         {!answerable ? (
           <span className="text-[12.5px] text-muted-foreground">
             AI 正在生成问题…
+          </span>
+        ) : !allAnswered ? (
+          <span className="text-[12.5px] text-muted-foreground">
+            请回答全部问题后再提交
           </span>
         ) : null}
       </div>
@@ -1041,7 +1409,7 @@ function UserMessage(): React.JSX.Element {
 const USER_BUBBLE_MAX_PX = 150
 
 /** Join a user message's text parts into the full raw string (for the
- *  full-text modal + copy). Mirrors the content-walk in AssistantFileCards. */
+ *  full-text modal + copy). */
 function useUserMessageText(): string {
   const message = useMessage()
   return useMemo(() => {
@@ -1593,258 +1961,7 @@ function AssistantMessage(): React.JSX.Element {
           Empty: ThinkingSpinner
         }}
       />
-      {/* File cards for any files the assistant wrote this turn. Renders
-          only once the turn completes (see AssistantFileCards). */}
-      <AssistantFileCards />
     </MessagePrimitive.Root>
-  )
-}
-
-/**
- * Match absolute file paths inside assistant text. The assistant often
- * writes files via a Bash/python heredoc (no `file_path` tool arg to
- * scrape), so the only reliable signal is the path it prints in prose,
- * e.g. "已保存为 `/Users/me/Desktop/方案/报告.docx`". We therefore scrape
- * the TEXT, not tool args.
- *
- * The path:
- *   - starts at `/` that's at string start or preceded by whitespace,
- *     a backtick, or a quote (so we catch `…` / "…" wrapped paths and
- *     bare ones, but not a `//` inside a URL's `http://`).
- *   - runs over any non-whitespace, non-quote, non-backtick chars —
- *     this includes CJK, spaces are NOT allowed (a path with spaces in
- *     prose is usually backtick/quote-wrapped, handled by the boundary).
- *   - must contain a filename with an extension in the last segment, so
- *     we don't card a bare directory like `/Users/me/Desktop`.
- *
- * Existence is verified server-side (chatApi.statFiles) — this regex
- * only proposes candidates; main drops anything that isn't a real file.
- */
-const ABS_PATH_RE = /(?:^|[\s`"'(])(\/[^\s`"'()]*\/[^\s`"'()/]+\.[A-Za-z0-9]+)/g
-
-function scrapeAbsolutePaths(text: string): string[] {
-  const out: string[] = []
-  const seen = new Set<string>()
-  let m: RegExpExecArray | null
-  ABS_PATH_RE.lastIndex = 0
-  while ((m = ABS_PATH_RE.exec(text)) !== null) {
-    let path = m[1]!
-    // Trim trailing sentence punctuation the regex may have swept in
-    // (e.g. "保存为 /a/b.docx。" → drop the 。/,/) etc.).
-    path = path.replace(/[。，、,.;:)）】」"'`]+$/, '')
-    if (!path || seen.has(path)) continue
-    seen.add(path)
-    out.push(path)
-  }
-  return out
-}
-
-/**
- * Extract absolute file paths a tool call PRODUCED or MODIFIED — the
- * reliable source for "what file did this turn leave on disk", since
- * it's the path the model passed to the tool, not prose it wrote after.
- *
- *   - Write/Edit/MultiEdit/NotebookEdit → the `file_path` arg.
- *   - Bash → absolute paths inside the `command` string, but ONLY when
- *     the command looks like it WRITES (mv/cp/touch/tee/install/… or a
- *     `>`/`>>` redirect). A read-only `cat /a/x.txt` / `grep … /a/y.log`
- *     must not card files it merely inspected, and those paths usually
- *     still exist so statFiles wouldn't catch them. The source path of a
- *     `mv` is included too, but statFiles drops it (it no longer exists),
- *     so only the resulting file ends up carded.
- *
- * Deliberately NOT Read: a turn that merely reads files shouldn't card
- * them — the cards mean "here's what I made for you", and a read file
- * almost always still exists, so it would survive statFiles and spam a
- * card per file the model glanced at.
- *
- * Returns only absolute (`/…`) paths so statFiles gets resolvable input;
- * a bare `file_path: "src/foo.ts"` from a relative-cwd tool is skipped
- * (we can't resolve cwd here) rather than stat'd against the wrong root.
- */
-const FILE_WRITING_TOOLS = new Set([
-  'Write',
-  'Edit',
-  'MultiEdit',
-  'NotebookEdit'
-])
-
-// A Bash command is treated as file-producing if it invokes a known
-// write/move verb OR contains an output redirect. Word-boundary anchored
-// so `cat`/`category` don't match a `cp`-style verb by substring; the
-// redirect alternative catches `cmd > /abs/out` regardless of the verb.
-const BASH_WRITE_RE =
-  /(?:^|[\s;&|(])(?:mv|cp|touch|tee|install|dd|rsync|ln|mkdir|convert|ffmpeg|pandoc|zip|tar|sed\s+-i)\b|>>?/
-
-function pathsFromToolCall(toolName?: string, args?: unknown): string[] {
-  if (!args || typeof args !== 'object') return []
-  const obj = args as Record<string, unknown>
-  if (toolName === 'Bash') {
-    const cmd = obj.command
-    if (typeof cmd !== 'string' || !BASH_WRITE_RE.test(cmd)) return []
-    return scrapeAbsolutePaths(cmd)
-  }
-  if (toolName && FILE_WRITING_TOOLS.has(toolName)) {
-    const fp = pickFilePath(args)
-    return fp && fp.startsWith('/') ? [fp] : []
-  }
-  return []
-}
-
-/**
- * Render a card per file the assistant produced this turn, beneath the
- * message body — appearing only AFTER the turn finishes so cards don't
- * pop in mid-stream while the model is still writing.
- *
- * Pipeline:
- *   1. Collect candidate absolute paths from this turn from TWO sources:
- *      a) the tool calls the assistant actually ran — `file_path` of
- *         Write/Edit/MultiEdit/NotebookEdit, and any absolute path inside
- *         a Bash `command` (so a `mv …/a.docx …/b.docx` cards the result).
- *         This is the reliable source: it's the path the model operated
- *         on, not whatever it happened to spell out in prose afterwards.
- *      b) the prose text parts (scrapeAbsolutePaths) — a fallback for
- *         turns that produced a file via a tool we don't special-case but
- *         still named the absolute path in the reply.
- *   2. Ask main which of those actually exist as files (chatApi.statFiles)
- *      — the renderer has no fs access, and we don't want to card a path
- *      the model merely mentioned/read but didn't leave on disk (a renamed
- *      file's old path is gone, so only the survivor cards).
- *   3. Render a card per surviving file; clicking opens it with the OS
- *      default app (chatApi.openPath → shell.openPath).
- */
-function AssistantFileCards(): React.JSX.Element | null {
-  const message = useMessage()
-
-  // Gate on completion. A streaming assistant message has
-  // `status.type === 'running'`; we only verify + render once it's done.
-  const status = (message as { status?: { type?: string } }).status
-  const isRunning = status?.type === 'running'
-
-  // Candidate paths for this turn, drawn from the tool calls the model
-  // actually ran (reliable) plus a prose fallback. Memoized on message
-  // identity so we don't re-scrape on unrelated rerenders.
-  const candidates = useMemo(() => {
-    const content = (message as { content?: readonly unknown[] }).content
-    if (!Array.isArray(content)) return [] as string[]
-    const out: string[] = []
-    let text = ''
-    for (const part of content) {
-      const p = part as {
-        type?: string
-        text?: string
-        toolName?: string
-        args?: unknown
-      }
-      if (p.type === 'text' && typeof p.text === 'string') {
-        text += (text ? '\n' : '') + p.text
-      } else if (p.type === 'tool-call') {
-        out.push(...pathsFromToolCall(p.toolName, p.args))
-      }
-    }
-    // Prose paths come after tool paths so tool-derived candidates (the
-    // ones we trust most) sort first; the final dedupe keeps first-seen.
-    if (text) out.push(...scrapeAbsolutePaths(text))
-    // Dedupe while preserving order.
-    return out.filter((p, i) => out.indexOf(p) === i)
-  }, [message])
-
-  // Verified subset (exists + is-file), resolved by main. Empty until
-  // the async statFiles round-trip resolves.
-  const [files, setFiles] = useState<readonly string[]>([])
-
-  useEffect(() => {
-    // Only verify after the turn completes and only if we found any
-    // candidates — keeps the IPC chatter to one call per finished turn
-    // that actually mentions a path.
-    if (isRunning || candidates.length === 0) {
-      setFiles([])
-      return
-    }
-    let cancelled = false
-    window.chatApi
-      .statFiles({ paths: candidates })
-      .then((res) => {
-        if (!cancelled) setFiles(res.files)
-      })
-      .catch((err) => {
-        console.error('[AssistantFileCards] statFiles failed', err)
-        if (!cancelled) setFiles([])
-      })
-    return () => {
-      cancelled = true
-    }
-    // candidates is a fresh array each render but its *contents* only
-    // change when the message text changes; join to a stable dep key.
-  }, [isRunning, candidates.join(' ')]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (isRunning || files.length === 0) return null
-
-  return (
-    // Indented to line up under the text column (gutter dot is size-6
-    // + gap-3 ≈ the `ml-9` here), so cards sit flush with the prose.
-    <div className="ml-9 flex flex-col gap-2">
-      {files.map((path) => (
-        <AssistantFileCard key={path} path={path} />
-      ))}
-    </div>
-  )
-}
-
-/**
- * One file card: document glyph + file name + a type sub-label, the
- * whole row clickable to open the file. Visual reference is the
- * attachment-list card style (rounded border, muted icon tile, name +
- * meta stacked). On click we call chatApi.openPath; a non-empty error
- * is surfaced inline so a missing/unhandled file isn't a silent no-op.
- */
-function AssistantFileCard({ path }: { path: string }): React.JSX.Element {
-  const [error, setError] = useState<string | null>(null)
-  const [opening, setOpening] = useState(false)
-
-  const name = basenameOf(path)
-  // Reuse the composer's extension→language map only for a friendly
-  // upper-case type tag; fall back to the bare extension.
-  const ext = name.includes('.') ? name.split('.').pop()!.toUpperCase() : ''
-  const lang = languageFromPath(path)
-  const typeLabel = lang ? `${lang} · ${ext}` : ext || 'FILE'
-
-  const handleOpen = useCallback(async () => {
-    if (opening) return
-    setOpening(true)
-    setError(null)
-    try {
-      const res = await window.chatApi.openPath({ absPath: path })
-      if (res.error) setError(res.error)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setOpening(false)
-    }
-  }, [opening, path])
-
-  return (
-    <button
-      type="button"
-      onClick={handleOpen}
-      title={path}
-      className="group/fc flex w-full max-w-md items-center gap-3 rounded-xl border border-border bg-card/60 p-2.5 text-left transition-colors hover:border-accent/40 hover:bg-accent/[0.04] disabled:opacity-60"
-      disabled={opening}
-    >
-      {/* Icon tile — coloured per file type (sits on a neutral surface). */}
-      <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
-        <FileTypeIcon pathOrName={path} size={22} />
-      </div>
-      {/* Name + meta */}
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-medium text-foreground">
-          {name}
-        </div>
-        <div className="truncate text-[11px] text-muted-foreground/70">
-          {error ? error : typeLabel}
-        </div>
-      </div>
-    </button>
   )
 }
 
@@ -2142,6 +2259,10 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   // the permission prompt above, since assistant-ui's Fallback props
   // don't carry the part's `tasks` field. Empty for ordinary tools.
   const subtasks = useToolCallTasks(toolCallId)
+  // Per-tool elapsed timer (header, right-aligned). startedAt is stamped when
+  // the tool call begins; endedAt when its result lands. ToolElapsed ticks live
+  // while running and freezes on the final duration once endedAt exists.
+  const { startedAt: toolStartedAt, endedAt: toolEndedAt } = useToolCallTiming(toolCallId)
   // AskUserQuestion is a special beast — its "args" are the questions
   // themselves and the InlinePermissionPrompt renders the dedicated
   // interactive view that lets the user pick answers. While that prompt
@@ -2169,6 +2290,14 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   )
   const askHandledByCanvas =
     toolName === 'AskUserQuestion' && cardIsSlides
+  // In slides sessions the canvas's 文件 tab shows the FULL written-file
+  // content (and auto-focuses on each write), so the inline card's content
+  // preview would just duplicate it. Suppress the friendly Content pane for
+  // Write calls here — but keep the headline ("写入文件 total.md · 82 行"),
+  // which is a useful one-line marker, not a duplicate of the canvas.
+  // Outside slides sessions (no canvas) the inline preview stays the only
+  // place to see what was written, so it's untouched.
+  const writeHandledByCanvas = toolName === 'Write' && cardIsSlides
   const hideInputPane = askPending || askHandledByCanvas
 
   // Input-pane display logic — see the original prop-shape comment.
@@ -2218,9 +2347,14 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   //     hideInputPane from the AskUserQuestion special-case)
   //   - friendly.input === null      ⇒ no input pane at all
   //   - friendly.input === object    ⇒ friendly replacement
-  const useFriendlyInput = Boolean(friendly?.input)
+  // `writeHandledByCanvas` drops the friendly Content pane (the canvas 文件 tab
+  // owns it); the headline above still renders.
+  const useFriendlyInput = Boolean(friendly?.input) && !writeHandledByCanvas
   const hideDefaultInput =
-    hideInputPane || friendly?.input === null || useFriendlyInput
+    hideInputPane ||
+    writeHandledByCanvas ||
+    friendly?.input === null ||
+    useFriendlyInput
 
   // Same semantics for the output slot, with the extra wrinkle that
   // the default output splits into CodeFileView vs JsonView based on
@@ -2230,15 +2364,6 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   const hideDefaultOutput =
     friendly?.output === null || useFriendlyOutput || result === undefined
 
-  // The "raw data" fallback toggle is only meaningful when we actually
-  // replaced at least one of the default panes with a friendly one.
-  // Otherwise the default panes are already on screen and there's
-  // nothing to "reveal". Suppressed while AskUserQuestion is pending so
-  // the user can't expand a duplicate JSON copy of the questions the
-  // interactive prompt is already showing.
-  const showRawDataToggle =
-    !askPending && (useFriendlyInput || useFriendlyOutput)
-
   // Slides-session AskUserQuestion is rendered entirely in the canvas's 问题
   // tab (streaming preview + answerable form), so this inline card — headline,
   // streaming JSON, prompt and all — would be a duplicate. Render nothing.
@@ -2246,41 +2371,40 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   if (askHandledByCanvas) return <></>
 
   return (
-    <div className="flex w-full gap-3">
-      <span
-        aria-hidden
-        className={
-          'mt-[3px] shrink-0 select-none font-mono text-[13px] leading-relaxed ' +
-          // DESIGN.md §2: Apple Blue is the ONLY chromatic accent;
-          // no amber/yellow anywhere in the palette. The gutter glyph
-          // turns accent-blue while streaming and neutral when done.
-          (running ? 'text-accent' : 'text-muted-foreground/60')
-        }
-      >
-        ⎿
-      </span>
-      <div className="min-w-0 flex-1">
-        <details open={running} className="group/tool">
+    <div className="w-full min-w-0">
+      <details open={running} className="group/tool">
+          {/* Compact tool header (DESIGN.md §4): a ringed status check,
+              the tool label, and the most-informative arg (command /
+              file / query) inline on the same row — no DONE pill, no
+              gutter glyph. Mirrors the lightweight "已执行命令 ls -la"
+              row in the reference design. The summary stays visible when
+              expanded (it IS the headline), so we drop the old
+              group-open hide. */}
           <summary className="flex cursor-pointer list-none items-center gap-2 text-[13px]">
-            <StatusDot running={running} />
-            <span className="font-mono font-medium text-foreground">
+            <StatusCheck running={running} />
+            <span className="shrink-0 font-medium text-foreground">
               {toolLabel(toolName)}
             </span>
-            <StatusPill running={running} />
             {summary && (
-              <span className="ml-0.5 min-w-0 truncate font-mono text-[11.5px] text-muted-foreground/70 group-open/tool:hidden">
+              <span className="min-w-0 truncate font-mono text-[12px] text-muted-foreground">
                 {summary}
               </span>
             )}
+            <ToolElapsed
+              startedAt={toolStartedAt}
+              endedAt={toolEndedAt}
+              running={running}
+              className="ml-auto"
+            />
             <span
               aria-hidden
-              className="ml-auto font-mono text-[10.5px] text-muted-foreground/60 transition group-open/tool:rotate-90"
+              className="shrink-0 font-mono text-[10.5px] text-muted-foreground/50 transition group-open/tool:rotate-90"
             >
-              ▸
+              ▾
             </span>
           </summary>
 
-          <div className="mt-2 space-y-2 text-[12px]">
+          <div className="mt-2 space-y-2 pl-[22px] text-[12px]">
             {/* While AskUserQuestion is pending, hide the static question
                 preview (headline + friendly input) — the interactive
                 InlinePermissionPrompt below already shows the questions,
@@ -2341,40 +2465,21 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
                 </ToolPane>
               ))}
 
-            {showRawDataToggle && (
-              <details className="group/raw">
-                <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground/60 transition hover:text-muted-foreground">
-                  <span
-                    aria-hidden
-                    className="inline-block transition group-open/raw:rotate-90"
-                  >
-                    ▸
-                  </span>
-                  {t('toolRawDataSummary')}
-                </summary>
-                <div className="mt-1.5 space-y-2">
-                  {!hideInputPane && (
-                    <ToolPane
-                      label={t('toolPaneInputLabel')}
-                      copyText={inputBody}
-                    >
-                      <JsonView text={inputBody} maxHeight />
-                    </ToolPane>
-                  )}
-                  {result !== undefined && (
-                    <ToolPane
-                      label={t('toolPaneOutputLabel')}
-                      copyText={safeStringify(result)}
-                    >
-                      <JsonView text={safeStringify(result)} maxHeight />
-                    </ToolPane>
-                  )}
-                </div>
-              </details>
-            )}
+            {/* Running placeholder — fills the otherwise-empty gap under a
+                tool card while it executes and no output has streamed back
+                yet. A pulsing accent dot + "正在执行…" with an animated
+                ellipsis (pure-CSS .tool-loading-dots). Suppressed once any
+                output lands (useFriendlyOutput / result), while a permission
+                prompt is showing (the prompt IS the active surface), and
+                for Task/Workflow cards that already render a live subtask
+                list. */}
+            {running &&
+              result === undefined &&
+              !useFriendlyOutput &&
+              !pendingPermission &&
+              subtasks.length === 0 && <ToolRunningHint />}
           </div>
-        </details>
-      </div>
+      </details>
     </div>
   )
 }
@@ -2548,101 +2653,231 @@ function WorkflowTaskGlyph({
   )
 }
 
-function StatusDot({ running }: { running: boolean }): React.JSX.Element {
+/**
+ * Ringed status check for the tool header — replaces the old
+ * StatusDot + DONE-pill pair. Mirrors the reference design's leading
+ * glyph: a hairline-ringed circle holding a ✓ when complete (emerald,
+ * the macOS success green — DESIGN.md reserves blue for interactive
+ * elements), and a pulsing accent-blue ring while the call runs. No
+ * text pill: completion is now carried by the glyph alone, keeping the
+ * header to a single quiet row.
+ */
+/**
+ * ToolElapsed
+ * -----------
+ * Per-tool elapsed-time readout in the ToolCallCard header (the `166.5s`
+ * the user asked for). Two phases:
+ *
+ *   - running  → a 100ms ticker re-renders the row so the readout climbs in
+ *                tenths of a second; elapsed = now − startedAt.
+ *   - finished → the interval is torn down and the readout freezes on
+ *                endedAt − startedAt (the real duration), staying visible
+ *                forever as a "this step took N seconds" trace.
+ *
+ * Renders nothing when `startedAt` is missing — old messages / replayed
+ * history have no timestamp, and we don't want a bogus 0.0s on them.
+ *
+ * The ticker only runs while `running` (and only after mount), so finished
+ * cards — which can be numerous in a long thread — carry zero timers.
+ */
+function ToolElapsed({
+  startedAt,
+  endedAt,
+  running,
+  className
+}: {
+  startedAt: number | undefined
+  endedAt: number | undefined
+  running: boolean
+  className?: string
+}): React.JSX.Element | null {
+  // Live ticker: only armed while the tool is running AND we know when it
+  // started. Finished tools (endedAt present) never schedule an interval.
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (!running || startedAt === undefined || endedAt !== undefined) return
+    const id = setInterval(() => setTick((t) => t + 1), 100)
+    return () => clearInterval(id)
+  }, [running, startedAt, endedAt])
+
+  if (startedAt === undefined) return null
+
+  // Frozen duration once ended; otherwise live since start. Clamp at 0 so a
+  // tiny clock skew can't render a negative.
+  const elapsedMs = Math.max(0, (endedAt ?? Date.now()) - startedAt)
+  const label = `${(elapsedMs / 1000).toFixed(1)}s`
+  const done = endedAt !== undefined
+
   return (
     <span
-      aria-hidden
       className={
-        'inline-block size-1.5 rounded-full ' +
-        (running ? 'bg-accent' : 'bg-emerald-500')
+        'shrink-0 font-mono text-[11.5px] tabular-nums ' +
+        (done ? 'text-muted-foreground/70' : 'text-accent') +
+        (className ? ' ' + className : '')
       }
-    />
+      aria-label={`耗时 ${label}`}
+    >
+      {label}
+    </span>
   )
 }
 
-function StatusPill({ running }: { running: boolean }): React.JSX.Element {
-  const t = useT()
-  const lang = useI18n((s) => s.lang)
-  // English pills keep the original mono-uppercase look; Chinese pills
-  // drop the uppercase / wide-tracking classes since neither apply to
-  // CJK glyphs (they just inflate the label box).
-  const typographyClasses =
-    lang === 'zh'
-      ? 'font-sans text-[10px]'
-      : 'font-mono text-[10px] uppercase tracking-wider'
-  // Apple pill (DESIGN.md §4): fully rounded 980px capsule, no
-  // border, color comes from a tinted bg + matching tinted text.
-  // Running = Apple accent (the ONLY chromatic interactive color);
-  // done = emerald (universal success signal — DESIGN.md reserves
-  // blue for interactive elements, so completion state uses the
-  // conventional macOS "check" green instead of spending accent on
-  // a non-interactive indicator).
+/**
+ * Chinese labels for the composer status bar, keyed by the activity string
+ * useTurnActivity derives from the current running tool. Kept here (UI layer)
+ * so the store stays text-free.
+ */
+const ACTIVITY_LABELS: Record<string, string> = {
+  thinking: '思考中',
+  planning: '拆一下任务',
+  exploring: '探索中',
+  reading: '查阅中',
+  writing: '编写中',
+  running: '执行中',
+  searching: '联网中',
+  asking: '等待你回答',
+  working: '处理中'
+}
+
+/**
+ * ComposerStatusBar
+ * -----------------
+ * The "✻ 探索中…  ·······  2.5s" strip that sits flush on top of the composer
+ * input, sharing one outer green frame with it so the two read as a SINGLE
+ * piece (see the reference). It carries no border/background of its own — the
+ * parent wrapper (in Composer) owns the green ring + tint and the rounded
+ * outer corners; this row only paints its content and a hairline divider
+ * above the input.
+ *
+ * Pure presentation: `active`/`startedAt`/`activity` come from the parent
+ * (which calls useTurnActivity once), so the wrapper and this row stay in
+ * sync. Ticks every 100ms for the tenths-of-a-second readout. Timer basis is
+ * the TURN start — one counter for the whole response, not per tool.
+ */
+function ComposerStatusBar({
+  startedAt,
+  activity
+}: {
+  startedAt: number
+  activity: string
+}): React.JSX.Element {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 100)
+    return () => clearInterval(id)
+  }, [])
+
+  const elapsedMs = Math.max(0, Date.now() - startedAt)
+  const label = `${(elapsedMs / 1000).toFixed(1)}s`
+  const verb = ACTIVITY_LABELS[activity] ?? ACTIVITY_LABELS.thinking
+
+  return (
+    <div
+      className="flex items-center gap-2 px-4 pb-2 pt-2.5 text-[13px]"
+      role="status"
+      aria-live="polite"
+      aria-label={`${verb}, ${label}`}
+    >
+      <span aria-hidden className="shrink-0 animate-spin text-accent [animation-duration:2.4s]">
+        ✺
+      </span>
+      <span className="font-medium text-accent">{verb}…</span>
+      <span className="ml-auto shrink-0 font-mono text-[12px] tabular-nums text-accent/80">
+        {label}
+      </span>
+    </div>
+  )
+}
+
+function StatusCheck({ running }: { running: boolean }): React.JSX.Element {
+  if (running) {
+    return (
+      <span
+        aria-hidden
+        className="grid size-[15px] shrink-0 animate-pulse place-items-center rounded-full border-[1.5px] border-accent text-accent"
+      >
+        <span className="size-[5px] rounded-full bg-accent" />
+      </span>
+    )
+  }
   return (
     <span
-      className={
-        'rounded-pill px-2 py-[2px] ' +
-        typographyClasses +
-        ' ' +
-        (running
-          ? 'bg-accent/15 text-accent'
-          : 'bg-emerald-500/10 text-emerald-500')
-      }
+      aria-hidden
+      className="grid size-[15px] shrink-0 place-items-center rounded-full border-[1.5px] border-emerald-500 text-emerald-500"
     >
-      {running ? t('toolStatusRunning') : t('toolStatusDone')}
+      <svg
+        viewBox="0 0 12 12"
+        className="size-[9px]"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M2.5 6.2 5 8.5 9.5 3.5" />
+      </svg>
     </span>
+  )
+}
+
+/**
+ * Running placeholder for a tool card whose output hasn't streamed back
+ * yet. A breathing accent dot + the localized "正在执行" verb + a
+ * pure-CSS animated ellipsis (`.tool-loading-dots`). Mirrors the
+ * waiting-state vocabulary of ThinkingSpinner / the AskUserQuestion
+ * streaming hint, so a card in flight never reads as a blank gap. No
+ * timer/state — the dot uses Tailwind's `animate-pulse` and the dots
+ * run off a CSS keyframe, so this costs nothing on the main thread.
+ */
+function ToolRunningHint(): React.JSX.Element {
+  const t = useT()
+  return (
+    <div
+      className="flex items-center gap-2 py-0.5 text-[12px] text-muted-foreground"
+      role="status"
+      aria-live="polite"
+    >
+      <span
+        aria-hidden
+        className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-accent"
+      />
+      <span className="tool-loading-dots">{t('toolRunningHint')}</span>
+    </div>
   )
 }
 
 function ToolPane({
   label,
-  copyText,
   children
 }: {
   label: string
-  copyText: string
+  /** Kept in the prop list for call-site compatibility but no longer
+   *  rendered — the simplified pane dropped its per-box COPY button
+   *  (see the reference design: a single bordered output frame with
+   *  just a corner label, no copy affordance). */
+  copyText?: string
   children: React.ReactNode
 }): React.JSX.Element {
-  // `min-w-0` on both the outer card and the body wrapper lets the
+  // `min-w-0` on both the outer frame and the body wrapper lets the
   // pane shrink below its child <pre>'s intrinsic width — without it,
-  // a single long unwrappable line in INPUT/OUTPUT would push the
-  // chat column wider than its flex slot and steal pixels from the
-  // right rail on narrow windows. The pre inside JsonView then
-  // owns the actual horizontal scroll.
-  // Apple card (DESIGN.md §4): no border, elevation comes from bg
-  // contrast alone. Outer card = `bg-muted` (one shade off canvas),
-  // label strip = `bg-card` (card surface, same as message content
-  // cards). The two tones create an implied separation where we
-  // used to draw a border-b. Radius bumps to apple-md (11px) — the
-  // DESIGN.md value for "inputs / filter controls".
+  // a single long unwrappable line would push the chat column wider
+  // than its flex slot and steal pixels from the right rail on narrow
+  // windows. The pre inside JsonView then owns the horizontal scroll.
+  //
+  // Simplified output frame (matches the reference design): a single
+  // hairline-bordered card on the canvas — NOT the old two-tone
+  // bg-muted/bg-card stack with a COPY button. The label floats in the
+  // top-left as quiet mono micro-copy ("Response" / "输出"), the body
+  // holds the raw content. No header strip, no copy button.
   return (
-    <div className="min-w-0 overflow-hidden rounded-apple-md bg-muted">
-      <div className="flex items-center justify-between bg-card/80 px-3 py-1.5">
-        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+    <div className="min-w-0 overflow-hidden rounded-apple-md border border-border/60 bg-card/40">
+      <div className="px-3 pt-2">
+        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70">
           {label}
         </span>
-        <CopyButton text={copyText} />
       </div>
-      <div className="min-w-0 px-3 py-2">{children}</div>
+      <div className="min-w-0 px-3 pb-2 pt-1">{children}</div>
     </div>
-  )
-}
-
-function CopyButton({ text }: { text: string }): React.JSX.Element {
-  const [copied, setCopied] = useState(false)
-  const handle = useCallback(() => {
-    void navigator.clipboard?.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1200)
-  }, [text])
-  return (
-    <button
-      type="button"
-      onClick={handle}
-      className="rounded px-1 font-mono text-[9.5px] uppercase tracking-wider text-muted-foreground/70 transition hover:bg-muted hover:text-foreground"
-      aria-label="Copy to clipboard"
-    >
-      {copied ? 'copied' : 'copy'}
-    </button>
   )
 }
 
@@ -3003,6 +3238,10 @@ function Composer(): React.JSX.Element {
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [files, setFiles] = useState<readonly string[]>([])
   const streaming = useChatStore((s) => s.streaming)
+  // Working-status for the strip fused on top of the composer. `active` also
+  // toggles the shared green frame that makes the strip + input read as one
+  // piece; when inactive the composer renders as its normal standalone card.
+  const turnActivity = useTurnActivity()
   // Slides binding: when the user sends while the global picker is on
   // 幻灯片, mark the CURRENT session as a slides session so ThreadView
   // shows its two-pane layout from then on (per-session, not global).
@@ -3161,10 +3400,27 @@ function Composer(): React.JSX.Element {
           (AttachmentDropzone / Attachments / Send / Cancel / Dictation)
           remain. */}
       <div className="relative">
-        {/* AttachmentDropzone is the outer "card" — owns the border +
-            background + rounded corners so drag-over highlights the
-            whole composer. Bigger radius to match the prototype. */}
-        <ComposerPrimitive.AttachmentDropzone className="rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--accent)/0.35)] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--accent)/0.5)] data-[dragging=true]:bg-accent/[0.08] dark:ring-white/[0.08]">
+        {/* Working-status strip stacked directly on top of the composer card:
+            animated glyph + current Chinese activity on the left, live elapsed
+            timer on the right. Only while the turn streams (and not during
+            plain prose output). It's a slim GREEN band with rounded TOP corners
+            and a flat bottom; a negative margin tucks its bottom edge under the
+            white input card below so they butt seamlessly. The green stays a
+            thin top accent — it does NOT flood the input area, which keeps its
+            clean white card. */}
+        {turnActivity.active && turnActivity.startedAt !== undefined ? (
+          <div className="-mb-3 rounded-t-[20px] border border-b-0 border-accent/25 bg-accent/[0.08] px-1 pb-3 pt-0.5">
+            <ComposerStatusBar
+              startedAt={turnActivity.startedAt}
+              activity={turnActivity.activity}
+            />
+          </div>
+        ) : null}
+        {/* AttachmentDropzone is the input "card" — always its own clean white
+            card with border + rounded corners, sitting ON TOP of the status
+            band (z-10) so the band's tucked bottom edge stays hidden and the
+            composer never floods green. */}
+        <ComposerPrimitive.AttachmentDropzone className="relative z-10 rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--accent)/0.35)] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--accent)/0.5)] data-[dragging=true]:bg-accent/[0.08] dark:ring-white/[0.08]">
           {/* Attachment preview row (pasted / dropped / picked). */}
           <div className="flex flex-wrap gap-2 px-4 pt-3 empty:hidden">
             <ComposerPrimitive.Attachments>

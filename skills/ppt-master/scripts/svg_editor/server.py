@@ -360,6 +360,20 @@ def create_app(
     def _update_activity():
         app.config['LAST_REQUEST_TIME'] = time.time()
 
+    @app.after_request
+    def _allow_cross_origin(resp):
+        # The Claude Desktop host renders the live preview natively in its
+        # 「幻灯片」canvas tab by fetching /api/slides + /api/slide/<name> from
+        # the renderer (origin http://localhost:5173 in dev, file:// → Origin
+        # `null` in prod) — a different origin than this server, so the browser
+        # blocks the reads without CORS. These endpoints only expose this
+        # project's own SVG/preview data over loopback, so a wildcard origin is
+        # acceptable here; no credentials ride these requests.
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+
     def _exit_with_lock_release(code: int = 0) -> None:
         lf = app.config.get('LOCK_FILE')
         if lf is not None:

@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SlidesWorkspace 重设计 · v0 原型</title>
+<style>
+/* ============================================================
+   设计系统 — 沿用 Claude Desktop 的 Apple HIG token，
+   注入参考图（QoderWork CN 封面）的深色电影感 + 暖橙/青蓝流光语言。
+   ------------------------------------------------------------
+   - 基底比现状更深更暖：#13110f → #1a1917（app 暗色基线 #1a1917 下沉一档）
+   - 主点缀 暖橙 #D97757，次点缀 青蓝 #6B9BD1（呼应参考图流光双色）
+   - 圆角 / 字阶 / 负字距全部取自 app 的 --radius-apple-* / --text-apple-*
+   ============================================================ */
+:root {
+  --bg: #13110f;            /* 画布最底 */
+  --bg-raise: #1a1917;      /* app 暗色基线 */
+  --surface: #211f1c;       /* 卡片 */
+  --surface-2: #2a2723;     /* 浮层 / 浮起卡片 */
+  --hairline: rgba(255,255,255,0.07);
+  --hairline-strong: rgba(255,255,255,0.12);
+
+  --fg: #ece7df;            /* 暖白正文（app fg #e8e4dc 提亮一点用于深底） */
+  --fg-dim: #a39b90;        /* 次要文字 */
+  --fg-faint: #6f675e;      /* 三级文字 / 占位 */
+
+  --orange: #d97757;        /* 主点缀（Anthropic 暖橙系） */
+  --orange-soft: #e8a07f;
+  --blue: #6b9bd1;          /* 次点缀（参考图青蓝流光） */
+  --amber: #e8b931;
+
+  --r-xs: 5px;  --r-sm: 8px;  --r-md: 11px;  --r-lg: 12px;
+  --tr-display: -0.005em;  --tr-body: -0.022em;  --tr-caption: -0.016em;
+
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+          "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background:
+    radial-gradient(120% 80% at 78% 8%, rgba(217,119,87,0.10), transparent 55%),
+    radial-gradient(90% 70% at 12% 92%, rgba(107,155,209,0.07), transparent 60%),
+    var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  letter-spacing: var(--tr-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── Electron 窗口外框 ──────────────────────────────────────── */
+.window {
+  width: min(1320px, 96vw);
+  height: min(840px, 92vh);
+  margin: max(2.5vh, 14px) auto;
+  display: flex;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--hairline-strong);
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.5),
+    0 40px 120px -20px rgba(0,0,0,0.7),
+    inset 0 1px 0 rgba(255,255,255,0.04);
+  background: var(--bg-raise);
+}
+
+/* ── 左：聊天列（占位，焦点在右侧画布）────────────────────────── */
+.chat-rail {
+  width: 360px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(255,255,255,0.012), transparent);
+}
+.traffic {
+  display: flex; gap: 8px; padding: 16px 18px 0;
+}
+.traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.traffic i:nth-child(1){ background:#ff5f57; }
+.traffic i:nth-child(2){ background:#febc2e; }
+.traffic i:nth-child(3){ background:#28c840; }
+.chat-body { flex: 1; padding: 26px 22px; display: flex; flex-direction: column; gap: 18px; overflow: hidden; }
+.bubble { max-width: 86%; padding: 12px 15px; border-radius: var(--r-md); font-size: 14px; line-height: 1.5; }
+.bubble.user { align-self: flex-end; background: var(--surface-2); color: var(--fg); border: 1px solid var(--hairline); }
+.bubble.ai { align-self: flex-start; color: var(--fg-dim); }
+.bubble.ai .ph { color: var(--fg-faint); }
+.composer {
+  margin: 0 18px 18px; padding: 12px 14px;
+  border-radius: var(--r-lg); border: 1px solid var(--hairline-strong);
+  background: var(--surface);
+  color: var(--fg-faint); font-size: 14px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.composer .send {
+  width: 30px; height: 30px; border-radius: var(--r-sm);
+  background: var(--orange); display: grid; place-items: center;
+  box-shadow: 0 4px 14px -4px rgba(217,119,87,0.6);
+}
+.composer .send svg { width: 15px; height: 15px; }
+
+/* ── 右：画布 SlidesWorkspace ─────────────────────────────────── */
+.canvas {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  background:
+    radial-gradient(140% 90% at 85% -10%, rgba(217,119,87,0.07), transparent 50%),
+    var(--bg);
+}
+
+/* tab bar — 毛玻璃，兼作窗口拖拽区 */
+.tabbar {
+  display: flex; align-items: center; gap: 4px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+  background: rgba(19,17,15,0.6);
+  backdrop-filter: blur(20px) saturate(1.2);
+}
+.tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 13px; border-radius: var(--r-sm);
+  font-size: 12.5px; color: var(--fg-dim);
+  letter-spacing: var(--tr-caption);
+  cursor: pointer; user-select: none;
+  border: 1px solid transparent;
+  transition: background .16s cubic-bezier(.22,1,.36,1), color .16s, border-color .16s;
+}
+.tab svg { width: 15px; height: 15px; opacity: .85; }
+.tab:hover { color: var(--fg); background: rgba(255,255,255,0.04); }
+.tab.active {
+  color: var(--fg);
+  background: linear-gradient(180deg, rgba(217,119,87,0.18), rgba(217,119,87,0.10));
+  border-color: rgba(217,119,87,0.35);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 12px -6px rgba(217,119,87,0.5);
+}
+.tab.active svg { opacity: 1; color: var(--orange-soft); }
+.tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 8px var(--orange); }
+.tab .beta {
+  font-size: 9px; padding: 1px 5px; border-radius: 980px;
+  background: rgba(107,155,209,0.18); color: var(--blue);
+  letter-spacing: .04em; text-transform: uppercase;
+}
+.tabbar .spacer { flex: 1; }
+.tabbar .winbtn {
+  padding: 6px 12px; border-radius: var(--r-sm); font-size: 12px;
+  color: var(--fg-dim); border: 1px solid var(--hairline-strong);
+  cursor: pointer;
+}
+.tabbar .winbtn.primary { background: var(--fg); color: #1a1410; border-color: transparent; font-weight: 600; }
+
+/* body 区域 */
+.body { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.pane { position: absolute; inset: 0; display: none; flex-direction: column; }
+.pane.show { display: flex; }
+
+/* ── 幻灯片 pane — 空状态：流光线条母题（参考图核心视觉）────────── */
+.slides-empty {
+  flex: 1; display: grid; place-items: center; position: relative;
+  overflow: hidden;
+}
+.flux {
+  position: absolute; inset: 0; pointer-events: none;
+  opacity: .9;
+}
+.flux svg { width: 100%; height: 100%; }
+.flux .stream { fill: none; stroke-width: 1.6; stroke-linecap: round; }
+.flux .s1 { stroke: url(#go); filter: drop-shadow(0 0 6px rgba(217,119,87,.5)); animation: drift 14s ease-in-out infinite; }
+.flux .s2 { stroke: url(#gb); opacity:.7; animation: drift 18s ease-in-out infinite reverse; }
+.flux .s3 { stroke: url(#go); opacity:.35; animation: drift 22s ease-in-out infinite; }
+@keyframes drift {
+  0%,100% { transform: translateY(0); }
+  50% { transform: translateY(-14px); }
+}
+.empty-card {
+  position: relative; z-index: 2; text-align: center; max-width: 460px;
+}
+.empty-badge {
+  width: 64px; height: 64px; margin: 0 auto 22px; border-radius: 18px;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, rgba(217,119,87,0.22), rgba(107,155,209,0.16));
+  border: 1px solid var(--hairline-strong);
+  box-shadow: 0 0 40px -8px rgba(217,119,87,0.4), inset 0 1px 0 rgba(255,255,255,0.1);
+}
+.empty-badge svg { width: 30px; height: 30px; color: var(--orange-soft); }
+.empty-title {
+  font-size: 27px; font-weight: 600; letter-spacing: var(--tr-display);
+  line-height: 1.14;
+}
+.empty-sub { margin-top: 10px; color: var(--fg-dim); font-size: 15px; line-height: 1.5; text-wrap: pretty; }
+.empty-kicker {
+  display: inline-block; margin-bottom: 18px; font-size: 12px;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--orange-soft);
+}
+
+/* ── 幻灯片 pane — 有内容态：缩略图带 + 主舞台 ─────────────────── */
+.slides-live { flex: 1; display: grid; grid-template-columns: 168px 1fr; min-height: 0; }
+.thumbs { border-right: 1px solid var(--hairline); padding: 16px 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.thumbs .lbl { font-size: 11px; color: var(--fg-faint); letter-spacing: var(--tr-caption); padding: 0 4px 4px; display:flex; justify-content: space-between; }
+.thumb { position: relative; border-radius: var(--r-sm); aspect-ratio: 16/9; overflow: hidden; border: 1px solid var(--hairline); cursor: pointer; transition: border-color .16s, transform .16s; }
+.thumb:hover { transform: translateY(-1px); border-color: var(--hairline-strong); }
+.thumb.active { border-color: rgba(217,119,87,0.6); box-shadow: 0 0 0 1px rgba(217,119,87,0.4), 0 6px 18px -8px rgba(217,119,87,0.5); }
+.thumb .num { position:absolute; top:5px; left:6px; font-size:10px; color: var(--fg-dim); font-family: var(--mono); }
+.thumb .rdot { position:absolute; top:5px; right:6px; width:7px; height:7px; border-radius:50%; background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+.thumb .mini { position:absolute; inset:0; display:grid; place-items:center; color: var(--fg-faint); font-size: 9px; }
+.thumb.c1 { background: linear-gradient(135deg, #1a2230, #0e1118); }
+.thumb.c2 { background: linear-gradient(135deg, #2a2723, #1a1917); }
+.thumb.c3 { background: linear-gradient(135deg, #2e1a18, #1a1110); }
+
+.stage { display: flex; flex-direction: column; min-height: 0; }
+.stage-head { display: flex; align-items: center; gap: 12px; padding: 16px 22px; border-bottom: 1px solid var(--hairline); }
+.stage-head .idx { font-family: var(--mono); font-size: 12px; color: var(--fg-faint); }
+.stage-head .name { font-size: 15px; font-weight: 600; }
+.stage-head .tag { font-size: 11px; color: var(--blue); background: rgba(107,155,209,0.14); padding: 2px 8px; border-radius: 980px; }
+.stage-head .nav { margin-left: auto; display:flex; gap:6px; }
+.stage-head .nav button { width: 30px; height: 30px; border-radius: var(--r-sm); border: 1px solid var(--hairline-strong); background: transparent; color: var(--fg-dim); cursor: pointer; }
+.stage-canvas { flex: 1; display: grid; place-items: center; padding: 28px; min-height: 0; }
+.deck-frame {
+  width: 100%; max-width: 760px; aspect-ratio: 16/9; border-radius: var(--r-md);
+  background:
+    radial-gradient(120% 90% at 80% 0%, rgba(217,119,87,0.12), transparent 50%),
+    linear-gradient(135deg, #0f1620, #0a0d12);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: 0 30px 80px -30px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.05);
+  position: relative; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  padding: 44px;
+}
+.deck-frame .logo { position:absolute; top:26px; right:26px; width:34px; height:34px; border-radius:8px; background: linear-gradient(135deg, var(--orange), var(--blue)); }
+.deck-frame .accent-bar { width: 64px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--orange), var(--blue)); margin-bottom: 18px; }
+.deck-frame h1 { font-size: clamp(28px, 4.4vw, 46px); font-weight: 700; line-height: 1.08; letter-spacing: var(--tr-display); }
+.deck-frame p { margin-top: 14px; color: var(--fg-dim); font-size: clamp(13px,1.6vw,17px); }
+
+/* ── 文件 pane — 两栏 ─────────────────────────────────────────── */
+.files { flex: 1; display: grid; grid-template-columns: 240px 1fr; min-height: 0; }
+.file-list { border-right: 1px solid var(--hairline); padding: 12px; overflow-y: auto; }
+.file-item { display: flex; align-items: center; gap: 9px; padding: 9px 11px; border-radius: var(--r-sm); font-size: 13px; color: var(--fg-dim); cursor: pointer; }
+.file-item:hover { background: rgba(255,255,255,0.04); color: var(--fg); }
+.file-item.active { background: rgba(217,119,87,0.12); color: var(--fg); border: 1px solid rgba(217,119,87,0.25); }
+.file-item .fnum { font-family: var(--mono); font-size: 11px; color: var(--fg-faint); }
+.file-item .fdot { margin-left: auto; width:6px; height:6px; border-radius:50%; background: var(--orange); }
+.file-view { padding: 26px 32px; overflow-y: auto; }
+.file-view h2 { font-size: 22px; font-weight: 700; letter-spacing: var(--tr-display); }
+.file-view h3 { font-size: 16px; font-weight: 600; margin: 22px 0 8px; color: var(--orange-soft); }
+.file-view p { color: var(--fg-dim); font-size: 14px; line-height: 1.65; margin: 8px 0; text-wrap: pretty; }
+.file-view .meta { color: var(--fg-faint); font-size: 12px; font-family: var(--mono); margin-top: 4px; }
+
+/* ── 通用占位 ─────────────────────────────────────────────────── */
+.placeholder { flex:1; display: grid; place-items: center; color: var(--fg-faint); font-size: 14px; }
+
+/* ── Tweaks 面板 ──────────────────────────────────────────────── */
+.tweaks { position: fixed; bottom: 20px; right: 20px; z-index: 50; }
+.tweaks-toggle {
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--hairline-strong);
+  background: var(--surface-2); color: var(--fg); cursor: pointer;
+  display: grid; place-items: center; box-shadow: 0 10px 30px -10px rgba(0,0,0,0.6);
+}
+.tweaks-panel {
+  position: absolute; bottom: 56px; right: 0; width: 230px;
+  background: var(--surface-2); border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-lg); padding: 14px; display: none;
+  box-shadow: 0 20px 60px -20px rgba(0,0,0,0.7);
+}
+.tweaks-panel.open { display: block; }
+.tweaks-panel .t { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--fg-faint); margin-bottom: 10px; }
+.tweaks-row { display:flex; justify-content: space-between; align-items:center; padding: 7px 0; font-size: 13px; color: var(--fg-dim); }
+.tweaks-row .seg { display:flex; gap:4px; }
+.tweaks-row .seg button { padding: 4px 9px; border-radius: 6px; font-size: 11px; border: 1px solid var(--hairline); background: transparent; color: var(--fg-dim); cursor: pointer; }
+.tweaks-row .seg button.on { background: var(--orange); color: #1a1410; border-color: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .flux .stream { animation: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="window">
+  <!-- 左：聊天列（占位） -->
+  <aside class="chat-rail">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="chat-body">
+      <div class="bubble user">/claude-desktop:ppt-master 做两页 ppt 介绍下唐代的经济</div>
+      <div class="bubble ai">已完成设计规划，正在生成幻灯片<span class="ph"> ▸ 右侧画布实时预览</span></div>
+    </div>
+    <div class="composer">
+      <span>继续对话…</span>
+      <span class="send"><svg viewBox="0 0 24 24" fill="none" stroke="#1a1410" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
+    </div>
+  </aside>
+
+  <!-- 右：画布 SlidesWorkspace -->
+  <section class="canvas">
+    <!-- tab bar -->
+    <div class="tabbar">
+      <div class="tab active" data-pane="slides">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8 20.5h8M12 16.5v4"/></svg>
+        幻灯片 <span class="dot"></span>
+      </div>
+      <div class="tab" data-pane="outline">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
+        大纲
+      </div>
+      <div class="tab" data-pane="files">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h5l2 2.5h6A1.5 1.5 0 0 1 20 8v9.5A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/></svg>
+        文件
+      </div>
+      <div class="spacer"></div>
+      <div class="winbtn">放映</div>
+      <div class="winbtn primary">导出</div>
+    </div>
+
+    <!-- body -->
+    <div class="body">
+      <!-- 幻灯片 pane（默认空状态 → 切到“有内容”由 Tweaks 控制）-->
+      <div class="pane show" id="pane-slides">
+        <!-- 空状态：流光母题 -->
+        <div class="slides-empty" id="slides-empty">
+          <div class="flux">
+            <svg viewBox="0 0 1200 600" preserveAspectRatio="xMidYMid slice">
+              <defs>
+                <linearGradient id="go" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0" stop-color="#d97757" stop-opacity="0"/><stop offset=".5" stop-color="#e8a07f"/><stop offset="1" stop-color="#d97757" stop-opacity="0"/>
+                </linearGradient>
+                <linearGradient id="gb" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0" stop-color="#6b9bd1" stop-opacity="0"/><stop offset=".5" stop-color="#8fb6e0"/><stop offset="1" stop-color="#6b9bd1" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <path class="stream s1" d="M-50 320 C 250 200, 450 420, 700 300 S 1050 180, 1250 280"/>
+              <path class="stream s2" d="M-50 360 C 280 260, 460 460, 720 340 S 1060 230, 1250 330"/>
+              <path class="stream s3" d="M-50 290 C 230 180, 470 400, 690 270 S 1040 150, 1250 250"/>
+            </svg>
+          </div>
+          <div class="empty-card">
+            <div class="empty-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8 20.5h8M12 16.5v4"/></svg>
+            </div>
+            <span class="empty-kicker">Slides Workspace</span>
+            <div class="empty-title">确认大纲后<br/>幻灯片将在此处实时呈现</div>
+            <div class="empty-sub">每生成一页，它会带着实时预览出现在这里——你可以点选元素、做批注、直接微调。</div>
+          </div>
+        </div>
+
+        <!-- 有内容态（默认隐藏，Tweaks 切）-->
+        <div class="slides-live" id="slides-live" style="display:none">
+          <div class="thumbs">
+            <div class="lbl"><span>幻灯片</span><span>02 / 02</span></div>
+            <div class="thumb c1 active"><span class="num">01</span><span class="rdot"></span><span class="mini">封面</span></div>
+            <div class="thumb c2"><span class="num">02</span><span class="mini">四维全貌</span></div>
+          </div>
+          <div class="stage">
+            <div class="stage-head">
+              <span class="idx">01</span>
+              <span class="name">唐代的经济</span>
+              <span class="tag">cover</span>
+              <span class="nav"><button>‹</button><button>›</button></span>
+            </div>
+            <div class="stage-canvas">
+              <div class="deck-frame">
+                <div class="logo"></div>
+                <div class="accent-bar"></div>
+                <h1>唐代的经济</h1>
+                <p>从均田授地到丝路通商的近三百年</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 大纲 pane -->
+      <div class="pane" id="pane-outline">
+        <div class="file-view" style="max-width:720px; margin:0 auto;">
+          <h2>唐代经济 · 内容大纲</h2>
+          <p class="meta">2 页 · balanced</p>
+          <h3>01 · 封面</h3>
+          <p>楷体大字「唐代的经济」如卷首题款，点出 618—907 年从均田授地到丝路通商的繁荣。</p>
+          <h3>02 · 四维全貌</h3>
+          <p>2×2 等权铺陈唐代经济四大支柱：农业之基、商业与城市、货币与赋税、对外贸易。</p>
+        </div>
+      </div>
+
+      <!-- 文件 pane -->
+      <div class="pane" id="pane-files">
+        <div class="files">
+          <div class="file-list">
+            <div class="file-item"><span class="fnum">01</span> recommendations.json</div>
+            <div class="file-item"><span class="fnum">02</span> design_spec.md</div>
+            <div class="file-item"><span class="fnum">03</span> spec_lock.md <span class="fdot"></span></div>
+            <div class="file-item active"><span class="fnum">04</span> total.md</div>
+          </div>
+          <div class="file-view">
+            <h2>01_封面</h2>
+            <p>这一节我们用两页内容，速览唐代的经济。唐朝从公元六一八年到九零七年，前后近三百年，是中国古代经济发展的一个高峰。</p>
+            <h2 style="margin-top:28px">02_四维全貌</h2>
+            <p>唐代经济的繁荣，可以从农业、商业、货币赋税和对外贸易这四个维度来理解，它们彼此支撑，共同撑起了一个世界级的帝国。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- Tweaks -->
+<div class="tweaks">
+  <div class="tweaks-panel" id="tweaksPanel">
+    <div class="t">Tweaks</div>
+    <div class="tweaks-row">
+      <span>幻灯片状态</span>
+      <div class="seg" id="segState">
+        <button class="on" data-state="empty">空</button>
+        <button data-state="live">有内容</button>
+      </div>
+    </div>
+    <div class="tweaks-row">
+      <span>流光母题</span>
+      <div class="seg" id="segFlux">
+        <button class="on" data-flux="on">开</button>
+        <button data-flux="off">关</button>
+      </div>
+    </div>
+  </div>
+  <button class="tweaks-toggle" id="tweaksToggle" aria-label="Tweaks">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a7.96 7.96 0 0 0 .1-3l1.5-1.2-2-3.4-1.8.7a8 8 0 0 0-2.6-1.5L13.5 1h-3l-.6 2.1A8 8 0 0 0 7.3 4.6L5.5 4l-2 3.4L5 8.6a8 8 0 0 0 0 3L3.5 12.8l2 3.4 1.8-.7a8 8 0 0 0 2.6 1.5l.6 2h3l.6-2.1a8 8 0 0 0 2.6-1.5l1.8.7 2-3.4z"/></svg>
+  </button>
+</div>
+
+<script>
+// tab 切换
+document.querySelectorAll('.tab[data-pane]').forEach(function (t) {
+  t.addEventListener('click', function () {
+    document.querySelectorAll('.tab[data-pane]').forEach(function (x){ x.classList.remove('active'); });
+    document.querySelectorAll('.pane').forEach(function (p){ p.classList.remove('show'); });
+    t.classList.add('active');
+    document.getElementById('pane-' + t.dataset.pane).classList.add('show');
+  });
+});
+
+// Tweaks 开关
+var toggle = document.getElementById('tweaksToggle');
+var panel = document.getElementById('tweaksPanel');
+toggle.addEventListener('click', function () { panel.classList.toggle('open'); });
+
+// 幻灯片状态：空 / 有内容
+document.getElementById('segState').addEventListener('click', function (e) {
+  var b = e.target.closest('button'); if (!b) return;
+  this.querySelectorAll('button').forEach(function (x){ x.classList.remove('on'); });
+  b.classList.add('on');
+  var live = b.dataset.state === 'live';
+  document.getElementById('slides-empty').style.display = live ? 'none' : '';
+  document.getElementById('slides-live').style.display = live ? 'grid' : 'none';
+});
+
+// 流光母题开关
+document.getElementById('segFlux').addEventListener('click', function (e) {
+  var b = e.target.closest('button'); if (!b) return;
+  this.querySelectorAll('button').forEach(function (x){ x.classList.remove('on'); });
+  b.classList.add('on');
+  document.querySelector('.flux').style.display = b.dataset.flux === 'off' ? 'none' : '';
+});
+</script>
+</body>
+</html>

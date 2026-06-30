@@ -166,36 +166,44 @@ def _wait_only_for_result(
     result_file: Path,
     lock_file: Path,
     timeout: int,
+    stage: str = 'final',
 ) -> int:
-    """Attach to an already-running confirm server and wait for the **final**
-    (tier-2) result.json — the second leg of the two-tier flow. No child is
-    launched here: the page is still open from the first ``--wait`` launch, so
-    liveness is tracked via the recorded pid, not a ``proc`` handle. Only the
-    ``stage == 'final'`` guard is used (no mtime gate): this run's tier-1 confirm
-    already left result.json at stage ``tier1``, so any ``final`` is the tier-2
-    submit, and a mtime gate would race-miss a user who confirms before this wait.
+    """Attach to an already-running confirm server and wait for a result.json at
+    the given ``stage`` — ``tier1`` for the first leg, ``final`` (tier-2) for the
+    second. No child is launched here: the page is already open from a prior
+    ``--daemon`` launch, so liveness is tracked via the recorded pid, not a
+    ``proc`` handle. The stage guard alone is the signal (no mtime gate): each
+    leg waits for the stage the next page-submit will write, and a mtime gate
+    would race-miss a user who confirms before this wait is even issued.
+
+    Splitting launch (``--daemon``, returns immediately with the URL on stdout)
+    from waiting (``--wait-only --stage tier1``) lets the Claude Desktop host
+    read the real auto-advanced port from the launch command's stdout and embed
+    the page *before* the user confirms — a single blocking ``--daemon --wait``
+    keeps stdout captive until confirmation, so the host can't learn the port.
     """
-    logger.info('waiting for tier-2 browser confirmation...')
+    logger.info('waiting for %s browser confirmation...', stage)
     deadline = None if timeout <= 0 else time.time() + timeout
     while True:
-        # `stage == 'final'` alone is the signal: this run's tier-1 confirm already
-        # overwrote result.json to stage 'tier1', so any 'final' here is the tier-2
-        # submit we are waiting for. Gating on mtime >= started_at would race-miss a
-        # user who confirms tier 2 before this wait is even issued.
-        if _result_stage(result_file) == 'final':
-            logger.info('tier-2 confirmation received: %s', result_file)
+        # The stage guard alone is the signal. For tier1: recommendations.json is
+        # still at tier 1 and no result.json (or a stale prior-run one) exists, so
+        # a fresh `stage == 'tier1'` is this run's anchor submit. For final: this
+        # run's tier-1 confirm already left result.json at stage 'tier1', so any
+        # 'final' is the tier-2 submit. A mtime gate would race-miss a fast user.
+        if _result_stage(result_file) == stage:
+            logger.info('%s confirmation received: %s', stage, result_file)
             return 0
 
         lock = _read_lock(lock_file)
         pid = int((lock or {}).get('pid', 0) or 0)
         if not pid or not _process_alive(pid):
-            logger.error('confirm server is no longer running before tier 2 was confirmed')
+            logger.error('confirm server is no longer running before %s was confirmed', stage)
             return 1
 
         if deadline is not None and time.time() >= deadline:
             logger.error(
-                'timed out waiting for tier-2 confirmation — the page may still '
-                'be open; re-check %s before falling back to chat', result_file,
+                'timed out waiting for %s confirmation — the page may still '
+                'be open; re-check %s before falling back to chat', stage, result_file,
             )
             return 124
 
@@ -302,6 +310,22 @@ def create_app(
     @app.before_request
     def _update_activity():
         app.config['LAST_REQUEST_TIME'] = time.time()
+
+    @app.after_request
+    def _allow_cross_origin(resp):
+        # The Claude Desktop host renders the Eight-Confirmations page natively
+        # in its 「问题」canvas tab by fetching /api/catalogs +
+        # /api/recommendations and POSTing /api/confirm from the renderer
+        # (origin http://localhost:5173 in dev, file:// → Origin `null` in prod)
+        # — a different origin than this server, so the browser blocks the reads
+        # without CORS. (The old iframe path was same-origin and needed none.)
+        # These endpoints only expose this project's own confirm data over
+        # loopback, so a wildcard origin is acceptable; no credentials ride
+        # these requests. Mirror of svg_editor/server.py's CORS hook.
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
 
     def _exit_with_lock_release(code: int = 0) -> None:
         lf = app.config.get('LOCK_FILE')
@@ -423,9 +447,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--wait-only', action='store_true',
         help='Do not launch. Attach to the already-running confirm server for '
-             'this project and wait for the final (tier-2) result.json. Used for '
-             'the second leg of the two-tier flow after the tier-2 '
-             'recommendations have been re-derived and written.',
+             'this project and wait for a result.json at the --stage stage. Used '
+             'for both legs of the two-tier flow: --stage tier1 after the '
+             '--daemon launch, --stage final after the tier-2 recommendations '
+             'have been re-derived and written.',
+    )
+    parser.add_argument(
+        '--stage', choices=('tier1', 'final'), default='final',
+        help='With --wait-only, which confirmation stage to wait for '
+             '(default: final = tier-2).',
     )
     parser.add_argument(
         '--wait-timeout', type=int, default=WAIT_TIMEOUT_DEFAULT,
@@ -472,6 +502,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             project_path / CONFIRM_DIR_NAME / RESULT_NAME,
             project_path / LOCK_FILE_NAME,
             args.wait_timeout,
+            stage=args.stage,
         )
 
     rec_file = project_path / CONFIRM_DIR_NAME / RECOMMENDATIONS_NAME
@@ -499,6 +530,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         confirm_dir.mkdir(parents=True, exist_ok=True)
         log_path = confirm_dir / 'server.log'
         result_file = confirm_dir / RESULT_NAME
+        # Clear any result.json left by a previous run so the split-launch flow
+        # (--daemon now, --wait-only --stage tier1 next) can use the stage guard
+        # alone: without this, a stale tier1/final from an earlier session would
+        # make the tier-1 wait return instantly without a real confirmation.
+        try:
+            result_file.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning('could not clear stale result.json: %s', exc)
         started_at = time.time()
         # Pick a free port up front (another project may hold the default) and
         # pass the concrete port to the child so the reported URL is accurate.

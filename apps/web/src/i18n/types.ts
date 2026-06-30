@@ -182,6 +182,7 @@ export interface Dict {
   'settings.onboardingFinish': string;
   'settings.onboardingSkip': string;
   'settings.kicker': string;
+  'settings.backToApp': string;
   'settings.title': string;
   'settings.subtitle': string;
   'settings.modeAria': string;
@@ -280,6 +281,7 @@ export interface Dict {
   'settings.language': string;
   'settings.languageHint': string;
   'settings.appearance': string;
+  'settings.appearanceThemeMode': string;
   'settings.appearanceHint': string;
   'settings.themeSystem': string;
   'settings.themeLight': string;

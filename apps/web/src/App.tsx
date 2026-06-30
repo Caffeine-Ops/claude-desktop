@@ -1559,7 +1559,12 @@ export function App() {
   // dialog has real config / agents / daemon data.
   if (isSettingsOverlay) {
     return (
-      <div className="fixed inset-0 z-50 bg-black/40">
+      // Settings is now a full-screen page that paints its own opaque
+      // surface (see index.css `.modal-backdrop:has(.modal-settings)`), so
+      // the old `bg-black/40` dimming scrim is dropped — it would just tint
+      // the whole page. The container only positions the page over the
+      // transparent host WebContentsView.
+      <div className="fixed inset-0 z-50">
         {settingsOpen ? (
           <SettingsDialog
             initial={config}

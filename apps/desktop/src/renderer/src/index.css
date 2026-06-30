@@ -296,3 +296,41 @@
   pointer-events: none;
   line-height: inherit;
 }
+
+/*
+ * Animated trailing ellipsis for "working…" hints (running tool cards,
+ * waiting states). Pure CSS — drives a stepped `::after` content cycle
+ * `'' → '.' → '..' → '...'` so the dots breathe without any React
+ * re-render (no setInterval / rAF, so it keeps animating even when the
+ * window is backgrounded and costs nothing on the main thread). Attach
+ * to an inline element; the `inline-block` + fixed `1.2em` width keeps
+ * the following layout from jittering as the dot count changes.
+ */
+@keyframes tool-loading-dots {
+  0% {
+    content: '';
+  }
+  25% {
+    content: '.';
+  }
+  50% {
+    content: '..';
+  }
+  75%,
+  100% {
+    content: '...';
+  }
+}
+.tool-loading-dots::after {
+  content: '';
+  display: inline-block;
+  width: 1.2em;
+  text-align: left;
+  animation: tool-loading-dots 1.4s steps(1, end) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool-loading-dots::after {
+    animation: none;
+    content: '…';
+  }
+}

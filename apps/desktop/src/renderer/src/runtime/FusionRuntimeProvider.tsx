@@ -434,6 +434,11 @@ export function FusionRuntimeProvider({
       // re-reading an outer closure that could theoretically drift.
       const targetSid = sessionId
       appendUserMessage(targetSid, storeContent)
+      // The transcript just grew by the user's turn. Drop the cached
+      // snapshot now (before the assistant's `start`) so a switch away +
+      // back in the gap before the reply can't resurrect a copy that's
+      // missing this message.
+      invalidateHistoryCache(targetSid)
 
       // Pre-flip the spinner so the user sees feedback while the
       // main-process send awaits the lazy fusion-code cold start.
@@ -556,6 +561,64 @@ function dateGroupLabel(updatedAt: number): string {
   if (updatedAt >= startOfToday - dayMs) return '昨天'
   if (updatedAt >= startOfToday - 7 * dayMs) return '7 天内'
   return '更早'
+}
+
+/**
+ * Tiny module-level LRU cache of `loadSession` results, keyed by session id.
+ *
+ * Why: `onSwitchToThread` reads `<id>.jsonl` off disk and JSON-parses it on
+ * EVERY switch — even when flipping back to a session the user just read.
+ * For long transcripts that fs + parse round-trip (tens to low-hundreds of
+ * ms, plus an IPC hop) is the dominant cost between "clicked" and "history
+ * on screen". Caching the mapped `ThreadMessageLike[]` lets a switch back to
+ * a recently-visited session resolve SYNCHRONOUSLY → the content column swaps
+ * in the same frame as the click, instead of after a disk round-trip.
+ *
+ * Correctness guards:
+ *   - Bounded to `HISTORY_CACHE_MAX` entries (LRU eviction) so a long browsing
+ *     session can't pin unbounded transcript arrays in renderer memory.
+ *   - Invalidated for a session whenever that session receives a new turn /
+ *     mutation — see `invalidateHistoryCache`, called from the IPC→store fan-out
+ *     in `FusionRuntimeProvider`. Without this, a cached snapshot taken before
+ *     the user sent a message would resurrect a stale (shorter) transcript on
+ *     the next switch back. The live-state-wins guard in `setSession`
+ *     (chat.ts) already protects background-running sessions, but a session
+ *     that finished its turn and went idle has no live slot — so the cache is
+ *     the source of truth and MUST be dropped on every append.
+ *   - We cache only on a cold `loadSession`, never the optimistic empty array,
+ *     so a half-mounted thread can't poison the cache.
+ */
+const HISTORY_CACHE_MAX = 8
+const historyCache = new Map<string, readonly ThreadMessageLike[]>()
+
+function getCachedHistory(id: string): readonly ThreadMessageLike[] | undefined {
+  const hit = historyCache.get(id)
+  if (hit === undefined) return undefined
+  // Touch: re-insert so this id becomes the most-recently-used (Map preserves
+  // insertion order, so delete+set moves it to the tail).
+  historyCache.delete(id)
+  historyCache.set(id, hit)
+  return hit
+}
+
+function setCachedHistory(id: string, messages: readonly ThreadMessageLike[]): void {
+  if (historyCache.has(id)) historyCache.delete(id)
+  historyCache.set(id, messages)
+  // Evict the least-recently-used (the head of insertion order) past the cap.
+  while (historyCache.size > HISTORY_CACHE_MAX) {
+    const oldest = historyCache.keys().next().value
+    if (oldest === undefined) break
+    historyCache.delete(oldest)
+  }
+}
+
+/**
+ * Drop a session's cached transcript. Called whenever that session's message
+ * list mutates (a new turn arrives) so the next switch-back re-reads fresh
+ * JSONL instead of serving a pre-turn snapshot. Cheap no-op when uncached.
+ */
+export function invalidateHistoryCache(id: string): void {
+  historyCache.delete(id)
 }
 
 /**
@@ -699,18 +762,36 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
         // `sessionLoading` → `useExternalStoreRuntime.isLoading` until
         // switchSession also resolves, so the user can read but not
         // send until the cli is actually accepting turns.
-        const loadPromise = window.chatApi.loadSession({ sessionId: id })
+        //
+        // switchSession still fires immediately (in parallel) regardless
+        // of the cache — only the *display* of history is short-circuited
+        // below; the cli cold start can't be cached and must always run.
         const switchPromise = window.chatApi.switchSession({
           sessionId: id,
           resume: true
         })
 
-        // Optimistically mount the thread under the requested id. The
-        // overwhelming majority of the time this is what the cli will
-        // end up using — the silent-fork rebind below is a rare edge
-        // case we still need to handle for correctness.
-        const { messages } = await loadPromise
-        setSession(id, messages as ThreadMessageLike[])
+        // Fast path: a recently-visited session's transcript is already
+        // mapped in memory. Mount it SYNCHRONOUSLY so the content column
+        // swaps in the same frame as the click — no disk round-trip, no
+        // blank gap. The cache is invalidated on every append (see
+        // invalidateHistoryCache) so this can't serve a pre-turn snapshot.
+        const cached = getCachedHistory(id)
+        let messages: readonly ThreadMessageLike[]
+        if (cached !== undefined) {
+          messages = cached
+          setSession(id, messages as ThreadMessageLike[])
+        } else {
+          // Cold path: read + parse off disk, then prime the cache.
+          // Optimistically mount the thread under the requested id. The
+          // overwhelming majority of the time this is what the cli will
+          // end up using — the silent-fork rebind below is a rare edge
+          // case we still need to handle for correctness.
+          const loaded = await window.chatApi.loadSession({ sessionId: id })
+          messages = loaded.messages as ThreadMessageLike[]
+          setCachedHistory(id, messages)
+          setSession(id, messages as ThreadMessageLike[])
+        }
 
         // Wait for cli ready. In the rare fusion-code `--resume X`
         // silent-fork case the cli picks a different id Y for the
@@ -996,6 +1077,10 @@ function makeSessionEventHandler(
   return (event: ChatEvent) => {
     switch (event.type) {
       case 'start':
+        // A new assistant turn is starting → this session's transcript is
+        // about to grow. Drop any cached history snapshot so the next
+        // switch-back re-reads fresh JSONL instead of the pre-turn copy.
+        invalidateHistoryCache(sid)
         actions.startAssistantMessage(sid, event.messageId)
         break
       case 'chunk':

@@ -14,7 +14,8 @@ import {
 } from '@assistant-ui/react'
 import { motion } from 'motion/react'
 
-import { useChatStore } from '../../stores/chat'
+import { useChatStore, useDelayedSessionLoading } from '../../stores/chat'
+import { invalidateHistoryCache } from '../../runtime/FusionRuntimeProvider'
 import { useT } from '../../i18n'
 import { usePendingPermissionCountsBySession } from '../../stores/permissions'
 import { pushUiLog } from '../../stores/uiLogs'
@@ -122,7 +123,15 @@ function resolveStatus(
  * beside this sidebar with `flex-1` consuming the remaining width.
  */
 export function ThreadListSidebar(): React.JSX.Element {
+  // Raw flag: gates the pointer-events lockout (must engage the instant a
+  // switch starts so a mid-flight click can't queue a second switch).
   const sessionLoading = useChatStore((s) => s.sessionLoading)
+  // Debounced flag: drives only the *visual* dim/desaturate, so a fast
+  // switch (history-cache hit) doesn't flash the whole list darker for a
+  // frame. The two diverge only in the sub-200ms window of a quick switch:
+  // there the list stays bright but is still click-locked, which is exactly
+  // right (no visible "busy" flicker, no accidental double-switch).
+  const sessionLoadingChrome = useDelayedSessionLoading()
   const t = useT()
   const activeRuntimeIds = useActiveRuntimeIds()
   const awaitingPermissionCounts = usePendingPermissionCountsBySession()
@@ -194,10 +203,10 @@ export function ThreadListSidebar(): React.JSX.Element {
             smooth instead of a class-toggle flick. aria-busy mirrors
             the loading flag for screen readers. */}
         <motion.div
-          aria-busy={sessionLoading}
+          aria-busy={sessionLoadingChrome}
           animate={{
-            opacity: sessionLoading ? 0.45 : 1,
-            filter: sessionLoading ? 'saturate(0.6)' : 'saturate(1)'
+            opacity: sessionLoadingChrome ? 0.45 : 1,
+            filter: sessionLoadingChrome ? 'saturate(0.6)' : 'saturate(1)'
           }}
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
           className={
@@ -330,6 +339,10 @@ function ThreadListItem(): React.JSX.Element {
         // back later (main will serve fresh JSONL history on the
         // next open).
         useChatStore.getState().dropSession(itemId)
+        // Also evict the history-LRU snapshot — otherwise the next
+        // switch-back would serve the cached transcript and skip the
+        // fresh JSONL read main now provides for this closed runtime.
+        invalidateHistoryCache(itemId)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         console.error('[sidebar] closeSessionRuntime failed', err)

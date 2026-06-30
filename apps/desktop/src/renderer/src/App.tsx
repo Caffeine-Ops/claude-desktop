@@ -6,7 +6,7 @@ import { PermissionBridge } from './components/permissions/PermissionBridge'
 import { SkillsDialog } from './components/dialogs/SkillsDialog'
 import { McpDialog } from './components/dialogs/McpDialog'
 import { LogsDialog } from './components/dialogs/LogsDialog'
-import { useChatStore } from './stores/chat'
+import { useDelayedSessionLoading } from './stores/chat'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
 import { useI18n, useT } from './i18n'
@@ -302,7 +302,13 @@ function App(): React.JSX.Element {
  * that setting still see a static pill.
  */
 function SessionLoadingOverlay(): React.JSX.Element {
-  const sessionLoading = useChatStore((s) => s.sessionLoading)
+  // Debounced: a fast switch (history-cache hit / lazy engine) clears the
+  // raw flag within a frame or two, and popping the toast for that flicker
+  // reads as "always busy". Gating it behind ~200ms means a quick switch
+  // shows nothing, while a real ~3-8s cold start still surfaces the pill.
+  // Matches the top progress bar in ThreadView (same hook) so the two
+  // loading affordances appear and disappear together.
+  const sessionLoading = useDelayedSessionLoading()
   const t = useT()
   // Strip the trailing ellipsis so screen readers don't read it aloud.
   const label = t('openingSession').replace(/[…\.]+$/, '')

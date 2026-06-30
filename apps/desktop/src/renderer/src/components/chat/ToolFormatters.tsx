@@ -134,20 +134,12 @@ function formatBash({ args, result, lang }: FormatterCtx): FriendlyView | null {
         )}
       </div>
     ),
-    // Keep the command visible (users can verify what ran) but make
-    // it compact — it's a reference, not the focus.
-    input: {
-      label: pick(lang, '命令', 'Command'),
-      content: (
-        <pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-snug text-foreground/80">
-          <span aria-hidden className="select-none text-muted-foreground/50">
-            ${' '}
-          </span>
-          {command}
-        </pre>
-      ),
-      copyText: command
-    },
+    // Simplified design: the command itself already rides inline in the
+    // card header (summarizeArgs picks `command`), so a dedicated
+    // `$ cmd` input box would just repeat it. Suppress the input pane
+    // entirely (null) and let the header carry the command — matching
+    // the reference "已执行命令 ls -la" single-row layout.
+    input: null,
     // Empty output → no pane. `ls` → grid renderer. Summarized
     // output → friendly one-liner + raw details toggle. Plain log
     // → raw pre.
@@ -204,7 +196,7 @@ function formatBash({ args, result, lang }: FormatterCtx): FriendlyView | null {
               copyText: trimmed
             }
           : {
-              label: pick(lang, '输出', 'Output'),
+              label: pick(lang, '输出', 'Response'),
               content: (
                 <pre className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-snug text-foreground/85">
                   {trimmed}

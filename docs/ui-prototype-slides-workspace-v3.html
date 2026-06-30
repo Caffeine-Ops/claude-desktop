@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SlidesWorkspace 重设计 · v3 框选标注</title>
+<style>
+/* ============================================================
+   SlidesWorkspace · v3 — 在 v2 深色电影感基础上，
+   把批注交互升级为「真·框选 overlay」：
+   - 工具栏切换 点选 / 框选 双模式（仿 open-design 桥接思路，纯手写）
+   - 框选：原生 pointer 事件 + rAF 直接改 DOM（等同 useMotionValue，零依赖）
+   - 编号钉 + 引线 + 气泡，右栏批注列表与画布钉子双向联动
+   ============================================================ */
+:root {
+  --bg: #13110f; --bg-raise: #1a1917; --surface: #211f1c; --surface-2: #2a2723;
+  --hairline: rgba(255,255,255,0.07); --hairline-strong: rgba(255,255,255,0.12);
+  --fg: #ece7df; --fg-dim: #a39b90; --fg-faint: #6f675e;
+  --orange: #d97757; --orange-soft: #e8a07f; --blue: #6b9bd1; --amber: #e8b931;
+  --r-xs: 5px; --r-sm: 8px; --r-md: 11px; --r-lg: 12px;
+  --tr-display: -0.005em; --tr-body: -0.022em; --tr-caption: -0.016em;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%;
+  background:
+    radial-gradient(120% 80% at 78% 8%, rgba(217,119,87,0.10), transparent 55%),
+    radial-gradient(90% 70% at 12% 92%, rgba(107,155,209,0.07), transparent 60%), var(--bg);
+  color: var(--fg); font-family: var(--font); letter-spacing: var(--tr-body);
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+.window {
+  width: min(1360px, 97vw); height: min(860px, 94vh); margin: max(2vh, 10px) auto;
+  display: flex; border-radius: 14px; overflow: hidden; border: 1px solid var(--hairline-strong);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.5), 0 40px 120px -20px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04);
+  background: var(--bg-raise);
+}
+
+/* 左：聊天列 */
+.chat-rail { width: 320px; flex-shrink: 0; border-right: 1px solid var(--hairline); display: flex; flex-direction: column; background: linear-gradient(180deg, rgba(255,255,255,0.012), transparent); }
+.traffic { display: flex; gap: 8px; padding: 16px 18px 0; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; }
+.traffic i:nth-child(1){ background:#ff5f57 } .traffic i:nth-child(2){ background:#febc2e } .traffic i:nth-child(3){ background:#28c840 }
+.chat-body { flex: 1; padding: 22px 18px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+.bubble { max-width: 90%; padding: 11px 13px; border-radius: var(--r-md); font-size: 13px; line-height: 1.5; }
+.bubble.user { align-self: flex-end; background: var(--surface-2); border: 1px solid var(--hairline); }
+.bubble.ai { align-self: flex-start; color: var(--fg-dim); }
+.bubble.ai .ph { color: var(--fg-faint); }
+.composer { margin: 0 16px 16px; padding: 11px 13px; border-radius: var(--r-lg); border: 1px solid var(--hairline-strong); background: var(--surface); color: var(--fg-faint); font-size: 13px; display: flex; align-items: center; justify-content: space-between; }
+.composer .send { width: 28px; height: 28px; border-radius: var(--r-sm); background: var(--orange); display: grid; place-items: center; box-shadow: 0 4px 14px -4px rgba(217,119,87,0.6); }
+.composer .send svg { width: 14px; height: 14px; }
+
+/* 右：画布 */
+.canvas { flex: 1; min-width: 0; display: flex; flex-direction: column; background: radial-gradient(140% 90% at 85% -10%, rgba(217,119,87,0.07), transparent 50%), var(--bg); }
+.tabbar { display: flex; align-items: center; gap: 4px; padding: 10px 14px; border-bottom: 1px solid var(--hairline); background: rgba(19,17,15,0.6); backdrop-filter: blur(20px) saturate(1.2); }
+.tab { display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px; border-radius: var(--r-sm); font-size: 12.5px; color: var(--fg-dim); letter-spacing: var(--tr-caption); cursor: pointer; user-select: none; border: 1px solid transparent; transition: background .16s cubic-bezier(.22,1,.36,1), color .16s, border-color .16s; }
+.tab svg { width: 15px; height: 15px; opacity: .85; }
+.tab.active { color: var(--fg); background: linear-gradient(180deg, rgba(217,119,87,0.18), rgba(217,119,87,0.10)); border-color: rgba(217,119,87,0.35); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 12px -6px rgba(217,119,87,0.5); }
+.tab.active svg { opacity: 1; color: var(--orange-soft); }
+.tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 8px var(--orange); }
+.tabbar .spacer { flex: 1; }
+.winbtn { padding: 6px 12px; border-radius: var(--r-sm); font-size: 12px; color: var(--fg-dim); border: 1px solid var(--hairline-strong); cursor: pointer; background: transparent; }
+.winbtn.primary { background: var(--fg); color: #1a1410; border-color: transparent; font-weight: 600; }
+
+.body { flex: 1; min-height: 0; position: relative; overflow: hidden; display: flex; }
+
+/* live preview：缩略图 + 舞台 + 右栏 */
+.live { flex: 1; display: grid; grid-template-columns: 150px 1fr 278px; min-height: 0; }
+.thumbs { border-right: 1px solid var(--hairline); padding: 14px 11px; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; }
+.thumbs .lbl { font-size: 11px; color: var(--fg-faint); letter-spacing: var(--tr-caption); padding: 0 4px 3px; display:flex; justify-content: space-between; }
+.thumb { position: relative; border-radius: var(--r-sm); aspect-ratio: 16/9; overflow: hidden; border: 1px solid var(--hairline); cursor: pointer; transition: border-color .16s, transform .16s; }
+.thumb:hover { transform: translateY(-1px); border-color: var(--hairline-strong); }
+.thumb.active { border-color: rgba(217,119,87,0.6); box-shadow: 0 0 0 1px rgba(217,119,87,0.4), 0 6px 18px -8px rgba(217,119,87,0.5); }
+.thumb .num { position:absolute; top:5px; left:6px; font-size:10px; color: var(--fg-dim); font-family: var(--mono); }
+.thumb .rdot { position:absolute; top:5px; right:6px; width:7px; height:7px; border-radius:50%; background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+.thumb .mini { position:absolute; inset:0; display:grid; place-items:center; color: var(--fg-faint); font-size: 9px; }
+.thumb .pincount { position:absolute; bottom:5px; right:6px; font-size: 9px; background: var(--amber); color:#1a1410; border-radius: 980px; min-width:14px; text-align:center; padding: 0 4px; line-height:14px; font-weight:700; }
+.thumb.c1 { background: linear-gradient(135deg, #1a2230, #0e1118); }
+.thumb.c2 { background: linear-gradient(135deg, #2a2723, #1a1917); }
+
+.stage { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--hairline); }
+.stage-head { display: flex; align-items: center; gap: 11px; padding: 13px 18px; border-bottom: 1px solid var(--hairline); }
+.stage-head .idx { font-family: var(--mono); font-size: 12px; color: var(--fg-faint); }
+.stage-head .name { font-size: 14px; font-weight: 600; }
+.stage-head .tag { font-size: 11px; color: var(--blue); background: rgba(107,155,209,0.14); padding: 2px 8px; border-radius: 980px; }
+/* 工具栏：点选 / 框选 双模式 */
+.toolbar { margin-left: auto; display: flex; gap: 4px; padding: 3px; border-radius: var(--r-sm); background: var(--surface); border: 1px solid var(--hairline); }
+.toolbar button { display:inline-flex; align-items:center; gap:5px; padding: 5px 10px; border-radius: 6px; font-size: 12px; color: var(--fg-dim); border: none; background: transparent; cursor: pointer; transition: background .15s, color .15s; }
+.toolbar button svg { width: 14px; height: 14px; }
+.toolbar button.on { background: var(--orange); color: #1a1410; font-weight: 600; }
+
+.stage-canvas { flex: 1; display: grid; place-items: center; padding: 26px; min-height: 0; }
+.frame-wrap { position: relative; width: 100%; max-width: 600px; }
+.deck-frame { width: 100%; aspect-ratio: 16/9; border-radius: var(--r-md); background: radial-gradient(120% 90% at 80% 0%, rgba(217,119,87,0.12), transparent 50%), linear-gradient(135deg, #0f1620, #0a0d12); border: 1px solid var(--hairline-strong); box-shadow: 0 30px 80px -30px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.05); position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 38px; }
+.deck-frame .logo { position:absolute; top:22px; right:22px; width:28px; height:28px; border-radius:7px; background: linear-gradient(135deg, var(--orange), var(--blue)); }
+.deck-frame .accent-bar { width: 52px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--orange), var(--blue)); margin-bottom: 14px; }
+.deck-frame h1 { font-size: clamp(24px, 3.8vw, 38px); font-weight: 700; line-height: 1.08; letter-spacing: var(--tr-display); }
+.deck-frame p { margin-top: 11px; color: var(--fg-dim); font-size: clamp(11px,1.4vw,15px); }
+/* 点选态：可选元素 */
+.sel-el { cursor: pointer; border-radius: 4px; transition: box-shadow .15s, background .15s; padding: 1px 4px; margin: -1px -4px; }
+body[data-mode="pick"] .sel-el:hover { box-shadow: 0 0 0 1.5px rgba(107,155,209,0.5); }
+.sel-el.selected { box-shadow: 0 0 0 2px var(--blue), 0 0 18px -4px rgba(107,155,209,0.6); background: rgba(107,155,209,0.08); }
+
+/* ── 批注 overlay 层（覆盖在 deck-frame 上）────────────────── */
+.overlay { position: absolute; inset: 0; border-radius: var(--r-md); }
+body[data-mode="box"] .overlay { cursor: crosshair; }
+body[data-mode="pick"] .overlay { pointer-events: none; } /* 点选模式让事件透到 SVG 元素 */
+/* 拖拽中的临时框 */
+.drag-rect { position: absolute; border: 1.5px dashed var(--amber); background: rgba(232,185,49,0.10); border-radius: 4px; pointer-events: none; display: none; }
+/* 已落地的批注钉 */
+.pin-rect { position: absolute; border: 1.5px solid var(--amber); background: rgba(232,185,49,0.08); border-radius: 4px; box-shadow: 0 0 0 1px rgba(0,0,0,0.3); transition: box-shadow .15s; }
+.pin-rect.hot { box-shadow: 0 0 0 2px var(--amber), 0 6px 20px -6px rgba(232,185,49,0.6); }
+.pin-badge { position: absolute; top: -11px; left: -11px; width: 22px; height: 22px; border-radius: 50%; background: var(--amber); color: #1a1410; font-size: 12px; font-weight: 700; display: grid; place-items: center; box-shadow: 0 2px 8px -2px rgba(0,0,0,0.6); cursor: pointer; }
+/* SVG 引线层 */
+.leader { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.leader line { stroke: var(--amber); stroke-width: 1.4; stroke-dasharray: 3 3; opacity: .7; }
+/* 气泡 */
+.bubble-note { position: absolute; max-width: 200px; background: var(--surface-2); border: 1px solid rgba(232,185,49,0.4); border-radius: var(--r-sm); padding: 8px 10px; font-size: 12px; line-height: 1.4; color: var(--fg); box-shadow: 0 10px 30px -10px rgba(0,0,0,0.7); }
+.bubble-note .who { font-size: 10px; color: var(--amber); font-family: var(--mono); margin-bottom: 2px; }
+
+.hint { position: absolute; bottom: -30px; left: 0; font-size: 11.5px; color: var(--fg-faint); }
+.hint b { color: var(--amber); }
+
+/* 右栏：批注列表 + 应用修改 */
+.edit-rail { display: flex; flex-direction: column; min-height: 0; }
+.edit-scroll { flex: 1; overflow-y: auto; padding: 16px 16px 8px; }
+.edit-rail h4 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-faint); margin-bottom: 8px; display:flex; justify-content: space-between; }
+.edit-rail h4 .cnt { color: var(--amber); }
+.draft { border: 1px solid rgba(232,185,49,0.4); border-radius: var(--r-sm); background: rgba(232,185,49,0.06); padding: 11px; margin-bottom: 14px; }
+.draft .draft-h { font-size: 11px; color: var(--amber); font-family: var(--mono); margin-bottom: 7px; }
+.instr { width: 100%; min-height: 64px; resize: none; background: var(--surface); border: 1px solid var(--hairline-strong); border-radius: var(--r-sm); color: var(--fg); font-family: var(--font); font-size: 12.5px; line-height: 1.5; padding: 9px 10px; letter-spacing: var(--tr-body); }
+.instr::placeholder { color: var(--fg-faint); }
+.instr:focus { outline: none; border-color: rgba(232,185,49,0.5); box-shadow: 0 0 0 3px rgba(232,185,49,0.12); }
+.draft-row { display:flex; gap:7px; margin-top: 8px; }
+.draft-row button { flex:1; padding: 8px; border-radius: var(--r-sm); font-size: 12.5px; font-weight: 600; cursor: pointer; border: 1px solid var(--hairline-strong); background: transparent; color: var(--fg-dim); }
+.draft-row button.save { background: var(--amber); color: #1a1410; border-color: transparent; }
+.annot-item { padding: 10px 11px; border-radius: var(--r-sm); border: 1px solid var(--hairline); background: rgba(232,185,49,0.04); margin-bottom: 8px; cursor: pointer; transition: border-color .15s, background .15s; }
+.annot-item:hover { border-color: rgba(232,185,49,0.4); background: rgba(232,185,49,0.08); }
+.annot-item .who { font-size: 11px; color: var(--amber); font-family: var(--mono); margin-bottom: 4px; display:flex; align-items:center; gap:7px; }
+.annot-item .who .n { width:18px; height:18px; border-radius:50%; background:var(--amber); color:#1a1410; display:grid; place-items:center; font-weight:700; font-size:11px; }
+.annot-item .who .del { margin-left:auto; color: var(--fg-faint); }
+.annot-item .txt { font-size: 12.5px; color: var(--fg-dim); line-height: 1.45; }
+.annot-empty { font-size: 12.5px; color: var(--fg-faint); font-style: italic; padding: 8px 0; }
+.edit-foot { padding: 12px 14px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 8px; }
+.edit-foot .apply { width: 100%; padding: 10px; border-radius: var(--r-sm); border: none; background: var(--amber); color: #1a1410; font-weight: 700; font-size: 13.5px; cursor: pointer; box-shadow: 0 6px 18px -6px rgba(232,185,49,0.5); }
+.edit-foot .apply:disabled { opacity: .35; cursor: not-allowed; box-shadow: none; }
+.edit-foot .row { display: flex; gap: 8px; }
+.edit-foot .row button { flex: 1; padding: 9px; border-radius: var(--r-sm); border: 1px solid var(--hairline-strong); background: transparent; color: var(--fg-dim); font-size: 13px; cursor: pointer; }
+
+/* Tweaks */
+.tweaks { position: fixed; bottom: 20px; right: 20px; z-index: 50; }
+.tweaks-toggle { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--hairline-strong); background: var(--surface-2); color: var(--fg); cursor: pointer; display: grid; place-items: center; box-shadow: 0 10px 30px -10px rgba(0,0,0,0.6); }
+.tweaks-panel { position: absolute; bottom: 56px; right: 0; width: 240px; background: var(--surface-2); border: 1px solid var(--hairline-strong); border-radius: var(--r-lg); padding: 14px; display: none; box-shadow: 0 20px 60px -20px rgba(0,0,0,0.7); }
+.tweaks-panel.open { display: block; }
+.tweaks-panel .t { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--fg-faint); margin-bottom: 10px; }
+.tweaks-row { display:flex; justify-content: space-between; align-items:center; padding: 7px 0; font-size: 13px; color: var(--fg-dim); }
+.seg { display:flex; gap:4px; }
+.seg button { padding: 4px 9px; border-radius: 6px; font-size: 11px; border: 1px solid var(--hairline); background: transparent; color: var(--fg-dim); cursor: pointer; }
+.seg button.on { background: var(--orange); color: #1a1410; border-color: transparent; }
+</style>
+</head>
+<body data-mode="box">
+
+<div class="window">
+  <aside class="chat-rail">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="chat-body">
+      <div class="bubble user">/claude-desktop:ppt-master 做两页 ppt 介绍下唐代的经济</div>
+      <div class="bubble ai">生成完成。在右侧画布<span class="ph"> 框选任意区域写批注，或切「点选」模式点中元素</span>，改完点「应用修改」我来重做。</div>
+    </div>
+    <div class="composer">
+      <span>继续对话…</span>
+      <span class="send"><svg viewBox="0 0 24 24" fill="none" stroke="#1a1410" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
+    </div>
+  </aside>
+
+  <section class="canvas">
+    <div class="tabbar">
+      <div class="tab active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8 20.5h8M12 16.5v4"/></svg> 幻灯片 <span class="dot"></span></div>
+      <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg> 大纲</div>
+      <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h5l2 2.5h6A1.5 1.5 0 0 1 20 8v9.5A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/></svg> 文件</div>
+      <div class="spacer"></div>
+      <div class="winbtn">放映</div>
+      <div class="winbtn primary">导出</div>
+    </div>
+
+    <div class="body">
+      <div class="live">
+        <div class="thumbs">
+          <div class="lbl"><span>幻灯片</span><span>02 / 02</span></div>
+          <div class="thumb c1 active"><span class="num">01</span><span class="rdot"></span><span class="mini">封面</span><span class="pincount" id="thumbCount" style="display:none">0</span></div>
+          <div class="thumb c2"><span class="num">02</span><span class="mini">四维全貌</span></div>
+        </div>
+
+        <div class="stage">
+          <div class="stage-head">
+            <span class="idx">01</span><span class="name">唐代的经济</span><span class="tag">cover</span>
+            <div class="toolbar">
+              <button data-mode="pick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 3l14 7-6 2-2 6z"/></svg>点选</button>
+              <button data-mode="box" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2" stroke-dasharray="3 2.5"/></svg>框选</button>
+            </div>
+          </div>
+          <div class="stage-canvas">
+            <div class="frame-wrap" id="frameWrap">
+              <div class="deck-frame" id="deckFrame">
+                <div class="logo"></div>
+                <div class="accent-bar"></div>
+                <h1 class="sel-el" data-el="title">唐代的经济</h1>
+                <p class="sel-el" data-el="subtitle">从均田授地到丝路通商的近三百年</p>
+              </div>
+              <!-- 引线层 -->
+              <svg class="leader" id="leaderLayer"></svg>
+              <!-- 批注 overlay（事件层）-->
+              <div class="overlay" id="overlay">
+                <div class="drag-rect" id="dragRect"></div>
+              </div>
+              <div class="hint">框选模式：在幻灯片上<b>拖一个框</b>圈出要改的区域 → 右栏写指令</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右栏 -->
+        <div class="edit-rail">
+          <div class="edit-scroll">
+            <!-- 草稿（刚框完待写指令）-->
+            <div class="draft" id="draftBox" style="display:none">
+              <div class="draft-h" id="draftH">批注 #1 · 已框选区域</div>
+              <textarea class="instr" id="instr" placeholder="对这个区域的修改指令，例如「标题放大、字重加粗，换成暖橙色」…"></textarea>
+              <div class="draft-row">
+                <button id="draftCancel">取消</button>
+                <button class="save" id="draftSave">保存批注</button>
+              </div>
+            </div>
+            <h4>本页批注 <span class="cnt" id="annotCnt">0</span></h4>
+            <div id="annotBox"><div class="annot-empty">还没有批注 —— 框选一块区域开始</div></div>
+          </div>
+          <div class="edit-foot">
+            <button class="apply" id="applyBtn" disabled>应用修改</button>
+            <div class="row"><button id="undoBtn">撤销</button><button>退出预览</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="tweaks">
+  <div class="tweaks-panel" id="tweaksPanel">
+    <div class="t">Tweaks</div>
+    <div class="tweaks-row"><span>引线</span><div class="seg" id="segLeader"><button class="on" data-leader="on">显示</button><button data-leader="off">隐藏</button></div></div>
+    <div class="tweaks-row"><span>气泡</span><div class="seg" id="segBubble"><button class="on" data-bubble="on">显示</button><button data-bubble="off">隐藏</button></div></div>
+  </div>
+  <button class="tweaks-toggle" id="tweaksToggle" aria-label="Tweaks"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a8 8 0 0 0 .1-3l1.5-1.2-2-3.4-1.8.7a8 8 0 0 0-2.6-1.5L13.5 1h-3l-.6 2.1A8 8 0 0 0 7.3 4.6L5.5 4l-2 3.4L5 8.6a8 8 0 0 0 0 3L3.5 12.8l2 3.4 1.8-.7a8 8 0 0 0 2.6 1.5l.6 2h3l.6-2.1a8 8 0 0 0 2.6-1.5l1.8.7 2-3.4z"/></svg></button>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+//  状态：批注 = 矩形区域（相对 deck-frame 的 0~1 归一坐标）+ 指令文本
+//  归一化存储 → 幻灯片缩放/重渲染后钉子仍贴在原位（仿 open-design）
+// ─────────────────────────────────────────────────────────────
+var annots = [];           // {id, rx, ry, rw, rh, text}  rx/ry/rw/rh ∈ [0,1]
+var seq = 0;
+var draft = null;          // 刚框完待保存的草稿 {rx,ry,rw,rh}
+var showLeader = true, showBubble = true;
+
+var frameWrap = document.getElementById('frameWrap');
+var overlay = document.getElementById('overlay');
+var dragRect = document.getElementById('dragRect');
+var deckFrame = document.getElementById('deckFrame');
+var leaderLayer = document.getElementById('leaderLayer');
+var draftBox = document.getElementById('draftBox');
+var draftH = document.getElementById('draftH');
+var instr = document.getElementById('instr');
+var annotBox = document.getElementById('annotBox');
+var annotCnt = document.getElementById('annotCnt');
+var applyBtn = document.getElementById('applyBtn');
+var thumbCount = document.getElementById('thumbCount');
+
+// ── 模式切换：点选 / 框选 ──
+document.querySelectorAll('.toolbar button').forEach(function(b){
+  b.addEventListener('click', function(){
+    document.querySelectorAll('.toolbar button').forEach(function(x){ x.classList.remove('on'); });
+    b.classList.add('on');
+    document.body.dataset.mode = b.dataset.mode;
+    document.querySelector('.hint').innerHTML = b.dataset.mode === 'box'
+      ? '框选模式：在幻灯片上<b>拖一个框</b>圈出要改的区域 → 右栏写指令'
+      : '点选模式：<b>点中</b>标题/副标题等元素，高亮后写修改指令';
+  });
+});
+// 点选模式：直接选元素（沿用 v2 逻辑，简化）
+document.querySelectorAll('.deck-frame .sel-el').forEach(function(el){
+  el.addEventListener('click', function(e){
+    if(document.body.dataset.mode !== 'pick') return;
+    var was = el.classList.contains('selected');
+    if(!(e.metaKey||e.ctrlKey)) document.querySelectorAll('.sel-el').forEach(function(x){x.classList.remove('selected')});
+    el.classList.toggle('selected', !was);
+  });
+});
+
+// ── 框选：原生 pointer + rAF（拖拽时直接改 DOM，等同 useMotionValue）──
+var dragging = false, sx = 0, sy = 0, cx = 0, cy = 0, raf = 0;
+overlay.addEventListener('pointerdown', function(e){
+  if(document.body.dataset.mode !== 'box') return;
+  if(draft) return; // 已有待保存草稿时不重复框
+  var r = overlay.getBoundingClientRect();
+  sx = e.clientX - r.left; sy = e.clientY - r.top; cx = sx; cy = sy;
+  dragging = true;
+  try { overlay.setPointerCapture(e.pointerId); } catch (_) { /* 合成事件/边缘情况下 capture 可能抛，不影响拖拽 */ }
+  dragRect.style.display = 'block';
+  paint();
+});
+overlay.addEventListener('pointermove', function(e){
+  if(!dragging) return;
+  var r = overlay.getBoundingClientRect();
+  cx = Math.max(0, Math.min(e.clientX - r.left, r.width));
+  cy = Math.max(0, Math.min(e.clientY - r.top, r.height));
+  if(!raf) raf = requestAnimationFrame(paint); // rAF：每帧最多画一次，绕过 React/重排
+});
+overlay.addEventListener('pointerup', function(e){
+  if(!dragging) return;
+  dragging = false;
+  if(raf){ cancelAnimationFrame(raf); raf = 0; }
+  dragRect.style.display = 'none';
+  var r = overlay.getBoundingClientRect();
+  var x = Math.min(sx, cx), y = Math.min(sy, cy), w = Math.abs(cx - sx), h = Math.abs(cy - sy);
+  if(w < 14 || h < 14) return; // 太小当误触
+  // 落地为归一坐标
+  draft = { rx: x / r.width, ry: y / r.height, rw: w / r.width, rh: h / r.height };
+  openDraft();
+});
+function paint(){
+  raf = 0;
+  var x = Math.min(sx, cx), y = Math.min(sy, cy), w = Math.abs(cx - sx), h = Math.abs(cy - sy);
+  dragRect.style.left = x + 'px'; dragRect.style.top = y + 'px';
+  dragRect.style.width = w + 'px'; dragRect.style.height = h + 'px';
+}
+
+// ── 草稿 → 保存为批注 ──
+function openDraft(){
+  draftH.textContent = '批注 #' + (seq + 1) + ' · 已框选区域';
+  draftBox.style.display = 'block';
+  instr.value = ''; instr.focus();
+  renderPins(); // 先把草稿框画出来
+}
+document.getElementById('draftCancel').addEventListener('click', function(){ draft = null; draftBox.style.display='none'; renderPins(); });
+document.getElementById('draftSave').addEventListener('click', function(){
+  if(!draft || !instr.value.trim()) { instr.focus(); return; }
+  seq++;
+  annots.push({ id: seq, rx: draft.rx, ry: draft.ry, rw: draft.rw, rh: draft.rh, text: instr.value.trim() });
+  draft = null; draftBox.style.display='none';
+  renderAll();
+});
+document.getElementById('undoBtn').addEventListener('click', function(){ if(annots.length){ annots.pop(); renderAll(); } });
+
+// ── 渲染：钉子 + 引线 + 气泡 + 右栏列表 ──
+function renderAll(){ renderPins(); renderList(); }
+function renderPins(){
+  // 清掉旧钉/气泡（保留 dragRect + draft）
+  frameWrap.querySelectorAll('.pin-rect, .bubble-note').forEach(function(n){ n.remove(); });
+  leaderLayer.innerHTML = '';
+  var r = overlay.getBoundingClientRect();
+  var list = annots.slice();
+  if(draft) list = list.concat([{ id: '·', rx: draft.rx, ry: draft.ry, rw: draft.rw, rh: draft.rh, text: '', _draft: true }]);
+
+  list.forEach(function(a, i){
+    var x = a.rx * r.width, y = a.ry * r.height, w = a.rw * r.width, h = a.rh * r.height;
+    // 矩形钉
+    var pin = document.createElement('div');
+    pin.className = 'pin-rect'; pin.dataset.id = a.id;
+    pin.style.left = x + 'px'; pin.style.top = y + 'px'; pin.style.width = w + 'px'; pin.style.height = h + 'px';
+    if(!a._draft){
+      var badge = document.createElement('div'); badge.className = 'pin-badge'; badge.textContent = a.id;
+      badge.addEventListener('click', function(ev){ ev.stopPropagation(); removeAnnot(a.id); });
+      pin.appendChild(badge);
+      pin.addEventListener('mouseenter', function(){ hotItem(a.id, true); });
+      pin.addEventListener('mouseleave', function(){ hotItem(a.id, false); });
+    }
+    frameWrap.appendChild(pin);
+
+    if(a._draft) return;
+    // 气泡：放在框右侧，超出则左侧
+    var bx = x + w + 14, by = y;
+    if(bx + 200 > r.width) bx = x - 214;
+    if(showBubble){
+      var note = document.createElement('div'); note.className = 'bubble-note';
+      note.style.left = Math.max(4, bx) + 'px'; note.style.top = Math.max(4, by) + 'px';
+      note.innerHTML = '<div class="who">#' + a.id + '</div>' + escapeHtml(a.text);
+      frameWrap.appendChild(note);
+      // 引线：框中心 → 气泡左上
+      if(showLeader){
+        var ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+        ln.setAttribute('x1', x + w/2); ln.setAttribute('y1', y + h/2);
+        ln.setAttribute('x2', Math.max(4,bx)); ln.setAttribute('y2', Math.max(4,by) + 12);
+        leaderLayer.appendChild(ln);
+      }
+    }
+  });
+  // 缩略图角标
+  thumbCount.style.display = annots.length ? 'block' : 'none';
+  thumbCount.textContent = annots.length;
+}
+function renderList(){
+  annotCnt.textContent = annots.length;
+  applyBtn.disabled = annots.length === 0;
+  if(annots.length === 0){ annotBox.innerHTML = '<div class="annot-empty">还没有批注 —— 框选一块区域开始</div>'; return; }
+  annotBox.innerHTML = annots.map(function(a){
+    return '<div class="annot-item" data-id="'+a.id+'"><div class="who"><span class="n">'+a.id+'</span> 区域批注 <span class="del" data-del="'+a.id+'">删除</span></div><div class="txt">'+escapeHtml(a.text)+'</div></div>';
+  }).join('');
+  annotBox.querySelectorAll('.del').forEach(function(d){ d.addEventListener('click', function(ev){ ev.stopPropagation(); removeAnnot(+d.dataset.del); }); });
+  annotBox.querySelectorAll('.annot-item').forEach(function(it){
+    it.addEventListener('mouseenter', function(){ hotPin(+it.dataset.id, true); });
+    it.addEventListener('mouseleave', function(){ hotPin(+it.dataset.id, false); });
+  });
+}
+function removeAnnot(id){ annots = annots.filter(function(a){ return a.id !== id; }); renderAll(); }
+function hotItem(id, on){ var it = annotBox.querySelector('.annot-item[data-id="'+id+'"]'); if(it) it.style.borderColor = on ? 'rgba(232,185,49,0.6)' : ''; }
+function hotPin(id, on){ var p = frameWrap.querySelector('.pin-rect[data-id="'+id+'"]'); if(p) p.classList.toggle('hot', on); }
+function escapeHtml(s){ return s.replace(/[&<>]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
+
+// 窗口缩放时按归一坐标重绘（钉子贴回原位）
+window.addEventListener('resize', function(){ renderPins(); });
+
+// Tweaks
+document.getElementById('tweaksToggle').addEventListener('click', function(){ document.getElementById('tweaksPanel').classList.toggle('open'); });
+function seg(id, fn){ document.getElementById(id).addEventListener('click', function(e){ var b=e.target.closest('button'); if(!b)return; this.querySelectorAll('button').forEach(function(x){x.classList.remove('on')}); b.classList.add('on'); fn(b); renderPins(); }); }
+seg('segLeader', function(b){ showLeader = b.dataset.leader === 'on'; });
+seg('segBubble', function(b){ showBubble = b.dataset.bubble === 'on'; });
+
+// 预置一条示例批注，进来就能看到完整形态
+seq = 1;
+annots.push({ id: 1, rx: 0.07, ry: 0.62, rw: 0.46, rh: 0.20, text: '标题放大一档、字重加粗，颜色换成暖橙 #D97757' });
+renderAll();
+</script>
+</body>
+</html>

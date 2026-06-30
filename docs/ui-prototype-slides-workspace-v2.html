@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SlidesWorkspace 重设计 · v2 全量原型</title>
+<style>
+/* ============================================================
+   SlidesWorkspace 重设计 — 深色电影感 + 暖橙/青蓝流光
+   参考：QoderWork CN 封面（深蓝近黑底 + 暖橙→青蓝流光 + 电影质感）
+   基线：Claude Desktop 的 Apple HIG token（圆角/负字距/字阶）
+   ============================================================ */
+:root {
+  --bg: #13110f; --bg-raise: #1a1917; --surface: #211f1c; --surface-2: #2a2723;
+  --hairline: rgba(255,255,255,0.07); --hairline-strong: rgba(255,255,255,0.12);
+  --fg: #ece7df; --fg-dim: #a39b90; --fg-faint: #6f675e;
+  --orange: #d97757; --orange-soft: #e8a07f; --blue: #6b9bd1; --amber: #e8b931;
+  --r-xs: 5px; --r-sm: 8px; --r-md: 11px; --r-lg: 12px;
+  --tr-display: -0.005em; --tr-body: -0.022em; --tr-caption: -0.016em;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%;
+  background:
+    radial-gradient(120% 80% at 78% 8%, rgba(217,119,87,0.10), transparent 55%),
+    radial-gradient(90% 70% at 12% 92%, rgba(107,155,209,0.07), transparent 60%), var(--bg);
+  color: var(--fg); font-family: var(--font); letter-spacing: var(--tr-body);
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+.window {
+  width: min(1340px, 96vw); height: min(852px, 93vh); margin: max(2.2vh, 12px) auto;
+  display: flex; border-radius: 14px; overflow: hidden; border: 1px solid var(--hairline-strong);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.5), 0 40px 120px -20px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04);
+  background: var(--bg-raise);
+}
+
+/* 左：聊天列 */
+.chat-rail { width: 340px; flex-shrink: 0; border-right: 1px solid var(--hairline); display: flex; flex-direction: column; background: linear-gradient(180deg, rgba(255,255,255,0.012), transparent); }
+.traffic { display: flex; gap: 8px; padding: 16px 18px 0; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; }
+.traffic i:nth-child(1){ background:#ff5f57 } .traffic i:nth-child(2){ background:#febc2e } .traffic i:nth-child(3){ background:#28c840 }
+.chat-body { flex: 1; padding: 24px 20px; display: flex; flex-direction: column; gap: 16px; overflow: hidden; }
+.bubble { max-width: 88%; padding: 11px 14px; border-radius: var(--r-md); font-size: 13.5px; line-height: 1.5; }
+.bubble.user { align-self: flex-end; background: var(--surface-2); border: 1px solid var(--hairline); }
+.bubble.ai { align-self: flex-start; color: var(--fg-dim); }
+.bubble.ai .ph { color: var(--fg-faint); }
+.composer { margin: 0 16px 16px; padding: 11px 13px; border-radius: var(--r-lg); border: 1px solid var(--hairline-strong); background: var(--surface); color: var(--fg-faint); font-size: 13.5px; display: flex; align-items: center; justify-content: space-between; }
+.composer .send { width: 28px; height: 28px; border-radius: var(--r-sm); background: var(--orange); display: grid; place-items: center; box-shadow: 0 4px 14px -4px rgba(217,119,87,0.6); }
+.composer .send svg { width: 14px; height: 14px; }
+
+/* 右：画布 */
+.canvas { flex: 1; min-width: 0; display: flex; flex-direction: column; background: radial-gradient(140% 90% at 85% -10%, rgba(217,119,87,0.07), transparent 50%), var(--bg); }
+.tabbar { display: flex; align-items: center; gap: 4px; padding: 10px 14px; border-bottom: 1px solid var(--hairline); background: rgba(19,17,15,0.6); backdrop-filter: blur(20px) saturate(1.2); }
+.tab { display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px; border-radius: var(--r-sm); font-size: 12.5px; color: var(--fg-dim); letter-spacing: var(--tr-caption); cursor: pointer; user-select: none; border: 1px solid transparent; transition: background .16s cubic-bezier(.22,1,.36,1), color .16s, border-color .16s; }
+.tab svg { width: 15px; height: 15px; opacity: .85; }
+.tab:hover { color: var(--fg); background: rgba(255,255,255,0.04); }
+.tab.active { color: var(--fg); background: linear-gradient(180deg, rgba(217,119,87,0.18), rgba(217,119,87,0.10)); border-color: rgba(217,119,87,0.35); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 12px -6px rgba(217,119,87,0.5); }
+.tab.active svg { opacity: 1; color: var(--orange-soft); }
+.tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 8px var(--orange); }
+.tab.q .badge { font-size: 9px; min-width: 15px; text-align:center; padding: 0 4px; line-height: 15px; border-radius: 980px; background: var(--blue); color: #0e1118; font-weight: 700; }
+.tabbar .spacer { flex: 1; }
+.winbtn { padding: 6px 12px; border-radius: var(--r-sm); font-size: 12px; color: var(--fg-dim); border: 1px solid var(--hairline-strong); cursor: pointer; background: transparent; transition: background .16s, color .16s; }
+.winbtn:hover { color: var(--fg); background: rgba(255,255,255,0.04); }
+.winbtn.primary { background: var(--fg); color: #1a1410; border-color: transparent; font-weight: 600; }
+.winbtn.primary:hover { background: #fff; }
+
+.body { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.pane { position: absolute; inset: 0; display: none; flex-direction: column; animation: fade .18s ease; }
+.pane.show { display: flex; }
+@keyframes fade { from { opacity: .55 } to { opacity: 1 } }
+
+/* 幻灯片：空状态 + 流光 */
+.slides-empty { flex: 1; display: grid; place-items: center; position: relative; overflow: hidden; }
+.flux { position: absolute; inset: 0; pointer-events: none; opacity: .9; }
+.flux svg { width: 100%; height: 100%; }
+.flux .stream { fill: none; stroke-width: 1.5; stroke-linecap: round; }
+.flux .s1 { stroke: url(#go); filter: drop-shadow(0 0 6px rgba(217,119,87,.5)); animation: drift 14s ease-in-out infinite; }
+.flux .s2 { stroke: url(#gb); opacity:.6; animation: drift 18s ease-in-out infinite reverse; }
+.flux .s3 { stroke: url(#go); opacity:.3; animation: drift 22s ease-in-out infinite; }
+@keyframes drift { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-14px) } }
+.empty-card { position: relative; z-index: 2; text-align: center; max-width: 460px; }
+.empty-badge { width: 64px; height: 64px; margin: 0 auto 22px; border-radius: 18px; display: grid; place-items: center; background: linear-gradient(135deg, rgba(217,119,87,0.22), rgba(107,155,209,0.16)); border: 1px solid var(--hairline-strong); box-shadow: 0 0 40px -8px rgba(217,119,87,0.4), inset 0 1px 0 rgba(255,255,255,0.1); }
+.empty-badge svg { width: 30px; height: 30px; color: var(--orange-soft); }
+.empty-kicker { display: inline-block; margin-bottom: 18px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--orange-soft); }
+.empty-title { font-size: 27px; font-weight: 600; letter-spacing: var(--tr-display); line-height: 1.14; }
+.empty-sub { margin-top: 10px; color: var(--fg-dim); font-size: 15px; line-height: 1.5; text-wrap: pretty; }
+
+/* 幻灯片：live preview 编辑器（缩略图 + 舞台 + 右栏批注）*/
+.live { flex: 1; display: grid; grid-template-columns: 158px 1fr 268px; min-height: 0; }
+.thumbs { border-right: 1px solid var(--hairline); padding: 14px 11px; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; }
+.thumbs .lbl { font-size: 11px; color: var(--fg-faint); letter-spacing: var(--tr-caption); padding: 0 4px 3px; display:flex; justify-content: space-between; }
+.thumb { position: relative; border-radius: var(--r-sm); aspect-ratio: 16/9; overflow: hidden; border: 1px solid var(--hairline); cursor: pointer; transition: border-color .16s, transform .16s; }
+.thumb:hover { transform: translateY(-1px); border-color: var(--hairline-strong); }
+.thumb.active { border-color: rgba(217,119,87,0.6); box-shadow: 0 0 0 1px rgba(217,119,87,0.4), 0 6px 18px -8px rgba(217,119,87,0.5); }
+.thumb .num { position:absolute; top:5px; left:6px; font-size:10px; color: var(--fg-dim); font-family: var(--mono); }
+.thumb .rdot { position:absolute; top:5px; right:6px; width:7px; height:7px; border-radius:50%; background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+.thumb .mini { position:absolute; inset:0; display:grid; place-items:center; color: var(--fg-faint); font-size: 9px; }
+.thumb.c1 { background: linear-gradient(135deg, #1a2230, #0e1118); }
+.thumb.c2 { background: linear-gradient(135deg, #2a2723, #1a1917); }
+
+.stage { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--hairline); }
+.stage-head { display: flex; align-items: center; gap: 11px; padding: 14px 20px; border-bottom: 1px solid var(--hairline); }
+.stage-head .idx { font-family: var(--mono); font-size: 12px; color: var(--fg-faint); }
+.stage-head .name { font-size: 14.5px; font-weight: 600; }
+.stage-head .tag { font-size: 11px; color: var(--blue); background: rgba(107,155,209,0.14); padding: 2px 8px; border-radius: 980px; }
+.stage-head .nav { margin-left: auto; display:flex; gap:6px; }
+.stage-head .nav button { width: 30px; height: 30px; border-radius: var(--r-sm); border: 1px solid var(--hairline-strong); background: transparent; color: var(--fg-dim); cursor: pointer; transition: background .16s; }
+.stage-head .nav button:hover { background: rgba(255,255,255,0.05); color: var(--fg); }
+.stage-canvas { flex: 1; display: grid; place-items: center; padding: 26px; min-height: 0; }
+.deck-frame { width: 100%; max-width: 620px; aspect-ratio: 16/9; border-radius: var(--r-md); background: radial-gradient(120% 90% at 80% 0%, rgba(217,119,87,0.12), transparent 50%), linear-gradient(135deg, #0f1620, #0a0d12); border: 1px solid var(--hairline-strong); box-shadow: 0 30px 80px -30px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.05); position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 40px; }
+.deck-frame .logo { position:absolute; top:24px; right:24px; width:30px; height:30px; border-radius:7px; background: linear-gradient(135deg, var(--orange), var(--blue)); }
+.deck-frame .accent-bar { width: 56px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--orange), var(--blue)); margin-bottom: 16px; }
+/* 可选元素（高亮态）*/
+.deck-frame h1 { font-size: clamp(26px, 4vw, 40px); font-weight: 700; line-height: 1.08; letter-spacing: var(--tr-display); cursor: pointer; border-radius: 4px; transition: box-shadow .15s, background .15s; padding: 2px 4px; margin: -2px -4px; }
+.deck-frame p { margin-top: 12px; color: var(--fg-dim); font-size: clamp(12px,1.5vw,16px); cursor: pointer; border-radius: 4px; transition: box-shadow .15s; padding: 1px 4px; }
+.sel-el:hover { box-shadow: 0 0 0 1.5px rgba(107,155,209,0.5); }
+.sel-el.selected { box-shadow: 0 0 0 2px var(--blue), 0 0 18px -4px rgba(107,155,209,0.6); background: rgba(107,155,209,0.08); }
+.sel-el.annotated { box-shadow: 0 0 0 2px var(--amber); }
+
+/* 右栏：已选元素 / 批注 / 应用修改 */
+.edit-rail { display: flex; flex-direction: column; min-height: 0; }
+.edit-scroll { flex: 1; overflow-y: auto; padding: 18px 18px 10px; }
+.edit-rail h4 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-faint); margin-bottom: 8px; }
+.sel-state { font-size: 13px; color: var(--fg-dim); line-height: 1.5; margin-bottom: 18px; }
+.sel-state b { color: var(--orange-soft); }
+.instr { width: 100%; min-height: 76px; resize: none; background: var(--surface); border: 1px solid var(--hairline-strong); border-radius: var(--r-sm); color: var(--fg); font-family: var(--font); font-size: 13px; line-height: 1.5; padding: 10px 11px; letter-spacing: var(--tr-body); }
+.instr::placeholder { color: var(--fg-faint); }
+.instr:focus { outline: none; border-color: rgba(107,155,209,0.5); box-shadow: 0 0 0 3px rgba(107,155,209,0.12); }
+.add-annot { margin-top: 9px; width: 100%; padding: 9px; border-radius: var(--r-sm); border: 1px solid rgba(107,155,209,0.4); background: rgba(107,155,209,0.12); color: var(--blue); font-size: 13px; font-weight: 600; cursor: pointer; transition: background .16s; }
+.add-annot:hover { background: rgba(107,155,209,0.2); }
+.add-annot:disabled { opacity: .4; cursor: not-allowed; }
+.annot-list { margin-top: 22px; }
+.annot-item { padding: 10px 11px; border-radius: var(--r-sm); border: 1px solid var(--hairline); background: rgba(232,185,49,0.06); margin-bottom: 8px; }
+.annot-item .who { font-size: 11px; color: var(--amber); font-family: var(--mono); margin-bottom: 3px; display:flex; justify-content: space-between; }
+.annot-item .who .del { color: var(--fg-faint); cursor: pointer; }
+.annot-item .txt { font-size: 12.5px; color: var(--fg-dim); line-height: 1.45; }
+.annot-empty { font-size: 12.5px; color: var(--fg-faint); font-style: italic; }
+.edit-foot { padding: 12px 16px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 8px; }
+.edit-foot .apply { width: 100%; padding: 10px; border-radius: var(--r-sm); border: none; background: var(--amber); color: #1a1410; font-weight: 700; font-size: 13.5px; cursor: pointer; box-shadow: 0 6px 18px -6px rgba(232,185,49,0.5); }
+.edit-foot .row { display: flex; gap: 8px; }
+.edit-foot .row button { flex: 1; padding: 9px; border-radius: var(--r-sm); border: 1px solid var(--hairline-strong); background: transparent; color: var(--fg-dim); font-size: 13px; cursor: pointer; }
+.edit-foot .row button:hover { background: rgba(255,255,255,0.04); color: var(--fg); }
+
+/* 大纲 / 文件 */
+.doc { padding: 28px 34px; overflow-y: auto; max-width: 760px; margin: 0 auto; width: 100%; }
+.doc h2 { font-size: 22px; font-weight: 700; letter-spacing: var(--tr-display); }
+.doc h3 { font-size: 16px; font-weight: 600; margin: 22px 0 8px; color: var(--orange-soft); }
+.doc p { color: var(--fg-dim); font-size: 14px; line-height: 1.65; margin: 8px 0; text-wrap: pretty; }
+.doc .meta { color: var(--fg-faint); font-size: 12px; font-family: var(--mono); margin-top: 4px; }
+.files { flex: 1; display: grid; grid-template-columns: 230px 1fr; min-height: 0; }
+.file-list { border-right: 1px solid var(--hairline); padding: 12px; overflow-y: auto; }
+.file-item { display: flex; align-items: center; gap: 9px; padding: 9px 11px; border-radius: var(--r-sm); font-size: 13px; color: var(--fg-dim); cursor: pointer; }
+.file-item:hover { background: rgba(255,255,255,0.04); color: var(--fg); }
+.file-item.active { background: rgba(217,119,87,0.12); color: var(--fg); border: 1px solid rgba(217,119,87,0.25); }
+.file-item .fnum { font-family: var(--mono); font-size: 11px; color: var(--fg-faint); }
+.file-item .fdot { margin-left: auto; width:6px; height:6px; border-radius:50%; background: var(--orange); }
+
+/* 问题 pane（CanvasConfirm / 八项确认 native）*/
+.q-pane { flex:1; overflow-y:auto; padding: 30px 36px; }
+.q-pane h2 { font-size: 21px; font-weight: 700; letter-spacing: var(--tr-display); }
+.q-pane .q-sub { color: var(--fg-dim); font-size: 14px; margin-top: 6px; }
+.q-grid { margin-top: 24px; display: grid; gap: 12px; }
+.q-card { border: 1px solid var(--hairline-strong); border-radius: var(--r-md); padding: 16px 18px; background: var(--surface); }
+.q-card .q-label { font-size: 12px; color: var(--orange-soft); letter-spacing: .04em; text-transform: uppercase; }
+.q-opts { margin-top: 12px; display: flex; gap: 9px; flex-wrap: wrap; }
+.q-opt { padding: 9px 14px; border-radius: var(--r-sm); border: 1px solid var(--hairline-strong); font-size: 13px; color: var(--fg-dim); cursor: pointer; transition: all .16s; }
+.q-opt:hover { color: var(--fg); border-color: var(--hairline-strong); }
+.q-opt.on { background: linear-gradient(180deg, rgba(217,119,87,0.2), rgba(217,119,87,0.1)); border-color: rgba(217,119,87,0.45); color: var(--fg); }
+.q-submit { margin-top: 26px; padding: 11px 26px; border-radius: var(--r-sm); border: none; background: var(--orange); color: #1a1410; font-weight: 700; font-size: 14px; cursor: pointer; box-shadow: 0 8px 22px -8px rgba(217,119,87,0.6); }
+
+/* 浏览器 pane（fallback iframe）*/
+.browser { flex:1; display:flex; flex-direction:column; }
+.url-bar { display:flex; align-items:center; gap:10px; padding: 9px 14px; border-bottom: 1px solid var(--hairline); }
+.url-bar .pill { flex:1; background: var(--surface); border: 1px solid var(--hairline); border-radius: 980px; padding: 6px 14px; font-size: 12px; color: var(--fg-dim); font-family: var(--mono); }
+.browser-body { flex:1; display: grid; place-items: center; color: var(--fg-faint); font-size: 13px; }
+
+.placeholder { flex:1; display: grid; place-items: center; color: var(--fg-faint); font-size: 14px; }
+
+/* Tweaks */
+.tweaks { position: fixed; bottom: 20px; right: 20px; z-index: 50; }
+.tweaks-toggle { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--hairline-strong); background: var(--surface-2); color: var(--fg); cursor: pointer; display: grid; place-items: center; box-shadow: 0 10px 30px -10px rgba(0,0,0,0.6); }
+.tweaks-panel { position: absolute; bottom: 56px; right: 0; width: 250px; background: var(--surface-2); border: 1px solid var(--hairline-strong); border-radius: var(--r-lg); padding: 14px; display: none; box-shadow: 0 20px 60px -20px rgba(0,0,0,0.7); }
+.tweaks-panel.open { display: block; }
+.tweaks-panel .t { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--fg-faint); margin-bottom: 10px; }
+.tweaks-row { display:flex; justify-content: space-between; align-items:center; padding: 7px 0; font-size: 13px; color: var(--fg-dim); gap: 8px; }
+.seg { display:flex; gap:4px; flex-wrap: wrap; }
+.seg button { padding: 4px 9px; border-radius: 6px; font-size: 11px; border: 1px solid var(--hairline); background: transparent; color: var(--fg-dim); cursor: pointer; }
+.seg button.on { background: var(--orange); color: #1a1410; border-color: transparent; }
+@media (prefers-reduced-motion: reduce) { .flux .stream { animation: none !important; } .pane { animation: none } }
+</style>
+</head>
+<body>
+
+<div class="window">
+  <aside class="chat-rail">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="chat-body">
+      <div class="bubble user">/claude-desktop:ppt-master 做两页 ppt 介绍下唐代的经济</div>
+      <div class="bubble ai">已完成设计规划，正在生成幻灯片<span class="ph"> ▸ 右侧画布实时预览，可点选元素做批注</span></div>
+    </div>
+    <div class="composer">
+      <span>继续对话…</span>
+      <span class="send"><svg viewBox="0 0 24 24" fill="none" stroke="#1a1410" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
+    </div>
+  </aside>
+
+  <section class="canvas">
+    <div class="tabbar">
+      <div class="tab active" data-pane="slides">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8 20.5h8M12 16.5v4"/></svg>
+        幻灯片 <span class="dot"></span>
+      </div>
+      <div class="tab" data-pane="outline">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
+        大纲
+      </div>
+      <div class="tab" data-pane="files">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h5l2 2.5h6A1.5 1.5 0 0 1 20 8v9.5A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/></svg>
+        文件
+      </div>
+      <!-- 条件 tab（真实组件里 wantsQuestionsTab / hasConfirm 时出现）-->
+      <div class="tab q" data-pane="questions" id="tab-q" style="display:none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .8-1 1.7M12 17h.01"/></svg>
+        问题 <span class="badge">8</span>
+      </div>
+      <div class="tab" data-pane="browser" id="tab-b" style="display:none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>
+        浏览器
+      </div>
+      <div class="spacer"></div>
+      <div class="winbtn">放映</div>
+      <div class="winbtn primary">导出</div>
+    </div>
+
+    <div class="body">
+      <!-- ───── 幻灯片 ───── -->
+      <div class="pane show" id="pane-slides">
+        <!-- 空状态 -->
+        <div class="slides-empty" id="slides-empty">
+          <div class="flux">
+            <svg viewBox="0 0 1200 600" preserveAspectRatio="xMidYMid slice">
+              <defs>
+                <linearGradient id="go" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#d97757" stop-opacity="0"/><stop offset=".5" stop-color="#e8a07f"/><stop offset="1" stop-color="#d97757" stop-opacity="0"/></linearGradient>
+                <linearGradient id="gb" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6b9bd1" stop-opacity="0"/><stop offset=".5" stop-color="#8fb6e0"/><stop offset="1" stop-color="#6b9bd1" stop-opacity="0"/></linearGradient>
+              </defs>
+              <path class="stream s1" d="M-50 320 C 250 200, 450 420, 700 300 S 1050 180, 1250 280"/>
+              <path class="stream s2" d="M-50 360 C 280 260, 460 460, 720 340 S 1060 230, 1250 330"/>
+              <path class="stream s3" d="M-50 290 C 230 180, 470 400, 690 270 S 1040 150, 1250 250"/>
+            </svg>
+          </div>
+          <div class="empty-card">
+            <div class="empty-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8 20.5h8M12 16.5v4"/></svg></div>
+            <span class="empty-kicker">Slides Workspace</span>
+            <div class="empty-title">确认大纲后<br/>幻灯片将在此处实时呈现</div>
+            <div class="empty-sub">每生成一页，它会带着实时预览出现在这里——你可以点选元素、做批注、直接微调。</div>
+          </div>
+        </div>
+
+        <!-- live preview 编辑器 -->
+        <div class="live" id="slides-live" style="display:none">
+          <div class="thumbs">
+            <div class="lbl"><span>幻灯片</span><span>02 / 02</span></div>
+            <div class="thumb c1 active"><span class="num">01</span><span class="rdot"></span><span class="mini">封面</span></div>
+            <div class="thumb c2"><span class="num">02</span><span class="mini">四维全貌</span></div>
+          </div>
+          <div class="stage">
+            <div class="stage-head">
+              <span class="idx">01</span><span class="name">唐代的经济</span><span class="tag">cover</span>
+              <span class="nav"><button>‹</button><button>›</button></span>
+            </div>
+            <div class="stage-canvas">
+              <div class="deck-frame">
+                <div class="logo"></div>
+                <div class="accent-bar"></div>
+                <h1 class="sel-el" data-el="title">唐代的经济</h1>
+                <p class="sel-el" data-el="subtitle">从均田授地到丝路通商的近三百年</p>
+              </div>
+            </div>
+          </div>
+          <!-- 右栏：已选 / 批注 / 应用修改 -->
+          <div class="edit-rail">
+            <div class="edit-scroll">
+              <h4>已选元素</h4>
+              <div class="sel-state" id="selState">点击幻灯片中的元素进行选择（Ctrl/Cmd 点击多选）</div>
+              <textarea class="instr" id="instr" placeholder="对所选元素的修改指令，例如「标题放大并加粗，副标题颜色调淡」…"></textarea>
+              <button class="add-annot" id="addAnnot" disabled>添加批注</button>
+              <div class="annot-list">
+                <h4>本页标注</h4>
+                <div id="annotBox"><div class="annot-empty">暂无标注</div></div>
+              </div>
+            </div>
+            <div class="edit-foot">
+              <button class="apply">应用修改</button>
+              <div class="row"><button>撤销</button><button>退出预览</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ───── 大纲 ───── -->
+      <div class="pane" id="pane-outline">
+        <div class="doc">
+          <h2>唐代经济 · 内容大纲</h2><p class="meta">2 页 · balanced</p>
+          <h3>01 · 封面</h3><p>楷体大字「唐代的经济」如卷首题款，点出 618—907 年从均田授地到丝路通商的繁荣。</p>
+          <h3>02 · 四维全貌</h3><p>2×2 等权铺陈唐代经济四大支柱：农业之基、商业与城市、货币与赋税、对外贸易。</p>
+        </div>
+      </div>
+
+      <!-- ───── 文件 ───── -->
+      <div class="pane" id="pane-files">
+        <div class="files">
+          <div class="file-list">
+            <div class="file-item"><span class="fnum">01</span> recommendations.json</div>
+            <div class="file-item"><span class="fnum">02</span> design_spec.md</div>
+            <div class="file-item"><span class="fnum">03</span> spec_lock.md <span class="fdot"></span></div>
+            <div class="file-item active"><span class="fnum">04</span> total.md</div>
+          </div>
+          <div class="doc" style="max-width:none; margin:0">
+            <h2>01_封面</h2><p>这一节我们用两页内容，速览唐代的经济。唐朝从公元六一八年到九零七年，前后近三百年，是中国古代经济发展的一个高峰。</p>
+            <h2 style="margin-top:26px">02_四维全貌</h2><p>唐代经济的繁荣，可以从农业、商业、货币赋税和对外贸易这四个维度来理解，它们彼此支撑，共同撑起了一个世界级的帝国。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ───── 问题（八项确认 native）───── -->
+      <div class="pane" id="pane-questions">
+        <div class="q-pane">
+          <h2>请确认设计方案</h2>
+          <div class="q-sub">八项确认 · 确认后开始生成幻灯片</div>
+          <div class="q-grid">
+            <div class="q-card"><div class="q-label">画幅</div><div class="q-opts"><div class="q-opt on">16:9 宽屏 1280×720</div><div class="q-opt">4:3</div></div></div>
+            <div class="q-card"><div class="q-label">风格</div><div class="q-opts"><div class="q-opt on">深色科技</div><div class="q-opt">新中式水墨</div><div class="q-opt">极简商务</div></div></div>
+            <div class="q-card"><div class="q-label">配色</div><div class="q-opts"><div class="q-opt on">暖橙 + 青蓝</div><div class="q-opt">墨黑 + 朱砂</div></div></div>
+          </div>
+          <button class="q-submit">确认并开始生成</button>
+        </div>
+      </div>
+
+      <!-- ───── 浏览器（fallback）───── -->
+      <div class="pane" id="pane-browser">
+        <div class="browser">
+          <div class="url-bar"><div class="pill">http://localhost:5050</div></div>
+          <div class="browser-body">［ fallback：嵌入式 localhost iframe — 仅确认阶段兜底 ］</div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="tweaks">
+  <div class="tweaks-panel" id="tweaksPanel">
+    <div class="t">Tweaks</div>
+    <div class="tweaks-row"><span>幻灯片状态</span><div class="seg" id="segState"><button class="on" data-state="empty">空</button><button data-state="live">编辑器</button></div></div>
+    <div class="tweaks-row"><span>问题 tab</span><div class="seg" id="segQ"><button data-q="on">显示</button><button class="on" data-q="off">隐藏</button></div></div>
+    <div class="tweaks-row"><span>浏览器 tab</span><div class="seg" id="segB"><button data-b="on">显示</button><button class="on" data-b="off">隐藏</button></div></div>
+    <div class="tweaks-row"><span>流光母题</span><div class="seg" id="segFlux"><button class="on" data-flux="on">开</button><button data-flux="off">关</button></div></div>
+  </div>
+  <button class="tweaks-toggle" id="tweaksToggle" aria-label="Tweaks">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a8 8 0 0 0 .1-3l1.5-1.2-2-3.4-1.8.7a8 8 0 0 0-2.6-1.5L13.5 1h-3l-.6 2.1A8 8 0 0 0 7.3 4.6L5.5 4l-2 3.4L5 8.6a8 8 0 0 0 0 3L3.5 12.8l2 3.4 1.8-.7a8 8 0 0 0 2.6 1.5l.6 2h3l.6-2.1a8 8 0 0 0 2.6-1.5l1.8.7 2-3.4z"/></svg>
+  </button>
+</div>
+
+<script>
+// tab 切换
+function activate(name){
+  document.querySelectorAll('.tab[data-pane]').forEach(function(x){ x.classList.toggle('active', x.dataset.pane===name); });
+  document.querySelectorAll('.pane').forEach(function(p){ p.classList.toggle('show', p.id==='pane-'+name); });
+}
+document.querySelectorAll('.tab[data-pane]').forEach(function(t){ t.addEventListener('click', function(){ activate(t.dataset.pane); }); });
+
+// Tweaks
+var toggle = document.getElementById('tweaksToggle'), panel = document.getElementById('tweaksPanel');
+toggle.addEventListener('click', function(){ panel.classList.toggle('open'); });
+function segPick(id, fn){ document.getElementById(id).addEventListener('click', function(e){ var b=e.target.closest('button'); if(!b)return; this.querySelectorAll('button').forEach(function(x){x.classList.remove('on')}); b.classList.add('on'); fn(b); }); }
+
+segPick('segState', function(b){ var live=b.dataset.state==='live'; document.getElementById('slides-empty').style.display=live?'none':''; document.getElementById('slides-live').style.display=live?'grid':'none'; });
+segPick('segQ', function(b){ var on=b.dataset.q==='on'; document.getElementById('tab-q').style.display=on?'':'none'; if(on) activate('questions'); else if(document.getElementById('pane-questions').classList.contains('show')) activate('slides'); });
+segPick('segB', function(b){ var on=b.dataset.b==='on'; document.getElementById('tab-b').style.display=on?'':'none'; });
+segPick('segFlux', function(b){ document.querySelector('.flux').style.display = b.dataset.flux==='off'?'none':''; });
+
+// ── live preview 编辑器交互：点选元素 → 写指令 → 添加批注 ──
+var selected = [];
+var annots = {}; // el -> text
+var instr = document.getElementById('instr');
+var addBtn = document.getElementById('addAnnot');
+var selState = document.getElementById('selState');
+var annotBox = document.getElementById('annotBox');
+var elLabel = { title: '标题「唐代的经济」', subtitle: '副标题「从均田授地…」' };
+
+document.querySelectorAll('.deck-frame .sel-el').forEach(function(el){
+  el.addEventListener('click', function(e){
+    var id = el.dataset.el;
+    var multi = e.metaKey || e.ctrlKey;
+    if(!multi){ selected = [id]; }
+    else { var i=selected.indexOf(id); if(i>=0) selected.splice(i,1); else selected.push(id); }
+    renderSel();
+  });
+});
+function renderSel(){
+  document.querySelectorAll('.deck-frame .sel-el').forEach(function(el){ el.classList.toggle('selected', selected.indexOf(el.dataset.el)>=0); });
+  if(selected.length===0){ selState.innerHTML='点击幻灯片中的元素进行选择（Ctrl/Cmd 点击多选）'; addBtn.disabled=true; }
+  else { selState.innerHTML='已选 <b>'+selected.length+'</b> 个元素：'+selected.map(function(s){return elLabel[s]||s}).join('、'); addBtn.disabled = instr.value.trim()===''; }
+}
+instr.addEventListener('input', function(){ addBtn.disabled = selected.length===0 || instr.value.trim()===''; });
+addBtn.addEventListener('click', function(){
+  if(addBtn.disabled) return;
+  selected.forEach(function(id){ annots[id]=instr.value.trim(); document.querySelector('.deck-frame [data-el="'+id+'"]').classList.add('annotated'); });
+  instr.value=''; selected=[]; renderSel(); renderAnnots();
+});
+function renderAnnots(){
+  var keys = Object.keys(annots);
+  if(keys.length===0){ annotBox.innerHTML='<div class="annot-empty">暂无标注</div>'; return; }
+  annotBox.innerHTML = keys.map(function(id){
+    return '<div class="annot-item"><div class="who"><span>'+(elLabel[id]||id)+'</span><span class="del" data-del="'+id+'">删除</span></div><div class="txt">'+annots[id]+'</div></div>';
+  }).join('');
+  annotBox.querySelectorAll('.del').forEach(function(d){ d.addEventListener('click', function(){ var id=d.dataset.del; delete annots[id]; var el=document.querySelector('.deck-frame [data-el="'+id+'"]'); if(el) el.classList.remove('annotated'); renderAnnots(); }); });
+}
+</script>
+</body>
+</html>

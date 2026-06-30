@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import type { ThreadMessageLike } from '@assistant-ui/react'
@@ -507,7 +508,13 @@ export const useChatStore = create<ChatState>((set) => ({
           type: 'tool-call',
           toolCallId: toolUseId,
           toolName,
-          argsText: ''
+          argsText: '',
+          // Wall-clock start for the per-tool elapsed timer shown in the
+          // ToolCallCard header. Stamped here (streaming path) and in
+          // addToolCall (non-streaming path); the matching endedAt is set
+          // in updateToolCallResult. Rides the loose ContentPart bag like
+          // tasks/argsComplete and survives assistant-ui's render.
+          startedAt: Date.now()
         }
         const existing = slot.messages.find((m) => m.id === messageId)
         if (!existing) {
@@ -636,7 +643,9 @@ export const useChatStore = create<ChatState>((set) => ({
           toolCallId: toolUseId,
           toolName,
           args: normalizeArgs(args),
-          argsComplete: true
+          argsComplete: true,
+          // See startToolCall: per-tool elapsed-timer start (non-streaming path).
+          startedAt: Date.now()
         }
         if (!existing) {
           const newMessage = {
@@ -672,7 +681,11 @@ export const useChatStore = create<ChatState>((set) => ({
           const parts = ((m.content as unknown) as ContentPart[]).map((p) => {
             if (p.type === 'tool-call' && p.toolCallId === toolUseId) {
               changed = true
-              return { ...p, result }
+              // Stamp endedAt once — the result can be re-delivered by the
+              // SDK; keeping the first end time freezes the timer at the real
+              // duration instead of stretching it on every re-push.
+              const endedAt = typeof p.endedAt === 'number' ? p.endedAt : Date.now()
+              return { ...p, result, endedAt }
             }
             return p
           })
@@ -900,6 +913,131 @@ export function useToolCallTasks(
 }
 
 /**
+ * Per-tool elapsed-timer source: the `{ startedAt, endedAt }` stamped on the
+ * tool-call part with this id (see startToolCall / addToolCall / updateToolCallResult).
+ * `endedAt` is undefined while the tool is still running.
+ *
+ * Returns a PLAIN-SCALAR object so `useShallow` stays stable: both fields are
+ * numbers (or undefined), so shallow-compare on values means the card only
+ * re-renders when one of the two timestamps actually changes. (We deliberately
+ * do NOT build a derived array/object out of fresh references here — that would
+ * make useShallow see a "new" value every tick and loop forever. Scalars only.)
+ */
+export function useToolCallTiming(toolUseId: string | undefined): {
+  startedAt: number | undefined
+  endedAt: number | undefined
+} {
+  return useChatStore(
+    useShallow((s) => {
+      if (!toolUseId) return { startedAt: undefined, endedAt: undefined }
+      for (const m of s.messages) {
+        if (!Array.isArray(m.content)) continue
+        for (const p of (m.content as unknown) as ContentPart[]) {
+          if (p.type === 'tool-call' && p.toolCallId === toolUseId) {
+            return {
+              startedAt: typeof p.startedAt === 'number' ? p.startedAt : undefined,
+              endedAt: typeof p.endedAt === 'number' ? p.endedAt : undefined
+            }
+          }
+        }
+      }
+      return { startedAt: undefined, endedAt: undefined }
+    })
+  )
+}
+
+/**
+ * Maps a tool name to the coarse "activity" the composer status bar names in
+ * Chinese ("探索中…", "拆一下任务…", …). Returns a stable string KEY (not the
+ * label) so the store stays UI-text-free and useShallow compares scalars.
+ * Unknown / no tool → 'thinking' (the generic "思考中…").
+ */
+function toolActivityKey(toolName: string | undefined): string {
+  switch (toolName) {
+    case 'Task':
+    case 'Workflow':
+      return 'planning' // 拆一下任务…
+    case 'Agent':
+    case 'Explore':
+      return 'exploring' // 探索中…
+    case 'Read':
+    case 'Grep':
+    case 'Glob':
+    case 'NotebookRead':
+      return 'reading' // 查阅中…
+    case 'Write':
+    case 'Edit':
+    case 'MultiEdit':
+    case 'NotebookEdit':
+      return 'writing' // 编写中…
+    case 'Bash':
+    case 'BashOutput':
+      return 'running' // 执行中…
+    case 'WebFetch':
+    case 'WebSearch':
+      return 'searching' // 联网中…
+    case 'AskUserQuestion':
+      return 'asking' // 等待你回答…
+    default:
+      return toolName ? 'working' : 'thinking'
+  }
+}
+
+/**
+ * Drives the composer status bar (the "✻ 探索中… … 2.5s" strip above the
+ * input). While the foreground session is streaming, returns:
+ *   - active:    true → render the bar
+ *   - startedAt: turn start (the elapsed-timer basis, whole turn)
+ *   - activity:  coarse Chinese-activity KEY from the newest still-running
+ *                tool, or 'thinking' when no tool is in flight yet
+ *
+ * All-scalar return for useShallow stability. The bar shows ONE turn-level
+ * timer (every tool in the turn shares turnStartedAt), matching the reference.
+ */
+export function useTurnActivity(): {
+  active: boolean
+  startedAt: number | undefined
+  activity: string
+} {
+  return useChatStore(
+    useShallow((s) => {
+      if (!s.streaming || s.turnStartedAt === null) {
+        return { active: false, startedAt: undefined, activity: 'thinking' }
+      }
+      // Walk all parts to find (a) the newest still-running tool-call and
+      // (b) the very last part overall (to know if we're mid-prose-output).
+      let runningTool: string | undefined
+      let lastPartType: string | undefined
+      for (const m of s.messages) {
+        if (!Array.isArray(m.content)) continue
+        for (const p of (m.content as unknown) as ContentPart[]) {
+          lastPartType = p.type
+          if (
+            p.type === 'tool-call' &&
+            p.result === undefined &&
+            typeof p.toolName === 'string'
+          ) {
+            runningTool = p.toolName
+          }
+        }
+      }
+      // While the assistant is streaming PROSE (the tail part is text and no
+      // tool is in flight), hide the bar — the user asked to see it only for
+      // thinking / tool work ("运行命令中"), not for plain text output. The
+      // bar reappears when the next tool starts or a fresh thinking gap opens.
+      if (runningTool === undefined && lastPartType === 'text') {
+        return { active: false, startedAt: undefined, activity: 'thinking' }
+      }
+      return {
+        active: true,
+        startedAt: s.turnStartedAt,
+        activity: toolActivityKey(runningTool)
+      }
+    })
+  )
+}
+
+/**
  * The raw `argsText` of the foreground session's STILL-STREAMING
  * AskUserQuestion tool call, or null when none is mid-stream.
  *
@@ -930,4 +1068,343 @@ export function useStreamingAskArgsText(): string | null {
     }
     return null
   })
+}
+
+/**
+ * Timing for the foreground session's current AskUserQuestion tool call —
+ * used by the slides canvas 问题 tab, which hosts the questionnaire instead of
+ * the inline ToolCallCard (the card is suppressed there, so its header timer
+ * never shows). We surface the SAME {startedAt, endedAt} the card would have,
+ * so the canvas header gets the live `166.5s` counter.
+ *
+ * Walks tool-call parts and returns the LAST AskUserQuestion part's stamps —
+ * "last" so a fresh question supersedes a resolved earlier one in the same
+ * thread. Plain-scalar return for useShallow stability (see useToolCallTiming).
+ */
+export function usePendingAskTiming(): {
+  startedAt: number | undefined
+  endedAt: number | undefined
+} {
+  return useChatStore(
+    useShallow((s) => {
+      let found: { startedAt: number | undefined; endedAt: number | undefined } | null =
+        null
+      for (const m of s.messages) {
+        if (!Array.isArray(m.content)) continue
+        for (const p of (m.content as unknown) as ContentPart[]) {
+          if (p.type === 'tool-call' && p.toolName === 'AskUserQuestion') {
+            found = {
+              startedAt: typeof p.startedAt === 'number' ? p.startedAt : undefined,
+              endedAt: typeof p.endedAt === 'number' ? p.endedAt : undefined
+            }
+          }
+        }
+      }
+      return found ?? { startedAt: undefined, endedAt: undefined }
+    })
+  )
+}
+
+/* ───────────────── ppt-master in-app preview detection ──────────────── */
+
+/**
+ * ppt-master spins up a local Flask server on http://localhost:5050 (AUTO-
+ * ADVANCING to 5051+ whenever 5050 is already held) for two distinct phases:
+ *   - `confirm_ui/server.py` — the Eight-Confirmations page. Rendered in the
+ *     in-app 「浏览器」canvas tab via an <iframe> (it's an interactive form).
+ *   - `svg_editor/server.py` — Executor live preview. Rendered NATIVELY in the
+ *     「幻灯片」canvas tab: the renderer fetches /api/slides + /api/slide/<name>
+ *     and paints the SVG itself (not an iframe of the editor UI).
+ * Both used to pop a system Chrome window; now the host embeds them. Same shape
+ * as `useStreamingAskArgsText`: walk the foreground session's tool-call parts
+ * and surface the most recent preview server's real URL + which kind it is —
+ * read from the server's own stdout, never guessed (see usePreviewServer).
+ */
+const CONFIRM_SERVER_RE = /confirm_ui[/\\]server\.py/
+const EDITOR_SERVER_RE = /svg_editor[/\\]server\.py/
+const PREVIEW_SERVER_RE = /(?:confirm_ui|svg_editor)[/\\]server\.py/
+// Match the URL the SERVER PRINTS — anchored on the launcher's log phrasings
+// ("running at <url>" / "started confirm UI in background: <url>" /
+// "Running on <url>") so we never pick up a localhost URL that merely appears
+// in the command text or a doc comment. Captures the real (possibly
+// auto-advanced) port from stdout, the only trustworthy source.
+const PREVIEW_URL_RE =
+  /(?:running (?:at|on)|started[^\n]*background:)\s*(https?:\/\/(?:localhost|127\.0\.0\.1):\d+)/i
+const PREVIEW_PORT_FLAG_RE = /--port[=\s]+(\d+)/
+
+/** Best-effort plain-text from a tool-result that may be string/array/object. */
+function previewResultText(result: unknown): string {
+  if (typeof result === 'string') return result
+  if (Array.isArray(result)) {
+    return result
+      .map((part) =>
+        part && typeof part === 'object' && 'text' in part
+          ? String((part as { text?: unknown }).text ?? '')
+          : typeof part === 'string'
+            ? part
+            : ''
+      )
+      .join('')
+  }
+  if (result && typeof result === 'object') {
+    const obj = result as Record<string, unknown>
+    if (typeof obj.text === 'string') return obj.text
+    if (typeof obj.content === 'string') return obj.content
+    if (Array.isArray(obj.content)) return previewResultText(obj.content)
+  }
+  return ''
+}
+
+/** Pull the running command string out of a Bash tool-call part. */
+function previewCommandText(part: ContentPart): string {
+  const args = part.args
+  if (args && typeof args === 'object') {
+    const cmd = (args as Record<string, unknown>).command
+    if (typeof cmd === 'string' && cmd.length > 0) return cmd
+  }
+  // Falls back to the still-streaming raw JSON before args is parsed.
+  return typeof part.argsText === 'string' ? part.argsText : ''
+}
+
+/** Which ppt-master server is up and where. `confirm` → iframe in 「浏览器」;
+ *  `preview` → native render in 「幻灯片」. */
+export type PreviewServer = {
+  kind: 'confirm' | 'preview'
+  url: string
+}
+
+/**
+ * The foreground session's active ppt-master preview server (kind + URL), or
+ * null when none is up.
+ *
+ * Scans every Bash tool-call part for one whose command launches a server and
+ * resolves its URL. The port is NEVER guessed: 5050 is routinely still held by
+ * a previous session's server, so the launcher auto-advances to 5051+, and a
+ * guessed 5050 would point at a STALE server from another project. So we trust
+ * only two sources, in order:
+ *   1. the URL the server PRINTS to stdout ("running at …" / "started … in
+ *      background: …") — the real, post-advance port, the source of truth;
+ *   2. an explicit `--port <N>` on the command — the launcher honors it.
+ * Until one of those is available the hook returns null and no tab appears yet
+ * — correct, because there is no trustworthy URL to load. The LAST matching
+ * launch wins, so a confirm → live-preview handoff swaps which tab is driven.
+ * `kind` comes from whether the command names confirm_ui or svg_editor.
+ *
+ * Uses `useShallow` so the returned object is compared by value — callers only
+ * re-render when the kind or URL actually changes, not on every store tick.
+ */
+export function usePreviewServer(): PreviewServer | null {
+  return useChatStore(
+    useShallow((s): PreviewServer | null => {
+      let result: PreviewServer | null = null
+      for (const m of s.messages) {
+        if (!Array.isArray(m.content)) continue
+        for (const p of (m.content as unknown) as ContentPart[]) {
+          if (p.type !== 'tool-call' || p.toolName !== 'Bash') continue
+          const command = previewCommandText(p)
+          if (!PREVIEW_SERVER_RE.test(command)) continue
+          // `--shutdown` tears the server down; clear any prior launch.
+          if (/--shutdown\b/.test(command)) {
+            result = null
+            continue
+          }
+          // `--wait-only` attaches to an already-running server (no new launch,
+          // no fresh stdout URL) — skip so it can't clear `result`.
+          if (/--wait-only\b/.test(command)) continue
+          const kind: PreviewServer['kind'] = CONFIRM_SERVER_RE.test(command)
+            ? 'confirm'
+            : EDITOR_SERVER_RE.test(command)
+              ? 'preview'
+              : 'confirm'
+          // 1. The URL the server actually printed (real, post-advance port).
+          const fromOut = PREVIEW_URL_RE.exec(previewResultText(p.result))
+          if (fromOut) {
+            result = { kind, url: fromOut[1] }
+            continue
+          }
+          // 2. An explicitly pinned --port (honored verbatim by the launcher).
+          const fromFlag = PREVIEW_PORT_FLAG_RE.exec(command)
+          if (fromFlag) {
+            result = { kind, url: `http://localhost:${fromFlag[1]}` }
+            continue
+          }
+          // Otherwise the server hasn't printed its URL yet — do NOT guess a
+          // port. Leave `result` as-is; the tab appears once stdout arrives.
+        }
+      }
+      return result
+    })
+  )
+}
+
+/* ───────────────── ppt-master written-file canvas feed ──────────────── */
+
+/** One file written by a Write tool call, surfaced into the 文件 canvas tab. */
+export type WrittenFile = {
+  /** Absolute path from the Write call's `file_path` arg. */
+  path: string
+  /** Bare filename (last path segment) for the tab's file list. */
+  name: string
+  /** Full file contents from the Write call's `content` arg. */
+  content: string
+  /** True while the tool is still streaming its args (content may be partial). */
+  streaming: boolean
+}
+
+/**
+ * Minimal JSON-string unescape for fields pulled out of half-streamed argsText
+ * (before `args` is parsed). Mirrors `formatWrite`'s inline preview logic in
+ * ToolFormatters so the canvas shows real characters, not backslash noise.
+ */
+function unescapeWriteFragment(src: string): string {
+  return src.replace(/\\([nrtbf"\\/]|u[0-9a-fA-F]{4})/g, (_, esc: string) => {
+    if (esc === 'n') return '\n'
+    if (esc === 'r') return '\r'
+    if (esc === 't') return '\t'
+    if (esc === 'b') return '\b'
+    if (esc === 'f') return '\f'
+    if (esc === '"') return '"'
+    if (esc === '\\') return '\\'
+    if (esc === '/') return '/'
+    if (esc.startsWith('u')) return String.fromCharCode(parseInt(esc.slice(1), 16))
+    return esc
+  })
+}
+
+/** Last path segment (handles both / and \ separators). */
+function baseFileName(p: string): string {
+  const seg = p.split(/[/\\]/).filter(Boolean)
+  return seg[seg.length - 1] ?? p
+}
+
+/**
+ * Best-effort `{ file_path, content }` from a Write tool-call part. Prefers the
+ * parsed `args`; while the call is still streaming (`args` undefined) it regexes
+ * both fields out of the half-open JSON in `argsText`, exactly like the inline
+ * `formatWrite` preview — so the canvas tab fills in live as the model writes.
+ */
+function writeFieldsFromPart(
+  part: ContentPart
+): { path: string; content: string } | null {
+  let path: string | undefined
+  let content: string | undefined
+  const args = part.args
+  if (args && typeof args === 'object') {
+    const a = args as Record<string, unknown>
+    if (typeof a.file_path === 'string') path = a.file_path
+    if (typeof a.content === 'string') content = a.content
+  }
+  if ((path === undefined || content === undefined) && typeof part.argsText === 'string') {
+    const txt = part.argsText
+    if (path === undefined) {
+      const m = /"file_path"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(txt)
+      if (m) path = unescapeWriteFragment(m[1]!)
+    }
+    if (content === undefined) {
+      // Content may still be mid-stream (no closing quote yet): capture up to
+      // an unescaped closing quote OR the end of the buffer.
+      const m = /"content"\s*:\s*"((?:[^"\\]|\\.)*?)(?:"|$)/.exec(txt)
+      if (m) content = unescapeWriteFragment(m[1]!)
+    }
+  }
+  if (path === undefined) return null
+  return { path, content: content ?? '' }
+}
+
+/**
+ * Every file the foreground session has written via the `Write` tool, in
+ * first-write order, deduped by path (a later write to the same path replaces
+ * the earlier entry's content but keeps its original position so the list
+ * doesn't reshuffle under the user). Drives the 文件 canvas tab in slides mode.
+ *
+ * Same scan shape as `usePreviewServer`: walk every tool-call part once. The
+ * still-streaming write (if any) is included with `streaming: true` so the tab
+ * fills in live; callers use that flag to auto-follow the active write.
+ *
+ * NOTE: we subscribe to `messages` and derive in a `useMemo` rather than doing
+ * the scan inside the zustand selector. A selector that builds fresh
+ * `WrittenFile` objects every call returns a brand-new array each time —
+ * `useShallow` then compares element REFERENCES (all new) and never settles,
+ * tripping React's "getSnapshot should be cached" infinite loop. Deriving in a
+ * `useMemo` keyed on the (stable-until-changed) `messages` reference avoids the
+ * snapshot-identity trap entirely: it only recomputes when messages actually
+ * change, and never calls setState, so there's no loop.
+ */
+export function useWrittenFiles(): WrittenFile[] {
+  const messages = useChatStore((s) => s.messages)
+  return useMemo(() => {
+    const byPath = new Map<string, WrittenFile>()
+    for (const m of messages) {
+      if (!Array.isArray(m.content)) continue
+      for (const p of (m.content as unknown) as ContentPart[]) {
+        if (p.type !== 'tool-call' || p.toolName !== 'Write') continue
+        const fields = writeFieldsFromPart(p)
+        if (!fields) continue
+        const streaming = p.argsComplete !== true
+        byPath.set(fields.path, {
+          path: fields.path,
+          name: baseFileName(fields.path),
+          content: fields.content,
+          streaming
+        })
+      }
+    }
+    return Array.from(byPath.values())
+  }, [messages])
+}
+
+/**
+ * Debounced view of `sessionLoading` for *visual* loading affordances
+ * (top progress bar, sidebar dim). Returns `true` only if the raw
+ * `sessionLoading` flag has been continuously true for at least
+ * `delayMs`, and resets to `false` the instant the flag clears.
+ *
+ * Why this exists
+ * ---------------
+ * A switch to a recently-visited session now resolves almost instantly:
+ * the history-cache hit (FusionRuntimeProvider) mounts the transcript
+ * synchronously and the lazy engine returns from `switchToSession` in a
+ * single microtask. In that common case `sessionLoading` flips
+ * true→false within a frame or two — yet the old code lit the progress
+ * bar / dimmed the sidebar immediately, producing a visible flicker that
+ * read as "the app is always busy".
+ *
+ * Gating the *visual* signal (NOT the functional one) behind a short
+ * delay means a fast switch shows no loading chrome at all, while a real
+ * cold start (~3-8s) still surfaces the bar after the threshold. The
+ * composer-disable path keeps reading the RAW flag via
+ * `useExternalStoreRuntime.isLoading`, so input is still correctly gated
+ * during the sub-threshold window — we only suppress the *decoration*,
+ * never the interaction guard.
+ *
+ * Default `delayMs` of 200ms sits just above a cache-hit switch (a few
+ * frames) and just below the point a human reads a blank wait as "stuck".
+ */
+export function useDelayedSessionLoading(delayMs = 200): boolean {
+  const loading = useChatStore((s) => s.sessionLoading)
+  const [shown, setShown] = useState(false)
+  const timerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (loading) {
+      // Arm a timer; only flip `shown` true if we're still loading when
+      // it fires. A fast switch clears `loading` first and the cleanup
+      // below cancels the timer, so `shown` never turns on.
+      timerRef.current = window.setTimeout(() => {
+        setShown(true)
+      }, delayMs)
+      return () => {
+        if (timerRef.current !== null) {
+          window.clearTimeout(timerRef.current)
+          timerRef.current = null
+        }
+      }
+    }
+    // Not loading → hide immediately (no trailing delay on the way out,
+    // so the bar disappears the moment the session is ready).
+    setShown(false)
+    return undefined
+  }, [loading, delayMs])
+
+  return shown
 }

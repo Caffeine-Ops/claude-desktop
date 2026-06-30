@@ -347,6 +347,57 @@ function isInjectedAgentMessage(text: string): boolean {
   return text.trimStart().startsWith('<task-notification>')
 }
 
+/**
+ * Slash-command turns are stored in the JSONL with an XML skeleton, not as
+ * the friendly text the human typed. The CLI writes three flavours:
+ *
+ *   1. The invocation itself —
+ *        <command-message>name</command-message>
+ *        <command-name>/name</command-name>
+ *        <command-args>the actual user input</command-args>
+ *      (`<command-message>` and `<command-args>` are optional). Without
+ *      cleanup the renderer paints the raw tags into a user bubble, which
+ *      is exactly the "format looks wrong" report. We rebuild the human
+ *      intent as `/name args` so the bubble reads like what was typed.
+ *
+ *   2. Local-command bookkeeping — a `<local-command-caveat>` preamble and
+ *      a `<local-command-stdout>` result (e.g. the line `/clear` prints).
+ *      Neither is human input; collapse the whole message to empty so the
+ *      caller drops the turn entirely.
+ *
+ * Anything without these tags is returned unchanged. We deliberately do
+ * the matching here (main side, on replay) rather than in the renderer so
+ * the chat store never holds the raw skeleton.
+ */
+function cleanUserCommandText(text: string): string {
+  const trimmed = text.trimStart()
+
+  // Pure CLI bookkeeping — not something the human said. Drop it.
+  if (
+    trimmed.startsWith('<local-command-stdout>') ||
+    trimmed.startsWith('<local-command-caveat>')
+  ) {
+    return ''
+  }
+
+  // Not a slash-command skeleton → leave it exactly as-is.
+  if (!trimmed.startsWith('<command-')) return text
+
+  const tag = (name: string): string | undefined => {
+    const m = text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))
+    return m ? m[1].trim() : undefined
+  }
+
+  // `<command-name>` already includes the leading slash (and any plugin
+  // prefix like `claude-desktop:ppt-master`). Fall back to the bare
+  // `<command-message>` label if the name tag is somehow missing.
+  const name = tag('command-name') ?? tag('command-message')
+  if (!name) return text
+
+  const args = tag('command-args')
+  return args ? `${name} ${args}` : name
+}
+
 function convertUserContent(message: unknown): ContentPart[] {
   const parts: ContentPart[] = []
 
@@ -362,7 +413,10 @@ function convertUserContent(message: unknown): ContentPart[] {
     // we must drop it here too, otherwise the raw XML resurfaces as a
     // blue user bubble. Returning no parts makes the caller skip it.
     if (isInjectedAgentMessage(raw)) return parts
-    if (raw.length > 0) parts.push({ type: 'text', text: raw })
+    // Rewrite slash-command XML skeletons into `/name args` (and drop pure
+    // local-command bookkeeping) before they reach the bubble.
+    const cleaned = cleanUserCommandText(raw)
+    if (cleaned.length > 0) parts.push({ type: 'text', text: cleaned })
     return parts
   }
   if (!Array.isArray(raw)) return parts
@@ -371,7 +425,8 @@ function convertUserContent(message: unknown): ContentPart[] {
     if (!isRecord(block)) continue
     if (block.type === 'text' && typeof block.text === 'string') {
       if (isInjectedAgentMessage(block.text)) continue
-      if (block.text.length > 0) parts.push({ type: 'text', text: block.text })
+      const cleaned = cleanUserCommandText(block.text)
+      if (cleaned.length > 0) parts.push({ type: 'text', text: cleaned })
       continue
     }
     if (block.type === 'image') {

@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Claude Desktop · 设置页重设计原型</title>
+<style>
+  /* ============================================================
+     设置页重设计原型（参考 docs/ui-prototype-chat.html 的设计语言）。
+     图5 = 当前全屏设置页（外观分区）。本原型在同一套 token 上重做：
+
+       · 沿用浅灰 + 绿色点缀 + 大圆角 + 软阴影
+       · 左栏导航：选中态绿色高亮气泡 + 左侧绿短条（和聊天原型一致）
+       · 右侧内容：每个设置组改成「白色圆角卡片」，标题 + 控件
+         分区，留白克制；告别图5 那种平铺无边界的松散排版
+       · 主题切换 = 分段控件；主题色 = 圆形色板（选中绿环）；
+         font size = 胶囊步进器；CLI backend = 分段卡
+       · 顶部「← 返回应用」+ 标题区；底部 Esc/版本号状态条
+
+     单文件、零依赖、纯静态。底部演示条切换分区 / 暗色。
+     ============================================================ */
+
+  :root {
+    --bg-app: #ffffff;
+    --bg-shell: #f6f6f5;          /* 设置页整体底色（浅灰） */
+    --bg-sidebar: #f6f6f5;
+    --bg-card: #ffffff;
+    --bg-hover: #ececeb;
+    --bg-active: #e7e7e6;
+    --bg-inset: #f3f3f2;          /* 分段控件 / 步进器底槽 */
+    --bg-code: #f7f7f6;
+
+    --border: #ececeb;
+    --border-soft: #f0f0ef;
+    --border-strong: #e3e3e1;
+
+    --text: #1a1a18;
+    --text-soft: #5f5f5b;
+    --text-muted: #9b9b96;
+    --text-faint: #bdbdb8;
+
+    --accent: #16a34a;
+    --accent-soft: #dcf5e6;
+    --accent-ink: #0f7a38;
+    --blue: #2563eb;
+
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-pill: 999px;
+
+    --shadow-card: 0 1px 2px rgba(0,0,0,.035), 0 4px 16px rgba(0,0,0,.04);
+    --shadow-pop: 0 8px 30px rgba(0,0,0,.14);
+
+    --sidebar-w: 260px;
+    --content-max: 720px;
+
+    --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+
+  body {
+    font-family: var(--font);
+    color: var(--text);
+    background: #d8d8d6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 22px;
+  }
+
+  /* —— macOS 窗口外壳（设置是全屏页，铺满窗口） —— */
+  .window {
+    width: min(1320px, 100%);
+    height: min(840px, calc(100vh - 44px));
+    background: var(--bg-shell);
+    border-radius: 14px;
+    box-shadow: 0 30px 90px rgba(0,0,0,.26), 0 4px 14px rgba(0,0,0,.12);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    border: 1px solid rgba(0,0,0,.08);
+  }
+
+  /* ========== 顶部条：返回 + 标题区 + 关闭 ========== */
+  .topbar {
+    flex-shrink: 0;
+    display: flex; align-items: flex-start; gap: 16px;
+    padding: 14px 18px 16px;
+    position: relative;
+  }
+  .traffic { display: flex; gap: 8px; align-items: center; padding-top: 6px; }
+  .traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .traffic .r { background: #ff5f57; }
+  .traffic .y { background: #febc2e; }
+  .traffic .g { background: #28c840; }
+
+  .back-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 30px; padding: 0 12px 0 9px;
+    border: none; background: transparent;
+    color: var(--text-soft); font-size: 13.5px; font-weight: 500;
+    border-radius: var(--radius-sm); cursor: pointer;
+    transition: background .12s, color .12s;
+    margin-top: 1px;
+  }
+  .back-btn:hover { background: var(--bg-hover); color: var(--text); }
+  .back-btn svg { color: var(--text-muted); }
+
+  .title-block { padding-top: 0; }
+  .title-block .kicker { font-size: 11px; letter-spacing: .06em; color: var(--text-muted); font-weight: 600; }
+  .title-block .row { display: flex; align-items: baseline; gap: 14px; margin-top: 3px; }
+  .title-block h1 { font-size: 22px; font-weight: 650; letter-spacing: -.01em; color: var(--text); }
+  .title-block .sub { font-size: 13px; color: var(--text-muted); }
+
+  .close-btn {
+    position: absolute; top: 14px; right: 16px;
+    width: 30px; height: 30px; border-radius: var(--radius-sm);
+    display: flex; align-items: center; justify-content: center;
+    border: none; background: transparent; color: var(--text-muted);
+    font-size: 16px; cursor: pointer; transition: background .12s, color .12s;
+  }
+  .close-btn:hover { background: var(--bg-hover); color: var(--text); }
+
+  /* ========== 主体：左导航 + 右内容 ========== */
+  .body { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--sidebar-w) minmax(0,1fr); }
+
+  /* —— 左导航 —— */
+  .nav {
+    border-top: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    padding: 16px 14px;
+    overflow-y: auto;
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .nav::-webkit-scrollbar { width: 8px; }
+  .nav::-webkit-scrollbar-thumb { background: rgba(0,0,0,.12); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box; }
+  .nav-item {
+    display: flex; align-items: center; gap: 11px;
+    height: 36px; padding: 0 12px;
+    border-radius: var(--radius-sm);
+    color: var(--text-soft); font-size: 13.5px;
+    cursor: pointer; user-select: none; position: relative;
+    border: none; background: transparent; width: 100%; text-align: left;
+    transition: background .12s, color .12s;
+  }
+  .nav-item:hover { background: var(--bg-hover); }
+  .nav-item svg { flex-shrink: 0; color: var(--text-muted); }
+  .nav-item.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+  .nav-item.active svg { color: var(--accent); }
+  .nav-item.active::before {
+    content: ""; position: absolute; left: 3px; top: 50%;
+    transform: translateY(-50%);
+    width: 3px; height: 18px; border-radius: 2px; background: var(--accent);
+  }
+
+  /* —— 右内容 —— */
+  .content {
+    border-top: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 28px 32px 48px;
+  }
+  .content::-webkit-scrollbar { width: 10px; }
+  .content::-webkit-scrollbar-thumb { background: rgba(0,0,0,.1); border-radius: 5px; border: 3px solid transparent; background-clip: padding-box; }
+  .content-col { max-width: var(--content-max); margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+
+  /* 设置卡片 */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    padding: 20px 22px;
+  }
+  .card-label { font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: .02em; margin-bottom: 12px; }
+  .card-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+  .card-row + .card-row { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-soft); }
+  .card-row .rl { min-width: 0; }
+  .card-row .rl .name { font-size: 14px; color: var(--text); font-weight: 500; }
+  .card-row .rl .desc { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; line-height: 1.5; }
+
+  /* 分段控件（系统/浅色/深色、CLI backend） */
+  .segmented {
+    display: grid; gap: 4px; padding: 4px;
+    background: var(--bg-inset); border-radius: var(--radius-md);
+  }
+  .seg-3 { grid-template-columns: repeat(3, 1fr); }
+  .seg-2 { grid-template-columns: repeat(2, 1fr); }
+  .seg {
+    height: 38px; border: none; background: transparent;
+    border-radius: var(--radius-sm); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    font-size: 13.5px; color: var(--text-soft); font-weight: 500;
+    transition: background .12s, color .12s, box-shadow .12s;
+  }
+  .seg:hover:not(.on) { color: var(--text); }
+  .seg.on {
+    background: var(--bg-app); color: var(--text); font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 1px 1px rgba(0,0,0,.04);
+  }
+  .seg svg { color: currentColor; opacity: .75; }
+  .seg .ver { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin-left: 4px; }
+
+  /* 主题色色板 */
+  .swatches { display: flex; gap: 10px; flex-wrap: wrap; }
+  .swatch {
+    width: 26px; height: 26px; border-radius: 50%;
+    cursor: pointer; border: 2px solid transparent;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.06);
+    transition: transform .1s;
+    position: relative;
+  }
+  .swatch:hover { transform: scale(1.08); }
+  .swatch.on { box-shadow: 0 0 0 2px var(--bg-app), 0 0 0 4px var(--accent); }
+  .swatch.custom {
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg,#f0f0ef,#e3e3e1); color: var(--text-muted);
+  }
+
+  /* 胶囊步进器 */
+  .stepper {
+    display: inline-flex; align-items: stretch;
+    border: 1px solid var(--border-strong); border-radius: var(--radius-pill);
+    background: var(--bg-app); overflow: hidden; height: 34px;
+  }
+  .stepper button {
+    width: 38px; border: none; background: transparent; cursor: pointer;
+    color: var(--text-soft); font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .12s;
+  }
+  .stepper button:hover { background: var(--bg-hover); color: var(--text); }
+  .stepper .val {
+    min-width: 64px; display: flex; align-items: center; justify-content: center; gap: 3px;
+    border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+    font-size: 13.5px; color: var(--text); font-variant-numeric: tabular-nums;
+  }
+  .stepper .val .u { color: var(--text-muted); font-size: 12px; }
+
+  /* 勾选项 */
+  .check {
+    width: 20px; height: 20px; border-radius: 6px;
+    background: var(--blue); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; box-shadow: 0 1px 2px rgba(37,99,235,.3);
+  }
+  .check svg { color: #fff; }
+
+  /* 提示文字 */
+  .card-hint { font-size: 12px; color: var(--text-muted); line-height: 1.55; margin-top: 12px; }
+
+  /* ========== 底部状态条 ========== */
+  .footbar {
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 20px 11px;
+    border-top: 1px solid var(--border);
+  }
+  .foot-hint { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-muted); }
+  .foot-hint kbd {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 5px;
+    border-radius: 4px; border: 1px solid var(--border-strong);
+    background: var(--bg-inset); color: var(--text-soft);
+    font-family: var(--mono); font-size: 10.5px;
+  }
+  .foot-ver { font-family: var(--mono); font-size: 11.5px; color: var(--text-faint); }
+
+  /* 演示切换条 */
+  .demo-switch {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+    display: flex; gap: 4px; padding: 5px;
+    background: rgba(20,20,20,.9); border-radius: 999px;
+    box-shadow: var(--shadow-pop); z-index: 50; backdrop-filter: blur(8px);
+  }
+  .demo-switch button { border: none; background: transparent; color: rgba(255,255,255,.66); font-size: 12.5px; padding: 6px 14px; border-radius: 999px; cursor: pointer; font-family: var(--font); }
+  .demo-switch button.on { background: rgba(255,255,255,.16); color: #fff; }
+</style>
+</head>
+<body>
+
+<div class="window">
+
+  <!-- ===== 顶部条 ===== -->
+  <div class="topbar">
+    <div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+    <button class="back-btn">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8H3M7 4 3 8l4 4"/></svg>
+      返回应用
+    </button>
+    <div class="title-block">
+      <div class="kicker">设置</div>
+      <div class="row">
+        <h1>外观</h1>
+        <span class="sub">选择浅色、深色或跟随系统设置。</span>
+      </div>
+    </div>
+    <button class="close-btn">✕</button>
+  </div>
+
+  <!-- ===== 主体 ===== -->
+  <div class="body">
+
+    <!-- 左导航 -->
+    <nav class="nav">
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 5h11M2.5 11h11"/><circle cx="6" cy="5" r="1.6"/><circle cx="10.5" cy="11" r="1.6"/></svg>执行模式</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12.5 3.5 10l6-6 2.5 2.5-6 6z"/><path d="M10 3.5 12.5 6"/></svg>Instructions / Rules</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg>记忆</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/><circle cx="6" cy="7" r="1.2"/><path d="M3 11l3-2.5 2 1.5 2.5-2 2.5 2.5"/></svg>媒体生成提供商</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/></svg>技能</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 2 9.4 6.2 13.5 6.5l-3.2 2.6 1 4.1L8 11.2 4.7 13.2l1-4.1L2.5 6.5l4.1-.3z"/></svg>外部 MCP</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 5h11M2.5 11h11"/><circle cx="6" cy="5" r="1.6"/><circle cx="10.5" cy="11" r="1.6"/></svg>连接器</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6.5 9.5 9 7m-3 5.5-1.5 1.5a2.5 2.5 0 0 1-3.5-3.5L3.5 9m9-2L14 5.5a2.5 2.5 0 0 0-3.5-3.5L9 3.5"/></svg>MCP 服务器</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h6M5 2.5v1.5c0 4-2 6-2 6M4 6.5s.5 3 4 4.5"/><path d="M9 13.5 11.5 7l2.5 6.5M9.8 11.8h3.4"/></svg>界面语言</button>
+      <button class="nav-item active"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></svg>外观</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4.5h10v6H6l-3 2.5z"/></svg>设计评审团</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5.5 12a2.5 2.5 0 0 0 5 0M8 2a4 4 0 0 0-4 4c0 3-1.5 4-1.5 4h11S12 9 12 6a4 4 0 0 0-4-4z"/></svg>通知</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 2 9.4 6.2 13.5 6.5l-3.2 2.6 1 4.1L8 11.2 4.7 13.2l1-4.1L2.5 6.5l4.1-.3z"/></svg>宠物</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12.5 3.5 10l6-6 2.5 2.5-6 6z"/><path d="M10 3.5 12.5 6"/></svg>设计系统</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>隐私</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg>日志分析</button>
+      <button class="nav-item"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4M12.6 12.6l-1.4-1.4M4.8 4.8 3.4 3.4"/></svg>关于</button>
+    </nav>
+
+    <!-- 右内容 -->
+    <div class="content">
+      <div class="content-col">
+
+        <!-- 主题模式 -->
+        <div class="card">
+          <div class="card-label">主题模式</div>
+          <div class="segmented seg-3">
+            <button class="seg on">系统</button>
+            <button class="seg"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></svg>浅色</button>
+            <button class="seg"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13.5 9A5.5 5.5 0 1 1 7 2.5 4.3 4.3 0 0 0 13.5 9z"/></svg>深色</button>
+          </div>
+        </div>
+
+        <!-- 主题色 -->
+        <div class="card">
+          <div class="card-label">主题色</div>
+          <div class="swatches">
+            <span class="swatch" style="background:#b8754a"></span>
+            <span class="swatch" style="background:#2563eb"></span>
+            <span class="swatch" style="background:#7c3aed"></span>
+            <span class="swatch on" style="background:#16a34a"></span>
+            <span class="swatch" style="background:#dc2626"></span>
+            <span class="swatch" style="background:#d97706"></span>
+            <span class="swatch" style="background:#0891b2"></span>
+            <span class="swatch" style="background:#db2777"></span>
+            <span class="swatch custom">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3v10M3 8h10"/></svg>
+            </span>
+          </div>
+        </div>
+
+        <!-- 字号 -->
+        <div class="card">
+          <div class="card-row">
+            <div class="rl"><div class="name">UI font size</div><div class="desc">界面整体字号</div></div>
+            <div class="stepper">
+              <button>−</button>
+              <span class="val">11<span class="u">px</span></span>
+              <button>+</button>
+            </div>
+          </div>
+          <div class="card-row">
+            <div class="rl"><div class="name">Code font size</div><div class="desc">代码块字号</div></div>
+            <div class="stepper">
+              <button>−</button>
+              <span class="val">10<span class="u">px</span></span>
+              <button>+</button>
+            </div>
+          </div>
+          <div class="card-row">
+            <div class="rl"><div class="name">Use pointer cursor on clickable elements</div><div class="desc">可点击元素显示手型光标</div></div>
+            <span class="check">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5 6.5 11.5 12.5 5"/></svg>
+            </span>
+          </div>
+        </div>
+
+        <!-- CLI backend -->
+        <div class="card">
+          <div class="card-label">CLI backend</div>
+          <div class="segmented seg-2">
+            <button class="seg">Bundled (fusion-code)</button>
+            <button class="seg on">System claude <span class="ver">v2.1.193</span></button>
+          </div>
+          <div class="card-hint">Takes effect immediately — an in-flight turn keeps its current backend; the next turn switches.</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 底部状态条 ===== -->
+  <div class="footbar">
+    <span class="foot-hint"><kbd>Esc</kbd> 关闭</span>
+    <span class="foot-ver">v0.7.0</span>
+  </div>
+
+</div>
+
+<!-- 演示切换 -->
+<div class="demo-switch">
+  <button class="on" onclick="setMode('light', this)">浅色</button>
+  <button onclick="setMode('dark', this)">暗色预览</button>
+</div>
+
+<script>
+  function setMode(v, btn) {
+    document.querySelectorAll('.demo-switch button').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    if (v === 'dark') applyDark(); else applyLight();
+  }
+  function applyDark() {
+    const r = document.documentElement.style;
+    r.setProperty('--bg-app', '#2a2826');
+    r.setProperty('--bg-shell', '#191817');
+    r.setProperty('--bg-card', '#222120');
+    r.setProperty('--bg-hover', 'rgba(255,255,255,.06)');
+    r.setProperty('--bg-active', 'rgba(255,255,255,.10)');
+    r.setProperty('--bg-inset', 'rgba(255,255,255,.05)');
+    r.setProperty('--border', 'rgba(255,255,255,.10)');
+    r.setProperty('--border-soft', 'rgba(255,255,255,.06)');
+    r.setProperty('--border-strong', 'rgba(255,255,255,.14)');
+    r.setProperty('--text', '#ededeb');
+    r.setProperty('--text-soft', 'rgba(237,237,235,.72)');
+    r.setProperty('--text-muted', 'rgba(237,237,235,.5)');
+    r.setProperty('--text-faint', 'rgba(237,237,235,.34)');
+    r.setProperty('--accent', '#2ec96b');
+    r.setProperty('--accent-soft', 'rgba(46,201,107,.16)');
+    r.setProperty('--accent-ink', '#57d98a');
+    document.body.style.background = '#0e0d0c';
+  }
+  function applyLight() {
+    document.documentElement.removeAttribute('style');
+    document.body.style.background = '#d8d8d6';
+  }
+</script>
+</body>
+</html>

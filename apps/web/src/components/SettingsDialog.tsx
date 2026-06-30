@@ -1956,6 +1956,21 @@ export function SettingsDialog({
         aria-labelledby="settings-dialog-title"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Top-left back affordance — now that settings is a full-screen
+            page (not a centered modal over a scrim), the primary "I'm
+            done" gesture is a back button, mirroring the reference's
+            「← 返回应用」. It calls the same `onClose` as the ✕ / Esc, so
+            the close path (persist + tear down the desktop overlay view)
+            is unchanged. The corner ✕ stays as a secondary affordance. */}
+        <button
+          type="button"
+          className="settings-back"
+          onClick={onClose}
+          aria-label={t('settings.backToApp')}
+        >
+          <Icon name="arrow-left" size={16} />
+          <span>{t('settings.backToApp')}</span>
+        </button>
         {/* Top-right chrome strip — anchored to the modal corner so the
             autosave indicator and the close button float above the
             sidebar/content rhythm without competing with the title.
@@ -5799,8 +5814,10 @@ function AppearanceSection({
   };
 
   return (
-    <section className="settings-section">
-      <div className="seg-control" role="group" aria-label={t('settings.appearance')} style={{ '--seg-cols': THEMES.length } as React.CSSProperties}>
+    <section className="settings-section settings-section--cards">
+      <div className="settings-card">
+        <div className="settings-card-label">{t('settings.appearanceThemeMode')}</div>
+        <div className="seg-control" role="group" aria-label={t('settings.appearance')} style={{ '--seg-cols': THEMES.length } as React.CSSProperties}>
         {THEMES.map(({ value, labelKey, icon }) => (
           <button
             key={value}
@@ -5825,9 +5842,10 @@ function AppearanceSection({
             <span className="seg-title">{t(labelKey)}</span>
           </button>
         ))}
+        </div>
       </div>
-      <div className="field">
-        <span className="field-label">{accentLabel}</span>
+      <div className="settings-card">
+        <div className="settings-card-label">{accentLabel}</div>
         <div className="pet-swatches" role="radiogroup" aria-label={accentLabel}>
           {ACCENT_SWATCHES.map((color) => {
             const active = currentAccent === color;
@@ -6225,40 +6243,42 @@ function DesktopAppearanceControls({
 
   return (
     <>
-      <div className="field">
-        <span className="field-label">UI font size</span>
-        <FontStepper
-          value={uiFont}
-          min={UI_FONT_MIN}
-          max={UI_FONT_MAX}
-          onChange={setUiFont}
-          ariaLabel="UI font size"
-        />
-      </div>
-      <div className="field">
-        <span className="field-label">Code font size</span>
-        <FontStepper
-          value={codeFont}
-          min={CODE_FONT_MIN}
-          max={CODE_FONT_MAX}
-          onChange={setCodeFont}
-          ariaLabel="Code font size"
-        />
-      </div>
-      <div className="field">
-        <label className="settings-checkbox-row">
-          <input
-            type="checkbox"
-            checked={pointer}
-            onChange={(e) => setPointer(e.target.checked)}
+      <div className="settings-card">
+        <div className="field">
+          <span className="field-label">UI font size</span>
+          <FontStepper
+            value={uiFont}
+            min={UI_FONT_MIN}
+            max={UI_FONT_MAX}
+            onChange={setUiFont}
+            ariaLabel="UI font size"
           />
-          <span>Use pointer cursor on clickable elements</span>
-        </label>
+        </div>
+        <div className="field">
+          <span className="field-label">Code font size</span>
+          <FontStepper
+            value={codeFont}
+            min={CODE_FONT_MIN}
+            max={CODE_FONT_MAX}
+            onChange={setCodeFont}
+            ariaLabel="Code font size"
+          />
+        </div>
+        <div className="field">
+          <label className="settings-checkbox-row">
+            <input
+              type="checkbox"
+              checked={pointer}
+              onChange={(e) => setPointer(e.target.checked)}
+            />
+            <span>Use pointer cursor on clickable elements</span>
+          </label>
+        </div>
       </div>
 
       {cliBackend ? (
-        <div className="field">
-          <span className="field-label">CLI backend</span>
+        <div className="settings-card">
+          <div className="settings-card-label">CLI backend</div>
           <div className="seg-control" role="group" aria-label="CLI backend">
             <button
               type="button"

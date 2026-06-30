@@ -3278,30 +3278,54 @@ a.avatar-item:visited {
   50% { opacity: 0.6; transform: scale(0.85); }
 }
 
+/* Settings is no longer a centered card — it fills the whole window as a
+   full-screen page (reference: Claude desktop's own Preferences page). The
+   `.modal-backdrop` that wraps it therefore must NOT dim or center: it just
+   becomes the opaque page surface. Scoped with `:has()` so every OTHER modal
+   keeps the centered-card-over-scrim treatment. */
+/* Settings page surface. Matches the ui-prototype-settings-b layout:
+   a WHITE content surface with a light-grey sidebar (not the inverse).
+   The backdrop paints white so the right-hand content column + header
+   read as a continuous white page; the sidebar repaints grey itself. */
+.modal-backdrop:has(.modal-settings) {
+  background: var(--bg-elevated);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  align-items: stretch;
+  justify-content: stretch;
+  animation: fade-in 120ms ease-out;
+}
+/* In the desktop overlay the page must paint its own opaque background even
+   though `<html>` is forced transparent (see `html.settings-overlay`). */
+html.settings-overlay .modal-backdrop:has(.modal-settings) {
+  background: var(--bg-elevated);
+}
+
 .modal-settings {
-  --modal-padding: 24px;
-  width: min(920px, calc(100vw - 48px));
-  /* Fixed height regardless of which section is active — short sections
-     pad out with empty space inside `.settings-content`, long sections
-     scroll internally. Keeps the dialog from jumping in size as the user
-     switches sidebar items. */
-  height: min(720px, calc(100vh - 64px));
+  --modal-padding: 32px;
+  /* Fill the window. No max-width card, no rounded corners, no shadow —
+     it's a page, not a dialog. */
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
   padding: 0;
   gap: 0;
   /* Anchor for the absolutely-positioned `.settings-chrome` strip
-     (close button + autosave indicator). Without this the chrome
-     would escape to the viewport on long-scrolling sections. */
+     (close button + autosave indicator) and the top-left back button. */
   position: relative;
-}
-@media (max-height: 600px) {
-  .modal-settings { height: 90vh; }
+  animation: fade-in 140ms ease-out;
 }
 .modal-settings .modal-body {
   overflow: hidden;
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  /* Prototype rail width (ui-prototype-settings-b: --sidebar-w 248px). */
+  grid-template-columns: 248px minmax(0, 1fr);
   gap: 0;
   margin: 0;
   padding: 0;
@@ -3412,6 +3436,49 @@ a.avatar-item:visited {
 }
 .settings-chrome > * {
   pointer-events: auto;
+}
+
+/* Top-left「← 返回应用」back button. The page's primary dismiss gesture
+   now that settings fills the window (the corner ✕ stays as a secondary
+   affordance). A quiet ghost button — icon + label, muted by default,
+   subtle fill on hover — so it reads as navigation chrome, not a CTA. */
+.settings-back {
+  position: absolute;
+  top: 18px;
+  left: var(--modal-padding);
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+.settings-back:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg-muted) 70%, transparent);
+}
+.settings-back:active {
+  background: color-mix(in srgb, var(--bg-muted) 90%, transparent);
+}
+.settings-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  color: var(--text);
+}
+.settings-back svg {
+  opacity: 0.85;
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-back { transition: none; }
 }
 
 /* Close button. A `✕` glyph in a 28px rounded-md hit target — a 1:1
@@ -3542,8 +3609,11 @@ a.avatar-item:visited {
    not a soft gradient of whitespace. */
 .modal-settings .modal-head {
   padding-right: calc(var(--modal-padding) + 56px);
-  padding-top: 18px;
-  padding-bottom: 16px;
+  padding-top: 22px;
+  padding-bottom: 18px;
+  /* Page header indents to clear the top-left back button so the kicker
+     lines up with the content column, not the window edge. */
+  padding-left: calc(var(--modal-padding) + 116px);
   border-bottom: 1px solid var(--border-soft, var(--border));
 }
 
@@ -3815,9 +3885,12 @@ a.avatar-item:visited {
 .settings-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 16px 10px;
-  background: var(--bg-panel);
+  gap: 1px;
+  /* Prototype rail insets (ui-prototype-settings-b .nav: 4px 10px 14px). */
+  padding: 4px 10px 14px;
+  /* Grey rail against the white content surface — matches the prototype's
+     `--bg-sidebar #f1f1f0`. --bg-subtle is the theme's light-grey token. */
+  background: var(--bg-subtle);
   border-right: 1px solid var(--border);
   min-height: 0;
   overflow-y: auto;
@@ -3831,30 +3904,54 @@ a.avatar-item:visited {
 .settings-nav-item {
   width: 100%;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
-  color: var(--text);
+  color: var(--text-soft, var(--text));
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 11px;
   align-items: center;
-  padding: 7px 10px;
+  /* Prototype nav-item: 36px tall, 0 12px padding. */
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 14px;
   text-align: left;
   cursor: pointer;
 }
 .settings-nav-item:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
 }
+/* Active nav: green-tinted pill (1:1 with ui-prototype-settings-b —
+   --green-soft #dcf5e6 fill, --green-ink #0f7a38 text/icon). Fixed greens
+   here rather than theme accent, so it reads identically to the prototype
+   regardless of the user's chosen accent color. The dark block below swaps
+   in dark-friendly greens. */
 .settings-nav-item.active,
 .settings-nav-item.active:hover {
-  background: var(--bg-subtle);
+  background: #dcf5e6;
   border-color: transparent;
-  color: var(--text);
+  color: #0f7a38;
+  font-weight: 600;
   box-shadow: none;
+}
+.settings-nav-item.active svg {
+  color: #16a34a;
+  opacity: 1;
+}
+.dark .settings-nav-item.active,
+.dark .settings-nav-item.active:hover {
+  background: rgba(46, 201, 107, 0.16);
+  color: #57d98a;
+}
+.dark .settings-nav-item.active svg {
+  color: #2ec96b;
 }
 .settings-nav-item svg {
   justify-self: center;
   opacity: 0.75;
+  /* Prototype nav icons are 16px (the JSX ships size=18); clamp to 16. */
+  width: 16px;
+  height: 16px;
 }
 .settings-nav-item span {
   min-width: 0;
@@ -3878,15 +3975,25 @@ a.avatar-item:visited {
 .settings-content {
   min-width: 0;
   min-height: 0;
-  /* Top inset matches `.settings-sidebar`'s `padding-top: 16` so the first
-     content row (the Local CLI / BYOK pill) sits level with the first
-     sidebar nav-item across the gutter. */
-  padding: 16px var(--modal-padding) 22px;
+  /* Vertical padding only — horizontal inset moves to the centered column
+     below so the cards end up 680px wide (760 col − 40px × 2), exactly
+     like the prototype's `.content-col { max-width:760; padding:…40px… }`. */
+  padding: 44px 0 60px;
   overflow: auto;
   overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+.modal-settings .settings-content > * {
+  width: 100%;
+  /* 760px column = 680px content + 40px horizontal padding each side,
+     centered. Matches the prototype's content-col exactly. */
+  max-width: 760px;
+  padding-left: 40px;
+  padding-right: 40px;
+  margin-left: auto;
+  margin-right: auto;
 }
 @media (max-width: 760px) {
   .modal-settings {
@@ -3961,6 +4068,168 @@ a.avatar-item:visited {
   height: 16px;
   flex: 0 0 auto;
   cursor: pointer;
+}
+
+/* ============================================================
+   Appearance section — grouped cards (prototype: ui-prototype-settings-b)
+   ------------------------------------------------------------
+   The appearance pane wraps its groups in white rounded "cards" with a
+   label + rows, instead of the flat field stack the other sections use.
+   Everything here is SCOPED to `.settings-section--cards` so the shared
+   .seg-control / .field / .pet-swatch / .font-stepper rules the rest of
+   the dialog relies on are untouched.
+   ============================================================ */
+/* Two-class selector so this beats the later base `.settings-section`
+   rule (both single-class otherwise, and the base one wins by order). */
+.settings-section.settings-section--cards {
+  display: flex;
+  flex-direction: column;
+  /* Prototype card spacing: 22px between groups. */
+  gap: 22px;
+}
+.settings-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  /* Prototype card radius 14px + softer shadow. */
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 2px 10px rgba(0, 0, 0, 0.03);
+  padding: 20px 22px;
+}
+.settings-card-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  margin-bottom: 14px;
+}
+/* Card rows: label/desc on the left, control on the right, hairline between. */
+.settings-section--cards .settings-card .field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+}
+.settings-section--cards .settings-card .field:first-child { padding-top: 0; }
+.settings-section--cards .settings-card .field:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+.settings-section--cards .settings-card .field-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-section--cards .settings-card .field > .hint {
+  flex-basis: 100%;
+  margin-top: 12px;
+}
+/* Full-width controls (segmented theme picker, CLI backend) inside a card
+   shouldn't be squeezed into the right column — let them span the card.
+   Also re-tune the segmented control to the prototype's `.segmented`
+   metrics (radius 10, padding 4, gap 4) — the shared .seg-control defaults
+   differ, so override them scoped to the appearance cards. */
+.settings-section--cards .settings-card > .seg-control {
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  padding: 4px;
+  gap: 4px;
+  min-height: 0;
+}
+.settings-section--cards .settings-card .seg-btn {
+  border-radius: 7px;
+  padding: 0 12px;
+  min-height: 38px;
+}
+.settings-section--cards .settings-card .seg-btn.active {
+  background: var(--bg-elevated);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+.settings-section--cards .settings-card .seg-btn .seg-title {
+  font-size: 13.5px;
+}
+/* Accent swatches: bigger, with an accent double-ring on the active one
+   (matches the prototype). Scoped so the pet-config swatches keep their
+   smaller default look. */
+.settings-section--cards .pet-swatch {
+  width: 26px;
+  height: 26px;
+}
+.settings-section--cards .pet-swatch.active {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--bg-elevated), 0 0 0 4px var(--accent);
+}
+/* Custom-color slot — render as the prototype's grey "+" circle rather
+   than echoing the picked color. A grey disc with a centered plus glyph
+   (SVG data-URI) sits on the input; the native color swatch is made
+   transparent so the grey+plus shows through. Clicking still opens the
+   OS color picker. */
+.settings-section--cards .pet-swatch-picker {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  overflow: hidden;
+  background-color: #ececeb;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 16 16' fill='none' stroke='%239b9b96' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M8 3v10M3 8h10'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+}
+.settings-section--cards .pet-swatch-picker::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.settings-section--cards .pet-swatch-picker::-webkit-color-swatch {
+  border: none;
+  border-radius: 50%;
+  /* The native swatch paints the picked color over our grey+plus
+     background; hide it so only the grey "+" disc shows (1:1 with the
+     prototype's custom-color slot). */
+  opacity: 0;
+}
+.dark .settings-section--cards .pet-swatch-picker {
+  background-color: rgba(255, 255, 255, 0.1);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 16 16' fill='none' stroke='%23a0a09a' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M8 3v10M3 8h10'/%3E%3C/svg%3E");
+}
+/* Font stepper → pill stepper (rounded, divided cells). */
+.settings-section--cards .font-stepper {
+  border-radius: 999px;
+  border-color: var(--border-strong, var(--border));
+  padding: 0;
+  gap: 0;
+  height: 34px;
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+.settings-section--cards .font-stepper button {
+  width: 38px;
+  height: 100%;
+  border-radius: 0;
+}
+.settings-section--cards .font-stepper-value {
+  min-width: 56px;
+  padding: 0 4px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Pointer-cursor checkbox → accent-filled check (prototype's blue square,
+   but accent-driven so it matches the theme). */
+.settings-section--cards .settings-checkbox-row {
+  width: 100%;
+  flex-direction: row-reverse;
+  justify-content: space-between;
+}
+.settings-section--cards .settings-checkbox-row input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  /* Prototype uses a fixed blue check (#2f6bff), not the theme accent. */
+  accent-color: #2f6bff;
 }
 
 .seg-control {
