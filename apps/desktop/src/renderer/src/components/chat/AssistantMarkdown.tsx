@@ -298,8 +298,15 @@ function reactNodeToText(node: ReactNode): string {
 /* ───────────────── Exported Text renderer ───────────────── */
 
 function AssistantMarkdownImpl({ text }: { text: string }): React.JSX.Element {
+  // tracking-normal cancels the global -0.022em Apple tracking that
+  // :root sets for SF Pro. That negative tracking is tuned for Latin
+  // glyphs (which carry side-bearing); CJK ideographs are full-width
+  // and already dense, so the same negative value crushes Chinese text
+  // and makes it look cramped. Resetting to normal here gives the
+  // roomy, breathing rhythm of reference chat UIs (ChatGPT/Codex)
+  // WITHOUT touching the Latin tracking on buttons/headings elsewhere.
   return (
-    <div className="break-words text-[14px] leading-relaxed text-foreground">
+    <div className="break-words text-[14px] font-medium leading-relaxed tracking-normal text-foreground">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}

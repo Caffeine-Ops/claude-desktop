@@ -92,9 +92,19 @@
    * apps/web (its --sans / --mono tokens) both derive from these so the two
    * surfaces render identical type. NOTE: apps/web intentionally overrides
    * --sans under `[dir="rtl"]` with the Cairo Arabic/Persian stack — that
-   * locale-specific choice is deliberate and left untouched. */
+   * locale-specific choice is deliberate and left untouched.
+   *
+   * CJK: the Latin faces above (SF Pro / Helvetica) carry NO Chinese
+   * glyphs, so without an explicit CJK family the browser falls back to
+   * the platform default — and macOS WebKit's fallback for Han text in
+   * some render contexts is a SONG/serif face (heavy, calligraphic — the
+   * "ugly" look). We pin PingFang SC (Apple's system Hei/sans for SC),
+   * with Hiragino Sans GB (older macOS) and Microsoft YaHei (Windows)
+   * as cross-platform fallbacks, placed AFTER the Latin faces so Latin
+   * still resolves to SF Pro and only Han characters hit PingFang. */
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
-    'Helvetica Neue', Helvetica, Arial, sans-serif;
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
 
   /* ── Semantic weight tokens ───────────────────────────────────────────

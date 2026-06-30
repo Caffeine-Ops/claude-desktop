@@ -685,6 +685,25 @@ function SlidesWorkspace(): React.JSX.Element {
   const server = usePreviewServer()
   const hasConfirm = server?.kind === 'confirm'
   const hasPreview = server?.kind === 'preview'
+  // usePreviewServer resolves the preview URL from the launch command in the
+  // transcript, which OUTLIVES the server when it stops by idle-timeout or
+  // self-exit (no `--shutdown` line ever lands to clear it). LivePreviewEditor
+  // polls the URL and reports reachability up here; once it's unreachable we
+  // treat the preview as gone and drop the 幻灯片 tab — a stale launch URL must
+  // not leave a dead "预览服务已停止" tab behind. Keyed off server?.url so a
+  // fresh launch (new URL) clears the flag and the tab returns.
+  const [previewDown, setPreviewDown] = useState(false)
+  const previewUrl = server?.url
+  useEffect(() => {
+    // New (or cleared) preview server → reset reachability for the new URL.
+    setPreviewDown(false)
+  }, [previewUrl])
+  // The preview tab is "alive" only while we have a preview server that hasn't
+  // been detected as down. Before any preview launches (hasPreview false) the
+  // 幻灯片 tab still shows its neutral placeholder — only a launched-then-dead
+  // preview hides it.
+  const previewGone = hasPreview && previewDown
+  const showSlidesTab = !previewGone
   // Every file this session has written via Write — drives the 文件 tab and the
   // auto-focus on each new write. See useWrittenFiles in stores/chat.
   const writtenFiles = useWrittenFiles()
@@ -708,9 +727,18 @@ function SlidesWorkspace(): React.JSX.Element {
   // longer targets 浏览器. The 浏览器/iframe path remains only as a fallback.
   useEffect(() => {
     if (wantsQuestionsTab) return
-    if (hasPreview) setTab('slides')
+    if (hasPreview && !previewDown) setTab('slides')
     else setTab((t) => (t === 'browser' ? 'slides' : t))
-  }, [hasPreview, wantsQuestionsTab])
+  }, [hasPreview, previewDown, wantsQuestionsTab])
+
+  // When the 幻灯片 tab disappears (launched preview went away) and we were on
+  // it, fall back to a tab that still exists — 文件 if there are written files,
+  // else 大纲. Without this the body would hit the neutral "未命名" placeholder
+  // with no tab highlighted.
+  useEffect(() => {
+    if (showSlidesTab) return
+    setTab((t) => (t === 'slides' ? (hasFiles ? 'files' : 'outline') : t))
+  }, [showSlidesTab, hasFiles])
 
   // Auto-focus 文件 on each new write so the user watches files land as they're
   // written (mirrors the 浏览器/问题 auto-focus). Keyed off a "write signature"
@@ -738,7 +766,9 @@ function SlidesWorkspace(): React.JSX.Element {
   }, [writeSig, hasFiles, wantsQuestionsTab, hasPreview])
 
   const tabs: { id: CanvasTab; label: string }[] = [
-    { id: 'slides', label: '幻灯片' },
+    // 幻灯片 drops out once a launched preview server is detected as gone
+    // (idle-timeout / self-exit), so no dead "预览服务已停止" tab lingers.
+    ...(showSlidesTab ? [{ id: 'slides' as const, label: '幻灯片' }] : []),
     { id: 'outline', label: '大纲' },
     { id: 'files', label: '文件' },
     // 问题 tab: while a questionnaire is streaming/pending, OR while the
@@ -818,13 +848,13 @@ function SlidesWorkspace(): React.JSX.Element {
           title="ppt-master 确认设计方案"
           className="min-h-0 w-full flex-1 border-0 bg-white"
         />
-      ) : tab === 'slides' && hasPreview && server ? (
+      ) : tab === 'slides' && hasPreview && !previewDown && server ? (
         // Live-preview phase: the native editor (replaces the old read-only
         // SlidesLivePreview). Fetches the svg_editor server's SVG and renders
         // it natively WITH the annotation/edit interactions (element select →
         // edit instruction → annotate / 应用修改 / 撤销 / 退出), the same flow the
         // browser editor at :5050 offered. See LivePreviewEditor.
-        <LivePreviewEditor baseUrl={server.url} />
+        <LivePreviewEditor baseUrl={server.url} onServerDownChange={setPreviewDown} />
       ) : tab === 'files' && hasFiles ? (
         // 文件 tab: the full content of files written this session, two-pane
         // (file list + content) like SlidesLivePreview. The inline Write card's
