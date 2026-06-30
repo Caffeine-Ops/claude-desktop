@@ -95,6 +95,7 @@ export function ProposalStyleModal({
       <button
         type="button"
         aria-label="关闭"
+        tabIndex={-1}
         className="absolute inset-0 cursor-default bg-black/45 backdrop-blur-sm"
         onClick={onClose}
       />

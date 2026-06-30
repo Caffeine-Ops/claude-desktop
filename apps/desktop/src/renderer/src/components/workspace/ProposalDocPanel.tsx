@@ -249,7 +249,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     // flex-1 吃满。旧的「返回态 w-96 靠右停靠」分支已随门控统一而消失。
     // relative：作浮动导出 toast（exportMsg，见下方）的定位锚——toast 不再占布局、不再
     // 和其它状态条叠成一堵彩色墙（design-review F3）。
-    <div className="relative flex min-w-0 flex-1 flex-col border-l border-border bg-background text-foreground">
+    // proposal-feature：作用域 class，让 index.css 给区内所有可聚焦控件统一补 focus-visible
+    // 焦点环（design-review F6）；Paper/Preview/StyleModal 都在本根 DOM 子树内，一处全覆盖。
+    <div className="proposal-feature relative flex min-w-0 flex-1 flex-col border-l border-border bg-background text-foreground">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">方案草稿</span>
 
@@ -347,6 +349,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                 <button
                   type="button"
                   aria-label="关闭导出菜单"
+                  tabIndex={-1}
                   className="fixed inset-0 z-20 cursor-default"
                   onClick={() => setExportMenuOpen(false)}
                 />

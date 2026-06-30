@@ -345,3 +345,17 @@
   --muted: 0 0% 96%;
   font-family: 'Songti SC', 'SimSun', Georgia, 'Times New Roman', serif;
 }
+
+/* 写方案功能区统一焦点环（design-review F6）。原先区内控件多只有 hover 态，键盘用户在
+   导出菜单/节工具条/样式弹窗上无可见焦点。这里给功能区（.proposal-feature，挂在
+   ProposalDocPanel 根，Paper/Preview/StyleModal 全在其子树内）所有可聚焦控件补 focus-visible
+   焦点环：
+   - 仅 :focus-visible 触发——键盘 Tab / 程序聚焦才显，鼠标点击不显，不打扰既有 hover 视觉。
+   - 用 outline（非 box-shadow）：不会覆盖元素已有的 shadow-sm/ring（如 segmented 高亮、模板
+     卡选中环），且 Chromium 下 outline 跟随圆角。offset 让环落在控件外侧。
+   - 用 accent（.proposal-paper 不覆盖 accent，故白纸上的节工具条也显蓝环）。 */
+.proposal-feature
+  :is(button, [role='button'], a[href], input, select, textarea, summary):focus-visible {
+  outline: 2px solid hsl(var(--accent));
+  outline-offset: 1px;
+}
