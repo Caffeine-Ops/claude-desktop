@@ -209,6 +209,20 @@ function pick<T extends string>(v: unknown, allowed: readonly T[], base: T): T {
 }
 
 /**
+ * 取 v（若是 [min,max] 内的有限数）否则 base。挡住负值 / 0 / NaN / Infinity / 荒谬巨值——
+ * 这些进 docx 会出大问题：lineMultiple≤0 让 `round(×240)` 产 0 或负，docx 抛
+ * 「Invalid value '-720'. Must be a positive integer」整篇导出/预览直接失败；indentChars 负
+ * 让首行缩进 twips 为负同样炸；spaceAfterPt 巨值则排版退化。range 取得宽松（覆盖 UI 滑块全程
+ * 与合法微调），只拦真正越界的脏持久化值，回退默认而非裁剪（与 pick 的「非法即回退」一致、
+ * 行为可预测）。这正是 coerce 立身的契约：绝不让半残配置喂进 docx 生成。 */
+function num(v: unknown, min: number, max: number, base: number): number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : base
+}
+
+/** docx 颜色要 6 位 hex（RRGGBB、无 #）。校验防止脏色值原样拼进 docx XML（坏色值 / 注入串）。 */
+const HEX6_RE = /^[0-9a-fA-F]{6}$/
+
+/**
  * 把任意来源的（可能旧 schema / 部分损坏 / 缺字段的）样式数据强制补全成完整 ProposalStyleConfig。
  * 持久化反序列化（store 的 loadPersisted）必经此函数：缺哪个字段就用默认模板对应字段兜底、
  * 枚举值非法也回退——绝不让半残配置喂进 docx 生成。否则 main 侧 levelStyle 解引用 undefined.size
@@ -234,10 +248,13 @@ export function coerceProposalStyle(raw: unknown): ProposalStyleConfig {
       size: pick(o.size, SIZE_ORDER, base.size),
       bold: typeof o.bold === 'boolean' ? o.bold : base.bold,
       align: pick(o.align, ALIGN_VALUES, base.align),
-      indentChars: typeof o.indentChars === 'number' ? o.indentChars : base.indentChars
+      // 首行缩进字符数：0~8 的有限数（UI 是 0/1/2 下拉，放宽到 8 容未来微调）。负值会让
+      // docx 首行缩进 twips 为负而炸，故越界回退 base。
+      indentChars: num(o.indentChars, 0, 8, base.indentChars)
     }
-    // color 可选：合法 string 用之，否则沿用 base 的（可能本就无）。
-    const color = typeof o.color === 'string' ? o.color : base.color
+    // color 可选：必须是 6 位 hex（docx 要 RRGGBB）才采用，否则沿用 base 的（可能本就无）——
+    // 挡住坏色值 / 注入串原样拼进 docx XML。
+    const color = typeof o.color === 'string' && HEX6_RE.test(o.color) ? o.color : base.color
     if (color) merged.color = color
     return merged
   }
@@ -249,8 +266,11 @@ export function coerceProposalStyle(raw: unknown): ProposalStyleConfig {
     h2: lvl('h2', d.h2),
     h3: lvl('h3', d.h3),
     body: lvl('body', d.body),
-    lineMultiple: typeof p.lineMultiple === 'number' ? p.lineMultiple : d.lineMultiple,
-    spaceAfterPt: typeof p.spaceAfterPt === 'number' ? p.spaceAfterPt : d.spaceAfterPt,
+    // 行距倍数：1.0~3.0（UI 滑块 1.2~2.4，放宽容微调）。≤0 会让 docx line=round(×240) 产 0/负、
+    // 抛「Must be a positive integer」整篇导出失败，故越界回退默认。
+    lineMultiple: num(p.lineMultiple, 1.0, 3.0, d.lineMultiple),
+    // 段后距：0~100pt（UI 滑块 0~24，放宽容微调）。负值 docx 炸、巨值排版退化，越界回退默认。
+    spaceAfterPt: num(p.spaceAfterPt, 0, 100, d.spaceAfterPt),
     margin: pick(p.margin, MARGIN_VALUES, d.margin),
     ol: pick(p.ol, OL_VALUES, d.ol),
     ul: pick(p.ul, UL_VALUES, d.ul),
