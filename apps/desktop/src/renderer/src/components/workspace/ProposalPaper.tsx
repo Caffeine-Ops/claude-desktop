@@ -161,7 +161,13 @@ export function ProposalPaper(): React.JSX.Element {
       globalIndex < sections.length - 1 && sections[globalIndex + 1].kind === sec.kind
     return (
     <section key={sec.id} className="group relative py-0.5">
-      <div className="absolute -right-[58px] top-1.5 hidden flex-col gap-1 group-hover:flex">
+      {/* 节级工具条：停靠在纸张右侧内边距里（.proposal-paper 的 px-[clamp(28px,6%,76px)]，下限
+          28px，刚好容下 24px 的按钮列）。旧值 -right-[58px] 探到纸外，窄面板（外边距仅 24px）会
+          溢出、被外层 overflow-auto 裁掉或触发横向滚动；改 -right-[26px] 锚进纸内右 padding，
+          任意面板宽都不溢出。可见性：默认透明，hover 本节或键盘聚焦其中按钮（focus-within）时淡入
+          ——用 opacity 而非 hidden，键盘用户才能 Tab 到并唤出、且能做过渡；透明态 pointer-events-none
+          不拦纸面点击（design-review F4）。 */}
+      <div className="pointer-events-none absolute -right-[26px] top-1.5 flex flex-col gap-1 opacity-0 transition-opacity duration-150 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
         {/* AI 修订组：仅正文节（封面/目录无修订语义）。点击发起【整节替换】式重写，流式中禁用。 */}
         {sec.kind === 'content' && (
           <>
