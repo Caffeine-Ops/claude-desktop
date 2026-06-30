@@ -11,6 +11,7 @@ import {
   TableCell,
   WidthType,
   LevelFormat,
+  LevelSuffix,
   LineRuleType,
   AlignmentType,
   VerticalAlignTable,
@@ -18,10 +19,7 @@ import {
   BorderStyle,
   Header,
   Footer,
-  PageNumber,
-  HorizontalPositionRelativeFrom,
-  VerticalPositionRelativeFrom,
-  TextWrappingType
+  PageNumber
 } from 'docx'
 import { readFileSync } from 'node:fs'
 import imageSize from 'image-size'
@@ -29,7 +27,7 @@ import type { IStylesOptions, INumberingOptions, ISectionOptions } from 'docx'
 import { PROPOSAL_PAGEBREAK, PROPOSAL_SECTION_RE, isEmbeddableImagePath } from '../../shared/proposal'
 import type { ProposalKind } from '../../shared/proposal'
 import type { MermaidImage } from '../../shared/ipc-channels'
-import { FUSION_HEADER_BANNER, FUSION_COVER_LOGO, FUSION_COVER_FLAME } from '../../shared/proposalBrand'
+import { FUSION_HEADER_BANNER, FUSION_COVER_LOGO } from '../../shared/proposalBrand'
 import {
   CN_SIZE_PT,
   FONT_DOCX,
@@ -81,6 +79,59 @@ const MAX_LIST_LEVEL = 8
 // 这样项目符号字形（●/○/■）与编号格式（1./a./i.）都能由模板配置控制。
 const ORDERED_REF = 'proposal-ordered'
 const UNORDERED_REF = 'proposal-unordered'
+// 层级编号专用实例（与上面两套普通列表分开，故正文里普通有序列表仍是 1. 2. 3.，不受牵连）：
+//  - TOC_REF：目录的嵌套有序列表 → 1 / 1.1 / 1.1.1（带逐级缩进，呈现父子层次）。
+//  - HEADING_REF：正文章节标题（##/###/####）→ 同款 1 / 1.1 / 1.1.1，与目录对齐，不带列表缩进。
+// 两者都强制 DECIMAL：层级点分号只有十进制有意义（"a.a"/"i.i" 是噪声），故不沿用模板的 ol 格式。
+const TOC_REF = 'proposal-toc'
+const HEADING_REF = 'proposal-heading'
+
+/**
+ * 层级编号的占位串：第 lvl 级（0-indexed）引用其【全部祖先层】的计数器，拼成 Word 的
+ * `%1.%2.%3…`。level 0 → "%1"，level 1 → "%1.%2"，level 2 → "%1.%2.%3"。配合 LevelFormat.DECIMAL
+ * 即得 1 / 1.1 / 1.1.1。对比旧的单层 `%${lvl+1}.`（每层各自计数、嵌套从 1 重启 → 永远出不来
+ * "1.1"），这里串起祖先计数器才是真正的多级层级号。main 内部用，导出供单测。
+ */
+export function hierarchicalLevelText(lvl: number): string {
+  return Array.from({ length: lvl + 1 }, (_, i) => `%${i + 1}`).join('.')
+}
+
+// 防御性剥除 AI 仍手打进标题/目录里的章节序号（提示词已要求别写、改由导出器自动编号，但模型偶有
+// 反复）：不剥就会和自动编号叠成「1.1 1.1 建设背景」。只认【小章节号样式】——1~2 位数字、可带点分
+// 子级、后随分隔符（空格/点/顿号）。如此「1 」「1.1 」「1.1.1、」都剥，而「5G 网络方案」（数字后非
+// 分隔符）、「2024 年规划」（4 位数，非章节号）这类真标题不会被误伤。
+// 分隔符两种：① 句点/顿号（其后空白可选——中文「1、建设背景」顿号后常无空格）；② 纯空白
+// （「1 系统概述」「1.1 建设背景」）。数字后若既无分隔符也无空白（如「5G」），不视为章节号。
+const MANUAL_HEADING_NUMBER_RE = /^\s*\d{1,2}(?:\.\d{1,2})*(?:[.、]\s*|\s+)/
+export function stripManualHeadingNumber(text: string): string {
+  return text.replace(MANUAL_HEADING_NUMBER_RE, '')
+}
+
+// 章节大标题（`## ` = depth 2 = 编号 1/2/3 的层级）= 一章。markdown 用 `#` 当封面大标题、
+// `##` 才是正文首层章节，故「章」是 depth 2，子节 `###`/`####`（depth 3/4）不算章。
+const CHAPTER_HEADING_DEPTH = 2
+
+/**
+ * 正文节里【哪些顶层节点前应插入分页符】——实现「每个章节大标题另起一页」。规则：只认 ##
+ * 章节（{@link CHAPTER_HEADING_DEPTH}），且【第一章除外】（它已落在本节首页顶部，再插分页会多
+ * 出一张空白页）；###/#### 子标题不触发分页。返回应在其前分页的节点【索引集合】。
+ *
+ * 为什么用「独立 PageBreak 段落」而非样式级 pageBreakBefore：PDF 导出走 docx-preview，而它的
+ * 分页只认【命名样式上】的 pageBreakBefore、不认逐段属性，且首章会被它切出一张空白页；改在章前插
+ * 一个独立 PageBreak 段落（与 PROPOSAL_PAGEBREAK 的 kind 边界分页同款），Word 与 docx-preview
+ * 两端都据此干净分页、首章不空页。纯函数，供 buildSectionChildren 调用 + 单测。
+ */
+export function chapterPageBreakIndices(nodes: RootContent[]): Set<number> {
+  const breaks = new Set<number>()
+  let chapterSeen = false
+  nodes.forEach((node, i) => {
+    if (node.type === 'heading' && node.depth === CHAPTER_HEADING_DEPTH) {
+      if (chapterSeen) breaks.add(i)
+      chapterSeen = true
+    }
+  })
+  return breaks
+}
 
 const ALIGN = {
   left: AlignmentType.LEFT,
@@ -129,6 +180,10 @@ interface BlockContext {
   baseStyle?: InlineStyle
   // 强制段落水平对齐（封面节用 CENTER 覆盖模板自带 align，使标题/落款都居中）。
   forceAlign?: (typeof AlignmentType)[keyof typeof AlignmentType]
+  // 目录节专用：本子树里的有序列表改引用 TOC_REF（层级编号 1/1.1/1.1.1），不影响正文普通列表。
+  tocNumbering?: boolean
+  // 正文节专用：章节标题（##/###/####）挂 HEADING_REF 自动层级编号，并剥掉 AI 手打的序号。
+  headingNumbering?: boolean
 }
 
 // 遍历级环境：跨整篇文档共享的状态 + 由 style 预算出的常量。
@@ -148,6 +203,25 @@ interface WalkEnv {
   // 预渲的 mermaid 位图（mermaid 源码 trim → PNG buffer + 像素尺寸）。renderer 渲 SVG → main
   // 用 sharp 转 PNG 后填入。case 'code' 的 mermaid 分支据此居中嵌图；缺省 / 查不到 → 降级文字。
   mermaidImages?: ReadonlyMap<string, { data: Buffer; width: number; height: number }>
+}
+
+// 在 inline 节点层剥掉标题最前面那段手打章节号（配合 HEADING_REF 自动编号，避免叠号）。
+// 序号几乎总落在首个 text 节点的 value 开头；若整条标题被 **加粗**/*斜体* 包裹（首节点是
+// strong/emphasis），递归进它的首子节点剥——与 nodeText 处理嵌套强调同源。返回新数组，不改入参。
+function stripLeadingHeadingNumber(nodes: PhrasingContent[]): PhrasingContent[] {
+  if (!nodes.length) return nodes
+  const [first, ...rest] = nodes
+  if (first.type === 'text') {
+    const stripped = stripManualHeadingNumber(first.value)
+    return stripped === first.value ? nodes : [{ ...first, value: stripped }, ...rest]
+  }
+  if ((first.type === 'strong' || first.type === 'emphasis') && Array.isArray(first.children)) {
+    return [
+      { ...first, children: stripLeadingHeadingNumber(first.children as PhrasingContent[]) },
+      ...rest
+    ]
+  }
+  return nodes
 }
 
 function inlineRuns(nodes: PhrasingContent[], style: InlineStyle = {}): TextRun[] {
@@ -193,11 +267,14 @@ function inlineRuns(nodes: PhrasingContent[], style: InlineStyle = {}): TextRun[
 // 列表项 → 段落数组。ordered / unordered 都引用各自的 numbering 实例（编号格式与项目
 // 符号字形由模板的 ol/ul 决定）；嵌套靠 level。baseStyle 用于引用块内的列表（斜体）。
 // 缩进交给 numbering 各级的 indent，不另加 indent.left，避免覆盖编号自带缩进。
+// orderedRef：有序列表用哪个 numbering 实例——默认 ORDERED_REF（普通 1./a./i.），目录传 TOC_REF
+// （层级 1/1.1/1.1.1）。沿子树递归下传，保证整个目录列表统一用层级编号。
 function listItemParagraphs(
   item: ListItem,
   ordered: boolean,
   level: number,
-  baseStyle?: InlineStyle
+  baseStyle?: InlineStyle,
+  orderedRef: string = ORDERED_REF
 ): Paragraph[] {
   const out: Paragraph[] = []
   // 超过 Word 上限的深层嵌套 clamp 到 MAX_LIST_LEVEL：宁可让最深几级共用同一编号级别，
@@ -208,13 +285,13 @@ function listItemParagraphs(
       out.push(
         new Paragraph({
           children: inlineRuns(child.children, baseStyle),
-          numbering: { reference: ordered ? ORDERED_REF : UNORDERED_REF, level: safeLevel }
+          numbering: { reference: ordered ? orderedRef : UNORDERED_REF, level: safeLevel }
         })
       )
     } else if (child.type === 'list') {
-      // 嵌套列表：递归，level+1。
+      // 嵌套列表：递归，level+1（orderedRef 原样下传，目录子层继续用层级编号）。
       for (const sub of child.children) {
-        out.push(...listItemParagraphs(sub, Boolean(child.ordered), level + 1, baseStyle))
+        out.push(...listItemParagraphs(sub, Boolean(child.ordered), level + 1, baseStyle, orderedRef))
       }
     }
   }
@@ -279,6 +356,9 @@ function imageParagraphs(
   const out: Paragraph[] = [
     new Paragraph({
       alignment: AlignmentType.CENTER,
+      // keepNext：图与紧随的图说保持同页，不被页边界拆散（单张图本身是一整行、不会被劈）。
+      // docx-preview（PDF）不渲染 keepNext，PDF 侧靠 break-inside: avoid 达到同效，两端一致。
+      keepNext: true,
       children: [new ImageRun({ type, data, transformation: { width, height } })]
     })
   ]
@@ -313,13 +393,22 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
           })
         ]
       }
+      // 正文章节标题自动层级编号（ctx.headingNumbering，仅正文节传入）：章=## 映射到编号 level 0
+      // （→ 1）、节=### → level 1（→ 1.1）、小节=#### → level 2（→ 1.1.1）。映射 = depth-2，clamp 到
+      // [0, MAX_LIST_LEVEL]。同时剥掉 AI 可能仍手打在标题里的序号，避免与自动编号叠成「1.1 1.1 …」。
+      const numbered = ctx?.headingNumbering === true
+      const numLevel = Math.max(0, Math.min(node.depth - 2, MAX_LIST_LEVEL))
+      const headingChildren = numbered
+        ? stripLeadingHeadingNumber(node.children)
+        : node.children
       return [
         new Paragraph({
           // 上界 clamp 到 6、下界 clamp 到 0：remark 标准不产 depth0，但万一上游传入
           // depth0 会让 `-1` 索引出 undefined → 标题静默降级普通段、丢目录条目（C3）。
           heading: HEADING_BY_DEPTH[Math.max(0, Math.min(node.depth, 6) - 1)],
-          children: inlineRuns(node.children, ctx?.baseStyle),
+          children: inlineRuns(headingChildren, ctx?.baseStyle),
           indent: ctx?.indent,
+          ...(numbered ? { numbering: { reference: HEADING_REF, level: numLevel } } : {}),
           ...(ctx?.forceAlign ? { alignment: ctx.forceAlign } : {})
         })
       ]
@@ -363,9 +452,12 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
       ]
     }
     case 'list': {
+      // 目录节（ctx.tocNumbering）里的有序列表改用 TOC_REF（层级 1/1.1/1.1.1）；正文里的普通
+      // 有序列表仍用默认 ORDERED_REF（1. 2. 3.，不受牵连）。
+      const orderedRef = ctx?.tocNumbering ? TOC_REF : ORDERED_REF
       const out: Paragraph[] = []
       for (const item of node.children) {
-        out.push(...listItemParagraphs(item, Boolean(node.ordered), 0, ctx?.baseStyle))
+        out.push(...listItemParagraphs(item, Boolean(node.ordered), 0, ctx?.baseStyle, orderedRef))
       }
       return out
     }
@@ -444,7 +536,10 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
             })
           )
         }
-        rows.push(new TableRow({ children: cells }))
+        // cantSplit：禁止单行被页边界从中间劈开（一行内容跨两页很难看）。Word 据此把整行连同
+        // 内容一起下推到下一页。注：docx-preview（PDF 导出）不渲染 cantSplit，PDF 侧靠
+        // renderProposalPdfHtml 的 `break-inside: avoid` 达到同等效果，两端一致。
+        rows.push(new TableRow({ children: cells, cantSplit: true }))
       }
       // 整张表没有任何行（同样会让 Packer 抛错）→ 直接忽略，不产出空 Table。
       if (rows.length === 0) return []
@@ -547,6 +642,20 @@ function buildNumbering(style: ProposalStyleConfig): INumberingOptions {
     left: 540 + lvl * 360,
     hanging: 360
   })
+  // 层级编号（目录 / 正文标题共用的形状）：每级 DECIMAL，text 引用全部祖先计数器得 1/1.1/1.1.1，
+  // suffix=space 让编号与文字间是单个空格（而非默认的 tab，省得把标题顶到 tab 位）。withIndent 决定
+  // 是否带逐级缩进——目录要（呈现父子层次），正文标题不要（标题应顶格、缩进会破版）。
+  const hierarchicalLevels = (
+    withIndent: boolean
+  ): NonNullable<INumberingOptions['config']>[number]['levels'] =>
+    Array.from({ length: MAX_LIST_LEVEL + 1 }, (_, lvl) => ({
+      level: lvl,
+      format: LevelFormat.DECIMAL,
+      text: hierarchicalLevelText(lvl),
+      alignment: AlignmentType.START,
+      suffix: LevelSuffix.SPACE,
+      ...(withIndent ? { style: { paragraph: { indent: indentFor(lvl) } } } : {})
+    }))
   return {
     config: [
       {
@@ -568,7 +677,11 @@ function buildNumbering(style: ProposalStyleConfig): INumberingOptions {
           alignment: AlignmentType.START,
           style: { paragraph: { indent: indentFor(lvl) } }
         }))
-      }
+      },
+      // 目录：带缩进的层级编号（嵌套有序列表 → 1 / 1.1 / 1.1.1，逐级右移）。
+      { reference: TOC_REF, levels: hierarchicalLevels(true) },
+      // 正文标题：不带缩进的层级编号（标题顶格，号在文字前）。
+      { reference: HEADING_REF, levels: hierarchicalLevels(false) }
     ]
   }
 }
@@ -660,33 +773,18 @@ const COVER_LOGO_W_PX = Math.round(1457960 / EMU_PER_PX) // 153
 const COVER_LOGO_H_PX = Math.round(330200 / EMU_PER_PX) // 35
 const COVER_LOGO_SPACE_AFTER_TWIPS = Math.round(12 * 20)
 
-// 封面左侧火焰装饰（P2-1）：源文档 anchor 浮动图 711200×1422400 EMU（75×149px，0.78×1.56"），
-// 【水平贴版心左边（column 偏移 0）、垂直距页顶 1 英寸（914400 EMU）、文字后方（behindDoc）、不绕排】。
-// 照搬其锚定参数。浮动图不占行内空间，故不影响封面表格高度，安全。
-const FLAME_W_PX = Math.round(711200 / EMU_PER_PX) // 75
-const FLAME_H_PX = Math.round(1422400 / EMU_PER_PX) // 149
-function coverFlameRun(): ImageRun {
-  return new ImageRun({
-    type: 'png',
-    data: Buffer.from(FUSION_COVER_FLAME.base64, 'base64'),
-    transformation: { width: FLAME_W_PX, height: FLAME_H_PX },
-    floating: {
-      horizontalPosition: { relative: HorizontalPositionRelativeFrom.COLUMN, offset: 0 },
-      verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: 914400 },
-      behindDocument: true,
-      allowOverlap: true,
-      wrap: { type: TextWrappingType.NONE }
-    }
-  })
-}
+// 封面左侧装饰火焰曾用 anchor 浮动图（behindDoc + wrapNone）。【已移除】：预览与 PDF 同源走
+// docx-preview，而它对 floating/behindDocument 写死降级——把浮动图强制渲成 `position:relative` 的
+// 内联大图（75×149px ≈ 1.5"），压在右上角 logo 上 → 「封面 Logo 全乱」，且吃掉封面竖向空间致溢页。
+// 完整 logo（COVER_LOGO）本身已含火焰+文字，足以代表品牌，故弃用这枚独立装饰火焰，三处渲染一致干净。
+// （如日后要恢复装饰火焰，需用 docx-preview 能渲的方案，如 align=left 的 float，而非 behindDoc 浮动。）
 
-// 封面顶部块首段：左侧浮动火焰（绝对定位、不占行内）+ 右对齐完整 logo。
+// 封面顶部块首段：右对齐完整 logo（不再叠装饰火焰，见上）。
 function coverLogoParagraph(): Paragraph {
   return new Paragraph({
     alignment: AlignmentType.RIGHT,
     spacing: { after: COVER_LOGO_SPACE_AFTER_TWIPS },
     children: [
-      coverFlameRun(),
       new ImageRun({
         type: 'png',
         data: Buffer.from(FUSION_COVER_LOGO.base64, 'base64'),
@@ -931,17 +1029,22 @@ function buildSectionChildren(
         children: [new TextRun({ text: '————————', color: '9a9a9e' })]
       })
     )
-    // 大纲列表/标题沿用默认 blockToDocx 渲染（list→numbering 自带层级缩进）；
-    // stripLeadingTocHeading 只剥「目录」标题，其余节点原样渲染。
+    // 大纲列表沿用默认 blockToDocx 渲染，但传 tocNumbering：有序列表改用 TOC_REF 层级编号
+    // （1 / 1.1 / 1.1.1）。stripLeadingTocHeading 只剥「目录」标题，其余节点原样渲染。
     for (const node of stripLeadingTocHeading(group.nodes)) {
-      out.push(...blockToDocx(node, env))
+      out.push(...blockToDocx(node, env, { tocNumbering: true }))
     }
     return out
   }
 
-  for (const node of group.nodes) {
-    out.push(...blockToDocx(node, env))
-  }
+  // 正文节：传 headingNumbering，让 ##/###/#### 章节标题自动挂层级编号（与目录对齐）。
+  // 章节分页：每个 ## 章节大标题另起一页（首章除外），在其前插一个独立 PageBreak 段落
+  // （详见 chapterPageBreakIndices 注释——为何用独立段落而非样式级 pageBreakBefore）。
+  const pageBreakBefore = chapterPageBreakIndices(group.nodes)
+  group.nodes.forEach((node, i) => {
+    if (pageBreakBefore.has(i)) out.push(new Paragraph({ children: [new PageBreak()] }))
+    out.push(...blockToDocx(node, env, { headingNumbering: true }))
+  })
   return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
 }
 

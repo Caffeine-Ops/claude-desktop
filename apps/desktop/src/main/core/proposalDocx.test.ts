@@ -4,7 +4,134 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { RootContent } from 'mdast'
 
-import { markdownToDocxBuffer, stripLeadingTocHeading, splitCoverNodes } from './proposalDocx'
+import {
+  markdownToDocxBuffer,
+  stripLeadingTocHeading,
+  splitCoverNodes,
+  hierarchicalLevelText,
+  stripManualHeadingNumber,
+  chapterPageBreakIndices
+} from './proposalDocx'
+
+// 层级编号占位串：每级引用全部祖先计数器，配 DECIMAL 即 1 / 1.1 / 1.1.1（目录与正文标题共用）。
+describe('hierarchicalLevelText', () => {
+  it('level 0 → %1（一级章，单计数器）', () => {
+    expect(hierarchicalLevelText(0)).toBe('%1')
+  })
+  it('level 1 → %1.%2（二级节，串祖先）', () => {
+    expect(hierarchicalLevelText(1)).toBe('%1.%2')
+  })
+  it('level 2 → %1.%2.%3（三级子节）', () => {
+    expect(hierarchicalLevelText(2)).toBe('%1.%2.%3')
+  })
+})
+
+// 防御性剥除 AI 手打的章节序号——只剥「小章节号」，放过数字开头的真标题。
+describe('stripManualHeadingNumber', () => {
+  it('剥单层「1 」', () => {
+    expect(stripManualHeadingNumber('1 系统功能概述')).toBe('系统功能概述')
+  })
+  it('剥点分两级「1.1 」', () => {
+    expect(stripManualHeadingNumber('1.1 建设背景')).toBe('建设背景')
+  })
+  it('剥点分三级「1.4.1 」', () => {
+    expect(stripManualHeadingNumber('1.4.1 面向患者')).toBe('面向患者')
+  })
+  it('剥顿号分隔「1、」', () => {
+    expect(stripManualHeadingNumber('1、建设背景')).toBe('建设背景')
+  })
+  it('剥句点分隔「1. 」', () => {
+    expect(stripManualHeadingNumber('1. 系统定位')).toBe('系统定位')
+  })
+  it('放过数字后非分隔符的真标题「5G 网络方案」', () => {
+    expect(stripManualHeadingNumber('5G 网络方案')).toBe('5G 网络方案')
+  })
+  it('放过 4 位数年份开头「2024 年规划」（非章节号）', () => {
+    expect(stripManualHeadingNumber('2024 年规划')).toBe('2024 年规划')
+  })
+  it('放过无序号的纯标题', () => {
+    expect(stripManualHeadingNumber('系统定位')).toBe('系统定位')
+  })
+})
+
+// 章节分页（需求：每个 ## 章节大标题另起一页）：决定「正文节里哪些顶层节点前应插分页符」的
+// 纯函数。规则——只认 ## 章节（depth 2，即编号 1/2/3 的层级），且【第一章除外】（它已在本节首页
+// 顶部，再插会多出空白页）；###/#### 子标题不触发。
+describe('chapterPageBreakIndices', () => {
+  const h = (depth: number): RootContent =>
+    ({ type: 'heading', depth, children: [{ type: 'text', value: 'x' }] }) as unknown as RootContent
+  const p = (): RootContent =>
+    ({ type: 'paragraph', children: [{ type: 'text', value: '正文' }] }) as unknown as RootContent
+
+  it('多章：第一章不分页，其后每章前分页', () => {
+    // [##, p, ##, p, ##] → 第二、三个 ## 前分页（索引 2、4），第一个（索引 0）不分页。
+    const nodes = [h(2), p(), h(2), p(), h(2)]
+    expect([...chapterPageBreakIndices(nodes)].sort((a, b) => a - b)).toEqual([2, 4])
+  })
+  it('单章：不产生任何分页', () => {
+    expect(chapterPageBreakIndices([h(2), p(), p()]).size).toBe(0)
+  })
+  it('子标题 ### / #### 不触发分页', () => {
+    // 一个 ## 章下挂 ###、####：只有 ## 算章节，子标题不分页 → 空集（首个 ## 也不分页）。
+    const nodes = [h(2), h(3), p(), h(4), p()]
+    expect(chapterPageBreakIndices(nodes).size).toBe(0)
+  })
+  it('章前有游离段落：仍只在第二个 ## 起分页', () => {
+    const nodes = [p(), h(2), p(), h(2)]
+    expect([...chapterPageBreakIndices(nodes)]).toEqual([3])
+  })
+})
+
+// 多章正文过真实导出器不抛错、产出非空 docx（章节分页插的 PageBreak 段落不破坏合法性）。
+describe('markdownToDocxBuffer 章节分页', () => {
+  it('多章正文导出不抛错', async () => {
+    const md = [
+      '<!--proposal-section:content-->',
+      '',
+      '## 第一章',
+      '',
+      '正文一。（据《白皮书》）',
+      '',
+      '## 第二章',
+      '',
+      '正文二。（据《白皮书》）',
+      '',
+      '## 第三章',
+      '',
+      '正文三。（据《白皮书》）'
+    ].join('\n')
+    const buf = await markdownToDocxBuffer(md)
+    expect(buf.length).toBeGreaterThan(1000)
+  })
+})
+
+// 新增的目录/正文层级编号路径冒烟：含嵌套有序目录 + 多级正文标题的 markdown 过真实导出器
+// 不抛错、产出合法 docx。仓库无 zip 库，无法断言 numbering.xml 的层级文本（与表格冒烟同限制），
+// 故这里只守 no-throw + 非空；编号是否真为 1/1.1/1.1.1 由 GUI 走查确认。
+describe('markdownToDocxBuffer 层级编号路径', () => {
+  it('嵌套有序目录 + 多级正文标题导出不抛错', async () => {
+    const md = [
+      '<!--proposal-section:toc-->',
+      '',
+      '1. 系统功能概述',
+      '   1. 建设背景',
+      '   2. 系统定位',
+      '2. 总体方案设计',
+      '',
+      '<!--proposal-section:content-->',
+      '',
+      '## 系统功能概述',
+      '',
+      '### 建设背景',
+      '',
+      '#### 面向患者',
+      '',
+      '正文一段。（据《白皮书》）'
+    ].join('\n')
+    const buf = await markdownToDocxBuffer(md)
+    expect(buf.length).toBeGreaterThan(1000)
+  })
+})
 
 // 仓库无 zip 库、表格导出代码（case 'table'）本就存在未改，故这里只做冒烟：含 GFM 表格的
 // 正文 markdown 过真实导出器不抛错、产出合法 docx（zip）。
