@@ -128,8 +128,10 @@ export function ProposalStyleModal({
 
         {/* 主体两栏 */}
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(360px,42%)_1fr]">
-          {/* 左：实时预览（真 docx，与导出一致） */}
-          <div className="min-h-0 border-r border-border">
+          {/* 左：实时预览（真 docx，与导出一致）。必须是 flex-col：ProposalPreview 根用 flex-1 撑
+              满高度，而 grid 单元格是 block、flex-1 不生效 → 预览拿不到框定高度、内部滚动视口建不
+              起来，多页内容滚不到（实测 bug）。与右栏 / 主面板的 flex min-h-0 容器对齐即修复。 */}
+          <div className="flex min-h-0 flex-col border-r border-border">
             <ProposalPreview active styleConfig={draft} />
           </div>
 
