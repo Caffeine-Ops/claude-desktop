@@ -81,7 +81,7 @@ const ORDERED_REF = 'proposal-ordered'
 const UNORDERED_REF = 'proposal-unordered'
 // 层级编号专用实例（与上面两套普通列表分开，故正文里普通有序列表仍是 1. 2. 3.，不受牵连）：
 //  - TOC_REF：目录的嵌套有序列表 → 1 / 1.1 / 1.1.1（带逐级缩进，呈现父子层次）。
-//  - HEADING_REF：正文章节标题（##/###/####）→ 同款 1 / 1.1 / 1.1.1，与目录对齐，不带列表缩进。
+//  - HEADING_REF：正文章节标题（##/###/####/#####）→ 同款 1 / 1.1 / 1.1.1 / 1.1.1.1，与目录对齐，不带列表缩进。
 // 两者都强制 DECIMAL：层级点分号只有十进制有意义（"a.a"/"i.i" 是噪声），故不沿用模板的 ol 格式。
 const TOC_REF = 'proposal-toc'
 const HEADING_REF = 'proposal-heading'
@@ -394,7 +394,8 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
         ]
       }
       // 正文章节标题自动层级编号（ctx.headingNumbering，仅正文节传入）：章=## 映射到编号 level 0
-      // （→ 1）、节=### → level 1（→ 1.1）、小节=#### → level 2（→ 1.1.1）。映射 = depth-2，clamp 到
+      // （→ 1）、节=### → level 1（→ 1.1）、小节=#### → level 2（→ 1.1.1）、要点=##### → level 3
+      // （→ 1.1.1.1）。映射 = depth-2，clamp 到
       // [0, MAX_LIST_LEVEL]。同时剥掉 AI 可能仍手打在标题里的序号，避免与自动编号叠成「1.1 1.1 …」。
       const numbered = ctx?.headingNumbering === true
       const numLevel = Math.max(0, Math.min(node.depth - 2, MAX_LIST_LEVEL))
@@ -627,7 +628,14 @@ function buildDocStyles(style: ProposalStyleConfig): IStylesOptions {
       },
       heading1: levelStyle(style.h1, style, 12, true),
       heading2: levelStyle(style.h2, style, 10, true),
-      heading3: levelStyle(style.h3, style, 8, true)
+      heading3: levelStyle(style.h3, style, 8, true),
+      // 正文层级：## → heading2、### → heading3、#### → heading4、##### → heading5（见 blockToDocx
+      // 的 depth 映射）。模板只配到 h3，但正文可深到三~四级（#### / #####），不补这两条它们会落到
+      // Word 内置 heading4/5（蓝色斜体、字号失控、PDF 走 docx-preview 时尤其难看）。这里把更深层
+      // 标题统一回退到 h3 的字体/字号/加粗，只逐级收紧段前距——保证「越深的小节」仍是同一套观感、
+      // 不会突然变斜体或变色，与已注册的 heading1/2/3 连续。
+      heading4: levelStyle(style.h3, style, 6, true),
+      heading5: levelStyle(style.h3, style, 4, true)
     },
     paragraphStyles: [
       { id: 'Normal', name: 'Normal', run: normal.run, paragraph: normal.paragraph }
