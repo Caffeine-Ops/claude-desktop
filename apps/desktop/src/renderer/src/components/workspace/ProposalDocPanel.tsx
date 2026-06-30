@@ -357,8 +357,8 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                   >
                     <FileTextIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0">
-                      <span className="block text-[12.5px] font-medium">Word（.docx）</span>
-                      <span className="block text-[10.5px] text-muted-foreground">交付客户、可继续编辑</span>
+                      <span className="block text-[12px] font-medium">Word（.docx）</span>
+                      <span className="block text-[11px] text-muted-foreground">交付客户、可继续编辑</span>
                     </span>
                   </button>
                   <button
@@ -371,8 +371,8 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                   >
                     <FileIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0">
-                      <span className="block text-[12.5px] font-medium">PDF</span>
-                      <span className="block text-[10.5px] text-muted-foreground">定稿发送、排版固定</span>
+                      <span className="block text-[12px] font-medium">PDF</span>
+                      <span className="block text-[11px] text-muted-foreground">定稿发送、排版固定</span>
                     </span>
                   </button>
                   <button
@@ -385,8 +385,8 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                   >
                     <FileCodeIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0">
-                      <span className="block text-[12.5px] font-medium">Markdown</span>
-                      <span className="block text-[10.5px] text-muted-foreground">纯文本、便于版本管理</span>
+                      <span className="block text-[12px] font-medium">Markdown</span>
+                      <span className="block text-[11px] text-muted-foreground">纯文本、便于版本管理</span>
                     </span>
                   </button>
                   <div className="my-1 border-t border-border" />
@@ -510,7 +510,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                       {fillingKey !== key && (
                         <button
                           type="button"
-                          className="shrink-0 rounded border border-amber-500/40 px-1.5 py-0.5 text-[10.5px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-40 dark:text-amber-400"
+                          className="shrink-0 rounded border border-amber-500/40 px-1.5 py-0.5 text-[11px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-40 dark:text-amber-400"
                           disabled={generating}
                           title={generating ? 'AI 生成中，请稍候' : '补充这段缺失的资料，让 AI 续写'}
                           onClick={() => {
@@ -670,7 +670,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
       {retrievalOpen && (
         <div className="space-y-1.5 border-b border-border px-3 py-2">
           {/* 说明文字（方案三）：先讲清这是什么、不影响生成，降低「召不回是不是坏了」的误会。 */}
-          <div className="text-[10.5px] leading-snug text-muted-foreground">
+          <div className="text-[11px] leading-snug text-muted-foreground">
             预览知识库会为关键词从<b>当前选中的产品</b>里挑出哪些原文片段——只读探查，不写盘、不影响实际生成。
             按词面匹配（BM25），关键词尽量贴近资料里的说法。
           </div>
@@ -712,7 +712,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
               <div className="max-h-56 space-y-1.5 overflow-auto">
                 {peekResults.map((p, i) => (
                   <div key={i} className="rounded-md border border-border bg-card/50 px-2 py-1.5">
-                    <div className="mb-0.5 text-[10.5px] font-medium text-accent">《{p.title}》</div>
+                    <div className="mb-0.5 text-[11px] font-medium text-accent">《{p.title}》</div>
                     <div className="max-h-24 overflow-hidden whitespace-pre-wrap text-[11px] leading-snug text-foreground/80">
                       {p.text}
                     </div>

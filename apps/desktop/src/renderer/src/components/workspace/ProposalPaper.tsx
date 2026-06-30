@@ -252,7 +252,7 @@ export function ProposalPaper(): React.JSX.Element {
 
       {editingId === sec.id ? (
         <textarea
-          className="min-h-[120px] w-full resize-none rounded-sm bg-accent/5 font-serif text-[14.5px] leading-[1.95] text-[#1d1d1f] outline-none"
+          className="min-h-[120px] w-full resize-none rounded-sm bg-accent/5 font-serif text-[14px] leading-[1.95] text-[#1d1d1f] outline-none"
           value={sec.markdown}
           autoFocus
           onChange={(e) => updateSection(sec.id, e.target.value)}

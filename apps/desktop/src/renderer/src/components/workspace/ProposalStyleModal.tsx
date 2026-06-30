@@ -148,20 +148,20 @@ export function ProposalStyleModal({
                         }
                       >
                         {t.key === 'classic' && (
-                          <span className="absolute right-1.5 top-1.5 rounded bg-accent px-1 py-px text-[9px] font-semibold text-white">
+                          <span className="absolute right-1.5 top-1.5 rounded bg-accent px-1 py-px text-[10px] font-semibold text-white">
                             默认
                           </span>
                         )}
                         <MiniPreview tplKey={t.key} />
                         <div
                           className={
-                            'text-[12.5px] font-semibold ' +
+                            'text-[12px] font-semibold ' +
                             (activeTpl ? 'text-accent' : 'text-foreground')
                           }
                         >
                           {t.name}
                         </div>
-                        <div className="mt-0.5 text-[10.5px] leading-tight text-muted-foreground">
+                        <div className="mt-0.5 text-[11px] leading-tight text-muted-foreground">
                           {t.desc}
                         </div>
                       </button>
@@ -179,8 +179,8 @@ export function ProposalStyleModal({
                   onChange={(e) => patchField({ brand: e.target.checked })}
                   className="size-4 accent-accent"
                 />
-                <span className="text-[12.5px] font-medium text-foreground">Fusion Ai 品牌</span>
-                <span className="text-[10.5px] text-muted-foreground">每页页眉 logo + 封面 logo</span>
+                <span className="text-[12px] font-medium text-foreground">Fusion Ai 品牌</span>
+                <span className="text-[11px] text-muted-foreground">每页页眉 logo + 封面 logo</span>
               </label>
 
               {/* 风格名 + 还原 */}
@@ -374,7 +374,7 @@ export function ProposalStyleModal({
             {/* 底部操作 */}
             <div className="flex items-center justify-end gap-2.5 border-t border-border px-5 py-3.5">
               <button
-                className="rounded-lg border border-border px-3.5 py-2 text-[12.5px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="rounded-lg border border-border px-3.5 py-2 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
                 onClick={onClose}
               >
                 取消
