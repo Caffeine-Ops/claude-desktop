@@ -63,6 +63,12 @@ async function rebuildProposalFromTranscript(
     const rec = await window.chatApi.loadProposalDraft({ sessionId })
     if (rec && rec.sections.length > 0) {
       useProposalStore.getState().restoreFromDisk(rec)
+      // 恢复路径补校验：verification 是派生信号、刻意不持久化，restore 回来的节 verification
+      // 全是 undefined。校验此前只在实时生成路径（end / syncSections / reviseSection）触发过，
+      // 重开会话 / 重启 app 后必须重新核对——否则引用徽标恒灰、导出埋点把整片记成
+      // unverifiedSections（M-0 基线发现的回写缺口：实测旧会话导出全是 unverified:9）。
+      // trigger 幂等（已校验 / 在飞 / 非 content / 截断节自动跳过）、异步、失败静默，不阻塞。
+      triggerProposalCitationVerification()
       return
     }
   } catch (err) {
@@ -108,6 +114,8 @@ async function rebuildProposalFromTranscript(
   useProposalStore
     .getState()
     .restoreFromTranscript({ sessionId, sections, consumedDraftIds: consumed, phase })
+  // 同盘恢复路径：transcript 重建的节同样无 verification，补触发校验（幂等、异步、不阻塞）。
+  triggerProposalCitationVerification()
 }
 
 /**
