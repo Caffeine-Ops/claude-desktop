@@ -30,7 +30,9 @@ import {
   SlidersIcon,
   XIcon,
   SearchIcon,
-  AlertTriangleIcon
+  AlertTriangleIcon,
+  InfoIcon,
+  CheckIcon
 } from './proposalIcons'
 
 // 取一节的展示标题：正文首个 markdown 标题行（# ～ ######）的文字，用于资料缺失清单里
@@ -245,7 +247,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   return (
     // 只在工作台接管时渲染（show=useProposalWorkspace），故恒为顶替右栏的第 3 列：
     // flex-1 吃满。旧的「返回态 w-96 靠右停靠」分支已随门控统一而消失。
-    <div className="flex min-w-0 flex-1 flex-col border-l border-border bg-background text-foreground">
+    // relative：作浮动导出 toast（exportMsg，见下方）的定位锚——toast 不再占布局、不再
+    // 和其它状态条叠成一堵彩色墙（design-review F3）。
+    <div className="relative flex min-w-0 flex-1 flex-col border-l border-border bg-background text-foreground">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">方案草稿</span>
 
@@ -424,9 +428,12 @@ export function ProposalDocPanel(): React.JSX.Element | null {
       </div>
 
       {/* 跳阶提示（方案二·软化）：默认静默自动补救（见上方 effect），不再暴露「AI 跳过目录」
-          这种内部状态机斗争。仅当自动补救两次仍跳阶（autoTocFix>=2）才露一行温和兜底 + 手动入口。 */}
+          这种内部状态机斗争。仅当自动补救两次仍跳阶（autoTocFix>=2）才露一行温和兜底 + 手动入口。
+          用天蓝（info）而非琥珀（warning）：文案是「正在整理目录，请稍候」属进行中信息、非警告，
+          且与下方「资料缺失」琥珀条区分开，避免两条同色彩条叠在一起难辨（design-review F3）。 */}
       {stageSkip && phase !== 'content' && autoTocFix >= 2 && (
-        <div className="flex items-center gap-2 border-b border-border bg-amber-500/5 px-3 py-1 text-[11px] text-amber-600">
+        <div className="flex items-center gap-2 border-b border-sky-500/20 bg-sky-500/5 px-3 py-1 text-[11px] text-sky-600">
+          <InfoIcon className="shrink-0" />
           <span className="flex-1">正在整理目录，请稍候…若反复未生成，可手动重试。</span>
           <button
             className="rounded bg-accent px-2 py-0.5 text-white disabled:opacity-40"
@@ -565,19 +572,32 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         </div>
       )}
 
+      {/* 导出反馈：浮动 toast（design-review F3）。原先是顶部一条满宽彩色横幅，会和跳阶/缺料/
+          写盘失败几条彩条一起把文档顶下去、叠成一堵墙；它本就是 4s 自动消失的瞬时反馈，最适合
+          从布局流里抽走。改为底部居中浮层：不占布局、不挤文档，pointer-events-none 全程不挡点击。
+          自动消失仍由上方 useEffect 的 4s 计时器负责。 */}
       {exportMsg && (
-        <div
-          className={
-            'truncate border-b border-border px-3 pb-1.5 pt-1 text-[11px] ' +
-            (exportMsg.tone === 'ok'
-              ? 'text-emerald-500'
-              : exportMsg.tone === 'err'
-                ? 'text-rose-500'
-                : 'text-muted-foreground')
-          }
-          title={exportMsg.text}
-        >
-          {exportMsg.text}
+        <div className="pointer-events-none absolute inset-x-0 bottom-4 z-40 flex justify-center px-4">
+          <div
+            className={
+              'flex max-w-[90%] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] shadow-lg backdrop-blur ' +
+              (exportMsg.tone === 'ok'
+                ? 'border-emerald-500/40 bg-background/95 text-emerald-600'
+                : exportMsg.tone === 'err'
+                  ? 'border-rose-500/40 bg-background/95 text-rose-600'
+                  : 'border-border bg-background/95 text-muted-foreground')
+            }
+            title={exportMsg.text}
+          >
+            {exportMsg.tone === 'ok' ? (
+              <CheckIcon className="shrink-0" />
+            ) : exportMsg.tone === 'err' ? (
+              <AlertTriangleIcon className="shrink-0" />
+            ) : (
+              <InfoIcon className="shrink-0" />
+            )}
+            <span className="truncate">{exportMsg.text}</span>
+          </div>
         </div>
       )}
 
