@@ -1,12 +1,7 @@
 import { create } from 'zustand'
 
 import type { ProposalDraftBlock, ProposalKind, SectionVerification } from '@shared/proposal'
-import {
-  gateDraftBlocksByPhase,
-  isDraftBlockAheadOfPhase,
-  laterPhase,
-  sortSectionsByKind
-} from '@shared/proposal'
+import { appendDraftBlocks, sortSectionsByKind } from '@shared/proposal'
 import type { ProposalDraftRecord } from '@shared/ipc-channels'
 import { useChatStore } from './chat'
 
@@ -98,6 +93,11 @@ interface ProposalState {
     blocks: ProposalDraftBlock[],
     truncated?: ProposalDraftBlock | null
   ) => void
+  // 轮内增量同步：把当前在飞消息里【已闭合】的哨兵块即时入库，不必等轮末 'end'。AskUserQuestion
+  // 暂停确认时由 FusionRuntimeProvider 调用——AI 在一个 SDK 轮里生成封面/目录后用 AskUserQuestion
+  // 暂停、该轮 'end' 迟迟不到，期间右侧草稿会一直空（用户报的 bug）。只靠内容级去重幂等、不碰
+  // messageId（同消息余下块仍由轮末 appendSections 入库）；不传截断残文（半截轮末才入库）。
+  syncSections: (blocks: ProposalDraftBlock[]) => void
   // 推进到目标阶段（cover→toc→content）。只改 phase，不动 sections——已生成的封面/
   // 目录节保持原 kind。按钮在调用本方法后另发推进消息给 AI。
   advancePhase: (to: ProposalKind) => void
@@ -146,6 +146,22 @@ interface ProposalState {
   reset: () => void
 }
 
+/**
+ * 草稿块 → 节工厂：注入给 appendDraftBlocks（shared 不依赖 crypto）。生成稳定 id（React key），
+ * 把 AI 产出原文记进 baselineMarkdown（M-0 可交付率代理基准，后续 updateSection 不动它），
+ * 截断恢复的残块带 truncated:true（面板打「疑似截断」徽标）。appendSections 与 syncSections 共用。
+ */
+const makeDraftSection = (
+  block: ProposalDraftBlock,
+  opts: { truncated?: boolean }
+): ProposalSection => ({
+  id: crypto.randomUUID(),
+  markdown: block.markdown,
+  kind: block.kind,
+  baselineMarkdown: block.markdown,
+  ...(opts.truncated ? { truncated: true } : {})
+})
+
 export const useProposalStore = create<ProposalState>((set) => ({
   active: false,
   sessionId: null,
@@ -185,65 +201,36 @@ export const useProposalStore = create<ProposalState>((set) => ({
   appendSections: (messageId, blocks, truncated) =>
     set((s) => {
       // 消息级去重：end 对同一 messageId 二次触发时不重复入节（沿用原 consumedDraftIds 语义）。
+      // 内容级幂等兜底（同 kind+markdown 去重）由 appendDraftBlocks 内部承担，故 messageId 去重
+      // 失效（restoreFromDisk 清空 + SDK resume 重放）时仍不会重复入节。
       if (s.consumedDraftIds.has(messageId)) return s
       const consumed = new Set(s.consumedDraftIds)
       consumed.add(messageId)
-      // 阶段门护栏：剔除越过「目录确认门」（唯一被 gate 的转换 toc→content）的正文块——
-      // AI 在 cover/toc 阶段自行吐 content（用户点「生成目录」后 AI 直接冒正文）时，这些块
-      // 【不入文档、不推进 phase】，只把被拦数记进 stageSkip 供面板提示用户先生成确认目录。
-      // 没有这道门时，越界 content 块会被「取 max 自动推进」一把把 phase 顶到 content，目录
-      // 确认按钮与 confirmToc 的目录回灌全被绕过、目录整段被跳（本次根因）。cover→toc 不是
-      // 门，仍允许 AI 哨兵自动推进（聊天驱动封面→目录是设计内行为）；gate 内部据此放行。
-      const gate = gateDraftBlocksByPhase(s.phase, blocks)
-      let skipped = gate.skippedAhead.length
-      // P3-4 内容级幂等兜底：messageId 去重（上面那行）只在【单次运行内】有效——restoreFromDisk
-      // 重开会话时 consumedDraftIds 被清空（盘上不存 messageId），若 SDK resume 意外重放某条历史
-      // assistant 'end'，messageId 去重会漏、同一段正文被二次 append 成重复节。再加一道「同 kind 且
-      // markdown 逐字相同」的块级防线：方案写作里两节正文逐字一致几乎不可能是有意产出，故可安全
-      // 当作重放丢弃。key 用 NUL 连接 kind 与 markdown（正文不含 NUL，绝不会把不同内容误判同一）。
-      const dupKey = (kind: ProposalKind, markdown: string): string => `${kind}\u0000${markdown}`
-      const existingKeys = new Set(s.sections.map((sec) => dupKey(sec.kind, sec.markdown)))
-      // kind 取自每个哨兵块自带的标签（AI 在哨兵里声明封面/目录/正文），不再取自全局 phase。
-      // 这样无论用户走右侧按钮还是直接在聊天里驱动阶段，草稿都按内容真实归档。
-      // baselineMarkdown 在此设为 AI 产出原文，作 M-0 可交付率代理基准（后续 updateSection 不动它）。
-      const added: ProposalSection[] = gate.accepted
-        .filter((b) => !existingKeys.has(dupKey(b.kind, b.markdown)))
-        .map((b) => ({
-          id: crypto.randomUUID(),
-          markdown: b.markdown,
-          kind: b.kind,
-          baselineMarkdown: b.markdown
-        }))
-      // phase 取 gate 算出的「绝不跨门」目标；再叠上被接受的截断残块（laterPhase 不回退）。
-      // 截断的越界正文（AI 在目录阶段写了未闭合的正文哨兵）同样被门拦下、记入 skipped。
-      let phase = gate.nextPhase
-      if (truncated && !existingKeys.has(dupKey(truncated.kind, truncated.markdown))) {
-        // 截断残块同样过内容级去重（P3-4）：resume 重放时半截正文也可能二次到达。
-        if (isDraftBlockAheadOfPhase(s.phase, truncated.kind)) {
-          skipped += 1
-        } else {
-          added.push({
-            id: crypto.randomUUID(),
-            markdown: truncated.markdown,
-            kind: truncated.kind,
-            truncated: true,
-            baselineMarkdown: truncated.markdown
-          })
-          phase = laterPhase(phase, truncated.kind)
-        }
-      }
+      // 阶段门护栏 + 内容级去重 + 按阶段序归并，全在 appendDraftBlocks 里（shared，与 syncSections
+      // 同源）。这里只额外做 messageId 记账——轮末 'end' 的权威入库路径。
+      const next = appendDraftBlocks(s, blocks, truncated ?? null, makeDraftSection)
       return {
-        // sortSectionsByKind：把追加块按阶段序归并回各自区段，维持「同 kind 连续」不变量——
-        // 正文阶段 AI 回发的封面块（不被阶段门拦）若直接追加到末尾，会让 buildProposalMarkdown
-        // 产生两个封面分节、ProposalPaper 出现两个封面组头、moveSection 失效（评审发现）。稳定
-        // 排序，故同 kind 内既有顺序（逐章正文、用户 moveSection 的调整）保持不变。
-        sections: sortSectionsByKind([...s.sections, ...added]),
+        sections: next.sections,
         consumedDraftIds: consumed,
-        phase,
-        // 本轮有越界块被拦才更新提示；否则保留既有 stageSkip（不被无关轮次悄悄清掉，
-        // 由用户关闭或阶段推进动作 confirmCover/confirmToc 清）。
-        stageSkip: skipped > 0 ? { count: skipped } : s.stageSkip
+        phase: next.phase,
+        stageSkip: next.stageSkip
       }
+    }),
+  syncSections: (blocks) =>
+    set((s) => {
+      // 轮内增量同步：AI 在一个 SDK 轮里生成封面/目录后用 AskUserQuestion 暂停确认，该轮的
+      // 'end'（appendSections 的触发点）要等模型彻底停下才到——期间右侧草稿一直空（用户报的
+      // 「对话说生成封面了、右侧还是空的」根因，详见 shared/proposal.ts appendDraftBlocks 注释）。
+      // 故在每次 AskUserQuestion 暂停时即时同步当前已闭合的哨兵块进草稿。
+      //
+      // 【不消费 messageId】：同一条消息后续还会产出目录/正文，轮末 appendSections 仍要按该
+      // messageId 处理余下的块；本方法只靠 appendDraftBlocks 的内容级去重保证不重复入节。
+      // 【pendingRevision 态下不介入】：那是「下一轮 content 整节替换某节」的定向修订流，由 end
+      // 分流（reviseSection）处理；此时轮内 append 会把修订产出错当新节追加，与替换冲突。
+      // 【截断残文传 null】：半截内容轮末才正式入库，轮内当节加会在闭合后重复（见 reducer 注释）。
+      if (!s.active || s.pendingRevision) return s
+      const next = appendDraftBlocks(s, blocks, null, makeDraftSection)
+      return { sections: next.sections, phase: next.phase, stageSkip: next.stageSkip }
     }),
   advancePhase: (to) => set({ phase: to }),
   clearStageSkip: () => set({ stageSkip: null }),

@@ -13,6 +13,7 @@ import {
   isDraftBlockAheadOfPhase,
   laterPhase,
   decideProposalStageConfirm,
+  appendDraftBlocks,
   PROPOSAL_COVER_CONFIRM_HEADER,
   PROPOSAL_TOC_CONFIRM_HEADER
 } from './proposal'
@@ -474,5 +475,65 @@ describe('decideProposalStageConfirm', () => {
     expect(decideProposalStageConfirm(null, {})).toBe('none')
     expect(decideProposalStageConfirm({}, {})).toBe('none')
     expect(decideProposalStageConfirm({ questions: 'x' }, {})).toBe('none')
+  })
+})
+
+describe('appendDraftBlocks（轮内增量同步 + 轮末入库共用的纯 reducer）', () => {
+  // 确定性 id 工厂（生产用 crypto.randomUUID，测试用计数器，便于断言）。
+  type Sec = ProposalDraftBlock & { id: string; truncated?: boolean; baselineMarkdown?: string }
+  let n = 0
+  const mk = (b: ProposalDraftBlock, opts: { truncated?: boolean }): Sec => ({
+    id: `id-${n++}`,
+    markdown: b.markdown,
+    kind: b.kind,
+    baselineMarkdown: b.markdown,
+    ...(opts.truncated ? { truncated: true } : {})
+  })
+  const empty = (): { sections: Sec[]; phase: 'cover'; stageSkip: null } => {
+    n = 0
+    return { sections: [], phase: 'cover', stageSkip: null }
+  }
+  const cover: ProposalDraftBlock = { kind: 'cover', markdown: '# 标题\n\n客户单位：XX' }
+  const toc: ProposalDraftBlock = { kind: 'toc', markdown: '1. 背景\n2. 方案' }
+  const content: ProposalDraftBlock = { kind: 'content', markdown: '## 一、背景\n正文（据《X》）' }
+
+  it('把闭合块追加进草稿', () => {
+    const out = appendDraftBlocks(empty(), [cover], null, mk)
+    expect(out.sections.map((s) => s.kind)).toEqual(['cover'])
+    expect(out.sections[0].baselineMarkdown).toBe(cover.markdown)
+  })
+
+  it('内容级去重：同 kind+markdown 重复同步不产生重复节（幂等）', () => {
+    const s1 = appendDraftBlocks(empty(), [cover], null, mk)
+    const s2 = appendDraftBlocks(s1, [cover], null, mk)
+    expect(s2.sections.map((s) => s.kind)).toEqual(['cover'])
+  })
+
+  it('轮内同步封面 → 轮末再带封面+目录：封面被去重、目录新增，phase 推进到 toc', () => {
+    const mid = appendDraftBlocks(empty(), [cover], null, mk) // 轮内：AskUserQuestion 暂停时
+    const end = appendDraftBlocks(mid, [cover, toc], null, mk) // 轮末：同消息携全部块
+    expect(end.sections.map((s) => s.kind)).toEqual(['cover', 'toc'])
+    expect(end.phase).toBe('toc')
+  })
+
+  it('目录块到达时自动把 phase 由 cover 推进到 toc（cover→toc 非门）', () => {
+    const out = appendDraftBlocks(empty(), [toc], null, mk)
+    expect(out.phase).toBe('toc')
+  })
+
+  it('阶段门：cover 阶段收到 content 块被拦下（不入节、不推进），记 stageSkip', () => {
+    const out = appendDraftBlocks(empty(), [content], null, mk)
+    expect(out.sections.length).toBe(0)
+    expect(out.phase).toBe('cover')
+    expect(out.stageSkip).toEqual({ count: 1 })
+  })
+
+  it('截断残块：非越界时入节并标 truncated；越界（content 在 cover 阶段）则记 stageSkip', () => {
+    const ok = appendDraftBlocks(empty(), [], { kind: 'cover', markdown: '半截封面' }, mk)
+    expect(ok.sections.map((s) => [s.kind, s.truncated])).toEqual([['cover', true]])
+
+    const blocked = appendDraftBlocks(empty(), [], { kind: 'content', markdown: '半截正文' }, mk)
+    expect(blocked.sections.length).toBe(0)
+    expect(blocked.stageSkip).toEqual({ count: 1 })
   })
 })

@@ -289,6 +289,69 @@ export function gateDraftBlocksByPhase(
   return { accepted, skippedAhead, nextPhase }
 }
 
+/** appendDraftBlocks 的状态切片：草稿入库只依赖这三个字段（其余 store 字段与本逻辑无关）。 */
+export interface DraftAppendState<T extends ProposalDraftBlock> {
+  sections: T[]
+  phase: ProposalKind
+  stageSkip: { count: number } | null
+}
+
+/**
+ * 纯函数：把一批闭合草稿块（blocks）+ 可选截断残块（truncated）追加进当前草稿，返回新的
+ * sections/phase/stageSkip。store 的两个入口共用它，差别只在 messageId 记账：
+ *   - appendSections（轮末 'end' 触发）：额外按 messageId 去重 + 记账。
+ *   - syncSections（轮内 AskUserQuestion 暂停时触发）：增量同步，不碰 messageId。
+ *
+ * 为什么轮内也要同步：AI 在一个 SDK 轮里生成封面/目录后用 AskUserQuestion 暂停确认，而
+ * AskUserQuestion 经 canUseTool 内联应答、【不结束 SDK 轮】，该轮的 'end' 要等模型彻底停下
+ * 才到——期间右侧草稿一直空（「对话说生成封面了、右侧还是空的」的根因）。故在每次
+ * AskUserQuestion 暂停时调本逻辑即时入库。
+ *
+ * 去重靠「同 kind 且 markdown 逐字相同」（dupKey）：messageId 去重只在单次运行内有效，且
+ * 轮内同步会对同一 messageId 多次调用——内容级去重才是真正的幂等防线（方案正文两节逐字
+ * 一致几乎不可能是有意产出，可安全当作重放/重复同步丢弃）。NUL 连接 kind 与 markdown，
+ * 正文不含 NUL，绝不会把不同内容误判同一。
+ *
+ * 截断残块只在轮末传入（轮内同步传 null）：半截内容会在后续流里闭合、轮末再正式入库；
+ * 若轮内就把半截当节加进去，闭合后的完整块 markdown 不同、内容级去重拦不住，会重复成两节。
+ *
+ * makeSection 由调用方注入（生成 id、设 baselineMarkdown）——shared 不依赖 crypto.randomUUID：
+ * 渲染层注入 crypto.randomUUID，单测注入确定性计数器。main 与 renderer 共享纯函数。
+ */
+export function appendDraftBlocks<T extends ProposalDraftBlock>(
+  state: DraftAppendState<T>,
+  blocks: ProposalDraftBlock[],
+  truncated: ProposalDraftBlock | null,
+  makeSection: (block: ProposalDraftBlock, opts: { truncated?: boolean }) => T
+): DraftAppendState<T> {
+  // 阶段门护栏：剔除越过「目录确认门」（唯一被 gate 的转换 toc→content）的正文块。
+  const gate = gateDraftBlocksByPhase(state.phase, blocks)
+  let skipped = gate.skippedAhead.length
+  const dupKey = (kind: ProposalKind, markdown: string): string => `${kind}\u0000${markdown}`
+  const existingKeys = new Set(state.sections.map((sec) => dupKey(sec.kind, sec.markdown)))
+  const added: T[] = gate.accepted
+    .filter((b) => !existingKeys.has(dupKey(b.kind, b.markdown)))
+    .map((b) => makeSection(b, {}))
+  // phase 取 gate 算出的「绝不跨门」目标；再叠上被接受的截断残块（laterPhase 不回退）。
+  let phase = gate.nextPhase
+  if (truncated && !existingKeys.has(dupKey(truncated.kind, truncated.markdown))) {
+    if (isDraftBlockAheadOfPhase(state.phase, truncated.kind)) {
+      // 截断的越界正文（AI 在目录阶段写了未闭合的正文哨兵）同样被门拦下、记入 skipped。
+      skipped += 1
+    } else {
+      added.push(makeSection(truncated, { truncated: true }))
+      phase = laterPhase(phase, truncated.kind)
+    }
+  }
+  return {
+    // sortSectionsByKind：把追加块按阶段序归并回各自区段，维持「同 kind 连续」不变量。
+    sections: sortSectionsByKind([...state.sections, ...added]),
+    phase,
+    // 本轮有越界块被拦才更新提示；否则保留既有 stageSkip（不被无关轮次悄悄清掉）。
+    stageSkip: skipped > 0 ? { count: skipped } : state.stageSkip
+  }
+}
+
 /**
  * 把分节草稿拼成单串 markdown，供「导出 Word」与「真预览」同源消费（两处原先各自
  * `sections.map(s=>s.markdown).join('\n\n')`，现统一到此，保证预览=导出逐像素一致）。

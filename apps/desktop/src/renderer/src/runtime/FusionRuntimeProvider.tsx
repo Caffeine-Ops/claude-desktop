@@ -1097,6 +1097,12 @@ function makeSessionEventHandler(
         if (event.toolName === 'TodoWrite') {
           useTodosStore.getState().setTodos(sid, [])
         }
+        // 方案模式：AI 生成封面/目录后用 AskUserQuestion 暂停确认，此刻把已闭合的哨兵块即时
+        // 同步进右侧草稿——否则要等整轮 'end' 才入库，确认期间右侧一直空着（用户报的 bug）。
+        // 封面文本块先于本工具调用流完，故此时已在 store。幂等（内容级去重），与轮末不冲突。
+        if (event.toolName === 'AskUserQuestion') {
+          syncProposalDraftFromInflight(sid, event.messageId)
+        }
         break
       case 'tool_use_delta': {
         actions.appendToolCallArgsDelta(sid, event.toolUseId, event.partialJson)
@@ -1144,6 +1150,11 @@ function makeSessionEventHandler(
           if (items) {
             useTodosStore.getState().setTodos(sid, items)
           }
+        }
+        // 同 tool_use_start：非流式 tool_use 路径也兜一道 AskUserQuestion 轮内同步（两条路径
+        // 互斥触发，幂等故双触发也无害）。
+        if (event.toolName === 'AskUserQuestion') {
+          syncProposalDraftFromInflight(sid, event.messageId)
         }
         break
       case 'tool_result':
@@ -1247,6 +1258,34 @@ function makeSessionEventHandler(
         break
     }
   }
+}
+
+/**
+ * 轮内草稿同步：AI 在一个 SDK 轮里生成封面/目录后用 AskUserQuestion 暂停确认，但该轮的
+ * 'end'（草稿入库的原触发点）要等模型彻底停下才到——期间右侧草稿一直空着（用户报的「对话
+ * 说生成封面了、右侧还是空的」）。故在 AskUserQuestion 工具调用出现时（模型刚结束一段哨兵
+ * 块、暂停发问），把当前在飞消息里【已闭合】的哨兵块即时同步进右侧草稿。
+ *
+ * 只取闭合块（truncated 丢弃）：半截内容会在后续流里闭合、轮末再正式入库；store.syncSections
+ * 的内容级去重保证与轮末 appendSections 不重复、且不消费 messageId（同消息余下块仍走轮末）。
+ * 门控同 'end' 路径：仅方案绑定会话（active && sessionId===sid）、按 messageId 精确取消息。
+ */
+function syncProposalDraftFromInflight(sid: string, messageId: string): void {
+  const ps = useProposalStore.getState()
+  if (!ps.active || ps.sessionId !== sid) return
+  const slot = useChatStore.getState().perSession[sid]
+  const msg = slot?.messages.find((m) => m.id === messageId) as
+    | { role: string; content: Array<{ type: string; text?: string }> }
+    | undefined
+  if (!msg || msg.role !== 'assistant') return
+  const fullText = msg.content
+    .filter((p) => p.type === 'text' && p.text)
+    .map((p) => p.text!)
+    .join('')
+  const { blocks } = extractProposalDraftResult(fullText)
+  if (!blocks.length) return
+  useProposalStore.getState().syncSections(blocks)
+  triggerProposalCitationVerification()
 }
 
 // 引用落地校验（#1）的「在飞」去重集：同一节的校验 IPC 未回来前不重复发起（多条 end
