@@ -353,7 +353,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                   className="fixed inset-0 z-20 cursor-default"
                   onClick={() => setExportMenuOpen(false)}
                 />
-                <div className="absolute right-0 top-full z-30 mt-1 w-60 overflow-hidden rounded-lg border border-border bg-background py-1 text-foreground shadow-lg">
+                <div className="proposal-anim-pop absolute right-0 top-full z-30 mt-1 w-60 overflow-hidden rounded-lg border border-border bg-background py-1 text-foreground shadow-lg">
                   <button
                     type="button"
                     className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-muted"
@@ -435,7 +435,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           用天蓝（info）而非琥珀（warning）：文案是「正在整理目录，请稍候」属进行中信息、非警告，
           且与下方「资料缺失」琥珀条区分开，避免两条同色彩条叠在一起难辨（design-review F3）。 */}
       {stageSkip && phase !== 'content' && autoTocFix >= 2 && (
-        <div className="flex items-center gap-2 border-b border-sky-500/20 bg-sky-500/5 px-3 py-1 text-[11px] text-sky-600">
+        <div className="proposal-anim-fade flex items-center gap-2 border-b border-sky-500/20 bg-sky-500/5 px-3 py-1 text-[11px] text-sky-600">
           <InfoIcon className="shrink-0" />
           <span className="flex-1">正在整理目录，请稍候…若反复未生成，可手动重试。</span>
           <button
@@ -461,7 +461,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           可手动导出备份。下次成功保存后 draftSaveFailed 自动置 false、本条消失。 */}
       {draftSaveFailed && (
         <div
-          className="flex items-center gap-1 border-b border-rose-500/30 bg-rose-500/10 px-3 pb-1.5 pt-1 text-[11px] text-rose-500"
+          className="proposal-anim-fade flex items-center gap-1 border-b border-rose-500/30 bg-rose-500/10 px-3 pb-1.5 pt-1 text-[11px] text-rose-500"
           title="草稿写盘失败（磁盘空间/权限/路径问题）。你的修改仍在内存，切换会话或关闭可能丢失；建议先导出备份，问题排除后改动会在下次自动保存时落盘。"
         >
           <AlertTriangleIcon className="shrink-0" />
@@ -474,7 +474,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           仅在有缺口时出现；默认收起为一行摘要，点开看每处缺口在哪一章、缺什么。后续阶段二会在每条
           缺口旁加「补充资料」入口做定点续写——此处先把缺失变可见。 */}
       {gaps.length > 0 && (
-        <div className="border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+        <div className="proposal-anim-fade border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-700 dark:text-amber-400">
           <button
             type="button"
             className="flex w-full items-center gap-2 text-left"
@@ -583,7 +583,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         <div className="pointer-events-none absolute inset-x-0 bottom-4 z-40 flex justify-center px-4">
           <div
             className={
-              'flex max-w-[90%] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] shadow-lg backdrop-blur ' +
+              'proposal-anim-pop flex max-w-[90%] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] shadow-lg backdrop-blur ' +
               (exportMsg.tone === 'ok'
                 ? 'border-emerald-500/40 bg-background/95 text-emerald-600'
                 : exportMsg.tone === 'err'
@@ -645,7 +645,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             + 添加产品
           </button>
           {productPickerOpen && (
-            <div className="absolute left-0 top-full z-20 mt-1 max-h-64 w-72 overflow-auto rounded-lg border border-border bg-background p-1 shadow-lg">
+            <div className="proposal-anim-pop absolute left-0 top-full z-20 mt-1 max-h-64 w-72 overflow-auto rounded-lg border border-border bg-background p-1 shadow-lg">
               {(() => {
                 const picked = new Set(products.map((p) => `${p.productLine}::${p.product}`))
                 const avail = allKbProducts.filter(
@@ -691,7 +691,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
       {/* 召回预览面板（方案三·只读）：输关键词 → 显示当前产品集下知识库 top 召回片段。让「检索
           命中什么」对用户可见，不再只靠正文红条反推。 */}
       {retrievalOpen && (
-        <div className="space-y-1.5 border-b border-border px-3 py-2">
+        <div className="proposal-anim-fade space-y-1.5 border-b border-border px-3 py-2">
           {/* 说明文字（方案三）：先讲清这是什么、不影响生成，降低「召不回是不是坏了」的误会。 */}
           <div className="text-[11px] leading-snug text-muted-foreground">
             预览知识库会为关键词从<b>当前选中的产品</b>里挑出哪些原文片段——只读探查，不写盘、不影响实际生成。

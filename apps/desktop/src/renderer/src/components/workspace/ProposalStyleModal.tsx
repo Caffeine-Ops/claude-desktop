@@ -96,11 +96,11 @@ export function ProposalStyleModal({
         type="button"
         aria-label="关闭"
         tabIndex={-1}
-        className="absolute inset-0 cursor-default bg-black/45 backdrop-blur-sm"
+        className="proposal-anim-fade absolute inset-0 cursor-default bg-black/45 backdrop-blur-sm"
         onClick={onClose}
       />
       {/* 弹窗主体 */}
-      <div className="relative flex h-[min(760px,calc(100vh-56px))] w-[min(1180px,100%)] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
+      <div className="proposal-anim-pop relative flex h-[min(760px,calc(100vh-56px))] w-[min(1180px,100%)] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
         {/* 头部 */}
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div>
