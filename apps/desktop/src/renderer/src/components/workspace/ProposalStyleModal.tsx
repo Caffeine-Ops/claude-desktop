@@ -13,6 +13,7 @@ import {
 } from '@shared/proposalStyle'
 import { useProposalStyleStore } from '../../stores/proposalStyle'
 import { ProposalPreview } from './ProposalPreview'
+import { XIcon, RotateCcwIcon } from './proposalIcons'
 
 /**
  * 「样式模板」弹窗：左侧实时预览（复用 ProposalPreview 的真 docx 渲染，传入本地 draft 样式，
@@ -110,8 +111,9 @@ export function ProposalStyleModal({
           <button
             className="grid size-8 place-items-center rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-foreground"
             onClick={onClose}
+            aria-label="关闭"
           >
-            ✕
+            <XIcon className="size-4" />
           </button>
         </div>
 
@@ -192,11 +194,12 @@ export function ProposalStyleModal({
                   />
                 </label>
                 <button
-                  className="h-8 shrink-0 rounded-md border border-border px-3 text-[11px] text-accent hover:bg-accent/5"
+                  className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-border px-3 text-[11px] text-accent hover:bg-accent/5"
                   onClick={() => selectTemplate(draft.templateKey)}
                   title="放弃微调，回到该模板默认值"
                 >
-                  ↺ 还原模板默认
+                  <RotateCcwIcon />
+                  还原模板默认
                 </button>
               </div>
 

@@ -19,6 +19,19 @@ import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
 import { ProposalPaper } from './ProposalPaper'
 import { ProposalPreview } from './ProposalPreview'
 import { ProposalStyleModal } from './ProposalStyleModal'
+import {
+  PencilIcon,
+  EyeIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  FileTextIcon,
+  FileIcon,
+  FileCodeIcon,
+  SlidersIcon,
+  XIcon,
+  SearchIcon,
+  AlertTriangleIcon
+} from './proposalIcons'
 
 // 取一节的展示标题：正文首个 markdown 标题行（# ～ ######）的文字，用于资料缺失清单里
 // 标明「这处缺口在哪一章」。无标题（理论少见）退化为占位串。模块级纯函数，不依赖组件状态。
@@ -240,21 +253,21 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         <div className="inline-flex rounded-lg border border-border bg-card p-0.5">
           <button
             className={
-              'rounded-md px-3 py-1 ' +
+              'inline-flex items-center gap-1 rounded-md px-3 py-1 ' +
               (mode === 'edit' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground')
             }
             onClick={() => setMode('edit')}
           >
-            ✎ 编辑
+            <PencilIcon /> 编辑
           </button>
           <button
             className={
-              'rounded-md px-3 py-1 ' +
+              'inline-flex items-center gap-1 rounded-md px-3 py-1 ' +
               (mode === 'preview' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground')
             }
             onClick={() => setMode('preview')}
           >
-            ▤ 预览
+            <EyeIcon /> 预览
           </button>
         </div>
 
@@ -312,12 +325,17 @@ export function ProposalDocPanel(): React.JSX.Element | null {
               （useProposalStyleStore，跨会话持久）；先调样式就先走「调整样式模板…」应用再导出。 */}
           <div className="relative">
             <button
-              className="rounded bg-accent px-2 py-0.5 text-white hover:opacity-90 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded bg-accent px-2 py-0.5 text-white hover:opacity-90 disabled:opacity-50"
               disabled={exporting}
               onClick={() => setExportMenuOpen((o) => !o)}
               title="导出方案（Word / PDF / Markdown）"
             >
-              {exporting ? '导出中…' : '导出 ▾'}
+              {exporting ? '导出中…' : (
+                <>
+                  导出
+                  <ChevronDownIcon />
+                </>
+              )}
             </button>
             {exportMenuOpen && (
               <>
@@ -337,7 +355,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                       void handleExport('docx', useProposalStyleStore.getState().config)
                     }}
                   >
-                    <span className="mt-px">📄</span>
+                    <FileTextIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0">
                       <span className="block text-[12.5px] font-medium">Word（.docx）</span>
                       <span className="block text-[10.5px] text-muted-foreground">交付客户、可继续编辑</span>
@@ -351,7 +369,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                       void handleExportPdf(useProposalStyleStore.getState().config)
                     }}
                   >
-                    <span className="mt-px">📕</span>
+                    <FileIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0">
                       <span className="block text-[12.5px] font-medium">PDF</span>
                       <span className="block text-[10.5px] text-muted-foreground">定稿发送、排版固定</span>
@@ -365,7 +383,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                       void handleExport('md')
                     }}
                   >
-                    <span className="mt-px">📝</span>
+                    <FileCodeIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0">
                       <span className="block text-[12.5px] font-medium">Markdown</span>
                       <span className="block text-[10.5px] text-muted-foreground">纯文本、便于版本管理</span>
@@ -380,7 +398,8 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                       setStyleModalOpen(true)
                     }}
                   >
-                    ⚙ 调整样式模板…
+                    <SlidersIcon className="size-4 shrink-0" />
+                    调整样式模板…
                   </button>
                 </div>
               </>
@@ -421,8 +440,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             className="text-muted-foreground hover:text-foreground"
             onClick={clearStageSkip}
             title="忽略此提示"
+            aria-label="忽略此提示"
           >
-            ✕
+            <XIcon />
           </button>
         </div>
       )}
@@ -431,10 +451,11 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           可手动导出备份。下次成功保存后 draftSaveFailed 自动置 false、本条消失。 */}
       {draftSaveFailed && (
         <div
-          className="border-b border-rose-500/30 bg-rose-500/10 px-3 pb-1.5 pt-1 text-[11px] text-rose-500"
+          className="flex items-center gap-1 border-b border-rose-500/30 bg-rose-500/10 px-3 pb-1.5 pt-1 text-[11px] text-rose-500"
           title="草稿写盘失败（磁盘空间/权限/路径问题）。你的修改仍在内存，切换会话或关闭可能丢失；建议先导出备份，问题排除后改动会在下次自动保存时落盘。"
         >
-          ⚠️ 草稿未保存（写盘失败）——改动仍在，建议先导出备份
+          <AlertTriangleIcon className="shrink-0" />
+          草稿未保存（写盘失败）——改动仍在，建议先导出备份
         </div>
       )}
 
@@ -450,12 +471,25 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             onClick={() => setGapsOpen((v) => !v)}
             title="知识库未覆盖、AI 未编造的缺口；待补料后续写"
           >
-            <span className="font-medium">⚠️ 资料缺失 {gaps.length} 处</span>
+            <AlertTriangleIcon className="shrink-0" />
+            <span className="font-medium">资料缺失 {gaps.length} 处</span>
             <span className="text-amber-600/70 dark:text-amber-400/70">
               — 知识库没查到、AI 未编造，待补料
             </span>
             <span className="flex-1" />
-            <span className="text-amber-600/80 dark:text-amber-400/80">{gapsOpen ? '收起 ▴' : '展开 ▾'}</span>
+            <span className="inline-flex items-center gap-0.5 text-amber-600/80 dark:text-amber-400/80">
+              {gapsOpen ? (
+                <>
+                  收起
+                  <ChevronUpIcon />
+                </>
+              ) : (
+                <>
+                  展开
+                  <ChevronDownIcon />
+                </>
+              )}
+            </span>
           </button>
           {gapsOpen && (
             <ul className="mt-1.5 max-h-60 space-y-1 overflow-auto">
@@ -568,7 +602,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                   )
                 }
               >
-                ✕
+                <XIcon />
               </button>
             </span>
           ))
@@ -623,11 +657,11 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         {/* 召回预览开关（方案三·只读）：看知识库针对当前产品/关键词会召回哪些原文片段。 */}
         <button
           type="button"
-          className="rounded border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-accent hover:text-accent"
+          className="inline-flex items-center gap-1 rounded border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-accent hover:text-accent"
           onClick={() => setRetrievalOpen((v) => !v)}
           title="预览知识库召回片段"
         >
-          🔍 召回预览
+          <SearchIcon /> 召回预览
         </button>
       </div>
 

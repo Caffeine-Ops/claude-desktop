@@ -4,6 +4,18 @@ import { useChatStore } from '../../stores/chat'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 import { reviseProposalSection } from '../../lib/sendProposalSectionRevision'
 import type { ProposalKind } from '@shared/proposal'
+import {
+  RotateCwIcon,
+  PlusIcon,
+  MinusIcon,
+  CheckIcon,
+  PencilIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
+  TrashIcon,
+  AlertTriangleIcon,
+  InfoIcon
+} from './proposalIcons'
 
 /**
  * 引用落地校验（#1）的节级提示条。仅对正文节（content）渲染：
@@ -38,8 +50,9 @@ function renderVerification(sec: ProposalSection, generating: boolean): React.JS
   }
   if (v.citedFileCount === 0) {
     return (
-      <div className="mb-1 rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
-        ⚠️ 本段未标注来源，建议补充或核对是否凭空生成{fixBtn}
+      <div className="mb-1 flex items-start gap-1 rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
+        <AlertTriangleIcon className="mt-0.5 shrink-0" />
+        <span>本段未标注来源，建议补充或核对是否凭空生成{fixBtn}</span>
       </div>
     )
   }
@@ -55,8 +68,9 @@ function renderVerification(sec: ProposalSection, generating: boolean): React.JS
   ).size
   const suppliedLine =
     suppliedCount > 0 ? (
-      <div className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[11px] text-sky-600">
-        ℹ️ 有 {suppliedCount} 处据你补充的资料撰写（不在知识库，请自行确认准确性）
+      <div className="flex items-start gap-1 rounded bg-sky-500/10 px-1.5 py-0.5 text-[11px] text-sky-600">
+        <InfoIcon className="mt-0.5 shrink-0" />
+        <span>有 {suppliedCount} 处据你补充的资料撰写（不在知识库，请自行确认准确性）</span>
       </div>
     ) : null
   if (notFound.length === 0 && unsupported.length === 0 && ungroundedImgs.length === 0) {
@@ -64,8 +78,9 @@ function renderVerification(sec: ProposalSection, generating: boolean): React.JS
       <div className="mb-1 space-y-0.5">
         {/* KB 来源全部核对通过才报绿；补料不参与「已核对」绿灯（它无从 trigram 核对），单列蓝条。 */}
         {kbFileCount > 0 && (
-          <div className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600">
-            ✓ {kbFileCount} 处来源已核对
+          <div className="flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600">
+            <CheckIcon className="shrink-0" />
+            {kbFileCount} 处来源已核对
           </div>
         )}
         {suppliedLine}
@@ -75,18 +90,21 @@ function renderVerification(sec: ProposalSection, generating: boolean): React.JS
   return (
     <div className="mb-1 space-y-0.5">
       {unsupported.length > 0 && (
-        <div className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
-          ⚠️ 这段内容在{unsupported.map((f) => `《${f}》`).join('、')}里没找到对应依据，建议核对或{fixBtn}
+        <div className="flex items-start gap-1 rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
+          <AlertTriangleIcon className="mt-0.5 shrink-0" />
+          <span>这段内容在{unsupported.map((f) => `《${f}》`).join('、')}里没找到对应依据，建议核对或{fixBtn}</span>
         </div>
       )}
       {notFound.length > 0 && (
-        <div className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
-          ⚠️ 引用的{notFound.map((f) => `《${f}》`).join('、')}不在当前知识库，来源待确认
+        <div className="flex items-start gap-1 rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
+          <AlertTriangleIcon className="mt-0.5 shrink-0" />
+          <span>引用的{notFound.map((f) => `《${f}》`).join('、')}不在当前知识库，来源待确认</span>
         </div>
       )}
       {ungroundedImgs.length > 0 && (
-        <div className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
-          ⚠️ 有 {ungroundedImgs.length} 张配图与本段来源不符，建议替换
+        <div className="flex items-start gap-1 rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
+          <AlertTriangleIcon className="mt-0.5 shrink-0" />
+          <span>有 {ungroundedImgs.length} 张配图与本段来源不符，建议替换</span>
         </div>
       )}
       {suppliedLine}
@@ -154,7 +172,7 @@ export function ProposalPaper(): React.JSX.Element {
               title="AI 重写本章"
               aria-label="AI 重写本章"
             >
-              ↻
+              <RotateCwIcon />
             </button>
             <button
               className={toolBtn}
@@ -163,7 +181,7 @@ export function ProposalPaper(): React.JSX.Element {
               title="AI 展开（更详尽）"
               aria-label="AI 展开本章"
             >
-              ⊕
+              <PlusIcon />
             </button>
             <button
               className={toolBtn}
@@ -172,7 +190,7 @@ export function ProposalPaper(): React.JSX.Element {
               title="AI 精简（去冗余）"
               aria-label="AI 精简本章"
             >
-              ⊖
+              <MinusIcon />
             </button>
           </>
         )}
@@ -181,7 +199,7 @@ export function ProposalPaper(): React.JSX.Element {
           onClick={() => setEditingId(editingId === sec.id ? null : sec.id)}
           aria-label={editingId === sec.id ? '完成' : '编辑'}
         >
-          {editingId === sec.id ? '✓' : '✎'}
+          {editingId === sec.id ? <CheckIcon /> : <PencilIcon />}
         </button>
         <button
           className={toolBtn}
@@ -190,7 +208,7 @@ export function ProposalPaper(): React.JSX.Element {
           title={canMoveUp ? '上移' : '已是本区段第一节，不能跨区段上移'}
           aria-label="上移"
         >
-          ↑
+          <ArrowUpIcon />
         </button>
         <button
           className={toolBtn}
@@ -199,7 +217,7 @@ export function ProposalPaper(): React.JSX.Element {
           title={canMoveDown ? '下移' : '已是本区段最后一节，不能跨区段下移'}
           aria-label="下移"
         >
-          ↓
+          <ArrowDownIcon />
         </button>
         <button
           className="grid size-6 place-items-center rounded-md border border-neutral-300 bg-white text-[12px] text-rose-500 hover:border-rose-400"
@@ -209,7 +227,7 @@ export function ProposalPaper(): React.JSX.Element {
           }}
           aria-label="删除"
         >
-          ×
+          <TrashIcon />
         </button>
       </div>
 
