@@ -24,7 +24,12 @@ import {
 import { readFileSync } from 'node:fs'
 import imageSize from 'image-size'
 import type { IStylesOptions, INumberingOptions, ISectionOptions } from 'docx'
-import { PROPOSAL_PAGEBREAK, PROPOSAL_SECTION_RE, isEmbeddableImagePath } from '../../shared/proposal'
+import {
+  PROPOSAL_PAGEBREAK,
+  PROPOSAL_SECTION_RE,
+  isEmbeddableImagePath,
+  stripCitations
+} from '../../shared/proposal'
 import type { ProposalKind } from '../../shared/proposal'
 import type { MermaidImage } from '../../shared/ipc-channels'
 import { FUSION_HEADER_BANNER, FUSION_COVER_LOGO } from '../../shared/proposalBrand'
@@ -1093,7 +1098,9 @@ export async function markdownToDocxBuffer(
 ): Promise<Buffer> {
   // base64 PNG → Buffer，建 code→{data,尺寸} map 供 case 'code' 的 mermaid 分支同步查表嵌图。
   const mermaidImageMap = decodeMermaidImages(mermaidImages)
-  const tree = mdProcessor.parse(markdown) as Root
+  // 剥除段末「（据《X》）」来源标注：docx 导出、PDF 导出、真预览都经此单一入口，故交付件与预览
+  // 都不出现来源（只在编辑态保留并上色，见 AssistantMarkdown.highlightCitations）。
+  const tree = mdProcessor.parse(stripCitations(markdown)) as Root
   const bodyFirstLine = style.body.indentChars
     ? Math.round(style.body.indentChars * CN_SIZE_PT[style.body.size] * 20)
     : 0

@@ -346,6 +346,18 @@
   font-family: 'Songti SC', 'SimSun', Georgia, 'Times New Roman', serif;
 }
 
+/* 段末「（据《X》）」来源标注的高亮（编辑态专用，AssistantMarkdown highlightCitations 注入的
+   span.proposal-citation）。让作者一眼看到每段引了哪些来源、便于逐句溯源——这些标注【不会】进
+   预览/导出（docx/PDF/md 都在 markdownToDocxBuffer / 写盘前剥除，见 shared/proposal.stripCitations）。
+   暖橙 + 淡底胶囊：和墨色正文、蓝色链接都拉开，扫一眼即可定位；padding 极小不破坏行内排版。 */
+.proposal-paper .proposal-citation {
+  color: #b45309; /* amber-700 */
+  font-weight: 500;
+  background: rgba(251, 191, 36, 0.16); /* amber-400 @16% */
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
 /* 写方案功能区统一焦点环（design-review F6）。原先区内控件多只有 hover 态，键盘用户在
    导出菜单/节工具条/样式弹窗上无可见焦点。这里给功能区（.proposal-feature，挂在
    ProposalDocPanel 根，Paper/Preview/StyleModal 全在其子树内）所有可聚焦控件补 focus-visible

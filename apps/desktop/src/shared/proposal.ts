@@ -604,6 +604,18 @@ export function parseCitations(markdown: string): ParsedCitationParagraph[] {
   return out
 }
 
+// 来源标注剥除：把段末的「（据《X》）」引用组整段删掉（含多个《》、连续多组）。
+// 设计取舍：来源是给作者「逐句溯源」的工作态标注，编辑态保留并上色（见 AssistantMarkdown
+// 的 highlightCitations），但导出的交付文件（docx/PDF/md）与真预览都不应出现——客户看到的
+// 是干净成品。故清洗只发生在导出/预览的 markdown 上，编辑态那份 sec.markdown 不动。
+// - 用独立正则字面量（非共享的 CITATION_GROUP_RE），避免和 parseCitations 的 lastIndex 状态耦合。
+// - 顺带吃掉引用组前的 ASCII 空格/制表（`正文 （据…）` → `正文`），中文正文一般无此空格，安全兜底。
+// main 与 renderer 共享的纯函数。
+export function stripCitations(markdown: string): string {
+  if (!markdown) return markdown
+  return markdown.replace(/[ \t]*（据[^）]*）/g, '')
+}
+
 // markdown 图片：`![alt](path)`。path 取到首个 `)` 前——KB 图为 img-N.png 类路径、不含 `)`。
 // 要求前置 `!`，故普通链接 `[text](url)` 不会被误抽（无 `!`）。alt 可空。
 const IMAGE_RE = /!\[([^\]]*)\]\(([^)]+)\)/g

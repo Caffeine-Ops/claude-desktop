@@ -2,6 +2,7 @@ import { isValidElement, memo, useCallback, useEffect, useState, type ReactNode 
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
+import type { Root } from 'mdast'
 
 import { useT } from '../../i18n'
 import { toKbAssetUrl } from '../../lib/kbAssetUrl'
@@ -366,13 +367,84 @@ function reactNodeToText(node: ReactNode): string {
   return ''
 }
 
+/* ───────────────── 来源标注上色（编辑态专用） ───────────────── */
+
+// 段末「（据《X》）」来源标注的内联匹配（与 shared/proposal 的 stripCitations 同模式）。
+const CITATION_INLINE_RE = /（据[^）]*）/g
+
+/**
+ * remark transform：把文本节点里的「（据《X》）」切出来，包成带 class 的内联节点，供编辑态上色
+ * （CSS `.proposal-citation`，见 index.css）。让作者一眼看到每段引了哪些来源、便于逐句溯源。
+ *
+ * 实现取舍：用 `emphasis` 作载体节点 + `data.hName='span'`——mdast-util-to-hast 的 applyData 会用
+ * hName 覆盖最终元素的 tagName，故渲染成 `<span class="proposal-citation">` 而非 `<em>`（不带斜体），
+ * 也不必给 react-markdown 注册一个会误伤其它内容的全局 `span` 组件。仅当 highlightCitations 开启时
+ * 才挂这个插件，故普通聊天气泡不产出任何 span、零影响。
+ *
+ * 项目未装 unist-util-visit，故手写递归遍历 mdast。只切 type==='text' 的节点：code / inlineCode 的
+ * 文本在 'code'/'inlineCode' 节点里（无 children），不会被误染。
+ */
+function remarkHighlightCitations() {
+  return (tree: Root): void => {
+    walkCitations(tree as { children?: unknown[] })
+  }
+}
+
+function walkCitations(node: { children?: unknown[] }): void {
+  const children = node.children
+  if (!Array.isArray(children)) return
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i] as { type?: string; value?: string; children?: unknown[] }
+    if (child.type === 'text' && typeof child.value === 'string') {
+      const split = splitCitationText(child.value)
+      if (split) {
+        children.splice(i, 1, ...split)
+        i += split.length - 1 // 跳过刚插入的片段，避免重复处理
+      }
+    } else {
+      walkCitations(child)
+    }
+  }
+}
+
+// 把一段文本按引用组切成 [普通文本 | 引用 span | 普通文本 …]；无引用 → null（保持原节点不变）。
+function splitCitationText(value: string): unknown[] | null {
+  CITATION_INLINE_RE.lastIndex = 0
+  if (!CITATION_INLINE_RE.test(value)) return null
+  CITATION_INLINE_RE.lastIndex = 0
+  const out: unknown[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = CITATION_INLINE_RE.exec(value)) !== null) {
+    if (m.index > last) out.push({ type: 'text', value: value.slice(last, m.index) })
+    out.push({
+      type: 'emphasis',
+      children: [{ type: 'text', value: m[0] }],
+      data: { hName: 'span', hProperties: { className: ['proposal-citation'] } }
+    })
+    last = m.index + m[0].length
+  }
+  if (last < value.length) out.push({ type: 'text', value: value.slice(last) })
+  return out
+}
+
 /* ───────────────── Exported Text renderer ───────────────── */
 
-function AssistantMarkdownImpl({ text }: { text: string }): React.JSX.Element {
+function AssistantMarkdownImpl({
+  text,
+  // 编辑态（ProposalPaper）传 true：高亮段末来源标注。聊天气泡不传 → 走默认，无任何 span 注入。
+  highlightCitations = false
+}: {
+  text: string
+  highlightCitations?: boolean
+}): React.JSX.Element {
+  const remarkPlugins = highlightCitations
+    ? [remarkGfm, remarkHighlightCitations]
+    : [remarkGfm]
   return (
     <div className="break-words text-[14px] leading-relaxed text-foreground">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={remarkPlugins}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={components}
       >

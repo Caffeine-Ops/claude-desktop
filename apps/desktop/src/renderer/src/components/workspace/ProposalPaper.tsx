@@ -288,7 +288,7 @@ export function ProposalPaper(): React.JSX.Element {
           onChange={(e) => updateSection(sec.id, e.target.value)}
         />
       ) : (
-        <AssistantMarkdown text={sec.markdown} />
+        <AssistantMarkdown text={sec.markdown} highlightCitations />
       )}
     </section>
     )

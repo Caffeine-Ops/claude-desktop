@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test'
 
 import {
   parseCitations,
+  stripCitations,
   parseGaps,
   trigramOverlap,
   buildProposalMetric,
@@ -54,6 +55,39 @@ describe('parseCitations', () => {
 
   it('空引用组（无《》）跳过', () => {
     expect(parseCitations('正文。（据无名）')).toEqual([])
+  })
+})
+
+describe('stripCitations（导出/预览剥除段末来源标注）', () => {
+  it('单个来源组整段删掉', () => {
+    expect(stripCitations('智能预问诊支持多轮对话。（据《产品白皮书》）')).toBe(
+      '智能预问诊支持多轮对话。'
+    )
+  })
+
+  it('连续多个来源组都删掉（用户实例）', () => {
+    expect(
+      stripCitations(
+        '系统建设方案如下。（据《【福鑫数科-特别详细版】AI智能预问诊系统建设方案》）（据《【福鑫数科-特别详细版】AI智能预问诊系统建设方案》）'
+      )
+    ).toBe('系统建设方案如下。')
+  })
+
+  it('一组内多个《》一并删掉', () => {
+    expect(stripCitations('正文。（据《A》《B》）')).toBe('正文。')
+  })
+
+  it('吃掉引用组前的 ASCII 空格', () => {
+    expect(stripCitations('正文 （据《A》）')).toBe('正文')
+  })
+
+  it('保留正文其余内容、多段只删来源', () => {
+    expect(stripCitations('第一段。（据《A》）\n\n第二段。（据《B》）')).toBe('第一段。\n\n第二段。')
+  })
+
+  it('无来源标注原样返回；空串安全', () => {
+    expect(stripCitations('这是一段没有任何来源标注的正文。')).toBe('这是一段没有任何来源标注的正文。')
+    expect(stripCitations('')).toBe('')
   })
 })
 
