@@ -11,9 +11,13 @@ import {
   sortSectionsByKind,
   gateDraftBlocksByPhase,
   isDraftBlockAheadOfPhase,
+  detectContentSentinelAheadOfPhase,
   laterPhase,
   decideProposalStageConfirm,
   appendDraftBlocks,
+  collapseSingletonSections,
+  PROPOSAL_DRAFT_BEGIN,
+  PROPOSAL_DRAFT_END,
   PROPOSAL_COVER_CONFIRM_HEADER,
   PROPOSAL_TOC_CONFIRM_HEADER
 } from './proposal'
@@ -316,6 +320,51 @@ describe('stripDraftHtml（经 extractProposalDraftResult 间接验证）', () =
   })
 })
 
+describe('extractProposalDraftResult·哨兵必须独占整行（防内联引用的幻影块）', () => {
+  it('哨兵被反引号内联引用（如对话总结/压缩复述格式说明）→ 不抽出任何块', () => {
+    // 真实 bug：上下文压缩生成的「对话总结」里把哨兵当文档引用：
+    //   正文须包在哨兵 `===方案正文开始===`/`===方案正文结束===` 内
+    // 旧 indexOf 扫描会从这对引用里抽出中间的 `/`（反引号+斜杠+反引号）当正文块，
+    // 右侧草稿于是只剩一个「/」。哨兵只有独占整行才算真分隔符。
+    const summary =
+      '# 对话总结\n\n核心纪律：正文须包在哨兵 `===方案正文开始===`/`===方案正文结束===` 内，' +
+      '封面用封面哨兵、目录用目录哨兵。每段正文末尾标注 `（据《文件名》）`。'
+    const r = extractProposalDraftResult(summary)
+    expect(r.blocks).toEqual([])
+    expect(r.truncated).toBeNull()
+  })
+
+  it('同行内行文中夹哨兵（前后有可见字符）→ 不算分隔符', () => {
+    const r = extractProposalDraftResult('提示你用 ===方案正文开始=== 包住正文 ===方案正文结束=== 即可')
+    expect(r.blocks).toEqual([])
+    expect(r.truncated).toBeNull()
+  })
+
+  it('真·独占整行的哨兵照常抽出（容忍前后空白与 \\r）', () => {
+    const r = extractProposalDraftResult(
+      '前言。\n\n===方案正文开始===\n# 正文内容\n这是一段。\n===方案正文结束===\n\n收尾。'
+    )
+    expect(r.blocks).toEqual([{ kind: 'content', markdown: '# 正文内容\n这是一段。' }])
+    expect(r.truncated).toBeNull()
+  })
+
+  it('混合：先内联引用的幻影哨兵，后真·整行哨兵 → 只抽真块', () => {
+    const r = extractProposalDraftResult(
+      '说明：写法是 `===方案封面开始===`。下面是真封面：\n\n===方案封面开始===\n# 标题\n===方案封面结束==='
+    )
+    expect(r.blocks).toEqual([{ kind: 'cover', markdown: '# 标题' }])
+  })
+
+  it('真起始哨兵独占行但结束哨兵只内联引用 → 截断残文（不被内联引用误闭合）', () => {
+    const r = extractProposalDraftResult(
+      '===方案正文开始===\n# 正文\n（结束写法是 `===方案正文结束===`）'
+    )
+    expect(r.blocks).toEqual([])
+    expect(r.truncated?.kind).toBe('content')
+    expect(r.truncated?.markdown).toContain('# 正文')
+  })
+})
+
 describe('isDraftBlockAheadOfPhase（阶段门谓词）', () => {
   it('content 块在 cover/toc 阶段都判为「越过目录门」', () => {
     expect(isDraftBlockAheadOfPhase('cover', 'content')).toBe(true)
@@ -329,6 +378,41 @@ describe('isDraftBlockAheadOfPhase（阶段门谓词）', () => {
       expect(isDraftBlockAheadOfPhase(phase, 'cover')).toBe(false)
       expect(isDraftBlockAheadOfPhase(phase, 'toc')).toBe(false)
     }
+  })
+})
+
+describe('detectContentSentinelAheadOfPhase（流式硬门·趁 AI 跳过目录确认刚冒正文就掐断）', () => {
+  const begin = PROPOSAL_DRAFT_BEGIN.content
+
+  it('toc 阶段冒出独占整行的正文起始哨兵 → 命中（应 abort）', () => {
+    const text = `===方案目录开始===\n1. 背景\n===方案目录结束===\n${begin}\n# 项目背景`
+    expect(detectContentSentinelAheadOfPhase(text, 'toc')).toBe(true)
+  })
+
+  it('cover 阶段直接冒正文哨兵（连目录都跳了）→ 命中', () => {
+    expect(detectContentSentinelAheadOfPhase(`${begin}\n# 正文`, 'cover')).toBe(true)
+  })
+
+  it('content 阶段（用户已确认目录）恒返回 false——正文哨兵是合法产出，绝不误伤', () => {
+    expect(detectContentSentinelAheadOfPhase(`${begin}\n# 正文`, 'content')).toBe(false)
+  })
+
+  it('只生成目录、没有正文哨兵 → 不命中（正常目录回合不被打断）', () => {
+    const text = '===方案目录开始===\n1. 背景\n2. 需求分析\n===方案目录结束==='
+    expect(detectContentSentinelAheadOfPhase(text, 'toc')).toBe(false)
+  })
+
+  it('正文哨兵字样只是被内联引用/说明（非独占行）→ 不命中（复用独占行判定，防误掐）', () => {
+    const text = `目录阶段提示：正文要用 \`${begin}\` 包裹，但现在先别写。`
+    expect(detectContentSentinelAheadOfPhase(text, 'toc')).toBe(false)
+  })
+
+  it('空文本 → 不命中', () => {
+    expect(detectContentSentinelAheadOfPhase('', 'toc')).toBe(false)
+  })
+
+  it('正文结束哨兵不触发（只认起始哨兵，避免把闭合误当起手）', () => {
+    expect(detectContentSentinelAheadOfPhase(`${PROPOSAL_DRAFT_END.content}\n`, 'toc')).toBe(false)
   })
 })
 
@@ -419,6 +503,35 @@ describe('sortSectionsByKind（维持同 kind 连续不变量）', () => {
     const inp = [S('toc', 'b'), S('cover', 'a')]
     sortSectionsByKind(inp)
     expect(inp.map((s) => s.id)).toEqual(['b', 'a']) // 原数组未被原地改
+  })
+})
+
+describe('collapseSingletonSections（重建/恢复路径折叠重复封面·目录）', () => {
+  const S = (kind: ProposalDraftBlock['kind'], id: string): { kind: ProposalDraftBlock['kind']; id: string } => ({ kind, id })
+
+  it('转录里两份封面（原版+修订版）→ 只保留最后一份（最新修订）', () => {
+    const out = collapseSingletonSections([S('cover', 'v1'), S('cover', 'v2'), S('toc', 't')])
+    expect(out.map((s) => [s.kind, s.id])).toEqual([['cover', 'v2'], ['toc', 't']])
+  })
+
+  it('封面、目录各保留最后一份；正文多节全保留；只过滤不排序（保留原序，排序交 sortSectionsByKind）', () => {
+    const out = collapseSingletonSections([
+      S('cover', 'c1'),
+      S('toc', 't1'),
+      S('content', 'a'),
+      S('cover', 'c2'),
+      S('toc', 't2'),
+      S('content', 'b')
+    ])
+    expect(out.map((s) => s.id)).toEqual(['a', 'c2', 't2', 'b'])
+  })
+
+  it('各 kind 至多一份时原样返回；空数组 → 空数组；不原地改入参', () => {
+    const inp = [S('cover', 'a'), S('toc', 'b'), S('content', 'c')]
+    expect(collapseSingletonSections(inp).map((s) => s.id)).toEqual(['a', 'b', 'c'])
+    expect(collapseSingletonSections([])).toEqual([])
+    collapseSingletonSections(inp)
+    expect(inp.map((s) => s.id)).toEqual(['a', 'b', 'c']) // 入参未被原地改
   })
 })
 
@@ -535,5 +648,64 @@ describe('appendDraftBlocks（轮内增量同步 + 轮末入库共用的纯 redu
     const blocked = appendDraftBlocks(empty(), [], { kind: 'content', markdown: '半截正文' }, mk)
     expect(blocked.sections.length).toBe(0)
     expect(blocked.stageSkip).toEqual({ count: 1 })
+  })
+
+  // 单例 kind（封面/目录）：全篇至多一节。用户在「确认/调整」对话里让 AI 重发修订版封面时，
+  // 新块 markdown 与旧块不同、躲过逐字去重，旧逻辑会把它当新节追加 → 右侧出现两份封面
+  // （用户报的「复制一整块、原处不变」bug）。修复后单例 kind 的新块【整节替换】同 kind 旧节。
+  it('单例·封面修订：重发不同内容的封面 → 替换旧节而非追加（仍只 1 节、内容为新版）', () => {
+    const v1 = appendDraftBlocks(empty(), [cover], null, mk)
+    const adjusted: ProposalDraftBlock = { kind: 'cover', markdown: '# 标题\n\n客户单位：武汉协和医院' }
+    const v2 = appendDraftBlocks(v1, [adjusted], null, mk)
+    expect(v2.sections.map((s) => s.kind)).toEqual(['cover'])
+    expect(v2.sections[0].markdown).toBe(adjusted.markdown)
+    // baselineMarkdown 同步成新版：否则 M-0 埋点把「AI 重写封面」误算成用户编辑量。
+    expect(v2.sections[0].baselineMarkdown).toBe(adjusted.markdown)
+  })
+
+  it('单例·目录修订：重发不同内容的目录 → 替换旧节而非追加（仍只 1 节、内容为新版）', () => {
+    const v1 = appendDraftBlocks(empty(), [toc], null, mk)
+    const adjusted: ProposalDraftBlock = { kind: 'toc', markdown: '1. 背景\n2. 方案\n3. 实施' }
+    const v2 = appendDraftBlocks(v1, [adjusted], null, mk)
+    expect(v2.sections.map((s) => s.kind)).toEqual(['toc'])
+    expect(v2.sections[0].markdown).toBe(adjusted.markdown)
+  })
+
+  it('封面替换不波及正文：正文阶段重写封面只换封面，多节正文原样保留', () => {
+    // 构造 [cover, content, content]（正文阶段）。
+    let st = appendDraftBlocks(empty(), [cover], null, mk)
+    st.phase = 'content'
+    const c1: ProposalDraftBlock = { kind: 'content', markdown: '## 一、背景\n正文一（据《X》）' }
+    const c2: ProposalDraftBlock = { kind: 'content', markdown: '## 二、目标\n正文二（据《Y》）' }
+    st = appendDraftBlocks(st, [c1, c2], null, mk)
+    expect(st.sections.map((s) => s.kind)).toEqual(['cover', 'content', 'content'])
+    // 正文阶段重写封面（封面可反复改、不被阶段门拦）。
+    const newCover: ProposalDraftBlock = { kind: 'cover', markdown: '# 新标题\n\n客户单位：ZZ' }
+    const out = appendDraftBlocks(st, [newCover], null, mk)
+    expect(out.sections.map((s) => s.kind)).toEqual(['cover', 'content', 'content'])
+    expect(out.sections[0].markdown).toBe(newCover.markdown)
+    expect(out.sections.filter((s) => s.kind === 'content').map((s) => s.markdown)).toEqual([
+      c1.markdown,
+      c2.markdown
+    ])
+  })
+
+  it('单例·完全相同的封面重复同步仍幂等：不替换也不重复（沿用内容级去重）', () => {
+    const v1 = appendDraftBlocks(empty(), [cover], null, mk)
+    const id0 = v1.sections[0].id
+    const v2 = appendDraftBlocks(v1, [cover], null, mk)
+    expect(v2.sections.map((s) => s.kind)).toEqual(['cover'])
+    // 完全相同 → 不重建节（id 不变），区别于「内容不同 → 替换（id 可变）」。
+    expect(v2.sections[0].id).toBe(id0)
+  })
+
+  it('正文多节：仍是追加语义，不受单例替换影响', () => {
+    let st = appendDraftBlocks(empty(), [], null, mk)
+    st.phase = 'content'
+    const c1: ProposalDraftBlock = { kind: 'content', markdown: '## 一\n正文一' }
+    const c2: ProposalDraftBlock = { kind: 'content', markdown: '## 二\n正文二' }
+    st = appendDraftBlocks(st, [c1], null, mk)
+    st = appendDraftBlocks(st, [c2], null, mk)
+    expect(st.sections.map((s) => s.markdown)).toEqual([c1.markdown, c2.markdown])
   })
 })

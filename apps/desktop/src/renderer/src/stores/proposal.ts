@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 import type { ProposalDraftBlock, ProposalKind, SectionVerification } from '@shared/proposal'
-import { appendDraftBlocks, sortSectionsByKind } from '@shared/proposal'
+import { appendDraftBlocks, sortSectionsByKind, collapseSingletonSections } from '@shared/proposal'
 import type { ProposalDraftRecord } from '@shared/ipc-channels'
 import { useChatStore } from './chat'
 
@@ -285,9 +285,13 @@ export const useProposalStore = create<ProposalState>((set) => ({
       seeded: true,
       consumedDraftIds,
       // 重建时无从知晓 AI 原文，以重建出的 markdown 作埋点基准（编辑量从重开后算起）。
-      // sortSectionsByKind 加固：历史 transcript 若含非连续 kind 也归并回区段，保不变量。
+      // collapseSingletonSections：transcript 含历史多版封面/目录（用户调整过）时只留最后一版，
+      // 否则重建出两份封面（实时路径已修、重建路径会复发的根因）。sortSectionsByKind：折叠后再
+      // 按阶段序归并回区段，保「同 kind 连续」不变量。
       sections: sortSectionsByKind(
-        sections.map((s) => ({ ...s, baselineMarkdown: s.baselineMarkdown ?? s.markdown }))
+        collapseSingletonSections(
+          sections.map((s) => ({ ...s, baselineMarkdown: s.baselineMarkdown ?? s.markdown }))
+        )
       ),
       phase,
       workspaceOpen: true,
@@ -304,9 +308,10 @@ export const useProposalStore = create<ProposalState>((set) => ({
       seeded: true,
       consumedDraftIds: new Set(),
       // 盘上不存 baselineMarkdown（不持久化）；以盘载 markdown 作埋点基准，编辑量从本次重开算起。
-      // sortSectionsByKind 加固：盘载历史若含非连续 kind 也归并回区段，保不变量。
+      // collapseSingletonSections：旧版本遗留的脏草稿（盘上已存两份封面/目录）恢复时折叠成最后一版；
+      // sortSectionsByKind：折叠后再按阶段序归并回区段，保「同 kind 连续」不变量。
       sections: sortSectionsByKind(
-        record.sections.map((s) => ({ ...s, baselineMarkdown: s.markdown }))
+        collapseSingletonSections(record.sections.map((s) => ({ ...s, baselineMarkdown: s.markdown })))
       ),
       phase: record.phase,
       workspaceOpen: true,

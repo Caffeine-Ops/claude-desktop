@@ -89,6 +89,41 @@ export function decideProposalStageConfirm(
 const KIND_SCAN_ORDER: ProposalKind[] = ['cover', 'toc', 'content']
 
 /**
+ * 哨兵是否【独占整行】：从它所在行的行首到 start 全是空白、从 start+len 到行尾也全是空白。
+ *
+ * 为什么必须独占行（本次根因修复）：旧版用裸 indexOf 扫全文，不区分哨兵是「真分隔符」
+ * 还是被反引号内联引用的文档说明。上下文压缩生成的「对话总结」会把哨兵当格式说明复述：
+ *   正文须包在哨兵 `===方案正文开始===`/`===方案正文结束===` 内
+ * 旧扫描会从这对内联引用里抽出中间的 `/`（反引号+斜杠+反引号）当成正文块——右侧草稿于是
+ * 只剩一个「/」（用户报的 bug）。AI 产出真哨兵时一律单独成行（`\n===…===\n`，见文件头注释
+ * 「整行含 CJK 字符」的设计本意），故「独占整行」既是设计本意、又能精准排除内联引用。
+ */
+function isStandaloneSentinel(text: string, start: number, len: number): boolean {
+  for (let p = start - 1; p >= 0 && text[p] !== '\n'; p--) {
+    const ch = text[p]
+    if (ch !== ' ' && ch !== '\t' && ch !== '\r') return false
+  }
+  for (let q = start + len; q < text.length && text[q] !== '\n'; q++) {
+    const ch = text[q]
+    if (ch !== ' ' && ch !== '\t' && ch !== '\r') return false
+  }
+  return true
+}
+
+/**
+ * 从 from 起找下一个【独占整行】的 token 出现位置；跳过被行内其他字符（如反引号引用）包裹的。
+ * 无独占行出现 → -1。供 extractProposalDraftResult 找真起始/结束哨兵共用。
+ */
+function indexOfStandaloneSentinel(text: string, token: string, from: number): number {
+  let i = text.indexOf(token, from)
+  while (i >= 0) {
+    if (isStandaloneSentinel(text, i, token.length)) return i
+    i = text.indexOf(token, i + token.length)
+  }
+  return -1
+}
+
+/**
  * 导出/预览时插在 kind 边界的「分页」标记。单独成行时 remark 解析为一个块级 html 节点，
  * proposalDocx 识别它产出真 PageBreak（封面单独一页、目录单独一页、正文起新页）。
  * 用 html 注释而非 thematicBreak：注释在 .md 里不可见、在 docx 里被我们专门拦截，
@@ -184,11 +219,13 @@ export function extractProposalDraftResult(text: string): ProposalDraftExtractio
   let from = 0
   for (;;) {
     // 在三种 kind 的起始哨兵里取「位置最靠前」的那个——块的 kind 由它自己的哨兵决定，
-    // 不再依赖外部 phase（根因修复，见文件头 PROPOSAL_DRAFT_BEGIN 注释）。
+    // 不再依赖外部 phase（根因修复，见文件头 PROPOSAL_DRAFT_BEGIN 注释）。只认【独占整行】
+    // 的哨兵（indexOfStandaloneSentinel），排除被反引号内联引用的文档说明（幻影块根因，见
+    // isStandaloneSentinel 注释）。
     let kind: ProposalKind | null = null
     let begin = -1
     for (const k of KIND_SCAN_ORDER) {
-      const i = text.indexOf(PROPOSAL_DRAFT_BEGIN[k], from)
+      const i = indexOfStandaloneSentinel(text, PROPOSAL_DRAFT_BEGIN[k], from)
       if (i >= 0 && (begin < 0 || i < begin)) {
         begin = i
         kind = k
@@ -196,7 +233,8 @@ export function extractProposalDraftResult(text: string): ProposalDraftExtractio
     }
     if (kind === null) break
     const contentStart = begin + PROPOSAL_DRAFT_BEGIN[kind].length
-    const e = text.indexOf(PROPOSAL_DRAFT_END[kind], contentStart)
+    // 结束哨兵同样必须独占整行：否则正文里内联引用一句 `===方案正文结束===` 会提前误闭合本块。
+    const e = indexOfStandaloneSentinel(text, PROPOSAL_DRAFT_END[kind], contentStart)
     if (e < 0) {
       // 未闭合 = 截断。残文连同 kind 交调用侧降级，而非丢弃（B2 核心修复）。
       const tail = stripDraftHtml(text.slice(contentStart))
@@ -229,6 +267,24 @@ export function isDraftBlockAheadOfPhase(phase: ProposalKind, kind: ProposalKind
   return kind === 'content' && phase !== 'content'
 }
 
+/**
+ * 流式硬门探测（①·根因「目录阶段一直在思考」）：in-flight 文本里是否已出现【独占整行】的
+ * 正文【起始】哨兵，且当前 phase 还没确认目录（cover/toc）。供渲染端在 chunk 流里逐段调用——
+ * 一旦命中即 abort 本轮，趁 AI 刚要写正文就掐断，避免它在「跳过目录确认」后跑飞整篇正文
+ * （那正是用户看到的长时间「在思考」）。
+ *
+ * 为什么只看【起始】哨兵而非等闭合：目的是【尽早】打断，等 content 块闭合就晚了（整章正文已生成）。
+ * 为什么必须独占整行：复用 isStandaloneSentinel——排除 AI 在说明/引用里内联提到哨兵字样的误判
+ * （与 extractProposalDraftResult 同源，见 isStandaloneSentinel 注释）。
+ * 为什么 content 阶段恒返回 false：用户点「确认目录」时 applyProposalStageConfirm 已同步把 phase
+ * 推到 content（早于 AI 吐正文），故此后正文哨兵是合法产出，绝不能误伤——这也让本探测在最昂贵的
+ * 正文阶段直接短路、不扫长文本。
+ */
+export function detectContentSentinelAheadOfPhase(text: string, phase: ProposalKind): boolean {
+  if (phase === 'content' || !text) return false
+  return indexOfStandaloneSentinel(text, PROPOSAL_DRAFT_BEGIN.content, 0) >= 0
+}
+
 /** 取两阶段里更靠后的（cover<toc<content）。阶段「绝不回退」语义的单一实现。 */
 export function laterPhase(a: ProposalKind, b: ProposalKind): ProposalKind {
   return PROPOSAL_PHASE_ORDER[b] > PROPOSAL_PHASE_ORDER[a] ? b : a
@@ -250,6 +306,29 @@ export function laterPhase(a: ProposalKind, b: ProposalKind): ProposalKind {
  */
 export function sortSectionsByKind<T extends { kind: ProposalKind }>(sections: T[]): T[] {
   return [...sections].sort((a, b) => PROPOSAL_PHASE_ORDER[a.kind] - PROPOSAL_PHASE_ORDER[b.kind])
+}
+
+/**
+ * 折叠单例 kind（封面/目录）的重复节：每个单例 kind 只保留【最后一份】，丢弃更早的；正文（多节）
+ * 全保留、相对顺序不变。返回新数组，不原地改入参。main 与 renderer 共享纯函数。
+ *
+ * 为什么需要（本次根因修复的第二层）：appendDraftBlocks 的单例替换只管【实时 append/sync】路径。
+ * 但「重开历史方案会话」是另一条路——它从会话 transcript（或盘上草稿）重建 sections，绕过
+ * appendDraftBlocks 把每条 assistant 消息抽出的每个块直接堆进数组。用户曾在「调整封面」对话里让
+ * AI 重发过修订版封面，transcript 于是同时留着原版+修订版两个封面块 → 重建出两份封面（实时路径
+ * 已修、重建路径会复发）。故 restore 路径统一过本函数，把历史重复折叠成「最后一份胜出」（transcript
+ * 按时间顺序，最后一个封面/目录即用户最终敲定的修订版）。也顺带清掉旧版本遗留的脏草稿。
+ */
+export function collapseSingletonSections<T extends { kind: ProposalKind }>(sections: T[]): T[] {
+  // 单例 kind 的「最后一份」下标：正向遍历不断覆盖，遍历完即指向各 kind 最后一次出现。
+  const lastIndexOfKind = new Map<ProposalKind, number>()
+  sections.forEach((sec, i) => {
+    if (SINGLETON_KINDS.has(sec.kind)) lastIndexOfKind.set(sec.kind, i)
+  })
+  // 保留：非单例（content 全留）+ 单例里恰是「最后一份」的那个。其余单例旧版本剔除。
+  return sections.filter(
+    (sec, i) => !SINGLETON_KINDS.has(sec.kind) || lastIndexOfKind.get(sec.kind) === i
+  )
 }
 
 /** gateDraftBlocksByPhase 的结果：放行的块、被拦的越界块、过门后应推进到的 phase。 */
@@ -297,6 +376,17 @@ export interface DraftAppendState<T extends ProposalDraftBlock> {
 }
 
 /**
+ * 单例 kind：全篇至多一节。封面、目录天然唯一（一份方案只有一个封面、一个目录）；正文是多节
+ * （逐章追加）。这个区分是「封面/目录修订要替换、正文要追加」的单一真相源（appendDraftBlocks 用）。
+ *
+ * 为什么需要它（本次根因修复）：用户在「确认封面/目录吗？要调整吗？」对话里点「调整」后，AI 会
+ * 重发一份【修订版】封面/目录哨兵块。它与旧块内容不同 → 躲过 appendDraftBlocks 的逐字内容级去重
+ * → 旧逻辑把它当【新节追加】，于是右侧草稿出现两份封面/目录（用户报「复制一整块、原处不变」的
+ * bug，见截图）。把封面/目录标为单例后，新块【整节替换】同 kind 旧节，修订就地生效、不再堆叠。
+ */
+export const SINGLETON_KINDS: ReadonlySet<ProposalKind> = new Set<ProposalKind>(['cover', 'toc'])
+
+/**
  * 纯函数：把一批闭合草稿块（blocks）+ 可选截断残块（truncated）追加进当前草稿，返回新的
  * sections/phase/stageSkip。store 的两个入口共用它，差别只在 messageId 记账：
  *   - appendSections（轮末 'end' 触发）：额外按 messageId 去重 + 记账。
@@ -329,9 +419,13 @@ export function appendDraftBlocks<T extends ProposalDraftBlock>(
   let skipped = gate.skippedAhead.length
   const dupKey = (kind: ProposalKind, markdown: string): string => `${kind}\u0000${markdown}`
   const existingKeys = new Set(state.sections.map((sec) => dupKey(sec.kind, sec.markdown)))
-  const added: T[] = gate.accepted
-    .filter((b) => !existingKeys.has(dupKey(b.kind, b.markdown)))
-    .map((b) => makeSection(b, {}))
+
+  // 收集本轮要真正入库的块（已闭合块 + 轮末截断残块），统一过「内容级去重 + 阶段门」。
+  // truncated 标记透传给 makeSection 以打「疑似截断」徽标。
+  const incoming: Array<{ block: ProposalDraftBlock; truncated: boolean }> = []
+  for (const b of gate.accepted) {
+    if (!existingKeys.has(dupKey(b.kind, b.markdown))) incoming.push({ block: b, truncated: false })
+  }
   // phase 取 gate 算出的「绝不跨门」目标；再叠上被接受的截断残块（laterPhase 不回退）。
   let phase = gate.nextPhase
   if (truncated && !existingKeys.has(dupKey(truncated.kind, truncated.markdown))) {
@@ -339,13 +433,35 @@ export function appendDraftBlocks<T extends ProposalDraftBlock>(
       // 截断的越界正文（AI 在目录阶段写了未闭合的正文哨兵）同样被门拦下、记入 skipped。
       skipped += 1
     } else {
-      added.push(makeSection(truncated, { truncated: true }))
+      incoming.push({ block: truncated, truncated: true })
       phase = laterPhase(phase, truncated.kind)
     }
   }
+
+  // 单例 kind（封面/目录）替换：本批确有「内容不同」的新封面/目录块时，移除同 kind 旧节、由新块
+  // 取代——修订就地生效，不再把修订版当新节追加（重复封面/目录的根因，见 SINGLETON_KINDS 注释）。
+  // 仅当 incoming 里确有该 kind 的新块才替换：完全相同的块已被上面的逐字去重过滤掉、不进 incoming，
+  // 故纯重复同步绝不会误删既有节（幂等不变量保持）。同批若混入多个同 kind 单例块（理论少见，如 AI
+  // 一轮里改了两版封面），只保留最后一个，避免又生成两节。
+  const replacedKinds = new Set<ProposalKind>()
+  for (const it of incoming) if (SINGLETON_KINDS.has(it.block.kind)) replacedKinds.add(it.block.kind)
+  const deduped: Array<{ block: ProposalDraftBlock; truncated: boolean }> = []
+  for (const it of incoming) {
+    if (SINGLETON_KINDS.has(it.block.kind)) {
+      const prev = deduped.findIndex((x) => x.block.kind === it.block.kind)
+      if (prev >= 0) deduped.splice(prev, 1)
+    }
+    deduped.push(it)
+  }
+
+  const added: T[] = deduped.map((it) =>
+    makeSection(it.block, it.truncated ? { truncated: true } : {})
+  )
+  // 被替换 kind 的旧节先剔出；其余旧节保留。content 永不在 replacedKinds 里 → 多节正文原样保留。
+  const kept = state.sections.filter((sec) => !replacedKinds.has(sec.kind))
   return {
-    // sortSectionsByKind：把追加块按阶段序归并回各自区段，维持「同 kind 连续」不变量。
-    sections: sortSectionsByKind([...state.sections, ...added]),
+    // sortSectionsByKind：把（替换后的）新块按阶段序归并回各自区段，维持「同 kind 连续」不变量。
+    sections: sortSectionsByKind([...kept, ...added]),
     phase,
     // 本轮有越界块被拦才更新提示；否则保留既有 stageSkip（不被无关轮次悄悄清掉）。
     stageSkip: skipped > 0 ? { count: skipped } : state.stageSkip

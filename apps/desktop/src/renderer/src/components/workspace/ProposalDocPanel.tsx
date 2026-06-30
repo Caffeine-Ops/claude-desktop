@@ -162,12 +162,14 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageSkip, phase, generating, autoTocFix])
 
-  // 跳阶补救：AI 在目录阶段直接吐正文被阶段门拦下（stageSkip 非空）时，重发「只生成目录」
-  // 指令把 AI 拉回目录。phase 已是 toc（目录哨兵块经 laterPhase 自动推进），不再 advancePhase。
+  // 跳阶补救：AI 在目录阶段直接吐正文被阶段门拦下（stageSkip 非空）、或被流式硬门（①）当场掐断时，
+  // 重发指令把 AI 拉回。phase 已是 toc（目录哨兵块经 laterPhase 自动推进），不再 advancePhase。
+  // 措辞直指真正缺的那一步——【目录确认】：跳阶的本质不是没生成目录，而是生成后没发起 AskUserQuestion
+  // 确认就抢写正文。故既覆盖「目录还没生成」也覆盖「目录已生成但漏了确认」，并硬性要求先发确认卡。
   function regenerateToc(): void {
     clearStageSkip()
     void sendProposalStageMessage(
-      `上一轮直接写了正文、跳过了目录。请【先只输出章节目录大纲】（有序列表逐章列出），用方案【目录】哨兵包裹（${PROPOSAL_DRAFT_BEGIN.toc} … ${PROPOSAL_DRAFT_END.toc}）；目录经我确认前不要写正文。`
+      `上一轮你跳过了目录确认就开始写正文（已被拦下、未入文档）。请按下列顺序纠正：① 若目录尚未生成，先【只输出章节目录大纲】（有序列表逐章列出），用方案【目录】哨兵包裹（${PROPOSAL_DRAFT_BEGIN.toc} … ${PROPOSAL_DRAFT_END.toc}）；② 然后【必须立即】用 AskUserQuestion 工具发起目录确认（header「确认目录」，首选项「确认目录，开始撰写正文」）。在我确认前【绝对不要】写任何正文。`
     )
   }
   async function handleExport(
@@ -429,6 +431,19 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         {phase === 'toc' && <span className="text-muted-foreground">目录整理中</span>}
         {phase === 'content' && <span className="text-muted-foreground">正文撰写中</span>}
       </div>
+
+      {/* 补救进行中提示（③·根因「莫名一直在思考」）：自动补救（regenerateToc）原本【完全静默】，
+          用户只看到 spinner 一直转、不知在干嘛——这正是「一直在思考」体感的来源之一。故凡补救轮
+          在飞期间（已触发过补救 autoTocFix>0、且正生成、目录尚未确认）都露一行「正在自动纠正」，
+          让「为什么还在转」对用户可见。与下方 autoTocFix>=2 的兜底条天然互斥：本条要 generating=true，
+          那条要 stageSkip 非空，而 regenerateToc 发起前已 clearStageSkip，故补救轮在飞时 stageSkip
+          必为 null、兜底条不显示；补救轮结束（generating=false）后才轮到兜底条。 */}
+      {autoTocFix > 0 && generating && phase !== 'content' && (
+        <div className="proposal-anim-fade flex items-center gap-2 border-b border-sky-500/20 bg-sky-500/5 px-3 py-1 text-[11px] text-sky-600">
+          <InfoIcon className="shrink-0" />
+          <span className="flex-1">AI 跳过了目录确认，正在自动重新整理目录…</span>
+        </div>
+      )}
 
       {/* 跳阶提示（方案二·软化）：默认静默自动补救（见上方 effect），不再暴露「AI 跳过目录」
           这种内部状态机斗争。仅当自动补救两次仍跳阶（autoTocFix>=2）才露一行温和兜底 + 手动入口。

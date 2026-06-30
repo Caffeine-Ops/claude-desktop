@@ -20,7 +20,7 @@ import { useProposalStore } from '../stores/proposal'
 import type { ProposalProduct, ProposalSection } from '../stores/proposal'
 import { matchProducts } from '../lib/kbProductMatch'
 import { dispatchChatTurn } from '../lib/dispatchChatTurn'
-import { extractProposalDraftResult } from '@shared/proposal'
+import { extractProposalDraftResult, detectContentSentinelAheadOfPhase } from '@shared/proposal'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
@@ -1077,6 +1077,8 @@ function makeSessionEventHandler(
 ): (event: ChatEvent) => void {
   const toolNames = new Map<string, string>()
   const argsBuffers = new Map<string, string>()
+  // 流式硬门（①）：每条 messageId 至多 abort 一次的去重集。模块/闭包级即可——掐断是会话级副作用。
+  const tocGuardAborted = new Set<string>()
   return (event: ChatEvent) => {
     switch (event.type) {
       case 'start':
@@ -1084,6 +1086,10 @@ function makeSessionEventHandler(
         break
       case 'chunk':
         actions.appendAssistantDelta(sid, event.messageId, event.delta)
+        // 流式硬门（①·根因「目录阶段一直在思考」）：方案目录阶段若 AI 跳过确认、刚冒出正文
+        // 哨兵，立即 abort 本轮，避免它跑飞整篇正文（见 maybeAbortOnTocSkip）。非方案/正文阶段
+        // 内部短路，开销可忽略。
+        maybeAbortOnTocSkip(sid, event.messageId, tocGuardAborted)
         break
       case 'thinking_start':
         actions.startReasoning(sid, event.messageId)
@@ -1189,73 +1195,85 @@ function makeSessionEventHandler(
         //   3. 精确定位：用 event.messageId 找到刚结束的那条消息（store 里消息 id
         //      就是 messageId，见 chat.ts appendAssistantDelta），而非倒序抓「最后
         //      一条 assistant」——后者会误抓错误占位等尾随消息、把报错写进草稿。
-        const _ps = useProposalStore.getState()
-        if (
-          _ps.active &&
-          _ps.sessionId === sid &&
-          !_ps.consumedDraftIds.has(event.messageId)
-        ) {
-          const slot = useChatStore.getState().perSession[sid]
-          const msg = slot?.messages.find((m) => m.id === event.messageId) as
-            | { role: string; content: Array<{ type: string; text?: string }> }
-            | undefined
-          if (msg && msg.role === 'assistant') {
-            // Collect all 'text' parts (skip 'reasoning' / tool-call parts).
-            const fullText = msg.content
-              .filter((p) => p.type === 'text' && p.text)
-              .map((p) => p.text!)
-              .join('')
-            // 每个闭合哨兵块映射为一节；提问 / 过程对话不带哨兵 → 不入节（修复提问污染
-            // 文档）。哨兵与抽取器在 shared/proposal.ts，与提示词规则 6 同源。appendSections
-            // 内部按 messageId 去重并记账，分节入 store。
-            //
-            // 三态分流（B2）：
-            //   - 有闭合块或截断残文 → appendSections（截断残文恢复成一节并标记，绝不静默丢）。
-            //   - 完全无哨兵（纯对话轮）→ 仅记账，使同一 messageId 的 end 不再二次处理。
-            const { blocks, truncated } = extractProposalDraftResult(fullText)
-            // 定向修订分流（方案一）：pendingRevision 非空 = 上一动作（节重写/展开/精简/据来源
-            // 修正/截断续写）要求本轮产出【整节替换】某节，而非 append 新节。三种结局：
-            //   ① 目标节仍在 + 拿到 content 块 → reviseSection 整节替换，清指针，重新校验。
-            //   ② 目标节仍在 + 本轮无可用产出（修订被截断/空）→ 放弃替换，原节不动，仅记账。
-            //   ③ 目标节已不在（pending stale：节被删 / reopen 切到别的会话残留指针）→ 回退
-            //      正常累积路径，绝不让产出走 reviseSection 的 no-op 而被静默吞掉（评审：
-            //      reopen 新会话后 stale pending 会吃掉新会话首段正文）。
-            const pending = useProposalStore.getState().pendingRevision
-            const target = pending
-              ? useProposalStore.getState().sections.find((s) => s.id === pending.sectionId)
-              : undefined
-            const revised = blocks.find((b) => b.kind === 'content') ?? blocks[0]
-            if (pending && target && revised) {
-              useProposalStore.getState().setPendingRevision(null)
-              useProposalStore.getState().reviseSection(pending.sectionId, revised.markdown)
-              triggerProposalCitationVerification()
-            } else if (pending && target) {
-              // 修订轮被截断 / 空产出：保留原节（不变量：绝不用半截覆盖好内容），清指针 + 记账。
-              useProposalStore.getState().setPendingRevision(null)
-              useProposalStore.getState().markDraftConsumed(event.messageId)
-            } else {
-              // 无 pending，或 pending 已 stale → 回归正常累积。stale 指针在此一并清除。
-              if (pending) useProposalStore.getState().setPendingRevision(null)
-              if (blocks.length || truncated) {
-                useProposalStore.getState().appendSections(event.messageId, blocks, truncated)
-                // 引用落地校验（#1）：appendSections 内部生成节 id，这里无法直接拿到新节，
-                // 故扫一遍 store 对「未校验的正文节」异步触发——已校验的（verification!==undefined）
-                // 与在飞的（verifyingSectionIds）天然跳过，故重复调用幂等、只补新节。封面/目录
-                // 与截断残节不校验（前者无来源标注，后者内容本就不完整）。
+        // 防御性兜底（根因·「一直在思考」）：下面整段方案草稿处理（抽取/入库/校验）一旦同步
+        // 抛错，绝不能漏掉清 spinner 的 endAssistantMessage——否则 streaming 永远停在 true，
+        // 聊天气泡的 ThinkingSpinner 与右栏 ProposalDocPanel/ProposalPaper 的「AI 生成中」两处
+        // loading 都永久搁浅，表现为「永远在思考」。故把全段包进 try、endAssistantMessage 落在
+        // finally，无论草稿处理成败都复位 turn 状态。catch 只记日志、不重抛——避免异常冒泡到
+        // preload 的 onEvent（那里也无 try/catch，会丢到 ipcRenderer 监听器外）。代价仅是出错
+        // 那一轮的草稿可能没入库（可恢复），远好于把整个会话钉死在思考态。
+        try {
+          const _ps = useProposalStore.getState()
+          if (
+            _ps.active &&
+            _ps.sessionId === sid &&
+            !_ps.consumedDraftIds.has(event.messageId)
+          ) {
+            const slot = useChatStore.getState().perSession[sid]
+            const msg = slot?.messages.find((m) => m.id === event.messageId) as
+              | { role: string; content: Array<{ type: string; text?: string }> }
+              | undefined
+            if (msg && msg.role === 'assistant') {
+              // Collect all 'text' parts (skip 'reasoning' / tool-call parts).
+              const fullText = msg.content
+                .filter((p) => p.type === 'text' && p.text)
+                .map((p) => p.text!)
+                .join('')
+              // 每个闭合哨兵块映射为一节；提问 / 过程对话不带哨兵 → 不入节（修复提问污染
+              // 文档）。哨兵与抽取器在 shared/proposal.ts，与提示词规则 6 同源。appendSections
+              // 内部按 messageId 去重并记账，分节入 store。
+              //
+              // 三态分流（B2）：
+              //   - 有闭合块或截断残文 → appendSections（截断残文恢复成一节并标记，绝不静默丢）。
+              //   - 完全无哨兵（纯对话轮）→ 仅记账，使同一 messageId 的 end 不再二次处理。
+              const { blocks, truncated } = extractProposalDraftResult(fullText)
+              // 定向修订分流（方案一）：pendingRevision 非空 = 上一动作（节重写/展开/精简/据来源
+              // 修正/截断续写）要求本轮产出【整节替换】某节，而非 append 新节。三种结局：
+              //   ① 目标节仍在 + 拿到 content 块 → reviseSection 整节替换，清指针，重新校验。
+              //   ② 目标节仍在 + 本轮无可用产出（修订被截断/空）→ 放弃替换，原节不动，仅记账。
+              //   ③ 目标节已不在（pending stale：节被删 / reopen 切到别的会话残留指针）→ 回退
+              //      正常累积路径，绝不让产出走 reviseSection 的 no-op 而被静默吞掉（评审：
+              //      reopen 新会话后 stale pending 会吃掉新会话首段正文）。
+              const pending = useProposalStore.getState().pendingRevision
+              const target = pending
+                ? useProposalStore.getState().sections.find((s) => s.id === pending.sectionId)
+                : undefined
+              const revised = blocks.find((b) => b.kind === 'content') ?? blocks[0]
+              if (pending && target && revised) {
+                useProposalStore.getState().setPendingRevision(null)
+                useProposalStore.getState().reviseSection(pending.sectionId, revised.markdown)
                 triggerProposalCitationVerification()
-              } else {
+              } else if (pending && target) {
+                // 修订轮被截断 / 空产出：保留原节（不变量：绝不用半截覆盖好内容），清指针 + 记账。
+                useProposalStore.getState().setPendingRevision(null)
                 useProposalStore.getState().markDraftConsumed(event.messageId)
+              } else {
+                // 无 pending，或 pending 已 stale → 回归正常累积。stale 指针在此一并清除。
+                if (pending) useProposalStore.getState().setPendingRevision(null)
+                if (blocks.length || truncated) {
+                  useProposalStore.getState().appendSections(event.messageId, blocks, truncated)
+                  // 引用落地校验（#1）：appendSections 内部生成节 id，这里无法直接拿到新节，
+                  // 故扫一遍 store 对「未校验的正文节」异步触发——已校验的（verification!==undefined）
+                  // 与在飞的（verifyingSectionIds）天然跳过，故重复调用幂等、只补新节。封面/目录
+                  // 与截断残节不校验（前者无来源标注，后者内容本就不完整）。
+                  triggerProposalCitationVerification()
+                } else {
+                  useProposalStore.getState().markDraftConsumed(event.messageId)
+                }
               }
             }
+            // C4：msg 未找到（end 早于消息入 store 的竞态）或 role 非 assistant 时，
+            // 刻意【不】记账。重构前这里有一条无条件兜底 markDraftConsumed，但那与 B2 相悖：
+            // 若 end 对同一 messageId 二次触发（见上方注释「异常路径重发」），第一次 msg
+            // 尚未就绪就记账，会让第二次 msg 已就绪的正文被 consumedDraftIds 挡掉而永久丢失。
+            // 不记账则第一次空跑、第二次正常 append——只有「确实读到正文/截断/确认纯对话」
+            // 才记账，更安全。未记账的孤儿 id 也无害：除本 handler 外无人读 consumedDraftIds。
           }
-          // C4：msg 未找到（end 早于消息入 store 的竞态）或 role 非 assistant 时，
-          // 刻意【不】记账。重构前这里有一条无条件兜底 markDraftConsumed，但那与 B2 相悖：
-          // 若 end 对同一 messageId 二次触发（见上方注释「异常路径重发」），第一次 msg
-          // 尚未就绪就记账，会让第二次 msg 已就绪的正文被 consumedDraftIds 挡掉而永久丢失。
-          // 不记账则第一次空跑、第二次正常 append——只有「确实读到正文/截断/确认纯对话」
-          // 才记账，更安全。未记账的孤儿 id 也无害：除本 handler 外无人读 consumedDraftIds。
+        } catch (err) {
+          console.error('[runtime] proposal end-handler threw (草稿可能未入库，turn 状态照常复位):', err)
+        } finally {
+          actions.endAssistantMessage(sid)
         }
-        actions.endAssistantMessage(sid)
         break
       }
       case 'error':
@@ -1278,6 +1296,41 @@ function makeSessionEventHandler(
  * 的内容级去重保证与轮末 appendSections 不重复、且不消费 messageId（同消息余下块仍走轮末）。
  * 门控同 'end' 路径：仅方案绑定会话（active && sessionId===sid）、按 messageId 精确取消息。
  */
+/**
+ * 流式硬门（①·根因「目录阶段一直在思考」）：方案模式下，逐个 chunk 检查在飞消息——若当前 phase
+ * 还没确认目录（cover/toc）、AI 却已冒出【独占整行】的正文起始哨兵，说明它跳过了目录确认、正要
+ * 跑飞整篇正文。此刻立即 abort 本轮，趁它刚起手就掐断（详见 shared/proposal.ts
+ * detectContentSentinelAheadOfPhase）。
+ *
+ * abort 后引擎同步发 'end'（engine.ts:1253）→ 'end' 处理把这段未闭合的越界正文经阶段门剔除并设
+ * stageSkip → ProposalDocPanel 的自动补救 effect 重发「只生成目录 + 发起确认」，把 AI 拉回正轨。
+ * 故本函数只管「尽早掐断」，重发与上限（autoTocFix≤2）复用既有补救链，不在此另起循环。
+ *
+ * 去重：每条 messageId 至多 abort 一次（aborted 集合）——掐断后该轮仍可能再吐几个残 chunk，绝不
+ * 重复 abort。phase==='content'（用户已确认目录）由 detect 内部短路，正文阶段零开销、绝不误伤。
+ */
+function maybeAbortOnTocSkip(sid: string, messageId: string, aborted: Set<string>): void {
+  if (aborted.has(messageId)) return
+  const ps = useProposalStore.getState()
+  if (!ps.active || ps.sessionId !== sid || ps.phase === 'content') return
+  const slot = useChatStore.getState().perSession[sid]
+  const msg = slot?.messages.find((m) => m.id === messageId) as
+    | { role: string; content: Array<{ type: string; text?: string }> }
+    | undefined
+  if (!msg || msg.role !== 'assistant') return
+  const fullText = msg.content
+    .filter((p) => p.type === 'text' && p.text)
+    .map((p) => p.text!)
+    .join('')
+  if (!detectContentSentinelAheadOfPhase(fullText, ps.phase)) return
+  aborted.add(messageId)
+  console.warn(
+    `[runtime] proposal: 正文哨兵出现在 ${ps.phase} 阶段（AI 跳过目录确认）→ abort 本轮，交自动补救拉回`,
+    { sid }
+  )
+  void window.chatApi.abort({ sessionId: sid })
+}
+
 function syncProposalDraftFromInflight(sid: string, messageId: string): void {
   const ps = useProposalStore.getState()
   if (!ps.active || ps.sessionId !== sid) return
