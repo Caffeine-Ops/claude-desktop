@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useProposalStore, type ProposalSection } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
@@ -133,6 +133,15 @@ export function ProposalPaper(): React.JSX.Element {
     proposalSid ? (s.perSession[proposalSid]?.streaming ?? false) : false
   )
   const [editingId, setEditingId] = useState<string | null>(null)
+  // 删除二次确认（design-review F5）：删除不可逆，且在窄工具条里紧挨「下移」键易误触。点一下
+  // 不立即删，而是把该节的删除键「武装」成红底确认态，再点才真删；3 秒无操作自动撤销，避免卡在
+  // 武装态。复用 DocPanel「清空草稿」同款就地两步确认，不为单节删除引一层 modal。
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!confirmDeleteId) return
+    const id = setTimeout(() => setConfirmDeleteId(null), 3000)
+    return () => clearTimeout(id)
+  }, [confirmDeleteId])
 
   const toolBtn =
     'grid size-6 place-items-center rounded-md border border-neutral-300 bg-white text-[12px] text-neutral-600 hover:border-accent hover:text-accent disabled:opacity-30'
@@ -225,16 +234,31 @@ export function ProposalPaper(): React.JSX.Element {
         >
           <ArrowDownIcon />
         </button>
-        <button
-          className="grid size-6 place-items-center rounded-md border border-neutral-300 bg-white text-[12px] text-rose-500 hover:border-rose-400"
-          onClick={() => {
-            if (editingId === sec.id) setEditingId(null)
-            removeSection(sec.id)
-          }}
-          aria-label="删除"
-        >
-          <TrashIcon />
-        </button>
+        {/* 分隔线：把不可逆的「删除」与上方移动/编辑键分组隔开，降低误触（design-review F5）。 */}
+        <div className="my-0.5 h-px w-full bg-neutral-200" />
+        {confirmDeleteId === sec.id ? (
+          <button
+            className="grid size-6 place-items-center rounded-md border border-rose-500 bg-rose-500 text-[12px] text-white"
+            onClick={() => {
+              if (editingId === sec.id) setEditingId(null)
+              removeSection(sec.id)
+              setConfirmDeleteId(null)
+            }}
+            title="再次点击确认删除（或点别处、稍候自动取消）"
+            aria-label="确认删除"
+          >
+            <CheckIcon />
+          </button>
+        ) : (
+          <button
+            className="grid size-6 place-items-center rounded-md border border-neutral-300 bg-white text-[12px] text-rose-500 hover:border-rose-400"
+            onClick={() => setConfirmDeleteId(sec.id)}
+            title="删除本节（需再次点击确认）"
+            aria-label="删除"
+          >
+            <TrashIcon />
+          </button>
+        )}
       </div>
 
       {sec.truncated && (
