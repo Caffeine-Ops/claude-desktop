@@ -295,7 +295,7 @@ export function ProposalPaper(): React.JSX.Element {
   }
 
   return (
-    <div className="flex-1 overflow-auto bg-black/10 py-7 dark:bg-black/25">
+    <div className="proposal-canvas flex-1 overflow-auto py-7">
       <div className="proposal-paper mx-auto w-[min(794px,calc(100%-48px))] rounded-sm bg-white px-[clamp(28px,6%,76px)] py-16 text-[#1d1d1f] shadow-[0_1px_0_rgba(0,0,0,0.04),0_12px_34px_rgba(0,0,0,0.30)]">
         {sections.length === 0 ? (
           <div className="text-center text-[13px] text-neutral-400">

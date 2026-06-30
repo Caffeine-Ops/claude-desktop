@@ -359,3 +359,14 @@
   outline: 2px solid hsl(var(--accent));
   outline-offset: 1px;
 }
+
+/* 文档画布「桌面」底色（design-review F7）。编辑纸面（ProposalPaper）与真预览
+   （ProposalPreview，含样式弹窗内复用的那份）共用同一底色——原先编辑是 bg-black/10、
+   预览是 bg-neutral-200，切换 edit↔preview 会跳色。统一为比白页略深的中性灰，让 A4 页浮起；
+   共享类避免两处字面量各自漂移。 */
+.proposal-canvas {
+  background-color: rgb(229 229 229); /* = neutral-200 */
+}
+.dark .proposal-canvas {
+  background-color: rgb(23 23 23); /* = neutral-900 */
+}
