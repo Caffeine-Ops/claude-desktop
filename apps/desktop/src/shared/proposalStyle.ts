@@ -190,6 +190,58 @@ export function cloneProposalStyle(key: ProposalTemplateKey): ProposalStyleConfi
   return structuredClone(PROPOSAL_TEMPLATES[key])
 }
 
+/**
+ * 切换样式模板时的【智能合并】：以「当前模板默认值」（draft.templateKey 指示）为基准，逐叶子
+ * 字段判断用户是否动过——动过的（draft 值 ≠ 当前模板默认）保留，没动过的采用新模板对应值。
+ * templateKey 切到新模板。这样切模板只换走用户「没微调过」的字段，显式改过的字体/字号/行距/
+ * 页边距等跟着走，不再被整份覆盖（修复前 selectTemplate 整份 clone，切模板即丢全部微调）。
+ *
+ * 想彻底回到某模板的纯默认，走「还原模板默认」（= cloneProposalStyle(key)），不经本函数。
+ * 点【当前已选中】的模板卡：oldBase===next，每个字段 keep(cur,old,neu) 中 old===neu，未动的
+ * 取 neu(=old 不变)、动过的取 cur(保留)——故点当前卡是 no-op，绝不再清空微调。纯函数、可单测。
+ */
+export function mergeTemplateSwitch(
+  draft: ProposalStyleConfig,
+  newKey: ProposalTemplateKey
+): ProposalStyleConfig {
+  const oldBase = PROPOSAL_TEMPLATES[draft.templateKey] ?? PROPOSAL_TEMPLATES[DEFAULT_PROPOSAL_STYLE_KEY]
+  const next = PROPOSAL_TEMPLATES[newKey]
+  // 用户动过（cur≠old）→ 保留 cur；否则采用新模板 neu。用 Object.is 以正确处理 undefined（color）。
+  const keep = <T>(cur: T, old: T, neu: T): T => (Object.is(cur, old) ? neu : cur)
+  const mergeLevel = (
+    cur: ProposalLevelStyle,
+    old: ProposalLevelStyle,
+    neu: ProposalLevelStyle
+  ): ProposalLevelStyle => {
+    const merged: ProposalLevelStyle = {
+      font: keep(cur.font, old.font, neu.font),
+      size: keep(cur.size, old.size, neu.size),
+      bold: keep(cur.bold, old.bold, neu.bold),
+      align: keep(cur.align, old.align, neu.align),
+      indentChars: keep(cur.indentChars, old.indentChars, neu.indentChars)
+    }
+    // color 可选：合并结果可能为 undefined（如切到无标题色的模板且用户没设色）→ 不写该键。
+    const color = keep(cur.color, old.color, neu.color)
+    if (color) merged.color = color
+    return merged
+  }
+  return {
+    templateKey: newKey,
+    name: keep(draft.name, oldBase.name, next.name),
+    title: mergeLevel(draft.title, oldBase.title, next.title),
+    h1: mergeLevel(draft.h1, oldBase.h1, next.h1),
+    h2: mergeLevel(draft.h2, oldBase.h2, next.h2),
+    h3: mergeLevel(draft.h3, oldBase.h3, next.h3),
+    body: mergeLevel(draft.body, oldBase.body, next.body),
+    lineMultiple: keep(draft.lineMultiple, oldBase.lineMultiple, next.lineMultiple),
+    spaceAfterPt: keep(draft.spaceAfterPt, oldBase.spaceAfterPt, next.spaceAfterPt),
+    margin: keep(draft.margin, oldBase.margin, next.margin),
+    ol: keep(draft.ol, oldBase.ol, next.ol),
+    ul: keep(draft.ul, oldBase.ul, next.ul),
+    brand: keep(draft.brand, oldBase.brand, next.brand)
+  }
+}
+
 /** 默认样式（首次进入 / 未选择时用）。 */
 export function defaultProposalStyle(): ProposalStyleConfig {
   return cloneProposalStyle(DEFAULT_PROPOSAL_STYLE_KEY)

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   PROPOSAL_TEMPLATES,
+  mergeTemplateSwitch,
   FONT_ORDER,
   SIZE_ORDER,
   MARGIN_LABEL,
@@ -68,8 +69,15 @@ export function ProposalStyleModal({
 
   if (!open) return null
 
+  // 选模板卡：智能合并——保留用户已微调的字段，只换走「没动过的」字段（见 mergeTemplateSwitch）。
+  // 切模板不再丢全部微调；点当前已选中的卡是 no-op。彻底复位走下方「还原模板默认」按钮。
   const selectTemplate = (key: ProposalTemplateKey): void =>
-    setDraft(structuredClone(PROPOSAL_TEMPLATES[key]))
+    setDraft((d) => mergeTemplateSwitch(d, key))
+
+  // 还原模板默认：丢弃当前模板上的所有微调，整份回到该模板纯默认（与智能合并的「保留」相反，
+  // 这是显式的「我要重来」入口）。
+  const resetToTemplateDefault = (): void =>
+    setDraft((d) => structuredClone(PROPOSAL_TEMPLATES[d.templateKey]))
 
   const patchLevel = (
     rowKey: (typeof ROWS)[number]['key'],
@@ -196,7 +204,7 @@ export function ProposalStyleModal({
                 </label>
                 <button
                   className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-border px-3 text-[11px] text-accent hover:bg-accent/5"
-                  onClick={() => selectTemplate(draft.templateKey)}
+                  onClick={resetToTemplateDefault}
                   title="放弃微调，回到该模板默认值"
                 >
                   <RotateCcwIcon />
