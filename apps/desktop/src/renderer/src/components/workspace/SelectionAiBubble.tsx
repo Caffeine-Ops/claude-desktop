@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { reviseProposalSectionBlocks, type BlockReviseAction } from '../../lib/sendProposalSectionRevision'
+import { reviseProposalSectionBlocks } from '../../lib/sendProposalSectionRevision'
 
 // 选区即改浮层：监听编辑纸面内的选区，选中一段正文文字后贴选区尾浮出气泡。作用域=选区覆盖的
 // 块区间（从选区两端向上找最近 data-block-index），替换单位是块（见 proposalBlocks.ts 理由）。
@@ -26,12 +26,14 @@ function resolveBlock(node: Node | null): { sectionId: string; blockIndex: numbe
   return { sectionId, blockIndex: Number(idx) }
 }
 
-const QUICK: Array<{ action: Exclude<BlockReviseAction, 'custom'>; label: string }> = [
-  { action: 'polish', label: '润色' },
-  { action: 'shorten', label: '精简' },
-  { action: 'expand', label: '扩写' },
-  { action: 'rewrite', label: '改写' },
-  { action: 'fixSource', label: '据来源修正' }
+// 快捷动作只负责把【中文指令模板】填进输入框（用户可再改），真正发起改写永远走「改」按钮/回车。
+// prefill 是给人看的自然语言指令（会原样拼进提示词），故写成完整、可直接发送的一句话。
+const QUICK: Array<{ label: string; prefill: string }> = [
+  { label: '润色', prefill: '请润色这段内容，提升表达的清晰度、流畅度和专业感。' },
+  { label: '精简', prefill: '请精简这段内容，删去冗余与重复，只保留要点。' },
+  { label: '扩写', prefill: '请扩写这段内容，补充必要的细节、数据或案例，但不要引入知识库之外的内容。' },
+  { label: '改写', prefill: '请改写这段内容，换一种更好的组织方式与措辞，让质量更高。' },
+  { label: '据来源修正', prefill: '请严格依据所引《来源》原文修正这段内容，凡无来源支撑的表述一律删除或改写。' }
 ]
 
 export function SelectionAiBubble({
@@ -46,6 +48,7 @@ export function SelectionAiBubble({
   // 浮层根节点。用于：一旦焦点进入浮层（尤其是自定义指令输入框），忽略随之而来的 selectionchange，
   // 别把已捕获的 anchor 清掉——否则点输入框聚焦→正文选区塌陷→recompute 判空→气泡消失，字都没法敲。
   const bubbleRef = useRef<HTMLDivElement | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -121,16 +124,24 @@ export function SelectionAiBubble({
 
   if (!anchor) return null
 
-  async function fire(action: BlockReviseAction): Promise<void> {
+  // 点快捷动作：只把中文指令模板填进输入框并聚焦（供用户再编辑），【不发起】。聚焦引发的正文
+  // 选区塌陷由 recompute 的 bubbleRef 焦点守卫兜住，anchor 不受影响。发起统一走下方 fire()。
+  function applyPreset(prefill: string): void {
+    setInstruction(prefill)
+    inputRef.current?.focus()
+  }
+
+  async function fire(): Promise<void> {
     // 生成中一律不发（review V1 兜底）：disabled 翻真到浮层被上面的 effect 清掉之间有一帧窗口，
-    // 此处再挡一次，绝不在别的修订在飞时发起。reviseProposalSectionBlocks 内部还会按 pendingRevision 拒绝。
+    // 此处再挡一次，绝不在别的修订在飞时发起。reviseProposalSectionBlocks 内部还会按 streaming 闸拒绝。
     if (!anchor || disabled) return
+    const text = instruction.trim()
+    if (!text) return
     await reviseProposalSectionBlocks(
       anchor.sectionId,
       { start: anchor.start, end: anchor.end },
-      action,
-      anchor.selectedText,
-      action === 'custom' ? instruction : undefined
+      text,
+      anchor.selectedText
     )
     // 发起后收起浮层、清指令与选区。
     setInstruction('')
@@ -155,11 +166,11 @@ export function SelectionAiBubble({
         <span className="px-1 text-[12px]">✦</span>
         {QUICK.map((q) => (
           <button
-            key={q.action}
+            key={q.label}
             type="button"
             className="rounded px-1.5 py-0.5 text-[12px] text-foreground hover:bg-muted"
-            onClick={() => void fire(q.action)}
-            title={`让 AI ${q.label}选中的这段`}
+            onClick={() => applyPreset(q.prefill)}
+            title={`填入「${q.label}」指令，可再编辑后点「改」发起`}
           >
             {q.label}
           </button>
@@ -167,22 +178,23 @@ export function SelectionAiBubble({
       </div>
       <div className="mt-1 flex items-center gap-1">
         <input
+          ref={inputRef}
           value={instruction}
           onChange={(e) => setInstruction(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && instruction.trim()) {
               e.preventDefault()
-              void fire('custom')
+              void fire()
             }
           }}
-          placeholder="告诉 AI 怎么改这段…"
+          placeholder="选动作填入，或直接写：怎么改这段…"
           className="h-7 flex-1 rounded-md border border-border bg-card px-2 text-[12px] outline-none focus:border-accent"
         />
         <button
           type="button"
           className="rounded bg-accent px-2 py-1 text-[11px] text-white hover:opacity-90 disabled:opacity-40"
           disabled={!instruction.trim()}
-          onClick={() => void fire('custom')}
+          onClick={() => void fire()}
         >
           改
         </button>

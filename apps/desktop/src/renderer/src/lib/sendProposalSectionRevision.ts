@@ -116,29 +116,20 @@ export async function fillProposalGap(
  * 原样不动。selectedText 作为「用户特别想改的这句」焦点提示传给 AI，但替换单位仍是【块】
  * （见 proposalBlocks.ts 注释：按块替换避开选区↔源码子串脆映射）。
  *
+ * instruction 是【用户最终敲定的自然语言指令】：浮层的快捷动作（润色/精简/扩写…）只是把中文
+ * 指令模板【填进输入框】供用户再编辑，真正发起永远经「改」按钮/回车走这里——故不再有预设 action
+ * 分支，一律按用户给的整句指令拼进提示词。溯源纪律仍由下方固定后缀兜住（不因指令自由化而松口）。
+ *
  * 仅对 content 节生效；非方案前台 / 目标节不存在 / 指令为空时静默 no-op。
  */
-export type BlockReviseAction = 'polish' | 'shorten' | 'expand' | 'rewrite' | 'fixSource' | 'custom'
-
-const BLOCK_ACTION_INSTRUCTION: Record<Exclude<BlockReviseAction, 'custom'>, string> = {
-  polish: '润色下面这一小段：改善措辞与流畅度，保持原意与信息量不变',
-  shorten: '精简下面这一小段：删去冗余与重复，只留要点',
-  expand: '把下面这一小段写得更详尽（补充细节、数据、案例），但严禁引入知识库之外的内容',
-  rewrite: '重写下面这一小段，换一种更好的组织方式与措辞，质量更高',
-  fixSource:
-    '下面这一小段里有内容在所引《来源》原文中找不到依据（疑似编造或过度改写），请严格只依据所引文件原文重写，凡无来源支撑的表述一律删除或改写'
-}
-
 export async function reviseProposalSectionBlocks(
   sectionId: string,
   blockRange: { start: number; end: number },
-  action: BlockReviseAction,
-  selectedText: string,
-  customInstruction?: string
+  instruction: string,
+  selectedText: string
 ): Promise<void> {
-  const instruction =
-    action === 'custom' ? (customInstruction ?? '').trim() : BLOCK_ACTION_INSTRUCTION[action]
-  if (!instruction) return
+  const trimmed = instruction.trim()
+  if (!trimmed) return
   const focus = selectedText.trim()
 
   // build 在守卫通过后按【当时的】sec.markdown 切块、夹紧、拼上下文，并把夹紧后的 blockRange 交回
@@ -152,7 +143,7 @@ export async function reviseProposalSectionBlocks(
     return {
       blockRange: { start, end },
       message:
-        `【定向修订·只重写下面这一小段，不要改动本章其它内容、更不要动其它章节】${instruction}。\n\n` +
+        `【定向修订·只重写下面这一小段，不要改动本章其它内容、更不要动其它章节】${trimmed}\n\n` +
         (focus ? `用户特别想改的是这句：「${focus}」。\n\n` : '') +
         `这一小段的原文如下：\n\n${context}\n\n` +
         `只输出【重写后的这一小段本身】（不要重复章节标题、不要写章节序号），仍用方案【正文】哨兵包裹，` +
