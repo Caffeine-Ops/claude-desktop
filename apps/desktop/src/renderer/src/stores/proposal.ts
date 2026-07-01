@@ -72,10 +72,11 @@ interface ProposalState {
   // 「AI 跳过了目录，请先生成确认目录」。null=无待提示。纯 UI 瞬时信号，不持久化、不进
   // ProposalDraftRecord——它描述的是「刚发生的一次跳阶」，重开会话无意义。
   stageSkip: { count: number } | null
-  // 定向修订指针：非空时，下一轮 end 的 content 产出【整节替换】该 section（而非 append
-  // 新节）。节修订（重写/展开/精简）、据来源修正、截断续写三处共用。瞬时 UI 信号，不
-  // 持久化、不进 ProposalDraftRecord——它描述「刚发起的一次定向修订」，重开会话无意义。
-  pendingRevision: { sectionId: string } | null
+  // 定向修订指针：非空时下一轮 end 的 content 产出替换目标节。blockRange 缺省=整节替换
+  // （节重写/展开/精简/据来源修正/截断续写/补料，向后兼容）；blockRange 存在=只替换该节的
+  // 第 [start,end] 块（选区即改），由 FusionRuntimeProvider end 分流 spliceBlocks 拼回。瞬时
+  // UI 信号，不持久化。
+  pendingRevision: { sectionId: string; blockRange?: { start: number; end: number } } | null
   // 草稿写盘是否处于失败态（P3-3）：flushProposalSave 拿到 {ok:false} 或 IPC 抛错时置 true，
   // 下次成功落盘置 false。面板据此显示「草稿未保存」常驻提示——写盘失败（磁盘满/权限/路径）
   // 原本是 fire-and-forget 静默吞掉，用户误以为已存、切走就丢。非阻塞、不持久化，纯运行时
@@ -105,7 +106,9 @@ interface ProposalState {
   // 陈旧提示）。
   clearStageSkip: () => void
   // 标记/清除「下一轮产出要替换哪一节」。reviseProposalSection 发起修订前置，end 分流后清。
-  setPendingRevision: (sectionId: string | null) => void
+  setPendingRevision: (
+    pending: { sectionId: string; blockRange?: { start: number; end: number } } | null
+  ) => void
   // 标记/清除草稿写盘失败态（P3-3）。flushProposalSave 落盘后调用：失败 true、成功 false。
   setDraftSaveFailed: (failed: boolean) => void
   // 用 AI 新产出整节替换指定节：同步把 baselineMarkdown 也更新成新原文（否则 M-0 埋点会把
@@ -234,8 +237,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
     }),
   advancePhase: (to) => set({ phase: to }),
   clearStageSkip: () => set({ stageSkip: null }),
-  setPendingRevision: (sectionId) =>
-    set({ pendingRevision: sectionId ? { sectionId } : null }),
+  setPendingRevision: (pending) => set({ pendingRevision: pending }),
   setDraftSaveFailed: (failed) => set({ draftSaveFailed: failed }),
   reviseSection: (id, markdown) =>
     set((s) => ({

@@ -40,7 +40,7 @@ export async function reviseProposalSection(
 
   const instruction = intent === 'fixSource' ? (note ?? INTENT_INSTRUCTION.fixSource) : INTENT_INSTRUCTION[intent]
   // 先置指针：本轮 end 的 content 产出会整节替换该节（FusionRuntimeProvider end 分流）。
-  ps.setPendingRevision(sectionId)
+  ps.setPendingRevision({ sectionId })
   await sendProposalStageMessage(
     `【定向修订·只重写这一章，不要改动其它任何章节】${instruction}：\n\n${sec.markdown}\n\n` +
       `仍用方案【正文】哨兵包裹（与逐章撰写同款），段末按既有规则标注《来源》，绝不臆造。`
@@ -69,7 +69,7 @@ export async function fillProposalGap(
   const sec = ps.sections.find((s) => s.id === sectionId)
   if (!sec || sec.kind !== 'content') return
 
-  ps.setPendingRevision(sectionId)
+  ps.setPendingRevision({ sectionId })
   await sendProposalStageMessage(
     `【资料缺失·补料续写·只重写这一章，不要改动其它任何章节】本章里有一处标注的缺口：「⚠️ 资料缺失：${gapDesc}」。` +
       `用户为此补充了以下资料：\n\n${trimmed}\n\n` +
