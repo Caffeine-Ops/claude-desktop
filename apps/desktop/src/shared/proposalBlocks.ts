@@ -12,14 +12,16 @@ const INDENT_CONT = /^\s+\S/ // 列表项的缩进续行
 
 const isBlank = (s: string): boolean => s.trim() === ''
 
-// 去每行尾空白 + 去块首尾空行，保留块内部结构（含围栏代码里的空行）。
+// 只去块首尾的空行，保留块内部结构（含围栏代码里的空行）。
+// 【不】去内容行的行尾空白——否则会连 GFM「行尾两个空格 = 硬换行」一起吃掉。本函数现在也跑在
+// 只读逐块渲染与「任一块提交 → joinBlocks(splitBlocks(整节))」的整节重拼路径上，一旦在这里裁剪行尾
+// 空白，用户纯浏览就丢硬换行、且编辑任一块即把整节所有硬换行永久抹掉并落盘（review V6）。
 function trimBlock(lines: string[]): string {
-  const cleaned = lines.map((l) => l.replace(/\s+$/, ''))
   let a = 0
-  let b = cleaned.length
-  while (a < b && cleaned[a].trim() === '') a++
-  while (b > a && cleaned[b - 1].trim() === '') b--
-  return cleaned.slice(a, b).join('\n')
+  let b = lines.length
+  while (a < b && lines[a].trim() === '') a++
+  while (b > a && lines[b - 1].trim() === '') b--
+  return lines.slice(a, b).join('\n')
 }
 
 export function splitBlocks(markdown: string): string[] {
@@ -83,12 +85,10 @@ export function splitBlocks(markdown: string): string[] {
   return blocks
 }
 
-// 块间用一个空行连接。过滤空块，逐块再去每行尾空白，保证 join(split()) 幂等。
+// 块间用一个空行连接。只过滤纯空块——【不】再逐行去行尾空白（那会吃掉 GFM 硬换行，见 trimBlock
+// 注释与 review V6）。幂等仍成立：trimBlock 已去块首尾空行，块内容原样，join('\n\n') 后再 split 回同样的块。
 export function joinBlocks(blocks: string[]): string {
-  return blocks
-    .map((b) => b.replace(/[ \t]+$/gm, ''))
-    .filter((b) => b.trim().length > 0)
-    .join('\n\n')
+  return blocks.filter((b) => b.trim().length > 0).join('\n\n')
 }
 
 // 把 [range.start, range.end]（含端点）替换为 replacement（AI 产出，可多块），其余块原样保留。

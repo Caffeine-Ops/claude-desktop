@@ -37,6 +37,12 @@ describe('joinBlocks 往返 + 幂等', () => {
     expect(once).toBe('## 标题\n\n第一段。\n\n第二段。')
     expect(joinBlocks(splitBlocks(once))).toBe(once)
   })
+  it('保留 GFM 行尾两空格硬换行（不被 trim 吃掉）', () => {
+    // 「第一行␠␠\n第二行」是一段（硬换行），整段应原样留存，split/join 往返不丢行尾空格。
+    const md = '第一行  \n第二行'
+    expect(splitBlocks(md)).toEqual([md])
+    expect(joinBlocks(splitBlocks(md))).toBe(md)
+  })
 })
 
 describe('spliceBlocks', () => {

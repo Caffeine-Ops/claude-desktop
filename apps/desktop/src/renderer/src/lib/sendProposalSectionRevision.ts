@@ -110,6 +110,10 @@ export async function reviseProposalSectionBlocks(
   customInstruction?: string
 ): Promise<void> {
   const ps = useProposalStore.getState()
+  // 并发守卫（review V1 根治）：pendingRevision 单槽——已有一次定向修订在飞时，再发起会 setPendingRevision
+  // 覆盖旧指针，令先发起那次的 end 分流张冠李戴/丢产出。此处直接拒绝，堵住「选区气泡在生成中途被点」
+  // 这条路（UI 侧还有 disabled 兜底）。整节修订/补料同样是单槽消费者，故任一在飞都拒绝。
+  if (ps.pendingRevision) return
   const sec = ps.sections.find((s) => s.id === sectionId)
   if (!sec || sec.kind !== 'content') return
 

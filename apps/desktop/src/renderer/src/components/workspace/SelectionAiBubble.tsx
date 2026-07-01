@@ -48,6 +48,15 @@ export function SelectionAiBubble({
     const container = containerRef.current
     if (!container) return
 
+    // 生成中（disabled=generating）：立即收起已存在的气泡、且不订阅选区（review V1）。本 effect 的
+    // deps 含 disabled，故 disabled 由 false→true 时会重跑到这里，当场清 anchor 让浮层消失——堵住
+    // 「气泡在生成中途仍可见可点、fire() 覆盖在飞的单槽 pendingRevision」的竞态。disabled 回 false
+    // 时 effect 再次重跑、恢复订阅。
+    if (disabled) {
+      setAnchor(null)
+      return
+    }
+
     // 用 const 箭头函数而非函数声明：TS 对函数声明（因提升）不把外层 `container` 的
     // 非空窄化带入闭包，箭头函数表达式则可以（不存在提前调用的可能）——避免下面一堆 `container`
     // 误报「possibly null」。
@@ -107,7 +116,9 @@ export function SelectionAiBubble({
   if (!anchor) return null
 
   async function fire(action: BlockReviseAction): Promise<void> {
-    if (!anchor) return
+    // 生成中一律不发（review V1 兜底）：disabled 翻真到浮层被上面的 effect 清掉之间有一帧窗口，
+    // 此处再挡一次，绝不在别的修订在飞时发起。reviseProposalSectionBlocks 内部还会按 pendingRevision 拒绝。
+    if (!anchor || disabled) return
     await reviseProposalSectionBlocks(
       anchor.sectionId,
       { start: anchor.start, end: anchor.end },

@@ -138,20 +138,31 @@ export function ProposalPaper(): React.JSX.Element {
   // 块级就地手改（命中「改动粒度太粗」）：双击某块 → 只有那一块变 textarea。editingId（整节
   // 源码逃生舱）与 editingBlock 互斥——进整节源码时清块编辑，反之亦然。blockDraft 是就地草稿，
   // 失焦/⌘↵ 提交、Esc 取消；提交时替换该块 → joinBlocks 重拼 → updateSection（走现有防抖写盘）。
-  const [editingBlock, setEditingBlock] = useState<{ sectionId: string; blockIndex: number } | null>(null)
+  // original：双击进编辑那一刻该块的原文快照，供提交时做「陈旧块保护」（见 commitBlock）。
+  const [editingBlock, setEditingBlock] = useState<{
+    sectionId: string
+    blockIndex: number
+    original: string
+  } | null>(null)
   const [blockDraft, setBlockDraft] = useState('')
 
   // 提交块草稿：把 sec 的第 blockIndex 块替换成 blockDraft，重拼回整节 markdown。
   function commitBlock(sec: ProposalSection, blockIndex: number): void {
-    // 双击进块编辑时 generating 为 false（onDoubleClick 已挡），但编辑打开后 AI 可能开始
-    // 新一轮 streaming 修订；此时 onBlur/⌘↵ 仍会触发 commitBlock，覆盖并发写入的 AI 产出。
-    // 一旦检测到 generating 就放弃这次手改提交、只收起编辑态，不落盘。
+    // 生成中放弃提交（review V3 上半）：编辑打开后 AI 可能开始新一轮 streaming 修订；
+    // onBlur/⌘↵ 若仍写回会覆盖并发写入的 AI 产出。检测到 generating 就只收起编辑态、不落盘。
     if (generating) {
       setEditingBlock(null)
       return
     }
     const blocks = splitBlocks(sec.markdown)
     if (blockIndex < 0 || blockIndex >= blocks.length) {
+      setEditingBlock(null)
+      return
+    }
+    // 陈旧块保护（review V3）：块编辑期间若该节被并发的整节 AI 修订整节替换，同一 blockIndex 在新
+    // 块切分下已指向语义不同的块；此时用基于旧版内容的 blockDraft 覆盖会踩掉 AI 刚写好的内容。发现
+    // 「当前该块 ≠ 打开编辑时快照的原文」即放弃这次手改（AI 新内容更该保留），只收起编辑态。
+    if (!editingBlock || editingBlock.original !== blocks[blockIndex]) {
       setEditingBlock(null)
       return
     }
@@ -237,7 +248,11 @@ export function ProposalPaper(): React.JSX.Element {
         )}
         <button
           className={toolBtn}
+          // 生成中禁止【打开】整节源码逃生舱（review V2）：某节 blockRange 修订在飞时，若用户开源码框
+          // 改动本节使块布局变化，轮末 spliceBlocks 会按旧下标拼进错块、静默覆盖。已打开的仍允许关闭。
+          disabled={generating && editingId !== sec.id}
           onClick={() => {
+            if (generating && editingId !== sec.id) return
             setEditingBlock(null)
             setEditingId(editingId === sec.id ? null : sec.id)
           }}
@@ -313,10 +328,13 @@ export function ProposalPaper(): React.JSX.Element {
 
       {editingId === sec.id ? (
         // 整节源码逃生舱：改坏的表格、批量替换等场景。默认不再是主路径。
+        // readOnly={generating}：生成中（尤其某节 blockRange 修订在飞）冻结手改，防止改动使块布局漂移
+        // 致轮末 spliceBlocks 拼错块（review V2）；生成结束即恢复可编辑。
         <textarea
-          className="min-h-[120px] w-full resize-y rounded-sm bg-accent/5 font-mono text-[13px] leading-[1.8] text-[#1d1d1f] outline-none"
+          className="min-h-[120px] w-full resize-y rounded-sm bg-accent/5 font-mono text-[13px] leading-[1.8] text-[#1d1d1f] outline-none read-only:opacity-60"
           value={sec.markdown}
           autoFocus
+          readOnly={generating}
           onChange={(e) => updateSection(sec.id, e.target.value)}
         />
       ) : (
@@ -353,11 +371,12 @@ export function ProposalPaper(): React.JSX.Element {
               // 间距（末块多出的 mb-3 无碍，section 外层已有 py 包裹）。
               className="mb-3 rounded-sm hover:bg-accent/[0.03]"
               // 双击进块级就地手改：读该块源码进草稿、清整节源码逃生舱（互斥）。生成中禁改。
+              // 同步记 original=blk 快照，供提交时做陈旧块保护（见 commitBlock）。
               onDoubleClick={() => {
                 if (generating) return
                 setEditingId(null)
                 setBlockDraft(blk)
-                setEditingBlock({ sectionId: sec.id, blockIndex: bi })
+                setEditingBlock({ sectionId: sec.id, blockIndex: bi, original: blk })
               }}
             >
               <AssistantMarkdown text={blk} highlightCitations />
