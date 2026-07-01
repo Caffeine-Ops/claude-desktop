@@ -189,9 +189,11 @@ export function SelectionAiBubble({
         </button>
       </div>
 
-      {/* 选中原文预览：最多 4 行，超出以 … 省略（line-clamp）。whitespace-pre-wrap 保留原文换行。 */}
+      {/* 选中原文预览：最多 4 行，超出以 … 省略。无背景色，仅左 accent 竖线作引用感。
+          刻意【不用】whitespace-pre-wrap——它与 -webkit-line-clamp(line-clamp-4 展开物) 在
+          Chromium 下相冲，会让截断后的第 5 行漏出来；预览里原文换行折叠成空格无妨。 */}
       <div className="mt-2 text-[11px] text-muted-foreground">选中原文</div>
-      <div className="mt-1 line-clamp-4 whitespace-pre-wrap break-words rounded-md border-l-2 border-accent bg-muted/40 px-2 py-1.5 text-[12px] leading-[1.4] text-foreground">
+      <div className="mt-1 line-clamp-4 break-words border-l-2 border-accent pl-2 text-[12px] leading-[1.5] text-foreground">
         {anchor.selectedText}
       </div>
 
