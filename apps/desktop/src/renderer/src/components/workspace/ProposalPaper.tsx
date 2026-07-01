@@ -143,6 +143,13 @@ export function ProposalPaper(): React.JSX.Element {
 
   // 提交块草稿：把 sec 的第 blockIndex 块替换成 blockDraft，重拼回整节 markdown。
   function commitBlock(sec: ProposalSection, blockIndex: number): void {
+    // 双击进块编辑时 generating 为 false（onDoubleClick 已挡），但编辑打开后 AI 可能开始
+    // 新一轮 streaming 修订；此时 onBlur/⌘↵ 仍会触发 commitBlock，覆盖并发写入的 AI 产出。
+    // 一旦检测到 generating 就放弃这次手改提交、只收起编辑态，不落盘。
+    if (generating) {
+      setEditingBlock(null)
+      return
+    }
     const blocks = splitBlocks(sec.markdown)
     if (blockIndex < 0 || blockIndex >= blocks.length) {
       setEditingBlock(null)
@@ -340,7 +347,11 @@ export function ProposalPaper(): React.JSX.Element {
               key={bi}
               data-section-id={sec.id}
               data-block-index={bi}
-              className="rounded-sm hover:bg-accent/[0.03]"
+              // mb-3：逐块渲染前是整节一个 AssistantMarkdown，段落靠其内部
+              // <p className="mb-3 last:mb-0"> 撑出块间距；拆成逐块后每块只剩单个 <p>、
+              // 自身即 last 子元素→触发 mb-0，纵向间距全丢。这里在块容器上补回同量级
+              // 间距（末块多出的 mb-3 无碍，section 外层已有 py 包裹）。
+              className="mb-3 rounded-sm hover:bg-accent/[0.03]"
               // 双击进块级就地手改：读该块源码进草稿、清整节源码逃生舱（互斥）。生成中禁改。
               onDoubleClick={() => {
                 if (generating) return

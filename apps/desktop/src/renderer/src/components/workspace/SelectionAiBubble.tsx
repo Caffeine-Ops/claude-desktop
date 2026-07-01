@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { reviseProposalSectionBlocks, type BlockReviseAction } from '../../lib/sendProposalSectionRevision'
 
 // 选区即改浮层：监听编辑纸面内的选区，选中一段正文文字后贴选区尾浮出气泡。作用域=选区覆盖的
@@ -43,7 +43,6 @@ export function SelectionAiBubble({
 }): React.JSX.Element | null {
   const [anchor, setAnchor] = useState<Anchor | null>(null)
   const [instruction, setInstruction] = useState('')
-  const bubbleRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -124,7 +123,6 @@ export function SelectionAiBubble({
 
   return (
     <div
-      ref={bubbleRef}
       className="proposal-anim-pop absolute z-40 w-72 rounded-lg border border-border bg-background p-1.5 text-foreground shadow-lg"
       style={{ left: anchor.left, top: anchor.top }}
       // 阻止 mousedown 清掉选区（否则点按钮前选区先没了）。
