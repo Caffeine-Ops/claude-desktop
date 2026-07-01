@@ -13,14 +13,12 @@ import { dispatchChatTurn } from './dispatchChatTurn'
  * 前置：方案已 active 且已播种（按钮只在工作台里、首发之后出现，products 已定），故
  * 直接复用 ps.products，不再 readKbIndex/matchProducts。非方案前台调用是 no-op。
  */
-// 返回是否【真的发出了一轮】：非前台会话被挡时返回 false。调用方（如 dispatchSectionRevision）据此
-// 决定要不要回滚已置的 pendingRevision——没起飞就没有 end/error 来清指针，不回滚会永久锁死后续修订。
-export async function sendProposalStageMessage(text: string): Promise<boolean> {
+export async function sendProposalStageMessage(text: string): Promise<void> {
   const ps = useProposalStore.getState()
   const chat = useChatStore.getState()
   const sid = ps.sessionId
   // 仅当方案会话就是当前前台会话才发（防泄漏到别的 tab/会话）。
-  if (!ps.active || sid === null || chat.sessionId !== sid) return false
+  if (!ps.active || sid === null || chat.sessionId !== sid) return
 
   await dispatchChatTurn({
     sessionId: sid,
@@ -39,5 +37,4 @@ export async function sendProposalStageMessage(text: string): Promise<boolean> {
       proposalRetrieve: ps.phase !== 'cover'
     }
   })
-  return true
 }

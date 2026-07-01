@@ -1,4 +1,5 @@
 import { useProposalStore, type ProposalSection } from '../stores/proposal'
+import { useChatStore } from '../stores/chat'
 import { USER_SUPPLIED_SOURCE } from '@shared/proposal'
 import { splitBlocks } from '@shared/proposalBlocks'
 import { sendProposalStageMessage } from './sendProposalStageMessage'
@@ -17,22 +18,23 @@ async function dispatchSectionRevision(
   ) => { message: string; blockRange?: { start: number; end: number } } | null
 ): Promise<void> {
   const ps = useProposalStore.getState()
-  if (ps.pendingRevision) return
+  // 并发守卫（review V1 根治 + 复审 Issue#1 收尾）：一轮正在飞时拒绝新修订，否则第二次 setPendingRevision
+  // 会覆盖在飞那次的单槽指针、令其 end 分流张冠李戴/丢产出。
+  // 闸用【streaming】而非 pendingRevision：streaming 在 'end' 与 'error' 两个终止路径都必被
+  // endAssistantMessage 清（连 dispatchChatTurn 吞掉的 send 早退错误也走 endAssistantMessage 兜底），
+  // 故永不卡死；而 pendingRevision 只在 'end' 清，用它当闸会因一次「没起飞/出错」的修订永久锁死后续
+  // 所有修订。若真有 stale pendingRevision（没起飞的那次留下），streaming=false 时新修订照常放行、
+  // setPendingRevision 覆盖它自愈（回归本次收口前的鲁棒行为）。
+  const sid = ps.sessionId
+  const streaming = sid ? (useChatStore.getState().perSession[sid]?.streaming ?? false) : false
+  if (streaming) return
   const sec = ps.sections.find((s) => s.id === sectionId)
   if (!sec || sec.kind !== 'content') return
   const built = build(sec)
   if (!built || !built.message) return
+  // 指针在 await 前置好（end 分流靠它分流本轮产出）；无需回滚——streaming 闸已保证不会因 stale 指针锁死。
   ps.setPendingRevision(built.blockRange ? { sectionId, blockRange: built.blockRange } : { sectionId })
-  // 回滚保护（review 复审 Issue #1）：指针必须在 await 前置好（end 分流靠它分流本轮产出），但若这轮
-  // 【根本没起飞】（非前台会话被 sendProposalStageMessage 挡，返回 false）或发送抛错，就没有 end/error
-  // 来清指针——不回滚则 pendingRevision 永久滞留、把后续【所有】修订入口锁死。故没派出就当场清回。
-  // （真派出但回合出错的情况由 FusionRuntimeProvider 的 'error' 分流清指针兜底。）
-  let dispatched = false
-  try {
-    dispatched = await sendProposalStageMessage(built.message)
-  } finally {
-    if (!dispatched) useProposalStore.getState().setPendingRevision(null)
-  }
+  await sendProposalStageMessage(built.message)
 }
 
 /**
