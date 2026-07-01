@@ -618,6 +618,8 @@ export function stripCitations(markdown: string): string {
 
 // markdown 图片：`![alt](path)`。path 取到首个 `)` 前——KB 图为 img-N.png 类路径、不含 `)`。
 // 要求前置 `!`，故普通链接 `[text](url)` 不会被误抽（无 `!`）。alt 可空。
+// 目标可能被尖括号包裹（`![alt](<path>)`，见 normalizeImageMarkdown）：捕获后由 stripAngle 剥掉，
+// 让接地比对（proposalVerify 的 allowed.has(path)）拿到的仍是干净绝对路径，无论 <> 来自 AI 还是兜底。
 const IMAGE_RE = /!\[([^\]]*)\]\(([^)]+)\)/g
 
 // markdown 图片的可选 title：url 后【空白分隔】的 `"..."` / `'...'`（`![alt](url "title")`）。解析
@@ -636,10 +638,45 @@ export function parseImages(markdown: string): { alt: string; path: string }[] {
   IMAGE_RE.lastIndex = 0
   let m: RegExpExecArray | null
   while ((m = IMAGE_RE.exec(markdown)) !== null) {
-    const path = m[2].trim().replace(IMAGE_TITLE_SUFFIX_RE, '').trim()
+    const path = stripAngleWrap(m[2].trim().replace(IMAGE_TITLE_SUFFIX_RE, '').trim())
     out.push({ alt: m[1].trim(), path })
   }
   return out
+}
+
+// `<path>` → `path`。仅在首尾成对时剥；含空格的 userData 绝对路径被 <> 包裹后，接地比对与 img.url
+// 需拿到不带尖括号的原始路径（remark 解析 <目标> 同样会剥括号，故两侧一致）。
+function stripAngleWrap(s: string): string {
+  return s.startsWith('<') && s.endsWith('>') ? s.slice(1, -1).trim() : s
+}
+
+/**
+ * 归一化图片语法：把「目标含空格、且未用尖括号包裹」的 `![alt](路径)` 补成 `![alt](<路径>)`。
+ *
+ * 为什么必须有：CommonMark 规定裸目标（无 `<>`）【不许含空格】，否则整条 `![]()` 不被解析成图片、
+ * 退化成纯文本——既不显示、也进不了 docx 的 image 节点（预览与导出一起丢图）。KB 镜像图是 userData
+ * 绝对路径，macOS 上必然含「Application Support」空格 → 必然触发。提示词已要求 AI 直接写 `<>`，这里
+ * 是【兜底】：历史草稿 / transcript 里的裸路径、以及 AI 偶发不听话，都在走 mdast 解析的各消费端入口
+ * （预览 AssistantMarkdown、导出 docx、写 .md）统一补 `<>`。
+ *
+ * 与 stripCitations 同为 presentation-time 纯转换：只作用于「送去解析 / 交付」的那份，绝不改编辑态
+ * 存储的 sec.markdown 真相。幂等——已 `<>` 包裹（正则首字符排除 `<`）、或目标不含空格的原样不动。
+ * remark 解析 `<目标>` 时会剥掉尖括号，故 img.url / `<img src>` 拿到的仍是干净路径，kbasset:// 与
+ * docx fs 读盘均不受影响。main 与 renderer 共享纯函数。
+ */
+const IMAGE_UNWRAPPED_RE = /(!\[[^\]]*\]\()([^<)][^)]*)(\))/g
+
+export function normalizeImageMarkdown(markdown: string): string {
+  if (!markdown) return markdown
+  return markdown.replace(IMAGE_UNWRAPPED_RE, (whole, head: string, inner: string, tail: string) => {
+    // inner = 目标 + 可选 title（url 后空白分隔的 "..."/'...'）。拆出 title，只包 url 部分。
+    const titleMatch = inner.match(IMAGE_TITLE_SUFFIX_RE)
+    const title = titleMatch ? titleMatch[0] : ''
+    const dest = title ? inner.slice(0, inner.length - title.length) : inner
+    // 目标不含空格 → CommonMark 能解析，不必包裹（最小改动、不动无辜图）。
+    if (!/\s/.test(dest)) return whole
+    return `${head}<${dest}>${title}${tail}`
+  })
 }
 
 // ───────────────────────── 资料缺失标记（P3-2） ─────────────────────────

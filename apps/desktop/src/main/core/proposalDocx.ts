@@ -28,6 +28,7 @@ import {
   PROPOSAL_PAGEBREAK,
   PROPOSAL_SECTION_RE,
   isEmbeddableImagePath,
+  normalizeImageMarkdown,
   stripCitations
 } from '../../shared/proposal'
 import type { ProposalKind } from '../../shared/proposal'
@@ -1100,7 +1101,9 @@ export async function markdownToDocxBuffer(
   const mermaidImageMap = decodeMermaidImages(mermaidImages)
   // 剥除段末「（据《X》）」来源标注：docx 导出、PDF 导出、真预览都经此单一入口，故交付件与预览
   // 都不出现来源（只在编辑态保留并上色，见 AssistantMarkdown.highlightCitations）。
-  const tree = mdProcessor.parse(stripCitations(markdown)) as Root
+  // normalizeImageMarkdown：给含空格的图片目标补 `<>`，否则 remark 不解析成 image 节点、图丢失
+  // （img.url 经 remark 剥回干净路径，与 ungroundedImagePaths 的比对不受影响）。
+  const tree = mdProcessor.parse(normalizeImageMarkdown(stripCitations(markdown))) as Root
   const bodyFirstLine = style.body.indentChars
     ? Math.round(style.body.indentChars * CN_SIZE_PT[style.body.size] * 20)
     : 0

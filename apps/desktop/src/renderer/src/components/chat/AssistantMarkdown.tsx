@@ -7,7 +7,7 @@ import type { Root } from 'mdast'
 import { useT } from '../../i18n'
 import { toKbAssetUrl } from '../../lib/kbAssetUrl'
 import { renderMermaid } from '../../lib/mermaidRender'
-import { isEmbeddableImagePath } from '@shared/proposal'
+import { isEmbeddableImagePath, normalizeImageMarkdown } from '@shared/proposal'
 
 /**
  * AssistantMarkdown
@@ -441,6 +441,9 @@ function AssistantMarkdownImpl({
   const remarkPlugins = highlightCitations
     ? [remarkGfm, remarkHighlightCitations]
     : [remarkGfm]
+  // 给含空格的图片目标补 `<>`，否则 CommonMark 不解析成图片、KB 配图退化成一行纯文字（`![…](…)`
+  // 原样可见）。与导出侧 proposalDocx 共用同一个 normalizeImageMarkdown，保「预览=导出一致」。
+  const normalized = normalizeImageMarkdown(text)
   return (
     <div className="break-words text-[14px] leading-relaxed text-foreground">
       <ReactMarkdown
@@ -448,7 +451,7 @@ function AssistantMarkdownImpl({
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={components}
       >
-        {text}
+        {normalized}
       </ReactMarkdown>
     </div>
   )

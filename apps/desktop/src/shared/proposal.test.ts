@@ -7,6 +7,7 @@ import {
   trigramOverlap,
   buildProposalMetric,
   parseImages,
+  normalizeImageMarkdown,
   isEmbeddableImagePath,
   extractProposalDraftResult,
   sortSectionsByKind,
@@ -306,6 +307,64 @@ describe('parseImages', () => {
 
   it('路径含空格但无 title → 不误剥（userData 路径可能含空格）', () => {
     expect(parseImages('![图](/Users/a b/kb-index/assets/img.png)')).toEqual([
+      { alt: '图', path: '/Users/a b/kb-index/assets/img.png' }
+    ])
+  })
+
+  it('目标被尖括号包裹（AI 或归一化写的 `<path>`）→ 剥掉 <>，接地比对拿到干净路径', () => {
+    expect(parseImages('![图](</Users/a b/kb-index/assets/img.png>)')).toEqual([
+      { alt: '图', path: '/Users/a b/kb-index/assets/img.png' }
+    ])
+    // <> 包裹 + 尾随 title 一并处理
+    expect(parseImages('![图](</kb/assets/a/img-1.png> "架构")')).toEqual([
+      { alt: '图', path: '/kb/assets/a/img-1.png' }
+    ])
+  })
+})
+
+describe('normalizeImageMarkdown（给含空格图片目标补 <>，保 CommonMark 可解析·预览=导出一致）', () => {
+  it('目标含空格且未包裹 → 补 <>（userData 绝对路径含「Application Support」的核心场景）', () => {
+    const md =
+      '![语音输入交互界面](/Users/kika/Library/Application Support/@claude-desktop/kb-index/assets/x/img-4.png)'
+    expect(normalizeImageMarkdown(md)).toBe(
+      '![语音输入交互界面](</Users/kika/Library/Application Support/@claude-desktop/kb-index/assets/x/img-4.png>)'
+    )
+  })
+
+  it('目标不含空格 → 原样不动（不动无辜图）', () => {
+    const md = '![图](/kb/assets/a/img-1.png)'
+    expect(normalizeImageMarkdown(md)).toBe(md)
+  })
+
+  it('已用 <> 包裹 → 幂等，不重复包裹', () => {
+    const md = '![图](</Users/a b/kb-index/assets/img.png>)'
+    expect(normalizeImageMarkdown(md)).toBe(md)
+    // 二次归一化仍不变（幂等）
+    expect(normalizeImageMarkdown(normalizeImageMarkdown(md))).toBe(md)
+  })
+
+  it('含空格路径 + 尾随 title → 只包 url、title 留在 <> 外', () => {
+    const md = '![图](/Users/a b/assets/img.png "系统架构")'
+    expect(normalizeImageMarkdown(md)).toBe('![图](</Users/a b/assets/img.png> "系统架构")')
+  })
+
+  it('普通链接 [text](url with space) 不受影响（无前置 `!`，非图片）', () => {
+    const md = '[某链接](/a b/c)'
+    expect(normalizeImageMarkdown(md)).toBe(md)
+  })
+
+  it('一段里多张图各自独立处理；空串安全', () => {
+    const md = '![a](/x y/1.png)\n\n![b](/no-space/2.png)\n\n![c](/p q/3.png)'
+    expect(normalizeImageMarkdown(md)).toBe(
+      '![a](</x y/1.png>)\n\n![b](/no-space/2.png)\n\n![c](</p q/3.png>)'
+    )
+    expect(normalizeImageMarkdown('')).toBe('')
+  })
+
+  it('归一化后经 parseImages 仍取到干净路径（两个纯函数协同的闭环）', () => {
+    const md = '![图](/Users/a b/kb-index/assets/img.png)'
+    const normalized = normalizeImageMarkdown(md)
+    expect(parseImages(normalized)).toEqual([
       { alt: '图', path: '/Users/a b/kb-index/assets/img.png' }
     ])
   })
