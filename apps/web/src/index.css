@@ -21,6 +21,9 @@
  * lines of CSS keep working while adopting the unified desktop color values. */
 @import '../../../packages/design-tokens/tokens.css';
 @import './styles/design-system-flow.css';
+/* Scoped skin for the redesigned Settings page (V2). Everything is
+ * namespaced under `.sv2`, so it cannot leak into the rest of the app. */
+@import './styles/settings-v2.css';
 
 /* Theme for the shared @open-design/ui components. `inline` so each utility
  * emits `var(--token)` and re-resolves against the .dark overrides + any

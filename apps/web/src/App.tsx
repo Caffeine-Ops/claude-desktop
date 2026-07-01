@@ -29,6 +29,7 @@ import {
   updateCurrentApiProtocolConfig,
   type SettingsSection,
 } from './components/SettingsDialog';
+import { SettingsDialogV2 } from './components/SettingsDialogV2';
 import {
   daemonIsLive,
   fetchAppVersionInfo,
@@ -89,6 +90,22 @@ import type {
   PromptTemplateSummary,
   SkillSummary,
 } from './types';
+
+/**
+ * Feature flag for the redesigned Settings page (SettingsDialogV2).
+ * Reads `localStorage.settingsV2`: '0' forces the classic dialog, anything
+ * else (including unset) renders V2 — so V2 is the default during the
+ * rollout and you can drop to the old UI from devtools with
+ * `localStorage.settingsV2 = '0'` (then reopen Settings). When V2 reaches
+ * parity this flag and the V1 branch can be removed.
+ */
+function settingsV2Enabled(): boolean {
+  try {
+    return window.localStorage.getItem('settingsV2') !== '0';
+  } catch {
+    return true;
+  }
+}
 
 export function shouldSyncMediaProvidersOnSave(
   mediaProviders: AppConfig['mediaProviders'],
@@ -1565,41 +1582,50 @@ export function App() {
       // the whole page. The container only positions the page over the
       // transparent host WebContentsView.
       <div className="fixed inset-0 z-50">
-        {settingsOpen ? (
-          <SettingsDialog
-            initial={config}
-            agents={agents}
-            daemonLive={daemonLive}
-            appVersionInfo={appVersionInfo}
-            welcome={false}
-            initialSection={settingsInitialSection}
-            composioConfigLoading={composioConfigLoading}
-            onPersist={handleConfigPersist}
-            onPersistComposioKey={handleConfigPersistComposioKey}
-            onClose={() => {
+        {settingsOpen
+          ? (() => {
               // Persist on close (same as the in-app dialog), then ask the
               // desktop shell to remove the overlay view. In a plain browser
-              // `electronSettings` is absent and the call no-ops.
-              const next = resolveSettingsCloseConfig(
-                config,
-                latestPersistedConfigRef.current,
+              // `electronSettings` is absent and the call no-ops. Shared by
+              // the V1 and V2 dialogs below.
+              const handleOverlayClose = () => {
+                const next = resolveSettingsCloseConfig(
+                  config,
+                  latestPersistedConfigRef.current,
+                );
+                if (!next.onboardingCompleted || !config.onboardingCompleted) {
+                  latestPersistedConfigRef.current = next;
+                  saveConfig(next);
+                  void syncConfigToDaemon(next);
+                  setConfig(next);
+                }
+                setSettingsOpen(false);
+                window.electronSettings?.close?.();
+              };
+              const SettingsComponent = settingsV2Enabled()
+                ? SettingsDialogV2
+                : SettingsDialog;
+              return (
+                <SettingsComponent
+                  initial={config}
+                  agents={agents}
+                  daemonLive={daemonLive}
+                  appVersionInfo={appVersionInfo}
+                  welcome={false}
+                  initialSection={settingsInitialSection}
+                  composioConfigLoading={composioConfigLoading}
+                  onPersist={handleConfigPersist}
+                  onPersistComposioKey={handleConfigPersistComposioKey}
+                  onClose={handleOverlayClose}
+                  onRefreshAgents={refreshAgents}
+                  daemonMediaProviders={daemonMediaProviders}
+                  daemonMediaProvidersFetchState={daemonMediaProvidersFetchState}
+                  mediaProvidersNotice={mediaProvidersNotice}
+                  onReloadMediaProviders={reloadMediaProvidersFromDaemon}
+                />
               );
-              if (!next.onboardingCompleted || !config.onboardingCompleted) {
-                latestPersistedConfigRef.current = next;
-                saveConfig(next);
-                void syncConfigToDaemon(next);
-                setConfig(next);
-              }
-              setSettingsOpen(false);
-              window.electronSettings?.close?.();
-            }}
-            onRefreshAgents={refreshAgents}
-            daemonMediaProviders={daemonMediaProviders}
-            daemonMediaProvidersFetchState={daemonMediaProvidersFetchState}
-            mediaProvidersNotice={mediaProvidersNotice}
-            onReloadMediaProviders={reloadMediaProvidersFromDaemon}
-          />
-        ) : null}
+            })()
+          : null}
       </div>
     );
   }
@@ -1622,39 +1648,47 @@ export function App() {
           onOpenProject={handleOpenProject}
         />
       )}
-      {settingsOpen ? (
-        <SettingsDialog
-          initial={config}
-          agents={agents}
-          daemonLive={daemonLive}
-          appVersionInfo={appVersionInfo}
-          welcome={settingsWelcome}
-          initialSection={settingsInitialSection}
-          composioConfigLoading={composioConfigLoading}
-          onPersist={handleConfigPersist}
-          onPersistComposioKey={handleConfigPersistComposioKey}
-          onClose={() => {
-            // Closing the dialog is the canonical "I'm done" gesture
-            // now that there is no global Save button. We mark
+      {settingsOpen
+        ? (() => {
+            // Closing the dialog is the canonical "I'm done" gesture now
+            // that there is no global Save button. We mark
             // onboardingCompleted on close so the welcome modal stops
-            // re-prompting on every refresh, regardless of whether
-            // the user changed anything during the session.
-            const next = resolveSettingsCloseConfig(config, latestPersistedConfigRef.current);
-            if (!next.onboardingCompleted || !config.onboardingCompleted) {
-              latestPersistedConfigRef.current = next;
-              saveConfig(next);
-              void syncConfigToDaemon(next);
-              setConfig(next);
-            }
-            setSettingsOpen(false);
-          }}
-          onRefreshAgents={refreshAgents}
-          daemonMediaProviders={daemonMediaProviders}
-          daemonMediaProvidersFetchState={daemonMediaProvidersFetchState}
-          mediaProvidersNotice={mediaProvidersNotice}
-          onReloadMediaProviders={reloadMediaProvidersFromDaemon}
-        />
-      ) : null}
+            // re-prompting on every refresh, regardless of whether the
+            // user changed anything. Shared by the V1 and V2 dialogs.
+            const handleDialogClose = () => {
+              const next = resolveSettingsCloseConfig(config, latestPersistedConfigRef.current);
+              if (!next.onboardingCompleted || !config.onboardingCompleted) {
+                latestPersistedConfigRef.current = next;
+                saveConfig(next);
+                void syncConfigToDaemon(next);
+                setConfig(next);
+              }
+              setSettingsOpen(false);
+            };
+            const SettingsComponent = settingsV2Enabled()
+              ? SettingsDialogV2
+              : SettingsDialog;
+            return (
+              <SettingsComponent
+                initial={config}
+                agents={agents}
+                daemonLive={daemonLive}
+                appVersionInfo={appVersionInfo}
+                welcome={settingsWelcome}
+                initialSection={settingsInitialSection}
+                composioConfigLoading={composioConfigLoading}
+                onPersist={handleConfigPersist}
+                onPersistComposioKey={handleConfigPersistComposioKey}
+                onClose={handleDialogClose}
+                onRefreshAgents={refreshAgents}
+                daemonMediaProviders={daemonMediaProviders}
+                daemonMediaProvidersFetchState={daemonMediaProvidersFetchState}
+                mediaProvidersNotice={mediaProvidersNotice}
+                onReloadMediaProviders={reloadMediaProvidersFromDaemon}
+              />
+            );
+          })()
+        : null}
       <MemoryToast onOpenMemory={() => openSettings('memory')} />
       {/* First-run privacy consent is now resolved silently — see the
           auto-accept effect near handleConfigPersist. No banner UI is

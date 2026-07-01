@@ -142,7 +142,7 @@ export type SettingsSection =
   | 'library'
   | 'about';
 
-interface Props {
+export interface SettingsDialogProps {
   initial: AppConfig;
   agents: AgentInfo[];
   daemonLive: boolean;
@@ -182,6 +182,24 @@ interface Props {
   daemonMediaProvidersFetchState?: 'idle' | 'ok' | 'error';
   mediaProvidersNotice?: string | null;
   onReloadMediaProviders?: () => Promise<AppConfig['mediaProviders'] | null>;
+  /**
+   * Embedded mode — render ONLY the per-section content pane, with none of
+   * this dialog's own chrome (backdrop, modal frame, back button, autosave
+   * pill, header, sidebar nav, footer). SettingsDialogV2 uses this to host
+   * the exact same section logic + autosave inside its own `.sv2` shell, so
+   * V1 and V2 share one implementation and never drift. Default (false) =
+   * the standalone dialog, unchanged.
+   */
+  embedded?: boolean;
+  /**
+   * In embedded mode the active section is owned by the host shell (V2's
+   * sidebar drives it). When provided, this overrides the internal
+   * `activeSection` state; `onSectionChange` reports user-initiated section
+   * jumps from inside a panel (e.g. Memory's "open Connectors" link) back up
+   * to the host. Ignored when `embedded` is false.
+   */
+  controlledSection?: SettingsSection;
+  onSectionChange?: (section: SettingsSection) => void;
 }
 
 export interface AgentRefreshOptions {
@@ -803,7 +821,10 @@ export function SettingsDialog({
   daemonMediaProvidersFetchState = 'idle',
   mediaProvidersNotice,
   onReloadMediaProviders,
-}: Props) {
+  embedded = false,
+  controlledSection,
+  onSectionChange,
+}: SettingsDialogProps) {
   const { t, locale, setLocale } = useI18n();
   const analytics = useAnalytics();
   const [cfg, setCfg] = useState<AppConfig>(initial);
@@ -837,7 +858,23 @@ export function SettingsDialog({
     };
   }, []);
   const [showApiKey, setShowApiKey] = useState(false);
-  const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
+  // Active section is internal (non-embedded standalone dialog) but can be
+  // controlled by the host shell in embedded mode. When `controlledSection`
+  // is provided we read from it and report changes up via `onSectionChange`;
+  // otherwise the local state owns it, exactly as before.
+  const [internalSection, setInternalSection] =
+    useState<SettingsSection>(initialSection);
+  const activeSection = controlledSection ?? internalSection;
+  const setActiveSection = useCallback(
+    (next: SettingsSection) => {
+      if (controlledSection !== undefined) {
+        onSectionChange?.(next);
+      } else {
+        setInternalSection(next);
+      }
+    },
+    [controlledSection, onSectionChange],
+  );
   // Scroll the right-hand content pane back to the top whenever the user
   // picks a different settings section. Without this, switching from a
   // long section the user had scrolled (e.g. Library) into a short one
@@ -924,8 +961,13 @@ export function SettingsDialog({
   // routes through this when the MCP tab is active so the user can press the
   // single Save button at the bottom instead of hunting for the inner one.
   useEffect(() => {
-    setActiveSection(initialSection);
-  }, [initialSection]);
+    // Only the non-embedded dialog resets to initialSection here; in
+    // embedded mode the host shell owns the active section, so syncing it
+    // from here would fight the host's sidebar.
+    if (controlledSection === undefined) {
+      setInternalSection(initialSection);
+    }
+  }, [initialSection, controlledSection]);
 
   // settings_view — fires whenever the active section changes (and once on
   // mount). Keying the fire on a section+section-string lets us dedupe
@@ -1947,14 +1989,24 @@ export function SettingsDialog({
   const installedAgents = agents.filter((a) => a.available);
   const unavailableAgents = agents.filter((a) => !a.available);
 
+  // Embedded mode renders ONLY the section content pane (no dialog chrome),
+  // so SettingsDialogV2 can host it inside its own `.sv2` shell. The content
+  // pane itself is identical in both modes — it lives inline in the standard
+  // return below; here we just early-return a bare version that reuses the
+  // same `settingsContentRef` and section switch. We render the SAME JSX by
+  // toggling chrome via the `embedded` flag inside the standard tree instead
+  // of duplicating 1200 lines: see the conditional wrappers below.
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div
+      className={embedded ? 'settings-embedded-root' : 'modal-backdrop'}
+      onClick={embedded ? undefined : onClose}
+    >
       <div
-        className="modal modal-settings"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-dialog-title"
-        onClick={(e) => e.stopPropagation()}
+        className={embedded ? 'settings-embedded-shell' : 'modal modal-settings'}
+        role={embedded ? undefined : 'dialog'}
+        aria-modal={embedded ? undefined : 'true'}
+        aria-labelledby={embedded ? undefined : 'settings-dialog-title'}
+        onClick={embedded ? undefined : (e) => e.stopPropagation()}
       >
         {/* Top-left back affordance — now that settings is a full-screen
             page (not a centered modal over a scrim), the primary "I'm
@@ -1962,15 +2014,17 @@ export function SettingsDialog({
             「← 返回应用」. It calls the same `onClose` as the ✕ / Esc, so
             the close path (persist + tear down the desktop overlay view)
             is unchanged. The corner ✕ stays as a secondary affordance. */}
-        <button
-          type="button"
-          className="settings-back"
-          onClick={onClose}
-          aria-label={t('settings.backToApp')}
-        >
-          <Icon name="arrow-left" size={16} />
-          <span>{t('settings.backToApp')}</span>
-        </button>
+        {!embedded && (
+          <button
+            type="button"
+            className="settings-back"
+            onClick={onClose}
+            aria-label={t('settings.backToApp')}
+          >
+            <Icon name="arrow-left" size={16} />
+            <span>{t('settings.backToApp')}</span>
+          </button>
+        )}
         {/* Top-right chrome strip — anchored to the modal corner so the
             autosave indicator and the close button float above the
             sidebar/content rhythm without competing with the title.
@@ -1980,6 +2034,8 @@ export function SettingsDialog({
             measure, and the close button always lands at the same
             optical location regardless of how much copy the header
             renders. */}
+        {!embedded && (
+        <>
         <div className="settings-chrome" aria-hidden={false}>
           {/* Autosave status pill. Only renders something while a save
               is in flight or has just completed — idle = invisible so
@@ -2039,8 +2095,11 @@ export function SettingsDialog({
             </>
           )}
         </header>
+        </>
+        )}
 
         <div className="modal-body">
+          {!embedded && (
           <aside className="settings-sidebar" aria-label="Settings sections">
             <button
               type="button"
@@ -2230,6 +2289,7 @@ export function SettingsDialog({
               </span>
             </button>
           </aside>
+          )}
           <div className="settings-content" ref={settingsContentRef}>
           {activeSection === 'execution' ? (
             <>
@@ -3496,6 +3556,7 @@ export function SettingsDialog({
             version marker on the right. Purely informational; the actual
             close affordances stay the corner X, backdrop click, and the
             global Escape handler above. */}
+        {!embedded && (
         <footer className="settings-foot" aria-hidden="false">
           <span className="settings-foot-hint">
             <kbd>Esc</kbd>
@@ -3507,6 +3568,7 @@ export function SettingsDialog({
             </span>
           ) : null}
         </footer>
+        )}
       </div>
     </div>
   );
