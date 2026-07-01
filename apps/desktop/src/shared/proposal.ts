@@ -248,6 +248,64 @@ export function extractProposalDraftResult(text: string): ProposalDraftExtractio
   return { blocks, truncated }
 }
 
+/**
+ * 聊天气泡展示层的一段：`text`=普通对话文本（原样走 markdown），`draft`=一段被哨兵圈住、
+ * 要写进右侧文档的草稿（渲成折叠卡片）。complete=false 表示流式进行中（只见起始哨兵、
+ * 结束哨兵未到）。content 已 trim。
+ */
+export type ProposalChatSegment =
+  | { type: 'text'; value: string }
+  | { type: 'draft'; kind: ProposalKind; content: string; complete: boolean }
+
+/**
+ * 把一条 assistant 消息文本切成有序的 text / draft 段，供聊天气泡把哨兵块渲成「草稿写入」
+ * 卡片（AssistantMarkdown）。纯展示，故【刻意宽松】：
+ *
+ * - 用裸 indexOf 找哨兵，【不要求独占整行】——这样哨兵与内容挤在同一行/同一列表项
+ *   （`===方案正文开始=== 客户单位：… ===方案正文结束===`，用户截图里的真实形态）也能被
+ *   识别成卡片。这与入库用的 extractProposalDraftResult【故意不同】：那个必须独占整行来精准
+ *   排除被反引号内联引用的哨兵（幻影块根因），因为它决定落库内容、错判有数据后果；这里只
+ *   决定怎么把文字画成卡片，多切一个卡片最多是显示噪声、无数据后果，宽松换来对真实输出的兼容。
+ * - 只见起始哨兵、无同类结束哨兵 = 流式进行中：起始哨兵之后到结尾全部当卡片内容，complete:false。
+ *
+ * 空串 → []；完全无哨兵 → 单个 text 段（原文），调用侧据此走「零改动」的原渲染路径。
+ * 纯空白的 text 段与空内容的闭合块被丢弃（不产出空 markdown / 空卡片）。
+ */
+export function splitProposalDraftSegments(text: string): ProposalChatSegment[] {
+  const segments: ProposalChatSegment[] = []
+  if (!text) return segments
+  const pushText = (value: string): void => {
+    if (value.trim()) segments.push({ type: 'text', value })
+  }
+  let from = 0
+  for (;;) {
+    // 位置最靠前的起始哨兵（任意 kind）——kind 由哨兵自身决定，与 extractProposalDraftResult 同源。
+    let kind: ProposalKind | null = null
+    let begin = -1
+    for (const k of KIND_SCAN_ORDER) {
+      const i = text.indexOf(PROPOSAL_DRAFT_BEGIN[k], from)
+      if (i >= 0 && (begin < 0 || i < begin)) {
+        begin = i
+        kind = k
+      }
+    }
+    if (kind === null) break
+    pushText(text.slice(from, begin))
+    const contentStart = begin + PROPOSAL_DRAFT_BEGIN[kind].length
+    const e = text.indexOf(PROPOSAL_DRAFT_END[kind], contentStart)
+    if (e < 0) {
+      // 流式进行中：即便内容暂为空也产出卡片，用户即时看到「正在写入」。
+      segments.push({ type: 'draft', kind, content: text.slice(contentStart).trim(), complete: false })
+      return segments
+    }
+    const body = text.slice(contentStart, e).trim()
+    if (body) segments.push({ type: 'draft', kind, content: body, complete: true })
+    from = e + PROPOSAL_DRAFT_END[kind].length
+  }
+  pushText(text.slice(from))
+  return segments
+}
+
 // 阶段有序权重：cover < toc < content。只此一处定义，门护栏与 store 推进同源。
 const PROPOSAL_PHASE_ORDER: Record<ProposalKind, number> = { cover: 0, toc: 1, content: 2 }
 

@@ -18,6 +18,7 @@ import {
   decideProposalStageConfirm,
   appendDraftBlocks,
   collapseSingletonSections,
+  splitProposalDraftSegments,
   PROPOSAL_DRAFT_BEGIN,
   PROPOSAL_DRAFT_END,
   PROPOSAL_COVER_CONFIRM_HEADER,
@@ -800,5 +801,74 @@ describe('appendDraftBlocks（轮内增量同步 + 轮末入库共用的纯 redu
     st = appendDraftBlocks(st, [c1], null, mk)
     st = appendDraftBlocks(st, [c2], null, mk)
     expect(st.sections.map((s) => s.markdown)).toEqual([c1.markdown, c2.markdown])
+  })
+})
+
+// 聊天气泡里把哨兵块切成「普通文本 / 草稿卡片」段的展示层分块器。与入库抽取器
+// extractProposalDraftResult 各司其职：这个宽松（哨兵不必独占整行，兼容截图里哨兵与
+// 内容挤在同一行的情况）、只为渲染卡片；那个严格（独占整行）、决定落库内容。
+describe('splitProposalDraftSegments', () => {
+  const B = PROPOSAL_DRAFT_BEGIN
+  const E = PROPOSAL_DRAFT_END
+
+  it('空串 → 空数组', () => {
+    expect(splitProposalDraftSegments('')).toEqual([])
+  })
+
+  it('无哨兵 → 单个原文文本段', () => {
+    const out = splitProposalDraftSegments('这是一段普通对话，没有任何哨兵。')
+    expect(out).toEqual([{ type: 'text', value: '这是一段普通对话，没有任何哨兵。' }])
+  })
+
+  it('完整正文哨兵块 → 一个 complete 草稿段（内容 trim）', () => {
+    const out = splitProposalDraftSegments(`${B.content}\n客户单位：武汉协和医院\n${E.content}`)
+    expect(out).toEqual([
+      { type: 'draft', kind: 'content', content: '客户单位：武汉协和医院', complete: true }
+    ])
+  })
+
+  it('哨兵与内容挤在同一行（截图场景）也识别成卡片', () => {
+    const out = splitProposalDraftSegments(`${B.content} 客户单位：武汉协和医院 ${E.content}`)
+    expect(out).toEqual([
+      { type: 'draft', kind: 'content', content: '客户单位：武汉协和医院', complete: true }
+    ])
+  })
+
+  it('哨兵前后的普通文本各自成段', () => {
+    const out = splitProposalDraftSegments(`我来起草正文：\n${B.content}\n正文内容\n${E.content}\n以上，请过目。`)
+    expect(out).toEqual([
+      { type: 'text', value: '我来起草正文：\n' },
+      { type: 'draft', kind: 'content', content: '正文内容', complete: true },
+      { type: 'text', value: '\n以上，请过目。' }
+    ])
+  })
+
+  it('只有起始哨兵、无结束（流式进行中）→ complete:false，其后全部当卡片内容', () => {
+    const out = splitProposalDraftSegments(`${B.content}\n正在生成的半截正文`)
+    expect(out).toEqual([
+      { type: 'draft', kind: 'content', content: '正在生成的半截正文', complete: false }
+    ])
+  })
+
+  it('三类 kind（封面/目录/正文）各自识别、按出现顺序', () => {
+    const src = `${B.cover}\n封面\n${E.cover}\n${B.toc}\n目录\n${E.toc}\n${B.content}\n正文\n${E.content}`
+    const out = splitProposalDraftSegments(src)
+    expect(out.map((s) => (s.type === 'draft' ? s.kind : 'text'))).toEqual([
+      'cover',
+      'toc',
+      'content'
+    ])
+    expect(out.every((s) => s.type === 'draft' && s.complete)).toBe(true)
+  })
+
+  it('纯空白的文本段被丢弃（不产出空 markdown 段）', () => {
+    const out = splitProposalDraftSegments(`${B.content}\n正文\n${E.content}\n\n   \n`)
+    expect(out).toEqual([
+      { type: 'draft', kind: 'content', content: '正文', complete: true }
+    ])
+  })
+
+  it('闭合但内容为空的块被跳过（不产出空卡片）', () => {
+    expect(splitProposalDraftSegments(`${B.content}\n\n${E.content}`)).toEqual([])
   })
 })

@@ -135,6 +135,14 @@ const STRINGS = {
     codeBlockCopy: '复制',
     codeBlockCopied: '✓ 已复制',
 
+    // 聊天气泡里的「草稿写入」卡片（哨兵块）
+    proposalDraftCardWritten: '已写入文档',
+    proposalDraftCardWriting: '正在写入草稿',
+    proposalDraftCardCharsUnit: '字',
+    proposalDraftKindCover: '方案封面',
+    proposalDraftKindToc: '方案目录',
+    proposalDraftKindContent: '方案正文',
+
     // Settings page
     theme: '主题',
     themeDesc: '使用浅色、深色、或匹配系统设置',
@@ -376,6 +384,14 @@ const STRINGS = {
 
     codeBlockCopy: 'Copy',
     codeBlockCopied: '✓ Copied',
+
+    // Chat-bubble "draft written" cards (sentinel blocks)
+    proposalDraftCardWritten: 'Written to document',
+    proposalDraftCardWriting: 'Writing draft',
+    proposalDraftCardCharsUnit: 'chars',
+    proposalDraftKindCover: 'Cover',
+    proposalDraftKindToc: 'Contents',
+    proposalDraftKindContent: 'Body',
 
     theme: 'Theme',
     themeDesc: 'Use light, dark, or match the system setting',
