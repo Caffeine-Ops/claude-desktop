@@ -72,31 +72,22 @@ export function SelectionAiBubble({
         setAnchor(null)
         return
       }
-      // 焦点已在浮层内（点了自定义指令输入框、正在打字）：此时正文选区被浏览器塌陷是【预期】的，
-      // anchor 里已存好 sectionId/start/end/selectedText，保持浮层不动，不因这次塌陷把它清掉。
+      // 焦点已在浮层内（点了指令文本域、正在打字）：此时正文选区被浏览器塌陷是【预期】的，保持浮层不动。
       if (bubbleRef.current?.contains(document.activeElement)) return
+      // 关键语义（用户要求）：浮层一旦弹出，只能靠「取消 / ×」显式关闭，点编辑框以外的地方【不关闭】。
+      // 故下面所有「选区无效」的分支一律【保持现有 anchor 不动】(只 return，绝不 setAnchor(null))——
+      // 点外面→选区塌陷时浮层原地留存。recompute 只负责【拿到有效新选区时更新/打开】浮层；关闭只经
+      // close()（取消/×）或 fire() 收尾。唯一例外是顶部 disabled(生成中) 分支仍会清，防竞态。
       const sel = window.getSelection()
-      if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-        setAnchor(null)
-        return
-      }
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
       const text = sel.toString().trim()
-      if (!text) {
-        setAnchor(null)
-        return
-      }
+      if (!text) return
       const range = sel.getRangeAt(0)
       // 选区必须落在本容器内（别被聊天区/其它面板的选区触发）。
-      if (!container.contains(range.commonAncestorContainer)) {
-        setAnchor(null)
-        return
-      }
+      if (!container.contains(range.commonAncestorContainer)) return
       const a = resolveBlock(range.startContainer)
       const b = resolveBlock(range.endContainer)
-      if (!a) {
-        setAnchor(null)
-        return
-      }
+      if (!a) return
       // 跨节选区：吸附到起点所在节，end 夹到该节内（b 若在别节则退化为单块起点）。
       const sameSection = b && b.sectionId === a.sectionId
       const start = Math.min(a.blockIndex, sameSection ? b.blockIndex : a.blockIndex)
