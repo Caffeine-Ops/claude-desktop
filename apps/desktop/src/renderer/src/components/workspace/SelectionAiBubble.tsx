@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { reviseProposalSectionBlocks, type BlockReviseAction } from '../../lib/sendProposalSectionRevision'
 
 // 选区即改浮层：监听编辑纸面内的选区，选中一段正文文字后贴选区尾浮出气泡。作用域=选区覆盖的
@@ -43,6 +43,9 @@ export function SelectionAiBubble({
 }): React.JSX.Element | null {
   const [anchor, setAnchor] = useState<Anchor | null>(null)
   const [instruction, setInstruction] = useState('')
+  // 浮层根节点。用于：一旦焦点进入浮层（尤其是自定义指令输入框），忽略随之而来的 selectionchange，
+  // 别把已捕获的 anchor 清掉——否则点输入框聚焦→正文选区塌陷→recompute 判空→气泡消失，字都没法敲。
+  const bubbleRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -65,6 +68,9 @@ export function SelectionAiBubble({
         setAnchor(null)
         return
       }
+      // 焦点已在浮层内（点了自定义指令输入框、正在打字）：此时正文选区被浏览器塌陷是【预期】的，
+      // anchor 里已存好 sectionId/start/end/selectedText，保持浮层不动，不因这次塌陷把它清掉。
+      if (bubbleRef.current?.contains(document.activeElement)) return
       const sel = window.getSelection()
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
         setAnchor(null)
@@ -134,10 +140,16 @@ export function SelectionAiBubble({
 
   return (
     <div
+      ref={bubbleRef}
       className="proposal-anim-pop absolute z-40 w-72 rounded-lg border border-border bg-background p-1.5 text-foreground shadow-lg"
       style={{ left: anchor.left, top: anchor.top }}
-      // 阻止 mousedown 清掉选区（否则点按钮前选区先没了）。
-      onMouseDown={(e) => e.preventDefault()}
+      // 阻止 mousedown 清掉正文选区（否则点按钮前选区先没了、anchor 失据）——但【放行输入框】：
+      // 对 input 若也 preventDefault 会连它的默认聚焦行为一起挡掉，光标进不去、根本没法打字。
+      // 输入框聚焦引发的选区塌陷由上面 recompute 的 bubbleRef 焦点守卫兜住，anchor 不会被清。
+      onMouseDown={(e) => {
+        if (e.target instanceof HTMLElement && e.target.tagName === 'INPUT') return
+        e.preventDefault()
+      }}
     >
       <div className="flex items-center gap-1 text-accent">
         <span className="px-1 text-[12px]">✦</span>
