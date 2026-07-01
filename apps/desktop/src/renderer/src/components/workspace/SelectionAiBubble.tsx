@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { reviseProposalSectionBlocks } from '../../lib/sendProposalSectionRevision'
 
-// 选区即改浮层：监听编辑纸面内的选区，选中一段正文文字后贴选区尾浮出气泡。作用域=选区覆盖的
+// 选区即改浮层：监听编辑纸面内的选区，选中一段文字后贴选区尾浮出气泡。作用域=选区覆盖的
 // 块区间（从选区两端向上找最近 data-block-index），替换单位是块（见 proposalBlocks.ts 理由）。
-// 只对同一节 content 内的选区生效；跨节 / 封面目录 / 空选区 / disabled（生成中）一律不显。
+// 正文/封面/目录节的选区均生效（封面/目录也支持选区即改，溯源措辞在 dispatch 侧按节类型分叉）；
+// 空选区 / disabled（生成中）不显；跨节选区吸附到起点所在节（见下方 recompute）。
 
 interface Anchor {
   sectionId: string
