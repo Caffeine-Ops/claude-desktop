@@ -27,11 +27,21 @@ async function dispatchSectionRevision(
   // setPendingRevision 覆盖它自愈（回归本次收口前的鲁棒行为）。
   const sid = ps.sessionId
   const streaming = sid ? (useChatStore.getState().perSession[sid]?.streaming ?? false) : false
-  if (streaming) return
+  // 诊断：这几处静默 no-op 是「点了改写没反应」最可能的落点，打日志把原因显式化（原先全静默）。
+  if (streaming) {
+    console.warn('[proposal-revise] 跳过：上一轮仍在生成中（streaming），请等它结束再改。')
+    return
+  }
   const sec = ps.sections.find((s) => s.id === sectionId)
-  if (!sec || sec.kind !== 'content') return
+  if (!sec || sec.kind !== 'content') {
+    console.warn('[proposal-revise] 跳过：目标节不存在或非正文节', { sectionId, found: !!sec, kind: sec?.kind })
+    return
+  }
   const built = build(sec)
-  if (!built || !built.message) return
+  if (!built || !built.message) {
+    console.warn('[proposal-revise] 跳过：build 返回空（该节切不出块/指令为空）', { sectionId })
+    return
+  }
   // 指针在 await 前置好（end 分流靠它分流本轮产出）；无需回滚——streaming 闸已保证不会因 stale 指针锁死。
   ps.setPendingRevision(built.blockRange ? { sectionId, blockRange: built.blockRange } : { sectionId })
   await sendProposalStageMessage(built.message)

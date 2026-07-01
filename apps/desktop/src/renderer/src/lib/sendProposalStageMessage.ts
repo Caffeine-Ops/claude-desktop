@@ -18,7 +18,15 @@ export async function sendProposalStageMessage(text: string): Promise<void> {
   const chat = useChatStore.getState()
   const sid = ps.sessionId
   // 仅当方案会话就是当前前台会话才发（防泄漏到别的 tab/会话）。
-  if (!ps.active || sid === null || chat.sessionId !== sid) return
+  if (!ps.active || sid === null || chat.sessionId !== sid) {
+    // 诊断：这里静默 no-op 是「点了改写没反应」的一种落点——方案会话与前台会话漂移了。
+    console.warn('[proposal-stage] 跳过发送：方案会话与前台会话不一致', {
+      active: ps.active,
+      proposalSid: sid,
+      chatSid: chat.sessionId
+    })
+    return
+  }
 
   await dispatchChatTurn({
     sessionId: sid,

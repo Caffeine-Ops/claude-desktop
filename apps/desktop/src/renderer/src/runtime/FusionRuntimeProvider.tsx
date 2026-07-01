@@ -1267,6 +1267,13 @@ function makeSessionEventHandler(
                 }
               } else if (pending && target) {
                 // 修订轮被截断 / 空产出：保留原节（不变量：绝不用半截覆盖好内容），清指针 + 记账。
+                // 诊断（「点了改写没反应」的核心落点）：模型这轮【没吐出方案哨兵块】——通常是它跑偏去
+                // 评估/写文件/闲聊了，故拿不到 revised、不生成审阅项、正文也不变。把它显式打出来。
+                console.warn(
+                  '[proposal-revise] 本轮修订未产出可用的【方案正文哨兵块】——模型可能跑偏（评估/写文件/闲聊），' +
+                    '未生成「应用/放弃」审阅项、正文保持不变。建议重试或新开方案会话。',
+                  { sectionId: pending.sectionId, blockRange: pending.blockRange, messageId: event.messageId }
+                )
                 useProposalStore.getState().setPendingRevision(null)
                 useProposalStore.getState().markDraftConsumed(event.messageId)
               } else {
