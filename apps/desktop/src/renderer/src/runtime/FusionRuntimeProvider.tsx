@@ -21,6 +21,7 @@ import type { ProposalProduct, ProposalSection } from '../stores/proposal'
 import { matchProducts } from '../lib/kbProductMatch'
 import { dispatchChatTurn } from '../lib/dispatchChatTurn'
 import { extractProposalDraftResult, detectContentSentinelAheadOfPhase } from '@shared/proposal'
+import { spliceBlocks } from '@shared/proposalBlocks'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
@@ -1241,7 +1242,13 @@ function makeSessionEventHandler(
               const revised = blocks.find((b) => b.kind === 'content') ?? blocks[0]
               if (pending && target && revised) {
                 useProposalStore.getState().setPendingRevision(null)
-                useProposalStore.getState().reviseSection(pending.sectionId, revised.markdown)
+                // blockRange 存在=选区即改：只把 AI 产出 spliceBlocks 进目标节的那几块，本章
+                // 其余内容原样保留；缺省=整章替换（节重写/展开/精简/据来源修正/截断/补料）。
+                // 两路都落 reviseSection（重置 verification 触发重校验、更新 baseline、清 truncated）。
+                const nextMarkdown = pending.blockRange
+                  ? spliceBlocks(target.markdown, pending.blockRange, revised.markdown)
+                  : revised.markdown
+                useProposalStore.getState().reviseSection(pending.sectionId, nextMarkdown)
                 triggerProposalCitationVerification()
               } else if (pending && target) {
                 // 修订轮被截断 / 空产出：保留原节（不变量：绝不用半截覆盖好内容），清指针 + 记账。
