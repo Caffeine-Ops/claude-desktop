@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Hardened-runtime entitlements for the main app bundle. Required because
+	  Developer ID signing + notarization forces hardened runtime, which by
+	  default blocks the things Electron and our bundled child processes need.
+
+	  - allow-jit / allow-unsigned-executable-memory / disable-executable-page-protection:
+	    V8 (Chromium's JS engine) JITs code at runtime. Without these the
+	    renderer/main crash on launch under hardened runtime.
+	  - disable-library-validation: we spawn binaries signed by OTHER identities
+	    (the fusion-code CLI, the bundled Node 24 and Python 3.12 runtimes were
+	    downloaded from nodejs.org / python-build-standalone, NOT signed by our
+	    Developer ID). Library validation would refuse to load their dylibs into
+	    a process tree rooted at our signed app. This is the single most common
+	    cause of a "works unsigned, crashes signed" Electron app.
+	  - inherit: child processes inherit the parent's entitlements so the helper
+	    apps and spawned CLIs run under the same sandbox-exempt context.
+	-->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<key>com.apple.security.cs.disable-executable-page-protection</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.cs.allow-dyld-environment-variables</key>
+	<true/>
+	<key>com.apple.security.inherit</key>
+	<true/>
+	<!--
+	  The app spawns the fusion-code CLI which makes network calls to the
+	  Anthropic API, and the bundled Python/Node runtimes hit the network too.
+	  Under hardened runtime these client/server entitlements keep sockets open.
+	-->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+</dict>
+</plist>

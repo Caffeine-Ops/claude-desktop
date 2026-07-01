@@ -57,7 +57,11 @@
           "arch": ["arm64"]
         }
       ],
-      "identity": null,
+      "identity": "Shenzhen Panda Run Network Technology Co., Ltd (LBL475BGZL)",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "extraResources": [
         {
           "from": "fusion-bin/fusion-code-cli",

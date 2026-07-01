@@ -2,6 +2,18 @@ node_modules
 out
 dist
 build/
+# Exception for ONE file inside apps/desktop/build/. `build/` above excludes the
+# dir, and git won't descend into an excluded dir — so we must first re-include
+# the dir itself (without un-ignoring its other contents), then the file:
+#   1. !apps/desktop/build/  → allow git to descend into just this build dir
+#   2. apps/desktop/build/*  → re-ignore everything in it (icons are CI-generated)
+#   3. !…/entitlements.mac.plist → the one hand-authored, no-generator file we
+#      keep: electron-builder reads it for Developer ID signing on tag builds,
+#      so it must ride into the repo or `build:mac` in CI can't find it. Holds
+#      only hardened-runtime entitlement keys, no credentials.
+!apps/desktop/build/
+apps/desktop/build/*
+!apps/desktop/build/entitlements.mac.plist
 *.log
 .DS_Store
 
