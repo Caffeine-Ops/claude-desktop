@@ -151,3 +151,32 @@ export async function reviseProposalSectionBlocks(
     }
   })
 }
+
+/**
+ * 选区即改·继续改（对话审阅循环）：用户对一版【尚未落地】的改写稿点「继续改」并再给一句指令，
+ * AI 在【当前这版改写稿 baseText】的基础上继续修改（而非再从原节切块）。blockRange 原样透传
+ * （仍指向同几块），end 分流据此再登记一条新的 blockReview，形成「改→审阅→继续改→再审阅」循环，
+ * 直到用户点「应用」才 spliceBlocks 落地。溯源纪律仍由固定后缀兜住。
+ *
+ * 仅对 content 节生效；非方案前台 / 目标节不存在 / 指令为空 / 一轮在飞时静默 no-op（守卫在 dispatch）。
+ */
+export async function continueProposalSectionBlocks(
+  sectionId: string,
+  blockRange: { start: number; end: number },
+  baseText: string,
+  instruction: string
+): Promise<void> {
+  const trimmed = instruction.trim()
+  if (!trimmed) return
+  const base = baseText.trim()
+  if (!base) return
+  // build 忽略 sec（base 是上一版改写稿、非节内原文）；blockRange 原样透传给 end 分流 splice/审阅。
+  await dispatchSectionRevision(sectionId, () => ({
+    blockRange,
+    message:
+      `【定向修订·继续在下面这版改写稿上修改，只重写这一小段，不要改动本章其它内容、更不要动其它章节】${trimmed}\n\n` +
+      `当前这版改写稿如下：\n\n${base}\n\n` +
+      `只输出【继续修改后的这一小段本身】（不要重复章节标题、不要写章节序号），仍用方案【正文】哨兵包裹，` +
+      `段末按既有规则标注《来源》，绝不臆造知识库之外的内容。`
+  }))
+}

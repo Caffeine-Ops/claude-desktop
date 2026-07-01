@@ -21,7 +21,8 @@ import type { ProposalProduct, ProposalSection } from '../stores/proposal'
 import { matchProducts } from '../lib/kbProductMatch'
 import { dispatchChatTurn } from '../lib/dispatchChatTurn'
 import { extractProposalDraftResult, detectContentSentinelAheadOfPhase } from '@shared/proposal'
-import { spliceBlocks } from '@shared/proposalBlocks'
+import { splitBlocks } from '@shared/proposalBlocks'
+import { triggerProposalCitationVerification } from '../lib/proposalVerification'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
@@ -1242,14 +1243,28 @@ function makeSessionEventHandler(
               const revised = blocks.find((b) => b.kind === 'content') ?? blocks[0]
               if (pending && target && revised) {
                 useProposalStore.getState().setPendingRevision(null)
-                // blockRange 存在=选区即改：只把 AI 产出 spliceBlocks 进目标节的那几块，本章
-                // 其余内容原样保留；缺省=整章替换（节重写/展开/精简/据来源修正/截断/补料）。
-                // 两路都落 reviseSection（重置 verification 触发重校验、更新 baseline、清 truncated）。
-                const nextMarkdown = pending.blockRange
-                  ? spliceBlocks(target.markdown, pending.blockRange, revised.markdown)
-                  : revised.markdown
-                useProposalStore.getState().reviseSection(pending.sectionId, nextMarkdown)
-                triggerProposalCitationVerification()
+                if (pending.blockRange) {
+                  // blockRange 存在=选区即改：【不即时落地】。把「原文 vs 改写后」登记成一条挂在
+                  // 本条助手消息（event.messageId）下的待审阅项，由 ThreadView 的 ProposalRevisionReview
+                  // 在该消息下方渲染对照 + [应用/放弃/继续改]，用户点「应用」才 spliceBlocks 落地
+                  // （见 ThreadView）。原文按【当时的】target.markdown 切块夹紧取，与 blockRange 同源。
+                  const secBlocks = splitBlocks(target.markdown)
+                  const start = Math.max(0, Math.min(pending.blockRange.start, secBlocks.length - 1))
+                  const end = Math.max(start, Math.min(pending.blockRange.end, secBlocks.length - 1))
+                  useProposalStore.getState().addBlockReview(event.messageId, {
+                    sectionId: pending.sectionId,
+                    blockRange: { start, end },
+                    before: secBlocks.slice(start, end + 1).join('\n\n'),
+                    after: revised.markdown
+                  })
+                  // 记账：产出已转存进 blockReview，不能再被 appendSections 当新节追加。
+                  useProposalStore.getState().markDraftConsumed(event.messageId)
+                } else {
+                  // 缺省=整章替换（节重写/展开/精简/据来源修正/截断/补料）：仍即时落地整节替换，
+                  // reviseSection（重置 verification 触发重校验、更新 baseline、清 truncated）。
+                  useProposalStore.getState().reviseSection(pending.sectionId, revised.markdown)
+                  triggerProposalCitationVerification()
+                }
               } else if (pending && target) {
                 // 修订轮被截断 / 空产出：保留原节（不变量：绝不用半截覆盖好内容），清指针 + 记账。
                 useProposalStore.getState().setPendingRevision(null)
@@ -1356,37 +1371,6 @@ function syncProposalDraftFromInflight(sid: string, messageId: string): void {
   triggerProposalCitationVerification()
 }
 
-// 引用落地校验（#1）的「在飞」去重集：同一节的校验 IPC 未回来前不重复发起（多条 end
-// 接连触发时会重复扫 store）。模块级即可——校验是全局副作用、与组件实例无关。
-const verifyingSectionIds = new Set<string>()
-
-/**
- * 对当前草稿里「未校验的正文节」逐个异步发起引用落地校验，回填到 store。
- * 幂等：已校验（verification 非空）、在飞、非 content、截断残节都跳过。失败静默降级
- * （留 verification=undefined，UI 显示「未校验」灰态），绝不阻塞。
- */
-function triggerProposalCitationVerification(): void {
-  if (!window.chatApi?.verifyProposalCitations) return
-  const { sections } = useProposalStore.getState()
-  for (const sec of sections) {
-    if (
-      sec.kind !== 'content' ||
-      sec.truncated ||
-      sec.verification !== undefined ||
-      verifyingSectionIds.has(sec.id)
-    ) {
-      continue
-    }
-    verifyingSectionIds.add(sec.id)
-    void window.chatApi
-      .verifyProposalCitations({ markdown: sec.markdown })
-      .then((v) => useProposalStore.getState().setSectionVerification(sec.id, v))
-      .catch(() => {
-        /* 降级：留作未校验，绝不阻塞 */
-      })
-      .finally(() => verifyingSectionIds.delete(sec.id))
-  }
-}
 
 function matchSlashCommand(text: string): Exclude<DialogKind, null> | null {
   const trimmed = text.trim()

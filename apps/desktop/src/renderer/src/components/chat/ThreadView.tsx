@@ -15,6 +15,10 @@ import { AnimatePresence, motion } from 'motion/react'
 import type { SessionMeta } from '../../../../shared/types'
 import { useI18n, useT, useToolLabel } from '../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../stores/chat'
+import { useProposalStore } from '../../stores/proposal'
+import { continueProposalSectionBlocks } from '../../lib/sendProposalSectionRevision'
+import { triggerProposalCitationVerification } from '../../lib/proposalVerification'
+import { spliceBlocks } from '@shared/proposalBlocks'
 import { buildSlashAdapter } from '../../composer/slashAdapter'
 import { buildFileMentionAdapter } from '../../composer/fileMentionAdapter'
 import { ProseMirrorComposerInput } from '../../composer/ProseMirrorComposerInput'
@@ -786,7 +790,150 @@ function AssistantMessage(): React.JSX.Element {
       {/* File cards for any files the assistant wrote this turn. Renders
           only once the turn completes (see AssistantFileCards). */}
       <AssistantFileCards />
+      {/* 选区即改·待审阅对照 + [应用/放弃/继续改]。仅当本条助手消息是一轮选区改写的产出
+          （store.blockReviews[messageId] 存在）时渲染，挂在消息体下方。 */}
+      <ProposalRevisionReview />
     </MessagePrimitive.Root>
+  )
+}
+
+/**
+ * 选区即改·对话内审阅（先审阅后落地）。
+ *
+ * 用户在纸面选中一段正文、经浮层发起 AI 改写后，产出【不即时落地】，而是由 end 分流登记成一条
+ * blockReview（key=本轮助手消息 id）。本组件用 useMessage() 拿到当前消息 id，命中则在该助手消息
+ * 下方渲染「原文 vs 改写后」对照 + 三个动作：
+ *   - 应用：spliceBlocks 把改写后拼回目标节的那几块（reviseSection 重置校验/更新 baseline），
+ *           补触发引用落地校验，移除本项。原文其余内容原样不动。
+ *   - 放弃：移除本项，原文纹丝不动。
+ *   - 继续改：展开小输入框再给一句指令，在【当前这版改写稿】上接着改——移除本项、发起新一轮，
+ *           新产出到 end 会挂一条新的 blockReview（对照的「原文」始终是节内原文、不变），如此循环。
+ */
+function ProposalRevisionReview(): React.JSX.Element | null {
+  const message = useMessage()
+  const id = (message as { id?: string }).id
+  const review = useProposalStore((s) => (id ? s.blockReviews[id] : undefined))
+  const streaming = useChatStore((s) => s.streaming)
+  const [continuing, setContinuing] = useState(false)
+  const [instruction, setInstruction] = useState('')
+
+  if (!id || !review) return null
+  const r = review // 命中后窄化非空，供下方闭包使用
+
+  const apply = (): void => {
+    const st = useProposalStore.getState()
+    const cur = st.blockReviews[id]
+    if (!cur) return
+    const target = st.sections.find((s) => s.id === cur.sectionId)
+    if (target) {
+      st.reviseSection(cur.sectionId, spliceBlocks(target.markdown, cur.blockRange, cur.after))
+      triggerProposalCitationVerification()
+    }
+    st.removeBlockReview(id)
+  }
+
+  const discard = (): void => {
+    useProposalStore.getState().removeBlockReview(id)
+  }
+
+  const submitContinue = async (): Promise<void> => {
+    const text = instruction.trim()
+    if (!text || streaming) return
+    // 当前这版被「继续改稿」取代：先撤本项，再发起新一轮（新产出到 end 会挂新的 blockReview）。
+    useProposalStore.getState().removeBlockReview(id)
+    setContinuing(false)
+    setInstruction('')
+    await continueProposalSectionBlocks(r.sectionId, r.blockRange, r.after, text)
+  }
+
+  return (
+    <div className="mt-1 rounded-lg border border-border bg-muted/30 p-3 text-[13px]">
+      <div className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-accent">
+        <span>✦</span>
+        <span>选区改写 · 待确认</span>
+      </div>
+      <div className="space-y-2">
+        <div>
+          <div className="mb-0.5 text-[11px] text-muted-foreground">原文</div>
+          <div className="max-h-24 overflow-auto whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-[12px] leading-[1.5] text-muted-foreground">
+            {r.before}
+          </div>
+        </div>
+        <div>
+          <div className="mb-0.5 text-[11px] font-medium text-accent">改写后</div>
+          <div className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border-l-2 border-accent bg-accent/5 py-1 pl-2 pr-1 text-[12px] leading-[1.5] text-foreground">
+            {r.after}
+          </div>
+        </div>
+      </div>
+
+      {continuing ? (
+        <div className="mt-2.5">
+          <textarea
+            autoFocus
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && instruction.trim()) {
+                e.preventDefault()
+                void submitContinue()
+              }
+            }}
+            placeholder="再给一句：比如「再正式些」「补一个数据」…"
+            rows={2}
+            className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-2 text-[12px] leading-relaxed outline-none focus:border-accent"
+          />
+          <div className="mt-1.5 flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={() => {
+                setContinuing(false)
+                setInstruction('')
+              }}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="rounded-lg bg-foreground px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
+              disabled={!instruction.trim() || streaming}
+              onClick={() => void submitContinue()}
+              title="⌘/Ctrl + 回车"
+            >
+              发送
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-2.5 flex items-center gap-1.5">
+          <button
+            type="button"
+            className="flex items-center gap-1 rounded-lg bg-foreground px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90"
+            onClick={apply}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 6L9 17l-5-5" />
+            </svg>
+            应用
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-border px-3 py-1.5 text-[12px] text-foreground hover:bg-muted"
+            onClick={discard}
+          >
+            放弃
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-border px-3 py-1.5 text-[12px] text-foreground hover:border-accent hover:text-accent"
+            onClick={() => setContinuing(true)}
+          >
+            继续改
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 

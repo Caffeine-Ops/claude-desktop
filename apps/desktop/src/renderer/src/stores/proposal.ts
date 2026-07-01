@@ -34,6 +34,17 @@ export interface ProposalSection {
   baselineMarkdown?: string
 }
 
+// 选区即改的「先审阅后落地」提案，挂在【发起改写那一轮的助手消息 id】下。仅【选区块修订】走此流
+// （整章重写/展开/精简/据来源修正/补料等仍即时落地）。由 ThreadView 在对应助手消息下方渲染
+// 「原文 vs 改写后」对照 + [应用/放弃/继续改]，用户点「应用」才 spliceBlocks 落地。瞬时 UI 信号，
+// 不持久化（重开会话不复现待审阅项，符合直觉——未决的改写不该跨会话留存）。
+export interface BlockRevisionReview {
+  sectionId: string
+  blockRange: { start: number; end: number }
+  before: string // 选区覆盖块的原文（splitBlocks 切片 join）
+  after: string // AI 改写后正文（去哨兵的干净 markdown）
+}
+
 interface ProposalState {
   active: boolean
   // 方案绑定的会话 ID——只有该 session 的 send 才带 proposalMode=true，
@@ -77,6 +88,9 @@ interface ProposalState {
   // 第 [start,end] 块（选区即改），由 FusionRuntimeProvider end 分流 spliceBlocks 拼回。瞬时
   // UI 信号，不持久化。
   pendingRevision: { sectionId: string; blockRange?: { start: number; end: number } } | null
+  // 选区即改的待审阅提案，key=发起那轮的助手消息 id。非空项由 ThreadView 在该消息下渲染对照+按钮，
+  // 应用才落地。瞬时 UI 信号，不持久化。可同时挂多条（不同消息各自独立审阅）。
+  blockReviews: Record<string, BlockRevisionReview>
   // 草稿写盘是否处于失败态（P3-3）：flushProposalSave 拿到 {ok:false} 或 IPC 抛错时置 true，
   // 下次成功落盘置 false。面板据此显示「草稿未保存」常驻提示——写盘失败（磁盘满/权限/路径）
   // 原本是 fire-and-forget 静默吞掉，用户误以为已存、切走就丢。非阻塞、不持久化，纯运行时
@@ -109,6 +123,10 @@ interface ProposalState {
   setPendingRevision: (
     pending: { sectionId: string; blockRange?: { start: number; end: number } } | null
   ) => void
+  // 选区即改·审阅项增删。addBlockReview：end 分流把「原文 vs 改写后」登记到该轮助手消息 id 下。
+  // removeBlockReview：用户点应用/放弃、或「继续改」发起新一轮时，撤掉旧项。
+  addBlockReview: (messageId: string, review: BlockRevisionReview) => void
+  removeBlockReview: (messageId: string) => void
   // 标记/清除草稿写盘失败态（P3-3）。flushProposalSave 落盘后调用：失败 true、成功 false。
   setDraftSaveFailed: (failed: boolean) => void
   // 用 AI 新产出整节替换指定节：同步把 baselineMarkdown 也更新成新原文（否则 M-0 埋点会把
@@ -177,6 +195,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   viewMode: 'preview',
   stageSkip: null,
   pendingRevision: null,
+  blockReviews: {},
   draftSaveFailed: false,
   start: (sessionId) =>
     set({
@@ -191,6 +210,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       viewMode: 'preview',
       stageSkip: null,
       pendingRevision: null,
+      blockReviews: {},
       draftSaveFailed: false
     }),
   setProducts: (products) => set({ products }),
@@ -238,6 +258,15 @@ export const useProposalStore = create<ProposalState>((set) => ({
   advancePhase: (to) => set({ phase: to }),
   clearStageSkip: () => set({ stageSkip: null }),
   setPendingRevision: (pending) => set({ pendingRevision: pending }),
+  addBlockReview: (messageId, review) =>
+    set((s) => ({ blockReviews: { ...s.blockReviews, [messageId]: review } })),
+  removeBlockReview: (messageId) =>
+    set((s) => {
+      if (!(messageId in s.blockReviews)) return s
+      const next = { ...s.blockReviews }
+      delete next[messageId]
+      return { blockReviews: next }
+    }),
   setDraftSaveFailed: (failed) => set({ draftSaveFailed: failed }),
   reviseSection: (id, markdown) =>
     set((s) => ({
@@ -277,8 +306,16 @@ export const useProposalStore = create<ProposalState>((set) => ({
   setViewMode: (mode) => set({ viewMode: mode }),
   // 再入清陈旧跳阶提示：stageSkip 描述「刚发生的一次跳阶」，再入一个旧会话时无意义。
   reopen: (sessionId) =>
-    set({ active: true, sessionId, workspaceOpen: true, stageSkip: null, pendingRevision: null }),
-  leaveMode: () => set({ active: false, workspaceOpen: false, pendingRevision: null }),
+    set({
+      active: true,
+      sessionId,
+      workspaceOpen: true,
+      stageSkip: null,
+      pendingRevision: null,
+      blockReviews: {}
+    }),
+  leaveMode: () =>
+    set({ active: false, workspaceOpen: false, pendingRevision: null, blockReviews: {} }),
   restoreFromTranscript: ({ sessionId, sections, consumedDraftIds, phase }) =>
     set({
       active: true,
@@ -300,6 +337,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       viewMode: 'preview',
       stageSkip: null,
       pendingRevision: null,
+      blockReviews: {},
       draftSaveFailed: false
     }),
   restoreFromDisk: (record) =>
@@ -320,6 +358,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       viewMode: 'preview',
       stageSkip: null,
       pendingRevision: null,
+      blockReviews: {},
       draftSaveFailed: false
     }),
   reset: () =>
@@ -335,6 +374,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       viewMode: 'preview',
       stageSkip: null,
       pendingRevision: null,
+      blockReviews: {},
       draftSaveFailed: false
     })
 }))
