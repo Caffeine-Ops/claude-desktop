@@ -19,6 +19,7 @@ import { useProposalStore } from '../../stores/proposal'
 import { continueProposalSectionBlocks } from '../../lib/sendProposalSectionRevision'
 import { triggerProposalCitationVerification } from '../../lib/proposalVerification'
 import { spliceBlocks } from '@shared/proposalBlocks'
+import { diffChars } from '@shared/textDiff'
 import { buildSlashAdapter } from '../../composer/slashAdapter'
 import { buildFileMentionAdapter } from '../../composer/fileMentionAdapter'
 import { ProseMirrorComposerInput } from '../../composer/ProseMirrorComposerInput'
@@ -817,6 +818,14 @@ function ProposalRevisionReview(): React.JSX.Element | null {
   const [continuing, setContinuing] = useState(false)
   const [instruction, setInstruction] = useState('')
 
+  // 字符级 diff：把「原文 vs 改写后」的改动标出来——原文块给被删片段打红删除线、改写后块
+  // 给新增片段打绿高亮，用户一眼看出改了哪几个字（否则两段平铺得肉眼逐字对比）。review 命中
+  // 前 hooks 也得先跑（React 规则：hook 数量不能随分支变），故用可空源、内部兜底空串。
+  const segments = useMemo(
+    () => diffChars(review?.before ?? '', review?.after ?? ''),
+    [review?.before, review?.after]
+  )
+
   if (!id || !review) return null
   const r = review // 命中后窄化非空，供下方闭包使用
 
@@ -854,15 +863,51 @@ function ProposalRevisionReview(): React.JSX.Element | null {
       </div>
       <div className="space-y-2">
         <div>
-          <div className="mb-0.5 text-[11px] text-muted-foreground">原文</div>
-          <div className="max-h-24 overflow-auto whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-[12px] leading-[1.5] text-muted-foreground">
-            {r.before}
+          <div className="mb-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span>原文</span>
+            <span className="inline-flex items-center gap-1 text-[10px] text-rose-500/90">
+              <span className="inline-block h-2 w-2 rounded-[2px] bg-rose-500/25" />
+              删除
+            </span>
+          </div>
+          {/* 原文流 = equal + delete。被删片段打红删除线，其余保持原文的弱化色。 */}
+          <div className="max-h-24 overflow-auto whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-[12px] leading-[1.6] text-muted-foreground">
+            {segments.map((seg, idx) =>
+              seg.op === 'insert' ? null : seg.op === 'delete' ? (
+                <span
+                  key={idx}
+                  className="rounded-[3px] bg-rose-500/10 text-rose-600 line-through decoration-rose-400/60 dark:text-rose-400"
+                >
+                  {seg.text}
+                </span>
+              ) : (
+                <span key={idx}>{seg.text}</span>
+              )
+            )}
           </div>
         </div>
         <div>
-          <div className="mb-0.5 text-[11px] font-medium text-accent">改写后</div>
-          <div className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border-l-2 border-accent bg-accent/5 py-1 pl-2 pr-1 text-[12px] leading-[1.5] text-foreground">
-            {r.after}
+          <div className="mb-0.5 flex items-center gap-1.5 text-[11px] font-medium text-accent">
+            <span>改写后</span>
+            <span className="inline-flex items-center gap-1 text-[10px] font-normal text-emerald-600/90">
+              <span className="inline-block h-2 w-2 rounded-[2px] bg-emerald-500/30" />
+              新增
+            </span>
+          </div>
+          {/* 改写后流 = equal + insert。新增片段打绿高亮，其余保持成稿常规色。 */}
+          <div className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border-l-2 border-accent bg-accent/5 py-1 pl-2 pr-1 text-[12px] leading-[1.6] text-foreground">
+            {segments.map((seg, idx) =>
+              seg.op === 'delete' ? null : seg.op === 'insert' ? (
+                <span
+                  key={idx}
+                  className="rounded-[3px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                >
+                  {seg.text}
+                </span>
+              ) : (
+                <span key={idx}>{seg.text}</span>
+              )
+            )}
           </div>
         </div>
       </div>
