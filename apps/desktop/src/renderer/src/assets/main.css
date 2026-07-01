@@ -224,37 +224,19 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
   overflow: hidden;
 }
 
-/* Composer textarea is rendered with `color: transparent` because its
- * visible text is painted by ComposerHighlightOverlay underneath. The
- * browser would normally apply its own system selection colors to the
- * textarea text — which on transparent text means it briefly REVEALS
- * the transparent character cells on top of the overlay, fighting the
- * chip backgrounds and looking like a half-painted band (the bug we
- * had: a hard horizontal stripe over the first line of selected text).
+/* NB: there used to be a global `textarea::selection { color: transparent }`
+ * here. It existed because the OLD composer was a <textarea> whose glyphs were
+ * painted by a ComposerHighlightOverlay underneath — so its own selection text
+ * had to stay transparent or it would reveal the transparent character cells
+ * and paint a half-band stripe over the overlay.
  *
- * Fix: keep the selection text transparent so the overlay keeps
- * owning the rendered glyphs, and paint a theme-aware accent tint
- * underneath so the user can still see *what* is selected. Using
- * `hsl(var(--accent) / X)` makes the highlight track the active
- * theme — the old rgba(244,244,245,0.18) was practically invisible
- * on the light theme card surface.
- *
- * Both ::selection and the legacy ::-moz-selection are listed even
- * though modern Firefox accepts ::selection; spelling out the prefix
- * keeps older builds and the Electron Linux fallback in line.
- *
- * NB: targeting any `textarea` in the renderer is safe — only the
- * composer ever mounts one. If that changes, scope this to the
- * composer card via a class.
+ * That composer is gone: it's now a `.ProseMirror` contenteditable, not a
+ * <textarea> (see ProseMirrorComposerInput). So the rule no longer had a valid
+ * target — and every OTHER textarea in the renderer (the 写方案 editors:
+ * SelectionAiBubble, ProposalPaper block-edit, ProposalDocPanel) inherited it,
+ * making their selected text invisible (transparent glyphs on a light card).
+ * Removed so those textareas use the browser's default, visible selection.
  */
-textarea::selection {
-  color: transparent;
-  background: hsl(var(--accent) / 0.28);
-}
-textarea::-moz-selection {
-  color: transparent;
-  background: hsl(var(--accent) / 0.28);
-}
 
 /* Fake caret used by ComposerHighlightOverlay. The textarea's native
  * caret is hidden so we can draw our own in the overlay and have it
