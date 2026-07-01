@@ -118,12 +118,13 @@ function renderVerification(sec: ProposalSection, generating: boolean): React.JS
 // mb-3）。标题/列表/表格/围栏自带外边距，返回 false 不补（避免叠加撑大间距，review V9）。图片行
 // ![…] 属段落内容 → 返回 true。判据与 proposalBlocks.splitBlocks 的块首前缀一致。
 function blockNeedsGap(blk: string): boolean {
-  const s = blk.trimStart()
+  // 直接测 blk（不 trimStart）：与 splitBlocks 判块首前缀的方式严格一致——它也测原始行、无前导空格容忍，
+  // 故缩进的 # / ``` 在 splitBlocks 眼里本就不算标题/围栏，这里同样按段落型处理，判据不分叉（review 复审 Minor#2）。
   return !(
-    /^#{1,6}\s/.test(s) || // 标题
-    /^(?:[-*+]|\d+[.)])\s/.test(s) || // 列表
-    s.startsWith('|') || // 表格
-    s.startsWith('```') // 围栏代码 / mermaid
+    /^#{1,6}\s/.test(blk) || // 标题（同 HEADING，不容忍前导空格）
+    /^\s*(?:[-*+]|\d+[.)])\s/.test(blk) || // 列表（同 LIST_ITEM，容忍前导空格）
+    /^\s*\|/.test(blk) || // 表格（同 TABLE_ROW，容忍前导空格）
+    blk.startsWith('```') // 围栏代码 / mermaid（同 FENCE，不容忍前导空格）
   )
 }
 
@@ -409,9 +410,12 @@ export function ProposalPaper(): React.JSX.Element {
           editingBlock && editingBlock.sectionId === sec.id && editingBlock.blockIndex === bi ? (
             <textarea
               key={bi}
-              className="my-1 min-h-[64px] w-full resize-y rounded-sm bg-accent/5 font-serif text-[14px] leading-[1.95] text-[#1d1d1f] outline-none"
+              className="my-1 min-h-[64px] w-full resize-y rounded-sm bg-accent/5 font-serif text-[14px] leading-[1.95] text-[#1d1d1f] outline-none read-only:opacity-60"
               value={blockDraft}
               autoFocus
+              // 生成中冻结手改（与整节逃生舱对称，review 复审 Minor#3）：编辑打开后若 AI 开始 streaming，
+              // 键入本会被 commitBlock 的 generating 守卫丢弃，readOnly 提前挡住、不让用户白敲。
+              readOnly={generating}
               onChange={(e) => setBlockDraft(e.target.value)}
               // 单一提交路径：一切提交都经 onBlur。⌘↵ 触发 blur() 走提交；Esc 先置 cancel 标记再 blur()，
               // onBlur 识别标记后跳过提交（review V4——否则 Esc 摘除 textarea 触发的 blur 仍会写回）。

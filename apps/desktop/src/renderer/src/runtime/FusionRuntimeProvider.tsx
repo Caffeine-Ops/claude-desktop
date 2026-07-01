@@ -1286,6 +1286,12 @@ function makeSessionEventHandler(
       case 'error':
         actions.setError(sid, event.messageId, event.error)
         actions.endAssistantMessage(sid)
+        // 出错回合无后续 'end'：若本轮是一次定向修订（pendingRevision 已置），end 分流不会到来清指针，
+        // 而修订发起层现在遇 pendingRevision 已置即拒绝——不清则一次失败修订会永久锁死后续所有修订
+        // （review 复审 Issue #1）。故出错终止时一并清回指针（无 pending 时是 no-op）。
+        if (useProposalStore.getState().pendingRevision) {
+          useProposalStore.getState().setPendingRevision(null)
+        }
         break
       default:
         break

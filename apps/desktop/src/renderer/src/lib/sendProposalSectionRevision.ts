@@ -23,7 +23,16 @@ async function dispatchSectionRevision(
   const built = build(sec)
   if (!built || !built.message) return
   ps.setPendingRevision(built.blockRange ? { sectionId, blockRange: built.blockRange } : { sectionId })
-  await sendProposalStageMessage(built.message)
+  // 回滚保护（review 复审 Issue #1）：指针必须在 await 前置好（end 分流靠它分流本轮产出），但若这轮
+  // 【根本没起飞】（非前台会话被 sendProposalStageMessage 挡，返回 false）或发送抛错，就没有 end/error
+  // 来清指针——不回滚则 pendingRevision 永久滞留、把后续【所有】修订入口锁死。故没派出就当场清回。
+  // （真派出但回合出错的情况由 FusionRuntimeProvider 的 'error' 分流清指针兜底。）
+  let dispatched = false
+  try {
+    dispatched = await sendProposalStageMessage(built.message)
+  } finally {
+    if (!dispatched) useProposalStore.getState().setPendingRevision(null)
+  }
 }
 
 /**
