@@ -263,6 +263,7 @@ export function ProposalPaper(): React.JSX.Element {
             className="grid size-6 place-items-center rounded-md border border-rose-500 bg-rose-500 text-[12px] text-white"
             onClick={() => {
               if (editingId === sec.id) setEditingId(null)
+              if (editingBlock?.sectionId === sec.id) setEditingBlock(null)
               removeSection(sec.id)
               setConfirmDeleteId(null)
             }}
