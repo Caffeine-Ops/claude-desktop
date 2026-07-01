@@ -10,7 +10,7 @@ import {
   useMessage
 } from '@assistant-ui/react'
 import type { Attachment } from '@assistant-ui/core'
-import { AnimatePresence, motion, useAnimate } from 'motion/react'
+import { AnimatePresence, motion, useAnimate, useReducedMotion } from 'motion/react'
 
 import type { SessionMeta, WorkflowTask, PermissionRequest } from '../../../../shared/types'
 import { useI18n, useT, useToolLabel } from '../../i18n'
@@ -24,9 +24,14 @@ import {
   useStreamingAskArgsText,
   usePreviewServer,
   useWrittenFiles,
+  useImageManifest,
   useDelayedSessionLoading,
   type WrittenFile
 } from '../../stores/chat'
+import type {
+  ImageManifestItem,
+  ImageManifestReadResult
+} from '../../../../shared/ipc-channels'
 import { useComposerModeStore, type ComposerModeId } from '../../stores/composerMode'
 import { parsePartialToolArgs } from '../../stores/todos'
 import { useComposerOverlayStore } from '../../stores/composerOverlay'
@@ -394,8 +399,6 @@ export function ThreadView(): React.JSX.Element {
           fades the first ~44px of text to transparent so messages don't hit a
           hard edge as they scroll up; only the frosted blur layer is gone. */}
 
-      <ScrollToBottomButton />
-
       {/* Composer dock — pinned to the bottom of Root, but ONLY once the
           thread has messages. While empty, the composer is rendered inside
           the centered EmptyState block instead (figure 26), so the dock is
@@ -417,6 +420,15 @@ export function ThreadView(): React.JSX.Element {
             so the strip's own backdrop-blur actually applies to the messages
             behind it. */}
         <div className="relative shrink-0">
+          {/* Scroll-to-bottom affordance. Anchored to THIS wrapper (which hugs
+              the composer dock) rather than Thread.Root, so it floats just
+              above the input regardless of how tall the dock grows (composer
+              content, slides dropdown, etc.) — the old Root-level
+              `bottom-[80px]` was a magic number that landed the button INSIDE
+              the dock once the composer got taller. Centering is also relative
+              to the dock's width now, so it stays centered over the chat column
+              instead of the whole ThreadView (which includes the slides pane). */}
+          <ScrollToBottomButton />
           {/* Frosted transition strip — sits directly above the dock
               (bottom-full), blur + opacity fading UPWARD via the mask, so
               messages soften and dissolve into the composer instead of a hard
@@ -475,33 +487,105 @@ export function ThreadView(): React.JSX.Element {
 /**
  * Floating "scroll to bottom" affordance.
  *
- * Built on `ThreadPrimitive.ScrollToBottom`, which auto-disables
- * itself when the viewport is already pinned to the end of the
- * thread. We key on that `disabled` attribute with Tailwind's
- * `disabled:` variant to fade + lift the button out of view, so no
- * extra state subscription is needed — the primitive handles the
- * scroll math and we just react to the resulting disabled flag.
+ * Click behavior comes from `ThreadPrimitive.ScrollToBottom` (its
+ * scroll-to-end math is fine). VISIBILITY, however, we compute
+ * OURSELVES rather than keying on the primitive's `disabled` flag —
+ * because that flag is unreliable at sub-pixel viewport heights.
  *
- * Positioned absolutely inside Thread.Root (above the composer dock)
- * so it floats over the fading bottom of the message list without
- * pushing other layout around.
+ * Why: assistant-ui decides "at bottom" with
+ *   Math.abs(scrollHeight - scrollTop - clientHeight) < 1
+ * but `Element.clientHeight` is an INTEGER (rounded). When the flex
+ * layout sizes the viewport to e.g. 970.5px, clientHeight rounds to
+ * 971 (or 970) while the real scrollable max is 970.5, so once pinned
+ * to the bottom the expression evaluates to ±1 — and `|±1| < 1` is
+ * false. The primitive then thinks we're NOT at bottom and the button
+ * sticks around forever (observed: scrollHeight 1245, scrollTop 689,
+ * clientHeight 557 → diff −1 → button never hides). A half-pixel
+ * viewport height is enough to trigger it, so it's not a one-off.
+ *
+ * Fix: walk up to the scroll container, listen to scroll + resize, and
+ * recompute "at bottom" with a 2px tolerance that swallows the rounding
+ * jitter. We drive a `data-at-bottom` attribute the className keys on.
+ *
+ * Positioned absolutely inside the composer-dock wrapper (`bottom-full`
+ * + mb-2), so it floats just above the input over the fading bottom of
+ * the message list, tracking the dock's height instead of a fixed
+ * offset, without pushing other layout around.
  */
 function ScrollToBottomButton(): React.JSX.Element {
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const viewportRef = useRef<HTMLElement | null>(null)
+  const [atBottom, setAtBottom] = useState(true)
+
+  useEffect(() => {
+    // The scroll viewport is NOT on our ancestor chain — it's a SIBLING.
+    // DOM shape: Thread.Root → [ChatHeader, Viewport, dock-wrapper → us].
+    // So: walk UP to the ancestor that contains the viewport in its subtree
+    // (Thread.Root), then querySelector DOWN to grab it.
+    //
+    // We match by the viewport's own marker class `[scrollbar-gutter:stable]`
+    // (set on exactly one element in ThreadView — the Viewport) rather than
+    // by "is currently overflowing", so we still bind the listener when the
+    // thread is short and only overflows LATER. Overflow is then decided per
+    // tick by the distance math in recompute().
+    const VIEWPORT_SELECTOR = '[class*="scrollbar-gutter"]'
+    const findViewport = (): HTMLElement | null => {
+      let anc: HTMLElement | null = btnRef.current?.parentElement ?? null
+      while (anc) {
+        const hit = anc.querySelector<HTMLElement>(VIEWPORT_SELECTOR)
+        if (hit) return hit
+        anc = anc.parentElement
+      }
+      return null
+    }
+
+    const TOLERANCE = 2 // px — absorbs sub-pixel clientHeight rounding
+    const recompute = (): void => {
+      const vp = viewportRef.current
+      if (!vp) {
+        // Not overflowing (no viewport found) ⇒ nothing to scroll ⇒ at bottom.
+        setAtBottom(true)
+        return
+      }
+      const distance = vp.scrollHeight - vp.scrollTop - vp.clientHeight
+      setAtBottom(distance <= TOLERANCE)
+    }
+
+    const viewport = findViewport()
+    viewportRef.current = viewport
+    recompute()
+    if (!viewport) return
+
+    viewport.addEventListener('scroll', recompute, { passive: true })
+    // Content height changes (streaming, message resize) move the bottom
+    // without firing a scroll event, so watch the box too.
+    const ro = new ResizeObserver(recompute)
+    ro.observe(viewport)
+    return () => {
+      viewport.removeEventListener('scroll', recompute)
+      ro.disconnect()
+    }
+  }, [])
+
   return (
     <ThreadPrimitive.ScrollToBottom asChild>
       <button
+        ref={btnRef}
         type="button"
         aria-label="Scroll to bottom"
+        data-at-bottom={atBottom ? '' : undefined}
         className={
           'pointer-events-auto absolute left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-lg shadow-black/10 backdrop-blur transition-all duration-200 ease-out hover:border-accent/60 hover:bg-background hover:text-accent active:scale-95 ' +
-          // Float just above the composer dock. The dock got shorter after its
-          // bottom padding was trimmed (pb-7 → pb-3, ~16px less), so the old
-          // bottom-[96px] dropped the button down into the composer; 80px puts
-          // it clearly above the (now shorter) dock again.
-          'bottom-[80px] ' +
-          // When already at bottom, the primitive sets `disabled`.
-          // Fade + lift + disable pointer so it doesn't trap clicks.
-          'disabled:pointer-events-none disabled:translate-y-2 disabled:opacity-0'
+          // Anchored to the dock wrapper: `bottom-full` puts the button's bottom
+          // edge at the dock's TOP, then mb-2 lifts it 8px clear so it floats
+          // just above the input. This tracks the dock height automatically —
+          // no magic offset to drift out of sync when the composer grows.
+          'bottom-full mb-2 ' +
+          // We own the at-bottom check (see JSDoc): when our 2px-tolerant
+          // calc says we're pinned, fade + drop + disable pointer so it
+          // doesn't trap clicks. Keyed on data-at-bottom, NOT the primitive's
+          // disabled flag, which mis-fires at half-pixel viewport heights.
+          'data-[at-bottom]:pointer-events-none data-[at-bottom]:translate-y-2 data-[at-bottom]:opacity-0'
         }
       >
         <svg
@@ -624,7 +708,7 @@ function ChatHeader(): React.JSX.Element {
 
 /* ─────────────────────── Slides workspace ───────────────────── */
 
-type CanvasTab = 'slides' | 'outline' | 'files' | 'questions' | 'browser'
+type CanvasTab = 'slides' | 'outline' | 'files' | 'images' | 'questions' | 'browser'
 
 const CANVAS_TAB_ICONS: Record<CanvasTab, React.ReactNode> = {
   slides: (
@@ -641,6 +725,13 @@ const CANVAS_TAB_ICONS: Record<CanvasTab, React.ReactNode> = {
   files: (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
+  ),
+  images: (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="8.5" cy="9" r="1.5" />
+      <path d="m3 16 5-4 4 3 3-2 6 5" />
     </svg>
   ),
   questions: (
@@ -704,10 +795,38 @@ function SlidesWorkspace(): React.JSX.Element {
   // preview hides it.
   const previewGone = hasPreview && previewDown
   const showSlidesTab = !previewGone
-  // Every file this session has written via Write — drives the 文件 tab and the
-  // auto-focus on each new write. See useWrittenFiles in stores/chat.
+  // Every file this session has written via Write. Drives the auto-focus on each
+  // new write (which needs to see EVERY write, including .svg deck pages, to
+  // route them to the right tab). See useWrittenFiles in stores/chat.
   const writtenFiles = useWrittenFiles()
   const hasFiles = writtenFiles.length > 0
+  // Files shown in the 文件 tab: everything EXCEPT .svg deck pages. The SVG
+  // pages are the deck itself — they render in the 幻灯片 tab (live preview),
+  // so listing their raw source in 文件 is noise. design_spec.md stays (it has
+  // its own 大纲 tab but is also a legitimate file to browse). Kept as a
+  // separate memo so it recomputes only when the file list changes.
+  const fileTabFiles = useMemo(
+    () => writtenFiles.filter((f) => !/\.svg$/i.test(f.name)),
+    [writtenFiles]
+  )
+  const hasFileTabFiles = fileTabFiles.length > 0
+  // The deck's design spec (design_spec.md) written this session, if any. This
+  // is the plan-of-record for the whole deck — Part/Slide breakdown, per-slide
+  // layout/title/content — so it gets its own home in the 大纲 tab, rendered
+  // as rich Markdown (not the raw-source shell the 文件 tab shows for arbitrary
+  // writes). Matched by bare filename, case-insensitively, so a path prefix or
+  // OS casing quirk doesn't hide it. If it's rewritten mid-session the latest
+  // entry wins (useWrittenFiles dedupes by path, keeping content fresh).
+  const designSpec =
+    writtenFiles.find((f) => /^design_spec\.md$/i.test(f.name)) ?? null
+  // ppt-master AI image generation, if this session ran `image_gen.py
+  // --manifest`. `manifestPath` locates the image_prompts.json to poll;
+  // `generating` is true while that command is still in flight. Drives the
+  // 「图片」tab: it appears once a run is detected and stays (like 文件), and we
+  // auto-focus it while generation is live. See useImageManifest in stores/chat.
+  const imageActivity = useImageManifest()
+  const hasImages = imageActivity !== null
+  const imagesGenerating = imageActivity?.generating === true
   const [tab, setTab] = useState<CanvasTab>('slides')
 
   // Auto-focus 问题 the moment a questionnaire OR the confirm server appears.
@@ -721,15 +840,28 @@ function SlidesWorkspace(): React.JSX.Element {
     else setTab((t) => (t === 'questions' ? 'slides' : t))
   }, [wantsQuestionsTab])
 
-  // Auto-focus the right tab for the live-preview server phase (unless the 问题
-  // tab is commanding focus): preview → 幻灯片 (which renders the live SVG
-  // itself). The confirm phase is handled above (native 问题 tab), so it no
-  // longer targets 浏览器. The 浏览器/iframe path remains only as a fallback.
+  // Auto-focus 图片 while AI image generation is running. Sits between 问题
+  // (highest) and the live-preview/write focus below: image generation is a
+  // discrete, watchable phase (progress + thumbnails filling in), so once it
+  // starts we drop the user into the 图片 tab and hold them there until it
+  // finishes. On finish we DON'T jump away — the user wants to review the
+  // results; a higher-priority event (a new questionnaire) or the user's own
+  // click moves them on.
+  const wantsImagesTab = imagesGenerating
   useEffect(() => {
     if (wantsQuestionsTab) return
+    if (wantsImagesTab) setTab('images')
+  }, [wantsImagesTab, wantsQuestionsTab])
+
+  // Auto-focus the right tab for the live-preview server phase (unless the 问题
+  // or 图片 tab is commanding focus): preview → 幻灯片 (which renders the live
+  // SVG itself). The confirm phase is handled above (native 问题 tab), so it no
+  // longer targets 浏览器. The 浏览器/iframe path remains only as a fallback.
+  useEffect(() => {
+    if (wantsQuestionsTab || wantsImagesTab) return
     if (hasPreview && !previewDown) setTab('slides')
     else setTab((t) => (t === 'browser' ? 'slides' : t))
-  }, [hasPreview, previewDown, wantsQuestionsTab])
+  }, [hasPreview, previewDown, wantsQuestionsTab, wantsImagesTab])
 
   // When the 幻灯片 tab disappears (launched preview went away) and we were on
   // it, fall back to a tab that still exists — 文件 if there are written files,
@@ -737,33 +869,54 @@ function SlidesWorkspace(): React.JSX.Element {
   // with no tab highlighted.
   useEffect(() => {
     if (showSlidesTab) return
-    setTab((t) => (t === 'slides' ? (hasFiles ? 'files' : 'outline') : t))
-  }, [showSlidesTab, hasFiles])
+    setTab((t) => (t === 'slides' ? (hasFileTabFiles ? 'files' : 'outline') : t))
+  }, [showSlidesTab, hasFileTabFiles])
 
-  // Auto-focus 文件 on each new write so the user watches files land as they're
-  // written (mirrors the 浏览器/问题 auto-focus). Keyed off a "write signature"
-  // — file count + the newest file's path — so it fires when a NEW file appears
-  // or a fresh Write starts, but NOT on every streaming-content tick of a file
-  // we've already focused (which would yank the user back if they switched away
-  // mid-stream).
+  // Auto-focus the right tab on each new write so the user watches files land as
+  // they're written (mirrors the 浏览器/问题 auto-focus). Keyed off a "write
+  // signature" — file count + the newest file's path — so it fires when a NEW
+  // file appears or a fresh Write starts, but NOT on every streaming-content tick
+  // of a file we've already focused (which would yank the user back if they
+  // switched away mid-stream).
+  //
+  // Which tab we grab depends on WHAT was just written:
+  //   - design_spec.md → 大纲 (outline). It's the deck's plan-of-record, and the
+  //     大纲 tab renders it as rich Markdown. Writing/rewriting the spec should
+  //     drop the user straight into the outline view.
+  //   - a .svg page → 幻灯片 (slides). These ARE the deck pages; the user wants
+  //     to watch them render there, not read raw SVG source. This holds even
+  //     BEFORE the live-preview server is up — the 幻灯片 tab shows its
+  //     placeholder until preview arrives, which still beats bouncing to 文件.
+  //   - anything else → 文件 (files), the raw-content shell for arbitrary writes.
   //
   // Focus precedence: 问题 (questionnaire/confirm) AND 幻灯片 (live preview) both
-  // outrank 文件. Once the live-preview server is up, the deck has entered the
-  // "generate SVG pages, watch them render" phase — every Write is an SVG page,
-  // and the user wants to watch it appear in 幻灯片, NOT be yanked into 文件 to
-  // read raw SVG source on each write. Before preview is up (the spec phase,
-  // writing design_spec.md / spec_lock.md), focusing 文件 on write is still the
-  // right call. So we suppress the 文件 grab while hasPreview is true. Distinct
-  // deps from the server effects above, so they never fight each render.
+  // outrank this. Once the live-preview server is up, the deck has entered the
+  // "generate SVG pages, watch them render" phase, and the preview effect above
+  // already parks the user on 幻灯片; the explicit .svg → slides branch here
+  // covers the pre-preview window (and the case preview never launches). We
+  // still suppress the whole grab while hasPreview is true so we don't fight
+  // that effect. Distinct deps from the server effects above.
   const lastWriteSigRef = useRef<string>('')
   const newestFile = writtenFiles[writtenFiles.length - 1]
   const writeSig = `${writtenFiles.length}|${newestFile?.path ?? ''}`
+  const newestIsDesignSpec = newestFile
+    ? /^design_spec\.md$/i.test(newestFile.name)
+    : false
+  const newestIsSvg = newestFile ? /\.svg$/i.test(newestFile.name) : false
   useEffect(() => {
     if (writeSig === lastWriteSigRef.current) return
     lastWriteSigRef.current = writeSig
-    if (!hasFiles || wantsQuestionsTab || hasPreview) return
-    setTab('files')
-  }, [writeSig, hasFiles, wantsQuestionsTab, hasPreview])
+    if (!hasFiles || wantsQuestionsTab || wantsImagesTab || hasPreview) return
+    setTab(newestIsDesignSpec ? 'outline' : newestIsSvg ? 'slides' : 'files')
+  }, [
+    writeSig,
+    hasFiles,
+    wantsQuestionsTab,
+    wantsImagesTab,
+    hasPreview,
+    newestIsDesignSpec,
+    newestIsSvg
+  ])
 
   const tabs: { id: CanvasTab; label: string }[] = [
     // 幻灯片 drops out once a launched preview server is detected as gone
@@ -771,6 +924,10 @@ function SlidesWorkspace(): React.JSX.Element {
     ...(showSlidesTab ? [{ id: 'slides' as const, label: '幻灯片' }] : []),
     { id: 'outline', label: '大纲' },
     { id: 'files', label: '文件' },
+    // 图片 tab: appears once this session ran an AI image-generation command
+    // (image_gen.py --manifest) and stays for the rest of the session so the
+    // user can revisit the generated previews. Auto-focused while generating.
+    ...(hasImages ? [{ id: 'images' as const, label: '图片' }] : []),
     // 问题 tab: while a questionnaire is streaming/pending, OR while the
     // confirm server is up (the Eight-Confirmations page renders natively here
     // via CanvasConfirm — see body below).
@@ -855,21 +1012,381 @@ function SlidesWorkspace(): React.JSX.Element {
         // edit instruction → annotate / 应用修改 / 撤销 / 退出), the same flow the
         // browser editor at :5050 offered. See LivePreviewEditor.
         <LivePreviewEditor baseUrl={server.url} onServerDownChange={setPreviewDown} />
-      ) : tab === 'files' && hasFiles ? (
+      ) : tab === 'files' && hasFileTabFiles ? (
         // 文件 tab: the full content of files written this session, two-pane
         // (file list + content) like SlidesLivePreview. The inline Write card's
         // content preview is suppressed in slides mode (see writeHandledByCanvas
         // in ToolCallCard) precisely so this is the single place that content
-        // lives — no duplication.
-        <WrittenFilesPanel files={writtenFiles} newestPath={newestFile?.path} />
+        // lives — no duplication. .svg deck pages are excluded (they belong to
+        // the 幻灯片 tab), so we pass fileTabFiles and follow ITS newest entry.
+        <WrittenFilesPanel
+          files={fileTabFiles}
+          newestPath={fileTabFiles[fileTabFiles.length - 1]?.path}
+        />
+      ) : tab === 'outline' && designSpec ? (
+        // 大纲 tab: the deck's design_spec.md, rendered as rich Markdown (the same
+        // WrittenFileContent used by the 文件 tab, which special-cases .md through
+        // AssistantMarkdown). This is the plan-of-record — Part/Slide breakdown,
+        // per-slide layout/title/content — so it reads as a real outline document
+        // rather than the raw-source view. `key` by path resets scroll/follow on
+        // a fresh spec; streaming rewrites update in place and auto-scroll.
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex shrink-0 items-baseline gap-2 border-b border-border/60 px-4 py-2">
+            <code className="min-w-0 truncate font-mono text-[12px] text-foreground" title={designSpec.path}>
+              {designSpec.name}
+            </code>
+            <span className="shrink-0 text-[11px] text-muted-foreground/60">
+              {designSpec.streaming
+                ? '写入中…'
+                : `${designSpec.content.split('\n').length} 行`}
+            </span>
+          </div>
+          <WrittenFileContent key={designSpec.path} file={designSpec} />
+        </div>
+      ) : tab === 'images' && imageActivity ? (
+        // 图片 tab: AI image-generation progress + thumbnails. Polls the
+        // manifest (image_gen.py rewrites it per completion) via main-process
+        // IPC, since the renderer can't read the local PNGs. `key` by path so a
+        // fresh run (new manifest) remounts with clean state.
+        <ImagesPanel
+          key={imageActivity.manifestPath}
+          manifestPath={imageActivity.manifestPath}
+          generating={imageActivity.generating}
+        />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-          <div className="text-[15px] font-semibold text-foreground">未命名</div>
+          <div className="text-[15px] font-semibold text-foreground">
+            {tab === 'outline' ? '暂无大纲' : '未命名'}
+          </div>
           <div className="mt-1 text-[13px] text-muted-foreground">
-            确认大纲后将在此处展示幻灯片
+            {tab === 'outline'
+              ? '生成 design_spec.md 后将在此处展示大纲'
+              : '确认大纲后将在此处展示幻灯片'}
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * 图片 canvas tab body: AI image-generation progress + thumbnail grid.
+ *
+ * Data comes from polling the ppt-master manifest (image_prompts.json) through
+ * the main process — the renderer can't read the local PNGs, and CSP forbids
+ * `file:` img sources, so main decodes each finished image into a small `data:`
+ * thumbnail (see the IMAGE_MANIFEST_READ handler). image_gen.py rewrites the
+ * manifest per completion, so each poll reflects live progress.
+ *
+ * Polling lifecycle:
+ *   - Poll immediately on mount, then every POLL_MS while `generating`.
+ *   - When `generating` flips false, do ONE final poll (to catch the last
+ *     image landing after the command returned) and stop.
+ *   - Remount (new manifestPath via `key`) or unmount clears the interval.
+ */
+const IMAGES_POLL_MS = 1500
+
+function ImagesPanel({
+  manifestPath,
+  generating
+}: {
+  manifestPath: string
+  generating: boolean
+}): React.JSX.Element {
+  const [data, setData] = useState<ImageManifestReadResult | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    // Freshest data across ticks, read inside the interval WITHOUT being an
+    // effect dep — the interval must keep a stable identity, so it can't be
+    // keyed on `data`.
+    let latest: ImageManifestReadResult | null = null
+    // Once we STOP generating, keep polling a few more cycles before giving up:
+    // the last image(s) land — and their thumbnails get decoded main-side — a
+    // beat AFTER the command returns. Without this tail the tab freezes on a
+    // pre-final snapshot until you switch tabs and back (which remounts and
+    // re-polls). While generating, the window is effectively unbounded.
+    const GRACE_TICKS = 4
+    let graceLeft = GRACE_TICKS
+
+    // "Settled" = every item has either a thumbnail or a terminal status, i.e.
+    // nothing is still mid-generation. We can stop polling once settled.
+    const isSettled = (res: ImageManifestReadResult | null): boolean =>
+      !!res &&
+      res.ok &&
+      res.items.length > 0 &&
+      res.items.every((it) => it.thumbnail !== undefined || it.status !== 'Generated')
+
+    const poll = async (): Promise<void> => {
+      try {
+        const res = await window.chatApi.readImageManifest({
+          manifestPath,
+          withThumbnails: true
+        })
+        if (cancelled) return
+        latest = res
+        setData(res)
+      } catch {
+        // Transient IPC failure — keep the last good data, next tick retries.
+      }
+    }
+
+    void poll() // immediate first read so the tab isn't blank for a poll cycle
+
+    const id = setInterval(() => {
+      // Stop conditions, checked BEFORE polling again:
+      //   - generation finished AND the grid is settled → done, no more polls.
+      //   - generation finished but not settled → burn a grace tick, keep going
+      //     (covers late-landing thumbnails after the command returned).
+      // While `generating` is still true we always keep polling — progress is
+      // live and every tick may reveal a newly-finished image.
+      if (!generating) {
+        if (isSettled(latest)) {
+          clearInterval(id)
+          return
+        }
+        graceLeft -= 1
+        if (graceLeft < 0) {
+          clearInterval(id)
+          return
+        }
+      }
+      void poll()
+    }, IMAGES_POLL_MS)
+
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [manifestPath, generating])
+
+  const items = data?.items ?? []
+  const total = data?.total ?? 0
+  const generated = data?.generatedCount ?? 0
+  const failed = items.filter((it) => it.status === 'Failed').length
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {/* Progress header */}
+      <div className="flex shrink-0 flex-col gap-1.5 border-b border-border/60 px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-medium text-foreground">
+            {generating ? 'AI 生成图片中…' : 'AI 图片'}
+          </span>
+          {generating && (
+            <span
+              aria-hidden
+              className="size-1.5 animate-pulse rounded-full bg-accent"
+            />
+          )}
+          <span className="ml-auto tabular-nums text-[12px] text-muted-foreground">
+            {generated}/{total}
+            {failed > 0 && <span className="ml-1 text-red-500">· {failed} 失败</span>}
+          </span>
+        </div>
+        {/* Progress bar */}
+        <div className="h-1 overflow-hidden rounded-full bg-foreground/[0.08]">
+          <div
+            className="h-full rounded-full bg-accent transition-[width] duration-500"
+            style={{ width: total > 0 ? `${Math.round((generated / total) * 100)}%` : '0%' }}
+          />
+        </div>
+      </div>
+
+      {/* Thumbnail grid */}
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {items.length === 0 ? (
+          <div className="flex h-full items-center justify-center text-[13px] text-muted-foreground">
+            {data && !data.ok ? '读取图片清单失败' : '等待生成…'}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {items.map((it) => (
+              <ImageCard key={it.filename} item={it} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * One image cell in the 图片 grid: thumbnail (or a status-appropriate
+ * placeholder) + filename + status badge. Clicking an already-generated image
+ * opens the full-res original in the OS default viewer via SHELL_OPEN_PATH —
+ * we only ever render the small thumbnail in-app.
+ */
+/**
+ * DotGridLoader
+ * -------------
+ * The "generating…" placeholder for an image cell: an Apple-Intelligence-style
+ * dot grid that breathes. A regular lattice of dots fills the cell; each dot's
+ * radius/alpha is a Gaussian falloff from the cell centre (bright core, faint
+ * edges) modulated by a slow ripple that radiates outward from the centre, so
+ * the whole field pulses like it's "thinking".
+ *
+ * Rendered on a canvas (dozens of dots redrawn per frame is cheap and gives a
+ * smooth continuous falloff a DOM grid can't). The canvas is sized to its
+ * container via ResizeObserver + devicePixelRatio so dots stay crisp on retina.
+ * Respects prefers-reduced-motion: a single static frame, no rAF loop.
+ */
+const DOT_GAP = 11 // px between dot centres (CSS px)
+const DOT_MAX_R = 1.9 // px radius at the brightest core
+
+function DotGridLoader(): React.JSX.Element {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const reduce = useReducedMotion()
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    let raf = 0
+    let start = 0
+    let cssW = 0
+    let cssH = 0
+
+    const resize = (): void => {
+      const rect = canvas.getBoundingClientRect()
+      cssW = rect.width
+      cssH = rect.height
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      canvas.width = Math.max(1, Math.round(cssW * dpr))
+      canvas.height = Math.max(1, Math.round(cssH * dpr))
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    }
+
+    // Draw one frame at time `t` (ms since start). The dot field is centred;
+    // brightness = Gaussian(distance) * (0.55 + 0.45*ripple), where ripple is a
+    // travelling sine wave keyed to distance so it visibly moves outward.
+    const draw = (t: number): void => {
+      if (cssW === 0 || cssH === 0) return
+      ctx.clearRect(0, 0, cssW, cssH)
+      const cx = cssW / 2
+      const cy = cssH / 2
+      // Falloff radius: reach ~60% of the half-diagonal so the core is tight
+      // and the edges fade fully, matching the reference's concentrated cloud.
+      const sigma = Math.hypot(cssW, cssH) * 0.28
+      const cols = Math.ceil(cssW / DOT_GAP) + 1
+      const rows = Math.ceil(cssH / DOT_GAP) + 1
+      // Centre the lattice so the brightest dot sits dead-centre.
+      const offX = (cssW - (cols - 1) * DOT_GAP) / 2
+      const offY = (cssH - (rows - 1) * DOT_GAP) / 2
+      const phase = (t / 1000) * 1.6 // ripple angular speed
+
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const x = offX + c * DOT_GAP
+          const y = offY + r * DOT_GAP
+          const dist = Math.hypot(x - cx, y - cy)
+          // Gaussian core → 0 at the edges.
+          const g = Math.exp(-(dist * dist) / (2 * sigma * sigma))
+          if (g < 0.02) continue
+          // Ripple travels outward: subtract phase so crests move away from
+          // centre over time. Reduced-motion → constant (no travel).
+          const ripple = reduce ? 0.75 : 0.55 + 0.45 * Math.sin(dist / 26 - phase)
+          const alpha = Math.min(1, g * ripple) * 0.5
+          const radius = DOT_MAX_R * g * (reduce ? 1 : 0.7 + 0.3 * ripple)
+          if (alpha < 0.015 || radius < 0.15) continue
+          ctx.beginPath()
+          ctx.arc(x, y, radius, 0, Math.PI * 2)
+          // Neutral grey dots — matches the reference's monochrome field and
+          // reads on both light and dark cell backgrounds.
+          ctx.fillStyle = `rgba(120, 120, 128, ${alpha})`
+          ctx.fill()
+        }
+      }
+    }
+
+    const loop = (now: number): void => {
+      if (!start) start = now
+      draw(now - start)
+      raf = requestAnimationFrame(loop)
+    }
+
+    resize()
+    const ro = new ResizeObserver(() => {
+      resize()
+      if (reduce) draw(0)
+    })
+    ro.observe(canvas)
+
+    if (reduce) {
+      draw(0)
+    } else {
+      raf = requestAnimationFrame(loop)
+    }
+
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
+  }, [reduce])
+
+  return (
+    <div className="absolute inset-0 flex flex-col">
+      <span className="px-3 pt-2.5 text-[12px] font-medium text-muted-foreground/80">
+        正在创建图片
+      </span>
+      <canvas ref={canvasRef} className="min-h-0 w-full flex-1" aria-hidden />
+    </div>
+  )
+}
+
+function ImageCard({ item }: { item: ImageManifestItem }): React.JSX.Element {
+  const done = item.status === 'Generated' && item.exists
+  const failed = item.status === 'Failed'
+  const openFull = (): void => {
+    if (done) void window.chatApi.openPath({ absPath: item.absPath })
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        onClick={openFull}
+        disabled={!done}
+        title={done ? `打开原图：${item.filename}` : item.altText || item.filename}
+        className={
+          'group relative aspect-[4/3] overflow-hidden rounded-md border border-border/60 bg-foreground/[0.03] ' +
+          (done ? 'cursor-zoom-in hover:border-accent/60' : 'cursor-default')
+        }
+      >
+        {item.thumbnail ? (
+          <img
+            src={item.thumbnail}
+            alt={item.altText || item.filename}
+            className="h-full w-full object-cover"
+          />
+        ) : failed ? (
+          <div className="flex h-full w-full items-center justify-center px-2 text-center">
+            <span className="text-[11px] text-red-500">生成失败</span>
+          </div>
+        ) : (
+          // Generating: Apple-Intelligence dot-grid loader breathes until the
+          // real thumbnail lands (next poll swaps this out for the <img>).
+          <DotGridLoader />
+        )}
+        {/* Status corner dot */}
+        <span
+          aria-hidden
+          className={
+            'absolute right-1.5 top-1.5 size-2 rounded-full ring-2 ring-white ' +
+            (done
+              ? 'bg-emerald-500'
+              : failed
+                ? 'bg-red-500'
+                : 'bg-muted-foreground/40')
+          }
+        />
+      </button>
+      <div className="flex items-baseline gap-1">
+        <code className="min-w-0 truncate font-mono text-[11px] text-muted-foreground" title={item.filename}>
+          {item.filename}
+        </code>
+      </div>
     </div>
   )
 }

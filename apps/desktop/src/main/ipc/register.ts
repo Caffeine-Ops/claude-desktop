@@ -1,8 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain, net, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, net, shell, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join, relative, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import type { PermissionResponse } from '../../shared/types'
 import {
   IPC_CHANNELS,
@@ -34,6 +34,9 @@ import {
   type ShellOpenPathResult,
   type ShellStatFilesPayload,
   type ShellStatFilesResult,
+  type ImageManifestReadPayload,
+  type ImageManifestReadResult,
+  type ImageManifestItem,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
   type WorkspaceState,
@@ -185,6 +188,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_FILE_OPEN)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_OPEN_PATH)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_STAT_FILES)
+  ipcMain.removeHandler(IPC_CHANNELS.IMAGE_MANIFEST_READ)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LOAD)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_NEW)
@@ -482,6 +486,115 @@ export function registerIpcHandlers(): void {
         }
       }
       return { files }
+    }
+  )
+
+  // Read a ppt-master image-generation manifest and surface each item's
+  // status + a thumbnail for the ones on disk. The renderer polls this while
+  // `image_gen.py --manifest` runs to drive the 「图片」canvas tab.
+  //
+  // Why main owns this: the renderer has no fs access, and CSP forbids `file:`
+  // img sources, so the only way to preview the generated PNGs is to decode
+  // them here (nativeImage, already a dep — see tray.ts) into small `data:`
+  // URIs. The manifest itself is image_gen.py's source of truth — it rewrites
+  // each item's status on completion (scripts/image_gen.py _run_manifest), so
+  // a poll of this file reflects live progress.
+  ipcMain.handle(
+    IPC_CHANNELS.IMAGE_MANIFEST_READ,
+    async (
+      _event,
+      payload: ImageManifestReadPayload
+    ): Promise<ImageManifestReadResult> => {
+      const empty: ImageManifestReadResult = {
+        ok: false,
+        items: [],
+        generatedCount: 0,
+        total: 0
+      }
+      const manifestPath =
+        payload && typeof payload.manifestPath === 'string'
+          ? payload.manifestPath
+          : ''
+      const withThumbnails = payload?.withThumbnails !== false
+      // Path guard: absolute + existing regular file only. No traversal — we
+      // read exactly the file the caller names (a path scraped from the
+      // running command), never walk directories.
+      if (!manifestPath || !isAbsolute(manifestPath)) {
+        return { ...empty, error: 'Invalid manifest path (expected absolute).' }
+      }
+      try {
+        if (!statSync(manifestPath).isFile()) {
+          return { ...empty, error: 'Manifest is not a file.' }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ...empty, error: `Manifest not found: ${msg}` }
+      }
+
+      let manifest: Record<string, unknown>
+      try {
+        manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as Record<
+          string,
+          unknown
+        >
+      } catch (err) {
+        // A read mid-write can yield truncated JSON — report, don't throw, so
+        // the next poll (post-atomic-rename) succeeds cleanly.
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ...empty, error: `Manifest parse failed: ${msg}` }
+      }
+
+      const dir = dirname(manifestPath)
+      const rawItems = Array.isArray(manifest.items) ? manifest.items : []
+      // Cap the decode fan-out — a normal deck has <20 images; 40 is a safe
+      // ceiling that still keeps the main thread responsive.
+      const MAX_ITEMS = 40
+      const items: ImageManifestItem[] = []
+      let generatedCount = 0
+      for (const raw of rawItems.slice(0, MAX_ITEMS)) {
+        if (!raw || typeof raw !== 'object') continue
+        const r = raw as Record<string, unknown>
+        const filename = typeof r.filename === 'string' ? r.filename : ''
+        if (!filename) continue
+        const status = typeof r.status === 'string' ? r.status : 'Pending'
+        if (status === 'Generated') generatedCount += 1
+        // Resolve the image next to the manifest; basename() strips any path
+        // segment in filename so it can't escape the images dir.
+        const absPath = join(dir, basename(filename))
+        const exists = existsSync(absPath)
+        const item: ImageManifestItem = {
+          filename,
+          status,
+          purpose: typeof r.purpose === 'string' ? r.purpose : undefined,
+          altText: typeof r.alt_text === 'string' ? r.alt_text : undefined,
+          lastError: typeof r.last_error === 'string' ? r.last_error : undefined,
+          exists,
+          absPath
+        }
+        if (withThumbnails && exists) {
+          try {
+            const img = nativeImage.createFromPath(absPath)
+            // A half-written PNG decodes to an empty image — skip its
+            // thumbnail (item still returns with exists:true); the next poll
+            // after the file finishes writing picks it up.
+            if (!img.isEmpty()) {
+              item.thumbnail = img.resize({ width: 320 }).toDataURL()
+            }
+          } catch {
+            // Decode failure (corrupt / unsupported) — omit thumbnail only.
+          }
+        }
+        items.push(item)
+      }
+
+      return {
+        ok: true,
+        project: typeof manifest.project === 'string' ? manifest.project : undefined,
+        dir,
+        items,
+        generatedCount,
+        total: items.length
+      }
     }
   )
 

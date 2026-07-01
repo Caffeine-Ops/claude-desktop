@@ -1237,6 +1237,100 @@ export function usePreviewServer(): PreviewServer | null {
   )
 }
 
+/* ───────────────── ppt-master AI image-generation feed ──────────────── */
+
+// Match the manifest path off a running `image_gen.py --manifest <path>`
+// command. The path may be quoted (spaces) or bare. Anchored on `image_gen.py`
+// so an unrelated `--manifest` elsewhere can't match. Mirrors usePreviewServer's
+// "read the real value out of the command text" approach.
+const IMAGE_MANIFEST_RE =
+  /image_gen\.py[^\n]*?--manifest[=\s]+(?:"([^"]+)"|'([^']+)'|(\S+))/
+// The manifest path in the real command is RELATIVE ("projects/<name>/images/
+// image_prompts.json"), because the ppt-master image step runs
+// `cd ${SKILL_DIR} && python scripts/image_gen.py --manifest projects/…`. Pull
+// the `cd <dir>` target out of the same command so we can resolve the relative
+// manifest against it — the main-process IPC only accepts absolute paths.
+const CD_DIR_RE = /\bcd\s+(?:"([^"]+)"|'([^']+)'|(\S+))/
+
+/** True for a POSIX-absolute path. Renderer runs on macOS/Linux; the manifest
+ *  paths are always POSIX, so a leading "/" is the only case to accept. */
+function isAbsolutePosix(p: string): boolean {
+  return p.startsWith('/')
+}
+
+/**
+ * Resolve the (possibly relative) manifest path against the command's `cd`
+ * target. Handles `.`/`..` segments so `cd /a/b && … --manifest c/d.json`
+ * yields `/a/b/c/d.json`. Returns '' when it can't produce an absolute path
+ * (relative manifest with no `cd` to anchor it) — the caller skips those.
+ */
+function resolveManifestPath(rawPath: string, command: string): string {
+  if (isAbsolutePosix(rawPath)) return rawPath
+  const cd = CD_DIR_RE.exec(command)
+  const base = cd ? (cd[1] ?? cd[2] ?? cd[3] ?? '') : ''
+  if (!base || !isAbsolutePosix(base)) return ''
+  const segments = `${base}/${rawPath}`.split('/')
+  const out: string[] = []
+  for (const seg of segments) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') out.pop()
+    else out.push(seg)
+  }
+  return `/${out.join('/')}`
+}
+
+/**
+ * The foreground session's ppt-master image-generation activity, or null.
+ *
+ * `manifestPath` is the ABSOLUTE `image_prompts.json` the `image_gen.py
+ * --manifest` command is (or was) running against — resolved from the command's
+ * relative `--manifest projects/…` arg against its `cd <dir>` target, since the
+ * IPC reader only accepts absolute paths. `generating` is true while that Bash
+ * tool call hasn't finished (no `endedAt` stamped yet — see
+ * updateToolCallResult, which stamps it exactly once when the result lands).
+ *
+ * The LAST matching command wins: a per-image retry re-runs `--manifest`, and
+ * we want to track the newest run (same rule as usePreviewServer). Its
+ * `generating` flag reflects whether that newest run is still in flight.
+ *
+ * Derivation shape copies useWrittenFiles deliberately: subscribe to the
+ * stable `messages` reference and derive in a `useMemo`, returning a plain
+ * `{ manifestPath, generating }` (a string + a boolean). We must NOT build this
+ * inside a `useShallow` selector that returns a fresh object each call — that
+ * trips React's "getSnapshot should be cached" infinite loop (see the note on
+ * useWrittenFiles). Two scalar fields compared by the caller are cheap and
+ * loop-safe.
+ */
+export type ImageGenActivity = { manifestPath: string; generating: boolean } | null
+
+export function useImageManifest(): ImageGenActivity {
+  const messages = useChatStore((s) => s.messages)
+  return useMemo(() => {
+    let found: ImageGenActivity = null
+    for (const m of messages) {
+      if (!Array.isArray(m.content)) continue
+      for (const p of (m.content as unknown) as ContentPart[]) {
+        if (p.type !== 'tool-call' || p.toolName !== 'Bash') continue
+        const command = previewCommandText(p)
+        const match = IMAGE_MANIFEST_RE.exec(command)
+        if (!match) continue
+        const rawPath = match[1] ?? match[2] ?? match[3] ?? ''
+        if (!rawPath) continue
+        // The command runs `cd ${SKILL_DIR} && … --manifest projects/…` with a
+        // RELATIVE manifest path, but the IPC only reads absolute paths — so
+        // resolve it against the command's `cd` target. Skip if unresolvable.
+        const manifestPath = resolveManifestPath(rawPath, command)
+        if (!manifestPath) continue
+        // `endedAt` is stamped once when the tool result arrives; its absence
+        // means the command is still running (generation in progress).
+        const generating = typeof p.endedAt !== 'number'
+        found = { manifestPath, generating }
+      }
+    }
+    return found
+  }, [messages])
+}
+
 /* ───────────────── ppt-master written-file canvas feed ──────────────── */
 
 /** One file written by a Write tool call, surfaced into the 文件 canvas tab. */

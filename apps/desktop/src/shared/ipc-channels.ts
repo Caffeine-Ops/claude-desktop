@@ -74,6 +74,17 @@ export const IPC_CHANNELS = {
    */
   SHELL_STAT_FILES: 'shell:stat-files',
   /**
+   * Renderer → main. Reads a ppt-master image-generation manifest
+   * (`images/image_prompts.json`) by absolute path and returns each item's
+   * status plus a small thumbnail data-URI for the ones already on disk.
+   * The renderer polls this while `image_gen.py --manifest` runs to drive
+   * the 「图片」canvas tab: the manifest is the source of truth (image_gen.py
+   * rewrites each item's status on completion), and main is the only side
+   * that can read the local PNGs — the renderer has no filesystem access and
+   * CSP forbids `file:` img sources, so thumbnails come back as `data:` URIs.
+   */
+  IMAGE_MANIFEST_READ: 'image-manifest:read',
+  /**
    * Renderer → main. Lists all sessions (JSONL transcripts) for the
    * current workspace, sorted by updatedAt desc. Backed by
    * `@anthropic-ai/claude-agent-sdk`'s `listSessions({ dir })`.
@@ -626,6 +637,54 @@ export type ShellStatFilesPayload = { paths: readonly string[] }
  */
 export type ShellStatFilesResult = { files: readonly string[] }
 
+/**
+ * Payload for IMAGE_MANIFEST_READ. `manifestPath` is the absolute path to a
+ * ppt-master `image_prompts.json` (scraped from the running `image_gen.py
+ * --manifest <path>` Bash command in the transcript). `withThumbnails` asks
+ * main to also decode each already-written PNG into a small data-URI; the
+ * 「图片」tab always wants them, but keeping the flag lets a future
+ * metadata-only progress poll skip the decode cost.
+ */
+export type ImageManifestReadPayload = {
+  manifestPath: string
+  withThumbnails?: boolean
+}
+
+/**
+ * One manifest item as surfaced to the 「图片」tab. `status` is image_gen.py's
+ * lifecycle string (Pending → Generated / Failed / Needs-Manual); we keep it
+ * as a widened union so an unknown value from a newer skill still renders.
+ * `exists` is whether `<dir>/<filename>` is on disk yet; `absPath` is that
+ * full path (for opening the full-res image via SHELL_OPEN_PATH); `thumbnail`
+ * is a `data:image/png;base64,…` at ~320px wide, present only when the file
+ * exists, decoded cleanly, and `withThumbnails` was set.
+ */
+export type ImageManifestItem = {
+  filename: string
+  status: 'Pending' | 'Generated' | 'Failed' | 'Needs-Manual' | (string & {})
+  purpose?: string
+  altText?: string
+  lastError?: string
+  exists: boolean
+  absPath: string
+  thumbnail?: string
+}
+
+/**
+ * Result of IMAGE_MANIFEST_READ. `ok` false (+ `error`) covers a missing /
+ * unreadable / malformed manifest — the tab shows an error rather than the
+ * whole poll rejecting. `generatedCount` / `total` drive the progress bar.
+ */
+export type ImageManifestReadResult = {
+  ok: boolean
+  error?: string
+  project?: string
+  dir?: string
+  items: ImageManifestItem[]
+  generatedCount: number
+  total: number
+}
+
 /* ─────────────────── Session (thread) channels ─────────────────── */
 
 export type SessionListResult = { threads: readonly ThreadSummary[] }
@@ -897,6 +956,14 @@ export interface ChatApi {
    * model merely mentioned). Returns the surviving subset in input order.
    */
   statFiles(payload: ShellStatFilesPayload): Promise<ShellStatFilesResult>
+
+  /**
+   * Read a ppt-master image-generation manifest by absolute path, returning
+   * each item's status and (for already-written PNGs) a small thumbnail
+   * data-URI. The 「图片」canvas tab polls this while `image_gen.py --manifest`
+   * runs, to show generation progress and previews.
+   */
+  readImageManifest(payload: ImageManifestReadPayload): Promise<ImageManifestReadResult>
 
   /**
    * List all sessions under the current workspace, newest first.

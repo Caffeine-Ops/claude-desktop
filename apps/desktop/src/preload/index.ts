@@ -51,6 +51,8 @@ import {
   type ShellOpenPathResult,
   type ShellStatFilesPayload,
   type ShellStatFilesResult,
+  type ImageManifestReadPayload,
+  type ImageManifestReadResult,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
   type WorkspaceState
@@ -187,6 +189,13 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.SHELL_STAT_FILES,
       payload
     ) as Promise<ShellStatFilesResult>
+  },
+
+  readImageManifest(payload: ImageManifestReadPayload): Promise<ImageManifestReadResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.IMAGE_MANIFEST_READ,
+      payload
+    ) as Promise<ImageManifestReadResult>
   },
 
   listSessions(): Promise<SessionListResult> {
