@@ -76,6 +76,17 @@ const HEADING_BY_DEPTH = [
   HeadingLevel.HEADING_6
 ] as const
 
+// 正文章节标题的 markdown 深度 → docx heading 档位。正文章节从 `##`(depth 2) 起步（`#` 是封面
+// 大标题），故档位基准取 depth-2 而非 depth-1：##→HEADING_1、###→HEADING_2、####→HEADING_3、
+// #####→HEADING_4、######→HEADING_5。这与层级编号的 numLevel(= depth-2，见 blockToDocx) 同一
+// 基准，保证「字号级别」和「编号级别」始终对齐——否则字号档位比编号高一位，h1 档在正文永不被用、
+// ###/####/##### 全挤进 h3(=正文字号)，层级视觉塌陷（本函数即为修此而抽出，单测锁死映射，别再改回
+// depth-1）。clamp 到 [0,5]：depth1（正文罕见的裸 #）→ 0(HEADING_1)，深于 ###### → 5(HEADING_6)，
+// 绝不越界索引出 undefined（否则标题静默降级普通段、丢目录条目，即历史 C3）。
+export function headingLevelForDepth(depth: number): (typeof HEADING_BY_DEPTH)[number] {
+  return HEADING_BY_DEPTH[Math.max(0, Math.min(depth - 2, 5))]
+}
+
 // 列表最大嵌套层级（0-indexed）。Word 的有序/无序列表上限是 9 级，故 0..8。
 // numbering config 注册到这一级；listItemParagraphs 对超深嵌套 clamp 到此，
 // 绝不引用未注册的 level（否则 Word/LibreOffice 报 numbering reference not found）。
@@ -423,9 +434,9 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
         : node.children
       return [
         new Paragraph({
-          // 上界 clamp 到 6、下界 clamp 到 0：remark 标准不产 depth0，但万一上游传入
-          // depth0 会让 `-1` 索引出 undefined → 标题静默降级普通段、丢目录条目（C3）。
-          heading: HEADING_BY_DEPTH[Math.max(0, Math.min(node.depth, 6) - 1)],
+          // 档位基准 depth-2（与编号 numLevel 同源，见 headingLevelForDepth）：##→H1、###→H2、
+          // ####→H3…，让 16/14/12 三档字号随编号 1/1.1/1.1.1 同步分层（clamp 防越界见该函数）。
+          heading: headingLevelForDepth(node.depth),
           children: inlineRuns(headingChildren, ctx?.baseStyle),
           indent: ctx?.indent,
           ...(numbered ? { numbering: { reference: HEADING_REF, level: numLevel } } : {}),

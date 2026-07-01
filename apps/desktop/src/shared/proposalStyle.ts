@@ -170,8 +170,11 @@ export const PROPOSAL_TEMPLATES: Record<ProposalTemplateKey, ProposalStyleConfig
     templateKey: 'academic',
     name: '专业学术',
     title: lv('宋体', '二号', true, 'center', 0),
-    h1: lv('黑体', '四号', true, 'left', 0),
-    h2: lv('黑体', '小四', true, 'left', 0),
+    // h1/h2/h3 = 三号16 / 四号14 / 小四12，与 classic/business 同为清晰三档。改前 h1/h2 是
+    // 四号14/小四12，正文（##→h1、###→h2）里「章」与「节」只差 14→12 一档、且 h2 与 h3/正文同为
+    // 12pt，层级视觉塌陷；提到三档后与 headingLevelForDepth 的 16/14/12 分层配套。
+    h1: lv('黑体', '三号', true, 'left', 0),
+    h2: lv('黑体', '四号', true, 'left', 0),
     h3: lv('宋体', '小四', true, 'left', 0),
     body: lv('宋体', '小四', false, 'justify', 2),
     lineMultiple: 1.5,

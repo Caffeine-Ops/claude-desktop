@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'bun:test'
+import { HeadingLevel } from 'docx'
+import { headingLevelForDepth } from './proposalDocx'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -14,6 +16,32 @@ import {
 } from './proposalDocx'
 
 // 层级编号占位串：每级引用全部祖先计数器，配 DECIMAL 即 1 / 1.1 / 1.1.1（目录与正文标题共用）。
+describe('headingLevelForDepth（字号档位与编号同源 depth-2，防塌陷回归）', () => {
+  it('## 章(depth2) → HEADING_1（复用此前闲置的 h1 档 = 最大标题字号）', () => {
+    expect(headingLevelForDepth(2)).toBe(HeadingLevel.HEADING_1)
+  })
+  it('### 节(depth3) → HEADING_2', () => {
+    expect(headingLevelForDepth(3)).toBe(HeadingLevel.HEADING_2)
+  })
+  it('#### 小节(depth4) → HEADING_3', () => {
+    expect(headingLevelForDepth(4)).toBe(HeadingLevel.HEADING_3)
+  })
+  it('##### 要点(depth5) → HEADING_4（回退 h3 字号，靠加粗与正文区分）', () => {
+    expect(headingLevelForDepth(5)).toBe(HeadingLevel.HEADING_4)
+  })
+  it('depth1（正文罕见的裸 #）下界 clamp → HEADING_1，绝不越界出 undefined', () => {
+    expect(headingLevelForDepth(1)).toBe(HeadingLevel.HEADING_1)
+  })
+  it('过深 depth9 上界 clamp → HEADING_6，绝不越界', () => {
+    expect(headingLevelForDepth(9)).toBe(HeadingLevel.HEADING_6)
+  })
+  it('回归锚点：档位索引 = depth-2 = 编号 numLevel，别再改回 depth-1', () => {
+    // ## → 索引0(H1)=numLevel0(编号 1)、### → 索引1(H2)=numLevel1(编号 1.1)，两套映射同基准。
+    expect(headingLevelForDepth(2)).toBe(HeadingLevel.HEADING_1)
+    expect(headingLevelForDepth(3)).toBe(HeadingLevel.HEADING_2)
+  })
+})
+
 describe('hierarchicalLevelText', () => {
   it('level 0 → %1（一级章，单计数器）', () => {
     expect(hierarchicalLevelText(0)).toBe('%1')
