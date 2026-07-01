@@ -126,8 +126,7 @@ export async function reviseProposalSectionBlocks(
   sectionId: string,
   blockRange: { start: number; end: number },
   instruction: string,
-  selectedText: string,
-  cardAnchor: { left: number; top: number }
+  selectedText: string
 ): Promise<void> {
   const trimmed = instruction.trim()
   if (!trimmed) return
@@ -141,14 +140,6 @@ export async function reviseProposalSectionBlocks(
     const start = Math.max(0, Math.min(blockRange.start, blocks.length - 1))
     const end = Math.max(start, Math.min(blockRange.end, blocks.length - 1))
     const context = blocks.slice(start, end + 1).join('\n\n')
-    // 登记「先审阅后落地」提案（改写中态）：before=这几块原文、blockRange 用【夹紧后】的同一份，
-    // 保证「end 回填的 after 要 splice 的范围」与「审阅卡片展示的原文」严格一致。after 由 end 分流回填。
-    useProposalStore.getState().startEditReview({
-      sectionId,
-      blockRange: { start, end },
-      before: context,
-      anchor: cardAnchor
-    })
     return {
       blockRange: { start, end },
       message:

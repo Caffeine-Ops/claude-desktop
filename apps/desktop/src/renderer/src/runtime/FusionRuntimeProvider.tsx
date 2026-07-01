@@ -21,6 +21,7 @@ import type { ProposalProduct, ProposalSection } from '../stores/proposal'
 import { matchProducts } from '../lib/kbProductMatch'
 import { dispatchChatTurn } from '../lib/dispatchChatTurn'
 import { extractProposalDraftResult, detectContentSentinelAheadOfPhase } from '@shared/proposal'
+import { spliceBlocks } from '@shared/proposalBlocks'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
@@ -1241,32 +1242,21 @@ function makeSessionEventHandler(
               const revised = blocks.find((b) => b.kind === 'content') ?? blocks[0]
               if (pending && target && revised) {
                 useProposalStore.getState().setPendingRevision(null)
-                if (pending.blockRange) {
-                  // blockRange 存在=选区即改：【不即时落地】，转交审阅卡片——把 after 回填进
-                  // editReview 转 'ready'，用户点「采用」才 spliceBlocks 上去（见 SelectionAiBubble）。
-                  // 若用户改写途中已「放弃」（clearEditReview→null），setEditReviewResult 是 no-op，
-                  // 本轮产出丢弃、原文不动——绝不复活被放弃的改写。仅记账，防同 messageId 二次 append。
-                  useProposalStore.getState().setEditReviewResult(revised.markdown)
-                  useProposalStore.getState().markDraftConsumed(event.messageId)
-                } else {
-                  // 缺省=整章替换（节重写/展开/精简/据来源修正/截断/补料）：仍即时落地整节替换，
-                  // reviseSection（重置 verification 触发重校验、更新 baseline、清 truncated）。
-                  useProposalStore.getState().reviseSection(pending.sectionId, revised.markdown)
-                  triggerProposalCitationVerification()
-                }
+                // blockRange 存在=选区即改：只把 AI 产出 spliceBlocks 进目标节的那几块，本章
+                // 其余内容原样保留；缺省=整章替换（节重写/展开/精简/据来源修正/截断/补料）。
+                // 两路都落 reviseSection（重置 verification 触发重校验、更新 baseline、清 truncated）。
+                const nextMarkdown = pending.blockRange
+                  ? spliceBlocks(target.markdown, pending.blockRange, revised.markdown)
+                  : revised.markdown
+                useProposalStore.getState().reviseSection(pending.sectionId, nextMarkdown)
+                triggerProposalCitationVerification()
               } else if (pending && target) {
                 // 修订轮被截断 / 空产出：保留原节（不变量：绝不用半截覆盖好内容），清指针 + 记账。
-                // 选区即改还要撤掉「改写中」审阅卡片，别让它空转。
                 useProposalStore.getState().setPendingRevision(null)
-                if (pending.blockRange) useProposalStore.getState().clearEditReview()
                 useProposalStore.getState().markDraftConsumed(event.messageId)
               } else {
                 // 无 pending，或 pending 已 stale → 回归正常累积。stale 指针在此一并清除。
-                if (pending) {
-                  useProposalStore.getState().setPendingRevision(null)
-                  // stale 选区修订（目标节已删/切走）：挂着的「改写中」卡片一并撤掉。
-                  if (pending.blockRange) useProposalStore.getState().clearEditReview()
-                }
+                if (pending) useProposalStore.getState().setPendingRevision(null)
                 if (blocks.length || truncated) {
                   useProposalStore.getState().appendSections(event.messageId, blocks, truncated)
                   // 引用落地校验（#1）：appendSections 内部生成节 id，这里无法直接拿到新节，
@@ -1293,15 +1283,10 @@ function makeSessionEventHandler(
         }
         break
       }
-      case 'error': {
+      case 'error':
         actions.setError(sid, event.messageId, event.error)
-        // 选区即改在飞时出错：撤掉「改写中」卡片，别让它空转。只清 'working'；'ready'（已出结果、
-        // 等用户定夺）不受无关轮次 error 影响，避免误清用户正在审阅的提案。
-        const er = useProposalStore.getState().editReview
-        if (er?.status === 'working') useProposalStore.getState().clearEditReview()
         actions.endAssistantMessage(sid)
         break
-      }
       default:
         break
     }
@@ -1380,7 +1365,7 @@ const verifyingSectionIds = new Set<string>()
  * 幂等：已校验（verification 非空）、在飞、非 content、截断残节都跳过。失败静默降级
  * （留 verification=undefined，UI 显示「未校验」灰态），绝不阻塞。
  */
-export function triggerProposalCitationVerification(): void {
+function triggerProposalCitationVerification(): void {
   if (!window.chatApi?.verifyProposalCitations) return
   const { sections } = useProposalStore.getState()
   for (const sec of sections) {
