@@ -87,6 +87,17 @@ export function headingLevelForDepth(depth: number): (typeof HEADING_BY_DEPTH)[n
   return HEADING_BY_DEPTH[Math.max(0, Math.min(depth - 2, 5))]
 }
 
+// 正文标题【自动编号 marker】该套哪个层级的字号——必须与标题文字自身档位一致，否则编号「3」和
+// 标题「建设目标」字号不一（用户反馈：编号比标题文字明显小）。映射与 headingLevelForDepth /
+// buildDocStyles 同源：编号 level0=##→h1、level1=###→h2、更深(####/#####…)→h3（正文里
+// heading4/5 也回退 h3 字号）。导出供单测锁死，别再让编号与标题字号脱钩。
+export function headingMarkerLevelStyle(
+  style: ProposalStyleConfig,
+  lvl: number
+): ProposalLevelStyle {
+  return lvl === 0 ? style.h1 : lvl === 1 ? style.h2 : style.h3
+}
+
 // 列表最大嵌套层级（0-indexed）。Word 的有序/无序列表上限是 9 级，故 0..8。
 // numbering config 注册到这一级；listItemParagraphs 对超深嵌套 clamp 到此，
 // 绝不引用未注册的 level（否则 Word/LibreOffice 报 numbering reference not found）。
@@ -124,6 +135,22 @@ export function stripManualHeadingNumber(text: string): string {
   return text.replace(MANUAL_HEADING_NUMBER_RE, '')
 }
 
+// 正文标题深度归一位移：AI 有时把顶层章节写成 ### 甚至更深（漏了 ##），此时按绝对 depth 算会让编号
+// level-0 计数器一直是 0（渲成「0.1.1.4」）、且深标题字号塌到正文档位（####/##### → h3=正文字号，
+// 不像标题）。取【全体正文节顶层标题】的最浅 depth，算出把它对齐到 depth 2(##) 所需的上移量：正文
+// 标题偏深(minDepth>2)时 shift=minDepth-2>0，编号与字号档位都相对本文档最浅标题算；本就从 ## 起
+// (minDepth≤2)则 shift=0、不动（绝不把标题推得更深）。无正文标题 → 0。纯函数、导出供单测。
+export function contentHeadingDepthShift(groups: SectionGroup[]): number {
+  let min = Infinity
+  for (const g of groups) {
+    if (g.kind !== 'content') continue
+    for (const node of g.nodes) {
+      if (node.type === 'heading') min = Math.min(min, node.depth)
+    }
+  }
+  return Number.isFinite(min) ? Math.max(0, min - 2) : 0
+}
+
 // 章节大标题（`## ` = depth 2 = 编号 1/2/3 的层级）= 一章。markdown 用 `#` 当封面大标题、
 // `##` 才是正文首层章节，故「章」是 depth 2，子节 `###`/`####`（depth 3/4）不算章。
 const CHAPTER_HEADING_DEPTH = 2
@@ -137,12 +164,19 @@ const CHAPTER_HEADING_DEPTH = 2
  * 分页只认【命名样式上】的 pageBreakBefore、不认逐段属性，且首章会被它切出一张空白页；改在章前插
  * 一个独立 PageBreak 段落（与 PROPOSAL_PAGEBREAK 的 kind 边界分页同款），Word 与 docx-preview
  * 两端都据此干净分页、首章不空页。纯函数，供 buildSectionChildren 调用 + 单测。
+ *
+ * chapterDepth：一章的【原始 markdown depth】。默认 2(##)，但正文标题深度归一后（AI 漏写 ##、整份从
+ * ### 起），一章的原始 depth = 2 + headingDepthShift，故调用方按位移传入，否则全 ### 起步的文档匹配不到
+ * 任何「章」、章间不分页。
  */
-export function chapterPageBreakIndices(nodes: RootContent[]): Set<number> {
+export function chapterPageBreakIndices(
+  nodes: RootContent[],
+  chapterDepth: number = CHAPTER_HEADING_DEPTH
+): Set<number> {
   const breaks = new Set<number>()
   let chapterSeen = false
   nodes.forEach((node, i) => {
-    if (node.type === 'heading' && node.depth === CHAPTER_HEADING_DEPTH) {
+    if (node.type === 'heading' && node.depth === chapterDepth) {
       if (chapterSeen) breaks.add(i)
       chapterSeen = true
     }
@@ -222,6 +256,9 @@ interface BlockContext {
 //    以免列表项/标题继承到首行缩进）。
 interface WalkEnv {
   walk: { titleConsumed: boolean }
+  // 正文标题深度归一位移（见 contentHeadingDepthShift）：正文标题的层级/编号档位都减去它，把本文档
+  // 最浅的正文标题对齐到 depth 2(##)。0 = 不归一（文档本就从 ## 起）。只作用于带编号的正文标题。
+  headingDepthShift: number
   bodyFirstLine: number
   // 当前模板的页边距（twips），嵌图算版心宽用。
   imgMarginTwips: number
@@ -428,15 +465,19 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
       // （→ 1.1.1.1）。映射 = depth-2，clamp 到
       // [0, MAX_LIST_LEVEL]。同时剥掉 AI 可能仍手打在标题里的序号，避免与自动编号叠成「1.1 1.1 …」。
       const numbered = ctx?.headingNumbering === true
-      const numLevel = Math.max(0, Math.min(node.depth - 2, MAX_LIST_LEVEL))
+      // 正文标题深度归一（env.headingDepthShift）：AI 有时漏写 ## 顶层、整份从 ### 起步，绝对 depth 会让
+      // 编号 level-0 计数器停在 0（出「0.1.1.4」）、且深标题字号塌到正文档位。减去位移把最浅正文标题对齐到
+      // depth 2，编号与字号档位都相对「本文档最浅标题」算。只对带编号的正文标题生效（封面 Title/引用内标题不动）。
+      const effectiveDepth = numbered ? node.depth - env.headingDepthShift : node.depth
+      const numLevel = Math.max(0, Math.min(effectiveDepth - 2, MAX_LIST_LEVEL))
       const headingChildren = numbered
         ? stripLeadingHeadingNumber(node.children)
         : node.children
       return [
         new Paragraph({
           // 档位基准 depth-2（与编号 numLevel 同源，见 headingLevelForDepth）：##→H1、###→H2、
-          // ####→H3…，让 16/14/12 三档字号随编号 1/1.1/1.1.1 同步分层（clamp 防越界见该函数）。
-          heading: headingLevelForDepth(node.depth),
+          // ####→H3…，让 18/15/12 三档字号随编号 1/1.1/1.1.1 同步分层（clamp 防越界见该函数）。
+          heading: headingLevelForDepth(effectiveDepth),
           children: inlineRuns(headingChildren, ctx?.baseStyle),
           indent: ctx?.indent,
           ...(numbered ? { numbering: { reference: HEADING_REF, level: numLevel } } : {}),
@@ -684,11 +725,25 @@ function buildNumbering(style: ProposalStyleConfig): INumberingOptions {
     left: 540 + lvl * 360,
     hanging: 360
   })
+  // 编号 marker 的 run 属性（字体/字号/加粗/色）——从某个层级样式取。为什么必须显式给：docx-preview
+  // 把编号「%1.%2…」渲成段落的 ::before 伪元素，其 CSS 只吃 numbering 层级自带的 <w:rPr>（num.rStyle）；
+  // 层级不带 rPr 时 marker 退回继承宿主 <p> 的字号，而 docx-preview 又把标题字号施加在 `p span`（文字 run）
+  // 上、不在 <p> 上，于是编号「3」继承文档默认（Normal 12pt）、比 16pt 的标题文字明显小——就是用户看到
+  // 的「编号比标题小 / h1 整行观感被拖矮」。给每级注入与其标题同款 run，编号才和标题文字同字号（Word 端
+  // 编号本就继承段落 rPr、加了也一致，无副作用）。
+  const markerRun = (l: ProposalLevelStyle): Record<string, unknown> => ({
+    font: runFont(l.font),
+    size: Math.round(CN_SIZE_PT[l.size] * 2), // half-points，与 levelStyle().run 同源
+    bold: l.bold,
+    ...(l.color ? { color: l.color } : {})
+  })
   // 层级编号（目录 / 正文标题共用的形状）：每级 DECIMAL，text 引用全部祖先计数器得 1/1.1/1.1.1，
   // suffix=space 让编号与文字间是单个空格（而非默认的 tab，省得把标题顶到 tab 位）。withIndent 决定
-  // 是否带逐级缩进——目录要（呈现父子层次），正文标题不要（标题应顶格、缩进会破版）。
+  // 是否带逐级缩进——目录要（呈现父子层次），正文标题不要（标题应顶格、缩进会破版）。runForLevel 决定
+  // 编号 marker 取哪个层级的字号（正文标题按层级 h1/h2/h3、目录统一按正文条目字号）。
   const hierarchicalLevels = (
-    withIndent: boolean
+    withIndent: boolean,
+    runForLevel: (lvl: number) => Record<string, unknown>
   ): NonNullable<INumberingOptions['config']>[number]['levels'] =>
     Array.from({ length: MAX_LIST_LEVEL + 1 }, (_, lvl) => ({
       level: lvl,
@@ -696,8 +751,21 @@ function buildNumbering(style: ProposalStyleConfig): INumberingOptions {
       text: hierarchicalLevelText(lvl),
       alignment: AlignmentType.START,
       suffix: LevelSuffix.SPACE,
-      ...(withIndent ? { style: { paragraph: { indent: indentFor(lvl) } } } : {})
+      style: {
+        run: runForLevel(lvl),
+        ...(withIndent ? { paragraph: { indent: indentFor(lvl) } } : {})
+      }
     }))
+  // 正文标题编号 marker 取哪个层级的字号：见 headingMarkerLevelStyle（导出供单测锁死映射）。
+  const headingRunForLevel = (lvl: number): Record<string, unknown> =>
+    markerRun(headingMarkerLevelStyle(style, lvl))
+  // 目录条目按正文字号（body）渲染，故其层级编号 marker 也取 body——编号与目录条目文字同字号。
+  const tocRunForLevel = (): Record<string, unknown> => markerRun(style.body)
+  // 正文有序/无序列表的编号「1.」/项目符号「●」也随正文字号（body）。同 HEADING/TOC 一样，docx-preview
+  // 把它们渲成 ::before、只吃 numbering 层级 rPr，不写就退回浏览器默认字号（约 12pt，碰巧≈默认 body 才
+  // 没露馅）；一旦用户把正文字号微调成别的档，编号又会与列表文字脱钩。显式绑到 body 让「编号=文字字号」
+  // 对任意模板/微调都成立（bold 随 body=false，与列表项文字观感一致）。
+  const bodyMarkerRun = markerRun(style.body)
   return {
     config: [
       {
@@ -707,7 +775,7 @@ function buildNumbering(style: ProposalStyleConfig): INumberingOptions {
           format: OL_FORMAT[style.ol],
           text: `%${lvl + 1}.`,
           alignment: AlignmentType.START,
-          style: { paragraph: { indent: indentFor(lvl) } }
+          style: { run: bodyMarkerRun, paragraph: { indent: indentFor(lvl) } }
         }))
       },
       {
@@ -717,13 +785,13 @@ function buildNumbering(style: ProposalStyleConfig): INumberingOptions {
           format: LevelFormat.BULLET,
           text: UL_GLYPH[style.ul],
           alignment: AlignmentType.START,
-          style: { paragraph: { indent: indentFor(lvl) } }
+          style: { run: bodyMarkerRun, paragraph: { indent: indentFor(lvl) } }
         }))
       },
       // 目录：带缩进的层级编号（嵌套有序列表 → 1 / 1.1 / 1.1.1，逐级右移）。
-      { reference: TOC_REF, levels: hierarchicalLevels(true) },
-      // 正文标题：不带缩进的层级编号（标题顶格，号在文字前）。
-      { reference: HEADING_REF, levels: hierarchicalLevels(false) }
+      { reference: TOC_REF, levels: hierarchicalLevels(true, tocRunForLevel) },
+      // 正文标题：不带缩进的层级编号（标题顶格，号在文字前）。编号 marker 随标题层级取字号。
+      { reference: HEADING_REF, levels: hierarchicalLevels(false, headingRunForLevel) }
     ]
   }
 }
@@ -1036,11 +1104,13 @@ function buildSectionChildren(
   group: SectionGroup,
   style: ProposalStyleConfig,
   bodyFirstLine: number,
+  headingDepthShift: number,
   ungroundedImagePaths?: ReadonlySet<string>,
   mermaidImages?: ReadonlyMap<string, { data: Buffer; width: number; height: number }>
 ): Array<Paragraph | Table> {
   const env: WalkEnv = {
     walk: { titleConsumed: group.kind !== 'cover' },
+    headingDepthShift,
     bodyFirstLine,
     imgMarginTwips: MARGIN_TWIPS[style.margin],
     ungroundedImagePaths,
@@ -1082,7 +1152,8 @@ function buildSectionChildren(
   // 正文节：传 headingNumbering，让 ##/###/#### 章节标题自动挂层级编号（与目录对齐）。
   // 章节分页：每个 ## 章节大标题另起一页（首章除外），在其前插一个独立 PageBreak 段落
   // （详见 chapterPageBreakIndices 注释——为何用独立段落而非样式级 pageBreakBefore）。
-  const pageBreakBefore = chapterPageBreakIndices(group.nodes)
+  // 章前分页按【原始 depth】匹配，故加回 headingDepthShift（归一后一章原始 depth = 2 + shift）。
+  const pageBreakBefore = chapterPageBreakIndices(group.nodes, CHAPTER_HEADING_DEPTH + env.headingDepthShift)
   group.nodes.forEach((node, i) => {
     if (pageBreakBefore.has(i)) out.push(new Paragraph({ children: [new PageBreak()] }))
     out.push(...blockToDocx(node, env, { headingNumbering: true }))
@@ -1142,8 +1213,11 @@ export async function markdownToDocxBuffer(
   // 按区段标记分组 → 每组一个 Word Section（默认 NEXT_PAGE，天然各自起新页）。
   // 封面/目录节不挂页码页脚；正文节挂「— N —」页脚。
   const groups = groupBySectionMarks(tree.children)
+  // 正文标题深度归一位移（全文档一致）：见 contentHeadingDepthShift——AI 漏写 ## 顶层时把最浅正文标题
+  // 对齐到 depth 2，编号不再从 0 起、深标题也拿到大字号档。全局算一次、喂给每个正文节，保证跨节编号连续。
+  const headingDepthShift = contentHeadingDepthShift(groups)
   const sections: ISectionOptions[] = groups.map((group) => {
-    const children = buildSectionChildren(group, style, bodyFirstLine, ungroundedImagePaths, mermaidImageMap)
+    const children = buildSectionChildren(group, style, bodyFirstLine, headingDepthShift, ungroundedImagePaths, mermaidImageMap)
     const safeChildren = children.length
       ? children
       : [new Paragraph({ children: [new TextRun('')] })]

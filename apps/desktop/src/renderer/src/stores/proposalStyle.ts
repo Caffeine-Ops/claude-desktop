@@ -16,7 +16,12 @@ import {
  * 跨会话持久化到 localStorage：用户选过的模板/微调下次启动仍在。方案草稿本身是会话级
  * （proposalStore.reset 会清），但样式偏好是跨文档的用户偏好，独立持久、不随 reset 清。
  */
-const STORAGE_KEY = 'proposal-style-config-v1'
+// v2：标题层级字号档从 16/14/12 拉到 18/15/12（章节标题压不住满宽列表的观感修复，见
+// proposalStyle 模板注释）。旧 v1 里若存过一份「默认 classic」，其 h1/h2 仍是旧的 16/14，coerce
+// 只补缺字段、不会覆盖已存值，改模板常量对它无效。故升键：丢弃 v1 缓存、让所有人拿到新默认档位。
+// 代价——曾在样式弹窗微调并应用过的用户，这些微调（字体/页边距等）会重置为新默认；权衡后取「保证
+// 层级修复对所有人生效」。真需要旧微调可重新在弹窗里调一次。
+const STORAGE_KEY = 'proposal-style-config-v2'
 
 function loadPersisted(): ProposalStyleConfig {
   try {

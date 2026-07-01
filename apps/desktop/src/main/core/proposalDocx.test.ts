@@ -8,12 +8,15 @@ import type { RootContent } from 'mdast'
 
 import {
   markdownToDocxBuffer,
+  headingMarkerLevelStyle,
+  contentHeadingDepthShift,
   stripLeadingTocHeading,
   splitCoverNodes,
   hierarchicalLevelText,
   stripManualHeadingNumber,
   chapterPageBreakIndices
 } from './proposalDocx'
+import { defaultProposalStyle, CN_SIZE_PT, PROPOSAL_TEMPLATES } from '../../shared/proposalStyle'
 
 // 层级编号占位串：每级引用全部祖先计数器，配 DECIMAL 即 1 / 1.1 / 1.1.1（目录与正文标题共用）。
 describe('headingLevelForDepth（字号档位与编号同源 depth-2，防塌陷回归）', () => {
@@ -51,6 +54,71 @@ describe('hierarchicalLevelText', () => {
   })
   it('level 2 → %1.%2.%3（三级子节）', () => {
     expect(hierarchicalLevelText(2)).toBe('%1.%2.%3')
+  })
+})
+
+// 标题自动编号 marker 的字号档位：必须与标题文字同档，否则编号「3」比标题「建设目标」明显小
+// （docx-preview 把编号渲成 ::before 伪元素，只吃 numbering 层级 rPr，不继承标题 run 字号）。
+// 锁死 level0→h1、level1→h2、更深→h3，与 headingLevelForDepth 同基准，别让编号与标题字号脱钩。
+describe('headingMarkerLevelStyle（编号 marker 字号 = 标题字号，防「编号比标题小」回归）', () => {
+  const style = defaultProposalStyle()
+  it('level 0（## 章）→ h1（编号 3 与「建设目标」同为 h1 字号）', () => {
+    expect(headingMarkerLevelStyle(style, 0)).toBe(style.h1)
+  })
+  it('level 1（### 节）→ h2（编号 3.1 与「患者层面」同为 h2 字号）', () => {
+    expect(headingMarkerLevelStyle(style, 1)).toBe(style.h2)
+  })
+  it('level 2（#### 小节）→ h3', () => {
+    expect(headingMarkerLevelStyle(style, 2)).toBe(style.h3)
+  })
+  it('更深层级（level 3/4，####+）回退 h3（与 buildDocStyles heading4/5=h3 同源）', () => {
+    expect(headingMarkerLevelStyle(style, 3)).toBe(style.h3)
+    expect(headingMarkerLevelStyle(style, 4)).toBe(style.h3)
+  })
+  it('h1 字号 > h2 字号（层级不塌陷的前提；编号沿用此档故不反转）', () => {
+    expect(CN_SIZE_PT[headingMarkerLevelStyle(style, 0).size]).toBeGreaterThan(
+      CN_SIZE_PT[headingMarkerLevelStyle(style, 1).size]
+    )
+  })
+})
+
+// 「任意深度的标题都严格大于正文」——最深标题回退到 h3，h3 必须 > body，否则深标题与正文/列表同字号、
+// 立不住（截图3「多轮对话/点赞」12pt 挨着 12pt 列表的根因）。三个模板都锁死 h1>h2>h3>body。
+describe('标题字号严格大于正文（含最深回退档 h3，防深标题塌到正文）', () => {
+  for (const key of ['classic', 'business', 'academic'] as const) {
+    it(`${key}: h1 > h2 > h3 > body`, () => {
+      const s = PROPOSAL_TEMPLATES[key]
+      const h1 = CN_SIZE_PT[s.h1.size], h2 = CN_SIZE_PT[s.h2.size]
+      const h3 = CN_SIZE_PT[s.h3.size], body = CN_SIZE_PT[s.body.size]
+      expect(h1).toBeGreaterThan(h2)
+      expect(h2).toBeGreaterThan(h3)
+      expect(h3).toBeGreaterThan(body) // 关键：深标题回退 h3 也 > 正文
+    })
+  }
+})
+
+// 正文标题深度归一：AI 漏写 ## 顶层、整份从 ### 起时，把最浅正文标题对齐到 depth 2——否则编号从 0 起
+// （0.1.1.4）、深标题字号塌。位移 = max(0, 最浅正文标题 depth − 2)，只上移、不把标题推更深。
+describe('contentHeadingDepthShift（正文标题深度归一，防 0.1.1.4 编号 + 深标题塌）', () => {
+  const H = (depth: number): RootContent =>
+    ({ type: 'heading', depth, children: [{ type: 'text', value: 'x' }] }) as unknown as RootContent
+  const grp = (kind: 'cover' | 'toc' | 'content', depths: number[]) =>
+    ({ kind, nodes: depths.map(H) })
+  it('正文从 ## 起（规范）→ 位移 0，不动', () => {
+    expect(contentHeadingDepthShift([grp('content', [2, 3, 4])] as never)).toBe(0)
+  })
+  it('正文全从 ### 起（漏 ##）→ 位移 1，最浅 ### 归一到 ##', () => {
+    expect(contentHeadingDepthShift([grp('content', [3, 4, 5, 5])] as never)).toBe(1)
+  })
+  it('正文最浅是 ####（更深）→ 位移 2', () => {
+    expect(contentHeadingDepthShift([grp('content', [4, 5])] as never)).toBe(2)
+  })
+  it('只统计 content 节：封面 # 标题(depth1)不参与，不会把位移拉成 0', () => {
+    // 封面 depth1 若被算入会让 min=1、位移=0；必须只看 content。
+    expect(contentHeadingDepthShift([grp('cover', [1]), grp('content', [3, 4])] as never)).toBe(1)
+  })
+  it('无正文标题 → 位移 0（不炸）', () => {
+    expect(contentHeadingDepthShift([grp('content', [])] as never)).toBe(0)
   })
 })
 

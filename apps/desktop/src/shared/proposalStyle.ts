@@ -140,9 +140,14 @@ export const PROPOSAL_TEMPLATES: Record<ProposalTemplateKey, ProposalStyleConfig
     templateKey: 'classic',
     name: '经典正式',
     title: lv('黑体', '二号', true, 'center', 0),
-    h1: lv('黑体', '三号', true, 'left', 0),
-    h2: lv('黑体', '四号', true, 'left', 0),
-    h3: lv('楷体', '小四', true, 'left', 0),
+    // 标题层级字号档：一级小二18 / 二级小三15 / 三级小四12，与正文小四12 拉开——原为三号16/四号14/
+    // 小四12，每档仅差 2pt、标题到正文仅差 4pt，章节标题压不住满宽列表（用户反馈「列表比标题大」的观感
+    // 根因）。拉到 18/15/14 后一级章节明显立得住。h3 从小四12 提到四号14（>正文12）：正文标题深度归一后，
+    // 最深的 ####/##### 会回退到 h3，若 h3=正文12 则深标题与正文/列表同字号、又「立不住」（截图3的
+    // 「多轮对话/点赞」正是此例）——提到 14 保证【任意深度的标题都严格大于正文】，仅靠加粗不够。
+    h1: lv('黑体', '小二', true, 'left', 0),
+    h2: lv('黑体', '小三', true, 'left', 0),
+    h3: lv('楷体', '四号', true, 'left', 0),
     body: lv('宋体', '小四', false, 'justify', 2),
     lineMultiple: 1.65,
     spaceAfterPt: 6,
@@ -154,10 +159,13 @@ export const PROPOSAL_TEMPLATES: Record<ProposalTemplateKey, ProposalStyleConfig
   business: {
     templateKey: 'business',
     name: '简洁商务',
-    title: lv('微软雅黑', '小二', true, 'left', 0, ACCENT),
-    h1: lv('微软雅黑', '三号', true, 'left', 0, ACCENT),
-    h2: lv('微软雅黑', '四号', true, 'left', 0, ACCENT),
-    h3: lv('微软雅黑', '小四', true, 'left', 0),
+    // 封面标题抬到二号22（原小二18）：一级标题拉到小二18 后，封面标题须仍高于章节标题，故 title>h1。
+    title: lv('微软雅黑', '二号', true, 'left', 0, ACCENT),
+    // 标题档同 classic 拉开：小二18 / 小三15 / 小四12，与正文小四12 分层清晰（原三号16/四号14/小四12 过挤）。
+    h1: lv('微软雅黑', '小二', true, 'left', 0, ACCENT),
+    h2: lv('微软雅黑', '小三', true, 'left', 0, ACCENT),
+    // h3 四号14（>正文12）：深标题回退 h3 时仍严格大于正文，见 classic 注释。
+    h3: lv('微软雅黑', '四号', true, 'left', 0),
     body: lv('微软雅黑', '小四', false, 'left', 0),
     lineMultiple: 1.8,
     spaceAfterPt: 8,
@@ -170,12 +178,14 @@ export const PROPOSAL_TEMPLATES: Record<ProposalTemplateKey, ProposalStyleConfig
     templateKey: 'academic',
     name: '专业学术',
     title: lv('宋体', '二号', true, 'center', 0),
-    // h1/h2/h3 = 三号16 / 四号14 / 小四12，与 classic/business 同为清晰三档。改前 h1/h2 是
-    // 四号14/小四12，正文（##→h1、###→h2）里「章」与「节」只差 14→12 一档、且 h2 与 h3/正文同为
-    // 12pt，层级视觉塌陷；提到三档后与 headingLevelForDepth 的 16/14/12 分层配套。
-    h1: lv('黑体', '三号', true, 'left', 0),
-    h2: lv('黑体', '四号', true, 'left', 0),
-    h3: lv('宋体', '小四', true, 'left', 0),
+    // h1/h2/h3 = 小二18 / 小三15 / 小四12，与 classic/business 同为清晰三档、且与正文小四12 拉开。改前
+    // 曾是三号16/四号14/小四12，每档仅差 2pt、标题到正文仅差 4pt，满宽列表压过短标题、章节立不住
+    // （用户反馈「列表比标题大」的观感根因）；再往前 h1/h2 是四号14/小四12 更塌。与 headingLevelForDepth
+    // 的 depth-2 分层配套（##→h1、###→h2、####→h3）。
+    h1: lv('黑体', '小二', true, 'left', 0),
+    h2: lv('黑体', '小三', true, 'left', 0),
+    // h3 四号14（>正文12）：深标题回退 h3 时仍严格大于正文，见 classic 注释。
+    h3: lv('宋体', '四号', true, 'left', 0),
     body: lv('宋体', '小四', false, 'justify', 2),
     lineMultiple: 1.5,
     spaceAfterPt: 4,
