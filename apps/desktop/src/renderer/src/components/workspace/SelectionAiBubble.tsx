@@ -30,9 +30,10 @@ function resolveBlock(node: Node | null): { sectionId: string; blockIndex: numbe
 // prefill 是给人看的自然语言指令（会原样拼进提示词），故写成完整、可直接发送的一句话。
 const QUICK: Array<{ label: string; prefill: string }> = [
   { label: '润色', prefill: '请润色这段内容，提升表达的清晰度、流畅度和专业感。' },
-  { label: '精简', prefill: '请精简这段内容，删去冗余与重复，只保留要点。' },
-  { label: '扩写', prefill: '请扩写这段内容，补充必要的细节、数据或案例，但不要引入知识库之外的内容。' },
   { label: '改写', prefill: '请改写这段内容，换一种更好的组织方式与措辞，让质量更高。' },
+  { label: '扩写', prefill: '请扩写这段内容，补充必要的细节、数据或案例，但不要引入知识库之外的内容。' },
+  { label: '精简', prefill: '请精简这段内容，删去冗余与重复，只保留要点。' },
+  { label: '修复语法', prefill: '请修正这段内容里的语法、错别字与标点问题，保持原意与信息量不变。' },
   { label: '据来源修正', prefill: '请严格依据所引《来源》原文修正这段内容，凡无来源支撑的表述一律删除或改写。' }
 ]
 
@@ -48,7 +49,7 @@ export function SelectionAiBubble({
   // 浮层根节点。用于：一旦焦点进入浮层（尤其是自定义指令输入框），忽略随之而来的 selectionchange，
   // 别把已捕获的 anchor 清掉——否则点输入框聚焦→正文选区塌陷→recompute 判空→气泡消失，字都没法敲。
   const bubbleRef = useRef<HTMLDivElement | null>(null)
-  const inputRef = useRef<HTMLInputElement | null>(null)
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -131,6 +132,13 @@ export function SelectionAiBubble({
     inputRef.current?.focus()
   }
 
+  // 关闭浮层（标题栏 × / 底栏「取消」）：清指令、收浮层、清正文选区。
+  function close(): void {
+    setInstruction('')
+    setAnchor(null)
+    window.getSelection()?.removeAllRanges()
+  }
+
   async function fire(): Promise<void> {
     // 生成中一律不发（review V1 兜底）：disabled 翻真到浮层被上面的 effect 清掉之间有一帧窗口，
     // 此处再挡一次，绝不在别的修订在飞时发起。reviseProposalSectionBlocks 内部还会按 streaming 闸拒绝。
@@ -152,51 +160,90 @@ export function SelectionAiBubble({
   return (
     <div
       ref={bubbleRef}
-      className="proposal-anim-pop absolute z-40 w-72 rounded-lg border border-border bg-background p-1.5 text-foreground shadow-lg"
+      className="proposal-anim-pop absolute z-40 w-80 rounded-xl border border-border bg-background p-3 text-foreground shadow-xl"
       style={{ left: anchor.left, top: anchor.top }}
-      // 阻止 mousedown 清掉正文选区（否则点按钮前选区先没了、anchor 失据）——但【放行输入框】：
-      // 对 input 若也 preventDefault 会连它的默认聚焦行为一起挡掉，光标进不去、根本没法打字。
-      // 输入框聚焦引发的选区塌陷由上面 recompute 的 bubbleRef 焦点守卫兜住，anchor 不会被清。
+      // 阻止 mousedown 清掉正文选区（否则点按钮前选区先没了、anchor 失据）——但【放行文本域/输入框】：
+      // 对 textarea 若也 preventDefault 会连它的默认聚焦行为一起挡掉，光标进不去、根本没法打字。
+      // 文本域聚焦引发的选区塌陷由上面 recompute 的 bubbleRef 焦点守卫兜住，anchor 不会被清。
       onMouseDown={(e) => {
-        if (e.target instanceof HTMLElement && e.target.tagName === 'INPUT') return
+        if (e.target instanceof HTMLElement && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT'))
+          return
         e.preventDefault()
       }}
     >
-      <div className="flex items-center gap-1 text-accent">
-        <span className="px-1 text-[12px]">✦</span>
+      {/* 标题栏 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1 text-[13px] font-medium">
+          <span className="text-accent">✦</span>
+          <span>AI 改写</span>
+        </div>
+        <button
+          type="button"
+          className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+          title="关闭"
+          onClick={close}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+
+      {/* 选中原文预览：最多 4 行，超出以 … 省略（line-clamp）。whitespace-pre-wrap 保留原文换行。 */}
+      <div className="mt-2 text-[11px] text-muted-foreground">选中原文</div>
+      <div className="mt-1 line-clamp-4 whitespace-pre-wrap break-words rounded-md border-l-2 border-accent bg-muted/40 px-2 py-1.5 text-[12px] leading-[1.4] text-foreground">
+        {anchor.selectedText}
+      </div>
+
+      {/* 快捷动作：点了只把指令模板填进下方文本域（不发起），可再编辑。 */}
+      <div className="mt-2.5 flex flex-wrap gap-1.5">
         {QUICK.map((q) => (
           <button
             key={q.label}
             type="button"
-            className="rounded px-1.5 py-0.5 text-[12px] text-foreground hover:bg-muted"
+            className="rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent"
             onClick={() => applyPreset(q.prefill)}
-            title={`填入「${q.label}」指令，可再编辑后点「改」发起`}
+            title={`填入「${q.label}」指令，可再编辑后点「开始改写」`}
           >
             {q.label}
           </button>
         ))}
       </div>
-      <div className="mt-1 flex items-center gap-1">
-        <input
-          ref={inputRef}
-          value={instruction}
-          onChange={(e) => setInstruction(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && instruction.trim()) {
-              e.preventDefault()
-              void fire()
-            }
-          }}
-          placeholder="选动作填入，或直接写：怎么改这段…"
-          className="h-7 flex-1 rounded-md border border-border bg-card px-2 text-[12px] outline-none focus:border-accent"
-        />
+
+      {/* 指令文本域（放大成多行）。⌘/Ctrl+↵ 发起；单独回车换行。 */}
+      <textarea
+        ref={inputRef}
+        value={instruction}
+        onChange={(e) => setInstruction(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && instruction.trim()) {
+            e.preventDefault()
+            void fire()
+          }
+        }}
+        placeholder="选一个动作填入指令，或直接写：怎么改这段…"
+        rows={3}
+        className="mt-2.5 min-h-[68px] w-full resize-none rounded-lg border border-border bg-card px-2.5 py-2 text-[12px] leading-relaxed outline-none focus:border-accent"
+      />
+
+      {/* 底栏：取消 / 开始改写（仅此按钮或 ⌘↵ 才真正发起）。 */}
+      <div className="mt-2.5 flex items-center justify-between">
         <button
           type="button"
-          className="rounded bg-accent px-2 py-1 text-[11px] text-white hover:opacity-90 disabled:opacity-40"
+          className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+          onClick={close}
+        >
+          取消
+        </button>
+        <button
+          type="button"
+          className="flex items-center gap-1 rounded-lg bg-foreground px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
           disabled={!instruction.trim()}
           onClick={() => void fire()}
+          title="⌘/Ctrl + 回车"
         >
-          改
+          <span className="text-[11px]">✦</span>
+          开始改写
         </button>
       </div>
     </div>
