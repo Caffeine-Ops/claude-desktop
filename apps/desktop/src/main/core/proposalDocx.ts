@@ -156,6 +156,17 @@ const UL_GLYPH = { disc: '●', circle: '○', square: '■' } as const
 // A4 页宽（twips，210mm）。嵌图最大宽 = 版心宽（页宽 − 左右页边距），换算成 px（96dpi）。
 // 注：A4_PAGE_HEIGHT_TWIPS 在本文件后段已定义（封面整页布局用），嵌图高度约束直接复用，不重复声明。
 const A4_PAGE_WIDTH_TWIPS = 11906
+// 嵌图/流程图的版心高占比上限：竖图（手机截图、纵向流程图）仅缩宽会撑破整页、被页底截断，
+// 必须同时按高约束。取版心高 × 本比例为高上限，宽/高两个缩放比取较小者等比缩到都放得下。
+//
+// 为什么是 0.4（曾为 0.7）：图片是【不可跨页】原子块（Word keepNext / PDF break-inside:avoid，两端
+// 都禁止把一张图切成两半——这是用户的硬底线）。一张图在当页剩余空间放不下时，只能整体挤到下一页，
+// 于是当前页底部残留【最多等于图片高度】的空白。0.7 意味着单图可占版心高七成，一次挤页就能留下近
+// 七成的大片空白（用户反馈「A4 大面积空白」的根因）。把上限压到 0.4：①被挤页时残留空白上界降到
+// 版心高四成以内；②图更矮 → 更容易塞进当页剩余空间 → 多数情况下不再挤页、后文留在同页。
+// 这是「把空白压小」而非「让后文流上来填满」——后者需把图改成文字环绕（浮动图），是另一套版式，
+// 已与用户确认不做。嵌图与 mermaid 共用此比例（同款）。想再调空白/图大小的松紧，只改此一处。
+const IMG_MAX_HEIGHT_RATIO = 0.4
 // 扩展名 → docx ImageRun 的 type。SVG 不在内（v1 不嵌 SVG，降级文字）。
 const IMG_TYPE: Record<string, 'png' | 'jpg' | 'gif'> = {
   '.png': 'png',
@@ -310,11 +321,12 @@ function tableCellContent(cell: MdTableCell): Paragraph[] {
 
 // 一个 image mdast 节点 → docx 段落数组：成功则 [居中 ImageRun 段, 居中图说段]；
 // 不可嵌（svg/未知扩展/读盘失败/尺寸读不出）则降级为 [「[图：alt]」文字段]，绝不抛错。
-// maxWidthPx 为版心宽（px），图按原始像素等比缩放到不超过它。
+// maxWidthPx/maxHeightPx 为版心宽/高上限（px），图按原始像素等比缩放到宽和高都不超过它们。
 function imageParagraphs(
   alt: string,
   path: string,
   maxWidthPx: number,
+  maxHeightPx: number,
   ungrounded = false
 ): Paragraph[] {
   const caption = (alt || path.slice(path.lastIndexOf('/') + 1)).trim()
@@ -355,8 +367,9 @@ function imageParagraphs(
   } catch {
     return degrade() // 尺寸读不出 → 降级
   }
-  // 等比缩放：宽超版心则按比例缩小，否则原尺寸。
-  const scale = w > maxWidthPx ? maxWidthPx / w : 1
+  // 等比缩放：宽/高任一超版心上限即按比例缩小，取两个缩放比的较小者让宽和高都放得下，绝不放大（上限 1）。
+  // 只缩宽会让竖图铺满栏宽后高度爆表、撑破整页被页底截断（用户反馈「图片整体偏大」的根因）。
+  const scale = Math.min(maxWidthPx / w, maxHeightPx / h, 1)
   const width = Math.round(w * scale)
   const height = Math.round(h * scale)
   const out: Paragraph[] = [
@@ -433,12 +446,16 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
         const maxWidthPx = Math.round(
           ((A4_PAGE_WIDTH_TWIPS - 2 * env.imgMarginTwips) / 1440) * 96
         )
+        // 版心高上限（px）：与 mermaid 分支同款，竖图靠它避免撑破整页（详见 IMG_MAX_HEIGHT_RATIO）。
+        const maxHeightPx = Math.round(
+          (((A4_PAGE_HEIGHT_TWIPS - 2 * env.imgMarginTwips) / 1440) * 96) * IMG_MAX_HEIGHT_RATIO
+        )
         const out: Paragraph[] = []
         for (const img of imgs) {
           if (img.type === 'image') {
             // 接地闸门：本图路径在未接地全集里 → imageParagraphs 降级为占位（详见其注释）。
             const isUngrounded = env.ungroundedImagePaths?.has(img.url) ?? false
-            out.push(...imageParagraphs(img.alt ?? '', img.url, maxWidthPx, isUngrounded))
+            out.push(...imageParagraphs(img.alt ?? '', img.url, maxWidthPx, maxHeightPx, isUngrounded))
           }
         }
         return out
@@ -492,9 +509,9 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
         if (png) {
           const maxWidthPx = Math.round(((A4_PAGE_WIDTH_TWIPS - 2 * env.imgMarginTwips) / 1440) * 96)
           // 也按版心高约束：竖向流程图常比一页还高，仅缩宽会撑破页面、图被页底截断（实测 bug）。
-          // 版心高留 0.9 余量给本节标题/页脚，避免图占满整页把后文挤到下页或贴边裁切。取宽/高
-          // 两个缩放比的较小者，等比缩到【宽和高都放得下】，绝不放大（上限 1）。
-          const maxHeightPx = Math.round((((A4_PAGE_HEIGHT_TWIPS - 2 * env.imgMarginTwips) / 1440) * 96) * 0.9)
+          // 高上限 = 版心高 × IMG_MAX_HEIGHT_RATIO，与嵌图同款；取宽/高两个缩放比的较小者，等比缩到
+          // 【宽和高都放得下】，绝不放大（上限 1）。
+          const maxHeightPx = Math.round((((A4_PAGE_HEIGHT_TWIPS - 2 * env.imgMarginTwips) / 1440) * 96) * IMG_MAX_HEIGHT_RATIO)
           const scale = Math.min(maxWidthPx / png.width, maxHeightPx / png.height, 1)
           return [
             new Paragraph({

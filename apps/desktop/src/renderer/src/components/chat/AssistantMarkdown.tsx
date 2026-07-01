@@ -138,10 +138,10 @@ const components: Components = {
         const caption = (alt && alt.trim()) || src.slice(src.lastIndexOf('/') + 1)
         return <span className="my-2 inline-block text-[13px] text-neutral-400">[图：{caption}]</span>
       }
-      return <img src={kbUrl} alt={alt ?? ''} className="my-2 max-w-full rounded" />
+      return <img src={kbUrl} alt={alt ?? ''} className="my-2 max-h-[70vh] w-auto max-w-full rounded" />
     }
     // 非 string 的 src（罕见，react-markdown 类型上允许 undefined）原样透传给 <img>。
-    return <img src={src as string | undefined} alt={alt ?? ''} className="my-2 max-w-full rounded" />
+    return <img src={src as string | undefined} alt={alt ?? ''} className="my-2 max-h-[70vh] w-auto max-w-full rounded" />
   },
 
   // Tables live in a horizontal scroll shell so wide tables stay
