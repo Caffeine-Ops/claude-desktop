@@ -325,7 +325,7 @@ export function ProseMirrorComposerInput({
         <SuggestionPopover
           items={items}
           highlighted={highlighted}
-          coords={suggestion.coords}
+          anchorEl={editorHostRef.current}
           onPick={(item) => {
             insertSuggestion(viewRef.current!, suggestion, item)
           }}
@@ -339,22 +339,62 @@ export function ProseMirrorComposerInput({
 function SuggestionPopover({
   items,
   highlighted,
-  coords,
+  anchorEl,
   onPick,
   onHover
 }: {
   items: SuggestionItem[]
   highlighted: number
-  coords: { left: number; bottom: number }
+  /** The editor host element — the popover left-aligns to it and sits above it. */
+  anchorEl: HTMLElement | null
   onPick: (item: SuggestionItem) => void
   onHover: (index: number) => void
-}): React.JSX.Element {
-  // Anchor above the caret (composer sits near the bottom of the
-  // window). Fixed positioning against the caret's viewport coords.
+}): React.JSX.Element | null {
+  // Position relative to the EDITOR box, not the caret: the menu always
+  // hugs the input's left edge and sits just above its top, so it doesn't
+  // drift right as the user types (the caret-anchored version did, which is
+  // why it floated off to the upper-right). Mirrors the file-mention menu.
+  const MAX_WIDTH = 640 // px — preferred width when the input is wide enough
+  const MIN_WIDTH = 320 // px — readability floor for very narrow inputs
+  const GAP = 8 // px above the editor's top edge
+  const [pos, setPos] = useState<{ left: number; bottom: number; width: number } | null>(
+    null
+  )
+  // Hovered row's tooltip: index + the row's viewport rect. The tooltip is
+  // `fixed`-positioned off that rect rather than nested in the row, because
+  // the popover body is `overflow-y-auto` (clips to its own box) — an
+  // `absolute` tooltip spilling out the right edge would be cut off. Only
+  // set for rows that actually have a description.
+  const [tip, setTip] = useState<{ index: number; left: number; top: number } | null>(
+    null
+  )
+
+  useLayoutEffect(() => {
+    if (!anchorEl) return
+    const place = (): void => {
+      const r = anchorEl.getBoundingClientRect()
+      // Width tracks the input: as wide as 640 when the input allows, but
+      // never wider than the input itself (so it doesn't overflow past the
+      // composer in the narrow slides-mode column), with a readability floor.
+      const width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(r.width)))
+      // Clamp left so a narrow window can't push the menu off-screen.
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8))
+      setPos({ left, bottom: window.innerHeight - r.top + GAP, width })
+    }
+    place()
+    window.addEventListener('resize', place)
+    return () => window.removeEventListener('resize', place)
+  }, [anchorEl, items.length])
+
+  if (!pos) return null
+
+  const tipItem = tip ? items[tip.index] : null
+
   return (
+    <>
     <div
-      className="fixed z-30 max-h-72 w-72 overflow-y-auto rounded-2xl bg-popover/95 py-1.5 ring-1 ring-black/[0.08] backdrop-blur-2xl shadow-[0_16px_48px_-12px_rgba(0,0,0,0.22)] dark:ring-white/[0.08]"
-      style={{ left: coords.left, bottom: window.innerHeight - coords.bottom + 24 }}
+      className="fixed z-30 max-h-80 overflow-y-auto rounded-xl bg-popover/95 py-1 ring-1 ring-black/[0.06] backdrop-blur-2xl shadow-[0_12px_40px_-12px_rgba(0,0,0,0.25)] dark:ring-white/[0.08]"
+      style={{ left: pos.left, bottom: pos.bottom, width: pos.width, maxWidth: 'calc(100vw - 16px)' }}
     >
       {items.map((item, i) => {
         // A known skill (e.g. /claude-desktop:gpt-image-2) shows its coloured
@@ -376,10 +416,22 @@ function SuggestionPopover({
             )}
             <button
               type="button"
-              className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] ${
+              className={`flex w-full items-center gap-2.5 px-3 py-[7px] text-left text-[13px] ${
                 i === highlighted ? 'bg-accent/[0.12]' : ''
               }`}
-              onMouseEnter={() => onHover(i)}
+              onMouseEnter={(e) => {
+                onHover(i)
+                if (!item.description) {
+                  setTip(null)
+                  return
+                }
+                // Position the tooltip off the row's right edge in viewport
+                // coords (fixed), so it isn't clipped by the popover's own
+                // overflow. +8 gap; top aligns to the row.
+                const r = e.currentTarget.getBoundingClientRect()
+                setTip({ index: i, left: r.right + 8, top: r.top })
+              }}
+              onMouseLeave={() => setTip((cur) => (cur?.index === i ? null : cur))}
               onMouseDown={(e) => {
                 // mousedown (not click) so we insert before the editor
                 // loses focus / selection.
@@ -387,10 +439,14 @@ function SuggestionPopover({
                 onPick(item)
               }}
             >
-              {skill && (
+              {/* Leading icon. A registered skill shows its coloured chip icon;
+                  everything else (plain `/cmd`s, `@` mentions without a chip)
+                  gets a neutral command glyph so EVERY row carries a left icon
+                  and the names line up — matching the file-mention menu's look. */}
+              {skill ? (
                 <svg
-                  width={18}
-                  height={18}
+                  width={16}
+                  height={16}
                   viewBox="0 0 48 48"
                   aria-hidden="true"
                   className="shrink-0"
@@ -399,17 +455,57 @@ function SuggestionPopover({
                     <path key={pi} d={p.d} fill={p.fill} />
                   ))}
                 </svg>
+              ) : (
+                <svg
+                  width={16}
+                  height={16}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                  className="shrink-0 text-muted-foreground/60"
+                >
+                  {/* hash glyph — generic "command" mark */}
+                  <path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18" />
+                </svg>
               )}
-              <span className="flex min-w-0 flex-col items-start gap-0.5">
-                <span className="font-medium text-foreground">{skill?.label ?? item.label}</span>
-                {item.description && (
-                  <span className="truncate text-muted-foreground/70">{item.description}</span>
-                )}
+              {/* Single-row layout: name, then the description trailing inline
+                  and truncating, instead of stacking onto a second line. Keeps
+                  rows short so the popover fits far more entries on screen.
+                  The name is `shrink-0` (it's the primary token — never let a
+                  long description squeeze it); the description takes the
+                  remaining width and truncates. */}
+              <span className="shrink-0 font-medium text-foreground">
+                {skill?.label ?? item.label}
               </span>
+              {item.description && (
+                <span className="ml-1 min-w-0 flex-1 truncate text-muted-foreground/70">
+                  {item.description}
+                </span>
+              )}
             </button>
           </div>
         )
       })}
     </div>
+    {/* Full-description tooltip — `fixed` so it isn't clipped by the popover's
+        overflow. Positioned off the hovered row's right edge (computed in the
+        row's onMouseEnter). Surfaces the complete description (the inline copy
+        truncates) plus the raw value, handy for namespaced skills. */}
+    {tip && tipItem?.description && (
+      <div
+        className="pointer-events-none fixed z-40 w-72 rounded-lg bg-neutral-900/95 px-3 py-2 text-[12px] leading-snug text-neutral-100 shadow-xl ring-1 ring-white/10"
+        style={{ left: tip.left, top: tip.top }}
+      >
+        <div>{tipItem.description}</div>
+        <div className="mt-1 truncate font-mono text-[11px] text-neutral-400">
+          {tipItem.value}
+        </div>
+      </div>
+    )}
+    </>
   )
 }

@@ -79,15 +79,18 @@ export function buildSlashAdapter(sessionMeta: SessionMeta | null): SuggestionAd
     cmd.aliases?.forEach((a) => seen.add(a))
   }
 
-  // 2) CLI commands from session meta.
+  // 2) CLI commands from session meta. The SDK's `system init` only gives
+  // us names (no per-command help text), so we DON'T synthesize a filler
+  // "Built-in command" line — an identical, meaningless subtitle on every
+  // row just adds visual noise and doubles row height. We leave description
+  // empty; the popover renders these as a single tidy name-only row.
   const fusionCmds = sessionMeta?.slashCommands ?? []
   for (const name of fusionCmds) {
     if (seen.has(name)) continue
     push({
       id: `fc-${name}`,
       value: `/${name}`,
-      label: `/${name}`,
-      description: 'Built-in command'
+      label: `/${name}`
     })
   }
 
