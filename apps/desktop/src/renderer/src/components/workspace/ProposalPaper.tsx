@@ -114,6 +114,19 @@ function renderVerification(sec: ProposalSection, generating: boolean): React.JS
   )
 }
 
+// 判断一个块是否为「段落型」（渲染成 <p>，会被 AssistantMarkdown 的 <p last:mb-0> 清掉底距、需补
+// mb-3）。标题/列表/表格/围栏自带外边距，返回 false 不补（避免叠加撑大间距，review V9）。图片行
+// ![…] 属段落内容 → 返回 true。判据与 proposalBlocks.splitBlocks 的块首前缀一致。
+function blockNeedsGap(blk: string): boolean {
+  const s = blk.trimStart()
+  return !(
+    /^#{1,6}\s/.test(s) || // 标题
+    /^(?:[-*+]|\d+[.)])\s/.test(s) || // 列表
+    s.startsWith('|') || // 表格
+    s.startsWith('```') // 围栏代码 / mermaid
+  )
+}
+
 /**
  * 编辑态：一张连续的 A4 宽长纸，分节无缝拼接、向下滚动不分页。
  * 保留现有「哨兵→分节」数据模型，仅把卡片堆叠换皮成纸面：
@@ -134,6 +147,20 @@ export function ProposalPaper(): React.JSX.Element {
   const generating = useChatStore((s) =>
     proposalSid ? (s.perSession[proposalSid]?.streaming ?? false) : false
   )
+  // 分块结果按 markdown 内容缓存（review 效率）：renderSection 每次渲染都 splitBlocks(sec.markdown)，
+  // AI 流式时某节高频变更→整个 ProposalPaper 重渲染→对【所有】章节反复重跑逐行分块。按内容 key 缓存后，
+  // 只有内容真变的那节才重解析、其余命中缓存。splitBlocks 是纯函数，按输入缓存安全；>200 条清空防长会话涨。
+  const blocksCacheRef = useRef<Map<string, string[]>>(new Map())
+  const getBlocks = (markdown: string): string[] => {
+    const cache = blocksCacheRef.current
+    let b = cache.get(markdown)
+    if (!b) {
+      b = splitBlocks(markdown)
+      if (cache.size > 200) cache.clear()
+      cache.set(markdown, b)
+    }
+    return b
+  }
   const [editingId, setEditingId] = useState<string | null>(null)
   // 块级就地手改（命中「改动粒度太粗」）：双击某块 → 只有那一块变 textarea。editingId（整节
   // 源码逃生舱）与 editingBlock 互斥——进整节源码时清块编辑，反之亦然。blockDraft 是就地草稿，
@@ -145,6 +172,37 @@ export function ProposalPaper(): React.JSX.Element {
     original: string
   } | null>(null)
   const [blockDraft, setBlockDraft] = useState('')
+  // Esc 取消标记（review V4）：Esc 只 setEditingBlock(null) 不够——textarea 因重渲染被摘除时浏览器
+  // 仍会派发 blur→onBlur→commitBlock 把本应放弃的内容写回。Esc 先置本标记再 blur()，onBlur 识别后跳过提交。
+  const cancelBlockRef = useRef(false)
+  // 卸载时 flush 未提交的块草稿（review V5）：切工作台面板/切会话会让 ProposalPaper 整体卸载
+  // （ProposalDocPanel !show return null），若卸载前未触发 textarea blur，本地 blockDraft 会随之丢失
+  // （原整节 textarea 每键即写 store、不会丢）。用 ref 取最新值（[]-deps 的 cleanup 否则捕获初值），
+  // 卸载时直接读 store 兜底落盘；沿用 commitBlock 同款守卫（生成中/陈旧块/空草稿都不落盘）。
+  const editingBlockRef = useRef(editingBlock)
+  editingBlockRef.current = editingBlock
+  const blockDraftRef = useRef(blockDraft)
+  blockDraftRef.current = blockDraft
+  useEffect(() => {
+    return () => {
+      const eb = editingBlockRef.current
+      if (!eb) return
+      const pstore = useProposalStore.getState()
+      const sid = pstore.sessionId
+      const gen = sid ? (useChatStore.getState().perSession[sid]?.streaming ?? false) : false
+      if (gen) return // 生成中不落盘，避免覆盖并发 AI 产出（同 commitBlock）
+      const draft = blockDraftRef.current
+      if (!draft.trim()) return // 清空不落盘（不静默删块，见 commitBlock V8）
+      const sec = pstore.sections.find((s) => s.id === eb.sectionId)
+      if (!sec) return
+      const blocks = splitBlocks(sec.markdown)
+      if (eb.blockIndex < 0 || eb.blockIndex >= blocks.length) return
+      if (blocks[eb.blockIndex] !== eb.original) return // 陈旧块保护
+      if (blocks[eb.blockIndex] === draft) return // 无改动不写
+      blocks[eb.blockIndex] = draft
+      pstore.updateSection(sec.id, joinBlocks(blocks))
+    }
+  }, [])
 
   // 提交块草稿：把 sec 的第 blockIndex 块替换成 blockDraft，重拼回整节 markdown。
   function commitBlock(sec: ProposalSection, blockIndex: number): void {
@@ -163,6 +221,13 @@ export function ProposalPaper(): React.JSX.Element {
     // 块切分下已指向语义不同的块；此时用基于旧版内容的 blockDraft 覆盖会踩掉 AI 刚写好的内容。发现
     // 「当前该块 ≠ 打开编辑时快照的原文」即放弃这次手改（AI 新内容更该保留），只收起编辑态。
     if (!editingBlock || editingBlock.original !== blocks[blockIndex]) {
+      setEditingBlock(null)
+      return
+    }
+    // 把某块清空 ≠ 删块（review V8）：块级手改无删块语义（删除走整节两步确认 + 3s 自动撤销，
+    // design-review F5）。清空即视为放弃本次编辑、保留原块，避免一次失焦静默抹掉一整段（joinBlocks
+    // 会把 trim 后为空的块整块过滤掉）。要删掉一段，走整节源码逃生舱显式删。
+    if (!blockDraft.trim()) {
       setEditingBlock(null)
       return
     }
@@ -339,8 +404,8 @@ export function ProposalPaper(): React.JSX.Element {
         />
       ) : (
         // 逐块渲染：DOM 块索引 = splitBlocks 下标（Task 5 选区映射靠 data-block-index）。
-        // 双击某块 → 只有那一块进就地编辑；其余块照常渲染（含来源高亮）。
-        splitBlocks(sec.markdown).map((blk, bi) =>
+        // 双击某块 → 只有那一块进就地编辑；其余块照常渲染（含来源高亮）。getBlocks 按内容缓存分块。
+        getBlocks(sec.markdown).map((blk, bi) =>
           editingBlock && editingBlock.sectionId === sec.id && editingBlock.blockIndex === bi ? (
             <textarea
               key={bi}
@@ -348,15 +413,25 @@ export function ProposalPaper(): React.JSX.Element {
               value={blockDraft}
               autoFocus
               onChange={(e) => setBlockDraft(e.target.value)}
-              onBlur={() => commitBlock(sec, bi)}
+              // 单一提交路径：一切提交都经 onBlur。⌘↵ 触发 blur() 走提交；Esc 先置 cancel 标记再 blur()，
+              // onBlur 识别标记后跳过提交（review V4——否则 Esc 摘除 textarea 触发的 blur 仍会写回）。
+              onBlur={() => {
+                if (cancelBlockRef.current) {
+                  cancelBlockRef.current = false
+                  setEditingBlock(null)
+                  return
+                }
+                commitBlock(sec, bi)
+              }}
               onKeyDown={(e) => {
-                // ⌘↵/Ctrl↵ 提交；Esc 取消（不写回）。普通回车留给多行输入。
+                // ⌘↵/Ctrl↵ 提交（经 blur）；Esc 取消（不写回）。普通回车留给多行输入。
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault()
-                  commitBlock(sec, bi)
+                  e.currentTarget.blur()
                 } else if (e.key === 'Escape') {
                   e.preventDefault()
-                  setEditingBlock(null)
+                  cancelBlockRef.current = true
+                  e.currentTarget.blur()
                 }
               }}
             />
@@ -365,11 +440,11 @@ export function ProposalPaper(): React.JSX.Element {
               key={bi}
               data-section-id={sec.id}
               data-block-index={bi}
-              // mb-3：逐块渲染前是整节一个 AssistantMarkdown，段落靠其内部
-              // <p className="mb-3 last:mb-0"> 撑出块间距；拆成逐块后每块只剩单个 <p>、
-              // 自身即 last 子元素→触发 mb-0，纵向间距全丢。这里在块容器上补回同量级
-              // 间距（末块多出的 mb-3 无碍，section 外层已有 py 包裹）。
-              className="mb-3 rounded-sm hover:bg-accent/[0.03]"
+              // mb-3 只补【段落型块】（review V9）：逐块渲染前整节一个 AssistantMarkdown，段落靠内部
+              // <p className="mb-3 last:mb-0"> 撑间距；拆成逐块后段落块只剩单个 <p>=last 子元素→mb-0、
+              // 间距全丢，故补回。但标题/列表/表格自带外边距（如 h2 mb-2），若也叠 wrapper mb-3 会因
+              // margin-collapse-through 取 max 撑大间距（标题后由 8px 变 12px）——故这类块不补。
+              className={(blockNeedsGap(blk) ? 'mb-3 ' : '') + 'rounded-sm hover:bg-accent/[0.03]'}
               // 双击进块级就地手改：读该块源码进草稿、清整节源码逃生舱（互斥）。生成中禁改。
               // 同步记 original=blk 快照，供提交时做陈旧块保护（见 commitBlock）。
               onDoubleClick={() => {
