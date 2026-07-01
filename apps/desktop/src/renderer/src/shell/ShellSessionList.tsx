@@ -83,6 +83,19 @@ export function ShellSessionList(): React.ReactElement {
       for (const id of bt.keys()) if (!live.has(id)) bt.delete(id)
       for (const t of ordered) if (!bt.has(t.id)) bt.set(t.id, t.updatedAt)
       setSessions(ordered)
+      // Cold-start highlight seed. `activeId` is otherwise only set by an
+      // explicit click (onClick) — but on first launch nobody clicks: the
+      // chat tab auto-restores threads[0] (the most recent session) on its
+      // own, leaving the shell list with no highlighted row. So if we still
+      // have no active id, adopt the list's first row, which IS that same
+      // most-recent session (the chat tab's cold-start picks threads[0] and
+      // both sides share main's newest-first order). `prev ?? …` makes this
+      // a one-time seed: once a real click / switch has set activeId we never
+      // override it, and the clear-on-vanish effect below can re-trigger the
+      // seed only when the active session genuinely left the list.
+      if (ordered.length > 0) {
+        setActiveId((prev) => prev ?? ordered[0].id)
+      }
     } catch (err) {
       console.warn('[shellSessionList] listShellSessions failed', err)
     }
