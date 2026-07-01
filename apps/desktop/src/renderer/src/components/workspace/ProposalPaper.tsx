@@ -4,6 +4,7 @@ import { useChatStore } from '../../stores/chat'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 import { reviseProposalSection } from '../../lib/sendProposalSectionRevision'
 import type { ProposalKind } from '@shared/proposal'
+import { splitBlocks, joinBlocks } from '@shared/proposalBlocks'
 import {
   RotateCwIcon,
   PlusIcon,
@@ -133,6 +134,23 @@ export function ProposalPaper(): React.JSX.Element {
     proposalSid ? (s.perSession[proposalSid]?.streaming ?? false) : false
   )
   const [editingId, setEditingId] = useState<string | null>(null)
+  // 块级就地手改（命中「改动粒度太粗」）：双击某块 → 只有那一块变 textarea。editingId（整节
+  // 源码逃生舱）与 editingBlock 互斥——进整节源码时清块编辑，反之亦然。blockDraft 是就地草稿，
+  // 失焦/⌘↵ 提交、Esc 取消；提交时替换该块 → joinBlocks 重拼 → updateSection（走现有防抖写盘）。
+  const [editingBlock, setEditingBlock] = useState<{ sectionId: string; blockIndex: number } | null>(null)
+  const [blockDraft, setBlockDraft] = useState('')
+
+  // 提交块草稿：把 sec 的第 blockIndex 块替换成 blockDraft，重拼回整节 markdown。
+  function commitBlock(sec: ProposalSection, blockIndex: number): void {
+    const blocks = splitBlocks(sec.markdown)
+    if (blockIndex < 0 || blockIndex >= blocks.length) {
+      setEditingBlock(null)
+      return
+    }
+    blocks[blockIndex] = blockDraft
+    updateSection(sec.id, joinBlocks(blocks))
+    setEditingBlock(null)
+  }
   // 删除二次确认（design-review F5）：删除不可逆，且在窄工具条里紧挨「下移」键易误触。点一下
   // 不立即删，而是把该节的删除键「武装」成红底确认态，再点才真删；3 秒无操作自动撤销，避免卡在
   // 武装态。复用 DocPanel「清空草稿」同款就地两步确认，不为单节删除引一层 modal。
@@ -211,8 +229,12 @@ export function ProposalPaper(): React.JSX.Element {
         )}
         <button
           className={toolBtn}
-          onClick={() => setEditingId(editingId === sec.id ? null : sec.id)}
-          aria-label={editingId === sec.id ? '完成' : '编辑'}
+          onClick={() => {
+            setEditingBlock(null)
+            setEditingId(editingId === sec.id ? null : sec.id)
+          }}
+          title={editingId === sec.id ? '完成整节源码编辑' : '编辑整节 Markdown 源码（逃生舱）'}
+          aria-label={editingId === sec.id ? '完成' : '编辑整节源码'}
         >
           {editingId === sec.id ? <CheckIcon /> : <PencilIcon />}
         </button>
@@ -281,14 +303,54 @@ export function ProposalPaper(): React.JSX.Element {
       {renderVerification(sec, generating)}
 
       {editingId === sec.id ? (
+        // 整节源码逃生舱：改坏的表格、批量替换等场景。默认不再是主路径。
         <textarea
-          className="min-h-[120px] w-full resize-none rounded-sm bg-accent/5 font-serif text-[14px] leading-[1.95] text-[#1d1d1f] outline-none"
+          className="min-h-[120px] w-full resize-y rounded-sm bg-accent/5 font-mono text-[13px] leading-[1.8] text-[#1d1d1f] outline-none"
           value={sec.markdown}
           autoFocus
           onChange={(e) => updateSection(sec.id, e.target.value)}
         />
       ) : (
-        <AssistantMarkdown text={sec.markdown} highlightCitations />
+        // 逐块渲染：DOM 块索引 = splitBlocks 下标（Task 5 选区映射靠 data-block-index）。
+        // 双击某块 → 只有那一块进就地编辑；其余块照常渲染（含来源高亮）。
+        splitBlocks(sec.markdown).map((blk, bi) =>
+          editingBlock && editingBlock.sectionId === sec.id && editingBlock.blockIndex === bi ? (
+            <textarea
+              key={bi}
+              className="my-1 min-h-[64px] w-full resize-y rounded-sm bg-accent/5 font-serif text-[14px] leading-[1.95] text-[#1d1d1f] outline-none"
+              value={blockDraft}
+              autoFocus
+              onChange={(e) => setBlockDraft(e.target.value)}
+              onBlur={() => commitBlock(sec, bi)}
+              onKeyDown={(e) => {
+                // ⌘↵/Ctrl↵ 提交；Esc 取消（不写回）。普通回车留给多行输入。
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault()
+                  commitBlock(sec, bi)
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setEditingBlock(null)
+                }
+              }}
+            />
+          ) : (
+            <div
+              key={bi}
+              data-section-id={sec.id}
+              data-block-index={bi}
+              className="rounded-sm hover:bg-accent/[0.03]"
+              // 双击进块级就地手改：读该块源码进草稿、清整节源码逃生舱（互斥）。生成中禁改。
+              onDoubleClick={() => {
+                if (generating) return
+                setEditingId(null)
+                setBlockDraft(blk)
+                setEditingBlock({ sectionId: sec.id, blockIndex: bi })
+              }}
+            >
+              <AssistantMarkdown text={blk} highlightCitations />
+            </div>
+          )
+        )
       )}
     </section>
     )
