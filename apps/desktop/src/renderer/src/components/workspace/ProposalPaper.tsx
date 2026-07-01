@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useProposalStore, type ProposalSection } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 import { reviseProposalSection } from '../../lib/sendProposalSectionRevision'
+import { SelectionAiBubble } from './SelectionAiBubble'
 import type { ProposalKind } from '@shared/proposal'
 import { splitBlocks, joinBlocks } from '@shared/proposalBlocks'
 import {
@@ -357,8 +358,9 @@ export function ProposalPaper(): React.JSX.Element {
     )
   }
 
+  const canvasRef = useRef<HTMLDivElement | null>(null)
   return (
-    <div className="proposal-canvas flex-1 overflow-auto py-7">
+    <div ref={canvasRef} className="proposal-canvas relative flex-1 overflow-auto py-7">
       <div className="proposal-paper mx-auto w-[min(794px,calc(100%-48px))] rounded-sm bg-white px-[clamp(28px,6%,76px)] py-16 text-[#1d1d1f] shadow-[0_1px_0_rgba(0,0,0,0.04),0_12px_34px_rgba(0,0,0,0.30)]">
         {sections.length === 0 ? (
           <div className="text-center text-[13px] text-neutral-400">
@@ -384,6 +386,8 @@ export function ProposalPaper(): React.JSX.Element {
           })()
         )}
       </div>
+      {/* 选区即改浮层：贴选区尾浮出，作用于选区覆盖的块区间。生成中禁用（与块手改一致）。 */}
+      <SelectionAiBubble containerRef={canvasRef} disabled={generating} />
     </div>
   )
 }
