@@ -115,8 +115,8 @@ import type {
   ProposalImageResult,
   ProposalImageUploadPayload
 } from '../../shared/ipc-channels'
-import type { ProposalMetricRecord } from '../../shared/proposal'
-import { generateImage, editImage } from '../services/imageGenService'
+import { EMBEDDABLE_IMAGE_EXTS, type ProposalMetricRecord } from '../../shared/proposal'
+import { generateImage, editImage, sniffImageExt } from '../services/imageGenService'
 import { writeProposalImage } from '../services/proposalImageWriter'
 import { readFile } from 'node:fs/promises'
 
@@ -213,6 +213,20 @@ const IMAGE_MIME_BY_EXT: Record<string, string> = {
 function mimeForImagePath(filePath: string): string {
   const ext = extname(filePath).toLowerCase()
   return IMAGE_MIME_BY_EXT[ext] ?? 'image/png'
+}
+
+/**
+ * 出图/改图产物落盘前按魔数定真实扩展名（评审发现：不传 ext 一律落 .png，url 兜底下载
+ * 的 jpeg/webp 字节会被错标——Chromium 预览嗅探能显示、Word 按扩展名解码直接裂图，
+ * 预览/导出静默分歧）。webp/未知格式 docx 本就无法嵌入（EMBEDDABLE_IMAGE_EXTS 有意排除），
+ * 在「先审后落地」之前报错让用户重试/换模型，胜过落盘后预览与导出各自降级的迷惑体验。
+ */
+function embeddableExtFor(bytes: Buffer): string {
+  const ext = sniffImageExt(bytes)
+  if (ext === null || ext === 'webp') {
+    throw new Error('出图 API 返回了无法嵌入 Word 的图片格式（webp/未知），请重试或更换模型')
+  }
+  return ext
 }
 
 /**
@@ -1283,7 +1297,7 @@ export function registerIpcHandlers(): void {
       const cfg = getAppSettings().imageApi
       if (!cfg?.apiKey) throw new Error('未配置出图 API，请到设置里填写 key 与地址')
       const bytes = await generateImage(cfg, { prompt })
-      const path = await writeProposalImage(sessionId, 'generated', bytes)
+      const path = await writeProposalImage(sessionId, 'generated', bytes, embeddableExtFor(bytes))
       return { path }
     }
   )
@@ -1299,7 +1313,7 @@ export function registerIpcHandlers(): void {
       if (!cfg?.apiKey) throw new Error('未配置出图 API，请到设置里填写 key 与地址')
       const sourceBytes = await readFile(sourcePath)
       const bytes = await editImage(cfg, { prompt, sourceBytes, sourceMime: mimeForImagePath(sourcePath) })
-      const path = await writeProposalImage(sessionId, 'edited', bytes)
+      const path = await writeProposalImage(sessionId, 'edited', bytes, embeddableExtFor(bytes))
       return { path }
     }
   )
@@ -1314,10 +1328,13 @@ export function registerIpcHandlers(): void {
       const sessionId = typeof args?.sessionId === 'string' ? args.sessionId : ''
       if (!sessionId) throw new Error('缺少会话 id')
       const window = resolveBrowserWindow(event)
+      // 扩展名列表从 EMBEDDABLE_IMAGE_EXTS 派生而非手写——曾手写含 webp，用户选了 webp
+      // 落盘插入后预览/导出双双降级成文字占位符、且无 <img> 节点连删除都点不到（评审发现）。
+      // docx 嵌不了的格式就不该让用户选进来，单一事实源杜绝再漂移。
       const result = await dialog.showOpenDialog(window, {
         title: '选择要插入的图片',
         properties: ['openFile'],
-        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
+        filters: [{ name: 'Images', extensions: EMBEDDABLE_IMAGE_EXTS.map((e) => e.slice(1)) }]
       })
       if (result.canceled || result.filePaths.length === 0) return null
       const filePath = result.filePaths[0]!
