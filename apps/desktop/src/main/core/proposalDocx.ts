@@ -17,6 +17,7 @@ import {
   VerticalAlignTable,
   HeightRule,
   BorderStyle,
+  ShadingType,
   Header,
   Footer,
   PageNumber
@@ -363,8 +364,19 @@ function listItemParagraphs(
   return out
 }
 
-function tableCellContent(cell: MdTableCell): Paragraph[] {
-  return [new Paragraph({ children: inlineRuns(cell.children) })]
+// GFM 数据表格的排版常量（docx skill 的表格规则落地——此前数据表格几乎裸奔：无内边距致文字贴框、
+// 无表头底纹致分不清表头/正文、无显式边框吃 docx 默认）：
+//  - TABLE_BORDER：细灰单线（size 单位 1/8pt，4=0.5pt），比 docx 默认更轻、六边一致成干净网格。
+//  - TABLE_CELL_MARGINS：单元格内边距（twips），文字不贴框；量级同 skill（左右比上下大，中文观感更稳）。
+//  - TABLE_HEADER_FILL：表头行浅灰底，一眼区分表头/正文。底纹【必须】走 ShadingType.CLEAR——skill 明确
+//    SOLID 会被渲成黑底吞掉文字。
+const TABLE_BORDER = { style: BorderStyle.SINGLE, size: 4, color: 'bfbfbf' }
+const TABLE_CELL_MARGINS = { top: 60, bottom: 60, left: 120, right: 120 }
+const TABLE_HEADER_FILL = 'f2f2f2'
+
+// header 行的单元格文字加粗（GFM 首行 = 表头）。bold 经 inlineRuns 下传，与其它内联样式累积同源。
+function tableCellContent(cell: MdTableCell, bold = false): Paragraph[] {
+  return [new Paragraph({ children: inlineRuns(cell.children, bold ? { bold: true } : {}) })]
 }
 
 // 一个 image mdast 节点 → docx 段落数组：成功则 [居中 ImageRun 段, 居中图说段]；
@@ -593,12 +605,20 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
     }
     case 'table': {
       const rows: TableRow[] = []
-      for (const row of node.children) {
+      // GFM 表格首行 = 表头：加浅灰底纹 + 文字加粗 + tableHeader（跨页时 Word 每页重复表头）。正文行普通。
+      node.children.forEach((row, rowIdx) => {
+        const isHeader = rowIdx === 0
         const cells = row.children.map(
           (cell) =>
             new TableCell({
-              children: tableCellContent(cell),
-              width: { size: 0, type: WidthType.AUTO }
+              children: tableCellContent(cell, isHeader),
+              width: { size: 0, type: WidthType.AUTO },
+              margins: TABLE_CELL_MARGINS,
+              verticalAlign: VerticalAlignTable.CENTER,
+              // 表头底纹走 CLEAR（skill：SOLID 会渲成黑底吞字）；正文行不加底纹。
+              ...(isHeader
+                ? { shading: { type: ShadingType.CLEAR, fill: TABLE_HEADER_FILL, color: 'auto' } }
+                : {})
             })
         )
         // 无单元格的行（畸形/空 GFM 行）会让 docx 在 Packer 阶段抛错、整篇导出与预览
@@ -608,18 +628,35 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
           cells.push(
             new TableCell({
               children: [new Paragraph({ children: [new TextRun('')] })],
-              width: { size: 0, type: WidthType.AUTO }
+              width: { size: 0, type: WidthType.AUTO },
+              margins: TABLE_CELL_MARGINS
             })
           )
         }
         // cantSplit：禁止单行被页边界从中间劈开（一行内容跨两页很难看）。Word 据此把整行连同
         // 内容一起下推到下一页。注：docx-preview（PDF 导出）不渲染 cantSplit，PDF 侧靠
         // renderProposalPdfHtml 的 `break-inside: avoid` 达到同等效果，两端一致。
-        rows.push(new TableRow({ children: cells, cantSplit: true }))
-      }
+        rows.push(new TableRow({ children: cells, cantSplit: true, tableHeader: isHeader }))
+      })
       // 整张表没有任何行（同样会让 Packer 抛错）→ 直接忽略，不产出空 Table。
       if (rows.length === 0) return []
-      return [new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE } })]
+      // 宽度保持 PERCENTAGE 100%（满栏），不切 DXA columnWidths：本应用只面向 Word + docx-preview(PDF)，
+      // PERCENTAGE 两端都稳且天然满宽；切 DXA 要自算列宽、且可能扰动「预览=导出逐像素一致」不变量
+      // （skill 推荐 DXA 是为 Google Docs 兼容，非本应用场景）。六边套细灰边框成干净网格（见 TABLE_BORDER）。
+      return [
+        new Table({
+          rows,
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          borders: {
+            top: TABLE_BORDER,
+            bottom: TABLE_BORDER,
+            left: TABLE_BORDER,
+            right: TABLE_BORDER,
+            insideHorizontal: TABLE_BORDER,
+            insideVertical: TABLE_BORDER
+          }
+        })
+      ]
     }
     case 'html':
       // 块级 html 节点：唯一我们关心的是分页标记（renderer 拼接时插在 kind 边界）。
@@ -645,11 +682,16 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
 
 // 一个层级配置 → docx 段落样式的 run + paragraph 属性。
 // spacingBeforePt 给标题留段前距（正文传 0）；onlyRun/skipIndent 用不到时省略。
+// keepWithNext：标题专用——让本段与紧随其后的段落同页（keepNext），且本段自身各行不被页边界劈开
+// （keepLines）。避免「标题印在页底、正文翻到下一页」这种孤零标题（docx skill 的排版规则；正文段
+// 不传，否则每段都被粘住反而错）。所有段落一律开 widowControl：段落只剩一行被甩到下/上页时挤到一起，
+// 消灭孤行/寡行——这是零成本的易读性提升，对正文/标题都适用，故不设开关、恒开。
 function levelStyle(
   l: ProposalLevelStyle,
   style: ProposalStyleConfig,
   spacingBeforePt: number,
-  applyIndent: boolean
+  applyIndent: boolean,
+  keepWithNext = false
 ): { run: Record<string, unknown>; paragraph: Record<string, unknown> } {
   const sizePt = CN_SIZE_PT[l.size]
   const firstLine = applyIndent && l.indentChars ? Math.round(l.indentChars * sizePt * 20) : 0
@@ -668,6 +710,8 @@ function levelStyle(
         before: Math.round(spacingBeforePt * 20),
         after: Math.round(style.spaceAfterPt * 20)
       },
+      widowControl: true,
+      ...(keepWithNext ? { keepNext: true, keepLines: true } : {}),
       ...(firstLine ? { indent: { firstLine } } : {})
     }
   }
@@ -684,9 +728,19 @@ function levelStyle(
 // 正文首行缩进【不】写进 Normal（改为逐正文段落施加），以免列表项/标题继承首行缩进。
 function buildDocStyles(style: ProposalStyleConfig): IStylesOptions {
   const normal = levelStyle(style.body, style, 0, false)
-  const titleBase = levelStyle(style.title, style, 0, true)
+  const titleBase = levelStyle(style.title, style, 0, true, true)
   return {
     default: {
+      // docDefaults（全文档字号/字体的最底层兜底）= 正文 run。
+      //
+      // 关键坑（解 docx XML 实测）：此前 docDefaults【无 w:sz】，正文字号只写在 Normal 样式上，而
+      // Normal 未被标 default、正文段落又几乎不带 pStyle（普通段/表格/引用/代码都是无样式，列表是
+      // ListParagraph）——于是这些「非标题正文」的字号全靠脆弱的样式继承链，Word 与 docx-preview 两端
+      // 各自回退到不同默认，导致「正文文字大小不统一」（用户反馈）。把 docDefaults 的 run 设成正文 run
+      // 后，所有【未显式设字号】的文字都统一回落到正文字号（小四12），而标题（heading1-5 的 run 显式
+      // 更大字号）、封面（coverLine 显式 size）、图说/页码（显式 size:18）都各自覆盖、不受影响；代码块
+      // 保留 Consolas 但字号也随正文统一。这才是让「正文非标题文字尺寸一致」在两端都成立的收口。
+      document: { run: normal.run },
       // 封面标题：套用内置 'Title' 样式（blockToDocx 首个 h1 用 style:'Title'）。
       title: {
         run: titleBase.run,
@@ -701,16 +755,17 @@ function buildDocStyles(style: ProposalStyleConfig): IStylesOptions {
           }
         }
       },
-      heading1: levelStyle(style.h1, style, 12, true),
-      heading2: levelStyle(style.h2, style, 10, true),
-      heading3: levelStyle(style.h3, style, 8, true),
+      // 标题一律 keepWithNext（keepNext + keepLines）：标题不能孤零零留在页底、正文却翻页（见 levelStyle）。
+      heading1: levelStyle(style.h1, style, 12, true, true),
+      heading2: levelStyle(style.h2, style, 10, true, true),
+      heading3: levelStyle(style.h3, style, 8, true, true),
       // 正文层级：## → heading2、### → heading3、#### → heading4、##### → heading5（见 blockToDocx
       // 的 depth 映射）。模板只配到 h3，但正文可深到三~四级（#### / #####），不补这两条它们会落到
       // Word 内置 heading4/5（蓝色斜体、字号失控、PDF 走 docx-preview 时尤其难看）。这里把更深层
       // 标题统一回退到 h3 的字体/字号/加粗，只逐级收紧段前距——保证「越深的小节」仍是同一套观感、
       // 不会突然变斜体或变色，与已注册的 heading1/2/3 连续。
-      heading4: levelStyle(style.h3, style, 6, true),
-      heading5: levelStyle(style.h3, style, 4, true)
+      heading4: levelStyle(style.h3, style, 6, true, true),
+      heading5: levelStyle(style.h3, style, 4, true, true)
     },
     paragraphStyles: [
       { id: 'Normal', name: 'Normal', run: normal.run, paragraph: normal.paragraph }

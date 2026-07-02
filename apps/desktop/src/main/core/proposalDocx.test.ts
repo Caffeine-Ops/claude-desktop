@@ -4,7 +4,44 @@ import { headingLevelForDepth } from './proposalDocx'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { inflateRawSync } from 'node:zlib'
 import type { RootContent } from 'mdast'
+
+// docx 是 zip；用极小的中央目录解析器取出某个部件的 XML 字符串，好在测试里断言真实产出的排版特征。
+// 走【中央目录】而非 local header：中央目录总带 compressed size 与 local header 偏移，避开 local
+// header 在设了 data-descriptor 标志时尺寸为 0 的坑。jszip（docx 内部用）不是本包直接依赖、无法
+// import，故不引第三方解压库，仅靠 node:zlib 的 inflateRawSync（deflate 部件）自解。
+function readDocxEntry(buf: Buffer, name: string): string {
+  let eocd = -1
+  for (let i = buf.length - 22; i >= 0; i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocd = i
+      break
+    }
+  }
+  if (eocd < 0) throw new Error('EOCD not found')
+  const cdOffset = buf.readUInt32LE(eocd + 16)
+  const cdCount = buf.readUInt16LE(eocd + 10)
+  let p = cdOffset
+  for (let e = 0; e < cdCount; e++) {
+    const method = buf.readUInt16LE(p + 10)
+    const compSize = buf.readUInt32LE(p + 20)
+    const nameLen = buf.readUInt16LE(p + 28)
+    const extraLen = buf.readUInt16LE(p + 30)
+    const commLen = buf.readUInt16LE(p + 32)
+    const lho = buf.readUInt32LE(p + 42)
+    const fname = buf.toString('utf8', p + 46, p + 46 + nameLen)
+    if (fname === name) {
+      const lNameLen = buf.readUInt16LE(lho + 26)
+      const lExtraLen = buf.readUInt16LE(lho + 28)
+      const dataStart = lho + 30 + lNameLen + lExtraLen
+      const raw = buf.subarray(dataStart, dataStart + compSize)
+      return (method === 8 ? inflateRawSync(raw) : raw).toString('utf8')
+    }
+    p += 46 + nameLen + extraLen + commLen
+  }
+  throw new Error('entry not found: ' + name)
+}
 
 import {
   markdownToDocxBuffer,
@@ -240,6 +277,56 @@ describe('markdownToDocxBuffer 表格', () => {
       '<!--proposal-section:content-->\n\n## 核心参数\n\n| 模块 | 说明 |\n| --- | --- |\n| 分诊 | 智能分诊建议 |\n\n（据《白皮书》）'
     const buf = await markdownToDocxBuffer(md)
     expect(buf.length).toBeGreaterThan(1000)
+  })
+})
+
+// docx skill 的表格排版规则落地——锁死数据表格不再裸奔（无内边距/无表头底纹/无边框），防回退。
+describe('markdownToDocxBuffer 表格排版（内边距 / 表头底纹 / 边框 / 跨页表头）', () => {
+  const tableMd =
+    '<!--proposal-section:content-->\n\n## 核心参数\n\n| 模块 | 说明 |\n| --- | --- |\n| 分诊 | 智能分诊建议 |'
+  it('单元格有内边距（w:tcMar）、表格有边框（w:tblBorders）', async () => {
+    const doc = readDocxEntry(await markdownToDocxBuffer(tableMd), 'word/document.xml')
+    expect(doc).toContain('w:tcMar')
+    expect(doc).toContain('w:tblBorders')
+  })
+  it('表头行有浅灰底纹 f2f2f2（且 CLEAR 型，非 SOLID 黑底）', async () => {
+    const doc = readDocxEntry(await markdownToDocxBuffer(tableMd), 'word/document.xml')
+    expect(/w:shd[^>]*w:fill="F2F2F2"/i.test(doc)).toBe(true)
+    expect(/w:shd[^>]*w:val="clear"/i.test(doc)).toBe(true)
+    expect(/w:shd[^>]*w:val="solid"/i.test(doc)).toBe(false)
+  })
+  it('表头行标记 tableHeader（跨页时 Word 每页重复表头）', async () => {
+    const doc = readDocxEntry(await markdownToDocxBuffer(tableMd), 'word/document.xml')
+    expect(doc).toContain('w:tblHeader')
+  })
+})
+
+// 正文字号统一：docDefaults 兜底 = 正文字号，非标题正文文字（普通段/列表/表格/引用/代码，均无
+// 显式字号）统一回落到它；标题各自显式覆盖更大字号。防「正文文字大小不统一」回退。
+describe('markdownToDocxBuffer 正文字号统一（docDefaults 兜底）', () => {
+  const md =
+    '<!--proposal-section:content-->\n\n## 标题\n\n正文一段。\n\n- 列表项\n\n> 引用块\n\n| A | B |\n| --- | --- |\n| c | d |'
+  const bodyHalfPt = Math.round(CN_SIZE_PT[defaultProposalStyle().body.size] * 2)
+  it('docDefaults 带正文字号（未显式设字号的正文文字统一回落到它）', async () => {
+    const sty = readDocxEntry(await markdownToDocxBuffer(md), 'word/styles.xml')
+    const dd = /<w:docDefaults>[\s\S]*?<\/w:docDefaults>/.exec(sty)?.[0] ?? ''
+    expect(dd).toContain(`<w:sz w:val="${bodyHalfPt}"/>`)
+  })
+  it('标题字号不受兜底影响，严格大于正文字号', async () => {
+    const sty = readDocxEntry(await markdownToDocxBuffer(md), 'word/styles.xml')
+    const h1 = /w:styleId="Heading1"[\s\S]*?<\/w:style>/.exec(sty)?.[0] ?? ''
+    const h1Sz = Number(/<w:sz w:val="(\d+)"\/>/.exec(h1)?.[1])
+    expect(h1Sz).toBeGreaterThan(bodyHalfPt)
+  })
+})
+
+// 分页级排版：标题 keepNext（不孤零留页底）+ 段落 widowControl（消孤行/寡行），写进 styles.xml。
+describe('markdownToDocxBuffer 分页排版（标题 keepNext / 段落 widowControl）', () => {
+  it('styles.xml 里标题带 keepNext、段落带 widowControl', async () => {
+    const md = '<!--proposal-section:content-->\n\n## 标题\n\n正文一段。'
+    const sty = readDocxEntry(await markdownToDocxBuffer(md), 'word/styles.xml')
+    expect(sty).toContain('w:keepNext')
+    expect(sty).toContain('w:widowControl')
   })
 })
 
