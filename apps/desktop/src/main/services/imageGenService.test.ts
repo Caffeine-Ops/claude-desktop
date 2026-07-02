@@ -73,4 +73,21 @@ describe('editImage', () => {
     expect(sawMultipart).toBe(true)
     expect(buf.toString()).toBe('EDITED')
   })
+
+  it('multipart 文件名扩展名跟随 sourceMime（jpeg 源图 → source.jpg，不再硬编码 source.png）', async () => {
+    const b64 = Buffer.from('EDITED').toString('base64')
+    let fileName = ''
+    globalThis.fetch = mock(async (_url: string, init: RequestInit) => {
+      const form = init.body as FormData
+      const file = form.get('image') as File
+      fileName = file.name
+      return okJson(b64)
+    }) as unknown as typeof fetch
+    await editImage(CFG, {
+      prompt: '换白底',
+      sourceBytes: Buffer.from('SRC'),
+      sourceMime: 'image/jpeg'
+    })
+    expect(fileName).toBe('source.jpg')
+  })
 })

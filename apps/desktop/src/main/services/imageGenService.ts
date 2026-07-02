@@ -105,6 +105,17 @@ export async function generateImage(
   })
 }
 
+/** sourceMime → multipart 文件名后缀，'source.png' 硬编码会把 jpg/webp 源图错误贴成 png 扩展名。 */
+const EXT_BY_MIME: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp'
+}
+
+function multipartFileName(sourceMime: string): string {
+  return `source.${EXT_BY_MIME[sourceMime] ?? 'png'}`
+}
+
 export async function editImage(
   cfg: ImageApiConfig,
   opts: { prompt: string; sourceBytes: Buffer; sourceMime: string; size?: string; quality?: string }
@@ -112,7 +123,11 @@ export async function editImage(
   const url = `${normalizeBaseUrl(cfg.baseURL)}/images/edits`
   return withModelDowngrade(cfg, (model) => {
     const form = new FormData()
-    form.append('image', new Blob([new Uint8Array(opts.sourceBytes)], { type: opts.sourceMime }), 'source.png')
+    form.append(
+      'image',
+      new Blob([new Uint8Array(opts.sourceBytes)], { type: opts.sourceMime }),
+      multipartFileName(opts.sourceMime)
+    )
     form.append('prompt', opts.prompt)
     form.append('model', model)
     if (opts.size) form.append('size', opts.size)

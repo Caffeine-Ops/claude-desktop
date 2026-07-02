@@ -196,6 +196,25 @@ function resolveBrowserWindow(event: IpcMainInvokeEvent): BrowserWindow {
   throw new Error('No window available for dialog anchoring.')
 }
 
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp'
+}
+
+/**
+ * 原图扩展名 → MIME，供 PROPOSAL_IMAGE_EDIT 把「原图真实格式」而非硬编码的 image/png 传给
+ * 出图 API（评审发现：改 jpg/webp 源图时被错误贴上 image/png 标签）。没有直接复用
+ * proposalAssetProtocol.ts 里同构的 mimeFor——那个是该文件私有函数（未 export），为一个
+ * 四行小映射引入跨文件耦合不值得，这里就地放一份更干净。
+ */
+function mimeForImagePath(filePath: string): string {
+  const ext = extname(filePath).toLowerCase()
+  return IMAGE_MIME_BY_EXT[ext] ?? 'image/png'
+}
+
 /**
  * Registers all IPC handlers. Call once at app startup — handlers use
  * `event.sender` to resolve the target ChatEngine from the window
@@ -1279,7 +1298,7 @@ export function registerIpcHandlers(): void {
       const cfg = getAppSettings().imageApi
       if (!cfg?.apiKey) throw new Error('未配置出图 API，请到设置里填写 key 与地址')
       const sourceBytes = await readFile(sourcePath)
-      const bytes = await editImage(cfg, { prompt, sourceBytes, sourceMime: 'image/png' })
+      const bytes = await editImage(cfg, { prompt, sourceBytes, sourceMime: mimeForImagePath(sourcePath) })
       const path = await writeProposalImage(sessionId, 'edited', bytes)
       return { path }
     }

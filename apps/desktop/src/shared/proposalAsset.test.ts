@@ -34,6 +34,23 @@ describe('deriveImageOrigin', () => {
   })
 })
 
+describe('Windows 反斜杠路径（win32 上 path.join 产出，markdown 原样存储）', () => {
+  it('isProposalAssetPath：反斜杠路径 → true', () => {
+    expect(
+      isProposalAssetPath(
+        'C:\\Users\\x\\AppData\\Roaming\\app\\proposal-drafts\\s1\\assets\\gen-1.png'
+      )
+    ).toBe(true)
+  })
+  it('deriveImageOrigin：反斜杠路径 → generated（basename 提取不受分隔符影响）', () => {
+    expect(
+      deriveImageOrigin(
+        'C:\\Users\\x\\AppData\\Roaming\\app\\proposal-drafts\\s1\\assets\\gen-1.png'
+      )
+    ).toBe('generated')
+  })
+})
+
 describe('proposalAssetFileName', () => {
   it('generated → gen-<ts>.png', () => {
     expect(proposalAssetFileName('generated', 'png', 1751000000000)).toBe('gen-1751000000000.png')

@@ -14,4 +14,8 @@ describe('toProposalAssetUrl', () => {
   it('http 图原样返回', () => {
     expect(toProposalAssetUrl('https://e.com/a.png')).toBe('https://e.com/a.png')
   })
+  it('Windows 反斜杠路径 → 仍识别为草稿资产、转 proposalasset:// URL（编码原始反斜杠字符串）', () => {
+    const p = 'C:\\Users\\x\\AppData\\Roaming\\app\\proposal-drafts\\sess-1\\assets\\gen-1.png'
+    expect(toProposalAssetUrl(p)).toBe(`proposalasset://p/${encodeURIComponent(p)}`)
+  })
 })

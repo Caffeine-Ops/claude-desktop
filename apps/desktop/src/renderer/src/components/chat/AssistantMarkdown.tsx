@@ -150,11 +150,14 @@ const components: Components = {
       // data-raw-src：保留 markdown 里的原始（未转协议）绝对路径，供编辑态点图工具栏（Task 9）
       // 反查 sourcePath——react-markdown 解析时已代我们剥掉了 <> 包裹与 " title" 后缀，值与
       // shared/proposal.parseImages 抽出的 path 精确一致，点图无需再自行正则重新解析一遍。
+      // 仅当 URL 被实际改写（resolved !== src，即本地 kb/草稿资产）才挂 data-raw-src——外链
+      // http 图不改写，若仍挂上会让工具栏误以为它可点「改图」，点了却拿不到本地文件、报错
+      // confusing（评审发现）。
       const imgEl = (
         <img
           src={resolved}
           alt={alt ?? ''}
-          data-raw-src={src}
+          {...(resolved !== src ? { 'data-raw-src': src } : {})}
           className="my-2 max-h-[70vh] w-auto max-w-full rounded"
         />
       )
