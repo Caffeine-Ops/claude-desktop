@@ -330,6 +330,18 @@ export function ProposalPaper(): React.JSX.Element {
   // 的按钮也锁住。
   const [reviewBusy, setReviewBusy] = useState<Record<string, boolean>>({})
   const [reviewError, setReviewError] = useState<Record<string, string | null>>({})
+  // 新审阅卡登记后要滚进可视区（GUI 走查反馈：卡贴在原图下方，但原图本身可能在长节里滚出屏外，
+  // 改完图找不到结果）。记下刚生成的 review id，等它挂载出 DOM（data-review-id）后平滑滚到中央——
+  // 审阅本就是「看着原图对比改后图」，把用户带回原图位置是符合预期的默认行为，不突兀。
+  const [scrollToReviewId, setScrollToReviewId] = useState<string | null>(null)
+  // 用 layout 后一帧再滚：卡片刚 set 进 imageReviews 时对应 DOM 尚未 paint，querySelector 会落空；
+  // 放到 effect（DOM 已提交）里查，命中即滚、随后清标记（一次性，避免后续无关重渲染重复滚动）。
+  useEffect(() => {
+    if (!scrollToReviewId) return
+    const el = canvasRef.current?.querySelector(`[data-review-id="${scrollToReviewId}"]`)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setScrollToReviewId(null)
+  }, [scrollToReviewId, imageReviews])
   // 清理陈旧条目：review 一旦从 imageReviews 里消失（应用/放弃/重改成功后旧 id 被替换），对应
   // 的 busy/error 记录就该一并清掉，否则重改用同一图再次触发相同 sourcePath 时若 id 复用
   // （理论上 crypto.randomUUID 不会重复，但心智上仍希望 map 不无限增长）会残留陈旧展示。以
@@ -458,7 +470,7 @@ export function ProposalPaper(): React.JSX.Element {
           : await window.chatApi.proposalImageGenerate({ sessionId: proposalSid, prompt })
       const pstore = useProposalStore.getState()
       pstore.removeImageReview(review.id)
-      pstore.addImageReview({
+      const id = pstore.addImageReview({
         sectionId: review.sectionId,
         blockIndex: review.blockIndex,
         sourcePath: review.sourcePath,
@@ -466,6 +478,7 @@ export function ProposalPaper(): React.JSX.Element {
         mode: review.mode,
         occurrence: review.occurrence
       })
+      setScrollToReviewId(id)
     } catch (err) {
       setReviewError((m) => ({ ...m, [review.id]: friendlyImageError(err, review.mode) }))
     } finally {
@@ -548,7 +561,7 @@ export function ProposalPaper(): React.JSX.Element {
         sourcePath,
         prompt
       })
-      addImageReview({
+      const id = addImageReview({
         sectionId,
         blockIndex,
         sourcePath,
@@ -556,6 +569,7 @@ export function ProposalPaper(): React.JSX.Element {
         mode: 'edit',
         occurrence
       })
+      setScrollToReviewId(id)
       return { ok: true }
     } catch (err) {
       return { ok: false, message: friendlyImageError(err, 'edit') }
@@ -613,7 +627,8 @@ export function ProposalPaper(): React.JSX.Element {
       const sec = pstore.sections.find((s) => s.id === sectionId)
       if (!sec) return { ok: true } // 节已被删除：生成已完成但无处插入，静默丢弃（不报错误）
       const blockIndex = Math.max(splitBlocks(sec.markdown).length - 1, 0)
-      pstore.addImageReview({ sectionId, blockIndex, resultPath: path, mode: 'generate' })
+      const id = pstore.addImageReview({ sectionId, blockIndex, resultPath: path, mode: 'generate' })
+      setScrollToReviewId(id)
       return { ok: true }
     } catch (err) {
       return { ok: false, message: friendlyImageError(err, 'generate') }
@@ -729,16 +744,18 @@ export function ProposalPaper(): React.JSX.Element {
     const secReviews = imageReviews.filter((r) => r.sectionId === sec.id)
     const secBlockCount = getBlocks(sec.markdown).length
     const renderReviewCard = (review: ImageReview): React.JSX.Element => (
-      <ProposalImageReview
-        key={review.id}
-        review={review}
-        busy={Boolean(reviewBusy[review.id]) || generating}
-        error={reviewError[review.id] ?? null}
-        onApply={() => applyImageReview(review)}
-        onDiscard={() => discardImageReview(review.id)}
-        onRetry={(prompt) => void retryImageReview(review, prompt)}
-        onOpenSettings={openImageApiSettings}
-      />
+      // data-review-id：新卡登记后 scrollToReviewId effect 靠它定位 DOM 滚进可视区（见上方注释）。
+      <div key={review.id} data-review-id={review.id}>
+        <ProposalImageReview
+          review={review}
+          busy={Boolean(reviewBusy[review.id]) || generating}
+          error={reviewError[review.id] ?? null}
+          onApply={() => applyImageReview(review)}
+          onDiscard={() => discardImageReview(review.id)}
+          onRetry={(prompt) => void retryImageReview(review, prompt)}
+          onOpenSettings={openImageApiSettings}
+        />
+      </div>
     )
     return (
     <section key={sec.id} className="group relative py-0.5">
