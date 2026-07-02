@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useProposalStore, type ProposalSection, type ImageReview } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
 import { useSettingsStore } from '../../stores/settings'
@@ -723,6 +723,23 @@ export function ProposalPaper(): React.JSX.Element {
     const canMoveUp = globalIndex > 0 && sections[globalIndex - 1].kind === sec.kind
     const canMoveDown =
       globalIndex < sections.length - 1 && sections[globalIndex + 1].kind === sec.kind
+    // 改图/生图审阅卡（Task 11）：卡片就地锚定在其 blockIndex 对应块的正下方——改图的对照卡紧跟
+    // 原图、生图的预览卡紧跟节末块，用户不用滚到节尾找卡（GUI 走查反馈：长节里卡「跑到了别处」）。
+    // blockIndex 越界（登记后该节被并发改写、块数变少）时退回节尾兜底渲染，卡不丢。
+    const secReviews = imageReviews.filter((r) => r.sectionId === sec.id)
+    const secBlockCount = getBlocks(sec.markdown).length
+    const renderReviewCard = (review: ImageReview): React.JSX.Element => (
+      <ProposalImageReview
+        key={review.id}
+        review={review}
+        busy={Boolean(reviewBusy[review.id]) || generating}
+        error={reviewError[review.id] ?? null}
+        onApply={() => applyImageReview(review)}
+        onDiscard={() => discardImageReview(review.id)}
+        onRetry={(prompt) => void retryImageReview(review, prompt)}
+        onOpenSettings={openImageApiSettings}
+      />
+    )
     return (
     <section key={sec.id} className="group relative py-0.5">
       {/* 节级工具条：停靠在纸张右侧内边距里（.proposal-paper 的 px-[clamp(28px,6%,76px)]，下限
@@ -986,10 +1003,10 @@ export function ProposalPaper(): React.JSX.Element {
       ) : (
         // 逐块渲染：DOM 块索引 = splitBlocks 下标（Task 5 选区映射靠 data-block-index）。
         // 双击某块 → 只有那一块进就地编辑；其余块照常渲染（含来源高亮）。getBlocks 按内容缓存分块。
-        getBlocks(sec.markdown).map((blk, bi) =>
-          editingBlock && editingBlock.sectionId === sec.id && editingBlock.blockIndex === bi ? (
+        getBlocks(sec.markdown).map((blk, bi) => (
+          <Fragment key={bi}>
+          {editingBlock && editingBlock.sectionId === sec.id && editingBlock.blockIndex === bi ? (
             <textarea
-              key={bi}
               className="my-1 min-h-[64px] w-full resize-y rounded-sm bg-accent/5 font-serif text-[14px] leading-[1.95] text-[#1d1d1f] outline-none read-only:opacity-60"
               value={blockDraft}
               autoFocus
@@ -1021,7 +1038,6 @@ export function ProposalPaper(): React.JSX.Element {
             />
           ) : (
             <div
-              key={bi}
               data-section-id={sec.id}
               data-block-index={bi}
               // mb-3 只补【段落型块】（review V9）：逐块渲染前整节一个 AssistantMarkdown，段落靠内部
@@ -1040,27 +1056,21 @@ export function ProposalPaper(): React.JSX.Element {
             >
               <AssistantMarkdown text={blk} highlightCitations />
             </div>
-          )
-        )
+          )}
+          {/* 本块名下的审阅卡：紧跟锚定块渲染（改图卡贴原图、生图卡贴节末块）。同一块可挂多张
+              （并发对同块多图各自发起改图），按 imageReviews 数组原样顺序渲染，不做单选收窄。 */}
+          {secReviews.filter((r) => r.blockIndex === bi).map(renderReviewCard)}
+          </Fragment>
+        ))
       )}
 
-      {/* 改图/生图审阅卡（Task 11）：挂在本节正文之后、区段边界之前——就地内联而非浮层，理由见
-          ProposalImageReview.tsx 顶部注释。同一节可能同时挂多张（并发对不同图各自发起改图/生图），
-          按 imageReviews 数组原样顺序渲染，不做单选收窄。 */}
-      {imageReviews
-        .filter((r) => r.sectionId === sec.id)
-        .map((review) => (
-          <ProposalImageReview
-            key={review.id}
-            review={review}
-            busy={Boolean(reviewBusy[review.id]) || generating}
-            error={reviewError[review.id] ?? null}
-            onApply={() => applyImageReview(review)}
-            onDiscard={() => discardImageReview(review.id)}
-            onRetry={(prompt) => void retryImageReview(review, prompt)}
-            onOpenSettings={openImageApiSettings}
-          />
-        ))}
+      {/* 审阅卡兜底渲染（就地内联而非浮层，理由见 ProposalImageReview.tsx 顶部注释）：
+          - 整节源码逃生舱打开时逐块渲染整体缺席，全部卡退到节尾，卡不随 textarea 消失；
+          - blockIndex 越界（登记后该节被并发改写、块数变少）时同样退到节尾。 */}
+      {(editingId === sec.id
+        ? secReviews
+        : secReviews.filter((r) => r.blockIndex < 0 || r.blockIndex >= secBlockCount)
+      ).map(renderReviewCard)}
     </section>
     )
   }
