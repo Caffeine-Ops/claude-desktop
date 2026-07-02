@@ -11,8 +11,14 @@
       refuses the blob URL and the dictation adapter dies with an
       AbortError before the first chunk. `worker-src blob:` covers the
       Worker flavor some Chromium versions classify the worklet under.
+
+      img-src 额外放行 kbasset:/proposalasset: 两个自定义协议——方案编辑器的知识库配图与
+      草稿产出图（改图/文生图/上传）经它们加载（见 main/services/localAssetProtocol.ts）。
+      不放行则 Chromium 直接 "Refused to load the image ... violates CSP"，图全裂（GUI 走查
+      发现：协议侧路径守卫再正确也过不了渲染侧这道门）。两协议自身有根目录逃逸守卫，
+      放行 scheme 不等于放行任意本地文件。
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' blob:;" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: kbasset: proposalasset:; media-src 'self' blob:; connect-src 'self' blob:;" />
     <title>Claude Desktop</title>
   </head>
   <body>
