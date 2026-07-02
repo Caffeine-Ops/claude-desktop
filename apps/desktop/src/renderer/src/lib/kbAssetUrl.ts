@@ -10,8 +10,17 @@
 // KB 镜像图都落在 <userData>/kb-index/assets/ 下，故以这个路径片段作判定特征。
 const KB_ASSET_MARKER = '/kb-index/assets/'
 
+/**
+ * 判定前把 win32 反斜杠归一成 `/` 再比 marker——与 shared/proposalAsset 的 toPosix 同款
+ * 处理（评审发现：marker 硬编 `/`，反斜杠路径三处判定全失效）。归一只用于判定，
+ * 返回/编码仍用原始 src。
+ */
+export function isKbAssetPath(src: string): boolean {
+  if (!src) return false
+  return src.replace(/\\/g, '/').includes(KB_ASSET_MARKER)
+}
+
 export function toKbAssetUrl(src: string): string {
-  if (!src) return src
-  if (src.includes(KB_ASSET_MARKER)) return `kbasset://kb/${encodeURIComponent(src)}`
+  if (isKbAssetPath(src)) return `kbasset://kb/${encodeURIComponent(src)}`
   return src
 }

@@ -1,11 +1,12 @@
 import { isValidElement, memo, useCallback, useEffect, useState, type ReactNode } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import type { Root } from 'mdast'
 
 import { useT } from '../../i18n'
 import { toKbAssetUrl } from '../../lib/kbAssetUrl'
+import { isLocalAssetPath, safeDecodeUri } from '../../lib/localAssetPath'
 import { renderMermaid } from '../../lib/mermaidRender'
 import { toProposalAssetUrl } from '../../lib/proposalAssetUrl'
 import { isEmbeddableImagePath, normalizeImageMarkdown } from '@shared/proposal'
@@ -137,33 +138,40 @@ const components: Components = {
   // 两者路径特征互斥、链式判定零歧义。
   img: ({ src, alt }) => {
     if (typeof src === 'string') {
-      const kbUrl = toKbAssetUrl(src)
-      const resolved = kbUrl === src ? toProposalAssetUrl(src) : kbUrl
+      // react-markdown 会把 src 百分号编码（空格→%20、CJK→%E…，见 localAssetPath.ts 注释），
+      // 而下游所有逻辑（协议转换/接地角标/data-raw-src 点图手术）都假设拿到的是 markdown 里的
+      // 原始字节。本地资产路径在此解码一次还原；外链 http 图保持原 src 不动（解码外链会改变
+      // 语义，如 query 里的合法 %26）。
+      const decoded = safeDecodeUri(src)
+      const path = isLocalAssetPath(decoded) ? decoded : src
+      const kbUrl = toKbAssetUrl(path)
+      const resolved = kbUrl === path ? toProposalAssetUrl(path) : kbUrl
       // 本地资产图（KB 或产出图）若非 docx 可嵌格式（webp/svg…），导出 Word 会降级为文字占位；
       // 预览此处同步降级，避免「预览有图、成品 Word 没图」的静默不一致——与 proposalDocx.
       // imageParagraphs 共用同一个 isEmbeddableImagePath 谓词（评审发现）。仅对 URL 被改写的本地
-      // 资产图（resolved !== src）生效，不影响外链图。
-      if (resolved !== src && !isEmbeddableImagePath(src)) {
-        const caption = (alt && alt.trim()) || src.slice(src.lastIndexOf('/') + 1)
+      // 资产图（resolved !== path）生效，不影响外链图。
+      if (resolved !== path && !isEmbeddableImagePath(path)) {
+        const caption = (alt && alt.trim()) || path.slice(path.lastIndexOf('/') + 1)
         return <span className="my-2 inline-block text-[13px] text-neutral-400">[图：{caption}]</span>
       }
-      // data-raw-src：保留 markdown 里的原始（未转协议）绝对路径，供编辑态点图工具栏（Task 9）
-      // 反查 sourcePath——react-markdown 解析时已代我们剥掉了 <> 包裹与 " title" 后缀，值与
-      // shared/proposal.parseImages 抽出的 path 精确一致，点图无需再自行正则重新解析一遍。
-      // 仅当 URL 被实际改写（resolved !== src，即本地 kb/草稿资产）才挂 data-raw-src——外链
+      // data-raw-src：保留 markdown 里的原始（未转协议、已还原编码）绝对路径，供编辑态点图
+      // 工具栏（Task 9）反查 sourcePath——react-markdown 解析时已剥掉 <> 包裹与 " title" 后缀，
+      // 加上面的 safeDecodeUri 还原百分号编码后，值与 shared/proposal.parseImages 抽出的 path
+      // 精确一致（评审实证：不解码则 macOS 含空格路径三处全断），点图无需再自行正则解析。
+      // 仅当 URL 被实际改写（resolved !== path，即本地 kb/草稿资产）才挂 data-raw-src——外链
       // http 图不改写，若仍挂上会让工具栏误以为它可点「改图」，点了却拿不到本地文件、报错
       // confusing（评审发现）。
       const imgEl = (
         <img
           src={resolved}
           alt={alt ?? ''}
-          {...(resolved !== src ? { 'data-raw-src': src } : {})}
+          {...(resolved !== path ? { 'data-raw-src': path } : {})}
           className="my-2 max-h-[70vh] w-auto max-w-full rounded"
         />
       )
       // 产出图来源角标：纯渲染态提示，不进 markdown、不进 docx（导出侧直读绝对路径原文，
       // 天然不含角标）。仅对草稿产出图生效——deriveImageOrigin 对 KB 图/外链图恒返回 null。
-      const origin = deriveImageOrigin(src)
+      const origin = deriveImageOrigin(path)
       if (!origin) return imgEl
       return (
         <span className="relative inline-block">
@@ -464,6 +472,15 @@ function splitCitationText(value: string): unknown[] | null {
 
 /* ───────────────── Exported Text renderer ───────────────── */
 
+// defaultUrlTransform 会把 win32 盘符路径（C:\… / C:/…）当未知协议清空成 ''（评审实证），
+// 图片 src 直接消失、点图链全断——Windows 是 CI 出包目标，不能靠它兜。本地资产路径（KB 图/
+// 草稿产出图，特征前缀足够收敛）跳过 sanitize 原样放行；其余 URL 照走默认，保住
+// javascript:/data: 注入防护。判定前先解码：sanitize 收到的是 normalizeUri 编码后的串。
+function assetAwareUrlTransform(url: string): string {
+  if (isLocalAssetPath(safeDecodeUri(url))) return url
+  return defaultUrlTransform(url)
+}
+
 function AssistantMarkdownImpl({
   text,
   // 编辑态（ProposalPaper）传 true：高亮段末来源标注。聊天气泡不传 → 走默认，无任何 span 注入。
@@ -484,6 +501,7 @@ function AssistantMarkdownImpl({
         remarkPlugins={remarkPlugins}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={components}
+        urlTransform={assetAwareUrlTransform}
       >
         {normalized}
       </ReactMarkdown>
