@@ -117,6 +117,7 @@ import type {
   ProposalImageUploadPayload
 } from '../../shared/ipc-channels'
 import { EMBEDDABLE_IMAGE_EXTS, type ProposalMetricRecord } from '../../shared/proposal'
+import { mimeForImagePath as mimeForImage } from '../../shared/imageMime'
 import { generateImage, editImage, sniffImageExt } from '../services/imageGenService'
 import { writeProposalImage } from '../services/proposalImageWriter'
 import { readFile } from 'node:fs/promises'
@@ -197,23 +198,15 @@ function resolveBrowserWindow(event: IpcMainInvokeEvent): BrowserWindow {
   throw new Error('No window available for dialog anchoring.')
 }
 
-const IMAGE_MIME_BY_EXT: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp'
-}
-
 /**
  * 原图扩展名 → MIME，供 PROPOSAL_IMAGE_EDIT 把「原图真实格式」而非硬编码的 image/png 传给
- * 出图 API（评审发现：改 jpg/webp 源图时被错误贴上 image/png 标签）。没有直接复用
- * proposalAssetProtocol.ts 里同构的 mimeFor——那个是该文件私有函数（未 export），为一个
- * 四行小映射引入跨文件耦合不值得，这里就地放一份更干净。
+ * 出图 API（评审发现：改 jpg/webp 源图时被错误贴上 image/png 标签）。映射收口在
+ * shared/imageMime.ts（评审复核：全仓已有四份手抄同构映射，「就地放一份」的辩护在 2 份时
+ * 成立、4 份时已被 webp 漂移活例证伪）。fallback 取 image/png：改图源是我们自己落盘的图，
+ * 无扩展名理论不可达，兜成图像类型比 octet-stream 更不易被网关拒。
  */
 function mimeForImagePath(filePath: string): string {
-  const ext = extname(filePath).toLowerCase()
-  return IMAGE_MIME_BY_EXT[ext] ?? 'image/png'
+  return mimeForImage(filePath, 'image/png')
 }
 
 /**

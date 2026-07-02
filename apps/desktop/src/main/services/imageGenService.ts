@@ -10,6 +10,8 @@
  *   gpt-image-2 → gpt-image-1.5 → gpt-image-1。对话端点能用 ≠ 图像端点同时可用。
  */
 
+import { extForImageMime } from '../../shared/imageMime'
+
 export interface ImageApiConfig {
   apiKey: string
   baseURL: string
@@ -147,15 +149,10 @@ export async function generateImage(
   })
 }
 
-/** sourceMime → multipart 文件名后缀，'source.png' 硬编码会把 jpg/webp 源图错误贴成 png 扩展名。 */
-const EXT_BY_MIME: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/gif': 'gif',
-  'image/webp': 'webp'
-}
-
+/** sourceMime → multipart 文件名后缀，'source.png' 硬编码会把 jpg/webp 源图错误贴成 png 扩展名。
+ *  逆映射收口在 shared/imageMime.ts（此前全仓四份手抄映射，加格式要同步四处）。 */
 function multipartFileName(sourceMime: string): string {
-  return `source.${EXT_BY_MIME[sourceMime] ?? 'png'}`
+  return `source.${extForImageMime(sourceMime)}`
 }
 
 export async function editImage(
