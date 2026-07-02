@@ -11,12 +11,14 @@
  */
 
 import { extForImageMime } from '../../shared/imageMime'
+import type { ProposalImageApiConfig } from '../../shared/ipc-channels'
 
-export interface ImageApiConfig {
-  apiKey: string
-  baseURL: string
-  model: string
-}
+/**
+ * 出图凭据配置。直接复用 shared 的 IPC 类型而非再声明一份结构双胞胎（评审发现：两份
+ * 「字段同构、handler 透传」的定义靠人肉同步，单侧加字段时结构化类型照样编译、新字段
+ * 却静默不过 IPC/不落盘）。方向是 main import shared（合法依赖），不是反过来。
+ */
+export type ImageApiConfig = ProposalImageApiConfig
 
 const DEFAULT_DOWNGRADE = ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1']
 const MAX_ATTEMPTS_PER_MODEL = 3

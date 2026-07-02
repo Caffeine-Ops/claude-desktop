@@ -1026,9 +1026,9 @@ export interface ProposalDeleteDraftResult {
 }
 
 /**
- * 出图 API 凭据配置。定义在 shared 而非直接复用 main/services/imageGenService.ts 的
- * `ImageApiConfig`——那个文件是 main-only（不在 web tsconfig 的 include 里），renderer/
- * preload 不能 import 它。字段同构，main 侧两者结构兼容、handler 里直接透传。
+ * 出图 API 凭据配置。唯一定义在 shared：renderer/preload 不能 import main-only 文件，
+ * 而 main 可以 import shared——imageGenService.ts 的 `ImageApiConfig` 是本类型的别名
+ * （评审发现：曾是两份靠人肉同步的结构双胞胎，单侧加字段编译照过、字段却静默丢失）。
  *
  * `apiKey` 在 PROPOSAL_IMAGE_SETTINGS_GET 的返回里是脱敏值（`''` 未配置 / `'••••'` 已配置），
  * 在 PROPOSAL_IMAGE_SETTINGS_SET 的入参里可能是真实 key 或该脱敏占位符（占位符触发 main 侧
