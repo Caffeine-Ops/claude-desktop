@@ -126,6 +126,19 @@ describe('verifyCitationsCore 图片接地', () => {
     const r = verifyCitationsCore('文。（据《白皮书》）\n\n![图](/kb/a/img-1.png)', () => '文。')
     expect(r.imageVerdicts).toEqual([{ path: '/kb/a/img-1.png', status: 'ungrounded' }])
   })
+
+  it('proposal-drafts 下的产出图豁免接地——不产生 ungrounded verdict', () => {
+    const md =
+      '正文（据《报告A》）\n\n![示意](/U/x/app/proposal-drafts/s1/assets/gen-1.png)'
+    const r = verifyCitationsCore(
+      md,
+      (f) => (f === '报告A' ? '正文' : null),
+      // 所引文件的 assets 不含该产出图——若不豁免，按旧逻辑会判 ungrounded
+      (f) => (f === '报告A' ? ['/kb/a/img-1.png'] : [])
+    )
+    const bad = (r.imageVerdicts ?? []).filter((v) => v.status === 'ungrounded')
+    expect(bad.find((v) => v.path.includes('/proposal-drafts/'))).toBeUndefined()
+  })
 })
 
 describe('splitMarkdownBySections', () => {

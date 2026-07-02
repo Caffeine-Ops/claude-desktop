@@ -8,6 +8,7 @@ import {
   type ImageVerdict,
   type SectionVerification
 } from '../../shared/proposal'
+import { isProposalAssetPath } from '../../shared/proposalAsset'
 
 /**
  * 「这段正文是否真出自所引原文」的支持阈值：段落正文的字符 trigram 有多大比例出现在
@@ -84,15 +85,25 @@ export function verifyCitationsCore(
   // 图片接地：图必属本节所引文件（citedFiles）的 assets 并集。无图 → 不带 imageVerdicts
   // （向后兼容，UI 据「有无该字段」决定要不要画图相关红绿）。resolveAssets 缺省 → 并集为空
   // → 有图即 ungrounded（安全默认：宁可标红也不放过来路不明的图）。
+  //
+  // 例外：草稿产出图（改图/文生图/上传，路径落在 proposal-drafts/*/assets 下，见
+  // isProposalAssetPath）不是 KB 图，压根不该拿「是否属所引文件 assets」去核对——它们由用户
+  // 当场生成/上传，来源就是用户本人，不存在挪用/编造问题。故短路：既不判 grounded（没查、
+  // 不能瞎标绿）也不判 ungrounded（不能标红吓用户），直接不产出该图的 verdict。
   const images = parseImages(safe)
   let imageVerdicts: ImageVerdict[] | undefined
   if (images.length > 0) {
     const allowed = new Set<string>()
     for (const f of citedFiles) for (const a of resolveAssets?.(f) ?? []) allowed.add(a)
-    imageVerdicts = images.map((img) => ({
-      path: img.path,
-      status: allowed.has(img.path) ? ('grounded' as const) : ('ungrounded' as const)
-    }))
+    const verdictList: ImageVerdict[] = []
+    for (const img of images) {
+      if (isProposalAssetPath(img.path)) continue
+      verdictList.push({
+        path: img.path,
+        status: allowed.has(img.path) ? ('grounded' as const) : ('ungrounded' as const)
+      })
+    }
+    imageVerdicts = verdictList
   }
 
   const base: SectionVerification = { verdicts, citedFileCount: citedFiles.size }
