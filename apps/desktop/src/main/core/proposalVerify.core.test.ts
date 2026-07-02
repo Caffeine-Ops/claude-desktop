@@ -139,6 +139,37 @@ describe('verifyCitationsCore 图片接地', () => {
     const bad = (r.imageVerdicts ?? []).filter((v) => v.status === 'ungrounded')
     expect(bad.find((v) => v.path.includes('/proposal-drafts/'))).toBeUndefined()
   })
+
+  it('注入 isDraftAsset 后：形状命中但谓词不过（幻造/不存在的产出图路径）→ 掉回接地判定标红', () => {
+    const md = '正文（据《报告A》）\n\n![幻造](/any/dir/proposal-drafts/x/assets/diagram.png)'
+    const r = verifyCitationsCore(
+      md,
+      (f) => (f === '报告A' ? '正文' : null),
+      (f) => (f === '报告A' ? ['/kb/a/img-1.png'] : []),
+      () => false // 强校验：不在真实草稿根/不存在
+    )
+    expect(r.imageVerdicts).toEqual([
+      { path: '/any/dir/proposal-drafts/x/assets/diagram.png', status: 'ungrounded' }
+    ])
+  })
+
+  it('注入 isDraftAsset 后：谓词通过的真产出图仍豁免', () => {
+    const md = '正文（据《报告A》）\n\n![真图](/U/x/app/proposal-drafts/s1/assets/gen-1.png)'
+    const r = verifyCitationsCore(
+      md,
+      (f) => (f === '报告A' ? '正文' : null),
+      (f) => (f === '报告A' ? ['/kb/a/img-1.png'] : []),
+      () => true
+    )
+    expect(r.imageVerdicts).toBeUndefined()
+  })
+
+  it('一节的图全部被豁免 → imageVerdicts 字段缺省而非空数组（字段有无契约）', () => {
+    const md = '正文（据《报告A》）\n\n![上传图](/U/x/app/proposal-drafts/s1/assets/upload-1.png)'
+    const r = verifyCitationsCore(md, (f) => (f === '报告A' ? '正文' : null), () => [])
+    expect(r.imageVerdicts).toBeUndefined()
+    expect('imageVerdicts' in r).toBe(false)
+  })
 })
 
 describe('splitMarkdownBySections', () => {

@@ -39,7 +39,8 @@ const MIN_VERIFIABLE_CHARS = 3
  *
  * 图片接地：第三参 `resolveAssets` 可选，返回某 title 文件的 assets 路径数组。若传入，
  * 对正文里的每张图判断其 path 是否属于【本节所引文件的 assets 并集】——grounded/ungrounded。
- * 无图时不带 imageVerdicts（向后兼容，UI 据此判要不要画图相关红绿）。resolveAssets 缺省
+ * 无【受核对的】图时不带 imageVerdicts（向后兼容，UI 据「有无该字段」判要不要画图相关红绿；
+ * 一节的图若全被草稿产出图豁免，字段同样缺省，不给空数组）。resolveAssets 缺省
  * → assets 并集为空 → 有图即 ungrounded（安全默认，宁可标红也不放过来路不明的图）。
  *
  * 注意：「索引整体不可用 → degraded」的判定在 proposalVerify.ts 包装层（要先读索引），
@@ -48,7 +49,10 @@ const MIN_VERIFIABLE_CHARS = 3
 export function verifyCitationsCore(
   markdown: string,
   resolveContent: (file: string) => string | null,
-  resolveAssets?: (file: string) => string[]
+  resolveAssets?: (file: string) => string[],
+  // 草稿产出图的强校验谓词（真实根目录 + 存在性），由 main 包装层注入（见 proposalVerify.ts）。
+  // 缺省时退回纯形状判定（isProposalAssetPath），保持纯核心可单测、旧调用不破。
+  isDraftAsset?: (absPath: string) => boolean
 ): SectionVerification {
   const safe = typeof markdown === 'string' ? markdown : ''
   const paras = parseCitations(safe)
@@ -90,6 +94,11 @@ export function verifyCitationsCore(
   // isProposalAssetPath）不是 KB 图，压根不该拿「是否属所引文件 assets」去核对——它们由用户
   // 当场生成/上传，来源就是用户本人，不存在挪用/编造问题。故短路：既不判 grounded（没查、
   // 不能瞎标绿）也不判 ungrounded（不能标红吓用户），直接不产出该图的 verdict。
+  //
+  // 但豁免不能只看路径形状（评审 CONFIRMED）：改图后整节 markdown 会回灌给 AI 重产，AI
+  // 复读/篡改/幻造 proposal-drafts 形路径是常态流。纯子串判定会让幻造路径无声跳过校验——
+  // 绿横幅 + 预览 403 + 导出静默降级，恰好绕开「宁可标红」底线。故形状命中后还要过注入的
+  // isDraftAsset（真实草稿根 + 存在性）；不过 → 掉回正常接地判定（必 ungrounded 标红）。
   const images = parseImages(safe)
   let imageVerdicts: ImageVerdict[] | undefined
   if (images.length > 0) {
@@ -97,13 +106,15 @@ export function verifyCitationsCore(
     for (const f of citedFiles) for (const a of resolveAssets?.(f) ?? []) allowed.add(a)
     const verdictList: ImageVerdict[] = []
     for (const img of images) {
-      if (isProposalAssetPath(img.path)) continue
+      if (isProposalAssetPath(img.path) && (isDraftAsset ? isDraftAsset(img.path) : true)) continue
       verdictList.push({
         path: img.path,
         status: allowed.has(img.path) ? ('grounded' as const) : ('ungrounded' as const)
       })
     }
-    imageVerdicts = verdictList
+    // 全部被豁免时置回 undefined——契约是「imageVerdicts 字段存在 ⇔ 本节有受核对的图」，
+    // 空数组是真值、会让按字段有无分支的消费方把「没核对」当「已核对」（评审发现）。
+    imageVerdicts = verdictList.length > 0 ? verdictList : undefined
   }
 
   const base: SectionVerification = { verdicts, citedFileCount: citedFiles.size }
@@ -148,11 +159,12 @@ export function splitMarkdownBySections(markdown: string): string[] {
 export function collectUngroundedImagePathsCore(
   markdown: string,
   resolveContent: (file: string) => string | null,
-  resolveAssets: (file: string) => string[]
+  resolveAssets: (file: string) => string[],
+  isDraftAsset?: (absPath: string) => boolean
 ): Set<string> {
   const out = new Set<string>()
   for (const section of splitMarkdownBySections(markdown)) {
-    const v = verifyCitationsCore(section, resolveContent, resolveAssets)
+    const v = verifyCitationsCore(section, resolveContent, resolveAssets, isDraftAsset)
     for (const iv of v.imageVerdicts ?? []) {
       if (iv.status === 'ungrounded') out.add(iv.path)
     }

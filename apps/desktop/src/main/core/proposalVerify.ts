@@ -1,8 +1,24 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 import type { SectionVerification } from '../../shared/proposal'
+import { isPathInsideProposalRoot, proposalDraftsRoot } from '../services/proposalAssetProtocol'
 import { readKbIndex } from './kbIndexStore'
 import { verifyCitationsCore, collectUngroundedImagePathsCore } from './proposalVerify.core'
+
+/**
+ * 草稿产出图豁免接地的强校验谓词：路径形状（isProposalAssetPath，核心里已查）只是必要条件，
+ * 这里补充分「真的在本机草稿根之下」+「文件真实存在」——AI 回灌重产时幻造的 proposal-drafts
+ * 形路径过不了这两关，会掉回正常接地判定标红（评审 CONFIRMED：纯形状豁免让幻造图无声通过、
+ * 绿横幅配裂图）。与 proposalasset:// 协议 handler 的 403 守卫同一把尺（同 isPathInsideProposalRoot
+ * + 同根），保证「校验放行的图，预览一定能显示」。防御式 try/catch：谓词绝不抛（校验不阻塞主流程）。
+ */
+function isDraftAsset(absPath: string): boolean {
+  try {
+    return isPathInsideProposalRoot(absPath, proposalDraftsRoot()) && existsSync(absPath)
+  } catch {
+    return false
+  }
+}
 
 /**
  * 核对一节正文 markdown 里的所有引用：把每段正文与其末尾 `（据《X》）` 所指的镜像原文
@@ -59,7 +75,8 @@ export function verifyCitations(markdown: string): SectionVerification {
     return verifyCitationsCore(
       typeof markdown === 'string' ? markdown : '',
       resolveContent,
-      resolveAssets
+      resolveAssets,
+      isDraftAsset
     )
   } catch (err) {
     console.warn('[proposalVerify] verifyCitations failed:', err)
@@ -91,7 +108,8 @@ export function collectUngroundedImagePaths(markdown: string): Set<string> {
     return collectUngroundedImagePathsCore(
       typeof markdown === 'string' ? markdown : '',
       () => null,
-      resolveAssets
+      resolveAssets,
+      isDraftAsset
     )
   } catch (err) {
     console.warn('[proposalVerify] collectUngroundedImagePaths failed:', err)
