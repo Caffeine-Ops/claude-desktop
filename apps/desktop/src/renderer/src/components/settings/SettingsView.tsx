@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 
-import type {
-  CliBackendState,
-  ProposalImageApiConfig
+import {
+  PROPOSAL_IMAGE_API_KEY_MASK,
+  type CliBackendState,
+  type ProposalImageApiConfig
 } from '../../../../shared/ipc-channels'
 import { useI18n, useT } from '../../i18n'
 import { useSettingsStore } from '../../stores/settings'
@@ -473,9 +474,10 @@ function CliBackendOption({
 const IMAGE_API_DEFAULT_MODEL = 'gpt-image-2'
 /** Masked placeholder the main process returns for an already-configured
  *  key — never the plaintext. Sending this value back unchanged tells the
- *  IPC handler "keep whatever key you already have" (see
- *  `ProposalImageApiConfig` doc comment in shared/ipc-channels.ts). */
-const IMAGE_API_KEY_MASK = '••••'
+ *  IPC handler "keep whatever key you already have". 线协议哨兵，定义收口在
+ *  shared/ipc-channels.ts（评审发现：曾是 renderer/main 两份独立字面量，任一侧
+ *  改动即把字面圆点存成真 key）。 */
+const IMAGE_API_KEY_MASK = PROPOSAL_IMAGE_API_KEY_MASK
 
 /**
  * Configuration category. Currently hosts just the 出图 API credential
@@ -551,6 +553,24 @@ function ConfigurationSection(): React.JSX.Element {
     }
   }
 
+  // 显式清除已存 key。没有它用户回不到未配置态（评审发现）：清空输入框后点保存，
+  // 按钮的 mousedown 先触发 blur，onBlur 把空值还原成掩码，发出去的永远是「保留」。
+  // 走独立按钮而非改 blur 语义——blur 还原掩码本身是对的（防「看了一眼就丢 key」）。
+  const handleClearKey = async (): Promise<void> => {
+    if (saving) return
+    setSaving(true)
+    setJustSaved(false)
+    try {
+      await window.chatApi.proposalImageSettingsSet({ apiKey: '', baseURL, model })
+      setApiKey('')
+      setConfigured(false)
+    } catch (err) {
+      console.error('[settings] proposalImageSettingsSet(clear) failed', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <section className="space-y-8">
       <h1 className="text-[20px] font-semibold text-foreground">
@@ -585,6 +605,16 @@ function ConfigurationSection(): React.JSX.Element {
               }
               className="h-8 w-full rounded-md border border-border bg-card px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
             />
+            {configured && (
+              <button
+                type="button"
+                onClick={() => void handleClearKey()}
+                disabled={saving || !loaded}
+                className="mt-1.5 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+              >
+                {t('imageApiKeyClear')}
+              </button>
+            )}
           </label>
 
           <label className="block">

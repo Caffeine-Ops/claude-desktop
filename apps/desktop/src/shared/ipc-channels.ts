@@ -1040,6 +1040,14 @@ export interface ProposalImageApiConfig {
   model: string
 }
 
+/**
+ * apiKey 脱敏占位符——跨进程线协议哨兵，不是 UI 文案：GET 用它替换明文 key 回给渲染进程；
+ * SET 收到它表示「保留现存 key」。两端必须字节一致，否则渲染进程发来的字面圆点会被当成
+ * 真 key 存掉（静默毁 key，评审发现曾是三处独立字面量）。唯一定义在此，renderer/main 都
+ * 从这里 import；i18n 里同形的 placeholder 只是展示文案、与本协议无关。
+ */
+export const PROPOSAL_IMAGE_API_KEY_MASK = '••••'
+
 /** Payload for PROPOSAL_IMAGE_GENERATE。 */
 export interface ProposalImageGeneratePayload {
   sessionId: string

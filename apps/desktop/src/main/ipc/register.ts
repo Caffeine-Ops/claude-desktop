@@ -6,6 +6,7 @@ import { extname, isAbsolute, join, relative, sep } from 'node:path'
 import type { PermissionResponse } from '../../shared/types'
 import {
   IPC_CHANNELS,
+  PROPOSAL_IMAGE_API_KEY_MASK,
   type ChatAbortPayload,
   type ChatImagePayload,
   type ChatSendPayload,
@@ -1262,7 +1263,8 @@ export function registerIpcHandlers(): void {
   // 出图 API 凭据脱敏占位符。GET 用它替换明文 key 回给渲染进程（渲染进程内存/devtools
   // 都是比 main 进程更大的泄漏面）；SET 收到这个占位符时代表用户没重新输入 key，只改了
   // baseURL/model，需与现存 key 合并而非覆盖——见下面 SETTINGS_SET handler。
-  const IMAGE_API_KEY_MASK = '••••'
+  // 定义收口在 shared（评审发现：曾是 renderer/main 两份独立字面量，任一侧改动即静默毁 key）。
+  const IMAGE_API_KEY_MASK = PROPOSAL_IMAGE_API_KEY_MASK
 
   ipcMain.handle(
     IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_GET,
