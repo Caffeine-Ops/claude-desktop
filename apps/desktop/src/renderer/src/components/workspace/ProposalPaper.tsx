@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { useProposalStore, type ProposalSection } from '../../stores/proposal'
+import { useProposalStore, type ProposalSection, type ImageReview } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 import { reviseProposalSection } from '../../lib/sendProposalSectionRevision'
 import { SelectionAiBubble } from './SelectionAiBubble'
 import { ProposalImageToolbar } from './ProposalImageToolbar'
+import { ProposalImageReview } from './ProposalImageReview'
 import type { ProposalKind } from '@shared/proposal'
 import { splitBlocks, joinBlocks } from '@shared/proposalBlocks'
 import { removeImageOccurrence, replaceImageOccurrence } from '@shared/proposalImageOps'
@@ -137,6 +138,37 @@ function blockNeedsGap(blk: string): boolean {
 // 次出现删除）已抽到 shared/proposalImageOps.ts（纯函数、有 bun test 覆盖）——renderer 这层
 // 只负责从 DOM 数出「点中的是第几个同路径出现」（见 handlePaperClick）并调用它。
 
+// 应用改图审阅项（Task 11）：把 review 记的新图路径换回目标块。preferredIndex（多半是发起改图
+// 那一刻的 blockIndex）优先尝试；审阅悬而未决期间该节完全可能被并发编辑（AI 修订/手改/块序
+// 变化）致块布局漂移，若仅按旧下标硬替换，一旦目标块已不含 sourcePath，replaceImageOccurrence
+// 会原样返回、静默不生效——用户点了「应用」却什么也没发生。于是在优先下标未命中时退化为扫描
+// 该节其余块，只要还能在【任意】块里找到同 path+occurrence 的图就换掉；replaceImageOccurrence
+// 本身对不匹配的块是幂等直通（不会误改无关内容），扫描不存在越权改写的风险。
+function applyReplacementAcrossBlocks(
+  blocks: string[],
+  preferredIndex: number,
+  sourcePath: string,
+  occurrence: number,
+  newPath: string
+): { blocks: string[]; changed: boolean } {
+  const tryIndex = (idx: number): boolean => {
+    const replaced = replaceImageOccurrence(blocks[idx], sourcePath, occurrence, newPath)
+    if (replaced !== blocks[idx]) {
+      blocks[idx] = replaced
+      return true
+    }
+    return false
+  }
+  if (preferredIndex >= 0 && preferredIndex < blocks.length && tryIndex(preferredIndex)) {
+    return { blocks, changed: true }
+  }
+  for (let i = 0; i < blocks.length; i++) {
+    if (i === preferredIndex) continue
+    if (tryIndex(i)) return { blocks, changed: true }
+  }
+  return { blocks, changed: false }
+}
+
 /**
  * 编辑态：一张连续的 A4 宽长纸，分节无缝拼接、向下滚动不分页。
  * 保留现有「哨兵→分节」数据模型，仅把卡片堆叠换皮成纸面：
@@ -153,6 +185,9 @@ export function ProposalPaper(): React.JSX.Element {
   // 这几个 action 是 zustand 稳定引用、永不变——从 getState() 一次性取出、不订阅，
   // 避免每次 store 更新（如流式 append 新节）都白跑一遍 selector。
   const { updateSection, removeSection, moveSection, addImageReview } = useProposalStore.getState()
+  // imageReviews 需要订阅（Task 11）：改图/生图产出待审阅项要驱动重渲染出对照卡，
+  // 不能像上面几个稳定 action 那样只取一次。
+  const imageReviews = useProposalStore((s) => s.imageReviews)
   const proposalSid = useProposalStore((s) => s.sessionId)
   const generating = useChatStore((s) =>
     proposalSid ? (s.perSession[proposalSid]?.streaming ?? false) : false
@@ -311,6 +346,129 @@ export function ProposalPaper(): React.JSX.Element {
     return () => clearTimeout(id)
   }, [uploadError])
 
+  // 改图/生图审阅卡（Task 11）：多张卡可能同时挂着（不同节的改图/生图各自独立发起），按
+  // review.id 建 map 记「重改中」与「重改失败」，而非单槽状态——否则一张卡在重改会把另一张卡
+  // 的按钮也锁住。
+  const [reviewBusy, setReviewBusy] = useState<Record<string, boolean>>({})
+  const [reviewError, setReviewError] = useState<Record<string, string | null>>({})
+  // 清理陈旧条目：review 一旦从 imageReviews 里消失（应用/放弃/重改成功后旧 id 被替换），对应
+  // 的 busy/error 记录就该一并清掉，否则重改用同一图再次触发相同 sourcePath 时若 id 复用
+  // （理论上 crypto.randomUUID 不会重复，但心智上仍希望 map 不无限增长）会残留陈旧展示。以
+  // imageReviews 的当前 id 集合为准做一次性 diff，是自动化清理点，不必在每个删除路径手动同步。
+  useEffect(() => {
+    const ids = new Set(imageReviews.map((r) => r.id))
+    setReviewBusy((m) => {
+      let changed = false
+      const next: Record<string, boolean> = {}
+      for (const k of Object.keys(m)) {
+        if (ids.has(k)) next[k] = m[k]
+        else changed = true
+      }
+      return changed ? next : m
+    })
+    setReviewError((m) => {
+      let changed = false
+      const next: Record<string, string | null> = {}
+      for (const k of Object.keys(m)) {
+        if (ids.has(k)) next[k] = m[k]
+        else changed = true
+      }
+      return changed ? next : m
+    })
+  }, [imageReviews])
+
+  // 应用（Task 11）：edit 模式把新图路径换回原图所在块（见 applyReplacementAcrossBlocks 顶部
+  // 注释）；generate 模式在节末尾追加一个新图块（与 handleImageUpload 同一条落盘路径）。节已被
+  // 删除（审阅悬而未决期间用户删了整节）则无处落地，只清审阅项、不报错——静默丢弃优于抛错阻断。
+  function applyImageReview(review: ImageReview): void {
+    const pstore = useProposalStore.getState()
+    const sec = pstore.sections.find((s) => s.id === review.sectionId)
+    if (!sec) {
+      pstore.removeImageReview(review.id)
+      return
+    }
+    if (review.mode === 'generate') {
+      const blocks = splitBlocks(sec.markdown)
+      blocks.push(`![生成图](${review.resultPath})`)
+      pstore.updateSection(sec.id, joinBlocks(blocks))
+      pstore.removeImageReview(review.id)
+      return
+    }
+    // mode === 'edit'：sourcePath 按契约总存在（addImageReview 的两处 edit 调用点都带它），
+    // 缺失属数据不一致，防御性丢弃而非用 ! 断言硬来。
+    if (!review.sourcePath) {
+      pstore.removeImageReview(review.id)
+      return
+    }
+    const blocks = splitBlocks(sec.markdown)
+    if (blocks.length === 0) {
+      pstore.removeImageReview(review.id)
+      return
+    }
+    const clamped = Math.min(Math.max(review.blockIndex, 0), blocks.length - 1)
+    const { blocks: next, changed } = applyReplacementAcrossBlocks(
+      blocks,
+      clamped,
+      review.sourcePath,
+      review.occurrence ?? 0,
+      review.resultPath
+    )
+    if (changed) pstore.updateSection(sec.id, joinBlocks(next))
+    pstore.removeImageReview(review.id)
+  }
+
+  // 放弃：只摘审阅项，产出图文件留在磁盘（随草稿区一并清理，不即时删盘——同一图片可能已被
+  // 别处复用，误删风险由「不做即时删除」规避，Step 3 既定策略）。
+  function discardImageReview(id: string): void {
+    useProposalStore.getState().removeImageReview(id)
+  }
+
+  // 重改：对同一 mode 重发同一条 Task 7 IPC，成功则原子替换审阅项（先摘旧、再以同样的落点
+  // 字段插入新的一条，旧卡即被新卡取代，不会一闪而过地同时出现两张）；失败把错误留在原卡上、
+  // busy 收回，供用户再试或改用「放弃」。
+  async function retryImageReview(review: ImageReview, prompt: string): Promise<void> {
+    if (!proposalSid) {
+      setReviewError((m) => ({ ...m, [review.id]: '当前没有方案会话，请稍后重试' }))
+      return
+    }
+    if (review.mode === 'edit' && !review.sourcePath) {
+      setReviewError((m) => ({ ...m, [review.id]: '缺少原图信息，无法重改' }))
+      return
+    }
+    setReviewBusy((m) => ({ ...m, [review.id]: true }))
+    setReviewError((m) => ({ ...m, [review.id]: null }))
+    try {
+      const { path } =
+        review.mode === 'edit'
+          ? await window.chatApi.proposalImageEdit({
+              sessionId: proposalSid,
+              sourcePath: review.sourcePath as string,
+              prompt
+            })
+          : await window.chatApi.proposalImageGenerate({ sessionId: proposalSid, prompt })
+      const pstore = useProposalStore.getState()
+      pstore.removeImageReview(review.id)
+      pstore.addImageReview({
+        sectionId: review.sectionId,
+        blockIndex: review.blockIndex,
+        sourcePath: review.sourcePath,
+        resultPath: path,
+        mode: review.mode,
+        occurrence: review.occurrence
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      const friendly = message.includes('未配置')
+        ? '尚未配置出图 API，请到设置里填写 key 与地址后再试。'
+        : review.mode === 'edit'
+          ? '改图失败，请稍后重试。'
+          : '生成失败，请稍后重试。'
+      setReviewError((m) => ({ ...m, [review.id]: friendly }))
+    } finally {
+      setReviewBusy((m) => ({ ...m, [review.id]: false }))
+    }
+  }
+
   // 点击别处关闭：真正的判定在 mousedown（早于 click），但只处理「关闭」——「选中新图片」这个
   // 更新交给下面 handlePaperClick 的 onClick 做。命中工具栏自身（data-image-toolbar）或某张图
   // （马上会被 handlePaperClick 处理成新选中项）都不在这里清空，否则会先清后设、多余的中间态。
@@ -376,6 +534,7 @@ export function ProposalPaper(): React.JSX.Element {
     sectionId: string,
     blockIndex: number,
     sourcePath: string,
+    occurrence: number,
     prompt: string
   ): Promise<{ ok: true } | { ok: false; message: string }> {
     if (!proposalSid) return { ok: false, message: '当前没有方案会话，请稍后重试' }
@@ -385,7 +544,14 @@ export function ProposalPaper(): React.JSX.Element {
         sourcePath,
         prompt
       })
-      addImageReview({ sectionId, blockIndex, sourcePath, resultPath: path, mode: 'edit' })
+      addImageReview({
+        sectionId,
+        blockIndex,
+        sourcePath,
+        resultPath: path,
+        mode: 'edit',
+        occurrence
+      })
       return { ok: true }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -870,6 +1036,23 @@ export function ProposalPaper(): React.JSX.Element {
           )
         )
       )}
+
+      {/* 改图/生图审阅卡（Task 11）：挂在本节正文之后、区段边界之前——就地内联而非浮层，理由见
+          ProposalImageReview.tsx 顶部注释。同一节可能同时挂多张（并发对不同图各自发起改图/生图），
+          按 imageReviews 数组原样顺序渲染，不做单选收窄。 */}
+      {imageReviews
+        .filter((r) => r.sectionId === sec.id)
+        .map((review) => (
+          <ProposalImageReview
+            key={review.id}
+            review={review}
+            busy={Boolean(reviewBusy[review.id]) || generating}
+            error={reviewError[review.id] ?? null}
+            onApply={() => applyImageReview(review)}
+            onDiscard={() => discardImageReview(review.id)}
+            onRetry={(prompt) => void retryImageReview(review, prompt)}
+          />
+        ))}
     </section>
     )
   }
@@ -916,7 +1099,13 @@ export function ProposalPaper(): React.JSX.Element {
           anchorTop={imgSel.anchorTop}
           disabled={generating}
           onEdit={(prompt) =>
-            handleImageEdit(imgSel.sectionId, imgSel.blockIndex, imgSel.sourcePath, prompt)
+            handleImageEdit(
+              imgSel.sectionId,
+              imgSel.blockIndex,
+              imgSel.sourcePath,
+              imgSel.occurrence,
+              prompt
+            )
           }
           onReplace={
             replacingImage

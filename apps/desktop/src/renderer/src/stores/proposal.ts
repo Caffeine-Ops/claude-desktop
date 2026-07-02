@@ -56,6 +56,11 @@ export interface ImageReview {
   sourcePath?: string // mode='generate'（未来任务）时没有源图，故可空
   resultPath: string
   mode: 'edit' | 'generate'
+  // mode='edit' 时，源图在该块内【同路径出现序列】里的下标（0 起，来自 ProposalPaper
+  // handlePaperClick 从 DOM 数出的 imgSel.occurrence）——应用时喂给 replaceImageOccurrence
+  // 精确定位换哪一张（同一块贴了两张同路径图时不误换）。mode='generate' 没有源图、无意义，
+  // 缺省即可（Task 11 应用逻辑按 mode 分流，不读 generate 项的这个字段）。
+  occurrence?: number
 }
 
 interface ProposalState {
