@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useProposalStore, type ProposalSection, type ImageReview } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
+import { useSettingsStore } from '../../stores/settings'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 import { reviseProposalSection } from '../../lib/sendProposalSectionRevision'
 import { SelectionAiBubble } from './SelectionAiBubble'
@@ -413,6 +414,13 @@ export function ProposalPaper(): React.JSX.Element {
   // 别处复用，误删风险由「不做即时删除」规避，Step 3 既定策略）。
   function discardImageReview(id: string): void {
     useProposalStore.getState().removeImageReview(id)
+  }
+
+  // 「去设置」直达：打开原生设置页并定位到「配置」分类（出图 API 表单所在）。原生设置页
+  // 没有常驻入口（右上角齿轮开的是 Open Design 的 web 设置弹窗，GUI 走查发现），错误提示里
+  // 的这个按钮就是用户唯一能走到的路。
+  function openImageApiSettings(): void {
+    useSettingsStore.getState().openSettings('configuration')
   }
 
   // 出图/改图失败的统一错误分流（评审发现：此前同一段 includes 映射复制在三处，main 侧改个
@@ -918,7 +926,18 @@ export function ProposalPaper(): React.JSX.Element {
           {imageGenError && (
             <div className="mt-1.5 flex items-start gap-1 rounded bg-rose-500/10 px-1.5 py-1 text-[11px] text-rose-600">
               <AlertTriangleIcon className="mt-0.5 shrink-0" />
-              <span>{imageGenError}</span>
+              <span>
+                {imageGenError}
+                {imageGenError.includes('设置') && (
+                  <button
+                    type="button"
+                    onClick={openImageApiSettings}
+                    className="ml-1 underline underline-offset-2 hover:text-rose-700"
+                  >
+                    去设置
+                  </button>
+                )}
+              </span>
             </div>
           )}
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
@@ -1039,6 +1058,7 @@ export function ProposalPaper(): React.JSX.Element {
             onApply={() => applyImageReview(review)}
             onDiscard={() => discardImageReview(review.id)}
             onRetry={(prompt) => void retryImageReview(review, prompt)}
+            onOpenSettings={openImageApiSettings}
           />
         ))}
     </section>
@@ -1110,6 +1130,7 @@ export function ProposalPaper(): React.JSX.Element {
             handleImageDelete(imgSel.sectionId, imgSel.blockIndex, imgSel.sourcePath, imgSel.occurrence)
           }
           onClose={() => setImgSel(null)}
+          onOpenSettings={openImageApiSettings}
         />
       )}
     </div>

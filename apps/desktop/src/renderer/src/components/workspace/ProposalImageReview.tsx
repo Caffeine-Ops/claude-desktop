@@ -30,6 +30,9 @@ export interface ProposalImageReviewProps {
   // 重改失败时的错误信息（未配置 key / 网关异常，同 ProposalImageToolbar 的分流措辞），
   // 由 ProposalPaper 在 onRetry 的 IPC 调用失败后回填；本组件只负责展示，不解析错误原因。
   error?: string | null
+  // 「未配置出图 API」类错误的「去设置」直达入口（原生设置页无常驻入口，见
+  // ProposalImageToolbar 同名 prop 的注释）。可选：不传则错误只展示文字。
+  onOpenSettings?: () => void
 }
 
 export function ProposalImageReview({
@@ -38,7 +41,8 @@ export function ProposalImageReview({
   onDiscard,
   onRetry,
   busy = false,
-  error = null
+  error = null,
+  onOpenSettings
 }: ProposalImageReviewProps): React.JSX.Element {
   // 重改展开态：点「重改」后内联展开一个小文本域，⌘/Ctrl+↵ 或点提交都走 onRetry。
   const [retrying, setRetrying] = useState(false)
@@ -127,7 +131,18 @@ export function ProposalImageReview({
       {error && (
         <div className="mt-2 flex items-start gap-1 rounded bg-rose-500/10 px-1.5 py-1 text-[11px] text-rose-600">
           <AlertTriangleIcon className="mt-0.5 shrink-0" />
-          <span>{error}</span>
+          <span>
+            {error}
+            {onOpenSettings && error.includes('设置') && (
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                className="ml-1 underline underline-offset-2 hover:text-rose-700"
+              >
+                去设置
+              </button>
+            )}
+          </span>
         </div>
       )}
 

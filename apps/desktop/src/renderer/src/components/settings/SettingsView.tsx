@@ -76,8 +76,12 @@ export function SettingsView(): React.JSX.Element | null {
  */
 export function SettingsBody(): React.JSX.Element {
   const t = useT()
-  const [activeCategory, setActiveCategory] =
-    useState<CategoryId>('appearance')
+  // 功能侧「去设置」按钮可带目标分类直达（如出图 API 未配置 → 'configuration'）。SettingsView
+  // 关闭时本组件整体卸载，useState 初始化器每次打开都重新执行，故只读一次初值即可、无需 effect。
+  const initialCategory = useSettingsStore((s) => s.initialCategory)
+  const [activeCategory, setActiveCategory] = useState<CategoryId>(
+    isCategoryId(initialCategory) ? initialCategory : 'appearance'
+  )
 
   const categories: { id: CategoryId; label: string; icon: React.ReactNode }[] =
     [
@@ -157,6 +161,23 @@ type CategoryId =
   | 'environment'
   | 'worktrees'
   | 'archived'
+
+const CATEGORY_IDS: readonly CategoryId[] = [
+  'general',
+  'appearance',
+  'configuration',
+  'personalization',
+  'usage',
+  'mcp',
+  'git',
+  'environment',
+  'worktrees',
+  'archived'
+]
+
+function isCategoryId(v: string | null): v is CategoryId {
+  return v !== null && (CATEGORY_IDS as readonly string[]).includes(v)
+}
 
 /* ─────────────────── Appearance ─────────────────── */
 

@@ -23,6 +23,10 @@ export interface ProposalImageToolbarProps {
   onReplace: (() => void) | null
   onDelete: () => void
   onClose: () => void
+  // 「未配置出图 API」类错误的「去设置」直达入口。为什么必须有：右上角齿轮打开的是 Open
+  // Design 的 web 设置弹窗，承载出图 API 表单的原生设置页没有常驻入口（GUI 走查发现），
+  // 错误提示里的这个按钮就是用户唯一能走到的路。可选：不传则错误只展示文字。
+  onOpenSettings?: () => void
 }
 
 export function ProposalImageToolbar({
@@ -32,7 +36,8 @@ export function ProposalImageToolbar({
   onEdit,
   onReplace,
   onDelete,
-  onClose
+  onClose,
+  onOpenSettings
 }: ProposalImageToolbarProps): React.JSX.Element {
   // mode: 'buttons' 三键常态；'editing' 展开改图指令输入框。
   const [mode, setMode] = useState<'buttons' | 'editing'>('buttons')
@@ -169,7 +174,18 @@ export function ProposalImageToolbar({
           {error && (
             <div className="mt-1.5 flex items-start gap-1 rounded bg-rose-500/10 px-1.5 py-1 text-[11px] text-rose-600">
               <AlertTriangleIcon className="mt-0.5 shrink-0" />
-              <span>{error}</span>
+              <span>
+                {error}
+                {onOpenSettings && error.includes('设置') && (
+                  <button
+                    type="button"
+                    onClick={onOpenSettings}
+                    className="ml-1 underline underline-offset-2 hover:text-rose-700"
+                  >
+                    去设置
+                  </button>
+                )}
+              </span>
             </div>
           )}
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
