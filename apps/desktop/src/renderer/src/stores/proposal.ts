@@ -45,6 +45,19 @@ export interface BlockRevisionReview {
   after: string // AI 改写后正文（去哨兵的干净 markdown）
 }
 
+// 点图工具栏（Task 9）发起改图/生成后的「待审阅」项，挂在数组里（非 blockReviews 那种以助手
+// 消息 id 为 key——图片操作不经 SDK 轮，没有 messageId 可挂）。Task 11 在此之上渲染「原图 vs
+// 新图」对照卡 + 应用/放弃。id 由 addImageReview 生成（crypto.randomUUID()），供 Task 11 增删。
+// 瞬时 UI 信号，不持久化（同 blockReviews：未决的图片改写不该跨会话留存）。
+export interface ImageReview {
+  id: string
+  sectionId: string
+  blockIndex: number
+  sourcePath?: string // mode='generate'（未来任务）时没有源图，故可空
+  resultPath: string
+  mode: 'edit' | 'generate'
+}
+
 interface ProposalState {
   active: boolean
   // 方案绑定的会话 ID——只有该 session 的 send 才带 proposalMode=true，
@@ -91,6 +104,9 @@ interface ProposalState {
   // 选区即改的待审阅提案，key=发起那轮的助手消息 id。非空项由 ThreadView 在该消息下渲染对照+按钮，
   // 应用才落地。瞬时 UI 信号，不持久化。可同时挂多条（不同消息各自独立审阅）。
   blockReviews: Record<string, BlockRevisionReview>
+  // 点图工具栏（Task 9）发起的改图/换图/生图「待审阅」项列表，Task 11 据此渲染对照卡。同
+  // blockReviews：瞬时 UI 信号，不持久化，在与 blockReviews 相同的重置点一并清空。
+  imageReviews: ImageReview[]
   // 草稿写盘是否处于失败态（P3-3）：flushProposalSave 拿到 {ok:false} 或 IPC 抛错时置 true，
   // 下次成功落盘置 false。面板据此显示「草稿未保存」常驻提示——写盘失败（磁盘满/权限/路径）
   // 原本是 fire-and-forget 静默吞掉，用户误以为已存、切走就丢。非阻塞、不持久化，纯运行时
@@ -127,6 +143,10 @@ interface ProposalState {
   // removeBlockReview：用户点应用/放弃、或「继续改」发起新一轮时，撤掉旧项。
   addBlockReview: (messageId: string, review: BlockRevisionReview) => void
   removeBlockReview: (messageId: string) => void
+  // 点图工具栏·审阅项增删（Task 9 产出、Task 11 消费）。addImageReview 生成并返回稳定 id
+  // （调用方目前不必用，但契约要求返回，供 Task 11 未来精确定位/去重）。
+  addImageReview: (review: Omit<ImageReview, 'id'>) => string
+  removeImageReview: (id: string) => void
   // 标记/清除草稿写盘失败态（P3-3）。flushProposalSave 落盘后调用：失败 true、成功 false。
   setDraftSaveFailed: (failed: boolean) => void
   // 用 AI 新产出整节替换指定节：同步把 baselineMarkdown 也更新成新原文（否则 M-0 埋点会把
@@ -196,6 +216,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   stageSkip: null,
   pendingRevision: null,
   blockReviews: {},
+  imageReviews: [],
   draftSaveFailed: false,
   start: (sessionId) =>
     set({
@@ -211,6 +232,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       stageSkip: null,
       pendingRevision: null,
       blockReviews: {},
+      imageReviews: [],
       draftSaveFailed: false
     }),
   setProducts: (products) => set({ products }),
@@ -267,6 +289,13 @@ export const useProposalStore = create<ProposalState>((set) => ({
       delete next[messageId]
       return { blockReviews: next }
     }),
+  addImageReview: (review) => {
+    const id = crypto.randomUUID()
+    set((s) => ({ imageReviews: [...s.imageReviews, { ...review, id }] }))
+    return id
+  },
+  removeImageReview: (id) =>
+    set((s) => ({ imageReviews: s.imageReviews.filter((r) => r.id !== id) })),
   setDraftSaveFailed: (failed) => set({ draftSaveFailed: failed }),
   reviseSection: (id, markdown) =>
     set((s) => ({
@@ -312,10 +341,17 @@ export const useProposalStore = create<ProposalState>((set) => ({
       workspaceOpen: true,
       stageSkip: null,
       pendingRevision: null,
-      blockReviews: {}
+      blockReviews: {},
+      imageReviews: []
     }),
   leaveMode: () =>
-    set({ active: false, workspaceOpen: false, pendingRevision: null, blockReviews: {} }),
+    set({
+      active: false,
+      workspaceOpen: false,
+      pendingRevision: null,
+      blockReviews: {},
+      imageReviews: []
+    }),
   restoreFromTranscript: ({ sessionId, sections, consumedDraftIds, phase }) =>
     set({
       active: true,
@@ -338,6 +374,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       stageSkip: null,
       pendingRevision: null,
       blockReviews: {},
+      imageReviews: [],
       draftSaveFailed: false
     }),
   restoreFromDisk: (record) =>
@@ -359,6 +396,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       stageSkip: null,
       pendingRevision: null,
       blockReviews: {},
+      imageReviews: [],
       draftSaveFailed: false
     }),
   reset: () =>
@@ -375,6 +413,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       stageSkip: null,
       pendingRevision: null,
       blockReviews: {},
+      imageReviews: [],
       draftSaveFailed: false
     })
 }))

@@ -147,8 +147,16 @@ const components: Components = {
         const caption = (alt && alt.trim()) || src.slice(src.lastIndexOf('/') + 1)
         return <span className="my-2 inline-block text-[13px] text-neutral-400">[图：{caption}]</span>
       }
+      // data-raw-src：保留 markdown 里的原始（未转协议）绝对路径，供编辑态点图工具栏（Task 9）
+      // 反查 sourcePath——react-markdown 解析时已代我们剥掉了 <> 包裹与 " title" 后缀，值与
+      // shared/proposal.parseImages 抽出的 path 精确一致，点图无需再自行正则重新解析一遍。
       const imgEl = (
-        <img src={resolved} alt={alt ?? ''} className="my-2 max-h-[70vh] w-auto max-w-full rounded" />
+        <img
+          src={resolved}
+          alt={alt ?? ''}
+          data-raw-src={src}
+          className="my-2 max-h-[70vh] w-auto max-w-full rounded"
+        />
       )
       // 产出图来源角标：纯渲染态提示，不进 markdown、不进 docx（导出侧直读绝对路径原文，
       // 天然不含角标）。仅对草稿产出图生效——deriveImageOrigin 对 KB 图/外链图恒返回 null。

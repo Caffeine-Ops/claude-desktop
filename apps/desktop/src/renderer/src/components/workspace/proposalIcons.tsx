@@ -184,3 +184,12 @@ export const TrashIcon = (p: IconProps): React.JSX.Element => (
     <path d="M14 11v6" />
   </Base>
 )
+
+// 「换图」按钮用：一张图片（相框 + 山 + 太阳），暗示「替换这张图」。
+export const ImageIcon = (p: IconProps): React.JSX.Element => (
+  <Base {...p}>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="8.5" cy="8.5" r="1.5" />
+    <path d="m21 15-5-5L5 21" />
+  </Base>
+)

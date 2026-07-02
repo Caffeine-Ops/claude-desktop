@@ -4,6 +4,7 @@ import { useChatStore } from '../../stores/chat'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 import { reviseProposalSection } from '../../lib/sendProposalSectionRevision'
 import { SelectionAiBubble } from './SelectionAiBubble'
+import { ProposalImageToolbar } from './ProposalImageToolbar'
 import type { ProposalKind } from '@shared/proposal'
 import { splitBlocks, joinBlocks } from '@shared/proposalBlocks'
 import {
@@ -128,6 +129,34 @@ function blockNeedsGap(blk: string): boolean {
   )
 }
 
+// 点图工具栏「删除」用：在一块 markdown 文本里找到路径等于 targetPath 的那个 `![alt](path)`
+// 图片语法并摘掉它，其余内容原样保留（同块共存的说明文字等不受影响）。找不到匹配项则原样返回
+// （调用方据「返回值是否等于入参」判断是否真的删了）。
+//
+// path 归一化逻辑刻意与 shared/proposal.ts 的 parseImages 保持一致（剥 `"title"`/`'title'`
+// 后缀、剥 `<>` 包裹）——targetPath 来自 AssistantMarkdown 的 data-raw-src，那是 react-markdown
+// 解析后的干净路径（等价于 parseImages 抽出的 path），两边用同一套剥离规则比较才不会因为
+// markdown 原文里到底带没带 `<>`/title 而误判「找不到」。parseImages 本身不导出内部正则，
+// 这里的块级删除又需要拿到匹配的原始子串位置（parseImages 只返回值，不返回位置），故在此
+// 自成一份小实现，而非 import 复用——两处判据一致即可，不必共享同一个正则对象。
+function removeImageFromBlockText(block: string, targetPath: string): string {
+  const IMAGE_RE = /!\[[^\]]*\]\(([^)]+)\)/g
+  IMAGE_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = IMAGE_RE.exec(block)) !== null) {
+    let raw = m[1].trim()
+    raw = raw.replace(/\s+(?:"[^"]*"|'[^']*')\s*$/, '').trim() // 剥 title 后缀
+    if (raw.startsWith('<') && raw.endsWith('>')) raw = raw.slice(1, -1).trim() // 剥 <> 包裹
+    if (raw !== targetPath) continue
+    const before = block.slice(0, m.index).replace(/[ \t]+$/, '')
+    const after = block.slice(m.index + m[0].length).replace(/^[ \t]+/, '')
+    // joinBlocks 会把 trim 后为空的块整块过滤掉（图片独占一块的常见情形，见文件顶部块切分
+    // 注释），故这里不必费力抹平中间可能留下的空行——多数情况下整块本就只剩空白直接消失。
+    return (before + after).trim()
+  }
+  return block
+}
+
 /**
  * 编辑态：一张连续的 A4 宽长纸，分节无缝拼接、向下滚动不分页。
  * 保留现有「哨兵→分节」数据模型，仅把卡片堆叠换皮成纸面：
@@ -141,9 +170,9 @@ function blockNeedsGap(blk: string): boolean {
  */
 export function ProposalPaper(): React.JSX.Element {
   const sections = useProposalStore((s) => s.sections)
-  // 这三个 action 是 zustand 稳定引用、永不变——从 getState() 一次性取出、不订阅，
+  // 这几个 action 是 zustand 稳定引用、永不变——从 getState() 一次性取出、不订阅，
   // 避免每次 store 更新（如流式 append 新节）都白跑一遍 selector。
-  const { updateSection, removeSection, moveSection } = useProposalStore.getState()
+  const { updateSection, removeSection, moveSection, addImageReview } = useProposalStore.getState()
   const proposalSid = useProposalStore((s) => s.sessionId)
   const generating = useChatStore((s) =>
     proposalSid ? (s.perSession[proposalSid]?.streaming ?? false) : false
@@ -151,6 +180,9 @@ export function ProposalPaper(): React.JSX.Element {
   // 分块结果按 markdown 内容缓存（review 效率）：renderSection 每次渲染都 splitBlocks(sec.markdown)，
   // AI 流式时某节高频变更→整个 ProposalPaper 重渲染→对【所有】章节反复重跑逐行分块。按内容 key 缓存后，
   // 只有内容真变的那节才重解析、其余命中缓存。splitBlocks 是纯函数，按输入缓存安全；>200 条清空防长会话涨。
+  // 编辑纸面的滚动容器：既是 SelectionAiBubble 的定位参照系，也是点图工具栏（下方）的定位参照系
+  // ——两者都用「容器相对坐标 + 容器自身 relative」的同一套定位范式，故提到函数顶部与其它 ref 并列。
+  const canvasRef = useRef<HTMLDivElement | null>(null)
   const blocksCacheRef = useRef<Map<string, string[]>>(new Map())
   const getBlocks = (markdown: string): string[] => {
     const cache = blocksCacheRef.current
@@ -245,6 +277,123 @@ export function ProposalPaper(): React.JSX.Element {
     const id = setTimeout(() => setConfirmDeleteId(null), 3000)
     return () => clearTimeout(id)
   }, [confirmDeleteId])
+
+  // 点图浮动工具栏（Task 9）：点中编辑态某图 → 记录它所在的节/块 + 源图绝对路径（来自 img 的
+  // data-raw-src，见 AssistantMarkdown 的注释——react-markdown 解析时已代我们剥好 <> 与 title
+  // 后缀，值与 shared/proposal.parseImages 抽出的 path 精确一致，无需再自行正则解析一遍）。
+  // anchorLeft/anchorTop 是容器（canvasRef）相对坐标，与 SelectionAiBubble 同一套定位范式。
+  const [imgSel, setImgSel] = useState<{
+    sectionId: string
+    blockIndex: number
+    sourcePath: string
+    anchorLeft: number
+    anchorTop: number
+  } | null>(null)
+
+  // 生成中 / 进了整节源码逃生舱 / 进了块级就地编辑：三者都可能让当前选中的图片从 DOM 里消失
+  // （generating 时其它路径可能并发改写本节；editingId/editingBlock 打开会把渲染内容换成
+  // textarea），此时工具栏若还挂着旧坐标就是悬空的，一律收起（与 SelectionAiBubble 收到
+  // disabled 就清 anchor 是同一条纪律）。
+  useEffect(() => {
+    if (generating || editingId || editingBlock) setImgSel(null)
+  }, [generating, editingId, editingBlock])
+
+  // 点击别处关闭：真正的判定在 mousedown（早于 click），但只处理「关闭」——「选中新图片」这个
+  // 更新交给下面 handlePaperClick 的 onClick 做。命中工具栏自身（data-image-toolbar）或某张图
+  // （马上会被 handlePaperClick 处理成新选中项）都不在这里清空，否则会先清后设、多余的中间态。
+  useEffect(() => {
+    if (!imgSel) return
+    function onDocMouseDown(e: MouseEvent): void {
+      // 同 SelectionAiBubble 的 resolveBlock：e.target 理论上可能是非 Element 节点（罕见），
+      // instanceof 窄化后再 closest，避免对非 Element 调用 closest 报错。
+      const target = e.target instanceof Element ? e.target : null
+      if (!target) return
+      if (target.closest('[data-image-toolbar]')) return
+      if (target.closest('img[data-raw-src]')) return
+      setImgSel(null)
+    }
+    document.addEventListener('mousedown', onDocMouseDown)
+    return () => document.removeEventListener('mousedown', onDocMouseDown)
+  }, [imgSel])
+
+  // 纸面点击委派：只关心点没点中一张（可点的）图。图片渲染在 AssistantMarkdown 深处，逐块加
+  // 监听器成本高也没必要——冒泡到滚动容器上统一判定即可，命中才 setImgSel，否则原样放行（不
+  // 吞事件、不 stopPropagation），不影响块双击进编辑/选区即改等既有交互。
+  function handlePaperClick(e: React.MouseEvent<HTMLDivElement>): void {
+    if (generating) return
+    if (!(e.target instanceof Element)) return
+    const img = e.target.closest('img[data-raw-src]')
+    if (!img) return
+    const blockEl = img.closest<HTMLElement>('[data-block-index]')
+    if (!blockEl) return
+    const sectionId = blockEl.getAttribute('data-section-id')
+    const idxAttr = blockEl.getAttribute('data-block-index')
+    const sourcePath = img.getAttribute('data-raw-src')
+    if (sectionId == null || idxAttr == null || !sourcePath) return
+    const container = canvasRef.current
+    if (!container) return
+    const rect = img.getBoundingClientRect()
+    const cRect = container.getBoundingClientRect()
+    setImgSel({
+      sectionId,
+      blockIndex: Number(idxAttr),
+      sourcePath,
+      // 右上角：右边界对齐图片右边（浮层自身用 translate(-100%) 靠右），上边缘贴图片顶部再下探
+      // 一点，视觉上像一枚浮在图片右上角的胶囊，不完全盖住图（与 Step1 要求「绝对定位在图右上角」一致）。
+      anchorLeft: rect.right - cRect.left + container.scrollLeft,
+      anchorTop: rect.top - cRect.top + container.scrollTop + 6
+    })
+  }
+
+  // 改图：调 Task 7 的 IPC，成功则把「原图 vs 新图」登记进 imageReviews（Task 11 消费）。
+  // 失败按错误信息分流成两类可读提示（未配置 key → 引导去设置；其它 → 建议稍后重试），返回给
+  // 工具栏自己展示、不抛出——工具栏据返回值决定是否保留输入框允许重试。
+  async function handleImageEdit(
+    sectionId: string,
+    blockIndex: number,
+    sourcePath: string,
+    prompt: string
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    if (!proposalSid) return { ok: false, message: '当前没有方案会话，请稍后重试' }
+    try {
+      const { path } = await window.chatApi.proposalImageEdit({
+        sessionId: proposalSid,
+        sourcePath,
+        prompt
+      })
+      addImageReview({ sectionId, blockIndex, sourcePath, resultPath: path, mode: 'edit' })
+      return { ok: true }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (message.includes('未配置')) {
+        return { ok: false, message: '尚未配置出图 API，请到设置里填写 key 与地址后再试。' }
+      }
+      return { ok: false, message: '改图失败，请稍后重试。' }
+    }
+  }
+
+  // 删除：从该图所在块的 markdown 里摘掉这一段 `![...](sourcePath)`，其余内容原样保留，
+  // 重拼回整节后走 updateSection（与块级手改同一条落盘路径）。若该块已不是当初点击时的样子
+  // （如生成中被并发改写）——找不到匹配的图片则整块原样不动，只收起工具栏（不误删无关内容）。
+  function handleImageDelete(sectionId: string, blockIndex: number, sourcePath: string): void {
+    const sec = sections.find((s) => s.id === sectionId)
+    if (!sec) {
+      setImgSel(null)
+      return
+    }
+    const blocks = splitBlocks(sec.markdown)
+    if (blockIndex < 0 || blockIndex >= blocks.length) {
+      setImgSel(null)
+      return
+    }
+    const original = blocks[blockIndex]
+    const stripped = removeImageFromBlockText(original, sourcePath)
+    if (stripped !== original) {
+      blocks[blockIndex] = stripped
+      updateSection(sec.id, joinBlocks(blocks))
+    }
+    setImgSel(null)
+  }
 
   const toolBtn =
     'grid size-6 place-items-center rounded-md border border-neutral-300 bg-white text-[12px] text-neutral-600 hover:border-accent hover:text-accent disabled:opacity-30'
@@ -467,9 +616,12 @@ export function ProposalPaper(): React.JSX.Element {
     )
   }
 
-  const canvasRef = useRef<HTMLDivElement | null>(null)
   return (
-    <div ref={canvasRef} className="proposal-canvas relative flex-1 overflow-auto py-7">
+    <div
+      ref={canvasRef}
+      className="proposal-canvas relative flex-1 overflow-auto py-7"
+      onClick={handlePaperClick}
+    >
       <div className="proposal-paper mx-auto w-[min(794px,calc(100%-48px))] rounded-sm bg-white px-[clamp(28px,6%,76px)] py-16 text-[#1d1d1f] shadow-[0_1px_0_rgba(0,0,0,0.04),0_12px_34px_rgba(0,0,0,0.30)]">
         {sections.length === 0 ? (
           <div className="text-center text-[13px] text-neutral-400">
@@ -497,6 +649,21 @@ export function ProposalPaper(): React.JSX.Element {
       </div>
       {/* 选区即改浮层：贴选区尾浮出，作用于选区覆盖的块区间。生成中禁用（与块手改一致）。 */}
       <SelectionAiBubble containerRef={canvasRef} disabled={generating} />
+      {/* 点图浮动工具栏（Task 9）：点中一张图后浮出，右上角贴图。换图占位——Task 10（上传/知识库
+          选图）尚未落地，传 null 让工具栏自行渲染成禁用态 + 「即将支持」提示。 */}
+      {imgSel && (
+        <ProposalImageToolbar
+          anchorLeft={imgSel.anchorLeft}
+          anchorTop={imgSel.anchorTop}
+          disabled={generating}
+          onEdit={(prompt) =>
+            handleImageEdit(imgSel.sectionId, imgSel.blockIndex, imgSel.sourcePath, prompt)
+          }
+          onReplace={null}
+          onDelete={() => handleImageDelete(imgSel.sectionId, imgSel.blockIndex, imgSel.sourcePath)}
+          onClose={() => setImgSel(null)}
+        />
+      )}
     </div>
   )
 }
