@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, net, shell, type IpcMainInvokeEven
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join, relative, sep } from 'node:path'
+import { extname, isAbsolute, join, relative, sep } from 'node:path'
 import type { PermissionResponse } from '../../shared/types'
 import {
   IPC_CHANNELS,
@@ -112,7 +112,8 @@ import type {
   ProposalImageApiConfig,
   ProposalImageGeneratePayload,
   ProposalImageEditPayload,
-  ProposalImageResult
+  ProposalImageResult,
+  ProposalImageUploadPayload
 } from '../../shared/ipc-channels'
 import type { ProposalMetricRecord } from '../../shared/proposal'
 import { generateImage, editImage } from '../services/imageGenService'
@@ -266,6 +267,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_SET)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_GENERATE)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_EDIT)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_UPLOAD)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -1279,6 +1281,32 @@ export function registerIpcHandlers(): void {
       const sourceBytes = await readFile(sourcePath)
       const bytes = await editImage(cfg, { prompt, sourceBytes, sourceMime: 'image/png' })
       const path = await writeProposalImage(sessionId, 'edited', bytes)
+      return { path }
+    }
+  )
+
+  // 上传本地图：与 GENERATE/EDIT 不同，不调出图 API（不受未配置 apiKey 限制），只是「选文件→
+  // 落盘到草稿资产目录」。用原生文件选择框而非 <input type=file>——renderer 侧拿不到选中文件
+  // 的绝对磁盘路径（浏览器安全模型），必须走 main 侧 dialog 才能后续 readFile。锚定 sender 所在
+  // 的 BrowserWindow，同 WORKSPACE_PICK 的 resolveBrowserWindow 用法。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_IMAGE_UPLOAD,
+    async (event, args: ProposalImageUploadPayload): Promise<ProposalImageResult | null> => {
+      const sessionId = typeof args?.sessionId === 'string' ? args.sessionId : ''
+      if (!sessionId) throw new Error('缺少会话 id')
+      const window = resolveBrowserWindow(event)
+      const result = await dialog.showOpenDialog(window, {
+        title: '选择要插入的图片',
+        properties: ['openFile'],
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
+      })
+      if (result.canceled || result.filePaths.length === 0) return null
+      const filePath = result.filePaths[0]!
+      const bytes = await readFile(filePath)
+      // ext 取自选中文件本身的扩展名（去掉前导点、小写），落盘文件名与源文件格式一致；
+      // 用户不可能选出没有扩展名的图片（filters 已限定），但防御性兜底成 'png'。
+      const ext = extname(filePath).slice(1).toLowerCase() || 'png'
+      const path = await writeProposalImage(sessionId, 'uploaded', bytes, ext)
       return { path }
     }
   )

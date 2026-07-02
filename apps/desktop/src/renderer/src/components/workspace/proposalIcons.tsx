@@ -193,3 +193,24 @@ export const ImageIcon = (p: IconProps): React.JSX.Element => (
     <path d="m21 15-5-5L5 21" />
   </Base>
 )
+
+// 「生成图片」按钮用：同款相框图片 + 右上角一个「+」，暗示「凭空生成/插入一张新图」，与
+// ImageIcon（换图，暗示替换既有图）区分开。
+export const ImagePlusIcon = (p: IconProps): React.JSX.Element => (
+  <Base {...p}>
+    <rect x="3" y="3" width="14" height="14" rx="2" />
+    <circle cx="8" cy="8" r="1.3" />
+    <path d="m16 12-4-4-6 6" />
+    <path d="M19 15v6" />
+    <path d="M22 18h-6" />
+  </Base>
+)
+
+// 「上传图片」按钮用：托盘 + 向上箭头，通用的本地文件上传语义。
+export const UploadIcon = (p: IconProps): React.JSX.Element => (
+  <Base {...p}>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <path d="M17 8l-5-5-5 5" />
+    <path d="M12 3v12" />
+  </Base>
+)

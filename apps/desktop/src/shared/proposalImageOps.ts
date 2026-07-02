@@ -68,3 +68,43 @@ export function removeImageOccurrence(blockText: string, path: string, occurrenc
   }
   return joined.trim()
 }
+
+// 换图（Task 10）用的字符串手术：在一块 markdown 文本里找到路径等于 path 的第 occurrence 个
+// （0 起）`![alt](path)` 图片语法，把括号里的路径换成 newPath，其余内容（含 alt 文本）原样
+// 保留。找不到匹配项（同 removeImageOccurrence：路径不存在，或 occurrence 超出该路径出现
+// 次数）则原样返回——调用方据「返回值是否等于入参」判断是否真的换了。
+//
+// 与 removeImageOccurrence 共用同一套 occurrence 定位逻辑与 normalizeImagePath 归一化规则
+// （title 后缀 / <> 包裹都按同一标准剥离后比较），只是命中后的落子动作从「摘除」换成「替换
+// 括号内容」。替换后原有的 title 后缀 / <> 包裹一并丢弃（新路径不含它们，同 removeImageOccurrence
+// 对这些修饰符的处理立场一致：不保留跟旧路径绑定的修饰符）。
+export function replaceImageOccurrence(
+  blockText: string,
+  path: string,
+  occurrence: number,
+  newPath: string
+): string {
+  IMAGE_RE.lastIndex = 0
+  let matchStart = -1
+  let matchLen = 0
+  let seen = 0
+  let m: RegExpExecArray | null
+  while ((m = IMAGE_RE.exec(blockText)) !== null) {
+    if (normalizeImagePath(m[1]) !== path) continue
+    if (seen === occurrence) {
+      matchStart = m.index
+      matchLen = m[0].length
+      break
+    }
+    seen++
+  }
+  if (matchStart < 0) return blockText
+
+  // 从匹配到的完整 `![alt](...)` 子串里单独抠出 alt 文本（IMAGE_RE 本身只捕获路径部分），
+  // 拼一个只换了路径、alt 原样保留的新语法。
+  const matched = blockText.slice(matchStart, matchStart + matchLen)
+  const altMatch = /^!\[([^\]]*)\]/.exec(matched)
+  const alt = altMatch ? altMatch[1] : ''
+  const replacement = `![${alt}](${newPath})`
+  return blockText.slice(0, matchStart) + replacement + blockText.slice(matchStart + matchLen)
+}

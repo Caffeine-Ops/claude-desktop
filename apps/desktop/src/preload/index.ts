@@ -73,7 +73,8 @@ import {
   type ProposalImageApiConfig,
   type ProposalImageGeneratePayload,
   type ProposalImageEditPayload,
-  type ProposalImageResult
+  type ProposalImageResult,
+  type ProposalImageUploadPayload
 } from '../shared/ipc-channels'
 import type { ProposalMetricRecord } from '../shared/proposal'
 
@@ -501,6 +502,12 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PROPOSAL_IMAGE_EDIT,
       args
     ) as Promise<ProposalImageResult>
+  },
+  proposalImageUpload(args: ProposalImageUploadPayload): Promise<ProposalImageResult | null> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_IMAGE_UPLOAD,
+      args
+    ) as Promise<ProposalImageResult | null>
   }
 }
 

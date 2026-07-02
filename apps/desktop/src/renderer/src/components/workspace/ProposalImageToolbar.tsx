@@ -17,7 +17,9 @@ export interface ProposalImageToolbarProps {
   // 生成中（AI 正在流式产出）禁用一切操作——与块编辑/选区改写同一条「生成中冻结手改」纪律。
   disabled: boolean
   onEdit: (prompt: string) => Promise<{ ok: true } | { ok: false; message: string }>
-  // 换图：Task 10（上传/知识库选图）未落地，先占位禁用。
+  // 换图（Task 10 已接通）：点击弹原生文件选择框，选中后用新图替换这张。null 仅在「正弹着
+  // 选择框」的短暂窗口内传入（父组件用它防重入双击），不再是「功能未落地」的永久占位——
+  // 故下方按钮的禁用提示文案也相应改为「处理中」而非「即将支持」。
   onReplace: (() => void) | null
   onDelete: () => void
   onClose: () => void
@@ -100,7 +102,7 @@ export function ProposalImageToolbar({
             type="button"
             className={iconBtn}
             disabled={disabled || !onReplace}
-            title={onReplace ? '换图' : '换图·即将支持'}
+            title={onReplace ? '换图' : '换图·处理中'}
             aria-label="换图"
             onClick={() => onReplace?.()}
           >

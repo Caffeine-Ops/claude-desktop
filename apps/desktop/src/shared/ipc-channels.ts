@@ -510,7 +510,14 @@ export const IPC_CHANNELS = {
    * Renderer → main. 改图：读 `sourcePath` 的字节喂给 imageGenService.editImage，出图后
    * 落盘（来源标记 'edited'/edit- 前缀），返回绝对路径。同 GENERATE，缺 apiKey 抛中文错误。
    */
-  PROPOSAL_IMAGE_EDIT: 'proposal-image:edit'
+  PROPOSAL_IMAGE_EDIT: 'proposal-image:edit',
+  /**
+   * Renderer → main. 上传本地图：弹 OS 原生文件选择框（限图片格式，单选），用户取消返回
+   * null；选中后读字节落盘到该会话草稿资产目录（writeProposalImage，来源标记
+   * 'uploaded'/upload- 前缀，ext 取自选中文件的扩展名），返回绝对路径。与 GENERATE/EDIT
+   * 不同：上传不调出图 API，不受未配置 apiKey 限制。
+   */
+  PROPOSAL_IMAGE_UPLOAD: 'proposal-image:upload'
 } as const
 
 /**
@@ -1051,6 +1058,11 @@ export interface ProposalImageResult {
   path: string
 }
 
+/** Payload for PROPOSAL_IMAGE_UPLOAD。 */
+export interface ProposalImageUploadPayload {
+  sessionId: string
+}
+
 /**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
  * interface on both sides via the shared type.
@@ -1482,6 +1494,12 @@ export interface ChatApi {
    * edited），返回绝对路径。同 generate，缺 apiKey 时 reject 中文错误。
    */
   proposalImageEdit(args: ProposalImageEditPayload): Promise<ProposalImageResult>
+  /**
+   * 上传本地图。main 弹原生文件选择框（限 png/jpg/jpeg/gif/webp，单选），用户取消返回
+   * null；选中后落盘到该会话草稿资产目录（来源标记为 uploaded），返回绝对路径。不调出图
+   * API，不受 apiKey 是否配置影响。
+   */
+  proposalImageUpload(args: ProposalImageUploadPayload): Promise<ProposalImageResult | null>
 }
 
 /**
