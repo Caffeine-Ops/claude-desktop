@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'bun:test'
 
-import { removeImageOccurrence, replaceImageOccurrence } from './proposalImageOps'
+import {
+  removeImageOccurrence,
+  replaceImageOccurrence,
+  applyImageReplacementWithDrift
+} from './proposalImageOps'
 
 describe('removeImageOccurrence', () => {
   it('独占一行的图片被干净摘除（trim 后不留空白伪影）', () => {
@@ -101,5 +105,80 @@ describe('replaceImageOccurrence', () => {
   it('alt 为空字符串时也能正确保留（空 alt）', () => {
     const block = '![](/a/b.png)'
     expect(replaceImageOccurrence(block, '/a/b.png', 0, '/c.png')).toBe('![](/c.png)')
+  })
+})
+
+describe('applyImageReplacementWithDrift', () => {
+  it('preferredIndex 命中：直接原地换，不触发扫描', () => {
+    const blocks = ['first block', '![alt](/a/b.png)', 'third block']
+    const { blocks: next, changed } = applyImageReplacementWithDrift(
+      blocks,
+      1,
+      '/a/b.png',
+      0,
+      '/new/c.png'
+    )
+    expect(changed).toBe(true)
+    expect(next).toEqual(['first block', '![alt](/new/c.png)', 'third block'])
+    // 入参不被就地修改（纯函数）
+    expect(blocks[1]).toBe('![alt](/a/b.png)')
+  })
+
+  it('preferredIndex 未命中、其余块里只有唯一候选：漂移后仍能落地到那一块', () => {
+    const blocks = ['no image here', 'other block', '![alt](/a/b.png)']
+    const { blocks: next, changed } = applyImageReplacementWithDrift(
+      blocks,
+      0,
+      '/a/b.png',
+      0,
+      '/new/c.png'
+    )
+    expect(changed).toBe(true)
+    expect(next).toEqual(['no image here', 'other block', '![alt](/new/c.png)'])
+  })
+
+  it('preferredIndex 未命中、其余块里有两个候选（同路径复用资产）：歧义，no-op（Finding 1）', () => {
+    const blocks = ['no image here', '![alt](/a/b.png)', '![alt](/a/b.png)']
+    const { blocks: next, changed } = applyImageReplacementWithDrift(
+      blocks,
+      0,
+      '/a/b.png',
+      0,
+      '/new/c.png'
+    )
+    expect(changed).toBe(false)
+    expect(next).toEqual(blocks)
+  })
+
+  it('preferredIndex 未命中、也没有任何候选：no-op', () => {
+    const blocks = ['no image here', 'still no image']
+    const { blocks: next, changed } = applyImageReplacementWithDrift(
+      blocks,
+      0,
+      '/a/b.png',
+      0,
+      '/new/c.png'
+    )
+    expect(changed).toBe(false)
+    expect(next).toEqual(blocks)
+  })
+
+  it('preferredIndex 越界：被夹到合法范围后继续走命中/漂移逻辑，不抛错', () => {
+    const blocks = ['first block', '![alt](/a/b.png)']
+    const { blocks: next, changed } = applyImageReplacementWithDrift(
+      blocks,
+      99,
+      '/a/b.png',
+      0,
+      '/new/c.png'
+    )
+    expect(changed).toBe(true)
+    expect(next).toEqual(['first block', '![alt](/new/c.png)'])
+  })
+
+  it('blocks 为空数组：no-op，不抛错', () => {
+    const { blocks: next, changed } = applyImageReplacementWithDrift([], 0, '/a/b.png', 0, '/c.png')
+    expect(changed).toBe(false)
+    expect(next).toEqual([])
   })
 })

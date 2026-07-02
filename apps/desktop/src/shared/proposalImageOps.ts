@@ -108,3 +108,50 @@ export function replaceImageOccurrence(
   const replacement = `![${alt}](${newPath})`
   return blockText.slice(0, matchStart) + replacement + blockText.slice(matchStart + matchLen)
 }
+
+// 应用改图审阅项（Task 11）时用的「带漂移容错 + 歧义守卫」落点逻辑：把 review 记的新图路径
+// 换回目标块。preferredIndex（多半是发起改图那一刻的 blockIndex，越界会被夹到合法范围）优先
+// 尝试；审阅悬而未决期间该节完全可能被并发编辑（AI 修订/手改/块序变化）致块布局漂移，若仅按
+// 旧下标硬替换，一旦目标块已不含 sourcePath，replaceImageOccurrence 会原样返回、静默不生效
+// ——用户点了「应用」却什么也没发生。
+//
+// 于是在优先下标未命中时退化为扫描该节其余块，但不再是「见第一个匹配就换」：先数清楚除
+// preferredIndex 外还有几个块的 path+occurrence 会命中 replaceImageOccurrence（即真的会改变
+// 内容），只有【恰好一个】候选时才落地——0 个候选说明图确实不在这节了（原样返回），≥2 个候选
+// 说明同一张图（同 path+occurrence）在本节被复用了不止一处，此时无法分辨用户当初点的到底是
+// 哪一块，贸然改第一个匹配到的等于可能重写一块用户从未审阅过的内容（Finding 1），故同样按
+// no-op 处理，把判断权交回用户（review 卡片仍会被上层摘除，但内容不动）。
+//
+// 纯函数：不就地修改入参 blocks，返回新数组（changed=false 时返回值与入参内容相等，但调用方
+// 不应依赖引用相等）。
+export function applyImageReplacementWithDrift(
+  blocks: string[],
+  preferredIndex: number,
+  path: string,
+  occurrence: number,
+  newPath: string
+): { blocks: string[]; changed: boolean } {
+  if (blocks.length === 0) return { blocks, changed: false }
+
+  const clampedPreferred = Math.min(Math.max(preferredIndex, 0), blocks.length - 1)
+  const replacedAt = (idx: number): string => replaceImageOccurrence(blocks[idx], path, occurrence, newPath)
+
+  const preferredReplaced = replacedAt(clampedPreferred)
+  if (preferredReplaced !== blocks[clampedPreferred]) {
+    const next = blocks.slice()
+    next[clampedPreferred] = preferredReplaced
+    return { blocks: next, changed: true }
+  }
+
+  const candidates: number[] = []
+  for (let i = 0; i < blocks.length; i++) {
+    if (i === clampedPreferred) continue
+    if (replacedAt(i) !== blocks[i]) candidates.push(i)
+  }
+  if (candidates.length !== 1) return { blocks, changed: false }
+
+  const idx = candidates[0]
+  const next = blocks.slice()
+  next[idx] = replacedAt(idx)
+  return { blocks: next, changed: true }
+}

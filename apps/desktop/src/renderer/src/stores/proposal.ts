@@ -318,8 +318,16 @@ export const useProposalStore = create<ProposalState>((set) => ({
     set((s) => ({
       sections: s.sections.map((sec) => (sec.id === id ? { ...sec, verification } : sec))
     })),
+  // 删节要连带清掉挂在该节上的待审阅改图项（Finding 4）：imageReviews 靠 sectionId 关联章节，
+  // 节被删后若不过滤，孤儿 review 会继续渲染对照卡——「应用」时 applyImageReview 的
+  // `sections.find` 落空、静默清项（表现尚可），但「放弃」前它会一直挂在 UI 上指向一个已经
+  // 不存在的节，属于状态不一致，删节这一步就该顺手清干净。blockReviews 以 messageId 为键、
+  // 不含 sectionId 关联，不受此次修复影响。
   removeSection: (id) =>
-    set((s) => ({ sections: s.sections.filter((sec) => sec.id !== id) })),
+    set((s) => ({
+      sections: s.sections.filter((sec) => sec.id !== id),
+      imageReviews: s.imageReviews.filter((r) => r.sectionId !== id)
+    })),
   moveSection: (id, dir) =>
     set((s) => {
       const i = s.sections.findIndex((sec) => sec.id === id)

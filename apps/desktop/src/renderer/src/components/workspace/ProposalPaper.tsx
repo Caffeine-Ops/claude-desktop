@@ -8,7 +8,11 @@ import { ProposalImageToolbar } from './ProposalImageToolbar'
 import { ProposalImageReview } from './ProposalImageReview'
 import type { ProposalKind } from '@shared/proposal'
 import { splitBlocks, joinBlocks } from '@shared/proposalBlocks'
-import { removeImageOccurrence, replaceImageOccurrence } from '@shared/proposalImageOps'
+import {
+  removeImageOccurrence,
+  replaceImageOccurrence,
+  applyImageReplacementWithDrift
+} from '@shared/proposalImageOps'
 import {
   RotateCwIcon,
   PlusIcon,
@@ -137,37 +141,11 @@ function blockNeedsGap(blk: string): boolean {
 // 点图工具栏「删除」的字符串手术本身（含 Finding 1 的空格粘连修复、Finding 2 的同路径按第 N
 // 次出现删除）已抽到 shared/proposalImageOps.ts（纯函数、有 bun test 覆盖）——renderer 这层
 // 只负责从 DOM 数出「点中的是第几个同路径出现」（见 handlePaperClick）并调用它。
-
-// 应用改图审阅项（Task 11）：把 review 记的新图路径换回目标块。preferredIndex（多半是发起改图
-// 那一刻的 blockIndex）优先尝试；审阅悬而未决期间该节完全可能被并发编辑（AI 修订/手改/块序
-// 变化）致块布局漂移，若仅按旧下标硬替换，一旦目标块已不含 sourcePath，replaceImageOccurrence
-// 会原样返回、静默不生效——用户点了「应用」却什么也没发生。于是在优先下标未命中时退化为扫描
-// 该节其余块，只要还能在【任意】块里找到同 path+occurrence 的图就换掉；replaceImageOccurrence
-// 本身对不匹配的块是幂等直通（不会误改无关内容），扫描不存在越权改写的风险。
-function applyReplacementAcrossBlocks(
-  blocks: string[],
-  preferredIndex: number,
-  sourcePath: string,
-  occurrence: number,
-  newPath: string
-): { blocks: string[]; changed: boolean } {
-  const tryIndex = (idx: number): boolean => {
-    const replaced = replaceImageOccurrence(blocks[idx], sourcePath, occurrence, newPath)
-    if (replaced !== blocks[idx]) {
-      blocks[idx] = replaced
-      return true
-    }
-    return false
-  }
-  if (preferredIndex >= 0 && preferredIndex < blocks.length && tryIndex(preferredIndex)) {
-    return { blocks, changed: true }
-  }
-  for (let i = 0; i < blocks.length; i++) {
-    if (i === preferredIndex) continue
-    if (tryIndex(i)) return { blocks, changed: true }
-  }
-  return { blocks, changed: false }
-}
+//
+// 应用改图审阅项（Task 11）用的「带漂移容错 + 歧义守卫」落点逻辑（含 preferredIndex 命中优先、
+// 未命中时扫描其余块、恰好一个候选才落地、多候选/零候选一律 no-op）同样已抽到
+// shared/proposalImageOps.ts 的 applyImageReplacementWithDrift（有 bun test 覆盖，见该文件
+// 顶部注释），下面 applyImageReview 直接调用。
 
 /**
  * 编辑态：一张连续的 A4 宽长纸，分节无缝拼接、向下滚动不分页。
@@ -377,9 +355,10 @@ export function ProposalPaper(): React.JSX.Element {
     })
   }, [imageReviews])
 
-  // 应用（Task 11）：edit 模式把新图路径换回原图所在块（见 applyReplacementAcrossBlocks 顶部
-  // 注释）；generate 模式在节末尾追加一个新图块（与 handleImageUpload 同一条落盘路径）。节已被
-  // 删除（审阅悬而未决期间用户删了整节）则无处落地，只清审阅项、不报错——静默丢弃优于抛错阻断。
+  // 应用（Task 11）：edit 模式把新图路径换回原图所在块（见 applyImageReplacementWithDrift 顶部
+  // 注释——preferredIndex 命中优先，未命中时按「恰好一个候选」的歧义守卫扫描其余块）；generate
+  // 模式在节末尾追加一个新图块（与 handleImageUpload 同一条落盘路径）。节已被删除（审阅悬而
+  // 未决期间用户删了整节）则无处落地，只清审阅项、不报错——静默丢弃优于抛错阻断。
   function applyImageReview(review: ImageReview): void {
     const pstore = useProposalStore.getState()
     const sec = pstore.sections.find((s) => s.id === review.sectionId)
@@ -405,15 +384,28 @@ export function ProposalPaper(): React.JSX.Element {
       pstore.removeImageReview(review.id)
       return
     }
-    const clamped = Math.min(Math.max(review.blockIndex, 0), blocks.length - 1)
-    const { blocks: next, changed } = applyReplacementAcrossBlocks(
+    const { blocks: next, changed } = applyImageReplacementWithDrift(
       blocks,
-      clamped,
+      review.blockIndex,
       review.sourcePath,
       review.occurrence ?? 0,
       review.resultPath
     )
-    if (changed) pstore.updateSection(sec.id, joinBlocks(next))
+    if (changed) {
+      pstore.updateSection(sec.id, joinBlocks(next))
+    } else {
+      // 原图既不在 preferredIndex、其余块里也数不出恰好一个候选（漂移到找不到 / 歧义），
+      // 应用被放弃。审阅项照样摘除（不留僵尸卡），但这一步是「用户点了应用却什么也没发生」，
+      // 不能悄无声息——控制台留痕，方便用户反馈「应用没反应」时靠 devtools 定位（同
+      // WorkspaceTreePanel openFile 失败的既有先例：本处也没有 toast 槽位，不为这一个
+      // 边缘场景新起一套 toast 机制）。
+      console.warn('[proposal] 应用改图失败：原图已不在本节，已放弃该修订', {
+        reviewId: review.id,
+        sectionId: review.sectionId,
+        sourcePath: review.sourcePath,
+        occurrence: review.occurrence ?? 0
+      })
+    }
     pstore.removeImageReview(review.id)
   }
 
