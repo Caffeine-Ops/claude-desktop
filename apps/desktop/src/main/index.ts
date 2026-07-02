@@ -41,6 +41,7 @@ import {
 } from './services/openDesignServices'
 import { APP_SCHEME, registerAppProtocol } from './services/appProtocol'
 import { KB_ASSET_SCHEME, registerKbAssetProtocol } from './services/kbAssetProtocol'
+import { PROPOSAL_ASSET_SCHEME, registerProposalAssetProtocol } from './services/proposalAssetProtocol'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -65,6 +66,15 @@ protocol.registerSchemesAsPrivileged([
   },
   {
     scheme: KB_ASSET_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true
+    }
+  },
+  {
+    scheme: PROPOSAL_ASSET_SCHEME,
     privileges: {
       standard: true,
       secure: true,
@@ -212,6 +222,7 @@ app.whenReady().then(async () => {
   }
 
   await registerKbAssetProtocol()
+  await registerProposalAssetProtocol()
 
   // Boot the single shell window (tab bar) then open the first tab
   // so the user lands directly in a workspace gate rather than an
