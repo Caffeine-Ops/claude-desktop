@@ -170,6 +170,19 @@ const STRINGS = {
     codeFontSize: 'Code font size',
     codeFontSizeDesc: '调整聊天和 diff 中代码的基础字号',
 
+    // Settings — Configuration category — 出图 API（编辑器内 P 图功能的凭据配置）
+    imageApiTitle: '出图 API',
+    imageApiDesc: '配置图像生成/改图接口凭据，供编辑器内「出图」「改图」使用；未配置时对应入口置灰。',
+    imageApiKeyLabel: 'API Key',
+    imageApiKeyPlaceholderConfigured: '••••',
+    imageApiKeyPlaceholderEmpty: '未配置',
+    imageApiBaseUrlLabel: 'Base URL',
+    imageApiBaseUrlPlaceholder: 'https://api.example.com/v1',
+    imageApiModelLabel: '默认模型',
+    imageApiSave: '保存',
+    imageApiSaving: '保存中…',
+    imageApiSaved: '已保存',
+
     // Right rail — Todos
     todosTitle: '待办',
     todosEmpty: '暂无待办事项',
@@ -420,6 +433,21 @@ const STRINGS = {
     codeFontSize: 'Code font size',
     codeFontSizeDesc:
       'Adjust the base size used for code across chats and diffs',
+
+    // Settings — Configuration category — Image API credentials for the
+    // in-editor image generate/edit feature.
+    imageApiTitle: 'Image API',
+    imageApiDesc:
+      'Configure image generation/editing API credentials used by the in-editor image tools. Entry points stay disabled until this is set up.',
+    imageApiKeyLabel: 'API Key',
+    imageApiKeyPlaceholderConfigured: '••••',
+    imageApiKeyPlaceholderEmpty: 'Not configured',
+    imageApiBaseUrlLabel: 'Base URL',
+    imageApiBaseUrlPlaceholder: 'https://api.example.com/v1',
+    imageApiModelLabel: 'Default model',
+    imageApiSave: 'Save',
+    imageApiSaving: 'Saving…',
+    imageApiSaved: 'Saved',
 
     todosTitle: 'Todos',
     todosEmpty: 'No todos yet',

@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 
-import type { CliBackendState } from '../../../../shared/ipc-channels'
+import type {
+  CliBackendState,
+  ProposalImageApiConfig
+} from '../../../../shared/ipc-channels'
 import { useI18n, useT } from '../../i18n'
 import { useSettingsStore } from '../../stores/settings'
 import {
@@ -129,6 +132,8 @@ export function SettingsBody(): React.JSX.Element {
             <AppearanceSection />
           ) : activeCategory === 'general' ? (
             <GeneralSection />
+          ) : activeCategory === 'configuration' ? (
+            <ConfigurationSection />
           ) : (
             <PlaceholderSection
               title={categories.find((c) => c.id === activeCategory)?.label ?? ''}
@@ -459,6 +464,156 @@ function CliBackendOption({
         </p>
       )}
     </button>
+  )
+}
+
+/* ─────────────────── Configuration (出图 API) ─────────────────── */
+
+/** Default model id prefilled when the user has never configured one. */
+const IMAGE_API_DEFAULT_MODEL = 'gpt-image-2'
+/** Masked placeholder the main process returns for an already-configured
+ *  key — never the plaintext. Sending this value back unchanged tells the
+ *  IPC handler "keep whatever key you already have" (see
+ *  `ProposalImageApiConfig` doc comment in shared/ipc-channels.ts). */
+const IMAGE_API_KEY_MASK = '••••'
+
+/**
+ * Configuration category. Currently hosts just the 出图 API credential
+ * form (key / baseURL / model) that the in-editor image generate/edit
+ * feature reads. `apiKey` round-trips through the masked placeholder —
+ * we never hold the plaintext key in this component's state once it's
+ * been saved, only the mask, so a stray console.log or React devtools
+ * inspection can't leak it.
+ */
+function ConfigurationSection(): React.JSX.Element {
+  const t = useT()
+  const [apiKey, setApiKey] = useState('')
+  const [baseURL, setBaseURL] = useState('')
+  const [model, setModel] = useState(IMAGE_API_DEFAULT_MODEL)
+  const [configured, setConfigured] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [justSaved, setJustSaved] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    window.chatApi
+      .proposalImageSettingsGet()
+      .then((cfg) => {
+        if (cancelled || !cfg) return
+        setApiKey(cfg.apiKey)
+        setBaseURL(cfg.baseURL)
+        setModel(cfg.model || IMAGE_API_DEFAULT_MODEL)
+        setConfigured(cfg.apiKey === IMAGE_API_KEY_MASK)
+      })
+      .catch((err) => {
+        console.error('[settings] proposalImageSettingsGet failed', err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const handleSave = async (): Promise<void> => {
+    if (saving) return
+    setSaving(true)
+    setJustSaved(false)
+    try {
+      const cfg: ProposalImageApiConfig = { apiKey, baseURL, model }
+      await window.chatApi.proposalImageSettingsSet(cfg)
+      // The key we hold in state might now be stale (either the user
+      // typed a fresh one, or it was still the mask from a no-op edit).
+      // Either way re-mask it locally so state never carries plaintext
+      // longer than the single round trip to main.
+      setApiKey(IMAGE_API_KEY_MASK)
+      setConfigured(true)
+      setJustSaved(true)
+    } catch (err) {
+      console.error('[settings] proposalImageSettingsSet failed', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="space-y-8">
+      <h1 className="text-[20px] font-semibold text-foreground">
+        {t('catConfiguration')}
+      </h1>
+
+      <Section title={t('imageApiTitle')} description={t('imageApiDesc')}>
+        <div className="space-y-4">
+          <label className="block">
+            <span className="mb-1.5 block text-[11px] text-muted-foreground">
+              {t('imageApiKeyLabel')}
+            </span>
+            <input
+              type="password"
+              value={apiKey}
+              onFocus={() => {
+                // If the field still shows the mask, clear it on focus so
+                // the user doesn't have to manually delete the dots
+                // before typing a new key. Leaving it untouched (blur
+                // without typing) means "keep the existing key" — restored
+                // below via onBlur.
+                if (apiKey === IMAGE_API_KEY_MASK) setApiKey('')
+              }}
+              onBlur={() => {
+                if (apiKey === '' && configured) setApiKey(IMAGE_API_KEY_MASK)
+              }}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={
+                configured
+                  ? t('imageApiKeyPlaceholderConfigured')
+                  : t('imageApiKeyPlaceholderEmpty')
+              }
+              className="h-8 w-full rounded-md border border-border bg-card px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[11px] text-muted-foreground">
+              {t('imageApiBaseUrlLabel')}
+            </span>
+            <input
+              type="text"
+              value={baseURL}
+              onChange={(e) => setBaseURL(e.target.value)}
+              placeholder={t('imageApiBaseUrlPlaceholder')}
+              className="h-8 w-full rounded-md border border-border bg-card px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[11px] text-muted-foreground">
+              {t('imageApiModelLabel')}
+            </span>
+            <input
+              type="text"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder={IMAGE_API_DEFAULT_MODEL}
+              className="h-8 w-full rounded-md border border-border bg-card px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
+            />
+          </label>
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={saving}
+              className="inline-flex h-8 items-center rounded-md bg-accent px-3 text-[12px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving ? t('imageApiSaving') : t('imageApiSave')}
+            </button>
+            {justSaved && !saving && (
+              <span className="text-[11px] text-muted-foreground/70">
+                {t('imageApiSaved')}
+              </span>
+            )}
+          </div>
+        </div>
+      </Section>
+    </section>
   )
 }
 
