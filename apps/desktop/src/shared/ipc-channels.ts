@@ -487,7 +487,30 @@ export const IPC_CHANNELS = {
    * 召回片段，供用户随时探库、判断检索质量、决定要不要加产品。与生成时的内容级召回共用
    * retrievePassages，但【只读、不注入提示词、不写盘】。
    */
-  PROPOSAL_PEEK_RETRIEVAL: 'proposal:peek-retrieval'
+  PROPOSAL_PEEK_RETRIEVAL: 'proposal:peek-retrieval',
+  /**
+   * Renderer → main. 读出图 API 设置（baseURL/model + apiKey 是否已配置）。为什么不回明文
+   * key：main 侧 getAppSettings() 落盘明文，但 IPC 结构化克隆会把它摆进渲染进程内存，增大
+   * 泄漏面（devtools/渲染进程崩溃转储都可能读到）。UI 只需要「已配置」布尔态就能渲染表单，
+   * 故 apiKey 脱敏为占位符 `••••`（未配置则空串），见 PROPOSAL_IMAGE_SETTINGS_SET 的合并约定。
+   */
+  PROPOSAL_IMAGE_SETTINGS_GET: 'proposal-image:settings-get',
+  /**
+   * Renderer → main. 写出图 API 设置。若 `apiKey` 等于脱敏占位符 `••••`（用户只改了
+   * baseURL/model、没重新输入 key），main 合并保留现存明文 key，避免占位符覆盖真 key。
+   */
+  PROPOSAL_IMAGE_SETTINGS_SET: 'proposal-image:settings-set',
+  /**
+   * Renderer → main. 文生图：调用 imageGenService.generateImage 出图后落盘到该会话的
+   * 草稿资产目录（writeProposalImage，来源标记 'generated'/gen- 前缀），返回绝对路径。
+   * 未配置 apiKey 时抛出中文错误，UI 据此提示去设置页填写。
+   */
+  PROPOSAL_IMAGE_GENERATE: 'proposal-image:generate',
+  /**
+   * Renderer → main. 改图：读 `sourcePath` 的字节喂给 imageGenService.editImage，出图后
+   * 落盘（来源标记 'edited'/edit- 前缀），返回绝对路径。同 GENERATE，缺 apiKey 抛中文错误。
+   */
+  PROPOSAL_IMAGE_EDIT: 'proposal-image:edit'
 } as const
 
 /**
@@ -996,6 +1019,39 @@ export interface ProposalDeleteDraftResult {
 }
 
 /**
+ * 出图 API 凭据配置。定义在 shared 而非直接复用 main/services/imageGenService.ts 的
+ * `ImageApiConfig`——那个文件是 main-only（不在 web tsconfig 的 include 里），renderer/
+ * preload 不能 import 它。字段同构，main 侧两者结构兼容、handler 里直接透传。
+ *
+ * `apiKey` 在 PROPOSAL_IMAGE_SETTINGS_GET 的返回里是脱敏值（`''` 未配置 / `'••••'` 已配置），
+ * 在 PROPOSAL_IMAGE_SETTINGS_SET 的入参里可能是真实 key 或该脱敏占位符（占位符触发 main 侧
+ * 合并保留现存 key，见通道注释）。
+ */
+export interface ProposalImageApiConfig {
+  apiKey: string
+  baseURL: string
+  model: string
+}
+
+/** Payload for PROPOSAL_IMAGE_GENERATE。 */
+export interface ProposalImageGeneratePayload {
+  sessionId: string
+  prompt: string
+}
+
+/** Payload for PROPOSAL_IMAGE_EDIT。`sourcePath` 是待改图片的绝对路径（main 侧读字节）。 */
+export interface ProposalImageEditPayload {
+  sessionId: string
+  sourcePath: string
+  prompt: string
+}
+
+/** Result of PROPOSAL_IMAGE_GENERATE / PROPOSAL_IMAGE_EDIT。`path` 是落盘后的绝对路径。 */
+export interface ProposalImageResult {
+  path: string
+}
+
+/**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
  * interface on both sides via the shared type.
  */
@@ -1405,6 +1461,27 @@ export interface ChatApi {
    * jsonl。本地不外传，失败返回 ok:false（绝不抛）——埋点是旁路信号，不阻塞导出。
    */
   logProposalMetric(record: ProposalMetricRecord): Promise<ProposalMetricLogResult>
+
+  /**
+   * 读出图 API 设置。`apiKey` 已脱敏（`''` 未配置 / `'••••'` 已配置），未配置过 imageApi
+   * 时返回 null（UI 显示「未配置」空态）。
+   */
+  proposalImageSettingsGet(): Promise<ProposalImageApiConfig | null>
+  /**
+   * 写出图 API 设置。传入脱敏占位符 `'••••'` 作为 apiKey 时 main 侧合并保留现存明文 key
+   * （用户只改了 baseURL/model 的场景），不会被占位符覆盖。
+   */
+  proposalImageSettingsSet(cfg: ProposalImageApiConfig): Promise<void>
+  /**
+   * 文生图。main 读设置里的 imageApi 出图后落盘到该会话草稿资产目录，返回绝对路径。
+   * 未配置 apiKey 时 reject 一条中文错误，UI 提示去设置页填写。
+   */
+  proposalImageGenerate(args: ProposalImageGeneratePayload): Promise<ProposalImageResult>
+  /**
+   * 改图。main 读 `sourcePath` 的字节喂给出图 service，出图后落盘（来源标记为
+   * edited），返回绝对路径。同 generate，缺 apiKey 时 reject 中文错误。
+   */
+  proposalImageEdit(args: ProposalImageEditPayload): Promise<ProposalImageResult>
 }
 
 /**

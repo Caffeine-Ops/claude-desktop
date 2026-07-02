@@ -108,9 +108,16 @@ import type {
   ProposalDeleteDraftResult,
   ProposalMetricLogResult,
   ProposalPeekRetrievalPayload,
-  ProposalPeekRetrievalResult
+  ProposalPeekRetrievalResult,
+  ProposalImageApiConfig,
+  ProposalImageGeneratePayload,
+  ProposalImageEditPayload,
+  ProposalImageResult
 } from '../../shared/ipc-channels'
 import type { ProposalMetricRecord } from '../../shared/proposal'
+import { generateImage, editImage } from '../services/imageGenService'
+import { writeProposalImage } from '../services/proposalImageWriter'
+import { readFile } from 'node:fs/promises'
 
 /**
  * Resolve the ChatEngine for the window that sent this IPC event.
@@ -255,6 +262,10 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_VERIFY)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_METRIC_LOG)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_PEEK_RETRIEVAL)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_SET)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_GENERATE)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_EDIT)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -1208,6 +1219,67 @@ export function registerIpcHandlers(): void {
         console.warn('[ipc] logProposalMetric failed:', err)
         return { ok: false }
       }
+    }
+  )
+
+  // ── 出图/改图/设置读写（编辑器内 P 图）───────────────────────────────────
+  //
+  // 出图 API 凭据脱敏占位符。GET 用它替换明文 key 回给渲染进程（渲染进程内存/devtools
+  // 都是比 main 进程更大的泄漏面）；SET 收到这个占位符时代表用户没重新输入 key，只改了
+  // baseURL/model，需与现存 key 合并而非覆盖——见下面 SETTINGS_SET handler。
+  const IMAGE_API_KEY_MASK = '••••'
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_GET,
+    async (): Promise<ProposalImageApiConfig | null> => {
+      const cfg = getAppSettings().imageApi
+      if (!cfg) return null
+      return { apiKey: cfg.apiKey ? IMAGE_API_KEY_MASK : '', baseURL: cfg.baseURL, model: cfg.model }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_SET,
+    async (_event, cfg: ProposalImageApiConfig): Promise<void> => {
+      if (!cfg || typeof cfg !== 'object') return
+      const cur = getAppSettings().imageApi
+      const apiKey = cfg.apiKey === IMAGE_API_KEY_MASK ? (cur?.apiKey ?? '') : (cfg.apiKey ?? '')
+      const merged: ProposalImageApiConfig = {
+        apiKey,
+        baseURL: typeof cfg.baseURL === 'string' ? cfg.baseURL : (cur?.baseURL ?? ''),
+        model: typeof cfg.model === 'string' && cfg.model ? cfg.model : (cur?.model ?? 'gpt-image-2')
+      }
+      updateAppSettings({ imageApi: merged })
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_IMAGE_GENERATE,
+    async (_event, args: ProposalImageGeneratePayload): Promise<ProposalImageResult> => {
+      const sessionId = typeof args?.sessionId === 'string' ? args.sessionId : ''
+      const prompt = typeof args?.prompt === 'string' ? args.prompt : ''
+      if (!sessionId || !prompt) throw new Error('缺少会话 id 或提示词')
+      const cfg = getAppSettings().imageApi
+      if (!cfg?.apiKey) throw new Error('未配置出图 API，请到设置里填写 key 与地址')
+      const bytes = await generateImage(cfg, { prompt })
+      const path = await writeProposalImage(sessionId, 'generated', bytes)
+      return { path }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_IMAGE_EDIT,
+    async (_event, args: ProposalImageEditPayload): Promise<ProposalImageResult> => {
+      const sessionId = typeof args?.sessionId === 'string' ? args.sessionId : ''
+      const sourcePath = typeof args?.sourcePath === 'string' ? args.sourcePath : ''
+      const prompt = typeof args?.prompt === 'string' ? args.prompt : ''
+      if (!sessionId || !sourcePath || !prompt) throw new Error('缺少会话 id / 原图路径 / 提示词')
+      const cfg = getAppSettings().imageApi
+      if (!cfg?.apiKey) throw new Error('未配置出图 API，请到设置里填写 key 与地址')
+      const sourceBytes = await readFile(sourcePath)
+      const bytes = await editImage(cfg, { prompt, sourceBytes, sourceMime: 'image/png' })
+      const path = await writeProposalImage(sessionId, 'edited', bytes)
+      return { path }
     }
   )
 

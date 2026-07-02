@@ -69,7 +69,11 @@ import {
   type ProposalDeleteDraftResult,
   type ProposalMetricLogResult,
   type ProposalPeekRetrievalPayload,
-  type ProposalPeekRetrievalResult
+  type ProposalPeekRetrievalResult,
+  type ProposalImageApiConfig,
+  type ProposalImageGeneratePayload,
+  type ProposalImageEditPayload,
+  type ProposalImageResult
 } from '../shared/ipc-channels'
 import type { ProposalMetricRecord } from '../shared/proposal'
 
@@ -471,6 +475,32 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PROPOSAL_PEEK_RETRIEVAL,
       payload
     ) as Promise<ProposalPeekRetrievalResult>
+  },
+
+  proposalImageSettingsGet(): Promise<ProposalImageApiConfig | null> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_GET
+    ) as Promise<ProposalImageApiConfig | null>
+  },
+  proposalImageSettingsSet(cfg: ProposalImageApiConfig): Promise<void> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_SET,
+      cfg
+    ) as Promise<void>
+  },
+  proposalImageGenerate(
+    args: ProposalImageGeneratePayload
+  ): Promise<ProposalImageResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_IMAGE_GENERATE,
+      args
+    ) as Promise<ProposalImageResult>
+  },
+  proposalImageEdit(args: ProposalImageEditPayload): Promise<ProposalImageResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_IMAGE_EDIT,
+      args
+    ) as Promise<ProposalImageResult>
   }
 }
 
