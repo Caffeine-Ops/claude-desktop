@@ -493,20 +493,31 @@ function ConfigurationSection(): React.JSX.Element {
   const [configured, setConfigured] = useState(false)
   const [saving, setSaving] = useState(false)
   const [justSaved, setJustSaved] = useState(false)
+  // Guards Save against firing before the mount-time GET resolves: apiKey
+  // starts as '' and a click in that window would send '' to main and
+  // silently wipe a previously stored key (see proposal-image-editing
+  // review finding — save-before-load race).
+  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     window.chatApi
       .proposalImageSettingsGet()
       .then((cfg) => {
-        if (cancelled || !cfg) return
+        if (cancelled) return
+        if (!cfg) {
+          setLoaded(true)
+          return
+        }
         setApiKey(cfg.apiKey)
         setBaseURL(cfg.baseURL)
         setModel(cfg.model || IMAGE_API_DEFAULT_MODEL)
         setConfigured(cfg.apiKey === IMAGE_API_KEY_MASK)
+        setLoaded(true)
       })
       .catch((err) => {
         console.error('[settings] proposalImageSettingsGet failed', err)
+        setLoaded(true)
       })
     return () => {
       cancelled = true
@@ -523,9 +534,15 @@ function ConfigurationSection(): React.JSX.Element {
       // The key we hold in state might now be stale (either the user
       // typed a fresh one, or it was still the mask from a no-op edit).
       // Either way re-mask it locally so state never carries plaintext
-      // longer than the single round trip to main.
-      setApiKey(IMAGE_API_KEY_MASK)
-      setConfigured(true)
+      // longer than the single round trip to main. But if apiKey was ''
+      // (user never entered a key, only touched baseURL/model), main
+      // stores '' as-is and there's nothing to mask — forcing the mask
+      // and `configured: true` here would show a false "configured"
+      // state until the component remounts.
+      if (apiKey) {
+        setApiKey(IMAGE_API_KEY_MASK)
+        setConfigured(true)
+      }
       setJustSaved(true)
     } catch (err) {
       console.error('[settings] proposalImageSettingsSet failed', err)
@@ -600,7 +617,7 @@ function ConfigurationSection(): React.JSX.Element {
             <button
               type="button"
               onClick={() => void handleSave()}
-              disabled={saving}
+              disabled={saving || !loaded}
               className="inline-flex h-8 items-center rounded-md bg-accent px-3 text-[12px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving ? t('imageApiSaving') : t('imageApiSave')}
