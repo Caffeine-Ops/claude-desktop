@@ -1,18 +1,20 @@
 import { app } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { normalize, normalizeImageApi } from './appSettingsNormalize'
+import type { AppSettings, CliBackend } from './appSettingsNormalize'
+
+// Re-export for consumers.
+export { normalizeImageApi }
+export type { AppSettings, CliBackend }
 
 /**
  * Tiny main-process settings store for preferences that need to survive
  * app restarts AND be readable from the engine before the renderer has
  * mounted (so localStorage in the renderer is not an option).
  *
- * Currently a single field — `cliBackend` — so the file is small, no
- * schema migrations, no locking, no debounce. If this ever grows past
- * a handful of fields, consider switching to `electron-store`.
- *
  * On-disk shape:
- *   { "cliBackend": "bundled" | "system" }
+ *   { "cliBackend": "bundled" | "system", "imageApi": { "apiKey": "...", "baseURL": "...", "model": "..." } }
  *
  * Location: `<userData>/settings.json`. Electron maps `userData` to
  * the standard per-OS config directory (`~/Library/Application
@@ -20,11 +22,6 @@ import { dirname, join } from 'node:path'
  * Windows). Corrupt or missing files fall back to defaults — we log
  * a warning and keep going rather than crash the main process.
  */
-export type CliBackend = 'bundled' | 'system'
-
-export interface AppSettings {
-  cliBackend: CliBackend
-}
 
 const DEFAULTS: AppSettings = {
   cliBackend: 'bundled'
@@ -59,18 +56,6 @@ function load(): AppSettings {
   return cached
 }
 
-/**
- * Defensive field-by-field copy so a malformed file that e.g. sets
- * `cliBackend: 42` doesn't poison the rest of the engine. Unknown keys
- * are dropped; invalid values are coerced to the default for that key.
- */
-function normalize(raw: Partial<AppSettings>): Partial<AppSettings> {
-  const out: Partial<AppSettings> = {}
-  if (raw.cliBackend === 'bundled' || raw.cliBackend === 'system') {
-    out.cliBackend = raw.cliBackend
-  }
-  return out
-}
 
 export function getAppSettings(): AppSettings {
   return { ...load() }
