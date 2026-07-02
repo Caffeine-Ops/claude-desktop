@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { writeFileSync } from 'node:fs'
+import { writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { RootContent } from 'mdast'
@@ -169,6 +169,32 @@ describe('markdownToDocxBuffer 嵌图', () => {
       '<!--proposal-section:content-->\n\n![矢量图](/nope/x.svg)\n\n![缺图](/nope/missing.png)'
     const buf = await markdownToDocxBuffer(md)
     expect(buf.length).toBeGreaterThan(500)
+  })
+})
+
+// 回归守卫：产出图（AI 生成/用户上传，存 <userData>/proposal-drafts/<sessionId>/assets/ 下的绝对
+// 路径）走的是同一条 imageParagraphs 读图路径，架构上零改动——但没有测试锁住的话，未来任何人在
+// exporter 里加「只信 KB 目录」的校验都会悄悄ломать产出图导出。用真实目录形状（proposal-drafts/
+// <sessionId>/assets/xxx.png）复现，而不是随手扔在 tmp 根下，让意图看得见。
+describe('markdownToDocxBuffer 嵌图（产出图 proposal-drafts 路径，防未来加白名单校验回归）', () => {
+  it('产出图（proposal-drafts 绝对路径）真嵌入 docx，且未被 grounding 豁免逻辑误剔', async () => {
+    const PNG_100 =
+      'iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAAH0lEQVR42u3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAvg0hAAABmmDh1QAAAABJRU5ErkJggg=='
+    const assetsDir = join(tmpdir(), 'proposal-drafts', 'sess-test-12', 'assets')
+    mkdirSync(assetsDir, { recursive: true })
+    const png = join(assetsDir, 'gen-123.png')
+    writeFileSync(png, Buffer.from(PNG_100, 'base64'))
+
+    const withImg = await markdownToDocxBuffer(
+      `<!--proposal-section:content-->\n\n## 架构\n\n![架构图](${png})\n\n（据《白皮书》）`
+    )
+    const without = await markdownToDocxBuffer(
+      `<!--proposal-section:content-->\n\n## 架构\n\n架构图说明文字。\n\n（据《白皮书》）`
+    )
+    // 体积差 > 200 字节 = zip 里真多了 media 部件（proven 判据，见文件头 KB 嵌图用例）；
+    // 顺带证明「图片是产出图（非 KB 资产）」这一事实没有触发 grounding 豁免逻辑把它从导出剔除——
+    // 若被误剔，withImg 会退化成与 without 几乎等长的纯文字段落，差值远小于 200。
+    expect(withImg.byteLength - without.byteLength).toBeGreaterThan(200)
   })
 })
 
