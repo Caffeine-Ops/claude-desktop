@@ -7,7 +7,9 @@ import type { Root } from 'mdast'
 import { useT } from '../../i18n'
 import { toKbAssetUrl } from '../../lib/kbAssetUrl'
 import { renderMermaid } from '../../lib/mermaidRender'
+import { toProposalAssetUrl } from '../../lib/proposalAssetUrl'
 import { isEmbeddableImagePath, normalizeImageMarkdown } from '@shared/proposal'
+import { deriveImageOrigin } from '@shared/proposalAsset'
 
 /**
  * AssistantMarkdown
@@ -49,6 +51,9 @@ import { isEmbeddableImagePath, normalizeImageMarkdown } from '@shared/proposal'
  */
 
 /* ───────────────── Per-tag Tailwind overrides ───────────────── */
+
+// 产出图来源角标文案，见下方 img override。
+const originLabel = { generated: 'AI 生成', edited: '已编辑', uploaded: '用户上传' } as const
 
 const components: Components = {
   p: ({ children }) => (
@@ -127,18 +132,36 @@ const components: Components = {
     </a>
   ),
 
-  // KB 本地图经 kbasset:// 协议加载（绝对路径直接当 <img src> 会被当相对 URL、加载失败）。
+  // KB 本地图经 kbasset:// 协议加载，草稿产出图（改图/文生图/上传）经 proposalasset:// 协议加载
+  // （绝对路径直接当 <img src> 会被当相对 URL、加载失败）。先试 kbasset，未命中再试 proposalasset，
+  // 两者路径特征互斥、链式判定零歧义。
   img: ({ src, alt }) => {
     if (typeof src === 'string') {
       const kbUrl = toKbAssetUrl(src)
-      // KB 本地图若非 docx 可嵌格式（webp/svg…），导出 Word 会降级为文字占位；预览此处同步降级，
-      // 避免「预览有图、成品 Word 没图」的静默不一致——与 proposalDocx.imageParagraphs 共用同一个
-      // isEmbeddableImagePath 谓词（评审发现）。仅对 KB 资产图（kbUrl 被改写）生效，不影响外链图。
-      if (kbUrl !== src && !isEmbeddableImagePath(src)) {
+      const resolved = kbUrl === src ? toProposalAssetUrl(src) : kbUrl
+      // 本地资产图（KB 或产出图）若非 docx 可嵌格式（webp/svg…），导出 Word 会降级为文字占位；
+      // 预览此处同步降级，避免「预览有图、成品 Word 没图」的静默不一致——与 proposalDocx.
+      // imageParagraphs 共用同一个 isEmbeddableImagePath 谓词（评审发现）。仅对 URL 被改写的本地
+      // 资产图（resolved !== src）生效，不影响外链图。
+      if (resolved !== src && !isEmbeddableImagePath(src)) {
         const caption = (alt && alt.trim()) || src.slice(src.lastIndexOf('/') + 1)
         return <span className="my-2 inline-block text-[13px] text-neutral-400">[图：{caption}]</span>
       }
-      return <img src={kbUrl} alt={alt ?? ''} className="my-2 max-h-[70vh] w-auto max-w-full rounded" />
+      const imgEl = (
+        <img src={resolved} alt={alt ?? ''} className="my-2 max-h-[70vh] w-auto max-w-full rounded" />
+      )
+      // 产出图来源角标：纯渲染态提示，不进 markdown、不进 docx（导出侧直读绝对路径原文，
+      // 天然不含角标）。仅对草稿产出图生效——deriveImageOrigin 对 KB 图/外链图恒返回 null。
+      const origin = deriveImageOrigin(src)
+      if (!origin) return imgEl
+      return (
+        <span className="relative inline-block">
+          {imgEl}
+          <span className="absolute right-1 top-1 rounded bg-black/60 px-1 text-[10px] text-white">
+            {originLabel[origin]}
+          </span>
+        </span>
+      )
     }
     // 非 string 的 src（罕见，react-markdown 类型上允许 undefined）原样透传给 <img>。
     return <img src={src as string | undefined} alt={alt ?? ''} className="my-2 max-h-[70vh] w-auto max-w-full rounded" />
