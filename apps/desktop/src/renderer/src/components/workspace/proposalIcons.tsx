@@ -39,6 +39,15 @@ export const PencilIcon = (p: IconProps): React.JSX.Element => (
   </Base>
 )
 
+// 转圈 spinner：一段 3/4 圆弧，靠 Tailwind 的 animate-spin 旋转（调用处加 className）。
+// 单色 currentColor + 起点略淡的整圈打底，转起来才有「头尾」的方向感，而非匀色圆环干转。
+export const SpinnerIcon = (p: IconProps): React.JSX.Element => (
+  <Base {...p}>
+    <circle cx="12" cy="12" r="9" opacity={0.25} />
+    <path d="M21 12a9 9 0 0 0-9-9" />
+  </Base>
+)
+
 export const EyeIcon = (p: IconProps): React.JSX.Element => (
   <Base {...p}>
     <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />

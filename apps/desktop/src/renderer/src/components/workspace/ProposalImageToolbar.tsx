@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { PencilIcon, ImageIcon, TrashIcon, CheckIcon, XIcon, AlertTriangleIcon } from './proposalIcons'
+import { PencilIcon, ImageIcon, TrashIcon, CheckIcon, XIcon, AlertTriangleIcon, SpinnerIcon } from './proposalIcons'
 
 // 点图浮动工具栏（Task 9）：编辑态点中一张图后，在其右上角浮出 [改图][换图][删除]。定位靠
 // ProposalPaper 算好的 left/top（与 SelectionAiBubble 同一套「容器相对坐标」范式），本组件
@@ -141,9 +141,10 @@ export function ProposalImageToolbar({
             <span className="text-[12px] font-medium text-neutral-700">改图指令</span>
             <button
               type="button"
-              className="rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+              className="rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 disabled:opacity-40"
               title="取消"
               aria-label="取消"
+              disabled={loading}
               onClick={() => {
                 setMode('buttons')
                 setError(null)
@@ -152,6 +153,19 @@ export function ProposalImageToolbar({
               <XIcon />
             </button>
           </div>
+          {/* 改图是秒级到数十秒的网络往返，纯按钮文字变「改图中…」反馈太弱（GUI 走查：等太久
+              不知在不在动）。loading 时用转圈 + 说明文字的独立块替换输入区，明确「在处理、别关」。 */}
+          {loading && (
+            <div className="mt-2 flex items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-2 text-[12px] text-neutral-600">
+              <SpinnerIcon className="shrink-0 animate-spin text-accent" />
+              <div className="leading-relaxed">
+                <div className="font-medium text-neutral-700">AI 正在改这张图…</div>
+                <div className="text-[11px] text-neutral-400">通常十几秒到半分钟，请勿关闭</div>
+              </div>
+            </div>
+          )}
+          {!loading && (
+          <>
           <textarea
             ref={inputRef}
             value={prompt}
@@ -202,20 +216,16 @@ export function ProposalImageToolbar({
             <button
               type="button"
               className="flex items-center gap-1 rounded-md bg-neutral-900 px-2.5 py-1 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-40"
-              disabled={!prompt.trim() || loading}
+              disabled={!prompt.trim()}
               onClick={() => void submit()}
               title="⌘/Ctrl + 回车"
             >
-              {loading ? (
-                <span>改图中…</span>
-              ) : (
-                <>
-                  <CheckIcon />
-                  <span>提交</span>
-                </>
-              )}
+              <CheckIcon />
+              <span>提交</span>
             </button>
           </div>
+          </>
+          )}
         </div>
       )}
     </div>

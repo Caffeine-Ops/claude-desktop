@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ImageReview } from '../../stores/proposal'
 import { toKbAssetUrl } from '../../lib/kbAssetUrl'
 import { toProposalAssetUrl } from '../../lib/proposalAssetUrl'
-import { CheckIcon, TrashIcon, PencilIcon, XIcon, AlertTriangleIcon } from './proposalIcons'
+import { CheckIcon, TrashIcon, PencilIcon, XIcon, AlertTriangleIcon, SpinnerIcon } from './proposalIcons'
 
 // 改图/生图「先审后落地」对照卡（Task 11）。挂在 ProposalPaper 里对应节的正文之后（就地内联，
 // 非浮层——图片改写不像选区改写/点图工具栏那样有一个天然的锚点坐标，且审阅项可能在用户滚动
@@ -125,6 +125,20 @@ export function ProposalImageReview({
             />
           </div>
           <div className="mt-1 text-[11px] text-neutral-500">插入到本节末尾</div>
+        </div>
+      )}
+
+      {/* 重改（retry）飞行中：改图/生图同样是数十秒往返，给转圈 + 说明，别让用户对着静止的
+          「处理中…」按钮猜是否在动。busy 也可能来自「应用」——措辞用中性的「处理中」。 */}
+      {busy && (
+        <div className="mt-2 flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2.5 py-2 text-[12px] text-neutral-600">
+          <SpinnerIcon className="shrink-0 animate-spin text-accent" />
+          <div className="leading-relaxed">
+            <div className="font-medium text-neutral-700">
+              {review.mode === 'edit' ? 'AI 正在重新改图…' : 'AI 正在重新生成…'}
+            </div>
+            <div className="text-[11px] text-neutral-400">通常十几秒到半分钟，请勿关闭</div>
+          </div>
         </div>
       )}
 

@@ -27,7 +27,8 @@ import {
   InfoIcon,
   XIcon,
   ImagePlusIcon,
-  UploadIcon
+  UploadIcon,
+  SpinnerIcon
 } from './proposalIcons'
 
 /**
@@ -937,6 +938,16 @@ export function ProposalPaper(): React.JSX.Element {
               <XIcon />
             </button>
           </div>
+          {/* 生图是数十秒的网络往返，loading 时用转圈 + 说明块替换输入区，反馈比纯按钮文字更明确。 */}
+          {imageGenLoading ? (
+            <div className="mt-1.5 flex items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-2 text-[12px] text-neutral-600">
+              <SpinnerIcon className="shrink-0 animate-spin text-accent" />
+              <div className="leading-relaxed">
+                <div className="font-medium text-neutral-700">AI 正在生成插图…</div>
+                <div className="text-[11px] text-neutral-400">通常十几秒到半分钟，请勿关闭</div>
+              </div>
+            </div>
+          ) : (
           <textarea
             autoFocus
             value={imageGenPrompt}
@@ -954,9 +965,9 @@ export function ProposalPaper(): React.JSX.Element {
             }}
             placeholder="描述想生成的插图，比如：一张展示产品架构的示意图"
             rows={2}
-            disabled={imageGenLoading}
             className="mt-1.5 w-full resize-none rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-[12px] leading-relaxed text-neutral-800 outline-none focus:border-accent disabled:opacity-60"
           />
+          )}
           {imageGenError && (
             <div className="mt-1.5 flex items-start gap-1 rounded bg-rose-500/10 px-1.5 py-1 text-[11px] text-rose-600">
               <AlertTriangleIcon className="mt-0.5 shrink-0" />
@@ -974,35 +985,32 @@ export function ProposalPaper(): React.JSX.Element {
               </span>
             </div>
           )}
-          <div className="mt-1.5 flex items-center justify-end gap-1.5">
-            <button
-              type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
-              onClick={() => {
-                setImageGenSel(null)
-                setImageGenPrompt('')
-                setImageGenError(null)
-              }}
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              className="flex items-center gap-1 rounded-md bg-neutral-900 px-2.5 py-1 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-40"
-              disabled={!imageGenPrompt.trim() || imageGenLoading}
-              onClick={() => void submitImageGen(sec.id)}
-              title="⌘/Ctrl + 回车"
-            >
-              {imageGenLoading ? (
-                <span>生成中…</span>
-              ) : (
-                <>
-                  <CheckIcon />
-                  <span>生成</span>
-                </>
-              )}
-            </button>
-          </div>
+          {/* 生成中隐藏按钮行（同改图工具栏纪律）：只留上方的转圈说明块，界面不显得「还能再点」。 */}
+          {!imageGenLoading && (
+            <div className="mt-1.5 flex items-center justify-end gap-1.5">
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+                onClick={() => {
+                  setImageGenSel(null)
+                  setImageGenPrompt('')
+                  setImageGenError(null)
+                }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-md bg-neutral-900 px-2.5 py-1 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-40"
+                disabled={!imageGenPrompt.trim()}
+                onClick={() => void submitImageGen(sec.id)}
+                title="⌘/Ctrl + 回车"
+              >
+                <CheckIcon />
+                <span>生成</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
