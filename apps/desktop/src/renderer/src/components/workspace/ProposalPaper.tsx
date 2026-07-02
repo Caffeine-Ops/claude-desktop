@@ -415,6 +415,16 @@ export function ProposalPaper(): React.JSX.Element {
     useProposalStore.getState().removeImageReview(id)
   }
 
+  // 出图/改图失败的统一错误分流（评审发现：此前同一段 includes 映射复制在三处，main 侧改个
+  // 措辞就会漏改）。可操作的错误按语义引导（缺配置 → 去设置；认证失败/格式不可嵌 → 透传 main
+  // 的中文原文，它们本身就写给用户看）；其余归到按 mode 的泛化提示。
+  function friendlyImageError(err: unknown, mode: 'edit' | 'generate'): string {
+    const message = err instanceof Error ? err.message : String(err)
+    if (message.includes('未配置')) return '尚未配置出图 API，请到设置里填写 key 与地址后再试。'
+    if (message.includes('认证失败') || message.includes('无法嵌入 Word')) return message
+    return mode === 'edit' ? '改图失败，请稍后重试。' : '生成失败，请稍后重试。'
+  }
+
   // 重改：对同一 mode 重发同一条 Task 7 IPC，成功则原子替换审阅项（先摘旧、再以同样的落点
   // 字段插入新的一条，旧卡即被新卡取代，不会一闪而过地同时出现两张）；失败把错误留在原卡上、
   // busy 收回，供用户再试或改用「放弃」。
@@ -449,13 +459,7 @@ export function ProposalPaper(): React.JSX.Element {
         occurrence: review.occurrence
       })
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      const friendly = message.includes('未配置')
-        ? '尚未配置出图 API，请到设置里填写 key 与地址后再试。'
-        : review.mode === 'edit'
-          ? '改图失败，请稍后重试。'
-          : '生成失败，请稍后重试。'
-      setReviewError((m) => ({ ...m, [review.id]: friendly }))
+      setReviewError((m) => ({ ...m, [review.id]: friendlyImageError(err, review.mode) }))
     } finally {
       setReviewBusy((m) => ({ ...m, [review.id]: false }))
     }
@@ -546,11 +550,7 @@ export function ProposalPaper(): React.JSX.Element {
       })
       return { ok: true }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      if (message.includes('未配置')) {
-        return { ok: false, message: '尚未配置出图 API，请到设置里填写 key 与地址后再试。' }
-      }
-      return { ok: false, message: '改图失败，请稍后重试。' }
+      return { ok: false, message: friendlyImageError(err, 'edit') }
     }
   }
 
@@ -608,11 +608,7 @@ export function ProposalPaper(): React.JSX.Element {
       pstore.addImageReview({ sectionId, blockIndex, resultPath: path, mode: 'generate' })
       return { ok: true }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      if (message.includes('未配置')) {
-        return { ok: false, message: '尚未配置出图 API，请到设置里填写 key 与地址后再试。' }
-      }
-      return { ok: false, message: '生成失败，请稍后重试。' }
+      return { ok: false, message: friendlyImageError(err, 'generate') }
     }
   }
 
