@@ -429,8 +429,10 @@ export function ProposalPaper(): React.JSX.Element {
   // 生图（Task 10）：节工具条「生成图片」卡片提交时调用。与改图（handleImageEdit）走同一条
   // Task 7 IPC + 同一套错误分流约定，唯一区别是没有 sourcePath（凭空生成，非改写既有图）、
   // blockIndex 取该节【当前】最后一块的下标——不是原图所在块，而是给 Task 11 审阅卡一个默认
-  // 的「插入到此处」落点（该节末尾）。sections 在这里直接闭包读取（同 handleImageDelete），
-  // 提交时刻的最新节列表已经是最新渲染值，不存在过期风险（无跨异步的二次 store 读取需要）。
+  // 的「插入到此处」落点（该节末尾）。proposalImageGenerate 是秒级网络调用，await 期间双击块
+  // 编辑并不受「生图中」状态门控，该节完全可能被并发改写；若沿用提交时刻闭包捕获的 sections
+  // 会拿着陈旧块数算出错的 blockIndex（同 handleImageUpload/handleImageReplace 的顾虑，而非
+  // 同步无 await 的 handleImageDelete）。故 await 后重新从 store 取最新 sections 再算下标。
   async function handleImageGenerate(
     sectionId: string,
     prompt: string
@@ -441,9 +443,11 @@ export function ProposalPaper(): React.JSX.Element {
         sessionId: proposalSid,
         prompt
       })
-      const sec = sections.find((s) => s.id === sectionId)
-      const blockIndex = sec ? Math.max(getBlocks(sec.markdown).length - 1, 0) : 0
-      addImageReview({ sectionId, blockIndex, resultPath: path, mode: 'generate' })
+      const pstore = useProposalStore.getState()
+      const sec = pstore.sections.find((s) => s.id === sectionId)
+      if (!sec) return { ok: true } // 节已被删除：生成已完成但无处插入，静默丢弃（不报错误）
+      const blockIndex = Math.max(splitBlocks(sec.markdown).length - 1, 0)
+      pstore.addImageReview({ sectionId, blockIndex, resultPath: path, mode: 'generate' })
       return { ok: true }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
