@@ -123,6 +123,15 @@ function formatBash({ args, result, lang }: FormatterCtx): FriendlyView | null {
     ? null
     : summarizeBashOutput(command, trimmed, lang)
 
+  // Outputs that are mostly file paths (du sizes, find results, the
+  // "list what got exported" checks skills love to run) render as a
+  // Finder-ish file list: basename + size badge + shortened parent
+  // dir. A raw absolute path hard-wraps across 4 lines in the pane
+  // and reads as noise to a non-engineer.
+  const pathList = isEmptyOutput || lsPane || summary
+    ? null
+    : renderPathListOutput(trimmed, lang)
+
   return {
     headline: (
       <div className="flex items-baseline gap-2 text-[13px] font-medium text-foreground/90">
@@ -141,8 +150,8 @@ function formatBash({ args, result, lang }: FormatterCtx): FriendlyView | null {
     // the reference "已执行命令 ls -la" single-row layout.
     input: null,
     // Empty output → no pane. `ls` → grid renderer. Summarized
-    // output → friendly one-liner + raw details toggle. Plain log
-    // → raw pre.
+    // output → friendly one-liner + raw details toggle. Path-heavy
+    // output → file-row list. Plain log → raw pre.
     output: isEmptyOutput
       ? null
       : lsPane
@@ -151,20 +160,10 @@ function formatBash({ args, result, lang }: FormatterCtx): FriendlyView | null {
             content: (
               <div className="space-y-1.5">
                 {lsPane.content}
-                <details className="group/bash">
-                  <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[10.5px] text-muted-foreground/60 transition hover:text-muted-foreground">
-                    <span
-                      aria-hidden
-                      className="inline-block transition group-open/bash:rotate-90"
-                    >
-                      ▸
-                    </span>
-                    {pick(lang, '查看原始输出', 'Raw output')}
-                  </summary>
-                  <pre className="mt-1 max-h-60 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-foreground/75">
-                    {trimmed}
-                  </pre>
-                </details>
+                <RawOutputDetails
+                  raw={trimmed}
+                  label={pick(lang, '查看原始输出', 'Raw output')}
+                />
               </div>
             ),
             copyText: trimmed
@@ -177,34 +176,68 @@ function formatBash({ args, result, lang }: FormatterCtx): FriendlyView | null {
                   <div className="text-[12px] text-foreground/85">
                     {summary}
                   </div>
-                  <details className="group/bash">
-                    <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[10.5px] text-muted-foreground/60 transition hover:text-muted-foreground">
-                      <span
-                        aria-hidden
-                        className="inline-block transition group-open/bash:rotate-90"
-                      >
-                        ▸
-                      </span>
-                      {pick(lang, '查看完整输出', 'Full output')}
-                    </summary>
-                    <pre className="mt-1 max-h-60 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-foreground/75">
-                      {trimmed}
-                    </pre>
-                  </details>
+                  <RawOutputDetails
+                    raw={trimmed}
+                    label={pick(lang, '查看完整输出', 'Full output')}
+                  />
                 </div>
               ),
               copyText: trimmed
             }
-          : {
-              label: pick(lang, '输出', 'Response'),
-              content: (
-                <pre className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-snug text-foreground/85">
-                  {trimmed}
-                </pre>
-              ),
-              copyText: trimmed
-            }
+          : pathList
+            ? {
+                label: pathList.label,
+                content: (
+                  <div className="space-y-1.5">
+                    {pathList.content}
+                    <RawOutputDetails
+                      raw={trimmed}
+                      label={pick(lang, '查看原始输出', 'Raw output')}
+                    />
+                  </div>
+                ),
+                copyText: trimmed
+              }
+            : {
+                label: pick(lang, '输出', 'Response'),
+                content: (
+                  <pre className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-snug text-foreground/85">
+                    {trimmed}
+                  </pre>
+                ),
+                copyText: trimmed
+              }
   }
+}
+
+/**
+ * Shared "查看原始输出" toggle. Every friendly rendering (ls grid,
+ * one-line summary, path list) is a lossy heuristic, so the untouched
+ * text must stay one click away as ground truth.
+ */
+function RawOutputDetails({
+  raw,
+  label
+}: {
+  raw: string
+  label: string
+}): React.JSX.Element {
+  return (
+    <details className="group/bash">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[10.5px] text-muted-foreground/60 transition hover:text-muted-foreground">
+        <span
+          aria-hidden
+          className="inline-block transition group-open/bash:rotate-90"
+        >
+          ▸
+        </span>
+        {label}
+      </summary>
+      <pre className="mt-1 max-h-60 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-foreground/75">
+        {raw}
+      </pre>
+    </details>
+  )
 }
 
 /**
@@ -709,6 +742,153 @@ function FileGlyph(): React.JSX.Element {
       <polyline points="14 2 14 8 20 8" />
     </svg>
   )
+}
+
+/* ───────────── path-heavy output → file-row list ───────────── */
+
+type PathLogLine =
+  | { kind: 'section'; text: string }
+  | { kind: 'path'; path: string; size?: string }
+  | { kind: 'text'; text: string }
+
+/** `13M` / `4.0K` / `512B` / plain block counts — the size column
+ *  `du -h` / `ls -s` print in front of each path. */
+function isSizeToken(tok: string): boolean {
+  return /^\d+(?:[.,]\d+)?\s?(?:[KMGTPE]i?)?B?$/i.test(tok)
+}
+
+/** Absolute or ~-relative and at least two levels deep. Deliberately
+ *  loose — a mis-parsed line keeps its full text in the tooltip and
+ *  the raw log stays one click away. */
+function isPathToken(tok: string): boolean {
+  return /^(?:\/|~\/)/.test(tok) && tok.split('/').length >= 3
+}
+
+function classifyPathLogLine(line: string): PathLogLine {
+  const t = line.trim()
+  // `=== title ===` / `--- title ---` banner rows scripts print to
+  // separate blocks of output.
+  const section = /^[=\-—#*─]{2,}\s*(.+?)\s*[=\-—#*─]{2,}$/.exec(t)
+  if (section?.[1]) return { kind: 'section', text: section[1] }
+  // `13M<TAB>/path/to/file` — size column followed by a path. The
+  // path may contain spaces (iCloud dirs!), so match greedily.
+  const sized = /^(\S+)\s+(.+)$/.exec(t)
+  if (sized && isSizeToken(sized[1]!) && isPathToken(sized[2]!.trim())) {
+    return { kind: 'path', path: sized[2]!.trim(), size: sized[1] }
+  }
+  if (isPathToken(t)) return { kind: 'path', path: t }
+  return { kind: 'text', text: line }
+}
+
+/** `13M` → `13 MB`, `4.0K` → `4 KB` — du's one-letter units read as
+ *  typos to non-engineers. Unknown shapes pass through untouched. */
+function humanizeSizeToken(tok: string): string {
+  const unit = /^(\d+(?:[.,]\d+)?)\s?([KMGTPE])i?B?$/i.exec(tok)
+  if (unit) {
+    const num = unit[1]!.replace(/[.,]0$/, '')
+    return `${num} ${unit[2]!.toUpperCase()}B`
+  }
+  const bytes = /^(\d+)B$/.exec(tok)
+  if (bytes) return `${bytes[1]} B`
+  return tok
+}
+
+/**
+ * Collapse the home prefix to `~` and fold middle segments so the
+ * basename and its nearest parents carry the line. The full path
+ * lives in the row tooltip and in copy / raw output.
+ */
+function shortenDir(dir: string): string {
+  const home = dir.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~')
+  const segs = home.split('/').filter((s) => s.length > 0)
+  const lead = home.startsWith('/') ? '/' : ''
+  if (segs.length <= 4) return lead + segs.join('/')
+  return `${lead}${segs[0]}/…/${segs.slice(-2).join('/')}`
+}
+
+function PathRow({
+  path,
+  size
+}: {
+  path: string
+  size?: string
+}): React.JSX.Element {
+  // Only an explicit trailing `/` marks a directory here — unlike the
+  // ls grid, a bare extension-less basename in a path listing is far
+  // more likely a file (binaries, exports) than a folder.
+  const isDir = path.endsWith('/')
+  const clean = path.replace(/\/+$/, '')
+  const base = clean.split('/').pop() ?? clean
+  const parent = clean.slice(0, clean.length - base.length).replace(/\/+$/, '')
+  return (
+    <div className="flex min-w-0 items-center gap-1.5" title={path}>
+      {isDir ? <FolderGlyph /> : <FileGlyph />}
+      {/* shrink-0 + max-w: the basename never gets squeezed by the dir
+          column, it only truncates against its own cap. */}
+      <span className="min-w-0 max-w-[65%] shrink-0 truncate font-mono text-[11.5px] font-medium text-foreground/85">
+        {base}
+      </span>
+      {size && (
+        <span className="shrink-0 rounded-full border border-border bg-muted/40 px-1.5 text-[9.5px] font-medium tabular-nums leading-4 text-muted-foreground">
+          {humanizeSizeToken(size)}
+        </span>
+      )}
+      <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted-foreground/50">
+        {shortenDir(parent || '/')}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * Render outputs dominated by file paths (du, find, "check what got
+ * exported" one-liners) as a file list. Returns null unless paths
+ * clearly dominate — mixed logs read better untouched.
+ */
+function renderPathListOutput(
+  output: string,
+  lang: Lang
+): { label: string; content: React.ReactNode } | null {
+  const rawLines = output.split('\n')
+  // Hard cap so a giant log never becomes thousands of flex rows.
+  if (rawLines.length > 200) return null
+  const lines = rawLines
+    .map(classifyPathLogLine)
+    .filter((l) => !(l.kind === 'text' && l.text.trim().length === 0))
+  const pathCount = lines.filter((l) => l.kind === 'path').length
+  const structured = lines.filter((l) => l.kind !== 'text').length
+  if (pathCount === 0 || structured < lines.length * 0.6) return null
+
+  return {
+    label: pick(lang, `${pathCount} 个文件`, `${pathCount} files`),
+    content: (
+      <div className="space-y-1">
+        {lines.map((l, i) => {
+          if (l.kind === 'section') {
+            return (
+              <div
+                key={i}
+                className="pt-1.5 font-sans text-[10.5px] uppercase tracking-wider text-muted-foreground/60 first:pt-0"
+              >
+                {l.text}
+              </div>
+            )
+          }
+          if (l.kind === 'path') {
+            return <PathRow key={i} path={l.path} size={l.size} />
+          }
+          return (
+            <div
+              key={i}
+              className="whitespace-pre-wrap break-words font-mono text-[11.5px] leading-snug text-foreground/75"
+            >
+              {l.text}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
 }
 
 function formatRead({
@@ -1587,6 +1767,149 @@ function formatWebFetch({
   }
 }
 
+/**
+ * WebSearch (网页搜索) — the raw result is engineer-speak: an English
+ * "Web search results for query: …" preamble, a one-line `Links: [...]`
+ * JSON array, boilerplate, then a markdown digest. Regular users saw a
+ * wall of JSON-in-monospace (the exact complaint that prompted this
+ * formatter). Rebuilt as:
+ *   - headline/input: none — the query already rides in the card header
+ *     (summarizeArgs picks `query`), so repeating it twice is noise.
+ *   - output: a clean SOURCES list (numbered title + domain, opens in
+ *     the system browser) + the markdown digest rendered as rich text +
+ *     the untouched raw text tucked under a 查看原始输出 toggle.
+ * Parsing is best-effort: if the result doesn't match the known shape,
+ * we fall back to plain readable text (never the raw JSON pane).
+ */
+function parseWebSearchResult(text: string): {
+  links: { title: string; url: string }[]
+  summary: string
+} {
+  let links: { title: string; url: string }[] = []
+  // The Links array lives on a single line: `Links: [{"title":…}]`.
+  const linksMatch = /^Links:\s*(\[.*\])\s*$/m.exec(text)
+  if (linksMatch) {
+    try {
+      const parsed = JSON.parse(linksMatch[1]) as unknown
+      if (Array.isArray(parsed)) {
+        links = parsed
+          .map((l) =>
+            isObj(l)
+              ? {
+                  title: getStringArg(l, 'title') ?? '',
+                  url: getStringArg(l, 'url') ?? ''
+                }
+              : { title: '', url: '' }
+          )
+          .filter((l) => l.url.length > 0)
+      }
+    } catch {
+      // malformed Links JSON — keep links empty, summary still renders
+    }
+  }
+  // Digest = everything after the Links line, minus the boilerplate
+  // lead-ins the search tool prepends in both languages.
+  let summary = linksMatch
+    ? text.slice(linksMatch.index + linksMatch[0].length)
+    : text
+  summary = summary
+    .replace(/^Web search results for query:.*$/m, '')
+    .replace(/^现在为你提供关于搜索查询的信息[:：]\s*$/m, '')
+    .replace(/^I'll provide.*information.*$/m, '')
+    .trim()
+  return { links, summary }
+}
+
+/** Hostname sans www — the quiet "source" tag on each link row. */
+function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return ''
+  }
+}
+
+function formatWebSearch({
+  args,
+  result,
+  lang
+}: FormatterCtx): FriendlyView | null {
+  const query = getStringArg(args, 'query')
+  if (!query) return null
+
+  const raw = extractText(result).replace(/\s+$/, '')
+  if (!raw) {
+    // Still running / result not back yet — hide the raw {query} JSON
+    // (the header shows the query), let the default running hint show.
+    return { input: null }
+  }
+
+  const { links, summary } = parseWebSearchResult(raw)
+
+  return {
+    input: null,
+    output: {
+      label:
+        links.length > 0
+          ? pick(lang, `搜索结果 · ${links.length} 个来源`, `Results · ${links.length} sources`)
+          : pick(lang, '搜索结果', 'Results'),
+      content: (
+        <div className="max-h-96 space-y-2 overflow-y-auto">
+          {links.length > 0 && (
+            <ol className="space-y-0.5">
+              {links.map((l, i) => (
+                <li key={l.url + i}>
+                  <a
+                    href={l.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group/link flex items-baseline gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-accent/10"
+                  >
+                    <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-muted-foreground/50">
+                      {i + 1}
+                    </span>
+                    <span className="min-w-0 truncate text-[12px] text-foreground/85 transition-colors group-hover/link:text-accent">
+                      {l.title || l.url}
+                    </span>
+                    <span className="ml-auto shrink-0 text-[10.5px] text-muted-foreground/60">
+                      {domainOf(l.url)}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ol>
+          )}
+          {summary && (
+            <div
+              className={
+                'text-[12px] leading-relaxed text-foreground/85 ' +
+                (links.length > 0 ? 'border-t border-border/40 pt-2' : '')
+              }
+            >
+              <AssistantMarkdown text={summary} />
+            </div>
+          )}
+          <details className="group/ws">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[10.5px] text-muted-foreground/60 transition hover:text-muted-foreground">
+              <span
+                aria-hidden
+                className="inline-block transition group-open/ws:rotate-90"
+              >
+                ▸
+              </span>
+              {pick(lang, '查看原始输出', 'Raw output')}
+            </summary>
+            <pre className="mt-1 max-h-60 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-foreground/75">
+              {raw}
+            </pre>
+          </details>
+        </div>
+      ),
+      copyText: raw
+    }
+  }
+}
+
 function formatToolSearch({
   args,
   result,
@@ -1619,11 +1942,43 @@ function formatToolSearch({
     }
   }
 
+  // `select:A,B,…` is exact-name loading, not a search — translate the
+  // syntax instead of showing it. Knowing the requested names also
+  // lets us flag the ones that did NOT come back (schema failed to
+  // load), which is the actually-useful signal of this tool.
+  const selectNames = query.startsWith('select:')
+    ? query
+        .slice('select:'.length)
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+    : null
+  const found = new Set(tools)
+  const missing = selectNames?.filter((n) => !found.has(n)) ?? []
+
   return {
-    headline: (
+    headline: selectNames ? (
+      <span>
+        {pick(lang, '加载工具', 'Load tools')}{' '}
+        <span className="text-muted-foreground/60">
+          ·{' '}
+          {pick(
+            lang,
+            `按名称选取 ${selectNames.length} 个`,
+            `${selectNames.length} by name`
+          )}
+        </span>
+      </span>
+    ) : (
       <span>
         {pick(lang, '搜索工具', 'Tool search')}{' '}
-        <code className="font-mono text-[11.5px] text-accent">{query}</code>
+        <span className="text-accent">
+          “
+          <span className="font-mono text-[11.5px]">
+            {query.replace(/^\+/, '')}
+          </span>
+          ”
+        </span>
         {maxResults !== undefined && (
           <span className="ml-1 text-muted-foreground/60">
             · {pick(lang, `上限 ${maxResults}`, `max ${maxResults}`)}
@@ -1637,20 +1992,18 @@ function formatToolSearch({
         tools.length > 0
           ? pick(
               lang,
-              `找到 ${tools.length} 个工具`,
-              `Found ${tools.length} tools`
+              `已加载 ${tools.length} 个工具`,
+              `${tools.length} tools loaded`
             )
           : pick(lang, '结果', 'Result'),
       content:
-        tools.length > 0 ? (
+        tools.length > 0 || missing.length > 0 ? (
           <ul className="flex flex-wrap gap-1.5">
             {tools.map((t) => (
-              <li
-                key={t}
-                className="rounded-full border border-border bg-muted/40 px-2 py-0.5 font-mono text-[11px] text-foreground/85"
-              >
-                {t}
-              </li>
+              <ToolChip key={t} name={t} />
+            ))}
+            {missing.map((t) => (
+              <ToolChip key={t} name={t} missing lang={lang} />
             ))}
           </ul>
         ) : (
@@ -1661,6 +2014,77 @@ function formatToolSearch({
       copyText: tools.join(', ')
     }
   }
+}
+
+/**
+ * One loaded-tool pill. MCP names encode their server as
+ * `mcp__<server>__<tool>` — split that into a dimmed server prefix and
+ * the tool proper so the eye lands on the part that matters. A
+ * `missing` pill (requested via select: but absent from the result)
+ * renders dashed + muted: the schema did not load.
+ */
+function ToolChip({
+  name,
+  missing = false,
+  lang
+}: {
+  name: string
+  missing?: boolean
+  lang?: Lang
+}): React.JSX.Element {
+  const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(name)
+  const server = mcp?.[1]
+  const tool = mcp?.[2] ?? name
+  return (
+    <li
+      className={
+        'inline-flex min-w-0 items-center gap-1.5 rounded-full py-0.5 pl-2 pr-2.5 text-[11px] leading-4 ' +
+        (missing
+          ? 'border border-dashed border-border text-muted-foreground/50'
+          : 'border border-border bg-muted/40 text-foreground/85')
+      }
+      title={name}
+    >
+      <WrenchGlyph
+        className={missing ? 'text-muted-foreground/40' : 'text-accent/70'}
+      />
+      {server && (
+        <>
+          <span className="max-w-32 truncate font-sans text-[10px] text-muted-foreground/60">
+            {server}
+          </span>
+          <span aria-hidden className="text-muted-foreground/40">
+            ·
+          </span>
+        </>
+      )}
+      <span className="min-w-0 truncate font-mono">{tool}</span>
+      {missing && lang && (
+        <span className="font-sans text-[9.5px] text-amber-500/90">
+          {pick(lang, '未找到', 'not found')}
+        </span>
+      )}
+    </li>
+  )
+}
+
+function WrenchGlyph({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className={'shrink-0 ' + (className ?? '')}
+    >
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+    </svg>
+  )
 }
 
 type TodoItem = {
@@ -1985,6 +2409,7 @@ const FORMATTERS: Record<string, Formatter> = {
   Grep: formatGrep,
   Glob: formatGlob,
   WebFetch: formatWebFetch,
+  WebSearch: formatWebSearch,
   ToolSearch: formatToolSearch,
   TodoWrite: formatTodoWrite,
   Skill: formatSkill,

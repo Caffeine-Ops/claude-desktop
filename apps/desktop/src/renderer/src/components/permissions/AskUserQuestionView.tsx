@@ -6,6 +6,16 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
+
+import { useI18n, useToolLabel, type Lang } from '../../i18n'
+
+/** Two-lang string picker — same convention as ToolFormatters /
+ *  CanvasConfirm: desktop-native UI copy lives in the component,
+ *  bilingual, keyed off the i18n store's `lang`. */
+function pick(lang: Lang, zh: string, en: string): string {
+  return lang === 'zh' ? zh : en
+}
+
 /**
  * Keyboard cap pill used in the footer hints. Inlined here (instead
  * of imported) so this view doesn't depend on the legacy
@@ -112,19 +122,13 @@ type Props = {
   onCancel: () => void
 }
 
-/**
- * Sentinel used to mark the "Other" row inside the highlight state —
- * any highlight index equal to `options.length` means Other is the
- * current focus. We don't use a string literal in state because the
- * index-based model keeps ArrowUp/Down arithmetic trivial.
- */
-const OTHER_PLACEHOLDER = 'Type your own answer…'
-
 export function AskUserQuestionView({
   input,
   onSubmit,
   onCancel
 }: Props): React.JSX.Element {
+  const lang = useI18n((s) => s.lang)
+  const toolLabel = useToolLabel()
   // Parse once per mount. The permission request payload is stable
   // for a single dialog lifetime, so memoizing on `input` is both
   // correct and cheap.
@@ -352,7 +356,7 @@ export function AskUserQuestionView({
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-4 pt-4">
         <div className="mb-2 text-[14px] font-semibold text-foreground">
-          Claude has a question
+          {pick(lang, 'Claude 想问你一个问题', 'Claude has a question')}
         </div>
         <div className="mb-4 max-h-48 overflow-auto rounded-md border border-border bg-background px-3 py-2 font-mono text-[12px] leading-relaxed text-foreground/80">
           <pre className="whitespace-pre-wrap break-words">
@@ -365,14 +369,14 @@ export function AskUserQuestionView({
             onClick={() => onSubmit({ answers: {} })}
             className="flex w-full items-center gap-3 rounded-md border border-accent/40 bg-accent/15 px-3 py-2 text-left text-[13px] font-medium text-accent transition hover:border-accent hover:bg-accent/25"
           >
-            Continue
+            {pick(lang, '继续', 'Continue')}
           </button>
           <button
             type="button"
             onClick={onCancel}
             className="flex w-full items-center gap-3 rounded-md border border-border bg-card/60 px-3 py-2 text-left text-[13px] text-foreground transition hover:border-input hover:bg-muted"
           >
-            Cancel
+            {pick(lang, '取消', 'Cancel')}
           </button>
         </div>
       </div>
@@ -475,26 +479,26 @@ export function AskUserQuestionView({
           {otherEditing ? (
             <>
               <Kbd>↵</Kbd>
-              <span>submit</span>
+              <span>{pick(lang, '提交', 'submit')}</span>
               <span className="text-muted-foreground/40">·</span>
               <Kbd>Esc</Kbd>
-              <span>back to list</span>
+              <span>{pick(lang, '返回选项', 'back to list')}</span>
             </>
           ) : (
             <>
               <Kbd>Esc</Kbd>
-              <span>cancel</span>
+              <span>{pick(lang, '取消', 'cancel')}</span>
               <span className="text-muted-foreground/40">·</span>
               <Kbd>↵</Kbd>
-              <span>select</span>
+              <span>{pick(lang, '确认', 'select')}</span>
               <span className="text-muted-foreground/40">·</span>
               <Kbd>1-{current.options.length}</Kbd>
-              <span>pick</span>
+              <span>{pick(lang, '直选', 'pick')}</span>
               {qIndex > 0 && (
                 <>
                   <span className="text-muted-foreground/40">·</span>
                   <Kbd>⌫</Kbd>
-                  <span>back</span>
+                  <span>{pick(lang, '上一题', 'back')}</span>
                 </>
               )}
             </>
@@ -504,7 +508,7 @@ export function AskUserQuestionView({
           className="truncate text-muted-foreground/50"
           style={{ letterSpacing: '-0.01em' }}
         >
-          AskUserQuestion
+          {toolLabel('AskUserQuestion')}
         </span>
       </div>
     </div>
@@ -615,6 +619,7 @@ function OtherRow({
   onKeyDown: (e: ReactKeyboardEvent<HTMLInputElement>) => void
   onBlur: () => void
 }): React.JSX.Element {
+  const lang = useI18n((s) => s.lang)
   const active = highlighted || editing
   return (
     <div
@@ -655,7 +660,7 @@ function OtherRow({
             onKeyDown={onKeyDown}
             onBlur={onBlur}
             onClick={(e) => e.stopPropagation()}
-            placeholder={OTHER_PLACEHOLDER}
+            placeholder={pick(lang, '输入你的回答…', 'Type your own answer…')}
             className="w-full bg-transparent font-medium text-foreground caret-accent placeholder:text-muted-foreground focus:outline-none"
             style={{ fontSize: '14px', lineHeight: 1.35, letterSpacing: '-0.012em' }}
           />
@@ -667,7 +672,7 @@ function OtherRow({
             }
             style={{ fontSize: '14px', lineHeight: 1.35 }}
           >
-            {draft.length > 0 ? draft : 'Other'}
+            {draft.length > 0 ? draft : pick(lang, '其他', 'Other')}
           </div>
         )}
         {!editing && (
@@ -675,7 +680,11 @@ function OtherRow({
             className="mt-1 whitespace-pre-wrap break-words text-muted-foreground"
             style={{ fontSize: '12.5px', lineHeight: 1.47, letterSpacing: '-0.01em' }}
           >
-            Type your own answer in your own words.
+            {pick(
+              lang,
+              '用自己的话输入你的回答。',
+              'Type your own answer in your own words.'
+            )}
           </div>
         )}
       </span>

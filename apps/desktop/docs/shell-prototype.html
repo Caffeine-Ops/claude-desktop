@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Desktop — 外壳 UI 原型</title>
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   Claude Desktop 外壳 UI 原型
+   ------------------------------------------------------------------
+   三个主题变体 × 明暗模式，右下角 Tweaks 面板实时切换：
+     porcelain 素瓷 — 现有冷灰 + 绿 accent 的精修版（保守）
+     frost     霜面 — macOS vibrancy 毛玻璃方向
+     clay      暖岩 — Claude 品牌暖纸色 + 陶土 accent（大胆）
+   Token 命名沿用应用真实变量（--rail-*、--accent-*），方便回迁。
+   ══════════════════════════════════════════════════════════════════ */
+
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+    'PingFang SC', 'Helvetica Neue', sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-optical-sizing: auto;
+  letter-spacing: -0.022em;
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+  background: var(--backdrop);
+  transition: background 320ms ease;
+}
+
+/* ── 主题 token：素瓷（默认） ─────────────────────────────────── */
+body[data-theme='porcelain'] {
+  --backdrop: linear-gradient(180deg, #ced2d9 0%, #c3c8d1 100%);
+  --window-bg: #e9ebef;
+  --rail-bg: transparent;
+  --rail-hover: rgba(16, 20, 28, 0.055);
+  --rail-active: #ffffff;
+  --rail-active-shadow: 0 1px 2px rgba(16, 20, 28, 0.07), 0 0 0 1px rgba(16, 20, 28, 0.045);
+  --rail-text: #1b1d22;
+  --rail-text-soft: #5c5f66;
+  --rail-muted: #989ba3;
+  --accent: #17a24b;
+  --accent-soft: rgba(23, 162, 75, 0.11);
+  --accent-ink: #0e7c39;
+  --accent-contrast: #ffffff;
+  --newchat-bg: #ffffff;
+  --newchat-text: #0e7c39;
+  --newchat-border: rgba(16, 20, 28, 0.075);
+  --newchat-shadow: 0 1px 2px rgba(16, 20, 28, 0.06);
+  --newchat-hover: #f4faf6;
+  --card-bg: #ffffff;
+  --card-border: rgba(16, 20, 28, 0.07);
+  --card-shadow: 0 1px 2px rgba(16, 20, 28, 0.04), 0 14px 40px rgba(16, 20, 28, 0.09);
+  --card-blur: none;
+  --rail-blur: none;
+  --hairline: rgba(16, 20, 28, 0.08);
+  --content-text: #1b1d22;
+  --content-muted: #83868d;
+  --user-bubble: #eef0f3;
+  --tool-card-bg: #fafbfc;
+  --kbd-bg: rgba(16, 20, 28, 0.05);
+  --window-shadow: 0 24px 80px rgba(20, 24, 32, 0.32), 0 0 0 1px rgba(16, 20, 28, 0.10);
+}
+body[data-theme='porcelain'][data-mode='dark'] {
+  --backdrop: linear-gradient(180deg, #101114 0%, #0b0c0e 100%);
+  --window-bg: #1d1e21;
+  --rail-hover: rgba(255, 255, 255, 0.06);
+  --rail-active: rgba(255, 255, 255, 0.095);
+  --rail-active-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --rail-text: #ececec;
+  --rail-text-soft: rgba(236, 236, 236, 0.66);
+  --rail-muted: rgba(236, 236, 236, 0.42);
+  --accent: #2ec96b;
+  --accent-soft: rgba(46, 201, 107, 0.15);
+  --accent-ink: #58d98b;
+  --accent-contrast: #0c2214;
+  --newchat-bg: rgba(255, 255, 255, 0.07);
+  --newchat-text: #58d98b;
+  --newchat-border: rgba(255, 255, 255, 0.09);
+  --newchat-shadow: none;
+  --newchat-hover: rgba(255, 255, 255, 0.11);
+  --card-bg: #26272b;
+  --card-border: rgba(255, 255, 255, 0.075);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 16px 44px rgba(0, 0, 0, 0.4);
+  --hairline: rgba(255, 255, 255, 0.08);
+  --content-text: #ececec;
+  --content-muted: rgba(236, 236, 236, 0.5);
+  --user-bubble: rgba(255, 255, 255, 0.075);
+  --tool-card-bg: rgba(255, 255, 255, 0.035);
+  --kbd-bg: rgba(255, 255, 255, 0.07);
+  --window-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+/* ── 主题 token：霜面 ─────────────────────────────────────────── */
+body[data-theme='frost'] {
+  --backdrop:
+    radial-gradient(120% 90% at 12% 0%, #8fadd0 0%, transparent 55%),
+    radial-gradient(110% 80% at 88% 8%, #d4c2a4 0%, transparent 50%),
+    radial-gradient(130% 100% at 50% 100%, #9dbfa8 0%, transparent 60%),
+    linear-gradient(180deg, #b3bcc8, #a3adb9);
+  --window-bg: rgba(242, 245, 248, 0.36);
+  --rail-bg: transparent;
+  --rail-hover: rgba(18, 22, 30, 0.065);
+  --rail-active: rgba(255, 255, 255, 0.62);
+  --rail-active-shadow: 0 1px 3px rgba(18, 22, 30, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.35) inset;
+  --rail-text: #191b20;
+  --rail-text-soft: #565a62;
+  --rail-muted: #90949c;
+  --accent: #17a24b;
+  --accent-soft: rgba(23, 162, 75, 0.13);
+  --accent-ink: #0d7537;
+  --accent-contrast: #ffffff;
+  --newchat-bg: rgba(255, 255, 255, 0.55);
+  --newchat-text: #0d7537;
+  --newchat-border: rgba(255, 255, 255, 0.5);
+  --newchat-shadow: 0 1px 3px rgba(18, 22, 30, 0.07);
+  --newchat-hover: rgba(255, 255, 255, 0.78);
+  --card-bg: rgba(255, 255, 255, 0.72);
+  --card-border: rgba(255, 255, 255, 0.55);
+  --card-shadow: 0 2px 6px rgba(18, 22, 30, 0.05), 0 18px 50px rgba(18, 22, 30, 0.13);
+  --card-blur: blur(36px) saturate(1.7);
+  --rail-blur: blur(36px) saturate(1.7);
+  --hairline: rgba(18, 22, 30, 0.075);
+  --content-text: #191b20;
+  --content-muted: #7d818a;
+  --user-bubble: rgba(255, 255, 255, 0.65);
+  --tool-card-bg: rgba(255, 255, 255, 0.5);
+  --kbd-bg: rgba(18, 22, 30, 0.055);
+  --window-shadow: 0 28px 90px rgba(18, 22, 30, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+body[data-theme='frost'][data-mode='dark'] {
+  --backdrop:
+    radial-gradient(120% 90% at 12% 0%, #232c3a 0%, transparent 55%),
+    radial-gradient(110% 80% at 88% 8%, #33302a 0%, transparent 50%),
+    radial-gradient(130% 100% at 50% 100%, #1f2a24 0%, transparent 60%),
+    linear-gradient(180deg, #14161a, #0e1013);
+  --window-bg: rgba(26, 28, 33, 0.55);
+  --rail-hover: rgba(255, 255, 255, 0.065);
+  --rail-active: rgba(255, 255, 255, 0.12);
+  --rail-active-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07) inset;
+  --rail-text: #eceef0;
+  --rail-text-soft: rgba(236, 238, 240, 0.66);
+  --rail-muted: rgba(236, 238, 240, 0.4);
+  --accent: #2ec96b;
+  --accent-soft: rgba(46, 201, 107, 0.17);
+  --accent-ink: #5cdb8e;
+  --accent-contrast: #0c2214;
+  --newchat-bg: rgba(255, 255, 255, 0.09);
+  --newchat-text: #5cdb8e;
+  --newchat-border: rgba(255, 255, 255, 0.1);
+  --newchat-shadow: none;
+  --newchat-hover: rgba(255, 255, 255, 0.14);
+  --card-bg: rgba(36, 38, 44, 0.66);
+  --card-border: rgba(255, 255, 255, 0.09);
+  --card-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 20px 56px rgba(0, 0, 0, 0.45);
+  --hairline: rgba(255, 255, 255, 0.085);
+  --content-text: #eceef0;
+  --content-muted: rgba(236, 238, 240, 0.5);
+  --user-bubble: rgba(255, 255, 255, 0.09);
+  --tool-card-bg: rgba(255, 255, 255, 0.045);
+  --kbd-bg: rgba(255, 255, 255, 0.08);
+  --window-shadow: 0 28px 90px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+/* ── 主题 token：暖岩 ─────────────────────────────────────────── */
+body[data-theme='clay'] {
+  --backdrop: linear-gradient(180deg, #d6d0c2 0%, #ccc5b6 100%);
+  --window-bg: #ece9e0;
+  --rail-bg: transparent;
+  --rail-hover: rgba(62, 52, 32, 0.06);
+  --rail-active: #faf8f2;
+  --rail-active-shadow: 0 1px 2px rgba(62, 52, 32, 0.08), 0 0 0 1px rgba(62, 52, 32, 0.05);
+  --rail-text: #2a2721;
+  --rail-text-soft: #6b665c;
+  --rail-muted: #a09a8c;
+  --accent: #c15f3c;
+  --accent-soft: rgba(193, 95, 60, 0.11);
+  --accent-ink: #a34c2b;
+  --accent-contrast: #ffffff;
+  --newchat-bg: #c15f3c;
+  --newchat-text: #ffffff;
+  --newchat-border: rgba(62, 52, 32, 0.0);
+  --newchat-shadow: 0 1px 3px rgba(163, 76, 43, 0.3);
+  --newchat-hover: #b1522f;
+  --card-bg: #faf9f5;
+  --card-border: rgba(62, 52, 32, 0.08);
+  --card-shadow: 0 1px 2px rgba(62, 52, 32, 0.05), 0 14px 40px rgba(62, 52, 32, 0.1);
+  --card-blur: none;
+  --rail-blur: none;
+  --hairline: rgba(62, 52, 32, 0.09);
+  --content-text: #2a2721;
+  --content-muted: #8d8779;
+  --user-bubble: #f0ede4;
+  --tool-card-bg: #f5f3ec;
+  --kbd-bg: rgba(62, 52, 32, 0.06);
+  --window-shadow: 0 24px 80px rgba(52, 44, 28, 0.32), 0 0 0 1px rgba(62, 52, 32, 0.1);
+}
+body[data-theme='clay'][data-mode='dark'] {
+  --backdrop: linear-gradient(180deg, #171613 0%, #100f0d 100%);
+  --window-bg: #23211d;
+  --rail-hover: rgba(255, 250, 240, 0.06);
+  --rail-active: rgba(255, 250, 240, 0.09);
+  --rail-active-shadow: 0 0 0 1px rgba(255, 250, 240, 0.05);
+  --rail-text: #ebe7de;
+  --rail-text-soft: rgba(235, 231, 222, 0.66);
+  --rail-muted: rgba(235, 231, 222, 0.42);
+  --accent: #e0805a;
+  --accent-soft: rgba(224, 128, 90, 0.16);
+  --accent-ink: #eb9a77;
+  --accent-contrast: #2b1207;
+  --newchat-bg: #c96442;
+  --newchat-text: #fff6f0;
+  --newchat-border: transparent;
+  --newchat-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --newchat-hover: #d5714e;
+  --card-bg: #2b2924;
+  --card-border: rgba(255, 250, 240, 0.07);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 16px 44px rgba(0, 0, 0, 0.4);
+  --hairline: rgba(255, 250, 240, 0.08);
+  --content-text: #ebe7de;
+  --content-muted: rgba(235, 231, 222, 0.5);
+  --user-bubble: rgba(255, 250, 240, 0.07);
+  --tool-card-bg: rgba(255, 250, 240, 0.04);
+  --kbd-bg: rgba(255, 250, 240, 0.07);
+  --window-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 250, 240, 0.06);
+}
+
+/* ══════════════════════ 舞台与窗口 frame ═══════════════════════ */
+
+.stage {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+}
+
+.window {
+  width: min(1320px, 100%);
+  height: min(848px, calc(100vh - 56px));
+  border-radius: 12px;
+  background: var(--window-bg);
+  box-shadow: var(--window-shadow);
+  backdrop-filter: var(--rail-blur, none);
+  -webkit-backdrop-filter: var(--rail-blur, none);
+  display: flex;
+  overflow: hidden;
+  position: relative;
+  transition: background 320ms ease, box-shadow 320ms ease;
+}
+
+/* macOS 交通灯（占位，仅视觉） */
+.traffic {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  gap: 8px;
+  z-index: 10;
+}
+.traffic span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12) inset;
+}
+.traffic .r { background: #ff5f57; }
+.traffic .y { background: #febc2e; }
+.traffic .g { background: #28c840; }
+
+/* ══════════════════════ 左侧导航 rail ══════════════════════════ */
+
+.rail {
+  width: var(--rail-width, 240px);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 48px 10px 10px 10px;
+  background: var(--rail-bg);
+  transition: width 200ms ease;
+}
+
+/* 通用行：nav / 会话共用的骨架 */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: var(--row-h, 34px);
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--rail-text-soft);
+  cursor: default;
+  user-select: none;
+  position: relative;
+  transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+.row:hover {
+  background: var(--rail-hover);
+  color: var(--rail-text);
+}
+.row svg { flex-shrink: 0; }
+.row .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 新对话 — 主操作按钮：从幽灵文字行升级为实体按钮 */
+.new-chat {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  margin: 0 2px 10px 2px;
+  border: 1px solid var(--newchat-border);
+  border-radius: 9px;
+  background: var(--newchat-bg);
+  color: var(--newchat-text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: inherit;
+  box-shadow: var(--newchat-shadow);
+  cursor: pointer;
+  transition: background 140ms ease, box-shadow 140ms ease, transform 80ms ease;
+}
+.new-chat:hover { background: var(--newchat-hover); }
+.new-chat:active { transform: scale(0.985); }
+.new-chat:focus-visible,
+.row:focus-visible,
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 搜索入口（设计提案，可在 Tweaks 关闭） */
+.search-row { color: var(--rail-muted); margin-bottom: 10px; }
+.search-row:hover { color: var(--rail-text-soft); }
+.search-row kbd {
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--rail-muted);
+  background: var(--kbd-bg);
+  border-radius: 5px;
+  padding: 2px 5px;
+  letter-spacing: 0.02em;
+}
+body[data-search='off'] .search-row { display: none; }
+
+/* nav 行：active = 浮起白 fill + 3px accent bar（macOS source list） */
+.nav-row.active {
+  background: var(--rail-active);
+  color: var(--rail-text);
+  font-weight: 500;
+  box-shadow: var(--rail-active-shadow);
+}
+.nav-row.active::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+/* 分组标签 */
+.group-label {
+  padding: 14px 12px 5px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--rail-muted);
+}
+
+/* 会话列表：撑满剩余高度，独立滚动 */
+.sessions {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin-top: 2px;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rail-muted) transparent;
+}
+.sessions::-webkit-scrollbar { width: 8px; }
+.sessions::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--rail-muted) 45%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.sessions::-webkit-scrollbar-track { background: transparent; }
+
+.session { font-size: 13px; }
+.session .time {
+  font-size: 11px;
+  color: var(--rail-muted);
+  font-variant-numeric: tabular-nums;
+  opacity: 1;
+  transition: opacity 120ms ease;
+}
+.session .more {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--rail-muted);
+  cursor: pointer;
+}
+.session .more:hover { background: var(--rail-hover); color: var(--rail-text); }
+.session:hover .time { display: none; }
+.session:hover .more { display: flex; }
+.session.active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+.session.active .time { color: var(--accent-ink); opacity: 0.7; }
+
+/* 用户 footer */
+.user-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  margin-top: 6px;
+  border-radius: 10px;
+  transition: background 140ms ease;
+}
+.user-bar:hover { background: var(--rail-hover); }
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.user-meta { flex: 1; min-width: 0; line-height: 1.3; }
+.user-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--rail-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-plan { font-size: 11px; color: var(--rail-muted); }
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--rail-text-soft);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.icon-btn:hover { background: var(--rail-hover); color: var(--rail-text); }
+
+/* ══════════════════════ 右侧内容区 ═════════════════════════════ */
+
+.content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  padding: 8px 8px 8px 0;
+}
+/* 通栏布局：卡片贴边，只留左 hairline 分割 */
+body[data-layout='flush'] .content { padding: 0; }
+body[data-layout='flush'] .chat-card {
+  border-radius: 0;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  box-shadow: none;
+}
+
+.chat-card {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
+  backdrop-filter: var(--card-blur, none);
+  -webkit-backdrop-filter: var(--card-blur, none);
+  overflow: hidden;
+  transition: background 320ms ease, box-shadow 320ms ease;
+}
+
+/* 卡片 header */
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+.chat-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--content-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--content-muted);
+}
+.chat-status .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.chat-header .spacer { flex: 1; }
+.header-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--content-muted);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.header-btn:hover { background: var(--rail-hover); color: var(--content-text); }
+
+/* 消息流 */
+.messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 28px 0;
+}
+.msg-col {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 0 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.msg-user {
+  align-self: flex-end;
+  max-width: 78%;
+  background: var(--user-bubble);
+  border-radius: 14px 14px 4px 14px;
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--content-text);
+}
+.msg-assistant {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--content-text);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.msg-assistant p { margin: 0; }
+
+/* 工具调用卡片（占位） */
+.tool-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--tool-card-bg);
+  padding: 9px 12px;
+  font-size: 12.5px;
+  color: var(--content-muted);
+}
+.tool-card .tool-name {
+  font-weight: 600;
+  color: var(--content-text);
+}
+.tool-card .check { color: var(--accent); margin-left: auto; }
+.tool-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  flex-shrink: 0;
+}
+
+/* 空状态（新对话） */
+.empty-state {
+  flex: 1;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--content-muted);
+}
+.empty-state .empty-mark {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+.empty-state h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--content-text);
+  letter-spacing: -0.01em;
+}
+.empty-state p { margin: 0; font-size: 13px; }
+
+/* composer */
+.composer-wrap {
+  flex-shrink: 0;
+  padding: 12px 28px 18px;
+}
+.composer {
+  max-width: 680px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 13px;
+  background: var(--card-bg);
+  box-shadow: 0 1px 2px rgba(16, 20, 28, 0.04);
+  padding: 9px 10px 9px 12px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.composer .attach {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--content-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 140ms ease, color 140ms ease;
+}
+.composer .attach:hover { background: var(--rail-hover); color: var(--content-text); }
+.composer .input {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  max-height: 120px;
+  padding: 5px 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 14px;
+  letter-spacing: inherit;
+  line-height: 1.4;
+  color: var(--content-text);
+}
+.composer .input::placeholder { color: var(--content-muted); }
+.composer .send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: filter 140ms ease, transform 80ms ease, opacity 140ms ease;
+}
+.composer .send:hover { filter: brightness(1.08); }
+.composer .send:active { transform: scale(0.94); }
+.composer .send:disabled { opacity: 0.35; cursor: default; }
+.composer-hint {
+  max-width: 680px;
+  margin: 7px auto 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--content-muted);
+  opacity: 0.8;
+}
+
+/* 工作画布 pane（tab 切换占位） */
+.canvas-pane {
+  flex: 1;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.canvas-placeholder {
+  width: min(72%, 720px);
+  aspect-ratio: 16 / 9;
+  border: 1.5px dashed color-mix(in srgb, var(--content-muted) 50%, transparent);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--content-muted);
+  font-size: 13px;
+}
+.canvas-placeholder .ratio { font-size: 11px; opacity: 0.7; }
+
+/* pane 显隐由 body[data-pane] 驱动 */
+body[data-pane='canvas'] .chat-header,
+body[data-pane='canvas'] .messages,
+body[data-pane='canvas'] .composer-wrap { display: none; }
+body[data-pane='canvas'] .canvas-pane { display: flex; }
+body[data-pane='empty'] .messages { display: none; }
+body[data-pane='empty'] .empty-state { display: flex; }
+
+/* 密度：紧凑档 */
+body[data-density='compact'] { --row-h: 30px; }
+body[data-density='compact'] .group-label { padding-top: 10px; }
+body[data-density='compact'] .new-chat { height: 32px; }
+
+/* ══════════════════════ Tweaks 面板 ════════════════════════════ */
+
+.tweaks-fab {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 100;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--card-bg);
+  color: var(--content-text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 8px 14px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(16, 20, 28, 0.18);
+}
+.tweaks {
+  position: fixed;
+  right: 20px;
+  bottom: 62px;
+  z-index: 100;
+  width: 248px;
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 13px;
+  background: var(--card-bg);
+  box-shadow: 0 12px 40px rgba(16, 20, 28, 0.25);
+  padding: 14px;
+}
+.tweaks.open { display: flex; }
+.tweaks h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--content-text);
+}
+.tweak-group { display: flex; flex-direction: column; gap: 5px; }
+.tweak-group .tw-label {
+  font-size: 11px;
+  color: var(--content-muted);
+  font-weight: 500;
+}
+.seg {
+  display: flex;
+  gap: 3px;
+  background: var(--kbd-bg);
+  border-radius: 8px;
+  padding: 3px;
+}
+.seg button {
+  flex: 1;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--content-muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  letter-spacing: inherit;
+  padding: 5px 0;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.seg button.on {
+  background: var(--card-bg);
+  color: var(--content-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(16, 20, 28, 0.1);
+}
+</style>
+</head>
+<body data-theme="porcelain" data-mode="light" data-layout="float"
+      data-density="cozy" data-search="on" data-pane="chat"
+      style="--rail-width: 240px">
+
+<div class="stage">
+  <div class="window">
+    <div class="traffic" aria-hidden="true"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+
+    <!-- ═══ 左侧导航 rail ═══ -->
+    <aside class="rail">
+      <button type="button" class="new-chat" id="btn-new-chat">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        新对话
+      </button>
+
+      <div class="row search-row" role="button" tabindex="0">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <span class="label">搜索对话</span>
+        <kbd>⌘K</kbd>
+      </div>
+
+      <nav aria-label="主导航">
+        <div class="row nav-row active" role="button" tabindex="0" data-tab="chat">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+            <path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 16.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+          </svg>
+          <span class="label">智能助手</span>
+        </div>
+        <div class="row nav-row" role="button" tabindex="0" data-tab="canvas">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+            <rect x="3.5" y="4.5" width="17" height="15" rx="2" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M3.5 15l4.5-4 3 2.5 4-4.5 5 6" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+            <circle cx="9" cy="9" r="1.4" fill="currentColor"/>
+          </svg>
+          <span class="label">工作画布</span>
+        </div>
+      </nav>
+
+      <!-- ═══ 会话列表 ═══ -->
+      <div class="group-label">对话</div>
+      <div class="sessions" id="sessions">
+        <div class="group-label" style="padding-top:2px">今天</div>
+        <div class="row session active" role="button" tabindex="0">
+          <span class="label">重构外壳 UI 设计</span>
+          <span class="time">14:02</span>
+          <button type="button" class="more" title="更多操作" aria-label="更多操作">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            </svg>
+          </button>
+        </div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">ppt-master 图片生成调试</span>
+          <span class="time">10:31</span>
+          <button type="button" class="more" title="更多操作" aria-label="更多操作">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="group-label">昨天</div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">Settings 页面 V2 重设计</span>
+          <span class="time">18:47</span>
+          <button type="button" class="more" title="更多操作" aria-label="更多操作">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            </svg>
+          </button>
+        </div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">slash 建议菜单视觉打磨</span>
+          <span class="time">15:20</span>
+          <button type="button" class="more" title="更多操作" aria-label="更多操作">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="group-label">7 天内</div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">macOS 签名与应用图标配置</span>
+          <span class="time">周一</span>
+          <button type="button" class="more" title="更多操作" aria-label="更多操作">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            </svg>
+          </button>
+        </div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">会话列表冷启动高亮修复</span>
+          <span class="time">周一</span>
+          <button type="button" class="more" title="更多操作" aria-label="更多操作">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            </svg>
+          </button>
+        </div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">canvas 确认页嵌入 iframe</span>
+          <span class="time">周日</span>
+          <button type="button" class="more" title="更多操作" aria-label="更多操作">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="group-label">更早</div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">权限内联 UI 改造</span>
+          <span class="time">6/20</span>
+          <button type="button" class="more" title="更多操作" aria-label="更多操作">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            </svg>
+          </button>
+        </div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">multi-runtime 引擎重构</span>
+          <span class="time">6/14</span>
+          <button type="button" class="more" title="更多操作" aria-label="更多操作">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- ═══ 用户 footer ═══ -->
+      <footer class="user-bar">
+        <span class="avatar">我</span>
+        <div class="user-meta">
+          <div class="user-name">我爱啦啦哈哈</div>
+          <div class="user-plan">Pro trial Plan</div>
+        </div>
+        <button type="button" class="icon-btn" title="设置" aria-label="设置">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </footer>
+    </aside>
+
+    <!-- ═══ 右侧内容区 ═══ -->
+    <main class="content">
+      <div class="chat-card">
+        <!-- 聊天 header -->
+        <div class="chat-header">
+          <span class="chat-title" id="chat-title">重构外壳 UI 设计</span>
+          <span class="chat-status"><span class="dot"></span>就绪</span>
+          <span class="spacer"></span>
+          <button type="button" class="header-btn" title="会话操作" aria-label="会话操作">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- 消息流 -->
+        <div class="messages">
+          <div class="msg-col">
+            <div class="msg-user">帮我把外壳 UI 重新设计一版，先出 HTML 原型</div>
+            <div class="msg-assistant">
+              <p>好的。我先读一下现有外壳的实现，提取设计 token 和结构，再给出改造方案。</p>
+              <div class="tool-card">
+                <span class="tool-icon">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" aria-hidden="true">
+                    <path d="M6 3.5h9l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20V5a1.5 1.5 0 0 1 1-1.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                  </svg>
+                </span>
+                <span><span class="tool-name">Read</span> · shell/ShellApp.tsx</span>
+                <span class="check">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
+                    <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </span>
+              </div>
+              <p>现有外壳是 240px 左侧导航 rail 加浮动聊天卡片。我准备了三个视觉方向：保守精修的「素瓷」、macOS 毛玻璃的「霜面」、以及 Claude 品牌暖调的「暖岩」，右下角 Tweaks 面板可以实时切换对比。</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 空状态（新对话时显示） -->
+        <div class="empty-state">
+          <div class="empty-mark">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">
+              <path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 16.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <h2>开始新对话</h2>
+          <p>输入消息，@ 引用文件，/ 唤起技能</p>
+        </div>
+
+        <!-- 工作画布占位 pane -->
+        <div class="canvas-pane">
+          <div class="canvas-placeholder">
+            <span>工作画布（外部 web 视图）</span>
+            <span class="ratio">此处为独立 WebContentsView，不由本原型定义</span>
+          </div>
+        </div>
+
+        <!-- composer -->
+        <div class="composer-wrap">
+          <div class="composer">
+            <button type="button" class="attach" title="添加附件" aria-label="添加附件">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <textarea class="input" name="composer-input" rows="1" placeholder="输入消息，@ 引用文件，/ 唤起技能…"></textarea>
+            <button type="button" class="send" title="发送" aria-label="发送">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+                <path d="M12 19V6M6.5 11.5L12 6l5.5 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+          <div class="composer-hint">Enter 发送 · Shift+Enter 换行</div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ═══ Tweaks ═══ -->
+<button type="button" class="tweaks-fab" id="tweaks-fab">Tweaks</button>
+<div class="tweaks" id="tweaks-panel" role="dialog" aria-label="Tweaks">
+  <h3>Tweaks</h3>
+  <div class="tweak-group">
+    <span class="tw-label">主题</span>
+    <div class="seg" data-attr="data-theme">
+      <button type="button" data-val="porcelain" class="on">素瓷</button>
+      <button type="button" data-val="frost">霜面</button>
+      <button type="button" data-val="clay">暖岩</button>
+    </div>
+  </div>
+  <div class="tweak-group">
+    <span class="tw-label">外观</span>
+    <div class="seg" data-attr="data-mode">
+      <button type="button" data-val="light" class="on">浅色</button>
+      <button type="button" data-val="dark">深色</button>
+    </div>
+  </div>
+  <div class="tweak-group">
+    <span class="tw-label">内容布局</span>
+    <div class="seg" data-attr="data-layout">
+      <button type="button" data-val="float" class="on">浮动卡片</button>
+      <button type="button" data-val="flush">通栏</button>
+    </div>
+  </div>
+  <div class="tweak-group">
+    <span class="tw-label">列表密度</span>
+    <div class="seg" data-attr="data-density">
+      <button type="button" data-val="cozy" class="on">舒适</button>
+      <button type="button" data-val="compact">紧凑</button>
+    </div>
+  </div>
+  <div class="tweak-group">
+    <span class="tw-label">搜索入口（提案）</span>
+    <div class="seg" data-attr="data-search">
+      <button type="button" data-val="on" class="on">显示</button>
+      <button type="button" data-val="off">隐藏</button>
+    </div>
+  </div>
+  <div class="tweak-group">
+    <span class="tw-label">导航栏宽度</span>
+    <div class="seg" data-attr="--rail-width">
+      <button type="button" data-val="220px">220</button>
+      <button type="button" data-val="240px" class="on">240</button>
+      <button type="button" data-val="260px">260</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── Tweaks：segmented 控件写 body 的 data-* 或 CSS 变量 ─────── */
+const fab = document.getElementById('tweaks-fab');
+const panel = document.getElementById('tweaks-panel');
+fab.addEventListener('click', () => panel.classList.toggle('open'));
+
+document.querySelectorAll('.seg').forEach((seg) => {
+  const attr = seg.dataset.attr;
+  seg.querySelectorAll('button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      seg.querySelectorAll('button').forEach((b) => b.classList.remove('on'));
+      btn.classList.add('on');
+      if (attr.startsWith('--')) {
+        document.body.style.setProperty(attr, btn.dataset.val);
+      } else {
+        document.body.setAttribute(attr, btn.dataset.val);
+      }
+    });
+  });
+});
+
+/* ── nav 行切换：智能助手 / 工作画布 ─────────────────────────── */
+const navRows = document.querySelectorAll('.nav-row');
+const chatTitle = document.getElementById('chat-title');
+let currentChatPane = 'chat'; // 记住聊天 tab 内部处于消息流还是空状态
+
+navRows.forEach((row) => {
+  row.addEventListener('click', () => {
+    navRows.forEach((r) => r.classList.remove('active'));
+    row.classList.add('active');
+    const target = row.dataset.tab === 'canvas' ? 'canvas' : currentChatPane;
+    document.body.setAttribute('data-pane', target);
+  });
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.click(); }
+  });
+});
+
+/* ── 会话行：点击切换高亮 + 更新卡片标题 ─────────────────────── */
+const sessionRows = document.querySelectorAll('.session');
+sessionRows.forEach((row) => {
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('.more')) return; // 「更多」按钮不触发切换
+    sessionRows.forEach((r) => r.classList.remove('active'));
+    row.classList.add('active');
+    chatTitle.textContent = row.querySelector('.label').textContent;
+    currentChatPane = 'chat';
+    // 切会话时确保聊天 tab 前台（模拟真实行为）
+    navRows.forEach((r) => r.classList.toggle('active', r.dataset.tab === 'chat'));
+    document.body.setAttribute('data-pane', 'chat');
+  });
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.click(); }
+  });
+});
+
+/* ── 新对话：清高亮 + 空状态 ─────────────────────────────────── */
+document.getElementById('btn-new-chat').addEventListener('click', () => {
+  sessionRows.forEach((r) => r.classList.remove('active'));
+  chatTitle.textContent = '新对话';
+  currentChatPane = 'empty';
+  navRows.forEach((r) => r.classList.toggle('active', r.dataset.tab === 'chat'));
+  document.body.setAttribute('data-pane', 'empty');
+});
+
+/* ── composer：自动伸缩 + 有内容才可发送 ─────────────────────── */
+const input = document.querySelector('.composer .input');
+const send = document.querySelector('.composer .send');
+send.disabled = true;
+input.addEventListener('input', () => {
+  send.disabled = input.value.trim().length === 0;
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+});
+</script>
+</body>
+</html>

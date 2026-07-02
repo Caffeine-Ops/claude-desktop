@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-accent="green" data-stage="dots" data-docfont="sans" data-toc="on" data-stream="off">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>文件面板 · 文稿阅读原型 v2</title>
+<style>
+  /* ═══════════════════════════════════════════════════════════════════════
+     Design tokens — 与 slide-editor-prototype-v2 / confirm-ui-prototype-v2
+     同一套（v2 系列）：
+     · accent 来自 appearance store（浅 #16a34a / 深 #2ec96b），soft/tint/
+       ring/ink 全部 color-mix 派生 → 换 accent 一键全局重染。
+     · 中性灰 zinc 系；深色 = web 同源 warm-black (#1a1917)。
+     · 新增「代码语法语义色」（--j-*）：仅用于源码视图 token 着色，
+       深浅各一套（GitHub 风格），不是装饰色。
+     ═══════════════════════════════════════════════════════════════════════ */
+  :root {
+    --accent: #16a34a;
+    --accent-contrast: #ffffff;
+    --accent-ink: color-mix(in srgb, var(--accent) 78%, #000);
+    --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+    --accent-tint: color-mix(in srgb, var(--accent) 16%, transparent);
+    --accent-ring: color-mix(in srgb, var(--accent) 30%, transparent);
+
+    --bg-app: #fafafa;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f4f4f5;
+    --bg-hover: rgba(24, 24, 27, 0.045);
+    --bg-active: rgba(24, 24, 27, 0.07);
+    --stage-bg: #f5f5f3;
+    --stage-dot: rgba(26, 28, 31, 0.085);
+
+    --border: #ececec;
+    --border-strong: #e2e2e4;
+
+    --text: #1a1c1f;
+    --text-2: #6f7076;
+    --text-3: #a3a4aa;
+
+    /* 源码视图语法色（GitHub light） */
+    --j-key: #953800;
+    --j-str: #0a3069;
+    --j-num: #0550ae;
+    --j-kw:  #8250df;
+
+    --r-canvas: 14px;
+    --r-lg: 10px;
+    --r-md: 8px;
+    --r-sm: 6px;
+
+    --e1: 0 1px 2px rgba(0,0,0,.05);
+    --e2: 0 2px 8px rgba(0,0,0,.06);
+    --e-canvas: 0 1px 2px rgba(0,0,0,.05), 0 12px 32px rgba(0,0,0,.09), 0 0 0 1px rgba(0,0,0,.035);
+    --e-float: 0 8px 30px rgba(0,0,0,.14), 0 0 0 1px rgba(0,0,0,.04);
+
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    --spring: cubic-bezier(0.3, 1.3, 0.5, 1);
+    --dur: 170ms;
+
+    --font: "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    --font-serif: "Songti SC", Georgia, "Noto Serif SC", serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+    --rail-w: 216px;
+  }
+
+  [data-accent="blue"] { --accent: #3395ff; }
+
+  [data-theme="dark"] {
+    --accent: #2ec96b;
+    --accent-ink: color-mix(in srgb, var(--accent) 74%, #fff);
+    --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+    --accent-tint: color-mix(in srgb, var(--accent) 22%, transparent);
+
+    --bg-app: #1a1917;
+    --bg-surface: #232220;
+    --bg-subtle: #2b2a27;
+    --bg-hover: rgba(232, 228, 220, 0.05);
+    --bg-active: rgba(232, 228, 220, 0.09);
+    --stage-bg: #161514;
+    --stage-dot: rgba(232, 228, 220, 0.07);
+
+    --border: #32312e;
+    --border-strong: #3c3b37;
+
+    --text: #e8e4dc;
+    --text-2: #a5a199;
+    --text-3: #726f69;
+
+    /* 源码视图语法色（GitHub dark） */
+    --j-key: #ffa657;
+    --j-str: #a5d6ff;
+    --j-num: #79c0ff;
+    --j-kw:  #d2a8ff;
+
+    --e-canvas: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.06);
+    --e-float: 0 8px 30px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.07);
+  }
+  [data-theme="dark"][data-accent="blue"] { --accent: #2997ff; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg-app);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    font-size: 13px;
+    overflow: hidden;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  /* ─── Panel shell：rail | stage ─────────────────────────────────────── */
+  .panel {
+    display: grid;
+    grid-template-columns: var(--rail-w) 1fr;
+    height: 100vh;
+  }
+
+  /* ─── 左 rail：文件列表 ─────────────────────────────────────────────── */
+  .rail {
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .rail-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 13px 14px 9px;
+  }
+  .rail-head .label { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); }
+  .rail-head .count { font-size: 11px; color: var(--text-3); }
+  .rail-list { flex: 1; overflow-y: auto; padding: 0 8px 12px; display: flex; flex-direction: column; gap: 1px; }
+
+  .frow {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; height: 32px; padding: 0 8px;
+    border-radius: var(--r-md);
+    text-align: left;
+    transition: background var(--dur) var(--ease);
+  }
+  .frow:hover { background: var(--bg-hover); }
+  .frow .no {
+    flex-shrink: 0; width: 16px;
+    font-size: 10px; font-weight: 500; color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  /* 类型 glyph：中性小方块 + 类型缩写；选中 = accent 实底（同缩略图序号徽章语言） */
+  .frow .glyph {
+    flex-shrink: 0;
+    display: grid; place-items: center;
+    width: 19px; height: 19px; border-radius: 5px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 7.5px; font-weight: 700; letter-spacing: .02em;
+    color: var(--text-2);
+    transition: background var(--dur), color var(--dur), border-color var(--dur);
+  }
+  .frow .fname {
+    min-width: 0; flex: 1;
+    font-size: 12px; color: var(--text-2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: color var(--dur);
+  }
+  .frow:hover .fname { color: var(--text); }
+  .frow.active { background: var(--accent-soft); }
+  .frow.active .fname { color: var(--text); font-weight: 500; }
+  .frow.active .glyph { background: var(--accent); border-color: transparent; color: var(--accent-contrast); }
+  .frow .live {
+    flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s var(--ease) infinite;
+    display: none;
+  }
+  .frow.streaming .live { display: block; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 var(--accent-ring); } 50% { box-shadow: 0 0 0 4px transparent; } }
+
+  /* ─── 右 stage：点阵展台，文稿纸浮起 ────────────────────────────────── */
+  .stage {
+    position: relative;
+    min-width: 0; min-height: 0;
+    background: var(--stage-bg);
+    background-image: radial-gradient(var(--stage-dot) 1px, transparent 1px);
+    background-size: 16px 16px;
+    display: flex; justify-content: center;
+    padding: 22px 26px;
+    transition: background var(--dur) var(--ease), padding var(--dur) var(--ease);
+  }
+  [data-stage="plain"] .stage { background-image: none; }
+
+  /* 文稿纸 */
+  .doc {
+    display: flex; flex-direction: column;
+    width: 100%; max-width: 880px; min-height: 0;
+    background: var(--bg-surface);
+    border-radius: var(--r-canvas);
+    box-shadow: var(--e-canvas);
+    overflow: hidden;
+    animation: doc-in .32s var(--ease);
+  }
+  @keyframes doc-in { from { opacity: 0; transform: translateY(6px) scale(.995); } to { opacity: 1; transform: none; } }
+
+  /* 平铺变体（贴近现状的保守对照）：展台消失，内容全宽铺开 */
+  [data-stage="flat"] .stage { padding: 0; background: var(--bg-surface); background-image: none; }
+  [data-stage="flat"] .doc { max-width: none; border-radius: 0; box-shadow: none; }
+
+  /* ── 文档头 ── */
+  .doc-head {
+    position: relative;
+    display: flex; align-items: center; gap: 10px;
+    flex-shrink: 0;
+    padding: 0 14px 0 18px; height: 46px;
+    border-bottom: 1px solid var(--border);
+  }
+  .doc-head .fglyph {
+    display: grid; place-items: center;
+    width: 26px; height: 26px; border-radius: var(--r-sm);
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    flex-shrink: 0;
+  }
+  .doc-head .fglyph svg { width: 14px; height: 14px; }
+  .doc-title { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+  .doc-title .name {
+    font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .doc-title .meta { font-size: 10.5px; color: var(--text-3); display: flex; align-items: center; gap: 5px; }
+  .doc-title .meta .live-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: pulse 2s var(--ease) infinite; }
+  .doc-head .spacer { flex: 1; }
+
+  /* 阅读/源码 分段切换 */
+  .seg {
+    display: flex; gap: 3px;
+    background: var(--bg-subtle); border-radius: var(--r-md); padding: 3px;
+  }
+  .seg button {
+    display: flex; align-items: center; gap: 5px;
+    height: 24px; padding: 0 10px; border-radius: var(--r-sm);
+    font-size: 11.5px; color: var(--text-2);
+    transition: background var(--dur), color var(--dur), box-shadow var(--dur);
+  }
+  .seg button.on { background: var(--bg-surface); color: var(--text); font-weight: 500; box-shadow: var(--e1); }
+  .seg button:disabled { opacity: .35; cursor: not-allowed; }
+  .seg svg { width: 11px; height: 11px; }
+
+  .icon-btn {
+    display: grid; place-items: center;
+    width: 28px; height: 28px; border-radius: var(--r-sm);
+    color: var(--text-2);
+    transition: background var(--dur), color var(--dur), transform 80ms var(--ease);
+  }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--text); }
+  .icon-btn:active { transform: scale(.92); }
+  .icon-btn svg { width: 14px; height: 14px; }
+  .icon-btn.ok { color: var(--accent-ink); }
+
+  /* 阅读进度：文档头下缘 accent 细线，随滚动填充 */
+  .read-progress {
+    position: absolute; left: 0; right: 0; bottom: -1px; height: 1.5px;
+    pointer-events: none;
+  }
+  .read-progress i {
+    display: block; height: 100%; width: 0%;
+    background: var(--accent);
+    transition: width 60ms linear;
+  }
+
+  /* ── 文档体（滚动容器） ── */
+  .doc-scroll {
+    min-height: 0; flex: 1;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  .doc-scroll::-webkit-scrollbar { width: 8px; }
+  .doc-scroll::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; border: 2px solid var(--bg-surface); }
+
+  .doc-inner {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 44px 48px 72px;
+    animation: content-in .26s var(--ease);
+  }
+  @keyframes content-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+  /* 平铺对照：现状是全宽左对齐 */
+  [data-stage="flat"] .doc-inner { margin: 0; max-width: 760px; padding: 24px 28px 56px; }
+
+  /* ═══ 文稿排版（markdown 阅读态） ═══ */
+  .prose { font-size: 14.5px; line-height: 1.8; color: var(--text); }
+  [data-docfont="serif"] .prose { font-family: var(--font-serif); font-size: 15px; }
+
+  .prose h1 {
+    font-size: 25px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.35;
+    margin-bottom: 6px;
+  }
+  .prose .h1-meta {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11.5px; color: var(--text-3);
+    margin-bottom: 8px;
+    font-family: var(--font);
+  }
+  .prose h2 {
+    font-size: 18px; font-weight: 650; letter-spacing: -0.012em; line-height: 1.4;
+    margin: 44px 0 4px;
+    scroll-margin-top: 16px;
+  }
+  /* h2 前的章节序号 overline：从「Page N:」抽出的节奏标记 */
+  .prose .sec-no {
+    display: block;
+    font-family: var(--font);
+    font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--accent-ink);
+    margin: 44px 0 -38px;
+  }
+  .prose .sec-no + h2 { margin-top: 44px; }
+  .prose h3 {
+    font-family: var(--font);
+    font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--text-3);
+    margin: 22px 0 8px;
+  }
+  .prose p { margin: 10px 0; }
+  .prose p + p { margin-top: 12px; }
+  .prose hr {
+    border: none; height: 1px;
+    background: var(--border);
+    margin: 36px 0 0;
+  }
+  .prose ul { margin: 12px 0; padding-left: 4px; list-style: none; }
+  .prose ul li {
+    position: relative;
+    padding-left: 18px;
+    margin: 7px 0;
+  }
+  .prose ul li::before {
+    content: '';
+    position: absolute; left: 2px; top: .72em;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent);
+    opacity: .75;
+  }
+  .prose code {
+    font-family: var(--mono); font-size: .86em;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  .prose strong { font-weight: 650; }
+
+  /* Visual 行 → callout 卡（原文是「**Visual:** …」行内 bold，升级为结构化摘要卡） */
+  .visual-note {
+    display: flex; gap: 10px; align-items: flex-start;
+    background: var(--bg-subtle);
+    border-radius: var(--r-md);
+    padding: 10px 14px;
+    margin: 14px 0 4px;
+  }
+  .visual-note .vn-icon {
+    flex-shrink: 0;
+    display: grid; place-items: center;
+    width: 20px; height: 20px; margin-top: 1px;
+    border-radius: 5px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+  }
+  .visual-note .vn-icon svg { width: 11px; height: 11px; }
+  .visual-note .vn-body { min-width: 0; }
+  .visual-note .vn-label {
+    display: block;
+    font-family: var(--font);
+    font-size: 9.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 1px;
+  }
+  .visual-note p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-2); }
+
+  /* 表格（design_spec.md 用） */
+  .prose table {
+    width: 100%; border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 13px;
+  }
+  .prose th {
+    text-align: left; font-weight: 600;
+    font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3);
+    padding: 6px 12px 6px 0;
+    border-bottom: 1px solid var(--border-strong);
+  }
+  .prose td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .prose tr:last-child td { border-bottom: none; }
+  .swatch {
+    display: inline-block; vertical-align: -2px;
+    width: 13px; height: 13px; border-radius: 4px;
+    margin-right: 7px;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
+  }
+
+  /* checklist（spec_lock.md 用） */
+  .prose ul.checks li::before { display: none; }
+  .prose ul.checks li { padding-left: 24px; }
+  .prose ul.checks li .ck {
+    position: absolute; left: 0; top: .28em;
+    display: grid; place-items: center;
+    width: 15px; height: 15px; border-radius: 4px;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+  }
+  .prose ul.checks li .ck svg { width: 9px; height: 9px; }
+
+  /* 写入中光标：文稿末尾 accent 块闪烁 */
+  .stream-caret {
+    display: none;
+    width: 7px; height: 17px; border-radius: 2px;
+    background: var(--accent);
+    margin-top: 14px;
+    animation: caret 1s steps(2, start) infinite;
+  }
+  @keyframes caret { to { visibility: hidden; } }
+  [data-stream="on"] .doc.is-newest .stream-caret { display: block; }
+
+  /* ═══ 源码视图 ═══ */
+  .srcview {
+    font-family: var(--mono);
+    font-size: 12px; line-height: 1.75;
+    padding: 20px 0 60px;
+  }
+  .src-line { display: flex; }
+  .src-line .ln {
+    flex-shrink: 0; width: 52px; padding-right: 18px;
+    text-align: right;
+    color: var(--text-3); opacity: .6;
+    font-size: 10.5px; line-height: inherit;
+    user-select: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .src-line .lc { white-space: pre-wrap; word-break: break-word; min-width: 0; padding-right: 24px; }
+  .src-line.head .lc { font-weight: 700; }
+  .src-line:hover { background: var(--bg-hover); }
+  .j-key { color: var(--j-key); }
+  .j-str { color: var(--j-str); }
+  .j-num { color: var(--j-num); }
+  .j-kw  { color: var(--j-kw); }
+  /* 源码视图下取消 inner 的窄栏排版 */
+  .doc-inner.as-src { max-width: none; margin: 0; padding: 0; }
+
+  /* ═══ 右侧文档目录（TOC） ═══ */
+  .toc {
+    position: absolute; right: 20px; top: 84px;
+    width: 148px;
+    display: flex; flex-direction: column; gap: 2px;
+    opacity: 1;
+    transition: opacity var(--dur) var(--ease);
+  }
+  [data-toc="off"] .toc, .toc.empty { display: none; }
+  .toc .toc-label {
+    font-size: 9.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--text-3);
+    margin: 0 0 6px 10px;
+  }
+  .toc button {
+    display: flex; align-items: center; gap: 8px;
+    height: 24px; padding: 0 10px;
+    border-radius: var(--r-sm);
+    font-size: 11px; color: var(--text-3);
+    text-align: left;
+    transition: color var(--dur), background var(--dur);
+  }
+  .toc button .bar {
+    flex-shrink: 0;
+    width: 3px; height: 12px; border-radius: 2px;
+    background: var(--border-strong);
+    transition: background var(--dur), height var(--dur);
+  }
+  .toc button span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .toc button:hover { color: var(--text); }
+  .toc button.on { color: var(--text); font-weight: 500; }
+  .toc button.on .bar { background: var(--accent); height: 15px; }
+  /* 窄窗或平铺模式收起 TOC（平铺=现状对照，不叠加新组件） */
+  @media (max-width: 1240px) { .toc { display: none; } }
+  [data-stage="flat"] .toc { display: none; }
+
+  /* ─── Tweaks 面板（系列同款，左下角） ───────────────────────────────── */
+  .tweaks-fab {
+    position: fixed; left: 14px; bottom: 14px; z-index: 60;
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--bg-surface); border: 1px solid var(--border-strong);
+    box-shadow: var(--e2);
+    display: grid; place-items: center; color: var(--text-2);
+    transition: color var(--dur), box-shadow var(--dur), transform 80ms var(--ease);
+  }
+  .tweaks-fab:hover { color: var(--text); box-shadow: var(--e-float); }
+  .tweaks-fab:active { transform: scale(.94); }
+  .tweaks {
+    position: fixed; left: 14px; bottom: 60px; z-index: 60;
+    width: 248px;
+    background: var(--bg-surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--e-float);
+    padding: 14px;
+    display: none;
+    flex-direction: column; gap: 12px;
+  }
+  .tweaks.open { display: flex; animation: tw-in .18s var(--spring); }
+  @keyframes tw-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .tweaks h3 { font-size: 12px; font-weight: 600; }
+  .tw-row { display: flex; flex-direction: column; gap: 6px; }
+  .tw-row .lbl { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+  .tw-opts { display: flex; gap: 4px; background: var(--bg-subtle); border-radius: var(--r-md); padding: 3px; }
+  .tw-opt {
+    flex: 1; height: 24px; border-radius: var(--r-sm);
+    font-size: 11px; color: var(--text-2);
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    transition: background var(--dur), color var(--dur), box-shadow var(--dur);
+  }
+  .tw-opt.on { background: var(--bg-surface); color: var(--text); font-weight: 500; box-shadow: var(--e1); }
+  .sw { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<div class="panel">
+
+  <!-- ── 左 rail：本次会话写入的文件 ── -->
+  <aside class="rail">
+    <div class="rail-head">
+      <span class="label">文件</span>
+      <span class="count tnum" id="rail-count">5 个</span>
+    </div>
+    <div class="rail-list" id="rail"></div>
+  </aside>
+
+  <!-- ── 右 stage：文稿纸 ── -->
+  <section class="stage">
+    <article class="doc" id="doc">
+      <header class="doc-head">
+        <div class="fglyph">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>
+          </svg>
+        </div>
+        <div class="doc-title">
+          <span class="name" id="doc-name">total.md</span>
+          <span class="meta" id="doc-meta"></span>
+        </div>
+        <div class="spacer"></div>
+
+        <!-- 阅读 / 源码 切换（提案：真实组件目前只有富渲染一种视图） -->
+        <div class="seg" id="viewseg">
+          <button type="button" data-view="read" class="on">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            阅读
+          </button>
+          <button type="button" data-view="src">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>
+            源码
+          </button>
+        </div>
+
+        <button class="icon-btn" id="copy-btn" title="复制内容">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+        <button class="icon-btn" title="导出文件（提案）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+        </button>
+
+        <div class="read-progress"><i id="progress"></i></div>
+      </header>
+
+      <div class="doc-scroll" id="scroll">
+        <div class="doc-inner" id="content"></div>
+      </div>
+    </article>
+
+    <!-- 文档目录：h2 自动收集，滚动高亮（提案） -->
+    <nav class="toc empty" id="toc"></nav>
+  </section>
+
+</div>
+
+<!-- ── Tweaks ── -->
+<button class="tweaks-fab" id="tw-fab" title="Tweaks">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+</button>
+<div class="tweaks" id="tw-panel">
+  <h3>Tweaks</h3>
+  <div class="tw-row">
+    <span class="lbl">展台</span>
+    <div class="tw-opts" data-attr="data-stage">
+      <button class="tw-opt on" data-val="dots">点阵</button>
+      <button class="tw-opt" data-val="plain">素色</button>
+      <button class="tw-opt" data-val="flat">平铺（现状）</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">主题色</span>
+    <div class="tw-opts" data-attr="data-accent">
+      <button class="tw-opt on" data-val="green"><span class="sw" style="background:#16a34a"></span>绿</button>
+      <button class="tw-opt" data-val="blue"><span class="sw" style="background:#3395ff"></span>Codex 蓝</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">外观</span>
+    <div class="tw-opts" data-attr="data-theme">
+      <button class="tw-opt on" data-val="light">浅色</button>
+      <button class="tw-opt" data-val="dark">深色</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">阅读字体</span>
+    <div class="tw-opts" data-attr="data-docfont">
+      <button class="tw-opt on" data-val="sans">黑体</button>
+      <button class="tw-opt" data-val="serif">衬线</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">文档目录</span>
+    <div class="tw-opts" data-attr="data-toc">
+      <button class="tw-opt on" data-val="on">显示</button>
+      <button class="tw-opt" data-val="off">隐藏</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">演示：写入中</span>
+    <div class="tw-opts" data-attr="data-stream">
+      <button class="tw-opt on" data-val="off">已完成</button>
+      <button class="tw-opt" data-val="on">写入中</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Demo 内容 — 与截图同一场景（Stanford intro deck 的产物文件）。
+     阅读态 HTML 手写（对应 AssistantMarkdown 渲染结果）；raw 源码放
+     text/plain script 块，textContent 注入源码视图，无需转义。
+     ═══════════════════════════════════════════════════════════════════════ -->
+
+<template id="doc-intro">
+  <h1>Stanford 介绍 · 项目简报</h1>
+  <div class="h1-meta"><span>stanford_intro.md</span><span>·</span><span>输入材料</span></div>
+  <p>为一场面向多元听众的宣讲制作 4 页幻灯片，全面介绍斯坦福大学：历史底蕴、关键数据、创新生态与社区文化。</p>
+  <h3>受众与场合</h3>
+  <ul>
+    <li>对高等教育感兴趣的学生与家长</li>
+    <li>校友及潜在合作机构</li>
+    <li>宣讲时长约 5 分钟，投影 16:9</li>
+  </ul>
+  <h3>内容要求</h3>
+  <ul>
+    <li>用关键数字建立第一印象（建校、在校生、诺奖、排名）</li>
+    <li>创新生态要点出代表性公司与创始人</li>
+    <li>收尾落在社区归属感，配真实校园影像</li>
+  </ul>
+  <h3>语言与基调</h3>
+  <p>中文演讲稿，基调热情而克制，避免营销腔；数据必须可查证。</p>
+</template>
+<script type="text/plain" id="src-intro">
+# Stanford 介绍 · 项目简报
+
+为一场面向多元听众的宣讲制作 4 页幻灯片，全面介绍斯坦福大学：
+历史底蕴、关键数据、创新生态与社区文化。
+
+## 受众与场合
+
+- 对高等教育感兴趣的学生与家长
+- 校友及潜在合作机构
+- 宣讲时长约 5 分钟，投影 16:9
+
+## 内容要求
+
+- 用关键数字建立第一印象（建校、在校生、诺奖、排名）
+- 创新生态要点出代表性公司与创始人
+- 收尾落在社区归属感，配真实校园影像
+
+## 语言与基调
+
+中文演讲稿，基调热情而克制，避免营销腔；数据必须可查证。
+</script>
+
+<script type="text/plain" id="src-reco">
+{
+  "version": 2,
+  "deck": "stanford_intro",
+  "pages": 4,
+  "style": "academic-heritage",
+  "palette": {
+    "primary": "#8C1515",
+    "ink": "#2E2D29",
+    "paper": "#F4F4F0",
+    "accent": "#279989"
+  },
+  "typography": {
+    "heading": "Source Serif Pro",
+    "body": "Source Sans Pro",
+    "heading_cn": "思源宋体",
+    "body_cn": "思源黑体"
+  },
+  "imagery": "campus-photography",
+  "confirmed": true,
+  "locked_at": "2026-07-02T09:41:00+08:00"
+}
+</script>
+
+<template id="doc-spec">
+  <h1>设计规格</h1>
+  <div class="h1-meta"><span>design_spec.md</span><span>·</span><span>由 8 项确认派生</span></div>
+  <p>本文档由确认结果派生，锁定后所有页面共用同一套视觉词汇。</p>
+
+  <span class="sec-no">Sec 01</span>
+  <h2>配色</h2>
+  <table>
+    <thead><tr><th>角色</th><th>色值</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td><span class="swatch" style="background:#8C1515"></span>Cardinal</td><td><code>#8C1515</code></td><td>标题、章节强调</td></tr>
+      <tr><td><span class="swatch" style="background:#2E2D29"></span>Ink</td><td><code>#2E2D29</code></td><td>正文文字</td></tr>
+      <tr><td><span class="swatch" style="background:#F4F4F0"></span>Paper</td><td><code>#F4F4F0</code></td><td>页面底色</td></tr>
+      <tr><td><span class="swatch" style="background:#279989"></span>Palo Verde</td><td><code>#279989</code></td><td>图表、数据点缀</td></tr>
+    </tbody>
+  </table>
+
+  <span class="sec-no">Sec 02</span>
+  <h2>字体</h2>
+  <ul>
+    <li>标题：Source Serif Pro / 思源宋体，700</li>
+    <li>正文：Source Sans Pro / 思源黑体，400–500</li>
+    <li>数据大字：衬线 60–96px，行首对齐基线网格</li>
+  </ul>
+
+  <span class="sec-no">Sec 03</span>
+  <h2>版式原则</h2>
+  <ul>
+    <li>每页一个视觉主体，文字支撑、不与影像抢焦点</li>
+    <li>统计数字用左栏纵列，右侧留给校园影像</li>
+    <li>页脚统一：页码 + 校名缩写，10px，Ink 60%</li>
+  </ul>
+</template>
+<script type="text/plain" id="src-spec">
+# 设计规格
+
+本文档由确认结果派生，锁定后所有页面共用同一套视觉词汇。
+
+## 配色
+
+| 角色 | 色值 | 用途 |
+| --- | --- | --- |
+| Cardinal | #8C1515 | 标题、章节强调 |
+| Ink | #2E2D29 | 正文文字 |
+| Paper | #F4F4F0 | 页面底色 |
+| Palo Verde | #279989 | 图表、数据点缀 |
+
+## 字体
+
+- 标题：Source Serif Pro / 思源宋体，700
+- 正文：Source Sans Pro / 思源黑体，400–500
+- 数据大字：衬线 60–96px，行首对齐基线网格
+
+## 版式原则
+
+- 每页一个视觉主体，文字支撑、不与影像抢焦点
+- 统计数字用左栏纵列，右侧留给校园影像
+- 页脚统一：页码 + 校名缩写，10px，Ink 60%
+</script>
+
+<template id="doc-lock">
+  <h1>Spec Lock</h1>
+  <div class="h1-meta"><span>spec_lock.md</span><span>·</span><span>锁定于 09:41</span></div>
+  <p>以下项目已经用户确认，后续页面生成不再更改。如需调整，须重新走确认流程。</p>
+  <ul class="checks">
+    <li><span class="ck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>视觉风格：<code>academic-heritage</code></li>
+    <li><span class="ck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>配色：Cardinal 四色系</li>
+    <li><span class="ck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>字体：衬线标题 + 黑体正文</li>
+    <li><span class="ck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>图像策略：真实校园摄影，禁用插画</li>
+    <li><span class="ck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>页数：4 页，16:9</li>
+  </ul>
+</template>
+<script type="text/plain" id="src-lock">
+# Spec Lock
+
+以下项目已经用户确认，后续页面生成不再更改。
+如需调整，须重新走确认流程。
+
+- [x] 视觉风格：`academic-heritage`
+- [x] 配色：Cardinal 四色系
+- [x] 字体：衬线标题 + 黑体正文
+- [x] 图像策略：真实校园摄影，禁用插画
+- [x] 页数：4 页，16:9
+</script>
+
+<template id="doc-total">
+  <h1>Stanford University Introduction — Speaker Notes</h1>
+  <div class="h1-meta"><span>total.md</span><span>·</span><span>演讲稿 · 4 页</span></div>
+  <hr>
+
+  <span class="sec-no">Page 01</span>
+  <h2>Page 1: Title Page</h2>
+  <div class="visual-note">
+    <span class="vn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg></span>
+    <span class="vn-body">
+      <span class="vn-label">Visual</span>
+      <p>Stanford campus aerial photo with overlay, centered title and subtitle</p>
+    </span>
+  </div>
+  <h3>Speaker Notes</h3>
+  <p>欢迎各位！今天我想和大家分享一所非凡的大学——斯坦福大学。无论你是对高等教育感兴趣的学生、校友，或者是想了解全球最具影响力的研究机构的专业人士，这个介绍都会给你一个全面的认识。</p>
+  <p>让我们一起探索斯坦福是如何塑造世界的。</p>
+  <hr>
+
+  <span class="sec-no">Page 02</span>
+  <h2>Page 2: Stanford at a Glance</h2>
+  <div class="visual-note">
+    <span class="vn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg></span>
+    <span class="vn-body">
+      <span class="vn-label">Visual</span>
+      <p>Key statistics with icons on the left, campus quad photo on the right</p>
+    </span>
+  </div>
+  <h3>Speaker Notes</h3>
+  <p>首先，让我们从几个关键数字开始认识斯坦福：</p>
+  <p>建校于 1885 年，斯坦福经历了超过 130 年的卓越发展。今天，学校有大约 17,000 名本科和研究生在校。</p>
+  <p>最令人印象深刻的是，84 位诺贝尔奖得主曾在斯坦福工作或求学——这一数字包括校友和教职员工。</p>
+  <p>在全球排名上，斯坦福始终位列顶级——QS 世界大学排名中位列全球前 5，在美国范围内更是长期位列前 3。这些数字背后，是斯坦福对学术卓越的执着追求。</p>
+  <hr>
+
+  <span class="sec-no">Page 03</span>
+  <h2>Page 3: Innovation Ecosystem &amp; Impact</h2>
+  <div class="visual-note">
+    <span class="vn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg></span>
+    <span class="vn-body">
+      <span class="vn-label">Visual</span>
+      <p>Four-card grid showcasing companies, founders, research, and global impact</p>
+    </span>
+  </div>
+  <h3>Speaker Notes</h3>
+  <p>但斯坦福的真正力量，不仅仅体现在学术排名上，更体现在它对全球创新的推动作用。</p>
+  <p>首先是企业生态：超过 25,000 家由斯坦福校友创办的公司正在全球范围内运营。这些企业从初创公司到全球科技巨头，改变了几乎每一个行业——从互联网到能源、医疗到太空探索。</p>
+  <p>其中最著名的创始人包括 Google 的布林和佩奇、Apple 的乔布斯、以及 Tesla 和 SpaceX 的埃隆·马斯克。这些领导者在斯坦福的经历，塑造了他们改变世界的愿景。</p>
+  <p>同时，斯坦福的研究机构在全球最前沿的领域中引领着创新：</p>
+  <ul>
+    <li>气候学校在应对气候变化上处于全球领导地位</li>
+    <li>医学和生科领域在基因编辑和精准医学上取得突破</li>
+    <li>人工智能研究，尤其是围绕人机协作和伦理的研究，正在塑造 AI 的未来</li>
+    <li>这一切都指向一个共同目标：用创新解决全球最紧迫的挑战</li>
+  </ul>
+  <hr>
+
+  <span class="sec-no">Page 04</span>
+  <h2>Page 4: Join the Community</h2>
+  <div class="visual-note">
+    <span class="vn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg></span>
+    <span class="vn-body">
+      <span class="vn-label">Visual</span>
+      <p>Left side key community features, right side diverse students image with overlay</p>
+    </span>
+  </div>
+  <h3>Speaker Notes</h3>
+  <p>最后，斯坦福不只是一所研究机构，更是一个开放而多元的社区。无论你以学生、研究者还是合作伙伴的身份加入，这里都为你准备了完整的支持网络。</p>
+  <p>谢谢大家！期待与你在斯坦福相遇。</p>
+  <div class="stream-caret" aria-hidden="true"></div>
+</template>
+<script type="text/plain" id="src-total">
+# Stanford University Introduction — Speaker Notes
+
+---
+
+## Page 1: Title Page
+
+**Visual:** Stanford campus aerial photo with overlay, centered title and subtitle
+
+### Speaker Notes
+
+欢迎各位！今天我想和大家分享一所非凡的大学——斯坦福大学。无论你是对高等教育感兴趣的
+学生、校友，或者是想了解全球最具影响力的研究机构的专业人士，这个介绍都会给你一个
+全面的认识。
+
+让我们一起探索斯坦福是如何塑造世界的。
+
+---
+
+## Page 2: Stanford at a Glance
+
+**Visual:** Key statistics with icons on the left, campus quad photo on the right
+
+### Speaker Notes
+
+首先，让我们从几个关键数字开始认识斯坦福：
+
+建校于 1885 年，斯坦福经历了超过 130 年的卓越发展。今天，学校有大约 17,000 名
+本科和研究生在校。
+
+最令人印象深刻的是，84 位诺贝尔奖得主曾在斯坦福工作或求学——这一数字包括校友和
+教职员工。
+
+在全球排名上，斯坦福始终位列顶级——QS 世界大学排名中位列全球前 5，在美国范围内
+更是长期位列前 3。这些数字背后，是斯坦福对学术卓越的执着追求。
+
+---
+
+## Page 3: Innovation Ecosystem & Impact
+
+**Visual:** Four-card grid showcasing companies, founders, research, and global impact
+
+### Speaker Notes
+
+但斯坦福的真正力量，不仅仅体现在学术排名上，更体现在它对全球创新的推动作用。
+
+首先是企业生态：超过 25,000 家由斯坦福校友创办的公司正在全球范围内运营。这些企业
+从初创公司到全球科技巨头，改变了几乎每一个行业——从互联网到能源、医疗到太空探索。
+
+其中最著名的创始人包括 Google 的布林和佩奇、Apple 的乔布斯、以及 Tesla 和 SpaceX
+的埃隆·马斯克。这些领导者在斯坦福的经历，塑造了他们改变世界的愿景。
+
+同时，斯坦福的研究机构在全球最前沿的领域中引领着创新：
+
+- 气候学校在应对气候变化上处于全球领导地位
+- 医学和生科领域在基因编辑和精准医学上取得突破
+- 人工智能研究，尤其是围绕人机协作和伦理的研究，正在塑造 AI 的未来
+- 这一切都指向一个共同目标：用创新解决全球最紧迫的挑战
+
+---
+
+## Page 4: Join the Community
+
+**Visual:** Left side key community features, right side diverse students image with overlay
+
+### Speaker Notes
+
+最后，斯坦福不只是一所研究机构，更是一个开放而多元的社区。无论你以学生、研究者
+还是合作伙伴的身份加入，这里都为你准备了完整的支持网络。
+
+谢谢大家！期待与你在斯坦福相遇。
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   状态与渲染 — vanilla，无依赖。
+   与真实 WrittenFilesPanel 同构：文件数组 + active 指针 + 「未手动点选
+   时跟随最新写入」。原型里最新写入固定为 total.md。
+   ═══════════════════════════════════════════════════════════════════════ */
+const FILES = [
+  { id: 'intro', name: 'stanford_intro.md',    kind: 'md',   glyph: 'MD' },
+  { id: 'reco',  name: 'recommendations.json', kind: 'json', glyph: '{}' },
+  { id: 'spec',  name: 'design_spec.md',       kind: 'md',   glyph: 'MD' },
+  { id: 'lock',  name: 'spec_lock.md',         kind: 'md',   glyph: 'MD' },
+  { id: 'total', name: 'total.md',             kind: 'md',   glyph: 'MD' }
+]
+const NEWEST = 'total' // 最新写入（写入中演示挂在它身上）
+
+let activeId = 'total'
+let view = 'read' // read | src
+
+const $ = (id) => document.getElementById(id)
+const rail = $('rail'), content = $('content'), toc = $('toc'), scroller = $('scroll')
+
+const rawOf = (f) => document.getElementById('src-' + f.id).textContent.trim()
+const tplOf = (f) => document.getElementById('doc-' + f.id)
+
+function isStreamingDemo(f) {
+  return document.documentElement.dataset.stream === 'on' && f.id === NEWEST
+}
+
+/* ── 左 rail ── */
+function renderRail() {
+  rail.innerHTML = ''
+  FILES.forEach((f, i) => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'frow' + (f.id === activeId ? ' active' : '') + (isStreamingDemo(f) ? ' streaming' : '')
+    b.title = f.name
+    b.innerHTML =
+      '<span class="no">' + String(i + 1).padStart(2, '0') + '</span>' +
+      '<span class="glyph">' + f.glyph + '</span>' +
+      '<span class="fname">' + f.name + '</span>' +
+      '<span class="live"></span>'
+    b.addEventListener('click', () => { activeId = f.id; renderAll() })
+    rail.appendChild(b)
+  })
+}
+
+/* ── 源码视图：raw 按行号化；md 标题行加粗，json 走极简 tokenizer ── */
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
+function hlJson(line) {
+  return esc(line).replace(
+    /("(?:[^"\\]|\\.)*")(\s*:)?|(-?\d+\.?\d*)|\b(true|false|null)\b/g,
+    (m, str, colon, num, kw) => {
+      if (str) return '<span class="' + (colon ? 'j-key' : 'j-str') + '">' + str + '</span>' + (colon || '')
+      if (num) return '<span class="j-num">' + num + '</span>'
+      return '<span class="j-kw">' + kw + '</span>'
+    }
+  )
+}
+function renderSource(f) {
+  const lines = rawOf(f).split('\n')
+  const frag = document.createElement('div')
+  frag.className = 'srcview'
+  lines.forEach((line, i) => {
+    const row = document.createElement('div')
+    row.className = 'src-line' + (f.kind === 'md' && /^#{1,3} /.test(line) ? ' head' : '')
+    const html = f.kind === 'json' ? hlJson(line) : esc(line)
+    row.innerHTML = '<span class="ln">' + (i + 1) + '</span><span class="lc">' + (html || ' ') + '</span>'
+    frag.appendChild(row)
+  })
+  return frag
+}
+
+/* ── 文档区 ── */
+function renderDoc() {
+  const f = FILES.find(x => x.id === activeId)
+  const streaming = isStreamingDemo(f)
+
+  // 头部
+  $('doc-name').textContent = f.name
+  const lineCount = rawOf(f).split('\n').length
+  const charCount = rawOf(f).replace(/\s/g, '').length
+  $('doc-meta').innerHTML = streaming
+    ? '<span class="live-dot"></span><span>写入中…</span>'
+    : '<span class="tnum">' + lineCount + ' 行 · 约 ' +
+      (charCount > 1000 ? (charCount / 1000).toFixed(1) + 'k' : charCount) + ' 字</span>'
+
+  // json 没有富渲染，锁死源码视图
+  const readBtn = document.querySelector('#viewseg [data-view="read"]')
+  const effView = f.kind === 'json' ? 'src' : view
+  readBtn.disabled = f.kind === 'json'
+  document.querySelectorAll('#viewseg button').forEach(b =>
+    b.classList.toggle('on', b.dataset.view === effView))
+
+  // 主体（重建触发入场动画，对应真实组件 key={path} 重挂）
+  content.innerHTML = ''
+  content.classList.toggle('as-src', effView === 'src')
+  if (effView === 'src') {
+    content.appendChild(renderSource(f))
+  } else {
+    content.classList.add('prose')
+    content.appendChild(tplOf(f).content.cloneNode(true))
+  }
+  content.classList.toggle('prose', effView === 'read')
+  document.querySelector('.doc').classList.toggle('is-newest', f.id === NEWEST)
+
+  content.style.animation = 'none'
+  void content.offsetWidth
+  content.style.animation = ''
+
+  scroller.scrollTop = 0
+  renderToc(effView)
+  updateProgress()
+}
+
+/* ── TOC：阅读态 h2 自动收集 ── */
+let tocTargets = []
+function renderToc(effView) {
+  toc.innerHTML = ''
+  tocTargets = []
+  const heads = effView === 'read' ? Array.from(content.querySelectorAll('h2')) : []
+  if (heads.length < 2) { toc.classList.add('empty'); return }
+  toc.classList.remove('empty')
+  const label = document.createElement('span')
+  label.className = 'toc-label'
+  label.textContent = '目录'
+  toc.appendChild(label)
+  heads.forEach(h => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.innerHTML = '<span class="bar"></span><span>' + h.textContent.replace(/^Page \d+:\s*/, '') + '</span>'
+    // 不用 scrollIntoView（iframe 预览环境会带崩外层滚动）
+    b.addEventListener('click', () => {
+      scroller.scrollTo({ top: h.offsetTop - 28, behavior: 'smooth' })
+    })
+    toc.appendChild(b)
+    tocTargets.push({ h, b })
+  })
+  spyToc()
+}
+function spyToc() {
+  if (!tocTargets.length) return
+  const y = scroller.scrollTop + 90
+  let current = tocTargets[0]
+  tocTargets.forEach(t => { if (t.h.offsetTop <= y) current = t })
+  tocTargets.forEach(t => t.b.classList.toggle('on', t === current))
+}
+
+/* ── 阅读进度 ── */
+function updateProgress() {
+  const max = scroller.scrollHeight - scroller.clientHeight
+  $('progress').style.width = max > 4 ? (scroller.scrollTop / max) * 100 + '%' : '0%'
+}
+scroller.addEventListener('scroll', () => { updateProgress(); spyToc() })
+
+/* ── 视图切换 / 复制 ── */
+document.querySelectorAll('#viewseg button').forEach(b => {
+  b.addEventListener('click', () => { view = b.dataset.view; renderDoc() })
+})
+$('copy-btn').addEventListener('click', async () => {
+  const f = FILES.find(x => x.id === activeId)
+  try { await navigator.clipboard.writeText(rawOf(f)) } catch { /* 预览环境可能无权限 */ }
+  const btn = $('copy-btn')
+  btn.classList.add('ok')
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>'
+  setTimeout(() => {
+    btn.classList.remove('ok')
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+  }, 1400)
+})
+
+/* ── Tweaks ── */
+$('tw-fab').addEventListener('click', () => $('tw-panel').classList.toggle('open'))
+document.querySelectorAll('.tw-opts').forEach(group => {
+  group.querySelectorAll('.tw-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.documentElement.setAttribute(group.dataset.attr, btn.dataset.val)
+      group.querySelectorAll('.tw-opt').forEach(b => b.classList.toggle('on', b === btn))
+      // 写入中演示改变 rail 徽章与头部 meta，需要重渲染
+      if (group.dataset.attr === 'data-stream') renderAll()
+      if (group.dataset.attr === 'data-stage') { updateProgress(); spyToc() }
+    })
+  })
+})
+
+/* ── URL 参数初始化（?theme=dark&stage=flat&file=reco&view=src…），便于截图与分享指定状态 ── */
+const qp = new URLSearchParams(location.search)
+;['theme', 'accent', 'stage', 'docfont', 'toc', 'stream'].forEach(k => {
+  if (qp.has(k)) document.documentElement.setAttribute('data-' + k, qp.get(k))
+})
+if (qp.has('file') && FILES.some(f => f.id === qp.get('file'))) activeId = qp.get('file')
+if (qp.has('view')) view = qp.get('view')
+// Tweaks 按钮 on 态与实际 attr 对齐
+document.querySelectorAll('.tw-opts').forEach(group => {
+  const cur = document.documentElement.getAttribute(group.dataset.attr)
+  group.querySelectorAll('.tw-opt').forEach(b => b.classList.toggle('on', b.dataset.val === cur))
+})
+
+function renderAll() { renderRail(); renderDoc() }
+renderAll()
+</script>
+</body>
+</html>

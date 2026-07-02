@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-accent="green">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>确认页 · 两层向导原型 v2</title>
+<style>
+  /* ═══════════════════════════════════════════════════════════════════════
+     Design tokens — 与 slide-editor-prototype-v2 同一套（app 主题系统同源）：
+     · accent 从 appearance store 的 rail token 取（浅 #16a34a / 深 #2ec96b），
+       tint/ring/ink 全部 color-mix 派生 → 换 accent 一键全局重染。
+     · amber 只保留「AI 推荐」语义（现有 ★ 徽章约定），不作装饰。
+     · 演示数据基于耶鲁三百年 deck 场景，字段结构 1:1 对应
+       CanvasConfirm.tsx 的 tier1/tier2 分层。
+     ═══════════════════════════════════════════════════════════════════════ */
+  :root {
+    --accent: #16a34a;
+    --accent-contrast: #ffffff;
+    --accent-ink: color-mix(in srgb, var(--accent) 78%, #000);
+    --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+    --accent-tint: color-mix(in srgb, var(--accent) 16%, transparent);
+    --accent-ring: color-mix(in srgb, var(--accent) 30%, transparent);
+
+    --bg-app: #f5f5f3;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f4f4f5;
+    --bg-hover: rgba(24, 24, 27, 0.045);
+    --stage-dot: rgba(26, 28, 31, 0.10);
+
+    --border: #ececec;
+    --border-strong: #e0e0e2;
+
+    --text: #1a1c1f;
+    --text-2: #6f7076;
+    --text-3: #a3a4aa;
+
+    --rec: #f5b400;                 /* AI 推荐语义色（amber，沿用） */
+    --rec-soft: rgba(245, 180, 0, 0.16);
+    --rec-ink: color-mix(in srgb, var(--rec) 62%, #000);
+
+    --r-lg: 12px;
+    --r-md: 8px;
+    --r-sm: 6px;
+
+    --e1: 0 1px 2px rgba(0,0,0,.04), 0 2px 8px rgba(0,0,0,.04);
+    --e2: 0 4px 16px rgba(0,0,0,.08);
+    --e-float: 0 8px 30px rgba(0,0,0,.14), 0 0 0 1px rgba(0,0,0,.04);
+
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    --spring: cubic-bezier(0.3, 1.3, 0.5, 1);
+    --dur: 170ms;
+
+    --font: "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  [data-accent="blue"] { --accent: #3395ff; }
+  [data-theme="dark"] {
+    --accent: #2ec96b;
+    --accent-ink: color-mix(in srgb, var(--accent) 74%, #fff);
+    --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+    --accent-tint: color-mix(in srgb, var(--accent) 22%, transparent);
+    --bg-app: #1a1917;
+    --bg-surface: #232220;
+    --bg-subtle: #2b2a27;
+    --bg-hover: rgba(232, 228, 220, 0.05);
+    --stage-dot: rgba(232, 228, 220, 0.08);
+    --border: #32312e;
+    --border-strong: #3c3b37;
+    --text: #e8e4dc;
+    --text-2: #a5a199;
+    --text-3: #726f69;
+    --rec-ink: color-mix(in srgb, var(--rec) 78%, #fff);
+    --e1: 0 1px 2px rgba(0,0,0,.35), 0 2px 8px rgba(0,0,0,.25);
+    --e2: 0 4px 16px rgba(0,0,0,.4);
+    --e-float: 0 8px 30px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.07);
+  }
+  [data-theme="dark"][data-accent="blue"] { --accent: #2997ff; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg-app);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    font-size: 13px;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  input, textarea { font-family: inherit; }
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  /* ─── 页面骨架：sticky 头（stepper）+ 滚动区 + sticky 操作栏 ─────────── */
+  .page { display: flex; flex-direction: column; height: 100vh; }
+  .head {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg-app) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+  .head-inner { max-width: 860px; margin: 0 auto; padding: 16px 24px 14px; }
+  .head-row { display: flex; align-items: flex-start; gap: 12px; }
+  .head-title h1 { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+  .head-title p { margin-top: 3px; font-size: 12px; color: var(--text-3); }
+  .head-row .spacer { flex: 1; }
+  .lang-btn {
+    height: 26px; padding: 0 10px; border-radius: var(--r-sm);
+    border: 1px solid var(--border-strong); background: var(--bg-surface);
+    font-size: 11.5px; font-weight: 500; color: var(--text-2);
+    transition: color var(--dur), background var(--dur);
+  }
+  .lang-btn:hover { color: var(--text); background: var(--bg-subtle); }
+
+  /* stepper：两步向导 */
+  .stepper { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .step { display: flex; align-items: center; gap: 8px; }
+  .step-dot {
+    width: 22px; height: 22px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 11px; font-weight: 700;
+    background: var(--bg-subtle); color: var(--text-3);
+    border: 1px solid var(--border-strong);
+    transition: all var(--dur) var(--ease);
+  }
+  .step-name { font-size: 12px; font-weight: 500; color: var(--text-3); transition: color var(--dur); }
+  .step-sub { font-size: 10.5px; color: var(--text-3); opacity: .8; }
+  .step.on .step-dot { background: var(--accent); color: var(--accent-contrast); border-color: transparent; box-shadow: 0 0 0 3px var(--accent-ring); }
+  .step.on .step-name { color: var(--text); font-weight: 600; }
+  .step.done .step-dot { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
+  .step.done .step-name { color: var(--text-2); }
+  .step-line { flex: 0 0 46px; height: 2px; border-radius: 1px; background: var(--border-strong); position: relative; overflow: hidden; }
+  .step-line::after {
+    content: ''; position: absolute; inset: 0;
+    background: var(--accent);
+    transform: scaleX(0); transform-origin: left;
+    transition: transform .4s var(--ease);
+  }
+  .step-line.fill::after { transform: scaleX(1); }
+
+  /* ─── 滚动主体 ──────────────────────────────────────────────────────── */
+  .scroll { flex: 1; overflow-y: auto; min-height: 0; }
+  .content { max-width: 860px; margin: 0 auto; padding: 18px 24px 28px; display: flex; flex-direction: column; gap: 14px; }
+
+  /* Section 卡 */
+  .sec {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    box-shadow: var(--e1);
+    padding: 16px 18px 18px;
+  }
+  .sec-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 13px; }
+  .sec-no {
+    align-self: center;
+    width: 22px; height: 22px; border-radius: 7px;
+    display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent-ink);
+    font-size: 11px; font-weight: 700;
+  }
+  .sec-title { font-size: 14px; font-weight: 600; }
+  .sec-note { font-size: 11.5px; color: var(--text-3); }
+  .sub-label { margin: 12px 0 7px; font-size: 12px; font-weight: 500; color: var(--text-2); }
+
+  /* ─── 通用选项 chip ─────────────────────────────────────────────────── */
+  .opts { display: flex; flex-wrap: wrap; gap: 7px; }
+  .opt {
+    display: inline-flex; align-items: center; gap: 6px;
+    min-height: 30px; padding: 5px 11px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    font-size: 12px; color: var(--text);
+    text-align: left;
+    transition: border-color var(--dur), background var(--dur), color var(--dur), box-shadow var(--dur);
+  }
+  .opt:hover { background: var(--bg-hover); }
+  .opt.sel {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font-weight: 500;
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  .opt .d { color: var(--text-3); font-weight: 400; }
+  .opt.sel .d { color: color-mix(in srgb, var(--accent-ink) 68%, transparent); }
+  .opt.dashed { border-style: dashed; color: var(--text-2); }
+  .opt.dashed.sel { border-style: solid; color: var(--accent-ink); }
+
+  /* AI 推荐徽章（amber 语义，全站唯一用途） */
+  .rec-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    height: 17px; padding: 0 6px; border-radius: 999px;
+    background: var(--rec-soft); color: var(--rec-ink);
+    font-size: 10px; font-weight: 600; white-space: nowrap;
+  }
+
+  /* ─── 文本输入 ──────────────────────────────────────────────────────── */
+  .ti {
+    width: 100%; min-height: 32px;
+    border: 1px solid var(--border-strong); border-radius: var(--r-md);
+    background: var(--bg-surface); color: var(--text);
+    padding: 7px 10px; font-size: 12.5px; line-height: 1.5;
+    transition: border-color var(--dur), box-shadow var(--dur);
+  }
+  .ti::placeholder { color: var(--text-3); }
+  .ti:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+  .ti.num { width: 110px; }
+
+  /* ─── 卡片网格（画布 / 风格 / 配色 / 字体 / 图片策略共用外壳） ───────── */
+  .cards { display: grid; gap: 9px; }
+  .cards.g4 { grid-template-columns: repeat(4, 1fr); }
+  .cards.g3 { grid-template-columns: repeat(3, 1fr); }
+  .cards.g2 { grid-template-columns: repeat(2, 1fr); }
+  .card {
+    position: relative;
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border); border-radius: var(--r-lg);
+    background: var(--bg-surface);
+    overflow: hidden; text-align: left;
+    transition: border-color var(--dur), box-shadow var(--dur), transform var(--dur) var(--ease);
+  }
+  .card:hover { border-color: var(--border-strong); box-shadow: var(--e2); transform: translateY(-1px); }
+  .card.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--e2); }
+  /* 选中角标 */
+  .card .tick {
+    position: absolute; right: 7px; top: 7px; z-index: 3;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent); color: var(--accent-contrast);
+    display: none; place-items: center;
+  }
+  .card.sel .tick { display: grid; animation: pop .18s var(--spring); }
+  @keyframes pop { from { transform: scale(.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .card .tick svg { width: 10px; height: 10px; }
+  .card .rec-badge { position: absolute; left: 7px; top: 7px; z-index: 3; }
+  /* 带推荐徽章的卡片：内容区让出徽章高度，避免首行被压 */
+  .card .rec-badge ~ .canvas-stage { padding-top: 28px; }
+  .card .rec-badge ~ .style-prev { padding-top: 30px; }
+  .card .rec-badge ~ .pal-row { padding-top: 30px; }
+  .card .rec-badge ~ .typo-body { padding-top: 32px; }
+  .card .rec-badge ~ .strat-body { padding-top: 32px; }
+  .card-meta { margin-top: auto; padding: 8px 10px 9px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+  .card.sel .card-meta { background: var(--accent-soft); border-top-color: transparent; }
+  .card-name { font-size: 12px; font-weight: 500; }
+  .card.sel .card-name { color: var(--accent-ink); }
+  .card-sub { font-size: 10.5px; color: var(--text-3); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .card.dashed { border-style: dashed; align-items: center; justify-content: center; min-height: 96px; color: var(--text-2); font-size: 12px; font-weight: 500; gap: 4px; }
+  .card.dashed.sel { border-style: solid; color: var(--accent-ink); }
+
+  /* 画布格式卡：点阵展台 + 真实比例纸片（内部既有视觉语言） */
+  .canvas-stage {
+    height: 92px; display: grid; place-items: center; padding: 10px;
+    background-image: radial-gradient(var(--stage-dot) 1px, transparent 1px);
+    background-size: 12px 12px; background-position: center;
+  }
+  .sheet {
+    background: #fff; border: 1px solid rgba(0,0,0,.09);
+    border-radius: 3px;
+    box-shadow: 0 2px 6px -2px rgba(0,0,0,.28);
+    height: 100%; max-width: 100%;
+    display: flex; flex-direction: column; padding: 7px 8px; gap: 3px;
+    overflow: hidden;
+  }
+  [data-theme="dark"] .sheet { background: #f4f1e9; }
+  .sheet i { display: block; border-radius: 1px; background: #1f3a68; }
+  .sheet .t1 { width: 58%; height: 4px; opacity: .8; }
+  .sheet .t2 { width: 84%; height: 2px; opacity: .35; margin-top: 1px; }
+  .sheet .t3 { width: 70%; height: 2px; opacity: .35; }
+  .sheet .fill { flex: 1; opacity: .12; border-radius: 2px; margin-top: 2px; } /* 配图占位，淡化 */
+  .sheet .foot { width: 30%; height: 2px; opacity: .25; }
+
+  /* 视觉风格卡：16:10 CSS 构图预览（真实实现为服务端 style-previews 图） */
+  .style-prev { aspect-ratio: 16 / 10; position: relative; overflow: hidden; display: flex; flex-direction: column; padding: 10px 12px; gap: 4px; }
+  .style-prev .k { font-size: 8px; letter-spacing: .18em; opacity: .75; }
+  .style-prev .h { font-size: 13px; font-weight: 700; line-height: 1.25; }
+  .style-prev .bars { display: flex; align-items: flex-end; gap: 4px; flex: 1; padding-top: 6px; }
+  .style-prev .bars i { display: block; width: 12px; border-radius: 1px; }
+
+  /* 配色卡 */
+  .pal-row { display: flex; gap: 5px; padding: 12px 12px 4px; }
+  .pal-cell { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
+  .pal-cell .sw { width: 30px; height: 30px; border-radius: 7px; border: 1px solid rgba(0,0,0,.10); }
+  .pal-cell .rl { font-size: 8.5px; color: var(--text-3); white-space: nowrap; }
+  .card .pal-note { padding: 0 12px; }
+
+  /* 字体卡 */
+  .typo-body { padding: 12px 14px 6px; display: flex; flex-direction: column; gap: 6px; }
+  .typo-line { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; overflow: hidden; }
+  .typo-line .lbl { flex-shrink: 0; width: 26px; font-size: 9.5px; color: var(--text-3); }
+  .typo-h { font-size: 19px; font-weight: 700; }
+  .typo-b { font-size: 14px; }
+  .typo-meta { font-size: 10px; color: var(--text-3); font-family: var(--mono); }
+
+  /* 图片策略卡 */
+  .strat-body { padding: 12px 14px 6px; display: flex; flex-direction: column; gap: 5px; }
+  .strat-row { font-size: 11.5px; color: var(--text-2); line-height: 1.5; }
+  .strat-row b { color: var(--text); font-weight: 500; }
+
+  /* ─── Tier2 粘性 StylePreview（整体形象实时合成条） ─────────────────── */
+  .style-preview-wrap {
+    position: sticky; top: 0; z-index: 10;
+    margin: -6px -4px 0; padding: 6px 4px 10px;
+    background: linear-gradient(var(--bg-app) 82%, transparent);
+  }
+  .style-preview {
+    display: flex; align-items: center; gap: 16px;
+    border-radius: var(--r-lg);
+    border: 1px solid var(--border);
+    box-shadow: var(--e2);
+    padding: 14px 18px;
+    overflow: hidden;
+    transition: background var(--dur) var(--ease);
+  }
+  .sp-main { min-width: 0; flex: 1; }
+  .sp-head { font-weight: 700; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sp-body-row { margin-top: 6px; display: flex; align-items: stretch; gap: 10px; }
+  .sp-bar { width: 4px; border-radius: 2px; flex-shrink: 0; }
+  .sp-body { line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sp-chip {
+    flex-shrink: 0; display: inline-flex; align-items: center; gap: 8px;
+    border-radius: var(--r-md); border: 1px solid rgba(0,0,0,.07);
+    padding: 8px 12px; font-size: 12px;
+  }
+  .sp-chip .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .sp-caption { margin: 0 2px 6px; font-size: 11px; color: var(--text-3); }
+  .sp-caption b { color: var(--text-2); font-weight: 600; }
+
+  /* ─── 底部操作栏 ────────────────────────────────────────────────────── */
+  .actionbar {
+    position: sticky; bottom: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid var(--border);
+  }
+  .actionbar-inner {
+    max-width: 860px; margin: 0 auto; padding: 11px 24px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .summary { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; }
+  .summary .s-item { color: var(--text-2); }
+  .summary .s-sep { opacity: .5; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 34px; padding: 0 18px;
+    border-radius: var(--r-md);
+    font-size: 13px; font-weight: 600;
+    transition: background var(--dur), color var(--dur), opacity var(--dur), transform 80ms var(--ease);
+    white-space: nowrap;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn-primary { background: var(--accent); color: var(--accent-contrast); box-shadow: var(--e1); }
+  .btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+  .btn-ghost { color: var(--text-2); font-weight: 500; }
+  .btn-ghost:hover { color: var(--text); background: var(--bg-hover); }
+
+  /* ─── deriving / confirmed 全屏态 ──────────────────────────────────── */
+  .fullstate { flex: 1; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 24px; text-align: center; }
+  .fullstate.show { display: flex; }
+  .spinner {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 3px solid var(--accent-soft); border-top-color: var(--accent);
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .fs-title { font-size: 15px; font-weight: 600; }
+  .fs-sub { font-size: 12px; color: var(--text-3); max-width: 380px; line-height: 1.6; }
+  .skeleton-row { display: flex; gap: 10px; margin-top: 8px; }
+  .skeleton {
+    width: 120px; height: 64px; border-radius: var(--r-md);
+    background: linear-gradient(100deg, var(--bg-subtle) 40%, var(--bg-surface) 50%, var(--bg-subtle) 60%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s var(--ease) infinite;
+  }
+  @keyframes shimmer { from { background-position: 130% 0; } to { background-position: -30% 0; } }
+  .ok-ring {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent-ink);
+    display: grid; place-items: center;
+    animation: pop .3s var(--spring);
+  }
+  .ok-ring svg { width: 24px; height: 24px; }
+
+  /* ─── Tweaks ────────────────────────────────────────────────────────── */
+  .tweaks-fab {
+    position: fixed; left: 14px; bottom: 70px; z-index: 60;
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--bg-surface); border: 1px solid var(--border-strong);
+    box-shadow: var(--e2);
+    display: grid; place-items: center; color: var(--text-2);
+    transition: color var(--dur), box-shadow var(--dur), transform 80ms var(--ease);
+  }
+  .tweaks-fab:hover { color: var(--text); box-shadow: var(--e-float); }
+  .tweaks-fab:active { transform: scale(.94); }
+  .tweaks {
+    position: fixed; left: 14px; bottom: 116px; z-index: 60;
+    width: 240px;
+    background: var(--bg-surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--e-float);
+    padding: 14px;
+    display: none; flex-direction: column; gap: 12px;
+  }
+  .tweaks.open { display: flex; animation: tw-in .18s var(--spring); }
+  @keyframes tw-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .tweaks h3 { font-size: 12px; font-weight: 600; }
+  .tw-row { display: flex; flex-direction: column; gap: 6px; }
+  .tw-row .lbl { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+  .tw-opts { display: flex; gap: 4px; background: var(--bg-subtle); border-radius: var(--r-md); padding: 3px; }
+  .tw-opt {
+    flex: 1; height: 24px; border-radius: var(--r-sm);
+    font-size: 11px; color: var(--text-2);
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    transition: background var(--dur), color var(--dur), box-shadow var(--dur);
+  }
+  .tw-opt.on { background: var(--bg-surface); color: var(--text); font-weight: 500; box-shadow: var(--e1); }
+  .sw-mini { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  @media (max-width: 720px) {
+    .cards.g4 { grid-template-columns: repeat(2, 1fr); }
+    .cards.g3 { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ── sticky 头：标题 + 两步 stepper ── -->
+  <header class="head">
+    <div class="head-inner">
+      <div class="head-row">
+        <div class="head-title">
+          <h1>开始前，确认这几件事</h1>
+          <p>AI 已按「耶鲁大学 · 三百年校庆」预填推荐（★），直接下一步或按需调整</p>
+        </div>
+        <div class="spacer"></div>
+        <button class="lang-btn">EN</button>
+      </div>
+      <div class="stepper">
+        <div class="step on" id="step1">
+          <span class="step-dot tnum" id="step1-dot">1</span>
+          <span><span class="step-name">锚点确认</span> <span class="step-sub">画布 · 受众 · 风格</span></span>
+        </div>
+        <div class="step-line" id="step-line"></div>
+        <div class="step" id="step2">
+          <span class="step-dot tnum">2</span>
+          <span><span class="step-name">实现确认</span> <span class="step-sub">配色 · 字体 · 图片</span></span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ══════════ Tier 1 锚点层 ══════════ -->
+  <div class="scroll" id="pane-t1">
+    <div class="content">
+
+      <!-- 1 画布格式 -->
+      <section class="sec">
+        <div class="sec-head">
+          <span class="sec-no">1</span>
+          <span class="sec-title">画布格式</span>
+          <span class="sec-note">决定构图与信息密度，之后不可换</span>
+        </div>
+        <div class="cards g4" data-group="canvas">
+          <button class="card sel" data-val="16:9 幻灯片">
+            <span class="rec-badge">★ 推荐</span>
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="canvas-stage"><span class="sheet" style="aspect-ratio:16/9">
+              <i class="t1"></i><i class="t2"></i><i class="t3"></i><i class="fill"></i><i class="foot"></i>
+            </span></span>
+            <span class="card-meta"><span class="card-name">16:9 幻灯片</span><span class="card-sub">1280 × 720 · 演讲投屏</span></span>
+          </button>
+          <button class="card" data-val="4:3 幻灯片">
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="canvas-stage"><span class="sheet" style="aspect-ratio:4/3">
+              <i class="t1"></i><i class="t2"></i><i class="t3"></i><i class="fill"></i><i class="foot"></i>
+            </span></span>
+            <span class="card-meta"><span class="card-name">4:3 幻灯片</span><span class="card-sub">1024 × 768 · 传统投影</span></span>
+          </button>
+          <button class="card" data-val="A4 纵向文档">
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="canvas-stage"><span class="sheet" style="aspect-ratio:210/297">
+              <i class="t1"></i><i class="t2"></i><i class="t3"></i><i class="fill"></i><i class="foot"></i>
+            </span></span>
+            <span class="card-meta"><span class="card-name">A4 纵向文档</span><span class="card-sub">210 × 297 mm · 打印阅读</span></span>
+          </button>
+          <button class="card dashed" data-val="custom" data-custom>
+            自定义尺寸
+          </button>
+        </div>
+      </section>
+
+      <!-- 2 受众与内容 -->
+      <section class="sec">
+        <div class="sec-head">
+          <span class="sec-no">2</span>
+          <span class="sec-title">受众与内容</span>
+          <span class="sec-note">AI 依此决定叙述口吻与内容深度</span>
+        </div>
+        <input class="ti" value="校庆到访的校友与捐赠人，多为非学术背景" />
+        <div class="sub-label">内容发散度</div>
+        <input class="ti" value="以提供的三段校史素材为主，可适度补充公开史实" />
+        <div class="sub-label">交付目的</div>
+        <div class="opts" data-group="purpose">
+          <button class="opt" data-val="演讲辅助">演讲辅助 <span class="d">大字少文，讲者主导</span></button>
+          <button class="opt sel" data-val="平衡">平衡 <span class="d">讲读兼顾</span> <span class="rec-badge">★</span></button>
+          <button class="opt" data-val="独立阅读">独立阅读 <span class="d">信息完整，可离线传阅</span></button>
+        </div>
+      </section>
+
+      <!-- 3 风格基调 -->
+      <section class="sec">
+        <div class="sec-head">
+          <span class="sec-no">3</span>
+          <span class="sec-title">风格基调</span>
+          <span class="sec-note">视觉风格按同一张样张预览，所见即所得</span>
+        </div>
+        <div class="sub-label" style="margin-top:0">表达模式</div>
+        <div class="opts" data-group="mode">
+          <button class="opt sel" data-val="叙事型">叙事型 <span class="d">按时间与故事推进</span> <span class="rec-badge">★</span></button>
+          <button class="opt" data-val="论证型">论证型 <span class="d">观点—论据结构</span></button>
+          <button class="opt" data-val="展示型">展示型 <span class="d">大图大字，重氛围</span></button>
+        </div>
+        <div class="sub-label">视觉风格</div>
+        <div class="cards g3" data-group="style">
+          <button class="card sel" data-val="手绘学术">
+            <span class="rec-badge">★ 古典厚重</span>
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="style-prev" style="background:#fbf9f2; color:#1f3a68; font-family:Georgia,'Songti SC',serif">
+              <span class="k">YALE · 1701</span>
+              <span class="h">三百年，只做一件事</span>
+              <span class="bars"><i style="height:60%;background:#1f3a68;opacity:.85"></i><i style="height:85%;background:#1f3a68;opacity:.6"></i><i style="height:45%;background:#b08d3f;opacity:.7"></i><i style="height:70%;background:#1f3a68;opacity:.4"></i></span>
+            </span>
+            <span class="card-meta"><span class="card-name">手绘学术</span><span class="card-sub">米白纸本 + 线稿插画，学院气质</span></span>
+          </button>
+          <button class="card" data-val="经典衬线">
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="style-prev" style="background:#ffffff; color:#20242c; font-family:Georgia,'Songti SC',serif">
+              <span class="k">YALE · 1701</span>
+              <span class="h" style="border-bottom:1.5px solid #20242c; padding-bottom:3px">三百年，只做一件事</span>
+              <span class="bars"><i style="height:60%;background:#20242c;opacity:.8"></i><i style="height:85%;background:#20242c;opacity:.55"></i><i style="height:45%;background:#8c2332;opacity:.75"></i><i style="height:70%;background:#20242c;opacity:.35"></i></span>
+            </span>
+            <span class="card-meta"><span class="card-name">经典衬线</span><span class="card-sub">黑白为骨，一点酒红，庄重克制</span></span>
+          </button>
+          <button class="card" data-val="现代扁平">
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="style-prev" style="background:#eef3fb; color:#14315e">
+              <span class="k" style="letter-spacing:.1em">YALE · 1701</span>
+              <span class="h" style="font-weight:800">三百年，只做一件事</span>
+              <span class="bars"><i style="height:60%;background:#2563eb"></i><i style="height:85%;background:#2563eb;opacity:.65"></i><i style="height:45%;background:#f59e0b"></i><i style="height:70%;background:#2563eb;opacity:.35"></i></span>
+            </span>
+            <span class="card-meta"><span class="card-name">现代扁平</span><span class="card-sub">明快色块与几何图形，信息导向</span></span>
+          </button>
+          <button class="card" data-val="杂志编辑">
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="style-prev" style="background:#f7f5f1; color:#1c1a17; font-family:Georgia,serif">
+              <span class="k" style="color:#b3541e">FEATURE · 1701</span>
+              <span class="h" style="font-size:15px; font-style:italic">三百年，只做一件事</span>
+              <span class="bars"><i style="height:70%;background:#1c1a17;opacity:.75;width:26px"></i><i style="height:70%;background:#b3541e;opacity:.8;width:5px"></i><i style="height:44%;background:#1c1a17;opacity:.3;width:26px"></i></span>
+            </span>
+            <span class="card-meta"><span class="card-name">杂志编辑</span><span class="card-sub">大标题+跨栏排版，纸媒质感</span></span>
+          </button>
+          <button class="card" data-val="极简留白">
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="style-prev" style="background:#ffffff; color:#2a2c30; justify-content:center; gap:6px">
+              <span class="h" style="font-weight:500; font-size:12.5px">三百年，只做一件事</span>
+              <span style="width:22px;height:1.5px;background:#2a2c30;opacity:.5"></span>
+            </span>
+            <span class="card-meta"><span class="card-name">极简留白</span><span class="card-sub">一页一事，克制到只剩重点</span></span>
+          </button>
+          <button class="card" data-val="暗色科技">
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="style-prev" style="background:#101418; color:#e6edf5">
+              <span class="k" style="color:#4cc2ff">YALE · 1701</span>
+              <span class="h" style="font-weight:700">三百年，只做一件事</span>
+              <span class="bars"><i style="height:60%;background:#4cc2ff"></i><i style="height:85%;background:#4cc2ff;opacity:.55"></i><i style="height:45%;background:#9a7bff;opacity:.8"></i><i style="height:70%;background:#4cc2ff;opacity:.3"></i></span>
+            </span>
+            <span class="card-meta"><span class="card-name">暗色科技</span><span class="card-sub">深底高对比，锐利现代</span></span>
+          </button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <!-- ══════════ deriving 过渡态 ══════════ -->
+  <div class="fullstate" id="pane-deriving">
+    <div class="spinner"></div>
+    <div class="fs-title">正在派生实现层建议…</div>
+    <div class="fs-sub">AI 正在根据你锚定的画布、受众与风格，重新推导配色、字体与图片策略的候选方案</div>
+    <div class="skeleton-row"><span class="skeleton"></span><span class="skeleton"></span><span class="skeleton"></span></div>
+  </div>
+
+  <!-- ══════════ Tier 2 实现层 ══════════ -->
+  <div class="scroll" id="pane-t2" style="display:none">
+    <div class="content">
+
+      <!-- 粘性整体形象条：配色+字体实时合成 -->
+      <div class="style-preview-wrap">
+        <div class="sp-caption"><b>整体形象</b> · 由下方配色与字体选择实时合成，仅供感受基调</div>
+        <div class="style-preview" id="sp">
+          <div class="sp-main">
+            <div class="sp-head" id="sp-head">光明与真理 <span style="opacity:.85">Lux et veritas</span></div>
+            <div class="sp-body-row">
+              <span class="sp-bar" id="sp-bar"></span>
+              <div class="sp-body" id="sp-body">三百年校史，凝练成一页一事的讲述 Aa Bb 1701</div>
+            </div>
+          </div>
+          <div class="sp-chip" id="sp-chip"><span class="dot" id="sp-dot"></span><span id="sp-chip-t">次级底色</span></div>
+        </div>
+      </div>
+
+      <!-- 4 页数 -->
+      <section class="sec">
+        <div class="sec-head">
+          <span class="sec-no">4</span>
+          <span class="sec-title">页数</span>
+          <span class="sec-note">建议 10–14 页，讲述节奏最稳</span>
+        </div>
+        <input class="ti num tnum" value="12" inputmode="numeric" />
+      </section>
+
+      <!-- 5 配色方案 -->
+      <section class="sec">
+        <div class="sec-head">
+          <span class="sec-no">5</span>
+          <span class="sec-title">配色方案</span>
+          <span class="sec-note">六个角色色一起换，保证整套和谐</span>
+        </div>
+        <div class="cards g2" data-group="color">
+          <button class="card sel" data-val="耶鲁蓝 · 纸本米白"
+            data-pal='{"bg":"#fbf9f2","sbg":"#f2eddf","pri":"#1f3a68","acc":"#b08d3f","sacc":"#8c2332","txt":"#2a3240"}'>
+            <span class="rec-badge">★ 推荐</span>
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="pal-row">
+              <span class="pal-cell"><span class="sw" style="background:#fbf9f2"></span><span class="rl">背景</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#f2eddf"></span><span class="rl">次背景</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#1f3a68"></span><span class="rl">主色</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#b08d3f"></span><span class="rl">强调</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#8c2332"></span><span class="rl">次强调</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#2a3240"></span><span class="rl">正文</span></span>
+            </span>
+            <span class="card-meta"><span class="card-name">耶鲁蓝 · 纸本米白</span><span class="card-sub">校徽蓝为骨，鎏金与酒红点睛，古典学院气</span></span>
+          </button>
+          <button class="card" data-val="青灰学院"
+            data-pal='{"bg":"#f6f7f8","sbg":"#e9edf0","pri":"#2c4a52","acc":"#3f7d6d","sacc":"#c07b4d","txt":"#26313a"}'>
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="pal-row">
+              <span class="pal-cell"><span class="sw" style="background:#f6f7f8"></span><span class="rl">背景</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#e9edf0"></span><span class="rl">次背景</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#2c4a52"></span><span class="rl">主色</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#3f7d6d"></span><span class="rl">强调</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#c07b4d"></span><span class="rl">次强调</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#26313a"></span><span class="rl">正文</span></span>
+            </span>
+            <span class="card-meta"><span class="card-name">青灰学院</span><span class="card-sub">冷静青灰配苔绿，理性而不失温度</span></span>
+          </button>
+          <button class="card" data-val="暖棕纸本"
+            data-pal='{"bg":"#faf6ef","sbg":"#f0e8d9","pri":"#5b4636","acc":"#a4633a","sacc":"#7d8b5e","txt":"#3d342b"}'>
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="pal-row">
+              <span class="pal-cell"><span class="sw" style="background:#faf6ef"></span><span class="rl">背景</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#f0e8d9"></span><span class="rl">次背景</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#5b4636"></span><span class="rl">主色</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#a4633a"></span><span class="rl">强调</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#7d8b5e"></span><span class="rl">次强调</span></span>
+              <span class="pal-cell"><span class="sw" style="background:#3d342b"></span><span class="rl">正文</span></span>
+            </span>
+            <span class="card-meta"><span class="card-name">暖棕纸本</span><span class="card-sub">旧籍与羊皮纸的暖调，怀旧沉稳</span></span>
+          </button>
+          <button class="card dashed" data-val="custom" data-custom>自定义配色</button>
+        </div>
+      </section>
+
+      <!-- 6 图标风格 -->
+      <section class="sec">
+        <div class="sec-head">
+          <span class="sec-no">6</span>
+          <span class="sec-title">图标风格</span>
+        </div>
+        <div class="opts" data-group="icons">
+          <button class="opt sel" data-val="细线性">细线性 <span class="d">1.5px 描边，克制精致</span> <span class="rec-badge">★</span></button>
+          <button class="opt" data-val="面性">面性 <span class="d">色块填充，醒目</span></button>
+          <button class="opt" data-val="无图标">无图标 <span class="d">纯文字与排印</span></button>
+        </div>
+      </section>
+
+      <!-- 7 字体排印 -->
+      <section class="sec">
+        <div class="sec-head">
+          <span class="sec-no">7</span>
+          <span class="sec-title">字体排印</span>
+          <span class="sec-note">标题与正文成对确定，字样为实时预览</span>
+        </div>
+        <div class="cards g2" data-group="typo">
+          <!-- 字体名不能加引号：属性外层已是单引号，内嵌 ' 会截断属性值使 JSON.parse 崩溃；
+               CSS 多词字体名允许无引号 -->
+          <button class="card sel" data-val="宋标黑文"
+            data-typo='{"head":"Songti SC, STSong, Georgia, serif","body":"PingFang SC, sans-serif"}'>
+            <span class="rec-badge">★ 推荐</span>
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="typo-body">
+              <span class="typo-line"><span class="lbl">标题</span><span class="typo-h" style="font-family:'Songti SC',STSong,Georgia,serif">光明与真理 Lux et veritas</span></span>
+              <span class="typo-line"><span class="lbl">正文</span><span class="typo-b" style="font-family:'PingFang SC',sans-serif">三百年校史，一页一事 Aa Bb 1701</span></span>
+              <span class="typo-meta">宋体 / Georgia · 苹方 / system</span>
+            </span>
+            <span class="card-meta"><span class="card-name">宋标黑文</span><span class="card-sub">衬线立骨、黑体行文，学术演示的稳妥组合</span></span>
+          </button>
+          <button class="card" data-val="全衬线"
+            data-typo='{"head":"Songti SC, STSong, Georgia, serif","body":"Songti SC, STSong, Georgia, serif"}'>
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="typo-body">
+              <span class="typo-line"><span class="lbl">标题</span><span class="typo-h" style="font-family:'Songti SC',STSong,Georgia,serif">光明与真理 Lux et veritas</span></span>
+              <span class="typo-line"><span class="lbl">正文</span><span class="typo-b" style="font-family:'Songti SC',STSong,Georgia,serif">三百年校史，一页一事 Aa Bb 1701</span></span>
+              <span class="typo-meta">宋体 / Georgia · 全套衬线</span>
+            </span>
+            <span class="card-meta"><span class="card-name">全衬线</span><span class="card-sub">通篇书卷气，适合文档型交付</span></span>
+          </button>
+        </div>
+        <div class="sub-label">正文基准字号 <span style="color:var(--text-3);font-weight:400">（16:9 投屏建议 ≥ 24px）</span></div>
+        <input class="ti num tnum" id="body-size" value="24" inputmode="numeric" />
+        <div class="sub-label">公式排版</div>
+        <div class="opts" data-group="formula">
+          <button class="opt sel" data-val="无公式">无公式 <span class="rec-badge">★</span></button>
+          <button class="opt" data-val="LaTeX">LaTeX 渲染</button>
+        </div>
+      </section>
+
+      <!-- 8 图片策略 -->
+      <section class="sec">
+        <div class="sec-head">
+          <span class="sec-no">8</span>
+          <span class="sec-title">图片策略</span>
+          <span class="sec-note">决定插图从哪来、长什么样</span>
+        </div>
+        <div class="opts" data-group="img-usage">
+          <button class="opt sel" data-val="AI 生成">AI 生成插图 <span class="d">按策略统一风格</span> <span class="rec-badge">★</span></button>
+          <button class="opt" data-val="仅素材">仅用提供素材</button>
+          <button class="opt" data-val="不配图">不配图</button>
+        </div>
+        <div class="sub-label">生成策略</div>
+        <div class="cards g2" data-group="img-strategy">
+          <button class="card sel" data-val="手绘线稿">
+            <span class="rec-badge">★ 推荐</span>
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="strat-body">
+              <span class="strat-row"><b>手绘线稿插画</b> · 钢笔淡彩</span>
+              <span class="strat-row">视觉：单色线稿 + 局部淡彩，纸纹肌理</span>
+              <span class="strat-row">色彩：跟随配色主色，低饱和</span>
+              <span class="strat-row">氛围：手工、年代感、学院庄重</span>
+            </span>
+            <span class="card-meta"><span class="card-name">手绘线稿</span><span class="card-sub">与「手绘学术」风格同源，插图即装饰</span></span>
+          </button>
+          <button class="card" data-val="档案照片">
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></span>
+            <span class="strat-body">
+              <span class="strat-row"><b>仿档案照片</b> · 单色影调</span>
+              <span class="strat-row">视觉：泛黄相纸质感，暗角与颗粒</span>
+              <span class="strat-row">色彩：棕褐单色调</span>
+              <span class="strat-row">氛围：历史现场感、纪实</span>
+            </span>
+            <span class="card-meta"><span class="card-name">档案照片</span><span class="card-sub">像从校史馆借出的旧照</span></span>
+          </button>
+        </div>
+      </section>
+
+      <!-- 9 生成方式 -->
+      <section class="sec">
+        <div class="sec-head">
+          <span class="sec-no">9</span>
+          <span class="sec-title">生成方式</span>
+          <span class="sec-note" id="mode-note">逐页生成，每页可单独返工</span>
+        </div>
+        <div class="opts" data-group="gen-mode">
+          <button class="opt sel" data-val="分页生成">分页生成 <span class="d">逐页出稿，可中途调整</span> <span class="rec-badge">★</span></button>
+          <button class="opt" data-val="连续生成">连续生成 <span class="d">一次出全稿，更快</span></button>
+        </div>
+        <div class="sub-label">生成前精修规格</div>
+        <div class="opts" data-group="refine">
+          <button class="opt sel" data-val="关">关 <span class="d">按当前确认直接生成</span> <span class="rec-badge">★</span></button>
+          <button class="opt" data-val="开">开 <span class="d">先出规格书供再确认</span></button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <!-- ══════════ confirmed 完成态 ══════════ -->
+  <div class="fullstate" id="pane-confirmed">
+    <div class="ok-ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4.5 12.5l5 5L19.5 7"/></svg></div>
+    <div class="fs-title">已确认，开始生成</div>
+    <div class="fs-sub">你可以在「预览幻灯片」标签页实时查看每一页的生成结果；本页已完成使命，可以关闭。</div>
+  </div>
+
+  <!-- ── sticky 操作栏 ── -->
+  <footer class="actionbar" id="actionbar">
+    <div class="actionbar-inner">
+      <div class="summary" id="summary"></div>
+      <button class="btn btn-ghost" id="btn-back" style="display:none">← 返回锚点</button>
+      <button class="btn btn-primary" id="btn-primary">下一步 · 实现确认</button>
+    </div>
+  </footer>
+</div>
+
+<!-- ── Tweaks ── -->
+<button class="tweaks-fab" id="tweaks-fab" title="Tweaks">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>
+  </svg>
+</button>
+<div class="tweaks" id="tweaks">
+  <h3>Tweaks</h3>
+  <div class="tw-row">
+    <span class="lbl">页面</span>
+    <div class="tw-opts" data-key="pane">
+      <button class="tw-opt on" data-val="t1">锚点</button>
+      <button class="tw-opt" data-val="t2">实现</button>
+      <button class="tw-opt" data-val="confirmed">完成</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">主题色（跟随 app 设置）</span>
+    <div class="tw-opts" data-key="accent">
+      <button class="tw-opt on" data-val="green"><span class="sw-mini" style="background:#16a34a"></span>绿</button>
+      <button class="tw-opt" data-val="blue"><span class="sw-mini" style="background:#3395ff"></span>Codex 蓝</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">外观</span>
+    <div class="tw-opts" data-key="theme">
+      <button class="tw-opt on" data-val="light">浅色</button>
+      <button class="tw-opt" data-val="dark">深色</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   Demo 交互：选卡/选 chip 高亮、tier1 → deriving → tier2 流转、
+   StylePreview 从配色+字体实时合成、底部摘要联动。
+   数据流方向与真实 CanvasConfirm 一致（选择 → state → 派生渲染），
+   仅为设计演示服务。
+   ════════════════════════════════════════════════════════════════════════ */
+const $ = (s) => document.querySelector(s);
+
+/* ── 选择联动（事件委托） ────────────────────────────────────────────── */
+document.querySelectorAll('[data-group]').forEach((group) => {
+  group.addEventListener('click', (e) => {
+    const item = e.target.closest('.card, .opt');
+    if (!item || !group.contains(item)) return;
+    group.querySelectorAll('.card, .opt').forEach((el) => el.classList.remove('sel'));
+    item.classList.add('sel');
+    if (group.dataset.group === 'color' || group.dataset.group === 'typo') paintStylePreview();
+    if (group.dataset.group === 'gen-mode') {
+      $('#mode-note').textContent = item.dataset.val === '分页生成'
+        ? '逐页生成，每页可单独返工' : '一次出全稿，整体更快';
+    }
+    renderSummary();
+  });
+});
+
+/* ── StylePreview：读取选中的配色/字体卡实时合成 ─────────────────────── */
+function paintStylePreview() {
+  const colorCard = document.querySelector('[data-group="color"] .card.sel[data-pal]');
+  const typoCard = document.querySelector('[data-group="typo"] .card.sel[data-typo]');
+  if (!colorCard) return;
+  const pal = JSON.parse(colorCard.dataset.pal);
+  const typo = typoCard ? JSON.parse(typoCard.dataset.typo) : null;
+  const sp = $('#sp');
+  sp.style.background = pal.bg;
+  const head = $('#sp-head');
+  head.style.color = pal.pri;
+  head.style.fontSize = '22px';
+  if (typo) head.style.fontFamily = typo.head;
+  $('#sp-bar').style.background = pal.acc;
+  const body = $('#sp-body');
+  body.style.color = pal.txt;
+  body.style.fontSize = '13.5px';
+  if (typo) body.style.fontFamily = typo.body;
+  const chip = $('#sp-chip');
+  chip.style.background = pal.sbg;
+  $('#sp-dot').style.background = pal.sacc;
+  $('#sp-chip-t').style.color = pal.txt;
+}
+
+/* ── 底部摘要 ────────────────────────────────────────────────────────── */
+function selVal(group) {
+  const el = document.querySelector(`[data-group="${group}"] .sel`);
+  return el ? el.dataset.val : null;
+}
+function renderSummary() {
+  const parts = pane === 't1'
+    ? [selVal('canvas'), selVal('purpose'), selVal('mode'), selVal('style')]
+    : [selVal('canvas'), selVal('style'), selVal('color'), selVal('typo'), ($('#body-size') || {}).value + 'px'];
+  $('#summary').innerHTML = parts.filter(Boolean)
+    .map((p) => `<span class="s-item">${p}</span>`)
+    .join('<span class="s-sep">·</span>');
+}
+
+/* ── tier 流转 ───────────────────────────────────────────────────────── */
+let pane = 't1';
+function show(p) {
+  pane = p;
+  $('#pane-t1').style.display = p === 't1' ? '' : 'none';
+  $('#pane-deriving').classList.toggle('show', p === 'deriving');
+  $('#pane-t2').style.display = p === 't2' ? '' : 'none';
+  $('#pane-confirmed').classList.toggle('show', p === 'confirmed');
+  $('#actionbar').style.display = (p === 'deriving' || p === 'confirmed') ? 'none' : '';
+
+  const s1 = $('#step1'), s2 = $('#step2'), line = $('#step-line');
+  const t2on = p === 't2' || p === 'confirmed';
+  s1.classList.toggle('on', p === 't1');
+  s1.classList.toggle('done', t2on || p === 'deriving');
+  $('#step1-dot').innerHTML = (t2on || p === 'deriving')
+    ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg>' : '1';
+  s2.classList.toggle('on', t2on);
+  line.classList.toggle('fill', t2on || p === 'deriving');
+
+  if (p === 't2') {
+    $('#btn-back').style.display = '';
+    $('#btn-primary').textContent = '确认，开始生成';
+    $('#pane-t2').scrollTop = 0;
+    paintStylePreview();
+  } else if (p === 't1') {
+    $('#btn-back').style.display = 'none';
+    $('#btn-primary').textContent = '下一步 · 实现确认';
+    $('#pane-t1').scrollTop = 0;
+  }
+  renderSummary();
+}
+
+$('#btn-primary').addEventListener('click', () => {
+  if (pane === 't1') {
+    show('deriving');
+    setTimeout(() => show('t2'), 1600); // 真实实现为轮询 /api/recommendations tier===2
+  } else {
+    show('confirmed');
+  }
+});
+$('#btn-back').addEventListener('click', () => show('t1'));
+document.getElementById('body-size').addEventListener('input', renderSummary);
+
+/* ── Tweaks ─────────────────────────────────────────────────────────── */
+$('#tweaks-fab').addEventListener('click', () => $('#tweaks').classList.toggle('open'));
+document.querySelectorAll('.tw-opts').forEach((group) => {
+  group.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tw-opt');
+    if (!btn) return;
+    group.querySelectorAll('.tw-opt').forEach((b) => b.classList.remove('on'));
+    btn.classList.add('on');
+    const key = group.dataset.key;
+    if (key === 'pane') show(btn.dataset.val);
+    else document.documentElement.dataset[key] = btn.dataset.val;
+  });
+});
+
+show('t1');
+</script>
+</body>
+</html>

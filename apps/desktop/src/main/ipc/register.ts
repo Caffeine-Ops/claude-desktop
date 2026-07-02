@@ -37,6 +37,8 @@ import {
   type ImageManifestReadPayload,
   type ImageManifestReadResult,
   type ImageManifestItem,
+  type ModelListResult,
+  type ModelSetPayload,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
   type WorkspaceState,
@@ -83,6 +85,25 @@ import type {
   UiPermissionMode
 } from '../../shared/ipc-channels'
 import { clearLogs, getLogs } from '../core/logCollector'
+
+/**
+ * MODEL_LIST cache: the catalog changes rarely, and the composer's 模型 chip
+ * fetches on every dropdown open — one upstream hit per TTL window keeps
+ * that instant. Module-level (not per-engine): the catalog is a property of
+ * the backend, identical for every window. Keyed by CLI backend mode so a
+ * Settings-page switch (bundled ↔ system) invalidates immediately instead
+ * of serving the other backend's list for up to a TTL.
+ */
+let modelListCache: { key: string; models: string[]; at: number } | null = null
+const MODEL_LIST_TTL_MS = 5 * 60 * 1000
+
+/**
+ * Fallback for the system-claude backend BEFORE its CLI is live (lazy spawn):
+ * the stable alias set claude accepts for --model / setModel. Once a runtime
+ * is up, the real `supportedModels` control-request list replaces this (and
+ * only THAT gets cached, so the upgrade happens on the next dropdown open).
+ */
+const SYSTEM_CLAUDE_MODEL_ALIASES = ['default', 'opus', 'sonnet', 'haiku', 'sonnet[1m]']
 
 /**
  * Resolve the ChatEngine for the window that sent this IPC event.
@@ -189,6 +210,8 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_OPEN_PATH)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_STAT_FILES)
   ipcMain.removeHandler(IPC_CHANNELS.IMAGE_MANIFEST_READ)
+  ipcMain.removeHandler(IPC_CHANNELS.MODEL_LIST)
+  ipcMain.removeHandler(IPC_CHANNELS.MODEL_SET)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LOAD)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_NEW)
@@ -595,6 +618,95 @@ export function registerIpcHandlers(): void {
         generatedCount,
         total: items.length
       }
+    }
+  )
+
+  // Model catalog for the composer's 模型 chip — source depends on the CLI
+  // backend, because the two run against DIFFERENT model providers:
+  //   - bundled (fusion-code) → the csdn gateway env.json points it at; its
+  //     OpenAI-compatible /v1/models catalog is the source of truth for what
+  //     the user can actually run. Non-chat entries (image / audio /
+  //     realtime) are filtered so the dropdown only offers chat models.
+  //   - system claude → runs on the user's own ~/.claude login (gateway env
+  //     is stripped, see systemBackendEnv), so the gateway catalog is
+  //     irrelevant. Ask the LIVE CLI itself via the SDK `supportedModels`
+  //     control request; before the lazy spawn there is no CLI to ask, so
+  //     fall back to claude's stable alias set.
+  // Cached module-wide with a short TTL, keyed by backend; on failure the
+  // last good same-backend list is returned (stale beats empty).
+  ipcMain.handle(
+    IPC_CHANNELS.MODEL_LIST,
+    async (event): Promise<ModelListResult> => {
+      const { cliBackend } = getAppSettings()
+      const now = Date.now()
+      if (
+        modelListCache &&
+        modelListCache.key === cliBackend &&
+        now - modelListCache.at < MODEL_LIST_TTL_MS
+      ) {
+        return { ok: true, models: modelListCache.models }
+      }
+      const cachedSameBackend =
+        modelListCache?.key === cliBackend ? modelListCache.models : []
+
+      if (cliBackend === 'system') {
+        const live = await resolveEngine(event).listSupportedModels()
+        if (live) {
+          modelListCache = { key: cliBackend, models: live, at: now }
+          return { ok: true, models: live }
+        }
+        // No live runtime (or an old CLI): serve the alias fallback WITHOUT
+        // caching it, so the real list takes over on the first open after a
+        // runtime spawns.
+        return { ok: true, models: SYSTEM_CLAUDE_MODEL_ALIASES }
+      }
+
+      const base = (
+        process.env.ANTHROPIC_BASE_URL ??
+        process.env.OPENAI_BASE_URL ??
+        ''
+      ).replace(/\/+$/, '')
+      const token =
+        process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.OPENAI_API_KEY ?? ''
+      if (!base) {
+        return {
+          ok: false,
+          models: cachedSameBackend,
+          error: 'No gateway base URL configured (env.json).'
+        }
+      }
+      try {
+        // Electron's net.fetch: Chromium network stack, honors the system
+        // proxy config the same way the rest of the app does.
+        const res = await net.fetch(`${base}/v1/models`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const body = (await res.json()) as { data?: Array<{ id?: unknown }> }
+        const NON_CHAT_RE = /image|audio|realtime|embedding|whisper|tts/i
+        const models = (Array.isArray(body.data) ? body.data : [])
+          .map((m) => (typeof m.id === 'string' ? m.id : ''))
+          .filter((id) => id && !NON_CHAT_RE.test(id))
+          .sort()
+        modelListCache = { key: cliBackend, models, at: now }
+        return { ok: true, models }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ok: false, models: cachedSameBackend, error: msg }
+      }
+    }
+  )
+
+  // Model switch — engine-scoped (see ChatEngine.setModel for the live +
+  // future-session application semantics).
+  ipcMain.handle(
+    IPC_CHANNELS.MODEL_SET,
+    async (event, payload: ModelSetPayload): Promise<void> => {
+      const model =
+        payload && typeof payload.model === 'string' && payload.model.trim()
+          ? payload.model.trim()
+          : null
+      await resolveEngine(event).setModel(model)
     }
   )
 

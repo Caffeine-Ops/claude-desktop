@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 
 import { useChatStore } from '../../stores/chat'
+import { useI18n } from '../../i18n'
+import { zhSpinnerVerb } from '../../constants/spinnerVerbs'
 
 /**
  * ThinkingSpinner
@@ -62,10 +64,12 @@ import { useChatStore } from '../../stores/chat'
  */
 
 /**
- * Static glyph. The old terminal-style cycling spinner
- * (`·✢✳✶✻✽`, 120ms per frame) was dropped — the user found the
- * constant re-render noisy. A single eight-pointed star anchors
- * the row without any motion.
+ * Glyph animation note: the old terminal-style cycling spinner
+ * (`·✢✳✶✻✽`, 120ms per frame) was dropped because its 120ms
+ * setInterval re-render churn read as jittery. The single star now
+ * animates via PURE CSS instead (`.tc-star`, main.css: slow rotation +
+ * opacity breathe) — smooth motion, zero JS re-renders, so it restores
+ * the "alive" feel without the original noise.
  */
 const SPINNER_GLYPH = '✻'
 
@@ -74,6 +78,7 @@ export function ThinkingSpinner(): React.JSX.Element | null {
   const streaming = useChatStore((s) => s.streaming)
   const turnVerb = useChatStore((s) => s.turnVerb)
   const sessionId = useChatStore((s) => s.sessionId)
+  const lang = useI18n((s) => s.lang)
 
   // Elapsed-seconds ticker. Re-renders every 1000ms only (was 80ms
   // for the frame-cycle animation, now unnecessary since the glyph
@@ -112,7 +117,12 @@ export function ThinkingSpinner(): React.JSX.Element | null {
 
   const elapsedMs = Math.max(0, Date.now() - turnStartedAt)
   const elapsedSec = Math.floor(elapsedMs / 1000)
-  const verbLabel = turnVerb ?? 'Thinking'
+  // Display verb follows the UI language: the store samples an English
+  // verb once per turn (turnVerb); Chinese UIs map it deterministically
+  // onto the Chinese list so the label stays stable for the whole turn.
+  const enVerb = turnVerb ?? 'Thinking'
+  const verbLabel = lang === 'zh' ? zhSpinnerVerb(enVerb) : enVerb
+  const hint = lang === 'zh' ? ' · esc 中断)' : ' · esc to interrupt)'
 
   return (
     <div
@@ -121,16 +131,16 @@ export function ThinkingSpinner(): React.JSX.Element | null {
       aria-live="polite"
       aria-label={`${verbLabel}, ${elapsedSec} seconds elapsed`}
     >
-      {/* Static gutter glyph — same column as ● / ⎿ on adjacent
-          assistant rows so the visual tree down the left edge stays
-          aligned no matter what the row type is. */}
-      <span aria-hidden className="inline-block w-[1ch] shrink-0 text-emerald-500">
+      {/* Gutter glyph — same column as ● / ⎿ on adjacent assistant rows
+          so the visual tree down the left edge stays aligned no matter
+          what the row type is. tc-star = CSS-only rotation + breathe. */}
+      <span aria-hidden className="tc-star w-[1ch] shrink-0 text-emerald-500">
         {SPINNER_GLYPH}
       </span>
-      <span className="text-foreground">{verbLabel}…</span>
+      <span className="shimmer-text">{verbLabel}…</span>
       <span className="truncate text-muted-foreground/80">
         <span className="tabular-nums">({elapsedSec}s</span>
-        {' · esc to interrupt)'}
+        {hint}
       </span>
     </div>
   )

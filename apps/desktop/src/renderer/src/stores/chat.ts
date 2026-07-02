@@ -1167,10 +1167,45 @@ function previewCommandText(part: ContentPart): string {
 }
 
 /** Which ppt-master server is up and where. `confirm` → iframe in 「浏览器」;
- *  `preview` → native render in 「幻灯片」. */
+ *  `preview` → native render in 「幻灯片」. `project` is the project DIRECTORY
+ *  NAME the launch command targeted (best-effort; undefined when the command
+ *  shape defeats extraction) — used to verify the server answering at `url`
+ *  is actually THIS deck's server and not another project squatting on a
+ *  reused port (see the identity gate in SlidesWorkspace). */
 export type PreviewServer = {
   kind: 'confirm' | 'preview'
   url: string
+  project?: string
+}
+
+/**
+ * Extract the project identity (directory name) from a `server.py` launch
+ * command. Real launches look like either:
+ *   python3 ${SKILL_DIR}/scripts/svg_editor/server.py <project_path> --live …
+ *   PROJ="projects/<name>" && … "$PPT_PY" scripts/svg_editor/server.py "$PROJ" …
+ * i.e. the first non-flag argument after server.py is the project path — but
+ * it may be a shell VARIABLE whose assignment sits earlier on the same command
+ * line, so `$PROJ`/`${PROJ}` is resolved against a `PROJ=…` assignment.
+ * Returns the path's basename: stable identity whether the launch used an
+ * absolute or a skill-relative path. Best-effort — undefined disables the
+ * identity check rather than breaking the preview.
+ */
+function extractServerProject(command: string): string | undefined {
+  const argMatch = /server\.py\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(command)
+  if (!argMatch) return undefined
+  let arg = argMatch[1] ?? argMatch[2] ?? argMatch[3] ?? ''
+  const varMatch = /^\$\{?(\w+)\}?$/.exec(arg)
+  if (varMatch) {
+    const assign = new RegExp(
+      `(?:^|[\\s;&])${varMatch[1]}=(?:"([^"]+)"|'([^']+)'|(\\S+))`
+    ).exec(command)
+    if (!assign) return undefined
+    arg = assign[1] ?? assign[2] ?? assign[3] ?? ''
+  }
+  if (!arg || arg.startsWith('-') || arg.startsWith('$')) return undefined
+  const segments = arg.replace(/[/\\]+$/, '').split(/[/\\]/)
+  const name = segments[segments.length - 1]
+  return name || undefined
 }
 
 /**
@@ -1219,13 +1254,17 @@ export function usePreviewServer(): PreviewServer | null {
           // 1. The URL the server actually printed (real, post-advance port).
           const fromOut = PREVIEW_URL_RE.exec(previewResultText(p.result))
           if (fromOut) {
-            result = { kind, url: fromOut[1] }
+            result = { kind, url: fromOut[1], project: extractServerProject(command) }
             continue
           }
           // 2. An explicitly pinned --port (honored verbatim by the launcher).
           const fromFlag = PREVIEW_PORT_FLAG_RE.exec(command)
           if (fromFlag) {
-            result = { kind, url: `http://localhost:${fromFlag[1]}` }
+            result = {
+              kind,
+              url: `http://localhost:${fromFlag[1]}`,
+              project: extractServerProject(command)
+            }
             continue
           }
           // Otherwise the server hasn't printed its URL yet — do NOT guess a

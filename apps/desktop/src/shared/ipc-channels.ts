@@ -85,6 +85,19 @@ export const IPC_CHANNELS = {
    */
   IMAGE_MANIFEST_READ: 'image-manifest:read',
   /**
+   * Renderer → main. Lists chat-capable model ids from the backend
+   * gateway's `/v1/models` catalog (see ModelListResult). Cached in main
+   * with a short TTL — the composer's 模型 chip fetches on open.
+   */
+  MODEL_LIST: 'model:list',
+  /**
+   * Renderer → main. Switches the model for THIS window's engine (see
+   * ModelSetPayload): applied live to the foreground runtime and to every
+   * future session the engine opens. Per-engine, in-memory — a new window
+   * starts back on the backend default.
+   */
+  MODEL_SET: 'model:set',
+  /**
    * Renderer → main. Lists all sessions (JSONL transcripts) for the
    * current workspace, sorted by updatedAt desc. Backed by
    * `@anthropic-ai/claude-agent-sdk`'s `listSessions({ dir })`.
@@ -685,6 +698,30 @@ export type ImageManifestReadResult = {
   total: number
 }
 
+/* ───────────────────────── Model switching ─────────────────────── */
+
+/**
+ * Result of MODEL_LIST: chat-capable model ids from the backend gateway's
+ * OpenAI-compatible `/v1/models` catalog (image / audio / realtime entries
+ * filtered out in main). `ok` false (+ `error`) covers gateway-unreachable;
+ * main still returns its last good list in that case (stale beats empty for
+ * a dropdown), so check `models.length`, not just `ok`.
+ */
+export type ModelListResult = {
+  ok: boolean
+  models: string[]
+  error?: string
+}
+
+/**
+ * Payload for MODEL_SET. `model` is the raw id passed through to the CLI
+ * (the gateway resolves it); `null` clears the override so the backend's
+ * default alias routing applies again. Engine-scoped: applies live to the
+ * foreground runtime via the SDK's `setModel` control request AND becomes
+ * the `model` option for every future `query()` this engine spawns.
+ */
+export type ModelSetPayload = { model: string | null }
+
 /* ─────────────────── Session (thread) channels ─────────────────── */
 
 export type SessionListResult = { threads: readonly ThreadSummary[] }
@@ -964,6 +1001,21 @@ export interface ChatApi {
    * runs, to show generation progress and previews.
    */
   readImageManifest(payload: ImageManifestReadPayload): Promise<ImageManifestReadResult>
+
+  /**
+   * List chat-capable model ids from the backend gateway (main-side cached).
+   * The composer's 模型 chip calls this when its dropdown opens.
+   */
+  listModels(): Promise<ModelListResult>
+
+  /**
+   * Switch the model for this window's engine — live for the foreground
+   * session, and the default for future sessions here. `null` restores the
+   * backend default. The engine reflects the pick into SessionMeta.model and
+   * fires `onSessionMetaChanged`, so the chip label updates via the normal
+   * meta refresh path.
+   */
+  setModel(model: string | null): Promise<void>
 
   /**
    * List all sessions under the current workspace, newest first.

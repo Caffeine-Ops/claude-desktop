@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>幻灯片编辑器 · 工作台原型 v0</title>
+<style>
+  /* ─── Design tokens (extracted from QoderWork reference) ─────────────── */
+  :root {
+    --bg-app: #FAFAFA;
+    --bg-surface: #FFFFFF;
+    --bg-subtle: #F4F4F5;
+    --bg-hover: rgba(24, 24, 27, 0.04);
+    --bg-active: rgba(24, 24, 27, 0.06);
+
+    --border: #ECECEC;
+    --border-strong: #E4E4E7;
+
+    --text: #18181B;
+    --text-2: #71717A;
+    --text-3: #A1A1AA;
+
+    --accent: #18181B;            /* near-black primary */
+    --accent-fg: #FFFFFF;
+    --ok: #22C55E;                /* ready dot */
+    --idle: #D4D4D8;              /* not-generated dot */
+
+    --r-lg: 12px;
+    --r-md: 8px;
+    --r-sm: 6px;
+
+    --e1: 0 1px 2px rgba(0,0,0,.04);
+    --e2: 0 4px 16px rgba(0,0,0,.06);
+    --e3: 0 8px 24px rgba(0,0,0,.10);
+
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    --dur: 170ms;
+
+    --font: "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+
+    --topbar-h: 56px;
+    --statusbar-h: 36px;
+    --rail-w: 176px;
+    --panel-w: 264px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg-app);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    font-size: 13px;
+    overflow: hidden;
+  }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  /* ─── App shell grid ────────────────────────────────────────────────── */
+  .app {
+    display: grid;
+    grid-template-rows: var(--topbar-h) 1fr var(--statusbar-h);
+    height: 100vh;
+    background: var(--bg-app);
+  }
+
+  /* ─── Top app bar ───────────────────────────────────────────────────── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 16px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .brand h1 { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+  .brand .sub { font-size: 11.5px; color: var(--text-3); }
+  .topbar .spacer { flex: 1; }
+  .topbar-actions { display: flex; align-items: center; gap: 8px; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 32px; padding: 0 12px;
+    border-radius: var(--r-md);
+    font-size: 12.5px; font-weight: 500;
+    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), transform 80ms var(--ease);
+    white-space: nowrap;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn-ghost { color: var(--text-2); }
+  .btn-ghost:hover { background: var(--bg-hover); color: var(--text); }
+  .btn-outline { border: 1px solid var(--border-strong); background: var(--bg-surface); color: var(--text); }
+  .btn-outline:hover { background: var(--bg-subtle); }
+  .btn-primary { background: var(--accent); color: var(--accent-fg); }
+  .btn-primary:hover { background: #000; }
+  .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+  .btn .caret { width: 8px; height: 8px; opacity: .6; }
+
+  /* ─── Middle: rail | stage | panel ─────────────────────────────────── */
+  .body {
+    display: grid;
+    grid-template-columns: var(--rail-w) 1fr var(--panel-w);
+    min-height: 0;
+    background: var(--bg-app);
+  }
+
+  /* ── Left rail: thumbnail list ── */
+  .rail {
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    min-height: 0;
+  }
+  .rail-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px 8px;
+  }
+  .rail-head .label { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+  .rail-head .count { font-size: 11px; color: var(--text-3); }
+  .rail-list { flex: 1; overflow-y: auto; padding: 4px 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .thumb {
+    display: flex; gap: 9px; align-items: center;
+    padding: 6px; border-radius: var(--r-md);
+    transition: background var(--dur) var(--ease);
+    text-align: left; width: 100%;
+  }
+  .thumb:hover { background: var(--bg-hover); }
+  .thumb.active { background: var(--bg-active); }
+  .thumb .idx { font-size: 11px; color: var(--text-3); width: 16px; text-align: right; flex-shrink: 0; }
+  .thumb.active .idx { color: var(--text); font-weight: 600; }
+  .thumb-frame {
+    position: relative; flex: 1;
+    aspect-ratio: 16 / 9;
+    border-radius: var(--r-sm);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  /* placeholder "mini slide" so v0 reads as a preview, not a filename list */
+  .thumb-frame .mini {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 6px 7px; gap: 3px;
+  }
+  .thumb-frame .mini .m-kick { width: 22px; height: 2px; border-radius: 1px; background: var(--text-3); opacity: .5; }
+  .thumb-frame .mini .m-title { width: 70%; height: 5px; border-radius: 1px; background: var(--text-2); opacity: .65; }
+  .thumb-frame .mini .m-line { height: 2px; border-radius: 1px; background: var(--text-3); opacity: .35; }
+  .thumb-frame .mini .m-line.short { width: 45%; }
+  .dot { position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 0 2px var(--bg-surface); }
+  .dot.ok { background: var(--ok); }
+  .dot.idle { background: var(--idle); }
+
+  /* ── Center stage ── */
+  .stage-col { display: flex; flex-direction: column; min-width: 0; background: var(--bg-app); }
+  .breadcrumb {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 20px;
+  }
+  .crumb-badge {
+    font-size: 11px; font-weight: 600; color: var(--text-2);
+    background: var(--bg-subtle); border: 1px solid var(--border);
+    border-radius: var(--r-sm); padding: 2px 7px; letter-spacing: .02em;
+  }
+  .crumb-title { font-size: 13px; font-weight: 600; }
+  .crumb-meta { font-size: 12px; color: var(--text-3); }
+  .breadcrumb .spacer { flex: 1; }
+  .crumb-actions { display: flex; align-items: center; gap: 6px; }
+  .icon-btn {
+    width: 30px; height: 30px; border-radius: var(--r-md);
+    display: grid; place-items: center; color: var(--text-2);
+    border: 1px solid var(--border-strong); background: var(--bg-surface);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .icon-btn:hover { background: var(--bg-subtle); color: var(--text); }
+  .icon-btn svg { width: 15px; height: 15px; }
+
+  .stage {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; padding: 8px 24px 24px;
+    position: relative;
+    user-select: none;
+  }
+  .canvas-wrap { position: relative; width: min(100%, 860px); }
+  .canvas {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: var(--bg-surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--e2);
+    overflow: hidden;
+  }
+  /* placeholder slide content (stand-in for the real injected SVG) */
+  .slide-demo { position: absolute; inset: 0; display: flex; }
+  .slide-left { flex: 1; padding: 7% 6%; display: flex; flex-direction: column; }
+  .sd-kick { color: #2563EB; font-size: 13px; font-weight: 600; letter-spacing: .06em; }
+  .sd-title { font-size: 30px; font-weight: 800; margin-top: 6px; letter-spacing: -0.01em; }
+  .sd-row { display: flex; gap: 10px; margin-top: 20px; }
+  .sd-ic { width: 26px; height: 26px; border-radius: 7px; background: #EFF3FF; display: grid; place-items: center; flex-shrink: 0; }
+  .sd-ic span { width: 13px; height: 13px; border-radius: 3px; background: #2563EB; opacity: .8; }
+  .sd-h { font-size: 17px; font-weight: 700; }
+  .sd-p { font-size: 13px; color: var(--text-2); line-height: 1.5; margin-top: 2px; max-width: 320px; }
+  .sd-div { height: 1px; background: var(--border); margin: 14px 0; }
+  .slide-right { width: 42%; background: linear-gradient(160deg, #E9EBEE, #D9DCE0); display: grid; place-items: center; }
+  .slide-right .imgtag { font-size: 11px; color: var(--text-3); background: rgba(255,255,255,.7); padding: 3px 8px; border-radius: 20px; }
+  .caption { font-size: 12px; color: var(--text-3); }
+
+  /* Figma-style selection overlay (demo boxes) */
+  .overlay { position: absolute; inset: 0; pointer-events: none; }
+  .sel-box { position: absolute; border: 1.5px solid var(--accent); border-radius: 2px; }
+  .sel-box.hover { border-color: rgba(24,24,27,.35); border-width: 1px; }
+  .handle { position: absolute; width: 6px; height: 6px; background: var(--accent); border: 1px solid #fff; border-radius: 1px; }
+  .handle.tl { left: -4px; top: -4px; } .handle.tr { right: -4px; top: -4px; }
+  .handle.bl { left: -4px; bottom: -4px; } .handle.br { right: -4px; bottom: -4px; }
+
+  /* ── Right panel ── */
+  .panel {
+    background: var(--bg-surface);
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    min-height: 0;
+  }
+  .panel-scroll { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 18px; }
+  .sec-head { display: flex; align-items: center; justify-content: space-between; }
+  .sec-head .t { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+  .sec-head .clear { font-size: 11px; color: var(--text-3); transition: color var(--dur); }
+  .sec-head .clear:hover { color: var(--text); }
+  .sec-badge { min-width: 18px; height: 16px; padding: 0 5px; border-radius: 999px; background: var(--bg-subtle); color: var(--text-2); font-size: 10px; font-weight: 600; display: grid; place-items: center; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 24px; padding: 0 4px 0 8px;
+    border-radius: var(--r-sm);
+    background: var(--bg-subtle); border: 1px solid var(--border-strong);
+    font-size: 11px; font-weight: 500; color: var(--text);
+  }
+  .chip .x { width: 15px; height: 15px; display: grid; place-items: center; border-radius: 3px; color: var(--text-3); font-size: 10px; transition: background var(--dur), color var(--dur); }
+  .chip .x:hover { background: var(--bg-active); color: var(--text); }
+  .empty {
+    margin-top: 8px; border: 1px dashed var(--border-strong); border-radius: var(--r-md);
+    padding: 14px 12px; text-align: center; font-size: 11.5px; color: var(--text-3); line-height: 1.6;
+  }
+  .empty .k { color: var(--text-3); opacity: .8; }
+
+  textarea {
+    width: 100%; margin-top: 8px; resize: vertical; min-height: 88px;
+    border: 1px solid var(--border-strong); border-radius: var(--r-md);
+    background: var(--bg-surface); color: var(--text);
+    padding: 9px 10px; font-size: 12.5px; font-family: inherit; line-height: 1.5;
+    transition: border-color var(--dur), box-shadow var(--dur);
+  }
+  textarea::placeholder { color: var(--text-3); }
+  textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.06); }
+
+  .btn-block { width: 100%; height: 36px; justify-content: center; margin-top: 10px; border-radius: var(--r-md); font-size: 12.5px; font-weight: 600; }
+
+  .anno-card { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-surface); padding: 9px 10px; transition: border-color var(--dur); }
+  .anno-card:hover { border-color: var(--border-strong); }
+  .anno-row { display: flex; gap: 7px; align-items: flex-start; }
+  .anno-dot { width: 6px; height: 6px; border-radius: 50%; background: #F5B400; margin-top: 5px; flex-shrink: 0; }
+  .anno-text { flex: 1; font-size: 12px; line-height: 1.5; }
+  .anno-id { margin-top: 4px; padding-left: 13px; font-family: ui-monospace, monospace; font-size: 10px; color: var(--text-3); opacity: .7; }
+
+  .panel-foot { border-top: 1px solid var(--border); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; background: var(--bg-surface); }
+  .foot-row { display: flex; gap: 8px; }
+  .foot-row .btn { flex: 1; justify-content: center; height: 32px; }
+
+  /* ─── Bottom status bar ─────────────────────────────────────────────── */
+  .statusbar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 16px;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    font-size: 11.5px; color: var(--text-3);
+  }
+  .statusbar .spacer { flex: 1; }
+  .status-pill { color: var(--text-2); }
+  .status-nav { display: flex; align-items: center; gap: 6px; color: var(--text-2); }
+  .kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border: 1px solid var(--border-strong); border-radius: 4px; font-size: 10px; color: var(--text-2); background: var(--bg-subtle); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Top app bar ── -->
+  <header class="topbar">
+    <div class="brand">
+      <h1>iOS 27 全面介绍</h1>
+      <span class="sub"><span class="tnum">6 / 9</span> 张幻灯片已就绪</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="topbar-actions">
+      <button class="btn btn-ghost">保存为模版</button>
+      <button class="btn btn-outline">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        放映
+      </button>
+      <button class="btn btn-primary">
+        导出
+        <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ── Body: rail | stage | panel ── -->
+  <div class="body">
+
+    <!-- Left rail -->
+    <aside class="rail">
+      <div class="rail-head">
+        <span class="label">幻灯片</span>
+        <span class="count tnum">06 / 09</span>
+      </div>
+      <div class="rail-list" id="rail"></div>
+    </aside>
+
+    <!-- Center stage -->
+    <section class="stage-col">
+      <div class="breadcrumb">
+        <span class="crumb-badge tnum">06</span>
+        <span class="crumb-title">日常焕新</span>
+        <span class="crumb-meta">· image-side</span>
+        <div class="spacer"></div>
+        <div class="crumb-actions">
+          <button class="icon-btn" title="上一页">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <button class="icon-btn" title="下一页">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="canvas-wrap">
+          <div class="canvas">
+            <!-- [slide] real injected SVG goes here; this is a placeholder stand-in -->
+            <div class="slide-demo">
+              <div class="slide-left">
+                <div class="sd-kick">日常焕新</div>
+                <div class="sd-title">每天都用的，都更好用了</div>
+                <div class="sd-row">
+                  <div class="sd-ic"><span></span></div>
+                  <div>
+                    <div class="sd-h">照片</div>
+                    <div class="sd-p" id="p-photo">智能移除三档可选；AI 扩展补全裁切；从视频里抽一帧，直接存成照片。</div>
+                  </div>
+                </div>
+                <div class="sd-div"></div>
+                <div class="sd-row">
+                  <div class="sd-ic"><span></span></div>
+                  <div>
+                    <div class="sd-h">Safari</div>
+                    <div class="sd-p">自动按主题整理标签页；缺货降价，「提醒我」会替你盯着网页。</div>
+                  </div>
+                </div>
+              </div>
+              <div class="slide-right"><span class="imgtag">16:9 image</span></div>
+            </div>
+
+            <!-- Figma-style selection overlay (demo) -->
+            <div class="overlay">
+              <div class="sel-box" style="left:8.5%; top:47%; width:37%; height:9%;">
+                <span class="handle tl"></span><span class="handle tr"></span>
+                <span class="handle bl"></span><span class="handle br"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="caption">点击元素选择 · 拖拽框选多个 · 选中后在右侧填写修改说明</div>
+      </div>
+    </section>
+
+    <!-- Right panel -->
+    <aside class="panel">
+      <div class="panel-scroll">
+        <!-- 已选元素 -->
+        <section>
+          <div class="sec-head">
+            <span class="t">已选元素</span>
+            <button class="clear">清空</button>
+          </div>
+          <div class="chips">
+            <span class="chip">_edit_11<button class="x">✕</button></span>
+          </div>
+        </section>
+
+        <!-- 修改说明 -->
+        <section>
+          <div class="sec-head"><span class="t">修改说明</span></div>
+          <textarea placeholder="描述希望如何修改所选 1 个元素…"></textarea>
+          <button class="btn btn-primary btn-block">添加标注</button>
+        </section>
+
+        <!-- 本页标注 -->
+        <section>
+          <div class="sec-head">
+            <span class="t">本页标注</span>
+            <span class="sec-badge tnum">0</span>
+          </div>
+          <div class="empty">暂无标注</div>
+        </section>
+      </div>
+
+      <div class="panel-foot">
+        <button class="btn btn-primary btn-block" style="margin-top:0">应用修改</button>
+        <div class="foot-row">
+          <button class="btn btn-outline">撤销</button>
+          <button class="btn btn-ghost" style="border:1px solid var(--border-strong)">退出预览</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ── Bottom status bar ── -->
+  <footer class="statusbar">
+    <span class="status-pill">16:9 · 1280 × 720 · HTML 幻灯片工作区</span>
+    <div class="spacer"></div>
+    <div class="status-nav">
+      <span class="kbd">←</span><span class="kbd">→</span>
+      <span>切换页</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+  // Build the thumbnail rail as a placeholder preview list.
+  const slides = [
+    { name: '01_cover',        ready: true },
+    { name: '02_overview',     ready: true },
+    { name: '03_siri_ai',      ready: true },
+    { name: '04_liquid_glass', ready: true },
+    { name: '05_performance',  ready: true },
+    { name: '06_apps',         ready: true,  active: true },
+    { name: '07_privacy',      ready: false },
+    { name: '08_upgrade',      ready: false },
+    { name: '09_closing',      ready: false }
+  ];
+  const rail = document.getElementById('rail');
+  slides.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.className = 'thumb' + (s.active ? ' active' : '');
+    b.innerHTML = `
+      <span class="idx tnum">${String(i + 1).padStart(2, '0')}</span>
+      <span class="thumb-frame">
+        <span class="mini">
+          <span class="m-kick"></span>
+          <span class="m-title"></span>
+          <span class="m-line"></span>
+          <span class="m-line short"></span>
+        </span>
+        <span class="dot ${s.ready ? 'ok' : 'idle'}"></span>
+      </span>`;
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.thumb').forEach(t => t.classList.remove('active'));
+      b.classList.add('active');
+    });
+    rail.appendChild(b);
+  });
+</script>
+</body>
+</html>

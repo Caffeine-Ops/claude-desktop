@@ -398,3 +398,233 @@ textarea::-moz-selection {
     color: hsl(var(--muted-foreground));
   }
 }
+
+/* ═══ 预览幻灯片空态「显影」动画（LivePreviewEditor / PreviewEmptyState）═══
+ * 幽灵卡浮动 + 骨架微光 + 扫描显影 + 描边彗星 + 生成尘埃。原型见
+ * docs/preview-empty-state.html（用户选定「显影」变体）。颜色全部取自主题
+ * token（--accent / --muted / --card），换肤/深浅色自动跟随；
+ * prefers-reduced-motion 下动画全部冻结，扫描线与尘埃直接隐藏。
+ * pes- 前缀 = preview-empty-state，避免撞全局类名。 */
+
+/* 后排幽灵卡：暗示「一叠即将到来的幻灯片」，静态 transform 与 0% 帧一致，
+ * 这样 reduced-motion 去掉动画后仍保持错位叠放的造型。 */
+.pes-ghost-a {
+  transform: rotate(-2.4deg) translate(-12px, -4px) scale(0.97);
+  animation: pes-ghost-a 6.4s ease-in-out infinite;
+}
+.pes-ghost-b {
+  transform: rotate(3.2deg) translate(14px, -10px) scale(0.94);
+  animation: pes-ghost-b 6.4s ease-in-out infinite;
+}
+@keyframes pes-ghost-a {
+  0%, 100% { transform: rotate(-2.4deg) translate(-12px, -4px) scale(0.97); }
+  50%      { transform: rotate(-2.9deg) translate(-14px, -9px) scale(0.97); }
+}
+@keyframes pes-ghost-b {
+  0%, 100% { transform: rotate(3.2deg) translate(14px, -10px) scale(0.94); }
+  50%      { transform: rotate(3.8deg) translate(16px, -14px) scale(0.94); }
+}
+
+/* 主卡悬浮呼吸 */
+.pes-bob { animation: pes-bob 6s ease-in-out infinite; }
+@keyframes pes-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+
+/* 骨架块微光：高光永远「更亮」——浅色里向白、深色里也向白（88/12 混合，
+ * 深色 muted 混 12% 白正好抬一档，对应原型的 skeleton-hi）。 */
+.pes-sk {
+  border-radius: 5px;
+  background: linear-gradient(
+    100deg,
+    hsl(var(--muted)) 38%,
+    color-mix(in srgb, hsl(var(--muted)) 88%, #fff) 50%,
+    hsl(var(--muted)) 62%
+  );
+  background-size: 240% 100%;
+  animation: pes-shimmer 3.2s ease-in-out infinite;
+}
+@keyframes pes-shimmer {
+  0%   { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+
+/* 扫描线：accent 光带自上而下「显影」一次，停一拍再来 */
+.pes-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -34%;
+  height: 34%;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    hsl(var(--accent) / 0.14) 62%,
+    hsl(var(--accent) / 0.38) 98%,
+    hsl(var(--accent) / 0.62) 100%
+  );
+  animation: pes-scan 4.8s cubic-bezier(0.45, 0, 0.35, 1) infinite;
+  pointer-events: none;
+}
+@keyframes pes-scan {
+  0%       { top: -34%; opacity: 0; }
+  8%       { opacity: 1; }
+  52%      { top: 100%; opacity: 1; }
+  60%, 100% { top: 100%; opacity: 0; }
+}
+
+/* 描边彗星：极淡的 accent 流光沿主卡边缘巡游（rect 周长 ≈ 928） */
+.pes-comet rect {
+  fill: none;
+  stroke: hsl(var(--accent));
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-dasharray: 72 856;
+  opacity: 0.55;
+  animation: pes-comet 5.6s linear infinite;
+}
+@keyframes pes-comet {
+  to { stroke-dashoffset: -928; }
+}
+
+/* 生成尘埃：稀疏 accent 微粒自卡片下沿上浮消散，参数由 JSX 以 CSS 变量注入 */
+.pes-sparkle {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: hsl(var(--accent));
+  opacity: 0;
+  animation: pes-rise var(--pes-dur, 4s) ease-in-out var(--pes-delay, 0s) infinite;
+  pointer-events: none;
+}
+@keyframes pes-rise {
+  0%   { transform: translateY(0) scale(0.6); opacity: 0; }
+  18%  { opacity: var(--pes-peak, 0.7); }
+  70%  { opacity: calc(var(--pes-peak, 0.7) * 0.35); }
+  100% { transform: translateY(-64px) scale(1); opacity: 0; }
+}
+
+/* accent 环境光呼吸（展台中心极淡的光晕） */
+.pes-ambient { animation: pes-ambient 7s ease-in-out infinite; }
+@keyframes pes-ambient {
+  0%, 100% { opacity: 0.38; }
+  50%      { opacity: 0.62; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pes-ghost-a,
+  .pes-ghost-b,
+  .pes-bob,
+  .pes-sk,
+  .pes-comet rect,
+  .pes-ambient {
+    animation: none !important;
+  }
+  .pes-scan,
+  .pes-sparkle {
+    display: none;
+  }
+}
+
+/* ═══ 工具调用卡片动效（ToolCallCard / ReasoningCard，ThreadView）═══
+ * 原型见 docs/tool-call-cards.html。tc- 前缀 = tool-call。
+ * 徽标三态：运行中 accent 弧线旋转 → 完成盘弹入 + 勾描边画出 /
+ * 失败红盘 + 叉描边。弹入/描边只在「亲眼看着跑完」的行上播（组件里用
+ * sawRunning 门控）——历史恢复一次性画几十行，齐刷刷弹跳读作故障。 */
+
+/* 行入场：淡入 + 5px 上浮 */
+.tc-row-in { animation: tc-rise 0.38s cubic-bezier(0.3, 0.7, 0.3, 1) both; }
+@keyframes tc-rise {
+  from { opacity: 0; transform: translateY(5px); }
+}
+
+/* details 展开/收起高度动画（Chromium 131+ 的 ::details-content +
+ * interpolate-size；Electron 35 = Chromium 134 已支持）。纯 CSS，
+ * 不必为动画把 <details> 改造成受控组件。 */
+.tc-details { interpolate-size: allow-keywords; }
+.tc-details::details-content {
+  block-size: 0;
+  overflow-y: clip;
+  opacity: 0;
+  transition:
+    content-visibility 0.32s allow-discrete,
+    block-size 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.24s ease;
+}
+.tc-details[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+}
+
+/* 运行中：accent 弧线（r=6 周长≈37.7，24+14 的缺口弧） */
+.tc-spin {
+  fill: none;
+  stroke: hsl(var(--accent));
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 24 14;
+  transform-origin: center;
+  animation: tc-spin 1s linear infinite;
+  opacity: 0.9;
+}
+@keyframes tc-spin { to { transform: rotate(360deg); } }
+
+/* 完成/失败盘 + 描边笔画。无 .tc-pop/.tc-draw 时静态呈现终态。 */
+.tc-k,
+.tc-x {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.tc-pop {
+  transform: scale(0);
+  transform-origin: center;
+  animation: tc-pop 0.34s cubic-bezier(0.3, 1.4, 0.4, 1) forwards;
+}
+@keyframes tc-pop { to { transform: scale(1); } }
+.tc-draw {
+  stroke-dasharray: 12;
+  stroke-dashoffset: 12;
+  animation: tc-draw 0.3s ease-out 0.1s forwards;
+}
+@keyframes tc-draw { to { stroke-dashoffset: 0; } }
+
+/* 思考过程小圆点呼吸（仅 streaming 时挂类） */
+.tc-breathe { animation: tc-breathe 1.4s ease-in-out infinite; }
+@keyframes tc-breathe {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.45); opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-row-in { animation: none; }
+  .tc-details::details-content { transition: none; }
+  .tc-spin { animation: none; }
+  .tc-pop { animation: none; transform: scale(1); }
+  .tc-draw { animation: none; stroke-dashoffset: 0; }
+  .tc-breathe { animation: none; }
+}
+
+/* 思考行（ThinkingSpinner）✻ 星标：慢速旋转 + 透明度呼吸。纯 CSS 合成器
+ * 动画，零 JS 重渲染——当初把终端式换帧 spinner 改静态，嫌的是 120ms
+ * setInterval 的抖动刷屏，不是「有动画」本身。spin 只动 transform、
+ * breathe 只动 opacity，两条 animation 互不打架。 */
+.tc-star {
+  display: inline-block;
+  transform-origin: center;
+  animation:
+    tc-star-spin 3.6s linear infinite,
+    tc-star-breathe 2.4s ease-in-out infinite;
+}
+@keyframes tc-star-spin { to { transform: rotate(360deg); } }
+@keyframes tc-star-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tc-star { animation: none; }
+}

@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-accent="green">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>问题页 · 问卷动画原型 v2</title>
+<style>
+  /* ═══════════════════════════════════════════════════════════════════════
+     Design tokens — 与 slide-editor / confirm-ui / outline 原型 v2 同一套。
+     动画语言：入场 spring（cubic-bezier(.3,1.3,.5,1)）+ 170ms 标准过渡；
+     「AI 活动」信号沿用 app 既定的 Apple-Intelligence 六色边缘光晕
+     （AppleGlowEffect 的 CSS 近似：conic ring + 缓慢 hue 流动）。
+     演示时间线：load 后自动播放「逐题生成 → 就绪」，也可用 Tweaks 跳状态。
+     ═══════════════════════════════════════════════════════════════════════ */
+  :root {
+    --accent: #16a34a;
+    --accent-contrast: #ffffff;
+    --accent-ink: color-mix(in srgb, var(--accent) 78%, #000);
+    --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+    --accent-ring: color-mix(in srgb, var(--accent) 30%, transparent);
+
+    --bg-app: #fafafa;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f4f4f5;
+    --bg-hover: rgba(24, 24, 27, 0.045);
+
+    --border: #ececec;
+    --border-strong: #e0e0e2;
+
+    --text: #1a1c1f;
+    --text-2: #6f7076;
+    --text-3: #a3a4aa;
+
+    --r-lg: 12px;
+    --r-md: 8px;
+    --r-sm: 6px;
+
+    --e1: 0 1px 2px rgba(0,0,0,.04), 0 2px 8px rgba(0,0,0,.04);
+    --e2: 0 4px 16px rgba(0,0,0,.08);
+    --e-float: 0 8px 30px rgba(0,0,0,.14), 0 0 0 1px rgba(0,0,0,.04);
+
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    --spring: cubic-bezier(0.3, 1.3, 0.5, 1);
+    --dur: 170ms;
+
+    --font: "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  [data-accent="blue"] { --accent: #3395ff; }
+  [data-theme="dark"] {
+    --accent: #2ec96b;
+    --accent-ink: color-mix(in srgb, var(--accent) 74%, #fff);
+    --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+    --bg-app: #1a1917;
+    --bg-surface: #232220;
+    --bg-subtle: #2b2a27;
+    --bg-hover: rgba(232, 228, 220, 0.05);
+    --border: #32312e;
+    --border-strong: #3c3b37;
+    --text: #e8e4dc;
+    --text-2: #a5a199;
+    --text-3: #726f69;
+    --e1: 0 1px 2px rgba(0,0,0,.35), 0 2px 8px rgba(0,0,0,.25);
+    --e2: 0 4px 16px rgba(0,0,0,.4);
+    --e-float: 0 8px 30px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.07);
+  }
+  [data-theme="dark"][data-accent="blue"] { --accent: #2997ff; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg-app);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    font-size: 13px;
+    overflow: hidden;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  input { font-family: inherit; }
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  /* ─── 骨架 ─────────────────────────────────────────────────────────── */
+  .page { position: relative; display: flex; flex-direction: column; height: 100vh; }
+
+  /* ── Apple-Intelligence 边缘光晕（app 既定「AI 活动」信号的 CSS 近似）──
+     两层 conic ring（mask 挖空中心）+ 缓慢 hue 流动 + 呼吸。
+     生成结束后 .page.ready 使其淡出。 */
+  .glow, .glow::after {
+    position: absolute; inset: 6px; z-index: 30;
+    border-radius: 14px;
+    pointer-events: none;
+    content: '';
+  }
+  .glow {
+    opacity: 1;
+    transition: opacity .8s var(--ease);
+  }
+  .page.ready .glow { opacity: 0; }
+  .glow i, .glow b {
+    position: absolute; inset: 0;
+    border-radius: inherit;
+    background: conic-gradient(from 0deg,
+      #BC82F3, #F5B9EA 18%, #8D9FFF 36%, #FF6778 55%, #FFBA71 74%, #C686FF 90%, #BC82F3);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    animation: glow-churn 7s linear infinite, glow-breathe 2.6s var(--ease) infinite;
+  }
+  .glow i { padding: 2px; }
+  .glow b { padding: 5px; filter: blur(14px); opacity: .55; animation-delay: 0s, -1.3s; }
+  @keyframes glow-churn { to { filter: hue-rotate(360deg); } }
+  .glow b { animation-name: glow-churn-b, glow-breathe; }
+  @keyframes glow-churn-b { to { filter: blur(14px) hue-rotate(360deg); } }
+  @keyframes glow-breathe { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+  .glow b { }
+
+  /* ─── 顶部 ─────────────────────────────────────────────────────────── */
+  .head {
+    flex-shrink: 0;
+    display: flex; align-items: center; gap: 12px;
+    padding: 18px 28px 0;
+  }
+  .head-inner { max-width: 760px; margin: 0 auto; width: 100%; display: flex; align-items: flex-start; gap: 12px; }
+  .head h1 { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+  .head .sub { margin-top: 3px; font-size: 12px; color: var(--text-3); display: flex; align-items: center; gap: 8px; }
+  /* 「AI 正在生成」打字三点 */
+  .gen-dots { display: inline-flex; gap: 3px; }
+  .gen-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--text-3); animation: dot-hop 1.2s var(--ease) infinite; }
+  .gen-dots i:nth-child(2) { animation-delay: .15s; }
+  .gen-dots i:nth-child(3) { animation-delay: .3s; }
+  @keyframes dot-hop { 0%,60%,100% { transform: none; opacity: .5; } 30% { transform: translateY(-3px); opacity: 1; } }
+  .page.ready .gen-line { display: none; }
+  .head .spacer { flex: 1; }
+  /* 已回答进度 + 计时 */
+  .meta { display: flex; align-items: center; gap: 12px; }
+  .answered { font-size: 11.5px; color: var(--text-3); }
+  .answered b { color: var(--accent-ink); font-weight: 600; }
+  .timer { font-family: var(--mono); font-size: 12px; color: var(--accent-ink); }
+
+  /* ─── 滚动问卷 ─────────────────────────────────────────────────────── */
+  .scroll { flex: 1; min-height: 0; overflow-y: auto; }
+  .content { max-width: 760px; margin: 0 auto; padding: 18px 28px 32px; display: flex; flex-direction: column; gap: 14px; }
+
+  /* 问题卡：入场动画（spring 上滑浮现） */
+  .q-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    box-shadow: var(--e1);
+    padding: 16px 18px 17px;
+    animation: card-in .45s var(--spring) backwards;
+  }
+  @keyframes card-in {
+    from { opacity: 0; transform: translateY(14px) scale(.985); }
+    to { opacity: 1; transform: none; }
+  }
+  .q-head { display: flex; align-items: flex-start; gap: 10px; }
+  /* 题号徽章：未答=编号；答完=翻转成勾（3D flip） */
+  .q-no {
+    position: relative;
+    width: 24px; height: 24px; flex-shrink: 0;
+    perspective: 80px;
+  }
+  .q-no i, .q-no b {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    border-radius: 7px;
+    font-size: 11px; font-weight: 700; font-style: normal;
+    backface-visibility: hidden;
+    transition: transform .45s var(--spring);
+  }
+  .q-no i { background: var(--accent-soft); color: var(--accent-ink); }
+  .q-no b { background: var(--accent); color: var(--accent-contrast); transform: rotateY(180deg); }
+  .q-card.answered .q-no i { transform: rotateY(-180deg); }
+  .q-card.answered .q-no b { transform: rotateY(0); }
+  .q-no svg { width: 12px; height: 12px; }
+  .q-title-wrap { min-width: 0; flex: 1; }
+  .q-title { font-size: 14.5px; font-weight: 600; line-height: 24px; }
+  .q-desc { margin-top: 2px; font-size: 12.5px; line-height: 1.6; color: var(--text-2); }
+  .q-type {
+    flex-shrink: 0; align-self: center;
+    font-size: 10.5px; color: var(--text-3);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 2px 8px;
+  }
+
+  /* 选项 */
+  .opts { margin-top: 12px; display: flex; flex-direction: column; gap: 7px; }
+  .opt {
+    display: flex; align-items: flex-start; gap: 10px;
+    width: 100%; text-align: left;
+    padding: 10px 13px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-surface);
+    transition: border-color var(--dur), background var(--dur), transform var(--dur) var(--ease);
+  }
+  .opt:hover { border-color: var(--border-strong); background: var(--bg-hover); }
+  .opt:active { transform: scale(.995); }
+  .opt.sel { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent); }
+  /* radio：选中内核 spring pop */
+  .radio {
+    position: relative;
+    width: 16px; height: 16px; flex-shrink: 0; margin-top: 1.5px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-strong);
+    background: var(--bg-surface);
+    transition: border-color var(--dur);
+  }
+  .opt.sel .radio { border-color: var(--accent); }
+  .radio::after {
+    content: ''; position: absolute; inset: 2.5px;
+    border-radius: 50%;
+    background: var(--accent);
+    transform: scale(0);
+    transition: transform .3s var(--spring);
+  }
+  .opt.sel .radio::after { transform: scale(1); }
+  .opt-body { min-width: 0; flex: 1; }
+  .opt-label { font-size: 13px; font-weight: 500; line-height: 1.45; }
+  .opt.sel .opt-label { color: var(--accent-ink); }
+  .opt-desc { margin-top: 1px; font-size: 11.5px; line-height: 1.55; color: var(--text-3); }
+  .opt.sel .opt-desc { color: color-mix(in srgb, var(--accent-ink) 60%, transparent); }
+
+  /* 其他（请填写） */
+  .other {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 4px 4px 13px;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--r-md);
+    transition: border-color var(--dur), background var(--dur), box-shadow var(--dur);
+  }
+  .other:focus-within { border-style: solid; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+  .other.sel { border-style: solid; border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent); }
+  .other .radio { margin: 0; }
+  .other input {
+    flex: 1; min-width: 0;
+    border: none; outline: none; background: none;
+    padding: 8px 10px 8px 0;
+    font-size: 13px; color: var(--text);
+  }
+  .other input::placeholder { color: var(--text-3); }
+
+  /* 正在生成的骨架题卡 */
+  .q-skeleton {
+    background: var(--bg-surface);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--r-lg);
+    padding: 16px 18px;
+    animation: card-in .45s var(--spring) backwards;
+  }
+  .q-skeleton .row { display: flex; align-items: center; gap: 10px; }
+  .q-skeleton .no {
+    width: 24px; height: 24px; border-radius: 7px;
+    background: var(--accent-soft);
+    display: grid; place-items: center;
+  }
+  .q-skeleton .no i {
+    width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
+    animation: dot-hop 1.2s var(--ease) infinite;
+  }
+  .sk {
+    height: 11px; border-radius: 4px;
+    background: linear-gradient(100deg, var(--bg-subtle) 40%, var(--bg-surface) 50%, var(--bg-subtle) 60%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s var(--ease) infinite;
+  }
+  @keyframes shimmer { from { background-position: 130% 0; } to { background-position: -30% 0; } }
+  .q-skeleton .lines { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+
+  /* ─── 底部操作栏 ────────────────────────────────────────────────────── */
+  .actionbar {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+    backdrop-filter: blur(10px);
+  }
+  .actionbar-inner {
+    max-width: 760px; margin: 0 auto;
+    padding: 11px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  /* 每题一个进度点：答完点亮 */
+  .q-dots { display: flex; gap: 5px; }
+  .q-dots span {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--bg-subtle); border: 1px solid var(--border-strong);
+    transition: background .3s var(--spring), border-color .3s, transform .3s var(--spring);
+  }
+  .q-dots span.on { background: var(--accent); border-color: transparent; transform: scale(1.15); }
+  .q-dots span.gen { border-style: dashed; animation: pulse-dot 1.4s var(--ease) infinite; }
+  @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  .action-hint { font-size: 11.5px; color: var(--text-3); }
+  .actionbar .spacer { flex: 1; }
+
+  /* 提交按钮：disabled → 就绪解锁（sheen 扫光 + 微弹） */
+  .submit {
+    position: relative; overflow: hidden;
+    height: 34px; padding: 0 20px;
+    border-radius: var(--r-md);
+    font-size: 13px; font-weight: 600;
+    background: var(--bg-subtle); color: var(--text-3);
+    transition: background .35s var(--ease), color .35s var(--ease), transform 80ms var(--ease), opacity var(--dur);
+    cursor: not-allowed;
+  }
+  .submit.ready {
+    background: var(--accent); color: var(--accent-contrast);
+    box-shadow: var(--e1);
+    cursor: pointer;
+    animation: unlock .45s var(--spring);
+  }
+  .submit.ready:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+  .submit.ready:active { transform: scale(.96); }
+  @keyframes unlock { 0% { transform: scale(1); } 40% { transform: scale(1.06); } 100% { transform: scale(1); } }
+  /* 一次性 sheen 扫光 */
+  .submit.ready::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(105deg, transparent 30%, rgba(255,255,255,.5) 50%, transparent 70%);
+    transform: translateX(-110%);
+    animation: sheen .9s var(--ease) .15s forwards;
+  }
+  @keyframes sheen { to { transform: translateX(110%); } }
+  /* 提交中 spinner */
+  .submit.busy { pointer-events: none; color: transparent; }
+  .submit .spin {
+    position: absolute; inset: 0; margin: auto;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.35); border-top-color: #fff;
+    animation: spin .7s linear infinite;
+    display: none;
+  }
+  .submit.busy .spin { display: block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ─── 已提交成功页 ─────────────────────────────────────────────────── */
+  .done-view {
+    position: absolute; inset: 0; z-index: 20;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    background: var(--bg-app);
+    opacity: 0; pointer-events: none;
+    transition: opacity .4s var(--ease);
+  }
+  .done-view.show { opacity: 1; pointer-events: auto; }
+  .done-ring {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent-ink);
+    display: grid; place-items: center;
+  }
+  .done-view.show .done-ring { animation: pop .45s var(--spring); }
+  @keyframes pop { from { transform: scale(.4); opacity: 0; } to { transform: none; opacity: 1; } }
+  /* 勾的描边动画 */
+  .done-ring svg { width: 26px; height: 26px; }
+  .done-ring path {
+    stroke-dasharray: 24; stroke-dashoffset: 24;
+  }
+  .done-view.show .done-ring path { animation: draw .5s var(--ease) .25s forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  .done-title { font-size: 16px; font-weight: 700; }
+  .done-sub { font-size: 12.5px; color: var(--text-3); max-width: 320px; text-align: center; line-height: 1.7; }
+  /* 提交时问卷整体收合 */
+  .page.submitted .scroll, .page.submitted .actionbar, .page.submitted .head {
+    opacity: 0; transform: translateY(-8px) scale(.99);
+    transition: opacity .35s var(--ease), transform .35s var(--ease);
+  }
+
+  /* ─── Tweaks ───────────────────────────────────────────────────────── */
+  .tweaks-fab {
+    position: fixed; left: 14px; bottom: 14px; z-index: 60;
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--bg-surface); border: 1px solid var(--border-strong);
+    box-shadow: var(--e2);
+    display: grid; place-items: center; color: var(--text-2);
+    transition: color var(--dur), box-shadow var(--dur), transform 80ms var(--ease);
+  }
+  .tweaks-fab:hover { color: var(--text); box-shadow: var(--e-float); }
+  .tweaks {
+    position: fixed; left: 14px; bottom: 60px; z-index: 60;
+    width: 250px;
+    background: var(--bg-surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--e-float);
+    padding: 14px;
+    display: none; flex-direction: column; gap: 12px;
+  }
+  .tweaks.open { display: flex; animation: tw-in .18s var(--spring); }
+  @keyframes tw-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .tweaks h3 { font-size: 12px; font-weight: 600; }
+  .tw-row { display: flex; flex-direction: column; gap: 6px; }
+  .tw-row .lbl { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+  .tw-opts { display: flex; gap: 4px; background: var(--bg-subtle); border-radius: var(--r-md); padding: 3px; }
+  .tw-opt {
+    flex: 1; height: 24px; border-radius: var(--r-sm);
+    font-size: 11px; color: var(--text-2);
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    transition: background var(--dur), color var(--dur), box-shadow var(--dur);
+  }
+  .tw-opt.on { background: var(--bg-surface); color: var(--text); font-weight: 500; box-shadow: var(--e1); }
+  .sw-mini { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+<div class="page" id="page">
+
+  <!-- Apple-Intelligence 边缘光晕（生成中） -->
+  <div class="glow" aria-hidden="true"><i></i><b></b></div>
+
+  <!-- ── 顶部 ── -->
+  <header class="head">
+    <div class="head-inner">
+      <div>
+        <h1>请回答以下问题</h1>
+        <div class="sub">
+          <span class="gen-line" style="display:inline-flex;align-items:center;gap:7px">
+            AI 正在生成问题<span class="gen-dots"><i></i><i></i><i></i></span>
+          </span>
+          <span class="ready-line" style="display:none">回答后提交，AI 将按你的选择规划整份 PPT</span>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <div class="meta">
+        <span class="answered tnum" id="answered-meta" style="display:none"><b id="answered-n">0</b> / <span id="answered-m">3</span> 已回答</span>
+        <span class="timer tnum" id="timer">0.0s</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── 问卷 ── -->
+  <div class="scroll" id="scroll">
+    <div class="content" id="content"></div>
+  </div>
+
+  <!-- ── 底部操作栏 ── -->
+  <footer class="actionbar">
+    <div class="actionbar-inner">
+      <div class="q-dots" id="q-dots"></div>
+      <span class="action-hint" id="action-hint">回答全部问题后可提交</span>
+      <div class="spacer"></div>
+      <button class="submit" id="submit" disabled>
+        提交答案
+        <span class="spin"></span>
+      </button>
+    </div>
+  </footer>
+
+  <!-- ── 已提交成功页 ── -->
+  <div class="done-view" id="done-view">
+    <div class="done-ring">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12.5l4.5 4.5L19 7" />
+      </svg>
+    </div>
+    <div class="done-title">答案已提交</div>
+    <div class="done-sub">AI 已收到你的选择，正在按「用途、篇幅、视觉风格」规划整份 PPT——可切回大纲页查看进展。</div>
+  </div>
+</div>
+
+<!-- ── Tweaks ── -->
+<button class="tweaks-fab" id="tweaks-fab" title="Tweaks">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>
+  </svg>
+</button>
+<div class="tweaks" id="tweaks">
+  <h3>Tweaks</h3>
+  <div class="tw-row">
+    <span class="lbl">动画场景</span>
+    <div class="tw-opts" data-key="scene">
+      <button class="tw-opt on" data-val="stream">重放生成</button>
+      <button class="tw-opt" data-val="ready">就绪</button>
+      <button class="tw-opt" data-val="done">已提交</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">主题色（跟随 app 设置）</span>
+    <div class="tw-opts" data-key="accent">
+      <button class="tw-opt on" data-val="green"><span class="sw-mini" style="background:#16a34a"></span>绿</button>
+      <button class="tw-opt" data-val="blue"><span class="sw-mini" style="background:#3395ff"></span>Codex 蓝</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">外观</span>
+    <div class="tw-opts" data-key="theme">
+      <button class="tw-opt on" data-val="light">浅色</button>
+      <button class="tw-opt" data-val="dark">深色</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   演示编排：load 后模拟 AskUserQuestion 的流式生成——
+   题1 立即入场 → 题2 900ms → 题3 骨架 → 2200ms 替换为真题、光晕淡出。
+   数据结构与真实 AskUserQuestionItem 一致（question/header/options）。
+   ════════════════════════════════════════════════════════════════════════ */
+const QUESTIONS = [
+  {
+    header: '用途受众',
+    question: '这个介绍华中科技大学的 PPT 主要用在什么场景 / 面向谁?',
+    options: [
+      { label: '招生宣传 / 面向考生家长', description: '突出学校实力、王牌专业、录取分数、校园生活，语气亲和有吸引力' },
+      { label: '学校概况 / 面向来访嘉宾', description: '全面介绍历史、学科、师资、科研成就，正式庄重的官方风格' },
+      { label: '学术汇报 / 面向师生同行', description: '偏重学科排名、科研平台、重点实验室、学术产出等硬实力数据' },
+      { label: '通用综合介绍', description: '各方面均衡覆盖，一份可多场合使用的通用介绍' }
+    ]
+  },
+  {
+    header: '篇幅',
+    question: '希望 PPT 大概多少页?',
+    options: [
+      { label: '精简版（8-12 页）', description: '只讲核心亮点，快速浏览' },
+      { label: '标准版（15-20 页）', description: '覆盖历史、学科、师资、科研、校园等主要板块（推荐）' },
+      { label: '详尽版（25 页以上）', description: '各板块深入展开，信息量大' }
+    ]
+  },
+  {
+    header: '视觉风格',
+    question: '视觉风格倾向?',
+    options: [
+      { label: '华科红 · 校色庄重', description: '以校徽红为主色，正式大气，适合官方场合' },
+      { label: '科技蓝 · 现代理性', description: '深蓝底色配数据可视化，突出工科硬实力' },
+      { label: '简约白 · 学术清爽', description: '大量留白与细线条，内容为主的学术气质' }
+    ]
+  }
+];
+
+const $ = (s) => document.querySelector(s);
+const content = $('#content');
+const page = $('#page');
+const answers = {};           // question → label
+let revealed = 0;             // 已出现的题数
+let streamingDone = false;
+let timerId = 0, timelineIds = [];
+
+/* ── 渲染一道题（真题卡） ── */
+function renderQuestion(q, idx) {
+  const card = document.createElement('div');
+  card.className = 'q-card';
+  card.dataset.q = idx;
+  card.innerHTML = `
+    <div class="q-head">
+      <span class="q-no">
+        <i>${String(idx + 1).padStart(2, '0')}</i>
+        <b><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg></b>
+      </span>
+      <span class="q-title-wrap">
+        <div class="q-title">${q.header}</div>
+        <div class="q-desc">${q.question}</div>
+      </span>
+      <span class="q-type">单选</span>
+    </div>
+    <div class="opts">
+      ${q.options.map((o, oi) => `
+        <button class="opt" data-oi="${oi}">
+          <span class="radio"></span>
+          <span class="opt-body">
+            <span class="opt-label">${o.label}</span>
+            ${o.description ? `<div class="opt-desc">${o.description}</div>` : ''}
+          </span>
+        </button>`).join('')}
+      <label class="other">
+        <span class="radio"></span>
+        <input type="text" placeholder="其他（请填写）" />
+      </label>
+    </div>`;
+
+  // 选项交互
+  card.querySelectorAll('.opt').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      card.querySelectorAll('.opt, .other').forEach((el) => el.classList.remove('sel'));
+      btn.classList.add('sel');
+      answers[idx] = q.options[+btn.dataset.oi].label;
+      card.classList.add('answered');
+      syncProgress();
+    });
+  });
+  const other = card.querySelector('.other');
+  const input = other.querySelector('input');
+  input.addEventListener('input', () => {
+    card.querySelectorAll('.opt').forEach((el) => el.classList.remove('sel'));
+    const has = input.value.trim().length > 0;
+    other.classList.toggle('sel', has);
+    card.classList.toggle('answered', has);
+    if (has) answers[idx] = input.value.trim();
+    else delete answers[idx];
+    syncProgress();
+  });
+  return card;
+}
+
+/* ── 骨架卡（正在生成的下一题） ── */
+function renderSkeleton(idx) {
+  const el = document.createElement('div');
+  el.className = 'q-skeleton';
+  el.id = 'skeleton';
+  el.innerHTML = `
+    <div class="row">
+      <span class="no"><i></i></span>
+      <span class="sk" style="width:120px"></span>
+    </div>
+    <div class="lines">
+      <span class="sk" style="width:78%"></span>
+      <span class="sk" style="width:62%"></span>
+    </div>`;
+  return el;
+}
+
+/* ── 进度联动：题号勾 / 底部点 / 顶部计数 / 提交按钮 ── */
+function syncProgress() {
+  const n = Object.keys(answers).length;
+  const m = QUESTIONS.length;
+  $('#answered-n').textContent = n;
+  $('#answered-m').textContent = m;
+  $('#answered-meta').style.display = revealed > 0 ? '' : 'none';
+  // 底部每题进度点
+  const dots = $('#q-dots');
+  dots.innerHTML = '';
+  for (let i = 0; i < m; i++) {
+    const s = document.createElement('span');
+    if (i >= revealed) s.classList.add('gen');
+    else if (answers[i] !== undefined) s.classList.add('on');
+    dots.appendChild(s);
+  }
+  // 提交按钮
+  const all = streamingDone && n === m;
+  const btn = $('#submit');
+  const wasReady = btn.classList.contains('ready');
+  btn.classList.toggle('ready', all);
+  btn.disabled = !all;
+  $('#action-hint').textContent = !streamingDone
+    ? 'AI 正在生成问题…'
+    : all ? '就绪，随时可提交' : `还有 ${m - n} 题未回答`;
+  if (all && !wasReady) {
+    // 重触发解锁动画（sheen 是 ::after 一次性动画,重加 class 即可）
+    btn.style.animation = 'none';
+    void btn.offsetWidth;
+    btn.style.animation = '';
+  }
+}
+
+/* ── 流式时间线 ── */
+function playStreaming() {
+  // 重置
+  timelineIds.forEach(clearTimeout);
+  timelineIds = [];
+  content.innerHTML = '';
+  Object.keys(answers).forEach((k) => delete answers[k]);
+  revealed = 0;
+  streamingDone = false;
+  page.classList.remove('ready', 'submitted');
+  $('#done-view').classList.remove('show');
+  $('.gen-line').style.display = 'inline-flex';
+  $('.ready-line').style.display = 'none';
+  startTimer();
+
+  const step = (i) => {
+    // 移除旧骨架,放入真题
+    const sk = document.getElementById('skeleton');
+    if (sk) sk.remove();
+    content.appendChild(renderQuestion(QUESTIONS[i], i));
+    revealed = i + 1;
+    // 还有下一题 → 放骨架
+    if (i + 1 < QUESTIONS.length) {
+      content.appendChild(renderSkeleton(i + 1));
+    } else {
+      finishStreaming();
+    }
+    syncProgress();
+  };
+
+  step(0);
+  timelineIds.push(setTimeout(() => step(1), 1100));
+  timelineIds.push(setTimeout(() => step(2), 2400));
+}
+
+function finishStreaming() {
+  streamingDone = true;
+  page.classList.add('ready');
+  $('.gen-line').style.display = 'none';
+  $('.ready-line').style.display = '';
+  syncProgress();
+}
+
+/* ── 就绪场景（跳过流式,全部预填） ── */
+function jumpReady({ prefill } = {}) {
+  timelineIds.forEach(clearTimeout);
+  content.innerHTML = '';
+  Object.keys(answers).forEach((k) => delete answers[k]);
+  QUESTIONS.forEach((q, i) => content.appendChild(renderQuestion(q, i)));
+  revealed = QUESTIONS.length;
+  page.classList.remove('submitted');
+  $('#done-view').classList.remove('show');
+  finishStreaming();
+  if (prefill) {
+    // 预选每题第一项,便于直接看「就绪/提交」态
+    document.querySelectorAll('.q-card').forEach((card) => card.querySelector('.opt').click());
+  }
+  stopTimer(true);
+}
+
+/* ── 提交 ── */
+$('#submit').addEventListener('click', () => {
+  const btn = $('#submit');
+  if (!btn.classList.contains('ready')) return;
+  btn.classList.add('busy');
+  setTimeout(() => {
+    btn.classList.remove('busy');
+    page.classList.add('submitted');
+    $('#done-view').classList.add('show');
+    stopTimer(false);
+  }, 700);
+});
+
+/* ── 计时器 ── */
+let t0 = 0;
+function startTimer() {
+  clearInterval(timerId);
+  t0 = performance.now();
+  timerId = setInterval(() => {
+    $('#timer').textContent = ((performance.now() - t0) / 1000).toFixed(1) + 's';
+  }, 100);
+}
+function stopTimer(reset) {
+  clearInterval(timerId);
+  if (reset) $('#timer').textContent = '12.8s';
+}
+
+/* ── Tweaks ── */
+$('#tweaks-fab').addEventListener('click', () => $('#tweaks').classList.toggle('open'));
+document.querySelectorAll('.tw-opts').forEach((group) => {
+  group.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tw-opt');
+    if (!btn) return;
+    group.querySelectorAll('.tw-opt').forEach((b) => b.classList.remove('on'));
+    btn.classList.add('on');
+    const key = group.dataset.key;
+    if (key === 'scene') {
+      if (btn.dataset.val === 'stream') playStreaming();
+      else if (btn.dataset.val === 'ready') jumpReady({ prefill: false });
+      else { jumpReady({ prefill: true }); $('#submit').click(); }
+    } else {
+      document.documentElement.dataset[key] = btn.dataset.val;
+    }
+  });
+});
+
+playStreaming();
+</script>
+</body>
+</html>

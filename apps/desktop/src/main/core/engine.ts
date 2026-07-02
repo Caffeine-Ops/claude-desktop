@@ -301,6 +301,16 @@ interface ActiveTurn {
    * `reasoning` part on the active turn's assistant message.
    */
   thinkingBlockIndices: Set<number>
+  /**
+   * True once at least one `thinking_delta` streamed this turn. Mirrors
+   * `sawTextDelta`: `handleAssistantMessage` backfills the thinking text
+   * from the finalized message ONLY when nothing streamed — some backends
+   * (e.g. the csdn gateway translating gpt-5.x reasoning) never emit
+   * thinking deltas, and without the backfill the renderer keeps the empty
+   * "思考过程" placeholder that `thinking_start` created: a row with
+   * nothing to expand.
+   */
+  sawThinkingDelta: boolean
 }
 
 /**
@@ -350,6 +360,17 @@ export class ChatEngine extends EventEmitter {
     mcpServers: [],
     slashCommands: []
   }
+
+  /**
+   * User-picked model override (composer's 模型 chip → MODEL_SET IPC).
+   * `null` = follow the backend default (the env.json alias routing).
+   * Injected as the `model` option on every future `query()` this engine
+   * spawns AND pushed live into the foreground runtime via the SDK's
+   * `setModel` control request. Deliberately in-memory + per-engine: a
+   * fresh window starts back on the default, and window A's pick never
+   * bleeds into window B (same isolation rule as PermissionBroker).
+   */
+  private modelOverride: string | null = null
 
   /**
    * True once fusion-code's authoritative `system init` has landed at
@@ -955,7 +976,8 @@ export class ChatEngine extends EventEmitter {
       sdkMessageCount: 0,
       streamedToolUseIds: new Set(),
       toolUseIdByBlockIndex: new Map(),
-      thinkingBlockIndices: new Set()
+      thinkingBlockIndices: new Set(),
+      sawThinkingDelta: false
     }
     this.emitEvent(sessionId, { type: 'start', messageId })
 
@@ -1230,6 +1252,11 @@ export class ChatEngine extends EventEmitter {
       // once per { toolName, scope } pair for the lifetime of the
       // fusion-code child process.
       permissionMode: this.uiPermissionMode as PermissionMode,
+      // User-picked model override (composer 模型 chip → setModel()). Spread-
+      // omit when null so the CLI falls back to its default alias routing
+      // (env.json's ANTHROPIC_DEFAULT_*_MODEL) instead of receiving an
+      // explicit empty model.
+      ...(this.modelOverride ? { model: this.modelOverride } : {}),
       // Required for bypassPermissions to take effect. It's a no-op
       // under every other mode so we set it unconditionally — the
       // mode field is the actual gate.
@@ -2566,6 +2593,7 @@ export class ChatEngine extends EventEmitter {
       // forward the delta so the user sees the thinking text. The
       // renderer accumulates by messageId, not by index, so it's
       // safe to drop the gating.
+      active.sawThinkingDelta = true
       this.emitEvent(sessionId, {
         type: 'thinking_delta',
         messageId: active.messageId,
@@ -2616,8 +2644,37 @@ export class ChatEngine extends EventEmitter {
     sdkMessage: Record<string, unknown>
   ): void {
     const content = this.getContentBlocks(sdkMessage)
+    // Counts thinking blocks backfilled from THIS message so a second
+    // block gets a blank-line separator when appended into the same
+    // rolling reasoning part.
+    let thinkingBackfills = 0
     for (const block of content) {
       if (!this.isRecord(block) || typeof block.type !== 'string') continue
+
+      if (
+        block.type === 'thinking' &&
+        typeof block.thinking === 'string' &&
+        block.thinking.length > 0 &&
+        !active.sawThinkingDelta
+      ) {
+        // Backfill path — mirrors the text/tool_use patterns below. Some
+        // backends never stream `thinking_delta` (the csdn gateway
+        // translating gpt-5.x reasoning delivers the thinking text ONLY on
+        // the finalized assistant message); without this the renderer
+        // keeps the empty "思考过程" placeholder created by thinking_start
+        // — a row with nothing to expand. Emitted as a thinking_delta so
+        // the store appends into that existing reasoning part. We do NOT
+        // set sawThinkingDelta here: it guards against double-rendering
+        // STREAMED text, and multiple thinking blocks within this same
+        // finalized message should all land.
+        this.emitEvent(sessionId, {
+          type: 'thinking_delta',
+          messageId: active.messageId,
+          delta: (thinkingBackfills > 0 ? '\n\n' : '') + block.thinking
+        })
+        thinkingBackfills += 1
+        continue
+      }
 
       if (
         (block.type === 'tool_use' || block.type === 'server_tool_use') &&
@@ -2986,6 +3043,68 @@ export class ChatEngine extends EventEmitter {
     // refreshes the instant the cli finishes warming up, even while
     // the first turn is still streaming.
     this.emit('sessionMetaChanged')
+  }
+
+  /**
+   * Switch the model for this engine (MODEL_SET IPC ← composer's 模型 chip).
+   *
+   * Two application points, both needed:
+   *   1. LIVE — the foreground runtime's Query gets an SDK `setModel`
+   *      control request so the CURRENT session changes model mid-flight
+   *      (next turn onward). Best-effort: an old CLI that doesn't know the
+   *      control request rejects, which we log and swallow — point 2 still
+   *      covers every future session.
+   *   2. FUTURE — `modelOverride` is injected as `options.model` on every
+   *      subsequent `query()` (openSession), so lazily-spawned and new
+   *      sessions inherit the pick.
+   *
+   * `model: null` clears the override (backend default routing again).
+   * SessionMeta.model is updated optimistically + broadcast so the chip
+   * label flips immediately instead of waiting for the next system init.
+   */
+  async setModel(model: string | null): Promise<void> {
+    this.modelOverride = model
+    this.logEvent('setModel', { model })
+    const rt = this.activeSessionId
+      ? this.sessions.get(this.activeSessionId)
+      : undefined
+    if (rt?.handle) {
+      try {
+        await rt.handle.setModel(model ?? undefined)
+      } catch (err) {
+        console.warn('[engine] live setModel failed (applies on next session)', err)
+      }
+    }
+    if (model) {
+      this.sessionMeta = { ...this.sessionMeta, model }
+      this.emit('sessionMetaChanged')
+    }
+  }
+
+  /**
+   * Ask the LIVE foreground CLI which models it supports (SDK
+   * `supportedModels` control request → ModelInfo[].value). Returns null
+   * when no runtime is live yet (lazy spawn hasn't happened) or the CLI
+   * predates the control request — the MODEL_LIST handler falls back to a
+   * static alias set in that case. Used for the system-claude backend,
+   * where the bundled gateway's /v1/models catalog doesn't apply (its
+   * env.json keys are stripped for system claude — see systemBackendEnv).
+   */
+  async listSupportedModels(): Promise<string[] | null> {
+    const rt = this.activeSessionId
+      ? this.sessions.get(this.activeSessionId)
+      : undefined
+    if (!rt?.handle) return null
+    try {
+      const infos = await rt.handle.supportedModels()
+      const ids = infos
+        .map((m) => m.value)
+        .filter((v): v is string => typeof v === 'string' && v.length > 0)
+      return ids.length > 0 ? ids : null
+    } catch (err) {
+      console.warn('[engine] supportedModels failed', err)
+      return null
+    }
   }
 
   /** Coerce any string the CLI hands us into a known status union. */

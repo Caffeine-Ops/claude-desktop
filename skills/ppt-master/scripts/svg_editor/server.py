@@ -418,6 +418,13 @@ def create_app(
     def get_config():
         return jsonify({
             'live': app.config['LIVE_MODE'],
+            # Server identity: the project DIRECTORY NAME this instance serves.
+            # Ports get reused across sessions (a dead server's port may be
+            # re-bound by another project's editor), so a host that recorded a
+            # URL must be able to verify WHO is answering before rendering the
+            # deck — the Claude Desktop host compares this against the project
+            # named in the launch command and hides its preview tab on mismatch.
+            'project': app.config['PROJECT_PATH'].name,
         })
 
     @app.route('/images/<path:filename>')

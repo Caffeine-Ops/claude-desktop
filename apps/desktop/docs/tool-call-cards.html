@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-accent="green" data-rail="on">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工具调用卡片 · 动效原型</title>
+<style>
+  /* ══════════════════════════════════════════════════════════════
+     token 与 app / slide-editor-prototype-v2 同源：accent 为 rail token，
+     强调色一律 color-mix 派生。代码语法三色（字符串绿/数字蓝/布尔橙）
+     取自现有 INPUT 高亮的语义色，不引入新色相。
+     覆盖的行类型：用户气泡（可带技能 chip）/ 助手正文段落 / 思考过程 /
+     工具行（工具搜索·网页搜索·网页获取·读取文件）/ 运行命令（说明行 +
+     输出面板）/ MCP 工具（INPUT + OUTPUT，含错误态）。
+     ══════════════════════════════════════════════════════════════ */
+  :root {
+    --accent: #16a34a;
+    --accent-ink: color-mix(in srgb, var(--accent) 78%, #000);
+    --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+    --accent-ring: color-mix(in srgb, var(--accent) 30%, transparent);
+
+    --bg-app: #fafafa;
+    --bg-surface: #ffffff;
+    --bg-panel: #f7f7f6;
+    --ink: #1c1917;
+    --ink-muted: #79716b;
+    --ink-faint: #a9a29b;
+    --border: rgba(24, 24, 27, 0.10);
+    --rail-line: rgba(24, 24, 27, 0.08);
+
+    --ok: var(--accent);
+    --err: #dc2626;
+    --err-soft: color-mix(in srgb, var(--err) 7%, transparent);
+    --err-ring: color-mix(in srgb, var(--err) 26%, transparent);
+
+    --code-str: #15803d;
+    --code-num: #2563eb;
+    --code-bool: #d97706;
+
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  [data-accent="blue"] { --accent: #3395ff; }
+  [data-theme="dark"] {
+    --accent: #2ec96b;
+    --accent-ink: color-mix(in srgb, var(--accent) 74%, #fff);
+    --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+
+    --bg-app: #1a1917;
+    --bg-surface: #232220;
+    --bg-panel: #262523;
+    --ink: #f2f0ee;
+    --ink-muted: #a8a29e;
+    --ink-faint: #6d6a66;
+    --border: rgba(240, 238, 235, 0.10);
+    --rail-line: rgba(240, 238, 235, 0.09);
+
+    --err: #f87171;
+    --code-str: #4ade80;
+    --code-num: #60a5fa;
+    --code-bool: #fbbf24;
+  }
+  [data-accent="blue"][data-theme="dark"] { --accent: #58a6ff; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+    background: var(--bg-app);
+    color: var(--ink);
+    min-height: 100vh;
+    padding: 56px 24px 120px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .thread { max-width: 720px; margin: 0 auto; }
+
+  /* ── 步骤行（共用外壳） ───────────────────────────────────── */
+  .step {
+    position: relative;
+    display: flex;
+    gap: 12px;
+    padding: 7px 0;
+    opacity: 0;
+    transform: translateY(5px);
+    transition: opacity .38s ease, transform .38s cubic-bezier(.3, .7, .3, 1);
+  }
+  .step.shown { opacity: 1; transform: none; }
+
+  /* 时间线连线：贯穿左列图标中心的发丝线；用户气泡处断开（新回合） */
+  .rail {
+    position: relative;
+    width: 18px;
+    flex: none;
+    display: flex;
+    justify-content: center;
+  }
+  .rail::before {
+    content: "";
+    position: absolute;
+    top: -7px; bottom: -7px;
+    width: 1px;
+    background: var(--rail-line);
+  }
+  .step[data-rail-cap="top"] .rail::before { top: 12px; }
+  .step[data-rail-cap="bottom"] .rail::before { bottom: auto; height: 12px; }
+  [data-rail="off"] .rail::before { display: none; }
+
+  /* ── 用户气泡（新回合起点；可带技能 chip） ── */
+  .step.user { justify-content: flex-end; padding: 16px 0 12px; }
+  .step.user .bubble {
+    max-width: 82%;
+    padding: 10px 18px;
+    border-radius: 18px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 14px;
+    line-height: 1.55;
+    box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+  .step.user.shown .bubble { animation: bubble-in .36s cubic-bezier(.3, 1.25, .4, 1); }
+  @keyframes bubble-in {
+    from { opacity: 0; transform: translateY(6px) scale(.96); }
+  }
+  .step.user .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-right: 8px;
+    padding: 2.5px 9px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .22);
+  }
+  .step.user .chip::before {
+    content: "";
+    width: 10px; height: 10px;
+    border-radius: 2.5px;
+    background: #fff;
+    opacity: .9;
+  }
+
+  /* ── 助手正文段落 ── */
+  .step.prose .p-dot {
+    position: relative;
+    z-index: 1;
+    width: 5px; height: 5px;
+    margin-top: 10px;
+    border-radius: 50%;
+    background: var(--ink-faint);
+  }
+  .step.prose p {
+    font-size: 14.5px;
+    line-height: 1.75;
+    padding: 1px 6px;
+    text-wrap: pretty;
+  }
+  .step.prose code {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    padding: 1px 6px;
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+  }
+
+  /* ── 思考过程：accent 小点 + 灰字，进行中呼吸/扫光 ── */
+  .step.think .t-dot {
+    position: relative;
+    z-index: 1;
+    width: 6px; height: 6px;
+    margin-top: 9.5px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 70%, var(--ink-faint));
+  }
+  .step.think[data-state="running"] .t-dot { animation: think-breathe 1.4s ease-in-out infinite; }
+  @keyframes think-breathe {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50%      { transform: scale(1.45); opacity: .55; }
+  }
+  .step.think .t-label {
+    font-size: 13.5px;
+    color: var(--ink-muted);
+    padding: 3px 6px;
+  }
+
+  /* ── 状态图标：queued → running → done/error ── */
+  .badge {
+    position: relative;
+    z-index: 1;
+    width: 18px; height: 18px;
+    margin-top: 3.5px;
+    flex: none;
+  }
+  .badge svg { position: absolute; inset: 0; width: 18px; height: 18px; }
+  .badge .q {
+    position: absolute; inset: 5px;
+    border-radius: 50%;
+    border: 1.5px solid var(--ink-faint);
+    background: var(--bg-app);
+    transition: opacity .2s;
+  }
+  .badge .spin { opacity: 0; transition: opacity .2s; }
+  .badge .spin circle {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-dasharray: 30 18;
+    transform-origin: center;
+    animation: spin 1s linear infinite paused;
+    opacity: .9;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .badge .ok-c { fill: var(--ok); transform: scale(0); transform-origin: center; }
+  .badge .ok-k {
+    fill: none; stroke: #fff;
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+    stroke-dasharray: 12; stroke-dashoffset: 12;
+  }
+  .badge .er-c { fill: var(--err); transform: scale(0); transform-origin: center; }
+  .badge .er-x {
+    fill: none; stroke: #fff;
+    stroke-width: 2; stroke-linecap: round;
+    stroke-dasharray: 10; stroke-dashoffset: 10;
+  }
+  .step[data-state="running"] .q { opacity: 0; }
+  .step[data-state="running"] .spin { opacity: 1; }
+  .step[data-state="running"] .spin circle { animation-play-state: running; }
+  .step[data-state="done"] .q,
+  .step[data-state="error"] .q { opacity: 0; }
+  .step[data-state="done"] .ok-c { animation: pop .34s cubic-bezier(.3, 1.4, .4, 1) forwards; }
+  .step[data-state="done"] .ok-k { animation: draw .3s ease-out .12s forwards; }
+  .step[data-state="error"] .er-c { animation: pop .34s cubic-bezier(.3, 1.4, .4, 1) forwards; }
+  .step[data-state="error"] .er-x { animation: draw .26s ease-out .12s forwards; }
+  .step[data-state="error"] .head { animation: shake .4s ease .1s; }
+  @keyframes pop  { to { transform: scale(1); } }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    30% { transform: translateX(-2px); }
+    60% { transform: translateX(2px); }
+  }
+
+  /* ── 工具行主体 ── */
+  .main { flex: 1; min-width: 0; }
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    width: 100%;
+    padding: 4px 6px;
+    margin: 0 -6px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .head:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+  .name {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: .01em;
+    white-space: nowrap;
+  }
+  .args {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-muted);
+  }
+  .step[data-state="running"] .args {
+    background: linear-gradient(100deg,
+      var(--ink-muted) 0% 35%, var(--ink) 50%, var(--ink-muted) 65% 100%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: sweep 1.8s linear infinite;
+  }
+  @keyframes sweep { to { background-position: -200% 0; } }
+  .step[data-state="error"] .name { color: var(--err); }
+
+  /* 运行命令的说明行（AI 给这条命令写的一句话描述） */
+  .desc {
+    padding: 2px 6px 0;
+    font-size: 13.5px;
+    color: var(--ink);
+  }
+
+  .took {
+    font-size: 11px;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+    opacity: 0;
+    transition: opacity .3s .15s;
+    white-space: nowrap;
+  }
+  .step[data-state="done"] .took,
+  .step[data-state="error"] .took { opacity: 1; }
+
+  .caret {
+    flex: none;
+    align-self: center;
+    color: var(--ink-faint);
+    transition: transform .24s cubic-bezier(.4, 0, .2, 1);
+  }
+  .step[data-open] .caret { transform: rotate(180deg); }
+
+  /* ── 展开区：grid 0fr→1fr 高度动画 ── */
+  .body {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows .34s cubic-bezier(.4, 0, .2, 1);
+  }
+  .step[data-open] .body { grid-template-rows: 1fr; }
+  .body > .clip { overflow: hidden; min-height: 0; }
+  .body .inner {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 8px 0 10px;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity .26s ease, transform .26s ease;
+  }
+  .step[data-open] .body .inner { opacity: 1; transform: none; transition-delay: .08s; }
+
+  /* ── 面板（INPUT / OUTPUT / 输出） ── */
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-panel);
+    overflow: hidden;
+  }
+  .panel-h {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-h .tag {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    color: var(--ink-faint);
+  }
+  .panel-h .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--ink-faint); opacity: .5; }
+  .panel-h .copy {
+    margin-left: auto;
+    padding: 3px 9px;
+    font-size: 11px;
+    color: var(--ink-muted);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity .18s, background .15s;
+  }
+  .panel:hover .copy { opacity: 1; }
+  .panel .copy:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .panel pre {
+    padding: 12px 14px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--ink);
+  }
+  .panel .s { color: var(--code-str); }
+  .panel .n { color: var(--code-num); }
+  .panel .b { color: var(--code-bool); }
+  .panel .k { color: var(--ink); }
+
+  .panel.err { background: var(--err-soft); border-color: var(--err-ring); }
+  .panel.err .panel-h { border-bottom-color: var(--err-ring); }
+  .panel.err .panel-h .tag { color: var(--err); }
+  .panel.err .panel-h .dot { background: var(--err); opacity: .8; }
+  .panel.err pre { color: color-mix(in srgb, var(--err) 72%, var(--ink)); }
+  .step[data-open] .panel.err { animation: err-pulse 1.1s ease .3s 1; }
+  @keyframes err-pulse {
+    0%   { box-shadow: 0 0 0 0 var(--err-ring); }
+    45%  { box-shadow: 0 0 0 4px var(--err-ring); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+
+  /* 打字机光标（输出流式时跟在文字尾部） */
+  .cursor {
+    display: inline-block;
+    width: 7px; height: 13px;
+    margin-left: 1px;
+    vertical-align: -2px;
+    background: var(--ink-muted);
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .step, .caret, .body, .body .inner { transition: none; }
+    .badge .spin circle, .step[data-state="error"] .head,
+    .step[data-open] .panel.err, .step.think .t-dot,
+    .step.user.shown .bubble { animation: none !important; }
+    .step[data-state="done"] .ok-c, .step[data-state="error"] .er-c { transform: scale(1); animation: none; }
+    .step[data-state="done"] .ok-k, .step[data-state="error"] .er-x { stroke-dashoffset: 0; animation: none; }
+    .step[data-state="running"] .args { animation: none; -webkit-text-fill-color: currentColor; }
+  }
+
+  /* ── 控制条 + Tweaks（原型专用 chrome，不属于设计本体） ── */
+  .bar {
+    max-width: 720px;
+    margin: 0 auto 30px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .bar .replay {
+    padding: 7px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--bg-surface);
+    background: var(--ink);
+    border: 0;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .bar .replay:active { transform: scale(.97); }
+  .bar .hint { font-size: 12px; color: var(--ink-faint); }
+
+  .tweaks-toggle {
+    position: fixed; right: 16px; bottom: 16px; z-index: 50;
+    padding: 7px 14px; font-size: 12px;
+    color: var(--ink-muted); background: var(--bg-surface);
+    border: 1px solid var(--border); border-radius: 999px;
+    cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.08);
+  }
+  .tweaks {
+    position: fixed; right: 16px; bottom: 58px; z-index: 50;
+    width: 210px; padding: 14px;
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: 14px; box-shadow: 0 16px 48px rgba(0,0,0,.16);
+    display: none; flex-direction: column; gap: 12px; font-size: 12px;
+  }
+  .tweaks.open { display: flex; }
+  .tweaks h2 { font-size: 12px; font-weight: 600; color: var(--ink-muted); }
+  .tweaks .group { display: flex; flex-direction: column; gap: 6px; }
+  .tweaks label.title { color: var(--ink-faint); font-size: 11px; }
+  .tweaks .opts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tweaks button.opt {
+    padding: 5px 10px; font-size: 12px; color: var(--ink-muted);
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+    border: 1px solid transparent; border-radius: 8px; cursor: pointer;
+  }
+  .tweaks button.opt.on {
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    border-color: var(--accent-ring);
+  }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <button class="replay" id="replay" type="button">重播动画</button>
+    <span class="hint">点行头展开 / 收起 · 悬停面板可复制</span>
+  </div>
+
+  <div class="thread" id="thread"><!-- steps injected --></div>
+
+  <button class="tweaks-toggle" id="tweaksToggle" type="button">Tweaks</button>
+  <div class="tweaks" id="tweaksPanel">
+    <h2>Tweaks</h2>
+    <div class="group">
+      <label class="title">主题</label>
+      <div class="opts" data-attr="data-theme">
+        <button class="opt" data-val="light" type="button">浅色</button>
+        <button class="opt" data-val="dark" type="button">深色</button>
+      </div>
+    </div>
+    <div class="group">
+      <label class="title">主题色</label>
+      <div class="opts" data-attr="data-accent">
+        <button class="opt" data-val="green" type="button">绿</button>
+        <button class="opt" data-val="blue" type="button">蓝</button>
+      </div>
+    </div>
+    <div class="group">
+      <label class="title">时间线连线</label>
+      <div class="opts" data-attr="data-rail">
+        <button class="opt" data-val="on" type="button">开</button>
+        <button class="opt" data-val="off" type="button">关</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  /* ── 数据：全部取自真实会话截图，不造假数据。
+     `run` 是演示节奏（截短），`took` 显示真实耗时。 ── */
+  var INPUT_JSON =
+    '{\n' +
+    '  <span class="k">"headless"</span>: <span class="b">true</span>,\n' +
+    '  <span class="k">"viewport_width"</span>: <span class="n">1365</span>,\n' +
+    '  <span class="k">"viewport_height"</span>: <span class="n">768</span>,\n' +
+    '  <span class="k">"idle_timeout_seconds"</span>: <span class="n">120</span>,\n' +
+    '  <span class="k">"block_resources"</span>: [\n' +
+    '    <span class="s">"image"</span>,\n' +
+    '    <span class="s">"font"</span>\n' +
+    '  ],\n' +
+    '  <span class="k">"browser_args"</span>: [\n' +
+    '    <span class="s">"--no-sandbox"</span>,\n' +
+    '    <span class="s">"--disable-setuid-sandbox"</span>\n' +
+    '  ]\n' +
+    '}';
+  var ERR_TEXT =
+    "Error calling tool 'spawn_browser': Failed to spawn browser: Failed to spawn browser:\n" +
+    '                ----------------------\n' +
+    '                Failed to connect to browser\n' +
+    '                ----------------------\n' +
+    '                One of the causes could be when you are running as root.\n' +
+    '                In that case you need to pass no_sandbox=True';
+  var BOOT_OUT =
+    '[ppt-master] Python 就绪: /Users/andersenaxel/.ppt-master/venv/bin/python\n' +
+    'PPT_PY=/Users/andersenaxel/.ppt-master/venv/bin/python\n' +
+    'Python 3.12.12';
+
+  var STEPS = [
+    /* ── 回合 1：阿里巴巴 PPT（研究流：正文 / 命令+输出 / 读取 / 思考 / 搜索） ── */
+    { type: 'user', chip: '制作PPT', text: '做一个ppt 介绍阿里巴巴', run: 300 },
+    { type: 'prose', run: 420,
+      html: '收到，用户要做一份介绍阿里巴巴的 PPT。这是纯主题、无源文件的请求，按 skill 流程需要先走 <code>topic-research</code> 收集素材。我先做开工准备：bootstrap Python 环境、读 topic-research workflow、并按规范扫一遍历史记录。' },
+    { type: 'tool', name: '运行命令', args: 'source "/Users/andersenaxel/Desktop/Projects/claude/claud…', run: 900, took: '1.3s',
+      desc: 'Bootstrap ppt-master Python 虚拟环境', outLabel: '输出', output: BOOT_OUT, autoOpen: true },
+    { type: 'tool', name: '读取文件', args: '/Users/andersenaxel/Desktop/Projects/claude/claude_code_0…', run: 550, took: '0.9s' },
+    { type: 'tool', name: '运行命令', args: 'grep -rli "ppt-master\\|ppt_master\\|confirm_ui" "/Users/an…', run: 700, took: '2.4s' },
+    { type: 'think', run: 700 },
+    { type: 'tool', name: '读取文件', args: '/Users/andersenaxel/Library/Mobile Documents/iCloud~md~ob…', run: 550, took: '1.5s' },
+    { type: 'think', run: 600 },
+    { type: 'tool', name: '工具搜索', args: 'select:WebSearch,WebFetch', run: 500, took: '1.2s' },
+    { type: 'tool', name: '网页搜索', args: '阿里巴巴集团 2026财年 财报 营收 净利润 各业务分部', run: 1100, took: '18.8s' },
+    { type: 'tool', name: '网页搜索', args: 'Alibaba Group market cap revenue 2026 cloud AI Qwen strategy', run: 900, took: '11.3s' },
+    { type: 'think', run: 600 },
+
+    /* ── 回合 2：世界杯（错误态展示：MCP 工具 INPUT/OUTPUT + 自动展开） ── */
+    { type: 'user', text: '打开百度 搜索 世界杯 进去第一个link 看看里面内容 并分析', run: 300 },
+    { type: 'tool', name: '工具搜索', args: 'select:mcp__stealth-browser__spawn_browser,mcp__stealth-b…', run: 500, took: '0.7s' },
+    { type: 'tool', name: 'mcp__stealth-browser__spawn_browser', args: 'headless: true · 1365×768', run: 750, took: '1.3s' },
+    { type: 'tool', name: 'mcp__stealth-browser__spawn_browser', args: '--no-sandbox --disable-setuid-sandbox', run: 950, took: '1.6s',
+      error: true, input: INPUT_JSON, outLabel: 'OUTPUT', output: ERR_TEXT, autoOpen: true },
+    { type: 'tool', name: '工具搜索', args: 'select:WebSearch,WebFetch', run: 450, took: '0.6s' },
+    { type: 'tool', name: '网页搜索', args: '世界杯 最新 2026 百度百科', run: 800, took: '1.5s' },
+    { type: 'tool', name: '网页获取', args: 'https://www.fifa.com/en/articles/fifa-world-cup-2026-host…', run: 800, took: '1.7s' },
+    { type: 'prose', run: 400,
+      html: '浏览器自动化打开百度失败了（浏览器实例无法启动）。我改用搜索与网页抓取完成了近似分析，但没有拿到百度第一个链接的真实页面内容。' }
+  ];
+
+  var thread = document.getElementById('thread');
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var timers = [];
+
+  function el(html) {
+    var t = document.createElement('template');
+    t.innerHTML = html.trim();
+    return t.content.firstChild;
+  }
+
+  function badgeSvg() {
+    return '' +
+      '<span class="q"></span>' +
+      '<svg class="spin" viewBox="0 0 18 18"><circle cx="9" cy="9" r="7.5"/></svg>' +
+      '<svg viewBox="0 0 18 18"><circle class="ok-c" cx="9" cy="9" r="9"/><path class="ok-k" d="M5.2 9.3l2.6 2.6 5-5.4"/></svg>' +
+      '<svg viewBox="0 0 18 18"><circle class="er-c" cx="9" cy="9" r="9"/><path class="er-x" d="M6.2 6.2l5.6 5.6M11.8 6.2l-5.6 5.6"/></svg>';
+  }
+
+  function panelHtml(cls, label, preCls) {
+    return '<div class="panel ' + cls + '">' +
+      '<div class="panel-h"><span class="dot"></span><span class="tag">' + label + '</span>' +
+      '<button class="copy" type="button">复制</button></div>' +
+      '<pre class="' + preCls + '"></pre></div>';
+  }
+
+  function buildStep(s) {
+    if (s.type === 'user') {
+      var u = el(
+        '<div class="step user"><div class="bubble">' +
+          (s.chip ? '<span class="chip">' + s.chip + '</span>' : '') +
+          '<span class="u-text"></span>' +
+        '</div></div>'
+      );
+      u.querySelector('.u-text').textContent = s.text;
+      return u;
+    }
+    if (s.type === 'prose') {
+      var p = el(
+        '<div class="step prose">' +
+          '<div class="rail"><div class="p-dot"></div></div>' +
+          '<div class="main"><p></p></div>' +
+        '</div>'
+      );
+      p.querySelector('p').innerHTML = s.html;
+      return p;
+    }
+    if (s.type === 'think') {
+      return el(
+        '<div class="step think" data-state="idle">' +
+          '<div class="rail"><div class="t-dot"></div></div>' +
+          '<div class="main"><div class="t-label">思考过程</div></div>' +
+        '</div>'
+      );
+    }
+
+    /* tool 行：状态徽标 + 名称/参数/耗时；可选 说明行 desc、INPUT、输出面板 */
+    var hasBody = !!(s.input || s.output);
+    var node = el(
+      '<div class="step" data-state="idle">' +
+        '<div class="rail"><div class="badge">' + badgeSvg() + '</div></div>' +
+        '<div class="main">' +
+          '<button class="head" type="button">' +
+            '<span class="name"></span>' +
+            '<span class="args"></span>' +
+            '<span class="took">' + (s.took || '') + '</span>' +
+            (hasBody
+              ? '<svg class="caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>'
+              : '') +
+          '</button>' +
+          (s.desc ? '<div class="desc"></div>' : '') +
+          (hasBody
+            ? '<div class="body"><div class="clip"><div class="inner">' +
+                (s.input ? panelHtml('', 'INPUT', 'pre-in') : '') +
+                (s.output ? panelHtml(s.error ? 'err' : '', s.outLabel || 'OUTPUT', 'pre-out') : '') +
+              '</div></div></div>'
+            : '') +
+        '</div>' +
+      '</div>'
+    );
+    node.querySelector('.name').textContent = s.name;
+    node.querySelector('.args').textContent = s.args;
+    if (s.desc) node.querySelector('.desc').textContent = s.desc;
+    if (s.input) node.querySelector('.pre-in').innerHTML = s.input;
+    if (hasBody) {
+      node.querySelector('.head').addEventListener('click', function () {
+        if (node.hasAttribute('data-open')) node.removeAttribute('data-open');
+        else { node.setAttribute('data-open', ''); fillOutput(node, s, false); }
+      });
+      node.querySelectorAll('.copy').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var pre = btn.closest('.panel').querySelector('pre');
+          try { navigator.clipboard.writeText(pre.textContent); } catch (_) {}
+          btn.textContent = '已复制';
+          setTimeout(function () { btn.textContent = '复制'; }, 1200);
+        });
+      });
+    }
+    return node;
+  }
+
+  /* 输出流式打字：仅动画重播时用（typed=true），手动展开直接全量 */
+  function fillOutput(node, s, typed) {
+    var pre = node.querySelector('.pre-out');
+    if (!pre || pre.dataset.done === '1') return;
+    pre.dataset.done = '1';
+    if (!typed || reduced) { pre.textContent = s.output; return; }
+    var i = 0;
+    var cur = el('<span class="cursor"></span>');
+    var textNode = document.createTextNode('');
+    pre.appendChild(textNode);
+    pre.appendChild(cur);
+    (function tick() {
+      textNode.data = s.output.slice(0, i);
+      i += 4 + Math.floor(Math.random() * 5);
+      if (i <= s.output.length + 8) timers.push(setTimeout(tick, 16));
+      else cur.remove();
+    })();
+  }
+
+  /* 时间线连线的首尾截断：每个「回合段」（用户气泡之间的连续非用户行）
+     的第一行截上半、最后一行截下半，让线不越过气泡。 */
+  function capRails(nodes) {
+    var seg = [];
+    function flush() {
+      if (seg.length === 0) return;
+      seg[0].setAttribute('data-rail-cap', seg[0] === seg[seg.length - 1] ? 'top' : 'top');
+      if (seg.length > 1) seg[seg.length - 1].setAttribute('data-rail-cap', 'bottom');
+      seg = [];
+    }
+    nodes.forEach(function (n) {
+      if (n.classList.contains('user')) flush();
+      else seg.push(n);
+    });
+    flush();
+  }
+
+  /* ── 重播：逐行出现 → running → done/error；带输出的行自动展开打字 ── */
+  function play() {
+    timers.forEach(clearTimeout);
+    timers = [];
+    thread.innerHTML = '';
+    var nodes = STEPS.map(buildStep);
+    nodes.forEach(function (n) { thread.appendChild(n); });
+    capRails(nodes);
+    var t = 120;
+    STEPS.forEach(function (s, i) {
+      var n = nodes[i];
+      timers.push(setTimeout(function () {
+        n.classList.add('shown');
+        if (s.type === 'tool' || s.type === 'think') n.setAttribute('data-state', 'running');
+      }, t));
+      t += reduced ? 30 : s.run;
+      if (s.type === 'tool' || s.type === 'think') {
+        timers.push(setTimeout(function () {
+          n.setAttribute('data-state', s.error ? 'error' : 'done');
+          if (s.autoOpen) {
+            timers.push(setTimeout(function () {
+              n.setAttribute('data-open', '');
+              fillOutput(n, s, true);
+            }, 320));
+          }
+        }, t));
+      }
+      t += 130;
+    });
+  }
+
+  document.getElementById('replay').addEventListener('click', play);
+  play();
+
+  /* ── Tweaks（#dark,blue,norail 之类的 hash 直接落 data-attr，便于截图） ── */
+  (function tweaks() {
+    var root = document.documentElement;
+    var panel = document.getElementById('tweaksPanel');
+    (location.hash || '').slice(1).split(',').forEach(function (k) {
+      if (k === 'dark' || k === 'light') root.setAttribute('data-theme', k);
+      if (k === 'green' || k === 'blue') root.setAttribute('data-accent', k);
+      if (k === 'norail') root.setAttribute('data-rail', 'off');
+    });
+    document.getElementById('tweaksToggle').addEventListener('click', function () {
+      panel.classList.toggle('open');
+    });
+    function sync() {
+      panel.querySelectorAll('.opts').forEach(function (g) {
+        var attr = g.getAttribute('data-attr');
+        g.querySelectorAll('.opt').forEach(function (b) {
+          b.classList.toggle('on', root.getAttribute(attr) === b.getAttribute('data-val'));
+        });
+      });
+    }
+    panel.addEventListener('click', function (e) {
+      var btn = e.target.closest('.opt');
+      if (!btn) return;
+      root.setAttribute(btn.parentElement.getAttribute('data-attr'), btn.getAttribute('data-val'));
+      sync();
+    });
+    sync();
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,2017 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Desktop — 外壳 UI 原型 v2（丝滑动效 + 分屏画布）</title>
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   Claude Desktop 外壳 UI 原型 v2
+   ------------------------------------------------------------------
+   相比 v1 的两大改造：
+   1. 动效系统 —— 统一 motion token（easing/duration 四档）；
+      导航行 / 会话行 / 画布 tab 的 active 高亮全部改成「滑动 glider」
+      （一个绝对定位的指示块在列表内平移，替代 class 瞬时切换）；
+      消息流 stagger 入场；发送→思考→流式回复的完整链路模拟。
+   2. 分屏画布 —— 聊天卡片右侧滑出工作画布 panel（预览/浏览器/图片
+      三个 tab），用 grid-template-columns 的 fr 插值做开合动画
+      （比 width/flex-basis 过渡顺滑，Chromium 原生支持），
+      中间分隔条可拖拽调整比例。
+   三个主题变体 × 明暗模式沿用 v1，右下角 Tweaks 实时切换。
+   Token 命名沿用应用真实变量（--rail-*、--accent-*），方便回迁。
+   ══════════════════════════════════════════════════════════════════ */
+
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+    'PingFang SC', 'Helvetica Neue', sans-serif;
+
+  /* ── motion token：全文件唯一的动效词汇表 ──────────────────────
+     ease-out   入场/位移主力（expo-out，快进缓停）
+     ease-spring 高亮 glider 专用（轻微回弹，「吸附感」）
+     ease-inout 双向对称（主题切换等状态互换） */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.44, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --d-fast: 140ms;   /* hover 反馈 */
+  --d-med: 260ms;    /* 高亮滑动、内容显隐 */
+  --d-slow: 420ms;   /* 消息入场 */
+  --d-split: 520ms;  /* 分屏开合 */
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-optical-sizing: auto;
+  letter-spacing: -0.022em;
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+  background: var(--backdrop);
+  transition: background 320ms ease;
+}
+
+/* ── 主题 token：素瓷（默认） ─────────────────────────────────── */
+body[data-theme='porcelain'] {
+  --backdrop: linear-gradient(180deg, #ced2d9 0%, #c3c8d1 100%);
+  --window-bg: #e9ebef;
+  --rail-bg: transparent;
+  --rail-hover: rgba(16, 20, 28, 0.055);
+  --rail-active: #ffffff;
+  --rail-active-shadow: 0 1px 2px rgba(16, 20, 28, 0.07), 0 0 0 1px rgba(16, 20, 28, 0.045);
+  --rail-text: #1b1d22;
+  --rail-text-soft: #5c5f66;
+  --rail-muted: #989ba3;
+  --accent: #17a24b;
+  --accent-soft: rgba(23, 162, 75, 0.11);
+  --accent-ink: #0e7c39;
+  --accent-contrast: #ffffff;
+  --newchat-bg: #ffffff;
+  --newchat-text: #0e7c39;
+  --newchat-border: rgba(16, 20, 28, 0.075);
+  --newchat-shadow: 0 1px 2px rgba(16, 20, 28, 0.06);
+  --newchat-hover: #f4faf6;
+  --card-bg: #ffffff;
+  --card-border: rgba(16, 20, 28, 0.07);
+  --card-shadow: 0 1px 2px rgba(16, 20, 28, 0.04), 0 14px 40px rgba(16, 20, 28, 0.09);
+  --card-blur: none;
+  --rail-blur: none;
+  --hairline: rgba(16, 20, 28, 0.08);
+  --content-text: #1b1d22;
+  --content-muted: #83868d;
+  --user-bubble: #eef0f3;
+  --tool-card-bg: #fafbfc;
+  --kbd-bg: rgba(16, 20, 28, 0.05);
+  --sk-hi: rgba(16, 20, 28, 0.09);
+  --window-shadow: 0 24px 80px rgba(20, 24, 32, 0.32), 0 0 0 1px rgba(16, 20, 28, 0.10);
+}
+body[data-theme='porcelain'][data-mode='dark'] {
+  --backdrop: linear-gradient(180deg, #101114 0%, #0b0c0e 100%);
+  --window-bg: #1d1e21;
+  --rail-hover: rgba(255, 255, 255, 0.06);
+  --rail-active: rgba(255, 255, 255, 0.095);
+  --rail-active-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --rail-text: #ececec;
+  --rail-text-soft: rgba(236, 236, 236, 0.66);
+  --rail-muted: rgba(236, 236, 236, 0.42);
+  --accent: #2ec96b;
+  --accent-soft: rgba(46, 201, 107, 0.15);
+  --accent-ink: #58d98b;
+  --accent-contrast: #0c2214;
+  --newchat-bg: rgba(255, 255, 255, 0.07);
+  --newchat-text: #58d98b;
+  --newchat-border: rgba(255, 255, 255, 0.09);
+  --newchat-shadow: none;
+  --newchat-hover: rgba(255, 255, 255, 0.11);
+  --card-bg: #26272b;
+  --card-border: rgba(255, 255, 255, 0.075);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 16px 44px rgba(0, 0, 0, 0.4);
+  --hairline: rgba(255, 255, 255, 0.08);
+  --content-text: #ececec;
+  --content-muted: rgba(236, 236, 236, 0.5);
+  --user-bubble: rgba(255, 255, 255, 0.075);
+  --tool-card-bg: rgba(255, 255, 255, 0.035);
+  --kbd-bg: rgba(255, 255, 255, 0.07);
+  --sk-hi: rgba(255, 255, 255, 0.12);
+  --window-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+/* ── 主题 token：霜面 ─────────────────────────────────────────── */
+body[data-theme='frost'] {
+  --backdrop:
+    radial-gradient(120% 90% at 12% 0%, #8fadd0 0%, transparent 55%),
+    radial-gradient(110% 80% at 88% 8%, #d4c2a4 0%, transparent 50%),
+    radial-gradient(130% 100% at 50% 100%, #9dbfa8 0%, transparent 60%),
+    linear-gradient(180deg, #b3bcc8, #a3adb9);
+  --window-bg: rgba(242, 245, 248, 0.36);
+  --rail-bg: transparent;
+  --rail-hover: rgba(18, 22, 30, 0.065);
+  --rail-active: rgba(255, 255, 255, 0.62);
+  --rail-active-shadow: 0 1px 3px rgba(18, 22, 30, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.35) inset;
+  --rail-text: #191b20;
+  --rail-text-soft: #565a62;
+  --rail-muted: #90949c;
+  --accent: #17a24b;
+  --accent-soft: rgba(23, 162, 75, 0.13);
+  --accent-ink: #0d7537;
+  --accent-contrast: #ffffff;
+  --newchat-bg: rgba(255, 255, 255, 0.55);
+  --newchat-text: #0d7537;
+  --newchat-border: rgba(255, 255, 255, 0.5);
+  --newchat-shadow: 0 1px 3px rgba(18, 22, 30, 0.07);
+  --newchat-hover: rgba(255, 255, 255, 0.78);
+  --card-bg: rgba(255, 255, 255, 0.72);
+  --card-border: rgba(255, 255, 255, 0.55);
+  --card-shadow: 0 2px 6px rgba(18, 22, 30, 0.05), 0 18px 50px rgba(18, 22, 30, 0.13);
+  --card-blur: blur(36px) saturate(1.7);
+  --rail-blur: blur(36px) saturate(1.7);
+  --hairline: rgba(18, 22, 30, 0.075);
+  --content-text: #191b20;
+  --content-muted: #7d818a;
+  --user-bubble: rgba(255, 255, 255, 0.65);
+  --tool-card-bg: rgba(255, 255, 255, 0.5);
+  --kbd-bg: rgba(18, 22, 30, 0.055);
+  --sk-hi: rgba(18, 22, 30, 0.1);
+  --window-shadow: 0 28px 90px rgba(18, 22, 30, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+body[data-theme='frost'][data-mode='dark'] {
+  --backdrop:
+    radial-gradient(120% 90% at 12% 0%, #232c3a 0%, transparent 55%),
+    radial-gradient(110% 80% at 88% 8%, #33302a 0%, transparent 50%),
+    radial-gradient(130% 100% at 50% 100%, #1f2a24 0%, transparent 60%),
+    linear-gradient(180deg, #14161a, #0e1013);
+  --window-bg: rgba(26, 28, 33, 0.55);
+  --rail-hover: rgba(255, 255, 255, 0.065);
+  --rail-active: rgba(255, 255, 255, 0.12);
+  --rail-active-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07) inset;
+  --rail-text: #eceef0;
+  --rail-text-soft: rgba(236, 238, 240, 0.66);
+  --rail-muted: rgba(236, 238, 240, 0.4);
+  --accent: #2ec96b;
+  --accent-soft: rgba(46, 201, 107, 0.17);
+  --accent-ink: #5cdb8e;
+  --accent-contrast: #0c2214;
+  --newchat-bg: rgba(255, 255, 255, 0.09);
+  --newchat-text: #5cdb8e;
+  --newchat-border: rgba(255, 255, 255, 0.1);
+  --newchat-shadow: none;
+  --newchat-hover: rgba(255, 255, 255, 0.14);
+  --card-bg: rgba(36, 38, 44, 0.66);
+  --card-border: rgba(255, 255, 255, 0.09);
+  --card-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 20px 56px rgba(0, 0, 0, 0.45);
+  --hairline: rgba(255, 255, 255, 0.085);
+  --content-text: #eceef0;
+  --content-muted: rgba(236, 238, 240, 0.5);
+  --user-bubble: rgba(255, 255, 255, 0.09);
+  --tool-card-bg: rgba(255, 255, 255, 0.045);
+  --kbd-bg: rgba(255, 255, 255, 0.08);
+  --sk-hi: rgba(255, 255, 255, 0.13);
+  --window-shadow: 0 28px 90px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+/* ── 主题 token：暖岩 ─────────────────────────────────────────── */
+body[data-theme='clay'] {
+  --backdrop: linear-gradient(180deg, #d6d0c2 0%, #ccc5b6 100%);
+  --window-bg: #ece9e0;
+  --rail-bg: transparent;
+  --rail-hover: rgba(62, 52, 32, 0.06);
+  --rail-active: #faf8f2;
+  --rail-active-shadow: 0 1px 2px rgba(62, 52, 32, 0.08), 0 0 0 1px rgba(62, 52, 32, 0.05);
+  --rail-text: #2a2721;
+  --rail-text-soft: #6b665c;
+  --rail-muted: #a09a8c;
+  --accent: #c15f3c;
+  --accent-soft: rgba(193, 95, 60, 0.11);
+  --accent-ink: #a34c2b;
+  --accent-contrast: #ffffff;
+  --newchat-bg: #c15f3c;
+  --newchat-text: #ffffff;
+  --newchat-border: rgba(62, 52, 32, 0.0);
+  --newchat-shadow: 0 1px 3px rgba(163, 76, 43, 0.3);
+  --newchat-hover: #b1522f;
+  --card-bg: #faf9f5;
+  --card-border: rgba(62, 52, 32, 0.08);
+  --card-shadow: 0 1px 2px rgba(62, 52, 32, 0.05), 0 14px 40px rgba(62, 52, 32, 0.1);
+  --card-blur: none;
+  --rail-blur: none;
+  --hairline: rgba(62, 52, 32, 0.09);
+  --content-text: #2a2721;
+  --content-muted: #8d8779;
+  --user-bubble: #f0ede4;
+  --tool-card-bg: #f5f3ec;
+  --kbd-bg: rgba(62, 52, 32, 0.06);
+  --sk-hi: rgba(62, 52, 32, 0.11);
+  --window-shadow: 0 24px 80px rgba(52, 44, 28, 0.32), 0 0 0 1px rgba(62, 52, 32, 0.1);
+}
+body[data-theme='clay'][data-mode='dark'] {
+  --backdrop: linear-gradient(180deg, #171613 0%, #100f0d 100%);
+  --window-bg: #23211d;
+  --rail-hover: rgba(255, 250, 240, 0.06);
+  --rail-active: rgba(255, 250, 240, 0.09);
+  --rail-active-shadow: 0 0 0 1px rgba(255, 250, 240, 0.05);
+  --rail-text: #ebe7de;
+  --rail-text-soft: rgba(235, 231, 222, 0.66);
+  --rail-muted: rgba(235, 231, 222, 0.42);
+  --accent: #e0805a;
+  --accent-soft: rgba(224, 128, 90, 0.16);
+  --accent-ink: #eb9a77;
+  --accent-contrast: #2b1207;
+  --newchat-bg: #c96442;
+  --newchat-text: #fff6f0;
+  --newchat-border: transparent;
+  --newchat-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --newchat-hover: #d5714e;
+  --card-bg: #2b2924;
+  --card-border: rgba(255, 250, 240, 0.07);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 16px 44px rgba(0, 0, 0, 0.4);
+  --hairline: rgba(255, 250, 240, 0.08);
+  --content-text: #ebe7de;
+  --content-muted: rgba(235, 231, 222, 0.5);
+  --user-bubble: rgba(255, 250, 240, 0.07);
+  --tool-card-bg: rgba(255, 250, 240, 0.04);
+  --kbd-bg: rgba(255, 250, 240, 0.07);
+  --sk-hi: rgba(255, 250, 240, 0.13);
+  --window-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 250, 240, 0.06);
+}
+
+/* ══════════════════════ 舞台与窗口 frame ═══════════════════════ */
+
+.stage {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+}
+
+.window {
+  width: min(1360px, 100%);
+  height: min(860px, calc(100vh - 56px));
+  border-radius: 12px;
+  background: var(--window-bg);
+  box-shadow: var(--window-shadow);
+  backdrop-filter: var(--rail-blur, none);
+  -webkit-backdrop-filter: var(--rail-blur, none);
+  display: flex;
+  overflow: hidden;
+  position: relative;
+  transition: background 320ms ease, box-shadow 320ms ease;
+  animation: window-in 720ms var(--ease-out) backwards;
+}
+@keyframes window-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+}
+
+/* macOS 交通灯（占位，仅视觉；hover 显示符号是原生行为的还原） */
+.traffic {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  gap: 8px;
+  z-index: 10;
+}
+.traffic span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12) inset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: transparent;
+  transition: color var(--d-fast) ease;
+}
+.traffic:hover span { color: rgba(0, 0, 0, 0.45); }
+.traffic .r { background: #ff5f57; }
+.traffic .y { background: #febc2e; }
+.traffic .g { background: #28c840; }
+
+/* ══════════════════════ 左侧导航 rail ══════════════════════════ */
+
+.rail {
+  width: var(--rail-width, 240px);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 48px 10px 10px 10px;
+  background: var(--rail-bg);
+  transition: width var(--d-med) var(--ease-out);
+}
+
+/* 通用行：nav / 会话共用的骨架。
+   v2 中 active 背景由 glider 承担，行本身只负责 hover 底色与文字色 */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: var(--row-h, 34px);
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--rail-text-soft);
+  cursor: default;
+  user-select: none;
+  position: relative;
+  z-index: 1; /* 浮在 glider 之上 */
+  transition: background var(--d-fast) ease, color var(--d-fast) ease;
+}
+.row:hover { background: var(--rail-hover); color: var(--rail-text); }
+.row svg { flex-shrink: 0; }
+.row .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 滑动高亮 glider：绝对定位的指示块，top/height 平移过去而非瞬时切换。
+   .no-anim 供 JS 首次定位 / resize 重排时跳过过渡 */
+.glider {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-radius: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    top var(--d-med) var(--ease-spring),
+    height var(--d-med) var(--ease-spring),
+    opacity var(--d-fast) ease,
+    background 320ms ease,
+    box-shadow 320ms ease;
+}
+.glider.no-anim { transition: none !important; }
+
+/* nav glider：白卡浮起 + 左缘 accent bar（macOS source list 语义） */
+.nav-glider {
+  background: var(--rail-active);
+  box-shadow: var(--rail-active-shadow);
+}
+.nav-glider::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+/* sessions glider：accent 浅底 pill */
+.session-glider { background: var(--accent-soft); }
+
+/* 新对话 — 主操作按钮：hover 轻浮起，active 下压，plus 图标旋转呼应 */
+.new-chat {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  margin: 0 2px 10px 2px;
+  border: 1px solid var(--newchat-border);
+  border-radius: 9px;
+  background: var(--newchat-bg);
+  color: var(--newchat-text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: inherit;
+  box-shadow: var(--newchat-shadow);
+  cursor: pointer;
+  transition: background var(--d-fast) ease, box-shadow var(--d-fast) ease,
+    transform var(--d-fast) var(--ease-spring);
+}
+.new-chat svg { transition: transform var(--d-med) var(--ease-spring); }
+.new-chat:hover {
+  background: var(--newchat-hover);
+  transform: translateY(-1px);
+}
+.new-chat:hover svg { transform: rotate(90deg); }
+.new-chat:active { transform: translateY(0) scale(0.98); transition-duration: 60ms; }
+.new-chat:focus-visible,
+.row:focus-visible,
+.icon-btn:focus-visible,
+.header-btn:focus-visible,
+.ctab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 搜索入口 */
+.search-row { color: var(--rail-muted); margin-bottom: 10px; }
+.search-row:hover { color: var(--rail-text-soft); }
+.search-row kbd {
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--rail-muted);
+  background: var(--kbd-bg);
+  border-radius: 5px;
+  padding: 2px 5px;
+  letter-spacing: 0.02em;
+}
+body[data-search='off'] .search-row { display: none; }
+
+nav { position: relative; }
+.nav-row.active {
+  color: var(--rail-text);
+  font-weight: 500;
+}
+
+/* 分组标签 */
+.group-label {
+  padding: 14px 12px 5px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--rail-muted);
+}
+
+/* 会话列表：撑满剩余高度，独立滚动；相对定位承载 glider */
+.sessions {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin-top: 2px;
+  padding-bottom: 8px;
+  position: relative;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rail-muted) transparent;
+}
+.sessions::-webkit-scrollbar { width: 8px; }
+.sessions::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--rail-muted) 45%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.sessions::-webkit-scrollbar-track { background: transparent; }
+
+.session { font-size: 13px; }
+.session.active { color: var(--accent-ink); font-weight: 500; }
+.session.active:hover { background: transparent; }
+
+/* 行尾 time ↔ more 切换：v1 用 display:none 跳变，
+   v2 改为两元素同位叠放做 opacity/scale 交叉淡切 */
+.session .trail {
+  position: relative;
+  width: 34px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.session .time {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 11px;
+  color: var(--rail-muted);
+  font-variant-numeric: tabular-nums;
+  transition: opacity var(--d-fast) ease, transform var(--d-fast) var(--ease-out);
+}
+.session.active .time { color: var(--accent-ink); opacity: 0.7; }
+.session .more {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--rail-muted);
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity var(--d-fast) ease, transform var(--d-fast) var(--ease-spring),
+    background var(--d-fast) ease, color var(--d-fast) ease;
+}
+.session:hover .time { opacity: 0; transform: translateX(4px); }
+.session:hover .more { opacity: 1; transform: scale(1); }
+.session .more:hover { background: var(--rail-hover); color: var(--rail-text); }
+
+/* 用户 footer */
+.user-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  margin-top: 6px;
+  border-radius: 10px;
+  transition: background var(--d-fast) ease;
+}
+.user-bar:hover { background: var(--rail-hover); }
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.user-meta { flex: 1; min-width: 0; line-height: 1.3; }
+.user-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--rail-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-plan { font-size: 11px; color: var(--rail-muted); }
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--rail-text-soft);
+  cursor: pointer;
+  transition: background var(--d-fast) ease, color var(--d-fast) ease;
+}
+.icon-btn:hover { background: var(--rail-hover); color: var(--rail-text); }
+
+/* ══════════════════════ 右侧内容区（grid 分屏） ════════════════ */
+
+/* 三列 grid：聊天卡片 | 分隔条 | 画布 panel。
+   分屏开合动画走 grid-template-columns 的 fr 插值 ——
+   0fr→0.85fr 由合成器平滑插值，比 width/flex-basis 过渡顺滑。
+   拖拽分隔条时加 .dragging 关掉过渡，跟手不粘滞。 */
+.content {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 0px minmax(0, 0fr);
+  padding: 8px 8px 8px 0;
+  transition: grid-template-columns var(--d-split) var(--ease-out), padding var(--d-med) ease;
+}
+body[data-view='split'] .content {
+  grid-template-columns: minmax(0, 1fr) 8px minmax(0, var(--split, 0.85fr));
+}
+.content.dragging { transition: none; }
+
+/* 通栏布局：卡片贴边，只留 hairline 分割 */
+body[data-layout='flush'] .content { padding: 0; }
+body[data-layout='flush'] .chat-card,
+body[data-layout='flush'] .canvas-panel {
+  border-radius: 0;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  box-shadow: none;
+}
+body[data-layout='flush'] .canvas-panel { border-left: 1px solid var(--hairline); }
+body[data-layout='flush'][data-view='split'] .content {
+  grid-template-columns: minmax(0, 1fr) 0px minmax(0, var(--split, 0.85fr));
+}
+
+.chat-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
+  backdrop-filter: var(--card-blur, none);
+  -webkit-backdrop-filter: var(--card-blur, none);
+  overflow: hidden;
+  transition: background 320ms ease, box-shadow 320ms ease, border-radius var(--d-med) ease;
+}
+
+/* ── 分隔条：默认不可见；split 模式下出现拖柄，hover/drag 高亮 ── */
+.divider {
+  position: relative;
+  cursor: col-resize;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--d-med) ease;
+}
+body[data-view='split'] .divider { opacity: 1; pointer-events: auto; }
+.divider::before {
+  /* 加宽的命中区，8px 视觉宽拖起来太费劲 */
+  content: '';
+  position: absolute;
+  inset: 0 -5px;
+}
+.divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 40px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--content-muted) 45%, transparent);
+  transition: background var(--d-fast) ease, height var(--d-med) var(--ease-spring);
+}
+.divider:hover::after,
+.divider.active::after {
+  background: var(--accent);
+  height: 56px;
+}
+
+/* ── 工作画布 panel：随 grid 展开，同步做位移+淡入的二段动画 ──── */
+.canvas-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
+  backdrop-filter: var(--card-blur, none);
+  -webkit-backdrop-filter: var(--card-blur, none);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(20px);
+  transition: opacity var(--d-med) ease, transform var(--d-split) var(--ease-out),
+    background 320ms ease, box-shadow 320ms ease, border-radius var(--d-med) ease;
+}
+body[data-view='split'] .canvas-panel { opacity: 1; transform: none; }
+
+/* 内容层固定最小宽：开合过程中面板变窄时内容被裁切而非重排，
+   避免文字换行抖动 —— 丝滑感的关键细节 */
+.canvas-clip {
+  width: 100%;
+  height: 100%;
+  min-width: 420px;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 10px 0 12px;
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+/* 画布 tab：横向 glider 同款技术，left/width 平移 */
+.canvas-tabs {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  background: var(--kbd-bg);
+  border-radius: 8px;
+  padding: 3px;
+}
+.ctab {
+  position: relative;
+  z-index: 1;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--content-muted);
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: inherit;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: color var(--d-fast) ease;
+}
+.ctab:hover { color: var(--content-text); }
+.ctab.on { color: var(--content-text); font-weight: 600; }
+.ctab-glider {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 6px;
+  background: var(--card-bg);
+  box-shadow: 0 1px 2px rgba(16, 20, 28, 0.1);
+  transition: left var(--d-med) var(--ease-spring), width var(--d-med) var(--ease-spring),
+    background 320ms ease;
+}
+.ctab-glider.no-anim { transition: none !important; }
+
+.canvas-header .spacer { flex: 1; }
+
+/* 画布 body：tab 内容切换做进场滑淡 */
+.canvas-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+.cpane {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  padding: 16px;
+  gap: 12px;
+}
+.cpane.on { display: flex; animation: cpane-in var(--d-med) var(--ease-out) backwards; }
+@keyframes cpane-in {
+  from { opacity: 0; transform: translateY(8px); }
+}
+
+/* 预览 tab：幻灯片 16:9 占位 + 缩略图条 */
+.cpane-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--content-muted);
+  font-variant-numeric: tabular-nums;
+}
+.cpane-toolbar .spacer { flex: 1; }
+.slide-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.slide-frame {
+  width: min(100%, calc((100cqh - 140px) * 16 / 9));
+  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1.5px dashed color-mix(in srgb, var(--content-muted) 50%, transparent);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--content-muted);
+  font-size: 13px;
+}
+.slide-stage { container-type: size; }
+.slide-frame .ratio { font-size: 11px; opacity: 0.7; }
+.thumbs {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.thumb {
+  width: 56px;
+  aspect-ratio: 16 / 9;
+  border-radius: 5px;
+  border: 1px solid var(--hairline);
+  background: var(--tool-card-bg);
+  cursor: pointer;
+  padding: 0;
+  transition: border-color var(--d-fast) ease, transform var(--d-fast) var(--ease-spring),
+    box-shadow var(--d-fast) ease;
+}
+.thumb:hover { transform: translateY(-2px); }
+.thumb.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* 浏览器 tab：url 栏 + skeleton 页面 */
+.url-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--tool-card-bg);
+  font-size: 12px;
+  color: var(--content-muted);
+  font-variant-numeric: tabular-nums;
+}
+.url-bar svg { flex-shrink: 0; opacity: 0.7; }
+.url-bar .addr { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-skeleton {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--tool-card-bg);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+/* skeleton shimmer：占位加载质感（真实内容由 WebContentsView 提供） */
+.sk {
+  border-radius: 6px;
+  background: linear-gradient(90deg,
+    var(--kbd-bg) 30%, var(--sk-hi) 50%, var(--kbd-bg) 70%);
+  background-size: 220% 100%;
+  animation: shimmer 1.8s linear infinite;
+}
+@keyframes shimmer {
+  from { background-position: 180% 0; }
+  to { background-position: -80% 0; }
+}
+.sk.h-lg { height: 24px; width: 55%; }
+.sk.h-md { height: 12px; }
+.sk.h-md.w-90 { width: 90%; }
+.sk.h-md.w-75 { width: 75%; }
+.sk.h-md.w-60 { width: 60%; }
+.sk.block { flex: 1; min-height: 60px; width: 100%; }
+
+/* 图片 tab：2×2 网格占位 */
+.img-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-rows: 1fr;
+  gap: 10px;
+}
+.img-cell {
+  border: 1.5px dashed color-mix(in srgb, var(--content-muted) 45%, transparent);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--content-muted);
+  font-size: 12px;
+}
+.img-cell .ratio { font-size: 10.5px; opacity: 0.7; }
+
+/* ══════════════════════ 聊天卡片内部 ═══════════════════════════ */
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+.chat-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--content-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--content-muted);
+  flex-shrink: 0;
+}
+.chat-status .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  transition: background var(--d-med) ease;
+}
+/* 忙碌态：状态点呼吸 */
+.chat-status.busy .dot { animation: pulse 1.2s var(--ease-inout) infinite; }
+@keyframes pulse {
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
+.chat-header .spacer { flex: 1; }
+.header-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--content-muted);
+  cursor: pointer;
+  transition: background var(--d-fast) ease, color var(--d-fast) ease;
+}
+.header-btn:hover { background: var(--rail-hover); color: var(--content-text); }
+/* 分屏 toggle 按钮：开启时 accent 常亮 */
+body[data-view='split'] #btn-split {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+/* 消息流 */
+.messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 28px 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--content-muted) transparent;
+}
+.msg-col {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 0 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+/* stagger 入场：首屏与切会话时重放，animation-delay 由 JS 按序号写入 */
+.msg-col.replay > * {
+  animation: msg-in var(--d-slow) var(--ease-out) backwards;
+}
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(14px); }
+}
+.msg-user {
+  align-self: flex-end;
+  max-width: 78%;
+  background: var(--user-bubble);
+  border-radius: 14px 14px 4px 14px;
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--content-text);
+}
+/* 发送时的弹入：比常规入场多一点 scale，制造「离手」感 */
+.msg-user.pop {
+  animation: bubble-pop var(--d-slow) var(--ease-spring) backwards;
+}
+@keyframes bubble-pop {
+  from { opacity: 0; transform: translateY(12px) scale(0.94); }
+}
+.msg-assistant {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--content-text);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.msg-assistant.pop { animation: msg-in var(--d-slow) var(--ease-out) backwards; }
+.msg-assistant p { margin: 0; }
+
+/* 流式输出光标 */
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: -0.15em;
+  background: var(--accent);
+  animation: caret-blink 0.9s step-end infinite;
+}
+@keyframes caret-blink { 50% { opacity: 0; } }
+
+/* 思考指示：三点起伏 */
+.thinking {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+}
+.thinking i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--content-muted);
+  animation: think 1.1s var(--ease-inout) infinite;
+}
+.thinking i:nth-child(2) { animation-delay: 0.14s; }
+.thinking i:nth-child(3) { animation-delay: 0.28s; }
+@keyframes think {
+  0%, 55%, 100% { opacity: 0.35; transform: translateY(0); }
+  25% { opacity: 1; transform: translateY(-3px); }
+}
+
+/* 工具调用卡片（占位） */
+.tool-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--tool-card-bg);
+  padding: 9px 12px;
+  font-size: 12.5px;
+  color: var(--content-muted);
+}
+.tool-card .tool-name {
+  font-weight: 600;
+  color: var(--content-text);
+}
+.tool-card .check { color: var(--accent); margin-left: auto; }
+/* 完成勾：描边动画，工具卡出现时画一笔 */
+.tool-card .check path {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 0;
+}
+.msg-col.replay .tool-card .check path,
+.tool-card.pop .check path {
+  animation: check-draw 480ms var(--ease-out) 240ms backwards;
+}
+@keyframes check-draw {
+  from { stroke-dashoffset: 24; }
+}
+.tool-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  flex-shrink: 0;
+}
+
+/* 空状态（新对话） */
+.empty-state {
+  flex: 1;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--content-muted);
+}
+body[data-pane='empty'] .messages { display: none; }
+body[data-pane='empty'] .empty-state { display: flex; }
+body[data-pane='empty'] .empty-state > * {
+  animation: msg-in var(--d-slow) var(--ease-out) backwards;
+}
+body[data-pane='empty'] .empty-state > :nth-child(2) { animation-delay: 60ms; }
+body[data-pane='empty'] .empty-state > :nth-child(3) { animation-delay: 120ms; }
+.empty-state .empty-mark {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+.empty-state h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--content-text);
+  letter-spacing: -0.01em;
+}
+.empty-state p { margin: 0; font-size: 13px; }
+
+/* composer */
+.composer-wrap {
+  flex-shrink: 0;
+  padding: 12px 28px 18px;
+}
+.composer {
+  max-width: 680px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 13px;
+  background: var(--card-bg);
+  box-shadow: 0 1px 2px rgba(16, 20, 28, 0.04);
+  padding: 9px 10px 9px 12px;
+  transition: border-color var(--d-med) ease, box-shadow var(--d-med) ease,
+    transform var(--d-med) var(--ease-out);
+}
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 2px 8px rgba(16, 20, 28, 0.06);
+  transform: translateY(-1px);
+}
+.composer .attach {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--content-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--d-fast) ease, color var(--d-fast) ease,
+    transform var(--d-fast) var(--ease-spring);
+}
+.composer .attach:hover {
+  background: var(--rail-hover);
+  color: var(--content-text);
+  transform: rotate(90deg);
+}
+.composer .input {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  max-height: 120px;
+  padding: 5px 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 14px;
+  letter-spacing: inherit;
+  line-height: 1.4;
+  color: var(--content-text);
+}
+.composer .input::placeholder { color: var(--content-muted); }
+.composer .send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: filter var(--d-fast) ease, transform var(--d-fast) var(--ease-spring),
+    opacity var(--d-med) ease;
+}
+.composer .send:hover:not(:disabled) { filter: brightness(1.08); transform: scale(1.06); }
+.composer .send:active:not(:disabled) { transform: scale(0.92); transition-duration: 60ms; }
+.composer .send:disabled { opacity: 0.35; cursor: default; }
+.composer-hint {
+  max-width: 680px;
+  margin: 7px auto 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--content-muted);
+  opacity: 0.8;
+}
+
+/* 密度：紧凑档 */
+body[data-density='compact'] { --row-h: 30px; }
+body[data-density='compact'] .group-label { padding-top: 10px; }
+body[data-density='compact'] .new-chat { height: 32px; }
+
+/* ══════════════════════ Tweaks 面板 ════════════════════════════ */
+
+.tweaks-fab {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 100;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--card-bg);
+  color: var(--content-text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 8px 14px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(16, 20, 28, 0.18);
+  transition: transform var(--d-fast) var(--ease-spring), box-shadow var(--d-fast) ease;
+}
+.tweaks-fab:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(16, 20, 28, 0.22); }
+.tweaks-fab:active { transform: scale(0.96); }
+.tweaks {
+  position: fixed;
+  right: 20px;
+  bottom: 62px;
+  z-index: 100;
+  width: 248px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 13px;
+  background: var(--card-bg);
+  box-shadow: 0 12px 40px rgba(16, 20, 28, 0.25);
+  padding: 14px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px) scale(0.96);
+  transform-origin: bottom right;
+  transition: opacity var(--d-med) ease, transform var(--d-med) var(--ease-spring);
+}
+.tweaks.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+.tweaks h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--content-text);
+}
+.tweak-group { display: flex; flex-direction: column; gap: 5px; }
+.tweak-group .tw-label {
+  font-size: 11px;
+  color: var(--content-muted);
+  font-weight: 500;
+}
+.seg {
+  display: flex;
+  gap: 3px;
+  background: var(--kbd-bg);
+  border-radius: 8px;
+  padding: 3px;
+}
+.seg button {
+  flex: 1;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--content-muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  letter-spacing: inherit;
+  padding: 5px 0;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.seg button.on {
+  background: var(--card-bg);
+  color: var(--content-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(16, 20, 28, 0.1);
+}
+
+/* ══════════════════════ 动效降级 ═══════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+  }
+}
+body[data-motion='off'] *,
+body[data-motion='off'] *::before,
+body[data-motion='off'] *::after {
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
+}
+</style>
+</head>
+<body data-theme="porcelain" data-mode="light" data-layout="float"
+      data-density="cozy" data-search="on" data-pane="chat"
+      data-view="chat" data-motion="on"
+      style="--rail-width: 240px">
+
+<div class="stage">
+  <div class="window">
+    <div class="traffic" aria-hidden="true"><span class="r">×</span><span class="y">−</span><span class="g">+</span></div>
+
+    <!-- ═══ 左侧导航 rail ═══ -->
+    <aside class="rail">
+      <button type="button" class="new-chat" id="btn-new-chat">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        新对话
+      </button>
+
+      <div class="row search-row" role="button" tabindex="0">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <span class="label">搜索对话</span>
+        <kbd>⌘K</kbd>
+      </div>
+
+      <nav aria-label="主导航" id="main-nav">
+        <div class="glider nav-glider" id="nav-glider" aria-hidden="true"></div>
+        <div class="row nav-row active" role="button" tabindex="0" data-tab="chat">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+            <path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 16.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+          </svg>
+          <span class="label">智能助手</span>
+        </div>
+        <div class="row nav-row" role="button" tabindex="0" data-tab="canvas">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+            <rect x="3.5" y="4.5" width="17" height="15" rx="2" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M3.5 15l4.5-4 3 2.5 4-4.5 5 6" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+            <circle cx="9" cy="9" r="1.4" fill="currentColor"/>
+          </svg>
+          <span class="label">工作画布</span>
+        </div>
+      </nav>
+
+      <!-- ═══ 会话列表 ═══ -->
+      <div class="group-label">对话</div>
+      <div class="sessions" id="sessions">
+        <div class="glider session-glider" id="session-glider" aria-hidden="true"></div>
+        <div class="group-label" style="padding-top:2px">今天</div>
+        <div class="row session active" role="button" tabindex="0">
+          <span class="label">重构外壳 UI 设计</span>
+          <span class="trail">
+            <span class="time">14:02</span>
+            <button type="button" class="more" title="更多操作" aria-label="更多操作" tabindex="-1">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+              </svg>
+            </button>
+          </span>
+        </div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">ppt-master 图片生成调试</span>
+          <span class="trail">
+            <span class="time">10:31</span>
+            <button type="button" class="more" title="更多操作" aria-label="更多操作" tabindex="-1">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+              </svg>
+            </button>
+          </span>
+        </div>
+
+        <div class="group-label">昨天</div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">Settings 页面 V2 重设计</span>
+          <span class="trail">
+            <span class="time">18:47</span>
+            <button type="button" class="more" title="更多操作" aria-label="更多操作" tabindex="-1">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+              </svg>
+            </button>
+          </span>
+        </div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">slash 建议菜单视觉打磨</span>
+          <span class="trail">
+            <span class="time">15:20</span>
+            <button type="button" class="more" title="更多操作" aria-label="更多操作" tabindex="-1">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+              </svg>
+            </button>
+          </span>
+        </div>
+
+        <div class="group-label">7 天内</div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">macOS 签名与应用图标配置</span>
+          <span class="trail">
+            <span class="time">周一</span>
+            <button type="button" class="more" title="更多操作" aria-label="更多操作" tabindex="-1">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+              </svg>
+            </button>
+          </span>
+        </div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">会话列表冷启动高亮修复</span>
+          <span class="trail">
+            <span class="time">周一</span>
+            <button type="button" class="more" title="更多操作" aria-label="更多操作" tabindex="-1">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+              </svg>
+            </button>
+          </span>
+        </div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">canvas 确认页嵌入 iframe</span>
+          <span class="trail">
+            <span class="time">周日</span>
+            <button type="button" class="more" title="更多操作" aria-label="更多操作" tabindex="-1">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+              </svg>
+            </button>
+          </span>
+        </div>
+
+        <div class="group-label">更早</div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">权限内联 UI 改造</span>
+          <span class="trail">
+            <span class="time">6/20</span>
+            <button type="button" class="more" title="更多操作" aria-label="更多操作" tabindex="-1">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+              </svg>
+            </button>
+          </span>
+        </div>
+        <div class="row session" role="button" tabindex="0">
+          <span class="label">multi-runtime 引擎重构</span>
+          <span class="trail">
+            <span class="time">6/14</span>
+            <button type="button" class="more" title="更多操作" aria-label="更多操作" tabindex="-1">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+              </svg>
+            </button>
+          </span>
+        </div>
+      </div>
+
+      <!-- ═══ 用户 footer ═══ -->
+      <footer class="user-bar">
+        <span class="avatar">我</span>
+        <div class="user-meta">
+          <div class="user-name">我爱啦啦哈哈</div>
+          <div class="user-plan">Pro trial Plan</div>
+        </div>
+        <button type="button" class="icon-btn" title="设置" aria-label="设置">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </footer>
+    </aside>
+
+    <!-- ═══ 右侧内容区：聊天 | 分隔条 | 画布 ═══ -->
+    <main class="content" id="content">
+      <div class="chat-card" id="chat-card">
+        <!-- 聊天 header -->
+        <div class="chat-header">
+          <span class="chat-title" id="chat-title">重构外壳 UI 设计</span>
+          <span class="chat-status" id="chat-status"><span class="dot"></span><span id="status-text">就绪</span></span>
+          <span class="spacer"></span>
+          <button type="button" class="header-btn" id="btn-split" title="分屏画布" aria-label="分屏画布">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+              <rect x="3.5" y="5" width="17" height="14" rx="2" stroke="currentColor" stroke-width="1.6"/>
+              <path d="M13.5 5v14" stroke="currentColor" stroke-width="1.6"/>
+            </svg>
+          </button>
+          <button type="button" class="header-btn" title="会话操作" aria-label="会话操作">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- 消息流 -->
+        <div class="messages" id="messages">
+          <div class="msg-col" id="msg-col">
+            <div class="msg-user">帮我把外壳 UI 重新设计一版，先出 HTML 原型</div>
+            <div class="msg-assistant">
+              <p>好的。我先读一下现有外壳的实现，提取设计 token 和结构，再给出改造方案。</p>
+              <div class="tool-card">
+                <span class="tool-icon">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" aria-hidden="true">
+                    <path d="M6 3.5h9l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20V5a1.5 1.5 0 0 1 1-1.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                  </svg>
+                </span>
+                <span><span class="tool-name">Read</span> · shell/ShellApp.tsx</span>
+                <span class="check">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
+                    <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </span>
+              </div>
+              <p>外壳改成了「聊天 + 画布」左右分屏：点右上角分屏按钮或左侧「工作画布」试试，中间的分隔条可以拖拽调比例。在下方输入框发一条消息，可以体验完整的发送 → 思考 → 流式回复动效。</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 空状态（新对话时显示） -->
+        <div class="empty-state">
+          <div class="empty-mark">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">
+              <path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 16.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <h2>开始新对话</h2>
+          <p>输入消息，@ 引用文件，/ 唤起技能</p>
+        </div>
+
+        <!-- composer -->
+        <div class="composer-wrap">
+          <div class="composer">
+            <button type="button" class="attach" title="添加附件" aria-label="添加附件">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <textarea class="input" name="composer-input" rows="1" placeholder="输入消息，@ 引用文件，/ 唤起技能…"></textarea>
+            <button type="button" class="send" title="发送" aria-label="发送">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+                <path d="M12 19V6M6.5 11.5L12 6l5.5 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+          <div class="composer-hint">Enter 发送 · Shift+Enter 换行</div>
+        </div>
+      </div>
+
+      <!-- 分隔条 -->
+      <div class="divider" id="divider" role="separator" aria-orientation="vertical" aria-label="调整分屏比例"></div>
+
+      <!-- ═══ 工作画布 panel ═══ -->
+      <section class="canvas-panel" id="canvas-panel" aria-label="工作画布">
+        <div class="canvas-clip">
+          <div class="canvas-header">
+            <div class="canvas-tabs" role="tablist" id="canvas-tabs">
+              <span class="ctab-glider" id="ctab-glider" aria-hidden="true"></span>
+              <button type="button" class="ctab on" role="tab" aria-selected="true" data-ctab="preview">预览</button>
+              <button type="button" class="ctab" role="tab" aria-selected="false" data-ctab="browser">浏览器</button>
+              <button type="button" class="ctab" role="tab" aria-selected="false" data-ctab="images">图片</button>
+            </div>
+            <span class="spacer"></span>
+            <button type="button" class="header-btn" title="在浏览器打开" aria-label="在浏览器打开">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
+                <path d="M14 4h6v6M20 4l-9 9M10 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button type="button" class="header-btn" id="btn-close-canvas" title="收起画布" aria-label="收起画布">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="canvas-body">
+            <!-- 预览 tab：幻灯片渲染占位 -->
+            <div class="cpane on" data-cpane="preview" role="tabpanel">
+              <div class="cpane-toolbar">
+                <span id="slide-counter">3 / 11</span>
+                <span class="spacer"></span>
+                <span>ppt-master · 渲染完成</span>
+              </div>
+              <div class="slide-stage">
+                <div class="slide-frame">
+                  <span>幻灯片预览</span>
+                  <span class="ratio">16:9 · 实际由 WebContentsView 渲染</span>
+                </div>
+              </div>
+              <div class="thumbs" id="thumbs">
+                <button type="button" class="thumb" aria-label="第 1 页"></button>
+                <button type="button" class="thumb" aria-label="第 2 页"></button>
+                <button type="button" class="thumb on" aria-label="第 3 页"></button>
+                <button type="button" class="thumb" aria-label="第 4 页"></button>
+                <button type="button" class="thumb" aria-label="第 5 页"></button>
+              </div>
+            </div>
+
+            <!-- 浏览器 tab：本地服务页面占位 -->
+            <div class="cpane" data-cpane="browser" role="tabpanel">
+              <div class="url-bar">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" aria-hidden="true">
+                  <rect x="5" y="10.5" width="14" height="9" rx="2" stroke="currentColor" stroke-width="1.7"/>
+                  <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" stroke="currentColor" stroke-width="1.7"/>
+                </svg>
+                <span class="addr">localhost:5051 · 确认页（由 skill server 提供）</span>
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" aria-hidden="true">
+                  <path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+              <div class="page-skeleton" aria-hidden="true">
+                <div class="sk h-lg"></div>
+                <div class="sk h-md w-90"></div>
+                <div class="sk h-md w-75"></div>
+                <div class="sk block"></div>
+                <div class="sk h-md w-60"></div>
+              </div>
+            </div>
+
+            <!-- 图片 tab：AI 生成图片占位网格 -->
+            <div class="cpane" data-cpane="images" role="tabpanel">
+              <div class="cpane-toolbar">
+                <span>图片生成</span>
+                <span class="spacer"></span>
+                <span>4 张 · 等待真实资源</span>
+              </div>
+              <div class="img-grid">
+                <div class="img-cell"><span>[image]</span><span class="ratio">1:1 · 生成结果占位</span></div>
+                <div class="img-cell"><span>[image]</span><span class="ratio">1:1 · 生成结果占位</span></div>
+                <div class="img-cell"><span>[image]</span><span class="ratio">1:1 · 生成结果占位</span></div>
+                <div class="img-cell"><span>[image]</span><span class="ratio">1:1 · 生成结果占位</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- ═══ Tweaks ═══ -->
+<button type="button" class="tweaks-fab" id="tweaks-fab">Tweaks</button>
+<div class="tweaks" id="tweaks-panel" role="dialog" aria-label="Tweaks">
+  <h3>Tweaks</h3>
+  <div class="tweak-group">
+    <span class="tw-label">主题</span>
+    <div class="seg" data-attr="data-theme">
+      <button type="button" data-val="porcelain" class="on">素瓷</button>
+      <button type="button" data-val="frost">霜面</button>
+      <button type="button" data-val="clay">暖岩</button>
+    </div>
+  </div>
+  <div class="tweak-group">
+    <span class="tw-label">外观</span>
+    <div class="seg" data-attr="data-mode">
+      <button type="button" data-val="light" class="on">浅色</button>
+      <button type="button" data-val="dark">深色</button>
+    </div>
+  </div>
+  <div class="tweak-group">
+    <span class="tw-label">视图</span>
+    <div class="seg" data-attr="data-view">
+      <button type="button" data-val="chat" class="on">单栏</button>
+      <button type="button" data-val="split">分屏</button>
+    </div>
+  </div>
+  <div class="tweak-group">
+    <span class="tw-label">内容布局</span>
+    <div class="seg" data-attr="data-layout">
+      <button type="button" data-val="float" class="on">浮动卡片</button>
+      <button type="button" data-val="flush">通栏</button>
+    </div>
+  </div>
+  <div class="tweak-group">
+    <span class="tw-label">列表密度</span>
+    <div class="seg" data-attr="data-density">
+      <button type="button" data-val="cozy" class="on">舒适</button>
+      <button type="button" data-val="compact">紧凑</button>
+    </div>
+  </div>
+  <div class="tweak-group">
+    <span class="tw-label">动效</span>
+    <div class="seg" data-attr="data-motion">
+      <button type="button" data-val="on" class="on">丝滑</button>
+      <button type="button" data-val="off">减少</button>
+    </div>
+  </div>
+  <div class="tweak-group">
+    <span class="tw-label">导航栏宽度</span>
+    <div class="seg" data-attr="--rail-width">
+      <button type="button" data-val="220px">220</button>
+      <button type="button" data-val="240px" class="on">240</button>
+      <button type="button" data-val="260px">260</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════
+   交互脚本 —— 五块：glider 定位 / 视图切换 / 会话与消息 /
+   发送模拟 / 分隔条拖拽 + Tweaks
+   ══════════════════════════════════════════════════════════════════ */
+
+const body = document.body;
+const content = document.getElementById('content');
+const messagesEl = document.getElementById('messages');
+const msgCol = document.getElementById('msg-col');
+const chatTitle = document.getElementById('chat-title');
+const chatStatus = document.getElementById('chat-status');
+const statusText = document.getElementById('status-text');
+
+/* ── glider 定位：top/height（或 left/width）写到指示块上，
+   transition 负责平移。首次定位与 resize 重排用 no-anim 跳变。 ── */
+function placeGlider(glider, row, animate = true) {
+  if (!row) {
+    glider.style.opacity = '0';
+    return;
+  }
+  if (!animate) glider.classList.add('no-anim');
+  glider.style.top = row.offsetTop + 'px';
+  glider.style.height = row.offsetHeight + 'px';
+  glider.style.opacity = '1';
+  if (!animate) {
+    void glider.offsetWidth; // 强制 reflow，确保跳变后再恢复过渡
+    glider.classList.remove('no-anim');
+  }
+}
+function placeGliderX(glider, tab, animate = true) {
+  if (!animate) glider.classList.add('no-anim');
+  glider.style.left = tab.offsetLeft + 'px';
+  glider.style.width = tab.offsetWidth + 'px';
+  if (!animate) {
+    void glider.offsetWidth;
+    glider.classList.remove('no-anim');
+  }
+}
+
+const navGlider = document.getElementById('nav-glider');
+const sessionGlider = document.getElementById('session-glider');
+const ctabGlider = document.getElementById('ctab-glider');
+const navRows = [...document.querySelectorAll('.nav-row')];
+const sessionRows = [...document.querySelectorAll('.session')];
+const ctabs = [...document.querySelectorAll('.ctab')];
+
+const activeNav = () => navRows.find((r) => r.classList.contains('active'));
+const activeSession = () => sessionRows.find((r) => r.classList.contains('active'));
+const activeCtab = () => ctabs.find((t) => t.classList.contains('on'));
+
+/* ── 视图切换：单栏 ↔ 分屏。nav 高亮与 header 按钮状态一并同步 ── */
+function setView(view) {
+  body.dataset.view = view;
+  navRows.forEach((r) =>
+    r.classList.toggle('active', r.dataset.tab === (view === 'split' ? 'canvas' : 'chat')));
+  placeGlider(navGlider, activeNav());
+  syncTweaks('data-view', view);
+}
+
+navRows.forEach((row) => {
+  row.addEventListener('click', () => {
+    setView(row.dataset.tab === 'canvas' ? 'split' : 'chat');
+  });
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.click(); }
+  });
+});
+document.getElementById('btn-split').addEventListener('click', () => {
+  setView(body.dataset.view === 'split' ? 'chat' : 'split');
+});
+document.getElementById('btn-close-canvas').addEventListener('click', () => setView('chat'));
+
+/* ── 会话切换：glider 滑过去 + 消息流 stagger 重放 ────────────── */
+const defaultMessages = msgCol.innerHTML; // 原型固定演示消息，切会话时恢复
+
+function replayMessages() {
+  msgCol.classList.remove('replay');
+  void msgCol.offsetWidth;
+  [...msgCol.children].forEach((el, i) => {
+    el.style.animationDelay = i * 60 + 'ms';
+  });
+  msgCol.classList.add('replay');
+}
+
+sessionRows.forEach((row) => {
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('.more')) return; // 「更多」按钮不触发切换
+    if (row.classList.contains('active')) return;
+    sessionRows.forEach((r) => r.classList.remove('active'));
+    row.classList.add('active');
+    placeGlider(sessionGlider, row);
+    chatTitle.textContent = row.querySelector('.label').textContent;
+    body.dataset.pane = 'chat';
+    msgCol.innerHTML = defaultMessages;
+    replayMessages();
+  });
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.click(); }
+  });
+});
+
+/* ── 新对话：清高亮 + 空状态 ─────────────────────────────────── */
+document.getElementById('btn-new-chat').addEventListener('click', () => {
+  sessionRows.forEach((r) => r.classList.remove('active'));
+  placeGlider(sessionGlider, null);
+  chatTitle.textContent = '新对话';
+  body.dataset.pane = 'empty';
+  msgCol.innerHTML = '';
+});
+
+/* ── 画布 tab 切换：横向 glider + 面板进场 ────────────────────── */
+ctabs.forEach((tab) => {
+  tab.addEventListener('click', () => {
+    if (tab.classList.contains('on')) return;
+    ctabs.forEach((t) => {
+      t.classList.remove('on');
+      t.setAttribute('aria-selected', 'false');
+    });
+    tab.classList.add('on');
+    tab.setAttribute('aria-selected', 'true');
+    placeGliderX(ctabGlider, tab);
+    document.querySelectorAll('.cpane').forEach((p) =>
+      p.classList.toggle('on', p.dataset.cpane === tab.dataset.ctab));
+  });
+});
+
+/* 缩略图选中 */
+const thumbs = [...document.querySelectorAll('.thumb')];
+const slideCounter = document.getElementById('slide-counter');
+thumbs.forEach((t, i) => {
+  t.addEventListener('click', () => {
+    thumbs.forEach((x) => x.classList.remove('on'));
+    t.classList.add('on');
+    slideCounter.textContent = (i + 1) + ' / 11';
+  });
+});
+
+/* ── composer：自动伸缩 + 发送 → 思考 → 流式回复模拟 ──────────── */
+const input = document.querySelector('.composer .input');
+const send = document.querySelector('.composer .send');
+send.disabled = true;
+
+input.addEventListener('input', () => {
+  send.disabled = input.value.trim().length === 0;
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+});
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (!send.disabled) sendMessage();
+  }
+});
+send.addEventListener('click', sendMessage);
+
+const scrollToBottom = (smooth = false) => {
+  if (smooth) messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
+  else messagesEl.scrollTop = messagesEl.scrollHeight;
+};
+
+const demoReplies = [
+  '收到。右侧画布已经有对应的分屏预览，可以拖动中间的分隔条调整两栏比例，或者切到「浏览器」「图片」tab 看其它工作区。',
+  '好的，我先读取相关文件再动手。过程中的工具调用会以卡片形式内联在消息流里，完成后打上勾。',
+  '明白。这一版重点在动效：高亮是滑过去的、消息是弹出来的、分屏是展开来的——所有过渡共用同一组缓动曲线，保证手感一致。',
+];
+let replyIdx = 0;
+let sending = false;
+
+function sendMessage() {
+  if (sending) return;
+  const text = input.value.trim();
+  if (!text) return;
+  sending = true;
+
+  // 空状态下首次发送：转入消息流，标题取首句
+  if (body.dataset.pane === 'empty') {
+    body.dataset.pane = 'chat';
+    chatTitle.textContent = text.length > 14 ? text.slice(0, 14) + '…' : text;
+  }
+
+  input.value = '';
+  input.style.height = 'auto';
+  send.disabled = true;
+
+  // 1. user bubble 弹入
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-user pop';
+  bubble.textContent = text;
+  msgCol.appendChild(bubble);
+  scrollToBottom(true);
+
+  // 2. 思考指示 + 状态点呼吸
+  chatStatus.classList.add('busy');
+  statusText.textContent = '思考中';
+  const holder = document.createElement('div');
+  holder.className = 'msg-assistant pop';
+  holder.innerHTML = '<div class="thinking"><i></i><i></i><i></i></div>';
+  setTimeout(() => {
+    msgCol.appendChild(holder);
+    scrollToBottom(true);
+  }, 420);
+
+  // 3. 流式回复：逐字出字 + 光标闪烁
+  setTimeout(() => {
+    const reply = demoReplies[replyIdx++ % demoReplies.length];
+    statusText.textContent = '回复中';
+    holder.innerHTML = '';
+    const p = document.createElement('p');
+    const textNode = document.createTextNode('');
+    const caret = document.createElement('span');
+    caret.className = 'caret';
+    p.append(textNode, caret);
+    holder.appendChild(p);
+
+    let i = 0;
+    (function tick() {
+      textNode.data = reply.slice(0, ++i);
+      messagesEl.scrollTop = messagesEl.scrollHeight; // 流式期间即时贴底，smooth 会抖
+      if (i < reply.length) {
+        setTimeout(tick, 14 + Math.random() * 26);
+      } else {
+        caret.remove();
+        chatStatus.classList.remove('busy');
+        statusText.textContent = '就绪';
+        sending = false;
+      }
+    })();
+  }, 1500);
+}
+
+/* ── 分隔条拖拽：换算成 fr 写回 --split。
+   拖拽期间 .dragging 关闭 grid 过渡，跟手；松手恢复。 ──────────── */
+const divider = document.getElementById('divider');
+const chatCard = document.getElementById('chat-card');
+const canvasPanel = document.getElementById('canvas-panel');
+
+divider.addEventListener('pointerdown', (e) => {
+  if (body.dataset.view !== 'split') return;
+  e.preventDefault();
+  divider.setPointerCapture(e.pointerId);
+  divider.classList.add('active');
+  content.classList.add('dragging');
+  const total = chatCard.getBoundingClientRect().width + canvasPanel.getBoundingClientRect().width;
+  const startX = e.clientX;
+  const startCanvas = canvasPanel.getBoundingClientRect().width;
+
+  const onMove = (ev) => {
+    let canvasW = startCanvas - (ev.clientX - startX);
+    canvasW = Math.max(total * 0.3, Math.min(total * 0.62, canvasW));
+    // grid 右列是 minmax(0, Xfr)，fr 相对左列 1fr —— 直接换算宽度比
+    content.style.setProperty('--split', canvasW / (total - canvasW) + 'fr');
+  };
+  const onUp = () => {
+    divider.classList.remove('active');
+    content.classList.remove('dragging');
+    divider.removeEventListener('pointermove', onMove);
+    divider.removeEventListener('pointerup', onUp);
+  };
+  divider.addEventListener('pointermove', onMove);
+  divider.addEventListener('pointerup', onUp);
+});
+
+/* ── Tweaks：segmented 控件写 body 的 data-* 或 CSS 变量 ───────── */
+const fab = document.getElementById('tweaks-fab');
+const panel = document.getElementById('tweaks-panel');
+fab.addEventListener('click', () => panel.classList.toggle('open'));
+
+/* 外部状态变化（如 nav 切换分屏）时反向同步 Tweaks 的选中态 */
+function syncTweaks(attr, val) {
+  const seg = document.querySelector(`.seg[data-attr='${attr}']`);
+  if (!seg) return;
+  seg.querySelectorAll('button').forEach((b) =>
+    b.classList.toggle('on', b.dataset.val === val));
+}
+
+document.querySelectorAll('.seg').forEach((seg) => {
+  const attr = seg.dataset.attr;
+  seg.querySelectorAll('button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      seg.querySelectorAll('button').forEach((b) => b.classList.remove('on'));
+      btn.classList.add('on');
+      if (attr.startsWith('--')) {
+        body.style.setProperty(attr, btn.dataset.val);
+        // rail 宽度变化后 glider 需要重摆（行高不变但保险起见）
+        requestAnimationFrame(() => {
+          placeGlider(navGlider, activeNav(), false);
+          placeGlider(sessionGlider, activeSession(), false);
+        });
+      } else if (attr === 'data-view') {
+        setView(btn.dataset.val); // 走统一入口，nav 高亮同步
+      } else {
+        body.setAttribute(attr, btn.dataset.val);
+        if (attr === 'data-density') {
+          // 行高变了，glider 位置全部重算
+          requestAnimationFrame(() => {
+            placeGlider(navGlider, activeNav(), false);
+            placeGlider(sessionGlider, activeSession(), false);
+          });
+        }
+      }
+    });
+  });
+});
+
+/* ── 初始化：glider 首次定位（无动画）+ 首屏消息入场 ──────────── */
+function initGliders(animate) {
+  placeGlider(navGlider, activeNav(), animate);
+  placeGlider(sessionGlider, activeSession(), animate);
+  placeGliderX(ctabGlider, activeCtab(), animate);
+}
+requestAnimationFrame(() => {
+  initGliders(false);
+  replayMessages();
+});
+window.addEventListener('resize', () => initGliders(false));
+</script>
+</body>
+</html>

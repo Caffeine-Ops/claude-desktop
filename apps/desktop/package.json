@@ -122,6 +122,7 @@
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
     "@open-design/ui": "workspace:*",
+    "@use-gesture/react": "^10.3.1",
     "electron-updater": "^6.3.9",
     "highlight.js": "^11.11.1",
     "motion": "^12.38.0",

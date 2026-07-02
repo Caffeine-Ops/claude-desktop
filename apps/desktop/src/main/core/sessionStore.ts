@@ -460,6 +460,17 @@ function convertAssistantContent(
       if (block.text.length > 0) parts.push({ type: 'text', text: block.text })
       continue
     }
+    // Extended-thinking block → the renderer's `reasoning` part
+    // (ReasoningCard: collapsed "思考过程 · N 字" row, click to expand).
+    // Previously dropped on the floor, so RESTORED sessions lost the
+    // chain-of-thought that the live session showed. redacted_thinking
+    // (no readable text) still falls through and is skipped.
+    if (block.type === 'thinking' && typeof block.thinking === 'string') {
+      if (block.thinking.length > 0) {
+        parts.push({ type: 'reasoning', text: block.thinking })
+      }
+      continue
+    }
     if (block.type === 'tool_use') {
       const id = typeof block.id === 'string' ? block.id : ''
       const name = typeof block.name === 'string' ? block.name : 'tool'

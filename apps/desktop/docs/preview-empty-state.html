@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-accent="green" data-variant="materialize" data-sparkles="on">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>预览幻灯片 · 空态动画原型</title>
+<style>
+  /* ══════════════════════════════════════════════════════════════
+     设计 token —— 与 slide-editor-prototype-v2.html / app 完全同源：
+     accent = rail token（浅 #16a34a / 深 #2ec96b），一切强调色用
+     color-mix 从 --accent 派生，Tweaks 换 accent 即全局重染。
+     ══════════════════════════════════════════════════════════════ */
+  :root {
+    --accent: #16a34a;
+    --accent-ink: color-mix(in srgb, var(--accent) 78%, #000);
+    --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+    --accent-tint: color-mix(in srgb, var(--accent) 16%, transparent);
+    --accent-ring: color-mix(in srgb, var(--accent) 30%, transparent);
+
+    --bg-app: #fafafa;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f4f4f5;
+    --ink: #1c1917;
+    --ink-muted: #79716b;
+    --ink-faint: #a9a29b;
+    --border: rgba(24, 24, 27, 0.10);
+    --dot: rgba(24, 24, 27, 0.13);
+    --skeleton: #eeedec;
+    --skeleton-hi: #f8f7f6;
+    --card-shadow:
+      0 1px 2px rgba(24, 24, 27, 0.05),
+      0 12px 32px -8px rgba(24, 24, 27, 0.14);
+    --ghost-shadow: 0 8px 24px -12px rgba(24, 24, 27, 0.18);
+  }
+  [data-accent="blue"] { --accent: #3395ff; }
+  [data-theme="dark"] {
+    --accent: #2ec96b;
+    --accent-ink: color-mix(in srgb, var(--accent) 74%, #fff);
+    --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+    --accent-tint: color-mix(in srgb, var(--accent) 22%, transparent);
+
+    --bg-app: #1a1917;
+    --bg-surface: #232220;
+    --bg-subtle: #2a2927;
+    --ink: #f2f0ee;
+    --ink-muted: #a8a29e;
+    --ink-faint: #6d6a66;
+    --border: rgba(240, 238, 235, 0.10);
+    --dot: rgba(240, 238, 235, 0.13);
+    --skeleton: #32302d;
+    --skeleton-hi: #403d39;
+    --card-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.4),
+      0 16px 40px -10px rgba(0, 0, 0, 0.55);
+    --ghost-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+  }
+  [data-accent="blue"][data-theme="dark"] { --accent: #58a6ff; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+    background: var(--bg-app);
+    color: var(--ink);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── 展台：点阵 + 中心聚焦渐隐（沿用画布卡片的「纸片浮在点阵展台」语言） ── */
+  .stage {
+    position: relative;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 44px;
+    background-image: radial-gradient(circle, var(--dot) 1px, transparent 1.2px);
+    background-size: 24px 24px;
+    background-position: center;
+  }
+  /* 点阵只在中心区域可见，四周淡出 —— 避免整屏噪点 */
+  .stage::before {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 62% 55% at 50% 44%, transparent 32%, var(--bg-app) 78%);
+    pointer-events: none;
+  }
+  /* accent 极淡的环境光，让展台不至于死白/死黑 */
+  .stage::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 40% 34% at 50% 42%, var(--accent-soft), transparent 70%);
+    opacity: .55;
+    pointer-events: none;
+    animation: ambient 7s ease-in-out infinite;
+  }
+  @keyframes ambient {
+    0%, 100% { opacity: .38; }
+    50%      { opacity: .62; }
+  }
+
+  /* ══════════════ 变体 A：幻灯片显影（默认） ══════════════ */
+  .deck {
+    position: relative;
+    z-index: 1;
+    width: 300px;
+    height: 169px; /* 16:9 */
+  }
+  .card {
+    position: absolute; inset: 0;
+    border-radius: 10px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+  }
+  /* 后排幽灵卡：暗示「一叠即将到来的幻灯片」，微幅错位 + 呼吸 */
+  .card.ghost {
+    box-shadow: var(--ghost-shadow);
+  }
+  .card.g2 {
+    transform: rotate(3.2deg) translate(14px, -10px) scale(.94);
+    opacity: .38;
+    animation: ghost-b 6.4s ease-in-out infinite;
+  }
+  .card.g1 {
+    transform: rotate(-2.4deg) translate(-12px, -4px) scale(.97);
+    opacity: .6;
+    animation: ghost-a 6.4s ease-in-out infinite;
+  }
+  @keyframes ghost-a {
+    0%, 100% { transform: rotate(-2.4deg) translate(-12px, -4px) scale(.97); }
+    50%      { transform: rotate(-2.9deg) translate(-14px, -9px) scale(.97); }
+  }
+  @keyframes ghost-b {
+    0%, 100% { transform: rotate(3.2deg) translate(14px, -10px) scale(.94); }
+    50%      { transform: rotate(3.8deg) translate(16px, -14px) scale(.94); }
+  }
+
+  /* 主卡：浮动 + 骨架内容 + 扫描显影 */
+  .card.main {
+    box-shadow: var(--card-shadow);
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow: hidden;
+    animation: hover-bob 6s ease-in-out infinite;
+  }
+  @keyframes hover-bob {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-6px); }
+  }
+
+  /* 骨架块：微光从左往右缓慢掠过，逐块错峰 */
+  .sk {
+    border-radius: 5px;
+    background: linear-gradient(100deg,
+      var(--skeleton) 38%, var(--skeleton-hi) 50%, var(--skeleton) 62%);
+    background-size: 240% 100%;
+    animation: shimmer 3.2s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0%   { background-position: 120% 0; }
+    100% { background-position: -120% 0; }
+  }
+  .sk.title { width: 58%; height: 16px; }
+  .sk.hero  { flex: 1; animation-delay: .35s; }
+  .sk.line1 { width: 86%; height: 8px; animation-delay: .6s; }
+  .sk.line2 { width: 64%; height: 8px; animation-delay: .75s; }
+
+  /* 扫描线：accent 光带自上而下「显影」，每 4.8s 一次 */
+  .scan {
+    position: absolute; left: 0; right: 0; top: -34%;
+    height: 34%;
+    background: linear-gradient(to bottom,
+      transparent,
+      color-mix(in srgb, var(--accent) 14%, transparent) 62%,
+      color-mix(in srgb, var(--accent) 38%, transparent) 98%,
+      color-mix(in srgb, var(--accent) 62%, transparent) 100%);
+    animation: scan 4.8s cubic-bezier(.45, 0, .35, 1) infinite;
+    pointer-events: none;
+  }
+  @keyframes scan {
+    0%      { top: -34%; opacity: 0; }
+    8%      { opacity: 1; }
+    52%     { top: 100%; opacity: 1; }
+    60%, 100% { top: 100%; opacity: 0; }
+  }
+
+  /* 描边彗星：极淡的 accent 流光沿卡片边缘巡游 */
+  .comet { position: absolute; inset: -1px; pointer-events: none; }
+  .comet rect {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-dasharray: 72 856; /* 周长 ≈ 928 */
+    opacity: .55;
+    animation: comet 5.6s linear infinite;
+  }
+  @keyframes comet {
+    to { stroke-dashoffset: -928; }
+  }
+
+  /* 生成尘埃：稀疏的 accent 微粒自卡片附近上浮消散 */
+  .sparkle {
+    position: absolute;
+    width: 3px; height: 3px;
+    border-radius: 50%;
+    background: var(--accent);
+    opacity: 0;
+    animation: rise var(--dur, 4s) ease-in-out var(--delay, 0s) infinite;
+    pointer-events: none;
+  }
+  @keyframes rise {
+    0%   { transform: translateY(0) scale(.6); opacity: 0; }
+    18%  { opacity: var(--peak, .7); }
+    70%  { opacity: calc(var(--peak, .7) * .35); }
+    100% { transform: translateY(-64px) scale(1); opacity: 0; }
+  }
+  [data-sparkles="off"] .sparkle { display: none; }
+
+  /* ══════════════ 变体 B：粒子网格（Apple Intelligence 语言） ══════════════ */
+  .particles-wrap { position: relative; z-index: 1; width: 340px; height: 200px; display: none; }
+  .particles-wrap canvas { width: 100%; height: 100%; display: block; }
+  .particles-wrap .comet { inset: 20px 20px; }
+
+  /* ══════════════ 变体 C：极简呼吸 ══════════════ */
+  .minimal-wrap { position: relative; z-index: 1; display: none; flex-direction: column; align-items: center; gap: 26px; }
+  .halo {
+    position: absolute; top: 50%; left: 50%;
+    width: 300px; height: 140px;
+    transform: translate(-50%, -58%);
+    background: radial-gradient(ellipse at center, var(--accent-tint), transparent 68%);
+    filter: blur(10px);
+    animation: halo 5s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes halo {
+    0%, 100% { opacity: .4; transform: translate(-50%, -58%) scale(.92); }
+    50%      { opacity: .85; transform: translate(-50%, -58%) scale(1.05); }
+  }
+  .hairline {
+    position: relative;
+    width: 132px; height: 2px;
+    border-radius: 1px;
+    background: color-mix(in srgb, var(--ink) 10%, transparent);
+    overflow: hidden;
+  }
+  .hairline::after {
+    content: "";
+    position: absolute; top: 0; bottom: 0; left: 0;
+    width: 34%;
+    border-radius: 1px;
+    background: var(--accent);
+    animation: hairline 2.6s cubic-bezier(.6, .05, .4, .95) infinite;
+  }
+  @keyframes hairline {
+    0%   { left: -34%; }
+    55%  { left: 100%; }
+    100% { left: 100%; }
+  }
+
+  /* 变体切换 */
+  [data-variant="particles"] .deck,
+  [data-variant="minimal"] .deck { display: none; }
+  [data-variant="particles"] .particles-wrap { display: block; }
+  [data-variant="minimal"] .minimal-wrap { display: flex; }
+  [data-variant="minimal"] .stage { gap: 0; }
+  [data-variant="minimal"] .stage::before { background: radial-gradient(ellipse 52% 46% at 50% 47%, transparent 18%, var(--bg-app) 72%); }
+
+  /* ── 状态文案（沿用现文案，加呼吸状态点） ── */
+  .status {
+    position: relative; z-index: 1;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 7px;
+  }
+  .status .row {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .status .pulse {
+    position: relative;
+    width: 6px; height: 6px;
+  }
+  .status .pulse::before,
+  .status .pulse::after {
+    content: "";
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .status .pulse::before {
+    animation: ping 2.4s cubic-bezier(0, 0, .2, 1) infinite;
+  }
+  @keyframes ping {
+    0%   { transform: scale(1); opacity: .75; }
+    75%, 100% { transform: scale(2.6); opacity: 0; }
+  }
+  .status h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: .01em;
+  }
+  .status p {
+    font-size: 13px;
+    color: var(--ink-muted);
+  }
+
+  /* ── reduced motion：全部冻结在静态可读状态 ── */
+  @media (prefers-reduced-motion: reduce) {
+    .card, .sk, .scan, .comet rect, .sparkle, .stage::after,
+    .halo, .hairline::after, .status .pulse::before { animation: none !important; }
+    .scan { display: none; }
+    .sparkle { display: none; }
+  }
+
+  /* ── Tweaks 面板（关闭时完全隐藏） ── */
+  .tweaks-toggle {
+    position: fixed; right: 16px; bottom: 16px; z-index: 50;
+    padding: 7px 14px;
+    font-size: 12px;
+    color: var(--ink-muted);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0,0,0,.08);
+  }
+  .tweaks {
+    position: fixed; right: 16px; bottom: 58px; z-index: 50;
+    width: 220px;
+    padding: 14px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 16px 48px rgba(0,0,0,.16);
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+    font-size: 12px;
+  }
+  .tweaks.open { display: flex; }
+  .tweaks h2 { font-size: 12px; font-weight: 600; color: var(--ink-muted); }
+  .tweaks .group { display: flex; flex-direction: column; gap: 6px; }
+  .tweaks label.title { color: var(--ink-faint); font-size: 11px; }
+  .tweaks .opts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tweaks button.opt {
+    padding: 5px 10px;
+    font-size: 12px;
+    color: var(--ink-muted);
+    background: var(--bg-subtle);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .tweaks button.opt.on {
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    border-color: var(--accent-ring);
+  }
+</style>
+</head>
+<body>
+  <div class="stage" id="stage">
+    <!-- 变体 A：幻灯片显影 -->
+    <div class="deck" id="deck">
+      <div class="card ghost g2"></div>
+      <div class="card ghost g1"></div>
+      <div class="card main">
+        <div class="sk title"></div>
+        <div class="sk hero"></div>
+        <div class="sk line1"></div>
+        <div class="sk line2"></div>
+        <div class="scan"></div>
+        <svg class="comet" viewBox="0 0 300 169" preserveAspectRatio="none" aria-hidden="true">
+          <rect x="1" y="1" width="298" height="167" rx="10"></rect>
+        </svg>
+      </div>
+    </div>
+
+    <!-- 变体 B：粒子网格 -->
+    <div class="particles-wrap">
+      <canvas id="pcanvas" width="680" height="400" aria-hidden="true"></canvas>
+      <svg class="comet" viewBox="0 0 300 169" preserveAspectRatio="none" aria-hidden="true">
+        <rect x="1" y="1" width="298" height="167" rx="10"></rect>
+      </svg>
+    </div>
+
+    <!-- 变体 C：极简呼吸 -->
+    <div class="minimal-wrap">
+      <div class="halo"></div>
+      <div class="hairline"></div>
+    </div>
+
+    <!-- 状态文案 -->
+    <div class="status">
+      <div class="row">
+        <span class="pulse" aria-hidden="true"></span>
+        <h1>实时预览已就绪</h1>
+      </div>
+      <p>生成的幻灯片会在这里实时出现</p>
+    </div>
+  </div>
+
+  <button class="tweaks-toggle" id="tweaksToggle" type="button">Tweaks</button>
+  <div class="tweaks" id="tweaksPanel" role="group" aria-label="Tweaks">
+    <h2>Tweaks</h2>
+    <div class="group">
+      <label class="title">动画变体</label>
+      <div class="opts" data-attr="data-variant">
+        <button class="opt" data-val="materialize" type="button">显影</button>
+        <button class="opt" data-val="particles" type="button">粒子</button>
+        <button class="opt" data-val="minimal" type="button">极简</button>
+      </div>
+    </div>
+    <div class="group">
+      <label class="title">主题</label>
+      <div class="opts" data-attr="data-theme">
+        <button class="opt" data-val="light" type="button">浅色</button>
+        <button class="opt" data-val="dark" type="button">深色</button>
+      </div>
+    </div>
+    <div class="group">
+      <label class="title">主题色</label>
+      <div class="opts" data-attr="data-accent">
+        <button class="opt" data-val="green" type="button">绿</button>
+        <button class="opt" data-val="blue" type="button">蓝</button>
+      </div>
+    </div>
+    <div class="group">
+      <label class="title">生成尘埃</label>
+      <div class="opts" data-attr="data-sparkles">
+        <button class="opt" data-val="on" type="button">开</button>
+        <button class="opt" data-val="off" type="button">关</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  /* ── 生成尘埃：稀疏随机微粒，参数落在 CSS 变量上 ── */
+  (function sparkles() {
+    var deck = document.getElementById('deck');
+    var N = 12;
+    for (var i = 0; i < N; i++) {
+      var s = document.createElement('span');
+      s.className = 'sparkle';
+      s.style.left = (6 + Math.random() * 88) + '%';
+      s.style.top = (55 + Math.random() * 50) + '%';
+      s.style.setProperty('--dur', (3.4 + Math.random() * 3.2).toFixed(2) + 's');
+      s.style.setProperty('--delay', (Math.random() * 6).toFixed(2) + 's');
+      s.style.setProperty('--peak', (0.35 + Math.random() * 0.4).toFixed(2));
+      deck.appendChild(s);
+    }
+  })();
+
+  /* ── 变体 B：点阵粒子 —— 两团高斯亮斑沿 Lissajous 轨迹游走 ──
+     镜像 app 的 DotGridLoader 语言：网格点常暗，亮斑经过处点变亮变大。 */
+  (function particles() {
+    var canvas = document.getElementById('pcanvas');
+    var ctx = canvas.getContext('2d');
+    var W = canvas.width, H = canvas.height;
+    var GAP = 26, R = 2.2;
+    var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function accentColor() {
+      return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    }
+    function inkAlpha() {
+      return document.documentElement.getAttribute('data-theme') === 'dark' ? 0.16 : 0.12;
+    }
+    /* hex → rgb 数组（token 都是 #rrggbb 形式） */
+    function rgb(hex) {
+      var h = hex.replace('#', '');
+      return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+    }
+
+    function frame(t) {
+      var visible = document.documentElement.getAttribute('data-variant') === 'particles';
+      if (!visible) { requestAnimationFrame(frame); return; }
+      ctx.clearRect(0, 0, W, H);
+      var a = rgb(accentColor());
+      var base = inkAlpha();
+      var s = t / 1000;
+      /* 两团亮斑：不同频率的 Lissajous，永不重复的游走感 */
+      var blobs = [
+        { x: W * (0.5 + 0.32 * Math.sin(s * 0.42)), y: H * (0.5 + 0.28 * Math.cos(s * 0.31)), r: 120 },
+        { x: W * (0.5 + 0.3 * Math.cos(s * 0.23 + 2)), y: H * (0.5 + 0.3 * Math.sin(s * 0.37 + 1)), r: 95 }
+      ];
+      for (var gx = GAP / 2; gx < W; gx += GAP) {
+        for (var gy = GAP / 2; gy < H; gy += GAP) {
+          var glow = 0;
+          for (var b = 0; b < blobs.length; b++) {
+            var dx = gx - blobs[b].x, dy = gy - blobs[b].y;
+            glow += Math.exp(-(dx * dx + dy * dy) / (2 * blobs[b].r * blobs[b].r));
+          }
+          glow = Math.min(glow, 1);
+          var alpha = base + glow * 0.75;
+          var rad = R + glow * 2.6;
+          ctx.beginPath();
+          ctx.arc(gx, gy, rad, 0, 6.2832);
+          if (glow > 0.06) {
+            ctx.fillStyle = 'rgba(' + a[0] + ',' + a[1] + ',' + a[2] + ',' + alpha.toFixed(3) + ')';
+          } else {
+            var ink = document.documentElement.getAttribute('data-theme') === 'dark' ? '240,238,235' : '24,24,27';
+            ctx.fillStyle = 'rgba(' + ink + ',' + base.toFixed(3) + ')';
+          }
+          ctx.fill();
+        }
+      }
+      if (!reduced) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+
+  /* ── Tweaks 联动：按钮 → <html> data-attr ── */
+  (function tweaks() {
+    var root = document.documentElement;
+    var panel = document.getElementById('tweaksPanel');
+    /* 截图/演示便捷：#dark,particles,blue 之类的 hash 直接落 data-attr */
+    (location.hash || '').slice(1).split(',').forEach(function (k) {
+      if (k === 'dark' || k === 'light') root.setAttribute('data-theme', k);
+      if (k === 'materialize' || k === 'particles' || k === 'minimal') root.setAttribute('data-variant', k);
+      if (k === 'green' || k === 'blue') root.setAttribute('data-accent', k);
+    });
+    document.getElementById('tweaksToggle').addEventListener('click', function () {
+      panel.classList.toggle('open');
+    });
+    function sync() {
+      panel.querySelectorAll('.opts').forEach(function (g) {
+        var attr = g.getAttribute('data-attr');
+        g.querySelectorAll('.opt').forEach(function (b) {
+          b.classList.toggle('on', root.getAttribute(attr) === b.getAttribute('data-val'));
+        });
+      });
+    }
+    panel.addEventListener('click', function (e) {
+      var btn = e.target.closest('.opt');
+      if (!btn) return;
+      root.setAttribute(btn.parentElement.getAttribute('data-attr'), btn.getAttribute('data-val'));
+      sync();
+    });
+    sync();
+  })();
+</script>
+</body>
+</html>

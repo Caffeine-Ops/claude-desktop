@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-accent="green" data-toc="on" data-width="normal">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>大纲页 · design_spec 阅读器原型 v2</title>
+<style>
+  /* ═══════════════════════════════════════════════════════════════════════
+     Design tokens — 与 slide-editor / confirm-ui 原型 v2 同一套（app 主题
+     系统同源）：accent 取 rail token（浅 #16a34a / 深 #2ec96b），派生色全部
+     color-mix。demo 内容取自刘德华主题 deck 的真实 design_spec 片段；
+     文档固定 11 章（strategist.md §6.2），TOC 以此为导航骨架。
+     ═══════════════════════════════════════════════════════════════════════ */
+  :root {
+    --accent: #16a34a;
+    --accent-contrast: #ffffff;
+    --accent-ink: color-mix(in srgb, var(--accent) 78%, #000);
+    --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+    --accent-ring: color-mix(in srgb, var(--accent) 30%, transparent);
+
+    --bg-app: #fafafa;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f4f4f5;
+    --bg-hover: rgba(24, 24, 27, 0.045);
+
+    --border: #ececec;
+    --border-strong: #e0e0e2;
+
+    --text: #1a1c1f;
+    --text-2: #6f7076;
+    --text-3: #a3a4aa;
+
+    --r-lg: 12px;
+    --r-md: 8px;
+    --r-sm: 6px;
+
+    --e1: 0 1px 2px rgba(0,0,0,.04), 0 2px 8px rgba(0,0,0,.04);
+    --e2: 0 4px 16px rgba(0,0,0,.08);
+    --e-float: 0 8px 30px rgba(0,0,0,.14), 0 0 0 1px rgba(0,0,0,.04);
+
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    --spring: cubic-bezier(0.3, 1.3, 0.5, 1);
+    --dur: 170ms;
+
+    --font: "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+    --content-w: 800px;
+  }
+  [data-width="wide"] { --content-w: 980px; }
+  [data-accent="blue"] { --accent: #3395ff; }
+  [data-theme="dark"] {
+    --accent: #2ec96b;
+    --accent-ink: color-mix(in srgb, var(--accent) 74%, #fff);
+    --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+    --bg-app: #1a1917;
+    --bg-surface: #232220;
+    --bg-subtle: #2b2a27;
+    --bg-hover: rgba(232, 228, 220, 0.05);
+    --border: #32312e;
+    --border-strong: #3c3b37;
+    --text: #e8e4dc;
+    --text-2: #a5a199;
+    --text-3: #726f69;
+    --e1: 0 1px 2px rgba(0,0,0,.35), 0 2px 8px rgba(0,0,0,.25);
+    --e2: 0 4px 16px rgba(0,0,0,.4);
+    --e-float: 0 8px 30px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.07);
+  }
+  [data-theme="dark"][data-accent="blue"] { --accent: #2997ff; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg-app);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    font-size: 13px;
+    overflow: hidden;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  .tnum { font-variant-numeric: tabular-nums; }
+  code, .mono { font-family: var(--mono); }
+
+  /* ─── 骨架：header + (toc | 滚动内容) ──────────────────────────────── */
+  .page { display: flex; flex-direction: column; height: 100vh; }
+
+  .head {
+    flex-shrink: 0;
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 20px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .doc-badge {
+    width: 30px; height: 30px; border-radius: var(--r-md);
+    background: var(--accent-soft); color: var(--accent-ink);
+    display: grid; place-items: center; flex-shrink: 0;
+  }
+  .doc-badge svg { width: 15px; height: 15px; }
+  .head-main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .head-name { display: flex; align-items: center; gap: 8px; }
+  .head-name code { font-size: 13px; font-weight: 600; }
+  .writing-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 18px; padding: 0 8px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent-ink);
+    font-size: 10.5px; font-weight: 600;
+  }
+  .writing-pill .dot {
+    width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
+    animation: pulse 1.6s var(--ease) infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  .head-meta { font-size: 11px; color: var(--text-3); display: flex; gap: 6px; }
+  .head .spacer { flex: 1; }
+  .head-progress { display: flex; align-items: center; gap: 8px; }
+  .head-progress .segs { display: flex; gap: 3px; }
+  .head-progress .seg { width: 12px; height: 4px; border-radius: 2px; background: var(--bg-subtle); border: 1px solid var(--border); }
+  .head-progress .seg.on { background: var(--accent); border-color: transparent; }
+  .head-progress .seg.ing { background: var(--accent-soft); border-color: var(--accent-ring); }
+  .head-progress .num { font-size: 11px; color: var(--text-3); }
+
+  .body { flex: 1; min-height: 0; display: flex; }
+
+  /* ─── 左侧 TOC ─────────────────────────────────────────────────────── */
+  .toc {
+    width: 216px; flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg-surface);
+    overflow-y: auto;
+    padding: 14px 10px 20px;
+  }
+  [data-toc="off"] .toc { display: none; }
+  .toc-label {
+    padding: 0 10px 8px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--text-3);
+  }
+  .toc-item {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; padding: 6px 10px;
+    border-radius: var(--r-md);
+    text-align: left; font-size: 12px; color: var(--text-2);
+    transition: background var(--dur), color var(--dur);
+    position: relative;
+  }
+  .toc-item:hover { background: var(--bg-hover); color: var(--text); }
+  .toc-item .rn {
+    width: 26px; flex-shrink: 0;
+    font-size: 10px; font-weight: 600; color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+    transition: color var(--dur);
+  }
+  .toc-item .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .toc-item.on { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
+  .toc-item.on .rn { color: var(--accent-ink); }
+  .toc-item.on::before {
+    content: ''; position: absolute; left: 0; top: 7px; bottom: 7px;
+    width: 2.5px; border-radius: 2px; background: var(--accent);
+  }
+  .toc-item .st { flex-shrink: 0; }
+  .toc-item .st-done { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: .7; }
+  .toc-item .st-ing { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.6s var(--ease) infinite; }
+  .toc-item.pending { opacity: .45; cursor: default; }
+  .toc-item.pending:hover { background: none; color: var(--text-2); }
+
+  /* ─── 内容区 ───────────────────────────────────────────────────────── */
+  .scroll { flex: 1; min-width: 0; overflow-y: auto; scroll-behavior: smooth; }
+  .content { max-width: var(--content-w); margin: 0 auto; padding: 28px 32px 80px; transition: max-width var(--dur) var(--ease); }
+
+  .chapter { padding: 6px 0 34px; }
+  .chap-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .chap-no {
+    height: 24px; min-width: 34px; padding: 0 8px;
+    border-radius: 7px;
+    display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent-ink);
+    font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+  }
+  .chap-title { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+  .chap-sub { font-size: 11.5px; color: var(--text-3); margin-left: 2px; }
+
+  .prose { font-size: 13px; line-height: 1.75; color: var(--text); }
+  .prose p { margin: 8px 0; text-wrap: pretty; }
+  .prose strong { font-weight: 600; }
+  .prose .h3 { margin: 18px 0 8px; font-size: 13.5px; font-weight: 600; }
+  .prose ul { margin: 8px 0; padding-left: 4px; list-style: none; }
+  .prose li { position: relative; padding-left: 16px; margin: 5px 0; }
+  .prose li::before {
+    content: ''; position: absolute; left: 2px; top: 9px;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent); opacity: .45;
+  }
+  .prose code {
+    font-size: 11.5px; padding: 1.5px 6px; border-radius: 5px;
+    background: var(--bg-subtle); border: 1px solid var(--border);
+    color: var(--text); white-space: nowrap;
+  }
+  .callout {
+    margin: 14px 0; padding: 10px 14px;
+    border-radius: var(--r-md);
+    background: var(--accent-soft);
+    font-size: 12px; line-height: 1.7; color: var(--text-2);
+  }
+  .callout b { color: var(--accent-ink); font-weight: 600; }
+
+  /* ─── 表格 ─────────────────────────────────────────────────────────── */
+  .tbl-wrap {
+    margin: 12px 0;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--bg-surface);
+    box-shadow: var(--e1);
+    overflow-x: auto;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  thead th {
+    position: sticky; top: 0;
+    text-align: left; white-space: nowrap;
+    padding: 8px 14px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--text-3);
+    background: var(--bg-subtle);
+    border-bottom: 1px solid var(--border);
+  }
+  tbody td {
+    padding: 10px 14px; vertical-align: top;
+    border-bottom: 1px solid var(--border);
+    line-height: 1.6;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr { transition: background var(--dur); }
+  tbody tr:hover { background: var(--bg-hover); }
+  td.nowrap { white-space: nowrap; }
+  td .dim { color: var(--text-3); font-size: 11px; }
+  .swatch { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .swatch i { width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,.12); flex-shrink: 0; }
+
+  .path-chip {
+    display: inline-block; max-width: 100%;
+    font-family: var(--mono); font-size: 11px;
+    padding: 2px 7px; border-radius: 5px;
+    background: var(--bg-subtle); border: 1px solid var(--border);
+    color: var(--text-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .page-tag {
+    display: inline-flex; height: 18px; padding: 0 7px; margin-right: 4px;
+    align-items: center; border-radius: 5px;
+    background: var(--accent-soft); color: var(--accent-ink);
+    font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 20px; padding: 0 8px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600; white-space: nowrap;
+  }
+  .status-pill.pending { background: var(--bg-subtle); color: var(--text-2); border: 1px solid var(--border); }
+  .status-pill.pending::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--text-3); }
+
+  /* ─── IX Content Outline：slide 卡片 ───────────────────────────────── */
+  .part-label {
+    display: flex; align-items: center; gap: 10px;
+    margin: 20px 0 10px;
+    font-size: 12.5px; font-weight: 600; color: var(--text-2);
+  }
+  .part-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .slide-card {
+    display: flex; gap: 14px;
+    margin: 8px 0;
+    padding: 13px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--bg-surface);
+    box-shadow: var(--e1);
+    transition: border-color var(--dur), box-shadow var(--dur), transform var(--dur) var(--ease);
+  }
+  .slide-card:hover { border-color: var(--border-strong); box-shadow: var(--e2); transform: translateY(-1px); }
+  .slide-no {
+    flex-shrink: 0;
+    width: 38px; height: 28px; border-radius: 7px;
+    display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent-ink);
+    font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  .slide-body { min-width: 0; flex: 1; }
+  .slide-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+  .slide-title { font-size: 13.5px; font-weight: 600; }
+  .slide-tags { display: inline-flex; gap: 5px; }
+  .tag {
+    display: inline-flex; align-items: center; height: 18px; padding: 0 7px;
+    border-radius: 5px; font-size: 10.5px; font-weight: 500;
+    background: var(--bg-subtle); border: 1px solid var(--border); color: var(--text-2);
+    white-space: nowrap;
+  }
+  .slide-msg { margin-top: 5px; font-size: 12px; line-height: 1.65; color: var(--text-2); }
+  .slide-msg b { color: var(--text); font-weight: 550; }
+  .slide-points { margin-top: 7px; display: flex; flex-direction: column; gap: 4px; }
+  .slide-points span { position: relative; padding-left: 14px; font-size: 12px; line-height: 1.6; color: var(--text-2); }
+  .slide-points span::before {
+    content: ''; position: absolute; left: 1px; top: 8px;
+    width: 4px; height: 4px; border-radius: 50%;
+    background: var(--accent); opacity: .5;
+  }
+
+  /* ─── 写入中章节：shimmer 占位 ─────────────────────────────────────── */
+  .writing-block { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+  .sk {
+    height: 12px; border-radius: 4px;
+    background: linear-gradient(100deg, var(--bg-subtle) 40%, var(--bg-surface) 50%, var(--bg-subtle) 60%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s var(--ease) infinite;
+  }
+  @keyframes shimmer { from { background-position: 130% 0; } to { background-position: -30% 0; } }
+  .caret-line { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--text-3); }
+  .caret {
+    width: 2px; height: 14px; background: var(--accent);
+    animation: blink 1s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ─── Tweaks ───────────────────────────────────────────────────────── */
+  .tweaks-fab {
+    position: fixed; right: 16px; bottom: 16px; z-index: 60;
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--bg-surface); border: 1px solid var(--border-strong);
+    box-shadow: var(--e2);
+    display: grid; place-items: center; color: var(--text-2);
+    transition: color var(--dur), box-shadow var(--dur), transform 80ms var(--ease);
+  }
+  .tweaks-fab:hover { color: var(--text); box-shadow: var(--e-float); }
+  .tweaks-fab:active { transform: scale(.94); }
+  .tweaks {
+    position: fixed; right: 16px; bottom: 62px; z-index: 60;
+    width: 240px;
+    background: var(--bg-surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--e-float);
+    padding: 14px;
+    display: none; flex-direction: column; gap: 12px;
+  }
+  .tweaks.open { display: flex; animation: tw-in .18s var(--spring); }
+  @keyframes tw-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .tweaks h3 { font-size: 12px; font-weight: 600; }
+  .tw-row { display: flex; flex-direction: column; gap: 6px; }
+  .tw-row .lbl { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+  .tw-opts { display: flex; gap: 4px; background: var(--bg-subtle); border-radius: var(--r-md); padding: 3px; }
+  .tw-opt {
+    flex: 1; height: 24px; border-radius: var(--r-sm);
+    font-size: 11px; color: var(--text-2);
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    transition: background var(--dur), color var(--dur), box-shadow var(--dur);
+  }
+  .tw-opt.on { background: var(--bg-surface); color: var(--text); font-weight: 500; box-shadow: var(--e1); }
+  .sw-mini { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  @media (max-width: 900px) { .toc { display: none; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ── 文档头 ── -->
+  <header class="head">
+    <div class="doc-badge">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/>
+      </svg>
+    </div>
+    <div class="head-main">
+      <div class="head-name">
+        <code>design_spec.md</code>
+        <span class="writing-pill"><span class="dot"></span>写入中</span>
+      </div>
+      <div class="head-meta">
+        <span>刘德华 · 影艺人生</span><span>·</span>
+        <span>16:9 幻灯片 · 24 页</span><span>·</span>
+        <span>黑板粉笔手绘</span>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <div class="head-progress" title="章节写入进度">
+      <div class="segs" id="chap-segs"></div>
+      <span class="num tnum" id="chap-num">9 / 11 章</span>
+    </div>
+  </header>
+
+  <div class="body">
+    <!-- ── 左侧章节目录（scrollspy） ── -->
+    <nav class="toc" id="toc">
+      <div class="toc-label">章节</div>
+      <!-- items injected by JS -->
+    </nav>
+
+    <!-- ── 文档内容 ── -->
+    <div class="scroll" id="scroll">
+      <div class="content" id="content">
+
+        <!-- I -->
+        <section class="chapter" data-ch="I">
+          <div class="chap-head"><span class="chap-no">I</span><span class="chap-title">Project Information</span></div>
+          <div class="tbl-wrap"><table>
+            <tbody>
+              <tr><td class="nowrap" style="width:140px; color:var(--text-3)">项目名称</td><td><b>刘德华 · 影艺人生</b>（人物生平主题演示）</td></tr>
+              <tr><td class="nowrap" style="color:var(--text-3)">画布 / 页数</td><td>16:9 幻灯片 · 1280 × 720 · 24 页</td></tr>
+              <tr><td class="nowrap" style="color:var(--text-3)">视觉风格</td><td>黑板粉笔手绘 · 深色黑板底 + 粉笔白线稿 + 彩色粉笔点缀</td></tr>
+              <tr><td class="nowrap" style="color:var(--text-3)">受众 / 场景</td><td>影迷向分享会 · 投影演讲 · 讲者主导</td></tr>
+            </tbody>
+          </table></div>
+        </section>
+
+        <!-- II -->
+        <section class="chapter" data-ch="II">
+          <div class="chap-head"><span class="chap-no">II</span><span class="chap-title">Canvas Specification</span></div>
+          <div class="prose">
+            <p><code>viewBox="0 0 1280 720"</code> · 页边距 64px · 内容安全区 1152 × 592 · 页眉区 0–88px / 页脚区 672–720px。</p>
+          </div>
+        </section>
+
+        <!-- III -->
+        <section class="chapter" data-ch="III">
+          <div class="chap-head"><span class="chap-no">III</span><span class="chap-title">Visual Theme</span><span class="chap-sub">深色黑板基调</span></div>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>角色</th><th>色值</th><th>用途</th></tr></thead>
+            <tbody>
+              <tr><td class="nowrap">背景</td><td class="nowrap"><span class="swatch"><i style="background:#2f4538"></i><code>#2F4538</code></span></td><td>黑板墨绿底，全页统一</td></tr>
+              <tr><td class="nowrap">主色 / 正文</td><td class="nowrap"><span class="swatch"><i style="background:#f5f2e8"></i><code>#F5F2E8</code></span></td><td>粉笔白，标题与正文线稿</td></tr>
+              <tr><td class="nowrap">强调</td><td class="nowrap"><span class="swatch"><i style="background:#e8c85a"></i><code>#E8C85A</code></span></td><td>粉笔黄，数字与高亮下划线</td></tr>
+              <tr><td class="nowrap">次强调</td><td class="nowrap"><span class="swatch"><i style="background:#d98a8a"></i><code>#D98A8A</code></span></td><td>粉笔粉，装饰星点与爱心小图案</td></tr>
+            </tbody>
+          </table></div>
+        </section>
+
+        <!-- IV -->
+        <section class="chapter" data-ch="IV">
+          <div class="chap-head"><span class="chap-no">IV</span><span class="chap-title">Typography System</span></div>
+          <div class="prose">
+            <p>标题：<code>Long Cang</code>（粉笔手写体）+ <code>Caveat</code>（西文手写）；正文：<code>PingFang SC</code> + <code>Segoe UI</code>。正文基准 <b>28px</b>（presentation 交付），标题 49px / 副标题 38px / 注释 22px。</p>
+          </div>
+        </section>
+
+        <!-- V -->
+        <section class="chapter" data-ch="V">
+          <div class="chap-head"><span class="chap-no">V</span><span class="chap-title">Layout Principles</span></div>
+          <div class="prose">
+            <p>页结构三段式（页眉 / 内容 / 页脚）；page_rhythm：P01/P24 <code>anchor</code>、P05/P12 <code>breathing</code>、其余 <code>dense</code>。黑板留白即构图——线稿元素不满铺，四角保留手绘呼吸感。</p>
+          </div>
+        </section>
+
+        <!-- VI -->
+        <section class="chapter" data-ch="VI">
+          <div class="chap-head"><span class="chap-no">VI</span><span class="chap-title">Icon Usage Spec</span><span class="chap-sub">tabler-outline 全套</span></div>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>语义</th><th>图标</th><th>用于页面</th></tr></thead>
+            <tbody>
+              <tr><td>电影 / 作品</td><td><span class="path-chip">tabler-outline/movie</span></td><td class="nowrap"><span class="page-tag">P03</span><span class="page-tag">P04</span></td></tr>
+              <tr><td>音乐 / 唱片</td><td><span class="path-chip">tabler-outline/microphone-2</span></td><td class="nowrap"><span class="page-tag">P07</span><span class="page-tag">P08</span></td></tr>
+              <tr><td>奖项 / 荣誉</td><td><span class="path-chip">tabler-outline/award</span></td><td class="nowrap"><span class="page-tag">P04</span><span class="page-tag">P05</span></td></tr>
+              <tr><td>时间 / 年份标注</td><td><span class="path-chip">tabler-outline/calendar-time</span></td><td class="nowrap"><span class="page-tag">P02</span><span class="page-tag">P05</span></td></tr>
+              <tr><td>地点（香港 / 四川）</td><td><span class="path-chip">tabler-outline/map-pin-2</span></td><td class="nowrap"><span class="page-tag">P02</span><span class="page-tag">P05</span></td></tr>
+            </tbody>
+          </table></div>
+        </section>
+
+        <!-- VII -->
+        <section class="chapter" data-ch="VII">
+          <div class="chap-head"><span class="chap-no">VII</span><span class="chap-title">Visualization Reference List</span><span class="chap-sub">Catalog read: 71 templates</span></div>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>Page</th><th>Template</th><th>Path</th><th>Summary-Quote (verbatim)</th><th>Usage</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="nowrap"><span class="page-tag">P04</span></td>
+                <td class="nowrap"><b>kpi_cards</b></td>
+                <td style="max-width:180px"><span class="path-chip">templates/charts/kpi_cards.svg</span></td>
+                <td style="min-width:220px"><span class="dim">"Pick for 4-8 standalone numeric metrics shown as overview cards (2x2 or 1x4) — exec summary opener, dashboard headline, quarterly recap."</span></td>
+                <td style="min-width:200px">电影成就四项核心数字（170+ 部电影、3 次金像影帝、2 次金马影帝、桃姐双料影帝年份）以卡片形式呈现</td>
+              </tr>
+              <tr>
+                <td class="nowrap"><span class="page-tag">P05</span></td>
+                <td class="nowrap"><b>timeline</b></td>
+                <td style="max-width:180px"><span class="path-chip">templates/charts/timeline.svg</span></td>
+                <td><span class="dim">"Pick for 3-8 milestone events on a horizontal time axis (no duration)."</span></td>
+                <td>社会荣誉里程碑（1999 十大杰青 → 2000 世界杰青 → 2008 太平绅士 → 2012 功勋人物）沿水平时间轴排列</td>
+              </tr>
+            </tbody>
+          </table></div>
+          <div class="prose">
+            <div class="h3">Runners-up considered</div>
+            <ul>
+              <li><code>roadmap_vertical</code> — rejected for P05：内容是清晰的横向年份推进而非任务状态追踪，<code>timeline</code> 的水平时间轴更贴合「看年份看进程」的阅读习惯</li>
+              <li><code>donut_chart</code> — rejected for P04：四项成就数字彼此独立、无共同总量可供占比切分，不适合环形图的「部分-整体」语义</li>
+              <li><code>bullet_chart</code> — rejected for P04：电影成就数字没有「目标值 vs 实际值」的对比结构，KPI 卡片的「独立指标展示」比对比式指标更贴切</li>
+            </ul>
+          </div>
+        </section>
+
+        <!-- VIII -->
+        <section class="chapter" data-ch="VIII">
+          <div class="chap-head"><span class="chap-no">VIII</span><span class="chap-title">Image Resource List</span><span class="chap-sub">3 张 AI 配图 · 全部 Pending</span></div>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>Filename</th><th>规格</th><th>Purpose</th><th>Layout Pattern</th><th>Status</th><th>Reference</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="nowrap"><span class="path-chip">cover_portrait.png</span><br><span class="dim">hero_page</span></td>
+                <td class="nowrap">1280×720<br><span class="dim">1.78 · ai</span></td>
+                <td style="min-width:120px">封面黑板粉笔人物剪影，标题悬浮其上</td>
+                <td style="min-width:150px"><code>#1</code> full-bleed background + <code>#29</code> two-stop scrim</td>
+                <td class="nowrap"><span class="status-pill pending">Pending</span></td>
+                <td style="min-width:230px"><span class="dim">一位香港男演员/歌手的黑板粉笔手绘半身剪影肖像，站姿沉稳，背景点缀几处代表演艺与音乐的粉笔小图标（麦克风轮廓、胶片轮廓），黑板顶部留出大片空白供标题悬浮</span></td>
+              </tr>
+              <tr>
+                <td class="nowrap"><span class="path-chip">early_life_scene.png</span><br><span class="dim">local</span></td>
+                <td class="nowrap">1280×720<br><span class="dim">1.78 · ai</span></td>
+                <td>早年生活/演艺起点氛围图，人物剪影融入香港街景与片场轮廓</td>
+                <td><code>#2</code> left-third image + right text body + <code>#27</code> linear gradient mask</td>
+                <td class="nowrap"><span class="status-pill pending">Pending</span></td>
+                <td><span class="dim">黑板粉笔线描的香港 1980 年代街景与电视台片场剪影融合场景，年轻演员剪影手持剧本站在片场灯光轮廓下，画面左侧留出粉笔星标点缀</span></td>
+              </tr>
+              <tr>
+                <td class="nowrap"><span class="path-chip">closing_family_scene.png</span><br><span class="dim">hero_page</span></td>
+                <td class="nowrap">1280×720<br><span class="dim">1.78 · ai</span></td>
+                <td>收尾页氛围图，家庭剪影与温暖收束意象</td>
+                <td><code>#1</code> full-bleed background + <code>#57</code> extreme low opacity texture wash</td>
+                <td class="nowrap"><span class="status-pill pending">Pending</span></td>
+                <td><span class="dim">黑板粉笔线描的温馨家庭剪影场景，一家三口手牵手的简约线条画面，背景点缀几颗粉笔星星与爱心小图案，画面整体柔和克制</span></td>
+              </tr>
+            </tbody>
+          </table></div>
+          <div class="callout">
+            <b>Layout pattern 校验</b>：三行均取自 <code>image-layout-patterns.md</code> 的真实编号（#1/#2/#27/#29/#57），无臆造 id。<b>Image-as-canvas 覆盖</b>：本 deck 仅 3 张 ai 配图，均为封面/过渡/收尾类氛围背景，无内容密集的图文页，故未强制触发 #38–#46 家族——已在此处说明理由。
+          </div>
+        </section>
+
+        <!-- IX -->
+        <section class="chapter" data-ch="IX">
+          <div class="chap-head"><span class="chap-no">IX</span><span class="chap-title">Content Outline</span><span class="chap-sub">4 parts · 24 slides</span></div>
+
+          <div class="part-label">Part 1 · 生平概览</div>
+
+          <div class="slide-card">
+            <span class="slide-no">P01</span>
+            <div class="slide-body">
+              <div class="slide-head">
+                <span class="slide-title">Cover · 影艺人生</span>
+                <span class="slide-tags"><span class="tag">anchor</span><span class="tag">full-bleed + floating title</span></span>
+              </div>
+              <div class="slide-msg"><b>Cover impact</b>：用黑板粉笔手绘的人物剪影作为视觉钩子，标题以粉笔手写体悬浮在黑板留白区，营造「老师在黑板上讲一个人的一生」的叙事开场。</div>
+            </div>
+          </div>
+
+          <div class="slide-card">
+            <span class="slide-no">P02</span>
+            <div class="slide-body">
+              <div class="slide-head">
+                <span class="slide-title">出身与起点 · 1961 大埔</span>
+                <span class="slide-tags"><span class="tag">dense</span><span class="tag">left-third image</span></span>
+              </div>
+              <div class="slide-msg">核心信息：<b>从新界农家到无线艺员训练班，起点平凡而志向清晰。</b></div>
+              <div class="slide-points">
+                <span>1961 年生于香港新界大埔，家中六兄妹排行第四</span>
+                <span>1980 年考入 TVB 第 10 期艺员训练班，从跑龙套开始</span>
+                <span>粉笔地图标注：大埔 → 将军澳片场的「起点路线」</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="slide-card">
+            <span class="slide-no">P04</span>
+            <div class="slide-body">
+              <div class="slide-head">
+                <span class="slide-title">电影成就 · 四个数字</span>
+                <span class="slide-tags"><span class="tag">dense</span><span class="tag">kpi_cards</span></span>
+              </div>
+              <div class="slide-msg">核心信息：<b>数量与质量并肩——高产背后是三十年不间断的敬业。</b></div>
+              <div class="slide-points">
+                <span>170+ 部电影 · 3 次金像影帝 · 2 次金马影帝 · 2011《桃姐》双料影帝</span>
+                <span>四张粉笔手绘 KPI 卡片，数字用粉笔黄高亮</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="slide-card">
+            <span class="slide-no">P05</span>
+            <div class="slide-body">
+              <div class="slide-head">
+                <span class="slide-title">社会荣誉 · 时间轴</span>
+                <span class="slide-tags"><span class="tag">breathing</span><span class="tag">timeline</span></span>
+              </div>
+              <div class="slide-msg">核心信息：<b>演员之外的公民身份，荣誉沿年份稳步累积。</b></div>
+              <div class="slide-points">
+                <span>1999 十大杰青 → 2000 世界十大杰青 → 2008 太平绅士 → 2012 功勋人物</span>
+                <span>水平粉笔时间轴，节点用 award 图标 + 年份手写标注</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- X：写入中 -->
+        <section class="chapter" data-ch="X">
+          <div class="chap-head"><span class="chap-no">X</span><span class="chap-title">Speaker Notes Requirements</span><span class="chap-sub">写入中</span></div>
+          <div class="writing-block">
+            <div class="sk" style="width:88%"></div>
+            <div class="sk" style="width:72%"></div>
+            <div class="sk" style="width:80%"></div>
+            <div class="caret-line"><span class="caret"></span>AI 正在写入本章…</div>
+          </div>
+        </section>
+
+        <!-- XI：未开始（占位，不在内容区渲染实体，仅 TOC 灰） -->
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Tweaks ── -->
+<button class="tweaks-fab" id="tweaks-fab" title="Tweaks">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>
+  </svg>
+</button>
+<div class="tweaks" id="tweaks">
+  <h3>Tweaks</h3>
+  <div class="tw-row">
+    <span class="lbl">主题色（跟随 app 设置）</span>
+    <div class="tw-opts" data-key="accent">
+      <button class="tw-opt on" data-val="green"><span class="sw-mini" style="background:#16a34a"></span>绿</button>
+      <button class="tw-opt" data-val="blue"><span class="sw-mini" style="background:#3395ff"></span>Codex 蓝</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">外观</span>
+    <div class="tw-opts" data-key="theme">
+      <button class="tw-opt on" data-val="light">浅色</button>
+      <button class="tw-opt" data-val="dark">深色</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">章节目录</span>
+    <div class="tw-opts" data-key="toc">
+      <button class="tw-opt on" data-val="on">显示</button>
+      <button class="tw-opt" data-val="off">隐藏</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">内容宽度</span>
+    <div class="tw-opts" data-key="width">
+      <button class="tw-opt on" data-val="normal">800</button>
+      <button class="tw-opt" data-val="wide">980</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   TOC 构建 + scrollspy + 章节进度。章节骨架 = design_spec 固定 11 章
+   （strategist.md §6.2），真实实现中由 markdown 的 H2 解析得到。
+   status: done=已写完 / writing=正在写 / pending=未开始。
+   ════════════════════════════════════════════════════════════════════════ */
+const CHAPTERS = [
+  { rn: 'I',    name: 'Project Information',            status: 'done' },
+  { rn: 'II',   name: 'Canvas Specification',           status: 'done' },
+  { rn: 'III',  name: 'Visual Theme',                   status: 'done' },
+  { rn: 'IV',   name: 'Typography System',              status: 'done' },
+  { rn: 'V',    name: 'Layout Principles',              status: 'done' },
+  { rn: 'VI',   name: 'Icon Usage Spec',                status: 'done' },
+  { rn: 'VII',  name: 'Visualization Reference List',   status: 'done' },
+  { rn: 'VIII', name: 'Image Resource List',            status: 'done' },
+  { rn: 'IX',   name: 'Content Outline',                status: 'done' },
+  { rn: 'X',    name: 'Speaker Notes Requirements',     status: 'writing' },
+  { rn: 'XI',   name: 'Technical Constraints Reminder', status: 'pending' }
+];
+
+const $ = (s) => document.querySelector(s);
+const scrollEl = $('#scroll');
+const toc = $('#toc');
+
+/* ── TOC 构建 ── */
+CHAPTERS.forEach((ch) => {
+  const b = document.createElement('button');
+  b.className = 'toc-item' + (ch.status === 'pending' ? ' pending' : '');
+  b.dataset.ch = ch.rn;
+  b.innerHTML = `<span class="rn">${ch.rn}</span><span class="nm">${ch.name}</span>` +
+    (ch.status === 'writing' ? '<span class="st st-ing"></span>'
+      : ch.status === 'done' ? '<span class="st st-done"></span>' : '');
+  if (ch.status !== 'pending') {
+    b.addEventListener('click', () => {
+      const target = document.querySelector(`[data-ch="${ch.rn}"]`);
+      // scrollIntoView 会干扰外层 iframe 滚动，一律用容器 scrollTo
+      if (target) scrollEl.scrollTo({ top: target.offsetTop - 8, behavior: 'smooth' });
+    });
+  }
+  toc.appendChild(b);
+});
+
+/* ── 顶部章节进度分段 ── */
+const segs = $('#chap-segs');
+CHAPTERS.forEach((ch) => {
+  const s = document.createElement('span');
+  s.className = 'seg' + (ch.status === 'done' ? ' on' : ch.status === 'writing' ? ' ing' : '');
+  s.title = ch.rn + '. ' + ch.name;
+  segs.appendChild(s);
+});
+$('#chap-num').textContent = CHAPTERS.filter((c) => c.status === 'done').length + ' / ' + CHAPTERS.length + ' 章';
+
+/* ── scrollspy：滚动位置 → TOC 高亮 ── */
+const sections = Array.from(document.querySelectorAll('.chapter[data-ch]'));
+let spyTick = 0;
+function spy() {
+  spyTick = 0;
+  const top = scrollEl.scrollTop + 80; // 提前量：章头进入视口上部即算当前
+  let cur = sections[0];
+  sections.forEach((sec) => { if (sec.offsetTop <= top) cur = sec; });
+  document.querySelectorAll('.toc-item').forEach((el) =>
+    el.classList.toggle('on', el.dataset.ch === cur.dataset.ch));
+}
+scrollEl.addEventListener('scroll', () => {
+  if (!spyTick) spyTick = requestAnimationFrame(spy);
+}, { passive: true });
+spy();
+
+/* ── Tweaks ── */
+$('#tweaks-fab').addEventListener('click', () => $('#tweaks').classList.toggle('open'));
+document.querySelectorAll('.tw-opts').forEach((group) => {
+  group.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tw-opt');
+    if (!btn) return;
+    group.querySelectorAll('.tw-opt').forEach((b) => b.classList.remove('on'));
+    btn.classList.add('on');
+    document.documentElement.dataset[group.dataset.key] = btn.dataset.val;
+  });
+});
+</script>
+</body>
+</html>

@@ -49,6 +49,7 @@ import { extractText, safeStringify } from './toolHelpers'
 import { friendlyToolView } from './ToolFormatters'
 import { CanvasConfirm } from './CanvasConfirm'
 import { LivePreviewEditor } from './LivePreviewEditor'
+import { OutlinePanel } from './OutlinePanel'
 import { PermissionModePicker } from '../permissions/PermissionModePicker'
 import { InlinePermissionPrompt } from '../permissions/InlinePermissionPrompt'
 import {
@@ -708,7 +709,7 @@ function ChatHeader(): React.JSX.Element {
 
 /* ─────────────────────── Slides workspace ───────────────────── */
 
-type CanvasTab = 'slides' | 'outline' | 'files' | 'images' | 'questions' | 'browser'
+type CanvasTab = 'slides' | 'outline' | 'files' | 'images' | 'questions'
 
 const CANVAS_TAB_ICONS: Record<CanvasTab, React.ReactNode> = {
   slides: (
@@ -739,12 +740,6 @@ const CANVAS_TAB_ICONS: Record<CanvasTab, React.ReactNode> = {
       <circle cx="12" cy="12" r="9" />
       <path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .9-1 1.7M12 17h.01" />
     </svg>
-  ),
-  browser: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18" />
-    </svg>
   )
 }
 
@@ -768,10 +763,10 @@ function SlidesWorkspace(): React.JSX.Element {
   const streamingArgs = useStreamingAskArgsText()
   const hasQuestions = pendingAsk !== null || streamingArgs !== null
   // Active ppt-master server (kind + URL) when one is up, else null. Two phases:
-  //   - kind 'confirm' → the Eight-Confirmations page, embedded as an <iframe>
-  //     in the 「浏览器」tab (it's an interactive form).
-  //   - kind 'preview' → Executor live preview, rendered NATIVELY in 「幻灯片」
-  //     (SlidesLivePreview fetches the server's SVG and paints it itself).
+  //   - kind 'confirm' → the Eight-Confirmations page, rendered NATIVELY in
+  //     the 「问题」tab (CanvasConfirm — the old 浏览器 iframe tab is gone).
+  //   - kind 'preview' → Executor live preview, rendered NATIVELY in
+  //     「预览幻灯片」(LivePreviewEditor fetches the server's SVG itself).
   // See usePreviewServer in stores/chat.
   const server = usePreviewServer()
   const hasConfirm = server?.kind === 'confirm'
@@ -789,12 +784,56 @@ function SlidesWorkspace(): React.JSX.Element {
     // New (or cleared) preview server → reset reachability for the new URL.
     setPreviewDown(false)
   }, [previewUrl])
-  // The preview tab is "alive" only while we have a preview server that hasn't
-  // been detected as down. Before any preview launches (hasPreview false) the
-  // 幻灯片 tab still shows its neutral placeholder — only a launched-then-dead
-  // preview hides it.
-  const previewGone = hasPreview && previewDown
-  const showSlidesTab = !previewGone
+  // Identity gate: ports are REUSED across sessions — the URL recorded in a
+  // resumed session's transcript may now be answered by a DIFFERENT project's
+  // editor (real incident: deck A's :5050 died overnight, deck B pinned
+  // --port 5050, resuming deck A's session rendered deck B). Reachability
+  // alone would happily paint the wrong deck, so before trusting a preview
+  // server we ask WHO it is (/api/config reports `project`, see
+  // svg_editor/server.py) and compare against the project the launch command
+  // named (PreviewServer.project). Mismatch — or a server too old to report
+  // its identity — keeps the tab hidden. No expected project (command-shape
+  // extraction failed) → reachability-only, the previous behavior.
+  const expectedProject = server?.project
+  const [identityOk, setIdentityOk] = useState(false)
+  useEffect(() => {
+    if (!hasPreview || !previewUrl) {
+      setIdentityOk(false)
+      return
+    }
+    if (!expectedProject) {
+      setIdentityOk(true)
+      return
+    }
+    setIdentityOk(false)
+    let cancelled = false
+    let attempt = 0
+    const probe = async (): Promise<void> => {
+      attempt += 1
+      try {
+        const res = await fetch(`${previewUrl}/api/config`)
+        const cfg = (await res.json()) as { project?: unknown }
+        if (cancelled) return
+        setIdentityOk(cfg.project === expectedProject)
+      } catch {
+        if (cancelled) return
+        // A transient loopback hiccup would otherwise hide the tab forever
+        // (nothing re-probes this URL) — retry briefly, then give up. The
+        // launched-then-dies case is LivePreviewEditor's polling's job.
+        if (attempt < 3) setTimeout(probe, 700)
+      }
+    }
+    void probe()
+    return () => {
+      cancelled = true
+    }
+  }, [hasPreview, previewUrl, expectedProject])
+  // 预览幻灯片 exists ONLY while the live-preview server is up, reachable AND
+  // verified to be THIS session's deck: the tab appears when the server
+  // launches and drops out when it dies (idle-timeout / self-exit). No
+  // pre-launch placeholder shell, no dead "预览服务已停止" tab lingering after
+  // — the tab's presence IS the signal that a live deck is previewable now.
+  const showSlidesTab = hasPreview && !previewDown && identityOk
   // Every file this session has written via Write. Drives the auto-focus on each
   // new write (which needs to see EVERY write, including .svg deck pages, to
   // route them to the right tab). See useWrittenFiles in stores/chat.
@@ -827,7 +866,9 @@ function SlidesWorkspace(): React.JSX.Element {
   const imageActivity = useImageManifest()
   const hasImages = imageActivity !== null
   const imagesGenerating = imageActivity?.generating === true
-  const [tab, setTab] = useState<CanvasTab>('slides')
+  // Default landing is 大纲 — 预览幻灯片 only exists once the live-preview
+  // server is up (see showSlidesTab above), so it can't be the initial tab.
+  const [tab, setTab] = useState<CanvasTab>('outline')
 
   // Auto-focus 问题 the moment a questionnaire OR the confirm server appears.
   // The confirm Eight-Confirmations page now renders NATIVELY in the 问题 tab
@@ -854,26 +895,29 @@ function SlidesWorkspace(): React.JSX.Element {
   }, [wantsImagesTab, wantsQuestionsTab])
 
   // Auto-focus the right tab for the live-preview server phase (unless the 问题
-  // or 图片 tab is commanding focus): preview → 幻灯片 (which renders the live
-  // SVG itself). The confirm phase is handled above (native 问题 tab), so it no
-  // longer targets 浏览器. The 浏览器/iframe path remains only as a fallback.
+  // or 图片 tab is commanding focus): preview → 预览幻灯片 (which renders the
+  // live SVG itself). The confirm phase is handled above (native 问题 tab).
   useEffect(() => {
     if (wantsQuestionsTab || wantsImagesTab) return
-    if (hasPreview && !previewDown) setTab('slides')
-    else setTab((t) => (t === 'browser' ? 'slides' : t))
-  }, [hasPreview, previewDown, wantsQuestionsTab, wantsImagesTab])
+    // Keyed on showSlidesTab (not raw hasPreview) so the focus grab waits for
+    // the identity probe — grabbing while the tab is still hidden would just
+    // bounce off the redirect guard below and never come back.
+    if (showSlidesTab) setTab('slides')
+  }, [showSlidesTab, wantsQuestionsTab, wantsImagesTab])
 
-  // When the 幻灯片 tab disappears (launched preview went away) and we were on
-  // it, fall back to a tab that still exists — 文件 if there are written files,
-  // else 大纲. Without this the body would hit the neutral "未命名" placeholder
-  // with no tab highlighted.
+  // Whenever we're pointed at 预览幻灯片 while the tab doesn't exist (server
+  // not launched yet, or launched-then-died, or the questions fallback picked
+  // 'slides' blindly), redirect to a tab that does exist: 文件 if there are
+  // written files, else 大纲. `tab` is a dep on purpose — showSlidesTab alone
+  // wouldn't re-fire when a later setTab('slides') lands while the tab is
+  // hidden.
   useEffect(() => {
     if (showSlidesTab) return
     setTab((t) => (t === 'slides' ? (hasFileTabFiles ? 'files' : 'outline') : t))
-  }, [showSlidesTab, hasFileTabFiles])
+  }, [showSlidesTab, hasFileTabFiles, tab])
 
   // Auto-focus the right tab on each new write so the user watches files land as
-  // they're written (mirrors the 浏览器/问题 auto-focus). Keyed off a "write
+  // they're written (mirrors the 问题 auto-focus). Keyed off a "write
   // signature" — file count + the newest file's path — so it fires when a NEW
   // file appears or a fresh Write starts, but NOT on every streaming-content tick
   // of a file we've already focused (which would yank the user back if they
@@ -883,10 +927,11 @@ function SlidesWorkspace(): React.JSX.Element {
   //   - design_spec.md → 大纲 (outline). It's the deck's plan-of-record, and the
   //     大纲 tab renders it as rich Markdown. Writing/rewriting the spec should
   //     drop the user straight into the outline view.
-  //   - a .svg page → 幻灯片 (slides). These ARE the deck pages; the user wants
-  //     to watch them render there, not read raw SVG source. This holds even
-  //     BEFORE the live-preview server is up — the 幻灯片 tab shows its
-  //     placeholder until preview arrives, which still beats bouncing to 文件.
+  //   - a .svg page → no grab. These ARE the deck pages, but 预览幻灯片 only
+  //     exists once the live-preview server is up — and this whole effect is
+  //     suppressed while hasPreview is true. So an SVG write pre-preview just
+  //     stays put (they're excluded from 文件 anyway); the server-up effect
+  //     above lands the user on 预览幻灯片 the moment preview arrives.
   //   - anything else → 文件 (files), the raw-content shell for arbitrary writes.
   //
   // Focus precedence: 问题 (questionnaire/confirm) AND 幻灯片 (live preview) both
@@ -907,7 +952,8 @@ function SlidesWorkspace(): React.JSX.Element {
     if (writeSig === lastWriteSigRef.current) return
     lastWriteSigRef.current = writeSig
     if (!hasFiles || wantsQuestionsTab || wantsImagesTab || hasPreview) return
-    setTab(newestIsDesignSpec ? 'outline' : newestIsSvg ? 'slides' : 'files')
+    if (newestIsSvg) return
+    setTab(newestIsDesignSpec ? 'outline' : 'files')
   }, [
     writeSig,
     hasFiles,
@@ -918,10 +964,32 @@ function SlidesWorkspace(): React.JSX.Element {
     newestIsSvg
   ])
 
+  // Which tabs currently have LIVE, CHANGING content — drives the pulsing dot
+  // that nudges the user toward a tab whose content is updating while they're
+  // looking elsewhere. Only "in-flight" signals count, so the dot clears the
+  // moment work settles:
+  //   - 图片: AI image generation is running.
+  //   - 幻灯片: an SVG deck page is mid-write (a page is rendering).
+  //   - 大纲: design_spec.md is mid-write.
+  //   - 文件: some non-svg, non-spec file is mid-write.
+  const anySvgStreaming = writtenFiles.some(
+    (f) => f.streaming && /\.svg$/i.test(f.name)
+  )
+  const anyPlainFileStreaming = writtenFiles.some(
+    (f) => f.streaming && !/\.svg$/i.test(f.name) && !/^design_spec\.md$/i.test(f.name)
+  )
+  const tabBusy: Partial<Record<CanvasTab, boolean>> = {
+    images: imagesGenerating,
+    slides: anySvgStreaming,
+    outline: designSpec?.streaming === true,
+    files: anyPlainFileStreaming
+  }
+
   const tabs: { id: CanvasTab; label: string }[] = [
-    // 幻灯片 drops out once a launched preview server is detected as gone
-    // (idle-timeout / self-exit), so no dead "预览服务已停止" tab lingers.
-    ...(showSlidesTab ? [{ id: 'slides' as const, label: '幻灯片' }] : []),
+    // 预览幻灯片 only exists while the live-preview server is up and reachable
+    // (appears on launch, drops out on idle-timeout / self-exit) — see
+    // showSlidesTab above.
+    ...(showSlidesTab ? [{ id: 'slides' as const, label: '预览幻灯片' }] : []),
     { id: 'outline', label: '大纲' },
     { id: 'files', label: '文件' },
     // 图片 tab: appears once this session ran an AI image-generation command
@@ -931,12 +999,9 @@ function SlidesWorkspace(): React.JSX.Element {
     // 问题 tab: while a questionnaire is streaming/pending, OR while the
     // confirm server is up (the Eight-Confirmations page renders natively here
     // via CanvasConfirm — see body below).
-    ...(wantsQuestionsTab ? [{ id: 'questions' as const, label: '问题' }] : []),
-    // 浏览器 tab is kept ONLY as a fallback during the confirm phase: the native
-    // 问题 tab is now the primary surface, but the iframe path stays reachable
-    // (manual click) in case native rendering misbehaves. It carries no
-    // auto-focus anymore.
-    ...(hasConfirm ? [{ id: 'browser' as const, label: '浏览器' }] : [])
+    ...(wantsQuestionsTab ? [{ id: 'questions' as const, label: '问题' }] : [])
+    // NOTE: the old 浏览器 iframe-fallback tab for the confirm phase is gone —
+    // the native 问题 tab (CanvasConfirm) is the ONLY confirm surface now.
   ]
 
   return (
@@ -953,6 +1018,10 @@ function SlidesWorkspace(): React.JSX.Element {
       >
         {tabs.map((tDef) => {
           const active = tDef.id === tab
+          // Pulsing dot whenever this tab's content is changing — including the
+          // tab currently in view (you're watching a file stream in; the dot is
+          // the "still writing" signal). It clears the instant work settles.
+          const busy = tabBusy[tDef.id] === true
           return (
             <button
               key={tDef.id}
@@ -968,6 +1037,12 @@ function SlidesWorkspace(): React.JSX.Element {
             >
               {CANVAS_TAB_ICONS[tDef.id]}
               {tDef.label}
+              {busy && (
+                <span aria-hidden className="relative ml-0.5 flex size-1.5">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-75" />
+                  <span className="relative inline-flex size-1.5 rounded-full bg-accent" />
+                </span>
+              )}
             </button>
           )
         })}
@@ -988,24 +1063,7 @@ function SlidesWorkspace(): React.JSX.Element {
           request={pendingAsk}
           streamingArgsText={streamingArgs}
         />
-      ) : tab === 'browser' && hasConfirm && server ? (
-        // Confirm phase only: the Eight-Confirmations page embedded in-app
-        // instead of the system Chrome window the skill used to open.
-        // `key={server.url}` forces a fresh load if the URL changes. No
-        // `sandbox` attribute: the page is a local Flask app this app itself
-        // launches on a trusted loopback origin, and it confirms via
-        // `fetch('/api/confirm', {method:'POST'})` — a sandbox (even with
-        // allow-same-origin) gave the framed page an opaque origin that
-        // silently broke that same-origin POST, leaving it stuck on the
-        // "deriving…" spinner. CSP frame-src already scopes loads to loopback
-        // (see renderer/index.html).
-        <iframe
-          key={server.url}
-          src={server.url}
-          title="ppt-master 确认设计方案"
-          className="min-h-0 w-full flex-1 border-0 bg-white"
-        />
-      ) : tab === 'slides' && hasPreview && !previewDown && server ? (
+      ) : tab === 'slides' && showSlidesTab && server ? (
         // Live-preview phase: the native editor (replaces the old read-only
         // SlidesLivePreview). Fetches the svg_editor server's SVG and renders
         // it natively WITH the annotation/edit interactions (element select →
@@ -1024,25 +1082,13 @@ function SlidesWorkspace(): React.JSX.Element {
           newestPath={fileTabFiles[fileTabFiles.length - 1]?.path}
         />
       ) : tab === 'outline' && designSpec ? (
-        // 大纲 tab: the deck's design_spec.md, rendered as rich Markdown (the same
-        // WrittenFileContent used by the 文件 tab, which special-cases .md through
-        // AssistantMarkdown). This is the plan-of-record — Part/Slide breakdown,
-        // per-slide layout/title/content — so it reads as a real outline document
-        // rather than the raw-source view. `key` by path resets scroll/follow on
-        // a fresh spec; streaming rewrites update in place and auto-scroll.
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex shrink-0 items-baseline gap-2 border-b border-border/60 px-4 py-2">
-            <code className="min-w-0 truncate font-mono text-[12px] text-foreground" title={designSpec.path}>
-              {designSpec.name}
-            </code>
-            <span className="shrink-0 text-[11px] text-muted-foreground/60">
-              {designSpec.streaming
-                ? '写入中…'
-                : `${designSpec.content.split('\n').length} 行`}
-            </span>
-          </div>
-          <WrittenFileContent key={designSpec.path} file={designSpec} />
-        </div>
+        // 大纲 tab: the deck's design_spec.md as a structured document reader
+        // (OutlinePanel) — chapter TOC with scrollspy, roman-numeral chapter
+        // headers, per-chapter write status while streaming. Chapter BODIES
+        // still render through AssistantMarkdown; the panel only adds the
+        // navigation layer, and falls back to flat markdown when the spec has
+        // no H2 chapters. `key` by path resets scroll/follow on a fresh spec.
+        <OutlinePanel key={designSpec.path} file={designSpec} />
       ) : tab === 'images' && imageActivity ? (
         // 图片 tab: AI image-generation progress + thumbnails. Polls the
         // manifest (image_gen.py rewrites it per completion) via main-process
@@ -1392,6 +1438,18 @@ function ImageCard({ item }: { item: ImageManifestItem }): React.JSX.Element {
 }
 
 /**
+ * Per-type glyph text for the file-list rows: a tiny mono badge standing in
+ * for a real icon set. Deliberately neutral (no per-type colours) — the only
+ * colour channel in the list is accent = selected, so state stays readable.
+ */
+function fileGlyph(name: string): string {
+  const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
+  if (ext === 'md' || ext === 'markdown') return 'MD'
+  if (ext === 'json' || ext === 'jsonc') return '{}'
+  return (ext || '?').slice(0, 2).toUpperCase()
+}
+
+/**
  * 文件 canvas tab body: every file written this session in a two-pane layout
  * (file list left, selected file's content right), mirroring SlidesLivePreview's
  * shape. Until the user manually picks a file it follows the newest write, so
@@ -1400,6 +1458,10 @@ function ImageCard({ item }: { item: ImageManifestItem }): React.JSX.Element {
  * The content is the same text the inline Write card would have shown — but in
  * slides mode that inline preview is suppressed (writeHandledByCanvas), so this
  * is the one place it renders. Streaming writes show a live, growing preview.
+ *
+ * Visual language (files-panel-prototype-v2.html): the content sits on a
+ * "sheet of paper" floating over the dot-grid stage — the same paper-on-stage
+ * metaphor the slides canvas uses — instead of filling the pane edge-to-edge.
  */
 function WrittenFilesPanel({
   files,
@@ -1409,9 +1471,26 @@ function WrittenFilesPanel({
   newestPath?: string
 }): React.JSX.Element {
   const [active, setActive] = useState<string | null>(null)
+  // 阅读/源码 toggle, panel-level so it survives file switches. Non-markdown
+  // files have no rich rendering — they force the source view at render time
+  // WITHOUT overwriting the user's sticky choice for the next .md file.
+  const [view, setView] = useState<'read' | 'src'>('read')
+  const [copied, setCopied] = useState(false)
+  const copyTimerRef = useRef<number | null>(null)
+  // Reading-progress bar: scroll fires per frame, so the width update goes
+  // straight to the DOM through this ref. Routing it through setState would
+  // re-render the whole Markdown subtree on every scroll tick — visibly
+  // janky on long documents.
+  const progressRef = useRef<HTMLDivElement | null>(null)
   // True until the user clicks a file — while true the view auto-follows the
   // newest write so generation is watchable; a manual pick pins it.
   const followLatestRef = useRef(true)
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current)
+    }
+  }, [])
 
   // Follow the newest write while unpinned (and seed the initial selection).
   useEffect(() => {
@@ -1428,10 +1507,42 @@ function WrittenFilesPanel({
     setActive(path)
   }
 
+  // Non-markdown files only have a source rendering; keep the user's sticky
+  // `view` untouched and just force the effective view for this file.
+  const isMd = selected ? /\.(md|markdown)$/i.test(selected.name) : false
+  const effView: 'read' | 'src' = isMd ? view : 'src'
+
+  const meta = useMemo(() => {
+    if (!selected) return ''
+    const lines = selected.content.split('\n').length
+    const chars = selected.content.replace(/\s/g, '').length
+    const charLabel = chars > 1000 ? `${(chars / 1000).toFixed(1)}k` : String(chars)
+    return `${lines} 行 · 约 ${charLabel} 字`
+  }, [selected?.content])
+
+  const copySelected = async (): Promise<void> => {
+    if (!selected) return
+    try {
+      await navigator.clipboard.writeText(selected.content)
+    } catch {
+      // Clipboard denial still flips the button state — the click must feel
+      // acknowledged either way.
+    }
+    setCopied(true)
+    if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current)
+    copyTimerRef.current = window.setTimeout(() => setCopied(false), 1400)
+  }
+
+  const segBtnCls = (on: boolean): string =>
+    'flex h-6 items-center gap-1 rounded-md px-2.5 text-[11.5px] transition-colors ' +
+    (on
+      ? 'bg-background font-medium text-foreground shadow-sm'
+      : 'text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted-foreground')
+
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       {/* File list */}
-      <div className="w-44 shrink-0 overflow-y-auto border-r border-border/60 py-1.5">
+      <div className="w-[216px] shrink-0 overflow-y-auto border-r border-border/60 px-2 py-1.5">
         {files.map((f, i) => {
           const on = f.path === selected?.path
           return (
@@ -1440,17 +1551,32 @@ function WrittenFilesPanel({
               type="button"
               onClick={() => pick(f.path)}
               className={
-                'flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[12px] transition-colors ' +
-                (on
-                  ? 'bg-foreground/[0.06] font-medium text-foreground'
-                  : 'text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground/90')
+                'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] transition-colors ' +
+                (on ? 'bg-accent/10' : 'hover:bg-foreground/[0.04]')
               }
               title={f.path}
             >
-              <span className="shrink-0 tabular-nums text-muted-foreground/50">
+              <span className="w-4 shrink-0 text-[10px] tabular-nums text-muted-foreground/50">
                 {String(i + 1).padStart(2, '0')}
               </span>
-              <span className="min-w-0 truncate">{f.name}</span>
+              <span
+                className={
+                  'grid size-[19px] shrink-0 place-items-center rounded-[5px] font-mono text-[7.5px] font-bold transition-colors ' +
+                  (on
+                    ? 'bg-accent text-accent-foreground'
+                    : 'border border-border bg-muted/60 text-muted-foreground')
+                }
+              >
+                {fileGlyph(f.name)}
+              </span>
+              <span
+                className={
+                  'min-w-0 truncate ' +
+                  (on ? 'font-medium text-foreground' : 'text-muted-foreground')
+                }
+              >
+                {f.name}
+              </span>
               {f.streaming && (
                 <span
                   aria-hidden
@@ -1462,25 +1588,133 @@ function WrittenFilesPanel({
         })}
       </div>
 
-      {/* Selected file content */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      {/* Stage: dot-grid backdrop with the document floating as a paper sheet.
+          Same pattern CanvasConfirm's style cards use (var(--color-border)
+          dots track the theme), scaled up to a full pane. */}
+      <div
+        className="flex min-w-0 flex-1 justify-center overflow-hidden bg-muted/30 p-5"
+        style={{
+          backgroundImage:
+            'radial-gradient(circle at 1px 1px, var(--color-border, rgba(0,0,0,0.12)) 1px, transparent 0)',
+          backgroundSize: '14px 14px'
+        }}
+      >
         {selected ? (
-          <>
-            <div className="flex shrink-0 items-baseline gap-2 border-b border-border/60 px-4 py-2">
-              <code className="min-w-0 truncate font-mono text-[12px] text-foreground" title={selected.path}>
-                {selected.name}
-              </code>
-              <span className="shrink-0 text-[11px] text-muted-foreground/60">
-                {selected.streaming
-                  ? '写入中…'
-                  : `${selected.content.split('\n').length} 行`}
-              </span>
+          <div className="flex min-h-0 w-full max-w-[880px] flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-[0_1px_2px_rgba(0,0,0,0.05),0_10px_28px_rgba(0,0,0,0.08)] dark:shadow-[0_1px_2px_rgba(0,0,0,0.4),0_14px_36px_rgba(0,0,0,0.45)]">
+            <div className="relative flex h-[46px] shrink-0 items-center gap-2.5 border-b border-border/60 px-3.5">
+              <div className="grid size-[26px] shrink-0 place-items-center rounded-md bg-accent/10 text-accent">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="size-3.5"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                </svg>
+              </div>
+              <div className="flex min-w-0 flex-col">
+                <code
+                  className="truncate font-mono text-[12.5px] font-semibold leading-tight text-foreground"
+                  title={selected.path}
+                >
+                  {selected.name}
+                </code>
+                <span className="flex items-center gap-1.5 text-[10.5px] leading-tight text-muted-foreground/70">
+                  {selected.streaming ? (
+                    <>
+                      <span
+                        aria-hidden
+                        className="size-[5px] animate-pulse rounded-full bg-accent"
+                      />
+                      写入中…
+                    </>
+                  ) : (
+                    meta
+                  )}
+                </span>
+              </div>
+              <div className="flex-1" />
+
+              {/* 阅读 / 源码 — markdown renders rich by default; everything
+                  else is source-only so 阅读 is disabled. */}
+              <div className="flex gap-0.5 rounded-lg bg-muted/60 p-[3px]">
+                <button
+                  type="button"
+                  disabled={!isMd}
+                  onClick={() => setView('read')}
+                  className={segBtnCls(effView === 'read')}
+                >
+                  阅读
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView('src')}
+                  className={segBtnCls(effView === 'src')}
+                >
+                  源码
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void copySelected()}
+                title="复制内容"
+                className={
+                  'grid size-7 shrink-0 place-items-center rounded-md transition-colors ' +
+                  (copied
+                    ? 'text-accent'
+                    : 'text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground')
+                }
+              >
+                {copied ? (
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="size-3.5"
+                  >
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                ) : (
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="size-3.5"
+                  >
+                    <rect x="9" y="9" width="13" height="13" rx="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                )}
+              </button>
+
+              {/* Reading progress: hairline accent fill along the header's
+                  bottom edge, width driven imperatively via progressRef. */}
+              <div className="pointer-events-none absolute inset-x-0 -bottom-px h-[1.5px]">
+                <div ref={progressRef} className="h-full w-0 bg-accent" />
+              </div>
             </div>
             {/* Keyed by path so switching files resets the scroll/follow state
                 (a fresh mount), while same-file streaming updates re-render in
                 place and keep auto-scrolling. */}
-            <WrittenFileContent key={selected.path} file={selected} />
-          </>
+            <WrittenFileContent
+              key={selected.path}
+              file={selected}
+              view={effView}
+              paper
+              progressRef={progressRef}
+            />
+          </div>
         ) : (
           <div className="flex flex-1 items-center justify-center text-[13px] text-muted-foreground">
             选择左侧文件查看内容
@@ -1504,7 +1738,20 @@ function WrittenFilesPanel({
  * when they scroll back near the bottom). Mounted with `key={path}` by the
  * parent, so each file starts at the top with follow re-armed.
  */
-function WrittenFileContent({ file }: { file: WrittenFile }): React.JSX.Element {
+function WrittenFileContent({
+  file,
+  view = 'read',
+  paper = false,
+  progressRef
+}: {
+  file: WrittenFile
+  /** 'read' = rich rendering for .md; 'src' = raw source through hljs. */
+  view?: 'read' | 'src'
+  /** Paper mode (文件 tab): narrow centered column + streaming caret. */
+  paper?: boolean
+  /** Optional reading-progress bar; width written imperatively on scroll. */
+  progressRef?: React.RefObject<HTMLDivElement | null>
+}): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   // Whether to keep pinning the view to the bottom as content grows. Starts
   // true; a manual scroll-up turns it off, scrolling back near the bottom
@@ -1513,11 +1760,14 @@ function WrittenFileContent({ file }: { file: WrittenFile }): React.JSX.Element 
   const followBottomRef = useRef(true)
 
   const isMarkdown = /\.(md|markdown)$/i.test(file.path)
+  // Markdown only renders rich in the 阅读 view; the 源码 view routes it
+  // through hljs like any other file (md has a 'markdown' language mapping).
+  const renderRich = isMarkdown && view === 'read'
   const language = languageFromPath(file.path)
 
-  // hljs highlight (skipped for markdown, which AssistantMarkdown handles).
+  // hljs highlight (skipped when AssistantMarkdown handles the content).
   const html = useMemo(() => {
-    if (isMarkdown) return ''
+    if (renderRich) return ''
     try {
       if (language && hljs.getLanguage(language)) {
         return hljs.highlight(file.content, { language, ignoreIllegals: true }).value
@@ -1526,7 +1776,17 @@ function WrittenFileContent({ file }: { file: WrittenFile }): React.JSX.Element 
     } catch {
       return escapeHtml(file.content)
     }
-  }, [file.content, language, isMarkdown])
+  }, [file.content, language, renderRich])
+
+  // Progress goes straight to the bar's DOM node — see progressRef's comment
+  // in WrittenFilesPanel for why this must not be React state.
+  const reportProgress = useCallback((): void => {
+    const el = scrollRef.current
+    const bar = progressRef?.current
+    if (!el || !bar) return
+    const max = el.scrollHeight - el.clientHeight
+    bar.style.width = max > 4 ? `${(el.scrollTop / max) * 100}%` : '0%'
+  }, [progressRef])
 
   // Track whether the user is near the bottom; only then do we auto-follow.
   const onScroll = useCallback((): void => {
@@ -1535,34 +1795,63 @@ function WrittenFileContent({ file }: { file: WrittenFile }): React.JSX.Element 
     const nearBottom =
       el.scrollHeight - el.scrollTop - el.clientHeight < 40
     followBottomRef.current = nearBottom
-  }, [])
+    reportProgress()
+  }, [reportProgress])
+
+  // View toggles swap the whole body without remounting (key is the path),
+  // so reset the scroll position and re-sync the progress bar ourselves.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = 0
+    reportProgress()
+  }, [view, reportProgress])
 
   // After each content update, if we're still following (and the file is
   // actively streaming), stick to the bottom so new lines stay visible.
+  // Content growth also moves the progress ratio, so re-sync the bar here.
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     if (file.streaming && followBottomRef.current) {
       el.scrollTop = el.scrollHeight
     }
-  }, [file.content, file.streaming])
+    reportProgress()
+  }, [file.content, file.streaming, reportProgress])
 
   return (
     <div
       ref={scrollRef}
       onScroll={onScroll}
-      className="min-h-0 flex-1 overflow-auto px-4 py-3"
+      className={
+        'min-h-0 flex-1 overflow-auto ' + (paper ? '' : 'px-4 py-3')
+      }
     >
-      {isMarkdown ? (
-        <AssistantMarkdown text={file.content} />
-      ) : (
-        <pre
-          className="whitespace-pre font-mono text-[11.5px] leading-[1.55] text-foreground/90 [font-feature-settings:'calt','tnum']"
-          // hljs returns escaped HTML with <span class="hljs-*"> wrappers that
-          // our highlight.css palette already targets — same as CodeFileView.
-          dangerouslySetInnerHTML={{ __html: html || escapeHtml(file.content) }}
-        />
-      )}
+      {/* Paper mode narrows the measure to a readable column; the plain mode
+          (大纲 tab) keeps the original edge-to-edge layout. */}
+      <div className={paper ? 'mx-auto max-w-[700px] px-10 pb-14 pt-9' : undefined}>
+        {renderRich ? (
+          <AssistantMarkdown text={file.content} />
+        ) : (
+          <pre
+            className={
+              // Paper mode wraps long lines (the narrow column would otherwise
+              // force sideways scrolling inside the sheet); plain mode keeps
+              // the original pre + horizontal scroll behaviour.
+              (paper ? 'whitespace-pre-wrap break-words' : 'whitespace-pre') +
+              " font-mono text-[11.5px] leading-[1.55] text-foreground/90 [font-feature-settings:'calt','tnum']"
+            }
+            // hljs returns escaped HTML with <span class="hljs-*"> wrappers that
+            // our highlight.css palette already targets — same as CodeFileView.
+            dangerouslySetInnerHTML={{ __html: html || escapeHtml(file.content) }}
+          />
+        )}
+        {paper && file.streaming && (
+          <div
+            aria-hidden
+            className="mt-3 h-[17px] w-[7px] animate-pulse rounded-[2px] bg-accent"
+          />
+        )}
+      </div>
     </div>
   )
 }
@@ -1658,73 +1947,76 @@ function CanvasQuestionnaire({
     void respond(request.requestId, 'allow-once', { answers: out })
   }
 
-  if (questions.length === 0) {
-    // Streaming but nothing parseable yet → "generating"; finalized but empty
-    // → a real parse failure.
+  // Count of questions carrying a non-empty answer — drives the header
+  // tally, the per-question progress dots, and the submit unlock.
+  const answeredCount = questions.filter((q) => {
+    const a = answers[q.question]
+    return typeof a === 'string' && a.trim().length > 0
+  }).length
+
+  if (questions.length === 0 && answerable) {
+    // Finalized but empty → a real parse failure (streaming empty falls
+    // through to the main render, which shows the skeleton card).
     return (
       <div className="relative min-h-0 flex-1 overflow-y-auto px-8 py-6">
-        {!answerable ? <AppleGlowEffect /> : null}
-        <div className="flex items-baseline gap-3">
-          <h2 className="text-[20px] font-bold text-foreground">请回答以下问题</h2>
-          <ToolElapsed
-            startedAt={askStartedAt}
-            endedAt={askEndedAt}
-            running={askEndedAt === undefined}
-            className="ml-auto self-center"
-          />
-        </div>
-        <p
-          className={
-            'mt-3 text-[13px] ' +
-            // While streaming, the "generating" line gets the shimmer sweep; a
-            // real parse failure is a static muted message.
-            (answerable ? 'text-muted-foreground' : 'shimmer-text font-medium')
-          }
-        >
-          {answerable ? '无法解析问题内容。' : 'AI 正在生成问题…'}
-        </p>
+        <h2 className="text-[19px] font-bold text-foreground">请回答以下问题</h2>
+        <p className="mt-3 text-[13px] text-muted-foreground">无法解析问题内容。</p>
       </div>
     )
   }
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      {/* Siri / Apple-Intelligence edge glow — a rotating conic-gradient ring
-          hugging the panel's inner border while the questionnaire is still
-          streaming (!answerable). Pure CSS (.siri-edge in main.css); removed
-          once answering is possible. */}
+      {/* Siri / Apple-Intelligence edge glow — the「AI 活动」signal while the
+          questionnaire is still streaming (!answerable); removed once
+          answering is possible. The old whole-form opacity breathing was
+          dropped on purpose: the skeleton card + glow already say "working",
+          and a pulsing page reads as jitter, not polish. */}
       {!answerable ? <AppleGlowEffect /> : null}
-      <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
-        <div className="flex items-baseline gap-3">
-          <h2 className="text-[20px] font-bold text-foreground">请回答以下问题</h2>
-          <ToolElapsed
-            startedAt={askStartedAt}
-            endedAt={askEndedAt}
-            running={askEndedAt === undefined}
-            className="ml-auto self-center"
-          />
-        </div>
-        <p className="mt-1 text-[13px] text-muted-foreground">问题</p>
 
-        {/* While streaming (!answerable) the whole questionnaire breathes — a
-            gentle opacity pulse signalling「生成中」— and each freshly-arrived
-            question fades + slides in. Both stop once the form is answerable.
-            motion respects prefers-reduced-motion automatically. */}
-        <motion.div
-          className="mt-6 flex flex-col gap-8"
-          animate={answerable ? { opacity: 1 } : { opacity: [0.72, 1, 0.72] }}
-          transition={
-            answerable
-              ? { duration: 0.2 }
-              : { duration: 1.8, repeat: Infinity, ease: 'easeInOut' }
-          }
-        >
+      {/* header: title + status line | answered tally + elapsed */}
+      <div className="shrink-0 px-8 pb-1 pt-6">
+        <div className="mx-auto flex w-full max-w-[760px] items-start gap-3">
+          <div>
+            <h2 className="text-[19px] font-bold text-foreground">请回答以下问题</h2>
+            <p
+              className={
+                'mt-1 text-[12.5px] ' +
+                (answerable ? 'text-muted-foreground' : 'shimmer-text font-medium')
+              }
+            >
+              {answerable ? '回答后提交，AI 将按你的选择继续规划' : 'AI 正在生成问题…'}
+            </p>
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-3 self-center">
+            {questions.length > 0 && (
+              <span className="text-[11.5px] tabular-nums text-muted-foreground">
+                <span className="font-semibold text-accent">{answeredCount}</span> /{' '}
+                {questions.length} 已回答
+              </span>
+            )}
+            <ToolElapsed
+              startedAt={askStartedAt}
+              endedAt={askEndedAt}
+              running={askEndedAt === undefined}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-8 py-4">
+        <div className="mx-auto flex w-full max-w-[760px] flex-col gap-3.5">
           {questions.map((q, i) => {
             const otherText = otherDraft[q.question] ?? ''
             const otherSelected =
               answers[q.question] !== undefined &&
               answers[q.question] === otherText &&
               otherText.length > 0
+            const answered =
+              typeof answers[q.question] === 'string' && answers[q.question].trim().length > 0
+            // The badge flip + radio pop share one springy cubic-bezier so all
+            // the micro-interactions speak the same motion language.
+            const springCss = 'ease-[cubic-bezier(0.3,1.3,0.5,1)]'
             return (
               <motion.div
                 // Index key (not question text): during streaming the last
@@ -1733,24 +2025,56 @@ function CanvasQuestionnaire({
                 // tick (flicker). Index is stable — questions only append,
                 // never reorder — so only a genuinely NEW row animates in.
                 key={i}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.28, ease: 'easeOut' }}
+                initial={{ opacity: 0, y: 14, scale: 0.985 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ type: 'spring', bounce: 0.2, visualDuration: 0.4 }}
+                className="rounded-xl border border-border bg-card px-[18px] pb-[18px] pt-4 shadow-sm"
               >
-                <div className="text-[13px] font-medium text-muted-foreground">
-                  {String(i + 1).padStart(2, '0')}
+                <div className="flex items-start gap-2.5">
+                  {/* Question badge: number → check, a 3D flip once answered.
+                      Progress feedback lives ON the number, not in a footnote. */}
+                  <span className="relative mt-px size-6 shrink-0 [perspective:80px]" aria-hidden>
+                    <span
+                      className={
+                        `absolute inset-0 grid place-items-center rounded-[7px] bg-accent/10 text-[11px] font-bold text-accent [backface-visibility:hidden] transition-transform duration-[450ms] ${springCss} ` +
+                        (answered ? '[transform:rotateY(-180deg)]' : '')
+                      }
+                    >
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                    <span
+                      className={
+                        `absolute inset-0 grid place-items-center rounded-[7px] bg-accent text-accent-foreground [backface-visibility:hidden] transition-transform duration-[450ms] ${springCss} ` +
+                        (answered ? '' : '[transform:rotateY(180deg)]')
+                      }
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3.5"
+                        className="size-3"
+                      >
+                        <path d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <h3 className="text-[14.5px] font-semibold leading-6 text-foreground">
+                      {q.header ?? q.question}
+                    </h3>
+                    {q.header ? (
+                      <p className="mt-0.5 text-[12.5px] leading-relaxed text-muted-foreground">
+                        {q.question}
+                      </p>
+                    ) : null}
+                  </span>
+                  <span className="shrink-0 self-center rounded-full border border-border px-2 py-0.5 text-[10.5px] text-muted-foreground">
+                    单选
+                  </span>
                 </div>
-                <h3 className="mt-1 text-[17px] font-bold text-foreground">
-                  {q.header ?? q.question}
-                </h3>
-                {q.header ? (
-                  <p className="mt-1 text-[14px] text-muted-foreground">
-                    {q.question}
-                  </p>
-                ) : null}
-                <p className="mt-2 text-[12.5px] text-muted-foreground">单选</p>
 
-                <div className="mt-2 flex flex-col gap-2">
+                <div className="mt-3 flex flex-col gap-[7px]">
                   {q.options.map((opt) => {
                     const selected = answers[q.question] === opt.label
                     return (
@@ -1760,30 +2084,44 @@ function CanvasQuestionnaire({
                         disabled={!answerable}
                         onClick={() => answerable && pick(q.question, opt.label)}
                         className={
-                          'flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition-colors ' +
+                          'flex w-full items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-left transition-all duration-150 active:scale-[0.995] ' +
                           (selected
-                            ? 'border-accent bg-accent/[0.06]'
-                            : 'border-border hover:border-foreground/20 hover:bg-foreground/[0.02]') +
+                            ? 'border-accent bg-accent/[0.08] shadow-[0_0_0_1px_hsl(var(--accent))]'
+                            : 'border-border hover:border-border hover:bg-foreground/[0.03]') +
                           (!answerable ? ' cursor-default opacity-70' : '')
                         }
                       >
+                        {/* radio: the inner dot springs from 0 on select */}
                         <span
                           className={
-                            'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border ' +
+                            'relative mt-[1.5px] size-4 shrink-0 rounded-full border-[1.5px] transition-colors ' +
                             (selected ? 'border-accent' : 'border-muted-foreground/40')
                           }
                           aria-hidden
                         >
-                          {selected ? (
-                            <span className="size-2 rounded-full bg-accent" />
-                          ) : null}
+                          <span
+                            className={
+                              `absolute inset-[2.5px] rounded-full bg-accent transition-transform duration-300 ${springCss} ` +
+                              (selected ? 'scale-100' : 'scale-0')
+                            }
+                          />
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block text-[14px] font-semibold text-foreground">
+                          <span
+                            className={
+                              'block text-[13px] font-medium leading-snug ' +
+                              (selected ? 'text-accent' : 'text-foreground')
+                            }
+                          >
                             {opt.label}
                           </span>
                           {opt.description ? (
-                            <span className="mt-0.5 block text-[13px] text-muted-foreground">
+                            <span
+                              className={
+                                'mt-0.5 block text-[11.5px] leading-relaxed ' +
+                                (selected ? 'text-accent/70' : 'text-muted-foreground')
+                              }
+                            >
                               {opt.description}
                             </span>
                           ) : null}
@@ -1792,48 +2130,142 @@ function CanvasQuestionnaire({
                     )
                   })}
 
-                  {/* 其他 free-text row. */}
-                  <input
-                    type="text"
-                    value={otherText}
-                    disabled={!answerable}
-                    onChange={(e) => typeOther(q.question, e.target.value)}
-                    placeholder="其他（请填写）"
+                  {/* 其他 free-text row — a radio-styled row whose answer is
+                      the typed text; focus solidifies the dashed border. */}
+                  <label
                     className={
-                      'w-full rounded-xl border px-4 py-3 text-[14px] text-foreground placeholder:text-muted-foreground/60 outline-none transition-colors disabled:opacity-70 ' +
-                      'focus:border-accent focus:bg-accent/[0.06] focus:ring-2 focus:ring-accent/20 ' +
+                      'flex items-center gap-2.5 rounded-lg border border-dashed pl-3.5 pr-1 transition-all duration-150 focus-within:border-solid focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 ' +
                       (otherSelected
-                        ? 'border-accent bg-accent/[0.06]'
+                        ? 'border-solid border-accent bg-accent/[0.08] shadow-[0_0_0_1px_hsl(var(--accent))]'
                         : 'border-border hover:border-foreground/20')
                     }
-                  />
+                  >
+                    <span
+                      className={
+                        'relative size-4 shrink-0 rounded-full border-[1.5px] transition-colors ' +
+                        (otherSelected ? 'border-accent' : 'border-muted-foreground/40')
+                      }
+                      aria-hidden
+                    >
+                      <span
+                        className={
+                          `absolute inset-[2.5px] rounded-full bg-accent transition-transform duration-300 ${springCss} ` +
+                          (otherSelected ? 'scale-100' : 'scale-0')
+                        }
+                      />
+                    </span>
+                    <input
+                      type="text"
+                      value={otherText}
+                      disabled={!answerable}
+                      onChange={(e) => typeOther(q.question, e.target.value)}
+                      placeholder="其他（请填写）"
+                      className="min-w-0 flex-1 bg-transparent py-2.5 pr-3 text-[13px] text-foreground outline-none placeholder:text-muted-foreground/60 disabled:opacity-70"
+                    />
+                  </label>
                 </div>
               </motion.div>
             )
           })}
-        </motion.div>
+
+          {/* Skeleton card for the question the AI is writing next — the
+              streaming signal with a SHAPE, replacing the old page-wide
+              breathing. Appears while !answerable, springs in like a real
+              card, and the real question replaces it on the next parse. */}
+          {!answerable && (
+            <motion.div
+              key="skeleton"
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ type: 'spring', bounce: 0.2, visualDuration: 0.4 }}
+              className="rounded-xl border border-dashed border-border px-[18px] py-4"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="grid size-6 shrink-0 place-items-center rounded-[7px] bg-accent/10">
+                  <span className="size-1 animate-pulse rounded-full bg-accent" />
+                </span>
+                <span className="h-[11px] w-28 animate-pulse rounded bg-muted" />
+              </div>
+              <div className="mt-3.5 space-y-2">
+                <span
+                  className="block h-[11px] w-[72%] animate-pulse rounded bg-muted"
+                  style={{ animationDelay: '150ms' }}
+                />
+                <span
+                  className="block h-[11px] w-[54%] animate-pulse rounded bg-muted"
+                  style={{ animationDelay: '300ms' }}
+                />
+              </div>
+            </motion.div>
+          )}
+        </div>
       </div>
 
-      {/* Action bar. Disabled while streaming (no requestId yet → can't answer);
-          enabled once the permission request lands. */}
-      <div className="flex shrink-0 items-center gap-3 border-t border-border px-8 py-4">
-        <button
-          type="button"
-          onClick={submit}
-          disabled={!answerable || !allAnswered}
-          className="rounded-full bg-foreground px-5 py-2 text-[13px] font-medium text-background transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          提交答案
-        </button>
-        {!answerable ? (
-          <span className="text-[12.5px] text-muted-foreground">
-            AI 正在生成问题…
+      {/* Action bar: per-question progress dots + hint + the submit button.
+          The button UNLOCKS (grey → accent, one scale beat + a single sheen
+          sweep) the moment every question is answered — the "ready to hand
+          back" moment gets a visible beat instead of a silent color swap. */}
+      <div className="shrink-0 border-t border-border/60 bg-background/90 px-8 py-2.5 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-[760px] items-center gap-3.5">
+          <div className="flex gap-[5px]" aria-hidden>
+            {questions.map((q, i) => {
+              const on =
+                typeof answers[q.question] === 'string' && answers[q.question].trim().length > 0
+              return (
+                <span
+                  key={i}
+                  className={
+                    'size-[7px] rounded-full transition-all duration-300 ease-[cubic-bezier(0.3,1.3,0.5,1)] ' +
+                    (on ? 'scale-110 bg-accent' : 'border border-border bg-muted')
+                  }
+                />
+              )
+            })}
+            {!answerable && (
+              <span className="size-[7px] animate-pulse rounded-full border border-dashed border-muted-foreground/50" />
+            )}
+          </div>
+          <span className="text-[11.5px] text-muted-foreground">
+            {!answerable
+              ? 'AI 正在生成问题…'
+              : allAnswered
+                ? '就绪，随时可提交'
+                : `还有 ${questions.length - answeredCount} 题未回答`}
           </span>
-        ) : !allAnswered ? (
-          <span className="text-[12.5px] text-muted-foreground">
-            请回答全部问题后再提交
-          </span>
-        ) : null}
+          <div className="flex-1" />
+          <motion.button
+            type="button"
+            onClick={submit}
+            disabled={!answerable || !allAnswered}
+            // One scale beat when the button flips to ready. The keyframe array
+            // replays only when `animate` changes (ready false → true).
+            animate={answerable && allAnswered ? { scale: [1, 1.05, 1] } : { scale: 1 }}
+            transition={{ duration: 0.45, ease: [0.3, 1.3, 0.5, 1] }}
+            className={
+              'relative overflow-hidden rounded-lg px-[18px] py-2 text-[13px] font-semibold transition-colors duration-300 ' +
+              (answerable && allAnswered
+                ? 'bg-accent text-accent-foreground shadow-sm hover:opacity-90'
+                : 'cursor-not-allowed bg-muted text-muted-foreground/70')
+            }
+          >
+            提交答案
+            {/* Single sheen sweep across the freshly-unlocked button; parks
+                off-canvas (x:110%) so it never replays on re-render. */}
+            {answerable && allAnswered && (
+              <motion.span
+                aria-hidden
+                className="pointer-events-none absolute inset-0"
+                style={{
+                  background:
+                    'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.45) 50%, transparent 70%)'
+                }}
+                initial={{ x: '-110%' }}
+                animate={{ x: '110%' }}
+                transition={{ duration: 0.9, ease: 'easeOut', delay: 0.15 }}
+              />
+            )}
+          </motion.button>
+        </div>
       </div>
     </div>
   )
@@ -2604,14 +3036,14 @@ function ReasoningCard({
         className="mt-[7px] flex size-[6px] shrink-0 items-center justify-center"
       >
         {/* State indicator dot — mirrors the TodoRow status pattern:
-            in-progress = accent (blue) pulsing, done = emerald.
-            Same colours used for active todos / completed todos in
-            the right rail, so the chat reads as a single visual
+            in-progress = accent breathing (tc-breathe, main.css), done =
+            emerald. Same colours used for active todos / completed todos
+            in the right rail, so the chat reads as a single visual
             language across surfaces. */}
         <span
           className={
             'block size-[6px] rounded-full ' +
-            (isStreaming ? 'bg-accent' : 'bg-emerald-500')
+            (isStreaming ? 'tc-breathe bg-accent' : 'bg-emerald-500')
           }
         />
       </span>
@@ -2788,6 +3220,19 @@ type ToolFallbackProps = {
   }
 }
 
+/**
+ * Heuristic error sniff on a settled tool result: the SDK surfaces tool
+ * failures as text beginning with "Error" ("Error calling tool …",
+ * "Error: ENOENT …"). Purely VISUAL — it flips the status badge / tool
+ * name / output pane into the red error tone and never affects behavior,
+ * so a false negative just means the old neutral rendering.
+ */
+function resultLooksError(result: unknown): boolean {
+  if (result === undefined) return false
+  const text = typeof result === 'string' ? result : extractText(result)
+  return /^\s*Error(\b|:)/.test(text)
+}
+
 function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   const { toolName, toolCallId, args, argsText, result, status } = props
   const toolLabel = useToolLabel()
@@ -2917,23 +3362,42 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   // All hooks above have already run, so this early return is hook-safe.
   if (askHandledByCanvas) return <></>
 
+  // Visual error tone (red badge / name / output pane). Heuristic on the
+  // settled result text — see resultLooksError above.
+  const failed = !running && resultLooksError(result)
+
   return (
-    <div className="w-full min-w-0">
-      <details open={running} className="group/tool">
-          {/* Compact tool header (DESIGN.md §4): a ringed status check,
-              the tool label, and the most-informative arg (command /
-              file / query) inline on the same row — no DONE pill, no
-              gutter glyph. Mirrors the lightweight "已执行命令 ls -la"
-              row in the reference design. The summary stays visible when
-              expanded (it IS the headline), so we drop the old
-              group-open hide. */}
+    // tc-row-in: entry fade-rise as rows land in the stream (history restore
+    // fades everything in one quiet pass — uniform, not a cascade of pops).
+    <div className="tc-row-in w-full min-w-0">
+      {/* tc-details animates expand/collapse height via ::details-content
+          (see main.css) — the native <details> stays, no controlled state. */}
+      <details open={running} className="group/tool tc-details">
+          {/* Compact tool header (DESIGN.md §4): a status badge, the tool
+              label, and the most-informative arg (command / file / query)
+              inline on the same row — no DONE pill, no gutter glyph.
+              Mirrors the lightweight "已执行命令 ls -la" row in the
+              reference design. The summary stays visible when expanded
+              (it IS the headline), so we drop the old group-open hide. */}
           <summary className="flex cursor-pointer list-none items-center gap-2 text-[13px]">
-            <StatusCheck running={running} />
-            <span className="shrink-0 font-medium text-foreground">
+            <StatusCheck running={running} error={failed} />
+            <span
+              className={
+                'shrink-0 font-medium ' + (failed ? 'text-red-500' : 'text-foreground')
+              }
+            >
               {toolLabel(toolName)}
             </span>
             {summary && (
-              <span className="min-w-0 truncate font-mono text-[12px] text-muted-foreground">
+              <span
+                className={
+                  'min-w-0 truncate font-mono text-[12px] ' +
+                  // Sweep-of-light on the args while the tool runs (same
+                  // .shimmer-text the streaming verbs use) — settles back to
+                  // plain muted text the moment the result lands.
+                  (running ? 'shimmer-text' : 'text-muted-foreground')
+                }
+              >
                 {summary}
               </span>
             )}
@@ -2945,7 +3409,7 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
             />
             <span
               aria-hidden
-              className="shrink-0 font-mono text-[10.5px] text-muted-foreground/50 transition group-open/tool:rotate-90"
+              className="shrink-0 font-mono text-[10.5px] text-muted-foreground/50 transition-transform duration-200 group-open/tool:rotate-90"
             >
               ▾
             </span>
@@ -2987,6 +3451,7 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
               <ToolPane
                 label={friendly.output.label}
                 copyText={friendly.output.copyText}
+                tone={failed ? 'error' : undefined}
               >
                 {friendly.output.content}
               </ToolPane>
@@ -2997,6 +3462,7 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
                 <ToolPane
                   label={t('toolPaneOutputLabel')}
                   copyText={extractText(result)}
+                  tone={failed ? 'error' : undefined}
                 >
                   <CodeFileView
                     text={extractText(result)}
@@ -3007,6 +3473,7 @@ function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
                 <ToolPane
                   label={t('toolPaneOutputLabel')}
                   copyText={safeStringify(result)}
+                  tone={failed ? 'error' : undefined}
                 >
                   <JsonView text={safeStringify(result)} maxHeight />
                 </ToolPane>
@@ -3336,32 +3803,58 @@ function ComposerStatusBar({
   )
 }
 
-function StatusCheck({ running }: { running: boolean }): React.JSX.Element {
+/**
+ * Tool status badge, with the motion language landed from the prototype
+ * (docs/tool-call-cards.html):
+ *   - running → an accent ARC spinner (the old pulsing ring read as
+ *     "stalled"; a moving arc reads as "in flight").
+ *   - done    → emerald disc pops in, the check draws itself
+ *     (stroke-dashoffset), a two-beat "landed" moment.
+ *   - error   → red disc + drawn ✗ (see resultLooksError in ToolCallCard).
+ * The pop/draw plays ONLY on a live running→settled transition, gated by
+ * `sawRunning`: cards mounted already-settled (history restore paints
+ * dozens at once) render the static final glyph — a synchronized mass pop
+ * reads as a glitch, not delight.
+ */
+function StatusCheck({
+  running,
+  error
+}: {
+  running: boolean
+  error?: boolean
+}): React.JSX.Element {
+  const sawRunning = useRef(running)
+  if (running) sawRunning.current = true
+  const animate = sawRunning.current && !running
   if (running) {
     return (
-      <span
-        aria-hidden
-        className="grid size-[15px] shrink-0 animate-pulse place-items-center rounded-full border-[1.5px] border-accent text-accent"
-      >
-        <span className="size-[5px] rounded-full bg-accent" />
+      <span aria-hidden className="relative size-[15px] shrink-0">
+        <svg viewBox="0 0 15 15" className="absolute inset-0 size-full">
+          <circle className="tc-spin" cx="7.5" cy="7.5" r="6" />
+        </svg>
       </span>
     )
   }
   return (
-    <span
-      aria-hidden
-      className="grid size-[15px] shrink-0 place-items-center rounded-full border-[1.5px] border-emerald-500 text-emerald-500"
-    >
-      <svg
-        viewBox="0 0 12 12"
-        className="size-[9px]"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M2.5 6.2 5 8.5 9.5 3.5" />
+    <span aria-hidden className="relative size-[15px] shrink-0">
+      <svg viewBox="0 0 15 15" className="absolute inset-0 size-full">
+        <circle
+          className={(animate ? 'tc-pop ' : '') + (error ? 'fill-red-500' : 'fill-emerald-500')}
+          cx="7.5"
+          cy="7.5"
+          r="7.5"
+        />
+        {error ? (
+          <path
+            className={'tc-x' + (animate ? ' tc-draw' : '')}
+            d="M5.2 5.2l4.6 4.6M9.8 5.2l-4.6 4.6"
+          />
+        ) : (
+          <path
+            className={'tc-k' + (animate ? ' tc-draw' : '')}
+            d="M4.4 7.8l2.1 2.1 4.1-4.4"
+          />
+        )}
       </svg>
     </span>
   )
@@ -3386,7 +3879,7 @@ function ToolRunningHint(): React.JSX.Element {
     >
       <span
         aria-hidden
-        className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-accent"
+        className="tc-breathe inline-block size-1.5 shrink-0 rounded-full bg-accent"
       />
       <span className="tool-loading-dots">{t('toolRunningHint')}</span>
     </div>
@@ -3395,6 +3888,7 @@ function ToolRunningHint(): React.JSX.Element {
 
 function ToolPane({
   label,
+  tone,
   children
 }: {
   label: string
@@ -3403,6 +3897,10 @@ function ToolPane({
    *  (see the reference design: a single bordered output frame with
    *  just a corner label, no copy affordance). */
   copyText?: string
+  /** 'error' tints the frame red (failed tool's output pane) — border,
+   *  wash and corner label all shift so the failure reads at a glance
+   *  without opening the pane's content. */
+  tone?: 'error'
   children: React.ReactNode
 }): React.JSX.Element {
   // `min-w-0` on both the outer frame and the body wrapper lets the
@@ -3417,9 +3915,21 @@ function ToolPane({
   // top-left as quiet mono micro-copy ("Response" / "输出"), the body
   // holds the raw content. No header strip, no copy button.
   return (
-    <div className="min-w-0 overflow-hidden rounded-apple-md border border-border/60 bg-card/40">
+    <div
+      className={
+        'min-w-0 overflow-hidden rounded-apple-md border ' +
+        (tone === 'error'
+          ? 'border-red-500/30 bg-red-500/[0.05]'
+          : 'border-border/60 bg-card/40')
+      }
+    >
       <div className="px-3 pt-2">
-        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70">
+        <span
+          className={
+            'font-mono text-[10px] uppercase tracking-[0.08em] ' +
+            (tone === 'error' ? 'text-red-500/80' : 'text-muted-foreground/70')
+          }
+        >
           {label}
         </span>
       </div>
@@ -3545,12 +4055,36 @@ function summarizeArgs(args: unknown): string | null {
   for (const k of keys) {
     const v = obj[k]
     if (typeof v === 'string' && v.length > 0) {
-      const trimmed = v.length > 60 ? `${v.slice(0, 57)}…` : v
-      return trimmed
+      // Shell commands often open with setup links (`export VAR=… &&`,
+      // `cd … &&`, bare env assignments) that eat the whole 60-char
+      // budget before the substantive command appears. Peel them off —
+      // this is display-only; the full command stays in copy/raw.
+      const s =
+        k === 'command' || k === 'cmd' ? stripCommandPrefixes(v) : v
+      return s.length > 60 ? `${s.slice(0, 57)}…` : s
     }
     if (typeof v === 'number') return String(v)
   }
   return null
+}
+
+/** Peel `export VAR=…`, bare `VAR=…` and `cd …` links off the front of
+ *  a `&&` / `;` chain until a substantive command surfaces. Falls back
+ *  to the original string if peeling would leave nothing. */
+function stripCommandPrefixes(cmd: string): string {
+  let body = cmd.trim()
+  for (;;) {
+    const next = body
+      .replace(
+        /^export\s+[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s*(?:&&|;)\s*/,
+        ''
+      )
+      .replace(/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+/, '')
+      .replace(/^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*/, '')
+    if (next === body) break
+    body = next
+  }
+  return body.length > 0 ? body : cmd.trim()
 }
 
 /* ───────────── Code-file output highlighting ────────────── */
@@ -4097,10 +4631,10 @@ function Composer(): React.JSX.Element {
           </ComposerPrimitive.Root>
         </ComposerPrimitive.AttachmentDropzone>
 
-        {/* Below-card chips (figure 18): 选择工作目录 · 语气 创意. Like the
-            decor cluster above, these are VISUAL-ONLY placeholders for now —
-            no backing feature on the desktop side. They sit just under the
-            card, matching the mockup. */}
+        {/* Below-card chips (figure 18): 选择工作目录 · 语气 创意 stay
+            VISUAL-ONLY placeholders; the 模型 chip on the right is the first
+            FUNCTIONAL one — it switches the engine's model (live + future
+            sessions) via MODEL_SET. */}
         <div className="mt-3 flex items-center gap-4 px-2">
           <ComposerBelowChip
             label="选择工作目录"
@@ -4118,6 +4652,9 @@ function Composer(): React.JSX.Element {
               </svg>
             }
           />
+          <div className="ml-auto">
+            <ComposerModelChip model={sessionMeta?.model} />
+          </div>
         </div>
       </div>
     </div>
@@ -4299,6 +4836,170 @@ function ComposerModePicker(): React.JSX.Element {
                 </button>
               )
             })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/**
+ * 模型 chip — the composer footer's model switcher (right side of the
+ * below-card row). Shows the session's current model (SessionMeta.model,
+ * e.g. "gpt-5.4[1m]") and opens an upward dropdown listing the backend
+ * gateway's catalog (MODEL_LIST IPC, fetched on open — main caches it).
+ * Picking an id calls MODEL_SET: live for the foreground session and the
+ * default for every future session in this window. The label flips
+ * optimistically (`pending`) and retires once the sessionMeta refresh —
+ * driven by the engine's meta-changed broadcast — catches up.
+ */
+function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [models, setModels] = useState<string[] | null>(null)
+  const [listError, setListError] = useState<string | null>(null)
+  const [pending, setPending] = useState<string | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  // Same popover bookkeeping as ComposerModePicker: hold the composer blur
+  // strip closed while open + dismiss on outside click / Escape.
+  useEffect(() => {
+    if (!open) return
+    const overlay = useComposerOverlayStore.getState()
+    overlay.setOpen(true)
+    const onDown = (e: MouseEvent): void => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      overlay.setOpen(false)
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  // Fetch the catalog on open. Main's TTL cache makes repeat opens instant;
+  // a failed fetch still returns the last good list (stale beats empty), so
+  // only a genuinely empty result shows the error row.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    window.chatApi
+      .listModels()
+      .then((res) => {
+        if (cancelled) return
+        setModels(res.models)
+        setListError(res.models.length === 0 ? (res.error ?? '模型列表为空') : null)
+      })
+      .catch((err) => {
+        if (!cancelled) setListError(err instanceof Error ? err.message : String(err))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  // Engine reflects a pick into SessionMeta.model and broadcasts — once the
+  // prop catches up (or a system init reports a different truth), the
+  // optimistic label retires.
+  useEffect(() => {
+    setPending(null)
+  }, [model])
+
+  const current = pending ?? model
+  const choose = (id: string): void => {
+    setOpen(false)
+    if (id === current) return
+    setPending(id)
+    void window.chatApi.setModel(id).catch((err) => {
+      console.error('[Composer] setModel failed', err)
+      setPending(null)
+    })
+  }
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="切换模型"
+        className={
+          'flex items-center gap-1.5 text-[13px] transition-colors ' +
+          (open
+            ? 'text-foreground'
+            : 'text-muted-foreground/70 hover:text-foreground')
+        }
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden="true">
+          <rect x="7" y="7" width="10" height="10" rx="2" />
+          <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
+        </svg>
+        <span className="max-w-[180px] truncate leading-none">
+          {current ?? '模型'}
+        </span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={'text-muted-foreground/40 transition-transform ' + (open ? 'rotate-180' : '')} aria-hidden="true">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.98 }}
+            transition={{ duration: 0.12, ease: 'easeOut' }}
+            className="absolute bottom-full right-0 z-40 mb-1.5 max-h-72 w-64 overflow-y-auto rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+            role="listbox"
+          >
+            {models === null && listError === null ? (
+              <div className="px-3 py-2 text-[12.5px] text-muted-foreground">
+                加载模型列表…
+              </div>
+            ) : listError !== null ? (
+              <div className="px-3 py-2 text-[12.5px] text-muted-foreground">
+                {listError}
+              </div>
+            ) : (
+              models!.map((id) => {
+                const selected = id === current
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    onClick={() => choose(id)}
+                    className={
+                      'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors ' +
+                      (selected
+                        ? 'bg-accent/15 text-foreground'
+                        : 'text-muted-foreground hover:bg-accent/10 hover:text-foreground')
+                    }
+                  >
+                    <span className="min-w-0 flex-1 truncate font-medium" title={id}>
+                      {id}
+                    </span>
+                    {selected ? (
+                      <svg
+                        width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                        className="shrink-0 text-accent"
+                        aria-hidden
+                      >
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    ) : null}
+                  </button>
+                )
+              })
+            )}
           </motion.div>
         )}
       </AnimatePresence>

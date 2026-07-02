@@ -53,6 +53,8 @@ import {
   type ShellStatFilesResult,
   type ImageManifestReadPayload,
   type ImageManifestReadResult,
+  type ModelListResult,
+  type ModelSetPayload,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
   type WorkspaceState
@@ -196,6 +198,16 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.IMAGE_MANIFEST_READ,
       payload
     ) as Promise<ImageManifestReadResult>
+  },
+
+  listModels(): Promise<ModelListResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.MODEL_LIST) as Promise<ModelListResult>
+  },
+
+  setModel(model: string | null): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.MODEL_SET, {
+      model
+    } satisfies ModelSetPayload) as Promise<void>
   },
 
   listSessions(): Promise<SessionListResult> {

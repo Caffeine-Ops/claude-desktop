@@ -202,3 +202,52 @@ export const SPINNER_VERBS: readonly string[] = [
 export function sampleSpinnerVerb(): string {
   return SPINNER_VERBS[Math.floor(Math.random() * SPINNER_VERBS.length)]!
 }
+
+/**
+ * 中文动词表 — 与英文表同样的俏皮劲儿（既有「琢磨中」这类正经进行时，
+ * 也有「掐指一算」这类彩蛋），供中文界面下的思考行使用。
+ */
+export const SPINNER_VERBS_ZH: readonly string[] = [
+  '琢磨中',
+  '推敲中',
+  '酝酿中',
+  '思忖中',
+  '盘算中',
+  '梳理中',
+  '编织中',
+  '烹制中',
+  '熬煮中',
+  '搅拌中',
+  '发酵中',
+  '打磨中',
+  '雕琢中',
+  '拼装中',
+  '搭建中',
+  '排布中',
+  '斟酌中',
+  '掐指一算',
+  '翻箱倒柜',
+  '穿针引线',
+  '添砖加瓦',
+  '运筹帷幄',
+  '苦思冥想',
+  '灵光乍现',
+  '奋笔疾书',
+  '抽丝剥茧',
+  '融会贯通',
+  '按图索骥'
+]
+
+/**
+ * Deterministically map the turn's sampled ENGLISH verb onto the Chinese
+ * list. The store keeps sampling English (turnVerb is set once per turn in
+ * startAssistantMessage, far from any i18n context); the RENDER layer picks
+ * the display language. Hashing the English verb — instead of re-sampling —
+ * keeps the Chinese verb stable for the whole turn and avoids threading the
+ * lang through the store.
+ */
+export function zhSpinnerVerb(enVerb: string): string {
+  let h = 0
+  for (let i = 0; i < enVerb.length; i++) h = (h * 31 + enVerb.charCodeAt(i)) | 0
+  return SPINNER_VERBS_ZH[Math.abs(h) % SPINNER_VERBS_ZH.length]!
+}

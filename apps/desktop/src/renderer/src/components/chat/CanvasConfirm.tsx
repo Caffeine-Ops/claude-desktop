@@ -69,9 +69,50 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v))
 }
 
+/**
+ * Desktop-only wizard copy. Deliberately NOT in canvasConfirm.helpers'
+ * MESSAGES — that dict is a 1:1 mirror of app.js and must stay re-portable;
+ * the two-step stepper / deriving screen / rich button labels exist only in
+ * this native rendering, so their strings live here.
+ */
+const UI_MESSAGES: Record<Lang, Record<string, string>> = {
+  en: {
+    step1_name: 'Anchors',
+    step1_sub: 'Canvas · Audience · Style',
+    step2_name: 'Realization',
+    step2_sub: 'Color · Type · Images',
+    deriving_title: 'Deriving realization options…',
+    btn_next_rich: 'Next · Realization',
+    btn_confirm_rich: 'Confirm & generate',
+    note_canvas: 'Sets composition & density; cannot change later',
+    note_audience: 'Drives narration tone and content depth',
+    note_color: 'Six role colors swap together, staying harmonious',
+    note_type: 'Heading & body picked as a pair — live samples',
+    note_images: 'Where illustrations come from & how they look'
+  },
+  zh: {
+    step1_name: '锚点确认',
+    step1_sub: '画布 · 受众 · 风格',
+    step2_name: '实现确认',
+    step2_sub: '配色 · 字体 · 图片',
+    deriving_title: '正在派生实现层建议…',
+    btn_next_rich: '下一步 · 实现确认',
+    btn_confirm_rich: '确认，开始生成',
+    note_canvas: '决定构图与信息密度，之后不可换',
+    note_audience: 'AI 依此决定叙述口吻与内容深度',
+    note_color: '六个角色色一起换，保证整套和谐',
+    note_type: '标题与正文成对确定，字样为实时预览',
+    note_images: '决定插图从哪来、长什么样'
+  }
+}
+
 export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Element {
   const [lang, setLang] = useState<Lang>(detectLang)
   const t = useMemo(() => makeT(lang), [lang])
+  const uiT = useCallback(
+    (key: string): string => (UI_MESSAGES[lang] || UI_MESSAGES.en)[key] ?? key,
+    [lang]
+  )
 
   const [cat, setCat] = useState<Catalogs | null>(null)
   const [rec, setRec] = useState<Recommendations | null>(null)
@@ -84,6 +125,10 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
   const [submitting, setSubmitting] = useState(false)
   // Cancels an in-flight tier2 poll loop when the component unmounts.
   const pollAlive = useRef(true)
+  // The scrollable sections container — reset to the top when the page first
+  // becomes ready and on each stage change, so the confirm page always opens at
+  // the top instead of wherever a prior scroll left it.
+  const scrollRef = useRef<HTMLDivElement | null>(null)
 
   const api = useCallback((path: string) => baseUrl.replace(/\/$/, '') + path, [baseUrl])
 
@@ -244,6 +289,14 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseUrl])
 
+  // Reset the scroll position to the top whenever the page becomes ready or the
+  // stage advances (tier1 → tier2). Without this the container keeps whatever
+  // scroll offset a previous render left, so the confirm page can open already
+  // scrolled halfway down (its header/first cards cut off).
+  useEffect(() => {
+    if (phase === 'ready' && scrollRef.current) scrollRef.current.scrollTop = 0
+  }, [phase, stage])
+
   // ── tier-1 submit → deriving → poll for tier-2 ───────────────────────────
   const pollForTier2 = useCallback(() => {
     const tick = (): void => {
@@ -362,12 +415,53 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
     })
   }, [])
 
+  // Live selection summary for the action bar — the user's last glance before
+  // committing. Catalog ids resolve to their localized labels; a custom value
+  // (not in the catalog) shows the user's own text verbatim.
+  const summaryText = useMemo(() => {
+    if (!cat) return ''
+    const labelFor = (list: CatalogOption[] | undefined, id: string | undefined): string | null => {
+      if (!id) return null
+      const o = flattenCatalog(list).find((x) => x.id === id)
+      return o ? optionLabel(o, lang) : id
+    }
+    const parts =
+      stage === 1
+        ? [
+            labelFor(cat.canvas, state.canvas),
+            isPptCanvas(cat, state.canvas)
+              ? labelFor(cat.delivery_purpose, state.delivery_purpose)
+              : null,
+            labelFor(cat.modes, state.mode),
+            labelFor(cat.visual_styles, state.visual_style)
+          ]
+        : [
+            labelFor(cat.canvas, state.canvas),
+            labelFor(cat.visual_styles, state.visual_style),
+            state.color?.name,
+            state.typography?.name,
+            state.typography?.body_size ? `${state.typography.body_size}px` : null
+          ]
+    return parts.filter(Boolean).join(' · ')
+  }, [cat, state, stage, lang])
+
   // ── render ───────────────────────────────────────────────────────────────
   if (phase === 'confirmed') {
+    // MESSAGES' confirmed_title carries its own "✓ " prefix (the web page had
+    // no icon); the ring renders the check here, so strip it from the text.
     return (
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-8 py-10 text-center">
-        <div className="text-[22px] font-bold text-emerald-600">{t('confirmed_title')}</div>
-        <div className="max-w-md text-[13px] text-muted-foreground">{t('confirmed_hint')}</div>
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 py-10 text-center">
+        <div className="grid size-[52px] place-items-center rounded-full bg-accent/15 text-accent">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+            <path d="M4.5 12.5l5 5L19.5 7" />
+          </svg>
+        </div>
+        <div className="text-[16px] font-bold text-foreground">
+          {t('confirmed_title').replace(/^✓\s*/, '')}
+        </div>
+        <div className="max-w-md text-[12.5px] leading-relaxed text-muted-foreground">
+          {t('confirmed_hint')}
+        </div>
       </div>
     )
   }
@@ -386,43 +480,66 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
     )
   }
   if (phase === 'deriving') {
+    // The tier1→tier2 wait made visible: spinner + copy + shimmering skeleton
+    // cards, instead of the bare one-liner that read like a stall.
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-8 py-10 text-[13px] text-muted-foreground">
-        {t('deriving')}
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 py-10 text-center">
+        <div className="size-[34px] animate-spin rounded-full border-[3px] border-accent/25 border-t-accent" />
+        <div className="text-[15px] font-semibold text-foreground">{uiT('deriving_title')}</div>
+        <div className="max-w-sm text-[12px] leading-relaxed text-muted-foreground">{t('deriving')}</div>
+        <div className="mt-1.5 flex gap-2.5">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="h-16 w-28 animate-pulse rounded-lg bg-muted"
+              style={{ animationDelay: `${i * 150}ms` }}
+            />
+          ))}
+        </div>
       </div>
     )
   }
 
   const showAnchors = stage === 1 || stage === 'all'
   const showRealization = stage === 2 || stage === 'all'
-  const primaryLabel = stage === 1 ? t('btn_next') : t('btn_confirm')
+  // Wizard-flavored labels ("Next · Realization" / "Confirm & generate") so the
+  // button names the step it leads to, not just the verb.
+  const primaryLabel = stage === 1 ? uiT('btn_next_rich') : uiT('btn_confirm_rich')
   // Section numbering runs 1..N within the rendered tier (matches app.js).
   let secNum = 0
   const next = (): number => (secNum += 1)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* topbar */}
-      <div className="flex shrink-0 items-start justify-between gap-3 px-6 pb-3 pt-5">
-        <div>
-          <h2 className="text-[18px] font-bold text-foreground">{t('page_title')}</h2>
-          <p className="mt-1 text-[12px] text-muted-foreground">{t('topbar_hint')}</p>
+      {/* topbar: title + hint + lang toggle, then the two-step wizard
+          indicator. stage 'all' (legacy recs without a tier) renders both
+          layers at once, so the stepper would lie — hide it there. */}
+      <div className="shrink-0 border-b border-border/60 px-6 pb-3.5 pt-5">
+        <div className="mx-auto w-full max-w-[860px]">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-[17px] font-bold text-foreground">{t('page_title')}</h2>
+              <p className="mt-1 text-[12px] text-muted-foreground">{t('topbar_hint')}</p>
+            </div>
+            <button
+              type="button"
+              onClick={toggleLang}
+              title={t('lang_toggle_title')}
+              className="shrink-0 rounded-md border border-border bg-card/60 px-2.5 py-1 text-[12px] font-medium text-foreground transition hover:bg-muted"
+            >
+              {lang === 'zh' ? 'EN' : '中'}
+            </button>
+          </div>
+          {stage !== 'all' && <Stepper stage={stage} uiT={uiT} />}
         </div>
-        <button
-          type="button"
-          onClick={toggleLang}
-          title={t('lang_toggle_title')}
-          className="shrink-0 rounded-md border border-border bg-card/60 px-2.5 py-1 text-[12px] font-medium text-foreground transition hover:bg-muted"
-        >
-          {lang === 'zh' ? 'EN' : '中'}
-        </button>
       </div>
 
       {/* scrollable sections */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-4">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 pb-5">
+        <div className="mx-auto flex w-full max-w-[860px] flex-col gap-3.5 pt-4">
         {showAnchors && (
           <>
-            <Section num={next()} title={t('sec_canvas')}>
+            <Section num={next()} title={t('sec_canvas')} note={uiT('note_canvas')}>
               <CanvasField
                 list={cat.canvas}
                 recommendedId={recOrFirst(rec, 'canvas', cat.canvas)}
@@ -439,7 +556,7 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
               />
             </Section>
 
-            <Section num={next()} title={t('sec_audience')}>
+            <Section num={next()} title={t('sec_audience')} note={uiT('note_audience')}>
               <TextField
                 value={state.audience}
                 onChange={(v) => patch({ audience: v })}
@@ -505,7 +622,7 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
               />
             </Section>
 
-            <Section num={next()} title={t('sec_color')}>
+            <Section num={next()} title={t('sec_color')} note={uiT('note_color')}>
               <ColorField
                 candidates={(rec.color && rec.color.candidates) || []}
                 value={state.color}
@@ -527,7 +644,7 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
               />
             </Section>
 
-            <Section num={next()} title={t('sec_type')}>
+            <Section num={next()} title={t('sec_type')} note={uiT('note_type')}>
               <TypographyField
                 candidates={(rec.typography && rec.typography.candidates) || []}
                 value={state.typography}
@@ -550,7 +667,7 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
               </SubField>
             </Section>
 
-            <Section num={next()} title={t('sec_images')}>
+            <Section num={next()} title={t('sec_images')} note={uiT('note_images')}>
               <ImageField
                 cat={cat}
                 rec={rec}
@@ -589,24 +706,107 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
             </Section>
           </>
         )}
+        </div>
       </div>
 
-      {/* action bar */}
-      <div
-        className="flex shrink-0 items-center justify-end gap-3 px-6 py-3"
-        style={{ boxShadow: 'inset 0 1px 0 rgba(0,0,0,0.06)' }}
-      >
-        {statusText && <span className="mr-auto text-[12px] text-muted-foreground">{statusText}</span>}
-        <button
-          type="button"
-          disabled={submitting}
-          onClick={onPrimary}
-          className="rounded-md bg-accent px-4 py-1.5 text-[13px] font-semibold text-accent-foreground transition hover:opacity-90 disabled:opacity-50"
-        >
-          {primaryLabel}
-        </button>
+      {/* action bar: live selection summary (or a status/error, which takes
+          priority) + the single primary action. No back button — tier1 has
+          already been consumed by the server's --wait-only loop by the time
+          tier2 renders, so "going back" has nothing to re-submit into. */}
+      <div className="shrink-0 border-t border-border bg-background px-6 py-2.5">
+        <div className="mx-auto flex w-full max-w-[860px] items-center gap-3">
+          <span
+            className={
+              'min-w-0 flex-1 truncate text-[11.5px] ' +
+              (statusText ? 'text-muted-foreground' : 'text-muted-foreground/80')
+            }
+            title={statusText || summaryText}
+          >
+            {statusText || summaryText}
+          </span>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={onPrimary}
+            className="rounded-lg bg-accent px-[18px] py-2 text-[13px] font-semibold text-accent-foreground shadow-sm transition-all hover:opacity-90 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100"
+          >
+            {primaryLabel}
+          </button>
+        </div>
       </div>
     </div>
+  )
+}
+
+/* ───────────────── two-step wizard indicator ───────────────── */
+
+/**
+ * Stepper
+ * -------
+ * Makes the server's two-tier flow (anchors → derived realization) visible:
+ * step 1 shows a check once tier 2 is reached, the connector fills with the
+ * accent, and the active step gets a soft accent ring. Only rendered for
+ * tiered recommendations (stage 1 | 2) — 'all' shows every section at once.
+ */
+function Stepper({ stage, uiT }: { stage: 1 | 2; uiT: (k: string) => string }): React.JSX.Element {
+  const dot = (active: boolean, done: boolean, label: string): React.JSX.Element => (
+    <span
+      className={
+        'grid size-[22px] shrink-0 place-items-center rounded-full text-[11px] font-bold transition-all ' +
+        (active
+          ? 'bg-accent text-accent-foreground shadow-[0_0_0_3px_hsl(var(--accent)/0.25)]'
+          : done
+            ? 'bg-accent/15 text-accent'
+            : 'border border-border bg-muted text-muted-foreground')
+      }
+    >
+      {done ? (
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5">
+          <path d="M5 13l4 4L19 7" />
+        </svg>
+      ) : (
+        label
+      )}
+    </span>
+  )
+  const name = (active: boolean, nameKey: string, subKey: string): React.JSX.Element => (
+    <span className="whitespace-nowrap">
+      <span
+        className={
+          'text-[12px] ' + (active ? 'font-semibold text-foreground' : 'font-medium text-muted-foreground')
+        }
+      >
+        {uiT(nameKey)}
+      </span>{' '}
+      <span className="text-[10.5px] text-muted-foreground/70">{uiT(subKey)}</span>
+    </span>
+  )
+  return (
+    <div className="mt-3.5 flex items-center gap-2.5">
+      <div className="flex items-center gap-2">
+        {dot(stage === 1, stage === 2, '1')}
+        {name(stage === 1, 'step1_name', 'step1_sub')}
+      </div>
+      <span
+        className={'h-[2px] w-11 shrink-0 rounded-full ' + (stage === 2 ? 'bg-accent' : 'bg-border')}
+      />
+      <div className="flex items-center gap-2">
+        {dot(stage === 2, false, '2')}
+        {name(stage === 2, 'step2_name', 'step2_sub')}
+      </div>
+    </div>
+  )
+}
+
+/** The selected-state corner check shared by every picker card. Parent must
+ *  be `relative`. */
+function SelTick(): React.JSX.Element {
+  return (
+    <span className="absolute right-2 top-2 z-[3] grid size-[18px] place-items-center rounded-full bg-accent text-accent-foreground shadow-sm">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5">
+        <path d="M5 13l4 4L19 7" />
+      </svg>
+    </span>
   )
 }
 
@@ -623,10 +823,12 @@ function Section({
   note?: string
   children: React.ReactNode
 }): React.JSX.Element {
+  // One card per confirmation — the flat border-b list read as one endless
+  // form; discrete cards give each decision its own visual breath.
   return (
-    <div className="border-b border-border/40 py-4 last:border-b-0">
-      <div className="mb-3 flex items-center gap-2">
-        <span className="inline-flex size-[20px] shrink-0 items-center justify-center rounded-full bg-accent/15 text-[11px] font-semibold text-accent">
+    <div className="rounded-xl border border-border bg-card px-[18px] pb-[18px] pt-4 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+        <span className="inline-flex size-[22px] shrink-0 -translate-y-px items-center justify-center self-center rounded-[7px] bg-accent/10 text-[11px] font-bold text-accent">
           {num}
         </span>
         <span className="text-[14px] font-semibold text-foreground">{title}</span>
@@ -701,12 +903,12 @@ function EnumField({
   const [customText, setCustomText] = useState(isCustom && cur ? cur : '')
 
   const chip = (o: CatalogOption): React.JSX.Element => {
-    let label = optionLabel(o, lang)
-    if (o.dim) label += ' · ' + o.dim
-    const desc = optionDesc(o, lang)
-    if (desc) label += (lang === 'zh' ? '：' : ' — ') + desc
+    // Main label and description render as separate spans (weight + tone),
+    // not one concatenated string — the option name has to be scannable.
+    let main = optionLabel(o, lang)
+    if (o.dim) main += ' · ' + o.dim
     const spec = specById[o.id]
-    if (spec && spec.note) label += ' · ' + spec.note
+    const sub = [optionDesc(o, lang), spec && spec.note].filter(Boolean).join(' · ')
     const selected = !isCustom && o.id === cur
     const recommended = spec ? true : !hasSpectrum && o.id === recommendedId
     return (
@@ -717,11 +919,14 @@ function EnumField({
         className={
           'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-left text-[12px] transition-colors ' +
           (selected
-            ? 'border-accent bg-accent/[0.12] text-accent'
-            : 'border-border bg-card/40 text-foreground hover:bg-muted')
+            ? 'border-accent bg-accent/10 text-accent ring-1 ring-accent'
+            : 'border-border bg-background/60 text-foreground hover:bg-muted')
         }
       >
-        <span>{label}</span>
+        <span className="font-medium">{main}</span>
+        {sub && (
+          <span className={selected ? 'text-accent/70' : 'text-muted-foreground'}>{sub}</span>
+        )}
         {recommended && (
           <span className="shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
             ★ {spec ? spec.tag || t('recommended') : t('recommended')}
@@ -739,13 +944,13 @@ function EnumField({
         type="button"
         onClick={() => onChange(customText || '')}
         className={
-          'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ' +
+          'inline-flex items-center gap-1.5 rounded-lg border border-dashed px-2.5 py-1.5 text-[12px] transition-colors ' +
           (isCustom
-            ? 'border-accent bg-accent/[0.12] text-accent'
-            : 'border-border bg-card/40 text-foreground hover:bg-muted')
+            ? 'border-solid border-accent bg-accent/10 text-accent ring-1 ring-accent'
+            : 'border-border bg-background/60 text-muted-foreground hover:bg-muted')
         }
       >
-        <span>{t('custom')}</span>
+        <span className="font-medium">{t('custom')}</span>
         {recommended && (
           <span className="shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
             ★ {t('recommended')}
@@ -846,9 +1051,13 @@ function VisualStyleField({
   }, [spectrum, lang])
   const hasSpectrum = Object.keys(specById).length > 0
 
-  const cur = value
-  const isCustom = cur != null && cur !== '' && ids.indexOf(cur) === -1
-  const [customText, setCustomText] = useState(isCustom && cur ? cur : '')
+  // Coerce to a string: `value` is typed `string | undefined`, but a malformed
+  // recommendation could still hand us an object at runtime — rendering that in
+  // the free-text input below would show "[object Object]". Stringify defensively
+  // (an object becomes '', not "[object Object]").
+  const cur = typeof value === 'string' ? value : ''
+  const isCustom = cur !== '' && ids.indexOf(cur) === -1
+  const [customText, setCustomText] = useState(isCustom ? cur : '')
 
   const card = (o: CatalogOption): React.JSX.Element => {
     const label = optionLabel(o, lang)
@@ -883,7 +1092,7 @@ function VisualStyleField({
           'flex aspect-[16/10] flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed p-3 text-center text-[12px] font-medium transition-colors ' +
           (isCustom
             ? 'border-accent bg-accent/[0.08] text-accent'
-            : 'border-border bg-card/40 text-muted-foreground hover:bg-muted')
+            : 'border-border bg-background/60 text-muted-foreground hover:bg-muted')
         }
       >
         <span>{t('custom')}</span>
@@ -960,10 +1169,11 @@ function StyleCard({
       onClick={onClick}
       title={note || label}
       className={
-        'group flex flex-col overflow-hidden rounded-lg border text-left transition-colors ' +
+        'group relative flex flex-col overflow-hidden rounded-lg border text-left transition-colors ' +
         (selected ? 'border-accent ring-1 ring-accent' : 'border-border hover:border-accent/50')
       }
     >
+      {selected && <SelTick />}
       <div className="relative aspect-[16/10] w-full overflow-hidden bg-muted">
         {failed ? (
           <div className="flex size-full items-center justify-center px-2 text-center text-[11px] text-muted-foreground">
@@ -987,7 +1197,7 @@ function StyleCard({
       </div>
       <div
         className={
-          'flex flex-col gap-0.5 px-2 py-1.5 ' + (selected ? 'bg-accent/[0.08]' : 'bg-card/40')
+          'flex flex-col gap-0.5 px-2 py-1.5 ' + (selected ? 'bg-accent/[0.08]' : 'bg-background/40')
         }
       >
         <span className={'text-[12px] font-medium ' + (selected ? 'text-accent' : 'text-foreground')}>
@@ -1069,7 +1279,7 @@ function CanvasField({
         'flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed p-3 text-center text-[12px] font-medium transition-colors ' +
         (isCustom
           ? 'border-accent bg-accent/[0.08] text-accent'
-          : 'border-border bg-card/40 text-muted-foreground hover:bg-muted')
+          : 'border-border bg-background/60 text-muted-foreground hover:bg-muted')
       }
     >
       {t('custom')}
@@ -1134,14 +1344,15 @@ function CanvasCard({
       onClick={onClick}
       title={use || label}
       className={
-        'flex flex-col overflow-hidden rounded-xl border text-left transition-colors ' +
+        'relative flex flex-col overflow-hidden rounded-xl border text-left transition-colors ' +
         (selected ? 'border-accent ring-1 ring-accent' : 'border-border hover:border-accent/50')
       }
     >
+      {selected && <SelTick />}
       <div
         className={
           'relative flex h-[112px] items-center justify-center p-3 ' +
-          (selected ? 'bg-accent/[0.08]' : 'bg-card/40')
+          (selected ? 'bg-accent/[0.08]' : 'bg-background/40')
         }
         style={{
           backgroundImage:
@@ -1344,10 +1555,13 @@ function ColorField({
               type="button"
               onClick={() => onChange({ name: cardName, palette: { ...normPalette(c) } })}
               className={
-                'flex flex-col gap-1.5 rounded-lg border p-2.5 text-left transition-colors ' +
-                (selected ? 'border-accent bg-accent/[0.08]' : 'border-border bg-card/40 hover:bg-muted')
+                'relative flex flex-col gap-1.5 rounded-lg border p-2.5 text-left transition-colors ' +
+                (selected
+                  ? 'border-accent bg-accent/[0.08] ring-1 ring-accent'
+                  : 'border-border bg-background/60 hover:bg-muted')
               }
             >
+              {selected && <SelTick />}
               <div className="flex gap-1">
                 {PALETTE_ROLES.map((role) =>
                   pal[role] ? (
@@ -1374,8 +1588,8 @@ function ColorField({
           className={
             'flex items-center justify-center rounded-lg border p-2.5 text-[12px] font-medium transition-colors ' +
             (isCustom
-              ? 'border-accent bg-accent/[0.08] text-accent'
-              : 'border-dashed border-border bg-card/40 text-muted-foreground hover:bg-muted')
+              ? 'border-accent bg-accent/[0.08] text-accent ring-1 ring-accent'
+              : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-muted')
           }
         >
           {t('custom_color')}
@@ -1471,11 +1685,15 @@ function TypographyField({
               type="button"
               onClick={() => pickFont(raw, idx)}
               className={
-                'flex flex-col gap-1.5 rounded-lg border p-2.5 text-left transition-colors ' +
-                (selected ? 'border-accent bg-accent/[0.08]' : 'border-border bg-card/40 hover:bg-muted')
+                'relative flex flex-col gap-1.5 rounded-lg border p-2.5 text-left transition-colors ' +
+                (selected
+                  ? 'border-accent bg-accent/[0.08] ring-1 ring-accent'
+                  : 'border-border bg-background/60 hover:bg-muted')
               }
             >
-              <div className="flex flex-col gap-0.5">
+              {selected && <SelTick />}
+              {/* pr-6 keeps the header clear of the corner check */}
+              <div className="flex flex-col gap-0.5 pr-6">
                 <span className="text-[12px] font-medium text-foreground">
                   {cardName}
                 </span>
@@ -1504,8 +1722,8 @@ function TypographyField({
           className={
             'rounded-lg border p-2.5 text-left text-[12px] font-medium transition-colors ' +
             (isCustom
-              ? 'border-accent bg-accent/[0.08] text-accent'
-              : 'border-dashed border-border bg-card/40 text-muted-foreground hover:bg-muted')
+              ? 'border-accent bg-accent/[0.08] text-accent ring-1 ring-accent'
+              : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-muted')
           }
         >
           {t('custom_typography')}
@@ -1655,11 +1873,14 @@ function ImageField({
                         })
                       }
                       className={
-                        'flex flex-col gap-1 rounded-lg border p-2.5 text-left transition-colors ' +
-                        (selected ? 'border-accent bg-accent/[0.08]' : 'border-border bg-card/40 hover:bg-muted')
+                        'relative flex flex-col gap-1 rounded-lg border p-2.5 text-left transition-colors ' +
+                        (selected
+                          ? 'border-accent bg-accent/[0.08] ring-1 ring-accent'
+                          : 'border-border bg-background/60 hover:bg-muted')
                       }
                     >
-                      <div className="flex flex-col gap-0.5">
+                      {selected && <SelTick />}
+                      <div className="flex flex-col gap-0.5 pr-6">
                         <span className="text-[12px] font-medium text-foreground">{name}</span>
                         {meta.length > 0 && (
                           <span className="text-[10px] text-muted-foreground">{meta.join('  ·  ')}</span>

@@ -341,6 +341,15 @@ export const REC_ALIASES: Record<string, Record<string, string>> = {
 }
 
 function normalizeRecId(field: string, value: string | null | undefined): string | null | undefined {
+  // Guard: some servers return a field's recommendation as an OBJECT (e.g.
+  // `visual_style: { value: "custom", … }`) rather than a bare id string. If an
+  // object slips through here it would be stored as-is and later render as
+  // "[object Object]" in the free-text input. Coerce a non-string to its
+  // `.value` when present, else drop it — a recommendation must be an id string.
+  if (value != null && typeof value !== 'string') {
+    const inner = (value as { value?: unknown }).value
+    value = typeof inner === 'string' ? inner : null
+  }
   if (value == null || value === '') return value
   const aliases = REC_ALIASES[field] || {}
   return aliases[value] || value
@@ -349,7 +358,13 @@ function normalizeRecId(field: string, value: string | null | undefined): string
 function legacyRecId(rec: Recommendations | null, field: string): string | null | undefined {
   if (!rec) return null
   if (field === 'canvas') return rec.canvas && rec.canvas.value
-  if (field === 'visual_style') return rec.visual_style || (rec.style && rec.style.value)
+  // visual_style may be a bare string OR an object with `.value` — normalizeRecId
+  // coerces the object case, but prefer the explicit `.value` when present here.
+  if (field === 'visual_style') {
+    const vs = rec.visual_style as unknown
+    if (vs && typeof vs === 'object') return (vs as { value?: string }).value
+    return (vs as string | undefined) || (rec.style && rec.style.value)
+  }
   if (field === 'icons') return rec.icons && rec.icons.value
   if (field === 'image_usage') return rec.images && rec.images.value
   if (field === 'image_ai_path') return rec.image_ai_path || (rec.images && rec.images.ai_path)
