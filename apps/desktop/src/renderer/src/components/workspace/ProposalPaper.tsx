@@ -24,11 +24,7 @@ import {
   ArrowDownIcon,
   TrashIcon,
   AlertTriangleIcon,
-  InfoIcon,
-  XIcon,
-  ImagePlusIcon,
-  UploadIcon,
-  SpinnerIcon
+  InfoIcon
 } from './proposalIcons'
 
 /**
@@ -292,39 +288,22 @@ export function ProposalPaper(): React.JSX.Element {
   // 生成中 / 进了整节源码逃生舱 / 进了块级就地编辑：三者都可能让当前选中的图片从 DOM 里消失
   // （generating 时其它路径可能并发改写本节；editingId/editingBlock 打开会把渲染内容换成
   // textarea），此时工具栏若还挂着旧坐标就是悬空的，一律收起（与 SelectionAiBubble 收到
-  // disabled 就清 anchor 是同一条纪律）。imageGenSel（Task 10 生图输入卡）同理一并收起。
+  // disabled 就清 anchor 是同一条纪律）。
   useEffect(() => {
     if (generating || editingId || editingBlock) {
       setImgSel(null)
-      setImageGenSel(null)
     }
   }, [generating, editingId, editingBlock])
-
-  // 生图入口（Task 10）：节工具条「生成图片」点开的内联卡片状态。同一时刻只可能有一张卡片
-  // 展开（单选，与 editingBlock 同款「单槽」范式），故 prompt/loading/error 不必按 sectionId
-  // 建 Map——切换到另一节的卡片时旧状态自然被 setImageGenSel 的新值连带清空（见下方按钮逻辑）。
-  const [imageGenSel, setImageGenSel] = useState<{ sectionId: string } | null>(null)
-  const [imageGenPrompt, setImageGenPrompt] = useState('')
-  const [imageGenLoading, setImageGenLoading] = useState(false)
-  const [imageGenError, setImageGenError] = useState<string | null>(null)
 
   // 换图进行中（Task 10）：换图按钮点击后弹原生文件选择框，期间置 true 防止重入（用户快速
   // 双击再次弹出第二个对话框）。不做成 UI loading 态——原生对话框本身是模态的，用户能感知
   // 「点了之后弹了个框」，不需要额外的按钮态反馈。
   const [replacingImage, setReplacingImage] = useState(false)
 
-  // 上传入口（Task 10）：按 sectionId 记「正在上传中」（禁用该节的上传按钮防重入）与「上传失败」
-  // 瞬时错误提示（4s 自动消失，同 confirmDeleteId 的定时收起范式）。上传本身不经审阅（用户已
-  // 选定文件），故没有 loading 文案态之外的中间状态。
+  // 上传/生图入口现内联在选区弹框（SelectionAiBubble）里，不再挂节工具条——生图卡与上传按钮
+  // 已从右侧竖条移走（用户要求：图片操作应在「选中某段文字的弹出框」内，且插到选中段落之后）。
+  // uploadingSectionId 仍作跨节的上传防重入闸（handleImageUpload 内部用），弹框自身另有 imgBusy。
   const [uploadingSectionId, setUploadingSectionId] = useState<string | null>(null)
-  const [uploadError, setUploadError] = useState<{ sectionId: string; message: string } | null>(
-    null
-  )
-  useEffect(() => {
-    if (!uploadError) return
-    const id = setTimeout(() => setUploadError(null), 4000)
-    return () => clearTimeout(id)
-  }, [uploadError])
 
   // 改图/生图审阅卡（Task 11）：多张卡可能同时挂着（不同节的改图/生图各自独立发起），按
   // review.id 建 map 记「重改中」与「重改失败」，而非单槽状态——否则一张卡在重改会把另一张卡
@@ -381,8 +360,11 @@ export function ProposalPaper(): React.JSX.Element {
       return
     }
     if (review.mode === 'generate') {
+      // 插到「选中段落之后」：blockIndex 是发起时选区末块的下标，图插在其后一位（clamp 到合法
+      // 区间——审阅悬而未决期间该节可能被并发改写、块数变少，越界则退化为追加到节末）。
       const blocks = splitBlocks(sec.markdown)
-      blocks.push(`![生成图](${review.resultPath})`)
+      const at = Math.min(Math.max(review.blockIndex + 1, 0), blocks.length)
+      blocks.splice(at, 0, `![生成图](${review.resultPath})`)
       pstore.updateSection(sec.id, joinBlocks(blocks))
       pstore.removeImageReview(review.id)
       return
@@ -607,15 +589,14 @@ export function ProposalPaper(): React.JSX.Element {
     setImgSel(null)
   }
 
-  // 生图（Task 10）：节工具条「生成图片」卡片提交时调用。与改图（handleImageEdit）走同一条
-  // Task 7 IPC + 同一套错误分流约定，唯一区别是没有 sourcePath（凭空生成，非改写既有图）、
-  // blockIndex 取该节【当前】最后一块的下标——不是原图所在块，而是给 Task 11 审阅卡一个默认
-  // 的「插入到此处」落点（该节末尾）。proposalImageGenerate 是秒级网络调用，await 期间双击块
-  // 编辑并不受「生图中」状态门控，该节完全可能被并发改写；若沿用提交时刻闭包捕获的 sections
-  // 会拿着陈旧块数算出错的 blockIndex（同 handleImageUpload/handleImageReplace 的顾虑，而非
-  // 同步无 await 的 handleImageDelete）。故 await 后重新从 store 取最新 sections 再算下标。
+  // 生图（Task 10）：选区弹框「生成图片」提交时调用（弹框自持 loading/error/prompt UI）。与改图
+  // （handleImageEdit）走同一条 Task 7 IPC + 同一套错误分流约定，区别是没有 sourcePath（凭空
+  // 生成，非改写既有图）。insertAfter=选区末块下标：审阅卡就锚在该块下方、应用时图插到其后一位。
+  // proposalImageGenerate 是秒级网络调用，await 期间该节完全可能被并发改写，故 await 后重新从
+  // store 取最新 sections 校验节仍在；下标越界的兜底交给 applyImageReview 落地时 clamp。
   async function handleImageGenerate(
     sectionId: string,
+    insertAfter: number,
     prompt: string
   ): Promise<{ ok: true } | { ok: false; message: string }> {
     if (!proposalSid) return { ok: false, message: '当前没有方案会话，请稍后重试' }
@@ -627,8 +608,12 @@ export function ProposalPaper(): React.JSX.Element {
       const pstore = useProposalStore.getState()
       const sec = pstore.sections.find((s) => s.id === sectionId)
       if (!sec) return { ok: true } // 节已被删除：生成已完成但无处插入，静默丢弃（不报错误）
-      const blockIndex = Math.max(splitBlocks(sec.markdown).length - 1, 0)
-      const id = pstore.addImageReview({ sectionId, blockIndex, resultPath: path, mode: 'generate' })
+      const id = pstore.addImageReview({
+        sectionId,
+        blockIndex: insertAfter,
+        resultPath: path,
+        mode: 'generate'
+      })
       setScrollToReviewId(id)
       return { ok: true }
     } catch (err) {
@@ -636,44 +621,32 @@ export function ProposalPaper(): React.JSX.Element {
     }
   }
 
-  // 生图卡片的提交按钮/⌘↵ 都走这里：套「loading→await→关卡片或留错误」的固定流程，
-  // 与 ProposalImageToolbar 内部 submit() 同款节奏，只是这里的卡片状态提到了父组件（单槽）。
-  async function submitImageGen(sectionId: string): Promise<void> {
-    const text = imageGenPrompt.trim()
-    if (!text || imageGenLoading) return
-    setImageGenLoading(true)
-    setImageGenError(null)
-    const result = await handleImageGenerate(sectionId, text)
-    setImageGenLoading(false)
-    if (result.ok) {
-      setImageGenSel(null)
-      setImageGenPrompt('')
-    } else {
-      setImageGenError(result.message)
-    }
-  }
-
   // 上传（Task 10）：直接插入，不经审阅（用户已经手动选定了文件，不像生成/改图那样需要「原图
-  // vs 新图」对照确认）。插到该节末尾成一个新块，走与其它手改同一条 updateSection 落盘路径。
-  // 完成态（含用户取消）时重新从 store 取最新 sections——上传是原生模态对话框，用户挑文件可能
-  // 耗时数秒到数十秒，这期间该节完全可能被并发的 AI 修订/其它手改替换掉，若沿用点击那一刻闭包
-  // 捕获的 sec 会拿着陈旧 markdown 覆盖掉期间的新内容（同 handleImageReplace 的顾虑）。
-  async function handleImageUpload(sectionId: string): Promise<void> {
-    if (!proposalSid || uploadingSectionId) return
+  // vs 新图」对照确认）。插到「选中段落之后」（insertAfter+1，clamp 到合法区间），走与其它手改
+  // 同一条 updateSection 落盘路径。完成态（含用户取消）时重新从 store 取最新 sections——上传是
+  // 原生模态对话框，用户挑文件可能耗时数秒到数十秒，这期间该节完全可能被并发的 AI 修订/其它
+  // 手改替换掉，若沿用点击那一刻闭包捕获的 sec 会拿着陈旧 markdown 覆盖掉期间的新内容。返回
+  // ok/error 交给选区弹框展示（用户取消视为 ok=静默收起，仅真失败才 ok:false 留错误）。
+  async function handleImageUpload(
+    sectionId: string,
+    insertAfter: number
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    if (!proposalSid || uploadingSectionId) return { ok: true }
     setUploadingSectionId(sectionId)
-    setUploadError(null)
     try {
       const result = await window.chatApi.proposalImageUpload({ sessionId: proposalSid })
-      if (!result) return // 用户取消：静默无操作
+      if (!result) return { ok: true } // 用户取消：静默无操作
       const pstore = useProposalStore.getState()
       const sec = pstore.sections.find((s) => s.id === sectionId)
-      if (!sec) return
+      if (!sec) return { ok: true }
       const blocks = splitBlocks(sec.markdown)
-      blocks.push(`![上传图](${result.path})`)
+      const at = Math.min(Math.max(insertAfter + 1, 0), blocks.length)
+      blocks.splice(at, 0, `![上传图](${result.path})`)
       pstore.updateSection(sectionId, joinBlocks(blocks))
+      return { ok: true }
     } catch (err) {
       console.warn('[ProposalPaper] proposalImageUpload failed:', err)
-      setUploadError({ sectionId, message: '上传失败，请稍后重试。' })
+      return { ok: false, message: '上传失败，请稍后重试。' }
     } finally {
       setUploadingSectionId(null)
     }
@@ -797,34 +770,8 @@ export function ProposalPaper(): React.JSX.Element {
             >
               <MinusIcon />
             </button>
-            {/* 生图/上传（Task 10）：仅正文节——docx 导出只给正文节嵌图（封面/目录另有专属模板槽
-                位），封面/目录插了图导出也不会体现，故不在这两类 kind 上给这两个入口造成落空的期望。 */}
-            <button
-              className={toolBtn}
-              disabled={generating}
-              onClick={() => {
-                if (imageGenSel?.sectionId === sec.id) {
-                  setImageGenSel(null)
-                } else {
-                  setImageGenSel({ sectionId: sec.id })
-                  setImageGenPrompt('')
-                  setImageGenError(null)
-                }
-              }}
-              title="生成图片（AI 按文字描述生成一张插图，插入本节末尾前需确认）"
-              aria-label="生成图片"
-            >
-              <ImagePlusIcon />
-            </button>
-            <button
-              className={toolBtn}
-              disabled={generating || uploadingSectionId === sec.id}
-              onClick={() => void handleImageUpload(sec.id)}
-              title="上传本地图片，插入到本节末尾"
-              aria-label="上传图片"
-            >
-              <UploadIcon />
-            </button>
+            {/* 生成图片/上传图片入口已移到选区弹框（SelectionAiBubble）——图片操作需要一个「插到
+                哪里」的落点，选中段落天然就是那个锚点，比挂在节工具条上「永远插节末」更顺手。 */}
           </>
         )}
         <button
@@ -906,113 +853,6 @@ export function ProposalPaper(): React.JSX.Element {
       )}
 
       {renderVerification(sec, generating)}
-
-      {/* 上传失败瞬时提示（Task 10）：4s 自动消失（见 uploadError 的 useEffect），成功态不需要
-          提示——上传图直接可见地出现在本节末尾，本身就是最好的反馈。 */}
-      {uploadError?.sectionId === sec.id && (
-        <div className="mb-1 flex items-start gap-1 rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-600">
-          <AlertTriangleIcon className="mt-0.5 shrink-0" />
-          <span>{uploadError.message}</span>
-        </div>
-      )}
-
-      {/* 生图输入卡（Task 10）：点「生成图片」展开，样式抄 ProposalImageToolbar 的「改图指令」
-          展开态（同一套「标题栏 + 取消 × / 文本域 / 错误条 / 取消·提交」骨架），区别是这里是
-          节内嵌入的 banner 而非浮层——生图入口挂在节工具条（纸面右侧外边距）而非某张具体图片
-          上，没有一个可锚定的「图片右上角」，故用同一容器内的流式卡片，不引入额外的坐标换算。 */}
-      {imageGenSel?.sectionId === sec.id && (
-        <div className="mb-2 rounded-md border border-neutral-300 bg-neutral-50 p-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[12px] font-medium text-neutral-700">生成图片</span>
-            <button
-              type="button"
-              className="rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
-              title="取消"
-              aria-label="取消"
-              onClick={() => {
-                setImageGenSel(null)
-                setImageGenPrompt('')
-                setImageGenError(null)
-              }}
-            >
-              <XIcon />
-            </button>
-          </div>
-          {/* 生图是数十秒的网络往返，loading 时用转圈 + 说明块替换输入区，反馈比纯按钮文字更明确。 */}
-          {imageGenLoading ? (
-            <div className="mt-1.5 flex items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-2 text-[12px] text-neutral-600">
-              <SpinnerIcon className="shrink-0 animate-spin text-accent" />
-              <div className="leading-relaxed">
-                <div className="font-medium text-neutral-700">AI 正在生成插图…</div>
-                <div className="text-[11px] text-neutral-400">通常十几秒到半分钟，请勿关闭</div>
-              </div>
-            </div>
-          ) : (
-          <textarea
-            autoFocus
-            value={imageGenPrompt}
-            onChange={(e) => setImageGenPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && imageGenPrompt.trim()) {
-                e.preventDefault()
-                void submitImageGen(sec.id)
-              } else if (e.key === 'Escape') {
-                e.preventDefault()
-                setImageGenSel(null)
-                setImageGenPrompt('')
-                setImageGenError(null)
-              }
-            }}
-            placeholder="描述想生成的插图，比如：一张展示产品架构的示意图"
-            rows={2}
-            className="mt-1.5 w-full resize-none rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-[12px] leading-relaxed text-neutral-800 outline-none focus:border-accent disabled:opacity-60"
-          />
-          )}
-          {imageGenError && (
-            <div className="mt-1.5 flex items-start gap-1 rounded bg-rose-500/10 px-1.5 py-1 text-[11px] text-rose-600">
-              <AlertTriangleIcon className="mt-0.5 shrink-0" />
-              <span>
-                {imageGenError}
-                {imageGenError.includes('设置') && (
-                  <button
-                    type="button"
-                    onClick={openImageApiSettings}
-                    className="ml-1 underline underline-offset-2 hover:text-rose-700"
-                  >
-                    去设置
-                  </button>
-                )}
-              </span>
-            </div>
-          )}
-          {/* 生成中隐藏按钮行（同改图工具栏纪律）：只留上方的转圈说明块，界面不显得「还能再点」。 */}
-          {!imageGenLoading && (
-            <div className="mt-1.5 flex items-center justify-end gap-1.5">
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
-                onClick={() => {
-                  setImageGenSel(null)
-                  setImageGenPrompt('')
-                  setImageGenError(null)
-                }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="flex items-center gap-1 rounded-md bg-neutral-900 px-2.5 py-1 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-40"
-                disabled={!imageGenPrompt.trim()}
-                onClick={() => void submitImageGen(sec.id)}
-                title="⌘/Ctrl + 回车"
-              >
-                <CheckIcon />
-                <span>生成</span>
-              </button>
-            </div>
-          )}
-        </div>
-      )}
 
       {editingId === sec.id ? (
         // 整节源码逃生舱：改坏的表格、批量替换等场景。默认不再是主路径。
@@ -1132,7 +972,15 @@ export function ProposalPaper(): React.JSX.Element {
         )}
       </div>
       {/* 选区即改浮层：贴选区尾浮出，作用于选区覆盖的块区间。生成中禁用（与块手改一致）。 */}
-      <SelectionAiBubble containerRef={canvasRef} disabled={generating} />
+      <SelectionAiBubble
+        containerRef={canvasRef}
+        disabled={generating}
+        // 图片入口（生成/上传）内联在弹框里，仅正文节可用（docx 只给正文节嵌图）；插到选中段落之后。
+        resolveSectionKind={(id) => sections.find((s) => s.id === id)?.kind}
+        onGenerateImage={handleImageGenerate}
+        onUploadImage={handleImageUpload}
+        onOpenSettings={openImageApiSettings}
+      />
       {/* 点图浮动工具栏（Task 9）：点中一张图后浮出，右上角贴图。换图（Task 10）现已接通：传
           null 只在「正弹着上传框」时短暂出现（replacingImage=true），让工具栏渲染成禁用态防重入
           点击，而非「即将支持」的永久占位。 */}
