@@ -182,3 +182,29 @@ describe('applyImageReplacementWithDrift', () => {
     expect(next).toEqual([])
   })
 })
+
+// 代码跨度遮罩（评审 CONFIRMED：occurrence 按渲染 <img> DOM 顺序数，反引号里的图语法字面量
+// 渲染成 <code> 不产生 <img>——正则若把它计入 occurrence，两套计数错位会切碎代码、留下真图）。
+describe('代码跨度内的图语法不参与 occurrence 计数', () => {
+  const block = '示例：`![图](/a/img.png)` 效果如下 ![图](/a/img.png)'
+
+  it('删除 occurrence 0 摘掉真图、行内代码原样保留', () => {
+    expect(removeImageOccurrence(block, '/a/img.png', 0)).toBe('示例：`![图](/a/img.png)` 效果如下')
+  })
+
+  it('替换 occurrence 0 换掉真图、行内代码原样保留', () => {
+    expect(replaceImageOccurrence(block, '/a/img.png', 0, '/b/new.png')).toBe(
+      '示例：`![图](/a/img.png)` 效果如下 ![图](/b/new.png)'
+    )
+  })
+
+  it('双反引号与围栏代码同样被遮罩', () => {
+    const b = '``![x](/a/i.png)`` 与\n```\n![x](/a/i.png)\n```\n真图 ![x](/a/i.png)'
+    expect(removeImageOccurrence(b, '/a/i.png', 0)).toBe('``![x](/a/i.png)`` 与\n```\n![x](/a/i.png)\n```\n真图')
+  })
+
+  it('整块只有代码跨度里的图语法 → 无可命中，原样返回', () => {
+    const b = '只是示例 `![图](/a/img.png)` 而已'
+    expect(removeImageOccurrence(b, '/a/img.png', 0)).toBe(b)
+  })
+})

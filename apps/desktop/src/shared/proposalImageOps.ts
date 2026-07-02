@@ -27,22 +27,46 @@ function normalizeImagePath(raw: string): string {
   return p
 }
 
-export function removeImageOccurrence(blockText: string, path: string, occurrence: number): string {
+/**
+ * 代码跨度遮罩：把围栏 ```…``` 与行内 `…`（含 ``…`` 双反引号形态）的内容替换成等长空格。
+ * 遮罩后长度与非代码区字符完全不变，IMAGE_RE 在遮罩文本上扫描、命中区间直接回原文落子。
+ *
+ * 为什么必须遮罩（评审 CONFIRMED）：occurrence 由调用方按【真实渲染的 <img> DOM 顺序】数出，
+ * 而反引号里的 `![…](…)` 字面量 react-markdown 渲染成 <code> 不渲染 <img>——正则若连代码
+ * 跨度里的示例一起数，两套计数错位，手术会切碎代码跨度、留下真图且照样落盘（与项目记档的
+ * 「幻影哨兵」同根：raw 扫描 vs 渲染结构）。
+ */
+function maskCodeSpans(text: string): string {
+  return text.replace(/```[\s\S]*?```|``[^`]*``|`[^`\n]*`/g, (m) => ' '.repeat(m.length))
+}
+
+/**
+ * remove/replace 共用的 occurrence 定位（评审发现：此前两函数各自复制这段扫描循环，匹配规则
+ * 修一处漏一处会造成「删得掉却换不了」的不对称）。返回第 occurrence 个（0 起）路径归一后等于
+ * path 的图片语法在【原文】中的区间；找不到返回 null。
+ */
+function findImageOccurrence(
+  blockText: string,
+  path: string,
+  occurrence: number
+): { start: number; len: number } | null {
+  const masked = maskCodeSpans(blockText)
   IMAGE_RE.lastIndex = 0
-  let matchStart = -1
-  let matchLen = 0
   let seen = 0
   let m: RegExpExecArray | null
-  while ((m = IMAGE_RE.exec(blockText)) !== null) {
+  while ((m = IMAGE_RE.exec(masked)) !== null) {
     if (normalizeImagePath(m[1]) !== path) continue
-    if (seen === occurrence) {
-      matchStart = m.index
-      matchLen = m[0].length
-      break
-    }
+    if (seen === occurrence) return { start: m.index, len: m[0].length }
     seen++
   }
-  if (matchStart < 0) return blockText
+  return null
+}
+
+export function removeImageOccurrence(blockText: string, path: string, occurrence: number): string {
+  const hit = findImageOccurrence(blockText, path, occurrence)
+  if (!hit) return blockText
+  const matchStart = hit.start
+  const matchLen = hit.len
 
   // 只摘掉图片语法本身紧邻的空格/制表符（不动换行——多行结构原样保留，joinBlocks 上游已经
   // 靠「trim 后为空的块整块过滤掉」处理独占一整块的图片，这里不必费力抹平内部空行，见文件顶部
@@ -74,8 +98,8 @@ export function removeImageOccurrence(blockText: string, path: string, occurrenc
 // 保留。找不到匹配项（同 removeImageOccurrence：路径不存在，或 occurrence 超出该路径出现
 // 次数）则原样返回——调用方据「返回值是否等于入参」判断是否真的换了。
 //
-// 与 removeImageOccurrence 共用同一套 occurrence 定位逻辑与 normalizeImagePath 归一化规则
-// （title 后缀 / <> 包裹都按同一标准剥离后比较），只是命中后的落子动作从「摘除」换成「替换
+// 与 removeImageOccurrence 共用同一个 findImageOccurrence（含代码跨度遮罩与 normalizeImagePath
+// 归一化：title 后缀 / <> 包裹按同一标准剥离后比较），只是命中后的落子动作从「摘除」换成「替换
 // 括号内容」。替换后原有的 title 后缀 / <> 包裹一并丢弃（新路径不含它们，同 removeImageOccurrence
 // 对这些修饰符的处理立场一致：不保留跟旧路径绑定的修饰符）。
 export function replaceImageOccurrence(
@@ -84,21 +108,10 @@ export function replaceImageOccurrence(
   occurrence: number,
   newPath: string
 ): string {
-  IMAGE_RE.lastIndex = 0
-  let matchStart = -1
-  let matchLen = 0
-  let seen = 0
-  let m: RegExpExecArray | null
-  while ((m = IMAGE_RE.exec(blockText)) !== null) {
-    if (normalizeImagePath(m[1]) !== path) continue
-    if (seen === occurrence) {
-      matchStart = m.index
-      matchLen = m[0].length
-      break
-    }
-    seen++
-  }
-  if (matchStart < 0) return blockText
+  const hit = findImageOccurrence(blockText, path, occurrence)
+  if (!hit) return blockText
+  const matchStart = hit.start
+  const matchLen = hit.len
 
   // 从匹配到的完整 `![alt](...)` 子串里单独抠出 alt 文本（IMAGE_RE 本身只捕获路径部分），
   // 拼一个只换了路径、alt 原样保留的新语法。
