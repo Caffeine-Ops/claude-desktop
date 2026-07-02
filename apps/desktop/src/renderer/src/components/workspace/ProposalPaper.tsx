@@ -7,6 +7,7 @@ import { SelectionAiBubble } from './SelectionAiBubble'
 import { ProposalImageToolbar } from './ProposalImageToolbar'
 import type { ProposalKind } from '@shared/proposal'
 import { splitBlocks, joinBlocks } from '@shared/proposalBlocks'
+import { removeImageOccurrence } from '@shared/proposalImageOps'
 import {
   RotateCwIcon,
   PlusIcon,
@@ -129,33 +130,9 @@ function blockNeedsGap(blk: string): boolean {
   )
 }
 
-// 点图工具栏「删除」用：在一块 markdown 文本里找到路径等于 targetPath 的那个 `![alt](path)`
-// 图片语法并摘掉它，其余内容原样保留（同块共存的说明文字等不受影响）。找不到匹配项则原样返回
-// （调用方据「返回值是否等于入参」判断是否真的删了）。
-//
-// path 归一化逻辑刻意与 shared/proposal.ts 的 parseImages 保持一致（剥 `"title"`/`'title'`
-// 后缀、剥 `<>` 包裹）——targetPath 来自 AssistantMarkdown 的 data-raw-src，那是 react-markdown
-// 解析后的干净路径（等价于 parseImages 抽出的 path），两边用同一套剥离规则比较才不会因为
-// markdown 原文里到底带没带 `<>`/title 而误判「找不到」。parseImages 本身不导出内部正则，
-// 这里的块级删除又需要拿到匹配的原始子串位置（parseImages 只返回值，不返回位置），故在此
-// 自成一份小实现，而非 import 复用——两处判据一致即可，不必共享同一个正则对象。
-function removeImageFromBlockText(block: string, targetPath: string): string {
-  const IMAGE_RE = /!\[[^\]]*\]\(([^)]+)\)/g
-  IMAGE_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = IMAGE_RE.exec(block)) !== null) {
-    let raw = m[1].trim()
-    raw = raw.replace(/\s+(?:"[^"]*"|'[^']*')\s*$/, '').trim() // 剥 title 后缀
-    if (raw.startsWith('<') && raw.endsWith('>')) raw = raw.slice(1, -1).trim() // 剥 <> 包裹
-    if (raw !== targetPath) continue
-    const before = block.slice(0, m.index).replace(/[ \t]+$/, '')
-    const after = block.slice(m.index + m[0].length).replace(/^[ \t]+/, '')
-    // joinBlocks 会把 trim 后为空的块整块过滤掉（图片独占一块的常见情形，见文件顶部块切分
-    // 注释），故这里不必费力抹平中间可能留下的空行——多数情况下整块本就只剩空白直接消失。
-    return (before + after).trim()
-  }
-  return block
-}
+// 点图工具栏「删除」的字符串手术本身（含 Finding 1 的空格粘连修复、Finding 2 的同路径按第 N
+// 次出现删除）已抽到 shared/proposalImageOps.ts（纯函数、有 bun test 覆盖）——renderer 这层
+// 只负责从 DOM 数出「点中的是第几个同路径出现」（见 handlePaperClick）并调用它。
 
 /**
  * 编辑态：一张连续的 A4 宽长纸，分节无缝拼接、向下滚动不分页。
@@ -286,6 +263,10 @@ export function ProposalPaper(): React.JSX.Element {
     sectionId: string
     blockIndex: number
     sourcePath: string
+    // 该块内、路径与 sourcePath 相同的图片里，点中的是第几个（0 起）——同一块贴了两张同路径图
+    // 时用来区分删哪一张（Finding 2），在 handlePaperClick 里从 DOM 数出来，纯字符串手术
+    // 侧（proposalImageOps.removeImageOccurrence）不掺 DOM，只认这个下标。
+    occurrence: number
     anchorLeft: number
     anchorTop: number
   } | null>(null)
@@ -332,12 +313,23 @@ export function ProposalPaper(): React.JSX.Element {
     if (sectionId == null || idxAttr == null || !sourcePath) return
     const container = canvasRef.current
     if (!container) return
+    // 数「点中的是第几个同路径出现」（Finding 2）：在同一块元素范围内，遍历所有 data-raw-src
+    // 图片节点，数清楚排在被点中的 img 前面、且路径相同的有几个——即该图在同路径序列里的下标
+    // （0 起）。querySelectorAll 按文档序返回，与 markdown 源码里 `![](path)` 的出现顺序一致
+    // （DOM 渲染顺序 = 源码顺序，未被任何 CSS 重排），故这个下标能直接喂给
+    // removeImageOccurrence 的 occurrence 参数。
+    let occurrence = 0
+    for (const el of blockEl.querySelectorAll<HTMLElement>('img[data-raw-src]')) {
+      if (el === img) break
+      if (el.getAttribute('data-raw-src') === sourcePath) occurrence++
+    }
     const rect = img.getBoundingClientRect()
     const cRect = container.getBoundingClientRect()
     setImgSel({
       sectionId,
       blockIndex: Number(idxAttr),
       sourcePath,
+      occurrence,
       // 右上角：右边界对齐图片右边（浮层自身用 translate(-100%) 靠右），上边缘贴图片顶部再下探
       // 一点，视觉上像一枚浮在图片右上角的胶囊，不完全盖住图（与 Step1 要求「绝对定位在图右上角」一致）。
       anchorLeft: rect.right - cRect.left + container.scrollLeft,
@@ -375,7 +367,14 @@ export function ProposalPaper(): React.JSX.Element {
   // 删除：从该图所在块的 markdown 里摘掉这一段 `![...](sourcePath)`，其余内容原样保留，
   // 重拼回整节后走 updateSection（与块级手改同一条落盘路径）。若该块已不是当初点击时的样子
   // （如生成中被并发改写）——找不到匹配的图片则整块原样不动，只收起工具栏（不误删无关内容）。
-  function handleImageDelete(sectionId: string, blockIndex: number, sourcePath: string): void {
+  // occurrence 来自点击时刻在 DOM 里数出的「同路径第几个」（见 handlePaperClick），传给纯函数
+  // removeImageOccurrence 精确摘掉那一个，而不是总摘第一个同路径匹配（Finding 2）。
+  function handleImageDelete(
+    sectionId: string,
+    blockIndex: number,
+    sourcePath: string,
+    occurrence: number
+  ): void {
     const sec = sections.find((s) => s.id === sectionId)
     if (!sec) {
       setImgSel(null)
@@ -387,7 +386,7 @@ export function ProposalPaper(): React.JSX.Element {
       return
     }
     const original = blocks[blockIndex]
-    const stripped = removeImageFromBlockText(original, sourcePath)
+    const stripped = removeImageOccurrence(original, sourcePath, occurrence)
     if (stripped !== original) {
       blocks[blockIndex] = stripped
       updateSection(sec.id, joinBlocks(blocks))
@@ -660,7 +659,9 @@ export function ProposalPaper(): React.JSX.Element {
             handleImageEdit(imgSel.sectionId, imgSel.blockIndex, imgSel.sourcePath, prompt)
           }
           onReplace={null}
-          onDelete={() => handleImageDelete(imgSel.sectionId, imgSel.blockIndex, imgSel.sourcePath)}
+          onDelete={() =>
+            handleImageDelete(imgSel.sectionId, imgSel.blockIndex, imgSel.sourcePath, imgSel.occurrence)
+          }
           onClose={() => setImgSel(null)}
         />
       )}
