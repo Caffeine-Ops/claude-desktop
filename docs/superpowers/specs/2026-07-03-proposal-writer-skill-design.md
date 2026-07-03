@@ -123,11 +123,17 @@ skill——方法论只经 systemPrompt.append 一条通道注入，避免双份
 
 ### 5.3 `proposalPrompt.ts` 改造
 
-- 模板经 Vite `?raw` import 编译期内联进 main bundle：零打包配置、零 asar 路径
-  问题；dev 下改 markdown 触发 electron-vite 热重启即生效。monorepo 内跨目录
-  相对导入（`../../../../../skills/proposal-writer/references/append-template.md?raw`），
-  如 `tsconfig.node.json` 的 `include` 边界拦 `?raw` 声明，则补一条 `*.md?raw`
-  的模块声明（`env.d.ts`）。
+- 模板载入方式（**2026-07-03 计划期修订**，原设计为 Vite `?raw` 编译期内联）：
+  **运行期从 skills 目录读文件**。修订原因：`?raw` 是 Vite 专属语法，`bun test`
+  解析不了 `.md?raw` 导入，会弄挂现有 `proposalPrompt.test.ts` 与本设计新增的
+  快照/契约测试——而 typecheck 之外 bun test 是仅有的自动化防线，不可牺牲。
+  运行期读取的可行性已核实：`skills/` 整树经 `tools/pack/src/resources.ts` 的
+  `BUNDLED_RESOURCE_TREES` 打进包内 `resources/prebundled/skills`，dev / bun test
+  下经 cwd 候选回落仓库根 `skills/`，解析器 `resolveBundledSkillsPluginDir()` 现成
+  （engine 挂 plugin 用的就是它）。额外收益：dev 下改模板对下一个 spawn 的会话
+  即时生效，无需重启。代价：`resolveBundledSkillsPluginDir` 现居 `cliDetect.ts`
+  （import electron，bun test 加载不了），需先抽到 electron 无关的
+  `src/main/core/skillsDir.ts`。
 - `buildProposalAppend(mirrorDir, products)` **签名与调用方不变**（engine 零改动），
   内部改为：渲染 `{{KB_SCOPE}}` → 全模板占位符替换 → 返回。
 - `ProposalProductScope`、`MAX_FILES_PER_PRODUCT`、`MAX_IMAGES_PER_FILE`、
@@ -179,9 +185,11 @@ skill——方法论只经 systemPrompt.append 一条通道注入，避免双份
   方式写（无面板/硬门/检索）。可用但降级，符合预期。
 - **模型在非方案会话里自己调用该 skill**：同上，只得到文本。description 已写明
   使用方式，暴露面与 ppt-master 相同，可接受。
-- **`skills/` 目录在打包产物里缺失或被用户改坏**：不影响本功能——注入走的是
-  编译期内联的模板副本，运行期不读 skill 目录。skill 目录坏了只影响斜杠菜单的
-  展示名（fusion-code 侧），方案模式本体经场景卡仍可用。
+- **`skills/` 目录在打包产物里缺失或被用户改坏**（随 §5.3 修订同步更新）：
+  模板读不到时 `buildProposalAppend` 抛带完整路径的错误、当轮发送失败——宁可
+  失败也不让方案会话在没有纪律注入的情况下静默跑（编造风险 > 可用性）。这一
+  依赖面与 skills plugin 挂载、ppt-master 的 Python 脚本相同：skills 目录缺失
+  时它们同样已经坏了，不是本功能新引入的脆弱点。
 
 ## 8. 测试（bun test，沿用现有基建）
 
