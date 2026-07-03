@@ -6,6 +6,7 @@ import type {
   PermissionDecisionKind,
   PermissionRequest
 } from '../../../shared/types'
+import { interceptPrematureStageConfirm } from '../lib/proposalStageGate'
 
 /**
  * Pending tool-permission store.
@@ -143,6 +144,20 @@ export function usePermissionBridge(): void {
     if (typeof window === 'undefined' || !window.chatApi) return
     const { add, remove } = usePermissionStore.getState()
     const unsubRequest = window.chatApi.onPermissionRequest((req) => {
+      // 方案阶段确认硬门：模型空口发「封面/目录确认」（对应节根本没输出）时不渲染确认卡，
+      // 直接自动作答纠偏文本打回，让它先补哨兵块（见 proposalStageGate 顶注，GUI 走查实锤）。
+      // 直接走 chatApi 而非 store.respond——请求从未入 map，respond 的存在性检查会把它拦下。
+      const auto = interceptPrematureStageConfirm(req)
+      if (auto) {
+        console.warn('[proposal-stage-gate] 阶段确认被拦截：对应节尚未产出，已自动打回', {
+          requestId: req.requestId,
+          sessionId: req.sessionId
+        })
+        void window.chatApi
+          .respondPermission({ requestId: req.requestId, decision: 'allow-once', updatedInput: auto })
+          .catch((err) => console.error('[proposal-stage-gate] 自动应答失败', err))
+        return
+      }
       add(req)
     })
     const unsubCancel = window.chatApi.onPermissionCancelled((requestId) => {

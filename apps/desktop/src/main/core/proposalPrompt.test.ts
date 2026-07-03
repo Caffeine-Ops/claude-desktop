@@ -54,6 +54,13 @@ describe('buildProposalAppend 阶段确认走 AskUserQuestion', () => {
   it('不再宣称界面按钮推进（无回归）', () => {
     expect(out).not.toContain('界面按钮发来')
   })
+
+  it('空口确认硬门措辞：封面/目录哨兵块没输出就发确认会被打回', () => {
+    // 与 renderer 的 interceptPrematureStageConfirm 硬门配套的软约束（GUI 走查实锤：模型曾
+    // 只在确认卡里口头描述封面、从未输出哨兵块，右侧文档一直空白）。
+    expect(out).toContain('封面确认」只能在封面哨兵块已经【完整输出到消息里】之后发起')
+    expect(out).toContain('目录确认」同样只能在目录哨兵块已完整输出之后发起')
+  })
 })
 
 describe('buildProposalAppend 配图密度增强', () => {
