@@ -76,11 +76,26 @@ export const DAEMON_PORT = 7456
  */
 export const WEB_DEV_PORT = Number(process.env.OD_WEB_DEV_PORT) || 3200
 
+/**
+ * dev 下 studio dev server（apps/studio，三前端合并的迁移目标，见其 README）的
+ * 端口。与 WEB_DEV_PORT 同款「单一源头 + env 注入恒等」机制：spawnStudioDev 把
+ * 它作为 STUDIO_DEV_PORT 注入子进程，studio 的 dev script
+ * （`next dev -p ${STUDIO_DEV_PORT:-3100}`）读同名变量，next 真正监听的端口与
+ * 这里恒等。默认 3100 与 web 的 3200 一样刻意避开 next 默认 3000（3000 被同源
+ * fork 抢占串味的教训见 WEB_DEV_PORT 注释）。
+ *
+ * Phase 1 只有 dev 通路；打包形态（standalone vs static export）等聊天 UI 迁移
+ * 完再定，所以没有对应的 app://（prod）分支——prod 下根本不建 studio tab。
+ */
+export const STUDIO_DEV_PORT = Number(process.env.STUDIO_DEV_PORT) || 3100
+
 const DAEMON_ORIGIN = `http://127.0.0.1:${DAEMON_PORT}`
 const WEB_DEV_ORIGIN = `http://localhost:${WEB_DEV_PORT}`
+const STUDIO_DEV_ORIGIN = `http://localhost:${STUDIO_DEV_PORT}`
 
 let daemonProc: ChildProcess | null = null
 let webProc: ChildProcess | null = null
+let studioProc: ChildProcess | null = null
 
 /**
  * 启动时算出的仓库根，缓存到模块级，供 resolveWebStaticDir() 复用。
@@ -316,7 +331,11 @@ function spawnDaemon(repoRoot: string): void {
       // 直接抛错崩溃（7456 起不来 → 主进程 ECONNREFUSED）。prod 下 app:// 页面的
       // /api 请求由 appProtocol.ts 反代时**剥掉 Origin 头**，daemon 把它当可信的
       // 非浏览器请求放行（server.ts: origin==null → next()），根本不走白名单。
-      OD_ALLOWED_ORIGINS: `${WEB_DEV_ORIGIN},http://127.0.0.1:${WEB_DEV_PORT}`,
+      // studio（apps/studio, dev 3100）的 origin 一并放行：Phase 1 它经自己的
+      // next rewrites（服务端代理，无浏览器 Origin 头）调 daemon 不需要白名单，
+      // 但 Phase 2/3 迁入的页面直连 daemon（尤其 SSE 流式接口，经 Next 代理会
+      // 被 buffering 拖垮）时没有这行就是 403——提前排雷。
+      OD_ALLOWED_ORIGINS: `${WEB_DEV_ORIGIN},http://127.0.0.1:${WEB_DEV_PORT},${STUDIO_DEV_ORIGIN},http://127.0.0.1:${STUDIO_DEV_PORT}`,
       OD_WEB_PORT: String(WEB_DEV_PORT),
       OD_PORT: String(DAEMON_PORT),
       // prod 专属：daemon bundle 后的自我定位 + 可写数据目录 + 资源根。dev 不设，
@@ -394,6 +413,53 @@ function spawnWebDev(repoRoot: string): void {
 }
 
 /**
+ * dev 模式拉起 studio dev server（next dev）。prod 不调用——studio 尚无打包
+ * 形态（Phase 1，见 STUDIO_DEV_PORT 注释）。结构与 spawnWebDev 完全同构，
+ * 差异只有目录、端口 env 名（STUDIO_DEV_PORT，被 studio dev script 的
+ * `-p ${STUDIO_DEV_PORT:-3100}` 读取）和 collector 标签。
+ */
+function spawnStudioDev(repoRoot: string): void {
+  if (!is.dev) return
+  if (studioProc && !studioProc.killed) return
+
+  const studioDir = join(repoRoot, 'apps', 'studio')
+  if (!existsSync(join(studioDir, 'package.json'))) {
+    console.warn(`[od-services] studio package not found at ${studioDir} — skipping`)
+    return
+  }
+
+  const bunBin = resolveBunBin()
+  studioProc = spawn(bunBin, ['run', '--cwd', studioDir, 'dev'], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      // 让 studio next.config 的 rewrites 把 /api、/artifacts 指向我们的 daemon。
+      OD_PORT: String(DAEMON_PORT),
+      // studio dev script 用 `-p ${STUDIO_DEV_PORT:-3100}`（flag 优先于 PORT env，
+      // 所以这里注入的是同名 shell 变量而非 PORT）——保证监听端口与探活/加载
+      // 用的 STUDIO_DEV_PORT 常量恒等。
+      STUDIO_DEV_PORT: String(STUDIO_DEV_PORT),
+      // studio 的 /canvas 路由用 iframe 嵌 web（Phase 3 真迁移完成前的过渡
+      // 形态）。NEXT_PUBLIC_ 前缀让 next 在编译期内联给客户端代码——studio
+      // 页面自己不知道壳侧的 WEB_DEV_PORT 常量，靠这条 env 传递。
+      NEXT_PUBLIC_OD_WEB_ORIGIN: WEB_DEV_ORIGIN
+    },
+    stdio: ['inherit', 'pipe', 'pipe'],
+    windowsHide: true
+  })
+  pipeChildToCollector(studioProc, 'studio')
+
+  studioProc.on('exit', (code, signal) => {
+    console.log(`[od-services] studio dev exited code=${code} signal=${signal}`)
+    studioProc = null
+  })
+  studioProc.on('error', (err) => {
+    console.warn('[od-services] studio dev spawn error:', err)
+  })
+  console.log(`[od-services] studio dev spawned: ${bunBin} run --cwd ${studioDir} dev`)
+}
+
+/**
  * 轮询 daemon 健康端点直到返回 200，或超时。第二个 tab 在此 resolve 后才加载，
  * 避免加载到一个还没起好的 web/daemon 而白屏。
  */
@@ -429,9 +495,26 @@ export async function waitForWebReady(timeoutMs = 30_000): Promise<boolean> {
   return false
 }
 
+/** dev 下等 studio dev server ready（next dev 冷启动）。与 waitForWebReady 同构。 */
+export async function waitForStudioReady(timeoutMs = 30_000): Promise<boolean> {
+  if (!is.dev) return true
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(STUDIO_DEV_ORIGIN)
+      if (res.ok) return true
+    } catch {
+      // 继续轮询
+    }
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  return false
+}
+
 /**
- * 主进程启动时调用一次：拉起 daemon（+ dev 下 web）。同步返回，子进程在后台启动；
- * 调用方用 waitForDaemonReady / waitForWebReady 等就绪。
+ * 主进程启动时调用一次：拉起 daemon（+ dev 下 web、studio）。同步返回，子进程
+ * 在后台启动；调用方用 waitForDaemonReady / waitForWebReady / waitForStudioReady
+ * 等就绪。
  */
 export function startOpenDesignServices(selfDir: string): void {
   const repoRoot = resolveRepoRoot(selfDir)
@@ -439,6 +522,7 @@ export function startOpenDesignServices(selfDir: string): void {
   cachedRepoRoot = repoRoot
   spawnDaemon(repoRoot)
   spawnWebDev(repoRoot)
+  spawnStudioDev(repoRoot)
 }
 
 /**
@@ -454,9 +538,9 @@ export function resolveWebStaticDir(): string {
   return join(root, 'apps', 'web', 'out')
 }
 
-/** 应用退出时清理子进程，避免 daemon/web 变孤儿进程占着端口。 */
+/** 应用退出时清理子进程，避免 daemon/web/studio 变孤儿进程占着端口。 */
 export function stopOpenDesignServices(): void {
-  for (const proc of [webProc, daemonProc]) {
+  for (const proc of [webProc, studioProc, daemonProc]) {
     if (proc && !proc.killed) {
       try {
         proc.kill('SIGTERM')
@@ -467,6 +551,7 @@ export function stopOpenDesignServices(): void {
   }
   daemonProc = null
   webProc = null
+  studioProc = null
 }
 
 /**
@@ -504,4 +589,18 @@ export function resolveWebSettingsUrl(): string {
   return is.dev
     ? `${WEB_DEV_ORIGIN}/?settings=1`
     : `${APP_PROTOCOL_ORIGIN}/?settings=1`
+}
+
+/**
+ * studio tab 该加载的 URL。**只有 dev 分支**：studio 是三前端合并的迁移目标
+ * （apps/studio/README.md），Phase 1 尚无打包形态，prod 下调用方（main/index.ts）
+ * 根本不建 studio tab，所以这里不需要（也还没法）给出 prod URL。打包形态
+ * （standalone server vs static export 回退）在聊天 UI 迁移完成后决定。
+ *
+ * 不带 `?host=desktop`：web tab 需要它是因为不挂 preload、只能靠 URL 识别宿主；
+ * studio tab 挂完整 chatApi preload（见 tabRegistry.newStudioTab），页面检测
+ * `window.chatApi` 存在即知宿主，无需查询参数。
+ */
+export function resolveStudioTabUrl(): string {
+  return `${STUDIO_DEV_ORIGIN}/`
 }

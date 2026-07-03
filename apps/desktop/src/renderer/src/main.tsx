@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import ShellApp from './shell/ShellApp'
+import StudioSplash from './shell/StudioSplash'
 // Tailwind entrypoint — must come before assets/main.css so our own
 // layer rules (window chrome, header) sit on top of Tailwind preflight.
 import './index.css'
@@ -20,6 +21,10 @@ const search =
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams()
 const isShell = search.get('shell') === '1'
+// 单视图形态（studio 全屏唯一 tab，见 main/index.ts 的 studioSingleView）：
+// shell webContents 不再渲染 legacy rail（会在 studio 首帧前闪现误导），
+// 改渲染极简启动画面。
+const isSingleView = search.get('singleview') === '1'
 // Mark the document so CSS can scope chat-only surface rules. The chat tab's
 // content now floats as a rounded card with an 8px gap on all sides (see
 // tabRegistry.layoutActiveTab), and the gap must reveal the shell nav rail
@@ -203,7 +208,11 @@ if (typeof document !== 'undefined') {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     {isShell ? (
-      <ShellApp />
+      isSingleView ? (
+        <StudioSplash />
+      ) : (
+        <ShellApp />
+      )
     ) : (
       <App />
     )}

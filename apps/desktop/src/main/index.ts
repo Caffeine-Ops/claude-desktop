@@ -35,13 +35,15 @@ import {
   createShellWindow,
   getShellWindow,
   newTab,
-  newWebTab
+  newWebTab,
+  newStudioTab
 } from './tabRegistry'
 import {
   startOpenDesignServices,
   stopOpenDesignServices,
   waitForDaemonReady,
-  waitForWebReady
+  waitForWebReady,
+  waitForStudioReady
 } from './services/openDesignServices'
 import { APP_SCHEME, registerAppProtocol } from './services/appProtocol'
 
@@ -211,25 +213,69 @@ app.whenReady().then(async () => {
   // returns the existing window on re-entry, and the first newTab
   // is what the user would've done via ⌘T anyway.
   //
-  // 第一个 tab = chat 工作区（本仓原有功能），立即打开，不依赖 daemon/web。
-  createShellWindow()
-  newTab()
+  // dev 默认进 **studio 单视图**形态：不建 chat/web tab，唯一的 studio tab
+  // 全屏铺满（layoutActiveTab 的 studio 分支），聊天(/chat)、工作画布(/canvas)、
+  // 导航 rail 全部由 studio 页面内部渲染——三前端合并的目标形态。旧三 tab
+  // 架构（chat + 工作画布 + studio 并列切换）用 LEGACY_TABS=1 找回，作为
+  // 迁移期回退门；prod 恒走 legacy（studio 尚无打包形态，Phase 4 切换）。
+  const studioSingleView = is.dev && process.env.LEGACY_TABS !== '1'
 
-  // 第二个 tab = Open Design web。必须等 daemon（+ dev 下 web dev server）
-  // 就绪后再开，否则 WebContentsView 会加载到一个还没起好的端口而白屏。
-  // 用 IIFE 异步等待，不阻塞 whenReady 的其余初始化（tray 等）。
+  createShellWindow({ singleView: studioSingleView })
+  if (!studioSingleView) {
+    // legacy：第一个 tab = chat 工作区，立即打开，不依赖 daemon/web。
+    newTab()
+  }
+
+  // 后续 tab 必须等对应 dev server 就绪后再开，否则 WebContentsView 会加载
+  // 到一个还没起好的端口而白屏。用 IIFE 异步等待，不阻塞 whenReady 的其余
+  // 初始化（tray 等）。
   void (async () => {
+    if (studioSingleView) {
+      // 单视图：studio 是唯一 tab，**只等它自己 ready**——daemon/web 的
+      // 探活改为后台仅日志，不再串行阻塞首屏（原先 daemon→web→studio 三段
+      // 串行等完才建 tab，用户盯着 shell 画面十几秒）。聊天不依赖 daemon
+      // 就绪（engine lazy spawn + 会话读盘），/canvas 的 iframe 也是用户
+      // 点过去时才加载 web。
+      void waitForDaemonReady().then((ok) => {
+        if (!ok) console.warn('[main] daemon not ready within timeout')
+      })
+      void waitForWebReady().then((ok) => {
+        if (!ok) console.warn('[main] web dev server not ready within timeout')
+      })
+      const studioOk = await waitForStudioReady()
+      if (!studioOk) {
+        console.warn('[main] studio dev server not ready; studio 仍会打开但可能需手动刷新')
+      }
+      try {
+        newStudioTab()
+      } catch (err) {
+        console.warn('[main] newStudioTab failed:', err)
+      }
+      return
+    }
+    // legacy：第二个 tab = Open Design web，第三个 = studio（dev-only）。
     const daemonOk = await waitForDaemonReady()
     const webOk = await waitForWebReady()
     if (!daemonOk || !webOk) {
       console.warn(
-        `[main] Open Design services not ready (daemon=${daemonOk} web=${webOk}); web tab 仍会打开但可能需手动刷新`
+        `[main] Open Design services not ready (daemon=${daemonOk} web=${webOk}); 页面仍会打开但可能需手动刷新`
       )
     }
     try {
       if (canAddTab()) newWebTab()
     } catch (err) {
       console.warn('[main] newWebTab failed:', err)
+    }
+    if (is.dev) {
+      const studioOk = await waitForStudioReady()
+      if (!studioOk) {
+        console.warn('[main] studio dev server not ready; studio tab 仍会打开但可能需手动刷新')
+      }
+      try {
+        if (canAddTab()) newStudioTab()
+      } catch (err) {
+        console.warn('[main] newStudioTab failed:', err)
+      }
     }
   })()
 
@@ -243,11 +289,28 @@ app.whenReady().then(async () => {
       // waitForDaemonReady——直接同步补 web tab 即可。chat 先建保证它是
       // 前台，web 在后台（newWebTab 不抢占激活），与首启表现一致。
       createShellWindow()
+      if (studioSingleView) {
+        // 单视图：服务早已就绪（before-quit 才停），直接补回唯一的 studio tab。
+        try {
+          newStudioTab()
+        } catch (err) {
+          console.warn('[main] newStudioTab on activate failed:', err)
+        }
+        return
+      }
       newTab()
       try {
         if (canAddTab()) newWebTab()
       } catch (err) {
         console.warn('[main] newWebTab on activate failed:', err)
+      }
+      // dev 下补回 studio tab（同 web tab：服务早已就绪，无需再等探活）。
+      if (is.dev) {
+        try {
+          if (canAddTab()) newStudioTab()
+        } catch (err) {
+          console.warn('[main] newStudioTab on activate failed:', err)
+        }
       }
     }
   })

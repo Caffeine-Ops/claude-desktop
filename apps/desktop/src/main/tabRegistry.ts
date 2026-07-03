@@ -13,7 +13,11 @@ import appIcon from '../../resources/icon.png?asset'
 import { ChatEngine, createChatEngine } from './core/engine'
 import { clearUnread } from './tray'
 import { addLogSubscriber, removeLogSubscriber } from './core/logCollector'
-import { resolveWebTabUrl, resolveWebSettingsUrl } from './services/openDesignServices'
+import {
+  resolveWebTabUrl,
+  resolveWebSettingsUrl,
+  resolveStudioTabUrl
+} from './services/openDesignServices'
 import {
   IPC_CHANNELS,
   type ShellMenuAction,
@@ -153,8 +157,13 @@ interface TabContext {
    */
   engine: ChatEngine | null
   title: string
-  /** tab 类型：'chat' 是原有工作区聊天 tab；'web' 是嵌 Open Design web 的 tab。 */
-  kind: 'chat' | 'web'
+  /**
+   * tab 类型：'chat' 是原有工作区聊天 tab；'web' 是嵌 Open Design web 的 tab；
+   * 'studio' 是三前端合并的迁移目标（apps/studio，dev-only，见 newStudioTab）。
+   * studio 介于两者之间：像 web 一样加载外部 origin 的 Next 应用，但像 chat
+   * 一样挂完整 chatApi preload 并持有自己的 ChatEngine。
+   */
+  kind: 'chat' | 'web' | 'studio'
 }
 
 let shellWindow: BrowserWindow | null = null
@@ -186,7 +195,7 @@ export function canAddTab(): boolean {
  * bar (React app keyed by `?shell=1`) and each tab is a
  * WebContentsView layered below.
  */
-export function createShellWindow(): BrowserWindow {
+export function createShellWindow(opts?: { singleView?: boolean }): BrowserWindow {
   if (shellWindow && !shellWindow.isDestroyed()) return shellWindow
 
   const win = new BrowserWindow({
@@ -269,12 +278,13 @@ export function createShellWindow(): BrowserWindow {
     }
   })
 
-  // Load the renderer with `?shell=1`. main.tsx branches to a
-  // no-op ShellApp that renders nothing — the shell's main
-  // webContents just needs a valid document for BrowserWindow to
-  // stay alive. The tabs' WebContentsViews cover the entire
-  // window so the user never sees this empty surface.
-  const shellUrl = resolveRendererUrl({ shell: '1' })
+  // Load the renderer with `?shell=1`. main.tsx branches on the query:
+  // legacy 模式渲染 ShellApp（左侧 rail），单视图模式（&singleview=1）渲染
+  // StudioSplash 启动画面——studio tab 首帧就绪前窗口露出的就是这个
+  // webContents，不能再画 legacy rail（用户会看到旧界面闪现后跳变）。
+  const shellUrl = resolveRendererUrl(
+    opts?.singleView ? { shell: '1', singleview: '1' } : { shell: '1' }
+  )
   loadIntoWebContents(win.webContents, shellUrl)
 
   return win
@@ -506,6 +516,108 @@ export function newWebTab(): TabContext {
   }
   // 已有前台 tab（正常路径）：不做 deferred 抢占激活，仅靠上面的
   // did-finish-load → broadcastTabList 让顶部 TabBar 显示出第二个 pill。
+  return ctx
+}
+
+/**
+ * 创建「Studio」tab —— 三前端合并的迁移目标（apps/studio，见其 README）。
+ * dev-only：prod 下 studio 尚无打包形态，main/index.ts 根本不调这个函数。
+ *
+ * 与 web tab 的两个刻意区别：
+ *
+ *  - **挂完整 chatApi preload + 持有自己的 ChatEngine**：Phase 2 聊天 UI 会
+ *    迁进 studio，届时页面里的 window.chatApi 调用经 IPC 到 main 后，靠
+ *    `getContextForSender`（event.sender.id → tabs Map）路由回本 tab 的
+ *    engine——所以 engine 必须现在就随 tab 建好。ChatEngine 是 lazy spawn
+ *    （见 engine.ts：冷启动延迟到首次 send），空挂着不起 fusion-code 子进程，
+ *    成本只是一个 JS 对象。
+ *  - **不带 `?host=desktop` 查询参数**：web tab 靠它识别宿主是因为没有任何
+ *    preload 注入；studio 页面检测 `window.chatApi` 存在即知在壳内。
+ *
+ * 与 chat tab 的区别：布局 flush（layoutActiveTab 的 gap 只给 'chat'）、
+ * 标题固定、后台创建不抢前台（激活策略同 newWebTab——它是启动时主进程自动
+ * 建的，不是用户点 "+" 触发的）。
+ *
+ * shell 会话列表（getActiveChatWorkspace/getActiveChatEngine）目前只认
+ * kind==='chat'——studio 在 Phase 1 没有聊天 UI，激活它时左栏会话列表为空是
+ * 预期行为；Phase 2 迁入聊天后再把那两处放开到 'studio'。
+ */
+export function newStudioTab(): TabContext {
+  if (!shellWindow || shellWindow.isDestroyed()) {
+    throw new Error('Shell window is not initialized.')
+  }
+  if (!canAddTab()) {
+    throw new Error(`Maximum of ${MAX_TABS} tabs already open.`)
+  }
+
+  const view = new WebContentsView({
+    webPreferences: {
+      // 完整 chatApi preload（同 chat tab）：Phase 2 的聊天 UI 需要 window.chatApi。
+      preload: join(__dirname, '../preload/index.mjs'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+  view.setBackgroundColor('#00000000')
+  forceDetachedDevTools(view.webContents)
+  attachExternalLinkHandler(view.webContents)
+
+  const engine = createChatEngine(view.webContents, {
+    shouldBumpOnTurnEnd: () => {
+      const shellFocused = !!shellWindow && !shellWindow.isDestroyed() && shellWindow.isFocused()
+      const amActive = activeTabId === view.webContents.id
+      return !(shellFocused && amActive)
+    }
+  })
+
+  const ctx: TabContext = {
+    view,
+    engine,
+    title: 'Studio',
+    kind: 'studio'
+  }
+  tabs.set(view.webContents.id, ctx)
+  tabOrder.push(view.webContents.id)
+  broadcastTabList()
+
+  // 会话列表 / 权限徽标 fan-out 与 chat tab 一致（Phase 2 迁入聊天后直接生效）。
+  engine.on('sessionListChanged', () => {
+    if (activeTabId === view.webContents.id) {
+      broadcastShellSessionListChanged()
+    }
+  })
+  engine.permissionBroker.on('pendingChanged', () => {
+    broadcastTabList()
+  })
+
+  loadIntoWebContents(view.webContents, resolveStudioTabUrl())
+
+  view.webContents.on('did-finish-load', () => {
+    broadcastTabList()
+  })
+
+  // 激活策略分两种形态：
+  //  - legacy 第三 tab（activeTabId 非空）：同 newWebTab，后台创建绝不抢前台。
+  //  - 单视图首个 tab（activeTabId === null）：**defer 到 did-finish-load**
+  //    再上屏。studio dev server 探活 200 只代表 HTTP 可服务，dev 下 /chat
+  //    还要按需编译几秒——立即 activate 会把一个空白 view 盖到 shell 的
+  //    StudioSplash 启动画面上，用户看到的是白屏而非 splash。10s 兜底：
+  //    did-finish-load 万一丢失（HMR reconnect 吞事件），studio 也必须上屏。
+  if (activeTabId === null) {
+    const targetId = view.webContents.id
+    const promote = (): void => {
+      if (!tabs.has(targetId)) return
+      if (activeTabId === targetId) return
+      activateTab(targetId)
+    }
+    if (view.webContents.isLoading()) {
+      view.webContents.once('did-finish-load', promote)
+      setTimeout(promote, 10_000)
+    } else {
+      promote()
+    }
+  }
   return ctx
 }
 
@@ -859,6 +971,13 @@ function layoutActiveTab(): void {
   // the shell shows through the gap (incl. a sliver of rail to the LEFT of
   // the card). Web tabs stay flush (gap 0). Math.max guards a tiny window
   // from producing a negative width/height.
+  // studio tab 全屏 flush（x=0，无 rail 偏移无 gap）：单视图形态下导航 rail
+  // 由 studio 页面自己渲染（AppRail 组件），shell renderer 的 rail 被整个
+  // 盖住。chat/web tab 保持原布局（legacy 三 tab 模式还在用）。
+  if (ctx.kind === 'studio') {
+    ctx.view.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height })
+    return
+  }
   const gap = ctx.kind === 'chat' ? CHAT_CARD_GAP : 0
   ctx.view.setBounds({
     x: NAV_RAIL_WIDTH + gap,

@@ -51,11 +51,15 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64"]
+          "arch": [
+            "arm64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["arm64"]
+          "arch": [
+            "arm64"
+          ]
         }
       ],
       "identity": "Shenzhen Panda Run Network Technology Co., Ltd (LBL475BGZL)",
@@ -86,7 +90,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "extraResources": [
@@ -122,6 +128,7 @@
     "@assistant-ui/react-markdown": "^0.12.8",
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
+    "@open-design/composer": "workspace:*",
     "@open-design/ui": "workspace:*",
     "@use-gesture/react": "^10.3.1",
     "electron-updater": "^6.3.9",
@@ -143,16 +150,16 @@
     "@electron-toolkit/tsconfig": "^1.0.1",
     "@tailwindcss/postcss": "4.3.0",
     "@types/node": "^22.9.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "^4.3.3",
     "electron": "35.7.5",
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
     "esbuild": "^0.28.0",
     "postcss": "^8.5.9",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
     "tailwindcss": "4.3.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.11"

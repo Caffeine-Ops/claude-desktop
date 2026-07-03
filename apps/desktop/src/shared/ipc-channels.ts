@@ -878,9 +878,10 @@ export type CliBackendSetPayload = { mode: CliBackendMode }
  * - `main`     — this Electron main process's console.* (patched).
  * - `daemon`   — the spawned Open Design daemon child's stdout/stderr.
  * - `web`      — the dev-only web dev server (next dev) child's output.
+ * - `studio`   — the dev-only studio dev server (apps/studio, next dev) child's output.
  * - `renderer` — a tab/overlay renderer process's console-message.
  */
-export type LogSource = 'main' | 'daemon' | 'web' | 'renderer'
+export type LogSource = 'main' | 'daemon' | 'web' | 'studio' | 'renderer'
 
 /**
  * One line of runtime log. `seq` is a monotonically increasing id used as a
