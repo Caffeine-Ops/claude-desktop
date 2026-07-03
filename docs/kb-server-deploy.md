@@ -33,6 +33,8 @@ source ~/.bashrc
 pipx install markitdown
 ```
 
+**CentOS/RHEL（差异点）**：8 系默认仓库通常没有 pipx，需要先启用 EPEL（`sudo dnf install -y epel-release && sudo dnf install -y pipx`），或退而求其次用 `python3 -m pip install --user pipx`；装好后同样 `pipx ensurepath` + `pipx install markitdown`。
+
 **必须额外注入 `xlrd`，否则 `.xls` 全军覆没**——这是本机真实踩过的坑，不是预防性提醒：
 
 ```bash
@@ -86,6 +88,7 @@ soffice --version
 ```bash
 sudo mkdir -p /srv/kb/source /srv/kb/publish/default
 sudo git clone <本仓库地址> /srv/kb/app
+sudo chown -R <部署账号> /srv/kb/app   # sudo clone 出来属主是 root，交还给部署账号，否则 bun install 写不进去
 cd /srv/kb/app && bun install
 ```
 
@@ -159,10 +162,10 @@ sudo firewall-cmd --reload
 crontab -e
 ```
 
-加入以下两行（第一行把 bun 的安装路径补进 cron 的 PATH，避免 1.1 节提到的 `bun: command not found`）：
+加入以下两行（第一行把 bun 的安装路径补进 cron 的 PATH，避免 1.1 节提到的 `bun: command not found`）。注意 crontab 里的 `PATH=` 赋值是纯字面量，**不支持 `$HOME` / `~` 展开**，必须按实际部署账号手写绝对路径——把 `<部署账号>` 换成真实用户名：
 
 ```cron
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.bun/bin
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/<部署账号>/.bun/bin
 0 * * * * flock -n /tmp/kb-build.lock bash -c 'cd /srv/kb/app && bun scripts/build-kb-index.ts --kb /srv/kb/source --out /srv/kb/publish/default --now $(date +\%s)000 && bun scripts/publish-kb-manifest.ts --dir /srv/kb/publish/default --kb-id default --name "福鑫数科产品线资料库" --now $(date +\%s)000' >> /var/log/kb-build.log 2>&1
 ```
 
