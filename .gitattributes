@@ -1,0 +1,8 @@
+# skills/ 树随包分发且被运行期逐字节消费：proposal-writer 的 append-template.md 由
+# loadAppendTemplate 原样读入注入 AI（只剥一个尾 LF），快照测试逐字节比对。Windows
+# 检出（含构建 dist:win 的 GitHub windows runner，Git for Windows 默认 autocrlf=true）
+# 若被转成 CRLF，注入的写作纪律每行夹 \r、快照全红（终审 finding #2）。钉死 LF 让任何
+# 平台、任何 core.autocrlf 设置下检出字节一致。
+skills/** text eol=lf
+# bun test 快照文件同理逐字节敏感。
+*.snap text eol=lf
