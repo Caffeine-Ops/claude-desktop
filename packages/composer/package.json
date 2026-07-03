@@ -1,0 +1,20 @@
+{
+  "name": "@open-design/composer",
+  "version": "0.0.1",
+  "private": true,
+  "description": "聊天 composer 的 ProseMirror 核心（schema + serializeDoc + suggestion 状态机），desktop renderer / studio / web 三端共享。Source-only：入口直指 src，各宿主 bundler 自己编译（同 @open-design/ui 的模式及理由）。UI 层（ProseMirrorComposerInput / chipNodeView）刻意不在此包——两端交互差异大，留在各宿主。",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./pmSchema": "./src/pmSchema.ts",
+    "./suggestionPlugin": "./src/suggestionPlugin.ts",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "prosemirror-model": "^1.25.7",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.41.8"
+  },
+  "main": "./src/index.ts",
+  "//note-main": "main 是给 moduleResolution:node 的消费端（apps/desktop 的 tsconfig 基座）用的——它不认 exports subpath，所以三端 shim 一律从根入口 re-export，不用 ./pmSchema 子路径。"
+}
