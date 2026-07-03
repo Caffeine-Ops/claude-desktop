@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
@@ -58,19 +58,45 @@ const MAX_IMAGES_PER_FILE = 12
  * 据方案做采购决策，宁可当轮发送失败也不静默降级。这一依赖面与 skills plugin
  * 挂载、ppt-master 相同：skills 目录缺失时它们同样已经坏了。
  *
- * 每次调用都重读、不做模块级缓存：调用频率是「每次 spawn / 每次 grounding 补偿」
- * 量级，几 KB 的同步读开销可忽略；换来 dev 改模板即时生效。
+ * 缓存策略（终审 finding #10）：warm-spawn 的方案会话（spawnedWithProposal 恒
+ * false）每轮消息都走 grounding 补偿调到这里，「每次全量重读」会让 20~50 轮的
+ * 会话每轮在主进程事件循环上多付 ~6 次 fs 探测 + 14KB 同步读。改为【mtime 缓存】：
+ * 目录解析结果模块级缓存（skills 目录位置进程内不会变），模板内容按 statSync 的
+ * mtimeMs 判断新旧——命中时每轮只付 1 次 stat；dev 改模板 → mtime 变 → 自动重读，
+ * 「改模板对下一轮/下一个 spawn 即时生效」的开发体验不变，无需区分 dev/prod。
  */
-export function loadAppendTemplate(): string {
-  const skillsDir = resolveBundledSkillsPluginDir()
-  if (!skillsDir) {
+let cachedSkillsDir: string | null = null
+let cachedTemplate: { path: string; mtimeMs: number; content: string } | null = null
+
+function resolveTemplatePath(): string {
+  if (cachedSkillsDir === null) {
+    cachedSkillsDir = resolveBundledSkillsPluginDir()
+  }
+  if (!cachedSkillsDir) {
     throw new Error(
       '写方案提示词模板不可用：找不到 skills 插件目录（.claude-plugin/plugin.json 缺失）'
     )
   }
-  const path = join(skillsDir, 'proposal-writer', 'references', 'append-template.md')
-  if (!existsSync(path)) {
-    throw new Error(`写方案提示词模板不可用：${path} 不存在`)
+  return join(cachedSkillsDir, 'proposal-writer', 'references', 'append-template.md')
+}
+
+export function loadAppendTemplate(): string {
+  let path = resolveTemplatePath()
+  let mtimeMs: number
+  try {
+    mtimeMs = statSync(path).mtimeMs
+  } catch {
+    // 目录缓存可能陈旧（如 dev 下目录被挪动）——失效重解析、只重试一次，仍不在才抛。
+    cachedSkillsDir = null
+    path = resolveTemplatePath()
+    try {
+      mtimeMs = statSync(path).mtimeMs
+    } catch {
+      throw new Error(`写方案提示词模板不可用：${path} 不存在`)
+    }
+  }
+  if (cachedTemplate && cachedTemplate.path === path && cachedTemplate.mtimeMs === mtimeMs) {
+    return cachedTemplate.content
   }
   const raw = readFileSync(path, 'utf8')
   // 模板文件末尾按 POSIX 惯例带一个换行，而旧实现 join('\n') 无尾换行——剥掉这
@@ -80,7 +106,9 @@ export function loadAppendTemplate(): string {
   // 在读入口校验、不在渲染后校验：渲染后模板里已经替换进了 KB_SCOPE 等运行期
   // 值，值里（比如 KB 文件标题）合法出现 `{{` 会被误杀成「残缺占位符」；读入口
   // 校验的是模板原文，此时占位符还是 `{{NAME}}` 字面量，不会有这层污染。
+  // 校验通过才落缓存：改坏的模板不会以「缓存里还有旧好版本」的方式被掩盖。
   assertWellFormedPlaceholders(template)
+  cachedTemplate = { path, mtimeMs, content: template }
   return template
 }
 

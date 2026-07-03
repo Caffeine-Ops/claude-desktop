@@ -28,9 +28,12 @@ description: >
 - **改写作方法论**：只改 `references/append-template.md` 的文字，然后跑
   `cd apps/desktop && bun test src/main/core`。快照测试会 diff 出变化——确认是
   有意修改后用 `bun test --update-snapshots` 刷新基线，把 `.snap` 一起提交。
-- **改协议字样**（哨兵、确认 header、资料缺失前缀）：事实源在
-  `apps/desktop/src/shared/proposal.ts`，模板里只有 `{{占位符}}`、会自动跟随。
-  **不要**在模板里手写协议字样明文——契约测试会当场拦下。
+- **改协议字样**：事实源在 `apps/desktop/src/shared/proposal.ts`。分两档——
+  哨兵与「⚠️ 资料缺失：」前缀是解析器逐字节匹配的硬协议，模板里【绝不允许】
+  明文、只能是 `{{占位符}}`（契约测试会当场拦下）；确认 header（封面确认/目录
+  确认）只有「header 固定填「{{…}}」」这个【协议位】走占位符跟随常量，散文位
+  （如「发起封面确认」）是普通中文、写明文——这样改 header 常量不会把方法论
+  散文渲染成语病。
 - 渲染逻辑：`apps/desktop/src/main/core/proposalPrompt.ts`（`buildProposalAppend`）。
 - 斜杠拦截：`apps/desktop/src/renderer/src/runtime/FusionRuntimeProvider.tsx`（onNew）。
 - 各段纪律的历史来龙去脉：见本目录 `NOTES.md`。

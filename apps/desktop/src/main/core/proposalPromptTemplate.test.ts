@@ -14,10 +14,20 @@ import {
   renderPromptTemplate
 } from './proposalPrompt'
 
-const PROTOCOL_STRINGS = [
+// 硬协议字样：解析器逐字节匹配的标记（哨兵、缺失前缀），模板里【绝不允许】出现
+// 明文——只能是占位符，否则改常量必与模板漂移。
+const HARD_PROTOCOL_STRINGS = [
   ...Object.values(PROPOSAL_DRAFT_BEGIN),
   ...Object.values(PROPOSAL_DRAFT_END),
-  PROPOSAL_GAP_PREFIX,
+  PROPOSAL_GAP_PREFIX
+]
+
+// 确认 header 是「值必须逐字一致」的协议量，但它同时也是普通中文名词——模板的
+// 【散文位】（如「发起封面确认」）允许写明文（改常量后散文照样通顺），只有
+// 【协议位】（header 固定填「…」）必须走占位符跟随常量（终审 finding #9：此前
+// 散文位也占位符化，改常量会把散文渲染成语病，两层测试都拦不住）。
+const ALL_PROTOCOL_STRINGS = [
+  ...HARD_PROTOCOL_STRINGS,
   PROPOSAL_COVER_CONFIRM_HEADER,
   PROPOSAL_TOC_CONFIRM_HEADER
 ]
@@ -37,14 +47,20 @@ describe('renderPromptTemplate', () => {
 })
 
 describe('append 模板契约', () => {
-  it('模板文件不含任何协议字样明文——事实源只在 shared/proposal.ts', () => {
+  it('模板文件不含硬协议字样明文（哨兵/缺失前缀）——事实源只在 shared/proposal.ts', () => {
     const tpl = loadAppendTemplate()
-    for (const s of PROTOCOL_STRINGS) expect(tpl).not.toContain(s)
+    for (const s of HARD_PROTOCOL_STRINGS) expect(tpl).not.toContain(s)
+  })
+
+  it('确认 header 的【协议位】走占位符跟随常量（散文位允许明文）', () => {
+    const tpl = loadAppendTemplate()
+    expect(tpl).toContain('header 固定填「{{COVER_CONFIRM_HEADER}}」')
+    expect(tpl).toContain('header 固定填「{{TOC_CONFIRM_HEADER}}」')
   })
 
   it('渲染结果含全部协议字样、且无 {{ 残留', () => {
     const out = buildProposalAppend('/mirror', [])
-    for (const s of PROTOCOL_STRINGS) expect(out).toContain(s)
+    for (const s of ALL_PROTOCOL_STRINGS) expect(out).toContain(s)
     expect(out).not.toContain('{{')
   })
 })
