@@ -499,5 +499,5 @@ export function stopOpenDesignServices(): void {
  * `window.chatApi` 存在即知宿主，无需查询参数。
  */
 export function resolveStudioTabUrl(): string {
-  return is.dev ? `${STUDIO_DEV_ORIGIN}/` : 'app://studio/'
+  return is.dev ? `${STUDIO_DEV_ORIGIN}/chat` : 'app://studio/chat'
 }

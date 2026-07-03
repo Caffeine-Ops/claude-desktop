@@ -546,12 +546,13 @@ function SessionRow({
                       'text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground'
                 )}
               >
-                {active && (
-                  <span
-                    aria-hidden
-                    className="size-[5px] shrink-0 rounded-full bg-sidebar-primary"
-                  />
-                )}
+                <span
+                  aria-hidden
+                  className={cn(
+                    'size-[5px] shrink-0 rounded-full transition-colors',
+                    active ? 'bg-sidebar-primary' : 'bg-transparent'
+                  )}
+                />
                 <span className="min-w-0 flex-1 truncate">{displayTitle(thread.title)}</span>
                 {/* 相对时间：hover / 菜单打开时让位给 ···（原型 .time 的
                   * display:none on hover；这里用 opacity 免布局跳动——时间
