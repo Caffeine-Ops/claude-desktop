@@ -134,12 +134,20 @@
 1. **URL 布局含 kbId**：`/kb/<kbId>/…`，本期恒为 `default`；
 2. **manifest 自带 `kbId`/`name`**：客户端校验 kbId 匹配，P1 直接复用；
 3. **配置结构含 `remote.kbId`**：P1 变成 KB 列表 + activeKbId，解析函数向后兼容；
-4. **镜像目录收口点唯一**：所有读方（proposalScopes、engine 提示词注入、权限静默放行、kbasset 守卫）都经 `kbOutDir()` 一个函数。P1 把它参数化为 `kbOutDir(activeKbId)`（目录变 `kb-index/<kbId>/`），全部读方自动跟随——这正是本期坚持「同步只生产、不新增读路径」的原因；
+4. **镜像目录收口点唯一（主进程侧）**：主进程所有读方（proposalScopes、engine 提示词注入、权限静默放行、kbasset 守卫）都经 `kbOutDir()` 一个函数。P1 把它参数化为 `kbOutDir(activeKbId)`（目录变 `kb-index/<kbId>/`），主进程读方自动跟随——这正是本期坚持「同步只生产、不新增读路径」的原因。**已知例外（P1 迁移清单第一项）**：renderer 侧 `lib/kbAssetUrl.ts` 的 `KB_ASSET_MARKER = '/kb-index/assets/'` 是 kbOutDir 之外唯一一处 KB 路径字面量（`includes` 判定 KB 图并转 `kbasset://`）——目录一旦多一层 kbId，marker 匹配不上、库图预览全灭。P1 改目录时必须同步改这个判定（且 `proposalAssetUrl.ts` 注释里与它并列的产出图判定同步复核）；本期目录名不变，不受影响；
 5. **鉴权注入点**：kbSync 的所有 HTTP 请求走同一个 fetch 封装，P1 加团队 token 时只改这一处（本期内网免鉴权，不做 UI）。
 
 P1 额外需要：`/kb/index.json` 知识库列表接口、设置页 KB 切换器、切换时的镜像目录并存策略。均不在本期范围。
 
 另一个顺手的红利：语义检索（已定设计的 P1 向量索引）产物未来也落在 kb-index 内，天然随 manifest 分发——服务器算一次 embedding，全团队复用，不必每台机器自建。
+
+## 与「写方案 skill 化」改造的关系（2026-07-03 复核）
+
+本 spec 定稿当天「写方案」完成了 skill 化（方法论文本外置到 `skills/proposal-writer/references/append-template.md`，`buildProposalAppend` 改为运行期读模板 + `{{占位符}}` 渲染，另加 `/proposal-writer` 斜杠入口）。逐点核对后**同步方案不受影响**，且要守住一条新边界：
+
+- **两类内容、两条分发通道，不可混**：方法论模板属于**应用资产**（随包发布，`resolveBundledSkillsPluginDir` 解析、随应用版本升级），知识库镜像属于**数据制品**（随服务器 manifest 同步）。模板不进 manifest、kbSync 绝不写 skills 目录——否则应用升级和知识库同步会互相踩（模板与 `shared/proposal.ts` 协议常量有契约测试锁定，数据通道无从保证这种锁定）。
+- 提示词里的镜像路径是运行期经 `{{KB_SCOPE}}` 占位符注入的 `kbOutDir()` 值，模板本身零路径字面量——kbOutDir 收口点不受 skill 化影响；
+- CI 已新增 bun test 打包硬门（commit 4573ad7c），kbSync 的单测（见「测试」节）自动纳入守门，实施时快照/契约测试必须保持全绿。
 
 ## 错误处理汇总
 
