@@ -16,8 +16,6 @@ import { useProposalStore } from '../stores/proposal'
 import { friendlyImageError } from './imageErrorText'
 
 const MAX_AUTO_FIRE_PER_SESSION = 5
-// 会话内已自动发起计数。模块级 Map 而非 store：它是防御性配额、不是 UI 状态，不需要驱动渲染。
-const autoFired = new Map<string, number>()
 
 /** 给生图模型的最终提示词：构图描述 + 统一风格约束（中文短标签、扁平商务、白底、无水印）。 */
 export function buildGenImagePrompt(d: { caption: string; prompt: string }): string {
@@ -66,12 +64,16 @@ export async function fireGenImageDirective(
 export function autoFireProposalGenImages(sessionId: string): void {
   const s = useProposalStore.getState()
   if (!s.active || s.sessionId !== sessionId) return
+  // 发起配额由 genImageJobs 派生（任务表本身就是全部已发起记录，含手动发起——总量控制语义
+  // 更正确），不再用模块级计数：配额与 genImageJobs 同生命周期，start/reset 清表即天然重置
+  // 预算，不再有跨草稿残留（评审缺陷：模块级 Map 以 sessionId 为键永不清理，「新建方案」复用
+  // 同一 sessionId 时旧草稿触顶会把新草稿的自动发起永久锁死）。
+  let fired = Object.keys(s.genImageJobs).length
   for (const sec of s.sections) {
     if (sec.kind !== 'content') continue
     for (const d of parseGenImageDirectives(sec.markdown)) {
       const key = genImageDirectiveKey(sec.id, d.raw, d.occurrence)
       if (s.genImageJobs[key]) continue
-      const fired = autoFired.get(sessionId) ?? 0
       if (fired >= MAX_AUTO_FIRE_PER_SESSION) {
         console.warn('[proposal-genimage] 自动生图达每会话上限，其余指令块留手动生成', {
           sessionId,
@@ -79,7 +81,7 @@ export function autoFireProposalGenImages(sessionId: string): void {
         })
         return
       }
-      autoFired.set(sessionId, fired + 1)
+      fired++
       void fireGenImageDirective(sessionId, sec.id, d)
     }
   }

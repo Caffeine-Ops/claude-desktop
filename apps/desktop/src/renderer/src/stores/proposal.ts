@@ -380,6 +380,11 @@ export const useProposalStore = create<ProposalState>((set) => ({
   setWorkspaceOpen: (open) => set({ workspaceOpen: open }),
   setViewMode: (mode) => set({ viewMode: mode }),
   // 再入清陈旧跳阶提示：stageSkip 描述「刚发生的一次跳阶」，再入一个旧会话时无意义。
+  // genImageJobs 刻意【不】清（与 imageReviews 不对称）：imageReviews 是「未决提议」，跨离开/
+  // 再入不该留存；genImageJobs 是【幂等记录】，生命周期必须跟随 sections——sections 在
+  // reopen/leaveMode 存活，job 表就必须存活，否则未应用的旧指令块会在同会话下一次 end/
+  // inflight-sync 被当新指令自动重发（重复扣费+重复审阅卡）。start/reset/restoreFromTranscript/
+  // restoreFromDisk 四处照旧清空（那些路径 sections 也被清/重建，section id 全新，旧键本就成孤儿）。
   reopen: (sessionId) =>
     set({
       active: true,
@@ -388,17 +393,16 @@ export const useProposalStore = create<ProposalState>((set) => ({
       stageSkip: null,
       pendingRevision: null,
       blockReviews: {},
-      imageReviews: [],
-      genImageJobs: {}
+      imageReviews: []
     }),
+  // genImageJobs 不清的理由同 reopen（幂等记录随 sections 存活，防再入后旧指令自动重发）。
   leaveMode: () =>
     set({
       active: false,
       workspaceOpen: false,
       pendingRevision: null,
       blockReviews: {},
-      imageReviews: [],
-      genImageJobs: {}
+      imageReviews: []
     }),
   restoreFromTranscript: ({ sessionId, sections, consumedDraftIds, phase }) =>
     set({
