@@ -6,7 +6,10 @@ import { SpinnerIcon, AlertTriangleIcon, ImageIcon } from './proposalIcons'
 //   pending → 转圈「正在生成」；failed → 错误 + 重试（+缺配置时「去设置」）；
 //   done+hasReview → 一行提示看下方审阅卡（审阅卡与本卡同 blockIndex，紧挨着渲染）；
 //   done+!hasReview → 「重新生成」态（见下方 hasReview 注释）；
-//   无 job → 「点此生成」手动态（restore 重建路径不自动发起的落点，或超防御上限的溢出指令）。
+//   无 job 或 job.status==='manual' → 「点此生成」手动态：无 job 是超防御上限的溢出指令块/
+//   选区改写落地等尚未发起过的新块；manual 是 restore 重建预登记的旧指令块哨兵（见
+//   stores/proposal.ts seedManualGenImageJobs，终审 I-1）——两者渲染态相同、成因不同，
+//   故文案给中性表述，不单点某一种成因。
 // 纯展示 + 回调，不碰 store/IPC（与 ProposalImageReview 同纪律）。
 export interface GenImageDirectiveCardProps {
   caption: string
@@ -90,9 +93,9 @@ export function GenImageDirectiveCard({
             </button>
           </div>
         ))}
-      {!job && (
+      {(!job || job.status === 'manual') && (
         <div className="mt-1.5 flex items-center gap-2 text-neutral-500">
-          <span>尚未生成（重开会话不会自动扣费出图）。</span>
+          <span>尚未生成，可点击按钮生成这张图。</span>
           <button
             type="button"
             className="rounded border border-neutral-300 bg-white px-2 py-0.5 text-neutral-700 hover:border-accent hover:text-accent disabled:opacity-40"

@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import type { ProposalDraftBlock, ProposalKind, SectionVerification } from '@shared/proposal'
 import { appendDraftBlocks, sortSectionsByKind, collapseSingletonSections } from '@shared/proposal'
 import type { ProposalDraftRecord } from '@shared/ipc-channels'
+import { parseGenImageDirectives, genImageDirectiveKey } from '@shared/proposalGenImage'
 import { useChatStore } from './chat'
 
 export interface ProposalProduct {
@@ -76,8 +77,25 @@ export interface ImageReview {
 // 的三态渲染（pending 转圈 / failed 错误+重试 / done 提示看审阅卡）；③ restore 重建路径不写入
 // 任何键 → 卡片渲染成「点此生成」手动态。瞬时 UI 信号，不持久化（与 imageReviews 同重置点清空）。
 export interface GenImageJob {
-  status: 'pending' | 'failed' | 'done'
+  // manual = restore 重建时预登记的「旧指令块」哨兵（见 seedManualGenImageJobs）：autoFire 视为
+  // 已见永不自动发起，卡片渲染成手动生成态；用户点按钮时被 fireGenImageDirective 覆写回 pending。
+  status: 'pending' | 'failed' | 'done' | 'manual'
   error?: string
+}
+
+// restore 重建路径的预登记：把重建出的 sections 里【当下就存在】的指令块全部登记成 manual 态
+// 哨兵，堵住「重开会话后下一轮 end 把陈旧指令块当新块自动补发生图」的扣费泄漏（终审 I-1）。
+// 只有【重建之后新产出】的指令块才没有键、才会被 autoFire 自动发起——与「自动发起仅限生成
+// 会话进行中的落节时机」的 spec 语义精确对齐。
+function seedManualGenImageJobs(sections: ProposalSection[]): Record<string, GenImageJob> {
+  const jobs: Record<string, GenImageJob> = {}
+  for (const sec of sections) {
+    if (sec.kind !== 'content') continue
+    for (const d of parseGenImageDirectives(sec.markdown)) {
+      jobs[genImageDirectiveKey(sec.id, d.raw, d.occurrence)] = { status: 'manual' }
+    }
+  }
+  return jobs
 }
 
 interface ProposalState {
@@ -407,22 +425,23 @@ export const useProposalStore = create<ProposalState>((set) => ({
       blockReviews: {},
       imageReviews: []
     }),
-  restoreFromTranscript: ({ sessionId, sections, consumedDraftIds, phase }) =>
+  restoreFromTranscript: ({ sessionId, sections, consumedDraftIds, phase }) => {
+    // 重建时无从知晓 AI 原文，以重建出的 markdown 作埋点基准（编辑量从重开后算起）。
+    // collapseSingletonSections：transcript 含历史多版封面/目录（用户调整过）时只留最后一版，
+    // 否则重建出两份封面（实时路径已修、重建路径会复发的根因）。sortSectionsByKind：折叠后再
+    // 按阶段序归并回区段，保「同 kind 连续」不变量。
+    const finalSections = sortSectionsByKind(
+      collapseSingletonSections(
+        sections.map((s) => ({ ...s, baselineMarkdown: s.baselineMarkdown ?? s.markdown }))
+      )
+    )
     set({
       active: true,
       sessionId,
       products: [],
       seeded: true,
       consumedDraftIds,
-      // 重建时无从知晓 AI 原文，以重建出的 markdown 作埋点基准（编辑量从重开后算起）。
-      // collapseSingletonSections：transcript 含历史多版封面/目录（用户调整过）时只留最后一版，
-      // 否则重建出两份封面（实时路径已修、重建路径会复发的根因）。sortSectionsByKind：折叠后再
-      // 按阶段序归并回区段，保「同 kind 连续」不变量。
-      sections: sortSectionsByKind(
-        collapseSingletonSections(
-          sections.map((s) => ({ ...s, baselineMarkdown: s.baselineMarkdown ?? s.markdown }))
-        )
-      ),
+      sections: finalSections,
       phase,
       workspaceOpen: true,
       viewMode: 'preview',
@@ -430,22 +449,27 @@ export const useProposalStore = create<ProposalState>((set) => ({
       pendingRevision: null,
       blockReviews: {},
       imageReviews: [],
-      genImageJobs: {},
+      // 对【最终放进 state 的那份 sections】（折叠+归并之后）预登记 manual 哨兵（终审 I-1）——
+      // 若对折叠前的数组登记，被 collapseSingletonSections 丢弃的旧版封面/目录键会成孤儿，
+      // 而幸存下来的那份反而没有键、下一轮 end 仍会被 autoFire 误当新块补发生图。
+      genImageJobs: seedManualGenImageJobs(finalSections),
       draftSaveFailed: false
-    }),
-  restoreFromDisk: (record) =>
+    })
+  },
+  restoreFromDisk: (record) => {
+    // 盘上不存 baselineMarkdown（不持久化）；以盘载 markdown 作埋点基准，编辑量从本次重开算起。
+    // collapseSingletonSections：旧版本遗留的脏草稿（盘上已存两份封面/目录）恢复时折叠成最后一版；
+    // sortSectionsByKind：折叠后再按阶段序归并回区段，保「同 kind 连续」不变量。
+    const finalSections = sortSectionsByKind(
+      collapseSingletonSections(record.sections.map((s) => ({ ...s, baselineMarkdown: s.markdown })))
+    )
     set({
       active: true,
       sessionId: record.sessionId,
       products: record.products,
       seeded: true,
       consumedDraftIds: new Set(),
-      // 盘上不存 baselineMarkdown（不持久化）；以盘载 markdown 作埋点基准，编辑量从本次重开算起。
-      // collapseSingletonSections：旧版本遗留的脏草稿（盘上已存两份封面/目录）恢复时折叠成最后一版；
-      // sortSectionsByKind：折叠后再按阶段序归并回区段，保「同 kind 连续」不变量。
-      sections: sortSectionsByKind(
-        collapseSingletonSections(record.sections.map((s) => ({ ...s, baselineMarkdown: s.markdown })))
-      ),
+      sections: finalSections,
       phase: record.phase,
       workspaceOpen: true,
       viewMode: 'preview',
@@ -453,9 +477,11 @@ export const useProposalStore = create<ProposalState>((set) => ({
       pendingRevision: null,
       blockReviews: {},
       imageReviews: [],
-      genImageJobs: {},
+      // 同 restoreFromTranscript：必须对折叠+归并后的最终 sections 预登记，避免孤儿键/漏登记。
+      genImageJobs: seedManualGenImageJobs(finalSections),
       draftSaveFailed: false
-    }),
+    })
+  },
   reset: () =>
     set({
       active: false,

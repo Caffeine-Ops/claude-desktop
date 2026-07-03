@@ -72,7 +72,9 @@ export function autoFireProposalGenImages(sessionId: string): void {
   // 更正确），不再用模块级计数：配额与 genImageJobs 同生命周期，start/reset 清表即天然重置
   // 预算，不再有跨草稿残留（评审缺陷：模块级 Map 以 sessionId 为键永不清理，「新建方案」复用
   // 同一 sessionId 时旧草稿触顶会把新草稿的自动发起永久锁死）。
-  let fired = Object.keys(s.genImageJobs).length
+  // manual 键是 restore 重建预登记的哨兵（终审 I-1），不是本会话内真实发起过的生图记录，
+  // 不该占用自动发起配额——否则一份带很多陈旧指令块的旧草稿会把新草稿的自动发起预算提前吃满。
+  let fired = Object.values(s.genImageJobs).filter((j) => j.status !== 'manual').length
   for (const sec of s.sections) {
     if (sec.kind !== 'content') continue
     for (const d of parseGenImageDirectives(sec.markdown)) {
