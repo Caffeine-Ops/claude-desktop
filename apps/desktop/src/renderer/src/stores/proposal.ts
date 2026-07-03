@@ -385,6 +385,9 @@ export const useProposalStore = create<ProposalState>((set) => ({
   // reopen/leaveMode 存活，job 表就必须存活，否则未应用的旧指令块会在同会话下一次 end/
   // inflight-sync 被当新指令自动重发（重复扣费+重复审阅卡）。start/reset/restoreFromTranscript/
   // restoreFromDisk 四处照旧清空（那些路径 sections 也被清/重建，section id 全新，旧键本就成孤儿）。
+  // 这个不对称也有代价：job 已 done 但 imageReviews 被清空时，对应审阅卡（连同它绑定的
+  // resultPath）会一并丢失、搁浅成「说已完成却无卡可审」。由指令块卡片的「重新生成」兜底
+  // （见 GenImageDirectiveCard 的 hasReview 分支），不在这里另开状态机。
   reopen: (sessionId) =>
     set({
       active: true,

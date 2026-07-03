@@ -16,6 +16,15 @@ import {
   applyImageReplacementWithDrift
 } from '@shared/proposalImageOps'
 import {
+  isGenImageDirectiveBlock,
+  parseGenImageBlock,
+  genImageDirectiveKey,
+  replaceGenImageDirectiveBlock,
+  removeGenImageDirectiveBlock
+} from '@shared/proposalGenImage'
+import { fireGenImageDirective } from '../../lib/proposalGenImageFire'
+import { GenImageDirectiveCard } from './GenImageDirectiveCard'
+import {
   RotateCwIcon,
   PlusIcon,
   MinusIcon,
@@ -165,6 +174,8 @@ export function ProposalPaper(): React.JSX.Element {
   // imageReviews 需要订阅（Task 11）：改图/生图产出待审阅项要驱动重渲染出对照卡，
   // 不能像上面几个稳定 action 那样只取一次。
   const imageReviews = useProposalStore((s) => s.imageReviews)
+  // genimage 任务态：驱动指令块卡片的三态渲染（配图密度③）。
+  const genImageJobs = useProposalStore((s) => s.genImageJobs)
   const proposalSid = useProposalStore((s) => s.sessionId)
   const generating = useChatStore((s) =>
     proposalSid ? (s.perSession[proposalSid]?.streaming ?? false) : false
@@ -360,6 +371,32 @@ export function ProposalPaper(): React.JSX.Element {
       pstore.removeImageReview(review.id)
       return
     }
+    if (review.mode === 'directive') {
+      // 应用 = 用生成图原地替换指令块。按内容键（directiveRaw+occurrence）定位而非 blockIndex
+      // ——审阅悬而未决期间块序可能漂移（见 shared/proposalGenImage.ts 顶注）。找不到（用户手改
+      // 了指令文本/已删）→ 与改图漂移同一立场：console.warn 留痕、摘卡不落地。
+      if (!review.directiveRaw) {
+        pstore.removeImageReview(review.id)
+        return
+      }
+      const blocks = splitBlocks(sec.markdown)
+      const { blocks: next, changed } = replaceGenImageDirectiveBlock(
+        blocks,
+        review.directiveRaw,
+        review.directiveOccurrence ?? 0,
+        `![${review.caption ?? '配图'}](${review.resultPath})`
+      )
+      if (changed) {
+        pstore.updateSection(sec.id, joinBlocks(next))
+      } else {
+        console.warn('[proposal] 应用配图失败：指令块已不在本节（被手改或删除），已放弃', {
+          reviewId: review.id,
+          sectionId: review.sectionId
+        })
+      }
+      pstore.removeImageReview(review.id)
+      return
+    }
     if (review.mode === 'generate') {
       // 插到「选中段落之后」：blockIndex 是发起时选区末块的下标，图插在其后一位（clamp 到合法
       // 区间——审阅悬而未决期间该节可能被并发改写、块数变少，越界则退化为追加到节末）。
@@ -406,10 +443,23 @@ export function ProposalPaper(): React.JSX.Element {
     pstore.removeImageReview(review.id)
   }
 
-  // 放弃：只摘审阅项，产出图文件留在磁盘（随草稿区一并清理，不即时删盘——同一图片可能已被
-  // 别处复用，误删风险由「不做即时删除」规避，Step 3 既定策略）。
-  function discardImageReview(id: string): void {
-    useProposalStore.getState().removeImageReview(id)
+  // 放弃：摘审阅项；directive 模式额外把指令块从草稿里删掉（spec：丢弃 = 删除整个指令块——
+  // 指令已被用户明确否决，留着会反复渲染「已生成」卡造成状态错乱）。产出图文件留在磁盘（随
+  // 草稿区一并清理，不即时删盘——既定策略，见原注释）。
+  function discardImageReview(review: ImageReview): void {
+    const pstore = useProposalStore.getState()
+    if (review.mode === 'directive' && review.directiveRaw) {
+      const sec = pstore.sections.find((s) => s.id === review.sectionId)
+      if (sec) {
+        const { blocks: next, changed } = removeGenImageDirectiveBlock(
+          splitBlocks(sec.markdown),
+          review.directiveRaw,
+          review.directiveOccurrence ?? 0
+        )
+        if (changed) pstore.updateSection(sec.id, joinBlocks(next))
+      }
+    }
+    pstore.removeImageReview(review.id)
   }
 
   // 「去设置」直达：打开原生设置页并定位到「配置」分类（出图 API 表单所在）。原生设置页
@@ -450,7 +500,10 @@ export function ProposalPaper(): React.JSX.Element {
         sourcePath: review.sourcePath,
         resultPath: path,
         mode: review.mode,
-        occurrence: review.occurrence
+        occurrence: review.occurrence,
+        directiveRaw: review.directiveRaw,
+        directiveOccurrence: review.directiveOccurrence,
+        caption: review.caption
       })
       setScrollToReviewId(id)
     } catch (err) {
@@ -707,7 +760,10 @@ export function ProposalPaper(): React.JSX.Element {
     // 原图、生图的预览卡紧跟节末块，用户不用滚到节尾找卡（GUI 走查反馈：长节里卡「跑到了别处」）。
     // blockIndex 越界（登记后该节被并发改写、块数变少）时退回节尾兜底渲染，卡不丢。
     const secReviews = imageReviews.filter((r) => r.sectionId === sec.id)
-    const secBlockCount = getBlocks(sec.markdown).length
+    // secBlocks 只算一次、后面块渲染循环与越界判断共用同一个数组（getBlocks 有内容缓存，但
+    // 循环内每块重复调用仍是不必要的函数调用开销，性能纪律）。
+    const secBlocks = getBlocks(sec.markdown)
+    const secBlockCount = secBlocks.length
     const renderReviewCard = (review: ImageReview): React.JSX.Element => (
       // data-review-id：新卡登记后 scrollToReviewId effect 靠它定位 DOM 滚进可视区（见上方注释）。
       <div key={review.id} data-review-id={review.id}>
@@ -716,7 +772,7 @@ export function ProposalPaper(): React.JSX.Element {
           busy={Boolean(reviewBusy[review.id]) || generating}
           error={reviewError[review.id] ?? null}
           onApply={() => applyImageReview(review)}
-          onDiscard={() => discardImageReview(review.id)}
+          onDiscard={() => discardImageReview(review)}
           onRetry={(prompt) => void retryImageReview(review, prompt)}
           onOpenSettings={openImageApiSettings}
         />
@@ -858,8 +914,9 @@ export function ProposalPaper(): React.JSX.Element {
         />
       ) : (
         // 逐块渲染：DOM 块索引 = splitBlocks 下标（Task 5 选区映射靠 data-block-index）。
-        // 双击某块 → 只有那一块进就地编辑；其余块照常渲染（含来源高亮）。getBlocks 按内容缓存分块。
-        getBlocks(sec.markdown).map((blk, bi) => (
+        // 双击某块 → 只有那一块进就地编辑；其余块照常渲染（含来源高亮）。secBlocks 已在上方按
+        // 内容缓存分块一次，这里直接复用，不在循环里重复调用 getBlocks（性能纪律）。
+        secBlocks.map((blk, bi) => (
           <Fragment key={bi}>
           {editingBlock && editingBlock.sectionId === sec.id && editingBlock.blockIndex === bi ? (
             <textarea
@@ -892,6 +949,46 @@ export function ProposalPaper(): React.JSX.Element {
                 }
               }}
             />
+          ) : isGenImageDirectiveBlock(blk) ? (
+            // genimage 指令块（配图密度③）：不当普通段落渲染，换成卡片。不给 data-block-index
+            // ——它不参与文字选区与点图交互；双击编辑对指令块无意义，走整节源码逃生舱即可。
+            (() => {
+              // occurrence：同内容指令块按块序数第几个（与 parseGenImageDirectives / fireGenImageDirective
+              // 的口径一致）。secBlocks 已在上面按内容缓存分块一次，这里复用，不重新 splitBlocks。
+              let occ = 0
+              for (let k = 0; k < bi; k++) {
+                if (secBlocks[k].trim() === blk.trim()) occ++
+              }
+              const content = parseGenImageBlock(blk)
+              const key = genImageDirectiveKey(sec.id, blk.trim(), occ)
+              // hasReview：job done 但对应审阅卡是否还在（reopen/leaveMode 清 imageReviews、保
+              // genImageJobs 的不对称搁浅态，见 GenImageDirectiveCard 顶注）。按内容键 + occurrence
+              // 匹配，与 applyImageReview/discardImageReview 的落位判据一致。
+              const hasReview = secReviews.some(
+                (r) =>
+                  r.mode === 'directive' &&
+                  r.directiveRaw === blk.trim() &&
+                  (r.directiveOccurrence ?? 0) === occ
+              )
+              return (
+                <GenImageDirectiveCard
+                  caption={content?.caption ?? '配图'}
+                  job={genImageJobs[key]}
+                  hasReview={hasReview}
+                  generating={generating}
+                  onGenerate={() => {
+                    if (!proposalSid || !content) return
+                    void fireGenImageDirective(proposalSid, sec.id, {
+                      ...content,
+                      blockIndex: bi,
+                      occurrence: occ,
+                      raw: blk.trim()
+                    })
+                  }}
+                  onOpenSettings={openImageApiSettings}
+                />
+              )
+            })()
           ) : (
             <div
               data-section-id={sec.id}

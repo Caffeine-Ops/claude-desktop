@@ -263,6 +263,15 @@ const components: Components = {
     const language = match?.[1]
     const highlighted = codeProps?.children ?? children
     const rawCode = reactNodeToText(highlighted)
+    // genimage 指令块（配图密度③）：编辑态由 ProposalPaper 拦成卡片，这里只兜聊天流里的显示
+    // ——不渲染成代码卡（指令原文对用户是噪声），降级为一行提示。
+    if (language === 'genimage') {
+      return (
+        <div className="my-2 rounded-md border border-dashed border-border/60 bg-muted/20 px-3 py-2 text-[12px] text-muted-foreground">
+          已插入配图生成指令，将在右侧方案文档中自动生成并供你审阅。
+        </div>
+      )
+    }
     // mermaid 围栏块 → 渲成图（方案一二期），不进代码卡片。rawCode 是 reactNodeToText 拍平的
     // 原始 mermaid 源码（rehype-highlight 不识别 mermaid 语言、ignoreMissing 下原样透传）。
     if (language === 'mermaid') {

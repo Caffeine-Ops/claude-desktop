@@ -54,9 +54,13 @@ export async function fireGenImageDirective(
     })
     pstore.setGenImageJob(key, { status: 'done' })
   } catch (err) {
-    useProposalStore
-      .getState()
-      .setGenImageJob(key, { status: 'failed', error: friendlyImageError(err, 'generate') })
+    const pstore = useProposalStore.getState()
+    // 节存在性守卫，与成功路径对称（Task 6 评审 Minor）：pending 期间用户「新建」清空草稿会
+    // 换一批全新 section id，此时该节已不在当前 sections 里；若仍写表，失败回调会把旧节 id
+    // 的孤儿键塞进新草稿的空 genImageJobs、白占自动发起配额（MAX_AUTO_FIRE_PER_SESSION 按
+    // 表长度算，见 autoFireProposalGenImages）。节已删则直接 return，不落任何键。
+    if (!pstore.sections.some((s) => s.id === sectionId)) return
+    pstore.setGenImageJob(key, { status: 'failed', error: friendlyImageError(err, 'generate') })
   }
 }
 
