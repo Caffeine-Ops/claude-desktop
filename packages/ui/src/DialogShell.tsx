@@ -1,3 +1,8 @@
+// 本包的组件带 hooks/事件处理，进 Next App Router（apps/studio）会被 RSC 编译
+// 拦下，必须显式声明 client 边界。Vite 宿主（apps/desktop renderer）会原样忽略
+// 该指令，无副作用。本包新增组件一律照此办理。
+'use client'
+
 import { useEffect, type ReactNode } from 'react'
 
 /**

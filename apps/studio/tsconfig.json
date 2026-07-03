@@ -1,0 +1,55 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    // 刻意不开 noUncheckedIndexedAccess：src/chat/ 的 60 个文件迁自
+    // apps/desktop renderer（那边 tsconfig.web.json 没开它），开了会凭空
+    // 多出 37 处 TS2532/2345——那不是新 bug，是检查器口径差异。Phase 2 的
+    // 原则是零改动平移；聊天迁移稳定、desktop renderer 下线后再评估重开。
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowJs": true,
+    "incremental": true,
+    "noEmit": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": [
+        "./*"
+      ],
+      // desktop shared 类型的单一来源别名。renderer 对 shared 的引用 100% 是
+      // import type（已验证），编译期全部擦除——Turbopack 不会打包 desktop 的
+      // 任何代码，这条 paths 只服务 tsc/IDE 的类型解析。等 Phase 2 后期类型
+      // 下沉 packages/chat-protocol 后删除。
+      "@desktop-shared/*": [
+        "../desktop/src/shared/*"
+      ]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "next.config.ts",
+    "app/**/*",
+    "src/**/*",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".next"
+  ]
+}
