@@ -65,6 +65,8 @@ export function KnowledgeBaseSection(): React.JSX.Element {
     try {
       await window.chatApi.setKbRemote({ baseUrl, kbId: 'default' }) // kbId 口子：UI 本期不暴露
       refresh()
+    } catch (err) {
+      console.error('[settings] setKbRemote failed', err)
     } finally {
       setApplyingRemote(false)
     }
@@ -73,10 +75,16 @@ export function KnowledgeBaseSection(): React.JSX.Element {
   const switchToLocal = async (): Promise<void> => {
     if (switchingLocal) return
     setUiTab('local') // 乐观切面板，refresh() 落地后会再确认一次
+    // 已生效来源就是本地时短路（含「远程面板只是预览、从未提交」的情形）：
+    // 点已选中项只收回面板，不重发 setKbRemote(null)+写盘+refresh——对齐远程
+    // radio 纯 setUiTab 的零副作用行为。
+    if (mode === 'local') return
     setSwitchingLocal(true)
     try {
       await window.chatApi.setKbRemote(null)
       refresh()
+    } catch (err) {
+      console.error('[settings] setKbRemote(null) failed', err)
     } finally {
       setSwitchingLocal(false)
     }
@@ -91,6 +99,8 @@ export function KnowledgeBaseSection(): React.JSX.Element {
         await window.chatApi.setKbPath(path)
         refresh()
       }
+    } catch (err) {
+      console.error('[settings] pickKbRoot/setKbPath failed', err)
     } finally {
       setPicking(false)
     }
@@ -103,6 +113,8 @@ export function KnowledgeBaseSection(): React.JSX.Element {
       // 结果值（started/alreadyRunning/noRemote）只是"请求是否受理"，真正的
       // 进度/成败走 onKbSyncStatus 推送渲染，这里不用管返回值。
       await window.chatApi.kbSyncNow()
+    } catch (err) {
+      console.error('[settings] kbSyncNow failed', err)
     } finally {
       setSyncNowBusy(false)
     }
