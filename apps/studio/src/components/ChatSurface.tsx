@@ -34,15 +34,22 @@ const HOST_GATE_GRACE_MS = 2000
 const HOST_GATE_POLL_MS = 100
 
 export function ChatSurface() {
-  // null = 检测中（首帧 + 宽限窗口，避免文案闪烁/误判）
-  const [hosted, setHosted] = useState<boolean | null>(
-    // 挂载即同步判一次：壳内正常路径 preload 早已注入，直接放行，
-    // 不为宽限窗口付出任何首帧延迟。
-    () => (typeof window !== 'undefined' && typeof window.chatApi !== 'undefined' ? true : null)
-  )
+  // null = 检测中（首帧 + 宽限窗口，避免文案闪烁/误判）。
+  // 初始值**恒为 null**，不在 useState 初始化器里分支 typeof window：本组件
+  // 会被 prerender（服务端渲染出空），客户端 hydration 首帧若同步判成 true
+  // 会直接渲染 ChatApp 的 Suspense 壳，与服务端 HTML 对不上 → hydration
+  // mismatch 整树重建（2026-07-04 实锤）。「挂载同步判一次」下移到 effect：
+  // 仍是挂载后立即放行（壳内正常路径不等轮询），只多付一帧空白。
+  const [hosted, setHosted] = useState<boolean | null>(null)
 
   useEffect(() => {
-    if (hosted === true) return undefined
+    // 壳内正常路径 preload 早已注入：首跑同步判一次直接放行。
+    if (typeof window.chatApi !== 'undefined') {
+      setHosted(true)
+      return undefined
+    }
+    // 没判到再进 2s 宽限窗轮询——不能查一次锁死，瞬时竞态会被永久化成
+    // 错误页（见 errors/2026-07-03-HostGate单次判定锁死…）。
     const deadline = Date.now() + HOST_GATE_GRACE_MS
     const timer = window.setInterval(() => {
       if (typeof window.chatApi !== 'undefined') {
@@ -54,7 +61,7 @@ export function ChatSurface() {
       }
     }, HOST_GATE_POLL_MS)
     return () => window.clearInterval(timer)
-  }, [hosted])
+  }, [])
 
   if (hosted === null) return null
   if (!hosted) {
