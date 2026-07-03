@@ -28,7 +28,20 @@ function getMermaid(): Promise<MermaidApi> {
         // strict：mermaid 会对生成的 SVG 做消毒，杜绝代码块里夹带的恶意标记（虽内容来自
         // KB 接地文本，仍按最严级别处理）。
         securityLevel: 'strict',
-        theme: 'neutral',
+        // base + themeVariables（配图密度增强 ②）：素色 neutral 与客户方案里的专业彩图观感差距
+        // 太大；base 是 mermaid 唯一官方支持 themeVariables 全量定制的主题。品牌蓝系浅底深框、
+        // 白色画布（rasterizeSvg 导出时也刷白底，两端一致）。只调颜色/字号，不碰布局与标签渲染
+        // 方式——htmlLabels:false 等导出不变量在下方逐字保留。
+        theme: 'base',
+        themeVariables: {
+          primaryColor: '#eaf1fd', // 节点底：浅品牌蓝
+          primaryTextColor: '#1e3a5f', // 节点文字：深蓝灰
+          primaryBorderColor: '#3b74d9', // 节点框：品牌蓝
+          lineColor: '#5b8def', // 连线
+          secondaryColor: '#f4f8ff',
+          tertiaryColor: '#fafcff',
+          fontSize: '14px'
+        },
         // 见文件头：纯 SVG <text>，栅格化时才能渲出文字。
         htmlLabels: false,
         flowchart: { htmlLabels: false, useMaxWidth: true },
