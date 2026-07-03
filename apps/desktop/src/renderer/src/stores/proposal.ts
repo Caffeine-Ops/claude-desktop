@@ -74,8 +74,9 @@ export interface ImageReview {
 
 // genimage 指令块的生图任务态（配图密度③）。键 = genImageDirectiveKey(sectionId, raw, occurrence)。
 // 三重职责：① 幂等 seen 集合——键存在（无论何态）即不再自动发起，防重复烧钱；② 驱动指令块卡片
-// 的三态渲染（pending 转圈 / failed 错误+重试 / done 提示看审阅卡）；③ restore 重建路径不写入
-// 任何键 → 卡片渲染成「点此生成」手动态。瞬时 UI 信号，不持久化（与 imageReviews 同重置点清空）。
+// 的多态渲染（pending 转圈 / failed 错误+重试 / done 提示看审阅卡 / manual 手动生成）；③ restore
+// 重建路径把既存指令块预登记成 manual 哨兵 → 卡片渲染成手动态、autoFire 永不自动补发（终审 I-1）。
+// 瞬时 UI 信号，不持久化（与 imageReviews 同重置点清空）。
 export interface GenImageJob {
   // manual = restore 重建时预登记的「旧指令块」哨兵（见 seedManualGenImageJobs）：autoFire 视为
   // 已见永不自动发起，卡片渲染成手动生成态；用户点按钮时被 fireGenImageDirective 覆写回 pending。
