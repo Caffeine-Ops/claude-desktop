@@ -224,14 +224,22 @@ export function ThreadView(): React.JSX.Element {
             the title floating directly above it (KIMI-style landing).
             `relative` here is the positioning context for that title. */}
         {isEmpty ? (
-          // `-translate-y-[19px]` pulls the group up by half the height of
-          // the permission-mode strip that sits above the input card
+          // `-top-[19px]`（配合已有的 relative）pulls the group up by half the
+          // height of the permission-mode strip that sits above the input card
           // (~38px: 30px row + 8px margin). Without it, that strip's flow
           // height pushes the INPUT CARD's center ~19px below the Root's
           // justify-center midline; compensating lands the card's
           // geometric center exactly on the vertical 50% line. The title
           // (absolute) rides along since it's positioned off this wrapper.
-          <div className="relative mx-auto w-full max-w-3xl -translate-y-[19px]">
+          //
+          // 【为什么是 relative+top 而不是 -translate-y】二者视觉效果相同，但
+          // CSS 规范里 transform/translate 会把元素变成 fixed 后代的包含块——
+          // composer 里的 `/` 斜杠弹层是 position:fixed、坐标按视口算，之前用
+          // -translate-y-[19px] 时弹层被这张 146px 高的卡片劫持了参照系，整个
+          // 弹出到视口上沿之外（新对话敲 /「没反应」的根因；老对话的底部
+          // composer 没有这层包装所以从未暴露）。relative+top 是纯视觉偏移，
+          // 不产生包含块，别改回 translate。
+          <div className="relative -top-[19px] mx-auto w-full max-w-3xl">
             <EmptyHero />
             <Composer tall />
           </div>
