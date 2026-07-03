@@ -278,18 +278,21 @@ function SyncStatusRow({
     )
   }
 
-  if (sync.state === 'error') {
-    return (
+  // idle / success / error 都落到下面统一的 lastSync 渲染——error 态额外在前面
+  // 插一行失败原因，但不 return，让用户紧接着看到「上次同步时间」：手里镜像的
+  // 内容还是那次同步落下的，用户需要知道现在数据有多旧才能判断能不能先将就用。
+  const errorBanner =
+    sync.state === 'error' ? (
       <p className="text-[11.5px] text-destructive">
         {t('kbSyncFailed')}: {sync.message}
       </p>
-    )
-  }
+    ) : null
 
   // idle / success（success 已经触发过 refresh，lastSync 反映的是最新一次）——
   // 静息态统一走 lastSync，避免和 sync push 里的字段名对不上（success 变体没有
   // failedCount 之类，直接复用 getKbPath 的 lastSync 更省心）。
   if (!lastSync) {
+    if (errorBanner) return errorBanner
     return (
       <p className="text-[11.5px] text-muted-foreground/70">{t('kbNeverSynced')}</p>
     )
@@ -297,6 +300,7 @@ function SyncStatusRow({
 
   return (
     <div className="space-y-0.5 text-[11.5px] text-muted-foreground/80">
+      {errorBanner}
       <p>
         {t('kbLastSync')}: {new Date(lastSync.atMs).toLocaleString()}
       </p>

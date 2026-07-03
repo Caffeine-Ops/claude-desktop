@@ -42,13 +42,21 @@ export interface KbSyncDeps {
   onStatus?: (s: KbSyncStatus) => void // 进度回调（调度器接去广播）
   concurrency?: number // 默认 4
   retries?: number // 每文件重试，默认 2
+  // 磁盘预检用的 statfs 实现，默认 node:fs statfsSync；try/catch 跳过语义不变
+  // （老 Node/不支持的平台照样宁漏检不误伤）。这是纯为可测性开的最小 DI 口——
+  // bun test 跑在真实文件系统上，没有别的办法让「磁盘不足」这个分支可控地触发。
+  statfsImpl?: (path: string) => { bavail: number; bsize: number }
 }
 
 const FETCH_TIMEOUT_MS = 10_000
 const sha1Hex = (buf: Buffer): string => createHash('sha1').update(buf).digest('hex')
 
 /**
- * fetch 加 10s 硬超时：远端挂起时不能让整轮同步无限期卡住。AbortController 到点 abort，
+ * fetch 加 10s 硬超时——但只兜「发出请求到收到响应头」这一段：AbortController 的信号
+ * 传给 fetch 后，一旦 fetchImpl 返回 Response（headers 到手）本函数就 resolve，10s 定时器
+ * 随即被 finally 清掉；调用方后续 `await res.arrayBuffer()`/`res.text()` 读 body 不再受这个
+ * timer 约束。生产 fetchImpl 是 undici，其自带的 bodyTimeout（默认更长）才是 body 读取阶段
+ * 真正的兜底——两段各管一段，别把这里的 10s 误当成整个请求的总超时。
  * clearTimeout 放在 finally——无论 resolve 还是 reject 都要清掉定时器，别泄漏。
  */
 async function fetchWithTimeout(fetchImpl: typeof fetch, url: string): Promise<Response> {
@@ -130,7 +138,8 @@ export async function runKbSync(deps: KbSyncDeps): Promise<KbSyncStatus> {
     fetchImpl = globalThis.fetch,
     onStatus,
     concurrency = 4,
-    retries = 2
+    retries = 2,
+    statfsImpl = statfsSync
   } = deps
 
   const emit = (s: KbSyncStatus): KbSyncStatus => {
@@ -190,14 +199,14 @@ export async function runKbSync(deps: KbSyncDeps): Promise<KbSyncStatus> {
       if (!isPathInsideRoot(target, outDir)) return fail(`删除目标越界：${p}`, 0)
     }
 
-    // ── rule 5：磁盘预检（statfsSync 抛错则跳过——老 Node 前宁漏检不误伤）──────
+    // ── rule 5：磁盘预检（statfsImpl 抛错则跳过——老 Node 前宁漏检不误伤）──────
     try {
-      const st = statfsSync(outDir)
+      const st = statfsImpl(outDir)
       const availBytes = Number(st.bavail) * Number(st.bsize)
       const needed = plan.toDownload.reduce((s, f) => s + f.size, 0) * 1.1
       if (availBytes < needed) return fail('磁盘空间不足', 0)
     } catch {
-      // statfsSync 不可用：跳过预检。
+      // statfsImpl 不可用：跳过预检。
     }
 
     const total = plan.toDownload.length

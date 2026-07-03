@@ -137,6 +137,27 @@ describe('runKbSync 防线', () => {
     expect(st.state).toBe('error')
     expect(readFileSync(join(outDir, '现有.md'), 'utf8')).toBe('在')
   })
+  it('manifest 非 200 → error，镜像不动（同「manifest 损坏」的写盘前置断言写法）', async () => {
+    const serverError = (async () => new Response('', { status: 500 })) as typeof fetch
+    writeFileSync(join(outDir, '现有.md'), '在')
+    const st = await runKbSync(deps(serverError))
+    expect(st.state).toBe('error')
+    expect(readFileSync(join(outDir, '现有.md'), 'utf8')).toBe('在')
+  })
+  it('磁盘不足预检 → error，零文件请求（statfsImpl 是为可测性开的最小 DI 口）', async () => {
+    const f = fixture({ 'a.md': 'x', 'index.json': 'i' })
+    let fileRequests = 0
+    const counting = (async (url: unknown) => {
+      if (!String(url).endsWith('manifest.json')) fileRequests++
+      return f.fetchImpl(url as never)
+    }) as typeof fetch
+    const st = await runKbSync({
+      ...deps(counting),
+      statfsImpl: () => ({ bavail: 0, bsize: 1 })
+    })
+    expect(st.state).toBe('error')
+    expect(fileRequests).toBe(0)
+  })
   it('开工清扫 .part 残留', async () => {
     mkdirSync(join(outDir, 'x'), { recursive: true })
     writeFileSync(join(outDir, 'x/半截.md.part'), '')
