@@ -1,7 +1,8 @@
-import { isValidElement, memo, useCallback, useState, type ReactNode } from 'react'
+import { isValidElement, memo, useCallback, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
+import { useMessage } from '@assistant-ui/react'
 
 import { useI18n, useT } from '../../i18n'
 
@@ -281,7 +282,8 @@ const components: Components = {
 
 /**
  * A ```markdown fence rendered AS markdown — an accent-washed "note
- * card" with a 小结 label, entry fade-rise (tc-row-in), and the fence
+ * card" with a 小结 label, entry fade-rise (tc-row-in, 只在流式实时
+ * 长出时播；历史恢复/切会话即时呈现), and the fence
  * body fed back through AssistantMarkdown so headings / bold /
  * task-lists all render for real. Copy still hands over the RAW
  * markdown source (that's what you'd paste elsewhere). Nested
@@ -290,9 +292,25 @@ const components: Components = {
  */
 function MarkdownNoteCard({ rawCode }: { rawCode: string }): React.JSX.Element {
   const lang = useI18n((s) => s.lang)
+  // 入场动画只给「流式中长出来」的卡：挂载瞬间所属消息还在 running = 实时；
+  // 历史恢复/切会话重挂载时消息已 settled，不重播（与 ToolCallCard 同一
+  // gate，2026-07-04 会话切换零动画方针）。optional：本组件也被 OutlinePanel
+  // / WrittenFilesPanel 等消息上下文之外的面板复用，无上下文时返回 null →
+  // 恒不播。useRef 捕获首渲染值，流式结束不摘类。
+  const live = useMessage({
+    optional: true,
+    selector: (s: unknown) =>
+      (s as { status?: { type?: string } }).status?.type === 'running'
+  })
+  const enteredLive = useRef(live === true).current
 
   return (
-    <div className="tc-row-in group/note my-3 overflow-hidden rounded-lg border border-accent/20 bg-accent/[0.04]">
+    <div
+      className={
+        (enteredLive ? 'tc-row-in ' : '') +
+        'group/note my-3 overflow-hidden rounded-lg border border-accent/20 bg-accent/[0.04]'
+      }
+    >
       <div className="flex items-center justify-between border-b border-accent/15 px-3 py-1.5">
         <span className="inline-flex items-center gap-1.5 text-[10.5px] font-medium tracking-wide text-accent">
           <svg

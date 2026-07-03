@@ -67,6 +67,11 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   const t = useT()
   const lang = useI18n((s) => s.lang)
   const running = status?.type === 'running' || status?.type === 'requires-action'
+  // 入场动画只给「实时落进流」的卡：挂载瞬间还在 running = 流式新卡；挂载
+  // 即已 settled = 历史恢复/切会话重挂载——那批卡齐播 0.38s 上浮，切换读
+  // 起来就是整屏抖一下（2026-07-04 用户反馈，会话切换零动画方针）。
+  // useRef 捕获首渲染值：卡片后续从 running 转 settled 不改变这个判定。
+  const enteredLive = useRef(running).current
   // Look up any pending tool-permission request whose `toolUseId` matches
   // this card. When present we render an inline `InlinePermissionPrompt`
   // below the Input pane instead of the old fullscreen modal — one
@@ -195,9 +200,9 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   const failed = !running && resultLooksError(result)
 
   return (
-    // tc-row-in: entry fade-rise as rows land in the stream (history restore
-    // fades everything in one quiet pass — uniform, not a cascade of pops).
-    <div className="tc-row-in w-full min-w-0">
+    // tc-row-in 只在实时落卡时挂（enteredLive）：历史恢复/切会话的卡即时
+    // 呈现，不重播入场（原先无条件挂类，切会话整屏卡片齐刷刷上浮）。
+    <div className={(enteredLive ? 'tc-row-in ' : '') + 'w-full min-w-0'}>
       {/* tc-details animates expand/collapse height via ::details-content
           (see main.css) — the native <details> stays, no controlled state. */}
       <details open={running} className="group/tool tc-details">

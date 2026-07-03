@@ -357,6 +357,10 @@ function AssistantDeliverables(): React.JSX.Element | null {
   const reduce = useReducedMotion()
   const running =
     (message as { status?: { type?: string } }).status?.type === 'running'
+  // 入场动画只给「实时长出」的成果块：挂载瞬间消息还在 running = 流式实时
+  //（stat 后卡片落地播上浮）；挂载即已 settled = 历史恢复/切会话——卡片
+  // 即时呈现（与 ToolCallCard 同一 gate，2026-07-04 会话切换零动画方针）。
+  const enteredLive = useRef(running).current
   const text = useMemo(() => {
     const content = (message as { content?: readonly unknown[] }).content
     if (!Array.isArray(content)) return ''
@@ -408,8 +412,13 @@ function AssistantDeliverables(): React.JSX.Element | null {
           方式 menu escapes any clip via a body portal, so no overflow-hidden
           is needed here. */}
       <motion.div
+        // initial={false}：非实时挂载（历史恢复/切会话）直接以终态呈现。
         initial={
-          reduce ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.99 }
+          !enteredLive
+            ? false
+            : reduce
+              ? { opacity: 0 }
+              : { opacity: 0, y: 8, scale: 0.99 }
         }
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={
