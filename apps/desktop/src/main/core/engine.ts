@@ -1090,29 +1090,46 @@ export class ChatEngine extends EventEmitter {
     // 「知识库有料却没引到」。slash 命令不注入（同 grounding：注入会顶走开头的 '/'，CLI 短
     // 路检测失效）。召回失败/空 → 不注入，回落到「只给文件清单让 AI 自查」。
     const wantsRetrieval = proposalMode && proposalRetrieve && !isSlashCommand
-    // scopes 在 grounding 或召回任一需要时读一次（proposalProductScopes 对空集已短路、不读盘）。
-    const scopes =
-      needsGrounding || wantsRetrieval
-        ? this.proposalProductScopes(runtime.proposalProducts)
-        : []
-    let retrievalBlock = ''
-    if (wantsRetrieval) {
-      const passages = retrievePassages(text, scopes)
-      retrievalBlock = renderRetrievedBlock(passages)
-      // 调试可观测：让 dev 终端能看到召回有没有命中、抓了哪些文件（#2 手测靠它，因为
-      // 召回注入在主进程消息里、UI 看不见）。命中为空也打，便于区分「没触发」和「触发但零命中」。
-      console.log('[engine] proposal retrieval', {
-        query: text.slice(0, 40),
-        scopes: scopes.length,
-        hits: passages.length,
-        titles: passages.map((p) => p.title)
-      })
+    // grounding/召回构建段包 try/catch，与上面 spawn 路径（ensureSessionReady 的 catch：
+    // emit start/error/end 后 clean return）对称。为什么必须兜：buildProposalAppend 自
+    // skill 化后运行期读模板（skills/proposal-writer），模板缺失/被改坏会 throw——本段
+    // 跑在 'start' 已 emit 之后，若异常裸逃出 send()，IPC reject 只会让 renderer 在合成
+    // err_ id 下补错误气泡，1050 行那条真实 messageId 的 start 永远等不到配对的 end/
+    // error，本轮 spinner 悬挂成半终结态（终审 finding #1）。catch 里对真实 messageId
+    // 补发 error+end 并清 active，下一轮可正常重试。
+    let groundedText: string
+    try {
+      // scopes 在 grounding 或召回任一需要时读一次（proposalProductScopes 对空集已短路、不读盘）。
+      const scopes =
+        needsGrounding || wantsRetrieval
+          ? this.proposalProductScopes(runtime.proposalProducts)
+          : []
+      let retrievalBlock = ''
+      if (wantsRetrieval) {
+        const passages = retrievePassages(text, scopes)
+        retrievalBlock = renderRetrievedBlock(passages)
+        // 调试可观测：让 dev 终端能看到召回有没有命中、抓了哪些文件（#2 手测靠它，因为
+        // 召回注入在主进程消息里、UI 看不见）。命中为空也打，便于区分「没触发」和「触发但零命中」。
+        console.log('[engine] proposal retrieval', {
+          query: text.slice(0, 40),
+          scopes: scopes.length,
+          hits: passages.length,
+          titles: passages.map((p) => p.title)
+        })
+      }
+      const retrievedText = retrievalBlock ? `${retrievalBlock}\n\n---\n\n${text}` : text
+      groundedText = needsGrounding
+        ? `${buildProposalAppend(kbOutDir(), scopes)}\n\n---\n\n${retrievedText}`
+        : retrievedText
+      if (needsGrounding) runtime.proposalGroundedKey = proposalKey
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[engine] proposal grounding/retrieval build failed:', msg)
+      runtime.active = null
+      this.emitEvent(sessionId, { type: 'error', messageId, error: msg })
+      this.emitEvent(sessionId, { type: 'end', messageId })
+      return { messageId }
     }
-    const retrievedText = retrievalBlock ? `${retrievalBlock}\n\n---\n\n${text}` : text
-    const groundedText = needsGrounding
-      ? `${buildProposalAppend(kbOutDir(), scopes)}\n\n---\n\n${retrievedText}`
-      : retrievedText
-    if (needsGrounding) runtime.proposalGroundedKey = proposalKey
     // Build the SDK user message. Text-only turns keep the string
     // short-path (fusion-code expects this for slash commands and
     // zero-image prompts). Image turns switch to a ContentBlockParam[]
