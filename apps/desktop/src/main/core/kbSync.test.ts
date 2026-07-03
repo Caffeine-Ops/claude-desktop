@@ -151,4 +151,16 @@ describe('runKbSync 防线', () => {
     expect(seen[0]).toBe('syncing')
     expect(seen.at(-1)).toBe('success')
   })
+  it('onStatus 回调抛异常不击穿引擎——照常返回 success 且副作用完整', async () => {
+    const f = fixture({ 'a.md': 'x', 'index.json': 'i' })
+    const st = await runKbSync({
+      ...deps(f.fetchImpl),
+      onStatus: () => {
+        throw new Error('渲染端炸了')
+      }
+    })
+    expect(st.state).toBe('success')
+    expect(readFileSync(join(outDir, 'index.json'), 'utf8')).toBe('i')
+    expect(existsSync(join(stateDir, 'manifest.json'))).toBe(true)
+  })
 })

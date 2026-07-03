@@ -134,7 +134,14 @@ export async function runKbSync(deps: KbSyncDeps): Promise<KbSyncStatus> {
   } = deps
 
   const emit = (s: KbSyncStatus): KbSyncStatus => {
-    onStatus?.(s)
+    try {
+      onStatus?.(s)
+    } catch {
+      // 回调方（广播到已销毁的 webContents 等）的异常不是同步失败——引擎契约是
+      // 「绝不 throw、终态=返回值」，回调坏了只丢通知不丢结果。不兜住的话：成功
+      // 路径末尾的 emit 抛出会落进外层 catch，fail() 再 emit 又抛，异常直接逃出
+      // runKbSync；且哪怕只抛一次，落盘已完成的 success 也会被错转成 error。
+    }
     return s
   }
   // 终态收口：一切失败都经这里，既 onStatus 广播又作返回值（rule 9：终态双发）。
