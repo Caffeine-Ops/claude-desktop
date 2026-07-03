@@ -53,14 +53,31 @@ export interface ImageReview {
   id: string
   sectionId: string
   blockIndex: number
-  sourcePath?: string // mode='generate'（未来任务）时没有源图，故可空
+  sourcePath?: string // mode='generate'/'directive' 时没有源图，故可空
   resultPath: string
-  mode: 'edit' | 'generate'
+  // 'directive' = genimage 指令块自动生图（配图密度③）：应用=原地替换指令块，丢弃=删指令块，
+  // 与 'generate'（追加插入到 blockIndex 之后）落位语义不同，必须分流。
+  mode: 'edit' | 'generate' | 'directive'
   // mode='edit' 时，源图在该块内【同路径出现序列】里的下标（0 起，来自 ProposalPaper
   // handlePaperClick 从 DOM 数出的 imgSel.occurrence）——应用时喂给 replaceImageOccurrence
   // 精确定位换哪一张（同一块贴了两张同路径图时不误换）。mode='generate' 没有源图、无意义，
   // 缺省即可（Task 11 应用逻辑按 mode 分流，不读 generate 项的这个字段）。
   occurrence?: number
+  // mode='directive'：指令块原文（trim）+ 同内容出现序——落位手术按内容键定位（块序漂移免疫，
+  // 见 shared/proposalGenImage.ts 顶注），blockIndex 只用于审阅卡渲染锚定。
+  directiveRaw?: string
+  directiveOccurrence?: number
+  // mode='directive'：图说，落位时作 `![图说](路径)` 的 alt 文字。
+  caption?: string
+}
+
+// genimage 指令块的生图任务态（配图密度③）。键 = genImageDirectiveKey(sectionId, raw, occurrence)。
+// 三重职责：① 幂等 seen 集合——键存在（无论何态）即不再自动发起，防重复烧钱；② 驱动指令块卡片
+// 的三态渲染（pending 转圈 / failed 错误+重试 / done 提示看审阅卡）；③ restore 重建路径不写入
+// 任何键 → 卡片渲染成「点此生成」手动态。瞬时 UI 信号，不持久化（与 imageReviews 同重置点清空）。
+export interface GenImageJob {
+  status: 'pending' | 'failed' | 'done'
+  error?: string
 }
 
 interface ProposalState {
@@ -112,6 +129,7 @@ interface ProposalState {
   // 点图工具栏（Task 9）发起的改图/换图/生图「待审阅」项列表，Task 11 据此渲染对照卡。同
   // blockReviews：瞬时 UI 信号，不持久化，在与 blockReviews 相同的重置点一并清空。
   imageReviews: ImageReview[]
+  genImageJobs: Record<string, GenImageJob>
   // 草稿写盘是否处于失败态（P3-3）：flushProposalSave 拿到 {ok:false} 或 IPC 抛错时置 true，
   // 下次成功落盘置 false。面板据此显示「草稿未保存」常驻提示——写盘失败（磁盘满/权限/路径）
   // 原本是 fire-and-forget 静默吞掉，用户误以为已存、切走就丢。非阻塞、不持久化，纯运行时
@@ -152,6 +170,8 @@ interface ProposalState {
   // （调用方目前不必用，但契约要求返回，供 Task 11 未来精确定位/去重）。
   addImageReview: (review: Omit<ImageReview, 'id'>) => string
   removeImageReview: (id: string) => void
+  // genimage 任务态登记/更新（配图密度③）。整表清空走各 reset 点，不单独提供删除。
+  setGenImageJob: (key: string, job: GenImageJob) => void
   // 标记/清除草稿写盘失败态（P3-3）。flushProposalSave 落盘后调用：失败 true、成功 false。
   setDraftSaveFailed: (failed: boolean) => void
   // 用 AI 新产出整节替换指定节：同步把 baselineMarkdown 也更新成新原文（否则 M-0 埋点会把
@@ -222,6 +242,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   pendingRevision: null,
   blockReviews: {},
   imageReviews: [],
+  genImageJobs: {},
   draftSaveFailed: false,
   start: (sessionId) =>
     set({
@@ -238,6 +259,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       pendingRevision: null,
       blockReviews: {},
       imageReviews: [],
+      genImageJobs: {},
       draftSaveFailed: false
     }),
   setProducts: (products) => set({ products }),
@@ -301,6 +323,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
   },
   removeImageReview: (id) =>
     set((s) => ({ imageReviews: s.imageReviews.filter((r) => r.id !== id) })),
+  setGenImageJob: (key, job) =>
+    set((s) => ({ genImageJobs: { ...s.genImageJobs, [key]: job } })),
   setDraftSaveFailed: (failed) => set({ draftSaveFailed: failed }),
   reviseSection: (id, markdown) =>
     set((s) => ({
@@ -324,10 +348,19 @@ export const useProposalStore = create<ProposalState>((set) => ({
   // 不存在的节，属于状态不一致，删节这一步就该顺手清干净。blockReviews 以 messageId 为键、
   // 不含 sectionId 关联，不受此次修复影响。
   removeSection: (id) =>
-    set((s) => ({
-      sections: s.sections.filter((sec) => sec.id !== id),
-      imageReviews: s.imageReviews.filter((r) => r.sectionId !== id)
-    })),
+    set((s) => {
+      // genImageJobs 键 = `${sectionId}#...`（见 GenImageJob 顶注/genImageDirectiveKey），
+      // 节删除后同 imageReviews 一并清理挂在该节上的任务态，避免孤儿键误判为「已发起过」。
+      const jobs: Record<string, GenImageJob> = {}
+      for (const [k, v] of Object.entries(s.genImageJobs)) {
+        if (!k.startsWith(`${id}#`)) jobs[k] = v
+      }
+      return {
+        sections: s.sections.filter((sec) => sec.id !== id),
+        imageReviews: s.imageReviews.filter((r) => r.sectionId !== id),
+        genImageJobs: jobs
+      }
+    }),
   moveSection: (id, dir) =>
     set((s) => {
       const i = s.sections.findIndex((sec) => sec.id === id)
@@ -355,7 +388,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       stageSkip: null,
       pendingRevision: null,
       blockReviews: {},
-      imageReviews: []
+      imageReviews: [],
+      genImageJobs: {}
     }),
   leaveMode: () =>
     set({
@@ -363,7 +397,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       workspaceOpen: false,
       pendingRevision: null,
       blockReviews: {},
-      imageReviews: []
+      imageReviews: [],
+      genImageJobs: {}
     }),
   restoreFromTranscript: ({ sessionId, sections, consumedDraftIds, phase }) =>
     set({
@@ -388,6 +423,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       pendingRevision: null,
       blockReviews: {},
       imageReviews: [],
+      genImageJobs: {},
       draftSaveFailed: false
     }),
   restoreFromDisk: (record) =>
@@ -410,6 +446,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       pendingRevision: null,
       blockReviews: {},
       imageReviews: [],
+      genImageJobs: {},
       draftSaveFailed: false
     }),
   reset: () =>
@@ -427,6 +464,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       pendingRevision: null,
       blockReviews: {},
       imageReviews: [],
+      genImageJobs: {},
       draftSaveFailed: false
     })
 }))
