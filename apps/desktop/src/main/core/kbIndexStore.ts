@@ -38,7 +38,15 @@ export const kbOutDir = (): string => join(app.getPath('userData'), 'kb-index')
 /** 读整份 KB 配置。文件缺失/损坏 → 全空配置（防御哲学见 parseKbConfig）。 */
 export function getKbConfig(): KbConfig {
   const p = configPath()
-  return parseKbConfig(existsSync(p) ? readFileSync(p, 'utf8') : null)
+  let raw: string | null = null
+  try {
+    raw = existsSync(p) ? readFileSync(p, 'utf8') : null
+  } catch {
+    // existsSync 后读仍可能失败（TOCTOU/EACCES/EISDIR）——配置读取的不变量是
+    // 「任何残缺退安全默认、绝不抛」：读失败与文件缺失同待遇，退全空配置。
+    raw = null
+  }
+  return parseKbConfig(raw)
 }
 
 /**
