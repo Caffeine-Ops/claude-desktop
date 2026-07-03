@@ -4,6 +4,7 @@ import { useComposerRuntime } from '@assistant-ui/react'
 import { useT, type StringKey } from '../../i18n'
 import { useProposalStore } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
+import { startOrReopenProposal } from '../../lib/startOrReopenProposal'
 
 /**
  * ScenarioQuickStart
@@ -94,10 +95,6 @@ export function ScenarioQuickStart(): React.JSX.Element {
   // sidebar click prefill the central composer without prop-drilling.
   const composer = useComposerRuntime()
 
-  // Proposal store: record the chosen product so the rest of the app knows
-  // a proposal session is active and which product is being written about.
-  const startProposal = useProposalStore((s) => s.start)
-
   // Active session ID — the foreground session that the composer and the
   // right-rail todos panel are both bound to. `useChatStore` exposes
   // `sessionId: string | null` (set by `setForegroundSession` whenever the
@@ -130,34 +127,17 @@ export function ScenarioQuickStart(): React.JSX.Element {
     [composer, leaveProposalMode, t]
   )
 
-  // 点「写方案」卡：直接激活方案模式（绑定当前前台 sessionId），把引导模板
-  // 预填进 composer，聚焦编辑器。不再弹任何选择器——产品由用户在对话里说，
-  // 发送时由 matchProducts 识别（见 FusionRuntimeProvider）。
-  // activeSessionId 为 '' 说明还没有 session，此时本就不应触发方案；透传 '' 无害，
-  // FusionRuntimeProvider 的门控（ps.sessionId === targetSid）会天然排掉它。
+  // 点「写方案」卡：激活/再入语义抽到 startOrReopenProposal（斜杠入口
+  // /proposal-writer 与本卡共用同一实现，防两处分支漂移——见该 helper 注释）。
+  // 'started'（首发）才预填引导模板并聚焦；'reopened' 不动 composer——用户可能写到一半。
   const onStartProposal = useCallback(() => {
-    // 再入分支：只要还存在一份未被显式丢弃的草稿（active 为真，或 sections 非空），
-    // 一律 reopen 回到工作台，【绝不】调 start()——start 会清空 sections/products 把
-    // 用户已写的草稿冲掉。这是「再入永不丢草稿」的落点。
-    //
-    // 为什么不再校验 ps.sessionId === activeSessionId（旧逻辑）：那个等式在用户「返回」
-    // 后切过会话 / resume 静默 fork 重绑 / 误点别的场景卡（active 关、sessionId 仍旧）时
-    // 会为假，旧代码就坠入 start() 把草稿清空——正是丢草稿的根因。reopen 把方案重绑到
-    // 【当前前台会话】再打开，sessionId 漂移也能安全回到草稿，且不重填引导模板（写到
-    // 一半不该被模板覆盖）。
-    const ps = useProposalStore.getState()
-    if (ps.active || ps.sections.length > 0) {
-      ps.reopen(activeSessionId)
-      return
-    }
-    // 首发：开新方案 + 预填引导模板 + 聚焦编辑器。
-    startProposal(activeSessionId)
+    if (startOrReopenProposal(activeSessionId) === 'reopened') return
     composer.setText(t('scenarioProposalPrompt'))
     queueMicrotask(() => {
       const el = document.querySelector<HTMLElement>('.ProseMirror')
       el?.focus()
     })
-  }, [activeSessionId, composer, startProposal, t])
+  }, [activeSessionId, composer, t])
 
   return (
     <div className="shrink-0 px-2 pb-2 pt-2">

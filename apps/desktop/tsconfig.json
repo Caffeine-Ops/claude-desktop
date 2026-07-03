@@ -3,5 +3,16 @@
   "references": [
     { "path": "./tsconfig.node.json" },
     { "path": "./tsconfig.web.json" }
-  ]
+  ],
+  // compilerOptions 在这里【不参与】`bun run typecheck`（那个只吃 tsconfig.node.json /
+  // tsconfig.web.json 两个子工程，见 package.json），纯粹是给 `bun test` 用的：bun 的模块解析
+  // 沿目录向上找最近的 tsconfig.json 读 paths，子工程配置因为只被 references 引用（不是
+  // extends）对 bun 不可见，找到的就是这份聚合文件——不补 paths，跨包 `@shared/*` import 在
+  // `bun test` 下直接 Cannot find module（tsc/vite 各自有别的路径解析，不受影响）。
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["src/shared/*"]
+    }
+  }
 }
