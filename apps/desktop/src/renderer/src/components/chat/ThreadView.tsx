@@ -18,6 +18,7 @@ import { REASONING_PLACEHOLDER, useChatStore } from '../../stores/chat'
 import { useProposalStore } from '../../stores/proposal'
 import { continueProposalSectionBlocks } from '../../lib/sendProposalSectionRevision'
 import { triggerProposalCitationVerification } from '../../lib/proposalVerification'
+import { autoFireProposalGenImages } from '../../lib/proposalGenImageFire'
 import { spliceBlocks } from '@shared/proposalBlocks'
 import { diffChars } from '@shared/textDiff'
 import { buildSlashAdapter } from '../../composer/slashAdapter'
@@ -837,6 +838,11 @@ function ProposalRevisionReview(): React.JSX.Element | null {
     if (target) {
       st.reviseSection(cur.sectionId, spliceBlocks(target.markdown, cur.blockRange, cur.after))
       triggerProposalCitationVerification()
+      // genimage 自动发起（评审 #8）：选区即改的产出在 end 时还压在 blockReview 里没入节，
+      // FusionRuntimeProvider end 处的 autoFire 扫不到它——改写块里若带新指令块，只有此刻
+      // 「应用」才真正落进 sections。聊天侧对每个 genimage 围栏都提示「将自动生成」，这条
+      // 落地路径必须兑现承诺；扫描按 genImageJobs 幂等，重复调用零成本。
+      if (st.sessionId) autoFireProposalGenImages(st.sessionId)
     }
     st.removeBlockReview(id)
   }
