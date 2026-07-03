@@ -5819,7 +5819,7 @@ function IntegrationsSection() {
           style={{
             padding: '10px 12px',
             background: 'var(--bg-subtle)',
-            border: '1px solid var(--border)',
+            border: '1px solid var(--od-border)',
             borderLeft: '3px solid var(--border-strong)',
             borderRadius: 6,
             fontSize: 13,
@@ -5946,9 +5946,9 @@ function AppearanceSection({
           the CLI backend. These were the native Electron settings; they now
           live in this one overlay. Font size / cursor round-trip through the
           daemon `appearance` (the Electron renderer reads it). The CLI backend
-          goes through the `settings` preload bridge. The whole block renders
-          only inside the desktop settings overlay (window.electronSettings
-          present) — a plain browser never sees it. */}
+          goes through the studio tab's chatApi preload (getCliBackend /
+          setCliBackend). The whole block renders only inside the desktop
+          shell (window.chatApi present) — a plain browser never sees it. */}
       <DesktopAppearanceControls cfg={cfg} setCfg={setCfg} />
     </section>
   );
@@ -6194,7 +6194,7 @@ function LogAnalysisSection() {
           height: 'min(60vh, 520px)',
           overflowY: 'auto',
           borderRadius: 8,
-          border: '1px solid var(--border, #2a2a2a)',
+          border: '1px solid var(--od-border, #2a2a2a)',
           background: 'var(--card, #0c0c0c)',
           padding: '8px 10px',
           fontFamily:
@@ -6248,13 +6248,18 @@ function LogAnalysisSection() {
 
 /**
  * Desktop-only appearance controls embedded in the settings overlay.
- * Renders nothing in a plain browser (no `window.electronSettings`).
+ * Renders nothing in a plain browser (no `window.chatApi`).
  *
  * Font size / pointer cursor live on the shared AppConfig and persist to the
  * daemon `appearance` via the normal config save path, so the Electron shell
  * renderer picks them up. The CLI backend (bundled fusion-code vs system
- * claude) is Electron-only state read/written through the settings preload
- * bridge (`window.electronSettings.get/setCliBackend`).
+ * claude) is Electron-only state read/written through the studio tab's
+ * chatApi preload (`window.chatApi.getCliBackend/setCliBackend`)。
+ *
+ * 历史：这里原本走独立设置窗口的 `window.electronSettings` 桥——那个
+ * settings preload 已随设置窗口在 Phase 4 下线（本区块因此静默消失过，
+ * 「CLI 后端」一度无处可选）。studio 单视图里 canvas 与 chat 同一
+ * webContents、共享同一份 chatApi preload，直接用它即可，不需要第二座桥。
  */
 function DesktopAppearanceControls({
   cfg,
@@ -6263,29 +6268,28 @@ function DesktopAppearanceControls({
   cfg: AppConfig;
   setCfg: Dispatch<SetStateAction<AppConfig>>;
 }) {
-  const bridge =
-    typeof window !== 'undefined' ? window.electronSettings : undefined;
+  const chatApi = typeof window !== 'undefined' ? window.chatApi : undefined;
   const [cliBackend, setCliBackend] = useState<DesktopCliBackendState | null>(null);
   const [cliBusy, setCliBusy] = useState(false);
 
   useEffect(() => {
-    if (!bridge?.getCliBackend) return;
+    if (!chatApi?.getCliBackend) return;
     let cancelled = false;
-    bridge
+    chatApi
       .getCliBackend()
       .then((s) => {
         if (!cancelled) setCliBackend(s);
       })
       .catch(() => {
-        /* overlay-only; ignore in browser / on error */
+        /* shell-only; ignore in browser / on error */
       });
     return () => {
       cancelled = true;
     };
-  }, [bridge]);
+  }, [chatApi]);
 
-  // Not in the desktop overlay → render nothing.
-  if (!bridge) return null;
+  // Not inside the desktop shell → render nothing.
+  if (!chatApi) return null;
 
   const uiFont = cfg.uiFontSize ?? DEFAULT_UI_FONT;
   const codeFont = cfg.codeFontSize ?? DEFAULT_CODE_FONT;
@@ -6302,11 +6306,11 @@ function DesktopAppearanceControls({
     setCfg((c) => ({ ...c, usePointerCursor: v }));
 
   const switchCliBackend = async (mode: 'bundled' | 'system') => {
-    if (cliBusy || !bridge.setCliBackend || cliBackend?.mode === mode) return;
+    if (cliBusy || !chatApi.setCliBackend || cliBackend?.mode === mode) return;
     if (mode === 'system' && !cliBackend?.systemInfo) return;
     setCliBusy(true);
     try {
-      const next = await bridge.setCliBackend({ mode });
+      const next = await chatApi.setCliBackend({ mode });
       setCliBackend(next);
     } catch {
       /* ignore */

@@ -19,7 +19,7 @@
   max-width: 760px;
   max-height: calc(100vh - 88px);
   background: var(--bg-panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   display: flex;
@@ -32,7 +32,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--od-border);
   flex: 0 0 auto;
 }
 .new-project-modal__title {
@@ -90,14 +90,14 @@
   flex: 0 0 auto;
   margin-top: 10px;
   padding: 9px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-sm);
   background: var(--bg-subtle);
   color: var(--text-muted);
   font-size: 12px;
 }
 .new-project-modal__status.error {
-  border-color: color-mix(in oklab, var(--danger, #d4543b) 45%, var(--border));
+  border-color: color-mix(in oklab, var(--danger, #d4543b) 45%, var(--od-border));
   background: color-mix(in oklab, var(--danger, #d4543b) 10%, var(--bg-panel));
   color: var(--danger, #d4543b);
 }

@@ -23,7 +23,7 @@ import { AnimatePresence, MotionConfig, motion } from 'motion/react'
  *
  * Layout
  * ------
- *   .app                        (flex column, 100vh)
+ *   .chat-app                   (flex column, 100vh；不叫 .app——canvas 的壳类同名，见 main.css 注释)
  *     header                    (window chrome — title + version badge)
  *     main                      (flex column, fills remaining height)
  *       FusionRuntimeProvider   (runtime context — no DOM)
@@ -197,10 +197,10 @@ function App(): React.JSX.Element {
     }
   }, [])
 
-  // Loading slice: brief flash-prevention. `.app` keeps the window
+  // Loading slice: brief flash-prevention. `.chat-app` keeps the window
   // chrome / background consistent with the mounted state.
   if (workspace === 'loading') {
-    return <div className="app" />
+    return <div className="chat-app" />
   }
 
   // No-workspace slice. The engine now defaults every tab to the OS
@@ -214,7 +214,7 @@ function App(): React.JSX.Element {
   // defense-in-depth.
   const hasWorkspace = workspace !== null
   if (!hasWorkspace) {
-    return <div className="app" />
+    return <div className="chat-app" />
   }
 
   return (
@@ -223,7 +223,7 @@ function App(): React.JSX.Element {
     // actually honor macOS "Reduce motion" — mirrors the shell renderer's
     // wrapper so both webContents degrade consistently.
     <MotionConfig reducedMotion="user">
-    <div className="app">
+    <div className="chat-app">
       {/* 旧的 .header--tab 整条已移除——它只承载左右面板的折叠按钮，而面板
           现在常开不可收起，按钮失去意义。chat 内容直接顶到顶部 shell tab 条
           （shell/ShellApp.tsx）下方，省掉一条横栏。 */}

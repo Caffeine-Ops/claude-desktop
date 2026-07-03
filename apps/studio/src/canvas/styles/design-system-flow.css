@@ -26,7 +26,7 @@
   align-items: center;
   gap: 16px;
   padding: 0 28px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--od-border);
 }
 .ds-setup-topbar .primary,
 .ds-setup-topbar .ghost,
@@ -47,7 +47,7 @@
 .ds-github-access-toggle,
 .ds-github-access-actions button {
   min-height: 36px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   padding: 0 12px;
   background: var(--bg-panel);
@@ -65,13 +65,13 @@
 .ds-drop-zone-wrap > button:hover,
 .ds-github-access-toggle:hover,
 .ds-github-access-actions button:hover {
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-color: color-mix(in srgb, var(--od-accent) 30%, var(--od-border));
   color: var(--text-strong);
   transform: translateY(-1px);
 }
 .ds-setup-actions .primary {
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: var(--od-accent);
+  background: var(--od-accent);
   color: var(--accent-contrast, #fff);
 }
 .ds-setup-actions .primary:disabled,
@@ -91,7 +91,7 @@
   place-items: center;
   width: 32px;
   height: 32px;
-  color: var(--accent);
+  color: var(--od-accent);
 }
 .ds-setup-form {
   width: min(720px, calc(100vw - 40px));
@@ -150,7 +150,7 @@
 .ds-setup-field textarea {
   min-height: 112px;
   resize: vertical;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   padding: 12px 13px;
   color: var(--text-strong);
@@ -168,8 +168,8 @@
 .ds-setup-field textarea:focus-visible,
 .ds-resource-inline input:focus,
 .ds-resource-inline input:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--od-accent) 48%, var(--od-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--od-accent) 12%, transparent);
   outline: 0;
 }
 .ds-resource-section {
@@ -191,7 +191,7 @@
 }
 .ds-resource-card {
   margin-top: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--bg-panel) 98%, var(--bg-subtle) 2%);
   box-shadow: 0 14px 36px color-mix(in srgb, var(--shadow-color, #000) 5%, transparent), var(--shadow-xs);
@@ -228,7 +228,7 @@
 .ds-resource-inline input {
   min-width: 0;
   min-height: 38px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   padding: 0 12px;
   color: var(--text-strong);
@@ -250,7 +250,7 @@
   gap: 7px;
   min-height: 28px;
   padding: 4px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-pill);
   background: var(--bg-subtle);
   color: var(--text);
@@ -350,7 +350,7 @@
   align-items: center;
   min-height: 20px;
   padding: 2px 7px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-pill);
   background: var(--bg-subtle);
   color: var(--text-muted);
@@ -365,7 +365,7 @@
 }
 .ds-github-access-badge.is-warning,
 .ds-github-access-badge.is-loading {
-  border-color: color-mix(in srgb, var(--amber) 28%, var(--border));
+  border-color: color-mix(in srgb, var(--amber) 28%, var(--od-border));
   background: var(--amber-bg);
   color: var(--amber);
 }
@@ -409,7 +409,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px dashed color-mix(in srgb, var(--border-strong) 76%, var(--accent) 24%);
+  border: 1px dashed color-mix(in srgb, var(--border-strong) 76%, var(--od-accent) 24%);
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-subtle) 84%, var(--bg-panel) 16%);
   color: var(--text-muted);
@@ -417,8 +417,8 @@
   transition: background-color 160ms cubic-bezier(0.23, 1, 0.32, 1), border-color 160ms cubic-bezier(0.23, 1, 0.32, 1), color 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .ds-drop-zone:hover {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-strong));
-  background: color-mix(in srgb, var(--accent) 5%, var(--bg-subtle));
+  border-color: color-mix(in srgb, var(--od-accent) 42%, var(--border-strong));
+  background: color-mix(in srgb, var(--od-accent) 5%, var(--bg-subtle));
   color: var(--text);
 }
 .ds-drop-zone span {
@@ -444,7 +444,7 @@
   min-height: 28px;
   max-width: 100%;
   padding: 4px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-pill);
   background: var(--bg);
   color: var(--text);
@@ -512,7 +512,7 @@
   color: var(--text);
 }
 .ds-agent-rail {
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--od-border);
   background: var(--bg-panel);
   padding: 20px;
   display: flex;
@@ -523,7 +523,7 @@
 .ds-project-chat {
   min-height: 100vh;
   min-width: 0;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--od-border);
   background: var(--bg-panel);
   display: flex;
   flex-direction: column;
@@ -531,7 +531,7 @@
 .ds-project-chat__bar {
   height: 44px;
   padding: 0 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--od-border);
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto;
   align-items: center;
@@ -575,7 +575,7 @@
 .ds-summary-card,
 .ds-source-context-card,
 .ds-chat-composer {
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 12px;
   background: var(--bg-elevated);
   padding: 14px;
@@ -675,7 +675,7 @@
   height: 100%;
   min-width: 8px;
   border-radius: inherit;
-  background: var(--accent);
+  background: var(--od-accent);
   transition: width 180ms ease;
 }
 .ds-review-main {
@@ -690,7 +690,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 0 24px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--od-border);
   background: var(--bg-panel);
 }
 .ds-file-workspace-host {
@@ -703,7 +703,7 @@
 }
 .segmented {
   display: inline-flex;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 10px;
   background: var(--bg-subtle);
   overflow: hidden;
@@ -739,7 +739,7 @@
 .ds-revision-history,
 .ds-review-section,
 .ds-body-editor {
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 12px;
   background: var(--bg-panel);
   box-shadow: var(--shadow-xs);
@@ -761,15 +761,15 @@
   gap: 12px;
   padding: 16px;
   margin-bottom: 14px;
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--od-accent) 32%, var(--od-border));
+  background: color-mix(in srgb, var(--od-accent) 8%, var(--bg-panel));
 }
 .ds-generation-review-card.is-succeeded {
-  border-color: color-mix(in srgb, var(--green) 30%, var(--border));
+  border-color: color-mix(in srgb, var(--green) 30%, var(--od-border));
   background: color-mix(in srgb, var(--green) 7%, var(--bg-panel));
 }
 .ds-generation-review-card.is-failed {
-  border-color: color-mix(in srgb, var(--red) 34%, var(--border));
+  border-color: color-mix(in srgb, var(--red) 34%, var(--od-border));
   background: color-mix(in srgb, var(--red) 8%, var(--bg-panel));
 }
 .ds-generation-review-card > div:first-child {
@@ -790,19 +790,19 @@
   gap: 12px;
   padding: 16px;
   margin-bottom: 18px;
-  border-color: color-mix(in srgb, var(--blue) 30%, var(--border));
+  border-color: color-mix(in srgb, var(--blue) 30%, var(--od-border));
   background: color-mix(in srgb, var(--blue) 6%, var(--bg-panel));
 }
 .ds-workspace-activity-card.is-running {
-  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--od-accent) 36%, var(--od-border));
+  background: color-mix(in srgb, var(--od-accent) 8%, var(--bg-panel));
 }
 .ds-workspace-activity-card.is-succeeded {
-  border-color: color-mix(in srgb, var(--green) 30%, var(--border));
+  border-color: color-mix(in srgb, var(--green) 30%, var(--od-border));
   background: color-mix(in srgb, var(--green) 7%, var(--bg-panel));
 }
 .ds-workspace-activity-card.is-failed {
-  border-color: color-mix(in srgb, var(--red) 34%, var(--border));
+  border-color: color-mix(in srgb, var(--red) 34%, var(--od-border));
   background: color-mix(in srgb, var(--red) 8%, var(--bg-panel));
 }
 .ds-workspace-activity-head {
@@ -829,7 +829,7 @@
   gap: 6px;
   min-height: 24px;
   padding: 5px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   background: var(--bg-panel);
   color: var(--text-muted);
@@ -837,11 +837,11 @@
   line-height: 1.35;
 }
 .ds-workspace-todos span.is-running {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-color: color-mix(in srgb, var(--od-accent) 40%, var(--od-border));
   color: var(--text);
 }
 .ds-workspace-todos span.is-succeeded {
-  border-color: color-mix(in srgb, var(--green) 34%, var(--border));
+  border-color: color-mix(in srgb, var(--green) 34%, var(--od-border));
   color: var(--green);
 }
 .ds-workspace-files-touched {
@@ -865,7 +865,7 @@
   max-width: 100%;
   overflow: hidden;
   padding: 4px 7px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 7px;
   background: var(--bg-panel);
   color: var(--text-muted);
@@ -874,14 +874,14 @@
   white-space: nowrap;
 }
 .ds-workspace-files-touched code.is-running {
-  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-color: color-mix(in srgb, var(--od-accent) 34%, var(--od-border));
   color: var(--text);
 }
 .ds-workspace-files-touched code.is-done {
-  border-color: color-mix(in srgb, var(--green) 30%, var(--border));
+  border-color: color-mix(in srgb, var(--green) 30%, var(--od-border));
 }
 .ds-workspace-files-touched code.is-error {
-  border-color: color-mix(in srgb, var(--red) 36%, var(--border));
+  border-color: color-mix(in srgb, var(--red) 36%, var(--od-border));
   color: var(--red);
 }
 .ds-generation-review-progress {
@@ -895,7 +895,7 @@
   height: 100%;
   min-width: 8px;
   border-radius: inherit;
-  background: var(--accent);
+  background: var(--od-accent);
   transition: width 180ms ease;
 }
 .ds-generation-review-steps {
@@ -909,29 +909,29 @@
   gap: 4px;
   min-height: 24px;
   padding: 3px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-pill);
   background: var(--bg-panel);
   color: var(--text-muted);
   font-size: 11px;
 }
 .ds-generation-review-steps span.is-running {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-color: color-mix(in srgb, var(--od-accent) 40%, var(--od-border));
   color: var(--text);
 }
 .ds-generation-review-steps span.is-succeeded {
-  border-color: color-mix(in srgb, var(--green) 36%, var(--border));
+  border-color: color-mix(in srgb, var(--green) 36%, var(--od-border));
   color: var(--green);
 }
 .ds-generation-review-steps span.is-failed {
-  border-color: color-mix(in srgb, var(--red) 40%, var(--border));
+  border-color: color-mix(in srgb, var(--red) 40%, var(--od-border));
   color: var(--red);
 }
 .ds-warning-card {
   padding: 14px 16px;
   margin-bottom: 24px;
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-  background: color-mix(in srgb, var(--accent) 9%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--od-accent) 35%, var(--od-border));
+  background: color-mix(in srgb, var(--od-accent) 9%, var(--bg-panel));
 }
 .ds-package-card {
   display: grid;
@@ -959,7 +959,7 @@
 .ds-package-pill {
   flex: 0 0 auto;
   padding: 4px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 999px;
   color: var(--text-muted);
   font-size: 11px;
@@ -967,7 +967,7 @@
   line-height: 1.2;
 }
 .ds-package-pill.is-ready {
-  border-color: color-mix(in srgb, var(--green) 36%, var(--border));
+  border-color: color-mix(in srgb, var(--green) 36%, var(--od-border));
   color: var(--green);
 }
 .ds-package-grid,
@@ -983,7 +983,7 @@
   gap: 10px;
   min-width: 0;
   padding: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   background: var(--bg-subtle);
 }
@@ -1005,7 +1005,7 @@
   max-width: 100%;
   overflow: hidden;
   padding: 4px 7px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 7px;
   background: var(--bg-panel);
   color: var(--text);
@@ -1039,7 +1039,7 @@
 }
 .ds-confidence-row span {
   padding: 4px 7px;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--od-accent) 28%, var(--od-border));
   border-radius: 999px;
   color: var(--text-muted);
   font-size: 11px;
@@ -1049,7 +1049,7 @@
   overflow: auto;
   margin: 0;
   padding: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   background: var(--bg-subtle);
   color: var(--text-muted);
@@ -1071,7 +1071,7 @@
   gap: 12px;
   padding: 16px;
   margin-bottom: 18px;
-  border-color: color-mix(in srgb, var(--blue) 28%, var(--border));
+  border-color: color-mix(in srgb, var(--blue) 28%, var(--od-border));
   background: color-mix(in srgb, var(--blue) 5%, var(--bg-panel));
 }
 .ds-revision-card__head {
@@ -1107,7 +1107,7 @@
   overflow: auto;
   margin: 0;
   padding: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   background: var(--bg-panel);
   color: var(--text);
@@ -1141,7 +1141,7 @@
   font-size: 12px;
 }
 .ds-review-section__body {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--od-border);
   background: var(--bg-subtle);
   padding: 16px;
 }
@@ -1152,12 +1152,12 @@
   margin-bottom: 14px;
 }
 .ds-section-actions button.active.success {
-  border-color: color-mix(in srgb, var(--green) 42%, var(--border));
+  border-color: color-mix(in srgb, var(--green) 42%, var(--od-border));
   background: color-mix(in srgb, var(--green) 10%, var(--bg-panel));
   color: var(--green);
 }
 .ds-section-actions button.active.danger {
-  border-color: color-mix(in srgb, var(--red) 42%, var(--border));
+  border-color: color-mix(in srgb, var(--red) 42%, var(--od-border));
   background: color-mix(in srgb, var(--red) 9%, var(--bg-panel));
   color: var(--red);
 }
@@ -1201,7 +1201,7 @@
 .ds-revision-history span {
   min-width: 74px;
   padding: 3px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-pill);
   color: var(--text-muted);
   font-size: 11px;
@@ -1209,15 +1209,15 @@
   text-transform: capitalize;
 }
 .ds-revision-history span.is-pending {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
-  color: var(--accent);
+  border-color: color-mix(in srgb, var(--od-accent) 38%, var(--od-border));
+  color: var(--od-accent);
 }
 .ds-revision-history span.is-accepted {
-  border-color: color-mix(in srgb, var(--green) 38%, var(--border));
+  border-color: color-mix(in srgb, var(--green) 38%, var(--od-border));
   color: var(--green);
 }
 .ds-revision-history span.is-rejected {
-  border-color: color-mix(in srgb, var(--red) 38%, var(--border));
+  border-color: color-mix(in srgb, var(--red) 38%, var(--od-border));
   color: var(--red);
 }
 .ds-files-panel {
@@ -1226,7 +1226,7 @@
   grid-template-columns: minmax(360px, 48%) minmax(0, 1fr);
 }
 .ds-files-list {
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--od-border);
   background: var(--bg-panel);
   overflow: auto;
 }
@@ -1234,7 +1234,7 @@
 .ds-files-drop {
   padding: 14px 18px;
   color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--od-border);
 }
 .ds-file-row {
   min-height: 58px;
@@ -1293,14 +1293,14 @@
   max-height: 60vh;
   overflow: auto;
   padding: 18px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 12px;
   background: var(--bg-panel);
 }
 .ds-file-preview-frame {
   width: 100%;
   min-height: 68vh;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 12px;
   background: #fff;
 }
@@ -1315,7 +1315,7 @@
 }
 .ds-settings-card {
   background: var(--bg-panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 12px;
   box-shadow: var(--shadow-xs);
   overflow: hidden;
@@ -1326,7 +1326,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 16px 18px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--od-border);
 }
 .ds-settings-card__head h2 {
   margin: 4px 0 0;
@@ -1384,7 +1384,7 @@
   gap: 16px;
   padding: 16px 18px;
   border: 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--od-border);
   border-radius: 0;
   background: var(--bg-panel);
   text-align: left;
@@ -1410,7 +1410,7 @@
 .ds-create-row__action {
   flex: 0 0 auto;
   padding: 6px 14px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   background: var(--bg-elevated);
   color: var(--text);
@@ -1433,7 +1433,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 14px 18px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--od-border);
 }
 .ds-user-row__open {
   appearance: none;
@@ -1523,10 +1523,10 @@
   transition: transform 0.16s ease;
 }
 .ds-status-toggle.is-on {
-  color: var(--accent);
+  color: var(--od-accent);
 }
 .ds-status-toggle.is-on i {
-  background: var(--accent);
+  background: var(--od-accent);
 }
 .ds-status-toggle.is-on i::after {
   transform: translateX(10px);
@@ -1538,7 +1538,7 @@
   .ds-agent-rail {
     min-height: auto;
     border-right: 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--od-border);
   }
   .ds-review-column {
     width: min(760px, calc(100vw - 32px));
@@ -1616,7 +1616,7 @@
   gap: 6px;
   height: 28px;
   padding: 0 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text-muted);
@@ -1630,7 +1630,7 @@
   border-color: var(--border-strong);
 }
 .ws-focus-toggle:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--od-accent);
   outline-offset: 2px;
 }
 .ws-tab-action {
@@ -1685,7 +1685,7 @@
   height: 48px;
   display: grid;
   place-items: center;
-  color: var(--accent);
+  color: var(--od-accent);
 }
 .ds-project-generation-stage h1 {
   margin: 0;
@@ -1714,7 +1714,7 @@
   height: 100%;
   min-width: 10%;
   border-radius: inherit;
-  background: var(--accent);
+  background: var(--od-accent);
   transition: width 180ms ease;
 }
 .ds-project-main {
@@ -1727,7 +1727,7 @@
   justify-content: space-between;
   gap: 20px;
   padding-bottom: 22px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--od-border);
 }
 .ds-project-head h1 {
   margin: 0 0 8px;
@@ -1751,7 +1751,7 @@
   justify-content: flex-end;
 }
 .ds-project-badges span {
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 999px;
   padding: 5px 10px;
   color: var(--text-muted);
@@ -1762,7 +1762,7 @@
 }
 .ds-project-publish-card {
   margin: 22px 0 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius);
   background: var(--bg-panel);
   padding: 14px 16px;
@@ -1834,7 +1834,7 @@
 }
 .ds-project-review-card {
   margin: 14px 0 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius);
   background: var(--bg-panel);
   display: grid;
@@ -1878,7 +1878,7 @@
 }
 .ds-project-live-activity {
   margin: 10px 0 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius);
   background: var(--bg-panel);
   display: grid;
@@ -1911,25 +1911,25 @@
   white-space: nowrap;
 }
 .ds-project-live-activity span.is-reading {
-  border-color: color-mix(in srgb, var(--blue) 30%, var(--border));
+  border-color: color-mix(in srgb, var(--blue) 30%, var(--od-border));
   color: var(--blue);
 }
 .ds-project-live-activity span.is-planned {
-  border-color: color-mix(in srgb, var(--border-strong) 60%, var(--border));
+  border-color: color-mix(in srgb, var(--border-strong) 60%, var(--od-border));
   background: var(--bg-subtle);
   color: var(--text-muted);
 }
 .ds-project-live-activity span.is-writing {
-  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
-  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
-  color: var(--accent);
+  border-color: color-mix(in srgb, var(--od-accent) 36%, var(--od-border));
+  background: color-mix(in srgb, var(--od-accent) 7%, var(--bg));
+  color: var(--od-accent);
 }
 .ds-project-live-activity span.is-updated {
-  border-color: color-mix(in srgb, var(--amber) 36%, var(--border));
+  border-color: color-mix(in srgb, var(--amber) 36%, var(--od-border));
   color: var(--amber);
 }
 .ds-project-live-activity span.is-error {
-  border-color: color-mix(in srgb, var(--red) 38%, var(--border));
+  border-color: color-mix(in srgb, var(--red) 38%, var(--od-border));
   background: color-mix(in srgb, var(--red) 7%, var(--bg));
   color: var(--red);
 }
@@ -1948,12 +1948,12 @@
   align-items: center;
   gap: 12px;
   padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--od-accent) 35%, var(--od-border));
   border-radius: var(--radius);
-  background: color-mix(in srgb, var(--accent) 7%, var(--bg-panel));
+  background: color-mix(in srgb, var(--od-accent) 7%, var(--bg-panel));
 }
 .ds-project-warning-card > .od-icon {
-  color: var(--accent);
+  color: var(--od-accent);
 }
 .ds-project-warning-card span {
   min-width: 0;
@@ -1978,7 +1978,7 @@
 }
 .ds-context-strip {
   margin: 22px 0 30px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius);
   background: var(--bg-panel);
   display: flex;
@@ -2061,7 +2061,7 @@
   min-height: 28px;
   margin-left: auto;
   padding: 4px 9px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-pill);
   background: var(--bg-panel);
   color: var(--text-muted);
@@ -2069,35 +2069,35 @@
   white-space: nowrap;
 }
 .ds-project-section-state.is-ready {
-  border-color: color-mix(in srgb, var(--blue) 34%, var(--border));
+  border-color: color-mix(in srgb, var(--blue) 34%, var(--od-border));
   color: var(--blue);
 }
 .ds-project-section-state.is-running {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
-  color: var(--accent);
+  border-color: color-mix(in srgb, var(--od-accent) 40%, var(--od-border));
+  background: color-mix(in srgb, var(--od-accent) 8%, var(--bg-panel));
+  color: var(--od-accent);
 }
 .ds-project-section-state.is-planned {
-  border-color: color-mix(in srgb, var(--border-strong) 62%, var(--border));
+  border-color: color-mix(in srgb, var(--border-strong) 62%, var(--od-border));
   background: var(--bg-subtle);
   color: var(--text-muted);
 }
 .ds-project-section-state.is-approved {
-  border-color: color-mix(in srgb, var(--green) 42%, var(--border));
+  border-color: color-mix(in srgb, var(--green) 42%, var(--od-border));
   background: color-mix(in srgb, var(--green) 9%, var(--bg-panel));
   color: var(--green);
 }
 .ds-project-section-state.is-work {
-  border-color: color-mix(in srgb, var(--red) 38%, var(--border));
+  border-color: color-mix(in srgb, var(--red) 38%, var(--od-border));
   background: color-mix(in srgb, var(--red) 8%, var(--bg-panel));
   color: var(--red);
 }
 .ds-project-section-state.is-missing {
-  border-color: color-mix(in srgb, var(--red) 34%, var(--border));
+  border-color: color-mix(in srgb, var(--red) 34%, var(--od-border));
   color: var(--red);
 }
 .ds-project-section-state.is-review {
-  border-color: color-mix(in srgb, var(--amber) 42%, var(--border));
+  border-color: color-mix(in srgb, var(--amber) 42%, var(--od-border));
   background: color-mix(in srgb, var(--amber-bg) 55%, var(--bg-panel));
   color: var(--amber);
 }
@@ -2116,12 +2116,12 @@
   white-space: nowrap;
 }
 .ds-project-review-actions button.active.success {
-  border-color: color-mix(in srgb, var(--green) 42%, var(--border));
+  border-color: color-mix(in srgb, var(--green) 42%, var(--od-border));
   background: color-mix(in srgb, var(--green) 10%, var(--bg-panel));
   color: var(--green);
 }
 .ds-project-review-actions button.active.danger {
-  border-color: color-mix(in srgb, var(--red) 42%, var(--border));
+  border-color: color-mix(in srgb, var(--red) 42%, var(--od-border));
   background: color-mix(in srgb, var(--red) 9%, var(--bg-panel));
   color: var(--red);
 }
@@ -2147,7 +2147,7 @@
   padding: 3px 9px;
 }
 .ds-project-inline-preview {
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius);
   background: var(--bg-panel);
   box-shadow: var(--shadow-sm);
@@ -2172,7 +2172,7 @@
   background: var(--bg);
 }
 .ds-project-review-notice {
-  border: 1px solid color-mix(in srgb, var(--amber) 32%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--amber) 32%, var(--od-border));
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--amber-bg) 42%, var(--bg-panel));
   color: var(--text);
@@ -2187,14 +2187,14 @@
   flex: none;
 }
 .ds-project-review-notice.is-running {
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--od-accent) 32%, var(--od-border));
+  background: color-mix(in srgb, var(--od-accent) 6%, var(--bg-panel));
 }
 .ds-project-review-notice.is-running svg {
-  color: var(--accent);
+  color: var(--od-accent);
 }
 .ds-project-last-feedback {
-  border: 1px solid color-mix(in srgb, var(--red) 24%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--red) 24%, var(--od-border));
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--red) 5%, var(--bg-panel));
   color: var(--text);
@@ -2224,7 +2224,7 @@
   line-height: 1.4;
 }
 .ds-project-feedback-box {
-  border: 1px solid color-mix(in srgb, var(--red) 28%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--red) 28%, var(--od-border));
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--red) 6%, var(--bg-panel));
   display: flex;
@@ -2240,7 +2240,7 @@
 .ds-project-feedback-box textarea {
   width: 100%;
   min-height: 76px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
@@ -2259,7 +2259,7 @@
   gap: 8px;
 }
 .ds-project-file-list {
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--bg-panel);
@@ -2268,7 +2268,7 @@
   width: 100%;
   border: 0;
   border-radius: 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--od-border);
   background: transparent;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) 20px;
@@ -2335,12 +2335,12 @@
 .ds-project-publish-card--review .ds-project-publish-card__toggles {
   min-height: 58px;
   padding: 0 24px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--od-border);
 }
 .ds-project-publish-card--review .ds-project-use-row {
   margin: 0;
   padding: 14px 24px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--od-border);
 }
 .ds-project-section-group {
   display: flex;
@@ -2356,7 +2356,7 @@
 }
 .ds-project-review-item {
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   background: var(--bg-panel);
   box-shadow: var(--shadow-sm);
@@ -2408,11 +2408,11 @@
 }
 .ds-project-section-dot.is-running,
 .ds-project-section-dot.is-planned {
-  background: var(--accent);
+  background: var(--od-accent);
 }
 .ds-project-review-item .ds-project-section-body {
   gap: 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--od-border);
 }
 .ds-project-review-item .ds-project-inline-preview {
   height: clamp(340px, 48vw, 540px);
@@ -2431,7 +2431,7 @@
   display: grid;
   place-items: center;
   min-height: 240px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   background: var(--bg-panel);
   color: var(--text-muted);

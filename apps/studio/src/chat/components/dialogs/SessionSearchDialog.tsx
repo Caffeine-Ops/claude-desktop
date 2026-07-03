@@ -66,6 +66,10 @@ export function SessionSearchDialog(): React.JSX.Element {
   // so this one listener covers the whole renderer.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      // chat 树现在常驻（SurfaceHost keep-alive），本监听在工作画布可见时
+      // 也活着——只在聊天面前台时响应，否则画布上按 ⌘K 会凭空弹出会话
+      // 搜索。data-surface 由 SurfaceHost 随可见面翻转，是现成的判据。
+      if (document.documentElement.dataset.surface !== 'chat') return
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         if (open) closeDialog()

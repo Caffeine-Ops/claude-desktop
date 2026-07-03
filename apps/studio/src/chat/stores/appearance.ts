@@ -34,11 +34,19 @@ export interface ThemeOverrides {
   translucentSidebar: boolean
 }
 
+// Light defaults aligned 1:1 with the shared design tokens
+// (packages/design-tokens/tokens.css): canvas `--background` #f5f5f7
+// (Apple's signature off-white gray), foreground #1d1d1f, accent Apple
+// Blue #0071e3. The OLD default was a pure-white canvas (#ffffff) — the
+// applier then had nowhere brighter to lift card/popover, so it pushed
+// them DARKER, inverting the token design (gray page, white floating
+// cards) into "white page, gray cards": the rail lost its tint and the
+// chat card lost its float. Persist v4 migrates the stale default.
 const LIGHT_DEFAULTS: ThemeOverrides = {
-  presetName: 'Codex',
-  accent: '#3395ff',
-  background: '#ffffff',
-  foreground: '#1a1c1f',
+  presetName: 'Apple Light',
+  accent: '#0071e3',
+  background: '#f5f5f7',
+  foreground: '#1d1d1f',
   contrast: 45,
   translucentSidebar: true
 }
@@ -69,6 +77,19 @@ function isStaleDarkDefault(d: Partial<ThemeOverrides> | undefined): boolean {
     d.presetName === 'Dracula' ||
     d.background?.toLowerCase() === '#282a36' ||
     d.accent?.toLowerCase() === '#ff79c6'
+  )
+}
+
+// Fingerprint of the pre-v4 pure-white light default ("Codex", #ffffff
+// canvas). Same replace-only-the-stale-default contract as the dark
+// fingerprint above: a user who picked their own light background won't
+// match and is left untouched.
+function isStaleLightDefault(d: Partial<ThemeOverrides> | undefined): boolean {
+  if (!d) return false
+  return (
+    d.presetName === 'Codex' ||
+    (d.background?.toLowerCase() === '#ffffff' &&
+      d.accent?.toLowerCase() === '#3395ff')
   )
 }
 
@@ -113,7 +134,7 @@ export const useAppearanceStore = create<AppearanceState>()(
     }),
     {
       name: 'claude-desktop:appearance',
-      version: 3,
+      version: 4,
       // v1 only had themeMode/uiFontSize/codeFontSize/usePointerCursor.
       // Backfill the new theme objects so persisted v1 users don't crash
       // before they touch any color picker.
@@ -123,6 +144,11 @@ export const useAppearanceStore = create<AppearanceState>()(
       // the web app. Anyone still on the OLD dark default must be reset to
       // the new one so desktop matches web; users who deliberately picked a
       // custom dark color are left alone (only the stale default is replaced).
+      //
+      // v4: the light default flipped from the pure-white "Codex" canvas to
+      // the token-aligned Apple off-white (#f5f5f7) so the gray-page /
+      // white-floating-card hierarchy from design-tokens actually renders.
+      // Same stale-fingerprint contract as v3.
       migrate: (persisted: unknown, version: number): AppearanceState => {
         const base = (persisted ?? {}) as Partial<AppearanceState>
         if (version < 2) {
@@ -135,10 +161,14 @@ export const useAppearanceStore = create<AppearanceState>()(
             usePointerCursor: base.usePointerCursor ?? false
           } as AppearanceState
         }
-        if (version < 3 && isStaleDarkDefault(base.dark)) {
-          return { ...base, dark: DARK_DEFAULTS } as AppearanceState
+        let next = base
+        if (version < 3 && isStaleDarkDefault(next.dark)) {
+          next = { ...next, dark: DARK_DEFAULTS }
         }
-        return base as AppearanceState
+        if (version < 4 && isStaleLightDefault(next.light)) {
+          next = { ...next, light: LIGHT_DEFAULTS }
+        }
+        return next as AppearanceState
       }
     }
   )
@@ -216,19 +246,21 @@ export async function hydrateAppearanceFromDaemon(): Promise<void> {
   }
   if (!remote) return
 
-  // The daemon may still hold the pre-v3 cool "Dracula" dark default (the
-  // local persist migration only fixes localStorage, not the daemon copy that
-  // gets adopted here). If so, drop the remote dark slice and keep our new
-  // warm-black default, then push it back so the daemon — and the embedded web
-  // tab that shares it — converge on the new value. Only the stale default is
-  // overridden; a genuinely custom dark color won't match the fingerprint.
+  // The daemon may still hold a pre-migration default (the local persist
+  // migration only fixes localStorage, not the daemon copy that gets adopted
+  // here): the pre-v3 cool "Dracula" dark, or the pre-v4 pure-white light.
+  // If so, drop that remote slice and keep our new default, then push it back
+  // so the daemon — and every surface that shares it — converge. Only stale
+  // defaults are overridden; a genuinely custom color won't match either
+  // fingerprint.
   const remoteDarkIsStale = isStaleDarkDefault(remote.dark)
+  const remoteLightIsStale = isStaleLightDefault(remote.light)
 
   isHydrating = true
   try {
     useAppearanceStore.setState((s) => ({
       themeMode: remote.themeMode ?? s.themeMode,
-      light: { ...s.light, ...remote.light },
+      light: remoteLightIsStale ? LIGHT_DEFAULTS : { ...s.light, ...remote.light },
       dark: remoteDarkIsStale ? DARK_DEFAULTS : { ...s.dark, ...remote.dark },
       uiFontSize:
         typeof remote.uiFontSize === 'number'
@@ -244,10 +276,10 @@ export async function hydrateAppearanceFromDaemon(): Promise<void> {
     isHydrating = false
   }
 
-  // If we just replaced a stale daemon dark default, persist the new one back
-  // so the daemon stops serving the old palette on the next boot. Done outside
+  // If we just replaced a stale daemon default, persist the new one back so
+  // the daemon stops serving the old palette on the next boot. Done outside
   // the isHydrating guard so the push actually fires.
-  if (remoteDarkIsStale) pushAppearanceToDaemon()
+  if (remoteDarkIsStale || remoteLightIsStale) pushAppearanceToDaemon()
 }
 
 /**

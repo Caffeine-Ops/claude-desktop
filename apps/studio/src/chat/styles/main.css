@@ -64,62 +64,36 @@ body,
   margin: 0;
   padding: 0;
   height: 100%;
-  /* Root surface fixed to #e8eaee instead of the theme token, per request.
-     The per-surface overrides below (shell / chat) still take precedence
-     where they apply — and are kept at the SAME #e8eaee so the whole window
-     reads as one flat background. */
-  background-color: #e8eaee;
+  /* 窗口底面 = rail 面（--sidebar，浅色 Apple 灰 / 暗色暖黑，深浅自动跟随）。
+     悬浮内容卡（globals.css 的 .shell-content-card）浮在这块面上，rail 与卡
+     之间的 gutter 露出的就是这个颜色。
+     旧版是硬编码 #e8eaee + 三段 data-surface 分支（shell 根同色、chat 根
+     transparent）——那套属于双 WebContentsView 时代：chat view 要整体透明，
+     让 native 层下方的 shell 窗口从 8px 缝隙里透出来。单视图形态下整个前端
+     在同一个 document，底面直接画 token 即可，分支已全部退役
+     （data-surface='shell' 早已无 setter；'chat' 仍由 SurfaceHost 维护，
+     供下方 .chat-app 高度规则与窗口 chrome 分支使用）。 */
+  background-color: hsl(var(--sidebar));
   color: hsl(var(--foreground));
 }
 
-/* Shell-window surface only. The chat card floats with an 8px gap on all
-   sides (tabRegistry CHAT_CARD_GAP), and that gap reveals the SHELL window's
-   root behind the transparent chat view. To make the gap blend seamlessly
-   into the left nav rail, the shell root must paint the SAME colour as the
-   rail (.shell-chrome's --rail-bg) rather than the generic --background.
-   ⚠️ These values are duplicated from .shell-chrome / .dark .shell-chrome's
-   --rail-bg below — there's no shared root-level token, so edit both together
-   (same caveat as NAV_RAIL_WIDTH's CSS/TS duplication). */
-html[data-surface='shell'],
-html[data-surface='shell'] body,
-html[data-surface='shell'] #root {
-  background-color: #e8eaee;
-}
-/* `.dark` is toggled on the <html> element itself (see main.tsx
-   bootAppearance), so it's the SAME node as [data-surface='shell'] — use a
-   compound selector (html.dark[...]), not a descendant one. */
-html.dark[data-surface='shell'],
-html.dark[data-surface='shell'] body,
-html.dark[data-surface='shell'] #root {
-  background-color: color-mix(in srgb, hsl(var(--card)) 70%, hsl(var(--background)));
-}
-
-/* Chat-tab surface only (tagged in main.tsx). The chat WebContentsView now
-   floats as a rounded card with an 8px gap on every side (see tabRegistry.
-   layoutActiveTab), and that gap has to reveal what's UNDER the view — the
-   shell window's own surface. The view paints transparent (setBackgroundColor
-   '#00000000'), so we make the chat renderer's root transparent too; the
-   actual card background lives on `.app` below. Scoped to data-surface='chat'
-   so the shell strip + settings overlay (same bundle) keep their opaque bg. */
-html[data-surface='chat'],
-html[data-surface='chat'] body,
-html[data-surface='chat'] #root {
-  background-color: transparent;
-}
-
-.app {
+/* ⚠️ 类名是 .chat-app 不是 .app：canvas（src/canvas/index.css）的应用壳
+   也叫 .app 且有 270+ 处引用（display:grid + 自己的背景），studio 单文档
+   下后注入的 canvas 版会整个接管聊天根节点的布局。chat 侧引用少（App.tsx
+   三处 + 本文件），所以改名的是这边。 */
+.chat-app {
   display: flex;
   flex-direction: column;
   height: 100vh;
 }
 
-/* The chat surface's `.app` is the floating card itself: it carries the
+/* The chat surface's `.chat-app` is the floating card itself: it carries the
    rounded corners + background + a hairline ring, and clips its content
    (ThreadView, which in slides mode splits into a chat column + the
    SlidesWorkspace pane) so it inherits the rounded silhouette. The 8px gap
    that lets the shell show through is applied to the native view bounds in
-   tabRegistry, not here — so .app fills its (already inset) view. */
-html[data-surface='chat'] .app {
+   tabRegistry, not here — so .chat-app fills its (already inset) view. */
+html[data-surface='chat'] .chat-app {
   height: 100%;
   overflow: hidden;
   /* 4px to match the inner panes' `rounded` (ThreadView). When it was 12px,
@@ -558,10 +532,12 @@ textarea::-moz-selection {
   opacity: 1;
 }
 
-/* 运行中：accent 弧线（r=6 周长≈37.7，24+14 的缺口弧） */
+/* 运行中：品牌绿弧线（r=6 周长≈37.7，24+14 的缺口弧）。用 --brand 而非
+   --accent：弧线与完成后的绿勾是同一个身份记号，不跟用户主题色走
+   （见 design-tokens 的 --brand 注释）。 */
 .tc-spin {
   fill: none;
-  stroke: hsl(var(--accent));
+  stroke: hsl(var(--brand));
   stroke-width: 2;
   stroke-linecap: round;
   stroke-dasharray: 24 14;

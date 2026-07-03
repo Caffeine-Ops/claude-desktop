@@ -25,7 +25,7 @@
   max-width: 860px;
   max-height: calc(100vh - 64px);
   background: var(--bg-panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   display: flex;
@@ -39,7 +39,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 20px 22px 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--od-border);
   background: var(--bg-panel);
 }
 .use-everywhere-modal__head-titles {
@@ -53,7 +53,7 @@
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--accent-strong, var(--accent));
+  color: var(--accent-strong, var(--od-accent));
   font-weight: 600;
 }
 .use-everywhere-modal__title {
@@ -94,7 +94,7 @@
 .use-everywhere-modal__close:focus-visible {
   background: var(--bg-subtle);
   color: var(--text);
-  border-color: var(--border);
+  border-color: var(--od-border);
 }
 
 /* Tab strip — one row of pill buttons for the five surfaces. */
@@ -103,7 +103,7 @@
   flex-wrap: wrap;
   gap: 6px;
   padding: 10px 22px 0;
-  border-bottom: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--od-border);
   background: var(--bg-panel);
 }
 .use-everywhere-modal__tab {
@@ -128,7 +128,7 @@
 .use-everywhere-modal__tab.is-active {
   color: var(--text-strong);
   background: var(--bg);
-  border-color: var(--border);
+  border-color: var(--od-border);
   border-bottom-color: var(--bg);
 }
 
@@ -187,13 +187,13 @@
   line-height: 1.55;
   color: var(--text-muted);
   background: var(--bg-subtle);
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--od-border);
   border-radius: var(--radius-sm, 6px);
   padding: 8px 10px;
 }
 
 .use-everywhere-snippet {
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-sm, 6px);
   background: var(--bg-panel);
   overflow: hidden;
@@ -204,7 +204,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--od-border);
   background: var(--bg-subtle);
   font-size: 11.5px;
   color: var(--text-muted);
@@ -219,7 +219,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   background: var(--bg);
   color: var(--text-muted);
   padding: 3px 8px;
@@ -229,8 +229,8 @@
   transition: color 120ms ease, border-color 120ms ease;
 }
 .use-everywhere-snippet__copy:hover {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--od-accent);
+  border-color: var(--od-accent);
 }
 .use-everywhere-snippet__pre {
   margin: 0;
@@ -256,7 +256,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 14px 22px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--od-border);
   background: var(--bg-panel);
 }
 .use-everywhere-modal__foot-info {
@@ -293,19 +293,19 @@
 .use-everywhere-modal__secondary {
   background: transparent;
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
 }
 .use-everywhere-modal__secondary:hover {
   background: var(--bg-subtle);
 }
 .use-everywhere-modal__primary {
-  background: var(--accent);
+  background: var(--od-accent);
   color: var(--accent-on, #fff);
-  border: 1px solid var(--accent);
+  border: 1px solid var(--od-accent);
 }
 .use-everywhere-modal__primary:hover {
-  background: var(--accent-strong, var(--accent));
-  border-color: var(--accent-strong, var(--accent));
+  background: var(--accent-strong, var(--od-accent));
+  border-color: var(--accent-strong, var(--od-accent));
 }
 
 @media (max-width: 700px) {

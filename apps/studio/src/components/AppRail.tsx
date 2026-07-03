@@ -10,94 +10,161 @@
  * （同一 React 树内切换）——这正是单视图整合的意义：跨页面状态共享、
  * 拖拽、动画过渡都是进程内操作。
  *
- * 会话列表刻意不放在 rail 里：迁入的聊天页（/chat 的 App 树）自带
- * ThreadListSidebar，rail 再放一份就是双份维护。设置走
- * tabApi.openSettingsWindow()——复用现有全窗设置 overlay（web
- * ?settings=1），零迁移成本。
+ * UI 原语用 shadcn/ui（Button/lucide 图标）；会话列表（RailSessionList）
+ * 是 legacy shell rail 里 ShellSessionList 的回归——Phase 4 删 shell
+ * renderer 时它跟着消失了，现以 shadcn 版长回 rail 中段，数据链路复用
+ * SHELL_SESSION_* IPC（详见 RailSessionList 头注释）。
  *
  * 渲染在根 layout（server 树）里，所以本组件不得在模块层触碰 window；
- * tabApi 只在事件处理器里访问并做存在判断（浏览器直开时是 undefined）。
+ * chatApi 只在事件处理器 / effect 里访问并做存在判断（浏览器直开时是
+ * undefined）。
  */
 
-import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { Image as ImageIcon, MessageCircle, Plus, Settings } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
+
+import { Button } from '@/src/components/ui/button'
+import { RailSessionList } from '@/src/components/RailSessionList'
+import { cn } from '@/src/lib/utils'
 
 const NAV_ITEMS: { href: string; label: string; icon: ReactNode }[] = [
   {
     href: '/chat',
     label: '智能助手',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.7a8.5 8.5 0 1 1 16.1-3.8Z" />
-      </svg>
-    )
+    icon: <MessageCircle className="size-4" />
   },
   {
     // canvas SPA 挂在根 catch-all（router 是根路径制，见 app/[[...slug]]），
     // 所以「工作画布」指 '/'。active 判定在下面特判。
     href: '/',
     label: '工作画布',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <rect x="3" y="3" width="18" height="18" rx="2" />
-        <circle cx="8.5" cy="8.5" r="1.5" />
-        <path d="m21 15-5-5L5 21" />
-      </svg>
-    )
+    icon: <ImageIcon className="size-4" />
   }
 ]
+
+/**
+ * 切到聊天面 —— **原生 pushState（shallow）**而非 router.push：两个面都
+ * 常驻在 SurfaceHost、page 全是空壳，切换其实不需要 Next 做任何导航工作
+ * （dev 下 router.push 的 RSC 请求 + 内部处理实测占 ~276ms EvaluateScript）。
+ * Next 16 官方支持原生 History API：usePathname/useSearchParams 照常同步
+ * （SurfaceHost 因此切面），但零 RSC fetch、零 page 切换。canvas 侧的
+ * navigate() 本来就是同款机制。
+ */
+function goChatShallow(): void {
+  window.history.pushState(null, '', '/chat')
+}
 
 export function AppRail() {
   const pathname = usePathname()
 
+  // 底部 user chip 的真实数据：OS 用户名（preload 启动时 os.userInfo() 读定，
+  // 同步属性）+ 当前 CLI 后端（bundled → fusion-code / system → Claude Code）。
+  // 浏览器直开无 chatApi 时 identity 保持 null，chip 整个不渲染——rail 上
+  // 一块空比一块假身份诚实（与 RailSessionList 空态同一原则）。
+  const [identity, setIdentity] = useState<{ user: string; backend: string } | null>(null)
+  useEffect(() => {
+    const api = window.chatApi
+    if (!api) return
+    const user = api.osUser || '本机用户'
+    setIdentity({ user, backend: 'fusion-code' })
+    api
+      .getCliBackend()
+      .then((s) => {
+        setIdentity({ user, backend: s.mode === 'system' ? 'Claude Code' : 'fusion-code' })
+      })
+      .catch(() => {
+        /* 检测失败保持默认 fusion-code 文案，不打断 rail 渲染 */
+      })
+  }, [])
+
   return (
-    <nav className="flex h-full w-52 shrink-0 flex-col gap-1 border-r border-border bg-sidebar px-3 pb-4 pt-12">
-      <Link
-        href="/chat"
-        className="mb-2 flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 text-sm font-medium text-primary"
+    // 无右边框：rail 与窗口背景是同一块面（bg-sidebar == body），内容区靠
+    // 悬浮卡的阴影分隔，而不是一条竖线。宽度对齐原型 --sidebar-w: 244px
+    // （docs/ui-prototype-shell-floating.html；旧值 220 给不下「标题 + 相对
+    // 时间」的会话行）。
+    <nav className="flex h-full w-61 shrink-0 flex-col gap-1 bg-sidebar px-3 pb-3">
+      <Button
+        variant="ghost"
+        className="mb-2 justify-start gap-2 bg-sidebar-primary/12 px-3 text-sidebar-primary hover:bg-sidebar-primary/18 hover:text-sidebar-primary"
+        onClick={() => {
+          // 新对话 = 切到「新会话」再进聊天路由。sessionId null 的
+          // SWITCH_REQUEST 经 main 正规化后由 chat 的 FusionRuntimeProvider
+          // 接住（onSwitchToNewThread）；浏览器直开无 chatApi 时退化为纯导航。
+          void window.tabApi?.switchShellSession?.(null)
+          if (!pathname.startsWith('/chat')) goChatShallow()
+        }}
       >
-        <span className="text-base leading-none">+</span> 新对话
-      </Link>
+        <Plus className="size-4" /> 新对话
+      </Button>
 
       {NAV_ITEMS.map((item) => {
         // '/chat*' 归聊天，其余一切路径（'/'、'/projects'、'/project/x'…）
         // 都是 canvas SPA 的地盘。
         const active =
           item.href === '/' ? !pathname.startsWith('/chat') : pathname.startsWith(item.href)
+        const pillClass = cn(
+          'justify-start gap-2 px-3',
+          // 中性灰选中——绿 accent 只留给「新对话」CTA 和会话选中态
+          // （原型的用色纪律），nav pill 不抢。旧 bg-accent 是全局蓝，
+          // 压在灰 rail 上像个异物，一并退役。hover 用 rail 专属的
+          // sidebar-accent（比 ghost 默认的 muted 深一档，灰 rail 上才有
+          // 可见反馈）；active 态显式锁同色，免得 hover 被 ghost 默认变浅。
+          active
+            ? 'bg-sidebar-accent font-medium text-sidebar-foreground hover:bg-sidebar-accent'
+            : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground'
+        )
         return (
-          <Link
+          <Button
             key={item.href}
-            href={item.href}
-            className={
-              'flex items-center gap-2 rounded-lg px-3 py-2 text-sm ' +
-              (active
-                ? 'bg-accent font-medium text-accent-foreground'
-                : 'text-muted-foreground hover:bg-accent/50')
-            }
+            variant="ghost"
+            className={pillClass}
+            onClick={() => {
+              if (item.href === '/') {
+                // 工作画布不能走 Next <Link>：canvas 树常驻在 SurfaceHost
+                // （keep-alive），它的自制 router 只听 popstate——Next 软导航
+                // 改了 URL 它不知道，视图不会回首页。canvas.navigate 自己
+                // pushState + 派发 popstate：canvas 回首页，Next 的 native
+                // history 集成同步 usePathname，SurfaceHost 随之切面。
+                // 动态 import：canvas 模块求值期触碰 window，不能静态 import
+                // 进本组件（layout SSR 会炸）；事件处理器内加载则安全。
+                void import('@/src/canvas/router').then(({ navigate }) => {
+                  navigate({ kind: 'home', view: 'home' })
+                })
+              } else {
+                // 智能助手同为 shallow pushState（见 goChatShallow 注释）。
+                goChatShallow()
+              }
+            }}
           >
             {item.icon}
             {item.label}
-          </Link>
+          </Button>
         )
       })}
 
-      <div className="mt-4 px-3 text-xs text-muted-foreground">更多</div>
-      <button
-        type="button"
-        className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent/50"
-        onClick={() => {
-          // 复用现有全窗设置 overlay。浏览器直开（无 tabApi）时静默无效——
-          // 设置本就依赖壳内 daemon 环境。
-          void window.tabApi?.openSettingsWindow()
-        }}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
-        </svg>
-        设置
-      </button>
+      {/* 会话列表占据 rail 中段的全部剩余高度（内部自带 ScrollArea）。 */}
+      <RailSessionList />
+
+      <div className="mt-auto flex flex-col gap-1 pt-4">
+        <div className="px-3 text-xs text-muted-foreground">更多</div>
+        <Button
+          variant="ghost"
+          className="justify-start gap-2 px-3 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          onClick={() => {
+            // 设置走 canvas App 的 overlay 模式（?settings=1 → 全屏设置页，
+            // 数据链路完整）。shallow pushState：canvas 的 isSettingsOverlay
+            // 用 useSearchParams 响应式读取，Next 的 native history 集成会
+            // 同步它，overlay 即开——零刷新零 RSC 请求（关闭走
+            // handleOverlayClose 的 history.back，同文档软回退）。
+            window.history.pushState(null, '', '/?settings=1')
+          }}
+        >
+          <Settings className="size-4" />
+          设置
+        </Button>
+      </div>
     </nav>
   )
 }

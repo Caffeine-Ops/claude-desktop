@@ -533,7 +533,12 @@ function AssistantMarkdownImpl({ text }: { text: string }): React.JSX.Element {
     <div className="break-words text-[14px] font-medium leading-relaxed tracking-normal text-foreground">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+        // detect:false（默认）——只对标注了语言的 fence 高亮。自动探测是
+        // highlight.js 最贵的路径（把全部语法库对文本逐一打分），而未标语言
+        // 的 fence 多半是命令输出/纯文本，探测纯属浪费；切会话时历史消息
+        // 全量 mount，每个 fence 的探测成本按条数放大，是切换卡顿的主要
+        // 成本之一。代价只是「模型偷懒没写语言标注的真代码」不上色。
+        rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
         components={components}
       >
         {text}

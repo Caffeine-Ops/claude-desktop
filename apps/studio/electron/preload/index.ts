@@ -546,7 +546,10 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('chatApi', chatApi)
     contextBridge.exposeInMainWorld('tabApi', tabApi)
   } catch (error) {
-    console.error(error)
+    // ⚠️ 任何一个 expose 抛错都会让后续的**整体跳过**（chatApi/tabApi
+    // 一起消失），页面侧表现为 HostGate 判定「浏览器直开」。带前缀打日志，
+    // 排查「壳内却说未注入」这类问题时先搜这一条。
+    console.error('[preload] exposeInMainWorld failed — chatApi/tabApi may be missing:', error)
   }
 } else {
   // @ts-ignore (define in dts)

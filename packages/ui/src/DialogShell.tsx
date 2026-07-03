@@ -8,6 +8,11 @@ import { useEffect, type ReactNode } from 'react'
 /**
  * DialogShell
  * -----------
+ * ⚠️ DEPRECATED（2026-07-03）：studio 已切到 shadcn/radix 底座的同 API 实现
+ * （apps/studio/src/components/ui/dialog-shell.tsx，portal/focus trap/aria
+ * 由 radix 接管），本包已无消费方。保留仅作参考；确认无外部依赖后可随
+ * @open-design/ui 一起删除。新代码一律用 studio 内的 shadcn 版本。
+ *
  * The modal chrome that apps/desktop's Mcp / Skills / Logs dialogs each
  * hand-rolled an identical copy of: a dimmed full-screen backdrop, a
  * centered rounded card, click-outside-to-close, and a global Escape

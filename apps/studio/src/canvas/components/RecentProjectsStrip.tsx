@@ -12,6 +12,7 @@ import { useT } from '../i18n';
 import { fetchProjectFiles, projectFileUrl } from '../providers/registry';
 import type { Project, ProjectDisplayStatus, ProjectFile } from '../types';
 import { Icon } from './Icon';
+import { LazyMount } from './LazyMount';
 import { STATUS_LABEL_KEYS } from './DesignsTab';
 
 interface Props {
@@ -174,15 +175,17 @@ export function RecentProjectsStrip({
                     aria-hidden
                   />
                 ) : cover.kind === 'html' && cover.src ? (
-                  <iframe
-                    className="recent-projects__thumb-iframe"
-                    src={cover.src}
-                    title=""
-                    loading="lazy"
-                    sandbox="allow-scripts"
-                    tabIndex={-1}
-                    aria-hidden
-                  />
+                  <LazyMount>
+                    <iframe
+                      className="recent-projects__thumb-iframe"
+                      src={cover.src}
+                      title=""
+                      loading="lazy"
+                      sandbox="allow-scripts"
+                      tabIndex={-1}
+                      aria-hidden
+                    />
+                  </LazyMount>
                 ) : (
                   <span className="recent-projects__card-glyph" aria-hidden>{cover.initial}</span>
                 )}

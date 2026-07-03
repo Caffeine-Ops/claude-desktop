@@ -21,16 +21,57 @@
 /* 代码高亮主题（highlight.js）。 */
 @import '../src/chat/styles/highlight.css';
 
-/* 工作画布（src/canvas/，迁移自 apps/web）的样式链。它自带 utilities-only
- * 的 Tailwind（theme.css + utilities.css，刻意无 preflight——27k 行手写 CSS
- * 依赖裸元素默认样式）。⚠️ 已知张力：上面 chat 链的完整 tailwindcss import
- * 含全局 preflight，理论上会波及 canvas 的裸元素——两链并存是 Phase 3 平移
- * 期的过渡态，视觉回归在实测中逐处收敛（utilities 双份声明幂等，无冲突）。 */
-@import '../src/canvas/index.css';
+/* ⚠️ 工作画布（src/canvas/）的两个样式入口**不在这里** —— 在 layout.tsx 里
+ * 用 JS import。原因（视觉回归排查实锤）：本文件的 chat 链展开成规则后，
+ * 排在其后的任何 @import 都违反「@import 必须前置」规范，会被 lightningcss
+ * 静默丢弃 → canvas 27k 行样式整体蒸发（h1 掉回 preflight 的 13.5px）。
+ * JS import 的每个 CSS 是独立 stylesheet，浏览器按 import 顺序注入，无此
+ * 约束——这也是 web 原版 layout.tsx 的做法。 */
 
 /* studio 自己的 app/ 目录不在 index.css 的 @source 显式清单里，补一条
  * 让 Tailwind 扫到 page/layout 里用的类名。路径相对本文件。 */
 @source '../app/**/*.{ts,tsx}';
+
+/* 重命名成功后的一次性微光（rail 会话行，对应原型 renamed-flash）。挂类由
+ * RailSessionList 控制：提交改名后给行加 .just-renamed，超时移除以便下次
+ * 改名还能重播。 */
+@keyframes renamed-flash {
+  0% {
+    background-color: hsl(var(--sidebar-primary) / 0.16);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.just-renamed {
+  animation: renamed-flash 0.9s cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+/* ── 悬浮内容卡（docs/ui-prototype-shell-floating.html 的 1:1 落地）──────
+ * 窗口底面 = rail 灰面（body 的 bg-sidebar），右侧内容区（chat + canvas
+ * 两面共用一块卡，结构见 layout.tsx 的 stage/card 注释）浮在底面上。
+ * 阴影三层：1px hairline 圈轮廓 + 近距离接触影 + 大半径环境影；暗色下
+ * hairline 换成顶部 1px 内侧高光——暖黑底上黑描边不可见，浮起感靠
+ * 「表面比底面亮一档（--card vs --background）+ 高光边 + 深影」表达。
+ * 数值照抄原型，调整请先改原型看效果再同步回来，别在这里手拧。 */
+.shell-content-card {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  background: hsl(var(--card));
+  box-shadow:
+    0 0 0 1px hsl(240 6% 10% / 0.045),
+    0 1px 2px hsl(240 6% 10% / 0.05),
+    0 12px 32px hsl(240 6% 10% / 0.08);
+}
+.dark .shell-content-card {
+  box-shadow:
+    inset 0 1px 0 hsl(40 20% 95% / 0.045),
+    0 0 0 1px hsl(0 0% 0% / 0.35),
+    0 16px 48px hsl(0 0% 0% / 0.5);
+}
 
 /* Apple DESIGN.md §3 基础排版，对齐 desktop renderer 的全局设置。
  * 字体栈本体在共享 tokens 里（--font-sans），来源单一。 */

@@ -31,12 +31,12 @@
       "@/*": [
         "./*"
       ],
-      // desktop shared 类型的单一来源别名。renderer 对 shared 的引用 100% 是
-      // import type（已验证），编译期全部擦除——Turbopack 不会打包 desktop 的
-      // 任何代码，这条 paths 只服务 tsc/IDE 的类型解析。等 Phase 2 后期类型
-      // 下沉 packages/chat-protocol 后删除。
+      // Electron 宿主层 shared 类型的单一来源别名（desktop 并包后住在本包
+      // electron/shared/）。前端对 shared 的引用 100% 是 import type（已验证），
+      // 编译期全部擦除——Turbopack 不会打包 electron/ 的任何代码，这条 paths
+      // 只服务 tsc/IDE 的类型解析。等类型下沉 packages/chat-protocol 后删除。
       "@desktop-shared/*": [
-        "../desktop/src/shared/*"
+        "./electron/shared/*"
       ]
     }
   },

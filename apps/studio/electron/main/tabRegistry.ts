@@ -7,17 +7,11 @@ import {
 } from 'electron'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { is } from '@electron-toolkit/utils'
 
 import appIcon from '../../resources/icon.png?asset'
 import { ChatEngine, createChatEngine } from './core/engine'
 import { clearUnread } from './tray'
-import { addLogSubscriber, removeLogSubscriber } from './core/logCollector'
-import {
-  resolveWebTabUrl,
-  resolveWebSettingsUrl,
-  resolveStudioTabUrl
-} from './services/openDesignServices'
+import { resolveStudioTabUrl } from './services/openDesignServices'
 import {
   IPC_CHANNELS,
   type ShellMenuAction,
@@ -42,8 +36,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
  * 递归——close→open→devtools-opened→close→open… 无限循环，主进程日志里那条
  * DevTools 内部的 `presentUI` 噪音会被刷爆（每秒上千行）。快捷键这一条路径已经
  * 覆盖绝大多数打开方式；右键「检查」走默认停靠是可接受的折中，远好过死循环。
+ *
+ * `resolveTarget`：可选的**重定向**。shell webContents 传入它把 DevTools 指到
+ * 当前活跃的 studio tab——shell 自己只是一张静态 splash，检查它没有任何意义，
+ * 但启动后键盘焦点可能还落在 shell 上（用户没点过页面），不重定向的话 ⌘⌥I
+ * 打开的就是 splash 的 DevTools。返回 null 时回落到 wc 自身。
  */
-function forceDetachedDevTools(wc: WebContents): void {
+function forceDetachedDevTools(
+  wc: WebContents,
+  resolveTarget?: () => WebContents | null
+): void {
   wc.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
     const key = input.key.toLowerCase()
@@ -54,11 +56,12 @@ function forceDetachedDevTools(wc: WebContents): void {
       ((input.control || input.meta) && input.shift && (key === 'i' || key === 'j'))
     if (!isToggle) return
     event.preventDefault()
-    if (wc.isDestroyed()) return
-    if (wc.isDevToolsOpened()) {
-      wc.closeDevTools()
+    const target = resolveTarget?.() ?? wc
+    if (target.isDestroyed()) return
+    if (target.isDevToolsOpened()) {
+      target.closeDevTools()
     } else {
-      wc.openDevTools({ mode: 'detach' })
+      target.openDevTools({ mode: 'detach' })
     }
   })
 }
@@ -118,10 +121,10 @@ function attachExternalLinkHandler(wc: WebContents): void {
  * own webContents spans the full window underneath, but only this left
  * band is ever uncovered, so that's all the user sees of it.
  *
- * ⚠️ This value is duplicated as a hard-coded `width: 220px` in
- * `renderer/src/assets/main.css` (`.shell-chrome`). There is NO shared
- * constant — the two must be edited together or the rail will either
- * leave a sliver of bare shell background or clip its own content.
+ * ⚠️ Phase 4 起这是**死代码**：能画 rail 的 shell renderer 已整体下线
+ * （shell 只剩静态 splash），且 'chat' / 'web' kind 的 tab 再无创建入口——
+ * layoutActiveTab 只会走 studio 全屏分支。留着仅为 kind 枚举收窄（deferred
+ * cleanup）时一并删除。
  */
 const NAV_RAIL_WIDTH = 220
 
@@ -170,18 +173,6 @@ let shellWindow: BrowserWindow | null = null
 const tabs = new Map<number, TabContext>()
 const tabOrder: number[] = []
 
-/**
- * The settings modal's WebContentsView, or null when closed. It's a
- * per-shell-window singleton that, when open, covers the *entire* window
- * (y = 0, over the tab strip and every tab) so the modal can render a
- * dimming backdrop + centered card. The view's background is transparent
- * (same trick the tab views use) so the tab underneath shows through and
- * the renderer's semi-opaque scrim reads as "the window went dark".
- *
- * Reachable from any tab — chat or web — because it sits in the shell's
- * own contentView tree, not inside a tab. See openSettingsView below.
- */
-let settingsView: WebContentsView | null = null
 let activeTabId: number | null = null
 
 /** True while another workspace tab can still be opened. */
@@ -191,11 +182,12 @@ export function canAddTab(): boolean {
 
 /**
  * Create the single shell BrowserWindow. Called once at app startup
- * from `main/index.ts`. The shell's main webContents renders the tab
- * bar (React app keyed by `?shell=1`) and each tab is a
- * WebContentsView layered below.
+ * from `main/index.ts`. The shell's own webContents loads NOTHING
+ * (about:blank)——唯一的 studio tab 是层叠其上的 WebContentsView（见
+ * newStudioTab），窗口保持隐藏直到它首帧就绪才 show（见 activateTab），
+ * 所以用户睁眼看到的第一帧就是 studio 页面，没有任何中转画面。
  */
-export function createShellWindow(opts?: { singleView?: boolean }): BrowserWindow {
+export function createShellWindow(): BrowserWindow {
   if (shellWindow && !shellWindow.isDestroyed()) return shellWindow
 
   const win = new BrowserWindow({
@@ -216,23 +208,22 @@ export function createShellWindow(opts?: { singleView?: boolean }): BrowserWindo
     // rail-coloured surface instead of flashing white. (Light value; dark mode
     // repaints via the renderer root once it mounts — see main.css
     // html[data-surface='shell'].)
-    backgroundColor: '#f6f6f5',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false
-    }
+    backgroundColor: '#f6f6f5'
+    // 刻意不给 webPreferences：shell webContents 只承载静态 splash，
+    // 不需要 preload / chatApi——Electron 默认（sandbox + contextIsolation +
+    // 无 nodeIntegration）就是我们要的最小权限面。
   })
 
   shellWindow = win
   // DevTools 强制 detach，避免被覆盖全窗的 WebContentsView 遮挡（见函数注释）。
-  forceDetachedDevTools(win.webContents)
+  // shell 上触发的快捷键重定向到活跃 tab——检查一张静态 splash 没有意义。
+  forceDetachedDevTools(win.webContents, () => getActiveTabWebContents())
   attachExternalLinkHandler(win.webContents)
 
-  win.on('ready-to-show', () => {
-    win.show()
-  })
+  // 刻意没有 'ready-to-show' → show()：shell webContents 不加载内容，该事件
+  // 根本不会触发。show 的唯一入口在 activateTab——studio tab 首帧就绪上屏时
+  // 连带把窗口带出来，用户不会看到任何加载中间态（dev 下 next 编译首页的
+  // 几秒里窗口就是不存在的，终端有日志；prod 下 app://studio 读盘几乎无感）。
 
   const onUserReturned = (): void => clearUnread()
   win.on('focus', onUserReturned)
@@ -244,16 +235,13 @@ export function createShellWindow(opts?: { singleView?: boolean }): BrowserWindo
   // without a width change, so we layout on those too.
   win.on('resize', () => {
     layoutActiveTab()
-    layoutSettingsView()
   })
   win.on('enter-full-screen', () => {
     layoutActiveTab()
-    layoutSettingsView()
     broadcastFullscreen(true)
   })
   win.on('leave-full-screen', () => {
     layoutActiveTab()
-    layoutSettingsView()
     broadcastFullscreen(false)
   })
 
@@ -266,9 +254,6 @@ export function createShellWindow(opts?: { singleView?: boolean }): BrowserWindo
     tabs.clear()
     tabOrder.length = 0
     activeTabId = null
-    // The settings overlay (if open) is torn down with the window; just
-    // drop our reference so a later close/relayout doesn't touch a dead view.
-    settingsView = null
     shellWindow = null
     for (const ctx of all) {
       // web tab 没有 engine —— 跳过。
@@ -278,245 +263,12 @@ export function createShellWindow(opts?: { singleView?: boolean }): BrowserWindo
     }
   })
 
-  // Load the renderer with `?shell=1`. main.tsx branches on the query:
-  // legacy 模式渲染 ShellApp（左侧 rail），单视图模式（&singleview=1）渲染
-  // StudioSplash 启动画面——studio tab 首帧就绪前窗口露出的就是这个
-  // webContents，不能再画 legacy rail（用户会看到旧界面闪现后跳变）。
-  const shellUrl = resolveRendererUrl(
-    opts?.singleView ? { shell: '1', singleview: '1' } : { shell: '1' }
-  )
-  loadIntoWebContents(win.webContents, shellUrl)
+  // shell webContents 保持 about:blank——它唯一的存在意义是给 studio 的
+  // WebContentsView 当宿主。窗口 show 之前 studio 必已上屏（activateTab），
+  // 这层空白永远不会被用户看到；backgroundColor 只兜 resize/全屏切换的
+  // 间隙帧。
 
   return win
-}
-
-/**
- * Create a new tab: spin up a WebContentsView for the workspace
- * renderer, create its engine, attach the view to the shell window,
- * and activate it. The engine defaults its workspace to the OS Desktop
- * at construction (see engine.ts `resolveDefaultWorkspace`), so the new
- * tab opens straight into a usable chat UI with no folder-picker step.
- */
-export function newTab(): TabContext {
-  if (!shellWindow || shellWindow.isDestroyed()) {
-    throw new Error('Shell window is not initialized.')
-  }
-  // Hard cap so we don't accidentally fork more fusion-code CLI
-  // subprocesses than the host can comfortably run. The IPC layer
-  // is expected to check `canAddTab()` before invoking and show
-  // the user a dialog; this throw is the defense-in-depth catch
-  // for any path that bypasses that (HMR reload, direct module
-  // reference in tests, …).
-  if (!canAddTab()) {
-    throw new Error(`Maximum of ${MAX_TABS} tabs already open.`)
-  }
-
-  const view = new WebContentsView({
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  })
-  // Transparent background so the shell's theme shows through during
-  // the brief interval before the renderer paints its first frame.
-  view.setBackgroundColor('#00000000')
-  // Round the NATIVE view layer to match the floating chat card (main.css
-  // gives .app the same 12px radius). This is the real fix for the square
-  // drop-shadow that macOS composited around the inset view: the view layer
-  // was a sharp rectangle, so the system shadow it cast was rectangular and
-  // poked past the renderer's CSS-rounded corners. Rounding the layer itself
-  // makes the shadow follow the rounded shape (no more square corners).
-  // setBorderRadius needs Electron ≥35 — guarded so a downgrade can't crash
-  // (the method simply won't exist on older builds).
-  view.setBorderRadius?.(12)
-  forceDetachedDevTools(view.webContents)
-  attachExternalLinkHandler(view.webContents)
-
-  const engine = createChatEngine(view.webContents, {
-    shouldBumpOnTurnEnd: () => {
-      // Don't bump when: shell is focused AND this tab is the active one.
-      const shellFocused = !!shellWindow && !shellWindow.isDestroyed() && shellWindow.isFocused()
-      const amActive = activeTabId === view.webContents.id
-      return !(shellFocused && amActive)
-    }
-  })
-
-  const ctx: TabContext = {
-    view,
-    engine,
-    title: '智能助手',
-    kind: 'chat'
-  }
-  tabs.set(view.webContents.id, ctx)
-  tabOrder.push(view.webContents.id)
-
-  // Fan-out this tab's session-list changes to the SHELL renderer too.
-  // The engine already sends SESSION_LIST_CHANGED to its own webContents
-  // (wireWebContentsBridges in engine.ts), but the shell now renders the
-  // session list and is a separate webContents that never receives that.
-  // We only relay when THIS tab is the active one, since the shell only
-  // ever shows the active chat tab's sessions. Switching tabs re-pulls via
-  // activateTab's broadcast below, so a background tab's churn is ignored.
-  engine.on('sessionListChanged', () => {
-    if (activeTabId === view.webContents.id) {
-      broadcastShellSessionListChanged()
-    }
-  })
-
-  // Broadcast the new pill to existing tabs BEFORE we start loading
-  // the new renderer. Without this, the user clicks "+" and sees no
-  // feedback until 200-500 ms later when the new renderer finishes
-  // painting. With this, the currently-active tab's TabBar gets the
-  // inactive pill immediately so the chrome feels responsive.
-  broadcastTabList()
-
-  // Load the main workspace renderer (no shell query string). Dev
-  // uses the HMR server URL; prod loads the built index.html. The
-  // same preload and renderer bundle serve both the tab and the
-  // shell — branching on `window.location.search.includes('shell=1')`
-  // in the renderer entry decides which root component mounts.
-  //
-  // Note: the view is NOT added to `contentView` here. activateTab
-  // is the single place that mounts/unmounts views from the shell's
-  // visual hierarchy, which keeps "one view at a time" as a true
-  // invariant (see the comment on activateTab for why).
-  const tabUrl = resolveRendererUrl({})
-  loadIntoWebContents(view.webContents, tabUrl)
-
-  // Refresh the displayed title whenever the tab's engine commits a
-  // workspace (either initial set via the gate, or the renderer's
-  // workspace chip). The tabs map is the canonical source for tab
-  // labels, which broadcastTabList pushes to the shell renderer.
-  view.webContents.on('did-finish-load', () => {
-    broadcastTabList()
-  })
-
-  // Fan the engine's pending-permission count onto every tab's
-  // TabBar. When a background session inside THIS tab triggers a
-  // tool-permission request (or the user resolves one), we need
-  // every OTHER tab's TabBar to re-render and show / hide the red
-  // notification badge. Piggyback on `broadcastTabList()` so the
-  // count ships inside TabDescriptor — no new IPC channel needed.
-  //
-  // Unsubscribe on tab close is implicit: engine.dispose() calls
-  // broker.removeAllListeners(), which drops this handler.
-  engine.permissionBroker.on('pendingChanged', () => {
-    broadcastTabList()
-  })
-
-  // Activation policy — the whole point of the deferral below is to
-  // keep the previously-active tab on screen until the new renderer
-  // is actually ready to draw a TabBar + header. If we swap blindly
-  // at creation time, the user sees the chrome disappear for a beat
-  // because the new WebContentsView is still blank.
-  //
-  //   - First boot (no active tab yet): nothing else to show, so we
-  //     must activate immediately — otherwise the shell window sits
-  //     behind an empty content area forever.
-  //   - Subsequent new-tab clicks: keep the previous view attached
-  //     and defer `activateTab(newId)` until the new renderer fires
-  //     `did-finish-load`. That's the earliest reliable moment React
-  //     has mounted the header/TabBar inside the new view, so the
-  //     hand-off is seamless.
-  if (activeTabId === null) {
-    activateTab(view.webContents.id)
-  } else {
-    const targetId = view.webContents.id
-    const promoteIfStillPending = (): void => {
-      // Guard against: (a) the tab being closed during load,
-      // (b) the user having already switched to this (or another)
-      // tab via a click in the meantime. In both cases calling
-      // activateTab would be wrong.
-      if (!tabs.has(targetId)) return
-      if (activeTabId === targetId) return
-      activateTab(targetId)
-    }
-    if (view.webContents.isLoading()) {
-      view.webContents.once('did-finish-load', promoteIfStillPending)
-    } else {
-      // Already loaded — fall through to immediate activation.
-      promoteIfStillPending()
-    }
-    // Safety net: if `did-finish-load` is never emitted for any
-    // reason (renderer crash, HMR reconnect swallowing the event)
-    // the new tab must still become visible within a bounded time
-    // or the user is stuck watching the old tab with a phantom
-    // pill in the TabBar.
-    setTimeout(promoteIfStillPending, 1500)
-  }
-  return ctx
-}
-
-/**
- * 创建「Open Design web」tab —— 第二个 tab。和 chat tab 的本质区别：
- *
- *  - **不创建 ChatEngine**：它的 webContents 加载的是 Open Design 的 web UI
- *    （dev: localhost:3000 / prod: app://open-design 自定义协议读磁盘，见
- *    appProtocol.ts），那套前端靠本地 daemon 的 HTTP API 工作（prod 下经
- *    app:// handler 反代给 daemon），完全不经过我们的 ChatEngine / fusion-code / IPC。
- *  - **不挂 chatApi preload**：web tab 是个受控的外部 origin，没必要也不应该把
- *    我们的 IPC 桥暴露给它，所以用默认 webPreferences（仍开 contextIsolation、
- *    关 nodeIntegration 以保持沙箱）。
- *  - **标题固定** "工作画布"，不跟随工作区 basename（它没有工作区概念）。
- *
- * 由主进程在 daemon/web 就绪后调用（见 main/index.ts），URL 由
- * openDesignServices.resolveWebTabUrl() 决定。
- */
-export function newWebTab(): TabContext {
-  if (!shellWindow || shellWindow.isDestroyed()) {
-    throw new Error('Shell window is not initialized.')
-  }
-  if (!canAddTab()) {
-    throw new Error(`Maximum of ${MAX_TABS} tabs already open.`)
-  }
-
-  const view = new WebContentsView({
-    webPreferences: {
-      // 不挂 chatApi preload：见上方注释。保持沙箱默认值。
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  })
-  view.setBackgroundColor('#00000000')
-  forceDetachedDevTools(view.webContents)
-  attachExternalLinkHandler(view.webContents)
-
-  const ctx: TabContext = {
-    view,
-    engine: null,
-    title: '工作画布',
-    kind: 'web'
-  }
-  tabs.set(view.webContents.id, ctx)
-  tabOrder.push(view.webContents.id)
-  broadcastTabList()
-
-  // 加载 Open Design web。dev 走 web dev server（http），prod 走 app:// 自定义协议。
-  // 两者都是非 file:// URL，loadIntoWebContents 走 loadURL 分支即可。
-  loadIntoWebContents(view.webContents, resolveWebTabUrl())
-
-  view.webContents.on('did-finish-load', () => {
-    broadcastTabList()
-  })
-
-  // 激活策略与 chat tab **故意不同**：web tab 是 app 启动时由主进程在后台
-  // 自动创建的（不是用户点 "+" 触发的），所以它绝不能抢占前台——否则用户
-  // 一开 app 就被甩到 Open Design，而那个 tab 没有 TabBar、回不到 chat
-  // （历史 bug，见 [[2026-05-23-daemon-origin校验拒跨源致web调api全403]] 同会话）。
-  //
-  //   - 冷启动时 chat tab 已先建并激活（activeTabId 非空）→ 这里什么都不做，
-  //     web tab 安静地留在后台，等用户从顶部常驻 TabBar 点 "Open Design" pill
-  //     才切过去（activateTab 由 TAB_SWITCH IPC 调）。
-  //   - 万一 web tab 竟成了首个 tab（activeTabId 为空，理论上不该发生，因为
-  //     index.ts 保证 chat 先建）——才立即激活，避免窗口空着没有可见内容。
-  if (activeTabId === null) {
-    activateTab(view.webContents.id)
-  }
-  // 已有前台 tab（正常路径）：不做 deferred 抢占激活，仅靠上面的
-  // did-finish-load → broadcastTabList 让顶部 TabBar 显示出第二个 pill。
-  return ctx
 }
 
 /**
@@ -591,19 +343,18 @@ export function newStudioTab(): TabContext {
     broadcastTabList()
   })
 
-  loadIntoWebContents(view.webContents, resolveStudioTabUrl())
+  void view.webContents.loadURL(resolveStudioTabUrl())
 
   view.webContents.on('did-finish-load', () => {
     broadcastTabList()
   })
 
-  // 激活策略分两种形态：
-  //  - legacy 第三 tab（activeTabId 非空）：同 newWebTab，后台创建绝不抢前台。
-  //  - 单视图首个 tab（activeTabId === null）：**defer 到 did-finish-load**
-  //    再上屏。studio dev server 探活 200 只代表 HTTP 可服务，dev 下 /chat
-  //    还要按需编译几秒——立即 activate 会把一个空白 view 盖到 shell 的
-  //    StudioSplash 启动画面上，用户看到的是白屏而非 splash。10s 兜底：
-  //    did-finish-load 万一丢失（HMR reconnect 吞事件），studio 也必须上屏。
+  // 激活策略：单视图首个 tab **defer 到 did-finish-load** 再上屏。
+  // studio dev server 探活 200 只代表 HTTP 可服务，dev 下首页还要按需编译
+  // 几秒——而窗口的首次 show 挂在 activateTab 里（shell 自身不加载内容），
+  // 所以 defer 的效果是：窗口一直隐藏，直到 studio 真有首帧才带内容出现，
+  // 用户看不到任何空白/加载中间态。10s 兜底：did-finish-load 万一丢失
+  // （HMR reconnect 吞事件），窗口也必须出来（宁可短暂空白也不能永不出现）。
   if (activeTabId === null) {
     const targetId = view.webContents.id
     const promote = (): void => {
@@ -676,16 +427,18 @@ export function activateTab(id: number): void {
   activeTabId = id
   layoutActiveTab()
 
-  // If the settings modal is open, switching tabs just re-added a tab view
-  // on top of it — re-raise the overlay so it stays the topmost child.
-  if (settingsView && !settingsView.webContents.isDestroyed()) {
-    try {
-      shellWindow.contentView.addChildView(settingsView)
-      layoutSettingsView()
-    } catch (err) {
-      console.warn('[tabRegistry] re-raise settings on activate failed:', err)
-    }
+  // 窗口的首次显示挂在这里，而不是 'ready-to-show'（shell webContents 不
+  // 加载内容，那个事件不会来）：studio 首帧就绪 → 上屏 → 窗口带着内容一起
+  // 出现，用户看到的第一帧就是 3100 的页面，没有 splash / 白屏中转。
+  if (!shellWindow.isVisible()) {
+    shellWindow.show()
   }
+
+  // 把键盘焦点主动交给刚上屏的 view。addChildView 不会自动转移焦点——
+  // 不 focus 的话，启动后（deferred activate 上屏 studio 时）焦点仍留在
+  // shell 的空白 webContents 上：用户不点一下页面就没法打字，⌘⌥I 这类按
+  // 焦点分发的快捷键也会落到 shell 而不是 studio。
+  target.view.webContents.focus()
 
   broadcastTabList()
   // The active tab changed, so the shell's session list (which shows the
@@ -783,6 +536,18 @@ export function getShellWindow(): BrowserWindow | null {
 }
 
 /**
+ * 当前活跃 tab（单视图形态下即唯一的 studio tab）的 webContents，没有或已
+ * 销毁时返回 null。给「DevTools 该指向谁」这类调用方用：shell webContents
+ * 只是静态 splash，任何面向「当前页面」的操作都应该落到这里。
+ */
+export function getActiveTabWebContents(): WebContents | null {
+  if (activeTabId === null) return null
+  const ctx = tabs.get(activeTabId)
+  if (!ctx || ctx.view.webContents.isDestroyed()) return null
+  return ctx.view.webContents
+}
+
+/**
  * Forward a settings-menu action from the shell's tab strip to the active
  * chat tab's renderer. The shell can't reach the chat renderer's stores
  * (separate webContents), so it routes through main: we look up the active
@@ -795,7 +560,7 @@ export function getShellWindow(): BrowserWindow | null {
 export function dispatchMenuActionToActiveTab(action: ShellMenuAction): void {
   if (activeTabId === null) return
   const ctx = tabs.get(activeTabId)
-  if (!ctx || ctx.kind !== 'chat') return
+  if (!ctx?.engine) return
   ctx.view.webContents.send(IPC_CHANNELS.SHELL_MENU_ACTION, { action })
 }
 
@@ -804,11 +569,16 @@ export function dispatchMenuActionToActiveTab(action: ShellMenuAction): void {
  * (web tab foreground / nothing open). Used by the SHELL_SESSION_LIST
  * handler so the shell can list the *active* tab's sessions off disk
  * without owning an engine — listSessions is a stateless workspace scan.
+ *
+ * 判定用 `!!ctx.engine` 而不是 kind==='chat'：单视图形态下唯一的 tab 是
+ * kind='studio'（持有完整 engine），SHELL_SESSION_* 这套通道现在服务的是
+ * studio 页面里的 AppRail 会话列表——卡死在 'chat' 会让整条链路对 studio
+ * 永远返回空（Phase 2 注释里欠的「放开到 studio」在这里补上）。
  */
 export function getActiveChatWorkspace(): string | null {
   if (activeTabId === null) return null
   const ctx = tabs.get(activeTabId)
-  if (!ctx || ctx.kind !== 'chat' || !ctx.engine) return null
+  if (!ctx?.engine) return null
   return ctx.engine.getWorkspace()
 }
 
@@ -823,7 +593,8 @@ export function getActiveChatWorkspace(): string | null {
 export function getActiveChatEngine(): ChatEngine | null {
   if (activeTabId === null) return null
   const ctx = tabs.get(activeTabId)
-  if (!ctx || ctx.kind !== 'chat' || !ctx.engine) return null
+  // 同 getActiveChatWorkspace：有 engine 的活跃 tab（studio）即聊天宿主。
+  if (!ctx?.engine) return null
   return ctx.engine
 }
 
@@ -840,7 +611,11 @@ export function dispatchSessionSwitchToActiveTab(
 ): void {
   if (activeTabId === null) return
   const ctx = tabs.get(activeTabId)
-  if (!ctx || ctx.kind !== 'chat') return
+  // 有 engine 即聊天宿主（studio tab）。单视图下这条环是「AppRail 点会话
+  // → invoke SWITCH_REQUEST → 这里发回同一 webContents → chat 的
+  // FusionRuntimeProvider 订阅接住」——发起方和接收方是同一个页面，main
+  // 只是把请求正规化成事件（复用 legacy shell rail 的既有链路）。
+  if (!ctx?.engine) return
   ctx.view.webContents.send(IPC_CHANNELS.SHELL_SESSION_SWITCH, { sessionId })
 }
 
@@ -853,6 +628,14 @@ export function dispatchSessionSwitchToActiveTab(
 export function broadcastShellSessionListChanged(): void {
   if (!shellWindow || shellWindow.isDestroyed()) return
   shellWindow.webContents.send(IPC_CHANNELS.SHELL_SESSION_LIST_CHANGED)
+  // 单视图形态下监听方是 studio 页面里的 AppRail 会话列表（shell 自身只是
+  // 空白宿主，上面那条 send 没人听）——按 broadcastTabList 的模式 fan-out
+  // 给每个 tab 的 webContents。
+  for (const id of tabOrder) {
+    const ctx = tabs.get(id)
+    if (!ctx || ctx.view.webContents.isDestroyed()) continue
+    ctx.view.webContents.send(IPC_CHANNELS.SHELL_SESSION_LIST_CHANGED)
+  }
 }
 
 /** All registered tab contexts, in insertion order. */
@@ -987,102 +770,6 @@ function layoutActiveTab(): void {
   })
 }
 
-/** Size the settings overlay to fill the *entire* window (covers the tab
- *  strip too, so the modal's dimming scrim reaches the very top). */
-function layoutSettingsView(): void {
-  if (!shellWindow || shellWindow.isDestroyed() || !settingsView) return
-  const bounds = shellWindow.getContentBounds()
-  settingsView.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height })
-}
-
-/**
- * Open the settings modal. Lazily creates a transparent WebContentsView
- * that loads the **Open Design web app** with `?settings=1` (the web app
- * boots straight into a full-screen SettingsDialog modal — it paints its
- * own dimming scrim + centered card). The view is added as the topmost
- * child of the shell's contentView so it covers both the tab strip and the
- * active tab, and is sized to the full window. Idempotent: calling it while
- * already open just refocuses.
- *
- * Why the web app and not a desktop-native page: it gives the overlay the
- * full, always-in-sync settings feature set (providers / connectors / MCP /
- * skills / notifications / appearance / …) backed by the daemon, with no
- * reimplementation in the desktop renderer. The overlay gets a minimal
- * `settings` preload exposing only `electronSettings.close()` — the web
- * page calls it to dismiss, and main tears the view down.
- *
- * Works regardless of which tab is active — the overlay lives in the shell
- * tree, not in a tab, so a web tab can summon it just the same.
- */
-export function openSettingsView(): void {
-  if (!shellWindow || shellWindow.isDestroyed()) return
-  if (settingsView && !settingsView.webContents.isDestroyed()) {
-    // Already open — bring focus back to it (e.g. the gear was clicked twice).
-    settingsView.webContents.focus()
-    return
-  }
-
-  const view = new WebContentsView({
-    webPreferences: {
-      // Minimal preload — only `electronSettings.close()`, NOT the full
-      // chatApi (this loads the external-origin web app). See settings.ts.
-      preload: join(__dirname, '../preload/settings.mjs'),
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false,
-      // Transparent so the dimmed tab shows through the web modal's scrim.
-      transparent: true
-    }
-  })
-  view.setBackgroundColor('#00000000')
-  forceDetachedDevTools(view.webContents)
-  attachExternalLinkHandler(view.webContents)
-  settingsView = view
-
-  // Topmost child → paints over the active tab view and the strip.
-  shellWindow.contentView.addChildView(view)
-  layoutSettingsView()
-
-  // Load the Open Design web app's settings entry (dev: localhost:3000,
-  // prod: app://). loadIntoWebContents handles both URL shapes.
-  loadIntoWebContents(view.webContents, resolveWebSettingsUrl())
-
-  // Register the overlay as a live log-stream target so the「日志分析」panel
-  // receives lines as they're produced. Registering here (not on
-  // did-finish-load) is fine: the panel pulls a full snapshot via getLogs on
-  // mount, covering anything streamed before its listener attached. Being in
-  // the subscriber set also tells attachRendererCapture to skip this view's
-  // own console, so the panel doesn't echo its own render noise.
-  addLogSubscriber(view.webContents)
-}
-
-/**
- * Close the settings modal: detach + destroy the overlay view. Safe to
- * call when already closed (no-op). Triggered by the renderer (scrim
- * click / Escape / ✕) via the SETTINGS_WINDOW_CLOSE IPC.
- */
-export function closeSettingsView(): void {
-  const view = settingsView
-  settingsView = null
-  if (!view) return
-  // Stop live log pushes to this view before tearing it down. The collector
-  // also self-cleans on the webContents' `destroyed` event, but unsubscribing
-  // explicitly here keeps the close path unambiguous.
-  removeLogSubscriber(view.webContents)
-  if (shellWindow && !shellWindow.isDestroyed()) {
-    try {
-      shellWindow.contentView.removeChildView(view)
-    } catch (err) {
-      console.warn('[tabRegistry] removeChildView(settings) failed:', err)
-    }
-  }
-  try {
-    view.webContents.close()
-  } catch (err) {
-    console.warn('[tabRegistry] settings view close failed:', err)
-  }
-}
-
 /**
  * Tell every other window the shared appearance changed so it re-pulls and
  * re-applies the daemon copy at runtime. Called from the APPEARANCE_SET
@@ -1113,65 +800,13 @@ export function broadcastAppearanceChanged(sourceWebContentsId: number): void {
     shellWindow.webContents.send(IPC_CHANNELS.APPEARANCE_CHANGED)
   }
 
-  // Settings overlay — minimal preload, receives the IPC.
-  if (
-    settingsView &&
-    !settingsView.webContents.isDestroyed() &&
-    settingsView.webContents.id !== sourceWebContentsId
-  ) {
-    settingsView.webContents.send(IPC_CHANNELS.APPEARANCE_CHANGED)
-  }
-
-  // Tabs: chat tabs get the IPC; web tabs (no preload) get an injected event.
+  // Tabs：单视图形态只剩 studio tab（完整 preload），直接走 IPC。
+  // （legacy 的 settings overlay / web tab executeJavaScript 分支已随
+  // Phase 4 物理下线。）
   for (const ctx of tabs.values()) {
     const wc = ctx.view.webContents
     if (wc.isDestroyed() || wc.id === sourceWebContentsId) continue
-    if (ctx.kind === 'web') {
-      // No preload here — bridge via a window event the web App subscribes to.
-      // Best-effort: a tab still loading (no document yet) silently no-ops.
-      wc.executeJavaScript(
-        "window.dispatchEvent(new CustomEvent('od:appearance-changed'))"
-      ).catch(() => {
-        /* tab navigating / destroyed mid-call — next mount re-pulls anyway */
-      })
-    } else {
-      wc.send(IPC_CHANNELS.APPEARANCE_CHANGED)
-    }
+    wc.send(IPC_CHANNELS.APPEARANCE_CHANGED)
   }
 }
 
-/**
- * Resolve the renderer URL — dev uses electron-vite's HMR server,
- * production loads the bundled index.html off disk. The returned
- * value is whatever Electron expects for `loadURL` (dev) or the
- * full file:// URL the file loader builds in prod (the caller
- * passes it to `loadIntoWebContents` below which handles both).
- */
-function resolveRendererUrl(query: Record<string, string>): string {
-  const params = new URLSearchParams(query).toString()
-  const suffix = params ? `?${params}` : ''
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    return `${process.env['ELECTRON_RENDERER_URL']}${suffix}`
-  }
-  const abs = join(__dirname, '../renderer/index.html')
-  // WebContentsView / webContents.loadFile supports query via options,
-  // but we normalize to loadURL for a single code path — file:// URL
-  // with query works identically in dev and prod.
-  return `file://${abs}${suffix}`
-}
-
-function loadIntoWebContents(wc: Electron.WebContents, url: string): void {
-  if (url.startsWith('file://')) {
-    // For file URLs we could use loadFile but it ignores query
-    // strings appended via concat — splitting them back out and
-    // passing through the `query` option is the only way to keep
-    // `?shell=1` intact in production.
-    const [filePath, rawQuery] = url.slice('file://'.length).split('?')
-    const query = rawQuery
-      ? Object.fromEntries(new URLSearchParams(rawQuery))
-      : undefined
-    void wc.loadFile(filePath!, query ? { query } : undefined)
-    return
-  }
-  void wc.loadURL(url)
-}

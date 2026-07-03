@@ -10,6 +10,7 @@ import { exportAsHtml, exportAsPdf, exportAsZip } from '../runtime/exports';
 import { buildSrcdoc } from '../runtime/srcdoc';
 import type { SkillSummary, Surface } from '../types';
 import { Icon } from './Icon';
+import { LazyMount } from './LazyMount';
 import { PreviewModal } from './PreviewModal';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
@@ -600,12 +601,14 @@ function ExampleCard({
       >
         {html ? (
           <>
-            <iframe
-              title={`${skill.name} ${t('examples.previewLabel').toLowerCase()}`}
-              sandbox="allow-scripts"
-              srcDoc={buildSrcdoc(html)}
-              tabIndex={-1}
-            />
+            <LazyMount>
+              <iframe
+                title={`${skill.name} ${t('examples.previewLabel').toLowerCase()}`}
+                sandbox="allow-scripts"
+                srcDoc={buildSrcdoc(html)}
+                tabIndex={-1}
+              />
+            </LazyMount>
             <span className="example-preview-overlay" aria-hidden="true">
               {t('examples.openPreview')}
             </span>

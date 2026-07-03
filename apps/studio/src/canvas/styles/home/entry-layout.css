@@ -34,7 +34,7 @@
 /* Left rail */
 .entry-nav-rail {
   width: var(--entry-rail-width, 64px);
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--od-border);
   background: var(--bg-panel);
   padding: 8px 0 10px;
   display: flex;
@@ -144,7 +144,7 @@
   height: 3px;
   overflow: hidden;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(in srgb, var(--od-accent) 18%, transparent);
   pointer-events: none;
 }
 .entry-updater-menu__progress::after {
@@ -153,7 +153,7 @@
   width: var(--updater-progress, 100%);
   height: 100%;
   border-radius: inherit;
-  background: var(--accent);
+  background: var(--od-accent);
   transition: width 180ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .entry-nav-rail__btn {
@@ -191,8 +191,8 @@
 }
 .entry-nav-rail__btn.is-active {
   background: var(--accent-tint);
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--od-accent);
+  border-color: color-mix(in srgb, var(--od-accent) 18%, transparent);
 }
 /* The "new project" button is an action, not a destination, so it reads
    distinctly from the neutral destination icons (source: open-design-nav-v0
@@ -208,15 +208,15 @@
 }
 .entry-nav-rail__btn--action:hover {
   background: var(--accent-tint);
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  color: var(--od-accent);
+  border-color: color-mix(in srgb, var(--od-accent) 30%, var(--od-border));
 }
 .entry-nav-rail__btn:focus-visible {
   /* Double ring (panel-colored inner gap + accent outer) keeps the focus
      state legible even when it lands on the accent-tinted active button,
      where a single 2px accent outline would blend into the fill. */
   outline: none;
-  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--od-accent);
 }
 @media (prefers-reduced-motion: reduce) {
   .entry-nav-rail__btn { transition-duration: 1ms; }
@@ -248,10 +248,10 @@
   padding-left: 14px;
 }
 .avatar-item--lang.is-active {
-  color: var(--accent);
+  color: var(--od-accent);
 }
 .avatar-item--lang.is-active .avatar-item-meta {
-  color: var(--accent);
+  color: var(--od-accent);
   opacity: 0.8;
 }
 
@@ -466,7 +466,7 @@
   min-height: 46px;
   padding: 10px 12px;
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   color: var(--text-muted);
   background: color-mix(in srgb, var(--bg-panel) 96%, var(--bg-subtle) 4%);
   box-shadow: var(--shadow-xs);
@@ -508,26 +508,26 @@
 }
 
 .onboarding-view__steps li:hover {
-  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
-  background: color-mix(in srgb, var(--bg-panel) 96%, var(--accent) 4%);
+  border-color: color-mix(in srgb, var(--od-accent) 24%, var(--od-border));
+  background: color-mix(in srgb, var(--bg-panel) 96%, var(--od-accent) 4%);
 }
 
 .onboarding-view__steps li.is-active {
   color: var(--text-strong);
-  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
-  background: color-mix(in srgb, var(--bg-panel) 94%, var(--accent) 6%);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--od-accent) 36%, var(--od-border));
+  background: color-mix(in srgb, var(--bg-panel) 94%, var(--od-accent) 6%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--od-accent) 10%, transparent);
 }
 
 .onboarding-view__steps li.is-active:hover {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
-  background: color-mix(in srgb, var(--bg-panel) 93%, var(--accent) 7%);
+  border-color: color-mix(in srgb, var(--od-accent) 42%, var(--od-border));
+  background: color-mix(in srgb, var(--bg-panel) 93%, var(--od-accent) 7%);
 }
 
 .onboarding-view__steps li.is-active span,
 .onboarding-view__steps li.is-done span {
   color: var(--accent-contrast, #fff);
-  background: var(--accent);
+  background: var(--od-accent);
 }
 
 .onboarding-view__body {
@@ -579,9 +579,9 @@
   gap: 6px;
   min-height: 118px;
   padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--od-accent) 22%, var(--od-border));
   border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-panel) 96%, var(--accent) 4%);
+  background: color-mix(in srgb, var(--bg-panel) 96%, var(--od-accent) 4%);
   box-shadow: var(--shadow-xs);
 }
 
@@ -600,7 +600,7 @@
 .onboarding-view__ds-skip {
   justify-self: start;
   min-height: 36px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   padding: 0 12px;
   color: var(--text);
@@ -614,8 +614,8 @@
 }
 
 .onboarding-view__ds-skip:hover {
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
-  background: color-mix(in srgb, var(--bg-panel) 96%, var(--accent) 4%);
+  border-color: color-mix(in srgb, var(--od-accent) 30%, var(--od-border));
+  background: color-mix(in srgb, var(--bg-panel) 96%, var(--od-accent) 4%);
   transform: translateY(-1px);
 }
 
@@ -647,16 +647,16 @@
   align-items: flex-start;
   gap: 10px;
   padding: 13px 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--od-accent) 34%, var(--od-border));
   border-radius: 10px;
   color: var(--text);
-  background: color-mix(in srgb, var(--accent) 7%, var(--bg-panel));
+  background: color-mix(in srgb, var(--od-accent) 7%, var(--bg-panel));
 }
 
 .onboarding-view__handoff-status > svg {
   flex: 0 0 auto;
   margin-top: 2px;
-  color: var(--accent);
+  color: var(--od-accent);
 }
 
 .onboarding-view__handoff-status span {
@@ -703,14 +703,14 @@
 
 .onboarding-view__primary {
   color: var(--accent-contrast, #fff);
-  background: var(--accent);
-  border: 1px solid var(--accent);
+  background: var(--od-accent);
+  border: 1px solid var(--od-accent);
 }
 
 .onboarding-view__secondary {
   color: var(--text);
   background: var(--bg-panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
 }
 
 .onboarding-view__ghost {
@@ -730,7 +730,7 @@
 .onboarding-view__ghost:focus-visible,
 .onboarding-view__steps li button:focus-visible,
 .onboarding-view__card:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--od-accent);
   outline-offset: 2px;
 }
 
@@ -787,9 +787,9 @@
   display: grid;
   gap: 14px;
   padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--border) 82%, var(--accent) 18%);
+  border: 1px solid color-mix(in srgb, var(--od-border) 82%, var(--od-accent) 18%);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-panel) 97%, var(--accent) 3%);
+  background: color-mix(in srgb, var(--bg-panel) 97%, var(--od-accent) 3%);
   box-shadow: var(--shadow-xs);
 }
 
@@ -835,7 +835,7 @@
   align-items: center;
   justify-content: center;
   min-height: 32px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   padding: 0 11px;
   color: var(--text);
@@ -851,7 +851,7 @@
 .onboarding-view__field-row button:hover,
 .onboarding-view__protocol-strip button:hover {
   color: var(--text-strong);
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-color: color-mix(in srgb, var(--od-accent) 30%, var(--od-border));
 }
 
 .onboarding-view__mini-button:disabled {
@@ -875,7 +875,7 @@
   gap: 9px;
   min-width: 0;
   min-height: 48px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   padding: 8px 10px;
   color: var(--text);
@@ -886,8 +886,8 @@
 }
 
 .onboarding-view__agent-chip.is-selected {
-  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
-  background: color-mix(in srgb, var(--bg-panel) 92%, var(--accent) 8%);
+  border-color: color-mix(in srgb, var(--od-accent) 48%, var(--od-border));
+  background: color-mix(in srgb, var(--bg-panel) 92%, var(--od-accent) 8%);
 }
 
 .onboarding-view__agent-chip .agent-icon {
@@ -919,7 +919,7 @@
 }
 
 .onboarding-view__empty-slice {
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--od-border);
   border-radius: 8px;
   padding: 13px;
   color: var(--text-muted);
@@ -939,7 +939,7 @@
   gap: 8px;
   width: fit-content;
   margin: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   padding: 8px 10px;
   color: var(--text-muted);
@@ -963,8 +963,8 @@
 
 .onboarding-view__protocol-strip button.is-selected {
   color: var(--text-strong);
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
-  background: color-mix(in srgb, var(--bg-panel) 90%, var(--accent) 10%);
+  border-color: color-mix(in srgb, var(--od-accent) 42%, var(--od-border));
+  background: color-mix(in srgb, var(--bg-panel) 90%, var(--od-accent) 10%);
 }
 
 .onboarding-view__inline-field {
@@ -980,7 +980,7 @@
   width: 100%;
   min-width: 0;
   min-height: 42px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   padding: 0 12px;
   color: var(--text-strong);
@@ -997,7 +997,7 @@
 .onboarding-view__mini-button:focus-visible,
 .onboarding-view__field-row button:focus-visible,
 .onboarding-view__protocol-strip button:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--od-accent);
   outline-offset: 2px;
 }
 
@@ -1019,7 +1019,7 @@
 
 .onboarding-view__test-status {
   margin: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   padding: 10px 12px;
   font-size: 12px;
@@ -1033,19 +1033,19 @@
 
 .onboarding-view__test-status.is-success {
   color: var(--success-text, #166534);
-  border-color: color-mix(in srgb, var(--success, #22c55e) 34%, var(--border));
+  border-color: color-mix(in srgb, var(--success, #22c55e) 34%, var(--od-border));
   background: color-mix(in srgb, var(--success, #22c55e) 9%, var(--bg-panel));
 }
 
 .onboarding-view__test-status.is-warn {
   color: var(--warning-text, #92400e);
-  border-color: color-mix(in srgb, var(--warning, #f59e0b) 34%, var(--border));
+  border-color: color-mix(in srgb, var(--warning, #f59e0b) 34%, var(--od-border));
   background: color-mix(in srgb, var(--warning, #f59e0b) 10%, var(--bg-panel));
 }
 
 .onboarding-view__test-status.is-error {
   color: var(--danger-text, #991b1b);
-  border-color: color-mix(in srgb, var(--danger, #ef4444) 34%, var(--border));
+  border-color: color-mix(in srgb, var(--danger, #ef4444) 34%, var(--od-border));
   background: color-mix(in srgb, var(--danger, #ef4444) 9%, var(--bg-panel));
 }
 
@@ -1068,7 +1068,7 @@
   min-height: 112px;
   padding: 16px 18px;
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   background: var(--bg-panel);
   color: var(--text);
   text-align: left;
@@ -1082,23 +1082,23 @@
   grid-template-columns: 56px minmax(0, 1fr) auto;
   min-height: 168px;
   padding: 22px 24px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel));
-  border-color: color-mix(in srgb, var(--accent) 44%, var(--border));
+  background: color-mix(in srgb, var(--od-accent) 6%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--od-accent) 44%, var(--od-border));
   box-shadow: none;
 }
 
 .onboarding-view__card.is-selected {
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
-  background: color-mix(in srgb, var(--bg-panel) 94%, var(--accent) 6%);
+  border-color: color-mix(in srgb, var(--od-accent) 52%, var(--od-border));
+  background: color-mix(in srgb, var(--bg-panel) 94%, var(--od-accent) 6%);
 }
 
 .onboarding-view__card--featured.is-selected {
-  background: color-mix(in srgb, var(--accent) 9%, var(--bg-panel));
+  background: color-mix(in srgb, var(--od-accent) 9%, var(--bg-panel));
 }
 
 .onboarding-view__card:hover {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
-  background: color-mix(in srgb, var(--bg-panel) 97%, var(--accent) 3%);
+  border-color: color-mix(in srgb, var(--od-accent) 38%, var(--od-border));
+  background: color-mix(in srgb, var(--bg-panel) 97%, var(--od-accent) 3%);
   transform: translateY(-1px);
 }
 
@@ -1118,14 +1118,14 @@
   height: 40px;
   border-radius: 8px;
   color: var(--accent-strong);
-  background: color-mix(in srgb, var(--accent) 9%, var(--bg-panel));
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  background: color-mix(in srgb, var(--od-accent) 9%, var(--bg-panel));
+  border: 1px solid color-mix(in srgb, var(--od-accent) 18%, var(--od-border));
 }
 
 .onboarding-view__card--featured .onboarding-view__icon {
   width: 52px;
   height: 52px;
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
+  background: color-mix(in srgb, var(--od-accent) 12%, var(--bg-panel));
 }
 
 .onboarding-view__badge {
@@ -1141,7 +1141,7 @@
 
 .onboarding-view__badge {
   color: var(--accent-strong);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+  background: color-mix(in srgb, var(--od-accent) 10%, var(--bg-panel));
 }
 
 .onboarding-view__card-copy {
@@ -1201,8 +1201,8 @@
   height: 22px;
   border-radius: 999px;
   color: var(--accent-contrast, #fff);
-  background: var(--accent);
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 24%, transparent);
+  background: var(--od-accent);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--od-accent) 24%, transparent);
 }
 
 .onboarding-view__form-grid {
@@ -1231,7 +1231,7 @@
   gap: 12px;
   width: 100%;
   min-height: 42px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 8px;
   padding: 0 12px 0 13px;
   color: var(--text-muted);
@@ -1257,12 +1257,12 @@
 .onboarding-view__select-trigger:hover,
 .onboarding-view__select-trigger.is-open {
   color: var(--text-strong);
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
-  background: color-mix(in srgb, var(--bg-panel) 97%, var(--accent) 3%);
+  border-color: color-mix(in srgb, var(--od-accent) 38%, var(--od-border));
+  background: color-mix(in srgb, var(--bg-panel) 97%, var(--od-accent) 3%);
 }
 
 .onboarding-view__select-trigger.is-open {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--od-accent) 12%, transparent);
 }
 
 .onboarding-view__select-trigger.is-open svg {
@@ -1271,7 +1271,7 @@
 }
 
 .onboarding-view__select-trigger:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--od-accent);
   outline-offset: 2px;
 }
 
@@ -1288,7 +1288,7 @@
   overflow-x: hidden;
   overscroll-behavior: contain;
   padding: 4px;
-  border: 1px solid color-mix(in srgb, var(--border) 88%, var(--accent) 12%);
+  border: 1px solid color-mix(in srgb, var(--od-border) 88%, var(--od-accent) 12%);
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-panel) 98%, var(--bg-subtle) 2%);
   box-shadow: 0 12px 28px color-mix(in srgb, var(--shadow-color, #000) 10%, transparent);
@@ -1345,12 +1345,12 @@
 
 .onboarding-view__select-option:hover {
   color: var(--text-strong);
-  background: color-mix(in srgb, var(--accent) 5%, var(--bg-panel));
+  background: color-mix(in srgb, var(--od-accent) 5%, var(--bg-panel));
 }
 
 .onboarding-view__select-option.is-selected {
   color: var(--accent-strong);
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
+  background: color-mix(in srgb, var(--od-accent) 8%, var(--bg-panel));
   font-weight: 600;
 }
 
@@ -1359,7 +1359,7 @@
 }
 
 .onboarding-view__select-option:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--od-accent);
   outline-offset: -1px;
 }
 

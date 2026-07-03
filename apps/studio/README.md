@@ -20,17 +20,40 @@
 
 - **Phase 1 ✅**：骨架 + 共享包接入（design-tokens / @open-design/ui）+
   daemon 反代 rewrite。Electron 壳 dev 下加载 `http://localhost:3100`。
-- **Phase 2（进行中）**：聊天 UI 已从 `apps/desktop/src/renderer` 整体迁入
-  `src/chat/`（60 文件，/chat 路由，dynamic ssr:false + HostGate）。
-  剩余：composer 四件套下沉 packages（与 web 版本合并，wire format 不变量：
-  serialize 对 plain text 无损）。
-- **单视图形态 ✅（dev 默认）**：壳只建一个全屏 studio tab（LEGACY_TABS=1
-  找回旧三 tab），AppRail 在 studio 内做导航；/canvas 先以 iframe 嵌完整
-  web 应用（NEXT_PUBLIC_OD_WEB_ORIGIN 由壳注入），是 Phase 3 完成前的过渡。
-- **Phase 3**：设计工具 UI 从 `apps/web` 按路由逐步真迁入（184k 行，大头），
-  逐路由替换 /canvas 的 iframe，直到 web 清空。
-- **Phase 4**：下线 `apps/web` 与 desktop renderer，desktop 只剩 main/preload
-  薄壳；打包链路从 prebundle web/out 切换为 studio 产物。
+- **Phase 2 ✅**：聊天 UI 从 `apps/desktop/src/renderer` 整体迁入
+  `src/chat/`（60 文件，/chat 路由，dynamic ssr:false + HostGate）；
+  composer 核心（pmSchema+suggestionPlugin）下沉 @open-design/composer
+  三端合一（wire format 不变量：serialize 对 plain text 无损）。
+- **单视图形态 ✅**：壳只建一个全屏 studio tab，AppRail 在 studio 内做导航
+  （聊天 /chat、工作画布 /、设置 /?settings=1）。
+- **Phase 3 ✅**：apps/web 的 SPA 全树（184k 行）整体平移到 src/canvas/，
+  挂根 optional catch-all（canvas 自制 router 是根路径制）。
+- **Phase 4 ✅**：`apps/web` 已物理删除；desktop renderer 已整体删除
+  （electron-vite 不再有 renderer target，5173 dev server 不复存在；shell
+  窗口不加载任何内容，保持隐藏直到 studio 首帧就绪才 show——用户看到的
+  第一帧就是 studio）；
+  legacy 三 tab 架构（含 LEGACY_TABS 回退门）删除，单视图是唯一形态；
+  prod 走 static export + app://studio 协议（appProtocol.ts）；设置迁入
+  /?settings=1（AppRail 硬导航 → canvas 的 isSettingsOverlay 模式）；
+  @anthropic-ai/sdk 三端统一 ^0.105。
+
+## 组件库：shadcn/ui（2026-07-03 起）
+
+通用 UI 原语统一用 **shadcn/ui**（radix 底座），组件在 `src/components/ui/`，
+`bunx shadcn@latest add <name>` 拉新组件（components.json 已配好 alias：
+`@/src/components/ui`、cn() 在 `@/src/lib/utils`）。主题零对接成本——
+`src/chat/styles/index.css` 的 `@theme inline` 已把 design-tokens 的 HSL
+变量映射成 shadcn 语义 token（bg-primary / text-muted-foreground / …）；
+动画 utilities 来自 `tw-animate-css`（import 在 tailwindcss 之后）。
+
+- 生成的组件**手动补 `"use client"`**（components.json 设了 rsc:false，
+  CLI 不会自动加）。
+- 对话框底座用 `src/components/ui/dialog-shell.tsx`（API 兼容旧
+  @open-design/ui 版，radix 接管 portal/focus trap/aria）；@open-design/ui
+  的 DialogShell 已 deprecated。
+- canvas（`src/canvas/`）的手写 CSS 组件**不强改**——27k 行手写样式的
+  视觉回归风险高，替换按「碰到才换」增量进行（CustomSelect、各 *Modal
+  是首选替换对象）。
 
 ## 命令
 

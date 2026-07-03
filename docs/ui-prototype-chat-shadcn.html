@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>聊天界面 · shadcn/ui 重构原型</title>
+<style>
+  /* ════════════════════════════════════════════════════════════════
+     聊天主界面（sidebar + 消息流 + 工具调用行 + composer）的
+     shadcn/ui 重构原型。
+
+     与 docs/ui-prototype-session-actions.html 同一传统：单文件、
+     零依赖、可交互、Tweaks 面板控制变体。区别在于设计语言——
+     这里不再手搓产品 rail token，而是整套换成 shadcn/ui v4 的
+     标准 token 体系（oklch + neutral 基调 + sidebar 独立色组），
+     每个 UI 块都对应一个真实 shadcn 组件（开 Tweaks 里的
+     「组件注记」可以看到映射关系，方便照着接 React 实装）。
+
+     刻意保留产品形态的两处（其余全按 shadcn new-york 规范）：
+       · 布局仍是「灰 rail + 浮动聊天卡」，不是 shadcn 文档站的
+         贴边 sidebar-07——这是产品的窗口骨架，换掉就不像本产品了
+       · composer 的工具 chips 保持胶囊形（rounded-full），
+         产品现状如此；shadcn 默认 rounded-md 用在其余所有按钮上
+     ════════════════════════════════════════════════════════════════ */
+
+  /* ──────────── shadcn/ui v4 design tokens ────────────
+     数值 1:1 取自 shadcn "neutral" 预设，仅三处替换：
+       --primary        → 产品品牌绿 green-600（shadcn 默认是近黑）
+       --sidebar        → 产品 rail 的冷灰 #e8eaee（默认近白）
+       --ring           → 跟随品牌绿，focus 圈是绿的不是灰的
+     其余（muted/border/card/popover/destructive…）全是官方值，
+     以后接 React + tailwind 时直接用 shadcn CLI 生成的主题即可。 */
+  :root {
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.145 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.145 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.145 0 0);
+    --primary: oklch(0.627 0.194 149.214);          /* green-600 #16a34a */
+    --primary-foreground: oklch(0.982 0.018 155.826);
+    --primary-soft: oklch(0.627 0.194 149.214 / 12%); /* 选中态浅绿填充 */
+    --primary-ink: oklch(0.527 0.154 150);            /* 浅绿底上的深绿字 */
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --muted: oklch(0.97 0 0);
+    --muted-foreground: oklch(0.556 0 0);
+    --accent: oklch(0.97 0 0);
+    --accent-foreground: oklch(0.205 0 0);
+    --destructive: oklch(0.577 0.245 27.325);
+    --border: oklch(0.922 0 0);
+    --input: oklch(0.922 0 0);
+    --ring: oklch(0.627 0.194 149.214 / 45%);
+    --sidebar: oklch(0.937 0.006 264);               /* 产品 rail #e8eaee */
+    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-accent: oklch(0.895 0.005 264);        /* rail 行 hover：比底色深一档 */
+    --sidebar-accent-foreground: oklch(0.205 0 0);
+    --sidebar-border: oklch(0.87 0.005 264);
+    --radius: 0.625rem;                              /* shadcn 默认 10px */
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-card: 18px;                             /* 浮动聊天卡沿用产品外形 */
+    /* shadcn 阴影刻度：比产品现有阴影轻得多，这是 shadcn 的性格 */
+    --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --rail-w: 220px;
+  }
+  /* dark：shadcn neutral 暗色官方值 + 品牌绿提亮到 green-500 档
+     （暗底上 green-600 对比度不够，产品 dark 模式同样做了提亮） */
+  .dark {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.235 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.723 0.219 149.579);           /* green-500 提亮 */
+    --primary-foreground: oklch(0.145 0 0);
+    --primary-soft: oklch(0.723 0.219 149.579 / 16%);
+    --primary-ink: oklch(0.792 0.209 151.711);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.723 0.219 149.579 / 45%);
+    --sidebar: oklch(0.185 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.35), 0 1px 2px -1px rgb(0 0 0 / 0.35);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.45), 0 4px 6px -4px rgb(0 0 0 / 0.45);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--sidebar);
+    color: var(--foreground);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* focus-visible 全站统一走 shadcn 的 ring 语法：
+     border 变主色 + 外扩 3px 半透明 ring，不用默认 outline */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--ring);
+    border-color: var(--primary);
+  }
+
+  /* ════════════════ Shell：rail + 浮动聊天卡 ════════════════ */
+  .shell { display: flex; height: 100vh; }
+
+  /* ──────────── Sidebar（shadcn <Sidebar>） ──────────── */
+  .sidebar {
+    width: var(--rail-w); flex-shrink: 0;
+    display: flex; flex-direction: column;
+    padding: 8px 0 10px 10px;
+    position: relative;
+  }
+  .traffic { display: flex; gap: 8px; padding: 6px 4px 16px; flex-shrink: 0; }
+  .traffic i { width: 12px; height: 12px; border-radius: 50%; }
+  .traffic .r { background: #ff5f57; } .traffic .y { background: #febc2e; } .traffic .g { background: #28c840; }
+
+  /* 新对话：shadcn Button 的 soft 变体（bg-primary/10 text-primary）。
+     shadcn 没有内置 soft，但这是社区最常见的扩展变体，
+     React 侧一行 cva variant 就能加。 */
+  .btn-new-chat {
+    display: flex; align-items: center; gap: 8px;
+    height: 36px; margin-right: 10px; padding: 0 12px;
+    border: none; border-radius: var(--radius-md);
+    background: var(--primary-soft); color: var(--primary-ink);
+    font-family: var(--font); font-size: 14px; font-weight: 500;
+    cursor: pointer; flex-shrink: 0;
+    transition: background .15s;
+  }
+  .btn-new-chat:hover { background: oklch(from var(--primary) l c h / 18%); }
+  .btn-new-chat svg { flex-shrink: 0; }
+
+  /* 导航项 + 会话行：都是 shadcn <SidebarMenuButton>。
+     尺寸对齐 shadcn：h-8(32px)text-sm，产品行高 36px 取产品值——
+     触达面积优先。 */
+  .side-nav { display: flex; flex-direction: column; gap: 2px; margin: 10px 10px 0 0; flex-shrink: 0; }
+  .menu-btn {
+    position: relative;
+    display: flex; align-items: center; gap: 9px;
+    height: 34px; padding: 0 10px; width: 100%;
+    border: none; border-radius: var(--radius-md);
+    background: transparent; color: var(--sidebar-foreground);
+    font-family: var(--font); font-size: 14px; text-align: left;
+    cursor: pointer;
+    transition: background .12s, color .12s;
+  }
+  .menu-btn:hover { background: var(--sidebar-accent); }
+  .menu-btn svg { flex-shrink: 0; color: var(--muted-foreground); }
+  .menu-btn.active { background: var(--sidebar-accent); font-weight: 500; }
+  .menu-btn.active svg { color: var(--sidebar-foreground); }
+  .menu-btn .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 分组标题：shadcn <SidebarGroupLabel>（text-xs text-muted-foreground） */
+  .group-label {
+    padding: 16px 10px 6px; flex-shrink: 0;
+    font-size: 12px; font-weight: 500; color: var(--muted-foreground);
+  }
+
+  /* 会话列表滚动区：shadcn <ScrollArea> 的观感（细 overlay 滚动条） */
+  .session-scroll {
+    flex: 1; min-height: 0;
+    overflow-y: auto; overscroll-behavior: contain;
+    padding-right: 10px;
+  }
+  .session-scroll::-webkit-scrollbar { width: 8px; }
+  .session-scroll::-webkit-scrollbar-thumb {
+    background: oklch(0 0 0 / 14%); border-radius: 4px;
+    border: 2px solid transparent; background-clip: padding-box;
+  }
+  .dark .session-scroll::-webkit-scrollbar-thumb { background: oklch(1 0 0 / 18%); border: 2px solid transparent; background-clip: padding-box; }
+
+  .session-row { font-size: 13.5px; color: oklch(from var(--sidebar-foreground) l c h / 75%); height: 34px; }
+  /* 当前会话：浅绿填充 + 深绿字。shadcn 语义 = isActive 的
+     SidebarMenuButton（data-active:bg-sidebar-accent），
+     这里 accent 色换成品牌绿的 soft 层。 */
+  .session-row.active {
+    background: var(--primary-soft); color: var(--primary-ink); font-weight: 500;
+  }
+  .session-row.active:hover { background: var(--primary-soft); }
+  /* ··· 更多：hover 才浮现，shadcn <SidebarMenuAction> 同款行为 */
+  .session-row .more {
+    flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; margin-right: -4px;
+    border: none; border-radius: var(--radius-sm);
+    background: transparent; color: var(--muted-foreground);
+    cursor: pointer; opacity: 0; transition: opacity .12s, background .12s;
+  }
+  .session-row:hover .more, .session-row.active .more { opacity: 1; }
+  .session-row .more:hover { background: oklch(0 0 0 / 8%); color: var(--sidebar-foreground); }
+  .dark .session-row .more:hover { background: oklch(1 0 0 / 12%); }
+
+  .show-more-btn {
+    margin: 2px 10px 0 0; flex-shrink: 0;
+    color: var(--muted-foreground); font-size: 13.5px;
+  }
+
+  /* 底部设置：与列表用 <SidebarSeparator> 分隔 */
+  .sidebar-foot { flex-shrink: 0; margin-right: 10px; padding-top: 8px; }
+  .separator { height: 1px; background: var(--sidebar-border); margin: 0 0 8px; }
+
+  /* ════════════════ 聊天卡（shadcn <Card> 的放大版） ════════════════ */
+  .content { flex: 1; min-width: 0; padding: 8px 8px 8px 0; display: flex; }
+  .chat-card {
+    flex: 1; min-width: 0; position: relative;
+    background: var(--card); color: var(--card-foreground);
+    border: 1px solid var(--border);            /* shadcn Card 必有 border */
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-sm);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── 顶部：可编辑标题（shadcn <Input> 的在位编辑用法） ──
+     显示态是幽灵按钮：hover 浮出 muted 底 + 铅笔；点击原地换成
+     shadcn Input（border-input + focus ring）。 */
+  .card-header {
+    flex-shrink: 0; position: relative;
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 14px 68px 10px 28px;
+  }
+  #titleSlot { align-self: flex-start; max-width: 100%; min-width: 0; }
+  .title-ghost {
+    display: inline-flex; align-items: center; gap: 8px;
+    max-width: 100%; min-width: 0;
+    border: 1px solid transparent;               /* 占位 border，避免编辑态跳动 */
+    background: transparent;
+    font-family: var(--font); font-size: 15px; font-weight: 600;
+    color: var(--card-foreground); text-align: left;
+    padding: 5px 10px; margin-left: -11px;
+    border-radius: var(--radius-md);
+    cursor: text; transition: background .15s;
+  }
+  .title-ghost:hover { background: var(--muted); }
+  .title-ghost .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .title-ghost .pen { flex-shrink: 0; opacity: 0; color: var(--muted-foreground); transition: opacity .15s; }
+  .title-ghost:hover .pen { opacity: .9; }
+  .title-input {
+    width: min(460px, 100%);
+    height: 32px; padding: 0 10px; margin-left: -11px;
+    border: 1px solid var(--input);
+    border-radius: var(--radius-md);
+    background: var(--background); color: var(--foreground);
+    font-family: var(--font); font-size: 15px; font-weight: 600;
+    box-shadow: var(--shadow-xs);
+    outline: none; transition: box-shadow .15s, border-color .15s;
+  }
+  .title-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--ring); }
+  .ai-note { font-size: 12px; color: var(--muted-foreground); }
+
+  /* 右上角用户头像：shadcn <Avatar>（size-8 rounded-full） */
+  .avatar {
+    position: absolute; top: 14px; right: 20px;
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--foreground); color: var(--background);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 600;
+    cursor: pointer; user-select: none;
+  }
+
+  /* ════════════════ 消息流 ════════════════ */
+  .thread { flex: 1; min-height: 0; overflow-y: auto; scroll-behavior: smooth; }
+  .thread::-webkit-scrollbar { width: 10px; }
+  .thread::-webkit-scrollbar-thumb {
+    background: oklch(0 0 0 / 12%); border-radius: 5px;
+    border: 3px solid transparent; background-clip: padding-box;
+  }
+  .dark .thread::-webkit-scrollbar-thumb { background: oklch(1 0 0 / 16%); border: 3px solid transparent; background-clip: padding-box; }
+  .thread-inner { max-width: 880px; margin: 0 auto; padding: 18px 32px 24px; }
+
+  /* assistant 正文排版：截图里的样子——每个思考段落是一个
+     bullet 项，工具行穿插其间。字号对齐 shadcn 的 text-sm/relaxed。 */
+  .prose { font-size: 14.5px; line-height: 1.75; color: var(--foreground); }
+  .prose .li { position: relative; padding-left: 20px; margin: 14px 0; }
+  .prose .li::before {
+    content: ""; position: absolute; left: 5px; top: 11px;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: oklch(from var(--muted-foreground) l c h / 70%);
+  }
+  .prose strong { font-weight: 600; }
+  /* inline code：shadcn 文档站同款（bg-muted rounded px-1.5 mono） */
+  .ic {
+    font-family: var(--mono); font-size: 12.5px;
+    background: var(--muted); border-radius: 5px;
+    padding: 2px 6px; white-space: nowrap;
+  }
+
+  /* ── 工具调用行：shadcn <Collapsible> ──
+     trigger = 整行按钮（勾 + 工具名 + mono 参数 + chevron），
+     content = 折叠的输出区。展开时 chevron 旋转 90°，
+     内容用 grid-rows 过渡做高度动画（Radix Collapsible 同款思路）。 */
+  .tool { margin: 10px 0; }
+  .tool-trigger {
+    display: flex; align-items: center; gap: 9px;
+    width: 100%; min-height: 32px; padding: 4px 8px 4px 0;
+    border: none; border-radius: var(--radius-md);
+    background: transparent; color: var(--foreground);
+    font-family: var(--font); font-size: 14px; text-align: left;
+    cursor: pointer; transition: background .12s;
+  }
+  .tool-trigger:hover { background: var(--muted); padding-left: 8px; margin-left: -8px; }
+  .tool-check {
+    flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--primary); color: var(--primary-foreground);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .tool-name { flex-shrink: 0; font-weight: 500; }
+  .tool-arg {
+    flex: 1; min-width: 0;
+    font-family: var(--mono); font-size: 12.5px; color: var(--muted-foreground);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tool-chevron { flex-shrink: 0; color: var(--muted-foreground); transition: transform .18s; }
+  .tool.open .tool-chevron { transform: rotate(90deg); }
+  .tool-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .22s; }
+  .tool.open .tool-body { grid-template-rows: 1fr; }
+  .tool-body-inner { overflow: hidden; }
+  /* 展开后的输出占位：真实实现由 ToolFormatters 渲染
+     stdout / diff / 图片，这里只标注插槽 */
+  .tool-output {
+    margin: 6px 0 4px 27px; padding: 10px 14px;
+    border: 1px dashed var(--border); border-radius: var(--radius-md);
+    background: var(--muted);
+    font-size: 12.5px; color: var(--muted-foreground); line-height: 1.6;
+  }
+  .tool-output code { font-family: var(--mono); font-size: 11.5px; }
+
+  /* 结果宣告块：绿勾 + 标题，下面路径 chip + 嵌套清单 */
+  .result-block { margin: 22px 0 6px; padding-left: 20px; }
+  .result-title {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 16px; font-weight: 600; margin-bottom: 12px;
+  }
+  .result-title .tool-check { width: 20px; height: 20px; }
+  .file-chip {
+    font-family: var(--mono); font-size: 12.5px;
+    background: var(--muted); border: 1px solid var(--border);
+    border-radius: 6px; padding: 2.5px 8px;
+  }
+  .prose .sub-li { position: relative; padding-left: 20px; margin: 8px 0; }
+  .prose .sub-li::before {
+    content: ""; position: absolute; left: 5px; top: 11px;
+    width: 4px; height: 4px; border-radius: 50%;
+    background: var(--primary);
+  }
+
+  /* 滚动到底：shadcn Button variant=outline size=icon 的圆形版 */
+  .scroll-bottom {
+    position: absolute; left: 50%; bottom: 176px; transform: translateX(-50%);
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--card); color: var(--muted-foreground);
+    box-shadow: var(--shadow-md);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; z-index: 5;
+    opacity: 0; pointer-events: none;
+    transition: opacity .18s, transform .18s, background .12s;
+  }
+  .scroll-bottom.show { opacity: 1; pointer-events: auto; }
+  .scroll-bottom:hover { background: var(--accent); color: var(--accent-foreground); }
+
+  /* ════════════════ Composer ════════════════ */
+  .composer-dock { flex-shrink: 0; padding: 4px 32px 6px; }
+  .composer { max-width: 880px; margin: 0 auto; }
+  /* 输入卡：muted 底、focus 时整卡走 shadcn ring。
+     产品现状是灰底大圆角卡，shadcn 化后 = 一个套壳的 <Textarea>。 */
+  .composer-card {
+    background: var(--muted);
+    border: 1px solid transparent;
+    border-radius: 22px;
+    padding: 14px 14px 10px 18px;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+  }
+  .composer-card:focus-within {
+    background: var(--background);
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--ring);
+  }
+  .composer-input {
+    width: 100%; min-height: 24px; max-height: 180px;
+    font-size: 14.5px; line-height: 1.6; color: var(--foreground);
+    outline: none; overflow-y: auto;
+  }
+  .composer-input:empty::before {
+    content: "随便问点什么…  ↵ 发送 · ⇧↵ 换行 · / 命令 · @ 文件";
+    color: var(--muted-foreground); pointer-events: none;
+  }
+
+  .composer-toolbar { display: flex; align-items: center; gap: 7px; margin-top: 10px; }
+  /* 圆形图标钮：shadcn Button variant=ghost size=icon */
+  .btn-icon {
+    width: 30px; height: 30px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    border: none; border-radius: 50%;
+    background: transparent; color: var(--muted-foreground);
+    cursor: pointer; transition: background .12s, color .12s;
+  }
+  .btn-icon:hover { background: var(--accent); color: var(--accent-foreground); }
+  .dark .composer-card .btn-icon:hover { background: oklch(1 0 0 / 10%); }
+  /* 胶囊 chip：shadcn Button variant=outline size=sm + rounded-full。
+     胶囊形是保留的产品形态；边框/底色/hover 全按 outline 规范。 */
+  .chip {
+    height: 30px; padding: 0 12px; flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--background); color: var(--foreground);
+    font-family: var(--font); font-size: 12.5px; font-weight: 500;
+    box-shadow: var(--shadow-xs);
+    cursor: pointer; transition: background .12s, border-color .12s;
+  }
+  .chip:hover { background: var(--accent); }
+  .chip svg { color: var(--muted-foreground); flex-shrink: 0; }
+  .chip .dot-rec { width: 7px; height: 7px; border-radius: 50%; background: var(--destructive); flex-shrink: 0; }
+  .composer-toolbar .spacer { flex: 1; }
+
+  /* 发送：shadcn Button size=icon。空输入 = disabled（muted），
+     有内容才亮成 primary——状态演示比常亮更有对接价值。 */
+  .btn-send {
+    width: 32px; height: 32px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    border: none; border-radius: 50%;
+    background: var(--muted); color: var(--muted-foreground);
+    cursor: not-allowed; transition: background .15s, color .15s, transform .12s;
+  }
+  .dark .composer-card .btn-send { background: oklch(1 0 0 / 10%); }
+  .btn-send.ready {
+    background: var(--primary); color: var(--primary-foreground); cursor: pointer;
+  }
+  .btn-send.ready:hover { transform: translateY(-1px); }
+
+  /* composer 下方状态行：左侧两个 ghost 下拉、右侧模型选择 outline 下拉 */
+  .composer-below { display: flex; align-items: center; gap: 4px; margin-top: 7px; padding: 0 6px; }
+  .below-ghost {
+    height: 28px; padding: 0 9px;
+    display: inline-flex; align-items: center; gap: 6px;
+    border: none; border-radius: var(--radius-md);
+    background: transparent; color: var(--muted-foreground);
+    font-family: var(--font); font-size: 12.5px;
+    cursor: pointer; transition: background .12s, color .12s;
+  }
+  .below-ghost:hover { background: var(--accent); color: var(--accent-foreground); }
+  .below-ghost svg { flex-shrink: 0; }
+  .composer-below .spacer { flex: 1; }
+  .model-chip { height: 28px; font-size: 12px; }
+  .model-chip .chev { color: var(--muted-foreground); }
+
+  /* ════════════════ DropdownMenu（shadcn <DropdownMenu>） ════════════════
+     popover 白底 + border + shadow-md + p-1；item 高 32px rounded-sm，
+     选中项右侧打勾。缩放入场从触发角展开。 */
+  .dropdown {
+    position: fixed; z-index: 120;
+    min-width: 200px; padding: 4px;
+    background: var(--popover); color: var(--popover-foreground);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    opacity: 0; transform: scale(.96) translateY(3px);
+    transform-origin: bottom left;
+    transition: opacity .13s, transform .13s;
+    pointer-events: none;
+  }
+  .dropdown.show { opacity: 1; transform: none; pointer-events: auto; }
+  .dropdown .dd-label {
+    padding: 6px 10px 4px;
+    font-size: 11.5px; font-weight: 500; color: var(--muted-foreground);
+  }
+  .dd-item {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; min-height: 32px; padding: 5px 10px;
+    border: none; border-radius: var(--radius-sm);
+    background: transparent; color: var(--popover-foreground);
+    font-family: var(--font); font-size: 13.5px; text-align: left;
+    cursor: pointer; transition: background .1s;
+  }
+  .dd-item:hover { background: var(--accent); }
+  .dd-item .dd-main { flex: 1; min-width: 0; }
+  .dd-item .dd-desc { display: block; font-size: 11.5px; color: var(--muted-foreground); margin-top: 1px; }
+  .dd-item .dd-check { flex-shrink: 0; color: var(--primary); opacity: 0; }
+  .dd-item.selected .dd-check { opacity: 1; }
+
+  /* ════════════════ shadcn 组件注记（Tweaks 开关） ════════════════
+     开启后：关键区块描 primary 虚线 + 左上角组件名 tag。
+     照着 tag 就能列出 React 实装的组件清单。 */
+  .dev-tag {
+    position: absolute; z-index: 60;
+    font-family: var(--mono); font-size: 10px; line-height: 1;
+    padding: 3px 6px; border-radius: 4px;
+    background: var(--primary); color: var(--primary-foreground);
+    white-space: nowrap; pointer-events: none;
+    display: none;
+  }
+  body.show-dev .dev-tag { display: block; }
+  body.show-dev [data-dev] { outline: 1px dashed oklch(from var(--primary) l c h / 55%); outline-offset: 2px; }
+
+  /* ════════════════ Tweaks 面板 ════════════════ */
+  .tweaks-fab {
+    position: fixed; right: 18px; bottom: 18px; z-index: 400;
+    width: 40px; height: 40px;
+    border: 1px solid var(--border); border-radius: 50%;
+    background: var(--popover); color: var(--muted-foreground);
+    box-shadow: var(--shadow-lg);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: transform .2s;
+  }
+  .tweaks-fab:hover { transform: rotate(30deg); }
+  .tweaks {
+    position: fixed; right: 18px; bottom: 68px; z-index: 400;
+    width: 250px; padding: 16px;
+    background: var(--popover); color: var(--popover-foreground);
+    border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: var(--shadow-lg);
+    display: none; flex-direction: column; gap: 13px;
+  }
+  .tweaks.open { display: flex; }
+  .tweaks h4 { font-size: 13px; font-weight: 600; }
+  .tweaks .hint { font-size: 11.5px; color: var(--muted-foreground); line-height: 1.5; text-wrap: pretty; }
+  .switch-row { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; }
+  /* shadcn <Switch>：椭圆 track + 白 thumb */
+  .switch { position: relative; width: 34px; height: 20px; flex-shrink: 0; }
+  .switch input { opacity: 0; position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; z-index: 1; margin: 0; }
+  .switch .knob { position: absolute; inset: 0; border-radius: 999px; background: var(--input); transition: background .2s; }
+  .switch .knob::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%; background: var(--background);
+    box-shadow: var(--shadow-sm); transition: transform .2s;
+  }
+  .dark .switch .knob::after { background: var(--foreground); }
+  .switch input:checked + .knob { background: var(--primary); }
+  .switch input:checked + .knob::after { transform: translateX(14px); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    .thread { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <!-- ════════════ Sidebar ════════════ -->
+  <aside class="sidebar" data-dev>
+    <span class="dev-tag" style="top:4px;left:10px">Sidebar</span>
+    <div class="traffic" aria-hidden="true"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+
+    <button class="btn-new-chat" type="button" data-dev style="position:relative">
+      <span class="dev-tag" style="top:-16px;left:0">Button variant="soft"</span>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      新对话
+    </button>
+
+    <nav class="side-nav">
+      <button class="menu-btn active" type="button" style="position:relative">
+        <span class="dev-tag" style="top:-14px;left:0">SidebarMenuButton isActive</span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>
+        <span class="label">智能助手</span>
+      </button>
+      <button class="menu-btn" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18"/></svg>
+        <span class="label">工作画布</span>
+      </button>
+    </nav>
+
+    <div class="group-label">对话</div>
+
+    <div class="session-scroll" id="sessionScroll">
+      <div id="sessionList"></div>
+      <button class="menu-btn show-more-btn" type="button">
+        <span class="label">更多</span>
+      </button>
+    </div>
+
+    <div class="sidebar-foot">
+      <div class="separator" role="separator"></div>
+      <button class="menu-btn" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span class="label">设置</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ════════════ 聊天卡 ════════════ -->
+  <main class="content">
+    <div class="chat-card" data-dev>
+      <span class="dev-tag" style="top:8px;left:50%;transform:translateX(-50%)">Card</span>
+
+      <div class="card-header">
+        <div id="titleSlot" data-dev style="position:relative">
+          <span class="dev-tag" style="top:-12px;left:0">Input（在位编辑）</span>
+        </div>
+        <span class="ai-note">内容由 AI 生成</span>
+        <div class="avatar" data-dev title="账户">N
+          <span class="dev-tag" style="top:36px;right:0">Avatar</span>
+        </div>
+      </div>
+
+      <div class="thread" id="thread">
+        <div class="thread-inner prose">
+
+          <div class="li">正好：Songti SC Regular（索引6）作正文，Songti SC Bold（索引1）作粗体，Heiti SC Medium（索引1）作标题。抽成 ttf。</div>
+
+          <!-- 工具调用行：shadcn Collapsible。第一条带注记 tag -->
+          <div class="tool" data-dev style="position:relative">
+            <span class="dev-tag" style="top:-12px;left:0">Collapsible</span>
+            <button class="tool-trigger" type="button" aria-expanded="false">
+              <span class="tool-check"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+              <span class="tool-name">运行命令</span>
+              <span class="tool-arg">/tmp/pdfvenv/bin/python &lt;&lt; 'PYEOF' from fontTools.ttLib i…</span>
+              <svg class="tool-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <div class="tool-body"><div class="tool-body-inner">
+              <div class="tool-output">工具输出插槽——真实实现由 <code>ToolFormatters</code> 按工具类型渲染 stdout / diff / 图片，此处仅演示 Collapsible 展开态。</div>
+            </div></div>
+          </div>
+
+          <div class="li">三个字体抽好了。现在写 fpdf2 渲染脚本——它直接解析 Markdown 结构，按 A4 多页排版，分页完全可控，不会膨胀。</div>
+
+          <div class="tool">
+            <button class="tool-trigger" type="button" aria-expanded="false">
+              <span class="tool-check"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+              <span class="tool-name">写入文件</span>
+              <span class="tool-arg">/tmp/md2pdf.py</span>
+              <svg class="tool-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <div class="tool-body"><div class="tool-body-inner">
+              <div class="tool-output">工具输出插槽（写入文件 → 展示文件 diff / 字节数）。</div>
+            </div></div>
+          </div>
+
+          <div class="tool">
+            <button class="tool-trigger" type="button" aria-expanded="false">
+              <span class="tool-check"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+              <span class="tool-name">运行命令</span>
+              <span class="tool-arg">/tmp/pdfvenv/bin/python /tmp/md2pdf.py "/Users/andersenax…</span>
+              <svg class="tool-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <div class="tool-body"><div class="tool-body-inner">
+              <div class="tool-output">工具输出插槽（stdout）。</div>
+            </div></div>
+          </div>
+
+          <div class="li">成功——4 页、146 KB 的有效 PDF（那些 <span class="ic">feat/morx NOT subset</span> 警告无害，只是字体子集化时跳过了排版表，不影响中文显示）。我截图验证一下排版和中文渲染是否正常。</div>
+
+          <div class="tool">
+            <button class="tool-trigger" type="button" aria-expanded="false">
+              <span class="tool-check"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+              <span class="tool-name">运行命令</span>
+              <span class="tool-arg"># 用 macOS 自带工具把 PDF 各页转成 PNG 预览 cd /tmp && /tmp/pdfvenv/b…</span>
+              <svg class="tool-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <div class="tool-body"><div class="tool-body-inner">
+              <div class="tool-output">工具输出插槽（stdout）。</div>
+            </div></div>
+          </div>
+
+          <div class="li">有 <span class="ic">pdftoppm</span>，更适合做整页预览。我把 4 页都转成 PNG 然后逐页看渲染效果。</div>
+
+          <div class="tool">
+            <button class="tool-trigger" type="button" aria-expanded="false">
+              <span class="tool-check"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+              <span class="tool-name">运行命令</span>
+              <span class="tool-arg">mkdir -p /tmp/pdfpreview && rm -f /tmp/pdfpreview/*.png p…</span>
+              <svg class="tool-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <div class="tool-body"><div class="tool-body-inner">
+              <div class="tool-output">工具输出插槽（stdout）。</div>
+            </div></div>
+          </div>
+
+          <div class="tool">
+            <button class="tool-trigger" type="button" aria-expanded="false">
+              <span class="tool-check"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+              <span class="tool-name">读取文件</span>
+              <span class="tool-arg">/tmp/pdfpreview/page-1.png</span>
+              <svg class="tool-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <div class="tool-body"><div class="tool-body-inner">
+              <div class="tool-output">工具输出插槽（读取图片 → 缩略图预览）。</div>
+            </div></div>
+          </div>
+
+          <div class="li">第一页渲染完美——标题、中文、加粗、下划线空白、条款编号、项目符号全部正常，页脚有页码。我快速看一下含账户信息的第 2 页和含表格的第 4 页，确认表格也正常。</div>
+
+          <div class="tool">
+            <button class="tool-trigger" type="button" aria-expanded="false">
+              <span class="tool-check"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+              <span class="tool-name">读取文件</span>
+              <span class="tool-arg">/tmp/pdfpreview/page-2.png</span>
+              <svg class="tool-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <div class="tool-body"><div class="tool-body-inner">
+              <div class="tool-output">工具输出插槽（读取图片 → 缩略图预览）。</div>
+            </div></div>
+          </div>
+
+          <div class="li">第 2 页也正常，能看到收款账户三行（户名/开户行/账号）已填入。最后确认第 4 页的附件表格渲染。</div>
+
+          <div class="tool">
+            <button class="tool-trigger" type="button" aria-expanded="false">
+              <span class="tool-check"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+              <span class="tool-name">读取文件</span>
+              <span class="tool-arg">/tmp/pdfpreview/page-4.png</span>
+              <svg class="tool-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <div class="tool-body"><div class="tool-body-inner">
+              <div class="tool-output">工具输出插槽（读取图片 → 缩略图预览）。</div>
+            </div></div>
+          </div>
+
+          <div class="li">全部正常。PDF 已生成并验证完毕。</div>
+
+          <!-- 结果宣告块 -->
+          <div class="result-block">
+            <div class="result-title">
+              <span class="tool-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+              PDF 已生成
+            </div>
+            <p style="margin-bottom:12px"><span class="file-chip">~/Desktop/广告费支付协议.pdf</span> —— 4 页 A4，146 KB，可直接打印盖章。</p>
+            <p style="margin-bottom:8px">我逐页截图确认了排版：</p>
+            <div class="sub-li">第 1 页：标题居中、甲乙双方信息、第一/二条</div>
+            <div class="sub-li">第 2 页：收款账户三行（户名/开户行/账号）已填入、知识产权等条款</div>
+            <div class="sub-li">第 4 页：签字盖章栏、附件一投放计划表格、费用拆分备注</div>
+            <p style="margin-top:12px">中文（宋体正文 + 黑体标题）、加粗、下划线空格、项目符号、表格边框、页码全部渲染正常。</p>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- 滚动到底 -->
+      <button class="scroll-bottom" id="scrollBottom" type="button" aria-label="滚动到底部" data-dev>
+        <span class="dev-tag" style="top:40px;left:50%;transform:translateX(-50%)">Button variant="outline" size="icon"</span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+      </button>
+
+      <!-- ════════════ Composer ════════════ -->
+      <div class="composer-dock">
+        <div class="composer">
+          <div class="composer-card" data-dev style="position:relative">
+            <span class="dev-tag" style="top:-12px;left:12px">Textarea（套壳）</span>
+            <div class="composer-input" id="composerInput" contenteditable="true" role="textbox" aria-multiline="true" aria-label="消息输入"></div>
+            <div class="composer-toolbar">
+              <button class="btn-icon" type="button" aria-label="添加附件">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+              <button class="chip" type="button" data-dev style="position:relative">
+                <span class="dev-tag" style="top:-14px;left:0">Toggle</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></svg>
+                幻灯片
+              </button>
+              <div class="spacer"></div>
+              <button class="chip" type="button" id="autoModeBtn" aria-haspopup="menu" data-dev style="position:relative">
+                <span class="dev-tag" style="top:-14px;right:0">DropdownMenu</span>
+                <span class="dot-rec"></span>
+                <span id="autoModeLabel">全自动</span>
+                <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <button class="btn-icon" type="button" aria-label="语音输入">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="2.5" width="6" height="11.5" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3.5"/></svg>
+              </button>
+              <button class="btn-send" id="sendBtn" type="button" aria-label="发送" disabled>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="composer-below">
+            <button class="below-ghost" type="button">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+              选择工作目录
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <button class="below-ghost" type="button" id="toneBtn" aria-haspopup="menu">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg>
+              语气 <span id="toneLabel">创意</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="spacer"></div>
+            <button class="chip model-chip" type="button" id="modelBtn" aria-haspopup="menu" data-dev style="position:relative">
+              <span class="dev-tag" style="top:-14px;right:0">DropdownMenu + Button variant="outline" size="sm"</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.2 2.2M16.9 16.9l2.2 2.2M4.9 19.1l2.2-2.2M16.9 7.1l2.2-2.2"/></svg>
+              <span id="modelLabel">claude-fable-5</span>
+              <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<!-- ════════════ DropdownMenu 弹层（shadcn <DropdownMenuContent>） ════════════ -->
+<div class="dropdown" id="ddModel" role="menu">
+  <div class="dd-label">模型</div>
+  <button class="dd-item selected" type="button" data-value="claude-fable-5" role="menuitemradio" aria-checked="true">
+    <span class="dd-main">claude-fable-5<span class="dd-desc">最强推理，日常首选</span></span>
+    <svg class="dd-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+  </button>
+  <button class="dd-item" type="button" data-value="claude-opus-4-8" role="menuitemradio" aria-checked="false">
+    <span class="dd-main">claude-opus-4-8<span class="dd-desc">复杂任务、长上下文</span></span>
+    <svg class="dd-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+  </button>
+  <button class="dd-item" type="button" data-value="claude-sonnet-5" role="menuitemradio" aria-checked="false">
+    <span class="dd-main">claude-sonnet-5<span class="dd-desc">均衡速度与质量</span></span>
+    <svg class="dd-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+  </button>
+  <button class="dd-item" type="button" data-value="claude-haiku-4-5" role="menuitemradio" aria-checked="false">
+    <span class="dd-main">claude-haiku-4-5<span class="dd-desc">轻量快速</span></span>
+    <svg class="dd-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+  </button>
+</div>
+
+<div class="dropdown" id="ddAuto" role="menu">
+  <div class="dd-label">执行方式</div>
+  <button class="dd-item selected" type="button" data-value="全自动" role="menuitemradio" aria-checked="true">
+    <span class="dd-main">全自动<span class="dd-desc">工具自动执行，不逐个确认</span></span>
+    <svg class="dd-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+  </button>
+  <button class="dd-item" type="button" data-value="按步确认" role="menuitemradio" aria-checked="false">
+    <span class="dd-main">按步确认<span class="dd-desc">每个工具执行前询问</span></span>
+    <svg class="dd-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+  </button>
+  <button class="dd-item" type="button" data-value="只读" role="menuitemradio" aria-checked="false">
+    <span class="dd-main">只读<span class="dd-desc">只允许读取，不改动文件</span></span>
+    <svg class="dd-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+  </button>
+</div>
+
+<div class="dropdown" id="ddTone" role="menu">
+  <div class="dd-label">语气</div>
+  <button class="dd-item selected" type="button" data-value="创意" role="menuitemradio" aria-checked="true">
+    <span class="dd-main">创意</span>
+    <svg class="dd-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+  </button>
+  <button class="dd-item" type="button" data-value="平衡" role="menuitemradio" aria-checked="false">
+    <span class="dd-main">平衡</span>
+    <svg class="dd-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+  </button>
+  <button class="dd-item" type="button" data-value="精确" role="menuitemradio" aria-checked="false">
+    <span class="dd-main">精确</span>
+    <svg class="dd-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+  </button>
+</div>
+
+<!-- ════════════ Tweaks ════════════ -->
+<button class="tweaks-fab" id="tweaksFab" type="button" aria-label="Tweaks">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+</button>
+<div class="tweaks" id="tweaksPanel">
+  <h4>Tweaks</h4>
+  <div class="switch-row">
+    深色模式
+    <span class="switch"><input type="checkbox" id="twDark" name="dark-mode"><span class="knob"></span></span>
+  </div>
+  <div class="switch-row">
+    shadcn 组件注记
+    <span class="switch"><input type="checkbox" id="twDev" name="dev-annotations"><span class="knob"></span></span>
+  </div>
+  <p class="hint">开启注记后，每个区块会标出对应的 shadcn/ui 组件名——照着清单即可在 React 侧实装。</p>
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   会话列表 — 标题取自真实截图；active 行渲染成 primary-soft。
+   ════════════════════════════════════════════════════════════════ */
+const sessions = [
+  '/claude-desktop:ppt-master /c…',
+  '看看nextjs 最新版本',
+  '合并两个 ghostty 窗口',
+  '安装 codebase-memory-mcp 项目',
+  '帮我做一个网页/设计/PPT',
+  'Draft technology service fee agreement',
+  'Design official website VPN',
+  '/claude-desktop:ppt-master 继续',
+  '/claude-desktop:ppt-master 好的',
+  '/claude-desktop:ppt-master /clear',
+  '/claude-desktop:ppt-master 你好',
+  '分析 Claude 二进制文件的功能实现',
+  '你是什么模型呢',
+  '理解 daemon 的概念',
+  '你是谁',
+  '你是什么模型',
+  '调试 niupay 订单列表 API 接口',
+  '你好',
+  '我想换个风格 内容跟整体的页数',
+  '只回复两个字：收到。不要调用任何工具',
+  '/claude-desktop:ppt-master 打磨',
+  '武汉',
+  'Analyze codebase-memory-mcp',
+  '/claude-desktop:ppt-master A…',
+  '开源PPT编辑器调研'
+];
+let activeIdx = 5;   // Draft technology service fee agreement
+
+const listEl = document.getElementById('sessionList');
+
+function renderSessions() {
+  listEl.innerHTML = '';
+  const label = document.createElement('div');
+  label.className = 'group-label';
+  label.style.padding = '2px 10px 6px';
+  label.textContent = '今天';
+  listEl.appendChild(label);
+
+  sessions.forEach((title, i) => {
+    const row = document.createElement('button');
+    row.className = 'menu-btn session-row' + (i === activeIdx ? ' active' : '');
+    row.type = 'button';
+    row.title = title;
+
+    const t = document.createElement('span');
+    t.className = 'label';
+    t.textContent = title;
+    row.appendChild(t);
+
+    const more = document.createElement('span');
+    more.className = 'more';
+    more.setAttribute('aria-hidden', 'true');
+    more.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>';
+    row.appendChild(more);
+
+    row.addEventListener('click', () => {
+      activeIdx = i;
+      renderSessions();
+      renderTitle();
+    });
+    listEl.appendChild(row);
+  });
+}
+
+/* ════════════ 标题在位编辑（shadcn Input 用法演示） ════════════
+   显示态 = 幽灵按钮（hover 出 muted 底 + 铅笔），点击原地换成
+   shadcn Input；Enter/blur 提交、Esc 放弃。与产品 renameSession
+   的交互链路一致。 */
+let titleEditing = false;
+
+function renderTitle() {
+  if (titleEditing) return;
+  const slot = document.getElementById('titleSlot');
+  // 保留注记 tag，只重建按钮
+  slot.querySelector('.title-ghost, .title-input')?.remove();
+
+  const btn = document.createElement('button');
+  btn.className = 'title-ghost';
+  btn.type = 'button';
+  btn.title = '点击重命名';
+  btn.innerHTML =
+    '<span class="label"></span>' +
+    '<svg class="pen" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+  btn.querySelector('.label').textContent = sessions[activeIdx];
+  btn.addEventListener('click', startTitleEdit);
+  slot.appendChild(btn);
+}
+
+function startTitleEdit() {
+  const slot = document.getElementById('titleSlot');
+  titleEditing = true;
+  slot.querySelector('.title-ghost')?.remove();
+
+  const input = document.createElement('input');
+  input.className = 'title-input';
+  input.name = 'session-title';
+  input.value = sessions[activeIdx];
+  input.maxLength = 200;
+  input.setAttribute('aria-label', '重命名对话');
+  slot.appendChild(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
+    titleEditing = false;
+    const v = input.value.trim();
+    if (commit && v) sessions[activeIdx] = v;
+    input.remove();
+    renderTitle();
+    renderSessions();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+/* ════════════ 工具行 Collapsible ════════════ */
+document.querySelectorAll('.tool-trigger').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const tool = btn.closest('.tool');
+    const open = tool.classList.toggle('open');
+    btn.setAttribute('aria-expanded', String(open));
+  });
+});
+
+/* ════════════ 滚动到底按钮：离底 >200px 才浮现 ════════════ */
+const thread = document.getElementById('thread');
+const scrollBottomBtn = document.getElementById('scrollBottom');
+function updateScrollBtn() {
+  const gap = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
+  scrollBottomBtn.classList.toggle('show', gap > 200);
+}
+thread.addEventListener('scroll', updateScrollBtn);
+scrollBottomBtn.addEventListener('click', () => { thread.scrollTop = thread.scrollHeight; });
+
+/* ════════════ composer：输入非空才点亮发送 ════════════ */
+const composerInput = document.getElementById('composerInput');
+const sendBtn = document.getElementById('sendBtn');
+composerInput.addEventListener('input', () => {
+  const ready = composerInput.textContent.trim().length > 0;
+  sendBtn.classList.toggle('ready', ready);
+  sendBtn.disabled = !ready;
+});
+
+/* ════════════ DropdownMenu 通用逻辑 ════════════
+   触发器上方弹出（transform-origin: bottom），点外面/Esc 关闭，
+   单选组内互斥打勾——对应 DropdownMenuRadioGroup。 */
+const dropdowns = [
+  { btn: 'modelBtn', dd: 'ddModel', label: 'modelLabel' },
+  { btn: 'autoModeBtn', dd: 'ddAuto', label: 'autoModeLabel' },
+  { btn: 'toneBtn', dd: 'ddTone', label: 'toneLabel' }
+];
+let openDD = null;
+
+function closeDD() {
+  if (!openDD) return;
+  document.getElementById(openDD.dd).classList.remove('show');
+  openDD = null;
+}
+dropdowns.forEach((cfg) => {
+  const btn = document.getElementById(cfg.btn);
+  const dd = document.getElementById(cfg.dd);
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (openDD && openDD.dd === cfg.dd) { closeDD(); return; }
+    closeDD();
+    const r = btn.getBoundingClientRect();
+    dd.style.left = Math.min(r.left, window.innerWidth - dd.offsetWidth - 8) + 'px';
+    dd.style.top = 'auto';
+    dd.style.bottom = (window.innerHeight - r.top + 6) + 'px';
+    dd.classList.add('show');
+    openDD = cfg;
+  });
+
+  dd.addEventListener('click', (e) => {
+    const item = e.target.closest('.dd-item');
+    if (!item) return;
+    dd.querySelectorAll('.dd-item').forEach((x) => {
+      x.classList.toggle('selected', x === item);
+      x.setAttribute('aria-checked', String(x === item));
+    });
+    document.getElementById(cfg.label).textContent = item.dataset.value;
+    closeDD();
+  });
+});
+document.addEventListener('mousedown', (e) => {
+  if (openDD && !document.getElementById(openDD.dd).contains(e.target)) closeDD();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDD(); });
+
+/* ════════════ Tweaks ════════════ */
+document.getElementById('tweaksFab').addEventListener('click', () => {
+  document.getElementById('tweaksPanel').classList.toggle('open');
+});
+document.getElementById('twDark').addEventListener('change', (e) => {
+  document.documentElement.classList.toggle('dark', e.target.checked);
+});
+document.getElementById('twDev').addEventListener('change', (e) => {
+  document.body.classList.toggle('show-dev', e.target.checked);
+});
+/* 跟随系统深色 */
+if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+  document.documentElement.classList.add('dark');
+  document.getElementById('twDark').checked = true;
+}
+
+renderSessions();
+renderTitle();
+</script>
+</body>
+</html>

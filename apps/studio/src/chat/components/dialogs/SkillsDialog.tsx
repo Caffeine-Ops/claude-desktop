@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { DialogShell } from '@open-design/ui'
+import { DialogShell } from '@/src/components/ui/dialog-shell'
 
 import type { SessionMeta } from '@desktop-shared/types'
 import { useDialogStore } from '../../stores/dialogs'

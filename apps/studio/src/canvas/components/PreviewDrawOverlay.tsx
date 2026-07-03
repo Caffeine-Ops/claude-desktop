@@ -43,7 +43,7 @@ interface Props {
 
 const STROKE_COLOR = '#ff3b30';
 const STROKE_WIDTH = 4;
-const ACTIVE_BUTTON_COLOR = 'var(--accent)';
+const ACTIVE_BUTTON_COLOR = 'var(--od-accent)';
 const TARGET_COLOR = '#1677ff';
 
 export function PreviewDrawOverlay({

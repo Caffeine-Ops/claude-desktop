@@ -13,7 +13,7 @@
  * so this stays compatible with upstream behavior. Append-only means we
  * never race fusion-code's writes to the active turn.
  */
-import { appendFile, readdir, readFile, stat } from 'node:fs/promises'
+import { appendFile, open, readdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, sep } from 'node:path'
 import {
@@ -55,12 +55,147 @@ export async function listSessions(
       // Can flip true once we have a worktree selector.
       includeWorktrees: false
     })
-    return infos
-      .map(toThreadSummary)
-      .sort((a, b) => b.updatedAt - a.updatedAt)
+    // 排序键换成「最后一条真实对话的时间」，不能用 SDK 的 lastModified
+    // （= 文件 mtime）：切会话的 background warmup 会让 fusion-code 以
+    // --resume 起来，CLI 恢复时往 jsonl 追加 bookkeeping 行（last-prompt /
+    // mode / permission-mode / ai-title），mtime 被顶成"刚刚"——于是只是
+    // 被翻过一眼的会话就跳到列表顶部，浏览时排序乱跳（2026-07-03 实测：
+    // 翻列表两分钟内 7 个文件 mtime 全变当前时间，而其中一个的最后真实
+    // 对话停在前一天）。bookkeeping 行都不带 timestamp 字段，所以按
+    // 「最后一条带 timestamp 的 user/assistant 记录」取时间天然免疫。
+    const dirs = await candidateProjectDirs(workspaceDir)
+    const threads = await Promise.all(
+      infos.map(async (info) => {
+        const summary = toThreadSummary(info)
+        const ts = await lastConversationTime(
+          info.sessionId,
+          info.lastModified,
+          dirs
+        )
+        // null = 尾部扫不到对话记录（如刚建还没发言的会话）——保留
+        // mtime 兜底，新会话仍按创建时间排。
+        if (ts !== null) summary.updatedAt = ts
+        return summary
+      })
+    )
+    pruneLastActivityCache(dirs, infos.map((i) => i.sessionId))
+    return threads.sort((a, b) => b.updatedAt - a.updatedAt)
   } catch (err) {
     console.warn(`${TAG} listSessions failed for ${workspaceDir}:`, err)
     return []
+  }
+}
+
+/* ─────────── 排序时间：最后真实对话，而非文件 mtime ─────────── */
+
+/**
+ * 尾部倒扫的窗口大小。要罩住「最后一条对话之后 CLI 追加的全部
+ * bookkeeping 行 + 对话记录本身」——单条 assistant 记录（含工具结果）
+ * 通常几 KB～几十 KB，256KB 给足余量；极端情况（尾部一条超巨
+ * tool_result 撑爆窗口）退化为 mtime 兜底，只是那一个会话排序略偏，
+ * 不值得为它读整个文件。
+ */
+const ACTIVITY_TAIL_BYTES = 256 * 1024
+
+/**
+ * mtime 键控的「最后真实对话时间」缓存。listSessions 每次刷新（切换、
+ * 改名、turn 结束都会触发）都要对全部会话取该时间，逐次读尾部会把
+ * main 的 IO 放大 N 倍；transcript 是 append-only 的，mtime 不变 ⇒ 尾部
+ * 不变 ⇒ 缓存永远有效（同 transcriptCache 的不变式）。bookkeeping 追加
+ * 会改 mtime → miss 一次 → 重扫得到同一个时间 → 排序依旧稳定。
+ * `ts: null` 表示"文件在但尾部没有对话记录"，也缓存（避免每次都白扫）。
+ */
+const lastActivityCache = new Map<string, { mtimeMs: number; ts: number | null }>()
+
+/**
+ * Resolve a session's last-conversation timestamp (ms), trying each
+ * candidate project dir until the jsonl is found. `null` = file found but
+ * no timestamped user/assistant record in the tail window; callers keep
+ * their mtime fallback in that case.
+ */
+async function lastConversationTime(
+  sessionId: string,
+  mtimeMs: number,
+  dirs: readonly string[]
+): Promise<number | null> {
+  for (const dir of dirs) {
+    const path = join(dir, `${sessionId}.jsonl`)
+    const cached = lastActivityCache.get(path)
+    if (cached && cached.mtimeMs === mtimeMs) return cached.ts
+    const ts = await readLastConversationTs(path)
+    if (ts === undefined) continue // 该 dir 下没有这个文件，试下一个
+    lastActivityCache.set(path, { mtimeMs, ts })
+    return ts
+  }
+  return null
+}
+
+/**
+ * 读文件尾部 ACTIVITY_TAIL_BYTES，从最后一行往前找第一条
+ * `type: user|assistant` 且带可解析 `timestamp` 的记录。
+ * 返回值三态：number = 找到；null = 文件在但窗口内没有对话记录；
+ * undefined = 文件打不开（不存在/无权限），调用方换下一个候选目录。
+ * 窗口的第一行可能被截断——JSON.parse 失败即跳过，倒扫顺序保证
+ * 截断行永远是最后才碰到的那一条，不影响结果。
+ */
+async function readLastConversationTs(
+  path: string
+): Promise<number | null | undefined> {
+  let fh
+  try {
+    fh = await open(path, 'r')
+  } catch {
+    return undefined
+  }
+  try {
+    const { size } = await fh.stat()
+    if (size === 0) return null
+    const len = Math.min(size, ACTIVITY_TAIL_BYTES)
+    const buf = Buffer.allocUnsafe(len)
+    await fh.read(buf, 0, len, size - len)
+    const lines = buf.toString('utf8').split('\n')
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]
+      if (!line) continue
+      let entry: unknown
+      try {
+        entry = JSON.parse(line)
+      } catch {
+        continue
+      }
+      if (!isRecord(entry)) continue
+      if (entry.type !== 'user' && entry.type !== 'assistant') continue
+      if (typeof entry.timestamp !== 'string') continue
+      const ms = Date.parse(entry.timestamp)
+      if (!Number.isNaN(ms)) return ms
+    }
+    return null
+  } catch {
+    return null
+  } finally {
+    await fh.close()
+  }
+}
+
+/**
+ * 丢掉已删除会话的缓存条目（模式同 transcriptCache 的 prune：只清
+ * 本 workspace 目录下、且不在当前会话集合里的 key，别的 workspace
+ * 的条目不动）。缓存量级 = 会话文件数（几十），prune 是卫生习惯而
+ * 非内存压力。
+ */
+function pruneLastActivityCache(
+  dirs: readonly string[],
+  liveIds: readonly string[]
+): void {
+  const live = new Set<string>()
+  for (const dir of dirs) {
+    for (const id of liveIds) live.add(join(dir, `${id}.jsonl`))
+  }
+  for (const path of lastActivityCache.keys()) {
+    if (live.has(path)) continue
+    if (dirs.some((dir) => path.startsWith(dir + sep))) {
+      lastActivityCache.delete(path)
+    }
   }
 }
 

@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { projectKindToTracking } from "@open-design/contracts/analytics";
 import { useAnalytics } from "../analytics/provider";
+import { LazyMount } from "./LazyMount";
 import {
   trackPageView,
   trackProjectsListClick,
@@ -593,14 +594,16 @@ export function DesignsTab({
 										className="design-card-thumb live-artifact-thumb"
 										aria-hidden
 									>
-										<iframe
-											className="thumb-iframe"
-											src={liveArtifactPreviewUrl(p.id, artifact.id)}
-											title=""
-											loading="lazy"
-											sandbox="allow-scripts"
-											tabIndex={-1}
-										/>
+										<LazyMount>
+											<iframe
+												className="thumb-iframe"
+												src={liveArtifactPreviewUrl(p.id, artifact.id)}
+												title=""
+												loading="lazy"
+												sandbox="allow-scripts"
+												tabIndex={-1}
+											/>
+										</LazyMount>
 									</div>
 									<div className="design-card-meta-block">
 										<ProjectTag category="live-artifact" />
@@ -760,14 +763,16 @@ export function DesignsTab({
 									) : cover.kind === "video" && cover.src ? (
 										<video className="thumb-media" src={cover.src} muted preload="metadata" playsInline />
 									) : cover.kind === "html" && cover.src ? (
-										<iframe
-											className="thumb-iframe"
-											src={cover.src}
-											title=""
-											loading="lazy"
-											sandbox="allow-scripts"
-											tabIndex={-1}
-										/>
+										<LazyMount>
+											<iframe
+												className="thumb-iframe"
+												src={cover.src}
+												title=""
+												loading="lazy"
+												sandbox="allow-scripts"
+												tabIndex={-1}
+											/>
+										</LazyMount>
 									) : (
 										<span className="project-thumb-glyph">{cover.initial}</span>
 									)}

@@ -250,21 +250,26 @@ declare global {
   }
 }
 
-export function App() {
+export function App({
+  settingsOverlay = false,
+}: {
+  /**
+   * Settings-overlay mode: `?settings=1` renders ONLY the settings UI over
+   * the normal App init (config load, daemon sync, agents all still run so
+   * SettingsDialog has real data) — no workspace/entry chrome.
+   *
+   * 由宿主（SurfaceHost）经 props 传入而不是本组件自己 useSearchParams：
+   * 根组件订阅 searchParams 意味着**每次 URL 变化**（包括 chat/画布切换的
+   * shallow pushState）整棵 canvas 树都要 re-render 一遍（实测 ~276ms 的
+   * FunctionCall 大块）。SurfaceHost 树很小，由它订阅并 memo 住本组件的
+   * 元素（依赖仅 settingsOverlay），只有设置状态真正翻转时 canvas 树才
+   * 重渲染。响应性不变：进/出设置依旧零刷新。
+   */
+  settingsOverlay?: boolean;
+} = {}) {
   const { t } = useI18n();
   const clientType = useMemo(() => detectClientType(), []);
-  // Settings-overlay mode: the desktop shell loads this same web app with
-  // `?settings=1` inside a full-window WebContentsView, to show the complete
-  // settings UI as a modal over any tab (see desktop tabRegistry
-  // .openSettingsView). In this mode we keep all the normal App init (config
-  // load, daemon sync, agents) so SettingsDialog has real data, but render
-  // ONLY the dialog over a dimming scrim — no workspace/entry chrome.
-  const isSettingsOverlay = useMemo(
-    () =>
-      typeof window !== 'undefined' &&
-      new URLSearchParams(window.location.search).get('settings') === '1',
-    [],
-  );
+  const isSettingsOverlay = settingsOverlay;
   const [config, setConfig] = useState<AppConfig>(() => loadConfig());
   const configRef = useRef(config);
   configRef.current = config;
@@ -1290,6 +1295,10 @@ export function App() {
     setSettingsOpen(true);
     document.documentElement.classList.add('settings-overlay');
     return () => {
+      // isSettingsOverlay 现在随软导航翻转（不再只在卸载时清理）：退出
+      // overlay 必须同步收起 settingsOpen——它还兼管普通模式的内嵌设置
+      // dialog，不清的话 history.back() 回到画布会误弹一个设置框。
+      setSettingsOpen(false);
       document.documentElement.classList.remove('settings-overlay');
     };
   }, [isSettingsOverlay]);
@@ -1606,6 +1615,15 @@ export function App() {
                 }
                 setSettingsOpen(false);
                 window.electronSettings?.close?.();
+                // studio 单视图（无 electronSettings preload）：settings 是
+                // URL 态（/?settings=1，AppRail 软导航 router.push 进来），
+                // 关闭 = 回上一页。软导航历史下 back() 是同文档回退（Next
+                // 处理 popstate，isSettingsOverlay 随之翻回 false），不会
+                // 整页刷新；无历史（deep link 直开）则回首页。
+                if (!window.electronSettings) {
+                  if (window.history.length > 1) window.history.back();
+                  else window.location.assign('/');
+                }
               };
               const SettingsComponent = settingsV2Enabled()
                 ? SettingsDialogV2

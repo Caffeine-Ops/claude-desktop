@@ -71,9 +71,7 @@ import { clearUnread, updateTrayLang } from '../tray'
 import {
   broadcastAppearanceChanged,
   broadcastTabList,
-  canAddTab,
   closeTab,
-  closeSettingsView,
   describeSenderMismatch,
   dispatchMenuActionToActiveTab,
   dispatchSessionSwitchToActiveTab,
@@ -85,8 +83,6 @@ import {
   getShellWindow,
   listTabs,
   MAX_TABS,
-  newTab,
-  openSettingsView,
   activateTab
 } from '../tabRegistry'
 import type {
@@ -968,13 +964,9 @@ export function registerIpcHandlers(): void {
   // `listTabs` is a one-shot hydrate for the shell TabBar on mount;
   // after that it reads updates off the TAB_LIST_CHANGED broadcast
   // that tabRegistry emits on every mutation.
-  ipcMain.handle(IPC_CHANNELS.TAB_NEW, async (): Promise<void> => {
-    if (!canAddTab()) {
-      await showMaxTabsDialog()
-      return
-    }
-    newTab()
-  })
+  // TAB_NEW：legacy 多 tab 架构已物理下线（Phase 4，单视图唯一）。通道保留
+  // 为 no-op——preload 仍暴露 tabApi.newTab，删 handler 会让 invoke reject。
+  ipcMain.handle(IPC_CHANNELS.TAB_NEW, async (): Promise<void> => {})
 
   ipcMain.handle(
     IPC_CHANNELS.TAB_SWITCH,
@@ -1312,16 +1304,11 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // Settings modal — a full-window transparent overlay managed by
-  // tabRegistry. Open from the shell's gear (works over any tab); close
-  // from the overlay itself (scrim / Escape / ✕). Both are window-agnostic.
-  ipcMain.handle(IPC_CHANNELS.SETTINGS_WINDOW_OPEN, async (): Promise<void> => {
-    openSettingsView()
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE, async (): Promise<void> => {
-    closeSettingsView()
-  })
+  // SETTINGS_WINDOW_*：旧的全窗设置 overlay（加载 web ?settings=1）已随
+  // apps/web 物理下线——设置迁入 studio 内（/?settings=1，见 AppRail）。
+  // 通道保留为 no-op，理由同 TAB_NEW。
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_WINDOW_OPEN, async (): Promise<void> => {})
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE, async (): Promise<void> => {})
 
   // Runtime-log read/clear for the「日志分析」settings section. Engine-free —
   // they touch the process-global logCollector directly. Live streaming is a

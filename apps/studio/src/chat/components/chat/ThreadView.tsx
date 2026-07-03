@@ -349,6 +349,94 @@ function ComposerSkeleton(): React.JSX.Element {
   )
 }
 
+/**
+ * 「显示更早的消息」gate —— 尾部窗口渲染的顶端入口（机制见 chat.ts
+ * `historyWindowStart` 注释：切会话只同步挂载最近 30 条，把全量 mount
+ * 的主线程长任务砍掉）。窗口外还有历史时渲染在消息列顶部，点一次向上
+ * 多挂一批。
+ *
+ * 滚动保持：prepend 发生在用户已滚到顶（scrollTop≈0）的时刻，而浏览器
+ * 的 overflow anchoring 在滚动位置为 0 时不生效——不补偿的话视口会
+ * 停在新内容的顶端，阅读位置丢失。
+ *
+ * 补偿时机只能用 ResizeObserver 等「内容列真实长高」：同步方案全被实测
+ * 排除——消息行不直接订阅 zustand，而是走 assistant-ui ExternalStore
+ * 管道（useExternalStoreRuntime 收到新 messages 后经它自己的内部 store
+ * 通知 Thread 重渲染），比 gate 自身的 commit 晚一拍。rAF 会跟这拍竞态
+ * （偶发量到差值 0），flushSync 只能同步提交 gate 自己（量到的还是旧
+ * 高度）。RO 回调在 layout 之后、paint 之前触发，长高的那一帧内回补，
+ * 零闪烁且与管道时序解耦。
+ */
+function EarlierMessagesGate(): React.JSX.Element | null {
+  const hiddenCount = useChatStore((s) => s.historyWindowStart)
+  const revealEarlierMessages = useChatStore((s) => s.revealEarlierMessages)
+  const lang = useI18n((s) => s.lang)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  // 上一次 reveal 尚未完成的补偿任务的取消函数。连点时先取消旧任务，
+  // 只让最新一次按自己的基线补偿——两个 RO 同时存活会各补一次（双倍
+  // 位移）。
+  const pendingCompRef = useRef<(() => void) | null>(null)
+
+  const onReveal = useCallback((): void => {
+    pendingCompRef.current?.()
+    pendingCompRef.current = null
+
+    const sc = findScrollParent(wrapRef.current)
+    const prevHeight = sc?.scrollHeight ?? 0
+    const prevTop = sc?.scrollTop ?? 0
+    revealEarlierMessages()
+    if (!sc) return
+    // 观察 Viewport 的内容列（唯一子元素）。条件用「高于基线」而不是
+    // 「变化」：最后一批 reveal 会先经历 gate 自身卸载的一次缩水，
+    // 不能在那一拍就补偿并收工。
+    const content = sc.firstElementChild
+    if (!(content instanceof HTMLElement)) return
+    const ro = new ResizeObserver(() => {
+      if (sc.scrollHeight <= prevHeight) return
+      cancel()
+      sc.scrollTop = prevTop + (sc.scrollHeight - prevHeight)
+    })
+    // 兜底：内容始终没长高（不应发生）时 1s 后放手，别让 RO 泄漏。
+    const bail = window.setTimeout(() => cancel(), 1000)
+    const cancel = (): void => {
+      ro.disconnect()
+      window.clearTimeout(bail)
+      if (pendingCompRef.current === cancel) pendingCompRef.current = null
+    }
+    pendingCompRef.current = cancel
+    ro.observe(content)
+  }, [revealEarlierMessages])
+
+  if (hiddenCount <= 0) return null
+  return (
+    <div ref={wrapRef} className="mb-6 flex justify-center">
+      <button
+        type="button"
+        onClick={onReveal}
+        className="rounded-full border border-border/70 bg-background px-3.5 py-1.5 text-[12px] text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+      >
+        {lang === 'zh'
+          ? `显示更早的消息（还有 ${hiddenCount} 条）`
+          : `Show earlier messages (${hiddenCount} more)`}
+      </button>
+    </div>
+  )
+}
+
+/**
+ * 从元素向上找最近的纵向滚动容器（实际命中 ThreadPrimitive.Viewport）。
+ * 不用 ref 穿透拿 Viewport：它由 assistant-ui 渲染，没有暴露元素 ref 的
+ * 公开口子，而「最近的 overflow-y:auto 祖先」对这里的 DOM 形状是稳定不
+ * 变式（gate 就挂在 Viewport 的内容列里）。
+ */
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  for (let p = el?.parentElement ?? null; p; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY
+    if (oy === 'auto' || oy === 'scroll') return p
+  }
+  return null
+}
+
 export function ThreadView(): React.JSX.Element {
   // Session transition signals from the chat store.
   //   - sessionId      : switches when loadSession resolves (~100ms, or
@@ -517,6 +605,9 @@ export function ThreadView(): React.JSX.Element {
             <ThreadPrimitive.Empty>
               <EmptyState />
             </ThreadPrimitive.Empty>
+
+            {/* 尾部窗口 gate：窗口外还有更早消息时出现在列顶。 */}
+            <EarlierMessagesGate />
 
             <ThreadPrimitive.Messages
               components={{
@@ -729,7 +820,7 @@ function ScrollToBottomButton(): React.JSX.Element {
         aria-label="Scroll to bottom"
         data-at-bottom={atBottom ? '' : undefined}
         className={
-          'pointer-events-auto absolute left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-lg shadow-black/10 backdrop-blur transition-all duration-200 ease-out hover:border-accent/60 hover:bg-background hover:text-accent active:scale-95 ' +
+          'pointer-events-auto absolute left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-lg shadow-black/10 backdrop-blur transition-all duration-200 ease-out hover:border-brand/60 hover:bg-background hover:text-brand active:scale-95 ' +
           // Anchored to the dock wrapper: `bottom-full` puts the button's bottom
           // edge at the dock's TOP, then mb-2 lifts it 8px clear so it floats
           // just above the input. This tracks the dock height automatically —
@@ -806,7 +897,7 @@ function TopProgressBar(): React.JSX.Element {
           than a wrapping strip. Box-shadow in accent gives the
           leading edge a soft glow trail. */}
       <motion.div
-        className="absolute top-0 h-full w-[35%] rounded-r-full bg-accent shadow-[0_0_10px_0_hsl(var(--accent)/0.55)]"
+        className="absolute top-0 h-full w-[35%] rounded-r-full bg-brand shadow-[0_0_10px_0_hsl(var(--brand)/0.55)]"
         initial={{ left: '-40%' }}
         animate={{ left: '100%' }}
         transition={{
@@ -926,7 +1017,9 @@ function ChatHeader(): React.JSX.Element {
           // Same type metrics as the h1 (16px/semibold/leading-tight) so the
           // header doesn't jump a pixel entering/leaving edit mode; negative
           // margin re-absorbs the input's own padding for the same reason.
-          className="-mx-1.5 -my-0.5 w-[min(480px,100%)] rounded-md border-[1.5px] border-ring bg-background px-1.5 py-0.5 text-[16px] font-semibold leading-tight text-foreground outline-none [-webkit-app-region:no-drag]"
+          // border 用 --brand 而非 --ring：ring 会被 appearance applier 换成
+          // 用户主题色，而「正在重命名」的绿框与 rail 行内编辑是同一身份。
+          className="-mx-1.5 -my-0.5 w-[min(480px,100%)] rounded-md border-[1.5px] border-brand bg-background px-1.5 py-0.5 text-[16px] font-semibold leading-tight text-foreground outline-none ring-2 ring-brand/20 [-webkit-app-region:no-drag]"
         />
       ) : (
         /* Session-switch title intro. `key={sessionId}` remounts JUST this h1
@@ -1287,16 +1380,13 @@ function SlidesWorkspace(): React.JSX.Element {
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-white">
-      {/* Tab bar. Doubles as a window drag handle: the window is frameless
-          (titleBarStyle 'hiddenInset'), so the empty space of this bar is an
-          app-region drag surface (-webkit-app-region: drag) — grabbing it moves
-          the whole window. `select-none` stops the labels from being text-
-          selected while dragging. Each tab button opts BACK OUT with no-drag so
-          clicks still register (a drag region swallows click events). */}
-      <div
-        className="flex shrink-0 select-none items-center gap-0.5 border-b border-border/60 px-2 py-1.5"
-        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-      >
+      {/* Tab bar. 不再兼职窗口拖拽面：旧实现整条 bar 标 -webkit-app-region:
+          drag、每个按钮 no-drag 豁免——但 Electron 里 drag 区内嵌套 no-drag
+          的点击并不可靠（mousedown 后有轻微位移就被当成窗口拖拽起手，click
+          直接丢弃），真机上表现为「tab 点不动」，且浏览器里 app-region 无效
+          果、永远复现不出来。这条 bar 又窄又塞满按钮，拖拽收益趋零——整体
+          撤销 drag，窗口拖拽面由 ChatHeader（chat 列顶部）独自承担。 */}
+      <div className="flex shrink-0 select-none items-center gap-0.5 border-b border-border/60 px-2 py-1.5">
         {tabs.map((tDef) => {
           const active = tDef.id === tab
           // Pulsing dot whenever this tab's content is changing — including the
@@ -1308,7 +1398,6 @@ function SlidesWorkspace(): React.JSX.Element {
               key={tDef.id}
               type="button"
               onClick={() => setTab(tDef.id)}
-              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
               className={
                 'flex items-center gap-1 rounded-md px-2 py-1 text-[12px] transition-colors ' +
                 (active
@@ -5038,11 +5127,11 @@ function ComposerStatusBar({
       aria-live="polite"
       aria-label={`${verb}, ${label}`}
     >
-      <span aria-hidden className="shrink-0 animate-spin text-accent [animation-duration:2.4s]">
+      <span aria-hidden className="shrink-0 animate-spin text-brand [animation-duration:2.4s]">
         ✺
       </span>
-      <span className="font-medium text-accent">{verb}…</span>
-      <span className="ml-auto shrink-0 font-mono text-[12px] tabular-nums text-accent/80">
+      <span className="font-medium text-brand">{verb}…</span>
+      <span className="ml-auto shrink-0 font-mono text-[12px] tabular-nums text-brand/80">
         {label}
       </span>
     </div>
@@ -5085,7 +5174,7 @@ function StatusCheck({
     <span aria-hidden className="relative size-[15px] shrink-0">
       <svg viewBox="0 0 15 15" className="absolute inset-0 size-full">
         <circle
-          className={(animate ? 'tc-pop ' : '') + (error ? 'fill-red-500' : 'fill-emerald-500')}
+          className={(animate ? 'tc-pop ' : '') + (error ? 'fill-red-500' : 'fill-brand')}
           cx="7.5"
           cy="7.5"
           r="7.5"
@@ -5125,7 +5214,7 @@ function ToolRunningHint(): React.JSX.Element {
     >
       <span
         aria-hidden
-        className="tc-breathe inline-block size-1.5 shrink-0 rounded-full bg-accent"
+        className="tc-breathe inline-block size-1.5 shrink-0 rounded-full bg-brand"
       />
       <span className="tool-loading-dots">{t('toolRunningHint')}</span>
     </div>
@@ -5765,7 +5854,7 @@ function Composer(): React.JSX.Element {
             thin top accent — it does NOT flood the input area, which keeps its
             clean white card. */}
         {turnActivity.active && turnActivity.startedAt !== undefined ? (
-          <div className="-mb-3 rounded-t-[20px] border border-b-0 border-accent/25 bg-accent/[0.08] px-1 pb-3 pt-0.5">
+          <div className="-mb-3 rounded-t-[20px] border border-b-0 border-brand/25 bg-brand/[0.08] px-1 pb-3 pt-0.5">
             <ComposerStatusBar
               startedAt={turnActivity.startedAt}
               activity={turnActivity.activity}
@@ -5776,7 +5865,7 @@ function Composer(): React.JSX.Element {
             card with border + rounded corners, sitting ON TOP of the status
             band (z-10) so the band's tucked bottom edge stays hidden and the
             composer never floods green. */}
-        <ComposerPrimitive.AttachmentDropzone className="relative z-10 rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--accent)/0.35)] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--accent)/0.5)] data-[dragging=true]:bg-accent/[0.08] dark:ring-white/[0.08]">
+        <ComposerPrimitive.AttachmentDropzone className="relative z-10 rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--brand)/0.4)] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--brand)/0.5)] data-[dragging=true]:bg-brand/[0.08] dark:ring-white/[0.08]">
           {/* Attachment preview row (pasted / dropped / picked). */}
           <div className="flex flex-wrap gap-2 px-4 pt-3 empty:hidden">
             <ComposerPrimitive.Attachments>
@@ -5874,7 +5963,10 @@ function Composer(): React.JSX.Element {
                     <ComposerPrimitive.Send
                       aria-label="Send message"
                       onClick={markIfSlides}
-                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.18)] transition-all hover:brightness-[1.12] active:scale-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.08] disabled:text-muted-foreground/50 disabled:shadow-none"
+                      // ready 态品牌绿（原型 .btn-send.ready）：空输入是 muted
+                      // disabled 盘，有内容才亮绿——状态差本身就是「可以发了」
+                      // 的信号，比常亮黑盘的信息量大。
+                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.18)] transition-all hover:brightness-[1.08] active:scale-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.08] disabled:text-muted-foreground/50 disabled:shadow-none"
                     >
                       <svg
                         width="18"
@@ -6048,8 +6140,8 @@ function ComposerModePicker(): React.JSX.Element {
         aria-label="对话模式"
         className={
           'group inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[12.5px] transition-colors ' +
-          'border-border/70 bg-card/70 text-muted-foreground hover:border-accent/50 hover:bg-card hover:text-foreground ' +
-          (open ? ' border-accent/60 text-foreground' : '')
+          'border-border/70 bg-card/70 text-muted-foreground hover:border-brand/50 hover:bg-card hover:text-foreground ' +
+          (open ? ' border-brand/60 text-foreground' : '')
         }
       >
         <span className="flex shrink-0 items-center">{current.icon}</span>
@@ -6086,8 +6178,8 @@ function ComposerModePicker(): React.JSX.Element {
                   className={
                     'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors ' +
                     (selected
-                      ? 'bg-accent/15 text-foreground'
-                      : 'text-muted-foreground hover:bg-accent/10 hover:text-foreground')
+                      ? 'bg-brand/10 text-foreground'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground')
                   }
                 >
                   <span className="flex shrink-0 items-center">{meta.icon}</span>
@@ -6102,7 +6194,7 @@ function ComposerModePicker(): React.JSX.Element {
                     <svg
                       width="14" height="14" viewBox="0 0 24 24" fill="none"
                       stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                      className="shrink-0 text-accent"
+                      className="shrink-0 text-brand"
                       aria-hidden
                     >
                       <polyline points="20 6 9 17 4 12" />
@@ -6254,8 +6346,8 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
                     className={
                       'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors ' +
                       (selected
-                        ? 'bg-accent/15 text-foreground'
-                        : 'text-muted-foreground hover:bg-accent/10 hover:text-foreground')
+                        ? 'bg-brand/10 text-foreground'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground')
                     }
                   >
                     <span className="min-w-0 flex-1 truncate font-medium" title={id}>
@@ -6265,7 +6357,7 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
                       <svg
                         width="14" height="14" viewBox="0 0 24 24" fill="none"
                         stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                        className="shrink-0 text-accent"
+                        className="shrink-0 text-brand"
                         aria-hidden
                       >
                         <polyline points="20 6 9 17 4 12" />

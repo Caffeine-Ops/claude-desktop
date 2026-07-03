@@ -24,7 +24,7 @@
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--accent-strong, var(--accent));
+  color: var(--accent-strong, var(--od-accent));
 }
 
 .integrations-view__lede {
@@ -40,7 +40,7 @@
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 999px;
   background: var(--bg-panel);
   color: var(--text-muted);
@@ -50,7 +50,7 @@
 }
 
 .integrations-view__badge svg {
-  color: var(--accent);
+  color: var(--od-accent);
 }
 
 .integrations-view__tabs {
@@ -58,7 +58,7 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   padding: 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius);
   background: var(--bg-panel);
   box-shadow: var(--shadow-xs);
@@ -88,8 +88,8 @@
 
 .integrations-view__tab.is-active {
   background: var(--accent-tint);
-  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
-  color: var(--accent-strong, var(--accent));
+  border-color: color-mix(in srgb, var(--od-accent) 24%, var(--od-border));
+  color: var(--accent-strong, var(--od-accent));
 }
 
 .integrations-view__tab-label {
@@ -100,7 +100,7 @@
 }
 
 .integrations-view__tab.is-active .integrations-view__tab-label {
-  color: var(--accent-strong, var(--accent));
+  color: var(--accent-strong, var(--od-accent));
 }
 
 .integrations-view__tab-hint {
@@ -118,7 +118,7 @@
 
 .integrations-view__panel > .settings-section {
   padding: 18px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius);
   background: var(--bg-panel);
   box-shadow: var(--shadow-xs);
@@ -130,7 +130,7 @@
 
 .integrations-view__use-everywhere {
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius);
   background: var(--bg);
   box-shadow: var(--shadow-xs);
@@ -154,7 +154,7 @@
   grid-template-columns: auto minmax(0, 1fr);
   gap: 16px;
   padding: 28px;
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--od-border);
   border-radius: var(--radius);
   /* Apple chrome carries no decorative gradient — flat panel surface only.
      Rhythm comes from surface/border, not a tinted overlay. */
@@ -167,10 +167,10 @@
   justify-content: center;
   width: 44px;
   height: 44px;
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--od-accent) 22%, var(--od-border));
   border-radius: var(--radius);
   background: var(--bg-panel);
-  color: var(--accent);
+  color: var(--od-accent);
   box-shadow: var(--shadow-xs);
 }
 

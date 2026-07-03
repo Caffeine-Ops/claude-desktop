@@ -35,6 +35,12 @@
  * deleted `tailwind.config.js` into the CSS-first `@theme` block. */
 @import 'tailwindcss';
 
+/* shadcn/ui 组件（src/components/ui/）的进出场动画 utilities：
+ * animate-in/out、fade-in-0、zoom-in-95、data-[state=…] 配套。tailwind v4
+ * 没有内置这些（v3 时代靠 tailwindcss-animate 插件），tw-animate-css 是
+ * shadcn 官方 v4 模板指定的替代，必须跟在 tailwindcss 之后 import。 */
+@import 'tw-animate-css';
+
 /* Selector-based dark mode. v3 declared `darkMode: 'class'`; v4 expresses
  * the same thing as a custom `dark` variant. `:where(...)` keeps the
  * variant at zero specificity so it never out-weighs a plain utility,
@@ -56,6 +62,12 @@
  * the scanner straight at the package src so DialogShell's `bg-card` /
  * `border-border` etc. are generated here and not purged. */
 @source '../../../../../packages/ui/src/**/*.{ts,tsx}';
+
+/* studio 自己的共享组件树（AppRail + shadcn/ui 的 src/components/ui/）。
+ * 上面的 '../**' 只覆盖 src/chat/**，app/ 由 globals.css 补——src/components
+ * 谁都不盖，不声明的话 shadcn 组件的类名会被 purge（AppRail 此前能活纯靠
+ * 类名恰好与 chat 重合，这里一并转正）。 */
+@source '../../components/**/*.{ts,tsx}';
 
 /* ─────────────────────────────────────────────────────────────────────
  * Theme — migrated verbatim from the former tailwind.config.js. Apple
@@ -189,6 +201,13 @@
   --color-sidebar-foreground: hsl(var(--sidebar-foreground));
   --color-sidebar-accent: hsl(var(--sidebar-accent));
   --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+
+  /* 品牌绿身份色（见 design-tokens/tokens.css 的 --brand 注释）：聊天区
+   * 不跟用户主题走的固定绿——bg-brand / text-brand / ring-brand。 */
+  --color-brand: hsl(var(--brand));
+  --color-brand-foreground: hsl(var(--brand-foreground));
 }
 
 @layer base {

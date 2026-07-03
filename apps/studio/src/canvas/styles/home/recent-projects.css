@@ -29,7 +29,7 @@
   background: transparent;
   border: none;
   /* "View all" is a text link — Apple Action Blue. */
-  color: var(--accent);
+  color: var(--od-accent);
   font-size: 14px;
   letter-spacing: -0.012em;
   cursor: pointer;
@@ -47,7 +47,7 @@
   color: var(--text-muted);
   font-size: 13px;
   padding: 20px 16px;
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--od-border);
   border-radius: var(--radius);
   text-align: center;
 }
@@ -112,7 +112,7 @@
   /* Focus ring lives on the cover (the visible surface), in Action Blue. */
   box-shadow:
     0 0 0 3px var(--accent-tint),
-    0 0 0 1px var(--accent);
+    0 0 0 1px var(--od-accent);
 }
 /* Design-system projects keep their functional red ring — but on the cover,
    not a now-absent card border. */
@@ -251,7 +251,7 @@
   letter-spacing: -0.008em;
   color: var(--text-strong);
   background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   box-shadow: var(--shadow-xs);
   -webkit-backdrop-filter: saturate(180%) blur(12px);
   backdrop-filter: saturate(180%) blur(12px);
@@ -261,7 +261,7 @@
   height: 6px;
 }
 .recent-projects__card-badge-running {
-  color: var(--accent);
+  color: var(--od-accent);
 }
 .recent-projects__card-badge-awaiting_input {
   color: var(--amber);
@@ -286,7 +286,7 @@
   height: 30px;
   border-radius: 50%;
   color: #fff;
-  background: var(--accent);
+  background: var(--od-accent);
   box-shadow: var(--shadow-sm);
   opacity: 0;
   transform: translateY(6px) scale(0.85);
@@ -347,7 +347,7 @@
   font-weight: 600;
 }
 .recent-projects__card-status-running {
-  color: var(--accent);
+  color: var(--od-accent);
 }
 .recent-projects__card-status-awaiting_input {
   color: var(--amber);

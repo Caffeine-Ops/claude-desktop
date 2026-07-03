@@ -1,21 +1,140 @@
 {
   "name": "@claude-desktop/studio",
-  "version": "0.0.1",
-  "description": "统一前端（迁移目标）：desktop renderer 的聊天 UI 与 apps/web 的设计工具 UI 都往这里搬。Electron 退化为薄壳加载本应用；daemon 继续做后端。只服务桌面壳，不做 static export（决策：放弃纯浏览器部署形态）。",
+  "version": "0.0.17",
+  "description": "Claude Desktop 单包形态（原 apps/desktop 已并入）：electron/ 是 Electron 宿主（main+preload+shared），app/ + src/ 是统一前端（Next.js，prod 走 static export 由 app:// 协议加载）。",
   "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "next dev -p ${STUDIO_DEV_PORT:-3100}",
-    "build": "next build",
-    "start": "next start -p ${STUDIO_DEV_PORT:-3100}",
-    "typecheck": "tsc --noEmit"
+  "author": "Caffeine-Ops",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Caffeine-Ops/claude-desktop.git"
   },
-  "//note-port": "端口默认 3100（避开 next 默认 3000——被同源 fork 抢占串味的历史坑，见 desktop openDesignServices.ts WEB_DEV_PORT 注释）。desktop 壳 spawn 本应用时注入 STUDIO_DEV_PORT 保证监听端口与壳侧探活/加载常量恒等；独立 bun run dev 时走 3100 默认值。",
+  "type": "module",
+  "main": "./out-electron/main/index.js",
+  "//note-outdir": "electron-vite 产物在 out-electron/（见 electron.vite.config.ts）——out/ 被 next static export 占用，两条构建链的产物目录必须分开，否则互相清对方的产物。",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "dev:next": "next dev -p ${STUDIO_DEV_PORT:-3100}",
+    "build:next": "next build",
+    "build:electron": "electron-vite build",
+    "build:icons": "bash scripts/build-icons.sh",
+    "prebundle:daemon": "bun scripts/prebundle-daemon.mjs",
+    "verify:fusion": "bun scripts/verify-fusion-bin.mjs",
+    "build:mac": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --mac --publish never",
+    "build:win": "bun run verify:fusion win && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --win --publish never",
+    "build:linux": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --linux --publish never",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "start": "electron-vite preview",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "//note-scripts": "dev = 整个桌面应用（electron-vite dev；main 启动时自动 spawn daemon 与 dev:next）。dev:next / build:next 是 Next 前端的独立入口——openDesignServices.spawnStudioDev 调的就是 dev:next。刻意没有裸 build：两条构建链必须显式指名（root 的 build 转发到 build:electron，root 的 prebuild:resources 转发到 build:next），避免合包前『desktop build=electron、studio build=next』的二义性复活。",
+  "//note-port": "Next dev 端口默认 3100（避开 next 默认 3000——被同源 fork 抢占串味的历史坑，见 electron/main/services/openDesignServices.ts WEB_DEV_PORT 注释）。壳 spawn dev:next 时注入 STUDIO_DEV_PORT 保证监听端口与壳侧探活/加载常量恒等；独立 bun run dev:next 时走 3100 默认值。",
+  "build": {
+    "appId": "com.anthropic.claude-desktop",
+    "productName": "Claude Desktop",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Caffeine-Ops",
+        "repo": "claude-desktop"
+      }
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out-electron/**/*",
+      "resources/**/*",
+      "env.json",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "artifactName": "Claude-Desktop-${version}-${arch}-${os}.${ext}",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "identity": "Shenzhen Panda Run Network Technology Co., Ltd (LBL475BGZL)",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extraResources": [
+        {
+          "from": "fusion-bin/fusion-code-cli",
+          "to": "fusion-code-cli"
+        },
+        {
+          "from": "prebundled",
+          "to": "prebundled"
+        },
+        {
+          "from": "node-runtime/mac",
+          "to": "node-runtime"
+        },
+        {
+          "from": "python-runtime/mac",
+          "to": "python-runtime"
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "fusion-bin/fusion-code-cli.exe",
+          "to": "fusion-code-cli.exe"
+        },
+        {
+          "from": "prebundled",
+          "to": "prebundled"
+        },
+        {
+          "from": "node-runtime/win",
+          "to": "node-runtime"
+        },
+        {
+          "from": "python-runtime/win",
+          "to": "python-runtime"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.32.1",
+    "@anthropic-ai/claude-agent-sdk": "0.3.186",
+    "@electron-toolkit/preload": "^3.0.1",
+    "@electron-toolkit/utils": "^3.0.0"
+  },
+  "//note-deps": "dependencies = Electron 运行时真正 require 的包，一个都不能多：electron-vite 的 externalizeDepsPlugin 按这里决定哪些包不打进 bundle（运行时从 node_modules require），electron-builder 按这里决定哪些 node_modules 进 asar。全部前端依赖（next/react/prosemirror/…）都在 devDependencies——UI 是构建期产物（next static export），运行时没人 require 它们；若放进 dependencies，整个前端依赖树会被打进安装包白白撑大体积。",
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.105.0",
     "@assistant-ui/core": "^0.1.13",
     "@assistant-ui/react": "^0.12.24",
     "@claude-desktop/design-tokens": "workspace:*",
+    "@electron-toolkit/tsconfig": "^1.0.1",
     "@open-design/composer": "workspace:*",
     "@open-design/contracts": "workspace:*",
     "@open-design/host": "workspace:*",
@@ -23,12 +142,23 @@
     "@open-design/sidecar": "workspace:*",
     "@open-design/sidecar-proto": "workspace:*",
     "@open-design/ui": "workspace:*",
+    "@tailwindcss/postcss": "4.3.0",
+    "@types/node": "^22.9.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
     "@use-gesture/react": "^10.3.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "electron": "35.7.5",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "esbuild": "^0.28.0",
     "highlight.js": "^11.11.1",
     "lucide-react": "1.16.0",
     "motion": "^12.38.0",
     "next": "16.2.10",
     "openai": "6.38.0",
+    "postcss": "8.5.15",
     "posthog-js": "1.374.2",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-history": "^1.5.0",
@@ -36,27 +166,23 @@
     "prosemirror-model": "^1.25.7",
     "prosemirror-state": "^1.4.4",
     "prosemirror-view": "^1.41.8",
+    "radix-ui": "^1.6.1",
     "react": "19.2.5",
     "react-dom": "19.2.5",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "4.3.0",
+    "tw-animate-css": "^1.4.0",
+    "typescript": "5.9.3",
+    "vite": "^5.4.11",
     "zustand": "^5.0.0"
   },
-  "//note-chat-deps": "src/chat/ 迁移自 apps/desktop renderer，第三方依赖区间与 desktop 逐一对齐（bun hoist 同一份实例）。desktop 侧升级这些包时 studio 必须同步。",
-  "//note-assistant-ui": "版本区间与 apps/desktop 一致（bun hoist 同一份）。Phase 2 前置：@desktop-shared/ipc-channels 类型里 type-import 了 @assistant-ui/react 的 ThreadMessageLike，tsc 解析需要它在依赖树里；聊天 UI 迁入后是正经运行时依赖。",
-  "devDependencies": {
-    "@tailwindcss/postcss": "4.3.0",
-    "@types/node": "20.19.39",
-    "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3",
-    "postcss": "8.5.15",
-    "tailwindcss": "4.3.0",
-    "typescript": "5.9.3"
-  },
-  "//note-react": "react/@types 精确钉死到与 apps/web 完全一致的版本。bun workspace 里两个不同精确版本会 resolve 出两份 react，历史上 @types/react 双版本穿透穿出过 ReactNode 不兼容（见 errors/2026-05-23）。升级时全仓三个 app 一起动。",
+  "//note-assistant-ui": "@assistant-ui/react 是前端运行时依赖 + electron/shared/ipc-channels.ts 的 type-only 依赖，两个用途都是构建期解析——UI 打进静态导出、类型编译后擦除，故放 devDependencies（electron-builder 不需要把它带进 asar）。",
+  "//note-react": "react/@types 精确钉死。bun workspace 里两个不同精确版本会 resolve 出两份 react，历史上 @types/react 双版本穿透穿出过 ReactNode 不兼容（见 errors/2026-05-23）。@types/node 用 ^22（原 desktop 侧口径）——合包后单一版本服务两条 tsc 链。",
   "engines": {
     "node": "~24"
   },
-  "//note-canvas-deps": "src/canvas/ 迁移自 apps/web src（Phase 3 整体平移），依赖与 web 逐一对齐。@anthropic-ai/sdk 0.32.1 与 desktop 的 ^0.105 并存（canvas 代码用 0.32 API），Phase 4 前统一。"
+  "//note-canvas-deps": "src/canvas/ 迁移自 apps/web src（Phase 3 整体平移）。@anthropic-ai/sdk 的唯一使用点是 canvas 的 providers/anthropic.ts（前端构建期），Electron main 不再依赖它。"
 }

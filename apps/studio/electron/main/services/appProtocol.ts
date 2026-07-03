@@ -30,14 +30,17 @@ import { join, normalize, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { net, protocol } from 'electron'
 
-import { DAEMON_PORT, resolveWebStaticDir } from './openDesignServices'
+import { DAEMON_PORT, resolveStudioStaticDir } from './openDesignServices'
 
 /** 自定义协议名。注意：必须与 index.ts registerSchemesAsPrivileged 里登记的一致。 */
 export const APP_SCHEME = 'app'
-/** web tab 的 host。app://open-design/ 是页面入口，也是 daemon 白名单里的 origin。 */
-export const APP_HOST = 'open-design'
-/** prod 下 web tab 加载的入口 URL。 */
-export const APP_ORIGIN = `${APP_SCHEME}://${APP_HOST}`
+/**
+ * studio（统一前端，单视图形态的唯一 UI）的 host。app://studio/ 是 prod 下
+ * 唯一的页面入口（legacy 的 app://open-design → web/out 已随 apps/web 物理
+ * 下线，Phase 4）。
+ */
+export const STUDIO_HOST = 'studio'
+export const STUDIO_APP_ORIGIN = `${APP_SCHEME}://${STUDIO_HOST}`
 
 const DAEMON_ORIGIN = `http://127.0.0.1:${DAEMON_PORT}`
 
@@ -117,7 +120,7 @@ function mimeFor(filePath: string): string {
  * registerSchemesAsPrivileged 必须**已经**在 ready 之前跑过（见 index.ts）。
  */
 export function registerAppProtocol(): void {
-  const staticDir = resolveWebStaticDir()
+  const staticDir = resolveStudioStaticDir()
 
   protocol.handle(APP_SCHEME, async (request) => {
     const url = new URL(request.url)

@@ -150,6 +150,26 @@ interface ChatState {
    * keep working unchanged.
    */
   messages: ThreadMessageLike[]
+  /**
+   * Tail-window cursor for the FOREGROUND transcript: indexes into
+   * `messages`; rows before it exist in state but are NOT handed to the
+   * thread runtime (FusionRuntimeProvider slices `messages.slice(start)`).
+   *
+   * Why: switching to a long session used to mount the ENTIRE history in
+   * one synchronous commit — hundreds of messages × markdown parse ×
+   * tool cards pinned the renderer main thread for hundreds of ms and
+   * the switch entrance dropped frames. Chat reads bottom-up, so only
+   * the last HISTORY_WINDOW_INITIAL rows mount on switch; earlier rows
+   * are revealed on demand (EarlierMessagesGate in ThreadView).
+   *
+   * Index-based is safe because the transcript is append-only while
+   * mounted: streaming grows the TAIL, so indices below the cursor never
+   * shift. Only setSession/setForegroundSession replace the array — and
+   * both recompute the cursor. Foreground-scoped like the mirrors above
+   * (a background session's window resets on its next foregrounding,
+   * which is the desired "re-collapse on revisit" behavior).
+   */
+  historyWindowStart: number
   streaming: boolean
   turnStartedAt: number | null
   turnVerb: string | null
@@ -256,6 +276,29 @@ interface ChatState {
    */
   beginSessionSwitch: () => void
   endSessionSwitch: () => void
+
+  /**
+   * Slide the tail window up by HISTORY_WINDOW_REVEAL_STEP (clamped to
+   * 0), mounting older foreground messages. Caller (EarlierMessagesGate)
+   * owns scroll-position preservation around the reveal.
+   */
+  revealEarlierMessages: () => void
+}
+
+/**
+ * Tail-window sizing. INITIAL is what a switch mounts synchronously —
+ * 30 rows ≈ several screens of scrollback, enough that the reveal gate
+ * is out of sight until the user deliberately digs. REVEAL_STEP is per
+ * click of the gate; bigger than INITIAL so digging through a long
+ * transcript doesn't take a dozen clicks (each step is an incremental
+ * mount of already-in-memory rows — far cheaper than the initial one).
+ */
+const HISTORY_WINDOW_INITIAL = 30
+const HISTORY_WINDOW_REVEAL_STEP = 80
+
+/** Window start for a freshly-(re)mounted transcript: last N rows only. */
+function initialWindowStart(messages: readonly ThreadMessageLike[]): number {
+  return Math.max(0, messages.length - HISTORY_WINDOW_INITIAL)
 }
 
 function randomId(prefix: string): string {
@@ -338,6 +381,7 @@ export const useChatStore = create<ChatState>((set) => ({
   sessionLoading: false,
   sessionSwitching: false,
   perSession: {},
+  historyWindowStart: 0,
   messages: [],
   streaming: false,
   turnStartedAt: null,
@@ -826,6 +870,7 @@ export const useChatStore = create<ChatState>((set) => ({
       sessionLoading: false,
       sessionSwitching: false,
       perSession: {},
+      historyWindowStart: 0,
       ...EMPTY_SLOT
     }),
 
@@ -840,6 +885,7 @@ export const useChatStore = create<ChatState>((set) => ({
         // foreground (or leaves it null to drop back to the empty
         // thread).
         patch.sessionId = null
+        patch.historyWindowStart = 0
         Object.assign(patch, EMPTY_SLOT)
       }
       return patch
@@ -869,6 +915,9 @@ export const useChatStore = create<ChatState>((set) => ({
         // ThreadView entrance takes over from here.
         sessionSwitching: false,
         perSession: { ...s.perSession, [sessionId]: slot },
+        // Tail window from the COMMITTED slot (may be the preserved live
+        // slot, not the `messages` argument) so cursor and array agree.
+        historyWindowStart: initialWindowStart(slot.messages),
         ...mirrorFromSlot(slot)
       }
     }),
@@ -876,7 +925,12 @@ export const useChatStore = create<ChatState>((set) => ({
   setForegroundSession: (sessionId) =>
     set((s) => {
       if (sessionId === null) {
-        return { sessionId: null, sessionSwitching: false, ...EMPTY_SLOT }
+        return {
+          sessionId: null,
+          sessionSwitching: false,
+          historyWindowStart: 0,
+          ...EMPTY_SLOT
+        }
       }
       const slot = s.perSession[sessionId] ?? EMPTY_SLOT
       const perSession =
@@ -887,6 +941,7 @@ export const useChatStore = create<ChatState>((set) => ({
         sessionId,
         sessionSwitching: false,
         perSession,
+        historyWindowStart: initialWindowStart(slot.messages),
         ...mirrorFromSlot(slot)
       }
     }),
@@ -894,7 +949,15 @@ export const useChatStore = create<ChatState>((set) => ({
   setSessionLoading: (loading) => set({ sessionLoading: loading }),
 
   beginSessionSwitch: () => set({ sessionSwitching: true }),
-  endSessionSwitch: () => set({ sessionSwitching: false })
+  endSessionSwitch: () => set({ sessionSwitching: false }),
+
+  revealEarlierMessages: () =>
+    set((s) => ({
+      historyWindowStart: Math.max(
+        0,
+        s.historyWindowStart - HISTORY_WINDOW_REVEAL_STEP
+      )
+    }))
 }))
 
 /**

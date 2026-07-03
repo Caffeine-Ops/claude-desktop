@@ -63,6 +63,7 @@ export function FusionRuntimeProvider({
   const sessionId = useChatStore((s) => s.sessionId)
   const sessionLoading = useChatStore((s) => s.sessionLoading)
   const messages = useChatStore((s) => s.messages)
+  const historyWindowStart = useChatStore((s) => s.historyWindowStart)
   const streaming = useChatStore((s) => s.streaming)
   const appendUserMessage = useChatStore((s) => s.appendUserMessage)
   const startAssistantMessage = useChatStore((s) => s.startAssistantMessage)
@@ -238,8 +239,24 @@ export function FusionRuntimeProvider({
   }, [lang])
 
   // ── ExternalStoreRuntime wiring ─────────────────────────────────────
+
+  // Tail window: the runtime (and thus ThreadPrimitive.Messages) only sees
+  // messages from `historyWindowStart` on — mounting a long transcript's
+  // full history in one synchronous commit is what made session switches
+  // jank (see the cursor's doc in chat.ts). Derived with useMemo from two
+  // STABLE store fields, never sliced inside a selector (a fresh array per
+  // selector run is the useShallow/getSnapshot infinite-loop trap).
+  // Everything else (OutlinePanel, written-file derivations, event
+  // handlers) keeps reading the FULL `messages` — only the thread's render
+  // path is windowed.
+  const visibleMessages = useMemo(
+    () =>
+      historyWindowStart > 0 ? messages.slice(historyWindowStart) : messages,
+    [messages, historyWindowStart]
+  )
+
   const runtime = useExternalStoreRuntime({
-    messages: messages as ThreadMessageLike[],
+    messages: visibleMessages as ThreadMessageLike[],
     isRunning: streaming,
     // `isLoading` greys out the thread while main is spawning a new
     // fusion-code child (session switch) — the composer hides its
@@ -622,6 +639,18 @@ export function invalidateHistoryCache(id: string): void {
 }
 
 /**
+ * Resolve after the browser has composited one more frame (double rAF:
+ * the first callback runs BEFORE the next paint, the second one after it).
+ * Used to let the switch curtain's latest frame reach the screen before a
+ * heavy synchronous mount grabs the main thread.
+ */
+function nextPaintFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  })
+}
+
+/**
  * Powers the left sidebar. Talks only to `window.chatApi` — no direct
  * knowledge of the main process, file system, or the SDK. State lives
  * in `useState` + the chat store; this hook just glues them together.
@@ -815,6 +844,16 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
           const loaded = await window.chatApi.loadSession({ sessionId: id })
           messages = loaded.messages as ThreadMessageLike[]
           setCachedHistory(id, messages)
+          // 大 mount 前让一帧：loadSession 的 IPC resolve 落在帧中间，紧跟
+          // 的 setSession 是一次同步大 commit（有尾部窗口后也还有 ~30 条 ×
+          // markdown 的量）。双 rAF 让帘幕/骨架的最新一帧先合成上屏、排队
+          // 的输入事件先冲掉，再做 mount。不用 startTransition：zustand 走
+          // useSyncExternalStore，外部 store 更新必须同步渲染（防 tearing），
+          // transition 对它不生效。
+          await nextPaintFrame()
+          // 让帧期间可能又开始了一次更新的切换（快速连点）；落后的 mount
+          // 会把新切换刚上屏的内容打回去——直接弃权，flags 归新切换管。
+          if (switchSeqRef.current !== seq) return
           setSession(id, messages as ThreadMessageLike[])
         }
 

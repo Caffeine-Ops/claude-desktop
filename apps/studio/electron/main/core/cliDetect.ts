@@ -170,7 +170,7 @@ export function resolveSystemClaudeJsEntry(cliPath: string): string {
  *     prebundle-daemon.mjs RESOURCE_DIRS). resolveRepoRoot() in
  *     openDesignServices.ts lands daemon PROJECT_ROOT on that same prebundled
  *     root, so the two consumers stay in lockstep.
- *   - dev: walk up from this bundle (apps/desktop/out/main) / cwd to the repo
+ *   - dev: walk up from this bundle (apps/studio/out-electron/main) / cwd to the repo
  *     root and use its live `skills/`.
  *
  * Returns null when no `skills/` dir is found (the plugins option is then
@@ -220,7 +220,7 @@ export function resolveBundledSkillsPluginDir(): string | null {
  * dev/prod split mirrors resolveJsRuntimeBin():
  *   - prod (packaged): electron-builder copies `python-runtime/<platform>` →
  *     `<resourcesPath>/python-runtime` (extraResources, see package.json).
- *   - dev: use the in-repo `apps/desktop/python-runtime/<platform>` if a dev
+ *   - dev: use the in-repo `apps/studio/python-runtime/<platform>` if a dev
  *     populated it (normally absent in dev — bootstrap then uses system python).
  *
  * `PPT_MASTER_PYTHON_HOME` env overrides everything for diagnostics.
@@ -240,7 +240,7 @@ export function resolveBundledPythonHome(): string | null {
     ...(resourcesPath ? [resolve(resourcesPath, 'python-runtime')] : []),
     resolve(selfDir, '../../python-runtime', platformDir),
     resolve(process.cwd(), 'python-runtime', platformDir),
-    resolve(process.cwd(), 'apps/desktop/python-runtime', platformDir)
+    resolve(process.cwd(), 'apps/studio/python-runtime', platformDir)
   ]
   for (const p of candidates) {
     // Only return a home whose interpreter actually exists — a half-populated

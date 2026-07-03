@@ -696,12 +696,15 @@ function LsSection({
         <span className="tabular-nums">· {items.length}</span>
       </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-x-4 gap-y-0.5">
-        {items.map((name) => {
+        {items.map((name, i) => {
           const hidden = name.startsWith('.')
+          // key 必须带 index：items 是 ls 输出裸名字（无路径），递归列目录时
+          // 不同子目录下的同名文件（如两个 _index.md）会重复出现，裸 name
+          // 做 key 会撞。列表是一次性静态渲染（不重排不增删），index 安全。
           if (kind === 'dir') {
             return (
               <div
-                key={name}
+                key={`${i}-${name}`}
                 className="flex min-w-0 items-center gap-1.5"
                 title={name}
               >
@@ -721,7 +724,7 @@ function LsSection({
           }
           return (
             <div
-              key={name}
+              key={`${i}-${name}`}
               className="flex min-w-0 items-center gap-1.5"
               title={name}
             >

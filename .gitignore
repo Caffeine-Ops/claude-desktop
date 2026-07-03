@@ -1,34 +1,35 @@
 node_modules
 out
+out-electron
 dist
 build/
-# Exception for ONE file inside apps/desktop/build/. `build/` above excludes the
+# Exception for ONE file inside apps/studio/build/. `build/` above excludes the
 # dir, and git won't descend into an excluded dir — so we must first re-include
 # the dir itself (without un-ignoring its other contents), then the file:
-#   1. !apps/desktop/build/  → allow git to descend into just this build dir
-#   2. apps/desktop/build/*  → re-ignore everything in it (icons are CI-generated)
+#   1. !apps/studio/build/  → allow git to descend into just this build dir
+#   2. apps/studio/build/*  → re-ignore everything in it (icons are CI-generated)
 #   3. !…/entitlements.mac.plist → the one hand-authored, no-generator file we
 #      keep: electron-builder reads it for Developer ID signing on tag builds,
 #      so it must ride into the repo or `build:mac` in CI can't find it. Holds
 #      only hardened-runtime entitlement keys, no credentials.
-!apps/desktop/build/
-apps/desktop/build/*
-!apps/desktop/build/entitlements.mac.plist
+!apps/studio/build/
+apps/studio/build/*
+!apps/studio/build/entitlements.mac.plist
 *.log
 .DS_Store
 
 # fusion-code CLI 二进制 (~35M)：由 CI 在构建时下载（版本钉在
 # .github/workflows/build.yml 的 FUSION_CODE_VERSION），不是源码，不入库。
-apps/desktop/fusion-bin/
+apps/studio/fusion-bin/
 
 # 自带 Node runtime (~50M/平台)：CI 从 nodejs.org 下载对应平台 Node 24
 # （版本钉在 build.yml 的 BUNDLED_NODE_VERSION），打进包给 daemon 用，不入库。
-apps/desktop/node-runtime/
+apps/studio/node-runtime/
 
 # 自带 Python 3.12 runtime (~40-50M/平台)：CI 从 astral-sh/python-build-standalone
 # 下载（版本钉在 build.yml 的 PYTHON_STANDALONE_TAG/VERSION），打进包给 ppt-master
 # skill 的 ensure-python 脚本当 venv base 用，不是源码，不入库。
-apps/desktop/python-runtime/
+apps/studio/python-runtime/
 
 # skill 的运行时产物（本机跑 skill 时生成，非源码）：
 # ppt-master/projects/ 是生成的 PPT 工程；__pycache__/ 是 Python 字节码缓存
@@ -40,7 +41,7 @@ skills/**/__pycache__/
 # 内容全是从 repo 别处复制来的（daemon bundle + apps/web/out + skills/
 # design-systems/… 等根目录资源），无唯一副本。electron-builder 打包时用，
 # 重新生成用 `bun run prebundle:daemon`。不入库。
-apps/desktop/prebundled/
+apps/studio/prebundled/
 
 .env
 .env.local

@@ -17,11 +17,11 @@
 //   prebundled/
 //     apps/daemon/dist/daemon-cli.mjs        ← esbuild bundle (entry)
 //     apps/daemon/dist/node_modules/         ← better-sqlite3, blake3-wasm, deps
-//     apps/web/out/                          ← next static export (app:// serves it)
+//     apps/studio/out/                       ← next static export (app://studio serves it)
 //     skills/ design-systems/ design-templates/ craft/ assets/
 //     prompt-templates/ plugins/             ← daemon resource roots
 //
-// Run from apps/desktop via `bun run prebundle:daemon` (bun resolves esbuild
+// Run from apps/studio via `bun run prebundle:daemon` (bun resolves esbuild
 // from the workspace store; plain `node` can't resolve it under bun's layout).
 
 import { build } from 'esbuild'
@@ -30,10 +30,10 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-// apps/desktop/scripts → apps/desktop → apps → repo root
+// apps/studio/scripts → apps/studio → apps → repo root
 const repoRoot = join(__dirname, '..', '..', '..')
-const desktopRoot = join(__dirname, '..')
-const out = join(desktopRoot, 'prebundled')
+const pkgRoot = join(__dirname, '..')
+const out = join(pkgRoot, 'prebundled')
 
 const daemonEntry = join(repoRoot, 'apps', 'daemon', 'dist', 'cli.js')
 if (!existsSync(daemonEntry)) {
@@ -124,13 +124,21 @@ if (existsSync(nvmrcSrc)) {
   console.warn('[prebundle] .nvmrc missing — prod daemon may pick wrong Node ABI')
 }
 
-// Copy the web static export + daemon resource dirs verbatim.
-const webOut = join(repoRoot, 'apps', 'web', 'out')
-if (existsSync(webOut)) {
-  cpSync(webOut, join(out, 'apps', 'web', 'out'), { recursive: true, dereference: true })
-  console.log('[prebundle] copied apps/web/out')
+// （apps/web 已随 Phase 4 物理下线——prod 唯一 UI 是 studio/out。）
+
+// studio 静态产物（单视图形态 prod 的唯一 UI，app://studio 读这里）。
+// 缺失=打出来的包开屏就 404，按硬错误处理而不是 warning——单视图已是默认
+// 形态，没有 studio 的包是废包（LEGACY_TABS 用户除外，但那是逃生门不是常态）。
+const studioOut = join(repoRoot, 'apps', 'studio', 'out')
+if (existsSync(studioOut)) {
+  cpSync(studioOut, join(out, 'apps', 'studio', 'out'), { recursive: true, dereference: true })
+  console.log('[prebundle] copied apps/studio/out')
 } else {
-  console.warn('[prebundle] apps/web/out missing — web tab will 404 in prod (build web first)')
+  console.error(
+    '[prebundle] apps/studio/out missing — 单视图 prod 开屏即 404。' +
+      "先构建：bun run --filter='@claude-desktop/studio' build"
+  )
+  process.exit(1)
 }
 
 const RESOURCE_DIRS = [

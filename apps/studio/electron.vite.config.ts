@@ -1,41 +1,34 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
-import react from '@vitejs/plugin-react'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 /**
- * Vite config for the Electron wrapper.
+ * Vite config for the Electron 宿主层（electron/ = main + preload + shared，
+ * 原 apps/desktop 并入本包后的位置）。
+ *
+ * 产物目录是 out-electron/ 而不是 electron-vite 默认的 out/：本包同时承载
+ * Next 前端，next static export 固定写 out/——两条构建链共用一个目录会互相
+ * 清对方的产物。package.json 的 "main" 与 electron-builder 的 files 都指
+ * out-electron；out-electron/main 与旧 out/main 目录深度一致，main 代码里
+ * 所有「从 bundle 位置向上找仓库根 / env.json」的相对解析不受影响。
  *
  * History note (Apr 2026): an earlier iteration imported free-code/src/
- * directly through Vite aliases and a 400-line compat transform plugin
- * (`freeCodeCompatPlugin`) to bridge Bun-only constructs (`bun:bundle`,
- * `MACRO.*` defines, `src/`-prefixed baseUrl imports, lazy CJS requires,
- * NAPI native modules, etc.) into Rollup's ESM output. That stack was
+ * directly through Vite aliases and a 400-line compat transform plugin to
+ * bridge Bun-only constructs into Rollup's ESM output. That stack was
  * removed when ChatEngine was rewritten on top of `@anthropic-ai/
- * claude-agent-sdk`'s `query()` API: the SDK spawns the prebuilt
- * `free-code/cli` binary as a child process and talks to it over the
- * stream-json protocol, so we no longer need to bundle any free-code
- * source into the Electron main process.
- *
- * The result is the minimal electron-vite config below — just three
- * targets, three plugins, two aliases.
+ * claude-agent-sdk`'s `query()` API: the SDK spawns the prebuilt CLI binary
+ * as a child process, so we no longer bundle any free-code source.
  */
-
-const sharedResolve = {
-  alias: [
-    { find: /^@shared\/(.*)$/, replacement: resolve(__dirname, 'src/shared/$1') }
-  ]
-}
 
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin({ exclude: [] })],
-    resolve: sharedResolve,
     build: {
+      outDir: 'out-electron/main',
       rollupOptions: {
-        input: resolve(__dirname, 'src/main/index.ts')
+        input: resolve(__dirname, 'electron/main/index.ts')
       },
       commonjsOptions: { transformMixedEsModules: true }
     }
@@ -43,35 +36,18 @@ export default defineConfig({
 
   preload: {
     plugins: [externalizeDepsPlugin()],
-    resolve: sharedResolve,
     build: {
+      outDir: 'out-electron/preload',
       rollupOptions: {
-        // Two preloads: the main one (chatApi/tabApi for chat tabs + shell)
-        // and a tiny `settings` preload for the embedded web settings
-        // overlay, which only needs a single `electronSettings.close()`
-        // bridge — it must NOT get the full chatApi surface since it loads
-        // the (external-origin) Open Design web app.
+        // 单一 preload：chatApi/tabApi，注入给 studio tab。
         input: {
-          index: resolve(__dirname, 'src/preload/index.ts'),
-          settings: resolve(__dirname, 'src/preload/settings.ts')
+          index: resolve(__dirname, 'electron/preload/index.ts')
         }
       }
     }
-  },
-
-  renderer: {
-    root: resolve(__dirname, 'src/renderer'),
-    plugins: [react()],
-    resolve: {
-      alias: {
-        '@shared': resolve(__dirname, 'src/shared'),
-        '@': resolve(__dirname, 'src/renderer/src')
-      }
-    },
-    build: {
-      rollupOptions: {
-        input: resolve(__dirname, 'src/renderer/index.html')
-      }
-    }
   }
+
+  // 刻意没有 renderer target：UI 是本包的 Next 侧（app/ + src/），dev 走
+  // localhost:3100、prod 走 app://studio（static export 读盘），shell 窗口
+  // 保持隐藏直到 studio 首帧就绪才 show（tabRegistry.activateTab）。
 })

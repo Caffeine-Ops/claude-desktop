@@ -325,6 +325,16 @@ export interface ChatEngineOptions {
   shouldBumpOnTurnEnd?: () => boolean
 }
 
+/**
+ * How long a session must stay foreground before the speculative warmup
+ * spawn fires (see `warmupTimer`). Tuned against the sidebar-browsing
+ * cadence: a flip-through click train is well under this, while a real
+ * "landed on the session I want" pause comfortably exceeds it. Cost of
+ * being wrong is tiny — send() spawns on demand anyway, this only trims
+ * the head start.
+ */
+const WARMUP_DEBOUNCE_MS = 450
+
 export class ChatEngine extends EventEmitter {
   /**
    * The WebContents this engine is bound to. In the multi-tab model
@@ -435,6 +445,20 @@ export class ChatEngine extends EventEmitter {
    * renderer races a click-and-type.
    */
   private switching = false
+
+  /**
+   * Debounce timer for the background warmup at the end of
+   * `switchToSession()`. Without it, flipping through the sidebar spawns
+   * one fusion-code child PER VISITED SESSION (each cold start burns a
+   * full core for seconds) and immediately tears it down on the next
+   * click — the spawn/kill churn competes with the renderer for CPU and
+   * is felt as dropped frames while browsing. Each switch resets the
+   * timer, so only the session the user actually SETTLES on gets warmed.
+   * `send()` is unaffected: it calls ensureSessionReady itself, so an
+   * instant send just pays (at most) WARMUP_DEBOUNCE_MS of lost head
+   * start against a multi-second cold start.
+   */
+  private warmupTimer: NodeJS.Timeout | null = null
 
   /**
    * Current UI permission mode. Passed straight to the Agent SDK as
@@ -597,6 +621,12 @@ export class ChatEngine extends EventEmitter {
    * times; sessions map is cleared and subsequent calls become no-ops.
    */
   async dispose(): Promise<void> {
+    // A pending speculative warmup must not spawn a cli into a disposed
+    // engine (the sessions map is about to be cleared under it).
+    if (this.warmupTimer) {
+      clearTimeout(this.warmupTimer)
+      this.warmupTimer = null
+    }
     this.permissionBroker.cancelAll('Window closing')
     const entries = Array.from(this.sessions.entries())
     this.sessions.clear()
@@ -1610,14 +1640,25 @@ export class ChatEngine extends EventEmitter {
     // process already ready (no re-spawn) — the user-configured servers
     // would never load. Bounded by fetch's own timeout so a down daemon
     // can't stall warmup. A non-empty cache skips the await entirely.
-    void (async () => {
-      if (Object.keys(this.externalMcpServers).length === 0) {
-        await this.refreshExternalMcpServers({ waitForDaemon: true })
-      }
-      await this.ensureSessionReady(newId)
-    })().catch((err) => {
-      console.warn('[engine] background warmup failed:', err)
-    })
+    //
+    // Debounced (see `warmupTimer` doc): flipping through the sidebar must
+    // NOT spawn one cli per visited session. Each switch cancels the
+    // previous pending warmup; the timer only fires for the session the
+    // user settles on — double-checked against activeSessionId at fire
+    // time in case anything else moved the foreground meanwhile.
+    if (this.warmupTimer) clearTimeout(this.warmupTimer)
+    this.warmupTimer = setTimeout(() => {
+      this.warmupTimer = null
+      if (this.activeSessionId !== newId) return
+      void (async () => {
+        if (Object.keys(this.externalMcpServers).length === 0) {
+          await this.refreshExternalMcpServers({ waitForDaemon: true })
+        }
+        await this.ensureSessionReady(newId)
+      })().catch((err) => {
+        console.warn('[engine] background warmup failed:', err)
+      })
+    }, WARMUP_DEBOUNCE_MS)
 
     // We never rebind eagerly now. The rebind branch in
     // updateSessionMeta() is kept as defense-in-depth but cannot fire
@@ -2880,7 +2921,7 @@ export class ChatEngine extends EventEmitter {
    *   3. `<cwd>/../free-code/cli` — pre-monorepo `bun run dev` layout
    *      (cwd == claude-desktop/), kept for backward compat
    *   4. `<cwd>/../../../free-code/cli` — bun monorepo `bun run dev`
-   *      layout: cwd == claude-desktop/apps/desktop/, so three levels
+   *      layout: cwd == claude-desktop/apps/studio/, so three levels
    *      up lands at claude_code_01/, where free-code/ is a sibling of
    *      claude-desktop/
    *   5. `<importer>/../../../free-code/cli` — bundled main at
@@ -2888,7 +2929,7 @@ export class ChatEngine extends EventEmitter {
    *   6. `<importer>/../../../../free-code/cli` — extra fallback for
    *      dev when the importer is the source file not the bundle
    *   7. `<importer>/../../../../../free-code/cli` — monorepo variant of
-   *      (6): bundle now lives at apps/desktop/out/main/, one level deeper
+   *      (6): bundle now lives at apps/studio/out-electron/main/, one level deeper
    *
    * Throws with every candidate listed, so a misconfigured install is
    * easy to diagnose from the console error shown in the UI.

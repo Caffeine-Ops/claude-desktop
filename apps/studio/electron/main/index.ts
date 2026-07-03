@@ -19,7 +19,7 @@ import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { app, BrowserWindow, Menu, protocol, session, webContents, type MenuItemConstructorOptions } from 'electron'
-import { electronApp, is, optimizer } from '@electron-toolkit/utils'
+import { electronApp, is } from '@electron-toolkit/utils'
 
 // TEMP-DEBUG: dev 下开远程调试端口，便于用 Chrome DevTools 连进 web tab 的
 // webContents 对比渲染差异。定根后移除。必须在 app ready 前 append。
@@ -28,21 +28,18 @@ if (is.dev) {
   app.commandLine.appendSwitch('remote-allow-origins', 'http://localhost:9222')
 }
 
-import { registerIpcHandlers, showMaxTabsDialog } from './ipc/register'
+import { registerIpcHandlers } from './ipc/register'
 import { createTray, destroyTray } from './tray'
 import {
-  canAddTab,
   createShellWindow,
+  getActiveTabWebContents,
   getShellWindow,
-  newTab,
-  newWebTab,
   newStudioTab
 } from './tabRegistry'
 import {
   startOpenDesignServices,
   stopOpenDesignServices,
   waitForDaemonReady,
-  waitForWebReady,
   waitForStudioReady
 } from './services/openDesignServices'
 import { APP_SCHEME, registerAppProtocol } from './services/appProtocol'
@@ -83,28 +80,8 @@ function buildMenu(): Menu {
   const fileMenu: MenuItemConstructorOptions = {
     label: '&File',
     submenu: [
-      {
-        label: 'New Tab',
-        accelerator: 'CmdOrCtrl+T',
-        click: () => {
-          // Same gate the TAB_NEW IPC handler uses: show the
-          // user a native dialog instead of silently refusing
-          // when the cap is reached. `newTab()` itself also
-          // throws on cap, so we belt-and-suspenders the check
-          // to keep the menu click from landing on a pump that
-          // throws into the void.
-          if (!canAddTab()) {
-            void showMaxTabsDialog()
-            return
-          }
-          try {
-            newTab()
-          } catch (err) {
-            console.warn('[main] newTab from menu failed:', err)
-          }
-        }
-      },
-      { type: 'separator' },
+      // 「New Tab / ⌘T」已随 legacy 多 tab 架构下线（Phase 4）：单视图形态
+      // 全 app 只有一个全屏 studio tab，多开没有意义。
       isMac ? { role: 'close' } : { role: 'quit' }
     ]
   }
@@ -124,9 +101,12 @@ function buildMenu(): Menu {
         label: 'Toggle Developer Tools',
         accelerator: isMac ? 'Cmd+Alt+I' : 'Ctrl+Shift+I',
         click: () => {
-          // 对当前聚焦的 webContents（某个 tab 的 WebContentsView，或 shell 窗）
-          // 强制 detach 打开/关闭，避开被全屏 view 遮挡。
-          const wc = webContents.getFocusedWebContents()
+          // **优先指向活跃的 studio tab**，其次才是聚焦的 webContents。
+          // 单视图形态下用户想检查的永远是 studio 页面；而聚焦的 webContents
+          // 很可能是 shell 的静态 splash（启动后焦点默认在它上面）甚至某个
+          // DevTools 窗口自身——按焦点分发会打开错误目标。detach 打开，
+          // 避开被全屏 view 遮挡。
+          const wc = getActiveTabWebContents() ?? webContents.getFocusedWebContents()
           if (!wc || wc.isDestroyed()) return
           if (wc.isDevToolsOpened()) {
             wc.closeDevTools()
@@ -175,9 +155,11 @@ app.whenReady().then(async () => {
     return ALLOWED_PERMISSIONS.has(permission)
   })
 
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
+  // 刻意不用 optimizer.watchWindowShortcuts：它把 F12/⌘R 绑在 BrowserWindow
+  // 自身的 webContents 上——单视图形态下那是静态 splash，毫无检查价值；dev 下
+  // 它的 F12 处理不看 event.defaultPrevented，会和 forceDetachedDevTools 的
+  // 重定向双开 DevTools（splash undocked + studio detach 各一个）。DevTools
+  // 快捷键统一走菜单加速键 + forceDetachedDevTools（都指向活跃 studio tab）。
 
   // Forward every renderer's console into the runtime-log collector so the
   // 「日志分析」panel sees tab / shell / overlay console output too. One hook
@@ -207,75 +189,30 @@ app.whenReady().then(async () => {
     registerAppProtocol()
   }
 
-  // Boot the single shell window (tab bar) then open the first tab
-  // so the user lands directly in a workspace gate rather than an
-  // empty chrome. Both calls are idempotent: createShellWindow
-  // returns the existing window on re-entry, and the first newTab
-  // is what the user would've done via ⌘T anyway.
-  //
-  // dev 默认进 **studio 单视图**形态：不建 chat/web tab，唯一的 studio tab
-  // 全屏铺满（layoutActiveTab 的 studio 分支），聊天(/chat)、工作画布(/canvas)、
-  // 导航 rail 全部由 studio 页面内部渲染——三前端合并的目标形态。旧三 tab
-  // 架构（chat + 工作画布 + studio 并列切换）用 LEGACY_TABS=1 找回，作为
-  // 迁移期回退门；prod 恒走 legacy（studio 尚无打包形态，Phase 4 切换）。
-  const studioSingleView = is.dev && process.env.LEGACY_TABS !== '1'
+  // **studio 单视图**是唯一形态（Phase 4 起，legacy 三 tab 架构已物理下线）：
+  // 一个全屏 studio tab，聊天(/chat)、工作画布(/)、设置(/?settings=1)、导航
+  // rail 全部由 studio 页面内部渲染。dev 加载 localhost:3100（HMR），prod
+  // 加载 app://studio/（static export 读盘 + daemon 反代，见 appProtocol.ts）。
+  // shell 窗口自身不加载任何内容，且保持隐藏直到 studio 首帧就绪
+  // （tabRegistry.activateTab 里 show）——用户看到的第一帧就是 studio。
+  createShellWindow()
 
-  createShellWindow({ singleView: studioSingleView })
-  if (!studioSingleView) {
-    // legacy：第一个 tab = chat 工作区，立即打开，不依赖 daemon/web。
-    newTab()
-  }
-
-  // 后续 tab 必须等对应 dev server 就绪后再开，否则 WebContentsView 会加载
-  // 到一个还没起好的端口而白屏。用 IIFE 异步等待，不阻塞 whenReady 的其余
-  // 初始化（tray 等）。
+  // studio tab 等自己的 dev server ready 再建（prod 下 waitForStudioReady
+  // 立即 true），避免 WebContentsView 加载到还没起好的端口而白屏；daemon 的
+  // 探活是后台仅日志，不阻塞首屏（聊天 engine 是 lazy spawn，画布的 /api
+  // 请求自带重试语义）。用 IIFE 异步等待，不阻塞 whenReady 的其余初始化。
   void (async () => {
-    if (studioSingleView) {
-      // 单视图：studio 是唯一 tab，**只等它自己 ready**——daemon/web 的
-      // 探活改为后台仅日志，不再串行阻塞首屏（原先 daemon→web→studio 三段
-      // 串行等完才建 tab，用户盯着 shell 画面十几秒）。聊天不依赖 daemon
-      // 就绪（engine lazy spawn + 会话读盘），/canvas 的 iframe 也是用户
-      // 点过去时才加载 web。
-      void waitForDaemonReady().then((ok) => {
-        if (!ok) console.warn('[main] daemon not ready within timeout')
-      })
-      void waitForWebReady().then((ok) => {
-        if (!ok) console.warn('[main] web dev server not ready within timeout')
-      })
-      const studioOk = await waitForStudioReady()
-      if (!studioOk) {
-        console.warn('[main] studio dev server not ready; studio 仍会打开但可能需手动刷新')
-      }
-      try {
-        newStudioTab()
-      } catch (err) {
-        console.warn('[main] newStudioTab failed:', err)
-      }
-      return
-    }
-    // legacy：第二个 tab = Open Design web，第三个 = studio（dev-only）。
-    const daemonOk = await waitForDaemonReady()
-    const webOk = await waitForWebReady()
-    if (!daemonOk || !webOk) {
-      console.warn(
-        `[main] Open Design services not ready (daemon=${daemonOk} web=${webOk}); 页面仍会打开但可能需手动刷新`
-      )
+    void waitForDaemonReady().then((ok) => {
+      if (!ok) console.warn('[main] daemon not ready within timeout')
+    })
+    const studioOk = await waitForStudioReady()
+    if (!studioOk) {
+      console.warn('[main] studio dev server not ready; studio 仍会打开但可能需手动刷新')
     }
     try {
-      if (canAddTab()) newWebTab()
+      newStudioTab()
     } catch (err) {
-      console.warn('[main] newWebTab failed:', err)
-    }
-    if (is.dev) {
-      const studioOk = await waitForStudioReady()
-      if (!studioOk) {
-        console.warn('[main] studio dev server not ready; studio tab 仍会打开但可能需手动刷新')
-      }
-      try {
-        if (canAddTab()) newStudioTab()
-      } catch (err) {
-        console.warn('[main] newStudioTab failed:', err)
-      }
+      console.warn('[main] newStudioTab failed:', err)
     }
   })()
 
@@ -283,34 +220,14 @@ app.whenReady().then(async () => {
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) {
-      // 窗口全关后重新激活（macOS dock 点击）：重建 shell + chat tab，
-      // 并补回 Open Design web tab。和首启不同，这里 daemon/web 早已就绪
-      // （startOpenDesignServices 只在 before-quit 时才停），所以无需再等
-      // waitForDaemonReady——直接同步补 web tab 即可。chat 先建保证它是
-      // 前台，web 在后台（newWebTab 不抢占激活），与首启表现一致。
+      // 窗口全关后重新激活（macOS dock 点击）：重建 shell + 唯一的 studio
+      // tab。服务早已就绪（startOpenDesignServices 只在 before-quit 时才停），
+      // 无需再等探活。
       createShellWindow()
-      if (studioSingleView) {
-        // 单视图：服务早已就绪（before-quit 才停），直接补回唯一的 studio tab。
-        try {
-          newStudioTab()
-        } catch (err) {
-          console.warn('[main] newStudioTab on activate failed:', err)
-        }
-        return
-      }
-      newTab()
       try {
-        if (canAddTab()) newWebTab()
+        newStudioTab()
       } catch (err) {
-        console.warn('[main] newWebTab on activate failed:', err)
-      }
-      // dev 下补回 studio tab（同 web tab：服务早已就绪，无需再等探活）。
-      if (is.dev) {
-        try {
-          if (canAddTab()) newStudioTab()
-        } catch (err) {
-          console.warn('[main] newStudioTab on activate failed:', err)
-        }
+        console.warn('[main] newStudioTab on activate failed:', err)
       }
     }
   })

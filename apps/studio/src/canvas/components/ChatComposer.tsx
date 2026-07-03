@@ -1382,7 +1382,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                 onChange={(e) => onChangeByokImageModel(e.target.value)}
                 style={{
                   background: 'transparent',
-                  border: '1px solid var(--border, #444)',
+                  border: '1px solid var(--od-border, #444)',
                   borderRadius: 4,
                   padding: '2px 6px',
                   color: 'inherit',

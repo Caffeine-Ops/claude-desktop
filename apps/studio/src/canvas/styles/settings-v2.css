@@ -68,7 +68,7 @@
   /* Grey rail against the white content surface — same token the chat /
      classic-settings sidebar uses (.modal-settings nav → --bg-subtle). */
   background: var(--bg-subtle);
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--od-border);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -202,7 +202,7 @@
   color: var(--sv2-accent-ink);
 }
 .sv2-nav-item.active.accent svg {
-  color: var(--accent);
+  color: var(--od-accent);
 }
 
 /* ===================== Content ===================== */
@@ -249,7 +249,7 @@
 /* Grouped card */
 .sv2-group-card {
   background: var(--bg-panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   padding: 4px 22px;
@@ -288,7 +288,7 @@
 /* Standalone card (Appearance sub-sections) */
 .sv2-card {
   background: var(--bg-panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   padding: 20px 22px;
@@ -391,7 +391,7 @@
 }
 /* Selected ring uses the app accent so it matches the chat surface. */
 .sv2-swatch.on {
-  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--od-accent);
 }
 .sv2-swatch.custom {
   display: flex;
@@ -448,8 +448,8 @@
   align-items: center;
   justify-content: center;
   gap: 3px;
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--od-border);
+  border-right: 1px solid var(--od-border);
   font-size: 13.5px;
   color: var(--text);
   font-variant-numeric: tabular-nums;
@@ -475,8 +475,8 @@
   padding: 0;
 }
 .sv2-check.on {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--od-accent);
+  border-color: var(--od-accent);
 }
 .sv2-check svg {
   color: var(--accent-foreground, #fff);
@@ -536,7 +536,7 @@
 .sv2 .settings-card,
 .sv2 .settings-section-card {
   background: var(--bg-panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   padding: 20px 22px;
@@ -627,7 +627,7 @@
   box-shadow: 0 0 0 1px var(--border-strong);
 }
 .sv2 .pet-swatch.active {
-  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--od-accent);
 }
 
 /* Test / action buttons → quiet bordered pill. */

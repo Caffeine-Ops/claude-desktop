@@ -5,6 +5,12 @@ import type { NextConfig } from 'next'
 const DAEMON_PORT = Number(process.env.OD_PORT) || 7456
 const DAEMON_ORIGIN = `http://127.0.0.1:${DAEMON_PORT}`
 
+// 打包形态（Phase 4 定稿）：prod 走 static export，产物 out/ 由 Electron 的
+// app://studio 协议直接读盘、/api 等由同一 handler 反代 daemon——与 apps/web
+// 的 prod 模式完全同构（appProtocol.ts）。dev 保持 server 模式（rewrites 反代
+// + HMR）。export 模式下 rewrites 不受支持，所以按模式二选一。
+const isExport = process.env.NODE_ENV !== 'development'
+
 const nextConfig: NextConfig = {
   // @open-design/ui 是 source-only 包（exports 直指 src/*.tsx，无 dist）——
   // 必须列进 transpilePackages 让 Next 用自己的管线编译其 TSX，同时让
@@ -12,18 +18,23 @@ const nextConfig: NextConfig = {
   // 见 packages/ui/package.json 的 description）。
   transpilePackages: ['@open-design/ui'],
 
-  // 本应用只跑在 Electron 薄壳内（决策：放弃纯浏览器/od CLI 部署形态），
-  // 因此不设 output: 'export'，保留 Next 全量能力。dev 下壳加载
-  // http://localhost:3100；打包形态（standalone vs static export 回退）
-  // 在聊天 UI 迁移完成后再定，这里刻意不提前锁死。
-  async rewrites() {
-    // 与 web 同款 daemon 反代：/api 与 /artifacts 转发给本机 daemon，
-    // 让迁移过来的页面无需改 fetch 路径。
-    return [
-      { source: '/api/:path*', destination: `${DAEMON_ORIGIN}/api/:path*` },
-      { source: '/artifacts/:path*', destination: `${DAEMON_ORIGIN}/artifacts/:path*` }
-    ]
-  }
+  ...(isExport
+    ? {
+        output: 'export' as const,
+        // export 模式没有 image 优化服务；不关会构建报错。
+        images: { unoptimized: true }
+      }
+    : {
+        // dev：与 web 同款 daemon 反代——/api 与 /artifacts 转发给本机
+        // daemon，页面用相对路径 fetch 即可。prod 下这层反代由 app://
+        // handler 承担（见 appProtocol.ts）。
+        async rewrites() {
+          return [
+            { source: '/api/:path*', destination: `${DAEMON_ORIGIN}/api/:path*` },
+            { source: '/artifacts/:path*', destination: `${DAEMON_ORIGIN}/artifacts/:path*` }
+          ]
+        }
+      })
 }
 
 export default nextConfig

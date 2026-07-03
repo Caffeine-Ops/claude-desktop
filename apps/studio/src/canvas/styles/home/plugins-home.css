@@ -67,7 +67,7 @@
   align-items: center;
   width: 200px;
   max-width: 100%;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 999px;
   background: var(--bg-panel);
   transition: border-color 120ms ease, background-color 120ms ease,
@@ -135,12 +135,12 @@
   transition: background-color 120ms ease, color 120ms ease;
 }
 .plugins-home__search-clear:hover {
-  background: var(--border-soft, var(--border));
+  background: var(--border-soft, var(--od-border));
   border-color: transparent;
   color: var(--text);
 }
 .plugins-home__search-clear:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--od-accent);
   outline-offset: 1px;
 }
 @media (max-width: 720px) {
@@ -164,7 +164,7 @@
   color: var(--text-muted);
   font-size: 13px;
   padding: 20px 16px;
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--od-border);
   border-radius: var(--radius);
   text-align: center;
 }
@@ -190,7 +190,7 @@
   /* DESIGN.md button-utility: 14/400/-0.224px, pill radius. Padding kept
      compact (6×12) so the filter bar stays a single dense control row. */
   padding: 6px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 999px;
   background: var(--bg-panel);
   color: var(--text-muted);
@@ -225,12 +225,12 @@
 }
 /* Saved resting: a quiet Apple-blue-tinted affordance. */
 .plugins-home__chip--saved {
-  border-color: color-mix(in srgb, var(--apple-blue, #0066cc) 32%, var(--border));
+  border-color: color-mix(in srgb, var(--apple-blue, #0066cc) 32%, var(--od-border));
   color: var(--apple-blue, #0066cc);
   background: color-mix(in srgb, var(--apple-blue, #0066cc) 8%, var(--bg-panel));
 }
 .plugins-home__chip--saved:hover {
-  border-color: color-mix(in srgb, var(--apple-blue, #0066cc) 48%, var(--border));
+  border-color: color-mix(in srgb, var(--apple-blue, #0066cc) 48%, var(--od-border));
   color: var(--apple-blue, #0066cc);
 }
 /* Saved active = the single Action Blue solid (unified with .pill.is-active). */
@@ -342,7 +342,7 @@
    separates it from the tiles sliding beneath. Toggled by an
    IntersectionObserver sentinel in PluginsHomeSection. */
 .plugins-home__facets.is-pinned {
-  border-bottom-color: var(--border);
+  border-bottom-color: var(--od-border);
 }
 /* Below 900px `.entry-main__inner` drops to 16px side padding, so the
    bleed must match or the bar over/under-shoots the gutters. */
@@ -414,7 +414,7 @@
      pill radius. Category pills and the Saved/All chips share one grammar so
      the whole filter row reads as a single control surface. */
   padding: 6px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: 999px;
   background: var(--bg-panel);
   color: var(--text-muted);
@@ -460,11 +460,11 @@
    blue solid from .is-active above (no per-variant override needed). */
 .plugins-home__pill--all {
   background: color-mix(in srgb, var(--apple-blue, #0066cc) 8%, var(--bg-panel));
-  border-color: color-mix(in srgb, var(--apple-blue, #0066cc) 28%, var(--border));
+  border-color: color-mix(in srgb, var(--apple-blue, #0066cc) 28%, var(--od-border));
   color: var(--apple-blue, #0066cc);
 }
 .plugins-home__pill--all:hover {
-  border-color: color-mix(in srgb, var(--apple-blue, #0066cc) 44%, var(--border));
+  border-color: color-mix(in srgb, var(--apple-blue, #0066cc) 44%, var(--od-border));
   color: var(--apple-blue, #0066cc);
 }
 .plugins-home__pill--sub-all {
@@ -541,7 +541,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   /* Apple store-utility-card radius: lg (18px). */
   border-radius: 18px;
   background: var(--bg-panel);
@@ -563,11 +563,11 @@
   box-shadow: var(--shadow-md);
 }
 .plugins-home__card.is-active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  border-color: var(--od-accent);
+  box-shadow: 0 0 0 1px var(--od-accent);
 }
 .plugins-home__card.is-featured {
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-color: color-mix(in srgb, var(--od-accent) 32%, var(--od-border));
 }
 
 /* ---------- Hero preview surface ---------- */
@@ -615,11 +615,11 @@
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(circle at 22% 18%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 34%),
+    radial-gradient(circle at 22% 18%, color-mix(in srgb, var(--od-accent) 18%, transparent), transparent 34%),
     linear-gradient(135deg, color-mix(in srgb, var(--accent-tint) 64%, white), var(--bg-subtle));
 }
 .plugins-home__media-fallback-glyph {
-  color: color-mix(in srgb, var(--accent) 74%, var(--text));
+  color: color-mix(in srgb, var(--od-accent) 74%, var(--text));
   font-family: var(--serif);
   font-size: 56px;
   /* Content-preview serif stays; only the off-ladder weight snaps to the
@@ -637,10 +637,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--od-accent) 20%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg-panel) 74%, transparent);
-  color: var(--accent);
+  color: var(--od-accent);
   box-shadow: var(--shadow-xs);
 }
 @keyframes plugins-home-shimmer {
@@ -864,7 +864,7 @@
   font-family: var(--serif);
   font-size: 56px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--od-accent);
   letter-spacing: -0.02em;
 }
 
@@ -955,8 +955,8 @@
      accent like every other "this one's special" affordance instead of
      a translucent-white chip floating on black. */
   background: var(--accent-tint);
-  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
-  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--od-accent) 26%, transparent);
+  color: var(--od-accent);
 }
 .plugins-home__card-overlay-body {
   display: flex;
@@ -1056,14 +1056,14 @@
 .plugins-home__card-save:hover,
 .plugins-home__card-save:focus-visible {
   background: var(--accent-tint);
-  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
-  color: var(--accent);
+  border-color: color-mix(in srgb, var(--od-accent) 26%, transparent);
+  color: var(--od-accent);
   outline: none;
 }
 .plugins-home__card-save.is-saved {
-  background: color-mix(in srgb, var(--accent) 16%, white);
-  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--od-accent) 16%, white);
+  border-color: color-mix(in srgb, var(--od-accent) 32%, transparent);
+  color: var(--od-accent);
 }
 .plugins-home__card-title {
   display: inline-flex;
@@ -1144,7 +1144,7 @@
   min-width: min(180px, 100%);
   padding: 4px;
   /* Theme-aware popover (was hard white-on-black for the old scrim). */
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
   border-radius: var(--radius-sm);
   background: var(--bg-panel);
   color: var(--text-strong);
@@ -1175,13 +1175,13 @@
    button that only made sense against the black scrim.) */
 .plugins-home__action--primary {
   flex: 1;
-  background: var(--accent);
+  background: var(--od-accent);
   color: white;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--od-accent);
 }
 .plugins-home__action--primary:hover:not(:disabled) {
-  background: var(--accent-strong, var(--accent));
-  border-color: var(--accent-strong, var(--accent));
+  background: var(--accent-strong, var(--od-accent));
+  border-color: var(--accent-strong, var(--od-accent));
 }
 .plugins-home__use-menu .plugins-home__use-toggle {
   flex: 0 0 34px;
@@ -1196,7 +1196,7 @@
 .plugins-home__action--secondary {
   background: var(--bg-panel);
   color: var(--text-strong);
-  border: 1px solid var(--border);
+  border: 1px solid var(--od-border);
 }
 .plugins-home__action--secondary:hover:not(:disabled) {
   background: var(--bg-subtle);

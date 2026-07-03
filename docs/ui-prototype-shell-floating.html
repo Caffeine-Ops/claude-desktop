@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-float="standard" data-radius="md" data-composer="inset">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Studio Shell — 悬浮内容区布局原型</title>
+<style>
+/* ============================================================
+ * Studio shell 布局原型 — 「左侧菜单 + 悬浮内容卡」
+ *
+ * 色值 1:1 取自 packages/design-tokens/tokens.css（HSL 展开），
+ * 不引入任何新色相。品牌绿只给「新对话」CTA 与会话选中态，
+ * 与 AppRail.tsx 的用色纪律一致。
+ *
+ * Tweaks（右下角）可切：主题 / 悬浮深度 / 圆角 / composer 双浮层。
+ * ============================================================ */
+
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+
+  /* 布局参数（Tweaks 改这些） */
+  --gutter: 10px;
+  --card-radius: 14px;
+  --sidebar-w: 244px;
+}
+
+/* ---- 主题面：浅色（tokens.css :root） ---------------------- */
+html[data-theme="light"] {
+  color-scheme: light;
+  --rail-bg: hsl(240 7% 96%);          /* --sidebar */
+  --rail-fg: hsl(240 4% 18%);
+  --rail-hover: hsl(240 6% 90%);       /* --sidebar-accent */
+  --card-bg: hsl(0 0% 100%);           /* --card */
+  --elevated-bg: hsl(0 0% 100%);
+  --fg: hsl(240 3% 12%);               /* --foreground */
+  --muted-fg: hsl(240 4% 40%);         /* --muted-foreground */
+  --faint-fg: hsl(240 4% 58%);
+  --border: hsl(240 6% 84%);
+  --input-border: hsl(240 6% 86%);
+  --secondary: hsl(240 6% 94%);        /* 用户气泡底 */
+  --muted: hsl(240 5% 93%);
+  --brand: hsl(142 76% 36%);           /* --brand / --sidebar-primary */
+  --brand-fg: hsl(0 0% 100%);
+  --accent: hsl(211 100% 45%);         /* Apple Blue，仅交互焦点 */
+  --card-shadow:
+    0 0 0 1px hsl(240 6% 10% / 0.045),
+    0 1px 2px hsl(240 6% 10% / 0.05),
+    0 12px 32px hsl(240 6% 10% / 0.08);
+  --card-shadow-deep:
+    0 0 0 1px hsl(240 6% 10% / 0.05),
+    0 2px 6px hsl(240 6% 10% / 0.06),
+    0 24px 64px hsl(240 6% 10% / 0.14);
+  --composer-shadow:
+    0 0 0 1px hsl(240 6% 10% / 0.05),
+    0 4px 16px hsl(240 6% 10% / 0.08),
+    0 12px 36px hsl(240 6% 10% / 0.10);
+}
+
+/* ---- 主题面：暗色（tokens.css .dark，暖黑系） --------------- */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --rail-bg: hsl(40 6% 10%);           /* #1a1917 */
+  --rail-fg: hsl(40 21% 89%);
+  --rail-hover: hsl(30 5% 15%);
+  --card-bg: hsl(30 3% 13%);           /* #222120 */
+  --elevated-bg: hsl(36 6% 15%);       /* #2a2825 popover 档 */
+  --fg: hsl(40 21% 89%);               /* #e8e4dc */
+  --muted-fg: hsl(36 5% 58%);
+  --faint-fg: hsl(36 5% 44%);
+  --border: hsl(49 12% 18%);           /* #333128 */
+  --input-border: hsl(42 8% 25%);
+  --secondary: hsl(30 5% 15%);
+  --muted: hsl(36 6% 17%);
+  --brand: hsl(145 60% 52%);           /* 暗色提亮绿 */
+  --brand-fg: hsl(40 6% 10%);
+  --accent: hsl(210 100% 58%);
+  /* 暗色浮卡：亮一档表面 + 顶部 1px 内侧高光线，阴影负责“沉” */
+  --card-shadow:
+    inset 0 1px 0 hsl(40 20% 95% / 0.045),
+    0 0 0 1px hsl(0 0% 0% / 0.35),
+    0 16px 48px hsl(0 0% 0% / 0.5);
+  --card-shadow-deep:
+    inset 0 1px 0 hsl(40 20% 95% / 0.055),
+    0 0 0 1px hsl(0 0% 0% / 0.4),
+    0 32px 80px hsl(0 0% 0% / 0.65);
+  --composer-shadow:
+    inset 0 1px 0 hsl(40 20% 95% / 0.05),
+    0 0 0 1px hsl(0 0% 0% / 0.4),
+    0 12px 36px hsl(0 0% 0% / 0.55);
+}
+
+/* ---- 悬浮深度三档 ------------------------------------------ */
+html[data-float="flush"]    { --gutter: 0px; }
+html[data-float="standard"] { --gutter: 10px; }
+html[data-float="deep"]     { --gutter: 18px; }
+html[data-float="flush"] .content-card {
+  border-radius: 0;
+  box-shadow: none;
+  border-left: 1px solid var(--border);
+}
+html[data-float="deep"] .content-card { box-shadow: var(--card-shadow-deep); }
+
+/* ---- 圆角三档 ---------------------------------------------- */
+html[data-radius="sm"] { --card-radius: 10px; }
+html[data-radius="md"] { --card-radius: 14px; }
+html[data-radius="lg"] { --card-radius: 18px; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--rail-bg);
+  display: flex;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+  transition: background .25s ease;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+svg.icon {
+  width: 16px; height: 16px;
+  stroke: currentColor; fill: none;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+ * 左侧菜单 — 直接坐在窗口底面上，无边框无卡片感
+ * ============================================================ */
+.sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 12px 12px;
+  color: var(--rail-fg);
+  user-select: none;
+}
+
+/* macOS 无边框窗口的红绿灯占位 */
+.traffic {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 8px;
+  -webkit-app-region: drag;
+}
+.traffic i {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: hsl(0 0% 50% / .28);
+}
+.traffic:hover i:nth-child(1) { background: #ff5f57; }
+.traffic:hover i:nth-child(2) { background: #febc2e; }
+.traffic:hover i:nth-child(3) { background: #28c840; }
+
+/* 新对话 CTA —— 品牌绿 tint（AppRail 的 bg-sidebar-primary/12） */
+.new-chat {
+  display: flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 12px;
+  border-radius: 9px;
+  font-weight: 500;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  transition: background .15s ease;
+  margin-bottom: 10px;
+}
+.new-chat:hover { background: color-mix(in srgb, var(--brand) 19%, transparent); }
+.new-chat:active { transform: scale(.985); }
+
+/* 主导航 pill —— 中性灰选中，不抢绿 */
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav-pill {
+  display: flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 12px;
+  border-radius: 9px;
+  color: var(--muted-fg);
+  transition: background .15s ease, color .15s ease;
+}
+.nav-pill:hover { background: var(--rail-hover); color: var(--rail-fg); }
+.nav-pill.active {
+  background: var(--rail-hover);
+  color: var(--rail-fg);
+  font-weight: 500;
+}
+
+/* 会话列表 —— rail 中段，占满剩余高度 */
+.sessions {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: 14px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted-fg) 35%, transparent) transparent;
+}
+.session-group { margin-bottom: 12px; }
+.session-group > h3 {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--faint-fg);
+  padding: 0 12px;
+  margin-bottom: 3px;
+}
+.session-row {
+  position: relative;
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  height: 32px; padding: 0 12px;
+  border-radius: 8px;
+  color: var(--muted-fg);
+  transition: background .13s ease, color .13s ease;
+  text-align: left;
+}
+.session-row .title {
+  flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px;
+}
+.session-row .more {
+  display: none;
+  width: 22px; height: 22px;
+  align-items: center; justify-content: center;
+  border-radius: 6px;
+  color: var(--faint-fg);
+}
+.session-row .more:hover { background: color-mix(in srgb, var(--muted-fg) 18%, transparent); color: var(--rail-fg); }
+.session-row:hover { background: var(--rail-hover); color: var(--rail-fg); }
+.session-row:hover .more { display: inline-flex; }
+.session-row:hover .time { display: none; }
+.session-row .time {
+  font-size: 11px;
+  color: var(--faint-fg);
+  flex-shrink: 0;
+}
+/* 选中态：中性底 + 品牌绿圆点（绿只出现在这里和 CTA） */
+.session-row.active { background: var(--rail-hover); color: var(--rail-fg); font-weight: 500; }
+.session-row.active::before {
+  content: '';
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--brand);
+  flex-shrink: 0;
+  margin-left: -1px;
+}
+
+/* rail 底部：设置 + 用户 */
+.rail-footer {
+  margin-top: 10px;
+  padding-top: 10px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.user-chip {
+  display: flex; align-items: center; gap: 9px;
+  height: 40px; padding: 0 10px;
+  border-radius: 9px;
+  transition: background .15s ease;
+  text-align: left;
+}
+.user-chip:hover { background: var(--rail-hover); }
+.user-chip .avatar {
+  width: 24px; height: 24px; border-radius: 50%;
+  background: color-mix(in srgb, var(--brand) 16%, transparent);
+  color: var(--brand);
+  font-size: 12px; font-weight: 650;
+  display: flex; align-items: center; justify-content: center;
+}
+.user-chip .meta { line-height: 1.25; min-width: 0; }
+.user-chip .meta b { display: block; font-size: 12.5px; font-weight: 500; color: var(--rail-fg); }
+.user-chip .meta span { font-size: 11px; color: var(--faint-fg); }
+
+/* ============================================================
+ * 右侧舞台 + 悬浮内容卡
+ * ============================================================ */
+.stage {
+  flex: 1;
+  min-width: 0;
+  padding: var(--gutter) var(--gutter) var(--gutter) 0;
+  display: flex;
+  transition: padding .28s cubic-bezier(.32,.72,.24,1);
+}
+html[data-float="flush"] .stage { padding: 0; }
+
+.content-card {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--card-bg);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+  animation: card-in .34s cubic-bezier(.32,.72,.24,1) both;
+  transition: border-radius .28s cubic-bezier(.32,.72,.24,1),
+              box-shadow .28s ease, background .25s ease;
+}
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(6px) scale(.995); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .content-card { animation: none; }
+  * { transition-duration: .01ms !important; }
+}
+
+/* ---- 卡内 header ------------------------------------------- */
+.card-header {
+  display: flex; align-items: center; gap: 10px;
+  height: 52px;
+  padding: 0 10px 0 20px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+.card-header .head-meta { min-width: 0; margin-right: auto; }
+.card-header h1 {
+  font-size: 14px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.card-header .sub {
+  font-size: 11.5px;
+  color: var(--faint-fg);
+  display: flex; align-items: center; gap: 5px;
+}
+.card-header .sub .dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--brand);
+}
+.icon-btn {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  color: var(--muted-fg);
+  transition: background .15s ease, color .15s ease;
+  -webkit-app-region: no-drag;
+}
+.icon-btn:hover { background: var(--muted); color: var(--fg); }
+
+/* ---- 消息流 ------------------------------------------------- */
+.thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted-fg) 35%, transparent) transparent;
+}
+.thread-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px 32px 32px;
+  display: flex; flex-direction: column; gap: 26px;
+}
+
+.msg-user { display: flex; justify-content: flex-end; }
+.msg-user .bubble {
+  max-width: 78%;
+  background: var(--secondary);
+  border-radius: 16px 16px 4px 16px;
+  padding: 9px 15px;
+  font-size: 14px;
+}
+
+.msg-assistant { display: flex; flex-direction: column; gap: 10px; font-size: 14.5px; }
+.msg-assistant p { color: var(--fg); }
+.msg-assistant code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  background: var(--muted);
+  border-radius: 5px;
+  padding: 1.5px 5px;
+}
+
+/* 工具执行卡（对齐产品 tool card：小卡 + 绿勾 + 名称 + 简述） */
+.tool-card {
+  display: flex; align-items: center; gap: 9px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--card-bg) 60%, var(--muted));
+  font-size: 12.5px;
+  color: var(--muted-fg);
+}
+.tool-card .check {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: color-mix(in srgb, var(--brand) 15%, transparent);
+  color: var(--brand);
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.tool-card .check svg { width: 10px; height: 10px; stroke-width: 3; }
+.tool-card b { color: var(--fg); font-weight: 500; }
+.tool-card .path { font-family: var(--font-mono); font-size: 11.5px; }
+
+/* ---- Composer ----------------------------------------------- */
+.composer-zone {
+  flex-shrink: 0;
+  padding: 8px 24px 16px;
+  transition: padding .28s cubic-bezier(.32,.72,.24,1);
+}
+.composer {
+  max-width: 720px;
+  margin: 0 auto;
+  border: 1px solid var(--input-border);
+  border-radius: 14px;
+  background: var(--elevated-bg);
+  padding: 10px 10px 8px 16px;
+  transition: border-color .15s ease, box-shadow .2s ease,
+              transform .28s cubic-bezier(.32,.72,.24,1);
+}
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--brand) 55%, var(--input-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent);
+}
+.composer textarea {
+  width: 100%;
+  border: none; outline: none; resize: none;
+  background: transparent;
+  font: inherit; color: var(--fg);
+  font-size: 14px;
+  min-height: 22px; max-height: 160px;
+}
+.composer textarea::placeholder { color: var(--faint-fg); }
+.composer-row {
+  display: flex; align-items: center; gap: 2px;
+  margin-top: 6px;
+}
+.composer-row .model {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 9px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--muted-fg);
+  transition: background .15s ease;
+}
+.composer-row .model:hover { background: var(--muted); }
+.composer-row .model svg { width: 12px; height: 12px; }
+.composer-row .spacer { flex: 1; }
+.send-btn {
+  width: 30px; height: 30px;
+  border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--brand);
+  color: var(--brand-fg);
+  transition: transform .12s ease, opacity .15s ease;
+}
+.send-btn:hover { opacity: .9; }
+.send-btn:active { transform: scale(.92); }
+.send-btn[disabled] { background: var(--muted); color: var(--faint-fg); cursor: default; }
+
+/* composer 双浮层变体：脱离卡底，悬在内容卡内部下沿 */
+html[data-composer="float"] .composer-zone { padding: 0 24px 22px; }
+html[data-composer="float"] .composer {
+  box-shadow: var(--composer-shadow);
+  border-color: transparent;
+}
+html[data-composer="float"] .composer:focus-within {
+  border-color: color-mix(in srgb, var(--brand) 55%, transparent);
+}
+
+/* ============================================================
+ * Tweaks 面板（右下角，关闭时完全隐藏）
+ * ============================================================ */
+.tweaks-fab {
+  position: fixed;
+  right: 18px; bottom: 18px;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: var(--elevated-bg);
+  color: var(--muted-fg);
+  box-shadow: 0 0 0 1px var(--border), 0 8px 24px hsl(0 0% 0% / .18);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 60;
+  transition: color .15s ease, transform .15s ease;
+}
+.tweaks-fab:hover { color: var(--fg); transform: rotate(24deg); }
+
+.tweaks {
+  position: fixed;
+  right: 18px; bottom: 68px;
+  width: 252px;
+  background: var(--elevated-bg);
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px var(--border), 0 20px 56px hsl(0 0% 0% / .28);
+  padding: 14px 16px 16px;
+  z-index: 60;
+  display: none;
+}
+.tweaks.open { display: block; animation: tweaks-in .18s ease both; }
+@keyframes tweaks-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.tweaks h2 {
+  font-size: 12px; font-weight: 650;
+  letter-spacing: .04em;
+  color: var(--muted-fg);
+  margin-bottom: 12px;
+}
+.tweaks .field { margin-bottom: 12px; }
+.tweaks .field:last-child { margin-bottom: 0; }
+.tweaks label {
+  display: block;
+  font-size: 11.5px;
+  color: var(--faint-fg);
+  margin-bottom: 5px;
+}
+.seg {
+  display: flex;
+  background: var(--muted);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.seg button {
+  flex: 1;
+  height: 26px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--muted-fg);
+  transition: background .13s ease, color .13s ease;
+}
+.seg button:hover { color: var(--fg); }
+.seg button.on {
+  background: var(--card-bg);
+  color: var(--fg);
+  font-weight: 500;
+  box-shadow: 0 1px 3px hsl(0 0% 0% / .12);
+}
+</style>
+</head>
+<body>
+
+<!-- ================= 左侧菜单 ================= -->
+<aside class="sidebar">
+  <div class="traffic" title="窗口拖拽区"><i></i><i></i><i></i></div>
+
+  <button class="new-chat">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+    新对话
+  </button>
+
+  <nav class="nav">
+    <button class="nav-pill active" data-nav>
+      <svg class="icon" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+      智能助手
+    </button>
+    <button class="nav-pill" data-nav>
+      <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+      工作画布
+    </button>
+  </nav>
+
+  <div class="sessions">
+    <div class="session-group">
+      <h3>今天</h3>
+      <button class="session-row active" data-session>
+        <span class="title">修复会话列表排序乱跳</span>
+        <span class="time">刚刚</span>
+        <span class="more" role="button" aria-label="更多操作">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </span>
+      </button>
+      <button class="session-row" data-session>
+        <span class="title">切换会话卡顿分析</span>
+        <span class="time">2 小时前</span>
+        <span class="more" role="button" aria-label="更多操作">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </span>
+      </button>
+      <button class="session-row" data-session>
+        <span class="title">设置页找回 CLI 后端选择器</span>
+        <span class="time">4 小时前</span>
+        <span class="more" role="button" aria-label="更多操作">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </span>
+      </button>
+    </div>
+    <div class="session-group">
+      <h3>昨天</h3>
+      <button class="session-row" data-session>
+        <span class="title">desktop 目录合并进 studio</span>
+        <span class="time">昨天</span>
+        <span class="more" role="button" aria-label="更多操作">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </span>
+      </button>
+      <button class="session-row" data-session>
+        <span class="title">聊天 UI 整体迁入方案</span>
+        <span class="time">昨天</span>
+        <span class="more" role="button" aria-label="更多操作">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </span>
+      </button>
+    </div>
+    <div class="session-group">
+      <h3>本周</h3>
+      <button class="session-row" data-session>
+        <span class="title">composer 三端合一下沉</span>
+        <span class="time">周一</span>
+        <span class="more" role="button" aria-label="更多操作">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </span>
+      </button>
+      <button class="session-row" data-session>
+        <span class="title">会话重命名与搜索链路</span>
+        <span class="time">周一</span>
+        <span class="more" role="button" aria-label="更多操作">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </span>
+      </button>
+    </div>
+  </div>
+
+  <div class="rail-footer">
+    <button class="nav-pill">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+      设置
+    </button>
+    <button class="user-chip">
+      <span class="avatar">A</span>
+      <span class="meta">
+        <b>Andersen</b>
+        <span>fusion-code · 已连接</span>
+      </span>
+    </button>
+  </div>
+</aside>
+
+<!-- ================= 悬浮内容卡 ================= -->
+<main class="stage">
+  <section class="content-card">
+
+    <header class="card-header">
+      <div class="head-meta">
+        <h1>修复会话列表排序乱跳</h1>
+        <div class="sub"><span class="dot"></span>fusion-code · 就绪</div>
+      </div>
+      <button class="icon-btn" title="搜索会话 ⌘K">
+        <svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      </button>
+      <button class="icon-btn" title="切换主题" id="themeBtn">
+        <svg class="icon icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+      </button>
+      <button class="icon-btn" title="更多">
+        <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+      </button>
+    </header>
+
+    <div class="thread">
+      <div class="thread-inner">
+
+        <div class="msg-user">
+          <div class="bubble">切换会话的时候，左边列表的顺序总是乱跳，帮我分析下是什么原因</div>
+        </div>
+
+        <div class="msg-assistant">
+          <p>查到原因了：列表按文件修改时间排序，但每次恢复会话时 CLI 会往会话文件里追加几行记录数据，把没动过的会话也「顶」到了最前面。</p>
+          <div class="tool-card">
+            <span class="check"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span>读取 <b>sessionStore.ts</b></span>
+            <span class="path">electron/main/core</span>
+          </div>
+          <p>建议改成按「最后一条真实对话」的时间排序：只有你真的发过消息，会话才会上浮。</p>
+        </div>
+
+        <div class="msg-user">
+          <div class="bubble">可以，按这个方案改</div>
+        </div>
+
+        <div class="msg-assistant">
+          <div class="tool-card">
+            <span class="check"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span>编辑 <b>sessionStore.ts</b></span>
+            <span class="path">+86 −12</span>
+          </div>
+          <div class="tool-card">
+            <span class="check"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span>类型检查 <b>通过</b></span>
+            <span class="path">bun run typecheck</span>
+          </div>
+          <p>改好了。现在排序读的是每个会话最后一条真实消息的时间戳，切换会话不会再让列表乱跳。</p>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="composer-zone">
+      <div class="composer">
+        <textarea rows="1" placeholder="问点什么，或用 @ 引用文件…"></textarea>
+        <div class="composer-row">
+          <button class="model">
+            Fable 5
+            <svg class="icon" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div class="spacer"></div>
+          <button class="icon-btn" title="添加附件" style="width:28px;height:28px">
+            <svg class="icon" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <button class="icon-btn" title="语音输入" style="width:28px;height:28px">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>
+          </button>
+          <button class="send-btn" title="发送">
+            <svg class="icon" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </section>
+</main>
+
+<!-- ================= Tweaks ================= -->
+<button class="tweaks-fab" id="tweaksFab" title="Tweaks">
+  <svg class="icon" viewBox="0 0 24 24"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>
+</button>
+
+<div class="tweaks" id="tweaksPanel">
+  <h2>TWEAKS</h2>
+
+  <div class="field">
+    <label>主题</label>
+    <div class="seg" data-attr="data-theme">
+      <button data-val="light" class="on">浅色</button>
+      <button data-val="dark">深色</button>
+    </div>
+  </div>
+
+  <div class="field">
+    <label>悬浮深度</label>
+    <div class="seg" data-attr="data-float">
+      <button data-val="flush">贴合（现状）</button>
+      <button data-val="standard" class="on">标准</button>
+      <button data-val="deep">深悬浮</button>
+    </div>
+  </div>
+
+  <div class="field">
+    <label>内容卡圆角</label>
+    <div class="seg" data-attr="data-radius">
+      <button data-val="sm">小</button>
+      <button data-val="md" class="on">中</button>
+      <button data-val="lg">大</button>
+    </div>
+  </div>
+
+  <div class="field">
+    <label>输入框</label>
+    <div class="seg" data-attr="data-composer">
+      <button data-val="inset" class="on">嵌入卡内</button>
+      <button data-val="float">二级悬浮</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- Tweaks：segmented control 写 <html> 的 data-* 属性 ----
+document.querySelectorAll('.seg').forEach(function (seg) {
+  var attr = seg.getAttribute('data-attr');
+  seg.querySelectorAll('button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.documentElement.setAttribute(attr, btn.getAttribute('data-val'));
+      seg.querySelectorAll('button').forEach(function (b) { b.classList.remove('on'); });
+      btn.classList.add('on');
+    });
+  });
+});
+
+var fab = document.getElementById('tweaksFab');
+var panel = document.getElementById('tweaksPanel');
+fab.addEventListener('click', function () { panel.classList.toggle('open'); });
+
+// ---- header 主题快捷切换（与 Tweaks 联动） ----
+document.getElementById('themeBtn').addEventListener('click', function () {
+  var next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  var seg = document.querySelector('.seg[data-attr="data-theme"]');
+  seg.querySelectorAll('button').forEach(function (b) {
+    b.classList.toggle('on', b.getAttribute('data-val') === next);
+  });
+});
+
+// ---- 会话行 / nav pill：点击切 active（演示交互） ----
+document.querySelectorAll('[data-session]').forEach(function (row) {
+  row.addEventListener('click', function (e) {
+    if (e.target.closest('.more')) return;
+    document.querySelectorAll('[data-session]').forEach(function (r) { r.classList.remove('active'); });
+    row.classList.add('active');
+    document.querySelector('.card-header h1').textContent =
+      row.querySelector('.title').textContent;
+  });
+});
+document.querySelectorAll('[data-nav]').forEach(function (pill) {
+  pill.addEventListener('click', function () {
+    document.querySelectorAll('[data-nav]').forEach(function (p) { p.classList.remove('active'); });
+    pill.classList.add('active');
+  });
+});
+
+// ---- textarea 自适应高度 ----
+var ta = document.querySelector('.composer textarea');
+ta.addEventListener('input', function () {
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+});
+</script>
+</body>
+</html>

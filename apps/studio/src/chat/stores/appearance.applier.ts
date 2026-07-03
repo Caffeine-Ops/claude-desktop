@@ -36,6 +36,13 @@ export function useApplyAppearance(): void {
     const apply = (isDark: boolean): void => {
       const root = document.documentElement
       root.classList.toggle('dark', isDark)
+      // 明暗双标记桥接：canvas 面（src/canvas/）的 27k 行 CSS 用
+      // [data-theme='dark'] 选 dark、html:not([data-theme]) + @media 兜底，
+      // 而 chat 侧只翻 .dark 类——两套开关各走各的曾造成两面明暗分裂。
+      // 这里写显式 data-theme（永不留空）：canvas 的 @media 兜底分支从此
+      // 不参与，两面的明暗由同一次 apply 统一落地。canvas 侧的写手
+      // （applyAppearanceToDocument）做了对称桥接，谁后写都保持一致。
+      root.setAttribute('data-theme', isDark ? 'dark' : 'light')
       applyThemeOverrides(root, isDark ? dark : light)
     }
 
@@ -123,11 +130,17 @@ function applyThemeOverrides(
   //               two steps up, so the composer clearly lifts off the chat
   //               transcript. On the warm-black canvas a 3% delta was too
   //               faint (the composer looked glued to the conversation); a
-  //               6% delta on popover gives it a visible edge even through
-  //               the .9 translucency + blur. Light mode goes the other way
-  //               (floating surfaces a hair DARKER than the near-white page).
-  const cardHsl = shiftLightness(bgHsl, isDark ? 3 : -2)
-  const popoverHsl = shiftLightness(bgHsl, isDark ? 6 : -4)
+  //               6% delta on popover gives it a visible edge.
+  // BOTH modes lift UPWARD (lighter) now. The old light branch went DARKER
+  // (-2/-4) — a workaround for the pure-white default canvas that had no
+  // headroom to lift — which inverted the design-tokens hierarchy (gray
+  // page, white floating cards) into white-page/gray-cards. With the v4
+  // off-white default (#f5f5f7, L≈97%) the lift clamps to 100% = white
+  // cards floating on a gray page, matching tokens.css. A user-picked
+  // near-white background degrades gracefully (card==page at worst; the
+  // existing borders/shadows still separate the planes).
+  const cardHsl = shiftLightness(bgHsl, 3)
+  const popoverHsl = shiftLightness(bgHsl, isDark ? 6 : 5)
 
   root.style.setProperty('--accent', accentHsl)
   root.style.setProperty('--primary', accentHsl)

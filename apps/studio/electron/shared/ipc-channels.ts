@@ -842,8 +842,8 @@ export type SessionSearchResult = { hits: readonly SessionContentHit[] }
 export type SessionListActiveRuntimesResult = { sessionIds: readonly string[] }
 
 /**
- * Payload for LANG_CHANGED. Must match the renderer's `Lang` type in
- * `src/renderer/src/i18n.ts` — keep in sync.
+ * Payload for LANG_CHANGED. Must match the `Lang` type in
+ * `apps/studio/src/chat/i18n.ts` — keep in sync.
  */
 export type LangChangedPayload = { lang: 'zh' | 'en' }
 

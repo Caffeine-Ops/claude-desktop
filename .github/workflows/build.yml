@@ -36,13 +36,13 @@ jobs:
           - os: macos-latest
             platform: mac
             fusion_asset: fusion-code-darwin-arm64
-            fusion_target: apps/desktop/fusion-bin/fusion-code-cli
+            fusion_target: apps/studio/fusion-bin/fusion-code-cli
             node_dist: darwin-arm64
             python_dist: aarch64-apple-darwin
           - os: windows-latest
             platform: win
             fusion_asset: fusion-code-win32-x64.exe
-            fusion_target: apps/desktop/fusion-bin/fusion-code-cli.exe
+            fusion_target: apps/studio/fusion-bin/fusion-code-cli.exe
             node_dist: win-x64
             python_dist: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
@@ -99,9 +99,9 @@ jobs:
             echo "::error::ENV_JSON secret is empty. Configure it in Settings → Secrets → Actions."
             exit 1
           fi
-          # MUST write to apps/desktop/env.json, NOT the repo root. Two reasons:
+          # MUST write to apps/studio/env.json, NOT the repo root. Two reasons:
           #   1. electron-builder's `files: ["env.json"]` is relative to the
-          #      package dir (apps/desktop), so a repo-root env.json never gets
+          #      package dir (apps/studio), so a repo-root env.json never gets
           #      packed into the asar → loadEnv finds nothing in prod → every
           #      env.json-backed feature (gpt-image-2 OPENAI_API_KEY, fusion-code
           #      ANTHROPIC_* gateway) silently degrades.
@@ -109,8 +109,8 @@ jobs:
           #      this packed copy.
           # The monorepo move left this writing to the old repo-root location;
           # see [[2026-05-25-monorepo打包CI逐层路径未从根迁到appsdesktop]].
-          printf '%s' "$ENV_JSON" > apps/desktop/env.json
-          python -c "import json; json.load(open('apps/desktop/env.json'))" \
+          printf '%s' "$ENV_JSON" > apps/studio/env.json
+          python -c "import json; json.load(open('apps/studio/env.json'))" \
             || { echo "::error::env.json is not valid JSON"; exit 1; }
 
       - name: Download fusion-code CLI
@@ -119,20 +119,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # The desktop package (verify:fusion + electron-builder
-          # extraResources) resolves fusion-bin/ relative to apps/desktop,
+          # extraResources) resolves fusion-bin/ relative to apps/studio,
           # so the CLI must land there — NOT in the repo root. (Pre-monorepo
           # the app WAS the repo root; the path didn't move in this workflow.)
           set -euo pipefail
-          mkdir -p apps/desktop/fusion-bin
+          mkdir -p apps/studio/fusion-bin
           gh release download "$FUSION_CODE_VERSION" \
             --repo Caffeine-Ops/fusion-code-install \
             --pattern "${{ matrix.fusion_asset }}" \
-            --dir apps/desktop/fusion-bin
-          mv "apps/desktop/fusion-bin/${{ matrix.fusion_asset }}" "${{ matrix.fusion_target }}"
+            --dir apps/studio/fusion-bin
+          mv "apps/studio/fusion-bin/${{ matrix.fusion_asset }}" "${{ matrix.fusion_target }}"
           if [ "${{ matrix.platform }}" != "win" ]; then
             chmod +x "${{ matrix.fusion_target }}"
           fi
-          ls -la apps/desktop/fusion-bin/
+          ls -la apps/studio/fusion-bin/
 
           # Integrity gate, RIGHT HERE next to the download — do not wait for the
           # build step's verify:fusion. The CLI is a bun --compile single-file
@@ -172,7 +172,7 @@ jobs:
           set -euo pipefail
           ver="$BUNDLED_NODE_VERSION"
           dist="${{ matrix.node_dist }}"
-          dest="apps/desktop/node-runtime/${{ matrix.platform }}"
+          dest="apps/studio/node-runtime/${{ matrix.platform }}"
           mkdir -p "$dest"
           if [ "${{ matrix.platform }}" = "win" ]; then
             url="https://nodejs.org/dist/${ver}/node-${ver}-${dist}.zip"
@@ -211,7 +211,7 @@ jobs:
           tag="$PYTHON_STANDALONE_TAG"
           ver="$PYTHON_STANDALONE_VERSION"
           dist="${{ matrix.python_dist }}"
-          dest="apps/desktop/python-runtime/${{ matrix.platform }}"
+          dest="apps/studio/python-runtime/${{ matrix.platform }}"
           asset="cpython-${ver}+${tag}-${dist}-install_only.tar.gz"
           url="https://github.com/astral-sh/python-build-standalone/releases/download/${tag}/${asset}"
           mkdir -p "$dest"
@@ -247,17 +247,17 @@ jobs:
       # The daemon is a standalone service, not part of the desktop
       # bundle, so it has no business gating the desktop build.
       - name: Type check
-        run: bun run --filter='@claude-desktop/desktop' typecheck
+        run: bun run --filter='@claude-desktop/studio' typecheck
 
       # Use `dist:<platform>`, NOT `build:<platform>`. The desktop
-      # `build:*` chain assumes apps/daemon/dist/cli.js and apps/web/out
+      # `build:*` chain assumes apps/daemon/dist/cli.js and apps/studio/out
       # already exist (its prebundle:daemon step only COPIES them) — true
       # locally where they linger from a previous build, but a clean CI
       # checkout has neither. `dist:*` runs `prebuild:resources` first to
-      # build the daemon (tsc) and the web static export. The library
-      # packages daemon/web import from `dist/` are already built by the
-      # root postinstall (runs during `bun install`), so we don't repeat
-      # them here.
+      # build the daemon (tsc) and the studio static export (apps/web was
+      # physically retired in Phase 4). The library packages daemon/studio
+      # import from `dist/` are already built by the root postinstall (runs
+      # during `bun install`), so we don't repeat them here.
       - name: Build (${{ matrix.platform }})
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
@@ -271,7 +271,7 @@ jobs:
       # hand-off to a separate release job that re-downloaded them. Release
       # assets don't count against that quota, so attaching directly here
       # removes both the quota failure and the artifact→download→release
-      # round-trip. electron-builder writes to apps/desktop/dist/ (its
+      # round-trip. electron-builder writes to apps/studio/dist/ (its
       # build.directories.output is relative to the package, not the repo
       # root). Both matrix jobs target the same tag; action-gh-release is
       # idempotent per tag — the first creates the release, the second
@@ -281,11 +281,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            apps/desktop/dist/*.dmg
-            apps/desktop/dist/*.zip
-            apps/desktop/dist/*.exe
-            apps/desktop/dist/*.blockmap
-            apps/desktop/dist/latest*.yml
+            apps/studio/dist/*.dmg
+            apps/studio/dist/*.zip
+            apps/studio/dist/*.exe
+            apps/studio/dist/*.blockmap
+            apps/studio/dist/latest*.yml
           generate_release_notes: true
           draft: false
           prerelease: false

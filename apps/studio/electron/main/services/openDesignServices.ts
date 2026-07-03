@@ -94,7 +94,6 @@ const WEB_DEV_ORIGIN = `http://localhost:${WEB_DEV_PORT}`
 const STUDIO_DEV_ORIGIN = `http://localhost:${STUDIO_DEV_PORT}`
 
 let daemonProc: ChildProcess | null = null
-let webProc: ChildProcess | null = null
 let studioProc: ChildProcess | null = null
 
 /**
@@ -105,9 +104,6 @@ let studioProc: ChildProcess | null = null
  */
 let cachedRepoRoot: string | null = null
 
-/** prod 下 web tab 的 app:// origin。与 appProtocol.ts 的 APP_ORIGIN 保持一致。 */
-const APP_PROTOCOL_ORIGIN = 'app://open-design'
-
 /**
  * 定位「仓库根」——即一个能 join('apps','daemon','dist',...) / join('apps','web','out')
  * 找到 daemon bundle、web 静态产物、skills/design-systems 等资源的根目录。
@@ -117,7 +113,8 @@ const APP_PROTOCOL_ORIGIN = 'app://open-design'
  *   `apps/web/out`、`skills/` 等布局，让 daemon 的 resolveProjectRoot(__dirname) 算出
  *   的 PROJECT_ROOT 正好落在这个 prebundled 根上（见 prebundle-daemon.mjs）。daemon
  *   的资源安全校验（OD_RESOURCE_ROOT 必须在 PROJECT_ROOT 之下）也因此天然满足。
- * - **dev**：主进程 bundle 在 apps/desktop/out/main，往上三级到仓库根；兜底用 cwd。
+ * - **dev**：主进程 bundle 在 apps/studio/out-electron/main（上四级=仓库根）；
+ *   兜底用 cwd（cwd = apps/studio，上两级=仓库根）。
  *
  * app.isPackaged 比 is.dev 更权威（is.dev 看的是 ELECTRON_RENDERER_URL，prebundle
  * 阶段未必置位）。
@@ -129,10 +126,11 @@ function resolveRepoRoot(selfDir: string): string {
     // spawnDaemon 的 existsSync 检查报「daemon cli not found」而非静默走 dev 路径。
     return prebundled
   }
-  // apps/desktop/out/main → ../../.. = repo 根
-  const fromBundle = join(selfDir, '../../..')
+  // apps/studio/out-electron/main → 上四级 = repo 根（旧 desktop 布局是
+  // 上三级；并包后 bundle 深了一层，这里跟着改——算错也有 cwd 兜底守住）
+  const fromBundle = join(selfDir, '../../../..')
   if (existsSync(join(fromBundle, 'apps', 'daemon'))) return fromBundle
-  // 兜底：cwd（dev 下 electron-vite 在 apps/desktop 跑，cwd/../.. = 根）
+  // 兜底：cwd（dev 下 electron-vite 在 apps/studio 跑，cwd/../.. = 根）
   const fromCwd = join(process.cwd(), '../..')
   if (existsSync(join(fromCwd, 'apps', 'daemon'))) return fromCwd
   return fromBundle
@@ -370,53 +368,12 @@ function spawnDaemon(repoRoot: string): void {
 }
 
 /**
- * dev 模式拉起 web dev server（next dev）。prod 不调用——web 已静态构建。
- */
-function spawnWebDev(repoRoot: string): void {
-  if (!is.dev) return
-  if (webProc && !webProc.killed) return
-
-  const webDir = join(repoRoot, 'apps', 'web')
-  if (!existsSync(join(webDir, 'package.json'))) {
-    console.warn(`[od-services] web package not found at ${webDir} — skipping`)
-    return
-  }
-
-  const bunBin = resolveBunBin()
-  webProc = spawn(bunBin, ['run', '--cwd', webDir, 'dev'], {
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      // 让 next.config 的代理把 /api 指向我们的 daemon 端口。
-      OD_PORT: String(DAEMON_PORT),
-      // next dev 认 PORT 环境变量。注入 WEB_DEV_PORT 让 next 真正监听的端口与
-      // 上面那个被 Electron 探活/加载的常量恒等——否则 next 仍跑默认 3000，
-      // Electron 探新端口就连不上（这正是换端口的全部意义所在）。
-      PORT: String(WEB_DEV_PORT)
-    },
-    // 同 daemon：pipe stdout/stderr 进 collector（next dev 的 Local URL /
-    // 编译日志），pipeChildToCollector 仍回显到终端。
-    stdio: ['inherit', 'pipe', 'pipe'],
-    // Windows 隐藏控制台窗口（dev 才走这里，但保持与 daemon 一致）。
-    windowsHide: true
-  })
-  pipeChildToCollector(webProc, 'web')
-
-  webProc.on('exit', (code, signal) => {
-    console.log(`[od-services] web dev exited code=${code} signal=${signal}`)
-    webProc = null
-  })
-  webProc.on('error', (err) => {
-    console.warn('[od-services] web dev spawn error:', err)
-  })
-  console.log(`[od-services] web dev spawned: ${bunBin} run --cwd ${webDir} dev`)
-}
-
-/**
- * dev 模式拉起 studio dev server（next dev）。prod 不调用——studio 尚无打包
- * 形态（Phase 1，见 STUDIO_DEV_PORT 注释）。结构与 spawnWebDev 完全同构，
- * 差异只有目录、端口 env 名（STUDIO_DEV_PORT，被 studio dev script 的
- * `-p ${STUDIO_DEV_PORT:-3100}` 读取）和 collector 标签。
+ * dev 模式拉起 studio 前端 dev server（next dev）。prod 不调用——prod 走
+ * static export + app://studio 读盘。
+ *
+ * 脚本名必须是 `dev:next` 而不是 `dev`：desktop 并包后 studio 包的 `dev`
+ * 是 electron-vite dev（整个桌面应用的入口），在这里 spawn `dev` 会让 main
+ * 递归拉起第二个 Electron 实例。Next 侧的独立入口固定叫 dev:next。
  */
 function spawnStudioDev(repoRoot: string): void {
   if (!is.dev) return
@@ -429,20 +386,16 @@ function spawnStudioDev(repoRoot: string): void {
   }
 
   const bunBin = resolveBunBin()
-  studioProc = spawn(bunBin, ['run', '--cwd', studioDir, 'dev'], {
+  studioProc = spawn(bunBin, ['run', '--cwd', studioDir, 'dev:next'], {
     cwd: repoRoot,
     env: {
       ...process.env,
       // 让 studio next.config 的 rewrites 把 /api、/artifacts 指向我们的 daemon。
       OD_PORT: String(DAEMON_PORT),
-      // studio dev script 用 `-p ${STUDIO_DEV_PORT:-3100}`（flag 优先于 PORT env，
-      // 所以这里注入的是同名 shell 变量而非 PORT）——保证监听端口与探活/加载
-      // 用的 STUDIO_DEV_PORT 常量恒等。
-      STUDIO_DEV_PORT: String(STUDIO_DEV_PORT),
-      // studio 的 /canvas 路由用 iframe 嵌 web（Phase 3 真迁移完成前的过渡
-      // 形态）。NEXT_PUBLIC_ 前缀让 next 在编译期内联给客户端代码——studio
-      // 页面自己不知道壳侧的 WEB_DEV_PORT 常量，靠这条 env 传递。
-      NEXT_PUBLIC_OD_WEB_ORIGIN: WEB_DEV_ORIGIN
+      // studio 的 dev:next script 用 `-p ${STUDIO_DEV_PORT:-3100}`（flag 优先于
+      // PORT env，所以这里注入的是同名 shell 变量而非 PORT）——保证监听端口
+      // 与探活/加载用的 STUDIO_DEV_PORT 常量恒等。
+      STUDIO_DEV_PORT: String(STUDIO_DEV_PORT)
     },
     stdio: ['inherit', 'pipe', 'pipe'],
     windowsHide: true
@@ -456,7 +409,7 @@ function spawnStudioDev(repoRoot: string): void {
   studioProc.on('error', (err) => {
     console.warn('[od-services] studio dev spawn error:', err)
   })
-  console.log(`[od-services] studio dev spawned: ${bunBin} run --cwd ${studioDir} dev`)
+  console.log(`[od-services] studio dev spawned: ${bunBin} run --cwd ${studioDir} dev:next`)
 }
 
 /**
@@ -473,22 +426,6 @@ export async function waitForDaemonReady(timeoutMs = 30_000): Promise<boolean> {
       if (res.ok) return true
     } catch {
       // daemon 还没起好，继续轮询
-    }
-    await new Promise((r) => setTimeout(r, 500))
-  }
-  return false
-}
-
-/** dev 下额外等 web dev server ready（next dev 冷启动）。 */
-export async function waitForWebReady(timeoutMs = 30_000): Promise<boolean> {
-  if (!is.dev) return true
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(WEB_DEV_ORIGIN)
-      if (res.ok) return true
-    } catch {
-      // 继续轮询
     }
     await new Promise((r) => setTimeout(r, 500))
   }
@@ -521,26 +458,22 @@ export function startOpenDesignServices(selfDir: string): void {
   // 缓存给 resolveWebStaticDir()（app:// 协议 handler 注册时复用，见上方注释）。
   cachedRepoRoot = repoRoot
   spawnDaemon(repoRoot)
-  spawnWebDev(repoRoot)
   spawnStudioDev(repoRoot)
 }
 
 /**
- * prod 下 web 静态产物（next export 写到 apps/web/out）的磁盘目录。
- * 与 daemon 的 STATIC_DIR（server.ts: PROJECT_ROOT/apps/web/out）同一处，
- * 只是这里由 desktop 进程直接读盘喂给 app:// 协议，不再经过 daemon 的 HTTP。
- *
- * cachedRepoRoot 由 startOpenDesignServices 在 ready 早期填充；万一未填充
- * （理论上不会，调用顺序保证），回退到当前模块往上推算，至少不抛。
+ * prod 下 studio 静态产物（next export 写到 apps/studio/out）的磁盘目录。
+ * 与 resolveWebStaticDir 同款逻辑；prebundle-daemon.mjs 把它拷进
+ * prebundled/apps/studio/out，打包后 repoRoot 指向 prebundled 根时路径不变。
  */
-export function resolveWebStaticDir(): string {
+export function resolveStudioStaticDir(): string {
   const root = cachedRepoRoot ?? join(process.cwd(), '..', '..')
-  return join(root, 'apps', 'web', 'out')
+  return join(root, 'apps', 'studio', 'out')
 }
 
 /** 应用退出时清理子进程，避免 daemon/web/studio 变孤儿进程占着端口。 */
 export function stopOpenDesignServices(): void {
-  for (const proc of [webProc, studioProc, daemonProc]) {
+  for (const proc of [studioProc, daemonProc]) {
     if (proc && !proc.killed) {
       try {
         proc.kill('SIGTERM')
@@ -550,57 +483,21 @@ export function stopOpenDesignServices(): void {
     }
   }
   daemonProc = null
-  webProc = null
   studioProc = null
 }
 
 /**
- * 第二个 tab 该加载的 web URL。
- *  - dev：web dev server（next dev, localhost:3000）—— 保留 HMR。
- *  - prod：app:// 自定义协议（appProtocol.ts），直接读磁盘 out/，不占端口、
- *    不再让 daemon serve 页面（daemon 只保留作 /api 后端）。结尾的 / 是必需的，
- *    standard scheme 下 app://open-design 不带路径会被当成无 path 而非根。
- *
- * 末尾的 `?host=desktop` 是给嵌入的 web 应用的「我在桌面壳里」信号：这个
- * web tab **故意不挂任何 preload**（见 newWebTab 注释），所以 web 端没有
- * 任何注入的全局对象（`__od__` / `electronSettings` / `chatApi` 全都没有）
- * 可供识别宿主——只能靠 URL 查询参数。web 端 EntryShell 读到它后会隐藏
- * 自己的设置齿轮，避免和 shell 顶栏常驻的设置入口（UserInfoBar）重复。
- * 沿用 resolveWebSettingsUrl 的 `?settings=1` 同款查询参数约定。
- */
-export function resolveWebTabUrl(): string {
-  return is.dev
-    ? `${WEB_DEV_ORIGIN}/?host=desktop`
-    : `${APP_PROTOCOL_ORIGIN}/?host=desktop`
-}
-
-/**
- * URL for the embedded settings overlay — the same Open Design web app as
- * the web tab, but loaded with `?settings=1` so it boots straight into a
- * full-screen SettingsDialog modal (see apps/web App.tsx). Reusing the web
- * app means the settings overlay has the full, always-in-sync feature set
- * (providers / connectors / MCP / skills / notifications / …) backed by the
- * daemon, with zero reimplementation in the desktop renderer.
- *
- * dev keeps the next-dev origin (HMR); prod uses the app:// protocol root
- * with the query appended.
- */
-export function resolveWebSettingsUrl(): string {
-  return is.dev
-    ? `${WEB_DEV_ORIGIN}/?settings=1`
-    : `${APP_PROTOCOL_ORIGIN}/?settings=1`
-}
-
-/**
- * studio tab 该加载的 URL。**只有 dev 分支**：studio 是三前端合并的迁移目标
- * （apps/studio/README.md），Phase 1 尚无打包形态，prod 下调用方（main/index.ts）
- * 根本不建 studio tab，所以这里不需要（也还没法）给出 prod URL。打包形态
- * （standalone server vs static export 回退）在聊天 UI 迁移完成后决定。
+ * studio tab 该加载的 URL。
+ *  - dev：studio dev server（next dev, localhost:3100）—— 保留 HMR。
+ *  - prod：app://studio 自定义协议（appProtocol.ts 按 host 分发到
+ *    apps/studio/out），与 web tab 的 app://open-design 同一 handler、
+ *    同一套反代/SPA fallback。结尾 / 必需（standard scheme 规则同
+ *    resolveWebTabUrl 注释）。
  *
  * 不带 `?host=desktop`：web tab 需要它是因为不挂 preload、只能靠 URL 识别宿主；
  * studio tab 挂完整 chatApi preload（见 tabRegistry.newStudioTab），页面检测
  * `window.chatApi` 存在即知宿主，无需查询参数。
  */
 export function resolveStudioTabUrl(): string {
-  return `${STUDIO_DEV_ORIGIN}/`
+  return is.dev ? `${STUDIO_DEV_ORIGIN}/` : 'app://studio/'
 }

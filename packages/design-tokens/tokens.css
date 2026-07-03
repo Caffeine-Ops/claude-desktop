@@ -1,25 +1,37 @@
 /*
  * Shared design tokens — the single source of truth for color across the
- * whole monorepo. Both the Electron renderer (apps/desktop, Tailwind v3) and
- * the Next.js web app (apps/web, Tailwind v4) @import this file, so the two
- * surfaces stay visually identical without duplicating palette values.
+ * monorepo. The sole UI consumer today is apps/studio (the unified Next.js
+ * frontend); its TWO surfaces import this file through their own Tailwind v4
+ * entrypoints and live in ONE document (SurfaceHost keep-alive):
  *
- * The palette is the desktop app's shadcn-style, Apple-inspired system:
- * every color is an HSL triplet on `:root` (light) and `.dark` (dark), read
- * downstream through `hsl(var(--token) / <alpha>)`. apps/desktop consumes
- * these directly (its tailwind.config.js maps utilities to `hsl(var(--…))`);
- * apps/web derives its own legacy `--bg` / `--text` / `--accent` names from
- * these tokens (see apps/web/src/index.css) so its ~27k lines of CSS keep
- * working unchanged while picking up the desktop color values.
+ *   - chat  (src/chat/styles/index.css)  — full shadcn/Tailwind system;
+ *     utilities read these triplets via `hsl(var(--token) / <alpha>)`.
+ *   - canvas (src/canvas/index.css)      — ~27k lines of legacy hand-written
+ *     CSS; it derives its OWN namespaced tokens (`--od-accent`, `--od-border`,
+ *     `--bg-*`, `--text-*` — full color values, not triplets) FROM these.
+ *
+ * NAMESPACE RULE (learned the hard way, 2026-07-03): anything canvas defines
+ * on `:root` is document-global and will clobber same-named tokens here for
+ * the chat surface too. Canvas-local tokens must NOT reuse the shadcn names
+ * in this file — the legacy `--accent`/`--border` were renamed `--od-*` after
+ * they silently killed every `hsl(var(--accent|border))` in chat (a triplet
+ * replaced by a full color makes the hsl() wrapper invalid, with zero
+ * console errors). See the vault error note of that date before adding
+ * any new `:root` token on either side.
  *
  * IMPORTANT: this file must contain ONLY bare token declarations (no
- * `@tailwind`, no `@layer`, no `@import`). Tailwind v3 and v4 disagree on
- * `@layer` semantics, and `@import` is only legal at the very top of the
- * importing file — keeping this file layer-free lets both build pipelines
- * inline it wherever they need it.
+ * `@tailwind`, no `@layer`, no `@import`) so any pipeline can inline it.
  *
- * The appearance store/applier (apps/desktop) mutates these same variables on
- * `documentElement.style` for per-user overrides, so components re-skin live.
+ * Runtime writers that mutate these on `documentElement.style` (highest
+ * precedence — they win over every stylesheet):
+ *   - chat  applier (src/chat/stores/appearance.applier.ts): --accent,
+ *     --primary, --ring, --background, --card, --popover, --sidebar, fg set —
+ *     always HSL TRIPLETS.
+ *   - canvas applyAppearanceToDocument (src/canvas/state/appearance.ts):
+ *     --od-accent + --accent-strong/-soft/-tint/-hover — full color values,
+ *     namespaced so they can't collide with the triplets above.
+ * Both writers also bridge the dark-mode markers (.dark class ↔ data-theme
+ * attr) so the two surfaces always agree on light/dark.
  */
 
 :root {
@@ -74,6 +86,22 @@
   --sidebar-foreground: 240 4% 18%;
   --sidebar-accent: 240 6% 90%;
   --sidebar-border: 240 6% 84%;
+  /* Rail 专属 accent（绿）——取自旧 shell rail 的 --rail-accent #16a34a
+   * （docs/ui-prototype-session-actions.html 同源）。刻意与全局 --primary
+   * （蓝）分开：绿只属于左侧 rail 的选中态/CTA，改全局 primary 会把聊天区
+   * 的按钮一起染绿。 */
+  --sidebar-primary: 142 76% 36%;
+  --sidebar-primary-foreground: 0 0% 100%;
+
+  /* 品牌绿身份色（docs/ui-prototype-chat-shadcn.html 的 --primary）——与
+   * --sidebar-primary 同值同源，但语义不同：sidebar-primary 只属于 rail，
+   * brand 给聊天区的「身份点位」用（工具行绿勾/运行弧线、工作状态条、
+   * composer focus ring、发送按钮 ready 态、下拉选中勾）。这些点位在旧
+   * renderer 里读的是当时为绿的 --accent，迁到共享 token 后 --accent 变成
+   * Apple 蓝且会被 appearance applier 换成用户主题色——身份色不该跟着用户
+   * 主题跑，所以单独立 token 而不是复用 --accent。 */
+  --brand: 142 76% 36%;
+  --brand-foreground: 0 0% 100%;
 
   /* Composer mention chip — semantic green for "this is a file or symbol",
    * kept distinct from accent so the two chip variants stay separable
@@ -124,22 +152,24 @@
    *                           want a hint of accent without a solid fill).
    * `--shadow-accent`       : the accent-colored elevation under tinted
    *                           surfaces so they lift off the page warmly.
-   * These reference the legacy --accent / --accent-strong / --bg-panel names
-   * that apps/web derives (see apps/web/src/index.css), so they resolve
-   * correctly there. apps/desktop, which has no --accent-strong / --bg-panel,
-   * falls back to the shared accent via the var() fallbacks. */
+   * These reference the legacy --od-accent / --accent-strong / --bg-panel
+   * names that the canvas surface derives (apps/studio/src/canvas/index.css).
+   * The legacy accent was renamed --accent → --od-accent on 2026-07-03: the
+   * old name collided with THIS file's shared --accent (HSL triplet vs full
+   * color) and clobbered it document-wide. Surfaces without the legacy names
+   * (chat) fall back to the shared primary via the var() fallbacks. */
   --accent-gradient: linear-gradient(
     135deg,
-    var(--accent, hsl(var(--primary))) 0%,
+    var(--od-accent, hsl(var(--primary))) 0%,
     var(--accent-strong, hsl(var(--primary))) 100%
   );
   --surface-accent-tint: linear-gradient(
     135deg,
-    color-mix(in srgb, var(--accent, hsl(var(--primary))) 13%, var(--bg-panel, hsl(var(--card)))) 0%,
+    color-mix(in srgb, var(--od-accent, hsl(var(--primary))) 13%, var(--bg-panel, hsl(var(--card)))) 0%,
     var(--bg-panel, hsl(var(--card))) 54%
   );
   --shadow-accent: 0 18px 40px
-    color-mix(in srgb, var(--accent, hsl(var(--primary))) 10%, transparent);
+    color-mix(in srgb, var(--od-accent, hsl(var(--primary))) 10%, transparent);
 }
 
 .dark {
@@ -211,6 +241,15 @@
   --sidebar-foreground: 40 21% 89%;
   --sidebar-accent: 30 5% 15%;
   --sidebar-border: 49 12% 18%;
+  /* 暗色提亮绿（原型 dark --accent #2ec96b 与 --accent-ink #57d98a 的折中：
+   * 单 token 同时当填充色和文字色，取两者之间保证暗底可读性）。 */
+  --sidebar-primary: 145 60% 52%;
+  --sidebar-primary-foreground: 40 6% 10%;
+
+  /* 品牌绿暗色档——同 --sidebar-primary 的提亮逻辑（green-600 在暖黑底上
+   * 对比度不够）。foreground 用暖黑而非白：提亮后的绿够浅，深字更清晰。 */
+  --brand: 145 60% 52%;
+  --brand-foreground: 40 6% 10%;
 
   --chip-mention: 158 64% 65%;
 }

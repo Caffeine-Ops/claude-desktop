@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { DialogShell } from '@open-design/ui'
+import { DialogShell } from '@/src/components/ui/dialog-shell'
 
 import { useT, useTFormat } from '../../i18n'
 import { useDialogStore } from '../../stores/dialogs'
