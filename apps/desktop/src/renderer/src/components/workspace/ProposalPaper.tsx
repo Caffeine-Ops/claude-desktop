@@ -22,7 +22,7 @@ import {
   replaceGenImageDirectiveBlock,
   removeGenImageDirectiveBlock
 } from '@shared/proposalGenImage'
-import { fireGenImageDirective } from '../../lib/proposalGenImageFire'
+import { fireGenImageDirective, buildGenImagePrompt } from '../../lib/proposalGenImageFire'
 import { GenImageDirectiveCard } from './GenImageDirectiveCard'
 import {
   RotateCwIcon,
@@ -498,6 +498,15 @@ export function ProposalPaper(): React.JSX.Element {
     setReviewBusy((m) => ({ ...m, [review.id]: true }))
     setReviewError((m) => ({ ...m, [review.id]: null }))
     try {
+      // directive 重改：用户在输入框里写的是新构图描述，必须回炉 buildGenImagePrompt 重新裹上
+      // 统一风格套件（扁平商务/蓝色系/白底/中文短标签/无水印）与「为售前建设方案绘制…」框架
+      // ——首次自动发起就是这么拼的（评审 #9：裸发用户文本会让重改产物与其它 directive 图
+      // 风格脱节，且这些约束用户没写过、也无从补回）。generate 模式首发就是裸 prompt（选区
+      // 弹框直发），重试保持一致不裹。
+      const finalPrompt =
+        review.mode === 'directive'
+          ? buildGenImagePrompt({ caption: review.caption ?? '配图', prompt })
+          : prompt
       const { path } =
         review.mode === 'edit'
           ? await window.chatApi.proposalImageEdit({
@@ -505,7 +514,7 @@ export function ProposalPaper(): React.JSX.Element {
               sourcePath: review.sourcePath as string,
               prompt
             })
-          : await window.chatApi.proposalImageGenerate({ sessionId: proposalSid, prompt })
+          : await window.chatApi.proposalImageGenerate({ sessionId: proposalSid, prompt: finalPrompt })
       const pstore = useProposalStore.getState()
       pstore.removeImageReview(review.id)
       const id = pstore.addImageReview({

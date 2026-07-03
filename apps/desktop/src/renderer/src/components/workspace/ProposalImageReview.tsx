@@ -85,7 +85,9 @@ export function ProposalImageReview({
         </button>
       </div>
 
-      {/* 预览区：edit 模式原图/改后图并排对照；generate 模式只有新图，附「插入到本节末尾」提示。 */}
+      {/* 预览区：edit 模式原图/改后图并排对照；generate/directive 模式只有新图，落位提示按
+          mode 说实话（评审 #10）——generate 由 applyImageReview 插到发起时选中段落之后（越界
+          才退化节末），directive 原地替换文档中的指令块，都不是「本节末尾」。 */}
       {review.mode === 'edit' ? (
         <div className="mt-2 grid grid-cols-2 gap-2">
           <div>
@@ -124,7 +126,11 @@ export function ProposalImageReview({
               className="block h-auto max-h-72 w-full object-contain"
             />
           </div>
-          <div className="mt-1 text-[11px] text-neutral-500">插入到本节末尾</div>
+          <div className="mt-1 text-[11px] text-neutral-500">
+            {review.mode === 'directive'
+              ? '应用后将原地替换文档中的配图指令块'
+              : '应用后插入到所选段落之后'}
+          </div>
         </div>
       )}
 
