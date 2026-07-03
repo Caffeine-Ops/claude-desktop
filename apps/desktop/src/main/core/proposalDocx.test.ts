@@ -304,4 +304,33 @@ describe('markdownToDocxBuffer 剥除 genimage 指令块', () => {
     expect(xml).not.toContain('分层构图描述')
     expect(xml).toContain('尾段') // 剥除不误伤相邻正文
   })
+  it('未闭合的 genimage 围栏绝不吞掉后续正文（评审 #1 回归：code 兜底不再 return []）', async () => {
+    // 流式截断现场：未闭合围栏 + 后续真实章节 + mermaid 块。strip 对畸形块安全失败原样保留，
+    // remark 会把它解析成一路吞到 mermaid 收尾 ``` 的 genimage code 节点——旧的 return [] 兜底
+    // 会让「重要章节」和 mermaid 一起从交付 Word 里无声消失。
+    const md = [
+      '<!--proposal-section:content-->',
+      '',
+      '## 总体架构',
+      '',
+      '```genimage',
+      '图说: 被截断的指令',
+      '描述写到一半',
+      '',
+      '## 重要章节',
+      '',
+      '这段正文绝不能丢。（据《白皮书》）',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      'A-->B',
+      '```',
+      '',
+      '尾段。（据《白皮书》）'
+    ].join('\n')
+    const buf = await markdownToDocxBuffer(md)
+    const xml = readDocxDocumentXml(Buffer.from(buf))
+    expect(xml).toContain('这段正文绝不能丢')
+    expect(xml).toContain('尾段')
+  })
 })

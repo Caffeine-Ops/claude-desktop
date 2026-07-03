@@ -79,10 +79,14 @@ export function parseGenImageDirectives(markdown: string): GenImageDirective[] {
   return out
 }
 
-// 导出剥除：逐行扫描而非全文正则。全文非贪婪正则对畸形输入是破坏性的——未闭合的 genimage
-// 围栏（流式截断）会一路匹配到后面无关代码块/mermaid 的收尾 ```，把中间全部真实正文吞掉；
-// 且剥除边界与 parseGenImageDirectives 依赖的 splitBlocks 块边界（FENCE=/^```/ 找收尾）不一致，
-// 指令块内部出现裸 ``` 行时会泄漏残片。逐行扫描与 splitBlocks 同语义，剥的和 parse 认的是同一段。
+// 导出剥除：围栏状态机逐行扫描而非全文正则。三条来自评审的硬教训，改动前必读：
+// ① 全文非贪婪正则对畸形输入是破坏性的——未闭合的 genimage 围栏（流式截断）会一路匹配到后面
+//    无关代码块/mermaid 的收尾 ```，把中间全部真实正文吞掉；
+// ② 安全失败必须是【逐块】的，不能整文档放弃——一个未闭合围栏若让整个文档原样返回，其余全部
+//    合法指令块会原文泄漏进交付 .md，且 docx 侧 remark 会把未闭合围栏解析成一路吞到下一个裸 ```
+//    的 genimage code 节点，配合 code 兜底把中间正文整段删掉；
+// ③ 必须与 splitBlocks 完全同语义地消费【普通围栏】——否则被 ```text 等代码块引用作示例的
+//    ```genimage 行会被当成真指令开围栏，把引用内容剥掉、还让外层围栏失衡。
 // 之所以不直接 splitBlocks+joinBlocks 重拼：strip 跑在导出全文（含分页注释/节标记）上，重拼会
 // 规整化块间距、破坏「预览=导出」的字节稳定预期。
 const FENCE_LINE_RE = /^```/ // 与 proposalBlocks.ts 的 FENCE 完全同语义
@@ -96,24 +100,56 @@ export function stripGenImageDirectives(markdown: string): string {
   const kept: string[] = []
   let stripped = false
   let i = 0
+  // 普通围栏整块照抄：开围栏行到下一个 /^```/ 行（含）之间原样保留——与 splitBlocks 的围栏
+  // 消费同语义，围栏内部的 ```genimage 行绝不会被外层 while 看到（教训③）。
+  const copyFenceBlock = (): void => {
+    kept.push(lines[i])
+    i++
+    while (i < lines.length && !FENCE_LINE_RE.test(lines[i])) {
+      kept.push(lines[i])
+      i++
+    }
+    if (i < lines.length) {
+      kept.push(lines[i]) // 收尾 ``` 行
+      i++
+    }
+  }
   while (i < lines.length) {
     if (GENIMAGE_OPEN_LINE_RE.test(lines[i])) {
-      // 找收尾行：splitBlocks 语义（第一个 /^```/ 行收块）。但收尾行若不是裸 ```（比如撞上了
-      // 后续 ```mermaid 的开围栏），这段在 GENIMAGE_BLOCK_RE / parseGenImageDirectives 眼里
-      // 也不是合法指令块——典型的流式截断现场。与 parse 的「识别不到就不当指令」立场一致：
-      // 安全失败，整体原样返回入参，绝不冒险吞正文。
+      // 找收尾行：splitBlocks 语义（第一个 /^```/ 行收块）。收尾是裸 ``` → 合法指令块，剥掉；
+      // 收尾非裸（撞上后续 ```mermaid 的开围栏）或扫到 EOF（流式截断）→ 在 GENIMAGE_BLOCK_RE /
+      // parseGenImageDirectives 眼里这也不是指令块，按普通围栏【原样保留这一段】，只跳过这一个
+      // 畸形块——其余合法指令块照剥（教训②：绝不整文档放弃）。
       let j = i + 1
       while (j < lines.length && !FENCE_LINE_RE.test(lines[j])) j++
-      if (j >= lines.length || !BARE_CLOSE_LINE_RE.test(lines[j])) return markdown
-      i = j + 1 // 丢弃 [开..收] 这段行，继续扫收尾行之后
-      stripped = true
+      if (j < lines.length && BARE_CLOSE_LINE_RE.test(lines[j])) {
+        i = j + 1 // 丢弃 [开..收] 这段行
+        stripped = true
+        // 只在剥除点局部收敛空行：上一保留行已是空行（或文首还什么都没保留）时，吃掉紧随其后
+        // 的空行，不留连续空行/前导空行。绝不做全文 \n{3,} 收缩——那会改写幸存 mermaid/代码块
+        // 内部的空行，导出侧 mermaidImages 按原文精确键查不到、图静默降级成占位文字（评审 #2）；
+        // 局部判定用 trim()，CRLF（行尾 \r）下同样生效。
+        while (
+          i < lines.length &&
+          lines[i].trim() === '' &&
+          (kept.length === 0 || kept[kept.length - 1].trim() === '')
+        ) {
+          i++
+        }
+        continue
+      }
+      copyFenceBlock()
+      continue
+    }
+    if (FENCE_LINE_RE.test(lines[i])) {
+      copyFenceBlock()
       continue
     }
     kept.push(lines[i])
     i++
   }
-  if (!stripped) return markdown // 只有内联反引号伪指令等，没剥任何块 → 原引用返回
-  return kept.join('\n').replace(/\n{3,}/g, '\n\n')
+  if (!stripped) return markdown // 只有内联/被引用的伪指令等，没剥任何块 → 原引用返回
+  return kept.join('\n')
 }
 
 // djb2 短哈希：key 只做幂等去重（Map 键），不做安全用途；Date.now/Math.random 被禁（可重放性），

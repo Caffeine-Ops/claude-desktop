@@ -34,7 +34,7 @@ import {
 import type { ProposalKind } from '../../shared/proposal'
 import type { MermaidImage } from '../../shared/ipc-channels'
 import { FUSION_HEADER_BANNER, FUSION_COVER_LOGO } from '../../shared/proposalBrand'
-import { stripGenImageDirectives, GENIMAGE_LANG } from '../../shared/proposalGenImage'
+import { stripGenImageDirectives } from '../../shared/proposalGenImage'
 import {
   CN_SIZE_PT,
   FONT_DOCX,
@@ -501,10 +501,14 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
       return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
     }
     case 'code': {
-      // genimage 指令块：应用侧占位指令，绝不属于交付内容。入口 stripGenImageDirectives 已剥
-      // 一遍，这里对漏网块（嵌套结构里的）再兜一道——静默吞掉，不输出任何占位文字（编辑态卡片
-      // 已保证用户看得见未处理的指令，导出物里不需要提醒）。
-      if (node.lang === GENIMAGE_LANG) return []
+      // genimage 指令块：应用侧占位指令，绝不属于交付内容。合法（独立成块且闭合）的指令块在
+      // 入口 stripGenImageDirectives 已全部剥掉，能走到这里的 genimage code 节点只剩两种畸形：
+      // ① 未闭合围栏——strip 按「parse 不认就不剥」原样保留，但 remark 会把它解析成一路吞到
+      //    下一个裸 ``` / EOF 的 code 节点，node.value 里混着被吞的真实正文；
+      // ② 缩进围栏——strip 的行首锚定 ^``` 认不出，remark 认得出。
+      // 两种情况都【不能 return [] 静默吞掉】（评审 #1：整段章节从交付 Word 里无声消失，编辑态
+      // 又因不是合法块而没有卡片可见）——落到下方普通代码块渲染，内容难看但一字不丢、用户看得
+      // 见能改；这里绝不再加早退。
       // mermaid 围栏块 → 嵌入预渲位图（方案一二期）。renderer 已把 SVG 渲好、main 用 sharp 转成
       // PNG 填进 env.mermaidImages；查得到就居中嵌图（等比缩放到版心宽，与 imageParagraphs 同款），
       // 查不到（renderer 没渲成 / sharp 转换失败 / 未传）就降级一行文字占位，绝不把 mermaid 源码

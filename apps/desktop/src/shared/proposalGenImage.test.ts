@@ -85,12 +85,39 @@ describe('stripGenImageDirectives', () => {
     const md = ['```genimage', '图说: 架构', '描述被截断', '', '正文段落。', '', '```mermaid', 'flowchart LR', 'A-->B', '```', '', '尾段。'].join('\n')
     expect(stripGenImageDirectives(md)).toBe(md)
   })
+  it('安全失败是逐块的：一个未闭合围栏不拖累其余合法指令块的剥除（评审 #1 回归）', () => {
+    const md = [DIRECTIVE, '', '正文A。', '', '```genimage', '图说: 被截断', '描述写到一半'].join('\n')
+    const out = stripGenImageDirectives(md)
+    expect(out).not.toContain('系统总体架构图') // 合法块照剥
+    expect(out).toContain('正文A。')
+    expect(out).toContain('图说: 被截断') // 畸形块原样保留（编辑态没有卡片，导出物里可见可改）
+  })
   it('指令块内部裸 ``` 行：剥除边界与 splitBlocks 一致，其余内容保留', () => {
     const md = ['```genimage', '图说: 架构', '举例：', '```', 'foo()', '', '尾段。'].join('\n')
     const out = stripGenImageDirectives(md)
     expect(out).not.toContain('genimage')
     expect(out).toContain('foo()')
     expect(out).toContain('尾段。')
+  })
+  it('被别的代码块引用作示例的 ```genimage 不当真指令（评审 #3 回归：外层围栏上下文）', () => {
+    const md = ['```text', '格式如下：', '```genimage', '图说: x', '```', '后续说明', '```'].join('\n')
+    expect(stripGenImageDirectives(md)).toBe(md) // splitBlocks 眼里没有指令块 → 原引用返回
+  })
+  it('剥除不改写幸存 mermaid/代码块内部的空行（评审 #2 回归：导出 mermaidImages 精确键）', () => {
+    const mermaid = '```mermaid\nflowchart LR\n\n\n\nA-->B\n```'
+    const md = mermaid + '\n\n' + DIRECTIVE + '\n\n尾段。'
+    const out = stripGenImageDirectives(md)
+    expect(out).toContain(mermaid) // 内部连续空行原样——按原文精确键查图必须命中
+    expect(out).not.toContain('genimage\n图说')
+    expect(out).toContain('尾段。')
+  })
+  it('剥除点局部收敛空行：不留连续空行，文首指令块剥除后无前导空行', () => {
+    expect(stripGenImageDirectives(DIRECTIVE + '\n\n正文。')).toBe('正文。')
+    expect(stripGenImageDirectives('段一。\n\n' + DIRECTIVE + '\n\n段二。')).toBe('段一。\n\n段二。')
+  })
+  it('CRLF 文档同样局部收敛（旧全文 \\n{3,} 收缩被 \\r 打断的 Minor 一并修复）', () => {
+    const md = ['段一。', '', '```genimage', '图说: x', '描述。', '```', '', '尾段。'].join('\r\n')
+    expect(stripGenImageDirectives(md)).toBe('段一。\r\n\r\n尾段。')
   })
 })
 
