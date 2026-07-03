@@ -12,6 +12,7 @@ import {
   type ThemeOverrides,
   useAppearanceStore
 } from '../../stores/appearance'
+import { KnowledgeBaseSection } from './KnowledgeBaseSection'
 
 /**
  * SettingsView
@@ -88,6 +89,7 @@ export function SettingsBody(): React.JSX.Element {
       { id: 'general', label: t('catGeneral'), icon: <CircleIcon /> },
       { id: 'appearance', label: t('catAppearance'), icon: <SunIcon /> },
       { id: 'configuration', label: t('catConfiguration'), icon: <SlidersIcon /> },
+      { id: 'knowledgeBase', label: t('catKnowledgeBase'), icon: <BookIcon /> },
       { id: 'personalization', label: t('catPersonalization'), icon: <PersonIcon /> },
       { id: 'usage', label: t('catUsage'), icon: <BarChartIcon /> },
       { id: 'mcp', label: t('catMcpServers'), icon: <ServerIcon /> },
@@ -139,6 +141,8 @@ export function SettingsBody(): React.JSX.Element {
             <GeneralSection />
           ) : activeCategory === 'configuration' ? (
             <ConfigurationSection />
+          ) : activeCategory === 'knowledgeBase' ? (
+            <KnowledgeBaseSection />
           ) : (
             <PlaceholderSection
               title={categories.find((c) => c.id === activeCategory)?.label ?? ''}
@@ -154,6 +158,7 @@ type CategoryId =
   | 'general'
   | 'appearance'
   | 'configuration'
+  | 'knowledgeBase'
   | 'personalization'
   | 'usage'
   | 'mcp'
@@ -166,6 +171,7 @@ const CATEGORY_IDS: readonly CategoryId[] = [
   'general',
   'appearance',
   'configuration',
+  'knowledgeBase',
   'personalization',
   'usage',
   'mcp',
@@ -699,7 +705,7 @@ function PlaceholderSection({ title }: { title: string }): React.JSX.Element {
 
 /* ─────────────────── Layout helpers ─────────────────── */
 
-function Section({
+export function Section({
   title,
   description,
   divider,
@@ -1189,6 +1195,14 @@ function FolderTreeIcon(): React.JSX.Element {
     <>
       <path d="M2 4h4l1 1h7v3H2z" />
       <path d="M5 11v2h7" />
+    </>
+  )
+}
+function BookIcon(): React.JSX.Element {
+  return iconWrap(
+    <>
+      <path d="M2.5 3.5h4a2 2 0 0 1 2 2v7.5a1.5 1.5 0 0 0-1.5-1.5h-4.5z" />
+      <path d="M13.5 3.5h-4a2 2 0 0 0-2 2v7.5a1.5 1.5 0 0 1 1.5-1.5h4.5z" />
     </>
   )
 }

@@ -156,6 +156,7 @@ const STRINGS = {
     catGeneral: '常规',
     catAppearance: 'Appearance',
     catConfiguration: '配置',
+    catKnowledgeBase: '知识库',
     catPersonalization: '个性化',
     catUsage: '使用情况',
     catMcpServers: 'MCP 服务器',
@@ -183,6 +184,23 @@ const STRINGS = {
     imageApiSave: '保存',
     imageApiSaving: '保存中…',
     imageApiSaved: '已保存',
+
+    // Settings — Knowledge Base category — 「写方案」检索资料来源（本地目录 / 远程同步）
+    kbSourceTitle: '知识库来源',
+    kbSourceDesc: '「写方案」检索资料的出处。远程模式由服务器统一构建、自动同步到本机。',
+    kbSourceLocal: '本地目录',
+    kbSourceLocalDesc: '选择本机源目录，需在本机执行索引构建（依赖 markitdown / LibreOffice）',
+    kbSourceRemote: '远程服务器',
+    kbSourceRemoteDesc: '填入公司知识库服务器地址，如 http://10.0.0.5:8080',
+    kbPickFolder: '选择目录…',
+    kbRemoteUrl: '服务器地址',
+    kbRemoteApply: '保存并同步',
+    kbSyncNow: '立即同步',
+    kbSyncing: '同步中…',
+    kbLastSync: '上次同步',
+    kbVersion: '知识库版本',
+    kbSyncFailed: '同步失败',
+    kbNeverSynced: '尚未同步',
 
     // Right rail — Todos
     todosTitle: '待办',
@@ -419,6 +437,7 @@ const STRINGS = {
     catGeneral: 'General',
     catAppearance: 'Appearance',
     catConfiguration: 'Configuration',
+    catKnowledgeBase: 'Knowledge Base',
     catPersonalization: 'Personalization',
     catUsage: 'Usage',
     catMcpServers: 'MCP servers',
@@ -450,6 +469,25 @@ const STRINGS = {
     imageApiSave: 'Save',
     imageApiSaving: 'Saving…',
     imageApiSaved: 'Saved',
+
+    // Settings — Knowledge Base category — proposal-writing source (local folder / remote sync)
+    kbSourceTitle: 'Knowledge base source',
+    kbSourceDesc:
+      'Where proposal writing retrieves source material from. Remote mode is built on the server and auto-synced.',
+    kbSourceLocal: 'Local folder',
+    kbSourceLocalDesc:
+      'Pick a local source folder; the index must be built on this machine (requires markitdown / LibreOffice)',
+    kbSourceRemote: 'Remote server',
+    kbSourceRemoteDesc: 'Company KB server address, e.g. http://10.0.0.5:8080',
+    kbPickFolder: 'Choose folder…',
+    kbRemoteUrl: 'Server URL',
+    kbRemoteApply: 'Save & sync',
+    kbSyncNow: 'Sync now',
+    kbSyncing: 'Syncing…',
+    kbLastSync: 'Last synced',
+    kbVersion: 'KB version',
+    kbSyncFailed: 'Sync failed',
+    kbNeverSynced: 'Never synced',
 
     todosTitle: 'Todos',
     todosEmpty: 'No todos yet',
