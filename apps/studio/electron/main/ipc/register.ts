@@ -94,7 +94,13 @@ import type {
   RuntimeLogEntry,
   UiPermissionMode
 } from '../../shared/ipc-channels'
-import { clearLogs, getLogFileTarget, getLogs } from '../core/logCollector'
+import {
+  addLogSubscriber,
+  clearLogs,
+  getLogFileTarget,
+  getLogs,
+  removeLogSubscriber
+} from '../core/logCollector'
 
 /**
  * MODEL_LIST cache: the catalog changes rarely, and the composer's 模型 chip
@@ -1312,13 +1318,22 @@ export function registerIpcHandlers(): void {
 
   // Runtime-log read/clear for the「日志分析」settings section. Engine-free —
   // they touch the process-global logCollector directly. Live streaming is a
-  // separate `send` channel (LOGS_STREAM); the overlay registers as a push
-  // subscriber in openSettingsView and unregisters in closeSettingsView.
+  // separate `send` channel (LOGS_STREAM); since settings moved inside the
+  // studio tab (URL state main can't observe — the old openSettingsView /
+  // closeSettingsView hook points are gone), the panel registers itself as
+  // a push subscriber via LOGS_SUBSCRIBE on mount and LOGS_UNSUBSCRIBE on
+  // unmount. Destroyed webContents are cleaned up by logCollector itself.
   ipcMain.handle(IPC_CHANNELS.LOGS_GET, async (): Promise<RuntimeLogEntry[]> => {
     return getLogs()
   })
   ipcMain.handle(IPC_CHANNELS.LOGS_CLEAR, async (): Promise<void> => {
     clearLogs()
+  })
+  ipcMain.handle(IPC_CHANNELS.LOGS_SUBSCRIBE, async (event): Promise<void> => {
+    addLogSubscriber(event.sender)
+  })
+  ipcMain.handle(IPC_CHANNELS.LOGS_UNSUBSCRIBE, async (event): Promise<void> => {
+    removeLogSubscriber(event.sender)
   })
   // Reveal the on-disk runtime log in the OS file manager. Prefer selecting
   // today's file; fall back to opening the logs directory when no file has

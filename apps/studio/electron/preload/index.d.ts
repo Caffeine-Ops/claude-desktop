@@ -1,8 +1,8 @@
 import type { ElectronAPI } from '@electron-toolkit/preload'
-import type { ChatApi, TabApi } from '../shared/ipc-channels'
+import type { ChatApi, DesktopLogsApi, TabApi } from '../shared/ipc-channels'
 
 /**
- * Global `Window` augmentation for the four objects the preload exposes
+ * Global `Window` augmentation for the five objects the preload exposes
  * via `contextBridge.exposeInMainWorld` (see preload/index.ts). Without
  * this, every `window.chatApi.*` / `window.tabApi.*` call in the renderer
  * fails typecheck with TS2339. The preload's non-isolated fallback branch
@@ -20,6 +20,7 @@ declare global {
     }
     chatApi: ChatApi
     tabApi: TabApi
+    desktopLogs: DesktopLogsApi
   }
 }
 

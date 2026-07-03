@@ -1,4 +1,4 @@
-import type { ChatApi, TabApi } from '@desktop-shared/ipc-channels'
+import type { ChatApi, DesktopLogsApi, TabApi } from '@desktop-shared/ipc-channels'
 
 /**
  * Window 增强：studio 跑在 Electron 壳的 studio tab 里时，preload
@@ -18,6 +18,13 @@ declare global {
   interface Window {
     chatApi: ChatApi
     tabApi: TabApi
+    /**
+     * 与 chatApi/tabApi 不同，这里声明为**可选**：唯一消费方
+     * （LogAnalysisSection）不在 HostGate 之后，浏览器直开时要靠
+     * `window.desktopLogs` 为 undefined 来渲染「仅桌面应用内可用」
+     * 空态——类型如实反映运行时，判空逻辑才能被 typecheck 覆盖。
+     */
+    desktopLogs?: DesktopLogsApi
   }
 }
 

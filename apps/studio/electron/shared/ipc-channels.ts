@@ -418,13 +418,35 @@ export const IPC_CHANNELS = {
    */
   LOGS_REVEAL: 'settings:logs-reveal',
   /**
-   * Main → settings-overlay renderer (send). One runtime-log line, pushed
-   * live as it is produced (main console / daemon child / renderer console).
-   * The overlay subscribes via `electronSettings.onLog` and appends each
-   * entry. Only fires while the overlay is registered as a log subscriber
-   * (open); torn down on close so a destroyed view never receives sends.
+   * Main → renderer (send). One runtime-log line, pushed live as it is
+   * produced (main console / daemon child / renderer console). The
+   * 「日志分析」panel subscribes via `desktopLogs.onLog` and appends each
+   * entry. Only fires while the panel's webContents is registered as a log
+   * subscriber (LOGS_SUBSCRIBE), so a closed panel never receives sends.
    */
   LOGS_STREAM: 'settings:logs-stream',
+  /**
+   * Renderer → main (invoke). Register the calling webContents as a live
+   * LOGS_STREAM push target. Historically main did this itself in
+   * openSettingsView — the settings overlay was its own WebContentsView, so
+   * main knew exactly when it opened. Settings now live INSIDE the studio
+   * tab as URL state (/?settings=1), which main can't observe, so the
+   * 「日志分析」panel announces itself on mount instead. Unregistration on
+   * webContents destruction is automatic (logCollector hooks 'destroyed');
+   * LOGS_UNSUBSCRIBE covers the ordinary "panel closed, tab lives on" case.
+   *
+   * Side effect to be aware of: while subscribed, the calling webContents'
+   * own console-message output is NOT captured as a `renderer` log source
+   * (see logCollector.attachRendererCapture) — that exclusion is what
+   * prevents a feedback loop now that the panel shares a webContents with
+   * the whole studio app.
+   */
+  LOGS_SUBSCRIBE: 'settings:logs-subscribe',
+  /**
+   * Renderer → main (invoke). Counterpart of LOGS_SUBSCRIBE — stop pushing
+   * LOGS_STREAM to the calling webContents (panel unmounted). Idempotent.
+   */
+  LOGS_UNSUBSCRIBE: 'settings:logs-unsubscribe',
   /**
    * Main → active chat tab renderer. The forwarded counterpart of
    * TAB_TRIGGER_MENU_ACTION. The chat renderer subscribes once on mount
@@ -1451,4 +1473,28 @@ export interface TabApi {
    * is active or the session doesn't exist on disk.
    */
   deleteShellSession(payload: SessionDeletePayload): Promise<void>
+}
+
+/**
+ * Runtime-log bridge for the「日志分析」settings section, exposed by the
+ * preload as `window.desktopLogs`. This replaces the log half of the dead
+ * settings-overlay preload's `electronSettings` — deliberately under a NEW
+ * global name: App.tsx still uses the ABSENCE of `window.electronSettings`
+ * to detect the unified-studio mode (settings-as-URL-state close behaviour),
+ * so resurrecting that name would silently flip it back into overlay mode.
+ */
+export interface DesktopLogsApi {
+  /** Ring-buffer snapshot for the panel's initial fill (invoke LOGS_GET). */
+  getLogs(): Promise<RuntimeLogEntry[]>
+  /** Clear the in-memory ring + on-disk log files (invoke LOGS_CLEAR). */
+  clearLogs(): Promise<void>
+  /** Reveal the persisted log file in the OS file manager (invoke LOGS_REVEAL). */
+  revealLogFile(): Promise<void>
+  /**
+   * Subscribe to live log lines. The preload refcounts subscribers within
+   * this webContents and drives LOGS_SUBSCRIBE / LOGS_UNSUBSCRIBE on the
+   * 0↔1 edges, so main only streams while at least one panel is mounted.
+   * Returns an unsubscribe fn (idempotent).
+   */
+  onLog(handler: (entry: RuntimeLogEntry) => void): () => void
 }

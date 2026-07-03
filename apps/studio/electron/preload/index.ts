@@ -34,6 +34,8 @@ import {
   type SessionSwitchResult,
   type CliBackendSetPayload,
   type CliBackendState,
+  type DesktopLogsApi,
+  type RuntimeLogEntry,
   type PermissionModeChangedPayload,
   type PermissionModeGetResult,
   type PermissionModeSetPayload,
@@ -535,6 +537,58 @@ const tabApi: TabApi = {
   }
 }
 
+/**
+ * How many onLog subscriptions are live in this webContents. main only
+ * needs to know about the 0↔1 edges: it streams per-webContents, so a
+ * second panel subscribing must NOT re-invoke LOGS_SUBSCRIBE (harmless)
+ * but more importantly its unsubscribe must not tear down the stream the
+ * first panel still relies on — hence refcount instead of subscribe/
+ * unsubscribe per listener.
+ */
+let logStreamRefs = 0
+
+/**
+ * Runtime-log bridge for the「日志分析」settings section. Lives on its own
+ * global (`window.desktopLogs`) rather than resurrecting the dead settings
+ * overlay's `electronSettings` — App.tsx treats the ABSENCE of that name as
+ * the unified-studio mode signal (see DesktopLogsApi's doc comment).
+ */
+const desktopLogs: DesktopLogsApi = {
+  getLogs(): Promise<RuntimeLogEntry[]> {
+    return ipcRenderer.invoke(IPC_CHANNELS.LOGS_GET) as Promise<RuntimeLogEntry[]>
+  },
+
+  clearLogs(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.LOGS_CLEAR) as Promise<void>
+  },
+
+  revealLogFile(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.LOGS_REVEAL) as Promise<void>
+  },
+
+  onLog(handler: (entry: RuntimeLogEntry) => void): () => void {
+    const listener = (_e: unknown, entry: RuntimeLogEntry): void => {
+      handler(entry)
+    }
+    ipcRenderer.on(IPC_CHANNELS.LOGS_STREAM, listener)
+    if (++logStreamRefs === 1) {
+      void ipcRenderer.invoke(IPC_CHANNELS.LOGS_SUBSCRIBE)
+    }
+    let disposed = false
+    return () => {
+      // Idempotence guard: React strict-mode effects (and defensive callers)
+      // may run an unsubscribe twice; a double decrement would wedge the
+      // refcount below zero and break the next subscriber's 0→1 edge.
+      if (disposed) return
+      disposed = true
+      ipcRenderer.off(IPC_CHANNELS.LOGS_STREAM, listener)
+      if (--logStreamRefs === 0) {
+        void ipcRenderer.invoke(IPC_CHANNELS.LOGS_UNSUBSCRIBE)
+      }
+    }
+  }
+}
+
 const api = {
   version: '0.0.1'
 }
@@ -545,6 +599,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('api', api)
     contextBridge.exposeInMainWorld('chatApi', chatApi)
     contextBridge.exposeInMainWorld('tabApi', tabApi)
+    contextBridge.exposeInMainWorld('desktopLogs', desktopLogs)
   } catch (error) {
     // ⚠️ 任何一个 expose 抛错都会让后续的**整体跳过**（chatApi/tabApi
     // 一起消失），页面侧表现为 HostGate 判定「浏览器直开」。带前缀打日志，
@@ -560,4 +615,6 @@ if (process.contextIsolated) {
   window.chatApi = chatApi
   // @ts-ignore (define in dts)
   window.tabApi = tabApi
+  // @ts-ignore (define in dts)
+  window.desktopLogs = desktopLogs
 }
