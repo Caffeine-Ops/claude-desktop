@@ -1,6 +1,6 @@
 {
   "name": "@claude-desktop/desktop",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "description": "Electron desktop wrapper around free-code CLI",
   "private": true,
   "author": "Caffeine-Ops",
@@ -41,6 +41,7 @@
     },
     "files": [
       "out/**/*",
+      "resources/**/*",
       "env.json",
       "package.json"
     ],

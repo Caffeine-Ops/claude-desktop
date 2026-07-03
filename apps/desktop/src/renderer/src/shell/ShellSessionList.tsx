@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { motion } from 'motion/react'
 import type { ThreadSummary } from '../../../shared/types'
+import { railGliderSpring, railEaseOut } from './railMotion'
 
 /**
  * ShellSessionList
@@ -54,6 +56,13 @@ import type { ThreadSummary } from '../../../shared/types'
 export function ShellSessionList(): React.ReactElement {
   const [sessions, setSessions] = useState<readonly ThreadSummary[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
+  // Row-entrance gate. False until the FIRST non-empty list has painted, so
+  // the cold-start list doesn't play N fade-ins at once (the whole rail would
+  // shimmer on launch). Flipped in an effect — i.e. AFTER that first commit —
+  // so only rows mounted later (new chat lands on top, tab-switch turnover)
+  // animate in. Deliberately state (not a ref): reading a ref during render
+  // to decide `initial` is unreliable under concurrent re-renders.
+  const [entranceArmed, setEntranceArmed] = useState(false)
 
   // Last order we rendered, as a list of session ids. Drives stabiliseOrder:
   // a re-pull keeps these ids in their existing relative position so a
@@ -132,6 +141,13 @@ export function ShellSessionList(): React.ReactElement {
     }
   }, [sessions, activeId])
 
+  // Arm row-entrance animations only after the first non-empty commit (see
+  // entranceArmed above). Effects run post-commit, so the rows of that first
+  // paint mounted with the gate still closed.
+  useEffect(() => {
+    if (sessions.length > 0) setEntranceArmed(true)
+  }, [sessions])
+
   const onClick = useCallback((id: string): void => {
     setActiveId(id)
     void window.tabApi?.switchShellSession(id)
@@ -186,6 +202,7 @@ export function ShellSessionList(): React.ReactElement {
                 key={s.id}
                 title={s.title}
                 active={s.id === activeId}
+                animateIn={entranceArmed}
                 onClick={() => onClick(s.id)}
               />
             ))}
@@ -204,16 +221,24 @@ export function ShellSessionList(): React.ReactElement {
 function SessionRow({
   title,
   active,
+  animateIn,
   onClick
 }: {
   title: string
   active: boolean
+  /** Play a light fade-in on mount (suppressed for the cold-start paint). */
+  animateIn: boolean
   onClick: () => void
 }): React.ReactElement {
   return (
-    <div
+    <motion.div
       role="button"
       tabIndex={0}
+      // Entrance: appear-only, no theatrics — expo-out, small offset. List
+      // membership changes shouldn't out-act the selection glider.
+      initial={animateIn ? { opacity: 0, y: -6 } : false}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: railEaseOut }}
       onClick={onClick}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') onClick()
@@ -221,19 +246,34 @@ function SessionRow({
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       title={title}
       className={
-        'flex h-9 cursor-pointer select-none items-center rounded-lg px-3 text-[14px] leading-none transition-colors ' +
-        // Active row uses the product accent (green): a soft accent-tinted fill
-        // + accent text + medium weight, so the selection clearly stands out
-        // from the rail (the old --rail-active grey was nearly identical to the
-        // rail background and read as "no selection"). Hover keeps the neutral
-        // grey wash so only the *selected* row carries the accent.
+        // `relative isolate` hosts the glider on -z-[1]: above the row's own
+        // hover wash, below the title text — same layering trick as TabRow.
+        'relative isolate flex h-9 cursor-pointer select-none items-center rounded-lg px-3 text-[14px] leading-none transition-colors ' +
+        // Active row keeps accent TEXT only; the accent-tinted fill moved into
+        // the shared-layout glider below so selection SLIDES between rows
+        // (spring FLIP, interruptible) instead of blinking two backgrounds.
+        // Hover keeps the neutral grey wash so only the *selected* row carries
+        // the accent.
         (active
-          ? 'bg-[hsl(var(--accent)/0.12)] font-medium text-[hsl(var(--accent))]'
+          ? 'font-medium text-[hsl(var(--accent))]'
           : 'text-[color:var(--rail-text-soft)] hover:bg-[var(--rail-hover)] hover:text-[color:var(--rail-text)]')
       }
     >
+      {/* Selection glider — one shared layoutId across ALL rows (they render
+          under different date groups, but share the same React tree, which is
+          all layoutId needs). On cold start the first active row mounts with
+          no predecessor, so it appears in place without a fly-in — exactly the
+          behaviour the cold-start-highlight fix established. */}
+      {active ? (
+        <motion.div
+          aria-hidden
+          layoutId="rail-session-glider"
+          transition={railGliderSpring}
+          className="absolute inset-0 -z-[1] rounded-lg bg-[hsl(var(--accent)/0.12)]"
+        />
+      ) : null}
       <span className="min-w-0 flex-1 truncate">{title}</span>
-    </div>
+    </motion.div>
   )
 }
 

@@ -1033,8 +1033,33 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 1
         url = f'http://localhost:{port}'
         if not _wait_for_ready(url, proc):
-            logger.error('live preview failed to become reachable: %s (log: %s)', url, log_path)
-            return 1
+            # Probe timeout is NOT startup failure. The detached child keeps
+            # booting after our window closes, and under load (AI image
+            # generation runs in parallel with the Executor) it routinely
+            # becomes reachable a few seconds later. Treating the timeout as
+            # terminal used to print an error + exit 1 here — which dropped
+            # the URL signal the Claude Desktop host anchors its 「预览幻灯片」
+            # tab detection on ("started ... background: <url>"), so the tab
+            # never appeared even though the server came up fine.
+            #
+            # Only a DEAD child is a real failure. For a live-but-slow child,
+            # print the SAME success phrasing (the port is deterministic — we
+            # allocated it above — so the URL is trustworthy before the server
+            # answers) and exit 0. The host keeps its own reachability +
+            # project-identity gate, so a slow-warming server just opens the
+            # tab a beat later; it never shows a dead one.
+            if proc.poll() is not None:
+                logger.error(
+                    'live preview failed to start (process exited, code=%s): %s (log: %s)',
+                    proc.returncode, url, log_path,
+                )
+                return 1
+            logger.info(
+                'started live preview in background: %s (still warming up; pid=%s)',
+                url, proc.pid,
+            )
+            logger.info('log: %s', log_path)
+            return 0
         logger.info('started live preview in background: %s (pid=%s)', url, proc.pid)
         logger.info('log: %s', log_path)
         if not args.no_browser and not _open_browser(url):

@@ -10,7 +10,7 @@ import {
   useMessage
 } from '@assistant-ui/react'
 import type { Attachment } from '@assistant-ui/core'
-import { AnimatePresence, motion, useAnimate, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 
 import type { SessionMeta, WorkflowTask, PermissionRequest } from '../../../../shared/types'
 import { useI18n, useT, useToolLabel } from '../../i18n'
@@ -24,9 +24,10 @@ import {
   useStreamingAskArgsText,
   usePreviewServer,
   useWrittenFiles,
-  useImageManifest,
+  useImageFeeds,
   useDelayedSessionLoading,
-  type WrittenFile
+  type WrittenFile,
+  type ImageFeed
 } from '../../stores/chat'
 import type {
   ImageManifestItem,
@@ -215,6 +216,95 @@ function ChatColumnResizeHandle({
   )
 }
 
+/**
+ * Session-switch transition phases. See the curtain comment inside
+ * ThreadView for the full design rationale.
+ *
+ *   idle → (beginSessionSwitch) → out → [600ms unresolved] → skeleton
+ *        → (setSession mounts target) ──────────────────────→ in → idle
+ *
+ * Two independent triggers feed the machine:
+ *   - `sessionSwitching` (store): raised on click, cleared on mount. Only
+ *     observable when the mount is asynchronous (disk load) — a cache-hit
+ *     switch sets+clears it inside one store batch, invisible here.
+ *   - `sessionId` change: fires for every switch INCLUDING cache hits, and
+ *     is what plays the entrance that masks the message-array swap +
+ *     scroll reset.
+ */
+type SessionSwitchPhase = 'idle' | 'out' | 'skeleton' | 'in'
+
+function useSessionSwitchPhase(sessionId: string | null): SessionSwitchPhase {
+  const switching = useChatStore((s) => s.sessionSwitching)
+  const [phase, setPhase] = useState<SessionSwitchPhase>('idle')
+
+  useEffect(() => {
+    if (switching) {
+      setPhase('out')
+      // Escalate to the skeleton only when the load outlives the curtain —
+      // 600ms ≈ well past any cache hit / normal JSONL parse, so it only
+      // shows for genuinely slow loads (huge transcript, cold disk).
+      const t = window.setTimeout(() => setPhase('skeleton'), 600)
+      return () => window.clearTimeout(t)
+    }
+    // Switch ended without a sessionId change (throw path, or a rebind to
+    // the same id): lift the veil through the entrance rather than
+    // snapping, so the error path still resolves gracefully.
+    setPhase((p) => (p === 'out' || p === 'skeleton' ? 'in' : p))
+    return undefined
+  }, [switching])
+
+  // Entrance on every mounted switch — the only signal a cache-hit switch
+  // emits (see above).
+  const prevIdRef = useRef(sessionId)
+  useEffect(() => {
+    if (prevIdRef.current === sessionId) return
+    prevIdRef.current = sessionId
+    setPhase('in')
+  }, [sessionId])
+
+  // The entrance is a one-shot CSS animation; return to idle afterwards so
+  // the class (and its filter/transform) is removed and the viewport goes
+  // back to a plain unfiltered scroll container.
+  useEffect(() => {
+    if (phase !== 'in') return
+    const t = window.setTimeout(() => setPhase('idle'), 400)
+    return () => window.clearTimeout(t)
+  }, [phase])
+
+  return phase
+}
+
+/**
+ * Chat-shaped shimmer skeleton shown when a session load outlives the
+ * switch curtain. The rows mirror the transcript's real anatomy — a
+ * right-aligned user pill, then left-aligned assistant paragraph bars —
+ * so the loading state previews the shape of what's coming instead of
+ * showing a generic spinner. Shimmer gradient matches `.pes-sk`
+ * (main.css); classes live there too (`.ssw-*`).
+ */
+function SessionSwitchSkeleton(): React.JSX.Element {
+  return (
+    <div className="absolute inset-0 z-10 overflow-hidden bg-background/55">
+      <div className="mx-auto flex w-full max-w-4xl flex-col px-3 pt-10">
+        <div className="ssw-sk mb-7 h-9 w-1/3 self-end rounded-[18px]" />
+        <div className="mb-7 flex flex-col gap-2.5 pl-[18px]">
+          <div className="ssw-sk h-3.5 w-3/4" style={{ animationDelay: '60ms' }} />
+          <div className="ssw-sk h-3.5 w-3/5" style={{ animationDelay: '90ms' }} />
+          <div className="ssw-sk h-3.5 w-[68%]" style={{ animationDelay: '120ms' }} />
+        </div>
+        <div
+          className="ssw-sk mb-7 h-9 w-1/4 self-end rounded-[18px]"
+          style={{ animationDelay: '150ms' }}
+        />
+        <div className="flex flex-col gap-2.5 pl-[18px]">
+          <div className="ssw-sk h-3.5 w-[70%]" style={{ animationDelay: '180ms' }} />
+          <div className="ssw-sk h-3.5 w-1/2" style={{ animationDelay: '210ms' }} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function ThreadView(): React.JSX.Element {
   // Session transition signals from the chat store.
   //   - sessionId      : switches when loadSession resolves (~100ms, or
@@ -262,36 +352,32 @@ export function ThreadView(): React.JSX.Element {
   // (mode / permission picker) is open — its backdrop-blur otherwise sliced a
   // blurred band across the open menu (see stores/composerOverlay).
   const composerOverlayOpen = useComposerOverlayStore((s) => s.openCount > 0)
-  // Session-switch fade-in (replaces the old keyed content remount).
+  // Session-switch curtain (replaces both the old keyed content remount and
+  // the interim 0.3→1 opacity fade).
   //
-  // The previous design keyed the content column by sessionId, which
-  // unmounted + rebuilt the ENTIRE message subtree on every switch — for a
-  // long transcript that meant hundreds of message components re-mounting and
-  // every code block re-running highlight.js in a single frame (the "switch
-  // jank"). Now the column keeps a stable identity so assistant-ui can diff
-  // the message list by id and reuse DOM; we play a short controlled opacity
-  // fade on the existing node instead.
+  // History, so nobody re-treads it:
+  //   v1 keyed the content column by sessionId → full subtree remount, every
+  //      code block re-highlighting in one frame ("switch jank").
+  //   v2 kept node identity + played a 0.3→1 opacity fade on the INNER
+  //      column. Deliberately opacity-only, because a y+blur intro applied
+  //      to the inner column had pushed the scroll container past its
+  //      viewport and flickered the scrollbar.
+  //   v3 (this): the curtain animates the SCROLL CONTAINER itself, not the
+  //      inner column — transform/filter on the container are composited on
+  //      the whole box and cannot alter its internal scroll geometry, so the
+  //      v2 regression physically can't recur. That unlocks the richer
+  //      blur+rise transition without the jitter that killed it in v2.
   //
-  // Why a fade FROM 0.55 (not 0): the old content is still on screen at the
-  // moment of switch, so starting near-opaque reads as "the new view settles
-  // in" rather than a blink-to-black. Pure opacity (no y-translate, no blur)
-  // is a compositor-only property — it can't push the scroll container or
-  // flicker the scrollbar, which is exactly the regression that killed the
-  // earlier y+blur intro (see the viewport comment below).
-  const [scope, animate] = useAnimate()
-  useEffect(() => {
-    const node = scope.current
-    if (!node) return
-    // prefers-reduced-motion: skip the tween, snap to fully visible.
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-      node.style.opacity = '1'
-      return
-    }
-    void animate(node, { opacity: [0.55, 1] }, { duration: 0.16, ease: [0.22, 1, 0.36, 1] })
-    // Re-run on every session change. Intentionally NOT keyed on message
-    // content — we fade on switch, not on each streamed delta.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId])
+  // Phase machine (useSessionSwitchPhase):
+  //   out      — click → target transcript not yet mounted: old content
+  //              sinks behind a frost veil (masks the array swap + scroll
+  //              reset that used to read as "抖动").
+  //   skeleton — mount outlived the curtain (>600ms: huge JSONL / cold
+  //              disk): chat-shaped shimmer rows over the veil.
+  //   in       — transcript mounted: pane rises + unblurs. A cache-hit
+  //              switch collapses begin/end into one store batch, so it
+  //              plays ONLY this phase — zero pre-mount chrome.
+  const switchPhase = useSessionSwitchPhase(sessionId)
 
   return (
     <ThreadPrimitive.Root
@@ -345,55 +431,64 @@ export function ThreadView(): React.JSX.Element {
         {sessionLoadingChrome && <TopProgressBar />}
       </AnimatePresence>
 
-      {/* Scrollable message area. min-h-0 + flex-1 is the canonical
-          flexbox pattern that lets the viewport shrink correctly inside
-          another flex column. */}
-      <ThreadPrimitive.Viewport
-        autoScroll
-        // (Removed) top/bottom fade mask. The viewport used to fade its first
-        // ~44px and last ~56px to transparent so scrolling text dissolved
-        // near the header / composer; per design that fade-out is gone, so
-        // messages now cut off cleanly at the edges. The inner column's
-        // `pt-8` / `pb-20` padding still keeps the first/last message clear of
-        // the header and composer dock.
-        //
-        // `scrollbar-gutter: stable` (kept) reserves the scrollbar track slot
-        // whether or not the content overflows. Without it, the empty state
-        // can land at the "just fits" boundary and any sub-pixel wobble
-        // (font-metric changes, motion, font loading) flickers the scrollbar
-        // in/out → horizontal reflow → visible jitter.
-        className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
-      >
-        {/* Inner column caps reading width and centers messages. The
-            `min-h-full` lets the empty-state `flex-1` stretch so the
-            hero text lands at the vertical center of the viewport
-            even when there are no messages yet.
-
-            Session-switch transition is a compositor-only opacity fade
-            driven by `useAnimate` above (ref={scope}) — NOT a y-translate
-            or blur. The earlier y+blur intro briefly pushed the scroll
-            container past its viewport, flickering the scrollbar and
-            jittering the page horizontally; a pure-opacity fade can't move
-            layout, so it stays calm while still signalling "the view
-            changed". The node identity is stable (no `key`) so the message
-            list diffs by id instead of remounting the whole subtree. */}
-        <div
-          ref={scope}
-          className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-3 pb-20 pt-8"
+      {/* Scrollable message area. The wrapper takes the flex slot
+          (min-h-0 + flex-1, the canonical shrink-inside-flex-column
+          pattern) and stays UNfiltered — it hosts the skeleton overlay,
+          which must not inherit the curtain's blur. The Viewport fills it
+          (h-full) and carries the switch-phase classes: transform/filter
+          on the scroll CONTAINER composite the whole box without touching
+          its internal scroll geometry (see the curtain history comment
+          above — animating the inner column is what used to jitter). */}
+      <div className="relative min-h-0 flex-1">
+        <ThreadPrimitive.Viewport
+          autoScroll
+          // (Removed) top/bottom fade mask. The viewport used to fade its first
+          // ~44px and last ~56px to transparent so scrolling text dissolved
+          // near the header / composer; per design that fade-out is gone, so
+          // messages now cut off cleanly at the edges. The inner column's
+          // `pt-8` / `pb-20` padding still keeps the first/last message clear of
+          // the header and composer dock.
+          //
+          // `scrollbar-gutter: stable` (kept) reserves the scrollbar track slot
+          // whether or not the content overflows. Without it, the empty state
+          // can land at the "just fits" boundary and any sub-pixel wobble
+          // (font-metric changes, motion, font loading) flickers the scrollbar
+          // in/out → horizontal reflow → visible jitter.
+          className={
+            'h-full overflow-y-auto [scrollbar-gutter:stable] ' +
+            (switchPhase === 'out' || switchPhase === 'skeleton'
+              ? 'ssw-out'
+              : switchPhase === 'in'
+                ? 'ssw-in'
+                : '')
+          }
         >
-          <ThreadPrimitive.Empty>
-            <EmptyState />
-          </ThreadPrimitive.Empty>
+          {/* Inner column caps reading width and centers messages. The
+              `min-h-full` lets the empty-state `flex-1` stretch so the
+              hero text lands at the vertical center of the viewport
+              even when there are no messages yet. The node identity is
+              stable (no `key`) so the message list diffs by id instead of
+              remounting the whole subtree on a switch. */}
+          <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-3 pb-20 pt-8">
+            <ThreadPrimitive.Empty>
+              <EmptyState />
+            </ThreadPrimitive.Empty>
 
-          <ThreadPrimitive.Messages
-            components={{
-              UserMessage,
-              AssistantMessage,
-              SystemMessage
-            }}
-          />
-        </div>
-      </ThreadPrimitive.Viewport>
+            <ThreadPrimitive.Messages
+              components={{
+                UserMessage,
+                AssistantMessage,
+                SystemMessage
+              }}
+            />
+          </div>
+        </ThreadPrimitive.Viewport>
+
+        {/* Chat-shaped shimmer rows for loads that outlive the curtain.
+            Sibling of the (blurred) Viewport, so it renders crisp on top
+            of the veil. */}
+        {switchPhase === 'skeleton' && <SessionSwitchSkeleton />}
+      </div>
 
       {/* (Removed) 顶部渐进模糊带 — the backdrop-blur strip over the viewport
           top was dropped per design. The viewport's own top mask-image still
@@ -682,6 +777,11 @@ function TopProgressBar(): React.JSX.Element {
 function ChatHeader(): React.JSX.Element {
   const t = useT()
   const title = useSessionTitleStore((s) => s.title)
+  // Keys the title's enter animation to the SESSION, not the text: an AI
+  // rename streams a new title into the same session mid-conversation, and
+  // re-playing the intro on that would read as a glitch. Only a switch moves
+  // the title.
+  const sessionId = useChatStore((s) => s.sessionId)
   const display = title && title.trim() ? title : t('chatHeaderUntitled')
   return (
     // Window drag region. The chat WebContentsView is positioned at y≈gap
@@ -694,12 +794,23 @@ function ChatHeader(): React.JSX.Element {
     // NOT opt out — and `select-none` keeps the text from being selected so a
     // press-drag on it always moves the window instead of starting a selection.
     <div className="shrink-0 select-none p-3 [-webkit-app-region:drag]">
-      <h1
+      {/* Session-switch title intro. `key={sessionId}` remounts JUST this h1
+          (a single tiny node — nothing like the old full-column remount) so
+          the new title fades in with a 3px rise, echoing the viewport fade
+          below it. Safe to translate here: the header sits OUTSIDE the scroll
+          viewport, so the y-motion can't touch the scrollbar (the regression
+          that bans transforms inside the message column). No exit animation —
+          waiting for the old title to leave would delay the switch's snap. */}
+      <motion.h1
+        key={sessionId ?? 'no-session'}
+        initial={{ opacity: 0, y: 3 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
         className="truncate text-[16px] font-semibold leading-tight text-foreground"
         title={display}
       >
         {display}
-      </h1>
+      </motion.h1>
       <p className="mt-1 text-[12px] leading-none text-muted-foreground">
         {t('chatHeaderSubtitle')}
       </p>
@@ -858,14 +969,20 @@ function SlidesWorkspace(): React.JSX.Element {
   // entry wins (useWrittenFiles dedupes by path, keeping content fresh).
   const designSpec =
     writtenFiles.find((f) => /^design_spec\.md$/i.test(f.name)) ?? null
-  // ppt-master AI image generation, if this session ran `image_gen.py
-  // --manifest`. `manifestPath` locates the image_prompts.json to poll;
-  // `generating` is true while that command is still in flight. Drives the
-  // 「图片」tab: it appears once a run is detected and stays (like 文件), and we
-  // auto-focus it while generation is live. See useImageManifest in stores/chat.
-  const imageActivity = useImageManifest()
-  const hasImages = imageActivity !== null
-  const imagesGenerating = imageActivity?.generating === true
+  // ppt-master image acquisition runs — AI generation (`image_gen.py
+  // --manifest`) and/or web download (`image_search.py --batch`). Each feed
+  // names the worklist JSON to poll and whether that run is still in flight.
+  // Drives the 「图片」tab: it appears once any run is detected and stays
+  // (like 文件), and we auto-focus it while any run is live. See
+  // useImageFeeds in stores/chat.
+  const imageFeeds = useImageFeeds()
+  const hasImages = imageFeeds.length > 0
+  // Data-corrected liveness, NOT the raw command flag: a resumed session's
+  // restored launch command claims "generating" forever (endedAt/tasks are
+  // runtime-only fields the JSONL restore doesn't carry), so the busy dot /
+  // auto-focus would never clear. useImageFeedsLive polls the worklist
+  // itself and overrides the lie.
+  const imagesGenerating = useImageFeedsLive(imageFeeds)
   // Default landing is 大纲 — 预览幻灯片 only exists once the live-preview
   // server is up (see showSlidesTab above), so it can't be the initial tab.
   const [tab, setTab] = useState<CanvasTab>('outline')
@@ -1089,16 +1206,24 @@ function SlidesWorkspace(): React.JSX.Element {
         // navigation layer, and falls back to flat markdown when the spec has
         // no H2 chapters. `key` by path resets scroll/follow on a fresh spec.
         <OutlinePanel key={designSpec.path} file={designSpec} />
-      ) : tab === 'images' && imageActivity ? (
-        // 图片 tab: AI image-generation progress + thumbnails. Polls the
-        // manifest (image_gen.py rewrites it per completion) via main-process
-        // IPC, since the renderer can't read the local PNGs. `key` by path so a
-        // fresh run (new manifest) remounts with clean state.
-        <ImagesPanel
-          key={imageActivity.manifestPath}
-          manifestPath={imageActivity.manifestPath}
-          generating={imageActivity.generating}
-        />
+      ) : tab === 'images' && imageFeeds.length > 0 ? (
+        // 图片 tab: image acquisition progress + thumbnails, one panel per
+        // run (AI generation / web download — a mixed deck runs both). Each
+        // panel polls its worklist JSON (the runner rewrites it per
+        // completion) via main-process IPC, since the renderer can't read the
+        // local files. `key` by path so a fresh run remounts with clean
+        // state. Single run keeps the full-height layout (header pinned, grid
+        // scrolls); multiple runs stack in one scroll container with sticky
+        // per-run headers.
+        imageFeeds.length === 1 ? (
+          <ImagesPanel key={imageFeeds[0].manifestPath} feed={imageFeeds[0]} fill />
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {imageFeeds.map((f) => (
+              <ImagesPanel key={f.manifestPath} feed={f} />
+            ))}
+          </div>
+        )
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           <div className="text-[15px] font-semibold text-foreground">
@@ -1116,13 +1241,14 @@ function SlidesWorkspace(): React.JSX.Element {
 }
 
 /**
- * 图片 canvas tab body: AI image-generation progress + thumbnail grid.
+ * 图片 canvas tab body: one image-acquisition run's progress + thumbnail grid.
  *
- * Data comes from polling the ppt-master manifest (image_prompts.json) through
- * the main process — the renderer can't read the local PNGs, and CSP forbids
- * `file:` img sources, so main decodes each finished image into a small `data:`
- * thumbnail (see the IMAGE_MANIFEST_READ handler). image_gen.py rewrites the
- * manifest per completion, so each poll reflects live progress.
+ * Data comes from polling the run's worklist JSON (image_prompts.json for AI
+ * generation, image_queries.json for web download) through the main process —
+ * the renderer can't read the local files, and CSP forbids `file:` img
+ * sources, so main decodes each finished image into a small `data:` thumbnail
+ * (see the IMAGE_MANIFEST_READ handler). Both runners rewrite the worklist
+ * per completion, so each poll reflects live progress.
  *
  * Polling lifecycle:
  *   - Poll immediately on mount, then every POLL_MS while `generating`.
@@ -1132,14 +1258,129 @@ function SlidesWorkspace(): React.JSX.Element {
  */
 const IMAGES_POLL_MS = 1500
 
+// Status vocabulary spans both runners: image_gen.py writes Generated /
+// Failed, image_search.py writes Sourced / Needs-Manual. Either "done"
+// flavor counts as finished; either failure flavor renders red.
+function isDoneStatus(s: string): boolean {
+  return s === 'Generated' || s === 'Sourced'
+}
+function isFailStatus(s: string): boolean {
+  return s === 'Failed' || s === 'Needs-Manual'
+}
+
+/**
+ * True when every worklist row reached a terminal state (image landed on
+ * disk, or failed for good) — generation is OVER no matter what the
+ * command-level `generating` flag says. That flag lies in a known way:
+ * `endedAt`/`tasks` are renderer-runtime fields that JSONL history restore
+ * doesn't carry, so on a resumed session every restored launch command
+ * reads as "still running" forever ("AI 生成图片中" over a grid of 5/5
+ * green ticks). The manifest on disk is ground truth; it wins.
+ */
+function manifestDataDone(res: ImageManifestReadResult | null): boolean {
+  return (
+    !!res &&
+    res.ok &&
+    res.items.length > 0 &&
+    res.items.every(
+      (it) => (isDoneStatus(it.status) && it.exists) || isFailStatus(it.status)
+    )
+  )
+}
+
+/**
+ * Tab-level "any image run still live?" signal: each feed's `generating`
+ * corrected against its worklist's own data (see manifestDataDone). Runs a
+ * cheap metadata-only poll (withThumbnails:false — no decode cost) for
+ * feeds that CLAIM to be generating, independent of whether ImagesPanel is
+ * mounted — the tab's busy dot and auto-focus must be able to clear even
+ * if the user never opens the 图片 tab. A feed marked done stays done
+ * (per-image retries rewrite rows back to Pending AND re-run the command,
+ * which yields a fresh feed signal anyway).
+ */
+function useImageFeedsLive(feeds: ImageFeed[]): boolean {
+  const [dataDone, setDataDone] = useState<Record<string, boolean>>({})
+  const pendingKey = feeds
+    .filter((f) => f.generating && !dataDone[f.manifestPath])
+    .map((f) => f.manifestPath)
+    .join('\n')
+  useEffect(() => {
+    if (!pendingKey) return
+    const paths = pendingKey.split('\n')
+    let cancelled = false
+    const check = async (): Promise<void> => {
+      for (const p of paths) {
+        try {
+          const res = await window.chatApi.readImageManifest({
+            manifestPath: p,
+            withThumbnails: false
+          })
+          if (cancelled) return
+          if (manifestDataDone(res)) {
+            setDataDone((prev) => (prev[p] ? prev : { ...prev, [p]: true }))
+          }
+        } catch {
+          // transient IPC failure — next tick retries
+        }
+      }
+    }
+    void check()
+    const id = window.setInterval(check, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [pendingKey])
+  return feeds.some((f) => f.generating && !dataDone[f.manifestPath])
+}
+
+/** Per-kind copy: the 图片 tab hosts both AI painting and web fetching, and
+ *  the header/labels should say which one the user is watching. */
+const FEED_COPY = {
+  gen: {
+    running: 'AI 生成图片中',
+    done: '图片已生成',
+    idle: 'AI 图片',
+    activeVerb: '正在画',
+    empty: '等待生成…',
+    painting: '正在创建图片'
+  },
+  search: {
+    running: '获取网络图片中',
+    done: '图片已获取',
+    idle: '网络图片',
+    activeVerb: '正在找',
+    empty: '等待获取…',
+    painting: '正在搜索图片'
+  }
+} as const
+
 function ImagesPanel({
-  manifestPath,
-  generating
+  feed,
+  fill = false
 }: {
-  manifestPath: string
-  generating: boolean
+  feed: ImageFeed
+  /** True when this panel owns the whole tab (single run): header pinned,
+   *  grid scrolls inside. False when stacked with sibling runs — natural
+   *  height inside the tab's shared scroll container, sticky header. */
+  fill?: boolean
 }): React.JSX.Element {
+  const { manifestPath, generating, kind } = feed
+  const copy = FEED_COPY[kind]
   const [data, setData] = useState<ImageManifestReadResult | null>(null)
+  // "Witnessed" gate for the develop animation: filenames we've seen in a
+  // non-finished state. An item that later flips to Generated gets the
+  // polaroid develop-in (imgp-develop) exactly because we watched it happen.
+  // History restore / remount starts fresh — everything arrives already
+  // finished, nothing was witnessed, nothing animates (same principle as the
+  // tool cards' sawRunning gate: a screenful of simultaneous develop-ins on
+  // restore reads as a glitch, not a delight).
+  const pendingSeenRef = useRef<Set<string>>(new Set())
+  const [developSet, setDevelopSet] = useState<Set<string>>(new Set())
+  // The image currently open in the in-app lightbox, or null. A snapshot of
+  // the item is fine — only finished images are openable, and a finished
+  // row's fields don't change on later polls.
+  const [lightboxItem, setLightboxItem] = useState<ImageManifestItem | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -1161,7 +1402,7 @@ function ImagesPanel({
       !!res &&
       res.ok &&
       res.items.length > 0 &&
-      res.items.every((it) => it.thumbnail !== undefined || it.status !== 'Generated')
+      res.items.every((it) => it.thumbnail !== undefined || !isDoneStatus(it.status))
 
     const poll = async (): Promise<void> => {
       try {
@@ -1171,6 +1412,22 @@ function ImagesPanel({
         })
         if (cancelled) return
         latest = res
+        if (res.ok) {
+          // Track witnessed pendings → develop-in on completion (see the
+          // pendingSeenRef comment above).
+          const fresh: string[] = []
+          for (const it of res.items) {
+            const finished = isDoneStatus(it.status) && it.exists
+            if (!finished) pendingSeenRef.current.add(it.filename)
+            else if (pendingSeenRef.current.has(it.filename)) {
+              pendingSeenRef.current.delete(it.filename)
+              fresh.push(it.filename)
+            }
+          }
+          if (fresh.length > 0) {
+            setDevelopSet((prev) => new Set([...prev, ...fresh]))
+          }
+        }
         setData(res)
       } catch {
         // Transient IPC failure — keep the last good data, next tick retries.
@@ -1184,9 +1441,13 @@ function ImagesPanel({
       //   - generation finished AND the grid is settled → done, no more polls.
       //   - generation finished but not settled → burn a grace tick, keep going
       //     (covers late-landing thumbnails after the command returned).
-      // While `generating` is still true we always keep polling — progress is
-      // live and every tick may reveal a newly-finished image.
-      if (!generating) {
+      // "Finished" is EITHER the command flag flipping false OR the worklist
+      // itself reaching all-terminal (manifestDataDone) — the latter matters
+      // when `generating` is stuck true (resumed session: runtime fields
+      // gone), which would otherwise keep polling at full rate forever.
+      // While genuinely live we always keep polling — every tick may reveal
+      // a newly-finished image.
+      if (!generating || manifestDataDone(latest)) {
         if (isSettled(latest)) {
           clearInterval(id)
           return
@@ -1209,51 +1470,323 @@ function ImagesPanel({
   const items = data?.items ?? []
   const total = data?.total ?? 0
   const generated = data?.generatedCount ?? 0
-  const failed = items.filter((it) => it.status === 'Failed').length
+  const failed = items.filter((it) => isFailStatus(it.status)).length
+  // Display-level liveness: the command flag CORRECTED by the worklist's own
+  // data. A resumed session's restored command claims generating forever
+  // (runtime fields gone) — but a grid of all-terminal rows IS finished, and
+  // the header must say so instead of "AI 生成图片中" over 5/5 green ticks.
+  const live = generating && !manifestDataDone(data)
+  // image_gen.py generates sequentially, so "the one being painted right now"
+  // is the first still-pending item. Only meaningful while live —
+  // afterwards leftover pendings are just "didn't happen", not "in progress".
+  // (image_search.py --batch runs a few queries concurrently, so for the
+  // search kind this is an approximation — still the most useful single
+  // "currently working on" pick, since statuses write back one by one.)
+  const activeIdx = live
+    ? items.findIndex(
+        (it) => !(isDoneStatus(it.status) && it.exists) && !isFailStatus(it.status)
+      )
+    : -1
+  const activeItem = activeIdx >= 0 ? items[activeIdx] : null
+  const allDone = !live && total > 0 && generated >= total
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {/* Progress header */}
-      <div className="flex shrink-0 flex-col gap-1.5 border-b border-border/60 px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <span className="text-[13px] font-medium text-foreground">
-            {generating ? 'AI 生成图片中…' : 'AI 图片'}
+    <div
+      className={
+        fill
+          ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
+          : 'flex flex-col'
+      }
+    >
+      {/* Progress header: activity beacon + current subject + count, then a
+          segmented bar (one segment per image — done/failed/painting/queued)
+          so progress has SHAPE, not just a percentage. Stacked mode (multiple
+          runs sharing one scroll container) pins it sticky so the run's
+          identity stays visible while its grid scrolls by. */}
+      <div
+        className={
+          'flex shrink-0 flex-col gap-2 border-b border-border/60 px-4 py-3' +
+          (fill ? '' : ' sticky top-0 z-10 bg-white')
+        }
+      >
+        <div className="flex items-center gap-2.5">
+          <span
+            aria-hidden
+            className="relative grid size-[18px] shrink-0 place-items-center"
+          >
+            {live ? (
+              <>
+                <span className="imgp-beacon-halo absolute inset-0 rounded-full bg-accent/25" />
+                <span className="imgp-beacon-core size-2 rounded-full bg-accent" />
+              </>
+            ) : allDone ? (
+              <svg viewBox="0 0 18 18" className="size-[18px]">
+                <circle cx="9" cy="9" r="9" className="fill-accent" />
+                <path
+                  d="M5.4 9.4l2.4 2.4 4.8-5.2"
+                  fill="none"
+                  stroke="#fff"
+                  strokeWidth="2.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            ) : (
+              <span className="size-2 rounded-full bg-muted-foreground/40" />
+            )}
           </span>
-          {generating && (
-            <span
-              aria-hidden
-              className="size-1.5 animate-pulse rounded-full bg-accent"
-            />
-          )}
-          <span className="ml-auto tabular-nums text-[12px] text-muted-foreground">
-            {generated}/{total}
-            {failed > 0 && <span className="ml-1 text-red-500">· {failed} 失败</span>}
+          <span className="shrink-0 text-[13px] font-semibold text-foreground">
+            {live ? copy.running : allDone ? copy.done : copy.idle}
+          </span>
+          {/* Current subject — "which one is it painting/fetching" beats an
+              anonymous percentage for trust that things are moving. */}
+          <span className="min-w-0 flex-1 truncate text-[12px] text-muted-foreground">
+            {activeItem && (
+              <>
+                {copy.activeVerb}「{activeItem.altText || activeItem.purpose || activeItem.filename}」
+                <code className="ml-1.5 font-mono text-[10.5px] text-muted-foreground/60">
+                  {activeItem.filename}
+                </code>
+              </>
+            )}
+          </span>
+          <span className="shrink-0 tabular-nums text-[12px] text-muted-foreground">
+            <span className="text-[14px] font-semibold text-foreground">{generated}</span>
+            /{total}
+            {failed > 0 && <span className="ml-1.5 text-red-500">{failed} 失败</span>}
           </span>
         </div>
-        {/* Progress bar */}
-        <div className="h-1 overflow-hidden rounded-full bg-foreground/[0.08]">
-          <div
-            className="h-full rounded-full bg-accent transition-[width] duration-500"
-            style={{ width: total > 0 ? `${Math.round((generated / total) * 100)}%` : '0%' }}
-          />
-        </div>
+        {/* Segmented progress: one segment per image. */}
+        {total > 0 && items.length > 0 ? (
+          <div className="flex h-1 gap-1" aria-hidden>
+            {items.map((it, i) => {
+              const done = isDoneStatus(it.status) && it.exists
+              const fail = isFailStatus(it.status)
+              return (
+                <span
+                  key={it.filename}
+                  className={
+                    'flex-1 rounded-full transition-colors duration-500 ' +
+                    (done
+                      ? 'bg-accent'
+                      : fail
+                        ? 'bg-red-500'
+                        : i === activeIdx
+                          ? 'imgp-seg-active'
+                          : 'bg-foreground/[0.08]')
+                  }
+                />
+              )
+            })}
+          </div>
+        ) : (
+          <div className="h-1 rounded-full bg-foreground/[0.08]" aria-hidden />
+        )}
       </div>
 
       {/* Thumbnail grid */}
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div className={fill ? 'min-h-0 flex-1 overflow-y-auto p-4' : 'p-4'}>
         {items.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-[13px] text-muted-foreground">
-            {data && !data.ok ? '读取图片清单失败' : '等待生成…'}
+          <div
+            className={
+              'flex items-center justify-center text-[13px] text-muted-foreground ' +
+              (fill ? 'h-full' : 'py-10')
+            }
+          >
+            {data && !data.ok ? '读取图片清单失败' : copy.empty}
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {items.map((it) => (
-              <ImageCard key={it.filename} item={it} />
+          <div className="grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-3">
+            {items.map((it, i) => (
+              <ImageCard
+                key={it.filename}
+                item={it}
+                paintingLabel={copy.painting}
+                pendingMode={
+                  i === activeIdx ? 'painting' : live ? 'queued' : 'idle'
+                }
+                developing={developSet.has(it.filename)}
+                layoutId={`imgp:${manifestPath}:${it.filename}`}
+                onOpen={() => setLightboxItem(it)}
+              />
             ))}
           </div>
         )}
       </div>
+      {/* In-app lightbox. Portaled to <body> so the overlay isn't clipped by
+          the panel's overflow; the shared layoutId still connects across the
+          portal (Motion's layout projection is global). */}
+      {createPortal(
+        <AnimatePresence>
+          {lightboxItem && (
+            <ImageLightbox
+              item={lightboxItem}
+              layoutId={`imgp:${manifestPath}:${lightboxItem.filename}`}
+              onClose={() => setLightboxItem(null)}
+            />
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </div>
+  )
+}
+
+/**
+ * In-app lightbox for a finished gallery image.
+ *
+ * Choreography (the open feels like ONE gesture, not three animations):
+ *   1. The image FLIP-flies from its card into the center via the shared
+ *      `layoutId` — an interruptible spring, so a quick open-close reverses
+ *      mid-flight instead of snapping.
+ *   2. The backdrop fades in underneath it (plain opacity, slightly faster).
+ *   3. The caption bar follows with a small rise + fade, ~0.1s behind — it
+ *      belongs to the destination, so it arrives after the image does.
+ *
+ * Image quality is progressive: the 320px thumbnail (already in memory —
+ * same URL the card uses) renders instantly and the full-resolution file
+ * streams in over IPC, cross-fading on top when ready — the same "develop"
+ * language the gallery cards use. The container's aspect ratio starts at
+ * the card's 4:3 and relaxes to the image's true ratio the moment the
+ * thumbnail reports its natural size (usually before first paint, it's
+ * cached); `layoutId` projection animates that reshape smoothly. Both
+ * layers use object-cover, and since the container matches the true ratio,
+ * cover ≡ contain — no crop pop during the flight.
+ *
+ * Close: Esc, backdrop click, or the ✕ — all reverse the flight.
+ */
+function ImageLightbox({
+  item,
+  layoutId,
+  onClose
+}: {
+  item: ImageManifestItem
+  layoutId: string
+  onClose: () => void
+}): React.JSX.Element {
+  const [full, setFull] = useState<string | null>(null)
+  const [ratio, setRatio] = useState<number | null>(null)
+
+  // Fetch the full-resolution original (original bytes over IPC).
+  useEffect(() => {
+    let cancelled = false
+    void window.chatApi
+      .readImageFile({ absPath: item.absPath })
+      .then((r) => {
+        if (!cancelled && r.ok && r.dataUrl) setFull(r.dataUrl)
+      })
+      .catch(() => {
+        /* thumbnail stays — still a usable preview */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [item.absPath])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const r = ratio ?? 4 / 3
+  return (
+    <motion.div
+      className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-3 p-8"
+      onClick={onClose}
+    >
+      {/* Frosted-glass scrim, NOT a black dim: the app is a light chrome and
+          a black sheet reads as a different app taking over. The heavy blur
+          does the separation work (content underneath dissolves into wash);
+          the theme-token tint keeps it native in both light and dark. */}
+      <motion.div
+        className="absolute inset-0 bg-background/60 backdrop-blur-2xl"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0, transition: { duration: 0.2, ease: 'easeIn' } }}
+        transition={{ duration: 0.28, ease: 'easeOut' }}
+      />
+      {/* Image stage. Width solves the contain-fit by hand (aspect-ratio
+          alone loses to max-height and would re-crop): height = width / r,
+          capped by all three of 1100px / 88vw / 78vh. */}
+      <motion.div
+        layoutId={layoutId}
+        onClick={(e) => e.stopPropagation()}
+        className="relative overflow-hidden rounded-xl bg-card shadow-2xl"
+        style={{
+          width: `min(1100px, 88vw, calc(78vh * ${r}))`,
+          aspectRatio: r
+        }}
+        transition={{ type: 'spring', bounce: 0.18, visualDuration: 0.38 }}
+      >
+        <img
+          src={item.thumbnail}
+          alt={item.altText || item.filename}
+          onLoad={(e) => {
+            const el = e.currentTarget
+            if (el.naturalWidth > 0 && el.naturalHeight > 0) {
+              setRatio(el.naturalWidth / el.naturalHeight)
+            }
+          }}
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+        {full && (
+          <motion.img
+            src={full}
+            alt=""
+            aria-hidden
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.35, ease: 'easeOut' }}
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        )}
+      </motion.div>
+      {/* Caption bar: arrives a beat after the image, leaves instantly. */}
+      <motion.div
+        onClick={(e) => e.stopPropagation()}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, transition: { duration: 0.12 } }}
+        transition={{ type: 'spring', bounce: 0.2, visualDuration: 0.35, delay: 0.1 }}
+        className="relative z-10 flex max-w-[88vw] items-center gap-3 rounded-full border border-border/60 bg-card/90 py-1.5 pl-4 pr-1.5 shadow-md backdrop-blur-md"
+      >
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate text-[13px] font-medium text-foreground">
+            {item.altText || item.purpose || item.filename}
+          </span>
+          {(item.altText || item.purpose) && (
+            <code className="truncate font-mono text-[10px] text-muted-foreground/70">
+              {item.filename}
+            </code>
+          )}
+        </span>
+        <button
+          type="button"
+          onClick={() => void window.chatApi.openPath({ absPath: item.absPath })}
+          className="inline-flex h-7 shrink-0 items-center rounded-full bg-muted px-3 text-[11.5px] font-medium text-foreground transition-colors hover:bg-border/70"
+        >
+          用系统查看器打开
+        </button>
+      </motion.div>
+      {/* Close button, top-right. */}
+      <motion.button
+        type="button"
+        aria-label="关闭"
+        onClick={onClose}
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, transition: { duration: 0.12 } }}
+        transition={{ type: 'spring', bounce: 0.3, visualDuration: 0.3, delay: 0.12 }}
+        className="absolute right-5 top-5 z-10 grid size-9 place-items-center rounded-full border border-border/60 bg-card/90 text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-muted"
+      >
+        <svg viewBox="0 0 14 14" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+          <path d="M2 2l10 10M12 2L2 12" />
+        </svg>
+      </motion.button>
+    </motion.div>
   )
 }
 
@@ -1280,7 +1813,13 @@ function ImagesPanel({
 const DOT_GAP = 11 // px between dot centres (CSS px)
 const DOT_MAX_R = 1.9 // px radius at the brightest core
 
-function DotGridLoader(): React.JSX.Element {
+function DotGridLoader({
+  label = '正在创建图片'
+}: {
+  /** Cell caption — 「正在创建图片」 for AI generation, 「正在搜索图片」 for
+   *  web download (same breathing dot field either way). */
+  label?: string
+}): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const reduce = useReducedMotion()
 
@@ -1375,63 +1914,177 @@ function DotGridLoader(): React.JSX.Element {
   return (
     <div className="absolute inset-0 flex flex-col">
       <span className="px-3 pt-2.5 text-[12px] font-medium text-muted-foreground/80">
-        正在创建图片
+        {label}
       </span>
       <canvas ref={canvasRef} className="min-h-0 w-full flex-1" aria-hidden />
     </div>
   )
 }
 
-function ImageCard({ item }: { item: ImageManifestItem }): React.JSX.Element {
-  const done = item.status === 'Generated' && item.exists
-  const failed = item.status === 'Failed'
+function ImageCard({
+  item,
+  pendingMode,
+  developing,
+  paintingLabel,
+  layoutId,
+  onOpen
+}: {
+  item: ImageManifestItem
+  /** How a not-yet-finished cell presents: 'painting' = the one the
+   *  sequential generator is on right now (dot-grid loader), 'queued' =
+   *  behind it in line, 'idle' = the run ended without producing it. */
+  pendingMode: 'painting' | 'queued' | 'idle'
+  /** True once we've WATCHED this item finish (ImagesPanel's pendingSeen
+   *  gate) — plays the polaroid develop-in + badge pop exactly once. */
+  developing: boolean
+  /** DotGridLoader caption for the in-progress cell (per feed kind). */
+  paintingLabel: string
+  /** Shared-element id linking this thumbnail to the lightbox's image —
+   *  the open/close transition is a FLIP flight between the two. */
+  layoutId: string
+  /** Open the in-app lightbox for this (finished) image. */
+  onOpen: () => void
+}): React.JSX.Element {
+  const done = isDoneStatus(item.status) && item.exists
+  const failed = isFailStatus(item.status)
+  const pending = !done && !failed
+  // Chinese description leads, filename supports — regular users read
+  // 「青花瓷」, not `porcelain_blue.png`. Fall back to the filename as the
+  // title when the manifest carries no description (then skip the sub-line
+  // so the same string doesn't render twice).
+  const title = item.altText || item.purpose
   const openFull = (): void => {
-    if (done) void window.chatApi.openPath({ absPath: item.absPath })
+    if (done) onOpen()
   }
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex min-w-0 flex-col gap-1.5">
+      {/* Photo paper: white mat + floating shadow, lifts on hover. Same
+          paper-on-stage metaphor as the slides / files canvases. */}
       <button
         type="button"
         onClick={openFull}
         disabled={!done}
-        title={done ? `打开原图：${item.filename}` : item.altText || item.filename}
+        title={done ? `查看大图：${item.filename}` : item.altText || item.filename}
         className={
-          'group relative aspect-[4/3] overflow-hidden rounded-md border border-border/60 bg-foreground/[0.03] ' +
-          (done ? 'cursor-zoom-in hover:border-accent/60' : 'cursor-default')
+          'group relative rounded-[10px] bg-card p-[5px] text-left transition-all duration-200 ' +
+          (done
+            ? 'cursor-zoom-in shadow-sm hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-[0.985]'
+            : 'cursor-default shadow-sm')
         }
       >
-        {item.thumbnail ? (
-          <img
-            src={item.thumbnail}
-            alt={item.altText || item.filename}
-            className="h-full w-full object-cover"
-          />
-        ) : failed ? (
-          <div className="flex h-full w-full items-center justify-center px-2 text-center">
-            <span className="text-[11px] text-red-500">生成失败</span>
-          </div>
-        ) : (
-          // Generating: Apple-Intelligence dot-grid loader breathes until the
-          // real thumbnail lands (next poll swaps this out for the <img>).
-          <DotGridLoader />
-        )}
-        {/* Status corner dot */}
-        <span
-          aria-hidden
+        <div
           className={
-            'absolute right-1.5 top-1.5 size-2 rounded-full ring-2 ring-white ' +
-            (done
-              ? 'bg-emerald-500'
-              : failed
-                ? 'bg-red-500'
-                : 'bg-muted-foreground/40')
+            'relative aspect-[4/3] overflow-hidden rounded-md ' +
+            (failed
+              ? 'bg-red-500/10'
+              : pending && pendingMode !== 'painting'
+                ? 'border border-dashed border-border'
+                : 'bg-foreground/[0.03]')
           }
-        />
+        >
+          {item.thumbnail ? (
+            // Shared element: the lightbox opens by FLIP-flying this exact
+            // image out of the card (same layoutId there). Spring matches
+            // the lightbox's so both directions feel like one gesture.
+            // The hover zoom lives on a WRAPPER div — Motion's layout
+            // projection owns the img's inline transform, so a CSS
+            // group-hover scale on the img itself would fight it.
+            <div
+              className={
+                'h-full w-full transition-transform duration-300' +
+                (done ? ' group-hover:scale-[1.035]' : '')
+              }
+            >
+              <motion.img
+                layoutId={layoutId}
+                transition={{ type: 'spring', bounce: 0.18, visualDuration: 0.38 }}
+                src={item.thumbnail}
+                alt={item.altText || item.filename}
+                className={
+                  'h-full w-full object-cover ' +
+                  (developing ? 'imgp-develop' : '')
+                }
+              />
+            </div>
+          ) : failed ? (
+            <div
+              className="flex h-full w-full items-center justify-center px-2 text-center"
+              title={item.lastError}
+            >
+              <span className="text-[11.5px] font-medium text-red-500">
+                {item.status === 'Needs-Manual' ? '需手动获取' : '生成失败'}
+              </span>
+            </div>
+          ) : pendingMode === 'painting' ? (
+            // Painting right now: Apple-Intelligence dot-grid loader breathes
+            // until the real thumbnail lands (next poll swaps in the <img>).
+            <DotGridLoader label={paintingLabel} />
+          ) : (
+            <div className="grid h-full w-full place-items-center">
+              <span className="text-[11px] text-muted-foreground/70">
+                {pendingMode === 'queued' ? '排队中' : '未生成'}
+              </span>
+            </div>
+          )}
+          {/* Status corner badge: check / exclamation on a solid disc. Pops
+              in only when witnessed live (same gate as the develop). */}
+          {(done || failed) && (
+            <span
+              aria-hidden
+              className={
+                'absolute right-1.5 top-1.5 grid size-[18px] place-items-center rounded-full ' +
+                (done ? 'bg-accent ' : 'bg-red-500 ') +
+                (developing ? 'imgp-badge-in' : '')
+              }
+            >
+              <svg
+                viewBox="0 0 12 12"
+                className="size-[10px]"
+                fill="none"
+                stroke="#fff"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                {done ? (
+                  <path d="M2.5 6.4l2.4 2.4 4.6-5" />
+                ) : (
+                  <path d="M6 2.6v4.2M6 9.4v.1" />
+                )}
+              </svg>
+            </span>
+          )}
+          {/* Hover affordance on finished shots: bottom gradient + action
+              pill. Click opens the in-app lightbox — this just makes that
+              discoverable. */}
+          {done && (
+            <div className="pointer-events-none absolute inset-0 flex items-end bg-gradient-to-t from-black/45 via-black/0 to-transparent p-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+              <span className="inline-flex h-[22px] items-center rounded-full bg-white/90 px-2.5 text-[10.5px] font-medium text-zinc-900 shadow-sm">
+                查看大图
+              </span>
+            </div>
+          )}
+        </div>
       </button>
-      <div className="flex items-baseline gap-1">
-        <code className="min-w-0 truncate font-mono text-[11px] text-muted-foreground" title={item.filename}>
-          {item.filename}
-        </code>
+      {/* Caption: description leads, filename supports. */}
+      <div className="flex min-w-0 flex-col px-0.5">
+        <span
+          className={
+            'truncate text-[12px] ' +
+            (done ? 'font-medium text-foreground/90' : 'text-muted-foreground')
+          }
+          title={title || item.filename}
+        >
+          {title || item.filename}
+        </span>
+        {title && (
+          <code
+            className="truncate font-mono text-[10px] text-muted-foreground/70"
+            title={item.filename}
+          >
+            {item.filename}
+          </code>
+        )}
       </div>
     </div>
   )
@@ -2292,7 +2945,16 @@ function CanvasQuestionnaire({
 function EmptyState(): React.JSX.Element {
   const t = useT()
   return (
-    <div className="flex flex-1 flex-col items-stretch justify-center py-10">
+    // Enter fade on mount (new chat / switching to an empty session). Pure
+    // opacity ONLY: this block lives INSIDE the scroll viewport, where any
+    // transform risks the scrollbar-flicker regression documented on the
+    // viewport — so no y/scale here, just a slightly longer fade for feel.
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+      className="flex flex-1 flex-col items-stretch justify-center py-10"
+    >
       {/* Mascot — green chat-bubble glyph. */}
       <div className="mb-5 flex size-14 items-center justify-center rounded-2xl bg-[var(--rail-accent-soft,#dcf5e6)]">
         <svg width="30" height="30" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -2337,7 +2999,7 @@ function EmptyState(): React.JSX.Element {
           领取PRO
         </button>
       </div>
-    </div>
+    </motion.div>
   )
 }
 
@@ -2909,6 +3571,409 @@ function UserImagePart({
  * mixes text + tool + text reads as three vertically stacked rows
  * with three different gutter characters, exactly like the terminal.
  */
+/* ─────────────────── deliverable file cards ─────────────────── */
+
+/**
+ * File paths worth surfacing as openable cards at the end of an assistant
+ * turn: absolute or `~/`-prefixed, ending in a "deliverable" extension.
+ * Source artifacts the pipeline churns through (`.svg` pages, `.html`
+ * prototypes, `.json` manifests…) are deliberately NOT matched — a
+ * ppt-master deck would otherwise spam 15 svg cards under every report.
+ * Bracket/quote characters are excluded so a markdown link `[x](/a/b.pptx)`
+ * or a quoted path scrapes to just the path.
+ */
+const DELIVERABLE_PATH_RE =
+  /(?:~\/|\/)[^\s"'`«»<>|()[\]{}]*\.(?:pptx?|pdf|docx?|xlsx?|csv|zip|key|mp3|mp4|mov|wav|m4a|jpe?g|png|gif|webp)\b/gi
+
+/** Per-extension card presentation: type label (zh/en), icon-badge text and
+ *  badge color. Image types render a glyph instead of badge text. */
+function deliverableKind(ext: string): {
+  zh: string
+  en: string
+  badge: string
+  badgeClass: string
+  isImage?: boolean
+} {
+  switch (ext) {
+    case 'ppt':
+    case 'pptx':
+      return { zh: '幻灯片', en: 'Slides', badge: 'P', badgeClass: 'bg-[#D24726]' }
+    case 'key':
+      return { zh: '幻灯片', en: 'Slides', badge: 'K', badgeClass: 'bg-sky-600' }
+    case 'pdf':
+      return { zh: '文档', en: 'Document', badge: 'PDF', badgeClass: 'bg-[#E5252A]' }
+    case 'doc':
+    case 'docx':
+      return { zh: '文档', en: 'Document', badge: 'W', badgeClass: 'bg-[#2B579A]' }
+    case 'xls':
+    case 'xlsx':
+    case 'csv':
+      return { zh: '表格', en: 'Spreadsheet', badge: 'X', badgeClass: 'bg-[#217346]' }
+    case 'zip':
+      return { zh: '压缩包', en: 'Archive', badge: 'ZIP', badgeClass: 'bg-amber-500' }
+    case 'mp3':
+    case 'wav':
+    case 'm4a':
+      return { zh: '音频', en: 'Audio', badge: '♪', badgeClass: 'bg-violet-500' }
+    case 'mp4':
+    case 'mov':
+      return { zh: '视频', en: 'Video', badge: '▶', badgeClass: 'bg-violet-600' }
+    case 'jpg':
+    case 'jpeg':
+    case 'png':
+    case 'gif':
+    case 'webp':
+      return {
+        zh: '图像',
+        en: 'Image',
+        badge: '',
+        badgeClass: 'border border-border bg-background',
+        isImage: true
+      }
+    default:
+      return {
+        zh: '文件',
+        en: 'File',
+        badge: ext.slice(0, 3).toUpperCase() || '?',
+        badgeClass: 'bg-zinc-400'
+      }
+  }
+}
+
+/**
+ * One deliverable row: type icon + filename + kind label, with the whole
+ * row opening the file and a 打开方式 menu offering open / reveal-in-Finder
+ * / copy-path. Paths arrive pre-verified (statFiles) and absolute.
+ */
+function DeliverableCard({
+  path
+}: {
+  path: string
+}): React.JSX.Element {
+  const lang = useI18n((s) => s.lang)
+  const zh = lang === 'zh'
+  const reduce = useReducedMotion()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  // Screen-space anchor for the portal'd menu. The card block sits inside an
+  // `overflow-hidden` rounded container (see AssistantDeliverables), so an
+  // in-flow `absolute` popover gets clipped — the menu HAS to render in a
+  // body-level portal with `position: fixed`, anchored to the trigger's rect.
+  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(
+    null
+  )
+  const name = path.split('/').pop() ?? path
+  const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
+  const kind = deliverableKind(ext)
+
+  // Close the 打开方式 menu on any outside press. The menu is portal'd to the
+  // body, so the trigger and the menu are in two separate subtrees — check
+  // both refs before dismissing.
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as Node
+      if (
+        menuRef.current?.contains(t) ||
+        triggerRef.current?.contains(t)
+      ) {
+        return
+      }
+      setMenuOpen(false)
+    }
+    // fixed-positioned menu doesn't follow scroll — close it instead of
+    // letting it float detached from the trigger.
+    const onScroll = (): void => {
+      setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onScroll)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onScroll)
+    }
+  }, [menuOpen])
+
+  const toggleMenu = (): void => {
+    if (menuOpen) {
+      setMenuOpen(false)
+      return
+    }
+    const r = triggerRef.current?.getBoundingClientRect()
+    if (r) {
+      setAnchor({ top: r.bottom + 4, right: window.innerWidth - r.right })
+    }
+    setMenuOpen(true)
+  }
+
+  const open = (): void => {
+    void window.chatApi.openPath({ absPath: path })
+  }
+
+  return (
+    // Apple-style segmented row: the whole row is a rounded pill that fills the
+    // parent's p-1 inset edge-to-edge, so the hover wash reads as a full block
+    // (not a gapped stripe). `group/card` scopes hover so badge + pill react
+    // together without leaking into sibling rows.
+    <div className="group/card flex items-center gap-3 rounded-xl px-2.5 py-2 transition-colors duration-200 hover:bg-muted/50">
+      {/* File zone: icon + names. Clicking opens the file — the card IS the
+          affordance; the pill is for the alternatives. */}
+      <button
+        type="button"
+        onClick={open}
+        title={path}
+        className="group/file flex min-w-0 flex-1 items-center gap-3 text-left"
+      >
+        <span
+          aria-hidden
+          className={
+            // Rounded, slightly larger badge with a top-light gradient sheen
+            // (the ::after in the HTML mock → an overlaid gradient span) and a
+            // colored drop shadow, so the flat office-icon block gains depth.
+            // Springs a touch on card hover.
+            'relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-xl text-[13px] font-bold text-white shadow-[0_2px_8px_-2px_rgba(0,0,0,0.25)] transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover/card:scale-[1.05] ' +
+            kind.badgeClass
+          }
+        >
+          {kind.isImage ? (
+            <svg
+              viewBox="0 0 20 20"
+              className="size-[18px] text-muted-foreground"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            >
+              <rect x="2.5" y="3.5" width="15" height="13" rx="2" />
+              <circle cx="7.2" cy="8" r="1.4" fill="currentColor" stroke="none" />
+              <path d="M4 14.5l4-4 3 3 2.5-2.5 2.5 2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          ) : (
+            <>
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/25 to-transparent"
+              />
+              <span className="relative">{kind.badge}</span>
+            </>
+          )}
+        </span>
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate text-[13.5px] font-medium text-foreground group-hover/file:underline">
+            {name}
+          </span>
+          <span className="truncate text-[11.5px] text-muted-foreground">
+            {(zh ? kind.zh : kind.en) + ' · ' + ext.toUpperCase()}
+          </span>
+        </span>
+      </button>
+      {/* 打开方式 pill — trigger stays in flow; the popover is portal'd so it
+          escapes the AssistantDeliverables `overflow-hidden` clip. Softened
+          fill so it no longer out-shouts the filename. */}
+      <div className="shrink-0">
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={toggleMenu}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-background/60 pl-3 pr-2.5 text-[12px] font-medium text-foreground transition-colors duration-150 hover:bg-muted"
+        >
+          {zh ? '打开方式' : 'Open with'}
+          <svg
+            viewBox="0 0 10 10"
+            className={
+              'size-2.5 text-muted-foreground transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ' +
+              (menuOpen ? 'rotate-180' : '')
+            }
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+          >
+            <path d="M2 3.5l3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {createPortal(
+          <AnimatePresence>
+            {menuOpen && anchor && (
+              <motion.div
+                ref={menuRef}
+                role="menu"
+                style={{
+                  top: anchor.top,
+                  right: anchor.right,
+                  transformOrigin: 'top right'
+                }}
+                initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: -6 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: -6 }}
+                transition={
+                  reduce
+                    ? { duration: 0.12 }
+                    : { type: 'spring', bounce: 0.18, visualDuration: 0.2 }
+                }
+                className="fixed z-[100] w-48 overflow-hidden rounded-xl border border-border bg-popover p-1.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.35),0_2px_8px_rgba(0,0,0,0.08)]"
+              >
+                <DeliverableMenuItem
+                  onClick={() => {
+                    setMenuOpen(false)
+                    open()
+                  }}
+                  label={zh ? '打开' : 'Open'}
+                  icon={
+                    <path
+                      d="M10 3v10m0 0l-3.5-3.5M10 13l3.5-3.5M4 16h12"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  }
+                />
+                <DeliverableMenuItem
+                  onClick={() => {
+                    setMenuOpen(false)
+                    void window.chatApi.revealPath({ absPath: path })
+                  }}
+                  label={zh ? '在 Finder 中显示' : 'Reveal in Finder'}
+                  icon={
+                    <path
+                      d="M3 5.5h5l1.5 2h7.5v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-11z"
+                      strokeLinejoin="round"
+                    />
+                  }
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * One row inside the 打开方式 popover: leading line-icon + label, with a
+ * muted hover wash. Icon paths are passed in as children of a shared 20×20
+ * stroke SVG so every item lines up on the same grid.
+ */
+function DeliverableMenuItem({
+  onClick,
+  label,
+  icon
+}: {
+  onClick: () => void
+  label: string
+  icon: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-foreground transition-colors duration-100 hover:bg-muted"
+    >
+      <svg
+        viewBox="0 0 20 20"
+        className="size-[15px] shrink-0 text-muted-foreground"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+      >
+        {icon}
+      </svg>
+      {label}
+    </button>
+  )
+}
+
+/**
+ * Deliverable file cards appended to an assistant message: scrape file-like
+ * paths from the message's text parts, verify them against the real disk
+ * via SHELL_STAT_FILES (paths the model merely *mentioned* get no card),
+ * and render the survivors as openable cards — the "here are your files"
+ * moment a ppt-master run ends on.
+ *
+ * Runs only once the message stops streaming: a half-streamed path would
+ * stat as missing and flicker in later. Historical messages (no status)
+ * count as complete, so cards restore with the session.
+ */
+function AssistantDeliverables(): React.JSX.Element | null {
+  const message = useMessage()
+  const reduce = useReducedMotion()
+  const running =
+    (message as { status?: { type?: string } }).status?.type === 'running'
+  const text = useMemo(() => {
+    const content = (message as { content?: readonly unknown[] }).content
+    if (!Array.isArray(content)) return ''
+    let out = ''
+    for (const part of content) {
+      const p = part as { type?: string; text?: string }
+      if (p.type === 'text' && typeof p.text === 'string') {
+        out += (out ? '\n' : '') + p.text
+      }
+    }
+    return out
+  }, [message])
+  // Dedup + cap, joined into a single string so the stat effect's dep is a
+  // stable primitive (a fresh array every render would re-fire it).
+  const candidatesKey = useMemo(() => {
+    if (!text.includes('/')) return ''
+    const seen = new Set<string>()
+    for (const m of text.matchAll(DELIVERABLE_PATH_RE)) seen.add(m[0])
+    return [...seen].slice(0, 12).join('\n')
+  }, [text])
+  const [files, setFiles] = useState<readonly string[]>([])
+  useEffect(() => {
+    if (running || !candidatesKey) {
+      setFiles([])
+      return
+    }
+    let cancelled = false
+    void window.chatApi
+      .statFiles({ paths: candidatesKey.split('\n') })
+      .then((r) => {
+        if (!cancelled) setFiles(r.files.slice(0, 8))
+      })
+      .catch(() => {
+        /* transient IPC failure — no cards this round */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [running, candidatesKey])
+  if (files.length === 0) return null
+  return (
+    // pl-[18px] = the text rows' 6px gutter dot + gap-3, so the card block
+    // left-aligns with the assistant prose above it.
+    <div className="pl-[18px]">
+      {/* The "here are your files" reveal: a soft rise+fade on the whole block
+          (matches the deck's easeOutExpo entrance language). p-1.5 gives each
+          rounded row a matched inset so its hover wash meets the container edge
+          cleanly; space-y-0.5 separates rows without a divider line. The 打开
+          方式 menu escapes any clip via a body portal, so no overflow-hidden
+          is needed here. */}
+      <motion.div
+        initial={
+          reduce ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.99 }
+        }
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={
+          reduce
+            ? { duration: 0.2 }
+            : { duration: 0.32, ease: [0.22, 1, 0.36, 1] }
+        }
+        className="space-y-0.5 rounded-2xl border border-border/60 bg-gradient-to-b from-card to-card/60 p-1.5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-16px_rgba(0,0,0,0.3)]"
+      >
+        {files.map((f) => (
+          <DeliverableCard key={f} path={f} />
+        ))}
+      </motion.div>
+    </div>
+  )
+}
+
 function AssistantMessage(): React.JSX.Element {
   return (
     <MessagePrimitive.Root className="mb-6 flex w-full flex-col gap-3">
@@ -2940,6 +4005,9 @@ function AssistantMessage(): React.JSX.Element {
           Empty: ThinkingSpinner
         }}
       />
+      {/* Deliverable file cards: real on-disk files this message's text
+          points at, rendered as openable cards once the message settles. */}
+      <AssistantDeliverables />
     </MessagePrimitive.Root>
   )
 }
@@ -3028,6 +4096,17 @@ function ReasoningCard({
   // lands a few seconds later. Empty reasoning always stays closed.
   const open = hasText && (userToggled ?? isStreaming)
   const charCount = trimmedText.length
+
+  // Thinking ended with NO text at all → render nothing. The API
+  // sometimes ships a thinking block that carries only an encrypted
+  // signature and zero visible text (short greetings often get
+  // thinking_tokens > 0 but no thinking_delta / empty `thinking` in
+  // the finalized message) — a permanently-empty, non-expandable
+  // 「思考过程」 row is pure noise. While streaming we keep the row:
+  // 「正在思考…」 is a live activity signal even before text lands.
+  // (Hook order is safe: this return sits below every hook above.)
+  if (!isStreaming && !hasText) return <></>
+
 
   return (
     <div className="flex w-full gap-3">
@@ -3766,7 +4845,10 @@ const ACTIVITY_LABELS: Record<string, string> = {
  * Pure presentation: `active`/`startedAt`/`activity` come from the parent
  * (which calls useTurnActivity once), so the wrapper and this row stay in
  * sync. Ticks every 100ms for the tenths-of-a-second readout. Timer basis is
- * the TURN start — one counter for the whole response, not per tool.
+ * the CURRENT STEP's start (useTurnActivity picks it): the label names the
+ * current activity, so the number must be that activity's elapsed — a
+ * turn-total next to "执行中…" reads as a lie. The readout restarts as each
+ * new tool begins.
  */
 function ComposerStatusBar({
   startedAt,
@@ -4041,6 +5123,11 @@ function highlightJson(src: string): React.ReactNode[] {
 function summarizeArgs(args: unknown): string | null {
   if (!args || typeof args !== 'object') return null
   const obj = args as Record<string, unknown>
+  // `subject` outranks `description` for the workflow-task tools
+  // (TaskCreate / TaskUpdate): subject is the human one-liner ("生成两
+  // 张新水墨图") while description is the technical how-to — showing
+  // the latter in the header is exactly the noise a regular user
+  // can't read.
   const keys = [
     'file_path',
     'path',
@@ -4050,6 +5137,7 @@ function summarizeArgs(args: unknown): string | null {
     'cmd',
     'url',
     'name',
+    'subject',
     'description'
   ]
   for (const k of keys) {
@@ -4061,11 +5149,32 @@ function summarizeArgs(args: unknown): string | null {
       // this is display-only; the full command stays in copy/raw.
       const s =
         k === 'command' || k === 'cmd' ? stripCommandPrefixes(v) : v
+      // File paths truncate from the LEFT: a deep absolute path cut at
+      // 60 chars from the right shows only the useless machine prefix
+      // ("/Users/…/Library/Mobile Documents/iCloud~md~ob…") — the
+      // basename is the part a person actually recognizes.
+      if (k === 'file_path' || k === 'path') return shortenPathTail(s)
       return s.length > 60 ? `${s.slice(0, 57)}…` : s
     }
     if (typeof v === 'number') return String(v)
   }
   return null
+}
+
+/** Shorten a filesystem path keeping its TAIL: basename plus as many
+ *  parent segments as fit the ~60-char header budget, prefixed with
+ *  "…/" when anything was dropped. */
+function shortenPathTail(p: string): string {
+  if (p.length <= 60) return p
+  const segs = p.split('/').filter((s) => s.length > 0)
+  let out = segs[segs.length - 1] ?? p
+  for (let i = segs.length - 2; i >= 0; i--) {
+    const cand = `${segs[i]}/${out}`
+    if (cand.length > 56) break
+    out = cand
+  }
+  // Whole path fit after all (only separators were dropped) — keep it.
+  return out.length >= p.length - 2 ? p : `…/${out}`
 }
 
 /** Peel `export VAR=…`, bare `VAR=…` and `cd …` links off the front of
@@ -4074,13 +5183,15 @@ function summarizeArgs(args: unknown): string | null {
 function stripCommandPrefixes(cmd: string): string {
   let body = cmd.trim()
   for (;;) {
+    // Separator between links: `&&`, `;` — or a bare newline, which
+    // multi-line heredoc-style commands use instead (`cd "…"\npython …`).
     const next = body
       .replace(
-        /^export\s+[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s*(?:&&|;)\s*/,
+        /^export\s+[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s*(?:&&|;|\n)\s*/,
         ''
       )
       .replace(/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+/, '')
-      .replace(/^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*/, '')
+      .replace(/^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;|\n)\s*/, '')
     if (next === body) break
     body = next
   }

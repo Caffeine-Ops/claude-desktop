@@ -1,9 +1,8 @@
 import { Tray, Menu, app, nativeImage, BrowserWindow } from 'electron'
 import trayTemplate from '../../resources/trayIconTemplate.png?asset'
+import trayTemplate2x from '../../resources/trayIconTemplate@2x.png?asset'
 import trayIco from '../../resources/icon.ico?asset'
 import trayPng from '../../resources/icon.png?asset'
-import trayUnread from '../../resources/trayIconUnread.png?asset'
-import trayUnread2x from '../../resources/trayIconUnread@2x.png?asset'
 
 type Lang = 'zh' | 'en'
 
@@ -55,7 +54,26 @@ let unreadIcon: Electron.NativeImage | null = null
 
 function buildIcon(): Electron.NativeImage {
   if (process.platform === 'darwin') {
-    const img = nativeImage.createFromPath(trayTemplate)
+    // Bind the 18×18 and 36×36 template PNGs to one logical 18-point image
+    // via addRepresentation — same pattern as buildUnreadIcon and for the
+    // same reason: macOS would normally auto-pair `name@2x.png` sitting next
+    // to `name.png`, but electron-vite's `?asset` pipeline emits hashed
+    // filenames, which breaks that filename convention. Explicit
+    // representations survive the rename. Template mode (pure black +
+    // alpha) lets the menubar tint it for light/dark automatically.
+    const img = nativeImage.createEmpty()
+    img.addRepresentation({
+      scaleFactor: 1.0,
+      width: 18,
+      height: 18,
+      buffer: nativeImage.createFromPath(trayTemplate).toPNG()
+    })
+    img.addRepresentation({
+      scaleFactor: 2.0,
+      width: 18,
+      height: 18,
+      buffer: nativeImage.createFromPath(trayTemplate2x).toPNG()
+    })
     img.setTemplateImage(true)
     return img
   }
@@ -194,18 +212,13 @@ function applyUnread(): void {
 }
 
 /**
- * Load the pre-baked red-dot tray icon. Two PNG variants ship in
- * `resources/`:
- *
- *   - `trayIconUnread.png`     — 16×16, used at @1x
- *   - `trayIconUnread@2x.png`  — 32×32, used at @2x (retina)
- *
- * Going through `addRepresentation` instead of `createFromPath` lets
- * us bind both files to the same logical 16-point image, so the
- * system picks the right asset for the current display scale and the
- * dot stays crisp on retina menubars. The image is *not* a template —
- * we want the red to render as red, not be tinted to the menubar
- * text color.
+ * Draw the red "unread" dot at runtime — a filled circle rendered
+ * straight into a premultiplied BGRA bitmap, bound at @1x and @2x via
+ * `addRepresentation` so it stays crisp on retina menubars. This used
+ * to load two pre-baked PNGs from `resources/`; drawing in code drops
+ * the asset files entirely and keeps color/size tweakable in one
+ * place. The image is *not* a template — the red must render as red,
+ * not be tinted to the menubar text color.
  *
  * Drawing a real composite of "chat icon + red corner dot" runs into
  * macOS template-image color rules — templates are tinted to the
@@ -216,17 +229,38 @@ function applyUnread(): void {
  */
 function buildUnreadIcon(): Electron.NativeImage {
   const img = nativeImage.createEmpty()
-  img.addRepresentation({
-    scaleFactor: 1.0,
-    width: 16,
-    height: 16,
-    buffer: nativeImage.createFromPath(trayUnread).toPNG()
-  })
-  img.addRepresentation({
-    scaleFactor: 2.0,
-    width: 16,
-    height: 16,
-    buffer: nativeImage.createFromPath(trayUnread2x).toPNG()
-  })
+  // #EC443B — close to macOS systemRed; ~13pt disc on a 16pt canvas.
+  const RED = 0xec
+  const GREEN = 0x44
+  const BLUE = 0x3b
+  for (const scale of [1, 2] as const) {
+    const size = 16 * scale
+    // Raw bitmap is BGRA with premultiplied alpha (Chromium N32) —
+    // un-premultiplied edge pixels would render with a bright fringe.
+    const buf = Buffer.alloc(size * size * 4)
+    const center = size / 2
+    const radius = 6.5 * scale
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const dist = Math.hypot(x + 0.5 - center, y + 0.5 - center)
+        // One physical pixel of anti-aliased falloff at the rim.
+        const alpha = Math.max(0, Math.min(1, radius - dist + 0.5))
+        if (alpha <= 0) continue
+        const i = (y * size + x) * 4
+        buf[i] = Math.round(BLUE * alpha)
+        buf[i + 1] = Math.round(GREEN * alpha)
+        buf[i + 2] = Math.round(RED * alpha)
+        buf[i + 3] = Math.round(255 * alpha)
+      }
+    }
+    img.addRepresentation({
+      scaleFactor: scale,
+      width: 16,
+      height: 16,
+      buffer: nativeImage
+        .createFromBuffer(buf, { width: size, height: size })
+        .toPNG()
+    })
+  }
   return img
 }

@@ -59,6 +59,15 @@ const electronSettings = {
   },
 
   /**
+   * Reveal the on-disk runtime log file in the OS file manager (today's
+   * file selected in Finder; falls back to the logs directory). Everything
+   * the panel shows — plus process-level errors — is persisted there.
+   */
+  revealLogFile(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.LOGS_REVEAL) as Promise<void>
+  },
+
+  /**
    * Subscribe to live runtime-log lines. Returns an unsubscribe function the
    * panel calls on unmount — without it, repeated open/close of the settings
    * overlay would stack duplicate listeners. main only sends while this view

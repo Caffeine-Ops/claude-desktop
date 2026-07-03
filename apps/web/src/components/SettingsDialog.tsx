@@ -6153,14 +6153,26 @@ function LogAnalysisSection() {
             );
           })}
         </div>
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm"
-          onClick={handleClear}
-          title="清空内存日志并删除磁盘上的日志文件"
-        >
-          清空
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          {bridge.revealLogFile ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => void bridge.revealLogFile?.()}
+              title="在文件管理器中显示日志文件（面板内容 + 进程级错误都会持久化到该文件）"
+            >
+              查看日志文件
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={handleClear}
+            title="清空内存日志并删除磁盘上的日志文件"
+          >
+            清空
+          </button>
+        </div>
       </div>
 
       {!autoScroll ? (

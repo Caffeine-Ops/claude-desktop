@@ -224,6 +224,11 @@ declare global {
       getLogs: () => Promise<DesktopRuntimeLogEntry[]>;
       /** Clear the in-memory log ring (on-disk log file untouched). */
       clearLogs: () => Promise<void>;
+      /**
+       * Reveal the persisted runtime log file in the OS file manager.
+       * Optional: absent on desktop builds older than the LOGS_REVEAL IPC.
+       */
+      revealLogFile?: () => Promise<void>;
       /** Subscribe to live log lines; returns an unsubscribe fn. */
       onLog: (handler: (entry: DesktopRuntimeLogEntry) => void) => () => void;
       /**

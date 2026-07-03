@@ -64,6 +64,51 @@ function absolutizeSlideImages(svg: string, baseUrl: string): string {
       (_m, attr, q, file) => `${attr}=${q}${base}/${file}${q}`)
 }
 
+/**
+ * Warm the browser cache for every image an (absolutized) slide references,
+ * BEFORE its innerHTML is swapped in. The swap rebuilds the whole SVG DOM,
+ * so every `<image>` re-fetches from scratch — without warming, each swap
+ * blanks all the photos for a network round-trip and the deck visibly
+ * flashes on every regeneration (worst while the assistant is editing pages
+ * in a loop). Warm cache = the rebuilt tree paints images synchronously.
+ *
+ * Missing images (still generating in the background → 404) settle fast and
+ * resolve like everything else — the swap then shows the same blank spot it
+ * showed before, i.e. no NEW flash. A slow straggler is capped by
+ * `timeoutMs`: better to swap with one image late than hold the page on a
+ * stale slide.
+ */
+function preloadSlideImages(svg: string, timeoutMs: number): Promise<void> {
+  const urls = new Set<string>()
+  const attrRe =
+    /(?:xlink:href|href)=["'](https?:\/\/[^"']+\.(?:png|jpe?g|gif|webp|svg|bmp))["']/gi
+  const cssRe =
+    /url\((['"]?)(https?:\/\/[^)'"]+\.(?:png|jpe?g|gif|webp|svg|bmp))\1\)/gi
+  let m: RegExpExecArray | null
+  while ((m = attrRe.exec(svg))) urls.add(m[1])
+  while ((m = cssRe.exec(svg))) urls.add(m[2])
+  if (urls.size === 0) return Promise.resolve()
+  const loads = [...urls].map(
+    (u) =>
+      new Promise<void>((resolve) => {
+        const img = new Image()
+        img.onload = () => resolve()
+        img.onerror = () => resolve()
+        img.src = u
+      })
+  )
+  return Promise.race([
+    Promise.all(loads).then(() => undefined),
+    new Promise<void>((resolve) => window.setTimeout(resolve, timeoutMs))
+  ])
+}
+
+/** Strip the retry cache-buster off a probed image URL so failure bookkeeping
+ *  always keys on the canonical URL. */
+function canonicalImageUrl(url: string): string {
+  return url.replace(/[?&]v=\d+$/, '')
+}
+
 const SKIP_TAGS = ['defs', 'style', 'title', 'desc', 'metadata', 'clippath', 'lineargradient', 'radialgradient', 'pattern', 'filter', 'mask', 'symbol']
 
 /** A highlight box in stage-relative CSS px, plus the element id it tracks. */
@@ -170,6 +215,13 @@ export function LivePreviewEditor({
   const selectedIdsRef = useRef<string[]>([])
   activeRef.current = active
   selectedIdsRef.current = selectedIds
+  // Server image URLs that failed to load (canonical URL → probe attempts so
+  // far). ppt-master writes SVG pages that reference images STILL BEING
+  // generated in the background — those `<image>`s 404 and would stay blank
+  // forever, because nothing re-requests them when the file finally lands
+  // (the SVG's mtime doesn't change when a sibling PNG appears). The retry
+  // loop below probes these and swaps them in place once servable.
+  const failedImagesRef = useRef<Map<string, number>>(new Map())
 
   // Report reachability changes up to the parent (tab visibility).
   useEffect(() => {
@@ -186,7 +238,17 @@ export function LivePreviewEditor({
         if (typeof data?.content !== 'string') throw new Error('no content')
         if (typeof data.mtime === 'number') mtimesRef.current[name] = data.mtime
         if (activeRef.current !== name) return
-        setContent(absolutizeSlideImages(data.content, baseUrl))
+        const absolutized = absolutizeSlideImages(data.content, baseUrl)
+        // Only wait for the warm-up when a slide is already on screen — that's
+        // the case where the innerHTML swap would flash. First paint (host not
+        // mounted yet) should show content ASAP instead.
+        if (svgHostRef.current) {
+          await preloadSlideImages(absolutized, 1500)
+          // Re-check after the await: the user may have switched pages while
+          // we were warming this one's images.
+          if (activeRef.current !== name) return
+        }
+        setContent(absolutized)
         setUndoDepth(typeof data.undo_depth === 'number' ? data.undo_depth : 0)
         // Seed annotations from the server's per-slide list.
         const list: SlideAnnotation[] = Array.isArray(data.annotations) ? data.annotations : []
@@ -221,9 +283,14 @@ export function LivePreviewEditor({
       if (cached && (s.mtime === undefined || cached.mtime >= s.mtime)) return
       void fetch(api(`/api/slide/${encodeURIComponent(s.name)}`), { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
+        .then(async (data) => {
           if (cancelled || !data || typeof data.content !== 'string') return
           const svg = absolutizeSlideImages(data.content, baseUrl)
+          // Same warm-before-swap as loadSlide: a regenerated page replaces
+          // its rail thumbnail's innerHTML too, and 15 tiny frames flashing
+          // in a row reads worse than the main stage doing it once.
+          await preloadSlideImages(svg, 1500)
+          if (cancelled) return
           const mtime = typeof data.mtime === 'number' ? data.mtime : (s.mtime ?? 0)
           setThumbs((prev) => {
             const existing = prev[s.name]
@@ -437,6 +504,85 @@ export function LivePreviewEditor({
     setHoverId(null)
     setMarquee(null)
   }, [content])
+
+  // ── missing-image recovery ────────────────────────────────────────────────
+  // Collect load failures for THIS server's images. A window capture-phase
+  // listener sees resource `error` events (they don't bubble, but capture
+  // reaches them — same mechanism as the geometry effect's `load` listener),
+  // covering both the main stage and the thumbnail rail with one hook.
+  // Filtering on the server origin keeps unrelated app images (avatars etc.)
+  // out of the retry set.
+  useEffect(() => {
+    const base = baseUrl.replace(/\/$/, '')
+    const onError = (e: Event): void => {
+      const t = e.target
+      let url = ''
+      if (t instanceof SVGImageElement) url = t.href.baseVal
+      else if (t instanceof HTMLImageElement) url = t.currentSrc || t.src
+      if (!url || !url.startsWith(base)) return
+      const canonical = canonicalImageUrl(url)
+      if (!failedImagesRef.current.has(canonical)) {
+        failedImagesRef.current.set(canonical, 0)
+      }
+    }
+    window.addEventListener('error', onError, true)
+    return () => window.removeEventListener('error', onError, true)
+  }, [baseUrl])
+
+  // Probe failed images on a slow tick. On success, repoint every matching
+  // `<image>` in the live SVG at a cache-busted URL IN PLACE — no innerHTML
+  // rebuild, so the rest of the page doesn't so much as blink while the
+  // photo "develops" — and drop any cached rail thumbnails that referenced
+  // it (the 2s slide-list poll re-arms the thumbnail effect, which re-fetches
+  // them with the image now servable). Attempts are capped per URL so an
+  // image that will never exist (generation genuinely failed) doesn't get
+  // probed forever.
+  useEffect(() => {
+    const RETRY_MS = 3000
+    const MAX_ATTEMPTS = 400 // × 3s ≈ 20min — beyond any real generation run
+    const id = window.setInterval(() => {
+      failedImagesRef.current.forEach((attempts, url) => {
+        if (attempts >= MAX_ATTEMPTS) {
+          failedImagesRef.current.delete(url)
+          return
+        }
+        failedImagesRef.current.set(url, attempts + 1)
+        const busted = `${url}${url.includes('?') ? '&' : '?'}v=${Date.now()}`
+        const probe = new Image()
+        probe.onload = () => {
+          failedImagesRef.current.delete(url)
+          const host = svgHostRef.current
+          if (host) {
+            host.querySelectorAll('image').forEach((el) => {
+              const cur =
+                el.getAttribute('href') ?? el.getAttribute('xlink:href')
+              if (cur === url) {
+                el.setAttribute('href', busted)
+                if (el.hasAttribute('xlink:href')) {
+                  el.setAttribute('xlink:href', busted)
+                }
+              }
+            })
+          }
+          setThumbs((prev) => {
+            let changed = false
+            const next: typeof prev = {}
+            for (const [k, v] of Object.entries(prev)) {
+              if (v.svg.includes(url)) {
+                changed = true
+                continue
+              }
+              next[k] = v
+            }
+            return changed ? next : prev
+          })
+          bumpGeom() // the developed image changes bboxes — re-measure overlay
+        }
+        probe.src = busted
+      })
+    }, RETRY_MS)
+    return () => window.clearInterval(id)
+  }, [bumpGeom])
 
   // ── hover pre-highlight (rAF-throttled delegated mousemove) ───────────────
   const hoverRafRef = useRef(0)

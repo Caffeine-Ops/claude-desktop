@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, net, shell, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import type { PermissionResponse } from '../../shared/types'
@@ -34,9 +34,13 @@ import {
   type ShellOpenPathResult,
   type ShellStatFilesPayload,
   type ShellStatFilesResult,
+  type ShellRevealPathPayload,
+  type ShellRevealPathResult,
   type ImageManifestReadPayload,
   type ImageManifestReadResult,
   type ImageManifestItem,
+  type ImageFileReadPayload,
+  type ImageFileReadResult,
   type ModelListResult,
   type ModelSetPayload,
   type WorkspacePickResult,
@@ -84,7 +88,7 @@ import type {
   RuntimeLogEntry,
   UiPermissionMode
 } from '../../shared/ipc-channels'
-import { clearLogs, getLogs } from '../core/logCollector'
+import { clearLogs, getLogFileTarget, getLogs } from '../core/logCollector'
 
 /**
  * MODEL_LIST cache: the catalog changes rarely, and the composer's 模型 chip
@@ -209,7 +213,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_FILE_OPEN)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_OPEN_PATH)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_STAT_FILES)
+  ipcMain.removeHandler(IPC_CHANNELS.SHELL_REVEAL_PATH)
   ipcMain.removeHandler(IPC_CHANNELS.IMAGE_MANIFEST_READ)
+  ipcMain.removeHandler(IPC_CHANNELS.IMAGE_FILE_READ)
   ipcMain.removeHandler(IPC_CHANNELS.MODEL_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.MODEL_SET)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LIST)
@@ -483,11 +489,15 @@ export function registerIpcHandlers(): void {
   )
 
   // Filter scraped candidate paths down to real files. The renderer
-  // scrapes absolute paths out of an assistant turn's text (which it
-  // CAN'T verify — no fs access), then asks us which actually exist as
-  // regular files. We `statSync` each, keeping absolute + existing +
-  // is-file, preserving input order. Capped so a pathological message
-  // full of `/`-strings can't make us stat thousands of entries.
+  // scrapes paths out of an assistant turn's text (which it CAN'T verify —
+  // no fs access), then asks us which actually exist as regular files.
+  // `~/`-prefixed paths are expanded here (the model reports deliverables
+  // as `~/Desktop/…` about as often as fully absolute), and the EXPANDED
+  // path is what's returned — the caller feeds these straight into
+  // SHELL_OPEN_PATH / SHELL_REVEAL_PATH, which only take absolute paths.
+  // We `statSync` each, keeping absolute + existing + is-file, preserving
+  // input order. Capped so a pathological message full of `/`-strings
+  // can't make us stat thousands of entries.
   ipcMain.handle(
     IPC_CHANNELS.SHELL_STAT_FILES,
     async (
@@ -498,8 +508,13 @@ export function registerIpcHandlers(): void {
       const MAX_CANDIDATES = 50
       const files: string[] = []
       const seen = new Set<string>()
-      for (const p of input.slice(0, MAX_CANDIDATES)) {
-        if (typeof p !== 'string' || !p || !isAbsolute(p)) continue
+      for (const raw of input.slice(0, MAX_CANDIDATES)) {
+        if (typeof raw !== 'string' || !raw) continue
+        const p =
+          raw === '~' || raw.startsWith('~/')
+            ? join(homedir(), raw.slice(1))
+            : raw
+        if (!isAbsolute(p)) continue
         if (seen.has(p)) continue
         seen.add(p)
         try {
@@ -512,9 +527,40 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // Read a ppt-master image-generation manifest and surface each item's
-  // status + a thumbnail for the ones on disk. The renderer polls this while
-  // `image_gen.py --manifest` runs to drive the 「图片」canvas tab.
+  // Reveal a file in the OS file manager (Finder on macOS), selected. Same
+  // validation contract as SHELL_OPEN_PATH: absolute, existing, regular
+  // file. `showItemInFolder` never opens/executes the file — it only asks
+  // the file manager to highlight it.
+  ipcMain.handle(
+    IPC_CHANNELS.SHELL_REVEAL_PATH,
+    async (
+      _event,
+      payload: ShellRevealPathPayload
+    ): Promise<ShellRevealPathResult> => {
+      const absPath =
+        payload && typeof payload.absPath === 'string' ? payload.absPath : ''
+      if (!absPath || !isAbsolute(absPath)) {
+        return { error: 'Invalid path (expected an absolute path).' }
+      }
+      try {
+        if (!statSync(absPath).isFile()) {
+          return { error: 'Not a file.' }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { error: `File not found: ${msg}` }
+      }
+      shell.showItemInFolder(absPath)
+      return { error: '' }
+    }
+  )
+
+  // Read a ppt-master image worklist and surface each item's status + a
+  // thumbnail for the ones on disk. Serves BOTH acquisition runners — they
+  // share the `{ items: [{ filename, status, … }] }` shape:
+  //   - image_gen.py --manifest  → image_prompts.json (status: Generated)
+  //   - image_search.py --batch  → image_queries.json (status: Sourced)
+  // The renderer polls this while a run is live to drive the 「图片」tab.
   //
   // Why main owns this: the renderer has no fs access, and CSP forbids `file:`
   // img sources, so the only way to preview the generated PNGs is to decode
@@ -579,17 +625,36 @@ export function registerIpcHandlers(): void {
         const r = raw as Record<string, unknown>
         const filename = typeof r.filename === 'string' ? r.filename : ''
         if (!filename) continue
-        const status = typeof r.status === 'string' ? r.status : 'Pending'
-        if (status === 'Generated') generatedCount += 1
+        const rawStatus = typeof r.status === 'string' ? r.status : 'Pending'
         // Resolve the image next to the manifest; basename() strips any path
         // segment in filename so it can't escape the images dir.
         const absPath = join(dir, basename(filename))
         const exists = existsSync(absPath)
+        // Display-layer normalization: `Needs-Manual` means "waiting for the
+        // USER to generate this image externally and drop the file in" — the
+        // user won't (and shouldn't) hand-edit the manifest afterwards, so the
+        // file appearing on disk IS the completion signal. Surface it as
+        // Generated so the gallery card flips green the moment they drop the
+        // file, instead of showing 失败 forever. Deliberately NOT applied to
+        // `Failed` (+leftover file): a failed generation's partial/stale file
+        // is not trustworthy output. The manifest on disk is never modified.
+        const status =
+          rawStatus === 'Needs-Manual' && exists ? 'Generated' : rawStatus
+        // Both runners' "done" flavors count toward the progress numbers.
+        if (status === 'Generated' || status === 'Sourced') generatedCount += 1
         const item: ImageManifestItem = {
           filename,
           status,
           purpose: typeof r.purpose === 'string' ? r.purpose : undefined,
-          altText: typeof r.alt_text === 'string' ? r.alt_text : undefined,
+          // image_queries.json rows carry a `query` instead of `alt_text` —
+          // it's the best human-readable description a web row has, so it
+          // fills the same caption slot in the 图片 grid.
+          altText:
+            typeof r.alt_text === 'string'
+              ? r.alt_text
+              : typeof r.query === 'string'
+                ? r.query
+                : undefined,
           lastError: typeof r.last_error === 'string' ? r.last_error : undefined,
           exists,
           absPath
@@ -617,6 +682,55 @@ export function registerIpcHandlers(): void {
         items,
         generatedCount,
         total: items.length
+      }
+    }
+  )
+
+  // Read one image file as a full-resolution data URI for the 图片 tab's
+  // in-app lightbox. Returns the ORIGINAL bytes with an extension-derived
+  // mime — decoding through nativeImage and re-encoding would turn a 300KB
+  // JPEG into a multi-MB PNG for no benefit. Guards: absolute path, regular
+  // file, image extension, and a size cap so a mislabeled giant can't stall
+  // the IPC channel.
+  ipcMain.handle(
+    IPC_CHANNELS.IMAGE_FILE_READ,
+    async (
+      _event,
+      payload: ImageFileReadPayload
+    ): Promise<ImageFileReadResult> => {
+      const absPath =
+        payload && typeof payload.absPath === 'string' ? payload.absPath : ''
+      if (!absPath || !isAbsolute(absPath)) {
+        return { ok: false, error: 'Invalid path (expected absolute).' }
+      }
+      const MIME: Record<string, string> = {
+        png: 'image/png',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        gif: 'image/gif',
+        webp: 'image/webp',
+        bmp: 'image/bmp',
+        svg: 'image/svg+xml'
+      }
+      const ext = absPath.includes('.')
+        ? absPath.split('.').pop()!.toLowerCase()
+        : ''
+      const mime = MIME[ext]
+      if (!mime) {
+        return { ok: false, error: `Not an image file: .${ext}` }
+      }
+      const MAX_BYTES = 30 * 1024 * 1024
+      try {
+        const stat = statSync(absPath)
+        if (!stat.isFile()) return { ok: false, error: 'Not a file.' }
+        if (stat.size > MAX_BYTES) {
+          return { ok: false, error: 'Image too large for in-app preview.' }
+        }
+        const dataUrl = `data:${mime};base64,${readFileSync(absPath).toString('base64')}`
+        return { ok: true, dataUrl }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ok: false, error: `Read failed: ${msg}` }
       }
     }
   )
@@ -1145,6 +1259,23 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle(IPC_CHANNELS.LOGS_CLEAR, async (): Promise<void> => {
     clearLogs()
+  })
+  // Reveal the on-disk runtime log in the OS file manager. Prefer selecting
+  // today's file; fall back to opening the logs directory when no file has
+  // been written yet (or it was just deleted by 清空). mkdir first so the
+  // fallback never opens a non-existent path.
+  ipcMain.handle(IPC_CHANNELS.LOGS_REVEAL, async (): Promise<void> => {
+    const { file, dir } = getLogFileTarget()
+    if (file && existsSync(file)) {
+      shell.showItemInFolder(file)
+      return
+    }
+    try {
+      mkdirSync(dir, { recursive: true })
+    } catch {
+      // Directory creation failing here is non-fatal — openPath will report.
+    }
+    await shell.openPath(dir)
   })
 
   // Engine-free CLI backend read/write for the embedded web settings page.

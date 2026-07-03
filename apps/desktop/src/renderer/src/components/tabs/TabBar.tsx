@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
+import { motion } from 'motion/react'
 import type { TabDescriptor } from '../../../../shared/ipc-channels'
 import { NotificationBadge } from '../common/NotificationBadge'
+import { railGliderSpring } from '../../shell/railMotion'
 
 /**
  * Vertical navigation rail — rendered inside the shell window's own
@@ -206,18 +208,17 @@ function TabRow({
   // （chat "智能助手"）用对话气泡。
   const isWebTab = tab.title === '工作画布'
 
-  // Full-width nav row. `relative` so the active accent bar can absolutely
-  // position on the left edge. 1px transparent border keeps active/inactive
-  // the same box size so the row doesn't nudge layout on selection.
+  // Full-width nav row. `relative isolate` so the glider can sit on -z-[1]:
+  // isolate opens a local stacking context, which puts the glider ABOVE the
+  // row's own hover wash but BELOW the icon/label/badge — no per-child
+  // z-index needed.
   const sharedClass =
-    'group relative flex h-9 w-full items-center gap-2.5 rounded-lg pl-3 pr-2.5 text-left text-[13px] leading-none transition-colors cursor-default select-none'
+    'group relative isolate flex h-9 w-full items-center gap-2.5 rounded-lg pl-3 pr-2.5 text-left text-[13px] leading-none transition-colors cursor-default select-none'
 
-  // Active: solid rail fill + firm text (prototype --bg-active). The 3px
-  // green accent bar is a separate absolutely-positioned span below. All
-  // colors come from the rail palette (--rail-*) so the rail matches the
-  // prototype in light and stays sane in dark.
-  const activeClass =
-    'bg-[var(--rail-active)] text-[color:var(--rail-text)] font-medium'
+  // Active styling is now TEXT-ONLY: the fill + accent bar moved into the
+  // shared-layout glider below, so switching tabs SLIDES the highlight from
+  // the old row to the new one instead of blinking two backgrounds.
+  const activeClass = 'text-[color:var(--rail-text)] font-medium'
   const inactiveClass =
     'bg-transparent text-[color:var(--rail-text-soft)] hover:bg-[var(--rail-hover)] hover:text-[color:var(--rail-text)]'
 
@@ -233,13 +234,21 @@ function TabRow({
       className={`${sharedClass} ${tab.active ? activeClass : inactiveClass}`}
       title={tab.workspacePath ?? tab.title}
     >
-      {/* Active selection bar — 3px accent on the left edge, the macOS
-          source-list cue. Only rendered for the active row. */}
+      {/* Active highlight glider — fill + 3px macOS source-list accent bar in
+          ONE absolutely-positioned layer. `layoutId` makes Motion FLIP it from
+          the previously-active row to this one (transform-only, spring-driven,
+          interruptible mid-flight), matching the v3 prototype's sliding
+          glider. Rows are same-size so the FLIP is pure translation — no
+          border-radius distortion to worry about. */}
       {tab.active ? (
-        <span
+        <motion.span
           aria-hidden
-          className="absolute left-0.5 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full bg-[var(--rail-accent)]"
-        />
+          layoutId="rail-nav-glider"
+          transition={railGliderSpring}
+          className="absolute inset-0 -z-[1] rounded-lg bg-[var(--rail-active)]"
+        >
+          <span className="absolute left-0.5 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full bg-[var(--rail-accent)]" />
+        </motion.span>
       ) : null}
       <span aria-hidden className="flex shrink-0 items-center justify-center">
         {isWebTab ? <DesignBoardIcon /> : <ChatBubbleIcon />}

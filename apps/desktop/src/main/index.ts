@@ -2,7 +2,7 @@
 // any module that reads auth tokens / model overrides / base URLs runs.
 import './bootstrap/loadEnv'
 
-import { patchConsole, attachRendererCapture } from './core/logCollector'
+import { patchConsole, patchProcessEvents, attachRendererCapture } from './core/logCollector'
 
 // Tap this process's console.* as early as possible so the「日志分析」panel
 // captures everything after env load. Idempotent; the file sink opens lazily
@@ -10,6 +10,10 @@ import { patchConsole, attachRendererCapture } from './core/logCollector'
 // `[loadEnv]` lines printed by the import above run before this and aren't
 // captured — an acceptable gap for the very first startup lines.
 patchConsole()
+// Also tap process-level signals (unhandledRejection / uncaughtException /
+// process warnings) — they write straight to stderr without touching
+// console.*, so before this they only ever flashed by in the terminal.
+patchProcessEvents()
 
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'

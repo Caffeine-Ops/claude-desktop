@@ -42,6 +42,8 @@ const subscribers = new Set<WebContents>()
 /** 落盘流。首次 push 时惰性打开（那时 app 已 ready，userData 可用）。 */
 let fileStream: WriteStream | null = null
 let fileStreamFailed = false
+/** 当前落盘文件的绝对路径（fileStream 打开后有效），给「查看日志文件」用。 */
+let currentLogPath: string | null = null
 
 /**
  * 原始 console 方法引用。patchConsole 把它们存下来，patch 后的实现既调原始
@@ -67,17 +69,30 @@ function openFileStream(): void {
     const dir = logsDir()
     mkdirSync(dir, { recursive: true })
     const day = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
-    fileStream = createWriteStream(join(dir, `runtime-${day}.log`), { flags: 'a' })
+    const path = join(dir, `runtime-${day}.log`)
+    fileStream = createWriteStream(path, { flags: 'a' })
+    currentLogPath = path
     fileStream.on('error', () => {
       // 落盘失败不能影响日志面板；标记放弃文件，继续走内存 + 推送。
       fileStreamFailed = true
       fileStream = null
+      currentLogPath = null
     })
     // 标记一次会话边界，回看时能区分不同启动。
     fileStream.write(`\n===== session start ${new Date().toISOString()} =====\n`)
   } catch {
     fileStreamFailed = true
   }
+}
+
+/**
+ * 「查看日志文件」的目标：当前正在写的文件（若已打开）+ 日志目录。文件可能
+ * 尚未打开（本次启动还没有一条日志落盘，几乎不可能）或刚被 clearLogs 删掉
+ * ——调用方（LOGS_REVEAL handler）自行 existsSync 后决定 reveal 文件还是
+ * 退回打开目录。
+ */
+export function getLogFileTarget(): { file: string | null; dir: string } {
+  return { file: currentLogPath, dir: logsDir() }
 }
 
 /** 把已知 ANSI 颜色码剥掉——daemon / vite 的彩色输出在面板里是噪音。 */
@@ -148,6 +163,7 @@ export function clearLogs(): void {
     }
     fileStream = null
   }
+  currentLogPath = null
   // 之前若曾标记落盘失败，清空是一次重置机会——允许重建。
   fileStreamFailed = false
 
@@ -246,4 +262,38 @@ export function patchConsole(): void {
   console.warn = wrap('warn', originalConsole.warn)
   console.error = wrap('error', originalConsole.error)
   console.debug = wrap('debug', originalConsole.debug)
+}
+
+let processEventsPatched = false
+
+/**
+ * 补上 patchConsole 抓不到的 process 级信号——它们直接写 stderr、不经过
+ * console.*，恰恰是排障最要紧的一类（engine 的 `cli exited before first
+ * init` 就是以 UnhandledPromiseRejectionWarning 的形态只在终端一闪而过，
+ * 日志文件里没有）：
+ *   - unhandledRejection      —— async 函数忘了 catch 的 reject。只记录，
+ *     不改变 node 的默认 warning 行为（不调 process.exit 也不吞）。
+ *   - uncaughtExceptionMonitor —— 只监听不接管：普通的 `uncaughtException`
+ *     监听器会阻止 Electron 默认的崩溃/弹窗行为，monitor 变体专为
+ *     「旁路记录」设计。
+ *   - warning                 —— DeprecationWarning / MaxListeners 等。
+ * 幂等；在 patchConsole 旁调用一次。
+ */
+export function patchProcessEvents(): void {
+  if (processEventsPatched) return
+  processEventsPatched = true
+
+  process.on('unhandledRejection', (reason) => {
+    const detail =
+      reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)
+    pushLog('main', 'error', `[unhandledRejection] ${detail}`)
+  })
+
+  process.on('uncaughtExceptionMonitor', (err) => {
+    pushLog('main', 'error', `[uncaughtException] ${err.stack ?? err.message}`)
+  })
+
+  process.on('warning', (warning) => {
+    pushLog('main', 'warn', `[process warning] ${warning.stack ?? `${warning.name}: ${warning.message}`}`)
+  })
 }

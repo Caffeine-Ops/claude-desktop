@@ -645,6 +645,8 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
   const sessionLoading = useChatStore((s) => s.sessionLoading)
   const setSession = useChatStore((s) => s.setSession)
   const setSessionLoading = useChatStore((s) => s.setSessionLoading)
+  const beginSessionSwitch = useChatStore((s) => s.beginSessionSwitch)
+  const endSessionSwitch = useChatStore((s) => s.endSessionSwitch)
 
   const [threads, setThreads] = useState<readonly ThreadSummary[]>([])
   // Flips true once the initial `listSessions()` has returned (success
@@ -711,6 +713,13 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     }
   }, [])
 
+  // Monotonic switch sequence. A switch's `finally` may run SECONDS after a
+  // newer switch began (cold start awaits switchSession) — without this
+  // guard, switch A's cleanup would clear the loading/switching flags that
+  // switch B just raised, dropping B's veil mid-load. Only the newest
+  // switch is allowed to clear the shared flags.
+  const switchSeqRef = useRef(0)
+
   const onSwitchToNewThread = useCallback(async (): Promise<void> => {
     if (!window.chatApi) return
     // Multi-runtime: switching away from a streaming session is now
@@ -719,8 +728,13 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     // No interrupt confirmation needed; the old streamingGuard call
     // was a holdover from the single-runtime era when switching
     // teardowned the prev cli.
+    const seq = ++switchSeqRef.current
     try {
       setSessionLoading(true)
+      // Switch chrome (ThreadView curtain): the two IPC round-trips below
+      // leave the OLD transcript on screen until setSession mounts the empty
+      // thread — the switching flag lets ThreadView veil that stale content.
+      beginSessionSwitch()
       const { sessionId: newId } = await window.chatApi.newSession()
       // `--session-id newId` (no resume) — cli should honor it, but
       // use the returned activeId defensively in case of a rebind.
@@ -732,9 +746,14 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     } catch (err) {
       console.error('[runtime] new thread failed', err)
     } finally {
-      setSessionLoading(false)
+      if (switchSeqRef.current === seq) {
+        setSessionLoading(false)
+        // Idempotent: setSession already cleared it on the success path;
+        // this covers the throw path so the veil can't get stuck on.
+        endSessionSwitch()
+      }
     }
-  }, [setSession, setSessionLoading])
+  }, [setSession, setSessionLoading, beginSessionSwitch, endSessionSwitch])
 
   const onSwitchToThread = useCallback(
     async (id: string): Promise<void> => {
@@ -742,8 +761,14 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
       // Multi-runtime: non-destructive switch. See onSwitchToNewThread
       // for the rationale — the prev session keeps its cli alive in
       // the background, so there's nothing to interrupt.
+      const seq = ++switchSeqRef.current
       try {
         setSessionLoading(true)
+        // Switch chrome: veil the old transcript until the target one
+        // mounts. On the cache-hit path below, setSession runs in this
+        // same synchronous batch — subscribers never observe the flag as
+        // true, so a fast switch renders zero switch chrome by design.
+        beginSessionSwitch()
 
         // Fire both IPCs in parallel. They don't depend on each other:
         //   - loadSession reads `<id>.jsonl` off disk and maps it to
@@ -806,10 +831,16 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
       } catch (err) {
         console.error('[runtime] switch thread failed', err)
       } finally {
-        setSessionLoading(false)
+        if (switchSeqRef.current === seq) {
+          setSessionLoading(false)
+          // Idempotent guard for the throw path (success path already
+          // cleared via setSession) — a failed load must not strand the
+          // ThreadView switch veil.
+          endSessionSwitch()
+        }
       }
     },
-    [setSession, setSessionLoading]
+    [setSession, setSessionLoading, beginSessionSwitch, endSessionSwitch]
   )
 
   // Cold-start auto-select. Ensures that by the time the user types

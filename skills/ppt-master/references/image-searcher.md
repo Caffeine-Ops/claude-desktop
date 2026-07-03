@@ -147,6 +147,8 @@ python3 scripts/image_search.py --batch <project_path>/images/image_queries.json
 
 Required per item: `filename`, `query`, `status` (`Pending`). Optional per-item overrides: `slide`, `purpose`, `orientation`, `provider`, `strict_no_attribution`, `min_width`, `min_height`.
 
+**Also set `alt_text` per item** — a short caption **in the deck's content language**. The Claude Desktop host renders this batch file as a live image gallery and uses `alt_text` as each card's title; without it the card falls back to the English `query` string, which reads as tech noise to non-technical users. (`query` stays English-optimized for the providers; `alt_text` is what the user sees. The runner preserves unknown fields on write-back.)
+
 The runner searches all `Pending` / `Failed` rows concurrently, appends each success to `image_sources.json` (the credit source of truth, idempotent on `filename`), and writes status back into `image_queries.json` — `Sourced` on success, `Needs-Manual` when the full provider/stage chain is exhausted. Status is saved after each completion, so an interrupted run preserves finished rows; re-running skips terminal rows. A single `web` row may still use single-query mode above.
 
 **Pacing**: free providers (Wikimedia/Openverse) are rate-sensitive, so batch concurrency defaults to a modest **3** (`--concurrency N`, or `IMAGE_SEARCH_CONCURRENCY` env). Use `--concurrency 1` to restore strict one-at-a-time pacing. Single-query mode is one request at a time by nature.

@@ -126,6 +126,17 @@ interface ChatState {
    */
   sessionLoading: boolean
   /**
+   * True ONLY during the click → new-session-messages-mounted window of a
+   * session switch (set by beginSessionSwitch, cleared by the setSession
+   * that mounts the target transcript). Distinct from `sessionLoading`,
+   * which stays true through the multi-second cli cold start — by then the
+   * history is already on screen and must NOT be covered by switch chrome.
+   * Drives the ThreadView switch transition (curtain / skeleton): a
+   * cache-hit switch sets and clears this within one synchronous batch, so
+   * subscribers never observe `true` and fast switches show zero chrome.
+   */
+  sessionSwitching: boolean
+  /**
    * Per-session state map. Each slot holds the messages + streaming
    * flags for a session that's been visited / has a live runtime.
    * Keys are fusion-code session UUIDs.
@@ -236,6 +247,15 @@ interface ChatState {
 
   /** Flip the loading indicator on/off during a session switch. */
   setSessionLoading: (loading: boolean) => void
+
+  /**
+   * Mark the start of a session switch (see `sessionSwitching`). Cleared
+   * automatically by the next setSession / setForegroundSession mount;
+   * callers should also clear it in their error paths via
+   * endSessionSwitch so a failed load can't strand the switch chrome.
+   */
+  beginSessionSwitch: () => void
+  endSessionSwitch: () => void
 }
 
 function randomId(prefix: string): string {
@@ -316,6 +336,7 @@ function mirrorFromSlot(slot: PerSessionState): Partial<ChatState> {
 export const useChatStore = create<ChatState>((set) => ({
   sessionId: null,
   sessionLoading: false,
+  sessionSwitching: false,
   perSession: {},
   messages: [],
   streaming: false,
@@ -803,6 +824,7 @@ export const useChatStore = create<ChatState>((set) => ({
     set({
       sessionId: null,
       sessionLoading: false,
+      sessionSwitching: false,
       perSession: {},
       ...EMPTY_SLOT
     }),
@@ -843,6 +865,9 @@ export const useChatStore = create<ChatState>((set) => ({
             }
       return {
         sessionId,
+        // Mounting the target transcript ends the switch window — the
+        // ThreadView entrance takes over from here.
+        sessionSwitching: false,
         perSession: { ...s.perSession, [sessionId]: slot },
         ...mirrorFromSlot(slot)
       }
@@ -851,17 +876,25 @@ export const useChatStore = create<ChatState>((set) => ({
   setForegroundSession: (sessionId) =>
     set((s) => {
       if (sessionId === null) {
-        return { sessionId: null, ...EMPTY_SLOT }
+        return { sessionId: null, sessionSwitching: false, ...EMPTY_SLOT }
       }
       const slot = s.perSession[sessionId] ?? EMPTY_SLOT
       const perSession =
         sessionId in s.perSession
           ? s.perSession
           : { ...s.perSession, [sessionId]: slot }
-      return { sessionId, perSession, ...mirrorFromSlot(slot) }
+      return {
+        sessionId,
+        sessionSwitching: false,
+        perSession,
+        ...mirrorFromSlot(slot)
+      }
     }),
 
-  setSessionLoading: (loading) => set({ sessionLoading: loading })
+  setSessionLoading: (loading) => set({ sessionLoading: loading }),
+
+  beginSessionSwitch: () => set({ sessionSwitching: true }),
+  endSessionSwitch: () => set({ sessionSwitching: false })
 }))
 
 /**
@@ -987,12 +1020,21 @@ function toolActivityKey(toolName: string | undefined): string {
  * Drives the composer status bar (the "✻ 探索中… … 2.5s" strip above the
  * input). While the foreground session is streaming, returns:
  *   - active:    true → render the bar
- *   - startedAt: turn start (the elapsed-timer basis, whole turn)
+ *   - startedAt: basis for the elapsed timer — the CURRENT STEP's start,
+ *                not the turn's (see below)
  *   - activity:  coarse Chinese-activity KEY from the newest still-running
  *                tool, or 'thinking' when no tool is in flight yet
  *
- * All-scalar return for useShallow stability. The bar shows ONE turn-level
- * timer (every tool in the turn shares turnStartedAt), matching the reference.
+ * Timer basis is per-STEP, not per-turn: the bar's label names the current
+ * activity ("执行中…"), so the number next to it must be how long THAT
+ * activity has been going — a running tool counts from its own startedAt, a
+ * thinking gap counts from when the previous tool settled. A turn-total
+ * ("104.7s" while the current command started 5s ago) reads as a lie next
+ * to a per-activity label. Falls back to turnStartedAt when a part carries
+ * no timestamp (and for the turn's opening thinking phase, where step start
+ * IS turn start).
+ *
+ * All-scalar return for useShallow stability.
  */
 export function useTurnActivity(): {
   active: boolean
@@ -1005,19 +1047,24 @@ export function useTurnActivity(): {
         return { active: false, startedAt: undefined, activity: 'thinking' }
       }
       // Walk all parts to find (a) the newest still-running tool-call and
-      // (b) the very last part overall (to know if we're mid-prose-output).
+      // its own start stamp, (b) the newest settled tool's end stamp (basis
+      // for a mid-turn thinking gap), and (c) the very last part overall
+      // (to know if we're mid-prose-output).
       let runningTool: string | undefined
+      let runningToolStartedAt: number | undefined
+      let lastSettledAt: number | undefined
       let lastPartType: string | undefined
       for (const m of s.messages) {
         if (!Array.isArray(m.content)) continue
         for (const p of (m.content as unknown) as ContentPart[]) {
           lastPartType = p.type
-          if (
-            p.type === 'tool-call' &&
-            p.result === undefined &&
-            typeof p.toolName === 'string'
-          ) {
+          if (p.type !== 'tool-call') continue
+          if (p.result === undefined && typeof p.toolName === 'string') {
             runningTool = p.toolName
+            runningToolStartedAt =
+              typeof p.startedAt === 'number' ? p.startedAt : undefined
+          } else if (typeof p.endedAt === 'number') {
+            lastSettledAt = Math.max(lastSettledAt ?? 0, p.endedAt)
           }
         }
       }
@@ -1028,9 +1075,19 @@ export function useTurnActivity(): {
       if (runningTool === undefined && lastPartType === 'text') {
         return { active: false, startedAt: undefined, activity: 'thinking' }
       }
+      // The walk spans the WHOLE thread, so lastSettledAt may belong to a
+      // previous turn — only trust it as the thinking-gap basis when it's
+      // inside the current turn; otherwise the gap started with the turn.
+      const gapStartedAt =
+        lastSettledAt !== undefined && lastSettledAt > s.turnStartedAt
+          ? lastSettledAt
+          : s.turnStartedAt
       return {
         active: true,
-        startedAt: s.turnStartedAt,
+        startedAt:
+          runningTool !== undefined
+            ? (runningToolStartedAt ?? s.turnStartedAt)
+            : gapStartedAt,
         activity: toolActivityKey(runningTool)
       }
     })
@@ -1128,8 +1185,19 @@ const PREVIEW_SERVER_RE = /(?:confirm_ui|svg_editor)[/\\]server\.py/
 // "Running on <url>") so we never pick up a localhost URL that merely appears
 // in the command text or a doc comment. Captures the real (possibly
 // auto-advanced) port from stdout, the only trustworthy source.
+//
+// "failed to become reachable: <url>" is deliberately in the accepted set:
+// it's the OLD svg_editor launcher's probe-timeout phrasing, and that URL is
+// just as trustworthy as the success one — the launcher deterministically
+// allocated the port itself before spawning; only its 15s readiness probe
+// timed out (routinely, under load) while the detached server kept booting
+// and came up fine. Accepting it costs nothing even when the server really
+// died: showSlidesTab keeps its own reachability + project-identity gate, so
+// a dead URL never surfaces a tab. (The launcher itself now prints the
+// success phrasing for a live-but-slow child, but the DMG-bundled skill
+// lags this repo — the fallback keeps old bundles working.)
 const PREVIEW_URL_RE =
-  /(?:running (?:at|on)|started[^\n]*background:)\s*(https?:\/\/(?:localhost|127\.0\.0\.1):\d+)/i
+  /(?:running (?:at|on)|started[^\n]*background:|failed to become reachable:)\s*(https?:\/\/(?:localhost|127\.0\.0\.1):\d+)/i
 const PREVIEW_PORT_FLAG_RE = /--port[=\s]+(\d+)/
 
 /** Best-effort plain-text from a tool-result that may be string/array/object. */
@@ -1276,20 +1344,63 @@ export function usePreviewServer(): PreviewServer | null {
   )
 }
 
-/* ───────────────── ppt-master AI image-generation feed ──────────────── */
+/* ───────────────── ppt-master image acquisition feed ──────────────── */
 
-// Match the manifest path off a running `image_gen.py --manifest <path>`
-// command. The path may be quoted (spaces) or bare. Anchored on `image_gen.py`
-// so an unrelated `--manifest` elsewhere can't match. Mirrors usePreviewServer's
-// "read the real value out of the command text" approach.
+// Match the worklist path off a running `image_gen.py --manifest <path>`
+// command (AI generation) or its web sister `image_search.py --batch <path>`
+// (licensed-image download; both rewrite per-item status into that JSON as
+// they go). The path may be quoted (spaces) or bare. Anchored on the script
+// name so an unrelated `--manifest`/`--batch` elsewhere can't match. Mirrors
+// usePreviewServer's "read the real value out of the command text" approach.
+// The bare (unquoted) alternative accepts backslash-escaped spaces — the app
+// lives at `/Applications/Claude Desktop.app/…`, so an unquoted `cd` target
+// or manifest arg legitimately looks like `Claude\ Desktop.app`. Matched
+// escapes are undone by unescapeBareArg below.
 const IMAGE_MANIFEST_RE =
-  /image_gen\.py[^\n]*?--manifest[=\s]+(?:"([^"]+)"|'([^']+)'|(\S+))/
+  /image_gen\.py[^\n]*?--manifest[=\s]+(?:"([^"]+)"|'([^']+)'|((?:\\ |\S)+))/
+const IMAGE_BATCH_RE =
+  /image_search\.py[^\n]*?--batch[=\s]+(?:"([^"]+)"|'([^']+)'|((?:\\ |\S)+))/
 // The manifest path in the real command is RELATIVE ("projects/<name>/images/
 // image_prompts.json"), because the ppt-master image step runs
 // `cd ${SKILL_DIR} && python scripts/image_gen.py --manifest projects/…`. Pull
 // the `cd <dir>` target out of the same command so we can resolve the relative
 // manifest against it — the main-process IPC only accepts absolute paths.
-const CD_DIR_RE = /\bcd\s+(?:"([^"]+)"|'([^']+)'|(\S+))/
+const CD_DIR_RE = /\bcd\s+(?:"([^"]+)"|'([^']+)'|((?:\\ |\S)+))/
+
+/** Undo `\ ` escapes in a bare (unquoted) shell word captured by the regexes
+ *  above. Quoted captures never contain the escape, so this is safe to apply
+ *  to whichever alternative matched. */
+function unescapeBareArg(s: string): string {
+  return s.replace(/\\ /g, ' ')
+}
+
+/**
+ * Expand `$VAR` / `${VAR}` occurrences in `raw` against `VAR=value`
+ * assignments found in the SAME command text. Real ppt-master launches are
+ * self-contained one-liners — `SKILL_DIR="/Applications/…" && cd "$SKILL_DIR"
+ * && python3 scripts/image_gen.py --manifest projects/…` — so the assignment
+ * for every variable a path references sits earlier on the command line
+ * (each Bash call is a fresh shell; env doesn't persist across calls, and
+ * the model knows it). Same trick as extractServerProject's `$PROJ`
+ * resolution, generalized to whole paths. Iterates a few passes so chained
+ * assignments (`PROJ="$SKILL_DIR/projects/x"`) resolve too; variables with
+ * no visible assignment stay as-is, and the absolute-path check downstream
+ * rejects them (best-effort skip, never a wrong path).
+ */
+function expandShellVars(raw: string, command: string): string {
+  let out = raw
+  for (let pass = 0; pass < 3 && out.includes('$'); pass++) {
+    const next = out.replace(/\$\{?(\w+)\}?/g, (whole, name: string) => {
+      const assign = new RegExp(
+        `(?:^|[\\s;&(])(?:export\\s+)?${name}=(?:"([^"]+)"|'([^']+)'|(\\S+))`
+      ).exec(command)
+      return assign ? (assign[1] ?? assign[2] ?? assign[3] ?? whole) : whole
+    })
+    if (next === out) break
+    out = next
+  }
+  return out
+}
 
 /** True for a POSIX-absolute path. Renderer runs on macOS/Linux; the manifest
  *  paths are always POSIX, so a leading "/" is the only case to accept. */
@@ -1304,11 +1415,19 @@ function isAbsolutePosix(p: string): boolean {
  * (relative manifest with no `cd` to anchor it) — the caller skips those.
  */
 function resolveManifestPath(rawPath: string, command: string): string {
-  if (isAbsolutePosix(rawPath)) return rawPath
+  // Both the manifest arg and the `cd` target routinely arrive as shell
+  // variables (`"$SKILL_DIR"`, `"${PROJ}/images/…"`) — expand them against
+  // the command's own assignments before judging absoluteness. This exact
+  // shape is what silently killed the 图片 tab once the model started
+  // prefixing commands with `SKILL_DIR="…" &&` instead of inlining paths.
+  const path = expandShellVars(unescapeBareArg(rawPath), command)
+  if (isAbsolutePosix(path)) return path
   const cd = CD_DIR_RE.exec(command)
-  const base = cd ? (cd[1] ?? cd[2] ?? cd[3] ?? '') : ''
+  const base = cd
+    ? expandShellVars(unescapeBareArg(cd[1] ?? cd[2] ?? cd[3] ?? ''), command)
+    : ''
   if (!base || !isAbsolutePosix(base)) return ''
-  const segments = `${base}/${rawPath}`.split('/')
+  const segments = `${base}/${path}`.split('/')
   const out: string[] = []
   for (const seg of segments) {
     if (seg === '' || seg === '.') continue
@@ -1319,54 +1438,123 @@ function resolveManifestPath(rawPath: string, command: string): string {
 }
 
 /**
- * The foreground session's ppt-master image-generation activity, or null.
+ * One image-acquisition run the foreground session has launched (or is
+ * running): AI generation (`image_gen.py --manifest`) or web download
+ * (`image_search.py --batch`). `manifestPath` is the ABSOLUTE worklist JSON
+ * that run rewrites as it progresses — resolved from the command's (possibly
+ * relative, possibly `$VAR`-indirected) arg, since the IPC reader only
+ * accepts absolute paths.
+ */
+export type ImageFeed = {
+  manifestPath: string
+  generating: boolean
+  /** Which runner owns the worklist — drives the tab's copy (画 vs 找). */
+  kind: 'gen' | 'search'
+}
+
+/**
+ * Every image-acquisition run of the foreground session, in transcript order.
+ * A deck routinely runs BOTH kinds (ai rows via image_gen.py, web rows via
+ * image_search.py --batch), so this returns a list, deduped by manifest path
+ * with the LAST matching launch winning — a per-image retry re-runs the same
+ * worklist and we want the newest run's liveness (same rule as
+ * usePreviewServer).
  *
- * `manifestPath` is the ABSOLUTE `image_prompts.json` the `image_gen.py
- * --manifest` command is (or was) running against — resolved from the command's
- * relative `--manifest projects/…` arg against its `cd <dir>` target, since the
- * IPC reader only accepts absolute paths. `generating` is true while that Bash
- * tool call hasn't finished (no `endedAt` stamped yet — see
- * updateToolCallResult, which stamps it exactly once when the result lands).
- *
- * The LAST matching command wins: a per-image retry re-runs `--manifest`, and
- * we want to track the newest run (same rule as usePreviewServer). Its
- * `generating` flag reflects whether that newest run is still in flight.
+ * Where the command text comes from, per tool-call part:
+ *   - Bash: the command itself. `generating` is normally "no `endedAt`
+ *     stamped yet", BUT a `run_in_background` Bash returns its result (and
+ *     gets its endedAt) immediately while the real work keeps going — that
+ *     work reports through the task_update feed instead, folded onto this
+ *     part's `tasks` array. So when tasks exist they are the liveness
+ *     signal: any running/pending row means the run is still in flight.
+ *   - Task/Agent: the model sometimes delegates the whole generation step to
+ *     a subagent; the command then only appears inside the prompt arg. The
+ *     subagent's own Bash calls never reach this transcript, so scanning the
+ *     prompt is the ONLY way a delegated run still opens the 图片 tab.
  *
  * Derivation shape copies useWrittenFiles deliberately: subscribe to the
- * stable `messages` reference and derive in a `useMemo`, returning a plain
- * `{ manifestPath, generating }` (a string + a boolean). We must NOT build this
- * inside a `useShallow` selector that returns a fresh object each call — that
- * trips React's "getSnapshot should be cached" infinite loop (see the note on
- * useWrittenFiles). Two scalar fields compared by the caller are cheap and
- * loop-safe.
+ * stable `messages` reference and derive in a `useMemo` — NOT inside a
+ * `useShallow` selector returning a fresh array each call, which trips
+ * React's "getSnapshot should be cached" infinite loop (see the note on
+ * useWrittenFiles).
  */
-export type ImageGenActivity = { manifestPath: string; generating: boolean } | null
+// A Write to the worklist JSON itself — the earliest, path-independent signal
+// that an image acquisition run is coming. Matters most for Path B (the agent
+// drives the HOST's native image tool: no image_gen.py command ever appears
+// in the transcript) and Offline Manual mode — without this source those two
+// paths never open the 图片 tab at all.
+const IMAGE_WORKLIST_WRITE_RE =
+  /[/\\]images[/\\](image_prompts|image_queries)\.json$/
 
-export function useImageManifest(): ImageGenActivity {
+export function useImageFeeds(): ImageFeed[] {
   const messages = useChatStore((s) => s.messages)
   return useMemo(() => {
-    let found: ImageGenActivity = null
+    const feeds = new Map<string, ImageFeed>()
     for (const m of messages) {
       if (!Array.isArray(m.content)) continue
       for (const p of (m.content as unknown) as ContentPart[]) {
-        if (p.type !== 'tool-call' || p.toolName !== 'Bash') continue
-        const command = previewCommandText(p)
-        const match = IMAGE_MANIFEST_RE.exec(command)
-        if (!match) continue
-        const rawPath = match[1] ?? match[2] ?? match[3] ?? ''
-        if (!rawPath) continue
-        // The command runs `cd ${SKILL_DIR} && … --manifest projects/…` with a
-        // RELATIVE manifest path, but the IPC only reads absolute paths — so
-        // resolve it against the command's `cd` target. Skip if unresolvable.
-        const manifestPath = resolveManifestPath(rawPath, command)
-        if (!manifestPath) continue
-        // `endedAt` is stamped once when the tool result arrives; its absence
-        // means the command is still running (generation in progress).
-        const generating = typeof p.endedAt !== 'number'
-        found = { manifestPath, generating }
+        if (p.type !== 'tool-call') continue
+        // Source 1 — the Write that creates the worklist itself. Weakest
+        // liveness signal (writing the list ≠ the run started), so it's
+        // registered optimistically as generating and the data-side check
+        // (useImageFeedsLive / manifestDataDone in ThreadView) is what turns
+        // it off. A later command-source match for the same manifest path
+        // overwrites this entry with its sharper command-level signal (the
+        // real flow always writes the manifest BEFORE launching the run, so
+        // transcript order guarantees the command wins the Map.set).
+        if (p.toolName === 'Write') {
+          const args = p.args as Record<string, unknown> | undefined
+          const filePath =
+            typeof args?.file_path === 'string' ? args.file_path : ''
+          const wlMatch = IMAGE_WORKLIST_WRITE_RE.exec(filePath)
+          if (wlMatch && isAbsolutePosix(filePath)) {
+            feeds.set(filePath, {
+              manifestPath: filePath,
+              generating: true,
+              kind: wlMatch[1] === 'image_queries' ? 'search' : 'gen'
+            })
+          }
+          continue
+        }
+        // Sources 2/3 — the launch command, in a Bash call or inside a
+        // delegated Task/Agent prompt.
+        let text = ''
+        if (p.toolName === 'Bash') {
+          text = previewCommandText(p)
+        } else if (p.toolName === 'Task' || p.toolName === 'Agent') {
+          const args = p.args as Record<string, unknown> | undefined
+          text =
+            typeof args?.prompt === 'string'
+              ? args.prompt
+              : typeof p.argsText === 'string'
+                ? p.argsText
+                : ''
+        }
+        if (!text) continue
+        for (const [kind, re] of [
+          ['gen', IMAGE_MANIFEST_RE],
+          ['search', IMAGE_BATCH_RE]
+        ] as const) {
+          const match = re.exec(text)
+          if (!match) continue
+          const rawPath = match[1] ?? match[2] ?? match[3] ?? ''
+          if (!rawPath) continue
+          const manifestPath = resolveManifestPath(rawPath, text)
+          if (!manifestPath) continue
+          const tasks = Array.isArray(p.tasks)
+            ? (p.tasks as WorkflowTask[])
+            : []
+          const generating =
+            tasks.length > 0
+              ? tasks.some(
+                  (t) => t.status === 'running' || t.status === 'pending'
+                )
+              : typeof p.endedAt !== 'number'
+          feeds.set(manifestPath, { manifestPath, generating, kind })
+        }
       }
     }
-    return found
+    return [...feeds.values()]
   }, [messages])
 }
 

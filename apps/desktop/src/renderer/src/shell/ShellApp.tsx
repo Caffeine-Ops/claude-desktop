@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react'
+import { MotionConfig } from 'motion/react'
 
 import TabBar from '../components/tabs/TabBar'
 import { ShellSessionList } from './ShellSessionList'
@@ -51,18 +52,23 @@ export default function ShellApp(): React.ReactElement {
   }, [])
 
   return (
-    <div className="shell-chrome">
-      {/* Top: the vertical nav rail (新对话 + tab rows + 更多/设置). */}
-      <TabBar />
-      {/* Middle: the active chat tab's session list, grouped by date. It
-          fills the remaining height between the nav and the footer and
-          scrolls on its own. Lives here (not in the chat tab) so nav +
-          sessions read as one continuous left column. */}
-      <ShellSessionList />
-      {/* Bottom: user/account footer pinned to the base of the rail. Holds
-          the settings entry point — reachable from any tab (including the
-          Open Design web tab, which renders no chrome of its own). */}
-      <UserInfoBar />
-    </div>
+    // reducedMotion="user": every Motion animation in the rail (selection
+    // gliders, row entrances) collapses to a snap when macOS "Reduce motion"
+    // is on — one wrapper instead of per-animation checks.
+    <MotionConfig reducedMotion="user">
+      <div className="shell-chrome">
+        {/* Top: the vertical nav rail (新对话 + tab rows + 更多/设置). */}
+        <TabBar />
+        {/* Middle: the active chat tab's session list, grouped by date. It
+            fills the remaining height between the nav and the footer and
+            scrolls on its own. Lives here (not in the chat tab) so nav +
+            sessions read as one continuous left column. */}
+        <ShellSessionList />
+        {/* Bottom: user/account footer pinned to the base of the rail. Holds
+            the settings entry point — reachable from any tab (including the
+            Open Design web tab, which renders no chrome of its own). */}
+        <UserInfoBar />
+      </div>
+    </MotionConfig>
   )
 }

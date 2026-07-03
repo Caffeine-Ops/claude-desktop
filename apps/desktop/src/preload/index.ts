@@ -51,8 +51,12 @@ import {
   type ShellOpenPathResult,
   type ShellStatFilesPayload,
   type ShellStatFilesResult,
+  type ShellRevealPathPayload,
+  type ShellRevealPathResult,
   type ImageManifestReadPayload,
   type ImageManifestReadResult,
+  type ImageFileReadPayload,
+  type ImageFileReadResult,
   type ModelListResult,
   type ModelSetPayload,
   type WorkspacePickResult,
@@ -193,11 +197,25 @@ const chatApi: ChatApi = {
     ) as Promise<ShellStatFilesResult>
   },
 
+  revealPath(payload: ShellRevealPathPayload): Promise<ShellRevealPathResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SHELL_REVEAL_PATH,
+      payload
+    ) as Promise<ShellRevealPathResult>
+  },
+
   readImageManifest(payload: ImageManifestReadPayload): Promise<ImageManifestReadResult> {
     return ipcRenderer.invoke(
       IPC_CHANNELS.IMAGE_MANIFEST_READ,
       payload
     ) as Promise<ImageManifestReadResult>
+  },
+
+  readImageFile(payload: ImageFileReadPayload): Promise<ImageFileReadResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.IMAGE_FILE_READ,
+      payload
+    ) as Promise<ImageFileReadResult>
   },
 
   listModels(): Promise<ModelListResult> {

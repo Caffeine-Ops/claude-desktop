@@ -15,7 +15,7 @@ import { useDialogStore } from './stores/dialogs'
 import { useApplyAppearance } from './stores/appearance.applier'
 import { hydrateAppearanceFromDaemon } from './stores/appearance'
 import { SettingsView } from './components/settings/SettingsView'
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 
 /**
  * Root renderer component.
@@ -213,6 +213,11 @@ function App(): React.JSX.Element {
   }
 
   return (
+    // reducedMotion="user": makes every Motion animation in this renderer
+    // (session-switch fades, title intro, loading pill, message chrome)
+    // actually honor macOS "Reduce motion" — mirrors the shell renderer's
+    // wrapper so both webContents degrade consistently.
+    <MotionConfig reducedMotion="user">
     <div className="app">
       {/* 旧的 .header--tab 整条已移除——它只承载左右面板的折叠按钮，而面板
           现在常开不可收起，按钮失去意义。chat 内容直接顶到顶部 shell tab 条
@@ -271,6 +276,7 @@ function App(): React.JSX.Element {
           needs to *signal* the cold start — not block interaction. */}
       <SessionLoadingOverlay />
     </div>
+    </MotionConfig>
   )
 }
 

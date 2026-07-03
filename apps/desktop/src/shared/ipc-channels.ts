@@ -74,6 +74,18 @@ export const IPC_CHANNELS = {
    */
   SHELL_STAT_FILES: 'shell:stat-files',
   /**
+   * Reveal an absolute file path in the OS file manager (Finder), selected.
+   * Companion to SHELL_OPEN_PATH for the deliverable file cards' 打开方式
+   * menu — "show me where it is" vs "open it".
+   */
+  SHELL_REVEAL_PATH: 'shell:reveal-path',
+  /**
+   * Read one local image file as a data URI (original bytes, correct mime —
+   * no re-encode). The 图片 tab's in-app lightbox needs the full-resolution
+   * image; IMAGE_MANIFEST_READ only carries 320px thumbnails.
+   */
+  IMAGE_FILE_READ: 'image:file-read',
+  /**
    * Renderer → main. Reads a ppt-master image-generation manifest
    * (`images/image_prompts.json`) by absolute path and returns each item's
    * status plus a small thumbnail data-URI for the ones already on disk.
@@ -388,6 +400,14 @@ export const IPC_CHANNELS = {
    */
   LOGS_CLEAR: 'settings:logs-clear',
   /**
+   * Settings-overlay renderer → main (invoke). Reveal the on-disk runtime
+   * log in the OS file manager — the current day's file when it exists
+   * (selected in Finder), otherwise the logs directory. Everything the
+   * 「日志分析」panel shows is also appended there (plus process-level
+   * errors), so this is the hand-off point for "send me the full log".
+   */
+  LOGS_REVEAL: 'settings:logs-reveal',
+  /**
    * Main → settings-overlay renderer (send). One runtime-log line, pushed
    * live as it is produced (main console / daemon child / renderer console).
    * The overlay subscribes via `electronSettings.onLog` and appends each
@@ -638,17 +658,29 @@ export type ShellOpenPathPayload = { absPath: string }
 export type ShellOpenPathResult = { error: string }
 
 /**
- * Payload for SHELL_STAT_FILES. `paths` is a batch of candidate absolute
- * paths scraped from assistant text (deduped by the caller).
+ * Payload for SHELL_STAT_FILES. `paths` is a batch of candidate paths
+ * scraped from assistant text (deduped by the caller). Absolute paths and
+ * `~/`-prefixed paths are accepted — the model reports deliverables both
+ * ways — and `~` is expanded against the user's home dir main-side.
  */
 export type ShellStatFilesPayload = { paths: readonly string[] }
 
 /**
  * Result of SHELL_STAT_FILES. `files` is the subset of the input that
- * exists on disk AND is a regular file, in the same order as the input.
+ * exists on disk AND is a regular file, in the same order as the input,
+ * with any `~` prefix expanded to the absolute home path (so entries are
+ * directly usable with SHELL_OPEN_PATH / SHELL_REVEAL_PATH).
  * Non-absolute / missing / directory entries are dropped.
  */
 export type ShellStatFilesResult = { files: readonly string[] }
+
+/**
+ * SHELL_REVEAL_PATH reuses the open-path contract: absolute file path in,
+ * `{ error: '' }` on success. Main validates the same way (absolute +
+ * existing regular file) and calls `shell.showItemInFolder`.
+ */
+export type ShellRevealPathPayload = ShellOpenPathPayload
+export type ShellRevealPathResult = ShellOpenPathResult
 
 /**
  * Payload for IMAGE_MANIFEST_READ. `manifestPath` is the absolute path to a
@@ -696,6 +728,24 @@ export type ImageManifestReadResult = {
   items: ImageManifestItem[]
   generatedCount: number
   total: number
+}
+
+/**
+ * Payload for IMAGE_FILE_READ. `absPath` is the absolute image path (the
+ * `absPath` field of an ImageManifestItem — already resolved and confined
+ * next to the manifest by IMAGE_MANIFEST_READ).
+ */
+export type ImageFileReadPayload = { absPath: string }
+
+/**
+ * Result of IMAGE_FILE_READ. `dataUrl` carries the ORIGINAL file bytes
+ * base64-wrapped with the extension's mime type — no decode/re-encode, so
+ * a JPEG stays a JPEG (nativeImage.toDataURL would balloon it into PNG).
+ */
+export type ImageFileReadResult = {
+  ok: boolean
+  dataUrl?: string
+  error?: string
 }
 
 /* ───────────────────────── Model switching ─────────────────────── */
@@ -995,12 +1045,25 @@ export interface ChatApi {
   statFiles(payload: ShellStatFilesPayload): Promise<ShellStatFilesResult>
 
   /**
+   * Reveal an absolute file path in the OS file manager (Finder), with the
+   * file selected. The deliverable file cards' 打开方式 menu offers this
+   * alongside plain opening. On error, `result.error` is non-empty.
+   */
+  revealPath(payload: ShellRevealPathPayload): Promise<ShellRevealPathResult>
+
+  /**
    * Read a ppt-master image-generation manifest by absolute path, returning
    * each item's status and (for already-written PNGs) a small thumbnail
    * data-URI. The 「图片」canvas tab polls this while `image_gen.py --manifest`
    * runs, to show generation progress and previews.
    */
   readImageManifest(payload: ImageManifestReadPayload): Promise<ImageManifestReadResult>
+
+  /**
+   * Read one local image file as a full-resolution data URI for the 图片
+   * tab's in-app lightbox. Original bytes, extension-derived mime.
+   */
+  readImageFile(payload: ImageFileReadPayload): Promise<ImageFileReadResult>
 
   /**
    * List chat-capable model ids from the backend gateway (main-side cached).

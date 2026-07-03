@@ -631,6 +631,18 @@ python3 ${SKILL_DIR}/scripts/svg_to_pptx.py <project_path>
 > SVG visual reference, so it's only needed when you want a self-contained file
 > to share. Pass `-s output` or `-s final` to force a single source if you need it.
 
+> 📦 **Completion report — list every deliverable as a full file path.** After a
+> successful export, the final chat report MUST include one line per deliverable
+> file carrying its complete path — the exported `.pptx` always, plus any `.pdf` /
+> preview images / audio produced this run. Absolute (`/Users/…`) or `~/`-prefixed
+> both work; do NOT report only the containing directory, wrap the path in a
+> markdown link, or elide it with `…`. The Claude Desktop host scans the final
+> message for on-disk file paths and renders each as an openable file card
+> (open / reveal in Finder) — a truncated or directory-only path gets no card,
+> and the user has to dig the file out by hand. Keep intermediate artifacts
+> (`svg_output/*.svg`, manifests, backups) OUT of the report body — they'd river
+> the report with cards for files the user never asked for.
+
 > **Paragraph editability vs line fidelity** — by default, mergeable dy-stacked
 > paragraph blocks collapse into one editable PowerPoint text frame with multiple
 > `<a:p>`, improving body-text editing and resize/reflow behavior. Add `--no-merge`

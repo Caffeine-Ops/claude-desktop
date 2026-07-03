@@ -362,7 +362,7 @@ Write `project/images/image_prompts.json` with this shape:
       "aspect_ratio": "16:9",
       "image_size": "2K",
       "prompt": "{fully assembled paragraph per §4 — use §4.1 Primitive D for atmospheric cover}",
-      "alt_text": "Modern tech abstract background with deep blue gradient and digital waves",
+      "alt_text": "{short caption in the DECK's language — e.g. 深蓝渐变的科技感封面底图 for a Chinese deck}",
       "status": "Pending"
     },
     {
@@ -374,6 +374,7 @@ Write `project/images/image_prompts.json` with this shape:
       "aspect_ratio": "4:3",
       "image_size": "1K",
       "prompt": "{fully assembled paragraph per §4}",
+      "alt_text": "{short caption in the deck's language}",
       "status": "Pending"
     }
   ]
@@ -394,7 +395,7 @@ Write `project/images/image_prompts.json` with this shape:
 | `items[].aspect_ratio` | yes | Container sizing | Passed to `image_gen.py --aspect_ratio` |
 | `items[].prompt` | yes | §4 assembly | The full assembled paragraph |
 | `items[].image_size` | no | Container sizing | `512px` / `1K` / `2K` / `4K` |
-| `items[].alt_text` | no | Accessibility | Short caption |
+| `items[].alt_text` | yes | Accessibility + gallery caption | Short user-facing caption **written in the deck's content language** (a Chinese deck gets a Chinese alt_text). The Claude Desktop host live-renders the manifest as an image gallery and uses `alt_text` as each card's TITLE — an English sentence (or a missing field, which falls back to the raw filename) reads as tech noise to non-technical users. One plain-language sentence describing what the image shows, e.g. 「南北实力对比的双柱示意图」 not "Swiss-minimal two-zone comparison of agrarian South versus industrial North" |
 | `items[].status` | yes | CLI manages | `Pending` initially; CLI updates to `Generated` / `Failed` / `Needs-Manual` |
 
 > **Back-compat for legacy `type` values**: existing manifests using `background` / `hero` / `portrait` / `typography` (the four removed pseudo-types) remain readable. Read them as: `background` → `page_role: hero_page` + no type; `hero` → `page_role: hero_page` + no type (use §4.1 Primitive A in prompt); `portrait` → `page_role: local` + no type (use §4.1 Primitive B); `typography` → `page_role: hero_page` + `text_policy: embedded` + no type (use §4.1 Primitive C). New manifests should follow the rule above (omit `type` when `page_role: hero_page`).
@@ -498,7 +499,7 @@ Triggered automatically when `IMAGE_BACKEND` is not configured (or Path A fails)
 - Agent invokes the host's native image tool directly; prompts come from `items[].prompt`
 - **Batch for speed, mind the rate**: when the host can run independent tool calls in parallel (e.g. Claude Code issues independent calls concurrently), fire several generations together in modest groups — a few rows at a time (~3–4), not the whole manifest at once — so their latency overlaps without flooding the host's image quota. When the host only runs tools serially, generate one row at a time. This mirrors Path A's default concurrency of 3.
 - Outputs **must** land at `project/images/<filename-from-resource-list>` with dimensions matching the Image Resource List
-- Mark each item's `status` `Generated` in the manifest the moment its file lands — as each completes, not in one pass at the end (so an interrupted batch leaves accurate state)
+- Mark each item's `status` `Generated` in the manifest the moment its file lands — as each completes, not in one pass at the end. Two reasons: an interrupted batch leaves accurate state, AND the Claude Desktop host live-polls this manifest to drive its 图片 gallery — each status flip develops that image's card in real time, while a batch write at the end leaves the user staring at stale Pending placeholders for the whole run
 - Executor downstream is path-agnostic — no spec change required between Path A and Path B
 
 ### Offline Manual Mode (C's third implementation mode)
@@ -513,7 +514,7 @@ Triggered automatically when `IMAGE_BACKEND` is not configured (or Path A fails)
 4. Print one consolidated handoff to the user:
    - Filenames awaiting manual generation
    - Pointer to `images/image_prompts.md` (paste-ready `### Image N:` block per item) or `image_prompts.json` (`items[].prompt`)
-   - Target placement: `project/images/<filename>` matching the resource list exactly
+   - Target placement: `project/images/<filename>` matching the resource list exactly — tell the user they do NOT need to edit any JSON afterwards: the Claude Desktop host's 图片 gallery treats a `Needs-Manual` row whose file has appeared on disk as completed, so each card flips green the moment they drop the file in
    - Resume command: re-run Step 7 once all expected files exist
 
 **User-initiated**: When Strategist Step 4 captured "user wants manual generation" up front, Path A is skipped from the start; the workflow above runs as a planned mode.

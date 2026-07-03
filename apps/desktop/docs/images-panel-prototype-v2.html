@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-accent="green" data-stage="dots" data-density="cozy">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>图片面板 · AI 生成画廊原型 v2</title>
+<style>
+  /* ═══════════════════════════════════════════════════════════════════════
+     Design tokens — v2 系列同源（slide-editor / files-panel / outline /
+     confirm-ui / questions）：accent 由 appearance store 提供（浅 #16a34a /
+     深 #2ec96b），soft/tint/ring/ink 全部 color-mix 派生；中性 zinc 灰；
+     深色 = warm-black #1a1917。
+     ═══════════════════════════════════════════════════════════════════════ */
+  :root {
+    --accent: #16a34a;
+    --accent-contrast: #ffffff;
+    --accent-ink: color-mix(in srgb, var(--accent) 78%, #000);
+    --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+    --accent-tint: color-mix(in srgb, var(--accent) 16%, transparent);
+    --accent-ring: color-mix(in srgb, var(--accent) 30%, transparent);
+
+    --bg-app: #fafafa;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f4f4f5;
+    --bg-hover: rgba(24, 24, 27, 0.045);
+    --stage-bg: #f5f5f3;
+    --stage-dot: rgba(26, 28, 31, 0.085);
+
+    --border: #ececec;
+    --border-strong: #e2e2e4;
+
+    --text: #1a1c1f;
+    --text-2: #6f7076;
+    --text-3: #a3a4aa;
+
+    --danger: #dc2626;
+    --danger-soft: rgba(220, 38, 38, 0.09);
+
+    /* 水墨占位画的「纸」——demo 专用，属于作品本身不属于 UI 色板 */
+    --paper: #f0e9d6;
+    --paper-ink: rgba(58, 56, 50, 0.75);
+    --paper-seal: #b1483e;
+
+    --r-canvas: 14px;
+    --r-lg: 10px;
+    --r-md: 8px;
+    --r-sm: 6px;
+
+    --e1: 0 1px 2px rgba(0,0,0,.05);
+    --e2: 0 2px 8px rgba(0,0,0,.06);
+    --e-photo: 0 1px 2px rgba(0,0,0,.06), 0 6px 18px rgba(0,0,0,.08), 0 0 0 1px rgba(0,0,0,.03);
+    --e-photo-up: 0 2px 4px rgba(0,0,0,.06), 0 14px 34px rgba(0,0,0,.13), 0 0 0 1px rgba(0,0,0,.03);
+    --e-float: 0 8px 30px rgba(0,0,0,.14), 0 0 0 1px rgba(0,0,0,.04);
+
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    --spring: cubic-bezier(0.3, 1.3, 0.5, 1);
+    --dur: 170ms;
+
+    --font: "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+    --cell-min: 236px;   /* cozy 密度网格最小列宽 */
+  }
+
+  [data-accent="blue"] { --accent: #3395ff; }
+  [data-density="compact"] { --cell-min: 184px; }
+
+  [data-theme="dark"] {
+    --accent: #2ec96b;
+    --accent-ink: color-mix(in srgb, var(--accent) 74%, #fff);
+    --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+    --accent-tint: color-mix(in srgb, var(--accent) 22%, transparent);
+
+    --bg-app: #1a1917;
+    --bg-surface: #232220;
+    --bg-subtle: #2b2a27;
+    --bg-hover: rgba(232, 228, 220, 0.05);
+    --stage-bg: #161514;
+    --stage-dot: rgba(232, 228, 220, 0.07);
+
+    --border: #32312e;
+    --border-strong: #3c3b37;
+
+    --text: #e8e4dc;
+    --text-2: #a5a199;
+    --text-3: #726f69;
+
+    --danger: #f87171;
+    --danger-soft: rgba(248, 113, 113, 0.12);
+
+    --e-photo: 0 1px 2px rgba(0,0,0,.4), 0 6px 18px rgba(0,0,0,.42), 0 0 0 1px rgba(255,255,255,.05);
+    --e-photo-up: 0 2px 4px rgba(0,0,0,.4), 0 14px 34px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.06);
+    --e-float: 0 8px 30px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.07);
+  }
+  [data-theme="dark"][data-accent="blue"] { --accent: #2997ff; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg-app);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    font-size: 13px;
+    overflow: hidden;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  /* ─── 面板骨架：header + stage ──────────────────────────────────────── */
+  .panel { display: flex; flex-direction: column; height: 100vh; }
+
+  /* ─── 头部：状态 + 分段进度条 ───────────────────────────────────────── */
+  .head {
+    flex-shrink: 0;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 18px 11px;
+    display: flex; flex-direction: column; gap: 9px;
+  }
+  .head-row { display: flex; align-items: center; gap: 10px; }
+
+  /* AI 活动徽标：生成中 = accent 光晕呼吸点；完成 = 勾盘 */
+  .beacon { position: relative; width: 18px; height: 18px; flex-shrink: 0; display: grid; place-items: center; }
+  .beacon .core {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    animation: beacon-breathe 2.2s var(--ease) infinite;
+  }
+  .beacon .halo {
+    position: absolute; inset: 0; border-radius: 50%;
+    background: var(--accent-tint);
+    animation: beacon-halo 2.2s var(--ease) infinite;
+  }
+  @keyframes beacon-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(.82); } }
+  @keyframes beacon-halo { 0%,100% { transform: scale(.6); opacity: 0; } 45% { transform: scale(1.15); opacity: 1; } }
+
+  .beacon .check {
+    width: 18px; height: 18px; display: none;
+  }
+  .panel.done .beacon .core, .panel.done .beacon .halo { display: none; }
+  .panel.done .beacon .check { display: block; animation: check-pop .45s var(--spring); }
+  @keyframes check-pop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .beacon .check circle { fill: var(--accent); }
+  .beacon .check path {
+    stroke: var(--accent-contrast); stroke-width: 2.4; fill: none;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+
+  .head-title { font-size: 13.5px; font-weight: 600; }
+  /* 生成中的「当前对象」副行：正在画哪张，比一根匿名进度条诚实得多 */
+  .head-sub {
+    min-width: 0; flex: 1;
+    font-size: 12px; color: var(--text-2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .head-sub .mono { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+  .head-count { font-size: 12px; color: var(--text-2); flex-shrink: 0; }
+  .head-count .big { font-size: 15px; font-weight: 650; color: var(--text); }
+  .head-count .fail { color: var(--danger); margin-left: 6px; }
+
+  /* 分段进度条：一段 = 一张图。完成实心 accent / 当前脉冲 / 排队灰。 */
+  .segbar { display: flex; gap: 4px; height: 4px; }
+  .seg {
+    flex: 1; border-radius: 999px;
+    background: var(--bg-subtle);
+    transition: background .4s var(--ease);
+  }
+  .seg.done { background: var(--accent); }
+  .seg.fail { background: var(--danger); }
+  .seg.active {
+    background: linear-gradient(90deg, var(--accent-tint), var(--accent), var(--accent-tint));
+    background-size: 200% 100%;
+    animation: seg-flow 1.4s linear infinite;
+  }
+  @keyframes seg-flow { from { background-position: 200% 0; } to { background-position: 0% 0; } }
+
+  /* ─── 展台：点阵背景，相纸网格 ─────────────────────────────────────── */
+  .stage {
+    flex: 1; min-height: 0;
+    overflow-y: auto;
+    background: var(--stage-bg);
+    background-image: radial-gradient(var(--stage-dot) 1px, transparent 1px);
+    background-size: 16px 16px;
+    padding: 22px 24px 30px;
+    transition: background var(--dur) var(--ease);
+  }
+  [data-stage="plain"] .stage { background-image: none; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--cell-min), 1fr));
+    gap: 18px 16px;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+
+  /* ─── 相纸卡 ────────────────────────────────────────────────────────── */
+  .shot { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+
+  /* 相纸：白边内衬 + 浮起投影。hover（完成态）抬升 + 图微放大。 */
+  .shot .paper {
+    position: relative;
+    padding: 5px;
+    background: var(--bg-surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--e-photo);
+    transition: transform .22s var(--ease), box-shadow .22s var(--ease);
+  }
+  .shot.done .paper { cursor: zoom-in; }
+  .shot.done .paper:hover { transform: translateY(-2px); box-shadow: var(--e-photo-up); }
+  .shot.done .paper:active { transform: translateY(0) scale(.985); transition-duration: 80ms; }
+
+  .shot .frame {
+    position: relative;
+    aspect-ratio: 4 / 3;
+    border-radius: calc(var(--r-lg) - 4px);
+    overflow: hidden;
+    background: var(--bg-subtle);
+  }
+  .shot .art {
+    position: absolute; inset: 0;
+    transition: transform .35s var(--ease);
+  }
+  .shot.done .paper:hover .art { transform: scale(1.035); }
+
+  /* 显影：拍立得语言——过曝+模糊 → 清晰。只在「亲眼看着完成」时播。 */
+  .shot.developing .art { animation: develop 1.05s var(--ease) both; }
+  @keyframes develop {
+    from { filter: blur(16px) saturate(.2) brightness(1.5); opacity: .25; }
+    60%  { filter: blur(4px) saturate(.7) brightness(1.12); opacity: 1; }
+    to   { filter: none; opacity: 1; }
+  }
+
+  /* 生成中：点阵呼吸（DotGridLoader 的 CSS 近似——径向衰减的点云脉动） */
+  .shot .loader {
+    position: absolute; inset: 0;
+    display: none;
+    background-image: radial-gradient(rgba(120,120,128,.55) 1.3px, transparent 1.3px);
+    background-size: 11px 11px;
+    background-position: center;
+    -webkit-mask-image: radial-gradient(ellipse 62% 58% at center, #000 8%, transparent 78%);
+            mask-image: radial-gradient(ellipse 62% 58% at center, #000 8%, transparent 78%);
+    animation: dots-breathe 2.6s var(--ease) infinite;
+  }
+  .shot.generating .loader { display: block; }
+  .shot.generating .art { display: none; }
+  @keyframes dots-breathe {
+    0%,100% { opacity: .4; transform: scale(.96); }
+    50%     { opacity: .95; transform: scale(1.02); }
+  }
+  .shot .loader-label {
+    position: absolute; left: 10px; top: 8px;
+    display: none;
+    font-size: 11px; font-weight: 500; color: var(--text-3);
+  }
+  .shot.generating .loader-label { display: block; }
+
+  /* 排队：静态空 frame + 中心淡点 */
+  .shot .queued-mark {
+    position: absolute; inset: 0;
+    display: none; place-items: center;
+    color: var(--text-3); font-size: 11px;
+  }
+  .shot.queued .queued-mark { display: grid; }
+  .shot.queued .art { display: none; }
+  .shot.queued .paper { box-shadow: var(--e1); }
+  .shot.queued .frame { background: transparent; border: 1px dashed var(--border-strong); }
+
+  /* 失败：虚线红 + 重试 */
+  .shot.failed .frame { background: var(--danger-soft); }
+  .shot.failed .art { display: none; }
+  .shot .fail-body {
+    position: absolute; inset: 0;
+    display: none; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  }
+  .shot.failed .fail-body { display: flex; }
+  .fail-body .msg { font-size: 11.5px; color: var(--danger); font-weight: 500; }
+  .fail-body .retry {
+    height: 24px; padding: 0 12px; border-radius: 999px;
+    background: var(--bg-surface); border: 1px solid var(--border-strong);
+    font-size: 11px; color: var(--text-2);
+    box-shadow: var(--e1);
+    transition: color var(--dur), border-color var(--dur), transform 80ms var(--ease);
+  }
+  .fail-body .retry:hover { color: var(--text); border-color: var(--text-3); }
+  .fail-body .retry:active { transform: scale(.95); }
+
+  /* 状态角标：完成勾 / 失败叹号。玻璃底避免压在画面上突兀。 */
+  .shot .badge {
+    position: absolute; right: 6px; top: 6px;
+    width: 18px; height: 18px; border-radius: 50%;
+    display: none; place-items: center;
+    backdrop-filter: blur(4px);
+  }
+  .shot.done .badge.ok { display: grid; background: color-mix(in srgb, var(--accent) 88%, #000 0%); animation: badge-in .35s var(--spring); }
+  .shot.failed .badge.err { display: grid; background: var(--danger); animation: badge-in .35s var(--spring); }
+  @keyframes badge-in { from { transform: scale(.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .shot .badge svg { width: 10px; height: 10px; stroke: #fff; stroke-width: 2.6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* hover 操作浮层（完成态）：底部渐变 + 打开原图。放大镜跟随 cursor 语义。 */
+  .shot .hover-veil {
+    position: absolute; inset: 0;
+    display: flex; align-items: flex-end;
+    padding: 8px;
+    background: linear-gradient(to top, rgba(0,0,0,.42), transparent 44%);
+    opacity: 0; transition: opacity .18s var(--ease);
+    pointer-events: none;
+  }
+  .shot.done .paper:hover .hover-veil { opacity: 1; }
+  .hover-veil .act {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 22px; padding: 0 9px; border-radius: 999px;
+    background: rgba(255,255,255,.92); color: #1a1c1f;
+    font-size: 10.5px; font-weight: 500;
+    box-shadow: var(--e1);
+  }
+  .hover-veil .act svg { width: 10px; height: 10px; stroke: currentColor; stroke-width: 2.2; fill: none; stroke-linecap: round; }
+
+  /* 说明行：中文标题为主，文件名 mono 为辅 */
+  .shot .cap { display: flex; flex-direction: column; gap: 1px; padding: 0 2px; min-width: 0; }
+  .cap .title {
+    font-size: 12px; font-weight: 550; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .shot.queued .cap .title, .shot.generating .cap .title { color: var(--text-2); font-weight: 500; }
+  .cap .file {
+    font-family: var(--mono); font-size: 10px; color: var(--text-3);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* ─── 水墨占位画（demo 素材，落地时换真实缩略图）───────────────────
+     硬边椭圆剪影 + 地平线：柔和 radial 晕染读作「图片失焦」，会被误判
+     成加载 bug；干净的墨色剪影才读作「示意画」。 */
+  .art {
+    background:
+      radial-gradient(ellipse 40% 26% at var(--ix, 30%) var(--iy, 40%),
+        var(--paper-ink) 0 58%, transparent 66%),
+      radial-gradient(ellipse 26% 18% at var(--jx, 72%) var(--jy, 66%),
+        color-mix(in srgb, var(--paper-ink) 55%, transparent) 0 56%, transparent 65%),
+      linear-gradient(to top,
+        color-mix(in srgb, var(--paper-ink) 30%, transparent) 0 9%, transparent 9.5%),
+      var(--paper);
+  }
+  .art::after {
+    /* 朱印：水墨画的落款语义，也是「这是画不是 UI」的信号 */
+    content: "";
+    position: absolute; right: 9%; bottom: 10%;
+    width: 7px; height: 7px; border-radius: 1.5px;
+    background: var(--paper-seal); opacity: .85;
+  }
+
+  /* ─── Lightbox ──────────────────────────────────────────────────────── */
+  .lightbox {
+    position: fixed; inset: 0; z-index: 80;
+    display: none;
+    align-items: center; justify-content: center;
+    background: rgba(12, 12, 14, .58);
+    backdrop-filter: blur(10px);
+  }
+  .lightbox.open { display: flex; animation: lb-in .2s var(--ease); }
+  @keyframes lb-in { from { opacity: 0; } to { opacity: 1; } }
+  .lb-card {
+    width: min(760px, 84vw);
+    background: var(--bg-surface);
+    border-radius: var(--r-canvas);
+    box-shadow: var(--e-float);
+    padding: 10px;
+    animation: lb-card-in .26s var(--spring);
+  }
+  @keyframes lb-card-in { from { transform: scale(.92) translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .lb-frame { position: relative; aspect-ratio: 4 / 3; border-radius: var(--r-lg); overflow: hidden; }
+  .lb-frame .art { position: absolute; inset: 0; }
+  .lb-meta { display: flex; align-items: baseline; gap: 10px; padding: 10px 6px 4px; }
+  .lb-meta .title { font-size: 13.5px; font-weight: 600; }
+  .lb-meta .file { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+  .lb-meta .open-full {
+    margin-left: auto; flex-shrink: 0;
+    height: 26px; padding: 0 12px; border-radius: 999px;
+    background: var(--accent); color: var(--accent-contrast);
+    font-size: 11.5px; font-weight: 550;
+    transition: transform 80ms var(--ease), filter var(--dur);
+  }
+  .lb-meta .open-full:hover { filter: brightness(1.06); }
+  .lb-meta .open-full:active { transform: scale(.95); }
+
+  /* ─── Tweaks（系列同款，左下角） ────────────────────────────────────── */
+  .tweaks-fab {
+    position: fixed; left: 14px; bottom: 14px; z-index: 90;
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--bg-surface); border: 1px solid var(--border-strong);
+    box-shadow: var(--e2);
+    display: grid; place-items: center; color: var(--text-2);
+    transition: color var(--dur), box-shadow var(--dur), transform 80ms var(--ease);
+  }
+  .tweaks-fab:hover { color: var(--text); box-shadow: var(--e-float); }
+  .tweaks-fab:active { transform: scale(.94); }
+  .tweaks {
+    position: fixed; left: 14px; bottom: 60px; z-index: 90;
+    width: 248px;
+    background: var(--bg-surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--e-float);
+    padding: 14px;
+    display: none; flex-direction: column; gap: 12px;
+  }
+  .tweaks.open { display: flex; animation: tw-in .18s var(--spring); }
+  @keyframes tw-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .tweaks h3 { font-size: 12px; font-weight: 600; }
+  .tw-row { display: flex; flex-direction: column; gap: 6px; }
+  .tw-row .lbl { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+  .tw-opts { display: flex; gap: 4px; background: var(--bg-subtle); border-radius: var(--r-md); padding: 3px; }
+  .tw-opt {
+    flex: 1; height: 24px; border-radius: var(--r-sm);
+    font-size: 11px; color: var(--text-2);
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    transition: background var(--dur), color var(--dur), box-shadow var(--dur);
+  }
+  .tw-opt.on { background: var(--bg-surface); color: var(--text); font-weight: 500; box-shadow: var(--e1); }
+  .sw { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="panel" id="panel">
+
+  <!-- ── 头部：状态徽标 + 当前对象 + 计数 + 分段进度条 ── -->
+  <div class="head">
+    <div class="head-row">
+      <span class="beacon" aria-hidden>
+        <span class="halo"></span>
+        <span class="core"></span>
+        <svg class="check" viewBox="0 0 18 18">
+          <circle cx="9" cy="9" r="9" />
+          <path d="M5.4 9.4l2.4 2.4 4.8-5.2" />
+        </svg>
+      </span>
+      <span class="head-title" id="head-title">AI 生成图片中</span>
+      <span class="head-sub" id="head-sub"></span>
+      <span class="head-count tnum" id="head-count"></span>
+    </div>
+    <div class="segbar" id="segbar" aria-hidden></div>
+  </div>
+
+  <!-- ── 展台：相纸网格 ── -->
+  <div class="stage">
+    <div class="grid" id="grid"></div>
+  </div>
+
+</div>
+
+<!-- ── Lightbox ── -->
+<div class="lightbox" id="lightbox">
+  <div class="lb-card" id="lb-card">
+    <div class="lb-frame"><div class="art" id="lb-art"></div></div>
+    <div class="lb-meta">
+      <span class="title" id="lb-title"></span>
+      <span class="file" id="lb-file"></span>
+      <button class="open-full" type="button">打开原图</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Tweaks ── -->
+<button class="tweaks-fab" id="tw-fab" title="Tweaks" aria-label="Tweaks">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+</button>
+<div class="tweaks" id="tw-panel">
+  <h3>Tweaks</h3>
+  <div class="tw-row">
+    <span class="lbl">场景</span>
+    <div class="tw-opts" data-key="scene">
+      <button class="tw-opt on" data-val="playing">生成中</button>
+      <button class="tw-opt" data-val="done">全部完成</button>
+      <button class="tw-opt" data-val="failed">含失败</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">主题色</span>
+    <div class="tw-opts" data-key="accent">
+      <button class="tw-opt on" data-val="green"><span class="sw" style="background:#16a34a"></span>绿</button>
+      <button class="tw-opt" data-val="blue"><span class="sw" style="background:#3395ff"></span>蓝</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">外观</span>
+    <div class="tw-opts" data-key="theme">
+      <button class="tw-opt on" data-val="light">浅色</button>
+      <button class="tw-opt" data-val="dark">深色</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">密度</span>
+    <div class="tw-opts" data-key="density">
+      <button class="tw-opt on" data-val="cozy">舒适</button>
+      <button class="tw-opt" data-val="compact">紧凑</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="lbl">展台</span>
+    <div class="tw-opts" data-key="stage">
+      <button class="tw-opt on" data-val="dots">点阵</button>
+      <button class="tw-opt" data-val="plain">素色</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   Demo 数据 — 截图里的真实 9 张（明代文明 deck）。ink/jnk 是水墨占位的
+   晕染坐标（每张不同，避免 9 张一模一样）；落地时 art 换 manifest 缩略图。
+   ═══════════════════════════════════════════════════════════════════════ */
+const ITEMS = [
+  { file: 'cover_ming.png',        title: '封面 · 海上明月',   ink: [26, 38, 74, 70] },
+  { file: 'overview_map.png',      title: '疆域舆图',          ink: [50, 42, 30, 74] },
+  { file: 'lit_four_novels.png',   title: '四大奇书',          ink: [66, 34, 30, 66] },
+  { file: 'porcelain_blue.png',    title: '青花瓷',            ink: [38, 52, 68, 30] },
+  { file: 'philosophy_mind.png',   title: '心学 · 观山',       ink: [30, 60, 70, 36] },
+  { file: 'science_books.png',     title: '科技典籍',          ink: [52, 30, 26, 62] },
+  { file: 'voyage_ship.png',       title: '郑和宝船',          ink: [42, 46, 72, 62] },
+  { file: 'architecture_city.png', title: '紫禁城',            ink: [50, 34, 34, 72] },
+  { file: 'closing_seal.png',      title: '收束 · 落款',       ink: [64, 58, 30, 40] }
+]
+const FAIL_INDEX = 5 // 「含失败」场景里挂掉的那张
+
+/* 状态机：每张图 queued → generating → done（或 failed）。
+   scene=playing 用计时器逐张推进，模拟真实轮询到的 manifest 更新。 */
+const grid = document.getElementById('grid')
+const segbar = document.getElementById('segbar')
+const headTitle = document.getElementById('head-title')
+const headSub = document.getElementById('head-sub')
+const headCount = document.getElementById('head-count')
+const panel = document.getElementById('panel')
+
+let state = []       // 'queued' | 'generating' | 'done' | 'failed'
+let timers = []
+
+function buildDOM() {
+  grid.innerHTML = ''
+  segbar.innerHTML = ''
+  ITEMS.forEach((it, i) => {
+    const shot = document.createElement('div')
+    shot.className = 'shot'
+    shot.dataset.i = i
+    shot.innerHTML = `
+      <div class="paper">
+        <div class="frame">
+          <div class="art" style="--ix:${it.ink[0]}%;--iy:${it.ink[1]}%;--jx:${it.ink[2]}%;--jy:${it.ink[3]}%"></div>
+          <div class="loader" aria-hidden></div>
+          <span class="loader-label">正在创建图片</span>
+          <span class="queued-mark">排队中</span>
+          <div class="fail-body">
+            <span class="msg">生成失败</span>
+            <button class="retry" type="button">重试</button>
+          </div>
+          <span class="badge ok" aria-hidden><svg viewBox="0 0 12 12"><path d="M2.5 6.4l2.4 2.4 4.6-5"/></svg></span>
+          <span class="badge err" aria-hidden><svg viewBox="0 0 12 12"><path d="M6 2.6v4.2M6 9.4v.1"/></svg></span>
+          <div class="hover-veil">
+            <span class="act">
+              <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M8.5 11h5M11 8.5v5"/></svg>
+              查看大图
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="cap">
+        <span class="title">${it.title}</span>
+        <span class="file">${it.file}</span>
+      </div>`
+    shot.querySelector('.paper').addEventListener('click', () => {
+      if (state[i] === 'done') openLightbox(i)
+    })
+    grid.appendChild(shot)
+
+    const seg = document.createElement('span')
+    seg.className = 'seg'
+    segbar.appendChild(seg)
+  })
+}
+
+function render(withDevelop = -1) {
+  const shots = grid.children
+  const segs = segbar.children
+  let done = 0, failed = 0, genIdx = -1
+  state.forEach((st, i) => {
+    const shot = shots[i]
+    shot.className = 'shot ' + st + (i === withDevelop ? ' developing' : '')
+    const seg = segs[i]
+    seg.className = 'seg' +
+      (st === 'done' ? ' done' : st === 'failed' ? ' fail' : st === 'generating' ? ' active' : '')
+    if (st === 'done') done++
+    if (st === 'failed') failed++
+    if (st === 'generating') genIdx = i
+  })
+
+  const finished = done + failed === ITEMS.length
+  panel.classList.toggle('done', finished)
+  headTitle.textContent = finished ? '图片已生成' : 'AI 生成图片中'
+  headSub.innerHTML = finished
+    ? ''
+    : genIdx >= 0
+      ? `正在画「${ITEMS[genIdx].title}」 <span class="mono">${ITEMS[genIdx].file}</span>`
+      : ''
+  headCount.innerHTML =
+    `<span class="big">${done}</span>/${ITEMS.length}` +
+    (failed > 0 ? `<span class="fail">${failed} 失败</span>` : '')
+}
+
+function clearTimers() { timers.forEach(clearTimeout); timers = [] }
+
+/* scene=playing：0.9s 一拍，完成一张 → 下一张进入 generating。
+   完成的那拍带 developing class 播显影动画（真实组件的 sawRunning 门控）。 */
+function play(withFail = false) {
+  clearTimers()
+  state = ITEMS.map(() => 'queued')
+  state[0] = 'generating'
+  buildDOM()
+  render()
+  const STEP = 1150
+  ITEMS.forEach((_, i) => {
+    timers.push(setTimeout(() => {
+      state[i] = withFail && i === FAIL_INDEX ? 'failed' : 'done'
+      if (i + 1 < ITEMS.length) state[i + 1] = 'generating'
+      render(state[i] === 'done' ? i : -1)
+    }, STEP * (i + 1)))
+  })
+}
+
+function showDone() {
+  clearTimers()
+  state = ITEMS.map(() => 'done')
+  buildDOM()
+  render()
+}
+
+/* ── Lightbox ── */
+const lightbox = document.getElementById('lightbox')
+const lbArt = document.getElementById('lb-art')
+function openLightbox(i) {
+  const it = ITEMS[i]
+  lbArt.style.cssText = `--ix:${it.ink[0]}%;--iy:${it.ink[1]}%;--jx:${it.ink[2]}%;--jy:${it.ink[3]}%`
+  document.getElementById('lb-title').textContent = it.title
+  document.getElementById('lb-file').textContent = it.file
+  lightbox.classList.add('open')
+}
+lightbox.addEventListener('click', (e) => {
+  if (!document.getElementById('lb-card').contains(e.target)) lightbox.classList.remove('open')
+})
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') lightbox.classList.remove('open')
+})
+
+/* ── Tweaks ── */
+document.getElementById('tw-fab').addEventListener('click', () => {
+  document.getElementById('tw-panel').classList.toggle('open')
+})
+document.querySelectorAll('.tw-opts').forEach((group) => {
+  group.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tw-opt')
+    if (!btn) return
+    group.querySelectorAll('.tw-opt').forEach((b) => b.classList.toggle('on', b === btn))
+    const key = group.dataset.key
+    const val = btn.dataset.val
+    if (key === 'scene') {
+      if (val === 'playing') play(false)
+      else if (val === 'done') showDone()
+      else play(true)
+    } else {
+      document.documentElement.dataset[key] = val
+    }
+  })
+})
+
+/* URL 参数便于截图：?theme=dark&scene=done */
+const params = new URLSearchParams(location.search)
+if (params.get('theme')) document.documentElement.dataset.theme = params.get('theme')
+if (params.get('scene') === 'done') {
+  document.querySelector('[data-key="scene"] [data-val="done"]').click()
+} else {
+  play(false)
+}
+</script>
+</body>
+</html>

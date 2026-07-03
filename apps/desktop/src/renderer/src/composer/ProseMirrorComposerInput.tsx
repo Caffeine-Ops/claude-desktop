@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { Node as PMNode } from 'prosemirror-model'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
@@ -356,10 +357,25 @@ function SuggestionPopover({
   // why it floated off to the upper-right). Mirrors the file-mention menu.
   const MAX_WIDTH = 640 // px — preferred width when the input is wide enough
   const MIN_WIDTH = 320 // px — readability floor for very narrow inputs
-  const GAP = 8 // px above the editor's top edge
-  const [pos, setPos] = useState<{ left: number; bottom: number; width: number } | null>(
-    null
-  )
+  const GAP = 8 // px between the editor edge and the menu
+  const MENU_MAX_H = 320 // px — matches the popover's max height cap
+  // The menu flips: it prefers to open ABOVE the input (so the caret/input
+  // stays visible while browsing), but on the empty-state hero the input sits
+  // low with little room above, so it flips BELOW when the upper gap can't
+  // hold it. `placement` picks which edge we pin; `maxH` clamps the body to
+  // the space actually available on that side (never overflow the viewport —
+  // the old `bottom`-only version spilled off the top of the screen here).
+  const [pos, setPos] = useState<
+    | {
+        placement: 'above' | 'below'
+        left: number
+        top?: number
+        bottom?: number
+        width: number
+        maxH: number
+      }
+    | null
+  >(null)
   // Hovered row's tooltip: index + the row's viewport rect. The tooltip is
   // `fixed`-positioned off that rect rather than nested in the row, because
   // the popover body is `overflow-y-auto` (clips to its own box) — an
@@ -379,7 +395,31 @@ function SuggestionPopover({
       const width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(r.width)))
       // Clamp left so a narrow window can't push the menu off-screen.
       const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8))
-      setPos({ left, bottom: window.innerHeight - r.top + GAP, width })
+      // Room above the input's top edge vs. below its bottom edge (minus the
+      // gap). Prefer opening above; flip below only when above genuinely can't
+      // fit the menu AND below has more room — this keeps the dock composer
+      // (lots of room above) opening upward as before, while the empty-state
+      // hero (little room above) opens downward instead of spilling off-screen.
+      const spaceAbove = r.top - GAP
+      const spaceBelow = window.innerHeight - r.bottom - GAP
+      const above = spaceAbove >= Math.min(MENU_MAX_H, 160) || spaceAbove >= spaceBelow
+      if (above) {
+        setPos({
+          placement: 'above',
+          left,
+          bottom: window.innerHeight - r.top + GAP,
+          width,
+          maxH: Math.min(MENU_MAX_H, Math.max(120, spaceAbove))
+        })
+      } else {
+        setPos({
+          placement: 'below',
+          left,
+          top: r.bottom + GAP,
+          width,
+          maxH: Math.min(MENU_MAX_H, Math.max(120, spaceBelow))
+        })
+      }
     }
     place()
     window.addEventListener('resize', place)
@@ -390,11 +430,27 @@ function SuggestionPopover({
 
   const tipItem = tip ? items[tip.index] : null
 
-  return (
+  // Portal'd to <body>: the composer card carries `backdrop-blur` (a
+  // backdrop-filter), and per CSS spec a filtered ancestor becomes the
+  // containing block for `fixed` descendants — so rendered in-tree, these
+  // viewport coords would be re-interpreted relative to the card. That was
+  // invisible in the dock layout (card hugs the viewport bottom, offsets ≈ 0)
+  // but threw the menu to the top of the screen on the centered empty-state
+  // hero. The portal escapes the filtered subtree so `fixed` means viewport
+  // again.
+  return createPortal(
     <>
     <div
-      className="fixed z-30 max-h-80 overflow-y-auto rounded-xl bg-popover/95 py-1 ring-1 ring-black/[0.06] backdrop-blur-2xl shadow-[0_12px_40px_-12px_rgba(0,0,0,0.25)] dark:ring-white/[0.08]"
-      style={{ left: pos.left, bottom: pos.bottom, width: pos.width, maxWidth: 'calc(100vw - 16px)' }}
+      className="fixed z-30 overflow-y-auto rounded-xl bg-popover/95 py-1 ring-1 ring-black/[0.06] backdrop-blur-2xl shadow-[0_12px_40px_-12px_rgba(0,0,0,0.25)] dark:ring-white/[0.08]"
+      style={{
+        left: pos.left,
+        ...(pos.placement === 'above'
+          ? { bottom: pos.bottom }
+          : { top: pos.top }),
+        width: pos.width,
+        maxWidth: 'calc(100vw - 16px)',
+        maxHeight: pos.maxH
+      }}
     >
       {items.map((item, i) => {
         // A known skill (e.g. /claude-desktop:gpt-image-2) shows its coloured
@@ -506,6 +562,7 @@ function SuggestionPopover({
         </div>
       </div>
     )}
-    </>
+    </>,
+    document.body
   )
 }
