@@ -24,6 +24,7 @@ import { extractProposalDraftResult, detectContentSentinelAheadOfPhase } from '@
 import { splitBlocks } from '@shared/proposalBlocks'
 import { triggerProposalCitationVerification } from '../lib/proposalVerification'
 import { autoFireProposalGenImages } from '../lib/proposalGenImageFire'
+import { maybeNudgeStageConfirmAfterTurn } from '../lib/proposalStageGate'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
@@ -1296,6 +1297,10 @@ function makeSessionEventHandler(
               // 之后统一扫——append 与 reviseSection 两条路径都可能引入指令块，扫描自身按
               // genImageJobs 幂等，重复调用零成本。
               autoFireProposalGenImages(sid)
+              // 阶段确认硬门的轮末兜底：本轮发生过「空口确认」拦截、模型补写了节却没重新发起
+              // 确认就收工（GUI 走查实锤的停摆态）→ 自动补发一条催促。内部单发保险+阶段守卫，
+              // 正常轮零成本（无拦截登记即刻返回）。
+              maybeNudgeStageConfirmAfterTurn(sid)
             }
             // C4：msg 未找到（end 早于消息入 store 的竞态）或 role 非 assistant 时，
             // 刻意【不】记账。重构前这里有一条无条件兜底 markDraftConsumed，但那与 B2 相悖：
