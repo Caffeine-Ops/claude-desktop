@@ -22,11 +22,13 @@ import { useProposalStore } from '../stores/proposal'
 import { useChatStore } from '../stores/chat'
 import { sendProposalStageMessage } from './sendProposalStageMessage'
 
-// 本会话内被硬门拦截过的阶段（sessionId → kind）。给轮末兜底催促用：拦截后模型可能补写了
-// 哨兵块却【没有】重新发起确认就结束回合（GUI 走查实锤：模型自创「工具调用前的文字送不到
-// 文档」的错误理论，故意把封面当最后一条消息输出、想下一轮再确认——回合结束它就没有下一轮
-// 了，流程停摆）。每次拦截登记一次、轮末消费一次，绝不循环催促。
-const interceptedStage = new Map<string, Extract<ProposalKind, 'cover' | 'toc'>>()
+// 已催促过的节（`${sessionId}#${kind}#${sectionId}`）——轮末兜底的单发保险。按【节 id】而非
+// 会话：「新建方案」复用同一 sessionId 但节 id 全新，新草稿的兜底不被旧草稿的已催记录殃及。
+const nudgedSections = new Set<string>()
+
+// 纠偏回执的识别标记：轮末兜底扫聊天记录时，带这个前缀的 AskUserQuestion 结果=被硬门打回的
+// 空口确认，不算「真问过用户」。与下方 corrective 文案的前缀保持一致。
+const INTERCEPT_MARK = '【系统拦截·'
 
 /** 从 AskUserQuestion input 里找阶段确认 header，映射到它宣称已完成的节 kind。 */
 function confirmKindFromInput(input: unknown): Extract<ProposalKind, 'cover' | 'toc'> | null {
@@ -68,13 +70,7 @@ export function interceptPrematureStageConfirm(
   if (!ps.active || ps.sessionId !== req.sessionId) return null
   const kind = confirmKindFromInput(req.input)
   if (!kind) return null
-  if (ps.sections.some((s) => s.kind === kind)) {
-    // 确认卡即将正常渲染——若本会话此前有过拦截登记，任务已完成，清掉它。否则「拦截→模型
-    // 正确补发确认→用户点确认→本轮末」这条正常收尾路径上，残留登记会让轮末兜底误催一次
-    // 「请发起确认」（用户明明刚确认完）。
-    interceptedStage.delete(req.sessionId)
-    return null
-  }
+  if (ps.sections.some((s) => s.kind === kind)) return null
   // 权限事件与聊天 chunk 事件到达顺序无保证：sections 里没有 ≠ 模型没写。放行前直接扫本会话
   // assistant 消息文本抢救一次——真有闭合哨兵块就放行（随后的 tool_use_start 轮内同步 / 轮末
   // end 会把它收进 sections）。消息量是「本会话轮数」级，includes 快路径先挡，代价可忽略。
@@ -87,10 +83,7 @@ export function interceptPrematureStageConfirm(
       .map((p) => p.text!)
       .join('')
     if (!text.includes(PROPOSAL_DRAFT_BEGIN[kind])) continue
-    if (extractProposalDraftResult(text).blocks.some((b) => b.kind === kind)) {
-      interceptedStage.delete(req.sessionId) // 同上：放行即清登记
-      return null
-    }
+    if (extractProposalDraftResult(text).blocks.some((b) => b.kind === kind)) return null
   }
   const label = kind === 'cover' ? '封面' : '目录'
   const corrective =
@@ -100,8 +93,6 @@ export function interceptPrematureStageConfirm(
     `然后【在同一轮里紧接着】重新发起「${label}确认」。注意：同一条回复里先输出哨兵块、随后再调用 ` +
     `AskUserQuestion 完全没问题——系统按内容识别，与先后顺序无关；不要为「确保送达」而输出完就结束` +
     `回合，回合一结束你就无法发起确认了。`
-  // 登记拦截，供轮末兜底催促（见 maybeNudgeStageConfirmAfterTurn）。
-  interceptedStage.set(req.sessionId, kind)
   // 该调用里的每个问题都填同一句纠偏（阶段确认通常只有一个问题；万一模型把别的问题捆在
   // 同一次调用里，统一打回让它重新问，比留一半悬空更干净）。
   const answers: Record<string, string> = {}
@@ -109,32 +100,76 @@ export function interceptPrematureStageConfirm(
   return { answers }
 }
 
+// tool-call part 的 args 两种形态并存（流式路径先攒 JSON 串、非流式直接对象），统一解出对象。
+function toolCallArgs(raw: unknown): unknown {
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  }
+  return raw
+}
+
 /**
- * 轮末兜底催促：本轮发生过硬门拦截，且轮结束时对应节已经到位、阶段还停在待确认，说明模型
- * 「补写了内容但没重新发确认」就收工了——自动补发一条催促指令让它发起确认卡。
+ * 本会话聊天记录里是否已经出现过一张【真正渲染给用户】的 kind 阶段确认卡。
+ * 判据：assistant 消息里的 AskUserQuestion tool-call、header 命中该阶段确认常量、且其结果
+ * 不是硬门的纠偏回执（带 INTERCEPT_MARK 前缀的=被打回的空口确认，不算问过）。pending 未答、
+ * 已答、用户点取消都算「问过」——问过而用户不选放行项，是用户的决定，兜底不越俎代庖。
+ */
+function hasRenderedStageConfirm(
+  sessionId: string,
+  kind: Extract<ProposalKind, 'cover' | 'toc'>
+): boolean {
+  const slot = useChatStore.getState().perSession[sessionId]
+  for (const m of slot?.messages ?? []) {
+    const msg = m as { role?: string; content?: unknown }
+    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue
+    for (const part of msg.content as Array<Record<string, unknown>>) {
+      if (part.type !== 'tool-call' || part.toolName !== 'AskUserQuestion') continue
+      if (confirmKindFromInput(toolCallArgs(part.args)) !== kind) continue
+      const result =
+        typeof part.result === 'string' ? part.result : JSON.stringify(part.result ?? '')
+      if (result.includes(INTERCEPT_MARK)) continue
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * 轮末兜底催促（用户明确预期：封面/目录落地后【必须】弹确认卡）：轮结束时若某阶段的节已经
+ * 到位、阶段还停在待确认、而聊天记录里找不到一张真正渲染过的该阶段确认卡，就自动补发一条
+ * 催促让模型发卡。两种停摆都覆盖：①空口确认被硬门打回后，模型补写了节却不重发确认就收工
+ * （GUI 走查实锤：模型自创「工具调用前的文字送不到文档」的错误理论，故意把封面当最后一条
+ * 消息输出、想「下一轮」再确认——回合结束它没有下一轮）；②模型输出节后压根没尝试发确认。
  *
- * 单发保险：登记在拦截时、消费在紧随其后的第一个 'end'，随手 delete——每次拦截至多催一炮，
- * 绝不与模型来回循环。模型这轮若已正确补发确认卡，AskUserQuestion 会阻塞在 canUseTool、
- * 'end' 根本不会触发，本函数天然不会误催（因此这里不需要、也不能去查 permission store——
- * permissions.ts 引用本模块，反向引用会成环）。
+ * 防循环三道保险：nudgedSections 按节 id 单发（催一次后模型再摆烂也不再催，避免烧钱循环）；
+ * 模型这轮若已正确发卡且用户未答，AskUserQuestion 阻塞 canUseTool、'end' 根本不触发；
+ * hasRenderedStageConfirm 把已答/已取消的卡都算「问过」，用户刚确认完绝不会被误催。
  */
 export function maybeNudgeStageConfirmAfterTurn(sessionId: string): void {
-  const kind = interceptedStage.get(sessionId)
-  if (!kind) return
-  interceptedStage.delete(sessionId)
   const ps = useProposalStore.getState()
   if (!ps.active || ps.sessionId !== sessionId) return
-  // 节还没到位=模型连补写都没做，催「发确认」没有意义（它该做的是补写，纠偏文本已经说了）。
-  if (!ps.sections.some((s) => s.kind === kind)) return
-  // 阶段已过门（封面确认放行不动 phase、目录块落地才推 toc；目录确认放行推 content）→ 不催。
-  if (kind === 'cover' && ps.phase !== 'cover') return
-  if (kind === 'toc' && ps.phase !== 'toc') return
-  const label = kind === 'cover' ? '封面' : '目录'
-  console.warn('[proposal-stage-gate] 拦截后模型未重新发起确认，自动催促', { sessionId, kind })
-  void sendProposalStageMessage(
-    `${label}已收到、已显示在右侧文档里。请现在【立即】用 AskUserQuestion 工具发起「${label}确认」` +
-      `（header 固定「${label}确认」，第 1 个选项为确认放行项）。不要重复输出${label}，也不要在用户` +
-      `确认前写下一阶段的内容。`,
-    { displayText: `${label}已收到，请发起${label}确认` }
-  )
+  for (const kind of ['cover', 'toc'] as const) {
+    // 阶段守卫：cover 待确认=phase 还在 cover（封面确认放行是 clear-only 不动 phase，目录块
+    // 落地才推 toc）；toc 待确认=phase 在 toc（目录确认放行才推 content）。
+    if (kind === 'cover' ? ps.phase !== 'cover' : ps.phase !== 'toc') continue
+    const sec = ps.sections.find((s) => s.kind === kind)
+    if (!sec) continue
+    const nudgeKey = `${sessionId}#${kind}#${sec.id}`
+    if (nudgedSections.has(nudgeKey)) continue
+    if (hasRenderedStageConfirm(sessionId, kind)) continue
+    nudgedSections.add(nudgeKey)
+    const label = kind === 'cover' ? '封面' : '目录'
+    console.warn('[proposal-stage-gate] 节已落地但确认卡缺席，自动催促', { sessionId, kind })
+    void sendProposalStageMessage(
+      `${label}已收到、已显示在右侧文档里。请现在【立即】用 AskUserQuestion 工具发起「${label}确认」` +
+        `（header 固定「${label}确认」，第 1 个选项为确认放行项）。不要重复输出${label}，也不要在用户` +
+        `确认前写下一阶段的内容。`,
+      { displayText: `${label}已收到，请发起${label}确认` }
+    )
+    return // 一轮至多催一个阶段
+  }
 }
