@@ -48,7 +48,8 @@ export function GenImageDirectiveCard({
       </div>
       {job?.status === 'pending' && (
         <div className="mt-1.5 flex items-center gap-1.5 text-neutral-500">
-          <SpinnerIcon />
+          {/* SpinnerIcon 自身不动画（见 proposalIcons.tsx 约定），必须由调用处加 animate-spin。 */}
+          <SpinnerIcon className="shrink-0 animate-spin text-accent" />
           <span>正在调用生图模型绘制，完成后会出现审阅卡供你确认…</span>
         </div>
       )}
