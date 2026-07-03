@@ -39,7 +39,14 @@ function getMermaid(): Promise<MermaidApi> {
           primaryBorderColor: '#3b74d9', // 节点框：品牌蓝
           lineColor: '#5b8def', // 连线
           secondaryColor: '#f4f8ff',
-          tertiaryColor: '#fafcff',
+          // subgraph 底 / gantt 分区带都从 tertiaryColor 派生（theme-base：clusterBkg、
+          // sectionBkgColor = tertiaryColor，altSectionBkgColor = white）。不能取近白值——
+          // rasterizeSvg 刷纯白底，近白分区带在导出 docx/PDF 里等于不可见（评审 #6）。
+          tertiaryColor: '#e9f0fb',
+          // sequenceDiagram 便签：theme-base 硬编码默认 #fff5ad（黄），不随 primaryColor 派生，
+          // 必须显式覆盖才不与品牌蓝相撞（评审 #6）。
+          noteBkgColor: '#f4f8ff',
+          noteBorderColor: '#5b8def',
           fontSize: '14px'
         },
         // 见文件头：纯 SVG <text>，栅格化时才能渲出文字。
@@ -137,7 +144,7 @@ async function rasterizeSvg(svg: string, scale = 2): Promise<MermaidImage> {
   canvas.height = Math.max(1, Math.round(h * scale))
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('canvas 2d context 不可用')
-  // 白底：mermaid neutral 主题背景透明，docx 里需要白底才不透出页色 / 不变黑块。
+  // 白底：mermaid 输出的 SVG 背景透明（base 主题同样如此），docx 里需要白底才不透出页色 / 不变黑块。
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
