@@ -41,10 +41,10 @@ import {
   detectSystemClaudeSync,
   resolveBundledCliPath,
   resolveBundledPythonHome,
-  resolveBundledSkillsPluginDir,
   resolveJsRuntimeBin,
   resolveSystemClaudeJsEntry
 } from './cliDetect'
+import { resolveBundledSkillsPluginDir } from './skillsDir'
 import { envJsonInjectedKeys } from '../bootstrap/loadEnv'
 import {
   loadExternalMcpServers,

@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { resolveBundledSkillsPluginDir } from './cliDetect'
+import { resolveBundledSkillsPluginDir } from './skillsDir'
 
 /**
  * Pre-warm the skill list from disk so the `/` composer popover and the
