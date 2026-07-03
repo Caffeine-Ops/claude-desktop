@@ -447,6 +447,29 @@ export const IPC_CHANNELS = {
    */
   KB_SYNC_STATUS: 'kb:sync-status',
   /**
+   * Renderer → main. Persists the remote sync config (`{ baseUrl, kbId }`,
+   * or `null` to disconnect) to `userData/kb-config.json`. Writing a
+   * non-null remote also kicks off `triggerKbSyncNow()` immediately — the
+   * user filling in a URL shouldn't require a second click to start the
+   * first sync (spec ④).
+   */
+  KB_REMOTE_SET: 'kb:remote-set',
+  /**
+   * Renderer → main. Manually kicks off a remote KB sync (the settings
+   * page "sync now" button). Returns `'started'` | `'alreadyRunning'`
+   * (a sync — manual or the 30s/6h scheduler — is already in flight) |
+   * `'noRemote'` (no remote configured yet). Progress is reported
+   * separately via the `KB_SYNC_STATUS` broadcast, not this call's result.
+   */
+  KB_SYNC_NOW: 'kb:sync-now',
+  /**
+   * Renderer → main. Opens the OS native folder picker for choosing the
+   * local KB root. Engine-free counterpart of WORKSPACE_PICK — the
+   * settings overlay isn't bound to any tab/engine, so this can't reuse
+   * `resolveEngine`. Returns `{ path: null }` on cancel.
+   */
+  KB_ROOT_PICK: 'kb:root-pick',
+  /**
    * Renderer → main. Exports the proposal document via the OS native
    * save dialog. Main writes the file and returns the absolute path;
    * returns `{ path: null }` when the user cancelled the dialog.
@@ -1414,11 +1437,18 @@ export interface ChatApi {
   closeSettingsWindow(): Promise<void>
 
   /**
-   * Read the current KB root path and the fixed output directory.
+   * Read the current KB root path, the fixed output directory, the
+   * remote sync config (`null` when not connected), and the last
+   * successful sync's timing (`null` when never synced).
    * `kbRoot` is null when the user hasn't picked one yet.
    * `outDir` is always `userData/kb-index` (computed in main).
    */
-  getKbPath(): Promise<{ kbRoot: string | null; outDir: string }>
+  getKbPath(): Promise<{
+    kbRoot: string | null
+    outDir: string
+    remote: import('./kbConfig').KbRemoteConfig | null
+    lastSync: { atMs: number; builtAtMs: number } | null
+  }>
 
   /**
    * Persist the user-picked KB root path. Main writes it to
@@ -1426,6 +1456,33 @@ export interface ChatApi {
    * calls reflect the update immediately.
    */
   setKbPath(kbRoot: string): Promise<void>
+
+  /**
+   * Persist the remote sync config (or `null` to disconnect). Writing a
+   * non-null remote also triggers an immediate sync — no separate
+   * "sync now" click needed right after connecting.
+   */
+  setKbRemote(remote: import('./kbConfig').KbRemoteConfig | null): Promise<void>
+
+  /**
+   * Manually kick off a remote KB sync. Returns `'started'` |
+   * `'alreadyRunning'` | `'noRemote'`; progress/result is reported
+   * separately via `onKbSyncStatus`.
+   */
+  kbSyncNow(): Promise<'started' | 'alreadyRunning' | 'noRemote'>
+
+  /**
+   * Open the OS native folder picker for the local KB root. Engine-free
+   * (the settings overlay has no bound tab/engine). Returns
+   * `{ path: null }` on cancel.
+   */
+  pickKbRoot(): Promise<{ path: string | null }>
+
+  /**
+   * Subscribe to KB remote sync status pushes (idle/syncing/success/error).
+   * Returns an unsubscribe, mirroring the on/off pattern of `onEvent`.
+   */
+  onKbSyncStatus(handler: (status: import('./kbSyncStatus').KbSyncStatus) => void): () => void
 
   /**
    * Read the built knowledge-base index from `userData/kb-index/index.json`.

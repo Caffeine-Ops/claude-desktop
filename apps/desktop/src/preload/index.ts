@@ -77,6 +77,8 @@ import {
   type ProposalImageUploadPayload
 } from '../shared/ipc-channels'
 import type { ProposalMetricRecord } from '../shared/proposal'
+import type { KbRemoteConfig } from '../shared/kbConfig'
+import type { KbSyncStatus } from '../shared/kbSyncStatus'
 
 // Visible in the Electron terminal if the preload actually loads.
 console.log('[preload] loaded — exposing chatApi')
@@ -400,15 +402,42 @@ const chatApi: ChatApi = {
     return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE) as Promise<void>
   },
 
-  getKbPath(): Promise<{ kbRoot: string | null; outDir: string }> {
+  getKbPath(): Promise<{
+    kbRoot: string | null
+    outDir: string
+    remote: KbRemoteConfig | null
+    lastSync: { atMs: number; builtAtMs: number } | null
+  }> {
     return ipcRenderer.invoke(IPC_CHANNELS.KB_PATH_GET) as Promise<{
       kbRoot: string | null
       outDir: string
+      remote: KbRemoteConfig | null
+      lastSync: { atMs: number; builtAtMs: number } | null
     }>
   },
 
   setKbPath(kbRoot: string): Promise<void> {
     return ipcRenderer.invoke(IPC_CHANNELS.KB_PATH_SET, kbRoot) as Promise<void>
+  },
+
+  setKbRemote(remote: KbRemoteConfig | null): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_REMOTE_SET, remote) as Promise<void>
+  },
+
+  kbSyncNow(): Promise<'started' | 'alreadyRunning' | 'noRemote'> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_SYNC_NOW) as Promise<'started' | 'alreadyRunning' | 'noRemote'>
+  },
+
+  pickKbRoot(): Promise<{ path: string | null }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_ROOT_PICK) as Promise<{ path: string | null }>
+  },
+
+  onKbSyncStatus(cb: (s: KbSyncStatus) => void): () => void {
+    const listener = (_e: unknown, payload: KbSyncStatus): void => cb(payload)
+    ipcRenderer.on(IPC_CHANNELS.KB_SYNC_STATUS, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.KB_SYNC_STATUS, listener)
+    }
   },
 
   readKbIndex() {

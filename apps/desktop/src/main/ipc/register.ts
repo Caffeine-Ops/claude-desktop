@@ -79,8 +79,10 @@ import type {
   UiPermissionMode
 } from '../../shared/ipc-channels'
 import { clearLogs, getLogs } from '../core/logCollector'
-import { getKbRoot, setKbRoot, readKbIndex, kbOutDir } from '../core/kbIndexStore'
+import { setKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote } from '../core/kbIndexStore'
+import { triggerKbSyncNow, lastKbSyncInfo } from '../core/kbSyncScheduler'
 import type { KbIndex } from '../../shared/kbIndex'
+import type { KbRemoteConfig } from '../../shared/kbConfig'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
 import { exportProposalPdf } from '../core/proposalPdf'
 import { markdownToDocxBuffer } from '../core/proposalDocx'
@@ -1057,10 +1059,15 @@ export function registerIpcHandlers(): void {
   // as "not ready" and shows the build CTA.
   ipcMain.handle(
     IPC_CHANNELS.KB_PATH_GET,
-    async (): Promise<{ kbRoot: string | null; outDir: string }> => ({
-      kbRoot: getKbRoot(),
-      outDir: kbOutDir()
-    })
+    async (): Promise<{
+      kbRoot: string | null
+      outDir: string
+      remote: KbRemoteConfig | null
+      lastSync: { atMs: number; builtAtMs: number } | null
+    }> => {
+      const cfg = getKbConfig()
+      return { kbRoot: cfg.kbRoot, outDir: kbOutDir(), remote: cfg.remote, lastSync: lastKbSyncInfo() }
+    }
   )
 
   ipcMain.handle(
@@ -1069,6 +1076,29 @@ export function registerIpcHandlers(): void {
       setKbRoot(kbRoot)
     }
   )
+
+  ipcMain.handle(IPC_CHANNELS.KB_REMOTE_SET, async (_e, remote: KbRemoteConfig | null): Promise<void> => {
+    // 入参防御：renderer 被攻破时 main 是最后防线，形状不对宁可丢弃。
+    if (remote !== null && (typeof remote?.baseUrl !== 'string' || typeof remote?.kbId !== 'string')) return
+    setKbRemote(remote)
+    // 写入即触发：用户填完 URL 不该还要再点一次同步（spec ④）。
+    if (remote) triggerKbSyncNow()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_SYNC_NOW, async (): Promise<'started' | 'alreadyRunning' | 'noRemote'> =>
+    triggerKbSyncNow()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.KB_ROOT_PICK, async (event): Promise<{ path: string | null }> => {
+    // 不能复用 WORKSPACE_PICK：那条要 resolveEngine（per-tab），设置 overlay 没有 engine。
+    const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { path: null }
+    const result = await dialog.showOpenDialog(win, {
+      title: '选择知识库目录',
+      properties: ['openDirectory']
+    })
+    return { path: result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]! }
+  })
 
   ipcMain.handle(
     IPC_CHANNELS.KB_INDEX_READ,
