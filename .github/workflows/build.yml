@@ -249,6 +249,14 @@ jobs:
       - name: Type check
         run: bun run --filter='@claude-desktop/desktop' typecheck
 
+      # bun test 与 typecheck 并列做质量门（终审 finding #5）：写方案 skill 化把
+      # 方法论外置成 skills/proposal-writer 的模板文件，其正确性由快照（逐字节）
+      # 与契约测试守护——CI 不跑 test 的话这道门只存在于开发者本机自觉，改坏模板
+      # 的提交能一路发进 Release。Windows runner 上模板/快照的行尾一致性由仓库根
+      # .gitattributes（skills/**、*.snap 钉 eol=lf）保证。
+      - name: Unit tests
+        run: bun run --filter='@claude-desktop/desktop' test
+
       # Use `dist:<platform>`, NOT `build:<platform>`. The desktop
       # `build:*` chain assumes apps/daemon/dist/cli.js and apps/web/out
       # already exist (its prebundle:daemon step only COPIES them) — true
