@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { Node as PMNode } from 'prosemirror-model'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
@@ -321,17 +322,27 @@ export function ProseMirrorComposerInput({
   return (
     <div className="relative w-full">
       <div ref={editorHostRef} className="w-full" />
-      {suggestion && items.length > 0 && (
-        <SuggestionPopover
-          items={items}
-          highlighted={highlighted}
-          coords={suggestion.coords}
-          onPick={(item) => {
-            insertSuggestion(viewRef.current!, suggestion, item)
-          }}
-          onHover={setHighlighted}
-        />
-      )}
+      {/* Portal 到 body：弹层是 position:fixed、坐标按视口算，但 CSS 里任何祖先带
+          transform/translate/filter/backdrop-filter 都会把 fixed 的包含块劫持成该
+          祖先——空态 hero 的 -translate-y 包装曾让弹层整体飞出视口上沿（「新对话
+          敲 / 没反应」，commit 2e411f4f 点修过一处）。挂到 body 后包含块恒为视口，
+          不再依赖「composer 树上游永远不加 transform」的隐性约定（仓库里
+          .proposal-anim-pop 等 transform 动画容器是现成的复发向量，终审 finding #6）。
+          事件仍走 React 合成事件树（portal 不影响），键盘导航状态在本组件里不变。 */}
+      {suggestion &&
+        items.length > 0 &&
+        createPortal(
+          <SuggestionPopover
+            items={items}
+            highlighted={highlighted}
+            coords={suggestion.coords}
+            onPick={(item) => {
+              insertSuggestion(viewRef.current!, suggestion, item)
+            }}
+            onHover={setHighlighted}
+          />,
+          document.body
+        )}
     </div>
   )
 }
