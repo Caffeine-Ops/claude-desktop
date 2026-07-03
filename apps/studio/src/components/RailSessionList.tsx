@@ -21,7 +21,7 @@
  *    什么样，一直看得到。
  *  - ··· 菜单与右键菜单是同一组条目（SessionMenuItems 分别塞进
  *    DropdownMenu / ContextMenu 两个 radix 壳）。
- *  - 选中态是单个 glider 滑块（motion layoutId），删除行播高度折叠动画，
+ *  - 选中态即时呈现（无滑动动画，2026-07-04 退役），删除行播高度折叠动画，
  *    删的是当前会话时选中态移交相邻行。
  *
  * 本组件不 import 任何模块求值期会触碰 window 的 src/chat/ 模块（那会
@@ -37,7 +37,7 @@ import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import type { ComponentType, ReactNode } from 'react'
 import type { ThreadSummary } from '@desktop-shared/types'
 
-import { railEaseOut, railGliderSpring } from '@/src/chat/shell/railMotion'
+import { railEaseOut } from '@/src/chat/shell/railMotion'
 import { ScrollArea } from '@/src/components/ui/scroll-area'
 import { Button } from '@/src/components/ui/button'
 import { Input } from '@/src/components/ui/input'
@@ -356,7 +356,7 @@ export function RailSessionList() {
   const items = buildItems(threads)
 
   return (
-    // reducedMotion="user"：glider / 折叠退场尊重系统「减弱动态效果」，
+    // reducedMotion="user"：折叠退场尊重系统「减弱动态效果」，
     // 与 chat App 的 MotionConfig 行为一致（rail 挂在 layout，不在那棵树里）。
     <MotionConfig reducedMotion="user">
       {/* 无「对话」标题（shell-floating 原型）：分组标签（今天/昨天/…）
@@ -419,9 +419,9 @@ export function RailSessionList() {
 
 /**
  * 单个会话行。三态：常规（标题 + hover 浮现 ···）、编辑（行内输入框 +
- * 保存钩）、上膛态只影响菜单条目不影响行本身。选中态不是行背景，而是
- * layoutId 共享的 glider 滑块——切换选中时滑块在行间滑动（spring 可被
- * 连点打断续滑，见 railMotion 注释）。
+ * 保存钩）、上膛态只影响菜单条目不影响行本身。选中态 = 目标行上的中性
+ * 灰底 + 品牌绿圆点，即时呈现（曾是 layoutId glider 滑块在行间滑动，
+ * 2026-07-04 应用户要求去掉切换动画后退役）。
  */
 function SessionRow({
   thread,
@@ -513,13 +513,12 @@ function SessionRow({
           <ContextMenuTrigger asChild>
             <div className="group relative">
               {active && (
-                // 选中滑块：唯一一份，layoutId 让它在行间做 FLIP 位移。
-                // 中性灰底（shell-floating 原型的用色纪律：绿只给 CTA 与
-                // 选中「点」记号，选中面本身不上色——旧绿 tint 滑块退役）。
-                <motion.span
+                // 选中底：中性灰（shell-floating 原型的用色纪律：绿只给 CTA
+                // 与选中「点」记号，选中面本身不上色）。曾是 layoutId 共享的
+                // motion 滑块（切换时在行间做 FLIP 滑动），2026-07-04 应用户
+                // 要求退役——切换即时呈现，普通 span 直接画在目标行。
+                <span
                   aria-hidden
-                  layoutId="rail-session-glider"
-                  transition={railGliderSpring}
                   className="absolute inset-0 rounded-lg bg-sidebar-accent"
                 />
               )}
