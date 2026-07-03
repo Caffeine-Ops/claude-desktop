@@ -165,6 +165,15 @@ export function genImageDirectiveKey(sectionId: string, raw: string, occurrence:
   return `${sectionId}#${occurrence}#${hashText(raw.trim())}`
 }
 
+/**
+ * 指令原文的内容哈希（genImageDirectiveKey 的第三段）。store 侧「应用/丢弃后清理同内容任务键」
+ * 需要按 (sectionId, raw) 反查全部 occurrence 的键——导出哈希本身，免得调用方去 split 键字符串
+ * 猜格式（sectionId 是 UUID 不含 #，但格式知识应收口在本文件）。
+ */
+export function genImageRawHash(raw: string): string {
+  return hashText(raw.trim())
+}
+
 function directiveIndices(blocks: readonly string[], raw: string): number[] {
   const key = raw.trim()
   const out: number[] = []

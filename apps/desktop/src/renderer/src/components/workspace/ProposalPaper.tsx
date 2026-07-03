@@ -373,8 +373,7 @@ export function ProposalPaper(): React.JSX.Element {
     }
     if (review.mode === 'directive') {
       // 应用 = 用生成图原地替换指令块。按内容键（directiveRaw+occurrence）定位而非 blockIndex
-      // ——审阅悬而未决期间块序可能漂移（见 shared/proposalGenImage.ts 顶注）。找不到（用户手改
-      // 了指令文本/已删）→ 与改图漂移同一立场：console.warn 留痕、摘卡不落地。
+      // ——审阅悬而未决期间块序可能漂移（见 shared/proposalGenImage.ts 顶注）。
       if (!review.directiveRaw) {
         pstore.removeImageReview(review.id)
         return
@@ -389,11 +388,22 @@ export function ProposalPaper(): React.JSX.Element {
       if (changed) {
         pstore.updateSection(sec.id, joinBlocks(next))
       } else {
-        console.warn('[proposal] 应用配图失败：指令块已不在本节（被手改或删除），已放弃', {
+        // 内容键失配（用户手改了指令文本/已删，或同内容多实例的兄弟卡先被处理而本卡未及重编
+        // 号的历史残留）。生成图是已付费产物，不能随卡片一起无声蒸发（评审 #4）——退化为
+        // generate 同款「插到 blockIndex 后」（越界夹紧到节末），图落进文档，位置不满意用户
+        // 在编辑态点图可删。
+        console.warn('[proposal] 应用配图：指令块已不在本节（被手改或删除），退化为就近插入', {
           reviewId: review.id,
           sectionId: review.sectionId
         })
+        const at = Math.min(Math.max(review.blockIndex + 1, 0), blocks.length)
+        const withImg = blocks.slice()
+        withImg.splice(at, 0, `![${review.caption ?? '配图'}](${review.resultPath})`)
+        pstore.updateSection(sec.id, joinBlocks(withImg))
       }
+      // 簿记（评审 #4）：兄弟审阅卡 occurrence 前移 + 清最高序任务键。changed=false（块已被
+      // 手删）时块数同样已经少了一个实例，簿记照做，任务表才跟得上现实。
+      pstore.onGenImageDirectiveRemoved(sec.id, review.directiveRaw, review.directiveOccurrence ?? 0)
       pstore.removeImageReview(review.id)
       return
     }
@@ -457,6 +467,10 @@ export function ProposalPaper(): React.JSX.Element {
           review.directiveOccurrence ?? 0
         )
         if (changed) pstore.updateSection(sec.id, joinBlocks(next))
+        // 簿记与 applyImageReview 对称（评审 #4）：兄弟卡重编号 + 清最高序任务键。丢弃即用户
+        // 否决这条指令——键清掉后 AI 之后重新产出同内容指令块仍能自动发起，不会被 done 残键
+        // 永久拦下（评审 strand 场景）。
+        pstore.onGenImageDirectiveRemoved(sec.id, review.directiveRaw, review.directiveOccurrence ?? 0)
       }
     }
     pstore.removeImageReview(review.id)

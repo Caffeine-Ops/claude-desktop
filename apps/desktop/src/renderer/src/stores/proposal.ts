@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import type { ProposalDraftBlock, ProposalKind, SectionVerification } from '@shared/proposal'
 import { appendDraftBlocks, sortSectionsByKind, collapseSingletonSections } from '@shared/proposal'
 import type { ProposalDraftRecord } from '@shared/ipc-channels'
-import { parseGenImageDirectives, genImageDirectiveKey } from '@shared/proposalGenImage'
+import { parseGenImageDirectives, genImageDirectiveKey, genImageRawHash } from '@shared/proposalGenImage'
 import { useChatStore } from './chat'
 
 export interface ProposalProduct {
@@ -189,8 +189,16 @@ interface ProposalState {
   // （调用方目前不必用，但契约要求返回，供 Task 11 未来精确定位/去重）。
   addImageReview: (review: Omit<ImageReview, 'id'>) => string
   removeImageReview: (id: string) => void
-  // genimage 任务态登记/更新（配图密度③）。整表清空走各 reset 点，不单独提供删除。
+  // genimage 任务态登记/更新（配图密度③）。整表清空走各 reset 点，不提供任意删除——
+  // 唯一的定点清理入口是下面的 onGenImageDirectiveRemoved。
   setGenImageJob: (key: string, job: GenImageJob) => void
+  // 指令块被应用/丢弃（从草稿里移除一个 (sectionId, raw) 的实例）后的簿记（评审 #4）：
+  // ① 同节同内容、occurrence 更大的兄弟审阅卡就地减一——否则块重编号后旧 occurrence 越界，
+  //    「应用」静默 no-op、已付费生成图被丢弃；
+  // ② 删掉该 (sectionId, raw) 下 occurrence 最大的任务键——任务表与剩余块数对齐，幸存块的
+  //    键继续命中各自任务；单实例场景键被清空后，AI 之后重新产出同内容指令块才能再次自动
+  //    发起（否则 done 残键让 autoFire 永久跳过、卡片还挂着误导性的「已失效」文案）。
+  onGenImageDirectiveRemoved: (sectionId: string, raw: string, occurrence: number) => void
   // 标记/清除草稿写盘失败态（P3-3）。flushProposalSave 落盘后调用：失败 true、成功 false。
   setDraftSaveFailed: (failed: boolean) => void
   // 用 AI 新产出整节替换指定节：同步把 baselineMarkdown 也更新成新原文（否则 M-0 埋点会把
@@ -344,6 +352,40 @@ export const useProposalStore = create<ProposalState>((set) => ({
     set((s) => ({ imageReviews: s.imageReviews.filter((r) => r.id !== id) })),
   setGenImageJob: (key, job) =>
     set((s) => ({ genImageJobs: { ...s.genImageJobs, [key]: job } })),
+  onGenImageDirectiveRemoved: (sectionId, raw, occurrence) =>
+    set((s) => {
+      // ① 兄弟审阅卡重编号：块少了一个，更靠后的同内容实例整体前移一位。
+      const reviews = s.imageReviews.map((r) =>
+        r.mode === 'directive' &&
+        r.sectionId === sectionId &&
+        r.directiveRaw === raw &&
+        (r.directiveOccurrence ?? 0) > occurrence
+          ? { ...r, directiveOccurrence: (r.directiveOccurrence ?? 0) - 1 }
+          : r
+      )
+      // ② 删 (sectionId, raw) 下 occurrence 最大的任务键。删「最大」而非「被移除的那个」：
+      // 幸存块重编号后落在 0..n-2，恰好继续命中原有低序键（状态与内容都同源，任意实例互换
+      // 语义等价——同内容指令生成的图只差随机种子）；被腾出的最高序键才是真正失配的那个。
+      // 代价是并发在飞的最高序 fire 回调可能把键再写回来（孤儿键，只多占一格配额），比起
+      // done 残键永久锁死自动发起 + 卡片挂错误文案，取前者。
+      const h = genImageRawHash(raw)
+      const prefix = `${sectionId}#`
+      const suffix = `#${h}`
+      let maxKey: string | null = null
+      let maxOcc = -1
+      for (const k of Object.keys(s.genImageJobs)) {
+        if (!k.startsWith(prefix) || !k.endsWith(suffix)) continue
+        const occ = Number(k.slice(prefix.length, k.length - suffix.length))
+        if (Number.isInteger(occ) && occ > maxOcc) {
+          maxOcc = occ
+          maxKey = k
+        }
+      }
+      if (maxKey === null) return { imageReviews: reviews }
+      const jobs = { ...s.genImageJobs }
+      delete jobs[maxKey]
+      return { imageReviews: reviews, genImageJobs: jobs }
+    }),
   setDraftSaveFailed: (failed) => set({ draftSaveFailed: failed }),
   reviseSection: (id, markdown) =>
     set((s) => ({
