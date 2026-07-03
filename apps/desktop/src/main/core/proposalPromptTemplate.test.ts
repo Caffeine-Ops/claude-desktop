@@ -7,7 +7,12 @@ import {
   PROPOSAL_COVER_CONFIRM_HEADER,
   PROPOSAL_TOC_CONFIRM_HEADER
 } from '../../shared/proposal'
-import { buildProposalAppend, loadAppendTemplate, renderPromptTemplate } from './proposalPrompt'
+import {
+  assertWellFormedPlaceholders,
+  buildProposalAppend,
+  loadAppendTemplate,
+  renderPromptTemplate
+} from './proposalPrompt'
 
 const PROTOCOL_STRINGS = [
   ...Object.values(PROPOSAL_DRAFT_BEGIN),
@@ -41,5 +46,23 @@ describe('append 模板契约', () => {
     const out = buildProposalAppend('/mirror', [])
     for (const s of PROTOCOL_STRINGS) expect(out).toContain(s)
     expect(out).not.toContain('{{')
+  })
+})
+
+describe('assertWellFormedPlaceholders（运行期改坏模板的 fail-fast）', () => {
+  it('良构模板通过（含多个合法占位符）', () => {
+    expect(() => assertWellFormedPlaceholders('a{{KB_SCOPE}}b{{COVER_BEGIN}}')).not.toThrow()
+  })
+
+  it('小写占位符抛错', () => {
+    expect(() => assertWellFormedPlaceholders('a{{kb_scope}}b')).toThrow('残缺占位符')
+  })
+
+  it('残缺右括号抛错', () => {
+    expect(() => assertWellFormedPlaceholders('a{{X}b')).toThrow('残缺占位符')
+  })
+
+  it('当前提交的真实模板通过（loadAppendTemplate 全链路）', () => {
+    expect(() => loadAppendTemplate()).not.toThrow()
   })
 })

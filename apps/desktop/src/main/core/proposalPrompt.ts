@@ -76,7 +76,27 @@ export function loadAppendTemplate(): string {
   // 模板文件末尾按 POSIX 惯例带一个换行，而旧实现 join('\n') 无尾换行——剥掉这
   // 一个字节以维持「渲染输出与旧实现逐字节一致」的快照不变量。只剥一个、不用
   // trimEnd：trimEnd 会连模板刻意保留的尾部空白一起吃掉。
-  return raw.endsWith('\n') ? raw.slice(0, -1) : raw
+  const template = raw.endsWith('\n') ? raw.slice(0, -1) : raw
+  // 在读入口校验、不在渲染后校验：渲染后模板里已经替换进了 KB_SCOPE 等运行期
+  // 值，值里（比如 KB 文件标题）合法出现 `{{` 会被误杀成「残缺占位符」；读入口
+  // 校验的是模板原文，此时占位符还是 `{{NAME}}` 字面量，不会有这层污染。
+  assertWellFormedPlaceholders(template)
+  return template
+}
+
+/**
+ * 校验模板里所有 `{{` 都开启一个良构占位符（{{大写字母/数字/下划线}}）。
+ * renderPromptTemplate 对「良构但未知」的占位符会抛错，但小写/残缺的写法
+ * （{{kb_scope}}、{{X}）根本匹配不上正则、会静默漏进 prompt——契约测试守得住
+ * 已提交的模板，守不住运行期直接改坏文件（loadAppendTemplate 每次重读、改动
+ * 即生效）。这里把 fail-fast 延伸到运行期编辑场景：宁可当轮发送失败，也不让
+ * 残缺占位符污染注入 AI 的写作纪律。
+ */
+export function assertWellFormedPlaceholders(template: string): void {
+  const malformed = template.match(/\{\{(?![A-Z0-9_]+\}\})[^\n]{0,24}/)
+  if (malformed) {
+    throw new Error(`提示词模板含残缺占位符（应为 {{大写下划线}} 形态）：「${malformed[0]}…」`)
+  }
 }
 
 /**

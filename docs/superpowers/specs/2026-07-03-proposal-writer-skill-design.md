@@ -178,8 +178,14 @@ skill——方法论只经 systemPrompt.append 一条通道注入，避免双份
 ## 7. 错误处理与降级
 
 - **占位符渲染失败**（模板里出现未知 `{{...}}`）：`renderPromptTemplate` 抛错。
-  由于模板是编译期内联的常量，这类错误必然在开发期被快照/契约测试拦下，不可能
-  只在运行期暴露。
+  模板是运行期读取的（随 §5.3 修订，`loadAppendTemplate` 每次调用都重读文件，
+  非编译期内联常量）——已提交版本由快照/契约测试守护，但运行期有人直接把文件
+  改坏（比如把占位符写成小写 `{{kb_scope}}` 或残缺成 `{{X}`）不会经过这些测试。
+  这类「良构但拼错」的情形靠 `renderPromptTemplate` 对未知占位符抛错兜住；「小写
+  /残缺、正则根本匹配不上」的情形则靠 `loadAppendTemplate` 读入口的
+  `assertWellFormedPlaceholders` 校验兜住，否则会静默漏进 prompt、不抛错也不
+  报错。两层合起来保证：占位符相关的错误必然经 `send()` 失败路径浮出、用户可见，
+  不会静默污染注入 AI 的写作纪律。
 - **纯 CLI 终端里用户手动 `/claude-desktop:proposal-writer`**：CLI 会真的展开
   SKILL.md——文案明确说明桌面联动缺席、指引读 references 里的方法论后按降级
   方式写（无面板/硬门/检索）。可用但降级，符合预期。
