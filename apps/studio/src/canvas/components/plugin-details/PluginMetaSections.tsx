@@ -31,8 +31,8 @@ import type {
   PluginConnectorRef,
   PluginManifest,
 } from '@open-design/contracts';
-import { Icon } from '../Icon';
-import { TrustBadge } from '../TrustBadge';
+import { Icon } from '../shared/Icon';
+import { TrustBadge } from '../plugins/TrustBadge';
 import { authorInitials, derivePluginSourceLinks } from '../../runtime/plugin-source';
 import { resolvePluginQueryFallback } from '../../state/projects';
 

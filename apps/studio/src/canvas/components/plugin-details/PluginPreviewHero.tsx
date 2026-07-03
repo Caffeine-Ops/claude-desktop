@@ -10,7 +10,7 @@
 // nothing (the modal hides the hero entirely).
 
 import { useMemo, useState } from 'react';
-import { Icon } from '../Icon';
+import { Icon } from '../shared/Icon';
 
 export interface PluginExampleEntry {
   path: string;

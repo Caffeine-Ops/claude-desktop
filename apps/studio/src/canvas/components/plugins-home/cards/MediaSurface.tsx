@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import type { MediaPreviewSpec } from '../preview';
-import { Icon } from '../../Icon';
+import { Icon } from '../../shared/Icon';
 
 interface Props {
   preview: MediaPreviewSpec;

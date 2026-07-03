@@ -21,8 +21,8 @@ import {
   fetchDesignSystemShowcase,
   fetchPluginAssetText,
 } from '../../providers/registry';
-import { DesignSpecView } from '../DesignSpecView';
-import { PreviewModal, type PreviewView } from '../PreviewModal';
+import { DesignSpecView } from '../design-system/DesignSpecView';
+import { PreviewModal, type PreviewView } from '../shared/PreviewModal';
 import { PluginShareMenu } from './PluginShareMenu';
 import { PluginMetaSections } from './PluginMetaSections';
 

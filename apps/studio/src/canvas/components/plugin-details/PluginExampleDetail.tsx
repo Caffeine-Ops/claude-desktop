@@ -13,7 +13,7 @@ import {
   fetchPluginPreviewHtml,
   type SkillExampleResult,
 } from '../../providers/registry';
-import { PreviewModal } from '../PreviewModal';
+import { PreviewModal } from '../shared/PreviewModal';
 import { PluginShareMenu } from './PluginShareMenu';
 import { PluginMetaSections } from './PluginMetaSections';
 

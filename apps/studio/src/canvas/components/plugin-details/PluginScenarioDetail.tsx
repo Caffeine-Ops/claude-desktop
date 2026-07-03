@@ -12,8 +12,8 @@ import type {
   InstalledPluginRecord,
   PluginManifest,
 } from '@open-design/contracts';
-import { Icon } from '../Icon';
-import { TrustBadge } from '../TrustBadge';
+import { Icon } from '../shared/Icon';
+import { TrustBadge } from '../plugins/TrustBadge';
 import { PluginPreviewHero } from './PluginPreviewHero';
 import { PluginMetaSections } from './PluginMetaSections';
 import { PluginShareMenu } from './PluginShareMenu';

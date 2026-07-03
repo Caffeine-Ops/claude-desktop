@@ -18,7 +18,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { InstalledPluginRecord } from '@open-design/contracts';
-import { Icon } from '../Icon';
+import { Icon } from '../shared/Icon';
 import { derivePluginSourceLinks } from '../../runtime/plugin-source';
 
 interface Props {

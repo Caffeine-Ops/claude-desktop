@@ -16,8 +16,8 @@ import type {
 } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { resolvePluginQueryFallback } from '../../state/projects';
-import { Icon } from '../Icon';
-import { PreviewModal, type PreviewView } from '../PreviewModal';
+import { Icon } from '../shared/Icon';
+import { PreviewModal, type PreviewView } from '../shared/PreviewModal';
 import { PluginMetaSections } from './PluginMetaSections';
 import { PluginShareMenu } from './PluginShareMenu';
 
