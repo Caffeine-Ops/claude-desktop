@@ -1,0 +1,648 @@
+/*
+ * settings-v2.css — scoped skin for the redesigned Settings page (V2).
+ *
+ * DESIGN-SYSTEM PARITY (this is the important part)
+ *   V2 must read as the SAME app as the chat surface — not a bolted-on
+ *   second system. So this file deliberately does NOT define its own color
+ *   palette. It inherits the app's global semantic tokens (defined on :root
+ *   in index.css): --background/--card/--muted/--secondary, --foreground,
+ *   --muted-foreground, --accent*, --border*, --radius*, --shadow*. That
+ *   means V2 automatically tracks light/dark mode AND the user's chosen
+ *   accent color — flip the accent and the sidebar's selected pill, the
+ *   theme-mode toggle and the swatch ring all re-tint, exactly like the
+ *   rest of the UI.
+ *
+ *   The prototype (docs/ui-prototype-settings-b.html) is the LAYOUT source
+ *   (cards, segmented control, pill stepper, swatch grid), but its hard-coded
+ *   green/grey values are intentionally dropped in favor of the tokens above.
+ *
+ * SCOPING
+ *   Everything is namespaced under `.sv2` so it cannot leak into the rest of
+ *   the app. We only bridge a couple of layout-only locals here; all color,
+ *   radius and shadow come straight from the inherited app tokens.
+ */
+
+.sv2 {
+  /* Layout-only locals (no color). Everything else is an app token. */
+  --sv2-sidebar-w: 248px;
+  --sv2-content-max: 760px;
+  /* Accent ink for selected nav text: a readable, mostly-opaque accent. */
+  --sv2-accent-ink: var(--accent-strong);
+
+  /* Fill the host (App renders V2 inside a `fixed inset-0` container) WITHOUT
+     becoming a positioning context. If `.sv2` were `position: absolute`, any
+     absolutely-positioned descendant inside the embedded SettingsDialog with
+     no nearer positioned ancestor would resolve against `.sv2` and could lay
+     itself over the sidebar (stealing its clicks). Keeping `.sv2` static and
+     making `.sv2-content` the positioning context (below) confines such
+     elements to the content pane. We size via width/height:100%. */
+  width: 100%;
+  height: 100%;
+
+  font-family: var(--font-sans);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  letter-spacing: normal;
+}
+.sv2 *,
+.sv2 *::before,
+.sv2 *::after {
+  box-sizing: border-box;
+}
+
+/* Window shell — fills its host container (App renders V2 inside a
+   fixed inset-0 overlay or an in-app modal slot). */
+.sv2-window {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-app);
+  display: flex;
+  overflow: hidden;
+}
+
+/* ===================== Sidebar ===================== */
+.sv2-sidebar {
+  width: var(--sv2-sidebar-w);
+  flex-shrink: 0;
+  /* Grey rail against the white content surface — same token the chat /
+     classic-settings sidebar uses (.modal-settings nav → --bg-subtle). */
+  background: var(--bg-subtle);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Sit above the content pane so an over-tall or absolutely-positioned
+     embedded element can never overlay the nav and steal its clicks. */
+  position: relative;
+  z-index: 1;
+}
+/* Reserve clearance for the macOS traffic-light controls. These are the
+   native window buttons drawn by the OS at roughly (13px, 19px); this empty
+   spacer pushes everything below them so the「返回应用」row never crowds the
+   red/yellow/green dots (see reference: a full gap under the lights). */
+.sv2-sidebar-top {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.sv2-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 8px 10px 8px;
+  height: 34px;
+  padding: 0 11px;
+  border: none;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.sv2-back-btn:hover {
+  background: var(--bg-muted);
+  color: var(--text);
+}
+.sv2-back-btn svg {
+  color: var(--text-muted);
+}
+
+.sv2-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 10px 14px;
+}
+.sv2-nav::-webkit-scrollbar {
+  width: 8px;
+}
+.sv2-nav::-webkit-scrollbar-thumb {
+  background: var(--text-faint);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.sv2-nav-group {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 16px 12px 6px;
+}
+.sv2-nav-group:first-child {
+  padding-top: 6px;
+}
+
+.sv2-nav-item {
+  /* The app has a global `button { … }` reset (index.css) with its own
+     padding / border / background / inline-ish sizing. Those were shrinking
+     the row's hit box to its content (the green pill stopped at the text and
+     the empty right half wasn't part of the button — so only a small area was
+     clickable). We force the full-width box here with !important so the whole
+     row is the button: hit box == visual row. */
+  display: flex !important;
+  box-sizing: border-box !important;
+  align-items: center;
+  gap: 11px;
+  width: 100% !important;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px !important;
+  margin: 0 !important;
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: 14px;
+  cursor: pointer !important;
+  user-select: none;
+  border: none !important;
+  background: transparent;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+.sv2-nav-item:hover {
+  background: var(--bg-muted);
+}
+/* The <svg> icon is an SVGElement whose hit target reports as
+   SVGAnimatedString and was swallowing clicks on the icon half of each row —
+   only clicks on the text `.label` reached the button. `pointer-events: none`
+   passes those clicks through to the button so the WHOLE row is clickable.
+   We scope this to the svg only (NOT all children): the text label doesn't
+   swallow clicks, and leaving it interactive keeps the `cursor: pointer`
+   hand showing when hovering the label. */
+.sv2-nav-item svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.sv2-nav-item.active {
+  background: var(--bg-muted);
+  color: var(--text);
+  font-weight: 600;
+}
+.sv2-nav-item.active svg {
+  color: var(--text-soft);
+}
+.sv2-nav-item .label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Accent-tinted selected state — mirrors the chat sidebar's selected pill,
+   so the active row re-tints with the user's chosen accent color. */
+.sv2-nav-item.active.accent {
+  background: var(--accent-soft);
+  color: var(--sv2-accent-ink);
+}
+.sv2-nav-item.active.accent svg {
+  color: var(--accent);
+}
+
+/* ===================== Content ===================== */
+.sv2-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--bg-app);
+  /* Containing block for any absolutely-positioned embedded descendant, so
+     it can't escape leftward over the sidebar. */
+  position: relative;
+}
+.sv2-content::-webkit-scrollbar {
+  width: 10px;
+}
+.sv2-content::-webkit-scrollbar-thumb {
+  background: var(--text-faint);
+  border-radius: 5px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.sv2-content-col {
+  max-width: var(--sv2-content-max);
+  margin: 0 auto;
+  padding: 44px 40px 60px;
+}
+
+.sv2-page-head {
+  margin-bottom: 26px;
+}
+.sv2-page-head h1 {
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  margin: 0;
+}
+.sv2-page-head p {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+}
+
+/* Grouped card */
+.sv2-group-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 4px 22px;
+  margin-bottom: 22px;
+}
+.sv2-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.sv2-item:last-child {
+  border-bottom: none;
+}
+.sv2-item .il {
+  min-width: 0;
+}
+.sv2-item .il .t {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.sv2-item .il .d {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.55;
+  max-width: 56ch;
+}
+.sv2-item .ir {
+  flex-shrink: 0;
+}
+
+/* Standalone card (Appearance sub-sections) */
+.sv2-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 20px 22px;
+  margin-bottom: 22px;
+}
+.sv2-card .sv2-item:first-of-type {
+  padding-top: 0;
+}
+.sv2-card .sv2-item:last-of-type {
+  padding-bottom: 0;
+}
+.sv2-card-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  margin-bottom: 14px;
+}
+.sv2-card-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin-top: 14px;
+}
+
+/* Segmented control */
+.sv2-segmented {
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius);
+}
+.sv2-seg-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.sv2-seg-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+.sv2-seg {
+  height: 38px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 13.5px;
+  color: var(--text-soft);
+  font-weight: 500;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+  font-family: inherit;
+}
+.sv2-seg:hover:not(.on) {
+  color: var(--text);
+}
+.sv2-seg.on {
+  background: var(--bg-panel);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+.sv2-seg:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.sv2-seg svg {
+  color: currentColor;
+  opacity: 0.75;
+}
+.sv2-seg .ver {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+/* Accent swatches */
+.sv2-swatches {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.sv2-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 1px var(--border-strong);
+  transition: transform 0.1s;
+  position: relative;
+  padding: 0;
+}
+.sv2-swatch:hover {
+  transform: scale(1.08);
+}
+/* Selected ring uses the app accent so it matches the chat surface. */
+.sv2-swatch.on {
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--accent);
+}
+.sv2-swatch.custom {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  overflow: hidden;
+}
+.sv2-swatch-picker {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+
+/* Pill stepper */
+.sv2-stepper {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--bg-panel);
+  overflow: hidden;
+  height: 34px;
+}
+.sv2-stepper button {
+  width: 38px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-soft);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s;
+}
+.sv2-stepper button:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.sv2-stepper button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.sv2-stepper .val {
+  min-width: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  font-size: 13.5px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.sv2-stepper .val .u {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Checkbox — selected fill uses the app accent (was the prototype's blue). */
+.sv2-check {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--bg-app);
+  border: 1.5px solid var(--border-strong);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+  padding: 0;
+}
+.sv2-check.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.sv2-check svg {
+  color: var(--accent-foreground, #fff);
+  opacity: 0;
+}
+.sv2-check.on svg {
+  opacity: 1;
+}
+
+/* ===================================================================
+ * EMBEDDED BRIDGE
+ * -------------------------------------------------------------------
+ * V2 hosts the shared section logic by rendering <SettingsDialog embedded>.
+ * That tree still carries the legacy `settings-*` / `seg-*` / `field-*` /
+ * `hint` classes that index.css styles for the classic dialog. Inside `.sv2`
+ * we (a) neutralize the embedded wrapper chrome so the panes flow inside our
+ * content column, and (b) RE-SKIN those legacy classes to the V2 look (app
+ * tokens, prototype card/segment/field shapes) — so every reused panel
+ * matches the new design WITHOUT editing any section component. Scoped under
+ * `.sv2` so the classic dialog is untouched.
+ * =================================================================== */
+
+/* (a) Neutralize embedded wrapper chrome. Use targeted resets (NOT
+   `all: unset`, which nukes inherited color/font and breaks visibility) so
+   the embedded panes simply flow as plain blocks inside our content column. */
+.sv2 .settings-embedded-root,
+.sv2 .settings-embedded-shell,
+.sv2 .modal-body,
+.sv2 .settings-content {
+  display: block;
+  position: static;
+  inset: auto;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  overflow: visible;
+  flex: none;
+}
+
+/* (b) Re-skin legacy section classes to the V2 look. */
+
+/* Section wrapper → vertical stack of cards. */
+.sv2 .settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Legacy card → V2 card. */
+.sv2 .settings-card,
+.sv2 .settings-section-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 20px 22px;
+  margin-bottom: 22px;
+}
+.sv2 .settings-card-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  margin-bottom: 14px;
+}
+
+/* Inline hints. */
+.sv2 .hint,
+.sv2 p.hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+/* Field rows + labels. */
+.sv2 .field,
+.sv2 .field-row,
+.sv2 .settings-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.sv2 .field-label {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Segmented control → V2 segmented. */
+.sv2 .seg-control {
+  display: grid;
+  grid-template-columns: repeat(var(--seg-cols, 2), 1fr);
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius);
+}
+.sv2 .seg-btn {
+  height: 38px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 13.5px;
+  color: var(--text-soft);
+  font-weight: 500;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.sv2 .seg-btn:hover:not(.active):not(:disabled) {
+  color: var(--text);
+}
+.sv2 .seg-btn.active {
+  background: var(--bg-panel);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+.sv2 .seg-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.sv2 .seg-title {
+  font-weight: inherit;
+}
+.sv2 .seg-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* Accent swatches (legacy pet-swatch markup used by Appearance). */
+.sv2 .pet-swatch {
+  border-radius: 50%;
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+.sv2 .pet-swatch.active {
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--accent);
+}
+
+/* Test / action buttons → quiet bordered pill. */
+.sv2 .settings-test-btn,
+.sv2 .settings-rescan-btn {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--bg-panel);
+  color: var(--text);
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.sv2 .settings-test-btn:hover,
+.sv2 .settings-rescan-btn:hover {
+  background: var(--bg-subtle);
+}

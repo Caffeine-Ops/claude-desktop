@@ -1,0 +1,62 @@
+{
+  "name": "@claude-desktop/studio",
+  "version": "0.0.1",
+  "description": "统一前端（迁移目标）：desktop renderer 的聊天 UI 与 apps/web 的设计工具 UI 都往这里搬。Electron 退化为薄壳加载本应用；daemon 继续做后端。只服务桌面壳，不做 static export（决策：放弃纯浏览器部署形态）。",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p ${STUDIO_DEV_PORT:-3100}",
+    "build": "next build",
+    "start": "next start -p ${STUDIO_DEV_PORT:-3100}",
+    "typecheck": "tsc --noEmit"
+  },
+  "//note-port": "端口默认 3100（避开 next 默认 3000——被同源 fork 抢占串味的历史坑，见 desktop openDesignServices.ts WEB_DEV_PORT 注释）。desktop 壳 spawn 本应用时注入 STUDIO_DEV_PORT 保证监听端口与壳侧探活/加载常量恒等；独立 bun run dev 时走 3100 默认值。",
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.32.1",
+    "@assistant-ui/core": "^0.1.13",
+    "@assistant-ui/react": "^0.12.24",
+    "@claude-desktop/design-tokens": "workspace:*",
+    "@open-design/composer": "workspace:*",
+    "@open-design/contracts": "workspace:*",
+    "@open-design/host": "workspace:*",
+    "@open-design/platform": "workspace:*",
+    "@open-design/sidecar": "workspace:*",
+    "@open-design/sidecar-proto": "workspace:*",
+    "@open-design/ui": "workspace:*",
+    "@use-gesture/react": "^10.3.1",
+    "highlight.js": "^11.11.1",
+    "lucide-react": "1.16.0",
+    "motion": "^12.38.0",
+    "next": "16.2.10",
+    "openai": "6.38.0",
+    "posthog-js": "1.374.2",
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-history": "^1.5.0",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.7",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.41.8",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
+    "zustand": "^5.0.0"
+  },
+  "//note-chat-deps": "src/chat/ 迁移自 apps/desktop renderer，第三方依赖区间与 desktop 逐一对齐（bun hoist 同一份实例）。desktop 侧升级这些包时 studio 必须同步。",
+  "//note-assistant-ui": "版本区间与 apps/desktop 一致（bun hoist 同一份）。Phase 2 前置：@desktop-shared/ipc-channels 类型里 type-import 了 @assistant-ui/react 的 ThreadMessageLike，tsc 解析需要它在依赖树里；聊天 UI 迁入后是正经运行时依赖。",
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.0",
+    "@types/node": "20.19.39",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "postcss": "8.5.15",
+    "tailwindcss": "4.3.0",
+    "typescript": "5.9.3"
+  },
+  "//note-react": "react/@types 精确钉死到与 apps/web 完全一致的版本。bun workspace 里两个不同精确版本会 resolve 出两份 react，历史上 @types/react 双版本穿透穿出过 ReactNode 不兼容（见 errors/2026-05-23）。升级时全仓三个 app 一起动。",
+  "engines": {
+    "node": "~24"
+  },
+  "//note-canvas-deps": "src/canvas/ 迁移自 apps/web src（Phase 3 整体平移），依赖与 web 逐一对齐。@anthropic-ai/sdk 0.32.1 与 desktop 的 ^0.105 并存（canvas 代码用 0.32 API），Phase 4 前统一。"
+}

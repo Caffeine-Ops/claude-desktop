@@ -1,0 +1,44 @@
+/* 外部字体必须是整条 import 链里的第一条规则（CSS 规范：@import 前不得有
+ * 其它规则）。原本在 canvas/index.css 首行，但那个文件被嵌套 import 进本文件
+ * 后展开位置在 chat 链规则之后，Turbopack 直接拒绝解析——所以提升到这里。 */
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap');
+
+/* studio 全局样式入口。
+ *
+ * Tailwind entry 不在这里——src/chat/styles/index.css（从 desktop renderer
+ * 原样迁入）才是唯一的 `@import 'tailwindcss'`：它带着完整的 @theme inline
+ * 映射（shadcn 式 token → utility）和 @source 指令，聊天 UI 的全部类名都
+ * 依赖那套映射。这里若再 import 一次 tailwindcss 会产生双份 preflight/
+ * utilities，级联顺序也会错乱。
+ *
+ * index.css 里的相对路径（design-tokens、@source packages/ui）在迁移后
+ * 依然有效：apps/studio/src/chat/styles 到 repo root 的层级数恰好与原
+ * apps/desktop/src/renderer/src 相同（都是 5 层）。
+ */
+@import '../src/chat/styles/index.css';
+/* 桌面 window chrome（header、traffic-light 偏移、data-surface 分支）。 */
+@import '../src/chat/styles/main.css';
+/* 代码高亮主题（highlight.js）。 */
+@import '../src/chat/styles/highlight.css';
+
+/* 工作画布（src/canvas/，迁移自 apps/web）的样式链。它自带 utilities-only
+ * 的 Tailwind（theme.css + utilities.css，刻意无 preflight——27k 行手写 CSS
+ * 依赖裸元素默认样式）。⚠️ 已知张力：上面 chat 链的完整 tailwindcss import
+ * 含全局 preflight，理论上会波及 canvas 的裸元素——两链并存是 Phase 3 平移
+ * 期的过渡态，视觉回归在实测中逐处收敛（utilities 双份声明幂等，无冲突）。 */
+@import '../src/canvas/index.css';
+
+/* studio 自己的 app/ 目录不在 index.css 的 @source 显式清单里，补一条
+ * 让 Tailwind 扫到 page/layout 里用的类名。路径相对本文件。 */
+@source '../app/**/*.{ts,tsx}';
+
+/* Apple DESIGN.md §3 基础排版，对齐 desktop renderer 的全局设置。
+ * 字体栈本体在共享 tokens 里（--font-sans），来源单一。 */
+:root {
+  font-family: var(--font-sans);
+  font-optical-sizing: auto;
+  font-feature-settings: 'cv11', 'ss01';
+  letter-spacing: -0.022em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
