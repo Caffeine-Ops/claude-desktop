@@ -1,0 +1,1268 @@
+/* ==================================================================
+   Plugin detail — premium chrome
+   ------------------------------------------------------------------
+   Shared visual language for the four detail variants:
+   - Smooth scale-in entry (used by every detail backdrop + modal)
+   - Trust-tinted byline strip (PluginByline) reused across surfaces
+   - Share popover (PluginShareMenu) reused across surfaces
+   - Cinematic media detail layout
+   The goal: detail modals feel like curated content viewers users
+   want to share, not like internal admin inspectors.
+   ================================================================== */
+
+@keyframes plugin-detail-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes plugin-detail-rise {
+  from { opacity: 0; transform: translateY(12px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.plugin-details-modal-backdrop,
+.ds-modal-backdrop,
+.prompt-template-modal-backdrop {
+  animation: plugin-detail-fade 160ms ease-out;
+}
+.plugin-details-modal,
+.ds-modal,
+.prompt-template-modal {
+  animation: plugin-detail-rise 220ms cubic-bezier(0.16, 0.84, 0.44, 1);
+}
+
+.plugin-details-modal__head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* PluginShareMenu — popover trigger that doubles as a regular ghost
+   pill in the PreviewModal action row, or a softer brand chip when
+   it stands alone next to the close button on a detail modal. */
+.plugin-share-menu {
+  position: relative;
+  display: inline-flex;
+}
+.plugin-share-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  border-radius: 999px;
+  padding: 5px 11px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease,
+    border-color 120ms ease;
+}
+.plugin-share-trigger--solo {
+  border: 1px solid var(--od-border);
+  background: var(--bg-panel);
+  color: var(--text);
+}
+.plugin-share-trigger--solo:hover,
+.plugin-share-trigger--solo[aria-expanded='true'] {
+  background: var(--accent-tint);
+  border-color: var(--od-accent);
+  color: var(--od-accent);
+}
+.plugin-share-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 220px;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: plugin-detail-rise 140ms ease-out;
+}
+.plugin-share-popover__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.plugin-share-popover__divider {
+  height: 1px;
+  margin: 4px 4px;
+  background: var(--od-border);
+  opacity: 0.6;
+}
+.plugin-share-item {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: none;
+}
+.plugin-share-item:hover,
+.plugin-share-item:focus-visible {
+  background: var(--bg-subtle);
+  outline: none;
+}
+
+/* PluginByline — author avatar + name + trust tier + version chip,
+   shared by media + scenario variants, lives just under the modal
+   title bar. The compact variant collapses the secondary link row
+   when used inside dark/gradient headers. */
+.plugin-byline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--od-border);
+  background: var(--bg-panel);
+}
+.plugin-byline--compact {
+  padding: 8px 16px;
+  border-bottom: none;
+  background: transparent;
+}
+.plugin-byline__avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  overflow: hidden;
+  object-fit: cover;
+}
+.plugin-byline__avatar--fallback {
+  background: var(--accent-tint);
+  color: var(--od-accent);
+}
+.plugin-byline__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.plugin-byline__primary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.plugin-byline__by {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  text-transform: lowercase;
+}
+.plugin-byline__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.plugin-byline__version {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.plugin-byline__secondary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.plugin-byline__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 120ms ease;
+}
+.plugin-byline__link:hover {
+  color: var(--od-accent);
+}
+
+/* Plugins section composite — wraps InlinePluginsRail + ContextChipStrip +
+   PluginInputsForm. Mounted above ChatComposer (strip variant). The
+   NewProjectPanel mount has been removed: that flow now binds the
+   default scenario plugin transparently at create time, so the wide
+   variant has no remaining host. */
+.plugins-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.plugins-section__active {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-subtle);
+  border: 1px solid var(--od-border);
+}
+
+/* Strip rail — single-row horizontal scroller, intended for the
+   ChatComposer mount where vertical space is precious. Cards collapse
+   to compact pills (title only). */
+.inline-plugins-rail--strip {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  padding: 2px 0 6px;
+  max-height: 44px;
+}
+.inline-plugins-rail--strip::-webkit-scrollbar {
+  height: 6px;
+}
+.inline-plugins-rail--strip::-webkit-scrollbar-thumb {
+  background: var(--od-border);
+  border-radius: 3px;
+}
+.inline-plugins-rail--strip .inline-plugins-rail__card {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 5px 10px;
+  border: 1px solid var(--od-border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.inline-plugins-rail--strip .inline-plugins-rail__card:hover:not(:disabled) {
+  border-color: var(--od-accent);
+  color: var(--od-accent);
+}
+.inline-plugins-rail--strip .inline-plugins-rail__card:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+.inline-plugins-rail--strip .inline-plugins-rail__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+/* Description + trust are hidden inside the strip rail — they live
+   in the marketplace detail page. Keeping the strip compact is the
+   only way the chat history stays visible. */
+.inline-plugins-rail--strip .inline-plugins-rail__desc,
+.inline-plugins-rail--strip .inline-plugins-rail__trust {
+  display: none;
+}
+
+.inline-plugins-rail__error {
+  flex: 0 0 100%;
+  font-size: 11.5px;
+  color: var(--danger, #c33);
+}
+
+/* Context chip strip — small pill list of typed context items the
+   active plugin contributed. Sits inside `.plugins-section__active`. */
+.context-chip-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: center;
+}
+.context-chip-strip__empty {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.context-chip-strip__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px 0 0;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--od-border);
+  font-size: 11px;
+  color: var(--text);
+  max-width: 240px;
+}
+/* Per-kind accent stripe — keeps the chip recognisable at a glance
+   without leaning on color-only differentiation (the icon does most
+   of the work). Uses border-left for skill, design-system, etc. */
+.context-chip-strip__chip[data-kind='skill'] {
+  border-left: 3px solid var(--od-accent, #6e7bff);
+}
+.context-chip-strip__chip[data-kind='design-system'] {
+  border-left: 3px solid #d6a648;
+}
+.context-chip-strip__chip[data-kind='craft'] {
+  border-left: 3px solid #6dbf6d;
+}
+.context-chip-strip__chip[data-kind='asset'] {
+  border-left: 3px solid #8a8a8a;
+}
+.context-chip-strip__chip[data-kind='mcp'] {
+  border-left: 3px solid #c47bd9;
+}
+.context-chip-strip__chip[data-kind='claude-plugin'] {
+  border-left: 3px solid #d97757;
+}
+.context-chip-strip__chip[data-kind='atom'] {
+  border-left: 3px solid #5fb8d1;
+}
+.context-chip-strip__chip[data-kind='plugin'] {
+  border-left: 3px solid var(--od-accent, #6e7bff);
+}
+.context-chip-strip__body {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 2px 8px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+  text-align: left;
+  border-radius: 999px;
+  min-width: 0;
+}
+.context-chip-strip__chip.is-interactive .context-chip-strip__body {
+  cursor: pointer;
+}
+.context-chip-strip__chip.is-interactive .context-chip-strip__body:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+}
+.context-chip-strip__icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+.context-chip-strip__chip.is-interactive .context-chip-strip__body:hover
+  .context-chip-strip__icon {
+  color: var(--od-accent, var(--text));
+}
+.context-chip-strip__kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.context-chip-strip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.context-chip-strip__remove {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 4px;
+}
+.context-chip-strip__remove:hover {
+  color: var(--text);
+}
+
+/* Plugin inputs form — appears when the active plugin declares
+   `od.inputs[]`. Compact stacked label/input pairs. */
+.plugin-inputs-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plugin-inputs-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.plugin-inputs-form__label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.plugin-inputs-form__required {
+  color: var(--danger, #c33);
+  margin-left: 2px;
+}
+.plugin-inputs-form__input {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 8px;
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg);
+  color: var(--text);
+}
+.plugin-inputs-form__input:focus {
+  outline: 1px solid var(--od-accent);
+  outline-offset: 0;
+  border-color: var(--od-accent);
+}
+.plugin-inputs-form__input--textarea {
+  min-height: 56px;
+  resize: vertical;
+}
+
+/* ============================================================
+   Note: the entry-view home redesign (left rail, centered hero,
+   recent projects strip, plugins-home section, new-project modal)
+   lives in `src/styles/home/`. Imported from `app/layout.tsx`
+   alongside this file so upstream `index.css` rebases stay narrow.
+   ============================================================ */
+.settings-skills .skills-row-summary-btn:hover .skills-row-chevron {
+  color: var(--text-muted);
+}
+.settings-skills .skills-row-expanded .skills-row-chevron {
+  transform: rotate(180deg);
+  color: var(--text-muted);
+}
+
+.settings-skills .skills-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.settings-skills .skills-row-actions .icon-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease,
+    color 120ms ease;
+}
+.settings-skills .skills-row-actions .icon-btn:hover {
+  background: var(--bg-panel);
+  border-color: var(--od-border);
+  color: var(--text);
+}
+.settings-skills .skills-row-enable {
+  margin-left: 4px;
+}
+.settings-skills .skills-delete-confirm {
+  display: inline-flex;
+  gap: 6px;
+}
+.settings-skills .skills-delete-confirm .btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.settings-skills .skills-row-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 14px 14px;
+  border-top: 1px dashed var(--od-border);
+  margin: 0 4px;
+}
+.settings-skills .skills-row-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.settings-skills .skills-row-section h5 {
+  margin: 0;
+  font-size: 10.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+.settings-skills .skills-row-section .library-preview-body {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.settings-skills .skills-file-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow-y: auto;
+  max-height: 240px;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.settings-skills .skills-file-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+.settings-skills .skills-file-entry-directory {
+  color: var(--text);
+  font-weight: 400;
+}
+.settings-skills .skills-file-size {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+.settings-skills > .skills-draft {
+  margin: 0;
+}
+.settings-skills .skills-row > .skills-draft {
+  border: none;
+  border-top: 1px dashed var(--od-border);
+  border-radius: 0 0 10px 10px;
+  margin: 0;
+  background: transparent;
+}
+.settings-skills .skills-draft .skills-draft-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.settings-skills .skills-draft .skills-draft-head h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.settings-skills .skills-draft .skills-draft-sub {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+}
+
+.mcp-json-helper {
+	margin-top: 10px;
+
+	border: 1px solid var(--od-border);
+	border-radius: var(--radius);
+
+	background: var(--bg-subtle);
+
+	overflow: hidden;
+}
+
+.mcp-json-helper-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+
+  background: transparent;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-muted);
+  cursor: pointer;
+
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.mcp-json-helper-toggle:hover {
+  color: var(--text);
+  background: transparent;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 30%, transparent);
+}
+
+.mcp-json-helper.is-open .mcp-json-helper-toggle {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--od-border);
+}
+
+.mcp-json-helper.is-open .mcp-json-helper-toggle:hover {
+  box-shadow: inset 0 -1px 0 var(--od-border);
+}
+.mcp-json-helper-toggle span:first-child {
+	text-align: left;
+}
+
+.mcp-json-helper-toggle-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+
+	flex-shrink: 0;
+
+	color: var(--text-soft);
+}
+
+.mcp-json-helper-example {
+	display: flex;
+	flex-direction: column;
+}
+
+.mcp-json-helper-example-head {
+	padding: 10px 12px 0;
+
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+
+	color: var(--text-soft);
+}
+
+.mcp-json-helper-code {
+	margin: 0 12px 12px;
+
+	padding: 14px;
+
+	border: 1px solid var(--od-border);
+	border-radius: calc(var(--radius) - 4px);
+
+	background:
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--bg) 92%, black) 0%,
+			color-mix(in srgb, var(--bg) 86%, black) 100%
+		);
+
+	font-family: var(--mono);
+	font-size: 12px;
+	line-height: 1.7;
+
+	color: var(--text);
+
+	overflow-x: auto;
+}
+
+.mcp-json-helper-code code {
+	background: transparent;
+	padding: 0;
+	border-radius: 0;
+}
+
+.json-key {
+	color: var(--od-accent);
+}
+
+.json-string {
+	color: var(--green);
+}
+
+.json-punctuation {
+	color: var(--text-soft);
+}
+
+.mcp-json-helper-conversion {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+
+	padding: 12px;
+
+	border-top: 1px solid var(--od-border);
+
+	background: transparent;
+}
+
+.mcp-json-helper-conversion div {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.mcp-json-helper-conversion strong {
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+
+	color: var(--text-soft);
+}
+
+.mcp-json-helper-conversion code {
+	width: fit-content;
+}
+
+.mcp-json-helper-toggle-content {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+
+	min-width: 0;
+	flex: 1;
+}
+
+.mcp-json-helper-eye {
+	width: 22px;
+	height: 22px;
+
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+
+	border-radius: 999px;
+
+	background: var(--accent-tint);
+
+	color: var(--od-accent);
+
+	flex-shrink: 0;
+}
+
+.mcp-json-helper-toggle-text {
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 1.5;
+
+	color: inherit;
+
+	text-align: left;
+}
+
+/* ----- Project actions toolbar (#451) ---------------------------------- */
+/* Project-scoped actions live in their own bar between the chrome header
+ * and the chat/workspace split. File-scoped actions stay inside
+ * FileViewer's share menu. */
+.project-actions-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--od-border);
+  background: var(--bg-subtle, var(--bg));
+  min-height: 40px;
+  flex-wrap: wrap;
+}
+.project-actions-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--od-border);
+  background: var(--bg);
+  color: var(--text-strong, var(--text));
+  cursor: pointer;
+}
+.project-actions-button:hover:not(:disabled) {
+  background: var(--bg-subtle, var(--bg));
+}
+.project-actions-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.project-actions-button-primary {
+  background: var(--od-accent);
+  color: var(--accent-text, white);
+  border-color: var(--od-accent);
+}
+.project-actions-button-primary:hover:not(:disabled) {
+  filter: brightness(0.95);
+  background: var(--od-accent);
+}
+.project-actions-button-warning {
+  border-color: var(--warning, #d97706);
+  color: var(--warning, #d97706);
+}
+.project-actions-button-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--od-border);
+  background: var(--bg);
+}
+.project-actions-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--od-accent) 30%, transparent);
+  border-top-color: var(--od-accent);
+  animation: project-actions-spin 0.8s linear infinite;
+}
+@keyframes project-actions-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.project-actions-label {
+  font-size: 12.5px;
+  color: var(--text-strong, var(--text));
+}
+.project-actions-link {
+  background: none;
+  border: none;
+  color: var(--od-accent);
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.project-actions-button-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.project-actions-chip {
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning, #d97706) 14%, transparent);
+  color: var(--warning, #d97706);
+}
+.project-actions-disabled-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ----- Toast (#451) ---------------------------------------------------- */
+/* Single transient bottom-center toast for project-scoped actions. */
+.od-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 480px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--text-strong, #1f2328);
+  color: var(--bg, white);
+  font-size: 12.5px;
+  line-height: 1.4;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  z-index: 1000;
+  pointer-events: auto;
+}
+.od-toast-message {
+  font-weight: 400;
+}
+.od-toast-details {
+  margin-top: 4px;
+  font-size: 11.5px;
+  opacity: 0.85;
+  font-weight: 400;
+}
+.od-toast-code {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 4px);
+  background: rgba(255, 255, 255, 0.08);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+  user-select: text;
+}
+.od-toast-dismiss {
+  margin-top: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--bg, white);
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+}
+.od-toast-dismiss:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* ---------------- Routines (Settings → Automations) ---------------- */
+
+.routines-section .section-head { align-items: flex-start; }
+.routines-section .section-head > .btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.routines-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.routines-form { margin-top: 4px; }
+
+.routines-empty {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+}
+.routines-empty strong { color: var(--text); display: block; margin-bottom: 4px; font-size: 14px; }
+.routines-empty p { margin: 0; font-size: 13px; }
+.routines-empty em { color: var(--text); font-style: normal; font-weight: 600; }
+
+.routines-field { display: flex; flex-direction: column; gap: 6px; }
+.routines-field > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+.routines-field input[type="text"],
+.routines-field input[type="time"],
+.routines-field input[type="number"],
+.routines-field input:not([type]),
+.routines-field textarea,
+.routines-field select,
+.routines-project-select {
+  appearance: none;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--text);
+  font-family: inherit;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+/* Restore custom dropdown chevron for select elements in routines form.
+   The appearance:none above removes the native chevron, so we paint our own
+   via background-image (matching the global select styling). */
+.routines-field select,
+.routines-project-select {
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%2374716b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3 5 6 8 9 5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px 12px;
+}
+
+[data-theme='dark'] .routines-field select,
+[data-theme='dark'] .routines-project-select {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%239a9690' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3 5 6 8 9 5'/%3E%3C/svg%3E");
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .routines-field select,
+  html:not([data-theme]) .routines-project-select {
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%239a9690' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3 5 6 8 9 5'/%3E%3C/svg%3E");
+  }
+}
+.routines-field input:focus,
+.routines-field textarea:focus,
+.routines-field select:focus,
+.routines-project-select:focus {
+  outline: none;
+  border-color: var(--text);
+  box-shadow: 0 0 0 3px rgba(26, 25, 22, 0.08);
+}
+.routines-field textarea { resize: vertical; min-height: 80px; }
+
+.routines-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+.routines-fieldrow { display: flex; gap: 12px; flex-wrap: wrap; }
+.routines-fieldrow > .routines-field { flex: 1 1 180px; min-width: 0; }
+.routines-fieldrow-2col > .routines-field { flex: 1 1 240px; }
+
+.routines-schedule-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius);
+}
+
+.routines-kind-pills { align-self: flex-start; }
+
+.routines-weekday-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.routines-weekday {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+.routines-weekday:hover { color: var(--text); border-color: var(--text-soft); }
+.routines-weekday.active {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+
+.routines-schedule-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.routines-fieldset {
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.routines-fieldset legend {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 0 6px;
+}
+
+.routines-radio {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--od-border);
+  background: var(--bg-panel);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.routines-radio:hover {
+  background: var(--bg-subtle);
+  border-color: var(--border-strong);
+}
+
+.routines-radio:has(input:focus-visible) {
+  outline: 2px solid var(--od-accent);
+  outline-offset: 2px;
+}
+
+.routines-radio input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.routines-radio:has(input[type="radio"]:checked) {
+  border-color: var(--od-accent);
+  background: var(--accent-tint);
+}
+
+.routines-radio:has(input[type="radio"]:checked) strong {
+  color: var(--accent-strong);
+}
+
+.routines-radio span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.routines-radio strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.routines-radio small {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.routines-form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  border-top: 1px solid var(--od-border);
+  padding-top: 14px;
+}
+
+/* List of existing routines */
+.routines-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.routines-item.is-disabled { opacity: 0.7; }
+
+.routines-item-head {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.routines-item-main { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.routines-item-title { display: flex; align-items: center; gap: 8px; }
+.routines-item-title strong { font-size: 15px; color: var(--text); font-weight: 600; }
+.routines-item-line { font-size: 13px; color: var(--text); }
+.routines-item-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.routines-item-error {
+  color: #b3382b;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.routines-tag {
+  font-size: 11px;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+.routines-item-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+.routines-item-history {
+  border-top: 1px solid var(--od-border);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+.routines-history { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.routines-history-empty { font-size: 12px; color: var(--text-muted); padding: 6px 0; }
+.routines-history-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.routines-history-row:hover { background: var(--bg-subtle); }
+.routines-history-time { color: var(--text); }
+.routines-history-trigger {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.routines-history-error {
+  grid-column: 1 / -1;
+  color: #b3382b;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.routines-history-link {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 400;
+}
+.routines-history-link:hover {
+  background: var(--text);
+  color: var(--bg-panel);
+  border-color: var(--text);
+}
+.routines-history-link:focus-visible {
+  outline: 2px solid var(--selected);
+  outline-offset: 1px;
+}
+.routines-history-link:active {
+  opacity: 0.85;
+}
+
+.routines-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+}
+.routines-status-running { background: #f3eddc; color: #8a6a1a; }
+.routines-status-queued { background: #ece9e2; color: var(--text-muted); }
+.routines-status-succeeded { background: #e3efe6; color: #2e7d5b; }
+.routines-status-failed { background: #f6dfdc; color: #b3382b; }
+.routines-status-canceled { background: #ece9e2; color: var(--text-muted); }
+

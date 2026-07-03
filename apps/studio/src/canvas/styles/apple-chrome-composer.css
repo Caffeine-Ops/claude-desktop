@@ -1,0 +1,595 @@
+/* ============================================================
+   APPLE LANGUAGE — project chrome header
+   Source: project-root DESIGN.md (name: Apple-design-analysis).
+   Restyles the ProjectView AppChromeHeader (the strip the user
+   framed) to Apple's "near-invisible UI" grammar WITHOUT touching
+   the .tsx markup or the handoff/picker interaction logic — pure
+   visual override scoped to `.app .app-chrome-header` so it wins
+   over the neutral chrome rules above (those use a bare/lower
+   specificity selector; the `.app` ancestor here out-specifies
+   them — same lesson as the composer rework).
+
+   Apple decisions applied:
+   - chrome RECEDES: no shadow, parchment-frosted bar, hairline
+     border at #e0e0e0 (light) — DESIGN.md "no shadows on chrome".
+   - SINGLE Action Blue (#0066cc) carries the one primary action
+     (交付给 Finder → solid blue pill). Anchored to Apple's blue,
+     NOT the app's theme --accent, because the single-accent rule
+     is "non-negotiable" per DESIGN.md. Press = scale(0.95),
+     focus ring = 2px solid #0071e3 (Focus Blue).
+   - TWO button grammars only: blue pill CTA + pearl utility
+     capsule (rounded.md 11px, surface-pearl #fafafc).
+   - SF Pro tight tracking on the title (-0.01em) + caption meta.
+   ============================================================ */
+/* `:not(.workspace-tabs-chrome)` is load-bearing: `.app-chrome-header`
+   is shared by BOTH the project chrome row AND the top workspace-tabs
+   strip. The tab strip is a fixed 46px `height`; applying `min-height:
+   52px` here would win over that height (min > height) and push the
+   whole tab bar 6px taller, clipping a sliver off the `.app` body. So
+   the Apple restyle is scoped to the project header only. */
+.app .app-chrome-header:not(.workspace-tabs-chrome) {
+  /* Apple palette anchored locally so this strip speaks Apple's
+     blue regardless of the app's themeable --accent. */
+  --apple-blue: #0066cc;
+  --apple-blue-focus: #0071e3;
+  --apple-ink: #1d1d1f;
+  --apple-pearl: #fafafc;
+  --apple-hairline: #e0e0e0;
+  --apple-font: "SF Pro Text", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+
+  min-height: 52px;                 /* DESIGN.md sub-nav-frosted height */
+  /* Parchment-frosted bar; chrome carries NO shadow, only a hairline. */
+  background: color-mix(in srgb, var(--bg-panel) 72%, var(--bg));
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--apple-hairline);
+  box-shadow: none;
+}
+[data-theme="dark"] .app .app-chrome-header:not(.workspace-tabs-chrome) {
+  --apple-blue: #2997ff;            /* Sky Link Blue — Apple's on-dark blue */
+  --apple-blue-focus: #2997ff;
+  --apple-pearl: #2a2a2c;           /* surface-tile-2 */
+  --apple-hairline: #2e2e30;
+}
+
+/* Title — SF Pro tight tracking; the meta ("自由设计") to caption. */
+.app .app-chrome-header .app-project-title .title {
+  font-family: "SF Pro Display", var(--apple-font);
+  letter-spacing: -0.014em;
+  color: var(--text-strong);
+}
+.app .app-chrome-header .app-project-title .meta {
+  font-family: var(--apple-font);
+  font-size: 12.5px;
+  letter-spacing: -0.224px;
+  color: var(--text-muted);
+}
+
+/* "选择设计系统" → pearl utility capsule (button-pearl-capsule:
+   surface-pearl bg, ink-muted text, rounded.md 11px). The picked
+   state keeps a quiet Apple-blue ring rather than a loud fill. */
+.app .app-chrome-header .project-ds-picker-trigger {
+  font-family: var(--apple-font);
+  border-radius: 11px;
+  border: 1px solid var(--apple-hairline);
+  background: var(--apple-pearl);
+  color: var(--text);
+  letter-spacing: -0.224px;
+  transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.app .app-chrome-header .project-ds-picker-trigger:hover {
+  background: color-mix(in srgb, var(--apple-ink) 4%, var(--apple-pearl));
+  border-color: color-mix(in srgb, var(--apple-ink) 10%, var(--apple-hairline));
+}
+.app .app-chrome-header .project-ds-picker-trigger:active {
+  transform: scale(0.95);            /* DESIGN.md system-wide press */
+}
+.app .app-chrome-header .project-ds-picker-trigger.picked {
+  background: var(--apple-pearl);
+  border-color: color-mix(in srgb, var(--apple-blue) 40%, var(--apple-hairline));
+  color: var(--text-strong);
+}
+.app .app-chrome-header .project-ds-picker-trigger:focus-visible {
+  outline: 2px solid var(--apple-blue-focus);
+  outline-offset: 1px;
+}
+
+/* "交付给 Finder" → THE single Action Blue solid pill CTA.
+   Recolor the existing handoff split/solo chrome to blue; the
+   markup and the caret-menu logic are untouched. */
+.app .app-chrome-header .handoff-split,
+.app .app-chrome-header .handoff-trigger--solo {
+  border-radius: 9999px;             /* pill */
+  border-color: var(--apple-blue);
+  background: var(--apple-blue);
+  box-shadow: none;
+  transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.app .app-chrome-header .handoff-split:hover,
+.app .app-chrome-header .handoff-trigger--solo:hover {
+  border-color: var(--apple-blue);
+  background: color-mix(in srgb, #000 8%, var(--apple-blue));
+}
+.app .app-chrome-header .handoff-split:has(.handoff-trigger:active),
+.app .app-chrome-header .handoff-trigger--solo:active {
+  transform: scale(0.95);
+}
+/* Inner buttons go transparent so the pill's blue shows through,
+   and all text/icons flip to on-primary white. */
+.app .app-chrome-header .handoff-trigger,
+.app .app-chrome-header .handoff-caret,
+.app .app-chrome-header .handoff-trigger--solo {
+  font-family: var(--apple-font);
+  letter-spacing: -0.224px;
+  color: #fff;
+  background: transparent;
+}
+.app .app-chrome-header .handoff-trigger:hover,
+.app .app-chrome-header .handoff-caret:hover {
+  background: color-mix(in srgb, #fff 14%, transparent);
+  color: #fff;
+}
+.app .app-chrome-header .handoff-trigger svg,
+.app .app-chrome-header .handoff-caret svg,
+.app .app-chrome-header .handoff-trigger--solo svg {
+  color: #fff;
+}
+/* The editor-icon tile inside the trigger: drop its inset ring so
+   it reads as part of the solid pill rather than a chip-on-chip. */
+.app .app-chrome-header .handoff-trigger .editor-icon,
+.app .app-chrome-header .handoff-trigger--solo .editor-icon {
+  box-shadow: none;
+  background: color-mix(in srgb, #fff 18%, transparent);
+}
+.app .app-chrome-header .handoff-trigger:focus-visible,
+.app .app-chrome-header .handoff-caret:focus-visible,
+.app .app-chrome-header .handoff-trigger--solo:focus-visible {
+  outline: 2px solid var(--apple-blue-focus);
+  outline-offset: 2px;
+}
+/* Disabled keeps the pill shape but drops to Apple's disabled grey. */
+.app .app-chrome-header .handoff-trigger:disabled,
+.app .app-chrome-header .handoff-caret:disabled {
+  opacity: 1;
+  color: color-mix(in srgb, #fff 60%, transparent);
+}
+
+/* Back chevron + the pencil "项目指令" toggle: quiet ink, Apple press. */
+.app .app-chrome-header .app-chrome-back,
+.app .app-chrome-header .project-instructions-toggle,
+.app .app-chrome-header .project-instructions-chip {
+  font-family: var(--apple-font);
+  transition: background 160ms ease, color 160ms ease,
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.app .app-chrome-header .app-chrome-back:active,
+.app .app-chrome-header .project-instructions-toggle:active,
+.app .app-chrome-header .project-instructions-chip:active {
+  transform: scale(0.95);
+}
+.app .app-chrome-header .project-instructions-chip {
+  border-radius: 9999px;
+  border-color: color-mix(in srgb, var(--apple-blue) 30%, var(--apple-hairline));
+  color: color-mix(in srgb, var(--apple-blue) 80%, var(--text-strong));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app .app-chrome-header .handoff-split,
+  .app .app-chrome-header .handoff-trigger--solo,
+  .app .app-chrome-header .project-ds-picker-trigger,
+  .app .app-chrome-header .app-chrome-back,
+  .app .app-chrome-header .project-instructions-toggle,
+  .app .app-chrome-header .project-instructions-chip {
+    transition-duration: 1ms;
+  }
+  .app .app-chrome-header .handoff-split:has(.handoff-trigger:active),
+  .app .app-chrome-header .handoff-trigger--solo:active,
+  .app .app-chrome-header .project-ds-picker-trigger:active,
+  .app .app-chrome-header .app-chrome-back:active,
+  .app .app-chrome-header .project-instructions-toggle:active,
+  .app .app-chrome-header .project-instructions-chip:active {
+    transform: none;
+  }
+}
+
+/* ============================================================
+   APPLE LANGUAGE — project chrome popovers / menus
+   Source: project-root DESIGN.md (name: Apple-design-analysis).
+   The block above Apple-ified the header TRIGGERS (handoff pill,
+   ds-picker capsule, settings gear). This block does the dropdowns
+   they open — which were still wearing the old neutral chrome
+   (bare var(--od-border) + var(--bg-panel), flat radius, --accent
+   selection that follows the user's THEME color, e.g. red).
+
+   Three floating surfaces, one grammar:
+     1. .handoff-menu        — caret dropdown (lives inside .handoff-wrap)
+     2. .project-ds-picker-* — portal popover + fullscreen preview
+     3. .avatar-popover      — settings/agent menu
+
+   Apple decisions:
+   - FLOATING MATERIAL: parchment-frosted (80% bg-panel +
+     saturate(180%) blur(20px)) so the menu reads as glass floating
+     over content — DESIGN.md "backdrop-blur on floating bars".
+   - SYSTEM ELEVATION: one soft macOS-menu drop (NOT the product
+     shadow). Hairline ring at rgba(0,0,0,.08) doubles as the edge.
+   - ROUNDED.LG corners (14px container, items rounded.sm 8px) —
+     Apple's menu radius, generous and consistent across all three.
+   - SELECTION = Apple Blue, not --accent. The ds-picker/handoff/
+     avatar menus all highlight the active row with a quiet blue
+     tint + blue check, anchored to #0066cc (#2997ff on dark) so the
+     "single non-negotiable blue" rule holds even though the app's
+     themeable --accent may be another hue.
+   - hover rows: barely-there ink wash, not a loud grey block.
+
+   NOTE on scoping: the ds-picker popover + fullscreen render through
+   createPortal to <body>, OUTSIDE .app-chrome-header — so the Apple
+   palette can't cascade down from the header rule. Each portal'd
+   surface therefore re-declares its own --apple-* locals (two-track
+   light/dark) instead of inheriting them. The handoff + avatar menus
+   stay in-tree, so a plain `.app` prefix wins over their bare base
+   rules (same specificity lesson as the composer / header reworks).
+   ============================================================ */
+.handoff-menu,
+.project-ds-picker-popover,
+.app .avatar-popover {
+  /* Apple palette anchored locally — portal'd surfaces can't inherit
+     the header's --apple-* so every floating menu carries its own. */
+  --apple-blue: #0066cc;
+  --apple-blue-focus: #0071e3;
+  --apple-hairline: rgba(0, 0, 0, 0.08);
+  --apple-menu-bg: color-mix(in srgb, var(--bg-panel) 80%, transparent);
+  --apple-menu-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.18),
+    0 2px 8px -2px rgba(0, 0, 0, 0.12);
+
+  background: var(--apple-menu-bg);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid var(--apple-hairline);
+  border-radius: 14px;                /* DESIGN.md rounded.lg menu radius */
+  box-shadow: var(--apple-menu-shadow);
+}
+[data-theme="dark"] .handoff-menu,
+[data-theme="dark"] .project-ds-picker-popover,
+[data-theme="dark"] .app .avatar-popover {
+  --apple-blue: #2997ff;              /* Sky Link Blue — on-dark */
+  --apple-blue-focus: #2997ff;
+  --apple-hairline: rgba(255, 255, 255, 0.1);
+  --apple-menu-bg: color-mix(in srgb, var(--bg-panel) 82%, transparent);
+  --apple-menu-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.55),
+    0 2px 10px -2px rgba(0, 0, 0, 0.4);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .handoff-menu,
+  html:not([data-theme]) .project-ds-picker-popover,
+  html:not([data-theme]) .app .avatar-popover {
+    --apple-blue: #2997ff;
+    --apple-blue-focus: #2997ff;
+    --apple-hairline: rgba(255, 255, 255, 0.1);
+    --apple-menu-bg: color-mix(in srgb, var(--bg-panel) 82%, transparent);
+    --apple-menu-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.55),
+      0 2px 10px -2px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* Soft scale-in on open — the three menus get the same gentle pop so
+   they feel like one system. .handoff-menu / .avatar-popover anchor
+   top-right, the ds-picker popover is fixed-positioned so it scales
+   from its own top-left. */
+.handoff-menu,
+.app .avatar-popover {
+  transform-origin: top right;
+  animation: apple-menu-in 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.project-ds-picker-popover {
+  transform-origin: top left;
+  animation: apple-menu-in 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@keyframes apple-menu-in {
+  from { opacity: 0; transform: scale(0.97) translateY(-4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* -- 1. Handoff caret dropdown -- */
+.handoff-menu {
+  padding: 6px;
+  min-width: 220px;
+}
+.handoff-menu-item {
+  border-radius: 8px;                 /* rounded.sm */
+  padding: 7px 10px;
+  font-family: "SF Pro Text", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: -0.224px;
+  transition: background 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 140ms ease;
+}
+.handoff-menu-item:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+.handoff-menu-item.active {
+  background: color-mix(in srgb, var(--apple-blue) 12%, transparent);
+  color: color-mix(in srgb, var(--apple-blue) 85%, var(--text-strong));
+}
+.handoff-menu-item.active svg {
+  color: var(--apple-blue);
+}
+.handoff-menu-divider {
+  background: var(--apple-hairline);
+  margin: 5px 6px;
+}
+.handoff-menu-section {
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.02em;
+}
+
+/* -- 2. Design-system picker popover (portal'd to body) -- */
+.project-ds-picker-popover {
+  overflow: hidden;                   /* keep the 14px corners clipping */
+}
+.project-ds-picker-search {
+  border-bottom: 1px solid var(--apple-hairline);
+}
+.project-ds-picker-list {
+  border-right: 1px solid var(--apple-hairline);
+  padding: 8px;
+  gap: 3px;
+}
+.project-ds-picker-option {
+  border-radius: 10px;                /* rounded.md */
+  transition: background 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.project-ds-picker-option:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.project-ds-picker-option.active {
+  background: color-mix(in srgb, var(--apple-blue) 11%, transparent);
+}
+.project-ds-picker-option.active .project-ds-picker-option-title {
+  color: color-mix(in srgb, var(--apple-blue) 80%, var(--text-strong));
+}
+.project-ds-picker-option-check {
+  color: var(--apple-blue);
+  background: color-mix(in srgb, var(--apple-blue) 14%, transparent);
+}
+.project-ds-picker-option:focus-visible {
+  outline: 2px solid var(--apple-blue-focus);
+  outline-offset: -2px;
+}
+.project-ds-picker-search input::placeholder {
+  color: var(--text-faint, var(--text-muted));
+}
+
+/* The fullscreen preview shell also re-anchors the blue + corners so
+   its close button + frame read Apple, not theme-accent. */
+.project-ds-picker-fullscreen {
+  --apple-blue-focus: #0071e3;
+  /* Slightly heavier scrim than the 38% theme default, to match
+     Apple's quiet-but-present modal dim. */
+  background: color-mix(in srgb, #000 32%, transparent);
+  -webkit-backdrop-filter: saturate(140%) blur(6px);
+  backdrop-filter: saturate(140%) blur(6px);
+}
+[data-theme="dark"] .project-ds-picker-fullscreen {
+  --apple-blue-focus: #2997ff;
+  background: color-mix(in srgb, #000 55%, transparent);
+}
+.project-ds-picker-fullscreen-frame {
+  border: 1px solid var(--apple-hairline, rgba(0, 0, 0, 0.08));
+  border-radius: 18px;                /* rounded.lg */
+}
+.project-ds-picker-fullscreen-head {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+[data-theme="dark"] .project-ds-picker-fullscreen-head {
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+.project-ds-picker-fullscreen-close {
+  border-radius: 9999px;              /* round close, Apple style */
+  transition: background 140ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.project-ds-picker-fullscreen-close:active {
+  transform: scale(0.92);
+}
+.project-ds-picker-fullscreen-close:focus-visible {
+  outline: 2px solid var(--apple-blue-focus);
+  outline-offset: 1px;
+}
+
+/* -- 3. Avatar / settings menu -- */
+.app .avatar-popover {
+  padding: 7px;
+  min-width: 288px;
+}
+.app .avatar-popover-head {
+  border-bottom: 1px solid var(--apple-hairline);
+  margin-bottom: 5px;
+  padding: 10px 10px 9px;
+}
+.app .avatar-popover-head .who {
+  font-family: "SF Pro Display", "SF Pro Text", system-ui, -apple-system, sans-serif;
+  letter-spacing: -0.01em;
+}
+.app .avatar-item {
+  border-radius: 9px;                 /* rounded.sm+ */
+  padding: 8px 10px;
+  font-family: "SF Pro Text", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: -0.224px;
+  transition: background 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 140ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.app .avatar-item:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+.app .avatar-item:active {
+  transform: scale(0.985);            /* whole-row Apple press */
+}
+.app .avatar-item .avatar-item-meta {
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
+}
+.app .avatar-section-label {
+  font-family: "SF Pro Text", system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.04em;
+}
+.app .avatar-model-section {
+  border-top: 1px solid var(--apple-hairline);
+}
+.app .avatar-item:focus-visible {
+  outline: 2px solid var(--apple-blue-focus);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .handoff-menu,
+  .project-ds-picker-popover,
+  .app .avatar-popover,
+  .project-ds-picker-fullscreen {
+    animation-duration: 1ms;
+  }
+  .handoff-menu-item,
+  .project-ds-picker-option,
+  .app .avatar-item,
+  .project-ds-picker-fullscreen-close {
+    transition-duration: 1ms;
+  }
+  .app .avatar-item:active,
+  .project-ds-picker-fullscreen-close:active {
+    transform: none;
+  }
+}
+
+/* ============================================================
+   ProseMirror composer (web) — replaces the transparent
+   <textarea> + absolutely-positioned mention overlay. The
+   <textarea> is still in the DOM as a hidden controlled mirror
+   (.pm-composer-mirror); PM is the visible editor. Selectors are
+   prefixed `.app` so they win over the `.app .composer*` high-
+   specificity layer (the裸-class-gets-overridden trap from history).
+   ============================================================ */
+
+/* The visible contenteditable. Mirrors the textarea's box model
+   (min-height / padding / font-size) so the composer keeps its
+   shape and the caret/placeholder line up exactly — no overlay. */
+.app .composer .pm-composer-input {
+  min-height: 88px;
+  max-height: min(184px, 34vh);
+  overflow-y: auto;
+  padding: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  caret-color: var(--text);
+  background: transparent;
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.app .composer .pm-composer-input p {
+  margin: 0;
+}
+/* CSS placeholder shares the editor's box model (no drifting
+   absolute overlay). Shows only when the doc is truly empty. */
+.app .composer .pm-composer-input.is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted, hsl(var(--muted-foreground) / 0.7));
+  pointer-events: none;
+  position: absolute;
+}
+
+/* Inline atom pill — slash command / mention. Real inline-block
+   pill (unlike the old overlay, PM owns geometry so we CAN pad). */
+.app .composer .pm-composer-chip {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 6px;
+  vertical-align: baseline;
+  font-weight: 500;
+  white-space: nowrap;
+  user-select: none;
+  background: color-mix(in srgb, var(--od-accent) 10%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--od-accent) 26%, transparent);
+  color: color-mix(in srgb, var(--od-accent) 88%, var(--text));
+}
+.app .composer .pm-composer-chip--slash {
+  background: color-mix(in srgb, var(--od-accent) 12%, transparent);
+}
+
+/* In-editor `@`/`/` candidate popover (PM-originated keystrokes). */
+.pm-suggestion-popover {
+  position: fixed;
+  z-index: 30;
+  max-height: 18rem;
+  width: 18rem;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface, hsl(var(--popover))) 96%, transparent);
+  box-shadow: 0 16px 48px -12px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+}
+.pm-suggestion-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 13px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.pm-suggestion-item.is-active {
+  background: color-mix(in srgb, var(--od-accent) 12%, transparent);
+}
+.pm-suggestion-label {
+  font-weight: 500;
+  color: var(--text);
+}
+.pm-suggestion-desc {
+  color: hsl(var(--muted-foreground) / 0.7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* Hidden controlled mirror: the <textarea data-testid=chat-composer-input>
+   and the semantic mention-overlay node. Visually removed (clipped to
+   0×0) but still in the a11y tree + DOM so tests + AT + IME work.
+
+   IMPORTANT specificity note: the bare `.pm-composer-mirror` (0-1-0) was
+   overridden by `.app .composer textarea` (0-2-1, min-height:88px) +
+   `.home-hero__input` rules, which re-expanded the "hidden" textarea to
+   full height and leaked its placeholder over the PM editor (the
+   裸-class-gets-overridden trap). We boost specificity AND pin min-height
+   to 0 with !important so no high-specificity sibling rule can re-show it. */
+.pm-composer-mirror {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  min-height: 0 !important;
+  max-height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+/* Pure semantic mirror (the mention-overlay node read only for its
+   .textContent by tests + AT). Unlike the textarea mirror it never needs
+   focus/IME, so display:none is the cleanest, leak-proof hide — no
+   high-specificity sibling rule can re-show a display:none element, and
+   jsdom still exposes textContent on it. */
+.pm-composer-mirror--hidden {
+  display: none !important;
+}

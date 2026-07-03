@@ -1,0 +1,3026 @@
+
+/* Theme for the shared @open-design/ui components. `inline` so each utility
+ * emits `var(--token)` and re-resolves against the .dark overrides + any
+ * runtime mutation (same rationale as apps/desktop). Only the tokens the
+ * shared components actually use are mapped — this app drives its own
+ * 27k-line palette through the legacy --bg/--text names, not these. */
+@theme inline {
+  /* 这里读共享 token 的 HSL 三元组（design-tokens 的 --border），不是本
+     文件 legacy 的 --od-border（完整颜色值）——两者曾同名为 --border 互相
+     覆盖（2026-07-03 撞名事故的主案发点），legacy 侧已整体改名 --od-*。 */
+  --color-border: hsl(var(--border));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+}
+
+/* Shared UI primitives live under packages/ (symlinked into node_modules,
+ * which v4 won't scan) — point the scanner at the package src so the
+ * components' classes are generated and not purged. */
+@source '../../../../../packages/ui/src/**/*.{ts,tsx}';
+
+/* ============================================================
+   Open Design — neutral product workspace
+   ============================================================ */
+:root {
+  /* Surface / text / accent palette — derived from the shared design tokens
+     (packages/design-tokens/tokens.css, the desktop shadcn HSL system imported
+     above) so this web app matches the desktop app's exact color values. The
+     legacy --bg / --text / --accent NAMES are preserved (the ~27k lines below
+     reference them); only their VALUES now point at the unified tokens.
+
+     Mapping rationale:
+       --bg / --bg-app        → --background (page canvas)
+       --bg-panel/-elevated   → --card       (floating white surfaces)
+       --bg-subtle            → --secondary  (inset chrome)
+       --bg-muted             → --muted      (rails / quiet fills)
+       --text / --text-strong → --foreground (primary copy)
+       --text-muted/-soft/-faint → --muted-foreground at descending alpha
+       --accent*              → --accent     (Apple Blue, desktop's sole hue)
+     The semantic status colors (green/blue/red/…), shadows, radii and fonts
+     below are intentionally left as-is: the desktop token set has no equivalent
+     for them, so keeping them avoids regressing status pills and elevation. */
+  --bg: hsl(var(--background));
+  --bg-app: hsl(var(--background));
+  --bg-panel: hsl(var(--card));
+  --bg-subtle: hsl(var(--secondary));
+  --bg-muted: hsl(var(--muted));
+  --bg-elevated: hsl(var(--card));
+  /* --border / --accent collide by name with the shared tokens, so they
+     derive from collision-free aliases: --hairline (same value as the shared
+     --border) and --primary (the desktop accent's twin, identical value).
+     Using var(--od-border)/var(--od-accent) here would self-reference and break. */
+  --od-border: hsl(var(--hairline));
+  --border-strong: hsl(var(--hairline-strong));
+  --border-soft: hsl(var(--hairline) / 0.6);
+
+  --text: hsl(var(--foreground));
+  --text-strong: hsl(var(--foreground));
+  --text-muted: hsl(var(--muted-foreground));
+  --text-soft: hsl(var(--muted-foreground) / 0.8);
+  --text-faint: hsl(var(--muted-foreground) / 0.55);
+
+  /* Accent — the desktop Apple Blue accent (the only chromatic hue). Derived
+     from --primary (same value as the shared --accent) to avoid self-ref. */
+  --od-accent: hsl(var(--primary));
+  --accent-strong: hsl(var(--primary) / 0.92);
+  --accent-soft: hsl(var(--primary) / 0.18);
+  --accent-tint: hsl(var(--primary) / 0.1);
+  --accent-hover: hsl(var(--primary) / 0.92);
+
+  /* Semantic accent tints used by tool / status pills. */
+  --green: #1f7a3a;
+  --green-bg: #e8f7ee;
+  --green-border: #c6ead2;
+  --blue: #2348b8;
+  --blue-bg: #e8efff;
+  --blue-border: #c8d6ff;
+  --purple: #6c3aa6;
+  --purple-bg: #f3ecf9;
+  --purple-border: #e4d4f1;
+  --red: #9c2a25;
+  --red-bg: #fdecea;
+  --red-border: #f5c6c2;
+  --amber: #b26200;
+  --amber-bg: #fff3e0;
+
+  --shadow-xs: 0 1px 0 rgba(28, 27, 26, 0.04);
+  --shadow-sm: 0 1px 2px rgba(28, 27, 26, 0.05), 0 1px 3px rgba(28, 27, 26, 0.04);
+  --shadow-md: 0 6px 24px rgba(28, 27, 26, 0.07), 0 2px 6px rgba(28, 27, 26, 0.04);
+  --shadow-lg: 0 24px 60px rgba(28, 27, 26, 0.16), 0 8px 16px rgba(28, 27, 26, 0.07);
+
+  /* Apple radius scale (DESIGN.md): sm=8 / md=11 / lg=18 / pill=999.
+     --radius maps to Apple's md(11), --radius-lg to lg(18). The ~321
+     var(--radius*) consumers across this file pick this up automatically. */
+  --radius-sm: 8px;
+  --radius: 11px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+
+  /* "Active option" indicator color, intentionally separate from --accent
+     (brand orange used by primary CTAs like Create / Save). Use --selected
+     for "this option is the one currently picked" affordances — selected
+     fidelity card, focused input ring, active filter pill — so a primary
+     CTA and a selected state can coexist on the same screen without
+     competing. --selected-soft is the 16% tint for outer rings / fills. */
+  --selected: #2563eb;
+  --selected-soft: rgba(37, 99, 235, 0.16);
+
+  --serif: 'Source Serif Pro', 'Source Serif 4', 'Iowan Old Style', 'Apple Garamond', Georgia, 'Times New Roman', serif;
+  /* Sans / mono now derive from the shared design tokens
+     (packages/design-tokens/tokens.css → --font-sans / --font-mono, the
+     desktop SF Pro stack) so web renders the same type as the desktop app.
+     The locale comfort passes below (:lang(zh|ja|ko) and [dir="rtl"]) still
+     override --sans with CJK / Cairo stacks — those are intentional and
+     unchanged. */
+  --sans: var(--font-sans);
+  --mono: var(--font-mono);
+}
+
+/* Dark theme variables — shared between explicit [data-theme="dark"] and the
+   OS-level prefers-color-scheme media query (system mode = no data-theme attr). */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1a1917;
+  --bg-app: #1a1917;
+  --bg-panel: #222120;
+  --bg-subtle: #272523;
+  --bg-muted: #2e2c29;
+  --bg-elevated: #2a2825;
+  --od-border: #333128;
+  --border-strong: #46433c;
+  --border-soft: #2a2825;
+
+  /* Shared shadcn tokens — MUST be redeclared here. This app drives dark
+     mode through [data-theme="dark"], NOT the `.dark` class that the shared
+     design-tokens (packages/design-tokens/tokens.css) define their dark
+     palette under, so those .dark values never apply here. Anything reading
+     `hsl(var(--background|--card|--popover|--foreground))` (e.g. the composer
+     card .composer-shell, whose background is hsl(var(--popover)/.9)) was
+     falling back to the :root LIGHT values — which is why the composer
+     rendered white in dark mode. We mirror the warm-black palette (same HSL
+     as the shared .dark scope) so those consumers go dark and stay 1:1 with
+     desktop. Hex equivalents: --background #1a1917, --card #222120,
+     --popover #2a2825, --foreground #e8e4dc. */
+  --background: 40 6% 10%;
+  --card: 30 3% 13%;
+  --popover: 36 6% 15%;
+  --foreground: 40 21% 89%;
+  --card-foreground: 39 35% 92%;
+  --popover-foreground: 39 35% 92%;
+
+  --text: #e8e4dc;
+  --text-strong: #f2ede4;
+  --text-muted: #9a9690;
+  --text-soft: #6e6b65;
+  --text-faint: #4e4b46;
+
+  /* Accent — aligned to the desktop dark-mode Apple Bright Blue (#2997ff,
+     hsl 210 100% 58%), matching the shared tokens' .dark accent. This web app
+     drives dark mode through [data-theme="dark"] (not the .dark class the
+     shared tokens use), so the value is inlined here rather than read from
+     var(--od-accent); the alpha variants mirror the light-theme mapping. */
+  --od-accent: hsl(210 100% 58%);
+  --accent-strong: hsl(210 100% 58% / 0.92);
+  --accent-soft: hsl(210 100% 58% / 0.18);
+  --accent-tint: hsl(210 100% 58% / 0.1);
+  --accent-hover: hsl(210 100% 58% / 0.92);
+
+  --green: #4caf72;
+  --green-bg: #0f2a18;
+  --green-border: #1a4028;
+  --blue: #6b8fe8;
+  --blue-bg: #0f1a38;
+  --blue-border: #1a2c58;
+  --purple: #a87dd4;
+  --purple-bg: #1e1030;
+  --purple-border: #321a50;
+  --red: #e06b65;
+  --red-bg: #2a0e0c;
+  --red-border: #451714;
+  --amber: #e09a40;
+  --amber-bg: #2a1a04;
+
+  --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 6px 24px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 8px 16px rgba(0, 0, 0, 0.3);
+}
+
+/* System mode: follow OS preference when no explicit data-theme is set. */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) {
+    color-scheme: dark;
+    --bg: #1a1917;
+    --bg-app: #1a1917;
+    --bg-panel: #222120;
+    --bg-subtle: #272523;
+    --bg-muted: #2e2c29;
+    --bg-elevated: #2a2825;
+    --od-border: #333128;
+    --border-strong: #46433c;
+    --border-soft: #2a2825;
+
+    /* Shared shadcn tokens — same reason as the [data-theme="dark"] block:
+       redeclare so consumers of hsl(var(--popover|--background|…)) (the
+       composer card etc.) go dark instead of falling back to :root light. */
+    --background: 40 6% 10%;
+    --card: 30 3% 13%;
+    --popover: 36 6% 15%;
+    --foreground: 40 21% 89%;
+    --card-foreground: 39 35% 92%;
+    --popover-foreground: 39 35% 92%;
+
+    --text: #e8e4dc;
+    --text-strong: #f2ede4;
+    --text-muted: #9a9690;
+    --text-soft: #6e6b65;
+    --text-faint: #4e4b46;
+
+    /* Accent — desktop dark Apple Bright Blue (#2997ff), same as the explicit
+       [data-theme="dark"] block above; see that note for why it's inlined. */
+    --od-accent: hsl(210 100% 58%);
+    --accent-strong: hsl(210 100% 58% / 0.92);
+    --accent-soft: hsl(210 100% 58% / 0.18);
+    --accent-tint: hsl(210 100% 58% / 0.1);
+    --accent-hover: hsl(210 100% 58% / 0.92);
+
+    --green: #4caf72;
+    --green-bg: #0f2a18;
+    --green-border: #1a4028;
+    --blue: #6b8fe8;
+    --blue-bg: #0f1a38;
+    --blue-border: #1a2c58;
+    --purple: #a87dd4;
+    --purple-bg: #1e1030;
+    --purple-border: #321a50;
+    --red: #e06b65;
+    --red-bg: #2a0e0c;
+    --red-border: #451714;
+    --amber: #e09a40;
+    --amber-bg: #2a1a04;
+
+    --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.2);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
+    --shadow-md: 0 6px 24px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.25);
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 8px 16px rgba(0, 0, 0, 0.3);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+/* ⚠️ 全局裸元素规则（body/button/input/code 四段）都包进
+ * `@layer components`：canvas 与 chat/rail 同处一个文档（studio 单视图），
+ * 未分层规则会压过 chat 链所有 @layer utilities 的 tailwind 类——rail 的
+ * shadcn 按钮曾因此整体长成 canvas 的描边卡片。components 层的位置刚好：
+ * 仍高于 base（chat 链的 preflight 不会反过来剥掉 canvas 的元素皮肤，
+ * portal 弹层也不受 DOM 位置影响），又低于 utilities（挂了 tailwind 类的
+ * 元素以类为准）。带 class 的 canvas 规则只命中自家节点，保持未分层。 */
+@layer components {
+  body {
+    font-family: var(--sans);
+    color: var(--text);
+    background: var(--bg-app);
+    font-size: 13.5px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Settings-overlay mode (?settings=1, embedded in the desktop shell): the
+ * hosting WebContentsView is transparent so the dimmed desktop tab shows
+ * through. Clear the opaque page background so only the settings modal's own
+ * scrim + card paint. The App adds `settings-overlay` to <html> in this mode. */
+html.settings-overlay,
+html.settings-overlay body,
+html.settings-overlay #root {
+  background: transparent !important;
+}
+
+.od-loading-shell {
+  /* 100% 而非 100vh：canvas 面住在壳层的悬浮内容卡里（.shell-content-card，
+     比视口矮一圈 gutter），viewport 单位会向下溢出被卡的 overflow 裁掉。
+     下同（.app / .workspace-shell / .entry-shell）。 */
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  background: var(--bg-app);
+  font: 500 13px/1.4 var(--sans);
+}
+
+/* -------- Buttons ---------------------------------------------------
+ * 整段进 @layer components（含带 class 的变体，保持段内相对顺序）：
+ * 裸 `button {}` 是曾把 chat/rail 全部按钮染成描边卡片的元凶。
+ *
+ * @layer 只解决「与 utility 冲突时谁赢」，救不了 shadcn Button 的 ghost
+ * 变体——ghost 静息态本来就不声明 bg/border（依赖 preflight 清零），
+ * 这里的 background/border 没有竞争者，直接把 rail 的 ghost 按钮填成
+ * 描边卡片。所以再加一层守卫（全部裸元素 reset 统一模式）：
+ *   :not([data-slot])  → 豁免 shadcn 原语（全都带 data-slot；rail 与
+ *                        portal 到 body 的浮层都靠它）
+ *   :not(.chat-app *)  → 豁免整棵聊天树（chat 的手写 button/input/code
+ *                        没有 data-slot，靠子树豁免）
+ * canvas 自己的元素两者都不沾 → reset 只命中 canvas。用 :where() 包裹
+ * 保持零 specificity，段内 `.foo button` 的顺序覆盖关系原样不动。 */
+@layer components {
+button:where(:not([data-slot], .chat-app *)) {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+button:where(:not([data-slot], .chat-app *)):hover:not(:disabled) { background: var(--bg-subtle); border-color: var(--border-strong); }
+button:where(:not([data-slot], .chat-app *)):focus-visible { outline: 2px solid var(--od-accent); outline-offset: 2px; }
+
+button.primary {
+  background: var(--od-accent);
+  border-color: var(--od-accent);
+  color: white;
+  font-weight: 600;
+  box-shadow: 0 1px 0 rgba(180, 90, 59, 0.18) inset, var(--shadow-xs);
+}
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+button.primary-ghost {
+  background: var(--bg-panel);
+  border-color: var(--od-accent);
+  color: var(--od-accent);
+  font-weight: 600;
+}
+button.primary-ghost:hover:not(:disabled) { background: var(--accent-tint); }
+
+button.ghost {
+  background: transparent;
+  border-color: var(--od-border);
+  color: var(--text);
+}
+button.ghost:hover:not(:disabled) { background: var(--bg-subtle); border-color: var(--border-strong); }
+/*
+ * Transient success state for ghost buttons. Used by the Media
+ * Providers "Reload from daemon" button after a successful reload —
+ * the button briefly turns green with a check icon for ~2s then snaps
+ * back to its idle treatment, replacing what used to be a permanent
+ * success paragraph under the section header. Reusable on any
+ * ghost button that wants the same "did it" pulse.
+ */
+button.ghost.is-success-flash {
+  border-color: var(--green-border, color-mix(in srgb, #1f9d55 32%, var(--od-border)));
+  background: var(--green-bg, color-mix(in srgb, #1f9d55 8%, transparent));
+  color: var(--green, #137a3d);
+}
+button.ghost.is-success-flash:hover:not(:disabled) {
+  background: var(--green-bg, color-mix(in srgb, #1f9d55 14%, transparent));
+}
+button.ghost.is-success-flash svg {
+  color: currentColor;
+}
+
+/*
+ * Visually-hidden but assistive-tech accessible. We use it to keep
+ * a `role="status"` live-region for actions whose visible feedback
+ * is too transient (e.g. a 2s button-label flash) for a screen
+ * reader to catch reliably. Borrowed from Tailwind's `sr-only` so
+ * it reads as the same primitive everyone already knows.
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+button.subtle {
+  background: var(--bg-subtle);
+  border-color: transparent;
+  color: var(--text);
+}
+button.subtle:hover:not(:disabled) { background: var(--bg-muted); }
+
+button.icon-btn { padding: 6px 10px; font-size: 13px; }
+button:where(:not([data-slot], .chat-app *)):disabled { opacity: 0.5; cursor: not-allowed; }
+}
+
+/* -------- Inputs ----------------------------------------------------
+ * 同 Buttons：裸 input/textarea/select 皮肤进 components 层 + 双豁免
+ * 守卫（[data-slot] = shadcn 原语，.chat-app * = 聊天树；理由见上面
+ * Buttons 段注释）。@layer 治不了 shadcn/chat 元素不声明的属性被这里
+ * 填空——width:100%/padding 这类没有 utility 竞争者时会直接生效。 */
+@layer components {
+input:where(:not([data-slot], .chat-app *)),
+textarea:where(:not([data-slot], .chat-app *)),
+select:where(:not([data-slot], .chat-app *)) {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  width: 100%;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+input:where(:not([data-slot], .chat-app *))::placeholder,
+textarea:where(:not([data-slot], .chat-app *))::placeholder { color: var(--text-faint); }
+input:where(:not([data-slot], .chat-app *)):focus,
+textarea:where(:not([data-slot], .chat-app *)):focus,
+select:where(:not([data-slot], .chat-app *)):focus {
+  outline: none;
+  border-color: var(--selected);
+  box-shadow: 0 0 0 3px var(--selected-soft);
+}
+/* Entry sidebar form fields keep a quieter, neutral focus so the orange
+   "Create" CTA stays the loudest thing in the panel. A low-opacity black
+   halo reads as "focused" without re-introducing the global blue/accent
+   ring. Using rgba directly because the Next CSS pipeline collapses
+   `color-mix(in srgb, var(--text) 8%, transparent)` to a solid var(--text)
+   ring (would render a 3px black band — too loud). */
+.entry-side input:focus,
+.entry-side textarea:focus,
+.entry-side select:focus {
+  border-color: var(--text);
+  box-shadow: 0 0 0 3px rgba(28, 27, 26, 0.08);
+}
+/* Native <select> on macOS uses its own intrinsic min-height that ends up
+   shorter than <input> at the same `padding: 7px 10px` rule above, so any
+   form that flex-aligns an input next to a select (e.g. the memory editor's
+   Title + Type row) renders with mismatched heights. Stripping the native
+   chrome lets the shared padding and inherited line-height compute the
+   same box dimensions as the input, then we paint our own chevron via a
+   background SVG. The chevron color is a per-theme override so it stays
+   readable against the panel in both light and dark. */
+select:where(:not([data-slot], .chat-app *)) {
+  padding-right: 32px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%2374716b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3 5 6 8 9 5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px 12px;
+}
+select:where(:not([data-slot], .chat-app *))::-ms-expand { display: none; }
+[data-theme='dark'] select:where(:not([data-slot], .chat-app *)) {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%239a9690' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3 5 6 8 9 5'/%3E%3C/svg%3E");
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) select:where(:not([data-slot], .chat-app *)) {
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%239a9690' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3 5 6 8 9 5'/%3E%3C/svg%3E");
+  }
+}
+textarea:where(:not([data-slot], .chat-app *)) { resize: vertical; font-family: inherit; }
+}
+
+.od-select {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+.od-select-trigger {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+.od-select-trigger:hover:not(:disabled),
+.od-select-trigger[aria-expanded='true'] {
+  border-color: var(--border-strong);
+  background: var(--bg-subtle);
+}
+.od-select-trigger:focus-visible,
+.od-select-trigger[aria-expanded='true'] {
+  outline: none;
+  border-color: var(--selected);
+  box-shadow: 0 0 0 3px var(--selected-soft);
+}
+.od-select-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.od-select-trigger svg {
+  color: var(--text-muted);
+  transition: transform 120ms ease;
+}
+.od-select-trigger[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+.od-select-value,
+.od-select-option-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.od-select-menu {
+  z-index: 9000;
+  padding: 4px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  max-width: calc(100vw - 24px);
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+}
+.od-select-menu.portal {
+  position: fixed;
+}
+.od-select-menu.inline {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: min(280px, 48vh);
+}
+.od-select-option {
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.od-select-option:hover:not(:disabled),
+.od-select-option.active:not(:disabled) {
+  background: var(--bg-subtle);
+}
+.od-select-option.selected {
+  color: var(--text);
+  font-weight: 600;
+}
+.od-select-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.od-select-option-check {
+  display: inline-flex;
+  justify-content: center;
+  color: var(--selected);
+  opacity: 0;
+}
+.od-select-option.selected .od-select-option-check {
+  opacity: 1;
+}
+.od-select-group + .od-select-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+.od-select-group-label {
+  padding: 6px 8px 4px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* 同 Buttons/Inputs：裸 code 皮肤进 components 层 + 双豁免守卫。chat 的
+ * markdown 行内 code（AssistantMarkdown）靠 .chat-app 子树豁免——它的
+ * utilities 只声明部分属性，剩下的（padding/bg）会被这里填空。 */
+@layer components {
+code:where(:not([data-slot], .chat-app *)) {
+  font-family: var(--mono);
+  background: var(--bg-subtle);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.92em;
+  color: var(--text);
+}
+}
+
+/* -------- App shell ------------------------------------------------- */
+.app {
+  display: grid;
+  /* Three rows: chrome header (auto, fixed at 40px), optional
+   * project-actions toolbar (auto — collapses to 0 when hidden),
+   * and the chat/workspace split (1fr — fills the remaining
+   * viewport). The split gets explicit `grid-row: 3` below so the
+   * layout works whether the toolbar is rendered or returns null
+   * (workspace-focused mode). */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto 1fr;
+  /* 100%（原 100vh）：卡内布局，见 .od-loading-shell 注释。 */
+  height: 100%;
+  background: var(--bg-app);
+  overflow: hidden;
+}
+.app > .split {
+  grid-row: 3;
+}
+
+.workspace-shell {
+  /* 100%（原 100vw/100vh）：卡内布局，viewport 单位会按整窗算、
+     向右/向下溢出（rail + gutter 的宽度），见 .od-loading-shell 注释。 */
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  /* Row 1 must match the real tab-strip height. `.workspace-tabs-chrome`
+     is `height: 46px` (min-height: 46px), so a 36px track here is too
+     short: the strip's own min-height forces it to 46px and the 10px
+     overflow eats into row 2's body inside this `overflow: hidden`
+     grid, clipping a sliver off the top of `.app`. (This was latent —
+     the track stayed 36px when the strip grew from 36→46px to match the
+     prototype — and any extra strip height made it visible.) Use `auto`
+     so the row always fits the strip's intrinsic height, immune to
+     future strip-height changes. */
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--bg-app);
+  overflow: hidden;
+}
+.workspace-shell__body {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.workspace-shell__body > .app,
+.workspace-shell__body > .entry-shell {
+  height: 100%;
+  min-height: 0;
+}
+
+/* Top multi-tab bar — visual language lifted 1:1 from
+   prototypes/open-design-nav-v0.html `.tabbar`: a 46px browser-style
+   strip with a translucent saturate+blur backdrop. Accent tokens are
+   untouched; only chrome geometry and neutral surfaces changed. */
+.workspace-tabs-chrome.app-chrome-header {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 46px;
+  height: 46px;
+  padding: 0 10px;
+  gap: 6px;
+  background: color-mix(in srgb, var(--bg-panel) 70%, var(--bg));
+  border-bottom: 1px solid var(--od-border);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  user-select: none;
+  -webkit-app-region: drag;
+  overflow: hidden;
+  position: relative;
+  z-index: 120;
+}
+.workspace-tabs-chrome .workspace-tabs-traffic {
+  margin-right: calc(var(--app-chrome-traffic-margin) + 8px);
+}
+/* Right-side action cluster (prototype `.tabbar__actions`): + (new) and
+   search are both 32px square buttons sharing one neutral hover, with a
+   1px divider between them. */
+.workspace-tabs-new-btn,
+.workspace-tabs-icon-btn {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  -webkit-app-region: no-drag;
+  transition: background 120ms ease, color 120ms ease, transform 120ms ease;
+}
+.workspace-tabs-new-btn:hover,
+.workspace-tabs-icon-btn:hover:not(:disabled),
+.workspace-tabs-icon-btn.is-active {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+.workspace-tabs-new-btn:active,
+.workspace-tabs-icon-btn:active {
+  transform: scale(0.92);
+}
+.workspace-tabs-strip {
+  align-self: stretch;
+  min-width: 0;
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  /* 4px gaps between independent pill tabs (prototype `.tabbar__scroll`),
+     replacing the old gap:0 connected-row + sibling divider model. */
+  gap: 4px;
+  padding-left: 0;
+  /* Horizontal scroll inside the strip — tabs keep their natural width
+     and the strip itself scrolls when it overflows the chrome. This
+     replaces the previous "slice to N visible + overflow chip" model
+     which let lots of tabs squish-shrink and could push the rest of
+     the chrome out of view. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  contain: layout style;
+  -webkit-app-region: drag;
+  /* Allow the user's trackpad / shift-wheel to scroll horizontally
+     without the OS turning it into a back-gesture. */
+  overscroll-behavior-x: contain;
+}
+.workspace-tabs-strip::-webkit-scrollbar {
+  height: 0;
+  display: none;
+}
+.workspace-tab {
+  position: relative;
+  height: 32px;
+  /* Content-fit width capped at 200px (prototype `.tab`): the tab is a
+     standalone pill that grows with its label and shrinks for short
+     ones, instead of a fixed 156px slot. The strip still scrolls
+     horizontally once the pills overflow the chrome. */
+  max-width: 200px;
+  min-width: 0;
+  flex: 0 0 auto;
+  /* Padding lives on the inner __main / __close so the click targets fill
+     the pill; the pill itself just bounds them. */
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  overflow: hidden;
+  contain: layout style;
+  /* transform joins the list so the :active press animates; new tabs
+     fade+rise in via the keyframe below. */
+  transition: background 100ms ease, border-color 100ms ease, color 100ms ease,
+    transform 120ms cubic-bezier(0.32, 0.72, 0, 1);
+  animation: workspace-tab-in 200ms cubic-bezier(0.32, 0.72, 0, 1);
+  -webkit-app-region: no-drag;
+}
+@keyframes workspace-tab-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.97); }
+}
+.workspace-tab:active .workspace-tab__main {
+  transform: scale(0.97);
+}
+/* Independent pills need no sibling divider (prototype relies on the 4px
+   gap), and hover is a subtle neutral tint rather than a panel fill +
+   border swap. Active is the browser convention: solid panel fill, a
+   real border, and a hairline shadow lifting it off the bar. */
+.workspace-tab:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text);
+}
+.workspace-tab.is-active {
+  background: var(--bg-panel);
+  border-color: var(--od-border);
+  color: var(--text-strong);
+  box-shadow: var(--shadow-xs);
+}
+/* Active tab echoes the rail's accent language: its leading icon goes
+   accent and the label firms to medium, so "which tab am I on" reads at
+   a glance and the chrome stays consistent with the active rail button. */
+.workspace-tab.is-active .workspace-tab__icon {
+  color: var(--od-accent);
+  opacity: 1;
+}
+.workspace-tab.is-active .workspace-tab__label {
+  font-weight: 500;
+}
+.workspace-tab__main:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--od-accent);
+  border-radius: var(--radius-sm);
+}
+.workspace-tab__main {
+  min-width: 0;
+  height: 100%;
+  /* 11px lead-in matches the prototype `.tab`; 8px icon↔label gap. The
+     trailing 4px leaves a hair of breathing room before the close glyph. */
+  padding: 0 4px 0 11px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  text-align: left;
+}
+.workspace-tab__main:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+}
+.workspace-tab__icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+  opacity: 0.7;
+  flex: 0 0 auto;
+  line-height: 0;
+}
+.workspace-tab__icon svg,
+.workspace-tab__close svg,
+.workspace-tabs-icon-btn svg {
+  display: block;
+  flex: none;
+}
+.workspace-tab__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Prototype `.tab__label`: 13px / 500 / -0.01em. The active-state rule
+     below no longer needs to bump weight since the resting weight is
+     already medium. */
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.workspace-tab__close {
+  width: 18px;
+  height: 18px;
+  /* Sits flush at the pill's right edge with the prototype's 8px inset. */
+  margin-right: 8px;
+  margin-left: 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  /* Hidden until hover / active, scaling in from 0.85 (prototype). */
+  transform: scale(0.85);
+  flex: 0 0 auto;
+  transition: opacity 120ms ease, transform 120ms ease,
+    background-color 120ms ease, color 120ms ease;
+}
+.workspace-tab:hover .workspace-tab__close,
+.workspace-tab.is-active .workspace-tab__close,
+.workspace-tab__close:focus-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+.workspace-tab__close:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+.workspace-tab__close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--od-accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-tab,
+  .workspace-tab__close,
+  .workspace-tab .workspace-tab__main {
+    animation: none;
+    transition-duration: 1ms;
+  }
+  .workspace-tab:active .workspace-tab__main { transform: none; }
+}
+.workspace-tabs-actions {
+  position: relative;
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  margin-left: 4px;
+  padding-left: 4px;
+  z-index: 35;
+  -webkit-app-region: no-drag;
+}
+/* 1px divider between the + (new) and search buttons (prototype
+   `.tabbar__sep`). Rendered as a pseudo-element so we don't have to add a
+   DOM node: the search button gets 9px of left room and the hairline is
+   centered in it. */
+.workspace-tabs-new-btn + .workspace-tabs-icon-btn {
+  margin-left: 9px;
+}
+.workspace-tabs-new-btn + .workspace-tabs-icon-btn::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  width: 1px;
+  height: 18px;
+  background: var(--od-border);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+/* ── Search-tabs popover — Apple redesign ──────────────────────────────
+   Reworked against the project's Apple DESIGN.md (Apple-design-analysis):
+   Action Blue #0066cc / focus #0071e3, SF Pro caption type, hairline
+   dividers, recessed rounded selection fills (no edge-to-edge color bars),
+   and generous list-row breathing room. Chrome itself stays shadow-free
+   except this floating layer, which is one of the few surfaces allowed the
+   single signature drop shadow. DOM/behaviour unchanged — visual only. */
+.workspace-tabs-popover {
+  /* Anchored to the viewport, not to .workspace-tabs-actions, because the
+     actions group sits next to the tab strip on the left side of the chrome
+     header — not the right. `position: absolute; right: 0` against that
+     narrow inline-flex container made the 380px popover hang off the left
+     edge of the window. Fixed positioning keeps it inside the viewport
+     regardless of where the actions group lands as tabs accumulate. */
+  position: fixed;
+  top: calc(var(--workspace-tabs-chrome-height, 46px) + 8px);
+  right: max(10px, env(safe-area-inset-right));
+  width: min(380px, calc(100vw - 24px));
+  max-height: min(620px, calc(100vh - var(--workspace-tabs-chrome-height, 46px) - 24px));
+  /* DESIGN.md spacing.xs (8) outer pad, rounded.md (11) corners. */
+  padding: 8px;
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 130;
+  -webkit-app-region: no-drag;
+}
+.workspace-tabs-popover,
+.workspace-tabs-popover * {
+  -webkit-app-region: no-drag;
+}
+/* Search field: a calm hairline pill at rest; on focus it gets Apple's
+   restrained Action-Blue ring (border firms to #0071e3 + a soft 4px halo)
+   instead of the heavy always-on blue box it had before. */
+.workspace-tabs-search {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-muted);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.workspace-tabs-search:focus-within {
+  border-color: #0071e3;
+  box-shadow: 0 0 0 4px rgba(0, 102, 204, 0.16);
+}
+.workspace-tabs-search input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  /* DESIGN.md caption: 14 / -0.224em. */
+  font-size: 14px;
+  letter-spacing: -0.224px;
+}
+.workspace-tabs-search input:focus {
+  border: 0;
+  box-shadow: none;
+}
+.workspace-tabs-search input::placeholder {
+  color: var(--text-faint);
+}
+/* Section header ("Open tabs · 19"): DESIGN.md caption-strong, tracked in. */
+.workspace-tabs-popover__section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.08px;
+}
+.workspace-tabs-list {
+  min-height: 0;
+  max-height: 500px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  scrollbar-width: thin;
+  contain: layout style paint;
+}
+/* Rows get real vertical room (title + meta breathe) and a recessed
+   rounded fill on hover/selection — Apple's pearl/parchment grey, never an
+   edge-to-edge tinted bar. */
+.workspace-tabs-list__item {
+  min-height: 46px;
+  border-radius: var(--radius-sm);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  contain: layout style;
+}
+.workspace-tabs-list__item:hover {
+  background: var(--bg-subtle);
+}
+.workspace-tabs-list__item.is-active {
+  background: var(--bg-muted);
+}
+.workspace-tabs-list__main {
+  min-width: 0;
+  height: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  text-align: left;
+}
+.workspace-tabs-list__main:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+}
+.workspace-tabs-list__icon {
+  width: 18px;
+  height: 18px;
+  color: var(--text-soft);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  line-height: 0;
+}
+.workspace-tabs-list__icon svg,
+.workspace-tabs-list__close svg,
+.workspace-tabs-search svg {
+  display: block;
+  flex: none;
+}
+.workspace-tabs-list__text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.workspace-tabs-list__title,
+.workspace-tabs-list__meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Title = DESIGN.md caption-strong (14/600/-0.224); meta = caption (13/400
+   muted). Softer pairing than the old bold-title + grey-link contrast. */
+.workspace-tabs-list__title {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.224px;
+}
+.workspace-tabs-list__meta {
+  color: var(--text-muted);
+  font-size: 13px;
+  letter-spacing: -0.08px;
+}
+.workspace-tabs-list__close {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.workspace-tabs-list__close:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.workspace-tabs-empty {
+  padding: 24px 8px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+  letter-spacing: -0.224px;
+}
+@media (max-width: 720px) {
+  .workspace-tabs-chrome.app-chrome-header {
+    padding-right: 6px;
+  }
+  /* Narrow-screen degrade: collapse pills to icon-only. Prefixed with
+     `.workspace-shell` so it out-specifies the shell tab rules that
+     otherwise paint the bar (the bar only mounts inside the shell). */
+  .workspace-shell .workspace-tab,
+  .workspace-tab {
+    min-width: 40px;
+    max-width: 44px;
+    flex: 0 0 44px;
+    padding: 0;
+  }
+  .workspace-shell .workspace-tab__main,
+  .workspace-tab__main {
+    justify-content: center;
+    padding: 0;
+  }
+  .workspace-shell .workspace-tab__label,
+  .workspace-shell .workspace-tab__close,
+  .workspace-tab__label,
+  .workspace-tab__close {
+    display: none;
+  }
+}
+
+.app-chrome-header {
+  --app-chrome-traffic-space: 0px;
+  --app-chrome-traffic-margin: 0px; /* Set to 8px on macOS */
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--od-border);
+  background: var(--bg);
+  gap: 12px;
+  flex-shrink: 0;
+}
+.app-chrome-traffic-space {
+  width: var(--app-chrome-traffic-space);
+  flex: 0 0 var(--app-chrome-traffic-space);
+  /* Add extra spacing after the traffic light controls on macOS so project
+     navigation starts after the native window controls. */
+  margin-right: var(--app-chrome-traffic-margin);
+}
+.app-chrome-back,
+.settings-icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.app-chrome-back:hover:not(:disabled),
+.settings-icon-btn:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  border-color: var(--od-border);
+  color: var(--text);
+}
+.app-chrome-content {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+  align-self: stretch;
+  flex: 1 1 auto;
+}
+.app-chrome-drag {
+  min-width: 24px;
+  flex: 1 1 auto;
+  align-self: stretch;
+}
+.app-chrome-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.app-chrome-file-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.app-chrome-file-actions:not(:empty) + .app-chrome-actions {
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--od-border);
+}
+.chrome-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 1px solid var(--od-border);
+  background: transparent;
+  color: var(--text);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.chrome-action svg {
+  display: block;
+}
+.chrome-action > svg:first-child {
+  transform: translateY(1px);
+}
+.chrome-action:hover:not(:disabled) {
+  background: var(--bg-subtle);
+}
+.chrome-action-secondary {
+  border-color: var(--od-border);
+  background: var(--bg);
+  color: var(--text);
+}
+.chrome-action-secondary:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  border-color: var(--text-muted);
+}
+.chrome-action-primary {
+  background: var(--text-strong);
+  border-color: var(--text-strong);
+  color: var(--bg);
+}
+.chrome-action-primary:hover:not(:disabled) {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+}
+.chrome-action-export {
+  background: var(--od-accent);
+  border-color: var(--od-accent);
+  color: white;
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--od-accent) 24%, transparent);
+}
+.chrome-action-export:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: white;
+}
+.chrome-action-export:focus-visible {
+  outline-color: var(--od-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--od-accent) 22%, transparent);
+}
+.chrome-action-export.export-ready-nudge {
+  animation: export-ready-nudge 1600ms cubic-bezier(0.23, 1, 0.32, 1) 1;
+}
+/* (Removed) `.chrome-share-menu .share-menu-popover` / `.chrome-present-wrap
+   .present-menu` absolute-offset rule — these menus now portal to <body> and
+   are fixed-positioned from inline coords (see FileViewer + usePortalMenuPosition),
+   so this descendant-combinator no longer matched anything. */
+.zoom-menu { position: relative; display: inline-block; }
+.zoom-menu .zoom-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.zoom-menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  min-width: 110px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.zoom-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+}
+.zoom-menu-item:hover { background: var(--bg-subtle); }
+.zoom-menu-item.active { color: var(--accent-strong); font-weight: 600; }
+@media (max-width: 880px) {
+  .chrome-action-secondary span { display: none; }
+  .chrome-action-secondary { padding: 0 10px; }
+}
+@media (max-width: 720px) {
+  .app-chrome-content { display: none; }
+}
+.viewer.is-tab-present .viewer-toolbar,
+.viewer.is-tab-present .live-artifact-refresh-notice {
+  display: none;
+}
+.viewer.is-tab-present .viewer-body {
+  inset: 0;
+}
+.viewer .present-exit-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 50;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--od-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  color: var(--text-muted);
+}
+.viewer .present-exit-btn:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.live-artifact-preview-frame-host {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+.live-artifact-preview-frame-host:fullscreen {
+  background: var(--bg);
+}
+.app-project-title {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+.app-project-title-line {
+  display: flex;
+  /* Center on the cross-axis so the contentEditable title text, the
+     muted meta string, the design-system picker chip, and the edit
+     icon button all sit on a shared vertical mid-line. Baseline
+     alignment makes the icon-only edit button appear to "float" above
+     the text (the button has no text baseline of its own). */
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding-left: 1px;
+}
+.app-project-title .title {
+  color: var(--text-strong);
+  font-size: 13.5px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.app-project-title .meta {
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.project-target-platforms,
+.project-feature-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: min(100%, 280px);
+  height: 22px;
+  overflow: hidden;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+.project-feature-chips {
+  max-width: min(100%, 260px);
+}
+.project-target-platforms-label,
+.project-feature-chips-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 18px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+.project-target-platform-chip,
+.project-feature-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  max-width: 92px;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--od-border) 78%, transparent);
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-subtle) 88%, transparent);
+  font-size: 11px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+.project-feature-chip.is-landing {
+  color: color-mix(in srgb, var(--od-accent) 72%, var(--text-strong));
+  border-color: color-mix(in srgb, var(--od-accent) 26%, transparent);
+  background: color-mix(in srgb, var(--od-accent) 10%, var(--bg-subtle));
+}
+.project-feature-chip.is-widgets {
+  color: color-mix(in srgb, #0891b2 72%, var(--text-strong));
+  border-color: color-mix(in srgb, #0891b2 26%, transparent);
+  background: color-mix(in srgb, #0891b2 10%, var(--bg-subtle));
+}
+.project-target-platform-chip.is-count {
+  min-width: 28px;
+  max-width: 36px;
+  flex: 0 0 auto;
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--od-accent, #7c5cff) 12%, var(--bg-subtle));
+}
+
+/* Project instructions toggle & editor bar */
+.project-instructions-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  margin-left: 4px;
+  border-radius: 4px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.project-instructions-toggle:hover {
+  opacity: 1;
+  background: var(--bg-hover, rgba(128, 128, 128, 0.1));
+}
+.project-instructions-bar {
+  padding: 8px 16px 10px;
+  border-bottom: 1px solid var(--od-border);
+  background: var(--bg-secondary, var(--bg));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.project-instructions-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+}
+.project-instructions-input {
+  width: 100%;
+  min-height: 48px;
+  max-height: 120px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  border: 1px solid var(--od-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+  font-family: inherit;
+}
+.project-instructions-input:focus {
+  outline: none;
+  border-color: var(--od-accent, #646cff);
+}
+.project-instructions-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* Saved-state entry point: a persistent header chip that reveals the
+   review panel so saved Project instructions stay discoverable (#1822). */
+.project-instructions-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--text-muted);
+  background: var(--bg-hover, rgba(128, 128, 128, 0.1));
+  border: 1px solid var(--od-border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+  max-width: 220px;
+}
+.project-instructions-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-instructions-chip:hover,
+.project-instructions-chip.is-open {
+  color: var(--text);
+  border-color: var(--od-accent, #646cff);
+}
+.project-instructions-bar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.project-instructions-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--od-accent, #646cff);
+  flex-shrink: 0;
+}
+.project-instructions-preview {
+  width: 100%;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--od-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Settings: custom instructions textarea */
+.custom-instructions-input {
+  width: 100%;
+  min-height: 80px;
+  max-height: 200px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  border: 1px solid var(--od-border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+  font-family: inherit;
+}
+.custom-instructions-input:focus {
+  outline: none;
+  border-color: var(--od-accent, #646cff);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--od-border);
+  background: var(--bg);
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.topbar-left { display: flex; flex-direction: row; align-items: center; gap: 12px; min-width: 0; }
+.topbar-title { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.topbar .title { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .meta { color: var(--text-muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar-right { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
+
+.topbar .brand-mark {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-tint);
+  color: var(--od-accent);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.topbar .brand-mark .brand-mark-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  padding: 1px;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.topbar-left .back-btn {
+  align-self: center;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+.topbar-left .back-btn:hover { background: var(--bg-subtle); color: var(--text); border-color: var(--od-border); }
+
+/* -------- Avatar menu (replaces in-topbar agent picker) ------------- */
+.avatar-menu { position: relative; }
+.avatar-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--accent-tint);
+  border: 1px solid var(--od-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: box-shadow 120ms ease, transform 120ms ease;
+}
+.avatar-btn:hover:not(:disabled) {
+  box-shadow: 0 0 0 3px rgba(194, 83, 45, 0.18);
+  border-color: transparent;
+}
+.avatar-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(194, 83, 45, 0.32);
+  border-color: transparent;
+}
+.avatar-btn:active:not(:disabled) { transform: scale(0.96); }
+.avatar-btn-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 22%;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+.avatar-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 80;
+  min-width: 280px;
+  padding: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.avatar-popover-head {
+  padding: 10px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 4px;
+}
+.avatar-popover-head .who { font-weight: 600; font-size: 13px; }
+.avatar-popover-head .where { font-size: 11.5px; color: var(--text-muted); }
+.avatar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--text);
+  text-decoration: none;
+}
+.avatar-item:hover { background: var(--bg-subtle); }
+/* `<a>` items inside the popover need explicit color + decoration
+   resets — the user-agent stylesheet otherwise paints them blue
+   and underlined, which reads as misalignment next to the button
+   rows that share the same `.avatar-item` class. */
+a.avatar-item,
+a.avatar-item:visited {
+  color: var(--text);
+}
+.avatar-item .avatar-item-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.avatar-item .avatar-item-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.avatar-section-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  font-weight: 600;
+  padding: 8px 10px 4px;
+}
+.avatar-model-section {
+  padding: 2px 10px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px dashed var(--border-soft);
+  margin-top: 4px;
+}
+.avatar-select-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.avatar-select-label {
+  flex-shrink: 0;
+  min-width: 64px;
+}
+.avatar-select {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--od-border);
+  background-color: var(--bg-panel);
+  color: var(--text);
+  cursor: pointer;
+}
+.avatar-select:focus { outline: 2px solid var(--accent-soft, var(--border-strong)); }
+
+/* Environment pill — only used in entry view header now */
+.env-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  max-width: 360px;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+}
+.env-pill:hover { background: var(--bg-panel); border-color: var(--border-strong); }
+.env-pill-dot {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--od-accent);
+  flex-shrink: 0;
+}
+.env-pill-dot[data-mode="api"] {
+  background: #2d2c2b;
+}
+.env-pill-label { font-weight: 400; font-size: 12px; }
+.env-pill-meta {
+  font-size: 12px; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+
+/* -------- Split / panes -------------------------------------------- */
+.split {
+  display: grid;
+  grid-template-columns: 460px 8px minmax(400px, 1fr);
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.split.is-resizing-chat {
+  cursor: col-resize;
+  user-select: none;
+}
+.split.is-resizing-chat iframe {
+  pointer-events: none;
+}
+.split.split-focus {
+  grid-template-columns: minmax(0, 1fr);
+}
+.split-chat-slot {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.split-chat-slot[hidden] {
+  display: none;
+}
+.split-chat-slot > .pane {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+.split-resize-handle {
+  width: 8px;
+  min-width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 3px,
+      var(--od-border) 3px,
+      var(--od-border) 5px,
+      transparent 5px
+    );
+  transition: background 120ms ease;
+  touch-action: none;
+}
+.split-resize-handle:hover,
+.split-resize-handle:focus-visible,
+.split.is-resizing-chat .split-resize-handle {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--od-accent) 16%, transparent) 0,
+      color-mix(in srgb, var(--od-accent) 16%, transparent) 3px,
+      var(--od-accent) 3px,
+      var(--od-accent) 5px,
+      color-mix(in srgb, var(--od-accent) 16%, transparent) 5px
+    );
+}
+.split-resize-handle:focus-visible {
+  outline: 2px solid var(--od-accent);
+  outline-offset: -2px;
+}
+
+/* -------- Chat sticky header --------------------------------------- */
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--od-border);
+  background: var(--bg-panel);
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  height: 44px;
+}
+.chat-header-tabs { display: inline-flex; gap: 16px; flex: 1; }
+.chat-header-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 8px 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.chat-header-tab:hover { color: var(--text); background: transparent; border-color: transparent; }
+.chat-header-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--text);
+}
+.chat-active-conversation {
+  min-width: 0;
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-active-conversation-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.chat-active-conversation-rename {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.chat-active-conversation-rename:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.chat-active-conversation-rename:focus-visible {
+  outline: 2px solid var(--od-accent);
+  outline-offset: 2px;
+}
+.chat-active-conversation-input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 3px 8px;
+  border: 1px solid var(--od-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.chat-active-conversation-input:focus {
+  outline: none;
+  border-color: var(--od-accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.chat-header-actions { display: inline-flex; gap: 4px; align-items: center; }
+.chat-header-actions .icon-only {
+  width: 28px; height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.chat-header-actions .icon-only:hover { background: var(--bg-subtle); color: var(--text); }
+
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* -------- Messages -------------------------------------------------- */
+.msg {
+  padding: 0;
+  background: transparent;
+  border: none;
+  white-space: normal;
+  word-wrap: break-word;
+  min-width: 0;
+  max-width: 100%;
+}
+.msg.user {
+  align-self: flex-end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: min(78%, 560px);
+}
+.msg .role {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+  text-transform: none;
+  color: var(--text-strong);
+  margin-bottom: 4px;
+  letter-spacing: 0;
+  font-weight: 600;
+}
+.msg-time {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.chat-day-separator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  margin: 4px 0 0;
+}
+.chat-day-separator::before,
+.chat-day-separator::after {
+  content: '';
+  height: 1px;
+  background: var(--od-border);
+  flex: 1;
+}
+.msg.user .role::before { content: ''; }
+.msg.user .role {
+  justify-content: flex-end;
+  color: var(--text-muted);
+}
+.msg.user .user-text {
+  white-space: pre-wrap;
+  color: #fff;
+  background: var(--selected);
+  border: 1px solid color-mix(in srgb, var(--selected) 88%, #000);
+  border-radius: 14px 14px 4px 14px;
+  padding: 8px 11px;
+  line-height: 1.45;
+  box-shadow: var(--shadow-xs);
+}
+.msg-plugin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 6px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--od-border);
+  font-size: 11.5px;
+  line-height: 1;
+  color: var(--text-muted);
+  max-width: 100%;
+}
+.msg-plugin-chip__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--od-accent);
+  flex: 0 0 auto;
+}
+.msg-plugin-chip--design-system .msg-plugin-chip__dot {
+  background: #d76445;
+}
+.msg-plugin-chip__label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msg-plugin-chip__kind {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.msg-plugin-chip__title {
+  color: var(--text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msg-plugin-chip__version,
+.msg-plugin-chip__task {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.msg-plugin-chip__task {
+  border-left: 1px solid var(--od-border);
+  padding-left: 8px;
+}
+
+/* Wrapper for user bubble + copy button */
+.msg.user .user-text-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+.msg.user .user-text-wrap .user-text {
+  padding-inline-end: 28px;
+}
+.msg.user .user-status-wrap {
+  display: flex;
+  justify-content: flex-end;
+}
+.user-status-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(320px, 100%);
+  padding: 9px 11px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--od-border);
+  box-shadow: var(--shadow-xs);
+  color: var(--text);
+  text-align: start;
+}
+.user-status-card__icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--od-accent);
+  background: color-mix(in srgb, var(--od-accent) 12%, transparent);
+}
+.user-status-card__copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.user-status-card__copy strong {
+  font-size: 12.5px;
+  line-height: 1.2;
+  font-weight: 600;
+}
+.user-status-card__copy span {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.msg.user .user-copy-btn {
+  position: absolute;
+  inset-block-start: 6px;
+  inset-inline-end: 6px;
+  padding: 4px;
+  border: none;
+  background: none;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  z-index: 1;
+}
+.msg.user .user-copy-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+.msg.user .user-text-wrap:hover .user-copy-btn,
+.msg.user .user-text-wrap:focus-within .user-copy-btn,
+.msg.user .user-copy-btn:focus-visible {
+  opacity: 1;
+}
+.msg.user .user-copy-btn:focus-visible {
+  outline: 2px solid var(--od-accent);
+  outline-offset: 1px;
+}
+@media (hover: none) {
+  .msg.user .user-copy-btn {
+    opacity: 1;
+  }
+}
+.msg.assistant .prose { margin-top: 4px; }
+.msg .artifact-badge {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: var(--od-accent);
+  color: white;
+  border-radius: 4px;
+}
+.msg.error {
+  border: 1px solid var(--red-border);
+  background: var(--red-bg);
+  color: var(--red);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.chat-error-text { min-width: 0; }
+.chat-error-retry {
+  flex: 0 0 auto;
+  border-color: var(--red-border);
+  color: var(--red);
+  padding: 4px 10px;
+}
+
+/* -------- Composer -------------------------------------------------- */
+.composer {
+  border-top: 1px solid var(--od-border);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-panel);
+  position: relative;
+  z-index: 1;
+}
+/* When the @-mention popover is open, lift the whole composer above the
+ * page content below it. The popover sits inside `.composer-shell` (its own
+ * backdrop-filter stacking context) and itself carried no z-index, so the
+ * recent-projects cards' status badges (`.recent-projects__card-badge`,
+ * z-index: 2, with their own backdrop-filter context) painted *over* the
+ * popover rows — the "等待回复 / 原型" chips bled through (see screenshot).
+ * The composer's resting z-index is only 1, which loses to those 2s.
+ * `:has()` scopes the lift to exactly the open state so the normal stacking
+ * order (composer vs. pinned-todo card, etc.) is untouched otherwise. */
+.composer:has(.mention-popover) {
+  z-index: 30;
+}
+/* Elevation kicks in only when a pinned todo card is sitting directly
+ * above the composer. Without the card the chat scroll already provides
+ * its own visual edge; the shadow would just darken empty whitespace. */
+.chat-pinned-todo + .composer {
+  box-shadow: 0 -10px 22px -10px rgba(0, 0, 0, 0.22);
+}
+/* Dark mode: the same alpha disappears against the dark panel, so push
+ * it harder and let it spread a bit further. */
+[data-theme="dark"] .chat-pinned-todo + .composer {
+  box-shadow: 0 -14px 28px -12px rgba(0, 0, 0, 0.65);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .chat-pinned-todo + .composer {
+    box-shadow: 0 -14px 28px -12px rgba(0, 0, 0, 0.65);
+  }
+}
+/* Composer shell — aligned to the desktop app's ProseMirror composer
+ * card (apps/desktop ThreadView's ComposerPrimitive.AttachmentDropzone):
+ * a translucent, frosted-glass rounded card sitting on a hairline ring
+ * with a soft two-layer drop shadow, accent-tinted on focus/drag.
+ *
+ * The desktop card is `rounded-2xl bg-popover/90 ring-1 ring-black/.08
+ * backdrop-blur-xl backdrop-saturate-150` + a layered shadow, with
+ * `focus-within:ring-[hsl(var(--od-accent)/.35)]` and a stronger accent
+ * ring while dragging. We reproduce those exact values here in plain
+ * CSS (no Tailwind on this app's composer) using the SAME shared design
+ * tokens, so the colour re-skins with the in-app theme picker just like
+ * desktop. `border` is dropped in favour of a `box-shadow` ring so the
+ * 1px hairline + the elevation shadow compose without doubling the edge. */
+.composer-shell {
+  border: none;
+  /* 16px == Tailwind rounded-2xl, the desktop card's corner radius. */
+  border-radius: 16px;
+  /* Translucent popover surface so the frosted blur reads through. */
+  background: hsl(var(--popover) / 0.9);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  backdrop-filter: blur(24px) saturate(1.5);
+  /* ring-1 ring-black/.08 (inset hairline) + desktop's soft two-layer
+   * elevation shadow. */
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 4px 16px -6px rgba(0, 0, 0, 0.12),
+    0 1px 3px -1px rgba(0, 0, 0, 0.06);
+  padding: 8px 10px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: box-shadow 120ms ease, background-color 120ms ease;
+}
+/* Dark mode: the black inset ring vanishes against the dark popover, so
+ * switch it to a faint white hairline — mirrors desktop's
+ * `dark:ring-white/.08`. Both the explicit [data-theme] and the system
+ * media query are covered (this app drives dark mode through both). */
+[data-theme="dark"] .composer-shell {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4px 16px -6px rgba(0, 0, 0, 0.4),
+    0 1px 3px -1px rgba(0, 0, 0, 0.3);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .composer-shell {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 4px 16px -6px rgba(0, 0, 0, 0.4),
+      0 1px 3px -1px rgba(0, 0, 0, 0.3);
+  }
+}
+/* focus-within:ring-[hsl(var(--od-accent)/.35)] — accent hairline when the
+ * input is focused. Keep the elevation shadow underneath. */
+.composer-shell:focus-within {
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--primary) / 0.35),
+    0 4px 16px -6px rgba(0, 0, 0, 0.12),
+    0 1px 3px -1px rgba(0, 0, 0, 0.06);
+}
+/* Dark focus ring keeps the accent hairline but with dark's stronger
+ * drop shadow underneath. */
+[data-theme="dark"] .composer-shell:focus-within {
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--primary) / 0.35),
+    0 4px 16px -6px rgba(0, 0, 0, 0.4),
+    0 1px 3px -1px rgba(0, 0, 0, 0.3);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .composer-shell:focus-within {
+    box-shadow:
+      inset 0 0 0 1px hsl(var(--primary) / 0.35),
+      0 4px 16px -6px rgba(0, 0, 0, 0.4),
+      0 1px 3px -1px rgba(0, 0, 0, 0.3);
+  }
+}
+/* drag-active: stronger 2px accent ring + faint accent wash on the card,
+ * mirroring desktop's `data-[dragging=true]:ring-2 ring-[hsl(var(--od-accent)
+ * /.5)] bg-accent/.08`. */
+.composer.drag-active .composer-shell {
+  background: hsl(var(--primary) / 0.08);
+  box-shadow:
+    inset 0 0 0 2px hsl(var(--primary) / 0.5),
+    0 4px 16px -6px rgba(0, 0, 0, 0.12),
+    0 1px 3px -1px rgba(0, 0, 0, 0.06);
+}
+.composer textarea {
+  min-height: 88px;
+  max-height: min(184px, 34vh);
+  border: none;
+  background: transparent;
+  padding: 4px 4px;
+  resize: none;
+  overflow-y: hidden;
+}
+.composer textarea:focus { outline: none; box-shadow: none; }
+.composer-input-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.composer-textarea-layer {
+  position: relative;
+  min-height: 88px;
+}
+.composer-input-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  min-height: 88px;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  line-height: normal;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.composer-input-overlay-inner {
+  min-height: 100%;
+  padding: 4px;
+  transform: translateY(calc(-1 * var(--composer-input-scroll, 0px)));
+}
+.composer-input-wrap.has-mention-overlay textarea {
+  color: transparent;
+  caret-color: var(--text);
+}
+.composer-input-wrap.has-mention-overlay textarea::selection {
+  background: color-mix(in srgb, var(--od-accent) 24%, transparent);
+  color: transparent;
+}
+/* Inline @mention highlight — aligned to the desktop composer's chip
+ * (apps/desktop chipNodeView): a rounded filled pill in the accent tint.
+ *
+ * HARD CONSTRAINT: this span is an overlay mirrored on top of a
+ * transparent <textarea>; its glyph geometry must match the textarea's
+ * plain text exactly or the highlight drifts off the caret. So unlike
+ * desktop's real atom-node pill, we CANNOT add padding / line-height /
+ * font changes here — only the fill, ring and corner radius are tuned to
+ * read as a pill. Desktop fills the chip at ~16% accent with an accent
+ * label; we match that fill weight and bump the radius toward a pill,
+ * keeping all box metrics inherited (overlay alignment intact). */
+.composer-inline-mention {
+  display: inline;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  /* Softer fill than before (16% read as a solid block). */
+  background: color-mix(in srgb, var(--od-accent) 10%, transparent);
+  /* Two-layer box-shadow does the heavy lifting WITHOUT touching glyph
+   * geometry (shadows don't participate in layout, so the overlay stays
+   * pixel-aligned with the textarea — the hard constraint above holds):
+   *   1) a +2px-spread same-tint fill that visually pads the pill sideways,
+   *      faking the inner padding we're forbidden from adding;
+   *   2) a 1px accent ring on top for a crisp chip outline. */
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--od-accent) 10%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--od-accent) 26%, transparent);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  /* Higher contrast so the label reads clearly instead of washing out. */
+  color: color-mix(in srgb, var(--od-accent) 88%, var(--text));
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  vertical-align: baseline;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: inherit;
+}
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 4px;
+}
+/* Row icon buttons (tools "@" trigger, attach) — aligned to desktop's
+ * round size-9 ghost icon button: a 36px circle, muted glyph, soft
+ * foreground-tinted hover fill (no border, no square corners). */
+.composer-row .icon-btn {
+  width: 36px; height: 36px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 9999px;
+  color: hsl(var(--muted-foreground) / 0.8);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.composer-row .icon-btn:hover:not(:disabled) { background: hsl(var(--foreground) / 0.06); color: hsl(var(--foreground)); }
+.composer-spacer { flex: 1; }
+/* web-only pill buttons (import / research). These carry text + an `.on`
+ * toggle state, so they stay pills rather than becoming round icon discs,
+ * but adopt desktop's softer chrome: borderless, pill radius, gentle
+ * foreground-tinted hover. The accent `.on` state is preserved. */
+.composer-import {
+  background: transparent;
+  border: none;
+  border-radius: 9999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground) / 0.8);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.composer-import:hover:not(:disabled) { background: hsl(var(--foreground) / 0.06); color: hsl(var(--foreground)); }
+.composer-research {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  border-radius: 9999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground) / 0.8);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.composer-research:hover:not(:disabled) { background: hsl(var(--foreground) / 0.06); color: hsl(var(--foreground)); }
+.composer-research.on {
+  background: hsl(var(--primary) / 0.12);
+  color: var(--od-accent);
+}
+.composer-research-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--od-accent);
+}
+/* Send / Stop button — aligned to the desktop app's circular icon button
+ * (apps/desktop ComposerPrimitive.Send / .Cancel): a 36px (size-9) round
+ * solid-accent disc holding only an icon, with a soft accent-tinted
+ * shadow. The web button's JSX still renders an <Icon> + a text <span>;
+ * we keep the markup untouched (functionality unchanged) and visually
+ * hide the label via an accessible sr-only technique, so the disc shows
+ * the icon alone while screen readers still announce "Send" / "Stop".
+ *
+ * The icon glyph itself stays web's own paper-plane / square (changing it
+ * would mean editing the Icon component / JSX); only the button *shape*
+ * is aligned. */
+.composer-send {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 9999px;
+  background: var(--od-accent);
+  color: white;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.08),
+    0 2px 8px -2px hsl(var(--primary) / 0.3),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  transition: filter 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+/* Visually hide the text label but keep it for assistive tech. */
+.composer-send > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.composer-send:hover:not(:disabled) { filter: brightness(1.08); background: var(--od-accent); }
+.composer-send:active:not(:disabled) { filter: brightness(0.95); }
+/* Disabled: desktop fades the disc to a faint neutral fill with no shadow. */
+.composer-send:disabled {
+  background: hsl(var(--foreground) / 0.06);
+  color: hsl(var(--muted-foreground) / 0.5);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+/* Stop state: solid foreground disc (desktop's ComposerPrimitive.Cancel). */
+.composer-send.stop {
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.1),
+    0 2px 8px -2px rgba(0, 0, 0, 0.15),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+.composer-send.stop:hover { filter: brightness(1.1); background: hsl(var(--foreground)); color: hsl(var(--background)); }
+.composer-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin: 0 8px;
+}
+
+.preview-draw-note-input::placeholder {
+  color: rgba(255, 225, 210, 0.86);
+}
+
+.preview-draw-note-input:focus {
+  background: rgba(218, 97, 56, 0.26) !important;
+  border-color: rgba(255, 184, 140, 0.95) !important;
+  box-shadow: 0 0 0 3px rgba(218, 97, 56, 0.34), 0 0 18px rgba(218, 97, 56, 0.24) !important;
+}
+
+/* -------- Staged attachments -------------------------------------- */
+.staged-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 4px 0;
+}
+.staged-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius);
+  max-width: 220px;
+  font-size: 11.5px;
+  box-shadow: var(--shadow-xs);
+}
+.staged-chip img {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+.staged-preview-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.staged-preview-trigger:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+}
+.staged-preview-trigger img {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+}
+.staged-preview-trigger .staged-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.staged-preview-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(17, 24, 39, 0.44);
+}
+.staged-preview-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(720px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  padding: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.staged-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.staged-preview-head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.staged-preview-card > img {
+  display: block;
+  max-width: 100%;
+  max-height: min(70vh, 640px);
+  object-fit: contain;
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.staged-comment {
+  border-radius: var(--radius-pill);
+  padding: 4px 6px 4px 10px;
+}
+.user-attachment.staged-comment {
+  max-width: 100%;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.staged-comment .staged-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.staged-comment .staged-name strong {
+  color: var(--accent-strong);
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.staged-comment .staged-name span {
+  white-space: normal;
+  word-break: break-word;
+}
+.staged-comment button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+}
+.staged-comment button:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.staged-icon {
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+.staged-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+  color: var(--text);
+}
+.staged-remove {
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.staged-remove:hover { color: var(--red); background: var(--red-bg); }
+
+.linked-dirs-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.linked-dir-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  max-width: 220px;
+}
+.linked-dir-chip svg { flex-shrink: 0; color: var(--text-muted); }
+.linked-dir-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-attachments {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+.user-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius);
+  font-size: 11.5px;
+  max-width: 240px;
+  color: var(--text);
+  cursor: default;
+  text-align: left;
+  font: inherit;
+  font-size: 11.5px;
+}
+.user-attachment.openable { cursor: pointer; }
+.user-attachment.openable:hover {
+  background: var(--bg-subtle);
+  border-color: var(--od-accent);
+}
+.user-attachment img {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 6px;
+  display: block;
+}
+.user-attachment .staged-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -------- Mention popover ------------------------------------------- */
+.mention-popover {
+  order: -1;
+  flex: 0 0 clamp(300px, 52vh, 480px);
+  min-height: 248px;
+  max-height: min(480px, 72vh);
+  margin: 0 0 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* Own drawing baseline inside `.composer-shell` so it always paints above
+   * sibling composer content. Paired with `.composer:has(.mention-popover)`
+   * lifting the whole composer over page chrome, this stops the
+   * recent-projects status badges (z-index: 2) bleeding through the rows. */
+  position: relative;
+  z-index: 1;
+}
+.mention-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 42px;
+  padding: 6px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border-soft);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.mention-tabs::-webkit-scrollbar {
+  display: none;
+}
+.mention-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: max-content;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.mention-tab.active {
+  background: var(--bg-panel);
+  color: var(--text);
+  border-color: var(--od-border);
+  box-shadow: var(--shadow-xs);
+}
+.mention-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 3px 0;
+}
+.mention-empty {
+  padding: 14px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.45;
+}
+.mention-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 7px 10px;
+  font-size: 12px;
+  text-align: left;
+  gap: 8px;
+  color: var(--text);
+  min-height: 32px;
+}
+.mention-item:hover { background: var(--bg-subtle); border-color: transparent; }
+.mention-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 4px 8px 2px;
+}
+.mention-section-label + .mention-section-label,
+.mention-item + .mention-section-label {
+  margin-top: 4px;
+  border-top: 1px solid var(--od-border);
+}
+.mention-item--plugin {
+  align-items: flex-start;
+}
+.mention-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.mention-item-body strong {
+  font-weight: 600;
+  font-size: 12px;
+}
+.mention-meta--desc {
+  white-space: normal;
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: var(--text-muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.mention-item code {
+  flex: 1;
+  font-size: 11px;
+  background: transparent;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mention-meta { color: var(--text-muted); font-size: 10px; flex-shrink: 0; }
+
+/* Section header inside the @-popover when both skills and files appear. */
+.mention-section-head {
+  padding: 6px 10px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.mention-skill-item { flex-direction: column; align-items: flex-start; gap: 2px; }
+.mention-skill-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+.mention-skill-row code { flex: none; font-size: 11px; }
+.mention-skill-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mention-skill-desc {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Staged skill chips above the textarea. Reuse the staged-chip baseline
+   so they line up with attachment chips. */
+.staged-skills-row { gap: 6px; flex-wrap: wrap; }
+.staged-chip.staged-skill {
+  background: color-mix(in oklab, var(--od-accent) 8%, var(--bg-subtle));
+  border-color: color-mix(in oklab, var(--od-accent) 28%, var(--od-border));
+}
+.staged-chip.staged-skill .staged-icon { color: var(--od-accent); }
+.staged-chip.staged-skill-user {
+  background: color-mix(in oklab, var(--od-accent) 14%, var(--bg-subtle));
+}
+/* MCP / connector top chips — the visible anchor for a picked context
+   surface now that selecting one no longer injects an `@token` into the
+   prompt body. Same accent treatment as the skill chip so the three read
+   as one family. */
+.staged-chip.staged-context {
+  background: color-mix(in oklab, var(--od-accent) 8%, var(--bg-subtle));
+  border-color: color-mix(in oklab, var(--od-accent) 28%, var(--od-border));
+}
+.staged-chip.staged-context .staged-icon { color: var(--od-accent); }
+

@@ -1,0 +1,1864 @@
+/* ============================================================
+   Pet — Codex-style floating companion + settings cards
+   ------------------------------------------------------------
+   The overlay anchors to the bottom-right via inline right/bottom
+   styles set by PetOverlay. The accent color cascades through the
+   `--pet-accent` custom property so every pet variant gets the
+   same halo / bubble border / focus ring without a class explosion.
+   ============================================================ */
+.pet-overlay {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+  --pet-accent: var(--od-accent);
+}
+.pet-overlay > * { pointer-events: auto; }
+
+.pet-sprite {
+  position: relative;
+  /* The overlay sprite was 56px which read as a tiny postage stamp
+     against a 1280px+ canvas — bumped to 96px so the pet feels like
+     a present companion rather than a thumbnail. The image-mode
+     children inherit width/height: 100% via .pet-image, so atlas /
+     strip / static pets all scale up automatically. */
+  width: 96px;
+  height: 96px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  transition: transform 160ms ease;
+}
+.pet-sprite:hover {
+  transform: translateY(-2px);
+}
+.pet-sprite:active { cursor: grabbing; }
+.pet-sprite-glyph {
+  /* Glyph font-size scales with the sprite box (~0.55 ratio) so
+     emoji-only built-ins and the avatar mark stay legible at the
+     larger overlay size. */
+  font-size: 52px;
+  line-height: 1;
+  animation: var(--pet-anim, pet-float) 3.4s ease-in-out infinite;
+  filter: drop-shadow(0 1px 0 rgba(0,0,0,0.08));
+}
+.pet-sprite-shadow {
+  position: absolute;
+  bottom: -12px;
+  left: 50%;
+  width: 64px;
+  height: 8px;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 50%;
+  filter: blur(4px);
+  transform: translateX(-50%);
+  animation: pet-shadow 3.4s ease-in-out infinite;
+}
+.pet-sprite-status {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--pet-accent);
+  color: white;
+  border: 2px solid var(--bg);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: var(--shadow-sm);
+}
+
+@keyframes pet-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes pet-sway {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(4deg); }
+}
+@keyframes pet-float {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(-4px) rotate(2deg); }
+}
+@keyframes pet-wiggle {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-6deg); }
+  75% { transform: rotate(6deg); }
+}
+@keyframes pet-shadow {
+  0%, 100% { transform: translateX(-50%) scale(1); opacity: 0.18; }
+  50% { transform: translateX(-50%) scale(0.85); opacity: 0.12; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-sprite-glyph,
+  .pet-sprite-shadow { animation: none !important; }
+}
+
+.pet-bubble {
+  max-width: 240px;
+  background: var(--bg-panel);
+  color: var(--text);
+  border: 1px solid var(--pet-accent);
+  border-radius: 12px;
+  padding: 10px 12px 8px;
+  box-shadow: var(--shadow-md);
+  font-size: 12.5px;
+  line-height: 1.4;
+  position: relative;
+  animation: pet-bubble-in 200ms ease-out;
+}
+.pet-bubble::after {
+  content: '';
+  position: absolute;
+  right: 18px;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--pet-accent);
+  border-bottom: 1px solid var(--pet-accent);
+  transform: rotate(45deg);
+}
+.pet-bubble-name {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--pet-accent);
+  margin-bottom: 2px;
+}
+.pet-bubble-line {
+  color: var(--text);
+}
+.pet-idle-quote {
+  margin: 0;
+  display: grid;
+  gap: 5px;
+}
+.pet-idle-quote blockquote {
+  margin: 0;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.pet-idle-quote figcaption {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: right;
+}
+.pet-idle-quote figcaption::before {
+  content: '— ';
+}
+.pet-task-list {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+.pet-task-group {
+  display: grid;
+  gap: 5px;
+}
+.pet-task-group-title {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pet-task-item {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: 8px;
+  border: 1px solid var(--od-border);
+  background: var(--bg-subtle);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.pet-task-item:hover {
+  background: var(--bg-muted);
+  border-color: var(--border-strong);
+}
+.pet-task-item--static {
+  cursor: default;
+}
+.pet-task-item--static:hover {
+  background: var(--bg-subtle);
+  border-color: var(--od-border);
+}
+.pet-task-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--pet-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pet-accent) 18%, transparent);
+}
+.pet-task-dot[data-pet-task-status="queued"] {
+  opacity: 0.62;
+}
+.pet-task-dot[data-pet-task-status="succeeded"] {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent);
+}
+.pet-task-dot[data-pet-task-status="failed"] {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent);
+}
+.pet-task-dot[data-pet-task-status="canceled"] {
+  background: var(--text-faint);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-faint) 18%, transparent);
+}
+.pet-task-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.pet-task-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--text-muted);
+  border: 1px solid var(--od-border);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.pet-bubble-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pet-bubble-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  border: 1px solid var(--od-border);
+  cursor: pointer;
+}
+.pet-bubble-btn:hover {
+  background: var(--bg-muted);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+body.desktop-pet-shell {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+body.desktop-pet-shell .pet-overlay {
+  right: 18px !important;
+  bottom: 18px !important;
+}
+body.desktop-pet-shell .pet-bubble,
+body.desktop-pet-shell .pet-sprite {
+  -webkit-app-region: drag;
+}
+body.desktop-pet-shell .pet-task-item {
+  -webkit-app-region: no-drag;
+}
+
+@keyframes pet-bubble-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ----- Entry sidebar adopt pill ----- */
+.pet-pill {
+  position: relative;
+  height: 24px;
+  padding: 0;
+  gap: 0;
+  cursor: default;
+}
+.pet-pill .pet-pill-glyph {
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  width: 14px;
+  height: 14px;
+  justify-content: center;
+}
+.pet-pill > .pet-pill-main,
+.pet-pill > .pet-pill-toggle {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0 7px;
+}
+.pet-pill > .pet-pill-main {
+  gap: 5px;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+}
+.pet-pill > .pet-pill-toggle {
+  justify-content: center;
+  padding: 0 7px;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  color: var(--text-muted);
+}
+.pet-pill > .pet-pill-main:hover,
+.pet-pill > .pet-pill-toggle:hover {
+  background: var(--bg-panel);
+  color: var(--text);
+}
+.pet-pill-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 0;
+  background: var(--od-border);
+}
+.pet-pill-fresh {
+  border-color: var(--od-accent);
+  color: var(--text);
+  background: var(--accent-tint);
+}
+.pet-pill-fresh > .pet-pill-divider {
+  background: var(--od-accent);
+  opacity: 0.35;
+}
+.pet-pill-fresh:hover {
+  background: var(--accent-soft);
+  border-color: var(--od-accent);
+}
+.pet-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--od-accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+  margin-left: 2px;
+}
+
+/* ----- Settings → Pets ----- */
+.pet-wake-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pet-source-head {
+  margin-top: 14px;
+  display: grid;
+  gap: 4px;
+}
+.pet-source-head h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.pet-source-head .hint {
+  margin: 0;
+}
+.pet-action-status {
+  margin: 10px 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--od-accent) 32%, var(--od-border));
+  background: color-mix(in srgb, var(--od-accent) 9%, var(--bg-panel));
+  color: var(--accent-strong);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.pet-action-status span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pet-current-summary {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+.pet-current-summary__sprite {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--pet-accent, var(--od-accent)) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pet-accent, var(--od-accent)) 30%, var(--od-border));
+}
+.pet-current-summary__copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.pet-current-summary__label {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pet-current-summary__copy strong {
+  min-width: 0;
+  color: var(--text-strong);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pet-current-summary__copy span:last-child {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seg-btn.small {
+  padding: 4px 10px !important;
+  font-size: 12px !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--od-border);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.seg-btn.small.active {
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+  border-color: var(--od-accent);
+}
+.seg-btn.small[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Pet source tabs — pill row that splits the panel into three
+   exclusive surfaces (built-in / custom / community). Sits flush
+   between the section head and the active tab's content so the user
+   reads it as "pick a source, then pick a pet inside it". */
+.pet-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+.pet-tabs-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pet-tabs-top-row .subtab-pill {
+  flex: 0 0 auto;
+}
+.pet-tabs-hint {
+  margin: 0;
+}
+
+.pet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* The Community tab stacks the codex grid + hatch panel; flatten
+   their default top margins so the spacing reads as one column
+   rather than two ad-hoc cards. */
+.pet-community {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 4px;
+}
+.pet-community .pet-codex,
+.pet-community .pet-hatch {
+  margin-top: 0;
+}
+
+/* Custom tab dashed wrapper — strip the top margin so it tucks
+   directly under the tab pills. */
+.pet-tabs + .pet-custom,
+.pet-tabs + div + .pet-custom {
+  margin-top: 4px;
+}
+
+/* Highlight the codex card whose name + image match the user's
+   current adoption (community pets land in the custom slot, so we
+   piggy-back on the same "active" affordance used by built-ins). */
+.pet-codex-card.active {
+  border-color: var(--od-accent);
+  box-shadow: 0 0 0 1px var(--od-accent) inset;
+}
+.pet-card {
+  --pet-accent: var(--od-accent);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.pet-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+.pet-card.active {
+  border-color: var(--pet-accent);
+  box-shadow: 0 0 0 1px var(--pet-accent) inset;
+  background: var(--bg-panel);
+}
+.pet-card-glyph {
+  font-size: 28px;
+  line-height: 1;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--pet-accent) 14%, transparent);
+}
+.pet-card-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.pet-card-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-strong);
+}
+.pet-card-flavor {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.pet-card-cta,
+.pet-card-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  border: 1px solid var(--od-border);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.pet-card-badge {
+  background: color-mix(in srgb, var(--pet-accent) 16%, transparent);
+  border-color: var(--pet-accent);
+  color: var(--pet-accent);
+}
+
+.pet-custom {
+  margin-top: 18px;
+  padding: 14px;
+  border-radius: var(--radius);
+  border: 1px dashed var(--border-strong);
+  background: var(--bg-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pet-custom-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pet-custom-head h4 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+.pet-custom-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+}
+.pet-custom-sprite {
+  font-size: 32px;
+  line-height: 1;
+  width: 48px;
+  height: 48px;
+  /* Lock the sprite to a perfect square inside the flex preview row.
+     Without `flex-shrink: 0`, a long pet name or greeting in the
+     adjacent bubble shrinks the 48px box horizontally, squashing
+     the sprite and breaking the round halo. */
+  flex: 0 0 48px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--pet-accent, var(--od-accent)) 14%, transparent);
+}
+.pet-custom-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+  color: var(--text);
+  /* Allow the text column to shrink past its intrinsic content width
+     so long greetings wrap instead of pushing the sprite. */
+  min-width: 0;
+}
+.pet-custom-bubble strong {
+  color: var(--pet-accent, var(--od-accent));
+}
+.pet-custom-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.pet-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.pet-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12);
+}
+.pet-swatch.active {
+  border-color: var(--text-strong);
+}
+.pet-swatch-picker {
+  width: 22px;
+  height: 22px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 50%;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* ============================================================
+   Pet — discovery surfaces (welcome teaser, composer)
+   ============================================================ */
+
+/* ----- Welcome dialog teaser ----- */
+.welcome-pet-teaser {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--accent-tint);
+  border: 1px solid var(--od-accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  width: 100%;
+}
+.welcome-pet-teaser:hover {
+  filter: brightness(1.02);
+}
+.welcome-pet-glyph {
+  font-size: 24px;
+  line-height: 1;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.welcome-pet-copy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.welcome-pet-copy strong {
+  font-size: 12.5px;
+  color: var(--text-strong);
+}
+.welcome-pet-copy span {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+.welcome-pet-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--accent-strong);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ----- Composer pet button + popover ----- */
+.composer-pet-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.composer-pet {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+  border: 1px solid var(--od-border);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.composer-pet:hover {
+  background: var(--bg-muted);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.composer-pet.adopted {
+  border-color: var(--od-accent);
+  color: var(--accent-strong);
+  background: var(--accent-tint);
+}
+.composer-pet-glyph {
+  font-size: 14px;
+  line-height: 1;
+}
+.composer-pet-label {
+  font-weight: 400;
+}
+.composer-pet-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 260px;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.composer-pet-menu-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 2px 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.composer-pet-menu-head strong {
+  font-size: 12px;
+  color: var(--text-strong);
+}
+.composer-pet-menu-head span {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+.composer-pet-menu-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+.composer-pet-menu-row:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.composer-pet-menu-row.toggle {
+  background: var(--bg-subtle);
+  border-color: var(--od-border);
+}
+.composer-pet-menu-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+.composer-pet-menu-pet {
+  --pet-accent: var(--od-accent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 2px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.composer-pet-menu-pet:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.composer-pet-menu-pet.active {
+  border-color: var(--pet-accent);
+  background: color-mix(in srgb, var(--pet-accent) 12%, transparent);
+  color: var(--text);
+}
+.composer-pet-menu-pet span:first-child {
+  font-size: 18px;
+  line-height: 1;
+}
+.composer-pet-menu-row.settings {
+  border-top: 1px solid var(--border-soft);
+  margin-top: 2px;
+  padding-top: 8px;
+  border-radius: 0;
+  border-bottom: 1px solid transparent;
+  border-left: 1px solid transparent;
+  border-right: 1px solid transparent;
+}
+
+/* ============================================================
+   Composer — consolidated Tools popover
+   ------------------------------------------------------------
+   The leading @ glyph now opens a single tabbed popover
+   containing MCP / Import / Pet quick actions plus a shortcut
+   to the full Settings dialog. Replaces three standalone row
+   buttons that were overflowing in narrow chats.
+   ============================================================ */
+.composer-tools-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.composer-tools-trigger {
+  position: relative;
+}
+.composer-tools-at {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  color: currentColor;
+  transform: translateY(-0.5px);
+}
+.composer-tools-trigger.active {
+  background: hsl(var(--foreground) / 0.06);
+  color: hsl(var(--foreground));
+}
+.composer-tools-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  z-index: 30;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.composer-tools-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-subtle);
+}
+.composer-tools-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 6px 6px;
+  font-size: 11.5px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 0;
+}
+.composer-tools-tab:hover { color: var(--text); }
+.composer-tools-tab.active {
+  background: var(--bg-panel);
+  color: var(--text);
+  border-color: var(--od-border);
+  box-shadow: var(--shadow-xs);
+}
+.composer-tools-tab-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 13px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.composer-tools-tab > svg,
+[role='tab'] > svg {
+  display: block;
+  flex: none;
+  align-self: center;
+}
+.composer-tools-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.composer-tools-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 2px 6px;
+}
+.composer-tools-segments {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+.composer-tools-segment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  min-width: 0;
+}
+.composer-tools-segment:hover {
+  color: var(--text);
+  border-color: var(--od-border);
+}
+.composer-tools-segment.active {
+  background: var(--bg-panel);
+  color: var(--text);
+  border-color: var(--od-border);
+  font-weight: 600;
+  box-shadow: var(--shadow-xs);
+}
+.composer-tools-segment {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-tools-search {
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: 12px;
+}
+.composer-tools-search:focus {
+  border-color: var(--od-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--od-accent) 18%, transparent);
+}
+.composer-tools-empty {
+  padding: 14px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.5;
+}
+.composer-tools-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.composer-tools-section-label {
+  padding: 4px 6px 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.composer-tools-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  width: 100%;
+}
+.composer-tools-row:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.composer-tools-row.active {
+  background: var(--bg-subtle);
+  border-color: var(--od-border);
+}
+.composer-tools-row-body {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.composer-tools-row-body strong {
+  font-weight: 600;
+  font-size: 12px;
+}
+.composer-tools-row-meta {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  text-transform: lowercase;
+}
+/* Plugins panel — each row is a horizontal split: the main button
+   applies the plugin, the side button opens the details modal. */
+.composer-tools-row--plugin {
+  padding: 0;
+  gap: 0;
+}
+.composer-tools-row--plugin .composer-tools-row-body {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+.composer-tools-row--plugin .composer-tools-row-meta {
+  text-transform: none;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.composer-tools-row-main {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  min-width: 0;
+}
+.composer-tools-row-main:hover {
+  background: var(--bg-subtle);
+}
+.composer-tools-row-main:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.composer-tools-row-side {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.composer-tools-row-side:hover {
+  color: var(--text);
+  background: var(--bg-subtle);
+}
+.composer-tools-row-pending {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-left: auto;
+}
+.composer-tools-row-action {
+  border-top: 1px solid var(--border-soft);
+  border-radius: 0;
+  margin-top: 4px;
+  padding-top: 8px;
+  color: var(--text-muted);
+}
+.composer-tools-row-action:hover { color: var(--text); }
+.composer-tools-row-toggle {
+  background: var(--bg-subtle);
+  border-color: var(--od-border);
+}
+.composer-tools-pet {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.composer-tools-pet-head {
+  padding: 0 4px 4px;
+}
+.composer-tools-pet-head .hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.composer-tools-pet-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 0 2px;
+}
+.composer-tools-pet-item {
+  --pet-accent: var(--od-accent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 2px;
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.composer-tools-pet-item:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.composer-tools-pet-item.active {
+  border-color: var(--pet-accent);
+  background: color-mix(in srgb, var(--pet-accent) 12%, transparent);
+  color: var(--text);
+}
+.composer-tools-pet-item span:first-child {
+  font-size: 18px;
+  line-height: 1;
+}
+.composer-tools-settings {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  border-radius: 0;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  width: 100%;
+}
+.composer-tools-settings:hover {
+  background: var(--bg-subtle);
+}
+
+/* ============================================================
+   Pet — uploaded image / spritesheet rendering
+   ------------------------------------------------------------
+   The face element switches between an emoji glyph and an
+   image/spritesheet via the PetSpriteFace component. Static
+   images inherit the float animation from .pet-sprite-glyph;
+   spritesheets get their own pet-frames keyframes which the
+   component drives with an inline `animation: …` string so
+   each pet can choose its own (frames, fps) combo.
+   ============================================================ */
+.pet-image {
+  display: inline-block;
+  background-position: 0 0;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  width: 100%;
+  height: 100%;
+  /* Pixel art-friendly upscale so 32×32 sheets stay crisp at 56 px. */
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+}
+.pet-image.static {
+  /* Single static image — let the parent .pet-sprite-glyph float
+     animation drive subtle movement. */
+  background-size: contain;
+  background-position: center;
+}
+
+/* Spritesheet keyframe used by PetSpriteFace inline animation. The
+   from/to span 0% → 100%, which CSS resolves against
+   (container_width − background_width). With background-size set to
+   `${frames * 100}% 100%` each `steps()` tick lands on a frame edge. */
+@keyframes pet-frames {
+  from { background-position-x: 0%; }
+  to { background-position-x: 100%; }
+}
+
+/* Full-atlas mode: the sprite renders the active row from a Codex
+   8x9 grid. background-position-y is set inline to the row offset and
+   the keyframe walks frames inside that row. We use a CSS variable
+   for the endpoint so a single keyframe block can drive any row's
+   `frames`/`cols` combination — `--pet-atlas-end-x` is set per row by
+   PetSpriteFace based on `frames / (cols - 1) * 100%`. */
+.pet-image.atlas {
+  background-repeat: no-repeat;
+  /* The sprite element switches rows on the fly; smooth out the
+     row transitions so direction changes feel less jarring without
+     blurring the per-frame `steps()` cadence. */
+  transition: background-position-y 220ms ease;
+}
+@keyframes pet-atlas-frames {
+  from { background-position-x: 0%; }
+  to { background-position-x: var(--pet-atlas-end-x, 100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-image.frames,
+  .pet-image.atlas { animation: none !important; background-position-x: 0% !important; }
+}
+
+/* PetSettings — upload row, frames/fps grid, error caption */
+.pet-image-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+}
+.pet-image-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.seg-btn.small.ghost {
+  background: transparent;
+  border-color: var(--od-border);
+  color: var(--text-muted);
+}
+.seg-btn.small.ghost:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.pet-image-error {
+  color: var(--red) !important;
+}
+.pet-image-frames {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+.pet-image-frames .field input {
+  width: 100%;
+}
+
+/* Make the custom-pet preview / settings sprite respect the rounded
+   accent halo used for emoji glyphs even when an image is rendered. */
+.pet-custom-sprite {
+  overflow: hidden;
+}
+
+/* --- Codex hatch-pet atlas import + AI generation panels ------------ */
+
+.pet-atlas-preview {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--od-border);
+  border-radius: 12px;
+  background: var(--surface);
+  display: grid;
+  gap: 12px;
+}
+
+.pet-atlas-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pet-atlas-head strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pet-atlas-thumb {
+  width: 100%;
+  aspect-ratio: 1536 / 1872;
+  max-height: 240px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  background-color: var(--surface-2, #f6f4ee);
+  border-radius: 8px;
+  border: 1px solid var(--od-border);
+  image-rendering: pixelated;
+}
+
+.pet-atlas-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px;
+}
+
+.pet-atlas-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--od-border);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.pet-atlas-row:hover {
+  border-color: var(--od-accent);
+}
+
+.pet-atlas-row.active {
+  border-color: var(--od-accent);
+  background: color-mix(in srgb, var(--od-accent) 10%, transparent);
+}
+
+.pet-atlas-row[disabled] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.pet-atlas-row-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pet-atlas-row-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pet-atlas-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* "Hatch with AI" panel */
+
+.pet-hatch {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px dashed var(--od-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--od-accent) 4%, transparent);
+  display: grid;
+  gap: 10px;
+}
+
+.pet-hatch-head h4 {
+  margin: 0 0 4px 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pet-hatch-prompt {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--od-border);
+  border-radius: 8px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pet-hatch-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pet-hatch-foot {
+  margin: 0;
+}
+
+/* "Recently hatched" — Codex pets discovered under ~/.codex/pets/ */
+
+.pet-codex {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--od-border);
+  border-radius: 12px;
+  background: var(--surface);
+  display: grid;
+  gap: 10px;
+}
+
+.pet-codex-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pet-codex-head h4 {
+  margin: 0 0 4px 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Right-aligned button cluster in the codex head — keeps the
+   "Download community pets" + "Refresh" buttons on a single row even
+   when the section title wraps. */
+.pet-codex-head-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pet-codex-empty {
+  margin: 4px 0 0 0;
+}
+
+/* Inline status line shown after a community sync completes. Stays in
+   the section flow so the result reads as part of the same control
+   group as the trigger button. The error variant tints toward the
+   accent without screaming red — sync errors are usually transient
+   network blips. */
+.pet-codex-sync-status {
+  margin: 6px 0 8px 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--od-border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pet-codex-sync-status.error {
+  background: color-mix(in srgb, var(--od-accent) 8%, var(--bg-subtle));
+  border-color: color-mix(in srgb, var(--od-accent) 30%, var(--od-border));
+  color: var(--text-strong);
+}
+
+.pet-codex-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.pet-codex-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--od-border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.pet-codex-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  border: 1px solid var(--od-border);
+  background-color: var(--surface-2, #f6f4ee);
+  background-image: var(--pet-codex-src);
+  background-repeat: no-repeat;
+  /* Show only the top-left cell of the 8x9 atlas — that is the
+     `idle` row, frame 0, and reads as a recognizable still even
+     before adoption. */
+  background-position: 0 0;
+  background-size: 800% 900%;
+  image-rendering: pixelated;
+}
+
+/* Hover preview — a larger floating overlay that plays through every
+   cell of the 8x9 Codex atlas so users can see what animations (idle,
+   running, waving, jumping, failed, waiting, …) the pet has before they
+   adopt it. The overlay is purely decorative: pointer-events: none
+   prevents it from stealing hover from the card, and aria-hidden keeps
+   it out of the accessibility tree. */
+.pet-codex-thumb-preview {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  width: 128px;
+  /* 128 * (208/192) ≈ 138.7 — matches a single atlas cell aspect. */
+  height: 139px;
+  border-radius: 10px;
+  border: 1px solid var(--od-border);
+  background-color: var(--surface-2, #f6f4ee);
+  background-image: var(--pet-codex-src);
+  background-repeat: no-repeat;
+  background-position: 0% 0%;
+  background-size: 800% 900%;
+  image-rendering: pixelated;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 6px) scale(0.82);
+  transform-origin: 50% 100%;
+  transition:
+    opacity 140ms ease,
+    transform 160ms ease;
+  z-index: 20;
+}
+
+.pet-codex-card:hover .pet-codex-thumb-preview,
+.pet-codex-card:focus-within .pet-codex-thumb-preview {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+  /* 8 column steps (1 row) in 0.6s → ~13 fps per animation, then the row
+     index advances every 0.6s for a full 5.4s sweep through all 9 rows.
+     Animating background-position-x + -y as two independent animations
+     keeps the nested loop in pure CSS. */
+  animation:
+    pet-codex-preview-col 0.6s steps(8, jump-none) infinite,
+    pet-codex-preview-row 5.4s steps(9, jump-none) infinite;
+}
+
+@keyframes pet-codex-preview-col {
+  from { background-position-x: 0%; }
+  to { background-position-x: 100%; }
+}
+
+@keyframes pet-codex-preview-row {
+  from { background-position-y: 0%; }
+  to { background-position-y: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-codex-card:hover .pet-codex-thumb-preview,
+  .pet-codex-card:focus-within .pet-codex-thumb-preview {
+    animation: none;
+    background-position: 0% 0%;
+  }
+}
+
+.pet-codex-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding-right: 8px;
+}
+
+.pet-codex-title-row {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pet-codex-meta strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pet-codex-default-badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--od-accent) 26%, var(--od-border));
+  background: color-mix(in srgb, var(--od-accent) 8%, transparent);
+  color: var(--accent-strong);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.pet-codex-description {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Adopt button: absolutely positioned at card's right edge so the
+   meta text always fills the full remaining width. Hidden until hover;
+   adopted (active) icon-only check stays visible at all times. */
+.pet-codex-adopt-btn {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.pet-codex-adopt-btn:not(.active) {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.pet-codex-card:hover .pet-codex-adopt-btn:not(.active),
+.pet-codex-card:focus-within .pet-codex-adopt-btn:not(.active) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Slash-command popover in the chat composer */
+
+.slash-popover {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  z-index: 10;
+  padding: 6px;
+}
+
+.slash-popover-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 6px 6px 6px;
+  border-bottom: 1px solid var(--od-border);
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.slash-popover-hint {
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+.slash-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 7px 8px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.slash-item:hover,
+.slash-item.active {
+  background: var(--bg-subtle);
+  border-color: var(--od-border);
+}
+
+.slash-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--od-accent) 12%, transparent);
+  color: var(--od-accent);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.slash-item-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.slash-item-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.slash-item-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  padding: 0;
+}
+
+.slash-item-arg {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.slash-item-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+/* --- CJK (Chinese / Japanese / Korean) Comfort Pass --- */
+:lang(zh), :lang(zh-CN), :lang(zh-TW), :lang(ja), :lang(ko) {
+  --sans: "Inter", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Hiragino Sans GB", "Source Han Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* --- Arabic & Persian Comfort Pass --- */
+[dir="rtl"] {
+  --sans: "Cairo", "Inter", "Vazirmatn", "Noto Sans Arabic", "Segoe UI Arabic", "Tahoma", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Scope line-height increase to prose and chat to avoid breaking compact UI chrome */
+[dir="rtl"] .prose,
+[dir="rtl"] .chat-message,
+[dir="rtl"] .msg .user-text {
+  line-height: 1.7;
+}
+
+[dir="rtl"] .avatar-item,
+[dir="rtl"] .settings-tab,
+[dir="rtl"] .ds-item-name {
+  text-align: right;
+}
+
+[dir="rtl"] .app-chrome-back svg,
+[dir="rtl"] .back-btn svg,
+[dir="rtl"] .icon-btn svg[data-lucide="chevron-left"],
+[dir="rtl"] .icon-btn svg[data-lucide="chevron-right"],
+[dir="rtl"] .icon-btn svg[data-lucide="arrow-left"],
+[dir="rtl"] .icon-btn svg[data-lucide="arrow-right"],
+[dir="rtl"] .newproj-tabs-arrow svg,
+[dir="rtl"] .icon-only svg[data-lucide="chevron-left"],
+[dir="rtl"] .icon-only svg[data-lucide="chevron-right"],
+[dir="rtl"] .icon-only svg[data-lucide="arrow-left"],
+[dir="rtl"] .icon-only svg[data-lucide="arrow-right"],
+[dir="rtl"] .welcome-pet-teaser svg {
+  transform: scaleX(-1);
+}
+
+[dir="rtl"] .title,
+[dir="rtl"] .meta {
+  text-align: right;
+}
+

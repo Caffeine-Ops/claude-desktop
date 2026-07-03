@@ -1,0 +1,1439 @@
+/* ===========================================================
+   Modal / Settings
+   =========================================================== */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  /* Match apps/desktop's shared DialogShell backdrop (`bg-black/70
+     backdrop-blur-sm`): a black 70% scrim, not the lighter warm-grey 42%
+     this used before, so the dim behind every web modal reads the same as
+     the desktop dialogs. blur stays 4px (== Tailwind's backdrop-blur-sm). */
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fade-in 160ms ease-out;
+}
+.modal {
+  background: var(--bg-elevated);
+  -webkit-app-region: no-drag;
+  border-radius: var(--radius-lg);
+  padding: 22px;
+  width: 520px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--shadow-lg);
+  animation: pop-in 220ms cubic-bezier(0.21, 1.02, 0.73, 1);
+}
+.modal h2 { margin: 0; font-size: 18px; letter-spacing: -0.01em; font-weight: 600; }
+.modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.modal .hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0;
+}
+.modal .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+.updater-popup {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 12px);
+  z-index: 80;
+  width: min(360px, calc(100vw - var(--entry-rail-width, 56px) - 24px));
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--od-border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  -webkit-app-region: no-drag;
+}
+
+[dir='rtl'] .entry-updater-menu .updater-popup {
+  left: auto;
+  right: calc(100% + 12px);
+}
+
+.updater-popup__icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--od-accent) 12%, var(--bg-subtle));
+  color: var(--od-accent);
+}
+
+.updater-popup__body {
+  min-width: 0;
+}
+
+.updater-popup__body h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.updater-popup__body p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.updater-popup__error {
+  color: var(--red) !important;
+}
+
+.updater-popup__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.updater-popup__button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.updater-popup__button:hover {
+  border-color: var(--text-muted);
+}
+
+.updater-popup__button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.updater-popup__button--primary {
+  border-color: var(--od-accent);
+  background: var(--od-accent);
+  color: #ffffff;
+}
+
+@media (max-width: 560px) {
+  .updater-popup {
+    width: calc(100vw - var(--entry-rail-width, 56px) - 18px);
+  }
+}
+
+/* Compact rename modal */
+.modal-rename {
+  width: 420px;
+  gap: 14px;
+}
+.modal-rename input[type="text"] {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-strong);
+  font-size: 13px;
+  outline: none;
+}
+.modal-rename input[type="text"]:focus {
+  border-color: var(--od-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--od-accent) 20%, transparent);
+}
+.modal-rename .row button {
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--od-border);
+  background: var(--bg-subtle);
+  color: var(--text-strong);
+}
+.modal-rename .row button:hover { border-color: var(--border-strong); }
+.modal-rename .row button.primary {
+  background: var(--od-accent);
+  border-color: var(--od-accent);
+  color: #fff;
+}
+.modal-rename .row button.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Confirm modal — same shell, danger primary */
+.modal-confirm {
+  width: 420px;
+  gap: 12px;
+}
+.modal-confirm-message {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-strong);
+  line-height: 1.55;
+}
+.modal-confirm-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--red);
+  line-height: 1.55;
+}
+.modal-confirm .row { margin-top: 8px; }
+.modal-confirm .row button {
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+  border: 1px solid var(--od-border);
+  background: var(--bg-subtle);
+  color: var(--text-strong);
+}
+.modal-confirm .row button:hover { border-color: var(--border-strong); }
+.modal-confirm .row button.primary.danger {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+.modal-confirm .row button.primary.danger:hover { filter: brightness(0.95); }
+
+/* Project category tags */
+.design-card-tag {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  border: 1px solid var(--od-border);
+  margin-bottom: 2px;
+}
+.design-card-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.design-card-tag.tag-prototype {
+  color: #2348b8;
+  background: #e8efff;
+  border-color: rgba(35, 72, 184, 0.18);
+}
+.design-card-tag.tag-live-artifact {
+  color: #6d4ff5;
+  background: rgba(116, 92, 255, 0.12);
+  border-color: rgba(116, 92, 255, 0.28);
+}
+.design-card-tag.tag-slide {
+  color: #b15e00;
+  background: rgba(255, 159, 64, 0.14);
+  border-color: rgba(255, 159, 64, 0.32);
+}
+.design-card-tag.tag-media {
+  color: #1c8a73;
+  background: rgba(28, 138, 115, 0.12);
+  border-color: rgba(28, 138, 115, 0.28);
+}
+.design-card-tag.tag-design-system {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 9%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--red) 34%, transparent);
+}
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.85); }
+}
+
+/* Settings is no longer a centered card — it fills the whole window as a
+   full-screen page (reference: Claude desktop's own Preferences page). The
+   `.modal-backdrop` that wraps it therefore must NOT dim or center: it just
+   becomes the opaque page surface. Scoped with `:has()` so every OTHER modal
+   keeps the centered-card-over-scrim treatment. */
+/* Settings page surface. Matches the ui-prototype-settings-b layout:
+   a WHITE content surface with a light-grey sidebar (not the inverse).
+   The backdrop paints white so the right-hand content column + header
+   read as a continuous white page; the sidebar repaints grey itself. */
+.modal-backdrop:has(.modal-settings) {
+  background: var(--bg-elevated);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  align-items: stretch;
+  justify-content: stretch;
+  animation: fade-in 120ms ease-out;
+}
+/* In the desktop overlay the page must paint its own opaque background even
+   though `<html>` is forced transparent (see `html.settings-overlay`). */
+html.settings-overlay .modal-backdrop:has(.modal-settings) {
+  background: var(--bg-elevated);
+}
+
+.modal-settings {
+  --modal-padding: 32px;
+  /* Fill the window. No max-width card, no rounded corners, no shadow —
+     it's a page, not a dialog. */
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 0;
+  gap: 0;
+  /* Anchor for the absolutely-positioned `.settings-chrome` strip
+     (close button + autosave indicator) and the top-left back button. */
+  position: relative;
+  animation: fade-in 140ms ease-out;
+}
+.modal-settings .modal-body {
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  /* Prototype rail width (ui-prototype-settings-b: --sidebar-w 248px). */
+  grid-template-columns: 248px minmax(0, 1fr);
+  gap: 0;
+  margin: 0;
+  padding: 0;
+}
+.modal-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: var(--modal-padding);
+}
+.modal-head .kicker {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.modal-head h2 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text);
+}
+.modal-head .subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  /* 72ch lets typical one-sentence English subtitles fit on a single
+   * line inside the 920px settings modal while still wrapping cleanly
+   * on narrow viewports (the modal width clamps to 100vw - 48px) and
+   * for the longest locales (German, French). 50ch was forcing even
+   * the English subtitle onto two lines. See nexu-io/open-design#743. */
+  max-width: 72ch;
+}
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px var(--modal-padding, 22px) 12px;
+  border-top: 1px solid var(--od-border);
+  margin-top: 0;
+  flex-shrink: 0;
+}
+
+/* Settings bottom status strip. A quiet hairline-topped row that
+   closes the dialog frame the same way the reference does: an
+   `Esc · close` keycap hint pinned left, a muted version marker
+   pinned right. It is informational only — it never grabs focus
+   and carries no interactive controls (the real close affordances
+   are the corner X, the backdrop, and the global Escape handler).
+   `flex-shrink: 0` keeps it from collapsing as the body scrolls. */
+.settings-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px var(--modal-padding) 10px;
+  border-top: 1px solid var(--border-soft, var(--od-border));
+  flex-shrink: 0;
+  user-select: none;
+}
+.settings-foot-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.settings-foot-hint kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--od-border);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", monospace;
+  font-size: 10.5px;
+  line-height: 1;
+}
+.settings-foot-version {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", monospace;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  letter-spacing: 0.01em;
+}
+
+/* Top-right chrome strip for the Settings dialog. Floats above the
+   sidebar/content rhythm so the close affordance and the autosave
+   indicator never compete with the title or sidebar nav. The strip
+   is a flex row right-anchored to the modal corner; the autosave
+   pill comes first so the close button keeps a stable optical
+   position and the user's eye returns to the same place after a
+   save settles. */
+.settings-chrome {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-chrome > * {
+  pointer-events: auto;
+}
+
+/* Top-left「← 返回应用」back button. The page's primary dismiss gesture
+   now that settings fills the window (the corner ✕ stays as a secondary
+   affordance). A quiet ghost button — icon + label, muted by default,
+   subtle fill on hover — so it reads as navigation chrome, not a CTA. */
+.settings-back {
+  position: absolute;
+  top: 18px;
+  left: var(--modal-padding);
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+.settings-back:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg-muted) 70%, transparent);
+}
+.settings-back:active {
+  background: color-mix(in srgb, var(--bg-muted) 90%, transparent);
+}
+.settings-back:focus-visible {
+  outline: 2px solid var(--od-accent);
+  outline-offset: 2px;
+  color: var(--text);
+}
+.settings-back svg {
+  opacity: 0.85;
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-back { transition: none; }
+}
+
+/* Close button. A `✕` glyph in a 28px rounded-md hit target — a 1:1
+   match for apps/desktop's shared DialogShell close button
+   (`size-7 rounded-md text-muted-foreground/80`, hover `bg-muted/80` +
+   `text-foreground`) so the close affordance reads identically across
+   the desktop dialogs and this web settings modal. The token mapping:
+   --text-soft == desktop's muted-foreground/80, --bg-muted == its
+   bg-muted, --text == its foreground. */
+.settings-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease, transform 140ms ease;
+}
+.settings-close:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg-muted) 80%, transparent);
+  transform: none;
+}
+.settings-close:active {
+  transform: scale(0.94);
+}
+.settings-close:focus-visible {
+  outline: 2px solid var(--od-accent);
+  outline-offset: 2px;
+  color: var(--text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-close { transition: color 80ms linear, background-color 80ms linear; transform: none !important; }
+}
+
+/* Autosave status pill. Lives in the chrome strip now (next to the
+   close button) instead of a footer. Renders nothing while idle so
+   the chrome reads as a single close button until something is
+   actually saving; settles to a green check on success and red on
+   failure. The pill never takes focus and never blocks input — it
+   is a passive system message announced to assistive tech via
+   aria-live on the wrapper. */
+.settings-autosave {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: 0.005em;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-panel) 90%, transparent);
+  border: 1px solid transparent;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition: opacity 160ms ease, color 160ms ease, background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+.settings-autosave.is-idle {
+  opacity: 0;
+  transform: translateY(-2px);
+  /* Collapse the visual weight so the chrome strip is just the
+     close button when nothing is happening. */
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  min-height: 0;
+}
+.settings-autosave.is-pending,
+.settings-autosave.is-saving {
+  opacity: 1;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 12%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--text-muted) 18%, transparent);
+}
+.settings-autosave.is-saved {
+  opacity: 1;
+  color: var(--green, #1f9d55);
+  background: color-mix(in srgb, var(--green, #1f9d55) 14%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--green, #1f9d55) 30%, transparent);
+  animation: settingsAutosavePop 220ms ease-out;
+}
+.settings-autosave.is-error {
+  opacity: 1;
+  color: var(--red, #d23434);
+  background: color-mix(in srgb, var(--red, #d23434) 14%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--red, #d23434) 32%, transparent);
+}
+@keyframes settingsAutosavePop {
+  from { transform: translateY(-2px) scale(0.98); }
+  to   { transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-autosave { transition: opacity 80ms linear; animation: none !important; }
+}
+
+/* Hide the verbose error copy on narrow viewports so the chrome
+   strip doesn't crowd the close button. The icon + tooltip carry
+   the meaning, and the screen-reader announcement still fires. */
+@media (max-width: 720px) {
+  .settings-autosave.is-error span,
+  .settings-autosave.is-saved span,
+  .settings-autosave.is-pending span,
+  .settings-autosave.is-saving span {
+    display: none;
+  }
+  .settings-autosave.is-idle { padding: 0; }
+}
+
+/* Make sure header copy doesn't crash into the close button on
+   narrow viewports. The kicker/title/subtitle should keep their
+   normal width but reserve right-side gutter for the chrome.
+
+   The hairline bottom rule + tightened vertical padding give the
+   header the calm, ledger-like banding of the reference dialog: a
+   title block clearly separated from the body by a single divider,
+   not a soft gradient of whitespace. */
+.modal-settings .modal-head {
+  padding-right: calc(var(--modal-padding) + 56px);
+  padding-top: 22px;
+  padding-bottom: 18px;
+  /* Page header indents to clear the top-left back button so the kicker
+     lines up with the content column, not the window edge. */
+  padding-left: calc(var(--modal-padding) + 116px);
+  border-bottom: 1px solid var(--border-soft, var(--od-border));
+}
+
+/* Compact settings header: place subtitle on the same line as the h2
+   so opening the dialog doesn't burn 2-3 rows of header height. The
+   row uses baseline alignment so the smaller subtitle sits at the
+   h2 baseline and wraps to its own line on narrow viewports. The
+   welcome hero variant is unaffected — it keeps the stacked layout. */
+.modal-settings .modal-head-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 16px;
+  row-gap: 4px;
+}
+.modal-settings .modal-head-line > h2 {
+  flex: 0 0 auto;
+  margin: 0;
+}
+.modal-settings .modal-head-line > .subtitle {
+  margin: 0;
+  flex: 1 1 240px;
+  font-size: 12.5px;
+  /* Override the 72ch cap from the stacked variant so the subtitle
+     can take the full remaining inline width before wrapping. */
+  max-width: none;
+}
+
+/* Section-local Save key button for the Composio API key field. We do
+   NOT autosave secrets, so this is the explicit gesture. Styled as a
+   primary button to stand out next to the password input + ghost
+   Clear, with a tighter vertical rhythm so it sits flush in the
+   field-row alongside the input. */
+.settings-connectors-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.settings-connectors-save.is-busy {
+  opacity: 0.85;
+  cursor: progress;
+}
+.settings-section-connectors .field-row {
+  /* Allow the input + Save key + Clear triplet to wrap on narrow widths
+     instead of crushing the input. */
+  flex-wrap: wrap;
+}
+@media (max-width: 540px) {
+  .settings-section-connectors .field-row > input,
+  .settings-section-connectors .field-row > .field-input-skeleton-wrap {
+    flex: 1 1 100%;
+  }
+}
+
+/* Two-stage destructive confirmation for clearing the saved Composio
+   API key. Step 1 ("confirm") is a soft amber-ish warning rooted in
+   the same red palette as other destructive surfaces so it reads as
+   "this will undo something" without screaming. Step 2 ("final") leans
+   into red with a brief arming animation on the commit button so a
+   reflex double-click cannot blow through both stages. The whole panel
+   collapses inline beneath the credentials field so the destructive
+   action stays visually anchored to the row that started it. */
+.settings-connectors-clear.is-arming {
+  border-color: var(--red-border);
+  color: var(--red);
+  background: color-mix(in srgb, var(--red-bg) 65%, transparent);
+}
+.settings-connectors-clear-confirm {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--red-border);
+  background: color-mix(in srgb, var(--red-bg) 78%, transparent);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.45;
+  animation: settings-connectors-clear-confirm-in 180ms ease-out;
+}
+.settings-connectors-clear-confirm.is-final {
+  background: var(--red-bg);
+  border-color: color-mix(in srgb, var(--red) 55%, var(--red-border));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--red) 18%, transparent),
+    0 8px 24px -16px color-mix(in srgb, var(--red) 80%, transparent);
+}
+@keyframes settings-connectors-clear-confirm-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.settings-connectors-clear-confirm-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--red) 35%, var(--red-border));
+  background: var(--bg-panel);
+  color: var(--red);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.settings-connectors-clear-confirm.is-final .settings-connectors-clear-confirm-icon {
+  background: var(--red);
+  color: var(--bg-panel);
+  border-color: var(--red);
+}
+.settings-connectors-clear-confirm-glyph {
+  display: inline-block;
+  transform: translateY(-0.5px);
+}
+.settings-connectors-clear-confirm-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.settings-connectors-clear-confirm-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+.settings-connectors-clear-confirm-copy span {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.settings-connectors-clear-confirm.is-final .settings-connectors-clear-confirm-copy strong {
+  color: var(--red);
+}
+.settings-connectors-clear-confirm-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  align-self: center;
+}
+/* "Continue" — moves to stage 2. Styled as a quiet outlined button
+   tinted with the red palette so it reads as "destructive but not
+   yet committed". */
+.settings-connectors-clear-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--red-border);
+  background: var(--bg-panel);
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 120ms ease-out,
+    border-color 120ms ease-out,
+    transform 120ms ease-out;
+}
+.settings-connectors-clear-step:hover {
+  background: color-mix(in srgb, var(--red-bg) 60%, var(--bg-panel));
+  border-color: var(--red);
+}
+.settings-connectors-clear-step:active {
+  transform: translateY(1px);
+}
+/* Final commit button. Solid red with an arming sweep that fills the
+   left edge for ~700ms before the click is honored. While "arming",
+   the button is visually hot but disabled so an Enter-spam can't get
+   ahead of the user's intent; once armed, the label swaps to the
+   destructive verb and the click commits. */
+.settings-connectors-clear-commit {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 200px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--red);
+  background: var(--red);
+  color: var(--bg-panel);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    transform 120ms ease-out,
+    box-shadow 160ms ease-out,
+    background 160ms ease-out;
+}
+.settings-connectors-clear-commit:disabled,
+.settings-connectors-clear-commit[aria-disabled='true'] {
+  cursor: progress;
+  background: color-mix(in srgb, var(--red) 70%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--red) 60%, var(--red-border));
+}
+.settings-connectors-clear-commit.is-armed {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--red) 22%, transparent),
+    0 10px 20px -12px color-mix(in srgb, var(--red) 75%, transparent);
+}
+.settings-connectors-clear-commit.is-armed:hover {
+  background: color-mix(in srgb, var(--red) 88%, #000);
+}
+.settings-connectors-clear-commit.is-armed:active {
+  transform: translateY(1px);
+}
+/* The arming sweep — a translucent fill that races from left to right
+   over the disabled window, signaling "almost ready". CSS-only so it
+   renders the same in every browser without a second timer. */
+.settings-connectors-clear-commit-arm {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, #fff 28%, transparent) 0%,
+    color-mix(in srgb, #fff 12%, transparent) 100%
+  );
+  transform: translateX(-100%);
+  opacity: 0.85;
+  animation: settings-connectors-clear-commit-arm 700ms ease-out forwards;
+}
+.settings-connectors-clear-commit.is-armed .settings-connectors-clear-commit-arm {
+  display: none;
+}
+@keyframes settings-connectors-clear-commit-arm {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0%); }
+}
+.settings-connectors-clear-commit-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 1;
+}
+@media (max-width: 540px) {
+  .settings-connectors-clear-confirm {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+  .settings-connectors-clear-confirm-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .settings-connectors-clear-commit {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-connectors-clear-confirm {
+    animation: none;
+  }
+  .settings-connectors-clear-commit-arm {
+    animation: none;
+    transform: translateX(0%);
+    opacity: 0.4;
+  }
+}
+.settings-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* Prototype rail insets (ui-prototype-settings-b .nav: 4px 10px 14px). */
+  padding: 4px 10px 14px;
+  /* Grey rail against the white content surface — matches the prototype's
+     `--bg-sidebar #f1f1f0`. --bg-subtle is the theme's light-grey token. */
+  background: var(--bg-subtle);
+  border-right: 1px solid var(--od-border);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* Sidebar items follow the ChatGPT-style settings rhythm: single line,
+   icon + label only, gray pill fill on active. The `<small>` description
+   that ships in the JSX is hidden — the label alone is the navigation
+   handle; the section's own subtitle in the content area carries any
+   intro copy. */
+.settings-nav-item {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-soft, var(--text));
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 11px;
+  align-items: center;
+  /* Prototype nav-item: 36px tall, 0 12px padding. */
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-nav-item:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+}
+/* Active nav: green-tinted pill (1:1 with ui-prototype-settings-b —
+   --green-soft #dcf5e6 fill, --green-ink #0f7a38 text/icon). Fixed greens
+   here rather than theme accent, so it reads identically to the prototype
+   regardless of the user's chosen accent color. The dark block below swaps
+   in dark-friendly greens. */
+.settings-nav-item.active,
+.settings-nav-item.active:hover {
+  background: #dcf5e6;
+  border-color: transparent;
+  color: #0f7a38;
+  font-weight: 600;
+  box-shadow: none;
+}
+.settings-nav-item.active svg {
+  color: #16a34a;
+  opacity: 1;
+}
+.dark .settings-nav-item.active,
+.dark .settings-nav-item.active:hover {
+  background: rgba(46, 201, 107, 0.16);
+  color: #57d98a;
+}
+.dark .settings-nav-item.active svg {
+  color: #2ec96b;
+}
+.settings-nav-item svg {
+  justify-self: center;
+  opacity: 0.75;
+  /* Prototype nav icons are 16px (the JSX ships size=18); clamp to 16. */
+  width: 16px;
+  height: 16px;
+}
+.settings-nav-item span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-nav-item strong {
+  color: currentColor;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.settings-nav-item.active strong {
+  font-weight: 600;
+}
+.settings-nav-item small {
+  display: none;
+}
+.settings-content {
+  min-width: 0;
+  min-height: 0;
+  /* Vertical padding only — horizontal inset moves to the centered column
+     below so the cards end up 680px wide (760 col − 40px × 2), exactly
+     like the prototype's `.content-col { max-width:760; padding:…40px… }`. */
+  padding: 44px 0 60px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.modal-settings .settings-content > * {
+  width: 100%;
+  /* 760px column = 680px content + 40px horizontal padding each side,
+     centered. Matches the prototype's content-col exactly. */
+  max-width: 760px;
+  padding-left: 40px;
+  padding-right: 40px;
+  margin-left: auto;
+  margin-right: auto;
+}
+@media (max-width: 760px) {
+  .modal-settings {
+    width: min(560px, calc(100vw - 24px));
+  }
+  .modal-settings .modal-body {
+    grid-template-columns: 1fr;
+  }
+  .settings-sidebar {
+    flex-direction: row;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding: 10px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--od-border);
+  }
+  .settings-nav-item {
+    min-width: 150px;
+  }
+}
+
+/* Segmented control */
+/* Compact single-line segmented control (Local CLI / BYOK and friends).
+   Mirrors `.subtab-pill` and `.ds-picker-mode`: gray rounded container,
+   white raised tab for active, just a title — the meta sub-line that used
+   to render here is hidden because the section right below already prints
+   the same context ("Local CLI · Detected by scanning..."). */
+
+/* Desktop-only appearance controls (font size stepper + pointer-cursor
+ * checkbox), embedded in the settings overlay. Styled to match the existing
+ * .seg-control / .field idiom. */
+.font-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+}
+.font-stepper button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.font-stepper button:hover:not(:disabled) { background: var(--bg-subtle); }
+.font-stepper button:disabled { opacity: 0.4; cursor: not-allowed; }
+.font-stepper-value {
+  min-width: 38px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--text);
+}
+.settings-checkbox-row input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+/* ============================================================
+   Appearance section — grouped cards (prototype: ui-prototype-settings-b)
+   ------------------------------------------------------------
+   The appearance pane wraps its groups in white rounded "cards" with a
+   label + rows, instead of the flat field stack the other sections use.
+   Everything here is SCOPED to `.settings-section--cards` so the shared
+   .seg-control / .field / .pet-swatch / .font-stepper rules the rest of
+   the dialog relies on are untouched.
+   ============================================================ */
+/* Two-class selector so this beats the later base `.settings-section`
+   rule (both single-class otherwise, and the base one wins by order). */
+.settings-section.settings-section--cards {
+  display: flex;
+  flex-direction: column;
+  /* Prototype card spacing: 22px between groups. */
+  gap: 22px;
+}
+.settings-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--od-border);
+  /* Prototype card radius 14px + softer shadow. */
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 2px 10px rgba(0, 0, 0, 0.03);
+  padding: 20px 22px;
+}
+.settings-card-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  margin-bottom: 14px;
+}
+/* Card rows: label/desc on the left, control on the right, hairline between. */
+.settings-section--cards .settings-card .field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border-soft, var(--od-border));
+}
+.settings-section--cards .settings-card .field:first-child { padding-top: 0; }
+.settings-section--cards .settings-card .field:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+.settings-section--cards .settings-card .field-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-section--cards .settings-card .field > .hint {
+  flex-basis: 100%;
+  margin-top: 12px;
+}
+/* Full-width controls (segmented theme picker, CLI backend) inside a card
+   shouldn't be squeezed into the right column — let them span the card.
+   Also re-tune the segmented control to the prototype's `.segmented`
+   metrics (radius 10, padding 4, gap 4) — the shared .seg-control defaults
+   differ, so override them scoped to the appearance cards. */
+.settings-section--cards .settings-card > .seg-control {
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  padding: 4px;
+  gap: 4px;
+  min-height: 0;
+}
+.settings-section--cards .settings-card .seg-btn {
+  border-radius: 7px;
+  padding: 0 12px;
+  min-height: 38px;
+}
+.settings-section--cards .settings-card .seg-btn.active {
+  background: var(--bg-elevated);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+.settings-section--cards .settings-card .seg-btn .seg-title {
+  font-size: 13.5px;
+}
+/* Accent swatches: bigger, with an accent double-ring on the active one
+   (matches the prototype). Scoped so the pet-config swatches keep their
+   smaller default look. */
+.settings-section--cards .pet-swatch {
+  width: 26px;
+  height: 26px;
+}
+.settings-section--cards .pet-swatch.active {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--bg-elevated), 0 0 0 4px var(--od-accent);
+}
+/* Custom-color slot — render as the prototype's grey "+" circle rather
+   than echoing the picked color. A grey disc with a centered plus glyph
+   (SVG data-URI) sits on the input; the native color swatch is made
+   transparent so the grey+plus shows through. Clicking still opens the
+   OS color picker. */
+.settings-section--cards .pet-swatch-picker {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  overflow: hidden;
+  background-color: #ececeb;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 16 16' fill='none' stroke='%239b9b96' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M8 3v10M3 8h10'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+}
+.settings-section--cards .pet-swatch-picker::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.settings-section--cards .pet-swatch-picker::-webkit-color-swatch {
+  border: none;
+  border-radius: 50%;
+  /* The native swatch paints the picked color over our grey+plus
+     background; hide it so only the grey "+" disc shows (1:1 with the
+     prototype's custom-color slot). */
+  opacity: 0;
+}
+.dark .settings-section--cards .pet-swatch-picker {
+  background-color: rgba(255, 255, 255, 0.1);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 16 16' fill='none' stroke='%23a0a09a' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M8 3v10M3 8h10'/%3E%3C/svg%3E");
+}
+/* Font stepper → pill stepper (rounded, divided cells). */
+.settings-section--cards .font-stepper {
+  border-radius: 999px;
+  border-color: var(--border-strong, var(--od-border));
+  padding: 0;
+  gap: 0;
+  height: 34px;
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+.settings-section--cards .font-stepper button {
+  width: 38px;
+  height: 100%;
+  border-radius: 0;
+}
+.settings-section--cards .font-stepper-value {
+  min-width: 56px;
+  padding: 0 4px;
+  border-left: 1px solid var(--od-border);
+  border-right: 1px solid var(--od-border);
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Pointer-cursor checkbox → accent-filled check (prototype's blue square,
+   but accent-driven so it matches the theme). */
+.settings-section--cards .settings-checkbox-row {
+  width: 100%;
+  flex-direction: row-reverse;
+  justify-content: space-between;
+}
+.settings-section--cards .settings-checkbox-row input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  /* Prototype uses a fixed blue check (#2f6bff), not the theme accent. */
+  accent-color: #2f6bff;
+}
+
+.seg-control {
+  display: grid;
+  grid-template-columns: repeat(var(--seg-cols, 2), minmax(0, 1fr));
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--od-border);
+  border-radius: var(--radius);
+  /* Height-match the active sidebar nav-item across the gutter so the
+     top of the content area lines up neatly with the picked section. */
+  min-height: 42px;
+  min-width: 0;
+}
+.seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  text-align: center;
+  min-width: 0;
+}
+.seg-btn:hover:not(:disabled):not(.active) { color: var(--text); }
+.seg-btn.active {
+  background: var(--bg-panel);
+  border-color: transparent;
+  box-shadow: var(--shadow-xs);
+}
+.seg-btn .seg-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.seg-btn.active .seg-title { font-weight: 600; }
+.seg-btn .seg-meta { display: none; }
+.seg-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+/* Inline variant: title and meta sit on a single row instead of
+   stacking, which saves a row of vertical space inside the
+   execution-mode tabs (Local CLI · 2 installed / BYOK · API provider). */
+.seg-btn--inline {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+  padding-block: 8px;
+}
+.seg-btn--inline > .seg-title { min-width: 0; flex: 0 0 auto; }
+.seg-btn--inline > .seg-meta { min-width: 0; flex: 1 1 auto; }
+
+/* Secondary protocol selector — pill chips, wraps to multiple rows */
+.protocol-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 8px;
+  padding: 0;
+  min-width: 0;
+}
+.protocol-chip {
+  flex: 0 1 auto;
+  max-width: 100%;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid var(--od-border);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+.protocol-chip:hover:not(.active) {
+  background: var(--bg-subtle);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.protocol-chip.active {
+  background: var(--selected);
+  border-color: color-mix(in srgb, var(--selected) 86%, var(--text-strong));
+  color: #fff;
+  font-weight: 600;
+  box-shadow:
+    0 0 0 3px var(--selected-soft),
+    0 1px 2px color-mix(in srgb, var(--selected) 22%, transparent);
+}
+.protocol-chip.active:hover {
+  background: color-mix(in srgb, var(--selected) 88%, var(--text-strong));
+  border-color: color-mix(in srgb, var(--selected) 80%, var(--text-strong));
+  color: #fff;
+}
+
+.settings-section { display: flex; flex-direction: column; gap: 12px; }
+.settings-section-connectors { gap: 16px; }
+/* Credentials sit above the catalog now; the divider lives under the field
+   so the eye reads "configure key → catalog unlocks below". */
+.settings-section-connectors > .settings-section-connectors-credentials {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 4px;
+}
+.settings-section-connectors > .connectors-panel-embedded {
+  margin-top: 0;
+}
+.settings-rescan-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 96px;
+  justify-content: center;
+}
+.settings-rescan-btn.loading {
+  border-color: var(--accent-soft);
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+}
+.settings-rescan-status,
+.settings-test-status {
+  margin: -4px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--green-border);
+  border-radius: var(--radius-sm);
+  background: var(--green-bg);
+  color: var(--green);
+  font-size: 12px;
+  line-height: 1.4;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+.settings-rescan-status.error,
+.settings-test-status.error {
+  border-color: var(--red-border);
+  background: var(--red-bg);
+  color: var(--red);
+}
+.settings-rescan-status-inline {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.settings-rescan-status-inline.error {
+  color: var(--red);
+}
+.settings-test-status.warn {
+  border-color: var(--amber-border, var(--orange-border, var(--green-border)));
+  background: var(--amber-bg, var(--orange-bg, var(--green-bg)));
+  color: var(--amber, var(--orange, var(--green)));
+}
+.settings-test-status.running {
+  border-color: var(--accent-soft);
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+}
+.settings-test-actions {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-test-actions-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.settings-test-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.settings-test-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 64px;
+  justify-content: center;
+}
+.settings-test-btn.loading {
+  border-color: var(--accent-soft);
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+}
+.section-head-actions .seg-control {
+  display: inline-grid;
+  grid-template-columns: repeat(var(--seg-cols, 2), auto);
+  min-height: unset;
+  min-width: unset;
+}
+.section-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
