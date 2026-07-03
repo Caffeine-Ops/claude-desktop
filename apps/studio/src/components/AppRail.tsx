@@ -85,6 +85,10 @@ export function AppRail() {
     // （docs/ui-prototype-shell-floating.html；旧值 220 给不下「标题 + 相对
     // 时间」的会话行）。
     <nav className="flex h-full w-61 shrink-0 flex-col gap-1 bg-sidebar px-3 pb-3">
+      {/* 顶部 48px：macOS 红绿灯的净空 + 窗口拖拽面（原型 .traffic）。
+        * 原来是 nav 的 pt-12 padding——padding 不能标 app-region，改成
+        * 实体条后这块「空白」真的能拖动窗口。 */}
+      <div aria-hidden className="h-12 shrink-0 [-webkit-app-region:drag]" />
       <Button
         variant="ghost"
         className="mb-2 justify-start gap-2 bg-sidebar-primary/12 px-3 text-sidebar-primary hover:bg-sidebar-primary/18 hover:text-sidebar-primary"
