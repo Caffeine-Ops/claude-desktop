@@ -441,6 +441,12 @@ export const IPC_CHANNELS = {
    */
   KB_INDEX_READ: 'kb:index-read',
   /**
+   * Main → renderer push. Knowledge-base remote sync progress/state.
+   * Broadcast to shell + settings overlay + chat tabs (web tabs skipped —
+   * no preload there and no KB UI either).
+   */
+  KB_SYNC_STATUS: 'kb:sync-status',
+  /**
    * Renderer → main. Exports the proposal document via the OS native
    * save dialog. Main writes the file and returns the absolute path;
    * returns `{ path: null }` when the user cancelled the dialog.

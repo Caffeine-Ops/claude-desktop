@@ -42,6 +42,7 @@ import {
 import { APP_SCHEME, registerAppProtocol } from './services/appProtocol'
 import { KB_ASSET_SCHEME, registerKbAssetProtocol } from './services/kbAssetProtocol'
 import { PROPOSAL_ASSET_SCHEME, registerProposalAssetProtocol } from './services/proposalAssetProtocol'
+import { startKbSyncScheduler } from './core/kbSyncScheduler'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -208,6 +209,10 @@ app.whenReady().then(async () => {
   // tabRegistry, so we register them exactly once at startup —
   // there's no per-tab wiring to refresh.
   registerIpcHandlers()
+
+  // KB 远程同步调度器：30s 延迟首触 + 每 6h 定时（无 remote 配置时内部静默跳过）。
+  // 挂在这里而非独立 IPC handler 里，是因为它是 app 级后台任务，不依赖任何一个 tab。
+  startKbSyncScheduler()
 
   // 启动 Open Design 服务（daemon + dev 下 web dev server）。同步返回，
   // 子进程在后台拉起；第二个 tab 等它们就绪后再开（见下方 IIFE）。

@@ -19,6 +19,7 @@ import {
   type ShellMenuAction,
   type TabDescriptor
 } from '../shared/ipc-channels'
+import type { KbSyncStatus } from '../shared/kbSyncStatus'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -911,6 +912,28 @@ export function broadcastAppearanceChanged(sourceWebContentsId: number): void {
     } else {
       wc.send(IPC_CHANNELS.APPEARANCE_CHANGED)
     }
+  }
+}
+
+/**
+ * Push a KB sync status update to every surface that can render it: shell,
+ * settings overlay, and chat tabs. Unlike broadcastAppearanceChanged there's
+ * no "source" webContents to skip — this always originates in main (the
+ * scheduler), never a renderer write, so every live target gets it. Web tabs
+ * are skipped outright (not even the executeJavaScript bridge): they have no
+ * preload AND no KB UI to update, so there's nothing to reach.
+ */
+export function broadcastKbSyncStatus(payload: KbSyncStatus): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    shellWindow.webContents.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
+  }
+  if (settingsView && !settingsView.webContents.isDestroyed()) {
+    settingsView.webContents.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
+  }
+  for (const ctx of tabs.values()) {
+    if (ctx.kind === 'web') continue
+    const wc = ctx.view.webContents
+    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
   }
 }
 
