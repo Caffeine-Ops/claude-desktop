@@ -1380,12 +1380,12 @@ function SlidesWorkspace(): React.JSX.Element {
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-white">
-      {/* Tab bar. 不再兼职窗口拖拽面：旧实现整条 bar 标 -webkit-app-region:
-          drag、每个按钮 no-drag 豁免——但 Electron 里 drag 区内嵌套 no-drag
-          的点击并不可靠（mousedown 后有轻微位移就被当成窗口拖拽起手，click
-          直接丢弃），真机上表现为「tab 点不动」，且浏览器里 app-region 无效
-          果、永远复现不出来。这条 bar 又窄又塞满按钮，拖拽收益趋零——整体
-          撤销 drag，窗口拖拽面由 ChatHeader（chat 列顶部）独自承担。 */}
+      {/* Tab bar. 不再兼职窗口拖拽面——这条 bar 又窄又塞满按钮，拖拽收益
+          趋零，窗口拖拽面由 ChatHeader（chat 列顶部）独自承担。
+          「tab 点不动」的历史真因后来实锤并不是本 bar 的 drag/no-drag 嵌套：
+          是 SurfaceHost 隐藏面（canvas）的全宽 drag 顶栏仍被 Electron 注册成
+          原生窗口拖拽矩形、正好罩住这条 bar（app-region 收集不看 pointer-
+          events）。修复在 globals.css 的 .surface-inactive，详见那段注释。 */}
       <div className="flex shrink-0 select-none items-center gap-0.5 border-b border-border/60 px-2 py-1.5">
         {tabs.map((tDef) => {
           const active = tDef.id === tab

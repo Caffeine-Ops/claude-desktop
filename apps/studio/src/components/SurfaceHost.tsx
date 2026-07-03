@@ -88,12 +88,19 @@ export function SurfaceHost() {
         * 的主要来源就是隐藏面仍参与全文档 recalc），DOM/状态/iframe/滚动
         * 位置全保留；顺带让子树的 IntersectionObserver 正确判定不相交——
         * 后台面里的 LazyMount 不会再全量挂载 iframe。恢复显示时付一次
-        * 子树 layout，远小于重建。 */}
+        * 子树 layout，远小于重建。
+        *
+        * surface-inactive（globals.css）：把隐藏面的 -webkit-app-region 全部
+        * 压成 no-drag。Electron 按 layout box 注册原生窗口拖拽区，不看
+        * pointer-events——不加这个，隐藏 canvas 面的全宽 drag 顶栏会把可见
+        * chat 面顶部一整条的点击（canvas tab bar 等）吞给窗口拖拽，反向同理。 */}
       {visited.current.chat && (
         <div
           className={cn(
             'absolute inset-0',
-            isChat ? '' : '[content-visibility:hidden] pointer-events-none'
+            isChat
+              ? ''
+              : '[content-visibility:hidden] pointer-events-none surface-inactive'
           )}
         >
           {chatFace}
@@ -103,7 +110,9 @@ export function SurfaceHost() {
         <div
           className={cn(
             'absolute inset-0',
-            !isChat ? '' : '[content-visibility:hidden] pointer-events-none'
+            !isChat
+              ? ''
+              : '[content-visibility:hidden] pointer-events-none surface-inactive'
           )}
         >
           {canvasFace}
