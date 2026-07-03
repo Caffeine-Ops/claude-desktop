@@ -23,6 +23,7 @@ import { dispatchChatTurn } from '../lib/dispatchChatTurn'
 import { extractProposalDraftResult, detectContentSentinelAheadOfPhase } from '@shared/proposal'
 import { splitBlocks } from '@shared/proposalBlocks'
 import { triggerProposalCitationVerification } from '../lib/proposalVerification'
+import { autoFireProposalGenImages } from '../lib/proposalGenImageFire'
 import { useI18n } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
@@ -1291,6 +1292,10 @@ function makeSessionEventHandler(
                   useProposalStore.getState().markDraftConsumed(event.messageId)
                 }
               }
+              // genimage 自动发起（配图密度③）：本轮入库/替换的节里可能带新指令块。放在分流
+              // 之后统一扫——append 与 reviseSection 两条路径都可能引入指令块，扫描自身按
+              // genImageJobs 幂等，重复调用零成本。
+              autoFireProposalGenImages(sid)
             }
             // C4：msg 未找到（end 早于消息入 store 的竞态）或 role 非 assistant 时，
             // 刻意【不】记账。重构前这里有一条无条件兜底 markDraftConsumed，但那与 B2 相悖：
@@ -1377,6 +1382,9 @@ function syncProposalDraftFromInflight(sid: string, messageId: string): void {
   if (!blocks.length) return
   useProposalStore.getState().syncSections(blocks)
   triggerProposalCitationVerification()
+  // AskUserQuestion 暂停时的轮内同步同样可能带入新指令块（AI 生成正文中途暂停确认）：
+  // 与 end 路径同一入口，幂等由 genImageJobs 保证。
+  autoFireProposalGenImages(sid)
 }
 
 
