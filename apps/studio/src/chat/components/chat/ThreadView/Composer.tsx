@@ -1,0 +1,1214 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ThreadPrimitive,
+  ComposerPrimitive,
+  AttachmentPrimitive,
+  useAuiState,
+  useComposerRuntime
+} from '@assistant-ui/react'
+import type { Attachment } from '@assistant-ui/core'
+import { AnimatePresence, motion } from 'motion/react'
+
+import type { SessionMeta } from '@desktop-shared/types'
+import { useT } from '../../../i18n'
+import { useChatStore, useTurnActivity } from '../../../stores/chat'
+import { useComposerModeStore, type ComposerModeId } from '../../../stores/composerMode'
+import { useComposerOverlayStore } from '../../../stores/composerOverlay'
+import { buildSlashAdapter } from '../../../composer/slashAdapter'
+import { buildFileMentionAdapter } from '../../../composer/fileMentionAdapter'
+import { ProseMirrorComposerInput } from '../../../composer/ProseMirrorComposerInput'
+import { FileTypeIcon } from '../FileTypeIcon'
+import { DictationWaveform } from '../DictationWaveform'
+import { PermissionModePicker } from '../../permissions/PermissionModePicker'
+import { cancelActiveDictation } from '../../../runtime/openaiWhisperDictationAdapter'
+
+/* ───────────────────── Composer ────────────────────────────── */
+
+/**
+ * Chinese labels for the composer status bar, keyed by the activity string
+ * useTurnActivity derives from the current running tool. Kept here (UI layer)
+ * so the store stays text-free.
+ */
+const ACTIVITY_LABELS: Record<string, string> = {
+  thinking: '思考中',
+  planning: '拆一下任务',
+  exploring: '探索中',
+  reading: '查阅中',
+  writing: '编写中',
+  running: '执行中',
+  searching: '联网中',
+  asking: '等待你回答',
+  working: '处理中'
+}
+
+/**
+ * ComposerStatusBar
+ * -----------------
+ * The "✻ 探索中…  ·······  2.5s" strip that sits flush on top of the composer
+ * input, sharing one outer green frame with it so the two read as a SINGLE
+ * piece (see the reference). It carries no border/background of its own — the
+ * parent wrapper (in Composer) owns the green ring + tint and the rounded
+ * outer corners; this row only paints its content and a hairline divider
+ * above the input.
+ *
+ * Pure presentation: `active`/`startedAt`/`activity` come from the parent
+ * (which calls useTurnActivity once), so the wrapper and this row stay in
+ * sync. Ticks every 100ms for the tenths-of-a-second readout. Timer basis is
+ * the CURRENT STEP's start (useTurnActivity picks it): the label names the
+ * current activity, so the number must be that activity's elapsed — a
+ * turn-total next to "执行中…" reads as a lie. The readout restarts as each
+ * new tool begins.
+ */
+function ComposerStatusBar({
+  startedAt,
+  activity
+}: {
+  startedAt: number
+  activity: string
+}): React.JSX.Element {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 100)
+    return () => clearInterval(id)
+  }, [])
+
+  const elapsedMs = Math.max(0, Date.now() - startedAt)
+  const label = `${(elapsedMs / 1000).toFixed(1)}s`
+  const verb = ACTIVITY_LABELS[activity] ?? ACTIVITY_LABELS.thinking
+
+  return (
+    <div
+      className="flex items-center gap-2 px-4 pb-2 pt-2.5 text-[13px]"
+      role="status"
+      aria-live="polite"
+      aria-label={`${verb}, ${label}`}
+    >
+      <span aria-hidden className="shrink-0 animate-spin text-brand [animation-duration:2.4s]">
+        ✺
+      </span>
+      <span className="font-medium text-brand">{verb}…</span>
+      <span className="ml-auto shrink-0 font-mono text-[12px] tabular-nums text-brand/80">
+        {label}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * Composer with `/` slash-command autocomplete AND `@` file-mention
+ * autocomplete.
+ *
+ * Wired in four layers:
+ *
+ *   1. **SessionMeta fetch** — pulled from main on mount and after
+ *      every turn end. The first user turn triggers fusion-code's
+ *      cold start, which emits a `system init` SDK message containing
+ *      `slash_commands` / `mcp_servers` / `skills`. Once that meta is
+ *      cached in main, subsequent `getSessionMeta` calls return the
+ *      real list.
+ *
+ *   2. **File list fetch** — pulled from main via IPC on mount and
+ *      when streaming ends. Main scans `cwd` via `git ls-files` (or
+ *      readdir fallback) with a 5s TTL cache, so rapid re-fetches
+ *      share the same result. Loaded into React state so the
+ *      Unstable_TriggerAdapter.search() can be synchronous (the
+ *      primitive requires sync data access).
+ *
+ *   3. **Adapters** — `buildSlashAdapter` and `buildFileMentionAdapter`
+ *      return Unstable_TriggerAdapter instances memoized on their
+ *      respective data sources. File adapter does O(n) substring +
+ *      path-depth ranking on every keystroke (see fileMentionAdapter.ts).
+ *
+ *   4. **Popover JSX** — Two nested `Unstable_TriggerPopoverRoot`s
+ *      share the same ComposerPrimitive.Input. Each root listens to
+ *      its own trigger character (`/` or `@`) and only opens its
+ *      popover when that character is active. Because
+ *      `unstable_useTriggerPopoverContext()` walks up the React tree
+ *      to find the *nearest* root, the slash popover JSX lives in
+ *      the outer root (above the @ root) and the file popover lives
+ *      inside the inner root — each then reads its own context.
+ *
+ * On selection both popovers use `insertDirective`, which removes
+ * the `<trigger><query>` token from the input and writes
+ * `serialize(item)` in its place. For slash commands that's the
+ * literal `/cmd`; for file mentions that's `@path `. The user then
+ * presses Enter to submit — at which point free-code's CLI runs
+ * `extractAtMentionedFiles` on the text and auto-attaches each file.
+ */
+export function Composer(): React.JSX.Element {
+  const t = useT()
+  const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
+  const [files, setFiles] = useState<readonly string[]>([])
+  const streaming = useChatStore((s) => s.streaming)
+  // Working-status for the strip fused on top of the composer. `active` also
+  // toggles the shared green frame that makes the strip + input read as one
+  // piece; when inactive the composer renders as its normal standalone card.
+  const turnActivity = useTurnActivity()
+  // Slides binding: when the user sends while the global picker is on
+  // 幻灯片, mark the CURRENT session as a slides session so ThreadView
+  // shows its two-pane layout from then on (per-session, not global).
+  // Called on every send path (Enter → onSubmit, and the Send button's
+  // onClick); markSlidesSession is idempotent so double-calls are fine.
+  const composerSessionId = useChatStore((s) => s.sessionId)
+  const markIfSlides = useCallback(() => {
+    const st = useComposerModeStore.getState()
+    if (st.mode === 'slides') st.markSlidesSession(composerSessionId ?? '')
+  }, [composerSessionId])
+  // Read dictation state at the Composer level (single subscription)
+  // and branch the composer row layout on it. When dictating, the
+  // textarea is replaced by a live waveform, the send + mic slots
+  // become a pair of X / ✓ controls — matching the mutually
+  // exclusive UX in the design reference.
+  const isDictating = useAuiState(
+    (s) => (s as { composer?: { dictation?: unknown } }).composer?.dictation != null
+  )
+  // Composer runtime — used to submit via the same path Send uses
+  // (the ProseMirror input's onSubmit calls composerRuntime.send()).
+  const composerRuntime = useComposerRuntime()
+
+  // Pull session meta on mount and whenever a turn ends. The first
+  // pull (mount) returns empty arrays because fusion-code hasn't
+  // spawned yet; the post-first-turn pull picks up the populated
+  // cache. Subsequent turn-end pulls are no-ops on stable data but
+  // cheap (one IPC round-trip).
+  useEffect(() => {
+    if (streaming) return
+    let cancelled = false
+    window.chatApi
+      .getSessionMeta()
+      .then((meta) => {
+        if (!cancelled) setSessionMeta(meta)
+      })
+      .catch((err) => {
+        console.error('[Composer] getSessionMeta failed', err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [streaming])
+
+  // Also refresh sessionMeta the instant main fires
+  // `session:meta-changed` — this is what carries fusion-code's
+  // skills / mcp servers / slash commands, and it arrives on the
+  // first `system init` message (which is ~30s into the initial
+  // cold start, mid-stream). Without this subscription, the `/`
+  // popover would only see the full command set after the first
+  // turn ends and the [streaming] effect above re-polls — a bad
+  // UX when the user is already typing their second prompt while
+  // the first is still rendering. One IPC round-trip per push,
+  // main-side cache keeps it cheap.
+  useEffect(() => {
+    if (!window.chatApi) return
+    let cancelled = false
+    const unsub = window.chatApi.onSessionMetaChanged(() => {
+      window.chatApi
+        .getSessionMeta()
+        .then((meta) => {
+          if (!cancelled) setSessionMeta(meta)
+        })
+        .catch((err) => {
+          console.error('[Composer] getSessionMeta (pushed) failed', err)
+        })
+    })
+    return () => {
+      cancelled = true
+      unsub()
+    }
+  }, [])
+
+  // Pull the file list on the same cadence as session meta. Main's
+  // 5s TTL cache makes rapid re-fetches cheap, so we don't need to
+  // throttle here. First fetch fires on mount so the `@` popover
+  // has data available before the user even types.
+  useEffect(() => {
+    if (streaming) return
+    let cancelled = false
+    window.chatApi
+      .listFileSuggestions()
+      .then((result) => {
+        if (cancelled) return
+        if (result.truncated) {
+          console.warn(
+            `[Composer] file list truncated to ${result.files.length} entries — large project`
+          )
+        }
+        setFiles(result.files)
+      })
+      .catch((err) => {
+        console.error('[Composer] listFileSuggestions failed', err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [streaming])
+
+  // Build the adapters from the latest data. Memoized so the popover
+  // primitives don't recreate their internal state on every render.
+  const slashAdapter = useMemo(
+    () => buildSlashAdapter(sessionMeta),
+    [sessionMeta]
+  )
+  const fileAdapter = useMemo(() => buildFileMentionAdapter(files), [files])
+
+  // ── Attachment "+" button: any file, images OR path-only files ──────
+  // The native ComposerPrimitive.AddAttachment hard-wires the adapter's
+  // accept ('image/*' on the old image-only adapter) and only opens a
+  // file picker filtered to that. We replace it with our own hidden
+  // <input> (no accept filter) so the user can pick ANY file, and route
+  // every pick through the same runtime.addAttachment the unified
+  // fileAttachmentAdapter consumes (see fileAttachmentAdapter.ts):
+  //
+  //   - image/*  → resized + base64-encoded → inline thumbnail chip →
+  //     sent to the model as a vision block.
+  //   - any other file → resolved to its on-disk absolute path → shown
+  //     above the input as a chip carrying the FILE NAME (not a
+  //     thumbnail) → on send, the path (not the bytes) is appended to
+  //     the prompt as an `@"path"` mention so fusion-code's
+  //     extractAtMentionedFiles reads the file itself.
+  //
+  // Both kinds therefore appear in the SAME attachments row above the
+  // composer, exactly like pasted/dropped images already do.
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const handleFilesPicked = useCallback(
+    async (fileList: FileList | null): Promise<void> => {
+      if (!fileList || fileList.length === 0) return
+      const picked = Array.from(fileList)
+      await Promise.all(
+        picked.map((file) =>
+          composerRuntime.addAttachment(file).catch((err) => {
+            console.error('[Composer] addAttachment failed', err)
+          })
+        )
+      )
+      // Reset the input so re-picking the same file fires `change` again.
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    },
+    [composerRuntime]
+  )
+
+  return (
+    <div className="mx-auto w-full max-w-4xl">
+      {/* Two-row composer (per docs/ui-prototype-composer.html): a large
+          multi-line input on top, then a dedicated toolbar row below. The
+          PermissionModePicker moved OUT of a strip above the card and INTO
+          the toolbar's right cluster (it sits where the prototype's "Auto"
+          pill is). All assistant-ui wiring is preserved — only the layout
+          (rows/positions/classNames) changed.
+
+          The slash/mention popovers are driven by the ProseMirror
+          suggestion plugin inside ProseMirrorComposerInput; only the
+          assistant-ui pieces that read the composer *store*
+          (AttachmentDropzone / Attachments / Send / Cancel / Dictation)
+          remain. */}
+      <div className="relative">
+        {/* Working-status strip stacked directly on top of the composer card:
+            animated glyph + current Chinese activity on the left, live elapsed
+            timer on the right. Only while the turn streams (and not during
+            plain prose output). It's a slim GREEN band with rounded TOP corners
+            and a flat bottom; a negative margin tucks its bottom edge under the
+            white input card below so they butt seamlessly. The green stays a
+            thin top accent — it does NOT flood the input area, which keeps its
+            clean white card. */}
+        {turnActivity.active && turnActivity.startedAt !== undefined ? (
+          <div className="-mb-3 rounded-t-[20px] border border-b-0 border-brand/25 bg-brand/[0.08] px-1 pb-3 pt-0.5">
+            <ComposerStatusBar
+              startedAt={turnActivity.startedAt}
+              activity={turnActivity.activity}
+            />
+          </div>
+        ) : null}
+        {/* AttachmentDropzone is the input "card" — always its own clean white
+            card with border + rounded corners, sitting ON TOP of the status
+            band (z-10) so the band's tucked bottom edge stays hidden and the
+            composer never floods green. */}
+        <ComposerPrimitive.AttachmentDropzone className="relative z-10 rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--brand)/0.4)] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--brand)/0.5)] data-[dragging=true]:bg-brand/[0.08] dark:ring-white/[0.08]">
+          {/* Attachment preview row (pasted / dropped / picked). */}
+          <div className="flex flex-wrap gap-2 px-4 pt-3 empty:hidden">
+            <ComposerPrimitive.Attachments>
+              {({ attachment }) => (
+                <ComposerAttachmentChip attachment={attachment} />
+              )}
+            </ComposerPrimitive.Attachments>
+          </div>
+
+          {/* ComposerPrimitive.Root is the composer form context. We lay it
+              out as a column: input row on top, toolbar row beneath. */}
+          <ComposerPrimitive.Root className="flex w-full flex-col">
+            {/* Hidden file input — shared by the toolbar "+" button. Kept
+                here (inside Root) so it lives in the form context. */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              aria-hidden="true"
+              tabIndex={-1}
+              onChange={(e) => {
+                void handleFilesPicked(e.target.files)
+              }}
+            />
+
+            {isDictating ? (
+              // Dictation takes over the whole composer body (input + mic +
+              // send slot) — same as before, just hosted in the column.
+              <div className="flex items-end gap-2 px-3 py-2">
+                <DictationActiveControls
+                  cancelLabel={t('composerCancelDictation')}
+                  confirmLabel={t('composerConfirmDictation')}
+                />
+              </div>
+            ) : (
+              <>
+                {/* —— Top row: the multi-line input —— */}
+                <div className="min-h-[52px] max-h-52 overflow-y-auto px-5 pb-1 pt-4 text-[15px] leading-relaxed">
+                  <ProseMirrorComposerInput
+                    placeholder={t('composerPlaceholder')}
+                    slashAdapter={slashAdapter}
+                    mentionAdapter={fileAdapter}
+                    onSubmit={() => {
+                      markIfSlides()
+                      composerRuntime.send()
+                    }}
+                  />
+                </div>
+
+                {/* —— Bottom row: toolbar —— */}
+                <div className="flex items-center gap-2 px-3 pb-3 pt-1">
+                  {/* Left: attachment "+". We do NOT use
+                      ComposerPrimitive.AddAttachment (it hard-wires
+                      accept='image/*'); the hidden input above accepts any
+                      file and routes images vs. other files via
+                      handleFilesPicked. */}
+                  <button
+                    type="button"
+                    className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground/80 ring-1 ring-black/[0.06] transition-colors hover:bg-foreground/[0.06] hover:text-foreground dark:ring-white/[0.08]"
+                    aria-label={t('composerAttachFile')}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.9"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                  </button>
+
+                  {/* Composer mode picker (通用 / 设计 / 幻灯片 / 写作). The
+                      幻灯片 option is the slides entry point: choosing it sets
+                      mode='slides', and sending then marks the session as a
+                      slides session → ThreadView's two-pane layout. Replaces
+                      the old single monitor-icon slides toggle. */}
+                  <ComposerModePicker />
+
+                  {/* Spacer pushes the rest to the right edge. */}
+                  <div className="flex-1" />
+
+                  {/* Right cluster: permission mode (prototype "Auto"
+                      slot) · mic · send. */}
+                  <PermissionModePicker />
+                  <MicButton label={t('composerDictate')} />
+                  {/* Mutually exclusive Send / Stop slot. */}
+                  <ThreadPrimitive.If running={false}>
+                    <ComposerPrimitive.Send
+                      aria-label="Send message"
+                      onClick={markIfSlides}
+                      // ready 态品牌绿（原型 .btn-send.ready）：空输入是 muted
+                      // disabled 盘，有内容才亮绿——状态差本身就是「可以发了」
+                      // 的信号，比常亮黑盘的信息量大。
+                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.18)] transition-all hover:brightness-[1.08] active:scale-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.08] disabled:text-muted-foreground/50 disabled:shadow-none"
+                    >
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M12 19V5" />
+                        <path d="m6 11 6-6 6 6" />
+                      </svg>
+                    </ComposerPrimitive.Send>
+                  </ThreadPrimitive.If>
+                  <ThreadPrimitive.If running>
+                    <ComposerPrimitive.Cancel
+                      aria-label="Stop generating"
+                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.15)] transition-all hover:brightness-[1.1] active:scale-95"
+                    >
+                      <span className="block size-2.5 rounded-[2px] bg-card" />
+                    </ComposerPrimitive.Cancel>
+                  </ThreadPrimitive.If>
+                </div>
+              </>
+            )}
+          </ComposerPrimitive.Root>
+        </ComposerPrimitive.AttachmentDropzone>
+
+        {/* Below-card chips (figure 18): 选择工作目录 · 语气 创意 stay
+            VISUAL-ONLY placeholders; the 模型 chip on the right is the first
+            FUNCTIONAL one — it switches the engine's model (live + future
+            sessions) via MODEL_SET. */}
+        <div className="mt-3 flex items-center gap-4 px-2">
+          <ComposerBelowChip
+            label="选择工作目录"
+            icon={
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              </svg>
+            }
+          />
+          <ComposerBelowChip
+            label="语气 创意"
+            icon={
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden="true">
+                <path d="m12 3 2.5 5.5L20 11l-5.5 2.5L12 19l-2.5-5.5L4 11l5.5-2.5z" />
+              </svg>
+            }
+          />
+          <div className="ml-auto">
+            <ComposerModelChip model={sessionMeta?.model} />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Composer mode metadata for the picker (通用 / 设计 / 幻灯片 / 写作). */
+interface ComposerModeMeta {
+  id: ComposerModeId
+  label: string
+  beta?: boolean
+  icon: React.ReactNode
+}
+
+const COMPOSER_MODES: readonly ComposerModeMeta[] = [
+  {
+    id: 'general',
+    label: '通用',
+    icon: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
+        <path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z" />
+      </svg>
+    )
+  },
+  {
+    id: 'design',
+    label: '设计',
+    icon: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
+        <rect x="4" y="4" width="16" height="16" rx="2" />
+        <path d="M4 9h16M9 9v11" />
+      </svg>
+    )
+  },
+  {
+    id: 'slides',
+    label: '幻灯片',
+    beta: true,
+    icon: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
+        <rect x="3" y="4.5" width="18" height="12" rx="2" />
+        <path d="M8 20.5h8M12 16.5v4" />
+      </svg>
+    )
+  },
+  {
+    id: 'writing',
+    label: '写作',
+    beta: true,
+    icon: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M16.5 3.5 20.5 7.5 8 20 3.5 20.5 4 16z" />
+        <path d="M14 6 18 10" />
+      </svg>
+    )
+  }
+]
+
+/**
+ * Composer mode picker in the toolbar — a pill showing the current mode
+ * (icon + label, e.g.「通用」) that opens a popover to switch between
+ * 通用 / 设计 / 幻灯片 / 写作. Replaces the old single monitor-icon slides
+ * toggle: the popover's 幻灯片 row is now the slides entry point (picking it
+ * sets mode='slides'; sending then marks the session as a slides session via
+ * markIfSlides → ThreadView's two-pane layout).
+ *
+ * Reuses PermissionModePicker's interaction shape: upward popover (the
+ * composer sits at the window bottom), click-outside + Esc to close, motion
+ * fade, a check on the selected row. 幻灯片 / 写作 carry a blue "Beta" tag.
+ */
+function ComposerModePicker(): React.JSX.Element {
+  const mode = useComposerModeStore((s) => s.mode)
+  const setMode = useComposerModeStore((s) => s.setMode)
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  const current =
+    COMPOSER_MODES.find((m) => m.id === mode) ?? COMPOSER_MODES[0]!
+
+  useEffect(() => {
+    if (!open) return
+    // Hold an "overlay open" count while this popover is up so the composer's
+    // blur strip hides (its backdrop-blur otherwise slices across the menu).
+    // +1 on open, -1 in cleanup → balanced (open→false runs the cleanup, then
+    // the early return skips re-incrementing).
+    const overlay = useComposerOverlayStore.getState()
+    overlay.setOpen(true)
+    const onDown = (e: MouseEvent): void => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      overlay.setOpen(false)
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const choose = (next: ComposerModeId): void => {
+    setMode(next)
+    setOpen(false)
+  }
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="对话模式"
+        className={
+          'group inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[12.5px] transition-colors ' +
+          'border-border/70 bg-card/70 text-muted-foreground hover:border-brand/50 hover:bg-card hover:text-foreground ' +
+          (open ? ' border-brand/60 text-foreground' : '')
+        }
+      >
+        <span className="flex shrink-0 items-center">{current.icon}</span>
+        <span className="leading-none">{current.label}</span>
+        <svg
+          width="10" height="10" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          className={'opacity-60 transition-transform ' + (open ? 'rotate-180' : '')}
+          aria-hidden
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.98 }}
+            transition={{ duration: 0.12, ease: 'easeOut' }}
+            className="absolute bottom-full left-0 z-40 mb-1.5 w-56 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+            role="listbox"
+          >
+            {COMPOSER_MODES.map((meta) => {
+              const selected = meta.id === mode
+              return (
+                <button
+                  key={meta.id}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  onClick={() => choose(meta.id)}
+                  className={
+                    'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors ' +
+                    (selected
+                      ? 'bg-brand/10 text-foreground'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground')
+                  }
+                >
+                  <span className="flex shrink-0 items-center">{meta.icon}</span>
+                  <span className="font-medium">{meta.label}</span>
+                  {meta.beta ? (
+                    <span className="rounded-md bg-sky-500/15 px-1.5 py-0.5 text-[10.5px] font-semibold leading-none text-sky-500">
+                      Beta
+                    </span>
+                  ) : null}
+                  <span className="flex-1" />
+                  {selected ? (
+                    <svg
+                      width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                      className="shrink-0 text-brand"
+                      aria-hidden
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : null}
+                </button>
+              )
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/**
+ * 模型 chip — the composer footer's model switcher (right side of the
+ * below-card row). Shows the session's current model (SessionMeta.model,
+ * e.g. "gpt-5.4[1m]") and opens an upward dropdown listing the backend
+ * gateway's catalog (MODEL_LIST IPC, fetched on open — main caches it).
+ * Picking an id calls MODEL_SET: live for the foreground session and the
+ * default for every future session in this window. The label flips
+ * optimistically (`pending`) and retires once the sessionMeta refresh —
+ * driven by the engine's meta-changed broadcast — catches up.
+ */
+function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [models, setModels] = useState<string[] | null>(null)
+  const [listError, setListError] = useState<string | null>(null)
+  const [pending, setPending] = useState<string | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  // Same popover bookkeeping as ComposerModePicker: hold the composer blur
+  // strip closed while open + dismiss on outside click / Escape.
+  useEffect(() => {
+    if (!open) return
+    const overlay = useComposerOverlayStore.getState()
+    overlay.setOpen(true)
+    const onDown = (e: MouseEvent): void => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      overlay.setOpen(false)
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  // Fetch the catalog on open. Main's TTL cache makes repeat opens instant;
+  // a failed fetch still returns the last good list (stale beats empty), so
+  // only a genuinely empty result shows the error row.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    window.chatApi
+      .listModels()
+      .then((res) => {
+        if (cancelled) return
+        setModels(res.models)
+        setListError(res.models.length === 0 ? (res.error ?? '模型列表为空') : null)
+      })
+      .catch((err) => {
+        if (!cancelled) setListError(err instanceof Error ? err.message : String(err))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  // Engine reflects a pick into SessionMeta.model and broadcasts — once the
+  // prop catches up (or a system init reports a different truth), the
+  // optimistic label retires.
+  useEffect(() => {
+    setPending(null)
+  }, [model])
+
+  const current = pending ?? model
+  const choose = (id: string): void => {
+    setOpen(false)
+    if (id === current) return
+    setPending(id)
+    void window.chatApi.setModel(id).catch((err) => {
+      console.error('[Composer] setModel failed', err)
+      setPending(null)
+    })
+  }
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="切换模型"
+        className={
+          'flex items-center gap-1.5 text-[13px] transition-colors ' +
+          (open
+            ? 'text-foreground'
+            : 'text-muted-foreground/70 hover:text-foreground')
+        }
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden="true">
+          <rect x="7" y="7" width="10" height="10" rx="2" />
+          <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
+        </svg>
+        <span className="max-w-[180px] truncate leading-none">
+          {current ?? '模型'}
+        </span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={'text-muted-foreground/40 transition-transform ' + (open ? 'rotate-180' : '')} aria-hidden="true">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.98 }}
+            transition={{ duration: 0.12, ease: 'easeOut' }}
+            className="absolute bottom-full right-0 z-40 mb-1.5 max-h-72 w-64 overflow-y-auto rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+            role="listbox"
+          >
+            {models === null && listError === null ? (
+              <div className="px-3 py-2 text-[12.5px] text-muted-foreground">
+                加载模型列表…
+              </div>
+            ) : listError !== null ? (
+              <div className="px-3 py-2 text-[12.5px] text-muted-foreground">
+                {listError}
+              </div>
+            ) : (
+              models!.map((id) => {
+                const selected = id === current
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    onClick={() => choose(id)}
+                    className={
+                      'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors ' +
+                      (selected
+                        ? 'bg-brand/10 text-foreground'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground')
+                    }
+                  >
+                    <span className="min-w-0 flex-1 truncate font-medium" title={id}>
+                      {id}
+                    </span>
+                    {selected ? (
+                      <svg
+                        width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                        className="shrink-0 text-brand"
+                        aria-hidden
+                      >
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    ) : null}
+                  </button>
+                )
+              })
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/**
+ * A below-card placeholder chip (选择工作目录 / 语气 创意 in figure 18).
+ * VISUAL-ONLY for now.
+ */
+function ComposerBelowChip({
+  label,
+  icon
+}: {
+  label: string
+  icon: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <span
+      className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70"
+      aria-hidden="true"
+    >
+      {icon}
+      {label}
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground/40">
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </span>
+  )
+}
+
+/**
+ * Highlight layer that sits *behind* the composer textarea and renders
+ * the same text — but with slash commands (`/skill`) and file mentions
+ * (`@src/index.ts`) swapped out for proper pill chips with an icon and
+ * real horizontal padding.
+ *
+ * Alignment strategy
+ * ------------------
+ * Giving chips real width means overlay characters no longer sit on
+ * top of the textarea's character columns, so the native caret would
+ * drift off-screen from the visible text. We solve that by:
+ *
+ *   1. Painting the textarea's text transparent AND hiding its caret
+ *      (`caret-color: transparent`).
+ *   2. Tracking `selectionStart` via `onSelect` and passing it to this
+ *      overlay as `caretPos`.
+ *   3. Rendering our own blinking caret element at the right slot in
+ *      the token stream — inserted *between* token spans so it
+ *      inherits the overlay's actual layout (chip widths included).
+ *
+ * Because the caret is painted in the overlay's flow, it automatically
+ * follows chips, line wraps, and padding without any pixel math.
+ *
+ * Snap-out behavior for chip interiors
+ * ------------------------------------
+ * If the user clicks mid-chip the composer's onSelect handler snaps
+ * `selectionStart` to the closer chip edge before it reaches this
+ * component, so we can treat chips as atomic: the caret never paints
+ * inside a chip.
+ */
+
+/**
+ * Mic button shown in the normal (non-dictating) composer row.
+ *
+ * `startDictation` is deferred to a microtask so the click event
+ * finishes propagating BEFORE the state change happens. Without the
+ * defer, React synchronously re-renders during the click, the
+ * composer row swaps Normal → Dictation mid-click, and whatever
+ * element lands at the old mic position can receive a secondary
+ * click — exactly the race that kept auto-cancelling the session
+ * before. `queueMicrotask` is bulletproof because JS's event loop
+ * guarantees microtasks run only after the current sync task
+ * (which includes the full click dispatch) is done.
+ */
+function MicButton({ label }: { label: string }): React.JSX.Element {
+  const runtime = useComposerRuntime()
+  const onClick = useCallback(() => {
+    queueMicrotask(() => {
+      runtime.startDictation()
+    })
+  }, [runtime])
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground/80 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+    >
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="9" y="2" width="6" height="12" rx="3" />
+        <path d="M5 11a7 7 0 0 0 14 0" />
+        <path d="M12 18v4" />
+        <path d="M8 22h8" />
+      </svg>
+    </button>
+  )
+}
+
+/**
+ * Dictation-mode row content — live waveform filling the input slot
+ * plus a cancel (X) and a confirm (✓) button on the right.
+ *
+ * Lifecycle:
+ *  - This component mounts the instant dictation starts. On mount,
+ *    it snapshots the composer text via `useRef` so that cancelling
+ *    can revert to the pre-dictation state. (The first render is
+ *    always at dictation start, so `composer.text` at mount == the
+ *    original user text before any chunk commit.)
+ *  - Confirm (✓): stops the session. Any chunks already transcribed
+ *    stay in the composer text, and when this component unmounts
+ *    the Normal row's textarea rematerializes populated.
+ *  - Cancel (X): stops the session, then resets composer text to
+ *    the snapshot. Drops any committed chunks.
+ *
+ * Both actions defer their runtime calls to `queueMicrotask` so the
+ * click event finishes propagating before React's dictation-state
+ * change tears down this row — exactly the same defense the mic
+ * button uses.
+ */
+function DictationActiveControls({
+  cancelLabel,
+  confirmLabel
+}: {
+  cancelLabel: string
+  confirmLabel: string
+}): React.JSX.Element {
+  const runtime = useComposerRuntime()
+  // Latched "finishing" state — flips on the first X / ✓ click and
+  // stays on until this component unmounts (which happens once
+  // stopDictation resolves). While finishing, both buttons render
+  // as disabled so a second click can't queue a duplicate
+  // stopDictation call (the adapter guards that as well, but the
+  // visual feedback stops users from mashing the button during the
+  // 1-3s transcribe wait).
+  const [isFinishing, setIsFinishing] = useState(false)
+
+  const onCancel = useCallback(() => {
+    if (isFinishing) return
+    setIsFinishing(true)
+    // True cancel — bypass `runtime.stopDictation()` because that
+    // path always flushes the tail audio through Gemini and commits
+    // the transcript into the composer. We want to throw away the
+    // recorded audio without touching the textarea.
+    //
+    // `cancelActiveDictation()` calls `session.cancel()` on the
+    // adapter, which tears down immediately with no transcribe. The
+    // composer runtime's internal 100ms status poll will notice
+    // `session.status === 'ended'` a few frames later and fire
+    // `_cleanupDictation`, which drops the `composer.dictation` flag
+    // — at which point this component unmounts and the normal
+    // textarea row rematerializes showing the pre-dictation text
+    // unchanged. No setText needed because this single-shot adapter
+    // never commits anything until `stop()`, so `_text` is still
+    // whatever it was when startDictation ran.
+    queueMicrotask(() => {
+      cancelActiveDictation()
+    })
+  }, [isFinishing])
+
+  const onConfirm = useCallback(() => {
+    if (isFinishing) return
+    setIsFinishing(true)
+    queueMicrotask(() => {
+      runtime.stopDictation()
+    })
+  }, [isFinishing, runtime])
+
+  return (
+    <>
+      <div className="flex min-h-[24px] max-h-40 flex-1 items-center overflow-hidden">
+        <DictationWaveform />
+      </div>
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={isFinishing}
+        aria-label={cancelLabel}
+        title={cancelLabel}
+        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M18 6 6 18" />
+          <path d="m6 6 12 12" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        onClick={onConfirm}
+        disabled={isFinishing}
+        aria-label={confirmLabel}
+        title={confirmLabel}
+        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition hover:bg-foreground/90 disabled:cursor-wait"
+      >
+        {isFinishing ? (
+          // Inline spinner while we wait for the tail transcribe to
+          // land. Same animation Composer's attachments use
+          // elsewhere — one stroke rotating around a dim ring.
+          <svg
+            className="size-4 animate-spin"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle
+              cx="12"
+              cy="12"
+              r="9"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeOpacity="0.3"
+            />
+            <path
+              d="M21 12a9 9 0 0 0-9-9"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+            />
+          </svg>
+        ) : (
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        )}
+      </button>
+    </>
+  )
+}
+
+/* ───────────── Composer attachment chip ────────────────────── */
+
+/**
+ * Single attachment chip in the composer's attachment row.
+ *
+ * Renders a thumbnail for image attachments plus a filename label and
+ * a remove button. The thumbnail is read via `FileReader.readAsDataURL`
+ * (not `URL.createObjectURL`) because:
+ *
+ *   1. **StrictMode safety** — useMemo + createObjectURL + useEffect
+ *      cleanup is inherently racy (the mount→unmount→mount cycle of
+ *      dev-mode re-invocation can revoke the URL before the second
+ *      mount uses it, even though the memoized string is reused).
+ *
+ *   2. **Electron wire semantics** — in Electron 33, a File dropped
+ *      from an external app (Finder, CleanShot, Preview) can carry
+ *      a lazily-materialized blob body. blob: URLs sometimes fail to
+ *      decode in that scenario, giving the `<img>` a broken-image
+ *      icon even though `file.size` and `file.type` look correct.
+ *      FileReader reads through to the underlying bytes synchronously
+ *      and always produces a valid data URL.
+ *
+ *   3. **Symmetry with send()** — the adapter's send() path also
+ *      reads to data URL, so the chip preview now matches what the
+ *      model will actually receive. No chance of "chip shows X,
+ *      model gets Y".
+ *
+ * The data URL is held in component state and cleared on unmount.
+ * Unlike blob URLs there's nothing to revoke — data URLs are plain
+ * strings and are garbage-collected with the component.
+ *
+ * Layout: a compact pill with the thumb on the left, name truncated
+ * in the middle, and a floating ×-button in the top-right corner that
+ * calls through to the adapter's remove() via AttachmentPrimitive.Remove.
+ */
+function ComposerAttachmentChip({
+  attachment
+}: {
+  attachment: Attachment
+}): React.JSX.Element {
+  // Pending attachments carry a `file` field we can preview from.
+  // Complete attachments (briefly, between send() finishing and
+  // onNew firing) also retain the file field. Guard on file presence
+  // and type — non-image attachments render as a generic chip.
+  const file =
+    'file' in attachment && attachment.file instanceof File
+      ? attachment.file
+      : null
+
+  const isImage = attachment.type === 'image'
+
+  const [previewURL, setPreviewURL] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+
+  useEffect(() => {
+    // Only images get a thumbnail preview. Reading a non-image file
+    // (which could be hundreds of MB) into a data URL would waste
+    // memory for a preview we never render — the file chip shows the
+    // name + a generic glyph instead.
+    if (!file || !isImage) {
+      setPreviewURL(null)
+      setPreviewError(null)
+      return
+    }
+
+    let cancelled = false
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (cancelled) return
+      if (typeof reader.result === 'string') {
+        setPreviewURL(reader.result)
+      } else {
+        setPreviewError('FileReader returned non-string')
+      }
+    }
+    reader.onerror = () => {
+      if (cancelled) return
+      setPreviewError(reader.error?.message ?? 'FileReader error')
+    }
+    reader.readAsDataURL(file)
+
+    return () => {
+      cancelled = true
+      // FileReader.abort() is safe even if the read already completed.
+      try {
+        reader.abort()
+      } catch {
+        // abort can throw DOMException if already done — ignore
+      }
+    }
+  }, [file, isImage])
+
+  return (
+    <AttachmentPrimitive.Root className="group/att relative flex items-center gap-2 rounded-lg border border-border bg-card/60 p-1.5 pr-6">
+      {isImage && previewURL ? (
+        <img
+          src={previewURL}
+          alt=""
+          className="h-10 w-10 shrink-0 rounded object-cover"
+        />
+      ) : (
+        <div
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground/80"
+          title={previewError ?? undefined}
+        >
+          {previewError ? (
+            <span className="text-[10px] font-mono">!</span>
+          ) : (
+            // Per-type file glyph for non-image attachments. The file
+            // name is shown to the right; the icon signals the file kind
+            // (PDF / Word / code / …) without previewing unknown bytes.
+            <FileTypeIcon pathOrName={attachment.name} size={22} />
+          )}
+        </div>
+      )}
+      <span className="max-w-[140px] truncate text-[11px] text-foreground/80">
+        {attachment.name}
+      </span>
+      <AttachmentPrimitive.Remove
+        className="absolute right-1 top-1 flex size-4 items-center justify-center rounded-full bg-muted text-[10px] leading-none text-muted-foreground opacity-0 transition group-hover/att:opacity-100 hover:bg-secondary hover:text-foreground"
+        aria-label="Remove attachment"
+      >
+        ×
+      </AttachmentPrimitive.Remove>
+    </AttachmentPrimitive.Root>
+  )
+}
