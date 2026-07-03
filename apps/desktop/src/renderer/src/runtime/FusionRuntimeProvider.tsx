@@ -25,7 +25,9 @@ import { splitBlocks } from '@shared/proposalBlocks'
 import { triggerProposalCitationVerification } from '../lib/proposalVerification'
 import { autoFireProposalGenImages } from '../lib/proposalGenImageFire'
 import { maybeNudgeStageConfirmAfterTurn } from '../lib/proposalStageGate'
-import { useI18n } from '../i18n'
+import { matchProposalSlash } from '../lib/proposalSlash'
+import { startOrReopenProposal } from '../lib/startOrReopenProposal'
+import { useI18n, useT } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
 import { useDialogStore, type DialogKind } from '../stores/dialogs'
@@ -152,6 +154,11 @@ export function FusionRuntimeProvider({
   children: ReactNode
 }): React.JSX.Element {
   const sessionId = useChatStore((s) => s.sessionId)
+  const t = useT()
+  // onNew 拦截 /proposal-writer 空调用时要把引导模板写回 composer，但 onNew 是
+  // useExternalStoreRuntime 参数对象里的闭包、定义时 runtime 还不存在——经 ref 间接
+  // 引用（与下面 useThreadListAdapter 的 sessionIdRef 同一手法），调用期必已就绪。
+  const runtimeRef = useRef<ReturnType<typeof useExternalStoreRuntime> | null>(null)
   const sessionLoading = useChatStore((s) => s.sessionLoading)
   const messages = useChatStore((s) => s.messages)
   const streaming = useChatStore((s) => s.streaming)
@@ -426,7 +433,7 @@ export function FusionRuntimeProvider({
         }
       }
 
-      const baseText = textParts.map((p) => p.text).join('\n').trim()
+      let baseText = textParts.map((p) => p.text).join('\n').trim()
       const images: ChatImagePayload[] = imageParts.map((p) => ({
         dataUrl: p.image,
         filename: p.filename
@@ -438,7 +445,7 @@ export function FusionRuntimeProvider({
       // paths that don't. Mentions go AFTER the user's typed text so
       // the prompt reads naturally ("look at this: @/a/b.pdf").
       const mentionSuffix = filePaths.map((p) => `@"${p}"`).join(' ')
-      const text =
+      let text =
         mentionSuffix.length > 0
           ? baseText
             ? `${baseText} ${mentionSuffix}`
@@ -473,6 +480,36 @@ export function FusionRuntimeProvider({
         if (dialogKind) {
           useDialogStore.getState().openDialog(dialogKind)
           return
+        }
+
+        // ─── /proposal-writer：写方案斜杠入口（拦截，不发给 CLI）────────
+        // 方法论必须经 systemPrompt.append 无条件注入（硬门纪律不能靠模型自愿展开
+        // skill），所以这个命令在 renderer 侧消化：激活方案模式后，空调用=场景卡
+        // 语义（预填引导模板），带尾随文字=剥掉命令、尾随文字当本轮用户消息继续走
+        // 下面的正常发送路径（storeContent/payload 都读重写后的 baseText/text，
+        // matchProducts 播种、召回注入与场景卡首发完全同路）。设计见
+        // docs/superpowers/specs/2026-07-03-proposal-writer-skill-design.md §5.4。
+        const proposalSlash = matchProposalSlash(baseText)
+        if (proposalSlash) {
+          if (sessionId === null) {
+            console.error('[runtime] /proposal-writer：无前台会话，忽略')
+            return
+          }
+          const outcome = startOrReopenProposal(sessionId)
+          if (!proposalSlash.rest) {
+            // 空调用：'started'（首发）才预填模板；'reopened' 绝不覆盖 composer。
+            // queueMicrotask：assistant-ui send() 在 onNew 之后才清空 composer，
+            // 同步 setText 会被那次清空吃掉，推迟一拍写入。
+            if (outcome === 'started') {
+              queueMicrotask(() => {
+                runtimeRef.current?.thread.composer.setText(t('scenarioProposalPrompt'))
+                document.querySelector<HTMLElement>('.ProseMirror')?.focus()
+              })
+            }
+            return
+          }
+          baseText = proposalSlash.rest
+          text = proposalSlash.rest
         }
       }
 
@@ -609,6 +646,7 @@ export function FusionRuntimeProvider({
       dictation: dictationAdapter
     }
   })
+  runtimeRef.current = runtime
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>

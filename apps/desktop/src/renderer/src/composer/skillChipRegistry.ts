@@ -78,6 +78,21 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     icon: 'image',
     label: '生成图片',
     appearance: 'gradient'
+  },
+  // proposal-writer — 写方案。namespaced + 裸名双注册，理由同 ppt-master。
+  // 注意：这个命令不会发给 fusion-code——FusionRuntimeProvider.onNew 会拦截它、
+  // 激活方案模式（见 matchProposalSlash）。chip 只是让斜杠菜单里它长得像个产品功能。
+  {
+    match: '/claude-desktop:proposal-writer',
+    icon: 'word',
+    label: '写方案',
+    appearance: 'gradient'
+  },
+  {
+    match: '/proposal-writer',
+    icon: 'word',
+    label: '写方案',
+    appearance: 'gradient'
   }
 ]
 
