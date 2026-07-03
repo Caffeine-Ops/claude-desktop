@@ -21,7 +21,7 @@
 
 import type { ProjectKind, ProjectMetadata } from '@open-design/contracts';
 import type { DefaultScenarioPluginId } from '@open-design/contracts';
-import type { IconName } from '../Icon';
+import type { IconName } from '../shared/Icon';
 
 // Plugin ids the chip rail can dispatch to. Most chips route to a
 // `DefaultScenarioPluginId` so the same fallback table the daemon

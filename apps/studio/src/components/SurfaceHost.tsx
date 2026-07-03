@@ -33,8 +33,11 @@ import { ChatSurface } from '@/src/components/ChatSurface'
 import { cn } from '@/src/lib/utils'
 
 // canvas App 与 ChatSurface 内部的 ChatApp 同策略：ssr:false，模块只在
-// 浏览器求值（canvas 全树有模块期触碰 window 的路径）。
-const CanvasApp = dynamic(() => import('@/src/canvas/App').then((m) => m.App), {
+// 浏览器求值（canvas 全树有模块期触碰 window 的路径）。入口是 AppRoot
+// 而非 App —— I18nProvider 包在那一层：useI18n 的无 Provider 兜底是静默
+// no-op（locale 锁 'en'、setLocale 空函数），直接挂 App 会让整个画布面
+// 锁死英文、设置页语言切换失灵（2026-07-03 实锤，见 AppRoot 头注释）。
+const CanvasApp = dynamic(() => import('@/src/canvas/AppRoot').then((m) => m.AppRoot), {
   ssr: false,
   loading: () => <div className="od-loading-shell">加载工作画布…</div>
 })

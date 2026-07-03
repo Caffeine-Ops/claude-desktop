@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import { navigate, type EntryHomeView, type Route } from '../router';
 import type { Project } from '../types';
-import { Icon, type IconName } from './Icon';
+import { Icon, type IconName } from './shared/Icon';
 
 type WorkspaceChromeTab =
   | {

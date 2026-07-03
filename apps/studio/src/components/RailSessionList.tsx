@@ -60,7 +60,25 @@ const ARM_WINDOW_MS = 3000
 /** renamed-flash 动画时长 + 余量，播完摘类以便下次重播。 */
 const FLASH_MS = 950
 
-/** updatedAt → 时间分组。原型行内不放时间戳，靠分组标签表达新旧。 */
+/**
+ * rail 行的**展示**标题。ThreadSummary.title 无 custom/ai 标题时兜底到
+ * firstPrompt——以 slash 命令开头的会话（/claude-desktop:ppt-master 武汉…）
+ * 会把命令原文糊满整行，噪音吃掉真正的语义。展示层剥掉开头的命令 token：
+ *  - `/claude-desktop:ppt-master 武汉大学PPT` → `武汉大学PPT`
+ *  - 只有命令没有参数时，退化为命令短名（`/claude-desktop:ppt-master` →
+ *    `ppt-master`），比整串路径可读。
+ * 只影响 rail 展示；行 title 属性仍是完整原文，悬停可看全。
+ */
+function displayTitle(raw: string): string {
+  const t = raw.trim()
+  const m = /^(\/[\w.:-]+)\s*([\s\S]*)$/.exec(t)
+  if (!m) return t
+  const rest = m[2].trim()
+  if (rest) return rest
+  return m[1].slice(1).split(':').pop() || t
+}
+
+/** updatedAt → 时间分组。 */
 function groupLabel(ms: number): string {
   const d = new Date(ms)
   const now = new Date()
@@ -68,8 +86,28 @@ function groupLabel(ms: number): string {
   const yesterday = new Date(now)
   yesterday.setDate(now.getDate() - 1)
   if (d.toDateString() === yesterday.toDateString()) return '昨天'
-  if (now.getTime() - ms < 7 * 24 * 60 * 60 * 1000) return '7 天内'
+  // 标签叫「本周」但语义是滚动 7 天（与 shell-floating 原型的分组名对齐；
+  // 真按日历周切，周一早上「上周五」会瞬移进「更早」，反而反直觉）。
+  if (now.getTime() - ms < 7 * 24 * 60 * 60 * 1000) return '本周'
   return '更早'
+}
+
+/** updatedAt → 行尾相对时间（原型 .session-row .time：刚刚 / N 分钟前 /
+ * N 小时前 / 昨天 / 周X / M月D日）。只在列表 reload 时重算——与分组标签
+ * 同一刷新节奏，不为「3 分钟前变 4 分钟前」挂定时器。 */
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const
+function relativeTime(ms: number): string {
+  const now = new Date()
+  const d = new Date(ms)
+  const diffMin = Math.floor((now.getTime() - ms) / 60_000)
+  if (diffMin < 1) return '刚刚'
+  if (diffMin < 60) return `${diffMin} 分钟前`
+  if (d.toDateString() === now.toDateString()) return `${Math.floor(diffMin / 60)} 小时前`
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (d.toDateString() === yesterday.toDateString()) return '昨天'
+  if (now.getTime() - ms < 7 * 24 * 60 * 60 * 1000) return WEEKDAYS[d.getDay()]
+  return `${d.getMonth() + 1}月${d.getDate()}日`
 }
 
 /** 列表渲染项：分组标签与会话行拍平进同一个 AnimatePresence，
@@ -321,9 +359,16 @@ export function RailSessionList() {
     // reducedMotion="user"：glider / 折叠退场尊重系统「减弱动态效果」，
     // 与 chat App 的 MotionConfig 行为一致（rail 挂在 layout，不在那棵树里）。
     <MotionConfig reducedMotion="user">
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="px-3 pb-1 pt-4 text-xs font-medium text-muted-foreground">对话</div>
-        <ScrollArea className="-mx-1 min-h-0 flex-1 px-1">
+      {/* 无「对话」标题（shell-floating 原型）：分组标签（今天/昨天/…）
+        * 自己就是节奏，多一行总标题只会把 rail 撑得更碎。 */}
+      <div className="flex min-h-0 flex-1 flex-col pt-2">
+        {/* [&>…]:block!：Radix ScrollArea 的 Viewport 会把 children 包进一层
+          * `display:table; min-width:100%` 的 div——table 按 max-content 撑宽，
+          * 长标题会把整行撑出 rail 右缘（时间标签被顶出去、truncate 失效，
+          * 标题硬切无省略号，2026-07-04 实锤）。纯竖向列表不需要 table 的
+          * 横向内容测量，强制回 block 让行宽回归容器约束；带 ! 是因为
+          * display:table 写在 Radix 的 inline style 上。 */}
+        <ScrollArea className="-mx-1 min-h-0 flex-1 px-1 [&>[data-slot=scroll-area-viewport]>div]:block!">
           {/* pr-2：shadcn ScrollArea 的滚动条是 overlay（浮在内容上），
               行文字 truncate 到容器右缘会被它盖住尾巴——内容侧自留出
               滚动条的宽度（原型 session-scroll 右 padding 同理）。 */}
@@ -336,7 +381,10 @@ export function RailSessionList() {
                     layout="position"
                     exit={{ height: 0, opacity: 0 }}
                     transition={{ duration: 0.22, ease: railEaseOut }}
-                    className="overflow-hidden px-3 pb-1 pt-4 text-xs text-muted-foreground first:pt-1"
+                    // 分组标签是列表的呼吸位：字号压到 11px、透明度降档、上方
+                    // 留足空（pt-5）让组与组之间有明确的段落感——行墙太密正是
+                    // 「丑」的主因之一。
+                    className="overflow-hidden px-3 pb-1.5 pt-5 text-[11px] font-medium text-muted-foreground/70 first:pt-1.5"
                   >
                     {item.text}
                   </motion.li>
@@ -426,7 +474,8 @@ function SessionRow({
       {renaming ? (
         <div
           data-rail-renaming
-          className="flex h-9 items-center gap-1 rounded-lg bg-sidebar-accent/60 py-1 pl-2 pr-1"
+          // h-8 与常规行同高：进入/退出编辑时行高不跳。
+          className="flex h-8 items-center gap-1 rounded-lg bg-sidebar-accent/60 pl-2 pr-1"
         >
           <Input
             ref={inputRef}
@@ -465,11 +514,13 @@ function SessionRow({
             <div className="group relative">
               {active && (
                 // 选中滑块：唯一一份，layoutId 让它在行间做 FLIP 位移。
+                // 中性灰底（shell-floating 原型的用色纪律：绿只给 CTA 与
+                // 选中「点」记号，选中面本身不上色——旧绿 tint 滑块退役）。
                 <motion.span
                   aria-hidden
                   layoutId="rail-session-glider"
                   transition={railGliderSpring}
-                  className="absolute inset-0 rounded-lg bg-sidebar-primary/12"
+                  className="absolute inset-0 rounded-lg bg-sidebar-accent"
                 />
               )}
               {/* shadcn Button 而非裸 <button>：canvas 的裸元素 reset 守卫
@@ -483,16 +534,32 @@ function SessionRow({
                 onClick={onSwitch}
                 title={thread.firstPrompt ?? thread.title}
                 className={cn(
-                  'relative flex h-9 w-full items-center justify-start gap-2 rounded-lg px-3 text-left text-[13px] font-normal transition-colors',
+                  // h-8（32px，原型 .session-row）：36px 行配 13px 字在长列表里
+                  // 显得松散又占地，32px 才是「工具列表」的密度。
+                  'relative flex h-8 w-full items-center justify-start gap-2 rounded-lg px-3 text-left text-[13px] font-normal transition-colors',
                   justRenamed && 'just-renamed',
                   active
-                    ? 'font-medium text-sidebar-primary hover:bg-transparent hover:text-sidebar-primary'
+                    ? // 选中态文字回中性前景（滑块已是中性灰），身份记号交给
+                      // 下面的品牌绿圆点——shell-floating 原型的选中语言。
+                      'font-medium text-sidebar-foreground hover:bg-transparent hover:text-sidebar-foreground'
                     : // 实色 sidebar-accent（原型 .row:hover 的 rail-hover 同款）：
                       // 60% 透明版叠在灰 rail 上若隐若现，反馈感太弱。
                       'text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground'
                 )}
               >
-                <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+                {active && (
+                  <span
+                    aria-hidden
+                    className="size-[5px] shrink-0 rounded-full bg-sidebar-primary"
+                  />
+                )}
+                <span className="min-w-0 flex-1 truncate">{displayTitle(thread.title)}</span>
+                {/* 相对时间：hover / 菜单打开时让位给 ···（原型 .time 的
+                  * display:none on hover；这里用 opacity 免布局跳动——时间
+                  * 与 ··· 分别位于行内流和绝对定位层，淡出即可无重叠）。 */}
+                <span className="shrink-0 text-[11px] font-normal text-muted-foreground/70 transition-opacity group-hover:opacity-0 group-has-[[data-state=open]]:opacity-0">
+                  {relativeTime(thread.updatedAt)}
+                </span>
               </Button>
               <DropdownMenu onOpenChange={onMenuOpenChange}>
                 <DropdownMenuTrigger asChild>

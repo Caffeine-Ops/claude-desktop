@@ -151,8 +151,7 @@ export function AppRail() {
       {/* 会话列表占据 rail 中段的全部剩余高度（内部自带 ScrollArea）。 */}
       <RailSessionList />
 
-      <div className="mt-auto flex flex-col gap-1 pt-4">
-        <div className="px-3 text-xs text-muted-foreground">更多</div>
+      <div className="mt-auto flex flex-col gap-1 pt-3">
         <Button
           variant="ghost"
           className="justify-start gap-2 px-3 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
@@ -168,6 +167,30 @@ export function AppRail() {
           <Settings className="size-4" />
           设置
         </Button>
+        {identity && (
+          // user chip（原型 .user-chip）：头像首字母走品牌绿 tint——绿只给
+          // 「身份/CTA/选中」点位的用色纪律。点击同「设置」入口（身份与
+          // CLI 后端的详情都在设置页里）。
+          <Button
+            variant="ghost"
+            className="h-10 justify-start gap-2.5 px-2.5 hover:bg-sidebar-accent"
+            onClick={() => {
+              window.history.pushState(null, '', '/?settings=1')
+            }}
+          >
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/15 text-xs font-semibold text-sidebar-primary">
+              {identity.user.charAt(0).toUpperCase()}
+            </span>
+            <span className="flex min-w-0 flex-col items-start leading-tight">
+              <span className="max-w-full truncate text-[12.5px] font-medium text-sidebar-foreground">
+                {identity.user}
+              </span>
+              <span className="text-[11px] font-normal text-muted-foreground">
+                {identity.backend} · 已连接
+              </span>
+            </span>
+          </Button>
+        )}
       </div>
     </nav>
   )

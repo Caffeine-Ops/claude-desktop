@@ -109,6 +109,9 @@ interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
+// useI18n 无 Provider 兜底的一次性告警闸（见 useI18n 内注释）。
+let warnedMissingProvider = false;
+
 interface ProviderProps {
   initial?: Locale;
   children: ReactNode;
@@ -166,6 +169,20 @@ export function useI18n(): I18nContextValue {
     // Fall back to a stand-alone English translator when no provider is
     // mounted (e.g. an isolated test). This keeps the API safe to call
     // without requiring every callsite to wrap in a provider.
+    //
+    // ⚠️ 这个兜底在应用里出现即事故：它是**静默替身**（locale 锁 'en'、
+    // setLocale 空函数），Provider 丢失时整个 UI 锁死英文、语言切换点了
+    // 没反应且零报错——2026-07-03 画布迁移把 Provider（原住 apps/web 的
+    // app/layout.tsx）漏在了搬迁清单外，靠它掩护潜伏到用户报障才被发现。
+    // dev 下必须吼一声；只吼一次，避免每个 useI18n 调用点刷屏。
+    if (process.env.NODE_ENV !== 'production' && !warnedMissingProvider) {
+      warnedMissingProvider = true;
+      console.warn(
+        '[i18n] useI18n() called outside <I18nProvider> — falling back to a ' +
+          'no-op English stub. Language switching WILL NOT work. Mount the ' +
+          'provider (see src/canvas/AppRoot.tsx).',
+      );
+    }
     return {
       locale: 'en',
       setLocale: () => { },

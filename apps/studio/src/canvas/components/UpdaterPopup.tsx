@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { OpenDesignHostUpdaterStatusSnapshot } from '@open-design/host';
 
-import { Icon } from './Icon';
+import { Icon } from './shared/Icon';
 import {
   deriveUpdaterModel,
   openUpdaterInstaller,
