@@ -8,12 +8,12 @@ import {
   projectKindToTracking,
   fidelityToTracking,
 } from '@open-design/contracts/analytics';
-import { EntryView } from './components/EntryView';
-import type { IntegrationTab } from './components/IntegrationsView';
-import { MarketplaceView } from './components/MarketplaceView';
-import { PluginDetailView } from './components/PluginDetailView';
+import { EntryView } from './components/home/EntryView';
+import type { IntegrationTab } from './components/settings/IntegrationsView';
+import { MarketplaceView } from './components/plugins/MarketplaceView';
+import { PluginDetailView } from './components/plugins/PluginDetailView';
 import type { CreateInput } from './components/NewProjectPanel';
-import { MemoryToast } from './components/MemoryToast';
+import { MemoryToast } from './components/memory/MemoryToast';
 import { PetOverlay, type PetTaskCenter } from './components/pet/PetOverlay';
 import { buildPetTaskCenter } from './components/pet/taskCenter';
 import { migrateCustomPetAtlas } from './components/pet/pets';
@@ -29,7 +29,7 @@ import {
   updateCurrentApiProtocolConfig,
   type SettingsSection,
 } from './components/SettingsDialog';
-import { SettingsDialogV2 } from './components/SettingsDialogV2';
+import { SettingsDialogV2 } from './components/settings/SettingsDialogV2';
 import {
   daemonIsLive,
   fetchAppVersionInfo,
