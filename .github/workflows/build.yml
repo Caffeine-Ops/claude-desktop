@@ -257,6 +257,14 @@ jobs:
       - name: Unit tests
         run: bun run --filter='@claude-desktop/desktop' test
 
+      # scripts/ (the kb-sync manifest publisher, run manually on the server —
+      # not part of the desktop app bundle) has its own bun:test suite. It
+      # isn't under apps/desktop so the filter above never touches it; without
+      # this step a broken manifest.ts could ship straight to the release
+      # workflow with zero CI signal.
+      - name: Scripts tests
+        run: bun test scripts/
+
       # Use `dist:<platform>`, NOT `build:<platform>`. The desktop
       # `build:*` chain assumes apps/daemon/dist/cli.js and apps/web/out
       # already exist (its prebundle:daemon step only COPIES them) — true
