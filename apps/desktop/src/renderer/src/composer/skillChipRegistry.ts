@@ -1,4 +1,5 @@
 import { type FileIconKey } from '../components/chat/FileTypeIcon'
+import { PROPOSAL_WRITER_SLASH_NAMES } from '../lib/proposalSlash'
 
 /**
  * Per-skill chip appearance registry.
@@ -82,18 +83,17 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
   // proposal-writer — 写方案。namespaced + 裸名双注册，理由同 ppt-master。
   // 注意：这个命令不会发给 fusion-code——FusionRuntimeProvider.onNew 会拦截它、
   // 激活方案模式（见 matchProposalSlash）。chip 只是让斜杠菜单里它长得像个产品功能。
-  {
-    match: '/claude-desktop:proposal-writer',
-    icon: 'word',
-    label: '写方案',
-    appearance: 'gradient'
-  },
-  {
-    match: '/proposal-writer',
-    icon: 'word',
-    label: '写方案',
-    appearance: 'gradient'
-  }
+  // 命令名从 PROPOSAL_WRITER_SLASH_NAMES 派生而非在此重写字面量：拦截识别集与
+  // chip 注册必须永远同一份名单，否则改名漏同步会出现「chip 显示正常、点了却不
+  // 拦截、静默直发 CLI」（终审 finding #7）。
+  ...PROPOSAL_WRITER_SLASH_NAMES.map(
+    (name): SkillChipSpec => ({
+      match: `/${name}`,
+      icon: 'word',
+      label: '写方案',
+      appearance: 'gradient'
+    })
+  )
 ]
 
 const BY_VALUE = new Map(SKILL_CHIP_SPECS.map((s) => [s.match, s]))

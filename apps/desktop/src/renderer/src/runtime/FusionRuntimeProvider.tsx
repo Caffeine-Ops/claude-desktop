@@ -475,7 +475,13 @@ export function FusionRuntimeProvider({
       // certainly a typo and definitely not a recognized slash-command
       // flow. (Match on baseText: the appended @mentions would never
       // be a slash command anyway, but baseText is the user's intent.)
+      // 斜杠再入补播种标记：/proposal-writer 带尾随文字且草稿已存在（reopen）时置真，
+      // payload thunk 据此对新需求文字补跑产品匹配（只增不减）。见下方 thunk 内注释。
+      let proposalReopenedWithBrief = false
       if (images.length === 0 && filePaths.length === 0) {
+        // 【优先级不变量】两套斜杠匹配按书写顺序生效：matchSlashCommand（DialogKind，
+        // /skill、/mcp）先试、命中即 return——若未来某命令名同时出现在两边，先跑的
+        // 静默赢。加新斜杠功能时先核对另一边的名单（终审 finding #8）。
         const dialogKind = matchSlashCommand(baseText)
         if (dialogKind) {
           useDialogStore.getState().openDialog(dialogKind)
@@ -486,8 +492,9 @@ export function FusionRuntimeProvider({
         // 方法论必须经 systemPrompt.append 无条件注入（硬门纪律不能靠模型自愿展开
         // skill），所以这个命令在 renderer 侧消化：激活方案模式后，空调用=场景卡
         // 语义（预填引导模板），带尾随文字=剥掉命令、尾随文字当本轮用户消息继续走
-        // 下面的正常发送路径（storeContent/payload 都读重写后的 baseText/text，
-        // matchProducts 播种、召回注入与场景卡首发完全同路）。设计见
+        // 下面的正常发送路径（storeContent/payload 都读重写后的 baseText/text；
+        // 首发时 matchProducts 播种与场景卡同路，reopen 再入时对新文字补充匹配、
+        // 只增不减——见 payload thunk）。设计见
         // docs/superpowers/specs/2026-07-03-proposal-writer-skill-design.md §5.4。
         const proposalSlash = matchProposalSlash(baseText)
         if (proposalSlash) {
@@ -510,6 +517,7 @@ export function FusionRuntimeProvider({
           }
           baseText = proposalSlash.rest
           text = proposalSlash.rest
+          proposalReopenedWithBrief = outcome === 'reopened'
         }
       }
 
@@ -579,6 +587,24 @@ export function FusionRuntimeProvider({
                 cur.seedProducts(matched)
                 proposalProducts = matched
               }
+            } else if (proposalReopenedWithBrief) {
+              // 斜杠再入且带新需求文字（终审 finding #3）：seeded=true 会短路
+              // matchProducts，新需求若点名了别的产品/产品线，会被按旧草稿的产品集
+              // grounding——用户以为换了主题，AI 拿到的还是旧产品的文件清单。这里对
+              // 新文字补跑一次匹配并【只增不减】并入产品集：加法自动（召回优先：多
+              // 命中无害，同上），减法仍交给用户在 ProposalDocPanel 的 chip 上做；
+              // 不动 seeded，「一次播种、不中途重播」的既有语义保持不变。
+              const idx = await window.chatApi.readKbIndex()
+              const matched = matchProducts(text, idx)
+              const cur = useProposalStore.getState()
+              // \u0000 作分隔：产品线/产品名可能含空格等常见字符，普通分隔符会串键。
+              const key = (p: ProposalProduct): string => `${p.productLine}\u0000${p.product}`
+              const seen = new Set(cur.products.map(key))
+              const added = matched.filter((p) => !seen.has(key(p)))
+              if (added.length > 0) {
+                cur.setProducts([...cur.products, ...added])
+              }
+              proposalProducts = useProposalStore.getState().products
             } else {
               proposalProducts = ps.products
             }
