@@ -34,6 +34,7 @@ import {
 import type { ProposalKind } from '../../shared/proposal'
 import type { MermaidImage } from '../../shared/ipc-channels'
 import { FUSION_HEADER_BANNER, FUSION_COVER_LOGO } from '../../shared/proposalBrand'
+import { stripGenImageDirectives, GENIMAGE_LANG } from '../../shared/proposalGenImage'
 import {
   CN_SIZE_PT,
   FONT_DOCX,
@@ -500,6 +501,10 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
       return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
     }
     case 'code': {
+      // genimage 指令块：应用侧占位指令，绝不属于交付内容。入口 stripGenImageDirectives 已剥
+      // 一遍，这里对漏网块（嵌套结构里的）再兜一道——静默吞掉，不输出任何占位文字（编辑态卡片
+      // 已保证用户看得见未处理的指令，导出物里不需要提醒）。
+      if (node.lang === GENIMAGE_LANG) return []
       // mermaid 围栏块 → 嵌入预渲位图（方案一二期）。renderer 已把 SVG 渲好、main 用 sharp 转成
       // PNG 填进 env.mermaidImages；查得到就居中嵌图（等比缩放到版心宽，与 imageParagraphs 同款），
       // 查不到（renderer 没渲成 / sharp 转换失败 / 未传）就降级一行文字占位，绝不把 mermaid 源码
@@ -1120,7 +1125,11 @@ export async function markdownToDocxBuffer(
   // 都不出现来源（只在编辑态保留并上色，见 AssistantMarkdown.highlightCitations）。
   // normalizeImageMarkdown：给含空格的图片目标补 `<>`，否则 remark 不解析成 image 节点、图丢失
   // （img.url 经 remark 剥回干净路径，与 ungroundedImagePaths 的比对不受影响）。
-  const tree = mdProcessor.parse(normalizeImageMarkdown(stripCitations(markdown))) as Root
+  // stripGenImageDirectives：genimage 指令是给应用看的占位、不是内容，与来源标注同点剥除——
+  // 未处理（用户未应用/未生成）的指令块绝不能进 docx/预览/PDF 这三路共用的交付物。
+  const tree = mdProcessor.parse(
+    normalizeImageMarkdown(stripCitations(stripGenImageDirectives(markdown)))
+  ) as Root
   const bodyFirstLine = style.body.indentChars
     ? Math.round(style.body.indentChars * CN_SIZE_PT[style.body.size] * 20)
     : 0

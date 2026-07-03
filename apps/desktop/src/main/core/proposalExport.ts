@@ -5,6 +5,7 @@ import type { ProposalStyleConfig } from '../../shared/proposalStyle'
 import { markdownToDocxBuffer } from './proposalDocx'
 import { collectUngroundedImagePaths } from './proposalVerify'
 import { normalizeImageMarkdown, stripCitations } from '../../shared/proposal'
+import { stripGenImageDirectives } from '../../shared/proposalGenImage'
 
 /**
  * 各导出格式的元数据：保存对话框的文件类型过滤器 + 默认文件名。
@@ -76,8 +77,13 @@ export async function exportProposal(
     case 'md':
       // 剥除段末「（据《X》）」来源标注：交付的 .md 是干净成品，与 docx/PDF 一致（来源只在
       // 编辑态保留并上色，见 AssistantMarkdown.highlightCitations）。docx 分支在 markdownToDocxBuffer
-      // 内部已剥除，故这里只需管直接写盘的 .md 这一路。
-      writeFileSync(r.filePath, normalizeImageMarkdown(stripCitations(markdown)), 'utf8')
+      // 内部已剥除，故这里只需管直接写盘的 .md 这一路。同理剥 genimage 指令块——未处理的占位
+      // 指令不是交付内容，md 路径不经 markdownToDocxBuffer，得在这里单独剥一次。
+      writeFileSync(
+        r.filePath,
+        normalizeImageMarkdown(stripCitations(stripGenImageDirectives(markdown))),
+        'utf8'
+      )
       break
     case 'docx': {
       // markdown → 真 .docx（逐 mdast 节点构造，见 proposalDocx.ts），按选中模板排版。

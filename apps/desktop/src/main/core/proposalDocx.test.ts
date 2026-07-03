@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { inflateRawSync } from 'node:zlib'
 import type { RootContent } from 'mdast'
 
 import {
@@ -243,5 +244,64 @@ describe('splitCoverNodes', () => {
     const footer = text('编制单位：某某公司')
     const { bottom } = splitCoverNodes([title, footer])
     expect(bottom).toEqual([footer])
+  })
+})
+
+// 从 docx（zip）buffer 里解出 word/document.xml 文本：尾部找 EOCD → 中央目录拿偏移与压缩尺寸
+// → inflateRawSync。仅测试用，不求通用健壮。
+function readDocxDocumentXml(buf: Buffer): string {
+  let eocd = -1
+  for (let i = buf.length - 22; i >= 0; i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocd = i
+      break
+    }
+  }
+  if (eocd < 0) throw new Error('EOCD not found')
+  let off = buf.readUInt32LE(eocd + 16)
+  const count = buf.readUInt16LE(eocd + 10)
+  for (let n = 0; n < count; n++) {
+    if (buf.readUInt32LE(off) !== 0x02014b50) throw new Error('bad central directory header')
+    const method = buf.readUInt16LE(off + 10)
+    const compSize = buf.readUInt32LE(off + 20)
+    const nameLen = buf.readUInt16LE(off + 28)
+    const extraLen = buf.readUInt16LE(off + 30)
+    const commentLen = buf.readUInt16LE(off + 32)
+    const localOff = buf.readUInt32LE(off + 42)
+    const name = buf.subarray(off + 46, off + 46 + nameLen).toString('utf8')
+    if (name === 'word/document.xml') {
+      const lNameLen = buf.readUInt16LE(localOff + 26)
+      const lExtraLen = buf.readUInt16LE(localOff + 28)
+      const dataStart = localOff + 30 + lNameLen + lExtraLen
+      const data = buf.subarray(dataStart, dataStart + compSize)
+      return method === 0 ? data.toString('utf8') : inflateRawSync(data).toString('utf8')
+    }
+    off += 46 + nameLen + extraLen + commentLen
+  }
+  throw new Error('document.xml not found in docx')
+}
+
+describe('markdownToDocxBuffer 剥除 genimage 指令块', () => {
+  it('未处理的指令块绝不进交付 Word（document.xml 无残留）', async () => {
+    const md = [
+      '<!--proposal-section:content-->',
+      '',
+      '## 总体架构',
+      '',
+      '正文。（据《白皮书》）',
+      '',
+      '```genimage',
+      '图说: 系统总体架构图',
+      '分层构图描述。',
+      '```',
+      '',
+      '尾段。（据《白皮书》）'
+    ].join('\n')
+    const buf = await markdownToDocxBuffer(md)
+    const xml = readDocxDocumentXml(Buffer.from(buf))
+    expect(xml).not.toContain('genimage')
+    expect(xml).not.toContain('图说')
+    expect(xml).not.toContain('分层构图描述')
+    expect(xml).toContain('尾段') // 剥除不误伤相邻正文
   })
 })
