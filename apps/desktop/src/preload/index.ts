@@ -26,6 +26,9 @@ import {
   type SessionLoadResult,
   type SessionNewResult,
   type SessionRenamePayload,
+  type SessionDeletePayload,
+  type SessionSearchPayload,
+  type SessionSearchResult,
   type SessionRenameResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
@@ -230,6 +233,13 @@ const chatApi: ChatApi = {
 
   listSessions(): Promise<SessionListResult> {
     return ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST) as Promise<SessionListResult>
+  },
+
+  searchSessions(payload: SessionSearchPayload): Promise<SessionSearchResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SESSION_SEARCH,
+      payload
+    ) as Promise<SessionSearchResult>
   },
 
   loadSession(payload: SessionLoadPayload): Promise<SessionLoadResult> {
@@ -508,6 +518,20 @@ const tabApi: TabApi = {
     return () => {
       ipcRenderer.off(IPC_CHANNELS.SHELL_SESSION_LIST_CHANGED, listener)
     }
+  },
+
+  renameShellSession(payload: SessionRenamePayload): Promise<void> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SHELL_SESSION_RENAME,
+      payload
+    ) as Promise<void>
+  },
+
+  deleteShellSession(payload: SessionDeletePayload): Promise<void> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SHELL_SESSION_DELETE,
+      payload
+    ) as Promise<void>
   }
 }
 

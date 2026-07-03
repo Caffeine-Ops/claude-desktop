@@ -20,6 +20,9 @@ import {
   type SessionLoadResult,
   type SessionNewResult,
   type SessionRenamePayload,
+  type SessionDeletePayload,
+  type SessionSearchPayload,
+  type SessionSearchResult,
   type SessionRenameResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
@@ -57,7 +60,13 @@ import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
 import { DAEMON_PORT } from '../services/openDesignServices'
 import type { ChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
-import { listSessions, loadSession, renameSession } from '../core/sessionStore'
+import {
+  deleteSessionFromDisk,
+  listSessions,
+  loadSession,
+  renameSession,
+  searchSessionContent
+} from '../core/sessionStore'
 import { clearUnread, updateTrayLang } from '../tray'
 import {
   broadcastAppearanceChanged,
@@ -68,6 +77,7 @@ import {
   describeSenderMismatch,
   dispatchMenuActionToActiveTab,
   dispatchSessionSwitchToActiveTab,
+  getActiveChatEngine,
   getActiveChatWorkspace,
   getAllTabs,
   getContextForSender,
@@ -219,6 +229,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.MODEL_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.MODEL_SET)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LIST)
+  ipcMain.removeHandler(IPC_CHANNELS.SESSION_SEARCH)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LOAD)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_NEW)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_SWITCH)
@@ -240,6 +251,8 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.TAB_TRIGGER_MENU_ACTION)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_SWITCH_REQUEST)
+  ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_RENAME)
+  ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_DELETE)
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_WINDOW_OPEN)
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE)
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_CLI_BACKEND_GET)
@@ -893,6 +906,25 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // Session content search for the search dialog (标题 matching happens
+  // renderer-side over listSessions; this is the transcript scan). Scoped
+  // to the calling tab's workspace via its engine — no payload validation
+  // beyond the query being a string, since an odd query just returns [].
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_SEARCH,
+    async (
+      event,
+      payload: SessionSearchPayload
+    ): Promise<SessionSearchResult> => {
+      const query = typeof payload?.query === 'string' ? payload.query : ''
+      const hits = await searchSessionContent(
+        resolveEngine(event).getWorkspace(),
+        query
+      )
+      return { hits }
+    }
+  )
+
   // Multi-runtime support. Returns the set of sessions currently
   // backed by a live fusion-code process in this tab's engine, so
   // the sidebar can paint "still running" badges on the matching
@@ -1203,7 +1235,8 @@ export function registerIpcHandlers(): void {
       if (
         action !== 'open-settings' &&
         action !== 'open-logs' &&
-        action !== 'toggle-lang'
+        action !== 'toggle-lang' &&
+        action !== 'open-search'
       ) {
         return
       }
@@ -1236,6 +1269,46 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.SHELL_SESSION_SWITCH_REQUEST,
     async (_event, payload: { sessionId: string | null }): Promise<void> => {
       dispatchSessionSwitchToActiveTab(payload?.sessionId ?? null)
+    }
+  )
+
+  // Shell session rename (shell renderer → main). Engine-free like
+  // SHELL_SESSION_LIST: resolve the active chat workspace and append the
+  // custom-title line directly. The emit at the end is the whole refresh
+  // story — tabRegistry relays this engine's `sessionListChanged` to the
+  // shell, and the engine's own webContents bridge sends it to the chat
+  // renderer, so both lists re-pull without shell-specific plumbing.
+  ipcMain.handle(
+    IPC_CHANNELS.SHELL_SESSION_RENAME,
+    async (_event, payload: SessionRenamePayload): Promise<void> => {
+      validateSessionRenamePayload(payload)
+      const workspace = getActiveChatWorkspace()
+      if (!workspace) throw new Error('No active chat tab')
+      await renameSession(payload.sessionId, payload.title, workspace)
+      getActiveChatEngine()?.emit('sessionListChanged')
+    }
+  )
+
+  // Shell session delete (shell renderer → main). Order matters:
+  //   1. closeSessionRuntime FIRST — if a fusion-code child is live on this
+  //      session it would keep appending to (and holding open) the jsonl
+  //      we're about to unlink. No-op when no runtime exists.
+  //   2. deleteSessionFromDisk — removes jsonl + subagent dir; throws on a
+  //      missing session so a stale row surfaces as an error instead of a
+  //      silent fake success.
+  //   3. emit sessionListChanged — same double fan-out as rename above.
+  // The renderer owns the confirm UI and the switch-away-if-active logic
+  // (it knows the neighbouring row; main doesn't track shell selection).
+  ipcMain.handle(
+    IPC_CHANNELS.SHELL_SESSION_DELETE,
+    async (_event, payload: SessionDeletePayload): Promise<void> => {
+      validateSessionCloseRuntimePayload(payload)
+      const workspace = getActiveChatWorkspace()
+      if (!workspace) throw new Error('No active chat tab')
+      const engine = getActiveChatEngine()
+      await engine?.closeSessionRuntime(payload.sessionId)
+      await deleteSessionFromDisk(payload.sessionId, workspace)
+      engine?.emit('sessionListChanged')
     }
   )
 

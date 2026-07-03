@@ -1,0 +1,1290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>会话重命名 / 删除 — 交互原型</title>
+<style>
+  /* ────────────────────────────────────────────────────────────────
+     Design tokens — 1:1 取自 apps/desktop main.css 的 .shell-chrome
+     （--rail-* 系列）与 docs/ui-prototype-sidebar.html。
+     唯一新增色相：删除用的红（red-600 / dark 提亮）。
+     ──────────────────────────────────────────────────────────────── */
+  :root {
+    --rail-bg: #e8eaee;
+    --rail-hover: #ececeb;
+    --rail-text: #1a1a18;
+    --rail-text-soft: #5f5f5b;
+    --rail-muted: #9b9b96;
+    --accent: #16a34a;
+    --accent-soft: rgba(22, 163, 74, .12);   /* 选中行填充 = hsl(accent/0.12) */
+    --accent-ink: #0f7a38;
+
+    --danger: #dc2626;
+    --danger-soft: rgba(220, 38, 38, .10);
+    --danger-ink: #b91c1c;
+
+    --card-bg: #ffffff;
+    --card-border: #ececeb;
+    --pop-bg: #ffffff;
+    --pop-border: rgba(0, 0, 0, .08);
+    --shadow-card: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.05);
+    --shadow-pop: 0 2px 6px rgba(0,0,0,.06), 0 12px 32px rgba(0,0,0,.12);
+
+    --radius-sm: 8px;    /* 行、按钮 = 产品 rounded-lg */
+    --radius-md: 12px;   /* 弹层 */
+    --radius-lg: 18px;   /* 聊天卡 */
+
+    --rail-w: 220px;     /* NAV_RAIL_WIDTH */
+    --card-gap: 8px;     /* CHAT_CARD_GAP */
+
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);  /* railEaseOut */
+    --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  }
+  body.dark {
+    /* 近似产品 dark rail（color-mix(card 70%, background)）的手写值 */
+    --rail-bg: #232220;
+    --rail-hover: rgba(255, 255, 255, .06);
+    --rail-text: #ececea;
+    --rail-text-soft: rgba(236, 236, 234, .7);
+    --rail-muted: rgba(236, 236, 234, .5);
+    --accent: #2ec96b;
+    --accent-soft: rgba(46, 201, 107, .16);
+    --accent-ink: #57d98a;
+
+    --danger: #f87171;
+    --danger-soft: rgba(248, 113, 113, .14);
+    --danger-ink: #fca5a5;
+
+    --card-bg: #2c2b29;
+    --card-border: rgba(255, 255, 255, .08);
+    --pop-bg: #333230;
+    --pop-border: rgba(255, 255, 255, .1);
+    --shadow-card: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    --shadow-pop: 0 2px 6px rgba(0,0,0,.4), 0 16px 40px rgba(0,0,0,.5);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--rail-bg);
+    color: var(--rail-text);
+    overflow: hidden;
+    transition: background .3s var(--ease-out);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ──────────────── Shell 布局：rail + 浮动聊天卡 ──────────────── */
+  .shell { display: flex; height: 100vh; }
+
+  .rail {
+    width: var(--rail-w);
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 8px 0 10px 10px;   /* 与 .shell-chrome 一致：右 padding 0 */
+  }
+
+  /* macOS 交通灯占位 */
+  .traffic { display: flex; gap: 8px; padding: 6px 4px 18px; }
+  .traffic i { width: 12px; height: 12px; border-radius: 50%; background: rgba(0,0,0,.12); }
+  body.dark .traffic i { background: rgba(255,255,255,.15); }
+
+  /* 新对话按钮（TabBar 顶部主 CTA 的简化复刻） */
+  .new-chat {
+    display: flex; align-items: center; gap: 8px;
+    height: 36px; margin-right: 10px; padding: 0 12px;
+    border: none; border-radius: var(--radius-sm);
+    background: var(--accent-soft); color: var(--accent-ink);
+    font-family: var(--font); font-size: 14px; font-weight: 500;
+    cursor: pointer;
+    transition: background .15s var(--ease-out);
+  }
+  .new-chat:hover { background: rgba(22, 163, 74, .18); }
+  body.dark .new-chat:hover { background: rgba(46, 201, 107, .22); }
+  .new-chat svg { flex-shrink: 0; }
+
+  .rail-section-label {
+    padding: 14px 12px 4px; margin-right: 10px;
+    font-size: 12px; font-weight: 500; letter-spacing: .02em;
+    color: var(--rail-muted);
+  }
+
+  /* ──────────────── 会话列表 ────────────────
+     几何与修好的 ShellSessionList 一致：滚动容器左 4px、右侧留出
+     与左侧对称的呼吸；overlay 滚动条贴容器右缘。 */
+  .session-scroll {
+    min-height: 0; flex: 1;
+    overflow-y: auto; overscroll-behavior: contain;
+    padding: 0 10px 12px 4px;
+    position: relative;
+  }
+  .session-scroll::-webkit-scrollbar { width: 8px; }
+  .session-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,.14); border-radius: 4px; }
+  body.dark .session-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); }
+
+  .group-label {
+    padding: 14px 12px 4px;
+    font-size: 12px; font-weight: 500; color: var(--rail-muted);
+  }
+  .group-label:first-child { padding-top: 4px; }
+
+  /* 选中态滑块（glider）：单个绝对定位元素在行间滑动，
+     对应产品里 motion 的 layoutId="rail-session-glider"。 */
+  .glider {
+    position: absolute; left: 4px; right: 10px;
+    height: 36px; border-radius: var(--radius-sm);
+    background: var(--accent-soft);
+    transition: transform .32s var(--ease-out), opacity .2s;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .glider.hidden { opacity: 0; }
+
+  .row {
+    position: relative; z-index: 1;
+    display: flex; align-items: center; gap: 8px;
+    height: 36px; padding: 0 12px;
+    border-radius: var(--radius-sm);
+    font-size: 14px; line-height: 1; color: var(--rail-text-soft);
+    cursor: pointer; user-select: none;
+    transition: background .15s var(--ease-out), color .15s var(--ease-out);
+  }
+  .row:hover { background: var(--rail-hover); color: var(--rail-text); }
+  .row.active { font-weight: 500; color: var(--accent); background: transparent; }
+  .row.active:hover { background: transparent; }
+
+  .row .title {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .row .dot {
+    width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+    background: var(--accent);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  /* ··· 更多按钮：hover / 选中 / 菜单已开 时浮现 */
+  .more-btn {
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; margin-right: -6px;
+    border: none; border-radius: 6px;
+    background: transparent; color: var(--rail-muted);
+    cursor: pointer; opacity: 0;
+    transition: opacity .15s, background .15s, color .15s;
+  }
+  .row:hover .more-btn, .row.active .more-btn, .row.menu-open .more-btn { opacity: 1; }
+  .more-btn:hover { background: rgba(0,0,0,.07); color: var(--rail-text); }
+  body.dark .more-btn:hover { background: rgba(255,255,255,.12); }
+  .row.menu-open .more-btn { background: rgba(0,0,0,.07); color: var(--rail-text); }
+  body.dark .row.menu-open .more-btn { background: rgba(255,255,255,.12); }
+
+  /* 行折叠删除动画：外层 wrapper 收高度 */
+  .row-wrap {
+    overflow: hidden;
+    transition: height .22s var(--ease-out), opacity .22s var(--ease-out);
+  }
+  .row-wrap.collapsing { opacity: 0; }
+
+  /* 行内重命名 */
+  .row.editing { background: var(--rail-hover); cursor: default; }
+  .rename-input {
+    flex: 1; min-width: 0;
+    height: 26px; padding: 0 8px;
+    border: 1.5px solid var(--accent);
+    border-radius: 6px;
+    background: var(--card-bg); color: var(--rail-text);
+    font-family: var(--font); font-size: 13px;
+    outline: none;
+  }
+  .rename-save {
+    flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; margin-right: -6px;
+    border: none; border-radius: 6px;
+    background: transparent; color: var(--accent-ink);
+    cursor: pointer; transition: background .15s;
+  }
+  .rename-save:hover { background: var(--accent-soft); }
+
+  /* rename 成功后的一次性微光 */
+  @keyframes renamed-flash {
+    0% { background: var(--accent-soft); }
+    100% { background: transparent; }
+  }
+  .row.just-renamed { animation: renamed-flash 0.9s var(--ease-out) 1; }
+
+  /* 行内删除确认（变体 A） */
+  .row.confirming { background: var(--danger-soft); cursor: default; }
+  .confirm-text { flex: 1; min-width: 0; font-size: 13px; color: var(--danger-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .confirm-actions { display: flex; gap: 4px; flex-shrink: 0; margin-right: -6px; }
+  .btn-mini {
+    height: 24px; padding: 0 10px;
+    border: none; border-radius: 6px;
+    font-family: var(--font); font-size: 12px; font-weight: 500;
+    cursor: pointer; transition: filter .15s, background .15s;
+  }
+  .btn-mini.danger { background: var(--danger); color: #fff; }
+  .btn-mini.danger:hover { filter: brightness(1.1); }
+  .btn-mini.ghost { background: transparent; color: var(--rail-text-soft); }
+  .btn-mini.ghost:hover { background: rgba(0,0,0,.07); }
+  body.dark .btn-mini.ghost:hover { background: rgba(255,255,255,.1); }
+
+  .empty-hint { padding: 24px 12px; font-size: 12.5px; color: var(--rail-muted); }
+
+  /* 底部用户栏占位 */
+  .user-bar {
+    display: flex; align-items: center; gap: 8px;
+    margin: 8px 10px 0 0; padding: 8px 10px;
+    border-radius: var(--radius-sm); font-size: 13px; color: var(--rail-text-soft);
+  }
+  .user-bar .avatar {
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent-ink);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600;
+  }
+
+  /* ──────────────── 右侧浮动聊天卡（占位） ──────────────── */
+  .content {
+    flex: 1; min-width: 0;
+    padding: var(--card-gap) var(--card-gap) var(--card-gap) 0;
+    display: flex;
+  }
+  .chat-card {
+    flex: 1; min-width: 0;
+    background: var(--card-bg);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    display: flex; flex-direction: column; align-items: stretch;
+    transition: background .3s var(--ease-out);
+    overflow-y: auto;
+  }
+
+  /* ── 聊天卡顶部标题栏：标题本身就是重命名入口 ──
+     显示态是一个可点击的"幽灵按钮"：悬停浮出浅灰底 + 铅笔，
+     点击原地变输入框。与左侧行内重命名共用同一条数据链路。 */
+  .card-header {
+    flex-shrink: 0;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+    padding: 16px 28px 0;
+  }
+  /* slot 必须撑满 header 宽，否则它会 shrink-to-fit，
+     button 的 max-width:100% 相对收缩后的 slot 解析 → 循环把
+     标题压到 ~400px 就截断。stretch 后短标题按内容宽、超长才省略。 */
+  #cardTitleSlot { align-self: stretch; min-width: 0; }
+  .card-title {
+    display: inline-flex; align-items: center; gap: 8px;
+    max-width: 100%; min-width: 0;
+    border: none; background: transparent;
+    font-family: var(--font); font-size: 17px; font-weight: 600;
+    color: var(--rail-text); text-align: left;
+    padding: 5px 10px; margin-left: -10px;
+    border-radius: var(--radius-sm);
+    cursor: text;
+    transition: background .15s var(--ease-out);
+  }
+  .card-title:hover { background: var(--rail-hover); }
+  .card-title .label {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .card-title .pen { flex-shrink: 0; opacity: 0; color: var(--rail-muted); transition: opacity .15s; }
+  .card-title:hover .pen, .card-title:focus-visible .pen { opacity: .8; }
+  .card-title:disabled { cursor: default; color: var(--rail-muted); }
+  .card-title:disabled:hover { background: transparent; }
+  .card-title.just-renamed { animation: renamed-flash 0.9s var(--ease-out) 1; }
+  .card-title-input {
+    width: min(480px, 100%);
+    border: 1.5px solid var(--accent);
+    border-radius: var(--radius-sm);
+    background: var(--card-bg); color: var(--rail-text);
+    font-family: var(--font); font-size: 17px; font-weight: 600;
+    padding: 3.5px 8.5px; margin-left: -10px;
+    outline: none;
+  }
+  .card-ai-note { font-size: 12px; color: var(--rail-muted); }
+
+  .card-body {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; padding: 40px;
+  }
+  .chat-card .ph-line { height: 12px; border-radius: 6px; background: var(--rail-hover); }
+  .chat-card .ph-stack { width: min(520px, 80%); display: flex; flex-direction: column; gap: 14px; }
+  .chat-card .ph-note {
+    margin-top: 20px; font-size: 13px; color: var(--rail-muted); text-align: center;
+    text-wrap: pretty;
+  }
+
+  /* 工程对接注记面板（Tweaks 开关控制） */
+  .dev-panel { width: min(640px, 92%); display: none; flex-direction: column; gap: 16px; }
+  .chat-card.dev-mode .card-body { justify-content: flex-start; padding-top: 32px; }
+  .chat-card.dev-mode .ph-stack, .chat-card.dev-mode .ph-note { display: none; }
+  .chat-card.dev-mode .dev-panel { display: flex; }
+  .dev-panel h2 { font-size: 17px; font-weight: 600; }
+  .dev-panel h3 { font-size: 13px; font-weight: 600; margin-top: 6px; color: var(--rail-text-soft); text-transform: uppercase; letter-spacing: .05em; }
+  .dev-panel table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .dev-panel th, .dev-panel td {
+    text-align: left; padding: 8px 10px;
+    border-bottom: 1px solid var(--card-border); vertical-align: top;
+  }
+  .dev-panel th { color: var(--rail-muted); font-weight: 500; font-size: 12px; }
+  .dev-panel code {
+    font-family: var(--mono); font-size: 11.5px;
+    background: var(--rail-hover); padding: 1.5px 5px; border-radius: 4px;
+    white-space: nowrap;
+  }
+  .dev-panel .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; }
+  .dev-panel .tag.done { background: var(--accent-soft); color: var(--accent-ink); }
+  .dev-panel .tag.todo { background: var(--danger-soft); color: var(--danger-ink); }
+  .dev-panel p { font-size: 13px; line-height: 1.65; color: var(--rail-text-soft); text-wrap: pretty; }
+
+  /* ──────────────── 弹出菜单（··· / 右键共用） ──────────────── */
+  .popmenu {
+    position: fixed; z-index: 100;
+    min-width: 148px; padding: 5px;
+    background: var(--pop-bg);
+    border: 1px solid var(--pop-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-pop);
+    opacity: 0; transform: scale(.96) translateY(-3px);
+    transform-origin: top right;
+    transition: opacity .14s var(--ease-out), transform .14s var(--ease-out);
+    pointer-events: none;
+  }
+  .popmenu.show { opacity: 1; transform: none; pointer-events: auto; }
+  .popmenu button {
+    display: flex; align-items: center; gap: 9px;
+    width: 100%; height: 32px; padding: 0 10px;
+    border: none; border-radius: 7px;
+    background: transparent; color: var(--rail-text);
+    font-family: var(--font); font-size: 13.5px; text-align: left;
+    cursor: pointer; transition: background .12s;
+  }
+  .popmenu button:hover { background: var(--rail-hover); }
+  .popmenu button.danger { color: var(--danger); }
+  .popmenu button.danger:hover { background: var(--danger-soft); }
+  .popmenu button svg { flex-shrink: 0; }
+  .popmenu .dev-tag {
+    margin-left: auto; font-family: var(--mono); font-size: 10px;
+    color: var(--rail-muted); display: none;
+  }
+  body.show-dev-tags .popmenu .dev-tag { display: inline; }
+
+  /* ── 变体 D：菜单内二段确认 ──
+     第一次点「删除」不执行、不关菜单，按钮原地变红成「确认删除？」；
+     再点才真删。危险确认发生在同一个像素位置（指针零位移），
+     且列表行全程保持原样——删谁、删完列表长什么样，一直可见。
+     底部细线是 3 秒"引信"：烧完自动复原，防止红态被遗忘。 */
+  .popmenu button.armed { background: var(--danger); color: #fff; position: relative; overflow: hidden; }
+  .popmenu button.armed:hover { background: var(--danger); filter: brightness(1.08); }
+  .popmenu button.armed .dev-tag { color: rgba(255,255,255,.7); }
+  .popmenu button.armed .fuse {
+    position: absolute; left: 0; bottom: 0; height: 2px;
+    width: 100%; background: rgba(255,255,255,.55);
+    animation: fuse 3s linear forwards;
+  }
+  @keyframes fuse { to { width: 0; } }
+
+  /* ── 变体 E：锚定气泡确认 ──
+     菜单关闭后在原锚点弹一个小卡：标题 + 后果 + 双按钮。
+     信息量接近对话框，但不霸屏、指针位移小。 */
+  .confirm-pop {
+    position: fixed; z-index: 150;
+    width: 236px; padding: 14px;
+    background: var(--pop-bg);
+    border: 1px solid var(--pop-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-pop);
+    opacity: 0; transform: scale(.96) translateY(-3px);
+    transform-origin: top right;
+    transition: opacity .14s var(--ease-out), transform .14s var(--ease-out);
+    pointer-events: none;
+  }
+  .confirm-pop.show { opacity: 1; transform: none; pointer-events: auto; }
+  .confirm-pop .cp-title {
+    font-size: 13.5px; font-weight: 600; margin-bottom: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .confirm-pop .cp-body { font-size: 12.5px; line-height: 1.6; color: var(--rail-text-soft); }
+  .confirm-pop .cp-running {
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 8px; padding: 6px 8px;
+    background: var(--accent-soft); border-radius: 7px;
+    font-size: 12px; color: var(--accent-ink);
+  }
+  .confirm-pop .cp-running .dot {
+    width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
+    animation: pulse 1.6s ease-in-out infinite; flex-shrink: 0;
+  }
+  .confirm-pop .cp-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; }
+
+  /* ──────────────── 删除确认对话框（变体 B） ──────────────── */
+  .modal-scrim {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,.32);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none;
+    transition: opacity .2s var(--ease-out);
+  }
+  .modal-scrim.show { opacity: 1; pointer-events: auto; }
+  .modal {
+    width: 360px; max-width: calc(100vw - 48px);
+    background: var(--pop-bg);
+    border-radius: 16px;
+    box-shadow: var(--shadow-pop);
+    padding: 22px;
+    transform: scale(.95) translateY(8px);
+    transition: transform .22s var(--ease-out);
+  }
+  .modal-scrim.show .modal { transform: none; }
+  .modal h3 { font-size: 15.5px; font-weight: 600; margin-bottom: 8px; }
+  .modal p { font-size: 13.5px; line-height: 1.65; color: var(--rail-text-soft); text-wrap: pretty; }
+  .modal p strong { color: var(--rail-text); font-weight: 500; }
+  .modal .running-note {
+    display: flex; align-items: center; gap: 7px;
+    margin-top: 10px; padding: 8px 10px;
+    background: var(--accent-soft); border-radius: 8px;
+    font-size: 12.5px; color: var(--accent-ink);
+  }
+  .modal .running-note .dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+    animation: pulse 1.6s ease-in-out infinite; flex-shrink: 0;
+  }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  .btn {
+    height: 32px; padding: 0 16px;
+    border: none; border-radius: var(--radius-sm);
+    font-family: var(--font); font-size: 13.5px; font-weight: 500;
+    cursor: pointer; transition: filter .15s, background .15s;
+  }
+  .btn.danger { background: var(--danger); color: #fff; }
+  .btn.danger:hover { filter: brightness(1.08); }
+  .btn.neutral { background: var(--rail-hover); color: var(--rail-text); }
+  .btn.neutral:hover { filter: brightness(.97); }
+  body.dark .btn.neutral:hover { filter: brightness(1.2); }
+
+  /* ──────────────── 撤销 toast（变体 C） ──────────────── */
+  .toast {
+    position: fixed; z-index: 300;
+    left: calc(var(--rail-w) / 2); bottom: 22px;
+    transform: translateX(-50%) translateY(80px);
+    display: flex; align-items: center; gap: 12px;
+    max-width: 300px; padding: 10px 12px 10px 14px;
+    background: var(--pop-bg);
+    border: 1px solid var(--pop-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-pop);
+    font-size: 13px; color: var(--rail-text);
+    transition: transform .3s var(--ease-out);
+    overflow: hidden;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast .msg { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .toast .undo-btn {
+    flex-shrink: 0;
+    height: 26px; padding: 0 12px;
+    border: none; border-radius: 7px;
+    background: var(--accent-soft); color: var(--accent-ink);
+    font-family: var(--font); font-size: 12.5px; font-weight: 600;
+    cursor: pointer; transition: background .15s;
+  }
+  .toast .undo-btn:hover { background: rgba(22,163,74,.2); }
+  .toast .timer {
+    position: absolute; left: 0; bottom: 0; height: 2.5px;
+    background: var(--accent);
+    transition: width .1s linear;
+  }
+
+  /* ──────────────── Tweaks 面板 ──────────────── */
+  .tweaks-fab {
+    position: fixed; right: 18px; bottom: 18px; z-index: 400;
+    width: 40px; height: 40px;
+    border: 1px solid var(--pop-border); border-radius: 50%;
+    background: var(--pop-bg); color: var(--rail-text-soft);
+    box-shadow: var(--shadow-pop);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: transform .2s var(--ease-out);
+  }
+  .tweaks-fab:hover { transform: rotate(30deg); }
+  .tweaks {
+    position: fixed; right: 18px; bottom: 68px; z-index: 400;
+    width: 240px; padding: 16px;
+    background: var(--pop-bg);
+    border: 1px solid var(--pop-border);
+    border-radius: 14px;
+    box-shadow: var(--shadow-pop);
+    display: none; flex-direction: column; gap: 14px;
+  }
+  .tweaks.open { display: flex; }
+  .tweaks h4 { font-size: 13px; font-weight: 600; }
+  .tweaks label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--rail-muted); }
+  .tweaks select {
+    height: 30px; padding: 0 8px;
+    border: 1px solid var(--pop-border); border-radius: 7px;
+    background: var(--card-bg); color: var(--rail-text);
+    font-family: var(--font); font-size: 12.5px;
+  }
+  .tweaks .switch-row { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; color: var(--rail-text); }
+  .switch { position: relative; width: 34px; height: 20px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 100%; height: 100%; position: absolute; cursor: pointer; z-index: 1; margin: 0; }
+  .switch .knob {
+    position: absolute; inset: 0; border-radius: 999px;
+    background: rgba(0,0,0,.15); transition: background .2s;
+  }
+  body.dark .switch .knob { background: rgba(255,255,255,.2); }
+  .switch .knob::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%; background: #fff;
+    transition: transform .2s var(--ease-out);
+    box-shadow: 0 1px 2px rgba(0,0,0,.2);
+  }
+  .switch input:checked + .knob { background: var(--accent); }
+  .switch input:checked + .knob::after { transform: translateX(14px); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <!-- ──────────── 左 rail ──────────── -->
+  <aside class="rail">
+    <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+
+    <button class="new-chat" type="button">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      新对话
+    </button>
+
+    <div class="rail-section-label">对话</div>
+
+    <div class="session-scroll" id="sessionScroll">
+      <div class="glider hidden" id="glider"></div>
+      <div id="sessionList"></div>
+    </div>
+
+    <div class="user-bar">
+      <span class="avatar">A</span>
+      <span>Andersen</span>
+      <svg style="margin-left:auto" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </div>
+  </aside>
+
+  <!-- ──────────── 右侧浮动聊天卡（占位） ──────────── -->
+  <main class="content">
+    <div class="chat-card" id="chatCard">
+      <div class="card-header">
+        <div id="cardTitleSlot"></div>
+        <span class="card-ai-note">内容由 AI 生成</span>
+      </div>
+      <div class="card-body">
+      <div class="ph-stack" aria-hidden="true">
+        <div class="ph-line" style="width:42%"></div>
+        <div class="ph-line" style="width:88%"></div>
+        <div class="ph-line" style="width:74%"></div>
+        <div class="ph-line" style="width:60%; margin-top:18px"></div>
+        <div class="ph-line" style="width:82%"></div>
+      </div>
+      <p class="ph-note">右侧内容区（占位）。左侧会话行悬停点「···」或右键可重命名 / 删除；<br>顶部的会话标题也能点击直接改名，两处改的是同一个名字。</p>
+
+      <!-- 工程对接注记（Tweaks → 对接注记 开启后显示） -->
+      <div class="dev-panel">
+        <h2>工程对接说明</h2>
+        <h3>重命名 — 链路已通，只差 shell rail 的 UI</h3>
+        <table>
+          <tr><th>层</th><th>实现</th><th>状态</th></tr>
+          <tr>
+            <td>SDK</td>
+            <td><code>renameSession(sessionId, title, {dir})</code> — 向 jsonl 追加 <code>{"type":"custom-title"}</code> 行，与 CLI 的 <code>/rename</code> 同格式，最后一条生效</td>
+            <td><span class="tag done">已有</span></td>
+          </tr>
+          <tr>
+            <td>main</td>
+            <td><code>sessionStore.ts renameSession()</code> — 手写等价实现，append-only 不与活跃 turn 抢写</td>
+            <td><span class="tag done">已有</span></td>
+          </tr>
+          <tr>
+            <td>IPC</td>
+            <td><code>chatApi.renameSession</code> → <code>register.ts</code> → 广播 <code>sessionListChanged</code></td>
+            <td><span class="tag done">已有</span></td>
+          </tr>
+          <tr>
+            <td>UI</td>
+            <td>两个入口：① ShellSessionList 行内编辑 ② 聊天卡顶部标题在位编辑（本原型均已演示）；ThreadListSidebar 已有同款可参考</td>
+            <td><span class="tag todo">待接</span></td>
+          </tr>
+        </table>
+        <h3>删除 — SDK 有现成 API，IPC 全链路待建</h3>
+        <table>
+          <tr><th>层</th><th>实现</th><th>状态</th></tr>
+          <tr>
+            <td>SDK</td>
+            <td><code>deleteSession(sessionId, {dir})</code> — 删 <code>&lt;id&gt;.jsonl</code> 与 <code>&lt;id&gt;/</code> 子 agent 目录；找不到会 throw</td>
+            <td><span class="tag done">已有</span></td>
+          </tr>
+          <tr>
+            <td>IPC</td>
+            <td>新增四件套：<code>ipc-channels.ts</code> → <code>preload/index.ts</code> → <code>index.d.ts</code> → <code>register.ts</code> handler</td>
+            <td><span class="tag todo">待建</span></td>
+          </tr>
+          <tr>
+            <td>main</td>
+            <td>删除前：若有活跃 runtime 先 <code>closeSessionRuntime</code>；删除后广播 <code>sessionListChanged</code></td>
+            <td><span class="tag todo">待建</span></td>
+          </tr>
+          <tr>
+            <td>renderer</td>
+            <td><code>dropSession()</code> + <code>invalidateHistoryCache()</code>；删的是当前会话时切到相邻行（本原型已演示该行为）</td>
+            <td><span class="tag todo">待建</span></td>
+          </tr>
+        </table>
+        <p>提示：开启本注记后，行菜单里每个动作旁会标出对应的 IPC 调用名。聊天卡顶部的标题点击也能改名——与左侧行内重命名走同一条 <code>chatApi.renameSession</code>，改完靠 <code>sessionListChanged</code> 广播让两处同时刷新。删除不可逆（jsonl 直接从磁盘移除），所以三种确认方案里「先删再撤销」需要 main 侧把删除延迟到撤销窗口结束后才真正落盘。</p>
+      </div>
+      </div><!-- /.card-body -->
+    </div>
+  </main>
+</div>
+
+<!-- 弹出菜单（··· 与右键共用） -->
+<div class="popmenu" id="popmenu" role="menu">
+  <button type="button" data-act="rename" role="menuitem">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+    重命名
+    <span class="dev-tag">renameSession</span>
+  </button>
+  <button type="button" class="danger" data-act="delete" role="menuitem">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg>
+    <span class="txt">删除</span>
+    <span class="dev-tag">deleteSession</span>
+  </button>
+</div>
+
+<!-- 锚定气泡确认（变体 E） -->
+<div class="confirm-pop" id="confirmPop" role="alertdialog" aria-label="删除确认">
+  <div class="cp-title" id="cpTitle"></div>
+  <div class="cp-body">删掉后找不回来。</div>
+  <div class="cp-running" id="cpRunning" style="display:none">
+    <span class="dot"></span>会先停止这个对话。
+  </div>
+  <div class="cp-actions">
+    <button class="btn-mini ghost" type="button" id="cpCancel">取消</button>
+    <button class="btn-mini danger" type="button" id="cpConfirm">删除</button>
+  </div>
+</div>
+
+<!-- 删除确认对话框（变体 B） -->
+<div class="modal-scrim" id="modalScrim">
+  <div class="modal" role="alertdialog" aria-labelledby="modalTitle">
+    <h3 id="modalTitle">删除对话</h3>
+    <p id="modalBody"></p>
+    <div class="running-note" id="modalRunningNote" style="display:none">
+      <span class="dot"></span>这个对话正在运行，删除前会先停止它。
+    </div>
+    <div class="modal-actions">
+      <button class="btn neutral" type="button" id="modalCancel">取消</button>
+      <button class="btn danger" type="button" id="modalConfirm">删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 撤销 toast（变体 C） -->
+<div class="toast" id="toast">
+  <span class="msg" id="toastMsg"></span>
+  <button class="undo-btn" type="button" id="toastUndo">撤销</button>
+  <div class="timer" id="toastTimer"></div>
+</div>
+
+<!-- Tweaks -->
+<button class="tweaks-fab" id="tweaksFab" type="button" aria-label="Tweaks">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+</button>
+<div class="tweaks" id="tweaksPanel">
+  <h4>Tweaks</h4>
+  <label>
+    删除确认方式
+    <select id="twDeleteMode" name="delete-mode">
+      <option value="menu-morph">菜单内二次确认（推荐）</option>
+      <option value="popover">气泡确认（锚在菜单旁）</option>
+      <option value="inline">行内确认（原地不打断）</option>
+      <option value="modal">居中对话框（最稳妥）</option>
+      <option value="undo">先删再撤销（最快）</option>
+    </select>
+  </label>
+  <div class="switch-row">
+    深色模式
+    <span class="switch"><input type="checkbox" id="twDark" name="dark-mode"><span class="knob"></span></span>
+  </div>
+  <div class="switch-row">
+    工程对接注记
+    <span class="switch"><input type="checkbox" id="twDev" name="dev-annotations"><span class="knob"></span></span>
+  </div>
+</div>
+
+<script>
+/* ────────────────────────────────────────────────────────────────
+   数据 — 标题取自真实会话列表截图，含一条「运行中」演示删除
+   运行中会话时的额外提示。
+   ──────────────────────────────────────────────────────────────── */
+let sessions = [
+  { id: 's1', title: '/claude-desktop:ppt-master 复盘 journal 结构', group: '今天', running: false },
+  { id: 's2', title: '/claude-desktop:ppt-master 生成华科介绍页', group: '今天', running: false },
+  { id: 's3', title: '做一个介绍 华中科技大学的 ppt', group: '今天', running: true },
+  { id: 's4', title: '你好', group: '今天', running: false },
+  { id: 's5', title: '使用 ask user qustion 向我提问', group: '今天', running: false },
+  { id: 's6', title: 'Claude Code 2.1.170 发布修复了什么', group: '昨天', running: false },
+  { id: 's7', title: '分析 CSDN Cloud 账户管理服务', group: '昨天', running: false },
+  { id: 's8', title: 'shell 会话列表冷启动高亮首行', group: '7 天内', running: false },
+  { id: 's9', title: 'composer 模型切换交互打磨', group: '7 天内', running: false }
+];
+let activeId = 's1';
+let deleteMode = 'menu-morph';       // menu-morph | popover | inline | modal | undo
+
+const listEl   = document.getElementById('sessionList');
+const scrollEl = document.getElementById('sessionScroll');
+const gliderEl = document.getElementById('glider');
+const popmenu  = document.getElementById('popmenu');
+
+/* ──────────────── 渲染 ──────────────── */
+function render() {
+  listEl.innerHTML = '';
+  let lastGroup = null;
+  for (const s of sessions) {
+    if (s.group !== lastGroup) {
+      lastGroup = s.group;
+      const label = document.createElement('div');
+      label.className = 'group-label';
+      label.textContent = s.group;
+      listEl.appendChild(label);
+    }
+    listEl.appendChild(buildRow(s));
+  }
+  if (sessions.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-hint';
+    empty.textContent = '暂无对话';
+    listEl.appendChild(empty);
+  }
+  renderCardTitle();
+  requestAnimationFrame(positionGlider);
+}
+
+/* ──────────────── 聊天卡顶部标题（点击即改名） ────────────────
+   与左侧行内重命名改同一份数据：任一处提交后都走 render()，
+   两处同时刷新——对应真实实现里 renameSession 成功后
+   sessionListChanged 广播驱动的全局刷新。 */
+let titleEditing = false;
+
+function renderCardTitle() {
+  if (titleEditing) return;   // 编辑中不被列表重绘打断
+  const slot = document.getElementById('cardTitleSlot');
+  const s = sessions.find((x) => x.id === activeId);
+  slot.innerHTML = '';
+
+  const btn = document.createElement('button');
+  btn.className = 'card-title';
+  btn.type = 'button';
+  if (!s) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="label">新对话</span>';
+    slot.appendChild(btn);
+    return;
+  }
+  btn.title = '点击重命名';
+  btn.setAttribute('aria-label', '重命名对话：' + s.title);
+  btn.innerHTML =
+    '<span class="label"></span>' +
+    '<svg class="pen" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+  btn.querySelector('.label').textContent = s.title;
+  btn.addEventListener('click', () => startTitleEdit(s.id));
+  slot.appendChild(btn);
+}
+
+function startTitleEdit(id) {
+  closeInlineStates();
+  const s = sessions.find((x) => x.id === id);
+  if (!s) return;
+  const slot = document.getElementById('cardTitleSlot');
+  titleEditing = true;
+  slot.innerHTML = '';
+
+  const input = document.createElement('input');
+  input.className = 'card-title-input';
+  input.name = 'rename-session-title';
+  input.value = s.title;
+  input.maxLength = 200;
+  input.setAttribute('aria-label', '重命名对话');
+  slot.appendChild(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
+    titleEditing = false;
+    const v = input.value.trim();
+    const changed = commit && v && v !== s.title;
+    if (changed) s.title = v;
+    render();   // 标题 + 左侧行一起刷新
+    if (changed) {
+      document.querySelector('.card-title')?.classList.add('just-renamed');
+      const row = listEl.querySelector('.row[data-id="' + id + '"]');
+      if (row) row.classList.add('just-renamed');
+    }
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  // 点到别处（blur）视为提交——标题编辑是轻量动作，丢弃已输入
+  // 的内容比静默还原更让人意外；Esc 才是明确的"不要了"。
+  input.addEventListener('blur', () => finish(true));
+}
+
+function buildRow(s) {
+  const wrap = document.createElement('div');
+  wrap.className = 'row-wrap';
+  wrap.dataset.id = s.id;
+
+  const row = document.createElement('div');
+  row.className = 'row' + (s.id === activeId ? ' active' : '');
+  row.dataset.id = s.id;
+  row.setAttribute('role', 'button');
+  row.tabIndex = 0;
+  row.title = s.title;
+
+  if (s.running) {
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    row.appendChild(dot);
+  }
+
+  const title = document.createElement('span');
+  title.className = 'title';
+  title.textContent = s.title;
+  row.appendChild(title);
+
+  const more = document.createElement('button');
+  more.className = 'more-btn';
+  more.type = 'button';
+  more.setAttribute('aria-label', '更多操作');
+  more.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>';
+  more.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openMenu(s.id, more.getBoundingClientRect());
+  });
+  row.appendChild(more);
+
+  row.addEventListener('click', () => selectSession(s.id));
+  row.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openMenu(s.id, { left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY, width: 0 });
+  });
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectSession(s.id); }
+  });
+
+  wrap.appendChild(row);
+  return wrap;
+}
+
+function selectSession(id) {
+  if (activeId === id) return;
+  activeId = id;
+  document.querySelectorAll('.row').forEach((r) => {
+    r.classList.toggle('active', r.dataset.id === id);
+  });
+  renderCardTitle();   // 顶部标题跟随当前会话
+  positionGlider();
+}
+
+/* 选中滑块：跟随 active 行的 offsetTop 平滑滑动（对标产品的
+   layoutId glider）。行不存在（删空）时隐藏。 */
+function positionGlider() {
+  const row = listEl.querySelector('.row[data-id="' + activeId + '"]');
+  if (!row) { gliderEl.classList.add('hidden'); return; }
+  gliderEl.classList.remove('hidden');
+  const top = row.closest('.row-wrap').offsetTop;
+  gliderEl.style.transform = 'translateY(' + top + 'px)';
+}
+scrollEl.addEventListener('scroll', () => { /* glider 在滚动流内，无需处理 */ });
+
+/* ──────────────── 弹出菜单 ──────────────── */
+let menuSessionId = null;
+let lastMenuAnchor = null;   // 气泡确认沿用菜单的锚点定位
+
+function openMenu(id, anchor) {
+  closeInlineStates();
+  hideConfirmPop();
+  menuSessionId = id;
+  lastMenuAnchor = anchor;
+  document.querySelectorAll('.row').forEach((r) => r.classList.toggle('menu-open', r.dataset.id === id));
+  const mw = 160;
+  let x = Math.min(anchor.right, window.innerWidth - mw - 8);
+  let y = anchor.bottom + 4;
+  popmenu.style.left = x + 'px';
+  popmenu.style.top = y + 'px';
+  popmenu.classList.add('show');
+  // 菜单若溢出视口底部则翻转到锚点上方
+  requestAnimationFrame(() => {
+    const r = popmenu.getBoundingClientRect();
+    if (r.bottom > window.innerHeight - 8) {
+      popmenu.style.top = (anchor.top - r.height - 4) + 'px';
+    }
+  });
+}
+function closeMenu() {
+  menuSessionId = null;
+  disarmDeleteButton();
+  popmenu.classList.remove('show');
+  document.querySelectorAll('.row.menu-open').forEach((r) => r.classList.remove('menu-open'));
+}
+
+/* 变体 D 的撞针状态：armed = 已点过一次"删除"，等第二次确认。
+   3 秒引信烧完自动复原——红态不该在无人看的菜单里常驻。 */
+let armTimer = null;
+
+function armDeleteButton(btn, running) {
+  btn.classList.add('armed');
+  btn.querySelector('.txt').textContent = running ? '停止并删除？' : '确认删除？';
+  const fuse = document.createElement('span');
+  fuse.className = 'fuse';
+  btn.appendChild(fuse);
+  armTimer = window.setTimeout(disarmDeleteButton, 3000);
+}
+function disarmDeleteButton() {
+  if (armTimer != null) { clearTimeout(armTimer); armTimer = null; }
+  const btn = popmenu.querySelector('button[data-act="delete"]');
+  if (!btn || !btn.classList.contains('armed')) return;
+  btn.classList.remove('armed');
+  btn.querySelector('.txt').textContent = '删除';
+  btn.querySelector('.fuse')?.remove();
+}
+document.addEventListener('mousedown', (e) => {
+  if (!popmenu.contains(e.target)) closeMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeMenu(); cancelInlineConfirm(); cancelRename(); hideModal(); hideConfirmPop(); }
+});
+popmenu.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn || menuSessionId == null) return;
+  const id = menuSessionId;
+  if (btn.dataset.act === 'rename') {
+    closeMenu();
+    startRename(id);
+    return;
+  }
+  // 删除：menu-morph 模式下第一次点只是"上膛"，菜单保持打开
+  if (deleteMode === 'menu-morph' && !btn.classList.contains('armed')) {
+    const s = sessions.find((x) => x.id === id);
+    armDeleteButton(btn, !!s?.running);
+    return;
+  }
+  closeMenu();
+  if (deleteMode === 'menu-morph') performDelete(id);   // 二段已确认
+  else requestDelete(id);
+});
+
+/* ──────────────── 行内重命名 ──────────────── */
+let renamingId = null;
+
+function startRename(id) {
+  closeInlineStates();
+  const s = sessions.find((x) => x.id === id);
+  const row = listEl.querySelector('.row[data-id="' + id + '"]');
+  if (!s || !row) return;
+  renamingId = id;
+  row.classList.add('editing');
+  row.innerHTML = '';
+
+  const input = document.createElement('input');
+  input.className = 'rename-input';
+  input.name = 'rename-session';
+  input.value = s.title;
+  input.maxLength = 200;
+  input.setAttribute('aria-label', '重命名对话');
+
+  const save = document.createElement('button');
+  save.className = 'rename-save';
+  save.type = 'button';
+  save.setAttribute('aria-label', '保存');
+  save.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
+  // mousedown preventDefault：不让 input 先失焦（与产品实现同款细节）
+  save.addEventListener('mousedown', (e) => e.preventDefault());
+  save.addEventListener('click', commit);
+
+  row.appendChild(input);
+  row.appendChild(save);
+  input.focus();
+  input.select();
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+  });
+
+  function commit() {
+    const v = input.value.trim();
+    if (v && v !== s.title) s.title = v;
+    renamingId = null;
+    render();
+    const fresh = listEl.querySelector('.row[data-id="' + id + '"]');
+    if (fresh) fresh.classList.add('just-renamed');
+  }
+}
+function cancelRename() {
+  if (renamingId == null) return;
+  renamingId = null;
+  render();
+}
+// 点击行外任意处取消编辑（mousedown 先于 click，避免顺手切走会话时闪一帧）
+document.addEventListener('mousedown', (e) => {
+  if (renamingId == null) return;
+  const row = listEl.querySelector('.row[data-id="' + renamingId + '"]');
+  if (row && !row.contains(e.target)) cancelRename();
+});
+
+/* ──────────────── 删除：三种确认变体 ──────────────── */
+let confirmingId = null;
+
+function requestDelete(id) {
+  closeInlineStates();
+  if (deleteMode === 'inline') startInlineConfirm(id);
+  else if (deleteMode === 'modal') showModal(id);
+  else if (deleteMode === 'popover') showConfirmPop(id);
+  else if (deleteMode === 'undo') deleteWithUndo(id);
+  else performDelete(id);   // menu-morph 走不到这（菜单内已确认），兜底直删
+}
+
+/* 变体 E：锚定气泡确认 */
+const confirmPop = document.getElementById('confirmPop');
+let popSessionId = null;
+
+function showConfirmPop(id) {
+  const s = sessions.find((x) => x.id === id);
+  if (!s || !lastMenuAnchor) return;
+  popSessionId = id;
+  document.getElementById('cpTitle').textContent = '删除「' + s.title + '」？';
+  document.getElementById('cpRunning').style.display = s.running ? 'flex' : 'none';
+  const pw = 236;
+  confirmPop.style.left = Math.min(lastMenuAnchor.right, window.innerWidth - pw - 8) + 'px';
+  confirmPop.style.top = (lastMenuAnchor.bottom + 4) + 'px';
+  confirmPop.classList.add('show');
+  requestAnimationFrame(() => {
+    const r = confirmPop.getBoundingClientRect();
+    if (r.bottom > window.innerHeight - 8) {
+      confirmPop.style.top = (lastMenuAnchor.top - r.height - 4) + 'px';
+    }
+  });
+}
+function hideConfirmPop() {
+  popSessionId = null;
+  confirmPop.classList.remove('show');
+}
+document.getElementById('cpCancel').addEventListener('click', hideConfirmPop);
+document.getElementById('cpConfirm').addEventListener('click', () => {
+  const id = popSessionId;
+  hideConfirmPop();
+  if (id) performDelete(id);
+});
+document.addEventListener('mousedown', (e) => {
+  if (confirmPop.classList.contains('show') && !confirmPop.contains(e.target)) hideConfirmPop();
+});
+
+/* 变体 A：行内确认 */
+function startInlineConfirm(id) {
+  const s = sessions.find((x) => x.id === id);
+  const row = listEl.querySelector('.row[data-id="' + id + '"]');
+  if (!s || !row) return;
+  confirmingId = id;
+  row.classList.add('confirming');
+  row.innerHTML = '';
+
+  const text = document.createElement('span');
+  text.className = 'confirm-text';
+  // 短句：220px 的 rail 里要同时放下文案 + 两个按钮，长句会被截断
+  text.textContent = s.running ? '停止并删除？' : '确认删除？';
+
+  const actions = document.createElement('div');
+  actions.className = 'confirm-actions';
+  const yes = document.createElement('button');
+  yes.className = 'btn-mini danger';
+  yes.type = 'button';
+  yes.textContent = '删除';
+  yes.addEventListener('click', (e) => { e.stopPropagation(); confirmingId = null; performDelete(id); });
+  const no = document.createElement('button');
+  no.className = 'btn-mini ghost';
+  no.type = 'button';
+  no.textContent = '取消';
+  no.addEventListener('click', (e) => { e.stopPropagation(); cancelInlineConfirm(); });
+  actions.appendChild(yes);
+  actions.appendChild(no);
+
+  row.appendChild(text);
+  row.appendChild(actions);
+}
+function cancelInlineConfirm() {
+  if (confirmingId == null) return;
+  confirmingId = null;
+  render();
+}
+document.addEventListener('mousedown', (e) => {
+  if (confirmingId == null) return;
+  const row = listEl.querySelector('.row[data-id="' + confirmingId + '"]');
+  if (row && !row.contains(e.target)) cancelInlineConfirm();
+});
+
+/* 变体 B：居中对话框 */
+const modalScrim = document.getElementById('modalScrim');
+let modalSessionId = null;
+
+function showModal(id) {
+  const s = sessions.find((x) => x.id === id);
+  if (!s) return;
+  modalSessionId = id;
+  document.getElementById('modalBody').innerHTML =
+    '「<strong></strong>」的聊天记录会从这台电脑上删掉，删掉后找不回来。';
+  document.getElementById('modalBody').querySelector('strong').textContent = s.title;
+  document.getElementById('modalRunningNote').style.display = s.running ? 'flex' : 'none';
+  modalScrim.classList.add('show');
+  document.getElementById('modalConfirm').focus();
+}
+function hideModal() {
+  modalSessionId = null;
+  modalScrim.classList.remove('show');
+}
+document.getElementById('modalCancel').addEventListener('click', hideModal);
+modalScrim.addEventListener('mousedown', (e) => { if (e.target === modalScrim) hideModal(); });
+document.getElementById('modalConfirm').addEventListener('click', () => {
+  const id = modalSessionId;
+  hideModal();
+  if (id) performDelete(id);
+});
+
+/* 变体 C：先删再撤销 */
+const toast = document.getElementById('toast');
+let undoState = null;   // { session, index, timerId, deadline, remaining }
+
+function deleteWithUndo(id) {
+  commitPendingUndo();   // 只保留一条撤销：上一条立即落盘
+  const index = sessions.findIndex((x) => x.id === id);
+  if (index < 0) return;
+  const session = sessions[index];
+  collapseRow(id, () => {
+    sessions.splice(index, 1);
+    handleActiveHandoff(id, index);
+    render();
+    showUndoToast(session, index);
+  });
+}
+function showUndoToast(session, index) {
+  document.getElementById('toastMsg').textContent = '已删除「' + session.title + '」';
+  toast.classList.add('show');
+  undoState = { session, index, remaining: 5000, last: performance.now(), paused: false };
+  tickUndo();
+}
+function tickUndo() {
+  if (!undoState) return;
+  const now = performance.now();
+  if (!undoState.paused) undoState.remaining -= now - undoState.last;
+  undoState.last = now;
+  const pct = Math.max(0, undoState.remaining / 5000) * 100;
+  document.getElementById('toastTimer').style.width = pct + '%';
+  if (undoState.remaining <= 0) { commitPendingUndo(); return; }
+  undoState.raf = requestAnimationFrame(tickUndo);
+}
+// 悬停 toast 时暂停倒计时——给犹豫留时间
+toast.addEventListener('mouseenter', () => { if (undoState) undoState.paused = true; });
+toast.addEventListener('mouseleave', () => { if (undoState) undoState.paused = false; });
+document.getElementById('toastUndo').addEventListener('click', () => {
+  if (!undoState) return;
+  const { session, index } = undoState;
+  cancelAnimationFrame(undoState.raf);
+  undoState = null;
+  toast.classList.remove('show');
+  sessions.splice(Math.min(index, sessions.length), 0, session);
+  render();
+});
+function commitPendingUndo() {
+  if (!undoState) return;
+  cancelAnimationFrame(undoState.raf);
+  undoState = null;      // 真实实现里：此刻才调 chatApi.deleteSession 落盘
+  toast.classList.remove('show');
+}
+
+/* ──────────────── 真正执行删除（A/B 共用） ──────────────── */
+function performDelete(id) {
+  const index = sessions.findIndex((x) => x.id === id);
+  if (index < 0) return;
+  collapseRow(id, () => {
+    sessions.splice(index, 1);
+    handleActiveHandoff(id, index);
+    render();
+  });
+}
+
+/* 行折叠动画：定高 → 0，动画完再动数据 */
+function collapseRow(id, done) {
+  const wrap = listEl.querySelector('.row-wrap[data-id="' + id + '"]');
+  if (!wrap) { done(); return; }
+  gliderEl.classList.add('hidden');    // 折叠期间藏滑块，重渲染后归位
+  wrap.style.height = wrap.offsetHeight + 'px';
+  requestAnimationFrame(() => {
+    wrap.classList.add('collapsing');
+    wrap.style.height = '0px';
+  });
+  wrap.addEventListener('transitionend', function onEnd(e) {
+    if (e.propertyName !== 'height') return;
+    wrap.removeEventListener('transitionend', onEnd);
+    done();
+  });
+  // 兜底：reduce-motion 下 transition 立即结束可能不触发事件
+  setTimeout(() => { if (wrap.isConnected) done(); }, 350);
+}
+
+/* 删掉的是当前选中会话 → 选中态移交相邻行（真实实现：切 runtime 指针） */
+function handleActiveHandoff(deletedId, deletedIndex) {
+  if (activeId !== deletedId) return;
+  const next = sessions[deletedIndex] || sessions[deletedIndex - 1];
+  activeId = next ? next.id : null;
+}
+
+function closeInlineStates() {
+  cancelRename();
+  cancelInlineConfirm();
+}
+
+/* ──────────────── Tweaks ──────────────── */
+const tweaksPanel = document.getElementById('tweaksPanel');
+document.getElementById('tweaksFab').addEventListener('click', () => {
+  tweaksPanel.classList.toggle('open');
+});
+document.getElementById('twDeleteMode').addEventListener('change', (e) => {
+  deleteMode = e.target.value;
+});
+document.getElementById('twDark').addEventListener('change', (e) => {
+  document.body.classList.toggle('dark', e.target.checked);
+});
+document.getElementById('twDev').addEventListener('change', (e) => {
+  document.body.classList.toggle('show-dev-tags', e.target.checked);
+  document.getElementById('chatCard').classList.toggle('dev-mode', e.target.checked);
+});
+
+/* 跟随系统深色 */
+if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+  document.body.classList.add('dark');
+  document.getElementById('twDark').checked = true;
+}
+
+render();
+</script>
+</body>
+</html>

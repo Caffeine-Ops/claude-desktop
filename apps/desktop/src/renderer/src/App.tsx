@@ -6,6 +6,7 @@ import { PermissionBridge } from './components/permissions/PermissionBridge'
 import { SkillsDialog } from './components/dialogs/SkillsDialog'
 import { McpDialog } from './components/dialogs/McpDialog'
 import { LogsDialog } from './components/dialogs/LogsDialog'
+import { SessionSearchDialog } from './components/dialogs/SessionSearchDialog'
 import { useDelayedSessionLoading } from './stores/chat'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
@@ -104,6 +105,10 @@ function App(): React.JSX.Element {
       } else if (action === 'toggle-lang') {
         const cur = useI18n.getState().lang
         useI18n.getState().setLang(cur === 'zh' ? 'en' : 'zh')
+      } else if (action === 'open-search') {
+        // Shell rail's 「搜索对话」 row (or its ⌘K). The dialog lives in
+        // this renderer because the rail's 220px can't host a 580px panel.
+        useDialogStore.getState().openDialog('search')
       }
     })
   }, [])
@@ -267,6 +272,9 @@ function App(): React.JSX.Element {
       <SkillsDialog />
       <McpDialog />
       <LogsDialog />
+      {/* 会话搜索（⌘K / shell rail 的「搜索对话」）。常挂载：它自己订阅
+          dialog store 并在关闭态渲染 null，⌘K 监听因此全程有效。 */}
+      <SessionSearchDialog />
       {/* Non-blocking session-loading toast — shown while main is
           spawning a fusion-code child (new chat / session switch).
           Kept as its own tiny component so the zustand subscription

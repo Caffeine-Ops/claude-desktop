@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>消息队列 · 交互原型 — claude-desktop</title>
+<style>
+/* ────────────────────────────────────────────────────────────────
+ * 设计 token — 逐值取自 packages/design-tokens/tokens.css
+ * （shadcn 风格 HSL 三元组，与 app 内 Tailwind 映射一致）
+ * ──────────────────────────────────────────────────────────────── */
+:root {
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --popover: 0 0% 100%;
+  --secondary: 240 6% 94%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --accent: 211 100% 45%;
+  --border: 240 6% 84%;
+
+  --radius-xs: 5px;
+  --radius-sm: 8px;
+  --radius-md: 11px;
+  --radius-lg: 12px;
+  --radius-pill: 980px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'PingFang SC', 'Helvetica Neue', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+
+  /* 动效基准 — Tweaks 面板的「动画速度」会改这个系数 */
+  --speed: 1;
+}
+html.dark {
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --popover: 36 6% 15%;
+  --secondary: 30 5% 15%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --accent: 210 100% 58%;
+  --border: 49 12% 18%;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  transition: background 0.25s ease, color 0.25s ease;
+}
+button { font-family: inherit; border: none; background: none; cursor: pointer; color: inherit; }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── 布局骨架：单列 thread（模拟 app 主区域，无侧栏） ───────────── */
+.stage { height: 100vh; display: flex; flex-direction: column; align-items: center; }
+.thread-col {
+  width: min(860px, calc(100vw - 48px));
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+}
+.transcript {
+  flex: 1; overflow-y: auto; padding: 48px 8px 16px;
+  display: flex; flex-direction: column; gap: 22px;
+}
+
+/* ── 消息气泡 ─────────────────────────────────────────────────── */
+.msg-user { display: flex; justify-content: flex-end; }
+.msg-user .bubble {
+  max-width: 72%;
+  background: hsl(var(--muted));
+  border-radius: 16px;
+  padding: 10px 16px;
+  font-size: 15px; line-height: 1.6;
+  text-wrap: pretty;
+  animation: bubble-in calc(0.28s * var(--speed)) cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+@keyframes bubble-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+/* 引导消息：气泡下挂一行状态注脚 */
+.steer-note {
+  display: flex; justify-content: flex-end; align-items: center; gap: 6px;
+  margin-top: 6px; font-size: 12px; color: hsl(var(--muted-foreground));
+  animation: fade-in calc(0.4s * var(--speed)) ease both;
+}
+.steer-note svg { width: 12px; height: 12px; }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.msg-assistant { font-size: 15px; line-height: 1.75; max-width: 100%; text-wrap: pretty; }
+.msg-assistant p + p { margin-top: 10px; }
+.msg-assistant .divider-steer {
+  display: flex; align-items: center; gap: 8px;
+  margin: 14px 0 4px; font-size: 12px; color: hsl(var(--accent));
+}
+.divider-steer::after {
+  content: ''; flex: 1; height: 1px;
+  background: linear-gradient(to right, hsl(var(--accent) / 0.35), transparent);
+}
+
+/* streaming 光标 */
+.caret {
+  display: inline-block; width: 2px; height: 1em;
+  background: hsl(var(--foreground)); vertical-align: -0.15em;
+  margin-left: 1px; animation: caret-blink 1s steps(2) infinite;
+}
+@keyframes caret-blink { 50% { opacity: 0; } }
+
+/* 「正在思考」shimmer — 与 app 内 ThinkingSpinner 同款语言 */
+.thinking {
+  font-size: 14px; font-weight: 500; width: fit-content;
+  background: linear-gradient(90deg,
+    hsl(var(--muted-foreground) / 0.55) 20%,
+    hsl(var(--foreground)) 50%,
+    hsl(var(--muted-foreground) / 0.55) 80%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 1.8s linear infinite;
+}
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* ── 队列面板 ─────────────────────────────────────────────────── */
+.queue-wrap {
+  margin: 0 8px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  overflow: hidden;
+  transition: max-height calc(0.3s * var(--speed)) cubic-bezier(0.3, 0.8, 0.3, 1),
+              opacity calc(0.25s * var(--speed)) ease;
+}
+.queue-card {
+  background: hsl(var(--popover) / 0.88);
+  backdrop-filter: blur(20px);
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-bottom: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: 10px 8px 6px;
+  box-shadow: 0 -2px 16px -8px rgb(0 0 0 / 0.08);
+}
+.queue-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 10px 8px; font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+.queue-head .badge {
+  background: hsl(var(--secondary)); border-radius: var(--radius-pill);
+  padding: 1px 8px; font-variant-numeric: tabular-nums;
+}
+.queue-head .spacer { flex: 1; }
+.queue-head .resume-btn {
+  font-size: 12px; color: hsl(var(--accent));
+  padding: 2px 8px; border-radius: var(--radius-sm);
+  transition: background 0.15s ease;
+}
+.queue-head .resume-btn:hover { background: hsl(var(--accent) / 0.1); }
+
+/* 行容器：绝对定位 + top 过渡 → 重排/让位/插入动画统一由 top 驱动。
+ * height = 内容总高（撑出 scrollHeight），maxHeight 由 JSX 按行高 ×4.5 下发
+ * —— 超出后内部滚动，露出半行暗示还有更多 */
+.queue-list {
+  position: relative;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  transition: height calc(0.25s * var(--speed)) cubic-bezier(0.3, 0.8, 0.3, 1);
+}
+.queue-list::-webkit-scrollbar { width: 6px; }
+.queue-list::-webkit-scrollbar-thumb { background: hsl(var(--border) / 0.8); border-radius: 3px; }
+.queue-row {
+  position: absolute; left: 0; right: 0;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  transition: top calc(0.22s * var(--speed)) cubic-bezier(0.3, 0.8, 0.3, 1),
+              opacity calc(0.2s * var(--speed)) ease,
+              transform calc(0.2s * var(--speed)) ease,
+              box-shadow 0.15s ease,
+              background 0.15s ease;
+  cursor: grab;
+  animation: row-in calc(0.26s * var(--speed)) cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+@keyframes row-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+.queue-row:hover { background: hsl(var(--secondary) / 0.7); }
+.queue-row.dragging {
+  transition: opacity 0.2s ease, box-shadow 0.15s ease;  /* top 跟手，不过渡 */
+  background: hsl(var(--popover));
+  box-shadow: 0 8px 24px -6px rgb(0 0 0 / 0.18), 0 0 0 1px hsl(var(--border) / 0.8);
+  transform: scale(1.012);
+  cursor: grabbing; z-index: 10;
+}
+.queue-row.leaving { opacity: 0; transform: translateX(24px) scale(0.97); pointer-events: none; }
+.queue-row.steering { opacity: 0; transform: translateY(-18px) scale(0.96); pointer-events: none; }
+.queue-row.steer-flash { box-shadow: 0 0 0 1.5px hsl(var(--accent) / 0.8); background: hsl(var(--accent) / 0.07); }
+
+.queue-row .q-icon { flex-shrink: 0; color: hsl(var(--muted-foreground)); display: flex; }
+.queue-row .q-text {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  user-select: none; -webkit-user-select: none;
+}
+.queue-row .q-actions {
+  display: flex; align-items: center; gap: 2px;
+  opacity: 0; transform: translateX(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.queue-row:hover .q-actions, .queue-row .q-actions.menu-open { opacity: 1; transform: none; }
+.q-btn {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border-radius: var(--radius-sm);
+  font-size: 12.5px; color: hsl(var(--muted-foreground));
+  transition: background 0.13s ease, color 0.13s ease;
+  white-space: nowrap;
+}
+.q-btn:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+.q-btn.steer:hover { color: hsl(var(--accent)); background: hsl(var(--accent) / 0.1); }
+.q-btn svg { width: 14px; height: 14px; }
+
+/* ⋯ 菜单 */
+.q-menu {
+  position: absolute; right: 8px; top: calc(100% + 2px); z-index: 30;
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 28px -8px rgb(0 0 0 / 0.22);
+  padding: 4px; min-width: 132px;
+  animation: menu-in 0.16s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+@keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
+/* 滚动容器下半区的行：菜单向上弹，避免被 overflow 裁掉 */
+.q-menu.up { top: auto; bottom: calc(100% + 2px); animation-name: menu-in-up; }
+@keyframes menu-in-up { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
+.q-menu button {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 10px; border-radius: var(--radius-sm);
+  font-size: 13px; text-align: left;
+}
+.q-menu button:hover { background: hsl(var(--muted)); }
+.q-menu button svg { width: 14px; height: 14px; color: hsl(var(--muted-foreground)); }
+
+/* ── Composer — 仿 app：popover 面 + 模糊 + 大圆角浮卡 ─────────── */
+.composer-zone { padding: 0 8px 20px; }
+.composer {
+  background: hsl(var(--popover) / 0.9);
+  backdrop-filter: blur(20px);
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 24px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 32px -12px rgb(0 0 0 / 0.12);
+  transition: border-radius calc(0.3s * var(--speed)) ease, box-shadow 0.2s ease;
+}
+.composer.queue-open { border-top-left-radius: 0; border-top-right-radius: 0; }
+.composer:focus-within { box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 32px -10px rgb(0 0 0 / 0.16), 0 0 0 3px hsl(var(--accent) / 0.12); }
+.composer-input {
+  width: 100%; min-height: 52px; max-height: 200px;
+  padding: 16px 20px 4px; font-size: 15px; line-height: 1.6;
+  border: none; outline: none; background: transparent; resize: none;
+  font-family: inherit; color: inherit;
+}
+.composer-input::placeholder { color: hsl(var(--muted-foreground) / 0.7); transition: color 0.2s ease; }
+.composer-toolbar { display: flex; align-items: center; gap: 8px; padding: 4px 12px 12px; }
+.tool-circle {
+  display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 50%;
+  color: hsl(var(--muted-foreground) / 0.85);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.06);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+html.dark .tool-circle { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08); }
+.tool-circle:hover { background: hsl(var(--foreground) / 0.06); color: hsl(var(--foreground)); }
+.tool-chip {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 12px; border-radius: var(--radius-pill);
+  font-size: 13px; color: hsl(var(--muted-foreground));
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.06);
+  transition: background 0.15s ease;
+}
+html.dark .tool-chip { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08); }
+.tool-chip:hover { background: hsl(var(--foreground) / 0.05); }
+.toolbar-spacer { flex: 1; }
+
+/* 入队提示按钮：streaming + 输入非空时浮现 */
+.enqueue-hint {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: var(--radius-pill);
+  font-size: 13px; font-weight: 500;
+  color: hsl(var(--accent));
+  background: hsl(var(--accent) / 0.1);
+  animation: hint-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  transition: background 0.15s ease;
+}
+.enqueue-hint:hover { background: hsl(var(--accent) / 0.16); }
+.enqueue-hint kbd {
+  font-family: inherit; font-size: 11px;
+  background: hsl(var(--accent) / 0.14); border-radius: 4px; padding: 1px 5px;
+}
+@keyframes hint-in { from { opacity: 0; transform: translateX(6px) scale(0.96); } to { opacity: 1; transform: none; } }
+
+/* 发送 / 停止 主按钮（互斥槽位，切换时 scale 弹入） */
+.primary-slot {
+  width: 40px; height: 40px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.1), 0 2px 8px -2px rgb(0 0 0 / 0.18);
+  transition: transform 0.12s ease, filter 0.15s ease, opacity 0.15s ease;
+  animation: slot-in 0.18s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+.primary-slot:hover { filter: brightness(1.12); }
+.primary-slot:active { transform: scale(0.93); }
+.primary-slot:disabled { opacity: 0.35; cursor: not-allowed; }
+.primary-slot .stop-square { width: 11px; height: 11px; border-radius: 2.5px; background: hsl(var(--background)); }
+@keyframes slot-in { from { transform: scale(0.6); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ── Tweaks 浮动面板 ──────────────────────────────────────────── */
+.tweaks-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 100;
+  width: 40px; height: 40px; border-radius: 50%;
+  background: hsl(var(--popover)); border: 1px solid hsl(var(--border));
+  box-shadow: 0 4px 16px -4px rgb(0 0 0 / 0.15);
+  display: flex; align-items: center; justify-content: center;
+  color: hsl(var(--muted-foreground));
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+.tweaks-fab:hover { transform: rotate(30deg); color: hsl(var(--foreground)); }
+.tweaks-panel {
+  position: fixed; right: 20px; bottom: 70px; z-index: 100;
+  width: 250px; background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px -8px rgb(0 0 0 / 0.25);
+  padding: 14px 16px;
+  animation: menu-in 0.18s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+.tweaks-panel h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.tweak-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; font-size: 13px; color: hsl(var(--muted-foreground)); }
+.tweak-row:last-child { margin-bottom: 0; }
+.seg {
+  display: flex; background: hsl(var(--muted)); border-radius: var(--radius-sm); padding: 2px;
+}
+.seg button {
+  padding: 3px 9px; font-size: 12px; border-radius: 6px;
+  color: hsl(var(--muted-foreground));
+  transition: background 0.13s ease, color 0.13s ease;
+}
+.seg button.on { background: hsl(var(--popover)); color: hsl(var(--foreground)); box-shadow: 0 1px 3px rgb(0 0 0 / 0.1); }
+.switch {
+  position: relative; width: 34px; height: 20px; border-radius: 10px;
+  background: hsl(var(--muted)); transition: background 0.18s ease; flex-shrink: 0;
+}
+.switch.on { background: hsl(var(--accent)); }
+.switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%; background: white;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+  transition: transform 0.18s cubic-bezier(0.3, 0.8, 0.3, 1);
+}
+.switch.on::after { transform: translateX(14px); }
+.tweak-action {
+  width: 100%; margin-top: 4px; padding: 7px 0;
+  border-radius: var(--radius-sm); font-size: 13px; font-weight: 500;
+  background: hsl(var(--secondary)); color: hsl(var(--foreground));
+  transition: background 0.15s ease;
+}
+.tweak-action:hover { background: hsl(var(--muted)); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+
+<script type="text/babel">
+const { useState, useRef, useEffect, useCallback, useMemo } = React;
+
+/* ────────────────────────────────────────────────────────────────
+ * 演示脚本内容 — 真实感场景：用户正在让 AI 改设置页
+ * ──────────────────────────────────────────────────────────────── */
+const SCRIPT = {
+  history: [
+    { role: 'user', text: '帮我把设置页的外观选项改成卡片式布局' },
+    { role: 'assistant', paras: [
+      '好的，我把外观设置从下拉列表改成了三张预览卡片：浅色、深色、跟随系统。每张卡片带一个迷你窗口缩略图，选中态用主题色描边。',
+      '改动集中在 SettingsAppearance.tsx，复用了现有的 elevation 和圆角 token，typecheck 通过。'
+    ]},
+    { role: 'user', text: '很好，再给主题色选择器加上实时预览' }
+  ],
+  // 每个新 turn 循环取一段作为 assistant 流式输出
+  turnReplies: [
+    '正在给主题色选择器接实时预览。思路是把色板的 onHover 也接到 appearance store 的临时 override 上，移出时回滚——这样滑过色块就能看到整个窗口换色，点击才真正落库……',
+    '预览窗口的深色切换已经接上了。用的是现有的 .dark class 切换机制，加了 0.25s 的过渡让换肤不闪屏。顺手把高对比模式的边框增强也验证了一遍……',
+    'typecheck 跑完了，两个工程（node + web）都是零报错。顺便发现 appearance.applier.ts 里有个未使用的导入，一起清掉了……',
+    '这一条已经处理完毕。所有改动都遵循了现有的设计 token，没有引入新的颜色值……'
+  ],
+  // 「引导」注入后，assistant 转向输出的内容
+  steerReplies: [
+    '收到，先切换到这个方向：',
+    '明白，优先处理这条：'
+  ]
+};
+
+let _uid = 100;
+const uid = () => ++_uid;
+
+/* ── 小图标（内联 SVG，几何风格贴近 app 内 lucide 线稿） ────────── */
+function IconQueue() {
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 6h12M4 12h16M4 18h10"/><path d="M19 15l3 3-3 3" transform="translate(-1,-11) scale(0.9)"/></svg>;
+}
+function IconSteer() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5v6a4 4 0 0 0 4 4h11"/><path d="m15 11 4 4-4 4"/></svg>;
+}
+function IconTrash() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>;
+}
+function IconDots() {
+  return <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>;
+}
+function IconEdit() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>;
+}
+function IconTop() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V7M6 11l6-6 6 6"/><path d="M5 3h14" opacity="0.5"/></svg>;
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * 队列行 — 绝对定位，top 由父组件计算；拖拽用 Pointer Events
+ * ──────────────────────────────────────────────────────────────── */
+function QueueRow({ item, top, rowH, streaming, dragging, onDragStart, onSteer, onRemove, onEdit, onTop: onMoveTop }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuUp, setMenuUp] = useState(false);
+  const rowRef = useRef(null);
+
+  // 打开 ⋯ 菜单前判断行处在滚动视口的上/下半区，决定弹出方向
+  // （queue-list overflow:auto 会裁掉向下弹出的菜单）
+  const toggleMenu = () => {
+    const row = rowRef.current;
+    const scroller = row?.closest('.queue-list');
+    if (row && scroller) {
+      const r = row.getBoundingClientRect();
+      const s = scroller.getBoundingClientRect();
+      setMenuUp(r.top + r.height / 2 > s.top + s.height / 2);
+    }
+    setMenuOpen(v => !v);
+  };
+
+  // 点外关闭 ⋯ 菜单
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (e) => { if (!rowRef.current?.contains(e.target)) setMenuOpen(false); };
+    window.addEventListener('pointerdown', close);
+    return () => window.removeEventListener('pointerdown', close);
+  }, [menuOpen]);
+
+  const cls = [
+    'queue-row',
+    dragging && 'dragging',
+    item.leaving && 'leaving',
+    item.steering && 'steering',
+    item.flash && 'steer-flash'
+  ].filter(Boolean).join(' ');
+
+  return (
+    <div
+      ref={rowRef}
+      className={cls}
+      style={{ top, height: rowH }}
+      onPointerDown={(e) => {
+        if (e.target.closest('button')) return; // 按钮区不触发拖拽
+        onDragStart(e, item.id);
+      }}
+    >
+      <span className="q-icon"><IconQueue /></span>
+      <span className="q-text">{item.text}</span>
+      <span className={'q-actions' + (menuOpen ? ' menu-open' : '')}>
+        <button className="q-btn steer" title={streaming ? '立即引导当前回合' : '立即发送'}
+                onClick={() => onSteer(item.id)}>
+          <IconSteer />{streaming ? '引导' : '发送'}
+        </button>
+        <button className="q-btn" title="删除" onClick={() => onRemove(item.id)}><IconTrash /></button>
+        <button className="q-btn" title="更多" onClick={toggleMenu}><IconDots /></button>
+      </span>
+      {menuOpen && (
+        <div className={'q-menu' + (menuUp ? ' up' : '')}>
+          <button onClick={() => { setMenuOpen(false); onEdit(item.id); }}><IconEdit />编辑</button>
+          <button onClick={() => { setMenuOpen(false); onMoveTop(item.id); }}><IconTop />移到最前</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * 主应用 — 状态机模拟 ChatEngine 的 turn 生命周期
+ *   idle ──send──▶ streaming ──(计时/手动)──▶ turn 结束
+ *     ▲                                        │ autoDequeue && 队列非空
+ *     └────────────── 自动出队 ◀───────────────┘
+ * ──────────────────────────────────────────────────────────────── */
+function App() {
+  const [dark, setDark] = useState(false);
+  const [speed, setSpeed] = useState(1);          // 动画速度系数
+  const [turnSecs, setTurnSecs] = useState(8);    // 0 = 手动结束
+  const [autoDequeue, setAutoDequeue] = useState(true);
+  const [density, setDensity] = useState('cozy'); // cozy | compact
+  const [tweaksOpen, setTweaksOpen] = useState(false);
+
+  const [messages, setMessages] = useState(() =>
+    SCRIPT.history.map(m => ({ id: uid(), ...m }))
+  );
+  const [queue, setQueue] = useState(() => [
+    { id: uid(), text: '预览窗口要支持深色模式切换' },
+    { id: uid(), text: '完成后跑一遍 typecheck' }
+  ]);
+  const [phase, setPhase] = useState('streaming');       // idle | streaming
+  const [stream, setStream] = useState({ paras: [], typed: '', full: '' });
+  const [paused, setPaused] = useState(false);           // 手动停止后：队列保留、不自动出队
+  const [input, setInput] = useState('');
+
+  const replyIdx = useRef(0);
+  const steerIdx = useRef(0);
+  const timerRef = useRef(null);
+  const deadlineRef = useRef(null);
+  const transcriptRef = useRef(null);
+  const stateRef = useRef({});
+  stateRef.current = { phase, queue, autoDequeue, paused, turnSecs, speed };
+
+  const rowH = density === 'cozy' ? 44 : 38;
+
+  /* — 初始就处在 streaming 态：mount 时启动第一个回合（写入回复文本 + arm 计时），
+   *   否则 full 为空串、timer 未挂，页面会永远停在「正在思考」 — */
+  useEffect(() => { startTurn(); }, []);
+
+  /* — 动画速度写入 CSS 变量 — */
+  useEffect(() => {
+    document.documentElement.style.setProperty('--speed', String(1 / speed));
+  }, [speed]);
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+  }, [dark]);
+
+  /* — 自动跟随滚动（接近底部时才跟随，不打断用户回看） — */
+  useEffect(() => {
+    const el = transcriptRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+    if (near) el.scrollTop = el.scrollHeight;
+  });
+
+  /* — streaming 打字机：逐字输出 stream.full → stream.typed — */
+  useEffect(() => {
+    if (phase !== 'streaming') return;
+    const tick = setInterval(() => {
+      setStream(s => {
+        if (s.typed.length >= s.full.length) return s;
+        const step = Math.max(1, Math.round(2 * stateRef.current.speed));
+        return { ...s, typed: s.full.slice(0, s.typed.length + step) };
+      });
+    }, 30);
+    return () => clearInterval(tick);
+  }, [phase]);
+
+  /* — turn 计时：到时结束回合 — */
+  const armTurnTimer = useCallback(() => {
+    clearTimeout(timerRef.current);
+    const secs = stateRef.current.turnSecs;
+    if (secs <= 0) return; // 手动模式
+    deadlineRef.current = Date.now() + secs * 1000;
+    timerRef.current = setTimeout(() => finishTurn(), secs * 1000);
+  }, []);
+
+  const startTurn = useCallback(() => {
+    const reply = SCRIPT.turnReplies[replyIdx.current % SCRIPT.turnReplies.length];
+    replyIdx.current++;
+    setStream({ paras: [], typed: '', full: reply });
+    setPhase('streaming');
+    setPaused(false);
+    armTurnTimer();
+  }, [armTurnTimer]);
+
+  /* — 回合结束：落盘 streaming 文本 → （可选）自动出队队首 — */
+  const finishTurn = useCallback(() => {
+    clearTimeout(timerRef.current);
+    setStream(s => {
+      setMessages(ms => [...ms, {
+        id: uid(), role: 'assistant',
+        paras: [...s.paras.map(p => p.text), s.full].filter(Boolean),
+        steerMarks: s.paras.map((p, i) => p.steered ? i + 1 : -1).filter(i => i >= 0)
+      }]);
+      return { paras: [], typed: '', full: '' };
+    });
+    setPhase('idle');
+    const st = stateRef.current;
+    if (st.autoDequeue && !st.paused && st.queue.length > 0) {
+      setTimeout(() => dequeueHead(), 500);
+    }
+  }, []);
+
+  /* — 出队队首：行做离场动画 → 变成 user 气泡 → 开新回合 — */
+  const dequeueHead = useCallback(() => {
+    setQueue(q => {
+      if (q.length === 0) return q;
+      const head = q[0];
+      if (head.steering) return q;
+      const next = [{ ...head, steering: true }, ...q.slice(1)];
+      setTimeout(() => {
+        setQueue(q2 => q2.filter(i => i.id !== head.id));
+        setMessages(ms => [...ms, { id: uid(), role: 'user', text: head.text }]);
+        startTurn();
+      }, 220 / stateRef.current.speed);
+      return next;
+    });
+  }, [startTurn]);
+
+  /* — 发送：idle 直发；streaming 入队 — */
+  const submit = useCallback(() => {
+    const text = input.trim();
+    if (!text) return;
+    setInput('');
+    if (stateRef.current.phase === 'streaming') {
+      setQueue(q => [...q, { id: uid(), text }]);
+    } else {
+      setMessages(ms => [...ms, { id: uid(), role: 'user', text }]);
+      startTurn();
+    }
+  }, [input, startTurn]);
+
+  /* — 引导（steer）：streaming 中把该条立即注入当前回合 —
+   *   模拟：user 气泡带「已引导对话」注脚；assistant 在流中另起段落转向。
+   *   idle 时同一按钮退化为「立即发送」。 */
+  const steer = useCallback((id) => {
+    setQueue(q => {
+      const item = q.find(i => i.id === id);
+      if (!item || item.leaving || item.steering) return q;
+      // 先闪一下 accent 边框，再离场
+      const flashed = q.map(i => i.id === id ? { ...i, flash: true } : i);
+      setTimeout(() => {
+        setQueue(q2 => q2.map(i => i.id === id ? { ...i, steering: true, flash: false } : i));
+        setTimeout(() => {
+          setQueue(q3 => q3.filter(i => i.id !== id));
+          if (stateRef.current.phase === 'streaming') {
+            setMessages(ms => [...ms, { id: uid(), role: 'user', text: item.text, steered: true }]);
+            // 当前已输出的内容封段，另起转向段落继续流
+            setStream(s => {
+              const lead = SCRIPT.steerReplies[steerIdx.current % SCRIPT.steerReplies.length];
+              steerIdx.current++;
+              const done = s.typed || s.full ? [...s.paras, { text: s.typed, steered: false }] : s.paras;
+              return {
+                paras: done.map((p, i) => i === done.length - 1 ? { ...p, steered: true } : p),
+                typed: '',
+                full: lead + item.text.replace(/[。！？]$/, '') + '。正在按这个方向继续……'
+              };
+            });
+            armTurnTimer(); // 引导后重置回合计时，演示更从容
+          } else {
+            setMessages(ms => [...ms, { id: uid(), role: 'user', text: item.text }]);
+            startTurn();
+          }
+        }, 200 / stateRef.current.speed);
+      }, 260 / stateRef.current.speed);
+      return flashed;
+    });
+  }, [armTurnTimer, startTurn]);
+
+  const removeItem = useCallback((id) => {
+    setQueue(q => q.map(i => i.id === id ? { ...i, leaving: true } : i));
+    setTimeout(() => setQueue(q => q.filter(i => i.id !== id)), 200 / stateRef.current.speed);
+  }, []);
+
+  const editItem = useCallback((id) => {
+    setQueue(q => {
+      const item = q.find(i => i.id === id);
+      if (item) setInput(item.text);
+      return q.filter(i => i.id !== id);
+    });
+  }, []);
+
+  const moveTop = useCallback((id) => {
+    setQueue(q => {
+      const item = q.find(i => i.id === id);
+      if (!item) return q;
+      return [item, ...q.filter(i => i.id !== id)];
+    });
+  }, []);
+
+  /* — 停止：回合立刻结束，队列保留、不自动出队（paused 态） — */
+  const stopTurn = useCallback(() => {
+    setPaused(true);
+    clearTimeout(timerRef.current);
+    setStream(s => {
+      setMessages(ms => [...ms, {
+        id: uid(), role: 'assistant',
+        paras: [...s.paras.map(p => p.text), s.typed + '（已停止）'].filter(Boolean),
+        steerMarks: []
+      }]);
+      return { paras: [], typed: '', full: '' };
+    });
+    setPhase('idle');
+  }, []);
+
+  /* — 拖拽排序（Pointer Events，行让位由 top transition 驱动） — */
+  const [drag, setDrag] = useState(null); // { id, top }
+  const dragRef = useRef(null);
+
+  const onDragStart = useCallback((e, id) => {
+    const live = stateRef.current.queue.filter(i => !i.leaving && !i.steering);
+    const idx = live.findIndex(i => i.id === id);
+    if (idx < 0) return;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    const scroller = e.currentTarget.closest('.queue-list');
+    dragRef.current = {
+      id, startY: e.clientY, lastY: e.clientY, origIdx: idx, curIdx: idx,
+      count: live.length, scroller,
+      startScrollTop: scroller?.scrollTop ?? 0
+    };
+    setDrag({ id, top: idx * stateRef.current.rowH ?? 0 });
+  }, []);
+
+  // rowH 也塞进 stateRef，拖拽 handler 里可读
+  stateRef.current.rowH = rowH;
+
+  useEffect(() => {
+    // 位移 = 指针位移 + 拖拽期间容器滚动的补偿量，两个来源都会移动拖行
+    const updateDragTop = (clientY) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const h = stateRef.current.rowH;
+      const scrollDelta = (d.scroller?.scrollTop ?? 0) - d.startScrollTop;
+      const raw = d.origIdx * h + (clientY - d.startY) + scrollDelta;
+      const top = Math.max(0, Math.min((d.count - 1) * h, raw));
+      d.curIdx = Math.round(top / h);
+      setDrag({ id: d.id, top });
+    };
+    // 指针悬在滚动容器上下边缘 28px 内时，rAF 循环持续滚动
+    //（指针不动也要能滚，所以不能只依赖 pointermove 触发）
+    let rafId = null;
+    const edgeScrollLoop = () => {
+      const d = dragRef.current;
+      if (!d) { rafId = null; return; }
+      const sc = d.scroller;
+      if (sc && sc.scrollHeight > sc.clientHeight) {
+        const r = sc.getBoundingClientRect();
+        let dy = 0;
+        if (d.lastY < r.top + 28) dy = -5;
+        else if (d.lastY > r.bottom - 28) dy = 5;
+        if (dy !== 0) {
+          sc.scrollTop += dy;
+          updateDragTop(d.lastY);
+        }
+      }
+      rafId = requestAnimationFrame(edgeScrollLoop);
+    };
+    const move = (e) => {
+      const d = dragRef.current;
+      if (!d) return;
+      d.lastY = e.clientY;
+      updateDragTop(e.clientY);
+      if (rafId === null) rafId = requestAnimationFrame(edgeScrollLoop);
+    };
+    const up = () => {
+      if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+      const d = dragRef.current;
+      if (!d) return;
+      dragRef.current = null;
+      setQueue(q => {
+        const live = q.filter(i => !i.leaving && !i.steering);
+        const ghosts = q.filter(i => i.leaving || i.steering);
+        const from = live.findIndex(i => i.id === d.id);
+        if (from < 0) return q;
+        const next = [...live];
+        const [it] = next.splice(from, 1);
+        next.splice(d.curIdx, 0, it);
+        return [...next, ...ghosts];
+      });
+      setDrag(null);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+  }, []);
+
+  /* — 行布局：live 行按视觉顺序算 top；拖行跟手，其余让位 — */
+  const liveItems = queue.filter(i => !i.leaving && !i.steering);
+  const ghostItems = queue.filter(i => i.leaving || i.steering);
+  const layout = useMemo(() => {
+    const map = new Map();
+    if (drag && dragRef.current) {
+      const d = dragRef.current;
+      const others = liveItems.filter(i => i.id !== d.id);
+      others.forEach((it, i) => {
+        const slot = i >= d.curIdx ? i + 1 : i;
+        map.set(it.id, slot * rowH);
+      });
+      map.set(d.id, drag.top);
+    } else {
+      liveItems.forEach((it, i) => map.set(it.id, i * rowH));
+    }
+    ghostItems.forEach(it => {
+      const i = queue.indexOf(it);
+      map.set(it.id, Math.min(i, Math.max(0, liveItems.length - 1)) * rowH);
+    });
+    return map;
+  }, [queue, drag, rowH]);
+
+  const queueVisible = queue.length > 0;
+  const streaming = phase === 'streaming';
+
+  /* — 队列最大可视高度：4.5 行 —— 封顶后内部滚动，露出的半行暗示还有更多 — */
+  const queueMaxH = Math.round(rowH * 4.5);
+  const queueViewH = Math.min(liveItems.length * rowH, queueMaxH);
+
+  /* — 新消息入队时自动滚到底，让刚入队的那条保持可见 — */
+  const queueScrollRef = useRef(null);
+  const prevLiveLen = useRef(liveItems.length);
+  useEffect(() => {
+    const el = queueScrollRef.current;
+    if (el && liveItems.length > prevLiveLen.current) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
+    prevLiveLen.current = liveItems.length;
+  }, [liveItems.length]);
+
+  return (
+    <div className="stage">
+      <div className="thread-col">
+
+        {/* ── 消息流 ── */}
+        <div className="transcript" ref={transcriptRef}>
+          {messages.map(m => m.role === 'user' ? (
+            <div key={m.id}>
+              <div className="msg-user"><div className="bubble">{m.text}</div></div>
+              {m.steered && (
+                <div className="steer-note">
+                  <IconSteer />已引导对话
+                </div>
+              )}
+            </div>
+          ) : (
+            <div key={m.id} className="msg-assistant">
+              {m.paras.map((p, i) => (
+                <React.Fragment key={i}>
+                  {m.steerMarks?.includes(i) && <div className="divider-steer">已引导对话</div>}
+                  <p>{p}</p>
+                </React.Fragment>
+              ))}
+            </div>
+          ))}
+
+          {/* 进行中的回合 */}
+          {streaming && (
+            <div className="msg-assistant">
+              {stream.paras.map((p, i) => (
+                <React.Fragment key={i}>
+                  <p>{p.text}</p>
+                  {p.steered && <div className="divider-steer">已引导对话</div>}
+                </React.Fragment>
+              ))}
+              {stream.typed
+                ? <p>{stream.typed}<span className="caret" /></p>
+                : <div className="thinking">正在思考</div>}
+            </div>
+          )}
+        </div>
+
+        {/* ── 队列面板（composer 上沿融合） ── */}
+        <div className="queue-wrap" style={{
+          maxHeight: queueVisible ? queueViewH + 44 + 16 : 0,
+          opacity: queueVisible ? 1 : 0
+        }}>
+          <div className="queue-card">
+            <div className="queue-head">
+              <span>消息队列</span>
+              <span className="badge">{liveItems.length}</span>
+              <span style={{ opacity: 0.75 }}>拖拽调整顺序 · 悬停查看操作</span>
+              <span className="spacer" />
+              {paused && liveItems.length > 0 && (
+                <button className="resume-btn" onClick={() => dequeueHead()}>已暂停 — 继续队列</button>
+              )}
+            </div>
+            {/* height 撑出内容总高（供滚动），maxHeight 封顶可视区 */}
+            <div className="queue-list" ref={queueScrollRef}
+                 style={{ height: liveItems.length * rowH, maxHeight: queueMaxH }}>
+              {queue.map(item => (
+                <QueueRow
+                  key={item.id}
+                  item={item}
+                  top={layout.get(item.id) ?? 0}
+                  rowH={rowH}
+                  streaming={streaming}
+                  dragging={drag?.id === item.id}
+                  onDragStart={onDragStart}
+                  onSteer={steer}
+                  onRemove={removeItem}
+                  onEdit={editItem}
+                  onTop={moveTop}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Composer ── */}
+        <div className="composer-zone">
+          <div className={'composer' + (queueVisible ? ' queue-open' : '')}>
+            <textarea
+              className="composer-input"
+              id="composer-input"
+              name="composer"
+              aria-label="消息输入框"
+              rows={1}
+              placeholder={streaming ? '正在回复中 — 输入的消息将加入队列…' : '要求后续变更'}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  submit();
+                }
+              }}
+            />
+            <div className="composer-toolbar">
+              <button className="tool-circle" title="添加附件">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+              <button className="tool-chip">通用
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <span className="toolbar-spacer" />
+              {streaming && input.trim() && (
+                <button className="enqueue-hint" onClick={submit}>
+                  加入队列 <kbd>⏎</kbd>
+                </button>
+              )}
+              <button className="tool-chip">自动
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <button className="tool-circle" title="语音输入">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg>
+              </button>
+              {streaming ? (
+                <button key="stop" className="primary-slot" title="停止（队列会保留）" onClick={stopTurn}>
+                  <span className="stop-square" />
+                </button>
+              ) : (
+                <button key="send" className="primary-slot" title="发送" onClick={submit} disabled={!input.trim()}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5"/><path d="m6 11 6-6 6 6"/></svg>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Tweaks ── */}
+      {tweaksOpen && (
+        <div className="tweaks-panel">
+          <h3>Tweaks</h3>
+          <div className="tweak-row">
+            <span>深色模式</span>
+            <button className={'switch' + (dark ? ' on' : '')} onClick={() => setDark(v => !v)} aria-label="深色模式" />
+          </div>
+          <div className="tweak-row">
+            <span>回合时长</span>
+            <div className="seg">
+              {[[5, '5s'], [8, '8s'], [0, '手动']].map(([v, l]) => (
+                <button key={v} className={turnSecs === v ? 'on' : ''} onClick={() => { setTurnSecs(v); if (streaming) { clearTimeout(timerRef.current); if (v > 0) { deadlineRef.current = Date.now() + v * 1000; timerRef.current = setTimeout(() => finishTurn(), v * 1000); } } }}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div className="tweak-row">
+            <span>动画速度</span>
+            <div className="seg">
+              {[[0.5, '0.5×'], [1, '1×'], [2, '2×']].map(([v, l]) => (
+                <button key={v} className={speed === v ? 'on' : ''} onClick={() => setSpeed(v)}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div className="tweak-row">
+            <span>行密度</span>
+            <div className="seg">
+              {[['cozy', '舒适'], ['compact', '紧凑']].map(([v, l]) => (
+                <button key={v} className={density === v ? 'on' : ''} onClick={() => setDensity(v)}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div className="tweak-row">
+            <span>回合后自动出队</span>
+            <button className={'switch' + (autoDequeue ? ' on' : '')} onClick={() => setAutoDequeue(v => !v)} aria-label="自动出队" />
+          </div>
+          {streaming && (
+            <button className="tweak-action" onClick={finishTurn}>结束当前回合（模拟 result）</button>
+          )}
+          {!streaming && (
+            <button className="tweak-action" onClick={() => { setMessages(ms => [...ms, { id: uid(), role: 'user', text: '继续刚才的工作' }]); startTurn(); }}>开始一个新回合</button>
+          )}
+        </div>
+      )}
+      <button className="tweaks-fab" onClick={() => setTweaksOpen(v => !v)} title="Tweaks">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+      </button>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

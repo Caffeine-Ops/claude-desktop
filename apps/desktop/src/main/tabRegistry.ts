@@ -701,6 +701,21 @@ export function getActiveChatWorkspace(): string | null {
 }
 
 /**
+ * The active chat tab's engine, or null when no chat tab is active.
+ * Companion to getActiveChatWorkspace for the shell's session-mutation
+ * handlers (rename/delete): they need the engine to (a) close a live
+ * runtime before unlinking its jsonl and (b) emit `sessionListChanged`,
+ * whose fan-out (wired in createChatTab above) refreshes both the chat
+ * sidebar and the shell list in one shot.
+ */
+export function getActiveChatEngine(): ChatEngine | null {
+  if (activeTabId === null) return null
+  const ctx = tabs.get(activeTabId)
+  if (!ctx || ctx.kind !== 'chat' || !ctx.engine) return null
+  return ctx.engine
+}
+
+/**
  * Forward a session-switch request from the shell's session list to the
  * active chat tab's renderer (mirrors dispatchMenuActionToActiveTab). The
  * chat renderer runs its own onSwitchToThread/onSwitchToNewThread so the

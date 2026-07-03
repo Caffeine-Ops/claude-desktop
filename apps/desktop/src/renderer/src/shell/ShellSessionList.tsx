@@ -1,7 +1,27 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import type { ThreadSummary } from '../../../shared/types'
 import { railGliderSpring, railEaseOut } from './railMotion'
+
+/**
+ * Menu geometry. RAIL_WIDTH mirrors main/tabRegistry's NAV_RAIL_WIDTH and
+ * .shell-chrome's CSS width — the shell renderer spans the WHOLE window but
+ * only the left 220px are visible (the active tab's WebContentsView covers
+ * the rest), so every floating surface here must fit inside x < 220 or it
+ * gets swallowed by the content view. That constraint is also why delete
+ * confirmation lives INSIDE the menu (two-step arm) instead of a dialog:
+ * there is simply no visible real estate for one.
+ */
+const RAIL_WIDTH = 220
+const MENU_WIDTH = 148
+const MENU_EST_HEIGHT = 82
+
+/** Anchor rect for the row menu — from the ··· button or a right-click. */
+interface MenuAnchor {
+  right: number
+  top: number
+  bottom: number
+}
 
 /**
  * ShellSessionList
@@ -153,6 +173,123 @@ export function ShellSessionList(): React.ReactElement {
     void window.tabApi?.switchShellSession(id)
   }, [])
 
+  /* ── 行菜单（···/右键）+ 行内重命名 + 删除 ──
+     One menu at a time; `armed` is the two-step delete's first click.
+     All three states live at the LIST level (not per row) so opening a
+     menu / starting a rename on one row implicitly closes the others. */
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [armed, setArmed] = useState(false)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  // Row currently being deleted, i.e. the IPC round-trip is in flight.
+  // Deleting is NOT instant: main first tears down any live fusion-code
+  // runtime for the session (1–2s of child-process shutdown) before it can
+  // unlink the jsonl. The row shows a dimmed + spinner state for that
+  // window so the click visibly "took" — without it the UI looks dead
+  // until the collapse suddenly plays.
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  // Serialize deletes: a double-click on 确认删除 must not fire the IPC
+  // twice (the second would throw "session not found" after the first won).
+  const deletingRef = useRef(false)
+
+  const openMenu = useCallback((id: string, anchor: MenuAnchor): void => {
+    setRenamingId(null)
+    setArmed(false)
+    // Clamp inside the visible rail (see RAIL_WIDTH above) and flip above
+    // the anchor when the menu would poke past the window bottom.
+    const x = Math.min(anchor.right, RAIL_WIDTH - MENU_WIDTH - 8)
+    let y = anchor.bottom + 4
+    if (y + MENU_EST_HEIGHT > window.innerHeight - 8) {
+      y = anchor.top - MENU_EST_HEIGHT - 4
+    }
+    setMenu({ id, x, y })
+  }, [])
+
+  // Menu dismissal: outside mousedown or Escape. Re-registered per menu
+  // open (deps on `menu`), so a closed menu costs no document listeners.
+  useEffect(() => {
+    if (!menu) return
+    const onDown = (e: MouseEvent): void => {
+      const node = menuRef.current
+      if (node && e.target instanceof Node && node.contains(e.target)) return
+      setMenu(null)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setMenu(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menu])
+
+  // Two-step delete's 3s fuse: an armed 确认删除 that nobody clicks
+  // disarms itself — a forgotten red button must not lie in wait.
+  useEffect(() => {
+    if (!armed) return
+    const t = window.setTimeout(() => setArmed(false), 3000)
+    return () => window.clearTimeout(t)
+  }, [armed])
+
+  const commitRename = useCallback(
+    async (id: string, rawTitle: string): Promise<void> => {
+      setRenamingId(null)
+      const trimmed = rawTitle.trim()
+      const current = sessions.find((s) => s.id === id)
+      if (!trimmed || trimmed === current?.title) return
+      // Optimistic: paint the new title now; the engine's
+      // sessionListChanged broadcast re-pulls the same value from disk.
+      setSessions((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, title: trimmed } : s))
+      )
+      try {
+        await window.tabApi.renameShellSession({ sessionId: id, title: trimmed })
+      } catch (err) {
+        console.warn('[shellSessionList] rename failed', err)
+        // Roll back to disk truth rather than keeping a lie on screen.
+        void refresh()
+        window.alert('重命名失败')
+      }
+    },
+    [sessions, refresh]
+  )
+
+  const deleteSession = useCallback(
+    async (id: string): Promise<void> => {
+      if (deletingRef.current) return
+      deletingRef.current = true
+      setMenu(null)
+      setDeletingId(id)
+      try {
+        await window.tabApi.deleteShellSession({ sessionId: id })
+        // Deleting the highlighted session: hand the selection (and the
+        // chat tab's foreground) to a neighbouring row BEFORE dropping the
+        // row locally, so the clear-on-vanish effect never sees a dangling
+        // activeId. Falls back to null = new chat when the list empties.
+        if (activeId === id) {
+          const idx = sessions.findIndex((s) => s.id === id)
+          const neighbor = sessions[idx + 1]?.id ?? sessions[idx - 1]?.id ?? null
+          setActiveId(neighbor)
+          void window.tabApi.switchShellSession(neighbor)
+        }
+        // Optimistic removal — the row plays its AnimatePresence exit
+        // (collapse) immediately instead of waiting for the broadcast.
+        setSessions((prev) => prev.filter((s) => s.id !== id))
+        orderRef.current = orderRef.current?.filter((x) => x !== id) ?? null
+        bucketTimeRef.current.delete(id)
+      } catch (err) {
+        console.warn('[shellSessionList] delete failed', err)
+        window.alert('删除失败')
+      } finally {
+        deletingRef.current = false
+        setDeletingId(null)
+      }
+    },
+    [activeId, sessions]
+  )
+
   // Group by coarse date bucket using the FROZEN bucket time (not the live
   // mtime) so a resume can't bump a row across buckets. `sessions` is already
   // in stabilised order, so buckets keep that order within each label.
@@ -166,11 +303,14 @@ export function ShellSessionList(): React.ReactElement {
     // stuttery and unresponsive. SessionRow already sets no-drag per row;
     // hoisting it to the container covers the labels and inter-row gaps too.
     //
-    // `-mr-2.5` (−10px) cancels .shell-chrome's right padding (10px) for THIS
-    // column only, so the scrollbar can hug the rail's true right edge instead
-    // of floating 10px inset. The nav rows / footer keep that padding (they
-    // don't get the negative margin). Rows still carry their own px-3, so row
-    // text keeps right breathing room even with the column flush to the edge.
+    // `-mr-2.5` (−10px) pushes THIS column's right edge past the rail's
+    // 220px boundary into the CHAT_CARD_GAP strip (the 8px of shell
+    // background the floating chat card leaves visible — see tabRegistry's
+    // layoutActiveTab). The overlay scrollbar paints at that edge, so it
+    // hugs the gap right beside the chat card instead of floating inset
+    // inside the rail. (.shell-chrome's right padding is 0 nowadays; the
+    // overhang is solely about scrollbar placement.) Row CONTENT doesn't
+    // reach that far — the scroll container below re-insets it with pr-4.
     <div
       className="-mr-2.5 flex min-h-0 flex-1 flex-col"
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -188,24 +328,44 @@ export function ShellSessionList(): React.ReactElement {
           flex column instead of pushing the footer off. overscroll-contain
           stops a scroll that hits the top/bottom from bubbling out and
           dragging the window / over-scrolling the rail.
-          Only LEFT padding (pl-1, no pr): the scrollbar should hug the right
-          edge of the rail, not float inset. Rows keep their own px-3, so row
-          text still has right breathing room even with the container flush. */}
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pl-1 pb-3">
+
+          Horizontal padding is asymmetric ON PURPOSE — both sides work out
+          to the same VISUAL gap for the rows / selection glider:
+            left:  .shell-chrome's 10px gutter + pl-1 (4px)          = 14px
+            right: pr-4 (16px) − the column's -mr-2.5 overhang (10px)
+                   + the 8px CHAT_CARD_GAP the chat card floats over  = 14px
+          i.e. the active row's rounded fill now sits 14px off the chat
+          card's left edge on both sides instead of butting into it.
+
+          The scrollbar is NOT affected by pr: overlay scrollbars paint at
+          the scroll container's border edge (outside the padding box), so
+          it keeps hugging the rail's right edge exactly as before. */}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pl-1 pr-4 pb-3">
         {groups.map((g) => (
           <div key={g.label}>
             <div className="px-3 pb-1 pt-3 text-[12px] font-medium text-[color:var(--rail-muted)] first:pt-1">
               {g.label}
             </div>
-            {g.items.map((s) => (
-              <SessionRow
-                key={s.id}
-                title={s.title}
-                active={s.id === activeId}
-                animateIn={entranceArmed}
-                onClick={() => onClick(s.id)}
-              />
-            ))}
+            {/* AnimatePresence per group: a deleted row plays its collapse
+                exit in place. initial={false} keeps the cold-start batch
+                from animating (same intent as entranceArmed). */}
+            <AnimatePresence initial={false}>
+              {g.items.map((s) => (
+                <SessionRow
+                  key={s.id}
+                  title={s.title}
+                  active={s.id === activeId}
+                  animateIn={entranceArmed}
+                  renaming={renamingId === s.id}
+                  menuOpen={menu?.id === s.id}
+                  deleting={deletingId === s.id}
+                  onClick={() => onClick(s.id)}
+                  onOpenMenu={(anchor) => openMenu(s.id, anchor)}
+                  onCommitRename={(title) => void commitRename(s.id, title)}
+                  onCancelRename={() => setRenamingId(null)}
+                />
+              ))}
+            </AnimatePresence>
           </div>
         ))}
         {sessions.length === 0 ? (
@@ -214,6 +374,81 @@ export function ShellSessionList(): React.ReactElement {
           </div>
         ) : null}
       </div>
+
+      {/* Row menu — fixed-positioned INSIDE the no-drag column (so it
+          can't act as a window-drag zone) but OUTSIDE the scroll container
+          (so overflow can't clip it; `fixed` also detaches it from any
+          row transform motion leaves behind). Two items: 重命名 opens the
+          in-row editor; 删除 is two-step — first click arms it (red
+          确认删除 with a 3s fuse line), second click actually deletes. */}
+      <AnimatePresence>
+        {menu ? (
+          <motion.div
+            ref={menuRef}
+            key="session-row-menu"
+            role="menu"
+            initial={{ opacity: 0, scale: 0.96, y: -3 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: -3 }}
+            transition={{ duration: 0.14, ease: railEaseOut }}
+            style={
+              {
+                left: menu.x,
+                top: menu.y,
+                width: MENU_WIDTH,
+                transformOrigin: 'top right',
+                WebkitAppRegion: 'no-drag'
+              } as React.CSSProperties
+            }
+            className="fixed z-50 rounded-xl border border-black/10 bg-white p-[5px] shadow-[0_2px_6px_rgba(0,0,0,.06),0_12px_32px_rgba(0,0,0,.12)] dark:border-white/10 dark:bg-[#333230] dark:shadow-[0_2px_6px_rgba(0,0,0,.4),0_16px_40px_rgba(0,0,0,.5)]"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="flex h-8 w-full items-center gap-2 rounded-[7px] px-2.5 text-[13px] text-[color:var(--rail-text)] transition-colors hover:bg-[var(--rail-hover)]"
+              onClick={() => {
+                const id = menu.id
+                setMenu(null)
+                setRenamingId(id)
+              }}
+            >
+              <PencilIcon />
+              重命名
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className={
+                'relative flex h-8 w-full items-center gap-2 overflow-hidden rounded-[7px] px-2.5 text-[13px] transition-colors ' +
+                (armed
+                  ? 'bg-red-600 text-white hover:bg-red-500'
+                  : 'text-red-600 hover:bg-red-600/10 dark:text-red-400')
+              }
+              onClick={() => {
+                if (!armed) {
+                  setArmed(true)
+                  return
+                }
+                void deleteSession(menu.id)
+              }}
+            >
+              <TrashIcon />
+              {armed ? '确认删除？' : '删除'}
+              {/* 3s fuse — matches the disarm timeout above so the visual
+                  and the behavior can't drift apart by more than a frame. */}
+              {armed ? (
+                <motion.span
+                  aria-hidden
+                  className="absolute bottom-0 left-0 h-[2px] bg-white/55"
+                  initial={{ width: '100%' }}
+                  animate={{ width: 0 }}
+                  transition={{ duration: 3, ease: 'linear' }}
+                />
+              ) : null}
+            </button>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   )
 }
@@ -222,33 +457,96 @@ function SessionRow({
   title,
   active,
   animateIn,
-  onClick
+  renaming,
+  menuOpen,
+  deleting,
+  onClick,
+  onOpenMenu,
+  onCommitRename,
+  onCancelRename
 }: {
   title: string
   active: boolean
   /** Play a light fade-in on mount (suppressed for the cold-start paint). */
   animateIn: boolean
+  /** This row is showing the in-row rename editor. */
+  renaming: boolean
+  /** This row's ··· menu is open (keeps the button visible sans hover). */
+  menuOpen: boolean
+  /** Delete IPC in flight: dim the row, swap ··· for a spinner, no clicks. */
+  deleting: boolean
   onClick: () => void
+  onOpenMenu: (anchor: MenuAnchor) => void
+  onCommitRename: (title: string) => void
+  onCancelRename: () => void
 }): React.ReactElement {
+  const rowRef = useRef<HTMLDivElement | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const [draft, setDraft] = useState(title)
+
+  // Reset + focus the editor each time this row enters rename mode. The
+  // draft deliberately re-seeds from the CURRENT title (a rename elsewhere
+  // must not leave a stale draft), and select() lets the user type over.
+  useEffect(() => {
+    if (!renaming) return
+    setDraft(title)
+    const t = window.setTimeout(() => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }, 0)
+    return () => window.clearTimeout(t)
+  }, [renaming, title])
+
+  // Outside-mousedown cancels the rename (mousedown, not click, so the
+  // cancel lands before a sibling row's switch resolves — same rationale
+  // as ThreadListSidebar's editor).
+  useEffect(() => {
+    if (!renaming) return
+    const onDown = (e: MouseEvent): void => {
+      const node = rowRef.current
+      if (node && e.target instanceof Node && node.contains(e.target)) return
+      onCancelRename()
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [renaming, onCancelRename])
+
   return (
     <motion.div
+      ref={rowRef}
       role="button"
       tabIndex={0}
       // Entrance: appear-only, no theatrics — expo-out, small offset. List
       // membership changes shouldn't out-act the selection glider.
       initial={animateIn ? { opacity: 0, y: -6 } : false}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, ease: railEaseOut }}
-      onClick={onClick}
+      // Delete: collapse in place (height → 0 reflows the rows below in the
+      // same gesture). overflow-hidden on the row clips the content while it
+      // shrinks; nothing inside paints past the row box normally.
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.22, ease: railEaseOut }}
+      onClick={renaming || deleting ? undefined : onClick}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        if (deleting) return
+        onOpenMenu({ right: e.clientX, top: e.clientY, bottom: e.clientY })
+      }}
       onKeyDown={(e) => {
+        if (renaming || deleting) return
         if (e.key === 'Enter' || e.key === ' ') onClick()
       }}
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      title={title}
+      title={renaming ? undefined : title}
       className={
         // `relative isolate` hosts the glider on -z-[1]: above the row's own
         // hover wash, below the title text — same layering trick as TabRow.
-        'relative isolate flex h-9 cursor-pointer select-none items-center rounded-lg px-3 text-[14px] leading-none transition-colors ' +
+        // `group/srow` scopes the ···-reveal to THIS row's hover.
+        'group/srow relative isolate flex h-9 select-none items-center overflow-hidden rounded-lg px-3 text-[14px] leading-none transition-colors ' +
+        (deleting
+          ? 'pointer-events-none opacity-50 '
+          : renaming
+            ? 'bg-[var(--rail-hover)] '
+            : 'cursor-pointer ') +
         // Active row keeps accent TEXT only; the accent-tinted fill moved into
         // the shared-layout glider below so selection SLIDES between rows
         // (spring FLIP, interruptible) instead of blinking two backgrounds.
@@ -272,8 +570,139 @@ function SessionRow({
           className="absolute inset-0 -z-[1] rounded-lg bg-[hsl(var(--accent)/0.12)]"
         />
       ) : null}
-      <span className="min-w-0 flex-1 truncate">{title}</span>
+      {renaming ? (
+        // ── In-row rename editor ──
+        // Mirrors ThreadListSidebar's editor contract: Enter/✓ commits,
+        // Esc/outside-click cancels, save's mousedown is swallowed so the
+        // input doesn't blur before the click lands.
+        <>
+          <input
+            ref={inputRef}
+            value={draft}
+            maxLength={200}
+            name="rename-shell-session"
+            aria-label="重命名对话"
+            onChange={(e) => setDraft(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                onCommitRename(draft)
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                onCancelRename()
+              }
+            }}
+            className="h-[26px] min-w-0 flex-1 rounded-md border-[1.5px] border-[hsl(var(--accent))] bg-white px-2 text-[13px] text-[color:var(--rail-text)] outline-none dark:bg-[#333230]"
+          />
+          <button
+            type="button"
+            aria-label="保存名称"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => {
+              e.stopPropagation()
+              onCommitRename(draft)
+            }}
+            className="-mr-1.5 flex size-6 shrink-0 items-center justify-center rounded-md text-[color:var(--rail-accent-ink)] transition-colors hover:bg-[var(--rail-accent-soft)]"
+          >
+            <CheckIcon />
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="min-w-0 flex-1 truncate">{title}</span>
+          {deleting ? (
+            // Delete in flight — the ···'s slot becomes a spinner so the
+            // row reads as "working on it" for the 1–2s runtime-teardown
+            // window before the collapse plays.
+            <span
+              aria-label="删除中"
+              className="-mr-1.5 flex size-6 shrink-0 items-center justify-center text-[color:var(--rail-muted)]"
+            >
+              <SpinnerIcon />
+            </span>
+          ) : (
+            /* ··· row actions — sits in flex flow (not absolute) so the title
+               never slides under it; invisible until hover / menu-open but
+               always occupying its 24px, keeping the row metrics stable. */
+            <button
+              type="button"
+              aria-label="更多操作"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenMenu(e.currentTarget.getBoundingClientRect())
+              }}
+              className={
+                '-mr-1.5 flex size-6 shrink-0 items-center justify-center rounded-md text-[color:var(--rail-muted)] transition-opacity hover:bg-black/[0.07] hover:text-[color:var(--rail-text)] focus-visible:opacity-100 dark:hover:bg-white/10 ' +
+                (menuOpen
+                  ? 'bg-black/[0.07] text-[color:var(--rail-text)] opacity-100 dark:bg-white/10'
+                  : 'opacity-0 group-hover/srow:opacity-100')
+              }
+            >
+              <MoreIcon />
+            </button>
+          )}
+        </>
+      )}
     </motion.div>
+  )
+}
+
+/* ─────────────────── Tiny icon set ─────────────────── */
+
+function MoreIcon(): React.ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <circle cx="5" cy="12" r="1.7" />
+      <circle cx="12" cy="12" r="1.7" />
+      <circle cx="19" cy="12" r="1.7" />
+    </svg>
+  )
+}
+
+function PencilIcon(): React.ReactElement {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+    </svg>
+  )
+}
+
+function TrashIcon(): React.ReactElement {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  )
+}
+
+function CheckIcon(): React.ReactElement {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M5 12l5 5L20 7" />
+    </svg>
+  )
+}
+
+/** 3/4-arc spinner; tailwind's animate-spin does the rotation (pure CSS,
+ *  no per-frame JS). Sized to sit in the ··· button's 24px slot. */
+function SpinnerIcon(): React.ReactElement {
+  return (
+    <svg
+      className="animate-spin"
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      aria-hidden
+    >
+      <path d="M12 3a9 9 0 1 0 9 9" />
+    </svg>
   )
 }
 

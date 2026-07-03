@@ -13,10 +13,11 @@
  * so this stays compatible with upstream behavior. Append-only means we
  * never race fusion-code's writes to the active turn.
  */
-import { appendFile, readdir, stat } from 'node:fs/promises'
+import { appendFile, readdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import {
+  deleteSession as sdkDeleteSession,
   getSessionMessages,
   listSessions as sdkListSessions,
   type SDKSessionInfo,
@@ -113,6 +114,228 @@ export async function renameSession(
   await appendFile(filePath, line, 'utf8')
 }
 
+/* ─────────────────── Content search ─────────────────── */
+
+// Caps for searchSessionContent. Generous for a chat workspace (tens of
+// sessions, MB-scale transcripts) while bounding the worst case — a
+// pathological workspace can't stall the IPC or ship megabytes of hits.
+const SEARCH_MAX_SESSIONS = 30 // sessions returned per query
+const SEARCH_MAX_FILE_BYTES = 32 * 1024 * 1024 // skip absurdly large transcripts
+const SEARCH_SNIPPET_BEFORE = 16 // chars of context before the hit
+const SEARCH_SNIPPET_AFTER = 40 // chars after (incl. the hit itself)
+
+/** One searchable message extracted from a transcript. `lower` is the
+ *  pre-computed lowercase copy so per-query matching allocates nothing. */
+interface SearchableText {
+  who: 'user' | 'assistant'
+  text: string
+  lower: string
+}
+
+/**
+ * mtime-keyed extraction cache. Reading + JSON-parsing every jsonl on every
+ * debounced keystroke pinned the MAIN process for hundreds of ms (all IPC —
+ * chat streaming included — queues behind it: the whole app visibly froze
+ * while typing in the search box). Transcripts are append-only, so a file's
+ * extracted text is valid until its mtime changes; after the first pass a
+ * query is a pure in-memory substring scan. Entries for deleted sessions
+ * are pruned at the end of each search.
+ */
+const transcriptCache = new Map<
+  string,
+  { mtimeMs: number; texts: SearchableText[] }
+>()
+
+/** Let the event loop breathe between per-file extractions — the parse of
+ *  one multi-MB file is tolerable (~tens of ms); an uninterrupted run over
+ *  a whole workspace is what froze the app. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
+/**
+ * Extract the HUMAN-VISIBLE texts of one transcript (mirrors what
+ * convertSdkMessages would render):
+ *   - user messages whose content is a plain string NOT starting with '<'
+ *     (excludes slash-command XML skeletons and <task-notification> spam)
+ *   - text blocks inside user/assistant content arrays (tool_use inputs and
+ *     tool_result dumps are deliberately NOT searched — hitting a grep's raw
+ *     output would drown real conversation hits)
+ */
+async function extractSearchableTexts(path: string): Promise<SearchableText[]> {
+  let raw: string
+  try {
+    raw = await readFile(path, 'utf8')
+  } catch {
+    return []
+  }
+  const out: SearchableText[] = []
+  for (const line of raw.split('\n')) {
+    if (!line) continue
+    let entry: unknown
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (!isRecord(entry)) continue
+    const type = entry.type
+    if (type !== 'user' && type !== 'assistant') continue
+    const who = type as 'user' | 'assistant'
+    const content = isRecord(entry.message) ? entry.message.content : undefined
+
+    if (typeof content === 'string') {
+      // Plain-string user turns starting with '<' are CLI bookkeeping
+      // (command XML / task-notification), not something the human said.
+      if (who === 'user' && content.trimStart().startsWith('<')) continue
+      out.push({ who, text: content, lower: content.toLowerCase() })
+    } else if (Array.isArray(content)) {
+      for (const block of content) {
+        if (isRecord(block) && block.type === 'text' && typeof block.text === 'string') {
+          out.push({ who, text: block.text, lower: block.text.toLowerCase() })
+        }
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * Full-text search across a workspace's session transcripts.
+ *
+ * Hot path is memory-only: per-file extraction results live in
+ * `transcriptCache` (see above) keyed by mtime, so a query only pays file
+ * IO/parse for transcripts that changed since the last search. An EMPTY
+ * query returns `[]` but still warms the cache — the search dialog fires
+ * one on open so the first real keystroke doesn't foot the whole
+ * extraction bill.
+ *
+ * Returns one entry per matching session: an excerpt around the FIRST hit
+ * (windowed server-side so a hit inside a huge message doesn't ship whole)
+ * plus the total hit count. Order follows file mtime, newest first, so the
+ * dialog's result order roughly matches the sidebar's.
+ */
+export async function searchSessionContent(
+  workspaceDir: string | null,
+  query: string
+): Promise<
+  Array<{
+    sessionId: string
+    snippet: string
+    who: 'user' | 'assistant'
+    hitCount: number
+  }>
+> {
+  if (!workspaceDir) return []
+  const q = query.trim().toLowerCase()
+
+  // Collect candidate files (sessionId + mtime), newest first.
+  const projectDirs = await candidateProjectDirs(workspaceDir)
+  const files: Array<{ sessionId: string; path: string; mtime: number }> = []
+  for (const dir of projectDirs) {
+    let entries: string[]
+    try {
+      entries = await readdir(dir)
+    } catch {
+      continue
+    }
+    for (const name of entries) {
+      if (!name.endsWith('.jsonl')) continue
+      const path = join(dir, name)
+      try {
+        const s = await stat(path)
+        if (!s.isFile() || s.size > SEARCH_MAX_FILE_BYTES) continue
+        files.push({ sessionId: name.slice(0, -6), path, mtime: s.mtimeMs })
+      } catch {
+        // Vanished mid-scan (deleted session) — skip.
+      }
+    }
+  }
+  files.sort((a, b) => b.mtime - a.mtime)
+
+  const out: Array<{
+    sessionId: string
+    snippet: string
+    who: 'user' | 'assistant'
+    hitCount: number
+  }> = []
+
+  for (const f of files) {
+    if (q && out.length >= SEARCH_MAX_SESSIONS) break
+
+    let cached = transcriptCache.get(f.path)
+    if (!cached || cached.mtimeMs !== f.mtime) {
+      cached = { mtimeMs: f.mtime, texts: await extractSearchableTexts(f.path) }
+      transcriptCache.set(f.path, cached)
+      await yieldToEventLoop()
+    }
+    if (!q) continue // warm-only pass
+
+    let hitCount = 0
+    let first: { snippet: string; who: 'user' | 'assistant' } | null = null
+    for (const t of cached.texts) {
+      const idx = t.lower.indexOf(q)
+      if (idx < 0) continue
+      hitCount++
+      if (!first) {
+        const start = Math.max(0, idx - SEARCH_SNIPPET_BEFORE)
+        const end = Math.min(t.text.length, idx + q.length + SEARCH_SNIPPET_AFTER)
+        first = {
+          who: t.who,
+          snippet:
+            (start > 0 ? '…' : '') +
+            t.text.slice(start, end).replace(/\s+/g, ' ') +
+            (end < t.text.length ? '…' : '')
+        }
+      }
+    }
+
+    if (first && hitCount > 0) {
+      out.push({
+        sessionId: f.sessionId,
+        snippet: first.snippet,
+        who: first.who,
+        hitCount
+      })
+    }
+  }
+
+  // Prune cache entries whose files vanished (deleted sessions) so the
+  // cache tracks the workspace instead of growing without bound. Scoped to
+  // THIS workspace's project dirs — the cache is module-global and other
+  // tabs' workspaces keep their entries.
+  const live = new Set(files.map((f) => f.path))
+  for (const path of transcriptCache.keys()) {
+    if (live.has(path)) continue
+    if (projectDirs.some((dir) => path.startsWith(dir + sep))) {
+      transcriptCache.delete(path)
+    }
+  }
+
+  return out
+}
+
+/**
+ * Delete a session permanently. Wraps the SDK's `deleteSession`, which
+ * removes both `<sessionId>.jsonl` and the `<sessionId>/` subagent-
+ * transcript directory from the projects dir — the same two artifacts a
+ * session leaves on disk. Throws when the session isn't found (surfaced
+ * to the renderer so its confirm UI can report instead of silently
+ * "succeeding" on a stale row).
+ *
+ * IRREVERSIBLE. Callers must ensure any live runtime for this session is
+ * closed first (see the SHELL_SESSION_DELETE handler) — a fusion-code
+ * child appending to an unlinked file would silently resurrect nothing
+ * but still hold the fd open.
+ */
+export async function deleteSessionFromDisk(
+  sessionId: string,
+  workspaceDir: string | null
+): Promise<void> {
+  if (!workspaceDir) throw new Error('Workspace not set')
+  await sdkDeleteSession(sessionId, { dir: workspaceDir })
+}
+
 /**
  * Locate the on-disk jsonl for a sessionId under a given workspace.
  *
@@ -129,14 +352,34 @@ async function findSessionJsonl(
   workspaceDir: string,
   sessionId: string
 ): Promise<string | null> {
+  for (const dir of await candidateProjectDirs(workspaceDir)) {
+    const candidate = join(dir, `${sessionId}.jsonl`)
+    if (await fileExists(candidate)) return candidate
+  }
+  return null
+}
+
+/**
+ * All plausible `~/.claude/projects/<name>` dirs for a workspace, most
+ * likely first. The SDK derives the dir name by replacing every non-alnum
+ * char with `-`; names over 200 chars get truncated + hash-suffixed, and a
+ * workspace opened under a sibling worktree can land in a different
+ * long-name dir — hence the prefix scan after the direct match. Shared by
+ * findSessionJsonl (single-file lookup) and searchSessionContent (whole-
+ * project scan) so the two can't drift on the sanitize rules.
+ */
+async function candidateProjectDirs(workspaceDir: string): Promise<string[]> {
   const projectsDir = join(homedir(), '.claude', 'projects')
   const sanitized = workspaceDir.replace(/[^a-zA-Z0-9]/g, '-')
+  const out: string[] = []
 
   if (sanitized.length <= PROJECT_NAME_MAX_LEN) {
-    const direct = join(projectsDir, sanitized, `${sessionId}.jsonl`)
-    if (await fileExists(direct)) return direct
-    // Fall through — workspace might have been opened under a sibling
-    // worktree that hashes to a different prefix. Cheap to try the scan.
+    const direct = join(projectsDir, sanitized)
+    try {
+      if ((await stat(direct)).isDirectory()) out.push(direct)
+    } catch {
+      // No direct dir — fall through to the prefix scan.
+    }
   }
 
   const prefix = sanitized.slice(0, PROJECT_NAME_MAX_LEN)
@@ -146,13 +389,13 @@ async function findSessionJsonl(
       if (!e.isDirectory()) continue
       // Either an exact short-name match or a "<prefix>-<hash>" long-name match.
       if (e.name !== sanitized && !e.name.startsWith(`${prefix}-`)) continue
-      const candidate = join(projectsDir, e.name, `${sessionId}.jsonl`)
-      if (await fileExists(candidate)) return candidate
+      const dir = join(projectsDir, e.name)
+      if (!out.includes(dir)) out.push(dir)
     }
   } catch (err) {
-    console.warn(`${TAG} findSessionJsonl scan failed:`, err)
+    console.warn(`${TAG} candidateProjectDirs scan failed:`, err)
   }
-  return null
+  return out
 }
 
 async function fileExists(path: string): Promise<boolean> {

@@ -54,6 +54,27 @@ export default function TabBar(): React.ReactElement {
     void window.tabApi?.switchTab(id)
   }
 
+  // 搜索对话 — the dialog itself lives in the ACTIVE CHAT TAB's renderer
+  // (this rail is only 220px of visible surface; a 580px Spotlight panel
+  // physically can't render here). The row just fires the forwarded menu
+  // action; main routes it to the chat tab, which owns the UI. ⌘K here
+  // covers the case where FOCUS is on the shell webContents — the chat
+  // renderer has its own listener for the (far more common) case where
+  // focus sits in the composer.
+  const onOpenSearch = (): void => {
+    void window.tabApi?.triggerMenuAction('open-search')
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        onOpenSearch()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
   // The chat tab is the one whose title is NOT "工作画布". "新对话" routes
   // The chat tab is the one whose title is NOT "工作画布".
   const chatTab = tabs.find((t) => t.title !== '工作画布')
@@ -108,6 +129,16 @@ export default function TabBar(): React.ReactElement {
         icon={<GearGlyph />}
         onClick={() => void window.tabApi?.openSettingsWindow()}
       />
+      <NavActionRow
+        label="搜索对话"
+        icon={<SearchGlyph />}
+        trailing={
+          <span className="rounded border border-black/10 px-1 py-px font-mono text-[10px] text-[color:var(--rail-muted)] dark:border-white/15">
+            ⌘K
+          </span>
+        }
+        onClick={onOpenSearch}
+      />
     </>
   )
 }
@@ -120,10 +151,13 @@ export default function TabBar(): React.ReactElement {
 function NavActionRow({
   label,
   icon,
+  trailing,
   onClick
 }: {
   label: string
   icon: React.ReactNode
+  /** Right-edge adornment, e.g. the ⌘K shortcut hint on 搜索对话. */
+  trailing?: React.ReactNode
   onClick: () => void
 }): React.ReactElement {
   return (
@@ -138,7 +172,17 @@ function NavActionRow({
         {icon}
       </span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
+      {trailing ? <span className="shrink-0">{trailing}</span> : null}
     </button>
+  )
+}
+
+function SearchGlyph(): React.ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.6" />
+      <path d="m21 21-4.35-4.35" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
   )
 }
 

@@ -160,6 +160,16 @@ export const IPC_CHANNELS = {
    */
   SESSION_LIST_ACTIVE_RUNTIMES: 'session:list-active-runtimes',
   /**
+   * Chat renderer → main (invoke). Full-text search across the tab
+   * workspace's session transcripts (message content, not titles — title
+   * matching is a cheap renderer-side filter over listSessions). main
+   * scans the project dir's jsonl files and returns per-session excerpt
+   * hits (SessionSearchResult). The renderer debounces; main additionally
+   * caps scanned bytes / returned sessions so a huge workspace can't
+   * stall the IPC.
+   */
+  SESSION_SEARCH: 'session:search',
+  /**
    * Renderer → main. Tear down a session's background runtime without
    * deleting its transcript. The cli process exits and the sessions
    * map entry is removed; the JSONL on disk is untouched, so a later
@@ -459,6 +469,25 @@ export const IPC_CHANNELS = {
    * chat tab's own webContents, never the shell.
    */
   SHELL_SESSION_LIST_CHANGED: 'shell:session-list-changed',
+  /**
+   * Shell renderer → main (invoke). Rename a session of the ACTIVE chat
+   * tab's workspace. Same engine-free pattern as SHELL_SESSION_LIST: the
+   * shell owns no engine, so main resolves the active chat workspace and
+   * appends the custom-title line via sessionStore.renameSession (identical
+   * on-disk format to the chat tab's SESSION_RENAME). Refresh fan-out rides
+   * the engine's `sessionListChanged` emit — tabRegistry relays it to the
+   * shell, so both the shell list and the chat sidebar re-pull.
+   */
+  SHELL_SESSION_RENAME: 'shell:session-rename',
+  /**
+   * Shell renderer → main (invoke). Delete a session of the ACTIVE chat
+   * tab's workspace: best-effort close of any live runtime for that id
+   * first (a fusion-code child must not keep appending to a file we're
+   * about to unlink), then remove the jsonl + subagent dir via the SDK's
+   * deleteSession. Irreversible — the renderer owns the confirm UI.
+   * Rejects when no chat tab is active or the session file is missing.
+   */
+  SHELL_SESSION_DELETE: 'shell:session-delete',
   APPEARANCE_GET: 'appearance:get',
   /**
    * Renderer → main. Patches the shared appearance prefs into the
@@ -790,6 +819,26 @@ export type SessionRenameResult = { ok: true }
 export type SessionCloseRuntimePayload = { sessionId: string }
 export type SessionCloseRuntimeResult = { ok: true }
 
+export type SessionDeletePayload = { sessionId: string }
+
+export type SessionSearchPayload = { query: string }
+/**
+ * One session's content-search result. `snippet` is a pre-windowed
+ * excerpt around the FIRST hit (main truncates so a hit inside a huge
+ * assistant message doesn't ship the whole message over IPC); the
+ * renderer only needs to highlight the query inside it.
+ */
+export type SessionContentHit = {
+  sessionId: string
+  /** Excerpt around the first matching message, ellipsised both ends. */
+  snippet: string
+  /** Which side said the matching message (renders as 你：/ AI： prefix). */
+  who: 'user' | 'assistant'
+  /** Total matching messages in this session (for the "共 N 条命中" meta). */
+  hitCount: number
+}
+export type SessionSearchResult = { hits: readonly SessionContentHit[] }
+
 export type SessionListActiveRuntimesResult = { sessionIds: readonly string[] }
 
 /**
@@ -914,7 +963,14 @@ export interface AppearancePrefs {
  * chat tab. `toggle-lang` flips zh↔en; the others open the corresponding
  * overlay/dialog. Kept as a small closed union so both ends stay in sync.
  */
-export type ShellMenuAction = 'open-settings' | 'open-logs' | 'toggle-lang'
+export type ShellMenuAction =
+  | 'open-settings'
+  | 'open-logs'
+  | 'toggle-lang'
+  // 打开会话搜索弹窗。入口在 shell rail（设置下方的「搜索对话」行 + ⌘K），
+  // 但弹窗 UI 渲染在 active chat tab 里 —— shell 可见区只有 220px 的 rail，
+  // 一个 580px 的 Spotlight 弹窗只能住在 chat renderer（它覆盖整个内容区）。
+  | 'open-search'
 
 /** Payload for SHELL_MENU_ACTION / TAB_TRIGGER_MENU_ACTION. */
 export type ShellMenuActionPayload = { action: ShellMenuAction }
@@ -1086,6 +1142,14 @@ export interface ChatApi {
    * workspace has no prior fusion-code transcripts.
    */
   listSessions(): Promise<SessionListResult>
+
+  /**
+   * Full-text search across this workspace's session transcripts
+   * (message content only — the search dialog filters titles locally
+   * from listSessions). Returns per-session excerpt hits; see
+   * SESSION_SEARCH for the scan/caps story.
+   */
+  searchSessions(payload: SessionSearchPayload): Promise<SessionSearchResult>
 
   /**
    * Load a session's full message history. Used by ThreadListAdapter
@@ -1371,4 +1435,19 @@ export interface TabApi {
    * re-pull via listShellSessions. Returns an unsubscribe.
    */
   onShellSessionListChanged(handler: () => void): () => void
+
+  /**
+   * Rename a session of the active chat tab's workspace. Engine-free path
+   * (mirrors listShellSessions): main appends the custom-title line and the
+   * engine's sessionListChanged fan-out refreshes both the shell list and
+   * the chat sidebar. Rejects when no chat tab is active.
+   */
+  renameShellSession(payload: SessionRenamePayload): Promise<void>
+  /**
+   * Delete a session of the active chat tab's workspace — closes any live
+   * runtime for that id, then removes its jsonl + subagent dir from disk.
+   * IRREVERSIBLE; the caller owns the confirm UI. Rejects when no chat tab
+   * is active or the session doesn't exist on disk.
+   */
+  deleteShellSession(payload: SessionDeletePayload): Promise<void>
 }

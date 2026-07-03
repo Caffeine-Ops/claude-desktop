@@ -15,7 +15,7 @@ import { create } from 'zustand'
  * Only one dialog can be open at a time. Opening a new one replaces
  * whichever was open before — `null` means none.
  */
-export type DialogKind = 'skills' | 'mcp' | 'logs' | null
+export type DialogKind = 'skills' | 'mcp' | 'logs' | 'search' | null
 
 interface DialogState {
   open: DialogKind

@@ -301,6 +301,50 @@ function SessionSwitchSkeleton(): React.JSX.Element {
           <div className="ssw-sk h-3.5 w-1/2" style={{ animationDelay: '210ms' }} />
         </div>
       </div>
+      {/* Composer skeleton for the dock-less case. The dock renders under
+          `ThreadPrimitive.If empty={false}` (see the main layout):
+          switching away from the empty-state hero (composer centered
+          inside the now-veiled viewport, no dock) leaves the bottom of the
+          pane hollow — this fills that hole and previews the target
+          session's layout. The NON-empty case (real dock present) gets its
+          own overlay INSIDE the dock instead (same ComposerSkeleton,
+          perfectly aligned over the real composer). */}
+      <ThreadPrimitive.If empty>
+        <div className="absolute inset-x-0 bottom-3 px-3">
+          <ComposerSkeleton />
+        </div>
+      </ThreadPrimitive.If>
+    </div>
+  )
+}
+
+/**
+ * Skeleton of the composer block: the rounded input card (with attach /
+ * send button hints) plus the accessory row underneath (working-dir · tone
+ * · model pickers). Shared by the two switch-skeleton mounts — inside the
+ * viewport overlay when there's no dock (empty-state origin), and inside
+ * the dock veil when there is one. Geometry mirrors the real composer:
+ * max-w-4xl column, rounded-[22px] card.
+ */
+function ComposerSkeleton(): React.JSX.Element {
+  return (
+    <div className="mx-auto w-full max-w-4xl">
+      <div className="relative">
+        <div
+          className="ssw-sk h-[96px] rounded-[22px]"
+          style={{ animationDelay: '240ms' }}
+        />
+        {/* Hint of the toolbar row: attach button (left) and send button
+            (right), slightly deeper wash over the shimmer so the shape
+            reads "input card", not just a slab. */}
+        <div className="absolute bottom-3 left-3 size-8 rounded-full bg-foreground/[0.06]" />
+        <div className="absolute bottom-3 right-3 size-8 rounded-full bg-foreground/[0.08]" />
+      </div>
+      {/* Accessory row under the card (选择工作目录 · 语气 · 模型). */}
+      <div className="mt-2.5 flex items-center justify-between px-1">
+        <div className="ssw-sk h-3 w-44" style={{ animationDelay: '280ms' }} />
+        <div className="ssw-sk h-3 w-20" style={{ animationDelay: '310ms' }} />
+      </div>
     </div>
   )
 }
@@ -552,6 +596,20 @@ export function ThreadView(): React.JSX.Element {
           <div className="rounded-b-[4px] bg-background/45 px-3 pb-3 pt-4 backdrop-blur-xl backdrop-saturate-150">
             <Composer />
           </div>
+          {/* Dock veil for the skeleton phase of a session switch: the real
+              composer stays mounted (no layout jump — the veil just covers
+              it), and the shared ComposerSkeleton draws the loading shape
+              exactly over it. Opaque background: unlike the viewport
+              overlay (which sits on frosted content), the composer beneath
+              is crisp text and would bleed through a translucent wash.
+              justify-end pins the skeleton to the dock's bottom so any
+              extra dock height (status strip / attachment row) is simply
+              covered above it. */}
+          {switchPhase === 'skeleton' && (
+            <div className="absolute inset-0 z-20 flex flex-col justify-end rounded-b-[4px] bg-background px-3 pb-3 pt-4">
+              <ComposerSkeleton />
+            </div>
+          )}
         </div>
       </ThreadPrimitive.If>
       </div>
@@ -777,40 +835,146 @@ function TopProgressBar(): React.JSX.Element {
 function ChatHeader(): React.JSX.Element {
   const t = useT()
   const title = useSessionTitleStore((s) => s.title)
+  const setTitle = useSessionTitleStore((s) => s.setTitle)
   // Keys the title's enter animation to the SESSION, not the text: an AI
   // rename streams a new title into the same session mid-conversation, and
   // re-playing the intro on that would read as a glitch. Only a switch moves
   // the title.
   const sessionId = useChatStore((s) => s.sessionId)
   const display = title && title.trim() ? title : t('chatHeaderUntitled')
+
+  // ── In-place rename ──
+  // The title itself is the rename entry point (mirrors the sidebar's
+  // in-row editor; both funnel into the same renameSession IPC). Blur
+  // COMMITS here — dropping half-typed input on a stray click reads as
+  // data loss for a lightweight edit like this; Esc is the explicit
+  // "never mind". (The sidebar editor keeps cancel-on-outside-click
+  // because rows have a competing click action: switching sessions.)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const titleInputRef = useRef<HTMLInputElement | null>(null)
+
+  const startEdit = useCallback((): void => {
+    if (!sessionId) return
+    setDraft(title ?? '')
+    setEditing(true)
+  }, [sessionId, title])
+
+  useEffect(() => {
+    if (!editing) return
+    const timer = window.setTimeout(() => {
+      titleInputRef.current?.focus()
+      titleInputRef.current?.select()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [editing])
+
+  // A session switch mid-edit discards the editor — the draft belonged to
+  // the PREVIOUS session's title; committing it against the new sessionId
+  // would rename the wrong chat.
+  useEffect(() => {
+    setEditing(false)
+  }, [sessionId])
+
+  const commitEdit = useCallback(async (): Promise<void> => {
+    setEditing(false)
+    const trimmed = draft.trim()
+    if (!sessionId || !trimmed || trimmed === title) return
+    const previous = title
+    // Optimistic: the header repaints now; the rename's sessionListChanged
+    // broadcast re-derives the same value from disk via the list adapter.
+    setTitle(trimmed)
+    try {
+      await window.chatApi.renameSession({ sessionId, title: trimmed })
+    } catch (err) {
+      console.error('[chatHeader] rename failed', err)
+      setTitle(previous)
+      window.alert(t('renameChatFailed'))
+    }
+  }, [draft, sessionId, title, setTitle, t])
+
   return (
     // Window drag region. The chat WebContentsView is positioned at y≈gap
     // (tabRegistry.setBounds) on a `titleBarStyle: 'hiddenInset'` window, so
     // its top strip IS the title-bar zone — the macOS traffic lights float
     // over its top-left. The shell's `-webkit-app-region: drag` only covers
     // the LEFT rail (a separate webContents), so the chat surface's own header
-    // never moved the window. Marking the header a drag region fixes that. The
-    // WHOLE header (title + subtitle included) stays draggable — the text does
-    // NOT opt out — and `select-none` keeps the text from being selected so a
-    // press-drag on it always moves the window instead of starting a selection.
+    // never moved the window. Marking the header a drag region fixes that.
+    // The title BUTTON (and the editor input) opt OUT via no-drag — a click
+    // there must start a rename, not a window drag — while the rest of the
+    // header (subtitle, padding) stays draggable; `select-none` keeps a
+    // press-drag on the chrome from starting a text selection.
     <div className="shrink-0 select-none p-3 [-webkit-app-region:drag]">
-      {/* Session-switch title intro. `key={sessionId}` remounts JUST this h1
-          (a single tiny node — nothing like the old full-column remount) so
-          the new title fades in with a 3px rise, echoing the viewport fade
-          below it. Safe to translate here: the header sits OUTSIDE the scroll
-          viewport, so the y-motion can't touch the scrollbar (the regression
-          that bans transforms inside the message column). No exit animation —
-          waiting for the old title to leave would delay the switch's snap. */}
-      <motion.h1
-        key={sessionId ?? 'no-session'}
-        initial={{ opacity: 0, y: 3 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-        className="truncate text-[16px] font-semibold leading-tight text-foreground"
-        title={display}
-      >
-        {display}
-      </motion.h1>
+      {editing ? (
+        <input
+          ref={titleInputRef}
+          value={draft}
+          maxLength={200}
+          name="rename-session-title"
+          aria-label={t('renameChatPrompt')}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              void commitEdit()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              setEditing(false)
+            }
+          }}
+          onBlur={() => void commitEdit()}
+          // Same type metrics as the h1 (16px/semibold/leading-tight) so the
+          // header doesn't jump a pixel entering/leaving edit mode; negative
+          // margin re-absorbs the input's own padding for the same reason.
+          className="-mx-1.5 -my-0.5 w-[min(480px,100%)] rounded-md border-[1.5px] border-ring bg-background px-1.5 py-0.5 text-[16px] font-semibold leading-tight text-foreground outline-none [-webkit-app-region:no-drag]"
+        />
+      ) : (
+        /* Session-switch title intro. `key={sessionId}` remounts JUST this h1
+           (a single tiny node — nothing like the old full-column remount) so
+           the new title fades in with a 3px rise, echoing the viewport fade
+           below it. Safe to translate here: the header sits OUTSIDE the scroll
+           viewport, so the y-motion can't touch the scrollbar (the regression
+           that bans transforms inside the message column). No exit animation —
+           waiting for the old title to leave would delay the switch's snap. */
+        <motion.h1
+          key={sessionId ?? 'no-session'}
+          initial={{ opacity: 0, y: 3 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+          className="flex min-w-0 items-center text-[16px] font-semibold leading-tight text-foreground"
+        >
+          <button
+            type="button"
+            onClick={startEdit}
+            disabled={!sessionId}
+            title={sessionId ? t('renameChat') : undefined}
+            aria-label={sessionId ? `${t('renameChat')}: ${display}` : undefined}
+            // group/title scopes the pencil reveal to hovering the title
+            // itself, not the whole header band.
+            className="group/title flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 -mx-1.5 -my-0.5 text-left transition-colors [-webkit-app-region:no-drag] enabled:cursor-text enabled:hover:bg-foreground/[0.05] disabled:cursor-default"
+          >
+            <span className="min-w-0 truncate" title={display}>
+              {display}
+            </span>
+            {sessionId ? (
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+                className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/title:opacity-80 group-focus-visible/title:opacity-80"
+              >
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+              </svg>
+            ) : null}
+          </button>
+        </motion.h1>
+      )}
       <p className="mt-1 text-[12px] leading-none text-muted-foreground">
         {t('chatHeaderSubtitle')}
       </p>
