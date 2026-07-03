@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 给「写方案」加文本语义检索——模糊/同义描述也能召回知识库原文片段并带出处，落地搜索面板 + AI 的 `kb_search` 工具。
+**Goal:** 给「写方案」加文本语义检索——模糊/同义描述也能召回知识库原文片段并带出处。必交付：热路径自动召回升级 + 搜索面板；AI 的 `kb_search` 工具走 gate（Task 10 先 spike，后端不支持则砍出 P1）。
 
 **Architecture:** 离线建一张**唯一权威分块表**（`vectors.bin` 向量 + `vectors-meta.json` 元信息，行号即 chunk id）；查询时 BM25 与向量都跑同一张表、用行号 RRF 融合。embedding 跑在 **utilityProcess**（不冻 main），热路径 `await` 带超时、模型缺失/stale 时降级 BM25-only。
 
@@ -713,70 +713,58 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 7: 热路径召回升级 + kb_search 工具
+### Task 7: 热路径召回升级（engine）
+
+> ⚠️ 2026-07-03 复核修订：召回点已由 `:1100` 移到 **`:1108`**，且被 commit `75635b66` 包进 **try/catch（约 `:1101-1132`）**、`scopes` 改为 grounding 与召回**共用只算一次**（`:1103-1106`，`needsGrounding || wantsRetrieval` 时才调 `this.proposalProductScopes(...)`）。本 Task 只做**热路径召回升级**；`kb_search` 工具因 engine 无 in-process 工具机制、拆到 **Task 10**（先 spike）。
 
 **Files:**
-- Modify: `apps/desktop/src/main/core/engine.ts`（召回点 `:1100`；工具注册处；warmup 触发处）
+- Modify: `apps/desktop/src/main/core/engine.ts`（召回点 `:1108`；warmup 触发处 grep `spawnedWithProposal`）
 
 **Interfaces:**
 - Consumes: `kbSemanticSearch`/`warmEmbedWorker`(Task 6)、`renderRetrievedBlock`(已存在)。
 
-- [ ] **Step 1: 召回点改混合 + 忽略 stale**
+- [ ] **Step 1: 落地前先看清现场**
 
-`engine.ts:58` import 增 `kbSemanticSearch, warmEmbedWorker`。把 `:1100` 的同步块改为：
+Run: `cd apps/desktop && sed -n '1092,1132p' src/main/core/engine.ts`
+确认：`wantsRetrieval`（约 `:1092`）、`scopes` 单次计算（约 `:1103-1106`）、`const passages = retrievePassages(text, scopes)` + `renderRetrievedBlock`（约 `:1108-1110`）在 try 内，`groundedText` 在 try 内组装（约 `:1121`）。行号若又漂移，以本步实读为准。
+
+- [ ] **Step 2: 召回点改混合 + 忽略 stale（嵌进现有 try）**
+
+`engine.ts:58` import 增 `kbSemanticSearch, warmEmbedWorker`。把 try 内那两行（`const passages = retrievePassages(text, scopes)` 与紧随的 `renderRetrievedBlock`）替换为：
 
 ```typescript
-    let retrievalBlock = ''
-    if (wantsRetrieval) {
-      // 混合语义检索（embedding 在 utilityProcess）。engine 自动召回【忽略 staleIndex】——
-      // 拿到什么（混合或 BM25 降级）就注什么，绝不因 stale 变空（防回归）。带超时不冻 send。
+      // 混合语义检索（embedding 在 utilityProcess，带超时不冻 send）。engine 自动召回
+      // 【忽略 staleIndex】——拿到什么（混合或 BM25 降级）就注什么，绝不因 stale 变空（防回归）。
+      // 保留在现有 try/catch 内：kbSemanticSearch 内部已吞异常降级，这里的 try 仍兜 buildProposalAppend。
       const { hits } = await kbSemanticSearch(text, scopes)
-      const passages = hits.map((h) => ({ text: h.snippet, title: h.title, mirrorPath: h.mirrorPath, score: h.score }))
+      const passages = hits.map((h) => ({
+        text: h.snippet, title: h.title, mirrorPath: h.mirrorPath, score: h.score
+      }))
       retrievalBlock = renderRetrievedBlock(passages)
-      console.log('[engine] proposal semantic retrieval', { query: text.slice(0, 40), hits: hits.length, titles: hits.map((h) => h.title) })
-    }
+      console.log('[engine] proposal semantic retrieval', {
+        query: text.slice(0, 40), hits: hits.length, titles: hits.map((h) => h.title)
+      })
 ```
 
-> 注意：`renderRetrievedBlock` 吃 `RetrievedPassage`（含 text/title/mirrorPath/score），上面映射满足。snippet 较短可接受（注入块本就片段）；若要全文注入，让 worker 在 hit 里带 `text` 全文（VectorMeta.text 已有）——视注入预算决定，落地时若发现 snippet 太短影响质量，把 SemanticHit 加 `text` 字段返全文。
+保持 `retrievalBlock`/`groundedText` 的既有声明与组装不动——只把「取 passages」这步从同步 BM25 换成 `await` 混合检索。`send` 本就 async，try 内 `await` 合法。
 
-- [ ] **Step 2: 进入方案模式时 warmup**
+> 注意：`renderRetrievedBlock` 吃 `RetrievedPassage`（text/title/mirrorPath/score），上面映射满足。snippet 较短可接受（注入块本就片段）；若发现太短影响质量，给 `SemanticHit` 加 `text` 全文字段（VectorMeta.text 已有）返全文。
 
-找到 engine 里 `proposalMode` 首次置真/openSession 方案分支（grep `spawnedWithProposal`），在其附近调一次 `warmEmbedWorker()`（幂等）。确保模型在用户首查前后台预载。
+- [ ] **Step 3: 进入方案模式时 warmup**
 
-- [ ] **Step 3: 注册 kb_search SDK 工具**
-
-在 engine 现有工具注册处（grep `tool(` 或 SDK `tools:`/mcp 工具定义）加：
-
-```typescript
-// AI 写某节缺料时主动调：一句自然语言 → 语义命中片段（含出处）。复用 kbSemanticSearch。
-// 与热路径自动召回并存（一个被动、一个主动）。
-{
-  name: 'kb_search',
-  description: '在知识库里用自然语言模糊描述检索相关原文片段（语义+词面混合），返回片段与出处文件名。写方案缺资料时用。',
-  // 入参 schema：{ query: string }；实现里 scopes 取当前 runtime.proposalProducts 的 scope
-  // 返回：命中片段文本化（《文件名》\n片段）拼成字符串
-}
-```
-
-具体挂载形态对齐 engine 现有工具的注册 API（SDK in-process tool 或 mcp）。实现体：
-```typescript
-const { hits } = await kbSemanticSearch(query, this.proposalProductScopes(runtime.proposalProducts), 8)
-return hits.length
-  ? hits.map((h) => `《${h.title}》\n${h.snippet}`).join('\n\n- - -\n\n')
-  : '（知识库未命中相关内容）'
-```
+找到 engine 里 `proposalMode` 首次置真 / openSession 方案分支（grep `spawnedWithProposal`），在其附近调一次 `warmEmbedWorker()`（幂等）。确保模型在用户首查前后台预载、不落在首查同步路径。
 
 - [ ] **Step 4: typecheck + 手测召回日志**
 
 Run: `cd apps/desktop && bun run typecheck:node`
-Expected: 通过。dev 起 app 进方案模式发一轮，终端应见 `[engine] proposal semantic retrieval` 日志、hits 非空。
+Expected: 通过。dev 起 app 进方案模式发一轮，终端应见 `[engine] proposal semantic retrieval` 日志、hits 非空；随后修改任意镜像触发 stale，日志仍应有 BM25 降级结果（非空）。
 
 - [ ] **Step 5: commit**
 
 ```bash
 cd /Users/kika/Desktop/project/Electron/claude-desktop
 git add apps/desktop/src/main/core/engine.ts
-git commit -m "feat(proposal): engine 热路径召回升级混合检索(忽略stale不变空) + kb_search 工具 + warmup
+git commit -m "feat(proposal): engine 热路径召回升级混合检索(忽略stale不变空) + warmup
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -787,9 +775,11 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 照 `PROPOSAL_PEEK_RETRIEVAL` 既有范式（召回预览方案三）扩一个语义搜索面板。
 
+> ⚠️ 2026-07-03 复核：范式**完整成立**，注意真实名字/行号——通道 `ipc-channels.ts:490`、payload/result 类型 `:996/:1000`、`ChatApi.peekProposalRetrieval`（**实名带 Proposal**）`:1436`；preload 包装 `peekProposalRetrieval` `preload/index.ts:472`；handler `register.ts:1144`（内用 `buildProposalProductScopes`(proposalScopes:89) + `retrievePassages`，`topK:8`）；renderer 参照 `ProposalDocPanel.tsx`。`peekProposalRetrieval` 的 payload `{query, products}` 与本 Task 的 `KbSemanticSearchPayload` **逐字同形**。
+
 **Files:**
-- Modify: `apps/desktop/src/shared/ipc-channels.ts`、`apps/desktop/src/preload/index.ts`、`apps/desktop/src/preload/index.d.ts`、main handler（grep `PROPOSAL_PEEK_RETRIEVAL` 找到注册处，多在 `src/main/ipc/register.ts` 或 engine）。
-- Create: renderer 面板组件（参照现有召回预览组件，grep `peekRetrieval`/`PEEK_RETRIEVAL` 定位）。
+- Modify: `apps/desktop/src/shared/ipc-channels.ts`、`apps/desktop/src/preload/index.ts`、`apps/desktop/src/preload/index.d.ts`、main handler `apps/desktop/src/main/ipc/register.ts`（`:1144` PEEK 注册旁）。
+- Create: renderer 面板组件（参照 `apps/desktop/src/renderer/src/components/workspace/ProposalDocPanel.tsx` 里 peekProposalRetrieval 的用法）。
 
 **Interfaces:**
 - 新通道 `KB_SEMANTIC_SEARCH: 'kb:semantic-search'`；payload `{ query: string; products: ReadonlyArray<{productLine;product}> }`；result `{ hits: SemanticHit[]; staleIndex: boolean }`。
@@ -822,7 +812,7 @@ export interface KbSemanticSearchResult {
 
 - [ ] **Step 2: preload 两处**
 
-`preload/index.ts` 的 chatApi 对象加（仿现有 `peekRetrieval`/`verifyProposal` invoke 包装）：
+`preload/index.ts` 的 chatApi 对象加（仿现有 `peekProposalRetrieval`(`:472`)/`verifyProposal` invoke 包装）：
 ```typescript
   kbSemanticSearch: (payload) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEMANTIC_SEARCH, payload),
 ```
@@ -934,6 +924,80 @@ git commit -m "build(proposal): 语义检索打包——transformers依赖+asarU
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
+> ⚠️ 2026-07-03 复核补记（kb-sync 交互）：新增的 `scripts/kb-index/manifest.ts`（远程同步）会 walk 同一 `outDir` 产 `manifest.json`，**会自动把本 Task 写的 `vectors.bin` + `vectors-meta.json` 纳入同步清单**（它只跳过 dotfile/`*.part`/`manifest.json`）。这是红利（远端客户端能一并拿到向量），但两点须一致：① `vectors-meta.fingerprint`(=builtAtMs) 必须随 `index.json` 一起同步过去，远端 worker 才校验得过；② vectors.bin 体积进同步集。属同步/部署层面留意项，非本计划代码冲突。`convert.ts` 近期改动只增强转换鲁棒性、镜像 md 产物结构不变，embed.ts 读 mirrorPath 照旧。
+
+---
+
+### Task 10: kb_search 工具（先 spike 兼容性，通过才做）
+
+> 2026-07-03 复核新增。engine **没有 in-process SDK 工具机制**——工具来自 spawn 的 fusion-code CLI 子进程或外部 MCP 配置（`engine.ts:1604 mcpServers: this.externalMcpServers`）。让 AI 主动调 `kb_search` 需用 `createSdkMcpServer` 起一个 in-process SDK MCP server，而**它能否与「SDK 驱动外部 CLI 子进程」后端共存未经验证**。故先 spike，**通过才编 kb_search，不通过则本 Task 砍掉、P1 仅靠热路径自动召回 + 面板两出口交付**（用户已认可这个 gate）。
+
+**Files:**
+- Create（spike）：`scratch/mcp-spike/`（throwaway，不提交）
+- Modify（spike 通过后）：`apps/desktop/src/main/core/engine.ts`（openSession 的 `mcpServers` 组装处，grep `externalMcpServers`）
+
+**Interfaces:**
+- Consumes: `kbSemanticSearch`(Task 6)、`@anthropic-ai/claude-agent-sdk` 的 `createSdkMcpServer`/`tool`。
+
+- [ ] **Step 1: 查 SDK 是否支持 in-process MCP 与外部 CLI 后端共存**
+
+先用 claude-code-guide / 读 `@anthropic-ai/claude-agent-sdk` 类型：确认 `query()` 的 `options.mcpServers` 接受 `createSdkMcpServer(...)` 返回的 in-process server，且在本项目「SDK spawn fusion-code CLI 子进程」模式下 in-process 工具确实会暴露给模型（而非仅在 SDK-内建-loop 模式生效）。把结论记进本 Task 笔记。
+
+- [ ] **Step 2: 最小 spike**
+
+在 `scratch/mcp-spike/` 写一个最小脚本：用 `createSdkMcpServer` 定义一个回声工具（`tool('kb_search_probe', ..., async ({q}) => ({content:[{type:'text', text:'PROBE:'+q}]}))`），按本项目 engine 的 `query()` 调用方式（同一 CLI 后端）挂进 `mcpServers`，发一轮诱导模型调用它，看子进程/CLI 后端是否真的把工具暴露、能否收到 `PROBE:` 回。记录结果。
+
+- [ ] **Step 3: 分叉决策**
+
+- **spike 通过** → 继续 Step 4 编 kb_search。
+- **spike 失败/不支持** → 停在此 Task：在计划顶部与 memory 记「kb_search 因后端不支持 in-process MCP 而砍出 P1，留待 P2 走 CLI 侧工具或 skill 通道」，P1 以 Task 1-9 交付。**不要硬凑**。
+
+- [ ] **Step 4:（通过才做）注册 kb_search in-process MCP 工具**
+
+在 engine 组装 `mcpServers` 处，把 `createSdkMcpServer` 的 kb server 并进现有 `externalMcpServers`：
+
+```typescript
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
+import { z } from 'zod'
+
+// AI 写某节缺料时主动调：一句自然语言 → 语义命中片段（含出处）。复用 kbSemanticSearch。
+// scopes 取发起此请求的 runtime 的 proposalProducts（闭包捕获，勿用 this.activeSessionId——
+// 遵循本项目 canUseTool 同款纪律：前台可能已切走）。
+const kbSearchServer = createSdkMcpServer({
+  name: 'kb-search',
+  tools: [
+    tool('kb_search', '在知识库里用自然语言模糊描述检索相关原文片段（语义+词面混合），返回片段与出处文件名。写方案缺资料时用。',
+      { query: z.string() },
+      async ({ query }) => {
+        const { hits } = await kbSemanticSearch(query, this.proposalProductScopes(runtime.proposalProducts), 8)
+        const text = hits.length
+          ? hits.map((h) => `《${h.title}》\n${h.snippet}`).join('\n\n- - -\n\n')
+          : '（知识库未命中相关内容）'
+        return { content: [{ type: 'text', text }] }
+      })
+  ]
+})
+// 并进 mcpServers（仅方案模式挂，避免污染普通会话）：
+// mcpServers: proposalMode ? { ...externalMcpServers, 'kb-search': kbSearchServer } : externalMcpServers
+```
+
+具体键形态对齐 SDK `mcpServers` 的类型（record vs array）。仅方案模式挂载。
+
+- [ ] **Step 5: typecheck + 手测**
+
+Run: `cd apps/desktop && bun run typecheck:node`
+Expected: 通过。dev 进方案模式，诱导 AI「查一下智能导诊的资料」，应见它调用 `kb_search` 并拿到命中。
+
+- [ ] **Step 6: commit（通过才有）**
+
+```bash
+cd /Users/kika/Desktop/project/Electron/claude-desktop && rm -rf scratch/mcp-spike
+git add apps/desktop/src/main/core/engine.ts
+git commit -m "feat(proposal): kb_search in-process MCP 工具（spike 验证后端兼容后落地）
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+
 ---
 
 ## Self-Review
@@ -947,13 +1011,15 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - version 复用 bump 到 2、stale 检测 → Task 3 + Task 5(fingerprint) + Task 6。✅
 - stale→BM25 降级不返空、engine 忽略旗标 → Task 6 + Task 7。✅
 - 唯一分块表行号对齐（chunkText offset）→ Task 1 + Task 4 + Task 5。✅
-- 两出口（面板 + kb_search）→ Task 8 + Task 7。✅
+- 两出口：面板 → Task 8（必交付）；AI kb_search → **Task 10（先 spike，后端不支持则砍出 P1，见该 Task）**。⚠️ 复核降级：kb_search 由「照抄注册点」改为「先验证 in-process MCP 兼容性」，因 engine 无 in-process 工具机制。
 - 平台级裁剪/分平台 extraResources/去 install-app-deps 依赖/asar 断言 → Task 9。✅
 - 测试：cosineTopK/fuseRRF/chunkText offset/stale 降级/BM25 回归 → Task 1/2 测，stale 降级在 Task 6 手测（worker 依赖原生模型不单测）。⚠️ 补：Task 6 可加一个不依赖模型的 `bm25Fallback` 纯函数单测（见下）。
 
 **补一个遗漏单测（加进 Task 6 Step）：** `bm25Fallback` 不依赖 worker/模型，可单测「worker 未就绪时 kbSemanticSearch 返回非空 BM25 结果且 staleIndex 透传」——把 `bm25Fallback` 导出，写一个用假 scopes 的测试，断言 hits 来自 retrievePassages、不返空。
 
-**Placeholder 扫描：** 无 TBD/TODO；集成任务（5-9）的 SDK 工具注册形态、renderer 组件、prebundle 脚本给了 file:line 锚点 + 范式参照 + 完整接口契约，执行者照既有同类代码落地。Task 0 钉死 v3 API 供 4/5 逐字用。
+**Placeholder 扫描：** 无 TBD/TODO；集成任务（5-9）的 renderer 组件、prebundle 脚本给了 file:line 锚点 + 范式参照 + 完整接口契约，执行者照既有同类代码落地。Task 0 钉死 v3 API 供 4/5 逐字用；Task 10 的 kb_search 注册形态因是**未验证基建**，明确走「先 spike 再落地、不通则砍」而非当填空题——这是有意的 gate，非占位符。
+
+**2026-07-03 复核修订摘要：** ①Task 7 召回点 `:1100→:1108`、贴合新 try/catch + 共享 scopes + `await` 结构（Step 1 先实读定位）。②Task 8 方法实名 `peekProposalRetrieval`、handler `register.ts:1144`、renderer 参照 `ProposalDocPanel.tsx`。③kb_search 从 Task 7 拆到 **Task 10**（engine 无 in-process 工具机制、先 spike）。④Task 9 补 kb-sync manifest 会纳入 vectors 的一致性留意项。Task 1/2/3/4/5/6 锚点复核后**无变化**。
 
 **类型一致性：** `SemanticHit`(shared/kbIndex) 贯穿 Task 5/6/7/8；`VectorMeta/VectorStoreMeta`(Task 3) → Task 4 写、Task 5 读；`row` 对齐键贯穿 Task 1/2/5；`chunkTextWithOffsets`(Task 1) → Task 4。一致。
 
