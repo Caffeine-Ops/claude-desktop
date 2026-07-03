@@ -80,7 +80,7 @@ import type {
 } from '../../shared/ipc-channels'
 import { clearLogs, getLogs } from '../core/logCollector'
 import { setKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote } from '../core/kbIndexStore'
-import { triggerKbSyncNow, lastKbSyncInfo } from '../core/kbSyncScheduler'
+import { triggerKbSyncNow, lastKbSyncInfo, invalidateKbSyncBaseline } from '../core/kbSyncScheduler'
 import type { KbIndex } from '../../shared/kbIndex'
 import type { KbRemoteConfig } from '../../shared/kbConfig'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
@@ -1074,6 +1074,9 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.KB_PATH_SET,
     async (_e, kbRoot: string): Promise<void> => {
       setKbRoot(kbRoot)
+      // 重选本地根 = 本地构建在即，磁盘很快会在同步引擎之外被改写；旧同步基准
+      // 不再可信，作废让下一轮远程同步退回磁盘对账（见 invalidateKbSyncBaseline 注释）。
+      invalidateKbSyncBaseline()
     }
   )
 
@@ -1081,8 +1084,15 @@ export function registerIpcHandlers(): void {
     // 入参防御：renderer 被攻破时 main 是最后防线，形状不对宁可丢弃。
     if (remote !== null && (typeof remote?.baseUrl !== 'string' || typeof remote?.kbId !== 'string')) return
     setKbRemote(remote)
-    // 写入即触发：用户填完 URL 不该还要再点一次同步（spec ④）。
-    if (remote) triggerKbSyncNow()
+    if (remote) {
+      // 写入即触发：用户填完 URL 不该还要再点一次同步（spec ④）。
+      triggerKbSyncNow()
+    } else {
+      // 切回本地模式：用户接下来大概率会跑本地构建改写 kb-index/，同步引擎不再
+      // 是磁盘唯一写方，旧基准的「磁盘=上次同步」断言失效——作废它（见
+      // invalidateKbSyncBaseline 注释），逼下一轮远程同步做一次磁盘对账。
+      invalidateKbSyncBaseline()
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.KB_SYNC_NOW, async (): Promise<'started' | 'alreadyRunning' | 'noRemote'> =>
