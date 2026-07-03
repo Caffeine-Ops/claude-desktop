@@ -55,3 +55,33 @@ describe('buildProposalAppend 阶段确认走 AskUserQuestion', () => {
     expect(out).not.toContain('界面按钮发来')
   })
 })
+
+describe('buildProposalAppend 配图密度增强', () => {
+  const out = buildProposalAppend('/mirror', [])
+
+  it('库图纪律为积极式：有对应图就应当插入、一节一图', () => {
+    expect(out).toContain('就应当插入')
+    expect(out).toContain('一节一图')
+  })
+
+  it('同一张图全文只插一次', () => {
+    expect(out).toContain('只插一次')
+  })
+
+  it('mermaid 升级为密度要求：每个一级章应至少配一张结构图', () => {
+    expect(out).toContain('应至少配一张')
+  })
+
+  it('genimage 指令块纪律：存在、限 3 个、接地', () => {
+    expect(out).toContain('genimage')
+    expect(out).toContain('图说:')
+    expect(out).toContain('最多 3 个')
+    expect(out).toContain('绝不为画面丰满编造')
+  })
+
+  it('既有库图硬约束不回归：同源约束与尖括号包裹仍在', () => {
+    expect(out).toContain('![图说]')
+    expect(out).toContain('绝不挪用别处的图')
+    expect(out).toContain('尖括号')
+  })
+})
