@@ -179,6 +179,15 @@ function ChatColumnResizeHandle({
  */
 type SessionSwitchPhase = 'idle' | 'out' | 'skeleton' | 'in'
 
+/**
+ * 会话切换过渡总开关。2026-07-04 应用户要求关闭：切换即时呈现——不播
+ * 帘幕（ssw-out 的沉降磨砂 / ssw-in 的显影归位），也不升级骨架屏；慢加载
+ * 的用户反馈只剩右下角「正在打开会话…」toast。相位机与骨架组件原样保留：
+ * 机器挂着 store 的 sessionSwitching 信号与 600ms 升级时序，删了再装回
+ * 成本高，翻这个开关即可恢复。
+ */
+const SESSION_SWITCH_TRANSITION_ENABLED = false
+
 function useSessionSwitchPhase(sessionId: string | null): SessionSwitchPhase {
   const switching = useChatStore((s) => s.sessionSwitching)
   const [phase, setPhase] = useState<SessionSwitchPhase>('idle')
@@ -217,7 +226,9 @@ function useSessionSwitchPhase(sessionId: string | null): SessionSwitchPhase {
     return () => window.clearTimeout(t)
   }, [phase])
 
-  return phase
+  // 开关关闭时对外恒等 'idle'（消费端零 ssw 类、零骨架/veil 挂载）。内部
+  // 状态机照常空转——保持 hooks 顺序稳定，也让开关翻回来即刻能用。
+  return SESSION_SWITCH_TRANSITION_ENABLED ? phase : 'idle'
 }
 
 /**
@@ -455,6 +466,10 @@ export function ThreadView(): React.JSX.Element {
   //   in       — transcript mounted: pane rises + unblurs. A cache-hit
   //              switch collapses begin/end into one store batch, so it
   //              plays ONLY this phase — zero pre-mount chrome.
+  //
+  // ⚠️ 目前整套过渡被 SESSION_SWITCH_TRANSITION_ENABLED=false 关停
+  //（用户要求切换零动画），本值恒为 'idle'——下面所有 ssw 类与骨架/veil
+  // 分支都是死路，重新启用翻那个开关即可。
   const switchPhase = useSessionSwitchPhase(sessionId)
 
   return (
@@ -873,10 +888,9 @@ function ChatHeader(): React.JSX.Element {
   const t = useT()
   const title = useSessionTitleStore((s) => s.title)
   const setTitle = useSessionTitleStore((s) => s.setTitle)
-  // Keys the title's enter animation to the SESSION, not the text: an AI
-  // rename streams a new title into the same session mid-conversation, and
-  // re-playing the intro on that would read as a glitch. Only a switch moves
-  // the title.
+  // sessionId 供重命名链路使用（入口 disabled 判定、切会话丢弃编辑器、
+  // commit 落到正确会话）。曾同时给标题入场动画做 remount key，动画已于
+  // 2026-07-04 退役。
   const sessionId = useChatStore((s) => s.sessionId)
   const display = title && title.trim() ? title : t('chatHeaderUntitled')
 
@@ -968,20 +982,10 @@ function ChatHeader(): React.JSX.Element {
           className="-mx-1.5 -my-0.5 w-[min(480px,100%)] rounded-md border-[1.5px] border-brand bg-background px-1.5 py-0.5 text-[16px] font-semibold leading-tight text-foreground outline-none ring-2 ring-brand/20 [-webkit-app-region:no-drag]"
         />
       ) : (
-        /* Session-switch title intro. `key={sessionId}` remounts JUST this h1
-           (a single tiny node — nothing like the old full-column remount) so
-           the new title fades in with a 3px rise, echoing the viewport fade
-           below it. Safe to translate here: the header sits OUTSIDE the scroll
-           viewport, so the y-motion can't touch the scrollbar (the regression
-           that bans transforms inside the message column). No exit animation —
-           waiting for the old title to leave would delay the switch's snap. */
-        <motion.h1
-          key={sessionId ?? 'no-session'}
-          initial={{ opacity: 0, y: 3 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-          className="flex min-w-0 items-center text-[16px] font-semibold leading-tight text-foreground"
-        >
+        /* 无切换动画：曾是 key={sessionId} 重挂载的 motion.h1（淡入+3px 上浮
+           入场），2026-07-04 应用户要求退役——切会话时标题即时呈现，与 rail
+           选中态同一节奏（同日退役的 glider 滑块）。 */
+        <h1 className="flex min-w-0 items-center text-[16px] font-semibold leading-tight text-foreground">
           <button
             type="button"
             onClick={startEdit}
@@ -1012,7 +1016,7 @@ function ChatHeader(): React.JSX.Element {
               </svg>
             ) : null}
           </button>
-        </motion.h1>
+        </h1>
       )}
       <p className="mt-1 text-[12px] leading-none text-muted-foreground">
         {t('chatHeaderSubtitle')}
