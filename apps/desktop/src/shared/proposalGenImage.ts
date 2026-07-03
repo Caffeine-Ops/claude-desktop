@@ -19,8 +19,12 @@ import { splitBlocks } from './proposalBlocks'
 
 export const GENIMAGE_LANG = 'genimage'
 
+// 开围栏字面量（```genimage）：includes 快路径与正则都从 GENIMAGE_LANG 拼出来——常量改名时
+// 不会留下与正则静默失配的硬编码副本。
+const GENIMAGE_FENCE_OPEN = '```' + GENIMAGE_LANG
+
 // 块级识别：整块必须以 ```genimage 围栏开头、以 ``` 收尾（splitBlocks 产出的块已 trim 首尾空行）。
-const GENIMAGE_BLOCK_RE = /^```genimage[ \t]*\r?\n([\s\S]*?)\r?\n?```$/
+const GENIMAGE_BLOCK_RE = new RegExp(`^${GENIMAGE_FENCE_OPEN}[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n?\`\`\`$`)
 
 export function isGenImageDirectiveBlock(blockText: string): boolean {
   return GENIMAGE_BLOCK_RE.test(blockText.trim())
@@ -60,7 +64,7 @@ export interface GenImageDirective extends GenImageDirectiveContent {
 
 /** 抽取一节 markdown 里的全部指令块（按块扫描，绝不裸扫全文）。 */
 export function parseGenImageDirectives(markdown: string): GenImageDirective[] {
-  if (!markdown || !markdown.includes('```genimage')) return []
+  if (!markdown || !markdown.includes(GENIMAGE_FENCE_OPEN)) return []
   const blocks = splitBlocks(markdown)
   const out: GenImageDirective[] = []
   const seen = new Map<string, number>()
@@ -75,16 +79,41 @@ export function parseGenImageDirectives(markdown: string): GenImageDirective[] {
   return out
 }
 
-// 导出剥除用：行首锚定的围栏正则（与 mermaidRender 的 MERMAID_FENCE_RE 同风格，但必须锚行首
-// ——内联反引号里的伪指令不能被吞）。用正则而非 splitBlocks+joinBlocks 重拼：strip 跑在导出
-// 全文（含分页注释/节标记）上，重拼会规整化块间距、破坏「预览=导出」的字节稳定预期。
-const GENIMAGE_FENCE_MD_RE =
-  /(^|\r?\n)[ \t]{0,3}```genimage[ \t]*\r?\n[\s\S]*?\r?\n[ \t]{0,3}```[ \t]*(?=\r?\n|$)/g
+// 导出剥除：逐行扫描而非全文正则。全文非贪婪正则对畸形输入是破坏性的——未闭合的 genimage
+// 围栏（流式截断）会一路匹配到后面无关代码块/mermaid 的收尾 ```，把中间全部真实正文吞掉；
+// 且剥除边界与 parseGenImageDirectives 依赖的 splitBlocks 块边界（FENCE=/^```/ 找收尾）不一致，
+// 指令块内部出现裸 ``` 行时会泄漏残片。逐行扫描与 splitBlocks 同语义，剥的和 parse 认的是同一段。
+// 之所以不直接 splitBlocks+joinBlocks 重拼：strip 跑在导出全文（含分页注释/节标记）上，重拼会
+// 规整化块间距、破坏「预览=导出」的字节稳定预期。
+const FENCE_LINE_RE = /^```/ // 与 proposalBlocks.ts 的 FENCE 完全同语义
+const GENIMAGE_OPEN_LINE_RE = new RegExp(`^${GENIMAGE_FENCE_OPEN}[ \\t]*\\r?$`)
+const BARE_CLOSE_LINE_RE = /^```[ \t]*\r?$/
 
 /** 剥掉全文的 genimage 指令块（未生成/未审阅的指令绝不进交付物）。无指令时原样返回。 */
 export function stripGenImageDirectives(markdown: string): string {
-  if (!markdown.includes('```genimage')) return markdown
-  return markdown.replace(GENIMAGE_FENCE_MD_RE, '$1').replace(/\n{3,}/g, '\n\n')
+  if (!markdown.includes(GENIMAGE_FENCE_OPEN)) return markdown
+  const lines = markdown.split('\n')
+  const kept: string[] = []
+  let stripped = false
+  let i = 0
+  while (i < lines.length) {
+    if (GENIMAGE_OPEN_LINE_RE.test(lines[i])) {
+      // 找收尾行：splitBlocks 语义（第一个 /^```/ 行收块）。但收尾行若不是裸 ```（比如撞上了
+      // 后续 ```mermaid 的开围栏），这段在 GENIMAGE_BLOCK_RE / parseGenImageDirectives 眼里
+      // 也不是合法指令块——典型的流式截断现场。与 parse 的「识别不到就不当指令」立场一致：
+      // 安全失败，整体原样返回入参，绝不冒险吞正文。
+      let j = i + 1
+      while (j < lines.length && !FENCE_LINE_RE.test(lines[j])) j++
+      if (j >= lines.length || !BARE_CLOSE_LINE_RE.test(lines[j])) return markdown
+      i = j + 1 // 丢弃 [开..收] 这段行，继续扫收尾行之后
+      stripped = true
+      continue
+    }
+    kept.push(lines[i])
+    i++
+  }
+  if (!stripped) return markdown // 只有内联反引号伪指令等，没剥任何块 → 原引用返回
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
 // djb2 短哈希：key 只做幂等去重（Map 键），不做安全用途；Date.now/Math.random 被禁（可重放性），

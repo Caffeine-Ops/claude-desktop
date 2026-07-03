@@ -81,6 +81,17 @@ describe('stripGenImageDirectives', () => {
     const md = '```mermaid\nflowchart LR\nA-->B\n```'
     expect(stripGenImageDirectives(md)).toBe(md)
   })
+  it('未闭合的指令块（流式截断）→ 原样返回，绝不吞后续正文', () => {
+    const md = ['```genimage', '图说: 架构', '描述被截断', '', '正文段落。', '', '```mermaid', 'flowchart LR', 'A-->B', '```', '', '尾段。'].join('\n')
+    expect(stripGenImageDirectives(md)).toBe(md)
+  })
+  it('指令块内部裸 ``` 行：剥除边界与 splitBlocks 一致，其余内容保留', () => {
+    const md = ['```genimage', '图说: 架构', '举例：', '```', 'foo()', '', '尾段。'].join('\n')
+    const out = stripGenImageDirectives(md)
+    expect(out).not.toContain('genimage')
+    expect(out).toContain('foo()')
+    expect(out).toContain('尾段。')
+  })
 })
 
 describe('genImageDirectiveKey', () => {
