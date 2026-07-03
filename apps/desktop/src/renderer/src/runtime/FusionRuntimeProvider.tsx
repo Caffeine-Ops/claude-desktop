@@ -476,11 +476,12 @@ export function FusionRuntimeProvider({
 
       // 1) Push user turn into the store — Thread shows it instantly.
       // Build the content-part array we want the UI to render: the
-      // text (if any) followed by image thumbnails. This mirrors what
-      // the engine will send to the API a moment later.
+      // user-typed text (if any) followed by image thumbnails. File
+      // attachments are still appended to the payload below as @mentions,
+      // but they are not shown as raw implementation text in the bubble.
       const storeContent: Array<{ type: string; [key: string]: unknown }> = []
-      if (text) {
-        storeContent.push({ type: 'text', text })
+      if (baseText) {
+        storeContent.push({ type: 'text', text: baseText })
       }
       for (const img of imageParts) {
         storeContent.push({

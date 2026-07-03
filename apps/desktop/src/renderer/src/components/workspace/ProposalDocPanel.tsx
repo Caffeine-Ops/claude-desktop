@@ -169,7 +169,8 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   function regenerateToc(): void {
     clearStageSkip()
     void sendProposalStageMessage(
-      `上一轮你跳过了目录确认就开始写正文（已被拦下、未入文档）。请按下列顺序纠正：① 若目录尚未生成，先【只输出章节目录大纲】（有序列表逐章列出），用方案【目录】哨兵包裹（${PROPOSAL_DRAFT_BEGIN.toc} … ${PROPOSAL_DRAFT_END.toc}）；② 然后【必须立即】用 AskUserQuestion 工具发起目录确认（header「确认目录」，首选项「确认目录，开始撰写正文」）。在我确认前【绝对不要】写任何正文。`
+      `上一轮你跳过了目录确认就开始写正文（已被拦下、未入文档）。请按下列顺序纠正：① 若目录尚未生成，先【只输出章节目录大纲】（有序列表逐章列出），用方案【目录】哨兵包裹（${PROPOSAL_DRAFT_BEGIN.toc} … ${PROPOSAL_DRAFT_END.toc}）；② 然后【必须立即】用 AskUserQuestion 工具发起目录确认（header「确认目录」，首选项「确认目录，开始撰写正文」）。在我确认前【绝对不要】写任何正文。`,
+      { displayText: '重新生成目录并等待确认' }
     )
   }
   async function handleExport(

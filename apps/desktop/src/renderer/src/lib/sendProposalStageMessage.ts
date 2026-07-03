@@ -13,7 +13,10 @@ import { dispatchChatTurn } from './dispatchChatTurn'
  * 前置：方案已 active 且已播种（按钮只在工作台里、首发之后出现，products 已定），故
  * 直接复用 ps.products，不再 readKbIndex/matchProducts。非方案前台调用是 no-op。
  */
-export async function sendProposalStageMessage(text: string): Promise<void> {
+export async function sendProposalStageMessage(
+  text: string,
+  opts?: { displayText?: string }
+): Promise<void> {
   const ps = useProposalStore.getState()
   const chat = useChatStore.getState()
   const sid = ps.sessionId
@@ -30,7 +33,7 @@ export async function sendProposalStageMessage(text: string): Promise<void> {
 
   await dispatchChatTurn({
     sessionId: sid,
-    storeContent: [{ type: 'text', text }],
+    storeContent: [{ type: 'text', text: opts?.displayText ?? text }],
     logTag: '[proposal-stage]',
     payload: {
       sessionId: sid,

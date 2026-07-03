@@ -24,7 +24,7 @@ async function dispatchSectionRevision(
   sectionId: string,
   build: (
     sec: ProposalSection
-  ) => { message: string; blockRange?: { start: number; end: number } } | null
+  ) => { message: string; displayText?: string; blockRange?: { start: number; end: number } } | null
 ): Promise<void> {
   const ps = useProposalStore.getState()
   // 并发守卫（review V1 根治 + 复审 Issue#1 收尾）：一轮正在飞时拒绝新修订，否则第二次 setPendingRevision
@@ -57,7 +57,7 @@ async function dispatchSectionRevision(
   }
   // 指针在 await 前置好（end 分流靠它分流本轮产出）；无需回滚——streaming 闸已保证不会因 stale 指针锁死。
   ps.setPendingRevision(built.blockRange ? { sectionId, blockRange: built.blockRange } : { sectionId })
-  await sendProposalStageMessage(built.message)
+  await sendProposalStageMessage(built.message, { displayText: built.displayText })
 }
 
 /**
@@ -93,8 +93,15 @@ export async function reviseProposalSection(
   note?: string
 ): Promise<void> {
   const instruction = intent === 'fixSource' ? (note ?? INTENT_INSTRUCTION.fixSource) : INTENT_INSTRUCTION[intent]
+  const displayText =
+    intent === 'fixSource'
+      ? '据来源修正这一章'
+      : intent === 'resume'
+        ? '继续写完这一章'
+        : instruction
   // build 拿到 content 节，拼「整章替换」指令；并发守卫/置指针/发消息在 dispatchSectionRevision 收口。
   await dispatchSectionRevision(sectionId, (sec) => ({
+    displayText,
     message:
       `【定向修订·只重写这一章，不要改动其它任何章节】${instruction}：\n\n${sec.markdown}\n\n` +
       `仍用方案【正文】哨兵包裹（与逐章撰写同款），段末按既有规则标注《来源》，绝不臆造。`
@@ -121,6 +128,7 @@ export async function fillProposalGap(
   if (!trimmed) return
   // 补料消息不依赖 sec 内容（缺口/补料自带），故 build 忽略入参；守卫/置指针/发消息统一在 dispatch。
   await dispatchSectionRevision(sectionId, () => ({
+    displayText: trimmed,
     message:
       `【资料缺失·补料续写·只重写这一章，不要改动其它任何章节】本章里有一处标注的缺口：「⚠️ 资料缺失：${gapDesc}」。` +
       `用户为此补充了以下资料：\n\n${trimmed}\n\n` +
@@ -167,6 +175,7 @@ export async function reviseProposalSectionBlocks(
     const context = blocks.slice(start, end + 1).join('\n\n')
     return {
       blockRange: { start, end },
+      displayText: trimmed,
       message:
         // 硬边界（实测踩坑）：fusion-code 是带 Write/Bash 的 agent，连做几轮小改后会「自作主张」
         // 觉得方案该收尾了，转去【评估整份方案 / 往桌面写「评估总结报告.md」】，完全无视改写指令。
@@ -207,6 +216,7 @@ export async function continueProposalSectionBlocks(
   // 分流 splice/审阅。封面/目录的「继续改」同样走 groundingSuffix 免标《来源》。
   await dispatchSectionRevision(sectionId, (sec) => ({
     blockRange,
+    displayText: trimmed,
     message:
       // 同 reviseProposalSectionBlocks 的硬边界：防 agent 把「继续改这一小段」误当收尾去评估/写文件。
       `【就地小改·硬性边界】这是针对方案正文里【某一小段】改写稿的又一次就地修改，不是新任务、更不是收尾。` +
