@@ -61,6 +61,10 @@ function goChatShallow(): void {
 
 export function AppRail() {
   const pathname = usePathname()
+  // '/chat*' 归聊天面，其余一切路径都是 canvas 的地盘——rail 上所有
+  // 「跟随当前 surface」的元素（顶部主按钮 / Tabs 选中态 / 中段列表）
+  // 都从这一个判定派生。
+  const isChat = pathname.startsWith('/chat')
 
   // 底部 user chip 的真实数据：OS 用户名（preload 启动时 os.userInfo() 读定，
   // 同步属性）+ 当前 CLI 后端（bundled → fusion-code / system → Claude Code）。
@@ -95,18 +99,28 @@ export function AppRail() {
         * 原来是 nav 的 pt-12 padding——padding 不能标 app-region，改成
         * 实体条后这块「空白」真的能拖动窗口。 */}
       <div aria-hidden className="h-12 shrink-0 [-webkit-app-region:drag]" />
+      {/* 顶部主按钮跟随当前 surface（2026-07-04 用户要求）：
+        *  - 聊天面「新对话」= 切到「新会话」再进聊天路由。sessionId null 的
+        *    SWITCH_REQUEST 经 main 正规化后由 chat 的 FusionRuntimeProvider
+        *    接住（onSwitchToNewThread）；浏览器直开无 chatApi 时退化为纯导航。
+        *  - 画布面「新画布」= 回 canvas 主页（说说你的需求吧 composer 就是
+        *    「新建」的入口，canvas 没有独立的空白新建页）。走 canvas router
+        *    的 navigate（动态 import 原因见下方画布 tab 注释）；已在主页时
+        *    navigate 同路径早退，点击为无害 no-op。 */}
       <Button
         variant="ghost"
         className="mb-2 justify-start gap-2 bg-sidebar-primary/12 px-3 text-sidebar-primary hover:bg-sidebar-primary/18 hover:text-sidebar-primary"
         onClick={() => {
-          // 新对话 = 切到「新会话」再进聊天路由。sessionId null 的
-          // SWITCH_REQUEST 经 main 正规化后由 chat 的 FusionRuntimeProvider
-          // 接住（onSwitchToNewThread）；浏览器直开无 chatApi 时退化为纯导航。
-          void window.tabApi?.switchShellSession?.(null)
-          if (!pathname.startsWith('/chat')) goChatShallow()
+          if (isChat) {
+            void window.tabApi?.switchShellSession?.(null)
+          } else {
+            void import('@/src/canvas/router').then(({ navigate }) => {
+              navigate({ kind: 'home', view: 'home' })
+            })
+          }
         }}
       >
-        <Plus className="size-4" /> 新对话
+        <Plus className="size-4" /> {isChat ? '新对话' : '新画布'}
       </Button>
 
       {/* '/chat*' 归聊天，其余一切路径（'/'、'/projects'、'/project/x'…）
