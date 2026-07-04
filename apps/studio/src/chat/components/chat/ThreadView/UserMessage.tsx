@@ -201,10 +201,13 @@ function UserMessageModal({
         aria-modal="true"
         className="relative z-10 flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_30px_80px_-20px_rgba(0,0,0,0.4)]"
       >
-        {/* Header: copy + close. */}
+        {/* Header: copy + close. data-slot 是功能性的：本弹窗 portal 到
+            document.body、不在 .chat-app 子树内，缺它会被 canvas 裸 button
+            reset 填成描边卡片（同 AssistantMessage 打开方式菜单的泄漏）。 */}
         <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border px-3 py-2">
           <button
             type="button"
+            data-slot="modal-action"
             onClick={copy}
             className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
           >
@@ -213,6 +216,7 @@ function UserMessageModal({
           </button>
           <button
             type="button"
+            data-slot="modal-action"
             onClick={onClose}
             aria-label="关闭"
             className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
@@ -512,6 +516,9 @@ function UserImagePart({
                   clicks on the top half of the button. */}
               <motion.button
                 type="button"
+                // data-slot：portal 到 body、脱离 .chat-app 豁免子树，防
+                // canvas 裸 button reset 泄漏（同文件上方全文弹窗同款）。
+                data-slot="modal-action"
                 onClick={(e) => {
                   e.stopPropagation()
                   setOpen(false)

@@ -21,6 +21,8 @@ import type {
 
 import { Icon, type IconName } from '../shared/Icon';
 import { navigate } from '../../router';
+import { useI18n } from '../../i18n';
+import type { Dict } from '../../i18n/types';
 import type { SkillSummary } from '../../types';
 import { useAnalytics } from '../../analytics/provider';
 import { trackAutomationsClick, trackPageView } from '../../analytics/events';
@@ -32,6 +34,10 @@ import {
 } from './NewAutomationModal';
 
 type ProjectSummary = { id: string; name: string };
+/* t() 的函数类型——模块级 label helper 拿不到 hook，一律显式传入。
+   模板卡的 title/description 是数据（多数来自服务端 catalog），不翻；
+   这里只国际化 UI chrome。 */
+type TFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 type TemplateFilter =
   | 'all'
   | AutomationTemplateKind
@@ -149,32 +155,32 @@ const FALLBACK_LIVE_TEMPLATE: AutomationTemplate = {
     "Maintain a single live artifact named `status_board.md`. On each run, update the sections for 'In flight', 'Shipped this week', 'Risks', and 'Decisions made'. Edit in place so the artifact stays stable.",
 };
 
-const TEMPLATE_FILTERS: ReadonlyArray<{ id: TemplateFilter; label: string }> = [
-  { id: 'all', label: 'All' },
-  { id: 'orbit', label: 'Orbit' },
-  { id: 'live-artifact', label: 'Live artifacts' },
-  { id: 'memory', label: 'Memory' },
-  { id: 'design-system', label: 'Design systems' },
-  { id: 'skills', label: 'Skills' },
-  { id: 'connectors', label: 'Connectors' },
-  { id: 'compression', label: 'Compression' },
-  { id: 'release', label: 'Release' },
-  { id: 'quality', label: 'Quality' },
+const TEMPLATE_FILTERS: ReadonlyArray<{ id: TemplateFilter; labelKey: keyof Dict }> = [
+  { id: 'all', labelKey: 'automations.filterAll' },
+  { id: 'orbit', labelKey: 'automations.filterOrbit' },
+  { id: 'live-artifact', labelKey: 'automations.filterLiveArtifacts' },
+  { id: 'memory', labelKey: 'automations.filterMemory' },
+  { id: 'design-system', labelKey: 'automations.filterDesignSystems' },
+  { id: 'skills', labelKey: 'automations.filterSkills' },
+  { id: 'connectors', labelKey: 'automations.filterConnectors' },
+  { id: 'compression', labelKey: 'automations.filterCompression' },
+  { id: 'release', labelKey: 'automations.filterRelease' },
+  { id: 'quality', labelKey: 'automations.filterQuality' },
 ];
 
-const SOURCE_KIND_OPTIONS: ReadonlyArray<{ id: AutomationSourceKind; label: string }> = [
-  { id: 'connector', label: 'Connector' },
-  { id: 'url', label: 'URL' },
-  { id: 'repo', label: 'Repo' },
-  { id: 'artifact', label: 'Artifact' },
-  { id: 'chat', label: 'Chat' },
-  { id: 'upload', label: 'Upload' },
+const SOURCE_KIND_OPTIONS: ReadonlyArray<{ id: AutomationSourceKind; labelKey: keyof Dict }> = [
+  { id: 'connector', labelKey: 'automations.sourceConnector' },
+  { id: 'url', labelKey: 'automations.sourceUrl' },
+  { id: 'repo', labelKey: 'automations.sourceRepo' },
+  { id: 'artifact', labelKey: 'automations.sourceArtifact' },
+  { id: 'chat', labelKey: 'automations.sourceChat' },
+  { id: 'upload', labelKey: 'automations.sourceUpload' },
 ];
 
-const COMPRESSION_OPTIONS: ReadonlyArray<{ id: AutomationTokenCompressionMode; label: string }> = [
-  { id: 'balanced', label: 'Balanced' },
-  { id: 'aggressive', label: 'Aggressive' },
-  { id: 'off', label: 'Off' },
+const COMPRESSION_OPTIONS: ReadonlyArray<{ id: AutomationTokenCompressionMode; labelKey: keyof Dict }> = [
+  { id: 'balanced', labelKey: 'automations.compressionBalanced' },
+  { id: 'aggressive', labelKey: 'automations.compressionAggressive' },
+  { id: 'off', labelKey: 'automations.compressionOff' },
 ];
 
 type SourceIngestionForm = {
@@ -197,19 +203,23 @@ const DEFAULT_SOURCE_FORM: SourceIngestionForm = {
   tokenCompression: 'balanced',
 };
 
-function scheduleStatusLabel(routine: Routine): string {
-  if (!routine.enabled) return 'Paused';
+function scheduleStatusLabel(routine: Routine, t: TFn): string {
+  if (!routine.enabled) return t('automations.statusPaused');
+  /* describeScheduleSummary 的输出（Every day at 9:00 …）还在
+     NewAutomationModal 的英文解构器里，随那个 modal 的国际化一起做。 */
   return describeScheduleSummary(routine.schedule);
 }
 
-function nextRunLabel(routine: Routine): string {
-  if (!routine.enabled) return 'Manual only';
-  if (!routine.nextRunAt) return 'Scheduled';
+function nextRunLabel(routine: Routine, t: TFn): string {
+  if (!routine.enabled) return t('automations.manualOnly');
+  if (!routine.nextRunAt) return t('automations.scheduled');
   const date = new Date(routine.nextRunAt);
-  return `Next ${date.toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  })}`;
+  return t('automations.nextRun', {
+    when: date.toLocaleString(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }),
+  });
 }
 
 function formatAutomationTimestamp(ts: number | null | undefined): string {
@@ -220,8 +230,8 @@ function formatAutomationTimestamp(ts: number | null | undefined): string {
   });
 }
 
-function formatRunDuration(run: RoutineRun): string {
-  if (!run.completedAt) return 'In progress';
+function formatRunDuration(run: RoutineRun, t: TFn): string {
+  if (!run.completedAt) return t('automations.runInProgress');
   const seconds = Math.max(1, Math.round((run.completedAt - run.startedAt) / 1000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
@@ -229,16 +239,17 @@ function formatRunDuration(run: RoutineRun): string {
   return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
 }
 
-function statusLabel(status: RoutineRun['status']): string {
-  if (status === 'succeeded') return 'Succeeded';
-  if (status === 'failed') return 'Failed';
-  if (status === 'running') return 'Running';
-  if (status === 'queued') return 'Queued';
-  return 'Canceled';
+function statusLabelKey(status: RoutineRun['status']): keyof Dict {
+  if (status === 'succeeded') return 'automations.statusSucceeded';
+  if (status === 'failed') return 'automations.statusFailed';
+  if (status === 'running') return 'automations.statusRunning';
+  if (status === 'queued') return 'automations.statusQueued';
+  return 'automations.statusCanceled';
 }
 
 function StatusPill({ status }: { status: RoutineRun['status'] }) {
-  return <span className={`automation-status is-${status}`}>{statusLabel(status)}</span>;
+  const { t } = useI18n();
+  return <span className={`automation-status is-${status}`}>{t(statusLabelKey(status))}</span>;
 }
 
 function templateFromSkill(skill: SkillSummary, kind: AutomationTemplateKind): AutomationTemplate {
@@ -358,10 +369,10 @@ function filterTemplates(templates: AutomationTemplate[], filter: TemplateFilter
   return templates.filter((template) => template.category === filter);
 }
 
-function kindLabel(kind: AutomationTemplateKind): string {
-  if (kind === 'orbit') return 'Orbit';
-  if (kind === 'live-artifact') return 'Live artifact';
-  return 'Automation';
+function kindLabelKey(kind: AutomationTemplateKind): keyof Dict {
+  if (kind === 'orbit') return 'automations.kindOrbit';
+  if (kind === 'live-artifact') return 'automations.kindLiveArtifact';
+  return 'automations.kindAutomation';
 }
 
 function kindIcon(kind: AutomationTemplateKind): IconName {
@@ -370,23 +381,24 @@ function kindIcon(kind: AutomationTemplateKind): IconName {
   return 'history';
 }
 
-function proposalTargetLabel(target: AutomationEvolutionProposal['targetKind']): string {
-  if (target === 'memory-node') return 'Memory';
-  if (target === 'design-system') return 'Design system';
-  if (target === 'skill') return 'Skill';
-  return 'Automation template';
+function proposalTargetLabelKey(target: AutomationEvolutionProposal['targetKind']): keyof Dict {
+  if (target === 'memory-node') return 'automations.targetMemory';
+  if (target === 'design-system') return 'automations.targetDesignSystem';
+  if (target === 'skill') return 'automations.targetSkill';
+  return 'automations.targetTemplate';
 }
 
-function proposalActionLabel(action: AutomationEvolutionProposal['action']): string {
-  if (action === 'create') return 'Create';
-  if (action === 'update') return 'Update';
-  if (action === 'merge') return 'Merge';
-  if (action === 'move') return 'Move';
-  if (action === 'delete') return 'Delete';
-  return 'Promote';
+function proposalActionLabelKey(action: AutomationEvolutionProposal['action']): keyof Dict {
+  if (action === 'create') return 'automations.actionCreate';
+  if (action === 'update') return 'automations.actionUpdate';
+  if (action === 'merge') return 'automations.actionMerge';
+  if (action === 'move') return 'automations.actionMove';
+  if (action === 'delete') return 'common.delete';
+  return 'automations.actionPromote';
 }
 
 export function TasksView({ skills = [], designTemplates = [], connectors = [] }: Props) {
+  const { t } = useI18n();
   const analytics = useAnalytics();
   // P2 page_view page_name=automations. Ref-keyed so re-renders don't
   // double-fire while the user is on the page.
@@ -510,7 +522,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
 
   const submitSourceIngestion = async () => {
     if (!sourceForm.bodyMarkdown.trim()) {
-      setError('Paste source content before ingesting it.');
+      setError(t('automations.ingestEmptyError'));
       return;
     }
     setIngestingSource(true);
@@ -644,7 +656,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
   };
 
   const remove = async (id: string) => {
-    if (!window.confirm('Delete this automation? Past runs and their projects are kept.'))
+    if (!window.confirm(t('automations.deleteConfirm')))
       return;
     setBusyId(id);
     try {
@@ -666,19 +678,17 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
     <section className="automations-view" aria-labelledby="automations-title" data-testid="tasks-view">
       <header className="automations-hero">
         <div className="automations-hero__copy">
-          <span className="automations-hero__eyebrow">Scheduled agent sessions</span>
+          <span className="automations-hero__eyebrow">{t('automations.kicker')}</span>
           <h1 id="automations-title" className="automations-hero__title">
-            Automations
+            {t('automations.title')}
           </h1>
-          <p className="automations-hero__lede">
-            Plan recurring conversations for project work, Orbit digests, and live artifacts.
-          </p>
+          <p className="automations-hero__lede">{t('automations.lede')}</p>
         </div>
         <div className="automations-hero__actions">
-          <div className="automations-metrics" aria-label="Automation summary">
-            <Metric label="Active" value={activeCount} />
-            <Metric label="Paused" value={pausedCount} />
-            <Metric label="Templates" value={templates.length} />
+          <div className="automations-metrics" aria-label={t('automations.summaryAria')}>
+            <Metric label={t('automations.metricActive')} value={activeCount} />
+            <Metric label={t('automations.metricPaused')} value={pausedCount} />
+            <Metric label={t('automations.metricTemplates')} value={templates.length} />
           </div>
           <button
             type="button"
@@ -687,7 +697,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
             data-testid="automations-new"
           >
             <Icon name="plus" size={14} />
-            <span>New automation</span>
+            <span>{t('automations.new')}</span>
           </button>
         </div>
       </header>
@@ -698,10 +708,10 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
         </div>
       ) : null}
 
-      <section className="automations-saved" aria-label="Your automations">
+      <section className="automations-saved" aria-label={t('automations.yours')}>
         <div className="automations-section-head">
-          <h2 className="automations-section__label">Your automations</h2>
-          {loading ? <span className="automations-section__meta">Loading</span> : null}
+          <h2 className="automations-section__label">{t('automations.yours')}</h2>
+          {loading ? <span className="automations-section__meta">{t('automations.loading')}</span> : null}
         </div>
         {!loading && sortedRoutines.length === 0 ? (
           <button
@@ -713,8 +723,8 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
               <Icon name="plus" size={16} />
             </span>
             <span className="automation-empty__body">
-              <strong>No automations yet</strong>
-              <span>Create one from a template or start with a blank schedule.</span>
+              <strong>{t('automations.emptyTitle')}</strong>
+              <span>{t('automations.emptyBody')}</span>
             </span>
           </button>
         ) : null}
@@ -725,7 +735,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
               const targetLabel =
                 r.target.mode === 'reuse'
                   ? projectsById.get(r.target.projectId) ?? r.target.projectId
-                  : 'New project each run';
+                  : t('automations.newProjectEachRun');
               const isExpanded = expandedId === r.id;
               return (
                 <li
@@ -739,11 +749,11 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                     <span className="automation-row__content">
                       <span className="automation-row__title">{r.name}</span>
                       <span className="automation-row__meta">
-                        <span>{scheduleStatusLabel(r)}</span>
+                        <span>{scheduleStatusLabel(r, t)}</span>
                         <span aria-hidden="true">·</span>
                         <span>{targetLabel}</span>
                         <span aria-hidden="true">·</span>
-                        <span>{nextRunLabel(r)}</span>
+                        <span>{nextRunLabel(r, t)}</span>
                       </span>
                       {r.prompt ? (
                         <span className="automation-row__prompt">{r.prompt}</span>
@@ -751,7 +761,11 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                       {r.lastRun ? (
                         <span className="automation-row__last-run">
                           <StatusPill status={r.lastRun.status} />
-                          <span>Last run {formatAutomationTimestamp(r.lastRun.startedAt)}</span>
+                          <span>
+                            {t('automations.lastRun', {
+                              when: formatAutomationTimestamp(r.lastRun.startedAt),
+                            })}
+                          </span>
                           <span aria-hidden="true">·</span>
                           <button
                             type="button"
@@ -765,7 +779,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                               })
                             }
                           >
-                            Open result
+                            {t('automations.openResult')}
                           </button>
                         </span>
                       ) : null}
@@ -777,10 +791,10 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                       className="automation-row__btn"
                       onClick={() => runNow(r.id)}
                       disabled={isBusy}
-                      title="Run now and open the conversation"
+                      title={t('automations.runNowTitle')}
                     >
                       <Icon name="play" size={12} />
-                      <span>Run</span>
+                      <span>{t('automations.run')}</span>
                     </button>
                     <button
                       type="button"
@@ -792,7 +806,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                       aria-expanded={isExpanded}
                     >
                       <Icon name="history" size={12} />
-                      <span>{isExpanded ? 'Hide history' : 'History'}</span>
+                      <span>{isExpanded ? t('automations.hideHistory') : t('automations.history')}</span>
                     </button>
                     <button
                       type="button"
@@ -801,7 +815,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                       disabled={isBusy}
                     >
                       <Icon name="edit" size={12} />
-                      <span>Edit</span>
+                      <span>{t('common.edit')}</span>
                     </button>
                     <button
                       type="button"
@@ -809,15 +823,15 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                       onClick={() => togglePaused(r)}
                       disabled={isBusy}
                     >
-                      {r.enabled ? 'Pause' : 'Resume'}
+                      {r.enabled ? t('automations.pause') : t('automations.resume')}
                     </button>
                     <button
                       type="button"
                       className="automation-row__btn automation-row__btn--danger"
                       onClick={() => remove(r.id)}
                       disabled={isBusy}
-                      aria-label="Delete automation"
-                      title="Delete this automation"
+                      aria-label={t('automations.deleteAria')}
+                      title={t('automations.deleteTitle')}
                     >
                       <Icon name="trash" size={12} />
                     </button>
@@ -838,15 +852,15 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
       </section>
 
       {proposals.length > 0 ? (
-        <section className="automations-saved" aria-label="Automation evolution proposals">
+        <section className="automations-saved" aria-label={t('automations.proposalsTitle')}>
           <div className="automations-section-head">
             <div>
-              <h2 className="automations-section__label">Evolution proposals</h2>
-              <p className="automations-section__sub">
-                Review automation output before it changes memory, skills, or design systems.
-              </p>
+              <h2 className="automations-section__label">{t('automations.proposalsTitle')}</h2>
+              <p className="automations-section__sub">{t('automations.proposalsSub')}</p>
             </div>
-            <span className="automations-section__meta">{proposals.length} pending</span>
+            <span className="automations-section__meta">
+              {t('automations.pendingCount', { count: proposals.length })}
+            </span>
           </div>
           <ul className="automations-saved__list">
             {proposals.map((proposal) => {
@@ -863,9 +877,9 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                     <span className="automation-row__content">
                       <span className="automation-row__title">{proposal.title}</span>
                       <span className="automation-row__meta">
-                        <span>{proposalTargetLabel(proposal.targetKind)}</span>
+                        <span>{t(proposalTargetLabelKey(proposal.targetKind))}</span>
                         <span aria-hidden="true">·</span>
-                        <span>{proposalActionLabel(proposal.action)}</span>
+                        <span>{t(proposalActionLabelKey(proposal.action))}</span>
                         <span aria-hidden="true">·</span>
                         <span>{proposal.reviewPolicy}</span>
                       </span>
@@ -885,7 +899,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                       disabled={isBusy}
                     >
                       <Icon name="check" size={12} />
-                      <span>Apply</span>
+                      <span>{t('automations.apply')}</span>
                     </button>
                     <button
                       type="button"
@@ -893,7 +907,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                       onClick={() => reviewProposal(proposal.id, 'reject')}
                       disabled={isBusy}
                     >
-                      Reject
+                      {t('automations.reject')}
                     </button>
                   </div>
                 </li>
@@ -903,20 +917,20 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
         </section>
       ) : null}
 
-      <section className="automations-ingest" aria-label="Source ingestion">
+      <section className="automations-ingest" aria-label={t('automations.ingestTitle')}>
         <div className="automations-section-head">
           <div>
-            <h2 className="automations-section__label">Ingest source</h2>
-            <p className="automations-section__sub">
-              Turn connector, repo, artifact, or chat context into reviewable evolution proposals.
-            </p>
+            <h2 className="automations-section__label">{t('automations.ingestTitle')}</h2>
+            <p className="automations-section__sub">{t('automations.ingestSub')}</p>
           </div>
-          <span className="automations-section__meta">{sourcePackets.length} recent</span>
+          <span className="automations-section__meta">
+            {t('automations.recentCount', { count: sourcePackets.length })}
+          </span>
         </div>
         <div className="automation-ingest-panel">
           <div className="automation-ingest-controls">
             <label className="automation-ingest-field">
-              <span>Template</span>
+              <span>{t('automations.fieldTemplate')}</span>
               <select
                 value={sourceForm.templateId}
                 onChange={(event) => patchSourceForm({ templateId: event.currentTarget.value })}
@@ -932,7 +946,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
               </select>
             </label>
             <label className="automation-ingest-field">
-              <span>Source</span>
+              <span>{t('automations.fieldSource')}</span>
               <select
                 value={sourceForm.sourceKind}
                 onChange={(event) =>
@@ -941,13 +955,13 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
               >
                 {SOURCE_KIND_OPTIONS.map((option) => (
                   <option key={option.id} value={option.id}>
-                    {option.label}
+                    {t(option.labelKey)}
                   </option>
                 ))}
               </select>
             </label>
             <label className="automation-ingest-field">
-              <span>Compression</span>
+              <span>{t('automations.fieldCompression')}</span>
               <select
                 value={sourceForm.tokenCompression}
                 onChange={(event) =>
@@ -958,19 +972,19 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
               >
                 {COMPRESSION_OPTIONS.map((option) => (
                   <option key={option.id} value={option.id}>
-                    {option.label}
+                    {t(option.labelKey)}
                   </option>
                 ))}
               </select>
             </label>
             {sourceForm.sourceKind === 'connector' ? (
               <label className="automation-ingest-field">
-                <span>Connector</span>
+                <span>{t('automations.fieldConnector')}</span>
                 <select
                   value={sourceForm.connectorId}
                   onChange={(event) => patchSourceForm({ connectorId: event.currentTarget.value })}
                 >
-                  <option value="">Any connected source</option>
+                  <option value="">{t('automations.anyConnectedSource')}</option>
                   {connectors.map((connector) => (
                     <option key={connector.id} value={connector.id}>
                       {connector.name}
@@ -983,44 +997,47 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
           </div>
           <div className="automation-ingest-fields">
             <label className="automation-ingest-field">
-              <span>Title</span>
+              <span>{t('automations.fieldTitle')}</span>
               <input
                 value={sourceForm.title}
                 onChange={(event) => patchSourceForm({ title: event.currentTarget.value })}
-                placeholder="Decision, brand notes, workflow pattern..."
+                placeholder={t('automations.titlePlaceholder')}
               />
             </label>
             <label className="automation-ingest-field">
-              <span>Source ref</span>
+              <span>{t('automations.fieldSourceRef')}</span>
               <input
                 value={sourceForm.sourceRef}
                 onChange={(event) => patchSourceForm({ sourceRef: event.currentTarget.value })}
-                placeholder="URL, repo path, connector event id, artifact id..."
+                placeholder={t('automations.sourceRefPlaceholder')}
               />
             </label>
           </div>
           <label className="automation-ingest-field automation-ingest-field--body">
-            <span>Content</span>
+            <span>{t('automations.fieldContent')}</span>
             <textarea
               value={sourceForm.bodyMarkdown}
               onChange={(event) => patchSourceForm({ bodyMarkdown: event.currentTarget.value })}
-              placeholder="Paste the content to canonicalize into a source packet and proposals."
+              placeholder={t('automations.contentPlaceholder')}
             />
           </label>
           <div className="automation-ingest-footer">
             {sourcePackets.length > 0 ? (
-              <ul className="automation-ingest-recent" aria-label="Recent source packets">
+              <ul className="automation-ingest-recent" aria-label={t('automations.recentPacketsAria')}>
                 {sourcePackets.map((packet) => (
                   <li key={packet.id}>
                     <span>{packet.title}</span>
                     <small>
-                      {packet.sourceKind} · {packet.tokenStats.originalTokens} tokens
+                      {t('automations.packetMeta', {
+                        kind: packet.sourceKind,
+                        tokens: packet.tokenStats.originalTokens,
+                      })}
                     </small>
                   </li>
                 ))}
               </ul>
             ) : (
-              <span className="automation-ingest-empty">No source packets yet.</span>
+              <span className="automation-ingest-empty">{t('automations.noPackets')}</span>
             )}
             <button
               type="button"
@@ -1029,28 +1046,29 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
               disabled={ingestingSource}
             >
               <Icon name="sparkles" size={14} />
-              <span>{ingestingSource ? 'Ingesting' : 'Ingest'}</span>
+              <span>{ingestingSource ? t('automations.ingesting') : t('automations.ingest')}</span>
             </button>
           </div>
         </div>
       </section>
 
-      <section className="automations-templates" aria-label="Automation templates">
+      <section className="automations-templates" aria-label={t('automations.templatesTitle')}>
         <div className="automations-templates__head">
           <div className="automations-templates__head-copy">
-            <h2 className="automations-section__label">Templates</h2>
-            <p className="automations-section__sub">
-              Orbit and live artifacts are templates inside the same automation flow.
-            </p>
+            <h2 className="automations-section__label">{t('automations.templatesTitle')}</h2>
+            <p className="automations-section__sub">{t('automations.templatesSub')}</p>
           </div>
           <span className="automations-section__meta">
-            {filteredTemplates.length} of {templates.length}
+            {t('automations.templatesCount', {
+              shown: filteredTemplates.length,
+              total: templates.length,
+            })}
           </span>
         </div>
         <div
           className="automations-template-tabs"
           role="tablist"
-          aria-label="Template filters"
+          aria-label={t('automations.templateFiltersAria')}
         >
           {TEMPLATE_FILTERS.map((filter) => {
             const count = filterTemplates(templates, filter.id).length;
@@ -1064,7 +1082,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                 className={`automations-template-tab${isActive ? ' is-active' : ''}`}
                 onClick={() => setTemplateFilter(filter.id)}
               >
-                <span className="automations-template-tab__label">{filter.label}</span>
+                <span className="automations-template-tab__label">{t(filter.labelKey)}</span>
                 <span className="automations-template-tab__count">{count}</span>
               </button>
             );
@@ -1077,8 +1095,8 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
               <Icon name="sparkles" size={16} />
             </span>
             <div>
-              <strong>No templates in this category yet.</strong>
-              <p>Try a different filter, or start from a blank automation.</p>
+              <strong>{t('automations.templatesEmptyTitle')}</strong>
+              <p>{t('automations.templatesEmptyBody')}</p>
             </div>
           </div>
         ) : null}
@@ -1096,12 +1114,12 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
               <span className="automation-template-card__body">
                 <span className="automation-template-card__kicker">
                   <Icon name={kindIcon(template.kind)} size={11} />
-                  {kindLabel(template.kind)}
+                  {t(kindLabelKey(template.kind))}
                 </span>
                 <span className="automation-template-card__title">{template.title}</span>
                 <span className="automation-template-card__desc">{template.description}</span>
                 <span className="automation-template-card__cta">
-                  Use template
+                  {t('automations.useTemplate')}
                   <Icon name="chevron-right" size={12} />
                 </span>
               </span>
@@ -1152,6 +1170,7 @@ function AutomationRunHistory({
   crystallizingRunId: string | null;
   onCrystallizeRun: (routineId: string, runId: string) => void;
 }) {
+  const { t } = useI18n();
   const [runs, setRuns] = useState<RoutineRun[] | null>(null);
 
   useEffect(() => {
@@ -1173,18 +1192,18 @@ function AutomationRunHistory({
   }, [refreshKey, routineId]);
 
   if (runs === null) {
-    return <div className="automation-history automation-history--empty">Loading run history...</div>;
+    return <div className="automation-history automation-history--empty">{t('automations.historyLoading')}</div>;
   }
 
   if (runs.length === 0) {
-    return <div className="automation-history automation-history--empty">No runs yet.</div>;
+    return <div className="automation-history automation-history--empty">{t('automations.historyEmpty')}</div>;
   }
 
   return (
-    <div className="automation-history" aria-label="Automation run history">
+    <div className="automation-history" aria-label={t('automations.historyAria')}>
       <div className="automation-history__head">
-        <span>Run history</span>
-        <span>Latest 10</span>
+        <span>{t('automations.historyTitle')}</span>
+        <span>{t('automations.historyLatest')}</span>
       </div>
       <ul className="automation-history__list">
         {runs.map((run) => (
@@ -1196,7 +1215,7 @@ function AutomationRunHistory({
             <div className="automation-history__meta">
               <span>{formatAutomationTimestamp(run.startedAt)}</span>
               <span aria-hidden="true">·</span>
-              <span>{formatRunDuration(run)}</span>
+              <span>{formatRunDuration(run, t)}</span>
               <span aria-hidden="true">·</span>
               <span>{run.agentRunId}</span>
             </div>
@@ -1212,10 +1231,14 @@ function AutomationRunHistory({
                   className="automation-history__open"
                   onClick={() => onCrystallizeRun(routineId, run.id)}
                   disabled={crystallizingRunId === run.id}
-                  title="Draft skill and memory proposals from this run"
+                  title={t('automations.crystallizeTitle')}
                 >
                   <Icon name="sparkles" size={12} />
-                  <span>{crystallizingRunId === run.id ? 'Crystallizing' : 'Crystallize'}</span>
+                  <span>
+                    {crystallizingRunId === run.id
+                      ? t('automations.crystallizing')
+                      : t('automations.crystallize')}
+                  </span>
                 </button>
               ) : null}
               <button
@@ -1230,7 +1253,7 @@ function AutomationRunHistory({
                   })
                 }
               >
-                Open conversation
+                {t('automations.openConversation')}
                 <Icon name="chevron-right" size={12} />
               </button>
             </div>

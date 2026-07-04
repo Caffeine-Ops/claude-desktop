@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect } from 'react'
 
 import {
   hexToHslString,
@@ -32,7 +32,13 @@ export function useApplyAppearance(): void {
   // After settling on the effective mode we apply that mode's color
   // overrides so accent / background / foreground / contrast /
   // translucent-sidebar pick up automatically.
-  useEffect(() => {
+  //
+  // useLayoutEffect 而非 useEffect（2026-07-04 主题切换分拍收尾）：canvas
+  // 入口切主题→即时事件→本 store 变更是跨树的两次提交，若这里用 useEffect
+  // （paint 后跑），中间会被 paint 出「标记已暗/inline 还亮」的花斑帧；
+  // useLayoutEffect 在本次提交 paint 前同步写 inline token，把中间态压到
+  // 不可见。canvas 侧写手（canvas/App.tsx）同为 useLayoutEffect。
+  useLayoutEffect(() => {
     const apply = (isDark: boolean): void => {
       const root = document.documentElement
       root.classList.toggle('dark', isDark)

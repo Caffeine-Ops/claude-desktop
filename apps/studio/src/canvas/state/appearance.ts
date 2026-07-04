@@ -77,4 +77,19 @@ export function applyAppearanceToDocument({
   for (const name of ACCENT_VARS) {
     root.style.setProperty(name, vars[name]);
   }
+
+  // 同 document 即时广播（与走 daemon 的 'od:appearance-changed' 是两条不同
+  // 语义的通道，勿合并）：chat 面的主体颜色被它的 applier 以 inline token
+  // 钉在 documentElement.style 上，光翻上面的双标记压不动它们——若只靠
+  // 「syncConfigToDaemon 成功 → od:appearance-changed → chat 再 GET daemon」
+  // 的持久化链，chat 要晚两次网络往返才变色，主题切换看起来「一点点变」
+  // （2026-07-04 分拍事故）。这里在标记落地的同一帧把 themeMode 直接递给
+  // chat（src/chat/App.tsx 监听），chat 同帧改 store 重写 inline token，
+  // 切换一拍完成；持久化校准链保持原样。detail 只带模式不带颜色：颜色
+  // 归 chat 自己的 store 管。chat 侧「值相同不 set」断回声环。
+  window.dispatchEvent(
+    new CustomEvent('od:theme-mode-applied', {
+      detail: { themeMode: theme === 'light' || theme === 'dark' ? theme : 'system' },
+    })
+  );
 }

@@ -267,7 +267,9 @@ function DeliverableCard({
                     ? { duration: 0.12 }
                     : { type: 'spring', bounce: 0.18, visualDuration: 0.2 }
                 }
-                className="fixed z-[100] w-48 overflow-hidden rounded-xl border border-border bg-popover p-1.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.35),0_2px_8px_rgba(0,0,0,0.08)]"
+                // p-1（4px）配 rounded-xl（12px）外框 + rounded-lg（8px）行：
+                // 12 − 4 = 8，内外圆角同心，行 hover 高亮与外框间距均匀。
+                className="fixed z-[100] w-48 overflow-hidden rounded-xl border border-border/70 bg-popover p-1 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.35),0_2px_8px_rgba(0,0,0,0.08)]"
               >
                 <DeliverableMenuItem
                   onClick={() => {
@@ -324,12 +326,18 @@ function DeliverableMenuItem({
     <button
       type="button"
       role="menuitem"
+      // ⚠️ data-slot 是功能性的，不是装饰：本按钮 portal 到 document.body，
+      // 不在 .chat-app 子树内，canvas 的裸 button reset
+      // （base.css `button:where(:not([data-slot], .chat-app *))`）会把它
+      // 填成描边卡片——2026-07-04 用户实拍「菜单每行一个框」就是这个泄漏。
+      // portal 出 .chat-app 的任何裸交互元素都必须带 data-slot 逃逸。
+      data-slot="deliverable-menu-item"
       onClick={onClick}
-      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-foreground transition-colors duration-100 hover:bg-muted"
+      className="group/item flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[13px] font-medium text-foreground transition-colors duration-100 hover:bg-muted active:bg-muted/70"
     >
       <svg
         viewBox="0 0 20 20"
-        className="size-[15px] shrink-0 text-muted-foreground"
+        className="size-[15px] shrink-0 text-muted-foreground transition-colors duration-100 group-hover/item:text-foreground"
         fill="none"
         stroke="currentColor"
         strokeWidth="1.6"

@@ -83,7 +83,8 @@ import {
   getShellWindow,
   listTabs,
   MAX_TABS,
-  activateTab
+  activateTab,
+  syncShellBackgroundToTheme
 } from '../tabRegistry'
 import type {
   CliBackendSetPayload,
@@ -1208,6 +1209,11 @@ export function registerIpcHandlers(): void {
       // it back what it just pushed). web tabs have no preload, so the
       // broadcaster reaches them via executeJavaScript instead.
       if (appearance) broadcastAppearanceChanged(event.sender.id)
+      // 窗口底色跟主题（compositor 空隙帧的最终兜底，见 tabRegistry 注释）。
+      // chat 侧任何主题变化（含 canvas 入口经即时事件触发的 store 更新）
+      // 都会 push 到这里，themeMode 在快照里必带。daemon 离线也照样同步——
+      // 底色是纯窗口态，不依赖写入成功。
+      if (typeof patch.themeMode === 'string') syncShellBackgroundToTheme(patch.themeMode)
       return { appearance }
     }
   )
@@ -1220,6 +1226,13 @@ export function registerIpcHandlers(): void {
   // reason as APPEARANCE_SET above.
   ipcMain.handle(IPC_CHANNELS.APPEARANCE_BROADCAST, async (event): Promise<void> => {
     broadcastAppearanceChanged(event.sender.id)
+    // 无 payload 的 ping——主题可能刚变，从 daemon 补读一次 themeMode 同步
+    // 窗口底色（fire-and-forget，daemon 离线就跳过，底色留待下次机会）。
+    void fetchDaemonAppearance()
+      .then((a) => {
+        if (a && typeof a.themeMode === 'string') syncShellBackgroundToTheme(a.themeMode)
+      })
+      .catch(() => {})
   })
 
   // Shell tab-strip settings menu → active chat tab. The shell renderer

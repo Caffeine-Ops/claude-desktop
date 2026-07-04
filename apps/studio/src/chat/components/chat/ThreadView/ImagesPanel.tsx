@@ -533,6 +533,9 @@ function ImageLightbox({
         </span>
         <button
           type="button"
+          // data-slot：lightbox portal 到 body、脱离 .chat-app 豁免子树，
+          // 防 canvas 裸 button reset 泄漏（描边卡片化）。下方关闭钮同理。
+          data-slot="modal-action"
           onClick={() => void window.chatApi.openPath({ absPath: item.absPath })}
           className="inline-flex h-7 shrink-0 items-center rounded-full bg-muted px-3 text-[11.5px] font-medium text-foreground transition-colors hover:bg-border/70"
         >
@@ -542,6 +545,7 @@ function ImageLightbox({
       {/* Close button, top-right. */}
       <motion.button
         type="button"
+        data-slot="modal-action"
         aria-label="关闭"
         onClick={onClose}
         initial={{ opacity: 0, scale: 0.8 }}

@@ -295,15 +295,16 @@ html, body, #root { height: 100%; margin: 0; }
   }
 }
 
-/* Settings-overlay mode (?settings=1, embedded in the desktop shell): the
- * hosting WebContentsView is transparent so the dimmed desktop tab shows
- * through. Clear the opaque page background so only the settings modal's own
- * scrim + card paint. The App adds `settings-overlay` to <html> in this mode. */
-html.settings-overlay,
-html.settings-overlay body,
-html.settings-overlay #root {
-  background: transparent !important;
-}
+/* Settings-overlay mode (?settings=1)：旧多视图时代这里曾把 html/body/#root
+ * 强制 transparent !important——当年设置页是独立的透明 WebContentsView，
+ * 悬浮在被调暗的 desktop tab 上，透明让底下的页面透出来。单视图 studio
+ * 里这个前提没了：设置页与主视图同一个 webContents，html 打透明只会透过
+ * 透明的 view 露出 shell 窗口底色——暗色主题下就是「进设置白闪一帧」
+ * （设置页自己的不透明背景要等挂载后才画上，2026-07-04 事故）。规则已
+ * 删除：html/body 保持各自的主题背景（chat 链 @layer base 给 html 落了
+ * hsl(var(--background)) 兜底），overlay 的不透明底由 settings-modal.css
+ * 的 `.modal-backdrop:has(.modal-settings)` 自己画。<html> 上的
+ * settings-overlay 类仍由 canvas App 维护，供该 backdrop 规则定位。 */
 
 .od-loading-shell {
   /* 100% 而非 100vh：canvas 面住在壳层的悬浮内容卡里（.shell-content-card，

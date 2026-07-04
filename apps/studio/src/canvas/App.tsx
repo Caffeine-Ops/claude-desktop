@@ -1279,8 +1279,9 @@ export function App({
 
   // In settings-overlay mode, open the dialog as soon as we mount so the
   // desktop shell's gear click lands straight on the settings UI. Also tag
-  // <html> so the page background goes transparent (the hosting overlay view
-  // is transparent — see index.css `.settings-overlay`).
+  // <html> so settings-modal.css can scope its overlay rules（如 backdrop
+  // 的不透明底）。注意：这个类曾触发「html 强制透明」（多视图时代遗留），
+  // 该规则已因暗档进设置白闪删除——见 base.css 同名注释，别加回来。
   //
   // Default to the **appearance** section, NOT execution: the desktop-only
   // controls migrated from Electron's native settings (UI/code font size,

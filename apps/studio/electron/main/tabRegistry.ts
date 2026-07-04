@@ -1,6 +1,7 @@
 import {
   BrowserWindow,
   WebContentsView,
+  nativeTheme,
   shell,
   type IpcMainInvokeEvent,
   type WebContents
@@ -203,12 +204,14 @@ export function createShellWindow(): BrowserWindow {
     // the buttons don't overlap any content.
     trafficLightPosition: { x: 14, y: 16 },
     icon: appIcon,
-    // Match the nav rail's --rail-bg (#f6f6f5) so the brief pre-paint frame
-    // and the 8px gap around the floating chat card read as one continuous
-    // rail-coloured surface instead of flashing white. (Light value; dark mode
-    // repaints via the renderer root once it mounts — see main.css
-    // html[data-surface='shell'].)
-    backgroundColor: '#f6f6f5'
+    // 窗口底色 = renderer 没画出来的每一帧的最终兜底（studio 的
+    // WebContentsView 是透明底，见 newStudioTab 的 setBackgroundColor）。
+    // 必须跟主题走：写死浅色时，暗色模式下设置 overlay ↔ 主视图这类大树
+    // 重挂载的 compositor 空隙帧会透出浅灰白——「面板白闪」（2026-07-04）。
+    // 初值按 OS 主题给；运行时用户切主题经 APPEARANCE_SET/BROADCAST 调
+    // syncShellBackgroundToTheme 跟随。亮档 #f6f6f5 = rail 灰面，暗档
+    // #1a1917 = tokens.css 暗档 --background 的 hex 源值。
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1a1917' : '#f6f6f5'
     // 刻意不给 webPreferences：shell webContents 只承载静态 splash，
     // 不需要 preload / chatApi——Electron 默认（sandbox + contextIsolation +
     // 无 nodeIntegration）就是我们要的最小权限面。
@@ -533,6 +536,20 @@ export function describeSenderMismatch(
 /** Returns the BrowserWindow that sent this IPC (always the shell). */
 export function getShellWindow(): BrowserWindow | null {
   return shellWindow
+}
+
+/**
+ * 把 shell 窗口底色同步到主题档位——renderer 没画出来的每一帧（大树重挂载
+ * 的 compositor 空隙、resize、全屏切换）露出的就是它，跟错档位就是「白闪/
+ * 黑闪」。'system' 按 nativeTheme 解析。调用点：ipc/register.ts 的
+ * APPEARANCE_SET（chat 侧每次主题变化都会 push 到这）与 APPEARANCE_BROADCAST
+ * （canvas 直连 daemon 后的 ping）。色值与 createShellWindow 的初值同源。
+ */
+export function syncShellBackgroundToTheme(themeMode: string | undefined): void {
+  if (!shellWindow || shellWindow.isDestroyed()) return
+  const isDark =
+    themeMode === 'dark' || (themeMode !== 'light' && nativeTheme.shouldUseDarkColors)
+  shellWindow.setBackgroundColor(isDark ? '#1a1917' : '#f6f6f5')
 }
 
 /**

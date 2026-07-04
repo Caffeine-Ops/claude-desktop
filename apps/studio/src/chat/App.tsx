@@ -14,7 +14,7 @@ import { useI18n, useT } from './i18n'
 import { useSettingsStore } from './stores/settings'
 import { useDialogStore } from './stores/dialogs'
 import { useApplyAppearance } from './stores/appearance.applier'
-import { hydrateAppearanceFromDaemon } from './stores/appearance'
+import { hydrateAppearanceFromDaemon, useAppearanceStore } from './stores/appearance'
 import { SettingsView } from './components/settings/SettingsView'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 
@@ -94,11 +94,26 @@ function App(): React.JSX.Element {
     const onSameDocChange = () => {
       void hydrateAppearanceFromDaemon()
     }
+    // 即时通道：canvas 写手每次落双标记都会同帧广播 themeMode（见
+    // canvas/state/appearance.ts 的 dispatch 注释）。直接改本地 store——
+    // applier（deps 含 themeMode）同帧重写 inline token，主题切换一拍完成，
+    // 不必等下面那条「daemon 写入成功 → od:appearance-changed → 再 GET」的
+    // 持久化校准链（慢两次网络往返，是 2026-07-04「切主题一点点变」分拍
+    // 的根源）。「值相同不 set」断回声环：本组件 applier 触发的 canvas
+    // 重 apply 会再次广播同值，此处直接忽略。
+    const onThemeModeApplied = (e: Event) => {
+      const mode = (e as CustomEvent<{ themeMode?: 'light' | 'dark' | 'system' }>).detail?.themeMode
+      if (!mode) return
+      const store = useAppearanceStore.getState()
+      if (store.themeMode !== mode) store.setThemeMode(mode)
+    }
+    window.addEventListener('od:theme-mode-applied', onThemeModeApplied)
     window.addEventListener('od:appearance-changed', onSameDocChange)
     const offIpc = window.chatApi?.onAppearanceChanged?.(() => {
       void hydrateAppearanceFromDaemon()
     })
     return () => {
+      window.removeEventListener('od:theme-mode-applied', onThemeModeApplied)
       window.removeEventListener('od:appearance-changed', onSameDocChange)
       offIpc?.()
     }

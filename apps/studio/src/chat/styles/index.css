@@ -236,6 +236,16 @@
     border-color: hsl(var(--border));
   }
 
+  /* html 必须自带主题底色（2026-07-04 暗色白闪事故）：studio 的
+     WebContentsView 是透明底、shell 窗口底色是浅色，设置 overlay ↔ 主视图
+     这类大树重挂载时 compositor 有一帧无内容可画——html 若无背景（UA 默认
+     白）就露窗口浅色，暗色下表现为「面板白闪一下变黑」。html 层极少随
+     子树重建，由它兜住主题色能盖掉绝大多数渲染空隙；窗口层的兜底见
+     electron/main/tabRegistry.ts 的 backgroundColor 注释。 */
+  html {
+    background-color: hsl(var(--background));
+  }
+
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
