@@ -274,7 +274,7 @@ export function ImagesPanel({
       <div
         className={
           'flex shrink-0 flex-col gap-2 border-b border-border/60 px-4 py-3' +
-          (fill ? '' : ' sticky top-0 z-10 bg-white')
+          (fill ? '' : ' sticky top-0 z-10 bg-card')
         }
       >
         <div className="flex items-center gap-2.5">

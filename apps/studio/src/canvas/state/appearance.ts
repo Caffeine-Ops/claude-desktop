@@ -62,11 +62,14 @@ export function applyAppearanceToDocument({
     root.setAttribute('data-theme', theme);
     root.classList.toggle('dark', theme === 'dark');
   } else {
-    root.removeAttribute('data-theme');
-    root.classList.toggle(
-      'dark',
-      window.matchMedia('(prefers-color-scheme: dark)').matches
-    );
+    // system：按 matchMedia 解析后仍然**显式写** data-theme，不再
+    // removeAttribute——chat 写手（appearance.applier.ts）依赖「data-theme
+    // 永不留空」的契约压掉 canvas CSS 的 @media 兜底分支；这里留空会让
+    // 两面标记再度分叉（canvas 跟 @media 实时走、.dark 冻结在解析瞬间）。
+    // 解析值与 @media 兜底此刻等价，显式写不改变视觉、只锁一致性。
+    const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    root.setAttribute('data-theme', dark ? 'dark' : 'light');
+    root.classList.toggle('dark', dark);
   }
 
   const normalized = resolveAccentColor(accentColor);

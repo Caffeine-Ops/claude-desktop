@@ -382,13 +382,17 @@
   transition: transform 120ms ease;
 }
 
-/* Question form — interactive form a planning agent can post into chat */
+/* Question form — interactive form a planning agent can post into chat.
+   视觉对齐 chat 面的提问卡语言（docs/ui-prototype-project-workspace.html
+   .ask-card）：12px 圆角 + 轻接触影；「提问/确认」属于身份点位，头部与
+   选中态走 --brand（固定品牌绿，tokens.css），不跟用户可调的 --od-accent——
+   与 chat 面 composer focus ring / 发送按钮 ready 态同一条用色纪律。 */
 .question-form {
   margin: 8px 0;
   border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-lg);
+  border-radius: 12px;
   background: var(--bg-panel);
-  box-shadow: var(--od-shadow-md);
+  box-shadow: var(--od-shadow-xs);
   overflow: hidden;
 }
 .question-form-locked {
@@ -401,8 +405,8 @@
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  border-bottom: 1px solid var(--od-border);
-  background: var(--accent-tint);
+  border-bottom: 1px solid hsl(var(--brand) / 0.14);
+  background: hsl(var(--brand) / 0.08);
 }
 .question-form-locked .question-form-head {
   background: var(--bg-subtle);
@@ -411,8 +415,8 @@
   width: 28px;
   height: 28px;
   border-radius: 999px;
-  background: var(--od-accent);
-  color: white;
+  background: hsl(var(--brand));
+  color: hsl(var(--brand-foreground));
   font-weight: 600;
   font-size: 14px;
   display: inline-flex;
@@ -461,7 +465,7 @@
   align-items: center;
   gap: 4px;
 }
-.qf-required { color: var(--od-accent); }
+.qf-required { color: hsl(var(--destructive)); }
 .qf-help {
   font-size: 11px;
   color: var(--text-muted);
@@ -510,9 +514,9 @@
 }
 .qf-chip-disabled:hover { border-color: var(--od-border); }
 .qf-chip-on {
-  border-color: var(--od-accent);
-  background: var(--accent-soft);
-  color: var(--accent-hover);
+  border-color: hsl(var(--brand) / 0.5);
+  background: hsl(var(--brand) / 0.1);
+  color: var(--text);
   font-weight: 400;
 }
 .question-form-locked .qf-chip { cursor: not-allowed; }
@@ -535,6 +539,18 @@
   font-size: 11px;
   color: var(--text-muted);
   line-height: 1.4;
+}
+/* 发送答案 = 提问卡内的确认 CTA，scoped 走品牌绿——不动全局
+   button.primary（那是 canvas 全域主按钮，跟用户可调 --od-accent）。 */
+.question-form-foot button.primary {
+  background: hsl(var(--brand));
+  border-color: hsl(var(--brand));
+  color: hsl(var(--brand-foreground));
+  box-shadow: var(--od-shadow-xs);
+}
+.question-form-foot button.primary:hover:not(:disabled) {
+  background: hsl(var(--brand) / 0.9);
+  border-color: hsl(var(--brand) / 0.9);
 }
 
 /* Direction-cards picker — used by the second discovery form when the user
@@ -566,9 +582,9 @@
 .qf-card:hover { border-color: var(--border-strong); }
 .qf-card:active { transform: translateY(1px); }
 .qf-card-on {
-  border-color: var(--od-accent, #c96442);
-  background: color-mix(in oklch, var(--od-accent, #c96442) 4%, var(--bg));
-  box-shadow: 0 0 0 1px var(--od-accent, #c96442) inset;
+  border-color: hsl(var(--brand) / 0.5);
+  background: hsl(var(--brand) / 0.06);
+  box-shadow: 0 0 0 1px hsl(var(--brand) / 0.5) inset;
 }
 .qf-card-disabled { cursor: not-allowed; opacity: 0.6; }
 .qf-card-head {
@@ -590,8 +606,8 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: 2px 6px;
-  background: var(--od-accent, #c96442);
-  color: #fff;
+  background: hsl(var(--brand));
+  color: hsl(var(--brand-foreground));
   border-radius: 999px;
   flex-shrink: 0;
 }

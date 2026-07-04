@@ -88,7 +88,7 @@ function deliverableKind(ext: string): {
         zh: '文件',
         en: 'File',
         badge: ext.slice(0, 3).toUpperCase() || '?',
-        badgeClass: 'bg-zinc-400'
+        badgeClass: 'bg-muted-foreground'
       }
   }
 }

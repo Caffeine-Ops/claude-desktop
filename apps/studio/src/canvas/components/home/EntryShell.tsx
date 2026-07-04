@@ -53,13 +53,21 @@ import { CenteredLoader } from '../shared/Loading';
 import { DesignsTab } from './DesignsTab';
 import { DesignSystemPreviewModal } from '../design-system/DesignSystemPreviewModal';
 import { DesignSystemsTab } from '../design-system/DesignSystemsTab';
-import { EntryNavRail, type EntryView as EntryViewKind } from './EntryNavRail';
+// EntryNavRail 已退役（2026-07-04）：五个功能图标迁设置页「工作区」组、
+// 新建项目迁壳层 AppRail。视图 token 改用 router 的同构类型。
+import type { EntryHomeView as EntryViewKind } from '../../router';
+import {
+  consumeNewProjectRequest,
+  NEW_PROJECT_REQUEST_EVENT,
+} from '../../state/newProjectRequest';
+import { UpdaterPopup } from '../UpdaterPopup';
 import { HomeView } from './HomeView';
 import {
   createPluginAuthoringHandoff,
   createPluginUseHandoff,
   type HomePromptHandoff,
 } from '../home-hero/plugin-authoring';
+import { takeHomePromptHandoff } from '../../state/homePromptHandoff';
 import type { PluginUseAction } from '../plugins-home/useActions';
 import { Icon } from '../shared/Icon';
 import { AgentIcon } from '../shared/AgentIcon';
@@ -362,6 +370,29 @@ export function EntryShell({
     navigate({ kind: 'home', view: next });
   }
 
+  // 设置页「插件」section（WorkspaceSections.tsx）发起的 创建/使用 插件流：
+  // 设置 overlay 模式下本组件未挂载（App 提前 return），那边只能 stash +
+  // navigate 回首页；这里挂载时取走暂存写进本地 state，后续与 rail 直发的
+  // 流程完全一致。一次性信箱，取即清空（见 state/homePromptHandoff.ts）。
+  useEffect(() => {
+    const stashed = takeHomePromptHandoff();
+    if (stashed) {
+      setHomePromptHandoff(stashed);
+      changeView('home');
+    }
+  }, []);
+
+  // 壳层 AppRail 的「新建项目」按钮（EntryNavRail 退役后的新家）：事件 +
+  // pending 双通道（见 state/newProjectRequest.ts）。挂载分支接住「按钮
+  // 点击时本组件未挂载」（canvas 停在项目视图等），监听分支接住「已挂载」
+  // （SurfaceHost keep-alive 下即使 chat 面在前本组件也活着）。
+  useEffect(() => {
+    if (consumeNewProjectRequest()) openNewProject();
+    const onRequest = () => openNewProject();
+    window.addEventListener(NEW_PROJECT_REQUEST_EVENT, onRequest);
+    return () => window.removeEventListener(NEW_PROJECT_REQUEST_EVENT, onRequest);
+  }, []);
+
   function startPluginAuthoring(goal?: string) {
     setHomePromptHandoff(
       createPluginAuthoringHandoff(Date.now(), goal),
@@ -517,12 +548,14 @@ export function EntryShell({
 
   return (
     <div className="entry-shell entry-shell--no-header">
+      {/* EntryNavRail 已退役（2026-07-04）：左列图标栏整条删除，.entry 在
+          entry-layout.css 里收成单列。原 rail 里的 UpdaterPopup（更新提示，
+          仅桌面端有更新时才渲染、平时 return null）搬到右下角悬浮容器——
+          不能进 topbar：avatarMenu 为空时 topbar 高度收 0 会把它压没。 */}
       <div className="entry">
-        <EntryNavRail
-          view={view}
-          onViewChange={changeView}
-          onNewProject={() => openNewProject()}
-        />
+        <div className="entry-updater-float">
+          <UpdaterPopup />
+        </div>
         {/* In the Electron shell `avatarMenu` is null (the desktop tab strip
             already owns the settings gear), so the topbar collapses to an
             empty strip. Mark it so CSS can drop both the topbar's height and

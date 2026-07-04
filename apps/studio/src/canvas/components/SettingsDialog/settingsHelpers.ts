@@ -2,6 +2,7 @@ import { validateBaseUrl } from '@open-design/contracts/api/connectionTest';
 import type { Locale } from '../../i18n';
 import { KNOWN_PROVIDERS } from '../../state/config';
 import type { KnownProvider } from '../../state/config';
+import type { SettingsWorkspaceHost } from '../settings/WorkspaceSections';
 import type {
   AgentInfo,
   ApiProtocol,
@@ -32,6 +33,13 @@ export type SettingsSection =
   | 'memory'
   | 'logAnalysis'
   | 'privacy'
+  // 「工作区」三节（2026-07-04 首页 rail 迁移）：项目 / 自动化 / 插件。
+  // 内容由 WorkspaceSections.tsx 宿主，数据靠 workspaceHost prop 注入——
+  // 没有 workspaceHost 时（理论上只有 canvas App 会开设置，防御性判空）
+  // 这三节渲染为空。
+  | 'projects'
+  | 'automations'
+  | 'plugins'
   // 'library' is consumed by the EntryShell library route — App opens it
   // via this same openSettings entry point, so SettingsSection must
   // accept the token even though SettingsDialog itself has no Library
@@ -98,6 +106,13 @@ export interface SettingsDialogProps {
    */
   controlledSection?: SettingsSection;
   onSectionChange?: (section: SettingsSection) => void;
+  /**
+   * 「工作区」sections（projects/automations/plugins）的数据与动作包。
+   * 由 canvas App 在渲染设置时打包传入（数据在 App state、handler 内部
+   * navigate() 会让 ?settings=1 消失从而自动关 overlay）。不传时这三节
+   * 渲染为空——见 WorkspaceSections.tsx 头注释。
+   */
+  workspaceHost?: SettingsWorkspaceHost;
 }
 
 export interface AgentRefreshOptions {

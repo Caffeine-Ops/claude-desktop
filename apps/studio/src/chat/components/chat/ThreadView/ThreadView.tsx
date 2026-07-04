@@ -142,13 +142,15 @@ function ChatColumnResizeHandle({
       role="separator"
       aria-orientation="vertical"
       onPointerDown={onResizeStart}
-      // w-1.5 = 6px transparent gutter between the two white panes. Because the
-      // gutter is transparent and the panes are bg-white, this strip reveals
-      // the .app background behind them — that's what makes the two cards read
-      // as separated. The hit area spans the whole gutter so the handle is easy
-      // to grab; touch-none stops scroll/pan hijacking the drag; `group` drives
-      // the child divider's hover reveal.
-      className="group relative flex h-full w-1.5 shrink-0 cursor-col-resize touch-none items-stretch justify-center"
+      // w-2.5 = 10px gutter between the two white panes, painted bg-sidebar
+      // （窗口底面同款灰）。透明版透出的是 .chat-app 背后的
+      // shell-content-card（--card，近白），白缝夹两白面板等于隐形，所以
+      // 必须自涂。灰缝与 rail ↔ 浮卡的 10px gutter 同色同宽。Root 保持
+      // 透明满铺（「双浮卡」方案已被否，见 Root 注释），缝的颜色只能落在
+      // 这里。The hit area spans the whole gutter so the handle is easy to
+      // grab; touch-none stops scroll/pan hijacking the drag; `group`
+      // drives the child divider's hover reveal.
+      className="group relative flex h-full w-2.5 shrink-0 cursor-col-resize touch-none items-stretch justify-center bg-sidebar"
     >
       {/* The visible divider: a soft accent (green) line, invisible at rest,
           fading in on hover and while dragging (group-active). A vertical
@@ -481,12 +483,16 @@ export function ThreadView(): React.JSX.Element {
       // slides mode added a 4px `p-1` inset that normal mode lacked, so every
       // cross-mode switch animated the whole layout in/out by 4px on all sides.
       //
-      // The cards' outer corners are now clipped by `.app`'s own 4px radius
-      // (overflow:hidden in main.css) — which is exactly 4px, the same as each
-      // card's `rounded-[4px]`, so the clip and the card radius coincide and no
-      // corner reads as mismatched. The two slides panes stay visually
-      // separated by the 6px transparent gutter in ChatColumnResizeHandle, which
-      // reveals the `.app` background between them — it never needed the inset.
+      // ⚠️ 2026-07-04 试过「双浮卡」方案（Root 涂 bg-sidebar + p-2.5、面板
+      // 6px 圆角，让分栏读作两张浮在灰底上的卡）——用户当天否掉：shell
+      // 浮卡里再套两张卡 = 卡片套卡片，层次太重。定稿回到本形态：面板
+      // 满铺贴边，仅中缝 10px 灰缝（ChatColumnResizeHandle 自涂
+      // bg-sidebar）提供视觉分隔。别再往这个方向试。
+      //
+      // The cards' outer corners are clipped by `.chat-app`'s own 4px radius
+      // (overflow:hidden in main.css) — the same as each card's
+      // `rounded-[4px]`, so the clip and the card radius coincide and no
+      // corner reads as mismatched.
       className="relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-row bg-transparent"
     >
       {/* Left column: the chat itself (progress bar + message viewport +
@@ -497,11 +503,11 @@ export function ThreadView(): React.JSX.Element {
       <div
         className={
           'relative flex h-full min-h-0 flex-col ' +
-          // 4px (the smallest radius, matching .app's clip) — explicit so it
-          // can't drift if Tailwind's bare `rounded` default ever changes.
+          // 4px (the smallest radius, matching .chat-app's clip) — explicit so
+          // it can't drift if Tailwind's bare `rounded` default ever changes.
           (isSlidesMode
-            ? 'shrink-0 overflow-hidden rounded-[4px] bg-white'
-            : 'min-w-0 flex-1 bg-white')
+            ? 'shrink-0 overflow-hidden rounded-[4px] bg-card'
+            : 'min-w-0 flex-1 bg-card')
         }
         // Slides mode: width is user-controlled (drag handle below) and
         // persisted. The old fixed `w-[560px]` + `border-r` hairline are both
@@ -509,11 +515,9 @@ export function ThreadView(): React.JSX.Element {
         // normal modes width stays flex-driven, so leave style unset.
         style={isSlidesMode ? { width: chatColWidth } : undefined}
       >
-      {/* Chat header — the current session's title over a muted "内容由 AI
-          生成" subtitle, pinned to the top of the chat column. shrink-0 so it
-          never gets squeezed by the scrolling viewport below. Sits above the
-          viewport's top mask, so it reads as a fixed banner the messages
-          scroll under. */}
+      {/* Chat header — 46px 单行顶栏：命令 chip + 标题 + 「AI 生成」徽标，
+          hairline 底边（见 ChatHeader 注释）。shrink-0 so it never gets
+          squeezed by the scrolling viewport below. */}
       <ChatHeader />
 
       {/* Top indeterminate progress bar. Absolute at the very top of
@@ -874,15 +878,19 @@ function TopProgressBar(): React.JSX.Element {
 /* ─────────────────────────── Chat header ─────────────────────── */
 
 /**
- * Chat column header: the current session's title on one line, with a muted
- * "内容由 AI 生成" subtitle beneath it. Title comes from the shared
- * sessionTitle store (fed by FusionRuntimeProvider's thread-list adapter from
- * the active session's ThreadSummary). Falls back to a placeholder while no
- * session is selected or a freshly-minted one hasn't surfaced in the list yet.
+ * Chat column header — 46px 单行顶栏（docs/ui-prototype-tool-card.html 的
+ * 「标题·顶栏」定稿方案）：斜杠命令拆成绿色 mono chip、会话标题 14px、
+ * 右端一枚「AI 生成」hairline 徽标，底部 hairline 让它读作一根栏。
+ * 取代旧的两行式（16px 标题 + 「内容由 AI 生成」副行）——副行独占一行
+ * 且标题与内容列错位，读作调试信息而非会话锚点。
  *
- * `shrink-0` keeps it from being compressed by the scrolling viewport; the
- * messages scroll underneath. Title truncates on one line so a long session
- * name can't push the layout or wrap into the subtitle.
+ * Title comes from the shared sessionTitle store (fed by
+ * FusionRuntimeProvider's thread-list adapter from the active session's
+ * ThreadSummary). Falls back to a placeholder while no session is selected.
+ *
+ * `shrink-0` keeps it from being compressed by the scrolling viewport.
+ * 单栏与 PPT 分栏共用：header 就在聊天列内部，slides 模式列宽收窄时
+ * 内层对齐容器（max-w-4xl，同消息列）自然退化为全宽。
  */
 function ChatHeader(): React.JSX.Element {
   const t = useT()
@@ -893,6 +901,17 @@ function ChatHeader(): React.JSX.Element {
   // 2026-07-04 退役。
   const sessionId = useChatStore((s) => s.sessionId)
   const display = title && title.trim() ? title : t('chatHeaderUntitled')
+
+  // 斜杠命令标题拆分：'/claude-desktop:ppt-master 武汉大学介绍' →
+  // chip '/ppt-master'（冒号后短名；完整命令进 hover title）+ 正文标题。
+  // 纯命令无参数、或非 '/' 开头的标题不拆——chip 只在「命令 + 参数」
+  // 形态下才有语义（参数才是会话主题，命令是它的来源标记）。
+  const cmdMatch = /^\/(\S+)\s+(\S[\s\S]*)$/.exec(display)
+  const cmdFull = cmdMatch ? '/' + cmdMatch[1] : null
+  const cmdShort = cmdMatch
+    ? '/' + (cmdMatch[1].split(':').pop() ?? cmdMatch[1])
+    : null
+  const restTitle = cmdMatch ? cmdMatch[2] : display
 
   // ── In-place rename ──
   // The title itself is the rename entry point (mirrors the sidebar's
@@ -955,72 +974,90 @@ function ChatHeader(): React.JSX.Element {
     // there must start a rename, not a window drag — while the rest of the
     // header (subtitle, padding) stays draggable; `select-none` keeps a
     // press-drag on the chrome from starting a text selection.
-    <div className="shrink-0 select-none p-3 [-webkit-app-region:drag]">
-      {editing ? (
-        <input
-          ref={titleInputRef}
-          value={draft}
-          maxLength={200}
-          name="rename-session-title"
-          aria-label={t('renameChatPrompt')}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              void commitEdit()
-            } else if (e.key === 'Escape') {
-              e.preventDefault()
-              setEditing(false)
-            }
-          }}
-          onBlur={() => void commitEdit()}
-          // Same type metrics as the h1 (16px/semibold/leading-tight) so the
-          // header doesn't jump a pixel entering/leaving edit mode; negative
-          // margin re-absorbs the input's own padding for the same reason.
-          // border 用 --brand 而非 --ring：ring 会被 appearance applier 换成
-          // 用户主题色，而「正在重命名」的绿框与 rail 行内编辑是同一身份。
-          className="-mx-1.5 -my-0.5 w-[min(480px,100%)] rounded-md border-[1.5px] border-brand bg-background px-1.5 py-0.5 text-[16px] font-semibold leading-tight text-foreground outline-none ring-2 ring-brand/20 [-webkit-app-region:no-drag]"
-        />
-      ) : (
-        /* 无切换动画：曾是 key={sessionId} 重挂载的 motion.h1（淡入+3px 上浮
-           入场），2026-07-04 应用户要求退役——切会话时标题即时呈现，与 rail
-           选中态同一节奏（同日退役的 glider 滑块）。 */
-        <h1 className="flex min-w-0 items-center text-[16px] font-semibold leading-tight text-foreground">
-          <button
-            type="button"
-            onClick={startEdit}
-            disabled={!sessionId}
-            title={sessionId ? t('renameChat') : undefined}
-            aria-label={sessionId ? `${t('renameChat')}: ${display}` : undefined}
-            // group/title scopes the pencil reveal to hovering the title
-            // itself, not the whole header band.
-            className="group/title flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 -mx-1.5 -my-0.5 text-left transition-colors [-webkit-app-region:no-drag] enabled:cursor-text enabled:hover:bg-foreground/[0.05] disabled:cursor-default"
-          >
-            <span className="min-w-0 truncate" title={display}>
-              {display}
-            </span>
-            {sessionId ? (
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-                className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/title:opacity-80 group-focus-visible/title:opacity-80"
+    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [-webkit-app-region:drag]">
+      {/* 内层对齐容器：max-w-4xl + px-3 与消息列（Viewport 内层）完全同参，
+          宽列时标题与消息同一左缘；slides 分栏列窄时自然退化为全宽。 */}
+      <div className="mx-auto flex h-full w-full min-w-0 max-w-4xl items-center gap-2 px-3">
+        {editing ? (
+          <input
+            ref={titleInputRef}
+            value={draft}
+            maxLength={200}
+            name="rename-session-title"
+            aria-label={t('renameChatPrompt')}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                void commitEdit()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                setEditing(false)
+              }
+            }}
+            onBlur={() => void commitEdit()}
+            // Same type metrics as the h1 (14px/medium/leading-tight) so the
+            // header doesn't jump a pixel entering/leaving edit mode; negative
+            // margin re-absorbs the input's own padding for the same reason.
+            // 编辑的是完整原始标题（含命令前缀）——chip 只是展示态拆分。
+            // border 用 --brand 而非 --ring：ring 会被 appearance applier 换成
+            // 用户主题色，而「正在重命名」的绿框与 rail 行内编辑是同一身份。
+            className="-mx-1.5 -my-0.5 w-[min(480px,100%)] rounded-md border-[1.5px] border-brand bg-background px-1.5 py-0.5 text-[14px] font-medium leading-tight text-foreground outline-none ring-2 ring-brand/20 [-webkit-app-region:no-drag]"
+          />
+        ) : (
+          <>
+            {cmdShort ? (
+              <span
+                title={cmdFull ?? undefined}
+                className="shrink-0 rounded-full border border-brand/20 bg-brand/10 px-2 py-0.5 font-mono text-[11px] leading-none text-brand"
               >
-                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-              </svg>
+                {cmdShort}
+              </span>
             ) : null}
-          </button>
-        </h1>
-      )}
-      <p className="mt-1 text-[12px] leading-none text-muted-foreground">
-        {t('chatHeaderSubtitle')}
-      </p>
+            {/* 无切换动画：曾是 key={sessionId} 重挂载的 motion.h1（淡入+3px
+               上浮入场），2026-07-04 应用户要求退役——切会话时标题即时呈现，
+               与 rail 选中态同一节奏（同日退役的 glider 滑块）。 */}
+            <h1 className="flex min-w-0 items-center text-[14px] font-medium leading-tight text-foreground">
+              <button
+                type="button"
+                onClick={startEdit}
+                disabled={!sessionId}
+                title={sessionId ? t('renameChat') : undefined}
+                aria-label={
+                  sessionId ? `${t('renameChat')}: ${display}` : undefined
+                }
+                // group/title scopes the pencil reveal to hovering the title
+                // itself, not the whole header band.
+                className="group/title flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 -mx-1.5 -my-0.5 text-left transition-colors [-webkit-app-region:no-drag] enabled:cursor-text enabled:hover:bg-foreground/[0.05] disabled:cursor-default"
+              >
+                <span className="min-w-0 truncate" title={display}>
+                  {restTitle}
+                </span>
+                {sessionId ? (
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                    className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/title:opacity-80 group-focus-visible/title:opacity-80"
+                  >
+                    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                  </svg>
+                ) : null}
+              </button>
+            </h1>
+          </>
+        )}
+        {/* 「AI 生成」合规声明：从独占一行的副行收敛为右端 hairline 徽标。 */}
+        <span className="ml-auto shrink-0 rounded-full border border-border/90 px-2 py-0.5 text-[10.5px] leading-none text-muted-foreground/85">
+          {t('chatHeaderAiBadge')}
+        </span>
+      </div>
     </div>
   )
 }

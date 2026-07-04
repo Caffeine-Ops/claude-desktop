@@ -30,6 +30,12 @@ import {
   type SettingsSection,
 } from './components/SettingsDialog';
 import { SettingsDialogV2 } from './components/settings/SettingsDialogV2';
+import type { SettingsWorkspaceHost } from './components/settings/WorkspaceSections';
+import {
+  createPluginAuthoringHandoff,
+  createPluginUseHandoff,
+} from './components/home-hero/plugin-authoring';
+import { stashHomePromptHandoff } from './state/homePromptHandoff';
 import {
   daemonIsLive,
   fetchAppVersionInfo,
@@ -1256,17 +1262,10 @@ export function App({
   }, [route, activeProject, projects, daemonLive]);
 
   const openSettings = useCallback((section: SettingsSection = 'execution') => {
-    if (section === 'composio' || section === 'mcpClient' || section === 'integrations') {
-      setIntegrationInitialTab(
-        section === 'composio'
-          ? 'connectors'
-          : section === 'mcpClient'
-            ? 'mcp'
-            : 'use-everywhere',
-      );
-      navigate({ kind: 'home', view: 'integrations' });
-      return;
-    }
+    // 历史：composio/mcpClient/integrations 曾改道去首页 integrations 视图
+    // （navigate home + IntegrationTab）。2026-07-04 首页 rail 迁入设置页后
+    // 取消改道——设置页的 ConnectorSection / McpClientSection /
+    // IntegrationsSection 就是这三个入口的正身，全部收敛到设置页。
     setSettingsWelcome(false);
     setSettingsInitialSection(section);
     setSettingsOpen(true);
@@ -1304,9 +1303,9 @@ export function App({
   }, [isSettingsOverlay]);
 
   const openMcpSettings = useCallback(() => {
-    setIntegrationInitialTab('mcp');
-    navigate({ kind: 'home', view: 'integrations' });
-  }, []);
+    // 同 openSettings 的改道取消：MCP 配置的正身是设置页 mcpClient section。
+    openSettings('mcpClient');
+  }, [openSettings]);
 
   const handleCompleteOnboarding = useCallback(() => {
     const current = latestPersistedConfigRef.current;
@@ -1434,6 +1433,78 @@ export function App({
     [designSystems, config.disabledDesignSystems],
   );
 
+  // 设置页「工作区」sections（projects/automations/plugins，2026-07-04 首页
+  // rail 迁移）的数据与动作包。插件流没有 App 级 handler（原本是 EntryShell
+  // 本地 handoff state），走 stash + 回首页，EntryShell 重挂载时消费（见
+  // state/homePromptHandoff.ts）。
+  // ⚠️ 必须定义在 isSettingsOverlay 提前 return 之前（hooks 顺序）。
+  //
+  // 跳转型 handler 必须先 leaveSettingsOverlay()：canvas router 的
+  // navigate() 刻意保留整个 query string（?host=desktop 时代的约定，见
+  // router.ts 注释），?settings=1 会跟着到达新路由、overlay 永远关不掉
+  // （CDP 实测 /projects/<id>?settings=1 卡死在设置页）。replaceState 剥参
+  // 不产生额外历史项，Next 的 native history 集成会同步 useSearchParams，
+  // isSettingsOverlay 随之翻 false；紧随其后的 navigate() 派发 popstate。
+  // 删除/重命名不跳转，不剥参——操作完留在设置页里继续管理是正确交互。
+  const settingsWorkspaceHost = useMemo<SettingsWorkspaceHost>(() => {
+    const leaveSettingsOverlay = () => {
+      const url = new URL(window.location.href);
+      if (!url.searchParams.has('settings')) return;
+      url.searchParams.delete('settings');
+      window.history.replaceState(
+        null,
+        '',
+        url.pathname + url.search + url.hash,
+      );
+    };
+    return {
+      projects,
+      skills: enabledSkills,
+      designTemplates: enabledDesignTemplates,
+      designSystems: enabledDS,
+      onOpenProject: (id) => {
+        leaveSettingsOverlay();
+        handleOpenProject(id);
+      },
+      onOpenLiveArtifact: (projectId, artifactId) => {
+        leaveSettingsOverlay();
+        handleOpenLiveArtifact(projectId, artifactId);
+      },
+      onDeleteProject: handleDeleteProject,
+      onRenameProject: handleRenameProject,
+      onCreatePlugin: (goal?: string) => {
+        leaveSettingsOverlay();
+        stashHomePromptHandoff(createPluginAuthoringHandoff(Date.now(), goal));
+        navigate({ kind: 'home', view: 'home' });
+      },
+      onUsePlugin: (record, action) => {
+        leaveSettingsOverlay();
+        stashHomePromptHandoff(
+          createPluginUseHandoff(Date.now(), record.id, { action }),
+        );
+        navigate({ kind: 'home', view: 'home' });
+      },
+      // 剥参发生在创建之前：成功路径 handler 尾部 navigate 进新项目；失败
+      // 路径用户落回画布（overlay 已关、错误提示随宿主卸载丢失）——share
+      // 创建失败罕见，接受这个次优。想改进得把 navigate 从共享 handler 里
+      // 拆出来，不值得为此加复杂度。
+      onCreatePluginShareProject: async (pluginId, action, locale) => {
+        leaveSettingsOverlay();
+        return handleCreatePluginShareProject(pluginId, action, locale);
+      },
+    };
+  }, [
+    projects,
+    enabledSkills,
+    enabledDesignTemplates,
+    enabledDS,
+    handleOpenProject,
+    handleOpenLiveArtifact,
+    handleDeleteProject,
+    handleRenameProject,
+    handleCreatePluginShareProject,
+  ]);
+
   // Phase 2B / spec §11.6 — marketplace deep UI dispatch. The
   // /marketplace and /marketplace/:id routes render outside the
   // EntryView / ProjectView split so the discovery surface stays
@@ -1446,7 +1517,12 @@ export function App({
   } else if (route.kind === 'design-system-create') {
     appMain = (
       <DesignSystemCreationFlow
-        onBack={() => navigate({ kind: 'home', view: 'design-systems' })}
+        // 设计系统列表已迁入设置页 section（2026-07-04 rail 迁移）：返回 =
+        // 回首页 + 打开设置页的 designSystems 节，替代原 home 视图。
+        onBack={() => {
+          navigate({ kind: 'home', view: 'home' });
+          openSettings('designSystems');
+        }}
         onCreated={(projectId, project) => {
           if (project) {
             setProjects((curr) => [
@@ -1474,7 +1550,11 @@ export function App({
         selectedId={config.designSystemId}
         config={config}
         agents={agents}
-        onBack={() => navigate({ kind: 'home', view: 'design-systems' })}
+        // 同上：设计系统列表的正身在设置页 designSystems 节。
+        onBack={() => {
+          navigate({ kind: 'home', view: 'home' });
+          openSettings('designSystems');
+        }}
         onOpenProject={(projectId) => navigate({ kind: 'project', projectId, conversationId: null, fileName: null })}
         onSetDefault={handleChangeDefaultDesignSystem}
         onSystemsRefresh={refreshDesignSystems}
@@ -1645,6 +1725,7 @@ export function App({
                   daemonMediaProvidersFetchState={daemonMediaProvidersFetchState}
                   mediaProvidersNotice={mediaProvidersNotice}
                   onReloadMediaProviders={reloadMediaProvidersFromDaemon}
+                  workspaceHost={settingsWorkspaceHost}
                 />
               );
             })()
@@ -1708,6 +1789,7 @@ export function App({
                 daemonMediaProvidersFetchState={daemonMediaProvidersFetchState}
                 mediaProvidersNotice={mediaProvidersNotice}
                 onReloadMediaProviders={reloadMediaProvidersFromDaemon}
+                workspaceHost={settingsWorkspaceHost}
               />
             );
           })()

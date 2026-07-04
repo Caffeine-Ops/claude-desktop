@@ -122,6 +122,31 @@ export function AppRail() {
       >
         <Plus className="size-4" /> {isChat ? '新对话' : '新画布'}
       </Button>
+      {/* 新建项目（2026-07-04 从画布首页 EntryNavRail 迁入，那条 rail 已
+        * 退役）——只在画布面显示，落位「新画布」下方。NewProjectModal 归
+        * EntryShell 所有（canvas 树），跨树触达走「事件 + pending 信箱」
+        * （state/newProjectRequest.ts 头注释）：先 request（EntryShell 在
+        * SurfaceHost keep-alive 下多半已挂载，事件直接开 modal），再
+        * navigate 回画布首页兜底（未挂载场景由挂载 effect 消费 pending）。
+        * 两个 canvas 模块必须动态 import——canvas 链求值期触碰 window，
+        * 静态进 layout 树会炸 SSR（同工作画布 tab 的 router import 约束）。 */}
+      {!isChat && (
+        <Button
+          variant="ghost"
+          className="mb-2 justify-start gap-2 px-3 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          onClick={() => {
+            void Promise.all([
+              import('@/src/canvas/state/newProjectRequest'),
+              import('@/src/canvas/router')
+            ]).then(([{ requestNewProject }, { navigate }]) => {
+              requestNewProject()
+              navigate({ kind: 'home', view: 'home' })
+            })
+          }}
+        >
+          <Plus className="size-4" /> 新建项目
+        </Button>
+      )}
 
       {/* '/chat*' 归聊天，其余一切路径（'/'、'/projects'、'/project/x'…）
         * 都是 canvas SPA 的地盘——受控 value 直接从 pathname 派生，切面后

@@ -81,12 +81,27 @@ function App(): React.JSX.Element {
   // another tab — without it the change only landed here on a reload. No-op
   // when the daemon is offline (cache stays). main skips the window that made
   // the change, and hydrate's own isHydrating guard prevents an echo back.
+  //
+  // 另外必须监听同 document 的 'od:appearance-changed' window 事件：studio
+  // 单视图形态下 canvas 面与本组件共存同一 webContents，canvas 入口切主题
+  // 直连 daemon（PUT /api/app-config），main 毫不知情或按 skip-sender 跳过
+  // 本 webContents——IPC 广播对「同屋对面」永远到不了。少了这条监听，chat
+  // store 停在旧档、applier 留在 documentElement.style 的 inline token 会把
+  // chat 面钉在旧配色（2026-07-04 暗色花斑事故）。事件由 canvas 的
+  // syncConfigToDaemon 成功后 dispatch（src/canvas/state/config.ts）。
   useEffect(() => {
     void hydrateAppearanceFromDaemon()
-    if (!window.chatApi?.onAppearanceChanged) return
-    return window.chatApi.onAppearanceChanged(() => {
+    const onSameDocChange = () => {
+      void hydrateAppearanceFromDaemon()
+    }
+    window.addEventListener('od:appearance-changed', onSameDocChange)
+    const offIpc = window.chatApi?.onAppearanceChanged?.(() => {
       void hydrateAppearanceFromDaemon()
     })
+    return () => {
+      window.removeEventListener('od:appearance-changed', onSameDocChange)
+      offIpc?.()
+    }
   }, [])
 
   // Subscribe to settings-menu actions forwarded from the shell's tab-strip

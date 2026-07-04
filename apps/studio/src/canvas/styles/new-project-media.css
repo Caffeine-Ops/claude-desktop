@@ -401,22 +401,24 @@
   color: var(--text-soft);
   font-weight: 400;
 }
+/* 同 base.css .user-text：chat 面消息语言（secondary 灰底），
+   蓝底白字退役——改回去前先看 base.css 里同名段的注释。 */
 .app .msg.user .user-text {
   padding: 8px 34px 8px 11px;
-  border: 1px solid color-mix(in srgb, var(--selected) 88%, #000);
+  border: 1px solid transparent;
   border-radius: 14px 14px 4px 14px;
-  background: var(--selected);
-  color: #fff;
+  background: var(--bg-subtle);
+  color: var(--text);
   line-height: 1.45;
   font-size: 13.5px;
-  box-shadow: var(--od-shadow-xs);
+  box-shadow: none;
 }
 .app .msg.user .user-copy-btn {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text-muted);
 }
 .app .msg.user .user-copy-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text);
 }
 .app .msg.assistant .assistant-flow {
   gap: 7px;

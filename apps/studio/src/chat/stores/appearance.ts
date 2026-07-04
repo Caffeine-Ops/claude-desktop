@@ -293,9 +293,21 @@ function pushAppearanceToDaemon(): void {
   const api = window.chatApi
   if (!api?.setAppearance) return
   const patch = snapshotForDaemon(useAppearanceStore.getState())
-  void api.setAppearance({ patch }).catch(() => {
-    // Daemon offline; localStorage holds the user's copy for the next push.
-  })
+  void api.setAppearance({ patch })
+    .then(() => {
+      // 反向同 document 桥：chat 入口改了主题也要告诉同 webContents 的
+      // canvas 面——main 的 APPEARANCE_CHANGED 广播按 skip-sender 跳过本
+      // webContents，「同屋对面」收不到 IPC（正向坑见 canvas/state/
+      // config.ts syncConfigToDaemon 的注释，2026-07-04 暗色花斑事故）。
+      // canvas 的既有 repull 监听（canvas/App.tsx）收到后 fetchDaemonConfig
+      // 采纳 themeMode——否则 canvas config.theme 停旧值，之后任何 canvas
+      // 侧 re-apply（设置页关闭回滚等）会把双标记打回旧主题，反向花斑。
+      // 只在写入真正成功后 dispatch；repull merge 无变化即 no-op，无回声。
+      window.dispatchEvent(new CustomEvent('od:appearance-changed'))
+    })
+    .catch(() => {
+      // Daemon offline; localStorage holds the user's copy for the next push.
+    })
 }
 
 // Push on every change to a persisted theme field. The applier already reacts

@@ -850,14 +850,19 @@ export async function syncConfigToDaemon(
       body: JSON.stringify(prefs),
     });
     if (!response.ok) throw new Error(`Failed to sync app config (${response.status})`);
-    // Tell the desktop shell the shared config (incl. appearance) just changed
-    // so it broadcasts to the other windows (chat renderer / web tab) and they
-    // re-pull at runtime. Without this the theme only updated in whichever
-    // window made the change until a reload — this write goes straight to the
-    // daemon over /api/app-config and never touches the desktop main process,
-    // so main had no other way to learn it happened. The bridge exists only
-    // inside the settings overlay (settings preload); a plain browser or the
-    // web tab has no electronSettings, so this is a no-op there.
+    // 通知「同 document 的另一面」共享外观刚变了。studio 单视图形态下 chat
+    // 与 canvas 共存同一 webContents：main 的 APPEARANCE_CHANGED 广播按设计
+    // 跳过写入者 sender（多窗口语义），对同 document 的对面永远到不了；而
+    // 旧的 electronSettings 桥只存在于已退役的 settings overlay preload，在
+    // studio 里是 undefined（静默 no-op）。所以同 document 通知只能靠 window
+    // 事件：chat 面（src/chat/App.tsx）监听它 re-pull daemon 外观，否则
+    // canvas 入口切暗后 chat store 停在旧档、其 inline token 把 chat 面钉在
+    // 旧配色（2026-07-04 暗色花斑事故——教训：桥只翻 DOM 标记不通知对面
+    // store 不够，documentElement 的 inline token 优先级压过 .dark 档）。
+    // canvas 自己的同名监听（App.tsx repull）也会收到：merge 后无变化即
+    // no-op，无回声环。
+    window.dispatchEvent(new CustomEvent('od:appearance-changed'));
+    // 跨 webContents（独立 shell 窗口等）仍走旧桥；studio 内为 no-op。
     window.electronSettings?.notifyAppearanceChanged?.();
   } catch (error) {
     if (options?.throwOnError) throw error;

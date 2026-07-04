@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>统一前端原型 · 智能助手 × 工作画布</title>
+<style>
+/* ============================================================
+   Tokens — 逐字摘自 packages/design-tokens/tokens.css
+   （HSL 三元组，shadcn 式消费：hsl(var(--x) / alpha)）
+   ============================================================ */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 3% 12%;
+  --popover: 0 0% 100%;
+  --primary: 211 100% 45%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 6% 94%;
+  --secondary-foreground: 240 3% 18%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --destructive: 0 72% 50%;
+  --border: 240 6% 84%;
+  --input: 240 6% 86%;
+  --ring: 211 100% 45%;
+  --sidebar: 240 7% 96%;
+  --sidebar-foreground: 240 4% 18%;
+  --sidebar-accent: 240 6% 90%;
+  --sidebar-border: 240 6% 84%;
+  --brand: 142 76% 36%;
+  --brand-foreground: 0 0% 100%;
+  --ok: 142 76% 36%;
+  --fail: 0 72% 50%;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+  --w-medium: 500;
+  --w-strong: 650;
+
+  /* 密度档（Tweaks 可调） */
+  --ui: 13px;
+  --pad: 1;
+
+  /* 悬浮内容卡三层阴影 — 照抄 app/globals.css .shell-content-card */
+  --card-shadow:
+    0 0 0 1px hsl(240 6% 10% / 0.045),
+    0 1px 2px hsl(240 6% 10% / 0.05),
+    0 12px 32px hsl(240 6% 10% / 0.08);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 180ms;
+}
+html.dark {
+  color-scheme: dark;
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --card-foreground: 39 35% 92%;
+  --popover: 36 6% 15%;
+  --primary: 210 100% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 30 5% 15%;
+  --secondary-foreground: 40 21% 89%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --destructive: 0 72% 55%;
+  --border: 49 12% 18%;
+  --input: 42 8% 25%;
+  --ring: 210 100% 58%;
+  --sidebar: 40 6% 10%;
+  --sidebar-foreground: 40 21% 89%;
+  --sidebar-accent: 30 5% 15%;
+  --sidebar-border: 49 12% 18%;
+  --brand: 145 60% 52%;
+  --brand-foreground: 40 6% 10%;
+  --ok: 145 60% 52%;
+  --fail: 0 72% 55%;
+  /* 暗色浮卡：内侧高光 + 深影（黑底上描边不可见） */
+  --card-shadow:
+    inset 0 1px 0 hsl(40 20% 95% / 0.045),
+    0 0 0 1px hsl(0 0% 0% / 0.35),
+    0 16px 48px hsl(0 0% 0% / 0.5);
+}
+html.no-motion * { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+
+/* ============================================================ 基础 */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  font-size: var(--ui);
+  letter-spacing: -0.022em;
+  -webkit-font-smoothing: antialiased;
+  color: hsl(var(--foreground));
+  background: hsl(var(--sidebar));
+  overflow: hidden;
+  transition: background var(--dur) var(--ease-out);
+}
+button { font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+button:focus-visible, textarea:focus-visible { outline: 2px solid hsl(var(--ring) / .6); outline-offset: 1px; }
+textarea { font: inherit; letter-spacing: inherit; color: inherit; }
+svg { display: block; flex: none; }
+
+/* ============================================================ 壳布局 */
+.app { display: grid; grid-template-columns: 248px 1fr; height: 100vh; }
+
+/* ── 左 rail（灰面，与窗口底面同层） ── */
+.rail { display: flex; flex-direction: column; padding: 14px 10px 10px; min-width: 0; }
+.traffic { display: flex; gap: 8px; padding: 2px 6px 16px; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; background: hsl(var(--muted-foreground) / .25); }
+.new-chat {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: 9px;
+  font-weight: var(--w-medium);
+  background: hsl(var(--card));
+  box-shadow: 0 0 0 1px hsl(var(--sidebar-border)), 0 1px 2px hsl(240 6% 10% / .05);
+  transition: transform var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out);
+}
+.new-chat:hover { box-shadow: 0 0 0 1px hsl(var(--sidebar-border)), 0 3px 10px hsl(240 6% 10% / .09); transform: translateY(-1px); }
+.new-chat:active { transform: translateY(0); }
+
+/* surface 切换：shadcn Tabs 语言（TabsList = muted 底容器，选中段白卡凸起） */
+.surface-tabs {
+  display: flex; margin-top: 14px; padding: 3px;
+  background: hsl(var(--secondary));
+  border-radius: 10px;
+}
+.surface-tab {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 6px 4px; border-radius: 8px;
+  color: hsl(var(--muted-foreground)); font-weight: var(--w-medium);
+  white-space: nowrap;
+  transition: background var(--dur) var(--ease-out), color var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out);
+}
+.surface-tab:hover { color: hsl(var(--foreground) / .8); }
+.surface-tab[aria-selected="true"] {
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  box-shadow: 0 1px 3px hsl(240 6% 10% / .12), 0 0 0 1px hsl(240 6% 10% / .04);
+}
+.surface-tab svg { color: hsl(var(--muted-foreground) / .8); transition: color var(--dur) var(--ease-out); }
+.surface-tab[aria-selected="true"] svg { color: hsl(var(--brand)); }
+
+/* rail 通用行（设置等） */
+.rail-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 10px; border-radius: 8px;
+  color: hsl(var(--sidebar-foreground) / .85);
+  font-weight: var(--w-medium);
+  transition: background var(--dur) var(--ease-out);
+}
+.rail-item:hover { background: hsl(var(--sidebar-accent)); }
+.rail-item svg { color: hsl(var(--muted-foreground)); }
+
+.rail-label {
+  padding: 18px 10px 6px;
+  font-size: calc(var(--ui) - 2px);
+  font-weight: var(--w-medium);
+  color: hsl(var(--muted-foreground) / .8);
+}
+.sessions { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; min-height: 0; }
+.session-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 8px;
+  color: hsl(var(--sidebar-foreground) / .9);
+  text-align: left; white-space: nowrap; overflow: hidden;
+  transition: background var(--dur) var(--ease-out);
+}
+.session-row:hover { background: hsl(var(--sidebar-accent)); }
+.session-row.on { background: hsl(var(--sidebar-accent)); font-weight: var(--w-medium); }
+.session-row .t { overflow: hidden; text-overflow: ellipsis; }
+.session-row .dot { width: 6px; height: 6px; border-radius: 50%; background: hsl(var(--brand)); opacity: 0; transition: opacity var(--dur); }
+.session-row.live .dot { opacity: 1; }
+.rail-empty { padding: 6px 10px; color: hsl(var(--muted-foreground) / .7); }
+
+.rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 2px; padding-top: 10px; }
+.user-row { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 9px; transition: background var(--dur); }
+.user-row:hover { background: hsl(var(--sidebar-accent)); }
+.avatar {
+  width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: hsl(var(--brand) / .15); color: hsl(var(--brand));
+  font-size: calc(var(--ui) - 1px); font-weight: var(--w-strong);
+}
+.user-meta { display: flex; flex-direction: column; line-height: 1.25; text-align: left; }
+.user-meta b { font-weight: var(--w-medium); }
+.user-meta s { text-decoration: none; font-size: calc(var(--ui) - 2px); color: hsl(var(--muted-foreground)); }
+
+/* ── 舞台 + 悬浮内容卡 ── */
+.stage { padding: 10px 10px 10px 0; min-width: 0; }
+.content-card {
+  position: relative; height: 100%; min-width: 0; overflow: hidden;
+  border-radius: 6px;
+  background: hsl(var(--card));
+  box-shadow: var(--card-shadow);
+  display: flex; flex-direction: column;
+  transition: background var(--dur) var(--ease-out);
+}
+
+/* 卡头：两个 surface 共用一条 chrome */
+.card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid hsl(var(--border) / .7);
+  min-height: 46px;
+}
+.crumb { display: flex; align-items: center; gap: 8px; font-weight: var(--w-medium); min-width: 0; }
+.crumb[hidden] { display: none; } /* author display:flex 会压过 hidden 的 UA display:none，必须显式让位 */
+.crumb svg { color: hsl(var(--muted-foreground)); }
+.crumb .sub { color: hsl(var(--muted-foreground)); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 999px;
+  font-size: calc(var(--ui) - 1px);
+  background: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+  transition: background var(--dur);
+}
+.model-chip:hover { background: hsl(var(--sidebar-accent)); }
+.model-chip i { width: 6px; height: 6px; border-radius: 50%; background: hsl(var(--brand)); }
+.head-actions { margin-left: auto; display: flex; gap: 4px; }
+.icon-btn {
+  width: 28px; height: 28px; border-radius: 7px;
+  display: grid; place-items: center;
+  color: hsl(var(--muted-foreground));
+  transition: background var(--dur), color var(--dur);
+}
+.icon-btn:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+
+/* surface 容器与切换 */
+.surfaces { position: relative; flex: 1; min-height: 0; }
+.surface {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; min-height: 0;
+  opacity: 0; visibility: hidden; transform: scale(.992);
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out), visibility 0s linear var(--dur);
+}
+.surface.on {
+  opacity: 1; visibility: visible; transform: none;
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+
+/* ============================================================
+   共用 Composer —— 风格统一的核心：两个 surface 同一构件
+   ============================================================ */
+.composer {
+  border: 1px solid hsl(var(--input));
+  border-radius: 14px;
+  background: hsl(var(--card));
+  box-shadow: 0 1px 2px hsl(240 6% 10% / .04);
+  transition: border-color var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out);
+}
+.composer:focus-within {
+  border-color: hsl(var(--brand) / .55);
+  box-shadow: 0 0 0 3px hsl(var(--brand) / .12), 0 1px 2px hsl(240 6% 10% / .04);
+}
+.composer textarea {
+  width: 100%; resize: none; border: 0; background: none;
+  padding: calc(12px * var(--pad)) 14px 4px;
+  min-height: 46px; max-height: 180px;
+  line-height: 1.55;
+}
+.composer textarea:focus-visible { outline: none; }
+.composer textarea::placeholder { color: hsl(var(--muted-foreground) / .75); }
+.composer-bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px 8px; }
+.send-btn {
+  margin-left: auto;
+  width: 30px; height: 30px; border-radius: 9px;
+  display: grid; place-items: center;
+  background: hsl(var(--secondary));
+  color: hsl(var(--muted-foreground) / .6);
+  transition: background var(--dur) var(--ease-out), color var(--dur), transform 120ms var(--ease-out);
+}
+.send-btn.ready { background: hsl(var(--brand)); color: hsl(var(--brand-foreground)); }
+.send-btn.ready:hover { transform: translateY(-1px); }
+.send-btn.ready:active { transform: scale(.94); }
+
+/* ============================================================ Surface A：智能助手 */
+.thread { flex: 1; overflow-y: auto; padding: 26px 0 8px; }
+.thread-inner, .chat-composer-wrap { width: min(720px, calc(100% - 48px)); margin: 0 auto; }
+.msg { display: flex; flex-direction: column; gap: 6px; margin-bottom: 22px; animation: rise .28s var(--ease-out); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+.msg.user { align-items: flex-end; }
+.bubble {
+  max-width: 78%;
+  padding: 9px 13px; border-radius: 14px 14px 4px 14px;
+  background: hsl(var(--secondary));
+  line-height: 1.55;
+}
+.msg.ai { align-items: stretch; }
+.ai-body { line-height: 1.65; }
+.ai-body p + p { margin-top: 8px; }
+.thinking { display: inline-flex; align-items: center; gap: 8px; color: hsl(var(--muted-foreground)); }
+.thinking .orb {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid hsl(var(--brand) / .25);
+  border-top-color: hsl(var(--brand));
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 工具卡：chat 的工具执行语言（绿勾身份点位） */
+.tool-card {
+  margin: 10px 0 2px;
+  border: 1px solid hsl(var(--border) / .8);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: calc(var(--ui) - 1px);
+}
+.tool-row { display: flex; align-items: center; gap: 8px; padding: 8px 11px; background: hsl(var(--secondary) / .5); }
+.tool-row .check { color: hsl(var(--ok)); }
+.tool-row code { font-family: var(--font-mono); font-size: calc(var(--ui) - 2px); color: hsl(var(--muted-foreground)); }
+.tool-row .name { font-weight: var(--w-medium); }
+.chat-composer-wrap { padding: 10px 0 18px; }
+.hint-row {
+  display: flex; justify-content: center; gap: 6px;
+  padding-top: 10px; font-size: calc(var(--ui) - 2px);
+  color: hsl(var(--muted-foreground) / .7);
+}
+kbd {
+  font-family: var(--font-sans); font-size: calc(var(--ui) - 3px);
+  border: 1px solid hsl(var(--border)); border-bottom-width: 2px;
+  border-radius: 4px; padding: 0 4px; color: hsl(var(--muted-foreground));
+}
+
+/* ============================================================ Surface B：工作画布 */
+.canvas-scroll { flex: 1; overflow-y: auto; min-height: 0; display: flex; }
+/* canvas 子导航：统一成 icon rail（继承 icon-btn 语言） */
+.subnav {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 14px 8px; border-right: 1px solid hsl(var(--border) / .6);
+}
+.subnav .icon-btn { width: 32px; height: 32px; border-radius: 8px; }
+.subnav .icon-btn[aria-current="true"] { background: hsl(var(--brand) / .12); color: hsl(var(--brand)); }
+.subnav hr { width: 18px; border: 0; border-top: 1px solid hsl(var(--border) / .8); margin: 6px 0; }
+
+.canvas-main { flex: 1; min-width: 0; overflow-y: auto; padding: 0 34px 40px; }
+.hero { max-width: 780px; margin: 0 auto; padding-top: clamp(28px, 7vh, 84px); }
+.hero h1 {
+  font-size: clamp(26px, 4vw, 40px);
+  font-weight: var(--w-strong);
+  letter-spacing: -0.03em;
+  text-align: center;
+}
+.hero .lede {
+  text-align: center; margin: 10px 0 26px;
+  color: hsl(var(--muted-foreground));
+}
+.hero .composer textarea { min-height: 72px; font-size: calc(var(--ui) + 1px); }
+
+/* 类型 chips：secondary 语言，选中态 = 品牌绿 tint（与 rail 选中同语） */
+.chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 16px; }
+.chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 13px; border-radius: 999px;
+  border: 1px solid hsl(var(--border) / .9);
+  background: hsl(var(--card));
+  color: hsl(var(--foreground) / .85);
+  font-size: calc(var(--ui) - 1px);
+  transition: border-color var(--dur), background var(--dur), color var(--dur), transform 120ms var(--ease-out);
+}
+.chip:hover { border-color: hsl(var(--muted-foreground) / .4); transform: translateY(-1px); }
+.chip[aria-pressed="true"] {
+  border-color: hsl(var(--brand) / .5);
+  background: hsl(var(--brand) / .1);
+  color: hsl(var(--foreground));
+}
+.chip[aria-pressed="true"] svg { color: hsl(var(--brand)); }
+.chip svg { color: hsl(var(--muted-foreground)); }
+
+/* 最近项目 */
+.projects { max-width: 980px; margin: 46px auto 0; }
+.projects-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+.projects-head h2 { font-size: calc(var(--ui) + 3px); font-weight: var(--w-strong); }
+.projects-head .all {
+  margin-left: auto; color: hsl(var(--primary));
+  font-size: calc(var(--ui) - 1px); font-weight: var(--w-medium);
+  display: flex; align-items: center; gap: 3px;
+  border-radius: 6px; padding: 2px 6px;
+}
+.projects-head .all:hover { background: hsl(var(--primary) / .08); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
+.proj {
+  border: 1px solid hsl(var(--border) / .8);
+  border-radius: 12px;
+  background: hsl(var(--card));
+  overflow: hidden; text-align: left;
+  transition: transform var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out), border-color var(--dur);
+  display: flex; flex-direction: column;
+}
+.proj:hover {
+  transform: translateY(-2px);
+  border-color: hsl(var(--border));
+  box-shadow: 0 8px 24px hsl(240 6% 10% / .09);
+}
+.proj:active { transform: translateY(0); }
+/* 缩略图：中性 muted 面 + wireframe 占位（真实缩略图落位处） */
+.thumb {
+  aspect-ratio: 16/10;
+  background: hsl(var(--muted) / .7);
+  border-bottom: 1px solid hsl(var(--border) / .5);
+  position: relative; overflow: hidden;
+  display: grid; place-items: center;
+}
+.thumb .wire { width: 62%; opacity: .55; color: hsl(var(--muted-foreground) / .8); }
+.thumb .kind {
+  position: absolute; top: 8px; left: 8px;
+  font-size: calc(var(--ui) - 3px); font-weight: var(--w-medium);
+  padding: 2px 8px; border-radius: 999px;
+  background: hsl(var(--card) / .88); backdrop-filter: blur(4px);
+  border: 1px solid hsl(var(--border) / .7);
+  color: hsl(var(--muted-foreground));
+}
+.proj-meta { padding: 10px 12px 11px; display: flex; flex-direction: column; gap: 5px; }
+.proj-meta .t {
+  font-weight: var(--w-medium);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.proj-meta .s { display: flex; align-items: center; gap: 6px; font-size: calc(var(--ui) - 2px); color: hsl(var(--muted-foreground)); }
+.status { display: inline-flex; align-items: center; gap: 5px; }
+.status i { width: 6px; height: 6px; border-radius: 50%; }
+.status.ok i { background: hsl(var(--ok)); }
+.status.fail i { background: hsl(var(--fail)); }
+
+/* ============================================================ Tweaks */
+.tweaks-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: 50;
+  width: 40px; height: 40px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  box-shadow: 0 6px 20px hsl(240 6% 10% / .25);
+  transition: transform 140ms var(--ease-out);
+}
+.tweaks-fab:hover { transform: scale(1.06); }
+.tweaks {
+  position: fixed; right: 18px; bottom: 68px; z-index: 50;
+  width: 246px; padding: 14px;
+  border-radius: 14px;
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border) / .8);
+  box-shadow: 0 18px 50px hsl(240 6% 10% / .2);
+  display: none; flex-direction: column; gap: 12px;
+}
+.tweaks.open { display: flex; animation: rise .2s var(--ease-out); }
+.tweaks h3 { font-size: var(--ui); font-weight: var(--w-strong); }
+.tw-group { display: flex; flex-direction: column; gap: 6px; }
+.tw-group label { font-size: calc(var(--ui) - 2px); color: hsl(var(--muted-foreground)); font-weight: var(--w-medium); }
+.seg { display: flex; background: hsl(var(--secondary)); border-radius: 8px; padding: 2px; }
+.seg button {
+  flex: 1; padding: 4px 0; border-radius: 6px;
+  font-size: calc(var(--ui) - 1px); color: hsl(var(--muted-foreground));
+  transition: background var(--dur), color var(--dur), box-shadow var(--dur);
+}
+.seg button[aria-pressed="true"] {
+  background: hsl(var(--card)); color: hsl(var(--foreground));
+  box-shadow: 0 1px 3px hsl(240 6% 10% / .12);
+  font-weight: var(--w-medium);
+}
+.swatches { display: flex; gap: 8px; }
+.swatch { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; transition: transform 120ms var(--ease-out), border-color var(--dur); }
+.swatch:hover { transform: scale(1.1); }
+.swatch[aria-pressed="true"] { border-color: hsl(var(--foreground) / .8); }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ═══════════ 左 rail ═══════════ -->
+  <aside class="rail">
+    <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+    <button class="new-chat" id="newChat">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      新对话
+    </button>
+    <div class="surface-tabs" role="tablist" aria-label="主导航">
+      <button class="surface-tab" role="tab" data-surface="chat" aria-selected="true">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        智能助手
+      </button>
+      <button class="surface-tab" role="tab" data-surface="canvas" aria-selected="false">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
+        工作画布
+      </button>
+    </div>
+    <div class="rail-label">对话</div>
+    <div class="sessions" id="sessions">
+      <button class="session-row on live"><span class="dot"></span><span class="t">深色主题改造 · 科室看板</span></button>
+      <button class="session-row"><span class="dot"></span><span class="t">HIS 数据库仪表盘</span></button>
+      <button class="session-row"><span class="dot"></span><span class="t">Live Artifact 调试</span></button>
+    </div>
+    <div class="rail-foot">
+      <button class="rail-item">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v3m0 16v3M4.2 4.2l2.1 2.1m11.4 11.4 2.1 2.1M1 12h3m16 0h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+        设置
+      </button>
+      <button class="user-row">
+        <span class="avatar">我</span>
+        <span class="user-meta"><b>我爱啦啦哈哈</b><s>Pro trial Plan</s></span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ═══════════ 悬浮内容卡 ═══════════ -->
+  <main class="stage">
+    <div class="content-card">
+      <header class="card-head">
+        <!-- chat 态 chrome -->
+        <div class="crumb" data-head="chat">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span>深色主题改造</span><span class="sub">· 科室收入运营看板</span>
+        </div>
+        <!-- canvas 态 chrome -->
+        <div class="crumb" data-head="canvas" hidden>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span>主页</span>
+        </div>
+        <button class="model-chip"><i></i>Fable 5</button>
+        <div class="head-actions">
+          <button class="icon-btn" title="搜索" aria-label="搜索">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+          </button>
+          <button class="icon-btn" title="新标签页" aria-label="新标签页">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="surfaces">
+        <!-- ── Surface A：智能助手 ── -->
+        <section class="surface on" id="surface-chat" aria-label="智能助手">
+          <div class="thread" id="thread">
+            <div class="thread-inner" id="threadInner">
+              <div class="msg user"><div class="bubble">帮我把科室收入看板改成深色主题，图表配色也要跟着换</div></div>
+              <div class="msg ai">
+                <div class="ai-body">
+                  <p>好的。看板当前用的是浅色 token，我会切到暗色档并同步调整图表序列色，保证在暖黑底上的对比度。</p>
+                  <div class="tool-card">
+                    <div class="tool-row">
+                      <svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                      <span class="name">Edit</span>
+                      <code>dashboard/theme.css</code>
+                    </div>
+                    <div class="tool-row" style="border-top:1px solid hsl(var(--border)/.5)">
+                      <svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                      <span class="name">Edit</span>
+                      <code>dashboard/chart-palette.ts</code>
+                    </div>
+                  </div>
+                  <p>已完成：背景切到暖黑、卡片抬一档亮度、图表序列换成暗底六色。要我在工作画布里打开预览吗？</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="chat-composer-wrap">
+            <div class="composer">
+              <textarea id="chatInput" rows="1" placeholder="回复智能助手…" aria-label="回复智能助手"></textarea>
+              <div class="composer-bar">
+                <button class="icon-btn" title="附件" aria-label="附件">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                </button>
+                <button class="icon-btn" title="斜杠命令" aria-label="斜杠命令" style="font-family:var(--font-mono);font-size:12px">/</button>
+                <button class="send-btn" id="chatSend" aria-label="发送">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5m-7 7 7-7 7 7"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="hint-row"><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</div>
+          </div>
+        </section>
+
+        <!-- ── Surface B：工作画布 ── -->
+        <section class="surface" id="surface-canvas" aria-label="工作画布">
+          <div class="canvas-scroll">
+            <nav class="subnav" aria-label="画布导航">
+              <button class="icon-btn" aria-current="true" title="主页">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+              </button>
+              <button class="icon-btn" title="新建">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+              <hr>
+              <button class="icon-btn" title="项目">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+              </button>
+              <button class="icon-btn" title="设计系统">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>
+              </button>
+              <button class="icon-btn" title="插件">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+              </button>
+            </nav>
+            <div class="canvas-main">
+              <div class="hero">
+                <h1>你想设计什么？</h1>
+                <p class="lede">描述你想生成的内容，然后按 Enter</p>
+                <div class="composer">
+                  <textarea id="canvasInput" rows="2" placeholder="描述你想生成的内容…" aria-label="描述你想生成的内容"></textarea>
+                  <div class="composer-bar">
+                    <button class="icon-btn" title="附件" aria-label="附件">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                    </button>
+                    <button class="send-btn" id="canvasSend" aria-label="生成">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5m-7 7 7-7 7 7"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="chips" id="chips">
+                  <button class="chip" aria-pressed="true">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19 19 12l2.5 2.5a3.5 3.5 0 0 1-5 5L12 19Z"/><path d="m2 2 7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                    原型
+                  </button>
+                  <button class="chip" aria-pressed="false">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v6h-6"/></svg>
+                    实时制品
+                  </button>
+                  <button class="chip" aria-pressed="false">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8"/></svg>
+                    幻灯片
+                  </button>
+                  <button class="chip" aria-pressed="false">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
+                    图片
+                  </button>
+                  <button class="chip" aria-pressed="false">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+                    视频
+                  </button>
+                  <button class="chip" aria-pressed="false">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2v20M2 12h20" opacity="0"/><path d="M12 8a4 4 0 1 0 4 4"/><path d="M12 2a10 10 0 1 0 10 10"/></svg>
+                    音频
+                  </button>
+                </div>
+              </div>
+
+              <div class="projects">
+                <div class="projects-head">
+                  <h2>最近项目</h2>
+                  <button class="all">查看全部
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                  </button>
+                </div>
+                <div class="grid">
+                  <button class="proj">
+                    <div class="thumb"><span class="kind">原型</span>
+                      <svg class="wire" viewBox="0 0 120 70" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="112" height="14" rx="3"/><rect x="4" y="26" width="52" height="40" rx="3"/><path d="M64 30h52M64 40h40M64 50h46M64 60h30"/></svg>
+                    </div>
+                    <div class="proj-meta">
+                      <span class="t">用我的 HIS 库做一个全量的数据分析</span>
+                      <span class="s"><span class="status fail"><i></i>失败</span>· 2 天前</span>
+                    </div>
+                  </button>
+                  <button class="proj">
+                    <div class="thumb"><span class="kind">原型</span>
+                      <svg class="wire" viewBox="0 0 120 70" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="30" height="62" rx="3"/><path d="M42 8h74M42 20h58"/><rect x="42" y="30" width="35" height="36" rx="3"/><rect x="83" y="30" width="33" height="36" rx="3"/></svg>
+                    </div>
+                    <div class="proj-meta">
+                      <span class="t">帮我 HIS 数据库做一个仪表盘</span>
+                      <span class="s"><span class="status ok"><i></i>已完成</span>· 2026/5/26</span>
+                    </div>
+                  </button>
+                  <button class="proj">
+                    <div class="thumb"><span class="kind">实时产物</span>
+                      <svg class="wire" viewBox="0 0 120 70" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 58 34 34l20 14 28-28 22 16"/><path d="M8 66h104"/><circle cx="34" cy="34" r="3"/><circle cx="82" cy="20" r="3"/></svg>
+                    </div>
+                    <div class="proj-meta">
+                      <span class="t">Live Artifact</span>
+                      <span class="s"><span class="status fail"><i></i>失败</span>· 2026/5/26</span>
+                    </div>
+                  </button>
+                  <button class="proj">
+                    <div class="thumb"><span class="kind">原型</span>
+                      <svg class="wire" viewBox="0 0 120 70" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="60" cy="26" r="14"/><path d="M30 60c6-12 18-16 30-16s24 4 30 16"/></svg>
+                    </div>
+                    <div class="proj-meta">
+                      <span class="t">hi</span>
+                      <span class="s"><span class="status fail"><i></i>失败</span>· 2026/5/26</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ═══════════ Tweaks ═══════════ -->
+<button class="tweaks-fab" id="tweaksFab" aria-label="Tweaks">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 21v-7m0-4V3m8 18v-9m0-4V3m8 18v-5m0-4V3M1 14h6m2-6h6m2 8h6"/></svg>
+</button>
+<div class="tweaks" id="tweaks" role="dialog" aria-label="Tweaks">
+  <h3>Tweaks</h3>
+  <div class="tw-group">
+    <label>外观</label>
+    <div class="seg" id="segTheme">
+      <button aria-pressed="true" data-theme="light">浅色</button>
+      <button aria-pressed="false" data-theme="dark">深色</button>
+    </div>
+  </div>
+  <div class="tw-group">
+    <label>身份色（rail 选中 / 发送 / 状态）</label>
+    <div class="swatches" id="swatches">
+      <button class="swatch" style="background:#16a34a" data-brand="142 76% 36%" data-brand-dark="145 60% 52%" aria-pressed="true" aria-label="品牌绿"></button>
+      <button class="swatch" style="background:#0071e3" data-brand="211 100% 45%" data-brand-dark="210 100% 58%" aria-pressed="false" aria-label="Apple 蓝"></button>
+      <button class="swatch" style="background:#e05d38" data-brand="18 72% 55%" data-brand-dark="18 80% 62%" aria-pressed="false" aria-label="陶土橙（现画布色）"></button>
+    </div>
+  </div>
+  <div class="tw-group">
+    <label>密度</label>
+    <div class="seg" id="segDensity">
+      <button aria-pressed="true" data-ui="13">舒适</button>
+      <button aria-pressed="false" data-ui="12">紧凑</button>
+    </div>
+  </div>
+  <div class="tw-group">
+    <label>动效</label>
+    <div class="seg" id="segMotion">
+      <button aria-pressed="true" data-motion="on">开</button>
+      <button aria-pressed="false" data-motion="off">关</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── surface 切换（shadcn Tabs 语义） ── */
+const surfaceTabs = document.querySelectorAll('.surface-tab[data-surface]');
+const surfaces = { chat: document.getElementById('surface-chat'), canvas: document.getElementById('surface-canvas') };
+const heads = document.querySelectorAll('[data-head]');
+function switchSurface(key) {
+  surfaceTabs.forEach(b => b.setAttribute('aria-selected', String(b.dataset.surface === key)));
+  Object.entries(surfaces).forEach(([k, el]) => el.classList.toggle('on', k === key));
+  heads.forEach(h => h.hidden = h.dataset.head !== key);
+}
+surfaceTabs.forEach(btn => btn.addEventListener('click', () => switchSurface(btn.dataset.surface)));
+document.getElementById('newChat').addEventListener('click', () => {
+  switchSurface('chat');
+  document.getElementById('chatInput').focus();
+});
+
+/* ── composer：ready 态 + 自动伸缩 ── */
+function bindComposer(inputId, btnId, onSend) {
+  const input = document.getElementById(inputId);
+  const btn = document.getElementById(btnId);
+  const sync = () => {
+    btn.classList.toggle('ready', input.value.trim().length > 0);
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 180) + 'px';
+  };
+  input.addEventListener('input', sync);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (input.value.trim()) onSend(input.value.trim()); }
+  });
+  btn.addEventListener('click', () => { if (input.value.trim()) onSend(input.value.trim()); });
+  return { input, btn, sync };
+}
+
+/* ── chat 发送模拟：user 气泡 → 思考态 → 回复 ── */
+const thread = document.getElementById('thread');
+const threadInner = document.getElementById('threadInner');
+const chat = bindComposer('chatInput', 'chatSend', text => {
+  chat.input.value = ''; chat.sync();
+  threadInner.insertAdjacentHTML('beforeend',
+    `<div class="msg user"><div class="bubble"></div></div>`);
+  threadInner.lastElementChild.querySelector('.bubble').textContent = text;
+  thread.scrollTop = thread.scrollHeight;
+
+  const ai = document.createElement('div');
+  ai.className = 'msg ai';
+  ai.innerHTML = `<div class="ai-body"><span class="thinking"><span class="orb"></span>思考中…</span></div>`;
+  setTimeout(() => { threadInner.appendChild(ai); thread.scrollTop = thread.scrollHeight; }, 350);
+  setTimeout(() => {
+    ai.querySelector('.ai-body').innerHTML =
+      `<p>收到。这是原型的模拟回复——真实实现里，这条消息会经由 ChatEngine 流式渲染，工具执行会以带绿勾的工具卡内联展示。</p>`;
+    thread.scrollTop = thread.scrollHeight;
+  }, 1500);
+});
+
+/* ── canvas 发送：模拟跳转到 chat 开工 ── */
+const canvasC = bindComposer('canvasInput', 'canvasSend', text => {
+  canvasC.input.value = ''; canvasC.sync();
+  switchSurface('chat');
+  threadInner.insertAdjacentHTML('beforeend', `<div class="msg user"><div class="bubble"></div></div>`);
+  threadInner.lastElementChild.querySelector('.bubble').textContent = text;
+  const ai = document.createElement('div');
+  ai.className = 'msg ai';
+  ai.innerHTML = `<div class="ai-body"><span class="thinking"><span class="orb"></span>正在创建项目…</span></div>`;
+  setTimeout(() => { threadInner.appendChild(ai); thread.scrollTop = thread.scrollHeight; }, 300);
+  setTimeout(() => {
+    ai.querySelector('.ai-body').innerHTML =
+      `<p>项目已创建。画布任务与对话共用同一会话流，产物会出现在工作画布的「最近项目」里。</p>`;
+    thread.scrollTop = thread.scrollHeight;
+  }, 1400);
+});
+
+/* ── chips 多选 ── */
+document.getElementById('chips').addEventListener('click', e => {
+  const chip = e.target.closest('.chip');
+  if (chip) chip.setAttribute('aria-pressed', String(chip.getAttribute('aria-pressed') !== 'true'));
+});
+
+/* ── Tweaks ── */
+const tweaks = document.getElementById('tweaks');
+document.getElementById('tweaksFab').addEventListener('click', () => tweaks.classList.toggle('open'));
+
+function segBind(id, fn) {
+  const seg = document.getElementById(id);
+  seg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    seg.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    fn(b);
+  });
+}
+segBind('segTheme', b => {
+  document.documentElement.classList.toggle('dark', b.dataset.theme === 'dark');
+  document.documentElement.dataset.theme = b.dataset.theme; /* 双标记，贴合项目现实 */
+  applyBrand(); /* 换主题后重放当前身份色的明暗档 */
+});
+segBind('segDensity', b => document.documentElement.style.setProperty('--ui', b.dataset.ui + 'px'));
+segBind('segMotion', b => document.documentElement.classList.toggle('no-motion', b.dataset.motion === 'off'));
+
+const swatches = document.getElementById('swatches');
+function applyBrand() {
+  const cur = swatches.querySelector('[aria-pressed="true"]');
+  const dark = document.documentElement.classList.contains('dark');
+  const v = dark ? cur.dataset.brandDark : cur.dataset.brand;
+  const root = document.documentElement.style;
+  root.setProperty('--brand', v);
+  root.setProperty('--ok', v);
+  root.setProperty('--brand-foreground', dark ? '40 6% 10%' : '0 0% 100%');
+}
+swatches.addEventListener('click', e => {
+  const s = e.target.closest('.swatch'); if (!s) return;
+  swatches.querySelectorAll('.swatch').forEach(x => x.setAttribute('aria-pressed', String(x === s)));
+  applyBrand();
+});
+</script>
+</body>
+</html>

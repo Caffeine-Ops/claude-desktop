@@ -96,65 +96,67 @@
   outline-offset: 1px;
 }
 
-/* "交付给 Finder" → THE single Action Blue solid pill CTA.
-   Recolor the existing handoff split/solo chrome to blue; the
-   markup and the caret-menu logic are untouched. */
+/* 「交付给 …」主 CTA：品牌绿实心（对齐 chat 面用色纪律「绿 = 身份/CTA/
+   选中」，docs/ui-prototype-project-workspace.html .cta）。旧 Action Blue
+   是 canvas 独有语言。前景一律走 --brand-foreground 而非写死 #fff：暗档
+   的 brand 是提亮绿、配暖黑前景（tokens.css），写死白字暗档会糊。
+   markup 与 caret-menu 逻辑不动。 */
 .app .app-chrome-header .handoff-split,
 .app .app-chrome-header .handoff-trigger--solo {
-  border-radius: 9999px;             /* pill */
-  border-color: var(--apple-blue);
-  background: var(--apple-blue);
+  border-radius: 9px;                /* 原型 .cta 的圆角档，不再全胶囊 */
+  border-color: hsl(var(--brand));
+  background: hsl(var(--brand));
   box-shadow: none;
   transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1),
     transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .app .app-chrome-header .handoff-split:hover,
 .app .app-chrome-header .handoff-trigger--solo:hover {
-  border-color: var(--apple-blue);
-  background: color-mix(in srgb, #000 8%, var(--apple-blue));
+  border-color: hsl(var(--brand));
+  background: color-mix(in srgb, #000 8%, hsl(var(--brand)));
 }
 .app .app-chrome-header .handoff-split:has(.handoff-trigger:active),
 .app .app-chrome-header .handoff-trigger--solo:active {
   transform: scale(0.95);
 }
-/* Inner buttons go transparent so the pill's blue shows through,
-   and all text/icons flip to on-primary white. */
+/* Inner buttons go transparent so the pill's brand fill shows through,
+   and all text/icons flip to on-brand foreground. */
 .app .app-chrome-header .handoff-trigger,
 .app .app-chrome-header .handoff-caret,
 .app .app-chrome-header .handoff-trigger--solo {
   font-family: var(--apple-font);
   letter-spacing: -0.224px;
-  color: #fff;
+  color: hsl(var(--brand-foreground));
   background: transparent;
 }
 .app .app-chrome-header .handoff-trigger:hover,
 .app .app-chrome-header .handoff-caret:hover {
-  background: color-mix(in srgb, #fff 14%, transparent);
-  color: #fff;
+  background: color-mix(in srgb, hsl(var(--brand-foreground)) 14%, transparent);
+  color: hsl(var(--brand-foreground));
 }
 .app .app-chrome-header .handoff-trigger svg,
 .app .app-chrome-header .handoff-caret svg,
 .app .app-chrome-header .handoff-trigger--solo svg {
-  color: #fff;
+  color: hsl(var(--brand-foreground));
 }
 /* The editor-icon tile inside the trigger: drop its inset ring so
    it reads as part of the solid pill rather than a chip-on-chip. */
 .app .app-chrome-header .handoff-trigger .editor-icon,
 .app .app-chrome-header .handoff-trigger--solo .editor-icon {
   box-shadow: none;
-  background: color-mix(in srgb, #fff 18%, transparent);
+  background: color-mix(in srgb, hsl(var(--brand-foreground)) 18%, transparent);
 }
 .app .app-chrome-header .handoff-trigger:focus-visible,
 .app .app-chrome-header .handoff-caret:focus-visible,
 .app .app-chrome-header .handoff-trigger--solo:focus-visible {
-  outline: 2px solid var(--apple-blue-focus);
+  outline: 2px solid hsl(var(--brand) / 0.6);
   outline-offset: 2px;
 }
-/* Disabled keeps the pill shape but drops to Apple's disabled grey. */
+/* Disabled keeps the pill shape but drops the foreground contrast. */
 .app .app-chrome-header .handoff-trigger:disabled,
 .app .app-chrome-header .handoff-caret:disabled {
   opacity: 1;
-  color: color-mix(in srgb, #fff 60%, transparent);
+  color: color-mix(in srgb, hsl(var(--brand-foreground)) 60%, transparent);
 }
 
 /* Back chevron + the pencil "项目指令" toggle: quiet ink, Apple press. */

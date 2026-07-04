@@ -1,9 +1,14 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
+import { Minus, Moon, Plus, Sun } from 'lucide-react';
+
+import { Button } from '@/src/components/ui/button';
+import { Switch } from '@/src/components/ui/switch';
+import { Tabs, TabsList, TabsTrigger } from '@/src/components/ui/tabs';
+import { cn } from '@/src/lib/utils';
 import { useAnalytics } from '../../analytics/provider';
 import { trackSettingsAppearanceClick } from '../../analytics/events';
 import { useI18n } from '../../i18n';
-import { Icon } from '../shared/Icon';
 import {
   ACCENT_SWATCHES,
   DEFAULT_ACCENT_COLOR,
@@ -13,11 +18,24 @@ import {
 import type { AppConfig, AppTheme } from '../../types';
 import type { DesktopCliBackendState } from '../../App';
 
-const THEMES: Array<{ value: AppTheme; labelKey: 'settings.themeSystem' | 'settings.themeLight' | 'settings.themeDark'; icon?: 'sun' | 'moon' }> = [
+/* 2026-07-04 迁 chat 栈（shadcn + Tailwind utility）：seg-control/pet-swatch/
+   font-stepper/settings-card 等 legacy 类全部退役。主题模式用 shadcn Tabs
+   （与执行模式双档同构件）；CLI backend 不用 Tabs——它是 async 切换 + busy/
+   disabled 态，Radix 受控 value 会在请求失败时和真实状态打架，分段式裸
+   button + data-slot 更贴（BYOK 协议 tab 同模式）。 */
+
+const THEMES: Array<{
+  value: AppTheme;
+  labelKey: 'settings.themeSystem' | 'settings.themeLight' | 'settings.themeDark';
+  icon?: 'sun' | 'moon';
+}> = [
   { value: 'system', labelKey: 'settings.themeSystem' },
   { value: 'light', labelKey: 'settings.themeLight', icon: 'sun' },
   { value: 'dark', labelKey: 'settings.themeDark', icon: 'moon' },
 ];
+
+const cardCls = 'rounded-xl border border-border bg-card p-4';
+const cardLabelCls = 'mb-3 text-xs font-medium text-muted-foreground';
 
 export function AppearanceSection({
   cfg,
@@ -48,50 +66,57 @@ export function AppearanceSection({
   };
 
   return (
-    <section className="settings-section settings-section--cards">
-      <div className="settings-card">
-        <div className="settings-card-label">{t('settings.appearanceThemeMode')}</div>
-        <div className="seg-control" role="group" aria-label={t('settings.appearance')} style={{ '--seg-cols': THEMES.length } as React.CSSProperties}>
-        {THEMES.map(({ value, labelKey, icon }) => (
-          <button
-            key={value}
-            type="button"
-            className={'seg-btn' + (current === value ? ' active' : '')}
-            aria-pressed={current === value}
-            onClick={() => {
-              // P1 ui_click area=appearance — `system|light|dark` only
-              // emits from the segmented control; accent swatch picks
-              // use `accent_color` with the swatch hex below.
-              if (value === 'system' || value === 'light' || value === 'dark') {
-                trackSettingsAppearanceClick(analytics.track, {
-                  page_name: 'settings',
-                  area: 'appearance',
-                  element: value,
-                });
-              }
-              setCfg((c) => ({ ...c, theme: value }));
-            }}
-          >
-            {icon ? <Icon name={icon} size={14} aria-hidden="true" /> : null}
-            <span className="seg-title">{t(labelKey)}</span>
-          </button>
-        ))}
-        </div>
+    <section className="flex flex-col gap-3">
+      <div className={cardCls}>
+        <div className={cardLabelCls}>{t('settings.appearanceThemeMode')}</div>
+        <Tabs
+          value={current}
+          onValueChange={(v) => {
+            // P1 ui_click area=appearance — `system|light|dark` only
+            // emits from the segmented control; accent swatch picks
+            // use `accent_color` with the swatch hex below.
+            if (v === 'system' || v === 'light' || v === 'dark') {
+              trackSettingsAppearanceClick(analytics.track, {
+                page_name: 'settings',
+                area: 'appearance',
+                element: v,
+              });
+            }
+            setCfg((c) => ({ ...c, theme: v as AppTheme }));
+          }}
+          aria-label={t('settings.appearance')}
+        >
+          <TabsList className="grid w-full grid-cols-3 rounded-xl p-1">
+            {THEMES.map(({ value, labelKey, icon }) => (
+              <TabsTrigger key={value} value={value} className="rounded-[9px]">
+                {icon === 'sun' ? <Sun className="size-3.5" /> : null}
+                {icon === 'moon' ? <Moon className="size-3.5" /> : null}
+                {t(labelKey)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
       </div>
-      <div className="settings-card">
-        <div className="settings-card-label">{accentLabel}</div>
-        <div className="pet-swatches" role="radiogroup" aria-label={accentLabel}>
+
+      <div className={cardCls}>
+        <div className={cardLabelCls}>{accentLabel}</div>
+        <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label={accentLabel}>
           {ACCENT_SWATCHES.map((color) => {
             const active = currentAccent === color;
             return (
               <button
                 key={color}
                 type="button"
-                className={`pet-swatch${active ? ' active' : ''}`}
+                role="radio"
+                data-slot="accent-swatch"
+                className={cn(
+                  'size-7 cursor-pointer rounded-full transition-[transform,box-shadow] hover:scale-110',
+                  /* 选中态 = 色圆外留白隙再箍一圈（截图语言），ring-offset 造白隙 */
+                  active && 'ring-2 ring-foreground/50 ring-offset-2 ring-offset-card',
+                )}
                 style={{ background: color }}
                 aria-label={color === DEFAULT_ACCENT_COLOR ? defaultAccentLabel : color}
                 aria-checked={active}
-                role="radio"
                 onClick={() => {
                   trackSettingsAppearanceClick(analytics.track, {
                     page_name: 'settings',
@@ -104,13 +129,22 @@ export function AppearanceSection({
               />
             );
           })}
-          <input
-            type="color"
-            aria-label={customAccentLabel}
-            className="pet-swatch-picker"
-            value={currentAccent}
-            onChange={(e) => setAccentColor(e.target.value)}
-          />
+          {/* 自定义色：原生 color input 铺满圆形 label 隐形接管点击 —— 圆形
+              外观交给 label（native color swatch 没法直接圆形化）。 */}
+          <label
+            className="relative flex size-7 cursor-pointer items-center justify-center rounded-full bg-secondary text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            title={customAccentLabel}
+          >
+            <Plus className="size-3.5" />
+            <input
+              type="color"
+              aria-label={customAccentLabel}
+              data-slot="accent-swatch-picker"
+              className="absolute inset-0 size-full cursor-pointer opacity-0"
+              value={currentAccent}
+              onChange={(e) => setAccentColor(e.target.value)}
+            />
+          </label>
         </div>
       </div>
 
@@ -212,9 +246,10 @@ function DesktopAppearanceControls({
 
   return (
     <>
-      <div className="settings-card">
-        <div className="field">
-          <span className="field-label">UI font size</span>
+      {/* 字号 + 指针三行共一张卡，divide-y 分隔（截图版式） */}
+      <div className="divide-y divide-border/60 rounded-xl border border-border bg-card px-4">
+        <div className="flex items-center justify-between gap-4 py-3">
+          <span className="text-[13px] font-medium text-foreground">UI font size</span>
           <FontStepper
             value={uiFont}
             min={UI_FONT_MIN}
@@ -223,8 +258,8 @@ function DesktopAppearanceControls({
             ariaLabel="UI font size"
           />
         </div>
-        <div className="field">
-          <span className="field-label">Code font size</span>
+        <div className="flex items-center justify-between gap-4 py-3">
+          <span className="text-[13px] font-medium text-foreground">Code font size</span>
           <FontStepper
             value={codeFont}
             min={CODE_FONT_MIN}
@@ -233,49 +268,60 @@ function DesktopAppearanceControls({
             ariaLabel="Code font size"
           />
         </div>
-        <div className="field">
-          <label className="settings-checkbox-row">
-            <input
-              type="checkbox"
-              checked={pointer}
-              onChange={(e) => setPointer(e.target.checked)}
-            />
-            <span>Use pointer cursor on clickable elements</span>
+        <div className="flex items-center justify-between gap-4 py-3.5">
+          <label
+            className="cursor-pointer text-[13px] font-medium text-foreground"
+            htmlFor="appearance-pointer-cursor"
+          >
+            Use pointer cursor on clickable elements
           </label>
+          <Switch
+            id="appearance-pointer-cursor"
+            checked={pointer}
+            onCheckedChange={setPointer}
+          />
         </div>
       </div>
 
       {cliBackend ? (
-        <div className="settings-card">
-          <div className="settings-card-label">CLI backend</div>
-          <div className="seg-control" role="group" aria-label="CLI backend">
-            <button
-              type="button"
-              className={'seg-btn' + (cliBackend.mode === 'bundled' ? ' active' : '')}
-              aria-pressed={cliBackend.mode === 'bundled'}
-              disabled={cliBusy}
-              onClick={() => void switchCliBackend('bundled')}
-            >
-              <span className="seg-title">Bundled (fusion-code)</span>
-            </button>
-            <button
-              type="button"
-              className={'seg-btn' + (cliBackend.mode === 'system' ? ' active' : '')}
-              aria-pressed={cliBackend.mode === 'system'}
-              disabled={cliBusy || !cliBackend.systemInfo}
-              onClick={() => void switchCliBackend('system')}
-            >
-              <span className="seg-title">
-                System claude
-                {cliBackend.systemInfo?.version
-                  ? ` (v${cliBackend.systemInfo.version})`
-                  : !cliBackend.systemInfo
-                    ? ' (not installed)'
-                    : ''}
-              </span>
-            </button>
+        <div className={cardCls}>
+          <div className={cardLabelCls}>CLI backend</div>
+          <div className="flex rounded-[10px] bg-secondary p-[3px]" role="group" aria-label="CLI backend">
+            {(
+              [
+                { mode: 'bundled' as const, label: 'Bundled (fusion-code)', disabled: cliBusy },
+                {
+                  mode: 'system' as const,
+                  label: `System claude${
+                    cliBackend.systemInfo?.version
+                      ? ` (v${cliBackend.systemInfo.version})`
+                      : !cliBackend.systemInfo
+                        ? ' (not installed)'
+                        : ''
+                  }`,
+                  disabled: cliBusy || !cliBackend.systemInfo,
+                },
+              ]
+            ).map(({ mode, label, disabled }) => (
+              <button
+                key={mode}
+                type="button"
+                data-slot="cli-backend-tab"
+                aria-pressed={cliBackend.mode === mode}
+                disabled={disabled}
+                className={cn(
+                  'min-w-0 flex-1 cursor-pointer truncate rounded-lg px-3 py-1.5 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] disabled:cursor-not-allowed disabled:opacity-60',
+                  cliBackend.mode === mode
+                    ? 'bg-card text-foreground shadow-[0_1px_3px_hsl(240_6%_10%/0.12),0_0_0_1px_hsl(240_6%_10%/0.04)]'
+                    : 'hover:text-foreground/80',
+                )}
+                onClick={() => void switchCliBackend(mode)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          <p className="hint">
+          <p className="mb-0 mt-2.5 text-xs leading-relaxed text-muted-foreground">
             Takes effect immediately — an in-flight turn keeps its current
             backend; the next turn switches.
           </p>
@@ -300,26 +346,39 @@ function FontStepper({
   ariaLabel: string;
 }) {
   return (
-    <div className="font-stepper" role="group" aria-label={ariaLabel}>
-      <button
+    <div
+      className="flex items-center overflow-hidden rounded-lg border border-border"
+      role="group"
+      aria-label={ariaLabel}
+    >
+      <Button
         type="button"
+        variant="ghost"
+        size="icon-sm"
+        className="size-7 rounded-none"
         aria-label={`${ariaLabel} decrease`}
         disabled={value <= min}
         onClick={() => onChange(value - 1)}
       >
-        −
-      </button>
-      <span className="font-stepper-value" aria-live="polite">
+        <Minus className="size-3.5" />
+      </Button>
+      <span
+        className="min-w-[52px] border-x border-border px-2 text-center text-xs tabular-nums text-foreground"
+        aria-live="polite"
+      >
         {value}px
       </span>
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon-sm"
+        className="size-7 rounded-none"
         aria-label={`${ariaLabel} increase`}
         disabled={value >= max}
         onClick={() => onChange(value + 1)}
       >
-        +
-      </button>
+        <Plus className="size-3.5" />
+      </Button>
     </div>
   );
 }

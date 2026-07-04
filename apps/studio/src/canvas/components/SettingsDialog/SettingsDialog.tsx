@@ -1,5 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import { ChevronRight, Loader2, RotateCw } from 'lucide-react';
+
+import { Badge } from '@/src/components/ui/badge';
+import { Button } from '@/src/components/ui/button';
+import { Input } from '@/src/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/src/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/src/components/ui/tabs';
+import { cn } from '@/src/lib/utils';
 import {
   agentIdToTracking,
   byokProtocolToTracking,
@@ -26,7 +41,8 @@ import { ExportDiagnosticsRow } from '../settings/ExportDiagnosticsButton';
 import { Icon } from '../shared/Icon';
 import {
   CUSTOM_MODEL_SENTINEL,
-  renderModelOptions,
+  groupModelOptions,
+  stripProviderPrefix,
 } from '../shared/modelOptions';
 import {
   KNOWN_PROVIDERS,
@@ -45,6 +61,7 @@ import {
   modelMaxTokensDefault,
 } from '../../state/maxTokens';
 import type {
+  AgentModelOption,
   ApiProtocol,
   ApiProtocolConfig,
   AppConfig,
@@ -62,6 +79,11 @@ import { PetSettings } from '../pet/PetSettings';
 import { McpClientSection } from '../settings/McpClientSection';
 import { SkillsSection } from '../settings/SkillsSection';
 import { DesignSystemsSection } from '../design-system/DesignSystemsSection';
+import {
+  WorkspaceAutomationsSection,
+  WorkspacePluginsSection,
+  WorkspaceProjectsSection,
+} from '../settings/WorkspaceSections';
 import { PrivacySection } from '../settings/PrivacySection';
 import { RoutinesSection } from '../automations/RoutinesSection';
 import { MemoryModelInline } from '../memory/MemoryModelInline';
@@ -113,6 +135,56 @@ import { LogAnalysisSection } from './LogAnalysisSection';
 import { CritiqueTheaterSection } from './CritiqueTheaterSection';
 import { NotificationsSection } from './NotificationsSection';
 
+/* ── 执行模式面板已迁 chat 栈（shadcn + Tailwind utility），以下是迁移期的
+   两件小基建。全部 section 迁完后考虑下沉到 src/components/ui/：
+   - 下拉全部走 Radix Select（2026-07-04 换装）：原「不上 Radix」的两个障碍
+     已解——optgroup 分组用 SelectGroup/SelectLabel 覆盖（renderModelSelectItems，
+     与 AvatarMenu 共用的数据分组抽在 shared/modelOptions.groupModelOptions），
+     空字符串 value 用 sentinel 常量映射（Radix SelectItem 禁止 value=''）。
+   - TEST_STATUS_TONES：连接测试结果条的语义配色。var(--green*) 等状态色目前
+     只在 canvas base.css 定义（明暗双套、全局可见），chat 链尚无对应 token——
+     迁移期先引用全局变量，退役 canvas CSS 前要在 design-tokens 里转正。 */
+/* renderModelOptions 的 Radix 版：同一 groupModelOptions 数据源，flat 项平铺、
+   provider 组 SelectGroup+SelectLabel（对应原生 optgroup——当初不上 Radix 的
+   两个障碍在此解决：分组用 SelectGroup 覆盖，空字符串 value 用下方 sentinel
+   映射）。AvatarMenu 仍在 canvas 栈，继续用 shared/modelOptions 的原生版。 */
+function renderModelSelectItems(models: AgentModelOption[]) {
+  const { flat, groups } = groupModelOptions(models);
+  return (
+    <>
+      {flat.map((m) => (
+        <SelectItem key={m.id} value={m.id}>
+          {m.label}
+        </SelectItem>
+      ))}
+      {groups.map(([provider, items]) => (
+        <SelectGroup key={provider}>
+          <SelectLabel>{provider}</SelectLabel>
+          {items.map((m) => (
+            <SelectItem key={m.id} value={m.id}>
+              {stripProviderPrefix(m.label, provider)}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      ))}
+    </>
+  );
+}
+
+/* Radix SelectItem 禁止空字符串 value（会 throw）——原生 <option value="">
+   的两处「空=默认」语义改用 sentinel 表达，读写时映射回 ''。 */
+const QUICK_FILL_CUSTOM_VALUE = '__custom_provider__';
+const IMAGE_MODEL_DEFAULT_VALUE = '__registry_default__';
+
+const TEST_STATUS_TONES: Record<string, string> = {
+  success: 'border-[var(--green-border)] bg-[var(--green-bg)] text-[var(--green)]',
+  error: 'border-[var(--red-border)] bg-[var(--red-bg)] text-[var(--red)]',
+  warn: 'border-[var(--amber-border,var(--green-border))] bg-[var(--amber-bg,var(--green-bg))] text-[var(--amber,var(--green))]',
+  running: 'border-[var(--accent-soft)] bg-[var(--accent-tint)] text-[var(--accent-strong)]',
+};
+const testStatusBoxCls =
+  'm-0 break-words rounded-md border px-2.5 py-[7px] text-xs leading-normal';
+
 export function SettingsDialog({
   initial,
   agents,
@@ -132,6 +204,7 @@ export function SettingsDialog({
   embedded = false,
   controlledSection,
   onSectionChange,
+  workspaceHost,
 }: SettingsDialogProps) {
   const { t, locale, setLocale } = useI18n();
   const analytics = useAnalytics();
@@ -237,7 +310,8 @@ export function SettingsDialog({
   const providerAutoTestKeyRef = useRef<string | null>(null);
   const apiKeyInputRef = useRef<HTMLInputElement | null>(null);
   const baseUrlInputRef = useRef<HTMLInputElement | null>(null);
-  const modelSelectRef = useRef<HTMLSelectElement | null>(null);
+  /* Radix SelectTrigger 是 <button>——focusByokRequiredField 聚焦目标随之换型 */
+  const modelSelectRef = useRef<HTMLButtonElement | null>(null);
   const customModelInputRef = useRef<HTMLInputElement | null>(null);
   const focusByokRequiredFieldAfterProtocolSwitchRef = useRef(false);
   const [apiModelCustomEditing, setApiModelCustomEditing] = useState(false);
@@ -1172,15 +1246,16 @@ export function SettingsDialog({
         ? 'http://localhost:11434'
         : undefined;
   const renderByokBaseUrlField = () => (
-    <label className={'field' + (baseUrlReadOnly ? ' settings-base-url-readonly' : '')}>
-      <span className="field-label">
+    <label className="flex flex-col gap-1">
+      <span className="inline-flex items-center text-xs font-medium text-foreground">
         {t('settings.baseUrl')}
-        <span className="field-required" aria-label={t('settings.required')}>
+        <span className="ml-1 font-bold text-destructive" aria-label={t('settings.required')}>
           *
         </span>
       </span>
-      <div className="field-row">
-        <input
+      <div className="flex items-stretch gap-1.5">
+        <Input
+          className={cn('flex-1', baseUrlReadOnly && 'cursor-default text-muted-foreground')}
           ref={baseUrlInputRef}
           aria-label={t('settings.baseUrl')}
           type="url"
@@ -1208,34 +1283,36 @@ export function SettingsDialog({
           onChange={(e) => updateApiConfig({ baseUrl: e.target.value, apiProviderBaseUrl: null })}
         />
         {baseUrlReadOnly ? (
-          <button
+          <Button
             type="button"
-            className="ghost icon-btn settings-base-url-customize"
+            variant="ghost"
+            size="sm"
+            className="shrink-0 whitespace-nowrap font-normal"
             onClick={() => {
               updateApiConfig({ apiProviderBaseUrl: null });
               window.setTimeout(() => baseUrlInputRef.current?.focus(), 0);
             }}
           >
             {t('settings.baseUrlCustomize')}
-          </button>
+          </Button>
         ) : null}
       </div>
       {baseUrlInvalid ? (
         <span
           id="settings-base-url-error"
-          className="settings-field-error"
+          className="text-[11.5px] leading-snug text-destructive"
           role="alert"
         >
           {t('settings.baseUrlInvalid')}
         </span>
       ) : null}
       {baseUrlReadOnly ? (
-        <span className="field-inline-status">
+        <span className="text-[11.5px] leading-snug text-muted-foreground">
           {t('settings.baseUrlDefaultHint')}
         </span>
       ) : null}
       {apiProtocol === 'azure' ? (
-        <span className="field-inline-status">
+        <span className="text-[11.5px] leading-snug text-muted-foreground">
           {t('settings.azureBaseUrlHint')}
         </span>
       ) : null}
@@ -1288,6 +1365,11 @@ export function SettingsDialog({
     },
     memory: { title: t('settings.memory'), subtitle: t('settings.memoryHint') },
     logAnalysis: { title: '日志分析', subtitle: '查看与分析会话日志' },
+    // 「工作区」三节（2026-07-04 首页 rail 迁移）。标题沿用首页 rail 的
+    // i18n key，副标题一句话说明来处。
+    projects: { title: t('entry.navProjects'), subtitle: '' },
+    automations: { title: t('entry.navTasks'), subtitle: '' },
+    plugins: { title: t('entry.navPlugins'), subtitle: '' },
     // 'library' is opened via EntryShell route — SettingsDialog doesn't
     // render it but SettingsSection must accept the token (see type def).
     library: { title: '', subtitle: '' },
@@ -1601,52 +1683,51 @@ export function SettingsDialog({
           <div className="settings-content" ref={settingsContentRef}>
           {activeSection === 'execution' ? (
             <>
-              <div
-                className="seg-control"
-                role="tablist"
+              {/* 模式切换：Radix Tabs（chat 栈 idiom），只用 TabsList 作触发
+                  器——两个面板依旧走下面的 cfg.mode 条件渲染，不套 TabsContent
+                  以免改动渲染结构。 */}
+              <Tabs
+                value={cfg.mode}
+                onValueChange={(v) => setMode(v as ExecMode)}
                 aria-label={t('settings.modeAria')}
-                style={{ ['--seg-cols' as string]: 2 } as CSSProperties}
               >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={cfg.mode === 'daemon'}
-                  className={
-                    'seg-btn seg-btn--inline' +
-                    (cfg.mode === 'daemon' ? ' active' : '')
-                  }
-                  disabled={!daemonLive}
-                  onClick={() => setMode('daemon')}
-                  title={
-                    daemonLive
-                      ? t('settings.modeDaemonHelp')
-                      : t('settings.modeDaemonOffline')
-                  }
-                >
-                  <span className="seg-title">{t('settings.localCli')}</span>
-                  <span className="seg-meta">
-                    {daemonLive
-                      ? t('settings.modeDaemonInstalledMeta', { count: installedCount })
-                      : t('settings.modeDaemonOfflineMeta')}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={cfg.mode === 'api'}
-                  className={
-                    'seg-btn seg-btn--inline' +
-                    (cfg.mode === 'api' ? ' active' : '')
-                  }
-                  onClick={() => setMode('api')}
-                >
-                  <span className="seg-title">{t('settings.modeApiMeta')}</span>
-                  <span className="seg-meta">{t('settings.modeApi')}</span>
-                </button>
-              </div>
+                {/* h-auto 必须带同款变体前缀才能盖过 TabsList 基类的
+                    group-data-[orientation=horizontal]/tabs:h-9（tw-merge 只
+                    合并同前缀的同组 utility）——裸 h-auto 两条都保留，容器被
+                    钉在 36px，两行 trigger 直接溢出容器盖住下方内容。 */}
+                <TabsList className="grid w-full grid-cols-2 rounded-xl p-1 group-data-[orientation=horizontal]/tabs:h-auto">
+                  <TabsTrigger
+                    value="daemon"
+                    disabled={!daemonLive}
+                    className="h-auto flex-col gap-0.5 rounded-[9px] py-2"
+                    title={
+                      daemonLive
+                        ? t('settings.modeDaemonHelp')
+                        : t('settings.modeDaemonOffline')
+                    }
+                  >
+                    <span className="text-[13.5px]">{t('settings.localCli')}</span>
+                    <span className="text-[11px] font-normal text-muted-foreground">
+                      {daemonLive
+                        ? t('settings.modeDaemonInstalledMeta', { count: installedCount })
+                        : t('settings.modeDaemonOfflineMeta')}
+                    </span>
+                  </TabsTrigger>
+                  <TabsTrigger value="api" className="h-auto flex-col gap-0.5 rounded-[9px] py-2">
+                    <span className="text-[13.5px]">{t('settings.modeApiMeta')}</span>
+                    <span className="text-[11px] font-normal text-muted-foreground">
+                      {t('settings.modeApi')}
+                    </span>
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
               {cfg.mode === 'api' ? (
+                /* 协议切换：分段式（secondary 底容器 + 选中段白卡凸起），与上方
+                   模式双档同语言——原 outline 胶囊选中时整块 accent 实底，视觉
+                   权重压过模式 tab，两排切换器打架。裸 <button> + data-slot
+                   逃逸 canvas reset（同 agent-card-select）。 */
                 <div
-                  className="protocol-chips"
+                  className="mt-1 flex min-w-0 rounded-[10px] bg-secondary p-[3px]"
                   role="tablist"
                   aria-label={t('settings.protocolAria')}
                 >
@@ -1655,8 +1736,14 @@ export function SettingsDialog({
                       key={tab.id}
                       type="button"
                       role="tab"
+                      data-slot="byok-protocol-tab"
                       aria-selected={apiProtocol === tab.id}
-                      className={'protocol-chip' + (apiProtocol === tab.id ? ' active' : '')}
+                      className={cn(
+                        'min-w-0 flex-1 cursor-pointer truncate rounded-lg px-3 py-1.5 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow]',
+                        apiProtocol === tab.id
+                          ? 'bg-card text-foreground shadow-[0_1px_3px_hsl(240_6%_10%/0.12),0_0_0_1px_hsl(240_6%_10%/0.04)]'
+                          : 'hover:text-foreground/80',
+                      )}
                       onClick={() => {
                         const byokProviderId = byokProtocolToTracking(tab.id);
                         if (byokProviderId) {
@@ -1678,32 +1765,32 @@ export function SettingsDialog({
                 </div>
               ) : null}
           {cfg.mode === 'daemon' ? (
-            <section className="settings-section">
-              <div className="section-head">
-                <div>
-                  <p className="hint">{t('settings.codeAgentHint')}</p>
-                </div>
-              </div>
+            <section className="flex flex-col gap-3">
+              <p className="m-0 text-xs leading-relaxed text-muted-foreground">
+                {t('settings.codeAgentHint')}
+              </p>
               {agents.length === 0 ? (
-                <div className="empty-card">
+                <div className="rounded-md border border-dashed border-border bg-muted/40 p-4 text-xs text-muted-foreground">
                   {t('settings.noAgentsDetected')}
                 </div>
               ) : (
                 <>
-                  <div className="agent-group">
-                    <div className="agent-group-head">
-                      <h4>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <h4 className="m-0 text-[13px] font-semibold text-foreground">
                         {t('settings.agentInstalledGroup', {
                           count: installedAgents.length,
                         })}
                       </h4>
-                      <div className="agent-group-head-actions">
+                      <div className="inline-flex min-w-0 items-center gap-2.5">
                         {agentRescanNotice ? (
                           <span
-                            className={
-                              'settings-rescan-status settings-rescan-status-inline ' +
-                              agentRescanNotice.kind
-                            }
+                            className={cn(
+                              'whitespace-nowrap text-[11.5px]',
+                              agentRescanNotice.kind === 'error'
+                                ? 'text-[var(--red)]'
+                                : 'text-[var(--green)]',
+                            )}
                             role={
                               agentRescanNotice.kind === 'error'
                                 ? 'alert'
@@ -1717,33 +1804,28 @@ export function SettingsDialog({
                               : t('settings.rescanFailed')}
                           </span>
                         ) : null}
-                        <button
+                        <Button
                           type="button"
-                          className={
-                            'ghost icon-btn settings-rescan-btn agent-group-rescan-btn' +
-                            (agentRescanRunning ? ' loading' : '')
-                          }
+                          variant="outline"
+                          size="sm"
+                          className="min-w-[92px] rounded-[9px] font-normal shadow-none hover:border-accent/50 hover:bg-accent/5"
                           onClick={() => void handleRefreshAgents()}
                           disabled={agentRescanRunning}
                           title={t('settings.rescanTitle')}
                         >
                           {agentRescanRunning ? (
                             <>
-                              <Icon
-                                name="spinner"
-                                size={13}
-                                className="icon-spin"
-                              />
+                              <Loader2 className="size-3.5 animate-spin" />
                               <span>{t('settings.rescanRunning')}</span>
                             </>
                           ) : (
                             t('settings.rescan')
                           )}
-                        </button>
+                        </Button>
                       </div>
                     </div>
                     {installedAgents.length > 0 ? (
-                      <div className="agent-grid agent-grid-installed">
+                      <div className="grid grid-cols-1 gap-2">
                         {installedAgents.flatMap((a) => {
                           const active = cfg.agentId === a.id;
                           const running =
@@ -1756,14 +1838,23 @@ export function SettingsDialog({
                           const cardEl = (
                             <div
                               key={a.id}
-                              className={
-                                'agent-card agent-card-installed' +
-                                (active ? ' active' : '')
-                              }
+                              className={cn(
+                                /* 选中态 = accent tint + 1px ring（chip 选中同语），
+                                   替换旧的左侧色条——色条是 canvas 旧语言。 */
+                                'relative flex min-h-[72px] items-center gap-2.5 overflow-hidden rounded-xl border border-border bg-card transition-[border-color,background-color,box-shadow,transform] duration-150',
+                                active
+                                  ? 'border-accent/50 bg-accent/[0.07] shadow-[0_0_0_1px] shadow-accent/25'
+                                  : 'hover:-translate-y-px hover:border-foreground/25 hover:shadow-[0_3px_12px_hsl(240_6%_10%/0.07)]',
+                              )}
                             >
+                              {/* 整行选中按钮：裸 <button> + data-slot（canvas
+                                  裸元素 reset 的豁免标记）。不用 shadcn Button
+                                  是因为其 [&_svg]:size-4 会把 32px 的 AgentIcon
+                                  压成 16px。 */}
                               <button
                                 type="button"
-                                className="agent-card-select"
+                                data-slot="agent-card-select"
+                                className="flex min-h-[70px] min-w-0 flex-1 cursor-pointer items-center gap-3 py-2.5 pl-[18px] pr-3.5 text-left"
                                 onClick={() => {
                                   trackSettingsLocalCliClick(analytics.track, {
                                     page_name: 'settings',
@@ -1776,25 +1867,36 @@ export function SettingsDialog({
                                 }}
                                 aria-pressed={active}
                               >
-                                <AgentIcon id={a.id} size={32} />
-                                <div className="agent-card-body">
-                                  <div className="agent-card-name">
-                                    <span>{a.name}</span>
+                                {/* 图标底座 tile（原 .agent-card-select > .agent-icon
+                                    的 content-box + padding 视觉，改为包一层 span）。 */}
+                                <span
+                                  className={cn(
+                                    'flex shrink-0 items-center justify-center rounded-[10px] border border-border p-[5px] transition-colors',
+                                    active
+                                      ? 'border-accent/25 bg-accent/15'
+                                      : 'bg-muted/60',
+                                  )}
+                                >
+                                  <AgentIcon id={a.id} size={32} />
+                                </span>
+                                <div className="flex min-w-0 flex-1 flex-col">
+                                  <div className="flex min-w-0 items-baseline gap-[5px] overflow-hidden whitespace-nowrap text-[12.5px] font-semibold text-foreground">
+                                    <span className="min-w-0 flex-initial truncate">{a.name}</span>
                                     {description ? (
                                       <>
                                         <span
-                                          className="agent-card-name-divider"
+                                          className="font-normal text-muted-foreground"
                                           aria-hidden="true"
                                         >
                                           ·
                                         </span>
-                                        <span className="agent-card-tagline">
+                                        <span className="min-w-0 flex-1 truncate font-normal text-muted-foreground">
                                           {description}
                                         </span>
                                       </>
                                     ) : null}
                                   </div>
-                                  <div className="agent-card-meta">
+                                  <div className="truncate text-[11px] leading-[1.35] tabular-nums text-muted-foreground">
                                     {a.authStatus === 'missing' ? (
                                       <span title={a.authMessage ?? a.path ?? ''}>
                                         {t('settings.agentAuthRequired')}
@@ -1818,21 +1920,22 @@ export function SettingsDialog({
                               {active ? (
                                 <button
                                   type="button"
-                                  className={
-                                    'ghost icon-btn settings-test-btn agent-card-test-btn' +
-                                    (running ? ' loading' : '')
-                                  }
+                                  data-slot="agent-card-test-btn"
+                                  className={cn(
+                                    /* 紧凑 accent 胶囊（原整高右栏 + border-l 分隔
+                                       是 canvas 旧语言）。 */
+                                    'mr-3 flex min-w-[76px] shrink-0 items-center justify-center gap-1.5 rounded-[9px] border border-accent/40 px-3.5 py-1.5 text-[12.5px] font-medium text-[var(--accent-strong)] transition-[background-color,border-color,transform]',
+                                    running
+                                      ? 'opacity-60'
+                                      : 'cursor-pointer hover:-translate-y-px hover:border-accent/60 hover:bg-accent/10 active:translate-y-0',
+                                  )}
                                   onClick={() => void handleTestAgent()}
                                   disabled={running}
                                   title={t('settings.testTitle')}
                                 >
                                   {running ? (
                                     <>
-                                      <Icon
-                                        name="spinner"
-                                        size={13}
-                                        className="icon-spin"
-                                      />
+                                      <Loader2 className="size-3.5 animate-spin" />
                                       <span>{t('settings.test')}</span>
                                     </>
                                   ) : (
@@ -1846,11 +1949,11 @@ export function SettingsDialog({
                             const resultRow = (
                               <div
                                 key={`${a.id}__test-result`}
-                                className="agent-test-result-row"
+                                className="col-span-full flex flex-col gap-2"
                               >
                                 {agentTestState.status === 'running' ? (
                                   <p
-                                    className="settings-test-status running"
+                                    className={cn(testStatusBoxCls, TEST_STATUS_TONES.running)}
                                     role="status"
                                     aria-live="polite"
                                   >
@@ -1859,10 +1962,12 @@ export function SettingsDialog({
                                 ) : (
                                   <>
                                     <p
-                                      className={
-                                        'settings-test-status ' +
-                                        testStatusVariant(agentTestState.result)
-                                      }
+                                      className={cn(
+                                        testStatusBoxCls,
+                                        TEST_STATUS_TONES[
+                                          testStatusVariant(agentTestState.result)
+                                        ],
+                                      )}
                                       role={
                                         agentTestState.result.ok
                                           ? 'status'
@@ -1875,16 +1980,18 @@ export function SettingsDialog({
                                       )}
                                     </p>
                                     {!agentTestState.result.ok ? (
-                                      <div className="settings-test-actions">
-                                        <div className="settings-test-actions-row">
-                                          <button
+                                      <div className="flex flex-col gap-2">
+                                        <div className="flex flex-wrap gap-2">
+                                          <Button
                                             type="button"
-                                            className="ghost icon-btn settings-test-btn"
+                                            variant="outline"
+                                            size="sm"
+                                            className="rounded-full font-normal shadow-none"
                                             onClick={() => void handleTestAgent()}
                                           >
-                                            <Icon name="reload" size={13} />
+                                            <RotateCw className="size-3.5" />
                                             <span>{t('settings.testRetry')}</span>
-                                          </button>
+                                          </Button>
                                         </div>
                                       </div>
                                     ) : null}
@@ -1895,15 +2002,17 @@ export function SettingsDialog({
                                       if (!repair) return null;
                                       const codexStrings = codexPathStrings(locale);
                                       return (
-                                        <div className="settings-test-actions">
-                                          <span className="settings-test-actions-hint">
+                                        <div className="flex flex-col gap-2">
+                                          <span className="text-xs text-muted-foreground">
                                             {codexStrings.repairHint}
                                           </span>
-                                          <div className="settings-test-actions-row">
+                                          <div className="flex flex-wrap gap-2">
                                             {repair.canUseDetected ? (
-                                              <button
+                                              <Button
                                                 type="button"
-                                                className="settings-test-btn"
+                                                variant="outline"
+                                                size="sm"
+                                                className="rounded-full font-normal shadow-none"
                                                 onClick={() =>
                                                   applyCodexDetectedPath(
                                                     repair.detectedPath,
@@ -1911,15 +2020,17 @@ export function SettingsDialog({
                                                 }
                                               >
                                                 {codexStrings.useDetected}
-                                              </button>
+                                              </Button>
                                             ) : null}
-                                            <button
+                                            <Button
                                               type="button"
-                                              className="ghost icon-btn settings-rescan-btn"
+                                              variant="outline"
+                                              size="sm"
+                                              className="rounded-full font-normal shadow-none"
                                               onClick={clearCodexCustomPath}
                                             >
                                               {codexStrings.clearCustom}
-                                            </button>
+                                            </Button>
                                           </div>
                                         </div>
                                       );
@@ -1934,7 +2045,7 @@ export function SettingsDialog({
                         })}
                       </div>
                     ) : (
-                      <div className="empty-card">
+                      <div className="rounded-md border border-dashed border-border bg-muted/40 p-4 text-xs text-muted-foreground">
                         {t('settings.noAgentsDetected')}
                       </div>
                     )}
@@ -1990,66 +2101,72 @@ export function SettingsDialog({
                     ? t('settings.modelPickerLiveHint')
                     : t('settings.modelPickerFallbackHint');
                 return (
-                  <div className="agent-model-row">
-                    <div className="agent-model-row-head">
-                      {t('settings.agentModelHead')} <strong>{selected.name}</strong>
+                  <div className="flex flex-col gap-2 rounded-xl border border-border bg-secondary/40 p-4">
+                    <div className="text-xs text-foreground">
+                      {t('settings.agentModelHead')}{' '}
+                      <strong className="font-semibold">{selected.name}</strong>
                     </div>
                     {hasModels ? (
                       <>
-                        <label className="field">
-                          <span className="field-label">
+                        <label className="flex flex-col gap-1">
+                          <span className="inline-flex flex-wrap items-center gap-2 text-[11.5px] uppercase tracking-[0.04em] text-muted-foreground">
                             {t('settings.modelPicker')}
-                            <span
-                              className={`agent-model-source-badge ${modelSource}`}
-                            >
-                              {modelSourceLabel}
-                            </span>
+                            {modelSource === 'live' ? (
+                              <Badge
+                                variant="outline"
+                                className="rounded-full border-[var(--green-border)] bg-[var(--green-bg)] px-1.5 text-[10.5px] font-semibold normal-case text-[var(--green)]"
+                              >
+                                {modelSourceLabel}
+                              </Badge>
+                            ) : (
+                              <span className="text-[11.5px] font-normal normal-case tracking-normal before:mr-1.5 before:content-['·']">
+                                {modelSourceLabel}
+                              </span>
+                            )}
                           </span>
-                          <div className="agent-model-select-wrap">
-                            <select
-                              value={selectValue}
-                              onChange={(e) => {
-                                if (e.target.value === CUSTOM_MODEL_SENTINEL) {
-                                  setAgentCustomModelIds((prev) => {
-                                    const next = new Set(prev);
-                                    next.add(selected.id);
-                                    return next;
-                                  });
-                                  setChoice({ model: '' });
-                                } else {
-                                  setAgentCustomModelIds((prev) => {
-                                    if (!prev.has(selected.id)) return prev;
-                                    const next = new Set(prev);
-                                    next.delete(selected.id);
-                                    return next;
-                                  });
-                                  setChoice({ model: e.target.value });
-                                }
-                              }}
-                            >
-                              {renderModelOptions(selected.models!)}
-                              <option value={CUSTOM_MODEL_SENTINEL}>
+                          <Select
+                            value={selectValue}
+                            onValueChange={(v) => {
+                              if (v === CUSTOM_MODEL_SENTINEL) {
+                                setAgentCustomModelIds((prev) => {
+                                  const next = new Set(prev);
+                                  next.add(selected.id);
+                                  return next;
+                                });
+                                setChoice({ model: '' });
+                              } else {
+                                setAgentCustomModelIds((prev) => {
+                                  if (!prev.has(selected.id)) return prev;
+                                  const next = new Set(prev);
+                                  next.delete(selected.id);
+                                  return next;
+                                });
+                                setChoice({ model: v });
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="w-full bg-card">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent position="popper">
+                              {renderModelSelectItems(selected.models!)}
+                              <SelectItem value={CUSTOM_MODEL_SENTINEL}>
                                 {t('settings.modelCustom')}
-                              </option>
-                            </select>
-                            <Icon
-                              name="chevron-down"
-                              size={12}
-                              className="agent-model-select-chevron"
-                            />
-                          </div>
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
                         </label>
-                        <p className="hint agent-model-row-hint">
+                        <p className="m-0 text-[11.5px] leading-relaxed text-muted-foreground">
                           {modelSourceHint}
                         </p>
                       </>
                     ) : null}
                     {customActive ? (
-                      <label className="field">
-                        <span className="field-label">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11.5px] uppercase tracking-[0.04em] text-muted-foreground">
                           {t('settings.modelCustomLabel')}
                         </span>
-                        <input
+                        <Input
                           type="text"
                           value={modelValue}
                           placeholder={t('settings.modelCustomPlaceholder')}
@@ -2060,91 +2177,99 @@ export function SettingsDialog({
                       </label>
                     ) : null}
                     {hasReasoning ? (
-                      <label className="field">
-                        <span className="field-label">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11.5px] uppercase tracking-[0.04em] text-muted-foreground">
                           {t('settings.reasoningPicker')}
                         </span>
-                        <div className="agent-model-select-wrap">
-                          <select
-                            value={reasoningValue}
-                            onChange={(e) =>
-                              setChoice({ reasoning: e.target.value })
-                            }
-                          >
+                        <Select
+                          value={reasoningValue}
+                          onValueChange={(v) => setChoice({ reasoning: v })}
+                        >
+                          <SelectTrigger className="w-full bg-card">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent position="popper">
                             {selected.reasoningOptions!.map((r) => (
-                              <option key={r.id} value={r.id}>
+                              <SelectItem key={r.id} value={r.id}>
                                 {r.label}
-                              </option>
+                              </SelectItem>
                             ))}
-                          </select>
-                          <Icon
-                            name="chevron-down"
-                            size={12}
-                            className="agent-model-select-chevron"
-                          />
-                        </div>
+                          </SelectContent>
+                        </Select>
                       </label>
                     ) : null}
                   </div>
                 );
               })()}
                   {unavailableAgents.length > 0 ? (
+                    /* 统一 disclosure 语言：card 底 + 12px 圆角，padding 挂在
+                       summary/body 上让 hover 条铺满整行；安装卡走竖排小卡
+                       （logo+名 / 描述 / 安装·文档），不再整体压暗——「可安装」
+                       本身已表达未安装态，opacity 叠上去只降可读性。 */
                     <details
-                      className="agent-install-collapse"
+                      className="group mt-2.5 overflow-hidden rounded-xl border border-border bg-card"
                       open={installedAgents.length > 0 ? undefined : true}
                     >
-                      <summary className="agent-install-collapse-summary">
+                      <summary className="flex cursor-pointer select-none list-none items-center gap-2 px-3.5 py-3 text-[13px] font-medium text-foreground transition-colors hover:bg-secondary/50 [&::-webkit-details-marker]:hidden">
+                        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
                         <span>
                           {t('settings.agentInstallGroup', {
                             count: unavailableAgents.length,
                           })}
                         </span>
                       </summary>
-                      <div className="agent-grid agent-grid-unavailable">
+                      <div className="border-t border-border/50 px-3.5 pb-4 pt-3">
+                        <div className="grid grid-cols-[repeat(auto-fill,minmax(198px,1fr))] gap-2">
                         {unavailableAgents.map((a) => {
                           const installUrl = sanitizeHttpsUrl(a.installUrl);
                           const docsUrl = sanitizeHttpsUrl(a.docsUrl);
                           const hasLinks = Boolean(installUrl || docsUrl);
                           const description = AGENT_SHORT_DESCRIPTIONS[a.id];
                           const cardLabel = `${a.name} · ${t('common.notInstalled')}`;
+                          const linkBtnCls =
+                            'rounded-[7px] border border-border px-2.5 py-[3px] text-[11px] font-medium text-foreground/80 transition-colors hover:border-accent/50 hover:bg-accent/[0.07] hover:text-foreground';
                           return (
                             <div
                               key={a.id}
-                              className="agent-card disabled agent-card-unavailable"
+                              className="flex flex-col gap-2 rounded-[10px] border border-border/70 bg-card p-3 transition-[border-color,box-shadow] hover:border-foreground/25 hover:shadow-[0_2px_8px_hsl(240_6%_10%/0.05)]"
                               role="group"
                               aria-label={cardLabel}
                             >
-                              <AgentIcon id={a.id} size={40} />
-                              <div className="agent-card-body">
-                                <div className="agent-card-name">{a.name}</div>
-                                {description ? (
-                                  <div className="agent-card-description">
-                                    {description}
-                                  </div>
-                                ) : null}
+                              <div className="flex min-w-0 items-center gap-2">
+                                <span className="flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-[7px] bg-muted/60">
+                                  <AgentIcon id={a.id} size={20} />
+                                </span>
+                                <span className="truncate text-[12.5px] font-medium text-foreground">
+                                  {a.name}
+                                </span>
                               </div>
+                              {description ? (
+                                <div className="text-[11px] text-muted-foreground">
+                                  {description}
+                                </div>
+                              ) : null}
                               {hasLinks ? (
-                                <div className="agent-card-actions agent-card-actions--inline">
-                                  {docsUrl ? (
-                                    <a
-                                      href={docsUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="agent-card-link agent-card-link--muted"
-                                      onClick={markAgentInstallIntent}
-                                    >
-                                      {t('settings.agentInstall.docs')}
-                                    </a>
-                                  ) : null}
+                                <div className="mt-auto flex items-center gap-1.5 pt-0.5">
                                   {installUrl ? (
                                     <a
                                       href={installUrl}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="agent-card-link agent-card-link--ghost"
+                                      className={linkBtnCls}
                                       onClick={markAgentInstallIntent}
                                     >
                                       {t('settings.agentInstall.install')}
+                                    </a>
+                                  ) : null}
+                                  {docsUrl ? (
+                                    <a
+                                      href={docsUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className={linkBtnCls}
+                                      onClick={markAgentInstallIntent}
+                                    >
+                                      {t('settings.agentInstall.docs')}
                                     </a>
                                   ) : null}
                                 </div>
@@ -2152,6 +2277,7 @@ export function SettingsDialog({
                             </div>
                           );
                         })}
+                        </div>
                       </div>
                     </details>
                   ) : null}
@@ -2170,11 +2296,11 @@ export function SettingsDialog({
                   {!agents.find(
                     (a) => a.id === cfg.agentId && a.available,
                   ) ? (
-                    <div className="agent-install-guide">
-                      <p className="hint agent-install-path-hint">
+                    <div className="mt-2.5">
+                      <p className="m-0 rounded-[9px] bg-secondary/55 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
                         {t('settings.agentInstall.pathHint')}
                       </p>
-                      <ol className="agent-install-steps">
+                      <ol className="mt-2 list-decimal pl-[18px] text-xs leading-relaxed text-muted-foreground [&_li+li]:mt-1">
                         <li>{t('settings.agentInstall.stepOpenLinks')}</li>
                         <li>{t('settings.agentInstall.stepAuth')}</li>
                         <li>{t('settings.agentInstall.stepRescan')}</li>
@@ -2195,13 +2321,14 @@ export function SettingsDialog({
                 const modelValue =
                   choice.model ?? selected.models?.[0]?.id ?? '';
                 return (
-                  <details className="agent-cli-env settings-memory-advanced">
-                    <summary className="agent-cli-env-summary">
-                      <span className="agent-cli-env-summary-title">
+                  <details className="group overflow-hidden rounded-xl border border-border bg-card">
+                    <summary className="flex cursor-pointer select-none list-none items-center gap-2 px-3.5 py-3 transition-colors hover:bg-secondary/50 [&::-webkit-details-marker]:hidden">
+                      <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+                      <span className="text-[13px] font-medium text-foreground">
                         {t('settings.memoryModelInlineLabel')}
                       </span>
                     </summary>
-                    <div className="agent-cli-env-body">
+                    <div className="flex flex-col gap-2 border-t border-border/50 px-3.5 pb-4 pt-3">
                       <MemoryModelInline
                         mode="daemon"
                         apiProtocol={apiProtocol}
@@ -2241,29 +2368,32 @@ export function SettingsDialog({
                 if (cliEnvFields.length === 0) return null;
                 return (
                   <details
-                    className="agent-cli-env"
+                    className="group overflow-hidden rounded-xl border border-border bg-card"
                     data-testid="settings-cli-env"
                   >
-                    <summary className="agent-cli-env-summary">
-                      <span className="agent-cli-env-summary-title">
+                    <summary className="flex cursor-pointer select-none list-none items-center gap-2 px-3.5 py-3 transition-colors hover:bg-secondary/50 [&::-webkit-details-marker]:hidden">
+                      <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+                      <span className="text-[13px] font-medium text-foreground">
                         {t('settings.cliEnvTitle')}
                       </span>
                     </summary>
-                    <div className="agent-cli-env-body">
-                      <p className="hint">{t('settings.cliEnvHint')}</p>
-                      <div className="agent-cli-env-grid">
+                    <div className="flex flex-col gap-2 border-t border-border/50 px-3.5 pb-4 pt-3">
+                      <p className="m-0 text-[11.5px] leading-relaxed text-muted-foreground">
+                        {t('settings.cliEnvHint')}
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
                         {cliEnvFields.map((field) => (
                           <label
-                            className="field"
+                            className="flex min-w-0 flex-col gap-1"
                             key={`${field.agentId}:${field.envKey}`}
                           >
-                            <span className="field-label">
+                            <span className="text-xs font-medium text-foreground">
                               {t(field.labelKey)}
                               {'labelSuffix' in field
                                 ? ` (${field.labelSuffix})`
                                 : ''}
                             </span>
-                            <input
+                            <Input
                               type={
                                 'secret' in field && field.secret
                                   ? 'password'
@@ -2308,15 +2438,13 @@ export function SettingsDialog({
               border pattern as `.agent-model-row` so the two BYOK / CLI
               panels feel like the same family.
             */
-            <section className="settings-section settings-section-card settings-section-byok">
-              <div className="section-head">
-                <div>
-                  <h3>{API_PROTOCOL_LABELS[apiProtocol]}</h3>
-                </div>
-              </div>
+            <section className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
+              <h3 className="m-0 text-sm font-semibold text-foreground">
+                {API_PROTOCOL_LABELS[apiProtocol]}
+              </h3>
               {byokPreconditionNotice ? (
                 <p
-                  className="settings-test-status error"
+                  className={cn(testStatusBoxCls, TEST_STATUS_TONES.error)}
                   role="alert"
                   aria-live="polite"
                   data-action={byokPreconditionNotice.action}
@@ -2325,12 +2453,16 @@ export function SettingsDialog({
                 </p>
               ) : null}
               {showQuickFillProvider ? (
-                <label className="field">
-                  <span className="field-label">{t('settings.quickFillProvider')}</span>
-                  <select
-                    value={selectedProviderIndex >= 0 ? String(selectedProviderIndex) : ''}
-                    onChange={(e) => {
-                      if (e.target.value === '') {
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-foreground">{t('settings.quickFillProvider')}</span>
+                  <Select
+                    value={
+                      selectedProviderIndex >= 0
+                        ? String(selectedProviderIndex)
+                        : QUICK_FILL_CUSTOM_VALUE
+                    }
+                    onValueChange={(v) => {
+                      if (v === QUICK_FILL_CUSTOM_VALUE) {
                         setApiModelCustomEditing(false);
                         updateApiConfig({
                           baseUrl: '',
@@ -2339,7 +2471,7 @@ export function SettingsDialog({
                         });
                         return;
                       }
-                      const idx = Number(e.target.value);
+                      const idx = Number(v);
                       if (!isNaN(idx) && protocolProviders[idx]) {
                         const p = protocolProviders[idx]!;
                         setApiModelCustomEditing(false);
@@ -2351,26 +2483,35 @@ export function SettingsDialog({
                       }
                     }}
                   >
-                    <option value="">{t('settings.customProvider')}</option>
-                    {protocolProviders.map((p, i) => (
-                      <option key={p.label} value={i}>{p.label}</option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent position="popper">
+                      <SelectItem value={QUICK_FILL_CUSTOM_VALUE}>
+                        {t('settings.customProvider')}
+                      </SelectItem>
+                      {protocolProviders.map((p, i) => (
+                        <SelectItem key={p.label} value={String(i)}>
+                          {p.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </label>
               ) : null}
-              <label className="field">
-                <span className="field-label-row">
-                  <span className="field-label">
+              <label className="flex flex-col gap-1">
+                <span className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center text-xs font-medium text-foreground">
                     {t('settings.apiKey')}
                     {byokRequiresApiKey ? (
-                      <span className="field-required" aria-label={t('settings.required')}>
+                      <span className="ml-1 font-bold text-destructive" aria-label={t('settings.required')}>
                         *
                       </span>
                     ) : null}
                   </span>
                   {byokRequiresApiKey ? (
                     <a
-                      className="field-label-link"
+                      className="text-xs text-[var(--accent-strong)] hover:underline"
                       href={apiKeyConsoleLink.url}
                       target="_blank"
                       rel="noreferrer"
@@ -2381,8 +2522,9 @@ export function SettingsDialog({
                     </a>
                   ) : null}
                 </span>
-                <div className="field-row">
-                  <input
+                <div className="flex items-stretch gap-1.5">
+                  <Input
+                    className="flex-1"
                     ref={apiKeyInputRef}
                     aria-label={t('settings.apiKey')}
                     type={showApiKey ? 'text' : 'password'}
@@ -2407,25 +2549,27 @@ export function SettingsDialog({
                     }}
                     autoFocus
                   />
-                  <button
+                  <Button
                     type="button"
-                    className="ghost icon-btn"
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0 whitespace-nowrap font-normal"
                     onClick={() => setShowApiKey((v) => !v)}
                     title={
                       showApiKey ? t('settings.hideKey') : t('settings.showKey')
                     }
                   >
                     {showApiKey ? t('settings.hide') : t('settings.show')}
-                  </button>
+                  </Button>
                 </div>
                 {apiKeyAuthFailed && providerTestState.status === 'idle' ? (
-                  <span className="field-error" role="alert">
+                  <span className="text-[11.5px] leading-snug text-destructive" role="alert">
                     {t('settings.apiKeyInvalid')}
                   </span>
                 ) : null}
                 {providerTestState.status === 'running' ? (
                   <span
-                    className="field-inline-status running"
+                    className="text-[11.5px] leading-snug text-[var(--accent-strong)]"
                     role="status"
                     aria-live="polite"
                   >
@@ -2435,126 +2579,132 @@ export function SettingsDialog({
                   <span
                     className={
                       providerTestState.result.ok
-                        ? 'field-inline-status success'
-                        : 'field-error'
+                        ? 'text-[11.5px] leading-snug text-[var(--green)]'
+                        : 'text-[11.5px] leading-snug text-destructive'
                     }
                     role={providerTestState.result.ok ? 'status' : 'alert'}
                   >
                     {renderTestMessage(providerTestState.result, 'api')}
                   </span>
                 ) : null}
-                <span className="field-inline-status">
+                <span className="text-[11.5px] leading-snug text-muted-foreground">
                   {t('settings.apiHint')}
                 </span>
                 {canRunProviderConnectionTest(cfg, {
                   requiresApiKey: byokRequiresApiKey,
                 }) && baseUrlValid ? (
-                  <button
+                  <Button
                     type="button"
-                    className={
-                      'ghost icon-btn settings-test-btn' +
-                      (providerTestState.status === 'running' ? ' loading' : '')
-                    }
+                    variant="outline"
+                    size="sm"
+                    className="self-start rounded-[9px] border-accent/40 font-medium text-[var(--accent-strong)] shadow-none hover:border-accent/60 hover:bg-accent/10 hover:text-[var(--accent-strong)]"
                     onClick={() => void handleTestProvider()}
                     disabled={providerTestState.status === 'running'}
                     title={t('settings.testTitle')}
                   >
                     {providerTestState.status === 'running' ? (
                       <>
-                        <Icon
-                          name="spinner"
-                          size={13}
-                          className="icon-spin"
-                        />
+                        <Loader2 className="size-3.5 animate-spin" />
                         <span>{t('settings.test')}</span>
                       </>
                     ) : providerTestState.status === 'done' &&
                       !providerTestState.result.ok ? (
                       <>
-                        <Icon name="reload" size={13} />
+                        <RotateCw className="size-3.5" />
                         <span>{t('settings.testRetry')}</span>
                       </>
                     ) : (
                       t('settings.test')
                     )}
-                  </button>
+                  </Button>
                 ) : null}
               </label>
-              <label className="field">
-                <span className="field-label">
+              <label className="flex flex-col gap-1">
+                <span className="inline-flex items-center text-xs font-medium text-foreground">
                   {apiProtocol === 'azure'
                     ? t('settings.azureDeploymentModel')
                     : t('settings.model')}
-                  <span className="field-required" aria-label={t('settings.required')}>
+                  <span className="ml-1 font-bold text-destructive" aria-label={t('settings.required')}>
                     *
                   </span>
                 </span>
-                <select
-                  ref={modelSelectRef}
-                  aria-label={
-                    apiProtocol === 'azure'
-                      ? t('settings.azureDeploymentModel')
-                      : t('settings.model')
-                  }
+                <Select
                   value={apiModelSelectValue}
-                  onFocus={() => {
-                    const byokProviderId = byokProtocolToTracking(apiProtocol);
-                    if (byokProviderId) {
-                      trackSettingsByokFieldClick(analytics.track, {
-                        page_name: 'settings',
-                        area: 'configure_execution_mode_byok',
-                        element: 'model',
-                        provider_id: byokProviderId,
-                        has_value: Boolean(cfg.model?.trim()),
-                      });
-                    }
-                  }}
-                  onChange={(e) => {
-                    if (e.target.value === CUSTOM_MODEL_SENTINEL) {
+                  onValueChange={(v) => {
+                    if (v === CUSTOM_MODEL_SENTINEL) {
                       setApiModelCustomEditing(true);
                       updateApiConfig({ model: '' });
                     } else {
                       setApiModelCustomEditing(false);
-                      updateApiConfig({ model: e.target.value });
+                      updateApiConfig({ model: v });
                     }
                   }}
                 >
-                  {apiModelOptions.map((m) => (
-                    <option value={m.id} key={m.id}>{apiModelOptionLabel(m)}</option>
-                  ))}
-                  <option value={CUSTOM_MODEL_SENTINEL}>{t('settings.modelCustom')}</option>
-                </select>
+                  <SelectTrigger
+                    ref={modelSelectRef}
+                    className="w-full"
+                    aria-label={
+                      apiProtocol === 'azure'
+                        ? t('settings.azureDeploymentModel')
+                        : t('settings.model')
+                    }
+                    onFocus={() => {
+                      const byokProviderId = byokProtocolToTracking(apiProtocol);
+                      if (byokProviderId) {
+                        trackSettingsByokFieldClick(analytics.track, {
+                          page_name: 'settings',
+                          area: 'configure_execution_mode_byok',
+                          element: 'model',
+                          provider_id: byokProviderId,
+                          has_value: Boolean(cfg.model?.trim()),
+                        });
+                      }
+                    }}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    {apiModelOptions.map((m) => (
+                      <SelectItem value={m.id} key={m.id}>
+                        {apiModelOptionLabel(m)}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value={CUSTOM_MODEL_SENTINEL}>
+                      {t('settings.modelCustom')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
                 {loadedAccountModelCount > 0 ? (
-                  <span className="field-inline-status success" role="status">
+                  <span className="text-[11.5px] leading-snug text-[var(--green)]" role="status">
                     {t('settings.modelsLoadedFromAccount', {
                       count: loadedAccountModelCount,
                     })}
                   </span>
                 ) : null}
                 {providerModelsFailureMessage ? (
-                  <span className="field-error" role="alert">
+                  <span className="text-[11.5px] leading-snug text-destructive" role="alert">
                     {providerModelsFailureMessage}
                   </span>
                 ) : null}
               </label>
               {!selectedProvider ? (
-                <p className="hint">{t('settings.suggestedModelsHint')}</p>
+                <p className="m-0 text-xs leading-relaxed text-muted-foreground">{t('settings.suggestedModelsHint')}</p>
               ) : null}
               {apiProtocol === 'azure' ? (
-                <p className="hint">{t('settings.azureModelFetchHint')}</p>
+                <p className="m-0 text-xs leading-relaxed text-muted-foreground">{t('settings.azureModelFetchHint')}</p>
               ) : null}
               {apiProtocol === 'ollama' ? (
-                <p className="hint">{t('settings.fetchModelsUnsupported')}</p>
+                <p className="m-0 text-xs leading-relaxed text-muted-foreground">{t('settings.fetchModelsUnsupported')}</p>
               ) : null}
               {apiModelCustomActive ? (
-                <label className="field">
-                  <span className="field-label">
+                <label className="flex flex-col gap-1">
+                  <span className="inline-flex items-center text-xs font-medium text-foreground">
                     {t('settings.modelCustomLabel')}
-                    <span className="field-required" aria-label={t('settings.required')}>
+                    <span className="ml-1 font-bold text-destructive" aria-label={t('settings.required')}>
                       *
                     </span>
                   </span>
-                  <input
+                  <Input
                     ref={customModelInputRef}
                     aria-label={t('settings.modelCustomLabel')}
                     type="text"
@@ -2565,13 +2715,14 @@ export function SettingsDialog({
                 </label>
               ) : null}
               {renderByokBaseUrlField()}
-              <details className="agent-cli-env settings-memory-advanced">
-                <summary className="agent-cli-env-summary">
-                  <span className="agent-cli-env-summary-title">
+              <details className="group overflow-hidden rounded-xl border border-border bg-card">
+                <summary className="flex cursor-pointer select-none list-none items-center gap-2 px-3.5 py-3 transition-colors hover:bg-secondary/50 [&::-webkit-details-marker]:hidden">
+                  <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+                  <span className="text-[13px] font-medium text-foreground">
                     {t('settings.memoryModelInlineLabel')}
                   </span>
                 </summary>
-                <div className="agent-cli-env-body">
+                <div className="flex flex-col gap-2 border-t border-border/50 px-3.5 pb-4 pt-3">
                   <MemoryModelInline
                     mode="api"
                     apiProtocol={apiProtocol}
@@ -2583,9 +2734,9 @@ export function SettingsDialog({
                 </div>
               </details>
               {apiProtocol === 'azure' ? (
-                <label className="field">
-                  <span className="field-label">{t('settings.apiVersion')}</span>
-                  <input
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-foreground">{t('settings.apiVersion')}</span>
+                  <Input
                     type="text"
                     value={cfg.apiVersion ?? ''}
                     placeholder="2024-10-21"
@@ -2595,31 +2746,39 @@ export function SettingsDialog({
                 </label>
               ) : null}
               {apiProtocol === 'senseaudio' ? (
-                <label className="field">
-                  <span className="field-label">{t('settings.byokImageModel')}</span>
-                  <select
-                    value={cfg.byokImageModel ?? ''}
-                    onChange={(e) =>
-                      updateApiConfig({ byokImageModel: e.target.value })
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-foreground">{t('settings.byokImageModel')}</span>
+                  <Select
+                    value={cfg.byokImageModel || IMAGE_MODEL_DEFAULT_VALUE}
+                    onValueChange={(v) =>
+                      updateApiConfig({
+                        byokImageModel: v === IMAGE_MODEL_DEFAULT_VALUE ? '' : v,
+                      })
                     }
                   >
-                    {/* Default-empty option resolves to the registry default
-                        on the daemon side (senseaudio-image-2.0-260319 today).
-                        Listing it explicitly lets the picker show what the
-                        unconfigured state actually means. */}
-                    <option value="">
-                      {IMAGE_MODELS.find((m) => m.provider === 'senseaudio')?.label
-                        ?? 'senseaudio-image-2.0'}
-                      {' (default)'}
-                    </option>
-                    {IMAGE_MODELS.filter((m) => m.provider === 'senseaudio').map(
-                      (m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ),
-                    )}
-                  </select>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent position="popper">
+                      {/* Default sentinel（存储侧仍是 ''）resolves to the
+                          registry default on the daemon side
+                          (senseaudio-image-2.0-260319 today). Listing it
+                          explicitly lets the picker show what the
+                          unconfigured state actually means. */}
+                      <SelectItem value={IMAGE_MODEL_DEFAULT_VALUE}>
+                        {IMAGE_MODELS.find((m) => m.provider === 'senseaudio')?.label
+                          ?? 'senseaudio-image-2.0'}
+                        {' (default)'}
+                      </SelectItem>
+                      {IMAGE_MODELS.filter((m) => m.provider === 'senseaudio').map(
+                        (m) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.label}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
                 </label>
               ) : null}
             </section>
@@ -2753,6 +2912,23 @@ export function SettingsDialog({
 
           {activeSection === 'designSystems' ? (
             <DesignSystemsSection cfg={cfg} setCfg={setCfg} />
+          ) : null}
+
+          {/* 「工作区」三节（2026-07-04 首页 rail 迁移）：宿主组件见
+              WorkspaceSections.tsx。V1 自己的侧栏没有这三项入口（V1 是
+              legacy、一个 flag 之隔就删）；V2 的 NAV_GROUPS 提供导航，经
+              controlledSection 驱动到这里渲染。workspaceHost 缺席时渲染
+              空——只有 canvas App 会带着数据包打开设置。 */}
+          {activeSection === 'projects' && workspaceHost ? (
+            <WorkspaceProjectsSection host={workspaceHost} />
+          ) : null}
+
+          {activeSection === 'automations' && workspaceHost ? (
+            <WorkspaceAutomationsSection host={workspaceHost} />
+          ) : null}
+
+          {activeSection === 'plugins' && workspaceHost ? (
+            <WorkspacePluginsSection host={workspaceHost} />
           ) : null}
 
           {activeSection === 'instructions' ? (

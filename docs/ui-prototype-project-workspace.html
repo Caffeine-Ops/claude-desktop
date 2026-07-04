@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>项目工作区原型 · chat 统一皮肤</title>
+<style>
+/* ============================================================
+   Tokens — 逐字摘自 packages/design-tokens/tokens.css
+   与 docs/ui-prototype-unified-surfaces.html 同一基座。
+   ============================================================ */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 3% 12%;
+  --popover: 0 0% 100%;
+  --primary: 211 100% 45%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 6% 94%;
+  --secondary-foreground: 240 3% 18%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --destructive: 0 72% 50%;
+  --border: 240 6% 84%;
+  --input: 240 6% 86%;
+  --ring: 211 100% 45%;
+  --sidebar: 240 7% 96%;
+  --sidebar-foreground: 240 4% 18%;
+  --sidebar-accent: 240 6% 90%;
+  --sidebar-border: 240 6% 84%;
+  --brand: 142 76% 36%;
+  --brand-foreground: 0 0% 100%;
+  --ok: 142 76% 36%;
+  --fail: 0 72% 50%;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+  --w-medium: 500;
+  --w-strong: 650;
+
+  --ui: 13px;
+
+  /* 悬浮内容卡三层阴影 + 6px 圆角 — 2026-07-04 定案值
+     （app/globals.css .shell-content-card，改必同步）。 */
+  --card-radius: 6px;
+  --card-shadow:
+    0 0 0 1px hsl(240 6% 10% / 0.045),
+    0 1px 2px hsl(240 6% 10% / 0.05),
+    0 12px 32px hsl(240 6% 10% / 0.08);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 180ms;
+}
+html.dark {
+  color-scheme: dark;
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --card-foreground: 39 35% 92%;
+  --popover: 36 6% 15%;
+  --primary: 210 100% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 30 5% 15%;
+  --secondary-foreground: 40 21% 89%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --destructive: 0 72% 55%;
+  --border: 49 12% 18%;
+  --input: 42 8% 25%;
+  --ring: 210 100% 58%;
+  --sidebar: 40 6% 10%;
+  --sidebar-foreground: 40 21% 89%;
+  --sidebar-accent: 30 5% 15%;
+  --sidebar-border: 49 12% 18%;
+  --brand: 145 60% 52%;
+  --brand-foreground: 40 6% 10%;
+  --ok: 145 60% 52%;
+  --fail: 0 72% 55%;
+  --card-shadow:
+    inset 0 1px 0 hsl(40 20% 95% / 0.045),
+    0 0 0 1px hsl(0 0% 0% / 0.35),
+    0 16px 48px hsl(0 0% 0% / 0.5);
+}
+html.no-motion * { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+
+/* ============================================================ 基础 */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  font-size: var(--ui);
+  letter-spacing: -0.022em;
+  -webkit-font-smoothing: antialiased;
+  color: hsl(var(--foreground));
+  background: hsl(var(--sidebar));
+  overflow: hidden;
+  transition: background var(--dur) var(--ease-out);
+}
+button { font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid hsl(var(--ring) / .6); outline-offset: 1px; }
+textarea, input { font: inherit; letter-spacing: inherit; color: inherit; }
+svg { display: block; flex: none; }
+
+.app { display: grid; grid-template-columns: 244px 1fr; height: 100vh; }
+
+/* ============================================================
+   左 rail — 与 ui-prototype-unified-surfaces.html 同一构件
+   ============================================================ */
+.rail { display: flex; flex-direction: column; padding: 14px 10px 10px; min-width: 0; }
+.traffic { display: flex; gap: 8px; padding: 2px 6px 16px; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; background: hsl(var(--muted-foreground) / .25); }
+.new-chat {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: 9px;
+  font-weight: var(--w-medium);
+  background: hsl(var(--card));
+  box-shadow: 0 0 0 1px hsl(var(--sidebar-border)), 0 1px 2px hsl(240 6% 10% / .05);
+  transition: transform var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out);
+}
+.new-chat:hover { box-shadow: 0 0 0 1px hsl(var(--sidebar-border)), 0 3px 10px hsl(240 6% 10% / .09); transform: translateY(-1px); }
+.new-chat:active { transform: translateY(0); }
+
+.surface-tabs {
+  display: flex; margin-top: 14px; padding: 3px;
+  background: hsl(var(--secondary));
+  border-radius: 10px;
+}
+.surface-tab {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 6px 4px; border-radius: 8px;
+  color: hsl(var(--muted-foreground)); font-weight: var(--w-medium);
+  white-space: nowrap;
+  transition: background var(--dur) var(--ease-out), color var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out);
+}
+.surface-tab:hover { color: hsl(var(--foreground) / .8); }
+.surface-tab[aria-selected="true"] {
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  box-shadow: 0 1px 3px hsl(240 6% 10% / .12), 0 0 0 1px hsl(240 6% 10% / .04);
+}
+.surface-tab svg { color: hsl(var(--muted-foreground) / .8); }
+.surface-tab[aria-selected="true"] svg { color: hsl(var(--brand)); }
+
+.rail-label {
+  padding: 18px 10px 6px;
+  font-size: calc(var(--ui) - 2px);
+  font-weight: var(--w-medium);
+  color: hsl(var(--muted-foreground) / .8);
+}
+.sessions { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; min-height: 0; }
+.session-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 8px;
+  color: hsl(var(--sidebar-foreground) / .9);
+  text-align: left; white-space: nowrap; overflow: hidden;
+  transition: background var(--dur) var(--ease-out);
+}
+.session-row:hover { background: hsl(var(--sidebar-accent)); }
+.session-row.on { background: hsl(var(--sidebar-accent)); font-weight: var(--w-medium); }
+.session-row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.session-row .when { font-size: calc(var(--ui) - 2px); color: hsl(var(--muted-foreground) / .8); }
+/* 选中圆点恒占位只改色（RailSessionList 抖动修复同款，勿改回条件插拔） */
+.session-row .dot { width: 5px; height: 5px; border-radius: 50%; background: transparent; transition: background var(--dur); }
+.session-row.on .dot { background: hsl(var(--brand)); }
+
+.rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 2px; padding-top: 10px; }
+.rail-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 10px; border-radius: 8px;
+  color: hsl(var(--sidebar-foreground) / .85);
+  font-weight: var(--w-medium);
+  transition: background var(--dur) var(--ease-out);
+}
+.rail-item:hover { background: hsl(var(--sidebar-accent)); }
+.rail-item svg { color: hsl(var(--muted-foreground)); }
+.user-row { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 9px; transition: background var(--dur); }
+.user-row:hover { background: hsl(var(--sidebar-accent)); }
+.avatar {
+  width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: hsl(var(--brand) / .15); color: hsl(var(--brand));
+  font-size: calc(var(--ui) - 1px); font-weight: var(--w-strong);
+}
+.user-meta { display: flex; flex-direction: column; line-height: 1.25; text-align: left; }
+.user-meta b { font-weight: var(--w-medium); }
+.user-meta s { text-decoration: none; font-size: calc(var(--ui) - 2px); color: hsl(var(--muted-foreground)); }
+
+/* ============================================================
+   舞台 + 悬浮内容卡
+   ============================================================ */
+.stage { padding: 10px 10px 10px 0; min-width: 0; }
+.content-card {
+  position: relative; height: 100%; min-width: 0; overflow: hidden;
+  border-radius: var(--card-radius);
+  background: hsl(var(--card));
+  box-shadow: var(--card-shadow);
+  display: flex; flex-direction: column;
+  transition: background var(--dur) var(--ease-out);
+}
+
+/* ── 项目 tab 条（浮卡顶部 chrome） ── */
+.tab-strip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid hsl(var(--border) / .7);
+}
+.proj-tab {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 8px 5px 10px; border-radius: 8px;
+  color: hsl(var(--muted-foreground)); font-weight: var(--w-medium);
+  border: 1px solid transparent;
+  max-width: 200px;
+  transition: background var(--dur), color var(--dur), border-color var(--dur), box-shadow var(--dur);
+}
+.proj-tab:hover { background: hsl(var(--secondary) / .8); }
+.proj-tab[aria-selected="true"] {
+  background: hsl(var(--card));
+  border-color: hsl(var(--border) / .9);
+  box-shadow: 0 1px 3px hsl(240 6% 10% / .08);
+  color: hsl(var(--foreground));
+}
+.proj-tab svg { color: hsl(var(--muted-foreground) / .8); }
+.proj-tab[aria-selected="true"] svg { color: hsl(var(--brand)); }
+.proj-tab .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-tab .x {
+  display: grid; place-items: center;
+  width: 16px; height: 16px; border-radius: 4px;
+  color: hsl(var(--muted-foreground) / .7);
+  transition: background var(--dur), color var(--dur);
+}
+.proj-tab .x:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+.strip-actions { margin-left: auto; display: flex; gap: 4px; }
+
+.icon-btn {
+  width: 28px; height: 28px; border-radius: 7px;
+  display: grid; place-items: center;
+  color: hsl(var(--muted-foreground));
+  transition: background var(--dur), color var(--dur);
+}
+.icon-btn:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+
+/* ── 项目 header ── */
+.proj-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid hsl(var(--border) / .7);
+  min-height: 48px;
+}
+.proj-head .title { font-weight: var(--w-strong); font-size: calc(var(--ui) + 1px); }
+.proj-head .mode { color: hsl(var(--muted-foreground)); }
+.select-chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 11px; border-radius: 999px;
+  border: 1px solid hsl(var(--border) / .9);
+  background: hsl(var(--card));
+  color: hsl(var(--foreground) / .85);
+  font-size: calc(var(--ui) - 1px);
+  transition: border-color var(--dur), background var(--dur);
+}
+.select-chip:hover { border-color: hsl(var(--muted-foreground) / .4); }
+.select-chip svg { color: hsl(var(--muted-foreground)); }
+.head-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+/* 主 CTA：品牌绿（身份/CTA/选中点位纪律——截图的蓝按钮是 canvas 旧语言） */
+.cta {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 13px; border-radius: 9px;
+  background: hsl(var(--brand)); color: hsl(var(--brand-foreground));
+  font-weight: var(--w-medium);
+  transition: transform 120ms var(--ease-out), box-shadow var(--dur) var(--ease-out), background var(--dur);
+}
+.cta:hover { transform: translateY(-1px); box-shadow: 0 4px 14px hsl(var(--brand) / .35); }
+.cta:active { transform: translateY(0); }
+.cta .sep { width: 1px; height: 14px; background: hsl(var(--brand-foreground) / .3); }
+
+/* ============================================================
+   工作区双列
+   ============================================================ */
+.workspace { flex: 1; display: flex; min-height: 0; }
+
+/* ── 左：聊天列 ── */
+.chat-pane {
+  width: clamp(430px, 38%, 560px); flex-shrink: 0;
+  display: flex; flex-direction: column; min-height: 0;
+  border-right: 1px solid hsl(var(--border) / .7);
+}
+.pane-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px;
+  min-height: 42px;
+}
+.pane-head .name { font-weight: var(--w-medium); display: flex; align-items: center; gap: 6px; }
+.pane-head .name svg { color: hsl(var(--muted-foreground) / .7); }
+.pane-head .grow { flex: 1; }
+
+.chat-scroll { flex: 1; overflow-y: auto; min-height: 0; padding: 4px 18px 10px; }
+
+/* 居中元信息 pill（PLUGIN / initializing） */
+.meta-pill-row { display: flex; justify-content: center; margin: 10px 0; }
+.meta-pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 3px 11px; border-radius: 999px;
+  background: hsl(var(--secondary) / .8);
+  border: 1px solid hsl(var(--border) / .6);
+  font-size: calc(var(--ui) - 2px);
+  color: hsl(var(--muted-foreground));
+}
+.meta-pill i { width: 6px; height: 6px; border-radius: 50%; background: hsl(var(--ok)); }
+.meta-pill b { font-weight: var(--w-medium); color: hsl(var(--foreground) / .75); }
+.meta-pill .sep { width: 1px; height: 11px; background: hsl(var(--border)); }
+.meta-pill code { font-family: var(--font-mono); font-size: calc(var(--ui) - 3px); }
+
+/* 消息：chat 语言（用户气泡 = secondary，不是截图的蓝） */
+.msg { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; animation: rise .28s var(--ease-out); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+.msg.user { align-items: flex-end; }
+.bubble {
+  max-width: 82%;
+  padding: 8px 13px; border-radius: 14px 14px 4px 14px;
+  background: hsl(var(--secondary));
+  line-height: 1.55;
+}
+.ai-meta {
+  display: flex; align-items: baseline; gap: 8px; margin: 16px 0 6px;
+  font-size: calc(var(--ui) - 1px);
+}
+.ai-meta b { font-weight: var(--w-strong); }
+.ai-meta code { font-family: var(--font-mono); font-size: calc(var(--ui) - 2px); color: hsl(var(--muted-foreground)); }
+.ai-meta .when { margin-left: auto; color: hsl(var(--muted-foreground) / .8); font-size: calc(var(--ui) - 2px); }
+
+/* 思考中折叠行 */
+.think-row {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 5px 0; margin: 2px 0;
+  color: hsl(var(--muted-foreground)); text-align: left;
+  border-radius: 7px;
+  transition: color var(--dur);
+}
+.think-row:hover { color: hsl(var(--foreground) / .8); }
+.think-row .orb {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid hsl(var(--brand) / .25);
+  border-top-color: hsl(var(--brand));
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.think-row .chev { margin-left: auto; transition: transform var(--dur) var(--ease-out); }
+.think-row[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.think-body {
+  display: none;
+  margin: 2px 0 8px; padding: 9px 12px;
+  border-left: 2px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  font-size: calc(var(--ui) - 1px); line-height: 1.6;
+}
+.think-row[aria-expanded="true"] + .think-body { display: block; }
+
+.ai-body { line-height: 1.65; }
+.ai-body p + p { margin-top: 8px; }
+
+/* ── AskUserQuestion 表单卡：白卡 + brand tint header（chat 统一语言） ── */
+.ask-card {
+  margin: 12px 0;
+  border: 1px solid hsl(var(--border) / .8);
+  border-radius: 12px;
+  background: hsl(var(--card));
+  overflow: hidden;
+  box-shadow: 0 1px 2px hsl(240 6% 10% / .04);
+}
+.ask-head {
+  display: flex; gap: 11px; padding: 13px 15px;
+  background: hsl(var(--brand) / .08);
+  border-bottom: 1px solid hsl(var(--brand) / .14);
+}
+.ask-head .q {
+  width: 26px; height: 26px; border-radius: 50%; flex: none;
+  display: grid; place-items: center;
+  background: hsl(var(--brand)); color: hsl(var(--brand-foreground));
+  font-weight: var(--w-strong);
+}
+.ask-head h3 { font-size: var(--ui); font-weight: var(--w-strong); margin-bottom: 3px; }
+.ask-head p { font-size: calc(var(--ui) - 1px); color: hsl(var(--muted-foreground)); line-height: 1.5; }
+.ask-body { padding: 14px 15px 4px; display: flex; flex-direction: column; gap: 15px; }
+.field label {
+  display: block; margin-bottom: 7px;
+  font-weight: var(--w-medium); font-size: calc(var(--ui) - 1px);
+}
+.field label .req { color: hsl(var(--destructive)); }
+.chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.chip {
+  padding: 5px 12px; border-radius: 999px;
+  border: 1px solid hsl(var(--border) / .9);
+  background: hsl(var(--card));
+  color: hsl(var(--foreground) / .85);
+  font-size: calc(var(--ui) - 1px);
+  transition: border-color var(--dur), background var(--dur), color var(--dur), transform 120ms var(--ease-out);
+}
+.chip:hover { border-color: hsl(var(--muted-foreground) / .4); transform: translateY(-1px); }
+.chip[aria-pressed="true"] {
+  border-color: hsl(var(--brand) / .5);
+  background: hsl(var(--brand) / .1);
+  color: hsl(var(--foreground));
+}
+.text-input, .text-area {
+  width: 100%; padding: 8px 12px;
+  border: 1px solid hsl(var(--input));
+  border-radius: 9px;
+  background: hsl(var(--card));
+  transition: border-color var(--dur), box-shadow var(--dur);
+}
+.text-input::placeholder, .text-area::placeholder { color: hsl(var(--muted-foreground) / .65); }
+.text-input:focus-visible, .text-area:focus-visible {
+  outline: none;
+  border-color: hsl(var(--brand) / .55);
+  box-shadow: 0 0 0 3px hsl(var(--brand) / .12);
+}
+.text-area { resize: vertical; min-height: 64px; line-height: 1.55; }
+.ask-foot {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 14px; padding: 10px 15px;
+  background: hsl(var(--secondary) / .55);
+  border-top: 1px solid hsl(var(--border) / .6);
+  font-size: calc(var(--ui) - 1px);
+  color: hsl(var(--muted-foreground));
+}
+.ask-send {
+  margin-left: auto; flex: none;
+  padding: 6px 15px; border-radius: 9px;
+  background: hsl(var(--brand)); color: hsl(var(--brand-foreground));
+  font-weight: var(--w-medium);
+  transition: transform 120ms var(--ease-out), box-shadow var(--dur), opacity var(--dur);
+}
+.ask-send:hover { transform: translateY(-1px); box-shadow: 0 4px 14px hsl(var(--brand) / .35); }
+.ask-send:active { transform: translateY(0); }
+.ask-card.answered .ask-send { opacity: .55; pointer-events: none; }
+
+/* 完成状态 pill（左对齐） */
+.done-row { display: flex; margin: 12px 0; }
+.done-pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 12px; border-radius: 999px;
+  background: hsl(var(--secondary) / .8);
+  border: 1px solid hsl(var(--border) / .6);
+  font-size: calc(var(--ui) - 2px);
+  color: hsl(var(--muted-foreground));
+}
+.done-pill i { width: 6px; height: 6px; border-radius: 50%; background: hsl(var(--ok)); }
+.done-pill b { color: hsl(var(--foreground) / .8); font-weight: var(--w-medium); }
+
+/* ── composer（统一构件） ── */
+.chat-composer-wrap { padding: 8px 14px 12px; }
+.composer {
+  border: 1px solid hsl(var(--input));
+  border-radius: 14px;
+  background: hsl(var(--card));
+  box-shadow: 0 1px 2px hsl(240 6% 10% / .04);
+  transition: border-color var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out);
+}
+.composer:focus-within {
+  border-color: hsl(var(--brand) / .55);
+  box-shadow: 0 0 0 3px hsl(var(--brand) / .12), 0 1px 2px hsl(240 6% 10% / .04);
+}
+.composer textarea {
+  width: 100%; resize: none; border: 0; background: none;
+  padding: 11px 14px 4px;
+  min-height: 44px; max-height: 160px;
+  line-height: 1.55;
+}
+.composer textarea:focus-visible { outline: none; }
+.composer textarea::placeholder { color: hsl(var(--muted-foreground) / .75); }
+.composer-bar { display: flex; align-items: center; gap: 4px; padding: 5px 8px 7px; }
+.sess-chip {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid hsl(var(--border) / .8);
+  font-family: var(--font-mono); font-size: calc(var(--ui) - 3px);
+  color: hsl(var(--muted-foreground));
+  transition: border-color var(--dur);
+}
+.sess-chip:hover { border-color: hsl(var(--muted-foreground) / .4); }
+.send-btn {
+  margin-left: auto;
+  width: 30px; height: 30px; border-radius: 9px;
+  display: grid; place-items: center;
+  background: hsl(var(--secondary));
+  color: hsl(var(--muted-foreground) / .6);
+  transition: background var(--dur) var(--ease-out), color var(--dur), transform 120ms var(--ease-out);
+}
+.send-btn.ready { background: hsl(var(--brand)); color: hsl(var(--brand-foreground)); }
+.send-btn.ready:hover { transform: translateY(-1px); }
+.send-btn.ready:active { transform: scale(.94); }
+
+/* ============================================================
+   右：设计文件画布
+   ============================================================ */
+.canvas-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.canvas-pane .pane-head { border-bottom: 1px solid hsl(var(--border) / .5); }
+.file-tab {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 12px; border-radius: 8px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border) / .9);
+  box-shadow: 0 1px 3px hsl(240 6% 10% / .08);
+  font-weight: var(--w-medium);
+}
+.file-tab svg { color: hsl(var(--brand)); }
+
+.board {
+  flex: 1; position: relative; min-height: 0; overflow: hidden;
+  /* 画布网格：token 化 border 色，明暗自动跟 */
+  background:
+    linear-gradient(hsl(var(--border) / .32) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--border) / .32) 1px, transparent 1px),
+    hsl(var(--background) / .55);
+  background-size: 24px 24px, 24px 24px, auto;
+}
+.board-refresh { position: absolute; top: 12px; left: 12px; background: hsl(var(--card)); box-shadow: 0 0 0 1px hsl(var(--border) / .8), 0 1px 2px hsl(240 6% 10% / .05); }
+.board-tools { position: absolute; top: 12px; right: 14px; display: flex; gap: 8px; }
+.tool-pill {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 13px; border-radius: 999px;
+  background: hsl(var(--card));
+  box-shadow: 0 0 0 1px hsl(var(--border) / .8), 0 1px 3px hsl(240 6% 10% / .06);
+  font-size: calc(var(--ui) - 1px); font-weight: var(--w-medium);
+  color: hsl(var(--foreground) / .85);
+  transition: transform 120ms var(--ease-out), box-shadow var(--dur);
+}
+.tool-pill:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px hsl(var(--border)), 0 4px 12px hsl(240 6% 10% / .1); }
+.tool-pill svg { color: hsl(var(--muted-foreground)); }
+
+.board-center { position: absolute; inset: 0; display: grid; place-items: center; padding-bottom: 90px; }
+.empty-card {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 30px 44px;
+  border-radius: 14px;
+  background: hsl(var(--card));
+  box-shadow: 0 0 0 1px hsl(var(--border) / .7), 0 10px 32px hsl(240 6% 10% / .08);
+  animation: rise .3s var(--ease-out);
+}
+.empty-card h3 { font-size: calc(var(--ui) + 2px); font-weight: var(--w-strong); }
+.ghost-btn {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 14px; border-radius: 9px;
+  border: 1px solid hsl(var(--border) / .9);
+  background: hsl(var(--card));
+  font-weight: var(--w-medium);
+  transition: border-color var(--dur), background var(--dur), transform 120ms var(--ease-out);
+}
+.ghost-btn:hover { border-color: hsl(var(--brand) / .5); background: hsl(var(--brand) / .06); transform: translateY(-1px); }
+.ghost-btn svg { color: hsl(var(--brand)); }
+
+/* 草图占位卡（点「新建草图」后落进画布，演示产物落位） */
+.sketch-card {
+  position: absolute;
+  width: 300px;
+  border-radius: 12px;
+  background: hsl(var(--card));
+  box-shadow: 0 0 0 1px hsl(var(--border) / .8), 0 10px 30px hsl(240 6% 10% / .12);
+  overflow: hidden;
+  animation: rise .3s var(--ease-out);
+}
+.sketch-card .ph {
+  aspect-ratio: 16/10;
+  display: grid; place-items: center;
+  background: hsl(var(--muted) / .6);
+  border-bottom: 1px solid hsl(var(--border) / .5);
+  color: hsl(var(--muted-foreground) / .8);
+}
+.sketch-card .cap { display: flex; align-items: center; gap: 7px; padding: 9px 12px; font-weight: var(--w-medium); }
+.sketch-card .cap .badge {
+  margin-left: auto; padding: 1px 8px; border-radius: 999px;
+  background: hsl(var(--brand) / .1); color: hsl(var(--brand));
+  font-size: calc(var(--ui) - 3px); font-weight: var(--w-medium);
+}
+
+.dropzone {
+  position: absolute; left: 20px; right: 20px; bottom: 16px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 14px;
+  border: 1.5px dashed hsl(var(--border));
+  border-radius: 12px;
+  color: hsl(var(--muted-foreground) / .85);
+  background: hsl(var(--card) / .55);
+  backdrop-filter: blur(4px);
+  font-size: calc(var(--ui) - 1px);
+  transition: border-color var(--dur), background var(--dur);
+}
+.dropzone:hover { border-color: hsl(var(--brand) / .5); background: hsl(var(--brand) / .04); }
+.dropzone b { font-weight: var(--w-medium); color: hsl(var(--foreground) / .75); }
+
+/* ============================================================ Tweaks */
+.tweaks-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: 50;
+  width: 40px; height: 40px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  box-shadow: 0 6px 20px hsl(240 6% 10% / .25);
+  transition: transform 140ms var(--ease-out);
+}
+.tweaks-fab:hover { transform: scale(1.06); }
+.tweaks {
+  position: fixed; right: 18px; bottom: 68px; z-index: 50;
+  width: 246px; padding: 14px;
+  border-radius: 14px;
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border) / .8);
+  box-shadow: 0 18px 50px hsl(240 6% 10% / .2);
+  display: none; flex-direction: column; gap: 12px;
+}
+.tweaks.open { display: flex; animation: rise .2s var(--ease-out); }
+.tweaks h3 { font-size: var(--ui); font-weight: var(--w-strong); }
+.tw-group { display: flex; flex-direction: column; gap: 6px; }
+.tw-group label { font-size: calc(var(--ui) - 2px); color: hsl(var(--muted-foreground)); font-weight: var(--w-medium); }
+.seg { display: flex; background: hsl(var(--secondary)); border-radius: 8px; padding: 2px; }
+.seg button {
+  flex: 1; padding: 4px 0; border-radius: 6px;
+  font-size: calc(var(--ui) - 1px); color: hsl(var(--muted-foreground));
+  transition: background var(--dur), color var(--dur), box-shadow var(--dur);
+}
+.seg button[aria-pressed="true"] {
+  background: hsl(var(--card)); color: hsl(var(--foreground));
+  box-shadow: 0 1px 3px hsl(240 6% 10% / .12);
+  font-weight: var(--w-medium);
+}
+.swatches { display: flex; gap: 8px; }
+.swatch { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; transition: transform 120ms var(--ease-out), border-color var(--dur); }
+.swatch:hover { transform: scale(1.1); }
+.swatch[aria-pressed="true"] { border-color: hsl(var(--foreground) / .8); }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ═══════════ 左 rail ═══════════ -->
+  <aside class="rail">
+    <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+    <button class="new-chat">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      新对话
+    </button>
+    <div class="surface-tabs" role="tablist" aria-label="主导航">
+      <button class="surface-tab" role="tab" aria-selected="false">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        智能助手
+      </button>
+      <button class="surface-tab" role="tab" aria-selected="true">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
+        工作画布
+      </button>
+    </div>
+    <div class="rail-label">今天</div>
+    <div class="sessions">
+      <button class="session-row on"><span class="dot"></span><span class="t">你好</span><span class="when">2 分钟前</span></button>
+      <button class="session-row"><span class="dot"></span><span class="t">你好</span><span class="when">3 分钟前</span></button>
+    </div>
+    <div class="rail-label">昨天</div>
+    <div class="sessions">
+      <button class="session-row"><span class="dot"></span><span class="t">1</span><span class="when">昨天</span></button>
+    </div>
+    <div class="rail-foot">
+      <button class="rail-item">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v3m0 16v3M4.2 4.2l2.1 2.1m11.4 11.4 2.1 2.1M1 12h3m16 0h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+        设置
+      </button>
+      <button class="user-row">
+        <span class="avatar">A</span>
+        <span class="user-meta"><b>andersenaxel</b><s>Claude Code · 已连接</s></span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ═══════════ 悬浮内容卡 ═══════════ -->
+  <main class="stage">
+    <div class="content-card">
+
+      <!-- 项目 tab 条 -->
+      <div class="tab-strip" role="tablist" aria-label="打开的项目">
+        <button class="proj-tab" role="tab" aria-selected="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
+          <span class="t">你好</span>
+          <span class="x" role="button" aria-label="关闭标签页">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </span>
+        </button>
+        <button class="proj-tab" role="tab" aria-selected="false">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+          <span class="t">1</span>
+        </button>
+        <div class="strip-actions">
+          <button class="icon-btn" title="新标签页" aria-label="新标签页">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <button class="icon-btn" title="搜索" aria-label="搜索">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 项目 header -->
+      <header class="proj-head">
+        <button class="icon-btn" title="返回" aria-label="返回">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7M5 12h14"/></svg>
+        </button>
+        <span class="title">你好</span>
+        <span class="mode">自由设计</span>
+        <button class="select-chip">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg>
+          选择设计系统
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button class="icon-btn" title="重命名" aria-label="重命名">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+        </button>
+        <div class="head-right">
+          <button class="cta">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></svg>
+            交付给 VS Code
+            <span class="sep"></span>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <button class="icon-btn" title="项目设置" aria-label="项目设置">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v3m0 16v3M4.2 4.2l2.1 2.1m11.4 11.4 2.1 2.1M1 12h3m16 0h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- 工作区双列 -->
+      <div class="workspace">
+        <!-- ── 左：会话流 ── -->
+        <section class="chat-pane" aria-label="项目会话">
+          <div class="pane-head">
+            <span class="name">你好
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+            </span>
+            <span class="grow"></span>
+            <button class="icon-btn" title="历史" aria-label="历史">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+            </button>
+            <button class="icon-btn" title="新会话" aria-label="新会话">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button class="icon-btn" title="重新生成" aria-label="重新生成">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v6h-6"/></svg>
+            </button>
+            <button class="icon-btn" title="收起面板" aria-label="收起面板">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+          </div>
+
+          <div class="chat-scroll" id="chatScroll">
+            <div class="meta-pill-row">
+              <span class="meta-pill"><i></i><span>PLUGIN</span><b>Default design router</b><code>@0.1.0</code><span class="sep"></span><span>new-generation</span></span>
+            </div>
+
+            <div class="msg user"><div class="bubble">你好</div></div>
+
+            <div class="ai-meta"><b>Claude</b><code>claude-fable-5</code><span class="when">17 小时前</span></div>
+            <div class="meta-pill-row">
+              <span class="meta-pill"><span>initializing</span><code>claude-fable-5</code></span>
+            </div>
+
+            <button class="think-row" id="thinkRow" aria-expanded="false">
+              <span class="orb"></span>
+              思考中
+              <svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <div class="think-body">用户打招呼进入自由设计项目。先用一张任务类型确认卡锁定方向——产物类型、受众、品牌上下文、规模、约束，其余项给合理默认值。</div>
+
+            <div class="ai-body">
+              <p>你好！我是你的设计助手——想做什么都可以交给我。先花 30 秒锁定方向：</p>
+            </div>
+
+            <!-- AskUserQuestion 卡 -->
+            <div class="ask-card" id="askCard">
+              <div class="ask-head">
+                <span class="q">?</span>
+                <div>
+                  <h3>Choose the task type</h3>
+                  <p>I'll route this through the right Open Design workflow and lock the brief in one shot. Skip what doesn't apply — I'll fill defaults.</p>
+                </div>
+              </div>
+              <div class="ask-body">
+                <div class="field">
+                  <label>What should I build? <span class="req">*</span></label>
+                  <div class="chips" data-single="true">
+                    <button class="chip" aria-pressed="true">Prototype</button>
+                    <button class="chip" aria-pressed="false">Live artifact</button>
+                    <button class="chip" aria-pressed="false">Slide deck</button>
+                    <button class="chip" aria-pressed="false">Image</button>
+                    <button class="chip" aria-pressed="false">Video</button>
+                    <button class="chip" aria-pressed="false">HyperFrames</button>
+                    <button class="chip" aria-pressed="false">Audio</button>
+                    <button class="chip" aria-pressed="false">Other</button>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>Who is this for?</label>
+                  <input class="text-input" type="text" placeholder="e.g. early-stage investors, dev-tools buyers, internal exec review">
+                </div>
+                <div class="field">
+                  <label>Brand context</label>
+                  <div class="chips" data-single="true">
+                    <button class="chip" aria-pressed="false">Pick a direction for me</button>
+                    <button class="chip" aria-pressed="false">I have a brand spec — I'll share it</button>
+                    <button class="chip" aria-pressed="false">Match a reference site / screenshot — I'll attach it</button>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>Roughly how much?</label>
+                  <input class="text-input" type="text" placeholder="e.g. 8 slides, 1 landing + 3 sub-pages, 4 mobile screens, 30s video">
+                </div>
+                <div class="field">
+                  <label>Any important constraints?</label>
+                  <textarea class="text-area" rows="2" placeholder="Audience, brand, format, length, aspect ratio, references, things to avoid…"></textarea>
+                </div>
+              </div>
+              <div class="ask-foot">
+                <span id="askHint">挑选对话的选项；可选项可以跳过，代理会使用合理的默认值。</span>
+                <button class="ask-send" id="askSend">发送答案</button>
+              </div>
+            </div>
+
+            <div class="done-row">
+              <span class="done-pill"><i></i><b>已完成</b><span>26s · 979 输出 · $1.2287</span></span>
+            </div>
+          </div>
+
+          <div class="chat-composer-wrap">
+            <div class="composer">
+              <textarea id="chatInput" rows="1" placeholder="描述你想生成的内容…" aria-label="描述你想生成的内容"></textarea>
+              <div class="composer-bar">
+                <button class="icon-btn" title="提及文件" aria-label="提及文件">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>
+                </button>
+                <button class="icon-btn" title="附件" aria-label="附件">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                </button>
+                <button class="sess-chip" title="会话 ID">83b6b7ea-b1e9…</button>
+                <button class="send-btn" id="chatSend" aria-label="发送">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5m-7 7 7-7 7 7"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── 右：设计文件画布 ── -->
+        <section class="canvas-pane" aria-label="设计文件">
+          <div class="pane-head">
+            <span class="file-tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+              设计文件
+            </span>
+          </div>
+          <div class="board" id="board">
+            <button class="icon-btn board-refresh" title="刷新" aria-label="刷新">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v6h-6"/></svg>
+            </button>
+            <div class="board-tools">
+              <button class="tool-pill" id="newSketch">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                新建草图
+              </button>
+              <button class="tool-pill">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V4a2 2 0 0 1 2-2h10"/></svg>
+                粘贴
+              </button>
+              <button class="tool-pill">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0-12 4 4m-4-4L8 7"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>
+                上传
+              </button>
+            </div>
+
+            <div class="board-center" id="boardCenter">
+              <div class="empty-card">
+                <h3>生成的文件会出现在这里</h3>
+                <button class="ghost-btn" id="emptySketch">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                  新建草图
+                </button>
+              </div>
+            </div>
+
+            <div class="dropzone">
+              <b>把文件拖到这里</b>
+              <span>图片、文档、参考资料或文件夹 — 智能体都会用作上下文。</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ═══════════ Tweaks ═══════════ -->
+<button class="tweaks-fab" id="tweaksFab" aria-label="Tweaks">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 21v-7m0-4V3m8 18v-9m0-4V3m8 18v-5m0-4V3M1 14h6m2-6h6m2 8h6"/></svg>
+</button>
+<div class="tweaks" id="tweaks" role="dialog" aria-label="Tweaks">
+  <h3>Tweaks</h3>
+  <div class="tw-group">
+    <label>外观</label>
+    <div class="seg" id="segTheme">
+      <button aria-pressed="true" data-theme="light">浅色</button>
+      <button aria-pressed="false" data-theme="dark">深色</button>
+    </div>
+  </div>
+  <div class="tw-group">
+    <label>身份色（CTA / 选中 / 状态）</label>
+    <div class="swatches" id="swatches">
+      <button class="swatch" style="background:#16a34a" data-brand="142 76% 36%" data-brand-dark="145 60% 52%" aria-pressed="true" aria-label="品牌绿"></button>
+      <button class="swatch" style="background:#0071e3" data-brand="211 100% 45%" data-brand-dark="210 100% 58%" aria-pressed="false" aria-label="Apple 蓝"></button>
+      <button class="swatch" style="background:#e05d38" data-brand="18 72% 55%" data-brand-dark="18 80% 62%" aria-pressed="false" aria-label="陶土橙"></button>
+    </div>
+  </div>
+  <div class="tw-group">
+    <label>密度</label>
+    <div class="seg" id="segDensity">
+      <button aria-pressed="true" data-ui="13">舒适</button>
+      <button aria-pressed="false" data-ui="12">紧凑</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── 项目 tab 切换（仅演示选中态） ── */
+document.querySelectorAll('.proj-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.proj-tab').forEach(t => t.setAttribute('aria-selected', String(t === tab)));
+  });
+});
+
+/* ── 思考中折叠 ── */
+const thinkRow = document.getElementById('thinkRow');
+thinkRow.addEventListener('click', () => {
+  thinkRow.setAttribute('aria-expanded', String(thinkRow.getAttribute('aria-expanded') !== 'true'));
+});
+
+/* ── ask 卡 chips：data-single 组内单选 ── */
+document.querySelectorAll('.chips[data-single]').forEach(group => {
+  group.addEventListener('click', e => {
+    const chip = e.target.closest('.chip'); if (!chip) return;
+    group.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c === chip)));
+  });
+});
+
+/* ── 发送答案 → 已回答态 ── */
+document.getElementById('askSend').addEventListener('click', () => {
+  document.getElementById('askCard').classList.add('answered');
+  document.getElementById('askHint').textContent = '答案已发送，代理继续执行中…';
+});
+
+/* ── composer ready 态 + 自动伸缩 ── */
+const chatInput = document.getElementById('chatInput');
+const chatSend = document.getElementById('chatSend');
+const chatScroll = document.getElementById('chatScroll');
+chatInput.addEventListener('input', () => {
+  chatSend.classList.toggle('ready', chatInput.value.trim().length > 0);
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 160) + 'px';
+});
+function sendChat() {
+  const text = chatInput.value.trim(); if (!text) return;
+  chatInput.value = ''; chatInput.dispatchEvent(new Event('input'));
+  const wrap = document.createElement('div');
+  wrap.className = 'msg user';
+  const b = document.createElement('div');
+  b.className = 'bubble'; b.textContent = text;
+  wrap.appendChild(b);
+  chatScroll.appendChild(wrap);
+  chatScroll.scrollTop = chatScroll.scrollHeight;
+}
+chatInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+chatSend.addEventListener('click', sendChat);
+
+/* ── 新建草图：空态 → 草图占位卡落进画布 ── */
+let sketchCount = 0;
+function addSketch() {
+  const center = document.getElementById('boardCenter');
+  if (center) center.remove();
+  sketchCount += 1;
+  const card = document.createElement('div');
+  card.className = 'sketch-card';
+  /* 简单瀑布式错位摆放，演示多张草图共存 */
+  card.style.left = (48 + ((sketchCount - 1) % 3) * 330) + 'px';
+  card.style.top = (56 + Math.floor((sketchCount - 1) / 3) * 260) + 'px';
+  card.innerHTML =
+    '<div class="ph">' +
+      '<svg width="72" height="44" viewBox="0 0 120 70" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="112" height="14" rx="3"/><rect x="4" y="26" width="52" height="40" rx="3"/><path d="M64 30h52M64 40h40M64 50h46M64 60h30"/></svg>' +
+    '</div>' +
+    '<div class="cap"><span></span><span class="badge">草图</span></div>';
+  card.querySelector('.cap span').textContent = '未命名草图 ' + sketchCount;
+  document.getElementById('board').appendChild(card);
+}
+document.getElementById('newSketch').addEventListener('click', addSketch);
+const emptySketch = document.getElementById('emptySketch');
+if (emptySketch) emptySketch.addEventListener('click', addSketch);
+
+/* ── Tweaks ── */
+const tweaks = document.getElementById('tweaks');
+document.getElementById('tweaksFab').addEventListener('click', () => tweaks.classList.toggle('open'));
+
+function segBind(id, fn) {
+  const seg = document.getElementById(id);
+  seg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    seg.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    fn(b);
+  });
+}
+segBind('segTheme', b => {
+  document.documentElement.classList.toggle('dark', b.dataset.theme === 'dark');
+  document.documentElement.dataset.theme = b.dataset.theme; /* 双标记，贴合项目现实 */
+  applyBrand();
+});
+segBind('segDensity', b => document.documentElement.style.setProperty('--ui', b.dataset.ui + 'px'));
+
+const swatches = document.getElementById('swatches');
+function applyBrand() {
+  const cur = swatches.querySelector('[aria-pressed="true"]');
+  const dark = document.documentElement.classList.contains('dark');
+  const root = document.documentElement.style;
+  root.setProperty('--brand', dark ? cur.dataset.brandDark : cur.dataset.brand);
+  root.setProperty('--ok', dark ? cur.dataset.brandDark : cur.dataset.brand);
+  root.setProperty('--brand-foreground', dark ? '40 6% 10%' : '0 0% 100%');
+}
+swatches.addEventListener('click', e => {
+  const s = e.target.closest('.swatch'); if (!s) return;
+  swatches.querySelectorAll('.swatch').forEach(x => x.setAttribute('aria-pressed', String(x === s)));
+  applyBrand();
+});
+</script>
+</body>
+</html>

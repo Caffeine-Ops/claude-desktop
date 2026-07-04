@@ -1,0 +1,1340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工具执行流卡片原型 · 三个方向</title>
+<style>
+/* ============================================================
+   Tokens — 逐字摘自 packages/design-tokens/tokens.css
+   （HSL 三元组，shadcn 式消费：hsl(var(--x) / alpha)）
+   ============================================================ */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 3% 12%;
+  --primary: 211 100% 45%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 6% 94%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --destructive: 0 72% 50%;
+  --border: 240 6% 84%;
+  --brand: 142 76% 36%;
+  --brand-foreground: 0 0% 100%;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+  --w-medium: 500;
+  --w-strong: 650;
+
+  /* 悬浮内容卡三层阴影 — 照抄 app/globals.css .shell-content-card */
+  --card-shadow:
+    0 0 0 1px hsl(240 6% 10% / 0.045),
+    0 1px 2px hsl(240 6% 10% / 0.05),
+    0 12px 32px hsl(240 6% 10% / 0.08);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 180ms;
+
+  /* 密度档（Tweaks 可调）：行高与工具区字号 */
+  --row-h: 32px;
+  --tool-fs: 13px;
+  --mono-fs: 12px;
+}
+html.dark {
+  color-scheme: dark;
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --card-foreground: 39 35% 92%;
+  --primary: 210 100% 58%;
+  --secondary: 30 5% 15%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --destructive: 0 72% 55%;
+  --border: 49 12% 18%;
+  --brand: 145 60% 52%;
+  --brand-foreground: 40 6% 10%;
+  --card-shadow:
+    0 0 0 1px hsl(0 0% 100% / 0.06),
+    0 1px 2px hsl(0 0% 0% / 0.4),
+    0 12px 32px hsl(0 0% 0% / 0.5);
+}
+html[data-density="compact"] {
+  --row-h: 27px;
+  --tool-fs: 12.5px;
+  --mono-fs: 11.5px;
+}
+
+/* ============================================================
+   基础
+   ============================================================ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+  transition: background var(--dur) var(--ease-out);
+  overflow: hidden; /* 滚动都发生在 .panel 内 */
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+/* ── 原型工具条（不属于设计本身，演示用 chrome）────────── */
+.proto-bar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 18px;
+  background: hsl(var(--background) / 0.82);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+  font-size: 12px;
+}
+.proto-bar .hint { color: hsl(var(--muted-foreground)); margin-right: auto; }
+.seg {
+  display: inline-flex; gap: 2px;
+  background: hsl(var(--secondary));
+  border-radius: 8px; padding: 2px;
+}
+.seg button {
+  padding: 4px 12px; border-radius: 6px; font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  transition: all var(--dur) var(--ease-out);
+}
+.seg button:hover { color: hsl(var(--foreground)); }
+.seg button[aria-pressed="true"] {
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-weight: var(--w-medium);
+  box-shadow: 0 1px 2px hsl(240 6% 10% / 0.12);
+}
+.icon-btn {
+  display: grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  transition: all var(--dur) var(--ease-out);
+}
+.icon-btn:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+
+/* ============================================================
+   应用外框 — 左 rail + 右 panel（截图同构；panel 内独立滚动）
+   ============================================================ */
+.app { display: flex; height: calc(100vh - 49px); }
+.rail {
+  flex: none; width: 232px;
+  display: flex; flex-direction: column;
+  background: hsl(var(--background));
+  padding: 12px 10px 10px;
+  overflow: hidden;
+}
+.traffic { display: flex; gap: 8px; padding: 4px 6px 14px; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; }
+.traffic i:nth-child(1) { background: #ff5f57; }
+.traffic i:nth-child(2) { background: #febc2e; }
+.traffic i:nth-child(3) { background: #28c840; }
+.new-chat {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  height: 36px; border-radius: 10px;
+  background: hsl(var(--brand) / 0.12);
+  color: hsl(var(--brand));
+  font-size: 13px; font-weight: var(--w-medium);
+  margin-bottom: 10px;
+}
+.mode-tabs {
+  display: flex; gap: 2px;
+  background: hsl(var(--secondary));
+  border-radius: 10px; padding: 2px;
+  margin-bottom: 4px;
+}
+.mode-tabs .mt {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px;
+  height: 30px; border-radius: 8px;
+  font-size: 12px; color: hsl(var(--muted-foreground));
+}
+.mode-tabs .mt[aria-selected="true"] {
+  background: hsl(var(--card)); color: hsl(var(--foreground));
+  font-weight: var(--w-medium);
+  box-shadow: 0 1px 2px hsl(240 6% 10% / 0.1);
+}
+.rail-list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px; }
+.rl-sec { font-size: 10.5px; color: hsl(var(--muted-foreground) / 0.7); padding: 12px 8px 5px; }
+.rl-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6.5px 8px; border-radius: 8px;
+  font-size: 12.5px;
+}
+.rl-item:hover { background: hsl(var(--muted) / 0.7); }
+.rl-item .t { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rl-item .when { flex: none; font-size: 10.5px; color: hsl(var(--muted-foreground) / 0.6); }
+.rl-item.cur { background: hsl(var(--muted) / 0.9); }
+.rl-item.cur::before {
+  content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: hsl(var(--brand));
+}
+.rail-foot { border-top: 1px solid hsl(var(--border) / 0.5); padding-top: 6px; margin-top: 6px; }
+.rf-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: 8px;
+  font-size: 12.5px; color: hsl(var(--foreground) / 0.85);
+}
+.rf-row:hover { background: hsl(var(--muted) / 0.7); }
+.user { display: flex; align-items: center; gap: 9px; padding: 7px 8px 4px; }
+.avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: hsl(var(--brand) / 0.15); color: hsl(var(--brand));
+  display: grid; place-items: center;
+  font-size: 13px; font-weight: var(--w-medium);
+}
+.user .u-name { font-size: 12.5px; font-weight: var(--w-medium); line-height: 1.35; }
+.user .u-sub {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10.5px; color: hsl(var(--muted-foreground) / 0.75);
+}
+.user .u-sub::before {
+  content: ""; width: 5px; height: 5px; border-radius: 50%;
+  background: hsl(var(--brand));
+}
+.panel {
+  flex: 1; min-width: 0;
+  position: relative; overflow-y: auto;
+  background: hsl(var(--card));
+  /* 悬浮内容卡（shell-content-card 同款）：圆角 + 三层阴影浮在灰底上，
+     overflow 裁剪让 sticky 顶栏/composer 都贴合圆角 */
+  margin: 10px 12px 12px 6px;
+  border-radius: 16px;
+  box-shadow: var(--card-shadow);
+}
+
+/* ── thread 内容列：居中于 panel ── */
+.thread { max-width: 780px; margin: 0 auto; padding: 6px 28px 28px; }
+.variant-note {
+  font-size: 12px; color: hsl(var(--muted-foreground) / 0.8);
+  text-align: center;
+  margin: 14px 0 6px; line-height: 1.6; text-wrap: pretty;
+}
+.v { display: none; }
+body[data-variant="a"] .v-a { display: block; }
+body[data-variant="b"] .v-b { display: block; }
+body[data-variant="c"] .v-c { display: block; }
+
+/* ============================================================
+   标题区 — 三种方案（proto-bar 可切换）
+   现状痛点：标题顶格贴窗口左上角、副行「内容由 AI 生成」独占
+   一行，与居中的内容列错位，读作调试信息而非会话锚点。
+   共同决策：标题与内容列同一左缘；slash 命令降为 chip；
+   「AI 生成」合并成小徽标不再独占一行。
+   ============================================================ */
+.cmd-chip {
+  font-family: var(--font-mono); font-size: 11.5px;
+  color: hsl(var(--brand));
+  background: hsl(var(--brand) / 0.09);
+  border: 1px solid hsl(var(--brand) / 0.22);
+  padding: 2.5px 8px; border-radius: 999px;
+  letter-spacing: 0.01em; white-space: nowrap;
+}
+.ai-badge {
+  font-size: 10.5px; color: hsl(var(--muted-foreground) / 0.85);
+  border: 1px solid hsl(var(--border) / 0.9);
+  padding: 2px 7px; border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* T1「顶栏·左置」/ T2「顶栏·居中」— sticky 毛玻璃栏，
+   滚动时标题始终在场（聊天标题本质是导航锚点，不是文档标题） */
+.tbar {
+  position: sticky; top: 0; z-index: 10;
+  background: hsl(var(--card) / 0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid hsl(var(--border) / 0.55);
+}
+.tbar-inner {
+  position: relative;
+  max-width: 780px; margin: 0 auto; padding: 0 28px;
+  height: 46px;
+  display: flex; align-items: center; gap: 9px;
+}
+.tbar h1 {
+  font-size: 14px; font-weight: var(--w-medium); letter-spacing: -0.01em;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.tbar .ai-badge { margin-left: auto; }
+html[data-title="center"] .tbar-inner { justify-content: center; }
+html[data-title="center"] .tbar .ai-badge {
+  position: absolute; right: 28px; margin-left: 0;
+}
+html[data-title="doc"] .tbar { display: none; }
+
+/* T3「文档头」— 标题进入内容列，22px 大字 + meta 行，
+   给会话一点文档式的仪式感；滚动即离场 */
+.dochead {
+  padding: 30px 0 20px;
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+  margin-bottom: 14px;
+}
+.dochead h1 {
+  font-size: 22px; font-weight: var(--w-strong); letter-spacing: -0.015em;
+  margin: 10px 0 10px;
+}
+.dochead .meta {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: hsl(var(--muted-foreground) / 0.85);
+}
+html:not([data-title="doc"]) .dochead { display: none; }
+
+/* ============================================================
+   标题方案 D 系列 — 四个更大胆的方向
+   ============================================================ */
+html[data-title="side"] .tbar { display: none; }
+html:not([data-title="big"]) .bighead { display: none; }
+html:not([data-title="msg"]) .msghead { display: none; }
+html:not([data-title="side"]) .sidemeta { display: none; }
+html:not([data-title="status"]) .st-pill { display: none; }
+html:not([data-title="status"]) .st-line { display: none; }
+.tbar { pointer-events: none; } /* 标题栏无交互元素，透明期不挡内容点击 */
+
+/* D·大字收缩 — 28px 大标题开场；滚动时大标题淡出、顶栏淡入接棒。
+   纯 CSS scroll-driven animation（Chromium 115+，Electron 必然支持），
+   不支持的引擎退化为「顶栏 + 大标题同时在场」，原型可接受 */
+.bighead { padding: 34px 0 6px; }
+.bighead .pre {
+  font-family: var(--font-mono); font-size: 12.5px;
+  color: hsl(var(--brand)); letter-spacing: 0.01em;
+}
+.bighead h1 {
+  font-size: 28px; font-weight: var(--w-strong); letter-spacing: -0.022em;
+  margin: 6px 0 10px;
+}
+.bighead .meta {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: hsl(var(--muted-foreground) / 0.85);
+}
+@supports (animation-timeline: scroll()) {
+  html[data-title="big"] .tbar,
+  html[data-title="msg"] .tbar {
+    background: transparent; border-bottom-color: transparent; backdrop-filter: none;
+  }
+  html[data-title="big"] .tbar::before,
+  html[data-title="msg"] .tbar::before {
+    content: ""; position: absolute; inset: 0; z-index: -1;
+    background: hsl(var(--card) / 0.85); backdrop-filter: blur(12px);
+    border-bottom: 1px solid hsl(var(--border) / 0.55);
+    opacity: 0;
+    animation: ttl-fade-in linear both;
+    animation-timeline: scroll(nearest); animation-range: 60px 180px;
+  }
+  html[data-title="big"] .tbar-inner > *,
+  html[data-title="msg"] .tbar-inner > * {
+    opacity: 0; translate: 0 6px;
+    animation: ttl-rise-in linear both;
+    animation-timeline: scroll(nearest); animation-range: 90px 210px;
+  }
+  html[data-title="big"] .bighead > *,
+  html[data-title="msg"] .msghead > * {
+    animation: ttl-head-out linear both;
+    animation-timeline: scroll(nearest); animation-range: 0px 150px;
+  }
+}
+@keyframes ttl-fade-in { to { opacity: 1; } }
+@keyframes ttl-rise-in { to { opacity: 1; translate: 0 0; } }
+@keyframes ttl-head-out { to { opacity: 0.12; } }
+
+/* D·状态头 — 标题栏即任务仪表：状态胶囊 + 栏底进度线。
+   打断态用灰（不是错误，不配红）；进度线用品牌绿=「已执行的部分」 */
+.st-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-left: auto;
+  font-size: 11.5px; color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border) / 0.9);
+  padding: 3px 10px; border-radius: 999px;
+  white-space: nowrap;
+}
+html[data-title="status"] .tbar .ai-badge { margin-left: 0; }
+.st-pill .pip { width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--muted-foreground) / 0.8); }
+.st-pill[data-state="running"] .pip {
+  background: hsl(var(--brand));
+  animation: st-pulse 1.4s ease-in-out infinite;
+}
+@keyframes st-pulse { 50% { opacity: 0.35; } }
+.st-line {
+  position: absolute; left: 0; bottom: -1px; height: 2px;
+  width: var(--progress, 94%);
+  background: hsl(var(--brand) / 0.85);
+  border-radius: 0 2px 2px 0;
+}
+
+/* D·对话式 — 取消独立标题区：会话的第一条用户消息就是标题本体，
+   滚动后顶栏浮现接棒（复用 big 的 scroll-driven 机制） */
+.msghead { padding: 26px 0 2px; }
+.msghead .row { display: flex; justify-content: flex-end; }
+.msghead .bubble {
+  max-width: 78%;
+  background: hsl(var(--brand));
+  color: hsl(var(--brand-foreground));
+  font-size: 14.5px; line-height: 1.55; font-weight: var(--w-medium);
+  padding: 10px 16px;
+  border-radius: 18px 18px 5px 18px;
+}
+.msghead .bubble .cmd {
+  display: block;
+  font-family: var(--font-mono); font-size: 12px; font-weight: 400;
+  opacity: 0.78; margin-bottom: 3px;
+}
+.msghead .meta {
+  margin-top: 8px; text-align: right;
+  font-size: 11px; color: hsl(var(--muted-foreground) / 0.7);
+}
+
+/* D·侧栏 — 宽屏时标题与 meta 钉在内容列左侧空白（Linear 式），
+   窄屏（放不下侧栏）自动回落为内容列顶部的一段头部。
+   absolute 相对 .panel（滚动容器），随内容滚动离场 */
+.sidemeta {
+  position: absolute; z-index: 5;
+  top: 64px;
+  left: calc(50% - 390px - 200px);
+  width: 170px;
+  text-align: right;
+}
+.sidemeta h1 {
+  font-size: 16px; font-weight: var(--w-strong); letter-spacing: -0.01em;
+  line-height: 1.45; margin: 10px 0 12px;
+}
+.sidemeta .rows {
+  display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
+  font-size: 11.5px; color: hsl(var(--muted-foreground) / 0.85);
+}
+@media (max-width: 1460px) {
+  .sidemeta {
+    position: static; width: auto; text-align: left;
+    padding: 26px 0 14px; margin-bottom: 12px;
+    border-bottom: 1px solid hsl(var(--border) / 0.5);
+  }
+  .sidemeta .rows { flex-direction: row; align-items: center; gap: 10px; }
+}
+
+/* 滚动演示占位（big/msg 专用）：明确标注的 placeholder，不是伪造内容 */
+.scroll-spacer {
+  display: none; height: 460px; margin-top: 28px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 12px;
+  align-items: center; justify-content: center;
+  font-size: 11.5px; color: hsl(var(--muted-foreground) / 0.55);
+}
+html[data-title="big"] .scroll-spacer,
+html[data-title="msg"] .scroll-spacer { display: flex; }
+
+/* ============================================================
+   PPT 分栏 — 聊天列收窄，右侧画布面板（大纲/文件/问题）
+   ============================================================ */
+.canvas-panel {
+  display: none;
+  flex: 1; min-width: 0;
+  flex-direction: column;
+  margin: 10px 12px 12px 0;
+  background: hsl(var(--card));
+  border-radius: 16px;
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+html[data-layout="split"] .canvas-panel { display: flex; }
+html[data-layout="split"] .panel { flex: 0 0 600px; margin-right: 10px; }
+html[data-layout="split"] .thread { max-width: none; padding: 6px 22px 24px; }
+html[data-layout="split"] .tbar-inner { max-width: none; padding: 0 22px; }
+html[data-layout="split"] .composer-wrap { padding: 26px 18px 10px; }
+/* 分栏时聊天列没有左侧空白，侧栏标题方案回落为普通头部 */
+html[data-layout="split"] .sidemeta {
+  position: static; width: auto; text-align: left;
+  padding: 26px 0 14px; margin-bottom: 12px;
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+}
+html[data-layout="split"] .sidemeta .rows { flex-direction: row; align-items: center; gap: 10px; }
+
+.cv-tabs { display: flex; align-items: center; gap: 4px; padding: 10px 14px 8px; }
+.cv-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 999px;
+  font-size: 12px; color: hsl(var(--muted-foreground));
+}
+.cv-tab .svgi { width: 12.5px; height: 12.5px; }
+.cv-tab[aria-selected="true"] {
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border) / 0.8);
+  color: hsl(var(--foreground));
+  font-weight: var(--w-medium);
+  box-shadow: 0 1px 2px hsl(240 6% 10% / 0.06);
+}
+.cv-body { flex: 1; min-height: 0; display: flex; }
+.cv-files { flex: none; width: 208px; padding: 6px 8px 10px 12px; overflow-y: auto; }
+.cvf-item {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 9px; border-radius: 8px;
+  font-size: 12px; color: hsl(var(--foreground) / 0.85);
+}
+.cvf-item:hover { background: hsl(var(--muted) / 0.6); }
+.cvf-item.sel { background: hsl(var(--muted) / 0.85); }
+.cvf-item .no { flex: none; font-family: var(--font-mono); font-size: 10px; color: hsl(var(--muted-foreground) / 0.55); }
+.cvf-item .badge {
+  flex: none; font-family: var(--font-mono); font-size: 9px;
+  padding: 2px 4px; border-radius: 4px;
+  background: hsl(var(--secondary)); color: hsl(var(--muted-foreground));
+}
+.cvf-item .fn { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cv-view {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  margin: 4px 14px 14px 6px;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.cvv-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+  font-size: 12.5px;
+}
+.cvv-head .svgi { width: 13px; height: 13px; color: hsl(var(--muted-foreground) / 0.8); }
+.cvv-head b { font-family: var(--font-mono); font-size: 12.5px; font-weight: var(--w-medium); }
+.cvv-head .sub { font-size: 11px; color: hsl(var(--muted-foreground) / 0.7); }
+.mini-seg {
+  margin-left: auto; display: inline-flex;
+  background: hsl(var(--secondary));
+  border-radius: 7px; padding: 2px;
+  font-size: 11px;
+}
+.mini-seg i { font-style: normal; padding: 3px 10px; border-radius: 5px; color: hsl(var(--muted-foreground)); }
+.mini-seg i.on { background: hsl(var(--card)); color: hsl(var(--foreground)); box-shadow: 0 1px 2px hsl(240 6% 10% / 0.1); }
+.cvv-code {
+  flex: 1; overflow: auto;
+  padding: 14px 18px;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.75;
+  color: hsl(var(--foreground) / 0.88);
+}
+/* JSON 语法高亮 — 近似产品 highlight.js 主题的三色 */
+.j-key { color: hsl(5 60% 48%); }
+.j-str { color: hsl(140 45% 32%); }
+.j-num { color: hsl(211 100% 45%); }
+html.dark .j-key { color: hsl(5 70% 66%); }
+html.dark .j-str { color: hsl(140 40% 62%); }
+html.dark .j-num { color: hsl(210 100% 66%); }
+
+/* ============================================================
+   Composer 占位 — 外壳的一部分（截图同款：悬浮输入卡 + 工具行）
+   ============================================================ */
+.composer-wrap {
+  /* sticky 于 .panel 底部：占流内位置，滚动中途贴底悬浮 */
+  position: sticky; bottom: 0; z-index: 15;
+  padding: 26px 28px 12px;
+  background: linear-gradient(180deg, hsl(var(--card) / 0), hsl(var(--card)) 46%);
+  pointer-events: none;
+}
+.composer-wrap > * { pointer-events: auto; }
+.composer {
+  max-width: 780px; margin: 0 auto;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border) / 0.8);
+  border-radius: 22px;
+  box-shadow: 0 1px 3px hsl(240 6% 10% / 0.05), 0 10px 32px hsl(240 6% 10% / 0.09);
+  padding: 13px 14px 11px;
+}
+html.dark .composer { box-shadow: 0 1px 3px hsl(0 0% 0% / 0.4), 0 10px 32px hsl(0 0% 0% / 0.45); }
+.composer .ph-line {
+  font-size: 13px; color: hsl(var(--muted-foreground) / 0.62);
+  padding: 2px 6px 14px;
+}
+.composer .tools { display: flex; align-items: center; gap: 8px; }
+.c-round {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid hsl(var(--border) / 0.9);
+  color: hsl(var(--muted-foreground));
+}
+.c-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border) / 0.9);
+  padding: 5px 11px; border-radius: 999px;
+}
+.c-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--destructive) / 0.85); }
+.c-send {
+  display: grid; place-items: center;
+  width: 32px; height: 32px; border-radius: 50%;
+  background: hsl(var(--secondary));
+  color: hsl(var(--muted-foreground));
+}
+.composer-foot {
+  max-width: 780px; margin: 9px auto 0; padding: 0 8px;
+  display: flex; align-items: center; gap: 16px;
+  font-size: 11.5px; color: hsl(var(--muted-foreground) / 0.8);
+}
+.composer-foot .f-item { display: inline-flex; align-items: center; gap: 5px; }
+.composer-foot .f-item .svgi { width: 12px; height: 12px; }
+.composer-foot .f-right { margin-left: auto; }
+
+/* ============================================================
+   共用元素：图标 / 状态点 / 路径 / 叙述 / 打断事件
+   ============================================================ */
+.svgi { width: 15px; height: 15px; flex: none; }
+.svgi * { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* 完成勾 — 刻意降灰：成功是默认态，颜色留给 running / error */
+.st { display: grid; place-items: center; width: 18px; height: 18px; flex: none; }
+.st .svgi { width: 13px; height: 13px; }
+.st-done { color: hsl(var(--muted-foreground) / 0.62); }
+.st-error { color: hsl(var(--destructive)); }
+.st-spin {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 1.8px solid hsl(var(--brand) / 0.22);
+  border-top-color: hsl(var(--brand));
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 工具类型图标（变体 B/C 用，替代千篇一律的勾） */
+.ti { color: hsl(var(--muted-foreground) / 0.75); }
+
+/* 路径：目录段可收缩左渐隐，文件名恒定可见 —— 信息主体永不被截 */
+.pth {
+  display: flex; align-items: baseline; min-width: 0;
+  font-family: var(--font-mono); font-size: var(--mono-fs);
+}
+.p-dir {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap;
+  display: flex; justify-content: flex-end;
+  color: hsl(var(--muted-foreground) / 0.72);
+  mask-image: linear-gradient(90deg, transparent, #000 16px);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 16px);
+}
+.p-base { flex: none; color: hsl(var(--muted-foreground)); }
+.p-cmd {
+  min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-family: var(--font-mono); font-size: var(--mono-fs);
+  color: hsl(var(--muted-foreground));
+}
+
+/* running 行的文字微光（同产品 .shimmer-text 思路） */
+.shimmer {
+  background: linear-gradient(90deg,
+    hsl(var(--muted-foreground)) 20%,
+    hsl(var(--foreground)) 50%,
+    hsl(var(--muted-foreground)) 80%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+  animation: shimmer 1.8s linear infinite;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+.dur { flex: none; font-size: 11px; color: hsl(var(--muted-foreground) / 0.55); font-variant-numeric: tabular-nums; }
+html[data-durations="off"] .dur { display: none; }
+
+/* AI 叙述段 — 唯一保持全量正文色的层级，工具区整体退灰衬托它 */
+.note {
+  font-size: 13.5px; line-height: 1.75;
+  color: hsl(var(--card-foreground) / 0.92);
+  margin: 18px 0 10px;
+  text-wrap: pretty;
+}
+
+/* 打断事件：从「实心绿大胶囊」降级为分隔线上的一枚安静标签 */
+.interrupt {
+  display: flex; align-items: center; gap: 12px;
+  margin: 22px 0 4px;
+  color: hsl(var(--muted-foreground) / 0.8);
+  font-size: 12px;
+}
+.interrupt::before, .interrupt::after {
+  content: ""; height: 1px; flex: 1;
+  background: hsl(var(--border) / 0.8);
+}
+.interrupt .tag { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.interrupt .svgi { width: 12px; height: 12px; }
+
+/* 展开箭头 */
+.chev {
+  flex: none; color: hsl(var(--muted-foreground) / 0.45);
+  transition: transform var(--dur) var(--ease-out);
+}
+details[open] > summary .chev { transform: rotate(90deg); }
+summary { list-style: none; }
+summary::-webkit-details-marker { display: none; }
+
+/* details 高度过渡（同产品 tc-details 技术） */
+details.anim { interpolate-size: allow-keywords; }
+details.anim::details-content {
+  block-size: 0; overflow: hidden;
+  transition: block-size 240ms var(--ease-out), content-visibility 240ms allow-discrete;
+}
+details.anim[open]::details-content { block-size: auto; }
+
+/* 展开后的参数详情面板（占位：真实实现挂 Input/Output pane） */
+.pane {
+  margin: 6px 0 10px 26px;
+  border-left: 2px solid hsl(var(--border) / 0.7);
+  padding: 8px 12px;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.7;
+  color: hsl(var(--muted-foreground));
+  overflow-wrap: anywhere;
+}
+.pane .lbl {
+  font-family: var(--font-sans); font-size: 10.5px; font-weight: var(--w-medium);
+  color: hsl(var(--muted-foreground) / 0.7); letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+.pane .ph {
+  margin-top: 6px; padding: 14px 12px; text-align: center;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 8px;
+  font-family: var(--font-sans); font-size: 11px;
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+
+/* ============================================================
+   变体 A · 折叠分组时间线（推荐）
+   连续 ≥3 个同类工具收拢成一组；完成组一行即一组。
+   ============================================================ */
+.va-flow { margin-top: 14px; }
+.va-row, .va-group > summary {
+  display: flex; align-items: center; gap: 8px;
+  min-height: var(--row-h);
+  padding: 0 8px; margin: 0 -8px;
+  border-radius: 8px;
+  font-size: var(--tool-fs);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease-out);
+}
+.va-row:hover, .va-group > summary:hover { background: hsl(var(--muted) / 0.55); }
+.va-label { flex: none; font-weight: var(--w-medium); color: hsl(var(--foreground) / 0.85); }
+.va-count {
+  flex: none; font-size: 11px; font-weight: var(--w-medium);
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--secondary));
+  padding: 1px 7px; border-radius: 999px;
+}
+.va-peek {
+  min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-family: var(--font-mono); font-size: var(--mono-fs);
+  color: hsl(var(--muted-foreground) / 0.72);
+}
+.va-members {
+  margin-left: 8px; padding-left: 17px;
+  border-left: 1px solid hsl(var(--border) / 0.7);
+}
+.va-members .va-row { min-height: calc(var(--row-h) - 4px); }
+.va-spacer { flex: 1; }
+
+/* ============================================================
+   变体 B · 紧凑清单
+   工具类型图标代替千篇一律的勾；成功不标色，失败才发声。
+   ============================================================ */
+.vb-flow { margin-top: 14px; }
+.vb-row {
+  display: flex; align-items: center; gap: 9px;
+  min-height: calc(var(--row-h) - 3px);
+  padding: 0 8px; margin: 0 -8px;
+  border-radius: 7px;
+  font-size: var(--tool-fs);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease-out);
+}
+.vb-row:hover { background: hsl(var(--muted) / 0.55); }
+.vb-row:hover .ti { color: hsl(var(--foreground) / 0.7); }
+.vb-label { flex: none; font-size: 12px; color: hsl(var(--muted-foreground)); }
+.vb-sum {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px; padding: 0 8px;
+  font-size: 11.5px; color: hsl(var(--muted-foreground) / 0.75);
+}
+.vb-sum .svgi { width: 12px; height: 12px; color: hsl(var(--brand) / 0.8); }
+
+/* ============================================================
+   变体 C · 阶段卡片
+   以 AI 叙述为界分节；卡头 = 从数据推导的组成摘要。
+   ============================================================ */
+.vc-flow { margin-top: 16px; }
+.vc-card {
+  border: 1px solid hsl(var(--border) / 0.75);
+  border-radius: 12px;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.vc-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px;
+  background: hsl(var(--muted) / 0.45);
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+  font-size: 11.5px; color: hsl(var(--muted-foreground));
+}
+.vc-num {
+  font-family: var(--font-mono); font-size: 10.5px;
+  color: hsl(var(--muted-foreground) / 0.6);
+  letter-spacing: 0.06em;
+}
+.vc-mix { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.vc-body { padding: 6px 8px; }
+.vc-body .vb-row { margin: 0; }
+</style>
+</head>
+<body data-variant="a">
+
+<!-- ═══════════ 原型工具条（演示 chrome，非设计的一部分）═══════════ -->
+<div class="proto-bar">
+  <span class="hint">标题样式对比</span>
+  <div class="seg" id="segLayout" role="tablist">
+    <button aria-pressed="true"  data-l="single">单栏</button>
+    <button aria-pressed="false" data-l="split">PPT 分栏</button>
+  </div>
+  <div class="seg" id="segTitle" role="tablist">
+    <button aria-pressed="true"  data-t="bar">顶栏</button>
+    <button aria-pressed="false" data-t="center">居中</button>
+    <button aria-pressed="false" data-t="doc">文档头</button>
+    <button aria-pressed="false" data-t="big">大字收缩</button>
+    <button aria-pressed="false" data-t="status">状态头</button>
+    <button aria-pressed="false" data-t="msg">对话式</button>
+    <button aria-pressed="false" data-t="side">侧栏</button>
+  </div>
+  <button class="icon-btn" id="btnDark" title="切换亮暗" aria-label="切换亮暗">
+    <svg class="svgi" viewBox="0 0 16 16"><path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z"/></svg>
+  </button>
+  <button class="icon-btn" id="btnTweaks" title="Tweaks" aria-label="Tweaks">
+    <svg class="svgi" viewBox="0 0 16 16"><path d="M2 5h8M12 5h2M2 11h2M6 11h8"/><circle cx="10" cy="5" r="1.8"/><circle cx="4" cy="11" r="1.8"/></svg>
+  </button>
+</div>
+
+<!-- ═══════════ 应用外框：左 rail + 右 panel ═══════════ -->
+<div class="app">
+
+<aside class="rail">
+  <div class="traffic"><i></i><i></i><i></i></div>
+  <div class="new-chat"><svg class="svgi" style="width:13px;height:13px" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>新对话</div>
+  <div class="mode-tabs">
+    <span class="mt" aria-selected="true"><svg class="svgi" style="width:13px;height:13px" viewBox="0 0 16 16"><path d="M13.5 7.7a5.5 5.5 0 1 0-2.4 4.3L13.5 13z"/></svg>智能助手</span>
+    <span class="mt"><svg class="svgi" style="width:13px;height:13px" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M2.5 10.5l3-3 3.5 3.5M9.5 9l2-2 2 2"/></svg>工作画布</span>
+  </div>
+  <nav class="rail-list">
+    <div class="rl-sec">今天</div>
+    <div class="rl-item cur"><span class="t">武汉大学介绍</span><span class="when">30 分钟前</span></div>
+    <div class="rl-item"><span class="t">你好</span><span class="when">34 分钟前</span></div>
+    <div class="rl-item"><span class="t">你好</span><span class="when">36 分钟前</span></div>
+    <div class="rl-item"><span class="t">介绍武汉大学的ppt</span><span class="when">10 小时前</span></div>
+    <div class="rl-sec">昨天</div>
+    <div class="rl-item"><span class="t">做一个武汉大学ppt</span><span class="when">昨天</span></div>
+    <div class="rl-item"><span class="t">你是谁</span><span class="when">昨天</span></div>
+    <div class="rl-item"><span class="t">合并两个 ghostty 窗口</span><span class="when">昨天</span></div>
+    <div class="rl-item"><span class="t">我想换个风格 内容跟整体…</span><span class="when">昨天</span></div>
+    <div class="rl-sec">本周</div>
+    <div class="rl-item"><span class="t">这个ppt 有两页缺少图片</span><span class="when">周四</span></div>
+    <div class="rl-item"><span class="t">做一个介绍 三国演义的 ppt</span><span class="when">周四</span></div>
+    <div class="rl-item"><span class="t">做一个 ppt 介绍 日本的文化</span><span class="when">周四</span></div>
+    <div class="rl-item"><span class="t">你可以做什么呢</span><span class="when">周四</span></div>
+  </nav>
+  <div class="rail-foot">
+    <div class="rf-row"><svg class="svgi" style="width:13px;height:13px" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.6v2.2M8 12.2v2.2M1.6 8h2.2M12.2 8h2.2M3.5 3.5l1.5 1.5M11 11l1.5 1.5M12.5 3.5L11 5M5 11l-1.5 1.5"/></svg>设置</div>
+    <div class="user">
+      <span class="avatar">A</span>
+      <div>
+        <div class="u-name">andersenaxel</div>
+        <div class="u-sub">Claude Code · 已连接</div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<section class="panel">
+
+<!-- 顶栏（bar/center/status 常显；big/msg 滚动后淡入；doc/side 隐藏） -->
+<header class="tbar">
+  <div class="tbar-inner">
+    <span class="cmd-chip">/ppt-master</span>
+    <h1>武汉大学介绍</h1>
+    <span class="st-pill" id="stPill" data-state="interrupted"><span class="pip"></span><span id="stPillText">已打断 · 第 17 步</span></span>
+    <span class="ai-badge">AI 生成</span>
+  </div>
+  <span class="st-line"></span>
+</header>
+
+<main class="thread">
+  <p class="variant-note" id="variantNote"></p>
+
+  <!-- 文档头（doc）：标题进入内容列，meta 从执行数据推导 -->
+  <header class="dochead">
+    <span class="cmd-chip">/ppt-master</span>
+    <h1>武汉大学介绍</h1>
+    <div class="meta">
+      <span class="ai-badge">AI 生成</span>
+      <span>17 步执行</span><span>·</span><span>已被打断</span>
+    </div>
+  </header>
+
+  <!-- 大字收缩（big）：28px 开场，滚动时与顶栏交接 -->
+  <header class="bighead">
+    <span class="pre">/ppt-master</span>
+    <h1>武汉大学介绍</h1>
+    <div class="meta">
+      <span class="ai-badge">AI 生成</span>
+      <span>17 步执行</span><span>·</span><span>已被打断</span>
+    </div>
+  </header>
+
+  <!-- 对话式（msg）：第一条用户消息即标题 -->
+  <header class="msghead">
+    <div class="row">
+      <div class="bubble">
+        <span class="cmd">/claude-desktop:ppt-master</span>
+        武汉大学介绍
+      </div>
+    </div>
+    <div class="meta">以下内容由 AI 生成</div>
+  </header>
+
+  <!-- 侧栏（side）：宽屏钉在内容列左侧，窄屏回落为头部 -->
+  <aside class="sidemeta">
+    <span class="cmd-chip">/ppt-master</span>
+    <h1>武汉大学介绍</h1>
+    <div class="rows">
+      <span>AI 生成</span>
+      <span>17 步执行</span>
+      <span>已被打断</span>
+    </div>
+  </aside>
+
+  <div class="v v-a"><div class="va-flow" id="flowA"></div></div>
+  <div class="v v-b"><div class="vb-flow" id="flowB"></div></div>
+  <div class="v v-c"><div class="vc-flow" id="flowC"></div></div>
+
+  <!-- 滚动演示占位：仅 big/msg（scroll-driven 交接需要滚动空间）时出现 -->
+  <div class="scroll-spacer">[ 后续对话占位 · 为滚动演示留出空间 ]</div>
+</main>
+
+<!-- Composer 占位 — 外壳的一部分，静态展示 -->
+<div class="composer-wrap">
+  <div class="composer">
+    <div class="ph-line">随便问点什么…&ensp;⏎ 发送 · ⇧⏎ 换行 · / 命令 · @ 文件</div>
+    <div class="tools">
+      <span class="c-round"><svg class="svgi" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg></span>
+      <span class="c-pill"><svg class="svgi" style="width:12px;height:12px" viewBox="0 0 16 16"><rect x="2" y="3.5" width="12" height="8" rx="1.5"/><path d="M5.5 14h5"/></svg>幻灯片<svg class="svgi" style="width:9px;height:9px" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></svg></span>
+      <span class="va-spacer"></span>
+      <span class="c-pill"><span class="dot"></span>全自动<svg class="svgi" style="width:9px;height:9px" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></svg></span>
+      <span class="c-round" style="border:none"><svg class="svgi" viewBox="0 0 16 16"><rect x="6" y="2.5" width="4" height="7" rx="2"/><path d="M3.5 8a4.5 4.5 0 0 0 9 0M8 12.5V14"/></svg></span>
+      <span class="c-send"><svg class="svgi" viewBox="0 0 16 16"><path d="M8 12.5v-9M4.5 7L8 3.5 11.5 7"/></svg></span>
+    </div>
+  </div>
+  <div class="composer-foot">
+    <span class="f-item"><svg class="svgi" viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 2h4.5A1.5 1.5 0 0 1 14 6.5v5A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z"/></svg>选择工作目录</span>
+    <span class="f-item"><svg class="svgi" viewBox="0 0 16 16"><path d="M8 2l1.4 4.6L14 8l-4.6 1.4L8 14l-1.4-4.6L2 8l4.6-1.4z"/></svg>语气 创意</span>
+    <span class="f-item f-right"><svg class="svgi" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2"/></svg>模型</span>
+  </div>
+</div>
+
+</section><!-- /.panel -->
+
+<!-- PPT 分栏：右侧画布面板（大纲 / 文件 / 问题） -->
+<section class="canvas-panel">
+  <div class="cv-tabs">
+    <span class="cv-tab"><svg class="svgi" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h6"/></svg>大纲</span>
+    <span class="cv-tab" aria-selected="true"><svg class="svgi" viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 2h4.5A1.5 1.5 0 0 1 14 6.5v5A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z"/></svg>文件</span>
+    <span class="cv-tab"><svg class="svgi" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M6.2 6.2a1.8 1.8 0 1 1 2.6 1.7c-.5.3-.8.6-.8 1.1M8 11.2v.1"/></svg>问题</span>
+  </div>
+  <div class="cv-body">
+    <nav class="cv-files">
+      <div class="cvf-item"><span class="no">01</span><span class="badge">MD</span><span class="fn">wuhan_university.md</span></div>
+      <div class="cvf-item sel"><span class="no">02</span><span class="badge">{ }</span><span class="fn">recommendations.json</span></div>
+    </nav>
+    <div class="cv-view">
+      <div class="cvv-head">
+        <svg class="svgi" viewBox="0 0 16 16"><path d="M9.5 2H4.5A1 1 0 0 0 3.5 3v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5z"/><path d="M9.5 2v3h3"/></svg>
+        <b>recommendations.json</b>
+        <span class="sub">122 行 · 约 3.4k 字</span>
+        <span class="mini-seg"><i>阅读</i><i class="on">源码</i></span>
+        <svg class="svgi" style="width:13px;height:13px;color:hsl(var(--muted-foreground)/0.7)" viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>
+      </div>
+      <pre class="cvv-code" id="cvvCode"></pre>
+    </div>
+  </div>
+</section>
+
+</div><!-- /.app -->
+
+<!-- ═══════════ Tweaks ═══════════ -->
+<aside id="tweaks" style="display:none; position:fixed; right:18px; bottom:18px; z-index:30;
+  width:220px; background:hsl(var(--card)); border:1px solid hsl(var(--border));
+  border-radius:12px; box-shadow:var(--card-shadow); padding:14px 16px; font-size:12px;">
+  <div style="font-weight:var(--w-medium); margin-bottom:10px;">Tweaks</div>
+  <label style="display:flex; align-items:center; justify-content:space-between; padding:5px 0;">
+    工具流样式
+    <select id="twVariant" style="font:inherit; color:inherit; background:hsl(var(--secondary)); border:none; border-radius:6px; padding:3px 6px;">
+      <option value="a" selected>A · 分组</option>
+      <option value="b">B · 清单</option>
+      <option value="c">C · 阶段</option>
+    </select>
+  </label>
+  <label style="display:flex; align-items:center; justify-content:space-between; padding:5px 0;">
+    紧凑密度 <input type="checkbox" id="twDensity">
+  </label>
+  <label style="display:flex; align-items:center; justify-content:space-between; padding:5px 0;">
+    模拟执行中 <input type="checkbox" id="twRunning" checked>
+  </label>
+  <label style="display:flex; align-items:center; justify-content:space-between; padding:5px 0;">
+    显示耗时 <input type="checkbox" id="twDur" checked>
+  </label>
+</aside>
+
+<script>
+/* ============================================================
+   数据 — 逐条取自截图的真实执行序列（武汉大学 ppt-master 会话）
+   ============================================================ */
+const FLOW = [
+  { kind:'tool', tool:'bash',   label:'运行命令', cmd:'grep -E "IMAGE_BACKEND|OPENAI|PEXELS|PIXABAY|API" ~/.ppt-master/env', dur:'0.4s' },
+  { kind:'tool', tool:'search', label:'网页搜索', cmd:'武汉大学 QS 2026 排名 在校学生 本科生 研究生 人数 5195亩 2000年 合并', dur:'6.2s' },
+  { kind:'tool', tool:'write',  label:'写入文件', dir:'…/sources/', base:'wuhan_university.md', dur:'0.8s' },
+  { kind:'tool', tool:'read',   label:'读取文件', dir:'…/skills/ppt-master/references/', base:'strategist.md', dur:'0.3s' },
+  { kind:'tool', tool:'read',   label:'读取文件', dir:'…/skills/ppt-master/references/', base:'strategist.md', dur:'0.2s' },
+  { kind:'tool', tool:'read',   label:'读取文件', dir:'…/skills/ppt-master/references/modes/', base:'_index.md', dur:'0.3s' },
+  { kind:'tool', tool:'read',   label:'读取文件', dir:'…/skills/ppt-master/references/visual-styles/', base:'_index.md', dur:'0.2s' },
+  { kind:'tool', tool:'read',   label:'读取文件', dir:'…/skills/ppt-master/scripts/docs/', base:'confirm_ui.md', dur:'0.4s' },
+  { kind:'note', text:'GATE 要求在起草八项确认前读完 charts 目录（71 个模板摘要）和 design_spec 参考模板。批量读取：' },
+  { kind:'tool', tool:'read',   label:'读取文件', dir:'…/skills/ppt-master/templates/charts/', base:'charts_index.json', dur:'0.6s' },
+  { kind:'tool', tool:'read',   label:'读取文件', dir:'…/skills/ppt-master/templates/', base:'design_spec_reference.md', dur:'0.3s' },
+  { kind:'tool', tool:'write',  label:'写入文件', dir:'…/confirm_ui/', base:'recommendations.json', dur:'0.5s' },
+  { kind:'tool', tool:'bash',   label:'运行命令', cmd:'~/.ppt-master/venv/bin/python …/confirm_ui/server.py --daemon', dur:'2.1s' },
+  { kind:'tool', tool:'bash',   label:'运行命令', cmd:'~/.ppt-master/venv/bin/python …/confirm_ui/server.py --wait-only --stage tier1', dur:'48s' },
+  { kind:'note', text:'第一层已确认，立即读取结果并推导第二层：' },
+  { kind:'tool', tool:'read',   label:'读取文件', dir:'…/wuhan_university_ppt169_20260704/confirm_ui/', base:'result.json', dur:'0.2s' },
+  { kind:'tool', tool:'write',  label:'写入文件', dir:'…/confirm_ui/', base:'recommendations.json', dur:'0.4s' },
+  { kind:'tool', tool:'bash',   label:'运行命令', cmd:'~/.ppt-master/venv/bin/python …/confirm_ui/server.py --wait-only --stage final', dur:'', running:true },
+  { kind:'interrupt' },
+];
+
+const NOTES = {
+  a: '变体 A · 分组时间线（推荐）—— 连续 ≥3 个同类调用自动收拢成一组，绿色只留给「正在执行」；点组头展开明细，点单行展开参数。',
+  b: '变体 B · 紧凑清单 —— 保持逐行但全面减重：工具类型图标代替千篇一律的勾，成功是默认态不再标色，行高压到 29px，结尾一行汇总。',
+  c: '变体 C · 阶段卡片 —— 以 AI 叙述为界把执行流切成小节卡片，卡头是从数据推导的组成摘要，适合步骤很多的长任务。',
+};
+
+/* 工具类型 → 线性图标（15px stroke，与 lucide 同语汇） */
+const ICONS = {
+  bash:   '<svg class="svgi" viewBox="0 0 16 16"><path d="M3 5l3 3-3 3M8 11h5"/></svg>',
+  search: '<svg class="svgi" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L13.5 13.5"/></svg>',
+  read:   '<svg class="svgi" viewBox="0 0 16 16"><path d="M9.5 2H4.5A1 1 0 0 0 3.5 3v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5z"/><path d="M9.5 2v3h3"/></svg>',
+  write:  '<svg class="svgi" viewBox="0 0 16 16"><path d="M11.3 2.7a1.4 1.4 0 0 1 2 2L6 12l-2.8.8L4 10z"/></svg>',
+};
+const CHECK = '<svg class="svgi" viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg>';
+const CHEV  = '<svg class="svgi chev" viewBox="0 0 16 16" style="width:11px;height:11px"><path d="M6 3.5L10.5 8 6 12.5"/></svg>';
+const STOP  = '<svg class="svgi" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg>';
+
+const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+let simulateRunning = true;
+
+const isRunning = (it) => Boolean(it.running) && simulateRunning;
+
+function statusHtml(it) {
+  if (isRunning(it)) return '<span class="st"><span class="st-spin"></span></span>';
+  return '<span class="st st-done">' + CHECK + '</span>';
+}
+function bodyHtml(it, cls) {
+  const run = isRunning(it);
+  if (it.cmd) return '<span class="p-cmd ' + (run ? 'shimmer' : '') + '">' + esc(it.cmd) + '</span>';
+  return '<span class="pth"><span class="p-dir">' + esc(it.dir) + '</span><span class="p-base ' + (run ? 'shimmer' : '') + '">' + esc(it.base) + '</span></span>';
+}
+function durHtml(it) {
+  if (isRunning(it)) return '<span class="dur">' + '<span data-live-dur>3.2s</span>' + '</span>';
+  return it.dur ? '<span class="dur">' + it.dur + '</span>' : '';
+}
+/* 展开面板：全量参数 + Output 占位（真实实现挂 Input/Output pane） */
+function paneHtml(it) {
+  const arg = it.cmd ? it.cmd : (it.dir || '') + (it.base || '');
+  return '<div class="pane"><div class="lbl">输入</div>' + esc(arg) +
+         '<div class="ph">[ 输出预览 · 真实实现渲染 ToolPane ]</div></div>';
+}
+const noteHtml = (it) => '<p class="note">' + esc(it.text) + '</p>';
+const interruptHtml = () =>
+  '<div class="interrupt"><span class="tag">' + STOP + '已被你打断 · 等待你的下一步</span></div>';
+
+/* ============================================================
+   变体 A：连续 ≥3 个同类工具折叠成组
+   ============================================================ */
+function renderA(root) {
+  const out = [];
+  let i = 0;
+  while (i < FLOW.length) {
+    const it = FLOW[i];
+    if (it.kind === 'note') { out.push(noteHtml(it)); i++; continue; }
+    if (it.kind === 'interrupt') { out.push(interruptHtml()); i++; continue; }
+
+    // 收集连续同类 tool 段
+    let j = i;
+    while (j < FLOW.length && FLOW[j].kind === 'tool' && FLOW[j].tool === it.tool) j++;
+    const run = FLOW.slice(i, j);
+
+    if (run.length >= 3) {
+      const anyRunning = run.some(isRunning);
+      // peek 去重：同名文件（如连读两次 strategist.md）只出现一次
+      const names = [...new Set(run.map(r => r.base || '').filter(Boolean))];
+      const peek = names.slice(0, 2).join('、');
+      const totalDur = anyRunning ? '' : sumDur(run);
+      out.push(
+        '<details class="va-group anim">' +
+          '<summary>' +
+            (anyRunning ? '<span class="st"><span class="st-spin"></span></span>' : '<span class="st st-done">' + CHECK + '</span>') +
+            '<span class="va-label">' + it.label + '</span>' +
+            '<span class="va-count">' + run.length + '</span>' +
+            '<span class="va-peek">' + esc(peek) + (names.length > 2 ? ' 等' : '') + '</span>' +
+            '<span class="va-spacer"></span>' +
+            (totalDur ? '<span class="dur">' + totalDur + '</span>' : '') +
+            CHEV +
+          '</summary>' +
+          '<div class="va-members">' + run.map(rowA).join('') + '</div>' +
+        '</details>'
+      );
+    } else {
+      out.push(run.map(rowA).join(''));
+    }
+    i = j;
+  }
+  root.innerHTML = out.join('');
+}
+function rowA(it) {
+  return '<details class="anim"><summary class="va-row">' +
+    statusHtml(it) +
+    '<span class="va-label">' + it.label + '</span>' +
+    bodyHtml(it) +
+    '<span class="va-spacer"></span>' +
+    durHtml(it) + CHEV +
+    '</summary>' + paneHtml(it) + '</details>';
+}
+function sumDur(run) {
+  let s = 0;
+  for (const r of run) { const m = /^([\d.]+)s$/.exec(r.dur || ''); if (m) s += parseFloat(m[1]); }
+  return s ? (Math.round(s * 10) / 10) + 's' : '';
+}
+
+/* ============================================================
+   变体 B：逐行紧凑清单 + 尾部汇总
+   ============================================================ */
+function renderB(root) {
+  const out = [];
+  let steps = 0;
+  for (const it of FLOW) {
+    if (it.kind === 'note') { out.push(noteHtml(it)); continue; }
+    if (it.kind === 'interrupt') { out.push(interruptHtml()); continue; }
+    steps++;
+    out.push(
+      '<details class="anim"><summary class="vb-row">' +
+        (isRunning(it)
+          ? '<span class="st"><span class="st-spin"></span></span>'
+          : '<span class="st ti">' + ICONS[it.tool] + '</span>') +
+        '<span class="vb-label">' + it.label + '</span>' +
+        bodyHtml(it) +
+        '<span class="va-spacer"></span>' +
+        durHtml(it) + CHEV +
+      '</summary>' + paneHtml(it) + '</details>'
+    );
+  }
+  const done = FLOW.filter(x => x.kind === 'tool' && !isRunning(x)).length;
+  out.push('<div class="vb-sum">' + CHECK + done + ' 步已完成' + (simulateRunning ? ' · 1 步执行中' : '') + '</div>');
+  root.innerHTML = out.join('');
+}
+
+/* ============================================================
+   变体 C：以叙述为界分节，卡头 = 组成摘要
+   ============================================================ */
+function renderC(root) {
+  const sections = [];
+  let cur = { note: null, items: [] };
+  for (const it of FLOW) {
+    if (it.kind === 'note') { if (cur.items.length) sections.push(cur); cur = { note: it.text, items: [] }; }
+    else if (it.kind === 'tool') cur.items.push(it);
+  }
+  if (cur.items.length) sections.push(cur);
+
+  const out = [];
+  sections.forEach((sec, idx) => {
+    if (sec.note) out.push(noteHtml({ text: sec.note }));
+    const mix = summarizeMix(sec.items);
+    out.push(
+      '<div class="vc-card">' +
+        '<div class="vc-head"><span class="vc-num">0' + (idx + 1) + '</span><span class="vc-mix">' + mix + '</span></div>' +
+        '<div class="vc-body">' +
+          sec.items.map(it =>
+            '<details class="anim"><summary class="vb-row">' +
+              (isRunning(it)
+                ? '<span class="st"><span class="st-spin"></span></span>'
+                : '<span class="st ti">' + ICONS[it.tool] + '</span>') +
+              '<span class="vb-label">' + it.label + '</span>' +
+              bodyHtml(it) +
+              '<span class="va-spacer"></span>' +
+              durHtml(it) + CHEV +
+            '</summary>' + paneHtml(it) + '</details>'
+          ).join('') +
+        '</div>' +
+      '</div>'
+    );
+  });
+  out.push(interruptHtml());
+  root.innerHTML = out.join('');
+}
+function summarizeMix(items) {
+  const order = []; const count = {};
+  for (const it of items) {
+    if (!(it.label in count)) order.push(it.label);
+    count[it.label] = (count[it.label] || 0) + 1;
+  }
+  return order.map(l => l + (count[l] > 1 ? ' ×' + count[l] : '')).join(' · ');
+}
+
+/* ============================================================
+   渲染 & 原型 chrome 交互
+   ============================================================ */
+function renderAll() {
+  renderA(document.getElementById('flowA'));
+  renderB(document.getElementById('flowB'));
+  renderC(document.getElementById('flowC'));
+}
+renderAll();
+
+const TITLE_NOTES = {
+  bar:    '标题·顶栏 —— 46px 粘性毛玻璃栏，标题与内容列同一左缘，滚动时始终在场（导航锚点）。',
+  center: '标题·居中 —— chip + 标题组合居中，macOS 窗口标题感，「AI 生成」钉在右缘。',
+  doc:    '标题·文档头 —— 22px 标题进入内容列，meta 行从执行数据推导，滚动即离场。',
+  big:    '标题·大字收缩 —— 28px 大标题开场；滚动时大标题淡出、顶栏淡入接棒（纯 CSS scroll-driven，试着滚动看看）。',
+  status: '标题·状态头 —— 标题栏即任务仪表：右侧状态胶囊 + 栏底品牌绿进度线（Tweaks 切「模拟执行中」看两种状态）。',
+  msg:    '标题·对话式 —— 取消独立标题区：你的第一条消息就是标题本体，滚动后顶栏浮现接棒。',
+  side:   '标题·侧栏 —— 宽屏时标题与 meta 钉在内容列左侧空白（Linear 式），窗口变窄自动回落为普通头部。',
+};
+
+const noteEl = document.getElementById('variantNote');
+noteEl.textContent = TITLE_NOTES.bar;
+
+/* 工具流样式（Tweaks 下拉）：A 分组 / B 清单 / C 阶段 */
+document.getElementById('twVariant').addEventListener('change', (e) => {
+  document.body.dataset.variant = e.target.value;
+  noteEl.textContent = NOTES[e.target.value];
+});
+
+/* 标题样式切换：bar/center/doc/big/status/msg/side */
+document.documentElement.dataset.title = 'bar';
+document.getElementById('segTitle').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-t]');
+  if (!btn) return;
+  document.documentElement.dataset.title = btn.dataset.t;
+  noteEl.textContent = TITLE_NOTES[btn.dataset.t];
+  for (const b of btn.parentElement.querySelectorAll('button'))
+    b.setAttribute('aria-pressed', String(b === btn));
+});
+
+/* ── PPT 分栏：布局切换 + 画布文件内容 ── */
+document.documentElement.dataset.layout = 'single';
+document.getElementById('segLayout').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-l]');
+  if (!btn) return;
+  document.documentElement.dataset.layout = btn.dataset.l;
+  for (const b of btn.parentElement.querySelectorAll('button'))
+    b.setAttribute('aria-pressed', String(b === btn));
+});
+
+/* recommendations.json — 逐字取自截图（前两个配色候选） */
+const RECO_JSON = `{
+  "tier": 2,
+  "lang": "zh",
+  "recommend": {
+    "icons": "tabler-outline",
+    "image_usage": "ai",
+    "image_ai_path": "auto",
+    "formula_policy": "text-only",
+    "generation_mode": "continuous"
+  },
+  "page_count": { "value": "12-14" },
+  "color": {
+    "selected": 0,
+    "candidates": [
+      {
+        "name_zh": "珞珈墨绿 × 樱花",
+        "name_en": "Luojia Green × Sakura",
+        "note_zh": "武大校徽的深绿作主色，樱花胭脂作点睛——百年学府的底色配上春天的高光",
+        "note_en": "WHU emblem green as primary, sakura blush as accent",
+        "palette": {
+          "background": "#FDFBF7",
+          "secondary_bg": "#F3EFE6",
+          "primary": "#14452F",
+          "accent": "#C96F7E",
+          "secondary_accent": "#3E6B4F",
+          "body_text": "#26241F"
+        }
+      },
+      {
+        "name_zh": "民国学府 · 藏蓝暖金",
+        "name_en": "Republican-era Navy × Gold",
+        "note_zh": "老武大宫殿式建筑的庄重气质——藏蓝承重，暖金提亮，像一册民国校史档案",
+        "note_en": "Stately navy with warm gold, like a Republican-era university archive",
+        "palette": {
+          "background": "#FAF7F0",
+          "secondary_bg": "#F0EAD9",
+          "primary": "#1E3A5F",
+          "accent": "#C79A3A",
+          "secondary_accent": "#5B7A9D",
+          "body_text": "#2A2A28"
+        }
+      }
+    ]
+  }
+}`;
+
+/* 极简 JSON 高亮：key → 红橙，字符串值 → 绿，数字 → 蓝。
+   顺序敏感：先包 key（带尾冒号判定），再包剩下的字符串值和数字 */
+function hlJson(src) {
+  return esc(src)
+    .replace(/(&quot;(?:(?!&quot;).)*&quot;)(\s*:)/g, '<span class="j-key">$1</span>$2')
+    .replace(/(:\s*)(&quot;(?:(?!&quot;).)*&quot;)/g, '$1<span class="j-str">$2</span>')
+    .replace(/(:\s*)(-?\d[\d.]*)/g, '$1<span class="j-num">$2</span>');
+}
+document.getElementById('cvvCode').innerHTML = hlJson(RECO_JSON);
+
+/* 状态头胶囊随「模拟执行中」联动 */
+function updateStatusPill() {
+  const pill = document.getElementById('stPill');
+  const text = document.getElementById('stPillText');
+  if (simulateRunning) { pill.dataset.state = 'running'; text.textContent = '执行中 · 第 17 步'; }
+  else { pill.dataset.state = 'interrupted'; text.textContent = '已打断 · 第 17 步'; }
+}
+updateStatusPill();
+
+document.getElementById('btnDark').addEventListener('click', () => {
+  document.documentElement.classList.toggle('dark');
+});
+
+const tweaks = document.getElementById('tweaks');
+document.getElementById('btnTweaks').addEventListener('click', () => {
+  tweaks.style.display = tweaks.style.display === 'none' ? 'block' : 'none';
+});
+document.getElementById('twDensity').addEventListener('change', (e) => {
+  document.documentElement.dataset.density = e.target.checked ? 'compact' : '';
+});
+document.getElementById('twRunning').addEventListener('change', (e) => {
+  simulateRunning = e.target.checked;
+  renderAll();
+  updateStatusPill();
+});
+document.getElementById('twDur').addEventListener('change', (e) => {
+  document.documentElement.dataset.durations = e.target.checked ? '' : 'off';
+});
+
+/* running 行的活时长（演示） */
+let liveSec = 3.2;
+setInterval(() => {
+  liveSec += 1;
+  for (const el of document.querySelectorAll('[data-live-dur]'))
+    el.textContent = Math.round(liveSec) + 's';
+}, 1000);
+
+/* 系统亮暗跟随（首帧一次） */
+if (matchMedia('(prefers-color-scheme: dark)').matches)
+  document.documentElement.classList.add('dark');
+</script>
+</body>
+</html>

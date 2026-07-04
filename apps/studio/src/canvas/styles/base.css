@@ -813,10 +813,12 @@ code:where(:not([data-slot], .chat-app *)) {
   box-shadow: var(--od-shadow-xs);
 }
 /* Active tab echoes the rail's accent language: its leading icon goes
-   accent and the label firms to medium, so "which tab am I on" reads at
-   a glance and the chrome stays consistent with the active rail button. */
+   brand-green and the label firms to medium, so "which tab am I on" reads
+   at a glance. 用 --brand 而非 --od-accent：rail 的 surface tabs 选中 icon
+   就是品牌绿（AppRail data-[state=active] svg → --sidebar-primary 同值），
+   跟用户可调主题色走会让两层 tab 选中态各说各话。 */
 .workspace-tab.is-active .workspace-tab__icon {
-  color: var(--od-accent);
+  color: hsl(var(--brand));
   opacity: 1;
 }
 .workspace-tab.is-active .workspace-tab__label {
@@ -2090,15 +2092,18 @@ a.avatar-item:visited {
   justify-content: flex-end;
   color: var(--text-muted);
 }
+/* 用户气泡走 chat 面的消息语言：secondary 灰底 + 正常前景（对齐
+   docs/ui-prototype-project-workspace.html 的 .bubble）。旧的 --selected
+   蓝底白字是 canvas 独有语言，与 chat 面同屏时读成两套产品。 */
 .msg.user .user-text {
   white-space: pre-wrap;
-  color: #fff;
-  background: var(--selected);
-  border: 1px solid color-mix(in srgb, var(--selected) 88%, #000);
+  color: var(--text);
+  background: var(--bg-subtle);
+  border: 1px solid transparent; /* 占位保尺寸：hover/主题切换不跳动 */
   border-radius: 14px 14px 4px 14px;
   padding: 8px 11px;
   line-height: 1.45;
-  box-shadow: var(--od-shadow-xs);
+  box-shadow: none;
 }
 .msg-plugin-chip {
   display: inline-flex;
@@ -2219,13 +2224,15 @@ a.avatar-item:visited {
   border-radius: 4px;
   opacity: 0;
   transition: opacity 120ms ease;
-  color: rgba(255, 255, 255, 0.85);
+  /* 气泡已从蓝底白字改为 secondary 灰底（见 .user-text 注释），
+     copy 按钮同步从白色系换 muted 系。 */
+  color: var(--text-muted);
   cursor: pointer;
   z-index: 1;
 }
 .msg.user .user-copy-btn:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
 }
 .msg.user .user-text-wrap:hover .user-copy-btn,
 .msg.user .user-text-wrap:focus-within .user-copy-btn,

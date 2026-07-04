@@ -861,7 +861,7 @@ export function LivePreviewEditor({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#FAFAFA]">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {/* ── top app bar: deck title + ready progress ── */}
       <header className="flex h-14 shrink-0 items-center gap-4 border-b border-border/60 bg-background px-4">
         <div className="flex min-w-0 flex-col">
@@ -950,7 +950,7 @@ export function LivePreviewEditor({
         </aside>
 
         {/* ── center: breadcrumb + stage ── */}
-        <section className="flex min-w-0 flex-1 flex-col bg-[#FAFAFA]">
+        <section className="flex min-w-0 flex-1 flex-col bg-background">
           {/* breadcrumb: page no + name + prev/next */}
           <div className="flex items-center gap-2.5 px-5 py-3">
             <span className="rounded-md border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums tracking-wide text-muted-foreground">

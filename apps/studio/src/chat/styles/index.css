@@ -69,6 +69,16 @@
  * 类名恰好与 chat 重合，这里一并转正）。 */
 @source '../../components/**/*.{ts,tsx}';
 
+/* 设置页技术栈统一（2026-07-04 起）：settings 两个目录正在从 canvas 手写
+ * CSS 逐 section 迁到 shadcn + Tailwind，迁移期间文件仍住在 canvas 树里
+ * （状态/i18n 深度耦合 canvas，搬家只有 import churn 没有收益）。只扫这
+ * 两个目录、绝不扫整个 src/canvas/**——canvas 40k 行手写 CSS 里存在与
+ * Tailwind utility 撞名的自定义类，全量扫描会让 scanner 生成的 utility
+ * 静默套在 canvas 元素上。全部 section 转完后 settings-modal.css /
+ * settings-v2.css 退役，这条注释也该更新。 */
+@source '../../canvas/components/SettingsDialog/**/*.{ts,tsx}';
+@source '../../canvas/components/settings/**/*.{ts,tsx}';
+
 /* ─────────────────────────────────────────────────────────────────────
  * Theme — migrated verbatim from the former tailwind.config.js. Apple
  * DESIGN.md type/radius/shadow scale + the shadcn-style HSL token system.
@@ -211,6 +221,21 @@
 }
 
 @layer base {
+  /* Tailwind v4 preflight 把默认 border-color 从 v3 的 gray-200 改成了
+     currentColor——shadcn 组件里大量裸 `border`（不带 border-<color>）的
+     写法都假设默认是 hairline 灰，缺这层时全部渲染成文字色黑框（rail
+     会话菜单的黑边即此坑）。这是 shadcn Tailwind v4 官方模板的标准
+     兼容层。注意写 hsl(var(--border)) 而非 var(--color-border)：
+     @theme inline 不向 :root 发布 --color-* 变量。特异性为 0，canvas
+     侧任何显式 border-color 声明都压得过它。 */
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: hsl(var(--border));
+  }
+
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));

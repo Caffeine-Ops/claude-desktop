@@ -1,13 +1,20 @@
 import type { AgentModelOption } from '../../types';
 
-// Render the `<option>` children for a model `<select>`. When the list
-// contains `provider/model` ids (opencode's listing has hundreds), we
-// group them under `<optgroup>` so the dropdown is navigable. Flat lists
-// (Claude, Codex, Gemini, Qwen) are emitted as plain options.
+// Group model options for a model picker. When the list contains
+// `provider/model` ids (opencode's listing has hundreds), we group them
+// by provider so the dropdown is navigable. Flat lists (Claude, Codex,
+// Gemini, Qwen) stay ungrouped.
 //
 // `'default'` is always pinned first (no group), so the user can return
 // to "let the CLI decide" with one click.
-export function renderModelOptions(models: AgentModelOption[]) {
+//
+// Pure data shaping — shared by the native-<select> renderer below
+// (AvatarMenu, still on the canvas stack) and the shadcn Select renderer
+// in SettingsDialog（chat 栈，SelectGroup/SelectLabel 对应 optgroup）.
+export function groupModelOptions(models: AgentModelOption[]): {
+  flat: AgentModelOption[];
+  groups: [string, AgentModelOption[]][];
+} {
   const groups = new Map<string, AgentModelOption[]>();
   const flat: AgentModelOption[] = [];
   for (const m of models) {
@@ -22,7 +29,22 @@ export function renderModelOptions(models: AgentModelOption[]) {
     groups.set(provider, arr);
   }
   flat.sort((a, b) => (a.id === 'default' ? -1 : b.id === 'default' ? 1 : 0));
-  if (groups.size === 0) {
+  return { flat, groups: Array.from(groups.entries()) };
+}
+
+// Strip the redundant `provider/` prefix from a label shown inside its
+// own provider group; keep it in the value so the CLI sees the fully-
+// qualified id.
+export function stripProviderPrefix(label: string, provider: string): string {
+  return label.startsWith(`${provider}/`)
+    ? label.slice(provider.length + 1)
+    : label;
+}
+
+// Render the `<option>` children for a native model `<select>`.
+export function renderModelOptions(models: AgentModelOption[]) {
+  const { flat, groups } = groupModelOptions(models);
+  if (groups.length === 0) {
     return (
       <>
         {flat.map((m) => (
@@ -40,16 +62,11 @@ export function renderModelOptions(models: AgentModelOption[]) {
           {m.label}
         </option>
       ))}
-      {Array.from(groups.entries()).map(([provider, items]) => (
+      {groups.map(([provider, items]) => (
         <optgroup key={provider} label={provider}>
           {items.map((m) => (
             <option key={m.id} value={m.id}>
-              {/* Strip the redundant `provider/` prefix from the label
-                  inside its own optgroup; keep it in the value so the
-                  CLI sees the fully-qualified id. */}
-              {m.label.startsWith(`${provider}/`)
-                ? m.label.slice(provider.length + 1)
-                : m.label}
+              {stripProviderPrefix(m.label, provider)}
             </option>
           ))}
         </optgroup>

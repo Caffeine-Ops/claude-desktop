@@ -284,20 +284,24 @@
   gap: 4px;
   flex-wrap: wrap;
 }
+/* 画布工具按钮（新建草图/粘贴/上传）：白底 pill + 描边 + 轻影，浮在
+   网格上（对齐原型 .tool-pill）——透明 ghost 在网格底上会「沉」进背景。 */
 .df-controls-row .df-actions button {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-muted);
-  padding: 5px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  color: var(--text);
+  padding: 5px 12px;
   font-size: 12.5px;
-  border-radius: var(--od-radius-sm);
+  border-radius: 999px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  box-shadow: var(--od-shadow-xs);
 }
 .df-controls-row .df-actions button:hover:not(:disabled) {
-  background: var(--bg-subtle);
-  color: var(--text);
+  background: var(--bg-panel);
+  border-color: var(--border-strong);
+  box-shadow: var(--od-shadow-sm);
 }
 .df-controls-row .df-actions button.danger { color: var(--red); }
 .df-controls-row .df-actions button.danger:hover:not(:disabled) {
@@ -964,7 +968,9 @@
   align-items: center;
   gap: 14px;
   padding: 28px 36px;
-  border-radius: 24px;
+  /* 14px 对齐 chat 系卡片圆角档（原型 .empty-card）；24px 是旧 canvas
+     独有的超大档，同屏两套圆角语言会互相打架。 */
+  border-radius: 14px;
   border: 1px solid var(--od-border);
   background: var(--bg-panel);
   box-shadow:
@@ -986,22 +992,25 @@
   gap: 6px;
   padding: 7px 14px;
   border: 1px solid var(--od-border);
-  border-radius: 999px;
-  background: var(--bg);
+  border-radius: 9px;
+  background: var(--bg-panel);
   color: var(--text);
   font: inherit;
   font-size: 12.5px;
-  font-weight: 400;
+  font-weight: 500;
   cursor: pointer;
   flex-shrink: 0;
   transition: background 120ms ease, border-color 120ms ease;
 }
+/* hover 走品牌绿 tint（原型 .ghost-btn）：这是空态里唯一的行动入口，
+   悬停时用身份色示意「从这里开始」，与 chat 面 CTA 语言一致。 */
 .df-empty-cta:hover {
-  background: var(--bg-subtle);
-  border-color: var(--border-strong);
+  background: hsl(var(--brand) / 0.06);
+  border-color: hsl(var(--brand) / 0.5);
 }
+.df-empty-cta svg { color: hsl(var(--brand)); }
 .df-empty-cta:focus-visible {
-  outline: 2px solid var(--od-accent);
+  outline: 2px solid hsl(var(--brand) / 0.6);
   outline-offset: 2px;
 }
 
@@ -1018,9 +1027,15 @@
   text-align: center;
   color: var(--text-muted);
 }
+/* 拖放悬停/进行中都走品牌绿（「把东西交给代理」= 身份点位，同
+   composer focus ring 的语言），不跟用户可调 --od-accent。 */
+.df-drop:hover {
+  border-color: hsl(var(--brand) / 0.5);
+  background: hsl(var(--brand) / 0.04);
+}
 .df-drop.dragging {
-  border-color: var(--od-accent);
-  background: color-mix(in srgb, var(--od-accent) 10%, var(--bg-panel));
+  border-color: hsl(var(--brand));
+  background: hsl(var(--brand) / 0.1);
   color: var(--text);
 }
 .df-drop .label {
