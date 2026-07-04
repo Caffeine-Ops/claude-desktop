@@ -26,19 +26,22 @@ import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { Button } from '@/src/components/ui/button'
+import { RailProjectList } from '@/src/components/RailProjectList'
 import { RailSessionList } from '@/src/components/RailSessionList'
-import { cn } from '@/src/lib/utils'
+import { Tabs, TabsList, TabsTrigger } from '@/src/components/ui/tabs'
 
-const NAV_ITEMS: { href: string; label: string; icon: ReactNode }[] = [
+/* 两个 surface 的切换是「同级二选一」而非普通导航列表——语义和视觉都用
+ * shadcn Tabs（segmented：muted 底槽 + 选中段白卡凸起），不再用 ghost pill。
+ * canvas SPA 挂在根 catch-all（router 是根路径制，见 app/[[...slug]]），
+ * 所以「工作画布」对应一切非 /chat 路径。 */
+const SURFACE_TABS: { value: 'chat' | 'canvas'; label: string; icon: ReactNode }[] = [
   {
-    href: '/chat',
+    value: 'chat',
     label: '智能助手',
     icon: <MessageCircle className="size-4" />
   },
   {
-    // canvas SPA 挂在根 catch-all（router 是根路径制，见 app/[[...slug]]），
-    // 所以「工作画布」指 '/'。active 判定在下面特判。
-    href: '/',
+    value: 'canvas',
     label: '工作画布',
     icon: <ImageIcon className="size-4" />
   }
@@ -84,6 +87,9 @@ export function AppRail() {
     // 悬浮卡的阴影分隔，而不是一条竖线。宽度对齐原型 --sidebar-w: 244px
     // （docs/ui-prototype-shell-floating.html；旧值 220 给不下「标题 + 相对
     // 时间」的会话行）。
+    // ⚠️ w-61（244px）与设置页 V2 的 --sv2-sidebar-w（settings-v2.css）配对：
+    // 设置页是全屏 overlay、自己画 rail + 浮卡，两边宽度不等则切换
+    // 设置 ↔ 聊天时内容卡左边缘跳动。改宽度必须两处同步。
     <nav className="flex h-full w-61 shrink-0 flex-col gap-1 bg-sidebar px-3 pb-3">
       {/* 顶部 48px：macOS 红绿灯的净空 + 窗口拖拽面（原型 .traffic）。
         * 原来是 nav 的 pt-12 padding——padding 不能标 app-region，改成
@@ -103,53 +109,51 @@ export function AppRail() {
         <Plus className="size-4" /> 新对话
       </Button>
 
-      {NAV_ITEMS.map((item) => {
-        // '/chat*' 归聊天，其余一切路径（'/'、'/projects'、'/project/x'…）
-        // 都是 canvas SPA 的地盘。
-        const active =
-          item.href === '/' ? !pathname.startsWith('/chat') : pathname.startsWith(item.href)
-        const pillClass = cn(
-          'justify-start gap-2 px-3',
-          // 中性灰选中——绿 accent 只留给「新对话」CTA 和会话选中态
-          // （原型的用色纪律），nav pill 不抢。旧 bg-accent 是全局蓝，
-          // 压在灰 rail 上像个异物，一并退役。hover 用 rail 专属的
-          // sidebar-accent（比 ghost 默认的 muted 深一档，灰 rail 上才有
-          // 可见反馈）；active 态显式锁同色，免得 hover 被 ghost 默认变浅。
-          active
-            ? 'bg-sidebar-accent font-medium text-sidebar-foreground hover:bg-sidebar-accent'
-            : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground'
-        )
-        return (
-          <Button
-            key={item.href}
-            variant="ghost"
-            className={pillClass}
-            onClick={() => {
-              if (item.href === '/') {
-                // 工作画布不能走 Next <Link>：canvas 树常驻在 SurfaceHost
-                // （keep-alive），它的自制 router 只听 popstate——Next 软导航
-                // 改了 URL 它不知道，视图不会回首页。canvas.navigate 自己
-                // pushState + 派发 popstate：canvas 回首页，Next 的 native
-                // history 集成同步 usePathname，SurfaceHost 随之切面。
-                // 动态 import：canvas 模块求值期触碰 window，不能静态 import
-                // 进本组件（layout SSR 会炸）；事件处理器内加载则安全。
-                void import('@/src/canvas/router').then(({ navigate }) => {
-                  navigate({ kind: 'home', view: 'home' })
-                })
-              } else {
-                // 智能助手同为 shallow pushState（见 goChatShallow 注释）。
-                goChatShallow()
-              }
-            }}
-          >
-            {item.icon}
-            {item.label}
-          </Button>
-        )
-      })}
+      {/* '/chat*' 归聊天，其余一切路径（'/'、'/projects'、'/project/x'…）
+        * 都是 canvas SPA 的地盘——受控 value 直接从 pathname 派生，切面后
+        * usePathname 同步，选中态无需本地 state。 */}
+      <Tabs
+        value={pathname.startsWith('/chat') ? 'chat' : 'canvas'}
+        onValueChange={(value) => {
+          if (value === 'canvas') {
+            // 工作画布不能走 Next <Link>：canvas 树常驻在 SurfaceHost
+            // （keep-alive），它的自制 router 只听 popstate——Next 软导航
+            // 改了 URL 它不知道，视图不会回首页。canvas.navigate 自己
+            // pushState + 派发 popstate：canvas 回首页，Next 的 native
+            // history 集成同步 usePathname，SurfaceHost 随之切面。
+            // 动态 import：canvas 模块求值期触碰 window，不能静态 import
+            // 进本组件（layout SSR 会炸）；事件处理器内加载则安全。
+            void import('@/src/canvas/router').then(({ navigate }) => {
+              navigate({ kind: 'home', view: 'home' })
+            })
+          } else {
+            // 智能助手同为 shallow pushState（见 goChatShallow 注释）。
+            goChatShallow()
+          }
+        }}
+      >
+        <TabsList className="w-full">
+          {SURFACE_TABS.map((item) => (
+            <TabsTrigger
+              key={item.value}
+              value={item.value}
+              // 选中段用 bg-card（纯白）而非默认 bg-background：本项目的
+              // --background 是 97% 灰面，压在 muted 底槽（93%）上对比太弱，
+              // 白卡才有 segmented 的凸起感（同悬浮内容卡的表面语言）。
+              // 选中 icon 走品牌绿——「身份/CTA/选中」点位的用色纪律。
+              className="data-[state=active]:bg-card [&[data-state=active]_svg]:text-sidebar-primary"
+            >
+              {item.icon}
+              {item.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
-      {/* 会话列表占据 rail 中段的全部剩余高度（内部自带 ScrollArea）。 */}
-      <RailSessionList />
+      {/* rail 中段列表跟随当前 surface：聊天面列会话、画布面列项目
+        *（各自内部自带 ScrollArea，占满剩余高度）。两个列表都是「空态
+        * 渲染 null」，切面时中段可能整块消失重现——这是数据诚实优先。 */}
+      {pathname.startsWith('/chat') ? <RailSessionList /> : <RailProjectList />}
 
       <div className="mt-auto flex flex-col gap-1 pt-3">
         <Button

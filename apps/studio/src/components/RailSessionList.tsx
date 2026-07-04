@@ -38,6 +38,7 @@ import type { ComponentType, ReactNode } from 'react'
 import type { ThreadSummary } from '@desktop-shared/types'
 
 import { railEaseOut } from '@/src/chat/shell/railMotion'
+import { groupLabel, relativeTime } from '@/src/components/railTime'
 import { ScrollArea } from '@/src/components/ui/scroll-area'
 import { Button } from '@/src/components/ui/button'
 import { Input } from '@/src/components/ui/input'
@@ -78,37 +79,8 @@ function displayTitle(raw: string): string {
   return m[1].slice(1).split(':').pop() || t
 }
 
-/** updatedAt → 时间分组。 */
-function groupLabel(ms: number): string {
-  const d = new Date(ms)
-  const now = new Date()
-  if (d.toDateString() === now.toDateString()) return '今天'
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  if (d.toDateString() === yesterday.toDateString()) return '昨天'
-  // 标签叫「本周」但语义是滚动 7 天（与 shell-floating 原型的分组名对齐；
-  // 真按日历周切，周一早上「上周五」会瞬移进「更早」，反而反直觉）。
-  if (now.getTime() - ms < 7 * 24 * 60 * 60 * 1000) return '本周'
-  return '更早'
-}
-
-/** updatedAt → 行尾相对时间（原型 .session-row .time：刚刚 / N 分钟前 /
- * N 小时前 / 昨天 / 周X / M月D日）。只在列表 reload 时重算——与分组标签
- * 同一刷新节奏，不为「3 分钟前变 4 分钟前」挂定时器。 */
-const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const
-function relativeTime(ms: number): string {
-  const now = new Date()
-  const d = new Date(ms)
-  const diffMin = Math.floor((now.getTime() - ms) / 60_000)
-  if (diffMin < 1) return '刚刚'
-  if (diffMin < 60) return `${diffMin} 分钟前`
-  if (d.toDateString() === now.toDateString()) return `${Math.floor(diffMin / 60)} 小时前`
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  if (d.toDateString() === yesterday.toDateString()) return '昨天'
-  if (now.getTime() - ms < 7 * 24 * 60 * 60 * 1000) return WEEKDAYS[d.getDay()]
-  return `${d.getMonth() + 1}月${d.getDate()}日`
-}
+/* groupLabel / relativeTime 抽到 railTime.ts 与 RailProjectList 共用
+ *（两个 rail 列表的时间节奏必须同源）。 */
 
 /** 列表渲染项：分组标签与会话行拍平进同一个 AnimatePresence，
  * 组内最后一行被删时标签跟着播同一支折叠退场。 */
