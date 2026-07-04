@@ -52,7 +52,7 @@
   padding: 0 12px;
   background: var(--bg-panel);
   color: var(--text);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   font: inherit;
   font-size: 13px;
   /* Apple ladder skips 500/650 — utility button label sits at 600. */
@@ -155,7 +155,7 @@
   padding: 12px 13px;
   color: var(--text-strong);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   font: inherit;
   font-size: 15px;
   line-height: 1.6;
@@ -194,7 +194,7 @@
   border: 1px solid var(--od-border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--bg-panel) 98%, var(--bg-subtle) 2%);
-  box-shadow: 0 14px 36px color-mix(in srgb, var(--shadow-color, #000) 5%, transparent), var(--shadow-xs);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--shadow-color, #000) 5%, transparent), var(--od-shadow-xs);
   overflow: hidden;
 }
 .ds-resource-row {
@@ -233,7 +233,7 @@
   padding: 0 12px;
   color: var(--text-strong);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   font: inherit;
   font-size: 13px;
 }
@@ -251,7 +251,7 @@
   min-height: 28px;
   padding: 4px 8px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg-subtle);
   color: var(--text);
   font-size: 12px;
@@ -351,7 +351,7 @@
   min-height: 20px;
   padding: 2px 7px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg-subtle);
   color: var(--text-muted);
   font-size: 11px;
@@ -445,7 +445,7 @@
   max-width: 100%;
   padding: 4px 8px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg);
   color: var(--text);
   font-size: 12px;
@@ -742,7 +742,7 @@
   border: 1px solid var(--od-border);
   border-radius: 12px;
   background: var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .ds-publish-card {
   display: grid;
@@ -910,7 +910,7 @@
   min-height: 24px;
   padding: 3px 8px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg-panel);
   color: var(--text-muted);
   font-size: 11px;
@@ -1202,7 +1202,7 @@
   min-width: 74px;
   padding: 3px 8px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   color: var(--text-muted);
   font-size: 11px;
   text-align: center;
@@ -1317,7 +1317,7 @@
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
   border-radius: 12px;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   overflow: hidden;
 }
 .ds-settings-card__head {
@@ -1617,7 +1617,7 @@
   height: 28px;
   padding: 0 10px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg);
   color: var(--text-muted);
   font-size: 12px;
@@ -1638,7 +1638,7 @@
   font-size: 12.5px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   color: var(--text-muted);
 }
 .ws-tab-action:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text); border-color: transparent; }
@@ -1763,7 +1763,7 @@
 .ds-project-publish-card {
   margin: 22px 0 0;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
   padding: 14px 16px;
 }
@@ -1835,7 +1835,7 @@
 .ds-project-review-card {
   margin: 14px 0 0;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1869,7 +1869,7 @@
   align-items: center;
   min-height: 25px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg);
   color: var(--text-muted);
   padding: 3px 9px;
@@ -1879,7 +1879,7 @@
 .ds-project-live-activity {
   margin: 10px 0 0;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1903,7 +1903,7 @@
   align-items: center;
   min-height: 24px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg);
   color: var(--text-muted);
   font-size: 12px;
@@ -1935,7 +1935,7 @@
 }
 .ds-project-source-card {
   margin: 14px 0 0;
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
 }
 .ds-project-source-card > strong {
   color: var(--text);
@@ -1949,7 +1949,7 @@
   gap: 12px;
   padding: 14px 16px;
   border: 1px solid color-mix(in srgb, var(--od-accent) 35%, var(--od-border));
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: color-mix(in srgb, var(--od-accent) 7%, var(--bg-panel));
 }
 .ds-project-warning-card > .od-icon {
@@ -1979,7 +1979,7 @@
 .ds-context-strip {
   margin: 22px 0 30px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
   display: flex;
   align-items: center;
@@ -2062,7 +2062,7 @@
   margin-left: auto;
   padding: 4px 9px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg-panel);
   color: var(--text-muted);
   font-size: 11px;
@@ -2142,15 +2142,15 @@
   align-items: center;
   min-height: 24px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg-panel);
   padding: 3px 9px;
 }
 .ds-project-inline-preview {
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
   display: block;
   height: clamp(220px, 34vw, 420px);
   overflow: hidden;
@@ -2173,7 +2173,7 @@
 }
 .ds-project-review-notice {
   border: 1px solid color-mix(in srgb, var(--amber) 32%, var(--od-border));
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: color-mix(in srgb, var(--amber-bg) 42%, var(--bg-panel));
   color: var(--text);
   display: flex;
@@ -2195,7 +2195,7 @@
 }
 .ds-project-last-feedback {
   border: 1px solid color-mix(in srgb, var(--red) 24%, var(--od-border));
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: color-mix(in srgb, var(--red) 5%, var(--bg-panel));
   color: var(--text);
   display: flex;
@@ -2225,7 +2225,7 @@
 }
 .ds-project-feedback-box {
   border: 1px solid color-mix(in srgb, var(--red) 28%, var(--od-border));
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: color-mix(in srgb, var(--red) 6%, var(--bg-panel));
   display: flex;
   flex-direction: column;
@@ -2241,7 +2241,7 @@
   width: 100%;
   min-height: 76px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg);
   color: var(--text);
   font: inherit;
@@ -2260,7 +2260,7 @@
 }
 .ds-project-file-list {
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   overflow: hidden;
   background: var(--bg-panel);
 }
@@ -2323,7 +2323,7 @@
   padding: 0;
   overflow: hidden;
   border-radius: 8px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
 }
 .ds-project-publish-card--review > p {
   margin: 0;
@@ -2359,7 +2359,7 @@
   border: 1px solid var(--od-border);
   border-radius: 8px;
   background: var(--bg-panel);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
 }
 .ds-project-review-item .ds-project-section-head {
   min-height: 58px;

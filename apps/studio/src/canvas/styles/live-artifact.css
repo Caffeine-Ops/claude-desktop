@@ -19,7 +19,7 @@
   border: 1px solid var(--od-border);
   border-radius: 10px;
   background: var(--bg-panel);
-  box-shadow: var(--shadow-xs, 0 1px 2px rgba(16, 24, 40, 0.04));
+  box-shadow: var(--od-shadow-xs, 0 1px 2px rgba(16, 24, 40, 0.04));
 }
 .live-artifact-refresh-hero-main {
   display: flex;
@@ -428,7 +428,7 @@
   color: var(--text);
   font-size: 12.5px;
   line-height: 1.2;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .viewer-viewport-trigger:hover:not(:disabled),
 .viewer-viewport-trigger[aria-expanded='true'] {
@@ -443,9 +443,9 @@
   width: 100%;
   padding: 5px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--od-shadow-md);
   overflow: hidden;
 }
 .viewer-viewport-menu-item {
@@ -457,7 +457,7 @@
   gap: 10px;
   padding: 5px 8px;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: transparent;
   color: var(--text-muted);
   font-size: 12.5px;
@@ -506,7 +506,7 @@
   max-height: none;
   flex: 0 0 auto;
   border: 1px solid var(--border-strong);
-  border-radius: 18px;
+  border-radius: var(--od-radius-lg);
   overflow: hidden;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
   background: var(--bg-panel);
@@ -602,13 +602,13 @@
   height: 18px;
   padding: 0 5px;
   border: 1px solid #0958d9;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: #1677ff;
   color: white;
   font-size: 10px;
   font-weight: 700;
   line-height: 16px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
   pointer-events: auto;
 }
 .comment-saved-pin:hover {
@@ -623,9 +623,9 @@
   width: min(320px, calc(100% - 28px));
   padding: 10px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--od-shadow-lg);
 }
 .comment-popover-head {
   display: flex;
@@ -663,7 +663,7 @@
   margin-bottom: 8px;
   padding: 8px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
 }
 .board-pod-summary strong {
@@ -682,7 +682,7 @@
   gap: 4px;
   padding: 3px 7px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg-panel);
   color: var(--text-muted);
   font-size: 11px;
@@ -722,7 +722,7 @@
   gap: 10px;
   padding: 8px 9px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
   font-size: 12px;
 }
@@ -1060,9 +1060,9 @@
   gap: 14px;
   padding: 12px 14px 14px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--od-shadow-lg);
   font-size: 12px;
 }
 .inspect-panel-head {
@@ -1110,7 +1110,7 @@
   padding: 10px;
   color: var(--text);
   border: 1px solid color-mix(in srgb, var(--od-accent) 28%, var(--od-border));
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: color-mix(in srgb, var(--od-accent) 8%, var(--bg-panel));
   font-size: 11px;
   line-height: 1.4;
@@ -1228,7 +1228,7 @@ button.ghost.mcp-copy-btn:hover:not(:disabled) {
   z-index: 5;
   padding: 8px 12px;
   border: 1px dashed var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
   color: var(--text-muted);
   font-size: 12px;
@@ -1289,7 +1289,7 @@ button.ghost.mcp-copy-btn:hover:not(:disabled) {
   margin: 0;
   padding: 10px 12px;
   border: 1px dashed var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   color: var(--text-faint);
   font-size: 12px;
 }
@@ -1298,9 +1298,9 @@ button.ghost.mcp-copy-btn:hover:not(:disabled) {
   gap: 5px;
   padding: 9px 10px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .comment-card.attached {
   border-color: var(--accent-soft);
@@ -1339,7 +1339,7 @@ button.ghost.mcp-copy-btn:hover:not(:disabled) {
   flex: 0 0 auto;
   padding: 3px 8px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg);
   color: var(--text-muted);
   font-size: 11.5px;
@@ -1599,7 +1599,7 @@ button.ghost.mcp-copy-btn:hover:not(:disabled) {
   object-fit: contain;
   background: white;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 .sketch-preview {
   width: 100%;
@@ -1612,7 +1612,7 @@ button.ghost.mcp-copy-btn:hover:not(:disabled) {
   display: block;
   background: white;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 .sketch-preview.loading {
   background:
@@ -1620,7 +1620,7 @@ button.ghost.mcp-copy-btn:hover:not(:disabled) {
     #f7f5f1;
   background-size: 16px 16px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 .sketch-preview-empty-mark path {
   stroke: #bfbcb6;

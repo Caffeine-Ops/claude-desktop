@@ -173,7 +173,7 @@
   border: 1px solid var(--od-border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--bg-panel) 98%, white);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--od-shadow-lg);
 }
 .home-hero__shortcut-menu-item {
   appearance: none;
@@ -238,9 +238,10 @@
   max-width: 720px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  /* Apple lg radius (18px) for the input shell; chrome stays flat so the
-     surface reads as a hairline-bordered card, not an elevated panel. */
-  border-radius: 18px;
+  /* lg 档输入壳（曾按 Apple lg=18px 写死，2026-07-04 随 --od-radius-lg
+     收敛到 chat 档 12px）；chrome stays flat so the surface reads as a
+     hairline-bordered card, not an elevated panel. */
+  border-radius: var(--od-radius-lg);
   box-shadow: none;
   padding: 14px 14px 10px;
   display: flex;
@@ -260,7 +261,7 @@
 }
 .home-hero__input-card.is-drag-active {
   border-color: color-mix(in srgb, var(--od-accent) 56%, var(--od-border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--od-accent) 12%, transparent), var(--shadow-md);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--od-accent) 12%, transparent), var(--od-shadow-md);
 }
 .home-hero__active {
   display: flex;
@@ -338,7 +339,7 @@
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  border-radius: calc(var(--radius-lg) - 6px);
+  border-radius: calc(var(--od-radius-lg) - 6px);
 }
 .home-hero__prompt-surface--with-inputs {
   padding: 0;
@@ -441,7 +442,7 @@
   border: 1px solid var(--od-border);
   border-radius: 8px;
   background: var(--bg-panel);
-  box-shadow: var(--shadow-lg, 0 14px 36px rgba(0, 0, 0, 0.14));
+  box-shadow: var(--od-shadow-lg, 0 14px 36px rgba(0, 0, 0, 0.14));
   color: var(--text);
   font-size: 13px;
   line-height: 1.3;
@@ -635,7 +636,7 @@
   width: 100%;
   padding: 7px 9px;
   border: 1px solid color-mix(in srgb, var(--od-accent) 22%, var(--od-border));
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--od-radius-sm, 6px);
   background: var(--bg-panel);
   color: var(--text);
   font-size: 13px;
@@ -659,9 +660,9 @@
   overflow: auto;
   padding: 6px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-lg, 0 14px 36px rgba(0, 0, 0, 0.14));
+  box-shadow: var(--od-shadow-lg, 0 14px 36px rgba(0, 0, 0, 0.14));
 }
 .home-hero__plugin-hover-card {
   display: grid;
@@ -671,7 +672,7 @@
   margin-top: 4px;
   padding: 10px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: color-mix(in srgb, var(--bg-subtle) 72%, var(--bg-panel));
 }
 .home-hero__plugin-hover-card strong {
@@ -715,7 +716,7 @@
   appearance: none;
   padding: 6px 9px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
   color: var(--text);
   font: inherit;
@@ -731,7 +732,7 @@
   gap: 4px;
   padding: 2px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
 }
 .home-hero__mention-tab {
@@ -743,7 +744,7 @@
   min-width: 0;
   padding: 5px 8px;
   border: 1px solid transparent;
-  border-radius: calc(var(--radius-sm) - 1px);
+  border-radius: calc(var(--od-radius-sm) - 1px);
   background: transparent;
   color: var(--text-muted);
   font: inherit;
@@ -754,7 +755,7 @@
   border-color: var(--od-border);
   background: var(--bg-panel);
   color: var(--text-strong);
-  box-shadow: var(--shadow-xs, 0 1px 2px rgba(0, 0, 0, 0.05));
+  box-shadow: var(--od-shadow-xs, 0 1px 2px rgba(0, 0, 0, 0.05));
 }
 .home-hero__mention-tab span:last-child {
   color: var(--text-faint);
@@ -787,7 +788,7 @@
   width: 100%;
   padding: 9px 10px;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -861,11 +862,11 @@
   min-width: 0;
   padding: 4px 6px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
   color: var(--text);
   font-size: 11.5px;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .home-hero__attachment-icon {
   width: 22px;
@@ -1037,7 +1038,7 @@
   font-size: 12px;
   font-weight: 400;
   line-height: 1.2;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   transition:
     background-color 120ms ease,
     border-color 120ms ease,
@@ -1095,7 +1096,7 @@
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 400;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   transition:
     background-color 120ms ease,
     border-color 120ms ease,
@@ -1202,7 +1203,7 @@
   font-size: 12px;
   font-weight: 400;
   letter-spacing: 0;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   transition:
     background-color 120ms ease,
     border-color 120ms ease,
@@ -1688,7 +1689,7 @@
 .home-hero__footer-option:focus-within {
   background: var(--bg-subtle);
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   color: var(--od-accent);
 }
 .home-hero__submit {
@@ -1728,7 +1729,7 @@
   background: var(--red-bg);
   border: 1px solid var(--red-border);
   padding: 8px 12px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   max-width: 720px;
   width: 100%;
 }
@@ -1748,9 +1749,9 @@
   width: min(420px, 100%);
   padding: 18px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-lg, 0 18px 50px rgba(0, 0, 0, 0.18));
+  box-shadow: var(--od-shadow-lg, 0 18px 50px rgba(0, 0, 0, 0.18));
 }
 .home-hero-confirm h2 {
   margin: 0;
@@ -1774,7 +1775,7 @@
 .home-hero-confirm__primary {
   appearance: none;
   padding: 8px 12px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   font: inherit;
   font-size: 12.5px;
   cursor: pointer;
@@ -1836,7 +1837,7 @@
   line-height: 1.35;
   text-align: left;
   cursor: pointer;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   transition:
     border-color 140ms ease,
     background-color 140ms ease,
@@ -1865,7 +1866,7 @@
   background: color-mix(in srgb, var(--accent-tint) 34%, var(--bg-panel));
   color: var(--text-strong);
   transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
 }
 .home-hero__prompt-example:hover svg,
 .home-hero__prompt-example:focus-visible svg {
@@ -1903,7 +1904,7 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   scroll-snap-align: start;
   transition:
     border-color 140ms ease,
@@ -1926,7 +1927,7 @@
   background: color-mix(in srgb, var(--accent-tint) 32%, var(--bg-panel));
   color: var(--text-strong);
   transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
 }
 
 .home-hero__plugin-preset.is-pending {
@@ -2061,7 +2062,7 @@
   line-height: 1;
   letter-spacing: -0.005em;
   cursor: pointer;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   transition: border-color 140ms ease, background-color 140ms ease,
     color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
 }
@@ -2083,7 +2084,7 @@
   color: var(--text);
   background: var(--bg-panel);
   transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
 }
 .home-hero__rail-chip:hover:not(:disabled) .home-hero__rail-chip-icon {
   opacity: 1;
@@ -2105,7 +2106,7 @@
   color: var(--od-accent);
   box-shadow:
     0 1px 0 color-mix(in srgb, var(--od-accent) 18%, transparent),
-    var(--shadow-xs);
+    var(--od-shadow-xs);
   transform: translateY(-1px);
 }
 .home-hero__rail-chip.is-active .home-hero__rail-chip-icon {

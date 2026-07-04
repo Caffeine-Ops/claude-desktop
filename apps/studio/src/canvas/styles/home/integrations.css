@@ -45,7 +45,7 @@
   background: var(--bg-panel);
   color: var(--text-muted);
   font-size: 12px;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   white-space: nowrap;
 }
 
@@ -59,9 +59,9 @@
   gap: 8px;
   padding: 6px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 
 .integrations-view__tab {
@@ -73,7 +73,7 @@
   min-width: 0;
   padding: 10px 12px;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -119,9 +119,9 @@
 .integrations-view__panel > .settings-section {
   padding: 18px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 
 .integrations-view__panel .settings-section > .section-head:first-child {
@@ -131,9 +131,9 @@
 .integrations-view__use-everywhere {
   overflow: hidden;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 
 .integrations-view__use-everywhere .use-everywhere-modal__tabs {
@@ -155,7 +155,7 @@
   gap: 16px;
   padding: 28px;
   border: 1px dashed var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   /* Apple chrome carries no decorative gradient — flat panel surface only.
      Rhythm comes from surface/border, not a tinted overlay. */
   background: var(--bg-panel);
@@ -168,10 +168,10 @@
   width: 44px;
   height: 44px;
   border: 1px solid color-mix(in srgb, var(--od-accent) 22%, var(--od-border));
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
   color: var(--od-accent);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 
 .integrations-view__coming-soon h2 {

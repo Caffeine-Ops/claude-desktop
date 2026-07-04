@@ -20,8 +20,8 @@
   max-height: calc(100vh - 88px);
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--od-radius-lg);
+  box-shadow: var(--od-shadow-lg);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -46,7 +46,7 @@
   appearance: none;
   width: 32px;
   height: 32px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
@@ -91,7 +91,7 @@
   margin-top: 10px;
   padding: 9px 12px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
   color: var(--text-muted);
   font-size: 12px;

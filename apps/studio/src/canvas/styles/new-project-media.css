@@ -12,7 +12,7 @@
   gap: 2px;
   background: var(--bg-subtle);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
 }
 .newproj-media-surface {
   border: none;
@@ -20,7 +20,7 @@
   padding: 3px 12px;
   font-size: 12px;
   font-weight: 400;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   color: var(--text-muted);
   cursor: pointer;
 }
@@ -28,7 +28,7 @@
 .newproj-media-surface.active {
   background: var(--bg-panel);
   color: var(--text);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 
 .newproj-aspect-segmented {
@@ -123,8 +123,8 @@
 .palette-tweaks {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 60;
   min-width: 240px; background: var(--bg-panel); border: 1px solid var(--od-border);
-  border-radius: var(--radius-md, 10px);
-  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.12));
+  border-radius: var(--od-radius);
+  box-shadow: var(--od-shadow-md, 0 8px 24px rgba(0, 0, 0, 0.12));
   padding: 8px; display: flex; flex-direction: column; gap: 6px; user-select: none;
 }
 .palette-tweaks-header {
@@ -137,7 +137,7 @@
 .palette-tweaks-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .palette-tweaks-item {
   display: flex; align-items: center; gap: 10px;
-  padding: 6px 8px; border-radius: var(--radius-sm, 6px);
+  padding: 6px 8px; border-radius: var(--od-radius-sm, 6px);
   cursor: pointer; font-size: 12.5px; color: var(--text);
   transition: background 100ms ease;
 }
@@ -191,7 +191,7 @@
   min-width: 0;
   max-width: 200px;
   flex: 0 0 auto;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   border: 1px solid transparent;
   background: transparent;
   box-shadow: none;
@@ -199,7 +199,7 @@
 .workspace-shell .workspace-tab.is-active {
   background: var(--bg-panel);
   border-color: var(--od-border);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .workspace-shell .workspace-tab__main {
   gap: 8px;
@@ -219,7 +219,7 @@
 .workspace-shell .workspace-tabs-icon-btn {
   width: 32px;
   height: 32px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 
 .app {
@@ -409,7 +409,7 @@
   color: #fff;
   line-height: 1.45;
   font-size: 13.5px;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .app .msg.user .user-copy-btn {
   color: rgba(255, 255, 255, 0.85);
@@ -684,7 +684,7 @@
   border: 1px solid var(--od-border);
   border-radius: 10px;
   background: var(--bg-panel);
-  box-shadow: var(--shadow-md, 0 12px 32px rgba(0, 0, 0, 0.12));
+  box-shadow: var(--od-shadow-md, 0 12px 32px rgba(0, 0, 0, 0.12));
 }
 .app .working-dir-pill-menu-path {
   padding: 4px 10px;
@@ -1258,7 +1258,7 @@
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
   border-radius: 12px;
-  box-shadow: var(--shadow-md, 0 24px 64px rgba(0, 0, 0, 0.14));
+  box-shadow: var(--od-shadow-md, 0 24px 64px rgba(0, 0, 0, 0.14));
   display: flex;
   flex-direction: column;
   z-index: 140;
@@ -1280,7 +1280,7 @@
   height: 36px;
   background: var(--bg-subtle);
   border: 1px solid transparent;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--od-radius-pill, 999px);
   color: var(--text-muted);
   transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
@@ -1502,7 +1502,7 @@
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
   border-radius: 14px;
-  box-shadow: var(--shadow-lg, 0 32px 80px rgba(0, 0, 0, 0.24));
+  box-shadow: var(--od-shadow-lg, 0 32px 80px rgba(0, 0, 0, 0.24));
   display: flex;
   flex-direction: column;
   overflow: hidden;

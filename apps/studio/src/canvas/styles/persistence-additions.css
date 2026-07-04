@@ -27,7 +27,7 @@
   gap: 6px;
   padding: 6px 10px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
   font: inherit;
   font-size: 12px;
@@ -63,7 +63,7 @@
   overflow-y: auto;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
   z-index: 200;
   padding: 8px;
@@ -142,7 +142,7 @@
 .system-reminder-block {
   background: var(--bg-subtle);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   margin: 6px 0;
 }
 .system-reminder-toggle {
@@ -188,7 +188,7 @@
   gap: 8px;
   padding: 8px 12px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-subtle);
   font-size: 12px;
   color: var(--text-muted);
@@ -354,7 +354,7 @@
   font-size: 11px;
   font-weight: 400;
   border: 1px solid var(--green-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--green-bg);
   color: var(--green);
   cursor: pointer;
@@ -386,9 +386,9 @@
 .question-form {
   margin: 8px 0;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--od-radius-lg);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--od-shadow-md);
   overflow: hidden;
 }
 .question-form-locked {
@@ -670,8 +670,8 @@
   background: var(--bg);
   -webkit-app-region: no-drag;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--od-radius-lg);
+  box-shadow: var(--od-shadow-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1185,7 +1185,7 @@
   padding: 0 0 14px;
   background: var(--bg);
   border-bottom: 1px solid var(--border-soft);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
 }
 .examples-search {
   position: relative;

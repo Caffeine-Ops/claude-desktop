@@ -70,7 +70,7 @@
    state keeps a quiet Apple-blue ring rather than a loud fill. */
 .app .app-chrome-header .project-ds-picker-trigger {
   font-family: var(--apple-font);
-  border-radius: 11px;
+  border-radius: var(--od-radius);
   border: 1px solid var(--apple-hairline);
   background: var(--apple-pearl);
   color: var(--text);
@@ -377,7 +377,7 @@
 }
 .project-ds-picker-fullscreen-frame {
   border: 1px solid var(--apple-hairline, rgba(0, 0, 0, 0.08));
-  border-radius: 18px;                /* rounded.lg */
+  border-radius: var(--od-radius-lg);
 }
 .project-ds-picker-fullscreen-head {
   border-bottom: 1px solid rgba(0, 0, 0, 0.08);

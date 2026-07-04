@@ -37,7 +37,7 @@
   align-items: center;
   gap: 4px;
   padding: 2px 4px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 .recent-projects__view-all:hover {
   color: var(--accent-strong);
@@ -48,7 +48,7 @@
   font-size: 13px;
   padding: 20px 16px;
   border: 1px dashed var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   text-align: center;
 }
 .recent-projects__row {
@@ -100,10 +100,10 @@
    carries the single soft system shadow — and it rests under the cover, the
    way Apple's one drop-shadow sits beneath product imagery. */
 .recent-projects__card:hover .recent-projects__card-thumb {
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--od-shadow-md);
 }
 .recent-projects__card:active .recent-projects__card-thumb {
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
 }
 .recent-projects__card:focus-visible {
   outline: none;
@@ -122,7 +122,7 @@
 .recent-projects__card.is-design-system-project:hover .recent-projects__card-thumb {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--red) 60%, transparent),
-    var(--shadow-md);
+    var(--od-shadow-md);
 }
 .recent-projects__card-thumb {
   /* The card is a <button>, whose UA flex default is align-items:flex-start
@@ -142,10 +142,11 @@
   align-items: center;
   justify-content: center;
   position: relative;
-  /* Rounding moved off the card and onto the cover (Apple store-utility-card
-     lg = 18px). The cover is now the framed artifact; meta sits bare beneath
-     it. overflow:hidden keeps media/iframe within the rounded cover. */
-  border-radius: 18px;
+  /* Rounding moved off the card and onto the cover. The cover is now the
+     framed artifact; meta sits bare beneath it. overflow:hidden keeps
+     media/iframe within the rounded cover.（曾按 Apple lg=18px 写死，
+     2026-07-04 随 --od-radius-lg 收敛到 chat 档。） */
+  border-radius: var(--od-radius-lg);
   overflow: hidden;
   /* The cover carries its own faint resting edge so it reads as a discrete
      surface on the parchment page without a heavy frame — a hairline ring,
@@ -252,7 +253,7 @@
   color: var(--text-strong);
   background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
   border: 1px solid var(--od-border);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   -webkit-backdrop-filter: saturate(180%) blur(12px);
   backdrop-filter: saturate(180%) blur(12px);
 }
@@ -287,7 +288,7 @@
   border-radius: 50%;
   color: #fff;
   background: var(--od-accent);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
   opacity: 0;
   transform: translateY(6px) scale(0.85);
   transition:

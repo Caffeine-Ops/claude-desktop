@@ -76,7 +76,10 @@
   height: 100%;
   min-width: 0;
   overflow: hidden;
-  border-radius: 14px;
+  /* 圆角 6px——2026-07-04 用户两轮反馈调定（原型 md=14、sm=10 都嫌大）。
+     与设置页 V2 浮卡（settings-v2.css .sv2-content）配对，改必两处同步，
+     否则切换设置 ↔ 聊天时卡片圆角跳变。 */
+  border-radius: 6px;
   background: hsl(var(--card));
   box-shadow:
     0 0 0 1px hsl(240 6% 10% / 0.045),

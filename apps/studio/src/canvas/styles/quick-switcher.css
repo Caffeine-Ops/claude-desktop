@@ -17,8 +17,8 @@
   width: min(560px, 92vw);
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--od-radius-lg);
+  box-shadow: var(--od-shadow-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -167,7 +167,7 @@
   background: var(--bg-panel);
   color: var(--text);
   outline: none;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   cursor: text;
   transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
 }
@@ -179,7 +179,7 @@
 
 .library-search:focus {
   border-color: var(--selected);
-  box-shadow: 0 0 0 3px var(--selected-soft), var(--shadow-xs);
+  box-shadow: 0 0 0 3px var(--selected-soft), var(--od-shadow-xs);
 }
 
 .library-filters {
@@ -221,7 +221,7 @@
   font-size: 12px;
   background-color: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   color: var(--text);
   min-width: 100px;
   max-width: 180px;
@@ -565,7 +565,7 @@
      "you have nothing here yet" panel. */
   padding: 28px 24px;
   background: var(--bg-subtle);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--od-radius);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -632,7 +632,7 @@
   min-height: 58px;
   padding: 10px 12px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
   color: var(--text-muted);
   text-align: left;
@@ -656,7 +656,7 @@
   color: var(--text);
   box-shadow:
     inset 0 0 0 1px color-mix(in oklab, var(--od-accent) 10%, transparent),
-    var(--shadow-xs);
+    var(--od-shadow-xs);
 }
 
 .memory-source-tab-icon,
@@ -666,7 +666,7 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
   color: var(--text-muted);
   box-shadow: inset 0 0 0 1px var(--border-soft);
@@ -917,7 +917,7 @@
 .memory-action-block,
 .memory-source-summary {
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
 }
 
@@ -1073,7 +1073,7 @@
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
 }
 
@@ -1113,7 +1113,7 @@
   min-height: 50px;
   padding: 8px 10px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
   color: var(--text);
   cursor: pointer;
@@ -1183,7 +1183,7 @@
   border-radius: 999px;
   background: var(--od-accent);
   color: white;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   opacity: 0;
   transform: scale(0.9);
   transition:
@@ -1373,7 +1373,7 @@
 
 .memory-connector-result {
   padding: 8px 10px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -1414,7 +1414,7 @@
   gap: 8px;
   padding: 10px 12px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
 }
 
@@ -1496,13 +1496,13 @@
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: color-mix(in oklab, var(--od-accent) 5%, var(--bg-panel));
 }
 
 .memory-scan-history {
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
 }
 
@@ -1572,7 +1572,7 @@
   gap: 10px;
   padding: 11px 12px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
   color: var(--text);
   cursor: pointer;
@@ -1737,7 +1737,7 @@
 .memory-collapsible-card {
   padding: 10px 12px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
   margin-top: 0;
 }
@@ -1766,7 +1766,7 @@
 .memory-advanced-card {
   padding: 8px 10px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
 }
 
@@ -1862,7 +1862,7 @@
   margin-top: 8px;
   padding: 9px 10px;
   border: 1px solid rgba(220, 53, 69, 0.22);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: rgba(220, 53, 69, 0.06);
   color: var(--text-muted, #888);
   font-size: 12px;
@@ -2059,7 +2059,7 @@
   border-color: var(--border-subtle);
   background: var(--bg-panel);
   color: var(--text-primary);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 
 .library-import-row {
@@ -2876,7 +2876,7 @@
   padding: 8px 12px;
   background: var(--bg-panel);
   border-color: var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   color: var(--text);
   font-size: 13px;
   font-weight: 600;

@@ -6,7 +6,7 @@
  *   second system. So this file deliberately does NOT define its own color
  *   palette. It inherits the app's global semantic tokens (defined on :root
  *   in index.css): --background/--card/--muted/--secondary, --foreground,
- *   --muted-foreground, --accent*, --border*, --radius*, --shadow*. That
+ *   --muted-foreground, --accent*, --border*, --od-radius*, --od-shadow*. That
  *   means V2 automatically tracks light/dark mode AND the user's chosen
  *   accent color — flip the accent and the sidebar's selected pill, the
  *   theme-mode toggle and the swatch ring all re-tint, exactly like the
@@ -24,7 +24,11 @@
 
 .sv2 {
   /* Layout-only locals (no color). Everything else is an app token. */
-  --sv2-sidebar-w: 248px;
+  /* 侧栏宽必须 == AppRail 的 w-61（244px，见 src/components/AppRail.tsx）。
+     设置页是全屏 overlay、自己画 rail + 浮卡，两边宽度不同则切换
+     设置 ↔ 聊天时内容卡左边缘会跳（历史值 248 = 4px 抖动实锤）。
+     改这里必须同步改 AppRail，反之亦然。 */
+  --sv2-sidebar-w: 244px;
   --sv2-content-max: 760px;
   /* Accent ink for selected nav text: a readable, mostly-opaque accent. */
   --sv2-accent-ink: var(--accent-strong);
@@ -52,11 +56,17 @@
 }
 
 /* Window shell — fills its host container (App renders V2 inside a
-   fixed inset-0 overlay or an in-app modal slot). */
+   fixed inset-0 overlay or an in-app modal slot).
+   悬浮卡片布局（对齐主界面 shell）：窗口底面 = rail 灰面，右侧内容区
+   （.sv2-content）是浮在底面上的圆角卡片——与 app/globals.css 的
+   .shell-content-card / docs/ui-prototype-unified-surfaces.html 同一套
+   视觉语言，侧栏与卡片之间不再用 1px 分隔线，靠卡片阴影分层。 */
 .sv2-window {
   position: absolute;
   inset: 0;
-  background: var(--bg-app);
+  /* 用共享 --sidebar 三元组而不是 canvas 的 --bg-subtle：主界面窗口底面
+     （body 的 bg-sidebar）就是它，两处必须同色才能读成同一块底面。 */
+  background: hsl(var(--sidebar));
   display: flex;
   overflow: hidden;
 }
@@ -65,10 +75,9 @@
 .sv2-sidebar {
   width: var(--sv2-sidebar-w);
   flex-shrink: 0;
-  /* Grey rail against the white content surface — same token the chat /
-     classic-settings sidebar uses (.modal-settings nav → --bg-subtle). */
-  background: var(--bg-subtle);
-  border-right: 1px solid var(--od-border);
+  /* 侧栏直接坐在窗口灰底上（.sv2-window → hsl(var(--sidebar))），不再自带
+     底色和右侧分隔线——内容卡的阴影负责分层（对齐主界面 rail + 浮卡）。 */
+  background: transparent;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -100,7 +109,7 @@
   background: transparent;
   color: var(--text-soft);
   font-size: 14px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
@@ -154,7 +163,7 @@
   min-height: 36px;
   padding: 0 12px !important;
   margin: 0 !important;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   color: var(--text-soft);
   font-size: 14px;
   cursor: pointer !important;
@@ -206,14 +215,36 @@
 }
 
 /* ===================== Content ===================== */
+/* 内容区 = 悬浮内容卡本体：圆角 14px + 三层阴影（1px hairline 圈轮廓 +
+   近距离接触影 + 大半径环境影），数值照抄 app/globals.css 的
+   .shell-content-card——改数值先改那边/原型看效果再同步，别在这里手拧。
+   margin 四周留出灰底（左侧不留，由侧栏自然衔接出 10px 视觉间距靠
+   sidebar 自身 padding），滚动发生在卡片内部。 */
 .sv2-content {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  background: var(--bg-app);
+  margin: 10px 10px 10px 0;
+  /* 与 chat 面 .shell-content-card 配对（globals.css），6px 用户调定。 */
+  border-radius: 6px;
+  background: hsl(var(--card));
+  box-shadow:
+    0 0 0 1px hsl(240 6% 10% / 0.045),
+    0 1px 2px hsl(240 6% 10% / 0.05),
+    0 12px 32px hsl(240 6% 10% / 0.08);
   /* Containing block for any absolutely-positioned embedded descendant, so
      it can't escape leftward over the sidebar. */
   position: relative;
+}
+/* 暗色浮卡：黑底上描边不可见，换成顶部 1px 内侧高光 + 深影（同
+   .dark .shell-content-card）。canvas 认 [data-theme]、chat 认 .dark，
+   两标记由运行时双向桥接，这里两个都写以防挂载面不同。 */
+.dark .sv2-content,
+[data-theme='dark'] .sv2-content {
+  box-shadow:
+    inset 0 1px 0 hsl(40 20% 95% / 0.045),
+    0 0 0 1px hsl(0 0% 0% / 0.35),
+    0 16px 48px hsl(0 0% 0% / 0.5);
 }
 .sv2-content::-webkit-scrollbar {
   width: 10px;
@@ -248,10 +279,10 @@
 
 /* Grouped card */
 .sv2-group-card {
-  background: var(--bg-panel);
+  background: transparent;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--od-radius-lg);
+  box-shadow: none;
   padding: 4px 22px;
   margin-bottom: 22px;
 }
@@ -287,10 +318,10 @@
 
 /* Standalone card (Appearance sub-sections) */
 .sv2-card {
-  background: var(--bg-panel);
+  background: transparent;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--od-radius-lg);
+  box-shadow: none;
   padding: 20px 22px;
   margin-bottom: 22px;
 }
@@ -319,8 +350,8 @@
   display: grid;
   gap: 4px;
   padding: 4px;
-  background: var(--bg-subtle);
-  border-radius: var(--radius);
+  background: transparent;
+  border-radius: var(--od-radius);
 }
 .sv2-seg-3 {
   grid-template-columns: repeat(3, 1fr);
@@ -332,7 +363,7 @@
   height: 38px;
   border: none;
   background: transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -348,10 +379,11 @@
   color: var(--text);
 }
 .sv2-seg.on {
-  background: var(--bg-panel);
+  background: var(--bg-subtle);
   color: var(--text);
   font-weight: 600;
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
+  border: 1px solid var(--border-soft);
 }
 .sv2-seg:disabled {
   opacity: 0.5;
@@ -416,9 +448,9 @@
 .sv2-stepper {
   display: inline-flex;
   align-items: stretch;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--od-radius-pill);
+  background: transparent;
   overflow: hidden;
   height: 34px;
 }
@@ -448,8 +480,8 @@
   align-items: center;
   justify-content: center;
   gap: 3px;
-  border-left: 1px solid var(--od-border);
-  border-right: 1px solid var(--od-border);
+  border-left: 1px solid var(--border-soft);
+  border-right: 1px solid var(--border-soft);
   font-size: 13.5px;
   color: var(--text);
   font-variant-numeric: tabular-nums;
@@ -464,8 +496,8 @@
   width: 20px;
   height: 20px;
   border-radius: 6px;
-  background: var(--bg-app);
-  border: 1.5px solid var(--border-strong);
+  background: transparent;
+  border: 1.5px solid var(--border-soft);
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -535,10 +567,10 @@
 /* Legacy card → V2 card. */
 .sv2 .settings-card,
 .sv2 .settings-section-card {
-  background: var(--bg-panel);
+  background: transparent;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--od-radius-lg);
+  box-shadow: none;
   padding: 20px 22px;
   margin-bottom: 22px;
 }
@@ -579,14 +611,14 @@
   grid-template-columns: repeat(var(--seg-cols, 2), 1fr);
   gap: 4px;
   padding: 4px;
-  background: var(--bg-subtle);
-  border-radius: var(--radius);
+  background: transparent;
+  border-radius: var(--od-radius);
 }
 .sv2 .seg-btn {
   height: 38px;
   border: none;
   background: transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   cursor: pointer;
   display: flex;
   flex-direction: column;
@@ -602,10 +634,11 @@
   color: var(--text);
 }
 .sv2 .seg-btn.active {
-  background: var(--bg-panel);
+  background: var(--bg-subtle);
   color: var(--text);
   font-weight: 600;
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
+  border: 1px solid var(--border-soft);
 }
 .sv2 .seg-btn:disabled {
   opacity: 0.5;
@@ -633,9 +666,9 @@
 /* Test / action buttons → quiet bordered pill. */
 .sv2 .settings-test-btn,
 .sv2 .settings-rescan-btn {
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--od-radius-pill);
+  background: transparent;
   color: var(--text);
   padding: 6px 14px;
   font-size: 13px;

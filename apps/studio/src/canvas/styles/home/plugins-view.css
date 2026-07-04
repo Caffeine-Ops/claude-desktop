@@ -57,7 +57,7 @@
 .plugins-view__stat {
   padding: 14px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
 }
 
@@ -86,7 +86,7 @@
   gap: 8px;
   padding: 5px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--od-radius-lg);
   background: var(--bg-subtle);
 }
 
@@ -99,7 +99,7 @@
   min-width: 0;
   padding: 9px 10px;
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: transparent;
   color: var(--text-muted);
   text-align: left;
@@ -128,7 +128,7 @@
   background: var(--bg-panel);
   border-color: var(--od-border);
   color: var(--text-strong);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
 }
 
 .plugins-view__tab-label {
@@ -293,7 +293,7 @@
   max-width: 260px;
   padding: 7px 34px 7px 12px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
   color: var(--text);
   font-size: 12px;
@@ -306,7 +306,7 @@
 .plugins-view__source-manager,
 .plugins-view__team {
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
 }
 
@@ -381,7 +381,7 @@
   gap: 6px;
   min-height: 32px;
   padding: 0 11px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   font-size: 12px;
   cursor: pointer;
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
@@ -475,7 +475,7 @@
   min-height: 32px;
   padding: 7px 34px 7px 12px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
   color: var(--text);
   font-size: 12px;
@@ -495,9 +495,9 @@
 .plugins-view__import {
   padding: 14px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--od-radius-lg);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
 }
 
 .plugins-view__install-card label {
@@ -555,7 +555,7 @@
 .plugins-view__future-card {
   padding: 13px;
   border: 1px dashed var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
 }
 
@@ -581,7 +581,7 @@
 .plugins-view__empty {
   padding: 20px 16px;
   border: 1px dashed var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   color: var(--text-muted);
   font-size: 13px;
   text-align: center;
@@ -590,7 +590,7 @@
 .plugins-view__notice {
   padding: 10px 12px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
   color: var(--text);
   font-size: 13px;
@@ -644,9 +644,9 @@
   gap: 16px;
   padding: 18px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--od-radius-lg);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-lg, 0 20px 60px rgba(0, 0, 0, 0.22));
+  box-shadow: var(--od-shadow-lg, 0 20px 60px rgba(0, 0, 0, 0.22));
 }
 
 .plugins-import-modal__head,
@@ -697,7 +697,7 @@
   min-width: 0;
   padding: 11px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
   color: var(--text-muted);
   text-align: left;
@@ -750,7 +750,7 @@
   min-height: 96px;
   padding: 16px;
   border: 1px dashed var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-subtle);
   color: var(--text-muted);
   font-size: 13px;

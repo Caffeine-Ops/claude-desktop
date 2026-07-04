@@ -165,7 +165,7 @@
   font-size: 13px;
   padding: 20px 16px;
   border: 1px dashed var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   text-align: center;
 }
 .plugins-home__empty code {
@@ -542,8 +542,7 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--od-border);
-  /* Apple store-utility-card radius: lg (18px). */
-  border-radius: 18px;
+  border-radius: var(--od-radius-lg);
   background: var(--bg-panel);
   overflow: hidden;
   /* Soft Apple ease-out on the lift; border/shadow keep a quick linear feel
@@ -560,7 +559,7 @@
      reads as intentional, not a jitter. */
   border-color: var(--border-strong);
   transform: translateY(-4px);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--od-shadow-md);
 }
 .plugins-home__card.is-active {
   border-color: var(--od-accent);
@@ -641,7 +640,7 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg-panel) 74%, transparent);
   color: var(--od-accent);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 @keyframes plugins-home-shimmer {
   to {
@@ -1145,10 +1144,10 @@
   padding: 4px;
   /* Theme-aware popover (was hard white-on-black for the old scrim). */
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
   color: var(--text-strong);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--od-shadow-lg);
 }
 .plugins-home__use-menu-item {
   appearance: none;
@@ -1158,7 +1157,7 @@
   justify-content: flex-start;
   padding: 7px 8px;
   border: 0;
-  border-radius: calc(var(--radius-sm) - 2px);
+  border-radius: calc(var(--od-radius-sm) - 2px);
   background: transparent;
   color: inherit;
   font: inherit;

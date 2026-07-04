@@ -87,27 +87,39 @@
   --amber: #b26200;
   --amber-bg: #fff3e0;
 
-  --shadow-xs: 0 1px 0 rgba(28, 27, 26, 0.04);
-  --shadow-sm: 0 1px 2px rgba(28, 27, 26, 0.05), 0 1px 3px rgba(28, 27, 26, 0.04);
-  --shadow-md: 0 6px 24px rgba(28, 27, 26, 0.07), 0 2px 6px rgba(28, 27, 26, 0.04);
-  --shadow-lg: 0 24px 60px rgba(28, 27, 26, 0.16), 0 8px 16px rgba(28, 27, 26, 0.07);
+  /* ⚠️ shadow/radius 必须带 --od- 前缀（不是风格洁癖，是级联事故）：
+     Tailwind v4 的默认 theme 把 --shadow-sm、--radius-lg 等发布到 :root
+     （chat 侧 shadow-… 与 rounded-… utility 输出的是 var(--shadow-sm) 这类
+     引用），而本文件的 :root 在级联里排 chat 链之后——同名即静默覆盖对面。
+     曾把 rounded-lg(8px) 撑成 18px：rail 的 shadcn Tabs 底槽（h-9=36px）
+     直接圆成全胶囊。同 2026-07-03 --accent 三元组事故一个家族。 */
+  --od-shadow-xs: 0 1px 0 rgba(28, 27, 26, 0.04);
+  --od-shadow-sm: 0 1px 2px rgba(28, 27, 26, 0.05), 0 1px 3px rgba(28, 27, 26, 0.04);
+  --od-shadow-md: 0 6px 24px rgba(28, 27, 26, 0.07), 0 2px 6px rgba(28, 27, 26, 0.04);
+  --od-shadow-lg: 0 24px 60px rgba(28, 27, 26, 0.16), 0 8px 16px rgba(28, 27, 26, 0.07);
 
-  /* Apple radius scale (DESIGN.md): sm=8 / md=11 / lg=18 / pill=999.
-     --radius maps to Apple's md(11), --radius-lg to lg(18). The ~321
-     var(--radius*) consumers across this file pick this up automatically. */
-  --radius-sm: 8px;
-  --radius: 11px;
-  --radius-lg: 18px;
-  --radius-pill: 999px;
+  /* 圆角档位**按值对齐 chat 面**（Tailwind v4 默认档：rounded-md 6 /
+     rounded-lg 8 / rounded-xl 12）。两面共存一个窗口，圆度是并排最容易读出
+     的不一致——旧 Apple 档（sm=8 / md=11 / lg=18）里 18px 的大卡与 chat 的
+     6~8px 语言割裂（2026-07-04 统一；用户口味实测宁小勿大，浮卡同日 14→6px）。
+     canvas 手写 CSS 里硬编码圆角的最大簇本来就是 8/6/4px，收敛 token 后
+     内外一致。~400 处 var(--od-radius*) 消费方自动拾取。
+     刻意**不**把 radius 提进 packages/design-tokens 共享：radius 名撞
+     Tailwind 默认 namespace（--radius-*），发布 :root 共享 token 会重演
+     2026-07-04 的静默覆盖事故——按值对齐、注释配对，是 radius 的安全形态。 */
+  --od-radius-sm: 6px;
+  --od-radius: 8px;
+  --od-radius-lg: 12px;
+  --od-radius-pill: 999px;
 
-  /* "Active option" indicator color, intentionally separate from --accent
-     (brand orange used by primary CTAs like Create / Save). Use --selected
-     for "this option is the one currently picked" affordances — selected
-     fidelity card, focused input ring, active filter pill — so a primary
-     CTA and a selected state can coexist on the same screen without
-     competing. --selected-soft is the 16% tint for outer rings / fills. */
-  --selected: #2563eb;
-  --selected-soft: rgba(37, 99, 235, 0.16);
+  /* "Active option" indicator（选中项描边/聚焦环/激活筛选 pill）。曾是独立
+     的 #2563eb——当年 accent 是品牌橙，选中态需要一种对比色；accent 迁到
+     Apple 蓝后「分离」的理由消失，同屏两种蓝（#2563eb vs #0071e3）反而读作
+     不一致。2026-07-04 收敛到 --primary 同源：与 chat 面的 ring/选中语言
+     一致，用户改主题色时 appearance applier 写 --primary，选中态一起跟走。
+     --selected-soft 是外环/软填充用的 16% tint。 */
+  --selected: hsl(var(--primary));
+  --selected-soft: hsl(var(--primary) / 0.16);
 
   --serif: 'Source Serif Pro', 'Source Serif 4', 'Iowan Old Style', 'Apple Garamond', Georgia, 'Times New Roman', serif;
   /* Sans / mono now derive from the shared design tokens
@@ -169,6 +181,12 @@
   --accent-tint: hsl(210 100% 58% / 0.1);
   --accent-hover: hsl(210 100% 58% / 0.92);
 
+  /* --selected 同 --od-accent 的内联理由：hsl(var(--primary)) 的暗色值挂在
+     共享 token 的 .dark 类下，本 app 走 [data-theme]——未桥接时会落回亮色
+     primary，故这里按值内联暗色 Apple Bright Blue。 */
+  --selected: hsl(210 100% 58%);
+  --selected-soft: hsl(210 100% 58% / 0.16);
+
   --green: #4caf72;
   --green-bg: #0f2a18;
   --green-border: #1a4028;
@@ -184,10 +202,10 @@
   --amber: #e09a40;
   --amber-bg: #2a1a04;
 
-  --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.2);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 6px 24px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.25);
-  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 8px 16px rgba(0, 0, 0, 0.3);
+  --od-shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.2);
+  --od-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
+  --od-shadow-md: 0 6px 24px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.25);
+  --od-shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 8px 16px rgba(0, 0, 0, 0.3);
 }
 
 /* System mode: follow OS preference when no explicit data-theme is set. */
@@ -228,6 +246,10 @@
     --accent-tint: hsl(210 100% 58% / 0.1);
     --accent-hover: hsl(210 100% 58% / 0.92);
 
+    /* --selected 内联暗色值——同上面 [data-theme="dark"] 块的注释。 */
+    --selected: hsl(210 100% 58%);
+    --selected-soft: hsl(210 100% 58% / 0.16);
+
     --green: #4caf72;
     --green-bg: #0f2a18;
     --green-border: #1a4028;
@@ -243,10 +265,10 @@
     --amber: #e09a40;
     --amber-bg: #2a1a04;
 
-    --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.2);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
-    --shadow-md: 0 6px 24px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.25);
-    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 8px 16px rgba(0, 0, 0, 0.3);
+    --od-shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.2);
+    --od-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
+    --od-shadow-md: 0 6px 24px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.25);
+    --od-shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 8px 16px rgba(0, 0, 0, 0.3);
   }
 }
 
@@ -315,7 +337,7 @@ button:where(:not([data-slot], .chat-app *)) {
   color: var(--text);
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   padding: 6px 12px;
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
@@ -328,7 +350,7 @@ button.primary {
   border-color: var(--od-accent);
   color: white;
   font-weight: 600;
-  box-shadow: 0 1px 0 rgba(180, 90, 59, 0.18) inset, var(--shadow-xs);
+  box-shadow: 0 1px 0 rgba(180, 90, 59, 0.18) inset, var(--od-shadow-xs);
 }
 button.primary:hover:not(:disabled) {
   background: var(--accent-hover);
@@ -411,7 +433,7 @@ select:where(:not([data-slot], .chat-app *)) {
   color: var(--text);
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   padding: 7px 10px;
   width: 100%;
   transition: border-color 120ms ease, box-shadow 120ms ease;
@@ -485,7 +507,7 @@ textarea:where(:not([data-slot], .chat-app *)) { resize: vertical; font-family: 
   text-align: left;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   cursor: pointer;
   transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
 }
@@ -527,8 +549,8 @@ textarea:where(:not([data-slot], .chat-app *)) { resize: vertical; font-family: 
   max-width: calc(100vw - 24px);
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--od-radius-sm);
+  box-shadow: var(--od-shadow-lg);
 }
 .od-select-menu.portal {
   position: fixed;
@@ -693,7 +715,7 @@ code:where(:not([data-slot], .chat-app *)) {
   height: 32px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: transparent;
   color: var(--text-muted);
   display: inline-flex;
@@ -758,7 +780,7 @@ code:where(:not([data-slot], .chat-app *)) {
   align-items: center;
   gap: 0;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: transparent;
   color: var(--text-muted);
   overflow: hidden;
@@ -788,7 +810,7 @@ code:where(:not([data-slot], .chat-app *)) {
   background: var(--bg-panel);
   border-color: var(--od-border);
   color: var(--text-strong);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 /* Active tab echoes the rail's accent language: its leading icon goes
    accent and the label firms to medium, so "which tab am I on" reads at
@@ -803,7 +825,7 @@ code:where(:not([data-slot], .chat-app *)) {
 .workspace-tab__main:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px var(--od-accent);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 .workspace-tab__main {
   min-width: 0;
@@ -950,9 +972,9 @@ code:where(:not([data-slot], .chat-app *)) {
   /* DESIGN.md spacing.xs (8) outer pad, rounded.md (11) corners. */
   padding: 8px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--od-shadow-lg);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -973,7 +995,7 @@ code:where(:not([data-slot], .chat-app *)) {
   gap: 8px;
   padding: 0 12px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg);
   color: var(--text-muted);
   transition: border-color 150ms ease, box-shadow 150ms ease;
@@ -1028,7 +1050,7 @@ code:where(:not([data-slot], .chat-app *)) {
    edge-to-edge tinted bar. */
 .workspace-tabs-list__item {
   min-height: 46px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   display: grid;
   grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
@@ -1045,7 +1067,7 @@ code:where(:not([data-slot], .chat-app *)) {
   height: 100%;
   padding: 7px 10px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: transparent;
   color: var(--text);
   display: flex;
@@ -1104,7 +1126,7 @@ code:where(:not([data-slot], .chat-app *)) {
   height: 24px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: transparent;
   color: var(--text-faint);
   display: inline-flex;
@@ -1299,8 +1321,8 @@ code:where(:not([data-slot], .chat-app *)) {
   transform: translateX(-50%);
   background: var(--bg);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
+  border-radius: var(--od-radius);
+  box-shadow: var(--od-shadow-md);
   padding: 4px;
   min-width: 110px;
   z-index: 40;
@@ -1316,7 +1338,7 @@ code:where(:not([data-slot], .chat-app *)) {
   padding: 6px 10px;
   background: transparent;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   color: var(--text);
   font-size: 12.5px;
   cursor: pointer;
@@ -1352,7 +1374,7 @@ code:where(:not([data-slot], .chat-app *)) {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
   color: var(--text-muted);
 }
 .viewer .present-exit-btn:hover {
@@ -1702,8 +1724,8 @@ code:where(:not([data-slot], .chat-app *)) {
   padding: 6px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--od-radius);
+  box-shadow: var(--od-shadow-lg);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1728,7 +1750,7 @@ code:where(:not([data-slot], .chat-app *)) {
   text-align: left;
   background: transparent;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   cursor: pointer;
   color: var(--text);
   text-decoration: none;
@@ -1791,7 +1813,7 @@ a.avatar-item:visited {
   min-width: 0;
   font-size: 12px;
   padding: 4px 6px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   border: 1px solid var(--od-border);
   background-color: var(--bg-panel);
   color: var(--text);
@@ -1807,7 +1829,7 @@ a.avatar-item:visited {
   padding: 4px 12px 4px 4px;
   background: var(--bg-subtle);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   cursor: pointer;
   max-width: 360px;
   min-width: 0;
@@ -2076,7 +2098,7 @@ a.avatar-item:visited {
   border-radius: 14px 14px 4px 14px;
   padding: 8px 11px;
   line-height: 1.45;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .msg-plugin-chip {
   display: inline-flex;
@@ -2156,7 +2178,7 @@ a.avatar-item:visited {
   border-radius: 14px 14px 4px 14px;
   background: var(--bg-subtle);
   border: 1px solid var(--od-border);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   color: var(--text);
   text-align: start;
 }
@@ -2234,7 +2256,7 @@ a.avatar-item:visited {
   background: var(--red-bg);
   color: var(--red);
   padding: 10px 12px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2614,10 +2636,10 @@ a.avatar-item:visited {
   padding: 4px 8px 4px 4px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   max-width: 220px;
   font-size: 11.5px;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .staged-chip img {
   width: 28px;
@@ -2672,8 +2694,8 @@ a.avatar-item:visited {
   padding: 12px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--od-radius-lg);
+  box-shadow: var(--od-shadow-lg);
 }
 .staged-preview-head {
   display: flex;
@@ -2695,11 +2717,11 @@ a.avatar-item:visited {
   max-width: 100%;
   max-height: min(70vh, 640px);
   object-fit: contain;
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg);
 }
 .staged-comment {
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   padding: 4px 6px 4px 10px;
 }
 .user-attachment.staged-comment {
@@ -2728,7 +2750,7 @@ a.avatar-item:visited {
   height: 20px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: transparent;
   color: var(--text-faint);
   font-size: 14px;
@@ -2779,7 +2801,7 @@ a.avatar-item:visited {
   padding: 4px 8px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   font-size: 11.5px;
   color: var(--text-muted);
   max-width: 220px;
@@ -2805,7 +2827,7 @@ a.avatar-item:visited {
   padding: 4px 10px 4px 4px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   font-size: 11.5px;
   max-width: 240px;
   color: var(--text);
@@ -2841,8 +2863,8 @@ a.avatar-item:visited {
   margin: 0 0 6px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-md);
+  border-radius: var(--od-radius);
+  box-shadow: var(--od-shadow-md);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -2877,7 +2899,7 @@ a.avatar-item:visited {
   min-height: 30px;
   padding: 5px 10px;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: transparent;
   color: var(--text-muted);
   font: inherit;
@@ -2889,7 +2911,7 @@ a.avatar-item:visited {
   background: var(--bg-panel);
   color: var(--text);
   border-color: var(--od-border);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .mention-results {
   flex: 1 1 auto;

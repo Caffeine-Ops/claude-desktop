@@ -14,11 +14,11 @@
   gap: 14px;
   padding: 16px 18px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background:
     radial-gradient(140% 160% at 100% 0%, color-mix(in srgb, var(--accent-tint) 75%, transparent) 0%, transparent 60%),
     var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .orbit-hero-mark {
   width: 44px;
@@ -75,7 +75,7 @@
   align-items: center;
   gap: 6px;
   padding: 4px 10px 4px 8px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -109,12 +109,12 @@
   background: var(--od-accent);
   color: #fff;
   border: 1px solid var(--od-accent);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.005em;
   cursor: pointer;
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent-strong) 22%, transparent) inset, var(--shadow-xs);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent-strong) 22%, transparent) inset, var(--od-shadow-xs);
   transition: background 120ms ease, border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
 }
 .orbit-run-cta:hover:not(:disabled) {
@@ -156,9 +156,9 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   overflow: hidden;
   transition: border-color 140ms ease, background 140ms ease;
 }
@@ -301,7 +301,7 @@
   padding: 4px 12px 4px 4px;
   background: transparent;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   cursor: pointer;
   color: var(--text-muted);
   font-size: 12px;
@@ -376,7 +376,7 @@
   font-size: 13px;
   letter-spacing: 0.02em;
   text-align: center;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 .orbit-next-run {
   display: inline-flex;
@@ -461,7 +461,7 @@
   gap: 6px;
   padding: 4px 8px;
   margin-top: 2px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: color-mix(in srgb, #c47a2c 10%, var(--bg-panel));
   color: #8a5217;
   font-weight: 400;
@@ -488,7 +488,7 @@
   color: #8a5217;
   background: var(--bg-panel);
   border: 1px solid color-mix(in srgb, #c47a2c 32%, var(--od-border));
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   cursor: pointer;
   transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
 }
@@ -528,7 +528,7 @@
   color: var(--text);
   background: var(--bg-subtle);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   cursor: pointer;
   transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
   text-overflow: ellipsis;
@@ -581,9 +581,9 @@
   gap: 12px;
   padding: 16px 18px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .orbit-receipt-head {
   display: flex;
@@ -623,7 +623,7 @@
 }
 .orbit-trigger-pill {
   padding: 2px 10px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -648,7 +648,7 @@
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   font-size: 11.5px;
   line-height: 1.4;
   border: 1px solid var(--od-border);
@@ -761,11 +761,11 @@
   gap: 18px;
   padding: 16px 20px;
   border: 1px solid color-mix(in srgb, var(--od-accent) 30%, var(--od-border));
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background:
     radial-gradient(120% 160% at 0% 50%, color-mix(in srgb, var(--accent-tint) 90%, transparent) 0%, transparent 60%),
     var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   overflow: hidden;
   animation: orbitConfigGateIn 220ms ease-out;
 }
@@ -918,10 +918,10 @@
   align-items: center;
   padding: 14px 16px 14px 18px;
   border: 1px solid color-mix(in srgb, var(--od-accent) 32%, var(--od-border));
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--accent-tint) 60%, var(--bg-panel)) 0%, var(--bg-panel) 55%);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
   overflow: hidden;
 }
 .orbit-artifact-strip::before {
@@ -1007,7 +1007,7 @@
   color: var(--text);
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease;
 }
@@ -1024,11 +1024,11 @@
   background: var(--od-accent);
   color: #fff;
   border: 1px solid var(--od-accent);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent-strong) 20%, transparent) inset, var(--shadow-xs);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent-strong) 20%, transparent) inset, var(--od-shadow-xs);
   transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
 .orbit-artifact-open:hover {
@@ -1077,7 +1077,7 @@
   overflow: auto;
   padding: 12px 14px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
   color: var(--text);
   font: 11.5px/1.6 var(--mono);
@@ -1124,7 +1124,7 @@
   padding: 12px 14px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   line-height: 1.55;
 }
 .mcp-capabilities-label {
@@ -1150,7 +1150,7 @@
   padding: 14px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 .mcp-setup-card .ds-picker {
   margin-bottom: 0;
@@ -1168,7 +1168,7 @@
   padding: 12px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 .settings-about-version-row {
   justify-content: space-between;
@@ -1189,7 +1189,7 @@
   padding: 12px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 .settings-notify-card-header {
   display: flex;
@@ -1220,7 +1220,7 @@
   font-size: 11px;
   font-weight: 400;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: transparent;
   color: var(--text-muted);
   text-decoration: none;
@@ -1260,7 +1260,7 @@
   padding: 12px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 .settings-about-diagnostics-text {
   display: flex;
@@ -1314,7 +1314,7 @@
   padding: 12px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 .media-provider-row.pending {
   background: var(--bg-subtle);
@@ -1351,7 +1351,7 @@
   font-size: 10px;
   font-weight: 600;
   padding: 2px 7px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   border: 1px solid var(--od-border);
 }
 .media-provider-badges {
@@ -1393,7 +1393,7 @@
   padding: 10px 12px;
   background: var(--bg-subtle);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
 }
 .media-provider-coming-soon[open] {
   padding-bottom: 12px;
@@ -1443,7 +1443,7 @@
   color: var(--text-muted);
   background: transparent;
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   box-shadow: none;
   transform: translateY(-50%);
 }
@@ -1525,7 +1525,7 @@
   padding: 10px 12px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   color: var(--text);
   text-align: left;
   box-shadow: none;
@@ -1572,7 +1572,7 @@
 .empty-card {
   padding: 16px;
   border: 1px dashed var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   color: var(--text-muted);
   font-size: 12px;
   background: var(--bg-subtle);
@@ -1617,7 +1617,7 @@
   margin-top: 10px;
   padding: 10px 12px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
 }
 .agent-install-collapse-summary {
@@ -1678,7 +1678,7 @@
   padding: 6px 10px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   cursor: pointer;
   text-align: left;
   position: relative;
@@ -1690,10 +1690,10 @@
   overflow: hidden;
   /* Installed cards are the execution-mode "pick your CLI" list — the one
      surface where the Apple card grammar should read most clearly. Bump
-     8px(--radius-sm) → 11px(--radius) so the corners match the dialog's
+     8px(--od-radius-sm) → 11px(--od-radius) so the corners match the dialog's
      own radius family; scoped to -installed so the denser unavailable
      list below keeps its tighter sm corners. */
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
 }
 .agent-card-select {
   flex: 1;
@@ -1830,7 +1830,7 @@
   align-items: center;
   padding: 3px 10px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: transparent;
   color: var(--text);
 }
@@ -1912,7 +1912,7 @@
   gap: 8px;
   padding: 12px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
 }
 .agent-model-row select,
@@ -1933,7 +1933,7 @@
 .settings-section-card {
   padding: 16px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
 }
 .agent-model-row .field { gap: 4px; }
@@ -2004,7 +2004,7 @@
 .agent-cli-env {
   padding: 10px 12px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
 }
 .agent-cli-env-summary {
@@ -2109,7 +2109,7 @@
   margin: 4px 0 8px;
   padding: 8px 10px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
 }
 .activity-header { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 6px; }

@@ -26,8 +26,8 @@
   max-height: calc(100vh - 64px);
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--od-radius-lg);
+  box-shadow: var(--od-shadow-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -76,7 +76,7 @@
   color: var(--text-muted);
   width: 28px;
   height: 28px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--od-radius-sm, 6px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -188,13 +188,13 @@
   color: var(--text-muted);
   background: var(--bg-subtle);
   border: 1px dashed var(--od-border);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--od-radius-sm, 6px);
   padding: 8px 10px;
 }
 
 .use-everywhere-snippet {
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--od-radius-sm, 6px);
   background: var(--bg-panel);
   overflow: hidden;
 }
@@ -285,7 +285,7 @@
   /* Button label → Apple weight 600. */
   font-weight: 600;
   padding: 8px 14px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--od-radius-sm, 6px);
   cursor: pointer;
   transition: background-color 120ms ease, color 120ms ease,
     border-color 120ms ease;

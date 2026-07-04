@@ -73,14 +73,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--pet-accent);
   color: white;
   border: 2px solid var(--bg);
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--od-shadow-sm);
 }
 
 @keyframes pet-bounce {
@@ -117,7 +117,7 @@
   border: 1px solid var(--pet-accent);
   border-radius: 12px;
   padding: 10px 12px 8px;
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--od-shadow-md);
   font-size: 12.5px;
   line-height: 1.4;
   position: relative;
@@ -242,7 +242,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg);
   color: var(--text-muted);
   border: 1px solid var(--od-border);
@@ -261,7 +261,7 @@
   gap: 4px;
   font-size: 11px;
   padding: 3px 8px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg-subtle);
   color: var(--text-muted);
   border: 1px solid var(--od-border);
@@ -328,12 +328,12 @@ body.desktop-pet-shell .pet-task-item {
 }
 .pet-pill > .pet-pill-main {
   gap: 5px;
-  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+  border-radius: var(--od-radius-pill) 0 0 var(--od-radius-pill);
 }
 .pet-pill > .pet-pill-toggle {
   justify-content: center;
   padding: 0 7px;
-  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  border-radius: 0 var(--od-radius-pill) var(--od-radius-pill) 0;
   color: var(--text-muted);
 }
 .pet-pill > .pet-pill-main:hover,
@@ -397,7 +397,7 @@ body.desktop-pet-shell .pet-task-item {
   width: fit-content;
   max-width: 100%;
   padding: 6px 10px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   border: 1px solid color-mix(in srgb, var(--od-accent) 32%, var(--od-border));
   background: color-mix(in srgb, var(--od-accent) 9%, var(--bg-panel));
   color: var(--accent-strong);
@@ -416,7 +416,7 @@ body.desktop-pet-shell .pet-task-item {
   gap: 10px;
   padding: 9px 10px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
 }
 .pet-current-summary__sprite {
@@ -464,7 +464,7 @@ body.desktop-pet-shell .pet-task-item {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   border: 1px solid var(--od-border);
   background: var(--bg-subtle);
   color: var(--text-muted);
@@ -545,7 +545,7 @@ body.desktop-pet-shell .pet-task-item {
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
   cursor: pointer;
@@ -601,7 +601,7 @@ body.desktop-pet-shell .pet-task-item {
   right: 8px;
   font-size: 10.5px;
   padding: 2px 7px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg-subtle);
   color: var(--text-muted);
   border: 1px solid var(--od-border);
@@ -618,7 +618,7 @@ body.desktop-pet-shell .pet-task-item {
 .pet-custom {
   margin-top: 18px;
   padding: 14px;
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   border: 1px dashed var(--border-strong);
   background: var(--bg-subtle);
   display: flex;
@@ -640,7 +640,7 @@ body.desktop-pet-shell .pet-task-item {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
 }
@@ -719,7 +719,7 @@ body.desktop-pet-shell .pet-task-item {
   padding: 8px 12px;
   background: var(--accent-tint);
   border: 1px solid var(--od-accent);
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   cursor: pointer;
   text-align: left;
   color: var(--text);
@@ -776,7 +776,7 @@ body.desktop-pet-shell .pet-task-item {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   background: var(--bg-subtle);
   border: 1px solid var(--od-border);
   color: var(--text-muted);
@@ -808,8 +808,8 @@ body.desktop-pet-shell .pet-task-item {
   width: 260px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-md);
+  border-radius: var(--od-radius);
+  box-shadow: var(--od-shadow-md);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -836,7 +836,7 @@ body.desktop-pet-shell .pet-task-item {
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
@@ -864,7 +864,7 @@ body.desktop-pet-shell .pet-task-item {
   align-items: center;
   gap: 2px;
   padding: 6px 2px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
   border: 1px solid transparent;
   cursor: pointer;
@@ -936,8 +936,8 @@ body.desktop-pet-shell .pet-task-item {
   z-index: 30;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-md);
+  border-radius: var(--od-radius);
+  box-shadow: var(--od-shadow-md);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -961,7 +961,7 @@ body.desktop-pet-shell .pet-task-item {
   font-size: 11.5px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   color: var(--text-muted);
   cursor: pointer;
   white-space: nowrap;
@@ -972,7 +972,7 @@ body.desktop-pet-shell .pet-task-item {
   background: var(--bg-panel);
   color: var(--text);
   border-color: var(--od-border);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .composer-tools-tab-glyph {
   display: inline-flex;
@@ -1010,7 +1010,7 @@ body.desktop-pet-shell .pet-task-item {
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
 }
 .composer-tools-segment {
@@ -1020,7 +1020,7 @@ body.desktop-pet-shell .pet-task-item {
   min-height: 28px;
   padding: 5px 8px;
   border: 1px solid transparent;
-  border-radius: calc(var(--radius-sm) - 1px);
+  border-radius: calc(var(--od-radius-sm) - 1px);
   background: transparent;
   color: var(--text-muted);
   font: inherit;
@@ -1037,7 +1037,7 @@ body.desktop-pet-shell .pet-task-item {
   color: var(--text);
   border-color: var(--od-border);
   font-weight: 600;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--od-shadow-xs);
 }
 .composer-tools-segment {
   overflow: hidden;
@@ -1049,7 +1049,7 @@ body.desktop-pet-shell .pet-task-item {
   height: 30px;
   padding: 0 9px;
   border: 1px solid var(--od-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   background: var(--bg-panel);
   color: var(--text);
   font-size: 12px;
@@ -1084,7 +1084,7 @@ body.desktop-pet-shell .pet-task-item {
   padding: 6px 8px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   color: var(--text);
   cursor: pointer;
   text-align: left;
@@ -1216,7 +1216,7 @@ body.desktop-pet-shell .pet-task-item {
   padding: 6px 2px;
   background: transparent;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--od-radius-sm);
   color: var(--text-muted);
   font-size: 10.5px;
   cursor: pointer;
@@ -1320,7 +1320,7 @@ body.desktop-pet-shell .pet-task-item {
   gap: 6px;
   margin-top: 4px;
   padding: 10px;
-  border-radius: var(--radius);
+  border-radius: var(--od-radius);
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
 }
@@ -1676,7 +1676,7 @@ body.desktop-pet-shell .pet-task-item {
 .pet-codex-default-badge {
   flex: none;
   padding: 1px 6px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--od-radius-pill);
   border: 1px solid color-mix(in srgb, var(--od-accent) 26%, var(--od-border));
   background: color-mix(in srgb, var(--od-accent) 8%, transparent);
   color: var(--accent-strong);
@@ -1726,8 +1726,8 @@ body.desktop-pet-shell .pet-task-item {
   overflow-y: auto;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-md);
+  border-radius: var(--od-radius);
+  box-shadow: var(--od-shadow-md);
   z-index: 10;
   padding: 6px;
 }
