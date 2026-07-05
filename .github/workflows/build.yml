@@ -283,11 +283,19 @@ jobs:
           # 去掉可能混入的空白/换行再解码（tr -d '\n\r '），最稳。
           printf '%s' "$MAC_CSC_LINK" | tr -d '\n\r ' | base64 --decode > "$RUNNER_TEMP/cert.p12"
           echo "解码后 .p12 大小: $(stat -f%z "$RUNNER_TEMP/cert.p12") bytes"
-          # 用密码试解析——能读出内容就说明 base64 完整 + 密码对。
-          if openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$MAC_CSC_KEY_PASSWORD" -nokeys -clcerts 2>/dev/null | openssl x509 -noout -subject 2>/dev/null; then
-            echo "✓ 证书可被 openssl 解析（base64 完整 + 密码正确）"
+          # 密码校验：只验 MAC，不解密内容。理由——Apple 钥匙串导出的 p12 常用
+          # 老算法 pbeWithSHA1And40BitRC2-CBC 加密，OpenSSL 3.x 默认禁用 RC2，
+          # 真解密（-nokeys 输出证书）会报 `RC2-40-CBC unsupported` 误杀合法证书
+          # （v0.0.18 第五轮实锤）。`-info -noout -passin` 只校验 MAC，MAC 用 SHA1
+          # 不受 RC2 禁用影响——密码对/错在这里就能判准，且 -legacy 兜底旧算法。
+          # electron-builder 内部用 macOS 系统 security 导入钥匙串（非 openssl），
+          # 不受 OpenSSL RC2 策略限制，所以老算法 p12 能正常签名。
+          if openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$MAC_CSC_KEY_PASSWORD" -info -noout -legacy 2>&1 | grep -q "MAC:"; then
+            echo "✓ 证书密码校验通过（MAC verified）"
           else
-            echo "::error::.p12 无法用给定密码解析——base64 可能被截断，或 MAC_CSC_KEY_PASSWORD 不对"
+            echo "::error::.p12 密码校验失败——MAC_CSC_KEY_PASSWORD 与导出证书时设的密码不一致"
+            echo "调试信息（不含密码）："
+            openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$MAC_CSC_KEY_PASSWORD" -info -noout -legacy 2>&1 | head -5 || true
             exit 1
           fi
           echo "CSC_FILE=$RUNNER_TEMP/cert.p12" >> "$GITHUB_ENV"
