@@ -59,6 +59,7 @@ import {
   MessageSquare,
   Palette,
   Pencil,
+  RefreshCw,
   Settings,
   SlidersHorizontal,
   Sparkles,
@@ -99,6 +100,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'language', labelKey: 'settings.language', fallback: '界面语言', icon: Languages },
       { id: 'appearance', labelKey: 'settings.appearance', fallback: '外观', icon: SunMoon },
       { id: 'notifications', labelKey: 'settings.notifications', fallback: '通知', icon: Bell },
+      { id: 'appUpdate', labelKey: 'settings.appUpdate', fallback: '更新应用', icon: RefreshCw },
     ],
   },
   {

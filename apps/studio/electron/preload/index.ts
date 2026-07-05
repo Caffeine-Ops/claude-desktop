@@ -64,6 +64,7 @@ import {
   type ImageFileReadResult,
   type ModelListResult,
   type ModelSetPayload,
+  type UpdaterState,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
   type WorkspaceState
@@ -439,6 +440,26 @@ const chatApi: ChatApi = {
 
   closeSettingsWindow(): Promise<void> {
     return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE) as Promise<void>
+  },
+
+  getUpdaterState(): Promise<UpdaterState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.UPDATER_GET_STATE) as Promise<UpdaterState>
+  },
+
+  checkForUpdates(): Promise<UpdaterState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.UPDATER_CHECK) as Promise<UpdaterState>
+  },
+
+  installUpdate(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.UPDATER_INSTALL) as Promise<void>
+  },
+
+  onUpdaterStateChanged(handler: (state: UpdaterState) => void): () => void {
+    const listener = (_e: unknown, state: UpdaterState): void => handler(state)
+    ipcRenderer.on(IPC_CHANNELS.UPDATER_STATE_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.UPDATER_STATE_CHANGED, listener)
+    }
   }
 }
 

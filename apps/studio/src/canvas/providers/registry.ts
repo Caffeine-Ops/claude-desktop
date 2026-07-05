@@ -8,7 +8,6 @@ import type {
   ConnectorStatusResponse,
   ImportGitHubDesignSystemRequest,
   ImportGitHubDesignSystemResponse,
-  OpenDesignGithubLatestReleaseResponse,
   ImportLocalDesignSystemRequest,
   ImportLocalDesignSystemResponse,
   ReplaceProjectWorkingDirResponse,
@@ -1048,27 +1047,9 @@ export async function fetchAppVersionInfo(): Promise<AppVersionInfo | null> {
   }
 }
 
-export type LatestGithubReleaseInfo = {
-  tagName: string;
-  htmlUrl: string;
-  stale: boolean;
-};
-
-export async function fetchLatestGithubReleaseInfo(): Promise<LatestGithubReleaseInfo | null> {
-  try {
-    const resp = await fetch('/api/github/open-design/releases/latest');
-    if (!resp.ok) return null;
-    const json = (await resp.json()) as Partial<OpenDesignGithubLatestReleaseResponse>;
-    if (typeof json.tag_name !== 'string' || typeof json.html_url !== 'string') return null;
-    return {
-      tagName: json.tag_name,
-      htmlUrl: json.html_url,
-      stale: json.stale === true,
-    };
-  } catch {
-    return null;
-  }
-}
+// fetchLatestGithubReleaseInfo（查上游 nexu-io/open-design release）已于
+// 2026-07-05 退役：本应用的更新检查走 main 进程 electron-updater（设置页
+// 「更新应用」section），与上游仓库再无关系。
 
 export type SkillExampleResult =
   | { html: string }

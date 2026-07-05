@@ -16,7 +16,8 @@ import { resolveStudioTabUrl } from './services/openDesignServices'
 import {
   IPC_CHANNELS,
   type ShellMenuAction,
-  type TabDescriptor
+  type TabDescriptor,
+  type UpdaterState
 } from '../shared/ipc-channels'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -807,6 +808,25 @@ function layoutActiveTab(): void {
  * desktop side it would feed the store back what it just pushed (the store's
  * own isHydrating guard assumes we don't do that).
  */
+/**
+ * Push the full updater state to every renderer that can receive IPC
+ * (shell + studio tab). Unlike broadcastAppearanceChanged there is NO
+ * skip-the-writer id: updater transitions originate in MAIN
+ * (electron-updater events), never in a renderer, so every window is
+ * equally "other" — a skip-sender here would recreate the 2026-07-04
+ * appearance sync black hole (chat/canvas share one webContents).
+ */
+export function broadcastUpdaterState(state: UpdaterState): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    shellWindow.webContents.send(IPC_CHANNELS.UPDATER_STATE_CHANGED, state)
+  }
+  for (const ctx of tabs.values()) {
+    const wc = ctx.view.webContents
+    if (wc.isDestroyed()) continue
+    wc.send(IPC_CHANNELS.UPDATER_STATE_CHANGED, state)
+  }
+}
+
 export function broadcastAppearanceChanged(sourceWebContentsId: number): void {
   // Shell renderer (hosts the gear; harmless if it has no appearance store).
   if (

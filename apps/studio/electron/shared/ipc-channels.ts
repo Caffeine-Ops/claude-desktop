@@ -549,7 +549,40 @@ export const IPC_CHANNELS = {
    * already applied the change locally. Distinct from APPEARANCE_SET, which
    * is the desktop renderer's own write-through-main path (also broadcasts).
    */
-  APPEARANCE_BROADCAST: 'appearance:broadcast'
+  APPEARANCE_BROADCAST: 'appearance:broadcast',
+
+  /**
+   * Renderer → main. One-shot pull of the current updater state — the
+   * settings「更新应用」section calls this on mount so it renders the real
+   * phase (downloading / ready / …) even when it mounts mid-flight.
+   * Always resolves; in dev / unpackaged builds the state's `supported`
+   * is false and every phase stays 'idle'.
+   */
+  UPDATER_GET_STATE: 'updater:get-state',
+  /**
+   * Renderer → main. Manually trigger a check ("检查更新" button / menu
+   * item). Resolves with the state snapshot taken right after the check
+   * kicks off; the actual outcome (available / up-to-date / error) arrives
+   * via UPDATER_STATE_CHANGED pushes. No-op (resolves current state) when
+   * a check/download is already in flight — electron-updater does not
+   * support concurrent checks.
+   */
+  UPDATER_CHECK: 'updater:check',
+  /**
+   * Renderer → main. Quit and install the downloaded update. Only
+   * meaningful in phase 'ready'; otherwise resolves without doing
+   * anything (the renderer's button is disabled outside 'ready', but a
+   * stale click racing a state push must not crash).
+   */
+  UPDATER_INSTALL: 'updater:install',
+  /**
+   * Main → every renderer. Pushed on every updater phase transition
+   * (checking → available → downloading(progress) → ready / none / error).
+   * Carries the full UpdaterState so receivers just replace their copy —
+   * no re-pull round-trip needed (unlike APPEARANCE_CHANGED, there is no
+   * daemon copy to re-read; main IS the source of truth here).
+   */
+  UPDATER_STATE_CHANGED: 'updater:state-changed'
 } as const
 
 /**
@@ -1006,6 +1039,52 @@ export type AppearanceSetPayload = { patch: AppearancePrefs }
 export type AppearanceSetResult = { appearance: AppearancePrefs | null }
 
 /**
+ * Auto-update lifecycle phase, owned by main's appUpdater service
+ * (electron-updater over the public GitHub releases repo).
+ *
+ *   idle ─ check ─→ checking ─→ available ─→ downloading ─→ ready
+ *                        │                                    │
+ *                        ├─→ none (already latest)            └─ install → quit
+ *                        └─→ error
+ *
+ * 'downloading' is entered implicitly (autoDownload=true): 'available' is a
+ * transient phase the renderer may never observe between two pushes — treat
+ * available/downloading the same visually. 'error' keeps the app usable; the
+ * next manual check resets to 'checking'.
+ */
+export type UpdaterPhase =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  | 'none'
+  | 'error'
+
+/**
+ * Full updater snapshot. Main pushes it on every transition
+ * (UPDATER_STATE_CHANGED) and returns it from UPDATER_GET_STATE /
+ * UPDATER_CHECK, so the renderer never assembles state from event crumbs.
+ */
+export interface UpdaterState {
+  phase: UpdaterPhase
+  /** app.getVersion() — the running build. */
+  currentVersion: string
+  /** Target version once known (phase available/downloading/ready). */
+  availableVersion: string | null
+  /** 0-100 while downloading, null otherwise. */
+  downloadPercent: number | null
+  /** Human-readable failure while phase === 'error', null otherwise. */
+  errorMessage: string | null
+  /**
+   * false in dev / unpackaged runs (electron-updater has no app-update.yml
+   * to read) — the settings UI shows a "开发模式不可用" hint instead of the
+   * check button.
+   */
+  supported: boolean
+}
+
+/**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
  * interface on both sides via the shared type.
  */
@@ -1392,6 +1471,28 @@ export interface ChatApi {
    * Resolves once main has torn the overlay view down.
    */
   closeSettingsWindow(): Promise<void>
+
+  /** One-shot pull of the auto-updater state (see UPDATER_GET_STATE). */
+  getUpdaterState(): Promise<UpdaterState>
+
+  /**
+   * Manually trigger an update check (see UPDATER_CHECK). Outcome arrives
+   * via onUpdaterStateChanged; the resolved snapshot only reflects the
+   * kick-off ('checking', or unchanged when unsupported/in-flight).
+   */
+  checkForUpdates(): Promise<UpdaterState>
+
+  /**
+   * Quit and install the downloaded update (see UPDATER_INSTALL). Resolves
+   * before the app actually quits; callers should not await-then-act.
+   */
+  installUpdate(): Promise<void>
+
+  /**
+   * Subscribe to updater phase pushes. The handler receives the full
+   * UpdaterState — replace, don't merge. Returns an unsubscribe.
+   */
+  onUpdaterStateChanged(handler: (state: UpdaterState) => void): () => void
 }
 
 /**

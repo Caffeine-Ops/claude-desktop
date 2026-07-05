@@ -1,6 +1,6 @@
 {
   "name": "@claude-desktop/studio",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "description": "Claude Desktop 单包形态（原 apps/desktop 已并入）：electron/ 是 Electron 宿主（main+preload+shared），app/ + src/ 是统一前端（Next.js，prod 走 static export 由 app:// 协议加载）。",
   "private": true,
   "author": "Caffeine-Ops",
@@ -28,14 +28,16 @@
   },
   "//note-scripts": "dev = 整个桌面应用（electron-vite dev；main 启动时自动 spawn daemon 与 dev:next）。dev:next / build:next 是 Next 前端的独立入口——openDesignServices.spawnStudioDev 调的就是 dev:next。刻意没有裸 build：两条构建链必须显式指名（root 的 build 转发到 build:electron，root 的 prebuild:resources 转发到 build:next），避免合包前『desktop build=electron、studio build=next』的二义性复活。",
   "//note-port": "Next dev 端口默认 3100（避开 next 默认 3000——被同源 fork 抢占串味的历史坑，见 electron/main/services/openDesignServices.ts WEB_DEV_PORT 注释）。壳 spawn dev:next 时注入 STUDIO_DEV_PORT 保证监听端口与壳侧探活/加载常量恒等；独立 bun run dev:next 时走 3100 默认值。",
+  "//note-build-appId": "（注释只能放顶层：electron-builder 对 build 块做 schema 校验，未知属性直接报错。）2026-07-05 appId 从 com.anthropic.claude-desktop 改名：与官方 Claude Desktop 的 bundle id 完全同名会让 mac 的 Squirrel ShipIt / updater 缓存目录（都按 appId 组织）在双装机器上互相污染。productName 刻意不改——userData 路径按它组织，改了会丢用户会话数据。副作用：mac TCC 权限（麦克风等）按 bundle id 记忆，升级到本版后需重新授权一次。",
+  "//note-build-publish": "自动更新 feed（方案 A，2026-07-05）：代码仓私有，安装包发到独立的**公开** release 仓——electron-updater 匿名读公开 release，客户端不携带任何 GitHub token（私有仓 provider 需要把 token 打进客户端，官方明说仅供测试）。build.publish 的 owner/repo 会被 electron-builder 写进安装包内的 app-update.yml（即客户端 feed 地址）；CI 的 action-gh-release 用 repository 参数发到同一个仓，两处必须一致。",
   "build": {
-    "appId": "com.anthropic.claude-desktop",
+    "appId": "com.caffeineops.claude-desktop",
     "productName": "Claude Desktop",
     "publish": [
       {
         "provider": "github",
         "owner": "Caffeine-Ops",
-        "repo": "claude-desktop"
+        "repo": "claude-desktop-releases"
       }
     ],
     "directories": {
@@ -126,7 +128,8 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.186",
     "@electron-toolkit/preload": "^3.0.1",
-    "@electron-toolkit/utils": "^3.0.0"
+    "@electron-toolkit/utils": "^3.0.0",
+    "electron-updater": "^6.8.9"
   },
   "//note-deps": "dependencies = Electron 运行时真正 require 的包，一个都不能多：electron-vite 的 externalizeDepsPlugin 按这里决定哪些包不打进 bundle（运行时从 node_modules require），electron-builder 按这里决定哪些 node_modules 进 asar。全部前端依赖（next/react/prosemirror/…）都在 devDependencies——UI 是构建期产物（next static export），运行时没人 require 它们；若放进 dependencies，整个前端依赖树会被打进安装包白白撑大体积。",
   "devDependencies": {

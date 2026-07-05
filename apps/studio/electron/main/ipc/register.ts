@@ -53,10 +53,12 @@ import {
   type AppearanceSetPayload,
   type AppearanceSetResult,
   type AppearancePrefs,
-  type ShellMenuActionPayload
+  type ShellMenuActionPayload,
+  type UpdaterState
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
 import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
+import { checkForUpdates, getUpdaterState, installUpdate } from '../services/appUpdater'
 import { DAEMON_PORT } from '../services/openDesignServices'
 import type { ChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
@@ -251,6 +253,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.APPEARANCE_GET)
   ipcMain.removeHandler(IPC_CHANNELS.APPEARANCE_SET)
   ipcMain.removeHandler(IPC_CHANNELS.APPEARANCE_BROADCAST)
+  ipcMain.removeHandler(IPC_CHANNELS.UPDATER_GET_STATE)
+  ipcMain.removeHandler(IPC_CHANNELS.UPDATER_CHECK)
+  ipcMain.removeHandler(IPC_CHANNELS.UPDATER_INSTALL)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_TRIGGER_MENU_ACTION)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_SWITCH_REQUEST)
@@ -1233,6 +1238,21 @@ export function registerIpcHandlers(): void {
         if (a && typeof a.themeMode === 'string') syncShellBackgroundToTheme(a.themeMode)
       })
       .catch(() => {})
+  })
+
+  // ── 自动更新（electron-updater，状态机在 services/appUpdater.ts）──
+  // 三个 handler 都是薄转发：状态归 main 单独持有，结论走
+  // UPDATER_STATE_CHANGED 推送，invoke 的返回值只是即时快照。
+  ipcMain.handle(IPC_CHANNELS.UPDATER_GET_STATE, async (): Promise<UpdaterState> => {
+    return getUpdaterState()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.UPDATER_CHECK, async (): Promise<UpdaterState> => {
+    return checkForUpdates()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.UPDATER_INSTALL, async (): Promise<void> => {
+    installUpdate()
   })
 
   // Shell tab-strip settings menu → active chat tab. The shell renderer

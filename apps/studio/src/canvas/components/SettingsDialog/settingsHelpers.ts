@@ -46,6 +46,10 @@ export type SettingsSection =
   // section. Reconcile follow-up: route library through a dedicated
   // navigate() call so openSettings only owns dialog-bound sections.
   | 'library'
+  // 自动更新（2026-07-05）：检查/下载/安装状态面。面板组件在
+  // components/settings/UpdateAppSection.tsx（chat 栈），经 window.chatApi
+  // 直连 main 的 appUpdater 状态流，不走 daemon。
+  | 'appUpdate'
   | 'about';
 
 export interface SettingsDialogProps {

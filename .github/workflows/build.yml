@@ -258,9 +258,26 @@ jobs:
       # physically retired in Phase 4). The library packages daemon/studio
       # import from `dist/` are already built by the root postinstall (runs
       # during `bun install`), so we don't repeat them here.
+      # mac 签名 + 公证（自动更新的硬前提，2026-07-05 起）：
+      #   - CSC_LINK / CSC_KEY_PASSWORD：Developer ID Application 证书
+      #     （.p12 base64）。secret 未配置时求值为空串，electron-builder 视
+      #     同未设置 → 跳过签名（CI 照常出未签名包，但 mac 自动更新不可用，
+      #     electron-updater 会拒绝未签名/签名不一致的更新替换）。
+      #   - APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID：三者齐全
+      #     时 electron-builder 自动走 notarytool 公证（无需在 build 配置里
+      #     声明 notarize；缺任一则跳过公证——未公证的 dmg 首次安装会被
+      #     Gatekeeper 拦，但不阻塞 CI 本身）。
+      #   - CSC_IDENTITY_AUTO_DISCOVERY 保持 false：禁的是「从 runner 钥匙串
+      #     自动捞证书」这条路（CI runner 没有钥匙串证书，捞了也是浪费时间
+      #     还可能捞到错的）；显式 CSC_LINK 不受它影响。
       - name: Build (${{ matrix.platform }})
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run dist:${{ matrix.platform }}
 
@@ -276,10 +293,22 @@ jobs:
       # root). Both matrix jobs target the same tag; action-gh-release is
       # idempotent per tag — the first creates the release, the second
       # appends its files — so mac and win can publish in parallel.
+      #
+      # 发布目标是独立的**公开** release 仓（自动更新方案 A，2026-07-05）：
+      # 代码仓保持私有，只有安装包公开——electron-updater 按包内
+      # app-update.yml（= studio package.json build.publish）匿名拉取该仓的
+      # latest*.yml + 安装包，*.blockmap 支撑差分下载。因此：
+      #   - repository 必须与 build.publish 的 owner/repo 一致；
+      #   - GITHUB_TOKEN 只对本仓有效，跨仓发布必须用 PAT secret
+      #     RELEASE_REPO_TOKEN（fine-grained：目标仓 Contents read/write）。
+      #     secret 缺失时本步会失败——发版链路宁可红也不要静默发错地方。
+      #   - tag 会打在目标仓的默认分支上（目标仓只有 README，无所谓指哪）。
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          repository: Caffeine-Ops/claude-desktop-releases
+          token: ${{ secrets.RELEASE_REPO_TOKEN }}
           files: |
             apps/studio/dist/*.dmg
             apps/studio/dist/*.zip

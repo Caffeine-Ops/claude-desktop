@@ -43,6 +43,7 @@ import {
   waitForStudioReady
 } from './services/openDesignServices'
 import { APP_SCHEME, registerAppProtocol } from './services/appProtocol'
+import { checkForUpdatesInteractive, initAppUpdater } from './services/appUpdater'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -77,11 +78,23 @@ protocol.registerSchemesAsPrivileged([
 function buildMenu(): Menu {
   const isMac = process.platform === 'darwin'
 
+  // 「检查更新…」：mac 放 app 菜单（About 下面，平台惯例位），其余平台放
+  // File 菜单。结论用原生对话框反馈（见 checkForUpdatesInteractive）——
+  // 菜单没有可驻留的状态面，弹框是同步反馈的唯一去处；设置页的
+  // 「更新应用」section 与它共用同一条 main 侧状态流。
+  const checkForUpdatesItem: MenuItemConstructorOptions = {
+    label: isMac ? '检查更新…' : '检查更新',
+    click: () => {
+      void checkForUpdatesInteractive()
+    }
+  }
+
   const fileMenu: MenuItemConstructorOptions = {
     label: '&File',
     submenu: [
       // 「New Tab / ⌘T」已随 legacy 多 tab 架构下线（Phase 4）：单视图形态
       // 全 app 只有一个全屏 studio tab，多开没有意义。
+      ...(isMac ? [] : [checkForUpdatesItem, { type: 'separator' } as MenuItemConstructorOptions]),
       isMac ? { role: 'close' } : { role: 'quit' }
     ]
   }
@@ -124,10 +137,27 @@ function buildMenu(): Menu {
     ]
   }
 
+  // mac app 菜单：展开默认 appMenu role 只为在 About 后插「检查更新…」，
+  // 其余项与 Electron 默认 appMenu 逐项一致（少一项都会丢平台标配行为）。
+  const macAppMenu: MenuItemConstructorOptions = {
+    role: 'appMenu',
+    submenu: [
+      { role: 'about' },
+      { type: 'separator' },
+      checkForUpdatesItem,
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { role: 'hide' },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit' }
+    ]
+  }
+
   const template: MenuItemConstructorOptions[] = [
-    ...(isMac
-      ? ([{ role: 'appMenu' }] as MenuItemConstructorOptions[])
-      : []),
+    ...(isMac ? [macAppMenu] : []),
     fileMenu,
     { role: 'editMenu' },
     viewMenu,
@@ -138,7 +168,10 @@ function buildMenu(): Menu {
 }
 
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.anthropic.claude-desktop')
+  // 与 package.json build.appId 保持一致（Windows AUMID，通知/任务栏分组
+  // 按它归属）。2026-07-05 随 appId 一起从 com.anthropic.* 改名，见
+  // package.json 的 //note-appId。
+  electronApp.setAppUserModelId('com.caffeineops.claude-desktop')
 
   // Electron's default permission policy denies every getUserMedia
   // call, which kills the dictation adapter before the first chunk.
@@ -217,6 +250,10 @@ app.whenReady().then(async () => {
   })()
 
   createTray(() => getShellWindow())
+
+  // 自动更新：打包形态才真正初始化（dev 下降级为 supported:false 只读态），
+  // 内部自带 15s 延迟首查，不跟冷启动抢资源。
+  initAppUpdater()
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) {

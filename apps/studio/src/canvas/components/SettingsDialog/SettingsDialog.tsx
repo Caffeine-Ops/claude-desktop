@@ -72,9 +72,7 @@ import type {
 } from '../../types';
 import { testAgent, testApiProvider } from '../../providers/connection-test';
 import { fetchProviderModels } from '../../providers/provider-models';
-import { fetchLatestGithubReleaseInfo } from '../../providers/registry';
 import { IMAGE_MODELS } from '../../media/models';
-import { Toast } from '../shared/Toast';
 import { PetSettings } from '../pet/PetSettings';
 import { McpClientSection } from '../settings/McpClientSection';
 import { SkillsSection } from '../settings/SkillsSection';
@@ -85,6 +83,7 @@ import {
   WorkspaceProjectsSection,
 } from '../settings/WorkspaceSections';
 import { PrivacySection } from '../settings/PrivacySection';
+import { UpdateAppSection } from '../settings/UpdateAppSection';
 import { RoutinesSection } from '../automations/RoutinesSection';
 import { MemoryModelInline } from '../memory/MemoryModelInline';
 import { MemorySection } from '../memory/MemorySection';
@@ -318,26 +317,10 @@ export function SettingsDialog({
   const [agentCustomModelIds, setAgentCustomModelIds] = useState<
     ReadonlySet<string>
   >(() => new Set());
-  const [versionChecking, setVersionChecking] = useState(false);
-  const [aboutToast, setAboutToast] = useState<string | null>(null);
-
-  const handleInstallLatest = useCallback(async () => {
-    if (versionChecking || !appVersionInfo) return;
-    setVersionChecking(true);
-    try {
-      const release = await fetchLatestGithubReleaseInfo();
-      const latestTag = (release?.tagName ?? '').replace(/^v/, '');
-      if (release?.stale !== true && latestTag && latestTag === appVersionInfo.version) {
-        setAboutToast(t('settings.alreadyLatest'));
-        return;
-      }
-    } catch {
-      // network error — fall through to open releases page
-    } finally {
-      setVersionChecking(false);
-    }
-    window.open('https://github.com/nexu-io/open-design/releases', '_blank', 'noopener,noreferrer');
-  }, [versionChecking, appVersionInfo, t]);
+  // 「关于」页的版本行动作（2026-07-05）：原 handleInstallLatest 检查的是
+  // 上游 nexu-io/open-design 的 release（daemon 代理），与本应用自己的发版
+  // 渠道早已无关——真正的更新走 main 的 electron-updater（设置页「更新
+  // 应用」section），这里退化成一个跳转入口。
 
   // Imperative handle for the External MCP section. The dialog footer Save
   // routes through this when the MCP tab is active so the user can press the
@@ -1373,6 +1356,7 @@ export function SettingsDialog({
     // 'library' is opened via EntryShell route — SettingsDialog doesn't
     // render it but SettingsSection must accept the token (see type def).
     library: { title: '', subtitle: '' },
+    appUpdate: { title: t('settings.appUpdate'), subtitle: t('settings.appUpdateHint') },
     about: { title: t('settings.about'), subtitle: t('settings.aboutHint') },
   };
   const activeHeader = sectionHeader[activeSection];
@@ -2975,6 +2959,10 @@ export function SettingsDialog({
             <PrivacySection cfg={cfg} setCfg={setCfg} />
           ) : null}
 
+          {activeSection === 'appUpdate' ? (
+            <UpdateAppSection fallbackVersion={appVersionInfo?.version ?? null} />
+          ) : null}
+
           {activeSection === 'about' ? (
             <section className="settings-section">
               {appVersionInfo ? (
@@ -2987,10 +2975,9 @@ export function SettingsDialog({
                     <button
                       type="button"
                       className="settings-about-download-link"
-                      disabled={versionChecking}
-                      onClick={handleInstallLatest}
+                      onClick={() => setActiveSection('appUpdate')}
                     >
-                      {versionChecking ? t('common.loading') : t('settings.installLatest')}
+                      {t('updateApp.check')}
                     </button>
                   </div>
                   <div>
@@ -3025,12 +3012,6 @@ export function SettingsDialog({
                 <ExportDiagnosticsRow />
               </div>
             </section>
-          ) : null}
-          {aboutToast ? (
-            <Toast
-              message={aboutToast}
-              onDismiss={() => setAboutToast(null)}
-            />
           ) : null}
           </div>
         </div>

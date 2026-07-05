@@ -30,6 +30,7 @@ import { usePathname, useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useRef } from 'react'
 
 import { ChatSurface } from '@/src/components/ChatSurface'
+import { UpdateReadyToast } from '@/src/components/UpdateReadyToast'
 import { cn } from '@/src/lib/utils'
 
 // canvas App 与 ChatSurface 内部的 ChatApp 同策略：ssr:false，模块只在
@@ -121,6 +122,9 @@ export function SurfaceHost() {
           {canvasFace}
         </div>
       )}
+      {/* 全局更新就绪提示：fixed 定位 + 顶层 z，必须在两个（可能被
+        * content-visibility:hidden 冻结的）面包装 div 之外。 */}
+      <UpdateReadyToast />
     </div>
   )
 }
