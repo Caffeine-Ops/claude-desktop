@@ -72,6 +72,9 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
+      "signIgnore": [
+        "prebundled/.*\\.(svg|png|jpg|jpeg|gif|webp|ico|md|txt|json|css|html|log|pptx)$"
+      ],
       "extraResources": [
         {
           "from": "fusion-bin/fusion-code-cli",
