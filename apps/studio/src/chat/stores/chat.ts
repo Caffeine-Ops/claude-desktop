@@ -836,13 +836,51 @@ export const useChatStore = create<ChatState>((set) => ({
 
   endAssistantMessage: (sessionId) => {
     set((s) => {
-      const patch = updateSlot(s, sessionId, (slot) => ({
-        ...slot,
-        streaming: false,
-        turnStartedAt: null,
-        turnVerb: null,
-        turnHasText: false
-      }))
+      const patch = updateSlot(s, sessionId, (slot) => {
+        // Settlement sweep — the turn is over, so any tool-call part still
+        // missing a result was never finished (user hit Esc mid-tool, or
+        // fusion-code died and fired 'error'). The normal finish paths
+        // (updateToolCallResult stamps endedAt, finalizeToolCall sets
+        // argsComplete) never ran for these, leaving them looking "still
+        // running" to every transcript-wide hook: useTurnActivity would show
+        // a bogus activity label + a runaway elapsed timer on later turns,
+        // useImageFeeds' `generating` and usePendingAskTiming's live counter
+        // would stay stuck, and a half-streamed AskUserQuestion would leave a
+        // permanent ghost 问题 tab. Force-settle them here so those hooks read
+        // them as done: backfill endedAt (freeze the timer at ~now, the best
+        // estimate we have) and mark argsComplete + an `interrupted` flag the
+        // cards can badge with ⊘.
+        let touched = false
+        const messages = slot.messages.map((m) => {
+          if (!Array.isArray(m.content)) return m
+          let partChanged = false
+          const parts = ((m.content as unknown) as ContentPart[]).map((p) => {
+            if (p.type !== 'tool-call') return p
+            if (p.result !== undefined) return p
+            partChanged = true
+            return {
+              ...p,
+              endedAt: typeof p.endedAt === 'number' ? p.endedAt : Date.now(),
+              argsComplete: true,
+              interrupted: true
+            }
+          })
+          if (!partChanged) return m
+          touched = true
+          return {
+            ...m,
+            content: parts as unknown as ThreadMessageLike['content']
+          }
+        })
+        return {
+          ...slot,
+          messages: touched ? messages : slot.messages,
+          streaming: false,
+          turnStartedAt: null,
+          turnVerb: null,
+          turnHasText: false
+        }
+      })
       return patch ?? {}
     })
   },
@@ -1122,7 +1160,18 @@ export function useTurnActivity(): {
         for (const p of (m.content as unknown) as ContentPart[]) {
           lastPartType = p.type
           if (p.type !== 'tool-call') continue
-          if (p.result === undefined && typeof p.toolName === 'string') {
+          // "Running" = no result AND not yet settled. endAssistantMessage's
+          // settlement sweep backfills endedAt on any tool-call left
+          // unfinished by an interrupt/error, so a still-undefined result with
+          // an endedAt stamp is a settled-but-interrupted tool from a PAST
+          // turn — treat it as done, not as a phantom still in flight (else its
+          // stale toolName + startedAt would drive a bogus label and a runaway
+          // timer on every later turn).
+          if (
+            p.result === undefined &&
+            typeof p.endedAt !== 'number' &&
+            typeof p.toolName === 'string'
+          ) {
             runningTool = p.toolName
             runningToolStartedAt =
               typeof p.startedAt === 'number' ? p.startedAt : undefined
@@ -1171,8 +1220,42 @@ export function useTurnActivity(): {
  * Returns the string itself so zustand's shallow compare re-renders only when
  * the streamed text grows. Mirrors useToolCallTasks's store-walk.
  */
+/**
+ * Set of session ids whose assistant turn is currently streaming — i.e.
+ * has agent work in flight. Drives the running/loading spinner on each
+ * rail session row (RailSessionList). Reads the authoritative
+ * per-session `streaming` flag (flipped by start/end ChatEvents, which
+ * FusionRuntimeProvider subscribes for every live runtime, foreground
+ * AND background), so a backgrounded task shows its spinner too.
+ *
+ * The selector returns a sorted, comma-joined id STRING rather than a
+ * fresh Set — a primitive that zustand compares with Object.is, so the
+ * hook only re-renders when the *set of running sessions* changes, not
+ * on every streaming delta (each delta rewrites the slot, but the id
+ * list is unchanged). The component rebuilds the Set from the string
+ * with a useMemo. This is the "subscribe to a stable primitive, derive
+ * the object in the component" pattern that avoids the useShallow
+ * new-object getSnapshot loop.
+ */
+export function useRunningSessionIdsKey(): string {
+  return useChatStore((s) => {
+    const running: string[] = []
+    for (const [sid, slot] of Object.entries(s.perSession)) {
+      if (slot.streaming) running.push(sid)
+    }
+    return running.sort().join(',')
+  })
+}
+
 export function useStreamingAskArgsText(): string | null {
   return useChatStore((s): string | null => {
+    // Take the LAST still-streaming AskUserQuestion, mirroring
+    // usePendingAskTiming's "last wins" — a fresh question must supersede any
+    // earlier one in the same thread. endAssistantMessage's settlement sweep
+    // sets argsComplete on interrupted tool-calls so they drop out of this
+    // filter, but "last wins" is a cheap belt-and-suspenders: even if a stale
+    // match somehow survived, it can't mask the newly streaming question.
+    let latest: string | null = null
     for (const m of s.messages) {
       if (!Array.isArray(m.content)) continue
       for (const p of (m.content as unknown) as ContentPart[]) {
@@ -1182,11 +1265,11 @@ export function useStreamingAskArgsText(): string | null {
           p.argsComplete !== true &&
           typeof p.argsText === 'string'
         ) {
-          return p.argsText as string
+          latest = p.argsText as string
         }
       }
     }
-    return null
+    return latest
   })
 }
 

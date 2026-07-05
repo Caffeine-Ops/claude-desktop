@@ -30,6 +30,7 @@ import type {
   LogEvent,
   McpServerInfo,
   PermissionRequest,
+  QueuedMessage,
   SessionMeta,
   WorkflowTaskStatus
 } from '../../shared/types'
@@ -260,6 +261,30 @@ interface SessionRuntime {
    * when the user switches away.
    */
   openedViaSend: boolean
+  /**
+   * Turns the user submitted **while a turn was already streaming**.
+   * `send()` refuses to overwrite `active` (that used to strand the
+   * running turn's events and silently drop the new reply — see
+   * docs/ui-prototype-message-queue.html); instead it appends here and
+   * the pump drains the head into a fresh `active` right after each
+   * `result` clears the slot. FIFO, but the UI can reorder/remove
+   * entries before they run. Empty in steady state.
+   */
+  pendingTurns: PendingTurn[]
+}
+
+/**
+ * A user turn waiting its slot behind the currently-streaming one.
+ * Holds everything `beginTurn` needs to install it as the next `active`
+ * — the messageId is minted at enqueue time (not dequeue) so the
+ * renderer's optimistic bubble and the queue row share one stable id
+ * across the whole "queued → running" transition.
+ */
+interface PendingTurn {
+  messageId: string
+  requestId: number
+  text: string
+  images?: readonly ChatImagePayload[]
 }
 
 interface ActiveTurn {
@@ -995,6 +1020,47 @@ export class ChatEngine extends EventEmitter {
       return { messageId }
     }
 
+    // Message queue: if a turn is already streaming, do NOT clobber
+    // `runtime.active`. Overwriting it used to strand the running turn's
+    // remaining chunks under a mismatched messageId and then drop the
+    // new turn's reply entirely once the old `result` cleared the slot
+    // (audit finding — see docs/ui-prototype-message-queue.html). Instead
+    // append the turn to `pendingTurns`; the pump drains the head into a
+    // fresh `active` right after the current `result` lands.
+    if (runtime.active !== null) {
+      runtime.pendingTurns.push({ messageId, requestId, text, images })
+      console.log('[engine] send enqueued behind active turn', {
+        sessionId,
+        messageId,
+        activeMessageId: runtime.active.messageId,
+        queueDepth: runtime.pendingTurns.length
+      })
+      this.logEvent('send:enqueued', {
+        messageId,
+        queueDepth: runtime.pendingTurns.length
+      })
+      this.emitQueueChanged(sessionId, runtime)
+      return { messageId }
+    }
+
+    this.beginTurn(runtime, sessionId, { messageId, requestId, text, images })
+    return { messageId }
+  }
+
+  /**
+   * Install a user turn as the runtime's `active` slot and push its SDK
+   * user-message onto the streaming prompt queue. Precondition: the
+   * caller has ensured the cli is ready (`runtime.queue`/`handle` set)
+   * and that no turn is currently active — `send()` guards the first via
+   * ensureSessionReady, and both `send()` (idle path) and
+   * `drainNextQueuedTurn()` (post-result path) guard the second.
+   */
+  private beginTurn(
+    runtime: SessionRuntime,
+    sessionId: string,
+    turn: PendingTurn
+  ): void {
+    const { messageId, requestId, text, images } = turn
     // Register this turn as the active one. The pump looks at
     // `runtime.active` to decide which messageId to emit ChatEvents for.
     runtime.active = {
@@ -1044,8 +1110,123 @@ export class ChatEngine extends EventEmitter {
       queueSize: runtime.queue!.size
     })
     this.logEvent('send:queued', { messageId, queueSize: runtime.queue!.size })
+  }
 
-    return { messageId }
+  /**
+   * Drain the head of `pendingTurns` into a fresh active turn. Called by
+   * the pump right after a `result` cleared `runtime.active`. No-op if
+   * the queue is empty or the cli went away (pump exit nulls the queue —
+   * we requeue nothing and let the next explicit send respawn). Emits a
+   * queue-changed event so the renderer drops the row it just promoted.
+   */
+  private drainNextQueuedTurn(
+    runtime: SessionRuntime,
+    sessionId: string
+  ): void {
+    if (runtime.active !== null) return
+    const next = runtime.pendingTurns.shift()
+    if (!next) return
+    if (!runtime.queue || !runtime.handle) {
+      // cli is gone (crash/exit). Put the turn back so a future send can
+      // respawn and replay it, rather than silently eating it.
+      runtime.pendingTurns.unshift(next)
+      console.warn('[engine] drainNextQueuedTurn: cli not ready, holding queue', {
+        sessionId,
+        queueDepth: runtime.pendingTurns.length
+      })
+      return
+    }
+    console.log('[engine] draining queued turn into active', {
+      sessionId,
+      messageId: next.messageId,
+      remaining: runtime.pendingTurns.length
+    })
+    this.beginTurn(runtime, sessionId, next)
+    this.emitQueueChanged(sessionId, runtime)
+  }
+
+  /** Project a runtime's pending turns into the renderer-facing shape. */
+  private queueSnapshot(runtime: SessionRuntime): QueuedMessage[] {
+    return runtime.pendingTurns.map((t) => ({
+      messageId: t.messageId,
+      text: t.text,
+      imageCount: t.images?.length ?? 0
+    }))
+  }
+
+  /** Broadcast the current queue to the renderer's queue panel. */
+  private emitQueueChanged(sessionId: string, runtime: SessionRuntime): void {
+    this.emitEvent(sessionId, {
+      type: 'queue_changed',
+      queue: this.queueSnapshot(runtime)
+    })
+  }
+
+  /**
+   * Return the current message queue for a session (used by the IPC
+   * layer to seed the renderer's panel on mount / after a switch). Empty
+   * array for an unknown session or one with nothing queued.
+   */
+  getQueue(sessionId: string): QueuedMessage[] {
+    const runtime = this.sessions.get(sessionId)
+    return runtime ? this.queueSnapshot(runtime) : []
+  }
+
+  /**
+   * Remove a queued turn by messageId before it runs. No-op (returns
+   * false) if the id isn't queued — e.g. it already got promoted into
+   * the active slot, which the renderer can't cancel from the panel
+   * (use abort() for that). Emits queue_changed on success.
+   */
+  removeQueued(sessionId: string, messageId: string): boolean {
+    const runtime = this.sessions.get(sessionId)
+    if (!runtime) return false
+    const idx = runtime.pendingTurns.findIndex((t) => t.messageId === messageId)
+    if (idx < 0) return false
+    runtime.pendingTurns.splice(idx, 1)
+    this.logEvent('queue:remove', {
+      messageId,
+      queueDepth: runtime.pendingTurns.length
+    })
+    this.emitQueueChanged(sessionId, runtime)
+    return true
+  }
+
+  /**
+   * Replace the text of a queued turn in place (the panel's "edit"
+   * action commits here rather than remove+re-add, so the entry keeps
+   * its position and messageId). Trimmed-empty text removes the entry
+   * instead. No-op if the id isn't queued.
+   */
+  editQueued(sessionId: string, messageId: string, text: string): boolean {
+    const runtime = this.sessions.get(sessionId)
+    if (!runtime) return false
+    const turn = runtime.pendingTurns.find((t) => t.messageId === messageId)
+    if (!turn) return false
+    const next = text.trim()
+    if (!next) return this.removeQueued(sessionId, messageId)
+    turn.text = next
+    this.logEvent('queue:edit', { messageId, textLength: next.length })
+    this.emitQueueChanged(sessionId, runtime)
+    return true
+  }
+
+  /**
+   * Move a queued turn to the front of the queue (panel's "move to top"
+   * action). It still waits for the active turn to finish — this only
+   * reorders what's pending, it does not preempt. No-op if not queued or
+   * already at the head.
+   */
+  promoteQueued(sessionId: string, messageId: string): boolean {
+    const runtime = this.sessions.get(sessionId)
+    if (!runtime) return false
+    const idx = runtime.pendingTurns.findIndex((t) => t.messageId === messageId)
+    if (idx <= 0) return false
+    const [turn] = runtime.pendingTurns.splice(idx, 1)
+    runtime.pendingTurns.unshift(turn)
+    this.logEvent('queue:promote', { messageId })
+    this.emitQueueChanged(sessionId, runtime)
+    return true
   }
 
   /**
@@ -2055,6 +2236,18 @@ export class ChatEngine extends EventEmitter {
           inspect(sdkMessage, SDK_INSPECT_OPTS)
         )
 
+        // First SDK message of the turn = the assistant has STARTED
+        // replying (thinking / tool-use / text — whichever comes first).
+        // By now fusion-code has consumed the user turn and written it to
+        // the JSONL, so the file mtime — the source of
+        // ThreadSummary.updatedAt — has advanced. Broadcast so the rail
+        // floats this session to the top with a fresh "刚刚" the instant
+        // the reply begins, instead of only when it finishes (the
+        // turn-end broadcast below still fires to catch the final mtime).
+        if (active.sdkMessageCount === 1) {
+          this.emit('sessionListChanged')
+        }
+
         this.handleSdkMessage(sessionId, active, sdkMessage)
 
         // Authoritative turn boundary: a `result` message is the
@@ -2117,6 +2310,22 @@ export class ChatEngine extends EventEmitter {
             messageId: active.messageId
           })
           runtime.active = null
+          // A turn just finished → this session's JSONL grew (user turn +
+          // assistant reply), so its file mtime — the source of
+          // ThreadSummary.updatedAt — advanced. Broadcast so the rail
+          // re-pulls and this session floats to the top with a fresh
+          // "刚刚" timestamp. Without this the list kept the pre-turn time
+          // (or, for a brand-new session, only the `system init` broadcast
+          // fired, so the row appeared but never re-sorted after the
+          // reply). The mtime-keyed listSessions cache invalidates itself
+          // on the new mtime, so the re-pull reads the real new time.
+          this.emit('sessionListChanged')
+          // Message queue: with the slot free, promote the next queued
+          // turn (if any) into a fresh active turn. beginTurn pushes its
+          // user-message onto the still-open SDK queue, so the same cli
+          // session streams straight through into the next reply — no
+          // respawn, no dropped turn. No-op when the queue is empty.
+          this.drainNextQueuedTurn(runtime, sessionId)
         }
       }
       console.log('[engine] pump exited gracefully', { sessionId })
@@ -2829,7 +3038,8 @@ export class ChatEngine extends EventEmitter {
       readyReject: null,
       readySettled: false,
       pendingResume: false,
-      openedViaSend: false
+      openedViaSend: false,
+      pendingTurns: []
     }
     this.sessions.set(sessionId, runtime)
     return runtime

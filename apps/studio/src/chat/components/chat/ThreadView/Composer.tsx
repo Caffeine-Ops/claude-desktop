@@ -17,6 +17,8 @@ import { useComposerOverlayStore } from '../../../stores/composerOverlay'
 import { buildSlashAdapter } from '../../../composer/slashAdapter'
 import { buildFileMentionAdapter } from '../../../composer/fileMentionAdapter'
 import { ProseMirrorComposerInput } from '../../../composer/ProseMirrorComposerInput'
+import { QueuePanel } from './QueuePanel'
+import { useMessageQueueStore } from '../../../stores/messageQueue'
 import { FileTypeIcon } from '../FileTypeIcon'
 import { DictationWaveform } from '../DictationWaveform'
 import { PermissionModePicker } from '../../permissions/PermissionModePicker'
@@ -150,6 +152,13 @@ export function Composer(): React.JSX.Element {
   // Called on every send path (Enter → onSubmit, and the Send button's
   // onClick); markSlidesSession is idempotent so double-calls are fine.
   const composerSessionId = useChatStore((s) => s.sessionId)
+  // Whether this session has any queued turns — drives the hairline divider
+  // BELOW the queue segment (the divider must not show when the queue is
+  // empty, and QueuePanel itself renders null then). A boolean selector, so
+  // it's a stable scalar (no fresh-array churn / useShallow pitfalls).
+  const hasQueue = useMessageQueueStore((s) =>
+    composerSessionId ? (s.queues[composerSessionId]?.length ?? 0) > 0 : false
+  )
   const markIfSlides = useCallback(() => {
     const st = useComposerModeStore.getState()
     if (st.mode === 'slides') st.markSlidesSession(composerSessionId ?? '')
@@ -302,27 +311,50 @@ export function Composer(): React.JSX.Element {
           (AttachmentDropzone / Attachments / Send / Cancel / Dictation)
           remain. */}
       <div className="relative">
-        {/* Working-status strip stacked directly on top of the composer card:
-            animated glyph + current Chinese activity on the left, live elapsed
-            timer on the right. Only while the turn streams (and not during
-            plain prose output). It's a slim GREEN band with rounded TOP corners
-            and a flat bottom; a negative margin tucks its bottom edge under the
-            white input card below so they butt seamlessly. The green stays a
-            thin top accent — it does NOT flood the input area, which keeps its
-            clean white card. */}
-        {turnActivity.active && turnActivity.startedAt !== undefined ? (
-          <div className="-mb-3 rounded-t-[20px] border border-b-0 border-brand/25 bg-brand/[0.08] px-1 pb-3 pt-0.5">
-            <ComposerStatusBar
-              startedAt={turnActivity.startedAt}
-              activity={turnActivity.activity}
-            />
-          </div>
-        ) : null}
-        {/* AttachmentDropzone is the input "card" — always its own clean white
-            card with border + rounded corners, sitting ON TOP of the status
-            band (z-10) so the band's tucked bottom edge stays hidden and the
-            composer never floods green. */}
-        <ComposerPrimitive.AttachmentDropzone className="relative z-10 rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--brand)/0.4)] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--brand)/0.5)] data-[dragging=true]:bg-brand/[0.08] dark:ring-white/[0.08]">
+        {/* SINGLE-CONTAINER COMPOSER (redesign — replaces the old three stacked
+            rounded boxes joined by negative margins, which clipped the status
+            row and doubled up borders; see the bug screenshots).
+
+            The AttachmentDropzone is now the ONE rounded frame for the whole
+            stack. Everything lives INSIDE it as flat, full-width segments
+            separated by 1px hairline dividers, top-to-bottom:
+
+              ┌─ message queue (QueuePanel) ─┐   ← only while queue non-empty
+              ├──────── hairline ────────────┤
+              │ working-status strip (green) │   ← only while streaming
+              ├──────── hairline ────────────┤
+              │ attachments · input · toolbar│
+              └──────────────────────────────┘
+
+            `overflow-hidden` clips each segment's square corners to the card's
+            radius. No segment carries its own border/radius/negative margin, so
+            nothing can overlap or clip anything else — the status row is always
+            a full, un-obscured line. */}
+        <ComposerPrimitive.AttachmentDropzone className="relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--brand)/0.4)] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--brand)/0.5)] data-[dragging=true]:bg-brand/[0.08] dark:ring-white/[0.08]">
+          {/* Segment 1 — message queue. Renders null when empty (so no divider
+              shows either). Its own frame styling was stripped; it's pure
+              content here. */}
+          <QueuePanel sessionId={composerSessionId} />
+          {hasQueue ? <div className="h-px bg-border/70" /> : null}
+
+          {/* Segment 2 — working-status strip: animated glyph + current Chinese
+              activity on the left, live elapsed timer on the right. A slim band
+              with a faint green tint (accent only, never floods the input).
+              Only while the turn streams (and not during plain prose output).
+              A full, un-clipped row — the whole point of the redesign. */}
+          {turnActivity.active && turnActivity.startedAt !== undefined ? (
+            <>
+              <div className="bg-brand/[0.07]">
+                <ComposerStatusBar
+                  startedAt={turnActivity.startedAt}
+                  activity={turnActivity.activity}
+                />
+              </div>
+              <div className="h-px bg-border/70" />
+            </>
+          ) : null}
+
+          {/* Segment 3 — the input body (attachments · text · toolbar). */}
           {/* Attachment preview row (pasted / dropped / picked). */}
           <div className="flex flex-wrap gap-2 px-4 pt-3 empty:hidden">
             <ComposerPrimitive.Attachments>
@@ -363,7 +395,11 @@ export function Composer(): React.JSX.Element {
                 {/* —— Top row: the multi-line input —— */}
                 <div className="min-h-[52px] max-h-52 overflow-y-auto px-5 pb-1 pt-4 text-[15px] leading-relaxed">
                   <ProseMirrorComposerInput
-                    placeholder={t('composerPlaceholder')}
+                    placeholder={
+                      streaming
+                        ? t('composerPlaceholderStreaming')
+                        : t('composerPlaceholder')
+                    }
                     slashAdapter={slashAdapter}
                     mentionAdapter={fileAdapter}
                     onSubmit={() => {

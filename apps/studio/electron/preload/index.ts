@@ -6,6 +6,7 @@ import type {
   LogEvent,
   PermissionRequest,
   PermissionResponse,
+  QueuedMessage,
   SessionMeta
 } from '../shared/types'
 import {
@@ -13,6 +14,10 @@ import {
   type ChatAbortPayload,
   type ChatApi,
   type ChatEventPayload,
+  type ChatQueueEditPayload,
+  type ChatQueueListPayload,
+  type ChatQueuePromotePayload,
+  type ChatQueueRemovePayload,
   type ChatSendPayload,
   type ChatSendResult,
   type FileSuggestionsListPayload,
@@ -89,6 +94,34 @@ const chatApi: ChatApi = {
 
   abort(payload: ChatAbortPayload): Promise<void> {
     return ipcRenderer.invoke(IPC_CHANNELS.CHAT_ABORT, payload) as Promise<void>
+  },
+
+  queueList(payload: ChatQueueListPayload): Promise<QueuedMessage[]> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.CHAT_QUEUE_LIST,
+      payload
+    ) as Promise<QueuedMessage[]>
+  },
+
+  queueRemove(payload: ChatQueueRemovePayload): Promise<boolean> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.CHAT_QUEUE_REMOVE,
+      payload
+    ) as Promise<boolean>
+  },
+
+  queueEdit(payload: ChatQueueEditPayload): Promise<boolean> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.CHAT_QUEUE_EDIT,
+      payload
+    ) as Promise<boolean>
+  },
+
+  queuePromote(payload: ChatQueuePromotePayload): Promise<boolean> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.CHAT_QUEUE_PROMOTE,
+      payload
+    ) as Promise<boolean>
   },
 
   onEvent(sessionId: string, handler: (event: ChatEvent) => void): () => void {

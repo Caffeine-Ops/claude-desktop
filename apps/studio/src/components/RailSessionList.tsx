@@ -30,14 +30,16 @@
  * window.chatApi / tabApi 获取，浏览器直开（无 chatApi）时整块渲染为空。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import { Loader2, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import type { ComponentType, ReactNode } from 'react'
 import type { ThreadSummary } from '@desktop-shared/types'
 
 import { railEaseOut } from '@/src/chat/shell/railMotion'
+import { useRunningSessionIdsKey } from '@/src/chat/stores/chat'
+import { useUnreadIdsKey, useUnreadStore } from '@/src/chat/stores/unread'
 import { groupLabel, relativeTime } from '@/src/components/railTime'
 import { ScrollArea } from '@/src/components/ui/scroll-area'
 import { Button } from '@/src/components/ui/button'
@@ -78,22 +80,53 @@ import { cn } from '@/src/lib/utils'
 /** renamed-flash 动画时长 + 余量，播完摘类以便下次重播。 */
 const FLASH_MS = 950
 
+/** 空标题的兜底展示文案（与删空会话回落的语义一致）。 */
+const UNTITLED_LABEL = '新对话'
+
 /**
  * rail 行的**展示**标题。ThreadSummary.title 无 custom/ai 标题时兜底到
- * firstPrompt——以 slash 命令开头的会话（/claude-desktop:ppt-master 武汉…）
- * 会把命令原文糊满整行，噪音吃掉真正的语义。展示层剥掉开头的命令 token：
- *  - `/claude-desktop:ppt-master 武汉大学PPT` → `武汉大学PPT`
- *  - 只有命令没有参数时，退化为命令短名（`/claude-desktop:ppt-master` →
- *    `ppt-master`），比整串路径可读。
- * 只影响 rail 展示；行 title 属性仍是完整原文，悬停可看全。
+ * firstPrompt——以 slash 命令开头的会话会把命令原文糊满整行，噪音吃掉真正
+ * 的语义。展示层归一化成可读文本，按优先级处理三种形态：
+ *
+ *  1. **XML 包裹的命令**（`<command-name>/x</command-name>
+ *     <command-args>参数</command-args>`）——这是 fusion-code 落盘 slash
+ *     命令 user turn 的原始格式，会话【进行中或 SDK 尚未归一化】时 firstPrompt
+ *     就是这段 XML（2026-07-05：ppt-master 会话跑起来但 rail 只显示一堆
+ *     `<command-message>…` 标签甚至空白的根因——旧逻辑的正则只认裸 `/` 开头，
+ *     不认 `<` 开头的 XML，直接把整段标签原样返回）。这里抽出
+ *     `<command-args>`（有参数用参数）或 `<command-name>` 的命令短名。
+ *  2. **裸 slash 命令**（SDK 归一化后的 `/claude-desktop:ppt-master 武汉…`）：
+ *     `/claude-desktop:ppt-master 武汉大学PPT` → `武汉大学PPT`；纯命令无参数
+ *     → 命令短名 `ppt-master`。
+ *  3. 其它纯文本原样返回。
+ *
+ * 任何一步产出空串都兜底到「新对话」，绝不让 rail 出现无名行。只影响 rail
+ * 展示；行 title 属性仍是完整原文，悬停可看全。
  */
 function displayTitle(raw: string): string {
   const t = raw.trim()
+  if (!t) return UNTITLED_LABEL
+
+  // 形态 1：XML 包裹的 slash 命令。
+  if (t.startsWith('<command-')) {
+    const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(t)?.[1]?.trim()
+    if (args) return args
+    const name = /<command-name>\s*\/?([\w.:-]+)\s*<\/command-name>/.exec(t)?.[1]
+    if (name) return name.split(':').pop() || name
+    // 认得是命令 XML 但抽不出名字/参数——别把标签糊到 rail 上。
+    return UNTITLED_LABEL
+  }
+
+  // 形态 2：裸 slash 命令。
   const m = /^(\/[\w.:-]+)\s*([\s\S]*)$/.exec(t)
-  if (!m) return t
-  const rest = m[2].trim()
-  if (rest) return rest
-  return m[1].slice(1).split(':').pop() || t
+  if (m) {
+    const rest = m[2].trim()
+    if (rest) return rest
+    return m[1].slice(1).split(':').pop() || UNTITLED_LABEL
+  }
+
+  // 形态 3：普通文本。
+  return t
 }
 
 /* groupLabel / relativeTime 抽到 railTime.ts 与 RailProjectList 共用
@@ -158,6 +191,24 @@ function SessionMenuItems({
 export function RailSessionList() {
   const pathname = usePathname()
 
+  // Sessions with an assistant turn in flight — drives the per-row
+  // running spinner. Subscribed as a stable comma-joined key (see the
+  // hook) and rebuilt into a Set here so row lookups are O(1) and the
+  // Set identity only changes when the running set actually changes.
+  const runningKey = useRunningSessionIdsKey()
+  const runningIds = useMemo(
+    () => new Set(runningKey ? runningKey.split(',') : []),
+    [runningKey]
+  )
+
+  // Sessions whose finished reply the user hasn't seen yet — drives the
+  // per-row unread dot. Same stable-key-then-Set pattern as runningIds.
+  const unreadKey = useUnreadIdsKey()
+  const unreadIds = useMemo(
+    () => new Set(unreadKey ? unreadKey.split(',') : []),
+    [unreadKey]
+  )
+
   const [threads, setThreads] = useState<readonly ThreadSummary[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [justRenamedId, setJustRenamedId] = useState<string | null>(null)
@@ -183,9 +234,12 @@ export function RailSessionList() {
     reload()
     const offList = window.tabApi?.onShellSessionListChanged?.(reload)
     // 切换事件回流时同步高亮——无论切换是本组件发起（点击项）还是 chat
-    // 页面内部发起后经 main 正规化，最终都汇到这一个事件上。
+    // 页面内部发起后经 main 正规化，最终都汇到这一个事件上。切到哪个会话
+    // 即视为看过它的回复，顺手清掉该会话的未读标记（这是权威清除点，
+    // 覆盖所有切换来源）。
     const offSwitch = window.chatApi.onShellSessionSwitch?.((id) => {
       setActiveId(id)
+      if (id) useUnreadStore.getState().clearUnread(id)
     })
     return () => {
       offList?.()
@@ -199,10 +253,11 @@ export function RailSessionList() {
     if (!pathname.startsWith('/chat')) window.history.pushState(null, '', '/chat')
   }, [pathname])
 
-  /** 点击行：高亮 + 导航到聊天 + 通知 main 切 runtime。 */
+  /** 点击行：高亮 + 导航到聊天 + 通知 main 切 runtime + 清未读。 */
   const switchTo = useCallback(
     (id: string | null) => {
       setActiveId(id)
+      if (id) useUnreadStore.getState().clearUnread(id)
       goChat()
       void window.tabApi?.switchShellSession?.(id)
     },
@@ -302,12 +357,18 @@ export function RailSessionList() {
           * 长标题会把整行撑出 rail 右缘（时间标签被顶出去、truncate 失效，
           * 标题硬切无省略号，2026-07-04 实锤）。纯竖向列表不需要 table 的
           * 横向内容测量，强制回 block 让行宽回归容器约束；带 ! 是因为
-          * display:table 写在 Radix 的 inline style 上。 */}
-        <ScrollArea className="-mx-1 min-h-0 flex-1 px-1 [&>[data-slot=scroll-area-viewport]>div]:block!">
-          {/* pr-2：shadcn ScrollArea 的滚动条是 overlay（浮在内容上），
-              行文字 truncate 到容器右缘会被它盖住尾巴——内容侧自留出
-              滚动条的宽度（原型 session-scroll 右 padding 同理）。 */}
-          <ul className="flex flex-col pr-2">
+          * display:table 写在 Radix 的 inline style 上。
+          *
+          * 右侧 -mr-3 而非对称 -mx-1（2026-07-05 用户要求「滚动条贴右缘」）：
+          * overlay 滚动条定位在 ScrollArea 容器右缘，而 AppRail 的 nav 有
+          * px-3（右 12px）把列表推离 rail 右缘。右负外边距吃满这 12px，让
+          * 滚动条容器右缘 = rail 右缘 = 内容卡左缘，滚动条紧贴内容不留缝。
+          * 左侧仍 -ml-1（选中行圆角背景略往左伸的呼吸），故拆成不对称。 */}
+        <ScrollArea className="-ml-1 -mr-3 min-h-0 flex-1 pl-1 [&>[data-slot=scroll-area-viewport]>div]:block!">
+          {/* pr-3：滚动条贴到容器右缘后，行文字 truncate 到右缘会被 10px 宽
+              的 overlay 滚动条盖住尾巴——内容侧留出 ≥滚动条宽度的右 padding
+              让文字避开（这段 padding 落在 ScrollArea 容器内、滚动条之内）。 */}
+          <ul className="flex flex-col pr-3">
             <AnimatePresence initial={false}>
               {items.map((item) =>
                 item.kind === 'label' ? (
@@ -328,6 +389,8 @@ export function RailSessionList() {
                     key={item.key}
                     thread={item.thread}
                     active={item.thread.id === activeId}
+                    running={runningIds.has(item.thread.id)}
+                    unread={unreadIds.has(item.thread.id)}
                     justRenamed={item.thread.id === justRenamedId}
                     onSwitch={() => switchTo(item.thread.id)}
                     onStartRename={() => openRename(item.thread)}
@@ -434,6 +497,8 @@ export function RailSessionList() {
 function SessionRow({
   thread,
   active,
+  running,
+  unread,
   justRenamed,
   onSwitch,
   onStartRename,
@@ -441,6 +506,8 @@ function SessionRow({
 }: {
   thread: ThreadSummary
   active: boolean
+  running: boolean
+  unread: boolean
   justRenamed: boolean
   onSwitch: () => void
   onStartRename: () => void
@@ -498,12 +565,36 @@ function SessionRow({
                 )}
               />
               <span className="min-w-0 flex-1 truncate">{displayTitle(thread.title)}</span>
-              {/* 相对时间：hover / 菜单打开时让位给 ···（原型 .time 的
-                * display:none on hover；这里用 opacity 免布局跳动——时间
-                * 与 ··· 分别位于行内流和绝对定位层，淡出即可无重叠）。 */}
-              <span className="shrink-0 text-[11px] font-normal text-muted-foreground/70 transition-opacity group-hover:opacity-0 group-has-[[data-state=open]]:opacity-0">
-                {relativeTime(thread.updatedAt)}
-              </span>
+              {/* 行右侧状态，三选一，都在行内流、hover / 菜单打开时淡出让位给
+                * 绝对定位的 ···（原型 .time 的 display:none on hover）：
+                *  1. 运行中：旋转 spinner（品牌绿，与聊天区 ThinkingSpinner
+                *     同色）——「正在运行」比「2 小时前」更该被看到；
+                *  2. 未读：AI 回复已完成但用户还没看过（回合在非前台会话结束），
+                *     蓝色小圆点，切到该会话即清除；
+                *  3. 否则：相对时间。
+                * running 与 unread 天然互斥（未读只在回合结束后出现，那时已不
+                * running），故按此优先级排布。 */}
+              {running ? (
+                <span
+                  className="flex shrink-0 items-center text-brand transition-opacity group-hover:opacity-0 group-has-[[data-state=open]]:opacity-0"
+                  aria-label="任务运行中"
+                  title="任务运行中"
+                >
+                  <Loader2 className="size-3.5 animate-spin" />
+                </span>
+              ) : unread ? (
+                <span
+                  className="flex shrink-0 items-center transition-opacity group-hover:opacity-0 group-has-[[data-state=open]]:opacity-0"
+                  aria-label="有未读回复"
+                  title="有未读回复"
+                >
+                  <span className="size-2 rounded-full bg-[#3b82f6]" />
+                </span>
+              ) : (
+                <span className="shrink-0 text-[11px] font-normal text-muted-foreground/70 transition-opacity group-hover:opacity-0 group-has-[[data-state=open]]:opacity-0">
+                  {relativeTime(thread.updatedAt)}
+                </span>
+              )}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

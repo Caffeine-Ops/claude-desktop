@@ -3,11 +3,15 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
-import type { PermissionResponse } from '../../shared/types'
+import type { PermissionResponse, QueuedMessage } from '../../shared/types'
 import {
   IPC_CHANNELS,
   type ChatAbortPayload,
   type ChatImagePayload,
+  type ChatQueueEditPayload,
+  type ChatQueueListPayload,
+  type ChatQueuePromotePayload,
+  type ChatQueueRemovePayload,
   type ChatSendPayload,
   type ChatSendResult,
   type FileSuggestionsListPayload,
@@ -219,6 +223,10 @@ export function registerIpcHandlers(): void {
   // "Attempted to register a second handler" errors.
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_SEND)
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_ABORT)
+  ipcMain.removeHandler(IPC_CHANNELS.CHAT_QUEUE_LIST)
+  ipcMain.removeHandler(IPC_CHANNELS.CHAT_QUEUE_REMOVE)
+  ipcMain.removeHandler(IPC_CHANNELS.CHAT_QUEUE_EDIT)
+  ipcMain.removeHandler(IPC_CHANNELS.CHAT_QUEUE_PROMOTE)
   ipcMain.removeHandler(IPC_CHANNELS.PERMISSION_RESPOND)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_META_GET)
   ipcMain.removeHandler(IPC_CHANNELS.FILE_SUGGESTIONS_LIST)
@@ -298,6 +306,49 @@ export function registerIpcHandlers(): void {
     async (event, payload: ChatAbortPayload): Promise<void> => {
       validateSessionId(payload?.sessionId)
       resolveEngine(event).abort(payload.sessionId)
+    }
+  )
+
+  // Message-queue panel commands. The engine validates the messageId
+  // (unknown/already-promoted ids no-op to false), so here we only
+  // shape-check the session id and, for edit, the replacement text.
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_QUEUE_LIST,
+    async (event, payload: ChatQueueListPayload): Promise<QueuedMessage[]> => {
+      validateSessionId(payload?.sessionId)
+      return resolveEngine(event).getQueue(payload.sessionId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_QUEUE_REMOVE,
+    async (event, payload: ChatQueueRemovePayload): Promise<boolean> => {
+      validateSessionId(payload?.sessionId)
+      validateMessageId(payload?.messageId)
+      return resolveEngine(event).removeQueued(payload.sessionId, payload.messageId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_QUEUE_EDIT,
+    async (event, payload: ChatQueueEditPayload): Promise<boolean> => {
+      validateSessionId(payload?.sessionId)
+      validateMessageId(payload?.messageId)
+      validateText(payload?.text)
+      return resolveEngine(event).editQueued(
+        payload.sessionId,
+        payload.messageId,
+        payload.text
+      )
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_QUEUE_PROMOTE,
+    async (event, payload: ChatQueuePromotePayload): Promise<boolean> => {
+      validateSessionId(payload?.sessionId)
+      validateMessageId(payload?.messageId)
+      return resolveEngine(event).promoteQueued(payload.sessionId, payload.messageId)
     }
   )
 
@@ -1512,6 +1563,12 @@ function isValidPermissionMode(value: unknown): value is UiPermissionMode {
 function validateSessionId(value: unknown): asserts value is string {
   if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
     throw new Error(`Invalid sessionId`)
+  }
+}
+
+function validateMessageId(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
+    throw new Error(`Invalid messageId`)
   }
 }
 

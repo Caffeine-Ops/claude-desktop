@@ -178,6 +178,29 @@ export type ChatEvent =
       /** Ambient/housekeeping task — renderer may hide from the card. */
       skipTranscript?: boolean
     }
+  /**
+   * Message-queue snapshot. Emitted whenever the runtime's `pendingTurns`
+   * changes — a turn submitted while another was streaming got enqueued,
+   * a queued turn got promoted into the active slot (post-`result`), or
+   * the user removed/edited/reordered one via the queue panel. Carries
+   * the full queue each time (small, so no diffing) — the renderer
+   * mirrors it wholesale. NO `messageId`: it's session-scoped, not
+   * turn-scoped. Empty `queue` means the panel should hide.
+   */
+  | { type: 'queue_changed'; queue: QueuedMessage[] }
+
+/**
+ * One user turn waiting behind the currently-streaming one, as surfaced
+ * to the renderer's queue panel. `messageId` is the same id the turn
+ * will carry once it runs, so the optimistic bubble and the queue row
+ * are the same identity across the "queued → running" transition.
+ */
+export interface QueuedMessage {
+  messageId: string
+  text: string
+  /** Number of image attachments on this turn (for a paperclip badge). */
+  imageCount: number
+}
 
 /** Coarse, UI-facing run state for a workflow/Task subtask. */
 export type WorkflowTaskStatus =

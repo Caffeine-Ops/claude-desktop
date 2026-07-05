@@ -3,6 +3,7 @@ import type {
   LogEvent,
   PermissionRequest,
   PermissionResponse,
+  QueuedMessage,
   SessionMeta,
   ThreadSummary
 } from './types'
@@ -17,6 +18,19 @@ export const IPC_CHANNELS = {
   CHAT_SEND: 'chat:send',
   /** Renderer → main. Cancels the in-flight assistant response. */
   CHAT_ABORT: 'chat:abort',
+  /**
+   * Renderer → main. Returns the current message queue (turns waiting
+   * behind the streaming one) for a session. Used to seed the panel on
+   * mount; live updates arrive as `queue_changed` ChatEvents on
+   * CHAT_EVENT, so there's no separate queue-changed channel.
+   */
+  CHAT_QUEUE_LIST: 'chat:queue:list',
+  /** Renderer → main. Removes a queued turn by messageId before it runs. */
+  CHAT_QUEUE_REMOVE: 'chat:queue:remove',
+  /** Renderer → main. Rewrites a queued turn's text in place. */
+  CHAT_QUEUE_EDIT: 'chat:queue:edit',
+  /** Renderer → main. Moves a queued turn to the front of the queue. */
+  CHAT_QUEUE_PROMOTE: 'chat:queue:promote',
   /** Main → renderer. Fires ChatEvents for a live assistant stream. */
   CHAT_EVENT: 'chat:event',
   /** Main → renderer. Asks the user to approve a pending tool call. */
@@ -661,6 +675,16 @@ export type ChatSendResult = { messageId: string }
 export type ChatAbortPayload = { sessionId: string }
 export type ChatEventPayload = { sessionId: string; event: ChatEvent }
 
+/** Renderer → main queue-panel command payloads. */
+export type ChatQueueListPayload = { sessionId: string }
+export type ChatQueueRemovePayload = { sessionId: string; messageId: string }
+export type ChatQueueEditPayload = {
+  sessionId: string
+  messageId: string
+  text: string
+}
+export type ChatQueuePromotePayload = { sessionId: string; messageId: string }
+
 /**
  * Wrapper for LOG_EVENT IPC payloads. Single field because the event
  * already carries its own timestamp + sessionId; keeping an envelope
@@ -1091,6 +1115,17 @@ export interface UpdaterState {
 export interface ChatApi {
   send(payload: ChatSendPayload): Promise<ChatSendResult>
   abort(payload: ChatAbortPayload): Promise<void>
+  /**
+   * Message-queue panel commands. `queueList` seeds the panel on mount;
+   * live changes then arrive as `queue_changed` events via `onEvent`.
+   * remove/edit/promote resolve to `true` when the target turn was
+   * still queued (id may have already been promoted into the active
+   * slot, in which case they no-op to `false`).
+   */
+  queueList(payload: ChatQueueListPayload): Promise<QueuedMessage[]>
+  queueRemove(payload: ChatQueueRemovePayload): Promise<boolean>
+  queueEdit(payload: ChatQueueEditPayload): Promise<boolean>
+  queuePromote(payload: ChatQueuePromotePayload): Promise<boolean>
   /**
    * Subscribe to chat events for a given session. Returns an unsubscribe
    * function. Called from the renderer's subscription hook.

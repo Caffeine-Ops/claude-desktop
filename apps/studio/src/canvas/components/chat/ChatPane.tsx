@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { Fragment, memo, useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { useAnalytics } from '../../analytics/provider';
 import { trackChatPanelClick } from '../../analytics/events';
 import { useT } from '../../i18n';
@@ -404,6 +404,14 @@ export function ChatPane({
     }
     return map;
   })();
+
+  // Stable side-effect fired before a form submit re-pins the view to the
+  // bottom. Hoisted out of the per-message render so MessageRow's memoized
+  // onSubmitForm callback keeps a stable identity across streaming flushes.
+  const handleFormSubmitReset = useCallback(() => {
+    pinnedToBottomRef.current = true;
+    scrolledToFormRef.current = new Set();
+  }, []);
 
   useEffect(() => {
     didInitialScrollRef.current = false;
@@ -978,69 +986,32 @@ export function ChatPane({
                   </div>
                 </div>
               ) : null}
-              {messages.map((m, i) => {
-                const showDaySeparator = shouldShowDaySeparator(messages[i - 1], m);
-                const messageStreaming = isAssistantMessageStreaming(
-                  m,
-                  streaming,
-                  lastAssistantId,
-                );
-                return (
-                  <Fragment key={m.id}>
-                    {showDaySeparator ? <DaySeparator ts={messageTime(m)} /> : null}
-                    {m.role === 'user' ? (
-                      <UserMessage
-                        message={m}
-                        projectId={projectId}
-                        projectFileNames={projectFileNames}
-                        onRequestOpenFile={onRequestOpenFile}
-                        t={t}
-                        activePluginSnapshot={
-                          m.id === firstUserMessageId
-                            ? activePluginSnapshot ?? null
-                            : null
-                        }
-                        activeDesignSystem={
-                          m.id === firstUserMessageId
-                            ? activeDesignSystem ?? null
-                            : null
-                        }
-                      />
-                    ) : (
-                      <AssistantMessage
-                        message={m}
-                        streaming={messageStreaming}
-                        projectId={projectId}
-                        projectKind={projectKindForTracking}
-                        conversationId={activeConversationId}
-                        projectFiles={projectFiles}
-                        projectFileNames={projectFileNames}
-                        onRequestOpenFile={onRequestOpenFile}
-                        onRequestPluginFolderAgentAction={onRequestPluginFolderAgentAction}
-                        isLast={m.id === lastAssistantId}
-                        nextUserContent={nextUserContentByAssistantId.get(m.id)}
-                        suppressDirectionForms={hasActiveDesignSystem}
-                        hasDesignSystemContext={hasActiveDesignSystem || !!activeDesignSystem}
-                        onSubmitForm={(text) => {
-                          pinnedToBottomRef.current = true;
-                          scrolledToFormRef.current = new Set();
-                          onSubmitForm?.(text);
-                        }}
-                        onContinueRemainingTasks={
-                          m.id === lastAssistantId && onContinueRemainingTasks
-                            ? (todos) => onContinueRemainingTasks(m, todos)
-                            : undefined
-                        }
-                        onFeedback={
-                          onAssistantFeedback
-                            ? (rating) => onAssistantFeedback(m, rating)
-                            : undefined
-                        }
-                      />
-                    )}
-                  </Fragment>
-                );
-              })}
+              {messages.map((m, i) => (
+                <MessageRow
+                  key={m.id}
+                  message={m}
+                  prevMessage={messages[i - 1]}
+                  streaming={isAssistantMessageStreaming(m, streaming, lastAssistantId)}
+                  isLast={m.id === lastAssistantId}
+                  isFirstUser={m.id === firstUserMessageId}
+                  nextUserContent={nextUserContentByAssistantId.get(m.id)}
+                  projectId={projectId}
+                  projectKind={projectKindForTracking}
+                  conversationId={activeConversationId}
+                  projectFiles={projectFiles}
+                  projectFileNames={projectFileNames}
+                  hasActiveDesignSystem={hasActiveDesignSystem}
+                  activeDesignSystem={activeDesignSystem}
+                  activePluginSnapshot={activePluginSnapshot}
+                  t={t}
+                  onRequestOpenFile={onRequestOpenFile}
+                  onRequestPluginFolderAgentAction={onRequestPluginFolderAgentAction}
+                  onFormSubmitReset={handleFormSubmitReset}
+                  onSubmitForm={onSubmitForm}
+                  onContinueRemainingTasks={onContinueRemainingTasks}
+                  onAssistantFeedback={onAssistantFeedback}
+                />
+              ))}
               {error ? (
                 <div className="msg error">
                   <span className="chat-error-text">{error}</span>
@@ -1427,6 +1398,117 @@ function normalizeConversationRename(
   const next = draft.trim();
   return next === current ? null : next;
 }
+
+// One chat row (day separator + the user/assistant message). Extracted from
+// the ChatPane map body and memoized so a streaming rAF flush — which swaps
+// only the streaming message's object in the messages array — re-renders just
+// that one row. All the props below are referentially stable across a flush
+// (scalars, or refs/callbacks hoisted in ChatPane), and the per-row callbacks
+// are re-bound to `message` via useCallback keyed on the stable message object,
+// so the default shallow prop compare skips every unchanged history row.
+const MessageRow = memo(function MessageRow({
+  message,
+  prevMessage,
+  streaming,
+  isLast,
+  isFirstUser,
+  nextUserContent,
+  projectId,
+  projectKind,
+  conversationId,
+  projectFiles,
+  projectFileNames,
+  hasActiveDesignSystem,
+  activeDesignSystem,
+  activePluginSnapshot,
+  t,
+  onRequestOpenFile,
+  onRequestPluginFolderAgentAction,
+  onFormSubmitReset,
+  onSubmitForm,
+  onContinueRemainingTasks,
+  onAssistantFeedback,
+}: {
+  message: ChatMessage;
+  prevMessage: ChatMessage | undefined;
+  streaming: boolean;
+  isLast: boolean;
+  isFirstUser: boolean;
+  nextUserContent: string | undefined;
+  projectId: string | null;
+  projectKind?: TrackingProjectKind | null;
+  conversationId: string | null;
+  projectFiles: ProjectFile[];
+  projectFileNames?: Set<string>;
+  hasActiveDesignSystem: boolean;
+  activeDesignSystem?: DesignSystemSummary | null;
+  activePluginSnapshot?: AppliedPluginSnapshot | null;
+  t: TranslateFn;
+  onRequestOpenFile?: (name: string) => void;
+  onRequestPluginFolderAgentAction?: (
+    relativePath: string,
+    action: PluginFolderAgentAction,
+  ) => Promise<void> | void;
+  onFormSubmitReset: () => void;
+  onSubmitForm?: (text: string) => void;
+  onContinueRemainingTasks?: (assistantMessage: ChatMessage, todos: TodoItem[]) => void;
+  onAssistantFeedback?: (assistantMessage: ChatMessage, change: ChatMessageFeedbackChange) => void;
+}) {
+  const handleSubmitForm = useCallback(
+    (text: string) => {
+      onFormSubmitReset();
+      onSubmitForm?.(text);
+    },
+    [onFormSubmitReset, onSubmitForm],
+  );
+  const handleContinueRemainingTasks = useCallback(
+    (todos: TodoItem[]) => onContinueRemainingTasks?.(message, todos),
+    [onContinueRemainingTasks, message],
+  );
+  const handleFeedback = useCallback(
+    (change: ChatMessageFeedbackChange) => onAssistantFeedback?.(message, change),
+    [onAssistantFeedback, message],
+  );
+
+  const showDaySeparator = shouldShowDaySeparator(prevMessage, message);
+  return (
+    <Fragment>
+      {showDaySeparator ? <DaySeparator ts={messageTime(message)} /> : null}
+      {message.role === 'user' ? (
+        <UserMessage
+          message={message}
+          projectId={projectId}
+          projectFileNames={projectFileNames}
+          onRequestOpenFile={onRequestOpenFile}
+          t={t}
+          activePluginSnapshot={isFirstUser ? activePluginSnapshot ?? null : null}
+          activeDesignSystem={isFirstUser ? activeDesignSystem ?? null : null}
+        />
+      ) : (
+        <AssistantMessage
+          message={message}
+          streaming={streaming}
+          projectId={projectId}
+          projectKind={projectKind}
+          conversationId={conversationId}
+          projectFiles={projectFiles}
+          projectFileNames={projectFileNames}
+          onRequestOpenFile={onRequestOpenFile}
+          onRequestPluginFolderAgentAction={onRequestPluginFolderAgentAction}
+          isLast={isLast}
+          nextUserContent={nextUserContent}
+          suppressDirectionForms={hasActiveDesignSystem}
+          hasDesignSystemContext={hasActiveDesignSystem || !!activeDesignSystem}
+          onSubmitForm={handleSubmitForm}
+          onContinueRemainingTasks={
+            isLast && onContinueRemainingTasks ? handleContinueRemainingTasks : undefined
+          }
+          onFeedback={onAssistantFeedback ? handleFeedback : undefined}
+        />
+      )}
+    </Fragment>
+  );
+});
 
 function UserMessage({
   message,

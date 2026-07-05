@@ -16,6 +16,8 @@ import {
 } from '@assistant-ui/react'
 
 import { useChatStore } from '../stores/chat'
+import { useMessageQueueStore } from '../stores/messageQueue'
+import { useUnreadStore } from '../stores/unread'
 import { useSessionTitleStore } from '../stores/sessionTitle'
 import { useComposerModeStore } from '../stores/composerMode'
 import { useI18n } from '../i18n'
@@ -161,6 +163,7 @@ export function FusionRuntimeProvider({
     for (const sid of desired) {
       if (current.has(sid)) continue
       const handler = makeSessionEventHandler(sid, {
+        appendUserMessage,
         startAssistantMessage,
         appendAssistantDelta,
         startReasoning,
@@ -177,6 +180,16 @@ export function FusionRuntimeProvider({
       })
       const unsub = window.chatApi.onEvent(sid, handler)
       current.set(sid, unsub)
+      // Seed the queue mirror for this session: a background runtime may
+      // already have turns queued from before the renderer subscribed
+      // (e.g. after a switch away and back). Live changes then flow in as
+      // `queue_changed` events on the subscription above.
+      void window.chatApi
+        .queueList({ sessionId: sid })
+        .then((queue) => useMessageQueueStore.getState().setQueue(sid, queue))
+        .catch((err: unknown) =>
+          console.warn('[runtime] queueList seed failed', err)
+        )
     }
     // Do NOT unsub on effect cleanup — only unmount should tear down
     // subscriptions. Effect cleanup runs on every deps change and
@@ -185,6 +198,7 @@ export function FusionRuntimeProvider({
     return undefined
   }, [
     subscribedIdsKey,
+    appendUserMessage,
     startAssistantMessage,
     appendAssistantDelta,
     startReasoning,
@@ -450,13 +464,53 @@ export function FusionRuntimeProvider({
       // local alias so every action below gets the right sid without
       // re-reading an outer closure that could theoretically drift.
       const targetSid = sessionId
+
+      // Message queue: read the LIVE streaming flag (getState, not the
+      // render-time `streaming` closure — this callback can fire against
+      // a stale render). When a turn is already streaming, the engine
+      // enqueues this send behind the active turn rather than clobbering
+      // it. A QUEUED turn must NOT touch the transcript yet — it hasn't
+      // been sent to the model, so showing it as a user bubble reads as
+      // "already sent" and contradicts the queue panel (the bug this
+      // path fixes). We stash its content keyed by the engine's real
+      // messageId and replay it into the transcript only when the turn's
+      // `start` event arrives (i.e. the queue drained it into the active
+      // slot). The `start` handler pairs the stash → user bubble +
+      // assistant bubble; see pendingQueuedTurns below.
+      const isStreaming = useChatStore.getState().streaming
+      if (isStreaming) {
+        try {
+          const { messageId } = await window.chatApi.send({
+            sessionId: targetSid,
+            text: text,
+            images: images.length > 0 ? images : undefined
+          })
+          // Stash the exact content-part array so the drained turn
+          // renders identically to an idle send (text + image thumbs),
+          // not a text-only reconstruction.
+          rememberQueuedTurn(targetSid, messageId, storeContent)
+          // Optimistic panel row keyed by the engine's real messageId, so
+          // the follow-up `queue_changed` snapshot (same id) reconciles
+          // instead of duplicating.
+          useMessageQueueStore.getState().optimisticEnqueue(targetSid, {
+            messageId,
+            text,
+            imageCount: images.length
+          })
+        } catch (err) {
+          console.error('[runtime] enqueue send failed', err)
+        }
+        return
+      }
+
+      // Idle path — the user's turn shows in the transcript immediately,
+      // then we open an assistant turn.
       appendUserMessage(targetSid, storeContent)
       // The transcript just grew by the user's turn. Drop the cached
       // snapshot now (before the assistant's `start`) so a switch away +
       // back in the gap before the reply can't resurrect a copy that's
       // missing this message.
       invalidateHistoryCache(targetSid)
-
       // Pre-flip the spinner so the user sees feedback while the
       // main-process send awaits the lazy fusion-code cold start.
       // Background: engine.ts switchToSession is now lazy — it
@@ -636,6 +690,82 @@ function setCachedHistory(id: string, messages: readonly ThreadMessageLike[]): v
  */
 export function invalidateHistoryCache(id: string): void {
   historyCache.delete(id)
+}
+
+/**
+ * Content of turns that were ENQUEUED (submitted while another turn was
+ * streaming) and haven't yet been drained into the active slot. Keyed
+ * `sessionId → messageId → content-parts`.
+ *
+ * A queued turn is deliberately kept OUT of the transcript until it
+ * actually runs — otherwise it'd show as an already-sent user bubble
+ * while it's still just sitting in the queue panel, which is
+ * contradictory (the bug this stash fixes). When the engine finally
+ * drains the queue and emits the turn's `start` event, the event
+ * handler pulls the stash here and replays it as the user bubble right
+ * before opening the assistant bubble — so a drained turn looks
+ * identical to an idle send (same content parts, including image
+ * thumbnails), just deferred.
+ */
+const pendingQueuedTurns = new Map<
+  string,
+  Map<string, Array<{ type: string; [key: string]: unknown }>>
+>()
+
+function rememberQueuedTurn(
+  sid: string,
+  messageId: string,
+  content: Array<{ type: string; [key: string]: unknown }>
+): void {
+  let perSession = pendingQueuedTurns.get(sid)
+  if (!perSession) {
+    perSession = new Map()
+    pendingQueuedTurns.set(sid, perSession)
+  }
+  perSession.set(messageId, content)
+}
+
+/**
+ * Keep a stashed queued-turn's text in sync when the user edits it in
+ * the queue panel. The engine is the source of truth for the queue, but
+ * the stash holds the rich content-parts (incl. image thumbnails) the
+ * transcript will replay — so an edit that only rewrites text must patch
+ * the stash's text part too, or the drained turn would show the OLD
+ * wording. Rebuilds the text part in place; leaves image parts intact.
+ * Empty text (the panel treats that as a delete) drops the stash.
+ */
+export function updateQueuedTurnText(
+  sid: string,
+  messageId: string,
+  text: string
+): void {
+  const perSession = pendingQueuedTurns.get(sid)
+  const content = perSession?.get(messageId)
+  if (!perSession || !content) return
+  const next = text.trim()
+  if (!next) {
+    perSession.delete(messageId)
+    return
+  }
+  const withoutText = content.filter((p) => p.type !== 'text')
+  perSession.set(messageId, [{ type: 'text', text: next }, ...withoutText])
+}
+
+/**
+ * Pull (and remove) a stashed queued-turn's content when its `start`
+ * event arrives. Returns undefined for an ordinary (idle) turn whose
+ * user bubble the renderer already appended locally — that path never
+ * stashed anything, so the handler skips the replay.
+ */
+function takeQueuedTurn(
+  sid: string,
+  messageId: string
+): Array<{ type: string; [key: string]: unknown }> | undefined {
+  const perSession = pendingQueuedTurns.get(sid)
+  if (!perSession) return undefined
+  const content = perSession.get(messageId)
+  if (content) perSession.delete(messageId)
+  return content
 }
 
 /**
@@ -1094,6 +1224,10 @@ function wrapDictationWithLogging(inner: DictationAdapter): DictationAdapter {
 function makeSessionEventHandler(
   sid: string,
   actions: {
+    appendUserMessage: (
+      sid: string,
+      content: Array<{ type: string; [key: string]: unknown }>
+    ) => void
     startAssistantMessage: (sid: string, messageId: string) => void
     appendAssistantDelta: (
       sid: string,
@@ -1146,13 +1280,23 @@ function makeSessionEventHandler(
   const argsBuffers = new Map<string, string>()
   return (event: ChatEvent) => {
     switch (event.type) {
-      case 'start':
+      case 'start': {
+        // If this turn was drained from the queue, its user bubble was
+        // withheld from the transcript until now (see rememberQueuedTurn).
+        // Replay it just before opening the assistant bubble so the pair
+        // appears together and in order. Ordinary idle turns stashed
+        // nothing here — the composer already appended their user bubble.
+        const queuedContent = takeQueuedTurn(sid, event.messageId)
+        if (queuedContent) {
+          actions.appendUserMessage(sid, queuedContent)
+        }
         // A new assistant turn is starting → this session's transcript is
         // about to grow. Drop any cached history snapshot so the next
         // switch-back re-reads fresh JSONL instead of the pre-turn copy.
         invalidateHistoryCache(sid)
         actions.startAssistantMessage(sid, event.messageId)
         break
+      }
       case 'chunk':
         actions.appendAssistantDelta(sid, event.messageId, event.delta)
         break
@@ -1242,10 +1386,26 @@ function makeSessionEventHandler(
         break
       case 'end':
         actions.endAssistantMessage(sid)
+        // Unread: a reply just finished. If the user isn't currently
+        // looking at this session (it's a background task, or they're on
+        // the canvas / another chat), flag it unread so the rail shows a
+        // dot until they open it. A turn that finished in the foreground
+        // is already-read — skip. Read the foreground id live from the
+        // store (getState, not a render-time closure).
+        if (useChatStore.getState().sessionId !== sid) {
+          useUnreadStore.getState().markUnread(sid)
+        }
         break
       case 'error':
         actions.setError(sid, event.messageId, event.error)
         actions.endAssistantMessage(sid)
+        break
+      case 'queue_changed':
+        // Authoritative queue snapshot from main — overwrite the local
+        // mirror wholesale. Fires on enqueue, post-result promotion, and
+        // every panel edit/remove/reorder. Independent of any active
+        // turn, so it lives outside the `actions.*` (chat-store) surface.
+        useMessageQueueStore.getState().setQueue(sid, event.queue)
         break
       default:
         break

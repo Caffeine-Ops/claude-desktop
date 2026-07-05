@@ -974,7 +974,23 @@ function ChatHeader(): React.JSX.Element {
     // there must start a rename, not a window drag — while the rest of the
     // header (subtitle, padding) stays draggable; `select-none` keeps a
     // press-drag on the chrome from starting a text selection.
-    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [-webkit-app-region:drag]">
+    //
+    // 收起态左净空（2026-07-05）：rail 收起后 chat 列顶到窗口左缘，标题会撞
+    // 左上角两样东西——① 红绿灯（浮在窗口 x≈30~90）② 收起态图标排（RailShell
+    // 的 fixed 展开/搜索/新建，x≈100~184）。两种布局各撞一样：
+    //   · slides 分栏（chat 列窄，max-w-4xl 撑不满）→ mx-auto 内层贴左，标题
+    //     从 x≈22 起，撞红绿灯；
+    //   · 非分栏（chat 全宽）→ 内层居中，标题落 x≈160，撞图标排。
+    // 展开态无此问题：rail（244px）整体推开 chat 列，红绿灯落 rail 顶栏、图标
+    // 排不渲染。故仅收起态给外层 drag 条补左 padding，一次让过两者：外层 pl 收
+    // 窄内层可用宽度、mx-auto 重新居中，分栏时把贴左标题推过图标排、非分栏时令
+    // 居中区右移同样躲开——两布局都安全。198px = 图标排右缘（x≈184）− 内容卡
+    // 左缘（stage gutter 10px）= 174 的净空基线，再 +24 让标题与图标排（尤其
+    // 紧挨的「+」新建钮）之间留出 36px 呼吸（2026-07-05 用户要求「新对话钮跟
+    // 标题加间距」，用户选 +24）。起点必须跟 tabRegistry 的 trafficLightPosition
+    // 与 RailShell 图标排 left-[100px] 联动（红绿灯/图标排右移则同增）。代价：
+    // 收起态标题不再与下方消息列严格同左缘——收起本就是特殊布局，可接受。
+    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [-webkit-app-region:drag] [body[data-rail-collapsed]_&]:pl-[198px]">
       {/* 内层对齐容器：max-w-4xl + px-3 与消息列（Viewport 内层）完全同参，
           宽列时标题与消息同一左缘；slides 分栏列窄时自然退化为全宽。 */}
       <div className="mx-auto flex h-full w-full min-w-0 max-w-4xl items-center gap-2 px-3">

@@ -2,7 +2,8 @@
  * Map a file extension (or basename for Dockerfile / Makefile) to a
  * highlight.js language id. Only covers the subset bundled in
  * `highlight.js/lib/common` — anything else falls through to
- * `undefined` so hljs.highlightAuto can take a guess.
+ * `undefined`, and callers render those as plain escaped text rather
+ * than paying for hljs.highlightAuto (the全语法库逐一打分路径).
  */
 export function languageFromPath(path: string): string | undefined {
   const base = path.split(/[\\/]/).pop() ?? path

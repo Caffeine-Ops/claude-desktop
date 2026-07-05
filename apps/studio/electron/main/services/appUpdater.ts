@@ -21,14 +21,14 @@ const { autoUpdater } = electronUpdaterPkg
  *  - autoInstallOnAppQuit：用户忽略提示直接退出时，退出即顺手装上，
  *    下次启动就是新版（electron-updater 默认行为，显式写出防止误改）。
  *  - 启动后延迟 15s 首查（让 daemon spawn / 首帧渲染先走完，别跟冷启动抢
- *    网络与 CPU），此后每 4h 复查一次。
+ *    网络与 CPU），此后每 3h 复查一次（2026-07-05 用户从 4h 调到 3h）。
  *
  * 状态是单份 module state：main 是唯一事实源，每次迁移全量推给所有
  * renderer（UPDATER_STATE_CHANGED），renderer 只做整体替换不自己拼装。
  */
 
 const CHECK_INITIAL_DELAY_MS = 15_000
-const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
+const CHECK_INTERVAL_MS = 3 * 60 * 60 * 1000
 
 let state: UpdaterState = {
   phase: 'idle',

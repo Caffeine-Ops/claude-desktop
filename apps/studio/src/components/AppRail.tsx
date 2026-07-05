@@ -21,7 +21,20 @@
  */
 
 import { usePathname } from 'next/navigation'
-import { Image as ImageIcon, MessageCircle, Plus, Settings } from 'lucide-react'
+import {
+  BookOpen,
+  Crown,
+  FileClock,
+  Image as ImageIcon,
+  Info,
+  LogOut,
+  MessageCircle,
+  Palette,
+  PanelLeft,
+  PanelLeftClose,
+  Plus,
+  Settings
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 
@@ -29,6 +42,19 @@ import { Button } from '@/src/components/ui/button'
 import { RailProjectList } from '@/src/components/RailProjectList'
 import { RailSessionList } from '@/src/components/RailSessionList'
 import { Tabs, TabsList, TabsTrigger } from '@/src/components/ui/tabs'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger
+} from '@/src/components/ui/dropdown-menu'
+import { useRailStore } from '@/src/stores/rail'
 
 /* 两个 surface 的切换是「同级二选一」而非普通导航列表——语义和视觉都用
  * shadcn Tabs（segmented：muted 底槽 + 选中段白卡凸起），不再用 ghost pill。
@@ -59,8 +85,19 @@ function goChatShallow(): void {
   window.history.pushState(null, '', '/chat')
 }
 
+/* 账户菜单里尚未接入功能的占位项共用的空动作（升级订阅/帮助/更新日志/
+ * 关于我们/退出登录，2026-07-05 用户确认先做占位）。模块级常量＝稳定引用，
+ * 不随渲染重建。接入真实链路时逐项换掉对应 onSelect 即可。 */
+const noop = (): void => {}
+
 export function AppRail() {
   const pathname = usePathname()
+  // 折叠意图（跨 chat/canvas 共享，见 src/stores/rail.ts）。收起态下这个
+  // 组件本体被 RailShell 复用为 hover 浮出的 overlay——所以顶部 toggle 的
+  // 语义天然自洽：collapsed=false 点击=收起，collapsed=true（overlay 里）
+  // 点击=展开钉住，都是同一个 toggle()。图标也随 collapsed 翻。
+  const collapsed = useRailStore((s) => s.collapsed)
+  const toggleCollapsed = useRailStore((s) => s.toggle)
   // '/chat*' 归聊天面，其余一切路径都是 canvas 的地盘——rail 上所有
   // 「跟随当前 surface」的元素（顶部主按钮 / Tabs 选中态 / 中段列表）
   // 都从这一个判定派生。
@@ -86,6 +123,12 @@ export function AppRail() {
       })
   }, [])
 
+  // 打开设置 overlay（?settings=1）——账户菜单里「设置」与「偏好设置」子项
+  // 共用这一个入口，机制见调用处注释（shallow pushState + canvas 响应式读参）。
+  const openSettings = () => {
+    window.history.pushState(null, '', '/?settings=1')
+  }
+
   return (
     // 无右边框：rail 与窗口背景是同一块面（bg-sidebar == body），内容区靠
     // 悬浮卡的阴影分隔，而不是一条竖线。宽度对齐原型 --sidebar-w: 244px
@@ -97,8 +140,32 @@ export function AppRail() {
     <nav className="flex h-full w-61 shrink-0 flex-col gap-1 bg-sidebar px-3 pb-3">
       {/* 顶部 48px：macOS 红绿灯的净空 + 窗口拖拽面（原型 .traffic）。
         * 原来是 nav 的 pt-12 padding——padding 不能标 app-region，改成
-        * 实体条后这块「空白」真的能拖动窗口。 */}
-      <div aria-hidden className="h-12 shrink-0 [-webkit-app-region:drag]" />
+        * 实体条后这块「空白」真的能拖动窗口。收起/展开按钮叠在这条的
+        * 右端：整条仍是 drag 区，按钮自身标 no-drag 才点得动（否则
+        * Electron 按 layout box 注册拖拽区，点击被窗口拖拽吞掉）。 */}
+      <div className="relative flex h-12 shrink-0 items-center justify-end [-webkit-app-region:drag]">
+        {/* 收起按钮与右侧内容卡标题栏（红绿灯 / 标题 / 收起态图标排）垂直
+          * 对齐（2026-07-05 用户要求）。错位根因：rail 顶栏从视口 y=0 起、
+          * items-center 让 32px 按钮中线落 y=24；而内容卡标题栏从 y=10
+          * 起（stage 的 10px gutter）+46px 高、中线在 y=33——两侧「居中」
+          * 基准差着那 10px gutter + 高度差 = 9px。用 translate-y-[9px] 把
+          * 按钮中线顶到 33（纯视觉位移，不改 flex 流、不推挤下方主按钮，
+          * 拖拽条高度语义不变）。改内容卡标题栏几何时同步核这个偏移量。 */}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
+          title={collapsed ? '展开侧边栏' : '收起侧边栏'}
+          className="translate-y-[9px] text-muted-foreground [-webkit-app-region:no-drag] hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          onClick={toggleCollapsed}
+        >
+          {collapsed ? (
+            <PanelLeft className="size-4" />
+          ) : (
+            <PanelLeftClose className="size-4" />
+          )}
+        </Button>
+      </div>
       {/* 顶部主按钮跟随当前 surface（2026-07-04 用户要求）：
         *  - 聊天面「新对话」= 切到「新会话」再进聊天路由。sessionId null 的
         *    SWITCH_REQUEST 经 main 正规化后由 chat 的 FusionRuntimeProvider
@@ -194,45 +261,118 @@ export function AppRail() {
         * 渲染 null」，切面时中段可能整块消失重现——这是数据诚实优先。 */}
       {pathname.startsWith('/chat') ? <RailSessionList /> : <RailProjectList />}
 
-      <div className="mt-auto flex flex-col gap-1 pt-3">
-        <Button
-          variant="ghost"
-          className="justify-start gap-2 px-3 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
-          onClick={() => {
-            // 设置走 canvas App 的 overlay 模式（?settings=1 → 全屏设置页，
-            // 数据链路完整）。shallow pushState：canvas 的 isSettingsOverlay
-            // 用 useSearchParams 响应式读取，Next 的 native history 集成会
-            // 同步它，overlay 即开——零刷新零 RSC 请求（关闭走
-            // handleOverlayClose 的 history.back，同文档软回退）。
-            window.history.pushState(null, '', '/?settings=1')
-          }}
-        >
-          <Settings className="size-4" />
-          设置
-        </Button>
+      {/* 底部只剩 user chip（独立「设置」按钮已并入 chip 的账户菜单，
+        * 2026-07-05 用户要求）——设置连同偏好/订阅/帮助等都收进这个菜单，
+        * rail 底部不再单列「设置」占一行。 */}
+      <div className="mt-auto pt-3">
         {identity && (
-          // user chip（原型 .user-chip）：头像首字母走品牌绿 tint——绿只给
-          // 「身份/CTA/选中」点位的用色纪律。点击同「设置」入口（身份与
-          // CLI 后端的详情都在设置页里）。
-          <Button
-            variant="ghost"
-            className="h-10 justify-start gap-2.5 px-2.5 hover:bg-sidebar-accent"
-            onClick={() => {
-              window.history.pushState(null, '', '/?settings=1')
-            }}
-          >
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/15 text-xs font-semibold text-sidebar-primary">
-              {identity.user.charAt(0).toUpperCase()}
-            </span>
-            <span className="flex min-w-0 flex-col items-start leading-tight">
-              <span className="max-w-full truncate text-[12.5px] font-medium text-sidebar-foreground">
-                {identity.user}
-              </span>
-              <span className="text-[11px] font-normal text-muted-foreground">
-                {identity.backend} · 已连接
-              </span>
-            </span>
-          </Button>
+          // user chip（原型 .user-chip）+ 账户菜单（2026-07-05）：一整行是
+          // 菜单 trigger，头像首字母走品牌绿 tint（绿只给「身份/CTA/选中」
+          // 点位的用色纪律）。右侧齿轮是「点这里能展开」的显式提示；点行
+          // 任意处都开同一个向上弹出的账户菜单。
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                aria-label="账户菜单"
+                className="h-11 w-full justify-start gap-2.5 px-2.5 hover:bg-sidebar-accent data-[state=open]:bg-sidebar-accent"
+              >
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/15 text-xs font-semibold text-sidebar-primary">
+                  {identity.user.charAt(0).toUpperCase()}
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col items-start leading-tight">
+                  <span className="max-w-full truncate text-[12.5px] font-medium text-sidebar-foreground">
+                    {identity.user}
+                  </span>
+                  <span className="max-w-full truncate text-[11px] font-normal text-muted-foreground">
+                    {identity.backend} · 已连接
+                  </span>
+                </span>
+                {/* 右端图标：设置齿轮做「可展开」的锚点提示。整行都是
+                  * trigger，图标不单独绑 onClick（点它 = 点行 = 开菜单）。
+                  * 装饰性，故 aria-hidden、pointer-events 交给外层 Button。 */}
+                <Settings
+                  aria-hidden
+                  className="size-4 shrink-0 text-muted-foreground"
+                />
+              </Button>
+            </DropdownMenuTrigger>
+            {/* side="top"：chip 在 rail 最底，菜单必须向上弹（原型账户菜单
+              * 从 chip 上方展开）。宽度贴齐 trigger（--radix-…-trigger-width）
+              * 起步、下限 15rem，够放最长的「偏好设置 ›」不换行。 */}
+            <DropdownMenuContent
+              side="top"
+              align="start"
+              sideOffset={8}
+              className="w-[--radix-dropdown-menu-trigger-width] min-w-[15rem]"
+            >
+              {/* 套餐信息区（占位数据，2026-07-05 用户确认先做占位——真实
+                * 订阅/到期链路后续接入，届时把这段换成动态值）。默认「永久」
+                * （用户要求，2026-07-05）：无到期日的套餐状态。 */}
+              <DropdownMenuLabel className="flex flex-col gap-0.5 py-2">
+                <span className="text-[11px] font-normal text-muted-foreground">
+                  套餐到期
+                </span>
+                <span className="text-[13px] font-semibold text-sidebar-foreground">
+                  永久
+                </span>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                {/* 设置：唯一有真实链路的项——走 canvas App 的 overlay 模式
+                  * （?settings=1 → 全屏设置页）。shallow pushState：canvas 的
+                  * isSettingsOverlay 用 useSearchParams 响应式读取，Next 的
+                  * native history 集成同步它，overlay 即开——零刷新零 RSC
+                  * 请求（关闭走 handleOverlayClose 的 history.back）。 */}
+                <DropdownMenuItem onSelect={openSettings}>
+                  <Settings />
+                  设置
+                </DropdownMenuItem>
+                {/* 偏好设置：图3 带 › 子菜单箭头。子项是占位——真实偏好项
+                  * （外观/语言等）大多已在设置页里，这里的子菜单先留空提示。 */}
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <Palette />
+                    偏好设置
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuItem onSelect={openSettings}>
+                      在设置中调整
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                {/* 以下均为占位项（用户确认，2026-07-05）：暂无对应功能。
+                  * 刻意不用 disabled——disabled 会置灰（opacity-50）破坏图3
+                  * 「所有项正常可读」的观感；改用 no-op onSelect 保持正常
+                  * 外观且点击不做事。真实链路（订阅/帮助/更新日志/关于）
+                  * 后续接入时把 noop 换成实际动作即可。 */}
+                <DropdownMenuItem onSelect={noop}>
+                  <Crown />
+                  升级订阅
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={noop}>
+                  <BookOpen />
+                  帮助文档
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={noop}>
+                  <FileClock />
+                  更新日志
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={noop}>
+                  <Info />
+                  关于我们
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              {/* 退出登录：destructive 红字（图3）。占位——尚无登录态，点击
+                * no-op（同上，不 disabled 以保留醒目红字），接入账号体系后
+                * 绑真实登出。 */}
+              <DropdownMenuItem variant="destructive" onSelect={noop}>
+                <LogOut />
+                退出登录
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
     </nav>

@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ToolCard } from "./ToolCard";
 import { FileOpsSummary } from "./FileOpsSummary";
 import { renderMarkdown } from "../../runtime/markdown";
@@ -90,7 +90,7 @@ interface Props {
  *     the individual tool cards. Mirrors the chat surface in screenshot 9.
  *   - status pills
  */
-export function AssistantMessage({
+function AssistantMessageInner({
   message,
   streaming,
   projectId,
@@ -118,8 +118,14 @@ export function AssistantMessage({
   // The chat-pane-level PinnedTodoBar renders the canonical TodoWrite card
   // above the composer, so we strip any TodoWrite tool-groups out of the
   // per-message flow to avoid the same task list rendering twice.
-  const blocks = stripTodoToolGroups(
-    suppressAskUserQuestionFallbackText(buildBlocks(events)),
+  // buildBlocks walks the full event list and news up a Map on every call, so
+  // memoize on `events`. Only the streaming message swaps its events array
+  // reference each rAF flush; history messages keep a stable reference and hit
+  // the cache — this also keeps `blocks` referentially stable so the
+  // displayedProduced / pluginActionFolders memos below can actually land.
+  const blocks = useMemo(
+    () => stripTodoToolGroups(suppressAskUserQuestionFallbackText(buildBlocks(events))),
+    [events],
   );
   const fileOps = useMemo(() => deriveFileOps(events), [events]);
   const produced = message.producedFiles ?? [];
@@ -320,6 +326,13 @@ export function AssistantMessage({
     </div>
   );
 }
+
+// Wrapped in memo so a streaming rAF flush — which replaces only the streaming
+// message's object in the parent's messages array — re-renders just that one
+// message row. Every history message keeps a stable object reference (see
+// ProjectView.updateAssistant) and its callback props are hoisted to stable
+// identities in ChatPane, so the default shallow prop compare skips them.
+export const AssistantMessage = memo(AssistantMessageInner);
 
 function inferProducedFilesFromTurn({
   message,
@@ -1182,6 +1195,16 @@ function latestStatusLabel(
   return undefined;
 }
 
+// Memoized markdown renderer. renderMarkdown is a pure function that runs the
+// full parseBlocks + renderInline regex pipeline over `text` every call, so
+// wrapping it in a memo keyed on `text` means the streaming path only re-parses
+// the one segment whose text actually changed — every stable prose segment
+// (all of history, plus the unchanged tail of the streaming message) returns
+// its cached ReactNode instead of re-parsing on each rAF flush.
+const MarkdownText = memo(function MarkdownText({ text }: { text: string }) {
+  return <>{renderMarkdown(text)}</>;
+});
+
 function ProseBlock({
   text,
   isLastAssistant,
@@ -1236,7 +1259,7 @@ function ProseBlock({
           return <SystemReminderBlock key={seg.key} text={seg.text} />;
         }
         if (seg.kind === "text") {
-          return <Fragment key={seg.key}>{renderMarkdown(seg.text)}</Fragment>;
+          return <MarkdownText key={seg.key} text={seg.text} />;
         }
         if (seg.kind === "suppressed-direction") {
           return (

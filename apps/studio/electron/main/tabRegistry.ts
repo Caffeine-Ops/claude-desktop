@@ -203,7 +203,15 @@ export function createShellWindow(): BrowserWindow {
     // Traffic lights sit directly over the active tab's renderer
     // header — the renderer's `.header` reserves left padding so
     // the buttons don't overlap any content.
-    trafficLightPosition: { x: 14, y: 16 },
+    // y=27：studio tab 的 WebContentsView 全屏 flush（setBounds x0 y0，见
+    // layoutActiveTab 的 studio 分支），所以窗口坐标 == renderer 视口坐标。
+    // 内容卡 46px 标题栏（含收起态展开图标、标题、AI生成徽标）的垂直中线
+    // ≈ 视口 y=33；红绿灯按钮 ⌀12，其 position.y 是按钮顶部，故 33-6=27 让
+    // 三者垂直居中对齐（2026-07-05 用户要求）。旧值 16 中线在 22，偏高一截。
+    // x=30：整组（红绿灯 + 收起态图标排）离左边缘再放开一档（用户 2026-07-05
+    // 要求「整体往右移」）。旧值 14 太贴边。必须与 RailShell 收起态图标排的
+    // left-[100px] 联动同增：图标排起点 = 红绿灯净空右缘，两者错位就不成一横。
+    trafficLightPosition: { x: 30, y: 27 },
     icon: appIcon,
     // 窗口底色 = renderer 没画出来的每一帧的最终兜底（studio 的
     // WebContentsView 是透明底，见 newStudioTab 的 setBackgroundColor）。

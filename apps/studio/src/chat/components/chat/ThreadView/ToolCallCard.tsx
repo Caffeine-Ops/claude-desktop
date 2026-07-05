@@ -945,16 +945,18 @@ function CodeFileView({
   const { gutter, code, html } = useMemo(() => {
     const { gutter: g, code: c } = splitNumberedLines(text)
     // highlight.js throws if you hand it an unregistered language, so
-    // we check `getLanguage` first and otherwise fall back to
-    // `highlightAuto` which scans for the best match across the
-    // bundled set. `ignoreIllegals: true` keeps partial / mid-stream
+    // we check `getLanguage` first and otherwise fall back to plain
+    // escaped text. 刻意不走 highlightAuto——它对全部语法库逐一打分是
+    // hljs 最贵的路径，历史恢复时整屏 tool card 全量 mount 会按条数放大
+    // 这个成本（与 AssistantMarkdown 的 detect:false、WrittenFilesPanel
+    // 的兜底决策一致）。`ignoreIllegals: true` keeps partial / mid-stream
     // snippets from tripping the highlighter.
     let rendered: string
     try {
       if (language && hljs.getLanguage(language)) {
         rendered = hljs.highlight(c, { language, ignoreIllegals: true }).value
       } else {
-        rendered = hljs.highlightAuto(c).value
+        rendered = escapeHtml(c)
       }
     } catch {
       rendered = escapeHtml(c)

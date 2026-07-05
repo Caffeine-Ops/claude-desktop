@@ -336,15 +336,23 @@ function WrittenFileContent({
   // hljs highlight (skipped when AssistantMarkdown handles the content).
   const html = useMemo(() => {
     if (renderRich) return ''
+    // 流式期间跳过高亮：file.content 每个 delta 都变，对全量内容重跑 hljs
+    // 是 O(n²) 主线程开销，尾段单次可达数十 ms，叠加每 delta 的 React 渲染
+    // 直接掉帧。跟随尾部滚动时用户本来也看不清着色，纯文本足够；streaming
+    // 翻 false 后 memo 依赖变化会自动跑一次完整高亮补上颜色。
+    if (file.streaming) return escapeHtml(file.content)
     try {
       if (language && hljs.getLanguage(language)) {
         return hljs.highlight(file.content, { language, ignoreIllegals: true }).value
       }
-      return hljs.highlightAuto(file.content).value
+      // 未知扩展名不做 highlightAuto——它是 hljs 最贵的路径（对全部语法库
+      // 逐一打分），与 AssistantMarkdown 的 detect:false 决策对齐，直接返回
+      // 转义后的纯文本。
+      return escapeHtml(file.content)
     } catch {
       return escapeHtml(file.content)
     }
-  }, [file.content, language, renderRich])
+  }, [file.content, file.streaming, language, renderRich])
 
   // Progress goes straight to the bar's DOM node — see progressRef's comment
   // in WrittenFilesPanel for why this must not be React state.

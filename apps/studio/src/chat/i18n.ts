@@ -207,6 +207,7 @@ const STRINGS = {
 
     // Composer
     composerPlaceholder: '随便问点什么…   ↵ 发送 · ⇧↵ 换行 · / 命令 · @ 文件',
+    composerPlaceholderStreaming: '正在回复中 — 消息将加入队列，回复完成后自动发送…',
     composerAttachImage: '附加图片',
     composerAttachFile: '附加文件或图片',
     composerDictate: '语音输入',
@@ -463,6 +464,8 @@ const STRINGS = {
 
     composerPlaceholder:
       'Ask anything…   ↵ send · ⇧↵ newline · / commands · @ files',
+    composerPlaceholderStreaming:
+      'Replying — your message will queue and send when the reply finishes…',
     composerAttachImage: 'Attach image',
     composerAttachFile: 'Attach file or image',
     composerDictate: 'Voice input',

@@ -64,6 +64,28 @@
   animation: renamed-flash 0.9s cubic-bezier(0.22, 1, 0.36, 1) 1;
 }
 
+/* ── 右侧舞台的 gutter（原型 .stage 的 10px 呼吸）──────────────────────
+ * 内容卡四周的间距用变量表达，方便按 rail 折叠态切换（RailShell 在收起时
+ * 给 <body> 加 data-rail-collapsed，见其头注释）：
+ *  - 展开态：左侧不留（rail 自己的 padding 就是左呼吸），上/右/下各 10px。
+ *  - 收起态：rail 撤走，左侧补回 10px，卡片四边对称 10px 悬浮。顶部不再
+ *    额外让位——展开图标改放进卡片自己的 46px 标题栏那一行（红绿灯右侧、
+ *    标题左侧的空白处，RailShell 里 fixed 定位到 header 高度），所以卡片
+ *    顶部保持 10px，红绿灯浮在卡片标题栏左上角上方、不打架。
+ * 过渡加 transition 让折叠时卡片平滑归位，不生硬跳。 */
+.shell-stage {
+  min-width: 0;
+  flex: 1 1 0%;
+  padding-top: var(--stage-gutter, 10px);
+  padding-right: var(--stage-gutter, 10px);
+  padding-bottom: var(--stage-gutter, 10px);
+  padding-left: var(--stage-pl, 0px);
+  transition: padding-left 0.2s ease-out;
+}
+body[data-rail-collapsed] .shell-stage {
+  --stage-pl: 10px;
+}
+
 /* ── 悬浮内容卡（docs/ui-prototype-shell-floating.html 的 1:1 落地）──────
  * 窗口底面 = rail 灰面（body 的 bg-sidebar），右侧内容区（chat + canvas
  * 两面共用一块卡，结构见 layout.tsx 的 stage/card 注释）浮在底面上。
