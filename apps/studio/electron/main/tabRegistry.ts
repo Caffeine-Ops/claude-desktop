@@ -177,6 +177,31 @@ const tabOrder: number[] = []
 
 let activeTabId: number | null = null
 
+/**
+ * True only during a **real** quit（⌘Q / 菜单退出 / before-quit）。
+ *
+ * 为什么需要它：macOS 上点红叉的语义是「关闭窗口」而非「退出应用」。默认让
+ * `close` 走到 `closed` 会 dispose 掉每个 tab 的 engine——连带 **kill 掉正在
+ * 跑的 fusion-code 子进程**（teardownRuntime），用户正在生成的 PPT/长任务被
+ * 拦腰截断（`[Request interrupted by user]`）。而 `window-all-closed` 在
+ * darwin 上又刻意不 quit，于是进程还挂在 dock、任务却已被杀——最坏组合。
+ *
+ * 有了这个标志，`close` handler 就能区分两种意图：红叉→只 hide（引擎/子进程
+ * 全保留，dock 点一下窗口原样回来）；真退出→放行到 closed 走完整 dispose。
+ * `before-quit`（main/index.ts）在退出前置它为 true。
+ */
+let isQuitting = false
+
+/** Called from main/index.ts `before-quit` so the final window close disposes engines. */
+export function setQuitting(v: boolean): void {
+  isQuitting = v
+}
+
+/** Whether a real quit is already committed (used to avoid re-prompting on re-entrant before-quit). */
+export function getQuitting(): boolean {
+  return isQuitting
+}
+
 /** True while another workspace tab can still be opened. */
 export function canAddTab(): boolean {
   return tabs.size < MAX_TABS
@@ -257,10 +282,26 @@ export function createShellWindow(): BrowserWindow {
     broadcastFullscreen(false)
   })
 
+  // macOS 红叉 = 隐藏窗口，不退应用（平台惯例）。拦下 close：非真退出时
+  // preventDefault + hide，engine / fusion-code 子进程 / 所有 SessionRuntime
+  // 原样存活，正在跑的任务继续在后台推进；dock 点一下经 app.on('activate')
+  // 直接 show 回来（见 index.ts，不重建 tab，也就没有 unknown-tab 噪音与
+  // 重挂载闪烁）。真退出（⌘Q / 菜单 / before-quit 已置 isQuitting）才放行到
+  // 下方 'closed' 走完整 dispose。
+  //
+  // 其它平台（win/linux）不拦：那里关窗即退应用是惯例，且 window-all-closed
+  // 已 app.quit()——保持原语义。
+  win.on('close', (event) => {
+    if (process.platform === 'darwin' && !isQuitting) {
+      event.preventDefault()
+      win.hide()
+    }
+  })
+
   // Shutdown path: closing the shell is equivalent to quitting the
   // app's UI. Dispose every tab's engine (each disposes its own
   // permission broker + fusion-code children) before the window
-  // actually tears down.
+  // actually tears down. macOS 下只有真退出（isQuitting）才走到这里。
   win.on('closed', () => {
     const all = Array.from(tabs.values())
     tabs.clear()
@@ -669,6 +710,18 @@ export function getAllTabs(): TabContext[] {
   return tabOrder
     .map((id) => tabs.get(id))
     .filter((ctx): ctx is TabContext => ctx !== undefined)
+}
+
+/**
+ * 是否有任何 tab 的 engine 还挂着活跃的 fusion-code runtime（pump 未退，
+ * handle 或 queue 仍在）。用于 before-quit 决定要不要弹「退出会中断任务」
+ * 确认框——没有任何任务在跑时直接静默退出，不打扰用户。
+ */
+export function hasActiveRuntimes(): boolean {
+  for (const ctx of tabs.values()) {
+    if (ctx.engine && ctx.engine.listActiveRuntimeIds().length > 0) return true
+  }
+  return false
 }
 
 /** Snapshot suitable for sending to the shell renderer. */

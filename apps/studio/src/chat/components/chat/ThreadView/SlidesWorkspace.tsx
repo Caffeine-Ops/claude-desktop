@@ -320,15 +320,17 @@ export function SlidesWorkspace(): React.JSX.Element {
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card">
-      {/* Tab bar. 不再兼职窗口拖拽面——这条 bar 又窄又塞满按钮，拖拽收益
-          趋零，窗口拖拽面由 ChatHeader（chat 列顶部）独自承担。
-          「tab 点不动」的历史真因后来实锤并不是本 bar 的 drag/no-drag 嵌套：
-          是 SurfaceHost 隐藏面（canvas）的全宽 drag 顶栏仍被 Electron 注册成
-          原生窗口拖拽矩形、正好罩住这条 bar（app-region 收集不看 pointer-
-          events）。修复在 globals.css 的 .surface-inactive，详见那段注释。 */}
-      {/* h-[46px] 与 ChatHeader（chat 列顶栏）严格同高、同 hairline 透明度——
-          分栏时两根栏并排，底边线必须对齐成一条（2026-07-04 顶栏化改版）。 */}
-      <div className="flex h-[46px] shrink-0 select-none items-center gap-0.5 border-b border-border/55 px-2">
+      {/* Tab bar —— 兼作 slides 列（右列）的窗口拖拽面。
+          分栏时本 bar 占据右列顶栏那一横，ChatHeader（在左列）够不到这里，
+          所以右列顶部的窗口拖拽只能由本 bar 自己承担——不标 drag 的话，tab
+          右侧那大片空白就拖不动窗口（2026-07-05 打包后实锤）。整条 bar 标
+          drag、tab 按钮各自 no-drag 逃逸（点 tab 是切换视图不是拖窗）。
+          「tab 点不动」的历史真因早已实锤不是本 bar 的 drag/no-drag 嵌套（是
+          SurfaceHost 隐藏面全宽 drag 顶栏罩住本 bar，已由 globals.css 的
+          .surface-inactive 修复），故此处恢复 drag 安全。
+          h-[46px] 与 ChatHeader 严格同高、同 hairline——分栏两根栏并排底边
+          对齐成一条（2026-07-04 顶栏化改版）。 */}
+      <div className="flex h-[46px] shrink-0 select-none items-center gap-0.5 border-b border-border/55 px-2 [-webkit-app-region:drag]">
         {tabs.map((tDef) => {
           const active = tDef.id === tab
           // Pulsing dot whenever this tab's content is changing — including the
@@ -341,7 +343,7 @@ export function SlidesWorkspace(): React.JSX.Element {
               type="button"
               onClick={() => setTab(tDef.id)}
               className={
-                'flex items-center gap-1 rounded-md px-2 py-1 text-[12px] transition-colors ' +
+                'flex items-center gap-1 rounded-md px-2 py-1 text-[12px] transition-colors [-webkit-app-region:no-drag] ' +
                 (active
                   ? 'bg-foreground/[0.06] font-medium text-foreground'
                   : 'text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground/90')

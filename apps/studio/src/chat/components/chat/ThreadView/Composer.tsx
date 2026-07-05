@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ThreadPrimitive,
   ComposerPrimitive,
@@ -447,9 +448,10 @@ export function Composer(): React.JSX.Element {
                   {/* Spacer pushes the rest to the right edge. */}
                   <div className="flex-1" />
 
-                  {/* Right cluster: permission mode (prototype "Auto"
-                      slot) · mic · send. */}
-                  <PermissionModePicker />
+                  {/* Right cluster: 模型选择器 · mic · send（2026-07-05 用户要求
+                      把模型 chip 与「全自动」权限 chip 互换——模型放这排紧挨麦克风/
+                      发送，权限模式挪到卡片下方 chip 排）。 */}
+                  <ComposerModelChip model={sessionMeta?.model} />
                   <MicButton label={t('composerDictate')} />
                   {/* Mutually exclusive Send / Stop slot. */}
                   <ThreadPrimitive.If running={false}>
@@ -492,9 +494,9 @@ export function Composer(): React.JSX.Element {
         </ComposerPrimitive.AttachmentDropzone>
 
         {/* Below-card chips (figure 18): 选择工作目录 · 语气 创意 stay
-            VISUAL-ONLY placeholders; the 模型 chip on the right is the first
-            FUNCTIONAL one — it switches the engine's model (live + future
-            sessions) via MODEL_SET. */}
+            VISUAL-ONLY placeholders; the 权限模式 chip on the right is the
+            FUNCTIONAL one（2026-07-05 与模型 chip 互换位置后落这排）——它切换
+            引擎的权限模式（default/plan/acceptEdits/bypass/dontAsk）。 */}
         <div className="mt-3 flex items-center gap-4 px-2">
           <ComposerBelowChip
             label="选择工作目录"
@@ -513,7 +515,7 @@ export function Composer(): React.JSX.Element {
             }
           />
           <div className="ml-auto">
-            <ComposerModelChip model={sessionMeta?.model} />
+            <PermissionModePicker />
           </div>
         </div>
       </div>
@@ -590,9 +592,35 @@ function ComposerModePicker(): React.JSX.Element {
   const setMode = useComposerModeStore((s) => s.setMode)
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  // 菜单 portal 到 body 后用 fixed 定位，锚点靠测量按钮 rect 得出（见下方
+  // 「为什么必须 portal」注释）。null = 还没测量 / 未打开。
+  const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(
+    null
+  )
 
   const current =
     COMPOSER_MODES.find((m) => m.id === mode) ?? COMPOSER_MODES[0]!
+
+  // 打开时测量按钮位置换算成 fixed 锚点：菜单左缘对齐按钮左缘，菜单底缘
+  // 贴按钮顶缘上方（bottom = 视口高 − 按钮 top，配 mb 间距向上弹）。
+  // useLayoutEffect：在浏览器绘制前定位好，避免菜单先闪现在 (0,0) 再跳位。
+  useLayoutEffect(() => {
+    if (!open) return
+    const measure = (): void => {
+      const b = btnRef.current?.getBoundingClientRect()
+      if (b) setAnchor({ left: b.left, bottom: window.innerHeight - b.top })
+    }
+    measure()
+    // 滚动 / 缩放时跟随重定位（composer 在滚动视口内，滚动会移动按钮）。
+    window.addEventListener('scroll', measure, true)
+    window.addEventListener('resize', measure)
+    return () => {
+      window.removeEventListener('scroll', measure, true)
+      window.removeEventListener('resize', measure)
+    }
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -603,9 +631,13 @@ function ComposerModePicker(): React.JSX.Element {
     const overlay = useComposerOverlayStore.getState()
     overlay.setOpen(true)
     const onDown = (e: MouseEvent): void => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
+      // 菜单已 portal 到 body（不在 rootRef 子树内），点击既不在按钮壳
+      // 也不在菜单里才算「点外面」→ 关闭。少了 menuRef 这半边，点菜单项
+      // 会被当成点外部先关掉菜单、选择丢失。
+      const target = e.target as Node
+      const inRoot = rootRef.current?.contains(target)
+      const inMenu = menuRef.current?.contains(target)
+      if (!inRoot && !inMenu) setOpen(false)
     }
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') setOpen(false)
@@ -627,6 +659,7 @@ function ComposerModePicker(): React.JSX.Element {
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={btnRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
@@ -649,87 +682,356 @@ function ComposerModePicker(): React.JSX.Element {
         </svg>
       </button>
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 4, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 4, scale: 0.98 }}
-            transition={{ duration: 0.12, ease: 'easeOut' }}
-            className="absolute bottom-full left-0 z-40 mb-1.5 w-56 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
-            role="listbox"
-          >
-            {COMPOSER_MODES.map((meta) => {
-              const selected = meta.id === mode
-              return (
-                <button
-                  key={meta.id}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  onClick={() => choose(meta.id)}
-                  className={
-                    'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors ' +
-                    (selected
-                      ? 'bg-brand/10 text-foreground'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground')
-                  }
-                >
-                  <span className="flex shrink-0 items-center">{meta.icon}</span>
-                  <span className="font-medium">{meta.label}</span>
-                  {meta.beta ? (
-                    <span className="rounded-md bg-sky-500/15 px-1.5 py-0.5 text-[10.5px] font-semibold leading-none text-sky-500">
-                      Beta
-                    </span>
-                  ) : null}
-                  <span className="flex-1" />
-                  {selected ? (
-                    <svg
-                      width="14" height="14" viewBox="0 0 24 24" fill="none"
-                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                      className="shrink-0 text-brand"
-                      aria-hidden
+      {/* ⚠️ 为什么必须 portal 到 body（2026-07-05「菜单顶部被欢迎语盖住」实锤）：
+        * 菜单原本 `absolute bottom-full` 相对本组件向上弹，但 Composer 卡片
+        * 外壳是 `relative overflow-hidden rounded-[…]`（圆角裁剪必需，不能去），
+        * 向上溢出卡片的菜单顶部被 overflow-hidden **裁掉**、露出后面的空态欢迎语
+        * 标题（CDP elementFromPoint 命中 H1 实锤）——不是 z-index 能救的（裁剪
+        * 与层叠无关）。portal 到 body 让菜单脱离卡片的 overflow 裁剪，fixed 定位
+        * 靠测量按钮 rect 得出锚点（anchor）。菜单在 .chat-app 之外，canvas 的裸
+        * <button> reset 会命中菜单项 → 每项加 data-slot 逃逸（同 2026-07-04 打开
+        * 方式菜单/lightbox 家族）。 */}
+      {anchor !== null &&
+        createPortal(
+          <AnimatePresence>
+            {open && (
+              <motion.div
+                ref={menuRef}
+                initial={{ opacity: 0, y: 4, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 4, scale: 0.98 }}
+                transition={{ duration: 0.12, ease: 'easeOut' }}
+                style={{ left: anchor.left, bottom: anchor.bottom }}
+                className="fixed z-[9999] mb-1.5 w-56 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                role="listbox"
+              >
+                {COMPOSER_MODES.map((meta) => {
+                  const selected = meta.id === mode
+                  return (
+                    <button
+                      key={meta.id}
+                      data-slot="composer-mode-option"
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => choose(meta.id)}
+                      className={
+                        'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors ' +
+                        (selected
+                          ? 'bg-brand/10 text-foreground'
+                          : 'text-muted-foreground hover:bg-muted hover:text-foreground')
+                      }
                     >
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                  ) : null}
-                </button>
-              )
-            })}
-          </motion.div>
+                      <span className="flex shrink-0 items-center">{meta.icon}</span>
+                      <span className="font-medium">{meta.label}</span>
+                      {meta.beta ? (
+                        <span className="rounded-md bg-sky-500/15 px-1.5 py-0.5 text-[10.5px] font-semibold leading-none text-sky-500">
+                          Beta
+                        </span>
+                      ) : null}
+                      <span className="flex-1" />
+                      {selected ? (
+                        <svg
+                          width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                          className="shrink-0 text-brand"
+                          aria-hidden
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      ) : null}
+                    </button>
+                  )
+                })}
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body
         )}
-      </AnimatePresence>
     </div>
   )
 }
 
 /**
- * 模型 chip — the composer footer's model switcher (right side of the
- * below-card row). Shows the session's current model (SessionMeta.model,
- * e.g. "gpt-5.4[1m]") and opens an upward dropdown listing the backend
- * gateway's catalog (MODEL_LIST IPC, fetched on open — main caches it).
- * Picking an id calls MODEL_SET: live for the foreground session and the
- * default for every future session in this window. The label flips
- * optimistically (`pending`) and retires once the sessionMeta refresh —
- * driven by the engine's meta-changed broadcast — catches up.
+ * 模型目录的 window 级共享缓存（2026-07-05 加，治「点开才 loading 不丝滑」）。
+ *
+ * listModels() 对整个 window 返回同一份目录（不随会话变），main 侧还有 TTL
+ * 缓存。原来每个 ComposerModelChip 只在 open 时才 fetch，首次点开必等一次
+ * 网络往返 → 「加载模型列表…」loading。这里把结果提到模块级：
+ *  - 首个实例挂载即预取（prefetchModels），填充 modelCache；
+ *  - 组件 state 用 modelCache 做初值，命中即首帧就有数据、点开零 loading；
+ *  - 切会话 composer 重挂载也共享同一份缓存，不重复拉。
+ * 只缓存成功结果；失败不写缓存（下次实例照常重试），也不吞错误（open 时的
+ * fetch 兜底仍会把 error 显示出来）。
+ */
+let modelCache: string[] | null = null
+let modelPrefetch: Promise<void> | null = null
+
+function prefetchModels(): void {
+  // 已有缓存或正在预取就不重复发起。
+  if (modelCache !== null || modelPrefetch !== null) return
+  const api = typeof window !== 'undefined' ? window.chatApi : undefined
+  if (!api?.listModels) return
+  modelPrefetch = api
+    .listModels()
+    .then((res) => {
+      if (res.models.length > 0) modelCache = res.models
+    })
+    .catch(() => {
+      // 预取失败静默——open 时的 fetch 会重试并负责显示错误。
+    })
+    .finally(() => {
+      modelPrefetch = null
+    })
+}
+
+/**
+ * 模型展示元数据（2026-07-05 富菜单重设计）——按后端返回的真实模型 id 补齐
+ * 图标 / 友好名 / 一句话描述 / 上下文窗口 / 消耗倍率，驱动富菜单每一行 + hover
+ * 详情卡。**未在表内的 id 走 fallback**（default meta：id 原样当名、通用图标、
+ * 无倍率徽章），保证后端加新模型也不会漏显、不报错。
+ *
+ * ⚠️ rate（倍率）目前是**前端静态占位**：当前后端 listModels() 只返回 id 字符串，
+ * 没有计费/折扣数据。等后端就绪（gateway 返回真实倍率/折扣/低峰时段）再把这里
+ * 换成数据驱动。图标用极简几何占位（无品牌 svg 资源，按 design 铁律用占位不乱画
+ * 假图标）。'auto' 段（default）单列在菜单顶部，与具名模型用分隔线隔开（图 2）。
+ */
+interface ModelMeta {
+  /** 友好显示名（chip + 菜单行 + 详情卡标题）。 */
+  name: string
+  /** 一句话卖点（hover 详情卡）。 */
+  desc: string
+  /** 上下文窗口（详情卡）。 */
+  context: string
+  /** 消耗倍率文案（菜单行右侧 + 详情卡），null = 不显示倍率徽章。 */
+  rate: string | null
+  /** 是否 auto 智能挡（菜单里单列顶部）。 */
+  auto?: boolean
+}
+
+// 按「模型家族」键（不含 context 变体后缀）。1m 变体的 context/name 后缀
+// 由 modelMetaOf 动态加，不各写一份，避免 haiku/haiku[1m]/完整 id 三份漂移。
+const MODEL_META: Record<string, ModelMeta> = {
+  default: {
+    name: 'Auto',
+    desc: '按任务自动挑选最合适的模型，省心之选。',
+    context: '自适应',
+    rate: '0.5X',
+    auto: true
+  },
+  opus: {
+    name: 'Opus 4.8',
+    desc: '最强推理与代码能力，攻坚复杂任务的旗舰。',
+    context: '200K',
+    rate: '1X'
+  },
+  sonnet: {
+    name: 'Sonnet 5',
+    desc: '速度与能力均衡，日常主力，写作、跑流程都靠得住。',
+    context: '200K',
+    rate: '0.3X'
+  },
+  haiku: {
+    name: 'Haiku 4.5',
+    desc: '轻量极速，简单问答与批量任务的性价比之选。',
+    context: '200K',
+    rate: '0.1X'
+  },
+  fable: {
+    name: 'Fable 5',
+    desc: '创意写作与叙事特化，文风生动、构思跳脱。',
+    context: '200K',
+    rate: '0.3X'
+  }
+}
+
+/**
+ * 归一化模型 id → { family, is1m }（2026-07-05「chip 完整 id 与菜单短别名对不
+ * 上、选中无勾」实锤修复）。
+ *
+ * 背景：同一模型有多种 id 写法——菜单来自 listModels 的短别名（`haiku` /
+ * `opus[1m]` / `claude-fable-5[1m]`），chip 来自 system init 报的**完整 id**
+ * （`claude-haiku-4-5-20251001`）。两者字符串不等 → chip 走 fallback 显裸 id、
+ * 菜单选中判断 `id===current` 恒 false（无勾）。归一化按**家族子串**把两种写法
+ * 收敛到同一 key，让 meta 查找 + 选中比较都对得上；`[1m]` / `1m` 检出 context
+ * 变体，给友好名 / context 动态加「· 1M」后缀。未识别家族返回 raw（走 fallback）。
+ */
+function normalizeModelId(id: string): { family: string; is1m: boolean } {
+  const lower = id.toLowerCase()
+  const is1m = /\[1m\]|-1m\b|1m$/.test(lower)
+  const family =
+    lower.includes('fable')
+      ? 'fable'
+      : lower.includes('haiku')
+        ? 'haiku'
+        : lower.includes('opus')
+          ? 'opus'
+          : lower.includes('sonnet')
+            ? 'sonnet'
+            : lower === 'default' || lower.includes('auto')
+              ? 'default'
+              : id // 未识别：原样，走 fallback
+  return { family, is1m }
+}
+
+/**
+ * 取模型元数据（按归一化家族查）。1m 变体在家族 meta 上叠加：name 加「· 1M」、
+ * context 改 1M。未知家族走 fallback（id 原样当名、无倍率）。
+ */
+function modelMetaOf(id: string): ModelMeta {
+  const { family, is1m } = normalizeModelId(id)
+  const base = MODEL_META[family]
+  if (!base) {
+    return { name: id, desc: '', context: '', rate: null }
+  }
+  if (is1m && !base.auto) {
+    return { ...base, name: `${base.name} · 1M`, context: '1M' }
+  }
+  return base
+}
+
+/** 两个 model id 是否指同一模型（归一化家族 + 1m 变体都相等）。 */
+function sameModel(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false
+  const na = normalizeModelId(a)
+  const nb = normalizeModelId(b)
+  return na.family === nb.family && na.is1m === nb.is1m
+}
+
+/**
+ * 模型行图标——极简几何占位（无品牌 svg 资源）。auto 挡用「闪电」示意智能，
+ * 具名模型用「星芒」；同一套描边风格，混排不违和。
+ */
+function ModelGlyph({ auto }: { auto?: boolean }): React.JSX.Element {
+  return (
+    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-foreground/[0.05] text-muted-foreground">
+      {auto ? (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M13 2 4 14h7l-1 8 9-12h-7z" />
+        </svg>
+      ) : (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden="true">
+          <path d="m12 3 2.3 6.2L21 11l-6.7 1.8L12 19l-2.3-6.2L3 11l6.7-1.8z" />
+        </svg>
+      )}
+    </span>
+  )
+}
+
+/**
+ * 模型 chip — the composer footer's model switcher (moved into the in-card
+ * toolbar's right cluster, left of mic/send — 2026-07-05). Shows the session's
+ * current model as a friendly name + glyph, and opens an upward RICH dropdown
+ * (portal'd to body to escape the composer card's overflow-hidden clip):
+ * per-model rows with glyph / name / rate, an Auto row split off on top, a
+ * hover detail card, and a 模型设置 footer link. Prefetch primes the catalog
+ * so opening is instant. Picking an id calls MODEL_SET (live + future default);
+ * the label flips optimistically (`pending`) until sessionMeta catches up.
  */
 function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
   const [open, setOpen] = useState(false)
-  const [models, setModels] = useState<string[] | null>(null)
+  // 初值取共享缓存：命中则首帧就有列表，点开零 loading。
+  const [models, setModels] = useState<string[] | null>(() => modelCache)
   const [listError, setListError] = useState<string | null>(null)
   const [pending, setPending] = useState<string | null>(null)
+  // hover 的模型行 id → 右侧弹详情卡（图 2 那张）。null = 不弹。
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  // 菜单 portal 到 body 后用 fixed 定位（脱离 composer 卡片 overflow-hidden
+  // 裁剪，同姊妹 picker）。右对齐：菜单右缘贴按钮右缘。
+  const [anchor, setAnchor] = useState<{ right: number; bottom: number } | null>(
+    null
+  )
+
+  // 打开时测按钮 rect 换算 fixed 锚点；滚动/缩放跟随。
+  useLayoutEffect(() => {
+    if (!open) return
+    const measure = (): void => {
+      const b = btnRef.current?.getBoundingClientRect()
+      if (b)
+        setAnchor({
+          right: window.innerWidth - b.right,
+          bottom: window.innerHeight - b.top
+        })
+    }
+    measure()
+    window.addEventListener('scroll', measure, true)
+    window.addEventListener('resize', measure)
+    return () => {
+      window.removeEventListener('scroll', measure, true)
+      window.removeEventListener('resize', measure)
+    }
+  }, [open])
+
+  // 挂载即预取模型目录（不等 open）：填充共享缓存，让首次点开也零 loading。
+  // 若缓存已在（别的实例先预取过 / 本实例初值已命中），prefetchModels 内部
+  // 早退；预取完成后把缓存同步进本实例 state（本实例初值 miss 但预取赶上的
+  // 场景）。cancelled 守卫防卸载后 setState。
+  useEffect(() => {
+    if (models !== null) return
+    prefetchModels()
+    let cancelled = false
+    // 预取的 promise 完成后（modelPrefetch 变 null），把缓存同步进来。
+    void Promise.resolve(modelPrefetch).then(() => {
+      if (!cancelled && modelCache !== null) setModels(modelCache)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [models])
+
+  // 切 CLI backend（fusion-code↔system claude）后模型目录整套换（gpt↔Claude）。
+  // main 在 restartRuntimesForBackendChange 里 emit sessionMetaChanged，这里借
+  // 它清模块级缓存 + 重拉：新旧列表不同才先 setModels(null)（触发骨架屏过渡），
+  // 避免旧列表「啪」地跳成新列表（2026-07-05 用户要求）。相同则静默不闪。
+  useEffect(() => {
+    const chatApi = typeof window !== 'undefined' ? window.chatApi : undefined
+    if (!chatApi?.onSessionMetaChanged) return
+    let cancelled = false
+    const unsub = chatApi.onSessionMetaChanged(() => {
+      void chatApi
+        .listModels()
+        .then((res) => {
+          if (cancelled) return
+          const next = res.models
+          modelCache = next.length > 0 ? next : modelCache
+          setModels((prev) => {
+            const changed =
+              prev === null ||
+              prev.length !== next.length ||
+              prev.some((id, i) => id !== next[i])
+            if (!changed) return prev
+            // 列表变了：先 null 一帧走骨架屏，微任务后填新列表。
+            queueMicrotask(() => {
+              if (!cancelled) setModels(next)
+            })
+            return null
+          })
+        })
+        .catch(() => {
+          /* 重拉失败保留旧列表，不打扰 */
+        })
+    })
+    return () => {
+      cancelled = true
+      unsub()
+    }
+  }, [])
 
   // Same popover bookkeeping as ComposerModePicker: hold the composer blur
-  // strip closed while open + dismiss on outside click / Escape.
+  // strip closed while open + dismiss on outside click / Escape. 菜单已 portal
+  // 到 body（不在 rootRef 子树）——点击既不在按钮壳也不在菜单里才关闭。
   useEffect(() => {
     if (!open) return
     const overlay = useComposerOverlayStore.getState()
     overlay.setOpen(true)
     const onDown = (e: MouseEvent): void => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
+      const target = e.target as Node
+      const inRoot = rootRef.current?.contains(target)
+      const inMenu = menuRef.current?.contains(target)
+      if (!inRoot && !inMenu) setOpen(false)
     }
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') setOpen(false)
@@ -743,9 +1045,16 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
     }
   }, [open])
 
-  // Fetch the catalog on open. Main's TTL cache makes repeat opens instant;
+  // 关闭时清 hover 态，下次打开不残留上次的详情卡。
+  useEffect(() => {
+    if (!open) setHoveredId(null)
+  }, [open])
+
+  // Fetch the catalog on open to keep it fresh (prefetch already primed it,
+  // so there's usually no visible loading). Main's TTL cache makes this cheap;
   // a failed fetch still returns the last good list (stale beats empty), so
-  // only a genuinely empty result shows the error row.
+  // only a genuinely empty result shows the error row. 成功结果回写共享缓存，
+  // 后续新挂载的实例首帧即命中。
   useEffect(() => {
     if (!open) return
     let cancelled = false
@@ -753,6 +1062,7 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
       .listModels()
       .then((res) => {
         if (cancelled) return
+        if (res.models.length > 0) modelCache = res.models
         setModels(res.models)
         setListError(res.models.length === 0 ? (res.error ?? '模型列表为空') : null)
       })
@@ -774,7 +1084,9 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
   const current = pending ?? model
   const choose = (id: string): void => {
     setOpen(false)
-    if (id === current) return
+    // 归一化比较：current 可能是 system init 报的完整 id、id 是菜单短别名，
+    // 同一模型不同写法要判等，避免「切到自己」多发一次 setModel。
+    if (sameModel(id, current)) return
     setPending(id)
     void window.chatApi.setModel(id).catch((err) => {
       console.error('[Composer] setModel failed', err)
@@ -782,87 +1094,182 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
     })
   }
 
-  return (
-    <div ref={rootRef} className="relative">
+  // chip 上显示当前模型的友好名（未知 id 原样）。
+  const currentMeta = current ? modelMetaOf(current) : null
+  // 菜单分两组：auto 挡（default）单列顶部，具名模型在下（图 2 的分隔线）。
+  const list = models ?? []
+  const autoIds = list.filter((id) => modelMetaOf(id).auto)
+  const namedIds = list.filter((id) => !modelMetaOf(id).auto)
+  // hover 详情卡的数据（悬停哪行取哪行 meta）。
+  const hoveredMeta = hoveredId ? modelMetaOf(hoveredId) : null
+
+  const renderRow = (id: string): React.JSX.Element => {
+    // 归一化比较：current（完整 id）与菜单行 id（短别名）指同一模型才打勾。
+    const selected = sameModel(id, current)
+    const meta = modelMetaOf(id)
+    return (
       <button
+        key={id}
+        data-slot="model-option"
+        type="button"
+        role="option"
+        aria-selected={selected}
+        onClick={() => choose(id)}
+        onMouseEnter={() => setHoveredId(id)}
+        className={
+          'flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors ' +
+          (selected ? 'bg-foreground/[0.04]' : 'hover:bg-foreground/[0.04]')
+        }
+      >
+        {/* 选中打勾占位（图 2：选中行左侧一个实心勾圈）——未选留白等宽，行不跳。 */}
+        <span className="grid size-4 shrink-0 place-items-center">
+          {selected ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="text-foreground" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <path d="m8.5 12 2.5 2.5 4.5-5" fill="none" stroke="hsl(var(--card))" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          ) : null}
+        </span>
+        <ModelGlyph auto={meta.auto} />
+        <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-foreground" title={meta.name}>
+          {meta.name}
+        </span>
+        {meta.rate ? (
+          <span className="shrink-0 font-mono text-[12px] tabular-nums text-muted-foreground">
+            {meta.rate}
+          </span>
+        ) : null}
+      </button>
+    )
+  }
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      {/* chip：图标 + 友好名 + 下拉箭头（图 1）。放在卡片内右簇、麦克风左侧。 */}
+      <button
+        ref={btnRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label="切换模型"
         className={
-          'flex items-center gap-1.5 text-[13px] transition-colors ' +
+          'flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors ' +
           (open
             ? 'text-foreground'
-            : 'text-muted-foreground/70 hover:text-foreground')
+            : 'text-muted-foreground/80 hover:bg-foreground/[0.05] hover:text-foreground')
         }
       >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden="true">
-          <rect x="7" y="7" width="10" height="10" rx="2" />
-          <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden="true">
+          <path d="m12 3 2.3 6.2L21 11l-6.7 1.8L12 19l-2.3-6.2L3 11l6.7-1.8z" />
         </svg>
-        <span className="max-w-[180px] truncate leading-none">
-          {current ?? '模型'}
+        <span className="max-w-[160px] truncate leading-none">
+          {currentMeta?.name ?? current ?? '模型'}
         </span>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={'text-muted-foreground/40 transition-transform ' + (open ? 'rotate-180' : '')} aria-hidden="true">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={'text-muted-foreground/50 transition-transform ' + (open ? 'rotate-180' : '')} aria-hidden="true">
           <path d="m6 9 6 6 6-6" />
         </svg>
       </button>
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 4, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 4, scale: 0.98 }}
-            transition={{ duration: 0.12, ease: 'easeOut' }}
-            className="absolute bottom-full right-0 z-40 mb-1.5 max-h-72 w-64 overflow-y-auto rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
-            role="listbox"
-          >
-            {models === null && listError === null ? (
-              <div className="px-3 py-2 text-[12.5px] text-muted-foreground">
-                加载模型列表…
-              </div>
-            ) : listError !== null ? (
-              <div className="px-3 py-2 text-[12.5px] text-muted-foreground">
-                {listError}
-              </div>
-            ) : (
-              models!.map((id) => {
-                const selected = id === current
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    onClick={() => choose(id)}
-                    className={
-                      'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors ' +
-                      (selected
-                        ? 'bg-brand/10 text-foreground'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground')
-                    }
+      {/* 富菜单 portal 到 body（脱离 composer 卡片 overflow-hidden 裁剪，同姊妹
+          picker）；fixed 定位，右缘贴按钮右缘、底缘贴按钮顶缘上方。 */}
+      {anchor !== null &&
+        createPortal(
+          <AnimatePresence>
+            {open && (
+              <motion.div
+                ref={menuRef}
+                initial={{ opacity: 0, y: 4, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 4, scale: 0.98 }}
+                transition={{ duration: 0.12, ease: 'easeOut' }}
+                style={{ right: anchor.right, bottom: anchor.bottom }}
+                className="fixed z-[9999] mb-2 w-80 overflow-hidden rounded-2xl border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                role="listbox"
+                onMouseLeave={() => setHoveredId(null)}
+              >
+                {/* hover 详情卡：悬停某行时在菜单左侧浮出（fixed，贴菜单左缘）。
+                    数据来自 MODEL_META。无描述（未知 id）不弹。 */}
+                {hoveredMeta && hoveredMeta.desc ? (
+                  <div
+                    className="fixed z-[10000] w-64 rounded-2xl border border-border bg-card p-4 shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
+                    // 详情卡贴菜单左侧：菜单右缘距视口右 anchor.right、菜单宽
+                    // 320(w-80)→左缘距右 anchor.right+320，详情卡再左移 12px 间隙。
+                    // 底缘与菜单底缘对齐上抬一点，读作从菜单「探出」。
+                    style={{ right: anchor.right + 320 + 12, bottom: anchor.bottom + 40 }}
                   >
-                    <span className="min-w-0 flex-1 truncate font-medium" title={id}>
-                      {id}
-                    </span>
-                    {selected ? (
-                      <svg
-                        width="14" height="14" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                        className="shrink-0 text-brand"
-                        aria-hidden
+                    <div className="flex items-center gap-2">
+                      <span className="text-[15px] font-semibold text-foreground">{hoveredMeta.name}</span>
+                    </div>
+                    <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
+                      {hoveredMeta.desc}
+                    </p>
+                    <div className="mt-3 flex flex-col gap-1.5 border-t border-border pt-3 text-[12.5px]">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">上下文窗口</span>
+                        <span className="font-mono tabular-nums text-foreground">{hoveredMeta.context}</span>
+                      </div>
+                      {hoveredMeta.rate ? (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">消耗</span>
+                          <span className="font-mono tabular-nums text-foreground">{hoveredMeta.rate}</span>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                {models === null && listError === null ? (
+                  // 骨架屏（2026-07-05 用户要求：切 backend 列表突变太生硬）——
+                  // 每行仿真实模型行的布局（图标方块 + 名条 + 倍率条），脉冲
+                  // 动画。首次打开（有预取缓存）通常直接跳过 loading，这里主要
+                  // 覆盖切 backend 后缓存失效重拉的空窗。
+                  <div className="flex flex-col gap-1 p-1.5">
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <div
+                        key={i}
+                        className="flex items-center gap-3 rounded-lg px-2.5 py-2"
                       >
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
+                        <span className="size-4 shrink-0" />
+                        <span className="size-8 shrink-0 animate-pulse rounded-lg bg-foreground/[0.06]" />
+                        <span
+                          className="h-3.5 animate-pulse rounded bg-foreground/[0.06]"
+                          style={{ width: `${[62, 48, 70, 54, 44][i]}%` }}
+                        />
+                        <span className="flex-1" />
+                        <span className="h-3 w-8 animate-pulse rounded bg-foreground/[0.05]" />
+                      </div>
+                    ))}
+                  </div>
+                ) : listError !== null ? (
+                  <div className="px-4 py-3 text-[12.5px] text-muted-foreground">{listError}</div>
+                ) : (
+                  // 高度上限 + 超出滚动（2026-07-05 用户要求）：模型多时（后端
+                  // 返 12+ 个）菜单 bottom-full 向上弹会撑出屏幕外。max-h 取
+                  // min(60vh, 420px)（不超视口 60% 也不超 420px，够放约 8-9 行），
+                  // overflow-y-auto 让超出部分内部滚动。外层菜单壳 overflow-hidden
+                  // 只管圆角裁剪，与此内层滚动不冲突。
+                  <div className="max-h-[min(60vh,420px)] overflow-y-auto overscroll-contain p-1.5">
+                    {/* auto 组（顶部，虚线分隔） */}
+                    {autoIds.length > 0 ? (
+                      <>
+                        {autoIds.map(renderRow)}
+                        {namedIds.length > 0 ? (
+                          <div className="mx-2.5 my-1 border-t border-dashed border-border" />
+                        ) : null}
+                      </>
                     ) : null}
-                  </button>
-                )
-              })
+                    {/* 具名模型组 */}
+                    {namedIds.map(renderRow)}
+                    {/* 注：图 2 底部有「模型设置 >」入口，但设置页当前无独立
+                        模型 section、chatApi 也无干净的「跳 section」方法——先不
+                        放这个入口，等补了模型设置页再加，避免指向空处。 */}
+                  </div>
+                )}
+              </motion.div>
             )}
-          </motion.div>
+          </AnimatePresence>,
+          document.body
         )}
-      </AnimatePresence>
     </div>
   )
 }

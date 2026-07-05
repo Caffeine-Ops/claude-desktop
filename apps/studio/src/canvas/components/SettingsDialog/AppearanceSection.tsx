@@ -237,6 +237,13 @@ function DesktopAppearanceControls({
     try {
       const next = await chatApi.setCliBackend({ mode });
       setCliBackend(next);
+      // 同 document 即时广播：rail 底部 user chip 只在挂载时拉一次后端，
+      // 不派发这个事件切换后 chip 文案不更新（2026-07-05）。rail 与本
+      // 设置页同一个 studio webContents，派 window 事件让 AppRail 就地
+      // re-pull——同 'od:appearance-changed' 桥的跨面同步机制。
+      window.dispatchEvent(
+        new CustomEvent('od:cli-backend-changed', { detail: next })
+      );
     } catch {
       /* ignore */
     } finally {

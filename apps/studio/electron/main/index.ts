@@ -18,7 +18,7 @@ patchProcessEvents()
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, Menu, protocol, session, webContents, type MenuItemConstructorOptions } from 'electron'
+import { app, dialog, Menu, protocol, session, webContents, type MenuItemConstructorOptions } from 'electron'
 import { electronApp, is } from '@electron-toolkit/utils'
 
 // TEMP-DEBUG: dev 下开远程调试端口，便于用 Chrome DevTools 连进 web tab 的
@@ -33,8 +33,11 @@ import { createTray, destroyTray } from './tray'
 import {
   createShellWindow,
   getActiveTabWebContents,
+  getQuitting,
   getShellWindow,
-  newStudioTab
+  hasActiveRuntimes,
+  newStudioTab,
+  setQuitting
 } from './tabRegistry'
 import {
   startOpenDesignServices,
@@ -67,6 +70,26 @@ protocol.registerSchemesAsPrivileged([
     }
   }
 ])
+
+// 存储目录必须**先于** setName 钉死。app.getPath('userData') 此刻仍返回
+// 改名前的历史目录，读一次锁进 setPath，之后 setName 改显示名就不会连带
+// 把数据目录漂走。顺序反了（先 setName 再读 userData）会读到 Fusion Work
+// 的新目录，等于把用户历史会话丢在旧目录里读不到。
+//
+// 为什么必须钉：userData（聊天历史 / 会话 / appSettings）默认按 app 显示名
+// 组织。dev 下 Electron 用 package.json name → ~/…/@claude-desktop/studio；
+// prod 下用 build.productName → ~/…/Claude Desktop。setName('Fusion Work')
+// 后两者都会漂到 …/Fusion Work，已有数据全部读不到。把当前真实目录读出来
+// 原样钉回，dev / prod 各自保住自己的历史数据，显示名与存储目录彻底解耦。
+const userDataDir = app.getPath('userData')
+app.setPath('userData', userDataDir)
+
+// 应用显示名 = Fusion Work。覆盖 Electron 默认取名（dev 菜单栏首项/About 会
+// 退回进程名 "Electron" 或 package name "@claude-desktop/studio"；prod 取
+// build.productName "Claude Desktop"）——显式 setName 让 dev 与 prod 的菜单 /
+// 关于 / 退出确认框都统一显示 Fusion Work。必须在 whenReady 前调用（菜单和
+// app 元信息在 ready 时定型）。存储目录已在上面钉死，不受这行影响。
+app.setName('Fusion Work')
 
 /**
  * Build the application menu. The tab-bar entry point is "File →
@@ -267,16 +290,25 @@ app.whenReady().then(async () => {
   initAppUpdater()
 
   app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      // 窗口全关后重新激活（macOS dock 点击）：重建 shell + 唯一的 studio
-      // tab。服务早已就绪（startOpenDesignServices 只在 before-quit 时才停），
-      // 无需再等探活。
-      createShellWindow()
-      try {
-        newStudioTab()
-      } catch (err) {
-        console.warn('[main] newStudioTab on activate failed:', err)
-      }
+    // dock 点击 / ⌘Tab 回到 app。macOS 关红叉只是 hide 了窗口（见
+    // tabRegistry 的 'close' handler），此时窗口对象、engine、正在跑的
+    // fusion-code 子进程全都还在——直接 show 回来，任务和进度原样呈现，
+    // 不重建 tab（重建会新起 webContents，旧的迟到 IPC 打到清空的路由表
+    // 就是那堆 `unknown tab` 噪音，还有大树重挂载闪烁）。
+    const existing = getShellWindow()
+    if (existing && !existing.isDestroyed()) {
+      existing.show()
+      existing.focus()
+      return
+    }
+    // 兜底：窗口真被销毁了（理论上只在真退出后，那时不会再触发 activate；
+    // 保留此路径防御异常销毁）。服务早已就绪（startOpenDesignServices 只在
+    // before-quit 才停），无需再等探活，重建 shell + 唯一的 studio tab。
+    createShellWindow()
+    try {
+      newStudioTab()
+    } catch (err) {
+      console.warn('[main] newStudioTab on activate failed:', err)
     }
   })
 })
@@ -287,7 +319,49 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  // 真退出意图（⌘Q / 菜单退出 / 托盘退出 / app.quit()）。红叉走 hide 分支
+  // 永远到不了这里（见 tabRegistry 的 'close' handler），所以这里的确认框
+  // 只在用户真想退应用时弹。
+  //
+  // 有活跃任务才拦一道：退出会 dispose 每个 engine → kill 正在跑的
+  // fusion-code 子进程，把用户正在生成的 PPT/长任务拦腰截断。给一个原生
+  // 确认框，用户点「退出」才真退、点「取消」preventDefault 留下（且不置
+  // isQuitting，下次红叉仍走 hide，语义不被这次犹豫污染）。没有任何任务在
+  // 跑时直接静默退出，不打扰。
+  if (!getQuitting() && hasActiveRuntimes()) {
+    const parent = getShellWindow()
+    // 窗口可能被红叉隐藏了（任务仍在后台跑），此时 ⌘Q 弹的 sheet 会挂在
+    // 隐藏窗口上看不见——先亮出来再弹，确保确认框可见。
+    if (parent && !parent.isDestroyed() && !parent.isVisible()) {
+      parent.show()
+    }
+    const opts = {
+      type: 'warning' as const,
+      buttons: ['取消', '退出'],
+      defaultId: 1,
+      cancelId: 0,
+      // macOS 弹窗把 message 当粗体首行、detail 当正文
+      message: `确定要退出 ${app.getName()} 吗？`,
+      detail: '所有正在运行的任务都将被中断。',
+      noLink: true
+    }
+    // parent 存在时挂成窗口模态（sheet 从标题栏滑下），否则 app 级模态
+    const choice =
+      parent && !parent.isDestroyed()
+        ? dialog.showMessageBoxSync(parent, opts)
+        : dialog.showMessageBoxSync(opts)
+    if (choice === 0) {
+      // 取消退出：阻止本次 quit，保持窗口与所有任务原样。
+      event.preventDefault()
+      return
+    }
+  }
+
+  // 确认退出（或本就无任务）：解锁窗口的 close 拦截，让接下来的 window close
+  // 真正走到 tabRegistry 的 'closed' → dispose 每个 engine（杀 fusion-code
+  // 子进程），并清理后台服务。
+  setQuitting(true)
   destroyTray()
   // 清理 daemon / web dev 子进程，避免退出后变孤儿进程占着 7456 / 3000。
   stopOpenDesignServices()

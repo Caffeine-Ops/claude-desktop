@@ -992,8 +992,13 @@ function ChatHeader(): React.JSX.Element {
     // 收起态标题不再与下方消息列严格同左缘——收起本就是特殊布局，可接受。
     <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [-webkit-app-region:drag] [body[data-rail-collapsed]_&]:pl-[198px]">
       {/* 内层对齐容器：max-w-4xl + px-3 与消息列（Viewport 内层）完全同参，
-          宽列时标题与消息同一左缘；slides 分栏列窄时自然退化为全宽。 */}
-      <div className="mx-auto flex h-full w-full min-w-0 max-w-4xl items-center gap-2 px-3">
+          宽列时标题与消息同一左缘；slides 分栏列窄时自然退化为全宽。
+          app-region:drag 必须显式加在本内层——它 h-full w-full 撑满整条
+          header，而 app-region 不继承（外层 drag 传不进来），不标则内层默认
+          none 盖住外层 drag，标题右侧那片空白就拖不动窗口（2026-07-05 打包后
+          实锤）。标题按钮 / rename 输入框各自 no-drag 逃逸（点它们是改名不是
+          拖窗）。 */}
+      <div className="mx-auto flex h-full w-full min-w-0 max-w-4xl items-center gap-2 px-3 [-webkit-app-region:drag]">
         {editing ? (
           <input
             ref={titleInputRef}

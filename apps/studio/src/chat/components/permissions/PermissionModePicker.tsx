@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
 
 import { useI18n } from '../../i18n'
@@ -120,9 +121,37 @@ export function PermissionModePicker(): React.JSX.Element {
   const setMode = usePermissionModeStore((s) => s.setMode)
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  // 菜单 portal 到 body 后用 fixed 定位。本 picker 右对齐（菜单右缘贴按钮
+  // 右缘），故锚点存 right（视口宽 − 按钮 right）+ bottom（视口高 − 按钮 top）。
+  const [anchor, setAnchor] = useState<{ right: number; bottom: number } | null>(
+    null
+  )
 
   const current = MODES.find((m) => m.id === mode) ?? MODES[0]
   const currentColor = COLOR_CLASS[current.color]
+
+  // 打开时测量按钮 rect 换算 fixed 锚点；滚动/缩放跟随。useLayoutEffect 在
+  // 绘制前定位好，避免菜单先闪现在角落再跳位。
+  useLayoutEffect(() => {
+    if (!open) return
+    const measure = (): void => {
+      const b = btnRef.current?.getBoundingClientRect()
+      if (b)
+        setAnchor({
+          right: window.innerWidth - b.right,
+          bottom: window.innerHeight - b.top
+        })
+    }
+    measure()
+    window.addEventListener('scroll', measure, true)
+    window.addEventListener('resize', measure)
+    return () => {
+      window.removeEventListener('scroll', measure, true)
+      window.removeEventListener('resize', measure)
+    }
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -131,9 +160,11 @@ export function PermissionModePicker(): React.JSX.Element {
     const overlay = useComposerOverlayStore.getState()
     overlay.setOpen(true)
     const onDown = (e: MouseEvent): void => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
+      // 菜单已 portal 出 rootRef 子树——按钮壳与菜单都不含才算点外部。
+      const target = e.target as Node
+      const inRoot = rootRef.current?.contains(target)
+      const inMenu = menuRef.current?.contains(target)
+      if (!inRoot && !inMenu) setOpen(false)
     }
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') setOpen(false)
@@ -158,6 +189,7 @@ export function PermissionModePicker(): React.JSX.Element {
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={btnRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
@@ -201,33 +233,43 @@ export function PermissionModePicker(): React.JSX.Element {
         </svg>
       </button>
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 4, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 4, scale: 0.98 }}
-            transition={{ duration: 0.12, ease: 'easeOut' }}
-            className="absolute bottom-full right-0 z-40 mb-1.5 w-64 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
-            role="listbox"
-          >
-            {MODES.map((meta) => {
-              const selected = meta.id === mode
-              const color = COLOR_CLASS[meta.color]
-              return (
-                <button
-                  key={meta.id}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  onClick={() => choose(meta.id)}
-                  className={
-                    'flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors ' +
-                    (selected
-                      ? 'bg-brand/10 text-foreground'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground')
-                  }
-                >
+      {/* ⚠️ portal 到 body（2026-07-05「菜单顶部被裁」同 ComposerModePicker）：
+        * 菜单 `bottom-full` 向上弹，被祖先 Composer 卡片的 overflow-hidden 裁掉
+        * 溢出顶部（露出后面元素）——z-index 治不了裁剪。portal 脱离裁剪祖先 +
+        * fixed 定位（测按钮 rect，右对齐用 right 锚点）；菜单项加 data-slot 逃逸
+        * .chat-app 外的 canvas 裸 button reset。 */}
+      {anchor !== null &&
+        createPortal(
+          <AnimatePresence>
+            {open && (
+              <motion.div
+                ref={menuRef}
+                initial={{ opacity: 0, y: 4, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 4, scale: 0.98 }}
+                transition={{ duration: 0.12, ease: 'easeOut' }}
+                style={{ right: anchor.right, bottom: anchor.bottom }}
+                className="fixed z-[9999] mb-1.5 w-64 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                role="listbox"
+              >
+                {MODES.map((meta) => {
+                  const selected = meta.id === mode
+                  const color = COLOR_CLASS[meta.color]
+                  return (
+                    <button
+                      key={meta.id}
+                      data-slot="permission-mode-option"
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => choose(meta.id)}
+                      className={
+                        'flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors ' +
+                        (selected
+                          ? 'bg-brand/10 text-foreground'
+                          : 'text-muted-foreground hover:bg-muted hover:text-foreground')
+                      }
+                    >
                   <span
                     className={
                       'mt-[5px] inline-block size-2 shrink-0 rounded-full ring-2 ring-offset-0 ' +
@@ -264,12 +306,14 @@ export function PermissionModePicker(): React.JSX.Element {
                       <polyline points="20 6 9 17 4 12" />
                     </svg>
                   )}
-                </button>
-              )
-            })}
-          </motion.div>
+                    </button>
+                  )
+                })}
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body
         )}
-      </AnimatePresence>
     </div>
   )
 }

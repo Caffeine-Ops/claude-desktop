@@ -49,6 +49,20 @@
   app-region: no-drag !important;
 }
 
+/* ── 切面后强制重采集原生拖拽区（2026-07-05「切回 chat 顶栏拖不动」实锤）──
+ * 同 WebContentsView 内 chat/canvas 只翻 CSS class 切换，view bounds 不变，
+ * Electron 的原生 draggable region 不会自动重算——切回 chat 后 CSS 层
+ * region 全对但原生层缓存残留旧面，顶栏真机拖不动（DOM 命中正常，只有真实
+ * 鼠标经过窗口系统才暴露）。SurfaceHost 切面后给宿主根挂本类一帧、再移除：
+ * 一缩（全片 no-drag）一放（drag 恢复）两次显著变化逼 Chromium 重发
+ * DraggableRegionsChanged，主进程据此重采集。逻辑与时序见 SurfaceHost 的
+ * region-refresh effect 头注释。持续仅 1 帧，用户无感。 */
+.region-refresh,
+.region-refresh * {
+  -webkit-app-region: no-drag !important;
+  app-region: no-drag !important;
+}
+
 /* 重命名成功后的一次性微光（rail 会话行，对应原型 renamed-flash）。挂类由
  * RailSessionList 控制：提交改名后给行加 .just-renamed，超时移除以便下次
  * 改名还能重播。 */
