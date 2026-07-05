@@ -316,12 +316,17 @@ jobs:
       #     SmartScreen 警告，不挡自动更新）。
       #   - APPLE_* 只在 mac 注入：三者齐全时 electron-builder 自动走
       #     notarytool 公证（无需在 build 配置里声明 notarize；缺任一则跳过）。
-      #   - CSC_IDENTITY_AUTO_DISCOVERY 保持 false：禁「从 runner 钥匙串自动
-      #     捞证书」（CI runner 没有钥匙串证书，捞了浪费时间还可能捞错）；
-      #     显式 CSC_LINK 指文件不受它影响。
+      #   - CSC_IDENTITY_AUTO_DISCOVERY：**mac 必须 true**（默认），win 才 false。
+      #     2026-07-05 血泪：曾对两平台都设 'false'，本意只想禁「从 runner 钥匙串
+      #     瞎捞证书」，但在 electron-builder 25.x 它会**连带禁掉整个签名身份
+      #     发现流程——包括从 CSC_LINK 导入**。结果 mac job 全绿却打印
+      #     `skipped macOS application code signing … CSC_IDENTITY_AUTO_DISCOVERY
+      #     =false`，出的是**未签名未公证**的包（v0.0.18 第八轮实锤：自检导入
+      #     证书成功、真打包却跳过签名）。mac 设 true 让它正常走 CSC_LINK →
+      #     导证书 → codesign → notarytool 公证；win 无证书，false 防它徒劳搜索。
       - name: Build (${{ matrix.platform }})
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.platform == 'mac' && 'true' || 'false' }}
           CSC_LINK: ${{ matrix.platform == 'mac' && env.CSC_FILE || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
           APPLE_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_ID || '' }}
