@@ -112,15 +112,32 @@ export function AppRail() {
     const api = window.chatApi
     if (!api) return
     const user = api.osUser || '本机用户'
+    const backendLabel = (mode: string) =>
+      mode === 'system' ? 'Claude Code' : 'fusion-code'
     setIdentity({ user, backend: 'fusion-code' })
     api
       .getCliBackend()
       .then((s) => {
-        setIdentity({ user, backend: s.mode === 'system' ? 'Claude Code' : 'fusion-code' })
+        setIdentity({ user, backend: backendLabel(s.mode) })
       })
       .catch(() => {
         /* 检测失败保持默认 fusion-code 文案，不打断 rail 渲染 */
       })
+
+    // 后端在设置页切换后，chip 文案要跟着翻——设置页切换成功即派
+    // 'od:cli-backend-changed'（携新状态），rail 与设置页同一个 studio
+    // webContents，就地接住用 detail.mode 更新文案。不依赖 IPC 广播，
+    // 是同 document 的 window 事件桥（同 od:appearance-changed 机制）。
+    const onBackendChanged = (e: Event) => {
+      const detail = (e as CustomEvent<{ mode?: string }>).detail
+      if (detail?.mode) {
+        setIdentity({ user, backend: backendLabel(detail.mode) })
+      }
+    }
+    window.addEventListener('od:cli-backend-changed', onBackendChanged)
+    return () => {
+      window.removeEventListener('od:cli-backend-changed', onBackendChanged)
+    }
   }, [])
 
   // 打开设置 overlay（?settings=1）——账户菜单里「设置」与「偏好设置」子项

@@ -36,7 +36,12 @@ import type {
 } from '../../shared/types'
 import { bumpUnread } from '../tray'
 import { AsyncMessageQueue } from './asyncMessageQueue'
-import { getAppSettings, type CliBackend } from './appSettings'
+import {
+  getAppSettings,
+  getLastModel,
+  setLastModel,
+  type CliBackend
+} from './appSettings'
 import {
   detectSystemClaude,
   detectSystemClaudeSync,
@@ -55,6 +60,7 @@ import { invalidateFileSuggestions } from './fileSuggestions'
 import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
 import { seedSkillsFromDisk } from './seedSkills'
+import { sessionTranscriptExists } from './sessionStore'
 
 /**
  * Resolve the default workspace directory used on every new tab/engine.
@@ -389,11 +395,16 @@ export class ChatEngine extends EventEmitter {
    * the user sends; before then it's empty arrays + undefined model.
    * Read by the renderer through `getSessionMeta()` IPC to power
    * client-side slash-command dialogs (`/skill`, `/mcp`).
+   *
+   * `model` 用持久化的 lastModel 做种子（2026-07-05）：冷启动子进程还没
+   * spawn（lazy）、system init 未到，但 chip 该立即显示用户上次选的模型而不是
+   * 空占位「模型」。真实 system init 到达后会用权威值覆盖（setSessionMeta）。
    */
   private sessionMeta: SessionMeta = {
     skills: [],
     mcpServers: [],
-    slashCommands: []
+    slashCommands: [],
+    model: getLastModel(getAppSettings().cliBackend)
   }
 
   /**
@@ -401,11 +412,16 @@ export class ChatEngine extends EventEmitter {
    * `null` = follow the backend default (the env.json alias routing).
    * Injected as the `model` option on every future `query()` this engine
    * spawns AND pushed live into the foreground runtime via the SDK's
-   * `setModel` control request. Deliberately in-memory + per-engine: a
-   * fresh window starts back on the default, and window A's pick never
-   * bleeds into window B (same isolation rule as PermissionBroker).
+   * `setModel` control request.
+   *
+   * 初值用持久化的 lastModel（2026-07-05 用户要求「记住上次选的模型」）——原
+   * 先刻意 null（fresh window 回默认）；改成读回后，重开应用不仅 chip 立即显示
+   * 上次模型，首次 send 也直接用它 spawn。窗口间仍不互相泄漏（各自读同一份
+   * 持久值，不是运行时互串）。切 backend 后 id 可能不被新 backend 认识，spawn
+   * 时后端回默认、不崩。
    */
-  private modelOverride: string | null = null
+  private modelOverride: string | null =
+    getLastModel(getAppSettings().cliBackend) ?? null
 
   /**
    * True once fusion-code's authoritative `system init` has landed at
@@ -721,6 +737,18 @@ export class ChatEngine extends EventEmitter {
    * Returns the count of runtimes actually recycled (for logging).
    */
   async restartRuntimesForBackendChange(): Promise<number> {
+    // 切 backend 后，把 modelOverride / chip 显示切成**新 backend** 的 lastModel
+    // （2026-07-05）。此方法由 CLI_BACKEND_SET 触发，settings 已先写成新 backend，
+    // 所以 getAppSettings().cliBackend 就是新的。不这样做的话 modelOverride 还留着
+    // 旧 backend 的模型 id（如从 system 的 haiku 切到 fusion-code），会拿去对 gpt
+    // 菜单 → 选中态对不上、chip 显不认识的裸 id。null（新 backend 没记过）= 回默认。
+    const nextModel = getLastModel(getAppSettings().cliBackend) ?? null
+    this.modelOverride = nextModel
+    this.sessionMeta = { ...this.sessionMeta, model: nextModel ?? undefined }
+    // model:null 一并广播，让渲染层的模型 chip 知道「backend 变了」——它借这个
+    // 信号清模型目录缓存 + 走骨架屏重拉（listModels 会返回新 backend 的列表）。
+    this.emit('sessionMetaChanged')
+
     const targets: Array<[string, SessionRuntime]> = []
     for (const [id, rt] of this.sessions) {
       // Empty slots (never sent to) carry no live child — skip; their
@@ -738,8 +766,22 @@ export class ChatEngine extends EventEmitter {
       count: targets.length,
       ids: targets.map(([id]) => id)
     })
+    const workspaceDir = this.getWorkingDirectory()
     await Promise.all(
       targets.map(async ([id, rt]) => {
+        // 只对「磁盘上真有 transcript」的会话设 pendingResume（防护层 1，
+        // 2026-07-05）。根因：一个已冷启动 warmup、但用户还没发过消息的
+        // 「新对话」，handle/queue 有值（过不了上面的空槽跳过），可它对应的
+        // <id>.jsonl 还没写出来。旧逻辑无脑设 pendingResume=true → 下次 send
+        // 用 `--resume <id>` 去恢复一个不存在的 transcript → CLI 抛
+        // 「No conversation found with session ID」（用户实锤）。两后端共读
+        // 同一个 ~/.claude/projects（HOME 相同），故文件存在性就是「新后端
+        // 能否 resume」的权威判据。不存在就设 false，下次 send 走全新 spawn
+        // （id 复用、从头开），既不丢会话行也不撞报错。真有历史的会话仍
+        // resume，历史照常在新后端重载。
+        const canResume = await sessionTranscriptExists(workspaceDir, id).catch(
+          () => false
+        )
         // Detach the live fields BEFORE the async teardown so a racing
         // send()/switchToSession sees an empty slot (and re-spawns)
         // rather than aliasing the runtime we're killing. We reuse the
@@ -760,9 +802,10 @@ export class ChatEngine extends EventEmitter {
         rt.readySettled = false
         rt.active = null
         rt.openedViaSend = false
-        // Next send must reload the transcript so history survives the
-        // backend swap.
-        rt.pendingResume = true
+        // Next send reloads the transcript so history survives the backend
+        // swap — but only when the transcript actually exists on disk
+        // (see canResume above); otherwise a fresh spawn under the new id.
+        rt.pendingResume = canResume
         // Tear down the detached child with the live fields we just
         // captured. teardownRuntime mutates a runtime, so feed it a
         // throwaway carrying only the old handles — the real `rt` is
@@ -1891,8 +1934,25 @@ export class ChatEngine extends EventEmitter {
       this.logEvent('ensureSessionReady:alreadySpawned')
       return
     }
-    const resume = runtime.pendingResume
+    let resume = runtime.pendingResume
     runtime.pendingResume = false
+    // 防护层 2（2026-07-05）：即便标了 pendingResume，spawn 前再验一次
+    // transcript 真的在磁盘上——不在就降级为非 resume（用同 id 全新 spawn），
+    // 绝不把 `--resume <不存在的 id>` 递给 CLI。覆盖第一层没管到的 resume
+    // 来源：侧栏点一个跨后端/已被外部删除的会话、或第一层判定到本次 send
+    // 之间 jsonl 被删的竞态。校验失败（读盘异常）时保守按「存在」放行，
+    // 维持旧行为，不因一次读盘抖动误伤正常 resume。见
+    // [[2026-07-05-切后端resume不存在transcript致No-conversation-found]]。
+    if (resume) {
+      const exists = await sessionTranscriptExists(
+        this.getWorkingDirectory(),
+        sessionId
+      ).catch(() => true)
+      if (!exists) {
+        this.logEvent('ensureSessionReady:resumeDowngraded', { sessionId })
+        resume = false
+      }
+    }
     this.logEvent('ensureSessionReady:spawn', { resume, sessionId })
     this.openSession(sessionId, runtime, { resume })
     // openSession returns synchronously once query() has been called
@@ -3236,7 +3296,11 @@ export class ChatEngine extends EventEmitter {
       ? initMsg.slash_commands.filter((s): s is string => typeof s === 'string')
       : []
 
-    const model = typeof initMsg.model === 'string' ? initMsg.model : undefined
+    // init 没报 model（老 CLI 不带该字段）时，别用 undefined 抹掉已有值——
+    // 保留现有的 model（可能是持久化 lastModel 种子或 modelOverride），否则
+    // chip 会从「上次模型」倒退回空占位（2026-07-05 持久化改动的回归防护）。
+    const model =
+      typeof initMsg.model === 'string' ? initMsg.model : this.sessionMeta.model
     const cwd = typeof initMsg.cwd === 'string' ? initMsg.cwd : undefined
 
     this.sessionMeta = { skills, mcpServers, slashCommands, model, cwd }
@@ -3315,6 +3379,11 @@ export class ChatEngine extends EventEmitter {
    */
   async setModel(model: string | null): Promise<void> {
     this.modelOverride = model
+    // 持久化用户选择到「当前 backend 的槽」（2026-07-05）：重开应用 / 切回该
+    // backend 时 chip 立即显示上次模型。null → 清该 backend 槽（回默认）。
+    // 按 backend 分槽：fusion-code(gpt) 与 system claude(Claude) 各记各的，切
+    // backend 不会拿另一体系的模型 id 去对新菜单（那会选中态对不上）。
+    setLastModel(getAppSettings().cliBackend, model)
     this.logEvent('setModel', { model })
     const rt = this.activeSessionId
       ? this.sessions.get(this.activeSessionId)

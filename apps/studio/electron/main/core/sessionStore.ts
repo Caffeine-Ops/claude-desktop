@@ -472,6 +472,29 @@ export async function deleteSessionFromDisk(
 }
 
 /**
+ * Does a resumable transcript exist on disk for this session?
+ *
+ * Both CLI backends (bundled fusion-code / system Claude Code) read the
+ * same `~/.claude/projects/<slug>/<id>.jsonl` (HOME is identical), so
+ * file existence is the authoritative "can `--resume <id>` succeed"
+ * check regardless of which backend is active. Used by the engine's
+ * backend-switch path to avoid handing `--resume` a session that has no
+ * transcript in the target backend — the CLI would otherwise abort with
+ * "No conversation found with session ID" (2026-07-05). Reuses the same
+ * slug/prefix rules as findSessionJsonl so the two can't drift.
+ *
+ * A brand-new session that spawned but never took a turn has NO jsonl
+ * yet (the file is created on the first `system init` write), so this
+ * correctly returns false for the "新对话 → switch backend" case.
+ */
+export async function sessionTranscriptExists(
+  workspaceDir: string,
+  sessionId: string
+): Promise<boolean> {
+  return (await findSessionJsonl(workspaceDir, sessionId)) !== null
+}
+
+/**
  * Locate the on-disk jsonl for a sessionId under a given workspace.
  *
  * The SDK derives the project dir name by replacing every non-alnum

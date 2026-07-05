@@ -57,6 +57,8 @@ export function SurfaceHost() {
   // 面首次可见后永久保活（ref 而非 state：render 期读写、不需要触发
   // 额外渲染——pathname 变化本身就会重渲染本组件）。
   const visited = useRef({ chat: false, canvas: false })
+  // 宿主根节点引用：切面后 region-refresh toggle 挂在它身上（见下方 effect）。
+  const hostRef = useRef<HTMLDivElement>(null)
   if (!isProbe) {
     if (isChat) visited.current.chat = true
     else visited.current.canvas = true
@@ -72,6 +74,51 @@ export function SurfaceHost() {
     return undefined
   }, [isChat])
 
+  // ── 切面后强制重采集原生窗口拖拽区（2026-07-05「切回 chat 顶栏拖不动」实锤）──
+  // chat 与 canvas 是**同一个 WebContentsView 里的两棵 React 树**，切换只翻
+  // CSS class（content-visibility + surface-inactive），view bounds 不变。
+  // Electron 的原生 draggable region 由 Chromium 的 DraggableRegionsChanged
+  // 事件驱动上报——而这个事件只在 layout 里 draggable region 集合发生**增量
+  // 变化**时才触发。纯 class 切换（尤其隐藏面用 content-visibility:hidden、
+  // 其子树整个退出渲染管线）在这里不可靠地触发不了该事件：切回 chat 后 CSS
+  // 层 -webkit-app-region 值全对（CDP 实测 region=drag 正常），但**原生层的
+  // 拖拽矩形缓存没刷新**，仍是切走前那套 → 顶栏真机拖不动（DOM 命中正常、
+  // 只有真实鼠标经过窗口系统时才暴露，同 .surface-inactive / 收起态图标排
+  // 家族的坑，Electron issue #20926「app-region drag stops working when
+  // BrowserView is changed」同类）。初次加载正常是因为原生层首采集恰好就是
+  // 当前面。
+  //
+  // 修法：切面后把整个宿主根节点瞬时压成 no-drag（`region-refresh` 类，规则
+  // 在 globals.css，!important 压过面内所有 drag）→ 强制一次 layout 让
+  // Chromium 采集到「所有 drag 都消失」这一拍 → 下一拍移除类、drag 全部恢复。
+  // 一缩一放两次显著变化必然逼出 DraggableRegionsChanged，主进程据此重采集
+  // 全文档拖拽区、映射到当前可见面。比插 1px 探针稳（探针太小可能被舍入/合并
+  // 优化掉）；toggle 只持续 1 帧、期间顶栏短暂不可拖，用户无感。双 rAF 等本轮
+  // class 切换与 content-visibility 恢复的 layout 落定后再扰动，确保重采集读
+  // 到的是新面的 region。仅桌面壳（有 app-region 语义）生效，浏览器无此层、
+  // 无副作用。
+  useEffect(() => {
+    if (isProbe) return undefined
+    const host = hostRef.current
+    if (!host) return undefined
+    let raf1 = 0
+    let raf2 = 0
+    raf1 = requestAnimationFrame(() => {
+      // 第一拍：整片压 no-drag，读一次 layout 让「drag 消失」被采集。
+      host.classList.add('region-refresh')
+      void host.offsetHeight
+      raf2 = requestAnimationFrame(() => {
+        // 第二拍：恢复，drag 全部回来——一缩一放逼出重采集。
+        host.classList.remove('region-refresh')
+      })
+    })
+    return () => {
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
+      host.classList.remove('region-refresh')
+    }
+  }, [isChat, isProbe])
+
   // 面元素**冻结**（引用恒定）：本组件每次随 usePathname 重渲染，若在
   // render 里裸写 <ChatSurface/>，元素引用每次都是新的 → React 对两棵
   // 万级节点的树做全量 re-render + diff（实测 FunctionCall ~485ms 的大头）。
@@ -86,7 +133,7 @@ export function SurfaceHost() {
   if (isProbe) return null
 
   return (
-    <div className="relative h-full">
+    <div ref={hostRef} className="relative h-full">
       {/* 隐藏用 content-visibility:hidden（而非 visibility:hidden）：隐藏
         * 子树整个退出样式重算/布局/绘制管线（实测 UpdateLayoutTree 356ms
         * 的主要来源就是隐藏面仍参与全文档 recalc），DOM/状态/iframe/滚动

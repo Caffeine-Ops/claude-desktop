@@ -321,6 +321,14 @@ function GeneralSection(): React.JSX.Element {
     try {
       const next = await window.chatApi.setCliBackend({ mode })
       setState(next)
+      // 同 document 即时广播：rail 底部的 user chip 显示当前后端
+      // （fusion-code / Claude Code），但它只在挂载时拉一次 getCliBackend，
+      // 不然切换后 chip 文案不更新（2026-07-05 实锤）。rail 与本设置页是
+      // 同一个 studio webContents，派发 window 事件让 AppRail 就地 re-pull
+      // ——同 'od:appearance-changed' 桥的同款跨面同步机制，无需新增 IPC。
+      window.dispatchEvent(
+        new CustomEvent('od:cli-backend-changed', { detail: next })
+      )
     } catch (err) {
       console.error('[settings] setCliBackend failed', err)
     } finally {

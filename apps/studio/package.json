@@ -28,12 +28,13 @@
   },
   "//note-scripts": "dev = 整个桌面应用（electron-vite dev；main 启动时自动 spawn daemon 与 dev:next）。dev:next / build:next 是 Next 前端的独立入口——openDesignServices.spawnStudioDev 调的就是 dev:next。刻意没有裸 build：两条构建链必须显式指名（root 的 build 转发到 build:electron，root 的 prebuild:resources 转发到 build:next），避免合包前『desktop build=electron、studio build=next』的二义性复活。",
   "//note-port": "Next dev 端口默认 3100（避开 next 默认 3000——被同源 fork 抢占串味的历史坑，见 electron/main/services/openDesignServices.ts WEB_DEV_PORT 注释）。壳 spawn dev:next 时注入 STUDIO_DEV_PORT 保证监听端口与壳侧探活/加载常量恒等；独立 bun run dev:next 时走 3100 默认值。",
-  "//note-build-appId": "（注释只能放顶层：electron-builder 对 build 块做 schema 校验，未知属性直接报错。）2026-07-05 appId 从 com.anthropic.claude-desktop 改名：与官方 Claude Desktop 的 bundle id 完全同名会让 mac 的 Squirrel ShipIt / updater 缓存目录（都按 appId 组织）在双装机器上互相污染。productName 刻意不改——userData 路径按它组织，改了会丢用户会话数据。副作用：mac TCC 权限（麦克风等）按 bundle id 记忆，升级到本版后需重新授权一次。",
+  "//note-build-appId": "（注释只能放顶层：electron-builder 对 build 块做 schema 校验，未知属性直接报错。）2026-07-05 appId 从 com.anthropic.claude-desktop 改名：与官方 Claude Desktop 的 bundle id 完全同名会让 mac 的 Squirrel ShipIt / updater 缓存目录（都按 appId 组织）在双装机器上互相污染。副作用：mac TCC 权限（麦克风等）按 bundle id 记忆，升级到本版后需重新授权一次。",
+  "//note-build-productName": "2026-07-05 productName Claude Desktop → Fusion Work（应用显示名 = dock/菜单/关于/退出确认框）。改 productName 通常会漂 userData 目录（默认按显示名组织）丢用户历史，但 main/index.ts 已在 whenReady 前 app.setPath('userData', 读回的当前真实目录) 显式钉死存储路径——显示名与数据目录彻底解耦，故此处可安全改名、老会话零丢失。appId 不跟着改（updater/TCC 缓存按它组织，见上）。",
   "//note-build-publish": "自动更新 feed（方案 A，2026-07-05）：代码仓私有，安装包发到独立的**公开** release 仓——electron-updater 匿名读公开 release，客户端不携带任何 GitHub token（私有仓 provider 需要把 token 打进客户端，官方明说仅供测试）。build.publish 的 owner/repo 会被 electron-builder 写进安装包内的 app-update.yml（即客户端 feed 地址）；CI 的 action-gh-release 用 repository 参数发到同一个仓，两处必须一致。",
   "//note-build-mac-identity": "mac 刻意**不写 identity**（2026-07-05 移除）：曾硬编码 'Shenzhen Panda Run…(LBL475BGZL)'，本地钥匙串命中没事，但 CI 上证书是经 CSC_LINK 临时导入的，electron-builder 在 CI 环境按名匹配不到就把 identity 字符串当 CSC 文件路径找 → 报 'apps/studio/<identity> doesn't exist'、签名步骤根本没走到（v0.0.18 首发翻车实锤）。删掉后 electron-builder 自动用 CSC_LINK 导入的证书（p12 里只有一张 Developer ID，无歧义）；本地免签打包一律 -c.mac.identity=null，不受钥匙串多证书干扰。",
   "build": {
     "appId": "com.caffeineops.claude-desktop",
-    "productName": "Claude Desktop",
+    "productName": "Fusion Work",
     "publish": [
       {
         "provider": "github",

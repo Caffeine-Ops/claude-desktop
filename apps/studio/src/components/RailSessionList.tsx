@@ -38,7 +38,7 @@ import type { ComponentType, ReactNode } from 'react'
 import type { ThreadSummary } from '@desktop-shared/types'
 
 import { railEaseOut } from '@/src/chat/shell/railMotion'
-import { useRunningSessionIdsKey } from '@/src/chat/stores/chat'
+import { useChatStore, useRunningSessionIdsKey } from '@/src/chat/stores/chat'
 import { useUnreadIdsKey, useUnreadStore } from '@/src/chat/stores/unread'
 import { groupLabel, relativeTime } from '@/src/components/railTime'
 import { ScrollArea } from '@/src/components/ui/scroll-area'
@@ -210,7 +210,32 @@ export function RailSessionList() {
   )
 
   const [threads, setThreads] = useState<readonly ThreadSummary[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
+  // 选中态的**权威源**是 chat store 的前台 `sessionId`（chat 与 rail 同一个
+  // studio webContents，共享同一份 zustand store）——不是本组件累积的临时
+  // state。这一改是「切到工作画布再切回智能助手时选中态丢失」的根治点
+  // （2026-07-05）：rail 挂在根 layout 的 surface tab 三元里，切到画布面时
+  // RailSessionList 被整块卸载，本地 activeId state 随之蒸发；切回来重新挂载
+  // 时初值是 null，而此刻并没有任何一方会重新广播 SHELL_SESSION_SWITCH，
+  // 于是旧的「纯 push 累积的 activeId」永远回不到当前会话。改成订阅
+  // store.sessionId 后，重挂载首帧即读到权威前台会话，选中态自动恢复。
+  //
+  // 仍保留本地 activeId 作**乐观覆盖**：点击行时立即高亮（点击 → store
+  // sessionId 更新之间冷路径有几十毫秒的 await 间隙，见 FusionRuntimeProvider
+  // 的 onSwitchToThread），以及删除当前会话时把选中态即时移交相邻行。store
+  // sessionId 随后追上会把 activeId 覆盖成同值（幂等），null 视作「未接管，
+  // 跟随 store」。
+  const foregroundSessionId = useChatStore((s) => s.sessionId)
+  const [optimisticId, setOptimisticId] = useState<string | null>(null)
+  // optimisticId 一旦与 store 的前台会话一致（或 store 已切到别的会话），
+  // 乐观覆盖的使命就完成了，交还给 store 权威值——否则一次点击后 activeId
+  // 会被本地值永久钉住，store 侧的后续切换（如 AI 在别的会话里被切到前台）
+  // 反而高亮不到。
+  const activeId = optimisticId ?? foregroundSessionId
+  useEffect(() => {
+    if (optimisticId !== null && optimisticId === foregroundSessionId) {
+      setOptimisticId(null)
+    }
+  }, [optimisticId, foregroundSessionId])
   const [justRenamedId, setJustRenamedId] = useState<string | null>(null)
   // 重命名弹窗：target = 正在改名的会话；draft = 输入框当前值。
   const [renameTarget, setRenameTarget] = useState<ThreadSummary | null>(null)
@@ -232,17 +257,31 @@ export function RailSessionList() {
   useEffect(() => {
     if (typeof window === 'undefined' || !window.chatApi) return undefined
     reload()
-    const offList = window.tabApi?.onShellSessionListChanged?.(reload)
+    // 会话列表刷新订阅【两条都挂】——两条通道由 engine 的同一个
+    // `sessionListChanged` 事件驱动，但 fan-out 路径不同：
+    //   - SHELL_SESSION_LIST_CHANGED（tabApi）：经 tabRegistry 转发，带
+    //     `activeTabId === 本 tab` 守卫（多 tab 时只刷前台）。
+    //   - SESSION_LIST_CHANGED（chatApi）：engine 直接 send 到自己的
+    //     webContents，【无条件】。chat 面的 threadList 一直用这条且实时
+    //     生效，rail 只挂了带守卫的那条——AI 回复中途 shell fan-out 那条
+    //     偶发不到位时，rail 就停在旧时间不刷新（2026-07-05：ppt 会话回复
+    //     中 rail 时间卡在「7 分钟前」不动的根因）。补挂无条件的这条兜底，
+    //     两条都触发 reload（reload 幂等，重复拉一次无害）。
+    const offShellList = window.tabApi?.onShellSessionListChanged?.(reload)
+    const offEngineList = window.chatApi.onSessionListChanged?.(reload)
     // 切换事件回流时同步高亮——无论切换是本组件发起（点击项）还是 chat
     // 页面内部发起后经 main 正规化，最终都汇到这一个事件上。切到哪个会话
     // 即视为看过它的回复，顺手清掉该会话的未读标记（这是权威清除点，
     // 覆盖所有切换来源）。
     const offSwitch = window.chatApi.onShellSessionSwitch?.((id) => {
-      setActiveId(id)
+      // 乐观抢跑：切换回流时 store.sessionId 多半已同步，但冷路径下
+      // FusionRuntimeProvider 还在 await loadSession，这一帧先高亮到位。
+      setOptimisticId(id)
       if (id) useUnreadStore.getState().clearUnread(id)
     })
     return () => {
-      offList?.()
+      offShellList?.()
+      offEngineList?.()
       offSwitch?.()
     }
   }, [reload])
@@ -256,7 +295,7 @@ export function RailSessionList() {
   /** 点击行：高亮 + 导航到聊天 + 通知 main 切 runtime + 清未读。 */
   const switchTo = useCallback(
     (id: string | null) => {
-      setActiveId(id)
+      setOptimisticId(id)
       if (id) useUnreadStore.getState().clearUnread(id)
       goChat()
       void window.tabApi?.switchShellSession?.(id)
@@ -323,7 +362,7 @@ export function RailSessionList() {
         // 行，删的是末行则前一行，删空则回「新对话」。只移交 runtime
         // 指针，不做路由跳转——在画布页删会话不该被拽去聊天页。
         const next = rest[Math.min(idx, rest.length - 1)] ?? null
-        setActiveId(next?.id ?? null)
+        setOptimisticId(next?.id ?? null)
         void window.tabApi?.switchShellSession?.(next?.id ?? null)
       }
       void window.tabApi
