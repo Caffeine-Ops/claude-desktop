@@ -283,21 +283,29 @@ jobs:
           # 去掉可能混入的空白/换行再解码（tr -d '\n\r '），最稳。
           printf '%s' "$MAC_CSC_LINK" | tr -d '\n\r ' | base64 --decode > "$RUNNER_TEMP/cert.p12"
           echo "解码后 .p12 大小: $(stat -f%z "$RUNNER_TEMP/cert.p12") bytes"
-          # 密码校验：只验 MAC，不解密内容。理由——Apple 钥匙串导出的 p12 常用
-          # 老算法 pbeWithSHA1And40BitRC2-CBC 加密，OpenSSL 3.x 默认禁用 RC2，
-          # 真解密（-nokeys 输出证书）会报 `RC2-40-CBC unsupported` 误杀合法证书
-          # （v0.0.18 第五轮实锤）。`-info -noout -passin` 只校验 MAC，MAC 用 SHA1
-          # 不受 RC2 禁用影响——密码对/错在这里就能判准，且 -legacy 兜底旧算法。
-          # electron-builder 内部用 macOS 系统 security 导入钥匙串（非 openssl），
-          # 不受 OpenSSL RC2 策略限制，所以老算法 p12 能正常签名。
-          if openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$MAC_CSC_KEY_PASSWORD" -info -noout -legacy 2>&1 | grep -q "MAC:"; then
-            echo "✓ 证书密码校验通过（MAC verified）"
+          # 密码校验：用 macOS 自带的 `security import` 试导入到一个**临时钥匙串**，
+          # 成功即证明 base64 完整 + 密码正确。为什么不用 openssl：
+          #   - runner 的 `openssl` 是 macOS 的 LibreSSL，不认 `-legacy` 参数
+          #     （`Unrecognized flag legacy`，v0.0.18 第六轮实锤）；
+          #   - 且 LibreSSL/OpenSSL 对 Apple 老算法 p12（RC2）支持不一，靠它判
+          #     密码本就脆。
+          # 而 electron-builder 真正签名走的**正是** `security import`，用它自检
+          # = 用签名同一套工具预演，最贴真、零第三方差异。临时钥匙串用完即删，
+          # 不污染 runner 的 login 钥匙串。
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PWD="ci-temp-$RANDOM"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          if security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MAC_CSC_KEY_PASSWORD" -T /usr/bin/codesign 2>&1; then
+            echo "✓ 证书导入成功（base64 完整 + 密码正确）"
+            security find-identity -v -p codesigning "$KEYCHAIN" | grep -i "Developer ID" || true
           else
-            echo "::error::.p12 密码校验失败——MAC_CSC_KEY_PASSWORD 与导出证书时设的密码不一致"
-            echo "调试信息（不含密码）："
-            openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$MAC_CSC_KEY_PASSWORD" -info -noout -legacy 2>&1 | head -5 || true
+            echo "::error::证书导入失败——base64 被截断，或 MAC_CSC_KEY_PASSWORD 与导出时设的密码不一致"
+            security delete-keychain "$KEYCHAIN" 2>/dev/null || true
             exit 1
           fi
+          # 自检用的临时钥匙串删掉——electron-builder 会自己再建它需要的钥匙串。
+          security delete-keychain "$KEYCHAIN" 2>/dev/null || true
           echo "CSC_FILE=$RUNNER_TEMP/cert.p12" >> "$GITHUB_ENV"
 
       # mac 签名 + 公证（自动更新的硬前提，2026-07-05 起）：
