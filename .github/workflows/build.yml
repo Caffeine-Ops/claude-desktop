@@ -258,26 +258,55 @@ jobs:
       # physically retired in Phase 4). The library packages daemon/studio
       # import from `dist/` are already built by the root postinstall (runs
       # during `bun install`), so we don't repeat them here.
+      # mac 证书：把 base64 secret 解码成真实 .p12 文件，让 CSC_LINK 指向
+      # **文件路径**而非 base64 字符串（2026-07-05 起，v0.0.18 踩坑后）。
+      # 为什么不直接把 base64 塞给 CSC_LINK：electron-builder 25.x 的
+      # codeSign/codesign.js 判「这是 base64 还是路径」靠三选一——有
+      # `data:...;base64,` 前缀 / 长度>2048 / 以 `=` 结尾。GitHub secret 在
+      # 存取/复制中一旦末尾被裁掉 `=` 且长度判定边缘，就三条全不中 → 被当
+      # 成相对路径 → `<cwd>/apps/studio/<base64> doesn't exist`（v0.0.18 mac
+      # job 连炸三轮实锤）。解成文件走 codesign.js 第一个分支（statOrNull
+      # 文件存在检查），彻底绕开脆弱的 base64 嗅探。诊断输出（长度/大小/
+      # openssl 能否识别）帮判 secret 到底是被截断还是密码错——值本身不打印。
+      - name: Decode signing certificate (mac)
+        if: matrix.platform == 'mac'
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+        run: |
+          if [ -z "$MAC_CSC_LINK" ]; then
+            echo "::warning::MAC_CSC_LINK 为空，跳过签名（mac 自动更新将不可用）"
+            echo "CSC_FILE=" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "base64 长度: ${#MAC_CSC_LINK}"
+          # 去掉可能混入的空白/换行再解码（tr -d '\n\r '），最稳。
+          printf '%s' "$MAC_CSC_LINK" | tr -d '\n\r ' | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          echo "解码后 .p12 大小: $(stat -f%z "$RUNNER_TEMP/cert.p12") bytes"
+          # 用密码试解析——能读出内容就说明 base64 完整 + 密码对。
+          if openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$MAC_CSC_KEY_PASSWORD" -nokeys -clcerts 2>/dev/null | openssl x509 -noout -subject 2>/dev/null; then
+            echo "✓ 证书可被 openssl 解析（base64 完整 + 密码正确）"
+          else
+            echo "::error::.p12 无法用给定密码解析——base64 可能被截断，或 MAC_CSC_KEY_PASSWORD 不对"
+            exit 1
+          fi
+          echo "CSC_FILE=$RUNNER_TEMP/cert.p12" >> "$GITHUB_ENV"
+
       # mac 签名 + 公证（自动更新的硬前提，2026-07-05 起）：
-      #   - CSC_LINK / CSC_KEY_PASSWORD：Developer ID Application 证书
-      #     （.p12 base64）。**只在 mac job 注入**——用 matrix.platform 条件包起来，
-      #     win job 拿到空串（= 未设置）。原因：CSC_LINK 是 electron-builder 的
-      #     跨平台通用签名 env，win 侧看到它会把这张 mac 证书**误当成 Windows
-      #     代码签名证书**去解析 → `Env WIN_CSC_LINK is not correct … doesn't
-      #     exist`（v0.0.18 首发 win job 实锤）。Windows 本就不签名（首装仅
-      #     SmartScreen 警告，不挡自动更新），所以 win 侧一律空。
-      #     secret 未配置时也是空串 → 跳过签名（mac 自动更新会因签名缺失失效，
-      #     但不阻塞 CI）。
-      #   - APPLE_* 同理只在 mac 注入（win 用不到，留着无害但一并条件化保持整齐）：
-      #     三者齐全时 electron-builder 自动走 notarytool 公证（无需在 build 配置
-      #     里声明 notarize；缺任一则跳过公证）。
-      #   - CSC_IDENTITY_AUTO_DISCOVERY 保持 false：禁的是「从 runner 钥匙串
-      #     自动捞证书」这条路（CI runner 没有钥匙串证书，捞了也是浪费时间
-      #     还可能捞到错的）；显式 CSC_LINK 不受它影响。
+      #   - CSC_LINK 指向上一步解码出的 .p12 **文件路径**（win 拿空串跳过——
+      #     CSC_LINK 是 electron-builder 跨平台通用签名 env，win 侧看到 mac
+      #     证书会误当 Windows 代码签名证书解析，报 `WIN_CSC_LINK is not
+      #     correct`，v0.0.18 win job 实锤；Windows 本就不签名，首装仅
+      #     SmartScreen 警告，不挡自动更新）。
+      #   - APPLE_* 只在 mac 注入：三者齐全时 electron-builder 自动走
+      #     notarytool 公证（无需在 build 配置里声明 notarize；缺任一则跳过）。
+      #   - CSC_IDENTITY_AUTO_DISCOVERY 保持 false：禁「从 runner 钥匙串自动
+      #     捞证书」（CI runner 没有钥匙串证书，捞了浪费时间还可能捞错）；
+      #     显式 CSC_LINK 指文件不受它影响。
       - name: Build (${{ matrix.platform }})
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_LINK || '' }}
+          CSC_LINK: ${{ matrix.platform == 'mac' && env.CSC_FILE || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
           APPLE_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'mac' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
