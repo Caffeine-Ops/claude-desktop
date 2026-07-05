@@ -652,7 +652,10 @@ function ReasoningCard({
                   reads as "inset" without any visible stroke. 13px
                   text with apple-micro tracking is Apple's smallest
                   comfortable reading size — tight but legible. */}
-              <div className="mt-1.5 rounded-apple-lg bg-muted px-4 py-3 text-[13px] leading-[1.47] tracking-apple-micro text-muted-foreground">
+              <div
+                data-selectable="true"
+                className="mt-1.5 rounded-apple-lg bg-muted px-4 py-3 text-[13px] leading-[1.47] tracking-apple-micro text-muted-foreground"
+              >
                 <pre className="whitespace-pre-wrap break-words font-sans">
                   {displayText}
                 </pre>

@@ -199,10 +199,14 @@ export function removeLogSubscriber(wc: WebContents): void {
  * Wire it from `app.on('web-contents-created')` so every tab / shell /
  * overlay renderer is covered without touching each creation site.
  *
- * Electron 33 fires `console-message` with the classic positional signature
- * `(event, level, message, line, sourceId)` where `level` is a number:
- *   0 = log/verbose, 1 = info, 2 = warning, 3 = error.
- * (Electron 35+ switched to a single details object — revisit on upgrade.)
+ * Electron 43 fires `console-message` with a single details object
+ * (`Event<WebContentsConsoleMessageEventParams>`) whose `level` is a **string**
+ * enum: `'debug' | 'info' | 'warning' | 'error'`. The old positional args
+ * `(event, level:number, message, line, sourceId)` still arrive after `details`
+ * but are all `@deprecated` — reading them is exactly what triggers Electron's
+ * runtime deprecation warning, so we read `details.level` / `details.message`
+ * instead. (Pre-35 used the numeric positional signature; the migration to the
+ * details object happened over 35→43.)
  *
  * The `message` is the already-formatted console string, so no util.format
  * here. We skip the settings overlay's own renderer: it's the panel that
@@ -213,16 +217,13 @@ export function removeLogSubscriber(wc: WebContents): void {
  * exactly the set we want to exclude as a source.
  */
 export function attachRendererCapture(wc: WebContents): void {
-  wc.on(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    'console-message' as any,
-    (_event: unknown, level: number, message: string) => {
-      if (subscribers.has(wc)) return
-      const lvl: RuntimeLogEntry['level'] =
-        level >= 3 ? 'error' : level === 2 ? 'warn' : level === 0 ? 'debug' : 'info'
-      pushLog('renderer', lvl, message)
-    },
-  )
+  wc.on('console-message', (details) => {
+    if (subscribers.has(wc)) return
+    // electron 的 'warning' 映射到内部的 'warn'；其余（info/error/debug）同名直传。
+    const lvl: RuntimeLogEntry['level'] =
+      details.level === 'warning' ? 'warn' : details.level
+    pushLog('renderer', lvl, details.message)
+  })
 }
 
 /**

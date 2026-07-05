@@ -472,7 +472,14 @@ function SuggestionPopover({
             )}
             <button
               type="button"
-              className={`flex w-full items-center gap-2.5 px-3 py-[7px] text-left text-[13px] ${
+              // data-slot 是功能性的，不是装饰：本 popover 通过 createPortal 挂到
+              // document.body（见下方 `document.body`），脱离了 .chat-app 豁免子树，
+              // 于是 canvas 的裸 button reset（base.css `button:where(:not([data-slot],
+              // .chat-app *))`）会把每一行填成描边圆角卡片（亮色下尤其丑）。加 data-slot
+              // 逃逸 reset，让行回到纯 hover 高亮的干净外观。同 AssistantMessage /
+              // UserMessage / ImagesPanel 里 portal 出去的裸交互元素一致处理。
+              data-slot="slash-suggestion-item"
+              className={`flex w-full items-center gap-2.5 rounded-md px-3 py-[7px] text-left text-[13px] ${
                 i === highlighted ? 'bg-accent/[0.12]' : ''
               }`}
               onMouseEnter={(e) => {

@@ -48,7 +48,7 @@ import { SlidesWorkspace } from './SlidesWorkspace'
 // Chat-rail width bounds (px). The min keeps the composer + messages
 // readable; the max stops the rail from swallowing the slides pane. The
 // default matches the old hard-coded `w-[560px]`.
-const CHAT_COL_MIN = 380
+const CHAT_COL_MIN = 432
 const CHAT_COL_MAX = 880
 const CHAT_COL_DEFAULT = 560
 const CHAT_COL_STORAGE_KEY = 'slides.chatColWidth'

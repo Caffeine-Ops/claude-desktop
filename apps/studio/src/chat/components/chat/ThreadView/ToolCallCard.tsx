@@ -205,7 +205,11 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
     <div className={(enteredLive ? 'tc-row-in ' : '') + 'w-full min-w-0'}>
       {/* tc-details animates expand/collapse height via ::details-content
           (see main.css) — the native <details> stays, no controlled state. */}
-      <details open={running} className="group/tool tc-details">
+      {/* data-selectable：放开工具卡输出（命令输出 / diff 内容 / JSON / 搜索
+          结果…）可复制。.chat-app 全局禁选之上，后代继承（见 main.css）；
+          已标 select-none 的 diff 行号列 / ± 前缀符仍不进剪贴板（CSS 规则
+          用 :not(.select-none) 排除）。头部短标签一并可选，无碍功能。 */}
+      <details open={running} data-selectable="true" className="group/tool tc-details">
           {/* Compact tool header (DESIGN.md §4): a status badge, the tool
               label, and the most-informative arg (command / file / query)
               inline on the same row — no DONE pill, no gutter glyph.

@@ -106,6 +106,10 @@ function ClampedUserBubble(): React.JSX.Element {
     <>
       <div
         ref={ref}
+        // data-selectable：放开用户消息气泡文本可选（.chat-app 全局禁选之上）。
+        // clamp 态下本 div 是 role=button，但拖选后松手不落在原点不算 click，
+        // 选中与"点击展开全文"可共存。
+        data-selectable="true"
         onClick={clamped ? () => setOpen(true) : undefined}
         role={clamped ? 'button' : undefined}
         tabIndex={clamped ? 0 : undefined}

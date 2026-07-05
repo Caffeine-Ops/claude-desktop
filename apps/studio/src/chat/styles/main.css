@@ -87,6 +87,40 @@ body,
   height: 100vh;
 }
 
+/* 桌面 app 常态：整个前端默认不可选。导航壳（rail 会话列表、tab、设置
+   导航、按钮文案…）是点击目标不是可复制文本，全局禁选避免 ⌘A / 大范围
+   拖拽把整屏文字一次选中（2026-07-05 用户反馈）。
+   ⚠️ 落点是 body 不是 .chat-app：rail（src/components/AppRail）是 body 的
+   直接子节点、和 .chat-app 平级（app/layout.tsx），挂 .chat-app 覆盖不到
+   rail。canvas 壳（.app，设计工具）用 :not() 排除、保持它原有的可选行为。
+   真正要复制的内容区（AI 正文 / 代码 / 工具输出 / 输入框）在下方放开。
+   portal 到 body 的弹窗（全文弹窗 / lightbox）是 body 子节点，会被禁选，
+   故其内容容器也各自带 data-selectable 放开（见对应组件）。 */
+body :where(:not(.app, .app *)) {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 在全局禁选之上，重新放开「用户要选中/复制」的内容区。
+   ⚠️ 必须带 body 前缀：禁选规则是 `body :where(...)` = 优先级 (0,0,1)，若放开
+   规则只写 `:where(...)` = (0,0,0) 会被禁选盖过（AI 正文变 none 的坑）。带上
+   body 前缀让两者同为 (0,0,1)，平级时后声明的放开赢；且下面第二条的后代选择器
+   优先级更高，稳压禁选。组件里的 `select-none`（行号列 / diff 前缀符）是类选择器
+   (0,1,0)，比这里都高，不会被覆盖——行号 / ± 符号仍进不了剪贴板。 */
+body :where(input, textarea, [contenteditable]) {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* AI markdown 正文（含表格 / inline code / fenced 代码块，全是后代继承）、
+   用户消息气泡与全文、思考过程、工具卡输出正文。这些容器统一带
+   data-selectable="true"（组件里加），一处规则覆盖，避免逐文件散改。 */
+body :where([data-selectable='true']),
+body :where([data-selectable='true']) :where(*:not(.select-none)) {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* The chat surface's `.chat-app` is the floating card itself: it carries the
    rounded corners + background + a hairline ring, and clips its content
    (ThreadView, which in slides mode splits into a chat column + the

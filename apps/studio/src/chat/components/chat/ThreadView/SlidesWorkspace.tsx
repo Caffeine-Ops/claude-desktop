@@ -361,16 +361,39 @@ export function SlidesWorkspace(): React.JSX.Element {
       </div>
 
       {/* Body */}
-      {tab === 'questions' && hasConfirm && server ? (
-        // Confirm phase: the Eight-Confirmations page rendered NATIVELY (not an
-        // iframe). CanvasConfirm fetches the same Flask server's
-        // /api/catalogs + /api/recommendations off `server.url`, lets the user
-        // pick, and POSTs the SAME contract back to /api/confirm — the server's
-        // --wait-only loop (watching result.json) is unchanged. confirm takes
-        // precedence over a questionnaire here (the two never coincide, but if
-        // they did, the active confirm phase is the right surface).
-        <CanvasConfirm key={server.url} baseUrl={server.url} />
-      ) : tab === 'questions' && hasQuestions ? (
+      {/* Confirm phase: the Eight-Confirmations page rendered NATIVELY (not an
+          iframe). CanvasConfirm fetches the same Flask server's
+          /api/catalogs + /api/recommendations off `server.url`, lets the user
+          pick, and POSTs the SAME contract back to /api/confirm — the server's
+          --wait-only loop (watching result.json) is unchanged.
+
+          KEEP-ALIVE: this is rendered OUTSIDE the mutually-exclusive tab
+          switch below and hidden with `hidden` (display:none) when another tab
+          is active — NOT unmounted. CanvasConfirm holds the entire wizard
+          progress (stage tier1→tier2, every picked option, phase) in local
+          React state; unmounting it on a tab switch (e.g. peeking at 「文件」)
+          would destroy all of that and remounting re-boots from
+          recommendations.json, snapping the user back to stage-1 while the
+          server's `_already_confirmed` flag persists — the "confirmed once but
+          back at step one" bug. So it stays mounted for the whole confirm
+          phase and only its visibility toggles. It still takes precedence over
+          a questionnaire on the 问题 tab (the two never coincide, but if they
+          did, the active confirm phase is the right surface — hence the
+          `!hasConfirm` guard on the questionnaire branch below). */}
+      {hasConfirm && server && (
+        <div
+          className={
+            tab === 'questions' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'
+          }
+        >
+          <CanvasConfirm key={server.url} baseUrl={server.url} />
+        </div>
+      )}
+      {/* When CanvasConfirm owns the 问题 tab (above), the fallback switch must
+          render nothing — otherwise its trailing `else` occupancy placeholder
+          would stack under the keep-alive confirm panel. */}
+      {hasConfirm && server && tab === 'questions' ? null : tab ===
+          'questions' && !hasConfirm && hasQuestions ? (
         <CanvasQuestionnaire
           request={pendingAsk}
           streamingArgsText={streamingArgs}

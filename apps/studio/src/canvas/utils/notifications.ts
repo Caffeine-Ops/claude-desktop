@@ -30,7 +30,6 @@ type NotificationOptionsWithBrowserExtensions = NotificationOptions & {
 
 let ctx: AudioContext | null = null;
 const activeNotifications = new Set<Notification>();
-const SERVICE_WORKER_URL = '/od-notifications-sw.js';
 
 function getCtx(): AudioContext | null {
   if (typeof window === 'undefined') return null;
@@ -201,21 +200,6 @@ function notificationOptionsFor(
   };
 }
 
-async function showViaServiceWorker(
-  opts: CompletionNotificationOpts,
-): Promise<CompletionNotificationResult | null> {
-  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null;
-  try {
-    const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL);
-    const readyRegistration = await navigator.serviceWorker.ready.catch(() => registration);
-    if (!readyRegistration.showNotification) return null;
-    await readyRegistration.showNotification(opts.title, notificationOptionsFor(opts));
-    return 'shown';
-  } catch {
-    return null;
-  }
-}
-
 function showViaConstructor(opts: CompletionNotificationOpts): CompletionNotificationResult {
   if (typeof Notification === 'undefined') return 'unsupported';
   if (Notification.permission !== 'granted') return 'permission-denied';
@@ -254,5 +238,10 @@ export async function showCompletionNotification(
 ): Promise<CompletionNotificationResult> {
   if (typeof Notification === 'undefined') return 'unsupported';
   if (Notification.permission !== 'granted') return 'permission-denied';
-  return (await showViaServiceWorker(opts)) ?? showViaConstructor(opts);
+  // 直接用 Notification constructor。曾经先试 service worker（showNotification）
+  // 再回退 constructor，但 SW 文件（/od-notifications-sw.js）从未存在，注册必然
+  // 失败、每次白跑一轮再回退。Electron 里 constructor 通知已由主进程转成 macOS
+  // 系统通知，SW 那套（给纯浏览器 PWA 的后台持久通知）在桌面壳里无收益。
+  // 保留 async 签名：调用方 await 它，且未来若要接主进程 IPC 通知不必改签名。
+  return showViaConstructor(opts);
 }

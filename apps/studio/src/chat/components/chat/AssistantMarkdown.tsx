@@ -548,7 +548,12 @@ function AssistantMarkdownImpl({ text }: { text: string }): React.JSX.Element {
   // roomy, breathing rhythm of reference chat UIs (ChatGPT/Codex)
   // WITHOUT touching the Latin tracking on buttons/headings elsewhere.
   return (
-    <div className="break-words text-[14px] font-medium leading-relaxed tracking-normal text-foreground">
+    // data-selectable：.chat-app 全局 user-select:none 之上放开 AI 正文——
+    // 表格 / inline code / fenced 代码块都是后代，一处覆盖（见 main.css）。
+    <div
+      data-selectable="true"
+      className="break-words text-[14px] font-medium leading-relaxed tracking-normal text-foreground"
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         // detect:false（默认）——只对标注了语言的 fence 高亮。自动探测是

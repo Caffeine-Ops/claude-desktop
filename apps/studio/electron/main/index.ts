@@ -178,9 +178,20 @@ app.whenReady().then(async () => {
   // Auto-approve `media` (mic + camera) for our own app origin —
   // this is a single-origin desktop app, there's no untrusted third
   // party whose requests would need gating. Same reasoning for
-  // `clipboard-sanitized-write` (code-block copy / file-tree copy).
+  // `clipboard-sanitized-write` (code-block copy / file-tree copy) and
+  // `notifications`.
+  //
+  // `notifications` 必须在这里放行，否则设置页「桌面通知」永远拒权限：UI 跑在
+  // app://studio（prod）/ localhost（dev）这类源里，渲染层调 Notification.
+  // requestPermission() 会走到本 handler，不放行就直接 denied，而 Electron 应用
+  // 里用户根本没有浏览器「站点设置」可去手动开启 → 功能死路。放行后 Electron 把
+  // Web Notification 自动转成 macOS 系统通知（无需额外主进程 Notification 代码）。
   const ses = session.defaultSession
-  const ALLOWED_PERMISSIONS = new Set(['media', 'clipboard-sanitized-write'])
+  const ALLOWED_PERMISSIONS = new Set([
+    'media',
+    'clipboard-sanitized-write',
+    'notifications',
+  ])
   ses.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(ALLOWED_PERMISSIONS.has(permission))
   })
