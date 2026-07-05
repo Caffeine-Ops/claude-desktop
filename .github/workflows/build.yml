@@ -333,7 +333,15 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'mac' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_TEAM_ID || '' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun run dist:${{ matrix.platform }}
+        # 提高文件描述符上限：mac 签名时 electron-builder 逐个签名 .app 内
+        # 每个文件，而本包塞了 prebundled/skills/…/icons（tabler 图标集，数千
+        # 个小 svg），并发打开的句柄撞爆 macOS 默认 ulimit -n 256 → `EMFILE:
+        # too many open files`，签名中途炸（v0.0.18 第九轮实锤：签名已用正确
+        # 证书 identity 启动，栽在句柄数而非证书）。65536 给足余量。ulimit 只
+        # 影响当前 shell 及其子进程，不改系统全局。
+        run: |
+          ulimit -n 65536
+          bun run dist:${{ matrix.platform }}
 
       # Upload the installers straight to the GitHub Release instead of
       # staging them as Actions artifacts. Why: artifacts count against the
