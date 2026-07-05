@@ -333,14 +333,29 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'mac' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_TEAM_ID || '' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # 提高文件描述符上限：mac 签名时 electron-builder 逐个签名 .app 内
-        # 每个文件，而本包塞了 prebundled/skills/…/icons（tabler 图标集，数千
-        # 个小 svg），并发打开的句柄撞爆 macOS 默认 ulimit -n 256 → `EMFILE:
-        # too many open files`，签名中途炸（v0.0.18 第九轮实锤：签名已用正确
-        # 证书 identity 启动，栽在句柄数而非证书）。65536 给足余量。ulimit 只
-        # 影响当前 shell 及其子进程，不改系统全局。
+        # 提高文件描述符上限：mac 签名时 @electron/osx-sign **递归遍历**整个
+        # .app 内容并 open 每个文件，而本包 prebundled/ 有 1.7 万文件（含
+        # 1.3 万 svg 图标，经 extraResources 散放进 .app/Contents/Resources），
+        # 并发句柄撞爆上限 → `EMFILE: too many open files`（v0.0.18 第九~十一轮
+        # 实锤：证书/签名都对，纯栽在句柄数）。
+        # 关键：**裸 `ulimit -n` 提不上去**——macOS 软上限受**硬上限**约束，
+        # runner 默认硬上限也不高。必须先 `launchctl limit maxfiles` 提系统级
+        # 硬上限，`ulimit` 的软上限才抬得起来（第九/十轮只做 ulimit 无效的真因）。
+        # signIgnore 也试过无效：它只过滤「顶层 .app 要不要签」，拦不到 osx-sign
+        # 递归内部对每个子文件的 open。
+        # ⚠️ 两处平台适配：
+        #   1) shell: bash——win runner 默认 PowerShell，不认 `if [ ]`/`ulimit`
+        #      语法；显式 bash 让两平台走同一套（win 用自带 git-bash）。
+        #   2) ulimit/launchctl 用 matrix.platform 条件只在 mac 跑：win 上
+        #      `ulimit` 不存在，裸写报 `ulimit is not recognized` 把 win job
+        #      带崩（v0.0.18 第十一轮 win regression 实锤——win 本来一直能过）。
+        shell: bash
         run: |
-          ulimit -n 65536
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            sudo launchctl limit maxfiles 262144 524288 || true
+            ulimit -n 262144 || ulimit -n unlimited || true
+            echo "ulimit -n = $(ulimit -n)"
+          fi
           bun run dist:${{ matrix.platform }}
 
       # Upload the installers straight to the GitHub Release instead of
