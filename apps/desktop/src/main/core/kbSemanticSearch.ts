@@ -57,7 +57,10 @@ export function warmEmbedWorker(): void {
     else if (msg.type === 'result' && msg.id != null) { pending.get(msg.id)?.(msg.hits ?? []); pending.delete(msg.id) }
     else if (msg.type === 'error' && msg.id != null) { pending.get(msg.id)?.([]); pending.delete(msg.id) }
   })
-  worker.on('exit', () => { worker = null; ready = false })
+  // exit 时三态全复位：stale 属于「上一个 worker 生命周期」的判断——重建索引后再 fork 的
+  // 新 worker 会用 fork 时新读的 fingerprint 重新校验，旧 latch 不能压住它（否则重建后
+  // 永久降级 BM25，只有重启 app 才能恢复）。
+  worker.on('exit', () => { worker = null; ready = false; stale = false })
 }
 
 /**
