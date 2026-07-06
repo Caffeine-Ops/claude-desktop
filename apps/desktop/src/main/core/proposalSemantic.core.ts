@@ -33,6 +33,43 @@ export function cosineTopK(
 }
 
 /**
+ * 命中按产品域过滤：只留 (productLine,product) 落在 scopes 集内的。
+ * 空 scopes → 返空（调用方先短路：scopes.length===0 时不应走到这里，调用方保证）。
+ * 接受结构子类型 { productLine, product } 让纯核不 import proposalPrompt（含 electron）。
+ */
+export function filterHitsByScopes(
+  hits: readonly SemanticHit[],
+  scopes: readonly { productLine: string; product: string }[]
+): SemanticHit[] {
+  if (scopes.length === 0) return []
+  // NUL 分隔符：productLine/product 均为路径片段，不含 NUL，键唯一
+  const set = new Set(scopes.map((s) => `${s.productLine}\0${s.product}`))
+  return hits.filter((h) => set.has(`${h.productLine}\0${h.product}`))
+}
+
+/**
+ * 主结果不足 k 时用备选补齐。去重键 = mirrorPath+snippet（同文件同片段=同 chunk）。
+ * 主结果在前，备选追加，总量 ≤ k。
+ */
+export function fillHitsToK(
+  primary: readonly SemanticHit[],
+  backfill: readonly SemanticHit[],
+  k: number
+): SemanticHit[] {
+  const seen = new Set(primary.map((h) => `${h.mirrorPath}\0${h.snippet}`))
+  const result: SemanticHit[] = [...primary]
+  for (const h of backfill) {
+    if (result.length >= k) break
+    const key = `${h.mirrorPath}\0${h.snippet}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      result.push(h)
+    }
+  }
+  return result.slice(0, k)
+}
+
+/**
  * Reciprocal Rank Fusion：两路命中按各自 rank（0-based）给分 1/(k+rank)，按 row 合并相加、
  * 降序。row = vectors-meta 行号，两路天然对齐（同一张分块表）。k 默认 60（RRF 惯例）。
  */

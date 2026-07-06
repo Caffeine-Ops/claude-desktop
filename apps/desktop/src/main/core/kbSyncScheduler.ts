@@ -4,6 +4,7 @@ import { app } from 'electron'
 
 import { runKbSync } from './kbSync'
 import type { KbSyncStatus } from '../../shared/kbSyncStatus'
+import { resetEmbedWorker } from './kbSemanticSearch'
 import { parseKbManifest } from '../../shared/kbManifest'
 import { getKbConfig, kbOutDir } from './kbIndexStore'
 import { broadcastKbSyncStatus } from '../tabRegistry'
@@ -36,7 +37,15 @@ export function triggerKbSyncNow(): 'started' | 'alreadyRunning' | 'noRemote' {
     onStatus: (s: KbSyncStatus) => broadcastKbSyncStatus(s)
   })
     .then(
-      (final) => broadcastKbSyncStatus(final),
+      (final) => {
+        broadcastKbSyncStatus(final)
+        // 同步成功时重置 embed worker——旧 worker 端着旧内存表，kill 触发 exit 三态复位，
+        // 下次搜索 fork 新进程用新 fingerprint 重校验（见 resetEmbedWorker 注释）。
+        // 门控 state==='success'：KbSyncStatus success 无 downloaded/deleted 计数字段，
+        // 以 success 为判据（代价：磁盘未变的成功同步也会重置，每 6h 付一次 ~7s 模型冷载，
+        // 属可接受的误触——相比静默带着旧向量表的 stale latch 更安全）。
+        if (final.state === 'success') resetEmbedWorker()
+      },
       (err) => console.error('[kb-sync] runKbSync 违反绝不reject契约', err)
     )
     .finally(() => {

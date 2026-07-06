@@ -108,7 +108,7 @@ if (asarMode) {
       // Ensure none of the unwanted win32/linux binaries slipped in
       // (they should be excluded by mac.files in package.json).
       const unwanted = nodes.filter(
-        (p) => p.includes('/win32/') || (p.includes('/linux/') && !p.includes('/darwin/'))
+        (p) => p.includes('/win32/') || p.includes('/linux/')
       )
       if (unwanted.length > 0) {
         console.error(

@@ -1,5 +1,6 @@
 import { test, expect } from 'bun:test'
-import { cosineTopK, fuseRRF, passagesToHits } from './proposalSemantic.core'
+import { cosineTopK, fuseRRF, passagesToHits, filterHitsByScopes, fillHitsToK } from './proposalSemantic.core'
+import type { SemanticHit } from '../../shared/kbIndex'
 
 test('cosineTopK: 取最近邻、k 截断、降序', () => {
   // 3 行 2 维，已归一化
@@ -49,4 +50,67 @@ test('passagesToHits: 非空 passages → 等长 hits、字段映射正确、sni
   // 短文本：text = snippet = 原文
   expect(hits[1].snippet).toBe('short')
   expect(hits[1].text).toBe('short')
+})
+
+// ── filterHitsByScopes ─────────────────────────────────────────────────────────
+
+function makeHit(productLine: string, product: string, mirrorPath: string, snippet = 'x'): SemanticHit {
+  return { title: '', sourcePath: '', mirrorPath, productLine, product, text: snippet, snippet, score: 0 }
+}
+
+test('filterHitsByScopes: 只保留在域内的命中', () => {
+  const hits = [
+    makeHit('PL1', 'P1', '/a.md'),
+    makeHit('PL2', 'P2', '/b.md'),
+    makeHit('PL1', 'P3', '/c.md'),
+  ]
+  const scopes = [{ productLine: 'PL1', product: 'P1' }]
+  const out = filterHitsByScopes(hits, scopes)
+  expect(out.length).toBe(1)
+  expect(out[0].mirrorPath).toBe('/a.md')
+})
+
+test('filterHitsByScopes: 空 scopes → 空结果', () => {
+  const hits = [makeHit('PL1', 'P1', '/a.md')]
+  expect(filterHitsByScopes(hits, [])).toEqual([])
+})
+
+test('filterHitsByScopes: 全命中在域内 → 全保留', () => {
+  const hits = [makeHit('PL1', 'P1', '/a.md'), makeHit('PL2', 'P2', '/b.md')]
+  const scopes = [{ productLine: 'PL1', product: 'P1' }, { productLine: 'PL2', product: 'P2' }]
+  expect(filterHitsByScopes(hits, scopes).length).toBe(2)
+})
+
+// ── fillHitsToK ────────────────────────────────────────────────────────────────
+
+test('fillHitsToK: primary 在前、去重 mirrorPath+snippet、总量 ≤ k', () => {
+  const p1 = makeHit('PL1', 'P1', '/a.md', 'alpha')
+  const p2 = makeHit('PL1', 'P1', '/b.md', 'beta')
+  // backfill 含一条与 p1 重复（同 mirrorPath+snippet）、一条新
+  const b1 = makeHit('PL1', 'P1', '/a.md', 'alpha')  // dup of p1
+  const b2 = makeHit('PL1', 'P1', '/c.md', 'gamma')  // new
+  const b3 = makeHit('PL1', 'P1', '/d.md', 'delta')  // new
+  const out = fillHitsToK([p1, p2], [b1, b2, b3], 4)
+  // primary 在前（/a /b），去重后补 /c /d，共 4
+  expect(out.length).toBe(4)
+  expect(out[0].mirrorPath).toBe('/a.md')
+  expect(out[1].mirrorPath).toBe('/b.md')
+  expect(out[2].mirrorPath).toBe('/c.md')
+  expect(out[3].mirrorPath).toBe('/d.md')
+})
+
+test('fillHitsToK: k 限制上界', () => {
+  const primaries = [makeHit('PL', 'P', '/a.md'), makeHit('PL', 'P', '/b.md')]
+  const backs = [makeHit('PL', 'P', '/c.md')]
+  // k=2，backfill 里的 /c 不应被纳入
+  const out = fillHitsToK(primaries, backs, 2)
+  expect(out.length).toBe(2)
+})
+
+test('fillHitsToK: primary 不足时补齐到 k', () => {
+  const primary = [makeHit('PL', 'P', '/a.md')]
+  const backs = [makeHit('PL', 'P', '/b.md'), makeHit('PL', 'P', '/c.md')]
+  const out = fillHitsToK(primary, backs, 3)
+  expect(out.length).toBe(3)
+  expect(out[0].mirrorPath).toBe('/a.md')
 })

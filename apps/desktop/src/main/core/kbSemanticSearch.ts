@@ -16,7 +16,7 @@ import type { ProposalProductScope } from './proposalPrompt'
 import type { SemanticHit } from '../../shared/kbIndex'
 import { readKbIndex, kbOutDir } from './kbIndexStore'
 import { retrievePassages } from './proposalRetrieve'
-import { passagesToHits } from './proposalSemantic.core'
+import { passagesToHits, filterHitsByScopes, fillHitsToK } from './proposalSemantic.core'
 
 const SEARCH_TIMEOUT_MS = 1500
 let worker: UtilityProcess | null = null
@@ -77,18 +77,45 @@ function bm25Fallback(query: string, scopes: readonly ProposalProductScope[], k:
  *
  * 顺序不变量（见文件头注释 #1）：先判 !ready || stale || !worker → BM25，
  * 再向 worker 发 search。切勿调换顺序。
+ *
+ * 产品域过滤（后置于 worker 输出）：
+ *   embedWorker 跑 cosineTopK+RRF 时面向全分块表，不知道调用方的产品范围。若不过滤，
+ *   向量腿会把语义相近但来自其他产品的 chunk 混入结果——这些 chunk 原文真在 KB 里，
+ *   trigram 引用校验因此通过，但内容属于错误产品，形成跨产品语义串扰。
+ *   修法：worker 多取（k*4 or 40），main 侧后置 filterHitsByScopes，不足 k 时
+ *   用 bm25Fallback（已自己按域过滤）补齐。bm25Fallback 输出 productLine=''，
+ *   不能再过 filterHitsByScopes——只过向量腿原始输出。
  */
 export async function kbSemanticSearch(
   query: string, scopes: readonly ProposalProductScope[], k = 5
 ): Promise<{ hits: SemanticHit[]; staleIndex: boolean }> {
   if (!worker) warmEmbedWorker()
+  // 空作用域：没有选中产品，语义检索全表无意义（任何命中都会被 filterHitsByScopes 滤空）；
+  // 直接 BM25——retrievePassages(empty scopes) 同样返回 []，与旧语义一致（保向后兼容）。
+  if (scopes.length === 0) return { hits: bm25Fallback(query, scopes, k), staleIndex: stale }
   // 顺序不变量：ready/stale 检查必须在 postMessage 之前——worker 在 ready 前回空数组（Task 5 实测）
   if (!ready || stale || !worker) return { hits: bm25Fallback(query, scopes, k), staleIndex: stale }
   const id = ++seq
+  // 向 worker 多取以对抗过滤损耗：k*4 or 40，过滤后不足 k 再用 bm25Fallback 补齐。
+  const workerK = Math.max(k * 4, 40)
   const hits = await new Promise<SemanticHit[]>((resolve) => {
     const timer = setTimeout(() => { pending.delete(id); resolve(bm25Fallback(query, scopes, k)) }, SEARCH_TIMEOUT_MS)
-    pending.set(id, (h) => { clearTimeout(timer); resolve(h.length ? h : bm25Fallback(query, scopes, k)) })
-    worker!.postMessage({ type: 'search', id, query, k })
+    pending.set(id, (rawHits) => {
+      clearTimeout(timer)
+      // 跨产品语义串扰会击穿引用校验——原文真在库里，trigram 抓不住。后置过滤确保
+      // 向量腿命中也只来自当前产品域。bm25Fallback 走 retrievePassages 已自己按域过滤，
+      // 它的 productLine='' 不能再过一次 filterHitsByScopes——只过向量腿输出。
+      const scoped = filterHitsByScopes(rawHits, scopes)
+      resolve(fillHitsToK(scoped, bm25Fallback(query, scopes, k), k))
+    })
+    worker!.postMessage({ type: 'search', id, query, k: workerK })
   })
   return { hits, staleIndex: false }
 }
+
+/**
+ * 杀掉 worker 让下一次搜索/预热重新 fork——KB 根切换/远程配置变更/同步落盘后，旧 worker
+ * 端着旧内存表(或 stale latch)不会自愈（exit 处理器只在真退出时复位三态）。kill 触发 exit
+ * → 三态复位 → 新 fork 用新 fingerprint 重校验。幂等：无 worker 时是 no-op。
+ */
+export function resetEmbedWorker(): void { worker?.kill() }

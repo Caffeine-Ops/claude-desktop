@@ -48,7 +48,9 @@
       "package.json"
     ],
     "asarUnpack": [
-      "**/onnxruntime-node/**"
+      "**/onnxruntime-node/**",
+      "**/sharp/**",
+      "**/@img/**"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

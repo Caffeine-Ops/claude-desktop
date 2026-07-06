@@ -89,7 +89,7 @@ import { markdownToDocxBuffer } from '../core/proposalDocx'
 import { verifyCitations, collectUngroundedImagePaths } from '../core/proposalVerify'
 import { retrievePassages } from '../core/proposalRetrieve'
 import { buildProposalProductScopes } from '../core/proposalScopes'
-import { kbSemanticSearch } from '../core/kbSemanticSearch'
+import { kbSemanticSearch, resetEmbedWorker } from '../core/kbSemanticSearch'
 import {
   saveProposalDraft,
   loadProposalDraft,
@@ -1081,6 +1081,9 @@ export function registerIpcHandlers(): void {
       // 重选本地根 = 本地构建在即，磁盘很快会在同步引擎之外被改写；旧同步基准
       // 不再可信，作废让下一轮远程同步退回磁盘对账（见 invalidateKbSyncBaseline 注释）。
       invalidateKbSyncBaseline()
+      // 旧 worker 端着旧内存表，不会自愈——kill 触发 exit 三态复位，下次搜索 fork 新进程
+      // 用新 fingerprint 重校验（见 resetEmbedWorker 注释）。
+      resetEmbedWorker()
     }
   )
 
@@ -1096,6 +1099,9 @@ export function registerIpcHandlers(): void {
       // 是磁盘唯一写方，旧基准的「磁盘=上次同步」断言失效——作废它（见
       // invalidateKbSyncBaseline 注释），逼下一轮远程同步做一次磁盘对账。
       invalidateKbSyncBaseline()
+      // 旧 worker 端着旧内存表，不会自愈——kill 触发 exit 三态复位，下次搜索 fork 新进程
+      // 用新 fingerprint 重校验（见 resetEmbedWorker 注释）。
+      resetEmbedWorker()
     }
   })
 

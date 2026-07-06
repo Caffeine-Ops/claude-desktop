@@ -56,6 +56,7 @@ export async function buildVectors(
   // 逐条 embed（v4 也支持批，但逐条最稳；几千~几万条一次性离线跑可接受）。
   for (let i = 0; i < texts.length; i++) {
     const out = await extractor(texts[i], { pooling: 'mean', normalize: true })
+    if ((out.data as Float32Array).length !== DIM) throw new Error(`embedding 维度 ${(out.data as Float32Array).length} ≠ ${DIM}——模型/dtype 配错`)
     vectors.set(out.data as Float32Array, i * DIM)
     if (i % 200 === 0) process.stdout.write(`\r向量化 ${i}/${texts.length}`)
   }
