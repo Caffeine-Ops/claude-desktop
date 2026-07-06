@@ -43,7 +43,9 @@ async function init(): Promise<void> {
     return
   }
   const buf = readFileSync(binPath)
-  matrix = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4)
+  // Buffer.slice 共享底层池、byteOffset 可能不是 4 的倍数（Node 小文件走池化分配），
+  // Float32Array 视图要求 4 字节对齐——ArrayBuffer.slice 拷一份对齐的，代价只是小文件一次 memcpy。
+  matrix = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
   rowChunks = meta.rows.map((m: VectorMeta, row) => ({
     text: m.text,
     title: m.title,
