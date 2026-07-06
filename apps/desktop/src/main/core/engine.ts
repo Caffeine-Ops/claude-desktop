@@ -7,10 +7,14 @@ import { inspect } from 'node:util'
 
 import {
   query,
+  createSdkMcpServer,
+  tool,
+  type McpServerConfig,
   type PermissionMode,
   type PermissionResult,
   type Query
 } from '@anthropic-ai/claude-agent-sdk'
+import { z } from 'zod'
 import type {
   ContentBlockParam,
   ImageBlockParam,
@@ -1405,6 +1409,39 @@ export class ChatEngine extends EventEmitter {
       }
     })
 
+    // kb_search in-process MCP server（仅方案模式挂载，非方案会话 null → 不传）。
+    //
+    // 在 openSession 内构造：闭包捕获的是本次 spawn 的 `runtime` 引用，而非
+    // this.activeSessionId——遵循本项目 canUseTool 同款纪律：前台可能已经切走，
+    // 工具处理器必须回归发起它的 runtime（同 canUseTool 长注释所述）。
+    // handler 在调用时 LIVE 读 runtime.proposalProducts，确保产品 chip 随时生效。
+    //
+    // spike 验证（Task 10）：createSdkMcpServer 在「SDK spawn 外部 CLI 后端」模式下
+    // 确实工作——model 通过 ToolSearch 发现 mcp__kb-search__kb_search、调用它、
+    // 结果原文回转，PASS（见 task-10-report.md）。不通过则不在此挂载。
+    const kbSearchMcpServer = proposalActive
+      ? createSdkMcpServer({
+          name: 'kb-search',
+          tools: [
+            tool(
+              'kb_search',
+              '在知识库里用自然语言模糊描述检索相关原文片段（语义+词面混合），返回片段与出处文件名。写方案缺资料时用。',
+              { query: z.string() },
+              async ({ query: q }) => {
+                // LIVE 读 proposalProducts：产品 chip 可能在 warm-spawn 后被用户修改，
+                // 捕获的是引用不是快照，确保检索范围始终反映当前选择。
+                const scopes = this.proposalProductScopes(runtime.proposalProducts)
+                const { hits } = await kbSemanticSearch(q, scopes, 8)
+                const text = hits.length
+                  ? hits.map((h) => `《${h.title}》\n${h.text}`).join('\n\n- - -\n\n')
+                  : '（知识库未命中相关内容）'
+                return { content: [{ type: 'text', text }] }
+              }
+            ),
+          ],
+        })
+      : null
+
     // Build the SDK query options. On resume we pass `resume: sessionId`
     // so fusion-code reloads the JSONL; on new sessions we pass
     // `sessionId: sessionId` so the CLI uses our UUID as the filename
@@ -1611,7 +1648,14 @@ export class ChatEngine extends EventEmitter {
       // clobber a `.mcp.json` the user keeps in their own source tree. The
       // daemon side writes `.mcp.json` only because it targets PROJECTS_DIR
       // (see daemon server.ts isManagedProjectCwd gating).
-      mcpServers: this.externalMcpServers,
+      //
+      // 方案模式：在外部 MCP 基础上并入 kb-search in-process server。
+      // 非方案模式原样传 externalMcpServers，不污染普通会话。
+      // 类型断言：SdkExternalMcpServers ∪ McpSdkServerConfigWithInstance 仍合
+      // Record<string, McpServerConfig>，外显 cast 消除严格分配检查收窄。
+      mcpServers: (kbSearchMcpServer
+        ? { ...this.externalMcpServers, 'kb-search': kbSearchMcpServer }
+        : this.externalMcpServers) as Record<string, McpServerConfig>,
       // Repo-root skills/ wired in as a local plugin so its SKILL.md entries
       // become `/`-triggerable in this chat tab (namespaced
       // `claude-desktop:<skill>`). Spread-omit when null: the SDK type allows
@@ -2039,6 +2083,15 @@ export class ChatEngine extends EventEmitter {
     // 走 broker。绝不放宽到 cwd 之外的任意目录（cwd 可读范围不变量）。
     if (this.sessions.get(sessionId)?.proposalMode && this.isKbMirrorRead(toolName, input)) {
       console.log('[engine] canUseTool → auto-allow (proposal KB read)', { sessionId, toolName })
+      return { behavior: 'allow', updatedInput: input, decisionClassification: 'user_temporary' }
+    }
+
+    // 方案模式：kb_search in-process MCP 工具静默放行——纯读、无副作用、仅在方案会话挂载。
+    // 工具名格式 `mcp__<server-name>__<tool-name>`（SDK 约定，spike 实测）。弹权限卡
+    // 会干扰 AI 写方案流程（每节缺料调一次），与 KB 镜像目录读取同属「不需要用户决策的
+    // 只读参考料访问」，性质一致，因此同等处理。
+    if (this.sessions.get(sessionId)?.proposalMode && toolName === 'mcp__kb-search__kb_search') {
+      console.log('[engine] canUseTool → auto-allow (proposal kb_search MCP)', { sessionId })
       return { behavior: 'allow', updatedInput: input, decisionClassification: 'user_temporary' }
     }
 
