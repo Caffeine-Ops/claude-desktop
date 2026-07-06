@@ -305,9 +305,16 @@ body {
 .style-preview {
     position: sticky;
     z-index: 5;
-    background: var(--bg);
-    padding: 8px 0;
+    /* Faint neutral tray behind the card so a light-palette preview (whose
+       own background is near-white) still reads as a distinct panel instead
+       of dissolving into the page — the card floats on this tray. */
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(240, 242, 245, 0.6)),
+        var(--bg);
+    border-radius: calc(var(--radius) + 6px);
+    padding: 10px 12px;
     margin-bottom: 16px;
+    box-shadow: inset 0 0 0 1px rgba(20, 30, 50, 0.05);
 }
 .style-preview-label {
     display: flex;
@@ -319,9 +326,12 @@ body {
 .spl-title { font-size: 12.5px; font-weight: 600; color: var(--muted); }
 .spl-note { font-size: 11.5px; color: var(--muted); }
 .style-preview-card {
+    /* border color + shadow are re-set in paint() to match the palette's
+       lightness (a dark palette needs a light hairline, a light palette a
+       darker one) so the card always has a visible edge against its tray. */
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    box-shadow: var(--shadow);
+    box-shadow: 0 1px 2px rgba(20, 30, 50, 0.06), 0 6px 20px rgba(20, 30, 50, 0.1);
     padding: 14px 18px;
     display: flex;
     align-items: center;

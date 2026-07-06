@@ -604,6 +604,21 @@
     function hexOr(val, fallback) {
         return normHex(val) || fallback;
     }
+    // Rough perceived lightness (0 = black, 1 = white) of a #rrggbb color.
+    // Used by the style preview to pick an edge treatment that stays visible
+    // whether the palette background is near-white or near-black.
+    function hexLightness(hex) {
+        var h = normHex(hex);
+        if (!h) return 1;
+        // normHex may hand back the #abc shorthand — expand to #aabbcc first.
+        if (h.length === 4) {
+            h = "#" + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
+        }
+        var r = parseInt(h.slice(1, 3), 16) / 255;
+        var g = parseInt(h.slice(3, 5), 16) / 255;
+        var b = parseInt(h.slice(5, 7), 16) / 255;
+        return 0.299 * r + 0.587 * g + 0.114 * b;
+    }
     // Replaced when the combined color+typography preview mounts; the color and
     // typography sections call it after every change so the preview stays live.
     var refreshStylePreview = function () {};
@@ -1106,6 +1121,25 @@
             var bodyLatStack = previewFontStack(body.latin, body.css);
 
             card.style.background = bg;
+            // Give the card a visible edge whatever the palette's lightness:
+            // a light background gets a darker hairline + stronger shadow so it
+            // lifts off the tray; a dark background gets a light inner hairline
+            // so it doesn't merge with the page. Without this, a near-white
+            // palette (e.g. "Economist warm paper") looks like it has no card.
+            var lite = hexLightness(bg);
+            if (lite > 0.7) {
+                card.style.border = "1px solid rgba(20, 30, 50, 0.14)";
+                card.style.boxShadow =
+                    "0 1px 2px rgba(20, 30, 50, 0.08), 0 8px 24px rgba(20, 30, 50, 0.12)";
+            } else if (lite < 0.35) {
+                card.style.border = "1px solid rgba(255, 255, 255, 0.16)";
+                card.style.boxShadow =
+                    "0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 26px rgba(0, 0, 0, 0.34)";
+            } else {
+                card.style.border = "1px solid rgba(20, 30, 50, 0.12)";
+                card.style.boxShadow =
+                    "0 1px 2px rgba(20, 30, 50, 0.08), 0 8px 24px rgba(20, 30, 50, 0.14)";
+            }
             titleCjk.textContent = head.sample_cjk || t("sample_cjk");
             titleLat.textContent = head.sample_latin || t("sample_latin");
             title.style.color = pri;
