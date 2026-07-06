@@ -125,7 +125,7 @@ export function createTray(resolver: () => BrowserWindow | null): Tray {
   targetWindowResolver = resolver
   idleIcon = buildIcon()
   tray = new Tray(idleIcon)
-  // 跟随 app 显示名（index.ts 已 setName('Fusion Work')），改名一处生效。
+  // 跟随 app 显示名（index.ts 已 setName('Cowork')），改名一处生效。
   tray.setToolTip(app.getName())
   tray.setContextMenu(buildMenu(currentLang))
   tray.on('click', () => showResolvedWindow())

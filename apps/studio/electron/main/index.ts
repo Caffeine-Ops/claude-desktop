@@ -73,23 +73,23 @@ protocol.registerSchemesAsPrivileged([
 
 // 存储目录必须**先于** setName 钉死。app.getPath('userData') 此刻仍返回
 // 改名前的历史目录，读一次锁进 setPath，之后 setName 改显示名就不会连带
-// 把数据目录漂走。顺序反了（先 setName 再读 userData）会读到 Fusion Work
+// 把数据目录漂走。顺序反了（先 setName 再读 userData）会读到 Cowork
 // 的新目录，等于把用户历史会话丢在旧目录里读不到。
 //
 // 为什么必须钉：userData（聊天历史 / 会话 / appSettings）默认按 app 显示名
 // 组织。dev 下 Electron 用 package.json name → ~/…/@claude-desktop/studio；
-// prod 下用 build.productName → ~/…/Claude Desktop。setName('Fusion Work')
-// 后两者都会漂到 …/Fusion Work，已有数据全部读不到。把当前真实目录读出来
+// prod 下用 build.productName → ~/…/Claude Desktop。setName('Cowork')
+// 后两者都会漂到 …/Cowork，已有数据全部读不到。把当前真实目录读出来
 // 原样钉回，dev / prod 各自保住自己的历史数据，显示名与存储目录彻底解耦。
 const userDataDir = app.getPath('userData')
 app.setPath('userData', userDataDir)
 
-// 应用显示名 = Fusion Work。覆盖 Electron 默认取名（dev 菜单栏首项/About 会
+// 应用显示名 = Cowork。覆盖 Electron 默认取名（dev 菜单栏首项/About 会
 // 退回进程名 "Electron" 或 package name "@claude-desktop/studio"；prod 取
 // build.productName "Claude Desktop"）——显式 setName 让 dev 与 prod 的菜单 /
-// 关于 / 退出确认框都统一显示 Fusion Work。必须在 whenReady 前调用（菜单和
+// 关于 / 退出确认框都统一显示 Cowork。必须在 whenReady 前调用（菜单和
 // app 元信息在 ready 时定型）。存储目录已在上面钉死，不受这行影响。
-app.setName('Fusion Work')
+app.setName('Cowork')
 
 /**
  * Build the application menu. The tab-bar entry point is "File →
