@@ -28,7 +28,14 @@ export default defineConfig({
     build: {
       outDir: 'out-electron/main',
       rollupOptions: {
-        input: resolve(__dirname, 'electron/main/index.ts')
+        input: {
+          index: resolve(__dirname, 'electron/main/index.ts'),
+          // embedWorker 是 utilityProcess 独立入口：KB 模型加载/向量检索全在
+          // 子进程，绝不进 main 主线程（冷加载 ~6s 会冻住所有 tab 的 engine）。
+          // kbSemanticSearch 用 utilityProcess.fork('out-electron/main/embedWorker.js')
+          // 指向此产物——漏配该入口 fork 会静默失败 → 检索永久降级 BM25。
+          embedWorker: resolve(__dirname, 'electron/main/workers/embedWorker.ts')
+        }
       },
       commonjsOptions: { transformMixedEsModules: true }
     }

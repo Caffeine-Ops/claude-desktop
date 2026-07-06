@@ -8,6 +8,12 @@ import type {
   ThreadSummary
 } from './types'
 import type { ThreadMessageLike } from '@assistant-ui/react'
+import type { ProposalStyleConfig } from './proposalStyle'
+import type {
+  ProposalKind,
+  ProposalMetricRecord,
+  SectionVerification
+} from './proposal'
 
 /**
  * Central registry of IPC channel names. Main and renderer both import
@@ -596,7 +602,139 @@ export const IPC_CHANNELS = {
    * no re-pull round-trip needed (unlike APPEARANCE_CHANGED, there is no
    * daemon copy to re-read; main IS the source of truth here).
    */
-  UPDATER_STATE_CHANGED: 'updater:state-changed'
+  UPDATER_STATE_CHANGED: 'updater:state-changed',
+  /**
+   * Renderer → main. Returns the current KB root path (or null when
+   * not yet configured) plus the fixed output directory for index
+   * artefacts (`userData/kb-index`). Called by the settings page to
+   * hydrate the KB path picker.
+   */
+  KB_PATH_GET: 'kb:path-get',
+  /**
+   * Renderer → main. Persists the user-picked KB root path to
+   * `userData/kb-config.json`. Takes effect immediately — subsequent
+   * KB_PATH_GET and KB_INDEX_READ calls reflect the new root.
+   */
+  KB_PATH_SET: 'kb:path-set',
+  /**
+   * Renderer → main. Reads `userData/kb-index/index.json` and
+   * returns the parsed KbIndex, or null when the file doesn't
+   * exist yet (index not yet built). The renderer uses this to
+   * decide whether to show the "build index" CTA or the ready state.
+   */
+  KB_INDEX_READ: 'kb:index-read',
+  /**
+   * Main → renderer push. Knowledge-base remote sync progress/state.
+   * Broadcast to shell + chat tabs (web tabs skipped — no preload there
+   * and no KB UI either).
+   */
+  KB_SYNC_STATUS: 'kb:sync-status',
+  /**
+   * Renderer → main. Persists the remote sync config (`{ baseUrl, kbId }`,
+   * or `null` to disconnect) to `userData/kb-config.json`. Writing a
+   * non-null remote also kicks off `triggerKbSyncNow()` immediately — the
+   * user filling in a URL shouldn't require a second click to start the
+   * first sync.
+   */
+  KB_REMOTE_SET: 'kb:remote-set',
+  /**
+   * Renderer → main. Manually kicks off a remote KB sync (the settings
+   * page "sync now" button). Returns `'started'` | `'alreadyRunning'`
+   * (a sync — manual or the 30s/6h scheduler — is already in flight) |
+   * `'noRemote'` (no remote configured yet). Progress is reported
+   * separately via the `KB_SYNC_STATUS` broadcast, not this call's result.
+   */
+  KB_SYNC_NOW: 'kb:sync-now',
+  /**
+   * Renderer → main. Opens the OS native folder picker for choosing the
+   * local KB root. Engine-free counterpart of WORKSPACE_PICK — the
+   * settings overlay isn't bound to any tab/engine, so this can't reuse
+   * `resolveEngine`. Returns `{ path: null }` on cancel.
+   */
+  KB_ROOT_PICK: 'kb:root-pick',
+  /**
+   * Renderer → main. Exports the proposal document via the OS native
+   * save dialog. Main writes the file and returns the absolute path;
+   * returns `{ path: null }` when the user cancelled the dialog.
+   *
+   * `format` is a closed union (`ExportFormat` in proposalExport.ts):
+   * md 直写、docx 走 markdownToDocxBuffer。
+   */
+  PROPOSAL_EXPORT: 'proposal:export',
+  /**
+   * Renderer → main. Renders the proposal markdown to a .docx binary
+   * IN MEMORY (no save dialog, no disk write), so the renderer can paint a
+   * docx-preview pagination view that matches the exported Word file
+   * byte-for-byte — same `markdownToDocxBuffer` engine as PROPOSAL_EXPORT.
+   */
+  PROPOSAL_RENDER: 'proposal:render',
+  /**
+   * Renderer → main. 导出 PDF。与 md/docx 不同：PDF 不是从 markdown 在 main 直接生成
+   * bytes，而是 renderer 先用 docx-preview 把【同一份 docx buffer】渲成自包含 HTML（样式内联、
+   * 图 base64），main 再用隐藏 BrowserWindow + webContents.printToPDF 打成 A4 PDF。故走独立通道、
+   * 不挤进 ProposalExportFormat 联合（那条 switch 的产物是 markdown→bytes，结构上容不下 PDF）。
+   * 选 Chromium printToPDF 而非外部 LibreOffice：开箱即用、零外部依赖、中文字体由 Chromium 处理、
+   * 且 PDF 与预览同源（同一 docx-preview 渲染）逐像素一致。
+   */
+  PROPOSAL_EXPORT_PDF: 'proposal:export-pdf',
+  /** Renderer → main. 写入/读出/删除某会话的持久化草稿（userData/proposal-drafts/<id>.json）。 */
+  PROPOSAL_SAVE_DRAFT: 'proposal:save-draft',
+  PROPOSAL_LOAD_DRAFT: 'proposal:load-draft',
+  PROPOSAL_DELETE_DRAFT: 'proposal:delete-draft',
+  /**
+   * Renderer → main. 核对一节正文里的 `（据《X》）` 引用是否真出自所引镜像原文
+   * （trigram 重叠），返回每条引用的 verdict + 覆盖度。校验须在主进程（要读 userData
+   * 镜像文件）；renderer 仅取结果用于标红/覆盖度徽标。失败降级（degraded:true），绝不阻塞。
+   */
+  PROPOSAL_VERIFY: 'proposal:verify',
+  /**
+   * Renderer → main. M-0 埋点：每次导出成功后 append 一条聚合记录到
+   * userData/proposal-metrics/metrics.jsonl（可交付率代理 + 引用准确度）。本地不外传，
+   * 失败静默——埋点是旁路信号，绝不阻塞导出。
+   */
+  PROPOSAL_METRIC_LOG: 'proposal:metric-log',
+  /**
+   * Renderer → main. 「召回预览」（只读）：给定关键词 + 当前产品集，返回知识库 top
+   * 召回片段，供用户随时探库、判断检索质量、决定要不要加产品。与生成时的内容级召回共用
+   * retrievePassages，但【只读、不注入提示词、不写盘】。
+   */
+  PROPOSAL_PEEK_RETRIEVAL: 'proposal:peek-retrieval',
+  /**
+   * Renderer → main. 读出图 API 设置（baseURL/model + apiKey 是否已配置）。为什么不回明文
+   * key：main 侧 getAppSettings() 落盘明文，但 IPC 结构化克隆会把它摆进渲染进程内存，增大
+   * 泄漏面（devtools/渲染进程崩溃转储都可能读到）。UI 只需要「已配置」布尔态就能渲染表单，
+   * 故 apiKey 脱敏为占位符 `••••`（未配置则空串），见 PROPOSAL_IMAGE_SETTINGS_SET 的合并约定。
+   */
+  PROPOSAL_IMAGE_SETTINGS_GET: 'proposal-image:settings-get',
+  /**
+   * Renderer → main. 写出图 API 设置。若 `apiKey` 等于脱敏占位符 `••••`（用户只改了
+   * baseURL/model、没重新输入 key），main 合并保留现存明文 key，避免占位符覆盖真 key。
+   */
+  PROPOSAL_IMAGE_SETTINGS_SET: 'proposal-image:settings-set',
+  /**
+   * Renderer → main. 文生图：调用 imageGenService.generateImage 出图后落盘到该会话的
+   * 草稿资产目录（writeProposalImage，来源标记 'generated'/gen- 前缀），返回绝对路径。
+   * 未配置 apiKey 时抛出中文错误，UI 据此提示去设置页填写。
+   */
+  PROPOSAL_IMAGE_GENERATE: 'proposal-image:generate',
+  /**
+   * Renderer → main. 改图：读 `sourcePath` 的字节喂给 imageGenService.editImage，出图后
+   * 落盘（来源标记 'edited'/edit- 前缀），返回绝对路径。同 GENERATE，缺 apiKey 抛中文错误。
+   */
+  PROPOSAL_IMAGE_EDIT: 'proposal-image:edit',
+  /**
+   * Renderer → main. 上传本地图：弹 OS 原生文件选择框（限图片格式，单选），用户取消返回
+   * null；选中后读字节落盘到该会话草稿资产目录（writeProposalImage，来源标记
+   * 'uploaded'/upload- 前缀，ext 取自选中文件的扩展名），返回绝对路径。与 GENERATE/EDIT
+   * 不同：上传不调出图 API，不受未配置 apiKey 限制。
+   */
+  PROPOSAL_IMAGE_UPLOAD: 'proposal-image:upload',
+  /**
+   * Renderer → main. 语义检索：模糊自然语言 → 混合(向量+BM25)命中片段+出处。供写方案
+   * 搜索面板主动用。embedding 在 utilityProcess、不冻 main；模型缺失/stale 降级 BM25。
+   * staleIndex=true 时结果是 BM25 降级（有内容但非语义），面板顶部显「需重建索引」条。
+   */
+  KB_SEMANTIC_SEARCH: 'kb:semantic-search'
 } as const
 
 /**
@@ -670,6 +808,39 @@ export type ChatSendPayload = {
   sessionId: string
   text: string
   images?: readonly ChatImagePayload[]
+  /**
+   * 方案写作模式开关。渲染层在 send 时透传 `useProposalStore.getState().active`。
+   *
+   * 为什么走 send payload 而不是单独一条 IPC：方案 append 是在 fusion-code 子进程
+   * spawn 时（openSession）烘焙的，而本项目 lazy spawn——真正的冷启动延迟到首次
+   * send()。把 flag 挂在 send 上，能保证「首次 send 触发 spawn」那一刻 engine 就读
+   * 得到方案模式，append 与 additionalDirectories 才来得及生效。
+   *
+   * warm-spawn 处理：switchToSession 的后台 warmup 可能在用户选产品之前就 spawn 了
+   * 子进程，那个进程的 append 不含方案纪律。engine.send() 检测到「本次 proposalMode=
+   * true，但该 runtime 的活进程不带方案 append」（runtime.spawnedWithProposal !== true）
+   * 时，会把方案纪律 + 镜像绝对路径注入到本次用户消息里（见 engine.send 的 warm-spawn
+   * grounding）。比"杀掉重启该 session"稳——重启一个刚被 kill 的同 id 会话会让 claude
+   * exit 1。fresh spawn 的 runtime 此刻 spawnedWithProposal 已为 true，不重复注入。
+   */
+  proposalMode?: boolean
+  /**
+   * 方案模式下识别到的产品集（{productLine, product}）。渲染层在 send 时用
+   * matchProducts 对用户文本匹配后透传。main 据此把这些产品的镜像子目录加进
+   * additionalDirectories 并在方案提示词里点名，收窄检索范围。
+   * 缺省/空数组 = 未识别到 → main 退回整个镜像根目录由 AI 自行 Grep 定位。
+   */
+  proposalProducts?: readonly { productLine: string; product: string }[]
+  /**
+   * 内容级召回开关（#2）：封面阶段外（phase !== 'cover'，即目录+正文回合）由渲染层置 true。
+   * 为真时 engine 用本回合文本对已限定产品的镜像原文做关键词召回，把命中的真实片段注入本
+   * 回合上下文（与文件清单并存、增量），治「知识库有料却没引到」。
+   *
+   * 为什么是「非封面」而非「仅正文」：phase 只在点阶段按钮时前进，用户手敲推进语时 phase
+   * 滞后会漏掉首个正文回合的召回（实测踩到）。放宽到非封面后手敲/点按钮都触发。封面回合
+   * （首发播种、问客户名）不召回。缺省/false = 不召回，回落到「只给文件清单让 AI 自查」。
+   */
+  proposalRetrieve?: boolean
 }
 export type ChatSendResult = { messageId: string }
 export type ChatAbortPayload = { sessionId: string }
@@ -1109,6 +1280,219 @@ export interface UpdaterState {
 }
 
 /**
+ * Supported export formats for a proposal document. Defined here (shared)
+ * so the renderer payload, the preload type, and the main-side
+ * proposalExport.ts can all reference the same closed union without
+ * circular imports. MVP is `'md'`; extend to `'docx' | 'pdf'` when those
+ * adapters land — the IPC surface requires no changes.
+ */
+// md/docx 都是「markdown → bytes 在 main 直出」的格式。PDF 不在此列：它要 renderer 先 docx-preview
+// 渲成 HTML、main 再 printToPDF（main 无 DOM），结构不同，走独立的 PROPOSAL_EXPORT_PDF 通道。
+export type ProposalExportFormat = 'md' | 'docx'
+
+/**
+ * 一张预渲的 mermaid 图：renderer 把 mermaid 渲成 SVG，再用 canvas 栅格成 PNG（base64，无
+ * `data:` 前缀），连同像素尺寸传给 main 直接 ImageRun 嵌入。为什么栅格化放 renderer 而非 main：
+ * ① 不必引入 sharp 等原生依赖；② Chromium 用与屏幕预览同一套字体栅格，导出位图里的中文绝不
+ * 缺字（main 侧若用 librsvg 渲 SVG，依赖系统字体，中文易变方框）。
+ */
+export interface MermaidImage {
+  /** PNG 字节的 base64（不含 `data:image/png;base64,` 前缀）。main 端 Buffer.from(png,'base64') 还原后 ImageRun。 */
+  png: string
+  width: number
+  height: number
+}
+
+/** Payload for PROPOSAL_EXPORT. */
+export interface ProposalExportPayload {
+  markdown: string
+  format: ProposalExportFormat
+  /**
+   * 选中的 Word 样式模板配置（字体/字号/对齐/缩进/行距/页边距/列表符号）。纯数据，
+   * 结构化克隆安全。仅 `'docx'` 用得到（驱动 markdownToDocxBuffer 的样式）；`'md'`
+   * 是纯文本无样式，忽略此字段。省略时 main 端回退默认模板（经典正式）。
+   */
+  style?: ProposalStyleConfig
+  /**
+   * 预渲的 mermaid 图（mermaid 源码 trim → {@link MermaidImage}）。mermaid 只能在 renderer 渲成
+   * 图，main 直接嵌入其 PNG（见 proposalDocx）。仅 `'docx'` 用；省略 → mermaid 块降级文字占位。
+   * key = mermaid 源码（trim 后），与 main 侧 mdast code 节点 node.value.trim() 对齐。
+   */
+  mermaidImages?: Record<string, MermaidImage>
+}
+
+/** Result of PROPOSAL_EXPORT. `path` is null when the user cancelled. */
+export interface ProposalExportResult {
+  path: string | null
+}
+
+/**
+ * Payload for PROPOSAL_EXPORT_PDF（P2-2）。`html` 是 renderer 用 docx-preview 渲好的【自包含】
+ * HTML 文档串（docx-preview 注入的 `<style>` + base64 内联图 + 打印用 @page A4 复位 CSS），main
+ * 不再依赖任何外部资源即可在隐藏窗口直接 printToPDF。`defaultPath` 是保存对话框默认文件名。
+ */
+export interface ProposalExportPdfPayload {
+  html: string
+  defaultPath?: string
+}
+
+/** Result of PROPOSAL_EXPORT_PDF. `path` is null when the user cancelled the save dialog. */
+export interface ProposalExportPdfResult {
+  path: string | null
+}
+
+/** Payload for PROPOSAL_RENDER. */
+export interface ProposalRenderPayload {
+  markdown: string
+  /**
+   * 实时预览用的样式模板配置——与 PROPOSAL_EXPORT 的 style 同源同义，保证「预览=导出
+   * 逐像素一致」。省略时回退默认模板（经典正式）。
+   */
+  style?: ProposalStyleConfig
+  /** 预渲的 mermaid 图（code→{@link MermaidImage}）。与 PROPOSAL_EXPORT 同义，保证「预览=导出一致」。 */
+  mermaidImages?: Record<string, MermaidImage>
+}
+
+/**
+ * Result of PROPOSAL_RENDER. `bytes` is the .docx binary — a Node `Buffer`
+ * on the main side, which structured-clones across IPC as a `Uint8Array`.
+ * The renderer wraps it in a `Blob` for docx-preview.
+ */
+export interface ProposalRenderResult {
+  bytes: Uint8Array
+}
+
+/**
+ * 一份持久化的方案草稿记录（v1）。写入 userData/proposal-drafts/<sessionId>.json。
+ * sections/products 结构与 renderer 的 ProposalSection/ProposalProduct 同构——本文件是
+ * shared、不能 import renderer 类型，故在此内联其结构（字段须与 renderer 保持一致）。
+ * consumedDraftIds/viewMode/workspaceOpen 刻意不持久化（见设计 spec「数据模型」）。
+ */
+export interface ProposalDraftRecord {
+  version: 1
+  sessionId: string
+  sections: Array<{
+    id: string
+    markdown: string
+    kind: ProposalKind
+    truncated?: boolean
+  }>
+  products: Array<{ productLine: string; product: string }>
+  phase: ProposalKind
+  updatedAt: number
+}
+
+/** Payload for PROPOSAL_VERIFY：待核对的一节正文 markdown（含 `（据《X》）` 引用）。 */
+export interface ProposalVerifyPayload {
+  markdown: string
+}
+/** Result of PROPOSAL_VERIFY：引用核对汇总（见 shared/proposal.ts 的 SectionVerification）。 */
+export type ProposalVerifyResult = SectionVerification
+
+/** 「召回预览」一条片段（方案三·只读，UI 展示用最小形：来源文件名 + 片段文本 + BM25 分）。 */
+export interface ProposalRetrievedPassage {
+  title: string
+  text: string
+  score: number
+}
+/** Payload for PROPOSAL_PEEK_RETRIEVAL：关键词 + 当前产品集（收窄检索范围）。 */
+export interface ProposalPeekRetrievalPayload {
+  query: string
+  products: ReadonlyArray<{ productLine: string; product: string }>
+}
+/** Result of PROPOSAL_PEEK_RETRIEVAL：top 召回片段；空 query / 无产品 / 索引不可用 → 空数组。 */
+export interface ProposalPeekRetrievalResult {
+  passages: ProposalRetrievedPassage[]
+  /**
+   * 诊断（方案三）：本次扫描到的【产品资料文件数】（= 当前产品集在知识库索引里匹配到的 ok 文件数）。
+   * 0 = 产品与索引对不上 / 索引为空（根本没料可搜，不是检索没命中）；>0 但 passages 空 = 有料但关键词
+   * 词面没匹配上（BM25 按词面）。UI 据此给不同的空态文案，便于用户与排障判断到底卡在哪。
+   */
+  scannedFiles: number
+}
+
+/** Payload for KB_SEMANTIC_SEARCH：自然语言检索词 + 要搜的产品集（空集→空结果）。 */
+export interface KbSemanticSearchPayload {
+  query: string
+  products: ReadonlyArray<{ productLine: string; product: string }>
+}
+/**
+ * Result of KB_SEMANTIC_SEARCH：混合(向量+BM25)命中片段列表 + stale 旗标 + 降级旗标。
+ * staleIndex=true 表示向量索引过期、本次结果来自 BM25 降级，面板顶部提示「需重建索引」。
+ * degraded=true 表示命中因【基础设施状态】只来自 BM25（worker 未就绪/stale/超时/error）——
+ * 面板给弱提示「词面匹配」；空产品集短路是设计使然的 no-op，不置 true。
+ */
+export interface KbSemanticSearchResult {
+  hits: import('./kbIndex').SemanticHit[]
+  staleIndex: boolean
+  degraded: boolean
+}
+
+export interface ProposalLoadDraftPayload {
+  sessionId: string
+}
+export interface ProposalDeleteDraftPayload {
+  sessionId: string
+}
+export interface ProposalSaveDraftResult {
+  ok: boolean
+}
+/** Result of PROPOSAL_METRIC_LOG。payload 直接是 ProposalMetricRecord（见 shared/proposal.ts）。 */
+export interface ProposalMetricLogResult {
+  ok: boolean
+}
+export interface ProposalDeleteDraftResult {
+  ok: boolean
+}
+
+/**
+ * 出图 API 凭据配置。唯一定义在 shared：renderer/preload 不能 import main-only 文件，
+ * 而 main 可以 import shared——imageGenService.ts 的 `ImageApiConfig` 是本类型的别名
+ * （评审发现：曾是两份靠人肉同步的结构双胞胎，单侧加字段编译照过、字段却静默丢失）。
+ *
+ * `apiKey` 在 PROPOSAL_IMAGE_SETTINGS_GET 的返回里是脱敏值（`''` 未配置 / `'••••'` 已配置），
+ * 在 PROPOSAL_IMAGE_SETTINGS_SET 的入参里可能是真实 key 或该脱敏占位符（占位符触发 main 侧
+ * 合并保留现存 key，见通道注释）。
+ */
+export interface ProposalImageApiConfig {
+  apiKey: string
+  baseURL: string
+  model: string
+}
+
+/**
+ * apiKey 脱敏占位符——跨进程线协议哨兵，不是 UI 文案：GET 用它替换明文 key 回给渲染进程；
+ * SET 收到它表示「保留现存 key」。两端必须字节一致，否则渲染进程发来的字面圆点会被当成
+ * 真 key 存掉（静默毁 key，评审发现曾是三处独立字面量）。唯一定义在此，renderer/main 都
+ * 从这里 import；i18n 里同形的 placeholder 只是展示文案、与本协议无关。
+ */
+export const PROPOSAL_IMAGE_API_KEY_MASK = '••••'
+
+/** Payload for PROPOSAL_IMAGE_GENERATE。 */
+export interface ProposalImageGeneratePayload {
+  sessionId: string
+  prompt: string
+}
+
+/** Payload for PROPOSAL_IMAGE_EDIT。`sourcePath` 是待改图片的绝对路径（main 侧读字节）。 */
+export interface ProposalImageEditPayload {
+  sessionId: string
+  sourcePath: string
+  prompt: string
+}
+
+/** Result of PROPOSAL_IMAGE_GENERATE / PROPOSAL_IMAGE_EDIT。`path` 是落盘后的绝对路径。 */
+export interface ProposalImageResult {
+  path: string
+}
+
+/** Payload for PROPOSAL_IMAGE_UPLOAD。 */
+export interface ProposalImageUploadPayload {
+  sessionId: string
+}
+
+
+/**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
  * interface on both sides via the shared type.
  */
@@ -1528,6 +1912,149 @@ export interface ChatApi {
    * UpdaterState — replace, don't merge. Returns an unsubscribe.
    */
   onUpdaterStateChanged(handler: (state: UpdaterState) => void): () => void
+
+  /**
+   * Read the current KB root path, the fixed output directory, the
+   * remote sync config (`null` when not connected), and the last
+   * successful sync's timing (`null` when never synced).
+   * `kbRoot` is null when the user hasn't picked one yet.
+   * `outDir` is always `userData/kb-index` (computed in main).
+   */
+  getKbPath(): Promise<{
+    kbRoot: string | null
+    outDir: string
+    remote: import('./kbConfig').KbRemoteConfig | null
+    lastSync: { atMs: number; builtAtMs: number } | null
+  }>
+
+  /**
+   * Persist the user-picked KB root path. Main writes it to
+   * `userData/kb-config.json`; subsequent getKbPath / readKbIndex
+   * calls reflect the update immediately.
+   */
+  setKbPath(kbRoot: string): Promise<void>
+
+  /**
+   * Persist the remote sync config (or `null` to disconnect). Writing a
+   * non-null remote also triggers an immediate sync — no separate
+   * "sync now" click needed right after connecting.
+   */
+  setKbRemote(remote: import('./kbConfig').KbRemoteConfig | null): Promise<void>
+
+  /**
+   * Manually kick off a remote KB sync. Returns `'started'` |
+   * `'alreadyRunning'` | `'noRemote'`; progress/result is reported
+   * separately via `onKbSyncStatus`.
+   */
+  kbSyncNow(): Promise<'started' | 'alreadyRunning' | 'noRemote'>
+
+  /**
+   * Open the OS native folder picker for the local KB root. Engine-free
+   * (the settings overlay has no bound tab/engine). Returns
+   * `{ path: null }` on cancel.
+   */
+  pickKbRoot(): Promise<{ path: string | null }>
+
+  /**
+   * Subscribe to KB remote sync status pushes (idle/syncing/success/error).
+   * Returns an unsubscribe, mirroring the on/off pattern of `onEvent`.
+   */
+  onKbSyncStatus(handler: (status: import('./kbSyncStatus').KbSyncStatus) => void): () => void
+
+  /**
+   * Read the built knowledge-base index from `userData/kb-index/index.json`.
+   * Returns null when the file doesn't exist yet (index not yet built).
+   * The renderer uses this to decide whether to show the build CTA or
+   * the ready state.
+   */
+  readKbIndex(): Promise<import('./kbIndex').KbIndex | null>
+
+  /**
+   * 「召回预览」（方案三·只读）：给定关键词 + 当前产品集，返回知识库 top 召回片段。让用户
+   * 随时探库、判断检索质量、决定要不要加产品。绝不写盘、绝不注入提示词。
+   */
+  peekProposalRetrieval(
+    payload: ProposalPeekRetrievalPayload
+  ): Promise<ProposalPeekRetrievalResult>
+
+  /**
+   * 语义搜索面板：混合(向量+BM25)检索，返回 SemanticHit 列表 + staleIndex 旗标。
+   * staleIndex=true → 向量索引已过期、结果为 BM25 降级，面板顶部显「需重建」提示条。
+   * 绝不 reject（全防御式）——空 query 立即返回 { hits:[], staleIndex:false }。
+   */
+  kbSemanticSearch(payload: KbSemanticSearchPayload): Promise<KbSemanticSearchResult>
+
+  /**
+   * Export the proposal document via the OS native save dialog.
+   * Main pops the dialog, writes the file, and returns the absolute
+   * path on success. Returns `{ path: null }` when the user cancels.
+   *
+   * `format` drives the file-type filter and the write adapter — MVP
+   * only `'md'` is wired; Word/PDF adapters extend the same channel
+   * without any IPC surface changes.
+   */
+  exportProposal(payload: ProposalExportPayload): Promise<ProposalExportResult>
+  /**
+   * 导出 PDF（P2-2）。renderer 传入用 docx-preview 渲好的自包含 HTML，main 弹保存对话框、用隐藏
+   * BrowserWindow + printToPDF 打成 A4 PDF 落盘。取消返回 `{ path: null }`。与 exportProposal 分流
+   * 是因为 PDF 的产物来自 renderer 渲染（main 无 DOM），不能从 markdown 直接生成——见通道注释。
+   */
+  exportProposalPdf(payload: ProposalExportPdfPayload): Promise<ProposalExportPdfResult>
+  /**
+   * Render the proposal markdown to a .docx binary in-memory (no save
+   * dialog, no disk write). The preview tab feeds the bytes to docx-preview
+   * to paint paginated A4 that matches the exported Word exactly. Rejects
+   * on render failure — the renderer shows an error state.
+   */
+  renderProposal(payload: ProposalRenderPayload): Promise<ProposalRenderResult>
+
+  /**
+   * 核对一节正文的引用是否真出自所引镜像原文。renderer 在每段正文生成后异步调用，
+   * 拿结果给 ProposalPaper 标红/打覆盖度徽标。失败返回 degraded:true（UI 显示「未校验」）。
+   */
+  verifyProposalCitations(payload: ProposalVerifyPayload): Promise<ProposalVerifyResult>
+
+  /**
+   * 持久化草稿三件套。saveProposalDraft 写盘并跑 LRU；loadProposalDraft 不存在返回 null；
+   * deleteProposalDraft 删除该会话草稿文件（「清空草稿」用）。失败一律返回 ok:false / null，
+   * 绝不抛——持久化是「尽力而为」，不得阻塞会话切换。
+   */
+  saveProposalDraft(record: ProposalDraftRecord): Promise<ProposalSaveDraftResult>
+  loadProposalDraft(payload: ProposalLoadDraftPayload): Promise<ProposalDraftRecord | null>
+  deleteProposalDraft(payload: ProposalDeleteDraftPayload): Promise<ProposalDeleteDraftResult>
+
+  /**
+   * M-0 埋点：每次导出成功后 append 一条聚合记录（可交付率代理 + 引用准确度）到本地
+   * jsonl。本地不外传，失败返回 ok:false（绝不抛）——埋点是旁路信号，不阻塞导出。
+   */
+  logProposalMetric(record: ProposalMetricRecord): Promise<ProposalMetricLogResult>
+
+  /**
+   * 读出图 API 设置。`apiKey` 已脱敏（`''` 未配置 / `'••••'` 已配置），未配置过 imageApi
+   * 时返回 null（UI 显示「未配置」空态）。
+   */
+  proposalImageSettingsGet(): Promise<ProposalImageApiConfig | null>
+  /**
+   * 写出图 API 设置。传入脱敏占位符 `'••••'` 作为 apiKey 时 main 侧合并保留现存明文 key
+   * （用户只改了 baseURL/model 的场景），不会被占位符覆盖。
+   */
+  proposalImageSettingsSet(cfg: ProposalImageApiConfig): Promise<void>
+  /**
+   * 文生图。main 读设置里的 imageApi 出图后落盘到该会话草稿资产目录，返回绝对路径。
+   * 未配置 apiKey 时 reject 一条中文错误，UI 提示去设置页填写。
+   */
+  proposalImageGenerate(args: ProposalImageGeneratePayload): Promise<ProposalImageResult>
+  /**
+   * 改图。main 读 `sourcePath` 的字节喂给出图 service，出图后落盘（来源标记为
+   * edited），返回绝对路径。同 generate，缺 apiKey 时 reject 中文错误。
+   */
+  proposalImageEdit(args: ProposalImageEditPayload): Promise<ProposalImageResult>
+  /**
+   * 上传本地图。main 弹原生文件选择框（限 png/jpg/jpeg/gif/webp，单选），用户取消返回
+   * null；选中后落盘到该会话草稿资产目录（来源标记为 uploaded），返回绝对路径。不调出图
+   * API，不受 apiKey 是否配置影响。
+   */
+  proposalImageUpload(args: ProposalImageUploadPayload): Promise<ProposalImageResult | null>
 }
 
 /**

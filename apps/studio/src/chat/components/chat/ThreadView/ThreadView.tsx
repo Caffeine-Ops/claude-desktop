@@ -11,6 +11,8 @@ import { Composer } from './Composer'
 import { UserMessage } from './UserMessage'
 import { AssistantMessage, SystemMessage } from './AssistantMessage'
 import { SlidesWorkspace } from './SlidesWorkspace'
+import { ProposalDocPanel } from '../../workspace/ProposalDocPanel'
+import { useProposalWorkspace } from '../../../stores/proposal'
 
 /**
  * ThreadView
@@ -432,6 +434,13 @@ export function ThreadView(): React.JSX.Element {
   const slidesSessions = useComposerModeStore((s) => s.slidesSessions)
   const isSlidesMode =
     sessionId !== null && slidesSessions[sessionId] === true
+  // 写方案两栏：绑定 proposal store（active + 前台 sid 一致 + workspaceOpen）。
+  // 与 slides 不同，它不按「会话启动时的模式」标记，而是随方案激活/离开实时切换
+  // （激活即接管、leaveMode 即还原——Install-Plan 的原语义）。两者理论上互斥
+  // （proposal 由 slash/模式激活的普通会话承载）；若同时为真，proposal 优先。
+  const isProposalMode = useProposalWorkspace()
+  // 任一分栏模式：chat 列都收窄成固定宽度 rail（共用同一条拖拽宽度）。
+  const isSplitMode = isProposalMode || isSlidesMode
   // Slides two-pane split is user-resizable. The chat rail used to be a
   // hard `w-[560px]` with a `border-r` hairline between the panes; per design
   // the hairline is gone (the panes now read as two separated blocks across a
@@ -505,15 +514,16 @@ export function ThreadView(): React.JSX.Element {
           'relative flex h-full min-h-0 flex-col ' +
           // 4px (the smallest radius, matching .chat-app's clip) — explicit so
           // it can't drift if Tailwind's bare `rounded` default ever changes.
-          (isSlidesMode
+          (isSplitMode
             ? 'shrink-0 overflow-hidden rounded-[4px] bg-card'
             : 'min-w-0 flex-1 bg-card')
         }
-        // Slides mode: width is user-controlled (drag handle below) and
-        // persisted. The old fixed `w-[560px]` + `border-r` hairline are both
-        // gone — the gutter handle now provides the visual separation. In
-        // normal modes width stays flex-driven, so leave style unset.
-        style={isSlidesMode ? { width: chatColWidth } : undefined}
+        // Split mode (slides / proposal): width is user-controlled (drag
+        // handle below) and persisted. The old fixed `w-[560px]` + `border-r`
+        // hairline are both gone — the gutter handle now provides the visual
+        // separation. In normal modes width stays flex-driven, so leave style
+        // unset.
+        style={isSplitMode ? { width: chatColWidth } : undefined}
       >
       {/* Chat header — 46px 单行顶栏：命令 chip + 标题 + 「AI 生成」徽标，
           hairline 底边（见 ChatHeader 注释）。shrink-0 so it never gets
@@ -675,7 +685,7 @@ export function ThreadView(): React.JSX.Element {
           (a transparent gutter that reveals a faint divider on hover) AND
           the resize affordance. Gated on the same empty={false} as the pane
           so it only appears once the layout actually splits. */}
-      {isSlidesMode ? (
+      {isSlidesMode && !isProposalMode ? (
         <ThreadPrimitive.If empty={false}>
           <ChatColumnResizeHandle onResizeStart={onResizeStart} />
         </ThreadPrimitive.If>
@@ -685,10 +695,19 @@ export function ThreadView(): React.JSX.Element {
           thread has messages (empty={false}) — so picking 幻灯片 on the
           empty state keeps the centered hero until the first message is
           sent, then the layout splits (figure 27). */}
-      {isSlidesMode ? (
+      {isSlidesMode && !isProposalMode ? (
         <ThreadPrimitive.If empty={false}>
           <SlidesWorkspace />
         </ThreadPrimitive.If>
+      ) : null}
+
+      {/* 写方案右栏：方案激活即分栏（不等首条消息——start() 即接管是原语义，
+          面板自带空态引导）。拖拽手柄与 slides 共用同一实现与持久化宽度。 */}
+      {isProposalMode ? (
+        <>
+          <ChatColumnResizeHandle onResizeStart={onResizeStart} />
+          <ProposalDocPanel />
+        </>
       ) : null}
     </ThreadPrimitive.Root>
   )

@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react'
 
 import type { CliBackendState } from '@desktop-shared/ipc-channels'
 import { useI18n, useT } from '../../i18n'
+import { KnowledgeBaseSection } from './KnowledgeBaseSection'
+import {
+  PROPOSAL_IMAGE_API_KEY_MASK,
+  type ProposalImageApiConfig
+} from '@desktop-shared/ipc-channels'
 import { useSettingsStore } from '../../stores/settings'
 import {
   APPEARANCE_LIMITS,
@@ -80,6 +85,7 @@ export function SettingsBody(): React.JSX.Element {
       { id: 'general', label: t('catGeneral'), icon: <CircleIcon /> },
       { id: 'appearance', label: t('catAppearance'), icon: <SunIcon /> },
       { id: 'configuration', label: t('catConfiguration'), icon: <SlidersIcon /> },
+      { id: 'knowledgeBase', label: t('catKnowledgeBase'), icon: <ServerIcon /> },
       { id: 'personalization', label: t('catPersonalization'), icon: <PersonIcon /> },
       { id: 'usage', label: t('catUsage'), icon: <BarChartIcon /> },
       { id: 'mcp', label: t('catMcpServers'), icon: <ServerIcon /> },
@@ -129,6 +135,10 @@ export function SettingsBody(): React.JSX.Element {
             <AppearanceSection />
           ) : activeCategory === 'general' ? (
             <GeneralSection />
+          ) : activeCategory === 'configuration' ? (
+            <ConfigurationSection />
+          ) : activeCategory === 'knowledgeBase' ? (
+            <KnowledgeBaseSection />
           ) : (
             <PlaceholderSection
               title={categories.find((c) => c.id === activeCategory)?.label ?? ''}
@@ -144,6 +154,7 @@ type CategoryId =
   | 'general'
   | 'appearance'
   | 'configuration'
+  | 'knowledgeBase'
   | 'personalization'
   | 'usage'
   | 'mcp'
@@ -484,7 +495,7 @@ function PlaceholderSection({ title }: { title: string }): React.JSX.Element {
 
 /* ─────────────────── Layout helpers ─────────────────── */
 
-function Section({
+export function Section({
   title,
   description,
   divider,
@@ -1017,5 +1028,200 @@ function iconWrap(children: React.ReactNode): React.JSX.Element {
     >
       {children}
     </svg>
+  )
+}
+
+
+/** Default model id prefilled when the user has never configured one. */
+const IMAGE_API_DEFAULT_MODEL = 'gpt-image-2'
+/** Masked placeholder the main process returns for an already-configured
+ *  key — never the plaintext. Sending this value back unchanged tells the
+ *  IPC handler "keep whatever key you already have". 线协议哨兵，定义收口在
+ *  shared/ipc-channels.ts（评审发现：曾是 renderer/main 两份独立字面量，任一侧
+ *  改动即把字面圆点存成真 key）。 */
+const IMAGE_API_KEY_MASK = PROPOSAL_IMAGE_API_KEY_MASK
+
+/**
+ * Configuration category. Currently hosts just the 出图 API credential
+ * form (key / baseURL / model) that the in-editor image generate/edit
+ * feature reads. `apiKey` round-trips through the masked placeholder —
+ * we never hold the plaintext key in this component's state once it's
+ * been saved, only the mask, so a stray console.log or React devtools
+ * inspection can't leak it.
+ */
+function ConfigurationSection(): React.JSX.Element {
+  const t = useT()
+  const [apiKey, setApiKey] = useState('')
+  const [baseURL, setBaseURL] = useState('')
+  const [model, setModel] = useState(IMAGE_API_DEFAULT_MODEL)
+  const [configured, setConfigured] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [justSaved, setJustSaved] = useState(false)
+  // Guards Save against firing before the mount-time GET resolves: apiKey
+  // starts as '' and a click in that window would send '' to main and
+  // silently wipe a previously stored key (see proposal-image-editing
+  // review finding — save-before-load race).
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    window.chatApi
+      .proposalImageSettingsGet()
+      .then((cfg) => {
+        if (cancelled) return
+        if (!cfg) {
+          setLoaded(true)
+          return
+        }
+        setApiKey(cfg.apiKey)
+        setBaseURL(cfg.baseURL)
+        setModel(cfg.model || IMAGE_API_DEFAULT_MODEL)
+        setConfigured(cfg.apiKey === IMAGE_API_KEY_MASK)
+        setLoaded(true)
+      })
+      .catch((err) => {
+        console.error('[settings] proposalImageSettingsGet failed', err)
+        setLoaded(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const handleSave = async (): Promise<void> => {
+    if (saving) return
+    setSaving(true)
+    setJustSaved(false)
+    try {
+      const cfg: ProposalImageApiConfig = { apiKey, baseURL, model }
+      await window.chatApi.proposalImageSettingsSet(cfg)
+      // The key we hold in state might now be stale (either the user
+      // typed a fresh one, or it was still the mask from a no-op edit).
+      // Either way re-mask it locally so state never carries plaintext
+      // longer than the single round trip to main. But if apiKey was ''
+      // (user never entered a key, only touched baseURL/model), main
+      // stores '' as-is and there's nothing to mask — forcing the mask
+      // and `configured: true` here would show a false "configured"
+      // state until the component remounts.
+      if (apiKey) {
+        setApiKey(IMAGE_API_KEY_MASK)
+        setConfigured(true)
+      }
+      setJustSaved(true)
+    } catch (err) {
+      console.error('[settings] proposalImageSettingsSet failed', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // 显式清除已存 key。没有它用户回不到未配置态（评审发现）：清空输入框后点保存，
+  // 按钮的 mousedown 先触发 blur，onBlur 把空值还原成掩码，发出去的永远是「保留」。
+  // 走独立按钮而非改 blur 语义——blur 还原掩码本身是对的（防「看了一眼就丢 key」）。
+  const handleClearKey = async (): Promise<void> => {
+    if (saving) return
+    setSaving(true)
+    setJustSaved(false)
+    try {
+      await window.chatApi.proposalImageSettingsSet({ apiKey: '', baseURL, model })
+      setApiKey('')
+      setConfigured(false)
+    } catch (err) {
+      console.error('[settings] proposalImageSettingsSet(clear) failed', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="space-y-8">
+      <h1 className="text-[20px] font-semibold text-foreground">
+        {t('catConfiguration')}
+      </h1>
+
+      <Section title={t('imageApiTitle')} description={t('imageApiDesc')}>
+        <div className="space-y-4">
+          <label className="block">
+            <span className="mb-1.5 block text-[11px] text-muted-foreground">
+              {t('imageApiKeyLabel')}
+            </span>
+            <input
+              type="password"
+              value={apiKey}
+              onFocus={() => {
+                // If the field still shows the mask, clear it on focus so
+                // the user doesn't have to manually delete the dots
+                // before typing a new key. Leaving it untouched (blur
+                // without typing) means "keep the existing key" — restored
+                // below via onBlur.
+                if (apiKey === IMAGE_API_KEY_MASK) setApiKey('')
+              }}
+              onBlur={() => {
+                if (apiKey === '' && configured) setApiKey(IMAGE_API_KEY_MASK)
+              }}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={
+                configured
+                  ? t('imageApiKeyPlaceholderConfigured')
+                  : t('imageApiKeyPlaceholderEmpty')
+              }
+              className="h-8 w-full rounded-md border border-border bg-card px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
+            />
+            {configured && (
+              <button
+                type="button"
+                onClick={() => void handleClearKey()}
+                disabled={saving || !loaded}
+                className="mt-1.5 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+              >
+                {t('imageApiKeyClear')}
+              </button>
+            )}
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[11px] text-muted-foreground">
+              {t('imageApiBaseUrlLabel')}
+            </span>
+            <input
+              type="text"
+              value={baseURL}
+              onChange={(e) => setBaseURL(e.target.value)}
+              placeholder={t('imageApiBaseUrlPlaceholder')}
+              className="h-8 w-full rounded-md border border-border bg-card px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[11px] text-muted-foreground">
+              {t('imageApiModelLabel')}
+            </span>
+            <input
+              type="text"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder={IMAGE_API_DEFAULT_MODEL}
+              className="h-8 w-full rounded-md border border-border bg-card px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
+            />
+          </label>
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={saving || !loaded}
+              className="inline-flex h-8 items-center rounded-md bg-accent px-3 text-[12px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving ? t('imageApiSaving') : t('imageApiSave')}
+            </button>
+            {justSaved && !saving && (
+              <span className="text-[11px] text-muted-foreground/70">
+                {t('imageApiSaved')}
+              </span>
+            )}
+          </div>
+        </div>
+      </Section>
+    </section>
   )
 }

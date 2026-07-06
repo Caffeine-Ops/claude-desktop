@@ -362,7 +362,9 @@ export function CanvasQuestionnaire({
           The button UNLOCKS (grey → accent, one scale beat + a single sheen
           sweep) the moment every question is answered — the "ready to hand
           back" moment gets a visible beat instead of a silent color swap. */}
-      <div className="shrink-0 border-t border-border/60 bg-background/90 px-8 py-2.5 backdrop-blur">
+      {/* Footer bar: same card surface as the body, separated by the top
+          hairline alone (bg-card = white in light / card colour in dark). */}
+      <div className="shrink-0 border-t border-border bg-card px-8 py-2.5">
         <div className="mx-auto flex w-full max-w-[760px] items-center gap-3.5">
           <div className="flex gap-[5px]" aria-hidden>
             {questions.map((q, i) => {
@@ -402,7 +404,7 @@ export function CanvasQuestionnaire({
               'relative overflow-hidden rounded-lg px-[18px] py-2 text-[13px] font-semibold transition-colors duration-300 ' +
               (answerable && allAnswered
                 ? 'bg-accent text-accent-foreground shadow-sm hover:opacity-90'
-                : 'cursor-not-allowed bg-muted text-muted-foreground/70')
+                : 'cursor-not-allowed border border-border bg-muted text-muted-foreground/70')
             }
           >
             提交答案

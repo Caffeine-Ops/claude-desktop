@@ -29,6 +29,7 @@ if (is.dev) {
 }
 
 import { registerIpcHandlers } from './ipc/register'
+import { pushSplashStage } from './splash'
 import { createTray, destroyTray } from './tray'
 import {
   createShellWindow,
@@ -47,6 +48,12 @@ import {
 } from './services/openDesignServices'
 import { APP_SCHEME, registerAppProtocol } from './services/appProtocol'
 import { checkForUpdatesInteractive, initAppUpdater } from './services/appUpdater'
+import { KB_ASSET_SCHEME, registerKbAssetProtocol } from './services/kbAssetProtocol'
+import {
+  PROPOSAL_ASSET_SCHEME,
+  registerProposalAssetProtocol
+} from './services/proposalAssetProtocol'
+import { startKbSyncScheduler } from './core/kbSyncScheduler'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -67,6 +74,28 @@ protocol.registerSchemesAsPrivileged([
       supportFetchAPI: true,
       stream: true,
       codeCache: true
+    }
+  },
+  // kbasset:// = 知识库镜像内嵌图；proposalasset:// = 写方案草稿产出图。
+  // 两者都只在 ready 后 protocol.handle（见下方 whenReady 回调），但 privileged
+  // 声明必须在这里（ready 前、只能一次）——漏声明的自定义协议在 <img src> 里
+  // 会被当不安全内容拦掉。
+  {
+    scheme: KB_ASSET_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true
+    }
+  },
+  {
+    scheme: PROPOSAL_ASSET_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true
     }
   }
 ])
@@ -256,19 +285,32 @@ app.whenReady().then(async () => {
     registerAppProtocol()
   }
 
+  // KB 远程同步调度器：30s 延迟首触 + 每 6h 定时（无 remote 配置时内部静默跳过）。
+  // 挂在这里而非独立 IPC handler 里，是因为它是 app 级后台任务，不依赖任何一个 tab。
+  startKbSyncScheduler()
+
+  // kbasset:// 与 proposalasset:// 的实际 handler（privileged 声明在模块顶层，
+  // ready 前）。知识库镜像内嵌图 / 写方案草稿产出图靠它们在 <img src> 里显形。
+  await registerKbAssetProtocol()
+  await registerProposalAssetProtocol()
+
   // **studio 单视图**是唯一形态（Phase 4 起，legacy 三 tab 架构已物理下线）：
   // 一个全屏 studio tab，聊天(/chat)、工作画布(/)、设置(/?settings=1)、导航
   // rail 全部由 studio 页面内部渲染。dev 加载 localhost:3100（HMR），prod
   // 加载 app://studio/（static export 读盘 + daemon 反代，见 appProtocol.ts）。
-  // shell 窗口自身不加载任何内容，且保持隐藏直到 studio 首帧就绪
-  // （tabRegistry.activateTab 里 show）——用户看到的第一帧就是 studio。
-  createShellWindow()
+  // shell 窗口自身承载静态闪屏（splash.ts），splash 首帧就绪即 show——studio
+  // 首帧就绪后盖上来完成交接（tabRegistry 的 promote 编排）。
+  const shellWin = createShellWindow()
 
   // studio tab 等自己的 dev server ready 再建（prod 下 waitForStudioReady
   // 立即 true），避免 WebContentsView 加载到还没起好的端口而白屏；daemon 的
   // 探活是后台仅日志，不阻塞首屏（聊天 engine 是 lazy spawn，画布的 /api
   // 请求自带重试语义）。用 IIFE 异步等待，不阻塞 whenReady 的其余初始化。
+  // 里程碑推进到闪屏：fraction 只增不减（splash 侧 stage 有 max 保护），
+  // 文案是给普通用户看的大白话。终点 finish() 不在这里——它属于 studio
+  // 首帧真实就绪（tabRegistry 的 promote → finishSplashThenSettle）。
   void (async () => {
+    pushSplashStage(shellWin, 0.4, '正在启动引擎…')
     void waitForDaemonReady().then((ok) => {
       if (!ok) console.warn('[main] daemon not ready within timeout')
     })
@@ -276,6 +318,7 @@ app.whenReady().then(async () => {
     if (!studioOk) {
       console.warn('[main] studio dev server not ready; studio 仍会打开但可能需手动刷新')
     }
+    pushSplashStage(shellWin, 0.7, '正在准备工作区…')
     try {
       newStudioTab()
     } catch (err) {

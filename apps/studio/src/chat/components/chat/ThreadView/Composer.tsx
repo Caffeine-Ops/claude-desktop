@@ -523,7 +523,7 @@ export function Composer(): React.JSX.Element {
   )
 }
 
-/** Composer mode metadata for the picker (通用 / 设计 / 幻灯片 / 写作). */
+/** Composer mode metadata for the picker (通用 / 设计 / 幻灯片 / 写作 / 写方案). */
 interface ComposerModeMeta {
   id: ComposerModeId
   label: string
@@ -572,13 +572,24 @@ const COMPOSER_MODES: readonly ComposerModeMeta[] = [
         <path d="M14 6 18 10" />
       </svg>
     )
+  },
+  {
+    id: 'proposal',
+    label: '写方案',
+    beta: true,
+    icon: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M14 3.5H6.5A1.5 1.5 0 0 0 5 5v14a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19V8.5z" />
+        <path d="M14 3.5V8.5H19M8.5 12.5h7M8.5 16h4.5" />
+      </svg>
+    )
   }
 ]
 
 /**
  * Composer mode picker in the toolbar — a pill showing the current mode
  * (icon + label, e.g.「通用」) that opens a popover to switch between
- * 通用 / 设计 / 幻灯片 / 写作. Replaces the old single monitor-icon slides
+ * 通用 / 设计 / 幻灯片 / 写作 / 写方案. Replaces the old single monitor-icon slides
  * toggle: the popover's 幻灯片 row is now the slides entry point (picking it
  * sets mode='slides'; sending then marks the session as a slides session via
  * markIfSlides → ThreadView's two-pane layout).

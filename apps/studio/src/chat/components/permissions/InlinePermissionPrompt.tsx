@@ -5,6 +5,7 @@ import type {
   PermissionRequest
 } from '@desktop-shared/types'
 import { useT, useTFormat } from '../../i18n'
+import { applyProposalStageConfirm } from '../../lib/proposalStageConfirm'
 import { usePermissionStore } from '../../stores/permissions'
 import { AskUserQuestionView } from './AskUserQuestionView'
 
@@ -83,9 +84,12 @@ export function InlinePermissionPrompt({ request }: Props): React.JSX.Element {
       >
         <AskUserQuestionView
           input={request.input}
-          onSubmit={(updatedInput) =>
+          onSubmit={(updatedInput) => {
+            // 方案模式：用户点了「确认目录/封面」放行项时，先同步推进 phase（先于 AI
+            // 回包的 end 过阶段门），再把答案回传给 AI。非方案场景下是 no-op。
+            applyProposalStageConfirm(request.input, updatedInput.answers)
             void respond(request.requestId, 'allow-once', updatedInput)
-          }
+          }}
           onCancel={() => void respond(request.requestId, 'deny')}
         />
       </div>

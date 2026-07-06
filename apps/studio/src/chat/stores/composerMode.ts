@@ -7,8 +7,9 @@ import { persist } from 'zustand/middleware'
  * Two things live here:
  *
  *  1. `mode` — the option picked in the composer's "写作 Beta ⌄" pill
- *     (通用 / 设计 / 幻灯片 / 写作). This is the GLOBAL current selection.
- *     FRONTEND-ONLY: it doesn't change what gets sent to the model yet.
+ *     (通用 / 设计 / 幻灯片 / 写作 / 写方案). This is the GLOBAL current
+ *     selection. FRONTEND-ONLY: it doesn't change what gets sent to the
+ *     model yet.
  *
  *  2. `slidesSessions` — the set of session ids that are "slides sessions".
  *     A session becomes one when the user sends their first message while
@@ -24,7 +25,12 @@ import { persist } from 'zustand/middleware'
  * JSON-serialise it without a custom replacer. Persisted to localStorage
  * so the binding survives reloads.
  */
-export type ComposerModeId = 'general' | 'design' | 'slides' | 'writing'
+export type ComposerModeId =
+  | 'general'
+  | 'design'
+  | 'slides'
+  | 'writing'
+  | 'proposal'
 
 interface ComposerModeState {
   mode: ComposerModeId

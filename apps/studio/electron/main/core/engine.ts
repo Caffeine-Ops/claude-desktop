@@ -2,15 +2,18 @@ import { randomUUID } from 'crypto'
 import { EventEmitter } from 'events'
 import { app, type WebContents } from 'electron'
 import { existsSync, statSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { isAbsolute, resolve, sep } from 'node:path'
 import { inspect } from 'node:util'
 
 import {
+  createSdkMcpServer,
   query,
+  tool,
   type PermissionMode,
   type PermissionResult,
   type Query
 } from '@anthropic-ai/claude-agent-sdk'
+import { z } from 'zod'
 import type {
   ContentBlockParam,
   ImageBlockParam,
@@ -61,6 +64,11 @@ import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
 import { seedSkillsFromDisk } from './seedSkills'
 import { sessionTranscriptExists } from './sessionStore'
+import { buildProposalAppend, type ProposalProductScope } from './proposalPrompt'
+import { renderRetrievedBlock } from './proposalRetrieve'
+import { buildProposalProductScopes } from './proposalScopes'
+import { kbSemanticSearch, warmEmbedWorker } from './kbSemanticSearch'
+import { kbOutDir } from './kbIndexStore'
 
 /**
  * Resolve the default workspace directory used on every new tab/engine.
@@ -277,6 +285,46 @@ interface SessionRuntime {
    * entries before they run. Empty in steady state.
    */
   pendingTurns: PendingTurn[]
+  /**
+   * True if the live child was spawned while proposal-writing mode was
+   * active — i.e. its `systemPrompt.append` carries the proposal discipline
+   * + mirror dir. Lets `send()` detect a WARM child that was spawned
+   * WITHOUT proposal mode (the background warmup fires before the user picks
+   * a product) and, for that turn only, inject the same grounding into the
+   * user message instead (the append can't be hot-updated and re-spawning
+   * is fragile). Without this flag the common "boot → first thread → pick
+   * product → send" path silently sends on a non-proposal child and the AI
+   * never receives the mirror path / cite-source discipline.
+   */
+  spawnedWithProposal: boolean
+  /**
+   * 本 runtime 的方案写作意图。由 send() 在每次发送时按 sessionId 写到 THIS
+   * runtime（不是 engine 全局字段），openSession 在 spawn 烘焙 systemPrompt.append /
+   * additionalDirectories 时从 `runtime` 读取，handleCanUseTool 据它决定是否对镜像
+   * 目录的读放行。
+   *
+   * 为什么必须 per-runtime 而非 per-engine：一个 engine 多 runtime。
+   * switchToSession 的后台 warmup 会对「另一个」会话 fire-and-forget 跑
+   * ensureSessionReady → openSession；若意图存在 engine 全局字段上，warmup 会读到
+   * 上一次 send（可能是别的会话）写的值，把方案纪律/镜像可读目录烘焙进一个用户从未
+   * 置于方案模式的会话——跨会话泄漏。挂在 runtime 上，spawn 永远消费与它配对的那份
+   * 意图，免疫交错与 warmup 抢读。新建 runtime 默认 false（普通会话）。
+   */
+  proposalMode: boolean
+  proposalProducts: readonly { productLine: string; product: string }[]
+  /**
+   * 「这个活进程当前被 grounding 过的产品集签名」——记录最近一次把方案产品清单送达
+   * AI 时所用的产品集（无论经 spawn 烘焙进 systemPrompt.append，还是经 send 注入进
+   * 用户消息）。空串表示尚未 grounding 过任何产品集。
+   *
+   * 为什么需要它：systemPrompt.append 在 spawn 那一刻烘焙、之后不可热更新（不变量）。
+   * 用户在 ProposalDocPanel 增删产品 chip 后，烘焙进 systemPrompt 的产品清单就过时了，
+   * 但活进程不会重 spawn。send() 比对「当前产品集签名 ≠ 已 grounding 的签名」即可发现
+   * 过时，于是把最新产品清单注入【本轮消息】覆盖旧的（读取始终由 isKbMirrorRead 放行
+   * 整库，故只需补 prompt 里「该读哪些文件」这层）。注入后更新本字段，使产品集稳定的
+   * 会话只在 chip 变动后注入一次、不每轮重注入。
+   */
+  proposalGroundedKey: string
 }
 
 /**
@@ -533,6 +581,28 @@ export class ChatEngine extends EventEmitter {
 
   /** In-flight refresh dedupe so a burst of sends issues one fetch. */
   private externalMcpRefresh: Promise<void> | null = null
+
+  /**
+   * 产品集的稳定签名：排序后拼接 `productLine::product`，与顺序无关、只看成员集合。
+   * 用于比对 spawn 烘焙 / 上次注入的产品集与本轮是否一致（见 runtime.proposalGroundedKey）。
+   * 空集 → 空串。
+   */
+  private proposalProductsKey(
+    products: readonly { productLine: string; product: string }[]
+  ): string {
+    return products
+      .map((p) => `${p.productLine}::${p.product}`)
+      .sort()
+      .join('|')
+  }
+
+  private proposalProductScopes(
+    products: readonly { productLine: string; product: string }[]
+  ): ProposalProductScope[] {
+    // 抽到 proposalScopes.buildProposalProductScopes 共享：send 热路径（本方法）与「召回预览」
+    // 只读 IPC 走同一份 scope 构建，避免两边漂移。空集短路、不读盘的优化也在那里。
+    return buildProposalProductScopes(products)
+  }
 
   constructor(webContents: WebContents, opts: ChatEngineOptions = {}) {
     super()
@@ -977,7 +1047,10 @@ export class ChatEngine extends EventEmitter {
   async send(
     sessionId: string,
     text: string,
-    images?: readonly ChatImagePayload[]
+    images?: readonly ChatImagePayload[],
+    proposalMode = false,
+    proposalProducts: readonly { productLine: string; product: string }[] = [],
+    proposalRetrieve = false
   ): Promise<{ messageId: string }> {
     // Hard gate: the workspace must have been picked via the drag-drop
     // gate before we spawn anything. The renderer already refuses to
@@ -1020,6 +1093,15 @@ export class ChatEngine extends EventEmitter {
     // the runtime slot exists we're allowed to push a turn into it.
     // `getSession` lazily creates the slot if missing (new session path).
     const runtime = await this.getSession(sessionId)
+    // Record the proposal-mode intent for THIS turn on the TARGET runtime
+    // (not an engine-global field) BEFORE anything below can trigger a spawn
+    // — ensureSessionReady → openSession reads it off `runtime`. Writing it
+    // per-runtime is what keeps switchToSession's background warmup (which
+    // spawns a DIFFERENT session) from baking the wrong intent. Set
+    // unconditionally so leaving proposal mode also takes effect on the next
+    // fresh spawn of this runtime.
+    runtime.proposalMode = proposalMode
+    runtime.proposalProducts = proposalProducts
     // Mark the runtime as "has real work" — this is the signal
     // `switchToSession` uses to keep the runtime alive when the user
     // switches away (warmup-cancel only kills never-sent runtimes).
@@ -1063,6 +1145,75 @@ export class ChatEngine extends EventEmitter {
       return { messageId }
     }
 
+    // ─── 方案模式 grounding / 召回注入 ──────────────────────────────
+    // systemPrompt.append 只在 spawn 那一刻烘焙。两类过时用「注入本轮用户消息」补：
+    //   (a) warm child 没带方案纪律（后台 warmup 抢先 spawn）——!spawnedWithProposal；
+    //   (b) 烘焙过，但用户随后增删了产品 chip——当前产品集签名 ≠ proposalGroundedKey。
+    // 注入后更新 proposalGroundedKey：产品集稳定的会话只在 chip 变动后注入一次。
+    // slash 命令不注入（注入会顶走开头的 '/'，CLI 短路检测失效）。
+    const isSlashCommand = text.trimStart().startsWith('/')
+    const proposalKey = proposalMode
+      ? this.proposalProductsKey(runtime.proposalProducts)
+      : ''
+    const needsGrounding =
+      proposalMode &&
+      !isSlashCommand &&
+      (!runtime.spawnedWithProposal || proposalKey !== runtime.proposalGroundedKey)
+    // 内容级召回：目录+正文回合（renderer 在 phase !== 'cover' 时置 proposalRetrieve）
+    // 对已限定产品的镜像原文做混合检索，把命中片段注入本回合（与文件清单并存、增量），
+    // 治「知识库有料却没引到」。召回失败/空 → 不注入，回落到「只给文件清单让 AI 自查」。
+    const wantsRetrieval = proposalMode && proposalRetrieve && !isSlashCommand
+    // grounding/召回构建段包 try/catch：buildProposalAppend 运行期读模板
+    //（skills/proposal-writer），模板缺失/被改坏会 throw——若异常裸逃出 send()，
+    // renderer 只会在合成 err_ id 下补错误气泡，本轮真实 messageId 的事件流悬挂。
+    // catch 里对真实 messageId 补发 start/error/end 三连（对齐上面 ensureSessionReady
+    // 失败分支的形态），下一轮可正常重试。
+    let groundedText: string
+    try {
+      // scopes 在 grounding 或召回任一需要时读一次（buildProposalProductScopes 对空集
+      // 已短路、不读盘）。
+      const scopes =
+        needsGrounding || wantsRetrieval
+          ? this.proposalProductScopes(runtime.proposalProducts)
+          : []
+      let retrievalBlock = ''
+      if (wantsRetrieval) {
+        // 混合语义检索（embedding 在 utilityProcess，带超时不冻 send）。engine 自动召回
+        // 【忽略 staleIndex】——拿到什么（混合或 BM25 降级）就注什么，绝不因 stale 变空。
+        // kbSemanticSearch 自身吞异常降级，这里的 try 继续兜 buildProposalAppend。
+        const { hits } = await kbSemanticSearch(text, scopes)
+        const passages = hits.map((h) => ({
+          text: h.text,
+          title: h.title,
+          mirrorPath: h.mirrorPath,
+          score: h.score
+        }))
+        retrievalBlock = renderRetrievedBlock(passages)
+        // 调试可观测：召回注入在主进程消息里、UI 看不见——dev 终端是唯一观察点。
+        // 命中为空也打，便于区分「没触发」和「触发但零命中」。
+        console.log('[engine] proposal semantic retrieval', {
+          query: text.slice(0, 40),
+          scopes: scopes.length,
+          hits: hits.length,
+          titles: hits.map((h) => h.title)
+        })
+      }
+      const retrievedText = retrievalBlock
+        ? `${retrievalBlock}\n\n---\n\n${text}`
+        : text
+      groundedText = needsGrounding
+        ? `${buildProposalAppend(kbOutDir(), scopes)}\n\n---\n\n${retrievedText}`
+        : retrievedText
+      if (needsGrounding) runtime.proposalGroundedKey = proposalKey
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[engine] proposal grounding/retrieval build failed:', msg)
+      this.emitEvent(sessionId, { type: 'start', messageId })
+      this.emitEvent(sessionId, { type: 'error', messageId, error: msg })
+      this.emitEvent(sessionId, { type: 'end', messageId })
+      return { messageId }
+    }
+
     // Message queue: if a turn is already streaming, do NOT clobber
     // `runtime.active`. Overwriting it used to strand the running turn's
     // remaining chunks under a mismatched messageId and then drop the
@@ -1070,8 +1221,10 @@ export class ChatEngine extends EventEmitter {
     // (audit finding — see docs/ui-prototype-message-queue.html). Instead
     // append the turn to `pendingTurns`; the pump drains the head into a
     // fresh `active` right after the current `result` lands.
+    // 注：入队的是注入后的 groundedText——注入语义按 send 时刻结算（产品集签名
+    // 已更新），排队 turn 晚运行也不会重复注入或丢注入。
     if (runtime.active !== null) {
-      runtime.pendingTurns.push({ messageId, requestId, text, images })
+      runtime.pendingTurns.push({ messageId, requestId, text: groundedText, images })
       console.log('[engine] send enqueued behind active turn', {
         sessionId,
         messageId,
@@ -1086,7 +1239,12 @@ export class ChatEngine extends EventEmitter {
       return { messageId }
     }
 
-    this.beginTurn(runtime, sessionId, { messageId, requestId, text, images })
+    this.beginTurn(runtime, sessionId, {
+      messageId,
+      requestId,
+      text: groundedText,
+      images
+    })
     return { messageId }
   }
 
@@ -1460,6 +1618,24 @@ export class ChatEngine extends EventEmitter {
       pythonHome: pythonHome ?? '(none)'
     })
 
+    // 方案写作模式：在常量中文 append 之后再拼一段「方案专家纪律」，并把知识库
+    // 文本镜像目录（userData/kb-index）的绝对路径写进提示词。镜像目录本身在下面
+    // 通过 additionalDirectories 加进可读范围——cwd 绝不改动（不变量）。
+    // 意图从 THIS runtime 读（send() 在本次 spawn 前写到该 runtime）——绝不读 engine
+    // 全局字段，否则 warmup 跑别的会话的 openSession 会抢到错误意图（见 SessionRuntime
+    // .proposalMode 注释）。
+    const proposalActive = runtime.proposalMode
+    // 方案 spawn 时后台预载 embedding worker，让模型在用户首次 send 前就绪。
+    // warmEmbedWorker 幂等（已有 worker 直接返回），不会重复 fork。
+    if (proposalActive) warmEmbedWorker()
+    const kbMirrorDir = kbOutDir()
+    // productScopes 只在方案模式下计算——非方案会话不调用 proposalProductScopes，避免
+    // 普通会话的 spawn 热路径也白读一遍 KB 索引再丢弃。下面 systemPrompt append
+    // 与 additionalDirectories 两处共用本次结果。
+    const productScopes = proposalActive
+      ? this.proposalProductScopes(runtime.proposalProducts)
+      : []
+
     const queue = new AsyncMessageQueue<unknown>()
     runtime.queue = queue
 
@@ -1479,6 +1655,35 @@ export class ChatEngine extends EventEmitter {
         reject(err)
       }
     })
+
+    // kb_search in-process MCP server（仅方案模式挂载，非方案会话 null → 不传）。
+    //
+    // 在 openSession 内构造：闭包捕获的是本次 spawn 的 `runtime` 引用，而非
+    // this.activeSessionId——遵循本项目 canUseTool 同款纪律：前台可能已经切走，
+    // 工具处理器必须回归发起它的 runtime（同 canUseTool 长注释所述）。
+    // handler 在调用时 LIVE 读 runtime.proposalProducts，确保产品 chip 随时生效。
+    const kbSearchMcpServer = proposalActive
+      ? createSdkMcpServer({
+          name: 'kb-search',
+          tools: [
+            tool(
+              'kb_search',
+              '在知识库里用自然语言模糊描述检索相关原文片段（语义+词面混合），返回片段与出处文件名。写方案缺资料时用。',
+              { query: z.string() },
+              async ({ query: q }) => {
+                // LIVE 读 proposalProducts：产品 chip 可能在 warm-spawn 后被用户修改，
+                // 捕获的是引用不是快照，确保检索范围始终反映当前选择。
+                const scopes = this.proposalProductScopes(runtime.proposalProducts)
+                const { hits } = await kbSemanticSearch(q, scopes, 8)
+                const text = hits.length
+                  ? hits.map((h) => `《${h.title}》\n${h.text}`).join('\n\n- - -\n\n')
+                  : '（知识库未命中相关内容）'
+                return { content: [{ type: 'text' as const, text }] }
+              }
+            )
+          ]
+        })
+      : null
 
     // Build the SDK query options. On resume we pass `resume: sessionId`
     // so fusion-code reloads the JSONL; on new sessions we pass
@@ -1631,17 +1836,31 @@ export class ChatEngine extends EventEmitter {
                 ? { PPT_MASTER_PYTHON_HOME: pythonHome }
                 : {})
           }) as Record<string, string>,
+      // 方案模式才扩大可读范围到知识库镜像目录（绝对路径）。spread-omit：非方案
+      // 模式不传，等价于不设——绝不通过这个字段或 cwd 改变默认可读范围（cwd 不变量）。
+      ...(proposalActive
+        ? {
+            additionalDirectories:
+              productScopes.length > 0
+                ? productScopes.map((p) => p.dir)
+                : [kbMirrorDir]
+          }
+        : {}),
       // 用 preset 形式追加中文回复指令，而不是用字符串整体覆盖。
       // 整体覆盖会丢掉 claude_code preset 自带的工具说明 / 权限语义 /
       // 环境上下文，得不偿失；`{ type:'preset', preset:'claude_code', append }`
       // 保留原系统提示词，只在末尾拼一段。append 内容是常量，每次 spawn
       // 都 bit 一致，落在 prompt 尾部不影响上面那几个 cache_control 断点
       // （与 CLAUDE_CODE_ATTRIBUTION_HEADER=false 的缓存保护互不冲突）。
+      // 方案模式时 append = 中文指令 + 方案专家纪律（buildProposalAppend 运行期
+      // 渲染 skills/proposal-writer 模板，产品集来自本次 spawn 的 runtime）；
+      // 普通模式只有中文指令。始终保留 preset+append 模式，绝不整体覆盖。
       systemPrompt: {
         type: 'preset' as const,
         preset: 'claude_code' as const,
-        append:
-          '始终用中文回复。所有解释、注释、与用户的交流都用中文。技术术语和代码标识符保留原形。'
+        append: proposalActive
+          ? `始终用中文回复。所有解释、注释、与用户的交流都用中文。技术术语和代码标识符保留原形。\n\n${buildProposalAppend(kbMirrorDir, productScopes)}`
+          : '始终用中文回复。所有解释、注释、与用户的交流都用中文。技术术语和代码标识符保留原形。'
       },
       // Pin fusion-code's session identity. Mutually exclusive: either
       // we're resuming an existing transcript (`resume`) or we're
@@ -1668,7 +1887,12 @@ export class ChatEngine extends EventEmitter {
       // clobber a `.mcp.json` the user keeps in their own source tree. The
       // daemon side writes `.mcp.json` only because it targets PROJECTS_DIR
       // (see daemon server.ts isManagedProjectCwd gating).
-      mcpServers: this.externalMcpServers,
+      //
+      // 方案模式：在外部 MCP 基础上并入 kb-search in-process server。
+      // 非方案模式原样传 externalMcpServers，不污染普通会话。
+      mcpServers: kbSearchMcpServer
+        ? { ...this.externalMcpServers, 'kb-search': kbSearchMcpServer }
+        : this.externalMcpServers,
       // Repo-root skills/ wired in as a local plugin so its SKILL.md entries
       // become `/`-triggerable in this chat tab (namespaced
       // `claude-desktop:<skill>`). Spread-omit when null: the SDK type allows
@@ -1697,6 +1921,16 @@ export class ChatEngine extends EventEmitter {
       options: sdkOptions
     })
     runtime.handle = handle
+    // Record whether THIS spawn baked the proposal append (see
+    // `proposalActive` above). send() reads it to decide whether a warm
+    // child spawned outside proposal mode needs the grounding injected into
+    // the message for a proposal turn.
+    runtime.spawnedWithProposal = proposalActive
+    // 记录本次 spawn 烘焙进 systemPrompt 的产品集签名（非方案 spawn 为空串）。send()
+    // 据它发现「用户随后改了产品 chip → 烘焙的清单已过时」并注入最新 grounding。
+    runtime.proposalGroundedKey = proposalActive
+      ? this.proposalProductsKey(runtime.proposalProducts)
+      : ''
 
     // Launch the pump in the background. The pump owns the lifetime
     // of `runtime.handle` / `runtime.queue` — when it exits (cleanly
@@ -2027,6 +2261,34 @@ export class ChatEngine extends EventEmitter {
   }
 
   /**
+   * True when `toolName` is a read-class tool (Read/Grep/Glob) AND its target
+   * path resolves inside the knowledge-base text mirror (`kbOutDir()`).
+   *
+   * Used by handleCanUseTool to silently allow proposal-mode KB reads without
+   * a dialog, closing the warm-spawn permission gap (the live child may not
+   * have baked `additionalDirectories`). Deliberately read-only — the mirror
+   * is reference material, never written through this path.
+   *
+   * Containment uses resolved absolute paths with a separator boundary so a
+   * sibling like `<userData>/kb-index-evil` can't masquerade as the mirror.
+   * Relative / missing paths return false (they'd be cwd-relative, not the
+   * mirror) and fall through to the normal broker.
+   */
+  private isKbMirrorRead(
+    toolName: string,
+    input: Record<string, unknown>
+  ): boolean {
+    let raw: unknown
+    if (toolName === 'Read') raw = input.file_path
+    else if (toolName === 'Grep' || toolName === 'Glob') raw = input.path
+    else return false
+    if (typeof raw !== 'string' || !raw || !isAbsolute(raw)) return false
+    const target = resolve(raw)
+    const root = resolve(kbOutDir())
+    return target === root || target.startsWith(root + sep)
+  }
+
+  /**
    * SDK `canUseTool` callback. Called by the Agent SDK for every tool
    * invocation the CLI would otherwise need to prompt on.
    *
@@ -2071,6 +2333,55 @@ export class ChatEngine extends EventEmitter {
   ): Promise<PermissionResult> {
     const scope = deriveScope(toolName, input)
     const toolUseId = ctx.toolUseID ?? ''
+
+    // 方案模式：对知识库镜像目录（userData/kb-index）内的「读类」工具静默放行，
+    // 不进 broker / 不弹窗。
+    //
+    // 为什么需要它：可读范围本应由 spawn 时的 additionalDirectories 烘焙，但那是
+    // spawn 冻结的——warmup 在用户选产品前就 spawn 了子进程（spawnedWithProposal=
+    // false），那个活进程没烘焙镜像目录。send() 的 warm-spawn grounding 只把镜像
+    // 绝对路径注入进消息（告知去哪检索），却补不上可读范围；若不在这里放行，AI 对
+    // 镜像目录的 Read/Grep/Glob（cwd 之外）就会触发权限弹窗，用户取消即读不到知识库
+    // → 退回「资料缺失」或臆想，正是本功能要避免的。在此放行让「是否在 spawn 烘焙了
+    // additionalDirectories」不再影响读取结果：cold-spawn（已烘焙）下 CLI 自行放行、
+    // 本回调对镜像读根本不触发；warm-spawn（没烘焙）下由本回调兜底。两条路径一致。
+    //
+    // 严格限定：仅 proposalMode 的 runtime、仅读类工具（Read/Grep/Glob，绝不含
+    // Write/Edit——镜像是只读参考料）、仅路径确实落在 kbOutDir() 之内。其余一律照常
+    // 走 broker。绝不放宽到 cwd 之外的任意目录（cwd 可读范围不变量）。
+    if (
+      this.sessions.get(sessionId)?.proposalMode &&
+      this.isKbMirrorRead(toolName, input)
+    ) {
+      console.log('[engine] canUseTool → auto-allow (proposal KB read)', {
+        sessionId,
+        toolName
+      })
+      return {
+        behavior: 'allow',
+        updatedInput: input,
+        decisionClassification: 'user_temporary'
+      }
+    }
+
+    // 方案模式：kb_search in-process MCP 工具静默放行——纯读、无副作用、仅在方案会话挂载。
+    // 工具名格式 `mcp__<server-name>__<tool-name>`（SDK 约定）。弹权限卡会干扰 AI 写
+    // 方案流程（每节缺料调一次），与 KB 镜像目录读取同属「不需要用户决策的只读参考料
+    // 访问」，性质一致，因此同等处理。
+    if (
+      this.sessions.get(sessionId)?.proposalMode &&
+      toolName === 'mcp__kb-search__kb_search'
+    ) {
+      console.log('[engine] canUseTool → auto-allow (proposal kb_search MCP)', {
+        sessionId
+      })
+      return {
+        behavior: 'allow',
+        updatedInput: input,
+        decisionClassification: 'user_temporary'
+      }
+    }
+
     console.log('[engine] canUseTool', {
       sessionId,
       toolName,
@@ -3099,7 +3410,11 @@ export class ChatEngine extends EventEmitter {
       readySettled: false,
       pendingResume: false,
       openedViaSend: false,
-      pendingTurns: []
+      pendingTurns: [],
+      spawnedWithProposal: false,
+      proposalMode: false,
+      proposalProducts: [],
+      proposalGroundedKey: ''
     }
     this.sessions.set(sessionId, runtime)
     return runtime

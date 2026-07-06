@@ -1,10 +1,28 @@
-import { isValidElement, memo, useCallback, useRef, useState, type ReactNode } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
+import {
+  isValidElement,
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { useMessage } from '@assistant-ui/react'
+import type { Root } from 'mdast'
 
 import { useI18n, useT } from '../../i18n'
+import { toKbAssetUrl } from '../../lib/kbAssetUrl'
+import { isLocalAssetPath, safeDecodeUri } from '../../lib/localAssetPath'
+import { renderMermaid } from '../../lib/mermaidRender'
+import { toProposalAssetUrl } from '../../lib/proposalAssetUrl'
+import {
+  isEmbeddableImagePath,
+  normalizeImageMarkdown
+} from '@desktop-shared/proposal'
+import { deriveImageOrigin } from '@desktop-shared/proposalAsset'
 
 /**
  * AssistantMarkdown
@@ -46,6 +64,13 @@ import { useI18n, useT } from '../../i18n'
  */
 
 /* ───────────────── Per-tag Tailwind overrides ───────────────── */
+
+// 产出图来源角标文案，见下方 img override。
+const originLabel = {
+  generated: 'AI 生成',
+  edited: '已编辑',
+  uploaded: '用户上传'
+} as const
 
 const components: Components = {
   p: ({ children }) => (
@@ -171,6 +196,68 @@ const components: Components = {
     </a>
   ),
 
+  // KB 本地图经 kbasset:// 协议加载，草稿产出图（改图/文生图/上传）经 proposalasset:// 协议加载
+  // （绝对路径直接当 <img src> 会被当相对 URL、加载失败）。先试 kbasset，未命中再试 proposalasset，
+  // 两者路径特征互斥、链式判定零歧义。
+  img: ({ src, alt }) => {
+    if (typeof src === 'string') {
+      // react-markdown 会把 src 百分号编码（空格→%20、CJK→%E…，见 localAssetPath.ts 注释），
+      // 而下游所有逻辑（协议转换/接地角标/data-raw-src 点图手术）都假设拿到的是 markdown 里的
+      // 原始字节。本地资产路径在此解码一次还原；外链 http 图保持原 src 不动（解码外链会改变
+      // 语义，如 query 里的合法 %26）。
+      const decoded = safeDecodeUri(src)
+      const path = isLocalAssetPath(decoded) ? decoded : src
+      const kbUrl = toKbAssetUrl(path)
+      const resolved = kbUrl === path ? toProposalAssetUrl(path) : kbUrl
+      // 本地资产图（KB 或产出图）若非 docx 可嵌格式（webp/svg…），导出 Word 会降级为文字占位；
+      // 预览此处同步降级，避免「预览有图、成品 Word 没图」的静默不一致——与 proposalDocx.
+      // imageParagraphs 共用同一个 isEmbeddableImagePath 谓词。仅对 URL 被改写的本地
+      // 资产图（resolved !== path）生效，不影响外链图。
+      if (resolved !== path && !isEmbeddableImagePath(path)) {
+        const caption = (alt && alt.trim()) || path.slice(path.lastIndexOf('/') + 1)
+        return (
+          <span className="my-2 inline-block text-[13px] text-neutral-400">
+            [图：{caption}]
+          </span>
+        )
+      }
+      // data-raw-src：保留 markdown 里的原始（未转协议、已还原编码）绝对路径，供编辑态点图
+      // 工具栏反查 sourcePath——react-markdown 解析时已剥掉 <> 包裹与 " title" 后缀，
+      // 加上面的 safeDecodeUri 还原百分号编码后，值与 shared/proposal.parseImages 抽出的 path
+      // 精确一致（不解码则 macOS 含空格路径三处全断），点图无需再自行正则解析。
+      // 仅当 URL 被实际改写（resolved !== path，即本地 kb/草稿资产）才挂 data-raw-src——外链
+      // http 图不改写，若仍挂上会让工具栏误以为它可点「改图」，点了却拿不到本地文件。
+      const imgEl = (
+        <img
+          src={resolved}
+          alt={alt ?? ''}
+          {...(resolved !== path ? { 'data-raw-src': path } : {})}
+          className="my-2 max-h-[70vh] w-auto max-w-full rounded"
+        />
+      )
+      // 产出图来源角标：纯渲染态提示，不进 markdown、不进 docx（导出侧直读绝对路径原文，
+      // 天然不含角标）。仅对草稿产出图生效——deriveImageOrigin 对 KB 图/外链图恒返回 null。
+      const origin = deriveImageOrigin(path)
+      if (!origin) return imgEl
+      return (
+        <span className="relative inline-block">
+          {imgEl}
+          <span className="absolute right-1 top-1 rounded bg-black/60 px-1 text-[10px] text-white">
+            {originLabel[origin]}
+          </span>
+        </span>
+      )
+    }
+    // 非 string 的 src（罕见，react-markdown 类型上允许 undefined）原样透传给 <img>。
+    return (
+      <img
+        src={src as string | undefined}
+        alt={alt ?? ''}
+        className="my-2 max-h-[70vh] w-auto max-w-full rounded"
+      />
+    )
+  },
+
   // Tables live in a horizontal scroll shell so wide tables stay
   // usable inside the narrow chat bubble. `table-auto` lets the browser
   // size columns from content, and `[overflow-wrap:anywhere]` on cells
@@ -265,6 +352,20 @@ const components: Components = {
     // (streaming included: the note grows in place as the fence streams).
     if (language === 'markdown' || language === 'md') {
       return <MarkdownNoteCard rawCode={rawCode} />
+    }
+    // genimage 指令块（写方案配图）：编辑态由 ProposalPaper 拦成卡片，这里只兜聊天流里的显示
+    // ——不渲染成代码卡（指令原文对用户是噪声），降级为一行提示。
+    if (language === 'genimage') {
+      return (
+        <div className="my-2 rounded-md border border-dashed border-border/60 bg-muted/20 px-3 py-2 text-[12px] text-muted-foreground">
+          已插入配图生成指令，将在右侧方案文档中自动生成并供你审阅。
+        </div>
+      )
+    }
+    // mermaid 围栏块 → 渲成图，不进代码卡片。rawCode 是 reactNodeToText 拍平的
+    // 原始 mermaid 源码（rehype-highlight 不识别 mermaid 语言、ignoreMissing 下原样透传）。
+    if (language === 'mermaid') {
+      return <MermaidBlock code={rawCode} />
     }
     return (
       <CodeBlockCard
@@ -513,6 +614,52 @@ function CodeBlockCard({
   )
 }
 
+/* ─────────────── Mermaid diagram block（写方案配图） ─────────────── */
+
+/**
+ * 把 ```mermaid 代码块渲成图（编辑/聊天态可见）。渲染在 renderer 异步完成；流式未闭合或语法
+ * 错误时降级显示源码（不报错打断阅读）。导出时由 renderer 把同一份 SVG 栅格化进 docx
+ * （renderMermaidImageMap），故两端视觉同源。
+ */
+function MermaidBlock({ code }: { code: string }): React.JSX.Element {
+  const [svg, setSvg] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let alive = true
+    setFailed(false)
+    renderMermaid(code)
+      .then((s) => {
+        if (alive) setSvg(s)
+      })
+      .catch(() => {
+        // 流式未闭合 / 语法错误：降级源码。边流式边解析时半截 mermaid 报错属预期，不打断阅读。
+        if (alive) {
+          setSvg(null)
+          setFailed(true)
+        }
+      })
+    return () => {
+      alive = false
+    }
+  }, [code])
+
+  if (svg && !failed) {
+    // dangerouslySetInnerHTML：mermaid 以 securityLevel:'strict' 渲染并消毒过 SVG，来源是
+    // KB 接地文本，可信。白底容器让 neutral 主题在深色聊天界面里也清晰。
+    return (
+      <div
+        className="my-3 flex justify-center overflow-x-auto rounded-lg border border-border/60 bg-white p-3"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    )
+  }
+  return (
+    <pre className="my-3 overflow-x-auto rounded-lg border border-border/60 bg-muted/30 px-4 py-3 text-[12.5px] leading-[1.55] text-muted-foreground [font-family:ui-monospace,Menlo,Consolas,monospace]">
+      <code>{code}</code>
+    </pre>
+  )
+}
+
 /* ─────────────── helpers ─────────────── */
 
 function firstElement(children: ReactNode): ReactNode {
@@ -537,9 +684,90 @@ function reactNodeToText(node: ReactNode): string {
   return ''
 }
 
+/* ───────────────── 来源标注上色（写方案编辑态专用） ───────────────── */
+
+// 段末「（据《X》）」来源标注的内联匹配（与 shared/proposal 的 stripCitations 同模式）。
+const CITATION_INLINE_RE = /（据[^）]*）/g
+
+/**
+ * remark transform：把文本节点里的「（据《X》）」切出来，包成带 class 的内联节点，供编辑态上色
+ * （CSS `.proposal-citation`）。让作者一眼看到每段引了哪些来源、便于逐句溯源。
+ *
+ * 实现取舍：用 `emphasis` 作载体节点 + `data.hName='span'`——mdast-util-to-hast 的 applyData 会用
+ * hName 覆盖最终元素的 tagName，故渲染成 `<span class="proposal-citation">` 而非 `<em>`（不带斜体），
+ * 也不必给 react-markdown 注册一个会误伤其它内容的全局 `span` 组件。仅当 highlightCitations 开启时
+ * 才挂这个插件，故普通聊天气泡不产出任何 span、零影响。
+ *
+ * 项目未装 unist-util-visit，故手写递归遍历 mdast。只切 type==='text' 的节点：code / inlineCode 的
+ * 文本在 'code'/'inlineCode' 节点里（无 children），不会被误染。
+ */
+function remarkHighlightCitations() {
+  return (tree: Root): void => {
+    walkCitations(tree as { children?: unknown[] })
+  }
+}
+
+function walkCitations(node: { children?: unknown[] }): void {
+  const children = node.children
+  if (!Array.isArray(children)) return
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i] as {
+      type?: string
+      value?: string
+      children?: unknown[]
+    }
+    if (child.type === 'text' && typeof child.value === 'string') {
+      const split = splitCitationText(child.value)
+      if (split) {
+        children.splice(i, 1, ...split)
+        i += split.length - 1 // 跳过刚插入的片段，避免重复处理
+      }
+    } else {
+      walkCitations(child)
+    }
+  }
+}
+
+// 把一段文本按引用组切成 [普通文本 | 引用 span | 普通文本 …]；无引用 → null（保持原节点不变）。
+function splitCitationText(value: string): unknown[] | null {
+  CITATION_INLINE_RE.lastIndex = 0
+  if (!CITATION_INLINE_RE.test(value)) return null
+  CITATION_INLINE_RE.lastIndex = 0
+  const out: unknown[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = CITATION_INLINE_RE.exec(value)) !== null) {
+    if (m.index > last) out.push({ type: 'text', value: value.slice(last, m.index) })
+    out.push({
+      type: 'emphasis',
+      children: [{ type: 'text', value: m[0] }],
+      data: { hName: 'span', hProperties: { className: ['proposal-citation'] } }
+    })
+    last = m.index + m[0].length
+  }
+  if (last < value.length) out.push({ type: 'text', value: value.slice(last) })
+  return out
+}
+
 /* ───────────────── Exported Text renderer ───────────────── */
 
-function AssistantMarkdownImpl({ text }: { text: string }): React.JSX.Element {
+// defaultUrlTransform 会把 win32 盘符路径（C:\… / C:/…）当未知协议清空成 ''，
+// 图片 src 直接消失、点图链全断——Windows 是 CI 出包目标，不能靠它兜。本地资产路径（KB 图/
+// 草稿产出图，特征前缀足够收敛）跳过 sanitize 原样放行；其余 URL 照走默认，保住
+// javascript:/data: 注入防护。判定前先解码：sanitize 收到的是 normalizeUri 编码后的串。
+function assetAwareUrlTransform(url: string): string {
+  if (isLocalAssetPath(safeDecodeUri(url))) return url
+  return defaultUrlTransform(url)
+}
+
+function AssistantMarkdownImpl({
+  text,
+  // 编辑态（ProposalPaper）传 true：高亮段末来源标注。聊天气泡不传 → 走默认，无任何 span 注入。
+  highlightCitations = false
+}: {
+  text: string
+  highlightCitations?: boolean
+}): React.JSX.Element {
   // tracking-normal cancels the global -0.022em Apple tracking that
   // :root sets for SF Pro. That negative tracking is tuned for Latin
   // glyphs (which carry side-bearing); CJK ideographs are full-width
@@ -547,6 +775,9 @@ function AssistantMarkdownImpl({ text }: { text: string }): React.JSX.Element {
   // and makes it look cramped. Resetting to normal here gives the
   // roomy, breathing rhythm of reference chat UIs (ChatGPT/Codex)
   // WITHOUT touching the Latin tracking on buttons/headings elsewhere.
+  // 给含空格的图片目标补 `<>`，否则 CommonMark 不解析成图片、KB 配图退化成一行纯文字（`![…](…)`
+  // 原样可见）。与导出侧 proposalDocx 共用同一个 normalizeImageMarkdown，保「预览=导出一致」。
+  const normalized = normalizeImageMarkdown(text)
   return (
     // data-selectable：.chat-app 全局 user-select:none 之上放开 AI 正文——
     // 表格 / inline code / fenced 代码块都是后代，一处覆盖（见 main.css）。
@@ -555,7 +786,9 @@ function AssistantMarkdownImpl({ text }: { text: string }): React.JSX.Element {
       className="break-words text-[14px] font-medium leading-relaxed tracking-normal text-foreground"
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={
+          highlightCitations ? [remarkGfm, remarkHighlightCitations] : [remarkGfm]
+        }
         // detect:false（默认）——只对标注了语言的 fence 高亮。自动探测是
         // highlight.js 最贵的路径（把全部语法库对文本逐一打分），而未标语言
         // 的 fence 多半是命令输出/纯文本，探测纯属浪费；切会话时历史消息
@@ -563,8 +796,9 @@ function AssistantMarkdownImpl({ text }: { text: string }): React.JSX.Element {
         // 成本之一。代价只是「模型偷懒没写语言标注的真代码」不上色。
         rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
         components={components}
+        urlTransform={assetAwareUrlTransform}
       >
-        {text}
+        {normalized}
       </ReactMarkdown>
     </div>
   )

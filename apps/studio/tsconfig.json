@@ -50,6 +50,9 @@
   ],
   "exclude": [
     "node_modules",
-    ".next"
+    ".next",
+    // *.test.ts 由 `bun test` 运行（自带 bun:test 类型），不进 tsc——否则 tsc 无
+    // bun 类型会在 `import 'bun:test'` 处报错、拖垮唯一的质量门（同 tsconfig.node.json）。
+    "src/**/*.test.ts"
   ]
 }

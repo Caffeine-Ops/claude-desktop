@@ -72,8 +72,34 @@ import {
   type UpdaterState,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
-  type WorkspaceState
+  type WorkspaceState,
+  type ProposalExportPayload,
+  type ProposalExportResult,
+  type ProposalExportPdfPayload,
+  type ProposalExportPdfResult,
+  type ProposalRenderPayload,
+  type ProposalRenderResult,
+  type ProposalVerifyPayload,
+  type ProposalVerifyResult,
+  type ProposalDraftRecord,
+  type ProposalLoadDraftPayload,
+  type ProposalDeleteDraftPayload,
+  type ProposalSaveDraftResult,
+  type ProposalDeleteDraftResult,
+  type ProposalMetricLogResult,
+  type ProposalPeekRetrievalPayload,
+  type ProposalPeekRetrievalResult,
+  type KbSemanticSearchPayload,
+  type KbSemanticSearchResult,
+  type ProposalImageApiConfig,
+  type ProposalImageGeneratePayload,
+  type ProposalImageEditPayload,
+  type ProposalImageResult,
+  type ProposalImageUploadPayload
 } from '../shared/ipc-channels'
+import type { ProposalMetricRecord } from '../shared/proposal'
+import type { KbRemoteConfig } from '../shared/kbConfig'
+import type { KbSyncStatus } from '../shared/kbSyncStatus'
 
 // Visible in the Electron terminal if the preload actually loads.
 console.log('[preload] loaded — exposing chatApi')
@@ -493,6 +519,148 @@ const chatApi: ChatApi = {
     return () => {
       ipcRenderer.off(IPC_CHANNELS.UPDATER_STATE_CHANGED, listener)
     }
+  },
+  getKbPath(): Promise<{
+    kbRoot: string | null
+    outDir: string
+    remote: KbRemoteConfig | null
+    lastSync: { atMs: number; builtAtMs: number } | null
+  }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_PATH_GET) as Promise<{
+      kbRoot: string | null
+      outDir: string
+      remote: KbRemoteConfig | null
+      lastSync: { atMs: number; builtAtMs: number } | null
+    }>
+  },
+
+  setKbPath(kbRoot: string): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_PATH_SET, kbRoot) as Promise<void>
+  },
+
+  setKbRemote(remote: KbRemoteConfig | null): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_REMOTE_SET, remote) as Promise<void>
+  },
+
+  kbSyncNow(): Promise<'started' | 'alreadyRunning' | 'noRemote'> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_SYNC_NOW) as Promise<'started' | 'alreadyRunning' | 'noRemote'>
+  },
+
+  pickKbRoot(): Promise<{ path: string | null }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_ROOT_PICK) as Promise<{ path: string | null }>
+  },
+
+  onKbSyncStatus(cb: (s: KbSyncStatus) => void): () => void {
+    const listener = (_e: unknown, payload: KbSyncStatus): void => cb(payload)
+    ipcRenderer.on(IPC_CHANNELS.KB_SYNC_STATUS, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.KB_SYNC_STATUS, listener)
+    }
+  },
+
+  readKbIndex() {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_INDEX_READ)
+  },
+
+  exportProposal(payload: ProposalExportPayload): Promise<ProposalExportResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_EXPORT,
+      payload
+    ) as Promise<ProposalExportResult>
+  },
+
+  exportProposalPdf(payload: ProposalExportPdfPayload): Promise<ProposalExportPdfResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_EXPORT_PDF,
+      payload
+    ) as Promise<ProposalExportPdfResult>
+  },
+
+  renderProposal(payload: ProposalRenderPayload): Promise<ProposalRenderResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_RENDER,
+      payload
+    ) as Promise<ProposalRenderResult>
+  },
+  verifyProposalCitations(payload: ProposalVerifyPayload): Promise<ProposalVerifyResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_VERIFY,
+      payload
+    ) as Promise<ProposalVerifyResult>
+  },
+  saveProposalDraft(record: ProposalDraftRecord): Promise<ProposalSaveDraftResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_SAVE_DRAFT,
+      record
+    ) as Promise<ProposalSaveDraftResult>
+  },
+  loadProposalDraft(
+    payload: ProposalLoadDraftPayload
+  ): Promise<ProposalDraftRecord | null> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_LOAD_DRAFT,
+      payload
+    ) as Promise<ProposalDraftRecord | null>
+  },
+  deleteProposalDraft(
+    payload: ProposalDeleteDraftPayload
+  ): Promise<ProposalDeleteDraftResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_DELETE_DRAFT,
+      payload
+    ) as Promise<ProposalDeleteDraftResult>
+  },
+  logProposalMetric(record: ProposalMetricRecord): Promise<ProposalMetricLogResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_METRIC_LOG,
+      record
+    ) as Promise<ProposalMetricLogResult>
+  },
+  peekProposalRetrieval(
+    payload: ProposalPeekRetrievalPayload
+  ): Promise<ProposalPeekRetrievalResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_PEEK_RETRIEVAL,
+      payload
+    ) as Promise<ProposalPeekRetrievalResult>
+  },
+  kbSemanticSearch(payload: KbSemanticSearchPayload): Promise<KbSemanticSearchResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.KB_SEMANTIC_SEARCH,
+      payload
+    ) as Promise<KbSemanticSearchResult>
+  },
+
+  proposalImageSettingsGet(): Promise<ProposalImageApiConfig | null> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_GET
+    ) as Promise<ProposalImageApiConfig | null>
+  },
+  proposalImageSettingsSet(cfg: ProposalImageApiConfig): Promise<void> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_SET,
+      cfg
+    ) as Promise<void>
+  },
+  proposalImageGenerate(
+    args: ProposalImageGeneratePayload
+  ): Promise<ProposalImageResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_IMAGE_GENERATE,
+      args
+    ) as Promise<ProposalImageResult>
+  },
+  proposalImageEdit(args: ProposalImageEditPayload): Promise<ProposalImageResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_IMAGE_EDIT,
+      args
+    ) as Promise<ProposalImageResult>
+  },
+  proposalImageUpload(args: ProposalImageUploadPayload): Promise<ProposalImageResult | null> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_IMAGE_UPLOAD,
+      args
+    ) as Promise<ProposalImageResult | null>
   }
 }
 

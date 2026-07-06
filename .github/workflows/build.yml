@@ -236,6 +236,23 @@ jobs:
             exit 1
           fi
 
+      # Download the bge-small-zh-v1.5 ONNX model files into
+      # apps/studio/kb-model/ so electron-builder can copy them into the
+      # packaged app's Resources/kb-model/. prebundle:kb-model downloads ~24 MB
+      # (onnx/model_quantized.onnx + 3 JSON files) from HuggingFace and verifies
+      # sha256 integrity immediately. verify:kb-model then re-asserts the same
+      # pins before packaging — if the download was truncated or the wrong model
+      # was fetched, the build fails here rather than shipping silent garbage
+      # vectors to users. Placed next to the other external-artifact downloads
+      # (fusion CLI, Node, Python) for the same fail-fast philosophy.
+      - name: Prepare kb-model
+        shell: bash
+        working-directory: apps/studio
+        run: |
+          set -euo pipefail
+          bun run prebundle:kb-model
+          bun run verify:kb-model
+
       # Only typecheck the package this workflow actually ships: the
       # Electron app. Its tsconfig project-references pull in every
       # @open-design/* package it depends on, so their types get checked
@@ -248,6 +265,22 @@ jobs:
       # bundle, so it has no business gating the desktop build.
       - name: Type check
         run: bun run --filter='@claude-desktop/studio' typecheck
+
+      # bun test 与 typecheck 并列做质量门：写方案 skill 化把方法论外置成
+      # skills/proposal-writer 的模板文件，其正确性由快照（逐字节）与契约测试
+      # 守护——CI 不跑 test 的话这道门只存在于开发者本机自觉，改坏模板的提交能
+      # 一路发进 Release。Windows runner 上模板/快照的行尾一致性由仓库根
+      # .gitattributes（skills/**、*.snap 钉 eol=lf）保证。
+      - name: Unit tests
+        run: bun run --filter='@claude-desktop/studio' test
+
+      # scripts/ (the kb-sync manifest publisher, run manually on the server —
+      # not part of the desktop app bundle) has its own bun:test suite. It
+      # isn't under apps/studio so the filter above never touches it; without
+      # this step a broken manifest.ts could ship straight to the release
+      # workflow with zero CI signal.
+      - name: Scripts tests
+        run: bun test scripts/
 
       # Use `dist:<platform>`, NOT `build:<platform>`. The desktop
       # `build:*` chain assumes apps/daemon/dist/cli.js and apps/studio/out

@@ -140,6 +140,41 @@ const STRINGS = {
     scenarioAnalyzeDesc: '把当前文件夹里的 Excel 表格读一遍，告诉你重点和趋势',
     scenarioAnalyzePrompt:
       '帮我看一下当前文件夹里的 [文件名]。用大白话告诉我：1）这张表里有什么数据、有没有缺失或异常 2）最值得注意的 3 个发现 3）如果要做图给老板看，建议画哪几张。',
+    scenarioProposalTitle: '写方案',
+    scenarioProposalDesc: '基于公司知识库，对话式生成建设方案草稿',
+    scenarioProposalPrompt:
+      '要写哪个产品的方案、给哪个客户或什么场景用；想分成哪几部分、每部分重点写什么。',
+
+    catKnowledgeBase: '知识库',
+    // Settings — Configuration category — 出图 API（编辑器内 P 图功能的凭据配置）
+    imageApiTitle: '出图 API',
+    imageApiDesc: '配置图像生成/改图接口凭据，供编辑器内「出图」「改图」使用；未配置时对应入口置灰。',
+    imageApiKeyLabel: 'API Key',
+    imageApiKeyPlaceholderConfigured: '••••',
+    imageApiKeyPlaceholderEmpty: '未配置',
+    imageApiKeyClear: '清除已保存的 Key',
+    imageApiBaseUrlLabel: 'Base URL',
+    imageApiBaseUrlPlaceholder: 'https://api.example.com/v1',
+    imageApiModelLabel: '默认模型',
+    imageApiSave: '保存',
+    imageApiSaving: '保存中…',
+    imageApiSaved: '已保存',
+    // Settings — Knowledge Base category — 「写方案」检索资料来源（本地目录 / 远程同步）
+    kbSourceTitle: '知识库来源',
+    kbSourceDesc: '「写方案」检索资料的出处。远程模式由服务器统一构建、自动同步到本机。',
+    kbSourceLocal: '本地目录',
+    kbSourceLocalDesc: '选择本机源目录，需在本机执行索引构建（依赖 markitdown / LibreOffice）',
+    kbSourceRemote: '远程服务器',
+    kbSourceRemoteDesc: '填入公司知识库服务器地址，如 http://10.0.0.5:8080',
+    kbPickFolder: '选择目录…',
+    kbRemoteUrl: '服务器地址',
+    kbRemoteApply: '保存并同步',
+    kbSyncNow: '立即同步',
+    kbSyncing: '同步中…',
+    kbLastSync: '上次同步',
+    kbVersion: '知识库版本',
+    kbSyncFailed: '同步失败',
+    kbNeverSynced: '尚未同步',
 
     // Code block copy affordance
     codeBlockCopy: '复制',
@@ -398,6 +433,45 @@ const STRINGS = {
     scenarioAnalyzeDesc: 'Read an Excel file in the folder and explain what matters in plain English',
     scenarioAnalyzePrompt:
       'Take a look at [file name] in my folder. In plain English, tell me: 1) what data is in this sheet and whether anything is missing or odd, 2) the 3 most important findings, 3) which charts I should make if I need to show this to my boss.',
+    scenarioProposalTitle: 'Write a proposal',
+    scenarioProposalDesc: 'Use the company knowledge base to co-author a construction proposal draft',
+    scenarioProposalPrompt:
+      'Which product the proposal is for, and which customer or scenario; how to split it into sections, and what each section should focus on.',
+
+    catKnowledgeBase: 'Knowledge Base',
+    // Settings — Configuration category — Image API credentials for the
+    // in-editor image generate/edit feature.
+    imageApiTitle: 'Image API',
+    imageApiDesc:
+      'Configure image generation/editing API credentials used by the in-editor image tools. Entry points stay disabled until this is set up.',
+    imageApiKeyLabel: 'API Key',
+    imageApiKeyPlaceholderConfigured: '••••',
+    imageApiKeyPlaceholderEmpty: 'Not configured',
+    imageApiKeyClear: 'Clear saved key',
+    imageApiBaseUrlLabel: 'Base URL',
+    imageApiBaseUrlPlaceholder: 'https://api.example.com/v1',
+    imageApiModelLabel: 'Default model',
+    imageApiSave: 'Save',
+    imageApiSaving: 'Saving…',
+    imageApiSaved: 'Saved',
+    // Settings — Knowledge Base category — proposal-writing source (local folder / remote sync)
+    kbSourceTitle: 'Knowledge base source',
+    kbSourceDesc:
+      'Where proposal writing retrieves source material from. Remote mode is built on the server and auto-synced.',
+    kbSourceLocal: 'Local folder',
+    kbSourceLocalDesc:
+      'Pick a local source folder; the index must be built on this machine (requires markitdown / LibreOffice)',
+    kbSourceRemote: 'Remote server',
+    kbSourceRemoteDesc: 'Company KB server address, e.g. http://10.0.0.5:8080',
+    kbPickFolder: 'Choose folder…',
+    kbRemoteUrl: 'Server URL',
+    kbRemoteApply: 'Save & sync',
+    kbSyncNow: 'Sync now',
+    kbSyncing: 'Syncing…',
+    kbLastSync: 'Last synced',
+    kbVersion: 'KB version',
+    kbSyncFailed: 'Sync failed',
+    kbNeverSynced: 'Never synced',
 
     codeBlockCopy: 'Copy',
     codeBlockCopied: '✓ Copied',

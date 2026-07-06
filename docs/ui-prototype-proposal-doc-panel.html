@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案草稿面板 · UI 原型</title>
+<style>
+/* ============================================================
+   Design tokens — 与 packages/design-tokens/tokens.css 同源。
+   浅色 = Apple 浅灰底 #f5f5f7 + Apple 蓝 #0071e3；
+   暗色 = 暖黑 #1a1917/#222120 + 亮蓝 #2997ff；
+   品牌绿 #16a34a 只做身份/成功点位，不做主题色。
+   ============================================================ */
+:root {
+  --bg: #f5f5f7;
+  --fg: #1d1d1f;
+  --card: #ffffff;
+  --card-fg: #1d1d1f;
+  --muted: #ebebed;
+  --muted-fg: #63636a;
+  --border: #d4d4d8;
+  --hairline: #e3e3e6;
+  --accent: #0071e3;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(0, 113, 227, .08);
+  --brand: #16a34a;
+  --brand-fg: #ffffff;
+  --amber: #b45309;
+  --amber-bg: rgba(245, 158, 11, .09);
+  --amber-border: rgba(245, 158, 11, .32);
+  --sky: #0369a1;
+  --sky-bg: rgba(14, 165, 233, .07);
+  --rose: #e11d48;
+  --paper: #ffffff;
+  --paper-ink: #1f2328;
+  --paper-muted: #6e747d;
+  --doc-bg: #ececee;
+  --shadow-menu: 0 8px 30px rgba(0,0,0,.12), 0 2px 8px rgba(0,0,0,.06);
+  --shadow-paper: 0 1px 2px rgba(0,0,0,.05), 0 8px 28px rgba(0,0,0,.07);
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue',
+    Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-doc-serif: 'Songti SC', 'SimSun', 'Noto Serif CJK SC', serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+}
+[data-theme="dark"] {
+  --bg: #1a1917;
+  --fg: #e8e4dc;
+  --card: #222120;
+  --card-fg: #f2ede4;
+  --muted: #2e2c29;
+  --muted-fg: #9a9690;
+  --border: #3a382f;
+  --hairline: #2e2c27;
+  --accent: #2997ff;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(41, 151, 255, .12);
+  --brand: #3ecf72;
+  --brand-fg: #1a1917;
+  --amber: #fbbf24;
+  --amber-bg: rgba(245, 158, 11, .10);
+  --amber-border: rgba(245, 158, 11, .28);
+  --sky: #4fb8ff;
+  --sky-bg: rgba(41, 151, 255, .08);
+  --rose: #fb7185;
+  --paper: #262523;
+  --paper-ink: #ece7de;
+  --paper-muted: #96918a;
+  --doc-bg: #141311;
+  --shadow-menu: 0 8px 30px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.35);
+  --shadow-paper: 0 1px 2px rgba(0,0,0,.3), 0 10px 32px rgba(0,0,0,.42);
+}
+/* 主题色可换（appearance applier 会把 --accent 换成用户主题色，橙 = 截图现状） */
+[data-accent="orange"] { --accent: #e8833a; --accent-soft: rgba(232,131,58,.10); }
+[data-theme="dark"][data-accent="orange"] { --accent: #f09a55; --accent-soft: rgba(240,154,85,.14); }
+[data-accent="green"] { --accent: #16a34a; --accent-soft: rgba(22,163,74,.09); }
+[data-theme="dark"][data-accent="green"] { --accent: #3ecf72; --accent-soft: rgba(62,207,114,.13); }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+  overflow: hidden;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 6px; }
+
+/* ============================================================
+   整窗 mock：左栏聊天骨架（低保真，只提供上下文）+ 右面板（设计主体）
+   ============================================================ */
+.frame { display: flex; height: 100vh; }
+
+.chat-mock {
+  width: 340px; flex-shrink: 0;
+  border-right: 1px solid var(--hairline);
+  background: var(--bg);
+  padding: 18px 16px;
+  display: flex; flex-direction: column; gap: 14px;
+  user-select: none;
+}
+.chat-mock .sk { border-radius: 8px; background: var(--muted); opacity: .7; }
+.chat-mock .sk.bubble-user { align-self: flex-end; width: 68%; height: 64px; background: var(--accent-soft); }
+.chat-mock .sk.line { height: 10px; }
+.chat-mock .sk-group { display: flex; flex-direction: column; gap: 8px; }
+.chat-mock .composer-sk {
+  margin-top: auto; height: 92px; border-radius: 14px;
+  border: 1px solid var(--border); background: var(--card);
+}
+.chat-mock .hint { font-size: 11px; color: var(--muted-fg); text-align: center; opacity: .8; }
+@media (max-width: 1080px) { .chat-mock { display: none; } }
+.frame[data-chatmock="off"] .chat-mock { display: none; }
+
+/* ============================================================
+   右面板
+   ============================================================ */
+.panel {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+}
+
+/* ---------- 顶栏：标题 + 状态呼吸灯 | 编辑/预览 | 清空 + 导出 ---------- */
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.topbar .title-group { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.topbar h1 { font-size: 14px; font-weight: 650; letter-spacing: .01em; white-space: nowrap; }
+
+/* 状态呼吸灯 badge：把「封面撰写中」从阶段条右侧收编到标题旁，
+   AI 工作中带脉冲绿点，一眼可知系统在不在干活 */
+.status-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  font-size: 11px; color: var(--muted-fg);
+  background: var(--muted);
+  white-space: nowrap;
+  transition: color .2s, background .2s;
+}
+.status-badge .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--muted-fg); opacity: .5;
+}
+.status-badge.live { color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); }
+.status-badge.live .dot { background: var(--brand); opacity: 1; animation: pulse 1.8s ease-in-out infinite; }
+.status-badge.wait { color: var(--amber); background: var(--amber-bg); }
+.status-badge.wait .dot { background: var(--amber); opacity: 1; }
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 45%, transparent); }
+  50%      { box-shadow: 0 0 0 4px transparent; }
+}
+
+/* segmented：编辑 | 预览。滑动 thumb，比换 class 染色更有物理感 */
+.segmented {
+  position: relative;
+  display: grid; grid-template-columns: 1fr 1fr;
+  margin-left: auto;
+  padding: 2px; border-radius: 9px;
+  background: var(--muted);
+}
+.segmented .thumb {
+  position: absolute; top: 2px; bottom: 2px; left: 2px;
+  width: calc(50% - 2px);
+  border-radius: 7px;
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(0,0,0,.12);
+  transition: transform .22s cubic-bezier(.3,.9,.35,1);
+}
+.segmented[data-mode="preview"] .thumb { transform: translateX(100%); }
+.segmented button {
+  position: relative; z-index: 1;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 4px 16px;
+  font-size: 12px; color: var(--muted-fg);
+  border-radius: 7px;
+  transition: color .18s;
+}
+.segmented button.on { color: var(--fg); font-weight: 550; }
+.segmented button svg { width: 13px; height: 13px; }
+
+.topbar .actions { display: flex; align-items: center; gap: 6px; }
+.btn-ghost {
+  padding: 5px 10px; border-radius: 7px;
+  font-size: 12px; color: var(--muted-fg);
+  transition: background .15s, color .15s;
+}
+.btn-ghost:hover { background: var(--muted); color: var(--fg); }
+.btn-ghost:disabled { opacity: .45; cursor: default; }
+.btn-ghost:disabled:hover { background: none; color: var(--muted-fg); }
+
+.export-wrap { position: relative; }
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 8px;
+  font-size: 12px; font-weight: 550;
+  color: var(--accent-fg); background: var(--accent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 35%, transparent);
+  transition: filter .15s, transform .1s;
+}
+.btn-primary:hover { filter: brightness(1.06); }
+.btn-primary:active { transform: scale(.97); }
+.btn-primary svg { width: 12px; height: 12px; }
+
+/* 导出下拉：三格式 + 样式模板，pop 动画 */
+.menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+  width: 248px;
+  padding: 5px;
+  border-radius: 12px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  box-shadow: var(--shadow-menu);
+  opacity: 0; transform: scale(.96) translateY(-4px);
+  transform-origin: top right;
+  pointer-events: none;
+  transition: opacity .16s, transform .16s cubic-bezier(.3,.9,.35,1);
+}
+.menu.open { opacity: 1; transform: none; pointer-events: auto; }
+.menu-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  width: 100%; padding: 8px 9px;
+  border-radius: 8px; text-align: left;
+  transition: background .12s;
+}
+.menu-item:hover { background: var(--muted); }
+.menu-item svg { width: 15px; height: 15px; margin-top: 1px; flex-shrink: 0; color: var(--muted-fg); }
+.menu-item .mi-name { display: block; font-size: 12.5px; font-weight: 550; color: var(--card-fg); }
+.menu-item .mi-desc { display: block; font-size: 11px; color: var(--muted-fg); margin-top: 1px; }
+.menu-sep { height: 1px; margin: 4px 6px; background: var(--hairline); }
+.menu-item.plain { align-items: center; }
+.menu-item.plain .mi-name { font-weight: 450; color: var(--muted-fg); }
+.menu-item.plain:hover .mi-name { color: var(--fg); }
+.scrim { position: fixed; inset: 0; z-index: 30; display: none; }
+.scrim.open { display: block; }
+
+/* ---------- 阶段条：三种变体 ---------- */
+.stagebar {
+  display: flex; align-items: center;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--hairline);
+  min-height: 40px;
+}
+
+/* 变体 A（默认）：节点 + 连线 stepper，完成打勾、当前脉冲、连线进度填充 */
+.stepper-nodes { display: flex; align-items: center; flex: 1; max-width: 420px; }
+.step { display: flex; align-items: center; gap: 7px; }
+.step .node {
+  position: relative;
+  width: 20px; height: 20px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 10.5px; font-weight: 600;
+  color: var(--muted-fg);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  transition: all .25s;
+}
+.step .lbl { font-size: 12px; color: var(--muted-fg); white-space: nowrap; transition: color .2s; }
+.step.done .node { background: var(--brand); border-color: var(--brand); color: var(--brand-fg); }
+.step.done .lbl { color: var(--fg); }
+.step.now .node {
+  background: var(--card); border-color: var(--brand); color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 16%, transparent);
+}
+.step.now .lbl { color: var(--fg); font-weight: 600; }
+.step .node svg { width: 11px; height: 11px; }
+.conn {
+  flex: 1; height: 2px; min-width: 24px; margin: 0 10px;
+  border-radius: 1px; background: var(--border);
+  position: relative; overflow: hidden;
+}
+.conn::after {
+  content: ''; position: absolute; inset: 0;
+  background: var(--brand);
+  transform: scaleX(0); transform-origin: left;
+  transition: transform .5s cubic-bezier(.3,.8,.3,1);
+}
+.conn.fill::after { transform: scaleX(1); }
+
+/* 变体 B：分段 pill 进度 */
+.stepper-pills { display: flex; align-items: center; gap: 6px; flex: 1; max-width: 420px; }
+.spill {
+  flex: 1; display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px;
+  font-size: 11.5px; color: var(--muted-fg);
+  background: var(--muted);
+  border: 1px solid transparent;
+  white-space: nowrap; justify-content: center;
+  transition: all .2s;
+}
+.spill .n { font-weight: 650; opacity: .55; font-size: 10.5px; }
+.spill.done { background: color-mix(in srgb, var(--brand) 9%, transparent); color: var(--brand); }
+.spill.now {
+  background: var(--card); color: var(--fg); font-weight: 600;
+  border-color: color-mix(in srgb, var(--brand) 45%, transparent);
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+}
+.spill.now .n { color: var(--brand); opacity: 1; }
+
+/* 变体 C：极简文本（现状改良——加粗当前 + 品牌色小圆点） */
+.stepper-text { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.stx { color: var(--muted-fg); display: inline-flex; align-items: center; gap: 5px; }
+.stx.now { color: var(--fg); font-weight: 600; }
+.stx.now::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--brand); }
+.stx.done { color: var(--brand); }
+.stx-arrow { color: var(--border); font-size: 11px; }
+
+.stagebar [data-stepper-variant] { display: none; }
+.panel[data-stepper="nodes"] [data-stepper-variant="nodes"] { display: flex; }
+.panel[data-stepper="pills"] [data-stepper-variant="pills"] { display: flex; }
+.panel[data-stepper="text"]  [data-stepper-variant="text"]  { display: flex; }
+
+/* ---------- 知识库行：语义标签 + chips + 工具 ---------- */
+.kbbar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.kb-label {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; color: var(--muted-fg);
+  margin-right: 2px;
+}
+.kb-label svg { width: 12px; height: 12px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 6px 3px 9px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: var(--fg);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  transition: border-color .15s;
+}
+.chip .x {
+  display: grid; place-items: center;
+  width: 14px; height: 14px; border-radius: 4px;
+  color: var(--muted-fg);
+  transition: background .12s, color .12s;
+}
+.chip .x:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--fg); }
+.chip .x svg { width: 9px; height: 9px; }
+.chip-empty { font-size: 11.5px; color: var(--muted-fg); font-style: normal; }
+.chip-add {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 7px;
+  font-size: 11.5px; color: var(--muted-fg);
+  border: 1px dashed var(--border);
+  transition: all .15s;
+}
+.chip-add:hover { border-color: var(--accent); color: var(--accent); }
+.chip-add svg { width: 10px; height: 10px; }
+.kb-tools { margin-left: auto; display: flex; gap: 2px; }
+.kb-tool {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 7px;
+  font-size: 11.5px; color: var(--muted-fg);
+  transition: background .15s, color .15s;
+}
+.kb-tool:hover { background: var(--muted); color: var(--fg); }
+.kb-tool.on { background: var(--accent-soft); color: var(--accent); }
+.kb-tool svg { width: 12px; height: 12px; }
+
+/* 召回预览展开面板 */
+.peek {
+  display: none;
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid var(--hairline);
+  animation: fadeDown .2s ease;
+}
+.peek.open { display: block; }
+@keyframes fadeDown { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.peek .desc { font-size: 11px; line-height: 1.6; color: var(--muted-fg); margin-bottom: 8px; }
+.peek .row { display: flex; gap: 6px; }
+.peek input {
+  flex: 1; height: 28px;
+  padding: 0 10px;
+  border-radius: 7px; border: 1px solid var(--border);
+  background: var(--card); color: var(--fg);
+  font: inherit; font-size: 12px;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.peek input::placeholder { color: var(--muted-fg); opacity: .7; }
+.peek input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.peek .btn-primary { padding: 5px 14px; }
+.peek-hit {
+  margin-top: 8px; padding: 8px 10px;
+  border-radius: 8px; border: 1px solid var(--hairline);
+  background: var(--card);
+}
+.peek-hit .src { font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 3px; }
+.peek-hit .txt { font-size: 11.5px; line-height: 1.6; color: var(--muted-fg); }
+
+/* ---------- 资料缺失条（amber，可展开） ---------- */
+.gapsbar {
+  display: none;
+  border-bottom: 1px solid var(--amber-border);
+  background: var(--amber-bg);
+}
+.gapsbar.show { display: block; animation: fadeDown .2s ease; }
+.gaps-head {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 7px 14px;
+  font-size: 11.5px; color: var(--amber);
+  text-align: left;
+}
+.gaps-head svg { width: 13px; height: 13px; flex-shrink: 0; }
+.gaps-head b { font-weight: 650; }
+.gaps-head .sub { opacity: .75; }
+.gaps-head .toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; opacity: .85; }
+.gaps-list { display: none; padding: 0 14px 10px; }
+.gapsbar.expanded .gaps-list { display: block; }
+.gap-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 7px 10px; margin-top: 5px;
+  border-radius: 8px;
+  border: 1px solid var(--amber-border);
+  background: color-mix(in srgb, var(--card) 72%, transparent);
+}
+.gap-item .where { font-size: 10.5px; color: var(--muted-fg); margin-bottom: 2px; }
+.gap-item .what { font-size: 12px; color: var(--fg); line-height: 1.5; }
+.gap-item .fill-btn {
+  flex-shrink: 0; padding: 3px 9px; margin-top: 2px;
+  border-radius: 6px; font-size: 11px;
+  color: var(--amber); border: 1px solid var(--amber-border);
+  transition: background .15s;
+}
+.gap-item .fill-btn:hover { background: var(--amber-bg); }
+
+/* ---------- 文档区 ---------- */
+.doc {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  background: var(--doc-bg);
+  position: relative;
+}
+.doc::-webkit-scrollbar { width: 10px; }
+.doc::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted-fg) 32%, transparent); border-radius: 5px; border: 2px solid var(--doc-bg); }
+
+/* 各内容状态互斥显示 */
+.doc > section { display: none; }
+.panel[data-state="empty"][data-mode="edit"]    .doc .st-empty { display: grid; place-items: center; min-height: 100%; }
+.panel[data-state="writing"][data-mode="edit"]  .doc .st-writing,
+.panel[data-state="toc"][data-mode="edit"]      .doc .st-toc,
+.panel[data-state="content"][data-mode="edit"]  .doc .st-content { display: block; }
+.panel[data-mode="preview"][data-state="empty"]   .doc .st-preview-empty { display: flex; }
+.panel[data-mode="preview"]:not([data-state="empty"]) .doc .st-preview { display: block; }
+
+/* ---- 空状态：叠纸插画 + 三步旅程（grid 居中于整个文档区） ---- */
+.st-empty { padding: 40px 32px; }
+.empty-inner { max-width: 460px; margin: 0 auto; text-align: center; }
+.paper-illo { position: relative; width: 148px; height: 180px; margin: 12px auto 30px; }
+.paper-illo .sheet {
+  position: absolute; inset: 0;
+  border-radius: 8px;
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-paper);
+}
+.paper-illo .sheet.b1 { transform: rotate(-5deg) translate(-9px, 5px); opacity: .5; }
+.paper-illo .sheet.b2 { transform: rotate(3deg) translate(7px, 2px); opacity: .72; }
+.paper-illo .sheet.top { display: flex; flex-direction: column; padding: 18px 16px; gap: 9px; }
+.paper-illo .cover-band { height: 34px; border-radius: 5px; background: color-mix(in srgb, var(--brand) 78%, var(--paper)); margin-bottom: 4px; }
+.paper-illo .ln { height: 7px; border-radius: 3px; background: var(--muted); }
+.paper-illo .ln.w60 { width: 60%; }
+.paper-illo .ln.w85 { width: 85%; }
+.paper-illo .ln.w40 { width: 40%; }
+.empty-inner h2 { font-size: 17px; font-weight: 650; margin-bottom: 8px; letter-spacing: .01em; }
+.empty-inner .lede { font-size: 12.5px; line-height: 1.7; color: var(--muted-fg); margin-bottom: 28px; }
+.journey { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: left; }
+.j-card {
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  transition: border-color .2s;
+}
+.j-card.now { border-color: color-mix(in srgb, var(--brand) 42%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 8%, transparent); }
+.j-card .j-step { font-size: 10px; font-weight: 650; color: var(--brand); letter-spacing: .06em; margin-bottom: 4px; }
+.j-card .j-name { font-size: 12.5px; font-weight: 600; color: var(--card-fg); margin-bottom: 3px; }
+.j-card .j-desc { font-size: 11px; line-height: 1.55; color: var(--muted-fg); }
+
+/* ---- 纸张通用 ---- */
+.sheet-wrap { max-width: 720px; margin: 22px auto 40px; padding: 0 24px; }
+.paper-doc {
+  border-radius: 10px;
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-paper);
+  padding: clamp(28px, 6%, 64px);
+  color: var(--paper-ink);
+}
+
+/* ---- 撰写中：封面渐现 + 骨架 shimmer + 光标 ---- */
+.st-writing .cover-title {
+  font-size: 26px; font-weight: 700; line-height: 1.4;
+  letter-spacing: .02em; margin: 34px 0 10px;
+  text-align: center;
+}
+.st-writing .cover-sub { text-align: center; font-size: 14px; color: var(--paper-muted); margin-bottom: 46px; }
+.caret {
+  display: inline-block; width: 2px; height: 1.05em;
+  vertical-align: -0.15em; margin-left: 2px;
+  background: var(--brand);
+  animation: blink 1s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+.skl { height: 12px; border-radius: 4px; margin: 14px 0; position: relative; overflow: hidden; background: var(--muted); }
+.skl::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--paper) 65%, transparent), transparent);
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+@keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.skl.w90 { width: 90%; } .skl.w75 { width: 75%; } .skl.w82 { width: 82%; } .skl.w50 { width: 50%; }
+
+/* ---- 目录态 ---- */
+.toc-title { font-size: 19px; font-weight: 700; margin-bottom: 20px; }
+.toc-list { list-style: none; counter-reset: toc; }
+.toc-list li {
+  counter-increment: toc;
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 8px 2px;
+  font-size: 14px;
+  border-bottom: 1px dashed color-mix(in srgb, var(--paper-muted) 25%, transparent);
+}
+.toc-list li::before {
+  content: counter(toc, cjk-ideographic) '、';
+  color: var(--paper-muted); font-size: 13px; flex-shrink: 0;
+}
+.toc-list li .sub-items { font-size: 12px; color: var(--paper-muted); margin-left: auto; }
+.wait-confirm {
+  display: flex; align-items: center; gap: 9px;
+  max-width: 720px; margin: 0 auto 26px; padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--amber-border);
+  background: var(--amber-bg);
+  font-size: 12px; color: var(--amber);
+}
+.wait-confirm svg { width: 14px; height: 14px; flex-shrink: 0; }
+.wait-confirm b { font-weight: 650; }
+
+/* ---- 正文态：连续纸 + 节 hover 工具条 + 内联缺口 ---- */
+.sec {
+  position: relative;
+  border-radius: 6px;
+  padding: 2px 6px; margin: 0 -6px;
+  transition: background .15s;
+}
+.sec:hover { background: color-mix(in srgb, var(--accent) 3%, transparent); }
+.sec h2 { font-size: 20px; font-weight: 700; margin: 26px 0 12px; }
+.sec h3 { font-size: 15px; font-weight: 650; margin: 20px 0 8px; }
+.sec p { font-size: 14px; line-height: 1.85; margin: 10px 0; }
+.sec ul { margin: 10px 0 10px 20px; }
+.sec li { font-size: 14px; line-height: 1.8; }
+.sec:first-child h2 { margin-top: 0; }
+/* 节级工具条：悬停浮现于右缘（还原产品交互：编辑/上移/下移/删除） */
+.sec-tools {
+  position: absolute; right: -4px; top: 4px;
+  display: flex; flex-direction: column; gap: 4px;
+  opacity: 0; pointer-events: none;
+  transition: opacity .15s;
+}
+.sec:hover .sec-tools, .sec-tools:focus-within { opacity: 1; pointer-events: auto; }
+.sec-tools button {
+  display: grid; place-items: center;
+  width: 24px; height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted-fg);
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  transition: color .12s, border-color .12s;
+}
+.sec-tools button:hover { color: var(--accent); border-color: var(--accent); }
+.sec-tools button.danger:hover { color: var(--rose); border-color: var(--rose); }
+.sec-tools svg { width: 12px; height: 12px; }
+/* 内联资料缺口卡（正文里的 ⚠️ 硬协议标记，卡片化呈现） */
+.gap-inline {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 12px 0; padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--amber-border);
+  background: var(--amber-bg);
+  font-size: 12.5px; line-height: 1.6; color: var(--amber);
+}
+.gap-inline svg { width: 13px; height: 13px; flex-shrink: 0; margin-top: 2px; }
+.gap-inline .fill-link { margin-left: auto; flex-shrink: 0; text-decoration: underline; text-underline-offset: 2px; font-size: 11.5px; }
+
+/* ---- 预览态：A4 分页，Word 风排版。
+   纸张恒为白纸黑字、不随主题翻转——「真预览 = 与导出的 Word 逐像素一致」，
+   Word 成品就是白纸；暗色主题只暗化纸张四周的画布。 ---- */
+.st-preview { padding: 24px 24px 40px; }
+.a4 {
+  width: min(680px, 100%);
+  aspect-ratio: 210 / 297;
+  margin: 0 auto 24px;
+  background: #ffffff;
+  box-shadow: var(--shadow-paper);
+  border: 1px solid rgba(0,0,0,.08);
+  border-radius: 3px;
+  padding: 9% 10%;
+  display: flex; flex-direction: column;
+  font-family: var(--font-doc-serif);
+  color: #1f2328;
+  position: relative;
+  overflow: hidden;
+}
+.a4 .pageno {
+  position: absolute; bottom: 3.4%; left: 0; right: 0;
+  text-align: center; font-size: 10px; color: #8a9099;
+}
+.a4-cover { justify-content: center; text-align: center; }
+.a4-cover .doc-class { font-family: var(--font-sans); font-size: 11px; letter-spacing: .35em; color: #8a9099; margin-bottom: 52px; }
+.a4-cover h2 { font-size: clamp(20px, 3.4vw, 30px); font-weight: 700; line-height: 1.5; letter-spacing: .04em; margin-bottom: 22px; }
+.a4-cover .band { width: 46px; height: 3px; background: var(--brand); margin: 0 auto 48px; }
+.a4-cover .meta { font-size: 13px; line-height: 2.4; color: #8a9099; }
+.a4-body h3 { font-family: var(--font-sans); font-size: 17px; font-weight: 700; margin: 0 0 4%; }
+.a4-body p { font-size: 12.5px; line-height: 2.05; text-indent: 2em; margin-bottom: 2.5%; }
+.a4-body .h4 { font-family: var(--font-sans); font-size: 13.5px; font-weight: 650; margin: 4% 0 2%; }
+
+/* 预览空态 */
+.st-preview-empty { min-height: 100%; align-items: center; justify-content: center; padding: 60px 24px; }
+.st-preview-empty .box { text-align: center; color: var(--muted-fg); }
+.st-preview-empty svg { width: 34px; height: 34px; opacity: .4; margin-bottom: 12px; }
+.st-preview-empty p { font-size: 12.5px; }
+
+/* ---------- 底部状态栏 ---------- */
+.statusbar {
+  display: flex; align-items: center; gap: 14px;
+  /* 右侧 padding 给悬浮的 Tweaks fab 让位，真预览 pill 不被遮 */
+  padding: 6px 68px 6px 14px;
+  border-top: 1px solid var(--hairline);
+  font-size: 11px; color: var(--muted-fg);
+  min-height: 30px;
+}
+.save-state { display: inline-flex; align-items: center; gap: 5px; }
+.save-state .sdot { width: 5px; height: 5px; border-radius: 50%; background: var(--brand); }
+.doc-stats { display: inline-flex; gap: 12px; }
+.true-preview {
+  display: none;
+  margin-left: auto;
+  align-items: center; gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand) 25%, transparent);
+}
+.true-preview svg { width: 10px; height: 10px; }
+.panel[data-mode="preview"] .true-preview { display: inline-flex; }
+.statusbar .spacer { margin-left: auto; }
+.panel[data-mode="preview"] .statusbar .spacer { display: none; }
+
+/* ============================================================
+   Tweaks 面板
+   ============================================================ */
+.tweaks-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: 90;
+  width: 40px; height: 40px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--fg); color: var(--bg);
+  box-shadow: 0 4px 16px rgba(0,0,0,.25);
+  transition: transform .15s;
+}
+.tweaks-fab:hover { transform: scale(1.08); }
+.tweaks-fab svg { width: 17px; height: 17px; }
+.tweaks {
+  position: fixed; right: 18px; bottom: 68px; z-index: 90;
+  width: 250px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  box-shadow: var(--shadow-menu);
+  display: none;
+}
+.tweaks.open { display: block; animation: fadeDown .18s ease; }
+.tweaks h3 { font-size: 12px; font-weight: 650; margin-bottom: 12px; color: var(--card-fg); }
+.tw-field { margin-bottom: 11px; }
+.tw-field label { display: block; font-size: 10.5px; color: var(--muted-fg); margin-bottom: 5px; letter-spacing: .03em; }
+.tw-seg { display: flex; gap: 3px; padding: 2px; border-radius: 8px; background: var(--muted); }
+.tw-seg button {
+  flex: 1; padding: 4px 2px;
+  border-radius: 6px; font-size: 11px; color: var(--muted-fg);
+  transition: all .13s;
+  white-space: nowrap;
+}
+.tw-seg button.on { background: var(--card); color: var(--fg); font-weight: 550; box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+.tw-swatches { display: flex; gap: 6px; }
+.tw-swatch {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 2px solid transparent;
+  transition: border-color .12s, transform .12s;
+}
+.tw-swatch.on { border-color: var(--fg); transform: scale(1.1); }
+</style>
+</head>
+<body>
+
+<div class="frame" id="frame" data-chatmock="on">
+
+  <!-- 左栏：聊天区低保真骨架（仅提供两栏上下文，非设计对象） -->
+  <aside class="chat-mock" aria-hidden="true">
+    <div class="sk line" style="width:52%"></div>
+    <div class="sk bubble-user"></div>
+    <div class="sk-group">
+      <div class="sk line" style="width:88%"></div>
+      <div class="sk line" style="width:73%"></div>
+      <div class="sk line" style="width:80%"></div>
+    </div>
+    <div class="sk" style="height:34px;width:64%"></div>
+    <div class="sk-group">
+      <div class="sk line" style="width:66%"></div>
+      <div class="sk line" style="width:78%"></div>
+    </div>
+    <div class="composer-sk"></div>
+    <div class="hint">← 聊天区（示意）</div>
+  </aside>
+
+  <!-- 右面板：方案草稿 —— 设计主体 -->
+  <main class="panel" id="panel" data-state="empty" data-mode="edit" data-stepper="nodes">
+
+    <!-- 顶栏 -->
+    <header class="topbar">
+      <div class="title-group">
+        <h1>方案草稿</h1>
+        <span class="status-badge" id="statusBadge"><span class="dot"></span><span id="statusText">等待开始</span></span>
+      </div>
+
+      <div class="segmented" id="segmented" data-mode="edit" role="tablist" aria-label="编辑或预览">
+        <span class="thumb"></span>
+        <button class="on" id="btnEdit" role="tab" aria-selected="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+          编辑
+        </button>
+        <button id="btnPreview" role="tab" aria-selected="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+          预览
+        </button>
+      </div>
+
+      <div class="actions">
+        <button class="btn-ghost" id="btnClear">清空草稿</button>
+        <div class="export-wrap">
+          <button class="btn-primary" id="btnExport" aria-haspopup="menu">
+            导出
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div class="menu" id="exportMenu" role="menu">
+            <button class="menu-item" role="menuitem">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+              <span><span class="mi-name">Word（.docx）</span><span class="mi-desc">交付客户、可继续编辑</span></span>
+            </button>
+            <button class="menu-item" role="menuitem">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/></svg>
+              <span><span class="mi-name">PDF</span><span class="mi-desc">定稿发送、排版固定</span></span>
+            </button>
+            <button class="menu-item" role="menuitem">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/><path d="m9 13-2 2 2 2"/><path d="m15 13 2 2-2 2"/></svg>
+              <span><span class="mi-name">Markdown</span><span class="mi-desc">纯文本、便于版本管理</span></span>
+            </button>
+            <div class="menu-sep"></div>
+            <button class="menu-item plain" role="menuitem">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>
+              <span><span class="mi-name">调整样式模板…</span></span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- 阶段条（三变体，经 Tweaks 切换） -->
+    <div class="stagebar">
+      <!-- 变体 A：节点 stepper -->
+      <div class="stepper-nodes" data-stepper-variant="nodes" id="stNodes">
+        <div class="step" data-k="cover"><span class="node">1</span><span class="lbl">封面</span></div>
+        <div class="conn" data-c="1"></div>
+        <div class="step" data-k="toc"><span class="node">2</span><span class="lbl">目录</span></div>
+        <div class="conn" data-c="2"></div>
+        <div class="step" data-k="content"><span class="node">3</span><span class="lbl">正文</span></div>
+      </div>
+      <!-- 变体 B：pill 分段 -->
+      <div class="stepper-pills" data-stepper-variant="pills" id="stPills">
+        <span class="spill" data-k="cover"><span class="n">01</span>封面</span>
+        <span class="spill" data-k="toc"><span class="n">02</span>目录</span>
+        <span class="spill" data-k="content"><span class="n">03</span>正文</span>
+      </div>
+      <!-- 变体 C：极简文本 -->
+      <div class="stepper-text" data-stepper-variant="text" id="stText">
+        <span class="stx" data-k="cover">封面</span><span class="stx-arrow">›</span>
+        <span class="stx" data-k="toc">目录</span><span class="stx-arrow">›</span>
+        <span class="stx" data-k="content">正文</span>
+      </div>
+    </div>
+
+    <!-- 知识库行 -->
+    <div class="kbbar">
+      <span class="kb-label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+        知识库
+      </span>
+      <span id="chipZone">
+        <span class="chip">导诊系统<button class="x" aria-label="移除 导诊系统"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></span>
+        <span class="chip">预问诊系统<button class="x" aria-label="移除 预问诊系统"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></span>
+      </span>
+      <span class="chip-empty" id="chipEmpty" style="display:none">未识别到产品，AI 将在知识库整库定位</span>
+      <button class="chip-add">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        添加产品
+      </button>
+      <div class="kb-tools">
+        <button class="kb-tool" id="btnPeek">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          召回预览
+        </button>
+        <button class="kb-tool">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+          语义搜索
+        </button>
+      </div>
+    </div>
+
+    <!-- 召回预览面板 -->
+    <div class="peek" id="peekPanel">
+      <div class="desc">预览知识库会为关键词从<b>当前选中的产品</b>里召回哪些原文片段——只读探查，不影响实际生成。按词面匹配，关键词尽量贴近资料原文。</div>
+      <div class="row">
+        <input type="text" id="peekInput" name="peekQuery" aria-label="召回预览关键词" placeholder="输入关键词，预览知识库召回片段…" value="分诊规则">
+        <button class="btn-primary">预览</button>
+      </div>
+      <div class="peek-hit">
+        <div class="src">《智能导诊产品白皮书》</div>
+        <div class="txt">系统内置分诊规则引擎，支持按症状、科室、医生排班三维度联合匹配，规则库可由医院自行维护……</div>
+      </div>
+    </div>
+
+    <!-- 资料缺失条（仅正文态显示） -->
+    <div class="gapsbar" id="gapsBar">
+      <button class="gaps-head" id="gapsHead">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        <b>资料缺失 2 处</b>
+        <span class="sub">— 知识库没查到、AI 未编造，待补料</span>
+        <span class="toggle" id="gapsToggle">展开</span>
+      </button>
+      <div class="gaps-list">
+        <div class="gap-item">
+          <div style="min-width:0;flex:1">
+            <div class="where">二、系统功能架构</div>
+            <div class="what">预问诊系统与 HIS 的对接接口规格（协议、字段映射）在知识库中未找到</div>
+          </div>
+          <button class="fill-btn">补充资料</button>
+        </div>
+        <div class="gap-item">
+          <div style="min-width:0;flex:1">
+            <div class="where">三、系统功能</div>
+            <div class="what">导诊系统支持的科室数量与已上线医院案例清单缺少资料来源</div>
+          </div>
+          <button class="fill-btn">补充资料</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 文档区 -->
+    <div class="doc">
+
+      <!-- 空状态 -->
+      <section class="st-empty">
+        <div class="empty-inner">
+          <div class="paper-illo">
+            <div class="sheet b1"></div>
+            <div class="sheet b2"></div>
+            <div class="sheet top">
+              <div class="cover-band"></div>
+              <div class="ln w60"></div>
+              <div class="ln w85"></div>
+              <div class="ln w40"></div>
+            </div>
+          </div>
+          <h2>从封面开始你的方案</h2>
+          <p class="lede">在左侧对话里说明客户与需求，AI 会检索知识库，<br>按三个阶段逐步生成完整方案，每一步都由你确认。</p>
+          <div class="journey">
+            <div class="j-card now">
+              <div class="j-step">第 1 步</div>
+              <div class="j-name">封面</div>
+              <div class="j-desc">项目名称、客户与日期</div>
+            </div>
+            <div class="j-card">
+              <div class="j-step">第 2 步</div>
+              <div class="j-name">目录</div>
+              <div class="j-desc">章节大纲，确认后动笔</div>
+            </div>
+            <div class="j-card">
+              <div class="j-step">第 3 步</div>
+              <div class="j-name">正文</div>
+              <div class="j-desc">逐章撰写，可随时修订</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 撰写中 -->
+      <section class="st-writing">
+        <div class="sheet-wrap">
+          <div class="paper-doc">
+            <div class="cover-title">智慧导诊与预问诊系统<br>建设方案<span class="caret"></span></div>
+            <div class="cover-sub">××医院 · 信息化建设项目</div>
+            <div class="skl w50" style="margin:0 auto 40px"></div>
+            <div class="skl w90"></div>
+            <div class="skl w82"></div>
+            <div class="skl w75"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 目录待确认 -->
+      <section class="st-toc">
+        <div class="sheet-wrap">
+          <div class="paper-doc">
+            <div class="toc-title">目录</div>
+            <ol class="toc-list">
+              <li>系统概述<span class="sub-items">建设背景 · 目标</span></li>
+              <li>系统功能架构<span class="sub-items">总体架构 · 关键技术</span></li>
+              <li>系统功能<span class="sub-items">导诊 · 预问诊 逐项</span></li>
+              <li>实施与保障<span class="sub-items">计划 · 培训 · 运维</span></li>
+            </ol>
+          </div>
+        </div>
+        <div class="wait-confirm">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          <span>目录已生成——请在<b>左侧对话</b>中确认目录，确认后 AI 才会开始撰写正文。</span>
+        </div>
+      </section>
+
+      <!-- 正文 -->
+      <section class="st-content">
+        <div class="sheet-wrap">
+          <div class="paper-doc">
+            <div class="sec">
+              <div class="sec-tools">
+                <button title="编辑本节"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+                <button title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+                <button title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+                <button class="danger" title="删除本节"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+              </div>
+              <h2>一、系统概述</h2>
+              <p>智慧导诊与预问诊系统面向医院门诊全流程，覆盖患者「来院前—院中—诊前」三个环节。导诊系统通过智能问答帮助患者快速定位科室与医生；预问诊系统在候诊阶段完成病史采集，生成结构化预问诊报告推送给接诊医生，缩短单次接诊时间。</p>
+              <p>本方案依据贵院信息化建设规划，结合两个产品的知识库资料编制，功能描述均以产品白皮书与实施手册为准，未经证实的内容不作展开。</p>
+            </div>
+            <div class="sec">
+              <div class="sec-tools">
+                <button title="编辑本节"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+                <button title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+                <button title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+                <button class="danger" title="删除本节"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+              </div>
+              <h2>二、系统功能架构</h2>
+              <h3>2.1 总体架构</h3>
+              <p>系统采用前后端分离的微服务架构，前端覆盖微信公众号、小程序与院内自助机三类入口，后端由分诊规则引擎、医学知识图谱服务与报告生成服务组成，统一经院内集成平台与 HIS、排班系统对接。</p>
+              <div class="gap-inline">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                <span>资料缺失：预问诊系统与 HIS 的对接接口规格（协议、字段映射）在知识库中未找到</span>
+                <button class="fill-link">补充资料</button>
+              </div>
+              <h3>2.2 关键技术</h3>
+              <ul>
+                <li>医学知识图谱驱动的多轮问诊对话，症状—科室映射可由医院自行维护；</li>
+                <li>分诊规则引擎支持症状、科室、排班三维联合匹配；</li>
+                <li>结构化报告生成，预问诊结果按病历书写规范输出主诉与现病史。</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 预览（A4 分页） -->
+      <section class="st-preview">
+        <div class="a4 a4-cover">
+          <div class="doc-class">建设方案</div>
+          <h2>智慧导诊与预问诊系统<br>建设方案</h2>
+          <div class="band"></div>
+          <div class="meta">××医院<br>二〇二六年七月</div>
+          <div class="pageno">— 1 —</div>
+        </div>
+        <div class="a4 a4-body">
+          <h3>一、系统概述</h3>
+          <p>智慧导诊与预问诊系统面向医院门诊全流程，覆盖患者「来院前—院中—诊前」三个环节。导诊系统通过智能问答帮助患者快速定位科室与医生；预问诊系统在候诊阶段完成病史采集，生成结构化预问诊报告推送给接诊医生，缩短单次接诊时间。</p>
+          <p>本方案依据贵院信息化建设规划，结合两个产品的知识库资料编制，功能描述均以产品白皮书与实施手册为准，未经证实的内容不作展开。</p>
+          <div class="h4">二、系统功能架构</div>
+          <p>系统采用前后端分离的微服务架构，前端覆盖微信公众号、小程序与院内自助机三类入口，后端由分诊规则引擎、医学知识图谱服务与报告生成服务组成，统一经院内集成平台与 HIS、排班系统对接。</p>
+          <div class="pageno">— 2 —</div>
+        </div>
+      </section>
+
+      <!-- 预览空态 -->
+      <section class="st-preview-empty">
+        <div class="box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/></svg>
+          <p>草稿为空，暂无可预览内容<br>切回「编辑」，在左侧对话中开始生成</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- 底部状态栏 -->
+    <footer class="statusbar">
+      <span class="save-state" id="saveState" style="display:none"><span class="sdot"></span>已自动保存 · 刚刚</span>
+      <span class="doc-stats" id="docStats" style="display:none"><span id="statSecs">2 节</span><span id="statChars">共 486 字</span></span>
+      <span class="spacer"></span>
+      <span class="true-preview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        真预览 · 与导出的 Word 逐像素一致
+      </span>
+    </footer>
+  </main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+
+<!-- Tweaks -->
+<button class="tweaks-fab" id="tweaksFab" aria-label="打开 Tweaks 面板">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>
+</button>
+<div class="tweaks" id="tweaksPanel">
+  <h3>Tweaks</h3>
+  <div class="tw-field">
+    <label>文档状态</label>
+    <div class="tw-seg" data-tw="state">
+      <button data-v="empty" class="on">空</button>
+      <button data-v="writing">撰写中</button>
+      <button data-v="toc">目录</button>
+      <button data-v="content">正文</button>
+    </div>
+  </div>
+  <div class="tw-field">
+    <label>阶段条样式</label>
+    <div class="tw-seg" data-tw="stepper">
+      <button data-v="nodes" class="on">节点</button>
+      <button data-v="pills">分段</button>
+      <button data-v="text">极简</button>
+    </div>
+  </div>
+  <div class="tw-field">
+    <label>主题</label>
+    <div class="tw-seg" data-tw="theme">
+      <button data-v="light" class="on">浅色</button>
+      <button data-v="dark">深色</button>
+    </div>
+  </div>
+  <div class="tw-field">
+    <label>主题色（accent 随用户可调）</label>
+    <div class="tw-swatches" data-tw="accent">
+      <button class="tw-swatch on" data-v="blue" style="background:#0071e3" aria-label="Apple 蓝"></button>
+      <button class="tw-swatch" data-v="orange" style="background:#e8833a" aria-label="橙（截图现状）"></button>
+      <button class="tw-swatch" data-v="green" style="background:#16a34a" aria-label="品牌绿"></button>
+    </div>
+  </div>
+  <div class="tw-field">
+    <label>左侧聊天区示意</label>
+    <div class="tw-seg" data-tw="chatmock">
+      <button data-v="on" class="on">显示</button>
+      <button data-v="off">隐藏</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const panel = document.getElementById('panel');
+const frame = document.getElementById('frame');
+const badge = document.getElementById('statusBadge');
+const badgeText = document.getElementById('statusText');
+const saveState = document.getElementById('saveState');
+const docStats = document.getElementById('docStats');
+const gapsBar = document.getElementById('gapsBar');
+const chipZone = document.getElementById('chipZone');
+const chipEmpty = document.getElementById('chipEmpty');
+
+/* ---------- 状态机：文档状态 → 阶段/badge/状态栏联动 ---------- */
+const STATES = {
+  empty:   { phase: 'cover',   badge: ['等待开始', ''],        save: false, stats: false, gaps: false },
+  writing: { phase: 'cover',   badge: ['封面撰写中', 'live'],   save: true,  stats: false, gaps: false },
+  toc:     { phase: 'toc',     badge: ['目录待确认', 'wait'],   save: true,  stats: false, gaps: false },
+  content: { phase: 'content', badge: ['正文撰写中', 'live'],   save: true,  stats: true,  gaps: true },
+};
+const PHASE_ORDER = ['cover', 'toc', 'content'];
+
+function applyState(name) {
+  const s = STATES[name];
+  panel.dataset.state = name;
+  // badge
+  badgeText.textContent = s.badge[0];
+  badge.className = 'status-badge' + (s.badge[1] ? ' ' + s.badge[1] : '');
+  // 底部状态栏
+  saveState.style.display = s.save ? '' : 'none';
+  docStats.style.display = s.stats ? '' : 'none';
+  // 资料缺失条
+  gapsBar.classList.toggle('show', s.gaps);
+  // 阶段条（三个变体一起同步）
+  const idx = PHASE_ORDER.indexOf(s.phase);
+  document.querySelectorAll('#stNodes .step').forEach((el) => {
+    const i = PHASE_ORDER.indexOf(el.dataset.k);
+    el.classList.toggle('done', i < idx);
+    el.classList.toggle('now', i === idx);
+    const node = el.querySelector('.node');
+    node.innerHTML = i < idx
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>'
+      : String(i + 1);
+  });
+  document.querySelectorAll('#stNodes .conn').forEach((c) => {
+    c.classList.toggle('fill', Number(c.dataset.c) <= idx);
+  });
+  document.querySelectorAll('#stPills .spill').forEach((el) => {
+    const i = PHASE_ORDER.indexOf(el.dataset.k);
+    el.classList.toggle('done', i < idx);
+    el.classList.toggle('now', i === idx);
+  });
+  document.querySelectorAll('#stText .stx').forEach((el) => {
+    const i = PHASE_ORDER.indexOf(el.dataset.k);
+    el.classList.toggle('done', i < idx);
+    el.classList.toggle('now', i === idx);
+  });
+}
+
+/* ---------- 编辑 / 预览 segmented ---------- */
+const seg = document.getElementById('segmented');
+const btnEdit = document.getElementById('btnEdit');
+const btnPreview = document.getElementById('btnPreview');
+function setMode(m) {
+  panel.dataset.mode = m;
+  seg.dataset.mode = m;
+  btnEdit.classList.toggle('on', m === 'edit');
+  btnPreview.classList.toggle('on', m === 'preview');
+  btnEdit.setAttribute('aria-selected', m === 'edit');
+  btnPreview.setAttribute('aria-selected', m === 'preview');
+}
+btnEdit.addEventListener('click', () => setMode('edit'));
+btnPreview.addEventListener('click', () => setMode('preview'));
+
+/* ---------- 导出菜单 ---------- */
+const exportMenu = document.getElementById('exportMenu');
+const scrim = document.getElementById('scrim');
+document.getElementById('btnExport').addEventListener('click', () => {
+  exportMenu.classList.toggle('open');
+  scrim.classList.toggle('open', exportMenu.classList.contains('open'));
+});
+scrim.addEventListener('click', () => {
+  exportMenu.classList.remove('open');
+  scrim.classList.remove('open');
+});
+exportMenu.querySelectorAll('.menu-item').forEach((b) =>
+  b.addEventListener('click', () => { exportMenu.classList.remove('open'); scrim.classList.remove('open'); })
+);
+
+/* ---------- 召回预览 / 资料缺失 展开 ---------- */
+const btnPeek = document.getElementById('btnPeek');
+const peekPanel = document.getElementById('peekPanel');
+btnPeek.addEventListener('click', () => {
+  peekPanel.classList.toggle('open');
+  btnPeek.classList.toggle('on', peekPanel.classList.contains('open'));
+});
+const gapsHead = document.getElementById('gapsHead');
+const gapsToggle = document.getElementById('gapsToggle');
+gapsHead.addEventListener('click', () => {
+  gapsBar.classList.toggle('expanded');
+  gapsToggle.textContent = gapsBar.classList.contains('expanded') ? '收起' : '展开';
+});
+
+/* ---------- chips 可删（演示） ---------- */
+chipZone.addEventListener('click', (e) => {
+  const x = e.target.closest('.x');
+  if (!x) return;
+  x.closest('.chip').remove();
+  if (!chipZone.querySelector('.chip')) chipEmpty.style.display = '';
+});
+
+/* ---------- 清空草稿（演示：回到空态） ---------- */
+document.getElementById('btnClear').addEventListener('click', () => {
+  applyState('empty');
+  setMode('edit');
+  syncTweaks('state', 'empty');
+});
+
+/* ---------- Tweaks ---------- */
+const tweaksPanel = document.getElementById('tweaksPanel');
+document.getElementById('tweaksFab').addEventListener('click', () => tweaksPanel.classList.toggle('open'));
+
+function syncTweaks(tw, v) {
+  document.querySelectorAll(`[data-tw="${tw}"] [data-v]`).forEach((b) =>
+    b.classList.toggle('on', b.dataset.v === v)
+  );
+}
+document.querySelectorAll('.tw-seg[data-tw], .tw-swatches[data-tw]').forEach((group) => {
+  group.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-v]');
+    if (!b) return;
+    const tw = group.dataset.tw, v = b.dataset.v;
+    syncTweaks(tw, v);
+    if (tw === 'state') applyState(v);
+    if (tw === 'stepper') panel.dataset.stepper = v;
+    if (tw === 'theme') document.documentElement.dataset.theme = v === 'dark' ? 'dark' : '';
+    if (tw === 'accent') document.documentElement.dataset.accent = v;
+    if (tw === 'chatmock') frame.dataset.chatmock = v;
+  });
+});
+
+/* 跟随系统主题作为初始值 */
+if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+  document.documentElement.dataset.theme = 'dark';
+  syncTweaks('theme', 'dark');
+}
+
+applyState('empty');
+setMode('edit');
+</script>
+</body>
+</html>

@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage, net, shell, type IpcM
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'node:path'
 import type { PermissionResponse, QueuedMessage } from '../../shared/types'
 import {
   IPC_CHANNELS,
@@ -61,6 +61,54 @@ import {
   type UpdaterState
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
+import {
+  PROPOSAL_IMAGE_API_KEY_MASK,
+  type ProposalExportPayload,
+  type ProposalExportResult,
+  type ProposalExportPdfPayload,
+  type ProposalExportPdfResult,
+  type ProposalRenderPayload,
+  type ProposalRenderResult,
+  type ProposalVerifyPayload,
+  type ProposalVerifyResult,
+  type ProposalDraftRecord,
+  type ProposalLoadDraftPayload,
+  type ProposalDeleteDraftPayload,
+  type ProposalSaveDraftResult,
+  type ProposalDeleteDraftResult,
+  type ProposalMetricLogResult,
+  type ProposalPeekRetrievalPayload,
+  type ProposalPeekRetrievalResult,
+  type KbSemanticSearchPayload,
+  type KbSemanticSearchResult,
+  type ProposalImageApiConfig,
+  type ProposalImageGeneratePayload,
+  type ProposalImageEditPayload,
+  type ProposalImageResult,
+  type ProposalImageUploadPayload
+} from '../../shared/ipc-channels'
+import { setKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote } from '../core/kbIndexStore'
+import { triggerKbSyncNow, lastKbSyncInfo, invalidateKbSyncBaseline } from '../core/kbSyncScheduler'
+import type { KbIndex } from '../../shared/kbIndex'
+import type { KbRemoteConfig } from '../../shared/kbConfig'
+import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
+import { exportProposalPdf } from '../core/proposalPdf'
+import { markdownToDocxBuffer } from '../core/proposalDocx'
+import { verifyCitations, collectUngroundedImagePaths } from '../core/proposalVerify'
+import { retrievePassages } from '../core/proposalRetrieve'
+import { buildProposalProductScopes } from '../core/proposalScopes'
+import { kbSemanticSearch, resetEmbedWorker } from '../core/kbSemanticSearch'
+import {
+  saveProposalDraft,
+  loadProposalDraft,
+  deleteProposalDraft
+} from '../core/proposalDraftStore'
+import { appendProposalMetric } from '../core/proposalMetricsStore'
+import { generateImage, editImage, sniffImageExt } from '../services/imageGenService'
+import { writeProposalImage } from '../services/proposalImageWriter'
+import { mimeForImagePath } from '../../shared/imageMime'
+import { EMBEDDABLE_IMAGE_EXTS, type ProposalMetricRecord } from '../../shared/proposal'
+import { readFile } from 'node:fs/promises'
 import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
 import { checkForUpdates, getUpdaterState, installUpdate } from '../services/appUpdater'
 import { DAEMON_PORT } from '../services/openDesignServices'
@@ -155,6 +203,20 @@ function resolveEngine(event: IpcMainInvokeEvent): ChatEngine {
 }
 
 /**
+ * 出图/改图产物落盘前按魔数定真实扩展名（评审发现：不传 ext 一律落 .png，url 兜底下载
+ * 的 jpeg/webp 字节会被错标——Chromium 预览嗅探能显示、Word 按扩展名解码直接裂图，
+ * 预览/导出静默分歧）。webp/未知格式 docx 本就无法嵌入（EMBEDDABLE_IMAGE_EXTS 有意排除），
+ * 在「先审后落地」之前报错让用户重试/换模型，胜过落盘后预览与导出各自降级的迷惑体验。
+ */
+function embeddableExtFor(bytes: Buffer): string {
+  const ext = sniffImageExt(bytes)
+  if (ext === null || ext === 'webp') {
+    throw new Error('出图 API 返回了无法嵌入 Word 的图片格式（webp/未知），请重试或更换模型')
+  }
+  return ext
+}
+
+/**
  * Recycle every open tab's live runtimes so the next turn re-spawns
  * under the freshly-saved `cliBackend`. Shared by BOTH backend-set
  * paths:
@@ -222,6 +284,27 @@ export function registerIpcHandlers(): void {
   // Remove any stale handlers from previous dev reloads to avoid
   // "Attempted to register a second handler" errors.
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_SEND)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_PATH_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_PATH_SET)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_INDEX_READ)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_REMOTE_SET)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_SYNC_NOW)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_ROOT_PICK)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_SEMANTIC_SEARCH)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT_PDF)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_RENDER)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_SAVE_DRAFT)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_LOAD_DRAFT)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_DELETE_DRAFT)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_VERIFY)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_METRIC_LOG)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_PEEK_RETRIEVAL)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_SET)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_GENERATE)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_EDIT)
+  ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_UPLOAD)
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_ABORT)
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_QUEUE_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_QUEUE_REMOVE)
@@ -297,7 +380,18 @@ export function registerIpcHandlers(): void {
       validateText(payload?.text)
       const images = validateImages(payload?.images)
       const engine = resolveEngine(event)
-      return await engine.send(payload.sessionId, payload.text, images)
+      // proposalMode is a plain boolean flag; coerce defensively so a
+      // malformed renderer payload can't smuggle a non-bool through.
+      return await engine.send(
+        payload.sessionId,
+        payload.text,
+        images,
+        payload?.proposalMode === true,
+        // 防御：只接受数组形状，过滤畸形 renderer payload。
+        Array.isArray(payload?.proposalProducts) ? payload.proposalProducts : undefined,
+        // 内容级召回开关：仅非封面回合为真，engine 据此对镜像原文做混合召回注入。
+        payload?.proposalRetrieve === true
+      )
     }
   )
 
@@ -1492,6 +1586,366 @@ export function registerIpcHandlers(): void {
           ? { path: info.path, version: info.version ?? null }
           : null
       }
+    }
+  )
+
+  // ── Knowledge-base path configuration and index reading ─────────────
+  //
+  // Engine-free: these handlers touch only the app-global userData
+  // directory, not any per-tab ChatEngine. The KB root path is written
+  // to `userData/kb-config.json` by KB_PATH_SET and re-read by
+  // KB_PATH_GET alongside the fixed `outDir` so the renderer can
+  // populate its settings UI in a single round-trip. KB_INDEX_READ
+  // loads the Phase-A build output from `outDir/index.json` and
+  // returns null when it doesn't exist yet — the renderer treats null
+  // as "not ready" and shows the build CTA.
+  ipcMain.handle(
+    IPC_CHANNELS.KB_PATH_GET,
+    async (): Promise<{
+      kbRoot: string | null
+      outDir: string
+      remote: KbRemoteConfig | null
+      lastSync: { atMs: number; builtAtMs: number } | null
+    }> => {
+      const cfg = getKbConfig()
+      return { kbRoot: cfg.kbRoot, outDir: kbOutDir(), remote: cfg.remote, lastSync: lastKbSyncInfo() }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.KB_PATH_SET,
+    async (_e, kbRoot: string): Promise<void> => {
+      setKbRoot(kbRoot)
+      // 重选本地根 = 本地构建在即，磁盘很快会在同步引擎之外被改写；旧同步基准
+      // 不再可信，作废让下一轮远程同步退回磁盘对账（见 invalidateKbSyncBaseline 注释）。
+      invalidateKbSyncBaseline()
+      // 旧 worker 端着旧内存表，不会自愈——kill 触发 exit 三态复位，下次搜索 fork 新进程
+      // 用新 fingerprint 重校验（见 resetEmbedWorker 注释）。
+      resetEmbedWorker()
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.KB_REMOTE_SET, async (_e, remote: KbRemoteConfig | null): Promise<void> => {
+    // 入参防御：renderer 被攻破时 main 是最后防线，形状不对宁可丢弃。
+    if (remote !== null && (typeof remote?.baseUrl !== 'string' || typeof remote?.kbId !== 'string')) return
+    setKbRemote(remote)
+    if (remote) {
+      // 写入即触发：用户填完 URL 不该还要再点一次同步（spec ④）。
+      triggerKbSyncNow()
+    } else {
+      // 切回本地模式：用户接下来大概率会跑本地构建改写 kb-index/，同步引擎不再
+      // 是磁盘唯一写方，旧基准的「磁盘=上次同步」断言失效——作废它（见
+      // invalidateKbSyncBaseline 注释），逼下一轮远程同步做一次磁盘对账。
+      invalidateKbSyncBaseline()
+      // 旧 worker 端着旧内存表，不会自愈——kill 触发 exit 三态复位，下次搜索 fork 新进程
+      // 用新 fingerprint 重校验（见 resetEmbedWorker 注释）。
+      resetEmbedWorker()
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_SYNC_NOW, async (): Promise<'started' | 'alreadyRunning' | 'noRemote'> =>
+    triggerKbSyncNow()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.KB_ROOT_PICK, async (event): Promise<{ path: string | null }> => {
+    // 不能复用 WORKSPACE_PICK：那条要 resolveEngine（per-tab），设置 overlay 没有 engine。
+    const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { path: null }
+    const result = await dialog.showOpenDialog(win, {
+      title: '选择知识库目录',
+      properties: ['openDirectory']
+    })
+    return { path: result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]! }
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.KB_INDEX_READ,
+    async (): Promise<KbIndex | null> => readKbIndex()
+  )
+
+  // ── Proposal document export ─────────────────────────────────────────
+  //
+  // Engine-free: the renderer ships the full markdown string, main pops
+  // the OS native save dialog anchored to the sender's BrowserWindow
+  // (modal on macOS), writes the file via proposalExport.ts, and returns
+  // the path. `{ path: null }` signals user cancellation. The format
+  // field is a closed union (`'md'` | `'docx'`). Extending to a new format
+  // is driven entirely from proposalExport.ts: add a FORMAT_META key (dialog
+  // filters/defaultPath + this IPC guard's whitelist both derive from it) and
+  // a write-switch case (its `never` default flags the omission). This IPC
+  // guard auto-follows, so nothing here needs touching.
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_EXPORT,
+    async (event, payload: ProposalExportPayload): Promise<ProposalExportResult> => {
+      const markdown =
+        typeof payload?.markdown === 'string' ? payload.markdown : ''
+      // 校验 format 落在已支持联合内，挡掉意外值流入写路径。白名单由 FORMAT_META
+      // 派生（单一真相源，见 proposalExport.ts），加新格式时无需同步改这里。
+      const format = payload?.format
+      if (!isProposalExportFormat(format)) {
+        return { path: null }
+      }
+      // Runtime guard: BrowserWindow may be null if the window was closed
+      // between IPC message send and handler execution.
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { path: null }
+      // style 是纯数据（字体/字号/缩进…），仅 docx 用得到；undefined 时 markdownToDocxBuffer
+      // 回退默认模板（经典正式）。
+      return exportProposal(win, markdown, format, payload?.style, payload?.mermaidImages)
+    }
+  )
+
+  // 导出 PDF（P2-2）：renderer 已用 docx-preview 把 docx 渲成自包含 HTML，这里弹保存框 +
+  // 隐藏窗口 printToPDF 落盘。html 非串 → 视为非法、返回取消语义（不抛，导出反馈走「已取消」）。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_EXPORT_PDF,
+    async (event, payload: ProposalExportPdfPayload): Promise<ProposalExportPdfResult> => {
+      const html = typeof payload?.html === 'string' ? payload.html : ''
+      if (!html) return { path: null }
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { path: null }
+      const defaultPath = typeof payload?.defaultPath === 'string' ? payload.defaultPath : undefined
+      return exportProposalPdf(win, html, defaultPath)
+    }
+  )
+
+  // 预览专用：复用与「导出 Word」完全相同的引擎（markdownToDocxBuffer），
+  // 保证 docx-preview 渲染出的分页 = 导出成品逐像素一致。不弹保存框、不落盘——
+  // 只把 .docx 字节回给渲染层喂给 docx-preview。生成异常直接抛出（reject），
+  // 渲染层 try/catch 后显示错误态，而不是静默吞掉。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_RENDER,
+    async (_event, payload: ProposalRenderPayload): Promise<ProposalRenderResult> => {
+      const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
+      // 预览也过同一接地闸门（与导出共用 collectUngroundedImagePaths）：未接地图在 docx 预览里
+      // 同样降级为占位，保证「预览=导出一致」——绝不出现预览有图、成品 Word 没图（评审 AL3）。
+      const ungrounded = collectUngroundedImagePaths(markdown)
+      const bytes = await markdownToDocxBuffer(markdown, payload?.style, ungrounded, payload?.mermaidImages)
+      return { bytes }
+    }
+  )
+
+  // 「召回预览」（方案三·只读）：给定关键词 + 产品集 → 知识库 top 召回片段。与生成时的内容级
+  // 召回共用 buildProposalProductScopes + retrievePassages，但【只读、不注入提示词、不写盘】。
+  // 全程防御式：空 query / 无产品 / 索引不可用 / 任意异常 → 空数组，绝不 reject（叠加信号）。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_PEEK_RETRIEVAL,
+    async (_event, payload: ProposalPeekRetrievalPayload): Promise<ProposalPeekRetrievalResult> => {
+      try {
+        const query = typeof payload?.query === 'string' ? payload.query : ''
+        const products = Array.isArray(payload?.products) ? payload.products : []
+        if (!query.trim() || products.length === 0) return { passages: [], scannedFiles: 0 }
+        const scopes = buildProposalProductScopes(products)
+        // 诊断：当前产品集在索引里匹配到的资料文件总数。0 = 产品/索引对不上（没料可搜）。
+        const scannedFiles = scopes.reduce((n, s) => n + s.files.length, 0)
+        const passages = retrievePassages(query, scopes, { topK: 8 })
+        return {
+          passages: passages.map((p) => ({ title: p.title, text: p.text, score: p.score })),
+          scannedFiles
+        }
+      } catch {
+        return { passages: [], scannedFiles: 0 }
+      }
+    }
+  )
+
+  // 语义搜索面板（Task 8）：混合(向量+BM25)检索，复用已有的 kbSemanticSearch 包装。
+  // kbSemanticSearch 内部全防御——模型缺失/超时/stale 均降级 BM25，绝不 reject。
+  // 空 query 在 handler 层短路，避免向 kbSemanticSearch 传空串触发无意义 BM25 扫全库。
+  ipcMain.handle(
+    IPC_CHANNELS.KB_SEMANTIC_SEARCH,
+    async (_event, p: KbSemanticSearchPayload): Promise<KbSemanticSearchResult> => {
+      try {
+        const query = typeof p?.query === 'string' ? p.query.trim() : ''
+        const products = Array.isArray(p?.products) ? p.products : []
+        // 空 query 短路与异常兜底都不是「BM25 顶替语义」——hits 本身为空，degraded=false。
+        if (!query) return { hits: [], staleIndex: false, degraded: false }
+        const scopes = buildProposalProductScopes(products)
+        return kbSemanticSearch(query, scopes, 12)
+      } catch {
+        return { hits: [], staleIndex: false, degraded: false }
+      }
+    }
+  )
+
+  // 引用落地校验（#1）：核对一节正文的 `（据《X》）` 是否真出自镜像原文。verifyCitations
+  // 内部全程防御式（索引缺失/读失败/异常 → degraded），这里再兜一道 catch 保证绝不 reject——
+  // 校验是叠加信号，任何失败都只降级为「未校验」，绝不阻塞正文生成或导出。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_VERIFY,
+    async (_event, payload: ProposalVerifyPayload): Promise<ProposalVerifyResult> => {
+      const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
+      try {
+        return verifyCitations(markdown)
+      } catch (err) {
+        console.warn('[ipc] verifyProposalCitations failed:', err)
+        return { verdicts: [], citedFileCount: 0, degraded: true }
+      }
+    }
+  )
+
+  // 草稿持久化三件套。全部防御式：非法载荷直接 ok:false/null，I/O 异常 catch 后同样
+  // 降级返回——持久化是尽力而为，绝不让 reject 阻塞渲染层的会话切换。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_SAVE_DRAFT,
+    async (_event, record: ProposalDraftRecord): Promise<ProposalSaveDraftResult> => {
+      if (
+        !record ||
+        record.version !== 1 ||
+        typeof record.sessionId !== 'string' ||
+        !record.sessionId ||
+        !Array.isArray(record.sections)
+      ) {
+        return { ok: false }
+      }
+      try {
+        await saveProposalDraft(record)
+        return { ok: true }
+      } catch (err) {
+        console.warn('[ipc] saveProposalDraft failed:', err)
+        return { ok: false }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_LOAD_DRAFT,
+    async (_event, payload: ProposalLoadDraftPayload): Promise<ProposalDraftRecord | null> => {
+      const sid = payload?.sessionId
+      if (typeof sid !== 'string' || !sid) return null
+      // 与 save/delete 一致：handler 层兜一道 catch。loadProposalDraft 内部已对
+      // readFile/JSON.parse 防御，但 existsSync/draftPath 在内部 try 之外——OS 级异常
+      // 逃逸会让本 handler reject，违反「绝不阻塞会话切换」契约。降级返回 null。
+      try {
+        return await loadProposalDraft(sid)
+      } catch (err) {
+        console.warn('[ipc] loadProposalDraft failed:', err)
+        return null
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_DELETE_DRAFT,
+    async (_event, payload: ProposalDeleteDraftPayload): Promise<ProposalDeleteDraftResult> => {
+      const sid = payload?.sessionId
+      if (typeof sid !== 'string' || !sid) return { ok: false }
+      try {
+        await deleteProposalDraft(sid)
+        return { ok: true }
+      } catch (err) {
+        console.warn('[ipc] deleteProposalDraft failed:', err)
+        return { ok: false }
+      }
+    }
+  )
+
+  // M-0 埋点（backlog 度量层）：每次导出成功后落一条聚合记录到 userData/proposal-metrics/。
+  // 防御式：非法载荷直接 ok:false，append 失败 catch 后降级——埋点是旁路信号，绝不阻塞导出。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_METRIC_LOG,
+    async (_event, record: ProposalMetricRecord): Promise<ProposalMetricLogResult> => {
+      if (!record || record.version !== 1 || typeof record.sessionId !== 'string') {
+        return { ok: false }
+      }
+      try {
+        await appendProposalMetric(record)
+        return { ok: true }
+      } catch (err) {
+        console.warn('[ipc] logProposalMetric failed:', err)
+        return { ok: false }
+      }
+    }
+  )
+
+  // ── 出图/改图/设置读写（编辑器内 P 图）───────────────────────────────────
+  //
+  // 出图 API 凭据脱敏占位符。GET 用它替换明文 key 回给渲染进程（渲染进程内存/devtools
+  // 都是比 main 进程更大的泄漏面）；SET 收到这个占位符时代表用户没重新输入 key，只改了
+  // baseURL/model，需与现存 key 合并而非覆盖——见下面 SETTINGS_SET handler。
+  // 定义收口在 shared（评审发现：曾是 renderer/main 两份独立字面量，任一侧改动即静默毁 key）。
+  const IMAGE_API_KEY_MASK = PROPOSAL_IMAGE_API_KEY_MASK
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_GET,
+    async (): Promise<ProposalImageApiConfig | null> => {
+      const cfg = getAppSettings().imageApi
+      if (!cfg) return null
+      return { apiKey: cfg.apiKey ? IMAGE_API_KEY_MASK : '', baseURL: cfg.baseURL, model: cfg.model }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_IMAGE_SETTINGS_SET,
+    async (_event, cfg: ProposalImageApiConfig): Promise<void> => {
+      if (!cfg || typeof cfg !== 'object') return
+      const cur = getAppSettings().imageApi
+      const apiKey = cfg.apiKey === IMAGE_API_KEY_MASK ? (cur?.apiKey ?? '') : (cfg.apiKey ?? '')
+      const merged: ProposalImageApiConfig = {
+        apiKey,
+        baseURL: typeof cfg.baseURL === 'string' ? cfg.baseURL : (cur?.baseURL ?? ''),
+        model: typeof cfg.model === 'string' && cfg.model ? cfg.model : (cur?.model ?? 'gpt-image-2')
+      }
+      updateAppSettings({ imageApi: merged })
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_IMAGE_GENERATE,
+    async (_event, args: ProposalImageGeneratePayload): Promise<ProposalImageResult> => {
+      const sessionId = typeof args?.sessionId === 'string' ? args.sessionId : ''
+      const prompt = typeof args?.prompt === 'string' ? args.prompt : ''
+      if (!sessionId || !prompt) throw new Error('缺少会话 id 或提示词')
+      const cfg = getAppSettings().imageApi
+      if (!cfg?.apiKey) throw new Error('未配置出图 API，请到设置里填写 key 与地址')
+      const bytes = await generateImage(cfg, { prompt })
+      const path = await writeProposalImage(sessionId, 'generated', bytes, embeddableExtFor(bytes))
+      return { path }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_IMAGE_EDIT,
+    async (_event, args: ProposalImageEditPayload): Promise<ProposalImageResult> => {
+      const sessionId = typeof args?.sessionId === 'string' ? args.sessionId : ''
+      const sourcePath = typeof args?.sourcePath === 'string' ? args.sourcePath : ''
+      const prompt = typeof args?.prompt === 'string' ? args.prompt : ''
+      if (!sessionId || !sourcePath || !prompt) throw new Error('缺少会话 id / 原图路径 / 提示词')
+      const cfg = getAppSettings().imageApi
+      if (!cfg?.apiKey) throw new Error('未配置出图 API，请到设置里填写 key 与地址')
+      const sourceBytes = await readFile(sourcePath)
+      const bytes = await editImage(cfg, { prompt, sourceBytes, sourceMime: mimeForImagePath(sourcePath) })
+      const path = await writeProposalImage(sessionId, 'edited', bytes, embeddableExtFor(bytes))
+      return { path }
+    }
+  )
+
+  // 上传本地图：与 GENERATE/EDIT 不同，不调出图 API（不受未配置 apiKey 限制），只是「选文件→
+  // 落盘到草稿资产目录」。用原生文件选择框而非 <input type=file>——renderer 侧拿不到选中文件
+  // 的绝对磁盘路径（浏览器安全模型），必须走 main 侧 dialog 才能后续 readFile。锚定 sender 所在
+  // 的 BrowserWindow，同 WORKSPACE_PICK 的 resolveBrowserWindow 用法。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_IMAGE_UPLOAD,
+    async (event, args: ProposalImageUploadPayload): Promise<ProposalImageResult | null> => {
+      const sessionId = typeof args?.sessionId === 'string' ? args.sessionId : ''
+      if (!sessionId) throw new Error('缺少会话 id')
+      const window = resolveBrowserWindow(event)
+      // 扩展名列表从 EMBEDDABLE_IMAGE_EXTS 派生而非手写——曾手写含 webp，用户选了 webp
+      // 落盘插入后预览/导出双双降级成文字占位符、且无 <img> 节点连删除都点不到（评审发现）。
+      // docx 嵌不了的格式就不该让用户选进来，单一事实源杜绝再漂移。
+      const result = await dialog.showOpenDialog(window, {
+        title: '选择要插入的图片',
+        properties: ['openFile'],
+        filters: [{ name: 'Images', extensions: EMBEDDABLE_IMAGE_EXTS.map((e) => e.slice(1)) }]
+      })
+      if (result.canceled || result.filePaths.length === 0) return null
+      const filePath = result.filePaths[0]!
+      const bytes = await readFile(filePath)
+      // ext 取自选中文件本身的扩展名（去掉前导点、小写），落盘文件名与源文件格式一致；
+      // 用户不可能选出没有扩展名的图片（filters 已限定），但防御性兜底成 'png'。
+      const ext = extname(filePath).slice(1).toLowerCase() || 'png'
+      const path = await writeProposalImage(sessionId, 'uploaded', bytes, ext)
+      return { path }
     }
   )
 

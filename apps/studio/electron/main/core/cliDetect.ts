@@ -155,50 +155,11 @@ export function resolveSystemClaudeJsEntry(cliPath: string): string {
   return cliPath
 }
 
-/**
- * Resolve the repo-root `skills/` directory, packaged as a local fusion-code
- * plugin (it carries `skills/.claude-plugin/plugin.json` with `"skills":
- * "./"`, so every immediate `skills/<name>/SKILL.md` subdir registers as the
- * plugin skill `claude-desktop:<name>`). The engine feeds the returned path
- * into the SDK `query()` `plugins` option so these skills become `/`-triggerable
- * in the chat tab — distinct from the daemon's own `/api/skills` surface, which
- * reads the same directory but over HTTP for the Settings → Skills panel.
- *
- * dev/prod split mirrors resolveBundledCliPath():
- *   - prod (packaged .app): electron-builder's extraResources copies the repo
- *     `skills/` into `<resourcesPath>/prebundled/skills` (see
- *     prebundle-daemon.mjs RESOURCE_DIRS). resolveRepoRoot() in
- *     openDesignServices.ts lands daemon PROJECT_ROOT on that same prebundled
- *     root, so the two consumers stay in lockstep.
- *   - dev: walk up from this bundle (apps/studio/out-electron/main) / cwd to the repo
- *     root and use its live `skills/`.
- *
- * Returns null when no `skills/` dir is found (the plugins option is then
- * simply omitted — the SDK wires no extra plugin, never an error). The
- * `FUSION_CODE_SKILLS_DIR` env overrides everything for diagnostics.
- */
-export function resolveBundledSkillsPluginDir(): string | null {
-  const envOverride = process.env.FUSION_CODE_SKILLS_DIR
-  if (envOverride) return existsSync(envOverride) ? envOverride : null
-
-  const selfDir = dirname(fileURLToPath(import.meta.url))
-  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
-    .resourcesPath
-  const candidates = [
-    ...(resourcesPath ? [resolve(resourcesPath, 'prebundled', 'skills')] : []),
-    resolve(process.cwd(), '../../skills'),
-    resolve(process.cwd(), '../../../skills'),
-    resolve(selfDir, '../../../skills'),
-    resolve(selfDir, '../../../../skills')
-  ]
-  for (const p of candidates) {
-    // Require the plugin manifest, not just the dir — a bare skills/ without
-    // `.claude-plugin/plugin.json` would make fusion-code's `--plugin` reject
-    // it, so only return a path that will actually load.
-    if (existsSync(join(p, '.claude-plugin', 'plugin.json'))) return p
-  }
-  return null
-}
+// resolveBundledSkillsPluginDir 本体已抽到 skillsDir.ts（electron-free）——
+// proposalPrompt.ts 运行期读 skills/proposal-writer 模板要用它，且其 bun test
+// 在无 electron 的进程里跑，依赖链上不允许出现本文件顶部的 electron import。
+// 这里 re-export 保住既有 import 路径（seedSkills/engine 等）。
+export { resolveBundledSkillsPluginDir } from './skillsDir'
 
 /**
  * Resolve the bundled standalone Python *home* directory (the dir holding
