@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { scanKb } from './kb-index/scan.ts'
 import { convertFile } from './kb-index/convert.ts'
+import { buildVectors } from './kb-index/embed.ts'
 import type { KbIndex, KbIndexFile } from '../apps/desktop/src/shared/kbIndex.ts'
 
 function arg(name: string, fallback?: string): string {
@@ -73,10 +74,12 @@ async function main(): Promise<void> {
     process.stdout.write(`\r转换 ${converted} 跳过 ${skipped} 失败 ${failed} / ${entries.length}`)
   }
 
-  const index: KbIndex = { version: 1, kbRoot, builtAtMs, files }
+  const index: KbIndex = { version: 2, kbRoot, builtAtMs, files }
   mkdirSync(outDir, { recursive: true })
   writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf8')
-  console.log(`\n完成：${files.length} 文件，失败 ${failed}。index.json → ${indexPath}`)
+  console.log(`\n转换完成：${files.length} 文件，失败 ${failed}。index.json → ${indexPath}`)
+  // 向量化（fingerprint 绑 builtAtMs，与 index 同源）。失败不吞——整库可重建。
+  await buildVectors(files, outDir, builtAtMs)
 }
 
 main().catch((e) => { console.error(e); process.exit(1) })
