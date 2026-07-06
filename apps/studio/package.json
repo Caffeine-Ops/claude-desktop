@@ -19,9 +19,9 @@
     "build:icons": "bash scripts/build-icons.sh",
     "prebundle:daemon": "bun scripts/prebundle-daemon.mjs",
     "verify:fusion": "bun scripts/verify-fusion-bin.mjs",
-    "build:mac": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && bun run prebundle:kb-model && bun run verify:kb-model && electron-vite build && electron-builder --mac --publish never",
-    "build:win": "bun run verify:fusion win && bun run build:icons && bun run prebundle:daemon && bun run prebundle:kb-model && bun run verify:kb-model && electron-vite build && electron-builder --win --publish never",
-    "build:linux": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && bun run prebundle:kb-model && bun run verify:kb-model && electron-vite build && electron-builder --linux --publish never",
+    "build:mac": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --mac --publish never",
+    "build:win": "bun run verify:fusion win && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --win --publish never",
+    "build:linux": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --linux --publish never",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "start": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
@@ -92,10 +92,6 @@
         {
           "from": "python-runtime/mac",
           "to": "python-runtime"
-        },
-        {
-          "from": "kb-model",
-          "to": "kb-model"
         }
       ],
       "files": [
@@ -128,10 +124,6 @@
         {
           "from": "python-runtime/win",
           "to": "python-runtime"
-        },
-        {
-          "from": "kb-model",
-          "to": "kb-model"
         }
       ],
       "files": [
@@ -153,12 +145,6 @@
       "files": [
         "!**/onnxruntime-node/bin/**/darwin/**",
         "!**/onnxruntime-node/bin/**/win32/**"
-      ],
-      "extraResources": [
-        {
-          "from": "kb-model",
-          "to": "kb-model"
-        }
       ]
     }
   },
