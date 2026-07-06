@@ -20,8 +20,14 @@
 //   Set NODE_TLS_REJECT_UNAUTHORIZED=0 as a last-resort escape hatch if the
 //   proxy's root CA isn't in the system store.
 //
-// Run via: bun scripts/prebundle-kb-model.mjs
-//   or:    node scripts/prebundle-kb-model.mjs
+// Run via: node scripts/prebundle-kb-model.mjs (package.json script pins `node`,
+//   not `bun` — bun's own resolve-cache layer intercepts this script's plain
+//   node:https request to huggingface.co and rewrites it into a malformed URL
+//   ("/api/resolve-cache/..." with the original URL re-encoded into its own
+//   query string), which throws ERR_INVALID_URL. Seen on CI with bun-version:
+//   latest; reproduce locally with a bun new enough to have the resolve-cache
+//   feature. `bun scripts/prebundle-kb-model.mjs` may or may not hit this
+//   depending on the installed bun version — `node` sidesteps it entirely.
 
 import { createWriteStream, existsSync, mkdirSync, statSync } from 'node:fs'
 import https from 'node:https'

@@ -17,10 +17,9 @@
 //      a. onnxruntime-node *.node native addon(s) for darwin-arm64
 //      b. kb-model/bge-small-zh-v1.5/onnx/model_quantized.onnx at correct size
 //
-// Usage:
-//   bun scripts/verify-kb-model.mjs
-//   bun scripts/verify-kb-model.mjs --asar dist/mac-arm64/Claude\ Desktop.app/Contents/Resources
-//   node scripts/verify-kb-model.mjs --asar /path/to/Resources
+// Usage (run via `node`, not `bun` — see prebundle-kb-model.mjs's header for why):
+//   node scripts/verify-kb-model.mjs
+//   node scripts/verify-kb-model.mjs --asar dist/mac-arm64/Claude\ Desktop.app/Contents/Resources
 
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
