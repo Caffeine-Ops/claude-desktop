@@ -637,11 +637,18 @@ function SessionRow({
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
+                {/* tabIndex=-1：这颗 ··· 是纯鼠标 affordance（hover 才显形）。
+                  * 让它进 Tab 序列的结果是键盘焦点落在一颗隐形按钮上、行尾
+                  * 凭空亮出一圈主题色 focus ring（2026-07-06 用户实锤），故
+                  * 移出 Tab 序列并去掉配套的 focus-visible:opacity-100。鼠标
+                  * 点击、菜单开合不受影响；无鼠标的行操作路径若将来要做，
+                  * 应是行级 roving focus + 菜单键，而非逐颗隐形钮参与 Tab。 */}
                 <Button
                   variant="ghost"
                   size="icon"
                   aria-label="会话操作"
-                  className="absolute right-1 top-1/2 size-6 -translate-y-1/2 text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                  tabIndex={-1}
+                  className="absolute right-1 top-1/2 size-6 -translate-y-1/2 text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
                 >
                   <MoreHorizontal className="size-3.5" />
                 </Button>

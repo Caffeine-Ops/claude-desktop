@@ -41,6 +41,7 @@ import type { ReactNode } from 'react'
 import { Button } from '@/src/components/ui/button'
 import { RailProjectList } from '@/src/components/RailProjectList'
 import { RailSessionList } from '@/src/components/RailSessionList'
+import { cn } from '@/src/lib/utils'
 import { Tabs, TabsList, TabsTrigger } from '@/src/components/ui/tabs'
 import {
   DropdownMenu,
@@ -90,7 +91,7 @@ function goChatShallow(): void {
  * 不随渲染重建。接入真实链路时逐项换掉对应 onSelect 即可。 */
 const noop = (): void => {}
 
-export function AppRail() {
+export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   const pathname = usePathname()
   // 折叠意图（跨 chat/canvas 共享，见 src/stores/rail.ts）。收起态下这个
   // 组件本体被 RailShell 复用为 hover 浮出的 overlay——所以顶部 toggle 的
@@ -159,8 +160,22 @@ export function AppRail() {
         * 原来是 nav 的 pt-12 padding——padding 不能标 app-region，改成
         * 实体条后这块「空白」真的能拖动窗口。收起/展开按钮叠在这条的
         * 右端：整条仍是 drag 区，按钮自身标 no-drag 才点得动（否则
-        * Electron 按 layout box 注册拖拽区，点击被窗口拖拽吞掉）。 */}
-      <div className="relative flex h-12 shrink-0 items-center justify-end [-webkit-app-region:drag]">
+        * Electron 按 layout box 注册拖拽区，点击被窗口拖拽吞掉）。
+        *
+        * ⚠️ overlay 形态（收起态 hover 浮出）**必须关掉 drag**：macOS 上
+        * drag 区是 non-client——真实鼠标一进这条，renderer 不再收 mousemove
+        * 且被合成一次 mouse-leave → RailShell overlay 的 onMouseLeave 立刻
+        * fire → peek=false → 面板当着用户的面缩回，顶部「展开钉住」按钮
+        * 永远点不到（2026-07-06 实锤，机制同「三图标点不动」那次）。而且
+        * app-region 矩形按 DOM 遍历顺序注册：外层容器标 no-drag 也会被这条
+        * 后遍历的 drag 重新填回，所以洞必须在这里挖，标 prop 不标 CSS 覆盖。
+        * 悬浮面板本就是移出即消失的瞬态 UI，拖窗口语义在此无意义。 */}
+      <div
+        className={cn(
+          'relative flex h-12 shrink-0 items-center justify-end',
+          overlay ? '[-webkit-app-region:no-drag]' : '[-webkit-app-region:drag]'
+        )}
+      >
         {/* 收起按钮与右侧内容卡标题栏（红绿灯 / 标题 / 收起态图标排）垂直
           * 对齐（2026-07-05 用户要求）。错位根因：rail 顶栏从视口 y=0 起、
           * items-center 让 32px 按钮中线落 y=24；而内容卡标题栏从 y=10

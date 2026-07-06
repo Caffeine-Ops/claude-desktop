@@ -64,6 +64,36 @@ export function RailShell() {
     }
   }, [collapsed])
 
+  // ── peek 翻转后强制重采集原生拖拽区（2026-07-06「hover 按钮周围面板仍
+  // 消失」二次实锤）──给 overlay 挂 no-drag 类只改了 CSS 层；Electron 的
+  // 原生 draggable region 缓存靠 DraggableRegionsChanged 事件刷新，而纯
+  // class 切换/transform 位移不可靠地触发不了它（SurfaceHost「切回 chat
+  // 顶栏拖不动」同根，Electron issue #20926 同类）。结果：overlay 滑入后
+  // 原生层还是滑入前的矩形集合——chat header 那条全宽 46px drag 依然罩着
+  // 面板顶部，鼠标一进那片就被当 non-client 合成 mouse-leave，面板自杀，
+  // 顶部按钮也点不动。修法复用 globals.css 的 .region-refresh 脉冲：等
+  // 滑入/滑回动画落定（200ms + 余量）后整片压 no-drag 一帧再放开，一缩
+  // 一放逼 Chromium 重发事件，重采集读到的就是 overlay 当前几何（挖洞
+  // 生效/恢复）。挂 body：规则是 .region-refresh 及其后代，body 覆盖全
+  // 文档，与 SurfaceHost 挂宿主根的用法互不冲突。
+  useEffect(() => {
+    if (!collapsed) return undefined
+    let raf = 0
+    const timer = window.setTimeout(() => {
+      document.body.classList.add('region-refresh')
+      // 读一次 layout 让「所有 drag 消失」这一拍真的被采集到。
+      void document.body.offsetHeight
+      raf = requestAnimationFrame(() => {
+        document.body.classList.remove('region-refresh')
+      })
+    }, 240)
+    return () => {
+      window.clearTimeout(timer)
+      cancelAnimationFrame(raf)
+      document.body.classList.remove('region-refresh')
+    }
+  }, [peek, collapsed])
+
   // 展开态：AppRail 原样占 flex 列，零额外包装（保持与加功能前一致的布局，
   // 避免多套一层 div 影响 w-61 shrink-0 的 flex 行为）。
   if (!collapsed) return <AppRail />
@@ -116,17 +146,57 @@ export function RailShell() {
         * 设置）。fixed 贴左，默认 -translate-x-full 藏在屏外，peek 时滑入。
         * 悬浮盖在内容上（高 z + 阴影），内容区不参与、不重排。移出整块
         * overlay（含热区/图标是 mouseenter 触发，这里是 mouseleave 收回）
-        * 即滑回。 */}
-      <div
-        className={cn(
-          'fixed left-0 top-0 z-40 h-full transition-transform duration-200 ease-out',
-          'bg-sidebar shadow-[0_8px_40px_rgba(0,0,0,0.18)]',
-          peek ? 'translate-x-0' : '-translate-x-full'
+        * 即滑回。
+        *
+        * ⚠️ 三件事缺一不可，否则「鼠标刚移进面板就缩回、顶部按钮点不到」
+        * （2026-07-06 实锤，机制同上方图标排的「三图标点不动」）：
+        *
+        * 1. **portal 到 body 末尾**：overlay 顶部 y≈10-56 与 chat header
+        *    （ThreadView，全宽 46px `-webkit-app-region: drag`）在屏幕上重叠。
+        *    drag/no-drag 矩形按 DOM 遍历顺序注册、后者覆盖前者——RailShell
+        *    在 body 首位，不 portal 则 overlay 的 no-drag 先注册、被 header
+        *    的 drag 整片盖回，白标。
+        * 2. **peek 时容器标 no-drag**：把 overlay 覆盖的整个矩形从原生拖拽
+        *    区里挖掉。真实鼠标落在 drag 区＝落在 non-client 区，renderer
+        *    收不到 mousemove 还会被合成 mouse-leave → onMouseLeave 误 fire →
+        *    peek=false → 面板消失。CDP/elementFromPoint 全测不出（不走原生
+        *    窗口层），只有真实鼠标复现。只在 peek 时标：藏在屏外时不占洞，
+        *    万一 region 收集不按 transform 后的位置算，也不会把收起态标题栏
+        *    左段的窗口拖拽误挖掉。
+        * 3. **AppRail 传 overlay**：关掉它自带的顶部 drag 净空条——那是子
+        *    节点、比本容器后遍历，不关会把刚挖的洞原地填回（no-drag 挖洞
+        *    只对「先注册的 drag」有效）。 */}
+      {mounted &&
+        createPortal(
+          <div
+            className={cn(
+              'fixed left-0 top-0 z-40 h-full transition-transform duration-200 ease-out',
+              'bg-sidebar shadow-[0_8px_40px_rgba(0,0,0,0.18)]',
+              peek
+                ? 'translate-x-0 [-webkit-app-region:no-drag]'
+                : '-translate-x-full'
+            )}
+            onMouseLeave={(e) => {
+              // 假 leave 免疫：区分「真离开」与「drag 区合成的 leave」。
+              // region-refresh 脉冲生效前有 ~240ms 窗口（外加任何原生
+              // region 缓存失灵的场合），鼠标碰到残留 drag 矩形会收到一次
+              // 合成 mouse-leave——其坐标是鼠标最后位置，仍在 overlay 矩形
+              // **内**；真移出 overlay 的 leave 坐标必在矩形外。坐标在内
+              // 就忽略，面板不再被假 leave 杀掉（此时按钮可能仍点不动，
+              // 等脉冲刷完即恢复，但至少面板不当着用户的面缩回）。
+              const r = e.currentTarget.getBoundingClientRect()
+              const inside =
+                e.clientX >= r.left &&
+                e.clientX < r.right &&
+                e.clientY >= r.top &&
+                e.clientY < r.bottom
+              if (!inside) setPeek(false)
+            }}
+          >
+            <AppRail overlay />
+          </div>,
+          document.body
         )}
-        onMouseLeave={() => setPeek(false)}
-      >
-        <AppRail />
-      </div>
     </div>
   )
 }
