@@ -3,6 +3,11 @@ declare module '*?asset' {
   export default src
 }
 
+declare module '*.html?raw' {
+  const src: string
+  export default src
+}
+
 declare module '*.ico?asset' {
   const src: string
   export default src

@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url'
 import appIcon from '../../resources/icon.png?asset'
 import { ChatEngine, createChatEngine } from './core/engine'
 import { clearUnread } from './tray'
+import { finishSplashThenSettle, loadSplashIntoShell } from './splash'
 import { resolveStudioTabUrl } from './services/openDesignServices'
 import {
   IPC_CHANNELS,
@@ -19,6 +20,7 @@ import {
   type TabDescriptor,
   type UpdaterState
 } from '../shared/ipc-channels'
+import type { KbSyncStatus } from '../shared/kbSyncStatus'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -209,10 +211,14 @@ export function canAddTab(): boolean {
 
 /**
  * Create the single shell BrowserWindow. Called once at app startup
- * from `main/index.ts`. The shell's own webContents loads NOTHING
- * (about:blank)——唯一的 studio tab 是层叠其上的 WebContentsView（见
- * newStudioTab），窗口保持隐藏直到它首帧就绪才 show（见 activateTab），
- * 所以用户睁眼看到的第一帧就是 studio 页面，没有任何中转画面。
+ * from `main/index.ts`. The shell's own webContents 承载静态闪屏
+ * （splash.html，见 splash.ts）——唯一的 studio tab 是层叠其上的
+ * WebContentsView（见 newStudioTab）。窗口在 splash 首帧就绪时就 show
+ * （loadSplashIntoShell）：用户点图标立即看到带真实启动进度的品牌画面，
+ * studio 首帧就绪后被同底色的 view 盖住完成交接（见 newStudioTab 的
+ * promote 编排）——历史上窗口一直隐藏到 studio 首帧才出现，dev 下编译
+ * 首页的几秒里点了图标毫无反馈，prod 下 did-finish-load ≠ React 画完，
+ * show 出来可能仍是一帧空白（「首次启动白屏」，2026-07-06 由此引入闪屏）。
  */
 export function createShellWindow(): BrowserWindow {
   if (shellWindow && !shellWindow.isDestroyed()) return shellWindow
@@ -257,10 +263,12 @@ export function createShellWindow(): BrowserWindow {
   forceDetachedDevTools(win.webContents, () => getActiveTabWebContents())
   attachExternalLinkHandler(win.webContents)
 
-  // 刻意没有 'ready-to-show' → show()：shell webContents 不加载内容，该事件
-  // 根本不会触发。show 的唯一入口在 activateTab——studio tab 首帧就绪上屏时
-  // 连带把窗口带出来，用户不会看到任何加载中间态（dev 下 next 编译首页的
-  // 几秒里窗口就是不存在的，终端有日志；prod 下 app://studio 读盘几乎无感）。
+  // 窗口的首次 show 在 splash 首帧就绪时（loadSplashIntoShell 里的
+  // did-finish-load），activateTab 里的 show 保留作兜底——splash 加载失败时
+  // studio 首帧仍能把窗口带出来。刻意不用 'ready-to-show'：它对 loadURL 的
+  // data: 页面同样会触发，但语义上我们要的是「splash 画好了」而不是「可以
+  // show 了」，did-finish-load 更贴切且与 splashShownAt 计时共用一个锚点。
+  loadSplashIntoShell(win)
 
   const onUserReturned = (): void => clearUnread()
   win.on('focus', onUserReturned)
@@ -316,10 +324,10 @@ export function createShellWindow(): BrowserWindow {
     }
   })
 
-  // shell webContents 保持 about:blank——它唯一的存在意义是给 studio 的
-  // WebContentsView 当宿主。窗口 show 之前 studio 必已上屏（activateTab），
-  // 这层空白永远不会被用户看到；backgroundColor 只兜 resize/全屏切换的
-  // 间隙帧。
+  // shell webContents = 静态闪屏（splash.html）。studio 上屏后它被全屏
+  // view 永久盖住；意外的加分是 studio renderer 崩溃时露出来的不再是
+  // 窗口纯色而是带 logo 的品牌画面。backgroundColor 仍兜 resize/全屏
+  // 切换的间隙帧与 splash 自身加载完成前的空窗。
 
   return win
 }
@@ -404,16 +412,25 @@ export function newStudioTab(): TabContext {
 
   // 激活策略：单视图首个 tab **defer 到 did-finish-load** 再上屏。
   // studio dev server 探活 200 只代表 HTTP 可服务，dev 下首页还要按需编译
-  // 几秒——而窗口的首次 show 挂在 activateTab 里（shell 自身不加载内容），
-  // 所以 defer 的效果是：窗口一直隐藏，直到 studio 真有首帧才带内容出现，
-  // 用户看不到任何空白/加载中间态。10s 兜底：did-finish-load 万一丢失
-  // （HMR reconnect 吞事件），窗口也必须出来（宁可短暂空白也不能永不出现）。
+  // 几秒——期间窗口显示的是闪屏（splash.html，随真实里程碑推进度）。上屏前
+  // 经 finishSplashThenSettle 收尾：补足最短展示时长（prod 下秒就绪时闪屏
+  // 不至于一闪而过）→ 进度冲满 →「马上就好」停一拍，然后 studio view 盖上
+  // 来完成交接——双方底色同源（tokens --background ↔ studio html 背景），
+  // 交接零跳变。10s 兜底：did-finish-load 万一丢失（HMR reconnect 吞事件），
+  // studio 也必须上屏（宁可短暂空白也不能永不出现）。promoting 标志防
+  // did-finish-load 与兜底定时器在 settle 的异步窗口里双跑。
   if (activeTabId === null) {
     const targetId = view.webContents.id
+    let promoting = false
     const promote = (): void => {
+      if (promoting) return
       if (!tabs.has(targetId)) return
       if (activeTabId === targetId) return
-      activateTab(targetId)
+      promoting = true
+      void finishSplashThenSettle(shellWindow).then(() => {
+        // settle 期间 tab 可能被关、窗口可能被销毁——activateTab 自会判。
+        activateTab(targetId)
+      })
     }
     if (view.webContents.isLoading()) {
       view.webContents.once('did-finish-load', promote)
@@ -480,9 +497,9 @@ export function activateTab(id: number): void {
   activeTabId = id
   layoutActiveTab()
 
-  // 窗口的首次显示挂在这里，而不是 'ready-to-show'（shell webContents 不
-  // 加载内容，那个事件不会来）：studio 首帧就绪 → 上屏 → 窗口带着内容一起
-  // 出现，用户看到的第一帧就是 3100 的页面，没有 splash / 白屏中转。
+  // 兜底 show：窗口的首次显示正常挂在 splash 首帧（loadSplashIntoShell），
+  // 走到这里还不可见 = splash 加载失败/被跳过——studio 首帧就绪时窗口
+  // 无论如何都必须出来。
   if (!shellWindow.isVisible()) {
     shellWindow.show()
   }
@@ -885,6 +902,24 @@ export function broadcastUpdaterState(state: UpdaterState): void {
     const wc = ctx.view.webContents
     if (wc.isDestroyed()) continue
     wc.send(IPC_CHANNELS.UPDATER_STATE_CHANGED, state)
+  }
+}
+
+/**
+ * Push KB sync status to every renderer that can receive IPC. Like
+ * broadcastUpdaterState there is NO skip-the-writer id — sync transitions
+ * originate in MAIN (kbSyncScheduler), never a renderer write, so every
+ * window is equally "other". Web tabs are skipped outright: they have no
+ * preload AND no KB UI to update, so there's nothing to reach.
+ */
+export function broadcastKbSyncStatus(payload: KbSyncStatus): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    shellWindow.webContents.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
+  }
+  for (const ctx of tabs.values()) {
+    if (ctx.kind === 'web') continue
+    const wc = ctx.view.webContents
+    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
   }
 }
 
