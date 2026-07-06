@@ -3,9 +3,11 @@ import { describe, it, expect, test } from 'bun:test'
 import {
   tokenize,
   chunkText,
+  chunkTextWithOffsets,
   rankChunks,
   clampPassageText,
   CHUNK_MAX,
+  CHUNK_MIN,
   PASSAGE_MAX_CHARS
 } from './proposalRetrieve.core'
 
@@ -133,21 +135,38 @@ describe('clampPassageText（单片段注入上限·防巨表撑爆提示词）'
   })
 })
 
-import { chunkTextWithOffsets } from './proposalRetrieve.core'
-
-test('chunkTextWithOffsets: offset 切片可回原文且与 text 一致', () => {
+test('chunkTextWithOffsets: offset 切片归一分隔符后等于 text（普遍不变量）', () => {
   const src = '第一段内容这里写满八十个字以上凑够最小块长度的要求一二三四五六七八九十甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥。\n\n第二段也要够长一二三四五六七八九十甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥再加一句话。'
   const chunks = chunkTextWithOffsets(src)
   expect(chunks.length).toBeGreaterThan(0)
   for (const c of chunks) {
     expect(c.charEnd).toBeGreaterThan(c.charStart)
-    // 回切：用 offset 从原文截出的子串，trim 后等于 chunk.text
-    expect(src.slice(c.charStart, c.charEnd).trim()).toBe(c.text)
+    // 回切不变量：原文切片把段间分隔归一为 \n\n 后等于 chunk.text。
+    // 不用 .trim()——窗口切块 text 未 trim；不变量更强且对合并块同样成立。
+    expect(src.slice(c.charStart, c.charEnd).replace(/\n\s*\n/g, '\n\n')).toBe(c.text)
   }
+})
+
+test('chunkTextWithOffsets: 合并块在非标准段间分隔（\\n   \\n）下不变量仍成立', () => {
+  // 两个各约 CHUNK_MIN/2 字的短段，用含空白的段间分隔符拼接 → 都低于 CHUNK_MIN，
+  // 算法会把它们合并成一块；text 用 \n\n 规范化，slice 保留原分隔符 \n   \n。
+  // 此处验证：(a) 产出恰好一块、(b) text 中分隔符已归一为 \n\n、
+  // (c) collapse 不变量成立（旧 .trim() 形式会因 slice 含原分隔符而 FAIL）。
+  const half = CHUNK_MIN >> 1 // 远小于 CHUNK_MIN，确保两段各自不够独立成块
+  const seg1 = '甲'.repeat(half)
+  const seg2 = '乙'.repeat(half)
+  const src = `${seg1}\n   \n${seg2}` // 非标准段间分隔：\n<spaces>\n
+  const chunks = chunkTextWithOffsets(src)
+  // (a) 两个短段合并为一块
+  expect(chunks).toHaveLength(1)
+  const c = chunks[0]
+  // (b) text 中段间分隔已规范化为 \n\n
+  expect(c.text).toBe(`${seg1}\n\n${seg2}`)
+  // (c) collapse 不变量成立
+  expect(src.slice(c.charStart, c.charEnd).replace(/\n\s*\n/g, '\n\n')).toBe(c.text)
 })
 
 test('chunkText 仍等价于 chunkTextWithOffsets 的 text 投影', () => {
   const src = 'abc 一二三四五六七八九十甲乙丙丁戊己庚辛壬癸。\n\nxyz 子丑寅卯辰巳午未申酉戌亥一二三四五六。'
-  const { chunkText } = require('./proposalRetrieve.core')
   expect(chunkText(src)).toEqual(chunkTextWithOffsets(src).map((c: { text: string }) => c.text))
 })

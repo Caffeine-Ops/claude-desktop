@@ -93,8 +93,20 @@ export interface TextChunk {
 
 /**
  * 与 {@link chunkText} 同算法，但额外返回每块在【原文】中的字符区间 [charStart,charEnd)。
- * 区间对齐到 trim 前的边界：slice(charStart,charEnd).trim() === text。offset 让离线向量化
- * 与查询期 BM25 落到同一套块、用行号对齐 RRF（见 proposalSemantic.core.ts）。
+ *
+ * **offset 不变量**（普遍成立）：
+ *   `src.slice(charStart, charEnd).replace(/\n\s*\n/g, '\n\n') === text`
+ *
+ * 为什么不能用 `.trim() === text`？
+ * - 单段块：trim 形式也成立（段间分隔符不在区间内），但窗口切块的 text 是
+ *   `t.slice(i, i+CHUNK_MAX)`——它不 trim，若窗口边界落在空白上 trim 就会失配。
+ * - **合并块**（多个连续短段拼成一块）：`text` 用 `\n\n` 连接各段（规范化），
+ *   而 `slice(start,end)` 跨越的原文段间分隔可能是 `\n   \n`/`\n\n\n` 等任意
+ *   `/\n\s*\n/` 匹配形式；exact round-trip 不可能成立。把原文切片里的段间分隔
+ *   同样归一为 `\n\n`，则与 `text` 完全吻合。
+ *
+ * offset 让离线向量化与查询期 BM25 落到同一套块、用行号对齐 RRF
+ * （见 proposalSemantic.core.ts）。
  */
 export function chunkTextWithOffsets(text: string): TextChunk[] {
   if (!text) return []
