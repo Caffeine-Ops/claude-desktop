@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useProposalStore, useProposalWorkspace, type ProposalProduct } from '../../stores/proposal'
 import { useProposalStyleStore } from '../../stores/proposalStyle'
 import { useChatStore } from '../../stores/chat'
@@ -33,8 +33,17 @@ import {
   SearchIcon,
   AlertTriangleIcon,
   InfoIcon,
-  CheckIcon
+  CheckIcon,
+  BookIcon
 } from './proposalIcons'
+
+// 阶段序列（模块级常量）：驱动阶段条 stepper 的 done / now / future 三态渲染。
+// 顺序即业务硬门顺序（封面→目录→正文），与 stores/proposal 的 phase 推进一致。
+const PROPOSAL_PHASES = [
+  { key: 'cover', label: '封面' },
+  { key: 'toc', label: '目录' },
+  { key: 'content', label: '正文' }
+] as const
 
 // 取一节的展示标题：正文首个 markdown 标题行（# ～ ######）的文字，用于资料缺失清单里
 // 标明「这处缺口在哪一章」。无标题（理论少见）退化为占位串。模块级纯函数，不依赖组件状态。
@@ -82,6 +91,22 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   const gaps = sections.flatMap((sec) =>
     parseGaps(sec.markdown).map((desc) => ({ sectionId: sec.id, title: sectionTitle(sec.markdown), desc }))
   )
+  // 状态呼吸灯 badge（重设计）：把「系统在不在干活」从阶段条右侧的灰字提升为标题旁的
+  // 活性徽章——生成中亮品牌绿呼吸点、目录等确认转琥珀、未开始中性灰；正文阶段闲置时
+  // 干脆不显示（无事发生就别占注意力）。纯派生，随 generating/phase/sections 重算。
+  const badge: { text: string; tone: 'live' | 'wait' | 'idle' } | null = generating
+    ? {
+        text: phase === 'cover' ? '封面撰写中' : phase === 'toc' ? '目录整理中' : '正文撰写中',
+        tone: 'live'
+      }
+    : sections.length === 0
+      ? { text: '等待开始', tone: 'idle' }
+      : phase === 'toc'
+        ? { text: '目录待确认', tone: 'wait' }
+        : null
+  const phaseIdx = PROPOSAL_PHASES.findIndex((p) => p.key === phase)
+  // 底部状态栏的文档体量：字数按去空白字符计（贴近中文「字数」直觉），纯派生不入 store。
+  const charCount = sections.reduce((n, s) => n + s.markdown.replace(/\s/g, '').length, 0)
   const [exporting, setExporting] = useState(false)
   const [exportMsg, setExportMsg] = useState<{ tone: 'ok' | 'err' | 'muted'; text: string } | null>(null)
   // 「新建」二次确认：清空是破坏性的（丢掉整份草稿），故点一下先morph成确认条，再点才真清。
@@ -259,14 +284,49 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     // 焦点环（design-review F6）；Paper/Preview/StyleModal 都在本根 DOM 子树内，一处全覆盖。
     <div className="proposal-feature relative flex min-w-0 flex-1 flex-col border-l border-border bg-background text-foreground">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">方案草稿</span>
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="whitespace-nowrap text-[13px] font-semibold text-foreground">方案草稿</span>
+          {/* 状态呼吸灯：live=品牌绿+ping 扩散点（AI 正在写）、wait=琥珀（等用户确认目录）、
+              idle=中性灰（还没开始）。品牌绿是身份/活性色（--brand），刻意不用会随用户
+              主题变的 --accent——「在干活」的信号不该跟着主题色跑。 */}
+          {badge && (
+            <span
+              className={
+                'inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] ' +
+                (badge.tone === 'live'
+                  ? 'bg-brand/10 text-brand'
+                  : badge.tone === 'wait'
+                    ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                    : 'bg-muted text-muted-foreground')
+              }
+            >
+              {badge.tone === 'live' ? (
+                <span className="relative flex size-1.5 shrink-0">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60" />
+                  <span className="relative inline-flex size-1.5 rounded-full bg-brand" />
+                </span>
+              ) : (
+                <span
+                  className={
+                    'size-1.5 shrink-0 rounded-full ' +
+                    (badge.tone === 'wait' ? 'bg-amber-500' : 'bg-muted-foreground/50')
+                  }
+                />
+              )}
+              {badge.text}
+            </span>
+          )}
+        </span>
 
-        {/* 编辑 ｜ 预览 segmented */}
-        <div className="inline-flex rounded-lg border border-border bg-card p-0.5">
+        {/* 编辑 ｜ 预览 segmented：muted 槽底 + 选中项白卡浮起（bg-card + shadow）——
+            原先容器用 card 白底，选中项 bg-background 与之几乎同色，选中态看不出来。 */}
+        <div className="inline-flex rounded-lg bg-muted p-0.5">
           <button
             className={
-              'inline-flex items-center gap-1 rounded-md px-3 py-1 ' +
-              (mode === 'edit' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground')
+              'inline-flex items-center gap-1 rounded-md px-3 py-1 transition-colors ' +
+              (mode === 'edit'
+                ? 'bg-card font-medium text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground')
             }
             onClick={() => setMode('edit')}
           >
@@ -274,8 +334,10 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           </button>
           <button
             className={
-              'inline-flex items-center gap-1 rounded-md px-3 py-1 ' +
-              (mode === 'preview' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground')
+              'inline-flex items-center gap-1 rounded-md px-3 py-1 transition-colors ' +
+              (mode === 'preview'
+                ? 'bg-card font-medium text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground')
             }
             onClick={() => setMode('preview')}
           >
@@ -316,7 +378,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             </span>
           ) : (
             <button
-              className="mr-1 rounded px-2 py-0.5 hover:bg-muted disabled:opacity-50"
+              className="mr-1 rounded-md px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
               // 草稿为空（sections 无内容）时没什么可清，置灰避免空操作 + 误触发二次确认条；
               // 流式期间也禁用（清空和进行中的那轮叠加会乱）。
               disabled={generating || sections.length === 0}
@@ -337,7 +399,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
               （useProposalStyleStore，跨会话持久）；先调样式就先走「调整样式模板…」应用再导出。 */}
           <div className="relative">
             <button
-              className="inline-flex items-center gap-1 rounded bg-accent px-2 py-0.5 text-white hover:opacity-90 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-50"
               disabled={exporting}
               onClick={() => setExportMenuOpen((o) => !o)}
               title="导出方案（Word / PDF / Markdown）"
@@ -421,19 +483,52 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         </div>
       </div>
 
-      {/* 阶段条：封面 → 目录 → 正文，只读状态显示。阶段推进已移到左侧聊天——AI 每完成
-          一阶段用 AskUserQuestion 发确认卡片，用户点「确认」放行项后推进（见
-          applyProposalStageConfirm），本条不再承载可点按钮。 */}
-      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-[11px]">
-        <span className={phase === 'cover' ? 'font-medium text-foreground' : 'text-muted-foreground'}>① 封面</span>
-        <span className="text-muted-foreground">→</span>
-        <span className={phase === 'toc' ? 'font-medium text-foreground' : 'text-muted-foreground'}>② 目录</span>
-        <span className="text-muted-foreground">→</span>
-        <span className={phase === 'content' ? 'font-medium text-foreground' : 'text-muted-foreground'}>③ 正文</span>
-        <span className="flex-1" />
-        {phase === 'cover' && <span className="text-muted-foreground">封面撰写中</span>}
-        {phase === 'toc' && <span className="text-muted-foreground">目录整理中</span>}
-        {phase === 'content' && <span className="text-muted-foreground">正文撰写中</span>}
+      {/* 阶段条：节点 stepper（重设计）——完成=品牌绿实心勾、当前=描边+光环、未来=灰点，
+          节点间连线随进度填充。只读状态显示；阶段推进已移到左侧聊天（AI 每完成一阶段用
+          AskUserQuestion 发确认卡片，见 applyProposalStageConfirm），本条不承载可点按钮。
+          原右侧的「封面撰写中」等活性文字已上移为标题旁呼吸灯 badge——本条只管「走到
+          哪一步」，badge 只管「系统在不在干活」，各司其职。 */}
+      <div className="flex items-center border-b border-border px-3 py-2">
+        {PROPOSAL_PHASES.map((p, i) => (
+          <Fragment key={p.key}>
+            {i > 0 && (
+              <span className="relative mx-2.5 h-0.5 w-9 shrink-0 overflow-hidden rounded-full bg-border">
+                <span
+                  className={
+                    'absolute inset-0 origin-left rounded-full bg-brand transition-transform duration-500 ' +
+                    (i <= phaseIdx ? 'scale-x-100' : 'scale-x-0')
+                  }
+                />
+              </span>
+            )}
+            <span className="flex items-center gap-1.5">
+              <span
+                className={
+                  'grid size-5 shrink-0 place-items-center rounded-full border text-[10px] font-semibold transition-colors ' +
+                  (i < phaseIdx
+                    ? 'border-brand bg-brand text-brand-foreground'
+                    : i === phaseIdx
+                      ? 'border-brand bg-background text-brand ring-[3px] ring-brand/15'
+                      : 'border-border bg-muted text-muted-foreground')
+                }
+              >
+                {i < phaseIdx ? <CheckIcon /> : i + 1}
+              </span>
+              <span
+                className={
+                  'whitespace-nowrap text-[12px] ' +
+                  (i === phaseIdx
+                    ? 'font-semibold text-foreground'
+                    : i < phaseIdx
+                      ? 'text-foreground'
+                      : 'text-muted-foreground')
+                }
+              >
+                {p.label}
+              </span>
+            </span>
+          </Fragment>
+        ))}
       </div>
 
       {/* 补救进行中提示（③·根因「莫名一直在思考」）：自动补救（regenerateToc）原本【完全静默】，
@@ -476,17 +571,8 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         </div>
       )}
 
-      {/* 草稿未保存常驻提示（P3-3）：写盘失败时一直显示，提醒用户改动还在内存、切走会丢，
-          可手动导出备份。下次成功保存后 draftSaveFailed 自动置 false、本条消失。 */}
-      {draftSaveFailed && (
-        <div
-          className="proposal-anim-fade flex items-center gap-1 border-b border-rose-500/30 bg-rose-500/10 px-3 pb-1.5 pt-1 text-[11px] text-rose-500"
-          title="草稿写盘失败（磁盘空间/权限/路径问题）。你的修改仍在内存，切换会话或关闭可能丢失；建议先导出备份，问题排除后改动会在下次自动保存时落盘。"
-        >
-          <AlertTriangleIcon className="shrink-0" />
-          草稿未保存（写盘失败）——改动仍在，建议先导出备份
-        </div>
-      )}
+      {/* 草稿写盘失败提示（P3-3）已从此处的满宽红条降格进底部状态栏：它是持续状态而非
+          事件，放顶部会把文档区往下顶、和跳阶/缺料彩条叠成一堵墙（design-review F3 同源）。 */}
 
       {/* 资料缺失清单（P3-2 阶段一·让缺失可见）：AI 遇知识库查不到的内容时不编造，而在正文里
           标「⚠️ 资料缺失：…」；这些缺口原本散落正文、易被忽略，这里集中汇成一张清单暴露在顶部。
@@ -623,21 +709,28 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         </div>
       )}
 
-      {/* 识别到的产品 chip：方案首发时由 matchProducts 写入，可删纠错。空集 → 提示整库兜底。 */}
-      <div className="flex flex-wrap items-center gap-1 border-b border-border px-3 py-1.5">
+      {/* 知识库行（重设计）：加「知识库」语义前缀——产品 chips 裸露一行不解释自己是什么，
+          标签先立住「这些 chip 决定 AI 从哪里取料」；chip 换 accent 淡染底（原 bg-muted 灰
+          底与画布同色系、存在感过弱）；召回预览/语义搜索收到右端（ml-auto）。
+          chip 本身语义不变：方案首发时由 matchProducts 写入，可删纠错，空集 → 整库兜底。 */}
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3 py-1.5">
+        <span className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground">
+          <BookIcon />
+          知识库
+        </span>
         {products.length === 0 ? (
           <span className="text-[11px] text-muted-foreground">未识别到产品，AI 将自行在知识库定位</span>
         ) : (
           products.map((p) => (
             <span
               key={`${p.productLine} ${p.product}`}
-              className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] text-foreground"
+              className="inline-flex items-center gap-1 rounded-md border border-accent/25 bg-accent/10 px-1.5 py-0.5 text-[11px] text-foreground"
             >
               {p.product}
               <button
                 type="button"
                 aria-label={`移除 ${p.product}`}
-                className="text-muted-foreground hover:text-foreground"
+                className="grid size-3.5 place-items-center rounded-sm text-muted-foreground hover:bg-accent/20 hover:text-foreground"
                 onClick={() =>
                   setProducts(
                     products.filter((x) => !(x.productLine === p.productLine && x.product === p.product))
@@ -654,7 +747,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         <div className="relative">
           <button
             type="button"
-            className="rounded border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-accent hover:text-accent"
+            className="rounded-md border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-accent hover:text-accent"
             onClick={() => {
               if (!productPickerOpen) void loadKbProducts()
               setProductPickerOpen(!productPickerOpen)
@@ -696,24 +789,39 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             </div>
           )}
         </div>
-        {/* 召回预览开关（方案三·只读）：看知识库针对当前产品/关键词会召回哪些原文片段。 */}
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-accent hover:text-accent"
-          onClick={() => setRetrievalOpen((v) => !v)}
-          title="预览知识库召回片段"
-        >
-          <SearchIcon /> 召回预览
-        </button>
-        {/* 语义搜索开关（Task 8）：混合向量+BM25，与召回预览 BM25 词面互补。 */}
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-accent hover:text-accent"
-          onClick={() => setSemanticSearchOpen((v) => !v)}
-          title="语义搜索知识库（向量+BM25）"
-        >
-          <SearchIcon /> 语义搜索
-        </button>
+        {/* 检索工具收右端：与左侧「产品集」分区（chips 是输入、工具是探查），展开中的
+            工具亮 accent 淡染底作 on 态——原 dashed 描边样式与「+ 添加产品」同形，会被
+            误读成又一个添加入口。 */}
+        <span className="ml-auto flex items-center gap-0.5">
+          {/* 召回预览开关（方案三·只读）：看知识库针对当前产品/关键词会召回哪些原文片段。 */}
+          <button
+            type="button"
+            className={
+              'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors ' +
+              (retrievalOpen
+                ? 'bg-accent/10 text-accent'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground')
+            }
+            onClick={() => setRetrievalOpen((v) => !v)}
+            title="预览知识库召回片段"
+          >
+            <SearchIcon /> 召回预览
+          </button>
+          {/* 语义搜索开关（Task 8）：混合向量+BM25，与召回预览 BM25 词面互补。 */}
+          <button
+            type="button"
+            className={
+              'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors ' +
+              (semanticSearchOpen
+                ? 'bg-accent/10 text-accent'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground')
+            }
+            onClick={() => setSemanticSearchOpen((v) => !v)}
+            title="语义搜索知识库（向量+BM25）"
+          >
+            <SearchIcon /> 语义搜索
+          </button>
+        </span>
       </div>
 
       {/* 召回预览面板（方案三·只读）：输关键词 → 显示当前产品集下知识库 top 召回片段。让「检索
@@ -793,6 +901,43 @@ export function ProposalDocPanel(): React.JSX.Element | null {
       <div className={'flex min-h-0 flex-1 flex-col ' + (mode === 'preview' ? '' : 'hidden')}>
         <ProposalPreview active={mode === 'preview'} />
       </div>
+
+      {/* 底部状态栏（重设计新增）：保存状态 + 文档体量 + 「真预览」角标。
+          - 写盘失败提示从顶部满宽红条降格到这里的常驻红字（title 保留完整说明），
+            写盘正常且有内容时显示「已自动保存」绿点，给持续性安心感。
+          - 「真预览 · 与导出的 Word 逐像素一致」原是漂浮在预览内容上方的 pill，
+            遮文档且与画布争层级；它是常驻元信息，归位状态栏、文档区还给文档。 */}
+      {/* 空草稿时整条隐藏：没有保存/体量可言，孤零零一个「真预览」pill 反而像残留物。 */}
+      {sections.length > 0 && (
+        <div className="flex min-h-[30px] flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">
+          {sections.length > 0 &&
+            (draftSaveFailed ? (
+              <span
+                className="inline-flex items-center gap-1.5 text-rose-500"
+                title="草稿写盘失败（磁盘空间/权限/路径问题）。你的修改仍在内存，切换会话或关闭可能丢失；建议先导出备份，问题排除后改动会在下次自动保存时落盘。"
+              >
+                <AlertTriangleIcon className="shrink-0" />
+                草稿未保存（写盘失败）——建议先导出备份
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5" title="草稿改动会自动保存到本机">
+                <span className="size-[5px] shrink-0 rounded-full bg-brand" />
+                已自动保存
+              </span>
+            ))}
+          {sections.length > 0 && (
+            <span className="whitespace-nowrap">
+              {sections.length} 节 · 共 {charCount} 字
+            </span>
+          )}
+          {mode === 'preview' && (
+            <span className="ml-auto inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-brand/25 bg-brand/10 px-2.5 py-0.5 text-[10px] text-brand">
+              <CheckIcon />
+              真预览 · 与导出的 Word 逐像素一致
+            </span>
+          )}
+        </div>
+      )}
 
       {/* 样式模板弹窗（重设计 A：纯调样式、非导出入口）：由「导出 ▾」下拉里的「调整样式模板…」
           打开，点「应用样式」把 draft 提交进 store，之后导出走顶栏下拉。 */}

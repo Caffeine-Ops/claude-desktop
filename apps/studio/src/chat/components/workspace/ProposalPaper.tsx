@@ -34,7 +34,8 @@ import {
   ArrowDownIcon,
   TrashIcon,
   AlertTriangleIcon,
-  InfoIcon
+  InfoIcon,
+  GripIcon
 } from './proposalIcons'
 
 /**
@@ -63,7 +64,7 @@ function renderVerification(sec: ProposalSection, generating: boolean): React.JS
   )
   if (v.degraded) {
     return (
-      <div className="mb-1 rounded bg-neutral-500/10 px-1.5 py-0.5 text-[11px] text-neutral-500">
+      <div className="mb-1 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
         来源核对暂不可用
       </div>
     )
@@ -156,15 +157,16 @@ function blockNeedsGap(blk: string): boolean {
 // 顶部注释），下面 applyImageReview 直接调用。
 
 /**
- * 编辑态：一张连续的 A4 宽长纸，分节无缝拼接、向下滚动不分页。
- * 保留现有「哨兵→分节」数据模型，仅把卡片堆叠换皮成纸面：
- *  - 去卡片边框/底色，节正文用 AssistantMarkdown 渲染；白纸黑字靠 .proposal-paper
- *    作用域覆盖前景 token（见 index.css），无需逐元素 !important。
- *  - 悬停某节 → 右侧外边距浮出工具条（编辑/上移/下移/删除），不占正文宽度、不破坏纸面。
- *  - 单节编辑仍是 editingId 单选 + textarea，但 textarea 白底衬线、无框，就地改字。
- *
- * 工具条按钮用显式中性色（非主题 token）——因为 .proposal-paper 把 token 覆盖成纸墨色，
- * 若按钮也用 text-foreground 会变成白纸上的浅色控件、对比过低。
+ * 编辑态：Notion 式通铺文档列（2026-07-06 重设计定稿，用户选型「通铺 + 黑体」）。
+ * 此前是「灰画布 + A4 白纸 + 宋体」的 Word 隐喻——那套纸感现在完整保留在预览态
+ * （ProposalPreview 才承诺与导出 Word 逐像素一致），编辑态回归屏幕舒适：
+ *  - 画布即面板背景（bg-background），内容列 768px 居中，黑体（继承 app sans）、
+ *    颜色一律语义 token 跟随明暗主题——旧 .proposal-paper 的纸墨 token 覆盖已随
+ *    白纸一起退役（main.css）。
+ *  - 悬停某节 → 左 gutter 浮出 ⋮⋮ 手柄，点开节操作菜单（AI 修订/源码逃生舱/
+ *    移动/删除）；动作 handler 与禁用逻辑与旧右缘工具条完全同源，只换交互外衣。
+ *  - 单节编辑仍是 editingId 单选 + textarea 就地改字。
+ * 保留现有「哨兵→分节」数据模型，本次重设计不动任何 store 语义。
  */
 export function ProposalPaper(): React.JSX.Element {
   const sections = useProposalStore((s) => s.sections)
@@ -280,6 +282,10 @@ export function ProposalPaper(): React.JSX.Element {
     const id = setTimeout(() => setConfirmDeleteId(null), 3000)
     return () => clearTimeout(id)
   }, [confirmDeleteId])
+  // 节操作菜单（2026-07-06 编辑器通铺重设计）：节级工具条从纸张右缘的按钮列改为左 gutter
+  // 的 ⋮⋮ 手柄 + 下拉菜单（Notion 语法）。同一时刻至多开一个；动作 handler 全部复用原工具条
+  // 的（AI 修订/源码逃生舱/上移下移/删除二次确认），只换交互外衣不动语义。
+  const [menuSecId, setMenuSecId] = useState<string | null>(null)
 
   // 点图浮动工具栏（Task 9）：点中编辑态某图 → 记录它所在的节/块 + 源图绝对路径（来自 img 的
   // data-raw-src，见 AssistantMarkdown 的注释——react-markdown 解析时已代我们剥好 <> 与 title
@@ -754,8 +760,10 @@ export function ProposalPaper(): React.JSX.Element {
     }
   }
 
-  const toolBtn =
-    'grid size-6 place-items-center rounded-md border border-neutral-300 bg-white text-[12px] text-neutral-600 hover:border-accent hover:text-accent disabled:opacity-30'
+  // 节操作菜单项的公共样式（通铺重设计）：Notion 式 popover 菜单项——图标 + 文字，
+  // hover 淡染，禁用降透明。禁用项保留 pointer-events 以便 title 提示仍可见。
+  const menuItem =
+    'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] text-foreground hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent'
 
   // 中文区名：每个 kind 对应面板里显示的分区标题。
   const KIND_LABEL: Record<ProposalKind, string> = {
@@ -802,106 +810,168 @@ export function ProposalPaper(): React.JSX.Element {
       </div>
     )
     return (
-    <section key={sec.id} className="group relative py-0.5">
-      {/* 节级工具条：停靠在纸张右侧内边距里（.proposal-paper 的 px-[clamp(28px,6%,76px)]，下限
-          28px，刚好容下 24px 的按钮列）。旧值 -right-[58px] 探到纸外，窄面板（外边距仅 24px）会
-          溢出、被外层 overflow-auto 裁掉或触发横向滚动；改 -right-[26px] 锚进纸内右 padding，
-          任意面板宽都不溢出。可见性：默认透明，hover 本节或键盘聚焦其中按钮（focus-within）时淡入
-          ——用 opacity 而非 hidden，键盘用户才能 Tab 到并唤出、且能做过渡；透明态 pointer-events-none
-          不拦纸面点击（design-review F4）。 */}
-      <div className="pointer-events-none absolute -right-[26px] top-1.5 flex flex-col gap-1 opacity-0 transition-opacity duration-150 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-        {/* AI 修订组：仅正文节（封面/目录无修订语义）。点击发起【整节替换】式重写，流式中禁用。 */}
-        {sec.kind === 'content' && (
-          <>
-            <button
-              className={toolBtn}
-              disabled={generating}
-              onClick={() => void reviseProposalSection(sec.id, 'rewrite')}
-              title="AI 重写本章"
-              aria-label="AI 重写本章"
-            >
-              <RotateCwIcon />
-            </button>
-            <button
-              className={toolBtn}
-              disabled={generating}
-              onClick={() => void reviseProposalSection(sec.id, 'expand')}
-              title="AI 展开（更详尽）"
-              aria-label="AI 展开本章"
-            >
-              <PlusIcon />
-            </button>
-            <button
-              className={toolBtn}
-              disabled={generating}
-              onClick={() => void reviseProposalSection(sec.id, 'shorten')}
-              title="AI 精简（去冗余）"
-              aria-label="AI 精简本章"
-            >
-              <MinusIcon />
-            </button>
-            {/* 生成图片/上传图片入口已移到选区弹框（SelectionAiBubble）——图片操作需要一个「插到
-                哪里」的落点，选中段落天然就是那个锚点，比挂在节工具条上「永远插节末」更顺手。 */}
-          </>
-        )}
+    <section
+      key={sec.id}
+      className={
+        'group relative rounded-md py-0.5 transition-colors ' +
+        // 菜单开着时节体淡染，指明「菜单作用于这一节」（Notion 同款反馈）。
+        (menuSecId === sec.id ? 'bg-accent/5' : '')
+      }
+    >
+      {/* 节手柄（通铺重设计）：⋮⋮ 停靠在通铺列的左 padding 里（列 px-12=48px，手柄 24px 在
+          -left-9 处不出列、任意面板宽不溢出）。可见性沿用原工具条的规则：默认透明，hover 本节
+          或键盘聚焦（focus-within）时淡入——opacity 而非 hidden，键盘用户才能 Tab 到并唤出；
+          透明态 pointer-events-none 不拦正文点击（design-review F4）。菜单打开时强制可见。 */}
+      <div
+        className={
+          'absolute -left-9 top-1 transition-opacity duration-150 ' +
+          (menuSecId === sec.id
+            ? 'opacity-100'
+            : 'pointer-events-none opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100')
+        }
+      >
         <button
-          className={toolBtn}
-          // 生成中禁止【打开】整节源码逃生舱（review V2）：某节 blockRange 修订在飞时，若用户开源码框
-          // 改动本节使块布局变化，轮末 spliceBlocks 会按旧下标拼进错块、静默覆盖。已打开的仍允许关闭。
-          disabled={generating && editingId !== sec.id}
+          className={
+            'grid size-6 place-items-center rounded-md hover:bg-muted hover:text-foreground ' +
+            (menuSecId === sec.id ? 'bg-muted text-foreground' : 'text-muted-foreground')
+          }
           onClick={() => {
-            if (generating && editingId !== sec.id) return
-            setEditingBlock(null)
-            setEditingId(editingId === sec.id ? null : sec.id)
+            setConfirmDeleteId(null)
+            setMenuSecId(menuSecId === sec.id ? null : sec.id)
           }}
-          title={editingId === sec.id ? '完成整节源码编辑' : '编辑整节 Markdown 源码（逃生舱）'}
-          aria-label={editingId === sec.id ? '完成' : '编辑整节源码'}
+          title="节操作（AI 修订 / 移动 / 删除）"
+          aria-label="节操作菜单"
+          aria-expanded={menuSecId === sec.id}
         >
-          {editingId === sec.id ? <CheckIcon /> : <PencilIcon />}
+          <GripIcon />
         </button>
-        <button
-          className={toolBtn}
-          disabled={!canMoveUp}
-          onClick={() => moveSection(sec.id, 'up')}
-          title={canMoveUp ? '上移' : '已是本区段第一节，不能跨区段上移'}
-          aria-label="上移"
-        >
-          <ArrowUpIcon />
-        </button>
-        <button
-          className={toolBtn}
-          disabled={!canMoveDown}
-          onClick={() => moveSection(sec.id, 'down')}
-          title={canMoveDown ? '下移' : '已是本区段最后一节，不能跨区段下移'}
-          aria-label="下移"
-        >
-          <ArrowDownIcon />
-        </button>
-        {/* 分隔线：把不可逆的「删除」与上方移动/编辑键分组隔开，降低误触（design-review F5）。 */}
-        <div className="my-0.5 h-px w-full bg-neutral-200" />
-        {confirmDeleteId === sec.id ? (
-          <button
-            className="grid size-6 place-items-center rounded-md border border-rose-500 bg-rose-500 text-[12px] text-white"
-            onClick={() => {
-              if (editingId === sec.id) setEditingId(null)
-              if (editingBlock?.sectionId === sec.id) setEditingBlock(null)
-              removeSection(sec.id)
-              setConfirmDeleteId(null)
-            }}
-            title="再次点击确认删除（或点别处、稍候自动取消）"
-            aria-label="确认删除"
-          >
-            <CheckIcon />
-          </button>
-        ) : (
-          <button
-            className="grid size-6 place-items-center rounded-md border border-neutral-300 bg-white text-[12px] text-rose-500 hover:border-rose-400"
-            onClick={() => setConfirmDeleteId(sec.id)}
-            title="删除本节（需再次点击确认）"
-            aria-label="删除"
-          >
-            <TrashIcon />
-          </button>
+        {menuSecId === sec.id && (
+          <>
+            {/* 点击空白处关闭（全屏透明捕获层，置于菜单下方）——与导出下拉同款模式。 */}
+            <button
+              type="button"
+              aria-label="关闭节操作菜单"
+              tabIndex={-1}
+              className="fixed inset-0 z-20 cursor-default"
+              onClick={() => {
+                setMenuSecId(null)
+                setConfirmDeleteId(null)
+              }}
+            />
+            <div className="proposal-anim-pop absolute left-0 top-full z-30 mt-1 w-56 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg">
+              {/* AI 修订组：仅正文节（封面/目录无修订语义）。发起【整节替换】式重写，流式中禁用。 */}
+              {sec.kind === 'content' && (
+                <>
+                  <button
+                    className={menuItem}
+                    disabled={generating}
+                    title={generating ? 'AI 生成中，请稍候' : undefined}
+                    onClick={() => {
+                      setMenuSecId(null)
+                      void reviseProposalSection(sec.id, 'rewrite')
+                    }}
+                  >
+                    <RotateCwIcon className="shrink-0 text-muted-foreground" />
+                    AI 重写本章
+                  </button>
+                  <button
+                    className={menuItem}
+                    disabled={generating}
+                    title={generating ? 'AI 生成中，请稍候' : undefined}
+                    onClick={() => {
+                      setMenuSecId(null)
+                      void reviseProposalSection(sec.id, 'expand')
+                    }}
+                  >
+                    <PlusIcon className="shrink-0 text-muted-foreground" />
+                    AI 展开（更详尽）
+                  </button>
+                  <button
+                    className={menuItem}
+                    disabled={generating}
+                    title={generating ? 'AI 生成中，请稍候' : undefined}
+                    onClick={() => {
+                      setMenuSecId(null)
+                      void reviseProposalSection(sec.id, 'shorten')
+                    }}
+                  >
+                    <MinusIcon className="shrink-0 text-muted-foreground" />
+                    AI 精简（去冗余）
+                  </button>
+                  <div className="my-1 h-px bg-border" />
+                  {/* 生成图片/上传图片入口在选区弹框（SelectionAiBubble）——图片操作需要「插到
+                      哪里」的落点，选中段落天然就是那个锚点。 */}
+                </>
+              )}
+              <button
+                className={menuItem}
+                // 生成中禁止【打开】整节源码逃生舱（review V2）：某节 blockRange 修订在飞时，若用户开
+                // 源码框改动本节使块布局变化，轮末 spliceBlocks 会按旧下标拼进错块、静默覆盖。已打开
+                // 的仍允许关闭。
+                disabled={generating && editingId !== sec.id}
+                onClick={() => {
+                  if (generating && editingId !== sec.id) return
+                  setEditingBlock(null)
+                  setEditingId(editingId === sec.id ? null : sec.id)
+                  setMenuSecId(null)
+                }}
+              >
+                {editingId === sec.id ? (
+                  <CheckIcon className="shrink-0 text-muted-foreground" />
+                ) : (
+                  <PencilIcon className="shrink-0 text-muted-foreground" />
+                )}
+                {editingId === sec.id ? '完成源码编辑' : '编辑整节源码（逃生舱）'}
+              </button>
+              {/* 上移/下移不关菜单：连续排序时不必反复重开。禁用逻辑与 moveSection 的
+                  同 kind 约束精确对齐（见 canMoveUp/Down 注释）。 */}
+              <button
+                className={menuItem}
+                disabled={!canMoveUp}
+                title={canMoveUp ? undefined : '已是本区段第一节，不能跨区段上移'}
+                onClick={() => moveSection(sec.id, 'up')}
+              >
+                <ArrowUpIcon className="shrink-0 text-muted-foreground" />
+                上移
+              </button>
+              <button
+                className={menuItem}
+                disabled={!canMoveDown}
+                title={canMoveDown ? undefined : '已是本区段最后一节，不能跨区段下移'}
+                onClick={() => moveSection(sec.id, 'down')}
+              >
+                <ArrowDownIcon className="shrink-0 text-muted-foreground" />
+                下移
+              </button>
+              {/* 分隔线：把不可逆的「删除」与上方动作分组隔开，降低误触（design-review F5）。
+                  两步确认保留：第一击武装成红底确认项（3s 无操作自动撤销，见 confirmDeleteId
+                  effect），第二击才真删。 */}
+              <div className="my-1 h-px bg-border" />
+              {confirmDeleteId === sec.id ? (
+                <button
+                  className="flex w-full items-center gap-2 rounded-md bg-rose-500 px-2.5 py-1.5 text-left text-[12px] font-medium text-white"
+                  onClick={() => {
+                    if (editingId === sec.id) setEditingId(null)
+                    if (editingBlock?.sectionId === sec.id) setEditingBlock(null)
+                    removeSection(sec.id)
+                    setConfirmDeleteId(null)
+                    setMenuSecId(null)
+                  }}
+                >
+                  <CheckIcon className="shrink-0" />
+                  再点一次确认删除
+                </button>
+              ) : (
+                <button
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] text-rose-500 hover:bg-rose-500/10"
+                  onClick={() => setConfirmDeleteId(sec.id)}
+                >
+                  <TrashIcon className="shrink-0" />
+                  删除本节
+                </button>
+              )}
+            </div>
+          </>
         )}
       </div>
 
@@ -929,7 +999,7 @@ export function ProposalPaper(): React.JSX.Element {
         // readOnly={generating}：生成中（尤其某节 blockRange 修订在飞）冻结手改，防止改动使块布局漂移
         // 致轮末 spliceBlocks 拼错块（review V2）；生成结束即恢复可编辑。
         <textarea
-          className="min-h-[120px] w-full resize-y rounded-sm bg-accent/5 font-mono text-[13px] leading-[1.8] text-[#1d1d1f] outline-none read-only:opacity-60"
+          className="min-h-[120px] w-full resize-y rounded-sm bg-accent/5 font-mono text-[13px] leading-[1.8] text-foreground outline-none read-only:opacity-60"
           value={sec.markdown}
           autoFocus
           readOnly={generating}
@@ -943,7 +1013,7 @@ export function ProposalPaper(): React.JSX.Element {
           <Fragment key={bi}>
           {editingBlock && editingBlock.sectionId === sec.id && editingBlock.blockIndex === bi ? (
             <textarea
-              className="my-1 min-h-[64px] w-full resize-y rounded-sm bg-accent/5 font-serif text-[14px] leading-[1.95] text-[#1d1d1f] outline-none read-only:opacity-60"
+              className="my-1 min-h-[64px] w-full resize-y rounded-sm bg-accent/5 text-[14.5px] leading-[1.85] text-foreground outline-none read-only:opacity-60"
               value={blockDraft}
               autoFocus
               // 生成中冻结手改（与整节逃生舱对称，review 复审 Minor#3）：编辑打开后若 AI 开始 streaming，
@@ -1053,14 +1123,77 @@ export function ProposalPaper(): React.JSX.Element {
 
   return (
     <div
+      // 通铺画布：不再挂 .proposal-canvas 灰底（那是预览态的 Word 画布），编辑态画布即
+      // 面板背景（bg-background），文档「坐在」应用里而非「印在」纸上。
       ref={canvasRef}
-      className="proposal-canvas relative flex-1 overflow-auto py-7"
+      className="relative flex-1 overflow-auto bg-background py-6"
       onClick={handlePaperClick}
     >
-      <div className="proposal-paper mx-auto w-[min(794px,calc(100%-48px))] rounded-sm bg-white px-[clamp(28px,6%,76px)] py-16 text-[#1d1d1f] shadow-[0_1px_0_rgba(0,0,0,0.04),0_12px_34px_rgba(0,0,0,0.30)]">
+      {sections.length === 0 && !generating ? (
+        /* 空态（重设计）：不再渲染一张空白纸 + 一行「等待 AI 起草…」灰字，改为画布上
+           居中的三步旅程引导——叠纸插画（品牌绿封面色块）+ 标题 + 三阶段卡片，把
+           「封面→目录→正文、每步由你确认」的心智模型在动笔前就交给用户。用 chat 语义
+           token（bg-card 等）而非纸墨色：本块在 .proposal-paper 之外、直接坐在画布上，
+           要跟随明暗主题。生成一旦开始即切到下方的纸张骨架分支。 */
+        <div className="grid min-h-full place-items-center px-8">
+          <div className="max-w-md py-8 text-center">
+            <div aria-hidden className="relative mx-auto mb-7 h-40 w-[8.25rem]">
+              <div className="absolute inset-0 -translate-x-2 translate-y-1 -rotate-[5deg] rounded-lg border border-border/60 bg-card opacity-50 shadow-sm" />
+              <div className="absolute inset-0 translate-x-1.5 translate-y-0.5 rotate-[3deg] rounded-lg border border-border/60 bg-card opacity-70 shadow-sm" />
+              <div className="absolute inset-0 flex flex-col gap-2 rounded-lg border border-border/60 bg-card p-4 shadow-md">
+                <div className="mb-1 h-9 rounded-md bg-brand/80" />
+                <div className="h-1.5 w-3/5 rounded-full bg-muted" />
+                <div className="h-1.5 w-[85%] rounded-full bg-muted" />
+                <div className="h-1.5 w-2/5 rounded-full bg-muted" />
+              </div>
+            </div>
+            <h2 className="mb-2 text-[15px] font-semibold text-foreground">从封面开始你的方案</h2>
+            <p className="mb-7 text-[12px] leading-relaxed text-muted-foreground">
+              在左侧对话里说明客户与需求，AI 会检索知识库，
+              按三个阶段逐步生成完整方案，每一步都由你确认。
+            </p>
+            <div className="grid grid-cols-3 gap-2 text-left">
+              {[
+                { step: '第 1 步', name: '封面', desc: '项目名称、客户与日期' },
+                { step: '第 2 步', name: '目录', desc: '章节大纲，确认后动笔' },
+                { step: '第 3 步', name: '正文', desc: '逐章撰写，可随时修订' }
+              ].map((j, i) => (
+                <div
+                  key={j.name}
+                  className={
+                    'rounded-xl border bg-card p-3 ' +
+                    /* 空态必在封面阶段（有内容即非空态），首卡即当前步，静态高亮即可。 */
+                    (i === 0 ? 'border-brand/40 ring-[3px] ring-brand/10' : 'border-border')
+                  }
+                >
+                  <div className="mb-1 text-[10px] font-semibold tracking-wide text-brand">{j.step}</div>
+                  <div className="mb-0.5 text-[12.5px] font-semibold text-card-foreground">{j.name}</div>
+                  <div className="text-[11px] leading-snug text-muted-foreground">{j.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+      /* 通铺内容列（2026-07-06 编辑器重设计）：白纸浮卡换成 Notion 式通铺——画布即文档、
+         内容列 768px 居中、黑体（继承 app sans）。左右 px-12 是节手柄的 gutter（手柄 -left-9
+         落在其中）。「Word 纸感」完整保留在预览态（那边才承诺与导出逐像素一致），编辑态
+         回归屏幕舒适。颜色一律语义 token：通铺后内容坐在 app 背景上，必须跟随明暗主题
+         （bg-white 暗档白块，踩过）。 */
+      <div className="mx-auto w-[min(768px,100%)] px-12 pb-24 pt-4 text-[15px] leading-[1.85] text-foreground">
         {sections.length === 0 ? (
-          <div className="text-center text-[13px] text-neutral-400">
-            {generating ? '方案正在生成，完成的部分会陆续出现在这里…' : '等待 AI 起草…'}
+          /* 撰写中骨架：sections 只在每条消息 end 才整批落地，首轮生成期间列面会长时间
+             全空——脉动骨架行给出「正在写」的活性反馈，替代原先孤零零一行灰字。 */
+          <div className="py-6">
+            <div aria-hidden className="animate-pulse">
+              <div className="mb-10 h-7 w-1/2 rounded bg-muted" />
+              <div className="mb-3.5 h-3 w-[90%] rounded bg-muted" />
+              <div className="mb-3.5 h-3 w-[82%] rounded bg-muted" />
+              <div className="h-3 w-3/4 rounded bg-muted" />
+            </div>
+            <div className="mt-9 text-center text-[12px] text-muted-foreground">
+              AI 正在撰写，完成的部分会陆续出现…
+            </div>
           </div>
         ) : (
           (() => {
@@ -1069,9 +1202,14 @@ export function ProposalPaper(): React.JSX.Element {
               // key 用组下标而非 g.kind：组下标在本次渲染中永远唯一且与 sections 顺序一致。
               // （moveSection 现已限制为同 kind 组内交换，sections 始终按 kind 连续、每 kind
               //  至多一组，故 g.kind 理论上也唯一；仍用组下标作 key，对未来放宽移动规则更稳健。）
-              <div key={gi} className="mb-2">
-                <div className="mb-1 border-b border-neutral-200 pb-0.5 text-[11px] font-medium tracking-wide text-neutral-400">
-                  {KIND_LABEL[g.kind]}
+              <div key={gi} className={(gi > 0 ? 'mt-9 ' : '') + 'mb-2'}>
+                {/* kind 分组标签（通铺重设计）：灰字+底边线升级为 pill + 细线——通铺后没有
+                    纸张分节，分组标记要立得住又不抢正文（Notion 式轻分隔）。 */}
+                <div className="mb-2.5 flex select-none items-center gap-2.5">
+                  <span className="rounded-md bg-muted px-2 py-0.5 text-[10.5px] font-semibold tracking-[0.12em] text-muted-foreground">
+                    {KIND_LABEL[g.kind]}
+                  </span>
+                  <span className="h-px flex-1 bg-border/60" />
                 </div>
                 {g.items.map((sec) => {
                   running += 1
@@ -1082,6 +1220,7 @@ export function ProposalPaper(): React.JSX.Element {
           })()
         )}
       </div>
+      )}
       {/* 选区即改浮层：贴选区尾浮出，作用于选区覆盖的块区间。生成中禁用（与块手改一致）。 */}
       <SelectionAiBubble
         containerRef={canvasRef}

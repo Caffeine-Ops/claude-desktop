@@ -162,6 +162,27 @@ export const CheckIcon = (p: IconProps): React.JSX.Element => (
   </Base>
 )
 
+// 知识库行的语义前缀图标（书本）：产品 chips 裸露一行不解释自己是什么，
+// 「知识库」标签 + 本图标先把语义立住（2026-07-06 面板重设计）。
+export const BookIcon = (p: IconProps): React.JSX.Element => (
+  <Base {...p}>
+    <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+  </Base>
+)
+
+// Notion 式节手柄（⋮⋮ 六点）：编辑器通铺化后节级操作收进左 gutter 的手柄菜单，
+// 这是唯一的 fill 图标——六个实心点靠 stroke 画不出来（2026-07-06 编辑器重设计）。
+export const GripIcon = (p: IconProps): React.JSX.Element => (
+  <Base {...p} fill="currentColor" stroke="none">
+    <circle cx="9" cy="6" r="1.6" />
+    <circle cx="15" cy="6" r="1.6" />
+    <circle cx="9" cy="12" r="1.6" />
+    <circle cx="15" cy="12" r="1.6" />
+    <circle cx="9" cy="18" r="1.6" />
+    <circle cx="15" cy="18" r="1.6" />
+  </Base>
+)
+
 export const ArrowUpIcon = (p: IconProps): React.JSX.Element => (
   <Base {...p}>
     <path d="M12 19V5" />

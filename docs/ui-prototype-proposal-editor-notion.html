@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案编辑器 · Notion 风格原型</title>
+<style>
+/* ============================================================
+   Design tokens — 与 packages/design-tokens/tokens.css 同源
+   ============================================================ */
+:root {
+  --bg: #f5f5f7;
+  --fg: #1d1d1f;
+  --card: #ffffff;
+  --muted: #ebebed;
+  --muted-fg: #63636a;
+  --border: #d4d4d8;
+  --hairline: #e3e3e6;
+  --accent: #0071e3;
+  --accent-soft: rgba(0, 113, 227, .08);
+  --brand: #16a34a;
+  --brand-fg: #ffffff;
+  --amber: #b45309;
+  --amber-bg: rgba(245, 158, 11, .09);
+  --amber-border: rgba(245, 158, 11, .32);
+  --rose: #e11d48;
+  --doc-bg: #ececee;
+  --paper: #ffffff;
+  --ink: #1f2328;
+  --ink-muted: #73787f;
+  --shadow-menu: 0 8px 30px rgba(0,0,0,.13), 0 2px 8px rgba(0,0,0,.07);
+  --shadow-paper: 0 1px 2px rgba(0,0,0,.05), 0 8px 28px rgba(0,0,0,.07);
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue',
+    Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-serif: 'Songti SC', 'SimSun', Georgia, 'Times New Roman', serif;
+}
+[data-theme="dark"] {
+  --bg: #1a1917;
+  --fg: #e8e4dc;
+  --card: #222120;
+  --muted: #2e2c29;
+  --muted-fg: #9a9690;
+  --border: #3a382f;
+  --hairline: #2e2c27;
+  --accent: #2997ff;
+  --accent-soft: rgba(41, 151, 255, .12);
+  --brand: #3ecf72;
+  --brand-fg: #1a1917;
+  --amber: #fbbf24;
+  --amber-bg: rgba(245, 158, 11, .10);
+  --amber-border: rgba(245, 158, 11, .28);
+  --rose: #fb7185;
+  --doc-bg: #141311;
+  --paper: #232220;
+  --ink: #e8e4dc;
+  --ink-muted: #96918a;
+  --shadow-menu: 0 8px 30px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.35);
+  --shadow-paper: 0 1px 2px rgba(0,0,0,.3), 0 10px 32px rgba(0,0,0,.42);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+  overflow: hidden;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 6px; }
+
+/* ============================================================
+   面板壳（简化：顶栏 + 阶段条 + 知识库行 + 状态栏，上下文用）
+   ============================================================ */
+.panel { display: flex; flex-direction: column; height: 100vh; }
+
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.topbar h1 { font-size: 13px; font-weight: 650; white-space: nowrap; }
+.status-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px 3px 8px; border-radius: 999px;
+  font-size: 11px; color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
+  white-space: nowrap;
+}
+.status-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); animation: pulse 1.8s ease-in-out infinite; }
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 45%, transparent); }
+  50%      { box-shadow: 0 0 0 4px transparent; }
+}
+.segmented {
+  display: inline-flex; margin-left: auto;
+  padding: 2px; border-radius: 9px; background: var(--muted);
+}
+.segmented button {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 14px; border-radius: 7px;
+  font-size: 12px; color: var(--muted-fg);
+}
+.segmented button.on { background: var(--card); color: var(--fg); font-weight: 550; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.segmented svg { width: 12px; height: 12px; }
+.btn-ghost { padding: 5px 10px; border-radius: 7px; font-size: 12px; color: var(--muted-fg); }
+.btn-ghost:hover { background: var(--muted); color: var(--fg); }
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 8px;
+  font-size: 12px; font-weight: 550;
+  color: #fff; background: var(--accent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.btn-primary svg { width: 11px; height: 11px; }
+
+.stagebar { display: flex; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--hairline); }
+.step { display: flex; align-items: center; gap: 7px; }
+.step .node {
+  width: 20px; height: 20px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 10.5px; font-weight: 600;
+  border: 1px solid var(--border); background: var(--muted); color: var(--muted-fg);
+}
+.step.done .node { background: var(--brand); border-color: var(--brand); color: var(--brand-fg); }
+.step.done .node svg { width: 11px; height: 11px; }
+.step.now .node { background: var(--card); border-color: var(--brand); color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 16%, transparent); }
+.step .lbl { font-size: 12px; color: var(--muted-fg); }
+.step.done .lbl, .step.now .lbl { color: var(--fg); }
+.step.now .lbl { font-weight: 600; }
+.conn { width: 36px; height: 2px; margin: 0 10px; border-radius: 1px; background: var(--border); }
+.conn.fill { background: var(--brand); }
+
+.kbbar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-bottom: 1px solid var(--hairline);
+  font-size: 11px; color: var(--muted-fg);
+}
+.kbbar svg { width: 12px; height: 12px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 7px;
+  font-size: 11.5px; color: var(--fg);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.kb-right { margin-left: auto; display: flex; gap: 2px; }
+.kb-tool { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 7px; font-size: 11.5px; color: var(--muted-fg); }
+.kb-tool:hover { background: var(--muted); color: var(--fg); }
+
+.statusbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 6px 68px 6px 14px;
+  border-top: 1px solid var(--hairline);
+  font-size: 11px; color: var(--muted-fg);
+  min-height: 30px;
+}
+.save-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--brand); display: inline-block; margin-right: 5px; vertical-align: 1px; }
+
+/* ============================================================
+   编辑区 —— 设计主体
+   两种画布隐喻（Tweaks 切换）：
+   notion = 通铺（画布即文档，Notion 式）
+   paper  = 白纸浮卡（现状 Word 隐喻）
+   ============================================================ */
+.doc { flex: 1; min-height: 0; overflow-y: auto; position: relative; }
+.panel[data-canvas="notion"] .doc { background: var(--bg); }
+.panel[data-canvas="paper"]  .doc { background: var(--doc-bg); }
+.doc::-webkit-scrollbar { width: 10px; }
+.doc::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted-fg) 30%, transparent); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
+
+/* 内容列：Notion 通铺 = 无容器直铺；白纸 = 包一层浮卡 */
+.editor {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 40px 56px 120px;   /* 左右 56px 是块手柄的 gutter */
+  color: var(--fg);
+}
+.panel[data-canvas="paper"] .editor {
+  max-width: 794px;
+  margin: 24px auto 48px;
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  box-shadow: var(--shadow-paper);
+  padding: 56px 64px 80px;
+  color: var(--ink);
+}
+/* 编辑字体：默认黑体（编辑态要舒适），Tweaks 可切宋体（Word 手感） */
+.panel[data-docfont="serif"] .editor { font-family: var(--font-serif); }
+
+/* ---------- 块（Notion 核心语法）---------- */
+.blk {
+  position: relative;
+  padding: 3px 2px;
+  border-radius: 4px;
+  line-height: 1.8;
+  font-size: 15px;
+}
+.blk[contenteditable] { outline: none; caret-color: var(--accent); white-space: pre-wrap; }
+.blk[contenteditable]:empty::before { content: '输入内容，或点左侧 + 插入块…'; color: var(--muted-fg); opacity: .6; }
+
+/* 标题块 */
+.blk.h1 { font-size: 30px; font-weight: 700; line-height: 1.35; letter-spacing: .01em; padding-top: 6px; }
+.blk.h2 { font-size: 21px; font-weight: 650; line-height: 1.4; margin-top: 26px; }
+.blk.h3 { font-size: 16.5px; font-weight: 600; line-height: 1.45; margin-top: 14px; }
+.blk.sub { color: var(--muted-fg); font-size: 14.5px; }
+.blk.li { padding-left: 22px; }
+.blk.li::before {
+  content: ''; position: absolute; left: 8px; top: .95em;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: currentColor; opacity: .55;
+}
+
+/* 引用标注（〔来源：…〕行内高亮，还原 proposal-citation 协议位） */
+.cite {
+  color: var(--amber);
+  background: var(--amber-bg);
+  border-radius: 3px;
+  padding: 0 3px;
+  font-weight: 500;
+  font-size: .92em;
+}
+
+/* ---------- 左缘手柄（Notion ⋮⋮ + ＋）---------- */
+.blk .handle {
+  position: absolute;
+  left: -50px; top: 50%;
+  transform: translateY(-50%);
+  display: flex; gap: 1px;
+  opacity: 0;
+  transition: opacity .12s;
+}
+.blk.h1 .handle, .blk.h2 .handle, .blk.h3 .handle { top: 55%; }
+.blk:hover .handle, .blk .handle:focus-within { opacity: 1; }
+.handle button {
+  display: grid; place-items: center;
+  width: 22px; height: 24px;
+  border-radius: 6px;
+  color: var(--muted-fg);
+  transition: background .1s, color .1s;
+}
+.handle button:hover { background: var(--muted); color: var(--fg); }
+.handle svg { width: 14px; height: 14px; }
+.handle .grip { cursor: grab; }
+/* 菜单锚定高亮：菜单开着时块淡染 accent，指明作用对象 */
+.blk.menu-open { background: var(--accent-soft); }
+
+/* ---------- 章节分组标签（封面/目录/正文 kind 语义）---------- */
+.kind-sep {
+  display: flex; align-items: center; gap: 10px;
+  margin: 34px 0 10px;
+  user-select: none;
+}
+.kind-sep:first-child { margin-top: 0; }
+.kind-sep .tag {
+  font-size: 10.5px; font-weight: 600;
+  letter-spacing: .12em;
+  color: var(--muted-fg);
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: var(--muted);
+  white-space: nowrap;
+}
+.kind-sep .rule { flex: 1; height: 1px; background: var(--hairline); }
+
+/* ---------- 资料缺失 callout（Notion callout 语法）---------- */
+.callout {
+  display: flex; align-items: flex-start; gap: 10px;
+  margin: 8px 0;
+  padding: 11px 14px;
+  border-radius: 8px;
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-border);
+  font-size: 13px; line-height: 1.7;
+  color: var(--amber);
+}
+.callout svg { width: 15px; height: 15px; flex-shrink: 0; margin-top: 3px; }
+.callout .c-body { flex: 1; min-width: 0; }
+.callout .c-title { font-weight: 650; margin-bottom: 1px; }
+.callout .c-desc { opacity: .9; }
+.callout .c-act {
+  flex-shrink: 0; align-self: center;
+  padding: 4px 11px; border-radius: 7px;
+  font-size: 11.5px; font-weight: 550;
+  color: var(--amber);
+  border: 1px solid var(--amber-border);
+  transition: background .12s;
+}
+.callout .c-act:hover { background: color-mix(in srgb, var(--amber) 12%, transparent); }
+/* 补料输入（点「补充资料」展开） */
+.callout .c-fill { display: none; margin-top: 8px; }
+.callout.filling .c-fill { display: block; }
+.callout.filling .c-act { display: none; }
+.c-fill textarea {
+  width: 100%; min-height: 64px; resize: vertical;
+  padding: 8px 10px;
+  border-radius: 7px; border: 1px solid var(--amber-border);
+  background: var(--card); color: var(--fg);
+  font: inherit; font-size: 12.5px; line-height: 1.6;
+  outline: none;
+}
+.c-fill textarea:focus { border-color: var(--amber); }
+.c-fill .row { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.c-fill .row .cancel { padding: 4px 10px; border-radius: 6px; font-size: 11.5px; color: var(--muted-fg); }
+.c-fill .row .cancel:hover { background: var(--muted); }
+.c-fill .row .submit {
+  padding: 4px 12px; border-radius: 6px;
+  font-size: 11.5px; font-weight: 550;
+  color: #fff; background: var(--amber);
+}
+
+/* ---------- 配图块（genimage 指令卡的 Notion 形态）---------- */
+.img-blk {
+  position: relative;
+  margin: 10px 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  background: var(--muted);
+}
+.img-blk .ph {
+  aspect-ratio: 16 / 7;
+  display: grid; place-items: center;
+}
+.img-blk .ph-inner { text-align: center; color: var(--muted-fg); }
+.img-blk .ph-inner svg { width: 26px; height: 26px; opacity: .45; margin-bottom: 8px; }
+.img-blk .ph-inner .t { font-size: 12px; }
+.img-blk .ph-inner .cap { font-size: 11px; opacity: .7; margin-top: 2px; }
+.img-blk .gen {
+  margin-top: 10px;
+  padding: 4px 14px; border-radius: 7px;
+  font-size: 11.5px; font-weight: 550;
+  color: #fff; background: var(--accent);
+}
+/* 图块 hover 工具（对应 ProposalImageToolbar：AI 改图/换图/删除） */
+.img-blk .img-tools {
+  position: absolute; right: 8px; top: 8px;
+  display: flex; gap: 3px;
+  padding: 3px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  border: 1px solid var(--hairline);
+  box-shadow: 0 2px 8px rgba(0,0,0,.1);
+  opacity: 0; transition: opacity .12s;
+}
+.img-blk:hover .img-tools { opacity: 1; }
+.img-tools button {
+  display: grid; place-items: center;
+  width: 24px; height: 24px; border-radius: 5px;
+  color: var(--muted-fg);
+}
+.img-tools button:hover { background: var(--muted); color: var(--fg); }
+.img-tools button.danger:hover { color: var(--rose); }
+.img-tools svg { width: 13px; height: 13px; }
+
+/* ---------- 块菜单（⋮⋮ 点开）---------- */
+.blk-menu {
+  position: fixed; z-index: 60;
+  width: 208px;
+  padding: 5px;
+  border-radius: 11px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  box-shadow: var(--shadow-menu);
+  display: none;
+  animation: pop .13s ease-out;
+}
+.blk-menu.open { display: block; }
+@keyframes pop { from { opacity: 0; transform: translateY(3px) scale(.98); } to { opacity: 1; transform: none; } }
+.blk-menu button {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; padding: 6px 9px;
+  border-radius: 7px;
+  font-size: 12.5px; color: var(--fg);
+  text-align: left;
+}
+.blk-menu button:hover { background: var(--muted); }
+.blk-menu button svg { width: 14px; height: 14px; color: var(--muted-fg); flex-shrink: 0; }
+.blk-menu button.danger { color: var(--rose); }
+.blk-menu button.danger svg { color: var(--rose); }
+.blk-menu .sep { height: 1px; margin: 4px 6px; background: var(--hairline); }
+.blk-menu .hint { padding: 4px 9px 3px; font-size: 10.5px; color: var(--muted-fg); letter-spacing: .04em; }
+
+/* ---------- 选区浮动工具条（SelectionAiBubble 的 Notion 形态）---------- */
+.sel-bar {
+  position: fixed; z-index: 70;
+  display: none;
+  align-items: center; gap: 1px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  box-shadow: var(--shadow-menu);
+  animation: pop .12s ease-out;
+}
+.sel-bar.open { display: flex; }
+.sel-bar button {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 9px;
+  border-radius: 7px;
+  font-size: 12px; color: var(--fg);
+}
+.sel-bar button:hover { background: var(--muted); }
+.sel-bar button svg { width: 13px; height: 13px; }
+.sel-bar .b { font-weight: 700; width: 28px; padding: 0; justify-content: center; }
+.sel-bar .i { font-style: italic; width: 28px; padding: 0; justify-content: center; font-family: Georgia, serif; }
+.sel-bar .ai { color: var(--accent); font-weight: 550; }
+.sel-bar .vr { width: 1px; height: 16px; background: var(--hairline); margin: 0 3px; }
+
+/* ---------- 撰写中骨架（Notion 风格）---------- */
+.writing-sk .skl {
+  height: 14px; border-radius: 4px;
+  background: var(--muted);
+  margin: 14px 0;
+  animation: sk-pulse 1.6s ease-in-out infinite;
+}
+@keyframes sk-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+.writing-sk .skl.title { height: 30px; width: 55%; margin-bottom: 26px; }
+.writing-sk .w90 { width: 90%; } .writing-sk .w80 { width: 80%; } .writing-sk .w70 { width: 70%; }
+.writing-note {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 26px;
+  font-size: 12px; color: var(--muted-fg);
+}
+.writing-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); animation: pulse 1.8s ease-in-out infinite; }
+
+.doc [data-state] { display: none; }
+.panel[data-state="content"] .doc [data-state="content"] { display: block; }
+.panel[data-state="writing"] .doc [data-state="writing"] { display: block; }
+
+/* ============================================================
+   Tweaks
+   ============================================================ */
+.tweaks-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: 90;
+  width: 40px; height: 40px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--fg); color: var(--bg);
+  box-shadow: 0 4px 16px rgba(0,0,0,.25);
+}
+.tweaks-fab svg { width: 17px; height: 17px; }
+.tweaks {
+  position: fixed; right: 18px; bottom: 68px; z-index: 90;
+  width: 252px; padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  box-shadow: var(--shadow-menu);
+  display: none;
+}
+.tweaks.open { display: block; animation: pop .15s ease-out; }
+.tweaks h3 { font-size: 12px; font-weight: 650; margin-bottom: 12px; }
+.tw-field { margin-bottom: 11px; }
+.tw-field label { display: block; font-size: 10.5px; color: var(--muted-fg); margin-bottom: 5px; letter-spacing: .03em; }
+.tw-seg { display: flex; gap: 3px; padding: 2px; border-radius: 8px; background: var(--muted); }
+.tw-seg button { flex: 1; padding: 4px 2px; border-radius: 6px; font-size: 11px; color: var(--muted-fg); white-space: nowrap; }
+.tw-seg button.on { background: var(--card); color: var(--fg); font-weight: 550; box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+</style>
+</head>
+<body>
+
+<main class="panel" id="panel" data-canvas="notion" data-docfont="sans" data-state="content">
+
+  <!-- 顶栏（上下文壳） -->
+  <header class="topbar">
+    <h1>方案草稿</h1>
+    <span class="status-badge"><span class="dot"></span>正文撰写中</span>
+    <div class="segmented">
+      <button class="on">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+        编辑
+      </button>
+      <button>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+        预览
+      </button>
+    </div>
+    <button class="btn-ghost">清空草稿</button>
+    <button class="btn-primary">
+      导出
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+  </header>
+
+  <!-- 阶段条 -->
+  <div class="stagebar">
+    <div class="step done"><span class="node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span class="lbl">封面</span></div>
+    <span class="conn fill"></span>
+    <div class="step done"><span class="node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span class="lbl">目录</span></div>
+    <span class="conn fill"></span>
+    <div class="step now"><span class="node">3</span><span class="lbl">正文</span></div>
+  </div>
+
+  <!-- 知识库行 -->
+  <div class="kbbar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+    知识库
+    <span class="chip">导诊系统</span>
+    <span class="chip">预问诊系统</span>
+    <div class="kb-right">
+      <button class="kb-tool"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>召回预览</button>
+      <button class="kb-tool"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>语义搜索</button>
+    </div>
+  </div>
+
+  <!-- ═══ 编辑区（设计主体）═══ -->
+  <div class="doc">
+
+    <!-- 正文态：Notion 块编辑器 -->
+    <div data-state="content">
+      <div class="editor" id="editor">
+
+        <div class="kind-sep"><span class="tag">封面</span><span class="rule"></span></div>
+
+        <div class="blk h1" contenteditable="true" spellcheck="false">智慧导诊与预问诊系统建设方案<span class="handle" contenteditable="false"><button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button></span></div>
+
+        <div class="blk sub" contenteditable="true" spellcheck="false">××医院 · 信息化建设项目 · 二〇二六年七月<span class="handle" contenteditable="false"><button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button></span></div>
+
+        <div class="kind-sep"><span class="tag">正文</span><span class="rule"></span></div>
+
+        <div class="blk h2" contenteditable="true" spellcheck="false">一、系统概述<span class="handle" contenteditable="false"><button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button></span></div>
+
+        <div class="blk" contenteditable="true" spellcheck="false">智慧导诊与预问诊系统面向医院门诊全流程，覆盖患者「来院前—院中—诊前」三个环节。导诊系统通过智能问答帮助患者快速定位科室与医生；预问诊系统在候诊阶段完成病史采集，生成结构化预问诊报告推送给接诊医生，缩短单次接诊时间。<span class="cite" contenteditable="false">〔来源：智能导诊产品白皮书〕</span><span class="handle" contenteditable="false"><button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button></span></div>
+
+        <div class="blk" contenteditable="true" spellcheck="false">本方案依据贵院信息化建设规划，结合两个产品的知识库资料编制，功能描述均以产品白皮书与实施手册为准，未经证实的内容不作展开。<span class="handle" contenteditable="false"><button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button></span></div>
+
+        <div class="blk h2" contenteditable="true" spellcheck="false">二、系统功能架构<span class="handle" contenteditable="false"><button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button></span></div>
+
+        <div class="blk h3" contenteditable="true" spellcheck="false">2.1 总体架构<span class="handle" contenteditable="false"><button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button></span></div>
+
+        <div class="blk" contenteditable="true" spellcheck="false">系统采用前后端分离的微服务架构，前端覆盖微信公众号、小程序与院内自助机三类入口，后端由分诊规则引擎、医学知识图谱服务与报告生成服务组成，统一经院内集成平台与 HIS、排班系统对接。<span class="handle" contenteditable="false"><button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button></span></div>
+
+        <!-- 资料缺失 callout（协议位「⚠️ 资料缺失：」的 Notion callout 形态） -->
+        <div class="callout" id="calloutDemo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          <div class="c-body">
+            <div class="c-title">资料缺失</div>
+            <div class="c-desc">预问诊系统与 HIS 的对接接口规格（协议、字段映射）在知识库中未找到，AI 未编造。</div>
+            <div class="c-fill">
+              <textarea id="gapFill" name="gapFill" aria-label="补充缺失资料" placeholder="贴入这段缺失的资料原文；或指认知识库文件（如：见《某产品白皮书》的部署章节）。AI 会据此续写并标注来源。"></textarea>
+              <div class="row">
+                <button class="cancel">取消</button>
+                <button class="submit">提交补料，让 AI 续写</button>
+              </div>
+            </div>
+          </div>
+          <button class="c-act">补充资料</button>
+        </div>
+
+        <div class="blk h3" contenteditable="true" spellcheck="false">2.2 关键技术<span class="handle" contenteditable="false"><button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button></span></div>
+
+        <div class="blk li" contenteditable="true" spellcheck="false">医学知识图谱驱动的多轮问诊对话，症状—科室映射可由医院自行维护；<span class="handle" contenteditable="false"><button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button></span></div>
+
+        <div class="blk li" contenteditable="true" spellcheck="false">分诊规则引擎支持症状、科室、排班三维联合匹配；<span class="handle" contenteditable="false"><button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button></span></div>
+
+        <div class="blk li" contenteditable="true" spellcheck="false">结构化报告生成，预问诊结果按病历书写规范输出主诉与现病史。<span class="handle" contenteditable="false"><button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button></span></div>
+
+        <!-- 配图块（genimage 指令卡） -->
+        <div class="img-blk">
+          <div class="ph">
+            <div class="ph-inner">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="14" x="3" y="5" rx="2"/><circle cx="8.5" cy="10.5" r="1.5"/><path d="m21 15-3.9-3.9a2 2 0 0 0-2.8 0L5 20"/></svg>
+              <div class="t">配图 · 总体架构图</div>
+              <div class="cap">尚未生成 —— 点击生成，AI 按图说文案绘制</div>
+              <button class="gen">生成配图</button>
+            </div>
+          </div>
+          <div class="img-tools">
+            <button title="AI 改图"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+            <button title="换图（上传）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg></button>
+            <button class="danger" title="删除配图"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- 撰写中态 -->
+    <div data-state="writing">
+      <div class="editor writing-sk">
+        <div class="skl title"></div>
+        <div class="skl w90"></div>
+        <div class="skl w80"></div>
+        <div class="skl w70"></div>
+        <div class="writing-note"><span class="dot"></span>AI 正在撰写，完成的部分会陆续出现，随后即可就地编辑…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部状态栏 -->
+  <footer class="statusbar">
+    <span><span class="save-dot"></span>已自动保存</span>
+    <span>6 节 · 共 486 字</span>
+  </footer>
+</main>
+
+<!-- 块菜单（⋮⋮） -->
+<div class="blk-menu" id="blkMenu">
+  <div class="hint">块操作</div>
+  <button data-act="ai">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+    AI 改写此块…
+  </button>
+  <button data-act="up">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+    上移
+  </button>
+  <button data-act="down">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m5 12 7 7 7-7"/></svg>
+    下移
+  </button>
+  <div class="sep"></div>
+  <button data-act="del" class="danger">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    删除块
+  </button>
+</div>
+
+<!-- 插入菜单（＋） -->
+<div class="blk-menu" id="addMenu">
+  <div class="hint">在下方插入</div>
+  <button data-add="p">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6.1H3M21 12.1H3M15.1 18H3"/></svg>
+    段落
+  </button>
+  <button data-add="h3">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h8M4 18V6M12 18V6M17 12l3-2v8"/></svg>
+    小标题
+  </button>
+  <button data-add="img">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="14" x="3" y="5" rx="2"/><circle cx="8.5" cy="10.5" r="1.5"/><path d="m21 15-3.9-3.9a2 2 0 0 0-2.8 0L5 20"/></svg>
+    配图占位（AI 生成）
+  </button>
+</div>
+
+<!-- 选区浮动工具条 -->
+<div class="sel-bar" id="selBar">
+  <button class="b" title="加粗">B</button>
+  <button class="i" title="斜体">I</button>
+  <span class="vr"></span>
+  <button class="ai">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+    AI 改写选中内容
+  </button>
+</div>
+
+<!-- Tweaks -->
+<button class="tweaks-fab" id="tweaksFab" aria-label="打开 Tweaks 面板">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>
+</button>
+<div class="tweaks" id="tweaksPanel">
+  <h3>Tweaks</h3>
+  <div class="tw-field">
+    <label>画布隐喻</label>
+    <div class="tw-seg" data-tw="canvas">
+      <button data-v="notion" class="on">通铺（Notion）</button>
+      <button data-v="paper">白纸（现状）</button>
+    </div>
+  </div>
+  <div class="tw-field">
+    <label>编辑字体</label>
+    <div class="tw-seg" data-tw="docfont">
+      <button data-v="sans" class="on">黑体（屏幕舒适）</button>
+      <button data-v="serif">宋体（Word 感）</button>
+    </div>
+  </div>
+  <div class="tw-field">
+    <label>文档状态</label>
+    <div class="tw-seg" data-tw="state">
+      <button data-v="content" class="on">正文</button>
+      <button data-v="writing">撰写中</button>
+    </div>
+  </div>
+  <div class="tw-field">
+    <label>主题</label>
+    <div class="tw-seg" data-tw="theme">
+      <button data-v="light" class="on">浅色</button>
+      <button data-v="dark">深色</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const panel = document.getElementById('panel');
+const editor = document.getElementById('editor');
+const blkMenu = document.getElementById('blkMenu');
+const addMenu = document.getElementById('addMenu');
+const selBar = document.getElementById('selBar');
+
+/* ---------- 手柄模板：动态插入的块也要有 ⋮⋮/＋ ---------- */
+const HANDLE_HTML =
+  '<span class="handle" contenteditable="false">' +
+  '<button class="add" title="在下方插入块"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>' +
+  '<button class="grip" title="块操作"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button>' +
+  '</span>';
+
+/* ---------- 块菜单（⋮⋮ / ＋）：定位到手柄旁，作用块高亮 ---------- */
+let menuTarget = null; // 当前菜单锚定的 .blk
+function openMenuAt(menu, anchorBtn, blk) {
+  closeMenus();
+  menuTarget = blk;
+  blk.classList.add('menu-open');
+  const r = anchorBtn.getBoundingClientRect();
+  menu.classList.add('open');
+  // 先显示再量尺寸，贴左下；触底时翻到上方
+  const mh = menu.offsetHeight, mw = menu.offsetWidth;
+  const top = r.bottom + 4 + mh > innerHeight ? r.top - mh - 4 : r.bottom + 4;
+  menu.style.top = `${top}px`;
+  menu.style.left = `${Math.min(r.left, innerWidth - mw - 8)}px`;
+}
+function closeMenus() {
+  blkMenu.classList.remove('open');
+  addMenu.classList.remove('open');
+  document.querySelectorAll('.blk.menu-open').forEach((b) => b.classList.remove('menu-open'));
+  menuTarget = null;
+}
+document.addEventListener('click', (e) => {
+  const grip = e.target.closest('.handle .grip');
+  const add = e.target.closest('.handle .add');
+  if (grip) { openMenuAt(blkMenu, grip, grip.closest('.blk')); return; }
+  if (add) { openMenuAt(addMenu, add, add.closest('.blk')); return; }
+  if (!e.target.closest('.blk-menu')) closeMenus();
+});
+
+/* 块操作：上移/下移跳过 callout/图块以外的兄弟；删除带淡出 */
+blkMenu.addEventListener('click', (e) => {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (!act || !menuTarget) return;
+  const blk = menuTarget;
+  if (act === 'up' && blk.previousElementSibling && !blk.previousElementSibling.classList.contains('kind-sep')) {
+    blk.previousElementSibling.before(blk);
+  } else if (act === 'down' && blk.nextElementSibling) {
+    blk.nextElementSibling.after(blk);
+  } else if (act === 'del') {
+    blk.style.transition = 'opacity .18s, transform .18s';
+    blk.style.opacity = '0';
+    blk.style.transform = 'translateX(6px)';
+    setTimeout(() => blk.remove(), 180);
+  }
+  // act === 'ai'：真实实现走 SelectionAiBubble 同链路，原型仅演示菜单结构
+  closeMenus();
+});
+
+/* 插入：段落 / 小标题 / 配图占位 */
+addMenu.addEventListener('click', (e) => {
+  const kind = e.target.closest('[data-add]')?.dataset.add;
+  if (!kind || !menuTarget) return;
+  let node;
+  if (kind === 'img') {
+    node = document.querySelector('.img-blk').cloneNode(true);
+  } else {
+    node = document.createElement('div');
+    node.className = 'blk' + (kind === 'h3' ? ' h3' : '');
+    node.setAttribute('contenteditable', 'true');
+    node.setAttribute('spellcheck', 'false');
+    node.innerHTML = HANDLE_HTML;
+  }
+  menuTarget.after(node);
+  closeMenus();
+  if (kind !== 'img') { node.focus(); }
+});
+
+/* ---------- 选区浮动工具条 ---------- */
+document.addEventListener('mouseup', (e) => {
+  if (e.target.closest('.sel-bar') || e.target.closest('.blk-menu')) return;
+  requestAnimationFrame(() => {
+    const sel = getSelection();
+    const inEditor = sel && !sel.isCollapsed && editor && editor.contains(sel.anchorNode);
+    if (!inEditor) { selBar.classList.remove('open'); return; }
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    if (!r.width) { selBar.classList.remove('open'); return; }
+    selBar.classList.add('open');
+    const bw = selBar.offsetWidth;
+    selBar.style.top = `${Math.max(8, r.top - selBar.offsetHeight - 8)}px`;
+    selBar.style.left = `${Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), innerWidth - bw - 8)}px`;
+  });
+});
+selBar.querySelector('.b').addEventListener('click', () => document.execCommand('bold'));
+selBar.querySelector('.i').addEventListener('click', () => document.execCommand('italic'));
+selBar.querySelector('.ai').addEventListener('click', () => selBar.classList.remove('open'));
+
+/* ---------- 资料缺失 callout：补料展开/收起 ---------- */
+const callout = document.getElementById('calloutDemo');
+callout.querySelector('.c-act').addEventListener('click', () => {
+  callout.classList.add('filling');
+  callout.querySelector('textarea').focus();
+});
+callout.querySelector('.cancel').addEventListener('click', () => callout.classList.remove('filling'));
+callout.querySelector('.submit').addEventListener('click', () => callout.classList.remove('filling'));
+
+/* ---------- Tweaks ---------- */
+const tweaksPanel = document.getElementById('tweaksPanel');
+document.getElementById('tweaksFab').addEventListener('click', () => tweaksPanel.classList.toggle('open'));
+document.querySelectorAll('.tw-seg[data-tw]').forEach((group) => {
+  group.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-v]');
+    if (!b) return;
+    group.querySelectorAll('[data-v]').forEach((x) => x.classList.toggle('on', x === b));
+    const tw = group.dataset.tw, v = b.dataset.v;
+    if (tw === 'canvas') panel.dataset.canvas = v;
+    if (tw === 'docfont') panel.dataset.docfont = v;
+    if (tw === 'state') panel.dataset.state = v;
+    if (tw === 'theme') document.documentElement.dataset.theme = v === 'dark' ? 'dark' : '';
+  });
+});
+if (matchMedia('(prefers-color-scheme: dark)').matches) {
+  document.documentElement.dataset.theme = 'dark';
+  document.querySelector('[data-tw="theme"] [data-v="dark"]').classList.add('on');
+  document.querySelector('[data-tw="theme"] [data-v="light"]').classList.remove('on');
+}
+</script>
+</body>
+</html>

@@ -77,12 +77,12 @@ export function ProposalImageToolbar({
   }
 
   const iconBtn =
-    'grid size-7 place-items-center rounded-md border border-neutral-300 bg-white text-[13px] text-neutral-600 hover:border-accent hover:text-accent disabled:opacity-30 disabled:hover:border-neutral-300 disabled:hover:text-neutral-600'
+    'grid size-7 place-items-center rounded-md border border-border bg-card text-[13px] text-muted-foreground hover:border-accent hover:text-accent disabled:opacity-30 disabled:hover:border-border disabled:hover:text-muted-foreground'
 
   return (
     <div
       data-image-toolbar
-      className="proposal-anim-pop absolute z-40 rounded-lg border border-neutral-300 bg-white p-1.5 text-neutral-700 shadow-lg"
+      className="proposal-anim-pop absolute z-40 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-lg"
       style={{ left: anchorLeft, top: anchorTop, transform: 'translate(-100%, 0)' }}
       // 与 SelectionAiBubble 同款取舍：mousedown 默认 preventDefault 防止点按钮前正文选区/
       // 图片选中态被意外打断，但放行 textarea 自身的聚焦，否则光标进不去打不了字。
@@ -116,7 +116,7 @@ export function ProposalImageToolbar({
           <button
             type="button"
             className={
-              'grid size-7 place-items-center rounded-md border border-neutral-300 bg-white text-[13px] text-rose-500 hover:border-rose-400 disabled:opacity-30'
+              'grid size-7 place-items-center rounded-md border border-border bg-card text-[13px] text-rose-500 hover:border-rose-400 disabled:opacity-30'
             }
             disabled={disabled}
             title="删除这张图"
@@ -138,10 +138,10 @@ export function ProposalImageToolbar({
       ) : (
         <div className="w-72 p-1">
           <div className="flex items-center justify-between">
-            <span className="text-[12px] font-medium text-neutral-700">改图指令</span>
+            <span className="text-[12px] font-medium text-foreground">改图指令</span>
             <button
               type="button"
-              className="rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 disabled:opacity-40"
+              className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
               title="取消"
               aria-label="取消"
               disabled={loading}
@@ -156,11 +156,11 @@ export function ProposalImageToolbar({
           {/* 改图是秒级到数十秒的网络往返，纯按钮文字变「改图中…」反馈太弱（GUI 走查：等太久
               不知在不在动）。loading 时用转圈 + 说明文字的独立块替换输入区，明确「在处理、别关」。 */}
           {loading && (
-            <div className="mt-2 flex items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-2 text-[12px] text-neutral-600">
+            <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-2 text-[12px] text-foreground">
               <SpinnerIcon className="shrink-0 animate-spin text-accent" />
               <div className="leading-relaxed">
-                <div className="font-medium text-neutral-700">AI 正在改这张图…</div>
-                <div className="text-[11px] text-neutral-400">通常十几秒到半分钟，请勿关闭</div>
+                <div className="font-medium text-foreground">AI 正在改这张图…</div>
+                <div className="text-[11px] text-muted-foreground">通常十几秒到半分钟，请勿关闭</div>
               </div>
             </div>
           )}
@@ -183,7 +183,7 @@ export function ProposalImageToolbar({
             placeholder="怎么改这张图，比如：把背景换成白色"
             rows={2}
             disabled={loading}
-            className="mt-1.5 w-full resize-none rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-[12px] leading-relaxed text-neutral-800 outline-none focus:border-accent disabled:opacity-60"
+            className="mt-1.5 w-full resize-none rounded-md border border-border bg-card px-2 py-1.5 text-[12px] leading-relaxed text-foreground outline-none focus:border-accent disabled:opacity-60"
           />
           {error && (
             <div className="mt-1.5 flex items-start gap-1 rounded bg-rose-500/10 px-1.5 py-1 text-[11px] text-rose-600">
@@ -205,7 +205,7 @@ export function ProposalImageToolbar({
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
             <button
               type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
               onClick={() => {
                 setMode('buttons')
                 setError(null)
@@ -215,7 +215,7 @@ export function ProposalImageToolbar({
             </button>
             <button
               type="button"
-              className="flex items-center gap-1 rounded-md bg-neutral-900 px-2.5 py-1 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-40"
+              className="flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
               disabled={!prompt.trim()}
               onClick={() => void submit()}
               title="⌘/Ctrl + 回车"

@@ -750,3 +750,60 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
   .ssw-in  { animation: none; }
   .ssw-sk  { animation: none; }
 }
+
+/* ═══ 写方案（proposal）功能样式（ProposalDocPanel / ProposalPaper / ProposalPreview）═══
+ * 这一节曾在 Install-Plan 分支移植（2026-07-06）时漏迁：组件 TSX 搬了过来，但
+ * proposal-canvas / proposal-paper / proposal-anim-* / proposal-feature 的定义留在了
+ * 旧分支——类名在组件里引用却无规则，画布底色、纸张衬线与 token 覆盖、pop/fade 动画、
+ * 统一焦点环全部静默失效（陈旧的 out/ 构建产物里还能看到旧规则，即本节的恢复依据）。
+ * 随 2026-07-06 面板 UI 重设计一并补回。 */
+
+/* 文档画布（仅预览态 ProposalPreview 还挂）：比面板底再压一档，让 docx 的 A4 白页
+ * 「浮」在上面——预览承诺与导出 Word 逐像素一致，Word 隐喻只留在这里。编辑态已于
+ * 2026-07-06 通铺化（Notion 式画布即背景 + 黑体，用户选型定稿），不再用本类；旧的
+ * .proposal-paper 衬线/纸墨 token 覆盖规则随之退役删除。
+ * 暗档取暖黑 #141311（旧规则是中性 #171717，与 app 的暖黑基调 #1a1917 色相不合，
+ * 重设计时顺手对齐暖色轴）。 */
+.proposal-canvas { background-color: #ececee; }
+.dark .proposal-canvas { background-color: #141311; }
+
+/* 引用标注（〔来源：…〕哨兵解析后的行内高亮）：编辑列通铺后内容坐在 app 背景上，
+ * 琥珀色必须分明暗档——浅档深琥珀字，暗档提亮到 amber-400，暖黑底上才读得清。 */
+.proposal-citation {
+  color: #b45309;
+  background: rgba(251, 191, 36, 0.16);
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: 500;
+}
+.dark .proposal-citation {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+}
+
+/* 区内统一焦点环（design-review F6）：面板根挂 .proposal-feature，一处覆盖全部可聚焦控件。 */
+.proposal-feature :is(button, [role='button'], a[href], input, select, textarea, summary):focus-visible {
+  outline: 2px solid hsl(var(--accent));
+  outline-offset: 1px;
+}
+
+/* 轻量出场动效：下拉/浮层 pop、状态条 fade。 */
+@keyframes proposal-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes proposal-pop-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+.proposal-anim-fade { animation: 0.15s ease-out proposal-fade-in; }
+.proposal-anim-pop  { animation: 0.14s ease-out proposal-pop-in; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* 一刀切压平区内所有过渡/动画（含 stepper 连线填充、badge 呼吸点）：proposal 区的
+   * 动效全部是装饰性反馈，无一承载独有信息，降级为瞬时切换零损失。 */
+  .proposal-feature *,
+  .proposal-feature *::before,
+  .proposal-feature *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

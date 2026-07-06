@@ -41,13 +41,13 @@ export function GenImageDirectiveCard({
 }: GenImageDirectiveCardProps): React.JSX.Element {
   const needsSettings = job?.status === 'failed' && (job.error ?? '').includes('未配置')
   return (
-    <div className="my-2 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-3 py-2.5 text-[12.5px]">
-      <div className="flex items-center gap-2 text-neutral-600">
+    <div className="my-2 rounded-lg border border-dashed border-border bg-muted/40 px-3 py-2.5 text-[12.5px]">
+      <div className="flex items-center gap-2 text-foreground">
         <ImageIcon />
         <span className="font-medium">方案配图：{caption}</span>
       </div>
       {job?.status === 'pending' && (
-        <div className="mt-1.5 flex items-center gap-1.5 text-neutral-500">
+        <div className="mt-1.5 flex items-center gap-1.5 text-muted-foreground">
           {/* SpinnerIcon 自身不动画（见 proposalIcons.tsx 约定），必须由调用处加 animate-spin。 */}
           <SpinnerIcon className="shrink-0 animate-spin text-accent" />
           <span>正在调用生图模型绘制，完成后会出现审阅卡供你确认…</span>
@@ -59,7 +59,7 @@ export function GenImageDirectiveCard({
           <span>{job.error ?? '生成失败，请稍后重试。'}</span>
           <button
             type="button"
-            className="rounded border border-neutral-300 bg-white px-2 py-0.5 text-neutral-700 hover:border-accent hover:text-accent disabled:opacity-40"
+            className="rounded border border-border bg-card px-2 py-0.5 text-foreground hover:border-accent hover:text-accent disabled:opacity-40"
             disabled={generating}
             onClick={onGenerate}
           >
@@ -68,7 +68,7 @@ export function GenImageDirectiveCard({
           {needsSettings && (
             <button
               type="button"
-              className="rounded border border-neutral-300 bg-white px-2 py-0.5 text-neutral-700 hover:border-accent hover:text-accent"
+              className="rounded border border-border bg-card px-2 py-0.5 text-foreground hover:border-accent hover:text-accent"
               onClick={onOpenSettings}
             >
               去设置
@@ -78,15 +78,15 @@ export function GenImageDirectiveCard({
       )}
       {job?.status === 'done' &&
         (hasReview ? (
-          <div className="mt-1.5 text-neutral-500">已生成，请在下方审阅卡里确认「应用」或「丢弃」。</div>
+          <div className="mt-1.5 text-muted-foreground">已生成，请在下方审阅卡里确认「应用」或「丢弃」。</div>
         ) : (
           // 搁浅态兜底（见 hasReview 注释）：审阅卡已随 reopen/leaveMode 清空，resultPath 随之
           // 丢失，唯一出路是重新生成。
-          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-neutral-500">
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-muted-foreground">
             <span>生成结果已失效（离开工作台会清掉未确认的审阅卡），可重新生成。</span>
             <button
               type="button"
-              className="rounded border border-neutral-300 bg-white px-2 py-0.5 text-neutral-700 hover:border-accent hover:text-accent disabled:opacity-40"
+              className="rounded border border-border bg-card px-2 py-0.5 text-foreground hover:border-accent hover:text-accent disabled:opacity-40"
               disabled={generating}
               onClick={onGenerate}
             >
@@ -95,11 +95,11 @@ export function GenImageDirectiveCard({
           </div>
         ))}
       {(!job || job.status === 'manual') && (
-        <div className="mt-1.5 flex items-center gap-2 text-neutral-500">
+        <div className="mt-1.5 flex items-center gap-2 text-muted-foreground">
           <span>尚未生成，可点击按钮生成这张图。</span>
           <button
             type="button"
-            className="rounded border border-neutral-300 bg-white px-2 py-0.5 text-neutral-700 hover:border-accent hover:text-accent disabled:opacity-40"
+            className="rounded border border-border bg-card px-2 py-0.5 text-foreground hover:border-accent hover:text-accent disabled:opacity-40"
             disabled={generating}
             onClick={onGenerate}
           >

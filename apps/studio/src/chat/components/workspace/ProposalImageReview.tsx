@@ -69,13 +69,13 @@ export function ProposalImageReview({
   const title = review.mode === 'edit' ? '改图预览' : '生成预览'
 
   return (
-    <div className="proposal-anim-pop mb-3 rounded-lg border border-neutral-300 bg-neutral-50 p-2.5">
+    <div className="proposal-anim-pop mb-3 rounded-lg border border-border bg-muted/40 p-2.5">
       {/* 标题栏：× 语义等同「放弃」——审阅卡本就是一次性的临时提议，关闭=不采纳。 */}
       <div className="flex items-center justify-between">
-        <span className="text-[12px] font-medium text-neutral-700">{title}</span>
+        <span className="text-[12px] font-medium text-foreground">{title}</span>
         <button
           type="button"
-          className="rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 disabled:opacity-40"
+          className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
           title="放弃"
           aria-label="放弃"
           disabled={busy}
@@ -91,8 +91,8 @@ export function ProposalImageReview({
       {review.mode === 'edit' ? (
         <div className="mt-2 grid grid-cols-2 gap-2">
           <div>
-            <div className="mb-1 text-[11px] text-neutral-500">原图</div>
-            <div className="overflow-hidden rounded-md border border-neutral-200 bg-white">
+            <div className="mb-1 text-[11px] text-muted-foreground">原图</div>
+            <div className="overflow-hidden rounded-md border border-border bg-card">
               {review.sourcePath ? (
                 <img
                   src={resolveImageSrc(review.sourcePath)}
@@ -100,15 +100,15 @@ export function ProposalImageReview({
                   className="block h-auto w-full object-contain"
                 />
               ) : (
-                <div className="flex h-24 items-center justify-center text-[11px] text-neutral-400">
+                <div className="flex h-24 items-center justify-center text-[11px] text-muted-foreground">
                   无原图
                 </div>
               )}
             </div>
           </div>
           <div>
-            <div className="mb-1 text-[11px] text-neutral-500">改后图</div>
-            <div className="overflow-hidden rounded-md border border-neutral-200 bg-white">
+            <div className="mb-1 text-[11px] text-muted-foreground">改后图</div>
+            <div className="overflow-hidden rounded-md border border-border bg-card">
               <img
                 src={resolveImageSrc(review.resultPath)}
                 alt="改后图"
@@ -119,14 +119,14 @@ export function ProposalImageReview({
         </div>
       ) : (
         <div className="mt-2">
-          <div className="overflow-hidden rounded-md border border-neutral-200 bg-white">
+          <div className="overflow-hidden rounded-md border border-border bg-card">
             <img
               src={resolveImageSrc(review.resultPath)}
               alt="生成图"
               className="block h-auto max-h-72 w-full object-contain"
             />
           </div>
-          <div className="mt-1 text-[11px] text-neutral-500">
+          <div className="mt-1 text-[11px] text-muted-foreground">
             {review.mode === 'directive'
               ? '应用后将原地替换文档中的配图指令块'
               : '应用后插入到所选段落之后'}
@@ -137,13 +137,13 @@ export function ProposalImageReview({
       {/* 重改（retry）飞行中：改图/生图同样是数十秒往返，给转圈 + 说明，别让用户对着静止的
           「处理中…」按钮猜是否在动。busy 也可能来自「应用」——措辞用中性的「处理中」。 */}
       {busy && (
-        <div className="mt-2 flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2.5 py-2 text-[12px] text-neutral-600">
+        <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-2 text-[12px] text-foreground">
           <SpinnerIcon className="shrink-0 animate-spin text-accent" />
           <div className="leading-relaxed">
-            <div className="font-medium text-neutral-700">
+            <div className="font-medium text-foreground">
               {review.mode === 'edit' ? 'AI 正在重新改图…' : 'AI 正在重新生成…'}
             </div>
-            <div className="text-[11px] text-neutral-400">通常十几秒到半分钟，请勿关闭</div>
+            <div className="text-[11px] text-muted-foreground">通常十几秒到半分钟，请勿关闭</div>
           </div>
         </div>
       )}
@@ -185,12 +185,12 @@ export function ProposalImageReview({
             placeholder={review.mode === 'edit' ? '怎么改这张图，比如：把背景换成白色' : '重新描述想生成的插图'}
             rows={2}
             disabled={busy}
-            className="w-full resize-none rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-[12px] leading-relaxed text-neutral-800 outline-none focus:border-accent disabled:opacity-60"
+            className="w-full resize-none rounded-md border border-border bg-card px-2 py-1.5 text-[12px] leading-relaxed text-foreground outline-none focus:border-accent disabled:opacity-60"
           />
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
             <button
               type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
               disabled={busy}
               onClick={() => {
                 setRetrying(false)
@@ -201,7 +201,7 @@ export function ProposalImageReview({
             </button>
             <button
               type="button"
-              className="flex items-center gap-1 rounded-md bg-neutral-900 px-2.5 py-1 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-40"
+              className="flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
               disabled={!prompt.trim() || busy}
               onClick={submitRetry}
               title="⌘/Ctrl + 回车"
@@ -214,7 +214,7 @@ export function ProposalImageReview({
         <div className="mt-2.5 flex items-center justify-end gap-1.5">
           <button
             type="button"
-            className="flex items-center gap-1 rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-[12px] text-neutral-600 hover:border-rose-400 hover:text-rose-500 disabled:opacity-40"
+            className="flex items-center gap-1 rounded-md border border-border bg-card px-2.5 py-1 text-[12px] text-foreground hover:border-rose-400 hover:text-rose-500 disabled:opacity-40"
             disabled={busy}
             onClick={onDiscard}
             title="放弃这次结果"
@@ -224,7 +224,7 @@ export function ProposalImageReview({
           </button>
           <button
             type="button"
-            className="flex items-center gap-1 rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-[12px] text-neutral-600 hover:border-accent hover:text-accent disabled:opacity-40"
+            className="flex items-center gap-1 rounded-md border border-border bg-card px-2.5 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent disabled:opacity-40"
             disabled={busy}
             onClick={() => setRetrying(true)}
             title="重新描述指令再来一次"
@@ -234,7 +234,7 @@ export function ProposalImageReview({
           </button>
           <button
             type="button"
-            className="flex items-center gap-1 rounded-md bg-neutral-900 px-2.5 py-1 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-40"
+            className="flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
             disabled={busy}
             onClick={onApply}
             title="采纳这次结果，写入正文"

@@ -5,6 +5,7 @@ import { useProposalStyleStore } from '../../stores/proposalStyle'
 import { buildProposalMarkdown } from '@desktop-shared/proposal'
 import { extractMermaidBlocks, renderMermaidImageMap } from '../../lib/mermaidRender'
 import type { ProposalStyleConfig } from '@desktop-shared/proposalStyle'
+import { FileIcon } from './proposalIcons'
 
 /**
  * 预览态：把当前草稿拼成 markdown → 走与「导出 Word」完全相同的引擎
@@ -181,14 +182,9 @@ export function ProposalPreview({
 
   return (
     <div className="relative flex-1 overflow-hidden">
-      {/* 预览角标：浅色描边 pill + 绿色 live 状态点（design-review F8）。原先是 bg-black/55 的
-          硬编码黑片、不跟随主题；改用主题 token（bg-background/80 + border-border + 半透明 +
-          backdrop-blur），明暗主题下都贴合画布。绿点表「实时同步、与导出一致」，比原 emoji/眼睛
-          图标更准地传达「这是 live 真预览」。 */}
-      <div className="pointer-events-none absolute left-1/2 top-3 z-10 inline-flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-background/80 px-3 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
-        <span className="size-1.5 shrink-0 rounded-full bg-emerald-500 ring-2 ring-emerald-500/20" />
-        真预览 · 与最终导出的 Word 逐像素一致
-      </div>
+      {/* 「真预览」角标（原 design-review F8 的浮动 pill）已移入 ProposalDocPanel 底部
+          状态栏（2026-07-06 重设计）：它是常驻元信息，漂浮在页面上方会遮挡首页内容、
+          且与画布争层级——文档区还给文档。 */}
       <div ref={scrollRef} className="proposal-canvas h-full overflow-auto py-8">
         <div ref={hostRef} className="proposal-docx-host" />
       </div>
@@ -201,9 +197,18 @@ export function ProposalPreview({
           </div>
         </div>
       )}
+      {/* 预览空态（重设计）：一行灰字漂在整片空画布上像坏掉了；补图标 + 第二行动作
+          引导（告诉用户出路在编辑模式的左侧对话），与编辑态的三步旅程空态呼应。 */}
       {status === 'empty' && (
-        <div className="absolute inset-0 grid place-items-center text-[13px] text-muted-foreground">
-          草稿为空，无可预览内容
+        <div className="absolute inset-0 grid place-items-center">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <FileIcon className="size-8 text-muted-foreground/40" />
+            <div className="text-[12.5px] leading-relaxed text-muted-foreground">
+              草稿为空，暂无可预览内容
+              <br />
+              切回「编辑」，在左侧对话中开始生成
+            </div>
+          </div>
         </div>
       )}
       {status === 'error' && (
