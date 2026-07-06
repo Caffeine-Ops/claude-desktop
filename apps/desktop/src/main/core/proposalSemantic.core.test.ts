@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { cosineTopK, fuseRRF } from './proposalSemantic.core'
+import { cosineTopK, fuseRRF, passagesToHits } from './proposalSemantic.core'
 
 test('cosineTopK: 取最近邻、k 截断、降序', () => {
   // 3 行 2 维，已归一化
@@ -21,4 +21,29 @@ test('fuseRRF: 公共 row 得分叠加、单路 row 也在、降序', () => {
   const rows = fused.map((f) => f.row).sort((a, b) => a - b)
   expect(rows).toEqual([5, 7, 9])       // 并集
   for (let i = 1; i < fused.length; i++) expect(fused[i - 1].score).toBeGreaterThanOrEqual(fused[i].score)
+})
+
+test('passagesToHits: 非空 passages → 等长 hits、字段映射正确、snippet 截 160 字符', () => {
+  // 构造超过 160 字符的文本，验证 snippet 被截断
+  const longText = 'A'.repeat(200)
+  const passages = [
+    { text: longText, title: '标题一', mirrorPath: '/mirror/foo.md', score: 0.9 },
+    { text: 'short', title: '标题二', mirrorPath: '/mirror/bar.md', score: 0.5 },
+  ]
+  const hits = passagesToHits(passages)
+  // 等长：passage 数 = hit 数
+  expect(hits.length).toBe(passages.length)
+  // 字段携带正确
+  expect(hits[0].title).toBe('标题一')
+  expect(hits[0].mirrorPath).toBe('/mirror/foo.md')
+  expect(hits[0].score).toBe(0.9)
+  // snippet 截 160
+  expect(hits[0].snippet).toBe(longText.slice(0, 160))
+  expect(hits[0].snippet.length).toBe(160)
+  // BM25 腿不提供源路径 / 产品线 / 产品，置空字符串
+  expect(hits[0].sourcePath).toBe('')
+  expect(hits[0].productLine).toBe('')
+  expect(hits[0].product).toBe('')
+  // 短文本不截断
+  expect(hits[1].snippet).toBe('short')
 })
