@@ -35,7 +35,13 @@ export default defineConfig({
     resolve: sharedResolve,
     build: {
       rollupOptions: {
-        input: resolve(__dirname, 'src/main/index.ts')
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // embedWorker 是 utilityProcess 独立入口：模型加载/向量检索全在子进程，
+          // 绝不进 main 主线程（冷加载 ~6s 会冻住所有 tab 的 engine）。
+          // Task 6 用 utilityProcess.fork('out/main/embedWorker.js') 指向此产物。
+          embedWorker: resolve(__dirname, 'src/main/workers/embedWorker.ts')
+        }
       },
       commonjsOptions: { transformMixedEsModules: true }
     }

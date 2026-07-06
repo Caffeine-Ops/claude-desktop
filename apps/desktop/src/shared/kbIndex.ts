@@ -42,3 +42,14 @@ export interface VectorStoreMeta {
   fingerprint: string
   rows: VectorMeta[]
 }
+
+/** 语义检索命中（worker→main→renderer 全链共用）。score 是 RRF 融合分，只用于排序不展示语义。 */
+export interface SemanticHit {
+  title: string
+  sourcePath: string
+  mirrorPath: string
+  productLine: string
+  product: string
+  snippet: string
+  score: number
+}
