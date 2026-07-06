@@ -70,6 +70,8 @@ import {
   type ProposalMetricLogResult,
   type ProposalPeekRetrievalPayload,
   type ProposalPeekRetrievalResult,
+  type KbSemanticSearchPayload,
+  type KbSemanticSearchResult,
   type ProposalImageApiConfig,
   type ProposalImageGeneratePayload,
   type ProposalImageEditPayload,
@@ -505,6 +507,12 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PROPOSAL_PEEK_RETRIEVAL,
       payload
     ) as Promise<ProposalPeekRetrievalResult>
+  },
+  kbSemanticSearch(payload: KbSemanticSearchPayload): Promise<KbSemanticSearchResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.KB_SEMANTIC_SEARCH,
+      payload
+    ) as Promise<KbSemanticSearchResult>
   },
 
   proposalImageSettingsGet(): Promise<ProposalImageApiConfig | null> {

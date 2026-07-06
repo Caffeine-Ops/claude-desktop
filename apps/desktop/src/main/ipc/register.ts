@@ -89,6 +89,7 @@ import { markdownToDocxBuffer } from '../core/proposalDocx'
 import { verifyCitations, collectUngroundedImagePaths } from '../core/proposalVerify'
 import { retrievePassages } from '../core/proposalRetrieve'
 import { buildProposalProductScopes } from '../core/proposalScopes'
+import { kbSemanticSearch } from '../core/kbSemanticSearch'
 import {
   saveProposalDraft,
   loadProposalDraft,
@@ -112,6 +113,8 @@ import type {
   ProposalMetricLogResult,
   ProposalPeekRetrievalPayload,
   ProposalPeekRetrievalResult,
+  KbSemanticSearchPayload,
+  KbSemanticSearchResult,
   ProposalImageApiConfig,
   ProposalImageGeneratePayload,
   ProposalImageEditPayload,
@@ -297,6 +300,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_GENERATE)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_EDIT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_UPLOAD)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_SEMANTIC_SEARCH)
   // LANG_CHANGED is a fire-and-forget `send` (not invoke), so cleanup
   // is via removeAllListeners rather than removeHandler. Important on
   // dev HMR reloads where this function runs more than once per
@@ -1197,6 +1201,24 @@ export function registerIpcHandlers(): void {
         }
       } catch {
         return { passages: [], scannedFiles: 0 }
+      }
+    }
+  )
+
+  // 语义搜索面板（Task 8）：混合(向量+BM25)检索，复用已有的 kbSemanticSearch 包装。
+  // kbSemanticSearch 内部全防御——模型缺失/超时/stale 均降级 BM25，绝不 reject。
+  // 空 query 在 handler 层短路，避免向 kbSemanticSearch 传空串触发无意义 BM25 扫全库。
+  ipcMain.handle(
+    IPC_CHANNELS.KB_SEMANTIC_SEARCH,
+    async (_event, p: KbSemanticSearchPayload): Promise<KbSemanticSearchResult> => {
+      try {
+        const query = typeof p?.query === 'string' ? p.query.trim() : ''
+        const products = Array.isArray(p?.products) ? p.products : []
+        if (!query) return { hits: [], staleIndex: false }
+        const scopes = buildProposalProductScopes(products)
+        return kbSemanticSearch(query, scopes, 12)
+      } catch {
+        return { hits: [], staleIndex: false }
       }
     }
   )

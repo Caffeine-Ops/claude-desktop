@@ -19,6 +19,7 @@ import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
 import { ProposalPaper } from './ProposalPaper'
 import { ProposalPreview } from './ProposalPreview'
 import { ProposalStyleModal } from './ProposalStyleModal'
+import { KbSemanticSearchPanel } from './KbSemanticSearchPanel'
 import {
   PencilIcon,
   EyeIcon,
@@ -113,6 +114,8 @@ export function ProposalDocPanel(): React.JSX.Element | null {
       setAllKbProducts([])
     }
   }
+  // 语义搜索面板（Task 8）：混合向量+BM25 检索，与「召回预览」BM25 词面互补。
+  const [semanticSearchOpen, setSemanticSearchOpen] = useState(false)
   // 召回预览（方案三·只读）：输关键词 + 当前产品集 → 知识库 top 召回片段，让用户看到检索到底命中
   // 什么、判断检索质量、决定要不要加产品。不写盘、不注入提示词，纯探查。
   const [retrievalOpen, setRetrievalOpen] = useState(false)
@@ -702,6 +705,15 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         >
           <SearchIcon /> 召回预览
         </button>
+        {/* 语义搜索开关（Task 8）：混合向量+BM25，与召回预览 BM25 词面互补。 */}
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-accent hover:text-accent"
+          onClick={() => setSemanticSearchOpen((v) => !v)}
+          title="语义搜索知识库（向量+BM25）"
+        >
+          <SearchIcon /> 语义搜索
+        </button>
       </div>
 
       {/* 召回预览面板（方案三·只读）：输关键词 → 显示当前产品集下知识库 top 召回片段。让「检索
@@ -760,6 +772,12 @@ export function ProposalDocPanel(): React.JSX.Element | null {
               </div>
             ))}
         </div>
+      )}
+
+      {/* 语义搜索面板（Task 8）：混合向量+BM25 检索，与召回预览（BM25 词面）互补。
+          结果卡含复制引用（剪贴板）+ 打开文档（openPath）。staleIndex → 提示重建。 */}
+      {semanticSearchOpen && (
+        <KbSemanticSearchPanel products={products} />
       )}
 
       {/* 分节文档区：ProposalPaper（连续长纸 + 悬停工具条 + 就地编辑）与 ProposalPreview

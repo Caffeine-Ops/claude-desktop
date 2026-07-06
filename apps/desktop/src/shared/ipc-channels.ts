@@ -546,7 +546,13 @@ export const IPC_CHANNELS = {
    * 'uploaded'/upload- 前缀，ext 取自选中文件的扩展名），返回绝对路径。与 GENERATE/EDIT
    * 不同：上传不调出图 API，不受未配置 apiKey 限制。
    */
-  PROPOSAL_IMAGE_UPLOAD: 'proposal-image:upload'
+  PROPOSAL_IMAGE_UPLOAD: 'proposal-image:upload',
+  /**
+   * Renderer → main. 语义检索：模糊自然语言 → 混合(向量+BM25)命中片段+出处。供写方案
+   * 搜索面板主动用。embedding 在 utilityProcess、不冻 main；模型缺失/stale 降级 BM25。
+   * staleIndex=true 时结果是 BM25 降级（有内容但非语义），面板顶部显「需重建索引」条。
+   */
+  KB_SEMANTIC_SEARCH: 'kb:semantic-search'
 } as const
 
 /**
@@ -1037,6 +1043,20 @@ export interface ProposalPeekRetrievalResult {
   scannedFiles: number
 }
 
+/** Payload for KB_SEMANTIC_SEARCH：自然语言检索词 + 要搜的产品集（空集→空结果）。 */
+export interface KbSemanticSearchPayload {
+  query: string
+  products: ReadonlyArray<{ productLine: string; product: string }>
+}
+/**
+ * Result of KB_SEMANTIC_SEARCH：混合(向量+BM25)命中片段列表 + stale 旗标。
+ * staleIndex=true 表示向量索引过期、本次结果来自 BM25 降级，面板顶部提示「需重建索引」。
+ */
+export interface KbSemanticSearchResult {
+  hits: import('./kbIndex').SemanticHit[]
+  staleIndex: boolean
+}
+
 export interface ProposalLoadDraftPayload {
   sessionId: string
 }
@@ -1499,6 +1519,13 @@ export interface ChatApi {
   peekProposalRetrieval(
     payload: ProposalPeekRetrievalPayload
   ): Promise<ProposalPeekRetrievalResult>
+
+  /**
+   * 语义搜索面板：混合(向量+BM25)检索，返回 SemanticHit 列表 + staleIndex 旗标。
+   * staleIndex=true → 向量索引已过期、结果为 BM25 降级，面板顶部显「需重建」提示条。
+   * 绝不 reject（全防御式）——空 query 立即返回 { hits:[], staleIndex:false }。
+   */
+  kbSemanticSearch(payload: KbSemanticSearchPayload): Promise<KbSemanticSearchResult>
 
   /**
    * Export the proposal document via the OS native save dialog.
