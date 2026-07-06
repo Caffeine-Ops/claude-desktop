@@ -236,6 +236,23 @@ jobs:
             exit 1
           fi
 
+      # Download the bge-small-zh-v1.5 ONNX model files into
+      # apps/desktop/kb-model/ so electron-builder can copy them into the
+      # packaged app's Resources/kb-model/. prebundle:kb-model downloads ~24 MB
+      # (onnx/model_quantized.onnx + 3 JSON files) from HuggingFace and verifies
+      # sha256 integrity immediately. verify:kb-model then re-asserts the same
+      # pins before packaging — if the download was truncated or the wrong model
+      # was fetched, the build fails here rather than shipping silent garbage
+      # vectors to users. Placed next to the other external-artifact downloads
+      # (fusion CLI, Node, Python) for the same fail-fast philosophy.
+      - name: Prepare kb-model
+        shell: bash
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          bun run prebundle:kb-model
+          bun run verify:kb-model
+
       # Only typecheck the package this workflow actually ships: the
       # Electron app. Its tsconfig project-references pull in every
       # @open-design/* package it depends on, so their types get checked

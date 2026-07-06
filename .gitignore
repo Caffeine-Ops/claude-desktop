@@ -30,6 +30,11 @@ skills/**/__pycache__/
 # 重新生成用 `bun run prebundle:daemon`。不入库。
 apps/desktop/prebundled/
 
+# 语义检索 ONNX 模型 (~24M)：scripts/prebundle-kb-model.mjs 从 HuggingFace 下载
+# （sha256 钉在脚本里），不是源码，不入库。electron-builder extraResources 把
+# kb-model/ 整体打进 Resources/kb-model/。重新拉取用 `bun run prebundle:kb-model`。
+apps/desktop/kb-model/
+
 .env
 .env.local
 # Exception: gpt-image-2 ships a secret-free `.env` carrying ONLY the
