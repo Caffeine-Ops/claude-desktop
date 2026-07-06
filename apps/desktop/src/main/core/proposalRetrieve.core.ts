@@ -84,46 +84,80 @@ function isTableBlock(block: string): boolean {
     .some((line) => line.includes('|') && /^\s*\|?[\s|:-]*-{3,}[\s|:-]*\|?\s*$/.test(line))
 }
 
+/** 一个检索块 + 它在原文中的字符区间（用于 RRF 行号对齐：离线 embed 与查询共用同一套块）。 */
+export interface TextChunk {
+  text: string
+  charStart: number
+  charEnd: number
+}
+
 /**
- * 把一篇文本切成检索块：先按空行切段，连续短段合并到 ≥ {@link CHUNK_MIN}（但不超
- * {@link CHUNK_MAX}），单段超 CHUNK_MAX 的按定长窗口硬切。返回非空块数组。
+ * 与 {@link chunkText} 同算法，但额外返回每块在【原文】中的字符区间 [charStart,charEnd)。
+ * 区间对齐到 trim 前的边界：slice(charStart,charEnd).trim() === text。offset 让离线向量化
+ * 与查询期 BM25 落到同一套块、用行号对齐 RRF（见 proposalSemantic.core.ts）。
  */
-export function chunkText(text: string): string[] {
+export function chunkTextWithOffsets(text: string): TextChunk[] {
   if (!text) return []
-  const blocks = text
-    .split(/\n\s*\n/)
-    .map((b) => b.trim())
-    .filter(Boolean)
-  const chunks: string[] = []
-  let buf = ''
-  const flush = (): void => {
-    const t = buf.trim()
-    if (t) chunks.push(t)
-    buf = ''
+  const out: TextChunk[] = []
+  // 用带捕获的分隔正则切段，同时累计绝对偏移。\n\s*\n 作为段分隔（与 chunkText 同义）。
+  const sep = /\n\s*\n/g
+  const segs: { raw: string; start: number }[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = sep.exec(text)) !== null) {
+    segs.push({ raw: text.slice(last, m.index), start: last })
+    last = m.index + m[0].length
   }
-  for (const b of blocks) {
-    if (b.length >= CHUNK_MAX) {
+  segs.push({ raw: text.slice(last), start: last })
+
+  // 把 raw 段 trim 成块；短段合并、超长段按 CHUNK_MAX 窗口/表格保形——与 chunkText 一致，
+  // 但携带绝对偏移。合并块的区间取 [首段trim起点, 末段trim终点)。
+  type Pending = { text: string; start: number; end: number }
+  let buf: Pending | null = null
+  const push = (p: Pending): void => { out.push({ text: p.text, charStart: p.start, charEnd: p.end }) }
+  const flush = (): void => {
+    if (buf) { push(buf); buf = null }
+  }
+  const trimRange = (raw: string, base: number): { t: string; s: number; e: number } => {
+    const lead = raw.length - raw.trimStart().length
+    const t = raw.trim()
+    return { t, s: base + lead, e: base + lead + t.length }
+  }
+  for (const seg of segs) {
+    const { t, s, e } = trimRange(seg.raw, seg.start)
+    if (!t) continue
+    if (t.length >= CHUNK_MAX) {
       flush()
       // 表格保形：大表整块保留，绝不按定长窗口硬切（那会把行/单元格/分隔行劈碎，召回片段
       // 里表格就不成形了）。代价是单个巨表块可能超 CHUNK_MAX——可接受：上游 retrievePassages
       // 还有 MAX_FILES / MAX_TOTAL_BYTES 兜注入预算，且巨表本就该整块呈现。
-      if (isTableBlock(b)) chunks.push(b)
-      else for (let i = 0; i < b.length; i += CHUNK_MAX) chunks.push(b.slice(i, i + CHUNK_MAX))
+      if (isTableBlock(t)) push({ text: t, start: s, end: e })
+      else for (let i = 0; i < t.length; i += CHUNK_MAX)
+        push({ text: t.slice(i, i + CHUNK_MAX), start: s + i, end: s + Math.min(i + CHUNK_MAX, t.length) })
       continue
     }
-    const merged = buf ? `${buf}\n\n${b}` : b
-    if (merged.length > CHUNK_MAX) {
-      flush()
-      buf = b
-    } else {
-      buf = merged
+    if (!buf) { buf = { text: t, start: s, end: e } }
+    else {
+      const merged = `${buf.text}\n\n${t}`
+      if (merged.length > CHUNK_MAX) { flush(); buf = { text: t, start: s, end: e } }
+      else { buf.text = merged; buf.end = e }
     }
     // 累计到下限即断：只把【过短的碎段】粘在一起，buf 一旦够长就成块，避免把整篇文档
     // 合并成一个巨块（那样 BM25 失去区分度）。典型段落（≥CHUNK_MIN）因此各自成块。
-    if (buf.length >= CHUNK_MIN) flush()
+    if (buf && buf.text.length >= CHUNK_MIN) flush()
   }
   flush()
-  return chunks
+  return out
+}
+
+/**
+ * 把一篇文本切成检索块：先按空行切段，连续短段合并到 ≥ {@link CHUNK_MIN}（但不超
+ * {@link CHUNK_MAX}），单段超 CHUNK_MAX 的按定长窗口硬切。返回非空块数组。
+ * 实现为 {@link chunkTextWithOffsets} 的 text 投影——两者使用同一套分块边界，
+ * 保证 BM25 与向量检索跑同一套块（RRF 行号对齐前提）。
+ */
+export function chunkText(text: string): string[] {
+  return chunkTextWithOffsets(text).map((c) => c.text)
 }
 
 /**

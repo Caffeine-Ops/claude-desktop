@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect, test } from 'bun:test'
 
 import {
   tokenize,
@@ -131,4 +131,23 @@ describe('clampPassageText（单片段注入上限·防巨表撑爆提示词）'
     // 保留部分应以完整的一行结尾（最后一行不是被中途切断的半行）。
     expect(body.endsWith(' |')).toBe(true)
   })
+})
+
+import { chunkTextWithOffsets } from './proposalRetrieve.core'
+
+test('chunkTextWithOffsets: offset 切片可回原文且与 text 一致', () => {
+  const src = '第一段内容这里写满八十个字以上凑够最小块长度的要求一二三四五六七八九十甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥。\n\n第二段也要够长一二三四五六七八九十甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥再加一句话。'
+  const chunks = chunkTextWithOffsets(src)
+  expect(chunks.length).toBeGreaterThan(0)
+  for (const c of chunks) {
+    expect(c.charEnd).toBeGreaterThan(c.charStart)
+    // 回切：用 offset 从原文截出的子串，trim 后等于 chunk.text
+    expect(src.slice(c.charStart, c.charEnd).trim()).toBe(c.text)
+  }
+})
+
+test('chunkText 仍等价于 chunkTextWithOffsets 的 text 投影', () => {
+  const src = 'abc 一二三四五六七八九十甲乙丙丁戊己庚辛壬癸。\n\nxyz 子丑寅卯辰巳午未申酉戌亥一二三四五六。'
+  const { chunkText } = require('./proposalRetrieve.core')
+  expect(chunkText(src)).toEqual(chunkTextWithOffsets(src).map((c: { text: string }) => c.text))
 })
