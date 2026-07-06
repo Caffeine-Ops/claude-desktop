@@ -1220,11 +1220,12 @@ export function registerIpcHandlers(): void {
       try {
         const query = typeof p?.query === 'string' ? p.query.trim() : ''
         const products = Array.isArray(p?.products) ? p.products : []
-        if (!query) return { hits: [], staleIndex: false }
+        // 空 query 短路与异常兜底都不是「BM25 顶替语义」——hits 本身为空，degraded=false。
+        if (!query) return { hits: [], staleIndex: false, degraded: false }
         const scopes = buildProposalProductScopes(products)
         return kbSemanticSearch(query, scopes, 12)
       } catch {
-        return { hits: [], staleIndex: false }
+        return { hits: [], staleIndex: false, degraded: false }
       }
     }
   )

@@ -8,8 +8,9 @@
 //   build time (electron-builder extraResources) so it must be present BEFORE
 //   `electron-vite build`. This script downloads it once and is idempotent:
 //   already-present files with a matching sha256 are silently skipped; a
-//   mismatching file is re-downloaded. The sha256 pins are the same constants
-//   as in verify-kb-model.mjs — if they ever need bumping, update both files.
+//   mismatching file is re-downloaded. Model dir name / HF repo / sha256 pins
+//   live in kb-model-manifest.mjs (single source shared with verify-kb-model.mjs;
+//   the TS-side twin is KB_MODEL_ID in src/shared/kbIndex.ts — bump both worlds).
 //
 // Why node's https module (not bun fetch):
 //   Some environments sit behind an SSL-MITM proxy. bun's native fetch
@@ -22,38 +23,22 @@
 // Run via: bun scripts/prebundle-kb-model.mjs
 //   or:    node scripts/prebundle-kb-model.mjs
 
-import { createHash } from 'node:crypto'
 import { createWriteStream, existsSync, mkdirSync, statSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
 import https from 'node:https'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// 目录名 / HF 仓库 / sha256 pins / 哈希 helper 统一来自 manifest——与 verify-kb-model.mjs
+// 同源，bump 模型改 kb-model-manifest.mjs 一处即可（TS 侧另见 shared/kbIndex.ts KB_MODEL_ID）。
+import { MODEL_DIR_NAME, HF_REPO, SHA256, sha256File } from './kb-model-manifest.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const desktopRoot = join(__dirname, '..')
-const modelDir = join(desktopRoot, 'kb-model', 'bge-small-zh-v1.5')
+const modelDir = join(desktopRoot, 'kb-model', MODEL_DIR_NAME)
 
-// SHA256 pins — must match verify-kb-model.mjs exactly.
-// These are the hashes of the files downloaded from Xenova/bge-small-zh-v1.5
-// via the @huggingface/transformers cache during Task 4 smoke test.
-// To bump: re-download the new files, compute new hashes, update BOTH scripts.
-const SHA256 = {
-  'config.json': 'd4193ead3a810fd694fa8a31d7fc72fbaebc0668b603e398734bf2f6538ff42f',
-  'tokenizer.json': '48cea5d44424912a6fd1ea647bf4fe50b55ab8b1e5879c3275f80e339e8fae26',
-  'tokenizer_config.json': 'e6f3b96db926a37d4039995fbf5ad17de158dfb8f6343d607e4dbaad18d75f5a',
-  'onnx/model_quantized.onnx': '15b717c382bcb518ba457b93ea6850ede7f4f1cd8937454aa06972366cd19bcc',
-}
-
-const HF_REPO = 'Xenova/bge-small-zh-v1.5'
 const HF_API = `https://huggingface.co/api/models/${HF_REPO}`
 const FILES = Object.keys(SHA256)
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-async function sha256File(filePath) {
-  const buf = await readFile(filePath)
-  return createHash('sha256').update(buf).digest('hex')
-}
 
 /** GET url → string body, following up to maxRedirects redirects. */
 function httpsGetText(url, maxRedirects = 10) {
@@ -157,9 +142,8 @@ for (const relPath of FILES) {
         `  expected sha256: ${expected}\n` +
         `  actual sha256:   ${actual}\n` +
         `  The downloaded file does not match the pinned sha256.\n` +
-        `  If the model was intentionally updated, bump SHA256 pins in BOTH:\n` +
-        `    apps/desktop/scripts/prebundle-kb-model.mjs\n` +
-        `    apps/desktop/scripts/verify-kb-model.mjs`
+        `  If the model was intentionally updated, bump the SHA256 pins in\n` +
+        `    apps/desktop/scripts/kb-model-manifest.mjs (shared with verify-kb-model.mjs)`
     )
     process.exit(1)
   }

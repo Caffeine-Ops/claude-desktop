@@ -21,30 +21,32 @@ export function passagesToHits(passages: readonly RetrievedPassage[]): SemanticH
 export function cosineTopK(
   query: Float32Array, matrix: Float32Array, rows: number, dim: number, k: number
 ): { row: number; score: number }[] {
-  const scored: { row: number; score: number }[] = new Array(rows)
-  for (let r = 0; r < rows; r++) {
-    let s = 0
-    const base = r * dim
-    for (let d = 0; d < dim; d++) s += query[d] * matrix[base + d]
-    scored[r] = { row: r, score: s }
-  }
-  scored.sort((a, b) => b.score - a.score)
-  return scored.slice(0, k)
+  // 委托 cosineTopKRows（allowedRows=全行）：只留一份点积内核，两函数永不漂移。
+  // 行号数组的分配代价相对逐行 dim 次乘加可忽略。
+  const all = new Array<number>(rows)
+  for (let r = 0; r < rows; r++) all[r] = r
+  return cosineTopKRows(query, matrix, all, dim, k)
 }
 
 /**
- * 命中按产品域过滤：只留 (productLine,product) 落在 scopes 集内的。
- * 空 scopes → 返空（调用方先短路：scopes.length===0 时不应走到这里，调用方保证）。
- * 接受结构子类型 { productLine, product } 让纯核不 import proposalPrompt（含 electron）。
+ * 与 cosineTopK 同语义，但只对 allowedRows 里的行打分——scope 过滤放在打分前，
+ * 窄产品域不会被全库 top-k 挤出（后置过滤的根本缺陷：语义相近的他域行占满 top-k 名额，
+ * main 侧再过滤只剩空壳，向量腿静默退化成纯 BM25）。allowedRows 为行号数组。
+ * （旧的后置过滤 filterHitsByScopes 已随之删除——worker 内前置过滤全面取代它。）
  */
-export function filterHitsByScopes(
-  hits: readonly SemanticHit[],
-  scopes: readonly { productLine: string; product: string }[]
-): SemanticHit[] {
-  if (scopes.length === 0) return []
-  // NUL 分隔符：productLine/product 均为路径片段，不含 NUL，键唯一
-  const set = new Set(scopes.map((s) => `${s.productLine}\0${s.product}`))
-  return hits.filter((h) => set.has(`${h.productLine}\0${h.product}`))
+export function cosineTopKRows(
+  query: Float32Array, matrix: Float32Array, allowedRows: readonly number[], dim: number, k: number
+): { row: number; score: number }[] {
+  const scored: { row: number; score: number }[] = new Array(allowedRows.length)
+  for (let i = 0; i < allowedRows.length; i++) {
+    const r = allowedRows[i]
+    let s = 0
+    const base = r * dim
+    for (let d = 0; d < dim; d++) s += query[d] * matrix[base + d]
+    scored[i] = { row: r, score: s }
+  }
+  scored.sort((a, b) => b.score - a.score)
+  return scored.slice(0, k)
 }
 
 /**

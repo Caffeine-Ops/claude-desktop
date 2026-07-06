@@ -1049,12 +1049,15 @@ export interface KbSemanticSearchPayload {
   products: ReadonlyArray<{ productLine: string; product: string }>
 }
 /**
- * Result of KB_SEMANTIC_SEARCH：混合(向量+BM25)命中片段列表 + stale 旗标。
+ * Result of KB_SEMANTIC_SEARCH：混合(向量+BM25)命中片段列表 + stale 旗标 + 降级旗标。
  * staleIndex=true 表示向量索引过期、本次结果来自 BM25 降级，面板顶部提示「需重建索引」。
+ * degraded=true 表示命中因【基础设施状态】只来自 BM25（worker 未就绪/stale/超时/error）——
+ * 面板给弱提示「词面匹配」；空产品集短路是设计使然的 no-op，不置 true。
  */
 export interface KbSemanticSearchResult {
   hits: import('./kbIndex').SemanticHit[]
   staleIndex: boolean
+  degraded: boolean
 }
 
 export interface ProposalLoadDraftPayload {

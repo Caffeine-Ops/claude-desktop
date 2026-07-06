@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { cosineTopK, fuseRRF, passagesToHits, filterHitsByScopes, fillHitsToK } from './proposalSemantic.core'
+import { cosineTopK, cosineTopKRows, fuseRRF, passagesToHits, fillHitsToK } from './proposalSemantic.core'
 import type { SemanticHit } from '../../shared/kbIndex'
 
 test('cosineTopK: 取最近邻、k 截断、降序', () => {
@@ -52,34 +52,41 @@ test('passagesToHits: 非空 passages → 等长 hits、字段映射正确、sni
   expect(hits[1].text).toBe('short')
 })
 
-// ── filterHitsByScopes ─────────────────────────────────────────────────────────
+// ── cosineTopKRows ─────────────────────────────────────────────────────────────
+// filterHitsByScopes（后置过滤）已删：scope 过滤改在 worker 打分前做（cosineTopKRows），
+// 窄产品域不再被全库 top-k 挤出。这里只测新的前置过滤内核。
+
+test('cosineTopKRows: 只对 allowedRows 打分，域外行绝不出现', () => {
+  // 3 行 2 维，已归一化。row1 与 q 完全同向（全库最高分），但不在 allowedRows —— 必须被排除。
+  const m = new Float32Array([0.7071, 0.7071, /*row0*/ 1, 0, /*row1*/ 0, 1 /*row2*/])
+  const q = new Float32Array([1, 0])
+  const top = cosineTopKRows(q, m, [0, 2], 2, 3)
+  expect(top.length).toBe(2)                       // 只有 2 行可打分，k=3 也只回 2
+  expect(top.map((h) => h.row)).not.toContain(1)   // 全库最高分行被域过滤挡在打分之外
+  expect(top[0].row).toBe(0)                       // 45° 优于 90°
+  expect(top[0].score).toBeCloseTo(0.7071, 4)
+  expect(top[1].row).toBe(2)
+  expect(top[1].score).toBeCloseTo(0, 5)
+  expect(top[0].score).toBeGreaterThan(top[1].score)
+})
+
+test('cosineTopKRows: 空 allowedRows → 空结果', () => {
+  const m = new Float32Array([1, 0, 0, 1])
+  const q = new Float32Array([1, 0])
+  expect(cosineTopKRows(q, m, [], 2, 5)).toEqual([])
+})
+
+test('cosineTopKRows: allowedRows=全行 时与 cosineTopK 等价', () => {
+  const m = new Float32Array([1, 0, 0, 1, 0.7071, 0.7071])
+  const q = new Float32Array([0.6, 0.8])
+  const all = cosineTopKRows(q, m, [0, 1, 2], 2, 3)
+  const ref = cosineTopK(q, m, 3, 2, 3)
+  expect(all).toEqual(ref)
+})
 
 function makeHit(productLine: string, product: string, mirrorPath: string, snippet = 'x'): SemanticHit {
   return { title: '', sourcePath: '', mirrorPath, productLine, product, text: snippet, snippet, score: 0 }
 }
-
-test('filterHitsByScopes: 只保留在域内的命中', () => {
-  const hits = [
-    makeHit('PL1', 'P1', '/a.md'),
-    makeHit('PL2', 'P2', '/b.md'),
-    makeHit('PL1', 'P3', '/c.md'),
-  ]
-  const scopes = [{ productLine: 'PL1', product: 'P1' }]
-  const out = filterHitsByScopes(hits, scopes)
-  expect(out.length).toBe(1)
-  expect(out[0].mirrorPath).toBe('/a.md')
-})
-
-test('filterHitsByScopes: 空 scopes → 空结果', () => {
-  const hits = [makeHit('PL1', 'P1', '/a.md')]
-  expect(filterHitsByScopes(hits, [])).toEqual([])
-})
-
-test('filterHitsByScopes: 全命中在域内 → 全保留', () => {
-  const hits = [makeHit('PL1', 'P1', '/a.md'), makeHit('PL2', 'P2', '/b.md')]
-  const scopes = [{ productLine: 'PL1', product: 'P1' }, { productLine: 'PL2', product: 'P2' }]
-  expect(filterHitsByScopes(hits, scopes).length).toBe(2)
-})
 
 // ── fillHitsToK ────────────────────────────────────────────────────────────────
 

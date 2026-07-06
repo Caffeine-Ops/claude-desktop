@@ -45,7 +45,7 @@ export function KbSemanticSearchPanel({ products }: KbSemanticSearchPanelProps):
       const r = await window.chatApi.kbSemanticSearch({ query: q, products })
       setResult(r)
     } catch {
-      setResult({ hits: [], staleIndex: false })
+      setResult({ hits: [], staleIndex: false, degraded: false })
     } finally {
       setLoading(false)
     }
@@ -82,6 +82,14 @@ export function KbSemanticSearchPanel({ products }: KbSemanticSearchPanelProps):
         混合语义检索（向量 + BM25）——同义词、英文缩写、跨语言均可召回。
         命中片段可「复制引用」后手动粘贴到草稿，或「打开文档」查看原文。
       </div>
+
+      {/* degraded 弱提示：基础设施未就绪（模型冷加载/超时/worker 崩），结果暂为 BM25 词面。
+          与 staleIndex 互斥展示——stale 有更强的琥珀色横幅（含修复动作），不叠加。 */}
+      {result?.degraded && !result.staleIndex && (
+        <div className="text-[11px] leading-snug text-muted-foreground">
+          语义引擎未就绪，当前为词面匹配结果
+        </div>
+      )}
 
       {/* staleIndex 警告条：向量过期 → 当前结果为 BM25 降级，提示重建索引。 */}
       {result?.staleIndex && (

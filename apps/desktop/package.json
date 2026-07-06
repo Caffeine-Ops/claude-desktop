@@ -127,6 +127,18 @@
         }
       ]
     },
+    "linux": {
+      "files": [
+        "!**/onnxruntime-node/bin/**/darwin/**",
+        "!**/onnxruntime-node/bin/**/win32/**"
+      ],
+      "extraResources": [
+        {
+          "from": "kb-model",
+          "to": "kb-model"
+        }
+      ]
+    },
     "nsis": {
       "oneClick": false,
       "perMachine": false,

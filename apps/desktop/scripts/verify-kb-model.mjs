@@ -22,36 +22,17 @@
 //   bun scripts/verify-kb-model.mjs --asar dist/mac-arm64/Claude\ Desktop.app/Contents/Resources
 //   node scripts/verify-kb-model.mjs --asar /path/to/Resources
 
-import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, statSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// 目录名 / sha256 pins / 体积下限 / 哈希 helper 统一来自 manifest——与
+// prebundle-kb-model.mjs 同源。旧实现两脚本各持一份字面量：bump 模型只改 prebundle 时，
+// verify 仍校验旧目录旧 pin 照样绿灯（坏产物直通打包）。现在路径与校验值都从同一常量
+// 推导，错配不可能静默通过（TS 侧另见 shared/kbIndex.ts KB_MODEL_ID）。
+import { MODEL_DIR_NAME, SHA256, MIN_SIZE, sha256File } from './kb-model-manifest.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const desktopRoot = join(__dirname, '..')
-
-// SHA256 pins — must match prebundle-kb-model.mjs exactly.
-const SHA256 = {
-  'config.json': 'd4193ead3a810fd694fa8a31d7fc72fbaebc0668b603e398734bf2f6538ff42f',
-  'tokenizer.json': '48cea5d44424912a6fd1ea647bf4fe50b55ab8b1e5879c3275f80e339e8fae26',
-  'tokenizer_config.json': 'e6f3b96db926a37d4039995fbf5ad17de158dfb8f6343d607e4dbaad18d75f5a',
-  'onnx/model_quantized.onnx': '15b717c382bcb518ba457b93ea6850ede7f4f1cd8937454aa06972366cd19bcc',
-}
-
-// Sanity-floor sizes (bytes). We check both exact sha256 AND a minimum size so
-// a zero-byte or obviously-truncated file gets a clear message before sha.
-const MIN_SIZE = {
-  'config.json': 100,
-  'tokenizer.json': 100_000,
-  'tokenizer_config.json': 100,
-  'onnx/model_quantized.onnx': 20_000_000,
-}
-
-async function sha256File(filePath) {
-  const buf = await readFile(filePath)
-  return createHash('sha256').update(buf).digest('hex')
-}
 
 /** Walk a directory recursively, returning all file paths that match predicate. */
 function findFiles(dir, predicate) {
@@ -126,10 +107,10 @@ if (asarMode) {
 
   // (b) kb-model ONNX file size check (sha256 is prohibitively slow in CI for a
   //     24 MB file inside a packaged app — size sanity is sufficient here).
-  const onnxInPkg = join(resourcesPath, 'kb-model', 'bge-small-zh-v1.5', 'onnx', 'model_quantized.onnx')
+  const onnxInPkg = join(resourcesPath, 'kb-model', MODEL_DIR_NAME, 'onnx', 'model_quantized.onnx')
   if (!existsSync(onnxInPkg)) {
     console.error(
-      `[verify-kb-model] MISSING: kb-model/bge-small-zh-v1.5/onnx/model_quantized.onnx\n` +
+      `[verify-kb-model] MISSING: kb-model/${MODEL_DIR_NAME}/onnx/model_quantized.onnx\n` +
         `  Path checked: ${onnxInPkg}\n` +
         `  extraResources in package.json must copy kb-model/ into Resources/`
     )
@@ -158,7 +139,7 @@ if (asarMode) {
 
 // ── mode 1: source layout check ───────────────────────────────────────────────
 
-const modelDir = join(desktopRoot, 'kb-model', 'bge-small-zh-v1.5')
+const modelDir = join(desktopRoot, 'kb-model', MODEL_DIR_NAME)
 
 if (!existsSync(modelDir)) {
   console.error(
@@ -201,9 +182,8 @@ for (const [relPath, expectedSha] of Object.entries(SHA256)) {
         `  expected: ${expectedSha}\n` +
         `  actual:   ${actualSha}\n` +
         `  The file content differs from the pinned version.\n` +
-        `  If the model was intentionally updated, bump SHA256 pins in BOTH:\n` +
-        `    apps/desktop/scripts/prebundle-kb-model.mjs\n` +
-        `    apps/desktop/scripts/verify-kb-model.mjs`
+        `  If the model was intentionally updated, bump the SHA256 pins in\n` +
+        `    apps/desktop/scripts/kb-model-manifest.mjs (shared with prebundle-kb-model.mjs)`
     )
     failures++
     continue

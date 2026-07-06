@@ -25,8 +25,15 @@ async function main(): Promise<void> {
   const prevByPath = new Map<string, KbIndexFile>()
   const indexPath = join(outDir, 'index.json')
   if (existsSync(indexPath)) {
-    const prev = JSON.parse(readFileSync(indexPath, 'utf8')) as KbIndex
-    for (const f of prev.files) prevByPath.set(f.sourcePath, f)
+    // 旧 index 只是增量加速缓存——解析失败（上次构建写到一半被 Ctrl-C/断电）不该让整个
+    // 重建炸掉：警告后当作没有旧索引，退回全量重建即可自愈。
+    try {
+      const prev = JSON.parse(readFileSync(indexPath, 'utf8')) as KbIndex
+      for (const f of prev.files) prevByPath.set(f.sourcePath, f)
+    } catch (err) {
+      console.warn('[build-kb-index] 旧 index.json 解析失败（上次构建被中断？），退回全量重建：', err)
+      prevByPath.clear()
+    }
   }
 
   const entries = scanKb(kbRoot)
