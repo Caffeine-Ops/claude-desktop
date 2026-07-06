@@ -50,6 +50,9 @@ export interface SemanticHit {
   mirrorPath: string
   productLine: string
   product: string
+  /** 注入用全文 chunk（engine 自动召回把整段原文注入 prompt，确保 grounding 材料不被截断）。 */
+  text: string
+  /** UI 展示用短预览（text 的前 160 字）。 */
   snippet: string
   score: number
 }

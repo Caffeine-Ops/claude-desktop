@@ -85,6 +85,7 @@ async function search(query: string, k: number): Promise<SemanticHit[]> {
       mirrorPath: m.mirrorPath,
       productLine: m.productLine,
       product: m.product,
+      text: m.text,
       snippet: m.snippet,
       score
     }

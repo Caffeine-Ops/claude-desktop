@@ -37,13 +37,16 @@ test('passagesToHits: 非空 passages → 等长 hits、字段映射正确、sni
   expect(hits[0].title).toBe('标题一')
   expect(hits[0].mirrorPath).toBe('/mirror/foo.md')
   expect(hits[0].score).toBe(0.9)
-  // snippet 截 160
+  // snippet 截 160，text 保留全文（不截断）
   expect(hits[0].snippet).toBe(longText.slice(0, 160))
   expect(hits[0].snippet.length).toBe(160)
+  expect(hits[0].text).toBe(longText)          // 全文注入字段不截断
+  expect(hits[0].text.length).toBe(200)
   // BM25 腿不提供源路径 / 产品线 / 产品，置空字符串
   expect(hits[0].sourcePath).toBe('')
   expect(hits[0].productLine).toBe('')
   expect(hits[0].product).toBe('')
-  // 短文本不截断
+  // 短文本：text = snippet = 原文
   expect(hits[1].snippet).toBe('short')
+  expect(hits[1].text).toBe('short')
 })

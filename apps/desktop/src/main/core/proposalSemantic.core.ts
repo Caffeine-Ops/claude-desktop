@@ -13,7 +13,7 @@ import type { RetrievedPassage } from './proposalRetrieve.core'
 export function passagesToHits(passages: readonly RetrievedPassage[]): SemanticHit[] {
   return passages.map((p) => ({
     title: p.title, sourcePath: '', mirrorPath: p.mirrorPath,
-    productLine: '', product: '', snippet: p.text.slice(0, 160), score: p.score
+    productLine: '', product: '', text: p.text, snippet: p.text.slice(0, 160), score: p.score
   }))
 }
 
