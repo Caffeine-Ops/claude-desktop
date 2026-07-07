@@ -7,6 +7,9 @@ import type { ImageApiConfig } from '../services/imageGenService'
 
 export type CliBackend = 'bundled' | 'system'
 
+/** 主题档位，与 renderer 的 appearance store / APPEARANCE_SET payload 同一口径。 */
+export type ThemeMode = 'light' | 'dark' | 'system'
+
 export interface AppSettings {
   cliBackend: CliBackend
   /**
@@ -23,6 +26,17 @@ export interface AppSettings {
   lastModelByBackend?: Partial<Record<CliBackend, string>>
   /** 写方案出图 API 配置（OpenAI 兼容端点），见 services/imageGenService。 */
   imageApi?: ImageApiConfig
+  /**
+   * 用户上次选的主题档位（2026-07-06）。真相源仍是 renderer 的
+   * stores/appearance.ts persist + daemon appearance config；这里只是一份
+   * best-effort 镜像，供 main 在 renderer 挂载前、daemon 未必在线时（splash
+   * 创建、shell 窗口初始 backgroundColor）就近读到「用户上次选的是什么」，
+   * 而不必回退去猜 nativeTheme（系统主题可能与用户在 app 内的选择不一致，
+   * 曾导致闪屏/窗口底色与用户实际主题撞色又在 studio 首帧交接时跳变）。
+   * 写入点：tabRegistry.syncShellBackgroundToTheme（APPEARANCE_SET/BROADCAST
+   * 触发，同一路径已在算 shell 底色，顺手镜像一份落盘）。
+   */
+  themeMode?: ThemeMode
 }
 
 /**
@@ -65,6 +79,9 @@ export function normalize(raw: Partial<AppSettings>): Partial<AppSettings> {
   if (raw.imageApi !== undefined) {
     const img = normalizeImageApi(raw.imageApi)
     if (img) out.imageApi = img
+  }
+  if (raw.themeMode === 'light' || raw.themeMode === 'dark' || raw.themeMode === 'system') {
+    out.themeMode = raw.themeMode
   }
   return out
 }

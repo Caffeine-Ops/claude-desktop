@@ -8,9 +8,14 @@ import { useComposerModeStore } from '../../../stores/composerMode'
 import { useComposerOverlayStore } from '../../../stores/composerOverlay'
 import { useSessionTitleStore } from '../../../stores/sessionTitle'
 import { Composer } from './Composer'
+import { PermissionFloatDock } from '../../permissions/PermissionFloatCard'
 import { UserMessage } from './UserMessage'
 import { AssistantMessage, SystemMessage } from './AssistantMessage'
 import { SlidesWorkspace } from './SlidesWorkspace'
+import {
+  WorkflowScriptPanel,
+  useWorkflowScriptPanelOpen
+} from './WorkflowScriptPanel'
 import { ProposalDocPanel } from '../../workspace/ProposalDocPanel'
 import { useProposalWorkspace } from '../../../stores/proposal'
 
@@ -441,6 +446,16 @@ export function ThreadView(): React.JSX.Element {
   const isProposalMode = useProposalWorkspace()
   // 任一分栏模式：chat 列都收窄成固定宽度 rail（共用同一条拖拽宽度）。
   const isSplitMode = isProposalMode || isSlidesMode
+  // Workflow 脚本面板（右栏）：AI 正在写 workflow 脚本时自动弹出，或用户
+  // 点了某张 Workflow 卡片的脚本入口。slides/proposal 分栏时禁用——右栏
+  // 已被工作区占用，再开就是三列（chat 被夹成一线）。此 hook 只订阅稳定
+  // 信号（toolCallId / 开关 id），流式文本的每 delta 重渲染被隔离在面板
+  // 组件自身（见 useStreamingWorkflowCallId 头注释）。
+  const workflowPanelWanted = useWorkflowScriptPanelOpen()
+  const showWorkflowPanel = workflowPanelWanted && !isSplitMode
+  // chat 列收窄成 rail 的诱因：slides / proposal / workflow 脚本任一右栏
+  // 打开。宽度共用同一条持久化的 chatColWidth。
+  const chatRailed = isSplitMode || showWorkflowPanel
   // Slides two-pane split is user-resizable. The chat rail used to be a
   // hard `w-[560px]` with a `border-r` hairline between the panes; per design
   // the hairline is gone (the panes now read as two separated blocks across a
@@ -508,22 +523,23 @@ export function ThreadView(): React.JSX.Element {
           composer dock). In normal modes it's flex-1 and fills the whole
           width — visually identical to the old single column. In slides
           mode it shrinks to a fixed-width chat rail card and the slides
-          workspace card takes the rest (figure 27). */}
+          workspace card takes the rest (figure 27); the workflow-script
+          split rails it the same way. */}
       <div
         className={
           'relative flex h-full min-h-0 flex-col ' +
           // 4px (the smallest radius, matching .chat-app's clip) — explicit so
           // it can't drift if Tailwind's bare `rounded` default ever changes.
-          (isSplitMode
+          (chatRailed
             ? 'shrink-0 overflow-hidden rounded-[4px] bg-card'
             : 'min-w-0 flex-1 bg-card')
         }
-        // Split mode (slides / proposal): width is user-controlled (drag
-        // handle below) and persisted. The old fixed `w-[560px]` + `border-r`
-        // hairline are both gone — the gutter handle now provides the visual
-        // separation. In normal modes width stays flex-driven, so leave style
-        // unset.
-        style={isSplitMode ? { width: chatColWidth } : undefined}
+        // Split mode (slides / proposal / workflow script): width is
+        // user-controlled (drag handle) and persisted. The old fixed
+        // `w-[560px]` + `border-r` hairline are both gone — the gutter handle
+        // now provides the visual separation. In normal modes width stays
+        // flex-driven, so leave style unset.
+        style={chatRailed ? { width: chatColWidth } : undefined}
       >
       {/* Chat header — 46px 单行顶栏：命令 chip + 标题 + 「AI 生成」徽标，
           hairline 底边（见 ChatHeader 注释）。shrink-0 so it never gets
@@ -660,6 +676,14 @@ export function ThreadView(): React.JSX.Element {
               through and the card's bottom-left/right read as square. Rounding
               the dock itself to the same 4px restores the corners. */}
           <div className="rounded-b-[4px] bg-background/45 px-3 pb-3 pt-4 backdrop-blur-xl backdrop-saturate-150">
+            {/* Floating permission card — docked directly above the
+                composer (Codex-style), replacing the old amber inline
+                prompt inside each tool card. Lives INSIDE the dock so it
+                shares the frosted band and the composer's width column
+                (the dock itself is full-rail width; the card's own
+                max-w-4xl wrapper keeps it on the composer's axis).
+                Renders null when nothing is pending. */}
+            <PermissionFloatDock />
             <Composer />
           </div>
           {/* Dock veil for the skeleton phase of a session switch: the real
@@ -707,6 +731,18 @@ export function ThreadView(): React.JSX.Element {
         <>
           <ChatColumnResizeHandle onResizeStart={onResizeStart} />
           <ProposalDocPanel />
+        </>
+      ) : null}
+
+      {/* Workflow 脚本右栏（普通单栏会话专属，slides/proposal 分栏时让位
+          ——showWorkflowPanel 已含 !isSplitMode，三列太挤）。AI 写脚本时
+          自动弹出、args 定稿自动收起、点 Workflow 卡片的脚本入口手动重
+          开。方向与 slides/proposal 一致：chat rail 在左、工作面板在右，
+          面板 flex-1 吃大头（代码要宽），拖拽手柄同一实现同一持久化宽度。 */}
+      {showWorkflowPanel ? (
+        <>
+          <ChatColumnResizeHandle onResizeStart={onResizeStart} />
+          <WorkflowScriptPanel />
         </>
       ) : null}
     </ThreadPrimitive.Root>

@@ -69,6 +69,9 @@ import {
   type ImageFileReadResult,
   type ModelListResult,
   type ModelSetPayload,
+  type AuthLoginPayload,
+  type AuthLoginResult,
+  type AuthState,
   type UpdaterState,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
@@ -518,6 +521,29 @@ const chatApi: ChatApi = {
     ipcRenderer.on(IPC_CHANNELS.UPDATER_STATE_CHANGED, listener)
     return () => {
       ipcRenderer.off(IPC_CHANNELS.UPDATER_STATE_CHANGED, listener)
+    }
+  },
+
+  getAuthState(): Promise<AuthState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.AUTH_GET_STATE) as Promise<AuthState>
+  },
+
+  login(payload: AuthLoginPayload): Promise<AuthLoginResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.AUTH_LOGIN,
+      payload
+    ) as Promise<AuthLoginResult>
+  },
+
+  logout(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.AUTH_LOGOUT) as Promise<void>
+  },
+
+  onAuthStateChanged(handler: (state: AuthState) => void): () => void {
+    const listener = (_e: unknown, state: AuthState): void => handler(state)
+    ipcRenderer.on(IPC_CHANNELS.AUTH_STATE_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.AUTH_STATE_CHANGED, listener)
     }
   },
   getKbPath(): Promise<{

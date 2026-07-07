@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from 'electron'
 import splashHtml from './splash.html?raw'
+import { getThemeMode, resolveIsDarkTheme } from './core/appSettings'
 
 /**
  * 首启闪屏（splash.html）的 main 侧封装。
@@ -46,9 +47,17 @@ export function loadSplashIntoShell(win: BrowserWindow): void {
     // 加载失败时 studio 首帧仍能把窗口带出来）。
     if (!win.isVisible()) win.show()
   })
+  // 深浅色档位：优先用户上次选的 themeMode 镜像（appSettings.json），无记录
+  // （首次启动）才落到 OS 当前值。'data-theme' 显式属性而非只靠 CSS 的
+  // prefers-color-scheme——后者只能跟系统，用户在 app 内手动选的主题与系统
+  // 不一致时会显示错误档位、再在 studio 首帧交接时"跳变"回正确档位
+  // （2026-07-06，与 createShellWindow 的 backgroundColor 同一根因同一解法）。
+  const isDark = resolveIsDarkTheme(getThemeMode())
   // replaceAll 而非 replace：占位符若在文件里出现多于一处（曾在头部注释里
   // 写了字面量），replace 只换第一个匹配，真占位符原样上屏。
-  const html = splashHtml.replaceAll('__APP_VERSION__', app.getVersion())
+  const html = splashHtml
+    .replaceAll('__APP_VERSION__', app.getVersion())
+    .replaceAll('__THEME_ATTR__', isDark ? ' data-theme="dark"' : ' data-theme="light"')
   void win
     .loadURL('data:text/html;charset=utf-8;base64,' + Buffer.from(html, 'utf-8').toString('base64'))
     .catch((err) => console.warn('[splash] load failed:', err))

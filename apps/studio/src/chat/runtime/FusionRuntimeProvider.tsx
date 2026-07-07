@@ -507,6 +507,18 @@ export function FusionRuntimeProvider({
         text = text ? `${SLIDES_SLASH} ${text}` : SLIDES_SLASH
       }
 
+      // Spreadsheet mode → drive the spreadsheets skill, same shape as slides
+      // above: prepend the namespaced slash so fusion-code runs the skill for
+      // this turn, skip when the user already typed it (no double-prefix).
+      const SPREADSHEET_SLASH = '/claude-desktop:spreadsheets'
+      const spreadsheetMode =
+        useComposerModeStore.getState().mode === 'spreadsheet'
+      const alreadySpreadsheetSlash =
+        /^\/(claude-desktop:)?spreadsheets\b/.test(baseText)
+      if (spreadsheetMode && !alreadySpreadsheetSlash) {
+        text = text ? `${SPREADSHEET_SLASH} ${text}` : SPREADSHEET_SLASH
+      }
+
       console.log('[runtime] onNew', {
         textLength: text.length,
         contentPartCount: message.content.length,

@@ -604,6 +604,31 @@ export const IPC_CHANNELS = {
    */
   UPDATER_STATE_CHANGED: 'updater:state-changed',
   /**
+   * Renderer → main. One-shot pull of the current auth state — the
+   * AuthGate calls this on mount to decide「放行 or 显示登录页」。
+   * Always resolves（读 main 内存态，不做任何网络/磁盘 IO）。
+   */
+  AUTH_GET_STATE: 'auth:get-state',
+  /**
+   * Renderer → main. Attempts a credential login. Resolves with
+   * `{ ok: true, state }`（已登录快照）or `{ ok: false, error }`（中文
+   * 错误文案，登录表单直接展示）。成功路径同时把状态写盘
+   * （userData/auth.json）并广播 AUTH_STATE_CHANGED——发起登录的窗口
+   * 用 resolve 值即时更新，其余窗口靠广播跟上。
+   */
+  AUTH_LOGIN: 'auth:login',
+  /**
+   * Renderer → main. Signs out：清内存态 + 删盘上凭据 + 广播。
+   * 幂等——未登录时调用是无害 no-op。
+   */
+  AUTH_LOGOUT: 'auth:logout',
+  /**
+   * Main → every renderer. Pushed on every auth transition（登录成功 /
+   * 退出登录）。Carries the full AuthState so receivers just replace
+   * their copy——同 UPDATER_STATE_CHANGED 的「整体替换不拼装」约定。
+   */
+  AUTH_STATE_CHANGED: 'auth:state-changed',
+  /**
    * Renderer → main. Returns the current KB root path (or null when
    * not yet configured) plus the fixed output directory for index
    * artefacts (`userData/kb-index`). Called by the settings page to
@@ -1279,6 +1304,55 @@ export interface UpdaterState {
   supported: boolean
 }
 
+/* ───────────────────────── Auth（登录/账号）───────────────────────── */
+
+/**
+ * 已登录用户的最小画像。plan 先随用户体系一起定义（套餐系统是同一条
+ * 开发线）：`expiresAt` 为 epoch ms，null = 永久（无到期日）——与账户
+ * 菜单套餐区的「永久」占位语义对齐。真实后端接入后字段只增不改。
+ */
+export interface AuthUser {
+  /** 稳定用户标识（占位实现 = email；接后端后换成服务端 id）。 */
+  id: string
+  email: string
+  /** 展示名（占位实现 = email 的 @ 前段）。 */
+  name: string
+  plan: {
+    /** 套餐名，如「免费版」「专业版」；占位实现固定「基础版」。 */
+    name: string
+    /** 到期时间 epoch ms；null = 永久。 */
+    expiresAt: number | null
+  }
+}
+
+/**
+ * Full auth snapshot. Main pushes it on every transition
+ * (AUTH_STATE_CHANGED) and returns it from AUTH_GET_STATE / AUTH_LOGIN,
+ * so the renderer never assembles state from event crumbs（同 UpdaterState
+ * 约定）。`status` 是闭合二值——「未知/加载中」只存在于 renderer 侧
+ * （AuthGate 在首次 getAuthState resolve 前的本地态），main 侧任何时刻
+ * 都有明确结论。
+ */
+export interface AuthState {
+  status: 'signedOut' | 'signedIn'
+  /** 已登录时的用户画像；signedOut 时恒为 null。 */
+  user: AuthUser | null
+}
+
+export interface AuthLoginPayload {
+  email: string
+  password: string
+}
+
+/**
+ * AUTH_LOGIN 的结论。失败时 `error` 是给登录表单直接展示的中文文案
+ * （main 侧生成，renderer 不做错误码翻译——同 TranscribeAudioResult
+ * 的「main 说人话」约定）。
+ */
+export type AuthLoginResult =
+  | { ok: true; state: AuthState }
+  | { ok: false; error: string }
+
 /**
  * Supported export formats for a proposal document. Defined here (shared)
  * so the renderer payload, the preload type, and the main-side
@@ -1912,6 +1986,27 @@ export interface ChatApi {
    * UpdaterState — replace, don't merge. Returns an unsubscribe.
    */
   onUpdaterStateChanged(handler: (state: UpdaterState) => void): () => void
+
+  /**
+   * One-shot pull of the current auth state (see AUTH_GET_STATE)。
+   * AuthGate 挂载时调用，决定放行还是显示登录页。
+   */
+  getAuthState(): Promise<AuthState>
+
+  /**
+   * Credential login (see AUTH_LOGIN)。resolve 即结论：ok=false 时
+   * `error` 直接展示；ok=true 时携带已登录快照，发起窗口无需等广播。
+   */
+  login(payload: AuthLoginPayload): Promise<AuthLoginResult>
+
+  /** Sign out (see AUTH_LOGOUT)。幂等；结果走 AUTH_STATE_CHANGED 广播。 */
+  logout(): Promise<void>
+
+  /**
+   * Subscribe to auth transition pushes. The handler receives the full
+   * AuthState — replace, don't merge. Returns an unsubscribe.
+   */
+  onAuthStateChanged(handler: (state: AuthState) => void): () => void
 
   /**
    * Read the current KB root path, the fixed output directory, the

@@ -1,0 +1,21 @@
+# spreadsheets skill dependencies / 处理表格 skill 依赖
+# ======================================================
+#
+# Install is handled by bin/ensure-python.sh (macOS/Linux, `source` it) or
+# bin/ensure-python.cmd (Windows) — they create a venv at
+# ~/.spreadsheets-skill/venv off the app-bundled Python 3.12 and pip install
+# this file. Do NOT install into the bundled runtime itself (read-only).
+# 依赖安装由 bin/ensure-python.sh(.cmd) 负责：基于 app 自带 Python 3.12 在
+# ~/.spreadsheets-skill/venv 建虚拟环境后安装本清单。打包 runtime 只读，禁止直装。
+
+# Core workbook authoring — create/read/edit .xlsx, formulas, formatting,
+# native Excel charts, tables, conditional formatting, data validation.
+openpyxl>=3.1.0
+
+# Required by openpyxl for embedding images (ws.add_image) and useful for
+# verifying downloaded/reference images before embedding.
+Pillow>=9.0.0
+
+# CSV/TSV wrangling and analysis intermediates. openpyxl handles the workbook;
+# pandas is for cleaning/aggregating source data before it goes into cells.
+pandas>=2.0.0

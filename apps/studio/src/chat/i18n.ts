@@ -75,7 +75,10 @@ const STRINGS = {
     chatHeaderAiBadge: 'AI 生成',
     chatHeaderUntitled: '新对话',
     sidebarStatusRunning: '运行中',
-    sidebarStatusAwaitingPermission: '等待授权',
+    // 两类挂起二分文案（2026-07-07）：权限门=「等待批准」，AskUserQuestion=
+    // 「等待回答」——AI 在等回答时写「等待批准」语义就是错的（用户实锤）。
+    sidebarStatusAwaitingPermission: '等待批准',
+    sidebarStatusAwaitingAnswer: '等待回答',
     sidebarStatusIdle: '空闲',
     sidebarCloseRuntime: '停止后台运行',
     sidebarSwitchingSession: '正在切换会话…',
@@ -307,17 +310,23 @@ const STRINGS = {
     trayShowHide: '显示 / 隐藏',
     trayQuit: '退出',
 
-    // Permission dialog
-    permissionHeader: '需要授权',
-    permissionAskHeader: '回答 Claude 的问题',
+    // Permission — floating card (docked above the composer) + the
+    // wait anchor left inside the tool card. The old inline three-button
+    // prompt's keys (permissionHeader/Prompt/Deny/FooterEsc/FooterEnter/
+    // AskHeader/AllowSession) retired with it, 2026-07-07.
     permissionAriaLabel: '{toolName} 授权',
     permissionNoParams: '（无参数）',
-    permissionPrompt: '是否继续？',
     permissionYes: '同意',
-    permissionAllowSession: '同意，本次会话内允许 {scope}',
-    permissionDeny: '不同意，继续对话',
-    permissionFooterEsc: '取消',
-    permissionFooterEnter: '同意',
+    permissionFloatTitle: '允许{tool}吗？',
+    permissionFloatQueued: '还有 {count} 个等待',
+    permissionFloatAllowSession: '同意，本次会话内不再问',
+    permissionFloatDenyFeedback: '不同意，告诉它下一步怎么做',
+    permissionFloatFeedbackPlaceholder: '例如：先别写桌面，放到 Downloads 里…',
+    permissionFloatHint: '数字键直选，↑↓ 切换',
+    permissionFloatSkip: '跳过',
+    permissionFloatSubmit: '提交',
+    permissionWaitAnchor: '需要你的授权才能继续',
+    permissionWaitAnchorHint: '见下方 ↓',
 
     // Tool-call card — labels for the default input/output panes and
     // the raw-data toggle that friendly-view tool cards show at the
@@ -334,6 +343,15 @@ const STRINGS = {
     toolStatusStopped: '已停止',
     toolWorkflowResultLabel: '结果',
     toolWorkflowAgentsLabel: 'agents',
+
+    // Workflow script panel (left pane) + the script entry chip on the
+    // Workflow tool card that reopens it.
+    workflowScriptPanelTitle: '编排脚本',
+    workflowScriptWriting: '正在编写',
+    workflowScriptPreparing: '正在准备脚本',
+    workflowScriptLines: '{count} 行',
+    workflowScriptClose: '关闭脚本面板',
+    workflowScriptEntryOpen: '查看脚本',
 
     // Settings → General → CLI backend
     cliBackendTitle: 'CLI 后端',
@@ -372,7 +390,8 @@ const STRINGS = {
     chatHeaderAiBadge: 'AI-generated',
     chatHeaderUntitled: 'New chat',
     sidebarStatusRunning: 'Running',
-    sidebarStatusAwaitingPermission: 'Awaiting permission',
+    sidebarStatusAwaitingPermission: 'Awaiting approval',
+    sidebarStatusAwaitingAnswer: 'Awaiting answer',
     sidebarStatusIdle: 'Idle',
     sidebarCloseRuntime: 'Stop background runtime',
     sidebarSwitchingSession: 'Switching session…',
@@ -602,16 +621,20 @@ const STRINGS = {
     trayShowHide: 'Show / Hide',
     trayQuit: 'Quit',
 
-    permissionHeader: 'Permission required',
-    permissionAskHeader: "Answer Claude's question",
     permissionAriaLabel: '{toolName} permission',
     permissionNoParams: '(no parameters)',
-    permissionPrompt: 'Do you want to proceed?',
     permissionYes: 'Yes',
-    permissionAllowSession: 'Yes, allow {scope} during this session',
-    permissionDeny: 'No, and keep going',
-    permissionFooterEsc: 'cancel',
-    permissionFooterEnter: 'yes',
+    permissionFloatTitle: 'Allow {tool}?',
+    permissionFloatQueued: '{count} more waiting',
+    permissionFloatAllowSession: "Yes, don't ask again this session",
+    permissionFloatDenyFeedback: 'No — tell it what to do instead',
+    permissionFloatFeedbackPlaceholder:
+      'e.g. Not the Desktop — put it in Downloads instead…',
+    permissionFloatHint: 'Numbers select · ↑↓ move',
+    permissionFloatSkip: 'Skip',
+    permissionFloatSubmit: 'Submit',
+    permissionWaitAnchor: 'Waiting for your approval to continue',
+    permissionWaitAnchorHint: 'See below ↓',
 
     toolPaneInputLabel: 'Input',
     toolPaneOutputLabel: 'Output',
@@ -625,6 +648,13 @@ const STRINGS = {
     toolStatusStopped: 'stopped',
     toolWorkflowResultLabel: 'Result',
     toolWorkflowAgentsLabel: 'agents',
+
+    workflowScriptPanelTitle: 'Workflow script',
+    workflowScriptWriting: 'Writing',
+    workflowScriptPreparing: 'Preparing script',
+    workflowScriptLines: '{count} lines',
+    workflowScriptClose: 'Close script panel',
+    workflowScriptEntryOpen: 'View script',
 
     cliBackendTitle: 'CLI backend',
     cliBackendDesc:
@@ -711,6 +741,7 @@ const TOOL_LABELS_ZH: Record<string, string> = {
   ToolSearch: '工具搜索',
   WebFetch: '网页获取',
   WebSearch: '网页搜索',
+  Workflow: '多智能体编排',
   Write: '写入文件'
 }
 

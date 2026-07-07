@@ -332,7 +332,13 @@ function mergeWorkflowTask(
     tokens: ev.tokens ?? prev?.tokens,
     toolUses: ev.toolUses ?? prev?.toolUses,
     durationMs: ev.durationMs ?? prev?.durationMs,
-    lastToolName: ev.lastToolName ?? prev?.lastToolName
+    lastToolName: ev.lastToolName ?? prev?.lastToolName,
+    // workflow_progress is a FULL snapshot when present (it lists every
+    // agent spawned so far), so replace wholesale — merging per-agent
+    // would resurrect rows a resumed run no longer has. Events without
+    // one (most heartbeats) keep the previous snapshot.
+    phases: ev.phases ?? prev?.phases,
+    agents: ev.agents ?? prev?.agents
   }
   if (!prev) return [...existing, merged]
   return existing.map((t) => (t.taskId === ev.taskId ? merged : t))
@@ -1270,6 +1276,132 @@ export function useStreamingAskArgsText(): string | null {
       }
     }
     return latest
+  })
+}
+
+/**
+ * The foreground session's STILL-STREAMING Workflow tool call, split into
+ * two hooks with deliberately different re-render costs:
+ *
+ *   - useStreamingWorkflowCallId — 只返回 toolCallId（原始值，delta 期间
+ *     恒定）。ThreadView 用它决定「要不要分栏」——它绝不能订阅流式文本，
+ *     否则每个 delta 重渲染整棵聊天列。
+ *   - useStreamingWorkflowArgsText — 返回半开 JSON 文本本体，每 delta 都
+ *     变。只有 WorkflowScriptPanel 自己订阅（实时跟写正是它的工作）。
+ *
+ * Same store-walk & "last wins" semantics as useStreamingAskArgsText above;
+ * 定稿（argsComplete）后双双回落 null，面板自动退出。
+ */
+export function useStreamingWorkflowCallId(): string | null {
+  return useChatStore((s): string | null => {
+    let id: string | null = null
+    for (const m of s.messages) {
+      if (!Array.isArray(m.content)) continue
+      for (const p of (m.content as unknown) as ContentPart[]) {
+        if (
+          p.type === 'tool-call' &&
+          p.toolName === 'Workflow' &&
+          p.argsComplete !== true &&
+          typeof p.argsText === 'string' &&
+          typeof p.toolCallId === 'string'
+        ) {
+          id = p.toolCallId
+        }
+      }
+    }
+    return id
+  })
+}
+
+export function useStreamingWorkflowArgsText(): string | null {
+  return useChatStore((s): string | null => {
+    let text: string | null = null
+    for (const m of s.messages) {
+      if (!Array.isArray(m.content)) continue
+      for (const p of (m.content as unknown) as ContentPart[]) {
+        if (
+          p.type === 'tool-call' &&
+          p.toolName === 'Workflow' &&
+          p.argsComplete !== true &&
+          typeof p.argsText === 'string'
+        ) {
+          text = p.argsText as string
+        }
+      }
+    }
+    return text
+  })
+}
+
+/**
+ * The foreground session's most recent Workflow tool call whose spawned
+ * run is STILL IN FLIGHT (any task/agent not yet settled), or null. Keeps
+ * the script panel open through the「跑任务」阶段：脚本定稿后流式信号消
+ * 失，但 task_update 还在持续更新 part.tasks——面板切到任务树视图直到
+ * 全部 agent 终态。判定单位与 WorkflowTaskList 的计数一致：带
+ * workflow_progress 快照的 task 看它的 agents，普通 subtask 看自身。
+ * Returns a primitive (the toolCallId)，task_update 每 tick 重算但值不
+ * 变 → 订阅者不重渲染。
+ */
+export function useActiveWorkflowRunId(): string | null {
+  return useChatStore((s): string | null => {
+    let id: string | null = null
+    for (const m of s.messages) {
+      if (!Array.isArray(m.content)) continue
+      for (const p of (m.content as unknown) as ContentPart[]) {
+        if (
+          p.type !== 'tool-call' ||
+          p.toolName !== 'Workflow' ||
+          typeof p.toolCallId !== 'string' ||
+          !Array.isArray(p.tasks) ||
+          p.tasks.length === 0
+        ) {
+          continue
+        }
+        const tasks = p.tasks as WorkflowTask[]
+        const units = tasks.flatMap(
+          (task): { status: WorkflowTask['status'] }[] =>
+            task.agents && task.agents.length > 0 ? task.agents : [task]
+        )
+        const inFlight = units.some(
+          (u) => u.status === 'running' || u.status === 'pending'
+        )
+        if (inFlight) id = p.toolCallId
+      }
+    }
+    return id
+  })
+}
+
+/**
+ * The SETTLED script text of a Workflow tool call, looked up by id in the
+ * foreground session's messages — feeds the script panel's manual-open path
+ * (点击卡片里的脚本入口重新打开). Returns null while the call is still
+ * streaming（那是 useStreamingWorkflowCall 的地盘）or when the args carry no
+ * inline `script`（scriptPath / name 调用形态没有脚本文本可看）。Settled
+ * args never mutate, so the returned string is referentially stable.
+ */
+export function useWorkflowScriptById(toolCallId: string | null): string | null {
+  return useChatStore((s): string | null => {
+    if (toolCallId === null) return null
+    for (const m of s.messages) {
+      if (!Array.isArray(m.content)) continue
+      for (const p of (m.content as unknown) as ContentPart[]) {
+        if (
+          p.type === 'tool-call' &&
+          p.toolCallId === toolCallId &&
+          p.argsComplete === true
+        ) {
+          const args = p.args
+          if (args && typeof args === 'object') {
+            const script = (args as Record<string, unknown>).script
+            if (typeof script === 'string' && script.length > 0) return script
+          }
+          return null
+        }
+      }
+    }
+    return null
   })
 }
 

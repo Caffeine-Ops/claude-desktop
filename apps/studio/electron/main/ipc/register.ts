@@ -58,7 +58,10 @@ import {
   type AppearanceSetResult,
   type AppearancePrefs,
   type ShellMenuActionPayload,
-  type UpdaterState
+  type UpdaterState,
+  type AuthLoginPayload,
+  type AuthLoginResult,
+  type AuthState
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
 import {
@@ -111,6 +114,7 @@ import { EMBEDDABLE_IMAGE_EXTS, type ProposalMetricRecord } from '../../shared/p
 import { readFile } from 'node:fs/promises'
 import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
 import { checkForUpdates, getUpdaterState, installUpdate } from '../services/appUpdater'
+import { getAuthState, login, logout } from '../services/authService'
 import { DAEMON_PORT } from '../services/openDesignServices'
 import type { ChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
@@ -347,6 +351,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.UPDATER_GET_STATE)
   ipcMain.removeHandler(IPC_CHANNELS.UPDATER_CHECK)
   ipcMain.removeHandler(IPC_CHANNELS.UPDATER_INSTALL)
+  ipcMain.removeHandler(IPC_CHANNELS.AUTH_GET_STATE)
+  ipcMain.removeHandler(IPC_CHANNELS.AUTH_LOGIN)
+  ipcMain.removeHandler(IPC_CHANNELS.AUTH_LOGOUT)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_TRIGGER_MENU_ACTION)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_SWITCH_REQUEST)
@@ -1400,6 +1407,33 @@ export function registerIpcHandlers(): void {
     installUpdate()
   })
 
+  // ── 登录/账号（状态机在 services/authService.ts）──
+  // 同 updater 的薄转发纪律：状态归 main 单独持有，迁移走
+  // AUTH_STATE_CHANGED 推送；AUTH_LOGIN 的 resolve 值让发起窗口免等广播。
+  ipcMain.handle(IPC_CHANNELS.AUTH_GET_STATE, async (): Promise<AuthState> => {
+    return getAuthState()
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUTH_LOGIN,
+    async (_event, payload: AuthLoginPayload): Promise<AuthLoginResult> => {
+      // 结构防御：preload 只透传，恶意/异常 payload 在此归一成失败结论
+      // 而不是让 authService 对 undefined 调 .trim() 抛栈。
+      if (
+        !payload ||
+        typeof payload.email !== 'string' ||
+        typeof payload.password !== 'string'
+      ) {
+        return { ok: false, error: '请输入邮箱和密码' }
+      }
+      return login(payload)
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async (): Promise<void> => {
+    logout()
+  })
+
   // Shell tab-strip settings menu → active chat tab. The shell renderer
   // can't reach the chat renderer's stores directly, so it fires this and
   // we forward the action to whichever chat tab is active (web tabs and the
@@ -2301,6 +2335,17 @@ function validatePermissionResponse(
       Array.isArray(v.updatedInput)
     ) {
       throw new Error('Invalid permission response: updatedInput must be an object')
+    }
+  }
+  // denyMessage is optional free text that gets concatenated into the
+  // SDK deny message verbatim. 4000 chars comfortably covers "tell it
+  // what to do instead" while keeping a paste-bomb out of the transcript.
+  if (v.denyMessage !== undefined) {
+    if (typeof v.denyMessage !== 'string') {
+      throw new Error('Invalid permission response: denyMessage must be a string')
+    }
+    if (v.denyMessage.length > 4000) {
+      throw new Error('Invalid permission response: denyMessage too long (max 4000)')
     }
   }
 }

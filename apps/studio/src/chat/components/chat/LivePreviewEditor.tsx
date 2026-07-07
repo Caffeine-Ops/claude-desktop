@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useDrag } from '@use-gesture/react'
 import { useComposerRuntime } from '@assistant-ui/react'
+import { create } from 'zustand'
 
 import { Button } from '@/src/components/ui/button'
 import { Textarea } from '@/src/components/ui/textarea'
@@ -16,6 +17,37 @@ import { useMessageQueueStore, useSessionQueue } from '../../stores/messageQueue
  * turn's `text` so we don't stack the same instruction N times).
  */
 const APPLY_ANNOTATION_TEXT = '应用我的标注'
+
+/**
+ * 就绪进度（N/M 张已就绪）的跨组件出口：2026-07-07 工作区重设计
+ * （docs/ui-prototype-ppt-workspace.html）删掉了 56px 的「幻灯片预览」
+ * 标题头——它唯一的有效信息是这个进度，上移到 SlidesWorkspace tab 栏
+ * 右端的胶囊里。editor 挂载期间持续写入、卸载清空，所以胶囊只在
+ * 「预览幻灯片」tab 活跃（= 本组件挂着）时出现，切走即消失。
+ */
+export const usePreviewReadinessStore = create<{
+  readiness: { ready: number; total: number } | null
+  setReadiness: (v: { ready: number; total: number } | null) => void
+}>((set) => ({
+  readiness: null,
+  setReadiness: (v) => set({ readiness: v })
+}))
+
+/* SVG 标签 → 大白话名。已选芯片/标注 tooltip 用它替代裸 _edit_15
+ * （普通用户产品原始 ID 一律收进 title，文案直白原则）。 */
+const TAG_LABEL: Record<string, string> = {
+  text: '文本',
+  tspan: '文本',
+  image: '图片',
+  g: '组',
+  rect: '形状',
+  circle: '形状',
+  ellipse: '形状',
+  polygon: '形状',
+  path: '形状',
+  line: '线条',
+  polyline: '线条'
+}
 
 /**
  * LivePreviewEditor
@@ -197,10 +229,34 @@ export function LivePreviewEditor({
   // by its own viewBox (vector, lossless), so this is a cheap real preview.
   const [thumbs, setThumbs] = useState<Record<string, { svg: string; mtime: number }>>({})
 
-  // Whether the 已选元素 chip list is expanded. Collapsed (default) shows a
-  // capped preview so a 60-element marquee doesn't blow the panel into an
-  // endless scroll; expanded reveals all in a height-capped, self-scrolling box.
-  const [selExpanded, setSelExpanded] = useState(false)
+  // 已选芯片条的溢出量（被定高单行裁掉的芯片数）。2026-07-07 定稿：芯片
+  // 条固定 26px 单行——多选折行会让 dock 纵向无上限、把舞台挤没（窄屏
+  // 实锤），溢出改为右端 +N 角标 + hover 上浮面板显示全量。由 effect 量
+  // 测（scrollWidth vs clientWidth + 逐芯片 offset），ResizeObserver 跟
+  // 面板宽度联动。
+  const chipsStripRef = useRef<HTMLDivElement | null>(null)
+  const [chipsHidden, setChipsHidden] = useState(0)
+  // 标注序号钮的 hover 提示（标注内容预览，2026-07-07 用户要求——原生
+  // title 延迟 1s 且不可控）。序号钮住在 overflow-x-auto 横滚带里，绝对
+  // 定位的提示卡放带内会被滚动容器裁掉，所以卡渲染在簇（section）层级，
+  // 锚点 x 在 mouseenter 时换算到簇坐标系并钳制，横滚时直接清掉。
+  const annSectionRef = useRef<HTMLElement | null>(null)
+  const [annTip, setAnnTip] = useState<{ eid: string; left: number } | null>(null)
+  // 提示卡带删除入口（2026-07-07 用户要求）→ 卡必须可进入：钮和卡之间
+  // 有 8px 空隙，mouseleave 立即关卡鼠标永远走不进去。离开钮/卡都只
+  // 「预约」160ms 后关，进入另一方即取消预约——标准 hover-card 宽限期。
+  const annTipCloseTimer = useRef<number | null>(null)
+  const cancelAnnTipClose = useCallback(() => {
+    if (annTipCloseTimer.current !== null) {
+      window.clearTimeout(annTipCloseTimer.current)
+      annTipCloseTimer.current = null
+    }
+  }, [])
+  const closeAnnTipSoon = useCallback(() => {
+    cancelAnnTipClose()
+    annTipCloseTimer.current = window.setTimeout(() => setAnnTip(null), 160)
+  }, [cancelAnnTipClose])
+  useEffect(() => () => cancelAnnTipClose(), [cancelAnnTipClose])
 
   // Selection + annotations are METADATA (React state). The SVG DOM itself is
   // the source of truth for geometry; we only track ids here.
@@ -579,11 +635,33 @@ export function LivePreviewEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRects])
 
-  // Collapse the chip list again once the selection is cleared, so the next
-  // multi-select starts folded rather than remembering a stale expanded state.
+  // 量测已选芯片条的溢出：条是定高单行 overflow-hidden，溢出时算出「没
+  // 完整露出的芯片数」（含被 +N 角标遮住的），驱动渐隐 mask + 角标 +
+  // hover 面板的显隐。ResizeObserver 让分栏拖宽/拖窄时数字实时跟手；
+  // setChipsHidden 不改条的几何（定高、mask 不参与布局），不会成环。
   useEffect(() => {
-    if (selectedIds.length === 0) setSelExpanded(false)
-  }, [selectedIds.length])
+    const el = chipsStripRef.current
+    if (!el) {
+      setChipsHidden(0)
+      return
+    }
+    const measure = () => {
+      if (el.scrollWidth <= el.clientWidth + 1) {
+        setChipsHidden(0)
+        return
+      }
+      const limit = el.clientWidth - 54 // 给 +N 角标留位
+      let hidden = 0
+      el.querySelectorAll<HTMLElement>('[data-chip]').forEach((c) => {
+        if (c.offsetLeft + c.offsetWidth > limit) hidden += 1
+      })
+      setChipsHidden(hidden)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [selectedIds])
 
   // ── geometry sync: bump on resize / scroll / image load / page change ─────
   useEffect(() => {
@@ -948,6 +1026,21 @@ export function LivePreviewEditor({
   // ── deck-level derived state (top bar / breadcrumb / status bar) ──────────
   // Ready count: a slide is "ready" when it rendered without error (ok !== false).
   const readyCount = useMemo(() => slides.filter((s) => s.ok !== false).length, [slides])
+  // 就绪进度推给 tab 栏胶囊（见 usePreviewReadinessStore 头注释）。
+  useEffect(() => {
+    usePreviewReadinessStore
+      .getState()
+      .setReadiness(slides.length > 0 ? { ready: readyCount, total: slides.length } : null)
+  }, [readyCount, slides.length])
+  useEffect(() => () => usePreviewReadinessStore.getState().setReadiness(null), [])
+  // 元素的大白话名：tag 中文 + id 尾号（`_edit_15` → 「文本 15」）。tag 从
+  // 真实 SVG DOM 现读——选中集只存 id，标签是画布上的活信息。
+  const friendlyLabel = useCallback((id: string): string => {
+    const el = svgHostRef.current?.querySelector(`[id="${CSS.escape(id)}"]`)
+    const tag = el?.tagName.toLowerCase() ?? ''
+    const num = /(\d+)$/.exec(id)?.[1]
+    return (TAG_LABEL[tag] ?? '元素') + (num ? ' ' + num : '')
+  }, [])
   const activeIndex = useMemo(
     () => slides.findIndex((s) => s.name === active),
     [slides, active]
@@ -1007,21 +1100,13 @@ export function LivePreviewEditor({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      {/* ── top app bar: deck title + ready progress ── */}
-      <header className="flex h-14 shrink-0 items-center gap-4 border-b border-border/60 bg-background px-4">
-        <div className="flex min-w-0 flex-col">
-          <span className="truncate text-[13.5px] font-semibold tracking-tight text-foreground">
-            幻灯片预览
-          </span>
-          <span className="text-[11px] text-muted-foreground">
-            <span className="tabular-nums">
-              {readyCount} / {slides.length}
-            </span>{' '}
-            张幻灯片已就绪
-          </span>
-        </div>
-      </header>
+    // @container/editor：工作区住在可拖分栏里，视口媒体查询探不到面板的
+    // 真实宽度——所有窄档适配（dock 换行/缩略栏收窄/meta 隐藏）用容器
+    // 查询打在这个根上。容器断点：md=448 lg=512 xl=576 2xl=672px。
+    <div className="@container/editor flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      {/* 原 56px「幻灯片预览」标题头已删（2026-07-07 重设计）：文案与
+          tab 名重复，就绪进度上移为 tab 栏右端胶囊（usePreviewReadinessStore
+          → SlidesWorkspace），省出一整行给画布。 */}
 
       {/* ── body: rail | stage | panel ── */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -1029,7 +1114,7 @@ export function LivePreviewEditor({
             Redesign: rail recedes to the sunken chrome plane (bg-muted/20, a hair
             lighter than the stage well) so it, the well and the dock read as one
             receding surface framing the elevated slide card. */}
-        <aside className="flex w-44 shrink-0 flex-col border-r border-border/60 bg-muted/20">
+        <aside className="flex w-44 shrink-0 flex-col border-r border-border/60 bg-muted/20 @max-xl/editor:w-[132px]">
           <div className="flex items-center justify-between px-3.5 pb-2 pt-3">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               幻灯片
@@ -1048,13 +1133,12 @@ export function LivePreviewEditor({
                   type="button"
                   onClick={() => pickSlide(s.name)}
                   className={
-                    // Redesign「色彩收敛」: the active thumbnail wears an indigo
-                    // wash + ring (the operation colour), so "which slide am I on"
-                    // uses the same signal as "what's selected", not a separate
-                    // neutral grey.
+                    // 操作色 = 品牌绿（2026-07-07 原型定稿，替换上一轮的
+                    // 靛蓝）：激活缩略图与选中态/CTA 同一信号色，且与整个
+                    // app 的绿色家族一致。
                     'flex w-full items-center gap-2 rounded-lg p-1.5 text-left transition-colors ' +
                     (on
-                      ? 'bg-indigo-500/10 ring-1 ring-inset ring-indigo-500/25'
+                      ? 'bg-[hsl(var(--brand)/0.1)] ring-1 ring-inset ring-[hsl(var(--brand)/0.28)]'
                       : 'hover:bg-foreground/[0.04]')
                   }
                   title={s.name}
@@ -1063,7 +1147,7 @@ export function LivePreviewEditor({
                     className={
                       'w-4 shrink-0 text-right text-[11px] tabular-nums ' +
                       (on
-                        ? 'font-semibold text-indigo-600 dark:text-indigo-300'
+                        ? 'font-semibold text-[hsl(var(--brand))]'
                         : 'text-muted-foreground/60')
                     }
                   >
@@ -1096,8 +1180,15 @@ export function LivePreviewEditor({
                         (ready ? 'bg-emerald-500' : 'bg-muted-foreground/30')
                       }
                     />
+                    {/* 标注计数徽标（琥珀 = 标注身份色）：与画布序号徽标、
+                        dock 序号钮同族。服务端没给 annotation_count 时退化
+                        为无数字的小圆（等价旧的提示点）。 */}
                     {s.annotated && (
-                      <span className="absolute bottom-1 right-1 size-1.5 rounded-full bg-amber-500" />
+                      <span className="absolute bottom-1 right-1 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-amber-500 px-[3px] text-[9px] font-bold tabular-nums text-white ring-2 ring-background">
+                        {s.annotation_count && s.annotation_count > 0
+                          ? s.annotation_count
+                          : ''}
+                      </span>
                     )}
                   </span>
                 </button>
@@ -1120,13 +1211,16 @@ export function LivePreviewEditor({
             <span className="truncate text-[13px] font-semibold text-foreground">
               {activeDisplayName || '未命名'}
             </span>
+            {/* 尺寸 meta 从底部状态条上移到这里（离画布更近，状态条只留
+                工作区身份 + 快捷键）。 */}
+            <span className="text-[11px] text-muted-foreground/60 @max-lg/editor:hidden">16:9 · 1280 × 720</span>
             <div className="flex-1" />
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => stepSlide(-1)}
                 disabled={activeIndex <= 0}
-                className="grid size-[30px] place-items-center rounded-md border border-border bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+                className="grid size-7 place-items-center rounded-[7px] text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
                 title="上一页"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>
@@ -1135,7 +1229,7 @@ export function LivePreviewEditor({
                 type="button"
                 onClick={() => stepSlide(1)}
                 disabled={activeIndex < 0 || activeIndex >= slides.length - 1}
-                className="grid size-[30px] place-items-center rounded-md border border-border bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+                className="grid size-7 place-items-center rounded-[7px] text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
                 title="下一页"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
@@ -1151,7 +1245,7 @@ export function LivePreviewEditor({
               natural "click blank to deselect" that the card's own handler
               can't cover since that whitespace isn't part of the card. */}
           <div
-            className="flex min-h-0 flex-1 items-center justify-center overflow-auto px-6 pb-6 pt-1"
+            className="flex min-h-0 flex-1 items-center justify-center overflow-auto px-6 pb-6 pt-1 @max-lg/editor:px-3 @max-lg/editor:pb-4"
             onMouseDown={(e) => {
               if (stageRef.current && !stageRef.current.contains(e.target as Node)) {
                 setSelectedIds([])
@@ -1212,13 +1306,32 @@ export function LivePreviewEditor({
                     value={annotationText}
                     busy={busy}
                     inputRef={floatingInputRef}
+                    // 编辑既有标注的判定：恰好单选且该元素已有标注（dock 序号
+                    // 钮/画布徽标点进来就是这个形态）。此时浮层换「编辑标注」
+                    // 文案并露出删除入口——dock 的标注卡片退役后（只剩序号
+                    // 钮），删除唯一的家就在这里。
+                    editingId={
+                      selectedIds.length === 1 &&
+                      annotations[selectedIds[0]] !== undefined
+                        ? selectedIds[0]
+                        : null
+                    }
                     onChange={setAnnotationText}
                     onSubmit={() => void addAnnotation()}
                     onDismiss={() => setSelectedIds([])}
+                    onDelete={(id) => {
+                      void removeAnnotation(id)
+                      setSelectedIds([])
+                      setAnnotationText('')
+                    }}
                   />
                 </div>
-                <div className="text-[12px] text-muted-foreground/70">
-                  点击元素选择 · 拖拽框选多个 · Ctrl/Cmd 加选 · Alt 选父级 · 选中后就地填写修改说明
+                <div className="flex flex-wrap items-center justify-center gap-1.5 text-[11.5px] text-muted-foreground/70">
+                  点击元素选择 · 拖拽框选多个 ·
+                  <kbd className="grid h-[17px] min-w-[17px] place-items-center rounded border border-border bg-muted/50 px-1 text-[10px]">⌘</kbd>
+                  加选 ·
+                  <kbd className="grid h-[17px] min-w-[17px] place-items-center rounded border border-border bg-muted/50 px-1 text-[10px]">⌥</kbd>
+                  选父级
                 </div>
               </div>
             ) : (
@@ -1231,163 +1344,221 @@ export function LivePreviewEditor({
 
       </div>
 
-      {/* ── bottom dock: selection + annotations + apply (was the right panel,
-          now a horizontal strip beneath the stage per the user's layout ask).
-          Redesign: dock shares the sunken surface tone (bg-muted/30) with the rail
-          and stage well, so all the chrome recedes to one plane and the slide card
-          stays the sole bright, elevated focal surface. ── */}
-      <div className="flex shrink-0 items-stretch gap-4 border-t border-border/60 bg-muted/30 px-4 py-3">
+      {/* ── bottom dock: 已选 + 本页标注 + 应用（2026-07-07 原型定稿，
+          docs/ui-prototype-ppt-workspace.html）。三簇靠留白分区——上一版的
+          border-l 竖线把 dock 切成表格感，是被毙的主因之一。已选簇定宽
+          260px：空态提示与芯片列表天然宽度不同，跟内容走会让整条 dock 在
+          选中/取消时左右抖动（2026-07-07 用户实锤）。dock 回到明面
+          bg-background，舞台井色只留给 rail 和 stage。 ── */}
+      {/* 窄档（容器 ≤672px）：dock 从「三簇一行」变「三条单行带竖排」——
+          簇内标签翻到左侧、内容条 flex-1，应用簇整行占满。芯片/序号钮
+          永不折行（折行让 dock 纵向无上限、把舞台挤没，2026-07-07 窄屏
+          实锤），dock 总高度因此有界。 */}
+      <div className="flex min-h-[62px] shrink-0 items-center gap-5 border-t border-border/60 bg-background px-4 py-2.5 @max-2xl/editor:min-h-0 @max-2xl/editor:flex-col @max-2xl/editor:items-stretch @max-2xl/editor:gap-2 @max-2xl/editor:px-3.5">
         {/* 已选元素 */}
-        <section className="flex min-w-[200px] max-w-[280px] shrink-0 flex-col">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <section className="flex w-[260px] shrink-0 flex-col gap-1.5 @max-2xl/editor:w-auto @max-2xl/editor:flex-row @max-2xl/editor:items-center @max-2xl/editor:gap-2.5">
+          <div className="flex items-center gap-1.5 @max-2xl/editor:shrink-0">
+            <span className="text-[10.5px] font-semibold tracking-wide text-muted-foreground">
               已选元素
-              {selectedIds.length > 0 && (
-                <span className="ml-1.5 tabular-nums text-muted-foreground/60">
-                  {selectedIds.length}
-                </span>
-              )}
             </span>
+            {selectedIds.length > 0 && (
+              <span className="grid h-[15px] min-w-[15px] place-items-center rounded-full bg-[hsl(var(--brand)/0.12)] px-1 text-[9.5px] font-bold tabular-nums text-[hsl(var(--brand))]">
+                {selectedIds.length}
+              </span>
+            )}
             {selectedIds.length > 0 && (
               <button
                 type="button"
                 onClick={() => setSelectedIds([])}
-                className="text-[11px] text-muted-foreground/70 transition-colors hover:text-foreground"
+                className="rounded px-1 text-[10.5px] text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
               >
                 清空
               </button>
             )}
           </div>
-          {selectedIds.length === 0 ? (
-            <div className="mt-2 flex flex-1 items-center rounded-lg border border-dashed border-border/60 px-3 py-2 text-[11.5px] leading-relaxed text-muted-foreground/70">
-              点击元素选择 · 拖拽框选多个 · Ctrl/Cmd 加选 · Alt 选父级
-            </div>
-          ) : (
-            (() => {
-              // Collapsed: show only the first SEL_COLLAPSED_MAX chips so a big
-              // marquee doesn't create an endless list. Expanded: reveal all in a
-              // height-capped, self-scrolling box. The extra count folds into a
-              // "+N 更多" toggle.
-              const SEL_COLLAPSED_MAX = 12
-              const overflow = selectedIds.length - SEL_COLLAPSED_MAX
-              const shown =
-                selExpanded || overflow <= 0
-                  ? selectedIds
-                  : selectedIds.slice(0, SEL_COLLAPSED_MAX)
-              return (
-                <>
-                  <div
-                    className={
-                      'mt-2 flex flex-wrap gap-1.5 ' +
-                      (selExpanded ? 'max-h-24 overflow-y-auto pr-0.5' : '')
-                    }
+          {/* 定高芯片区（26px 单行，group/selwrap 是 hover 面板的触发域）：
+              溢出时条尾渐隐 + 右端 +N 角标，鼠标移入上浮面板铺开全量芯片
+              （可滚动、可逐个移除）。替代早前的 +N 更多点击展开——展开
+              同样会把 dock 撑高，与定高目标矛盾。 */}
+          <div className="group/selwrap relative h-[26px] w-full min-w-0 @max-2xl/editor:w-auto @max-2xl/editor:flex-1">
+            {selectedIds.length === 0 ? (
+              <div className="flex h-full items-center text-[11.5px] text-muted-foreground/60">
+                在画布上点击元素开始标注
+              </div>
+            ) : (
+              (() => {
+                // 芯片与画布选中框、CTA 同穿品牌绿（一条操作色链）；显示
+                // 大白话名（friendlyLabel），原始 id 收进 title。亮档文字
+                // 压深 18%（亮底上纯 brand 绿对比不足），暗档直接用。
+                // 同一渲染函数喂定高条和 hover 面板，两处永不漂移。
+                const chip = (id: string): React.JSX.Element => (
+                  <span
+                    key={id}
+                    data-chip
+                    className="inline-flex max-w-full shrink-0 items-center gap-1 rounded-md bg-[hsl(var(--brand)/0.1)] py-1 pl-2 pr-1 text-[11px] font-medium text-[color-mix(in_srgb,hsl(var(--brand))_82%,#000)] ring-1 ring-inset ring-[hsl(var(--brand)/0.3)] dark:text-[hsl(var(--brand))]"
+                    title={id}
                   >
-                    {shown.map((id) => (
-                      <span
-                        key={id}
-                        // Redesign「色彩收敛」: selection chips wear the SAME fixed
-                        // indigo as the on-canvas selection frames + number badges
-                        // (not the theme accent) — one operation colour end-to-end,
-                        // so a selected element reads identically in the chip list
-                        // and on the slide.
-                        className="group inline-flex max-w-full items-center gap-1 rounded-md bg-indigo-500/10 py-1 pl-2 pr-1 text-[11px] font-medium text-indigo-600 ring-1 ring-inset ring-indigo-500/25 dark:text-indigo-300"
-                        title={id}
-                      >
-                        <span className="min-w-0 max-w-[140px] truncate">{id}</span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setSelectedIds((prev) => prev.filter((x) => x !== id))
-                          }
-                          className="grid size-3.5 shrink-0 place-items-center rounded-sm text-indigo-500/60 transition-colors hover:bg-indigo-500/20 hover:text-indigo-600 dark:hover:text-indigo-300"
-                          title="取消选择"
-                        >
-                          ✕
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                  {overflow > 0 && (
+                    <span className="min-w-0 max-w-[140px] truncate">
+                      {friendlyLabel(id)}
+                    </span>
                     <button
                       type="button"
-                      onClick={() => setSelExpanded((v) => !v)}
-                      className="mt-1.5 self-start text-[11px] font-medium text-indigo-600/80 transition-colors hover:text-indigo-600 dark:text-indigo-300/80 dark:hover:text-indigo-300"
+                      onClick={() =>
+                        setSelectedIds((prev) => prev.filter((x) => x !== id))
+                      }
+                      className="grid size-3.5 shrink-0 place-items-center rounded-sm text-[hsl(var(--brand)/0.6)] transition-colors hover:bg-[hsl(var(--brand)/0.15)] hover:text-[hsl(var(--brand))]"
+                      title="取消选择"
                     >
-                      {selExpanded ? '收起' : `+${overflow} 更多`}
+                      ✕
                     </button>
-                  )}
-                </>
-              )
-            })()
-          )}
+                  </span>
+                )
+                return (
+                  <>
+                    <div
+                      ref={chipsStripRef}
+                      className={cn(
+                        'relative flex h-[26px] items-center gap-1.5 overflow-hidden',
+                        chipsHidden > 0 &&
+                          '[mask-image:linear-gradient(90deg,#000_calc(100%-64px),transparent_calc(100%-6px))]'
+                      )}
+                    >
+                      {selectedIds.map(chip)}
+                    </div>
+                    {chipsHidden > 0 && (
+                      <>
+                        <span className="pointer-events-none absolute right-0 top-1/2 inline-flex h-[22px] -translate-y-1/2 items-center rounded-full bg-background px-2 text-[11px] font-semibold tabular-nums text-[hsl(var(--brand))] shadow-[inset_0_0_0_1px_hsl(var(--brand)/0.3),0_1px_4px_rgba(0,0,0,0.1)]">
+                        +{chipsHidden}
+                        </span>
+                        <div className="absolute bottom-[calc(100%+6px)] left-0 z-30 hidden max-h-[150px] w-[340px] max-w-[calc(100vw-48px)] flex-wrap content-start gap-1.5 overflow-y-auto rounded-[10px] border border-border bg-popover p-2 shadow-[0_12px_40px_rgba(0,0,0,0.16),0_2px_8px_rgba(0,0,0,0.08)] group-hover/selwrap:flex">
+                          {selectedIds.map(chip)}
+                        </div>
+                      </>
+                    )}
+                  </>
+                )
+              })()
+            )}
+          </div>
         </section>
 
-        {/* 本页标注 — grows to fill, scrolls horizontally when many */}
-        <section className="flex min-w-0 flex-1 flex-col border-l border-border/60 pl-4">
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {/* 本页标注 — 只露序号圆钮（2026-07-07 用户定稿：不显示文字，点击
+            打开）。编号取 annotationBadges，与画布虚线框的徽标同一套，两边
+            可互相对照；文字/元素名收进 tooltip。点击 = editBadge：选中对应
+            元素并弹出就地编辑浮层——删除入口也在浮层里（原卡片的 ✕ 随卡片
+            一起退役）。 */}
+        <section
+          ref={annSectionRef}
+          className="relative flex min-w-0 flex-1 flex-col gap-1.5 @max-2xl/editor:flex-none @max-2xl/editor:flex-row @max-2xl/editor:items-center @max-2xl/editor:gap-2.5"
+        >
+          <div className="flex items-center gap-1.5 @max-2xl/editor:shrink-0">
+            <span className="text-[10.5px] font-semibold tracking-wide text-muted-foreground">
               本页标注
             </span>
             {annotationEntries.length > 0 && (
-              <span className="grid min-w-[18px] place-items-center rounded-full bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-600">
+              <span className="grid h-[15px] min-w-[15px] place-items-center rounded-full bg-amber-500/15 px-1 text-[9.5px] font-bold tabular-nums text-amber-600">
                 {annotationEntries.length}
               </span>
             )}
           </div>
-          {/* 修改说明 lives in the on-canvas FloatingInstruction box (pops above
-              the selection). This dock keeps only the selected-chip list + the
-              annotation record, so both entry points coexist without a duplicate
-              input. */}
           {annotationEntries.length === 0 ? (
-            <div className="mt-2 flex flex-1 items-center text-[11.5px] text-muted-foreground/60">
+            <div className="flex h-[26px] items-center text-[11.5px] text-muted-foreground/60">
               暂无标注
             </div>
           ) : (
-            <div className="mt-2 flex max-h-24 gap-1.5 overflow-x-auto overflow-y-auto pb-0.5">
-              {annotationEntries.map(([eid, text]) => (
-                <div
+            <div
+              className="flex h-[26px] items-center gap-1.5 overflow-x-auto pb-0.5 @max-2xl/editor:min-w-0 @max-2xl/editor:flex-1"
+              onScroll={() => setAnnTip(null)}
+            >
+              {annotationEntries.map(([eid]) => (
+                <button
                   key={eid}
-                  className="group flex w-[220px] shrink-0 flex-col rounded-lg border border-border/60 bg-card px-2.5 py-2 shadow-sm transition-all hover:border-indigo-500/40 hover:shadow-[0_3px_10px_-4px_rgba(79,70,229,0.28)]"
+                  type="button"
+                  onClick={() => {
+                    setAnnTip(null)
+                    editBadge(eid)
+                  }}
+                  onMouseEnter={(e) => {
+                    cancelAnnTipClose()
+                    const sec = annSectionRef.current
+                    if (!sec) return
+                    const b = e.currentTarget.getBoundingClientRect()
+                    const s = sec.getBoundingClientRect()
+                    // 左对齐锚定：卡的左缘 ≈ 钮左缘 - 9px（卡内 12px padding
+                    // + 徽标半径，徽标正好落在钮正上方）。不能用「中心点 ±
+                    // 最大宽一半」钳制——卡是 w-max，窄卡会被 260px 的假定
+                    // 宽度推到钮右侧老远（2026-07-07 实锤）。右缘按最大宽
+                    // 保守钳制，超出簇也只是盖到 dock 同面，无剪裁风险。
+                    const bLeft = b.left - s.left
+                    const left = Math.max(
+                      0,
+                      Math.min(bLeft - 9, s.width - 260)
+                    )
+                    setAnnTip({ eid, left })
+                  }}
+                  onMouseLeave={closeAnnTipSoon}
+                  className="grid h-[22px] min-w-[22px] shrink-0 place-items-center rounded-full bg-amber-500 px-1.5 text-[11px] font-bold tabular-nums text-white shadow-sm transition-all hover:bg-amber-600 active:scale-90"
                 >
-                  <div className="flex items-start gap-1.5">
-                    <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-amber-500" />
-                    <span className="min-w-0 flex-1 break-words text-[12px] leading-relaxed text-foreground line-clamp-3">
-                      {text}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => void removeAnnotation(eid)}
-                      className="grid size-4 shrink-0 place-items-center rounded text-[11px] text-muted-foreground/50 opacity-0 transition-all hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
-                      title="删除标注"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  <div className="mt-1 truncate pl-3 font-mono text-[10px] text-muted-foreground/40">
-                    {eid}
-                  </div>
-                </div>
+                  {annotationBadges[eid]}
+                </button>
               ))}
+            </div>
+          )}
+          {/* hover 提示卡：序号 + 元素名 + 删除 + 标注全文（超 4 行截断）。
+              可交互（带删除入口），进出走 160ms 宽限期（见 closeAnnTipSoon
+              注释）。标注刚被删时 eid 可能已失效，渲染前再查一次。 */}
+          {annTip && annotations[annTip.eid] !== undefined && (
+            <div
+              className="absolute bottom-[calc(100%+8px)] z-30 w-max max-w-[260px] rounded-[10px] border border-border bg-popover px-3 py-2 shadow-[0_12px_40px_rgba(0,0,0,0.16),0_2px_8px_rgba(0,0,0,0.08)]"
+              style={{ left: annTip.left }}
+              onMouseEnter={cancelAnnTipClose}
+              onMouseLeave={closeAnnTipSoon}
+            >
+              <div className="mb-0.5 flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
+                <span className="grid h-[15px] min-w-[15px] place-items-center rounded-full bg-amber-500 px-1 text-[9px] font-bold tabular-nums text-white">
+                  {annotationBadges[annTip.eid]}
+                </span>
+                {friendlyLabel(annTip.eid)}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const eid = annTip.eid
+                    setAnnTip(null)
+                    void removeAnnotation(eid)
+                  }}
+                  className="ml-auto rounded px-1 py-0.5 text-[10.5px] text-muted-foreground/70 transition-colors hover:bg-destructive/10 hover:text-destructive"
+                >
+                  删除
+                </button>
+              </div>
+              <div className="line-clamp-4 text-[12px] leading-relaxed text-foreground">
+                {annotations[annTip.eid]}
+              </div>
             </div>
           )}
         </section>
 
         {/* apply — the single primary action (撤销/退出预览 removed per ask).
-            Redesign「色彩收敛」: the primary button now wears the operation indigo
-            (not neutral bg-foreground black), so "应用标注" reads as THE action in
-            the same colour the whole selection flow uses. A check icon + a count
-            subline give it the weight of a commit step. */}
-        <div className="flex w-52 shrink-0 flex-col justify-center gap-1.5 border-l border-border/60 pl-4">
+            2026-07-07 原型定稿：CTA 穿登录页/账户菜单同款品牌绿渐变（靛蓝
+            是外来色，被毙），深端由 --brand 混黑派生，不硬编码第二套绿。
+            状态文案收成小圆点行（绿=成功流转，红=失败）。 */}
+        <div className="flex w-52 shrink-0 flex-col justify-center gap-1 @max-2xl/editor:w-full">
           {statusMsg && (
-            <div className="rounded-md bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground">
-              {statusMsg}
+            <div className="flex items-center justify-center gap-1.5 text-[10.5px] text-muted-foreground">
+              <span
+                className={cn(
+                  'size-[5px] shrink-0 rounded-full',
+                  statusMsg.includes('失败') ? 'bg-red-500' : 'bg-emerald-500'
+                )}
+              />
+              <span className="truncate">{statusMsg}</span>
             </div>
           )}
           <button
             type="button"
             disabled={busy || applyQueued}
             onClick={() => void applyChanges()}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2.5 text-[12.5px] font-semibold text-white shadow-[0_4px_14px_-3px_rgba(79,70,229,0.5)] transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 dark:bg-indigo-500"
+            className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-[linear-gradient(135deg,hsl(var(--brand)),color-mix(in_srgb,hsl(var(--brand))_85%,#000))] px-3 py-2.5 text-[12.5px] font-semibold text-white shadow-[0_4px_14px_-4px_hsl(var(--brand)/0.55),inset_0_1px_0_rgba(255,255,255,0.22)] transition-all hover:shadow-[0_6px_20px_-4px_hsl(var(--brand)/0.55),inset_0_1px_0_rgba(255,255,255,0.22)] active:scale-[0.98] disabled:opacity-45 disabled:shadow-none disabled:active:scale-100"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M20 6L9 17l-5-5" /></svg>
             {applyQueued ? '已在队列中' : '应用标注到我的 PPT'}
@@ -1411,7 +1582,7 @@ export function LivePreviewEditor({
 
       {/* ── bottom status bar ── */}
       <footer className="flex h-9 shrink-0 items-center gap-2.5 border-t border-border/60 bg-background px-4 text-[11.5px] text-muted-foreground">
-        <span className="text-muted-foreground/80">16:9 · 1280 × 720 · HTML 幻灯片工作区</span>
+        <span className="text-muted-foreground/80">HTML 幻灯片工作区</span>
         <div className="flex-1" />
         <div className="flex items-center gap-1.5 text-muted-foreground/80">
           <kbd className="grid h-[18px] min-w-[18px] place-items-center rounded border border-border bg-muted/50 px-1 text-[10px]">←</kbd>
@@ -1457,10 +1628,10 @@ function HighlightOverlay({
   const transition = reduceMotion
     ? { duration: 0 }
     : { type: 'spring' as const, stiffness: 700, damping: 40, mass: 0.6 }
-  // The number chip that sits at a box's top-right corner (①②③…). Indigo, a
-  // fixed editor accent that stays legible on any slide palette (unlike the
-  // theme --accent, which the deck's own colours can wash out). Nudged just
-  // outside the frame so it reads as a callout tag, not part of the artwork.
+  // 序号徽标（①②③…）：琥珀 = 标注身份色（2026-07-07 原型定稿——选中
+  // 用品牌绿、已标注用琥珀，两个概念在色彩上彻底分开；dock 序号钮、缩略
+  // 图计数徽标同族）。琥珀是固定色不随主题，任何幻灯片配色上都读得出。
+  // 挂框左上角外侧，读作 callout 标签而不是画面的一部分。
   //
   // It's an interactive button: the overlay root is pointer-events-none (so it
   // never eats the marquee drag), so the badge re-enables pointer-events on
@@ -1475,10 +1646,20 @@ function HighlightOverlay({
         e.stopPropagation()
         onEditBadge(id)
       }}
-      className="pointer-events-auto absolute -right-2.5 -top-2.5 grid size-5 cursor-pointer place-items-center rounded-full bg-indigo-500 text-[11px] font-semibold tabular-nums text-white shadow-sm ring-2 ring-background transition-transform hover:scale-110 hover:bg-indigo-600 active:scale-95"
+      className="pointer-events-auto absolute -left-2.5 -top-2.5 grid size-5 cursor-pointer place-items-center rounded-full bg-amber-500 text-[11px] font-semibold tabular-nums text-white shadow-sm ring-2 ring-background transition-transform hover:scale-110 hover:bg-amber-600 active:scale-95"
     >
       {n}
     </button>
+  )
+  // 选中框四角的 Figma 式手柄（白底 + 品牌绿描边）。纯视觉 affordance，
+  // 不承担拖拽（resize 是后续 MODULE 的事）。
+  const cornerHandles = (
+    <>
+      <span className="absolute -left-[4.5px] -top-[4.5px] size-[7px] rounded-[2px] border-[1.5px] border-[hsl(var(--brand))] bg-background" />
+      <span className="absolute -right-[4.5px] -top-[4.5px] size-[7px] rounded-[2px] border-[1.5px] border-[hsl(var(--brand))] bg-background" />
+      <span className="absolute -bottom-[4.5px] -left-[4.5px] size-[7px] rounded-[2px] border-[1.5px] border-[hsl(var(--brand))] bg-background" />
+      <span className="absolute -bottom-[4.5px] -right-[4.5px] size-[7px] rounded-[2px] border-[1.5px] border-[hsl(var(--brand))] bg-background" />
+    </>
   )
   // No overflow-hidden on the root: selection boxes + number chips on elements
   // near the card edge must render in full (clipping them was the cut-corner
@@ -1487,36 +1668,43 @@ function HighlightOverlay({
   // drag-select behaviour, not a defect.
   return (
     <div className="pointer-events-none absolute inset-0">
-      {/* hover box (behind selection) — faint indigo dashed "will select" hint */}
+      {/* hover box (behind selection) — 品牌绿细线「将选中」提示。
+          操作色 2026-07-07 起 = 品牌绿（原型定稿，替换靛蓝）：brand 只分
+          亮/暗档、不跟用户主题色走，在任意幻灯片配色上保持一致的编辑器
+          身份色。 */}
       {hover && (
         <motion.div
-          className="absolute rounded-[3px] border border-dashed border-indigo-400/50"
+          className="absolute rounded-[3px] border border-[hsl(var(--brand)/0.45)]"
           initial={reduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1, left: hover.x, top: hover.y, width: hover.w, height: hover.h }}
           transition={transition}
         />
       )}
-      {/* annotated-but-unselected boxes: persistent dashed callouts + number */}
+      {/* annotated-but-unselected boxes: 琥珀虚线 callout + 序号（与选中的
+          绿实线框在色彩上分属两个概念）。 */}
       {annotated.map((r) => (
         <div
           key={`ann-${r.id}`}
-          className="absolute rounded-[3px] border border-dashed border-indigo-400/60 bg-indigo-400/[0.04]"
+          className="absolute rounded-[3px] border border-dashed border-amber-500/70 bg-amber-500/[0.05]"
           style={{ left: r.x, top: r.y, width: r.w, height: r.h }}
         >
           {r.badge !== undefined && badgeChip(r.badge, r.id)}
         </div>
       ))}
-      {/* selected boxes: bolder indigo dashed frame (+ number if annotated) */}
+      {/* selected boxes: 品牌绿实线框 + 四角手柄（Figma 语言；原先的虚线
+          让「选中」和「已标注」难以区分）。已标注元素被选中时序号徽标
+          保持可见。 */}
       <AnimatePresence>
         {selected.map((r) => (
           <motion.div
             key={r.id}
-            className="absolute rounded-[3px] border-[1.5px] border-dashed border-indigo-500 bg-indigo-500/[0.06]"
+            className="absolute rounded-[3px] border-[1.5px] border-[hsl(var(--brand))]"
             initial={reduceMotion ? false : { opacity: 0 }}
             animate={{ opacity: 1, left: r.x, top: r.y, width: r.w, height: r.h }}
             exit={reduceMotion ? undefined : { opacity: 0 }}
             transition={transition}
           >
+            {cornerHandles}
             {r.badge !== undefined && badgeChip(r.badge, r.id)}
           </motion.div>
         ))}
@@ -1524,7 +1712,7 @@ function HighlightOverlay({
       {/* marquee rubber-band */}
       {marquee && marquee.w > 1 && marquee.h > 1 && (
         <div
-          className="absolute rounded-[1px] border border-indigo-500/70 bg-indigo-500/10"
+          className="absolute rounded-[1px] border border-[hsl(var(--brand)/0.7)] bg-[hsl(var(--brand)/0.08)]"
           style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
         />
       )}
@@ -1552,9 +1740,11 @@ function FloatingInstruction({
   value,
   busy,
   inputRef,
+  editingId,
   onChange,
   onSubmit,
-  onDismiss
+  onDismiss,
+  onDelete
 }: {
   // y = selection's TOP edge, y2 = its BOTTOM edge (stage-relative px). Both are
   // needed so the flip anchors off the correct edge: above → sit over the top;
@@ -1564,9 +1754,13 @@ function FloatingInstruction({
   value: string
   busy: boolean
   inputRef: React.RefObject<HTMLTextAreaElement | null>
+  // 非空 = 正在编辑该元素的既有标注（单选且已有标注）：文案换「编辑
+  // 标注」、提交钮换「更新」、左下角露删除入口。
+  editingId: string | null
   onChange: (v: string) => void
   onSubmit: () => void
   onDismiss: () => void
+  onDelete: (id: string) => void
 }): React.JSX.Element | null {
   // Focus the input when a NEW selection appears (bounds goes null → set, or the
   // anchor jumps). Keyed on the rounded top so re-measures (scroll/resize) that
@@ -1585,12 +1779,15 @@ function FloatingInstruction({
   // anchors off y2 (bottom), NOT y (top) — anchoring off the top would drop the
   // card straight over the selected element and hide it (the bug being fixed).
   const GAP = 10
-  const BOX_H = 96
+  const BOX_H = 128
   const above = bounds.y >= BOX_H + GAP
   const left = Math.max(0, bounds.x)
+  // below 分支用 CSS min() 钳住下缘：选大元素时 y2+GAP 会伸出画布、被
+  // dock 裁掉半张卡（2026-07-07 窄屏实锤）。100% 指定位上下文（stage
+  // wrap）的高度，浮层最多贴底 4px——盖住选区下沿也比被裁切强。
   const style: React.CSSProperties = above
     ? { left, top: bounds.y - GAP, transform: 'translateY(-100%)' }
-    : { left, top: bounds.y2 + GAP }
+    : { left, top: `min(${bounds.y2 + GAP}px, calc(100% - ${BOX_H + 4}px))` }
 
   return (
     <div
@@ -1605,71 +1802,83 @@ function FloatingInstruction({
       onClick={(e) => e.stopPropagation()}
     >
       {/* Card chrome kept neutral (border-border / bg-popover) so it reads as a
-          system surface, not a coloured widget. The brand-green identity lives
-          ONLY on the tiny header icon + the send button + the input focus ring
-          — enough to feel part of the app WITHOUT the earlier "purple box on a
-          green deck" clash. NOTE: the selection FRAME (HighlightOverlay) stays
-          indigo on purpose — its colour must not follow the theme/brand or it
-          washes out on a coloured slide; the floating card is chrome floating
-          ABOVE the deck, so it can safely wear the brand colour. */}
-      <div className="rounded-xl border border-border bg-popover/95 p-2 shadow-[0_10px_30px_-6px_rgba(20,30,50,0.22)] ring-1 ring-black/[0.02] backdrop-blur-md">
-        <div className="mb-1.5 flex items-center gap-1.5 px-1 pt-0.5">
-          <span className="grid size-[18px] place-items-center rounded-md bg-[hsl(var(--brand)/0.12)] text-[hsl(var(--brand))]">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-            </svg>
-          </span>
-          <span className="text-[11px] font-medium text-muted-foreground">
-            修改所选{' '}
-            <span className="font-semibold tabular-nums text-foreground">{count}</span> 个元素
-          </span>
-          <kbd className="ml-auto rounded border border-border px-1.5 py-px font-mono text-[9.5px] tracking-wide text-muted-foreground/70">
-            esc
-          </kbd>
+          system surface, not a coloured widget. 品牌绿只落在色点 + 提交钮 +
+          输入焦点环上（2026-07-07 原型定稿布局：色点标题行 → 输入区 →
+          底部动作行）。选中框（HighlightOverlay）同为品牌绿——操作色全链
+          统一，靛蓝已退役。 */}
+      <div className="rounded-xl border border-border bg-popover/95 p-2.5 shadow-[0_10px_30px_-6px_rgba(20,30,50,0.22)] ring-1 ring-black/[0.02] backdrop-blur-md">
+        <div className="flex items-center gap-1.5 px-0.5 text-[11.5px] text-muted-foreground">
+          <span className="size-2 shrink-0 rounded-[3px] bg-[hsl(var(--brand))]" />
+          {editingId ? (
+            <span>编辑标注</span>
+          ) : (
+            <span>
+              修改所选{' '}
+              <span className="font-semibold tabular-nums text-foreground">{count}</span>{' '}
+              个元素
+            </span>
+          )}
         </div>
-        <div className="flex items-end gap-1.5">
-          {/* shadcn Textarea. Two deliberate overrides on top of the primitive:
-              - bg-background (not the primitive's bg-transparent): the card is
-                translucent w/ backdrop-blur, so a transparent input would let
-                the selected SVG element show THROUGH the box (the "green block
-                behind the input" the user saw). A solid field fixes that.
-              - focus ring recoloured from the theme --ring to --brand, to match
-                the rest of this card's brand-green identity. */}
-          <Textarea
-            ref={inputRef}
-            rows={2}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                if (!busy && value.trim()) onSubmit()
-              } else if (e.key === 'Escape') {
-                e.preventDefault()
-                onDismiss()
-              }
-            }}
-            placeholder="描述希望如何修改…（回车提交）"
-            className={cn(
-              'max-h-32 min-h-[38px] resize-none rounded-lg bg-background px-2.5 py-1.5 text-[12px] leading-relaxed shadow-none',
-              'focus-visible:border-[hsl(var(--brand)/0.7)] focus-visible:ring-[hsl(var(--brand)/0.25)]'
-            )}
-          />
+        {/* shadcn Textarea. Two deliberate overrides on top of the primitive:
+            - bg-background (not the primitive's bg-transparent): the card is
+              translucent w/ backdrop-blur, so a transparent input would let
+              the selected SVG element show THROUGH the box (the "green block
+              behind the input" the user saw). A solid field fixes that.
+            - focus ring recoloured from the theme --ring to --brand, to match
+              the rest of this card's brand-green identity. */}
+        <Textarea
+          ref={inputRef}
+          rows={2}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              if (!busy && value.trim()) onSubmit()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              onDismiss()
+            }
+          }}
+          placeholder="描述希望如何修改…"
+          className={cn(
+            'mt-2 max-h-32 min-h-[38px] resize-none rounded-lg bg-background px-2.5 py-1.5 text-[12px] leading-relaxed shadow-none',
+            'focus-visible:border-[hsl(var(--brand)/0.7)] focus-visible:ring-[hsl(var(--brand)/0.25)]'
+          )}
+        />
+        <div className="mt-2 flex items-center gap-1.5">
+          {editingId ? (
+            <button
+              type="button"
+              onClick={() => onDelete(editingId)}
+              className="rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground/70 transition-colors hover:bg-destructive/10 hover:text-destructive"
+            >
+              删除标注
+            </button>
+          ) : (
+            <span className="flex items-center gap-1 text-[10.5px] text-muted-foreground/70">
+              <kbd className="rounded border border-border px-1 py-px font-mono text-[9.5px] tracking-wide">
+                esc
+              </kbd>
+              取消
+            </span>
+          )}
+          <span className="flex-1" />
           <Button
             type="button"
-            size="icon-sm"
+            size="sm"
             disabled={busy || !value.trim()}
             onClick={onSubmit}
-            title="添加标注（回车）"
             className={cn(
-              'mb-px rounded-lg bg-[hsl(var(--brand))] text-[hsl(var(--brand-foreground))] shadow-[0_2px_8px_-1px_hsl(var(--brand)/0.5)]',
+              'h-7 gap-1.5 rounded-full bg-[hsl(var(--brand))] px-3 text-[12px] font-medium text-[hsl(var(--brand-foreground))] shadow-[0_2px_8px_-1px_hsl(var(--brand)/0.5)]',
               'hover:bg-[hsl(var(--brand))] hover:brightness-110 active:scale-95',
               'disabled:bg-muted disabled:text-muted-foreground/50 disabled:shadow-none'
             )}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 19V5M5 12l7-7 7 7" />
-            </svg>
+            {editingId ? '更新' : '添加标注'}
+            <kbd className="rounded border border-current/35 bg-current/10 px-1 font-mono text-[9px]">
+              ↵
+            </kbd>
           </Button>
         </div>
       </div>

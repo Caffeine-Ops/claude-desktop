@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>账户菜单重设计 · 4 方案对比</title>
+<style>
+/* ══════════════════════════════════════════════════════════════
+   设计画布：账户下拉菜单 4 方案（claude-desktop / AppRail）
+   色板与 login.css 的 --lg-* 同源：中性灰阶打底，品牌绿只做点睛。
+   顶栏「浅色/深色」切换整个画布主题（V4 为暗色原生，两档都保持暗面）。
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  --bg: #f4f6f5;
+  --surface: #ffffff;
+  --ink: #1d1d1f;
+  --ink-2: rgba(29, 29, 31, 0.6);
+  --ink-3: rgba(29, 29, 31, 0.38);
+  --line: rgba(29, 29, 31, 0.07);
+  --hover: rgba(29, 29, 31, 0.045);
+  --hover-strong: rgba(29, 29, 31, 0.08);
+  --green: #16a34a;
+  --green-deep: #15803d;
+  --green-soft: rgba(22, 163, 74, 0.1);
+  --menu-shadow:
+    0 0 0 1px rgba(29, 29, 31, 0.05),
+    0 18px 50px rgba(29, 29, 31, 0.13),
+    0 4px 12px rgba(29, 29, 31, 0.05);
+  --seg-active-bg: #ffffff;
+  --seg-active-shadow: 0 1px 3px rgba(29, 29, 31, 0.12);
+  --pill-ink-bg: #1d1d1f;
+  --pill-ink-fg: #ffffff;
+  --card-tint: rgba(29, 29, 31, 0.035);
+}
+[data-theme="dark"] {
+  --bg: #0f1211;
+  --surface: #1e2220;
+  --ink: #f2f4f2;
+  --ink-2: rgba(242, 244, 242, 0.6);
+  --ink-3: rgba(242, 244, 242, 0.38);
+  --line: rgba(242, 244, 242, 0.08);
+  --hover: rgba(242, 244, 242, 0.06);
+  --hover-strong: rgba(242, 244, 242, 0.11);
+  --green: #3bce78;
+  --green-deep: #34b96b;
+  --green-soft: rgba(59, 206, 120, 0.13);
+  --menu-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.07),
+    0 18px 50px rgba(0, 0, 0, 0.55),
+    0 4px 12px rgba(0, 0, 0, 0.3);
+  --seg-active-bg: rgba(242, 244, 242, 0.14);
+  --seg-active-shadow: none;
+  --pill-ink-bg: #f2f4f2;
+  --pill-ink-fg: #161918;
+  --card-tint: rgba(242, 244, 242, 0.05);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, "SF Pro SC", "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  transition: background 0.25s ease, color 0.25s ease;
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+svg.ic { width: 16px; height: 16px; flex: none; }
+
+/* ── 画布骨架 ─────────────────────────────────────────────── */
+.topbar {
+  display: flex; align-items: baseline; gap: 16px;
+  padding: 28px 40px 0;
+}
+.topbar h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.topbar .sub { font-size: 12.5px; color: var(--ink-3); }
+.theme-switch {
+  margin-left: auto; align-self: center;
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--hover-strong); border-radius: 8px;
+}
+.theme-switch button {
+  padding: 4px 12px; border-radius: 6px;
+  font-size: 12px; color: var(--ink-3);
+  transition: all 0.15s ease;
+}
+.theme-switch button.on {
+  background: var(--seg-active-bg); color: var(--ink);
+  box-shadow: var(--seg-active-shadow); font-weight: 500;
+}
+
+.canvas {
+  display: flex; flex-wrap: wrap; align-items: flex-start;
+  gap: 48px; padding: 36px 40px 64px;
+}
+.cell { display: flex; flex-direction: column; gap: 14px; }
+.cell .tag { display: flex; flex-direction: column; gap: 3px; }
+.cell .tag b { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+.cell .tag span { font-size: 11.5px; color: var(--ink-3); max-width: 264px; line-height: 1.5; }
+
+/* ══════════════════════════════════════════════════════════════
+   菜单公共骨架
+   ══════════════════════════════════════════════════════════════ */
+.menu {
+  background: var(--surface);
+  border-radius: 14px;
+  box-shadow: var(--menu-shadow);
+  padding: 5px;
+  user-select: none;
+  transition: background 0.25s ease;
+}
+.menu .sep { height: 1px; background: var(--line); margin: 4px 8px; }
+.menu .item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left;
+  padding: 0 9px; height: 34px; border-radius: 9px;
+  font-size: 13px; color: var(--ink);
+  transition: background 0.12s ease;
+}
+.menu .item .ic { color: var(--ink-3); transition: color 0.12s ease; }
+.menu .item:hover { background: var(--hover); }
+.menu .item:hover .ic { color: var(--ink-2); }
+.menu .item:active { background: var(--hover-strong); }
+.menu .item .grow { flex: 1; }
+
+/* 外观 seg：icon-only（V1）与文字段（V2/V3）两种 */
+.seg {
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--hover-strong); border-radius: 7px;
+}
+.seg button {
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 5px; color: var(--ink-3);
+  transition: all 0.15s ease;
+}
+.seg button:hover { color: var(--ink-2); }
+.seg button.on {
+  background: var(--seg-active-bg); color: var(--ink);
+  box-shadow: var(--seg-active-shadow);
+}
+.seg.icons button { width: 24px; height: 22px; }
+.seg.icons .ic { width: 13px; height: 13px; }
+.seg.words button { padding: 0 9px; height: 22px; font-size: 12px; }
+.seg.words button.on { font-weight: 500; }
+
+/* 复制按钮（用户名旁） */
+.copy-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px;
+  color: var(--ink-3); opacity: 0.7;
+  transition: all 0.12s ease;
+}
+.copy-btn .ic { width: 12.5px; height: 12.5px; }
+.copy-btn:hover { opacity: 1; background: var(--hover); color: var(--ink-2); }
+.copy-btn.done { color: var(--green); opacity: 1; }
+
+/* ══════════════════════════════════════════════════════════════
+   V1 · 精修基准 —— 结构不动，密度/层级/分隔全部收紧
+   ══════════════════════════════════════════════════════════════ */
+.v1 { width: 256px; }
+.v1 .head { padding: 8px 9px 9px; display: flex; flex-direction: column; gap: 1px; }
+.v1 .head .row { display: flex; align-items: center; gap: 4px; }
+.v1 .head .name { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; }
+.v1 .head .mail { font-size: 11.5px; color: var(--ink-3); }
+.v1 .plan { display: flex; align-items: center; gap: 8px; padding: 5px 9px 7px; }
+.v1 .plan .dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-soft);
+}
+.v1 .plan .pname { font-size: 12.5px; color: var(--ink-2); flex: 1; }
+.v1 .plan .up {
+  display: flex; align-items: center; gap: 3px;
+  padding: 3px 8px 3px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 500; color: var(--green-deep);
+  transition: background 0.12s ease;
+}
+.v1 .plan .up .ic { width: 11px; height: 11px; }
+.v1 .plan .up:hover { background: var(--green-soft); }
+
+/* ══════════════════════════════════════════════════════════════
+   V2 · 套餐卡片 —— 套餐信息装进浅灰内嵌卡，黑 pill 保留但减重
+   ══════════════════════════════════════════════════════════════ */
+.v2 { width: 264px; }
+.v2 .head { display: flex; align-items: center; gap: 4px; padding: 8px 9px 6px; }
+.v2 .head .name { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; }
+.v2 .plan-card {
+  margin: 2px 4px 4px;
+  padding: 9px 8px 9px 11px;
+  background: var(--card-tint);
+  border-radius: 10px;
+  display: flex; align-items: center; gap: 10px;
+}
+.v2 .plan-card .col { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.v2 .plan-card .pname { font-size: 12.5px; font-weight: 500; }
+.v2 .plan-card .psub { font-size: 11px; color: var(--ink-3); }
+.v2 .plan-card .up {
+  height: 24px; padding: 0 11px; border-radius: 999px;
+  background: var(--pill-ink-bg); color: var(--pill-ink-fg);
+  font-size: 12px; font-weight: 500;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.v2 .plan-card .up:hover { opacity: 0.85; }
+.v2 .plan-card .up:active { transform: scale(0.96); }
+
+/* ══════════════════════════════════════════════════════════════
+   V3 · 品牌绿点缀 —— 头像落位 + 升级钮用登录页 CTA 的绿渐变
+   ══════════════════════════════════════════════════════════════ */
+.v3 { width: 264px; }
+.v3 .head { display: flex; align-items: center; gap: 10px; padding: 9px 9px 8px; }
+.v3 .avatar {
+  width: 30px; height: 30px; border-radius: 50%; flex: none;
+  background: var(--green-soft); color: var(--green-deep);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600;
+}
+.v3 .head .col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.v3 .head .row { display: flex; align-items: center; gap: 4px; }
+.v3 .head .name { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; }
+.v3 .head .mail { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v3 .plan { display: flex; align-items: center; gap: 9px; padding: 4px 9px 8px 10px; }
+.v3 .plan .ic { width: 15px; height: 15px; color: var(--green); }
+.v3 .plan .pname { font-size: 12.5px; color: var(--ink-2); flex: 1; }
+.v3 .plan .up {
+  height: 24px; padding: 0 12px; border-radius: 999px;
+  background: linear-gradient(135deg, var(--green), var(--green-deep));
+  color: #fff; font-size: 12px; font-weight: 500;
+  box-shadow: 0 3px 10px var(--green-soft), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: box-shadow 0.15s ease, transform 0.12s ease;
+}
+.v3 .plan .up:hover { box-shadow: 0 5px 16px rgba(22, 163, 74, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.25); }
+.v3 .plan .up:active { transform: scale(0.96); }
+.v3 .seg button.on { background: var(--green-soft); color: var(--green-deep); box-shadow: none; }
+
+/* ══════════════════════════════════════════════════════════════
+   V4 · HUD 科技 —— 与登录页同语言的暗色玻璃面板（暗色原生）
+   ══════════════════════════════════════════════════════════════ */
+.v4 {
+  width: 268px;
+  background: rgba(17, 21, 19, 0.94);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(59, 206, 120, 0.16);
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.5),
+    0 0 44px rgba(59, 206, 120, 0.06);
+  --ink: #eef2ef;
+  --ink-2: rgba(238, 242, 239, 0.62);
+  --ink-3: rgba(238, 242, 239, 0.36);
+  --line: rgba(238, 242, 239, 0.08);
+  --hover: rgba(59, 206, 120, 0.08);
+  --hover-strong: rgba(238, 242, 239, 0.08);
+  --green: #3bce78;
+  --green-deep: #34b96b;
+  --green-soft: rgba(59, 206, 120, 0.14);
+  --seg-active-bg: rgba(59, 206, 120, 0.16);
+  --seg-active-shadow: none;
+  color: var(--ink);
+}
+.v4 .micro {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: rgba(59, 206, 120, 0.62);
+  padding: 8px 10px 0;
+}
+.v4 .head { padding: 3px 10px 8px; display: flex; flex-direction: column; gap: 1px; }
+.v4 .head .row { display: flex; align-items: center; gap: 4px; }
+.v4 .head .name { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; }
+.v4 .head .mail {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10.5px; color: var(--ink-3);
+}
+.v4 .plan { display: flex; align-items: center; gap: 9px; padding: 6px 10px 8px; }
+.v4 .plan .dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(59, 206, 120, 0.8);
+  animation: v4pulse 2.4s ease-in-out infinite;
+}
+.v4 .plan .pname { font-size: 12.5px; color: var(--ink-2); flex: 1; }
+.v4 .plan .up {
+  height: 24px; padding: 0 11px; border-radius: 999px;
+  border: 1px solid rgba(59, 206, 120, 0.4);
+  color: var(--green); font-size: 12px; font-weight: 500;
+  transition: all 0.15s ease;
+}
+.v4 .plan .up:hover { background: var(--green-soft); border-color: rgba(59, 206, 120, 0.6); }
+.v4 .item:hover .ic { color: var(--green); }
+@keyframes v4pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(59, 206, 120, 0.8); }
+  50% { box-shadow: 0 0 3px rgba(59, 206, 120, 0.35); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .v4 .plan .dot { animation: none; }
+}
+</style>
+</head>
+<body data-theme="light">
+
+<!-- lucide 图标 sprite（stroke 1.75，与应用内 strokeWidth={1.75} 一致） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="_stroke" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"></g>
+  </defs>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 6 9 17l-5-5"/>
+  </symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>
+  </symbol>
+  <symbol id="i-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.563-5.554C21.965 6.012 17.461 2 12 2z"/>
+  </symbol>
+  <symbol id="i-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>
+  </symbol>
+  <symbol id="i-update" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4"/><path d="M12 16V8"/>
+  </symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+  </symbol>
+  <symbol id="i-up-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 7h10v10"/><path d="M7 17 17 7"/>
+  </symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>
+  </symbol>
+</svg>
+
+<header class="topbar">
+  <h1>账户菜单重设计</h1>
+  <span class="sub">4 个方案 · hover / 点击 seg / 复制 均可交互 · V4 为暗色原生</span>
+  <div class="theme-switch" role="group" aria-label="画布主题">
+    <button class="on" data-set="light">浅色</button>
+    <button data-set="dark">深色</button>
+  </div>
+</header>
+
+<main class="canvas">
+
+  <!-- ═══════════ V1 精修基准 ═══════════ -->
+  <section class="cell">
+    <div class="tag">
+      <b>V1 · 精修基准</b>
+      <span>去掉黑 pill：升级降为绿色文字动作；套餐用呼吸绿点表达状态；外观收成太阳/月亮图标段；加邮箱副行撑起用户名层级。</span>
+    </div>
+    <div class="menu v1">
+      <div class="head">
+        <div class="row">
+          <span class="name">super</span>
+          <button class="copy-btn" aria-label="复制用户名"><svg class="ic"><use href="#i-copy"/></svg></button>
+        </div>
+        <span class="mail">xaviera@aucegypt.edu</span>
+      </div>
+      <div class="plan">
+        <span class="dot"></span>
+        <span class="pname">基础版</span>
+        <button class="up">升级 <svg class="ic"><use href="#i-up-right"/></svg></button>
+      </div>
+      <div class="sep"></div>
+      <button class="item"><svg class="ic"><use href="#i-settings"/></svg>设置</button>
+      <div class="item" style="cursor:default">
+        <svg class="ic"><use href="#i-palette"/></svg><span class="grow">外观</span>
+        <div class="seg icons">
+          <button class="on" aria-label="浅色"><svg class="ic"><use href="#i-sun"/></svg></button>
+          <button aria-label="深色"><svg class="ic"><use href="#i-moon"/></svg></button>
+        </div>
+      </div>
+      <button class="item"><svg class="ic"><use href="#i-help"/></svg>帮助与反馈</button>
+      <button class="item"><svg class="ic"><use href="#i-update"/></svg>检查更新</button>
+      <div class="sep"></div>
+      <button class="item"><svg class="ic"><use href="#i-logout"/></svg>退出登录</button>
+    </div>
+  </section>
+
+  <!-- ═══════════ V2 套餐卡片 ═══════════ -->
+  <section class="cell">
+    <div class="tag">
+      <b>V2 · 套餐卡片</b>
+      <span>套餐信息装进浅灰内嵌卡（自带分区，少一条分隔线），黑 pill 保留但收小；最贴近参考图的结构。</span>
+    </div>
+    <div class="menu v2">
+      <div class="head">
+        <span class="name">super</span>
+        <button class="copy-btn" aria-label="复制用户名"><svg class="ic"><use href="#i-copy"/></svg></button>
+      </div>
+      <div class="plan-card">
+        <div class="col">
+          <span class="pname">基础版</span>
+          <span class="psub">免费方案</span>
+        </div>
+        <button class="up">升级</button>
+      </div>
+      <button class="item"><svg class="ic"><use href="#i-settings"/></svg>设置</button>
+      <div class="item" style="cursor:default">
+        <svg class="ic"><use href="#i-palette"/></svg><span class="grow">外观</span>
+        <div class="seg words">
+          <button class="on">浅色</button>
+          <button>深色</button>
+        </div>
+      </div>
+      <button class="item"><svg class="ic"><use href="#i-help"/></svg>帮助与反馈</button>
+      <button class="item"><svg class="ic"><use href="#i-update"/></svg>检查更新</button>
+      <div class="sep"></div>
+      <button class="item"><svg class="ic"><use href="#i-logout"/></svg>退出登录</button>
+    </div>
+  </section>
+
+  <!-- ═══════════ V3 品牌绿点缀 ═══════════ -->
+  <section class="cell">
+    <div class="tag">
+      <b>V3 · 品牌绿点缀</b>
+      <span>头像圆落位 + 升级钮用登录页 CTA 同款绿渐变；seg 选中态用品牌绿浅底，整体和登录/订阅页一个家族。</span>
+    </div>
+    <div class="menu v3">
+      <div class="head">
+        <div class="avatar">S</div>
+        <div class="col">
+          <div class="row">
+            <span class="name">super</span>
+            <button class="copy-btn" aria-label="复制用户名"><svg class="ic"><use href="#i-copy"/></svg></button>
+          </div>
+          <span class="mail">xaviera@aucegypt.edu</span>
+        </div>
+      </div>
+      <div class="sep"></div>
+      <div class="plan">
+        <svg class="ic"><use href="#i-sparkles"/></svg>
+        <span class="pname">基础版</span>
+        <button class="up">升级</button>
+      </div>
+      <div class="sep"></div>
+      <button class="item"><svg class="ic"><use href="#i-settings"/></svg>设置</button>
+      <div class="item" style="cursor:default">
+        <svg class="ic"><use href="#i-palette"/></svg><span class="grow">外观</span>
+        <div class="seg words">
+          <button class="on">浅色</button>
+          <button>深色</button>
+        </div>
+      </div>
+      <button class="item"><svg class="ic"><use href="#i-help"/></svg>帮助与反馈</button>
+      <button class="item"><svg class="ic"><use href="#i-update"/></svg>检查更新</button>
+      <div class="sep"></div>
+      <button class="item"><svg class="ic"><use href="#i-logout"/></svg>退出登录</button>
+    </div>
+  </section>
+
+  <!-- ═══════════ V4 HUD 科技 ═══════════ -->
+  <section class="cell">
+    <div class="tag">
+      <b>V4 · HUD 科技</b>
+      <span>登录页同语言：暗色玻璃 + 绿描边 + mono 微标签 + 呼吸状态点。暗色原生，浅色档下也保持暗面。</span>
+    </div>
+    <div class="menu v4">
+      <div class="micro">Account</div>
+      <div class="head">
+        <div class="row">
+          <span class="name">super</span>
+          <button class="copy-btn" aria-label="复制用户名"><svg class="ic"><use href="#i-copy"/></svg></button>
+        </div>
+        <span class="mail">xaviera@aucegypt.edu</span>
+      </div>
+      <div class="plan">
+        <span class="dot"></span>
+        <span class="pname">基础版</span>
+        <button class="up">升级</button>
+      </div>
+      <div class="sep"></div>
+      <button class="item"><svg class="ic"><use href="#i-settings"/></svg>设置</button>
+      <div class="item" style="cursor:default">
+        <svg class="ic"><use href="#i-palette"/></svg><span class="grow">外观</span>
+        <div class="seg icons">
+          <button aria-label="浅色"><svg class="ic"><use href="#i-sun"/></svg></button>
+          <button class="on" aria-label="深色"><svg class="ic"><use href="#i-moon"/></svg></button>
+        </div>
+      </div>
+      <button class="item"><svg class="ic"><use href="#i-help"/></svg>帮助与反馈</button>
+      <button class="item"><svg class="ic"><use href="#i-update"/></svg>检查更新</button>
+      <div class="sep"></div>
+      <button class="item"><svg class="ic"><use href="#i-logout"/></svg>退出登录</button>
+    </div>
+  </section>
+
+</main>
+
+<script>
+// 画布主题切换
+document.querySelectorAll('.theme-switch button').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    document.body.dataset.theme = btn.dataset.set;
+    document.querySelectorAll('.theme-switch button').forEach(function (b) {
+      b.classList.toggle('on', b === btn);
+    });
+  });
+});
+
+// 外观 seg：组内单选（纯演示，不真切主题）
+document.querySelectorAll('.seg').forEach(function (seg) {
+  seg.querySelectorAll('button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      seg.querySelectorAll('button').forEach(function (b) {
+        b.classList.toggle('on', b === btn);
+      });
+    });
+  });
+});
+
+// 复制按钮：点击 → 对勾反馈 1.2s
+document.querySelectorAll('.copy-btn').forEach(function (btn) {
+  var original = btn.innerHTML;
+  btn.addEventListener('click', function () {
+    if (btn.classList.contains('done')) return;
+    btn.classList.add('done');
+    btn.innerHTML = '<svg class="ic"><use href="#i-check"/></svg>';
+    setTimeout(function () {
+      btn.classList.remove('done');
+      btn.innerHTML = original;
+    }, 1200);
+  });
+});
+</script>
+</body>
+</html>

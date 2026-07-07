@@ -6,3 +6,11 @@
 skills/** text eol=lf
 # bun test 快照文件同理逐字节敏感。
 *.snap text eol=lf
+# 上面 `skills/** text eol=lf` 的通配也把 ppt-master 的真二进制图片/视频卷了进去，
+# Git 对它们做 CRLF→LF 归一化 → 图片里凑巧的 0x0D0A 被改字节 → 永久显示 modified。
+# SVG 是 XML 文本（且模板逐字节消费、快照敏感），必须留在上面的 text eol=lf 里，别标 binary。
+# 只豁免真二进制扩展：png/jpg/mp4。规则写在 skills/** 之后才能覆盖它。
+skills/**/*.png binary
+skills/**/*.jpg binary
+skills/**/*.jpeg binary
+skills/**/*.mp4 binary

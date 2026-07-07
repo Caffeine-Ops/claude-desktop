@@ -10,7 +10,9 @@ permissions:
   contents: write
 
 env:
-  FUSION_CODE_VERSION: v2.1.90
+  # fusion-code CLI version is per-matrix (matrix.fusion_version), NOT a single
+  # global — darwin-x64 lives in v2.1.91 while arm64/win are still on v2.1.90
+  # until v2.1.91 is backfilled with all arches. See the matrix comment below.
   # Node version bundled INTO the app to run the daemon. Must match .nvmrc
   # (the version better-sqlite3 is compiled for, ABI 137) — see the
   # "Bundle Node runtime" step.
@@ -33,14 +35,45 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # fusion_version is per-arch (not one global env) because darwin-x64
+          # only exists starting v2.1.91, while arm64/win still pull from v2.1.90
+          # — the v2.1.91 release currently carries ONLY the darwin-x64 asset
+          # (fusion-code's publish job 401'd on a stale PUBLIC_RELEASE_TOKEN, so
+          # only darwin-x64 was hand-uploaded). Once v2.1.91 is backfilled with
+          # all 5 arches (fix the token + rerun publish, or upload the rest),
+          # collapse these back to a single v2.1.91 for every leg.
+          #
+          # Apple Silicon. macos-latest is an arm64 runner, so `bun install`
+          # here compiles/fetches arm64 native addons (better-sqlite3, sharp,
+          # onnxruntime-node) — matching this build's arch.
           - os: macos-latest
             platform: mac
+            arch: arm64
+            fusion_version: v2.1.90
             fusion_asset: fusion-code-darwin-arm64
             fusion_target: apps/studio/fusion-bin/fusion-code-cli
             node_dist: darwin-arm64
             python_dist: aarch64-apple-darwin
+          # Intel Mac. MUST run on an Intel (x64) runner so `bun install`
+          # fetches x64 native addons; an arm64 runner would bundle arm64 .node
+          # files into an x64 app that then crashes on load. GitHub's Intel mac
+          # runners now use the `-intel` suffix (the old macos-13 Intel image is
+          # retired; macos-14+ default to arm64) — macos-15-intel is the current
+          # GA x64 image. fusion_asset is fusion-code-darwin-x64, produced by
+          # Caffeine-Ops/fusion-code's Bun cross-compile (PR #1, tag v2.1.91).
+          # node/python dists are x64 variants.
+          - os: macos-15-intel
+            platform: mac
+            arch: x64
+            fusion_version: v2.1.91
+            fusion_asset: fusion-code-darwin-x64
+            fusion_target: apps/studio/fusion-bin/fusion-code-cli
+            node_dist: darwin-x64
+            python_dist: x86_64-apple-darwin
           - os: windows-latest
             platform: win
+            arch: x64
+            fusion_version: v2.1.90
             fusion_asset: fusion-code-win32-x64.exe
             fusion_target: apps/studio/fusion-bin/fusion-code-cli.exe
             node_dist: win-x64
@@ -124,7 +157,7 @@ jobs:
           # the app WAS the repo root; the path didn't move in this workflow.)
           set -euo pipefail
           mkdir -p apps/studio/fusion-bin
-          gh release download "$FUSION_CODE_VERSION" \
+          gh release download "${{ matrix.fusion_version }}" \
             --repo Caffeine-Ops/fusion-code-install \
             --pattern "${{ matrix.fusion_asset }}" \
             --dir apps/studio/fusion-bin
@@ -145,14 +178,14 @@ jobs:
           # for the asset (its authoritative byte count), so a partial fetch
           # fails the build here instead of silently entering the package.
           # See errors/2026-05-23-fusion-code-cli截断致spawn-88.md.
-          expected=$(gh release view "$FUSION_CODE_VERSION" \
+          expected=$(gh release view "${{ matrix.fusion_version }}" \
             --repo Caffeine-Ops/fusion-code-install \
             --json assets \
             --jq ".assets[] | select(.name == \"${{ matrix.fusion_asset }}\") | .size")
           actual=$(wc -c < "${{ matrix.fusion_target }}" | tr -d '[:space:]')
           echo "fusion-code asset: expected=$expected actual=$actual bytes"
           if [ -z "$expected" ]; then
-            echo "::error::Could not read expected size for asset ${{ matrix.fusion_asset }} from release $FUSION_CODE_VERSION"
+            echo "::error::Could not read expected size for asset ${{ matrix.fusion_asset }} from release ${{ matrix.fusion_version }}"
             exit 1
           fi
           if [ "$expected" != "$actual" ]; then
@@ -349,8 +382,15 @@ jobs:
       #     =false`，出的是**未签名未公证**的包（v0.0.18 第八轮实锤：自检导入
       #     证书成功、真打包却跳过签名）。mac 设 true 让它正常走 CSC_LINK →
       #     导证书 → codesign → notarytool 公证；win 无证书，false 防它徒劳搜索。
-      - name: Build (${{ matrix.platform }})
+      - name: Build (${{ matrix.platform }}-${{ matrix.arch }})
         env:
+          # Pin electron-builder's mac arch to THIS matrix leg. build:mac
+          # defaults to --arm64 (${EB_MAC_ARCH:---arm64}); the x64 leg overrides
+          # it here. Without this, the mac target now lists both arm64+x64 in
+          # package.json, so a no-flag build would try to emit BOTH arches on one
+          # runner — and cross-arch native addons (better-sqlite3/sharp/onnx)
+          # would be wrong for the other arch. One runner = one arch = one flag.
+          EB_MAC_ARCH: ${{ matrix.platform == 'mac' && format('--{0}', matrix.arch) || '' }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.platform == 'mac' && 'true' || 'false' }}
           CSC_LINK: ${{ matrix.platform == 'mac' && env.CSC_FILE || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
@@ -405,19 +445,140 @@ jobs:
       #     RELEASE_REPO_TOKEN（fine-grained：目标仓 Contents read/write）。
       #     secret 缺失时本步会失败——发版链路宁可红也不要静默发错地方。
       #   - tag 会打在目标仓的默认分支上（目标仓只有 README，无所谓指哪）。
+      # latest-mac.yml carries the auto-update pointer. With BOTH arm64 and x64
+      # mac jobs each writing a file literally named `latest-mac.yml`, uploading
+      # both to one release makes the second CLOBBER the first — half our mac
+      # users would then auto-update to a manifest that only lists the OTHER
+      # arch's zip. So mac jobs do NOT publish latest-mac.yml directly; they
+      # stash it (renamed per-arch) as a tiny artifact, and a dedicated
+      # merge-mac-latest job (below) fuses both into one manifest whose `files:`
+      # lists BOTH arches — electron-updater then picks the zip matching the
+      # user's CPU. Everything else (dmg/zip/blockmap, all arch-suffixed by
+      # artifactName) is safe to publish here in parallel as before.
+      - name: Stash mac latest.yml for cross-arch merge
+        if: matrix.platform == 'mac' && startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="apps/studio/dist/latest-mac.yml"
+          if [ ! -f "$src" ]; then
+            echo "::error::$src missing — electron-builder didn't emit a mac update manifest"
+            exit 1
+          fi
+          mkdir -p mac-latest-staging
+          cp "$src" "mac-latest-staging/latest-mac-${{ matrix.arch }}.yml"
+
+      - name: Upload mac latest.yml artifact
+        if: matrix.platform == 'mac' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-latest-${{ matrix.arch }}
+          path: mac-latest-staging/latest-mac-${{ matrix.arch }}.yml
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           repository: Caffeine-Ops/claude-desktop-releases
           token: ${{ secrets.RELEASE_REPO_TOKEN }}
+          # Deliberately NOT latest-mac.yml here (see stash step above); win's
+          # latest.yml is fine — only one win arch. `latest*.yml` on win matches
+          # latest.yml + latest-win.yml but NOT latest-mac.yml (mac dist won't
+          # contain a win manifest), so the mac exclusion is by construction.
           files: |
             apps/studio/dist/*.dmg
             apps/studio/dist/*.zip
             apps/studio/dist/*.exe
             apps/studio/dist/*.blockmap
-            apps/studio/dist/latest*.yml
+            ${{ matrix.platform == 'win' && 'apps/studio/dist/latest*.yml' || '' }}
           generate_release_notes: true
           draft: false
           prerelease: false
           fail_on_unmatched_files: false
+
+  # Fuse the two per-arch mac update manifests into ONE latest-mac.yml so
+  # electron-updater serves the right zip to each CPU. Runs after both mac
+  # legs finish. We take arm64's manifest as the base (top-level version/
+  # releaseDate/path/sha512 are arch-agnostic pointers electron-updater falls
+  # back to) and append x64's `files[]` entry, so the merged `files:` lists
+  # BOTH zips; electron-updater matches the entry whose url carries the user's
+  # arch. Only the tiny yml travels through artifacts (KBs — no storage-quota
+  # hit like the old dmg-as-artifact flow); the zips themselves were already
+  # published by each mac job. If either arch's manifest is missing the job
+  # fails loud rather than shipping a half manifest.
+  merge-mac-latest:
+    name: Merge mac latest.yml (arm64 + x64)
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download arm64 mac manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-latest-arm64
+          path: mac-latest
+
+      - name: Download x64 mac manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-latest-x64
+          path: mac-latest
+
+      - name: Merge into a single latest-mac.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la mac-latest
+          python3 - <<'PY'
+          import sys
+          try:
+              import yaml
+          except ImportError:
+              import subprocess
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "pyyaml"])
+              import yaml
+
+          base_path = "mac-latest/latest-mac-arm64.yml"
+          other_path = "mac-latest/latest-mac-x64.yml"
+          with open(base_path) as f:
+              base = yaml.safe_load(f)
+          with open(other_path) as f:
+              other = yaml.safe_load(f)
+
+          # electron-builder's mac manifest lists per-file entries under `files`;
+          # each has a url (arch-suffixed zip name), sha512 and size. Union the
+          # two arches' entries, de-duplicating by url so a re-run can't double
+          # them. Keep arm64's top-level fields as the fallback pointer.
+          def entries(m):
+              return m.get("files", []) or []
+          seen = set()
+          merged_files = []
+          for e in entries(base) + entries(other):
+              url = e.get("url")
+              if url in seen:
+                  continue
+              seen.add(url)
+              merged_files.append(e)
+          if len(merged_files) < 2:
+              print("::error::expected >=2 file entries (arm64+x64) after merge, got", len(merged_files))
+              sys.exit(1)
+          base["files"] = merged_files
+
+          with open("latest-mac.yml", "w") as f:
+              yaml.safe_dump(base, f, sort_keys=False, default_flow_style=False)
+          print("=== merged latest-mac.yml ===")
+          print(open("latest-mac.yml").read())
+          print("urls:", [e.get("url") for e in merged_files])
+          PY
+
+      - name: Publish merged latest-mac.yml
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: Caffeine-Ops/claude-desktop-releases
+          token: ${{ secrets.RELEASE_REPO_TOKEN }}
+          files: latest-mac.yml
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true

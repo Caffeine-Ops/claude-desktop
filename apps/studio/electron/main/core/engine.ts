@@ -35,6 +35,8 @@ import type {
   PermissionRequest,
   QueuedMessage,
   SessionMeta,
+  WorkflowAgent,
+  WorkflowPhaseInfo,
   WorkflowTaskStatus
 } from '../../shared/types'
 import { bumpUnread } from '../tray'
@@ -1314,6 +1316,45 @@ export class ChatEngine extends EventEmitter {
   }
 
   /**
+   * Install an ActiveTurn for a turn the CLI opened ON ITS OWN — no
+   * send() preceded it, so nothing installed the turn the pump routes
+   * ChatEvents through. Canonical case: a backgrounded workflow/task
+   * completes, fusion-code injects its <task-notification> as a user
+   * message, and the model reacts in a fresh self-initiated turn.
+   *
+   * The synthetic messageId pairs with no optimistic user bubble — by
+   * design. The renderer's `start` handler (startAssistantMessage)
+   * creates a standalone assistant bubble for ids it hasn't seen, which
+   * is exactly right for a reply the user never typed a message for.
+   * The turn ends through the normal `result` path: emit `end`, clear
+   * `runtime.active`, drain any queued user turns.
+   */
+  private beginSyntheticTurn(
+    runtime: SessionRuntime,
+    sessionId: string,
+    trigger: string
+  ): ActiveTurn {
+    const requestId = this.nextRequestId++
+    const messageId = `synthetic_${requestId}_${Date.now()}`
+    const active: ActiveTurn = {
+      requestId,
+      messageId,
+      toolNameByUseId: new Map(),
+      sawTextDelta: false,
+      sawTextContent: false,
+      sdkMessageCount: 0,
+      streamedToolUseIds: new Set(),
+      toolUseIdByBlockIndex: new Map(),
+      thinkingBlockIndices: new Set(),
+      sawThinkingDelta: false
+    }
+    runtime.active = active
+    this.logEvent('turn:synthetic', { messageId, trigger })
+    this.emitEvent(sessionId, { type: 'start', messageId })
+    return active
+  }
+
+  /**
    * Drain the head of `pendingTurns` into a fresh active turn. Called by
    * the pump right after a `result` cleared `runtime.active`. No-op if
    * the queue is empty or the cli went away (pump exit nulls the queue —
@@ -2406,9 +2447,18 @@ export class ChatEngine extends EventEmitter {
       )
 
       if (outcome.decision === 'deny') {
+        // The floating permission card's deny option carries an optional
+        // typed reason. Folding it into the deny message is what makes
+        // "不同意，告诉它下一步怎么做" actually work: the SDK surfaces this
+        // string to the assistant as the tool_result, so the model reads
+        // the user's instruction instead of guessing why it was refused.
+        const said = outcome.denyMessage?.trim()
         return {
           behavior: 'deny',
-          message: 'User declined this tool call.',
+          message:
+            said && said.length > 0
+              ? `User declined this tool call and said: ${said}`
+              : 'User declined this tool call.',
           interrupt: false,
           decisionClassification: 'user_reject'
         }
@@ -2570,7 +2620,7 @@ export class ChatEngine extends EventEmitter {
           runtime.readyResolve?.()
         }
 
-        const active = runtime.active
+        let active = runtime.active
         const msgType =
           this.isRecord(sdkMessage) && typeof sdkMessage.type === 'string'
             ? sdkMessage.type
@@ -2592,13 +2642,33 @@ export class ChatEngine extends EventEmitter {
         }
 
         if (!active) {
-          // Stragglers between turns — log the full message anyway so
-          // we can see what the SDK emitted, then drop.
-          console.log(
-            `[engine] pump: no active turn, dropping ${msgType}${subtype ? ' ' + subtype : ''}`,
-            inspect(sdkMessage, SDK_INSPECT_OPTS)
-          )
-          continue
+          // Assistant output with no active turn = a turn the CLI opened
+          // ON ITS OWN, without a send(). The canonical case: a
+          // backgrounded workflow completes, fusion-code injects the
+          // <task-notification> user message into the agent loop, and the
+          // model reacts with a fresh turn — the final report the user
+          // actually wants. Dropping it here is the "log streams tokens
+          // but the page never updates" bug (2026-07-07): the model's
+          // whole reply died in this branch. Synthesize an ActiveTurn so
+          // the reply streams into the UI; its `result` then ends the
+          // turn through the normal path below. Everything that is NOT
+          // assistant output (stray system/user noise between turns)
+          // still drops — synthesizing on those would open empty bubbles.
+          if (
+            msgType === 'assistant' ||
+            msgType === 'stream_event' ||
+            msgType === 'assistant_error'
+          ) {
+            active = this.beginSyntheticTurn(runtime, sessionId, msgType)
+          } else {
+            // Stragglers between turns — log the full message anyway so
+            // we can see what the SDK emitted, then drop.
+            console.log(
+              `[engine] pump: no active turn, dropping ${msgType}${subtype ? ' ' + subtype : ''}`,
+              inspect(sdkMessage, SDK_INSPECT_OPTS)
+            )
+            continue
+          }
         }
 
         active.sdkMessageCount++
@@ -2832,7 +2902,15 @@ export class ChatEngine extends EventEmitter {
         }
         break
 
-      case 'task_progress':
+      case 'task_progress': {
+        // `workflow_progress` rides on SOME task_progress messages for
+        // `local_workflow` tasks: a FULL snapshot of every agent() the
+        // run has spawned (label/phase/state/lastTool/tokens/result…).
+        // It's not in the SDK's narrowed .d.ts but it IS on the wire —
+        // and it's the only live per-agent view we get, since workflow
+        // agents' own conversations never reach the message stream.
+        // Absent → undefined, and the renderer keeps its last snapshot.
+        const wp = this.parseWorkflowProgress(sdkMessage.workflow_progress)
         event = {
           type: 'task_update',
           phase: 'progress',
@@ -2845,9 +2923,11 @@ export class ChatEngine extends EventEmitter {
           lastToolName: str(sdkMessage.last_tool_name),
           tokens: num(usage.total_tokens),
           toolUses: num(usage.tool_uses),
-          durationMs: num(usage.duration_ms)
+          durationMs: num(usage.duration_ms),
+          ...(wp ? { phases: wp.phases, agents: wp.agents } : {})
         }
         break
+      }
 
       case 'task_updated': {
         // patch carries the wire-safe subset of TaskState; map its
@@ -2893,6 +2973,89 @@ export class ChatEngine extends EventEmitter {
     )
     this.emitEvent(sessionId, event)
     return true
+  }
+
+  /**
+   * Parse the `workflow_progress` array a `local_workflow`'s
+   * task_progress messages intermittently carry. Wire shape (observed on
+   * claude 2.1.202 — NOT in the SDK's narrowed d.ts):
+   *
+   *   {type:'workflow_phase', index:1, title:'Search'}
+   *   {type:'workflow_agent', index:1, label:'search:…', phaseIndex:1,
+   *    phaseTitle:'Search', agentId:'a283…', model:'claude-…',
+   *    state:'start'|'progress'|'done', lastToolName:'WebSearch',
+   *    lastToolSummary:'…', promptPreview:'…', resultPreview:'…',
+   *    tokens:36990, toolCalls:2, durationMs:32337, …}
+   *
+   * Every field except type/index/label/title is treated as optional —
+   * the array is an internal CLI structure, so we extract defensively
+   * and let unknown entry types fall through. Returns null when the
+   * field is absent/empty so the caller can spread-omit and the renderer
+   * keeps its previous snapshot.
+   */
+  private parseWorkflowProgress(
+    value: unknown
+  ): { phases: WorkflowPhaseInfo[]; agents: WorkflowAgent[] } | null {
+    if (!Array.isArray(value) || value.length === 0) return null
+    const str = (v: unknown): string | undefined =>
+      typeof v === 'string' && v.length > 0 ? v : undefined
+    const num = (v: unknown): number | undefined =>
+      typeof v === 'number' && Number.isFinite(v) ? v : undefined
+    const phases: WorkflowPhaseInfo[] = []
+    const agents: WorkflowAgent[] = []
+    for (const entry of value) {
+      if (!this.isRecord(entry)) continue
+      if (entry.type === 'workflow_phase') {
+        const index = num(entry.index)
+        const title = str(entry.title)
+        if (index !== undefined && title) phases.push({ index, title })
+        continue
+      }
+      if (entry.type === 'workflow_agent') {
+        const index = num(entry.index)
+        if (index === undefined) continue
+        agents.push({
+          index,
+          label: str(entry.label) ?? `agent ${index}`,
+          agentId: str(entry.agentId),
+          phaseIndex: num(entry.phaseIndex),
+          phaseTitle: str(entry.phaseTitle),
+          model: str(entry.model),
+          status: this.mapWorkflowAgentState(entry.state),
+          lastToolName: str(entry.lastToolName),
+          lastToolSummary: str(entry.lastToolSummary),
+          promptPreview: str(entry.promptPreview),
+          resultPreview: str(entry.resultPreview),
+          tokens: num(entry.tokens),
+          toolCalls: num(entry.toolCalls),
+          durationMs: num(entry.durationMs)
+        })
+      }
+    }
+    if (phases.length === 0 && agents.length === 0) return null
+    return { phases, agents }
+  }
+
+  /**
+   * Map a workflow agent's wire `state` → coarse UI status. Observed
+   * values: 'start' (spawned), 'progress' (mid-run), 'done'. 'error' /
+   * 'failed' / 'queued' are defensive guesses for states we haven't
+   * caught on the wire; anything unknown renders as running — for a
+   * live snapshot that's the least-wrong default.
+   */
+  private mapWorkflowAgentState(value: unknown): WorkflowTaskStatus {
+    switch (value) {
+      case 'done':
+        return 'completed'
+      case 'error':
+      case 'failed':
+        return 'failed'
+      case 'queued':
+      case 'pending':
+        return 'pending'
+      default:
+        return 'running'
+    }
   }
 
   /** Map `task_updated.patch.status` → coarse UI status. */

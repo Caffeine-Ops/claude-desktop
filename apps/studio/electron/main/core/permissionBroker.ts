@@ -56,6 +56,8 @@ import type {
 export interface PermissionOutcome {
   decision: PermissionDecisionKind
   updatedInput?: unknown
+  /** User's typed deny reason — engine folds it into the SDK deny message. */
+  denyMessage?: string
 }
 
 class PermissionBroker extends EventEmitter {
@@ -156,7 +158,8 @@ class PermissionBroker extends EventEmitter {
     }
     entry.resolve({
       decision: response.decision,
-      updatedInput: response.updatedInput
+      updatedInput: response.updatedInput,
+      denyMessage: response.denyMessage
     })
     this.emitPendingChanged()
   }

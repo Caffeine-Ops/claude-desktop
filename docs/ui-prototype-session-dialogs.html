@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>会话弹窗（重命名/删除）样式原型</title>
+<style>
+/* ============================================================
+ * rail 会话「重命名 / 删除」弹窗样式原型
+ * 对照现状（RailSessionList 的 shadcn Dialog/AlertDialog 默认骨架）：
+ *   1. 输入框 focus 双层浓绿（3px ring）+ 全选 ::selection 绿底白字=荧光笔
+ *   2. 保存钮 disabled 浅绿底灰字，读作「坏了」而非「没改名」
+ *   3. 骨架松：宽、圆角小、投影生硬、标题节奏挤
+ *   4. 删除确认缺危险语义锚点
+ *
+ * 三变体（Tweaks 切换）：
+ *   A 精修基准——shadcn 骨架收紧 + 安静 focus + selection 修复（推荐）
+ *   B macOS 居中——图标徽章 + 居中文案 + 等宽按钮行
+ *   C 内联轻量——去副标题，输入框即主体
+ *
+ * token 取自 packages/design-tokens/tokens.css；品牌绿只做点缀
+ * （延续 2026-07-07 账户菜单 V3 的用色纪律）。
+ * ============================================================ */
+
+:root {
+  --background: hsl(240 7% 97%);
+  --foreground: hsl(240 3% 12%);
+  --card: hsl(0 0% 100%);
+  --muted: hsl(240 5% 93%);
+  --muted-foreground: hsl(240 4% 40%);
+  --border: hsl(240 6% 84%);
+  --input-border: hsl(240 6% 86%);
+  --brand: hsl(142 76% 36%);
+  --brand-deep: hsl(142 76% 29%);
+  --brand-fg: hsl(0 0% 100%);
+  --destructive: hsl(0 72% 50%);
+  --overlay: rgba(20, 20, 22, 0.32);
+  --dialog-shadow:
+    0 24px 70px -18px rgba(0, 0, 0, 0.28),
+    0 8px 24px -12px rgba(0, 0, 0, 0.14),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue',
+    Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+}
+[data-theme="dark"] {
+  --background: hsl(40 6% 10%);
+  --foreground: hsl(40 21% 89%);
+  --card: hsl(36 6% 15%);
+  --muted: hsl(36 6% 17%);
+  --muted-foreground: hsl(36 5% 58%);
+  --border: hsl(49 12% 22%);
+  --input-border: hsl(42 8% 28%);
+  --brand: hsl(145 60% 52%);
+  --brand-deep: hsl(145 60% 40%);
+  --brand-fg: hsl(40 6% 10%);
+  --destructive: hsl(0 72% 55%);
+  --overlay: rgba(0, 0, 0, 0.55);
+  --dialog-shadow:
+    0 24px 70px -18px rgba(0, 0, 0, 0.65),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; background: var(--background); }
+body {
+  font-family: var(--font-sans);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* ── 模拟 app 底景（虚化的聊天界面示意），弹窗浮于其上 ── */
+.backdrop {
+  position: fixed; inset: 0;
+  padding: 40px 56px;
+  filter: blur(2px) saturate(0.9);
+  opacity: 0.6;
+  pointer-events: none;
+  user-select: none;
+}
+.bk-line { height: 13px; border-radius: 7px; background: var(--muted); margin-bottom: 14px; }
+.bk-code {
+  height: 52px; border-radius: 12px;
+  background: color-mix(in srgb, var(--muted) 70%, transparent);
+  border: 1px solid var(--border);
+  margin: 20px 0;
+}
+.scrim { position: fixed; inset: 0; background: var(--overlay); }
+
+/* ── 弹窗展示台：两卡并排（重命名 / 删除） ── */
+.stage {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  gap: 44px; flex-wrap: wrap;
+  padding: 40px;
+}
+.slot { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.slot-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: rgba(255,255,255,0.75);
+  text-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
+
+/* ════════════ 弹窗本体（三变体共用骨架，变体只改排布档） ════════════ */
+.dlg {
+  width: 400px;
+  background: var(--card);
+  border-radius: 18px;
+  box-shadow: var(--dialog-shadow);
+  padding: 22px 22px 18px;
+  position: relative;
+}
+
+.dlg-close {
+  position: absolute; top: 14px; right: 14px;
+  width: 26px; height: 26px; border-radius: 8px;
+  border: none; background: transparent;
+  color: var(--muted-foreground); font-size: 13px; line-height: 1;
+  cursor: pointer;
+  display: grid; place-items: center;
+  transition: background 130ms ease, color 130ms ease;
+}
+.dlg-close:hover { background: var(--muted); color: var(--foreground); }
+
+.dlg h2 {
+  font-size: 15px; font-weight: 600; letter-spacing: -0.1px;
+  line-height: 1.4;
+}
+.dlg .sub {
+  margin-top: 5px;
+  font-size: 12.5px; line-height: 1.65;
+  color: var(--muted-foreground);
+  text-wrap: pretty;
+}
+.dlg .sub b { font-weight: 500; color: var(--foreground); }
+
+/* 输入框：安静 focus——1px 品牌绿边 + 3px 低透光晕；全选 selection 用
+ * brand/22 浅底保留文字原色（修「荧光笔」的核心两刀） */
+.dlg input[type="text"] {
+  width: 100%;
+  margin-top: 16px;
+  height: 40px;
+  padding: 0 12px;
+  font: inherit; font-size: 13.5px;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--input-border);
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+.dlg input[type="text"]:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 13%, transparent);
+}
+.dlg input[type="text"]::selection {
+  background: color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+.dlg .actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  margin-top: 18px;
+}
+.btn {
+  font: inherit; font-size: 13px; font-weight: 500;
+  border: none; border-radius: 10px;
+  height: 34px; padding: 0 16px;
+  cursor: pointer;
+  transition: background 130ms ease, filter 130ms ease, transform 80ms ease;
+}
+.btn:active { transform: scale(0.98); }
+.btn-ghost { background: transparent; color: var(--muted-foreground); }
+.btn-ghost:hover { background: var(--muted); color: var(--foreground); }
+.btn-primary {
+  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  color: var(--brand-fg);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.18);
+}
+.btn-primary:hover { filter: brightness(1.05); }
+/* disabled ≠ 坏：中性灰底灰字，与「可点的绿」拉开一整档 */
+.btn-primary:disabled {
+  background: var(--muted);
+  color: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
+  box-shadow: none;
+  cursor: default;
+  filter: none;
+}
+.btn-danger {
+  background: linear-gradient(180deg, var(--destructive), color-mix(in srgb, var(--destructive) 82%, black));
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.14), inset 0 1px 0 rgba(255,255,255,0.16);
+}
+.btn-danger:hover { filter: brightness(1.06); }
+
+/* ── 危险语义锚点：删除弹窗的图标徽章 ── */
+.badge {
+  width: 38px; height: 38px; border-radius: 12px;
+  display: grid; place-items: center;
+  margin-bottom: 12px;
+}
+.badge svg { width: 18px; height: 18px; }
+.badge-danger { background: color-mix(in srgb, var(--destructive) 11%, transparent); }
+.badge-danger svg { stroke: var(--destructive); }
+.badge-brand { background: color-mix(in srgb, var(--brand) 12%, transparent); }
+.badge-brand svg { stroke: var(--brand); }
+
+/* ════════════ 变体 B：macOS 居中构图 ════════════ */
+.variant-b .dlg { text-align: center; padding-top: 26px; }
+.variant-b .dlg .badge { margin: 0 auto 12px; }
+.variant-b .dlg-close { display: none; }
+.variant-b .dlg .actions { justify-content: stretch; }
+.variant-b .dlg .actions .btn { flex: 1; height: 36px; }
+/* 居中构图里取消钮升级为描边按钮——纯文字 ghost 在等宽行里权重不够 */
+.variant-b .btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--foreground);
+}
+.variant-b .btn-ghost:hover { background: var(--muted); }
+
+/* ════════════ 变体 C：内联轻量 ════════════ */
+.variant-c .dlg { padding: 18px 18px 16px; }
+.variant-c .dlg .sub { display: none; }
+.variant-c .dlg .badge { display: none; }
+.variant-c .dlg h2 { font-size: 13px; color: var(--muted-foreground); font-weight: 500; }
+.variant-c .dlg input[type="text"] { margin-top: 10px; height: 42px; font-size: 15px; }
+.variant-c .dlg .actions { margin-top: 14px; }
+/* 删除弹窗在 C 档：标题即全部文案，红按钮承担语义 */
+.variant-c .dlg.danger h2 { font-size: 14px; color: var(--foreground); font-weight: 600; }
+.variant-c .dlg.danger .sub { display: block; }
+
+/* 变体 A 隐藏徽章（左对齐骨架不用图标锚点，删除弹窗除外——A 档删除也带小徽章） */
+.variant-a .dlg:not(.danger) .badge { display: none; }
+
+/* ── Tweaks ── */
+.tweaks-fab {
+  position: fixed; right: 16px; bottom: 16px; z-index: 30;
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--card);
+  color: var(--muted-foreground); font-size: 15px; cursor: pointer;
+  opacity: 0.45; transition: opacity 150ms ease;
+}
+.tweaks-fab:hover { opacity: 1; }
+.tweaks {
+  position: fixed; right: 16px; bottom: 60px; z-index: 30;
+  width: 250px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--card); box-shadow: 0 12px 40px rgba(0,0,0,0.2);
+  display: none;
+}
+.tweaks.open { display: block; }
+.tweaks h3 {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--muted-foreground); margin-bottom: 12px;
+}
+.tweaks .row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.tweaks label { font-size: 12.5px; }
+.tweaks select {
+  font: inherit; font-size: 12px; color: var(--foreground);
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 7px; padding: 3px 6px; max-width: 130px;
+}
+</style>
+</head>
+<body class="variant-a">
+
+<!-- 虚化底景 -->
+<div class="backdrop">
+  <div class="bk-line" style="width:52%"></div>
+  <div class="bk-line" style="width:74%"></div>
+  <div class="bk-code"></div>
+  <div class="bk-line" style="width:63%"></div>
+  <div class="bk-line" style="width:81%"></div>
+  <div class="bk-code"></div>
+  <div class="bk-line" style="width:46%"></div>
+  <div class="bk-line" style="width:70%"></div>
+</div>
+<div class="scrim"></div>
+
+<div class="stage">
+  <!-- ── 重命名弹窗 ── -->
+  <div class="slot">
+    <span class="slot-label">重命名</span>
+    <div class="dlg" role="dialog">
+      <button class="dlg-close" aria-label="关闭">✕</button>
+      <span class="badge badge-brand" aria-hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+      </span>
+      <h2>重命名对话</h2>
+      <p class="sub">为这个对话起一个新名字。</p>
+      <input id="renameInput" type="text" value="修复 Claude Code PowerShell 安装失败" maxlength="200" autocomplete="off">
+      <div class="actions">
+        <button class="btn btn-ghost">取消</button>
+        <button class="btn btn-primary" id="saveBtn" disabled>保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 删除确认弹窗 ── -->
+  <div class="slot">
+    <span class="slot-label">删除确认</span>
+    <div class="dlg danger" role="alertdialog">
+      <span class="badge badge-danger" aria-hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg>
+      </span>
+      <h2>删除这个对话？</h2>
+      <p class="sub">「<b>修复 Claude Code PowerShell 安装失败</b>」及其消息将被删除，此操作无法撤销。</p>
+      <div class="actions">
+        <button class="btn btn-ghost">取消</button>
+        <button class="btn btn-danger">删除</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tweaks -->
+<button class="tweaks-fab" onclick="document.getElementById('tw').classList.toggle('open')" aria-label="Tweaks">⚙</button>
+<div class="tweaks" id="tw">
+  <h3>Tweaks</h3>
+  <div class="row">
+    <label for="twVariant">构图</label>
+    <select id="twVariant" autocomplete="off" onchange="document.body.className='variant-'+this.value">
+      <option value="a" selected>A · 精修基准</option>
+      <option value="b">B · macOS 居中</option>
+      <option value="c">C · 内联轻量</option>
+    </select>
+  </div>
+  <div class="row">
+    <label for="twTheme">主题</label>
+    <select id="twTheme" autocomplete="off" onchange="document.documentElement.dataset.theme=this.value">
+      <option value="light" selected>亮色</option>
+      <option value="dark">暗色</option>
+    </select>
+  </div>
+  <div class="row">
+    <label for="twSel">输入框状态</label>
+    <select id="twSel" autocomplete="off" onchange="applyInputState(this.value)">
+      <option value="selected" selected>聚焦 + 全选</option>
+      <option value="focus">聚焦无选中</option>
+      <option value="blur">未聚焦</option>
+    </select>
+  </div>
+</div>
+
+<script>
+const input = document.getElementById('renameInput');
+const saveBtn = document.getElementById('saveBtn');
+const ORIGINAL = input.value;
+
+/* 保存钮活性 = 名字真的变了（还原「disabled ≠ 坏」的语义演示） */
+input.addEventListener('input', () => {
+  const v = input.value.trim();
+  saveBtn.disabled = !v || v === ORIGINAL;
+});
+
+function applyInputState(state) {
+  if (state === 'blur') { input.blur(); return; }
+  input.focus();
+  if (state === 'selected') input.select();
+  else input.setSelectionRange(input.value.length, input.value.length);
+}
+/* 初始态复刻截图场景：聚焦 + 全选 */
+window.addEventListener('load', () => applyInputState('selected'));
+/* Tweaks 面板交互不抢输入框焦点（演示态保持） */
+document.getElementById('tw').addEventListener('mousedown', (e) => e.preventDefault());
+</script>
+</body>
+</html>

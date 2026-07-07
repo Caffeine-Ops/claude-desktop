@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import hljs from 'highlight.js/lib/common'
 
-import type { WorkflowTask } from '@desktop-shared/types'
 import { useI18n, useT, useToolLabel } from '../../../i18n'
 import {
   useChatStore,
@@ -10,10 +9,13 @@ import {
 } from '../../../stores/chat'
 import { useComposerModeStore } from '../../../stores/composerMode'
 import { usePermissionForToolUseId } from '../../../stores/permissions'
+import { useWorkflowScriptPanelStore } from '../../../stores/workflowScript'
 import { extractText, safeStringify } from '../toolHelpers'
 import { friendlyToolView } from '../ToolFormatters'
 import { InlinePermissionPrompt } from '../../permissions/InlinePermissionPrompt'
+import { PermissionWaitAnchor } from '../../permissions/PermissionFloatCard'
 import { escapeHtml, languageFromPath } from './codeViewUtils'
+import { WorkflowTaskList } from './WorkflowTaskTree'
 
 /* ───────────────────── Tool-call card ──────────────────────── */
 
@@ -123,7 +125,30 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   // Outside slides sessions (no canvas) the inline preview stays the only
   // place to see what was written, so it's untouched.
   const writeHandledByCanvas = toolName === 'Write' && cardIsSlides
-  const hideInputPane = askPending || askHandledByCanvas
+  // Workflow 的 `script` 参数是一整段 JS 源码——塞在默认 INPUT 的转义
+  // JSON 里没法读。有 script 时 INPUT 面板整个换成一个入口 chip，点击在
+  // 右侧脚本面板（WorkflowScriptPanel）铺开：流式期间面板本来就自动开
+  // 着，chip 同时是用户关掉后的找回入口。scriptPath / name 调用形态没有
+  // 内联脚本，保持默认 JSON 显示。
+  const workflowScript = ((): { name: string | null; lines: number | null } | null => {
+    if (toolName !== 'Workflow') return null
+    if (args && typeof args === 'object') {
+      const s = (args as Record<string, unknown>).script
+      if (typeof s === 'string' && s.length > 0) {
+        const m = /name:\s*['"]([^'"]+)['"]/.exec(s)
+        return { name: m ? m[1]! : null, lines: s.split('\n').length }
+      }
+    }
+    // 流式期间 args 还是半开文本：script 字段在场即可亮入口；meta.name
+    // 尽力从原始转义文本里捞（单引号在 JSON 字符串里不转义，双引号形态
+    // 带 `\"`——两种都容），行数等定稿。
+    if (running && typeof argsText === 'string' && argsText.includes('"script"')) {
+      const m = /name:\s*\\?["']([^"'\\]+)\\?["']/.exec(argsText)
+      return { name: m ? m[1]! : null, lines: null }
+    }
+    return null
+  })()
+  const hideInputPane = askPending || askHandledByCanvas || workflowScript !== null
 
   // Input-pane display logic — see the original prop-shape comment.
   const hasArgsText = typeof argsText === 'string' && argsText.length > 0
@@ -272,15 +297,75 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
               </ToolPane>
             )}
 
+            {/* Workflow 脚本入口 chip（取代默认 INPUT 的转义 JSON）：
+                点击在右侧面板铺开完整脚本。openManual 会顺带清掉本次
+                流式的 dismiss 否决票，所以流式期间关掉再点回来也灵。 */}
+            {workflowScript && (
+              <button
+                type="button"
+                onClick={() =>
+                  useWorkflowScriptPanelStore.getState().openManual(toolCallId)
+                }
+                className="group/wfentry flex w-full min-w-0 items-center gap-2 rounded-apple-md border border-border/60 bg-card/40 px-3 py-2 text-left transition-colors hover:border-border hover:bg-card"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                  className="shrink-0 text-muted-foreground"
+                >
+                  <path d="m16 18 6-6-6-6M8 6l-6 6 6 6" />
+                </svg>
+                <span className="shrink-0 text-[12px] font-medium text-foreground">
+                  {t('workflowScriptPanelTitle')}
+                </span>
+                {workflowScript.name && (
+                  <span className="min-w-0 truncate font-mono text-[11.5px] text-muted-foreground">
+                    {workflowScript.name}
+                  </span>
+                )}
+                {workflowScript.lines !== null && (
+                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
+                    {t('workflowScriptLines').replace(
+                      '{count}',
+                      String(workflowScript.lines)
+                    )}
+                  </span>
+                )}
+                <span className="ml-auto flex shrink-0 items-center gap-0.5 text-[11.5px] text-muted-foreground transition-colors group-hover/wfentry:text-foreground">
+                  {t('workflowScriptEntryOpen')}
+                  <span aria-hidden className="font-mono text-[10.5px]">
+                    ›
+                  </span>
+                </span>
+              </button>
+            )}
+
             {!hideDefaultInput && (
               <ToolPane label={t('toolPaneInputLabel')} copyText={inputBody}>
                 <JsonView text={inputBody} maxHeight />
               </ToolPane>
             )}
 
-            {pendingPermission && !askHandledByCanvas && (
-              <InlinePermissionPrompt request={pendingPermission} />
-            )}
+            {/* Pending-permission routing (2026-07-07 float redesign):
+                AskUserQuestion keeps its interactive questionnaire inline
+                (it's conversational content); every other tool renders a
+                one-line wait anchor here while the actual decision UI is
+                the floating card docked above the composer — see
+                PermissionFloatCard.tsx for why. */}
+            {pendingPermission &&
+              !askHandledByCanvas &&
+              (toolName === 'AskUserQuestion' ? (
+                <InlinePermissionPrompt request={pendingPermission} />
+              ) : (
+                <PermissionWaitAnchor />
+              ))}
 
             {subtasks.length > 0 && <WorkflowTaskList tasks={subtasks} />}
 
@@ -332,175 +417,6 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
           </div>
       </details>
     </div>
-  )
-}
-
-/**
- * Live sub-agent list rendered inside a Task/Workflow tool card, styled
- * after Claude Code's terminal output: a `⎿` gutter, one row per spawned
- * agent (status glyph + name + right-aligned `tok · tool · elapsed`
- * metadata), with a header line summarising `done/total agents · total
- * elapsed`. Fed by the `task_update` event stream (see stores/chat.ts
- * `updateToolCallTasks`). Deliberately flat — an at-a-glance strip, not
- * a nested transcript.
- */
-function WorkflowTaskList({
-  tasks
-}: {
-  tasks: WorkflowTask[]
-}): React.JSX.Element {
-  const t = useT()
-  const done = tasks.filter(
-    (task) =>
-      task.status === 'completed' ||
-      task.status === 'failed' ||
-      task.status === 'stopped'
-  ).length
-  // Header elapsed = the longest single agent's elapsed (they run
-  // concurrently, so summing would overstate wall-clock).
-  const elapsedMs = tasks.reduce(
-    (max, task) => Math.max(max, task.durationMs ?? 0),
-    0
-  )
-  return (
-    <div className="mt-1 border-l border-border/50 pl-3">
-      <div className="flex items-center gap-2 pb-1.5 font-mono text-[11px] text-muted-foreground/70">
-        <span className="tabular-nums">
-          {done}/{tasks.length} {t('toolWorkflowAgentsLabel')}
-        </span>
-        {elapsedMs > 0 && (
-          <>
-            <span className="text-muted-foreground/30">·</span>
-            <span className="tabular-nums">{formatWfDuration(elapsedMs)}</span>
-          </>
-        )}
-      </div>
-      <div className="space-y-1.5">
-        {tasks.map((task) => (
-          <WorkflowTaskRow key={task.taskId} task={task} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-/** One agent row: status glyph + name + right-aligned token/tool/elapsed
- * metadata, with an optional second line (progress summary / error) and
- * an expandable result block when the agent has completed. */
-function WorkflowTaskRow({ task }: { task: WorkflowTask }): React.JSX.Element {
-  const t = useT()
-  const label =
-    task.workflowName || task.description || task.subagentType || task.taskId
-  const secondary = task.error || task.summary
-  const meta = formatWfMeta(task)
-  // Only completed tasks carry a meaningful deliverable to expand; while
-  // running, `summary` (the live progress line) already shows above.
-  const hasResult =
-    task.status === 'completed' &&
-    Boolean(task.result) &&
-    task.result !== task.summary
-  return (
-    <div className="space-y-0.5">
-      <div className="flex items-center gap-2 font-mono text-[12px]">
-        <WorkflowTaskGlyph status={task.status} />
-        <span className="min-w-0 truncate font-medium text-foreground/90">
-          {label}
-        </span>
-        {task.subagentType && task.subagentType !== label && (
-          <span className="shrink-0 text-[10.5px] text-muted-foreground/40">
-            {task.subagentType}
-          </span>
-        )}
-        {meta && (
-          <span className="ml-auto shrink-0 text-[10.5px] tabular-nums text-muted-foreground/50">
-            {meta}
-          </span>
-        )}
-      </div>
-      {secondary && (
-        <div
-          className={
-            'pl-5 text-[11px] leading-snug ' +
-            (task.error
-              ? 'text-red-500/85'
-              : 'line-clamp-2 text-muted-foreground/65')
-          }
-        >
-          {secondary}
-        </div>
-      )}
-      {hasResult && (
-        <details className="group/wfres pl-5">
-          <summary className="flex cursor-pointer list-none items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground/55 transition hover:text-muted-foreground">
-            <span
-              aria-hidden
-              className="inline-block transition group-open/wfres:rotate-90"
-            >
-              ▸
-            </span>
-            {t('toolWorkflowResultLabel')}
-          </summary>
-          <div className="mt-1 whitespace-pre-wrap rounded-md bg-muted/30 p-2 text-[11.5px] leading-relaxed text-foreground/80">
-            {task.result}
-          </div>
-        </details>
-      )}
-    </div>
-  )
-}
-
-/** Right-aligned `27.2k tok · 1 tool · 16s` metadata for an agent row. */
-function formatWfMeta(task: WorkflowTask): string {
-  const bits: string[] = []
-  if (typeof task.tokens === 'number' && task.tokens > 0) {
-    bits.push(`${formatWfTokens(task.tokens)} tok`)
-  }
-  if (typeof task.toolUses === 'number' && task.toolUses > 0) {
-    bits.push(`${task.toolUses} tool${task.toolUses === 1 ? '' : 's'}`)
-  }
-  if (typeof task.durationMs === 'number' && task.durationMs > 0) {
-    bits.push(formatWfDuration(task.durationMs))
-  }
-  return bits.join(' · ')
-}
-
-/** 27200 → "27.2k", 950 → "950". */
-function formatWfTokens(n: number): string {
-  if (n < 1000) return String(n)
-  return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
-}
-
-/** 16000 → "16s", 95000 → "1m35s". */
-function formatWfDuration(ms: number): string {
-  const s = Math.round(ms / 1000)
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  const rem = s % 60
-  return rem === 0 ? `${m}m` : `${m}m${rem}s`
-}
-
-/**
- * Monospace status glyph echoing Claude Code's terminal vocabulary:
- * `✔` done · `✗` failed · `⊘` stopped · `◐` (pulsing) running ·
- * `○` pending. Coloured per state; only the running glyph animates.
- */
-function WorkflowTaskGlyph({
-  status
-}: {
-  status: WorkflowTask['status']
-}): React.JSX.Element {
-  const map = {
-    completed: { glyph: '✔', cls: 'text-emerald-500' },
-    failed: { glyph: '✗', cls: 'text-red-500' },
-    stopped: { glyph: '⊘', cls: 'text-muted-foreground/60' },
-    pending: { glyph: '○', cls: 'text-muted-foreground/40' },
-    running: { glyph: '◐', cls: 'text-accent animate-pulse' }
-  } as const
-  const { glyph, cls } = map[status]
-  return (
-    <span aria-hidden className={'w-3 shrink-0 text-center ' + cls}>
-      {glyph}
-    </span>
   )
 }
 

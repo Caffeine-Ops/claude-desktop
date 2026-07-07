@@ -177,6 +177,19 @@ export type ChatEvent =
       lastToolName?: string
       /** Ambient/housekeeping task — renderer may hide from the card. */
       skipTranscript?: boolean
+      /**
+       * Per-agent live snapshot of a `local_workflow` run, parsed from the
+       * `workflow_progress` field fusion-code piggybacks on SOME
+       * `task_progress` messages (it's absent from the SDK's narrowed
+       * .d.ts, but it IS on the wire — verified against claude 2.1.202).
+       * Full-snapshot semantics: when present it describes EVERY agent
+       * the run has spawned so far, so the renderer replaces wholesale
+       * rather than merging. Absent on events that don't carry the field
+       * (most `progress` heartbeats) — the renderer keeps its last
+       * snapshot. Ordinary Task-tool subagents never carry this.
+       */
+      phases?: WorkflowPhaseInfo[]
+      agents?: WorkflowAgent[]
     }
   /**
    * Message-queue snapshot. Emitted whenever the runtime's `pendingTurns`
@@ -210,6 +223,48 @@ export type WorkflowTaskStatus =
   | 'failed'
   | 'stopped'
 
+/** One phase header from a workflow script's `meta.phases` / `phase()`
+ * calls, as carried by the `workflow_progress` wire snapshot. */
+export interface WorkflowPhaseInfo {
+  /** 1-based phase order — `WorkflowAgent.phaseIndex` points at this. */
+  index: number
+  title: string
+}
+
+/**
+ * Live snapshot of ONE `agent()` call inside a running `local_workflow`,
+ * parsed from the `workflow_progress` array. This is the desktop's window
+ * into "what is each sub-agent actually doing right now" — the agents'
+ * own conversations never reach the SDK message stream (verified: even
+ * `forwardSubagentText` doesn't forward workflow agents), so this
+ * snapshot plus the on-disk transcripts is all there is.
+ */
+export interface WorkflowAgent {
+  /** 1-based spawn order — stable identity across snapshots. */
+  index: number
+  /** The `label` option of the agent() call (or a prompt-derived one). */
+  label: string
+  /** Transcript id — names `agent-<id>.jsonl` under the run's dir. */
+  agentId?: string
+  /** Which phase this agent belongs to (see WorkflowPhaseInfo.index). */
+  phaseIndex?: number
+  phaseTitle?: string
+  model?: string
+  /** Mapped from wire `state` ('start'/'progress'/'done'/'error'). */
+  status: WorkflowTaskStatus
+  /** Most recent REAL tool the agent invoked (e.g. 'WebSearch'). */
+  lastToolName?: string
+  /** One-line summary of that tool call (e.g. the search query). */
+  lastToolSummary?: string
+  /** First ~200 chars of the agent's prompt. */
+  promptPreview?: string
+  /** First ~400 chars of the agent's final return value, once done. */
+  resultPreview?: string
+  tokens?: number
+  toolCalls?: number
+  durationMs?: number
+}
+
 /**
  * One workflow/Task subtask as accumulated by the renderer from the
  * `task_update` event stream. Stored on the spawning tool-call part
@@ -235,6 +290,13 @@ export interface WorkflowTask {
   durationMs?: number
   /** Name of the most recent tool the subtask invoked. */
   lastToolName?: string
+  /**
+   * Latest `workflow_progress` snapshot (local_workflow only) — the
+   * per-agent tree rendered under this task's row. Replaced wholesale on
+   * every event that carries one; kept as-is when an event omits it.
+   */
+  phases?: WorkflowPhaseInfo[]
+  agents?: WorkflowAgent[]
 }
 
 /** Simple conversation container. */
@@ -331,6 +393,15 @@ export interface PermissionResponse {
    * over the original input so partial rewrites are safe.
    */
   updatedInput?: unknown
+  /**
+   * Free-text reason the user typed when denying ("不同意，告诉它下一步
+   * 怎么做" in the floating permission card). Engine folds it into the
+   * SDK deny message as "User declined this tool call and said: <text>"
+   * so the assistant hears WHY and can adjust course instead of blindly
+   * retrying. Only meaningful with `decision: 'deny'`; ignored otherwise.
+   * Capped at 4000 chars by the IPC validator.
+   */
+  denyMessage?: string
 }
 
 /**

@@ -1,7 +1,6 @@
 import {
   BrowserWindow,
   WebContentsView,
-  nativeTheme,
   shell,
   type IpcMainInvokeEvent,
   type WebContents
@@ -11,11 +10,13 @@ import { fileURLToPath } from 'url'
 
 import appIcon from '../../resources/icon.png?asset'
 import { ChatEngine, createChatEngine } from './core/engine'
+import { getThemeMode, resolveIsDarkTheme, setThemeMode } from './core/appSettings'
 import { clearUnread } from './tray'
 import { finishSplashThenSettle, loadSplashIntoShell } from './splash'
 import { resolveStudioTabUrl } from './services/openDesignServices'
 import {
   IPC_CHANNELS,
+  type AuthState,
   type ShellMenuAction,
   type TabDescriptor,
   type UpdaterState
@@ -248,10 +249,12 @@ export function createShellWindow(): BrowserWindow {
     // WebContentsView 是透明底，见 newStudioTab 的 setBackgroundColor）。
     // 必须跟主题走：写死浅色时，暗色模式下设置 overlay ↔ 主视图这类大树
     // 重挂载的 compositor 空隙帧会透出浅灰白——「面板白闪」（2026-07-04）。
-    // 初值按 OS 主题给；运行时用户切主题经 APPEARANCE_SET/BROADCAST 调
-    // syncShellBackgroundToTheme 跟随。亮档 #f6f6f5 = rail 灰面，暗档
-    // #1a1917 = tokens.css 暗档 --background 的 hex 源值。
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1a1917' : '#f6f6f5'
+    // 初值优先读用户上次选的 themeMode 镜像（appSettings.json，见其字段
+    // 注释）；无记录（首次启动）才落到 OS 主题。运行时用户切主题经
+    // APPEARANCE_SET/BROADCAST 调 syncShellBackgroundToTheme 跟随并更新镜像。
+    // 亮档 #f6f6f5 = rail 灰面，暗档 #1a1917 = tokens.css 暗档 --background
+    // 的 hex 源值。
+    backgroundColor: resolveIsDarkTheme(getThemeMode()) ? '#1a1917' : '#f6f6f5'
     // 刻意不给 webPreferences：shell webContents 只承载静态 splash，
     // 不需要 preload / chatApi——Electron 默认（sandbox + contextIsolation +
     // 无 nodeIntegration）就是我们要的最小权限面。
@@ -608,15 +611,22 @@ export function getShellWindow(): BrowserWindow | null {
 /**
  * 把 shell 窗口底色同步到主题档位——renderer 没画出来的每一帧（大树重挂载
  * 的 compositor 空隙、resize、全屏切换）露出的就是它，跟错档位就是「白闪/
- * 黑闪」。'system' 按 nativeTheme 解析。调用点：ipc/register.ts 的
- * APPEARANCE_SET（chat 侧每次主题变化都会 push 到这）与 APPEARANCE_BROADCAST
- * （canvas 直连 daemon 后的 ping）。色值与 createShellWindow 的初值同源。
+ * 黑闪」。'system' 按 nativeTheme 解析（见 appSettings.resolveIsDarkTheme）。
+ * 调用点：ipc/register.ts 的 APPEARANCE_SET（chat 侧每次主题变化都会 push
+ * 到这）与 APPEARANCE_BROADCAST（canvas 直连 daemon 后的 ping）。色值与
+ * createShellWindow 的初值同源。
+ *
+ * 顺手把 themeMode 镜像进 appSettings.json（2026-07-06）：闪屏与本窗口的
+ * *下次启动*初值都读它，而不是无条件回退 nativeTheme——否则用户在 app 内
+ * 手动选的主题与系统主题不一致时，闪屏/窗口初始底色会用错档位，studio
+ * 首帧交接时再"跳变"成正确的一档（观感是重新启动就先闪一下错误的主题）。
  */
 export function syncShellBackgroundToTheme(themeMode: string | undefined): void {
+  if (themeMode === 'dark' || themeMode === 'light' || themeMode === 'system') {
+    setThemeMode(themeMode)
+  }
   if (!shellWindow || shellWindow.isDestroyed()) return
-  const isDark =
-    themeMode === 'dark' || (themeMode !== 'light' && nativeTheme.shouldUseDarkColors)
-  shellWindow.setBackgroundColor(isDark ? '#1a1917' : '#f6f6f5')
+  shellWindow.setBackgroundColor(resolveIsDarkTheme(themeMode) ? '#1a1917' : '#f6f6f5')
 }
 
 /**
@@ -902,6 +912,24 @@ export function broadcastUpdaterState(state: UpdaterState): void {
     const wc = ctx.view.webContents
     if (wc.isDestroyed()) continue
     wc.send(IPC_CHANNELS.UPDATER_STATE_CHANGED, state)
+  }
+}
+
+/**
+ * Push the full auth state to every renderer that can receive IPC. 同
+ * broadcastUpdaterState：无 skip-the-writer id——登录虽由某个 renderer
+ * 发起，但它靠 AUTH_LOGIN 的 resolve 值更新自己，广播这边多收一次
+ * 整体替换是幂等的；跳 sender 反而会在 chat/canvas 共享 webContents
+ * 的形态下复刻 2026-07-04 的 appearance 同步黑洞。
+ */
+export function broadcastAuthState(state: AuthState): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    shellWindow.webContents.send(IPC_CHANNELS.AUTH_STATE_CHANGED, state)
+  }
+  for (const ctx of tabs.values()) {
+    const wc = ctx.view.webContents
+    if (wc.isDestroyed()) continue
+    wc.send(IPC_CHANNELS.AUTH_STATE_CHANGED, state)
   }
 }
 

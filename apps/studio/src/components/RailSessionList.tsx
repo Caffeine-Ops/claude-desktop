@@ -39,6 +39,7 @@ import type { ThreadSummary } from '@desktop-shared/types'
 
 import { railEaseOut } from '@/src/chat/shell/railMotion'
 import { useChatStore, useRunningSessionIdsKey } from '@/src/chat/stores/chat'
+import { usePendingPermissionKindsBySession } from '@/src/chat/stores/permissions'
 import { useUnreadIdsKey, useUnreadStore } from '@/src/chat/stores/unread'
 import { groupLabel, relativeTime } from '@/src/components/railTime'
 import { ScrollArea } from '@/src/components/ui/scroll-area'
@@ -67,12 +68,14 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/src/components/ui/dropdown-menu'
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger
 } from '@/src/components/ui/context-menu'
 import { cn } from '@/src/lib/utils'
@@ -163,25 +166,49 @@ type MenuItemComponent = ComponentType<{
   children?: ReactNode
 }>
 
+/** 与 MenuItemComponent 同理的 Separator 公共形状（两个 radix 壳各有一个）。 */
+type MenuSeparatorComponent = ComponentType<{ className?: string }>
+
+/** 菜单条目的统一精修档：13px 字（rail 环境的正文档）、条目内 10px 图标间距、
+ * rounded-lg hover 面。shadcn 基件默认 text-sm(14px)+py-1.5 在这个小操作菜单
+ * 里显得又大又松（2026-07-07 用户反馈「丑」），这里统一收紧。 */
+const SESSION_MENU_ITEM_CLS = 'gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px]'
+
+/** 菜单容器精修档（··· 与右键两个壳共用，保持「同一个菜单」的观感）：
+ * rounded-xl + p-1.5 让条目 hover 面与容器边缘有均匀呼吸；柔和的双层
+ * 投影替换 shadcn 默认 shadow-md 的生硬单层（暗档投影天然弱化，轮廓
+ * 靠 border 承担，故 border 不减淡）。 */
+const SESSION_MENU_CONTENT_CLS =
+  'min-w-[9.5rem] rounded-xl p-1.5 shadow-[0_10px_38px_-10px_rgba(0,0,0,0.22),0_2px_10px_-2px_rgba(0,0,0,0.08)]'
+
 /**
  * 菜单条目本体（··· 与右键共用）。两项都只做一件事：关掉菜单、打开对应
  * 弹窗（重命名 Dialog / 删除 AlertDialog），真正的动作在根组件里。
+ * 重命名与删除之间加分隔线——危险操作与普通操作分组是 macOS 菜单惯例，
+ * 也让红色的「删除」不再直接压在「重命名」底下显得扎眼。
  */
 function SessionMenuItems({
   Item,
+  Separator,
   onRename,
   onDelete
 }: {
   Item: MenuItemComponent
+  Separator: MenuSeparatorComponent
   onRename: () => void
   onDelete: () => void
 }) {
   return (
     <>
-      <Item onSelect={onRename}>
+      <Item className={SESSION_MENU_ITEM_CLS} onSelect={onRename}>
         <Pencil className="size-3.5" /> 重命名
       </Item>
-      <Item variant="destructive" onSelect={onDelete}>
+      <Separator className="-mx-1.5 my-1" />
+      <Item
+        className={SESSION_MENU_ITEM_CLS}
+        variant="destructive"
+        onSelect={onDelete}
+      >
         <Trash2 className="size-3.5" /> 删除
       </Item>
     </>
@@ -200,6 +227,12 @@ export function RailSessionList() {
     () => new Set(runningKey ? runningKey.split(',') : []),
     [runningKey]
   )
+
+  // Sessions blocked on the user：权限批准（approval）或 AskUserQuestion
+  // 回答（question）。驱动行右侧的「等待批准/等待回答」pill——等待时
+  // running spinner 的「正在干活」是误报，pill 优先级最高。useShallow
+  // 版 Record，只有某会话的 kind 变化才重渲。
+  const awaitingKinds = usePendingPermissionKindsBySession()
 
   // Sessions whose finished reply the user hasn't seen yet — drives the
   // per-row unread dot. Same stable-key-then-Set pattern as runningIds.
@@ -429,6 +462,7 @@ export function RailSessionList() {
                     thread={item.thread}
                     active={item.thread.id === activeId}
                     running={runningIds.has(item.thread.id)}
+                    awaitingKind={awaitingKinds[item.thread.id]}
                     unread={unreadIds.has(item.thread.id)}
                     justRenamed={item.thread.id === justRenamedId}
                     onSwitch={() => switchTo(item.thread.id)}
@@ -449,7 +483,12 @@ export function RailSessionList() {
           if (!open) setRenameTarget(null)
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        {/* 精修档（2026-07-07，原型 docs/ui-prototype-session-dialogs.html A 案）：
+          * 400px 窄卡 + 15px 标题 / 12.5px 副文的节奏；输入框 40px 高、10px 圆角
+          * （安静 focus 与浅色 selection 已在 ui/input.tsx 基件层修）；保存钮走
+          * 品牌绿渐变（与账户菜单升级钮同源），disabled 用中性灰而非透明度——
+          * 「还没改名」要读作待命，不是坏了。 */}
+        <DialogContent className="sm:max-w-[400px]">
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -457,8 +496,10 @@ export function RailSessionList() {
             }}
           >
             <DialogHeader>
-              <DialogTitle>重命名对话</DialogTitle>
-              <DialogDescription>为这个对话起一个新名字。</DialogDescription>
+              <DialogTitle className="text-[15px]">重命名对话</DialogTitle>
+              <DialogDescription className="text-[12.5px]">
+                为这个对话起一个新名字。
+              </DialogDescription>
             </DialogHeader>
             <div className="grid gap-2 py-4">
               <Label htmlFor="rail-rename-input" className="sr-only">
@@ -472,6 +513,7 @@ export function RailSessionList() {
                 name="rename-session"
                 autoComplete="off"
                 placeholder="输入新名称"
+                className="h-10 rounded-[10px] text-[13.5px] md:text-[13.5px]"
                 onChange={(e) => setRenameDraft(e.target.value)}
               />
             </div>
@@ -483,8 +525,14 @@ export function RailSessionList() {
               >
                 取消
               </Button>
+              {/* transition-[opacity,box-shadow] 覆盖基件的 transition-all：
+                * disabled↔enabled 的底色是「渐变图像 ↔ 灰底」——background-image
+                * 不可过渡会瞬跳，color 却吃 transition-all 慢慢变，中间帧=绿底
+                * 半灰字（2026-07-07 用户实锤「文字变色有问题」）。颜色切换必须
+                * 与背景同步瞬时完成，过渡只留给 hover 的 opacity/阴影。 */}
               <Button
                 type="submit"
+                className="bg-[linear-gradient(135deg,hsl(var(--brand)),color-mix(in_srgb,hsl(var(--brand))_85%,#000))] text-white shadow-[0_1px_2px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.18)] transition-[opacity,box-shadow] hover:opacity-95 disabled:bg-none disabled:bg-muted disabled:text-muted-foreground/70 disabled:opacity-100 disabled:shadow-none"
                 disabled={
                   !renameDraft.trim() ||
                   renameDraft.trim() === renameTarget?.title
@@ -504,19 +552,39 @@ export function RailSessionList() {
           if (!open) setDeleteTarget(null)
         }}
       >
-        <AlertDialogContent>
+        {/* 精修档（同重命名弹窗，2026-07-07）：红 tint 垃圾桶徽章给危险操作一个
+          * 语义锚点（不再只靠一颗红按钮撑），会话名加重嵌进副文。 */}
+        <AlertDialogContent className="sm:max-w-[400px]">
           <AlertDialogHeader>
-            <AlertDialogTitle>删除这个对话？</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteTarget
-                ? `「${displayTitle(deleteTarget.title)}」及其消息将被删除，此操作无法撤销。`
-                : ''}
+            <span
+              aria-hidden
+              className="mb-1 flex size-[38px] items-center justify-center rounded-xl bg-destructive/10"
+            >
+              <Trash2 className="size-[18px] text-destructive" />
+            </span>
+            <AlertDialogTitle className="text-[15px]">
+              删除这个对话？
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[12.5px] leading-relaxed">
+              {deleteTarget ? (
+                <>
+                  「
+                  <span className="font-medium text-foreground">
+                    {displayTitle(deleteTarget.title)}
+                  </span>
+                  」及其消息将被删除，此操作无法撤销。
+                </>
+              ) : (
+                ''
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel className="border-0 shadow-none">
+              取消
+            </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20"
+              className="bg-[linear-gradient(135deg,hsl(var(--destructive)),color-mix(in_srgb,hsl(var(--destructive))_82%,#000))] text-white shadow-[0_1px_2px_rgba(0,0,0,0.14),inset_0_1px_0_rgba(255,255,255,0.16)] hover:opacity-95 focus-visible:ring-destructive/20"
               onClick={() => deleteTarget && performDelete(deleteTarget)}
             >
               删除
@@ -537,6 +605,7 @@ function SessionRow({
   thread,
   active,
   running,
+  awaitingKind,
   unread,
   justRenamed,
   onSwitch,
@@ -546,12 +615,15 @@ function SessionRow({
   thread: ThreadSummary
   active: boolean
   running: boolean
+  awaitingKind?: 'approval' | 'question'
   unread: boolean
   justRenamed: boolean
   onSwitch: () => void
   onStartRename: () => void
   onStartDelete: () => void
 }) {
+  const awaitingLabel =
+    awaitingKind === 'question' ? '等待回答' : '等待批准'
   return (
     <motion.li
       layout="position"
@@ -604,16 +676,32 @@ function SessionRow({
                 )}
               />
               <span className="min-w-0 flex-1 truncate">{displayTitle(thread.title)}</span>
-              {/* 行右侧状态，三选一，都在行内流、hover / 菜单打开时淡出让位给
+              {/* 行右侧状态，四选一，都在行内流、hover / 菜单打开时淡出让位给
                 * 绝对定位的 ···（原型 .time 的 display:none on hover）：
-                *  1. 运行中：旋转 spinner（品牌绿，与聊天区 ThinkingSpinner
+                *  1. 等待用户：「等待批准/等待回答」pill（品牌绿降饱和底，
+                *     docs/ui-prototype-permission-float.html 的 .pill-wait）——
+                *     优先于 running spinner：挂起时 spinner 的「正在干活」是
+                *     误报，AI 其实在等用户；
+                *  2. 运行中：旋转 spinner（品牌绿，与聊天区 ThinkingSpinner
                 *     同色）——「正在运行」比「2 小时前」更该被看到；
-                *  2. 未读：AI 回复已完成但用户还没看过（回合在非前台会话结束），
+                *  3. 未读：AI 回复已完成但用户还没看过（回合在非前台会话结束），
                 *     蓝色小圆点，切到该会话即清除；
-                *  3. 否则：相对时间。
+                *  4. 否则：相对时间。
                 * running 与 unread 天然互斥（未读只在回合结束后出现，那时已不
                 * running），故按此优先级排布。 */}
-              {running ? (
+              {awaitingKind ? (
+                <span
+                  className="flex shrink-0 items-center gap-[5px] rounded-full bg-brand/[0.12] px-2 py-0.5 text-[10.5px] font-semibold tracking-[0.02em] text-brand transition-opacity group-hover:opacity-0 group-has-[[data-state=open]]:opacity-0"
+                  aria-label={awaitingLabel}
+                  title={awaitingLabel}
+                >
+                  <span
+                    aria-hidden
+                    className="perm-wait-dot size-[5px] rounded-full bg-brand"
+                  />
+                  {awaitingLabel}
+                </span>
+              ) : running ? (
                 <span
                   className="flex shrink-0 items-center text-brand transition-opacity group-hover:opacity-0 group-has-[[data-state=open]]:opacity-0"
                   aria-label="任务运行中"
@@ -653,9 +741,10 @@ function SessionRow({
                   <MoreHorizontal className="size-3.5" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[9rem]">
+              <DropdownMenuContent align="end" className={SESSION_MENU_CONTENT_CLS}>
                 <SessionMenuItems
                   Item={DropdownMenuItem}
+                  Separator={DropdownMenuSeparator}
                   onRename={onStartRename}
                   onDelete={onStartDelete}
                 />
@@ -663,9 +752,10 @@ function SessionRow({
             </DropdownMenu>
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent className="min-w-[9rem]">
+        <ContextMenuContent className={SESSION_MENU_CONTENT_CLS}>
           <SessionMenuItems
             Item={ContextMenuItem}
+            Separator={ContextMenuSeparator}
             onRename={onStartRename}
             onDelete={onStartDelete}
           />

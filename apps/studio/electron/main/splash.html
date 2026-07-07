@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN"__THEME_ATTR__>
 <head>
 <meta charset="UTF-8">
 <title>Cowork</title>
@@ -8,22 +8,28 @@
  * 首次启动闪屏 — shell BrowserWindow 的常驻内容（splash.ts 经
  * ?raw import + data:URL 加载；原型见 docs/ui-prototype-splash.html）。
  *
- * 三条铁律（对应 2026-07-04 暗档白闪事故）：
+ * 四条铁律（对应 2026-07-04 暗档白闪事故 + 2026-07-06 主题跟错档位）：
  *   1. 底色 = tokens.css 的 --background 原值（暗 #1a1917 / 亮
- *      #f5f5f7），经 prefers-color-scheme 跟 nativeTheme 走——与
- *      窗口 backgroundColor 初值、studio 首帧底色三方一致，
- *      splash → studio 交接零跳变。
- *   2. 零请求：无字体、无 CDN、图标 base64 内嵌。data: URL 的
+ *      #f5f5f7）；与窗口 backgroundColor 初值、studio 首帧底色三方
+ *      一致，splash → studio 交接零跳变。
+ *   2. 深浅色判定 = html[data-theme]（splash.ts 按用户上次选的
+ *      themeMode 镜像注入，见其注释），不是单纯 prefers-color-scheme——
+ *      后者只能跟系统，用户在 app 内手动选的主题与系统不一致时会先
+ *      显示错档位、studio 首帧交接时再"跳变"回正确档位。
+ *      :not([data-theme]) 的 media query 分支是占位符替换意外失败
+ *      时的降级路径，见下方 CSS。
+ *   3. 零请求：无字体、无 CDN、图标 base64 内嵌。data: URL 的
  *      opaque origin 对纯内联页面无碍（历史坑只咬第三方脚本/Cookie）。
- *   3. 身份色用品牌绿 --brand（不跟用户主题色走），与 chat 工具
+ *   4. 身份色用品牌绿 --brand（不跟用户主题色走），与 chat 工具
  *      运行弧线同源。
  *
  * 对 main 的契约（executeJavaScript 调用，见 splash.ts）：
  *   window.__splash.stage(fraction, text) — 推启动里程碑
  *   window.__splash.finish()              — 进度冲满 + 「马上就好」
- * 版本占位符（body 底部 .version 里）由 splash.ts 在加载前用
- * app.getVersion() 替换——此注释刻意不写占位符字面量：曾因注释里的
- * 字面量抢走 String.replace 的第一个匹配，真占位符漏替换直接上屏。
+ * 版本 / 主题占位符（<html> 标签与 body 底部 .version 里）由 splash.ts
+ * 在加载前替换——此注释刻意不写占位符字面量：曾因注释里的字面量抢走
+ * String.replace 的第一个匹配，真占位符漏替换直接上屏（故所有替换都用
+ * replaceAll）。
  * ============================================================ */
 
 :root {
@@ -37,8 +43,20 @@
   --logo-shadow: drop-shadow(0 14px 28px hsl(222 60% 20% / 0.28)) drop-shadow(0 3px 8px hsl(222 60% 20% / 0.14));
 }
 
+/* 深浅色判定：优先 html[data-theme]（splash.ts 按用户上次选的 themeMode
+ * 镜像注入，见其调用点注释）；:not([data-theme]) 的 prefers-color-scheme
+ * 分支是占位符替换意外失败时的降级路径，跟随系统主题而不是死板成某一档。 */
+html[data-theme="dark"] {
+  --background: hsl(40 6% 10%);
+  --foreground: hsl(40 21% 89%);
+  --muted-foreground: hsl(36 5% 58%);
+  --brand: hsl(145 60% 52%);
+  --track: hsl(40 6% 18%);
+  --logo-shadow: drop-shadow(0 0 40px hsl(212 100% 60% / 0.22)) drop-shadow(0 14px 28px hsl(0 0% 0% / 0.55));
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  html:not([data-theme]) {
     --background: hsl(40 6% 10%);
     --foreground: hsl(40 21% 89%);
     --muted-foreground: hsl(36 5% 58%);

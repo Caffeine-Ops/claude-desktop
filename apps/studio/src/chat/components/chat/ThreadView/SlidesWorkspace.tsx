@@ -9,7 +9,7 @@ import {
 } from '../../../stores/chat'
 import { usePendingAskUserQuestion } from '../../../stores/permissions'
 import { CanvasConfirm } from '../CanvasConfirm'
-import { LivePreviewEditor } from '../LivePreviewEditor'
+import { LivePreviewEditor, usePreviewReadinessStore } from '../LivePreviewEditor'
 import { OutlinePanel } from '../OutlinePanel'
 import { CanvasQuestionnaire } from './CanvasQuestionnaire'
 import { ImagesPanel, useImageFeedsLive } from './ImagesPanel'
@@ -299,6 +299,11 @@ export function SlidesWorkspace(): React.JSX.Element {
     files: anyPlainFileStreaming
   }
 
+  // 幻灯片就绪进度（N/M + 进度条）：LivePreviewEditor 挂载期间写入、卸载
+  // 清空——胶囊只在「预览幻灯片」tab 活跃时出现。它取代了 editor 里被删的
+  // 56px 标题头（2026-07-07 工作区重设计），见 store 的头注释。
+  const readiness = usePreviewReadinessStore((s) => s.readiness)
+
   const tabs: { id: CanvasTab; label: string }[] = [
     // 预览幻灯片 only exists while the live-preview server is up and reachable
     // (appears on launch, drops out on idle-timeout / self-exit) — see
@@ -319,7 +324,9 @@ export function SlidesWorkspace(): React.JSX.Element {
   ]
 
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card">
+    // @container/workspace：分栏里视口断点失真，tab 栏的窄档适配（就绪
+    // 胶囊降级）用容器查询。容器断点：lg=512 xl=576px。
+    <div className="@container/workspace flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card">
       {/* Tab bar —— 兼作 slides 列（右列）的窗口拖拽面。
           分栏时本 bar 占据右列顶栏那一横，ChatHeader（在左列）够不到这里，
           所以右列顶部的窗口拖拽只能由本 bar 自己承担——不标 drag 的话，tab
@@ -360,6 +367,28 @@ export function SlidesWorkspace(): React.JSX.Element {
             </button>
           )
         })}
+        {/* 就绪进度胶囊（非交互，保持 bar 的 drag 语义）。emerald 与缩略
+          * 图的就绪点同色。 */}
+        {/* 窄档降级：≤576px 先收进度条（省 56px 给 tab），≤512px 整个
+          * 胶囊让位——就绪数是 nice-to-have，tab 本体不能被挤断。 */}
+        {readiness && (
+          <div className="ml-auto flex items-center gap-2 rounded-full bg-foreground/[0.05] px-2.5 py-[5px] text-[11px] text-muted-foreground @max-lg/workspace:hidden">
+            <span className="h-[3px] w-12 overflow-hidden rounded-full bg-foreground/[0.09] @max-xl/workspace:hidden">
+              <span
+                className="block h-full rounded-full bg-emerald-500 transition-[width] duration-300"
+                style={{
+                  width: `${Math.round((readiness.ready / Math.max(1, readiness.total)) * 100)}%`
+                }}
+              />
+            </span>
+            <span className="whitespace-nowrap">
+              <span className="font-semibold tabular-nums text-foreground">
+                {readiness.ready} / {readiness.total}
+              </span>{' '}
+              已就绪
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Body */}
