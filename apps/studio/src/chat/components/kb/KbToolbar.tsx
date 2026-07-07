@@ -4,14 +4,12 @@ import { useT, useTFormat } from '../../i18n'
 import { kbIcons } from './kbIcons'
 
 /**
- * 顶部工具栏：导入（含工具门置灰）、新建产品线的批量迁移入口、构建进度。
- * `sel` 决定导入落点（当前选中的产品线/产品）；未选分类时点导入会提示先选/建分类，
- * 而不是静默导入到某个默认位置——写操作落点必须显式，不能猜。
+ * 顶部工具栏：同步本地文件夹（增量刷新）、空库时的批量迁移入口、构建进度、工具缺失提示。
+ * 「导入/拖拽」单文件进货已按用户要求下线（2026-07-07）：本地文件夹是唯一真相，进货只走
+ * 迁移/同步；单独导入的文件不在本地源里，下次同步会被当孤儿删掉，是个坑。
  */
-export function KbToolbar({ sel, readOnly, onImported }: {
-  sel: string | null // 选中文件夹的 path（n 级树，'/' 分隔）
+export function KbToolbar({ readOnly }: {
   readOnly: boolean
-  onImported: () => void
 }): React.JSX.Element {
   const t = useT()
   const tFormat = useTFormat()
@@ -20,38 +18,6 @@ export function KbToolbar({ sel, readOnly, onImported }: {
   const refresh = useKbStore((s) => s.refresh)
   const total = useKbStore((s) => s.total)
   const [busy, setBusy] = useState(false)
-
-  const canImport = tooling?.markitdown !== false // null(未知)时不置灰，避免闪烁误锁
-  // kbImport 仍是两级 API：取选中路径前两段作落点（深层选中落到其前两级）。
-  const segs = sel ? sel.split('/') : []
-  const targetLine = segs[0] ?? ''
-  const targetProduct = segs[1] ?? ''
-
-  const doImport = async (paths: string[]): Promise<void> => {
-    if (!paths.length || busy) return
-    if (!targetLine) { alert(t('kbNewLine')); return } // 未选分类先建/选产品线
-    setBusy(true)
-    try {
-      const r = await window.chatApi.kbImport({ paths, productLine: targetLine, product: targetProduct, overwrite: false })
-      if (r.conflicted.length > 0 && confirm(tFormat('kbConflictPrompt', { n: r.conflicted.length }))) {
-        // 冲突集是按 relPath 命中的一个子集，但这里选择整批 overwrite 重发——未冲突项
-        // 已入库，overwrite 对它们是同内容覆盖，无害；换来的是不用在 renderer 侧重新拆分
-        // plan（拆分逻辑已经在 main 侧 planImport 里，不重复实现一份）。
-        await window.chatApi.kbImport({ paths, productLine: targetLine, product: targetProduct, overwrite: true })
-      }
-      await refresh()
-      onImported()
-    } catch (err) {
-      alert(String(err instanceof Error ? err.message : err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const pickAndImport = async (): Promise<void> => {
-    const { paths } = await window.chatApi.kbPickImportFiles()
-    await doImport(paths)
-  }
 
   const migrate = async (): Promise<void> => {
     if (busy) return
@@ -84,10 +50,6 @@ export function KbToolbar({ sel, readOnly, onImported }: {
             与顶部只读横幅矛盾（横幅说别人管、按钮却在），所以直接不渲染。 */}
         {!readOnly && (
           <>
-            <button type="button" disabled={!canImport || busy} onClick={() => void pickAndImport()}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-medium text-accent-foreground hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50">
-              <kbIcons.import className="size-3.5" />{t('kbImport')}
-            </button>
             <button type="button" disabled={busy} onClick={() => void sync()} title={t('kbSyncLocalHint')}
               className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-[12px] font-medium hover:bg-muted/60 disabled:opacity-50">
               <kbIcons.refresh className="size-3.5" />{t('kbSyncLocal')}
