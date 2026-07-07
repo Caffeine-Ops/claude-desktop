@@ -165,6 +165,10 @@ export function Composer(): React.JSX.Element {
     const st = useComposerModeStore.getState()
     if (st.mode === 'slides') st.markSlidesSession(composerSessionId ?? '')
   }, [composerSessionId])
+  // 知识库只服务「写方案」——聊天框底栏的知识库 chip 仅在写方案模式下露出，
+  // 其它模式（通用/设计/幻灯片/写作）不显示，免得让用户以为知识库对它们也生效。
+  // 订阅全局 mode 而不是读 getState()，这样切换模式时 chip 能实时显隐。
+  const composerMode = useComposerModeStore((s) => s.mode)
   // Read dictation state at the Composer level (single subscription)
   // and branch the composer row layout on it. When dictating, the
   // textarea is replaced by a live waveform, the send + mic slots
@@ -516,8 +520,9 @@ export function Composer(): React.JSX.Element {
             }
           />
           {/* 知识库管理入口：与「选择工作目录」并排的 FUNCTIONAL chip——点开
-              接管聊天区的 KbManagerView（openManager 会先 refresh 一次）。 */}
-          <ComposerKbChip label={t('catKnowledgeBase')} />
+              接管聊天区的 KbManagerView（openManager 会先 refresh 一次）。
+              仅在「写方案」模式露出：知识库只喂写方案流程，其它模式隐藏它。 */}
+          {composerMode === 'proposal' ? <ComposerKbChip label={t('catKnowledgeBase')} /> : null}
           <div className="ml-auto">
             <PermissionModePicker />
           </div>
