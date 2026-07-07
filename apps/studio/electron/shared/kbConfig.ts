@@ -10,7 +10,12 @@ export interface KbRemoteConfig {
   kbId: string
 }
 
+export type KbMode = 'managed' | 'remote'
+
 export interface KbConfig {
+  /** null = 未配置/旧版配置（P2 迁移引导消费）。managed=主编机可写，remote=只读同步。 */
+  mode: KbMode | null
+  /** 旧「本地文件夹」模式的根目录。已废弃，仅保留读取供 P2 一次性迁移引导。 */
   kbRoot: string | null
   remote: KbRemoteConfig | null
   /**
@@ -41,6 +46,7 @@ const LOCAL_DOCS_PRESET_KEYS: ReadonlySet<string> = new Set(['downloads', 'deskt
 
 export function parseKbConfig(raw: string | null): KbConfig {
   const empty: KbConfig = {
+    mode: null,
     kbRoot: null,
     remote: null,
     localDocsExtraDirs: [],
@@ -55,6 +61,7 @@ export function parseKbConfig(raw: string | null): KbConfig {
   }
   if (typeof obj !== 'object' || obj === null) return empty
   const o = obj as Record<string, unknown>
+  const mode = o.mode === 'managed' || o.mode === 'remote' ? o.mode : null
   const kbRoot = typeof o.kbRoot === 'string' && o.kbRoot.length > 0 ? o.kbRoot : null
   let remote: KbRemoteConfig | null = null
   if (typeof o.remote === 'object' && o.remote !== null) {
@@ -66,6 +73,7 @@ export function parseKbConfig(raw: string | null): KbConfig {
   // 新字段必须进 KbConfig 本体：kbIndexStore 的 setter 全是「读-合并-写整文件」
   // （{ ...cur, patch }），parse 时丢弃的字段会在下一次任意 setter 落盘时被抹掉。
   return {
+    mode,
     kbRoot,
     remote,
     localDocsExtraDirs: parseStringArray(o.localDocsExtraDirs),

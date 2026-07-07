@@ -18,11 +18,16 @@ export interface KbIndexFile {
   assets: string[]
   ok: boolean
   error?: string
+  /** v3：首次入库时间。重转不刷新；同路径覆盖导入时由 build 以 now 重置。缺失（v2 索引）UI 显示「—」。 */
+  importedAtMs?: number
+  /** v3：原件字节数。缺失（v2 索引）UI 显示「—」。 */
+  sizeBytes?: number
 }
 
 export interface KbIndex {
-  // v2：新增语义向量产物（vectors.bin + vectors-meta.json）。v1 索引被视为 stale → 提示重建。
-  version: 2
+  // v3：新增 importedAtMs/sizeBytes（可选字段）。读取端对 v2 完全兼容——
+  // 消费方不判 version 只读字段，缺失字段按「无数据」渲染，因此不做 stale 处理。
+  version: 2 | 3
   kbRoot: string
   builtAtMs: number
   files: KbIndexFile[]
