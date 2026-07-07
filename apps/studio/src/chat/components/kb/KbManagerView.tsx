@@ -48,30 +48,6 @@ export function KbManagerView(): React.JSX.Element | null {
     try { await window.chatApi.kbRetryDoc(d.relPath); await refresh() } catch (e) { alert(String(e instanceof Error ? e.message : e)) }
   }
 
-  // ---- 拖拽导入：容器整体接 drop，取文件系统真实路径（webUtils，非 File.path——
-  // Electron 较新版本已移除 File.path，pathForFile 是 preload 里唯一合法取路径方式）。
-  // 落点是当前选中分类；无选中分类时静默忽略（导入只能进已有分类，新分类靠迁移带结构建）。----
-  const onDrop = async (e: React.DragEvent): Promise<void> => {
-    e.preventDefault()
-    if (readOnly || !sel) return
-    const paths: string[] = []
-    for (const f of Array.from(e.dataTransfer.files)) {
-      const p = window.chatApi.pathForFile(f)
-      if (p) paths.push(p)
-    }
-    if (!paths.length) return
-    // kbImport 仍是两级 API：取选中路径的前两段作 productLine/product 落点（深层选中会落到其前两级）。
-    const segs = sel.split('/')
-    const productLine = segs[0] ?? ''
-    const product = segs[1] ?? ''
-    try {
-      const r = await window.chatApi.kbImport({ paths, productLine, product, overwrite: false })
-      if (r.conflicted.length && confirm(tFormat('kbConflictPrompt', { n: r.conflicted.length })))
-        await window.chatApi.kbImport({ paths, productLine, product, overwrite: true })
-      await refresh()
-    } catch (err) { alert(String(err instanceof Error ? err.message : err)) }
-  }
-
   // 从旧资料文件夹批量导入（保结构）——空态的主进货路径。
   const migrateFromFolder = async (): Promise<void> => {
     try {
@@ -86,8 +62,7 @@ export function KbManagerView(): React.JSX.Element | null {
 
   return (
     <div role="dialog" aria-modal="true" aria-label={t('kbManageTitle')}
-      className="absolute inset-0 z-40 flex flex-col bg-background text-foreground"
-      onDragOver={(e) => e.preventDefault()} onDrop={(e) => void onDrop(e)}>
+      className="absolute inset-0 z-40 flex flex-col bg-background text-foreground">
       <div className="flex items-center gap-3 border-b border-border/50 px-6 py-3">
         <button type="button" onClick={closeManager}
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-muted-foreground hover:bg-muted/60 hover:text-foreground">
@@ -117,7 +92,7 @@ export function KbManagerView(): React.JSX.Element | null {
             ))}
           </nav>
           <div className="flex min-h-0 flex-1 flex-col">
-            <KbToolbar sel={sel} readOnly={readOnly} onImported={refresh} />
+            <KbToolbar readOnly={readOnly} />
             <div className="min-h-0 flex-1 overflow-y-auto">
               {sel ? (
                 <KbDocList docs={docs} readOnly={readOnly}
