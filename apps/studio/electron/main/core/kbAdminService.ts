@@ -7,12 +7,22 @@
  * 依赖注入（dirs/index/schedule）→ bun 直测，不碰 electron。
  */
 import { basename, extname, sep } from 'node:path'
+import { createHash } from 'node:crypto'
+import { statSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import * as store from './kbStore'
 import { validateSegmentName, isSafeRelPath } from './kbStore.core'
 import { scanKb } from './kbBuild/scan'
-import { buildKbTree, type KbDocRaw, type KbDocsListResult, type KbImportPayload, type KbImportResultDto, type KbMovePayload, type KbCategoryPayload, type KbCategoryRenamePayload } from '../../shared/kbAdmin'
+import { planLocalSync, type LocalSyncSourceFile } from './kbLocalSync.core'
+import { buildKbTree, type KbDocRaw, type KbDocsListResult, type KbImportPayload, type KbImportResultDto, type KbLocalSyncResult, type KbMovePayload, type KbCategoryPayload, type KbCategoryRenamePayload } from '../../shared/kbAdmin'
 import type { KbStoreDirs } from './kbStore'
 import type { KbIndex } from '../../shared/kbIndex'
+
+/** 异步读文件算 sha1（fs.promises.readFile 让 IO 离开主线程；逐文件 await 之间事件循环能喘气，
+ *  避免同步读+算 2.8G 把主进程冻死）。 */
+async function sha1OfFileAsync(path: string): Promise<string> {
+  return createHash('sha1').update(await readFile(path)).digest('hex')
+}
 
 export interface KbAdminDeps { dirs: KbStoreDirs; index: () => KbIndex | null; schedule: () => void }
 
@@ -121,22 +131,67 @@ export function deleteCategory(deps: KbAdminDeps, prefix: string): void {
 }
 
 export function migrateFromFolder(deps: KbAdminDeps, folder: string): { imported: number } {
-  // 保结构迁移：scanKb 已按 kbRoot 相对路径切出 productLine/product，逐组导入到 kb-store
-  // 同 relPath（overwrite=false 跳过已存在，允许多次迁移幂等）。
+  // 保全层级迁移：直接按 scanKb 的**完整 relPath** 落库（产品线/产品/第三级/…/文件，不拍平），
+  // overwrite=false 跳过已存在，允许多次迁移幂等。深层同名文件因完整 relPath 唯一而不再互相覆盖。
   const entries = scanKb(folder)
-  let imported = 0
-  // 按 (productLine, product) 分组批量导入（importDocs 一次只接一个分类目标）。
-  const groups = new Map<string, { productLine: string; product: string; reqs: { srcPath: string; fileName: string }[] }>()
+  const items = entries.map((e) => ({ srcPath: e.sourcePath, relPath: e.relPath }))
+  const r = store.importAtRelPaths(deps.dirs, items, false)
+  if (r.imported.length > 0) deps.schedule()
+  return { imported: r.imported.length }
+}
+
+/**
+ * 从本地源文件夹增量同步（「刷新」）：把 kb-store 对齐成 folder 的当前状态。
+ * 增/改 → 拷（overwrite=true）；本地删/改名 → 删库里多出的。只重转变动件由构建自理
+ * （build.ts 增量：mtime→sha1 跳过未变），故这里只负责把文件集对齐 + schedule 一轮。
+ *
+ * 关键：库内 relPath 用「拍平」规则 `docRelPath(productLine, product, fileName)`——与 migrate/
+ * importDocs 落盘完全一致（源可能深层嵌套 产品线/产品/子目录/文件，入库只留 产品线/产品/文件）。
+ * 早期误用 scanKb 的完整深层 relPath 去比库内拍平 relPath → 一个都对不上 → 全判为「新」→ 整库
+ * 重拷+全量重建（2026-07-07 事故）。同源多文件拍平后撞同一 relPath 时按 first-wins 去重（与
+ * migrate overwrite=false 一致），避免每轮同步在撞名两文件间反复翻拷。
+ *
+ * 「变没变」：库里已有该 relPath 且大小与索引一致才算 sha1 做内容级确认；大小不同=必变（免算）、
+ * 库里没有=新（免算）。sha1 走异步 readFile 逐文件让路，避免同步读算 2.8G 冻死主进程。
+ */
+export async function syncFromLocal(deps: KbAdminDeps, folder: string): Promise<KbLocalSyncResult> {
+  const entries = scanKb(folder)
+  const storeRelPaths = store.listStoreRelPaths(deps.dirs)
+  const prefix = deps.dirs.storeDir + sep
+  const indexSha1ByRel = new Map<string, string>()
+  const indexSizeByRel = new Map<string, number>()
+  for (const f of deps.index()?.files ?? []) {
+    const rel = f.sourcePath.startsWith(prefix) ? f.sourcePath.slice(prefix.length) : f.sourcePath
+    indexSha1ByRel.set(rel, f.sha1)
+    if (f.sizeBytes != null) indexSizeByRel.set(rel, f.sizeBytes)
+  }
+
+  const source: LocalSyncSourceFile[] = []
   for (const e of entries) {
-    const key = `${e.productLine}/${e.product}`
-    let g = groups.get(key)
-    if (!g) { g = { productLine: e.productLine, product: e.product, reqs: [] }; groups.set(key, g) }
-    g.reqs.push({ srcPath: e.sourcePath, fileName: basename(e.sourcePath) })
+    // 完整 relPath（保全层级、天然唯一，无需拍平/去重）。
+    const relPath = e.relPath
+    // sha1 占位 ''：只有「库已有该 relPath 且大小与索引一致」才真去读文件算 sha1 确认没变；
+    // 否则留 '' —— planLocalSync 里 '' 必不等于索引记录的 sha1 → 归 toCopy（新/大小已变者都在此拷）。
+    let sha1 = ''
+    if (storeRelPaths.has(relPath)) {
+      const idxSize = indexSizeByRel.get(relPath)
+      if (idxSize === undefined || idxSize === statSync(e.sourcePath).size) {
+        sha1 = await sha1OfFileAsync(e.sourcePath)
+      }
+    }
+    source.push({ relPath, sha1, productLine: e.productLine, product: e.product, sourcePath: e.sourcePath })
   }
-  for (const g of groups.values()) {
-    const r = store.importDocs(deps.dirs, g.reqs, g.productLine, g.product, false)
-    imported += r.imported.length
-  }
-  if (imported > 0) deps.schedule()
-  return { imported }
+  const plan = planLocalSync(source, storeRelPaths, indexSha1ByRel)
+
+  // added/updated 用同步前的 storeRelPaths 快照分：库里原本没有=新增，否则=更新。
+  const added = plan.toCopy.filter((c) => !storeRelPaths.has(c.relPath)).length
+  const updated = plan.toCopy.length - added
+
+  // 先删（toDelete 的 relPath 来自磁盘扫描、非 renderer 入参，天然无穿越风险）。
+  for (const rel of plan.toDelete) store.deleteDoc(deps.dirs, rel)
+  // 再拷：按完整 relPath 落库，overwrite=true（改动件先删旧条目再拷）。
+  store.importAtRelPaths(deps.dirs, plan.toCopy.map((c) => ({ srcPath: c.sourcePath, relPath: c.relPath })), true)
+
+  if (plan.toCopy.length > 0 || plan.toDelete.length > 0) deps.schedule()
+  return { added, updated, deleted: plan.toDelete.length }
 }

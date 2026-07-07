@@ -55,7 +55,8 @@ import {
   registerProposalAssetProtocol
 } from './services/proposalAssetProtocol'
 import { startKbSyncScheduler } from './core/kbSyncScheduler'
-import { onKbBuildStatus } from './core/kbBuildRunner'
+import { onKbBuildStatus, scheduleKbBuild } from './core/kbBuildRunner'
+import { readKbIndex, kbStoreHasDocs } from './core/kbIndexStore'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -294,6 +295,11 @@ app.whenReady().then(async () => {
   // 构建进度广播：kbBuildRunner 是 app 级单飞行单例（管理页导入/删改触发重建），
   // 与 startKbSyncScheduler 同层订阅——状态变化推给所有能收 IPC 的 renderer（管理页进度条）。
   onKbBuildStatus((s) => broadcastKbBuildStatus(s))
+
+  // 缺索引自愈：kb-store 有原件但 index.json 缺失（迁移/换机灌库后、或 app 更新令索引失效）
+  // → 补触发一次构建。构建平时只由写操作触发（导入/删改），没有这个启动兜底，迁移进来的库
+  // 会一直建不出索引、管理页恒空（2026-07-07 移植后实测踩到）。已有索引则跳过、不空转。
+  if (!readKbIndex() && kbStoreHasDocs()) scheduleKbBuild()
 
   // kbasset:// 与 proposalasset:// 的实际 handler（privileged 声明在模块顶层，
   // ready 前）。知识库镜像内嵌图 / 写方案草稿产出图靠它们在 <img src> 里显形。

@@ -88,6 +88,30 @@ export function importDocs(
   return { imported, conflicted }
 }
 
+/**
+ * 按「完整 relPath」导入（保全本地文件夹层级，不拍平）——migrate/sync 专用。
+ * 与 importDocs 的区别：importDocs 把文件落到 productLine/product/fileName（拍平，丢第三级+同名互覆盖）；
+ * 这里直接落到 storeDir/<传入的完整 relPath>，relPath 由 scanKb 相对源根算出、天然唯一。
+ * conflict（同 relPath 已存在）：overwrite → 先 deleteDoc 旧条目再拷；否则计入 conflicted 跳过。
+ */
+export function importAtRelPaths(
+  dirs: KbStoreDirs, items: readonly { srcPath: string; relPath: string }[], overwrite: boolean
+): ImportResult {
+  const existing = listStoreRelPaths(dirs)
+  const imported: string[] = []
+  const conflicted: string[] = []
+  for (const it of items) {
+    const conflict = existing.has(it.relPath)
+    if (conflict && !overwrite) { conflicted.push(it.relPath); continue }
+    if (conflict) deleteDoc(dirs, it.relPath)
+    const dest = join(dirs.storeDir, it.relPath)
+    mkdirSync(dirname(dest), { recursive: true })
+    copyFileSync(it.srcPath, dest)
+    imported.push(it.relPath)
+  }
+  return { imported, conflicted }
+}
+
 export function deleteDoc(dirs: KbStoreDirs, relPath: string): void {
   const p = docPaths(relPath, dirs.storeDir, dirs.outDir)
   // 先动文件、后改 index：崩在中间只会留「index 还认、磁盘已删」的悬空条目，

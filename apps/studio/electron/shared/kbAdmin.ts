@@ -17,13 +17,19 @@ export interface KbDocEntry {
   status: KbDocStatus
   error: string | null
 }
-export interface KbProduct { name: string; docs: KbDocEntry[] }
-export interface KbProductLine { name: string; products: KbProduct[]; rootDocs: KbDocEntry[] }
-export interface KbTree { lines: KbProductLine[] }
+/**
+ * n 级文件夹树节点：忠实反映本地文件夹的任意层级（产品线/产品/第三级/…/文件），
+ * 不再拍平到固定两级。folders=子文件夹，docs=本文件夹里直接的文件（一个文件夹可两者兼有）。
+ * path=该文件夹相对库根的 relPath 前缀（'/' 分隔），选中态/定位用它作句柄。
+ */
+export interface KbFolderNode { name: string; path: string; folders: KbFolderNode[]; docs: KbDocEntry[] }
+export interface KbTree { roots: KbFolderNode[] }
 export interface KbToolingStatus { markitdown: boolean; soffice: boolean }
 export interface KbDocsListResult { tree: KbTree; readOnly: boolean; total: number }
 export interface KbImportPayload { paths: string[]; productLine: string; product: string; overwrite: boolean }
 export interface KbImportResultDto { imported: string[]; conflicted: string[] }
+/** 本地文件夹增量同步结果：新增/更新/删除的文档数（供 UI 汇报）。 */
+export interface KbLocalSyncResult { added: number; updated: number; deleted: number }
 export interface KbMovePayload { relPath: string; toProductLine: string; toProduct: string; newFileName?: string }
 export interface KbCategoryPayload { productLine: string; product?: string }
 export interface KbCategoryRenamePayload { prefix: string; newName: string }
@@ -44,37 +50,39 @@ export interface KbDocRaw {
 }
 
 // 稳定排序用 code-unit 比较（同 manifest.ts）：不依赖 locale，测试跨环境结果一致。
-// 中文按码点序，P2 可接受；真要拼音序是后续事，不在本期。
+// 中文按码点序，可接受；真要拼音序是后续事，不在本期。
 const byName = <T extends { name: string }>(a: T, b: T): number => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+const byTitle = (a: KbDocEntry, b: KbDocEntry): number => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0)
 
+/**
+ * 把每个文件的完整 relPath 折成 n 级文件夹树：末段=文件挂到最深文件夹的 docs，途经段建/取文件夹。
+ * relPath 可能用 '/' 或 '\\'（OS 分隔符），一律按两者切分兼容。文件夹节点可同时有 docs 与 folders。
+ */
 export function buildKbTree(docs: readonly KbDocRaw[]): KbTree {
-  // 按产品线聚合——lineMap 记住创建顺序，后续 [...lineMap.values()] 保证顺序。
-  const lineMap = new Map<string, KbProductLine>()
+  const root: KbFolderNode = { name: '', path: '', folders: [], docs: [] }
   for (const d of docs) {
-    let line = lineMap.get(d.productLine)
-    if (!line) { line = { name: d.productLine, products: [], rootDocs: [] }; lineMap.set(d.productLine, line) }
-
-    // 构造 KbDocEntry：取决于 ok 来源 → ok ? 'indexed' : 'failed'
-    const entry: KbDocEntry = {
+    const segs = d.relPath.split(/[\\/]/).filter(Boolean)
+    if (segs.length === 0) continue
+    segs.pop() // 末段是文件名，不建文件夹；文件挂到其所在文件夹节点
+    let node = root
+    let acc = ''
+    for (const seg of segs) {
+      acc = acc ? acc + '/' + seg : seg
+      let child = node.folders.find((f) => f.name === seg)
+      if (!child) { child = { name: seg, path: acc, folders: [], docs: [] }; node.folders.push(child) }
+      node = child
+    }
+    node.docs.push({
       relPath: d.relPath, title: d.title, ext: d.ext,
       sizeBytes: d.sizeBytes, importedAtMs: d.importedAtMs,
       status: d.ok ? 'indexed' : 'failed', error: d.error
-    }
-
-    // 根据 product 为空与否分类：空则入 rootDocs，否则入产品的 docs
-    if (!d.product) { line.rootDocs.push(entry); continue }
-    let prod = line.products.find((p) => p.name === d.product)
-    if (!prod) { prod = { name: d.product, docs: [] }; line.products.push(prod) }
-    prod.docs.push(entry)
+    })
   }
-
-  // 排序：产品线按名排序；产品线内部的根文档按 title 排序；产品按名排序；产品内文档按 title 排序
-  const byTitle = (a: KbDocEntry, b: KbDocEntry): number => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0)
-  const lines = [...lineMap.values()].sort(byName)
-  for (const l of lines) {
-    l.rootDocs.sort(byTitle)
-    l.products.sort(byName)
-    for (const p of l.products) p.docs.sort(byTitle)
+  const sortNode = (n: KbFolderNode): void => {
+    n.folders.sort(byName)
+    n.docs.sort(byTitle)
+    n.folders.forEach(sortNode)
   }
-  return { lines }
+  sortNode(root)
+  return { roots: root.folders }
 }
