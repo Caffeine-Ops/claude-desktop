@@ -16,6 +16,7 @@ import { useDialogStore } from './stores/dialogs'
 import { useApplyAppearance } from './stores/appearance.applier'
 import { hydrateAppearanceFromDaemon, useAppearanceStore } from './stores/appearance'
 import { SettingsView } from './components/settings/SettingsView'
+import { KbManagerView } from './components/kb/KbManagerView'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 
 /**
@@ -288,6 +289,8 @@ function App(): React.JSX.Element {
             covers the chat row but leaves the title-bar header
             untouched. Renders null when the store says closed. */}
         <SettingsView />
+        {/* KB 托管仓库管理页 overlay——与 SettingsView 平级，靠 useKbStore.open 门控，关闭时 render null */}
+        <KbManagerView />
       </main>
       {/* Permission bridge — headless component that subscribes the
           permission store to main-process IPC events. The actual
