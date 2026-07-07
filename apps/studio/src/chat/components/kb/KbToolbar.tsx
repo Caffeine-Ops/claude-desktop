@@ -9,7 +9,7 @@ import { kbIcons } from './kbIcons'
  * 而不是静默导入到某个默认位置——写操作落点必须显式，不能猜。
  */
 export function KbToolbar({ sel, readOnly, onImported }: {
-  sel: { line: string; product: string | null } | null
+  sel: string | null // 选中文件夹的 path（n 级树，'/' 分隔）
   readOnly: boolean
   onImported: () => void
 }): React.JSX.Element {
@@ -22,8 +22,10 @@ export function KbToolbar({ sel, readOnly, onImported }: {
   const [busy, setBusy] = useState(false)
 
   const canImport = tooling?.markitdown !== false // null(未知)时不置灰，避免闪烁误锁
-  const targetLine = sel?.line ?? ''
-  const targetProduct = sel?.product ?? ''
+  // kbImport 仍是两级 API：取选中路径前两段作落点（深层选中落到其前两级）。
+  const segs = sel ? sel.split('/') : []
+  const targetLine = segs[0] ?? ''
+  const targetProduct = segs[1] ?? ''
 
   const doImport = async (paths: string[]): Promise<void> => {
     if (!paths.length || busy) return
@@ -62,6 +64,18 @@ export function KbToolbar({ sel, readOnly, onImported }: {
     } finally { setBusy(false) }
   }
 
+  // 增量同步本地源文件夹（「刷新」）：把库对齐成本地当前状态（增/删/改），只重转变动件。
+  const sync = async (): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const r = await window.chatApi.kbSyncFromLocal()
+      if (r) { await refresh(); alert(tFormat('kbSyncDone', { a: r.added, u: r.updated, d: r.deleted })) }
+    } catch (err) {
+      alert(String(err instanceof Error ? err.message : err))
+    } finally { setBusy(false) }
+  }
+
   return (
     <div className="space-y-2 border-b border-border/50 px-4 py-2">
       <div className="flex items-center gap-2">
@@ -73,6 +87,10 @@ export function KbToolbar({ sel, readOnly, onImported }: {
             <button type="button" disabled={!canImport || busy} onClick={() => void pickAndImport()}
               className="inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-medium text-accent-foreground hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50">
               <kbIcons.import className="size-3.5" />{t('kbImport')}
+            </button>
+            <button type="button" disabled={busy} onClick={() => void sync()} title={t('kbSyncLocalHint')}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-[12px] font-medium hover:bg-muted/60 disabled:opacity-50">
+              <kbIcons.refresh className="size-3.5" />{t('kbSyncLocal')}
             </button>
             {total === 0 && (
               <button type="button" disabled={busy} onClick={() => void migrate()}

@@ -34,7 +34,11 @@ export default defineConfig({
           // 子进程，绝不进 main 主线程（冷加载 ~6s 会冻住所有 tab 的 engine）。
           // kbSemanticSearch 用 utilityProcess.fork('out-electron/main/embedWorker.js')
           // 指向此产物——漏配该入口 fork 会静默失败 → 检索永久降级 BM25。
-          embedWorker: resolve(__dirname, 'electron/main/workers/embedWorker.ts')
+          embedWorker: resolve(__dirname, 'electron/main/workers/embedWorker.ts'),
+          // kbBuildWorker 同理：kbBuildRunner 用 utilityProcess.fork('out-electron/main/
+          // kbBuildWorker.js') 跑「扫描→转换→向量→写 index.json」。漏配此入口 = 产物不
+          // 生成 → fork 找不到文件 → 构建 worker 当场异常退出 → 索引永远建不出、管理页恒空。
+          kbBuildWorker: resolve(__dirname, 'electron/main/workers/kbBuildWorker.ts')
         }
       },
       commonjsOptions: { transformMixedEsModules: true }

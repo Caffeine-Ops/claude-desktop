@@ -19,7 +19,7 @@
 
 import { app } from 'electron'
 import { join } from 'node:path'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs'
 import type { KbIndex } from '../../shared/kbIndex'
 import type { KbConfig, KbMode, KbRemoteConfig } from '../../shared/kbConfig'
 import { parseKbConfig } from '../../shared/kbConfig'
@@ -37,6 +37,26 @@ export const kbOutDir = (): string => join(app.getPath('userData'), 'kb-index')
 
 /** 托管仓库根目录（原件树，目录即分类）。P1 起 kb-store 取代旧「用户自选 kbRoot 文件夹」。 */
 export const kbStoreDir = (): string => join(app.getPath('userData'), 'kb-store')
+
+/**
+ * kb-store 里是否至少有一个真实文档文件（递归，遇到第一个文件即返回）。
+ * 用于启动自愈：「原件已在库、但 index.json 缺失」时补触发一次构建——构建平时只由
+ * 写操作触发，缺了启动兜底的话，迁移/换机灌进来的库会一直是空树（管理页恒空）。
+ * 纯空目录/只有分类没文档 → false，避免空转构建。
+ */
+export function kbStoreHasDocs(): boolean {
+  const root = kbStoreDir()
+  if (!existsSync(root)) return false
+  const walk = (dir: string): boolean => {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name)
+      const st = statSync(p)
+      if (st.isDirectory()) { if (walk(p)) return true } else if (st.isFile()) return true
+    }
+    return false
+  }
+  return walk(root)
+}
 
 /** 读整份 KB 配置。文件缺失/损坏 → 全空配置（防御哲学见 parseKbConfig）。 */
 export function getKbConfig(): KbConfig {

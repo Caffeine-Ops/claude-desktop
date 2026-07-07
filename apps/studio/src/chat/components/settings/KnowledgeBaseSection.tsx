@@ -3,7 +3,6 @@ import React, { useEffect, useState } from 'react'
 import { useT } from '../../i18n'
 import type { KbSyncStatus } from '@desktop-shared/kbSyncStatus'
 import { Section } from './SettingsView'
-import { useKbStore } from '../../stores/kb'
 
 type KbPathState = Awaited<ReturnType<typeof window.chatApi.getKbPath>>
 
@@ -129,15 +128,8 @@ export function KnowledgeBaseSection(): React.JSX.Element {
         {t('catKnowledgeBase')}
       </h1>
 
-      {/* 管理页入口——托管仓库的浏览/整理界面，与「来源」二选一是正交关注点 */}
-      <button
-        type="button"
-        data-slot="button"
-        onClick={() => useKbStore.getState().openManager()}
-        className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground"
-      >
-        {t('kbManageOpen')}
-      </button>
+      {/* 管理页入口已移到聊天框底栏的「知识库」chip（Composer.tsx），
+          与「选择工作目录」并排——比藏在设置里更好找。此处不再重复放按钮。 */}
 
       <Section title={t('kbSourceTitle')} description={t('kbSourceDesc')}>
         <div className="space-y-2">

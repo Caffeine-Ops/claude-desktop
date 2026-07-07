@@ -24,6 +24,7 @@ import { FileTypeIcon } from '../FileTypeIcon'
 import { DictationWaveform } from '../DictationWaveform'
 import { PermissionModePicker } from '../../permissions/PermissionModePicker'
 import { cancelActiveDictation } from '../../../runtime/openaiWhisperDictationAdapter'
+import { useKbStore } from '../../../stores/kb'
 
 /* ───────────────────── Composer ────────────────────────────── */
 
@@ -514,6 +515,9 @@ export function Composer(): React.JSX.Element {
               </svg>
             }
           />
+          {/* 知识库管理入口：与「选择工作目录」并排的 FUNCTIONAL chip——点开
+              接管聊天区的 KbManagerView（openManager 会先 refresh 一次）。 */}
+          <ComposerKbChip label={t('catKnowledgeBase')} />
           <div className="ml-auto">
             <PermissionModePicker />
           </div>
@@ -1307,6 +1311,28 @@ function ComposerBelowChip({
         <path d="m6 9 6 6 6-6" />
       </svg>
     </span>
+  )
+}
+
+/**
+ * 知识库管理 chip——和上面的 ComposerBelowChip 视觉一致，但是真按钮：
+ * 点击调用 openManager() 打开接管聊天区的 KbManagerView。
+ * 在 .chat-app 子树内，裸 <button> 不受 canvas reset 影响；仍带 data-slot 以防万一。
+ */
+function ComposerKbChip({ label }: { label: string }): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      data-slot="button"
+      onClick={() => useKbStore.getState().openManager()}
+      className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70 transition-colors hover:text-foreground"
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden="true">
+        <path d="M4 5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+        <path d="M14 3v5h5M8 13h8M8 17h5" />
+      </svg>
+      {label}
+    </button>
   )
 }
 

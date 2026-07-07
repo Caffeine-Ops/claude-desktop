@@ -87,7 +87,7 @@ import {
   type ProposalImageResult,
   type ProposalImageUploadPayload
 } from '../../shared/ipc-channels'
-import { setKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote, kbStoreDir, setKbMode } from '../core/kbIndexStore'
+import { setKbRoot, getKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote, kbStoreDir, setKbMode } from '../core/kbIndexStore'
 import { triggerKbSyncNow, lastKbSyncInfo, invalidateKbSyncBaseline } from '../core/kbSyncScheduler'
 import * as kbAdmin from '../core/kbAdminService'
 import { detectTooling } from '../core/kbTooling'
@@ -308,6 +308,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_DOC_OPEN_SOURCE)
   ipcMain.removeHandler(IPC_CHANNELS.KB_DOC_PREVIEW)
   ipcMain.removeHandler(IPC_CHANNELS.KB_MIGRATE_FROM_FOLDER)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_SYNC_FROM_LOCAL)
   ipcMain.removeHandler(IPC_CHANNELS.KB_BUILD_STATUS_GET)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT_PDF)
@@ -1859,7 +1860,25 @@ export function registerIpcHandlers(): void {
     if (r.canceled || r.filePaths.length === 0) return null
     // 首次迁移即确立主编身份：写 managed 模式（远程机不会走到这条路径——assertWritable 已挡）。
     setKbMode('managed')
+    // 记住这个文件夹为「同步源」（复用 kbRoot 字段）：之后「同步本地文件夹」按钮免再手选。
+    setKbRoot(r.filePaths[0]!)
     return kbAdmin.migrateFromFolder(kbDeps(), r.filePaths[0]!)
+  })
+
+  // 从本地源文件夹增量同步（「刷新」）：优先用记住的 kbRoot；无则弹目录选择器并记住。
+  ipcMain.handle(IPC_CHANNELS.KB_SYNC_FROM_LOCAL, async (event): Promise<import('../../shared/kbAdmin').KbLocalSyncResult | null> => {
+    assertWritable()
+    let folder = getKbRoot()
+    if (!folder) {
+      const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0]
+      if (!win) return null
+      const r = await dialog.showOpenDialog(win, { title: '选择要同步的本地资料文件夹', properties: ['openDirectory'] })
+      if (r.canceled || r.filePaths.length === 0) return null
+      folder = r.filePaths[0]!
+      setKbMode('managed')
+      setKbRoot(folder)
+    }
+    return kbAdmin.syncFromLocal(kbDeps(), folder)
   })
 
   ipcMain.handle(IPC_CHANNELS.KB_BUILD_STATUS_GET, async (): Promise<import('../../shared/kbBuildStatus').KbBuildStatus> =>

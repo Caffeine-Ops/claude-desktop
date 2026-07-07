@@ -12,16 +12,14 @@ function fmtSize(n: number | null): string {
 function fmtTime(ms: number | null): string { return ms == null ? '—' : new Date(ms).toLocaleDateString() }
 
 /**
- * 右侧文档列表——纯展示 + 行内动作回调。除 onOpen（真接 kbDocOpenSource）外，
- * 本 task（Task 6，只读浏览）传进来的都是桩函数 () => {}；写交互在 Task 7 接上。
- * readOnly 时收敛动作条：只留「预览」「打开原件」两个无副作用的查看动作。
+ * 右侧文档列表——纯展示 + 行内动作。改结构类编辑（重命名/移动/删除）已按用户要求下线：
+ * 应用内部是托管副本，改了不反映到本地原始文件夹，留着只会误导（2026-07-07）。整理回本地
+ * 文件夹做、再重新导入。故行内只留三个无「改结构」副作用的动作：重试失败件、预览、打开原件
+ * （重试只是重跑一遍转换，不改分类结构，仅可写库显示）。
  */
-export function KbDocList({ docs, readOnly, onDelete, onMove, onRename, onRetry, onOpen, onPreview }: {
+export function KbDocList({ docs, readOnly, onRetry, onOpen, onPreview }: {
   docs: KbDocEntry[]
   readOnly: boolean
-  onDelete: (d: KbDocEntry) => void
-  onMove: (d: KbDocEntry) => void
-  onRename: (d: KbDocEntry) => void
   onRetry: (d: KbDocEntry) => void
   onOpen: (d: KbDocEntry) => void
   onPreview: (d: KbDocEntry) => void
@@ -41,24 +39,13 @@ export function KbDocList({ docs, readOnly, onDelete, onMove, onRename, onRetry,
           <span className={'w-20 shrink-0 text-right ' + (d.status === 'failed' ? 'text-destructive' : 'text-muted-foreground/80')}>
             {d.status === 'failed' ? t('kbStatusFailed') : t('kbStatusIndexed')}
           </span>
-          {!readOnly && (
-            <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground/70">
-              {d.status === 'failed' && (
-                <button type="button" title={t('kbRetry')} onClick={() => onRetry(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.retry className="size-3.5" /></button>
-              )}
-              <button type="button" title={t('kbPreview')} onClick={() => onPreview(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.doc className="size-3.5" /></button>
-              <button type="button" title={t('kbOpenSource')} onClick={() => onOpen(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.open className="size-3.5" /></button>
-              <button type="button" title={t('kbRename')} onClick={() => onRename(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.edit className="size-3.5" /></button>
-              <button type="button" title={t('kbMove')} onClick={() => onMove(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.move className="size-3.5" /></button>
-              <button type="button" title={t('kbDelete')} onClick={() => onDelete(d)} className="rounded p-1 hover:bg-muted hover:text-destructive"><kbIcons.trash className="size-3.5" /></button>
-            </span>
-          )}
-          {readOnly && (
-            <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground/70">
-              <button type="button" title={t('kbPreview')} onClick={() => onPreview(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.doc className="size-3.5" /></button>
-              <button type="button" title={t('kbOpenSource')} onClick={() => onOpen(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.open className="size-3.5" /></button>
-            </span>
-          )}
+          <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground/70">
+            {!readOnly && d.status === 'failed' && (
+              <button type="button" title={t('kbRetry')} onClick={() => onRetry(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.retry className="size-3.5" /></button>
+            )}
+            <button type="button" title={t('kbPreview')} onClick={() => onPreview(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.doc className="size-3.5" /></button>
+            <button type="button" title={t('kbOpenSource')} onClick={() => onOpen(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.open className="size-3.5" /></button>
+          </span>
         </div>
       ))}
     </div>
