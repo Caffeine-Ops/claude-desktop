@@ -21,7 +21,7 @@ import { app } from 'electron'
 import { join } from 'node:path'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import type { KbIndex } from '../../shared/kbIndex'
-import type { KbConfig, KbRemoteConfig } from '../../shared/kbConfig'
+import type { KbConfig, KbMode, KbRemoteConfig } from '../../shared/kbConfig'
 import { parseKbConfig } from '../../shared/kbConfig'
 
 /** Absolute path to the KB path config file. Evaluated lazily. */
@@ -34,6 +34,9 @@ const configPath = (): string => join(app.getPath('userData'), 'kb-config.json')
  * needs both values to build the settings UI.
  */
 export const kbOutDir = (): string => join(app.getPath('userData'), 'kb-index')
+
+/** 托管仓库根目录（原件树，目录即分类）。P1 起 kb-store 取代旧「用户自选 kbRoot 文件夹」。 */
+export const kbStoreDir = (): string => join(app.getPath('userData'), 'kb-store')
 
 /** 读整份 KB 配置。文件缺失/损坏 → 全空配置（防御哲学见 parseKbConfig）。 */
 export function getKbConfig(): KbConfig {
@@ -73,6 +76,12 @@ export function setKbRoot(kbRoot: string): void {
 export function setKbRemote(remote: KbRemoteConfig | null): void {
   const cur = getKbConfig()
   writeFileSync(configPath(), JSON.stringify({ ...cur, remote }), 'utf8')
+}
+
+/** 持久化模式（managed=主编可写 / remote=只读同步）。读-合并-写，理由见 setKbRoot。 */
+export function setKbMode(mode: KbMode): void {
+  const cur = getKbConfig()
+  writeFileSync(configPath(), JSON.stringify({ ...cur, mode }), 'utf8')
 }
 
 /**
