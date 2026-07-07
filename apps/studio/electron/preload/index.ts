@@ -100,6 +100,16 @@ import {
 import type { ProposalMetricRecord } from '../shared/proposal'
 import type { KbRemoteConfig } from '../shared/kbConfig'
 import type { KbSyncStatus } from '../shared/kbSyncStatus'
+import type { KbBuildStatus } from '../shared/kbBuildStatus'
+import type {
+  KbDocsListResult,
+  KbToolingStatus,
+  KbImportPayload,
+  KbImportResultDto,
+  KbMovePayload,
+  KbCategoryPayload,
+  KbCategoryRenamePayload
+} from '../shared/kbAdmin'
 
 // Visible in the Electron terminal if the preload actually loads.
 console.log('[preload] loaded — exposing chatApi')
@@ -629,6 +639,57 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.KB_SEMANTIC_SEARCH,
       payload
     ) as Promise<KbSemanticSearchResult>
+  },
+
+  // ── KB 托管仓库管理页（P2）──────────────────────────────────────
+  kbDocsList(): Promise<KbDocsListResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_DOCS_LIST) as Promise<KbDocsListResult>
+  },
+  kbToolingCheck(): Promise<KbToolingStatus> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_TOOLING_CHECK) as Promise<KbToolingStatus>
+  },
+  kbPickImportFiles(): Promise<{ paths: string[] }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_PICK) as Promise<{ paths: string[] }>
+  },
+  kbImport(payload: KbImportPayload): Promise<KbImportResultDto> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT, payload) as Promise<KbImportResultDto>
+  },
+  kbDeleteDoc(relPath: string): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_DELETE, relPath) as Promise<void>
+  },
+  kbMoveDoc(payload: KbMovePayload): Promise<string> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_MOVE, payload) as Promise<string>
+  },
+  kbRetryDoc(relPath: string): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_RETRY, relPath) as Promise<void>
+  },
+  kbCreateCategory(payload: KbCategoryPayload): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_CATEGORY_CREATE, payload) as Promise<void>
+  },
+  kbRenameCategory(payload: KbCategoryRenamePayload): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_CATEGORY_RENAME, payload) as Promise<void>
+  },
+  kbDeleteCategory(prefix: string): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_CATEGORY_DELETE, prefix) as Promise<void>
+  },
+  kbDocOpenSource(relPath: string): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_OPEN_SOURCE, relPath) as Promise<void>
+  },
+  kbDocPreview(relPath: string): Promise<{ text: string }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_PREVIEW, relPath) as Promise<{ text: string }>
+  },
+  kbMigrateFromFolder(): Promise<{ imported: number } | null> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_MIGRATE_FROM_FOLDER) as Promise<{ imported: number } | null>
+  },
+  kbBuildStatusGet(): Promise<KbBuildStatus> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_BUILD_STATUS_GET) as Promise<KbBuildStatus>
+  },
+  onKbBuildStatus(cb: (s: KbBuildStatus) => void): () => void {
+    const listener = (_e: unknown, payload: KbBuildStatus): void => cb(payload)
+    ipcRenderer.on(IPC_CHANNELS.KB_BUILD_STATUS, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.KB_BUILD_STATUS, listener)
+    }
   },
 
   proposalImageSettingsGet(): Promise<ProposalImageApiConfig | null> {

@@ -87,8 +87,12 @@ import {
   type ProposalImageResult,
   type ProposalImageUploadPayload
 } from '../../shared/ipc-channels'
-import { setKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote } from '../core/kbIndexStore'
+import { setKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote, kbStoreDir, setKbMode } from '../core/kbIndexStore'
 import { triggerKbSyncNow, lastKbSyncInfo, invalidateKbSyncBaseline } from '../core/kbSyncScheduler'
+import * as kbAdmin from '../core/kbAdminService'
+import { detectTooling } from '../core/kbTooling'
+import { docPaths, isSafeRelPath } from '../core/kbStore.core'
+import { scheduleKbBuild, getKbBuildStatus } from '../core/kbBuildRunner'
 import type { KbIndex } from '../../shared/kbIndex'
 import type { KbRemoteConfig } from '../../shared/kbConfig'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
@@ -291,6 +295,20 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_SYNC_NOW)
   ipcMain.removeHandler(IPC_CHANNELS.KB_ROOT_PICK)
   ipcMain.removeHandler(IPC_CHANNELS.KB_SEMANTIC_SEARCH)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_DOCS_LIST)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_TOOLING_CHECK)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_IMPORT_PICK)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_IMPORT)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_DOC_DELETE)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_DOC_MOVE)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_DOC_RETRY)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_CATEGORY_CREATE)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_CATEGORY_RENAME)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_CATEGORY_DELETE)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_DOC_OPEN_SOURCE)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_DOC_PREVIEW)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_MIGRATE_FROM_FOLDER)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_BUILD_STATUS_GET)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT_PDF)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_RENDER)
@@ -1767,6 +1785,85 @@ export function registerIpcHandlers(): void {
       }
     }
   )
+
+  // 管理页（P2）：全部经 kbAdminService（收口校验红线 + 写后 scheduleKbBuild）。
+  // deps 每次现取——kbStoreDir/kbOutDir 依赖 app.getPath，且 index 要读最新盘上状态。
+  const kbDeps = (): kbAdmin.KbAdminDeps => ({
+    dirs: { storeDir: kbStoreDir(), outDir: kbOutDir() },
+    index: () => readKbIndex(),
+    schedule: () => scheduleKbBuild()
+  })
+  // readOnly：远程配置存在 = 只读浏览（本库由主编机管，本机不可写）。
+  const kbReadOnly = (): boolean => getKbConfig().remote !== null
+
+  ipcMain.handle(IPC_CHANNELS.KB_DOCS_LIST, async (): Promise<import('../../shared/kbAdmin').KbDocsListResult> =>
+    kbAdmin.listDocs(kbDeps(), kbReadOnly()))
+
+  ipcMain.handle(IPC_CHANNELS.KB_TOOLING_CHECK, async (): Promise<import('../../shared/kbAdmin').KbToolingStatus> =>
+    detectTooling())
+
+  ipcMain.handle(IPC_CHANNELS.KB_IMPORT_PICK, async (event): Promise<{ paths: string[] }> => {
+    const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return { paths: [] }
+    const r = await dialog.showOpenDialog(win, {
+      title: '选择要导入的文档', properties: ['openFile', 'multiSelections'],
+      filters: [{ name: '文档', extensions: ['docx', 'docm', 'pptx', 'xlsx', 'xls', 'pdf', 'txt'] }]
+    })
+    return { paths: r.canceled ? [] : r.filePaths }
+  })
+
+  // 写操作 handler：只读机拒绝（main 是最后防线，renderer 隐藏按钮不足恃）。
+  const assertWritable = (): void => { if (kbReadOnly()) throw new Error('远程只读模式，不能修改知识库') }
+
+  ipcMain.handle(IPC_CHANNELS.KB_IMPORT, async (_e, p: import('../../shared/kbAdmin').KbImportPayload): Promise<import('../../shared/kbAdmin').KbImportResultDto> => {
+    assertWritable(); return kbAdmin.importDocs(kbDeps(), p)
+  })
+  ipcMain.handle(IPC_CHANNELS.KB_DOC_DELETE, async (_e, relPath: string): Promise<void> => {
+    assertWritable(); kbAdmin.deleteDoc(kbDeps(), relPath)
+  })
+  ipcMain.handle(IPC_CHANNELS.KB_DOC_MOVE, async (_e, p: import('../../shared/kbAdmin').KbMovePayload): Promise<string> => {
+    assertWritable(); return kbAdmin.moveDoc(kbDeps(), p)
+  })
+  ipcMain.handle(IPC_CHANNELS.KB_DOC_RETRY, async (_e, relPath: string): Promise<void> => {
+    assertWritable(); kbAdmin.retryDoc(kbDeps(), relPath)
+  })
+  ipcMain.handle(IPC_CHANNELS.KB_CATEGORY_CREATE, async (_e, p: import('../../shared/kbAdmin').KbCategoryPayload): Promise<void> => {
+    assertWritable(); kbAdmin.createCategory(kbDeps(), p)
+  })
+  ipcMain.handle(IPC_CHANNELS.KB_CATEGORY_RENAME, async (_e, p: import('../../shared/kbAdmin').KbCategoryRenamePayload): Promise<void> => {
+    assertWritable(); kbAdmin.renameCategory(kbDeps(), p)
+  })
+  ipcMain.handle(IPC_CHANNELS.KB_CATEGORY_DELETE, async (_e, prefix: string): Promise<void> => {
+    assertWritable(); kbAdmin.deleteCategory(kbDeps(), prefix)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_DOC_OPEN_SOURCE, async (_e, relPath: string): Promise<void> => {
+    // 打开原件走系统默认应用。isSafeRelPath 先挡 '..'/绝对路径（docPaths 只 join 不校验），
+    // 再由 docPaths 还原绝对路径——两道合起来才真正防越权开库外任意文件。
+    if (!isSafeRelPath(relPath)) throw new Error('非法文档路径')
+    const p = docPaths(relPath, kbStoreDir(), kbOutDir())
+    await shell.openPath(p.sourcePath)
+  })
+  ipcMain.handle(IPC_CHANNELS.KB_DOC_PREVIEW, async (_e, relPath: string): Promise<{ text: string }> => {
+    // 同 OPEN_SOURCE：穿越守卫收口在 relPath 进入边界，防读库外任意文件。
+    if (!isSafeRelPath(relPath)) throw new Error('非法文档路径')
+    const p = docPaths(relPath, kbStoreDir(), kbOutDir())
+    try { return { text: readFileSync(p.mirrorPath, 'utf8') } } catch { return { text: '' } }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_MIGRATE_FROM_FOLDER, async (event): Promise<{ imported: number } | null> => {
+    assertWritable()
+    const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0]
+    if (!win) return null
+    const r = await dialog.showOpenDialog(win, { title: '选择要迁移的旧资料文件夹', properties: ['openDirectory'] })
+    if (r.canceled || r.filePaths.length === 0) return null
+    // 首次迁移即确立主编身份：写 managed 模式（远程机不会走到这条路径——assertWritable 已挡）。
+    setKbMode('managed')
+    return kbAdmin.migrateFromFolder(kbDeps(), r.filePaths[0]!)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_BUILD_STATUS_GET, async (): Promise<import('../../shared/kbBuildStatus').KbBuildStatus> =>
+    getKbBuildStatus())
 
   // 引用落地校验（#1）：核对一节正文的 `（据《X》）` 是否真出自镜像原文。verifyCitations
   // 内部全程防御式（索引缺失/读失败/异常 → degraded），这里再兜一道 catch 保证绝不 reject——

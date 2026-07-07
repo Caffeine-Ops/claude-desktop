@@ -21,6 +21,7 @@ import {
   type UpdaterState
 } from '../shared/ipc-channels'
 import type { KbSyncStatus } from '../shared/kbSyncStatus'
+import type { KbBuildStatus } from '../shared/kbBuildStatus'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -920,6 +921,23 @@ export function broadcastKbSyncStatus(payload: KbSyncStatus): void {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
     if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
+  }
+}
+
+/**
+ * Push KB build progress to every renderer that can receive IPC. Same
+ * shape as broadcastKbSyncStatus — build transitions originate in MAIN
+ * (kbBuildRunner single-flight), never a renderer write, so every window
+ * is equally "other". Web tabs are skipped (no preload, no KB UI).
+ */
+export function broadcastKbBuildStatus(payload: KbBuildStatus): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    shellWindow.webContents.send(IPC_CHANNELS.KB_BUILD_STATUS, payload)
+  }
+  for (const ctx of tabs.values()) {
+    if (ctx.kind === 'web') continue
+    const wc = ctx.view.webContents
+    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_BUILD_STATUS, payload)
   }
 }
 

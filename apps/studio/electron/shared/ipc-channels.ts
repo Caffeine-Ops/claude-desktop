@@ -734,7 +734,23 @@ export const IPC_CHANNELS = {
    * 搜索面板主动用。embedding 在 utilityProcess、不冻 main；模型缺失/stale 降级 BM25。
    * staleIndex=true 时结果是 BM25 降级（有内容但非语义），面板顶部显「需重建索引」条。
    */
-  KB_SEMANTIC_SEARCH: 'kb:semantic-search'
+  KB_SEMANTIC_SEARCH: 'kb:semantic-search',
+  // ── KB 托管仓库管理页（P2）──────────────────────────────────────
+  KB_DOCS_LIST: 'kb:docs-list',
+  KB_TOOLING_CHECK: 'kb:tooling-check',
+  KB_IMPORT_PICK: 'kb:import-pick',
+  KB_IMPORT: 'kb:import',
+  KB_DOC_DELETE: 'kb:doc-delete',
+  KB_DOC_MOVE: 'kb:doc-move',
+  KB_DOC_RETRY: 'kb:doc-retry',
+  KB_CATEGORY_CREATE: 'kb:category-create',
+  KB_CATEGORY_RENAME: 'kb:category-rename',
+  KB_CATEGORY_DELETE: 'kb:category-delete',
+  KB_DOC_OPEN_SOURCE: 'kb:doc-open-source',
+  KB_DOC_PREVIEW: 'kb:doc-preview',
+  KB_MIGRATE_FROM_FOLDER: 'kb:migrate-from-folder',
+  KB_BUILD_STATUS_GET: 'kb:build-status-get',
+  KB_BUILD_STATUS: 'kb:build-status'
 } as const
 
 /**
@@ -1983,6 +1999,25 @@ export interface ChatApi {
    * 绝不 reject（全防御式）——空 query 立即返回 { hits:[], staleIndex:false }。
    */
   kbSemanticSearch(payload: KbSemanticSearchPayload): Promise<KbSemanticSearchResult>
+
+  // ── KB 托管仓库管理页（P2）。renderer 只传相对路径，绝对路径还原在 main 完成防越权。──
+  kbDocsList(): Promise<import('./kbAdmin').KbDocsListResult>
+  kbToolingCheck(): Promise<import('./kbAdmin').KbToolingStatus>
+  kbPickImportFiles(): Promise<{ paths: string[] }>
+  kbImport(payload: import('./kbAdmin').KbImportPayload): Promise<import('./kbAdmin').KbImportResultDto>
+  kbDeleteDoc(relPath: string): Promise<void>
+  kbMoveDoc(payload: import('./kbAdmin').KbMovePayload): Promise<string>
+  kbRetryDoc(relPath: string): Promise<void>
+  kbCreateCategory(payload: import('./kbAdmin').KbCategoryPayload): Promise<void>
+  kbRenameCategory(payload: import('./kbAdmin').KbCategoryRenamePayload): Promise<void>
+  kbDeleteCategory(prefix: string): Promise<void>
+  kbDocOpenSource(relPath: string): Promise<void>
+  kbDocPreview(relPath: string): Promise<{ text: string }>
+  /** 内部弹目录选择器迁移旧资料；用户取消返回 null。 */
+  kbMigrateFromFolder(): Promise<{ imported: number } | null>
+  kbBuildStatusGet(): Promise<import('./kbBuildStatus').KbBuildStatus>
+  /** 订阅构建进度广播（管理页进度条）。返回取消订阅函数。 */
+  onKbBuildStatus(handler: (s: import('./kbBuildStatus').KbBuildStatus) => void): () => void
 
   /**
    * Export the proposal document via the OS native save dialog.

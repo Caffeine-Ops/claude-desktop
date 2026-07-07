@@ -38,7 +38,8 @@ import {
   getShellWindow,
   hasActiveRuntimes,
   newStudioTab,
-  setQuitting
+  setQuitting,
+  broadcastKbBuildStatus
 } from './tabRegistry'
 import {
   startOpenDesignServices,
@@ -54,6 +55,7 @@ import {
   registerProposalAssetProtocol
 } from './services/proposalAssetProtocol'
 import { startKbSyncScheduler } from './core/kbSyncScheduler'
+import { onKbBuildStatus } from './core/kbBuildRunner'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -288,6 +290,10 @@ app.whenReady().then(async () => {
   // KB 远程同步调度器：30s 延迟首触 + 每 6h 定时（无 remote 配置时内部静默跳过）。
   // 挂在这里而非独立 IPC handler 里，是因为它是 app 级后台任务，不依赖任何一个 tab。
   startKbSyncScheduler()
+
+  // 构建进度广播：kbBuildRunner 是 app 级单飞行单例（管理页导入/删改触发重建），
+  // 与 startKbSyncScheduler 同层订阅——状态变化推给所有能收 IPC 的 renderer（管理页进度条）。
+  onKbBuildStatus((s) => broadcastKbBuildStatus(s))
 
   // kbasset:// 与 proposalasset:// 的实际 handler（privileged 声明在模块顶层，
   // ready 前）。知识库镜像内嵌图 / 写方案草稿产出图靠它们在 <img src> 里显形。
