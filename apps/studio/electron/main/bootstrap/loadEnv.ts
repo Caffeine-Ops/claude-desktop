@@ -48,11 +48,25 @@ function candidatePaths(): string[] {
   const cwd = process.cwd()
   const selfDir = dirname(fileURLToPath(import.meta.url))
   return [
-    // Typical dev path: `bun run dev` is invoked from claude-desktop/
+    // Single-package dev / same-dir layout: env.json sits next to cwd.
     resolve(cwd, 'env.json'),
-    // Packaged / bundled fallback: main bundle lives at out/main/index.js,
-    // so two levels up lands at the project root.
-    resolve(selfDir, '../../env.json')
+    // Packaged / bundled fallback: main bundle lives at out-electron/main/index.js,
+    // so two levels up lands next to the packaged resources root.
+    resolve(selfDir, '../../env.json'),
+    // Monorepo dev — the real reason both above miss (regression of the
+    // 2026-06-18 fix, dropped by the 2026-07-03 desktop→studio merge):
+    // `bun run dev` is `bun run --filter='@claude-desktop/studio' dev`, so the
+    // electron process cwd is apps/studio/ and selfDir is
+    // apps/studio/out-electron/main/. Both candidates above then resolve to a
+    // non-existent apps/studio/env.json, and the ONLY real env.json — the repo
+    // root claude-desktop/env.json carrying FUSION_CODE_CLI_PATH — is never
+    // tried. These two reach it from either anchor:
+    //   apps/studio            → ../../env.json           = claude-desktop/env.json
+    //   apps/studio/out-electron/main → ../../../../env.json = claude-desktop/env.json
+    // existsSync-guarded and ordered last, so prod/single-package still hit the
+    // candidates above first and this never false-matches a stray file.
+    resolve(cwd, '../../env.json'),
+    resolve(selfDir, '../../../../env.json')
   ]
 }
 
