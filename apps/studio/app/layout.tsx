@@ -23,19 +23,18 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       {/* rail + 内容区的持久两栏骨架。overflow-hidden 让各路由自己管滚动
        *（聊天页的 .app 自带全高布局，canvas 是全高 iframe）。
        * bg-sidebar：rail 与窗口背景同面（原型 --rail-bg == shell root），
-       * 聊天路由的浮动卡靠阴影浮在这块面上。注意 data-surface='chat' 挂上
-       * 后 main.css 会把 body 压成 transparent（旧双 webContents 时代的
-       * 规则），所以 chat 页的卡片壳自己还画了一层 bg-sidebar 兜底。 */}
+       * 右侧内容面平铺其上、靠左缘 hairline 分隔（2026-07-08 平铺化，
+       * 见 globals.css .shell-content-card 注释）。 */}
       <body className="flex h-screen overflow-hidden bg-sidebar">
-        {/* rail 外壳：展开态放回 w-61 常驻列，收起态宽度收成 0（内容卡
+        {/* rail 外壳：展开态放回 w-61 常驻列，收起态宽度收成 0（内容面
          * flex-1 补满）+ hover 左边缘浮出。见 RailShell 头注释。 */}
         <RailShell />
-        {/* 右侧舞台（原型 .stage）：10px gutter（上/右/下三边；左侧不留，
-         * rail 自己的 padding 就是呼吸）+ 悬浮内容卡（.shell-content-card，
-         * 圆角/阴影在 globals.css）。chat 与 canvas 两棵重型树常驻卡内的
-         * SurfaceHost（layout 跨路由保活，切换只翻显隐——见其头注释），
-         * 卡是两面共用的壳层元素，切面时卡本身纹丝不动。children 是空壳
-         * page（仅承担路由命中，chat-probe 除外）。 */}
+        {/* 右侧舞台（原型 .stage）：平铺无 gutter（2026-07-08 去浮卡化，
+         * 旧版上/右/下各 10px 呼吸 + 圆角阴影浮卡）。内容面样式在
+         * globals.css 的 .shell-content-card。chat 与 canvas 两棵重型树
+         * 常驻面内的 SurfaceHost（layout 跨路由保活，切换只翻显隐——见其
+         * 头注释），面是两面共用的壳层元素，切面时本身纹丝不动。children
+         * 是空壳 page（仅承担路由命中，chat-probe 除外）。 */}
         <div className="shell-stage">
           <div className="shell-content-card">
             {children}

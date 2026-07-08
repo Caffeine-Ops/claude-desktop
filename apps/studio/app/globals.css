@@ -202,55 +202,37 @@
   }
 }
 
-/* ── 右侧舞台的 gutter（原型 .stage 的 10px 呼吸）──────────────────────
- * 内容卡四周的间距用变量表达，方便按 rail 折叠态切换（RailShell 在收起时
- * 给 <body> 加 data-rail-collapsed，见其头注释）：
- *  - 展开态：左侧不留（rail 自己的 padding 就是左呼吸），上/右/下各 10px。
- *  - 收起态：rail 撤走，左侧补回 10px，卡片四边对称 10px 悬浮。顶部不再
- *    额外让位——展开图标改放进卡片自己的 46px 标题栏那一行（红绿灯右侧、
- *    标题左侧的空白处，RailShell 里 fixed 定位到 header 高度），所以卡片
- *    顶部保持 10px，红绿灯浮在卡片标题栏左上角上方、不打架。
- * 过渡加 transition 让折叠时卡片平滑归位，不生硬跳。 */
+/* ── 右侧舞台：平铺，无 gutter（2026-07-08 用户要求去掉悬浮卡效果，
+ * docs/ui-prototype-chat-header.html 的迭代反馈）。旧版四周 10px gutter
+ * （--stage-gutter/--stage-pl 变量 + 收起态补左呼吸）让内容卡浮在灰底上，
+ * 平铺后内容面直接顶满舞台。若要改回浮卡，恢复 gutter 之外还有四处按
+ * 「header 从 y=10 起、中线 33」校准过的几何要一起回退：红绿灯 y
+ * （tabRegistry trafficLightPosition）、RailShell 收起态图标排 top、
+ * AppRail 收起按钮 translate-y、ThreadView 收起态 pl 净空。 */
 .shell-stage {
   min-width: 0;
   flex: 1 1 0%;
-  padding-top: var(--stage-gutter, 10px);
-  padding-right: var(--stage-gutter, 10px);
-  padding-bottom: var(--stage-gutter, 10px);
-  padding-left: var(--stage-pl, 0px);
-  transition: padding-left 0.2s ease-out;
-}
-body[data-rail-collapsed] .shell-stage {
-  --stage-pl: 10px;
 }
 
-/* ── 悬浮内容卡（docs/ui-prototype-shell-floating.html 的 1:1 落地）──────
- * 窗口底面 = rail 灰面（body 的 bg-sidebar），右侧内容区（chat + canvas
- * 两面共用一块卡，结构见 layout.tsx 的 stage/card 注释）浮在底面上。
- * 阴影三层：1px hairline 圈轮廓 + 近距离接触影 + 大半径环境影；暗色下
- * hairline 换成顶部 1px 内侧高光——暖黑底上黑描边不可见，浮起感靠
- * 「表面比底面亮一档（--card vs --background）+ 高光边 + 深影」表达。
- * 数值照抄原型，调整请先改原型看效果再同步回来，别在这里手拧。 */
+/* ── 内容面（chat + canvas 两面共用，结构见 layout.tsx 的 stage 注释）──
+ * 2026-07-08 起平铺：去掉浮卡的圆角 / 三层阴影 / 四周 gutter（用户要求），
+ * 内容面与 rail 灰底同一张纸，仅靠左缘 hairline 与 rail 分隔。
+ * 背景保持 --card 不改 --background：面内全部组件（气泡/工具卡/composer）
+ * 都按「白面上的元素」设计，改灰底要全组件重校对比度，不属于本次收敛。
+ * 与设置页 V2 内容面（settings-v2.css .sv2-content）配对，改必两处同步，
+ * 否则切换设置 ↔ 聊天时观感跳变。
+ * 收起态（body[data-rail-collapsed]）rail 撤走、内容面左缘即窗口左缘，
+ * hairline 换透明色——保留 1px 边宽占位，折叠切换时内容不横跳。 */
 .shell-content-card {
   position: relative;
   height: 100%;
   min-width: 0;
   overflow: hidden;
-  /* 圆角 6px——2026-07-04 用户两轮反馈调定（原型 md=14、sm=10 都嫌大）。
-     与设置页 V2 浮卡（settings-v2.css .sv2-content）配对，改必两处同步，
-     否则切换设置 ↔ 聊天时卡片圆角跳变。 */
-  border-radius: 6px;
   background: hsl(var(--card));
-  box-shadow:
-    0 0 0 1px hsl(240 6% 10% / 0.045),
-    0 1px 2px hsl(240 6% 10% / 0.05),
-    0 12px 32px hsl(240 6% 10% / 0.08);
+  border-left: 1px solid hsl(var(--border) / 0.5);
 }
-.dark .shell-content-card {
-  box-shadow:
-    inset 0 1px 0 hsl(40 20% 95% / 0.045),
-    0 0 0 1px hsl(0 0% 0% / 0.35),
-    0 16px 48px hsl(0 0% 0% / 0.5);
+body[data-rail-collapsed] .shell-content-card {
+  border-left-color: transparent;
 }
 
 /* Apple DESIGN.md §3 基础排版，对齐 desktop renderer 的全局设置。

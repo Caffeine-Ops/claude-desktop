@@ -149,15 +149,17 @@ function ChatColumnResizeHandle({
       role="separator"
       aria-orientation="vertical"
       onPointerDown={onResizeStart}
-      // w-2.5 = 10px gutter between the two white panes, painted bg-sidebar
+      // w-1.5 = 6px gutter between the two white panes, painted bg-sidebar
       // （窗口底面同款灰）。透明版透出的是 .chat-app 背后的
       // shell-content-card（--card，近白），白缝夹两白面板等于隐形，所以
-      // 必须自涂。灰缝与 rail ↔ 浮卡的 10px gutter 同色同宽。Root 保持
-      // 透明满铺（「双浮卡」方案已被否，见 Root 注释），缝的颜色只能落在
-      // 这里。The hit area spans the whole gutter so the handle is easy to
+      // 必须自涂。Root 保持透明满铺（「双浮卡」方案已被否，见 Root 注释），
+      // 缝的颜色只能落在这里。（旧浮卡时代是 10px、与 rail↔卡的 gutter
+      // 同色同宽呼应；2026-07-08 平铺化后 gutter 没了，同日用户要求缝再
+      // 收窄——6px 是拖拽热区可抓性的下限档位，别再往下压。）
+      // The hit area spans the whole gutter so the handle is easy to
       // grab; touch-none stops scroll/pan hijacking the drag; `group`
       // drives the child divider's hover reveal.
-      className="group relative flex h-full w-2.5 shrink-0 cursor-col-resize touch-none items-stretch justify-center bg-sidebar"
+      className="group relative flex h-full w-1.5 shrink-0 cursor-col-resize touch-none items-stretch justify-center bg-sidebar"
     >
       {/* The visible divider: a soft accent (green) line, invisible at rest,
           fading in on hover and while dragging (group-active). A vertical
@@ -1039,13 +1041,15 @@ function ChatHeader(): React.JSX.Element {
     // 展开态无此问题：rail（244px）整体推开 chat 列，红绿灯落 rail 顶栏、图标
     // 排不渲染。故仅收起态给外层 drag 条补左 padding，一次让过两者：外层 pl 收
     // 窄内层可用宽度、mx-auto 重新居中，分栏时把贴左标题推过图标排、非分栏时令
-    // 居中区右移同样躲开——两布局都安全。198px = 图标排右缘（x≈184）− 内容卡
-    // 左缘（stage gutter 10px）= 174 的净空基线，再 +24 让标题与图标排（尤其
-    // 紧挨的「+」新建钮）之间留出 36px 呼吸（2026-07-05 用户要求「新对话钮跟
-    // 标题加间距」，用户选 +24）。起点必须跟 tabRegistry 的 trafficLightPosition
-    // 与 RailShell 图标排 left-[100px] 联动（红绿灯/图标排右移则同增）。代价：
-    // 收起态标题不再与下方消息列严格同左缘——收起本就是特殊布局，可接受。
-    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [-webkit-app-region:drag] [body[data-rail-collapsed]_&]:pl-[198px]">
+    // 居中区右移同样躲开——两布局都安全。208px = 图标排右缘（x≈184）− 内容面
+    // 左缘（平铺后为 0，2026-07-08 stage gutter 归零，见 globals.css
+    // .shell-stage；浮卡时代左缘 10px、本值 198）= 184 的净空基线，再 +24 让
+    // 标题与图标排（尤其紧挨的「+」新建钮）之间留出呼吸（2026-07-05 用户要求
+    // 「新对话钮跟标题加间距」，用户选 +24）。起点必须跟 tabRegistry 的
+    // trafficLightPosition 与 RailShell 图标排 left-[100px] 联动（红绿灯/图标
+    // 排右移则同增）。代价：收起态标题不再与下方消息列严格同左缘——收起本就
+    // 是特殊布局，可接受。
+    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [-webkit-app-region:drag] [body[data-rail-collapsed]_&]:pl-[208px]">
       {/* 内层对齐容器：max-w-4xl + px-3 与消息列（Viewport 内层）完全同参，
           宽列时标题与消息同一左缘；slides 分栏列窄时自然退化为全宽。
           app-region:drag 必须显式加在本内层——它 h-full w-full 撑满整条

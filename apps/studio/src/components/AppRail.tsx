@@ -279,19 +279,19 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
           overlay ? '[-webkit-app-region:no-drag]' : '[-webkit-app-region:drag]'
         )}
       >
-        {/* 收起按钮与右侧内容卡标题栏（红绿灯 / 标题 / 收起态图标排）垂直
-          * 对齐（2026-07-05 用户要求）。错位根因：rail 顶栏从视口 y=0 起、
-          * items-center 让 32px 按钮中线落 y=24；而内容卡标题栏从 y=10
-          * 起（stage 的 10px gutter）+46px 高、中线在 y=33——两侧「居中」
-          * 基准差着那 10px gutter + 高度差 = 9px。用 translate-y-[9px] 把
-          * 按钮中线顶到 33（纯视觉位移，不改 flex 流、不推挤下方主按钮，
-          * 拖拽条高度语义不变）。改内容卡标题栏几何时同步核这个偏移量。 */}
+        {/* 收起按钮与右侧内容面标题栏（红绿灯 / 标题 / 收起态图标排）垂直
+          * 对齐（2026-07-05 用户要求）。rail 顶栏从视口 y=0 起、items-center
+          * 让 32px 按钮中线落 y=24；内容面标题栏平铺后也从 y=0 起（2026-07-08
+          * stage gutter 归零，见 globals.css .shell-stage）、46px 高中线在
+          * y=23——差 1px，用 -translate-y-px 补齐（纯视觉位移，不改 flex 流、
+          * 不推挤下方主按钮，拖拽条高度语义不变）。浮卡时代 header 从 y=10
+          * 起中线 33，这里曾是 translate-y-[9px]。改标题栏几何时同步核偏移。 */}
         <Button
           variant="ghost"
           size="icon-sm"
           aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
           title={collapsed ? '展开侧边栏' : '收起侧边栏'}
-          className="translate-y-[9px] text-muted-foreground [-webkit-app-region:no-drag] hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          className="-translate-y-px text-muted-foreground [-webkit-app-region:no-drag] hover:bg-sidebar-accent hover:text-sidebar-foreground"
           onClick={toggleCollapsed}
         >
           {collapsed ? (
