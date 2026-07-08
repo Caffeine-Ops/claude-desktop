@@ -199,12 +199,25 @@ export async function runKbSync(deps: KbSyncDeps): Promise<KbSyncStatus> {
       if (!isPathInsideRoot(target, outDir)) return fail(`删除目标越界：${p}`, 0)
     }
 
-    // ── rule 5：磁盘预检（statfsImpl 抛错则跳过——老 Node 前宁漏检不误伤）──────
+    // ── rule 5：磁盘预检（statfsImpl 抛错或 bsize 不可信则跳过——宁漏检不误伤）──
     try {
       const st = statfsImpl(outDir)
-      const availBytes = Number(st.bavail) * Number(st.bsize)
-      const needed = plan.toDownload.reduce((s, f) => s + f.size, 0) * 1.1
-      if (availBytes < needed) return fail('磁盘空间不足', 0)
+      const bavail = Number(st.bavail)
+      const bsize = Number(st.bsize)
+      // bsize（块大小）必须是「正有限数」才拿来算可用空间。Bun x64（1.3.14）的
+      // node:fs statfsSync 有结构体字段错位 bug——bsize 读成 0（arm64/win 正常
+      // 是 4096），availBytes 恒 = bavail*0 = 0，把任何有下载量的同步误判成
+      // 「磁盘不足」（Intel mac CI 单测集体挂的真凶，2026-07-08）。bsize 一旦
+      // ≤0 或非有限就当 statfs 不可靠、跳过预检，与「statfsImpl 抛错则跳过」同
+      // 一「宁漏检不误伤」哲学：预检只是尽力而为的早失败优化，真磁盘满了下载环节
+      // 的 writeFileSync 照样会抛、被 downloadOne 兜住计失败，不漏底。
+      // 注意只守 bsize 不守 bavail——bavail===0 是「磁盘真满」的合法信号（可用块
+      // 为 0），必须让它照常触发 fail，不能跟 bug 混为一谈。
+      if (Number.isFinite(bavail) && Number.isFinite(bsize) && bsize > 0) {
+        const availBytes = bavail * bsize
+        const needed = plan.toDownload.reduce((s, f) => s + f.size, 0) * 1.1
+        if (availBytes < needed) return fail('磁盘空间不足', 0)
+      }
     } catch {
       // statfsImpl 不可用：跳过预检。
     }
