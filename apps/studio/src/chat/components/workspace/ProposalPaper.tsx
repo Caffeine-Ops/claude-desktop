@@ -1,4 +1,11 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/src/components/ui/dropdown-menu'
 import { useProposalStore, type ProposalSection, type ImageReview } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
 import { useSettingsStore } from '../../stores/settings'
@@ -760,10 +767,12 @@ export function ProposalPaper(): React.JSX.Element {
     }
   }
 
-  // 节操作菜单项的公共样式（通铺重设计）：Notion 式 popover 菜单项——图标 + 文字，
-  // hover 淡染，禁用降透明。禁用项保留 pointer-events 以便 title 提示仍可见。
-  const menuItem =
-    'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] text-foreground hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent'
+  // 节操作菜单项的禁用态补丁（配 ui/dropdown-menu 基件）：基件禁用项
+  // data-[disabled]:pointer-events-none 会连 title 提示一起杀掉，而本菜单
+  // 的禁用项全靠 title 解释「为什么点不了」（生成中/已到区段边界）——
+  // 恢复 pointer-events 只为 hover 出 title；radix 对 disabled 项不派发
+  // onSelect，点击仍是安全的 no-op。
+  const menuItemDisabledTitle = 'data-[disabled]:pointer-events-auto'
 
   // 中文区名：每个 kind 对应面板里显示的分区标题。
   const KIND_LABEL: Record<ProposalKind, string> = {
@@ -830,149 +839,145 @@ export function ProposalPaper(): React.JSX.Element {
             : 'pointer-events-none opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100')
         }
       >
-        <button
-          className={
-            'grid size-6 place-items-center rounded-md hover:bg-muted hover:text-foreground ' +
-            (menuSecId === sec.id ? 'bg-muted text-foreground' : 'text-muted-foreground')
-          }
-          onClick={() => {
+        {/* 节操作菜单 —— ui/dropdown-menu 基件（2026-07-08 用户定稿：全项目
+            下拉菜单统一基件样式，替换自绘 popover + 全屏捕获层）。受控
+            open：menuSecId 同时驱动「手柄常显」（上方 wrapper 的 opacity）
+            与菜单开合，radix 的 outside-dismiss/Esc 经 onOpenChange 收敛回
+            同一个 state；关闭时顺带撤销删除确认武装态。动作 handler 全部
+            原样复用，只换交互外衣。 */}
+        <DropdownMenu
+          open={menuSecId === sec.id}
+          onOpenChange={(open) => {
             setConfirmDeleteId(null)
-            setMenuSecId(menuSecId === sec.id ? null : sec.id)
+            setMenuSecId(open ? sec.id : null)
           }}
-          title="节操作（AI 修订 / 移动 / 删除）"
-          aria-label="节操作菜单"
-          aria-expanded={menuSecId === sec.id}
         >
-          <GripIcon />
-        </button>
-        {menuSecId === sec.id && (
-          <>
-            {/* 点击空白处关闭（全屏透明捕获层，置于菜单下方）——与导出下拉同款模式。 */}
+          <DropdownMenuTrigger asChild>
             <button
-              type="button"
-              aria-label="关闭节操作菜单"
-              tabIndex={-1}
-              className="fixed inset-0 z-20 cursor-default"
-              onClick={() => {
-                setMenuSecId(null)
-                setConfirmDeleteId(null)
-              }}
-            />
-            <div className="proposal-anim-pop absolute left-0 top-full z-30 mt-1 w-56 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg">
-              {/* AI 修订组：仅正文节（封面/目录无修订语义）。发起【整节替换】式重写，流式中禁用。 */}
-              {sec.kind === 'content' && (
-                <>
-                  <button
-                    className={menuItem}
-                    disabled={generating}
-                    title={generating ? 'AI 生成中，请稍候' : undefined}
-                    onClick={() => {
-                      setMenuSecId(null)
-                      void reviseProposalSection(sec.id, 'rewrite')
-                    }}
-                  >
-                    <RotateCwIcon className="shrink-0 text-muted-foreground" />
-                    AI 重写本章
-                  </button>
-                  <button
-                    className={menuItem}
-                    disabled={generating}
-                    title={generating ? 'AI 生成中，请稍候' : undefined}
-                    onClick={() => {
-                      setMenuSecId(null)
-                      void reviseProposalSection(sec.id, 'expand')
-                    }}
-                  >
-                    <PlusIcon className="shrink-0 text-muted-foreground" />
-                    AI 展开（更详尽）
-                  </button>
-                  <button
-                    className={menuItem}
-                    disabled={generating}
-                    title={generating ? 'AI 生成中，请稍候' : undefined}
-                    onClick={() => {
-                      setMenuSecId(null)
-                      void reviseProposalSection(sec.id, 'shorten')
-                    }}
-                  >
-                    <MinusIcon className="shrink-0 text-muted-foreground" />
-                    AI 精简（去冗余）
-                  </button>
-                  <div className="my-1 h-px bg-border" />
-                  {/* 生成图片/上传图片入口在选区弹框（SelectionAiBubble）——图片操作需要「插到
-                      哪里」的落点，选中段落天然就是那个锚点。 */}
-                </>
-              )}
-              <button
-                className={menuItem}
-                // 生成中禁止【打开】整节源码逃生舱（review V2）：某节 blockRange 修订在飞时，若用户开
-                // 源码框改动本节使块布局变化，轮末 spliceBlocks 会按旧下标拼进错块、静默覆盖。已打开
-                // 的仍允许关闭。
-                disabled={generating && editingId !== sec.id}
-                onClick={() => {
-                  if (generating && editingId !== sec.id) return
-                  setEditingBlock(null)
-                  setEditingId(editingId === sec.id ? null : sec.id)
-                  setMenuSecId(null)
-                }}
-              >
-                {editingId === sec.id ? (
-                  <CheckIcon className="shrink-0 text-muted-foreground" />
-                ) : (
-                  <PencilIcon className="shrink-0 text-muted-foreground" />
-                )}
-                {editingId === sec.id ? '完成源码编辑' : '编辑整节源码（逃生舱）'}
-              </button>
-              {/* 上移/下移不关菜单：连续排序时不必反复重开。禁用逻辑与 moveSection 的
-                  同 kind 约束精确对齐（见 canMoveUp/Down 注释）。 */}
-              <button
-                className={menuItem}
-                disabled={!canMoveUp}
-                title={canMoveUp ? undefined : '已是本区段第一节，不能跨区段上移'}
-                onClick={() => moveSection(sec.id, 'up')}
-              >
-                <ArrowUpIcon className="shrink-0 text-muted-foreground" />
-                上移
-              </button>
-              <button
-                className={menuItem}
-                disabled={!canMoveDown}
-                title={canMoveDown ? undefined : '已是本区段最后一节，不能跨区段下移'}
-                onClick={() => moveSection(sec.id, 'down')}
-              >
-                <ArrowDownIcon className="shrink-0 text-muted-foreground" />
-                下移
-              </button>
-              {/* 分隔线：把不可逆的「删除」与上方动作分组隔开，降低误触（design-review F5）。
-                  两步确认保留：第一击武装成红底确认项（3s 无操作自动撤销，见 confirmDeleteId
-                  effect），第二击才真删。 */}
-              <div className="my-1 h-px bg-border" />
-              {confirmDeleteId === sec.id ? (
-                <button
-                  className="flex w-full items-center gap-2 rounded-md bg-rose-500 px-2.5 py-1.5 text-left text-[12px] font-medium text-white"
-                  onClick={() => {
-                    if (editingId === sec.id) setEditingId(null)
-                    if (editingBlock?.sectionId === sec.id) setEditingBlock(null)
-                    removeSection(sec.id)
-                    setConfirmDeleteId(null)
-                    setMenuSecId(null)
+              className="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground"
+              title="节操作（AI 修订 / 移动 / 删除）"
+              aria-label="节操作菜单"
+            >
+              <GripIcon />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            {/* AI 修订组：仅正文节（封面/目录无修订语义）。发起【整节替换】式重写，流式中禁用。 */}
+            {sec.kind === 'content' && (
+              <>
+                <DropdownMenuItem
+                  className={menuItemDisabledTitle}
+                  disabled={generating}
+                  title={generating ? 'AI 生成中，请稍候' : undefined}
+                  onSelect={() => {
+                    void reviseProposalSection(sec.id, 'rewrite')
                   }}
                 >
-                  <CheckIcon className="shrink-0" />
-                  再点一次确认删除
-                </button>
-              ) : (
-                <button
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] text-rose-500 hover:bg-rose-500/10"
-                  onClick={() => setConfirmDeleteId(sec.id)}
+                  <RotateCwIcon className="shrink-0" />
+                  AI 重写本章
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className={menuItemDisabledTitle}
+                  disabled={generating}
+                  title={generating ? 'AI 生成中，请稍候' : undefined}
+                  onSelect={() => {
+                    void reviseProposalSection(sec.id, 'expand')
+                  }}
                 >
-                  <TrashIcon className="shrink-0" />
-                  删除本节
-                </button>
+                  <PlusIcon className="shrink-0" />
+                  AI 展开（更详尽）
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className={menuItemDisabledTitle}
+                  disabled={generating}
+                  title={generating ? 'AI 生成中，请稍候' : undefined}
+                  onSelect={() => {
+                    void reviseProposalSection(sec.id, 'shorten')
+                  }}
+                >
+                  <MinusIcon className="shrink-0" />
+                  AI 精简（去冗余）
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {/* 生成图片/上传图片入口在选区弹框（SelectionAiBubble）——图片操作需要「插到
+                    哪里」的落点，选中段落天然就是那个锚点。 */}
+              </>
+            )}
+            <DropdownMenuItem
+              // 生成中禁止【打开】整节源码逃生舱（review V2）：某节 blockRange 修订在飞时，若用户开
+              // 源码框改动本节使块布局变化，轮末 spliceBlocks 会按旧下标拼进错块、静默覆盖。已打开
+              // 的仍允许关闭。
+              disabled={generating && editingId !== sec.id}
+              onSelect={() => {
+                setEditingBlock(null)
+                setEditingId(editingId === sec.id ? null : sec.id)
+              }}
+            >
+              {editingId === sec.id ? (
+                <CheckIcon className="shrink-0" />
+              ) : (
+                <PencilIcon className="shrink-0" />
               )}
-            </div>
-          </>
-        )}
+              {editingId === sec.id ? '完成源码编辑' : '编辑整节源码（逃生舱）'}
+            </DropdownMenuItem>
+            {/* 上移/下移不关菜单（onSelect preventDefault）：连续排序时不必反复
+                重开。禁用逻辑与 moveSection 的同 kind 约束精确对齐（见
+                canMoveUp/Down 注释）。 */}
+            <DropdownMenuItem
+              className={menuItemDisabledTitle}
+              disabled={!canMoveUp}
+              title={canMoveUp ? undefined : '已是本区段第一节，不能跨区段上移'}
+              onSelect={(e) => {
+                e.preventDefault()
+                moveSection(sec.id, 'up')
+              }}
+            >
+              <ArrowUpIcon className="shrink-0" />
+              上移
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className={menuItemDisabledTitle}
+              disabled={!canMoveDown}
+              title={canMoveDown ? undefined : '已是本区段最后一节，不能跨区段下移'}
+              onSelect={(e) => {
+                e.preventDefault()
+                moveSection(sec.id, 'down')
+              }}
+            >
+              <ArrowDownIcon className="shrink-0" />
+              下移
+            </DropdownMenuItem>
+            {/* 分隔线：把不可逆的「删除」与上方动作分组隔开，降低误触（design-review F5）。
+                两步确认保留：第一击武装成红底确认项（preventDefault 保持菜单
+                开着，3s 无操作自动撤销，见 confirmDeleteId effect），第二击
+                才真删（radix 自动关菜单，onOpenChange 清两个 state）。 */}
+            <DropdownMenuSeparator />
+            {confirmDeleteId === sec.id ? (
+              <DropdownMenuItem
+                className="bg-rose-500 font-medium text-white focus:bg-rose-600 focus:text-white [&_svg:not([class*='text-'])]:text-white"
+                onSelect={() => {
+                  if (editingId === sec.id) setEditingId(null)
+                  if (editingBlock?.sectionId === sec.id) setEditingBlock(null)
+                  removeSection(sec.id)
+                }}
+              >
+                <CheckIcon className="shrink-0" />
+                再点一次确认删除
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={(e) => {
+                  e.preventDefault()
+                  setConfirmDeleteId(sec.id)
+                }}
+              >
+                <TrashIcon className="shrink-0" />
+                删除本节
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {sec.truncated && (

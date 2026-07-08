@@ -6,6 +6,11 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useT } from '../../../i18n'
 import { findSkillChipSpec } from '../../../composer/skillChipRegistry'
 import { FileTypeIcon, fileIconPathsByKey } from '../FileTypeIcon'
+import {
+  parseSheetSelectionMessage,
+  useSheetPreviewStore,
+  type SheetSelectionMeta
+} from '../../../stores/filePreview'
 
 /* ─────────────────────── User message ──────────────────────── */
 
@@ -102,6 +107,12 @@ function ClampedUserBubble(): React.JSX.Element {
     return () => ro.disconnect()
   }, [])
 
+  // 表格预览「框选问 AI」的消息(首行协议标记,见 stores/filePreview):
+  // 不走绿气泡,渲染成结构化卡片——文件名 + 范围 + 问题;完整 TSV 只在
+  // CLI 侧文本里,不上屏。(hooks 已全部跑完,分支安全。)
+  const sheetSel = parseSheetSelectionMessage(fullText)
+  if (sheetSel) return <SheetSelectionCard meta={sheetSel} />
+
   return (
     <>
       <div
@@ -160,6 +171,87 @@ function ClampedUserBubble(): React.JSX.Element {
         <UserMessageModal text={fullText} onClose={() => setOpen(false)} />
       ) : null}
     </>
+  )
+}
+
+/**
+ * 表格选区消息(替代绿气泡)。默认收起为「💬 1 条注释」小胶囊,鼠标
+ * 移入在上方浮出完整卡片:Excel 徽章 + 文件名(点击重开预览)、
+ * 「范围:工作表!A1:B2」、用户的问题——观感对齐文档类应用的注释交互
+ * (2026-07-08 用户给的 WPS 风格参照)。
+ */
+function SheetSelectionCard({
+  meta
+}: {
+  meta: SheetSelectionMeta
+}): React.JSX.Element {
+  const t = useT()
+  return (
+    <div className="group/selcard relative">
+      {/* 收起态胶囊。hover 反馈只提边框,展开动作由浮层自己接管。 */}
+      <div className="flex cursor-default items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-[13.5px] font-medium text-foreground shadow-sm transition-colors group-hover/selcard:border-input">
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+          className="shrink-0 text-muted-foreground"
+        >
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          <path d="M8 9h8M8 13h5" />
+        </svg>
+        {t('sheetSelectionPill')}
+      </div>
+      {/* hover 浮层:pill 上方右对齐展开。opacity 过渡 + hover 时才接管
+          指针(文件名可点击重开预览);离开即收。 */}
+      <div className="pointer-events-none absolute bottom-full right-0 z-20 mb-2 w-[400px] max-w-[72vw] opacity-0 transition-opacity duration-150 group-hover/selcard:pointer-events-auto group-hover/selcard:opacity-100">
+        <div
+          data-selectable="true"
+          className="overflow-hidden rounded-2xl border border-border bg-card text-left shadow-[0_2px_6px_rgba(0,0,0,0.06),0_16px_40px_-16px_rgba(0,0,0,0.35)]"
+        >
+          <div className="px-4 pt-3">
+            <button
+              type="button"
+              disabled={!meta.path}
+              onClick={() => {
+                if (meta.path) {
+                  useSheetPreviewStore.getState().openPreview(meta.path)
+                }
+              }}
+              title={meta.path || undefined}
+              className="group/file flex max-w-full items-center gap-2 text-left"
+            >
+              <span
+                aria-hidden
+                className="grid size-5 shrink-0 place-items-center rounded-[5px] bg-[#217346] text-[10px] font-bold text-white"
+              >
+                X
+              </span>
+              <span className="truncate text-[13.5px] font-medium text-accent group-hover/file:underline">
+                {meta.name}
+              </span>
+            </button>
+            <div className="pt-1.5 text-[12.5px] text-muted-foreground">
+              {t('sheetSelectionRange')}
+              {meta.sheet ? `${meta.sheet}!` : ''}
+              {meta.range}
+            </div>
+          </div>
+          {meta.q ? (
+            <div className="whitespace-pre-wrap break-words px-4 pb-3 pt-2 text-[14px] leading-[1.5] text-foreground">
+              {meta.q}
+            </div>
+          ) : (
+            <div className="pb-3" />
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -425,15 +517,14 @@ function UserImagePart({
               aria-modal="true"
               aria-label={filename ?? t('imagePreviewAria')}
               // `WebkitAppRegion: no-drag` on the outer wrapper — the
-              // app's `.header` has `-webkit-app-region: drag` so the
-              // user can drag the window by the title bar. That
-              // property works in screen coordinates; without a
-              // `no-drag` override on the modal, the top ~48px strip
-              // (overlapping the header) would still be a window-drag
-              // zone and clicks there (backdrop dismiss, image click,
-              // close button top half) would be swallowed by the OS.
-              // `no-drag` inherits through the subtree so every
-              // interactive element in the lightbox is click-safe.
+              // root layout's `.window-drag-strip` keeps the window's
+              // top 46px a native drag zone (screen coordinates, not
+              // DOM). Without a `no-drag` override on the modal, that
+              // strip (overlapping the lightbox top) would swallow
+              // clicks there (backdrop dismiss, image click, close
+              // button top half) into a window drag. `no-drag`
+              // inherits through the subtree so every interactive
+              // element in the lightbox is click-safe.
               //
               // No onClick here — dismiss-on-backdrop lives on the blur
               // layer below so the close button's click has a clean

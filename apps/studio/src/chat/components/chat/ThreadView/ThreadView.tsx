@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ThreadPrimitive } from '@assistant-ui/react'
 import { AnimatePresence, motion } from 'motion/react'
+import { MessageSquareText, MoreHorizontal, Pencil } from 'lucide-react'
+import { Button } from '@/src/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/src/components/ui/dropdown-menu'
 
 import { useI18n, useT } from '../../../i18n'
 import { useChatStore, useDelayedSessionLoading } from '../../../stores/chat'
@@ -18,6 +26,8 @@ import {
 } from './WorkflowScriptPanel'
 import { ProposalDocPanel } from '../../workspace/ProposalDocPanel'
 import { useProposalWorkspace } from '../../../stores/proposal'
+import { SpreadsheetPreviewPanel } from './SpreadsheetPreviewPanel'
+import { useSheetPreviewStore } from '../../../stores/filePreview'
 
 /**
  * ThreadView
@@ -454,10 +464,23 @@ export function ThreadView(): React.JSX.Element {
   // 信号（toolCallId / 开关 id），流式文本的每 delta 重渲染被隔离在面板
   // 组件自身（见 useStreamingWorkflowCallId 头注释）。
   const workflowPanelWanted = useWorkflowScriptPanelOpen()
-  const showWorkflowPanel = workflowPanelWanted && !isSplitMode
-  // chat 列收窄成 rail 的诱因：slides / proposal / workflow 脚本任一右栏
-  // 打开。宽度共用同一条持久化的 chatColWidth。
-  const chatRailed = isSplitMode || showWorkflowPanel
+  // 表格预览右栏：用户点了成果卡片里的 xlsx/xls/csv。slides/proposal 分栏
+  // 时让位（卡片点击自身降级回系统应用打开，见 useSplitWorkspaceBusy）；
+  // 与 workflow 面板相争时预览赢——它是用户刚刚的显式点击，workflow 的
+  // 自动弹出不该压过它。
+  const sheetPreviewPath = useSheetPreviewStore((s) => s.path)
+  const showSheetPreview = sheetPreviewPath !== null && !isSplitMode
+  const showWorkflowPanel =
+    workflowPanelWanted && !isSplitMode && !showSheetPreview
+  // chat 列收窄成 rail 的诱因：slides / proposal / workflow 脚本 / 表格
+  // 预览任一右栏打开。宽度共用同一条持久化的 chatColWidth。
+  const chatRailed = isSplitMode || showWorkflowPanel || showSheetPreview
+  // 切会话即收起表格预览：路径虽跨会话有效（文件还在盘上），但预览是
+  // 「点开看一眼」的瞬时动作，残留一张与新会话无关的旧表格读作串台。
+  // 挂载首跑也会触发一次——closePreview 幂等，启动时 path 本就是 null。
+  useEffect(() => {
+    useSheetPreviewStore.getState().closePreview()
+  }, [sessionId])
   // Slides two-pane split is user-resizable. The chat rail used to be a
   // hard `w-[560px]` with a `border-r` hairline between the panes; per design
   // the hairline is gone (the panes now read as two separated blocks across a
@@ -736,6 +759,16 @@ export function ThreadView(): React.JSX.Element {
         </>
       ) : null}
 
+      {/* 表格预览右栏：点成果卡片里的 xlsx/xls/csv 打开，应用内直接看
+          数据。布局同 workflow 面板（chat rail 在左、面板 flex-1 在右），
+          与它互斥且优先（用户显式点击 > 自动弹出）。 */}
+      {showSheetPreview ? (
+        <>
+          <ChatColumnResizeHandle onResizeStart={onResizeStart} />
+          <SpreadsheetPreviewPanel />
+        </>
+      ) : null}
+
       {/* Workflow 脚本右栏（普通单栏会话专属，slides/proposal 分栏时让位
           ——showWorkflowPanel 已含 !isSplitMode，三列太挤）。AI 写脚本时
           自动弹出、args 定稿自动收起、点 Workflow 卡片的脚本入口手动重
@@ -936,8 +969,10 @@ function TopProgressBar(): React.JSX.Element {
 
 /**
  * Chat column header — 46px 单行顶栏（docs/ui-prototype-tool-card.html 的
- * 「标题·顶栏」定稿方案）：斜杠命令拆成绿色 mono chip、会话标题 14px、
- * 右端一枚「AI 生成」hairline 徽标，底部 hairline 让它读作一根栏。
+ * 「标题·顶栏」定稿方案 + 2026-07-08 Notion 式收敛）：斜杠命令拆成绿色
+ * mono chip、会话标题 14px 超长省略、紧跟一枚 ··· 会话操作菜单（重命名
+ * 入口，样式与 rail 行菜单配对）、右端「AI 生成」hairline 徽标，底部
+ * hairline 让它读作一根栏。
  * 取代旧的两行式（16px 标题 + 「内容由 AI 生成」副行）——副行独占一行
  * 且标题与内容列错位，读作调试信息而非会话锚点。
  *
@@ -980,6 +1015,12 @@ function ChatHeader(): React.JSX.Element {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const titleInputRef = useRef<HTMLInputElement | null>(null)
+  // ··· 菜单选「重命名」时置 true：菜单关闭的 auto-focus 默认把焦点还给
+  // trigger 按钮，会跟 useEffect 里 rename input 的 focus 打架（radix 的
+  // restore 也是异步的，晚一拍就把 input 的焦点抢走）。选中重命名的那次
+  // 关闭用它拦掉 auto-focus，让 input 独占焦点；Esc/点外关闭不受影响，
+  // 焦点照常回 trigger（键盘可达性）。
+  const pendingEditRef = useRef(false)
 
   const startEdit = useCallback((): void => {
     if (!sessionId) return
@@ -1021,43 +1062,44 @@ function ChatHeader(): React.JSX.Element {
   }, [draft, sessionId, title, setTitle, t])
 
   return (
-    // Window drag region. The chat WebContentsView is positioned at y≈gap
-    // (tabRegistry.setBounds) on a `titleBarStyle: 'hiddenInset'` window, so
-    // its top strip IS the title-bar zone — the macOS traffic lights float
-    // over its top-left. The shell's `-webkit-app-region: drag` only covers
-    // the LEFT rail (a separate webContents), so the chat surface's own header
-    // never moved the window. Marking the header a drag region fixes that.
-    // The title BUTTON (and the editor input) opt OUT via no-drag — a click
-    // there must start a rename, not a window drag — while the rest of the
-    // header (subtitle, padding) stays draggable; `select-none` keeps a
-    // press-drag on the chrome from starting a text selection.
+    // 本 header 不再声明 app-region:drag（2026-07-08 拖拽面收敛重构）：
+    // 窗口拖拽/双击缩放由根 layout 的 .window-drag-strip（常驻 fixed 全宽
+    // 46px）统一负责——header 随会话切换反复重挂载，曾经自带的 drag 声明
+    // 正是「region 上报被竞态吞掉 → 整窗拖不动」的脆弱源（globals.css 的
+    // .window-drag-strip 注释有完整事故链）。header 只剩两件事：布局，和
+    // 给顶部 46px 内的交互控件（标题按钮 / rename 输入框 / ··· 菜单）标
+    // no-drag 在 strip 上挖洞——点它们是改名/开菜单，不是拖窗。
+    // `select-none` keeps a press-drag on the chrome from starting a text
+    // selection.
     //
-    // 收起态左净空（2026-07-05）：rail 收起后 chat 列顶到窗口左缘，标题会撞
-    // 左上角两样东西——① 红绿灯（浮在窗口 x≈30~90）② 收起态图标排（RailShell
-    // 的 fixed 展开/搜索/新建，x≈100~184）。两种布局各撞一样：
-    //   · slides 分栏（chat 列窄，max-w-4xl 撑不满）→ mx-auto 内层贴左，标题
-    //     从 x≈22 起，撞红绿灯；
-    //   · 非分栏（chat 全宽）→ 内层居中，标题落 x≈160，撞图标排。
-    // 展开态无此问题：rail（244px）整体推开 chat 列，红绿灯落 rail 顶栏、图标
-    // 排不渲染。故仅收起态给外层 drag 条补左 padding，一次让过两者：外层 pl 收
-    // 窄内层可用宽度、mx-auto 重新居中，分栏时把贴左标题推过图标排、非分栏时令
-    // 居中区右移同样躲开——两布局都安全。208px = 图标排右缘（x≈184）− 内容面
-    // 左缘（平铺后为 0，2026-07-08 stage gutter 归零，见 globals.css
+    // 收起态左净空（2026-07-05，2026-07-08 标题左贴边后机制更直白）：rail
+    // 收起后 chat 列顶到窗口左缘，左贴边的标题行会依次撞上左上角两样东西
+    // ——① 红绿灯（浮在窗口 x≈30~90）② 收起态图标排（RailShell 的 fixed
+    // 展开/搜索/新建，x≈100~184）。展开态无此问题：rail（244px）整体推开
+    // chat 列，红绿灯落 rail 顶栏、图标排不渲染。故仅收起态给外层补左
+    // padding 把整行推过两者。208px = 图标排右缘（x≈184）− 内容面左缘
+    // （平铺后为 0，2026-07-08 stage gutter 归零，见 globals.css
     // .shell-stage；浮卡时代左缘 10px、本值 198）= 184 的净空基线，再 +24 让
     // 标题与图标排（尤其紧挨的「+」新建钮）之间留出呼吸（2026-07-05 用户要求
     // 「新对话钮跟标题加间距」，用户选 +24）。起点必须跟 tabRegistry 的
     // trafficLightPosition 与 RailShell 图标排 left-[100px] 联动（红绿灯/图标
-    // 排右移则同增）。代价：收起态标题不再与下方消息列严格同左缘——收起本就
-    // 是特殊布局，可接受。
-    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [-webkit-app-region:drag] [body[data-rail-collapsed]_&]:pl-[208px]">
-      {/* 内层对齐容器：max-w-4xl + px-3 与消息列（Viewport 内层）完全同参，
-          宽列时标题与消息同一左缘；slides 分栏列窄时自然退化为全宽。
-          app-region:drag 必须显式加在本内层——它 h-full w-full 撑满整条
-          header，而 app-region 不继承（外层 drag 传不进来），不标则内层默认
-          none 盖住外层 drag，标题右侧那片空白就拖不动窗口（2026-07-05 打包后
-          实锤）。标题按钮 / rename 输入框各自 no-drag 逃逸（点它们是改名不是
-          拖窗）。 */}
-      <div className="mx-auto flex h-full w-full min-w-0 max-w-4xl items-center gap-2 px-3 [-webkit-app-region:drag]">
+    // 排右移则同增）。
+    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [body[data-rail-collapsed]_&]:pl-[208px]">
+      {/* 内层容器：标题左贴边（2026-07-08 用户定稿，参考 Claude.ai 顶栏
+          「图标 + 标题 + ···」左对齐形态）。此前是 mx-auto max-w-4xl 与
+          消息列同参居中——宽窗口时标题漂在中间偏左、与左缘脱节，用户
+          否掉。px-4 与 rail 列表的左内边距呼应；「AI 生成」徽标仍 ml-auto
+          钉右端。（旧结构在外层+内层各标一份 drag——现在拖拽由根
+          .window-drag-strip 负责，声明已摘除。） */}
+      <div className="flex h-full w-full min-w-0 items-center gap-2 px-4">
+        {/* 会话图标（参考形态的左端锚点）：纯装饰的 muted 线性图标，给
+            左贴边的标题一个视觉起笔；编辑态也保留，rename 输入框展开时
+            行首不跳。 */}
+        <MessageSquareText
+          aria-hidden
+          strokeWidth={1.75}
+          className="size-4 shrink-0 text-muted-foreground/80"
+        />
         {editing ? (
           <input
             ref={titleInputRef}
@@ -1131,6 +1173,49 @@ function ChatHeader(): React.JSX.Element {
                 ) : null}
               </button>
             </h1>
+            {/* ··· 会话操作菜单（2026-07-08 用户要求，Notion 顶栏样式）：
+               紧跟截断标题右侧，超长标题省略后菜单钮仍然贴着可见文本。
+               目前只有「重命名」（与点击标题的行内编辑同一入口）；后续
+               会话级操作（删除/移动工作区…）往这里加。无会话时不渲染
+               ——菜单里全是会话操作，空态挂个禁用按钮只是噪音。
+               Content portal 到 body、脱离 .chat-app 豁免，但 shadcn 原语
+               自带 data-slot，天然逃逸 canvas 裸元素 reset（CLAUDE.md）。 */}
+            {sessionId ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('chatHeaderMenu')}
+                    title={t('chatHeaderMenu')}
+                    className="shrink-0 text-muted-foreground hover:text-foreground [-webkit-app-region:no-drag]"
+                  >
+                    <MoreHorizontal className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                {/* 样式零覆盖：菜单精修档已是 ui/dropdown-menu 基件默认
+                   （2026-07-08 晋升，见其头注释），与 rail 行菜单天然同款，
+                   不再需要手工同步数值。 */}
+                <DropdownMenuContent
+                  align="start"
+                  onCloseAutoFocus={(e) => {
+                    if (pendingEditRef.current) {
+                      pendingEditRef.current = false
+                      e.preventDefault()
+                    }
+                  }}
+                >
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      pendingEditRef.current = true
+                      startEdit()
+                    }}
+                  >
+                    <Pencil strokeWidth={1.75} /> {t('renameChat')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
           </>
         )}
         {/* 「AI 生成」合规声明：从独占一行的副行收敛为右端 hairline 徽标。 */}

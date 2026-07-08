@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { MessagePrimitive, useMessage } from '@assistant-ui/react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/src/components/ui/dropdown-menu'
 import { useI18n } from '../../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../../stores/chat'
+import {
+  useSheetPreviewStore,
+  useSplitWorkspaceBusy
+} from '../../../stores/filePreview'
 import { ThinkingSpinner } from '../ThinkingSpinner'
 import { AssistantMarkdown } from '../AssistantMarkdown'
 import { ToolCallCard } from './ToolCallCard'
@@ -111,65 +120,25 @@ function DeliverableCard({
 }): React.JSX.Element {
   const lang = useI18n((s) => s.lang)
   const zh = lang === 'zh'
-  const reduce = useReducedMotion()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement | null>(null)
-  const triggerRef = useRef<HTMLButtonElement | null>(null)
-  // Screen-space anchor for the portal'd menu. The card block sits inside an
-  // `overflow-hidden` rounded container (see AssistantDeliverables), so an
-  // in-flow `absolute` popover gets clipped — the menu HAS to render in a
-  // body-level portal with `position: fixed`, anchored to the trigger's rect.
-  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(
-    null
-  )
   const name = path.split('/').pop() ?? path
   const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
   const kind = deliverableKind(ext)
+  // 表格文件点击 → 应用内预览面板（分割右栏，见 SpreadsheetPreviewPanel）。
+  // slides/proposal 分栏时右栏被工作区占用、预览面板让位，此时降级回
+  // 系统应用打开——点了必须有反应。外部打开始终留在打开方式菜单里。
+  const previewableSheet = ext === 'xlsx' || ext === 'xls' || ext === 'csv'
+  const splitBusy = useSplitWorkspaceBusy()
 
-  // Close the 打开方式 menu on any outside press. The menu is portal'd to the
-  // body, so the trigger and the menu are in two separate subtrees — check
-  // both refs before dismissing.
-  useEffect(() => {
-    if (!menuOpen) return
-    const onDown = (e: MouseEvent): void => {
-      const t = e.target as Node
-      if (
-        menuRef.current?.contains(t) ||
-        triggerRef.current?.contains(t)
-      ) {
-        return
-      }
-      setMenuOpen(false)
-    }
-    // fixed-positioned menu doesn't follow scroll — close it instead of
-    // letting it float detached from the trigger.
-    const onScroll = (): void => {
-      setMenuOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    window.addEventListener('scroll', onScroll, true)
-    window.addEventListener('resize', onScroll)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      window.removeEventListener('scroll', onScroll, true)
-      window.removeEventListener('resize', onScroll)
-    }
-  }, [menuOpen])
-
-  const toggleMenu = (): void => {
-    if (menuOpen) {
-      setMenuOpen(false)
-      return
-    }
-    const r = triggerRef.current?.getBoundingClientRect()
-    if (r) {
-      setAnchor({ top: r.bottom + 4, right: window.innerWidth - r.right })
-    }
-    setMenuOpen(true)
+  const openExternal = (): void => {
+    void window.chatApi.openPath({ absPath: path })
   }
 
   const open = (): void => {
-    void window.chatApi.openPath({ absPath: path })
+    if (previewableSheet && !splitBusy) {
+      useSheetPreviewStore.getState().openPreview(path)
+      return
+    }
+    openExternal()
   }
 
   return (
@@ -228,130 +197,79 @@ function DeliverableCard({
           </span>
         </span>
       </button>
-      {/* 打开方式 pill — trigger stays in flow; the popover is portal'd so it
-          escapes the AssistantDeliverables `overflow-hidden` clip. Softened
-          fill so it no longer out-shouts the filename. */}
+      {/* 打开方式 pill —— 菜单走 ui/dropdown-menu 基件（2026-07-08 用户
+          定稿：全项目下拉菜单统一基件样式，替换掉这里的自绘 popover）。
+          换基件顺带治好两个历史坑，不再需要手工代码：
+           · overflow-hidden 裁剪 —— 基件 Content 自带 body portal + 自动
+             锚定/避让（旧版手算 fixed anchor + scroll/resize 监听关闭）；
+           · canvas 裸 button reset 泄漏 —— radix Item 是 div 且基件带
+             data-slot，portal 出 .chat-app 也不会被填成描边卡片
+             （2026-07-04「菜单每行一个框」事故）。 */}
       <div className="shrink-0">
-        <button
-          ref={triggerRef}
-          type="button"
-          onClick={toggleMenu}
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-background/60 pl-3 pr-2.5 text-[12px] font-medium text-foreground transition-colors duration-150 hover:bg-muted"
-        >
-          {zh ? '打开方式' : 'Open with'}
-          <svg
-            viewBox="0 0 10 10"
-            className={
-              'size-2.5 text-muted-foreground transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ' +
-              (menuOpen ? 'rotate-180' : '')
-            }
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-          >
-            <path d="M2 3.5l3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-        {createPortal(
-          <AnimatePresence>
-            {menuOpen && anchor && (
-              <motion.div
-                ref={menuRef}
-                role="menu"
-                style={{
-                  top: anchor.top,
-                  right: anchor.right,
-                  transformOrigin: 'top right'
-                }}
-                initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: -6 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: -6 }}
-                transition={
-                  reduce
-                    ? { duration: 0.12 }
-                    : { type: 'spring', bounce: 0.18, visualDuration: 0.2 }
-                }
-                // p-1（4px）配 rounded-xl（12px）外框 + rounded-lg（8px）行：
-                // 12 − 4 = 8，内外圆角同心，行 hover 高亮与外框间距均匀。
-                className="fixed z-[100] w-48 overflow-hidden rounded-xl border border-border/70 bg-popover p-1 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.35),0_2px_8px_rgba(0,0,0,0.08)]"
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="group/owb inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-background/60 pl-3 pr-2.5 text-[12px] font-medium text-foreground transition-colors duration-150 hover:bg-muted"
+            >
+              {zh ? '打开方式' : 'Open with'}
+              <svg
+                viewBox="0 0 10 10"
+                className="size-2.5 text-muted-foreground transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-data-[state=open]/owb:rotate-180"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
               >
-                <DeliverableMenuItem
-                  onClick={() => {
-                    setMenuOpen(false)
-                    open()
-                  }}
-                  label={zh ? '打开' : 'Open'}
-                  icon={
-                    <path
-                      d="M10 3v10m0 0l-3.5-3.5M10 13l3.5-3.5M4 16h12"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  }
+                <path d="M2 3.5l3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            {/* 表格卡片的主点击已被应用内预览接管，菜单里这一项就是
+                「还是想用 Excel/Numbers 开」的出口，label 说清楚去向。 */}
+            <DropdownMenuItem onSelect={openExternal}>
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              >
+                <path
+                  d="M10 3v10m0 0l-3.5-3.5M10 13l3.5-3.5M4 16h12"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
-                <DeliverableMenuItem
-                  onClick={() => {
-                    setMenuOpen(false)
-                    void window.chatApi.revealPath({ absPath: path })
-                  }}
-                  label={zh ? '在 Finder 中显示' : 'Reveal in Finder'}
-                  icon={
-                    <path
-                      d="M3 5.5h5l1.5 2h7.5v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-11z"
-                      strokeLinejoin="round"
-                    />
-                  }
+              </svg>
+              {previewableSheet
+                ? zh
+                  ? '用系统应用打开'
+                  : 'Open in default app'
+                : zh
+                  ? '打开'
+                  : 'Open'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                void window.chatApi.revealPath({ absPath: path })
+              }}
+            >
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              >
+                <path
+                  d="M3 5.5h5l1.5 2h7.5v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-11z"
+                  strokeLinejoin="round"
                 />
-              </motion.div>
-            )}
-          </AnimatePresence>,
-          document.body
-        )}
+              </svg>
+              {zh ? '在 Finder 中显示' : 'Reveal in Finder'}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
-  )
-}
-
-/**
- * One row inside the 打开方式 popover: leading line-icon + label, with a
- * muted hover wash. Icon paths are passed in as children of a shared 20×20
- * stroke SVG so every item lines up on the same grid.
- */
-function DeliverableMenuItem({
-  onClick,
-  label,
-  icon
-}: {
-  onClick: () => void
-  label: string
-  icon: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      // ⚠️ data-slot 是功能性的，不是装饰：本按钮 portal 到 document.body，
-      // 不在 .chat-app 子树内，canvas 的裸 button reset
-      // （base.css `button:where(:not([data-slot], .chat-app *))`）会把它
-      // 填成描边卡片——2026-07-04 用户实拍「菜单每行一个框」就是这个泄漏。
-      // portal 出 .chat-app 的任何裸交互元素都必须带 data-slot 逃逸。
-      data-slot="deliverable-menu-item"
-      onClick={onClick}
-      className="group/item flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[13px] font-medium text-foreground transition-colors duration-100 hover:bg-muted active:bg-muted/70"
-    >
-      <svg
-        viewBox="0 0 20 20"
-        className="size-[15px] shrink-0 text-muted-foreground transition-colors duration-100 group-hover/item:text-foreground"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.6"
-      >
-        {icon}
-      </svg>
-      {label}
-    </button>
   )
 }
 

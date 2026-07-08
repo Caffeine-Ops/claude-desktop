@@ -172,9 +172,11 @@ export function WorkflowScriptPanel(): React.JSX.Element | null {
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card">
       {/* 顶栏 —— 46px 与 ChatHeader 同高同 hairline，分栏两根栏底边对齐
-          成一条（同 SlidesWorkspace tab 栏的对齐纪律）。整条标 drag 兼作
-          窗口拖拽面（本列顶部只有它），关闭按钮 no-drag 逃逸。 */}
-      <div className="flex h-[46px] shrink-0 select-none items-center gap-2 border-b border-border/55 px-3.5 [-webkit-app-region:drag]">
+          成一条（同 SlidesWorkspace tab 栏的对齐纪律）。窗口拖拽由根
+          layout 的 .window-drag-strip 统一负责（2026-07-08 收敛重构，
+          见 globals.css），本栏不声明 drag；关闭按钮 no-drag 在 strip
+          上挖洞。 */}
+      <div className="flex h-[46px] shrink-0 select-none items-center gap-2 border-b border-border/55 px-3.5">
         <svg
           width="14"
           height="14"

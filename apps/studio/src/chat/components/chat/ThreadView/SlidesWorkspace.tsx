@@ -327,17 +327,15 @@ export function SlidesWorkspace(): React.JSX.Element {
     // @container/workspace：分栏里视口断点失真，tab 栏的窄档适配（就绪
     // 胶囊降级）用容器查询。容器断点：lg=512 xl=576px。
     <div className="@container/workspace flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card">
-      {/* Tab bar —— 兼作 slides 列（右列）的窗口拖拽面。
-          分栏时本 bar 占据右列顶栏那一横，ChatHeader（在左列）够不到这里，
-          所以右列顶部的窗口拖拽只能由本 bar 自己承担——不标 drag 的话，tab
-          右侧那大片空白就拖不动窗口（2026-07-05 打包后实锤）。整条 bar 标
-          drag、tab 按钮各自 no-drag 逃逸（点 tab 是切换视图不是拖窗）。
-          「tab 点不动」的历史真因早已实锤不是本 bar 的 drag/no-drag 嵌套（是
-          SurfaceHost 隐藏面全宽 drag 顶栏罩住本 bar，已由 globals.css 的
-          .surface-inactive 修复），故此处恢复 drag 安全。
+      {/* Tab bar —— 不再自带窗口拖拽 drag（2026-07-08 拖拽面收敛重构）：
+          右列顶部的拖拽/双击缩放由根 layout 的 .window-drag-strip（常驻
+          fixed 全宽 46px）覆盖，本 bar 曾经的 drag 声明随分栏开合反复
+          增删矩形，是「上报竞态 → 整窗拖不动」的脆弱源之一（globals.css
+          的 .window-drag-strip 注释有完整事故链）。tab 按钮保留 no-drag
+          ——在 strip 上挖洞，点 tab 是切换视图不是拖窗。
           h-[46px] 与 ChatHeader 严格同高、同 hairline——分栏两根栏并排底边
           对齐成一条（2026-07-04 顶栏化改版）。 */}
-      <div className="flex h-[46px] shrink-0 select-none items-center gap-0.5 border-b border-border/55 px-2 [-webkit-app-region:drag]">
+      <div className="flex h-[46px] shrink-0 select-none items-center gap-0.5 border-b border-border/55 px-2">
         {tabs.map((tDef) => {
           const active = tDef.id === tab
           // Pulsing dot whenever this tab's content is changing — including the

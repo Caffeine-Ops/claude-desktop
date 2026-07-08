@@ -1,4 +1,11 @@
 import { Fragment, useEffect, useState } from 'react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/src/components/ui/dropdown-menu'
 import { useProposalStore, useProposalWorkspace, type ProposalProduct } from '../../stores/proposal'
 import { useProposalStyleStore } from '../../stores/proposalStyle'
 import { useChatStore } from '../../stores/chat'
@@ -114,7 +121,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   const [confirmingNew, setConfirmingNew] = useState(false)
   // 导出下拉菜单（重设计 A）：顶栏唯一导出入口，点开列 Word/PDF/Markdown（各带用途说明）+
   // 「调整样式模板…」。取代旧的「导出 Word 按钮 + ⚙ 两处散落 + 弹窗里又一组导出」的混乱布局。
-  const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  // 2026-07-08 起走 ui/dropdown-menu 基件（radix 管开合/outside-dismiss），不再自持 open state。
   // 样式模板弹窗：现退化为【纯调样式】（选模板 + 实时预览 + 微调 + 应用），不再是导出入口——
   // 导出统一收敛到上面的下拉，消除「两处导出」。由下拉里的「调整样式模板…」打开。
   const [styleModalOpen, setStyleModalOpen] = useState(false)
@@ -129,7 +136,6 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   // 及输入框内容。提交后置空、清编辑态——补料经 fillProposalGap 走定点续写，AI 重写该章删掉缺口标记。
   const [fillingKey, setFillingKey] = useState<string | null>(null)
   const [fillText, setFillText] = useState('')
-  const [productPickerOpen, setProductPickerOpen] = useState(false)
   const [allKbProducts, setAllKbProducts] = useState<ProposalProduct[]>([])
   async function loadKbProducts(): Promise<void> {
     try {
@@ -283,7 +289,13 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     // proposal-feature：作用域 class，让 index.css 给区内所有可聚焦控件统一补 focus-visible
     // 焦点环（design-review F6）；Paper/Preview/StyleModal 都在本根 DOM 子树内，一处全覆盖。
     <div className="proposal-feature relative flex min-w-0 flex-1 flex-col border-l border-border bg-background text-foreground">
-      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+      {/* 顶栏：h-[46px] + hairline /55 与 ChatHeader / slides tab 栏同参——
+          分栏各列顶栏底边对齐成一条（2026-07-08 统一，旧 py-2 自适应高
+          ≈40px 与左列 46px 错位）。窗口拖拽由根 .window-drag-strip 覆盖
+          本列顶部（本栏历来没标过 drag，右列顶部空白拖不动窗口的问题
+          顺带修复）；栏内交互控件必须 no-drag 在 strip 上挖洞，否则点击
+          被原生拖拽吞掉（globals.css 的 .window-drag-strip 纪律）。 */}
+      <div className="flex h-[46px] shrink-0 select-none items-center justify-between gap-2 border-b border-border/55 px-3 text-xs text-muted-foreground">
         <span className="flex min-w-0 items-center gap-2">
           <span className="whitespace-nowrap text-[13px] font-semibold text-foreground">方案草稿</span>
           {/* 状态呼吸灯：live=品牌绿+ping 扩散点（AI 正在写）、wait=琥珀（等用户确认目录）、
@@ -319,8 +331,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         </span>
 
         {/* 编辑 ｜ 预览 segmented：muted 槽底 + 选中项白卡浮起（bg-card + shadow）——
-            原先容器用 card 白底，选中项 bg-background 与之几乎同色，选中态看不出来。 */}
-        <div className="inline-flex rounded-lg bg-muted p-0.5">
+            原先容器用 card 白底，选中项 bg-background 与之几乎同色，选中态看不出来。
+            no-drag：本栏在窗口拖拽带（顶部 46px）内，不挖洞点击会被拖窗吞掉。 */}
+        <div className="inline-flex rounded-lg bg-muted p-0.5 [-webkit-app-region:no-drag]">
           <button
             className={
               'inline-flex items-center gap-1 rounded-md px-3 py-1 transition-colors ' +
@@ -345,7 +358,8 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           </button>
         </div>
 
-        <div className="flex items-center gap-1">
+        {/* no-drag 一次盖住右侧整组（清空草稿 / 导出下拉 trigger）——同 segmented。 */}
+        <div className="flex items-center gap-1 [-webkit-app-region:no-drag]">
           {/* 再入入口不在此处——面板只在工作台接管时存在，「返回」后整个隐藏，故再入
               由左侧「写方案」卡触发（已 active 时只重开 workspaceOpen、不清草稿）。 */}
           {/* 新建/清空：唯一显式丢弃草稿的入口（reopen/leaveMode 都保草稿，只有这里调 start
@@ -397,89 +411,75 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           {/* 导出下拉（重设计 A）：唯一导出入口。三格式各带一句用途说明，让「这个按钮干嘛用」
               一目了然；分隔线下「调整样式模板…」打开纯调样式弹窗。Word/PDF 用当前已生效样式
               （useProposalStyleStore，跨会话持久）；先调样式就先走「调整样式模板…」应用再导出。 */}
-          <div className="relative">
-            <button
-              className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-50"
-              disabled={exporting}
-              onClick={() => setExportMenuOpen((o) => !o)}
-              title="导出方案（Word / PDF / Markdown）"
-            >
-              {exporting ? '导出中…' : (
-                <>
-                  导出
-                  <ChevronDownIcon />
-                </>
-              )}
-            </button>
-            {exportMenuOpen && (
-              <>
-                {/* 点击空白处关闭（全屏透明捕获层，置于菜单下方）。 */}
-                <button
-                  type="button"
-                  aria-label="关闭导出菜单"
-                  tabIndex={-1}
-                  className="fixed inset-0 z-20 cursor-default"
-                  onClick={() => setExportMenuOpen(false)}
-                />
-                <div className="proposal-anim-pop absolute right-0 top-full z-30 mt-1 w-60 overflow-hidden rounded-lg border border-border bg-background py-1 text-foreground shadow-lg">
-                  <button
-                    type="button"
-                    className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-muted"
-                    onClick={() => {
-                      setExportMenuOpen(false)
-                      void handleExport('docx', useProposalStyleStore.getState().config)
-                    }}
-                  >
-                    <FileTextIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0">
-                      <span className="block text-[12px] font-medium">Word（.docx）</span>
-                      <span className="block text-[11px] text-muted-foreground">交付客户、可继续编辑</span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-muted"
-                    onClick={() => {
-                      setExportMenuOpen(false)
-                      void handleExportPdf(useProposalStyleStore.getState().config)
-                    }}
-                  >
-                    <FileIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0">
-                      <span className="block text-[12px] font-medium">PDF</span>
-                      <span className="block text-[11px] text-muted-foreground">定稿发送、排版固定</span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-muted"
-                    onClick={() => {
-                      setExportMenuOpen(false)
-                      void handleExport('md')
-                    }}
-                  >
-                    <FileCodeIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0">
-                      <span className="block text-[12px] font-medium">Markdown</span>
-                      <span className="block text-[11px] text-muted-foreground">纯文本、便于版本管理</span>
-                    </span>
-                  </button>
-                  <div className="my-1 border-t border-border" />
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onClick={() => {
-                      setExportMenuOpen(false)
-                      setStyleModalOpen(true)
-                    }}
-                  >
-                    <SlidersIcon className="size-4 shrink-0" />
-                    调整样式模板…
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+          {/* 导出下拉 —— ui/dropdown-menu 基件（2026-07-08 用户定稿：全项目
+              下拉菜单统一基件样式）。radix 自带 portal + outside-dismiss，
+              旧版的全屏捕获层（连同它的 app-region:no-drag 补丁）与
+              proposal-anim-pop 自绘动画随之退役。双行 item（标题+用途说明）
+              用 items-start 覆盖基件的 items-center，其余全走基件默认。 */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-50"
+                disabled={exporting}
+                title="导出方案（Word / PDF / Markdown）"
+              >
+                {exporting ? '导出中…' : (
+                  <>
+                    导出
+                    <ChevronDownIcon />
+                  </>
+                )}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-60">
+              <DropdownMenuItem
+                className="items-start"
+                onSelect={() => {
+                  void handleExport('docx', useProposalStyleStore.getState().config)
+                }}
+              >
+                <FileTextIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0">
+                  <span className="block font-medium">Word（.docx）</span>
+                  <span className="block text-[11px] text-muted-foreground">交付客户、可继续编辑</span>
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="items-start"
+                onSelect={() => {
+                  void handleExportPdf(useProposalStyleStore.getState().config)
+                }}
+              >
+                <FileIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0">
+                  <span className="block font-medium">PDF</span>
+                  <span className="block text-[11px] text-muted-foreground">定稿发送、排版固定</span>
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="items-start"
+                onSelect={() => {
+                  void handleExport('md')
+                }}
+              >
+                <FileCodeIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0">
+                  <span className="block font-medium">Markdown</span>
+                  <span className="block text-[11px] text-muted-foreground">纯文本、便于版本管理</span>
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-muted-foreground"
+                onSelect={() => {
+                  setStyleModalOpen(true)
+                }}
+              >
+                <SlidersIcon className="size-4 shrink-0" />
+                调整样式模板…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -743,52 +743,55 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           ))
         )}
         {/* + 添加产品（方案三·chip 可增）：从 KB 索引列出全部可选产品，补 matchProducts 漏识别的，
-            把「用哪些产品写」的决策权交还用户。空集时也显示，便于零识别时手动指定。 */}
-        <div className="relative">
-          <button
-            type="button"
-            className="rounded-md border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-accent hover:text-accent"
-            onClick={() => {
-              if (!productPickerOpen) void loadKbProducts()
-              setProductPickerOpen(!productPickerOpen)
-            }}
-            title="手动添加知识库里的产品"
-          >
-            + 添加产品
-          </button>
-          {productPickerOpen && (
-            <div className="proposal-anim-pop absolute left-0 top-full z-20 mt-1 max-h-64 w-72 overflow-auto rounded-lg border border-border bg-background p-1 shadow-lg">
-              {(() => {
-                const picked = new Set(products.map((p) => `${p.productLine}::${p.product}`))
-                const avail = allKbProducts.filter(
-                  (p) => !picked.has(`${p.productLine}::${p.product}`)
+            把「用哪些产品写」的决策权交还用户。空集时也显示，便于零识别时手动指定。
+            ui/dropdown-menu 基件（2026-07-08 统一）：开合/outside-dismiss 归 radix，
+            打开瞬间经 onOpenChange 惰加载 KB 产品清单（原 onClick 逻辑原样搬入）。
+            item 收紧到 py-1 + 12px——这是几十项的选择列表不是动作菜单，密度优先。 */}
+        <DropdownMenu
+          onOpenChange={(open) => {
+            if (open) void loadKbProducts()
+          }}
+        >
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="rounded-md border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-accent hover:text-accent"
+              title="手动添加知识库里的产品"
+            >
+              + 添加产品
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="max-h-64 w-72">
+            {(() => {
+              const picked = new Set(products.map((p) => `${p.productLine}::${p.product}`))
+              const avail = allKbProducts.filter(
+                (p) => !picked.has(`${p.productLine}::${p.product}`)
+              )
+              if (avail.length === 0) {
+                return (
+                  <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                    没有更多可添加的产品（或知识库索引为空）
+                  </div>
                 )
-                if (avail.length === 0) {
-                  return (
-                    <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
-                      没有更多可添加的产品（或知识库索引为空）
-                    </div>
-                  )
-                }
-                return avail.map((p) => (
-                  <button
-                    type="button"
-                    key={`${p.productLine}::${p.product}`}
-                    className="block w-full truncate rounded px-2 py-1 text-left text-[11px] hover:bg-muted"
-                    onClick={() => {
-                      setProducts([...products, p])
-                      setProductPickerOpen(false)
-                    }}
-                    title={`${p.productLine} / ${p.product}`}
-                  >
+              }
+              return avail.map((p) => (
+                <DropdownMenuItem
+                  key={`${p.productLine}::${p.product}`}
+                  className="py-1 text-[12px]"
+                  onSelect={() => {
+                    setProducts([...products, p])
+                  }}
+                  title={`${p.productLine} / ${p.product}`}
+                >
+                  <span className="min-w-0 truncate">
                     <span className="text-muted-foreground">{p.productLine} / </span>
                     {p.product}
-                  </button>
-                ))
-              })()}
-            </div>
-          )}
-        </div>
+                  </span>
+                </DropdownMenuItem>
+              ))
+            })()}
+          </DropdownMenuContent>
+        </DropdownMenu>
         {/* 检索工具收右端：与左侧「产品集」分区（chips 是输入、工具是探查），展开中的
             工具亮 accent 淡染底作 on 态——原 dashed 描边样式与「+ 添加产品」同形，会被
             误读成又一个添加入口。 */}

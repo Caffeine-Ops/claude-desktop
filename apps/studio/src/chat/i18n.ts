@@ -105,6 +105,7 @@ const STRINGS = {
     renameChatPrompt: '为这个会话起一个新名字',
     renameChatFailed: '重命名失败',
     renameChatSave: '保存名称',
+    chatHeaderMenu: '会话操作',
     searchChats: '搜索对话',
     searchChatsPlaceholder: '搜索对话标题和内容…',
     searchRecent: '最近对话',
@@ -352,6 +353,26 @@ const STRINGS = {
     workflowScriptClose: '关闭脚本面板',
     workflowScriptEntryOpen: '查看脚本',
 
+    // Spreadsheet preview panel (right pane, opened from deliverable
+    // file cards for xlsx / xls / csv).
+    sheetPreviewOpenExternal: '用系统应用打开',
+    sheetPreviewClose: '关闭表格预览',
+    sheetPreviewLoading: '正在读取表格',
+    sheetPreviewError: '无法预览此表格',
+    sheetPreviewEmpty: '这个工作表是空的',
+    sheetPreviewDims: '{rows} 行 × {cols} 列',
+    sheetPreviewTruncated: '表格较大，仅显示前 {rows} 行（共 {total} 行）',
+    sheetPreviewZoomIn: '放大',
+    sheetPreviewZoomOut: '缩小',
+    sheetPreviewZoomReset: '恢复 100%',
+    sheetPreviewAskPlaceholder: '针对选区问点什么…',
+    sheetPreviewCopy: '复制选区',
+    sheetPreviewSend: '发送给 AI',
+    sheetPreviewStale: '刷新以查看最新内容',
+    sheetPreviewStaleDismiss: '忽略此次变更',
+    sheetSelectionRange: '范围:',
+    sheetSelectionPill: '1 条注释',
+
     // Settings → General → CLI backend
     cliBackendTitle: 'CLI 后端',
     cliBackendDesc:
@@ -414,6 +435,7 @@ const STRINGS = {
     renameChatPrompt: 'Enter a new name for this chat',
     renameChatFailed: 'Rename failed',
     renameChatSave: 'Save name',
+    chatHeaderMenu: 'Chat actions',
     searchChats: 'Search chats',
     searchChatsPlaceholder: 'Search chat titles and messages…',
     searchRecent: 'Recent chats',
@@ -653,6 +675,24 @@ const STRINGS = {
     workflowScriptLines: '{count} lines',
     workflowScriptClose: 'Close script panel',
     workflowScriptEntryOpen: 'View script',
+
+    sheetPreviewOpenExternal: 'Open in default app',
+    sheetPreviewClose: 'Close spreadsheet preview',
+    sheetPreviewLoading: 'Loading spreadsheet',
+    sheetPreviewError: 'Cannot preview this spreadsheet',
+    sheetPreviewEmpty: 'This sheet is empty',
+    sheetPreviewDims: '{rows} rows × {cols} cols',
+    sheetPreviewTruncated: 'Large sheet — showing first {rows} of {total} rows',
+    sheetPreviewZoomIn: 'Zoom in',
+    sheetPreviewZoomOut: 'Zoom out',
+    sheetPreviewZoomReset: 'Reset to 100%',
+    sheetPreviewAskPlaceholder: 'Ask about the selection…',
+    sheetPreviewCopy: 'Copy selection',
+    sheetPreviewSend: 'Send to AI',
+    sheetPreviewStale: 'Refresh to see latest changes',
+    sheetPreviewStaleDismiss: 'Dismiss this change',
+    sheetSelectionRange: 'Range: ',
+    sheetSelectionPill: '1 note',
 
     cliBackendTitle: 'CLI backend',
     cliBackendDesc:
