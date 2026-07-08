@@ -727,21 +727,28 @@ export function ProposalDocPanel(): React.JSX.Element | null {
               className="inline-flex items-center gap-1 rounded-md border border-accent/25 bg-accent/10 px-1.5 py-0.5 text-[11px] text-foreground"
             >
               {p.product}
-              <button
-                type="button"
-                aria-label={`移除 ${p.product}`}
-                className="grid size-3.5 place-items-center rounded-sm text-muted-foreground hover:bg-accent/20 hover:text-foreground"
-                onClick={() =>
-                  setProducts(
-                    products.filter((x) => !(x.productLine === p.productLine && x.product === p.product))
-                  )
-                }
-              >
-                <XIcon />
-              </button>
+              {/* 删除 ✕ 仅编辑态：预览页头部只做展示、不做修改（用户要求 2026-07-08）。 */}
+              {mode === 'edit' && (
+                <button
+                  type="button"
+                  aria-label={`移除 ${p.product}`}
+                  className="grid size-3.5 place-items-center rounded-sm text-muted-foreground hover:bg-accent/20 hover:text-foreground"
+                  onClick={() =>
+                    setProducts(
+                      products.filter((x) => !(x.productLine === p.productLine && x.product === p.product))
+                    )
+                  }
+                >
+                  <XIcon />
+                </button>
+              )}
             </span>
           ))
         )}
+        {/* 交互入口（添加产品 + 检索工具）仅编辑态可见：预览页头部只做展示、不做修改，
+            要调整产品或探查检索，请回到编辑态、或直接找 AI 对话（用户要求 2026-07-08）。 */}
+        {mode === 'edit' && (
+          <>
         {/* + 添加产品（方案三·chip 可增）：从 KB 索引列出全部可选产品，补 matchProducts 漏识别的，
             把「用哪些产品写」的决策权交还用户。空集时也显示，便于零识别时手动指定。 */}
         <div className="relative">
@@ -822,11 +829,13 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             <SearchIcon /> 语义搜索
           </button>
         </span>
+          </>
+        )}
       </div>
 
       {/* 召回预览面板（方案三·只读）：输关键词 → 显示当前产品集下知识库 top 召回片段。让「检索
           命中什么」对用户可见，不再只靠正文红条反推。 */}
-      {retrievalOpen && (
+      {retrievalOpen && mode === 'edit' && (
         <div className="proposal-anim-fade space-y-1.5 border-b border-border px-3 py-2">
           {/* 说明文字（方案三）：先讲清这是什么、不影响生成，降低「召不回是不是坏了」的误会。 */}
           <div className="text-[11px] leading-snug text-muted-foreground">
@@ -884,7 +893,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
 
       {/* 语义搜索面板（Task 8）：混合向量+BM25 检索，与召回预览（BM25 词面）互补。
           结果卡含复制引用（剪贴板）+ 打开文档（openPath）。staleIndex → 提示重建。 */}
-      {semanticSearchOpen && (
+      {semanticSearchOpen && mode === 'edit' && (
         <KbSemanticSearchPanel products={products} />
       )}
 
