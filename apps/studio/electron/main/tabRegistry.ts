@@ -502,6 +502,34 @@ export function activateTab(id: number): void {
   activeTabId = id
   layoutActiveTab()
 
+  // ── 强制重采集原生窗口拖拽区（2026-07-08，「切换几次页面后顶栏拖不动/
+  // 双击不放大」实锤；Electron #20926「app-region drag stops working when
+  // BrowserView is changed」同族）。原生拖拽矩形是事件驱动 + 缓存：renderer
+  // 只在自己文档的 draggable region 集合发生**增量变化**时才上报
+  // DraggableRegionsChanged。view 被 removeChildView 再 addChildView 挂回
+  // 时，renderer 侧集合没有任何变化 → 不重新上报 → 原生层对刚挂回的 view
+  // 持陈旧/丢失的矩形，CSS 层查什么都是对的、只有真实鼠标暴露。renderer
+  // 感知不到 swap，唯一知道 swap 发生的就是这里——注入一次「探针瞬时压
+  // no-drag → 双 rAF 保证该拍被 commit → 恢复」的扰动，一缩一放必然逼出
+  // 两次上报（事件全量上报，原生缓存整体刷新）。`.region-refresh` 规则与
+  // 探针元素在 studio 的 globals.css / layout.tsx（SurfaceHost 切面路径与
+  // 此共用同一套类；2026-07-08 从全文档 `*` 压平收窄为探针，收窄原因见
+  // globals.css 注释），非 studio 文档（splash 等）无此规则、脚本自然
+  // no-op。页面尚在加载时 executeJavaScript 可能 reject——吞掉即可，
+  // 首次加载完成本来就是全新采集，无需扰动。
+  target.view.webContents
+    .executeJavaScript(
+      `(() => {
+        const root = document.documentElement
+        root.classList.add('region-refresh')
+        void root.offsetHeight
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          root.classList.remove('region-refresh')
+        }))
+      })()`
+    )
+    .catch(() => {})
+
   // 兜底 show：窗口的首次显示正常挂在 splash 首帧（loadSplashIntoShell），
   // 走到这里还不可见 = splash 加载失败/被跳过——studio 首帧就绪时窗口
   // 无论如何都必须出来。

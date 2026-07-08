@@ -49,26 +49,72 @@
   app-region: no-drag !important;
 }
 
-/* ── 切面后强制重采集原生拖拽区（2026-07-05「切回 chat 顶栏拖不动」实锤）──
- * 同 WebContentsView 内 chat/canvas 只翻 CSS class 切换，view bounds 不变，
- * Electron 的原生 draggable region 不会自动重算——切回 chat 后 CSS 层
- * region 全对但原生层缓存残留旧面，顶栏真机拖不动（DOM 命中正常，只有真实
- * 鼠标经过窗口系统才暴露）。SurfaceHost 切面后给宿主根挂本类一帧、再移除：
- * 一缩（全片 no-drag）一放（drag 恢复）两次显著变化逼 Chromium 重发
- * DraggableRegionsChanged，主进程据此重采集。逻辑与时序见 SurfaceHost 的
- * region-refresh effect 头注释。持续仅 1 帧，用户无感。 */
-.region-refresh,
-.region-refresh * {
+/* ── 窗口拖拽条（2026-07-08 重构：拖拽面收敛为单一常驻写手）─────────
+ * hiddenInset 窗口的「标题栏」= 内容顶部 46px。旧结构把 app-region:drag
+ * 分散写在各组件顶栏上（ChatHeader / SlidesWorkspace tab 栏 / Workflow
+ * 面板栏……），它们随会话/分栏/切面反复重挂载——而原生 draggable region
+ * 是**事件驱动 + 缓存**（renderer 只在 region 集合增量变化时上报，缓存
+ * 永不主动刷新），任何一次上报被竞态吞掉，整窗就「拖不动 + 双击不放大」，
+ * 打了四轮补丁（region-refresh 脉冲、双 rAF、250ms 兜底、tab-swap 注入）
+ * 仍间歇复发。
+ *
+ * 现结构：根 layout 挂**这一条** fixed 全宽 46px drag 条，永不重挂载、
+ * 几何永不变化——它的矩形从首次采集起就恒在原生缓存里，组件层怎么折腾
+ * 都不影响「窗口顶部可拖 / 可双击缩放」这条底线。纪律：
+ *  · 组件顶栏**不再声明 drag**（chat 侧已全部摘除；canvas 面自己的顶栏
+ *    drag 是冗余声明，无冲突，由 surface-inactive 管隐藏态）；
+ *  · 顶部 46px 内的交互元素一律 [-webkit-app-region:no-drag] 挖洞——
+ *    它们 DOM 在本条之后，洞必然有效（矩形按树序注册，后者覆盖前者）；
+ *  · 全屏 overlay/portal（lightbox、弹窗）落在顶部 46px 内的按钮同样要
+ *    no-drag，这是 hiddenInset 的固有约束，不是本条引入的；
+ *  · pointer-events:none —— app-region 是原生层语义不吃 DOM 事件，
+ *    本条不得拦截底下元素的 hover/点击。
+ *
+ * 本条兼任 region-refresh 脉冲的探针（前身 .app-region-probe，48×48）：
+ * 缓存陈旧的残余风险只剩「新挂载控件的 no-drag 洞未入缓存 → 点击被吞」，
+ * 仍由三处脉冲写手兜底——
+ *  · SurfaceHost 切面 effect（双 rAF 保 commit + 250ms 二轮兜底）；
+ *  · RailShell（收起态浮出面板）；
+ *  · 主进程 tabRegistry.activateTab（view swap 后 executeJavaScript 注入
+ *    ——swap 时 renderer 集合零变化不会自发上报，renderer 侧无从感知）。
+ * 脉冲让本条瞬时变 no-drag 再复原，两次 region 变化必然逼 Chromium 重发
+ * DraggableRegionsChanged（该事件**全量上报**，原生缓存整体刷新）。
+ *
+ * ⚠️ 别把脉冲规则改回 `.region-refresh *`：全元素选择器每轮脉冲对全文档
+ * 双次 recalc ≈ 165ms（2026-07-08 切面卡顿实锤）；事件既然全量上报，
+ * 单探针变化就够。真需要压平某棵子树用 surface-inactive（语义不同）。
+ * 探针别做小（历史教训：1px 级探针可能被 Chromium 舍入/合并优化掉）。 */
+.window-drag-strip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 46px;
+  pointer-events: none;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+.region-refresh .window-drag-strip {
   -webkit-app-region: no-drag !important;
   app-region: no-drag !important;
 }
 
+/* ── 外壳形态：分界线（2026-07-08 二次定稿，原型
+ * docs/ui-prototype-shell-refined.html 形态 3「分界线」）──────────────
+ * 经典 macOS（Finder/Notes/Mail）分层：rail 留 --sidebar 灰实面，内容面
+ * （.shell-content-card，--card 提亮一档）近白，一条 hairline 竖线定边界
+ * ——最安静的分层，规则都在 .shell-content-card（见下方）与 AppRail 的
+ * nav（实底 bg-sidebar）。
+ * 同日上午曾落过形态 5「毛玻璃」（body 主题色光斑壁纸 + rail 半透明
+ * backdrop-blur，--shell-glow-a/b/c 由 applier 派生），用户看过真机后
+ * 定「太丑」退役——别再把光斑/blur 加回来，要换形态先改原型过目。 */
+
 /* 重命名成功后的一次性微光（rail 会话行，对应原型 renamed-flash）。挂类由
  * RailSessionList 控制：提交改名后给行加 .just-renamed，超时移除以便下次
- * 改名还能重播。 */
+ * 改名还能重播。用 --primary：rail 强调色随用户主题色（2026-07-08）。 */
 @keyframes renamed-flash {
   0% {
-    background-color: hsl(var(--sidebar-primary) / 0.16);
+    background-color: hsl(var(--primary) / 0.16);
   }
   100% {
     background-color: transparent;
@@ -216,7 +262,9 @@
 
 /* ── 内容面（chat + canvas 两面共用，结构见 layout.tsx 的 stage 注释）──
  * 2026-07-08 起平铺：去掉浮卡的圆角 / 三层阴影 / 四周 gutter（用户要求），
- * 内容面与 rail 灰底同一张纸，仅靠左缘 hairline 与 rail 分隔。
+ * 内容面与 rail 灰底同一张纸，左缘一条分界线与 rail 定边界（形态 3
+ * 「分界线」的承担者：rail 灰面 / 内容面 --card 近白 / 竖线不减淡——
+ * 原型用 hairline-strong，减淡到 /0.5 的话灰白色差一弱线就形同虚设）。
  * 背景保持 --card 不改 --background：面内全部组件（气泡/工具卡/composer）
  * 都按「白面上的元素」设计，改灰底要全组件重校对比度，不属于本次收敛。
  * 与设置页 V2 内容面（settings-v2.css .sv2-content）配对，改必两处同步，
@@ -229,7 +277,7 @@
   min-width: 0;
   overflow: hidden;
   background: hsl(var(--card));
-  border-left: 1px solid hsl(var(--border) / 0.5);
+  border-left: 1px solid hsl(var(--border));
 }
 body[data-rail-collapsed] .shell-content-card {
   border-left-color: transparent;
@@ -400,3 +448,4 @@ body[data-rail-collapsed] .shell-content-card {
     transition: none;
   }
 }
+
