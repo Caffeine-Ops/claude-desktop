@@ -11,8 +11,9 @@ import type { Attachment } from '@assistant-ui/core'
 import { AnimatePresence, motion } from 'motion/react'
 
 import type { SessionMeta } from '@desktop-shared/types'
-import { useT } from '../../../i18n'
+import { useI18n, useT } from '../../../i18n'
 import { useChatStore, useTurnActivity } from '../../../stores/chat'
+import { useWorkspaceStore } from '../../../stores/workspace'
 import { useComposerModeStore, type ComposerModeId } from '../../../stores/composerMode'
 import { useComposerOverlayStore } from '../../../stores/composerOverlay'
 import { buildSlashAdapter } from '../../../composer/slashAdapter'
@@ -493,19 +494,13 @@ export function Composer(): React.JSX.Element {
           </ComposerPrimitive.Root>
         </ComposerPrimitive.AttachmentDropzone>
 
-        {/* Below-card chips (figure 18): 选择工作目录 · 语气 创意 stay
-            VISUAL-ONLY placeholders; the 权限模式 chip on the right is the
-            FUNCTIONAL one（2026-07-05 与模型 chip 互换位置后落这排）——它切换
+        {/* Below-card chips (figure 18): 选择工作目录已实装（统一会话管理，
+            2026-07-07：新会话可选工作目录，发过消息后锁定只读）；语气 创意
+            仍是 VISUAL-ONLY 占位; the 权限模式 chip on the right is
+            FUNCTIONAL（2026-07-05 与模型 chip 互换位置后落这排）——它切换
             引擎的权限模式（default/plan/acceptEdits/bypass/dontAsk）。 */}
         <div className="mt-3 flex items-center gap-4 px-2">
-          <ComposerBelowChip
-            label="选择工作目录"
-            icon={
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-              </svg>
-            }
-          />
+          <WorkspaceDirPicker />
           <ComposerBelowChip
             label="语气 创意"
             icon={
@@ -1297,7 +1292,433 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
 }
 
 /**
- * A below-card placeholder chip (选择工作目录 / 语气 创意 in figure 18).
+ * 工作目录 chip（composer 卡片下方那排的第一个）。任何会话都可改
+ * （2026-07-07 实测验证迁移方案后放开）：
+ *
+ *   - 新会话：选中经 SESSION_WORKSPACE_SET 记为预选，首次 send 烘焙进
+ *     子进程 cwd。
+ *   - 已有记录的会话：main 侧迁移 transcript 到新目录（历史无损，之后
+ *     按新 cwd resume）。菜单顶部对这类会话显示一行迁移提示。
+ *   - 只读态仅两种：本轮对话正在进行（child 正在写 transcript，main
+ *     也会拒绝）、或当前无会话。
+ *
+ * 展示规则：默认工作区显示「桌面」，其余显示目录 basename。菜单 portal
+ * 到 body + fixed 定位（同 PermissionModePicker：躲 Composer 卡片的
+ * overflow 裁剪；portal 子树脱离 .chat-app 豁免，行按钮必须带 data-slot
+ * 逃逸 canvas 裸 button reset）。
+ */
+function WorkspaceDirPicker(): React.JSX.Element {
+  const lang = useI18n((s) => s.lang)
+  const zh = lang === 'zh'
+  const sessionId = useChatStore((s) => s.sessionId)
+  const hasMessages = useChatStore((s) => s.messages.length > 0)
+  const streaming = useChatStore((s) => s.streaming)
+  const defaultWorkspace = useWorkspaceStore((s) => s.current)
+  const lockedPath = useWorkspaceStore((s) =>
+    sessionId ? s.sessionWorkspaces[sessionId] : undefined
+  )
+  const pendingPath = useWorkspaceStore((s) =>
+    sessionId ? s.pendingChoices[sessionId] : undefined
+  )
+  const switchingPath = useWorkspaceStore((s) =>
+    sessionId ? s.switching[sessionId] : undefined
+  )
+  const chooseForSession = useWorkspaceStore((s) => s.chooseForSession)
+
+  const [open, setOpen] = useState(false)
+  const [known, setKnown] = useState<readonly string[]>([])
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  // 左对齐锚点（菜单左缘贴 chip 左缘，向上弹）——PermissionModePicker 是
+  // 右对齐（right 锚点），本 chip 在行首，用 left + bottom。
+  const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(
+    null
+  )
+
+  // 已有对话记录 → 换目录走 main 的迁移路径，菜单里给一行提示。
+  const hasHistory = hasMessages || Boolean(lockedPath)
+  // 只读：本轮进行中（child 正在写 transcript，main 也会拒绝）或无会话。
+  const readonly = streaming || !sessionId
+  // 展示优先级：预选（用户刚选的乐观值，迁移后也是它）→ 磁盘归属镜像
+  // → 默认工作区。
+  const displayPath = pendingPath ?? lockedPath ?? defaultWorkspace
+  const nameFor = (p: string): string =>
+    p === defaultWorkspace
+      ? zh ? '桌面' : 'Desktop'
+      : p.split(/[\\/]/).filter(Boolean).pop() ?? p
+  const label =
+    displayPath === null
+      ? zh ? '选择工作目录' : 'Choose folder'
+      : nameFor(displayPath)
+
+  // 切换结束后的一拍反馈（B 胶囊方案，原型 docs/ui-prototype-workspace-
+  // picker.html）：done → 品牌绿胶囊 1.2s；fail → chip 回落 + 轻抖 +
+  // 红字 2.4s 淡出。成败判定不走异常通道（choose 的 catch 只 console.warn，
+  // 不好从那里回传 UI 态），而是看 switching 清掉那一刻乐观镜像是否已落到
+  // 目标路径——store 只在 IPC 成功时写 pendingChoices，判据与 main 的真实
+  // 结果同源。
+  const [flash, setFlash] = useState<{
+    kind: 'done' | 'fail'
+    path: string
+  } | null>(null)
+  const prevSwitchRef = useRef<{
+    sid: string | null
+    path: string | undefined
+  }>({ sid: null, path: undefined })
+  useEffect(() => {
+    const prev = prevSwitchRef.current
+    prevSwitchRef.current = { sid: sessionId, path: switchingPath }
+    if (prev.sid !== sessionId) {
+      // 换了前台会话：上一条记录属于别的会话，不做成败判定，清掉残留。
+      setFlash(null)
+      return
+    }
+    if (prev.path === undefined || switchingPath !== undefined || !sessionId)
+      return
+    const succeeded =
+      useWorkspaceStore.getState().pendingChoices[sessionId] === prev.path
+    setFlash({ kind: succeeded ? 'done' : 'fail', path: prev.path })
+    const timer = setTimeout(() => setFlash(null), succeeded ? 1200 : 2400)
+    return () => clearTimeout(timer)
+  }, [switchingPath, sessionId])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const measure = (): void => {
+      const b = btnRef.current?.getBoundingClientRect()
+      if (b)
+        setAnchor({
+          left: b.left,
+          bottom: window.innerHeight - b.top
+        })
+    }
+    measure()
+    window.addEventListener('scroll', measure, true)
+    window.addEventListener('resize', measure)
+    return () => {
+      window.removeEventListener('scroll', measure, true)
+      window.removeEventListener('resize', measure)
+    }
+  }, [open])
+
+  // 打开时拉一次已知工作区列表（[0] 恒为默认/桌面）。量级个位数，
+  // 每次现拉即可，不做缓存。
+  useEffect(() => {
+    if (!open || !window.chatApi) return
+    let cancelled = false
+    window.chatApi
+      .listKnownWorkspaces()
+      .then((r) => {
+        if (!cancelled) setKnown(r.workspaces)
+      })
+      .catch((err) => console.warn('[workspacePicker] known list failed', err))
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const overlay = useComposerOverlayStore.getState()
+    overlay.setOpen(true)
+    const onDown = (e: MouseEvent): void => {
+      const target = e.target as Node
+      const inRoot = rootRef.current?.contains(target)
+      const inMenu = menuRef.current?.contains(target)
+      if (!inRoot && !inMenu) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      overlay.setOpen(false)
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const choose = useCallback(
+    (path: string) => {
+      setOpen(false)
+      // switchingPath 挡二次触发：在途时 chip 已换成 loading 态摸不到菜单，
+      // 但 browse 的系统对话框是异步的，可能在切换开始后才回调进来。
+      if (!sessionId || switchingPath !== undefined) return
+      void chooseForSession(sessionId, path).catch((err) => {
+        // main 拒绝（竞态下会话刚落盘 transcript / 路径失效）。下一次
+        // listSessions 镜像会把 chip 翻成锁定态，这里不弹错误打断输入。
+        console.warn('[workspacePicker] chooseForSession failed', err)
+      })
+    },
+    [sessionId, switchingPath, chooseForSession]
+  )
+
+  const browse = useCallback(() => {
+    void (async () => {
+      if (!window.chatApi) return
+      try {
+        const { path } = await window.chatApi.pickWorkspace()
+        if (path) choose(path)
+        else setOpen(false)
+      } catch (err) {
+        console.warn('[workspacePicker] pickWorkspace failed', err)
+        setOpen(false)
+      }
+    })()
+  }, [choose])
+
+  const folderIcon = (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
+  )
+
+  // 切换在途（C 搬家，原型 docs/ui-prototype-workspace-picker.html）：
+  // 三粒点在源/目标两个文件夹图标之间依次流动——把「transcript 在物理
+  // 搬家」讲成故事，非交互。已有记录的会话换目录要 teardown 子进程 +
+  // 搬 transcript，几百 ms 到数秒可感知——没有反馈用户会连点或以为没
+  // 生效。flag 成败都会清（见 workspace store）。文案按是否真在搬记录
+  // 分「搬」/「切换」两说。
+  if (switchingPath !== undefined) {
+    return (
+      <span
+        className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70"
+        title={switchingPath}
+        aria-busy="true"
+      >
+        <span className="inline-flex items-center gap-[3px]">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          </svg>
+          <span className="mx-[3px] inline-flex gap-[3px]" aria-hidden="true">
+            <span className="ws-move-dot size-[3px] rounded-full bg-muted-foreground/80" />
+            <span className="ws-move-dot size-[3px] rounded-full bg-muted-foreground/80" />
+            <span className="ws-move-dot size-[3px] rounded-full bg-muted-foreground/80" />
+          </span>
+          <span className="text-foreground/75">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            </svg>
+          </span>
+        </span>
+        {zh
+          ? hasHistory
+            ? `正在把对话搬到「${nameFor(switchingPath)}」…`
+            : `正在切换到「${nameFor(switchingPath)}」…`
+          : hasHistory
+            ? `Moving this chat to “${nameFor(switchingPath)}”…`
+            : `Switching to “${nameFor(switchingPath)}”…`}
+      </span>
+    )
+  }
+
+  // 切换成功的一拍确认：目标位弹一下换成品牌绿勾，1.2s 后由 flash 计时器
+  // 收回。刻意排在 readonly 之前——刚切完立刻发消息进入 streaming 时，
+  // 确认拍照常走完。
+  if (flash?.kind === 'done') {
+    return (
+      <span
+        className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70"
+        title={flash.path}
+      >
+        <span className="inline-flex items-center gap-[3px]">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          </svg>
+          <span className="mx-[3px] inline-flex gap-[3px]" aria-hidden="true">
+            <span className="ws-move-dot size-[3px] rounded-full bg-muted-foreground/80" />
+            <span className="ws-move-dot size-[3px] rounded-full bg-muted-foreground/80" />
+            <span className="ws-move-dot size-[3px] rounded-full bg-muted-foreground/80" />
+          </span>
+          <span className="ws-dest-pop text-brand">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </span>
+        </span>
+        {zh
+          ? hasHistory
+            ? `已搬到「${nameFor(flash.path)}」`
+            : `已切到「${nameFor(flash.path)}」`
+          : `Moved to “${nameFor(flash.path)}”`}
+      </span>
+    )
+  }
+
+  // 只读态（本轮进行中 / 无会话）：纯展示，hover 出全路径。
+  if (readonly) {
+    return (
+      <span
+        className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70"
+        title={displayPath ?? undefined}
+      >
+        {folderIcon}
+        {label}
+      </span>
+    )
+  }
+
+  return (
+    <div ref={rootRef} className="relative flex items-center gap-2.5">
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={zh ? '选择工作目录' : 'Choose working folder'}
+        title={displayPath ?? undefined}
+        className={
+          'flex items-center gap-1.5 text-[13px] text-muted-foreground/70 transition-colors hover:text-foreground ' +
+          (open ? 'text-foreground ' : '') +
+          (flash?.kind === 'fail' ? 'ws-chip-shake' : '')
+        }
+      >
+        {folderIcon}
+        {label}
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          className={
+            'text-muted-foreground/40 transition-transform ' +
+            (open ? 'rotate-180' : '')
+          }
+          aria-hidden
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      {/* 切换失败：chip 已回落原目录（轻抖一下），红字点明「没切成」，
+        * 2.4s 淡出（unmount 由 flash 计时器兜底），不弹窗打断输入。 */}
+      {flash?.kind === 'fail' && (
+        <span className="ws-fail-fade flex items-center gap-1 text-[12px] text-destructive">
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 8v4" />
+            <path d="M12 16h.01" />
+          </svg>
+          {zh
+            ? `没切成，还留在「${label}」`
+            : `Couldn't switch — still in “${label}”`}
+        </span>
+      )}
+
+      {anchor !== null &&
+        createPortal(
+          <AnimatePresence>
+            {open && (
+              <motion.div
+                ref={menuRef}
+                initial={{ opacity: 0, y: 4, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 4, scale: 0.98 }}
+                transition={{ duration: 0.12, ease: 'easeOut' }}
+                style={{ left: anchor.left, bottom: anchor.bottom }}
+                className="fixed z-[9999] mb-1.5 w-72 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                role="listbox"
+              >
+                {/* 已有记录的会话：换目录 = main 侧迁移 transcript。一行
+                  * 大白话说清后果，不弹确认框打断。 */}
+                {hasHistory && (
+                  <div className="px-3 pb-1.5 pt-1 text-[11px] leading-snug text-muted-foreground/70">
+                    {zh
+                      ? '更改后，这个对话和它的记录会搬到新文件夹继续。'
+                      : 'Changing folders moves this chat and its history to the new folder.'}
+                  </div>
+                )}
+                {known.map((path, i) => {
+                  const isDef = i === 0
+                  const name = isDef
+                    ? zh ? '桌面' : 'Desktop'
+                    : path.split(/[\\/]/).filter(Boolean).pop() ?? path
+                  const selected = displayPath === path
+                  return (
+                    <button
+                      key={path}
+                      data-slot="workspace-option"
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => choose(path)}
+                      className={
+                        'flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors ' +
+                        (selected
+                          ? 'bg-brand/10 text-foreground'
+                          : 'text-muted-foreground hover:bg-muted hover:text-foreground')
+                      }
+                    >
+                      <span className="shrink-0 opacity-70">{folderIcon}</span>
+                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <span className="truncate text-[12px] font-medium">
+                          {name}
+                          {isDef && (
+                            <span className="ml-1.5 text-[11px] font-normal opacity-60">
+                              {zh ? '默认' : 'default'}
+                            </span>
+                          )}
+                        </span>
+                        <span className="truncate text-[11px] opacity-60">
+                          {path}
+                        </span>
+                      </span>
+                      {selected && (
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="shrink-0 text-brand"
+                          aria-hidden
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      )}
+                    </button>
+                  )
+                })}
+                <div className="mx-3 my-1 border-t border-border/60" aria-hidden />
+                <button
+                  data-slot="workspace-option"
+                  type="button"
+                  onClick={browse}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="shrink-0 opacity-70" aria-hidden>
+                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                    <path d="M12 11v4M10 13h4" />
+                  </svg>
+                  {zh ? '选择其他文件夹…' : 'Browse…'}
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+    </div>
+  )
+}
+
+/**
+ * A below-card placeholder chip (语气 创意 in figure 18).
  * VISUAL-ONLY for now.
  */
 function ComposerBelowChip({

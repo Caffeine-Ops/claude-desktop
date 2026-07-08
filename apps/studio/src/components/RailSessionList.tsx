@@ -32,7 +32,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { Loader2, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import { Folder, Loader2, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import type { ComponentType, ReactNode } from 'react'
 import type { ThreadSummary } from '@desktop-shared/types'
@@ -243,6 +243,10 @@ export function RailSessionList() {
   )
 
   const [threads, setThreads] = useState<readonly ThreadSummary[]>([])
+  // 首次 listShellSessions 是否已返回（成功或失败都算）。没有它就分不清
+  // 「IPC 还在路上」和「真的没有会话」——两者都是 threads=[]，而前者直接
+  // 渲染空白会让 rail 看起来像坏了（2026-07-07 用户反馈），要给骨架屏。
+  const [loaded, setLoaded] = useState(false)
   // 选中态的**权威源**是 chat store 的前台 `sessionId`（chat 与 rail 同一个
   // studio webContents，共享同一份 zustand store）——不是本组件累积的临时
   // state。这一改是「切到工作画布再切回智能助手时选中态丢失」的根治点
@@ -278,17 +282,29 @@ export function RailSessionList() {
   const [deleteTarget, setDeleteTarget] = useState<ThreadSummary | null>(null)
 
   const reload = useCallback(() => {
-    if (typeof window === 'undefined' || !window.tabApi?.listShellSessions) return
+    if (typeof window === 'undefined' || !window.tabApi?.listShellSessions) {
+      // 浏览器直开等无 tabApi 场景：不会有数据到来，标记 loaded 让渲染走
+      // 真空态（null）——否则骨架屏永远挂着。
+      setLoaded(true)
+      return
+    }
     window.tabApi
       .listShellSessions()
       .then((r) => {
         setThreads([...r.threads].sort((a, b) => b.updatedAt - a.updatedAt))
       })
       .catch((err: unknown) => console.warn('[RailSessionList] list failed', err))
+      // 成功失败都收骨架：失败时留骨架等于用加载假象掩盖故障，宁可空白。
+      .finally(() => setLoaded(true))
   }, [])
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.chatApi) return undefined
+    if (typeof window === 'undefined' || !window.chatApi) {
+      // 同 reload 里的兜底：无宿主桥（浏览器直开）永远等不来数据，
+      // 直接判定为空态，别让骨架屏挂死。
+      setLoaded(true)
+      return undefined
+    }
     reload()
     // 会话列表刷新订阅【两条都挂】——两条通道由 engine 的同一个
     // `sessionListChanged` 事件驱动，但 fan-out 路径不同：
@@ -410,8 +426,10 @@ export function RailSessionList() {
   )
 
   if (threads.length === 0) {
-    // 空态（含浏览器直开的无 chatApi 场景）：不渲染占位骨架——rail 上一块
-    // 空白比一块假列表诚实。
+    // 首次拉取还在路上：骨架屏占位（2026-07-07 用户反馈——启动/重挂载时
+    // rail 空白一拍像坏了）。只有确认「真的没有会话」（含浏览器直开的无
+    // chatApi 场景）才渲染空白——那时空白比一块假列表诚实。
+    if (!loaded) return <RailSessionSkeleton />
     return null
   }
 
@@ -597,6 +615,34 @@ export function RailSessionList() {
 }
 
 /**
+ * 首次拉取期间的骨架屏。节奏对齐真实列表（分组标签位 + h-8 会话行位），
+ * 数据到位后行落在骨架同一坐标上，切换不跳版。条子用 sidebar-accent 语义
+ * token（两档主题自适应，rail 上禁裸灰/裸白——2026-07-04 暗档白块教训）；
+ * 标题条宽度写死错落值模拟真实标题长短，纯装饰所以 aria-hidden。
+ */
+const SKELETON_ROW_WIDTHS = ['68%', '52%', '78%', '44%', '60%'] as const
+
+function RailSessionSkeleton() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col pt-2" aria-hidden>
+      <div className="animate-pulse pl-1 pr-3">
+        {/* 分组标签占位（对齐真实标签的 px-3 + first:pt-1.5 节奏） */}
+        <div className="px-3 pb-2 pt-1.5">
+          <div className="h-2.5 w-9 rounded bg-sidebar-accent" />
+        </div>
+        {SKELETON_ROW_WIDTHS.map((w, i) => (
+          <div key={i} className="flex h-8 items-center justify-between gap-2 px-3">
+            <div className="h-2.5 rounded bg-sidebar-accent" style={{ width: w }} />
+            {/* 行尾时间位的短条 */}
+            <div className="h-2 w-7 shrink-0 rounded bg-sidebar-accent/70" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
  * 单个会话行。两态：常规（标题 + hover 浮现 ···）、选中（目标行上的中性
  * 灰底 + 品牌绿圆点，即时呈现）。重命名/删除都改走列表级弹窗，行本身不再
  * 承载行内编辑与上膛态（2026-07-05）。
@@ -676,6 +722,18 @@ function SessionRow({
                 )}
               />
               <span className="min-w-0 flex-1 truncate">{displayTitle(thread.title)}</span>
+              {/* 工作区徽标（统一会话管理）：只有非默认工作区（桌面）的
+                * 会话才带 workspaceLabel（main 侧决定，见 ThreadSummary 注
+                * 释）——桌面会话不打标，避免满屏重复徽标。hover 出全路径。 */}
+              {thread.workspaceLabel && (
+                <span
+                  className="flex max-w-[76px] shrink-0 items-center gap-1 rounded bg-sidebar-accent/80 px-1.5 py-0.5 text-[10px] text-muted-foreground/80 transition-opacity group-hover:opacity-0 group-has-[[data-state=open]]:opacity-0"
+                  title={thread.workspacePath}
+                >
+                  <Folder className="size-2.5 shrink-0" aria-hidden />
+                  <span className="truncate">{thread.workspaceLabel}</span>
+                </span>
+              )}
               {/* 行右侧状态，四选一，都在行内流、hover / 菜单打开时淡出让位给
                 * 绝对定位的 ···（原型 .time 的 display:none on hover）：
                 *  1. 等待用户：「等待批准/等待回答」pill（品牌绿降饱和底，

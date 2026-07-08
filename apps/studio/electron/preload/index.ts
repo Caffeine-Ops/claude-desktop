@@ -37,6 +37,8 @@ import {
   type SessionRenameResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
+  type SessionWorkspaceSetPayload,
+  type SessionWorkspaceSetResult,
   type CliBackendSetPayload,
   type CliBackendState,
   type DesktopLogsApi,
@@ -73,6 +75,7 @@ import {
   type AuthLoginResult,
   type AuthState,
   type UpdaterState,
+  type WorkspaceKnownListResult,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
   type WorkspaceState,
@@ -223,6 +226,12 @@ const chatApi: ChatApi = {
     ) as Promise<WorkspacePickResult>
   },
 
+  listKnownWorkspaces(): Promise<WorkspaceKnownListResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.WORKSPACE_KNOWN_LIST
+    ) as Promise<WorkspaceKnownListResult>
+  },
+
   /**
    * Resolve a File object to its disk path. `webUtils.getPathForFile`
    * is the Electron 33+ replacement for `File.path`, which is
@@ -330,6 +339,15 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.SESSION_RENAME,
       payload
     ) as Promise<SessionRenameResult>
+  },
+
+  setSessionWorkspace(
+    payload: SessionWorkspaceSetPayload
+  ): Promise<SessionWorkspaceSetResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SESSION_WORKSPACE_SET,
+      payload
+    ) as Promise<SessionWorkspaceSetResult>
   },
 
   listActiveRuntimeIds(): Promise<SessionListActiveRuntimesResult> {

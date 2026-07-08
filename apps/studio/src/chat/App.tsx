@@ -7,16 +7,15 @@ import { SkillsDialog } from './components/dialogs/SkillsDialog'
 import { McpDialog } from './components/dialogs/McpDialog'
 import { LogsDialog } from './components/dialogs/LogsDialog'
 import { SessionSearchDialog } from './components/dialogs/SessionSearchDialog'
-import { useDelayedSessionLoading } from './stores/chat'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
-import { useI18n, useT } from './i18n'
+import { useI18n } from './i18n'
 import { useSettingsStore } from './stores/settings'
 import { useDialogStore } from './stores/dialogs'
 import { useApplyAppearance } from './stores/appearance.applier'
 import { hydrateAppearanceFromDaemon, useAppearanceStore } from './stores/appearance'
 import { SettingsView } from './components/settings/SettingsView'
-import { AnimatePresence, MotionConfig, motion } from 'motion/react'
+import { MotionConfig } from 'motion/react'
 
 /**
  * Root renderer component.
@@ -181,12 +180,10 @@ function App(): React.JSX.Element {
     return unsub
   }, [])
 
-  // Mirror the workspace store's `current` into our React state so a
-  // future "change folder" commit (via the store's `switchTo`) flows
-  // into FusionRuntimeProvider's `key={workspace}` remount. Without this
-  // subscription the store would update in isolation and the runtime
-  // subtree would stay bound to the old cwd. Harmless no-op today since
-  // there is no live switch entry point.
+  // Mirror the workspace store's `current` into our React state (feeds
+  // FusionRuntimeProvider's `key={workspace}`). 统一会话管理后 `current`
+  // 只是默认工作区（桌面），启动后不再变化，所以这只是防御性同步 ——
+  // 会话各有工作区（SessionRuntime.cwd），换目录不再走整窗 remount。
   useEffect(() => {
     const unsub = useWorkspaceStore.subscribe((state, prev) => {
       if (state.current === prev.current) return
@@ -212,7 +209,6 @@ function App(): React.JSX.Element {
         setWorkspace(state.path)
         if (state.path) {
           useWorkspaceStore.getState().setCurrent(state.path)
-          useWorkspaceStore.getState().pushRecent(state.path)
         }
       })
       .catch((err) => {
@@ -305,105 +301,14 @@ function App(): React.JSX.Element {
       {/* 会话搜索（⌘K / shell rail 的「搜索对话」）。常挂载：它自己订阅
           dialog store 并在关闭态渲染 null，⌘K 监听因此全程有效。 */}
       <SessionSearchDialog />
-      {/* Non-blocking session-loading toast — shown while main is
-          spawning a fusion-code child (new chat / session switch).
-          Kept as its own tiny component so the zustand subscription
-          doesn't re-render the whole App tree on every flip. The
-          composer's send button is already disabled during the switch
-          via `useExternalStoreRuntime.isLoading`, so this toast only
-          needs to *signal* the cold start — not block interaction. */}
-      <SessionLoadingOverlay />
+      {/* 右下角的「正在打开会话」toast 已退役（2026-07-07 用户要求去掉）：
+          冷启动信号由 ThreadView 顶部进度条独自承担（同一个
+          useDelayedSessionLoading 数据源），交互闸门在别处不受影响
+          （composer 发送钮走 isLoading、侧栏行走 pointer-events-none）。 */}
     </div>
     </MotionConfig>
   )
 }
 
-/**
- * Non-blocking toast shown in the bottom-right while `sessionLoading`
- * is true. Previously a fullscreen veil that hid the entire UI during
- * the ~8s fusion-code cli cold start — which also hid the chat history
- * the user just clicked to read. Now the parallelized `onSwitchToThread`
- * in FusionRuntimeProvider mounts history the instant `loadSession`
- * returns (~100ms), so this indicator only needs to *signal* that the
- * cli is still warming up. Interaction is gated elsewhere:
- *
- *  - Composer send button: `useExternalStoreRuntime.isLoading` in
- *    FusionRuntimeProvider — assistant-ui greys it out automatically.
- *  - Sidebar thread rows: `pointer-events-none opacity-60` in
- *    ThreadListSidebar when `sessionLoading` is true.
- *
- * Composition
- * -----------
- * - `pointer-events-none` so the toast itself never intercepts clicks
- *   at the corner (defensive; the target area rarely holds controls).
- * - `motion` spring entry + exit so the pill scales + translates in
- *   from the corner instead of snapping.
- * - Three staggered dots bounce in an infinite loop — a condensed
- *   version of the old fullscreen animation so the visual language
- *   survives the layout shrink.
- *
- * Motion respects `prefers-reduced-motion` by default, so users with
- * that setting still see a static pill.
- */
-function SessionLoadingOverlay(): React.JSX.Element {
-  // Debounced: a fast switch (history-cache hit / lazy engine) clears the
-  // raw flag within a frame or two, and popping the toast for that flicker
-  // reads as "always busy". Gating it behind ~200ms means a quick switch
-  // shows nothing, while a real ~3-8s cold start still surfaces the pill.
-  // Matches the top progress bar in ThreadView (same hook) so the two
-  // loading affordances appear and disappear together.
-  const sessionLoading = useDelayedSessionLoading()
-  const t = useT()
-  // Strip the trailing ellipsis so screen readers don't read it aloud.
-  const label = t('openingSession').replace(/[…\.]+$/, '')
-
-  return (
-    <AnimatePresence>
-      {sessionLoading && (
-        <motion.div
-          key="session-loading"
-          role="status"
-          aria-live="polite"
-          aria-label={label}
-          initial={{ opacity: 0, y: 8, scale: 0.96 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 4, scale: 0.96 }}
-          transition={{ type: 'spring', stiffness: 340, damping: 28 }}
-          className="pointer-events-none fixed bottom-4 right-4 z-[60] flex items-center gap-2.5 rounded-full border border-border bg-background/90 px-3.5 py-2 shadow-[0_4px_24px_rgba(0,0,0,0.4)] backdrop-blur-sm"
-        >
-          {/* Bouncing dots — shrunk from the old fullscreen version
-              (size-2 → size-1.5, y: -6 → -3) so the pill stays tight. */}
-          <div className="flex items-center gap-1">
-            {[0, 1, 2].map((i) => (
-              <motion.span
-                key={i}
-                aria-hidden
-                className="block size-1.5 rounded-full bg-foreground"
-                animate={{ y: [0, -3, 0], opacity: [0.5, 1, 0.5] }}
-                transition={{
-                  duration: 1.1,
-                  repeat: Infinity,
-                  ease: 'easeInOut',
-                  delay: i * 0.15
-                }}
-              />
-            ))}
-          </div>
-          <motion.span
-            className="text-[12px] font-medium tracking-wide text-foreground"
-            animate={{ opacity: [0.7, 1, 0.7] }}
-            transition={{
-              duration: 1.8,
-              repeat: Infinity,
-              ease: 'easeInOut'
-            }}
-          >
-            {t('openingSession')}
-          </motion.span>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  )
-}
 
 export default App

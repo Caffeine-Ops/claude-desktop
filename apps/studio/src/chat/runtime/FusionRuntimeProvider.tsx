@@ -16,6 +16,7 @@ import {
 } from '@assistant-ui/react'
 
 import { useChatStore } from '../stores/chat'
+import { useWorkspaceStore } from '../stores/workspace'
 import { useMessageQueueStore } from '../stores/messageQueue'
 import { useUnreadStore } from '../stores/unread'
 import { useSessionTitleStore } from '../stores/sessionTitle'
@@ -631,6 +632,27 @@ export function FusionRuntimeProvider({
       // re-reading an outer closure that could theoretically drift.
       const targetSid = sessionId
 
+      // 工作区切换在途（setSessionWorkspace IPC 未落定）→ 等它结束再发。
+      // 迁移路径此刻正在 teardown 子进程 + 搬 transcript，这时 send 会在
+      // main 侧重建 runtime 槽并按搬到一半的物理位置解析 cwd。flag 成败
+      // 都会清（workspace store 的 finally），所以这里只是把竞态变成
+      // 短暂排队；15s 兜底防 IPC 悬挂把发送永久卡死。
+      if (useWorkspaceStore.getState().switching[targetSid]) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(() => {
+            unsub()
+            resolve()
+          }, 15_000)
+          const unsub = useWorkspaceStore.subscribe((s) => {
+            if (!s.switching[targetSid]) {
+              clearTimeout(timer)
+              unsub()
+              resolve()
+            }
+          })
+        })
+      }
+
       // ─── 方案模式 payload 字段（queued / idle 两条 send 路径共用）───
       // 门控同 proposalMode——只有当前发送的 targetSid 与方案绑定的 sessionId
       // 相同才算（防泄漏到其他 tab / 后台 agent）。
@@ -1074,6 +1096,14 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
         const result = await window.chatApi.listSessions()
         if (cancelled) return null
         setThreads(result.threads)
+        // 镜像「会话 → 归属工作区」到 workspace store：composer 的
+        // 「选择工作目录」chip 用它渲染锁定态（已有 transcript 的会话
+        // 工作区不可改，展示归属即可）。整表替换 —— 来源是磁盘扫描。
+        const wsMap: Record<string, string> = {}
+        for (const t of result.threads) {
+          if (t.workspacePath) wsMap[t.id] = t.workspacePath
+        }
+        useWorkspaceStore.getState().setSessionWorkspaces(wsMap)
         return result.threads
       } catch (err) {
         console.error('[runtime] listSessions failed', err)

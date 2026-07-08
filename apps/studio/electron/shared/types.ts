@@ -333,6 +333,21 @@ export interface ThreadSummary {
   firstPrompt?: string
   /** Turn count (user message count), useful for "N messages" meta. */
   turnCount: number
+  /**
+   * Absolute path of the workspace this session belongs to — the dir
+   * whose `~/.claude/projects/<slug>/` scan surfaced it (统一会话管理，
+   * 2026-07-07). Optional because renderer-side optimistic rows (a
+   * brand-new chat with no transcript yet) don't know it; the next
+   * listSessions pull fills it in.
+   */
+  workspacePath?: string
+  /**
+   * Display hint：工作区目录的 basename，只在会话不属于默认工作区
+   * （桌面）时由 main 填充。渲染层据「有没有这个字段」决定要不要给行
+   * 挂工作区徽标 —— 判断默认与否需要知道默认工作区路径，那是 main 的
+   * 知识，不让两个渲染进程各自再查一遍。
+   */
+  workspaceLabel?: string
 }
 
 /**

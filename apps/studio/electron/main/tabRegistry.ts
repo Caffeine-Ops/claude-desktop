@@ -354,9 +354,9 @@ export function createShellWindow(): BrowserWindow {
  * 标题固定、后台创建不抢前台（激活策略同 newWebTab——它是启动时主进程自动
  * 建的，不是用户点 "+" 触发的）。
  *
- * shell 会话列表（getActiveChatWorkspace/getActiveChatEngine）目前只认
- * kind==='chat'——studio 在 Phase 1 没有聊天 UI，激活它时左栏会话列表为空是
- * 预期行为；Phase 2 迁入聊天后再把那两处放开到 'studio'。
+ * shell 会话列表（getActiveChatEngine）目前只认 kind==='chat'——studio 在
+ * Phase 1 没有聊天 UI，激活它时左栏会话列表为空是预期行为；Phase 2 迁入
+ * 聊天后再把那处放开到 'studio'。
  */
 export function newStudioTab(): TabContext {
   if (!shellWindow || shellWindow.isDestroyed()) {
@@ -658,36 +658,27 @@ export function dispatchMenuActionToActiveTab(action: ShellMenuAction): void {
   ctx.view.webContents.send(IPC_CHANNELS.SHELL_MENU_ACTION, { action })
 }
 
+// getActiveChatWorkspace 已随统一会话管理退役（2026-07-07）：shell 的
+// SHELL_SESSION_* 链路不再按「活跃 tab 的 workspace」扫盘，而是扫
+// workspaceRegistry 的已知工作区并集，engine 只剩 runtime 关闭 + 广播用途。
+
 /**
- * The active chat tab's workspace dir, or null when no chat tab is active
- * (web tab foreground / nothing open). Used by the SHELL_SESSION_LIST
- * handler so the shell can list the *active* tab's sessions off disk
- * without owning an engine — listSessions is a stateless workspace scan.
+ * The active chat tab's engine, or null when no chat tab is active.
+ * Used by the shell's session handlers: SHELL_SESSION_LIST treats it as
+ * the "is a chat host foreground" gate, and the mutation handlers
+ * (rename/delete) need it to (a) close a live runtime before unlinking
+ * its jsonl and (b) emit `sessionListChanged`, whose fan-out (wired in
+ * createChatTab above) refreshes both the chat sidebar and the shell
+ * list in one shot.
  *
  * 判定用 `!!ctx.engine` 而不是 kind==='chat'：单视图形态下唯一的 tab 是
  * kind='studio'（持有完整 engine），SHELL_SESSION_* 这套通道现在服务的是
  * studio 页面里的 AppRail 会话列表——卡死在 'chat' 会让整条链路对 studio
  * 永远返回空（Phase 2 注释里欠的「放开到 studio」在这里补上）。
  */
-export function getActiveChatWorkspace(): string | null {
-  if (activeTabId === null) return null
-  const ctx = tabs.get(activeTabId)
-  if (!ctx?.engine) return null
-  return ctx.engine.getWorkspace()
-}
-
-/**
- * The active chat tab's engine, or null when no chat tab is active.
- * Companion to getActiveChatWorkspace for the shell's session-mutation
- * handlers (rename/delete): they need the engine to (a) close a live
- * runtime before unlinking its jsonl and (b) emit `sessionListChanged`,
- * whose fan-out (wired in createChatTab above) refreshes both the chat
- * sidebar and the shell list in one shot.
- */
 export function getActiveChatEngine(): ChatEngine | null {
   if (activeTabId === null) return null
   const ctx = tabs.get(activeTabId)
-  // 同 getActiveChatWorkspace：有 engine 的活跃 tab（studio）即聊天宿主。
   if (!ctx?.engine) return null
   return ctx.engine
 }

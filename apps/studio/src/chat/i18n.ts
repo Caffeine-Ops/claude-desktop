@@ -94,7 +94,6 @@ const STRINGS = {
     quickActionPromptsTooltip: '提示词库',
     quickActionPlugins: '插件',
     quickActionPluginsTooltip: '插件市场',
-    openingSession: '正在打开会话…',
     switchWorkspaceTooltip: '点击切换 workspace',
     confirmSwitchWorkspace:
       '切换 workspace 会结束当前会话的进行中回合，未发送的草稿会丢失。确定继续吗？',
@@ -405,7 +404,6 @@ const STRINGS = {
     quickActionPromptsTooltip: 'Prompt library',
     quickActionPlugins: 'Plugins',
     quickActionPluginsTooltip: 'Plugin marketplace',
-    openingSession: 'Opening session…',
     switchWorkspaceTooltip: 'Click to switch workspace',
     confirmSwitchWorkspace:
       'Switching workspace will abort the in-flight turn and discard unsent drafts. Continue?',

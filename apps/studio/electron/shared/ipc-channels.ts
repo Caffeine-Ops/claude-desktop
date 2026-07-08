@@ -67,6 +67,12 @@ export const IPC_CHANNELS = {
    */
   WORKSPACE_PICK: 'workspace:pick',
   /**
+   * Renderer → main. 已知工作区列表（workspaceRegistry 并集，[0] 恒为
+   * 默认工作区/桌面）。composer「选择工作目录」下拉的数据源；engine-free
+   * （注册表是 main 全局的，不属于任何 tab）。
+   */
+  WORKSPACE_KNOWN_LIST: 'workspace:known-list',
+  /**
    * Renderer → main. Opens a workspace-relative file path in the OS
    * default handler (Finder's "open with default app"). Used by the
    * Files tree's double-click.
@@ -130,9 +136,11 @@ export const IPC_CHANNELS = {
    */
   MODEL_SET: 'model:set',
   /**
-   * Renderer → main. Lists all sessions (JSONL transcripts) for the
-   * current workspace, sorted by updatedAt desc. Backed by
-   * `@anthropic-ai/claude-agent-sdk`'s `listSessions({ dir })`.
+   * Renderer → main. Lists all sessions (JSONL transcripts) across every
+   * known workspace (workspaceRegistry 的并集，统一会话管理), sorted by
+   * updatedAt desc. Backed by `@anthropic-ai/claude-agent-sdk`'s
+   * `listSessions({ dir })` per workspace; each ThreadSummary carries its
+   * `workspacePath`.
    */
   SESSION_LIST: 'session:list',
   /**
@@ -162,6 +170,17 @@ export const IPC_CHANNELS = {
    */
   SESSION_RENAME: 'session:rename',
   /**
+   * Renderer → main. 给会话指定工作目录（composer 的「选择工作目录」
+   * chip）。main 校验绝对路径/存在/目录后：无 transcript 的新会话写入
+   * 引擎 pendingWorkspace（首次 send 烘焙进子进程 cwd）；已有记录的会
+   * 话走**迁移**——teardown 活 runtime 后把 transcript 工件搬进新目录
+   * 的 projects slug，历史无损、下次按新 cwd resume（实测验证，见
+   * sessionStore.moveSessionToWorkspace）。唯一拒绝条件：本轮对话正在
+   * 进行（active turn）。成功后目录进入 known-workspaces 注册表并广播
+   * sessionListChanged。
+   */
+  SESSION_WORKSPACE_SET: 'session:workspace-set',
+  /**
    * Main → renderer. Broadcast whenever the session list may have
    * changed (new session captured from system init, current session
    * title updated, etc). Renderer's ThreadListAdapter re-fetches on
@@ -180,12 +199,12 @@ export const IPC_CHANNELS = {
    */
   SESSION_LIST_ACTIVE_RUNTIMES: 'session:list-active-runtimes',
   /**
-   * Chat renderer → main (invoke). Full-text search across the tab
+   * Chat renderer → main (invoke). Full-text search across every known
    * workspace's session transcripts (message content, not titles — title
    * matching is a cheap renderer-side filter over listSessions). main
-   * scans the project dir's jsonl files and returns per-session excerpt
+   * scans the project dirs' jsonl files and returns per-session excerpt
    * hits (SessionSearchResult). The renderer debounces; main additionally
-   * caps scanned bytes / returned sessions so a huge workspace can't
+   * caps scanned bytes / returned sessions so a huge scan set can't
    * stall the IPC.
    */
   SESSION_SEARCH: 'session:search',
@@ -476,14 +495,14 @@ export const IPC_CHANNELS = {
   SHELL_MENU_ACTION: 'shell:menu-action',
   /**
    * Shell renderer → main (invoke). The session list now lives in the
-   * shell's left nav rail (a single column with the nav above it), but the
-   * sessions belong to the *active chat tab's* engine — and the shell has
-   * no engine of its own, so it can't go through the per-tab `resolveEngine`
-   * path the regular SESSION_LIST handler uses. This handler reads the
-   * active chat tab's workspace directly and lists its sessions off disk
-   * (listSessions is a stateless workspace-dir scan), returning a
-   * SessionListResult. Returns `{ threads: [] }` when the active tab is a
-   * web tab / there is no active chat tab.
+   * shell's left nav rail (a single column with the nav above it). The
+   * shell has no engine of its own, so it can't go through the per-tab
+   * `resolveEngine` path — and since 统一会话管理 it doesn't need to:
+   * the list is the stateless known-workspaces scan (same data as
+   * SESSION_LIST), returning a SessionListResult. Still returns
+   * `{ threads: [] }` when there is no active chat tab — row clicks are
+   * forwarded to the active tab to execute, so a list without a tab
+   * would be dead rows.
    */
   SHELL_SESSION_LIST: 'shell:session-list',
   /**
@@ -512,22 +531,22 @@ export const IPC_CHANNELS = {
    */
   SHELL_SESSION_LIST_CHANGED: 'shell:session-list-changed',
   /**
-   * Shell renderer → main (invoke). Rename a session of the ACTIVE chat
-   * tab's workspace. Same engine-free pattern as SHELL_SESSION_LIST: the
-   * shell owns no engine, so main resolves the active chat workspace and
-   * appends the custom-title line via sessionStore.renameSession (identical
-   * on-disk format to the chat tab's SESSION_RENAME). Refresh fan-out rides
-   * the engine's `sessionListChanged` emit — tabRegistry relays it to the
-   * shell, so both the shell list and the chat sidebar re-pull.
+   * Shell renderer → main (invoke). Rename a session by id — engine-free
+   * like SHELL_SESSION_LIST: main probes the known workspaces for the
+   * jsonl and appends the custom-title line via sessionStore.renameSession
+   * (identical on-disk format to the chat tab's SESSION_RENAME). Refresh
+   * fan-out rides the engine's `sessionListChanged` emit — tabRegistry
+   * relays it to the shell, so both the shell list and the chat sidebar
+   * re-pull.
    */
   SHELL_SESSION_RENAME: 'shell:session-rename',
   /**
-   * Shell renderer → main (invoke). Delete a session of the ACTIVE chat
-   * tab's workspace: best-effort close of any live runtime for that id
-   * first (a fusion-code child must not keep appending to a file we're
-   * about to unlink), then remove the jsonl + subagent dir via the SDK's
-   * deleteSession. Irreversible — the renderer owns the confirm UI.
-   * Rejects when no chat tab is active or the session file is missing.
+   * Shell renderer → main (invoke). Delete a session by id: best-effort
+   * close of any live runtime for that id first (a fusion-code child must
+   * not keep appending to a file we're about to unlink), then remove the
+   * jsonl + subagent dir via the SDK's deleteSession (UUID lookup across
+   * project dirs). Irreversible — the renderer owns the confirm UI.
+   * Rejects when the session file is missing.
    */
   SHELL_SESSION_DELETE: 'shell:session-delete',
   APPEARANCE_GET: 'appearance:get',
@@ -1090,6 +1109,16 @@ export type SessionSwitchResult = { sessionId: string }
 
 export type SessionRenamePayload = { sessionId: string; title: string }
 export type SessionRenameResult = { ok: true }
+
+/** Payload for SESSION_WORKSPACE_SET. `path` must be an absolute dir. */
+export type SessionWorkspaceSetPayload = { sessionId: string; path: string }
+export type SessionWorkspaceSetResult = { ok: true }
+
+/**
+ * Result of WORKSPACE_KNOWN_LIST. `workspaces[0]` is always the default
+ * workspace (OS 桌面)；其余按最近添加序。
+ */
+export type WorkspaceKnownListResult = { workspaces: string[] }
 
 export type SessionCloseRuntimePayload = { sessionId: string }
 export type SessionCloseRuntimeResult = { ok: true }
@@ -1658,6 +1687,12 @@ export interface ChatApi {
   pickWorkspace(): Promise<WorkspacePickResult>
 
   /**
+   * 已知工作区列表（[0] 恒为默认工作区/桌面）。composer「选择工作
+   * 目录」下拉的数据源。
+   */
+  listKnownWorkspaces(): Promise<WorkspaceKnownListResult>
+
+  /**
    * Resolve a File object dropped on the window to its absolute path.
    * Backed by Electron 33's `webUtils.getPathForFile` (the successor to
    * the deprecated `File.path`). The `File` type is not structured-clone
@@ -1732,14 +1767,15 @@ export interface ChatApi {
   setModel(model: string | null): Promise<void>
 
   /**
-   * List all sessions under the current workspace, newest first.
-   * Returns an empty array before the workspace is set or when the
-   * workspace has no prior fusion-code transcripts.
+   * List all sessions across every known workspace, newest first
+   * (统一会话管理 — each ThreadSummary carries its `workspacePath`).
+   * Returns an empty array when no workspace has prior fusion-code
+   * transcripts.
    */
   listSessions(): Promise<SessionListResult>
 
   /**
-   * Full-text search across this workspace's session transcripts
+   * Full-text search across every known workspace's session transcripts
    * (message content only — the search dialog filters titles locally
    * from listSessions). Returns per-session excerpt hits; see
    * SESSION_SEARCH for the scan/caps story.
@@ -1773,6 +1809,16 @@ export interface ChatApi {
    * so the sidebar refreshes without a manual reload.
    */
   renameSession(payload: SessionRenamePayload): Promise<SessionRenameResult>
+
+  /**
+   * 给会话指定工作目录（composer chip）。新会话记预选；已有记录的会话
+   * 迁移 transcript 到新目录（历史无损）。本轮对话进行中会被 main 拒绝
+   * （Promise reject）——调用方应在 streaming 时把 chip 渲染成只读态，
+   * 而不是靠 catch 兜底。
+   */
+  setSessionWorkspace(
+    payload: SessionWorkspaceSetPayload
+  ): Promise<SessionWorkspaceSetResult>
 
   /**
    * List session ids that currently have a live fusion-code runtime
