@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>聊天标题栏重设计原型 · 四个方向</title>
+<style>
+/* ============================================================
+   Tokens — 逐字摘自 packages/design-tokens/tokens.css
+   （HSL 三元组，shadcn 式消费：hsl(var(--x) / alpha)）
+   ============================================================ */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 3% 12%;
+  --primary: 211 100% 45%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 6% 94%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --border: 240 6% 84%;
+  --brand: 142 76% 36%;
+  --brand-foreground: 0 0% 100%;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+  --w-medium: 500;
+  --w-strong: 650;
+
+  --card-shadow:
+    0 0 0 1px hsl(240 6% 10% / 0.045),
+    0 1px 2px hsl(240 6% 10% / 0.05),
+    0 12px 32px hsl(240 6% 10% / 0.08);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 180ms;
+}
+html.dark {
+  color-scheme: dark;
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --card-foreground: 39 35% 92%;
+  --primary: 210 100% 58%;
+  --secondary: 30 5% 15%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --border: 49 12% 18%;
+  --brand: 145 60% 52%;
+  --brand-foreground: 40 6% 10%;
+  --card-shadow:
+    0 0 0 1px hsl(0 0% 100% / 0.06),
+    0 1px 2px hsl(0 0% 0% / 0.4),
+    0 12px 32px hsl(0 0% 0% / 0.5);
+}
+
+/* ============================================================
+   基础
+   ============================================================ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+  transition: background var(--dur) var(--ease-out);
+  text-wrap: pretty;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+svg { display: block; }
+
+/* ── 原型工具条（演示用 chrome，不属于设计本身）────────── */
+.proto-bar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 18px;
+  background: hsl(var(--background) / 0.82);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+  font-size: 12px;
+}
+.proto-bar .hint { color: hsl(var(--muted-foreground)); margin-right: auto; }
+.proto-bar .lbl { color: hsl(var(--muted-foreground) / 0.8); font-size: 11px; }
+.seg {
+  display: inline-flex; gap: 2px;
+  background: hsl(var(--secondary));
+  border-radius: 8px; padding: 2px;
+}
+.seg button {
+  padding: 4px 12px; border-radius: 6px; font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  transition: all var(--dur) var(--ease-out);
+}
+.seg button:hover { color: hsl(var(--foreground)); }
+.seg button[aria-pressed="true"] {
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-weight: var(--w-medium);
+  box-shadow: 0 1px 2px hsl(240 6% 10% / 0.12);
+}
+.icon-btn {
+  display: grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  transition: all var(--dur) var(--ease-out);
+}
+.icon-btn:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+
+/* ============================================================
+   页面骨架
+   ============================================================ */
+.page {
+  max-width: 1060px; margin: 0 auto; padding: 36px 24px 96px;
+}
+.page-title { font-size: 21px; font-weight: var(--w-strong); letter-spacing: -0.01em; }
+.page-sub {
+  margin-top: 6px; font-size: 13px; line-height: 1.6;
+  color: hsl(var(--muted-foreground)); max-width: 68ch;
+}
+.variant { margin-top: 44px; }
+.variant-head { display: flex; align-items: baseline; gap: 10px; }
+.variant-no {
+  font-family: var(--font-mono); font-size: 12px;
+  color: hsl(var(--brand)); font-weight: 600;
+}
+.variant-name { font-size: 15px; font-weight: var(--w-strong); }
+.variant-why {
+  margin-top: 5px; font-size: 12.5px; line-height: 1.65;
+  color: hsl(var(--muted-foreground)); max-width: 74ch;
+}
+.spec {
+  margin-top: 8px; font-family: var(--font-mono); font-size: 10.5px;
+  color: hsl(var(--muted-foreground) / 0.75); letter-spacing: 0.01em;
+  line-height: 1.7;
+}
+
+/* ============================================================
+   模拟窗口（rail + chat 列，还原真实上下文）
+   ============================================================ */
+.mock {
+  margin-top: 14px;
+  display: flex; height: 320px;
+  border-radius: 12px; overflow: hidden;
+  background: hsl(var(--background));
+  box-shadow: var(--card-shadow);
+}
+/* 左 rail 极简示意 — 只为提供空间参照，刻意低调 */
+.rail {
+  width: 196px; flex-shrink: 0;
+  background: hsl(var(--background));
+  border-right: 1px solid hsl(var(--border) / 0.5);
+  padding: 12px 10px;
+}
+.lights { display: flex; gap: 7px; padding: 2px 4px 12px; }
+.lights i { width: 11px; height: 11px; border-radius: 50%; }
+.lights i:nth-child(1) { background: #ff5f57; }
+.lights i:nth-child(2) { background: #febc2e; }
+.lights i:nth-child(3) { background: #28c840; }
+.rail-row {
+  height: 26px; border-radius: 7px; margin-top: 3px;
+  display: flex; align-items: center; padding: 0 9px;
+  font-size: 11.5px; color: hsl(var(--muted-foreground));
+  white-space: nowrap; overflow: hidden;
+}
+.rail-row.active { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+/* chat 列 — 悬浮内容卡质感 */
+.chat {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  background: hsl(var(--card));
+  border-radius: 12px 0 0 0;
+  overflow: hidden;
+}
+
+/* 消息内容（对齐参照物） */
+.content { flex: 1; overflow-y: auto; }
+.col { max-width: 640px; margin: 0 auto; padding: 18px 24px 28px; }
+.msg-user {
+  margin-left: auto; width: fit-content; max-width: 78%;
+  background: hsl(var(--secondary));
+  border-radius: 14px; padding: 8px 13px;
+  font-size: 13px; line-height: 1.55;
+}
+.msg-ai { margin-top: 16px; font-size: 13px; line-height: 1.7; color: hsl(var(--card-foreground)); }
+.tool-card {
+  margin-top: 12px; border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 10px; padding: 9px 12px;
+  font-family: var(--font-mono); font-size: 11.5px;
+  color: hsl(var(--muted-foreground));
+  display: flex; align-items: center; gap: 8px;
+}
+.tool-card .dot { width: 6px; height: 6px; border-radius: 50%; background: hsl(var(--brand)); flex-shrink: 0; }
+
+/* ============================================================
+   共享标题栏原语
+   ============================================================ */
+/* 命令 chip — 与现有实现同参（brand/10 底 + brand/20 边 + mono 11px） */
+.chip {
+  flex-shrink: 0; border-radius: 999px;
+  border: 1px solid hsl(var(--brand) / 0.2);
+  background: hsl(var(--brand) / 0.1);
+  padding: 3px 8px;
+  font-family: var(--font-mono); font-size: 11px; line-height: 1;
+  color: hsl(var(--brand));
+}
+html[data-title="plain"] .chip { display: none; }
+.t-cmd { display: none; }
+html[data-title="cmd"] .t-cmd { display: inline; }
+html[data-title="cmd"] .t-plain { display: none; }
+
+/* rename 铅笔 — hover 标题才浮现（沿用现有交互） */
+.pencil {
+  flex-shrink: 0; color: hsl(var(--muted-foreground));
+  opacity: 0; transition: opacity var(--dur) var(--ease-out);
+}
+.title-btn:hover .pencil, .title-btn:focus-visible .pencil { opacity: 0.8; }
+.title-btn {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  border-radius: 7px; padding: 3px 7px; margin: -3px -7px;
+  transition: background var(--dur) var(--ease-out);
+  cursor: text; text-align: left;
+}
+.title-btn:hover { background: hsl(var(--foreground) / 0.05); }
+.title-btn .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 「AI 生成」声明 — 三档形态，html[data-badge] 全局切换 */
+.ai { flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; line-height: 1; }
+.ai .pill-form, .ai .icon-form { display: none; }
+/* text（推荐）：无边框纯文本，退成元信息 */
+html[data-badge="text"] .ai .text-form {
+  display: inline; font-size: 10.5px; color: hsl(var(--muted-foreground) / 0.62);
+  letter-spacing: 0.02em;
+}
+html:not([data-badge="text"]) .ai .text-form { display: none; }
+/* icon：sparkle 12px + 文字，比 text 多一点可辨识度 */
+html[data-badge="icon"] .ai .icon-form {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; color: hsl(var(--muted-foreground) / 0.7);
+}
+/* pill（现状对照）：hairline 胶囊 */
+html[data-badge="pill"] .ai .pill-form {
+  display: inline; border-radius: 999px;
+  border: 1px solid hsl(var(--border) / 0.9);
+  padding: 3px 8px; font-size: 10.5px;
+  color: hsl(var(--muted-foreground) / 0.85);
+}
+
+/* ============================================================
+   方向 01 · macOS 文档式（居中标题）
+   46px 不变；grid [1fr auto 1fr] 三列，中列承载 chip+标题组，
+   右列 AI 声明。标题 13px/590 —— macOS 窗口标题的原生度量。
+   居中让宽窗口的空旷感消失：重心即窗口轴线，与红绿灯对称。
+   ============================================================ */
+.hdr-a {
+  flex-shrink: 0; height: 46px;
+  display: grid; grid-template-columns: 1fr auto 1fr;
+  align-items: center; gap: 8px; padding: 0 16px;
+  border-bottom: 1px solid hsl(var(--border) / 0.45);
+}
+.hdr-a .mid { display: flex; align-items: center; gap: 8px; min-width: 0; justify-self: center; max-width: 100%; }
+.hdr-a .title-btn .txt { font-size: 13px; font-weight: 590; letter-spacing: -0.005em; }
+.hdr-a .end { justify-self: end; }
+
+/* ============================================================
+   方向 02 · 锚点胶囊式（Claude.ai / ChatGPT 语言）
+   标题整体是一枚可点锚：hover 起底、右侧 chevron 暗示菜单/改名。
+   命令 chip 融进锚内作前缀，整组读作一个对象而非散落元素。
+   左缘与消息列同轴（640px 列）。
+   ============================================================ */
+.hdr-b {
+  flex-shrink: 0; height: 46px; display: flex; align-items: center;
+  border-bottom: 1px solid hsl(var(--border) / 0.45);
+}
+.hdr-b .inner {
+  max-width: 640px; width: 100%; margin: 0 auto; padding: 0 24px;
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+}
+.anchor {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  border-radius: 9px; padding: 5px 9px; margin-left: -9px;
+  transition: background var(--dur) var(--ease-out);
+}
+.anchor:hover, .anchor:focus-visible { background: hsl(var(--foreground) / 0.055); }
+.anchor .txt {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13.5px; font-weight: 560; letter-spacing: -0.005em;
+}
+.anchor .chev {
+  flex-shrink: 0; color: hsl(var(--muted-foreground));
+  opacity: 0.55; transition: opacity var(--dur) var(--ease-out);
+}
+.anchor:hover .chev { opacity: 0.9; }
+.hdr-b .ai { margin-left: auto; }
+
+/* ============================================================
+   方向 03 · 面包屑上下文式
+   工作区 › 标题 —— 会话本就挂在工作区下（rail 行的目录标签），
+   顶栏正是放这层从属关系的地方；宽窗口的"空"被语义填满。
+   前缀 11.5px muted 可点（跳工作区），标题 13.5px/590 落锚。
+   ============================================================ */
+.hdr-c {
+  flex-shrink: 0; height: 46px; display: flex; align-items: center;
+  border-bottom: 1px solid hsl(var(--border) / 0.45);
+}
+.hdr-c .inner {
+  max-width: 640px; width: 100%; margin: 0 auto; padding: 0 24px;
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+}
+.crumb {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; color: hsl(var(--muted-foreground));
+  border-radius: 6px; padding: 3px 6px; margin-left: -6px;
+  transition: all var(--dur) var(--ease-out);
+}
+.crumb:hover { background: hsl(var(--foreground) / 0.05); color: hsl(var(--foreground)); }
+.crumb-sep { flex-shrink: 0; color: hsl(var(--muted-foreground) / 0.45); }
+.hdr-c .title-btn .txt { font-size: 13.5px; font-weight: 590; letter-spacing: -0.005em; }
+.hdr-c .ai { margin-left: auto; }
+
+/* ============================================================
+   方向 04 · 无界沉浸式
+   静止时无 hairline —— 标题与内容同一张纸；内容滚动后 header
+   浮起（毛玻璃 + hairline + 微阴影），"栏"只在需要时存在。
+   标题 15px/650 略大，是四案中唯一敢给标题真正字级层级的。
+   ============================================================ */
+.hdr-d {
+  flex-shrink: 0; height: 48px; display: flex; align-items: center;
+  position: relative; z-index: 2;
+  background: hsl(var(--card) / 0);
+  border-bottom: 1px solid transparent;
+  transition: all 240ms var(--ease-out);
+}
+.hdr-d.scrolled {
+  background: hsl(var(--card) / 0.86);
+  backdrop-filter: blur(14px);
+  border-bottom-color: hsl(var(--border) / 0.5);
+  box-shadow: 0 2px 10px hsl(240 6% 10% / 0.03);
+}
+html.dark .hdr-d.scrolled { box-shadow: 0 2px 10px hsl(0 0% 0% / 0.25); }
+.hdr-d .inner {
+  max-width: 640px; width: 100%; margin: 0 auto; padding: 0 24px;
+  display: flex; align-items: center; gap: 9px; min-width: 0;
+}
+.hdr-d .title-btn .txt { font-size: 15px; font-weight: var(--w-strong); letter-spacing: -0.012em; }
+.hdr-d .ai { margin-left: auto; }
+/* 方向 04 的内容区盖到 header 下方，滚动时穿过毛玻璃 */
+.mock-d .chat { position: relative; }
+.mock-d .hdr-d { position: absolute; top: 0; left: 0; right: 0; }
+.mock-d .content { padding-top: 48px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════ 原型工具条 ═══════════ -->
+<div class="proto-bar">
+  <span class="hint">聊天标题栏重设计 · 四个方向 · hover 标题看改名入口</span>
+  <span class="lbl">标题形态</span>
+  <div class="seg" id="seg-title">
+    <button data-v="plain" aria-pressed="true">纯标题</button>
+    <button data-v="cmd" aria-pressed="false">命令＋参数</button>
+  </div>
+  <span class="lbl">AI 声明</span>
+  <div class="seg" id="seg-badge">
+    <button data-v="text" aria-pressed="true">纯文本</button>
+    <button data-v="icon" aria-pressed="false">图标</button>
+    <button data-v="pill" aria-pressed="false">胶囊（现状）</button>
+  </div>
+  <button class="icon-btn" id="dark-toggle" title="切换深浅模式" aria-label="切换深浅模式">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+  </button>
+</div>
+
+<div class="page">
+  <h1 class="page-title">聊天标题栏 · 重设计</h1>
+  <p class="page-sub">
+    现状的三个问题：宽窗口下 14px 标题孤零零漂在左半区，读作调试信息而非会话锚点；「AI 生成」hairline
+    胶囊带边框、存在感盖过标题本身；标题与正文字号几乎无层级差。以下四案从最稳（macOS 原生语言）到最激进
+    （无界沉浸）排列，色彩与字体全部取自 design-tokens，顶栏 46px 布局契约不动（04 为 48px）。
+  </p>
+
+  <!-- ═══════════ 01 · macOS 文档式 ═══════════ -->
+  <section class="variant">
+    <div class="variant-head"><span class="variant-no">01</span><span class="variant-name">macOS 文档式 · 居中标题</span></div>
+    <p class="variant-why">
+      hiddenInset 窗口的原生答案：标题落在窗口轴线上，与红绿灯、内容列形成对称秩序，宽窗口的空旷感直接消失。
+      命令 chip 与标题结成一组随轴居中；「AI 生成」退到右端做元信息。最稳、最不会错的一案。
+    </p>
+    <div class="mock">
+      <div class="rail">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <div class="rail-row active">ultracode 分析下代码仓库</div>
+        <div class="rail-row">武汉明天天气</div>
+        <div class="rail-row">创建一个 hello world</div>
+      </div>
+      <div class="chat">
+        <header class="hdr-a">
+          <span></span>
+          <div class="mid">
+            <span class="chip">/ppt-master</span>
+            <button type="button" class="title-btn" title="重命名会话">
+              <span class="txt"><span class="t-plain">ultracode 分析下代码仓库</span><span class="t-cmd">武汉大学宣传介绍 PPT</span></span>
+              <svg class="pencil" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+            </button>
+          </div>
+          <span class="end ai">
+            <span class="text-form">AI 生成</span>
+            <span class="icon-form"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 14.4 9.6 22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4Z"/></svg>AI 生成</span>
+            <span class="pill-form">AI 生成</span>
+          </span>
+        </header>
+        <div class="content"><div class="col">
+          <div class="msg-user">ultracode 分析下代码仓库</div>
+          <p class="msg-ai">好的，我先用 workflow 扫一遍仓库结构，再分维度深入分析各模块的职责与依赖关系。</p>
+          <div class="tool-card"><span class="dot"></span>get_architecture · 已完成</div>
+          <div class="tool-card"><span class="dot"></span>search_graph · 已完成</div>
+          <p class="msg-ai">仓库是一个 monorepo，核心包位于 apps/studio，主进程持有 ChatEngine，每个 tab 绑定独立的 WebContentsView……</p>
+        </div></div>
+      </div>
+    </div>
+    <p class="spec">title 13px/590 centered · grid [1fr auto 1fr] · hairline border/45 · ai-badge 右列 · 高度 46px 不变</p>
+  </section>
+
+  <!-- ═══════════ 02 · 锚点胶囊式 ═══════════ -->
+  <section class="variant">
+    <div class="variant-head"><span class="variant-no">02</span><span class="variant-name">锚点胶囊式 · 可点对象</span></div>
+    <p class="variant-why">
+      Claude.ai / ChatGPT 的顶栏语言：标题不是一行字，是一枚可点的「会话对象」——hover 起底、chevron
+      暗示这里能改名（未来还能挂会话菜单：改名／移动工作区／删除）。命令 chip 融进锚内做前缀，整组浑然一体。
+      左缘与消息列严格同轴，保住现有的对齐逻辑。
+    </p>
+    <div class="mock">
+      <div class="rail">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <div class="rail-row active">ultracode 分析下代码仓库</div>
+        <div class="rail-row">武汉明天天气</div>
+        <div class="rail-row">创建一个 hello world</div>
+      </div>
+      <div class="chat">
+        <header class="hdr-b">
+          <div class="inner">
+            <button type="button" class="anchor" title="会话操作">
+              <span class="chip">/ppt-master</span>
+              <span class="txt"><span class="t-plain">ultracode 分析下代码仓库</span><span class="t-cmd">武汉大学宣传介绍 PPT</span></span>
+              <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <span class="ai">
+              <span class="text-form">AI 生成</span>
+              <span class="icon-form"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 14.4 9.6 22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4Z"/></svg>AI 生成</span>
+              <span class="pill-form">AI 生成</span>
+            </span>
+          </div>
+        </header>
+        <div class="content"><div class="col">
+          <div class="msg-user">ultracode 分析下代码仓库</div>
+          <p class="msg-ai">好的，我先用 workflow 扫一遍仓库结构，再分维度深入分析各模块的职责与依赖关系。</p>
+          <div class="tool-card"><span class="dot"></span>get_architecture · 已完成</div>
+          <div class="tool-card"><span class="dot"></span>search_graph · 已完成</div>
+          <p class="msg-ai">仓库是一个 monorepo，核心包位于 apps/studio，主进程持有 ChatEngine，每个 tab 绑定独立的 WebContentsView……</p>
+        </div></div>
+      </div>
+    </div>
+    <p class="spec">anchor: 13.5px/560 · hover bg fg/5.5 radius 9 · chevron 11px op.55→.9 · 左缘对齐消息列(640px) · 为会话菜单预留扩展位</p>
+  </section>
+
+  <!-- ═══════════ 03 · 面包屑上下文式 ═══════════ -->
+  <section class="variant">
+    <div class="variant-head"><span class="variant-no">03</span><span class="variant-name">面包屑上下文式 · 工作区 › 标题</span></div>
+    <p class="variant-why">
+      会话本就挂在工作区下（rail 里的目录标签），顶栏正是放这层从属关系的地方——宽窗口的「空」被语义填满，
+      而不是被装饰填满。前缀可点（未来跳工作区视图），标题仍是改名入口。信息密度最高的一案，
+      与正在做的会话级工作区体系天然合拍。
+    </p>
+    <div class="mock">
+      <div class="rail">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <div class="rail-row active">ultracode 分析下代码仓库</div>
+        <div class="rail-row">武汉明天天气</div>
+        <div class="rail-row">创建一个 hello world</div>
+      </div>
+      <div class="chat">
+        <header class="hdr-c">
+          <div class="inner">
+            <button type="button" class="crumb" title="打开工作区">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+              小火箭备份
+            </button>
+            <svg class="crumb-sep" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+            <span class="chip">/ppt-master</span>
+            <button type="button" class="title-btn" title="重命名会话">
+              <span class="txt"><span class="t-plain">ultracode 分析下代码仓库</span><span class="t-cmd">武汉大学宣传介绍 PPT</span></span>
+              <svg class="pencil" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+            </button>
+            <span class="ai">
+              <span class="text-form">AI 生成</span>
+              <span class="icon-form"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 14.4 9.6 22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4Z"/></svg>AI 生成</span>
+              <span class="pill-form">AI 生成</span>
+            </span>
+          </div>
+        </header>
+        <div class="content"><div class="col">
+          <div class="msg-user">ultracode 分析下代码仓库</div>
+          <p class="msg-ai">好的，我先用 workflow 扫一遍仓库结构，再分维度深入分析各模块的职责与依赖关系。</p>
+          <div class="tool-card"><span class="dot"></span>get_architecture · 已完成</div>
+          <div class="tool-card"><span class="dot"></span>search_graph · 已完成</div>
+          <p class="msg-ai">仓库是一个 monorepo，核心包位于 apps/studio，主进程持有 ChatEngine，每个 tab 绑定独立的 WebContentsView……</p>
+        </div></div>
+      </div>
+    </div>
+    <p class="spec">crumb 11.5px muted + folder 12px · sep chevron 10px op.45 · title 13.5px/590 · 与会话级工作区体系联动</p>
+  </section>
+
+  <!-- ═══════════ 04 · 无界沉浸式 ═══════════ -->
+  <section class="variant">
+    <div class="variant-head"><span class="variant-no">04</span><span class="variant-name">无界沉浸式 · 滚动浮现</span></div>
+    <p class="variant-why">
+      静止时没有「栏」——标题与内容睡在同一张纸上，15px/650 的字级让它真正立起来（四案中唯一敢给标题
+      实打实层级的）。内容一滚动，header 毛玻璃浮起、hairline 与微阴影出现，消息从标题底下穿过。
+      「栏」只在需要分隔时存在。最轻、最有当代产品味的一案。<strong>试试滚动下面的消息区。</strong>
+    </p>
+    <div class="mock mock-d">
+      <div class="rail">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <div class="rail-row active">ultracode 分析下代码仓库</div>
+        <div class="rail-row">武汉明天天气</div>
+        <div class="rail-row">创建一个 hello world</div>
+      </div>
+      <div class="chat">
+        <header class="hdr-d" id="hdr-d">
+          <div class="inner">
+            <span class="chip">/ppt-master</span>
+            <button type="button" class="title-btn" title="重命名会话">
+              <span class="txt"><span class="t-plain">ultracode 分析下代码仓库</span><span class="t-cmd">武汉大学宣传介绍 PPT</span></span>
+              <svg class="pencil" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+            </button>
+            <span class="ai">
+              <span class="text-form">AI 生成</span>
+              <span class="icon-form"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 14.4 9.6 22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4Z"/></svg>AI 生成</span>
+              <span class="pill-form">AI 生成</span>
+            </span>
+          </div>
+        </header>
+        <div class="content" id="content-d"><div class="col">
+          <div class="msg-user">ultracode 分析下代码仓库</div>
+          <p class="msg-ai">好的，我先用 workflow 扫一遍仓库结构，再分维度深入分析各模块的职责与依赖关系。</p>
+          <div class="tool-card"><span class="dot"></span>get_architecture · 已完成</div>
+          <div class="tool-card"><span class="dot"></span>search_graph · 已完成</div>
+          <p class="msg-ai">仓库是一个 monorepo，核心包位于 apps/studio，主进程持有 ChatEngine，每个 tab 绑定独立的 WebContentsView。渲染层通过 preload 暴露的 chatApi 与主进程通信，IPC 通道名集中在 shared/ipc-channels.ts。</p>
+          <div class="tool-card"><span class="dot"></span>trace_path · 已完成</div>
+          <p class="msg-ai">权限体系走 per-engine 的 PermissionBroker，canUseTool 用闭包捕获 sessionId 保证权限请求回到发起它的 runtime。会话切换是 lazy spawn——switchToSession 只切指针，真正的冷启动延迟到第一次 send。</p>
+          <p class="msg-ai">样式层面 chat 与 canvas 两面共存一个 document，靠 token 命名空间与守卫选择器隔离，跨面泄漏是最大坑源。</p>
+        </div></div>
+      </div>
+    </div>
+    <p class="spec">title 15px/650 tracking-tight · 静止 border transparent → scrolled: bg card/86 + blur 14 + hairline border/50 · 高度 48px</p>
+  </section>
+</div>
+
+<script>
+/* seg 切换 —— data-* 落在 <html> 上全局生效 */
+function wireSeg(id, attr) {
+  const seg = document.getElementById(id)
+  seg.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-v]')
+    if (!btn) return
+    document.documentElement.setAttribute(attr, btn.dataset.v)
+    seg.querySelectorAll('button').forEach((b) =>
+      b.setAttribute('aria-pressed', String(b === btn)))
+  })
+}
+document.documentElement.setAttribute('data-title', 'plain')
+document.documentElement.setAttribute('data-badge', 'text')
+wireSeg('seg-title', 'data-title')
+wireSeg('seg-badge', 'data-badge')
+
+document.getElementById('dark-toggle').addEventListener('click', () => {
+  document.documentElement.classList.toggle('dark')
+})
+
+/* 方向 04：内容滚动 → header 浮起 */
+const contentD = document.getElementById('content-d')
+const hdrD = document.getElementById('hdr-d')
+contentD.addEventListener('scroll', () => {
+  hdrD.classList.toggle('scrolled', contentD.scrollTop > 2)
+}, { passive: true })
+</script>
+</body>
+</html>
