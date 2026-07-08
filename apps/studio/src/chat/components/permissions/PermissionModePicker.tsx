@@ -74,8 +74,8 @@ const MODES: readonly ModeMeta[] = [
     glyph: '⏵⏵',
     labelZh: '全自动',
     labelEn: 'Bypass',
-    descZh: '全权托付 Claude，无需逐步确认',
-    descEn: 'Hand off fully — Claude runs without prompts'
+    descZh: '全权托付，无需逐步确认',
+    descEn: 'Hand off fully — runs without prompts'
   },
   {
     id: 'dontAsk',
@@ -87,6 +87,18 @@ const MODES: readonly ModeMeta[] = [
     descEn: 'Silently deny anything not pre-approved'
   }
 ]
+
+/**
+ * 菜单里暂时下架的模式（2026-07-07 产品收敛：只暴露 默认/计划/全自动 三
+ * 档）。只从菜单里摘、不从 MODES 里删——localStorage 里可能残留着此前选过
+ * 的 acceptEdits/dontAsk（persist 中间件），pill 的 current 查找必须仍认得
+ * 它们，否则 pill 会误显示「默认」而引擎实际还跑在旧模式上。恢复上架 = 从
+ * 这个集合里删掉对应 id。
+ */
+const MENU_HIDDEN: ReadonlySet<UiPermissionMode> = new Set<UiPermissionMode>([
+  'acceptEdits',
+  'dontAsk'
+])
 
 const COLOR_CLASS: Record<ModeColor, { dot: string; ring: string }> = {
   muted: {
@@ -252,7 +264,7 @@ export function PermissionModePicker(): React.JSX.Element {
                 className="fixed z-[9999] mb-1.5 w-64 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
                 role="listbox"
               >
-                {MODES.map((meta) => {
+                {MODES.filter((m) => !MENU_HIDDEN.has(m.id)).map((meta) => {
                   const selected = meta.id === mode
                   const color = COLOR_CLASS[meta.color]
                   return (
