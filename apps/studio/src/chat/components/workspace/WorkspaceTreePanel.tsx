@@ -75,7 +75,17 @@ export function WorkspaceTreePanel(): React.JSX.Element {
   const tf = useTFormat()
   const sessionId = useChatStore((s) => s.sessionId)
   const streaming = useChatStore((s) => s.streaming)
-  const workspace = useWorkspaceStore((s) => s.current)
+  // 前台会话的有效工作区（统一会话管理）：已锁定归属 → 预选 → 默认
+  // （桌面）。与 main 侧 FILE_SUGGESTIONS 的 cwd 决策同口径 —— 路径
+  // chip 显示什么，文件树就扫什么。selector 返回原始 string，无
+  // useShallow 顾虑。
+  const workspace = useWorkspaceStore((s) =>
+    sessionId
+      ? (s.sessionWorkspaces[sessionId] ??
+        s.pendingChoices[sessionId] ??
+        s.current)
+      : s.current
+  )
 
   const [files, setFiles] = useState<readonly string[]>([])
   const [truncated, setTruncated] = useState(false)
@@ -126,6 +136,14 @@ export function WorkspaceTreePanel(): React.JSX.Element {
     const id = setInterval(() => setTick((n) => n + 1), POLL_FALLBACK_MS)
     return () => clearInterval(id)
   }, [])
+
+  // ── Bump source #4: 前台会话的工作区变了 ───────────────────────────
+  // 统一会话管理后每个会话有自己的工作区：切会话 / composer 预选目录都
+  // 会换扫描根，立即重拉（main 的 fileSuggestions 缓存按 cwd 键控，换
+  // 目录必 miss，不会拿到旧树）。
+  useEffect(() => {
+    setTick((n) => n + 1)
+  }, [workspace])
 
   // ── Fetch effect: debounced, force-refresh ─────────────────────────
   // `force: true` bypasses main's 5s TTL cache so we actually see the

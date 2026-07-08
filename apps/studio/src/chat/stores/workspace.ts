@@ -1,125 +1,77 @@
 import { create } from 'zustand'
 
-import { useChatStore } from './chat'
-import { useTodosStore } from './todos'
-import { confirmStreamingInterrupt } from '../runtime/streamingGuard'
-
 /**
- * Current workspace path + recent-folder ring + commit action.
+ * Workspace state（统一会话管理，2026-07-07 起为「会话级工作区」模型）。
  *
- * `current` is the renderer-side mirror of the engine's workspace path
- * (defaulted to the OS Desktop in main). App.tsx seeds it from
- * `getWorkspace()` on mount; WorkspaceTreePanel reads it to scope its
- * file scan. Recent list is persisted to localStorage.
+ * `current` 仍是引擎默认工作区（桌面）的渲染侧镜像 —— App.tsx 从
+ * `getWorkspace()` seed，WorkspaceTreePanel 读它来 scope 文件树。它不再
+ * 代表「所有会话的 cwd」：每个会话有自己的工作区。
  *
- * `switchTo` remains as the single commit path that calls the engine's
- * setWorkspace IPC, wipes per-workspace renderer stores, and updates
- * `current`. With the folder-picker UI removed it currently has no live
- * caller, but is kept so a future "change folder" affordance can reuse
- * it: App.tsx subscribes to `current` and mirrors it into the React tree
- * so FusionRuntimeProvider's `key={workspace}` remounts under the new cwd.
+ * 会话级状态分两张表：
+ *   - `sessionWorkspaces`：磁盘上已有 transcript 的会话 → 归属工作区。
+ *     由 FusionRuntimeProvider 在每次 listSessions 刷新时镜像
+ *     （ThreadSummary.workspacePath），是「锁定态」的展示来源。出现在
+ *     这张表 = 会话已开始对话 = 工作区不可再改。
+ *   - `pendingChoices`：还没发过消息的新会话 → 用户在 composer 预选的
+ *     目录。经 `chooseForSession`（SESSION_WORKSPACE_SET IPC）成功后
+ *     记录；main 侧的锁定校验才是权威，这里只是 UI 乐观镜像。
+ *
+ * 旧的 `switchTo`（整窗切换工作区 + wipe 全部 store + runtime remount）
+ * 已随会话级模型退役——「换目录」不再是窗口级动作。
  */
 
-const STORAGE_KEY = 'workspace.recent.v1'
-const MAX_RECENT = 6
-
 type WorkspaceStore = {
+  /** 引擎默认工作区（桌面）。null = getWorkspace() 尚未返回。 */
   current: string | null
-  recent: string[]
+  /** 已有 transcript 的会话的归属工作区（listSessions 镜像，只读展示）。 */
+  sessionWorkspaces: Record<string, string>
+  /** 未开始对话的会话的用户预选目录（乐观镜像）。 */
+  pendingChoices: Record<string, string>
   /**
-   * In-flight commit target. Non-null while `switchTo` is awaiting
-   * the main-process setWorkspace IPC + wiping renderer state. A future
-   * "change folder" affordance can read this to show a loading
-   * indicator while the switch lands, since the IPC can take several
-   * hundred ms and the subsequent FusionRuntimeProvider remount can take
-   * a few seconds more on the fusion-code cold start.
+   * 切换在途的会话 → 目标路径。覆盖 setSessionWorkspace IPC 从发出到
+   * 落定的窗口——已有记录的会话走迁移（teardown 子进程 + 搬 transcript），
+   * 耗时可感知。UI 靠它渲染 loading，send 路径靠它把「迁移中发消息」
+   * 变成短暂排队（见 FusionRuntimeProvider.onNew）。成败都会清。
    */
-  switching: string | null
+  switching: Record<string, string>
   setCurrent: (path: string | null) => void
-  pushRecent: (path: string) => void
-  removeRecent: (path: string) => void
+  /** listSessions 刷新时整表替换（来源是磁盘扫描，不做增量合并）。 */
+  setSessionWorkspaces: (map: Record<string, string>) => void
   /**
-   * Commit a new workspace path through the engine and refresh all
-   * per-workspace renderer state. Throws on main-side rejection so a
-   * future caller can surface the error in its own UI.
+   * 给一个新会话预选工作目录。round-trip 到 main（校验 + 锁定检查 +
+   * 写入引擎 pendingWorkspace + 注册表登记），成功后记录乐观镜像。
+   * main 拒绝（已有记录/路径非法）时抛出，调用方决定怎么提示。
    */
-  switchTo: (path: string) => Promise<void>
+  chooseForSession: (sessionId: string, path: string) => Promise<void>
 }
 
-function loadRecent(): string[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((p): p is string => typeof p === 'string').slice(0, MAX_RECENT)
-  } catch {
-    return []
-  }
-}
-
-function saveRecent(recent: string[]): void {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(recent))
-  } catch {
-    // localStorage is quota-limited but the worst case is losing the
-    // recent list on restart, not breaking the UI.
-  }
-}
-
-export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
+export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
   current: null,
-  recent: loadRecent(),
-  switching: null,
+  sessionWorkspaces: {},
+  pendingChoices: {},
+  switching: {},
 
   setCurrent: (path) => set({ current: path }),
 
-  pushRecent: (path) => {
-    const existing = get().recent.filter((p) => p !== path)
-    const next = [path, ...existing].slice(0, MAX_RECENT)
-    saveRecent(next)
-    set({ recent: next })
-  },
+  setSessionWorkspaces: (map) => set({ sessionWorkspaces: map }),
 
-  removeRecent: (path) => {
-    const next = get().recent.filter((p) => p !== path)
-    saveRecent(next)
-    set({ recent: next })
-  },
-
-  switchTo: async (path) => {
+  chooseForSession: async (sessionId, path) => {
     const api = window.chatApi
     if (!api) throw new Error('chatApi unavailable')
-    // Mid-turn guard: if a chat is currently streaming, prompt the
-    // user before tearing down the engine. A first-commit caller hits
-    // this with streaming === false and passes through without a dialog.
-    // Returning false silently aborts the switch — no error toast,
-    // since the user just clicked "cancel".
-    if (!(await confirmStreamingInterrupt())) return
-    // Flip `switching` to the target path immediately so the UI can
-    // show a loading state before the IPC round-trip starts. We
-    // always clear it in the finally block, even on rejection, so a
-    // failed switch doesn't leave a phantom spinner.
-    set({ switching: path })
+    set((s) => ({ switching: { ...s.switching, [sessionId]: path } }))
     try {
-      const state = await api.setWorkspace({ path })
-      if (!state.path) {
-        throw new Error('main rejected workspace')
-      }
-      // Wipe per-workspace renderer state before flipping `current`.
-      // FusionRuntimeProvider keys off App.tsx's workspace React
-      // state (which tracks `current` via an effect subscription),
-      // so the runtime subtree remounts after this set() lands.
-      useChatStore.getState().reset()
-      useTodosStore.setState({ todos: {} })
-      const existing = get().recent.filter((p) => p !== state.path)
-      const nextRecent = [state.path, ...existing].slice(0, MAX_RECENT)
-      saveRecent(nextRecent)
-      set({ current: state.path, recent: nextRecent })
+      await api.setSessionWorkspace({ sessionId, path })
+      set((s) => ({
+        pendingChoices: { ...s.pendingChoices, [sessionId]: path }
+      }))
     } finally {
-      set({ switching: null })
+      // 成败都清：失败时 chip 回落到原目录展示，回落本身就是「没切成」
+      // 的反馈（错误详情由调用方 console.warn，不弹窗打断输入）。
+      set((s) => {
+        const next = { ...s.switching }
+        delete next[sessionId]
+        return { switching: next }
+      })
     }
   }
 }))

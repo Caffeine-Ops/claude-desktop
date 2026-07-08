@@ -6,6 +6,11 @@
  * already understands (`ThreadSummary` for the sidebar, `ThreadMessageLike`
  * for Thread view restoration).
  *
+ * 统一会话管理（2026-07-07）后列表不再绑定单一工作区：入口是
+ * `listAllSessions(workspaceDirs)`（已知工作区集合来自 workspaceRegistry），
+ * 单会话操作（load/delete）按 UUID 走 SDK 的全局定位，rename/search 在
+ * 集合内逐目录探测。磁盘仍是唯一事实源 —— 本模块不新增任何状态。
+ *
  * One narrow exception to "read-only": `renameSession` appends a single
  * `{"type":"custom-title", ...}` line to the existing jsonl. Fusion-code's
  * own `/rename` slash command writes the exact same line, and the SDK's
@@ -13,11 +18,20 @@
  * so this stays compatible with upstream behavior. Append-only means we
  * never race fusion-code's writes to the active turn.
  */
-import { appendFile, open, readdir, readFile, stat } from 'node:fs/promises'
+import {
+  appendFile,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  rename,
+  stat
+} from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join, sep } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import {
   deleteSession as sdkDeleteSession,
+  getSessionInfo,
   getSessionMessages,
   listSessions as sdkListSessions,
   type SDKSessionInfo,
@@ -35,25 +49,73 @@ const TAG = '[sessionStore]'
 const PROJECT_NAME_MAX_LEN = 200
 
 /**
- * List all sessions for a workspace, newest first. Wraps the SDK's
- * `listSessions({ dir })` and maps `SDKSessionInfo` → `ThreadSummary`.
+ * Unified session list across every known workspace, newest first.
+ *
+ * 统一会话管理的读侧入口：对每个已知工作区（workspaceRegistry 的
+ * 集合，默认工作区置顶）各跑一次 per-dir 扫描后合并排序。刻意不用
+ * SDK 的「不传 dir 全局扫」——`~/.claude/projects/` 下混着大量不属于
+ * 本应用的会话（官方 Claude app、tmp 目录、CLI 仓库），按注册表并集
+ * 扫描天然过滤噪音（理由详见 workspaceRegistry 头注释）。
+ *
+ * 去重按 sessionId：同一会话的 jsonl 只存在于一个 projects 目录，
+ * 理论上不会重复；唯一的重叠来源是嵌套工作区 + 长名截断 hash 的
+ * prefix 扫描误伤，first-wins（dirs 有序，默认工作区优先）足够。
+ */
+export async function listAllSessions(
+  workspaceDirs: readonly string[]
+): Promise<ThreadSummary[]> {
+  // 注册表约定 dirs[0] = 默认工作区（桌面）；非默认工作区的行才带
+  // workspaceLabel（渲染层的徽标开关，见 ThreadSummary 注释）。
+  const perDir = await Promise.all(
+    workspaceDirs.map((dir, i) =>
+      listWorkspaceSessions(dir, { isDefault: i === 0 })
+    )
+  )
+  const seen = new Set<string>()
+  const out: ThreadSummary[] = []
+  for (const threads of perDir) {
+    for (const t of threads) {
+      if (seen.has(t.id)) continue
+      seen.add(t.id)
+      out.push(t)
+    }
+  }
+  return out.sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+/**
+ * List all sessions for ONE workspace, newest first. Wraps the SDK's
+ * `listSessions({ dir })` and maps `SDKSessionInfo` → `ThreadSummary`
+ * (stamping `workspacePath` so the renderer knows the row's home).
  *
  * Returns an empty array on:
- *   - null workspaceDir (before the workspace gate has been passed)
  *   - no fusion-code transcripts under that workspace yet
  *   - SDK read error (logged; the sidebar should not crash on a bad file)
  */
-export async function listSessions(
-  workspaceDir: string | null
+async function listWorkspaceSessions(
+  workspaceDir: string,
+  opts: { isDefault: boolean }
 ): Promise<ThreadSummary[]> {
-  if (!workspaceDir) return []
   try {
-    const infos = await sdkListSessions({
+    const rawInfos = await sdkListSessions({
       dir: workspaceDir,
       // Stay single-branch: avoid surfacing every worktree's session as
       // a separate row when the user only wanted the current one.
       // Can flip true once we have a worktree selector.
       includeWorktrees: false
+    })
+    // slug 撞车过滤（2026-07-07）：sanitize 把所有非 alnum 字符变 '-'，
+    // 中文目录名整个变成横杠——`/Desktop/方案配图` 和 `/Desktop/方案分类`
+    // 共享同一个 `~/.claude/projects/-Users-…-Desktop-----/`。按 transcript
+    // 里记录的 cwd 甄别邻居，但**只在同 slug 时滤**：迁移来的会话
+    // （moveSessionToWorkspace 只搬文件，不重写历史 entry 的 cwd 字段）
+    // cwd 记录还是旧工作区，sanitize 后与本目录不同 slug——物理位置即
+    // 归属，必须保留，否则迁移完的会话直接从列表消失。cwd 缺失（异常/
+    // 极早期 transcript）时也保留——宁可偶尔多显示一行，不静默丢会话。
+    const slugOf = (p: string): string => p.replace(/[^a-zA-Z0-9]/g, '-')
+    const infos = rawInfos.filter((i) => {
+      if (!i.cwd || i.cwd === workspaceDir) return true
+      return slugOf(i.cwd) !== slugOf(workspaceDir)
     })
     // 排序键换成「最后一条真实对话的时间」，不能用 SDK 的 lastModified
     // （= 文件 mtime）：切会话的 background warmup 会让 fusion-code 以
@@ -66,7 +128,7 @@ export async function listSessions(
     const dirs = await candidateProjectDirs(workspaceDir)
     const threads = await Promise.all(
       infos.map(async (info) => {
-        const summary = toThreadSummary(info)
+        const summary = toThreadSummary(info, workspaceDir, opts.isDefault)
         const ts = await lastConversationTime(
           info.sessionId,
           info.lastModified,
@@ -81,7 +143,7 @@ export async function listSessions(
     pruneLastActivityCache(dirs, infos.map((i) => i.sessionId))
     return threads.sort((a, b) => b.updatedAt - a.updatedAt)
   } catch (err) {
-    console.warn(`${TAG} listSessions failed for ${workspaceDir}:`, err)
+    console.warn(`${TAG} listWorkspaceSessions failed for ${workspaceDir}:`, err)
     return []
   }
 }
@@ -203,18 +265,18 @@ function pruneLastActivityCache(
  * Load a single session's full message history, mapped into the
  * assistant-ui ThreadMessageLike shape the chat store already consumes.
  *
+ * No workspace param: sessionId is a UUID, so the SDK's omit-dir mode
+ * (searches every project dir for `<id>.jsonl`) is unambiguous — and it
+ * frees the caller from knowing which workspace a row belongs to.
+ *
  * Returns `[]` on error or unknown session so the UI can fall back on a
  * blank thread rather than crash.
  */
 export async function loadSession(
-  sessionId: string,
-  workspaceDir: string | null
+  sessionId: string
 ): Promise<ThreadMessageLike[]> {
-  if (!workspaceDir) return []
   try {
-    const raws = await getSessionMessages(sessionId, {
-      dir: workspaceDir
-    })
+    const raws = await getSessionMessages(sessionId)
     return convertSdkMessages(raws)
   } catch (err) {
     console.warn(`${TAG} loadSession ${sessionId} failed:`, err)
@@ -230,23 +292,27 @@ export async function loadSession(
  * just keep working. Fusion-code's own `/rename` slash command writes
  * the exact same shape, so we stay compatible with the upstream format.
  *
- * Throws if the workspace is unset or the jsonl file can't be located.
+ * Takes the known-workspaces set (not a single dir) and probes each in
+ * order until the jsonl turns up — the unified sidebar mixes rows from
+ * every workspace, so the caller no longer knows which one owns the id.
+ * Throws when no workspace has the file.
  * The caller is expected to broadcast `sessionListChanged` after a
  * successful rename so the sidebar re-pulls the title.
  */
 export async function renameSession(
   sessionId: string,
   customTitle: string,
-  workspaceDir: string | null
+  workspaceDirs: readonly string[]
 ): Promise<void> {
-  if (!workspaceDir) throw new Error('Workspace not set')
-  const filePath = await findSessionJsonl(workspaceDir, sessionId)
-  if (!filePath) {
-    throw new Error(`Session jsonl not found for ${sessionId}`)
+  for (const dir of workspaceDirs) {
+    const filePath = await findSessionJsonl(dir, sessionId)
+    if (!filePath) continue
+    const line =
+      JSON.stringify({ type: 'custom-title', customTitle, sessionId }) + '\n'
+    await appendFile(filePath, line, 'utf8')
+    return
   }
-  const line =
-    JSON.stringify({ type: 'custom-title', customTitle, sessionId }) + '\n'
-  await appendFile(filePath, line, 'utf8')
+  throw new Error(`Session jsonl not found for ${sessionId}`)
 }
 
 /* ─────────────────── Content search ─────────────────── */
@@ -351,7 +417,7 @@ async function extractSearchableTexts(path: string): Promise<SearchableText[]> {
  * dialog's result order roughly matches the sidebar's.
  */
 export async function searchSessionContent(
-  workspaceDir: string | null,
+  workspaceDirs: readonly string[],
   query: string
 ): Promise<
   Array<{
@@ -361,11 +427,19 @@ export async function searchSessionContent(
     hitCount: number
   }>
 > {
-  if (!workspaceDir) return []
   const q = query.trim().toLowerCase()
 
-  // Collect candidate files (sessionId + mtime), newest first.
-  const projectDirs = await candidateProjectDirs(workspaceDir)
+  // Collect candidate files (sessionId + mtime), newest first. The scan
+  // set is the union of every known workspace's project dirs — the
+  // unified sidebar searches across all of them in one pass. Caps below
+  // (SEARCH_MAX_SESSIONS / SEARCH_MAX_FILE_BYTES) are global, not
+  // per-workspace, so a bigger union cannot blow up the IPC payload.
+  const projectDirs: string[] = []
+  for (const workspaceDir of workspaceDirs) {
+    for (const dir of await candidateProjectDirs(workspaceDir)) {
+      if (!projectDirs.includes(dir)) projectDirs.push(dir)
+    }
+  }
   const files: Array<{ sessionId: string; path: string; mtime: number }> = []
   for (const dir of projectDirs) {
     let entries: string[]
@@ -462,13 +536,119 @@ export async function searchSessionContent(
  * closed first (see the SHELL_SESSION_DELETE handler) — a fusion-code
  * child appending to an unlinked file would silently resurrect nothing
  * but still hold the fd open.
+ *
+ * No workspace param — same omit-dir global lookup rationale as
+ * loadSession: the UUID is unambiguous across project dirs.
  */
-export async function deleteSessionFromDisk(
+export async function deleteSessionFromDisk(sessionId: string): Promise<void> {
+  await sdkDeleteSession(sessionId)
+}
+
+/**
+ * 把一个会话的磁盘工件迁移到另一个工作区（「已有记录的会话改工作目录」，
+ * 2026-07-07 实测验证后放开）。
+ *
+ * 为什么是移文件而不是别的：CLI 的 `--resume <id>` 只在 sanitize(cwd)
+ * 对应的 `~/.claude/projects/<slug>/` 里找 transcript（2026-07-07 用
+ * claude 2.1.202 实测：跨 cwd resume 报 "No conversation found"；把
+ * jsonl 移进新 cwd 的 slug 目录后 resume 完全正常、历史无损、新 turn
+ * 继续 append 同一文件）。SDK 没有官方迁移 API，但它的读侧
+ * （listSessions/getSessionInfo）全是按目录扫文件，移动后自动归属新
+ * 工作区 —— 文件系统就是数据库。
+ *
+ * 迁移的工件与 `deleteSession` 删除的一致：`<id>.jsonl` + 同名子代理
+ * transcript 目录 `<id>/`（可能不存在）。其余按 sessionId 关联的状态
+ * （file-history、todos）不含 cwd 维度，无需搬动。
+ *
+ * 调用方（engine.setSessionWorkspace）必须先把该会话的 live runtime
+ * 彻底 teardown —— 正在写 transcript 的子进程手里握着旧路径的 fd，
+ * rename 底下的文件会让后续行为不可预测（同 delete 的顺序约束）。
+ *
+ * 同 workspace 重复迁移是 no-op。找不到源 transcript 抛错（调用方在
+ * 迁移前已确认 transcript 存在，走到这说明竞态删除，报错比假成功好）。
+ */
+export async function moveSessionToWorkspace(
   sessionId: string,
-  workspaceDir: string | null
+  sourceWorkspaceDirs: readonly string[],
+  targetWorkspaceDir: string
 ): Promise<void> {
-  if (!workspaceDir) throw new Error('Workspace not set')
-  await sdkDeleteSession(sessionId, { dir: workspaceDir })
+  let srcJsonl: string | null = null
+  for (const dir of sourceWorkspaceDirs) {
+    srcJsonl = await findSessionJsonl(dir, sessionId)
+    if (srcJsonl) break
+  }
+  // 已知工作区都没有 → 全局兜底扫一遍 ~/.claude/projects。会话可能
+  // "走丢"在未注册目录里（历史版本的迁移把文件搬去了后来被移出注册表
+  // 的工作区、或外部 CLI 建的），这条兜底让「再改一次工作目录」成为
+  // 把孤儿会话捞回来的自愈动作，而不是对着 not found 干瞪眼。
+  srcJsonl ??= await findSessionJsonlGlobal(sessionId)
+  if (!srcJsonl) {
+    throw new Error(`Session transcript not found for ${sessionId}`)
+  }
+
+  // 目标 slug 目录。≤200 字符直接按 sanitize 规则拼（与
+  // candidateProjectDirs 同源）；超长名会被 SDK 截断 + hash 后缀，而
+  // hash 算法是 SDK 内部实现 —— 只有目标工作区已经有过会话（目录已
+  // 存在，prefix 扫描可命中）才能拿到正确目录，否则明确拒绝，不赌。
+  const projectsDir = join(homedir(), '.claude', 'projects')
+  const sanitized = targetWorkspaceDir.replace(/[^a-zA-Z0-9]/g, '-')
+  let destDir: string | null = null
+  if (sanitized.length <= PROJECT_NAME_MAX_LEN) {
+    destDir = join(projectsDir, sanitized)
+  } else {
+    destDir = (await candidateProjectDirs(targetWorkspaceDir))[0] ?? null
+  }
+  if (!destDir) {
+    throw new Error(
+      `Cannot derive project dir for over-long workspace path: ${targetWorkspaceDir}`
+    )
+  }
+
+  if (dirname(srcJsonl) === destDir) return // 已在目标工作区 — no-op
+
+  await mkdir(destDir, { recursive: true })
+  await rename(srcJsonl, join(destDir, `${sessionId}.jsonl`))
+  // 子代理 transcript 目录跟着走；不存在（从没 spawn 过子代理）是常态。
+  try {
+    await rename(join(dirname(srcJsonl), sessionId), join(destDir, sessionId))
+  } catch {
+    // ENOENT 等 —— 主 jsonl 已迁移成功，子目录缺失不构成失败。
+  }
+}
+
+/**
+ * 定位一个会话归属的工作区（resolveRuntimeCwd 的 resume 解析用）。
+ *
+ * 判定次序：**物理位置优先** —— 遍历已知工作区，看谁的 projects slug
+ * 目录里真有 `<id>.jsonl`。不能信 `getSessionInfo().cwd`：那是 transcript
+ * 历史 entry 里记录的 cwd，迁移（moveSessionToWorkspace 只搬文件不重写
+ * 历史）之后它还是旧值——按它解析会 spawn 回旧目录，resume 在旧 slug
+ * 里找不到刚搬走的文件，历史"凭空消失"。
+ *
+ * 撞 slug 时（多个已知工作区 sanitize 后同目录，中文名常见）物理位置
+ * 无法消歧，才用 transcript 记录的 cwd 挑一个；仍然不中就取第一个命中
+ * （错也只错在归属展示，文件找得到、resume 不断链）。
+ *
+ * 返回 null = 已知工作区里都没有这个会话的文件（外部 CLI 在未注册目录
+ * 建的会话）——调用方 fallback 到 getSessionInfo().cwd。
+ */
+export async function resolveSessionWorkspace(
+  sessionId: string,
+  workspaceDirs: readonly string[]
+): Promise<string | null> {
+  const hits: string[] = []
+  for (const dir of workspaceDirs) {
+    if ((await findSessionJsonl(dir, sessionId)) !== null) hits.push(dir)
+  }
+  if (hits.length === 0) return null
+  if (hits.length === 1) return hits[0]
+  try {
+    const info = await getSessionInfo(sessionId)
+    if (info?.cwd && hits.includes(info.cwd)) return info.cwd
+  } catch {
+    // 消歧失败就退到第一个命中。
+  }
+  return hits[0]
 }
 
 /**
@@ -565,15 +745,45 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * 全局扫 `~/.claude/projects/` 找 `<id>.jsonl`。moveSessionToWorkspace
+ * 的源查找兜底（见调用处注释）。一次 readdir + 每目录一次 stat，
+ * 百级目录量级下可忽略；只在已知工作区全部 miss 时才走到。
+ */
+async function findSessionJsonlGlobal(sessionId: string): Promise<string | null> {
+  const projectsDir = join(homedir(), '.claude', 'projects')
+  let entries
+  try {
+    entries = await readdir(projectsDir, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue
+    const candidate = join(projectsDir, e.name, `${sessionId}.jsonl`)
+    if (await fileExists(candidate)) return candidate
+  }
+  return null
+}
+
 /* ─────────────────── Mapping helpers ─────────────────── */
 
-function toThreadSummary(info: SDKSessionInfo): ThreadSummary {
+function toThreadSummary(
+  info: SDKSessionInfo,
+  workspaceDir: string,
+  isDefaultWorkspace: boolean
+): ThreadSummary {
   return {
     id: info.sessionId,
     title: info.customTitle ?? info.summary ?? info.firstPrompt ?? 'New chat',
     updatedAt: info.lastModified,
     firstPrompt: info.firstPrompt,
-    turnCount: 0
+    turnCount: 0,
+    // 归属工作区 = 被扫描的目录本身（jsonl 落在 sanitize(cwd) 目录下，
+    // 所以扫描 dir 就是会话的 cwd），不取 info.cwd —— 那是 optional 的。
+    workspacePath: workspaceDir,
+    // 徽标开关：默认工作区（桌面）的行不打标，避免满屏重复徽标。
+    ...(isDefaultWorkspace ? {} : { workspaceLabel: basename(workspaceDir) })
   }
 }
 

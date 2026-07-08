@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>幻灯片工作区重设计 · 原型</title>
+<style>
+/* ══════════════════════════════════════════════════════════════
+   幻灯片工作区（LivePreviewEditor + SlidesWorkspace tab 壳）重设计原型
+   ------------------------------------------------------------------
+   诊断（对应 2026-07-07 截图）：
+   1. 靛蓝操作色与 app 品牌绿家族冲突（选中框/芯片/CTA 全是外来色）
+   2. dock 三段竖线分隔 → 表格感、碎
+   3. 芯片/卡片裸露 _edit_15 原始 ID（应大白话，原始数据收 tooltip）
+   4. 56px 标题头与 tab 文案重复，浪费纵向空间
+   操作色可在 Tweaks 里切 品牌绿/靛蓝/中性墨 对照。
+   色板与 tokens.css --brand 同源；标注身份色 = 琥珀（与选中绿分离）。
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  --bg: #f4f6f5;
+  --surface: #ffffff;
+  --well: rgba(29, 29, 31, 0.03);
+  --ink: #1d1d1f;
+  --ink-2: rgba(29, 29, 31, 0.62);
+  --ink-3: rgba(29, 29, 31, 0.4);
+  --line: rgba(29, 29, 31, 0.08);
+  --line-soft: rgba(29, 29, 31, 0.06);
+  --hover: rgba(29, 29, 31, 0.045);
+  --hover-strong: rgba(29, 29, 31, 0.08);
+  --amber: #d97706;
+  --amber-soft: rgba(217, 119, 6, 0.12);
+  --ready: #10b981;
+  --card-shadow:
+    0 18px 44px -20px rgba(29, 29, 31, 0.25),
+    0 4px 12px -6px rgba(29, 29, 31, 0.12);
+  --pop-shadow:
+    0 12px 40px rgba(29, 29, 31, 0.16),
+    0 2px 8px rgba(29, 29, 31, 0.08);
+  /* 操作色（默认品牌绿；Tweaks 可切） */
+  --op: #16a34a;
+  --op-deep: #15803d;
+  --op-soft: rgba(22, 163, 74, 0.1);
+  --op-ring: rgba(22, 163, 74, 0.28);
+  --op-glow: rgba(22, 163, 74, 0.3);
+}
+[data-theme="dark"] {
+  --bg: #0f1211;
+  --surface: #1c201e;
+  --well: rgba(0, 0, 0, 0.22);
+  --ink: #f2f4f2;
+  --ink-2: rgba(242, 244, 242, 0.62);
+  --ink-3: rgba(242, 244, 242, 0.4);
+  --line: rgba(242, 244, 242, 0.09);
+  --line-soft: rgba(242, 244, 242, 0.06);
+  --hover: rgba(242, 244, 242, 0.06);
+  --hover-strong: rgba(242, 244, 242, 0.11);
+  --amber: #f5a623;
+  --amber-soft: rgba(245, 166, 35, 0.15);
+  --ready: #34d399;
+  --card-shadow:
+    0 18px 44px -18px rgba(0, 0, 0, 0.6),
+    0 4px 12px -6px rgba(0, 0, 0, 0.4);
+  --pop-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.5),
+    0 2px 8px rgba(0, 0, 0, 0.35);
+}
+[data-theme="dark"][data-op="green"], [data-op="green"][data-theme="dark"] {
+  --op: #3bce78; --op-deep: #34b96b;
+  --op-soft: rgba(59, 206, 120, 0.13);
+  --op-ring: rgba(59, 206, 120, 0.32);
+  --op-glow: rgba(59, 206, 120, 0.3);
+}
+[data-op="indigo"] {
+  --op: #4f46e5; --op-deep: #4338ca;
+  --op-soft: rgba(79, 70, 229, 0.1);
+  --op-ring: rgba(79, 70, 229, 0.28);
+  --op-glow: rgba(79, 70, 229, 0.32);
+}
+[data-theme="dark"][data-op="indigo"] {
+  --op: #818cf8; --op-deep: #6366f1;
+  --op-soft: rgba(129, 140, 248, 0.14);
+  --op-ring: rgba(129, 140, 248, 0.32);
+}
+[data-op="ink"] {
+  --op: #1d1d1f; --op-deep: #000000;
+  --op-soft: rgba(29, 29, 31, 0.07);
+  --op-ring: rgba(29, 29, 31, 0.3);
+  --op-glow: rgba(29, 29, 31, 0.25);
+}
+[data-theme="dark"][data-op="ink"] {
+  --op: #f2f4f2; --op-deep: #ffffff;
+  --op-soft: rgba(242, 244, 242, 0.1);
+  --op-ring: rgba(242, 244, 242, 0.35);
+  --op-glow: rgba(0, 0, 0, 0.4);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, "SF Pro SC", "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  background: var(--bg); color: var(--ink);
+  min-height: 100vh; display: grid; place-items: center;
+  padding: 28px; -webkit-font-smoothing: antialiased; text-wrap: pretty;
+  transition: background 0.25s ease;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+kbd {
+  display: inline-grid; place-items: center; height: 17px; min-width: 17px;
+  padding: 0 4px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--hover); font-family: inherit; font-size: 10px; color: var(--ink-3);
+}
+
+/* ── 面板外框（模拟 app 右侧工作区） ── */
+.panel {
+  width: min(1200px, 96vw); height: min(820px, 92vh);
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--surface); border-radius: 14px;
+  box-shadow: 0 0 0 1px var(--line), 0 24px 70px rgba(0, 0, 0, 0.14);
+  transition: background 0.25s ease;
+}
+
+/* ── tab 栏（SlidesWorkspace 壳）：更紧的分段 tab，右端挂就绪进度 ── */
+.tabbar {
+  display: flex; align-items: center; gap: 2px;
+  padding: 8px 12px; border-bottom: 1px solid var(--line-soft);
+}
+.tab {
+  display: flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 11px; border-radius: 8px;
+  font-size: 12.5px; color: var(--ink-2);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.tab svg { width: 14px; height: 14px; opacity: 0.75; }
+.tab:hover { background: var(--hover); color: var(--ink); }
+.tab.on { background: var(--hover-strong); color: var(--ink); font-weight: 500; }
+.tab.on svg { opacity: 1; }
+/* 就绪进度胶囊：吃掉原 56px 标题头的唯一有效信息 */
+.readiness {
+  margin-left: auto; display: flex; align-items: center; gap: 7px;
+  height: 26px; padding: 0 10px; border-radius: 999px;
+  background: var(--hover); font-size: 11.5px; color: var(--ink-2);
+}
+.readiness .bar {
+  width: 56px; height: 3px; border-radius: 2px; background: var(--hover-strong);
+  overflow: hidden;
+}
+.readiness .bar i {
+  display: block; height: 100%; width: 100%;
+  background: var(--ready); border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.readiness b { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+
+/* ── 主体三段 ── */
+.body { display: flex; flex: 1; min-height: 0; }
+
+/* 缩略图栏 */
+.rail {
+  width: 172px; flex-shrink: 0; display: flex; flex-direction: column;
+  border-right: 1px solid var(--line-soft); background: var(--well);
+}
+.rail-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 12px 14px 8px;
+}
+.rail-head .cap {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; color: var(--ink-3);
+}
+.rail-head .num { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--ink-3); }
+.rail-list { flex: 1; overflow-y: auto; padding: 0 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.thumb {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px; border-radius: 10px; text-align: left;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+.thumb:hover { background: var(--hover); }
+.thumb.on { background: var(--op-soft); box-shadow: inset 0 0 0 1px var(--op-ring); }
+.thumb .no {
+  width: 16px; flex-shrink: 0; text-align: right;
+  font-size: 10.5px; font-variant-numeric: tabular-nums; color: var(--ink-3);
+}
+.thumb.on .no { color: var(--op); font-weight: 600; }
+.thumb .shot {
+  position: relative; flex: 1; aspect-ratio: 16/9; overflow: hidden;
+  border-radius: 6px; background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line);
+}
+/* 迷你骨架页（真实实现是 SVG 缩略；原型用几何骨架示意） */
+.shot .sk { position: absolute; border-radius: 2px; background: var(--hover-strong); }
+.shot.cover { background: #2b3a55; }
+.shot.cover .sk { background: rgba(255, 255, 255, 0.35); }
+.shot .dot {
+  position: absolute; top: 4px; right: 4px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--ready);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.shot.cover .dot { box-shadow: 0 0 0 2px #2b3a55; }
+/* 标注计数徽标（琥珀 = 标注身份色，与选中绿分离） */
+.thumb .ann {
+  position: absolute; bottom: 3px; right: 3px;
+  min-width: 14px; height: 14px; padding: 0 4px;
+  display: none; place-items: center;
+  border-radius: 999px; background: var(--amber); color: #fff;
+  font-size: 9px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.thumb .ann.show { display: grid; }
+
+/* 舞台 */
+.stage-col { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--well); }
+.crumb { display: flex; align-items: center; gap: 10px; padding: 10px 18px 8px; }
+.crumb .pageno {
+  padding: 2px 8px; border-radius: 6px; background: var(--hover-strong);
+  font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink-2);
+}
+.crumb .name { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+.crumb .meta { font-size: 11px; color: var(--ink-3); }
+.crumb .sp { flex: 1; }
+.navbtn {
+  display: grid; place-items: center; width: 28px; height: 28px;
+  border-radius: 7px; color: var(--ink-3);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.navbtn:hover { background: var(--hover-strong); color: var(--ink); }
+.navbtn:disabled { opacity: 0.35; cursor: default; }
+.navbtn:disabled:hover { background: none; color: var(--ink-3); }
+.navbtn svg { width: 15px; height: 15px; }
+
+.stage {
+  flex: 1; min-height: 0; overflow: auto;
+  display: flex; align-items: center; justify-content: center;
+  padding: 4px 26px 18px;
+}
+.stage-inner { width: 100%; max-width: 860px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.canvas-wrap { position: relative; width: 100%; user-select: none; }
+.slide {
+  position: relative; width: 100%; aspect-ratio: 16/9; overflow: hidden;
+  border-radius: 12px; background: #fff;
+  box-shadow: var(--card-shadow), 0 0 0 1px rgba(0, 0, 0, 0.03);
+}
+.hint { font-size: 11.5px; color: var(--ink-3); }
+.hint kbd { transform: translateY(-1px); }
+
+/* 幻灯片 mock 内容（占位几何，不造假素材） */
+.slide .el { position: absolute; cursor: pointer; }
+.slide .ph {
+  display: grid; place-items: center; border-radius: 6px;
+  background: repeating-linear-gradient(45deg, rgba(29, 29, 31, 0.05) 0 8px, rgba(29, 29, 31, 0.09) 8px 16px);
+  color: rgba(29, 29, 31, 0.35); font-size: 11px; letter-spacing: 0.08em;
+}
+.s-kicker { font-size: clamp(8px, 1.1vw, 12px); letter-spacing: 0.22em; color: #8a93a6; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.s-title { font-size: clamp(22px, 3.6vw, 42px); font-weight: 700; letter-spacing: 0.02em; color: #1c2b45; }
+.s-body { font-size: clamp(10px, 1.4vw, 15px); line-height: 1.9; color: #5a6577; }
+.s-pill {
+  display: inline-block; padding: 0.4em 1.1em; border-radius: 999px;
+  background: #b43d2f; color: #fff; font-size: clamp(10px, 1.3vw, 14px); font-weight: 600;
+}
+
+/* ── 选中/标注覆盖层（Figma 式量测框） ── */
+.frame {
+  position: absolute; pointer-events: none; border-radius: 3px;
+  box-shadow: 0 0 0 1.5px var(--op);
+  transition: all 0.14s ease-out;
+}
+.frame .h {
+  position: absolute; width: 7px; height: 7px; border-radius: 2px;
+  background: var(--surface); box-shadow: 0 0 0 1.5px var(--op);
+}
+.frame .h.tl { top: -4px; left: -4px; } .frame .h.tr { top: -4px; right: -4px; }
+.frame .h.bl { bottom: -4px; left: -4px; } .frame .h.br { bottom: -4px; right: -4px; }
+.frame.hoverbox { box-shadow: 0 0 0 1.25px var(--op-ring); }
+.frame.noted { box-shadow: none; border: 1.5px dashed var(--amber); }
+.frame.noted .badge {
+  position: absolute; top: -9px; left: -9px; pointer-events: auto; cursor: pointer;
+  min-width: 17px; height: 17px; padding: 0 4px; display: grid; place-items: center;
+  border-radius: 999px; background: var(--amber); color: #fff;
+  font-size: 10px; font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+/* ── 就地修改说明浮层 ── */
+.pop {
+  position: absolute; z-index: 20; width: min(300px, calc(100% - 12px)); pointer-events: auto;
+  background: var(--surface); border-radius: 12px;
+  box-shadow: 0 0 0 1px var(--line), var(--pop-shadow);
+  padding: 10px 10px 9px;
+  transform-origin: bottom center;
+  animation: pop-in 0.14s ease-out;
+}
+@keyframes pop-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } }
+.pop .cap { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-2); }
+.pop .cap .swatch { width: 8px; height: 8px; border-radius: 2px; background: var(--op); }
+.pop .cap b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.pop textarea {
+  width: 100%; margin-top: 8px; resize: none; border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 12.5px;
+  line-height: 1.6; color: var(--ink); background: var(--bg);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.pop textarea:focus { outline: none; border-color: var(--op-ring); box-shadow: 0 0 0 3px var(--op-soft); }
+.pop textarea::placeholder { color: var(--ink-3); }
+.pop .foot { display: flex; align-items: center; margin-top: 7px; gap: 6px; }
+.pop .foot .esc { font-size: 10.5px; color: var(--ink-3); }
+.pop .foot .del {
+  font-size: 11px; color: var(--ink-3); padding: 2px 6px; border-radius: 5px;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.pop .foot .del:hover { color: #d93025; background: rgba(217, 48, 37, 0.08); }
+.pop .foot .sp { flex: 1; }
+.pop .submit {
+  display: flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 11px; border-radius: 999px;
+  background: var(--op); color: #fff; font-size: 12px; font-weight: 500;
+  transition: filter 0.12s ease, transform 0.1s ease;
+}
+[data-op="ink"] .pop .submit, [data-op="ink"] .apply { color: var(--bg); }
+.pop .submit:hover { filter: brightness(1.08); }
+.pop .submit:active { transform: scale(0.96); }
+.pop .submit kbd { border-color: rgba(255, 255, 255, 0.35); background: rgba(255, 255, 255, 0.15); color: rgba(255, 255, 255, 0.85); }
+
+/* ── 底部 dock：单面无竖线，三簇靠留白分区 ── */
+.dock {
+  flex-shrink: 0; display: flex; align-items: center; gap: 20px;
+  border-top: 1px solid var(--line-soft);
+  padding: 10px 16px; min-height: 62px;
+}
+.dock .cluster { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.dock .cap {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; color: var(--ink-3);
+}
+.dock .cap .count {
+  min-width: 15px; height: 15px; padding: 0 4px; display: grid; place-items: center;
+  border-radius: 999px; font-size: 9.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.dock .cap .count.op { background: var(--op-soft); color: var(--op); }
+.dock .cap .count.amber { background: var(--amber-soft); color: var(--amber); }
+.dock .cap .clear {
+  margin-left: 2px; font-size: 10.5px; font-weight: 400; letter-spacing: 0;
+  color: var(--ink-3); border-radius: 4px; padding: 1px 4px;
+}
+.dock .cap .clear:hover { color: var(--ink); background: var(--hover); }
+/* 定宽：空态提示与芯片列表宽度不同，跟随内容会让整条 dock 在选中/
+   取消时左右抖动——已选簇钉死宽度，标注簇吃剩余空间。 */
+.sel-cluster { width: 260px; flex-shrink: 0; }
+/* 已选芯片条：定高单行（多选再多 dock 也不长高——折行堆山是窄档丑的
+   根源）。溢出时右端渐隐 + 「+N」角标，鼠标移入整条上浮面板显示全部。 */
+.sel-wrap { position: relative; width: 100%; min-width: 0; }
+.chips {
+  display: flex; align-items: center; gap: 5px;
+  height: 26px; flex-wrap: nowrap; overflow: hidden;
+}
+.chip { flex-shrink: 0; }
+.sel-wrap.overflowing .chips {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 64px), transparent calc(100% - 6px));
+  mask-image: linear-gradient(90deg, #000 calc(100% - 64px), transparent calc(100% - 6px));
+}
+.chips-more {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  display: none; align-items: center; height: 22px; padding: 0 8px;
+  border-radius: 999px; background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--op-ring), 0 1px 4px rgba(0, 0, 0, 0.1);
+  color: var(--op); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.sel-wrap.overflowing .chips-more { display: inline-flex; }
+/* 悬停上浮面板：全部芯片折行铺开，超高走纵向滚动 */
+.chips-pop {
+  position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 30;
+  width: 340px; max-width: calc(100vw - 48px);
+  display: none; flex-wrap: wrap; align-content: flex-start; gap: 5px;
+  max-height: 150px; overflow-y: auto;
+  background: var(--surface); border-radius: 10px; padding: 8px;
+  box-shadow: 0 0 0 1px var(--line), var(--pop-shadow);
+}
+.sel-wrap.overflowing:hover .chips-pop { display: flex; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  padding: 2px 3px 2px 8px; border-radius: 6px;
+  background: var(--op-soft); box-shadow: inset 0 0 0 1px var(--op-ring);
+  font-size: 11px; font-weight: 500; color: var(--op);
+}
+[data-op="green"] .chip { color: var(--op-deep); }
+[data-theme="dark"] .chip { color: var(--op); }
+.chip .x {
+  display: grid; place-items: center; width: 14px; height: 14px;
+  border-radius: 3px; color: inherit; opacity: 0.55; font-size: 10px;
+}
+.chip .x:hover { opacity: 1; background: var(--op-soft); }
+.empty-note { font-size: 11.5px; color: var(--ink-3); }
+
+.ann-cluster { flex: 1; min-width: 0; }
+.pills { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 1px; }
+/* 标注序号钮：只露编号（与画布徽标同一编号体系），文字收进 tooltip；
+   点击 = 在画布上打开该条标注的编辑浮层（删除入口也在浮层里）。 */
+.annbtn {
+  display: grid; place-items: center; flex-shrink: 0;
+  min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px;
+  background: var(--amber); color: #fff;
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  transition: transform 0.1s ease, filter 0.12s ease, box-shadow 0.12s ease;
+}
+.annbtn:hover { filter: brightness(1.06); box-shadow: 0 2px 8px -1px var(--amber), 0 1px 4px rgba(0, 0, 0, 0.18); }
+.annbtn:active { transform: scale(0.92); }
+
+.apply-cluster { flex-shrink: 0; display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: 200px; }
+.status-chip {
+  align-self: center; display: none; align-items: center; gap: 5px;
+  font-size: 10.5px; color: var(--ink-2);
+}
+.status-chip.show { display: flex; }
+.status-chip .sdot { width: 5px; height: 5px; border-radius: 50%; background: var(--ready); }
+.apply {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  height: 36px; border-radius: 10px;
+  background: linear-gradient(135deg, var(--op), var(--op-deep));
+  color: #fff; font-size: 12.5px; font-weight: 600;
+  box-shadow: 0 4px 14px -4px var(--op-glow), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition: box-shadow 0.15s ease, transform 0.1s ease, opacity 0.15s ease;
+}
+.apply:hover { box-shadow: 0 6px 20px -4px var(--op-glow), inset 0 1px 0 rgba(255, 255, 255, 0.22); }
+.apply:active { transform: scale(0.98); }
+.apply:disabled { opacity: 0.45; cursor: default; box-shadow: none; transform: none; }
+.apply svg { width: 14px; height: 14px; }
+.apply-sub { text-align: center; font-size: 10.5px; font-variant-numeric: tabular-nums; color: var(--ink-3); }
+
+/* ── 底部状态条 ── */
+.statusbar {
+  flex-shrink: 0; display: flex; align-items: center; gap: 10px;
+  height: 32px; padding: 0 16px; border-top: 1px solid var(--line-soft);
+  font-size: 11px; color: var(--ink-3);
+}
+.statusbar .sp { flex: 1; }
+.statusbar .keys { display: flex; align-items: center; gap: 5px; }
+
+/* ── Tweaks 面板 ── */
+.tweaks-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: 50;
+  width: 40px; height: 40px; border-radius: 999px;
+  background: var(--surface); color: var(--ink-2);
+  box-shadow: 0 0 0 1px var(--line), 0 8px 24px rgba(0, 0, 0, 0.18);
+  display: grid; place-items: center;
+}
+.tweaks {
+  position: fixed; right: 18px; bottom: 66px; z-index: 50; width: 230px;
+  background: var(--surface); border-radius: 12px; padding: 12px 14px;
+  box-shadow: 0 0 0 1px var(--line), 0 16px 48px rgba(0, 0, 0, 0.22);
+  display: none; flex-direction: column; gap: 10px;
+}
+.tweaks.open { display: flex; }
+.tweaks h3 { font-size: 12px; font-weight: 600; }
+.tweaks .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--ink-2); }
+.tweaks .opts { display: flex; gap: 2px; padding: 2px; background: var(--hover-strong); border-radius: 7px; }
+.tweaks .opts button { padding: 3px 8px; border-radius: 5px; font-size: 11px; color: var(--ink-3); }
+.tweaks .opts button.on { background: var(--surface); color: var(--ink); font-weight: 500; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+
+/* ══════════════════════════════════════════════════════════════
+   窄档（Tweaks「面板宽度→窄」，模拟分栏被拖到 ~560px）
+   核心策略：dock 从「三簇一行」变「三条单行横滚带」——芯片/序号钮
+   永不折行（折行会让 dock 纵向无上限，吃掉舞台，2026-07-07 实锤），
+   内容超宽走水平滚动，dock 总高度有界（~120px）。
+   ══════════════════════════════════════════════════════════════ */
+.pills::-webkit-scrollbar { height: 4px; }
+.chips-pop::-webkit-scrollbar { width: 4px; }
+.pills::-webkit-scrollbar-thumb, .chips-pop::-webkit-scrollbar-thumb {
+  background: var(--hover-strong); border-radius: 2px;
+}
+.pills::-webkit-scrollbar-track, .chips-pop::-webkit-scrollbar-track { background: transparent; }
+
+[data-width="narrow"] .panel { width: 560px; }
+[data-width="narrow"] .readiness .bar { display: none; }
+[data-width="narrow"] .rail { width: 118px; }
+[data-width="narrow"] .rail-head { padding: 10px 10px 6px; }
+[data-width="narrow"] .rail-list { padding: 0 8px 10px; }
+[data-width="narrow"] .crumb .meta { display: none; }
+[data-width="narrow"] .stage { padding: 2px 14px 14px; }
+/* dock：竖排三条带。cluster 从「上标签下内容」翻成「左标签右内容」，
+   标签 shrink-0、内容条 flex-1 单行横滚。 */
+[data-width="narrow"] .dock {
+  flex-direction: column; align-items: stretch; gap: 7px;
+  min-height: 0; padding: 10px 14px;
+}
+[data-width="narrow"] .dock .cluster {
+  flex-direction: row; align-items: center; gap: 10px; width: auto;
+}
+[data-width="narrow"] .dock .cluster .cap { flex-shrink: 0; }
+[data-width="narrow"] .sel-wrap { flex: 1; width: auto; }
+[data-width="narrow"] .pills { flex: 1; }
+/* 应用簇保持竖排（状态行/按钮/副行），占满整行 */
+[data-width="narrow"] .apply-cluster {
+  flex-direction: column; align-items: stretch; width: 100%; margin-top: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame, .pop { transition: none; animation: none; }
+}
+</style>
+</head>
+<body data-theme="light" data-op="green">
+
+<div class="panel" id="panel">
+
+  <!-- tab 壳：右端就绪进度胶囊取代整条 56px 标题头 -->
+  <div class="tabbar">
+    <button class="tab on">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8"/></svg>
+      预览幻灯片
+    </button>
+    <button class="tab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>
+      大纲
+    </button>
+    <button class="tab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+      文件
+    </button>
+    <button class="tab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+      图片
+    </button>
+    <div class="readiness">
+      <span class="bar"><i id="readyBar"></i></span>
+      <span><b id="readyText">9 / 9</b> 已就绪</span>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- 缩略图栏 -->
+    <aside class="rail">
+      <div class="rail-head">
+        <span class="cap">幻灯片</span>
+        <span class="num" id="railNum">09 / 09</span>
+      </div>
+      <div class="rail-list" id="railList"></div>
+    </aside>
+
+    <!-- 舞台 -->
+    <section class="stage-col">
+      <div class="crumb">
+        <span class="pageno" id="pageNo">09</span>
+        <span class="name" id="pageName">结语</span>
+        <span class="meta">16:9 · 1280 × 720</span>
+        <span class="sp"></span>
+        <button class="navbtn" id="prevBtn" title="上一页">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <button class="navbtn" id="nextBtn" title="下一页">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+        </button>
+      </div>
+      <div class="stage" id="stageOuter">
+        <div class="stage-inner">
+          <div class="canvas-wrap" id="canvasWrap">
+            <div class="slide" id="slide"></div>
+            <div id="overlay"></div>
+          </div>
+          <div class="hint">点击元素选择 · 拖拽框选多个 · <kbd>⌘</kbd> 加选 · <kbd>⌥</kbd> 选父级</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- dock：单面、无竖线分隔，三簇靠留白分区 -->
+  <div class="dock">
+    <div class="cluster sel-cluster">
+      <div class="cap">已选元素
+        <span class="count op" id="selCount" style="display:none">0</span>
+        <button class="clear" id="clearSel" style="display:none">清空</button>
+      </div>
+      <div class="sel-wrap" id="selWrap">
+        <div class="chips" id="chips"><span class="empty-note">在画布上点击元素开始标注</span></div>
+        <span class="chips-more" id="chipsMore">+0</span>
+        <div class="chips-pop" id="chipsPop"></div>
+      </div>
+    </div>
+    <div class="cluster ann-cluster">
+      <div class="cap">本页标注
+        <span class="count amber" id="annCount" style="display:none">0</span>
+      </div>
+      <div class="pills" id="pills"><span class="empty-note">暂无标注</span></div>
+    </div>
+    <div class="cluster apply-cluster">
+      <div class="status-chip" id="statusChip"><span class="sdot"></span><span id="statusText"></span></div>
+      <button class="apply" id="applyBtn" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg>
+        <span id="applyLabel">应用标注到我的 PPT</span>
+      </button>
+      <div class="apply-sub" id="applySub" style="visibility:hidden">&nbsp;</div>
+    </div>
+  </div>
+
+  <!-- 状态条 -->
+  <footer class="statusbar">
+    <span>HTML 幻灯片工作区</span>
+    <span class="sp"></span>
+    <div class="keys"><kbd>←</kbd><kbd>→</kbd><span>切换页</span></div>
+  </footer>
+</div>
+
+<!-- Tweaks -->
+<button class="tweaks-fab" id="tweaksFab" title="Tweaks">
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/></svg>
+</button>
+<div class="tweaks" id="tweaksPanel">
+  <h3>Tweaks</h3>
+  <div class="row"><span>操作色</span>
+    <div class="opts" data-tweak="op">
+      <button data-v="green" class="on">品牌绿</button>
+      <button data-v="indigo">靛蓝</button>
+      <button data-v="ink">墨</button>
+    </div>
+  </div>
+  <div class="row"><span>主题</span>
+    <div class="opts" data-tweak="theme">
+      <button data-v="light" class="on">浅色</button>
+      <button data-v="dark">深色</button>
+    </div>
+  </div>
+  <div class="row"><span>元素名称</span>
+    <div class="opts" data-tweak="idmode">
+      <button data-v="friendly" class="on">大白话</button>
+      <button data-v="raw">原始 ID</button>
+    </div>
+  </div>
+  <div class="row"><span>面板宽度</span>
+    <div class="opts" data-tweak="width">
+      <button data-v="wide" class="on">宽</button>
+      <button data-v="narrow">窄 560</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ────────────────────────────────────────────────────────────────
+   原型交互：选中/框选(简化为点击) → 就地浮层写说明 → 标注落 dock →
+   应用按钮状态机（空/可用/发送中/已入队）。真实实现的数据模型：
+   selectedIds + annotations Map + slides list（LivePreviewEditor.tsx）。
+   ──────────────────────────────────────────────────────────────── */
+
+// ── mock 数据 ──
+const SLIDES = [
+  { no: '01', name: '封面', tpl: 'cover' },
+  { no: '02', name: '百年学府', tpl: 'text' },
+  { no: '03', name: '学科门类', tpl: 'text' },
+  { no: '04', name: '学科评估', tpl: 'stats' },
+  { no: '05', name: '名师荟萃', tpl: 'stats' },
+  { no: '06', name: '珞珈山水', tpl: 'text' },
+  { no: '07', name: '面向全国', tpl: 'stats' },
+  { no: '08', name: '群星璀璨', tpl: 'text' },
+  { no: '09', name: '结语', tpl: 'closing' }
+]
+let current = 8
+// annotations: slideIdx -> Map(elementId -> {label, tag, text})
+const annotations = SLIDES.map(() => new Map())
+let selected = [] // [{id,label,tag,el}]
+let editingId = null // 正在通过徽标编辑的既有标注
+let applyState = 'idle' // idle|sending|queued
+
+// ── 幻灯片模板（占位几何；el = 可选中元素，带大白话 label 与原始 id） ──
+function slideHTML(tpl) {
+  if (tpl === 'closing') return `
+    <div style="position:absolute;inset:0;background:linear-gradient(160deg,#f7f9fc, #e9eef6)"></div>
+    <div class="el" data-id="_edit_12" data-tag="text" data-label="页眉编号" style="top:7%;left:6%;"><div class="s-kicker">09 · CLOSING</div></div>
+    <div class="el" data-id="_edit_15" data-tag="text" data-label="主标题" style="top:26%;left:6%;"><div class="s-title">欢迎报考武汉大学</div></div>
+    <div class="el" data-id="_edit_16" data-tag="text" data-label="正文段落" style="top:47%;left:6%;width:46%;"><div class="s-body">这个春天，樱花如约而至。在珞珈山下、东湖之畔，一百三十年的弦歌不辍等你续写下一段序章。</div></div>
+    <div class="el" data-id="_edit_18" data-tag="rect" data-label="强调按钮" style="top:74%;left:6%;"><span class="s-pill">2026 年招生进行中</span></div>
+    <div class="el" data-id="_edit_21" data-tag="image" data-label="右侧图片" style="top:14%;right:6%;width:34%;height:64%;"><div class="ph" style="width:100%;height:100%">16:9 图片</div></div>
+    <div class="el" data-id="_edit_22" data-tag="text" data-label="页脚" style="bottom:6%;left:6%;"><div class="s-kicker" style="letter-spacing:.28em">WUHAN UNIVERSITY · ADMISSIONS 2026</div></div>`
+  if (tpl === 'cover') return `
+    <div style="position:absolute;inset:0;background:linear-gradient(150deg,#22304a,#2f4468)"></div>
+    <div class="el" data-id="_edit_02" data-tag="image" data-label="封面底图" style="inset:0;"><div class="ph" style="width:100%;height:100%;background:none;color:rgba(255,255,255,.28)">封面摄影图</div></div>
+    <div class="el" data-id="_edit_03" data-tag="text" data-label="主标题" style="top:38%;left:8%;"><div class="s-title" style="color:#fff">武汉大学</div></div>
+    <div class="el" data-id="_edit_04" data-tag="text" data-label="副标题" style="top:58%;left:8%;"><div class="s-body" style="color:rgba(255,255,255,.75)">百卅珞珈 · 弦歌不辍</div></div>`
+  if (tpl === 'stats') return `
+    <div style="position:absolute;inset:0;background:#fff"></div>
+    <div class="el" data-id="_edit_05" data-tag="text" data-label="页标题" style="top:9%;left:6%;"><div class="s-title" style="font-size:clamp(16px,2.4vw,28px)">学科评估 · 全国前列</div></div>
+    <div class="el" data-id="_edit_06" data-tag="text" data-label="数据 1" style="top:36%;left:6%;"><div class="s-title" style="color:#b43d2f">19</div><div class="s-body">A 类学科</div></div>
+    <div class="el" data-id="_edit_07" data-tag="text" data-label="数据 2" style="top:36%;left:32%;"><div class="s-title" style="color:#1c2b45">7</div><div class="s-body">双一流学科</div></div>
+    <div class="el" data-id="_edit_08" data-tag="image" data-label="配图" style="top:24%;right:6%;width:32%;height:56%;"><div class="ph" style="width:100%;height:100%">4:3 图片</div></div>`
+  return `
+    <div style="position:absolute;inset:0;background:#fbfbf9"></div>
+    <div class="el" data-id="_edit_09" data-tag="text" data-label="页标题" style="top:10%;left:6%;"><div class="s-title" style="font-size:clamp(16px,2.4vw,28px)">百年学府，弦歌不辍</div></div>
+    <div class="el" data-id="_edit_10" data-tag="text" data-label="正文段落" style="top:34%;left:6%;width:52%;"><div class="s-body">自 1893 年自强学堂发轫，武汉大学始终与民族命运同频共振——从珞珈山麓到东湖之滨，学脉绵延百卅年。</div></div>
+    <div class="el" data-id="_edit_11" data-tag="image" data-label="时间轴图" style="top:30%;right:6%;width:32%;height:52%;"><div class="ph" style="width:100%;height:100%">时间轴插画</div></div>`
+}
+
+const TAG_NAME = { text: '文本', image: '图片', rect: '形状', g: '组' }
+
+// ── DOM 引用 ──
+const $ = (s) => document.querySelector(s)
+const slideEl = $('#slide'), overlay = $('#overlay'), wrap = $('#canvasWrap')
+const railList = $('#railList')
+
+// ── 缩略图栏 ──
+function renderRail() {
+  railList.innerHTML = ''
+  SLIDES.forEach((s, i) => {
+    const b = document.createElement('button')
+    b.className = 'thumb' + (i === current ? ' on' : '')
+    const annN = annotations[i].size
+    b.innerHTML = `
+      <span class="no">${s.no}</span>
+      <span class="shot ${s.tpl === 'cover' ? 'cover' : ''}">
+        <span class="sk" style="top:18%;left:8%;width:22%;height:5%"></span>
+        <span class="sk" style="top:32%;left:8%;width:52%;height:9%"></span>
+        <span class="sk" style="top:52%;left:8%;width:40%;height:4%;opacity:.5"></span>
+        <span class="sk" style="top:24%;right:8%;width:26%;height:46%;opacity:.4"></span>
+        <span class="dot"></span>
+        <span class="ann ${annN ? 'show' : ''}">${annN}</span>
+      </span>`
+    b.title = `${s.no} ${s.name}`
+    b.onclick = () => go(i)
+    railList.appendChild(b)
+  })
+  $('#railNum').textContent = `${SLIDES[current].no} / 0${SLIDES.length}`
+}
+
+// ── 舞台 ──
+function go(i) {
+  if (i < 0 || i >= SLIDES.length) return
+  current = i
+  selected = []; editingId = null
+  slideEl.innerHTML = slideHTML(SLIDES[i].tpl)
+  $('#pageNo').textContent = SLIDES[i].no
+  $('#pageName').textContent = SLIDES[i].name
+  $('#prevBtn').disabled = i === 0
+  $('#nextBtn').disabled = i === SLIDES.length - 1
+  bindElements()
+  renderRail(); renderOverlay(); renderDock()
+}
+
+function bindElements() {
+  slideEl.querySelectorAll('.el').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const item = { id: el.dataset.id, label: el.dataset.label, tag: el.dataset.tag, el }
+      const idx = selected.findIndex((s) => s.id === item.id)
+      if (e.metaKey || e.ctrlKey) {
+        idx >= 0 ? selected.splice(idx, 1) : selected.push(item)
+      } else {
+        selected = idx >= 0 && selected.length === 1 ? [] : [item]
+      }
+      editingId = null
+      renderOverlay(); renderDock()
+      if (selected.length) focusPopInput()
+    })
+  })
+}
+// 点空白取消选择：舞台留白或幻灯片背景（非 .el/.pop/.badge）都算空白。
+// 用 mousedown + closest 守卫——.el 的选中绑在 click 上，守卫保证
+// 「按在元素上」不会先被这里清空（否则 ⌘ 加选被打断）。
+$('#stageOuter').addEventListener('mousedown', (e) => {
+  if (!wrap.contains(e.target)) { selected = []; editingId = null; renderOverlay(); renderDock() }
+})
+wrap.addEventListener('mousedown', (e) => {
+  if (e.target.closest('.el') || e.target.closest('.pop') || e.target.closest('.badge')) return
+  selected = []; editingId = null; renderOverlay(); renderDock()
+})
+
+// ── 覆盖层：选中框 + 标注虚线框 + 浮层 ──
+function rectOf(el) {
+  const w = wrap.getBoundingClientRect(), r = el.getBoundingClientRect()
+  return { left: r.left - w.left, top: r.top - w.top, width: r.width, height: r.height }
+}
+function renderOverlay() {
+  overlay.innerHTML = ''
+  const ann = annotations[current]
+  let n = 0
+  // 标注虚线框（琥珀 + 序号徽标；点徽标可改）
+  for (const [id, a] of ann) {
+    n += 1
+    const el = slideEl.querySelector(`[data-id="${id}"]`)
+    if (!el) continue
+    const r = rectOf(el)
+    const f = document.createElement('div')
+    f.className = 'frame noted'
+    f.style.cssText = `left:${r.left - 3}px;top:${r.top - 3}px;width:${r.width + 6}px;height:${r.height + 6}px;position:absolute;`
+    const badgeIdx = n
+    f.innerHTML = `<button class="badge" title="编辑此标注">${badgeIdx}</button>`
+    f.querySelector('.badge').onclick = (e) => {
+      e.stopPropagation()
+      editingId = id
+      selected = [{ id, label: a.label, tag: a.tag, el }]
+      renderOverlay(); renderDock(); focusPopInput(a.text)
+    }
+    overlay.appendChild(f)
+  }
+  // 选中实线框 + 手柄
+  let bounds = null
+  selected.forEach(({ el }) => {
+    const r = rectOf(el)
+    const f = document.createElement('div')
+    f.className = 'frame'
+    f.style.cssText = `left:${r.left - 2}px;top:${r.top - 2}px;width:${r.width + 4}px;height:${r.height + 4}px;position:absolute;`
+    f.innerHTML = '<span class="h tl"></span><span class="h tr"></span><span class="h bl"></span><span class="h br"></span>'
+    overlay.appendChild(f)
+    bounds = bounds
+      ? {
+          left: Math.min(bounds.left, r.left), top: Math.min(bounds.top, r.top),
+          right: Math.max(bounds.right, r.left + r.width), bottom: Math.max(bounds.bottom, r.top + r.height)
+        }
+      : { left: r.left, top: r.top, right: r.left + r.width, bottom: r.top + r.height }
+  })
+  // 就地浮层
+  if (selected.length && bounds) {
+    const pop = document.createElement('div')
+    pop.className = 'pop'
+    const editing = editingId && annotations[current].get(editingId)
+    pop.innerHTML = `
+      <div class="cap"><span class="swatch"></span>${editing ? '编辑标注 · ' : '修改所选 '}<b>${selected.length}</b>${editing ? '' : ' 个元素'}</div>
+      <textarea rows="2" placeholder="描述希望如何修改…"></textarea>
+      <div class="foot">
+        ${editing
+          ? '<button class="del">删除标注</button>'
+          : '<span class="esc"><kbd>esc</kbd> 取消</span>'}
+        <span class="sp"></span>
+        <button class="submit">${editing ? '更新' : '添加标注'} <kbd>↵</kbd></button>
+      </div>`
+    // 与 .pop 的 min(300px, 100%-12px) 保持同一口径，窄画布上浮层收窄
+    const popW = Math.min(300, wrap.clientWidth - 12), popH = 118
+    const cx = (bounds.left + bounds.right) / 2
+    let left = Math.max(4, Math.min(cx - popW / 2, wrap.clientWidth - popW - 4))
+    let top = bounds.top - popH - 10
+    if (top < 4) top = Math.min(bounds.bottom + 10, wrap.clientHeight - popH - 4)
+    pop.style.cssText += `left:${left}px;top:${top}px;`
+    const ta = pop.querySelector('textarea')
+    if (editing) ta.value = editing.text
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitAnnotation(ta.value) }
+      if (e.key === 'Escape') { selected = []; editingId = null; renderOverlay(); renderDock() }
+    })
+    pop.querySelector('.submit').onclick = () => submitAnnotation(ta.value)
+    const delBtn = pop.querySelector('.del')
+    if (delBtn)
+      delBtn.onclick = () => {
+        annotations[current].delete(editingId)
+        selected = []; editingId = null
+        renderOverlay(); renderDock(); renderRail()
+      }
+    pop.addEventListener('mousedown', (e) => e.stopPropagation())
+    overlay.appendChild(pop)
+  }
+}
+function focusPopInput(prefill) {
+  requestAnimationFrame(() => {
+    const ta = overlay.querySelector('textarea')
+    if (ta) { if (prefill) ta.value = prefill; ta.focus(); ta.select() }
+  })
+}
+function submitAnnotation(text) {
+  const t = text.trim()
+  if (!t) return
+  const ann = annotations[current]
+  selected.forEach(({ id, label, tag }) => ann.set(id, { label, tag, text: t }))
+  selected = []; editingId = null
+  renderOverlay(); renderDock(); renderRail()
+}
+
+// ── dock ──
+function renderDock() {
+  const idmode = document.body.dataset.idmode || 'friendly'
+  const chips = $('#chips'), pills = $('#pills')
+  // 已选
+  $('#selCount').style.display = selected.length ? '' : 'none'
+  $('#selCount').textContent = selected.length
+  $('#clearSel').style.display = selected.length ? '' : 'none'
+  // 芯片同时渲进定高单行条 + 悬浮全量面板（溢出时 hover 弹出）
+  const chipsPop = $('#chipsPop')
+  chips.innerHTML = selected.length
+    ? ''
+    : '<span class="empty-note">在画布上点击元素开始标注</span>'
+  chipsPop.innerHTML = ''
+  const makeChip = ({ id, label, tag }) => {
+    const c = document.createElement('span')
+    c.className = 'chip'
+    c.title = id
+    const name = idmode === 'raw' ? id : `${label} · ${TAG_NAME[tag] || tag}`
+    c.innerHTML = `<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span><button class="x" title="取消选择">✕</button>`
+    c.querySelector('.x').onclick = () => {
+      selected = selected.filter((s) => s.id !== id)
+      renderOverlay(); renderDock()
+    }
+    return c
+  }
+  selected.forEach((s) => {
+    chips.appendChild(makeChip(s))
+    chipsPop.appendChild(makeChip(s))
+  })
+  requestAnimationFrame(measureChipsOverflow)
+  // 本页标注
+  const ann = annotations[current]
+  $('#annCount').style.display = ann.size ? '' : 'none'
+  $('#annCount').textContent = ann.size
+  pills.innerHTML = ann.size ? '' : '<span class="empty-note">暂无标注</span>'
+  let pn = 0
+  for (const [id, a] of ann) {
+    pn += 1
+    const p = document.createElement('button')
+    p.className = 'annbtn'
+    p.textContent = pn
+    p.title = (idmode === 'raw' ? id : a.label) + '：' + a.text
+    // 点序号 = 打开该条标注：选中对应元素并弹出编辑浮层（同画布徽标）。
+    p.onclick = () => {
+      const el = slideEl.querySelector(`[data-id="${id}"]`)
+      if (!el) return
+      editingId = id
+      selected = [{ id, label: a.label, tag: a.tag, el }]
+      renderOverlay(); renderDock(); focusPopInput(a.text)
+    }
+    pills.appendChild(p)
+  }
+  renderApply()
+}
+$('#clearSel').onclick = () => { selected = []; editingId = null; renderOverlay(); renderDock() }
+
+// 量测芯片条溢出：溢出则挂 overflowing（右端渐隐 + +N 角标 + hover 弹层），
+// +N = 被裁掉（含被角标遮住）的芯片数
+function measureChipsOverflow() {
+  const chips = $('#chips'), wrapSel = $('#selWrap'), more = $('#chipsMore')
+  const over = chips.scrollWidth > chips.clientWidth + 1
+  wrapSel.classList.toggle('overflowing', over)
+  if (!over) return
+  const limit = chips.clientWidth - 54
+  let hidden = 0
+  chips.querySelectorAll('.chip').forEach((c) => {
+    if (c.offsetLeft + c.offsetWidth > limit) hidden += 1
+  })
+  more.textContent = '+' + hidden
+}
+
+// ── 应用按钮状态机 ──
+function totalAnnotations() { return annotations.reduce((n, m) => n + m.size, 0) }
+function renderApply() {
+  const btn = $('#applyBtn'), label = $('#applyLabel'), sub = $('#applySub'), chip = $('#statusChip')
+  const total = totalAnnotations()
+  if (applyState === 'queued') {
+    btn.disabled = true
+    label.textContent = '已在队列中'
+    sub.style.visibility = 'visible'; sub.textContent = '回复完成后会自动应用'
+    return
+  }
+  if (applyState === 'sending') {
+    btn.disabled = true
+    label.textContent = '正在应用…'
+    return
+  }
+  btn.disabled = total === 0
+  label.textContent = '应用标注到我的 PPT'
+  chip.classList.remove('show')
+  if (total > 0) { sub.style.visibility = 'visible'; sub.textContent = `${total} 条标注将写回幻灯片` }
+  else { sub.style.visibility = 'hidden'; sub.innerHTML = '&nbsp;' }
+}
+$('#applyBtn').onclick = () => {
+  applyState = 'sending'; renderApply()
+  setTimeout(() => {
+    applyState = 'queued'
+    $('#statusChip').classList.add('show')
+    $('#statusText').textContent = '已发送，AI 正在修改'
+    renderApply()
+    // 演示循环：3.5s 后复位
+    setTimeout(() => { applyState = 'idle'; renderApply() }, 3500)
+  }, 900)
+}
+
+// ── 导航 ──
+$('#prevBtn').onclick = () => go(current - 1)
+$('#nextBtn').onclick = () => go(current + 1)
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'TEXTAREA') return
+  if (e.key === 'ArrowLeft') go(current - 1)
+  if (e.key === 'ArrowRight') go(current + 1)
+})
+window.addEventListener('resize', () => { renderOverlay(); measureChipsOverflow() })
+
+// ── Tweaks ──
+$('#tweaksFab').onclick = () => $('#tweaksPanel').classList.toggle('open')
+document.querySelectorAll('.tweaks .opts').forEach((g) => {
+  g.querySelectorAll('button').forEach((b) => {
+    b.onclick = () => {
+      g.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b))
+      const k = g.dataset.tweak, v = b.dataset.v
+      if (k === 'op') document.body.dataset.op = v
+      if (k === 'theme') document.body.dataset.theme = v
+      if (k === 'idmode') { document.body.dataset.idmode = v; renderDock() }
+      if (k === 'width') {
+        document.body.dataset.width = v
+        // 面板宽度变了，画布量测框/浮层与芯片条溢出都要按新几何重算
+        requestAnimationFrame(() => { renderOverlay(); measureChipsOverflow() })
+      }
+    }
+  })
+})
+
+// ── 初始化：落在 09 结语，预置一条标注演示琥珀链路 ──
+// overlay 本身穿透（不吃画布拖选），徽标/浮层子元素各自在 CSS 里开
+// pointer-events: auto。
+overlay.style.cssText = 'position:absolute;inset:0;pointer-events:none;'
+// 预置一页多标注，方便切「窄 560」复现拥挤场景（序号带横滚、dock 高度有界）
+annotations[8].set('_edit_15', { label: '主标题', tag: 'text', text: '帮我润色这句标题，更有感染力一些' })
+annotations[8].set('_edit_12', { label: '页眉编号', tag: 'text', text: '编号改成罗马数字' })
+annotations[8].set('_edit_16', { label: '正文段落', tag: 'text', text: '压缩到两行以内' })
+annotations[8].set('_edit_18', { label: '强调按钮', tag: 'rect', text: '换成品牌绿' })
+annotations[8].set('_edit_21', { label: '右侧图片', tag: 'image', text: '换一张樱花照片' })
+annotations[8].set('_edit_22', { label: '页脚', tag: 'text', text: '字距再大一点' })
+go(8)
+</script>
+</body>
+</html>

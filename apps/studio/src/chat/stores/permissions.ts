@@ -75,11 +75,16 @@ interface PermissionStoreState {
    * Send the user's decision to main and optimistically remove the
    * local entry. Callers don't need to await unless they want to
    * observe the IPC failure path.
+   *
+   * `denyMessage` is the optional typed reason from the floating card's
+   * deny-with-feedback option — engine folds it into the SDK deny
+   * message so the assistant hears why. Only meaningful with `'deny'`.
    */
   respond: (
     requestId: string,
     decision: PermissionDecisionKind,
-    updatedInput?: unknown
+    updatedInput?: unknown,
+    denyMessage?: string
   ) => Promise<void>
 }
 
@@ -107,18 +112,23 @@ export const usePermissionStore = create<PermissionStoreState>((set, get) => ({
     set((state) => (state.requests.size === 0 ? state : { requests: new Map() }))
   },
 
-  respond: async (requestId, decision, updatedInput) => {
+  respond: async (requestId, decision, updatedInput, denyMessage) => {
     const req = get().requests.get(requestId)
     if (!req) return
     // Optimistic removal — if the user clicks twice in the tight
     // window before the invoke reply lands, the second click sees an
     // empty slot and bails out instead of double-firing.
     get().remove(requestId)
+    // Trim + drop empty feedback here so main only ever sees a real
+    // reason (validator caps at 4000; textarea maxLength already
+    // matches, the slice is belt-and-braces for programmatic callers).
+    const said = denyMessage?.trim().slice(0, 4000)
     try {
       await window.chatApi.respondPermission({
         requestId,
         decision,
-        ...(updatedInput !== undefined ? { updatedInput } : {})
+        ...(updatedInput !== undefined ? { updatedInput } : {}),
+        ...(said ? { denyMessage: said } : {})
       })
     } catch (err) {
       console.error('[permission] respond failed', err)
@@ -219,6 +229,67 @@ export function usePermissionForToolUseId(
         if (req.toolUseId === toolUseId) return req
       }
       return null
+    })
+  )
+}
+
+/**
+ * The pending non-AskUserQuestion permission requests for a session,
+ * oldest first — the queue the floating permission card renders.
+ *
+ * Why oldest-first: the SDK's `canUseTool` calls resolve independently,
+ * but the user should answer in arrival order so a long-parked request
+ * can't starve behind a stream of newer ones. `Map` iteration follows
+ * insertion order, so a simple walk gives us exactly that.
+ *
+ * AskUserQuestion is excluded: its questionnaire keeps rendering inside
+ * the tool card / canvas 问题 tab (see InlinePermissionPrompt), not in
+ * the floating dock.
+ *
+ * `useShallow` note: the returned array is rebuilt per run but its
+ * ELEMENTS are the store's own stable request objects, so the shallow
+ * compare only fails when membership/order actually changes — no
+ * getSnapshot loop (2026-06-29 lesson: never map into fresh objects
+ * inside a useShallow selector).
+ */
+export function usePendingFloatPermissions(
+  sessionId: string | null
+): readonly PermissionRequest[] {
+  return usePermissionStore(
+    useShallow((state): PermissionRequest[] => {
+      const list: PermissionRequest[] = []
+      if (!sessionId) return list
+      for (const req of state.requests.values()) {
+        if (req.sessionId === sessionId && req.toolName !== 'AskUserQuestion') {
+          list.push(req)
+        }
+      }
+      return list
+    })
+  )
+}
+
+/**
+ * Per-session "what is the assistant waiting on" kind, for the sidebar
+ * pills: 'approval' = a real tool gate (权限批准), 'question' = an
+ * AskUserQuestion (回答问题). When BOTH are pending in one session,
+ * approval wins — the permission gate is the hard blocker (the model
+ * cannot proceed at all), whereas a question merely wants input.
+ */
+export function usePendingPermissionKindsBySession(): Readonly<
+  Record<string, 'approval' | 'question'>
+> {
+  return usePermissionStore(
+    useShallow((state): Record<string, 'approval' | 'question'> => {
+      const kinds: Record<string, 'approval' | 'question'> = {}
+      for (const req of state.requests.values()) {
+        if (req.toolName === 'AskUserQuestion') {
+          kinds[req.sessionId] ??= 'question'
+        } else {
+          kinds[req.sessionId] = 'approval'
+        }
+      }
+      return kinds
     })
   )
 }

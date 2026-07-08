@@ -22,22 +22,26 @@
 
 import { usePathname } from 'next/navigation'
 import {
-  BookOpen,
-  Crown,
-  FileClock,
+  ArrowUpRight,
+  Check,
+  CircleArrowUp,
+  CircleHelp,
+  Copy,
   Image as ImageIcon,
-  Info,
   LogOut,
   MessageCircle,
+  Moon,
   Palette,
   PanelLeft,
   PanelLeftClose,
   Plus,
-  Settings
+  Settings,
+  Sun
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 
+import type { AuthUser } from '@desktop-shared/ipc-channels'
 import { Button } from '@/src/components/ui/button'
 import { RailProjectList } from '@/src/components/RailProjectList'
 import { RailSessionList } from '@/src/components/RailSessionList'
@@ -48,14 +52,12 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '@/src/components/ui/dropdown-menu'
+import { useAppearanceStore } from '@/src/chat/stores/appearance'
 import { useRailStore } from '@/src/stores/rail'
+import { useUpgradeStore } from '@/src/stores/upgrade'
 
 /* 两个 surface 的切换是「同级二选一」而非普通导航列表——语义和视觉都用
  * shadcn Tabs（segmented：muted 底槽 + 选中段白卡凸起），不再用 ghost pill。
@@ -86,10 +88,67 @@ function goChatShallow(): void {
   window.history.pushState(null, '', '/chat')
 }
 
-/* 账户菜单里尚未接入功能的占位项共用的空动作（升级订阅/帮助/更新日志/
- * 关于我们/退出登录，2026-07-05 用户确认先做占位）。模块级常量＝稳定引用，
- * 不随渲染重建。接入真实链路时逐项换掉对应 onSelect 即可。 */
+/* 账户菜单里尚未接入功能的占位项共用的空动作（帮助/更新日志/关于我们，
+ * 2026-07-05 用户确认先做占位；退出登录与升级订阅已于 2026-07-06 接真实
+ * 链路）。模块级常量＝稳定引用，不随渲染重建。接入真实链路时逐项换掉
+ * 对应 onSelect 即可。 */
 const noop = (): void => {}
+
+/* 账户菜单 V1「精修基准」（2026-07-07 二次定稿，原型见
+ * docs/ui-prototype-account-menu.html；先定 V3 后用户改选 V1——绿只留
+ * 套餐状态点与升级文字动作，渐变钮/头像圆随 V3 退役）的品牌绿墨色：
+ * 绿一律派生自 --brand（HSL 三元组，tokens.css 已分亮/暗档），不硬编码
+ * 第二套绿。亮档文字/图标压深 18%（亮底上纯 brand 绿对比不足，对应
+ * 原型的 --green-deep #15803d）；暗档 brand 本身已提亮，直接用。 */
+const brandInk =
+  'text-[color-mix(in_srgb,hsl(var(--brand))_82%,#000)] dark:text-[hsl(var(--brand))]'
+
+/**
+ * 账户菜单「外观」行的浅色/深色两段切换（2026-07-07 对齐目标设计的
+ * 行内 seg）。挂在 DropdownMenu 的 portal 里、.chat-app 之外——裸
+ * <button> 会被 canvas reset 卡片化，必须带 data-slot 逃逸（老坑）。
+ * 高亮：显式 light/dark 直接亮对应段；system 档按当前实际生效面
+ * （html 的 .dark，菜单内容只在交互后经 portal 挂载，无 SSR 参与，
+ * 渲染中读 document 安全）。点击写显式档，走 appearance store 完整
+ * 链路（持久化 + 双标记 + 跨面广播，同登录页 ThemeToggle）。
+ *
+ * V1 形态：太阳/月亮 icon-only 段（24×22），选中态白卡浮起（暗档投影
+ * 不可见，改前景浅底充当「凸起」）——V3 的绿浅底选中态随方案退役，
+ * V1 里绿只属于套餐状态点和升级动作。
+ */
+function AppearanceSeg() {
+  const themeMode = useAppearanceStore((s) => s.themeMode)
+  const setThemeMode = useAppearanceStore((s) => s.setThemeMode)
+  const resolved =
+    themeMode === 'system'
+      ? document.documentElement.classList.contains('dark')
+        ? 'dark'
+        : 'light'
+      : themeMode
+  const seg = (mode: 'light' | 'dark', Icon: typeof Sun, label: string) => (
+    <button
+      type="button"
+      data-slot="appearance-seg"
+      aria-label={label}
+      title={label}
+      onClick={() => setThemeMode(mode)}
+      className={cn(
+        'flex h-[22px] w-6 items-center justify-center rounded-[5px] transition-colors',
+        resolved === mode
+          ? 'bg-card text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.12)] dark:bg-foreground/15 dark:shadow-none'
+          : 'text-muted-foreground/60 hover:text-muted-foreground'
+      )}
+    >
+      <Icon className="size-[13px]" strokeWidth={1.75} />
+    </button>
+  )
+  return (
+    <div className="flex gap-[2px] rounded-[7px] bg-muted p-[2px]">
+      {seg('light', Sun, '浅色')}
+      {seg('dark', Moon, '深色')}
+    </div>
+  )
+}
 
 export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   const pathname = usePathname()
@@ -109,6 +168,26 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   // 浏览器直开无 chatApi 时 identity 保持 null，chip 整个不渲染——rail 上
   // 一块空比一块假身份诚实（与 RailSessionList 空态同一原则）。
   const [identity, setIdentity] = useState<{ user: string; backend: string } | null>(null)
+  // 登录用户（AuthGate 放行后必有值；退出登录的广播会把它清回 null，
+  // 但那一刻登录墙也同时立起，用户看不到回退后的 chip）。展示优先级：
+  // authUser.name > OS 用户名——账号体系上线后 chip 显示的是「你登录的
+  // 谁」而不是「这台机器叫什么」。
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null)
+  useEffect(() => {
+    const api = window.chatApi
+    if (!api?.getAuthState) return
+    let alive = true
+    void api.getAuthState().then((s) => {
+      if (alive) setAuthUser(s.user)
+    })
+    const unsubscribe = api.onAuthStateChanged((s) => {
+      if (alive) setAuthUser(s.user)
+    })
+    return () => {
+      alive = false
+      unsubscribe()
+    }
+  }, [])
   useEffect(() => {
     const api = window.chatApi
     if (!api) return
@@ -145,6 +224,30 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   // 共用这一个入口，机制见调用处注释（shallow pushState + canvas 响应式读参）。
   const openSettings = () => {
     window.history.pushState(null, '', '/?settings=1')
+  }
+  // 打开订阅购买页 overlay（UpgradeScreen 常驻根 layout，store 翻开关即现）。
+  const setUpgradeOpen = useUpgradeStore((s) => s.setOpen)
+  const openUpgrade = () => setUpgradeOpen(true)
+
+  // 复制登录邮箱（账户菜单用户名区的复制钮）。copied 驱动图标短暂变勾
+  // 作成功反馈；按钮不是 menu item，点击不关菜单。
+  const [copied, setCopied] = useState(false)
+  const copyEmail = () => {
+    const email = authUser?.email
+    if (!email) return
+    void navigator.clipboard
+      .writeText(email)
+      .then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      })
+      .catch(() => {})
+  }
+
+  // 手动检查更新：结果走既有 updater 链路——发现新版由 UpdateReadyToast
+  // 弹卡提示；「已是最新」暂无主动反馈（设置页「更新应用」区可看结论）。
+  const checkUpdates = () => {
+    void window.chatApi?.checkForUpdates?.()
   }
 
   return (
@@ -307,14 +410,18 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
               <Button
                 variant="ghost"
                 aria-label="账户菜单"
-                className="h-11 w-full justify-start gap-2.5 px-2.5 hover:bg-sidebar-accent data-[state=open]:bg-sidebar-accent"
+                // focus-visible:ring-0：Radix 菜单关闭会把焦点还给 trigger，
+                // 且常判为 :focus-visible——shadcn Button 默认的 3px ring 让
+                // chip 每次关菜单后都亮一整圈（用户 2026-07-07 要求去掉）。
+                // 开启态视觉反馈由 data-[state=open] 底色承担，不靠焦点环。
+                className="h-11 w-full justify-start gap-2.5 px-2.5 hover:bg-sidebar-accent focus-visible:ring-0 data-[state=open]:bg-sidebar-accent"
               >
                 <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/15 text-xs font-semibold text-sidebar-primary">
-                  {identity.user.charAt(0).toUpperCase()}
+                  {(authUser?.name ?? identity.user).charAt(0).toUpperCase()}
                 </span>
                 <span className="flex min-w-0 flex-1 flex-col items-start leading-tight">
                   <span className="max-w-full truncate text-[12.5px] font-medium text-sidebar-foreground">
-                    {identity.user}
+                    {authUser?.name ?? identity.user}
                   </span>
                   <span className="max-w-full truncate text-[11px] font-normal text-muted-foreground">
                     {identity.backend} · 已连接
@@ -329,78 +436,125 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
                 />
               </Button>
             </DropdownMenuTrigger>
-            {/* side="top"：chip 在 rail 最底，菜单必须向上弹（原型账户菜单
-              * 从 chip 上方展开）。宽度贴齐 trigger（--radix-…-trigger-width）
-              * 起步、下限 15rem，够放最长的「偏好设置 ›」不换行。 */}
+            {/* side="top"：chip 在 rail 最底，菜单必须向上弹。2026-07-07
+              * 二次定稿 V1「精修基准」（原型 docs/ui-prototype-account-menu.html，
+              * 用户先选 V3 后改选 V1）：无头像圆，用户名 13.5 semibold + 邮箱
+              * 副行直接撑层级；套餐行用光圈绿点表状态、「升级」降为绿字动作
+              * （黑 pill / 绿渐变钮两代权重过载方案先后退役）；外观 seg 收成
+              * 太阳/月亮 icon 段。结构=用户名区 → 套餐行 → sep → 设置/外观/
+              * 帮助/检查更新 → sep → 退出登录（普通色）；用户名区与套餐行
+              * 之间刻意无分隔线——V1 靠密度分区，通栏线只切功能组。 */}
             <DropdownMenuContent
               side="top"
               align="start"
               sideOffset={8}
-              className="w-[--radix-dropdown-menu-trigger-width] min-w-[15rem]"
+              className="w-[256px] rounded-[14px] p-[5px] shadow-[0_16px_50px_rgba(0,0,0,.14),0_2px_8px_rgba(0,0,0,.06)]"
             >
-              {/* 套餐信息区（占位数据，2026-07-05 用户确认先做占位——真实
-                * 订阅/到期链路后续接入，届时把这段换成动态值）。默认「永久」
-                * （用户要求，2026-07-05）：无到期日的套餐状态。 */}
-              <DropdownMenuLabel className="flex flex-col gap-0.5 py-2">
-                <span className="text-[11px] font-normal text-muted-foreground">
-                  套餐到期
+              {/* 用户名区：名字行（复制钮贴名字，copied 短暂变勾，非 menu
+                * item 点击不关菜单）+ 邮箱副行（浏览器直开无 authUser 时不
+                * 渲染，不摆假数据）。 */}
+              <div className="flex flex-col gap-px px-[9px] pb-[5px] pt-2">
+                <span className="flex items-center gap-1">
+                  <span className="truncate text-[13.5px] font-semibold tracking-[-0.2px] text-foreground">
+                    {authUser?.name ?? identity.user}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="复制邮箱"
+                    onClick={copyEmail}
+                    className="size-5 shrink-0 text-muted-foreground/70 hover:text-foreground"
+                  >
+                    {copied ? (
+                      <Check className="size-3" strokeWidth={2.5} />
+                    ) : (
+                      <Copy className="size-3" strokeWidth={1.75} />
+                    )}
+                  </Button>
                 </span>
-                <span className="text-[13px] font-semibold text-sidebar-foreground">
-                  永久
+                {authUser?.email ? (
+                  <span className="truncate text-[11.5px] text-muted-foreground">
+                    {authUser.email}
+                  </span>
+                ) : null}
+              </div>
+              {/* 套餐行：光圈绿点（状态语义：账号有效）+ 套餐名（authService
+                * 下发，占位固定「基础版」）+「升级」绿字动作 → 订阅购买页。
+                * 行本身不可点，只有升级钮是动作（非 menu item，不关菜单的
+                * 语义在这里不适用——openUpgrade 开的是全屏 overlay，menu
+                * 随焦点转移自然关闭）。 */}
+              <div className="flex items-center gap-2 pb-[7px] pl-[11px] pr-[7px] pt-[5px]">
+                <span
+                  aria-hidden
+                  className="size-1.5 shrink-0 rounded-full bg-[hsl(var(--brand))] shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]"
+                />
+                <span className="flex-1 truncate text-[12.5px] text-muted-foreground">
+                  {authUser?.plan.name ?? '基础版'}
                 </span>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={openUpgrade}
+                  className={cn(
+                    'h-auto gap-[3px] rounded-full py-[3px] pl-[9px] pr-2 text-xs font-medium',
+                    brandInk,
+                    'hover:bg-[hsl(var(--brand)/0.12)] hover:text-[color-mix(in_srgb,hsl(var(--brand))_82%,#000)] dark:hover:text-[hsl(var(--brand))]'
+                  )}
+                >
+                  升级
+                  <ArrowUpRight className="size-[11px]" strokeWidth={2} />
+                </Button>
+              </div>
+              <DropdownMenuSeparator className="mx-2 bg-border/70" />
               <DropdownMenuGroup>
-                {/* 设置：唯一有真实链路的项——走 canvas App 的 overlay 模式
-                  * （?settings=1 → 全屏设置页）。shallow pushState：canvas 的
-                  * isSettingsOverlay 用 useSearchParams 响应式读取，Next 的
-                  * native history 集成同步它，overlay 即开——零刷新零 RSC
-                  * 请求（关闭走 handleOverlayClose 的 history.back）。 */}
-                <DropdownMenuItem onSelect={openSettings}>
-                  <Settings />
+                {/* 设置：走 canvas App 的 overlay 模式（?settings=1 → 全屏
+                  * 设置页）。shallow pushState：canvas 的 isSettingsOverlay
+                  * 用 useSearchParams 响应式读取，overlay 即开零刷新。 */}
+                <DropdownMenuItem
+                  onSelect={openSettings}
+                  className="gap-2.5 rounded-[9px] px-2.5 py-[7px] text-[13px]"
+                >
+                  <Settings strokeWidth={1.75} />
                   设置
                 </DropdownMenuItem>
-                {/* 偏好设置：图3 带 › 子菜单箭头。子项是占位——真实偏好项
-                  * （外观/语言等）大多已在设置页里，这里的子菜单先留空提示。 */}
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <Palette />
-                    偏好设置
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
-                    <DropdownMenuItem onSelect={openSettings}>
-                      在设置中调整
-                    </DropdownMenuItem>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                {/* 以下均为占位项（用户确认，2026-07-05）：暂无对应功能。
-                  * 刻意不用 disabled——disabled 会置灰（opacity-50）破坏图3
-                  * 「所有项正常可读」的观感；改用 no-op onSelect 保持正常
-                  * 外观且点击不做事。真实链路（订阅/帮助/更新日志/关于）
-                  * 后续接入时把 noop 换成实际动作即可。 */}
-                <DropdownMenuItem onSelect={noop}>
-                  <Crown />
-                  升级订阅
+                {/* 外观行：非 menu item（点 seg 切主题不关菜单），行内
+                  * 浅色/深色两段切换（AppearanceSeg）。 */}
+                <div className="flex items-center justify-between py-1 pl-2.5 pr-[7px]">
+                  <span className="flex items-center gap-2.5 text-[13px] text-foreground">
+                    <Palette className="size-4 text-muted-foreground" strokeWidth={1.75} />
+                    外观
+                  </span>
+                  <AppearanceSeg />
+                </div>
+                {/* 帮助与反馈：占位（noop 不置灰，同 2026-07-05 观感原则）。 */}
+                <DropdownMenuItem
+                  onSelect={noop}
+                  className="gap-2.5 rounded-[9px] px-2.5 py-[7px] text-[13px]"
+                >
+                  <CircleHelp strokeWidth={1.75} />
+                  帮助与反馈
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={noop}>
-                  <BookOpen />
-                  帮助文档
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={noop}>
-                  <FileClock />
-                  更新日志
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={noop}>
-                  <Info />
-                  关于我们
+                {/* 检查更新：真实链路（chatApi.checkForUpdates），结果由
+                  * UpdateReadyToast / 设置页更新区展示（见 checkUpdates）。 */}
+                <DropdownMenuItem
+                  onSelect={checkUpdates}
+                  className="gap-2.5 rounded-[9px] px-2.5 py-[7px] text-[13px]"
+                >
+                  <CircleArrowUp strokeWidth={1.75} />
+                  检查更新
                 </DropdownMenuItem>
               </DropdownMenuGroup>
-              <DropdownMenuSeparator />
-              {/* 退出登录：destructive 红字（图3）。占位——尚无登录态，点击
-                * no-op（同上，不 disabled 以保留醒目红字），接入账号体系后
-                * 绑真实登出。 */}
-              <DropdownMenuItem variant="destructive" onSelect={noop}>
-                <LogOut />
+              <DropdownMenuSeparator className="mx-2 bg-border/70" />
+              {/* 退出登录：真实登出。main 删 auth.json + 广播 signedOut →
+                * AuthGate 立起登录墙。普通墨色（2026-07-07 对齐目标设计，
+                * 不再用 destructive 红）。 */}
+              <DropdownMenuItem
+                onSelect={() => {
+                  void window.chatApi?.logout?.()
+                }}
+                className="gap-2.5 rounded-[9px] px-2.5 py-[7px] text-[13px]"
+              >
+                <LogOut strokeWidth={1.75} />
                 退出登录
               </DropdownMenuItem>
             </DropdownMenuContent>

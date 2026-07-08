@@ -17,9 +17,11 @@ import { motion } from 'motion/react'
 import { useChatStore, useDelayedSessionLoading } from '../../stores/chat'
 import { invalidateHistoryCache } from '../../runtime/FusionRuntimeProvider'
 import { useT } from '../../i18n'
-import { usePendingPermissionCountsBySession } from '../../stores/permissions'
+import {
+  usePendingPermissionCountsBySession,
+  usePendingPermissionKindsBySession
+} from '../../stores/permissions'
 import { pushUiLog } from '../../stores/uiLogs'
-import { NotificationBadge } from '../common/NotificationBadge'
 
 /**
  * Per-row session status flags, computed from:
@@ -89,10 +91,18 @@ function useActiveRuntimeIds(): ReadonlySet<string> {
 interface SidebarStatusMap {
   running: ReadonlySet<string>
   awaitingPermissionCounts: Readonly<Record<string, number>>
+  /**
+   * What each awaiting session is blocked ON: 'approval' = a tool
+   * permission gate, 'question' = an AskUserQuestion. Drives the pill
+   * wording (等待批准 vs 等待回答) — calling a question "approval" is
+   * semantically wrong (2026-07-07 user catch).
+   */
+  awaitingKinds: Readonly<Record<string, 'approval' | 'question'>>
 }
 const SidebarStatusContext = createContext<SidebarStatusMap>({
   running: new Set(),
-  awaitingPermissionCounts: {}
+  awaitingPermissionCounts: {},
+  awaitingKinds: {}
 })
 
 function resolveStatus(
@@ -135,15 +145,17 @@ export function ThreadListSidebar(): React.JSX.Element {
   const t = useT()
   const activeRuntimeIds = useActiveRuntimeIds()
   const awaitingPermissionCounts = usePendingPermissionCountsBySession()
+  const awaitingKinds = usePendingPermissionKindsBySession()
   // Freeze the context value inside useMemo so ThreadListItem's
   // lookup has a stable reference across renders — otherwise every
   // row's status derivation would re-run on every parent rerender.
   const statusMap = useMemo<SidebarStatusMap>(
     () => ({
       running: activeRuntimeIds,
-      awaitingPermissionCounts
+      awaitingPermissionCounts,
+      awaitingKinds
     }),
-    [activeRuntimeIds, awaitingPermissionCounts]
+    [activeRuntimeIds, awaitingPermissionCounts, awaitingKinds]
   )
 
   return (
@@ -324,6 +336,12 @@ function ThreadListItem(): React.JSX.Element {
   const pendingCount = statusMap.awaitingPermissionCounts[itemId] ?? 0
   const isAwaitingPermission = pendingCount > 0
   const isRunning = status === 'running' || isAwaitingPermission
+  // Pill wording: what the assistant is actually waiting FOR.
+  const awaitingLabel = t(
+    statusMap.awaitingKinds[itemId] === 'question'
+      ? 'sidebarStatusAwaitingAnswer'
+      : 'sidebarStatusAwaitingPermission'
+  )
   const [closing, setClosing] = useState(false)
   const closeRuntime = useCallback(
     async (e: React.MouseEvent): Promise<void> => {
@@ -521,7 +539,7 @@ function ThreadListItem(): React.JSX.Element {
               status === 'running'
                 ? `${itemTitle} · ${t('sidebarStatusRunning')}`
                 : status === 'awaitingPermission'
-                  ? `${itemTitle} · ${t('sidebarStatusAwaitingPermission')}`
+                  ? `${itemTitle} · ${awaitingLabel}`
                   : itemTitle
             }
             className="flex h-9 w-full items-center gap-2 rounded-lg pl-3 pr-9 text-left text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground/90 group-data-[active]/thread:bg-foreground/[0.08] group-data-[active]/thread:text-foreground"
@@ -545,19 +563,27 @@ function ThreadListItem(): React.JSX.Element {
               </span>
             ) : null}
           </ThreadListItemPrimitive.Trigger>
-          {/* Notification badge — Apple-style red pill with the
-              count, always visible when the session has at least
-              one pending permission request. Occupies the right
-              edge; the X/pencil hover actions sit to its left so
-              they don't collide. Rendered as a plain span on the
-              absolute layer because it isn't clickable — tapping
-              the row still switches to the session, which is what
-              the user needs to do to answer the permission. */}
+          {/* 等待 pill — the old Apple-style red NotificationBadge
+              retired (2026-07-07 去警示化): a permission gate is the
+              assistant asking a question, not an alarm. Brand-green
+              desaturated pill with a pulsing dot, wording split by
+              what's awaited (批准 vs 回答). Fades out on hover/active
+              to yield the right edge to the action buttons — unlike
+              the old badge it carries a text label, so colliding with
+              the pencil would clip it. Not clickable: tapping the row
+              switches to the session, which is how you answer. */}
           {isAwaitingPermission ? (
-            <NotificationBadge
-              count={pendingCount}
-              className="absolute right-2 top-1/2 -translate-y-1/2"
-            />
+            <span
+              className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-[5px] rounded-full bg-brand/[0.12] px-2 py-0.5 text-[10.5px] font-semibold tracking-[0.02em] text-brand transition-opacity group-hover/thread:opacity-0 group-data-[active]/thread:opacity-0"
+              aria-label={awaitingLabel}
+              title={awaitingLabel}
+            >
+              <span
+                aria-hidden
+                className="perm-wait-dot size-[5px] rounded-full bg-brand"
+              />
+              {awaitingLabel}
+            </span>
           ) : null}
 
           {/* Hover-revealed actions cluster on the right edge. The
@@ -588,10 +614,11 @@ function ThreadListItem(): React.JSX.Element {
             title={t('renameChat')}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={startEdit}
-            className={
-              'absolute top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground/80 opacity-0 transition hover:bg-secondary hover:text-foreground focus:opacity-100 focus:outline-none group-hover/thread:opacity-100 group-data-[active]/thread:opacity-100 ' +
-              (isAwaitingPermission ? 'right-8' : 'right-1.5')
-            }
+            // right-1.5 unconditionally: the awaiting pill fades out on
+            // hover/active — exactly when this pencil fades in — so the
+            // two never occupy the right edge at the same time (the old
+            // red badge was always-visible, hence the right-8 dodge).
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground/80 opacity-0 transition hover:bg-secondary hover:text-foreground focus:opacity-100 focus:outline-none group-hover/thread:opacity-100 group-data-[active]/thread:opacity-100"
           >
             <MoreIcon />
           </button>
@@ -663,11 +690,13 @@ function MoreIcon(): React.JSX.Element {
  * gutter column. Idle rows render no dot at all (see the Trigger above).
  */
 function InlineStatusDot({ status }: { status: SessionStatus }): React.JSX.Element {
+  // awaiting 从 amber 换品牌绿 + 脉冲（2026-07-07 去警示化）：授权=AI 在
+  // 问问题不是报警，琥珀警示语言随内联权限框一起退役。
   const color =
     status === 'running'
       ? 'bg-emerald-500'
       : status === 'awaitingPermission'
-        ? 'bg-amber-500'
+        ? 'perm-wait-dot bg-brand'
         : 'bg-muted-foreground/50'
   return <span className={`size-1.5 shrink-0 rounded-full ${color}`} />
 }

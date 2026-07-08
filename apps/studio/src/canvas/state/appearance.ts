@@ -13,12 +13,16 @@ const ACCENT_VARS = [
   '--accent-hover',
 ] as const;
 
-export const DEFAULT_ACCENT_COLOR = '#c96442';
+// 2026-07-07 默认主题色改为绿（原为首格赭色 #c96442）。色板顺序保持不变
+// ——绿不挪到首位，用户按位置记色；已持久化过主题色的用户不受影响
+// （normalizeAccentColor 命中即用存值），只有全新安装/从未设置过的会落到
+// 这个默认。
+export const DEFAULT_ACCENT_COLOR = '#059669';
 export const ACCENT_SWATCHES = [
-  DEFAULT_ACCENT_COLOR,
+  '#c96442',
   '#2563eb',
   '#7c3aed',
-  '#059669',
+  DEFAULT_ACCENT_COLOR,
   '#dc2626',
   '#d97706',
   '#0891b2',

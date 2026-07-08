@@ -1,12 +1,13 @@
 import { randomUUID } from 'crypto'
 import { EventEmitter } from 'events'
-import { app, type WebContents } from 'electron'
+import { type WebContents } from 'electron'
 import { existsSync, statSync } from 'node:fs'
 import { isAbsolute, resolve, sep } from 'node:path'
 import { inspect } from 'node:util'
 
 import {
   createSdkMcpServer,
+  getSessionInfo,
   query,
   tool,
   type PermissionMode,
@@ -35,6 +36,8 @@ import type {
   PermissionRequest,
   QueuedMessage,
   SessionMeta,
+  WorkflowAgent,
+  WorkflowPhaseInfo,
   WorkflowTaskStatus
 } from '../../shared/types'
 import { bumpUnread } from '../tray'
@@ -63,38 +66,25 @@ import { invalidateFileSuggestions } from './fileSuggestions'
 import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
 import { seedSkillsFromDisk } from './seedSkills'
-import { sessionTranscriptExists } from './sessionStore'
+import {
+  moveSessionToWorkspace,
+  resolveSessionWorkspace,
+  sessionTranscriptExists
+} from './sessionStore'
+import {
+  addKnownWorkspace,
+  listKnownWorkspaces,
+  resolveDefaultWorkspace
+} from './workspaceRegistry'
 import { buildProposalAppend, type ProposalProductScope } from './proposalPrompt'
 import { renderRetrievedBlock } from './proposalRetrieve'
 import { buildProposalProductScopes } from './proposalScopes'
 import { kbSemanticSearch, warmEmbedWorker } from './kbSemanticSearch'
 import { kbOutDir } from './kbIndexStore'
 
-/**
- * Resolve the default workspace directory used on every new tab/engine.
- *
- * Product contract (since the "drop a folder to start" gate was removed):
- * the app opens straight into the user's desktop folder so there's never
- * a picker page on cold start. We resolve it via Electron's
- * `app.getPath('desktop')` — never by concatenating the home dir with a
- * literal folder name — because getPath is the only cross-platform-correct
- * source: on Windows the desktop folder can be OneDrive-redirected or
- * localized, and getPath consults the OS shell folder registry to return
- * the real path. macOS returns the expected location under the home dir.
- *
- * Fallback: if the Desktop path can't be resolved or isn't a real
- * directory (locked-down enterprise profiles, exotic shell folder
- * redirection, a transient FS error), we silently fall back to the user
- * home (`app.getPath('home')`) so the engine still binds a valid cwd and
- * the user never sees a blank window. We deliberately do NOT fall back to
- * `process.cwd()` — in a packaged .app that points inside the bundle,
- * which is read-only and wrong.
- *
- * Must be called after `app.whenReady()` (getPath throws before ready).
- * The only caller is the ChatEngine constructor, and engines are only
- * created from `newTab()`, which runs well after whenReady — so this is
- * always safe in practice.
- */
+// resolveDefaultWorkspace moved to ./workspaceRegistry — the default
+// workspace doubles as the known-workspaces registry's implicit first
+// entry, so the registry owns the resolution logic now.
 /**
  * Build the child env for the SYSTEM claude backend.
  *
@@ -154,31 +144,6 @@ function systemBackendEnv(): Record<string, string> {
     env[key] = value
   }
   return env
-}
-
-function resolveDefaultWorkspace(): string {
-  const tryDir = (p: string | undefined): string | null => {
-    if (!p) return null
-    try {
-      return statSync(p).isDirectory() ? p : null
-    } catch {
-      return null
-    }
-  }
-
-  let desktop: string | undefined
-  try {
-    desktop = app.getPath('desktop')
-  } catch {
-    desktop = undefined
-  }
-  const desktopDir = tryDir(desktop)
-  if (desktopDir) return desktopDir
-
-  // Desktop unusable — fall back to the user home. getPath('home') is
-  // about as reliable as it gets; if even this throws we let it
-  // propagate, since an engine with no valid cwd can't function anyway.
-  return app.getPath('home')
 }
 
 // NOTE: there used to be a `SWITCH_READY_TIMEOUT_MS = 30_000` here,
@@ -267,6 +232,22 @@ interface SessionRuntime {
    * operating on rather than a single class field.
    */
   pendingResume: boolean
+  /**
+   * 本会话 fusion-code 子进程的工作目录（统一会话管理，2026-07-07：
+   * workspace 从 engine 级下沉到会话级）。spawn 时烘焙进 query() 的
+   * cwd，对活进程不可热改 —— CLI 的 `--resume` 按 cwd 对应的
+   * `~/.claude/projects/<slug>/` 找 transcript。用户改工作区走
+   * `setSessionWorkspace` 的迁移路径：teardown 本 runtime（整个对象
+   * 从 map 摘除，连带这份 cwd 缓存作废）→ 搬 transcript 到新目录的
+   * slug → 下次 send/switch 重建 runtime 重新解析。
+   *
+   * null = 尚未解析。`ensureSessionReady` 在每次 spawn 前经
+   * `resolveRuntimeCwd` 填充：composer 预选（pendingWorkspace）→ 磁盘
+   * transcript 的原工作区（getSessionInfo 全局定位）→ 引擎默认工作区。
+   * 解析后缓存在这里，同一 runtime 的重 spawn（pump 崩溃重试）不重付
+   * 磁盘查找。
+   */
+  cwd: string | null
   /**
    * True once `send()` has pushed at least one real user turn into the
    * queue. Used as the "worth keeping alive in the background" signal
@@ -491,8 +472,12 @@ export class ChatEngine extends EventEmitter {
   private seedAttempted = false
 
   /**
-   * Workspace directory — the cwd passed to `query()` for every session
-   * this engine spawns. This is the *only* source of truth for the cwd.
+   * DEFAULT workspace directory —— 统一会话管理（2026-07-07）后不再是
+   * 「本引擎全部会话的 cwd」，只作为：
+   *   1. 新会话在 composer 未选目录时的默认 cwd（resolveRuntimeCwd 的
+   *      最后一档兜底）；
+   *   2. WORKSPACE_GET / 文件树面板等 engine 级消费方的当前值。
+   * 每个会话真正的 cwd 挂在它的 SessionRuntime.cwd 上（见该字段注释）。
    *
    * Defaulted to the OS Desktop (see `resolveDefaultWorkspace`) at
    * construction time rather than left null: the old "drop a folder to
@@ -509,7 +494,21 @@ export class ChatEngine extends EventEmitter {
    * re-resolves the Desktop. Wire a `userData` file if a sticky
    * last-used folder turns out to be wanted.
    */
-  private workspaceDir: string | null = resolveDefaultWorkspace()
+  private defaultWorkspaceDir: string | null = resolveDefaultWorkspace()
+
+  /**
+   * 会话的用户选定工作目录（composer「选择工作目录」chip →
+   * SESSION_WORKSPACE_SET）。key = sessionId，value = 绝对路径。
+   *
+   * 条目与磁盘 transcript 的归属永远一致：无 transcript 的新会话首次
+   * send 后 transcript 落在该目录；已有 transcript 的会话在写入本 map
+   * 之前已经被 setSessionWorkspace 迁移到该目录 —— 所以
+   * resolveRuntimeCwd 无论走本 map 还是走 getSessionInfo 都得到同一个
+   * 答案。条目刻意不消费即删：runtime 可能因 spawn 失败被整个丢弃重
+   * 建，保留条目让重建后的解析仍拿到用户的选择。量级 = 用户手动选过
+   * 目录的会话数（个位数），不需要清理策略。
+   */
+  private pendingWorkspace = new Map<string, string>()
 
   /**
    * UUID of the session currently shown in the foreground of this
@@ -836,7 +835,6 @@ export class ChatEngine extends EventEmitter {
       count: targets.length,
       ids: targets.map(([id]) => id)
     })
-    const workspaceDir = this.getWorkingDirectory()
     await Promise.all(
       targets.map(async ([id, rt]) => {
         // 只对「磁盘上真有 transcript」的会话设 pendingResume（防护层 1，
@@ -849,9 +847,12 @@ export class ChatEngine extends EventEmitter {
         // 能否 resume」的权威判据。不存在就设 false，下次 send 走全新 spawn
         // （id 复用、从头开），既不丢会话行也不撞报错。真有历史的会话仍
         // resume，历史照常在新后端重载。
-        const canResume = await sessionTranscriptExists(workspaceDir, id).catch(
-          () => false
-        )
+        // per-session cwd：探测用各 runtime 自己的工作目录（曾 spawn 过的
+        // runtime 必有 cwd），engine 默认目录只是防御兜底。
+        const canResume = await sessionTranscriptExists(
+          this.getWorkingDirectory(rt),
+          id
+        ).catch(() => false)
         // Detach the live fields BEFORE the async teardown so a racing
         // send()/switchToSession sees an empty slot (and re-spawns)
         // rather than aliasing the runtime we're killing. We reuse the
@@ -947,7 +948,21 @@ export class ChatEngine extends EventEmitter {
 
   /** Current workspace path, or null before the user has picked one. */
   getWorkspace(): string | null {
-    return this.workspaceDir
+    return this.defaultWorkspaceDir
+  }
+
+  /**
+   * 前台会话的有效工作目录，null = 前台无会话或 cwd 尚未解析。
+   * 同步快照（不做磁盘查找）：rt.cwd 由 switchToSession 的后台解析 /
+   * spawn 前解析填充，pendingWorkspace 是 composer 预选。供 @-mention
+   * 文件列表、文件树、workspace:open 这类「跟随前台会话」的消费方使用；
+   * 拿到 null 时调用方回落 getWorkspace()（默认工作区）。
+   */
+  getActiveSessionCwd(): string | null {
+    const id = this.activeSessionId
+    if (!id) return null
+    const rt = this.sessions.get(id)
+    return rt?.cwd ?? this.pendingWorkspace.get(id) ?? null
   }
 
   /**
@@ -990,8 +1005,8 @@ export class ChatEngine extends EventEmitter {
     }
 
     // First-time set — fast path.
-    if (this.workspaceDir === null) {
-      this.workspaceDir = candidate
+    if (this.defaultWorkspaceDir === null) {
+      this.defaultWorkspaceDir = candidate
       invalidateFileSuggestions()
       this.logEvent('workspace:set', { path: candidate, mode: 'initial' })
       console.log('[engine] workspace set', { path: candidate })
@@ -1000,7 +1015,7 @@ export class ChatEngine extends EventEmitter {
     }
 
     // Same path — no-op. The gate may re-call with the current path.
-    if (this.workspaceDir === candidate) {
+    if (this.defaultWorkspaceDir === candidate) {
       return candidate
     }
 
@@ -1008,8 +1023,112 @@ export class ChatEngine extends EventEmitter {
     // contract is "one workspace per window". The renderer should
     // open a new window for the new workspace.
     throw new Error(
-      `Window is already bound to workspace "${this.workspaceDir}". Open a new workspace window to use "${candidate}".`
+      `Window is already bound to workspace "${this.defaultWorkspaceDir}". Open a new workspace window to use "${candidate}".`
     )
+  }
+
+  /**
+   * 设定某个会话的工作目录（composer「选择工作目录」chip 的提交路径，
+   * 统一会话管理 2026-07-07；同日实测验证后放开「已有记录也可改」）。
+   *
+   * 两条路径：
+   *   - 无 transcript 的新会话：写 pendingWorkspace，首次 send 时烘焙进
+   *     子进程 cwd。若已有 warmup child（cwd 按旧目录烘焙）先砍掉，让
+   *     下次 send 按新目录重 spawn —— 不砍用户的选择会被静默忽略。
+   *   - 已有 transcript：**迁移**。CLI 的 `--resume` 只在 sanitize(cwd)
+   *     的 projects 目录里找 transcript（实测跨 cwd 报 No conversation
+   *     found），所以改工作区 = 先 teardown 活 runtime（正在写文件的
+   *     child 必须退净，同 delete 的顺序约束，这里 await 而非
+   *     fire-and-forget）→ moveSessionToWorkspace 搬 jsonl + 子代理目录
+   *     → 下次点开按新 cwd resume，历史无损（见 sessionStore 的迁移函
+   *     数注释）。
+   *
+   * 唯一保留的拒绝条件：本轮对话正在进行（active turn）——child 正握着
+   * transcript 的 fd 在写，中途换绑既危险也没意义，等本轮结束即可。
+   *
+   * 校验规则与 setWorkspace 一致（绝对路径 + 存在 + 目录）。成功后把
+   * 目录写进 known-workspaces 注册表（fire-and-forget），让统一列表和
+   * 「最近工作区」下拉从此认识它。
+   */
+  async setSessionWorkspace(sessionId: string, candidate: string): Promise<void> {
+    if (typeof candidate !== 'string' || candidate.length === 0) {
+      throw new Error('Workspace path is required.')
+    }
+    if (!isAbsolute(candidate)) {
+      throw new Error(`Workspace path must be absolute (got "${candidate}").`)
+    }
+    let stat
+    try {
+      stat = statSync(candidate)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new Error(`Workspace path does not exist: ${msg}`)
+    }
+    if (!stat.isDirectory()) {
+      throw new Error(`Workspace path is not a directory: ${candidate}`)
+    }
+
+    const rt = this.sessions.get(sessionId)
+    if (rt?.active) {
+      throw new Error(
+        '对话正在进行中，等这一轮结束后再更改工作文件夹。'
+      )
+    }
+    // transcript 存在性用 SDK 全局定位（不限本引擎的工作区）——决定走
+    // 迁移路径还是纯 pending 路径。读盘异常按「存在」保守处理：多做一次
+    // 迁移查找（找不到会明确报错）好过漏迁一次让 resume 断链。
+    let hasTranscript: boolean
+    try {
+      hasTranscript = (await getSessionInfo(sessionId)) !== undefined
+    } catch {
+      hasTranscript = true
+    }
+
+    if (rt) {
+      // 无论 warm 还是 idle 的活 runtime，cwd 都已按旧目录烘焙，必须
+      // teardown 后重 spawn 才能生效；迁移路径更要求 child 完全退出、
+      // fd 关闭之后才能动文件 —— 所以这里 await（对比 switchToSession
+      // 的 warmup-cancel 是 fire-and-forget）。先从 map 摘除，竞态中的
+      // send/switch 会重建空槽而不是别名到将死进程。
+      this.sessions.delete(sessionId)
+      if (rt.handle || rt.queue) {
+        this.logEvent('setSessionWorkspace:teardown', { sessionId })
+        try {
+          await this.teardownRuntime(sessionId, rt)
+        } catch (err) {
+          console.warn('[engine] setSessionWorkspace teardown failed:', err)
+        }
+      }
+    }
+
+    if (hasTranscript) {
+      await moveSessionToWorkspace(
+        sessionId,
+        await listKnownWorkspaces(),
+        candidate
+      )
+      // 迁移过的会话有历史，下一次 spawn 必须 `--resume` 而不是
+      // `--session-id`（后者撞已存在的 id 会让 CLI exit 1，2026-07-07
+      // 实锤）。上面 teardown 已删槽，这里重建空槽把标志挂上；即便竞态
+      // 中槽再次被丢弃，ensureSessionReady 的防护层 3 也会按磁盘现实把
+      // resume 升级回来——这行是语义正确层，那边是兜底防线。
+      const fresh = await this.getSession(sessionId)
+      fresh.pendingResume = true
+      this.logEvent('setSessionWorkspace:migrated', {
+        sessionId,
+        path: candidate
+      })
+    }
+
+    this.pendingWorkspace.set(sessionId, candidate)
+    this.logEvent('setSessionWorkspace:set', { sessionId, path: candidate })
+    // 注册表登记 fire-and-forget：失败只影响「最近列表 / 统一列表可见性」，
+    // 不应阻塞本次选择（spawn 用的是 pendingWorkspace，不依赖注册表）。
+    void addKnownWorkspace(candidate).catch((err) => {
+      console.warn('[engine] addKnownWorkspace failed:', err)
+    })
+    // 归属变了（迁移）或即将变（预选）——让两侧列表和 chip 镜像重拉。
+    this.emit('sessionListChanged')
   }
 
   /**
@@ -1026,7 +1145,7 @@ export class ChatEngine extends EventEmitter {
     // that races in while this scan is in flight doesn't kick off a duplicate.
     this.seedAttempted = true
     try {
-      const skills = await seedSkillsFromDisk(this.workspaceDir)
+      const skills = await seedSkillsFromDisk(this.defaultWorkspaceDir)
       if (this.systemInitSeen) return // real data already landed — drop seed
       if (skills.length === 0) return
       this.sessionMeta = {
@@ -1057,7 +1176,7 @@ export class ChatEngine extends EventEmitter {
     // render the composer until getWorkspace() returns a non-null path,
     // but we re-check here so a buggy (or malicious) renderer can't
     // bypass the UI by directly invoking chatApi.send.
-    if (this.workspaceDir === null) {
+    if (this.defaultWorkspaceDir === null) {
       throw new Error(
         'Workspace not set. Drop a folder on the window to pick one first.'
       )
@@ -1311,6 +1430,45 @@ export class ChatEngine extends EventEmitter {
       queueSize: runtime.queue!.size
     })
     this.logEvent('send:queued', { messageId, queueSize: runtime.queue!.size })
+  }
+
+  /**
+   * Install an ActiveTurn for a turn the CLI opened ON ITS OWN — no
+   * send() preceded it, so nothing installed the turn the pump routes
+   * ChatEvents through. Canonical case: a backgrounded workflow/task
+   * completes, fusion-code injects its <task-notification> as a user
+   * message, and the model reacts in a fresh self-initiated turn.
+   *
+   * The synthetic messageId pairs with no optimistic user bubble — by
+   * design. The renderer's `start` handler (startAssistantMessage)
+   * creates a standalone assistant bubble for ids it hasn't seen, which
+   * is exactly right for a reply the user never typed a message for.
+   * The turn ends through the normal `result` path: emit `end`, clear
+   * `runtime.active`, drain any queued user turns.
+   */
+  private beginSyntheticTurn(
+    runtime: SessionRuntime,
+    sessionId: string,
+    trigger: string
+  ): ActiveTurn {
+    const requestId = this.nextRequestId++
+    const messageId = `synthetic_${requestId}_${Date.now()}`
+    const active: ActiveTurn = {
+      requestId,
+      messageId,
+      toolNameByUseId: new Map(),
+      sawTextDelta: false,
+      sawTextContent: false,
+      sdkMessageCount: 0,
+      streamedToolUseIds: new Set(),
+      toolUseIdByBlockIndex: new Map(),
+      thinkingBlockIndices: new Set(),
+      sawThinkingDelta: false
+    }
+    runtime.active = active
+    this.logEvent('turn:synthetic', { messageId, trigger })
+    this.emitEvent(sessionId, { type: 'start', messageId })
+    return active
   }
 
   /**
@@ -1597,7 +1755,7 @@ export class ChatEngine extends EventEmitter {
       resume,
       cliPath,
       backend,
-      cwd: this.getWorkingDirectory(),
+      cwd: this.getWorkingDirectory(runtime),
       env: {
         ANTHROPIC_BASE_URL: childEnvForLog.ANTHROPIC_BASE_URL ?? '(unset)',
         ANTHROPIC_AUTH_TOKEN: childEnvForLog.ANTHROPIC_AUTH_TOKEN ? '(set)' : '(unset)',
@@ -1695,7 +1853,10 @@ export class ChatEngine extends EventEmitter {
       // 仅当 cliPath 是 JS 入口且我们有自带 node 时设置：让 SDK 用它（而非裸 'node'）
       // 去跑那个 .js。undefined 时 SDK 回退默认（dev 下裸 'node' 通常能在 PATH 命中）。
       ...(jsRuntimeBin ? { executable: jsRuntimeBin as 'node' } : {}),
-      cwd: this.getWorkingDirectory(),
+      // Per-session cwd（统一会话管理）：ensureSessionReady 已在本次
+      // spawn 前经 resolveRuntimeCwd 填好 runtime.cwd，这里读到的必然
+      // 是会话自己的工作目录；default 仅是防御性兜底。
+      cwd: this.getWorkingDirectory(runtime),
       // UI-picked permission mode. Values:
       //   - default           → canUseTool → broker → dialog (current flow)
       //   - plan              → SDK restricts to read-only tools, assistant
@@ -2014,7 +2175,7 @@ export class ChatEngine extends EventEmitter {
     newId: string,
     opts: { resume: boolean }
   ): Promise<{ sessionId: string }> {
-    if (this.workspaceDir === null) {
+    if (this.defaultWorkspaceDir === null) {
       throw new Error('Workspace not set. Drop a folder on the window first.')
     }
     if (this.switching) {
@@ -2074,6 +2235,11 @@ export class ChatEngine extends EventEmitter {
       // to a background-running session picks up where we left off.
       const rt = await this.getSession(newId)
       rt.pendingResume = opts.resume
+      // 统一会话管理：切换即后台解析该会话的 cwd（只查 pending/transcript，
+      // 不 spawn），让 @-mention 文件列表、文件树等「前台会话 cwd」消费方
+      // 尽快对准，而不是等到首次 send。失败无妨——ensureSessionReady 在
+      // spawn 前还会再解析一次。
+      void this.resolveRuntimeCwd(newId, rt).catch(() => {})
       this.activeSessionId = newId
     } finally {
       this.switching = false
@@ -2168,6 +2334,18 @@ export class ChatEngine extends EventEmitter {
       this.logEvent('ensureSessionReady:alreadySpawned')
       return
     }
+    // 统一会话管理：spawn 前解析本会话的 cwd（composer 预选 → transcript
+    // 原工作区 → 默认工作区），缓存到 runtime.cwd 供 openSession 烘焙。
+    const cwd = await this.resolveRuntimeCwd(sessionId, runtime)
+    // 工作目录可能已被移动/删除（resume 会话的原目录没了、或预选后目录被
+    // 删）。直接 spawn 会让子进程即刻死掉、报错晦涩，这里前置成大白话错
+    // 误 —— send() 的 catch 会把它转成聊天里的错误气泡（start/error/end
+    // 三连）。历史照常可读（读 transcript 不需要 cwd 存在），只拦发送。
+    if (!existsSync(cwd)) {
+      throw new Error(
+        `这个对话的工作文件夹已不存在（${cwd}），可能被移动或删除，无法继续对话。`
+      )
+    }
     let resume = runtime.pendingResume
     runtime.pendingResume = false
     // 防护层 2（2026-07-05）：即便标了 pendingResume，spawn 前再验一次
@@ -2179,12 +2357,31 @@ export class ChatEngine extends EventEmitter {
     // [[2026-07-05-切后端resume不存在transcript致No-conversation-found]]。
     if (resume) {
       const exists = await sessionTranscriptExists(
-        this.getWorkingDirectory(),
+        this.getWorkingDirectory(runtime),
         sessionId
       ).catch(() => true)
       if (!exists) {
         this.logEvent('ensureSessionReady:resumeDowngraded', { sessionId })
         resume = false
+      }
+    } else {
+      // 防护层 3（2026-07-07）——防护层 2 的镜像：resume=false 但磁盘上
+      // 已有本 id 的 transcript → 升级为 resume。撞出来的场景：
+      // setSessionWorkspace 的迁移路径 teardown 删槽后用户直接发消息，
+      // send() 重建的空槽 pendingResume 是默认 false，于是 spawn 走
+      // `--session-id <id>`，撞上刚迁移过来的 jsonl → CLI 报
+      // "Session ID is already in use" exit 1（用户实锤 + 实验复现，
+      // claude 2.1.202）。transcript 在就 resume 永远是正确选择——历史
+      // 本来就该带上；全新会话无文件，不受影响。读盘异常按「不存在」
+      // 保守处理（维持原 fresh-spawn 行为，别把 --resume 递给一个可能
+      // 没有文件的 id，那是防护层 2 治的病）。
+      const exists = await sessionTranscriptExists(
+        this.getWorkingDirectory(runtime),
+        sessionId
+      ).catch(() => false)
+      if (exists) {
+        this.logEvent('ensureSessionReady:resumeUpgraded', { sessionId })
+        resume = true
       }
     }
     this.logEvent('ensureSessionReady:spawn', { resume, sessionId })
@@ -2406,9 +2603,18 @@ export class ChatEngine extends EventEmitter {
       )
 
       if (outcome.decision === 'deny') {
+        // The floating permission card's deny option carries an optional
+        // typed reason. Folding it into the deny message is what makes
+        // "不同意，告诉它下一步怎么做" actually work: the SDK surfaces this
+        // string to the assistant as the tool_result, so the model reads
+        // the user's instruction instead of guessing why it was refused.
+        const said = outcome.denyMessage?.trim()
         return {
           behavior: 'deny',
-          message: 'User declined this tool call.',
+          message:
+            said && said.length > 0
+              ? `User declined this tool call and said: ${said}`
+              : 'User declined this tool call.',
           interrupt: false,
           decisionClassification: 'user_reject'
         }
@@ -2570,7 +2776,7 @@ export class ChatEngine extends EventEmitter {
           runtime.readyResolve?.()
         }
 
-        const active = runtime.active
+        let active = runtime.active
         const msgType =
           this.isRecord(sdkMessage) && typeof sdkMessage.type === 'string'
             ? sdkMessage.type
@@ -2592,13 +2798,33 @@ export class ChatEngine extends EventEmitter {
         }
 
         if (!active) {
-          // Stragglers between turns — log the full message anyway so
-          // we can see what the SDK emitted, then drop.
-          console.log(
-            `[engine] pump: no active turn, dropping ${msgType}${subtype ? ' ' + subtype : ''}`,
-            inspect(sdkMessage, SDK_INSPECT_OPTS)
-          )
-          continue
+          // Assistant output with no active turn = a turn the CLI opened
+          // ON ITS OWN, without a send(). The canonical case: a
+          // backgrounded workflow completes, fusion-code injects the
+          // <task-notification> user message into the agent loop, and the
+          // model reacts with a fresh turn — the final report the user
+          // actually wants. Dropping it here is the "log streams tokens
+          // but the page never updates" bug (2026-07-07): the model's
+          // whole reply died in this branch. Synthesize an ActiveTurn so
+          // the reply streams into the UI; its `result` then ends the
+          // turn through the normal path below. Everything that is NOT
+          // assistant output (stray system/user noise between turns)
+          // still drops — synthesizing on those would open empty bubbles.
+          if (
+            msgType === 'assistant' ||
+            msgType === 'stream_event' ||
+            msgType === 'assistant_error'
+          ) {
+            active = this.beginSyntheticTurn(runtime, sessionId, msgType)
+          } else {
+            // Stragglers between turns — log the full message anyway so
+            // we can see what the SDK emitted, then drop.
+            console.log(
+              `[engine] pump: no active turn, dropping ${msgType}${subtype ? ' ' + subtype : ''}`,
+              inspect(sdkMessage, SDK_INSPECT_OPTS)
+            )
+            continue
+          }
         }
 
         active.sdkMessageCount++
@@ -2832,7 +3058,15 @@ export class ChatEngine extends EventEmitter {
         }
         break
 
-      case 'task_progress':
+      case 'task_progress': {
+        // `workflow_progress` rides on SOME task_progress messages for
+        // `local_workflow` tasks: a FULL snapshot of every agent() the
+        // run has spawned (label/phase/state/lastTool/tokens/result…).
+        // It's not in the SDK's narrowed .d.ts but it IS on the wire —
+        // and it's the only live per-agent view we get, since workflow
+        // agents' own conversations never reach the message stream.
+        // Absent → undefined, and the renderer keeps its last snapshot.
+        const wp = this.parseWorkflowProgress(sdkMessage.workflow_progress)
         event = {
           type: 'task_update',
           phase: 'progress',
@@ -2845,9 +3079,11 @@ export class ChatEngine extends EventEmitter {
           lastToolName: str(sdkMessage.last_tool_name),
           tokens: num(usage.total_tokens),
           toolUses: num(usage.tool_uses),
-          durationMs: num(usage.duration_ms)
+          durationMs: num(usage.duration_ms),
+          ...(wp ? { phases: wp.phases, agents: wp.agents } : {})
         }
         break
+      }
 
       case 'task_updated': {
         // patch carries the wire-safe subset of TaskState; map its
@@ -2893,6 +3129,89 @@ export class ChatEngine extends EventEmitter {
     )
     this.emitEvent(sessionId, event)
     return true
+  }
+
+  /**
+   * Parse the `workflow_progress` array a `local_workflow`'s
+   * task_progress messages intermittently carry. Wire shape (observed on
+   * claude 2.1.202 — NOT in the SDK's narrowed d.ts):
+   *
+   *   {type:'workflow_phase', index:1, title:'Search'}
+   *   {type:'workflow_agent', index:1, label:'search:…', phaseIndex:1,
+   *    phaseTitle:'Search', agentId:'a283…', model:'claude-…',
+   *    state:'start'|'progress'|'done', lastToolName:'WebSearch',
+   *    lastToolSummary:'…', promptPreview:'…', resultPreview:'…',
+   *    tokens:36990, toolCalls:2, durationMs:32337, …}
+   *
+   * Every field except type/index/label/title is treated as optional —
+   * the array is an internal CLI structure, so we extract defensively
+   * and let unknown entry types fall through. Returns null when the
+   * field is absent/empty so the caller can spread-omit and the renderer
+   * keeps its previous snapshot.
+   */
+  private parseWorkflowProgress(
+    value: unknown
+  ): { phases: WorkflowPhaseInfo[]; agents: WorkflowAgent[] } | null {
+    if (!Array.isArray(value) || value.length === 0) return null
+    const str = (v: unknown): string | undefined =>
+      typeof v === 'string' && v.length > 0 ? v : undefined
+    const num = (v: unknown): number | undefined =>
+      typeof v === 'number' && Number.isFinite(v) ? v : undefined
+    const phases: WorkflowPhaseInfo[] = []
+    const agents: WorkflowAgent[] = []
+    for (const entry of value) {
+      if (!this.isRecord(entry)) continue
+      if (entry.type === 'workflow_phase') {
+        const index = num(entry.index)
+        const title = str(entry.title)
+        if (index !== undefined && title) phases.push({ index, title })
+        continue
+      }
+      if (entry.type === 'workflow_agent') {
+        const index = num(entry.index)
+        if (index === undefined) continue
+        agents.push({
+          index,
+          label: str(entry.label) ?? `agent ${index}`,
+          agentId: str(entry.agentId),
+          phaseIndex: num(entry.phaseIndex),
+          phaseTitle: str(entry.phaseTitle),
+          model: str(entry.model),
+          status: this.mapWorkflowAgentState(entry.state),
+          lastToolName: str(entry.lastToolName),
+          lastToolSummary: str(entry.lastToolSummary),
+          promptPreview: str(entry.promptPreview),
+          resultPreview: str(entry.resultPreview),
+          tokens: num(entry.tokens),
+          toolCalls: num(entry.toolCalls),
+          durationMs: num(entry.durationMs)
+        })
+      }
+    }
+    if (phases.length === 0 && agents.length === 0) return null
+    return { phases, agents }
+  }
+
+  /**
+   * Map a workflow agent's wire `state` → coarse UI status. Observed
+   * values: 'start' (spawned), 'progress' (mid-run), 'done'. 'error' /
+   * 'failed' / 'queued' are defensive guesses for states we haven't
+   * caught on the wire; anything unknown renders as running — for a
+   * live snapshot that's the least-wrong default.
+   */
+  private mapWorkflowAgentState(value: unknown): WorkflowTaskStatus {
+    switch (value) {
+      case 'done':
+        return 'completed'
+      case 'error':
+      case 'failed':
+        return 'failed'
+      case 'queued':
+      case 'pending':
+        return 'pending'
+      default:
+        return 'running'
+    }
   }
 
   /** Map `task_updated.patch.status` → coarse UI status. */
@@ -3409,6 +3728,7 @@ export class ChatEngine extends EventEmitter {
       readyReject: null,
       readySettled: false,
       pendingResume: false,
+      cwd: null,
       openedViaSend: false,
       pendingTurns: [],
       spawnedWithProposal: false,
@@ -3754,18 +4074,79 @@ export class ChatEngine extends EventEmitter {
   }
 
   /**
-   * Working directory handed to `query()` on SDK spawn. Always reads
-   * the user-picked workspace — `send()` already guarantees this is
-   * non-null by the time openSession() runs, but we throw if called
-   * in some other code path to catch regressions loudly instead of
+   * Working directory handed to `query()` on SDK spawn. 统一会话管理后
+   * 优先读 runtime 自己的 cwd（ensureSessionReady 已在 spawn 前解析）；
+   * 不传 runtime（engine 级消费方）或 runtime.cwd 尚未解析时退回默认
+   * 工作区。null 兜底照旧抛出 —— catch regressions loudly instead of
    * silently falling back to process.cwd() (which in a packaged .app
    * is `/`, the wrong answer).
    */
-  private getWorkingDirectory(): string {
-    if (this.workspaceDir === null) {
+  private getWorkingDirectory(runtime?: SessionRuntime): string {
+    if (runtime?.cwd) return runtime.cwd
+    if (this.defaultWorkspaceDir === null) {
       throw new Error('getWorkingDirectory() called before workspace was set.')
     }
-    return this.workspaceDir
+    return this.defaultWorkspaceDir
+  }
+
+  /**
+   * Resolve (and cache on the runtime) the cwd this session's child
+   * process must spawn with. 优先级：
+   *   1. runtime.cwd —— 已解析过（同 runtime 重 spawn 不重付查找）；
+   *   2. pendingWorkspace —— composer 选定（新会话预选，或改目录后的
+   *      最新归属）；
+   *   3. transcript 的**物理归属工作区** —— resolveSessionWorkspace 按
+   *      「谁的 projects slug 目录里真有这份 jsonl」判定（撞 slug 用
+   *      记录的 cwd 消歧）。刻意不直接信 getSessionInfo().cwd：迁移只
+   *      搬文件不重写历史 entry，那个字段在迁移后是旧值，按它 spawn
+   *      会让 resume 在旧 slug 里扑空（详见 resolveSessionWorkspace
+   *      注释）。`--resume` 按 cwd 找 projects 目录，文件在哪就必须
+   *      spawn 在对应工作区；
+   *   4. getSessionInfo().cwd —— 已知工作区都没有文件（外部 CLI 在未
+   *      注册目录建的会话），记录值是唯一线索；
+   *   5. 引擎默认工作区（桌面）。
+   * 查找失败（SDK 读盘异常）静默落到默认档：宁可让一个边角会话 spawn
+   * 在默认目录，也不让 send 整个失败。
+   */
+  private async resolveRuntimeCwd(
+    sessionId: string,
+    runtime: SessionRuntime
+  ): Promise<string> {
+    if (runtime.cwd) return runtime.cwd
+    const pending = this.pendingWorkspace.get(sessionId)
+    if (pending) {
+      runtime.cwd = pending
+      this.logEvent('resolveRuntimeCwd:pending', { sessionId, cwd: pending })
+      return pending
+    }
+    try {
+      const physical = await resolveSessionWorkspace(
+        sessionId,
+        await listKnownWorkspaces()
+      )
+      if (physical) {
+        runtime.cwd = physical
+        this.logEvent('resolveRuntimeCwd:transcript', {
+          sessionId,
+          cwd: physical
+        })
+        return physical
+      }
+      const info = await getSessionInfo(sessionId)
+      if (info?.cwd) {
+        runtime.cwd = info.cwd
+        this.logEvent('resolveRuntimeCwd:transcriptCwdField', {
+          sessionId,
+          cwd: info.cwd
+        })
+        return info.cwd
+      }
+    } catch (err) {
+      console.warn('[engine] resolveRuntimeCwd lookup failed:', err)
+    }
+    const fallback = this.getWorkingDirectory()
+    runtime.cwd = fallback
+    return fallback
   }
 
   private emitEvent(sessionId: string, event: ChatEvent): void {

@@ -1,14 +1,14 @@
-import { app } from 'electron'
+import { app, nativeTheme } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { normalize, normalizeImageApi } from './appSettingsNormalize'
-import type { AppSettings, CliBackend } from './appSettingsNormalize'
+import type { AppSettings, CliBackend, ThemeMode } from './appSettingsNormalize'
 
 // Re-export for consumers（类型与纯归一化住 appSettingsNormalize.ts——它无
 // electron 依赖，proposal 图片设置的 bun test 在无 electron 进程里跑）。
 export { normalizeImageApi }
-export type { AppSettings, CliBackend }
+export type { AppSettings, CliBackend, ThemeMode }
 
 /**
  * Tiny main-process settings store for preferences that need to survive
@@ -97,4 +97,28 @@ export function setLastModel(backend: CliBackend, model: string | null): void {
   if (model) slot[backend] = model
   else delete slot[backend]
   updateAppSettings({ lastModelByBackend: slot })
+}
+
+/**
+ * 读用户上次选的主题档位（无记录时 undefined——调用方回退 nativeTheme）。
+ * splash 创建 / shell 窗口初始 backgroundColor 用它，早于 renderer 挂载、
+ * daemon 未必在线（见 AppSettings.themeMode 字段注释）。
+ */
+export function getThemeMode(): ThemeMode | undefined {
+  return load().themeMode
+}
+
+/** 镜像写入用户主题档位。调用点：tabRegistry.syncShellBackgroundToTheme。 */
+export function setThemeMode(mode: ThemeMode): void {
+  updateAppSettings({ themeMode: mode })
+}
+
+/**
+ * 'dark'/'light' 直接判定；'system'（或 undefined，即无记录时的默认档）
+ * 落到 nativeTheme.shouldUseDarkColors。tabRegistry（shell 窗口 backgroundColor
+ * 初值 + 运行时切主题）与 splash.ts（闪屏深浅色）共用同一判定，保证三处
+ * 「什么算暗色」的口径永远一致，不会各自实现出岔口。
+ */
+export function resolveIsDarkTheme(mode: ThemeMode | string | undefined): boolean {
+  return mode === 'dark' || (mode !== 'light' && nativeTheme.shouldUseDarkColors)
 }

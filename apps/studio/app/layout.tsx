@@ -1,7 +1,9 @@
 import type { Metadata } from 'next'
 import { Suspense, type ReactNode } from 'react'
+import { AuthGate } from '@/src/components/AuthGate'
 import { RailShell } from '@/src/components/RailShell'
 import { SurfaceHost } from '@/src/components/SurfaceHost'
+import { UpgradeScreen } from '@/src/components/UpgradeScreen'
 import './globals.css'
 // canvas（迁移自 apps/web）的两个样式入口，沿用 web 原版 layout.tsx 的
 // JS-import 方式——不能并进 globals.css 的 @import 链（位置违规会被静默
@@ -46,6 +48,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </Suspense>
           </div>
         </div>
+        {/* 订阅购买页 overlay（z-9980）：账户菜单「升级订阅」打开，
+         * 开关在 src/stores/upgrade.ts。挂在 AuthGate 之前——登出时
+         * 登录墙（z-9999 + DOM 更靠后）必须盖得住它。 */}
+        <UpgradeScreen />
+        {/* 登录墙：body 最后一个子元素——未登录时全屏盖住 rail + 舞台
+         * （两棵树照常挂载，墙只是视觉+交互门禁，见 AuthGate 头注释）。 */}
+        <AuthGate />
       </body>
     </html>
   )

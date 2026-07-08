@@ -80,6 +80,19 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     label: '生成图片',
     appearance: 'gradient'
   },
+  // spreadsheets — 处理表格。namespaced + 裸名双注册，理由同 ppt-master。
+  {
+    match: '/claude-desktop:spreadsheets',
+    icon: 'excel',
+    label: '处理表格',
+    appearance: 'gradient'
+  },
+  {
+    match: '/spreadsheets',
+    icon: 'excel',
+    label: '处理表格',
+    appearance: 'gradient'
+  },
   // proposal-writer — 写方案。namespaced + 裸名双注册，理由同 ppt-master。
   // 注意：这个命令不会发给 fusion-code——FusionRuntimeProvider.onNew 会拦截它、
   // 激活方案模式（见 matchProposalSlash）。chip 只是让斜杠菜单里它长得像个产品功能。

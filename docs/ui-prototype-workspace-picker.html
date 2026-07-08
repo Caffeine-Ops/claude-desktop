@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工作目录 chip · 切换 loading 原型</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════
+ * 设计 token —— 1:1 取自 packages/design-tokens/tokens.css（HSL 三元组，
+ * 与 chat 面 `hsl(var(--x) / a)` 的用法保持同一心智模型）。
+ * 投影/毛玻璃是原型自己的表现层 token，按浅/深两档分别调制。
+ * ═══════════════════════════════════════════════════════════════════ */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --border: 240 6% 84%;
+  --brand: 142 76% 36%;
+  --destructive: 0 72% 50%;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+
+  /* 表现层：多层 hairline 叠影（Apple 式「贴地 + 环境光」两段式），
+   * 毛玻璃菜单底色留出透明度给 backdrop-filter。 */
+  --glass: 0 0% 100% / .8;
+  --shadow-card: 0 0 0 1px hsl(240 6% 84% / .55), 0 1px 2px rgba(0,0,0,.04),
+    0 12px 40px -12px rgba(0,0,0,.12);
+  --shadow-menu: 0 0 0 1px hsl(240 6% 84% / .6), 0 2px 6px rgba(0,0,0,.05),
+    0 24px 60px -16px rgba(0,0,0,.28);
+  --shadow-tile: 0 0 0 1px hsl(240 6% 84% / .5), 0 1px 3px rgba(0,0,0,.03);
+  --shadow-tile-hover: 0 0 0 1px hsl(240 6% 84% / .7), 0 2px 6px rgba(0,0,0,.05),
+    0 14px 36px -14px rgba(0,0,0,.14);
+  --dot-grid: 240 4% 40% / .1;
+}
+.dark {
+  color-scheme: dark;
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --border: 49 12% 18%;
+  --brand: 145 60% 52%;
+  --destructive: 0 72% 55%;
+
+  --glass: 36 6% 15% / .82;
+  --shadow-card: 0 0 0 1px hsl(40 21% 89% / .08), 0 1px 2px rgba(0,0,0,.3),
+    0 16px 48px -12px rgba(0,0,0,.5);
+  --shadow-menu: 0 0 0 1px hsl(40 21% 89% / .1), 0 2px 8px rgba(0,0,0,.35),
+    0 28px 70px -16px rgba(0,0,0,.6);
+  --shadow-tile: 0 0 0 1px hsl(40 21% 89% / .06), 0 1px 3px rgba(0,0,0,.25);
+  --shadow-tile-hover: 0 0 0 1px hsl(40 21% 89% / .1), 0 2px 6px rgba(0,0,0,.3),
+    0 14px 36px -14px rgba(0,0,0,.5);
+  --dot-grid: 40 21% 89% / .07;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { height: 100%; }
+body {
+  min-height: 100%;
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+  transition: background .25s ease, color .25s ease;
+}
+::selection { background: hsl(var(--brand) / .25); }
+button { font-family: inherit; border: none; background: none; cursor: pointer; color: inherit; }
+button:focus-visible { outline: 2px solid hsl(var(--brand) / .55); outline-offset: 2px; border-radius: 6px; }
+svg { display: block; }
+
+main { max-width: 1060px; margin: 0 auto; padding: 52px 36px 150px; }
+
+/* ── 页眉 ────────────────────────────────────────────────────────── */
+.intro { margin-bottom: 44px; }
+.overline {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .16em;
+  color: hsl(var(--muted-foreground) / .7);
+  margin-bottom: 10px;
+}
+.intro h1 { font-size: 21px; font-weight: 650; letter-spacing: -0.02em; }
+.intro p {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: hsl(var(--muted-foreground));
+  max-width: 600px;
+}
+.intro code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1.5px 6px;
+  border-radius: 5px;
+  background: hsl(var(--muted) / .9);
+  box-shadow: inset 0 0 0 1px hsl(var(--border) / .5);
+}
+
+/* ── 分节标题：编号 + 名称 + hairline 延展 ───────────────────────── */
+.sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.sec-num {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: hsl(var(--muted-foreground) / .55);
+}
+.sec-head h2 { font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; }
+.sec-head .rule { flex: 1; border-top: 1px solid hsl(var(--border) / .6); transform: translateY(-3px); }
+.sec-sub { font-size: 12px; color: hsl(var(--muted-foreground) / .85); margin: -8px 0 20px; }
+
+/* ── 状态陈列板 ──────────────────────────────────────────────────── */
+.board {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  gap: 14px;
+  margin-bottom: 64px;
+}
+.tile {
+  background: hsl(var(--card));
+  border-radius: 16px;
+  box-shadow: var(--shadow-tile);
+  padding: 14px 14px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: box-shadow .25s ease, transform .25s ease;
+  animation: rise .45s cubic-bezier(.21,.61,.35,1) both;
+}
+.tile:hover { box-shadow: var(--shadow-tile-hover); transform: translateY(-1px); }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+.tile.tall { grid-row: span 2; }
+.tile-head { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
+.tile-index {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: hsl(var(--muted-foreground) / .5);
+}
+.tile-name {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.badge.neutral { color: hsl(var(--muted-foreground)); background: hsl(var(--muted)); }
+.badge.brand { color: hsl(var(--brand)); background: hsl(var(--brand) / .12); }
+/* 标本台：点阵底纹——「这是设计画布上的标本」的信号 */
+.tile-stage {
+  flex: 1;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 11px;
+  background-color: hsl(var(--background) / .55);
+  background-image: radial-gradient(hsl(var(--dot-grid)) 1px, transparent 1px);
+  background-size: 13px 13px;
+  box-shadow: inset 0 0 0 1px hsl(var(--border) / .4);
+  overflow: hidden;
+}
+.tile.tall .tile-stage { align-items: flex-start; padding: 16px 14px; }
+.tile-note {
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: hsl(var(--muted-foreground) / .65);
+  padding: 0 2px;
+}
+
+/* ── chip 本体（对齐 Composer 现状：13px 纯文字，无底）─────────────── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: hsl(var(--muted-foreground) / .7);
+  transition: color .15s ease;
+  white-space: nowrap;
+}
+.chip.interactive:hover, .chip.open { color: hsl(var(--foreground)); }
+.chip .chev {
+  color: hsl(var(--muted-foreground) / .4);
+  transition: transform .18s cubic-bezier(.34,1.2,.5,1);
+}
+.chip.open .chev { transform: rotate(180deg); }
+.chip.readonly { cursor: default; }
+
+/* spinner —— 0.9s，圆头断弧，13px 与 folder 同尺寸原位替换 */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin .9s linear infinite; }
+
+/* ── 变体 B：胶囊高亮 ────────────────────────────────────────────
+ * loading 时 chip 升级成低饱和胶囊，微光从左到右扫过（indeterminate）。
+ * 完成后闪一拍品牌绿勾，再退回纯文字 chip——「有仪式感但不吵」。 */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  padding: 4.5px 13px 4.5px 11px;
+  border-radius: 999px;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted) / .8);
+  box-shadow: inset 0 0 0 1px hsl(var(--border) / .7), 0 1px 2px rgba(0,0,0,.03);
+  position: relative;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.pill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 30%, hsl(var(--foreground) / .045) 50%, transparent 70%);
+  transform: translateX(-100%);
+  animation: sweep 1.4s cubic-bezier(.4,0,.4,1) infinite;
+}
+@keyframes sweep { to { transform: translateX(100%); } }
+.pill.done {
+  color: hsl(var(--brand));
+  background: hsl(var(--brand) / .1);
+  box-shadow: inset 0 0 0 1px hsl(var(--brand) / .28);
+  animation: pillDone .3s cubic-bezier(.34,1.4,.6,1);
+}
+.pill.done::after { animation: none; content: none; }
+@keyframes pillDone { 0% { transform: scale(.94); } 100% { transform: scale(1); } }
+
+/* ── 变体 C：搬家动画 ────────────────────────────────────────────
+ * 两个文件夹之间三粒点依次流动——把「transcript 在物理搬家」讲成故事。 */
+.move-track { display: inline-flex; align-items: center; gap: 3px; }
+.move-track .dots { display: inline-flex; gap: 3px; margin: 0 3px; }
+.move-track .dot {
+  width: 3px; height: 3px; border-radius: 999px;
+  background: hsl(var(--muted-foreground) / .8);
+  animation: travel 1.25s cubic-bezier(.45,.05,.55,.95) infinite;
+}
+.move-track .dot:nth-child(2) { animation-delay: .16s; }
+.move-track .dot:nth-child(3) { animation-delay: .32s; }
+@keyframes travel {
+  0%   { transform: translateX(-5px); opacity: 0; }
+  30%  { opacity: 1; }
+  70%  { transform: translateX(4px); opacity: 1; }
+  100% { transform: translateX(7px); opacity: 0; }
+}
+.move-track .dest { color: hsl(var(--foreground) / .75); }
+@keyframes pop {
+  0% { transform: scale(1); } 40% { transform: scale(1.3); } 100% { transform: scale(1); }
+}
+.pop { animation: pop .38s cubic-bezier(.34,1.56,.64,1); }
+
+/* ── 失败反馈：轻微横移抖动 + 短暂红字，2.4s 后淡出回落 ─────────── */
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-3px); }
+  40%, 60% { transform: translateX(3px); }
+}
+.shake { animation: shake .4s ease; }
+.fail-msg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: hsl(var(--destructive));
+  animation: failFade 2.4s ease forwards;
+}
+@keyframes failFade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ── 下拉菜单：macOS 式毛玻璃 + 内嵌圆角 hover ────────────────────
+ * 尺寸对齐现状（w-72 / rounded-xl），行 hover 从「full-bleed 填充」升级
+ * 成「留 5px 边距的内嵌圆角高亮」——同系统菜单，精致感主要来自这里。 */
+.menu {
+  width: 288px;
+  background: hsl(var(--glass));
+  border-radius: 13px;
+  padding: 5px;
+  box-shadow: var(--shadow-menu);
+  animation: menuIn .16s cubic-bezier(.34,1.2,.5,1);
+  transform-origin: bottom left;
+}
+@supports (backdrop-filter: blur(1px)) {
+  .menu { backdrop-filter: blur(24px) saturate(1.6); }
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .menu { background: hsl(var(--card)); }
+}
+@keyframes menuIn {
+  from { opacity: 0; transform: translateY(5px) scale(.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.menu.floating { position: absolute; bottom: calc(100% + 7px); left: 0; z-index: 50; }
+.menu-hint {
+  padding: 5px 9px 7px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground) / .75);
+}
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 8px;
+  text-align: left;
+  color: hsl(var(--muted-foreground));
+  transition: background .1s ease, color .1s ease;
+}
+.menu-row:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+.menu-row.selected { background: hsl(var(--brand) / .1); color: hsl(var(--foreground)); }
+.menu-row .row-icon { flex-shrink: 0; opacity: .7; }
+.menu-row .row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2.5px; }
+.menu-row .row-name {
+  font-size: 12px; font-weight: 500; letter-spacing: -0.005em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.menu-row .row-name .default-tag { margin-left: 6px; font-size: 10.5px; font-weight: 400; opacity: .55; }
+.menu-row .row-path {
+  font-family: var(--font-mono);
+  font-size: 10px; opacity: .55;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.menu-row .row-check { flex-shrink: 0; color: hsl(var(--brand)); animation: checkIn .2s cubic-bezier(.34,1.4,.6,1); }
+@keyframes checkIn { from { transform: scale(.5); opacity: 0; } }
+.menu-divider { margin: 5px 9px; border-top: 1px solid hsl(var(--border) / .55); }
+.menu-row.browse { font-size: 12px; }
+
+/* ── 实机演示区 ──────────────────────────────────────────────────── */
+.stage {
+  border-radius: 22px;
+  padding: 84px 48px 44px;
+  display: flex;
+  justify-content: center;
+  background-color: hsl(var(--background));
+  background-image: radial-gradient(hsl(var(--dot-grid)) 1px, transparent 1px);
+  background-size: 18px 18px;
+  box-shadow: inset 0 0 0 1px hsl(var(--border) / .55);
+  position: relative;
+}
+.stage::after {
+  content: '模拟环境 · 可点击';
+  position: absolute;
+  top: 14px; right: 18px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: .1em;
+  color: hsl(var(--muted-foreground) / .45);
+}
+.composer-wrap { width: 100%; max-width: 640px; }
+.composer-card {
+  background: hsl(var(--card));
+  border-radius: 24px;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow .25s ease;
+}
+.composer-input {
+  padding: 17px 21px 4px;
+  min-height: 54px;
+  font-size: 15px;
+  color: hsl(var(--muted-foreground) / .45);
+  line-height: 1.6;
+  letter-spacing: -0.005em;
+}
+.composer-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px 12px;
+}
+.tb-circle {
+  width: 36px; height: 36px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  color: hsl(var(--muted-foreground) / .8);
+  box-shadow: inset 0 0 0 1px hsl(var(--foreground) / .07);
+  transition: background .12s ease, color .12s ease;
+}
+.tb-circle:hover { background: hsl(var(--foreground) / .05); color: hsl(var(--foreground)); }
+.tb-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; color: hsl(var(--muted-foreground) / .8);
+  padding: 6px 11px; border-radius: 999px;
+  transition: background .12s ease, color .12s ease;
+}
+.tb-chip:hover { background: hsl(var(--foreground) / .05); color: hsl(var(--foreground)); }
+.tb-send {
+  width: 40px; height: 40px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  background: hsl(var(--foreground) / .07);
+  color: hsl(var(--muted-foreground) / .45);
+  cursor: not-allowed;
+}
+.below-chips {
+  margin-top: 13px;
+  display: flex; align-items: center; gap: 18px;
+  padding: 0 10px;
+  position: relative;
+}
+.below-chips .right { margin-left: auto; }
+/* 实机状态切换的 micro 过渡：内容换挡时 2px 上移淡入 */
+.swap { display: inline-flex; align-items: center; gap: 10px; animation: swapIn .18s ease-out; }
+@keyframes swapIn { from { opacity: 0; transform: translateY(2px); } }
+
+/* ── Tweaks 浮层 ─────────────────────────────────────────────────── */
+.tweaks-fab {
+  position: fixed; right: 22px; bottom: 22px; z-index: 100;
+  width: 40px; height: 40px; border-radius: 999px;
+  background: hsl(var(--glass));
+  box-shadow: var(--shadow-menu);
+  display: flex; align-items: center; justify-content: center;
+  color: hsl(var(--muted-foreground));
+  transition: color .15s ease, transform .2s cubic-bezier(.34,1.4,.6,1);
+}
+@supports (backdrop-filter: blur(1px)) { .tweaks-fab { backdrop-filter: blur(20px) saturate(1.6); } }
+.tweaks-fab:hover { color: hsl(var(--foreground)); transform: scale(1.08); }
+.tweaks-panel {
+  position: fixed; right: 22px; bottom: 72px; z-index: 100;
+  width: 252px;
+  background: hsl(var(--glass));
+  border-radius: 15px;
+  padding: 15px 16px 17px;
+  box-shadow: var(--shadow-menu);
+  display: none;
+  animation: menuIn .16s cubic-bezier(.34,1.2,.5,1);
+  transform-origin: bottom right;
+}
+@supports (backdrop-filter: blur(1px)) { .tweaks-panel { backdrop-filter: blur(24px) saturate(1.6); } }
+.tweaks-panel.show { display: block; }
+.tweaks-panel h3 {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+  color: hsl(var(--muted-foreground) / .7);
+  margin-bottom: 14px;
+}
+.tw-row { margin-bottom: 13px; }
+.tw-row:last-child { margin-bottom: 0; }
+.tw-label { font-size: 11px; color: hsl(var(--muted-foreground)); margin-bottom: 6px; display: block; }
+.seg {
+  display: flex; background: hsl(var(--muted) / .8); border-radius: 8px; padding: 2px;
+  box-shadow: inset 0 0 0 1px hsl(var(--border) / .35);
+}
+.seg button {
+  flex: 1; font-size: 11.5px; padding: 4.5px 0; border-radius: 6px;
+  color: hsl(var(--muted-foreground));
+  transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.seg button.on {
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0,0,0,.12), inset 0 0 0 1px hsl(var(--border) / .4);
+}
+.tw-range { display: flex; align-items: center; gap: 10px; }
+.tw-range input { flex: 1; accent-color: hsl(var(--brand)); }
+.tw-range output {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px; color: hsl(var(--muted-foreground)); min-width: 32px; text-align: right;
+}
+.tw-check { display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer; line-height: 1.4; }
+.tw-check input { accent-color: hsl(var(--brand)); flex-shrink: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pill::after, .move-track .dot { animation: none; }
+  .spin { animation-duration: 1.8s; }
+  .tile, .swap, .menu, .tweaks-panel { animation: none; }
+}
+@media (max-width: 720px) {
+  main { padding: 32px 18px 130px; }
+  .stage { padding: 64px 16px 30px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="intro">
+    <div class="overline">UI PROTOTYPE · COMPOSER</div>
+    <h1>工作目录 chip · 切换 loading 状态</h1>
+    <p>
+      对应 <code>Composer.tsx › WorkspaceDirPicker</code>。上半区陈列全部状态标本，
+      下半区可实际点击走完「打开菜单 → 选目录 → loading → 成功 / 失败」全流程；
+      右下角 Tweaks 切换主题、loading 样式（3 种）、时长与结果。
+    </p>
+  </header>
+
+  <!-- ════════ 01 状态总览 ════════ -->
+  <div class="sec-head">
+    <span class="sec-num">01</span>
+    <h2>状态总览</h2>
+    <span class="rule" aria-hidden="true"></span>
+  </div>
+  <section class="board" id="board"></section>
+
+  <!-- ════════ 02 实机演示 ════════ -->
+  <div class="sec-head">
+    <span class="sec-num">02</span>
+    <h2>实机演示</h2>
+    <span class="rule" aria-hidden="true"></span>
+  </div>
+  <p class="sec-sub">在模拟 composer 里点击左下角的工作目录 chip。</p>
+  <div class="stage">
+    <div class="composer-wrap">
+      <div class="composer-card">
+        <div class="composer-input">有什么想聊的？</div>
+        <div class="composer-toolbar">
+          <button class="tb-circle" aria-label="添加附件">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <button class="tb-chip">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z"/></svg>
+            通用
+          </button>
+          <div style="flex:1"></div>
+          <button class="tb-chip">Fable 5</button>
+          <button class="tb-circle" aria-label="语音输入">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v3"/></svg>
+          </button>
+          <button class="tb-send" aria-label="发送" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m6 11 6-6 6 6"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="below-chips">
+        <div id="live-picker" style="position:relative"></div>
+        <span class="chip">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="m12 3 2.5 5.5L20 11l-5.5 2.5L12 19l-2.5-5.5L4 11l5.5-2.5z"/></svg>
+          语气 创意
+        </span>
+        <span class="chip right">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
+          全自动
+        </span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ════════ Tweaks ════════ -->
+<button class="tweaks-fab" id="tweaks-fab" aria-label="Tweaks">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg>
+</button>
+<div class="tweaks-panel" id="tweaks-panel">
+  <h3>TWEAKS</h3>
+  <div class="tw-row">
+    <span class="tw-label">主题</span>
+    <div class="seg" data-tweak="theme">
+      <button data-val="light" class="on">浅色</button>
+      <button data-val="dark">深色</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="tw-label">loading 样式</span>
+    <div class="seg" data-tweak="variant">
+      <button data-val="A" class="on">A 极简</button>
+      <button data-val="B">B 胶囊</button>
+      <button data-val="C">C 搬家</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="tw-label">切换时长</span>
+    <div class="tw-range">
+      <input type="range" id="tw-duration" min="500" max="5000" step="250" value="2000">
+      <output id="tw-duration-out">2.0s</output>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="tw-label">结果</span>
+    <div class="seg" data-tweak="outcome">
+      <button data-val="ok" class="on">成功</button>
+      <button data-val="fail">失败</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <label class="tw-check"><input type="checkbox" id="tw-history" checked> 会话已有记录（菜单显示迁移提示）</label>
+  </div>
+</div>
+
+<script>
+/* ═══════════════ 共享 SVG 与数据 ═══════════════ */
+const ICON = {
+  folder: (s = 13) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>`,
+  folderPlus: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v4M10 13h4"/></svg>`,
+  spinner: `<svg class="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`,
+  chev: `<svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`,
+  check: (s = 14) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`,
+  warn: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`
+}
+
+const DESKTOP = '/Users/andersen/Desktop'
+const KNOWN = [
+  { path: DESKTOP, name: '桌面', isDefault: true },
+  { path: '/Users/andersen/Desktop/方案配图', name: '方案配图' },
+  { path: '/Users/andersen/Documents/学习笔记', name: '学习笔记' },
+  { path: '/Users/andersen/Go/grpc-demo', name: 'grpc-demo' }
+]
+const nameOf = (p) => p === DESKTOP ? '桌面' : p.split('/').filter(Boolean).pop()
+
+/* ═══════════════ 各状态的静态渲染器（陈列板 + 实机共用）═══════════════ */
+function chipIdle(path, { interactive = true, open = false } = {}) {
+  return `<button class="chip ${interactive ? 'interactive' : ''} ${open ? 'open' : ''}" title="${path}">
+    ${ICON.folder()}${nameOf(path)}${ICON.chev}
+  </button>`
+}
+function chipReadonly(path) {
+  return `<span class="chip readonly" title="${path}">${ICON.folder()}${nameOf(path)}</span>`
+}
+/* 变体 A —— 现状实现：图标原位换 spinner，文案直白。零布局跳动。 */
+function loadingA(target) {
+  return `<span class="chip" title="${target}" aria-busy="true">
+    ${ICON.spinner}正在切换到「${nameOf(target)}」…
+  </span>`
+}
+/* 变体 B —— 胶囊：loading 有容器感 + 微光扫过；done 一拍品牌绿。 */
+function loadingB(target, done = false) {
+  return done
+    ? `<span class="pill done" title="${target}">${ICON.check(12)}已切到「${nameOf(target)}」</span>`
+    : `<span class="pill" title="${target}" aria-busy="true">${ICON.spinner}正在切换到「${nameOf(target)}」…</span>`
+}
+/* 变体 C —— 搬家：源文件夹 → 三粒流动点 → 目标文件夹，讲清「记录在搬」。 */
+function loadingC(from, target, done = false) {
+  return `<span class="chip" title="${target}" aria-busy="${!done}">
+    <span class="move-track">
+      ${ICON.folder(12)}
+      <span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+      <span class="dest ${done ? 'pop' : ''}">${done ? ICON.check(12) : ICON.folder(12)}</span>
+    </span>
+    ${done ? `已搬到「${nameOf(target)}」` : `正在把对话搬到「${nameOf(target)}」…`}
+  </span>`
+}
+function failMsg(current) {
+  return `<span class="chip shake" title="${current}">${ICON.folder()}${nameOf(current)}</span>
+    <span class="fail-msg">${ICON.warn}没切成，还留在「${nameOf(current)}」</span>`
+}
+function menuHTML(current, { hasHistory = true, floating = false } = {}) {
+  const rows = KNOWN.map((w) => {
+    const selected = w.path === current
+    return `<button class="menu-row ${selected ? 'selected' : ''}" data-path="${w.path}" role="option" aria-selected="${selected}">
+      <span class="row-icon">${ICON.folder()}</span>
+      <span class="row-text">
+        <span class="row-name">${w.name}${w.isDefault ? '<span class="default-tag">默认</span>' : ''}</span>
+        <span class="row-path">${w.path}</span>
+      </span>
+      ${selected ? `<span class="row-check">${ICON.check()}</span>` : ''}
+    </button>`
+  }).join('')
+  return `<div class="menu ${floating ? 'floating' : ''}" role="listbox">
+    ${hasHistory ? '<div class="menu-hint">更改后，这个对话和它的记录会搬到新文件夹继续。</div>' : ''}
+    ${rows}
+    <div class="menu-divider" aria-hidden="true"></div>
+    <button class="menu-row browse" data-browse="1">
+      <span class="row-icon">${ICON.folderPlus}</span>
+      选择其他文件夹…
+    </button>
+  </div>`
+}
+
+/* ═══════════════ 状态陈列板 ═══════════════ */
+const TILES = [
+  { name: '默认 · 桌面', html: chipIdle(DESKTOP), note: '13px 纯文字，muted 70%，hover 升到前景色' },
+  { name: '自定义目录', html: chipIdle('/Users/andersen/Desktop/方案配图'), note: '显示目录 basename，hover title 出全路径' },
+  { name: '只读 · 对话进行中', html: chipReadonly(DESKTOP), note: '去掉箭头与 hover，纯展示' },
+  { name: '切换中 · A 极简', badge: '现状', kind: 'neutral', html: loadingA('/Users/andersen/Desktop/方案配图'), note: '图标原位换 spinner，零布局跳动，最安静' },
+  { name: '切换中 · B 胶囊', badge: '提案', kind: 'brand', html: loadingB('/Users/andersen/Desktop/方案配图'), note: '低饱和胶囊 + 微光扫过，「进行中」的存在感更强' },
+  { name: '完成 · B 胶囊', badge: '提案', kind: 'brand', html: loadingB('/Users/andersen/Desktop/方案配图', true), note: '品牌绿一拍确认，1.2s 后退回纯文字 chip' },
+  { name: '切换中 · C 搬家', badge: '提案', kind: 'brand', html: loadingC(DESKTOP, '/Users/andersen/Desktop/方案配图'), note: '三粒点在两个文件夹间流动——迁移语义可视化' },
+  { name: '完成 · C 搬家', badge: '提案', kind: 'brand', html: loadingC(DESKTOP, '/Users/andersen/Desktop/方案配图', true), note: '目标文件夹弹一下换成绿勾' },
+  { name: '切换失败', html: failMsg(DESKTOP), note: '轻抖 + 红字 2.4s 淡出，chip 回落原目录' },
+  { name: '菜单展开', html: menuHTML(DESKTOP), note: '毛玻璃 + 内嵌圆角 hover，路径行用 mono 10px', tall: true }
+]
+document.getElementById('board').innerHTML = TILES.map((t, i) => `
+  <div class="tile ${t.tall ? 'tall' : ''}" style="animation-delay:${i * 40}ms">
+    <div class="tile-head">
+      <span class="tile-index">${String(i + 1).padStart(2, '0')}</span>
+      <span class="tile-name">${t.name}</span>
+      ${t.badge ? `<span class="badge ${t.kind}">${t.badge}</span>` : ''}
+    </div>
+    <div class="tile-stage">${t.html}</div>
+    ${t.note ? `<div class="tile-note">${t.note}</div>` : ''}
+  </div>`).join('')
+
+/* ═══════════════ 实机演示状态机 ═══════════════ */
+const tweaks = { theme: 'light', variant: 'A', duration: 2000, outcome: 'ok', hasHistory: true }
+const live = { state: 'idle', current: DESKTOP, target: null, timer: null }
+const mount = document.getElementById('live-picker')
+
+function renderLive() {
+  const { state, current, target } = live
+  const wrap = (inner) => `<span class="swap">${inner}</span>`
+  if (state === 'switching') {
+    mount.innerHTML = wrap(
+      tweaks.variant === 'A' ? loadingA(target) :
+      tweaks.variant === 'B' ? loadingB(target) :
+      loadingC(current, target)
+    )
+    return
+  }
+  if (state === 'done-flash') {
+    mount.innerHTML = wrap(
+      tweaks.variant === 'B' ? loadingB(current, true) :
+      tweaks.variant === 'C' ? loadingC(current, current, true) :
+      chipIdle(current)
+    )
+    return
+  }
+  if (state === 'failed') {
+    mount.innerHTML = wrap(failMsg(current))
+    return
+  }
+  // idle / menu（菜单要相对 mount 绝对定位，留在 swap 包装之外）
+  mount.innerHTML = wrap(chipIdle(current, { open: state === 'menu' })) +
+    (state === 'menu' ? menuHTML(current, { hasHistory: tweaks.hasHistory, floating: true }) : '')
+}
+
+function startSwitch(path) {
+  if (path === live.current) { live.state = 'idle'; renderLive(); return }
+  live.state = 'switching'
+  live.target = path
+  renderLive()
+  clearTimeout(live.timer)
+  live.timer = setTimeout(() => {
+    if (tweaks.outcome === 'fail') {
+      live.state = 'failed'
+      renderLive()
+      live.timer = setTimeout(() => { live.state = 'idle'; renderLive() }, 2400)
+      return
+    }
+    live.current = path
+    // A 不搞仪式直接落定；B/C 闪一拍完成态再回 idle
+    if (tweaks.variant === 'A') { live.state = 'idle'; renderLive(); return }
+    live.state = 'done-flash'
+    renderLive()
+    live.timer = setTimeout(() => { live.state = 'idle'; renderLive() }, 1200)
+  }, tweaks.duration)
+}
+
+mount.addEventListener('click', (e) => {
+  const row = e.target.closest('.menu-row')
+  if (row) {
+    if (row.dataset.browse) { startSwitch('/Users/andersen/Documents/毕业设计'); return }
+    startSwitch(row.dataset.path)
+    return
+  }
+  const chip = e.target.closest('.chip.interactive')
+  if (chip) {
+    live.state = live.state === 'menu' ? 'idle' : 'menu'
+    renderLive()
+  }
+})
+window.addEventListener('mousedown', (e) => {
+  if (live.state === 'menu' && !mount.contains(e.target)) { live.state = 'idle'; renderLive() }
+})
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && live.state === 'menu') { live.state = 'idle'; renderLive() }
+})
+renderLive()
+
+/* ═══════════════ Tweaks 面板 ═══════════════ */
+const fab = document.getElementById('tweaks-fab')
+const panel = document.getElementById('tweaks-panel')
+fab.addEventListener('click', () => panel.classList.toggle('show'))
+
+document.querySelectorAll('.seg').forEach((seg) => {
+  seg.addEventListener('click', (e) => {
+    const btn = e.target.closest('button')
+    if (!btn) return
+    seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn))
+    const key = seg.dataset.tweak
+    tweaks[key] = btn.dataset.val
+    if (key === 'theme') document.documentElement.classList.toggle('dark', btn.dataset.val === 'dark')
+    renderLive()
+  })
+})
+const durInput = document.getElementById('tw-duration')
+const durOut = document.getElementById('tw-duration-out')
+durInput.addEventListener('input', () => {
+  tweaks.duration = Number(durInput.value)
+  durOut.textContent = (tweaks.duration / 1000).toFixed(1) + 's'
+})
+document.getElementById('tw-history').addEventListener('change', (e) => {
+  tweaks.hasHistory = e.target.checked
+  renderLive()
+})
+</script>
+</body>
+</html>

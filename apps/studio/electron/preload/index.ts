@@ -37,6 +37,8 @@ import {
   type SessionRenameResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
+  type SessionWorkspaceSetPayload,
+  type SessionWorkspaceSetResult,
   type CliBackendSetPayload,
   type CliBackendState,
   type DesktopLogsApi,
@@ -69,7 +71,11 @@ import {
   type ImageFileReadResult,
   type ModelListResult,
   type ModelSetPayload,
+  type AuthLoginPayload,
+  type AuthLoginResult,
+  type AuthState,
   type UpdaterState,
+  type WorkspaceKnownListResult,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
   type WorkspaceState,
@@ -220,6 +226,12 @@ const chatApi: ChatApi = {
     ) as Promise<WorkspacePickResult>
   },
 
+  listKnownWorkspaces(): Promise<WorkspaceKnownListResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.WORKSPACE_KNOWN_LIST
+    ) as Promise<WorkspaceKnownListResult>
+  },
+
   /**
    * Resolve a File object to its disk path. `webUtils.getPathForFile`
    * is the Electron 33+ replacement for `File.path`, which is
@@ -327,6 +339,15 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.SESSION_RENAME,
       payload
     ) as Promise<SessionRenameResult>
+  },
+
+  setSessionWorkspace(
+    payload: SessionWorkspaceSetPayload
+  ): Promise<SessionWorkspaceSetResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SESSION_WORKSPACE_SET,
+      payload
+    ) as Promise<SessionWorkspaceSetResult>
   },
 
   listActiveRuntimeIds(): Promise<SessionListActiveRuntimesResult> {
@@ -518,6 +539,29 @@ const chatApi: ChatApi = {
     ipcRenderer.on(IPC_CHANNELS.UPDATER_STATE_CHANGED, listener)
     return () => {
       ipcRenderer.off(IPC_CHANNELS.UPDATER_STATE_CHANGED, listener)
+    }
+  },
+
+  getAuthState(): Promise<AuthState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.AUTH_GET_STATE) as Promise<AuthState>
+  },
+
+  login(payload: AuthLoginPayload): Promise<AuthLoginResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.AUTH_LOGIN,
+      payload
+    ) as Promise<AuthLoginResult>
+  },
+
+  logout(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.AUTH_LOGOUT) as Promise<void>
+  },
+
+  onAuthStateChanged(handler: (state: AuthState) => void): () => void {
+    const listener = (_e: unknown, state: AuthState): void => handler(state)
+    ipcRenderer.on(IPC_CHANNELS.AUTH_STATE_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.AUTH_STATE_CHANGED, listener)
     }
   },
   getKbPath(): Promise<{

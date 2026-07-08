@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cowork 订阅购买页 · 原型</title>
+<style>
+/* ============================================================
+   Cowork 订阅购买页原型 · 2026-07-06
+   入口：账户菜单「升级订阅」→ 全屏 overlay（同设置页模式）
+   设计语言：延续登录页定稿的科技感体系（--lg-* 双主题变量、
+   品牌绿、网格 + 光晕、mono overline）
+   ⚠️ 套餐名/价格/权益均为占位——权益贴产品真实功能编写，
+   价格与档位定义等业务侧定稿后替换
+   ============================================================ */
+
+.frame {
+  /* ── 亮档 ── */
+  --lg-bg: #f4f6f5;
+  --lg-surface: #ffffff;
+  --lg-ink: #1d1d1f;
+  --lg-ink-2: rgba(29, 29, 31, 0.62);
+  --lg-ink-3: rgba(29, 29, 31, 0.4);
+  --lg-line: rgba(29, 29, 31, 0.12);
+  --lg-green: #16a34a;
+  --lg-green-deep: #15803d;
+  --lg-green-fg: #ffffff;
+  --lg-green-soft: rgba(22, 163, 74, 0.09);
+  --lg-grid-line: rgba(22, 163, 74, 0.05);
+  --lg-glow-a: rgba(22, 163, 74, 0.08);
+  --lg-glow-a2: rgba(22, 163, 74, 0.02);
+  --lg-card-bg: #ffffff;
+  --lg-card-border: rgba(29, 29, 31, 0.1);
+  --lg-card-shadow: 0 8px 30px rgba(29, 29, 31, 0.06);
+  --lg-hero-border: rgba(22, 163, 74, 0.45);
+  --lg-hero-glow: 0 0 0 1px rgba(22, 163, 74, 0.25), 0 12px 44px rgba(22, 163, 74, 0.16);
+  --lg-btn-shadow: 0 6px 22px rgba(22, 163, 74, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  --lg-error: #d93025;
+  --lg-window-shadow: 0 24px 80px rgba(0,0,0,.28), 0 4px 16px rgba(0,0,0,.14);
+}
+.frame[data-theme="dark"] {
+  /* ── 暗档 ── */
+  --lg-bg: #0a0c0b;
+  --lg-surface: #161817;
+  --lg-ink: #f2f4f3;
+  --lg-ink-2: rgba(242, 244, 243, 0.6);
+  --lg-ink-3: rgba(242, 244, 243, 0.34);
+  --lg-line: rgba(255, 255, 255, 0.1);
+  --lg-green: #3bce78;
+  --lg-green-deep: #16a34a;
+  --lg-green-fg: #06130b;
+  --lg-green-soft: rgba(59, 206, 120, 0.1);
+  --lg-grid-line: rgba(59, 206, 120, 0.04);
+  --lg-glow-a: rgba(59, 206, 120, 0.13);
+  --lg-glow-a2: rgba(59, 206, 120, 0.04);
+  --lg-card-bg: rgba(255, 255, 255, 0.03);
+  --lg-card-border: rgba(255, 255, 255, 0.09);
+  --lg-card-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+  --lg-hero-border: rgba(59, 206, 120, 0.5);
+  --lg-hero-glow: 0 0 0 1px rgba(59, 206, 120, 0.3), 0 12px 50px rgba(59, 206, 120, 0.14);
+  --lg-btn-shadow: 0 6px 26px rgba(59, 206, 120, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  --lg-error: #ff6b6b;
+  --lg-window-shadow: 0 32px 90px rgba(0,0,0,.6), 0 4px 18px rgba(0,0,0,.45);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+               "PingFang SC", "Helvetica Neue", sans-serif;
+  background: #2b2d2f;
+  display: grid; place-items: center;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+/* ============ mac 窗口 frame ============ */
+.stage { position: relative; }
+.frame {
+  width: 1080px; height: 700px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--lg-bg);
+  box-shadow: var(--lg-window-shadow);
+  position: relative;
+  transition: background .35s ease;
+}
+.traffic {
+  position: absolute; top: 0; left: 0;
+  height: 48px; padding-left: 20px;
+  display: flex; align-items: center; gap: 8px;
+  z-index: 50;
+}
+.traffic i { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.2); }
+.traffic i:nth-child(1) { background: #ff5f57; }
+.traffic i:nth-child(2) { background: #febc2e; }
+.traffic i:nth-child(3) { background: #28c840; }
+
+/* ============ 背景：网格 + 光晕（同登录页语言，密度收敛） ============ */
+.grid-layer {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    linear-gradient(var(--lg-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--lg-grid-line) 1px, transparent 1px);
+  background-size: 40px 40px;
+  -webkit-mask-image: radial-gradient(ellipse 95% 80% at 50% 30%, #000 20%, transparent 80%);
+  mask-image: radial-gradient(ellipse 95% 80% at 50% 30%, #000 20%, transparent 80%);
+}
+.glow-layer { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.glow-layer::before {
+  content: ''; position: absolute;
+  left: 50%; top: -40%;
+  width: 900px; height: 560px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, var(--lg-glow-a) 0%, var(--lg-glow-a2) 45%, transparent 70%);
+}
+
+/* ============ 页面结构 ============ */
+.page {
+  position: relative; z-index: 1;
+  height: 100%;
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+  padding: 0 48px 40px;
+}
+/* 顶部：拖拽条高度让位 + 关闭钮 */
+.topbar {
+  flex-shrink: 0;
+  height: 48px;
+  display: flex; align-items: center; justify-content: flex-end;
+}
+.close-btn {
+  width: 30px; height: 30px;
+  border: 1px solid var(--lg-line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--lg-ink-2);
+  font-size: 14px; line-height: 1;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.close-btn:hover { background: var(--lg-green-soft); color: var(--lg-ink); }
+
+/* 标题区 */
+.head { text-align: center; margin: 18px 0 26px; }
+.overline {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10.5px; font-weight: 500;
+  letter-spacing: 3px; text-transform: uppercase;
+  color: var(--lg-green);
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.overline::before, .overline::after {
+  content: ''; height: 1px; width: 22px;
+}
+.overline::before { background: linear-gradient(90deg, transparent, var(--lg-green)); opacity: .5; }
+.overline::after { background: linear-gradient(90deg, var(--lg-green), transparent); opacity: .5; }
+.head h1 {
+  margin-top: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;
+  font-size: 30px; font-weight: 600;
+  letter-spacing: -0.5px; line-height: 1.15;
+  color: var(--lg-ink);
+}
+.head p {
+  margin-top: 8px;
+  font-size: 14px; color: var(--lg-ink-2);
+}
+
+/* 计费周期切换 */
+.billing {
+  display: flex; align-items: center; justify-content: center; gap: 0;
+  margin-bottom: 26px;
+}
+.billing .seg {
+  display: flex; padding: 3px;
+  background: var(--lg-green-soft);
+  border: 1px solid var(--lg-line);
+  border-radius: 10px;
+}
+.billing button {
+  border: none; background: transparent; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 500;
+  color: var(--lg-ink-2);
+  padding: 6px 18px; border-radius: 7px;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: all .18s ease;
+}
+.billing button.on {
+  background: var(--lg-surface);
+  color: var(--lg-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 6px rgba(0,0,0,.12);
+}
+.save-badge {
+  font-size: 10.5px; font-weight: 700;
+  color: var(--lg-green);
+  background: var(--lg-green-soft);
+  border: 1px solid var(--lg-hero-border);
+  padding: 1px 6px; border-radius: 999px;
+}
+
+/* ============ 套餐卡三栏 ============ */
+.plans {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  align-items: stretch;
+  max-width: 920px;
+  margin: 0 auto;
+  width: 100%;
+}
+.plan {
+  position: relative;
+  display: flex; flex-direction: column;
+  background: var(--lg-card-bg);
+  border: 1px solid var(--lg-card-border);
+  border-radius: 16px;
+  padding: 24px 22px 22px;
+  box-shadow: var(--lg-card-shadow);
+  transition: transform .2s cubic-bezier(0.32, 0.72, 0, 1), box-shadow .2s ease;
+}
+.plan:hover { transform: translateY(-3px); }
+/* 推荐档：品牌绿描边 + 发光 + 顶部徽章 */
+.plan.hero {
+  border-color: var(--lg-hero-border);
+  box-shadow: var(--lg-hero-glow);
+}
+.plan.hero:hover { box-shadow: var(--lg-hero-glow), 0 16px 50px rgba(0,0,0,.18); }
+.hero-badge {
+  position: absolute; top: -11px; left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px; font-weight: 700; letter-spacing: 1px;
+  color: var(--lg-green-fg);
+  background: linear-gradient(160deg, var(--lg-green), var(--lg-green-deep));
+  padding: 3px 12px; border-radius: 999px;
+  box-shadow: 0 2px 12px var(--lg-green-soft), 0 0 0 3px var(--lg-bg);
+  white-space: nowrap;
+}
+.plan-name {
+  font-size: 15px; font-weight: 600;
+  color: var(--lg-ink);
+  display: flex; align-items: center; gap: 8px;
+}
+/* 「当前」小标 */
+.current-tag {
+  font-size: 10.5px; font-weight: 600;
+  color: var(--lg-ink-3);
+  border: 1px solid var(--lg-line);
+  padding: 1px 7px; border-radius: 999px;
+}
+.plan-desc { margin-top: 4px; font-size: 12px; color: var(--lg-ink-3); }
+
+.price-row { margin: 16px 0 4px; display: flex; align-items: baseline; gap: 4px; }
+.price-cur { font-size: 15px; font-weight: 600; color: var(--lg-ink-2); }
+.price-num {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+  font-size: 38px; font-weight: 700; letter-spacing: -1px;
+  color: var(--lg-ink);
+  line-height: 1;
+  transition: opacity .18s ease;
+}
+.price-num.flip { opacity: 0; }
+.price-unit { font-size: 13px; color: var(--lg-ink-3); }
+/* 年付折算行：占位固定高，切月付时不塌 */
+.price-sub {
+  height: 17px;
+  font-size: 11.5px; color: var(--lg-ink-3);
+  margin-bottom: 14px;
+}
+.price-sub .strike { text-decoration: line-through; margin-right: 5px; }
+.price-sub .save { color: var(--lg-green); font-weight: 600; }
+
+.plan ul { list-style: none; display: flex; flex-direction: column; gap: 9px; margin-bottom: 20px; }
+.plan li {
+  font-size: 12.5px; line-height: 1.45;
+  color: var(--lg-ink-2);
+  display: flex; gap: 8px; align-items: flex-start;
+}
+.plan li .tick {
+  flex-shrink: 0;
+  width: 15px; height: 15px; margin-top: 1px;
+  border-radius: 50%;
+  background: var(--lg-green-soft);
+  color: var(--lg-green);
+  font-size: 9px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.plan li strong { color: var(--lg-ink); font-weight: 600; }
+
+.plan .cta {
+  margin-top: auto;
+  height: 40px;
+  border-radius: 10px;
+  font: inherit; font-size: 13.5px; font-weight: 600;
+  cursor: pointer;
+  transition: all .18s ease;
+  position: relative; overflow: hidden;
+}
+/* 主 CTA（推荐档）：品牌绿发光 */
+.cta.primary {
+  border: none;
+  background: linear-gradient(160deg, var(--lg-green), var(--lg-green-deep));
+  color: var(--lg-green-fg);
+  box-shadow: var(--lg-btn-shadow);
+}
+.cta.primary:hover { filter: brightness(1.07); }
+.cta.primary:active { transform: scale(.985); }
+/* 次 CTA：描边 */
+.cta.outline {
+  background: transparent;
+  border: 1px solid var(--lg-line);
+  color: var(--lg-ink);
+}
+.cta.outline:hover { border-color: var(--lg-hero-border); color: var(--lg-green); }
+/* 当前方案：静默不可点（不置灰到不可读） */
+.cta.current {
+  background: var(--lg-green-soft);
+  border: none;
+  color: var(--lg-ink-3);
+  cursor: default;
+}
+
+/* 支付占位 toast */
+.toast {
+  position: absolute; left: 50%; bottom: 26px;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--lg-surface);
+  border: 1px solid var(--lg-line);
+  color: var(--lg-ink);
+  font-size: 12.5px;
+  padding: 9px 16px; border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.25);
+  opacity: 0; pointer-events: none;
+  transition: all .25s cubic-bezier(0.32, 0.72, 0, 1);
+  z-index: 60;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ============ 功能对比表（Tweaks 开关） ============ */
+.compare {
+  max-width: 920px; margin: 34px auto 0; width: 100%;
+  display: none;
+}
+.frame[data-compare="on"] .compare { display: block; }
+.compare h2 {
+  font-size: 15px; font-weight: 600; color: var(--lg-ink);
+  margin-bottom: 14px; text-align: center;
+}
+.compare table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  background: var(--lg-card-bg);
+  border: 1px solid var(--lg-card-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.compare th, .compare td {
+  padding: 10px 14px;
+  text-align: center;
+  border-bottom: 1px solid var(--lg-line);
+  color: var(--lg-ink-2);
+}
+.compare th {
+  font-weight: 600; color: var(--lg-ink);
+  background: var(--lg-green-soft);
+}
+.compare td:first-child, .compare th:first-child { text-align: left; color: var(--lg-ink); }
+.compare tr:last-child td { border-bottom: none; }
+.compare .ok { color: var(--lg-green); font-weight: 700; }
+.compare .no { color: var(--lg-ink-3); }
+
+/* 入场 stagger */
+.enter .stagger { animation: rise .55s cubic-bezier(0.32, 0.72, 0, 1) both; }
+.enter .stagger:nth-child(1) { animation-delay: .04s; }
+.enter .stagger:nth-child(2) { animation-delay: .1s; }
+.enter .stagger:nth-child(3) { animation-delay: .16s; }
+.enter .plans .plan:nth-child(1) { animation: rise .55s cubic-bezier(0.32,0.72,0,1) .2s both; }
+.enter .plans .plan:nth-child(2) { animation: rise .55s cubic-bezier(0.32,0.72,0,1) .27s both; }
+.enter .plans .plan:nth-child(3) { animation: rise .55s cubic-bezier(0.32,0.72,0,1) .34s both; }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .enter .stagger, .enter .plans .plan { animation: none !important; }
+}
+
+/* ============ Tweaks ============ */
+.tweaks-toggle {
+  position: fixed; right: 20px; bottom: 20px; z-index: 90;
+  width: 42px; height: 42px; border-radius: 50%;
+  border: none; cursor: pointer;
+  background: rgba(255,255,255,.92); color: #1d1d1f;
+  font-size: 17px;
+  box-shadow: 0 4px 18px rgba(0,0,0,.35);
+}
+.tweaks {
+  position: fixed; right: 20px; bottom: 72px; z-index: 90;
+  width: 244px;
+  background: rgba(24,26,25,.95);
+  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 14px;
+  padding: 16px;
+  color: #f2f4f3;
+  display: none;
+  font-size: 12.5px;
+}
+.tweaks.open { display: block; }
+.tweaks h3 {
+  font-size: 11px; font-weight: 600; letter-spacing: 1px;
+  text-transform: uppercase; color: rgba(242,244,243,.5);
+  margin-bottom: 12px;
+}
+.tweaks .row { margin-bottom: 12px; }
+.tweaks .row-label { display: block; margin-bottom: 6px; color: rgba(242,244,243,.72); }
+.tw-seg { display: flex; background: rgba(255,255,255,.08); border-radius: 8px; padding: 2px; }
+.tw-seg button {
+  flex: 1; border: none; background: transparent; cursor: pointer;
+  color: rgba(242,244,243,.6); font: inherit; font-size: 12px;
+  padding: 5px 0; border-radius: 6px;
+  transition: background .15s ease, color .15s ease;
+}
+.tw-seg button.on { background: rgba(59,206,120,.22); color: #fff; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="frame enter" id="frame" data-theme="dark" data-compare="off">
+    <div class="glow-layer"></div>
+    <div class="grid-layer"></div>
+    <div class="traffic"><i></i><i></i><i></i></div>
+
+    <div class="page">
+      <div class="topbar">
+        <button class="close-btn" title="返回">✕</button>
+      </div>
+
+      <!-- 标题区 -->
+      <div class="head">
+        <span class="overline stagger">Upgrade</span>
+        <h1 class="stagger">升级订阅</h1>
+        <p class="stagger">解锁更强的模型与更高的用量，让智能体替你做更多</p>
+      </div>
+
+      <!-- 计费周期 -->
+      <div class="billing">
+        <div class="seg" id="billingSeg">
+          <button data-cycle="monthly" class="on">按月付费</button>
+          <button data-cycle="yearly">按年付费 <span class="save-badge">省 20%</span></button>
+        </div>
+      </div>
+
+      <!-- 套餐三栏（价格/档位为占位，等业务定稿替换） -->
+      <div class="plans">
+        <!-- 基础版（当前） -->
+        <div class="plan">
+          <div class="plan-name">基础版 <span class="current-tag">当前方案</span></div>
+          <div class="plan-desc">个人轻度使用</div>
+          <div class="price-row">
+            <span class="price-cur">¥</span>
+            <span class="price-num" data-monthly="0" data-yearly="0">0</span>
+            <span class="price-unit">/ 永久</span>
+          </div>
+          <div class="price-sub"></div>
+          <ul>
+            <li><span class="tick">✓</span><span>每天 <strong>30 次</strong>智能助手对话</span></li>
+            <li><span class="tick">✓</span><span>标准模型</span></li>
+            <li><span class="tick">✓</span><span>知识库 <strong>100</strong> 篇文档</span></li>
+            <li><span class="tick">✓</span><span><strong>3</strong> 个工作画布项目</span></li>
+            <li><span class="tick">✓</span><span>写方案基础模板</span></li>
+          </ul>
+          <button class="cta current">当前方案</button>
+        </div>
+
+        <!-- 专业版（推荐） -->
+        <div class="plan hero">
+          <span class="hero-badge">最受欢迎</span>
+          <div class="plan-name">专业版</div>
+          <div class="plan-desc">高频使用的个人与自由职业者</div>
+          <div class="price-row">
+            <span class="price-cur">¥</span>
+            <span class="price-num" data-monthly="49" data-yearly="39">49</span>
+            <span class="price-unit">/ 月</span>
+          </div>
+          <div class="price-sub" data-yearly-only>
+            <span class="strike">¥49</span><span class="save">年付折合 ¥39/月，一次性 ¥468</span>
+          </div>
+          <ul>
+            <li><span class="tick">✓</span><span><strong>无限次</strong>智能助手对话</span></li>
+            <li><span class="tick">✓</span><span><strong>高级模型全系</strong>（含最新旗舰模型）</span></li>
+            <li><span class="tick">✓</span><span>知识库 <strong>10,000</strong> 篇文档 + 语义检索</span></li>
+            <li><span class="tick">✓</span><span><strong>无限</strong>工作画布项目</span></li>
+            <li><span class="tick">✓</span><span>写方案高级模板 + 引用核对</span></li>
+            <li><span class="tick">✓</span><span>优先响应支持</span></li>
+          </ul>
+          <button class="cta primary js-buy" data-plan="专业版">升级到专业版</button>
+        </div>
+
+        <!-- 旗舰版 -->
+        <div class="plan">
+          <div class="plan-name">旗舰版</div>
+          <div class="plan-desc">团队与重度生产力场景</div>
+          <div class="price-row">
+            <span class="price-cur">¥</span>
+            <span class="price-num" data-monthly="199" data-yearly="159">199</span>
+            <span class="price-unit">/ 月</span>
+          </div>
+          <div class="price-sub" data-yearly-only>
+            <span class="strike">¥199</span><span class="save">年付折合 ¥159/月，一次性 ¥1908</span>
+          </div>
+          <ul>
+            <li><span class="tick">✓</span><span>专业版全部权益</span></li>
+            <li><span class="tick">✓</span><span><strong>5</strong> 个成员席位，协作共享</span></li>
+            <li><span class="tick">✓</span><span>专属算力通道，高峰不排队</span></li>
+            <li><span class="tick">✓</span><span>知识库<strong>不限量</strong></span></li>
+            <li><span class="tick">✓</span><span>专属客户成功经理</span></li>
+          </ul>
+          <button class="cta outline js-buy" data-plan="旗舰版">升级到旗舰版</button>
+        </div>
+      </div>
+
+      <!-- 功能对比表（Tweaks 开） -->
+      <div class="compare">
+        <h2>功能对比</h2>
+        <table>
+          <thead>
+            <tr><th>功能</th><th>基础版</th><th>专业版</th><th>旗舰版</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>智能助手对话</td><td>30 次/天</td><td class="ok">无限</td><td class="ok">无限</td></tr>
+            <tr><td>高级模型（旗舰系列）</td><td class="no">—</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+            <tr><td>知识库容量</td><td>100 篇</td><td>10,000 篇</td><td class="ok">不限量</td></tr>
+            <tr><td>语义检索</td><td class="no">—</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+            <tr><td>工作画布项目</td><td>3 个</td><td class="ok">无限</td><td class="ok">无限</td></tr>
+            <tr><td>写方案高级模板</td><td class="no">—</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+            <tr><td>成员席位</td><td>1</td><td>1</td><td>5</td></tr>
+            <tr><td>专属算力通道</td><td class="no">—</td><td class="no">—</td><td class="ok">✓</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 支付占位提示 -->
+    <div class="toast" id="toast"></div>
+  </div>
+</div>
+
+<!-- ═══ Tweaks ═══ -->
+<button class="tweaks-toggle" id="tweaksToggle" aria-label="Tweaks">⚙</button>
+<div class="tweaks" id="tweaksPanel">
+  <h3>Tweaks</h3>
+  <div class="row">
+    <span class="row-label">主题</span>
+    <div class="tw-seg" data-attr="data-theme">
+      <button data-val="dark" class="on">深色</button>
+      <button data-val="light">浅色</button>
+    </div>
+  </div>
+  <div class="row">
+    <span class="row-label">功能对比表</span>
+    <div class="tw-seg" data-attr="data-compare">
+      <button data-val="off" class="on">收起</button>
+      <button data-val="on">展开</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const frame = document.getElementById('frame');
+
+/* Tweaks seg → frame data-* */
+document.querySelectorAll('.tw-seg').forEach(seg => {
+  const attr = seg.dataset.attr;
+  seg.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      seg.querySelectorAll('button').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      frame.setAttribute(attr, btn.dataset.val);
+    });
+  });
+});
+document.getElementById('tweaksToggle').addEventListener('click', () => {
+  document.getElementById('tweaksPanel').classList.toggle('open');
+});
+
+/* 计费周期切换：价格数字淡出→换值→淡入；年付折算行只在年付显示 */
+const billingSeg = document.getElementById('billingSeg');
+let cycle = 'monthly';
+billingSeg.querySelectorAll('button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (btn.dataset.cycle === cycle) return;
+    cycle = btn.dataset.cycle;
+    billingSeg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+    document.querySelectorAll('.price-num').forEach(num => {
+      num.classList.add('flip');
+      setTimeout(() => {
+        num.textContent = num.dataset[cycle];
+        num.classList.remove('flip');
+      }, 180);
+    });
+    document.querySelectorAll('[data-yearly-only]').forEach(el => {
+      el.style.visibility = cycle === 'yearly' ? 'visible' : 'hidden';
+    });
+  });
+});
+/* 初始：月付时隐藏年付折算行（占位保高） */
+document.querySelectorAll('[data-yearly-only]').forEach(el => {
+  el.style.visibility = 'hidden';
+});
+
+/* CTA：支付链路未接，点击给占位提示 */
+const toast = document.getElementById('toast');
+let toastTimer;
+document.querySelectorAll('.js-buy').forEach(btn => {
+  btn.addEventListener('click', () => {
+    toast.textContent = `「${btn.dataset.plan} · ${cycle === 'yearly' ? '年付' : '月付'}」支付流程待接入（原型占位）`;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
+  });
+});
+
+/* 关闭钮：原型里仅演示 */
+document.querySelector('.close-btn').addEventListener('click', () => {
+  toast.textContent = '关闭 → 返回应用（原型占位）';
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 1600);
+});
+
+/* 窗口 frame 自适应视口 */
+function fit() {
+  const stage = document.querySelector('.stage');
+  const s = Math.min(1, (innerWidth - 48) / 1080, (innerHeight - 48) / 700);
+  stage.style.transform = `scale(${s})`;
+}
+addEventListener('resize', fit);
+fit();
+</script>
+</body>
+</html>

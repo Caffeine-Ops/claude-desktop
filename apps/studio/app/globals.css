@@ -78,6 +78,130 @@
   animation: renamed-flash 0.9s cubic-bezier(0.22, 1, 0.36, 1) 1;
 }
 
+/* ── 权限浮层（PermissionFloatCard）─────────────────────────────────
+ * 入场：从 composer 后方浮起（原型 perm-in，0.26s 标准 spring-ish 曲线）。
+ * key=requestId 换卡时 remount 自动重播。等待点：tool card 锚点与侧栏
+ * pill 共用的 1.6s 脉冲（原型 pulse）。两者都是纯装饰，reduced-motion
+ * 下直接关停。 */
+@keyframes perm-float-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.perm-float-in {
+  animation: perm-float-in 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+}
+@keyframes perm-wait-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.perm-wait-dot {
+  animation: perm-wait-pulse 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .perm-float-in,
+  .perm-wait-dot {
+    animation: none;
+  }
+}
+
+/* ── 工作目录 chip 的切换动效（Composer 的 WorkspaceDirPicker，原型
+ * docs/ui-prototype-workspace-picker.html 的 C「搬家」变体）──────────
+ * dot-travel：三粒点在源/目标两个文件夹图标之间依次流动——把
+ * 「transcript 在物理搬家」讲成故事（先上过 B 胶囊，用户嫌丑换回 C）；
+ * dest-pop：切换成功后目标位弹一下换成绿勾；shake + fail-fade：失败时
+ * chip 回落的轻抖与红字淡出。全是装饰层，reduced-motion 下关掉动效
+ * （fail-fade 保留——它承担「2.4s 后消失」的时序，opacity 渐隐本身
+ * 不属于 vestibular 触发型运动；点流关停后三粒点静置成省略号，仍可读
+ * 作「进行中」）。 */
+@keyframes ws-dot-travel {
+  0% {
+    transform: translateX(-5px);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  70% {
+    transform: translateX(4px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(7px);
+    opacity: 0;
+  }
+}
+.ws-move-dot {
+  animation: ws-dot-travel 1.25s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+.ws-move-dot:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.ws-move-dot:nth-child(3) {
+  animation-delay: 0.32s;
+}
+@keyframes ws-dest-pop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.3);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.ws-dest-pop {
+  animation: ws-dest-pop 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes ws-chip-shake {
+  10%,
+  90% {
+    transform: translateX(-1px);
+  }
+  20%,
+  80% {
+    transform: translateX(2px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-3px);
+  }
+  40%,
+  60% {
+    transform: translateX(3px);
+  }
+}
+.ws-chip-shake {
+  animation: ws-chip-shake 0.4s ease;
+}
+@keyframes ws-fail-fade {
+  0%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.ws-fail-fade {
+  animation: ws-fail-fade 2.4s ease forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ws-move-dot,
+  .ws-dest-pop,
+  .ws-chip-shake {
+    animation: none;
+  }
+}
+
 /* ── 右侧舞台的 gutter（原型 .stage 的 10px 呼吸）──────────────────────
  * 内容卡四周的间距用变量表达，方便按 rail 折叠态切换（RailShell 在收起时
  * 给 <body> 加 data-rail-collapsed，见其头注释）：
@@ -138,4 +262,159 @@ body[data-rail-collapsed] .shell-stage {
   letter-spacing: -0.022em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── 登录页（LoginScreen.tsx）专属：科技感背景/动效 ─────────────────────
+ * docs/ui-prototype-login-v2.html「极光玻璃」的 1:1 落地，调整请先改原型
+ * 看效果再同步回来。全部 login- 命名空间：登录墙是全局 overlay，这些类
+ * 决不能命中 chat/canvas 任何元素。
+ *
+ * 登录页固定深色（品牌 moment，独立于用户明暗主题），色值刻意写死——
+ * 品牌绿用暗档提亮值 #3bce78（tokens.css [data-theme=dark] --brand），
+ * 不引用 var(--brand)：亮档下它是深绿 #16a34a，会把发光效果压暗。 */
+
+/* 细网格：1px 绿线 4.5%，40px 格；mask 让它中下部隐现、边缘消失 */
+.login-grid {
+  background:
+    linear-gradient(rgba(59, 206, 120, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(59, 206, 120, 0.045) 1px, transparent 1px);
+  background-size: 40px 40px;
+  -webkit-mask-image: radial-gradient(ellipse 90% 75% at 50% 62%, #000 20%, transparent 78%);
+  mask-image: radial-gradient(ellipse 90% 75% at 50% 62%, #000 20%, transparent 78%);
+}
+
+/* 极光光晕：主（底部品牌绿）/ 副（右上邻近青），缓慢呼吸 */
+.login-glow-main {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(59, 206, 120, 0.16) 0%,
+    rgba(59, 206, 120, 0.05) 42%,
+    transparent 70%
+  );
+  animation: login-breathe 8s ease-in-out infinite;
+}
+.login-glow-side {
+  background: radial-gradient(ellipse at center, rgba(45, 212, 191, 0.07) 0%, transparent 65%);
+  animation: login-breathe-side 11s ease-in-out infinite;
+}
+@keyframes login-breathe {
+  0%, 100% { opacity: 0.75; transform: translateX(-50%) scale(1); }
+  50%      { opacity: 1;    transform: translateX(-50%) scale(1.06); }
+}
+@keyframes login-breathe-side {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.08); }
+}
+
+/* 漂浮微粒：绿色小光点缓慢上浮（LoginScreen 以 inline style 覆盖每颗的
+ * left / animation-duration / animation-delay，制造错落） */
+.login-mote {
+  position: absolute;
+  bottom: -8px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(59, 206, 120, 0.55);
+  box-shadow: 0 0 8px rgba(59, 206, 120, 0.5);
+  opacity: 0;
+  animation: login-float 16s linear infinite;
+}
+@keyframes login-float {
+  0%   { transform: translateY(0); opacity: 0; }
+  8%   { opacity: 0.8; }
+  85%  { opacity: 0.4; }
+  100% { transform: translateY(-100vh); opacity: 0; }
+}
+
+/* 主按钮 hover 扫光：一道斜白光划过。伪元素比 utility 链干净——离开时
+ * transition 瞬间复位（left .05s），hover 才给 .6s 的划过缓动。 */
+.login-sheen::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -80%;
+  width: 40%;
+  background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.38), transparent);
+  transform: skewX(-18deg);
+  transition: left 0.05s;
+  pointer-events: none;
+}
+.login-sheen:hover::after {
+  left: 130%;
+  transition: left 0.6s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* 入场（卡片缩放浮现 + 表单元素 stagger）与错误 shake */
+@keyframes login-card-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes login-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes login-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-7px); }
+  55% { transform: translateX(5px); }
+  80% { transform: translateX(-2px); }
+}
+
+/* HUD 分屏左面的轨道环：外环实线（绿）+ 内环虚线（青）反向慢转，各带
+ * 一颗发光轨道点（::before 钉在环顶，随环转）。中心发光核是 utility。 */
+.login-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(59, 206, 120, 0.22);
+  animation: login-rotate 22s linear infinite;
+}
+.login-ring::before {
+  content: '';
+  position: absolute;
+  top: -3.5px;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3bce78;
+  box-shadow: 0 0 12px rgba(59, 206, 120, 0.9);
+}
+.login-ring-inner {
+  inset: 34px;
+  border-color: rgba(45, 212, 191, 0.18);
+  border-style: dashed;
+  animation: login-rotate 30s linear infinite reverse;
+}
+.login-ring-inner::before {
+  top: -3px;
+  width: 5px;
+  height: 5px;
+  background: #2dd4bf;
+  box-shadow: 0 0 10px rgba(45, 212, 191, 0.8);
+}
+@keyframes login-rotate {
+  to { transform: rotate(360deg); }
+}
+
+/* mono 状态行的呼吸点（System Ready） */
+.login-pulse {
+  animation: login-pulse 2.2s ease-in-out infinite;
+}
+@keyframes login-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-glow-main,
+  .login-glow-side,
+  .login-mote,
+  .login-ring,
+  .login-pulse,
+  .login-sheen::after {
+    animation: none;
+    transition: none;
+  }
 }

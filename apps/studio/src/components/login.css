@@ -1,0 +1,288 @@
+/* ── 登录页（LoginScreen.tsx）专属：科技感背景/动效 ─────────────────────
+ * docs/ui-prototype-login-v2.html「HUD 分屏」的落地。全部 login- 命名空间：
+ * 登录墙是全局 overlay，这些类决不能命中 chat/canvas 任何元素。由
+ * LoginScreen.tsx 直接 import（App Router 组件级全局 CSS），刻意不进
+ * globals.css——和 chat/canvas 样式链彻底解耦。
+ *
+ * 主题（2026-07-06 用户要求跟系统/应用一致）：全部颜色走 --lg-* 变量，
+ * 亮档定义在 .login-screen、暗档在 .dark .login-screen——html 的 .dark
+ * 标记由 chat 的 appearance.applier 维护（themeMode=system 时跟随 OS），
+ * 登录页因此自动与应用主题同步；页内的主题切换按钮直接写
+ * useAppearanceStore.setThemeMode，复用同一条链路。
+ *
+ * 品牌绿分档取值（同 tokens.css --brand 的亮/暗逻辑）：亮档 #16a34a
+ * （green-600），暗档提亮 #3bce78——发光/网格/轨道环的 alpha 也分档，
+ * 亮底上发光要收敛、线条要加深才可见。 */
+
+/* 变量作用域同时覆盖登录页与订阅页（UpgradeScreen 复用同一套科技感
+ * token，2026-07-06 订阅页落地时扩展）——新增消费者时在两个选择器组
+ * 各加一行即可。 */
+.login-screen,
+.upgrade-screen {
+  /* ── 亮档 ── */
+  --lg-bg: #f4f6f5;
+  --lg-ink: #1d1d1f;
+  --lg-ink-2: rgba(29, 29, 31, 0.62);
+  --lg-ink-3: rgba(29, 29, 31, 0.4);
+  --lg-line: rgba(29, 29, 31, 0.14);
+  --lg-line-hover: rgba(29, 29, 31, 0.28);
+  --lg-input-bg: #ffffff;
+  --lg-input-focus-bg: rgba(22, 163, 74, 0.03);
+  --lg-green: #16a34a;
+  --lg-green-deep: #15803d;
+  --lg-green-fg: #ffffff;
+  /* 订阅页卡片/发光（UpgradeScreen） */
+  --lg-surface: #ffffff;
+  --lg-green-soft: rgba(22, 163, 74, 0.09);
+  --lg-card-bg: #ffffff;
+  --lg-card-border: rgba(29, 29, 31, 0.1);
+  --lg-card-shadow: 0 8px 30px rgba(29, 29, 31, 0.06);
+  --lg-hero-border: rgba(22, 163, 74, 0.45);
+  --lg-hero-glow:
+    0 0 0 1px rgba(22, 163, 74, 0.25),
+    0 12px 44px rgba(22, 163, 74, 0.16);
+  --lg-focus-border: rgba(22, 163, 74, 0.55);
+  --lg-focus-ring: rgba(22, 163, 74, 0.16);
+  --lg-error: #d93025;
+  --lg-error-ring: rgba(217, 48, 37, 0.15);
+  --lg-grid-line: rgba(22, 163, 74, 0.06);
+  --lg-glow-a: rgba(22, 163, 74, 0.1);
+  --lg-glow-a2: rgba(22, 163, 74, 0.03);
+  --lg-glow-b: rgba(13, 148, 136, 0.05);
+  --lg-mote: rgba(22, 163, 74, 0.5);
+  --lg-mote-glow: rgba(22, 163, 74, 0.45);
+  --lg-ring-outer: rgba(22, 163, 74, 0.3);
+  --lg-ring-inner: rgba(13, 148, 136, 0.26);
+  --lg-dot-outer: #16a34a;
+  --lg-dot-inner: #0d9488;
+  --lg-dot-glow-outer: rgba(22, 163, 74, 0.7);
+  --lg-dot-glow-inner: rgba(13, 148, 136, 0.6);
+  --lg-pane-border: rgba(22, 163, 74, 0.16);
+  --lg-pane-glow: rgba(22, 163, 74, 0.05);
+  --lg-mark-shadow:
+    0 0 22px rgba(22, 163, 74, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  --lg-core-shadow:
+    0 0 48px rgba(22, 163, 74, 0.35),
+    inset 0 2px 0 rgba(255, 255, 255, 0.35);
+  /* 真实应用图标（img）用的环境光——drop-shadow 贴 alpha 通道，不像
+   * box-shadow 会打在 img 矩形框上（图标 PNG 四周有 macOS 规范的透明
+   * 内边距，2026-07-06 闪屏页踩过「白卡」坑）。绿光值与上面两个
+   * box-shadow token 同源，inset 高光对位图无意义故略去。 */
+  --lg-mark-glow: drop-shadow(0 0 11px rgba(22, 163, 74, 0.35));
+  --lg-core-glow: drop-shadow(0 0 26px rgba(22, 163, 74, 0.4));
+  --lg-btn-shadow:
+    0 6px 22px rgba(22, 163, 74, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  --lg-btn-shadow-hover:
+    0 8px 30px rgba(22, 163, 74, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  --lg-sheen: rgba(255, 255, 255, 0.4);
+}
+
+.dark .login-screen,
+.dark .upgrade-screen {
+  /* ── 暗档（原 HUD 定稿值） ── */
+  --lg-bg: #0a0c0b;
+  --lg-ink: #f2f4f3;
+  --lg-ink-2: rgba(242, 244, 243, 0.6);
+  --lg-ink-3: rgba(242, 244, 243, 0.34);
+  --lg-line: rgba(255, 255, 255, 0.1);
+  --lg-line-hover: rgba(255, 255, 255, 0.2);
+  --lg-input-bg: rgba(255, 255, 255, 0.04);
+  --lg-input-focus-bg: rgba(59, 206, 120, 0.045);
+  --lg-green: #3bce78;
+  --lg-green-deep: #16a34a;
+  --lg-green-fg: #06130b;
+  /* 订阅页卡片/发光（UpgradeScreen） */
+  --lg-surface: #161817;
+  --lg-green-soft: rgba(59, 206, 120, 0.1);
+  --lg-card-bg: rgba(255, 255, 255, 0.03);
+  --lg-card-border: rgba(255, 255, 255, 0.09);
+  --lg-card-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+  --lg-hero-border: rgba(59, 206, 120, 0.5);
+  --lg-hero-glow:
+    0 0 0 1px rgba(59, 206, 120, 0.3),
+    0 12px 50px rgba(59, 206, 120, 0.14);
+  --lg-focus-border: rgba(59, 206, 120, 0.65);
+  --lg-focus-ring: rgba(59, 206, 120, 0.15);
+  --lg-error: #ff6b6b;
+  --lg-error-ring: rgba(255, 107, 107, 0.15);
+  --lg-grid-line: rgba(59, 206, 120, 0.045);
+  --lg-glow-a: rgba(59, 206, 120, 0.16);
+  --lg-glow-a2: rgba(59, 206, 120, 0.05);
+  --lg-glow-b: rgba(45, 212, 191, 0.07);
+  --lg-mote: rgba(59, 206, 120, 0.55);
+  --lg-mote-glow: rgba(59, 206, 120, 0.5);
+  --lg-ring-outer: rgba(59, 206, 120, 0.22);
+  --lg-ring-inner: rgba(45, 212, 191, 0.18);
+  --lg-dot-outer: #3bce78;
+  --lg-dot-inner: #2dd4bf;
+  --lg-dot-glow-outer: rgba(59, 206, 120, 0.9);
+  --lg-dot-glow-inner: rgba(45, 212, 191, 0.8);
+  --lg-pane-border: rgba(59, 206, 120, 0.12);
+  --lg-pane-glow: rgba(59, 206, 120, 0.07);
+  --lg-mark-shadow:
+    0 0 18px rgba(59, 206, 120, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  --lg-core-shadow:
+    0 0 60px rgba(59, 206, 120, 0.5),
+    inset 0 2px 0 rgba(255, 255, 255, 0.3);
+  /* 暗档图标环境光（见亮档注释）。暗底上光晕感知更强，值略提。 */
+  --lg-mark-glow: drop-shadow(0 0 9px rgba(59, 206, 120, 0.45));
+  --lg-core-glow: drop-shadow(0 0 30px rgba(59, 206, 120, 0.55));
+  --lg-btn-shadow:
+    0 6px 26px rgba(59, 206, 120, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  --lg-btn-shadow-hover:
+    0 8px 34px rgba(59, 206, 120, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  --lg-sheen: rgba(255, 255, 255, 0.38);
+}
+
+/* 细网格：1px 绿线，40px 格；mask 让它中下部隐现、边缘消失 */
+.login-grid {
+  background:
+    linear-gradient(var(--lg-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--lg-grid-line) 1px, transparent 1px);
+  background-size: 40px 40px;
+  -webkit-mask-image: radial-gradient(ellipse 90% 75% at 50% 62%, #000 20%, transparent 78%);
+  mask-image: radial-gradient(ellipse 90% 75% at 50% 62%, #000 20%, transparent 78%);
+}
+
+/* 极光光晕：主（底部品牌绿）/ 副（右上邻近青），缓慢呼吸 */
+.login-glow-main {
+  background: radial-gradient(
+    ellipse at center,
+    var(--lg-glow-a) 0%,
+    var(--lg-glow-a2) 42%,
+    transparent 70%
+  );
+  animation: login-breathe 8s ease-in-out infinite;
+}
+.login-glow-side {
+  background: radial-gradient(ellipse at center, var(--lg-glow-b) 0%, transparent 65%);
+  animation: login-breathe-side 11s ease-in-out infinite;
+}
+@keyframes login-breathe {
+  0%, 100% { opacity: 0.75; transform: translateX(-50%) scale(1); }
+  50%      { opacity: 1;    transform: translateX(-50%) scale(1.06); }
+}
+@keyframes login-breathe-side {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.08); }
+}
+
+/* 漂浮微粒：小光点缓慢上浮（LoginScreen 以 inline style 覆盖每颗的
+ * left / 尺寸 / animation-duration / animation-delay，制造错落） */
+.login-mote {
+  position: absolute;
+  bottom: -8px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--lg-mote);
+  box-shadow: 0 0 8px var(--lg-mote-glow);
+  opacity: 0;
+  animation: login-float 16s linear infinite;
+}
+@keyframes login-float {
+  0%   { transform: translateY(0); opacity: 0; }
+  8%   { opacity: 0.8; }
+  85%  { opacity: 0.4; }
+  100% { transform: translateY(-100vh); opacity: 0; }
+}
+
+/* 主按钮 hover 扫光：一道斜白光划过。伪元素比 utility 链干净——离开时
+ * transition 瞬间复位（left .05s），hover 才给 .6s 的划过缓动。 */
+.login-sheen::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -80%;
+  width: 40%;
+  background: linear-gradient(105deg, transparent, var(--lg-sheen), transparent);
+  transform: skewX(-18deg);
+  transition: left 0.05s;
+  pointer-events: none;
+}
+.login-sheen:hover::after {
+  left: 130%;
+  transition: left 0.6s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* 入场（元素 stagger 上移浮现）与错误 shake；login-fade 是小幅淡入
+ * （订阅页价格数字月/年切换用，位移克制到 4px 不跳） */
+@keyframes login-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes login-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes login-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-7px); }
+  55% { transform: translateX(5px); }
+  80% { transform: translateX(-2px); }
+}
+
+/* HUD 分屏左面的轨道环：外环实线（绿）+ 内环虚线（青）反向慢转，各带
+ * 一颗发光轨道点（::before 钉在环顶，随环转）。中心发光核是 utility。 */
+.login-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--lg-ring-outer);
+  animation: login-rotate 22s linear infinite;
+}
+.login-ring::before {
+  content: '';
+  position: absolute;
+  top: -3.5px;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lg-dot-outer);
+  box-shadow: 0 0 12px var(--lg-dot-glow-outer);
+}
+.login-ring-inner {
+  inset: 34px;
+  border-color: var(--lg-ring-inner);
+  border-style: dashed;
+  animation: login-rotate 30s linear infinite reverse;
+}
+.login-ring-inner::before {
+  top: -3px;
+  width: 5px;
+  height: 5px;
+  background: var(--lg-dot-inner);
+  box-shadow: 0 0 10px var(--lg-dot-glow-inner);
+}
+@keyframes login-rotate {
+  to { transform: rotate(360deg); }
+}
+
+/* mono 状态行的呼吸点（System Ready） */
+.login-pulse {
+  animation: login-pulse 2.2s ease-in-out infinite;
+}
+@keyframes login-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-glow-main,
+  .login-glow-side,
+  .login-mote,
+  .login-ring,
+  .login-pulse,
+  .login-sheen::after {
+    animation: none;
+    transition: none;
+  }
+}

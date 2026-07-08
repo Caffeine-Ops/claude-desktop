@@ -185,6 +185,21 @@ export function formatAskUserQuestion({
     <div className="space-y-3">
       {questions.map((q, qi) => {
         const picks = pickedLabels(q.question)
+        // 「其他」自由输入的答案不等于任何预设选项的 label——如果
+        // 只按 label 匹配高亮，用户自己打的字会整个消失（四个选项
+        // 全空心、又没有"未作答"兜底，历史事故）。这里把匹配不到
+        // 选项的部分单独收出来，在选项列表末尾补一行回显。
+        const labelSet = new Set(q.options.map((o) => o.label))
+        const customPicks = [...picks].filter((p) => !labelSet.has(p))
+        // multiSelect 的逗号拆分会把含逗号的自由文本拆碎；当整条
+        // 回答都匹配不到选项时（纯自定义回答），直接展示原始字符
+        // 串，保住用户输入里的逗号。
+        const customText =
+          customPicks.length === 0
+            ? null
+            : customPicks.length === picks.size
+              ? (answers[q.question] ?? customPicks.join(', '))
+              : customPicks.join(', ')
         return (
           <div
             key={qi}
@@ -256,6 +271,35 @@ export function formatAskUserQuestion({
                   </li>
                 )
               })}
+              {customText !== null && (
+                <li className="flex items-start gap-2 rounded-sm bg-emerald-500/10 px-1.5 py-1 text-[12px] text-foreground">
+                  <span
+                    aria-hidden
+                    className="mt-[3px] flex size-[12px] shrink-0 items-center justify-center rounded-full border border-emerald-500 bg-emerald-500 text-white"
+                  >
+                    <svg
+                      width="8"
+                      height="8"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="break-words font-medium text-foreground">
+                      {customText}
+                    </span>
+                    <span className="ml-1.5 text-muted-foreground/75">
+                      {pick(lang, '自定义回答', 'Custom answer')}
+                    </span>
+                  </span>
+                </li>
+              )}
               {picks.size === 0 && !running && (
                 <li className="pl-5 text-[11px] italic text-muted-foreground/60">
                   {pick(lang, '未作答', 'No answer')}

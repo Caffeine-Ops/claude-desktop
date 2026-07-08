@@ -30,6 +30,8 @@ import {
   type SessionRenameResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
+  type SessionWorkspaceSetPayload,
+  type SessionWorkspaceSetResult,
   type TabClosePayload,
   type TabListResult,
   type TabSwitchPayload,
@@ -50,6 +52,7 @@ import {
   type ImageFileReadResult,
   type ModelListResult,
   type ModelSetPayload,
+  type WorkspaceKnownListResult,
   type WorkspacePickResult,
   type WorkspaceSetPayload,
   type WorkspaceState,
@@ -58,7 +61,10 @@ import {
   type AppearanceSetResult,
   type AppearancePrefs,
   type ShellMenuActionPayload,
-  type UpdaterState
+  type UpdaterState,
+  type AuthLoginPayload,
+  type AuthLoginResult,
+  type AuthState
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
 import {
@@ -111,16 +117,18 @@ import { EMBEDDABLE_IMAGE_EXTS, type ProposalMetricRecord } from '../../shared/p
 import { readFile } from 'node:fs/promises'
 import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
 import { checkForUpdates, getUpdaterState, installUpdate } from '../services/appUpdater'
+import { getAuthState, login, logout } from '../services/authService'
 import { DAEMON_PORT } from '../services/openDesignServices'
 import type { ChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
 import {
   deleteSessionFromDisk,
-  listSessions,
+  listAllSessions,
   loadSession,
   renameSession,
   searchSessionContent
 } from '../core/sessionStore'
+import { listKnownWorkspaces } from '../core/workspaceRegistry'
 import { clearUnread, updateTrayLang } from '../tray'
 import {
   broadcastAppearanceChanged,
@@ -130,7 +138,6 @@ import {
   dispatchMenuActionToActiveTab,
   dispatchSessionSwitchToActiveTab,
   getActiveChatEngine,
-  getActiveChatWorkspace,
   getAllTabs,
   getContextForSender,
   getShellFullscreen,
@@ -316,6 +323,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_GET)
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_SET)
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_PICK)
+  ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_KNOWN_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.WORKSPACE_FILE_OPEN)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_OPEN_PATH)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_STAT_FILES)
@@ -330,6 +338,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_NEW)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_SWITCH)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_RENAME)
+  ipcMain.removeHandler(IPC_CHANNELS.SESSION_WORKSPACE_SET)
   ipcMain.removeHandler(IPC_CHANNELS.APP_RELAUNCH)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_NEW)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_SWITCH)
@@ -347,6 +356,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.UPDATER_GET_STATE)
   ipcMain.removeHandler(IPC_CHANNELS.UPDATER_CHECK)
   ipcMain.removeHandler(IPC_CHANNELS.UPDATER_INSTALL)
+  ipcMain.removeHandler(IPC_CHANNELS.AUTH_GET_STATE)
+  ipcMain.removeHandler(IPC_CHANNELS.AUTH_LOGIN)
+  ipcMain.removeHandler(IPC_CHANNELS.AUTH_LOGOUT)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_TRIGGER_MENU_ACTION)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_SWITCH_REQUEST)
@@ -483,21 +495,23 @@ export function registerIpcHandlers(): void {
       payload: FileSuggestionsListPayload
     ): Promise<FileSuggestionsListResult> => {
       // Resolve the cwd to scan in priority order:
-      //   1. sessionMeta.cwd — captured from fusion-code's `system init`
-      //      message, matches what the CLI will actually resolve `@path`
-      //      against (respects `--worktree` mid-session chdirs).
-      //   2. engine.getWorkspace() — the user-picked workspace, which is
-      //      also what openSession() hands the SDK; the two are equal
-      //      in the common path but sessionMeta lags by one round-trip.
-      //   3. process.cwd() — last-ditch fallback, only hit when the
+      //   1. engine.getActiveSessionCwd() — 前台会话自己的工作目录
+      //      （统一会话管理：per-session cwd，composer 预选或 transcript
+      //      解析）。多 runtime 下 sessionMeta.cwd 可能是后台会话最后一次
+      //      system init 的 cwd，前台快照才是 `@path` 真正的解析基准。
+      //   2. sessionMeta.cwd — captured from fusion-code's `system init`
+      //      message（前台快照未解析时的过渡值）。
+      //   3. engine.getWorkspace() — 默认工作区（桌面）。
+      //   4. process.cwd() — last-ditch fallback, only hit when the
       //      renderer somehow fires this IPC before the workspace is
       //      set (the gate is supposed to prevent that).
       const engine = resolveEngine(event)
       const meta = engine.getSessionMeta()
       const cwd =
-        meta.cwd && meta.cwd.length > 0
+        engine.getActiveSessionCwd() ??
+        (meta.cwd && meta.cwd.length > 0
           ? meta.cwd
-          : (engine.getWorkspace() ?? process.cwd())
+          : (engine.getWorkspace() ?? process.cwd()))
       return await listFileSuggestions(cwd, payload?.force === true)
     }
   )
@@ -549,6 +563,15 @@ export function registerIpcHandlers(): void {
         return { path: null }
       }
       return { path: result.filePaths[0] }
+    }
+  )
+
+  // 已知工作区列表（composer「选择工作目录」下拉）。engine-free：注册表
+  // 是 main 全局状态，[0] 恒为默认工作区（桌面）。
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_KNOWN_LIST,
+    async (): Promise<WorkspaceKnownListResult> => {
+      return { workspaces: await listKnownWorkspaces() }
     }
   )
 
@@ -990,25 +1013,23 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // Session list / load / new / switch. All guarded by the workspace
-  // gate — listSessions() returns [] when workspace is null, and the
-  // switch handler defers to engine.switchToSession() which throws if
-  // the workspace is unset.
+  // Session list / load / new / switch. 统一会话管理后列表不再取调用
+  // tab 的 workspace —— 扫的是 workspaceRegistry 里全部已知工作区的并
+  // 集，load 按 UUID 全局定位。engine 的 workspace 只决定「新会话默认
+  // 落在哪」，与读侧解耦。
   ipcMain.handle(
     IPC_CHANNELS.SESSION_LIST,
-    async (event): Promise<SessionListResult> => {
-      const workspace = resolveEngine(event).getWorkspace()
-      const threads = await listSessions(workspace)
+    async (): Promise<SessionListResult> => {
+      const threads = await listAllSessions(await listKnownWorkspaces())
       return { threads }
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.SESSION_LOAD,
-    async (event, payload: SessionLoadPayload): Promise<SessionLoadResult> => {
+    async (_event, payload: SessionLoadPayload): Promise<SessionLoadResult> => {
       validateSessionLoadPayload(payload)
-      const workspace = resolveEngine(event).getWorkspace()
-      const messages = await loadSession(payload.sessionId, workspace)
+      const messages = await loadSession(payload.sessionId)
       return { messages }
     }
   )
@@ -1050,7 +1071,11 @@ export function registerIpcHandlers(): void {
     ): Promise<SessionRenameResult> => {
       validateSessionRenamePayload(payload)
       const engine = resolveEngine(event)
-      await renameSession(payload.sessionId, payload.title, engine.getWorkspace())
+      await renameSession(
+        payload.sessionId,
+        payload.title,
+        await listKnownWorkspaces()
+      )
       // Trigger sidebar refresh — the SDK reads customTitle on its
       // next listSessions scan, so rebroadcasting picks up the new
       // value without any in-memory state to invalidate.
@@ -1059,19 +1084,38 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // 会话工作目录（composer「选择工作目录」chip）。锁定校验（已有
+  // transcript / 已 send 过 → reject）在 engine.setSessionWorkspace 里，
+  // 这里只做 payload 形状检查——路径合法性（绝对/存在/目录）也归 engine，
+  // 与 setWorkspace 同一套规则，不在 IPC 层重复。
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_WORKSPACE_SET,
+    async (
+      event,
+      payload: SessionWorkspaceSetPayload
+    ): Promise<SessionWorkspaceSetResult> => {
+      validateSessionWorkspaceSetPayload(payload)
+      await resolveEngine(event).setSessionWorkspace(
+        payload.sessionId,
+        payload.path
+      )
+      return { ok: true }
+    }
+  )
+
   // Session content search for the search dialog (标题 matching happens
-  // renderer-side over listSessions; this is the transcript scan). Scoped
-  // to the calling tab's workspace via its engine — no payload validation
+  // renderer-side over listSessions; this is the transcript scan). 与
+  // SESSION_LIST 同口径：扫全部已知工作区的并集 —— no payload validation
   // beyond the query being a string, since an odd query just returns [].
   ipcMain.handle(
     IPC_CHANNELS.SESSION_SEARCH,
     async (
-      event,
+      _event,
       payload: SessionSearchPayload
     ): Promise<SessionSearchResult> => {
       const query = typeof payload?.query === 'string' ? payload.query : ''
       const hits = await searchSessionContent(
-        resolveEngine(event).getWorkspace(),
+        await listKnownWorkspaces(),
         query
       )
       return { hits }
@@ -1175,11 +1219,13 @@ export function registerIpcHandlers(): void {
   // Open the current workspace directory in the OS file manager. The
   // path comes from the engine — never the renderer — so the user can
   // never coax this into opening an arbitrary directory. Returns the
-  // shell.openPath error verbatim on failure.
+  // shell.openPath error verbatim on failure. 统一会话管理后优先开
+  // 前台会话自己的工作目录（chip 显示什么就开什么），默认工作区兜底。
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_OPEN,
     async (event): Promise<{ error: string }> => {
-      const workspace = resolveEngine(event).getWorkspace()
+      const engine = resolveEngine(event)
+      const workspace = engine.getActiveSessionCwd() ?? engine.getWorkspace()
       if (!workspace) {
         return { error: 'Workspace not set.' }
       }
@@ -1400,6 +1446,33 @@ export function registerIpcHandlers(): void {
     installUpdate()
   })
 
+  // ── 登录/账号（状态机在 services/authService.ts）──
+  // 同 updater 的薄转发纪律：状态归 main 单独持有，迁移走
+  // AUTH_STATE_CHANGED 推送；AUTH_LOGIN 的 resolve 值让发起窗口免等广播。
+  ipcMain.handle(IPC_CHANNELS.AUTH_GET_STATE, async (): Promise<AuthState> => {
+    return getAuthState()
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUTH_LOGIN,
+    async (_event, payload: AuthLoginPayload): Promise<AuthLoginResult> => {
+      // 结构防御：preload 只透传，恶意/异常 payload 在此归一成失败结论
+      // 而不是让 authService 对 undefined 调 .trim() 抛栈。
+      if (
+        !payload ||
+        typeof payload.email !== 'string' ||
+        typeof payload.password !== 'string'
+      ) {
+        return { ok: false, error: '请输入邮箱和密码' }
+      }
+      return login(payload)
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async (): Promise<void> => {
+    logout()
+  })
+
   // Shell tab-strip settings menu → active chat tab. The shell renderer
   // can't reach the chat renderer's stores directly, so it fires this and
   // we forward the action to whichever chat tab is active (web tabs and the
@@ -1420,18 +1493,16 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // Shell session list (shell renderer → main). The shell renders the
-  // active chat tab's session list but has no engine of its own, so this
-  // bypasses resolveEngine: it reads the active chat tab's workspace
-  // directly and scans it off disk (listSessions is stateless). Returns an
-  // empty list when no chat tab is active (web tab foreground / nothing
-  // open) rather than throwing — the shell just shows an empty list.
+  // Shell session list (shell renderer → main). The shell has no engine
+  // of its own, so this bypasses resolveEngine. 统一会话管理后列表本身
+  // 也不需要 engine —— 直接扫已知工作区并集。仍保留「无活跃 chat tab
+  // → 空列表」的闸：点击行的 switch 请求要转发给活跃 tab 执行，没有
+  // tab 时列表是一排点不动的死行，不如维持现状空列表。
   ipcMain.handle(
     IPC_CHANNELS.SHELL_SESSION_LIST,
     async (): Promise<SessionListResult> => {
-      const workspace = getActiveChatWorkspace()
-      if (!workspace) return { threads: [] }
-      const threads = await listSessions(workspace)
+      if (!getActiveChatEngine()) return { threads: [] }
+      const threads = await listAllSessions(await listKnownWorkspaces())
       return { threads }
     }
   )
@@ -1458,9 +1529,11 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.SHELL_SESSION_RENAME,
     async (_event, payload: SessionRenamePayload): Promise<void> => {
       validateSessionRenamePayload(payload)
-      const workspace = getActiveChatWorkspace()
-      if (!workspace) throw new Error('No active chat tab')
-      await renameSession(payload.sessionId, payload.title, workspace)
+      await renameSession(
+        payload.sessionId,
+        payload.title,
+        await listKnownWorkspaces()
+      )
       getActiveChatEngine()?.emit('sessionListChanged')
     }
   )
@@ -1479,11 +1552,9 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.SHELL_SESSION_DELETE,
     async (_event, payload: SessionDeletePayload): Promise<void> => {
       validateSessionCloseRuntimePayload(payload)
-      const workspace = getActiveChatWorkspace()
-      if (!workspace) throw new Error('No active chat tab')
       const engine = getActiveChatEngine()
       await engine?.closeSessionRuntime(payload.sessionId)
-      await deleteSessionFromDisk(payload.sessionId, workspace)
+      await deleteSessionFromDisk(payload.sessionId)
       engine?.emit('sessionListChanged')
     }
   )
@@ -2243,6 +2314,28 @@ function validateSessionCloseRuntimePayload(
   }
 }
 
+function validateSessionWorkspaceSetPayload(
+  value: unknown
+): asserts value is SessionWorkspaceSetPayload {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('Invalid session-workspace-set payload')
+  }
+  const v = value as Record<string, unknown>
+  if (typeof v.sessionId !== 'string' || v.sessionId.length === 0) {
+    throw new Error('Invalid session-workspace-set sessionId (empty or missing)')
+  }
+  if (v.sessionId.length > 128) {
+    throw new Error('Invalid session-workspace-set sessionId (too long)')
+  }
+  // 只做形状检查；绝对路径/存在/目录的语义校验在 engine.setSessionWorkspace。
+  if (typeof v.path !== 'string' || v.path.length === 0) {
+    throw new Error('Invalid session-workspace-set path (empty or missing)')
+  }
+  if (v.path.length > 4096) {
+    throw new Error('Invalid session-workspace-set path (too long)')
+  }
+}
+
 function validateSessionRenamePayload(
   value: unknown
 ): asserts value is SessionRenamePayload {
@@ -2301,6 +2394,17 @@ function validatePermissionResponse(
       Array.isArray(v.updatedInput)
     ) {
       throw new Error('Invalid permission response: updatedInput must be an object')
+    }
+  }
+  // denyMessage is optional free text that gets concatenated into the
+  // SDK deny message verbatim. 4000 chars comfortably covers "tell it
+  // what to do instead" while keeping a paste-bomb out of the transcript.
+  if (v.denyMessage !== undefined) {
+    if (typeof v.denyMessage !== 'string') {
+      throw new Error('Invalid permission response: denyMessage must be a string')
+    }
+    if (v.denyMessage.length > 4000) {
+      throw new Error('Invalid permission response: denyMessage too long (max 4000)')
     }
   }
 }
