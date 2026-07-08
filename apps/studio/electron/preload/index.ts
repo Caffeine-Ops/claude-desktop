@@ -87,6 +87,8 @@ import {
   type ProposalExportResult,
   type ProposalExportPdfPayload,
   type ProposalExportPdfResult,
+  type ProposalRenderPdfPayload,
+  type ProposalRenderPdfResult,
   type ProposalRenderPayload,
   type ProposalRenderResult,
   type ProposalVerifyPayload,
@@ -690,6 +692,13 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PROPOSAL_EXPORT_PDF,
       payload
     ) as Promise<ProposalExportPdfResult>
+  },
+
+  renderProposalPdf(payload: ProposalRenderPdfPayload): Promise<ProposalRenderPdfResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PROPOSAL_RENDER_PDF,
+      payload
+    ) as Promise<ProposalRenderPdfResult>
   },
 
   renderProposal(payload: ProposalRenderPayload): Promise<ProposalRenderResult> {
