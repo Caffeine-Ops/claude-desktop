@@ -31,6 +31,7 @@ import {
 } from './components/SettingsDialog';
 import { SettingsDialogV2 } from './components/settings/SettingsDialogV2';
 import type { SettingsWorkspaceHost } from './components/settings/WorkspaceSections';
+import { KnowledgeBaseDialog } from './components/knowledge-base/KnowledgeBaseDialog';
 import {
   createPluginAuthoringHandoff,
   createPluginUseHandoff,
@@ -258,6 +259,7 @@ declare global {
 
 export function App({
   settingsOverlay = false,
+  knowledgeBaseOverlay = false,
 }: {
   /**
    * Settings-overlay mode: `?settings=1` renders ONLY the settings UI over
@@ -272,16 +274,29 @@ export function App({
    * 重渲染。响应性不变：进/出设置依旧零刷新。
    */
   settingsOverlay?: boolean;
+  /**
+   * Knowledge-base-overlay mode: `?kb=1` —— **与 settingsOverlay 同一套机制**，
+   * 渲染 ONLY 知识库管理 UI 覆盖在正常 App init 之上（第一版内容为空白）。
+   * 同样由 SurfaceHost 经 props 传入并 memo，理由同 settingsOverlay。
+   */
+  knowledgeBaseOverlay?: boolean;
 } = {}) {
   const { t } = useI18n();
   const clientType = useMemo(() => detectClientType(), []);
   const isSettingsOverlay = settingsOverlay;
+  const isKnowledgeBaseOverlay = knowledgeBaseOverlay;
   const [config, setConfig] = useState<AppConfig>(() => loadConfig());
   const configRef = useRef(config);
   configRef.current = config;
   const latestPersistedConfigRef = useRef(config);
   latestPersistedConfigRef.current = config;
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 「返回应用」防重入（见 handleOverlayClose）：studio 单视图下关闭设置
+  // 是异步导航——history.back() 到 popstate 有实测 ~350ms 的空窗，期间
+  // 设置 UI 刻意保持挂载（否则闪画布面，2026-07-08），用户若在空窗里再点
+  // 一次会多退一层历史、落到 /chat 更早的 entry。首次点击后置 true 吞掉
+  // 后续点击，重新进入 overlay（isSettingsOverlay 翻 true）时复位。
+  const overlayBackFiredRef = useRef(false);
   const [settingsWelcome, setSettingsWelcome] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>('execution');
   const [integrationInitialTab, setIntegrationInitialTab] = useState<IntegrationTab>('mcp');
@@ -1291,6 +1306,7 @@ export function App({
   // hid them behind a sidebar click the user never knew to make.
   useEffect(() => {
     if (!isSettingsOverlay) return;
+    overlayBackFiredRef.current = false;
     setSettingsInitialSection('appearance');
     setSettingsOpen(true);
     document.documentElement.classList.add('settings-overlay');
@@ -1302,6 +1318,17 @@ export function App({
       document.documentElement.classList.remove('settings-overlay');
     };
   }, [isSettingsOverlay]);
+
+  // 知识库 overlay 的「返回应用」防重入复位——overlayBackFiredRef 与设置页
+  // **共用**（两个 overlay 互斥不并存），但上面的复位 effect 只挂在
+  // isSettingsOverlay 上：第一次从知识库返回后 ref 停在 true，再进知识库时
+  // 点「返回应用」被 handleKnowledgeBaseClose 的防重入守卫永久吞掉（2026-07-08
+  // 「chat 与知识库切换几次后返回失效」实锤）。进 kb overlay 时同样复位。
+  // 不需要 settings-overlay html 类——那只服务 V1 设置 modal 的 backdrop 规则。
+  useEffect(() => {
+    if (!isKnowledgeBaseOverlay) return;
+    overlayBackFiredRef.current = false;
+  }, [isKnowledgeBaseOverlay]);
 
   const openMcpSettings = useCallback(() => {
     // 同 openSettings 的改道取消：MCP 配置的正身是设置页 mcpClient section。
@@ -1662,6 +1689,39 @@ export function App({
       />
     );
   }
+  // 知识库-overlay 模式（?kb=1）：**与设置 overlay 同一套机制**——渲染
+  // ONLY 知识库管理 UI 覆盖在正常 App init 之上（其余 App chrome 不渲染）。
+  // 第一版内容为空白（用户要求），仅一个全屏容器 + 顶栏标题 + 关闭。关闭
+  // 走与设置页完全相同的 studio 单视图导航：back() 同文档回退剥掉 ?kb=1，
+  // isKnowledgeBaseOverlay 随 popstate 翻 false，SurfaceHost 由 chatShowing
+  // 翻转把原面（聊天/画布）重新放映——URL 驱动的同一次 commit 里完成，无
+  // 中间帧（同 handleOverlayClose 的时序纪律：不提前拆 UI，等 popstate）。
+  // 防重入复用 overlayBackFiredRef（设置与知识库互斥，不会同时在 overlay）。
+  if (isKnowledgeBaseOverlay) {
+    const handleKnowledgeBaseClose = () => {
+      if (overlayBackFiredRef.current) return;
+      overlayBackFiredRef.current = true;
+      // studio 单视图：?kb=1 是 URL 态，关闭 = 回上一页（剥参回原面）。
+      // 有历史走 back()（同文档回退，Next 处理 popstate）；无历史（deep
+      // link 直开）原地剥参硬跳，留在同一个面。
+      if (window.history.length > 1) {
+        window.history.back();
+      } else {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('kb');
+        window.location.assign(url.pathname + url.search);
+      }
+    };
+    return (
+      // 全屏容器（同设置 overlay 的 fixed inset-0 z-50）盖住底下透明的宿主
+      // view。壳内布局 = KnowledgeBaseDialog，照搬 SettingsDialogV2 的骨架
+      // （左侧 w-61 导航栏 + 右侧 border-l bg-card 内容区），返回按钮走
+      // handleKnowledgeBaseClose 剥参回原面。
+      <div className="fixed inset-0 z-50">
+        <KnowledgeBaseDialog onClose={handleKnowledgeBaseClose} />
+      </div>
+    );
+  }
   // Settings-overlay mode: render ONLY the settings dialog over a dimming
   // scrim — no workspace/entry chrome. The hosting WebContentsView is
   // transparent, so the scrim dims the desktop tab showing through behind
@@ -1694,17 +1754,34 @@ export function App({
                   void syncConfigToDaemon(next);
                   setConfig(next);
                 }
-                setSettingsOpen(false);
-                window.electronSettings?.close?.();
-                // studio 单视图（无 electronSettings preload）：settings 是
-                // URL 态（/?settings=1，AppRail 软导航 router.push 进来），
-                // 关闭 = 回上一页。软导航历史下 back() 是同文档回退（Next
-                // 处理 popstate，isSettingsOverlay 随之翻回 false），不会
-                // 整页刷新；无历史（deep link 直开）则回首页。
-                if (!window.electronSettings) {
-                  if (window.history.length > 1) window.history.back();
-                  else window.location.assign('/');
+                if (window.electronSettings) {
+                  // 桌面多视图（独立 settings overlay view）：关闭没有 URL
+                  // 语义，直接拆 UI 并让壳收掉 overlay view。
+                  setSettingsOpen(false);
+                  window.electronSettings.close?.();
+                  return;
                 }
+                // studio 单视图（无 electronSettings preload）：settings 是
+                // URL 态（?settings=1 挂在当前 pathname 上，AppRail 软导航
+                // pushState 进来），关闭 = 回上一页（剥参回原面）。软导航
+                // 历史下 back() 是同文档回退（Next 处理 popstate，
+                // isSettingsOverlay 随之翻回 false），不会整页刷新；无历史
+                // （deep link 直开）则原地剥参硬跳，留在同一个面。
+                //
+                // ⚠️ 这条路径**不能**提前 setSettingsOpen(false)：back() 的
+                // popstate 是异步的（CDP 实测 dev 下 back→popstate ~350ms），
+                // 提前拆设置 UI 会留出一段「URL 还带 settings=1 但设置树已
+                // 卸载」的空窗——SurfaceHost 仍强制放映 canvas 面（空 fixed
+                // 容器）而目标面还藏着，闪一帧空白/画布再落地（2026-07-08
+                // 「返回应用先跳工作画布再跳智能助手」实锤）。设置树保持
+                // 挂载，等 popstate 后 isSettingsOverlay 翻 false，由 overlay
+                // effect 的 cleanup 统一收 settingsOpen + html 类——URL 驱动
+                // 的同一次 commit 里完成「设置卸载 + 面切换」，无中间帧。
+                // 防重入 ref 语义见其声明处注释。
+                if (overlayBackFiredRef.current) return;
+                overlayBackFiredRef.current = true;
+                if (window.history.length > 1) window.history.back();
+                else window.location.assign(window.location.pathname);
               };
               const SettingsComponent = settingsV2Enabled()
                 ? SettingsDialogV2
