@@ -457,6 +457,24 @@ describe('extractProposalDraftResult·哨兵必须独占整行（防内联引用
     expect(r.truncated?.kind).toBe('content')
     expect(r.truncated?.markdown).toContain('# 正文')
   })
+
+  it('结束哨兵后紧贴过渡语、下一节起始哨兵前紧贴文字（AI 少打换行）→ 仍切出干净封面+目录，不塌成截断', () => {
+    // 本次根因：AI 生成封面时把过渡语紧贴在封面结束哨兵后（`===方案封面结束===进入阶段二…`），
+    // 且下一节目录起始哨兵前紧贴文字（`…【目录大纲】===方案目录开始===`）。旧「前后都须独占整行」
+    // 判定认不出这两个哨兵 → 封面被判截断、把过渡语+目录哨兵原文+目录全吞进封面块 → 整篇塌成
+    // 一节正文（预览里封面丢了整页布局、裸哨兵当正文显示）。放宽为「至少一侧到行边界」后，
+    // 封面结束哨兵（前是行首）与目录起始哨兵（后是换行）都能被识别，两块各自干净切出。
+    const text =
+      '===方案封面开始===\n# 某方案\n\n客户单位\n\n2025年7月\n' +
+      '===方案封面结束===进入阶段二：目录。我拟了以下【目录大纲】===方案目录开始===\n' +
+      '1. 背景\n2. 目标\n===方案目录结束==='
+    const r = extractProposalDraftResult(text)
+    expect(r.blocks).toEqual([
+      { kind: 'cover', markdown: '# 某方案\n\n客户单位\n\n2025年7月' },
+      { kind: 'toc', markdown: '1. 背景\n2. 目标' }
+    ])
+    expect(r.truncated).toBeNull()
+  })
 })
 
 describe('isDraftBlockAheadOfPhase（阶段门谓词）', () => {
