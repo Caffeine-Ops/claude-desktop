@@ -17,17 +17,12 @@ import { tmpdir } from 'node:os'
  *
  * @returns `{ path }` 落盘绝对路径；用户取消保存框 → `{ path: null }`。
  */
-export async function exportProposalPdf(
-  win: BrowserWindow,
-  html: string,
-  defaultPath = '方案草稿.pdf'
-): Promise<{ path: string | null }> {
-  const r = await dialog.showSaveDialog(win, {
-    filters: [{ name: 'PDF', extensions: ['pdf'] }],
-    defaultPath
-  })
-  if (r.canceled || !r.filePath) return { path: null }
-
+/**
+ * 自包含 HTML → PDF 字节（Chromium printToPDF 核心）。导出落盘与预览取字节两条路共用此函数,
+ * 保证【预览的 PDF 和导出的 PDF 逐字节一致】——同一 HTML、同一隐藏窗口、同一 printToPDF 参数。
+ * 只负责渲染成字节,不弹框、不落盘;临时目录用完即清。
+ */
+async function htmlToPdfBytes(html: string): Promise<Buffer> {
   // 用临时 .html 文件 + loadFile，而非 data: URL：大文档把所有配图 base64 内联后 HTML 可达数 MB，
   // data: URL 在此体量下不稳（长度限制/解析慢）；落临时文件再 loadFile 稳定，打印后连目录一并清掉。
   const dir = mkdtempSync(join(tmpdir(), 'proposal-pdf-'))
@@ -52,14 +47,12 @@ export async function exportProposalPdf(
     )
     // preferCSSPageSize：让 Chromium 用 HTML 里的 @page size（A4）而非这里的 pageSize 兜底，
     // 与 docx-preview 渲出的 A4 页面尺寸对齐，保证一页 docx = 一页 PDF（margins 全 0，页内已含版心）。
-    const pdf = await pdfWin.webContents.printToPDF({
+    return await pdfWin.webContents.printToPDF({
       pageSize: 'A4',
       printBackground: true,
       margins: { top: 0, bottom: 0, left: 0, right: 0 },
       preferCSSPageSize: true
     })
-    writeFileSync(r.filePath, pdf)
-    return { path: r.filePath }
   } finally {
     if (!pdfWin.isDestroyed()) pdfWin.destroy()
     try {
@@ -68,4 +61,29 @@ export async function exportProposalPdf(
       /* 临时目录清理失败无害，系统会自行回收 tmp */
     }
   }
+}
+
+export async function exportProposalPdf(
+  win: BrowserWindow,
+  html: string,
+  defaultPath = '方案草稿.pdf'
+): Promise<{ path: string | null }> {
+  const r = await dialog.showSaveDialog(win, {
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    defaultPath
+  })
+  if (r.canceled || !r.filePath) return { path: null }
+
+  const pdf = await htmlToPdfBytes(html)
+  writeFileSync(r.filePath, pdf)
+  return { path: r.filePath }
+}
+
+/**
+ * 预览专用：与 exportProposalPdf 同引擎（htmlToPdfBytes），但不弹保存框、不落盘——直接回 PDF 字节。
+ * 预览标签把这份字节包成 application/pdf Blob → <iframe> 显示,得到与导出【逐字节一致】的分页。
+ */
+export async function renderProposalPdfBytes(html: string): Promise<{ bytes: Buffer }> {
+  const bytes = await htmlToPdfBytes(html)
+  return { bytes }
 }

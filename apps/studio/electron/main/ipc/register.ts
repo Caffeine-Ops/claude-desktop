@@ -67,6 +67,8 @@ import {
   type ProposalExportResult,
   type ProposalExportPdfPayload,
   type ProposalExportPdfResult,
+  type ProposalRenderPdfPayload,
+  type ProposalRenderPdfResult,
   type ProposalRenderPayload,
   type ProposalRenderResult,
   type ProposalVerifyPayload,
@@ -96,7 +98,7 @@ import { scheduleKbBuild, getKbBuildStatus } from '../core/kbBuildRunner'
 import type { KbIndex } from '../../shared/kbIndex'
 import type { KbRemoteConfig } from '../../shared/kbConfig'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
-import { exportProposalPdf } from '../core/proposalPdf'
+import { exportProposalPdf, renderProposalPdfBytes } from '../core/proposalPdf'
 import { markdownToDocxBuffer } from '../core/proposalDocx'
 import { verifyCitations, collectUngroundedImagePaths } from '../core/proposalVerify'
 import { retrievePassages } from '../core/proposalRetrieve'
@@ -1725,6 +1727,17 @@ export function registerIpcHandlers(): void {
       if (!win) return { path: null }
       const defaultPath = typeof payload?.defaultPath === 'string' ? payload.defaultPath : undefined
       return exportProposalPdf(win, html, defaultPath)
+    }
+  )
+
+  // 预览专用 PDF：与导出 PDF 同引擎、同 HTML，只是不弹保存框、不落盘——直接回 PDF 字节给渲染层
+  // 塞进 <iframe>。html 非串 → 抛错（渲染层 try/catch 显示错误态，与 renderProposal 一致）。
+  ipcMain.handle(
+    IPC_CHANNELS.PROPOSAL_RENDER_PDF,
+    async (_event, payload: ProposalRenderPdfPayload): Promise<ProposalRenderPdfResult> => {
+      const html = typeof payload?.html === 'string' ? payload.html : ''
+      if (!html) throw new Error('renderProposalPdf: empty html')
+      return renderProposalPdfBytes(html)
     }
   )
 

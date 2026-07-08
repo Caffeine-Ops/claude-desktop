@@ -677,6 +677,13 @@ export const IPC_CHANNELS = {
    * 且 PDF 与预览同源（同一 docx-preview 渲染）逐像素一致。
    */
   PROPOSAL_EXPORT_PDF: 'proposal:export-pdf',
+  /**
+   * Renderer → main. 与 PROPOSAL_EXPORT_PDF 同源、同引擎（同一份自包含 HTML + 隐藏窗口
+   * printToPDF），唯一区别是【不弹保存框、不落盘】——直接把 PDF 字节回给渲染层。预览标签用它
+   * 拿到与导出【逐字节一致】的 PDF，塞进 <iframe> 显示：预览的分页 = 导出 PDF 的分页，从根上消除
+   * docx-preview 屏显不做溢出重排、而 Chromium 打印做真分页导致的「预览一页装下、PDF 分两页」错位。
+   */
+  PROPOSAL_RENDER_PDF: 'proposal:render-pdf',
   /** Renderer → main. 写入/读出/删除某会话的持久化草稿（userData/proposal-drafts/<id>.json）。 */
   PROPOSAL_SAVE_DRAFT: 'proposal:save-draft',
   PROPOSAL_LOAD_DRAFT: 'proposal:load-draft',
@@ -1356,6 +1363,23 @@ export interface ProposalExportPdfPayload {
 /** Result of PROPOSAL_EXPORT_PDF. `path` is null when the user cancelled the save dialog. */
 export interface ProposalExportPdfResult {
   path: string | null
+}
+
+/**
+ * Payload for PROPOSAL_RENDER_PDF。`html` 与 PROPOSAL_EXPORT_PDF 完全同构（renderer 用
+ * docx-preview 渲好的自包含 HTML，含 @page A4 打印复位 CSS + base64 内联图），main 隐藏窗口
+ * printToPDF 后【回字节而非落盘】，供预览标签直接显示。
+ */
+export interface ProposalRenderPdfPayload {
+  html: string
+}
+
+/**
+ * Result of PROPOSAL_RENDER_PDF. `bytes` 是 PDF 二进制（main 侧 Node `Buffer`，经 IPC
+ * 结构化克隆到渲染层为 `Uint8Array`）。渲染层包成 `application/pdf` Blob → objectURL → <iframe>。
+ */
+export interface ProposalRenderPdfResult {
+  bytes: Uint8Array
 }
 
 /** Payload for PROPOSAL_RENDER. */
@@ -2038,6 +2062,12 @@ export interface ChatApi {
    * 是因为 PDF 的产物来自 renderer 渲染（main 无 DOM），不能从 markdown 直接生成——见通道注释。
    */
   exportProposalPdf(payload: ProposalExportPdfPayload): Promise<ProposalExportPdfResult>
+  /**
+   * 与 exportProposalPdf 同引擎，但不弹保存框、不落盘——直接回 PDF 字节。预览标签用它拿到与
+   * 导出逐字节一致的 PDF，塞进 <iframe> 显示，保证「预览分页 = 导出 PDF 分页」。渲染失败时
+   * reject，渲染层显示错误态。
+   */
+  renderProposalPdf(payload: ProposalRenderPdfPayload): Promise<ProposalRenderPdfResult>
   /**
    * Render the proposal markdown to a .docx binary in-memory (no save
    * dialog, no disk write). The preview tab feeds the bytes to docx-preview

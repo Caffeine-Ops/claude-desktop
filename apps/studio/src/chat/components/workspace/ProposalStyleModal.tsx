@@ -17,8 +17,8 @@ import { ProposalPreview } from './ProposalPreview'
 import { XIcon, RotateCcwIcon } from './proposalIcons'
 
 /**
- * 「样式模板」弹窗：左侧实时预览（复用 ProposalPreview 的真 docx 渲染，传入本地 draft 样式，
- * 故边调边看、且与最终导出逐像素一致），右侧模板选择 + 逐级别微调。
+ * 「样式模板」弹窗：左侧实时预览（复用 ProposalPreview 的真 PDF 渲染——printToPDF 出真 PDF 塞
+ * <iframe>，传入本地 draft 样式，故边调边看、且与最终导出逐字节一致），右侧模板选择 + 逐级别微调。
  *
  * 重设计 A 后【纯调样式、不再是导出入口】——导出统一收敛到草稿页顶栏的「导出 ▾」下拉，消除
  * 「两处导出」。本弹窗只负责把样式调好并【应用】到 store；应用后用户回下拉选格式导出。
@@ -128,7 +128,7 @@ export function ProposalStyleModal({
 
         {/* 主体两栏 */}
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(360px,42%)_1fr]">
-          {/* 左：实时预览（真 docx，与导出一致）。必须是 flex-col：ProposalPreview 根用 flex-1 撑
+          {/* 左：实时预览（真 PDF，与导出一致）。必须是 flex-col：ProposalPreview 根用 flex-1 撑
               满高度，而 grid 单元格是 block、flex-1 不生效 → 预览拿不到框定高度、内部滚动视口建不
               起来，多页内容滚不到（实测 bug）。与右栏 / 主面板的 flex min-h-0 容器对齐即修复。 */}
           <div className="flex min-h-0 flex-col border-r border-border">
