@@ -31,7 +31,9 @@ export const useKbStore = create<KbState>((set, get) => ({
   build: null,
   loading: false,
   openManager: () => {
-    set({ open: true })
+    // 打开的同一帧就把 loading 拉起来：refresh 是异步的，若等它内部 set 会有一帧
+    // loading 仍是上次的值，组件那一帧会误判成「加载完为空」而闪出空态。
+    set({ open: true, loading: true })
     void get().refresh()
   },
   closeManager: () => set({ open: false }),

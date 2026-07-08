@@ -20,6 +20,7 @@ export function KbManagerView(): React.JSX.Element | null {
   const open = useKbStore((s) => s.open)
   const closeManager = useKbStore((s) => s.closeManager)
   const tree = useKbStore((s) => s.tree)
+  const loading = useKbStore((s) => s.loading)
   const readOnly = useKbStore((s) => s.readOnly)
   const refresh = useKbStore((s) => s.refresh)
   const subscribeBuild = useKbStore((s) => s.subscribeBuild)
@@ -72,7 +73,14 @@ export function KbManagerView(): React.JSX.Element | null {
         {readOnly && <span className="ml-2 rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{t('kbManageReadOnly')}</span>}
       </div>
 
-      {empty && !readOnly ? (
+      {loading && !tree ? (
+        // 首帧加载：tree 还是 null，此时 loading 与「加载完确实为空」不能混为一谈——
+        // 只在 !tree 时显示，避免后续手动 refresh 让整页闪回 spinner。
+        <div className="flex flex-1 flex-col items-center justify-center gap-2.5 text-[13px] text-muted-foreground/70">
+          <kbIcons.refresh className="size-5 animate-spin" />
+          <p>{t('kbManageLoading')}</p>
+        </div>
+      ) : empty && !readOnly ? (
         // 空态但可写：进货入口=从旧资料文件夹批量导入（保结构建分类）。手动新建分类已下线，
         // 分类结构一律由导入的文件夹结构决定。
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-[13px] text-muted-foreground/70">
