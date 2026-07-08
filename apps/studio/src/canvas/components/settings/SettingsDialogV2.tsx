@@ -225,17 +225,15 @@ export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Elemen
         </aside>
 
         {/* ── Content ──
-            悬浮内容卡：视觉参数（6px 圆角 + 三层阴影）与 app/globals.css 的
-            .shell-content-card 配对——没直接复用那个类是因为它 unlayered 的
-            height:100% + overflow:hidden 会压过这里的 utility（margin 布局
-            需要 stretch + overflow-y:auto）。改数值两处同步，否则设置 ↔ 聊天
-            切换时卡片跳变。relative = embedded 绝对定位后代的收容边界。 */}
+            内容面：与 app/globals.css 的 .shell-content-card 配对——2026-07-08
+            两处同步平铺（用户要求去掉悬浮卡效果）：无 margin 灰缝、无圆角、
+            无阴影，白面与侧栏灰底同一张纸，仅靠左缘 hairline 分隔。没直接
+            复用那个类是因为它 unlayered 的 height:100% + overflow:hidden 会
+            压过这里的 utility（布局需要 stretch + overflow-y:auto）。改观感
+            两处同步，否则设置 ↔ 聊天切换时观感跳变。relative = embedded
+            绝对定位后代的收容边界。 */}
         <div
-          className={cn(
-            'relative m-2.5 ml-0 min-w-0 flex-1 overflow-y-auto rounded-[6px] bg-card',
-            'shadow-[0_0_0_1px_hsl(240_6%_10%/0.045),0_1px_2px_hsl(240_6%_10%/0.05),0_12px_32px_hsl(240_6%_10%/0.08)]',
-            'dark:shadow-[inset_0_1px_0_hsl(40_20%_95%/0.045),0_0_0_1px_hsl(0_0%_0%/0.35),0_16px_48px_hsl(0_0%_0%/0.5)]',
-          )}
+          className="relative min-w-0 flex-1 overflow-y-auto border-l border-border/50 bg-card"
         >
           <div className="mx-auto max-w-[760px] px-10 pb-15 pt-11">
             <div className="mb-[26px]">

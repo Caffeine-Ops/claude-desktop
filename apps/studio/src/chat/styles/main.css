@@ -65,8 +65,8 @@ body,
   padding: 0;
   height: 100%;
   /* 窗口底面 = rail 面（--sidebar，浅色 Apple 灰 / 暗色暖黑，深浅自动跟随）。
-     悬浮内容卡（globals.css 的 .shell-content-card）浮在这块面上，rail 与卡
-     之间的 gutter 露出的就是这个颜色。
+     右侧内容面（globals.css 的 .shell-content-card）平铺其上，与 rail 靠
+     左缘 hairline 分隔（2026-07-08 去浮卡化前是 10px gutter 露出这个颜色）。
      旧版是硬编码 #e8eaee + 三段 data-surface 分支（shell 根同色、chat 根
      transparent）——那套属于双 WebContentsView 时代：chat view 要整体透明，
      让 native 层下方的 shell 窗口从 8px 缝隙里透出来。单视图形态下整个前端

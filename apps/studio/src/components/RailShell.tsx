@@ -111,13 +111,15 @@ export function RailShell() {
         onMouseEnter={() => setPeek(true)}
       />
 
-      {/* 常驻工具栏：收起后 rail 整个没了，在内容卡自己的 46px 标题栏那一行
-        * （卡片顶在 stage 的 10px gutter 处、红绿灯右侧、标题左侧的空白处）
-        * 留一排图标——展开 / 搜索 / 新建，仿 macOS 常见的「红绿灯后跟一排
+      {/* 常驻工具栏：收起后 rail 整个没了，在内容面自己的 46px 标题栏那一行
+        * （平铺后标题栏从视口 y=0 起、红绿灯右侧、标题左侧的空白处）留一排
+        * 图标——展开 / 搜索 / 新建，仿 macOS 常见的「红绿灯后跟一排
         * 工具钮」布局（用户提供的目标截图）。left-[100px] 让过红绿灯净空——
         * 这个起点必须跟 tabRegistry 的 trafficLightPosition.x（当前 30）联动：
         * 红绿灯右移多少，这里同增多少，否则两者不成一横（2026-07-05 用户要求
-        * 整组往右移，红绿灯 x 14→30、本值 84→100 同步）。
+        * 整组往右移，红绿灯 x 14→30、本值 84→100 同步）。top-0：容器高与
+        * header 同为 46px，顶对顶即中线对中线（23）；浮卡时代是 top-2.5，
+        * 对的是从 y=10 起的 header——2026-07-08 平铺化随 stage gutter 归零。
         *
         * ⚠️ 为什么必须 portal 到 body 末尾（2026-07-05「三图标点不动」实锤）：
         * 图标排标了 no-drag，但它渲染在 layout 里 RailShell（body 首个子节点）
@@ -136,7 +138,7 @@ export function RailShell() {
         * 不受 portal 出 .chat-app 豁免后的 canvas 裸元素 reset 影响。 */}
       {mounted &&
         createPortal(
-          <div className="fixed left-[100px] top-2.5 z-30 flex h-[46px] items-center gap-0.5 [-webkit-app-region:no-drag]">
+          <div className="fixed left-[100px] top-0 z-30 flex h-[46px] items-center gap-0.5 [-webkit-app-region:no-drag]">
             <CollapsedToolbar peek={peek} onPeek={() => setPeek(true)} />
           </div>,
           document.body

@@ -215,36 +215,20 @@
 }
 
 /* ===================== Content ===================== */
-/* 内容区 = 悬浮内容卡本体：圆角 14px + 三层阴影（1px hairline 圈轮廓 +
-   近距离接触影 + 大半径环境影），数值照抄 app/globals.css 的
-   .shell-content-card——改数值先改那边/原型看效果再同步，别在这里手拧。
-   margin 四周留出灰底（左侧不留，由侧栏自然衔接出 10px 视觉间距靠
-   sidebar 自身 padding），滚动发生在卡片内部。 */
+/* 内容区：与 chat 面 .shell-content-card（app/globals.css）配对——
+   2026-07-08 起两处同步平铺（用户要求去掉悬浮卡效果）：无 margin 灰缝、
+   无圆角、无阴影，白面与侧栏灰底同一张纸，仅靠左缘 hairline 分隔。
+   改观感先改 globals.css 那边/原型看效果再同步，别在这里手拧。
+   滚动仍发生在本容器内部。 */
 .sv2-content {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  margin: 10px 10px 10px 0;
-  /* 与 chat 面 .shell-content-card 配对（globals.css），6px 用户调定。 */
-  border-radius: 6px;
   background: hsl(var(--card));
-  box-shadow:
-    0 0 0 1px hsl(240 6% 10% / 0.045),
-    0 1px 2px hsl(240 6% 10% / 0.05),
-    0 12px 32px hsl(240 6% 10% / 0.08);
+  border-left: 1px solid hsl(var(--border) / 0.5);
   /* Containing block for any absolutely-positioned embedded descendant, so
      it can't escape leftward over the sidebar. */
   position: relative;
-}
-/* 暗色浮卡：黑底上描边不可见，换成顶部 1px 内侧高光 + 深影（同
-   .dark .shell-content-card）。canvas 认 [data-theme]、chat 认 .dark，
-   两标记由运行时双向桥接，这里两个都写以防挂载面不同。 */
-.dark .sv2-content,
-[data-theme='dark'] .sv2-content {
-  box-shadow:
-    inset 0 1px 0 hsl(40 20% 95% / 0.045),
-    0 0 0 1px hsl(0 0% 0% / 0.35),
-    0 16px 48px hsl(0 0% 0% / 0.5);
 }
 .sv2-content::-webkit-scrollbar {
   width: 10px;
