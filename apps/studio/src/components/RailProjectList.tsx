@@ -129,7 +129,7 @@ export function RailProjectList() {
                     aria-hidden
                     className={cn(
                       'size-[5px] shrink-0 rounded-full transition-colors',
-                      item.project.id === activeId ? 'bg-sidebar-primary' : 'bg-transparent'
+                      item.project.id === activeId ? 'bg-primary' : 'bg-transparent'
                     )}
                   />
                   <span className="min-w-0 flex-1 truncate">{item.project.name}</span>

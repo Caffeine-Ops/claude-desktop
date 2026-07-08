@@ -23,6 +23,7 @@
 import { usePathname } from 'next/navigation'
 import {
   ArrowUpRight,
+  BookOpen,
   Check,
   CircleArrowUp,
   CircleHelp,
@@ -222,8 +223,27 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
 
   // 打开设置 overlay（?settings=1）——账户菜单里「设置」与「偏好设置」子项
   // 共用这一个入口，机制见调用处注释（shallow pushState + canvas 响应式读参）。
+  //
+  // 参数挂在**当前 URL** 上而不是跳 '/?settings=1'：设置是 overlay，不是
+  // 面切换——pathname 保持不动，rail tab 高亮 / 中段列表 / data-surface
+  // 全程不变，关闭 back() 剥参回到原地。旧方案把 pathname 拽到 '/'，rail
+  // 在全屏设置页底下默默切到画布态，「返回应用」揭开的瞬间 tab 再从
+  // 工作画布翻回智能助手——一次可见的假切换（2026-07-08 用户实锤）。
+  // settings=1 时由 SurfaceHost 强制放映 canvas 面（设置页的宿主），与
+  // pathname 解耦。用 URL API 合并 query，保住 ?host=desktop 之类 boot 参数。
   const openSettings = () => {
-    window.history.pushState(null, '', '/?settings=1')
+    const url = new URL(window.location.href)
+    url.searchParams.set('settings', '1')
+    window.history.pushState(null, '', url.pathname + url.search)
+  }
+  // 打开知识库管理面（?kb=1）——同 openSettings 一套机制：shallow
+  // pushState 挂在**当前 pathname** 上（不跳宿主路径），SurfaceHost 用
+  // useSearchParams 响应式读参、就地放映知识库面盖住聊天/画布，back()
+  // 剥掉参数即回原面。pathname 不动，rail tab 高亮/中段列表全程不变。
+  const openKnowledgeBase = () => {
+    const url = new URL(window.location.href)
+    url.searchParams.set('kb', '1')
+    window.history.pushState(null, '', url.pathname + url.search)
   }
   // 打开订阅购买页 overlay（UpgradeScreen 常驻根 layout，store 翻开关即现）。
   const setUpgradeOpen = useUpgradeStore((s) => s.setOpen)
@@ -251,10 +271,14 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   }
 
   return (
-    // 无右边框：rail 与窗口背景是同一块面（bg-sidebar == body），内容区靠
-    // 悬浮卡的阴影分隔，而不是一条竖线。宽度对齐原型 --sidebar-w: 244px
-    // （docs/ui-prototype-shell-floating.html；旧值 220 给不下「标题 + 相对
-    // 时间」的会话行）。
+    // 分界线 rail（2026-07-08 二次定稿，原型 docs/ui-prototype-shell-refined.html
+    // 形态 3「分界线」）：--sidebar 灰实面，与近白内容面之间由
+    // .shell-content-card 的左缘竖线定边界（globals.css）。同日上午的
+    // 「毛玻璃」形态（bg-sidebar/40 + backdrop-blur + body 光斑壁纸）用户
+    // 真机看过定「太丑」退役，别加回。
+    // 无右边框：分界线由内容面左缘承担，rail 自己不画线（两条会叠粗）。
+    // 宽度对齐原型 --sidebar-w: 244px（旧值 220 给不下「标题 + 相对时间」
+    // 的会话行）。
     // ⚠️ w-61（244px）与设置页 V2 的 --sv2-sidebar-w（settings-v2.css）配对：
     // 设置页是全屏 overlay、自己画 rail + 浮卡，两边宽度不等则切换
     // 设置 ↔ 聊天时内容卡左边缘跳动。改宽度必须两处同步。
@@ -309,9 +333,12 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
         *    「新建」的入口，canvas 没有独立的空白新建页）。走 canvas router
         *    的 navigate（动态 import 原因见下方画布 tab 注释）；已在主页时
         *    navigate 同路径早退，点击为无害 no-op。 */}
+      {/* 主按钮强调色用 --primary（用户主题色，appearance applier 写入）——
+        * rail 的「CTA/选中/身份点位」随主题色走（2026-07-08 用户定稿，此前
+        * 钉品牌绿 --sidebar-primary）。品牌绿只保留给账户菜单的套餐语义。 */}
       <Button
         variant="ghost"
-        className="mb-2 justify-start gap-2 bg-sidebar-primary/12 px-3 text-sidebar-primary hover:bg-sidebar-primary/18 hover:text-sidebar-primary"
+        className="mb-2 justify-start gap-2 bg-primary/12 px-3 text-primary hover:bg-primary/18 hover:text-primary"
         onClick={() => {
           if (isChat) {
             void window.tabApi?.switchShellSession?.(null)
@@ -324,6 +351,19 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
       >
         <Plus className="size-4" /> {isChat ? '新对话' : '新画布'}
       </Button>
+      {/* 知识库（2026-07-08）：只在聊天面显示，落位「新对话」下方。点击
+        * 写 ?kb=1（openKnowledgeBase），SurfaceHost 就地放映知识库管理面
+        * 盖住聊天/画布——机制同「设置」overlay。样式对齐「新建项目」的
+        * 次级入口（ghost + muted 文字），与主按钮的品牌绿 tint 区分层级。 */}
+      {isChat && (
+        <Button
+          variant="ghost"
+          className="mb-2 justify-start gap-2 px-3 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          onClick={openKnowledgeBase}
+        >
+          <BookOpen className="size-4" /> 知识库
+        </Button>
+      )}
       {/* 新建项目（2026-07-04 从画布首页 EntryNavRail 迁入，那条 rail 已
         * 退役）——只在画布面显示，落位「新画布」下方。NewProjectModal 归
         * EntryShell 所有（canvas 树），跨树触达走「事件 + pending 信箱」
@@ -373,17 +413,14 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
           }
         }}
       >
+        {/* 样式对齐 shadcn 官方 TabsDemo（2026-07-08 用户要求）：零覆盖类，
+          * 选中态/暗档细节全部交给 ui/tabs.tsx 基件默认（bg-background 白卡
+          * + shadow-sm + 暗档 border-input/bg-input/30）。此前的 bg-card 强制
+          * 白卡与选中 icon 染主题色两处覆盖一并退役。w-full 是布局适配
+          * （rail 通栏两段均分），不属于样式覆盖。 */}
         <TabsList className="w-full">
           {SURFACE_TABS.map((item) => (
-            <TabsTrigger
-              key={item.value}
-              value={item.value}
-              // 选中段用 bg-card（纯白）而非默认 bg-background：本项目的
-              // --background 是 97% 灰面，压在 muted 底槽（93%）上对比太弱，
-              // 白卡才有 segmented 的凸起感（同悬浮内容卡的表面语言）。
-              // 选中 icon 走品牌绿——「身份/CTA/选中」点位的用色纪律。
-              className="data-[state=active]:bg-card [&[data-state=active]_svg]:text-sidebar-primary"
-            >
+            <TabsTrigger key={item.value} value={item.value}>
               {item.icon}
               {item.label}
             </TabsTrigger>
@@ -416,7 +453,7 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
                 // 开启态视觉反馈由 data-[state=open] 底色承担，不靠焦点环。
                 className="h-11 w-full justify-start gap-2.5 px-2.5 hover:bg-sidebar-accent focus-visible:ring-0 data-[state=open]:bg-sidebar-accent"
               >
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/15 text-xs font-semibold text-sidebar-primary">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
                   {(authUser?.name ?? identity.user).charAt(0).toUpperCase()}
                 </span>
                 <span className="flex min-w-0 flex-1 flex-col items-start leading-tight">

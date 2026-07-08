@@ -122,18 +122,19 @@ export function RailShell() {
         * 对的是从 y=10 起的 header——2026-07-08 平铺化随 stage gutter 归零。
         *
         * ⚠️ 为什么必须 portal 到 body 末尾（2026-07-05「三图标点不动」实锤）：
-        * 图标排标了 no-drag，但它渲染在 layout 里 RailShell（body 首个子节点）
-        * 内，而下方 chat header（ThreadView，深层 shell-stage 子树）是全宽
-        * `-webkit-app-region: drag`、46px 高，正好罩住图标排所在的 y。Electron
-        * 收集 app-region 是按渲染树遍历顺序注册原生拖拽矩形、**后注册覆盖先
-        * 注册**，且 no-drag 只能在「同一 DOM 子树内」给 drag 父矩形挖洞——
-        * 图标排与 chat header 是**跨树的两棵**，RailShell 在 DOM 里靠前 → 图标排
-        * no-drag 先注册、被 header 的 drag 后注册整片盖过 → macOS 把点击当窗口
-        * 拖拽截走，mousedown 根本不下发给 renderer（DOM elementFromPoint 仍能
-        * 命中按钮、CDP 的 Input.dispatchMouseEvent 也能点 → 都是假象，app-region
-        * 拦截在原生层、只有真实鼠标经过窗口系统时才发生；同 .surface-inactive
-        * 家族的坑）。portal 到 body 末尾让图标排 no-drag **最后注册**，稳压
-        * chat header 的 drag，真实点击才落到按钮上。mounted 前不 portal（SSR
+        * 图标排标了 no-drag，但覆盖它所在 y 的窗口拖拽矩形不止一条——根
+        * .window-drag-strip（body 首子元素，比 RailShell 更靠前，对它不
+        * portal 也能挖动）之外，canvas 面自己的顶栏 drag（base.css 的
+        * .workspace-tabs-chrome，冗余保留）在 shell-stage 深处、DOM 比
+        * RailShell **靠后**。Electron 收集 app-region 是按渲染树遍历顺序
+        * 注册原生拖拽矩形、**后注册覆盖先注册**，且 no-drag 只能在「先
+        * 注册的 drag」上挖洞——不 portal 则图标排 no-drag 先注册、被后面
+        * 的 drag 整片盖过 → macOS 把点击当窗口拖拽截走，mousedown 根本
+        * 不下发给 renderer（DOM elementFromPoint 仍能命中按钮、CDP 的
+        * Input.dispatchMouseEvent 也能点 → 都是假象，app-region 拦截在
+        * 原生层、只有真实鼠标经过窗口系统时才发生；同 .surface-inactive
+        * 家族的坑）。portal 到 body 末尾让图标排 no-drag **最后注册**，
+        * 稳压一切 drag，真实点击才落到按钮上。mounted 前不 portal（SSR
         * 无 body + 防 hydration）。图标排里全是 shadcn Button（带 data-slot），
         * 不受 portal 出 .chat-app 豁免后的 canvas 裸元素 reset 影响。 */}
       {mounted &&
@@ -153,11 +154,11 @@ export function RailShell() {
         * ⚠️ 三件事缺一不可，否则「鼠标刚移进面板就缩回、顶部按钮点不到」
         * （2026-07-06 实锤，机制同上方图标排的「三图标点不动」）：
         *
-        * 1. **portal 到 body 末尾**：overlay 顶部 y≈10-56 与 chat header
-        *    （ThreadView，全宽 46px `-webkit-app-region: drag`）在屏幕上重叠。
-        *    drag/no-drag 矩形按 DOM 遍历顺序注册、后者覆盖前者——RailShell
-        *    在 body 首位，不 portal 则 overlay 的 no-drag 先注册、被 header
-        *    的 drag 整片盖回，白标。
+        * 1. **portal 到 body 末尾**：overlay 顶部 y≈10-56 与窗口拖拽带
+        *    （根 .window-drag-strip 46px + canvas 面顶栏的冗余 drag）在
+        *    屏幕上重叠。drag/no-drag 矩形按 DOM 遍历顺序注册、后者覆盖
+        *    前者——RailShell 在 body 靠前位，不 portal 则 overlay 的
+        *    no-drag 会被 DOM 更靠后的 canvas 顶栏 drag 整片盖回，白标。
         * 2. **peek 时容器标 no-drag**：把 overlay 覆盖的整个矩形从原生拖拽
         *    区里挖掉。真实鼠标落在 drag 区＝落在 non-client 区，renderer
         *    收不到 mousemove 还会被合成 mouse-leave → onMouseLeave 误 fire →
