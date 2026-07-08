@@ -13,12 +13,13 @@ const ACCENT_VARS = [
   '--accent-hover',
 ] as const;
 
-// 2026-07-07 默认主题色改为绿（原为首格赭色 #c96442）。色板顺序保持不变
-// ——绿不挪到首位，用户按位置记色；已持久化过主题色的用户不受影响
-// （normalizeAccentColor 命中即用存值），只有全新安装/从未设置过的会落到
-// 这个默认。
+// 2026-07-07 默认主题色改为绿（原为首格赭色 #c96442）。
+// 2026-07-08 用户要求：色板首位加 UI 品牌绿 #16a34a（rail 主按钮/logo 同款，
+// tokens.css --brand 的 hex），其余顺移一位。DEFAULT_ACCENT_COLOR 不变
+// （已持久化的用户 normalizeAccentColor 命中即用存值，不受色板顺序影响）。
 export const DEFAULT_ACCENT_COLOR = '#059669';
 export const ACCENT_SWATCHES = [
+  '#16a34a',
   '#c96442',
   '#2563eb',
   '#7c3aed',

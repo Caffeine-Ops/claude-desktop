@@ -79,6 +79,13 @@
 @source '../../canvas/components/SettingsDialog/**/*.{ts,tsx}';
 @source '../../canvas/components/settings/**/*.{ts,tsx}';
 
+/* 知识库页（2026-07-08）：照搬设置页 V2 骨架的全新壳（KnowledgeBaseDialog），
+ * 纯 shadcn + Tailwind utility，文件住在 canvas 树里（同 settings 的理由）。
+ * 与 settings 同款 scoped @source——只扫这一个目录，绝不扫整个 src/canvas/**
+ * （撞名 utility 会静默套到 canvas 元素上）。不加这条，本目录用到的 utility
+ * 会被 purge，知识库壳样式全丢。 */
+@source '../../canvas/components/knowledge-base/**/*.{ts,tsx}';
+
 /* ─────────────────────────────────────────────────────────────────────
  * Theme — migrated verbatim from the former tailwind.config.js. Apple
  * DESIGN.md type/radius/shadow scale + the shadcn-style HSL token system.

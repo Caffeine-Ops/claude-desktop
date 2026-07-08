@@ -1,0 +1,208 @@
+/* ====================================================================
+ * 下拉菜单统一皮肤（2026-07-08 用户定稿：全项目菜单与 chat 侧
+ * ui/dropdown-menu 基件同款观感——Claude.ai 参考样式）。
+ *
+ * 背景：canvas 侧 ~15 个下拉菜单各自为政（present/share/zoom/avatar/
+ * df-row/viewer-mode/lang/conv/plugin-share/design-card/working-dir/
+ * handoff/chat-history/viewer-viewport…），十几套私有类分散在 10 个
+ * 样式文件，圆角 4~14px、padding 4~8px、阴影/hover/危险色三种写法
+ * 混杂，与 chat 侧基件（rounded-xl + p-1.5 + 双层柔和投影 + 13.5px
+ * 行 + secondary hover）完全不同调。
+ *
+ * 做法：本文件按「皮肤属性」逐组覆盖上述所有菜单类——只动观感
+ * （底色/边框/圆角/阴影/padding/行形态/hover/危险色/分隔线/入场
+ * 动画），**绝不碰布局语义**（position/z-index/宽度/max-height/
+ * display/grid/gap/overflow 及各自的 .active 选中态都留在原文件）。
+ * 各原始定义不删：菜单的结构属性仍住在原处，本文件只是最后一层
+ * 统一涂装。
+ *
+ * ⚠️ 级联纪律：
+ *  - 本文件必须是 canvas index.css @import 清单的**最后一条**——
+ *    没有 @layer，顺序即胜负；挪前一格统一就碎一块。
+ *  - 组内选择器与原定义**同构**（.app 前缀、:not(:disabled)、
+ *    button 元素后缀都是为了特异性打平靠顺序取胜），改写法前先算
+ *    特异性。
+ *  - 新增菜单：优先直接复用 chat 侧 ui/dropdown-menu（radix 基件，
+ *    canvas 组件可 import，样式类由 chat 链全局生成）；确需手写时
+ *    把容器/item/divider 类加进下面对应组。
+ *  - token 全部走双模式变量（--popover/--secondary/--destructive 是
+ *    chat 链 :root 三元组，--od-* 是 canvas 桥接值），无需 dark 分支；
+ *    暗档阴影天然弱化，轮廓由 border 承担（与基件同策略）。
+ *  - .project-ds-picker-popover（搜索+双栏复合面板）与 quick-switcher
+ *    是命令面板不是菜单，刻意不在清单内。
+ * ==================================================================== */
+
+/* ── 容器：popover 实底 + hairline + 12px 圆角 + 双层柔和投影 ──
+ * （= 基件 DropdownMenuContent：rounded-xl border bg-popover
+ *    shadow-[0_10px_38px_-10px_…]。.handoff-menu 与 .app .avatar-popover
+ *    原是 Apple 毛玻璃 14px + backdrop-blur——统一为实底，blur 显式
+ *    关停。） */
+.present-menu,
+.share-menu-popover,
+.zoom-menu-popover,
+.app .avatar-popover,
+.df-row-popover,
+.viewer-mode-popover,
+.lang-menu-popover,
+.conv-menu,
+.plugin-share-popover,
+.design-card-menu,
+.app .working-dir-pill-menu,
+.handoff-menu,
+.chat-history-menu,
+.viewer-viewport-menu {
+  background: hsl(var(--popover));
+  border: 1px solid var(--od-border);
+  border-radius: var(--od-radius-lg); /* 12px = 基件 rounded-xl */
+  box-shadow:
+    0 10px 38px -10px rgba(0, 0, 0, 0.22),
+    0 2px 10px -2px rgba(0, 0, 0, 0.08);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* 容器 padding 统一 6px（= 基件 p-1.5）。.chat-history-menu 除外——
+ * 它的 head/列表自带满宽 padding + border-bottom，容器加 padding 会把
+ * 头部底线截短。.conv-menu 同理有满幅 header，但其原生 8px padding
+ * 本就存在（header 底线原本就不满幅），收到 6px 无结构影响。 */
+.present-menu,
+.share-menu-popover,
+.zoom-menu-popover,
+.app .avatar-popover,
+.df-row-popover,
+.viewer-mode-popover,
+.lang-menu-popover,
+.conv-menu,
+.plugin-share-popover,
+.design-card-menu,
+.app .working-dir-pill-menu,
+.handoff-menu,
+.viewer-viewport-menu {
+  padding: 6px;
+}
+
+/* ── 菜单行：8px 圆角 + 8/10 padding + 13.5px + 10px 图标间距 ──
+ * （= 基件 DropdownMenuItem：rounded-lg px-2.5 py-2 text-[13.5px]
+ *    gap-2.5。display/grid/justify-content 等布局留给原定义；
+ *    working-dir 的 .small 变体、handoff 的 .dim/.active、各 select 型
+ *    菜单的 .active 选中态特异性更高或不在此列，自然保留。） */
+.present-menu button,
+.share-menu-item,
+.zoom-menu-item,
+.avatar-item,
+.df-row-popover button,
+.viewer-mode-menu-item,
+.lang-menu-item,
+.plugin-share-item,
+.design-card-menu button,
+.app .working-dir-pill-menu-item,
+.handoff-menu-item {
+  border-radius: var(--od-radius); /* 8px = 基件 rounded-lg */
+  padding: 8px 10px;
+  font-size: 13.5px;
+  gap: 10px;
+  color: hsl(var(--popover-foreground));
+}
+
+/* 行 hover：统一 secondary 灰底（= 基件 focus:bg-secondary）。
+ * 伪类形态与原定义同构打平特异性；select 型菜单（viewer-mode /
+ * viewer-viewport / lang / handoff）的 .active 行 hover 保持各自的
+ * 选中底色，:not(.active) 让开。 */
+.present-menu button:hover,
+.share-menu-item:hover:not(:disabled),
+.zoom-menu-item:hover,
+.avatar-item:hover,
+.df-row-popover button:hover,
+.viewer-mode-menu-item:hover:not(.active),
+.lang-menu-item:hover:not(.active),
+.plugin-share-item:hover,
+.plugin-share-item:focus-visible,
+.design-card-menu button:hover,
+.app .working-dir-pill-menu-item:hover,
+.handoff-menu-item:hover:not(.active),
+.viewer-viewport-menu-item:hover:not(.active) {
+  background: hsl(var(--secondary));
+  color: hsl(var(--popover-foreground));
+}
+
+/* viewer-viewport-menu-item 与 viewer-mode 同形但不在上面的行组：
+ * 它是 role=listbox 的等宽选项行，min-height/justify 布局保留，只对齐
+ * 圆角与字号（它的 5px 8px 紧凑 padding 是等宽窄条刻意的，不放大）。 */
+.viewer-viewport-menu-item {
+  border-radius: var(--od-radius);
+  font-size: 13px;
+}
+
+/* ── 危险项：destructive 红（= 基件 variant="destructive"）──
+ * 替换 --red / color-mix 两种旧写法。 */
+.df-row-popover button.danger,
+.design-card-menu button.danger {
+  color: hsl(var(--destructive));
+}
+.df-row-popover button.danger:hover,
+.design-card-menu button.danger:hover {
+  background: hsl(var(--destructive) / 0.1);
+  color: hsl(var(--destructive));
+}
+
+/* ── 分隔线：1px border/70（= 基件 Separator）。margin 4px 0 贯穿
+ * padding 盒——不用基件的负 margin 全宽贯穿：share/handoff 容器带
+ * max-height + overflow-y:auto，负 margin 超宽会逼出横向滚动条。 */
+.share-menu-divider,
+.plugin-share-popover__divider,
+.app .working-dir-pill-menu-divider,
+.handoff-menu-divider {
+  height: 1px;
+  background: hsl(var(--border) / 0.7);
+  opacity: 1;
+  margin: 4px 0;
+}
+
+/* ── 入场动画统一：160ms 轻缩放淡入（原 apple-menu-in /
+ * plugin-detail-rise / pop-in 三套并存，zoom/viewer-mode 等则无动画）。
+ * transform-origin 不设——各菜单向下/向上开的都有，0.97 起点的缩放
+ * 在任意 origin 下差异不可感。 */
+@keyframes od-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.present-menu,
+.share-menu-popover,
+.zoom-menu-popover,
+.app .avatar-popover,
+.df-row-popover,
+.viewer-mode-popover,
+.lang-menu-popover,
+.conv-menu,
+.plugin-share-popover,
+.design-card-menu,
+.app .working-dir-pill-menu,
+.handoff-menu,
+.chat-history-menu,
+.viewer-viewport-menu {
+  animation: od-menu-in 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .present-menu,
+  .share-menu-popover,
+  .zoom-menu-popover,
+  .app .avatar-popover,
+  .df-row-popover,
+  .viewer-mode-popover,
+  .lang-menu-popover,
+  .conv-menu,
+  .plugin-share-popover,
+  .design-card-menu,
+  .app .working-dir-pill-menu,
+  .handoff-menu,
+  .chat-history-menu,
+  .viewer-viewport-menu {
+    animation: none;
+  }
+}

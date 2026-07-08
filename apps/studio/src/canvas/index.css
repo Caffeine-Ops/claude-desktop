@@ -47,3 +47,7 @@
 @import './styles/plugin-detail-extras.css';
 @import './styles/new-project-media.css';
 @import './styles/apple-chrome-composer.css';
+/* 下拉菜单统一皮肤（2026-07-08，对齐 chat 侧 ui/dropdown-menu 基件）：
+ * 纯覆盖层，靠级联顺序压过前面所有私有菜单类的同特异性定义——
+ * 必须保持是本清单最后一条。清单与纪律见 menus.css 头注释。 */
+@import './styles/menus.css';
