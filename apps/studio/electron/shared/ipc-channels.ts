@@ -112,6 +112,25 @@ export const IPC_CHANNELS = {
    */
   IMAGE_FILE_READ: 'image:file-read',
   /**
+   * Read one local spreadsheet file (xlsx / xls / csv) as base64 bytes for
+   * the chat pane's in-app spreadsheet preview (right-hand split panel).
+   * Same shape as IMAGE_FILE_READ: extension-whitelisted, size-capped,
+   * original bytes — parsing happens renderer-side (SheetJS), main only
+   * ferries the file. Deliberately NOT a generic read-any-file channel:
+   * the whitelist keeps the renderer's disk reach limited to what the
+   * preview actually renders.
+   */
+  SHEET_FILE_READ: 'sheet:file-read',
+  /**
+   * Stat one spreadsheet file (mtime + size). The in-app preview polls this
+   * every few seconds while open, to surface a "file changed — refresh"
+   * banner when the AI (or the user, in Excel) rewrites the file on disk.
+   * Deliberately a poll, not an fs.watch subscription: no watcher lifecycle
+   * to leak across sessions/windows, and a 3s cadence is plenty for a
+   * human-facing banner.
+   */
+  SHEET_FILE_STAT: 'sheet:file-stat',
+  /**
    * Renderer → main. Reads a ppt-master image-generation manifest
    * (`images/image_prompts.json`) by absolute path and returns each item's
    * status plus a small thumbnail data-URI for the ones already on disk.
@@ -1071,6 +1090,42 @@ export type ImageFileReadResult = {
   error?: string
 }
 
+/**
+ * Payload for SHEET_FILE_READ. `absPath` is an absolute path to a
+ * spreadsheet file (typically the path behind a deliverable file card —
+ * already verified on disk via SHELL_STAT_FILES).
+ */
+export type SheetFileReadPayload = { absPath: string }
+
+/**
+ * Result of SHEET_FILE_READ. `data` is the file's ORIGINAL bytes as plain
+ * base64 (no data-URI prefix — SheetJS takes base64 directly). `error`
+ * covers validation rejections (not absolute / not a spreadsheet extension /
+ * too large) and read failures. `mtimeMs`/`size` stamp the version that was
+ * read — the preview's change-detection baseline (see SHEET_FILE_STAT).
+ */
+export type SheetFileReadResult = {
+  ok: boolean
+  data?: string
+  mtimeMs?: number
+  size?: number
+  error?: string
+}
+
+/** Payload for SHEET_FILE_STAT — same contract as SHEET_FILE_READ. */
+export type SheetFileStatPayload = { absPath: string }
+
+/**
+ * Result of SHEET_FILE_STAT. `mtimeMs`/`size` of the file right now;
+ * compare against the read stamp to detect on-disk changes.
+ */
+export type SheetFileStatResult = {
+  ok: boolean
+  mtimeMs?: number
+  size?: number
+  error?: string
+}
+
 /* ───────────────────────── Model switching ─────────────────────── */
 
 /**
@@ -1750,6 +1805,19 @@ export interface ChatApi {
    * tab's in-app lightbox. Original bytes, extension-derived mime.
    */
   readImageFile(payload: ImageFileReadPayload): Promise<ImageFileReadResult>
+
+  /**
+   * Read one local spreadsheet file (xlsx / xls / csv) as base64 bytes for
+   * the in-app spreadsheet preview panel. Extension-whitelisted and
+   * size-capped main-side; parsing is the renderer's job (SheetJS).
+   */
+  readSheetFile(payload: SheetFileReadPayload): Promise<SheetFileReadResult>
+
+  /**
+   * Stat one spreadsheet file (mtime + size) for the preview's on-disk
+   * change detection. See SHEET_FILE_STAT.
+   */
+  statSheetFile(payload: SheetFileStatPayload): Promise<SheetFileStatResult>
 
   /**
    * List chat-capable model ids from the backend gateway (main-side cached).

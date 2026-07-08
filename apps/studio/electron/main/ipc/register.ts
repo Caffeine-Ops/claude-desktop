@@ -50,6 +50,10 @@ import {
   type ImageManifestItem,
   type ImageFileReadPayload,
   type ImageFileReadResult,
+  type SheetFileReadPayload,
+  type SheetFileReadResult,
+  type SheetFileStatPayload,
+  type SheetFileStatResult,
   type ModelListResult,
   type ModelSetPayload,
   type WorkspaceKnownListResult,
@@ -330,6 +334,8 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_REVEAL_PATH)
   ipcMain.removeHandler(IPC_CHANNELS.IMAGE_MANIFEST_READ)
   ipcMain.removeHandler(IPC_CHANNELS.IMAGE_FILE_READ)
+  ipcMain.removeHandler(IPC_CHANNELS.SHEET_FILE_READ)
+  ipcMain.removeHandler(IPC_CHANNELS.SHEET_FILE_STAT)
   ipcMain.removeHandler(IPC_CHANNELS.MODEL_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.MODEL_SET)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LIST)
@@ -920,6 +926,76 @@ export function registerIpcHandlers(): void {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         return { ok: false, error: `Read failed: ${msg}` }
+      }
+    }
+  )
+
+  // Spreadsheet bytes for the chat pane's in-app preview panel. Mirrors
+  // IMAGE_FILE_READ's contract exactly (extension whitelist + size cap +
+  // original bytes), just for sheet formats and without a data-URI wrapper —
+  // SheetJS consumes plain base64. Parsing stays renderer-side so a corrupt
+  // file can't take main down with it.
+  ipcMain.handle(
+    IPC_CHANNELS.SHEET_FILE_READ,
+    async (
+      _event,
+      payload: SheetFileReadPayload
+    ): Promise<SheetFileReadResult> => {
+      const absPath =
+        payload && typeof payload.absPath === 'string' ? payload.absPath : ''
+      if (!absPath || !isAbsolute(absPath)) {
+        return { ok: false, error: 'Invalid path (expected absolute).' }
+      }
+      const ext = absPath.includes('.')
+        ? absPath.split('.').pop()!.toLowerCase()
+        : ''
+      if (ext !== 'xlsx' && ext !== 'xls' && ext !== 'csv') {
+        return { ok: false, error: `Not a spreadsheet file: .${ext}` }
+      }
+      // 与 IMAGE_FILE_READ 同上限。base64 后 ~40MB 走一趟 IPC 可接受；
+      // 再大的表格预览本身也会先卡在渲染上,让它走系统应用。
+      const MAX_BYTES = 30 * 1024 * 1024
+      try {
+        const stat = statSync(absPath)
+        if (!stat.isFile()) return { ok: false, error: 'Not a file.' }
+        if (stat.size > MAX_BYTES) {
+          return { ok: false, error: 'Spreadsheet too large for in-app preview.' }
+        }
+        return {
+          ok: true,
+          data: readFileSync(absPath).toString('base64'),
+          // 变更检测基准:预览用它对比 SHEET_FILE_STAT 的轮询结果。
+          mtimeMs: stat.mtimeMs,
+          size: stat.size
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ok: false, error: `Read failed: ${msg}` }
+      }
+    }
+  )
+
+  // 表格文件的 mtime/size——预览面板每几秒轮询一次,发现盘上文件变了
+  // 就浮「刷新」提示条。刻意用轮询不用 fs.watch:没有跨会话/多窗口的
+  // watcher 生命周期要管,3s 对一个人眼提示条绰绰有余。
+  ipcMain.handle(
+    IPC_CHANNELS.SHEET_FILE_STAT,
+    async (
+      _event,
+      payload: SheetFileStatPayload
+    ): Promise<SheetFileStatResult> => {
+      const absPath =
+        payload && typeof payload.absPath === 'string' ? payload.absPath : ''
+      if (!absPath || !isAbsolute(absPath)) {
+        return { ok: false, error: 'Invalid path (expected absolute).' }
+      }
+      try {
+        const stat = statSync(absPath)
+        if (!stat.isFile()) return { ok: false, error: 'Not a file.' }
+        return { ok: true, mtimeMs: stat.mtimeMs, size: stat.size }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ok: false, error: `Stat failed: ${msg}` }
       }
     }
   )

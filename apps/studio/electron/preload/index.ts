@@ -69,6 +69,10 @@ import {
   type ImageManifestReadResult,
   type ImageFileReadPayload,
   type ImageFileReadResult,
+  type SheetFileReadPayload,
+  type SheetFileReadResult,
+  type SheetFileStatPayload,
+  type SheetFileStatResult,
   type ModelListResult,
   type ModelSetPayload,
   type AuthLoginPayload,
@@ -293,6 +297,20 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.IMAGE_FILE_READ,
       payload
     ) as Promise<ImageFileReadResult>
+  },
+
+  readSheetFile(payload: SheetFileReadPayload): Promise<SheetFileReadResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SHEET_FILE_READ,
+      payload
+    ) as Promise<SheetFileReadResult>
+  },
+
+  statSheetFile(payload: SheetFileStatPayload): Promise<SheetFileStatResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SHEET_FILE_STAT,
+      payload
+    ) as Promise<SheetFileStatResult>
   },
 
   listModels(): Promise<ModelListResult> {
