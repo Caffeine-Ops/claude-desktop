@@ -33,6 +33,31 @@ export const usePreviewReadinessStore = create<{
   setReadiness: (v) => set({ readiness: v })
 }))
 
+/**
+ * apply turn 生命周期，keyed by 发起会话 id。为什么是 module store 而不是组
+ * 件 state：切换聊天会话时 SlidesWorkspace 可能卸载本组件（新会话没有
+ * preview server）或原地换绑 sessionId（无 key 复用实例），组件 state 要么
+ * 归零（切回来按钮忘了 AI 还在修改）、要么带着旧会话的 phase 去对新会话的
+ * streaming/队列信号（空闲双灭 → 1.5s 后误报「已完成」解锁）。store 里
+ * phase 按 sid 存，组件只读写「当前显示会话」那一格——phase 与它的判定信
+ * 号永远同源同 sid；组件卸载期间 phase 不被推进也没关系，按钮不在屏上，重
+ * 挂后状态机 effect 幂等接手。会话删除后残留的空格子无人再读，量级可忽略。
+ */
+const useApplyPhaseStore = create<{
+  bySid: Record<string, 'sent' | 'active'>
+  set: (sid: string, phase: 'sent' | 'active') => void
+  clear: (sid: string) => void
+}>((set) => ({
+  bySid: {},
+  set: (sid, phase) => set((s) => ({ bySid: { ...s.bySid, [sid]: phase } })),
+  clear: (sid) =>
+    set((s) => {
+      if (!(sid in s.bySid)) return s
+      const { [sid]: _dropped, ...rest } = s.bySid
+      return { bySid: rest }
+    })
+}))
+
 /* SVG 标签 → 大白话名。已选芯片/标注 tooltip 用它替代裸 _edit_15
  * （普通用户产品原始 ID 一律收进 title，文案直白原则）。 */
 const TAG_LABEL: Record<string, string> = {
@@ -217,6 +242,27 @@ export function LivePreviewEditor({
   const chatSessionId = useChatStore((s) => s.sessionId)
   const applyQueued = useSessionQueue(chatSessionId).some(
     (q) => q.text === APPLY_ANNOTATION_TEXT
+  )
+  /**
+   * 本次 apply turn 的生命周期（存在 useApplyPhaseStore，按 sid 取当前会话
+   * 那格——为什么不是组件 state 见 store 声明处注释）。ppt-master 侧的
+   * 「修改完成」定义是 AI 重写页面时清掉 data-edit-* 标记
+   * （check_annotations.py 扫不到即完成），但 /api/slides 的
+   * annotation_count 把磁盘标记和内存里未保存的新标注混在一个数里——AI 修
+   * 改期间用户新加一条标注它就不归零，绑它判完成会死锁。所以完成判定挂聊天
+   * 侧：send 之后跟踪发起会话的 streaming/队列，apply turn 真正结束（两个信
+   * 号都灭）才解锁按钮。
+   *   'sent'   = send() 已发出，但 onNew 还没把 streaming 翻 true / 还没入队
+   *              （async 空窗，此窗口内两个信号都是 false）；
+   *   'active' = AI 正在修改，或 apply turn 还在队列里等前一个 turn 收尾。
+   * streaming 订阅 per-session 槽而不是顶层 mirror——与 phase/队列检查严格
+   * 同源于 chatSessionId（ProposalDocPanel 同款读法）。
+   */
+  const applyPhase: 'idle' | 'sent' | 'active' = useApplyPhaseStore((s) =>
+    chatSessionId ? (s.bySid[chatSessionId] ?? 'idle') : 'idle'
+  )
+  const chatStreaming = useChatStore((s) =>
+    chatSessionId ? (s.perSession[chatSessionId]?.streaming ?? false) : false
   )
 
   const [slides, setSlides] = useState<LiveSlide[]>([])
@@ -964,6 +1010,14 @@ export function LivePreviewEditor({
   )
 
   const applyChanges = useCallback(async () => {
+    // 本会话上一轮 apply 还没走完（AI 修改中）就不再受理。按钮已 disabled，
+    // 这里挡的是 disabled 渲染生效前的连点——直接同步读 store 的 live 值
+    // （zustand set 同步提交，send 处写入后第二击必被挡），与下面读 live 队
+    // 列的 dup 检查同思路。
+    {
+      const liveSid = useChatStore.getState().sessionId
+      if (liveSid && useApplyPhaseStore.getState().bySid[liveSid]) return
+    }
     setBusy(true)
     setStatusMsg('正在应用…')
     try {
@@ -1003,6 +1057,10 @@ export function LivePreviewEditor({
             const willQueue = useChatStore.getState().streaming
             composerRuntime.setText(APPLY_ANNOTATION_TEXT)
             composerRuntime.send()
+            // 从这一刻起进入 apply 生命周期（见 applyPhase 声明处注释）：按钮
+            // 转 loading 并锁死，由下面的状态机 effect 在 turn 结束时解锁。
+            // 写进 sid 那格——send 发向的就是这个会话的 composer。
+            if (sid) useApplyPhaseStore.getState().set(sid, 'sent')
             setStatusMsg(willQueue ? '会话进行中，已加入队列' : '已发送，AI 正在修改')
           }
         } else {
@@ -1015,6 +1073,41 @@ export function LivePreviewEditor({
       setBusy(false)
     }
   }, [api, loadSlide, composerRuntime])
+
+  // apply 生命周期状态机：sent →（见到 streaming 或入队）→ active →（turn
+  // 结束且队列已空）→ idle（= 从 store 清掉该 sid）。phase 与两个判定信号都
+  // 取自同一个 chatSessionId，切会话时三者一起换格子——不会拿旧会话的
+  // phase 去对新会话的信号（那正是「切换 session 后失灵」的根因）。两个转换
+  // 各带一个 timer，原因不同：
+  // - 'sent' 的 10s 兜底：send() 到 onNew 翻 streaming 是 async 空窗，正常几
+  //   百 ms 内闭合；但 onNew 的异常路径（引擎拒发等）既不起 turn 也不入队，
+  //   没有兜底按钮就永久锁死。切会话打断兜底计时也没关系，切回来重新起算。
+  // - 'active' 的 1.5s 去抖：排队场景里前一个 turn 收尾（streaming=false）
+  //   → pump 取走队首（queued=false）→ 重新 send → streaming 再翻 true，
+  //   中间存在一个两信号皆灭的异步空窗（React effect 链 + IPC），立即判完成
+  //   会在空窗里把按钮闪开又闪关。去抖期内任一信号复燃即取消（依赖变化走
+  //   cleanup），真完成时最多晚 1.5s 解锁，感知不到。
+  useEffect(() => {
+    if (!chatSessionId) return
+    const sid = chatSessionId
+    if (applyPhase === 'sent') {
+      if (chatStreaming || applyQueued) {
+        useApplyPhaseStore.getState().set(sid, 'active')
+        return
+      }
+      const t = window.setTimeout(() => {
+        useApplyPhaseStore.getState().clear(sid)
+      }, 10_000)
+      return () => window.clearTimeout(t)
+    }
+    if (applyPhase === 'active' && !chatStreaming && !applyQueued) {
+      const t = window.setTimeout(() => {
+        useApplyPhaseStore.getState().clear(sid)
+        setStatusMsg('本次修改已完成，可以继续标注')
+      }, 1500)
+      return () => window.clearTimeout(t)
+    }
+  }, [applyPhase, chatStreaming, applyQueued, chatSessionId])
 
   // 撤销 / 退出预览 的 UI 已按需求移除（应用标注是唯一动作），对应的
   // runUndo / exitPreview 回调随之删除。undoDepth state 仍由 loadSlide /
@@ -1556,19 +1649,32 @@ export function LivePreviewEditor({
           )}
           <button
             type="button"
-            disabled={busy || applyQueued}
+            disabled={busy || applyQueued || applyPhase !== 'idle'}
             onClick={() => void applyChanges()}
             className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-[linear-gradient(135deg,hsl(var(--brand)),color-mix(in_srgb,hsl(var(--brand))_85%,#000))] px-3 py-2.5 text-[12.5px] font-semibold text-white shadow-[0_4px_14px_-4px_hsl(var(--brand)/0.55),inset_0_1px_0_rgba(255,255,255,0.22)] transition-all hover:shadow-[0_6px_20px_-4px_hsl(var(--brand)/0.55),inset_0_1px_0_rgba(255,255,255,0.22)] active:scale-[0.98] disabled:opacity-45 disabled:shadow-none disabled:active:scale-100"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M20 6L9 17l-5-5" /></svg>
-            {applyQueued ? '已在队列中' : '应用标注到我的 PPT'}
+            {applyPhase !== 'idle' && !applyQueued ? (
+              <span className="size-3.5 shrink-0 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+            ) : (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M20 6L9 17l-5-5" /></svg>
+            )}
+            {applyQueued
+              ? '已在队列中'
+              : applyPhase !== 'idle'
+                ? 'AI 正在修改…'
+                : '应用标注到我的 PPT'}
           </button>
           {/* Subline: while an apply turn is queued, tell the user it'll fire
               automatically — so the greyed-out button doesn't read as "broken".
-              Otherwise show how many annotations this click will write back. */}
+              While the AI is applying (applyPhase busy), explain when it will
+              unlock. Otherwise show how many annotations this click writes. */}
           {applyQueued ? (
             <div className="text-center text-[10.5px] text-muted-foreground/70">
               回复完成后会自动应用
+            </div>
+          ) : applyPhase !== 'idle' ? (
+            <div className="text-center text-[10.5px] text-muted-foreground/70">
+              修改完成后可再次应用
             </div>
           ) : (
             annotationEntries.length > 0 && (
