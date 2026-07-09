@@ -694,6 +694,55 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
   .imgp-seg-active { animation: none; background: hsl(var(--accent)); }
 }
 
+/* ═══ 图片生成占位卡「点阵显影」（ImageGenCard，Bash image_gen.py 特判）═══
+ * radial-gradient 平铺出 16px 网格点当幕布，再用一张不重复的 radial mask
+ * 从左上角把可见范围「呼吸」出去——像素在等待中逐步显影的隐喻（对标
+ * ChatGPT 生图占位）。动画只碰 mask-size / opacity：mask 的重采样由合成器
+ * 完成，不触发布局与内容重绘（region-refresh 全文档 recalc 是前车之鉴，
+ * 见 2026-07-08 error 记录——占位卡会一挂几十秒，必须零主线程成本）。 */
+.ig-dots {
+  background-image: radial-gradient(
+    circle,
+    hsl(var(--foreground) / 0.16) 1.2px,
+    transparent 1.7px
+  );
+  background-size: 16px 16px;
+  /* 渐变中心钉在左上（15% 10%），mask 图不重复、锚左上——生长方向恒定
+   * 朝右下，和卡内左上角的「正在创建图片」标题同一视觉起点。 */
+  -webkit-mask-image: radial-gradient(140% 140% at 15% 10%, #000 0%, #000 35%, transparent 70%);
+  mask-image: radial-gradient(140% 140% at 15% 10%, #000 0%, #000 35%, transparent 70%);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: 0 0;
+  mask-position: 0 0;
+  animation: ig-dots-grow 3s ease-in-out infinite alternate;
+}
+@keyframes ig-dots-grow {
+  from {
+    -webkit-mask-size: 55% 55%;
+    mask-size: 55% 55%;
+    opacity: 0.55;
+  }
+  to {
+    -webkit-mask-size: 170% 170%;
+    mask-size: 170% 170%;
+    opacity: 1;
+  }
+}
+
+/* 成图淡入：轻微过缩回正 + 透明度。只挂在「亲眼看着生成完」的图上
+ * （ImageGenCard 的 sawRunning 门控），历史恢复直接终态。 */
+.ig-img-in { animation: ig-img-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes ig-img-in {
+  from { opacity: 0; transform: scale(1.02); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ig-dots { animation: none; }
+  .ig-img-in { animation: none; }
+}
+
 /* ═══ 会话切换过渡「帘幕 + 骨架」（ThreadView session switch）═══
  * 原型见 scratchpad/SessionSwitchLoading.html（用户选定混合策略：短切换
  * 只播帘幕，>600ms 未挂载升级骨架）。ssw- 前缀 = session switch。

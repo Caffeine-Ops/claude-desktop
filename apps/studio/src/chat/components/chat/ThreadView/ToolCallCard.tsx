@@ -15,6 +15,7 @@ import { friendlyToolView } from '../ToolFormatters'
 import { InlinePermissionPrompt } from '../../permissions/InlinePermissionPrompt'
 import { PermissionWaitAnchor } from '../../permissions/PermissionFloatCard'
 import { escapeHtml, languageFromPath } from './codeViewUtils'
+import { detectImageGen, ImageGenToolCard } from './ImageGenCard'
 import { WorkflowTaskList } from './WorkflowTaskTree'
 
 /* ───────────────────── Tool-call card ──────────────────────── */
@@ -219,6 +220,18 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   // streaming JSON, prompt and all — would be a duplicate. Render nothing.
   // All hooks above have already run, so this early return is hook-safe.
   if (askHandledByCanvas) return <></>
+
+  // 图片生成特判（imagegen / gpt-image-2 的 Bash 调用）：聊天里「生成图片」
+  // 是产品动作，不渲染开发者工具卡——running 显示「正在创建图片」点阵显影
+  // 占位卡，settled 后成图原位落卡（点击进标记改图面板）。stdout 解析不到
+  // 成果路径（网关失败/脚本崩溃）时 detect 返回 null 回退这张原卡，错误原文
+  // 可见。权限待决时也走原卡：等待锚点（PermissionWaitAnchor）挂在原卡结构
+  // 里，替换掉它用户就找不到「在等你授权」的提示了。同样 hook-safe。
+  const imageGen =
+    toolName === 'Bash' && !pendingPermission
+      ? detectImageGen(args, result, running)
+      : null
+  if (imageGen) return <ImageGenToolCard info={imageGen} running={running} />
 
   // Visual error tone (red badge / name / output pane). Heuristic on the
   // settled result text — see resultLooksError above.

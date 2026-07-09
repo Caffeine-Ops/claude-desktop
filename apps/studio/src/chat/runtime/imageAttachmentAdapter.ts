@@ -14,24 +14,28 @@ import type {
  * Two attachment kinds, distinguished by `attachment.type`:
  *
  *  ── Images (`type: 'image'`) ─────────────────────────────────────────
- *  Resized + base64-encoded to a data URL and sent to the model as a
- *  vision block. What we do differently from the upstream
- *  SimpleImageAttachmentAdapter:
+ *  Kept as `type: 'image'` so the composer chip shows a thumbnail, but
+ *  the SEND format depends on whether the image exists on disk
+ *  (2026-07-09 用户定稿:图片文件一律发路径,不再 base64 内联):
  *
- *   1. **Dimension clamp**: Anthropic's vision docs recommend ≤ 1568px on
- *      the long edge. Larger images get resized on the GPU via
- *      createImageBitmap + OffscreenCanvas so we don't ship 4000px
- *      screenshots over IPC and into the API.
- *   2. **Size clamp**: the API rejects anything over 5MB base64 per image.
- *      After resizing to PNG we check the encoded length; if it's still
- *      over the ~3.75MB raw budget (which would become ~5MB base64) we
- *      re-encode as JPEG q=0.85 and keep dropping quality until it fits
- *      or we hit a minimum quality floor.
- *   3. **Data URL output**: the Complete attachment's content uses
- *      `{ type: 'image', image: dataURL }`. The main process parses it
- *      back into `{ media_type, data }` when building the SDK user
- *      message, so the wire format is a single string all the way
- *      through.
+ *   a. **On-disk image files** (drag/drop, file picker) → same as any
+ *      other file: the absolute path rides a FileMessagePart
+ *      (FILE_PATH_MIME) and becomes an `@"path"` mention. fusion-code's
+ *      Read tool loads the image itself and returns a vision block to
+ *      the model. The transcript (jsonl) stores only the path — no
+ *      megabyte base64 blobs in history, and the mention renders as a
+ *      compact file chip in the user bubble.
+ *
+ *   b. **Clipboard pastes** (no disk path exists) → the legacy inline
+ *      pipeline: resized + base64-encoded to a data URL, sent as a
+ *      vision block. Details:
+ *      1. **Dimension clamp**: Anthropic's vision docs recommend ≤
+ *         1568px on the long edge (resized via createImageBitmap +
+ *         OffscreenCanvas).
+ *      2. **Size clamp**: the API rejects > 5MB base64 per image; PNG
+ *         first, then JPEG stepping quality down until it fits.
+ *      3. **Data URL output**: `{ type: 'image', image: dataURL }`; the
+ *         main process parses it back into `{ media_type, data }`.
  *
  *  ── Files (`type: 'file'`) ───────────────────────────────────────────
  *  NON-image files do NOT ship their bytes. Instead we resolve the
@@ -92,20 +96,29 @@ export const fileAttachmentAdapter: AttachmentAdapter = {
 
   async add({ file }: { file: File }): Promise<PendingAttachment> {
     if (isImageFile(file)) {
-      // At add-time we only mark it as "pending, waiting for send". The
-      // actual resize + encode happens in send() so the UI shows the
-      // attachment chip immediately without blocking on GPU work.
+      // Resolve the disk path NOW (same reasoning as the file branch
+      // below: the native File reference is freshest at add-time).
+      // Present for drag/drop & picker images, '' for clipboard pastes
+      // — send() branches on it: path → `@"path"` mention, no path →
+      // inline base64 vision block.
+      const path = window.chatApi?.pathForFile(file) ?? ''
       console.log('[fileAdapter] add image', {
         name: file.name,
         size: file.size,
-        type: file.type
+        type: file.type,
+        path
       })
       return {
         id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        // type 保持 'image':composer chip 据此渲染缩略图预览,与发送
+        // 形态(路径 or base64)无关。
         type: 'image',
         name: file.name || 'Pasted image',
         contentType: file.type || 'image/png',
         file,
+        content: path
+          ? [{ type: 'file', filename: file.name, data: path, mimeType: FILE_PATH_MIME }]
+          : [],
         status: { type: 'requires-action', reason: 'composer-send' }
       }
     }
@@ -163,7 +176,30 @@ export const fileAttachmentAdapter: AttachmentAdapter = {
       }
     }
 
-    // ── Image branch: resize + base64-encode to a data URL ────────────
+    // ── Image branch ───────────────────────────────────────────────
+    // On-disk image? Send the PATH, exactly like the file branch —
+    // the model reads it with the Read tool (which returns a vision
+    // block), and the transcript stores a path instead of megabytes
+    // of base64(2026-07-09 用户定稿:图片文件一律发路径)。
+    {
+      const stashed = attachment.content?.find(
+        (p): p is { type: 'file'; data: string; mimeType: string; filename?: string } =>
+          p.type === 'file' && p.mimeType === FILE_PATH_MIME
+      )
+      const path = stashed?.data || window.chatApi?.pathForFile(attachment.file) || ''
+      if (path) {
+        console.log('[fileAdapter] send image as path', { name: attachment.name, path })
+        return {
+          ...attachment,
+          status: { type: 'complete' },
+          content: [
+            { type: 'file', filename: attachment.name, data: path, mimeType: FILE_PATH_MIME }
+          ]
+        }
+      }
+    }
+
+    // Clipboard paste (no disk path) — inline base64 vision block.
     console.log('[fileAdapter] send image start', {
       name: attachment.name,
       fileSize: attachment.file.size,

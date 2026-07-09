@@ -3,12 +3,15 @@ import { createPortal } from 'react-dom'
 import { MessagePrimitive, useMessage } from '@assistant-ui/react'
 import { AnimatePresence, motion } from 'motion/react'
 
-import { useT } from '../../../i18n'
+import { useI18n, useT } from '../../../i18n'
 import { findSkillChipSpec } from '../../../composer/skillChipRegistry'
 import { FileTypeIcon, fileIconPathsByKey } from '../FileTypeIcon'
 import {
+  parseImageEditMessage,
   parseSheetSelectionMessage,
+  useImageEditStore,
   useSheetPreviewStore,
+  type ImageEditMeta,
   type SheetSelectionMeta
 } from '../../../stores/filePreview'
 
@@ -113,6 +116,11 @@ function ClampedUserBubble(): React.JSX.Element {
   const sheetSel = parseSheetSelectionMessage(fullText)
   if (sheetSel) return <SheetSelectionCard meta={sheetSel} />
 
+  // 图片标记编辑面板发出的消息（同一套首行协议标记）：渲染成紧凑卡片
+  // ——图片名 + 各标记点描述 + 素材数；完整指令只在 CLI 侧文本里。
+  const imgEdit = parseImageEditMessage(fullText)
+  if (imgEdit) return <ImageEditCard meta={imgEdit} />
+
   return (
     <>
       <div
@@ -208,8 +216,12 @@ function SheetSelectionCard({
         {t('sheetSelectionPill')}
       </div>
       {/* hover 浮层:pill 上方右对齐展开。opacity 过渡 + hover 时才接管
-          指针(文件名可点击重开预览);离开即收。 */}
-      <div className="pointer-events-none absolute bottom-full right-0 z-20 mb-2 w-[400px] max-w-[72vw] opacity-0 transition-opacity duration-150 group-hover/selcard:pointer-events-auto group-hover/selcard:opacity-100">
+          指针(文件名可点击重开预览);离开即收。
+          pill 与卡片间的 8px 间隙用容器的 pb-2 透明内边距桥接(不是 mb-2
+          外边距)——外边距不在 group 的命中盒里,鼠标穿过缝隙会瞬断 hover
+          致卡片抖没(2026-07-08 用户反馈「hover 不上去」)。内边距仍属容器,
+          指针全程不脱离 .group/selcard。 */}
+      <div className="pointer-events-none absolute bottom-full right-0 z-20 w-[400px] max-w-[72vw] pb-2 opacity-0 transition-opacity duration-150 group-hover/selcard:pointer-events-auto group-hover/selcard:opacity-100">
         <div
           data-selectable="true"
           className="overflow-hidden rounded-2xl border border-border bg-card text-left shadow-[0_2px_6px_rgba(0,0,0,0.06),0_16px_40px_-16px_rgba(0,0,0,0.35)]"
@@ -249,6 +261,106 @@ function SheetSelectionCard({
           ) : (
             <div className="pb-3" />
           )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 图片标记编辑消息（替代绿气泡）。结构照抄 SheetSelectionCard：收起为
+ * 「🖼 N 处图片修改」胶囊，hover 浮出完整卡片——图片名（点击重开编辑
+ * 面板）+ 逐条标记描述 + 额外要求 + 融合素材计数。间隙桥接用 pb-2 内
+ * 边距的原因见 SheetSelectionCard 内注释（外边距会瞬断 hover）。
+ */
+function ImageEditCard({ meta }: { meta: ImageEditMeta }): React.JSX.Element {
+  const lang = useI18n((s) => s.lang)
+  const zh = lang === 'zh'
+  const editCount = meta.edits.length + (meta.extra ? 1 : 0)
+  return (
+    <div className="group/selcard relative">
+      <div className="flex cursor-default items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-[13.5px] font-medium text-foreground shadow-sm transition-colors group-hover/selcard:border-input">
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+          className="shrink-0 text-muted-foreground"
+        >
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none" />
+          <path d="M21 15l-5-5L5 21" />
+        </svg>
+        {zh ? `${editCount} 处图片修改` : `${editCount} image edits`}
+      </div>
+      <div className="pointer-events-none absolute bottom-full right-0 z-20 w-[400px] max-w-[72vw] pb-2 opacity-0 transition-opacity duration-150 group-hover/selcard:pointer-events-auto group-hover/selcard:opacity-100">
+        <div
+          data-selectable="true"
+          className="overflow-hidden rounded-2xl border border-border bg-card text-left shadow-[0_2px_6px_rgba(0,0,0,0.06),0_16px_40px_-16px_rgba(0,0,0,0.35)]"
+        >
+          <div className="px-4 pt-3">
+            <button
+              type="button"
+              disabled={!meta.path}
+              onClick={() => {
+                if (meta.path) {
+                  useImageEditStore.getState().openEditor(meta.path)
+                }
+              }}
+              title={meta.path || undefined}
+              className="group/file flex max-w-full items-center gap-2 text-left"
+            >
+              <span
+                aria-hidden
+                className="grid size-5 shrink-0 place-items-center rounded-[5px] border border-border bg-background"
+              >
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  aria-hidden
+                  className="text-muted-foreground"
+                >
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <path d="M21 15l-5-5L5 21" />
+                </svg>
+              </span>
+              <span className="truncate text-[13.5px] font-medium text-accent group-hover/file:underline">
+                {meta.name}
+              </span>
+            </button>
+          </div>
+          <div className="px-4 pb-3 pt-2 text-[14px] leading-[1.6] text-foreground">
+            {meta.edits.map((e, i) => (
+              <div key={i} className="flex gap-2">
+                <span className="shrink-0 font-semibold tabular-nums">
+                  {i + 1}.
+                </span>
+                <span className="min-w-0 break-words">{e.note}</span>
+              </div>
+            ))}
+            {meta.extra ? (
+              <div className="flex gap-2">
+                <span className="shrink-0 font-semibold">＋</span>
+                <span className="min-w-0 break-words">{meta.extra}</span>
+              </div>
+            ) : null}
+            {meta.fusion.length > 0 ? (
+              <div className="pt-1 text-[12.5px] text-muted-foreground">
+                {zh
+                  ? `融合素材 ${meta.fusion.length} 张`
+                  : `${meta.fusion.length} fusion image(s)`}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

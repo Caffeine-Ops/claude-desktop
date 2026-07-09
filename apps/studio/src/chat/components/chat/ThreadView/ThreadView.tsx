@@ -27,7 +27,11 @@ import {
 import { ProposalDocPanel } from '../../workspace/ProposalDocPanel'
 import { useProposalWorkspace } from '../../../stores/proposal'
 import { SpreadsheetPreviewPanel } from './SpreadsheetPreviewPanel'
-import { useSheetPreviewStore } from '../../../stores/filePreview'
+import { ImageEditPanel } from './ImageEditPanel'
+import {
+  useImageEditStore,
+  useSheetPreviewStore
+} from '../../../stores/filePreview'
 
 /**
  * ThreadView
@@ -470,16 +474,23 @@ export function ThreadView(): React.JSX.Element {
   // 自动弹出不该压过它。
   const sheetPreviewPath = useSheetPreviewStore((s) => s.path)
   const showSheetPreview = sheetPreviewPath !== null && !isSplitMode
+  // 图片标记编辑右栏：用户点了成果卡片里的图片文件。开关语义与表格预览
+  // 完全同构；两者在 store 层交叉互斥（后开的赢，见 stores/filePreview），
+  // 这里不会同时非 null。
+  const imageEditPath = useImageEditStore((s) => s.path)
+  const showImageEdit = imageEditPath !== null && !isSplitMode
   const showWorkflowPanel =
-    workflowPanelWanted && !isSplitMode && !showSheetPreview
+    workflowPanelWanted && !isSplitMode && !showSheetPreview && !showImageEdit
   // chat 列收窄成 rail 的诱因：slides / proposal / workflow 脚本 / 表格
-  // 预览任一右栏打开。宽度共用同一条持久化的 chatColWidth。
-  const chatRailed = isSplitMode || showWorkflowPanel || showSheetPreview
-  // 切会话即收起表格预览：路径虽跨会话有效（文件还在盘上），但预览是
-  // 「点开看一眼」的瞬时动作，残留一张与新会话无关的旧表格读作串台。
-  // 挂载首跑也会触发一次——closePreview 幂等，启动时 path 本就是 null。
+  // 预览 / 图片编辑任一右栏打开。宽度共用同一条持久化的 chatColWidth。
+  const chatRailed =
+    isSplitMode || showWorkflowPanel || showSheetPreview || showImageEdit
+  // 切会话即收起表格预览与图片编辑：路径虽跨会话有效（文件还在盘上），但
+  // 都是「点开看一眼/改一下」的瞬时动作，残留与新会话无关的旧面板读作
+  // 串台。挂载首跑也会触发一次——两个 close 都幂等，启动时 path 本就是 null。
   useEffect(() => {
     useSheetPreviewStore.getState().closePreview()
+    useImageEditStore.getState().closeEditor()
   }, [sessionId])
   // Slides two-pane split is user-resizable. The chat rail used to be a
   // hard `w-[560px]` with a `border-r` hairline between the panes; per design
@@ -766,6 +777,16 @@ export function ThreadView(): React.JSX.Element {
         <>
           <ChatColumnResizeHandle onResizeStart={onResizeStart} />
           <SpreadsheetPreviewPanel />
+        </>
+      ) : null}
+
+      {/* 图片标记编辑右栏：点成果卡片里的图片打开，图上落标记逐点描述
+          改动、可加融合素材，发送即走 imagegen skill 改图。布局与表格
+          预览同构，二者 store 层互斥。 */}
+      {showImageEdit ? (
+        <>
+          <ChatColumnResizeHandle onResizeStart={onResizeStart} />
+          <ImageEditPanel />
         </>
       ) : null}
 
