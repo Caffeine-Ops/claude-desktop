@@ -80,7 +80,12 @@ import { buildProposalAppend, type ProposalProductScope } from './proposalPrompt
 import { renderRetrievedBlock } from './proposalRetrieve'
 import { buildProposalProductScopes } from './proposalScopes'
 import { kbSemanticSearch, warmEmbedWorker } from './kbSemanticSearch'
-import { kbOutDir } from './kbIndexStore'
+import {
+  kbOutDir,
+  kbLocalDir,
+  imagegenOutDir,
+  localKbReadDirs
+} from './kbIndexStore'
 
 // resolveDefaultWorkspace moved to ./workspaceRegistry — the default
 // workspace doubles as the known-workspaces registry's implicit first
@@ -1983,7 +1988,17 @@ export class ChatEngine extends EventEmitter {
               ? {}
               : pythonHome
                 ? { PPT_MASTER_PYTHON_HOME: pythonHome }
-                : {})
+                : {}),
+            // local-kb skill 的 kbpath.mjs 读这个拿到知识库目录（userData/kb-local/）——
+            // userData 的真实位置只有 main 侧算得出，skill 脚本是用户机器裸 node 进程，
+            // 必须由此注入。尊重用户自导出的覆盖（诊断用）。
+            CLAUDE_DESKTOP_KB_DIR:
+              process.env.CLAUDE_DESKTOP_KB_DIR ?? kbLocalDir(),
+            // imagegen skill 的 image_gen.py 读这个拿到图片默认落盘目录
+            // （~/.cowork/imagegen）。理由同 KB_DIR：~ 的真实位置只有 main 侧
+            // 算得出，裸子进程算不出，故注入绝对路径。尊重用户覆盖。
+            CLAUDE_DESKTOP_IMAGEGEN_DIR:
+              process.env.CLAUDE_DESKTOP_IMAGEGEN_DIR ?? imagegenOutDir()
           }
         : {
             ...systemBackendEnv(),
@@ -1995,18 +2010,31 @@ export class ChatEngine extends EventEmitter {
               ? {}
               : pythonHome
                 ? { PPT_MASTER_PYTHON_HOME: pythonHome }
-                : {})
+                : {}),
+            // 同 bundled：local-kb 在 system 后端下也要能用。KB_DIR 是 main 侧运行时路径，
+            // 不是 env.json 网关密钥，不影响 claude 模型路由，交给 system claude 安全。
+            CLAUDE_DESKTOP_KB_DIR:
+              process.env.CLAUDE_DESKTOP_KB_DIR ?? kbLocalDir(),
+            // 同 bundled：imagegen 默认落盘目录（~/.cowork/imagegen），main 侧运行时
+            // 路径，不影响 claude 模型路由，system 后端下也一并注入。
+            CLAUDE_DESKTOP_IMAGEGEN_DIR:
+              process.env.CLAUDE_DESKTOP_IMAGEGEN_DIR ?? imagegenOutDir()
           }) as Record<string, string>,
-      // 方案模式才扩大可读范围到知识库镜像目录（绝对路径）。spread-omit：非方案
-      // 模式不传，等价于不设——绝不通过这个字段或 cwd 改变默认可读范围（cwd 不变量）。
-      ...(proposalActive
-        ? {
-            additionalDirectories:
-              productScopes.length > 0
-                ? productScopes.map((p) => p.dir)
-                : [kbMirrorDir]
-          }
-        : {}),
+      // 扩大可读范围的两个来源，各自独立、按需叠加（都是绝对路径）：
+      //   ① 方案模式：知识库文本镜像目录（写方案检索用，原有逻辑不变）。
+      //   ② 本地库（local-kb）：用户选定的库根 + 该库的 stateDir——让 agent 能读
+      //      KB-INDEX.md 定位、再 Read 库内真实文件回答（localKbReadDirs 未配置库时返空）。
+      // spread-omit：合并后为空（既非方案、又没配本地库）就整个不传，等价于不设——
+      // 绝不通过这个字段或 cwd 改变默认可读范围（cwd 不变量）。
+      ...(() => {
+        const proposalDirs = proposalActive
+          ? productScopes.length > 0
+            ? productScopes.map((p) => p.dir)
+            : [kbMirrorDir]
+          : []
+        const dirs = [...proposalDirs, ...localKbReadDirs()]
+        return dirs.length > 0 ? { additionalDirectories: dirs } : {}
+      })(),
       // 用 preset 形式追加中文回复指令，而不是用字符串整体覆盖。
       // 整体覆盖会丢掉 claude_code preset 自带的工具说明 / 权限语义 /
       // 环境上下文，得不偿失；`{ type:'preset', preset:'claude_code', append }`

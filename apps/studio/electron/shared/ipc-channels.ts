@@ -797,7 +797,73 @@ export const IPC_CHANNELS = {
    * 搜索面板主动用。embedding 在 utilityProcess、不冻 main；模型缺失/stale 降级 BM25。
    * staleIndex=true 时结果是 BM25 降级（有内容但非语义），面板顶部显「需重建索引」条。
    */
-  KB_SEMANTIC_SEARCH: 'kb:semantic-search'
+  KB_SEMANTIC_SEARCH: 'kb:semantic-search',
+  /**
+   * Renderer → main. 扫描系统授权目录（下载 + 桌面）里的文档文件，返回元数据清单
+   * （名称/路径/扩展名/大小/mtime/来源），驱动知识库页「全部文件」的网格/列表视图。
+   *
+   * 为什么只扫这两个目录：它们是 macOS TCC 的标准授权单元——首次 readdir 会触发系统
+   * 「允许访问下载/桌面文件夹？」弹窗，用户点允许即完成授权（这就是"扫描授权的目录"），
+   * 拒绝则该来源被跳过并记进 deniedSources，UI 据此提示去系统设置里开权限。
+   *
+   * engine-free（用户目录是全局的，不属于任何 tab）；只返回元数据不返回内容——文件
+   * 字节仍走 SHELL_OPEN_PATH 交系统应用，渲染层磁盘触达面不因此扩大。
+   */
+  KB_LOCAL_DOCS_SCAN: 'kb:local-docs-scan',
+  /**
+   * Renderer → main. 读「全部文件」扫描目录清单（预设 下载/桌面 + 用户自定义，
+   * 含停用态）。管理弹层打开时拉取。
+   */
+  KB_LOCAL_DOCS_DIRS_GET: 'kb:local-docs-dirs-get',
+  /**
+   * Renderer → main. 设置某目录是否参与扫描（预设=开关、自定义 false=移除），
+   * 持久化到 userData/kb-config.json 并返回新清单。移除/停用不撤销系统层授权
+   * ——只是不再扫，TCC 授权归系统设置管。
+   */
+  KB_LOCAL_DOCS_DIRS_SET: 'kb:local-docs-dirs-set',
+  /**
+   * Renderer → main. 弹 OS 原生文件夹选择器添加自定义扫描目录。macOS 上
+   * 「用户在系统选择器里主动选中」本身就是授权动作（user-selected access），
+   * 任意目录选完即可读，无需再弹 TCC——这是「修改授权目录」的正统入口。
+   * 取消返回 { dirs 原样, added: null }。
+   */
+  KB_LOCAL_DOCS_DIRS_PICK: 'kb:local-docs-dirs-pick',
+  /**
+   * Renderer → main. 读知识库索引（~/.cowork/KB-INDEX.json，结构化 JSON——
+   * 取代早期 KB-INDEX.md）+ 当前重建任务状态。「文档识别」页 mount 时拉取；
+   * catalog 为 null = 还没建过索引（UI 显示「更新知识库」CTA）。
+   */
+  KB_CATALOG_GET: 'kb:catalog-get',
+  /**
+   * Renderer → main. 触发「更新知识库」：扫授权目录 → SDK 无头（print 模式）
+   * 分批归类 → 全量重写 KB-INDEX.json。立即返回 'started'|'alreadyRunning'，
+   * 进度/结果走 KB_CATALOG_STATUS 广播（长任务不占 invoke）。
+   */
+  KB_CATALOG_REBUILD: 'kb:catalog-rebuild',
+  /**
+   * Main → renderer push. 重建任务状态机（scanning → classifying(done/total)
+   * → success/error）。广播面同 KB_SYNC_STATUS（shell + chat tabs）。
+   */
+  KB_CATALOG_STATUS: 'kb:catalog-status',
+  /**
+   * Renderer → main. 读当前生效的文档类别集合（分类管理页 + 文档识别页的
+   * 分组顺序数据源）。持久化在 ~/.cowork/KB-CATEGORIES.json——与索引同目录，
+   * 对话里的 local-kb skill 也读它；缺失时返回出厂默认八类。
+   */
+  KB_CATEGORIES_GET: 'kb:categories-get',
+  /**
+   * Renderer → main. 分类管理操作（add / rename / remove / move）。校验失败
+   * 经 result.error 返回中文文案（不 reject）；rename/remove 同步迁移
+   * 该域索引存量条目（migrated 条数带回提示）。「其他」不可删改。
+   */
+  KB_CATEGORIES_UPDATE: 'kb:categories-update',
+  /**
+   * Renderer → main. 批量读图片缩略图（160px，nativeImage 缩放后的 data URL）。
+   * 「图片识别」卡片行的预览用——IMAGE_FILE_READ 回原图字节，几百张会爆内存；
+   * 这条只回小缩略图，单次上限 60 张，损坏/超限的路径静默缺席（调用方按
+   * 「有就显示、没有就占位」消费）。
+   */
+  KB_IMAGE_THUMBS: 'kb:image-thumbs'
 } as const
 
 /**
@@ -1586,6 +1652,130 @@ export interface KbSemanticSearchResult {
   degraded: boolean
 }
 
+/**
+ * 预设扫描目录标识。路径不落盘、恒用 Electron 的 `app.getPath('downloads'|
+ * 'desktop')` 动态解析（跟随系统本地化改名）；用户停用只记 key（见 KbConfig）。
+ */
+export type LocalDocsPreset = 'downloads' | 'desktop'
+
+/**
+ * 一个参与「全部文件」扫描的目录。`path` 兼作来源 id——文件条目的 `source`、
+ * 筛选「按来源」、denied 上报全按它对齐。
+ */
+export interface LocalDocsDir {
+  /** 绝对路径（来源 id）。 */
+  path: string
+  /** 展示名：预设目录固定「下载」「桌面」，自定义目录用 basename。 */
+  label: string
+  /** 预设目录带 key；用户添加的自定义目录为 null。 */
+  preset: LocalDocsPreset | null
+  /**
+   * 是否参与扫描。预设目录可停用（enabled:false 仍留在清单里供再启用）；
+   * 自定义目录关掉即从清单移除，所以列表里的 custom 恒为 true。
+   */
+  enabled: boolean
+}
+
+/** Result of KB_LOCAL_DOCS_DIRS_GET / _SET（全量清单，含停用的预设）。 */
+export interface LocalDocsDirsResult {
+  dirs: LocalDocsDir[]
+}
+
+/**
+ * Payload for KB_LOCAL_DOCS_DIRS_SET：把某目录设为 参与/不参与 扫描。
+ * 预设目录 → 开关（写 disabledPresets）；自定义目录 enabled:false → 移除。
+ */
+export type LocalDocsDirSetPayload = { path: string; enabled: boolean }
+
+/**
+ * Result of KB_LOCAL_DOCS_DIRS_PICK。`added` 是本次新加入清单的目录路径
+ * （用户取消选择器 / 选了已在清单里的目录 → null，dirs 原样返回）。
+ */
+export interface LocalDocsDirsPickResult {
+  dirs: LocalDocsDir[]
+  added: string | null
+}
+
+/**
+ * KB catalog 系通道的域选择 payload（缺省 'docs' 向后兼容）。
+ * KB_CATALOG_GET / KB_CATALOG_REBUILD / KB_CATEGORIES_GET 共用。
+ */
+export type KbDomainPayload = { domain?: import('./kbCatalog').KbCatalogDomain } | undefined
+
+/** KB_CATALOG_STATUS 的 push payload：文档/图片两域任务可并行，订阅方按域路由。 */
+export interface KbCatalogStatusPayload {
+  domain: import('./kbCatalog').KbCatalogDomain
+  status: import('./kbCatalog').KbCatalogStatus
+}
+
+/**
+ * Payload for KB_CATEGORIES_UPDATE。判别式四操作；名字校验（非空/长度/重名/
+ * 数量上限）在 main 侧统一做，UI 只透传。`domain` 缺省 docs。
+ */
+export type KbCategoriesUpdatePayload = {
+  domain?: import('./kbCatalog').KbCatalogDomain
+} & (
+  | { action: 'add'; name: string }
+  | { action: 'rename'; from: string; to: string }
+  | { action: 'remove'; name: string }
+  | { action: 'move'; name: string; dir: 'up' | 'down' }
+)
+
+/** Payload for KB_IMAGE_THUMBS。paths 上限 60/次，超出部分静默丢弃。 */
+export type KbImageThumbsPayload = { paths: readonly string[] }
+
+/** Result of KB_IMAGE_THUMBS。键 = 输入路径；读不出/损坏的路径缺席。 */
+export interface KbImageThumbsResult {
+  thumbs: Record<string, string>
+}
+
+/**
+ * Result of KB_CATEGORIES_GET / _UPDATE。`migrated` = 本次操作迁移的索引条目数
+ * （仅 rename/remove 非零）；`error` 非空 = 操作被拒（categories 为未变的现状）。
+ */
+export interface KbCategoriesResult {
+  categories: string[]
+  migrated: number
+  error?: string
+}
+
+/** 一条被扫到的文档文件（只有元数据，没有内容——见 KB_LOCAL_DOCS_SCAN 通道注释）。 */
+export interface LocalDocEntry {
+  /** 文件名（含扩展名）。 */
+  name: string
+  /** 绝对路径——直接可喂 SHELL_OPEN_PATH / SHELL_REVEAL_PATH。 */
+  absPath: string
+  /** 小写扩展名（不带点），恒在 LOCAL_DOC_EXTS 白名单内。 */
+  ext: string
+  size: number
+  mtimeMs: number
+  /** 所属扫描目录的绝对路径（LocalDocsDir.path，来源筛选/标签按它查）。 */
+  source: string
+}
+
+/** Payload for KB_LOCAL_DOCS_SCAN。`force` 绕过 main 侧的短 TTL 缓存（手动刷新按钮）。 */
+export type LocalDocsScanPayload = { force?: boolean } | undefined
+
+/**
+ * Result of KB_LOCAL_DOCS_SCAN。`files` 已按 mtime 降序、截断到 main 侧上限；
+ * `total` 是截断前的命中总数（`truncated` = total > files.length）。
+ * `dirs` 是本次参与扫描的目录清单（enabled 的那部分）——来源筛选选项与来源
+ * 标签的数据源，随扫描结果一起回避免第二趟 IPC。
+ * `deniedDirs` 是因系统权限（macOS TCC 拒绝）没扫成的目录路径——UI 据此提示
+ * 去「系统设置 → 隐私与安全性」开权限，而不是显示一个假空态。
+ */
+export interface LocalDocsScanResult {
+  ok: boolean
+  files: LocalDocEntry[]
+  total: number
+  truncated: boolean
+  dirs: LocalDocsDir[]
+  deniedDirs: string[]
+  /** 本次结果的扫描时间戳（缓存命中时是缓存那次的时间）。 */
+  scannedAt: number
+  error?: string
+}
+
 export interface ProposalLoadDraftPayload {
   sessionId: string
 }
@@ -2192,6 +2382,55 @@ export interface ChatApi {
    * 绝不 reject（全防御式）——空 query 立即返回 { hits:[], staleIndex:false }。
    */
   kbSemanticSearch(payload: KbSemanticSearchPayload): Promise<KbSemanticSearchResult>
+
+  /**
+   * 扫描授权目录（下载 + 桌面）里的文档文件，返回元数据清单（mtime 降序、
+   * main 侧截断）。知识库页「全部文件」的数据源；`{ force: true }` 绕过
+   * main 的短 TTL 缓存（手动刷新）。永不 reject——扫描失败落在 result.error。
+   */
+  scanLocalDocs(payload?: LocalDocsScanPayload): Promise<LocalDocsScanResult>
+
+  /** 读「全部文件」扫描目录全量清单（含停用的预设）。管理弹层数据源。 */
+  getLocalDocsDirs(): Promise<LocalDocsDirsResult>
+
+  /**
+   * 设置某扫描目录是否启用（预设=开关、自定义 false=移除）。返回新清单；
+   * 调用方随后应 force 重扫（清单变化即视图数据源变化）。
+   */
+  setLocalDocsDir(payload: LocalDocsDirSetPayload): Promise<LocalDocsDirsResult>
+
+  /** 弹系统文件夹选择器添加自定义扫描目录（选中即授权）。取消 → added:null。 */
+  pickLocalDocsDir(): Promise<LocalDocsDirsPickResult>
+
+  /**
+   * 读某域知识库索引与当前重建任务状态（domain 缺省 docs）。catalog 为
+   * null = 索引还没建过/文件损坏——「文档/图片识别」页据此显示 CTA。
+   */
+  getKbCatalog(payload?: KbDomainPayload): Promise<{
+    catalog: import('./kbCatalog').KbCatalog | null
+    status: import('./kbCatalog').KbCatalogStatus
+  }>
+
+  /**
+   * 触发某域「更新知识库」（后台 SDK 无头归类，全量重建该域索引）。
+   * 立即返回；进度/结果订阅 onKbCatalogStatus（按 payload.domain 过滤）。
+   */
+  rebuildKbCatalog(payload?: KbDomainPayload): Promise<'started' | 'alreadyRunning'>
+
+  /** 订阅重建任务状态推送（含 domain）。返回退订函数，镜像 onKbSyncStatus 模式。 */
+  onKbCatalogStatus(handler: (payload: KbCatalogStatusPayload) => void): () => void
+
+  /** 读某域当前生效的类别集合（缺省 = 该域出厂默认，末位恒「其他」）。 */
+  getKbCategories(payload?: KbDomainPayload): Promise<KbCategoriesResult>
+
+  /**
+   * 分类管理操作（add/rename/remove/move，payload.domain 选域）。校验失败经
+   * result.error 返回，永不 reject；rename/remove 会同步迁移该域索引存量条目。
+   */
+  updateKbCategories(payload: KbCategoriesUpdatePayload): Promise<KbCategoriesResult>
+
+  /** 批量读图片缩略图（160px data URL）。读不出的路径在结果里缺席。 */
+  getKbImageThumbs(payload: KbImageThumbsPayload): Promise<KbImageThumbsResult>
 
   /**
    * Export the proposal document via the OS native save dialog.

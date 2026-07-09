@@ -91,6 +91,16 @@ import {
   type ProposalPeekRetrievalResult,
   type KbSemanticSearchPayload,
   type KbSemanticSearchResult,
+  type LocalDocsScanPayload,
+  type LocalDocsScanResult,
+  type LocalDocsDirsResult,
+  type LocalDocsDirSetPayload,
+  type LocalDocsDirsPickResult,
+  type KbCategoriesUpdatePayload,
+  type KbCategoriesResult,
+  type KbDomainPayload,
+  type KbImageThumbsPayload,
+  type KbImageThumbsResult,
   type ProposalImageApiConfig,
   type ProposalImageGeneratePayload,
   type ProposalImageEditPayload,
@@ -98,6 +108,14 @@ import {
   type ProposalImageUploadPayload
 } from '../../shared/ipc-channels'
 import { setKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote } from '../core/kbIndexStore'
+import { scanLocalDocs, listLocalDocsDirs, setLocalDocsDir } from '../core/localDocsScan'
+import {
+  readKbCatalog,
+  rebuildKbCatalog,
+  getKbCatalogStatus,
+  readKbCategories,
+  updateKbCategories
+} from '../core/kbCatalogService'
 import { triggerKbSyncNow, lastKbSyncInfo, invalidateKbSyncBaseline } from '../core/kbSyncScheduler'
 import type { KbIndex } from '../../shared/kbIndex'
 import type { KbRemoteConfig } from '../../shared/kbConfig'
@@ -302,6 +320,15 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_SYNC_NOW)
   ipcMain.removeHandler(IPC_CHANNELS.KB_ROOT_PICK)
   ipcMain.removeHandler(IPC_CHANNELS.KB_SEMANTIC_SEARCH)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_LOCAL_DOCS_SCAN)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_LOCAL_DOCS_DIRS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_LOCAL_DOCS_DIRS_SET)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_LOCAL_DOCS_DIRS_PICK)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_CATALOG_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_CATALOG_REBUILD)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_CATEGORIES_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_CATEGORIES_UPDATE)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_IMAGE_THUMBS)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT_PDF)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_RENDER)
@@ -1912,6 +1939,127 @@ export function registerIpcHandlers(): void {
       } catch {
         return { hits: [], staleIndex: false, degraded: false }
       }
+    }
+  )
+
+  // 授权目录文档扫描（知识库页「全部文件」）。engine-free：用户目录是全局的。
+  // scanLocalDocs 内部全防御（TCC 拒绝→deniedDirs、异常→ok:false），绝不 reject。
+  ipcMain.handle(
+    IPC_CHANNELS.KB_LOCAL_DOCS_SCAN,
+    async (_event, payload: LocalDocsScanPayload): Promise<LocalDocsScanResult> => {
+      return scanLocalDocs(payload?.force === true)
+    }
+  )
+
+  // 扫描目录清单三件套（预设开关 + 自定义增删）。持久化在 kb-config.json，
+  // 见 localDocsScan.ts 的目录管理注释。
+  ipcMain.handle(
+    IPC_CHANNELS.KB_LOCAL_DOCS_DIRS_GET,
+    async (): Promise<LocalDocsDirsResult> => {
+      return { dirs: listLocalDocsDirs() }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.KB_LOCAL_DOCS_DIRS_SET,
+    async (_event, payload: LocalDocsDirSetPayload): Promise<LocalDocsDirsResult> => {
+      const path =
+        payload && typeof payload.path === 'string' ? payload.path : ''
+      if (!path || !isAbsolute(path)) {
+        // 形状不对直接原样返回清单——目录管理是幂等读改写，没有值得
+        // reject 的失败模式（非法路径改不动任何配置）。
+        return { dirs: listLocalDocsDirs() }
+      }
+      return { dirs: setLocalDocsDir(path, payload?.enabled === true) }
+    }
+  )
+
+  // 添加自定义扫描目录：OS 原生文件夹选择器。macOS 上「用户主动选中」即
+  // 授权（user-selected access），选完即可读——不会再弹 TCC 窗。
+  ipcMain.handle(
+    IPC_CHANNELS.KB_LOCAL_DOCS_DIRS_PICK,
+    async (event): Promise<LocalDocsDirsPickResult> => {
+      const window = resolveBrowserWindow(event)
+      const result = await dialog.showOpenDialog(window, {
+        title: '选择要扫描的文件夹',
+        buttonLabel: '添加',
+        properties: ['openDirectory']
+      })
+      if (result.canceled || result.filePaths.length === 0) {
+        return { dirs: listLocalDocsDirs(), added: null }
+      }
+      const picked = result.filePaths[0]!
+      const before = listLocalDocsDirs()
+      const already = before.find((d) => d.path === picked)
+      const dirs = setLocalDocsDir(picked, true)
+      // 「新加入」的语义：清单里原本没有，或原本是停用的预设被重新启用。
+      const added = already && already.enabled ? null : picked
+      return { dirs, added }
+    }
+  )
+
+  // 知识库索引（文档/图片双域）：读取 + 触发全量重建。engine-free；重建是
+  // 后台长任务，invoke 立即返回、进度走 KB_CATALOG_STATUS 广播（payload 带
+  // domain）。domain 统一在这里收紧成合法值（缺省/非法一律 docs）。
+  const kbDomain = (payload: KbDomainPayload): 'docs' | 'images' =>
+    payload?.domain === 'images' ? 'images' : 'docs'
+
+  ipcMain.handle(IPC_CHANNELS.KB_CATALOG_GET, async (_event, payload: KbDomainPayload) => {
+    const domain = kbDomain(payload)
+    return { catalog: readKbCatalog(domain), status: getKbCatalogStatus(domain) }
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.KB_CATALOG_REBUILD,
+    async (_event, payload: KbDomainPayload): Promise<'started' | 'alreadyRunning'> => {
+      return rebuildKbCatalog(kbDomain(payload))
+    }
+  )
+
+  // 类别集合（分类管理页，双域）。UPDATE 的名字/结构校验统一在 service 侧做
+  // （校验失败走 result.error 中文文案，不 reject）；这里只挡形状完全不对的
+  // payload——直接原样返回现状清单。
+  ipcMain.handle(
+    IPC_CHANNELS.KB_CATEGORIES_GET,
+    async (_event, payload: KbDomainPayload): Promise<KbCategoriesResult> => {
+      return { categories: readKbCategories(kbDomain(payload)), migrated: 0 }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.KB_CATEGORIES_UPDATE,
+    async (_event, payload: KbCategoriesUpdatePayload): Promise<KbCategoriesResult> => {
+      const domain = kbDomain(payload)
+      const action = payload?.action
+      if (action !== 'add' && action !== 'rename' && action !== 'remove' && action !== 'move') {
+        return { categories: readKbCategories(domain), migrated: 0, error: '非法操作' }
+      }
+      return updateKbCategories(domain, payload)
+    }
+  )
+
+  // 图片缩略图批读（「图片识别」卡片行预览）。160px nativeImage 缩放；
+  // 单次上限 60 张；损坏/非绝对路径/超上限的静默缺席——预览是装饰不是数据，
+  // 任何单张失败都不该打断整批。
+  ipcMain.handle(
+    IPC_CHANNELS.KB_IMAGE_THUMBS,
+    async (_event, payload: KbImageThumbsPayload): Promise<KbImageThumbsResult> => {
+      const MAX_THUMBS = 60
+      const thumbs: Record<string, string> = {}
+      const paths = Array.isArray(payload?.paths) ? payload.paths.slice(0, MAX_THUMBS) : []
+      for (const p of paths) {
+        if (typeof p !== 'string' || !isAbsolute(p)) continue
+        try {
+          const img = nativeImage.createFromPath(p)
+          // 半写/损坏的图片解码成空图——跳过（svg 等 nativeImage 不认的格式
+          // 也走这条，UI 回落到文件图标占位）。
+          if (img.isEmpty()) continue
+          thumbs[p] = img.resize({ width: 160 }).toDataURL()
+        } catch {
+          continue
+        }
+      }
+      return { thumbs }
     }
   )
 

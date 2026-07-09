@@ -19,6 +19,7 @@
 
 import { app } from 'electron'
 import { join } from 'node:path'
+import { homedir } from 'node:os'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import type { KbIndex } from '../../shared/kbIndex'
 import type { KbConfig, KbRemoteConfig } from '../../shared/kbConfig'
@@ -34,6 +35,45 @@ const configPath = (): string => join(app.getPath('userData'), 'kb-config.json')
  * needs both values to build the settings UI.
  */
 export const kbOutDir = (): string => join(app.getPath('userData'), 'kb-index')
+
+/**
+ * local-kb（通用本地文件知识库）的固定单一目录：`~/.cowork`（用户主目录下的隐藏目录）。
+ * 里面就一份 `KB-INDEX.md`——每个被「添加到知识库」的文件一行「路径 + 一句话概览」，
+ * 逐文件累积（见 skills/local-kb/SKILL.md）。恒可写。
+ *
+ * 为什么放 ~/.cowork 而非 userData/kb-local：主目录的隐藏目录（如 .ssh/.config）用户
+ * 找得到、也认得出「这是我的知识库数据」；埋在 Electron 的 Application Support 深处则
+ * 难以发现、不便用户直接查看/备份那份 KB-INDEX.md。用 homedir() 而非 app.getPath('home')
+ * 与 sessionStore 的 ~/.claude 同套路，跨平台一致。
+ *
+ * 为什么是「一个全局库」而非「每个文件夹一个库」：真实交互是用户点某个文件「添加到
+ * 知识库」——单个任意路径的文件，没有"库根文件夹"可言。一份全局 md 逐条追加最贴合这个
+ * 心智，也免去 agent 追问"这个文件归哪个库"。
+ */
+export const kbLocalDir = (): string => join(homedir(), '.cowork')
+
+/**
+ * imagegen skill 生成图片的默认落盘目录：`~/.cowork/imagegen`。
+ *
+ * 与 kbLocalDir 同套路、同一个 `~/.cowork` 根——用户主目录下的隐藏目录，用户
+ * 找得到、能备份、恒可写，且不碰 macOS 上只读签名的 `.app` 内部。生成的图是
+ * 用户的产出物，跟知识库文件一样应落在用户能触达的地方，而非埋进 Application
+ * Support 深处，也不落项目根目录。
+ *
+ * `~` 的真实位置只有 main 侧算得出（skill 脚本是用户机器上的裸子进程），故由
+ * engine 把这个绝对路径经 `CLAUDE_DESKTOP_IMAGEGEN_DIR` 注入给 image_gen.py。
+ */
+export const imagegenOutDir = (): string => join(kbLocalDir(), 'imagegen')
+
+/**
+ * 本地库要加进 agent `additionalDirectories`（可读+可写）的目录：就是 kbLocalDir 本身，
+ * 让 agent 能读/写 KB-INDEX.md。用户文件的绝对路径由「添加到知识库」的消息现给，agent
+ * 用绝对路径 Read，不需要预先把某个用户目录整体加进可读范围。
+ * 恒定返回这一个目录——local-kb 是常驻能力，不像方案模式要按会话开关。
+ */
+export function localKbReadDirs(): string[] {
+  return [kbLocalDir()]
+}
 
 /** 读整份 KB 配置。文件缺失/损坏 → 全空配置（防御哲学见 parseKbConfig）。 */
 export function getKbConfig(): KbConfig {
@@ -73,6 +113,16 @@ export function setKbRoot(kbRoot: string): void {
 export function setKbRemote(remote: KbRemoteConfig | null): void {
   const cur = getKbConfig()
   writeFileSync(configPath(), JSON.stringify({ ...cur, remote }), 'utf8')
+}
+
+/**
+ * 通用读-合并-写补丁（同 setKbRoot 的合并纪律）。localDocsScan 的目录管理
+ * 一次要动 extraDirs / disabledPresets 两个字段，逐字段 setter 会写两次盘，
+ * 收敛成一个 patch 入口。
+ */
+export function patchKbConfig(patch: Partial<KbConfig>): void {
+  const cur = getKbConfig()
+  writeFileSync(configPath(), JSON.stringify({ ...cur, ...patch }), 'utf8')
 }
 
 /**

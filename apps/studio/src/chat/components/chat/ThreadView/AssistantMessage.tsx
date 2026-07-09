@@ -11,6 +11,7 @@ import {
 import { useI18n } from '../../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../../stores/chat'
 import {
+  useImageEditStore,
   useSheetPreviewStore,
   useSplitWorkspaceBusy
 } from '../../../stores/filePreview'
@@ -21,6 +22,7 @@ import { useProposalStore } from '../../../stores/proposal'
 import { continueProposalSectionBlocks } from '../../../lib/sendProposalSectionRevision'
 import { triggerProposalCitationVerification } from '../../../lib/proposalVerification'
 import { autoFireProposalGenImages } from '../../../lib/proposalGenImageFire'
+import { addFileToKb } from '../../../lib/addFileToKb'
 import { diffChars } from '@desktop-shared/textDiff'
 import { spliceBlocks } from '@desktop-shared/proposalBlocks'
 
@@ -127,6 +129,9 @@ function DeliverableCard({
   // slides/proposal 分栏时右栏被工作区占用、预览面板让位，此时降级回
   // 系统应用打开——点了必须有反应。外部打开始终留在打开方式菜单里。
   const previewableSheet = ext === 'xlsx' || ext === 'xls' || ext === 'csv'
+  // 图片文件点击 → 标记编辑面板（同一右栏，见 ImageEditPanel）。只放
+  // edit API 认的格式——gif 只能看不能改，仍走系统应用打开。
+  const editableImage = ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp'
   const splitBusy = useSplitWorkspaceBusy()
 
   const openExternal = (): void => {
@@ -136,6 +141,10 @@ function DeliverableCard({
   const open = (): void => {
     if (previewableSheet && !splitBusy) {
       useSheetPreviewStore.getState().openPreview(path)
+      return
+    }
+    if (editableImage && !splitBusy) {
+      useImageEditStore.getState().openEditor(path)
       return
     }
     openExternal()
@@ -265,6 +274,27 @@ function DeliverableCard({
                 />
               </svg>
               {zh ? '在 Finder 中显示' : 'Reveal in Finder'}
+            </DropdownMenuItem>
+            {/* 添加到本地知识库：走对话让 local-kb skill 增量索引这个文件（见
+                lib/addFileToKb —— 没有独立于对话的后台建索引通道，增量＝发一条 prompt）。 */}
+            <DropdownMenuItem
+              onSelect={() => {
+                void addFileToKb(path)
+              }}
+            >
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              >
+                <path
+                  d="M10 4v12M4 10h12"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              {zh ? '添加到知识库' : 'Add to knowledge base'}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

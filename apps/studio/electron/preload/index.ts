@@ -101,6 +101,17 @@ import {
   type ProposalPeekRetrievalResult,
   type KbSemanticSearchPayload,
   type KbSemanticSearchResult,
+  type LocalDocsScanPayload,
+  type LocalDocsScanResult,
+  type LocalDocsDirsResult,
+  type LocalDocsDirSetPayload,
+  type LocalDocsDirsPickResult,
+  type KbCategoriesUpdatePayload,
+  type KbCategoriesResult,
+  type KbDomainPayload,
+  type KbCatalogStatusPayload,
+  type KbImageThumbsPayload,
+  type KbImageThumbsResult,
   type ProposalImageApiConfig,
   type ProposalImageGeneratePayload,
   type ProposalImageEditPayload,
@@ -110,6 +121,7 @@ import {
 import type { ProposalMetricRecord } from '../shared/proposal'
 import type { KbRemoteConfig } from '../shared/kbConfig'
 import type { KbSyncStatus } from '../shared/kbSyncStatus'
+import type { KbCatalog, KbCatalogStatus } from '../shared/kbCatalog'
 
 // Visible in the Electron terminal if the preload actually loads.
 console.log('[preload] loaded — exposing chatApi')
@@ -620,6 +632,48 @@ const chatApi: ChatApi = {
     }
   },
 
+  getKbCatalog(payload?: KbDomainPayload): Promise<{ catalog: KbCatalog | null; status: KbCatalogStatus }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_CATALOG_GET, payload) as Promise<{
+      catalog: KbCatalog | null
+      status: KbCatalogStatus
+    }>
+  },
+
+  rebuildKbCatalog(payload?: KbDomainPayload): Promise<'started' | 'alreadyRunning'> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_CATALOG_REBUILD, payload) as Promise<
+      'started' | 'alreadyRunning'
+    >
+  },
+
+  onKbCatalogStatus(cb: (payload: KbCatalogStatusPayload) => void): () => void {
+    const listener = (_e: unknown, payload: KbCatalogStatusPayload): void => cb(payload)
+    ipcRenderer.on(IPC_CHANNELS.KB_CATALOG_STATUS, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.KB_CATALOG_STATUS, listener)
+    }
+  },
+
+  getKbCategories(payload?: KbDomainPayload): Promise<KbCategoriesResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.KB_CATEGORIES_GET,
+      payload
+    ) as Promise<KbCategoriesResult>
+  },
+
+  updateKbCategories(payload: KbCategoriesUpdatePayload): Promise<KbCategoriesResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.KB_CATEGORIES_UPDATE,
+      payload
+    ) as Promise<KbCategoriesResult>
+  },
+
+  getKbImageThumbs(payload: KbImageThumbsPayload): Promise<KbImageThumbsResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.KB_IMAGE_THUMBS,
+      payload
+    ) as Promise<KbImageThumbsResult>
+  },
+
   readKbIndex() {
     return ipcRenderer.invoke(IPC_CHANNELS.KB_INDEX_READ)
   },
@@ -691,6 +745,32 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.KB_SEMANTIC_SEARCH,
       payload
     ) as Promise<KbSemanticSearchResult>
+  },
+
+  scanLocalDocs(payload?: LocalDocsScanPayload): Promise<LocalDocsScanResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.KB_LOCAL_DOCS_SCAN,
+      payload
+    ) as Promise<LocalDocsScanResult>
+  },
+
+  getLocalDocsDirs(): Promise<LocalDocsDirsResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.KB_LOCAL_DOCS_DIRS_GET
+    ) as Promise<LocalDocsDirsResult>
+  },
+
+  setLocalDocsDir(payload: LocalDocsDirSetPayload): Promise<LocalDocsDirsResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.KB_LOCAL_DOCS_DIRS_SET,
+      payload
+    ) as Promise<LocalDocsDirsResult>
+  },
+
+  pickLocalDocsDir(): Promise<LocalDocsDirsPickResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.KB_LOCAL_DOCS_DIRS_PICK
+    ) as Promise<LocalDocsDirsPickResult>
   },
 
   proposalImageSettingsGet(): Promise<ProposalImageApiConfig | null> {

@@ -22,6 +22,7 @@ import {
   type UpdaterState
 } from '../shared/ipc-channels'
 import type { KbSyncStatus } from '../shared/kbSyncStatus'
+import type { KbCatalogStatusPayload } from '../shared/ipc-channels'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -969,6 +970,22 @@ export function broadcastKbSyncStatus(payload: KbSyncStatus): void {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
     if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
+  }
+}
+
+/**
+ * Push「更新知识库」后台归类任务的进度/结果——broadcastKbSyncStatus 的孪生
+ * （同一段注释里的理由全部成立：转移只源于 main、web tab 无 preload 跳过）。
+ * payload 带 domain：文档与图片两个域的任务可并行，订阅方按域路由。
+ */
+export function broadcastKbCatalogStatus(payload: KbCatalogStatusPayload): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    shellWindow.webContents.send(IPC_CHANNELS.KB_CATALOG_STATUS, payload)
+  }
+  for (const ctx of tabs.values()) {
+    if (ctx.kind === 'web') continue
+    const wc = ctx.view.webContents
+    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_CATALOG_STATUS, payload)
   }
 }
 

@@ -17,14 +17,17 @@
  */
 
 import { useState } from 'react';
-import { ArrowLeft, Files, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, Files, FolderKanban, Images, Tags, type LucideIcon } from 'lucide-react';
 
 import { Button } from '@/src/components/ui/button';
 import { cn } from '@/src/lib/utils';
 import { useI18n } from '../../i18n';
+import { AllFilesPanel } from './AllFilesPanel';
+import { DocCatalogPanel } from './DocCatalogPanel';
+import { CategoryManagePanel } from './CategoryManagePanel';
 
-/** 侧栏分区项。占位阶段只有「全部文件」一项，后续按 feature 扩。 */
-type KbSection = 'all-files';
+/** 侧栏分区项。 */
+type KbSection = 'all-files' | 'doc-catalog' | 'image-catalog' | 'categories';
 
 type NavItem = {
   id: KbSection;
@@ -33,10 +36,13 @@ type NavItem = {
   icon: LucideIcon;
 };
 
-/* 占位一项（用户要求）：「全部文件」。i18n 走 tt 带字面量兜底——缺 key 时
-   显示中文而非裸 key（同 SettingsDialogV2 的 tt 约定）。 */
+/* i18n 走 tt 带字面量兜底——缺 key 时显示中文而非裸 key（同 SettingsDialogV2
+   的 tt 约定）。 */
 const NAV_ITEMS: NavItem[] = [
   { id: 'all-files', labelKey: 'knowledgeBase.allFiles', fallback: '全部文件', icon: Files },
+  { id: 'doc-catalog', labelKey: 'knowledgeBase.docCatalog', fallback: '文档识别', icon: FolderKanban },
+  { id: 'image-catalog', labelKey: 'knowledgeBase.imageCatalog', fallback: '图片识别', icon: Images },
+  { id: 'categories', labelKey: 'knowledgeBase.categories', fallback: '分类管理', icon: Tags },
 ];
 
 export function KnowledgeBaseDialog({ onClose }: { onClose: () => void }): React.JSX.Element {
@@ -103,18 +109,22 @@ export function KnowledgeBaseDialog({ onClose }: { onClose: () => void }): React
         </aside>
 
         {/* ── Content ──
-            与设置页内容区同构：border-l bg-card 平铺白面，760px 居中列，26px
-            标题。内容第一版为空白（用户要求）。relative = 后续绝对定位后代的
-            收容边界。 */}
+            与设置页内容区同构：border-l bg-card 平铺白面，26px 标题。relative
+            = 后续绝对定位后代的收容边界。两个分区都是卡片/网格形态，760px 会
+            把每行压得太窄，统一放宽到 1160px。 */}
         <div className="relative min-w-0 flex-1 overflow-y-auto border-l border-border/50 bg-card">
-          <div className="mx-auto max-w-[760px] px-10 pb-15 pt-11">
-            <div className="mb-[26px]">
-              <h1 className="text-[26px] font-semibold tracking-[-0.015em] text-foreground">
-                {activeLabel}
-              </h1>
-            </div>
-            {/* 内容区：先空白（用户第一版要求）。后续在此填知识库文件列表 /
-                上传 / 检索等。 */}
+          <div className="mx-auto max-w-[1160px] px-10 pb-15 pt-11">
+            {/* 面板各自带标题行（标题右侧挂各自的工具组/主按钮）。文档/图片
+                识别共用 DocCatalogPanel，domain prop 选域。 */}
+            {activeSection === 'all-files' ? (
+              <AllFilesPanel title={activeLabel} />
+            ) : activeSection === 'doc-catalog' ? (
+              <DocCatalogPanel title={activeLabel} domain="docs" />
+            ) : activeSection === 'image-catalog' ? (
+              <DocCatalogPanel title={activeLabel} domain="images" />
+            ) : (
+              <CategoryManagePanel title={activeLabel} />
+            )}
           </div>
         </div>
       </div>
