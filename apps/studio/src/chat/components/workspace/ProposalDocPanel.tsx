@@ -23,6 +23,11 @@ import { sendProposalStageMessage } from '../../lib/sendProposalStageMessage'
 import { startProposalGapFill } from '../../lib/sendProposalSectionRevision'
 import { extractMermaidBlocks, renderMermaidImageMap } from '../../lib/mermaidRender'
 import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
+import {
+  hasSeenProposalOnboarding,
+  markProposalOnboardingSeen,
+  shouldShowProposalOnboarding
+} from '../../lib/proposalOnboarding'
 import { ProposalPaper } from './ProposalPaper'
 import { ProposalPreview } from './ProposalPreview'
 import { ProposalStyleModal } from './ProposalStyleModal'
@@ -111,6 +116,21 @@ export function ProposalDocPanel(): React.JSX.Element | null {
       : phase === 'toc'
         ? { text: '目录待确认', tone: 'wait' }
         : null
+  // 开场上手引导（一次性）：草稿为空且没看过时显示「三步走」说明卡。用户发出首条需求、
+  // 草稿长出内容（sections 非空）即视为「走过一次」，自动置位；也可点卡上「知道了」手动关。
+  // 置位后再开空草稿也不再出现（老用户不打扰）。onboardingSeen 初值读 localStorage。
+  const [onboardingSeen, setOnboardingSeen] = useState(hasSeenProposalOnboarding)
+  const showOnboarding = shouldShowProposalOnboarding(onboardingSeen, sections.length === 0)
+  useEffect(() => {
+    if (sections.length > 0 && !onboardingSeen) {
+      markProposalOnboardingSeen()
+      setOnboardingSeen(true)
+    }
+  }, [sections.length, onboardingSeen])
+  const dismissOnboarding = (): void => {
+    markProposalOnboardingSeen()
+    setOnboardingSeen(true)
+  }
   const phaseIdx = PROPOSAL_PHASES.findIndex((p) => p.key === phase)
   // 底部状态栏的文档体量：字数按去空白字符计（贴近中文「字数」直觉），纯派生不入 store。
   const charCount = sections.reduce((n, s) => n + s.markdown.replace(/\s/g, '').length, 0)
@@ -870,12 +890,38 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           每次切预览都从零跑一遍 IPC 生成 docx + 渲染。常驻后缓存存活：内容没变时切回预览
           即时复现已渲染的页面。预览常驻于后台时不能空跑——传 active 闸，非激活不渲染
           （见 ProposalPreview）。 */}
-      <div className={'flex min-h-0 flex-1 flex-col ' + (mode === 'edit' ? '' : 'hidden')}>
-        <ProposalPaper />
-      </div>
-      <div className={'flex min-h-0 flex-1 flex-col ' + (mode === 'preview' ? '' : 'hidden')}>
-        <ProposalPreview active={mode === 'preview'} />
-      </div>
+      {showOnboarding ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center p-8">
+          <div className="w-full max-w-xs rounded-2xl border border-border bg-card/60 p-6 text-[13px]">
+            <div className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+              <span aria-hidden>📄</span> 写方案分三步走
+            </div>
+            <ol className="mb-4 space-y-1.5 text-muted-foreground">
+              <li>① 封面 <span className="text-foreground/50">→ 你确认</span></li>
+              <li>② 目录 <span className="text-foreground/50">→ 你确认</span></li>
+              <li>③ 正文 <span className="text-foreground/50">→ 逐章生成</span></li>
+            </ol>
+            <p className="mb-3 text-muted-foreground">每步 AI 会停下来等你，点“确认”才继续。</p>
+            <p className="mb-4 text-xs text-muted-foreground/70">↓ 在下方输入框描述你的方案需求</p>
+            <button
+              type="button"
+              className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              onClick={dismissOnboarding}
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className={'flex min-h-0 flex-1 flex-col ' + (mode === 'edit' ? '' : 'hidden')}>
+            <ProposalPaper />
+          </div>
+          <div className={'flex min-h-0 flex-1 flex-col ' + (mode === 'preview' ? '' : 'hidden')}>
+            <ProposalPreview active={mode === 'preview'} />
+          </div>
+        </>
+      )}
 
       {/* 底部状态栏（重设计新增）：保存状态 + 文档体量 + 「真预览」角标。
           - 写盘失败提示从顶部满宽红条降格到这里的常驻红字（title 保留完整说明），
