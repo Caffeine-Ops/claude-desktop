@@ -67,15 +67,19 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     label: '制作PPT',
     appearance: 'gradient'
   },
-  // gpt-image-2 — image generation. Same namespaced + bare pair.
+  // imagegen — 生成图片。namespaced + 裸名双注册，理由同 ppt-master。
+  // 2026-07-09：「生成图片」按钮从 gpt-image-2 换绑到 imagegen（imagegen 已
+  // 改造为纯标准库走同一 OpenAI 兼容网关，见 skills/imagegen/scripts/image_gen.py）。
+  // gpt-image-2 skill 仍在仓库、仍可手动 /gpt-image-2 调用，只是不再是这个
+  // 彩色按钮背后的那个 skill。
   {
-    match: '/claude-desktop:gpt-image-2',
+    match: '/claude-desktop:imagegen',
     icon: 'image',
     label: '生成图片',
     appearance: 'gradient'
   },
   {
-    match: '/gpt-image-2',
+    match: '/imagegen',
     icon: 'image',
     label: '生成图片',
     appearance: 'gradient'
@@ -91,6 +95,21 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     match: '/spreadsheets',
     icon: 'excel',
     label: '处理表格',
+    appearance: 'gradient'
+  },
+  // remotion — 制作视频。namespaced + 裸名双注册，理由同 ppt-master。
+  // FileIconKey 尚无 video/film 图标，暂借 'image'（remotion 产出即渲染画面，
+  // 不违和）；要专属视频图标须先在 FileTypeIcon 加 key + 多色 path。
+  {
+    match: '/claude-desktop:remotion',
+    icon: 'image',
+    label: '制作视频',
+    appearance: 'gradient'
+  },
+  {
+    match: '/remotion',
+    icon: 'image',
+    label: '制作视频',
     appearance: 'gradient'
   },
   // proposal-writer — 写方案。namespaced + 裸名双注册，理由同 ppt-master。

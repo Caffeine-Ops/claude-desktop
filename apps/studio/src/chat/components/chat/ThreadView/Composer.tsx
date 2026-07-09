@@ -518,7 +518,7 @@ export function Composer(): React.JSX.Element {
   )
 }
 
-/** Composer mode metadata for the picker (通用 / 设计 / 幻灯片 / 写作 / 写方案 / 处理表格). */
+/** Composer mode metadata for the picker (通用 / 设计 / 幻灯片 / 写作 / 写方案 / 处理表格 / 制作视频). */
 interface ComposerModeMeta {
   id: ComposerModeId
   label: string
@@ -589,13 +589,26 @@ const COMPOSER_MODES: readonly ComposerModeMeta[] = [
         <path d="M3.5 9.5h17M9.5 9.5v10M3.5 14.5h17" />
       </svg>
     )
+  },
+  {
+    id: 'video',
+    label: '制作视频',
+    beta: true,
+    // 影片胶片框 + 中央播放三角：一眼是「视频」。描边同其余项 1.7 无填充。
+    icon: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
+        <rect x="3" y="5" width="18" height="14" rx="2" />
+        <path d="M3 9.5h18M8 5v4.5M16 5v4.5" />
+        <path d="M11 12.5v3l2.5-1.5z" />
+      </svg>
+    )
   }
 ]
 
 /**
  * Composer mode picker in the toolbar — a pill showing the current mode
  * (icon + label, e.g.「通用」) that opens a popover to switch between
- * 通用 / 设计 / 幻灯片 / 写作 / 写方案 / 处理表格. Replaces the old single monitor-icon slides
+ * 通用 / 设计 / 幻灯片 / 写作 / 写方案 / 处理表格 / 制作视频. Replaces the old single monitor-icon slides
  * toggle: the popover's 幻灯片 row is now the slides entry point (picking it
  * sets mode='slides'; sending then marks the session as a slides session via
  * markIfSlides → ThreadView's two-pane layout).

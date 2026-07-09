@@ -520,6 +520,19 @@ export function FusionRuntimeProvider({
         text = text ? `${SPREADSHEET_SLASH} ${text}` : SPREADSHEET_SLASH
       }
 
+      // Video mode → drive the remotion skill, same shape as slides/spreadsheet
+      // above: prepend the namespaced slash so fusion-code loads remotion's
+      // best-practices for this turn (project scaffold, animations, render).
+      // Skip when the user already typed it (no double-prefix). The chip
+      // registry renders /remotion verbatim as a「制作视频」chip in the bubble.
+      const VIDEO_SLASH = '/claude-desktop:remotion'
+      const videoMode = useComposerModeStore.getState().mode === 'video'
+      const alreadyRemotionSlash =
+        /^\/(claude-desktop:)?remotion\b/.test(baseText)
+      if (videoMode && !alreadyRemotionSlash) {
+        text = text ? `${VIDEO_SLASH} ${text}` : VIDEO_SLASH
+      }
+
       console.log('[runtime] onNew', {
         textLength: text.length,
         contentPartCount: message.content.length,

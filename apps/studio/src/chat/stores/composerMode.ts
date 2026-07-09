@@ -7,7 +7,7 @@ import { persist } from 'zustand/middleware'
  * Two things live here:
  *
  *  1. `mode` — the option picked in the composer's "写作 Beta ⌄" pill
- *     (通用 / 设计 / 幻灯片 / 写作 / 写方案 / 处理表格). This is the GLOBAL current
+ *     (通用 / 设计 / 幻灯片 / 写作 / 写方案 / 处理表格 / 制作视频). This is the GLOBAL current
  *     selection. FRONTEND-ONLY: it doesn't change what gets sent to the
  *     model yet.
  *
@@ -32,6 +32,7 @@ export type ComposerModeId =
   | 'writing'
   | 'proposal'
   | 'spreadsheet'
+  | 'video'
 
 interface ComposerModeState {
   mode: ComposerModeId
