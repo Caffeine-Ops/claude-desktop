@@ -1,4 +1,5 @@
 import type { PermissionRequest } from '@desktop-shared/types'
+import { identifyProposalStageConfirm } from '@desktop-shared/proposal'
 import { useTFormat } from '../../i18n'
 import { applyProposalStageConfirm } from '../../lib/proposalStageConfirm'
 import { usePermissionStore } from '../../stores/permissions'
@@ -37,12 +38,21 @@ type Props = {
 export function InlinePermissionPrompt({ request }: Props): React.JSX.Element {
   const tf = useTFormat()
   const respond = usePermissionStore((s) => s.respond)
+  // 方案阶段确认卡：前端确定性识别（不靠 AI 措辞），钉一行说明讲清「为什么停、点了会怎样」。
+  // 非阶段卡（普通 AskUserQuestion）→ stage=null → 不渲染说明行。
+  const stage = identifyProposalStageConfirm(request.input)
 
   return (
     <div
       className="overflow-hidden rounded-2xl bg-muted/40 ring-1 ring-black/[0.06] dark:ring-white/[0.06]"
       aria-label={tf('permissionAriaLabel', { toolName: request.toolName })}
     >
+      {stage && (
+        <div className="border-b border-black/[0.06] bg-brand/5 px-3 py-2 text-[12px] leading-snug text-muted-foreground dark:border-white/[0.06]">
+          <span aria-hidden>📄</span> 这是【{stage === 'cover' ? '封面确认' : '目录确认'}】。点“确认”后 AI 才会
+          {stage === 'cover' ? '继续下一步：生成目录' : '开始逐章撰写正文'}。
+        </div>
+      )}
       <AskUserQuestionView
         input={request.input}
         onSubmit={(updatedInput) => {
