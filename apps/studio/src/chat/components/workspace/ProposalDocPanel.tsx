@@ -13,7 +13,7 @@ import {
   PROPOSAL_DRAFT_END
 } from '@desktop-shared/proposal'
 import { sendProposalStageMessage } from '../../lib/sendProposalStageMessage'
-import { fillProposalGap } from '../../lib/sendProposalSectionRevision'
+import { startProposalGapFill } from '../../lib/sendProposalSectionRevision'
 import { extractMermaidBlocks, renderMermaidImageMap } from '../../lib/mermaidRender'
 import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
 import { ProposalPaper } from './ProposalPaper'
@@ -125,10 +125,6 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   // 到的产品——把「用哪些产品写」的控制权还给用户（原先只能删 chip、不能增）。
   // 资料缺失清单展开态（P3-2）：默认收起，只露一行「⚠️ 资料缺失 N 处」摘要条，点开看明细。
   const [gapsOpen, setGapsOpen] = useState(false)
-  // 补料编辑态（P3-2 阶段二）：当前正在为哪条缺口补料（key=`${sectionId}:${i}`，同一时刻只开一个）
-  // 及输入框内容。提交后置空、清编辑态——补料经 fillProposalGap 走定点续写，AI 重写该章删掉缺口标记。
-  const [fillingKey, setFillingKey] = useState<string | null>(null)
-  const [fillText, setFillText] = useState('')
   const [productPickerOpen, setProductPickerOpen] = useState(false)
   const [allKbProducts, setAllKbProducts] = useState<ProposalProduct[]>([])
   async function loadKbProducts(): Promise<void> {
@@ -620,58 +616,25 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                         <div className="text-[10px] text-muted-foreground">{g.title}</div>
                         <div className="text-foreground/90">{g.desc}</div>
                       </div>
-                      {/* 补料入口（阶段二）：开一个就地输入框，提交后经 fillProposalGap 让 AI 定点续写。
-                          流式中禁用（与其它修订动作一致，避免和进行中的那轮叠发）。 */}
-                      {fillingKey !== key && (
-                        <button
-                          type="button"
-                          className="shrink-0 rounded border border-amber-500/40 px-1.5 py-0.5 text-[11px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-40 dark:text-amber-400"
-                          disabled={generating}
-                          title={generating ? 'AI 生成中，请稍候' : '补充这段缺失的资料，让 AI 续写'}
-                          onClick={() => {
-                            setFillingKey(key)
-                            setFillText('')
-                          }}
-                        >
-                          补充资料
-                        </button>
-                      )}
+                      {/* 补料入口（改版）：草稿是【只读页】，不在这里就地收资料，也【不会立刻让 AI 跑】。
+                          点按钮只把「这一章缺这处」记下、并把焦点移到左侧输入框：输入框上方随即弹一条提示条
+                          告诉你缺什么、请你在下方输入这段资料原文（或指认知识库文件）并发送。你发送后 AI 才
+                          运行，一轮内把资料并进去、只重写这一章、删掉缺口标记。任何增删改都回对话框执行。
+                          流式中禁用（避免和进行中那轮叠发）。 */}
+                      <button
+                        type="button"
+                        className="shrink-0 rounded border border-amber-500/40 px-1.5 py-0.5 text-[11px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-40 dark:text-amber-400"
+                        disabled={generating}
+                        title={
+                          generating
+                            ? 'AI 生成中，请稍候'
+                            : '去左侧对话框补充这处资料——点后在输入框里贴入资料并发送，AI 才会据此续写这一章'
+                        }
+                        onClick={() => startProposalGapFill(g.sectionId, g.desc)}
+                      >
+                        去对话框补充
+                      </button>
                     </div>
-                    {fillingKey === key && (
-                      <div className="mt-1.5 space-y-1">
-                        <textarea
-                          value={fillText}
-                          autoFocus
-                          onChange={(e) => setFillText(e.target.value)}
-                          placeholder="贴入这段缺失的资料原文；或指认知识库文件（如：见《某产品白皮书》的部署章节）。AI 会据此续写并标注来源。"
-                          className="min-h-[72px] w-full resize-y rounded-md border border-border bg-card px-2 py-1 text-[12px] leading-snug text-foreground outline-none focus:border-accent"
-                        />
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            type="button"
-                            className="rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
-                            onClick={() => {
-                              setFillingKey(null)
-                              setFillText('')
-                            }}
-                          >
-                            取消
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded bg-accent px-2 py-0.5 text-[11px] text-white hover:opacity-90 disabled:opacity-40"
-                            disabled={generating || !fillText.trim()}
-                            onClick={() => {
-                              void fillProposalGap(g.sectionId, g.desc, fillText)
-                              setFillingKey(null)
-                              setFillText('')
-                            }}
-                          >
-                            提交补料，让 AI 续写
-                          </button>
-                        </div>
-                      </div>
-                    )}
                   </li>
                 )
               })}

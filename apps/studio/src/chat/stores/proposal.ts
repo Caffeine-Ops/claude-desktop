@@ -142,6 +142,15 @@ interface ProposalState {
   // 第 [start,end] 块（选区即改），由 FusionRuntimeProvider end 分流 spliceBlocks 拼回。瞬时
   // UI 信号，不持久化。
   pendingRevision: { sectionId: string; blockRange?: { start: number; end: number } } | null
+  // 资料缺失·待补料标记：用户在【只读】草稿里点某处缺口的「去对话框补充」按钮时置，记住「这一章
+  // 有这处缺口正等你在对话框里补料」。语义与交互——点按钮【不发任何消息给 AI】（不让 AI 在用户
+  // 还没给资料时就空跑），只置本标记：① 左侧输入框上方据它弹一条提示条，把「缺什么」告诉用户、
+  // 请其在下方输入这段资料并发送；② 用户发送那条消息时，onNew 发送收口据本标记把用户原文【包进
+  // 「只重写这一章、删缺口标记、按溯源规则标来源」的指令】发给引擎，并置 pendingRevision 让 end
+  // 分流整节替换、随即清掉本标记。故 AI 只在用户真正给了资料后才运行、且一轮内完成重写（复用成熟
+  // 的 pendingRevision 替换机制，不产生重复章节）。gapDesc 同时用于提示条文案与重写指令。瞬时 UI
+  // 信号，不持久化。
+  pendingGapFill: { sectionId: string; gapDesc: string } | null
   // 选区即改的待审阅提案，key=发起那轮的助手消息 id。非空项由 ThreadView 在该消息下渲染对照+按钮，
   // 应用才落地。瞬时 UI 信号，不持久化。可同时挂多条（不同消息各自独立审阅）。
   blockReviews: Record<string, BlockRevisionReview>
@@ -181,6 +190,9 @@ interface ProposalState {
   setPendingRevision: (
     pending: { sectionId: string; blockRange?: { start: number; end: number } } | null
   ) => void
+  // 置/清待补料标记。startProposalGapFill 点缺口「去对话框补充」时置；onNew 发送收口在用户发出
+  // 那条补料消息时消费并清（见 FusionRuntimeProvider onNew）。也用于提示条的显隐与取消。
+  setPendingGapFill: (pending: { sectionId: string; gapDesc: string } | null) => void
   // 选区即改·审阅项增删。addBlockReview：end 分流把「原文 vs 改写后」登记到该轮助手消息 id 下。
   // removeBlockReview：用户点应用/放弃、或「继续改」发起新一轮时，撤掉旧项。
   addBlockReview: (messageId: string, review: BlockRevisionReview) => void
@@ -267,6 +279,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   viewMode: 'preview',
   stageSkip: null,
   pendingRevision: null,
+  pendingGapFill: null,
   blockReviews: {},
   imageReviews: [],
   genImageJobs: {},
@@ -284,6 +297,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       viewMode: 'preview',
       stageSkip: null,
       pendingRevision: null,
+      pendingGapFill: null,
       blockReviews: {},
       imageReviews: [],
       genImageJobs: {},
@@ -334,6 +348,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
   advancePhase: (to) => set({ phase: to }),
   clearStageSkip: () => set({ stageSkip: null }),
   setPendingRevision: (pending) => set({ pendingRevision: pending }),
+  setPendingGapFill: (pending) => set({ pendingGapFill: pending }),
   addBlockReview: (messageId, review) =>
     set((s) => ({ blockReviews: { ...s.blockReviews, [messageId]: review } })),
   removeBlockReview: (messageId) =>
@@ -456,6 +471,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       workspaceOpen: true,
       stageSkip: null,
       pendingRevision: null,
+      pendingGapFill: null,
       blockReviews: {},
       imageReviews: []
     }),
@@ -465,6 +481,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       active: false,
       workspaceOpen: false,
       pendingRevision: null,
+      pendingGapFill: null,
       blockReviews: {},
       imageReviews: []
     }),
@@ -490,6 +507,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       viewMode: 'preview',
       stageSkip: null,
       pendingRevision: null,
+      pendingGapFill: null,
       blockReviews: {},
       imageReviews: [],
       // 对【最终放进 state 的那份 sections】（折叠+归并之后）预登记 manual 哨兵（终审 I-1）——
@@ -518,6 +536,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       viewMode: 'preview',
       stageSkip: null,
       pendingRevision: null,
+      pendingGapFill: null,
       blockReviews: {},
       imageReviews: [],
       // 同 restoreFromTranscript：必须对折叠+归并后的最终 sections 预登记，避免孤儿键/漏登记。
@@ -538,6 +557,7 @@ export const useProposalStore = create<ProposalState>((set) => ({
       viewMode: 'preview',
       stageSkip: null,
       pendingRevision: null,
+      pendingGapFill: null,
       blockReviews: {},
       imageReviews: [],
       genImageJobs: {},

@@ -43,6 +43,7 @@ import { triggerProposalCitationVerification } from '../lib/proposalVerification
 import { autoFireProposalGenImages } from '../lib/proposalGenImageFire'
 import { maybeNudgeStageConfirmAfterTurn } from '../lib/proposalStageGate'
 import { matchProposalSlash } from '../lib/proposalSlash'
+import { buildGapFillRewriteMessage } from '../lib/sendProposalSectionRevision'
 import { startOrReopenProposal } from '../lib/startOrReopenProposal'
 import { matchProducts } from '../lib/kbProductMatch'
 
@@ -589,6 +590,28 @@ export function FusionRuntimeProvider({
         }
       }
 
+      // ─── 资料缺失·补料落地（发送时收口）─────────────────────────────
+      // 用户在只读草稿点了某处缺口的「去对话框补充」→ pendingGapFill 记着「这一章有这处缺口正等你
+      // 在对话框补料」。此刻用户发出的这条消息就是那段资料：把它【包进「只重写这一章、删缺口标记、
+      // 按溯源规则标来源」的指令】发给引擎（sentTextOverride），并置 pendingRevision 让本轮产出的正文
+      // 块经 end 分流【整节替换】该节；随即清掉标记。用户气泡（storeContent/队列面板）仍只显示他打的
+      // 原文，包装指令只走引擎、不进 UI。前提是这条消息有正文（text 非空——纯图片不误触发补料）。
+      // 时序：gap-fill 是「草稿已生成、用户复核缺口」时的动作，此时通常没有在飞的流，故直接置
+      // pendingRevision 安全（不会撞上另一轮 content 产出的 end 分流把指针张冠李戴）。
+      let sentTextOverride: string | null = null
+      {
+        const ps = useProposalStore.getState()
+        const gap = ps.active && ps.sessionId === sessionId && text ? ps.pendingGapFill : null
+        if (gap) {
+          if (ps.sections.some((s) => s.id === gap.sectionId)) {
+            sentTextOverride = buildGapFillRewriteMessage(gap.gapDesc, text)
+            ps.setPendingRevision({ sectionId: gap.sectionId })
+          }
+          // 目标节即便已被删也照样消费掉意图，避免标记与提示条常驻。
+          ps.setPendingGapFill(null)
+        }
+      }
+
       // 1) Push user turn into the store — Thread shows it instantly.
       // Build the content-part array we want the UI to render: the
       // text (if any) followed by image thumbnails. This mirrors what
@@ -702,7 +725,8 @@ export function FusionRuntimeProvider({
           const proposalFields = await buildProposalFields()
           const { messageId } = await window.chatApi.send({
             sessionId: targetSid,
-            text: text,
+            // 补料落地时发【包装后的重写指令】，否则发用户原文（见上方 sentTextOverride 注释）。
+            text: sentTextOverride ?? text,
             images: images.length > 0 ? images : undefined,
             ...proposalFields
           })
@@ -753,8 +777,9 @@ export function FusionRuntimeProvider({
           sessionId: targetSid,
           // Engine validator accepts empty strings when images are present.
           // We still pass an empty string (not undefined) so the wire
-          // shape stays stable.
-          text: text,
+          // shape stays stable. 补料落地时发【包装后的重写指令】，否则发用户原文
+          // （见上方 sentTextOverride 注释）。
+          text: sentTextOverride ?? text,
           images: images.length > 0 ? images : undefined,
           ...proposalFields
         })
