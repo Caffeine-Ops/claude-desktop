@@ -105,9 +105,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         tone: 'live'
       }
     : sections.length === 0
-      ? { text: '等待开始', tone: 'idle' }
+      ? { text: '描述需求即可开始', tone: 'idle' }
       : phase === 'toc'
-        ? { text: '目录待确认', tone: 'wait' }
+        ? { text: '等你在聊天里确认', tone: 'wait' }
         : null
   // 开场上手引导（一次性）：草稿为空且没看过时显示「三步走」说明卡。用户发出首条需求、
   // 草稿长出内容（sections 非空）即视为「走过一次」，自动置位；也可点卡上「知道了」手动关。
