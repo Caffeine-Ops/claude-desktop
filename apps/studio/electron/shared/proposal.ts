@@ -85,6 +85,25 @@ export function decideProposalStageConfirm(
   return result
 }
 
+/**
+ * 纯函数：判断一张 AskUserQuestion 卡是不是【方案阶段确认卡】，是则返回是哪一阶段。
+ * 与 decideProposalStageConfirm 的区别：那个判「用户点完放行项后该往哪走」（需要 answers），
+ * 本函数只认「这是封面/目录确认卡」——用户还没作答就能识别，供确认卡渲染时钉说明行用。
+ * 只硬编码 header 常量（提示词据此填值，可靠）；放行项文案一概不管。toc 优先于 cover。
+ */
+export function identifyProposalStageConfirm(input: unknown): 'cover' | 'toc' | null {
+  if (!input || typeof input !== 'object') return null
+  const raw = (input as { questions?: unknown }).questions
+  if (!Array.isArray(raw)) return null
+  for (const q of raw) {
+    if (!q || typeof q !== 'object') continue
+    const header = (q as Record<string, unknown>).header
+    if (header === PROPOSAL_TOC_CONFIRM_HEADER) return 'toc'
+    if (header === PROPOSAL_COVER_CONFIRM_HEADER) return 'cover'
+  }
+  return null
+}
+
 // 抽取时按此顺序找「位置最靠前」的起始哨兵（顺序本身不影响正确性，只是遍历用）。
 const KIND_SCAN_ORDER: ProposalKind[] = ['cover', 'toc', 'content']
 
