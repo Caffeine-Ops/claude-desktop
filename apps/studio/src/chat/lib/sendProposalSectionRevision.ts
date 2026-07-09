@@ -56,6 +56,8 @@ async function dispatchSectionRevision(
     return
   }
   // 指针在 await 前置好（end 分流靠它分流本轮产出）；无需回滚——streaming 闸已保证不会因 stale 指针锁死。
+  // 与补料黏性指针互斥：发起一次直接修订即取消任何待补料意图，防两指针并存致 end 分流交叉捕获。
+  ps.setPendingGapFill(null)
   ps.setPendingRevision(built.blockRange ? { sectionId, blockRange: built.blockRange } : { sectionId })
   await sendProposalStageMessage(built.message, { displayText: built.displayText })
 }
@@ -109,35 +111,43 @@ export async function reviseProposalSection(
 }
 
 /**
- * 资料缺失·补料续写（P3-2 阶段二）：用户为某章里某条「⚠️ 资料缺失：…」缺口补充了资料，
- * 让 AI【只重写这一章】、把补料融进缺口处、删掉那条缺失标记，产出整章替换原节。
+ * 资料缺失·发起对话框补料（P3-2 阶段二·改版）：用户在【只读】草稿点某处缺口的「去对话框补充」时调用。
+ * 【不发任何消息给 AI】——只置待补料标记 pendingGapFill（指向这一章 + 缺口描述）并把焦点移到左侧输入框。
+ * 之后：输入框上方据标记弹一条提示条把「缺什么」告诉用户、请其在下方输入这段资料并发送；用户发送那条
+ * 消息时，onNew 发送收口据标记调 buildGapFillRewriteMessage 把原文包进「只重写这一章」的指令、并置
+ * pendingRevision，AI 这才运行、一轮内整节替换重写。这样 AI 只在用户真正给了资料后才跑，草稿保持只读。
  *
- * 复用与 reviseProposalSection 同一套机制（pendingRevision 指针 + end 分流整节替换 + 自动
- * 重新校验），区别只在指令：明确告知缺口描述与用户补料，并规定溯源——据【外部补料】写的内容
- * 标《${USER_SUPPLIED_SOURCE}》（校验侧识别为 user-supplied 中性态）；用户补料里若指认了知识库
- * 文件（如「见《某文件》」），则照常去 Read 该文件、按真实《文件名》标来源。两条路都不臆造。
- *
- * 仅对 content 节生效；非方案前台 / 目标节不存在 / 补料为空时静默 no-op。
+ * 不设 streaming 守卫——点按钮本身不发任何消息、无并发之虞（真正的发送并发由 onNew 那条路径承担）。
+ * 非方案前台 / 目标节不存在时静默 no-op。
  */
-export async function fillProposalGap(
-  sectionId: string,
-  gapDesc: string,
-  material: string
-): Promise<void> {
-  const trimmed = material.trim()
-  if (!trimmed) return
-  // 补料消息不依赖 sec 内容（缺口/补料自带），故 build 忽略入参；守卫/置指针/发消息统一在 dispatch。
-  await dispatchSectionRevision(sectionId, () => ({
-    displayText: trimmed,
-    message:
-      `【资料缺失·补料续写·只重写这一章，不要改动其它任何章节】本章里有一处标注的缺口：「⚠️ 资料缺失：${gapDesc}」。` +
-      `用户为此补充了以下资料：\n\n${trimmed}\n\n` +
-      `请把这段补料自然融入本章对应位置、并【删除那一行「⚠️ 资料缺失：${gapDesc}」标记】，重写并【整章完整输出】。溯源纪律：` +
-      `① 据上面这段【外部补料文字】写出的内容，段末标注（据《${USER_SUPPLIED_SOURCE}》）；` +
-      `② 若补料里指认了知识库中的某个文件，请实际 Read 该文件、据其原文撰写并按真实《文件名》标注来源；` +
-      `③ 本章其它原有内容与其《来源》标注保持不变；④ 绝不臆造补料和知识库之外的内容。` +
-      `仍用方案【正文】哨兵包裹（与逐章撰写同款）。`
-  }))
+export function startProposalGapFill(sectionId: string, gapDesc: string): void {
+  const ps = useProposalStore.getState()
+  if (!(ps.active && ps.sessionId)) return
+  if (!ps.sections.some((s) => s.id === sectionId)) return
+  // 与直接修订指针互斥：清掉任何残留 pendingRevision，防其在 end 分流里抢先捕获后续产出。
+  ps.setPendingRevision(null)
+  ps.setPendingGapFill({ sectionId, gapDesc })
+  // 焦点移到左侧输入框，方便用户直接开打（DOM 聚焦，与 onNew 里 /proposal-writer 预填模板同款手法）。
+  queueMicrotask(() => document.querySelector<HTMLElement>('.ProseMirror')?.focus())
+}
+
+/**
+ * 补料重写指令构造：把用户在对话框里给出的资料原文，包成「只重写这一章、删缺口标记、按溯源规则标
+ * 来源」的一条消息发给引擎。由 onNew 在用户发出补料消息时调用（此前 pendingGapFill 记着缺口描述），
+ * 同时那里会置 pendingRevision 让 end 分流整节替换。溯源纪律与旧版就地补料一致：外部补料标
+ * 《${USER_SUPPLIED_SOURCE}》；补料里指认了知识库文件则 Read 后按真实《文件名》标注。用户气泡仍只
+ * 显示他打的原文（displayText），这条包装消息只走引擎、不进 UI。
+ */
+export function buildGapFillRewriteMessage(gapDesc: string, material: string): string {
+  return (
+    `【资料缺失·补料续写·只重写这一章，不要改动其它任何章节】本章里有一处标注的缺口：` +
+    `「⚠️ 资料缺失：${gapDesc}」。用户为此在对话框补充了以下资料：\n\n${material}\n\n` +
+    `请把这段补料自然融入本章对应位置、并【删除那一行「⚠️ 资料缺失：${gapDesc}」标记】，重写并【整章完整输出】。溯源纪律：` +
+    `① 据上面这段【外部补料文字】写出的内容，段末标注（据《${USER_SUPPLIED_SOURCE}》）；` +
+    `② 若补料里指认了知识库中的某个文件，请实际 Read 该文件、据其原文撰写并按真实《文件名》标注来源；` +
+    `③ 本章其它原有内容与其《来源》标注保持不变；④ 绝不臆造补料和知识库之外的内容。` +
+    `仍用方案【正文】哨兵包裹（与逐章撰写同款）。`
+  )
 }
 
 /**

@@ -16,6 +16,7 @@ import { useChatStore, useTurnActivity } from '../../../stores/chat'
 import { useWorkspaceStore } from '../../../stores/workspace'
 import { useComposerModeStore, type ComposerModeId } from '../../../stores/composerMode'
 import { useComposerOverlayStore } from '../../../stores/composerOverlay'
+import { useProposalStore } from '../../../stores/proposal'
 import { buildSlashAdapter, buildSkillPickerEntries, type SkillPickerEntry } from '../../../composer/slashAdapter'
 import { buildFileMentionAdapter } from '../../../composer/fileMentionAdapter'
 import {
@@ -148,6 +149,44 @@ function ComposerStatusBar({
  * presses Enter to submit — at which point free-code's CLI runs
  * `extractAtMentionedFiles` on the text and auto-attaches each file.
  */
+/**
+ * GapFillBanner
+ * -------------
+ * 资料缺失·补料提示条：用户在【只读】方案草稿点某处缺口的「去对话框补充」后，pendingGapFill 被置，
+ * 这条提示条即在输入框顶部弹出——把「这一章缺什么」告诉用户，并指引其在下方输入这段资料的原文
+ * （或指认知识库文件）并发送。发送时 onNew 会把原文包成「只重写这一章」的指令、清掉 pendingGapFill，
+ * 本条随之消失。× 取消本次补料（清标记）。纯展示 + 一个取消动作，本身【不发任何消息】——AI 只在
+ * 用户真正发出资料后才运行。仅当补料标记属于当前 composer 会话时渲染（多 tab 不串）。
+ */
+function GapFillBanner({ sessionId }: { sessionId: string | null }): React.JSX.Element | null {
+  const gap = useProposalStore((s) =>
+    s.active && s.sessionId === sessionId ? s.pendingGapFill : null
+  )
+  if (!gap) return null
+  return (
+    <>
+      <div className="flex items-start gap-2 bg-amber-500/10 px-4 py-2 text-[12px] text-amber-700 dark:text-amber-400">
+        <span className="mt-px shrink-0">⚠️</span>
+        <div className="min-w-0 flex-1 leading-snug">
+          <div className="font-medium">补充资料：{gap.gapDesc}</div>
+          <div className="text-amber-600/80 dark:text-amber-400/80">
+            在下方输入这段资料的原文（或指认知识库文件）并发送，我就据此补写这一章、删掉缺口标记。
+          </div>
+        </div>
+        <button
+          type="button"
+          className="shrink-0 rounded px-1 leading-none text-amber-600/70 hover:bg-amber-500/15 hover:text-amber-700 dark:text-amber-400/70 dark:hover:text-amber-300"
+          title="取消补充"
+          onClick={() => useProposalStore.getState().setPendingGapFill(null)}
+        >
+          ✕
+        </button>
+      </div>
+      <div className="h-px bg-border/70" />
+    </>
+  )
+}
+
 export function Composer(): React.JSX.Element {
   const t = useT()
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
@@ -354,6 +393,10 @@ export function Composer(): React.JSX.Element {
             nothing can overlap or clip anything else — the status row is always
             a full, un-obscured line. */}
         <div className="relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--brand)/0.4)] group-data-[dragging=true]/dropzone:ring-2 group-data-[dragging=true]/dropzone:ring-[hsl(var(--brand)/0.5)] group-data-[dragging=true]/dropzone:bg-brand/[0.08] dark:ring-white/[0.08]">
+          {/* Segment 0 — 资料缺失·补料提示条。仅当用户点了草稿里某处缺口的「去对话框补充」
+              （pendingGapFill 属于本会话）时露出，指引其在下方输入资料并发送；自带底部 hairline。 */}
+          <GapFillBanner sessionId={composerSessionId} />
+
           {/* Segment 1 — message queue. Renders null when empty (so no divider
               shows either). Its own frame styling was stripped; it's pure
               content here. */}
