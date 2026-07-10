@@ -43,7 +43,7 @@ import { triggerProposalCitationVerification } from '../lib/proposalVerification
 import { autoFireProposalGenImages } from '../lib/proposalGenImageFire'
 import { maybeNudgeStageConfirmAfterTurn } from '../lib/proposalStageGate'
 import { matchProposalSlash } from '../lib/proposalSlash'
-import { buildGapFillRewriteMessage } from '../lib/sendProposalSectionRevision'
+import { buildGapFillRewriteMessage, drainRevisionQueue } from '../lib/sendProposalSectionRevision'
 import { startOrReopenProposal } from '../lib/startOrReopenProposal'
 import { matchProducts } from '../lib/kbProductMatch'
 
@@ -1867,6 +1867,11 @@ function makeSessionEventHandler(
           )
         } finally {
           actions.endAssistantMessage(sid)
+          // 选区改写排队·排空（CEO 护栏#1/#6 在 drainRevisionQueue 内部）：queueMicrotask 让
+          // endAssistantMessage 的 set 先落定（streaming=false 对 drain 内的闸可见），再排空。
+          queueMicrotask(() => {
+            void drainRevisionQueue()
+          })
         }
         // Unread: a reply just finished. If the user isn't currently
         // looking at this session (it's a background task, or they're on
@@ -1881,6 +1886,11 @@ function makeSessionEventHandler(
       case 'error':
         actions.setError(sid, event.messageId, event.error)
         actions.endAssistantMessage(sid)
+        // 选区改写排队·排空（复审 B 修正）：排队改写起飞后以 'error' 失败（子进程崩溃/abort/超时）时，
+        // 若不在此补排空，队列剩余项会永久停摆——与 'end' 分支对称，同款 queueMicrotask 触发下一轮。
+        queueMicrotask(() => {
+          void drainRevisionQueue()
+        })
         break
       case 'queue_changed':
         // Authoritative queue snapshot from main — overwrite the local
