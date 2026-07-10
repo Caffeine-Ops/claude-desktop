@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { reviseProposalSectionBlocks } from '../../lib/sendProposalSectionRevision'
+import { useProposalStore } from '../../stores/proposal'
 import type { ProposalKind } from '@desktop-shared/proposal'
 import { ImagePlusIcon, UploadIcon, SpinnerIcon, AlertTriangleIcon } from './proposalIcons'
 
@@ -85,29 +86,20 @@ export function SelectionAiBubble({
     const container = containerRef.current
     if (!container) return
 
-    // 生成中（disabled=generating）：立即收起已存在的气泡、且不订阅选区（review V1）。本 effect 的
-    // deps 含 disabled，故 disabled 由 false→true 时会重跑到这里，当场清 anchor 让浮层消失——堵住
-    // 「气泡在生成中途仍可见可点、fire() 覆盖在飞的单槽 pendingRevision」的竞态。disabled 回 false
-    // 时 effect 再次重跑、恢复订阅。
-    if (disabled) {
-      setAnchor(null)
-      return
-    }
+    // 生成中【不再】清 anchor / 停订阅：排队改写需要用户在 AI 忙时仍能选新段落。fire() 会按 disabled
+    // 分流——忙时入队、闲时直发（见下）。原先这里清 anchor 是"忙时锁死"的成因，排队方案下移除。
 
     // 用 const 箭头函数而非函数声明：TS 对函数声明（因提升）不把外层 `container` 的
     // 非空窄化带入闭包，箭头函数表达式则可以（不存在提前调用的可能）——避免下面一堆 `container`
     // 误报「possibly null」。
     const recompute = (): void => {
-      if (disabled) {
-        setAnchor(null)
-        return
-      }
+      // 生成中【不再】清 anchor / 停订阅（同上）：忙时也照常拿新选区，fire() 分流入队。
       // 焦点已在浮层内（点了指令文本域、正在打字）：此时正文选区被浏览器塌陷是【预期】的，保持浮层不动。
       if (bubbleRef.current?.contains(document.activeElement)) return
       // 关键语义（用户要求）：浮层一旦弹出，只能靠「取消 / ×」显式关闭，点编辑框以外的地方【不关闭】。
       // 故下面所有「选区无效」的分支一律【保持现有 anchor 不动】(只 return，绝不 setAnchor(null))——
       // 点外面→选区塌陷时浮层原地留存。recompute 只负责【拿到有效新选区时更新/打开】浮层；关闭只经
-      // close()（取消/×）或 fire() 收尾。唯一例外是顶部 disabled(生成中) 分支仍会清，防竞态。
+      // close()（取消/×）或 fire() 收尾。生成中亦然（排队方案下不再有 disabled 早退）。
       const sel = window.getSelection()
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
       const text = sel.toString().trim()
@@ -208,18 +200,26 @@ export function SelectionAiBubble({
   }
 
   async function fire(): Promise<void> {
-    // 生成中一律不发（review V1 兜底）：disabled 翻真到浮层被上面的 effect 清掉之间有一帧窗口，
-    // 此处再挡一次，绝不在别的修订在飞时发起。reviseProposalSectionBlocks 内部还会按 streaming 闸拒绝。
-    if (!anchor || disabled) return
+    if (!anchor) return
     const text = instruction.trim()
     if (!text) return
-    await reviseProposalSectionBlocks(
-      anchor.sectionId,
-      { start: anchor.start, end: anchor.end },
-      text,
-      anchor.selectedText
-    )
-    // 发起后收起浮层、清指令与选区。
+    if (disabled) {
+      // 生成中：入队，等当前轮结束由 drainRevisionQueue 串行发起（护栏#3 需要 hintRange 当消歧裁判）。
+      useProposalStore.getState().enqueueRevision({
+        sectionId: anchor.sectionId,
+        selectedText: anchor.selectedText,
+        instruction: text,
+        hintRange: { start: anchor.start, end: anchor.end }
+      })
+    } else {
+      await reviseProposalSectionBlocks(
+        anchor.sectionId,
+        { start: anchor.start, end: anchor.end },
+        text,
+        anchor.selectedText
+      )
+    }
+    // 发起/入队后收起浮层、清指令与选区。
     setInstruction('')
     setAnchor(null)
     window.getSelection()?.removeAllRanges()
@@ -243,7 +243,7 @@ export function SelectionAiBubble({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1 text-[13px] font-medium">
           <span className="text-accent">✦</span>
-          <span>{mode === 'genimage' ? '生成图片' : 'AI 改写'}</span>
+          <span>{mode === 'genimage' ? '生成图片' : disabled ? 'AI 改写 · 排队中' : 'AI 改写'}</span>
         </div>
         <button
           type="button"
@@ -314,10 +314,10 @@ export function SelectionAiBubble({
               className="flex items-center gap-1 rounded-lg bg-foreground px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
               disabled={!instruction.trim()}
               onClick={() => void fire()}
-              title="⌘/Ctrl + 回车"
+              title={disabled ? 'AI 忙，⌘/Ctrl+回车 排队' : '⌘/Ctrl + 回车'}
             >
               <span className="text-[11px]">✦</span>
-              开始改写
+              {disabled ? '排队改写' : '开始改写'}
             </button>
           </div>
 
@@ -352,23 +352,26 @@ export function SelectionAiBubble({
               ) : (
                 <div className="flex items-center gap-1.5">
                   <div className="mr-auto text-[11px] text-muted-foreground">插入图片</div>
+                  {/* 图片入口本次不排队：生成中禁用，避免用户误以为图片也会排队（改写才排队）。 */}
                   <button
                     type="button"
-                    className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent"
+                    className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-foreground"
+                    disabled={disabled}
                     onClick={() => {
                       setImgError(null)
                       setMode('genimage')
                     }}
-                    title="AI 按文字描述生成一张插图，插入选中段落之后（落地前可确认）"
+                    title={disabled ? 'AI 忙，插图暂不可用（图片不排队）' : 'AI 按文字描述生成一张插图，插入选中段落之后（落地前可确认）'}
                   >
                     <ImagePlusIcon />
                     <span>生成图片</span>
                   </button>
                   <button
                     type="button"
-                    className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent"
+                    className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-foreground"
+                    disabled={disabled}
                     onClick={() => void fireUpload()}
-                    title="上传本地图片，插入选中段落之后"
+                    title={disabled ? 'AI 忙，插图暂不可用（图片不排队）' : '上传本地图片，插入选中段落之后'}
                   >
                     <UploadIcon />
                     <span>上传图片</span>
