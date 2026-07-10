@@ -105,3 +105,53 @@ export function spliceBlocks(
   const repl = splitBlocks(replacement)
   return joinBlocks([...blocks.slice(0, start), ...repl, ...blocks.slice(end + 1)])
 }
+
+// 用"当初选中的文字"在最新 markdown 里重新定位块区间（排队改写排空时用）。
+// 为什么按文字重定位而非直接存块序号：排队期间前面的改写可能落地、块数变化，序号会漂到别处、
+// 改错段落；文字内容不漂。规范化去掉两侧所有空白后比较——浏览器选区把块间空行折叠成空格/直接
+// 相连，与源码 markdown 的空白不一致，不去空白会永远匹配不上。
+//
+// 算法：切块后把每块规范化文本顺次拼成一条长串，同时记住每块在长串里的字符区间；在长串里
+// indexOf(规范化选区文本)，命中区间的首尾字符各落在哪个块，就是 [start,end]。找不到 → null。
+// 多处命中取第一处（indexOf 语义），第一版够用。
+export function locateBlockRangeByText(
+  markdown: string,
+  selectedText: string
+): { start: number; end: number } | null {
+  const norm = (s: string): string => s.replace(/\s+/g, '')
+  const needle = norm(selectedText)
+  if (!needle) return null
+  const blocks = splitBlocks(markdown)
+  if (blocks.length === 0) return null
+
+  // 每块规范化文本 + 它在拼接长串里的 [起, 止) 字符区间。
+  let hay = ''
+  const spans: Array<{ start: number; end: number }> = []
+  for (const blk of blocks) {
+    const nb = norm(blk)
+    const begin = hay.length
+    hay += nb
+    spans.push({ start: begin, end: hay.length }) // [begin, hay.length)
+  }
+
+  const at = hay.indexOf(needle)
+  if (at < 0) return null
+  const hitStart = at
+  const hitEnd = at + needle.length - 1 // 命中末字符下标（含）
+
+  // 找命中首/末字符各自落在哪个块。空块（nb 为空、span.start===span.end）跳过。
+  let start = -1
+  let end = -1
+  for (let k = 0; k < spans.length; k++) {
+    const sp = spans[k]
+    if (sp.start === sp.end) continue // 规范化后为空的块不参与
+    if (start < 0 && hitStart < sp.end) start = k
+    if (hitEnd < sp.end) {
+      end = k
+      break
+    }
+  }
+  if (start < 0) return null
+  if (end < 0) end = blocks.length - 1 // 命中延伸到末尾（理论兜底）
+  return { start, end }
+}

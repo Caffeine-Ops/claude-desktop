@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { splitBlocks, joinBlocks, spliceBlocks } from './proposalBlocks'
+import { splitBlocks, joinBlocks, spliceBlocks, locateBlockRangeByText } from './proposalBlocks'
 
 describe('splitBlocks', () => {
   it('空行分隔的段落各自成块', () => {
@@ -55,5 +55,36 @@ describe('spliceBlocks', () => {
   })
   it('越界端点被夹紧', () => {
     expect(spliceBlocks(md, { start: 2, end: 99 }, 'C 改。')).toBe('A 段。\n\nB 段。\n\nC 改。')
+  })
+})
+
+describe('locateBlockRangeByText', () => {
+  const md = ['# 标题', '第一段讲的是产品背景。', '第二段讲的是技术方案。', '第三段讲的是落地计划。'].join('\n\n')
+
+  it('单块命中：定位到该块', () => {
+    expect(locateBlockRangeByText(md, '第二段讲的是技术方案。')).toEqual({ start: 2, end: 2 })
+  })
+
+  it('选区文本的空白被折叠也能命中（换行 vs 源码空行）', () => {
+    // 浏览器选区常把块间空行变成一个空格或直接相连
+    expect(locateBlockRangeByText(md, '第一段讲的是产品背景。 第二段讲的是技术方案。')).toEqual({ start: 1, end: 2 })
+  })
+
+  it('跨块选区：返回覆盖它的最小连续区间', () => {
+    expect(locateBlockRangeByText(md, '技术方案。第三段')).toEqual({ start: 2, end: 3 })
+  })
+
+  it('文字已不存在（被上一轮改写覆盖）：返回 null', () => {
+    expect(locateBlockRangeByText(md, '这段文字草稿里根本没有')).toBeNull()
+  })
+
+  it('空 markdown / 空选区：返回 null', () => {
+    expect(locateBlockRangeByText('', '任意')).toBeNull()
+    expect(locateBlockRangeByText(md, '   ')).toBeNull()
+  })
+
+  it('多处命中取第一处', () => {
+    const dup = ['复用段。', '中间段。', '复用段。'].join('\n\n')
+    expect(locateBlockRangeByText(dup, '复用段。')).toEqual({ start: 0, end: 0 })
   })
 })
