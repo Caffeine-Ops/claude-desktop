@@ -205,6 +205,13 @@ export function SelectionAiBubble({
     const text = instruction.trim()
     if (!text) return
     if (disabled) {
+      // 护栏#5·软上限：排队太多会拖长「等 AI 忙完」的尾巴，也让面板难读。达上限就拦下并提示，
+      // 不入队、不清 anchor——让用户看到提示后自行取消几个或等跑完再排。
+      const MAX_REVISION_QUEUE = 10
+      if (useProposalStore.getState().revisionQueue.length >= MAX_REVISION_QUEUE) {
+        useProposalStore.getState().setRevisionQueueNotice('排队已满（上限 10 个），请等几个跑完再排')
+        return
+      }
       // 生成中：入队，等当前轮结束由 drainRevisionQueue 串行发起（护栏#3 需要 hintRange 当消歧裁判）。
       useProposalStore.getState().enqueueRevision({
         sectionId: anchor.sectionId,

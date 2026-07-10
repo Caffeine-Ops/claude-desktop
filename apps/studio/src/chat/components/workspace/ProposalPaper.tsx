@@ -186,6 +186,11 @@ export function ProposalPaper(): React.JSX.Element {
   // genimage 任务态：驱动指令块卡片的三态渲染（配图密度③）。
   const genImageJobs = useProposalStore((s) => s.genImageJobs)
   const proposalSid = useProposalStore((s) => s.sessionId)
+  // 改写排队（Task 2/4/5）：队列可视化 + 丢弃提示条。两者都要订阅——入队/出队/取消、
+  // 及护栏拦截写入 notice 时都得驱动这块小面板重渲染。removeRevision/setRevisionQueueNotice
+  // 是稳定 action，用时从 getState() 取即可（下方渲染里直接调）。
+  const revisionQueue = useProposalStore((s) => s.revisionQueue)
+  const revisionQueueNotice = useProposalStore((s) => s.revisionQueueNotice)
   const generating = useChatStore((s) =>
     proposalSid ? (s.perSession[proposalSid]?.streaming ?? false) : false
   )
@@ -1134,6 +1139,46 @@ export function ProposalPaper(): React.JSX.Element {
       className="relative flex-1 overflow-auto bg-background py-6"
       onClick={handlePaperClick}
     >
+      {/* 改写排队面板 + 丢弃提示条（Task 5）：sticky 贴在画布顶部，AI 忙时排的改写在这里
+          可见、可取消；护栏拦下（队列满/冲突）的提示也落这。对齐正文列宽（768px + px-12），
+          与下方内容左右对齐。裸 <button> 会被 canvas 全局 reset 填成描边卡片，故都加 data-slot
+          逃逸（见 CLAUDE.md 样式铁律）。仅在有内容要展示时占位，空时不占高。 */}
+      {(revisionQueue.length > 0 || revisionQueueNotice) && (
+        <div className="sticky top-0 z-30 mx-auto mb-4 w-[min(768px,100%)] px-12">
+          {revisionQueueNotice && (
+            <div className="mb-2 flex items-start gap-1 rounded bg-amber-500/10 px-2 py-1 text-[12px] text-amber-700 dark:text-amber-400">
+              <span>{revisionQueueNotice}</span>
+              <button
+                type="button"
+                data-slot="queue-notice-close"
+                className="ml-auto shrink-0 hover:underline"
+                onClick={() => useProposalStore.getState().setRevisionQueueNotice(null)}
+              >
+                知道了
+              </button>
+            </div>
+          )}
+          {revisionQueue.length > 0 && (
+            <div className="rounded-lg border border-border bg-muted/30 p-2 text-[12px] shadow-sm backdrop-blur">
+              <div className="mb-1 font-medium text-muted-foreground">改写排队中（{revisionQueue.length}）</div>
+              {revisionQueue.map((r, i) => (
+                <div key={r.id} className="flex items-center gap-2 py-0.5">
+                  <span className="shrink-0 text-muted-foreground">{i + 1}.</span>
+                  <span className="truncate">{r.instruction}</span>
+                  <button
+                    type="button"
+                    data-slot="queue-cancel"
+                    className="ml-auto shrink-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => useProposalStore.getState().removeRevision(r.id)}
+                  >
+                    取消
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {sections.length === 0 && !generating ? (
         /* 空态（重设计）：不再渲染一张空白纸 + 一行「等待 AI 起草…」灰字，改为画布上
            居中的三步旅程引导——叠纸插画（品牌绿封面色块）+ 标题 + 三阶段卡片，把
