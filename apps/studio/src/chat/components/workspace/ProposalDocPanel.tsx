@@ -20,6 +20,7 @@ import {
   PROPOSAL_DRAFT_END
 } from '@desktop-shared/proposal'
 import { sendProposalStageMessage } from '../../lib/sendProposalStageMessage'
+import { proposalStepperNodeState } from '../../lib/proposalStepper'
 import { startProposalGapFill } from '../../lib/sendProposalSectionRevision'
 import { extractMermaidBlocks, renderMermaidImageMap } from '../../lib/mermaidRender'
 import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
@@ -505,46 +506,51 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           原右侧的「封面撰写中」等活性文字已上移为标题旁呼吸灯 badge——本条只管「走到
           哪一步」，badge 只管「系统在不在干活」，各司其职。 */}
       <div className="flex items-center border-b border-border px-3 py-2">
-        {PROPOSAL_PHASES.map((p, i) => (
-          <Fragment key={p.key}>
-            {i > 0 && (
-              <span className="relative mx-2.5 h-0.5 w-9 shrink-0 overflow-hidden rounded-full bg-border">
+        {PROPOSAL_PHASES.map((p, i) => {
+          // 三态由纯函数统一裁决（含「正文写完翻 done」规则，见 proposalStepper.ts）。连线填充
+          // 仍看 phaseIdx（节点「到达即填充」，与单个节点是否收尾无关，故不并进那套三态）。
+          const state = proposalStepperNodeState(phase, generating, i)
+          return (
+            <Fragment key={p.key}>
+              {i > 0 && (
+                <span className="relative mx-2.5 h-0.5 w-9 shrink-0 overflow-hidden rounded-full bg-border">
+                  <span
+                    className={
+                      'absolute inset-0 origin-left rounded-full bg-brand transition-transform duration-500 ' +
+                      (i <= phaseIdx ? 'scale-x-100' : 'scale-x-0')
+                    }
+                  />
+                </span>
+              )}
+              <span className="flex items-center gap-1.5">
                 <span
                   className={
-                    'absolute inset-0 origin-left rounded-full bg-brand transition-transform duration-500 ' +
-                    (i <= phaseIdx ? 'scale-x-100' : 'scale-x-0')
+                    'grid size-5 shrink-0 place-items-center rounded-full border text-[10px] font-semibold transition-colors ' +
+                    (state === 'done'
+                      ? 'border-brand bg-brand text-brand-foreground'
+                      : state === 'current'
+                        ? 'border-brand bg-background text-brand ring-[3px] ring-brand/15'
+                        : 'border-border bg-muted text-muted-foreground')
                   }
-                />
+                >
+                  {state === 'done' ? <CheckIcon /> : i + 1}
+                </span>
+                <span
+                  className={
+                    'whitespace-nowrap text-[12px] ' +
+                    (state === 'current'
+                      ? 'font-semibold text-foreground'
+                      : state === 'done'
+                        ? 'text-foreground'
+                        : 'text-muted-foreground')
+                  }
+                >
+                  {p.label}
+                </span>
               </span>
-            )}
-            <span className="flex items-center gap-1.5">
-              <span
-                className={
-                  'grid size-5 shrink-0 place-items-center rounded-full border text-[10px] font-semibold transition-colors ' +
-                  (i < phaseIdx
-                    ? 'border-brand bg-brand text-brand-foreground'
-                    : i === phaseIdx
-                      ? 'border-brand bg-background text-brand ring-[3px] ring-brand/15'
-                      : 'border-border bg-muted text-muted-foreground')
-                }
-              >
-                {i < phaseIdx ? <CheckIcon /> : i + 1}
-              </span>
-              <span
-                className={
-                  'whitespace-nowrap text-[12px] ' +
-                  (i === phaseIdx
-                    ? 'font-semibold text-foreground'
-                    : i < phaseIdx
-                      ? 'text-foreground'
-                      : 'text-muted-foreground')
-                }
-              >
-                {p.label}
-              </span>
-            </span>
-          </Fragment>
-        ))}
+            </Fragment>
+          )
+        })}
       </div>
 
       {/* 补救进行中提示（③·根因「莫名一直在思考」）：自动补救（regenerateToc）原本【完全静默】，
