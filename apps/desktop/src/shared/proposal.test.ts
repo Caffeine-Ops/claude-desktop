@@ -16,6 +16,7 @@ import {
   detectContentSentinelAheadOfPhase,
   laterPhase,
   decideProposalStageConfirm,
+  identifyProposalStageConfirm,
   appendDraftBlocks,
   collapseSingletonSections,
   splitProposalDraftSegments,
@@ -682,6 +683,27 @@ describe('decideProposalStageConfirm', () => {
     expect(decideProposalStageConfirm(null, {})).toBe('none')
     expect(decideProposalStageConfirm({}, {})).toBe('none')
     expect(decideProposalStageConfirm({ questions: 'x' }, {})).toBe('none')
+  })
+})
+
+describe('identifyProposalStageConfirm', () => {
+  const coverInput = { questions: [{ header: '封面确认', question: '封面 OK 吗？', options: [{ label: '确认封面，继续' }] }] }
+  const tocInput = { questions: [{ header: '目录确认', question: '目录 OK 吗？', options: [{ label: '确认目录，开始撰写正文' }] }] }
+
+  it('封面确认卡 → cover', () => {
+    expect(identifyProposalStageConfirm(coverInput)).toBe('cover')
+  })
+  it('目录确认卡 → toc', () => {
+    expect(identifyProposalStageConfirm(tocInput)).toBe('toc')
+  })
+  it('普通 AskUserQuestion（非阶段卡）→ null', () => {
+    const other = { questions: [{ header: '选个方向', question: '哪个？', options: [{ label: 'A' }] }] }
+    expect(identifyProposalStageConfirm(other)).toBeNull()
+  })
+  it('畸形 input → null（不抛）', () => {
+    expect(identifyProposalStageConfirm(null)).toBeNull()
+    expect(identifyProposalStageConfirm({})).toBeNull()
+    expect(identifyProposalStageConfirm({ questions: 'nope' })).toBeNull()
   })
 })
 
