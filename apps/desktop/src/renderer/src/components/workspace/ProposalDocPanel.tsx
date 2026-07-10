@@ -16,6 +16,11 @@ import { sendProposalStageMessage } from '../../lib/sendProposalStageMessage'
 import { fillProposalGap } from '../../lib/sendProposalSectionRevision'
 import { extractMermaidBlocks, renderMermaidImageMap } from '../../lib/mermaidRender'
 import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
+import {
+  hasSeenProposalOnboarding,
+  markProposalOnboardingSeen,
+  shouldShowProposalOnboarding
+} from '../../lib/proposalOnboarding'
 import { ProposalPaper } from './ProposalPaper'
 import { ProposalPreview } from './ProposalPreview'
 import { ProposalStyleModal } from './ProposalStyleModal'
@@ -83,6 +88,21 @@ export function ProposalDocPanel(): React.JSX.Element | null {
   )
   const [exporting, setExporting] = useState(false)
   const [exportMsg, setExportMsg] = useState<{ tone: 'ok' | 'err' | 'muted'; text: string } | null>(null)
+  // 开场上手引导（一次性）：草稿为空且没看过时显示「三步走」说明卡。用户发出首条需求、
+  // 草稿长出内容（sections 非空）即视为「走过一次」，自动置位；也可点卡上「知道了」手动关。
+  // 置位后再开空草稿也不再出现（老用户不打扰）。onboardingSeen 初值读 localStorage。
+  const [onboardingSeen, setOnboardingSeen] = useState(hasSeenProposalOnboarding)
+  const showOnboarding = shouldShowProposalOnboarding(onboardingSeen, sections.length === 0)
+  useEffect(() => {
+    if (sections.length > 0 && !onboardingSeen) {
+      markProposalOnboardingSeen()
+      setOnboardingSeen(true)
+    }
+  }, [sections.length, onboardingSeen])
+  const dismissOnboarding = (): void => {
+    markProposalOnboardingSeen()
+    setOnboardingSeen(true)
+  }
   // 「新建」二次确认：清空是破坏性的（丢掉整份草稿），故点一下先morph成确认条，再点才真清。
   // 内联确认而非 modal——与本工具栏其余轻量控件一致，不为一个动作引一层弹窗。
   const [confirmingNew, setConfirmingNew] = useState(false)
@@ -427,9 +447,18 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         <span className="text-muted-foreground">→</span>
         <span className={phase === 'content' ? 'font-medium text-foreground' : 'text-muted-foreground'}>③ 正文</span>
         <span className="flex-1" />
-        {phase === 'cover' && <span className="text-muted-foreground">封面撰写中</span>}
-        {phase === 'toc' && <span className="text-muted-foreground">目录整理中</span>}
-        {phase === 'content' && <span className="text-muted-foreground">正文撰写中</span>}
+        {/* 阶段状态一句话（上手引导 2b）：把原本无条件的「X撰写中」升级为随状态切换的说明——
+            正在生成时说「在写哪一阶段」，空闲空草稿时提示「描述需求即可开始」，停在目录确认时
+            提示「等你在聊天里确认」。文案全前端写死、不靠 AI 措辞（本功能反复踩坑得出的教训）。 */}
+        {generating ? (
+          <span className="text-muted-foreground">
+            {phase === 'cover' ? '封面撰写中' : phase === 'toc' ? '目录整理中' : '正文撰写中'}
+          </span>
+        ) : sections.length === 0 ? (
+          <span className="text-muted-foreground">描述需求即可开始</span>
+        ) : phase === 'toc' ? (
+          <span className="text-muted-foreground">等你在聊天里确认</span>
+        ) : null}
       </div>
 
       {/* 补救进行中提示（③·根因「莫名一直在思考」）：自动补救（regenerateToc）原本【完全静默】，
@@ -768,12 +797,40 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           每次切预览都从零跑一遍 IPC 生成 docx + 渲染。常驻后缓存存活：内容没变时切回预览
           即时复现已渲染的页面。预览常驻于后台时不能空跑——传 active 闸，非激活不渲染
           （见 ProposalPreview）。 */}
-      <div className={'flex min-h-0 flex-1 flex-col ' + (mode === 'edit' ? '' : 'hidden')}>
-        <ProposalPaper />
-      </div>
-      <div className={'flex min-h-0 flex-1 flex-col ' + (mode === 'preview' ? '' : 'hidden')}>
-        <ProposalPreview active={mode === 'preview'} />
-      </div>
+      {showOnboarding ? (
+        // 开场空状态说明卡（上手引导 1·一次性）：草稿为空且没看过时替代文档区显示，非遮罩、
+        // 不弹窗。用户发首条需求→草稿长出内容后被自然替换（并置位），或点「知道了」手动关。
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center p-8">
+          <div className="w-full max-w-xs rounded-2xl border border-border bg-card/60 p-6 text-[13px]">
+            <div className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+              <span aria-hidden>📄</span> 写方案分三步走
+            </div>
+            <ol className="mb-4 space-y-1.5 text-muted-foreground">
+              <li>① 封面 <span className="text-foreground/50">→ 你确认</span></li>
+              <li>② 目录 <span className="text-foreground/50">→ 你确认</span></li>
+              <li>③ 正文 <span className="text-foreground/50">→ 逐章生成</span></li>
+            </ol>
+            <p className="mb-3 text-muted-foreground">每步 AI 会停下来等你，点“确认”才继续。</p>
+            <p className="mb-4 text-xs text-muted-foreground/70">↓ 在下方输入框描述你的方案需求</p>
+            <button
+              type="button"
+              className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              onClick={dismissOnboarding}
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className={'flex min-h-0 flex-1 flex-col ' + (mode === 'edit' ? '' : 'hidden')}>
+            <ProposalPaper />
+          </div>
+          <div className={'flex min-h-0 flex-1 flex-col ' + (mode === 'preview' ? '' : 'hidden')}>
+            <ProposalPreview active={mode === 'preview'} />
+          </div>
+        </>
+      )}
 
       {/* 样式模板弹窗（重设计 A：纯调样式、非导出入口）：由「导出 ▾」下拉里的「调整样式模板…」
           打开，点「应用样式」把 draft 提交进 store，之后导出走顶栏下拉。 */}
