@@ -423,114 +423,103 @@ jobs:
           fi
           bun run dist:${{ matrix.platform }}
 
-      # Upload the installers straight to the GitHub Release instead of
-      # staging them as Actions artifacts. Why: artifacts count against the
-      # account's Actions storage quota (which we hit — a ~hundreds-of-MB
-      # dmg + the win exe per run fills it fast), AND they were only ever a
-      # hand-off to a separate release job that re-downloaded them. Release
-      # assets don't count against that quota, so attaching directly here
-      # removes both the quota failure and the artifact→download→release
-      # round-trip. electron-builder writes to apps/studio/dist/ (its
-      # build.directories.output is relative to the package, not the repo
-      # root). Both matrix jobs target the same tag; action-gh-release is
-      # idempotent per tag — the first creates the release, the second
-      # appends its files — so mac and win can publish in parallel.
+      # Stage installers as an Actions artifact instead of uploading straight
+      # to the GitHub Release from here. Why the change (2026-07-10 incident):
+      # the OLD comment here claimed "action-gh-release is idempotent per tag
+      # — mac and win can publish in parallel" — that assumption was WRONG.
+      # Three matrix legs (mac-arm64/mac-x64/win) each called action-gh-release
+      # against the SAME release CONCURRENTLY; when an asset with that name
+      # already exists the action deletes-then-reuploads it, and that
+      # delete+upload pair is not atomic across processes. Two legs racing
+      # that window on the SAME release produced byte-corrupted assets on
+      # BOTH mac arches simultaneously — v0.0.26 and v0.0.27 both shipped
+      # zips whose actual sha512 didn't match latest-mac.yml, so every
+      # installed client's "检查更新" failed with `sha512 checksum mismatch`
+      # (confirmed by re-downloading and re-hashing both arches' zips against
+      # the published manifest — neither matched, sizes didn't match either,
+      # ruling out a single-arch fluke). Root cause: concurrent writers to one
+      # release, not a build or signing defect.
       #
-      # 发布目标是独立的**公开** release 仓（自动更新方案 A，2026-07-05）：
-      # 代码仓保持私有，只有安装包公开——electron-updater 按包内
-      # app-update.yml（= studio package.json build.publish）匿名拉取该仓的
-      # latest*.yml + 安装包，*.blockmap 支撑差分下载。因此：
-      #   - repository 必须与 build.publish 的 owner/repo 一致；
-      #   - GITHUB_TOKEN 只对本仓有效，跨仓发布必须用 PAT secret
-      #     RELEASE_REPO_TOKEN（fine-grained：目标仓 Contents read/write）。
-      #     secret 缺失时本步会失败——发版链路宁可红也不要静默发错地方。
-      #   - tag 会打在目标仓的默认分支上（目标仓只有 README，无所谓指哪）。
-      # latest-mac.yml carries the auto-update pointer. With BOTH arm64 and x64
-      # mac jobs each writing a file literally named `latest-mac.yml`, uploading
-      # both to one release makes the second CLOBBER the first — half our mac
-      # users would then auto-update to a manifest that only lists the OTHER
-      # arch's zip. So mac jobs do NOT publish latest-mac.yml directly; they
-      # stash it (renamed per-arch) as a tiny artifact, and a dedicated
-      # merge-mac-latest job (below) fuses both into one manifest whose `files:`
-      # lists BOTH arches — electron-updater then picks the zip matching the
-      # user's CPU. Everything else (dmg/zip/blockmap, all arch-suffixed by
-      # artifactName) is safe to publish here in parallel as before.
-      - name: Stash mac latest.yml for cross-arch merge
-        if: matrix.platform == 'mac' && startsWith(github.ref, 'refs/tags/v')
+      # Fix: build jobs now ONLY produce artifacts (this step) — zero release
+      # writes happen here. A single non-matrix `publish` job (below, `needs:
+      # build`) downloads all three artifacts and uploads them to the release
+      # ONE AT A TIME, in one process — no concurrent writers, no race window.
+      # This does cost the old "skip the artifact quota" optimization (dmg/exe
+      # now transit through Actions storage again), but correctness beats
+      # quota headroom; the retention is 1 day so it doesn't accumulate.
+      - name: Stage installers artifact
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
           set -euo pipefail
-          src="apps/studio/dist/latest-mac.yml"
-          if [ ! -f "$src" ]; then
-            echo "::error::$src missing — electron-builder didn't emit a mac update manifest"
-            exit 1
+          mkdir -p release-staging
+          # mac legs also emit latest-mac.yml (per-arch, NOT release-ready —
+          # see the publish job's merge step); win emits latest.yml, which
+          # IS release-ready as-is (only one win arch, no merge needed).
+          shopt -s nullglob
+          for f in apps/studio/dist/*.dmg apps/studio/dist/*.zip apps/studio/dist/*.exe apps/studio/dist/*.blockmap; do
+            cp "$f" release-staging/
+          done
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            cp apps/studio/dist/latest-mac.yml "release-staging/latest-mac-${{ matrix.arch }}.yml"
+          else
+            cp apps/studio/dist/latest.yml release-staging/
           fi
-          mkdir -p mac-latest-staging
-          cp "$src" "mac-latest-staging/latest-mac-${{ matrix.arch }}.yml"
+          ls -la release-staging
 
-      - name: Upload mac latest.yml artifact
-        if: matrix.platform == 'mac' && startsWith(github.ref, 'refs/tags/v')
+      - name: Upload installers artifact
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
-          name: mac-latest-${{ matrix.arch }}
-          path: mac-latest-staging/latest-mac-${{ matrix.arch }}.yml
+          name: installers-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-staging/*
           if-no-files-found: error
           retention-days: 1
 
-      - name: Publish to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          repository: Caffeine-Ops/claude-desktop-releases
-          token: ${{ secrets.RELEASE_REPO_TOKEN }}
-          # Deliberately NOT latest-mac.yml here (see stash step above); win's
-          # latest.yml is fine — only one win arch. `latest*.yml` on win matches
-          # latest.yml + latest-win.yml but NOT latest-mac.yml (mac dist won't
-          # contain a win manifest), so the mac exclusion is by construction.
-          files: |
-            apps/studio/dist/*.dmg
-            apps/studio/dist/*.zip
-            apps/studio/dist/*.exe
-            apps/studio/dist/*.blockmap
-            ${{ matrix.platform == 'win' && 'apps/studio/dist/latest*.yml' || '' }}
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-          fail_on_unmatched_files: false
-
-  # Fuse the two per-arch mac update manifests into ONE latest-mac.yml so
-  # electron-updater serves the right zip to each CPU. Runs after both mac
-  # legs finish. We take arm64's manifest as the base (top-level version/
-  # releaseDate/path/sha512 are arch-agnostic pointers electron-updater falls
-  # back to) and append x64's `files[]` entry, so the merged `files:` lists
-  # BOTH zips; electron-updater matches the entry whose url carries the user's
-  # arch. Only the tiny yml travels through artifacts (KBs — no storage-quota
-  # hit like the old dmg-as-artifact flow); the zips themselves were already
-  # published by each mac job. If either arch's manifest is missing the job
-  # fails loud rather than shipping a half manifest.
-  merge-mac-latest:
-    name: Merge mac latest.yml (arm64 + x64)
+  # Single serial publisher (2026-07-10, replaces the old parallel-upload +
+  # merge-mac-latest split — see the "Stage installers artifact" step comment
+  # in `build` for the incident this fixes). Downloads all three matrix legs'
+  # artifacts, merges the two per-arch mac manifests into one latest-mac.yml,
+  # then makes exactly ONE action-gh-release call carrying every file. One
+  # process, one release, one asset-upload pass — no concurrent writers, so
+  # the delete-then-reupload race that corrupted v0.0.26/v0.0.27's mac zips
+  # structurally cannot happen here.
+  publish:
+    name: Publish release (serial)
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
-      - name: Download arm64 mac manifest
+      - name: Download mac-arm64 installers
         uses: actions/download-artifact@v4
         with:
-          name: mac-latest-arm64
-          path: mac-latest
+          name: installers-mac-arm64
+          path: release-out
 
-      - name: Download x64 mac manifest
+      - name: Download mac-x64 installers
         uses: actions/download-artifact@v4
         with:
-          name: mac-latest-x64
-          path: mac-latest
+          name: installers-mac-x64
+          path: release-out
 
-      - name: Merge into a single latest-mac.yml
+      - name: Download win installers
+        uses: actions/download-artifact@v4
+        with:
+          name: installers-win-x64
+          path: release-out
+
+      # Merge the two per-arch mac manifests (latest-mac-arm64.yml /
+      # latest-mac-x64.yml, staged by the build job under those names so they
+      # don't collide with each other before this point) into ONE
+      # latest-mac.yml whose `files:` lists BOTH zips — electron-updater then
+      # matches the entry for the user's CPU. arm64's manifest is the base
+      # (top-level version/releaseDate/path/sha512 are arch-agnostic fallback
+      # pointers); x64's `files[]` entry is appended.
+      - name: Merge mac manifests into one latest-mac.yml
         shell: bash
         run: |
           set -euo pipefail
-          ls -la mac-latest
+          ls -la release-out
           python3 - <<'PY'
           import sys
           try:
@@ -540,17 +529,13 @@ jobs:
               subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "pyyaml"])
               import yaml
 
-          base_path = "mac-latest/latest-mac-arm64.yml"
-          other_path = "mac-latest/latest-mac-x64.yml"
+          base_path = "release-out/latest-mac-arm64.yml"
+          other_path = "release-out/latest-mac-x64.yml"
           with open(base_path) as f:
               base = yaml.safe_load(f)
           with open(other_path) as f:
               other = yaml.safe_load(f)
 
-          # electron-builder's mac manifest lists per-file entries under `files`;
-          # each has a url (arch-suffixed zip name), sha512 and size. Union the
-          # two arches' entries, de-duplicating by url so a re-run can't double
-          # them. Keep arm64's top-level fields as the fallback pointer.
           def entries(m):
               return m.get("files", []) or []
           seen = set()
@@ -566,19 +551,66 @@ jobs:
               sys.exit(1)
           base["files"] = merged_files
 
-          with open("latest-mac.yml", "w") as f:
+          with open("release-out/latest-mac.yml", "w") as f:
               yaml.safe_dump(base, f, sort_keys=False, default_flow_style=False)
           print("=== merged latest-mac.yml ===")
-          print(open("latest-mac.yml").read())
+          print(open("release-out/latest-mac.yml").read())
           print("urls:", [e.get("url") for e in merged_files])
           PY
+          # Per-arch staging names are consumed by the merge above — remove
+          # them so they don't get uploaded to the release as stray assets.
+          rm -f release-out/latest-mac-arm64.yml release-out/latest-mac-x64.yml
 
-      - name: Publish merged latest-mac.yml
+      # Integrity self-check BEFORE publishing: recompute each zip/dmg's
+      # sha512 and compare against what the manifests claim. This is exactly
+      # the check electron-updater does client-side — running it here means a
+      # corrupted asset (network flake during artifact download, etc.) fails
+      # the CI job loud instead of shipping silently broken auto-update to
+      # every installed client (which is how the 2026-07-10 incident was
+      # only noticed after users hit "检查更新" and got sha512 mismatch).
+      - name: Verify asset checksums against manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, sys, yaml
+
+          def sha512_b64(path):
+              h = hashlib.sha512()
+              with open(path, "rb") as f:
+                  for chunk in iter(lambda: f.read(1 << 20), b""):
+                      h.update(chunk)
+              return base64.b64encode(h.digest()).decode()
+
+          failed = False
+          for manifest in ("release-out/latest-mac.yml", "release-out/latest.yml"):
+              with open(manifest) as f:
+                  doc = yaml.safe_load(f)
+              for entry in doc.get("files", []) or []:
+                  url = entry["url"]
+                  path = f"release-out/{url}"
+                  expected = entry["sha512"]
+                  actual = sha512_b64(path)
+                  if actual != expected:
+                      print(f"::error::{manifest}: {url} sha512 mismatch — expected {expected}, got {actual}")
+                      failed = True
+                  else:
+                      print(f"OK {manifest}: {url}")
+          if failed:
+              sys.exit(1)
+          PY
+
+      # ONE action-gh-release call for everything — the whole point of this
+      # job existing (see header comment). fail_on_unmatched_files: true
+      # because every file here MUST exist (unlike the old per-leg upload
+      # where a leg only ever saw its own platform's files).
+      - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           repository: Caffeine-Ops/claude-desktop-releases
           token: ${{ secrets.RELEASE_REPO_TOKEN }}
-          files: latest-mac.yml
+          files: release-out/*
+          generate_release_notes: true
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
