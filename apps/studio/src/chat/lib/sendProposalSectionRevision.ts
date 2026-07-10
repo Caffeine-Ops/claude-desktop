@@ -1,7 +1,7 @@
 import { useProposalStore, type ProposalSection } from '../stores/proposal'
 import { useChatStore } from '../stores/chat'
 import { USER_SUPPLIED_SOURCE, type ProposalKind } from '@desktop-shared/proposal'
-import { splitBlocks, locateBlockRangeByText } from '@desktop-shared/proposalBlocks'
+import { splitBlocks, locateBlockRangeByTextWithHint } from '@desktop-shared/proposalBlocks'
 import { sendProposalStageMessage } from './sendProposalStageMessage'
 
 // 溯源后缀按节类型分叉：正文节要标《来源》、守 trigram 引用落地校验；封面/目录不引用知识库、无
@@ -276,8 +276,7 @@ export async function drainRevisionQueue(): Promise<void> {
         console.warn('[proposal-queue] 丢弃排队项：目标节已不存在', { sectionId: head.sectionId })
         continue
       }
-      // Task 6 会把这里换成带 hint 的 locateBlockRangeByTextWithHint(sec.markdown, head.selectedText, head.hintRange)
-      const range = locateBlockRangeByText(sec.markdown, head.selectedText)
+      const range = locateBlockRangeByTextWithHint(sec.markdown, head.selectedText, head.hintRange)
       if (!range) {
         dropped++
         console.warn('[proposal-queue] 丢弃排队项：选中文字在最新草稿里已找不到', { sectionId: head.sectionId })
