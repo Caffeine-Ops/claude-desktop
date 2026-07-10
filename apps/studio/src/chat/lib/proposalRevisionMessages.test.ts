@@ -12,10 +12,14 @@ describe('buildSelectionRevisionMessage', () => {
       kind: 'content'
     })
     expect(msg).toContain('一字不动、原样保留')
-    expect(msg).toContain('第二句要改的正是这里。')
+    // focus 必须被拼进【选区框架文案】本身，而非只是碰巧作为 context 的子串蒙混过关（终审 Minor#1）：
+    // 断言整句「用户只选中了这段里的一部分文字要改：「focus」」，独立锁住 focus 真的被注入选区分支。
+    expect(msg).toContain('用户只选中了这段里的一部分文字要改：「第二句要改的正是这里。」')
     expect(msg).toContain(context)
     expect(msg).toContain('把它写得更专业')
     expect(msg).toContain('段末按既有规则标注《来源》')
+    // 负向锁（终审 Minor#2）：focus 非空的选区分支【绝不】退回旧的整段重写口径——那正是本次 bug 的病灶措辞。
+    expect(msg).not.toContain('只输出【重写后的这一小段本身】')
   })
 
   it('focus 为空（防御兜底）：退回「整段改写」措辞、不含「原样保留」约束', () => {
