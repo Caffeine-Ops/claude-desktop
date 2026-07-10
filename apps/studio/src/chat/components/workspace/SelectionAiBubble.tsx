@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { reviseProposalSectionBlocks } from '../../lib/sendProposalSectionRevision'
-import { blockRangeOverlapsPendingReview } from '../../lib/proposalRevisionGuards'
+import { resolveRevisionTarget } from '../../lib/proposalRevisionGuards'
 import { useProposalStore } from '../../stores/proposal'
+import { useChatStore } from '../../stores/chat'
 import type { ProposalKind } from '@desktop-shared/proposal'
 import { ImagePlusIcon, UploadIcon, SpinnerIcon, AlertTriangleIcon } from './proposalIcons'
+
+// 排队软上限（复审 L8：常量与提示文案共用同一个数，改一处即改两处，绝不自相矛盾）。
+const MAX_REVISION_QUEUE = 10
 
 // 选区即改浮层：监听编辑纸面内的选区，选中一段文字后贴选区尾浮出气泡。作用域=选区覆盖的
 // 块区间（从选区两端向上找最近 data-block-index），替换单位是块（见 proposalBlocks.ts 理由）。
@@ -204,34 +208,46 @@ export function SelectionAiBubble({
     if (!anchor) return
     const text = instruction.trim()
     if (!text) return
-    if (disabled) {
-      // 护栏#5·软上限：排队太多会拖长「等 AI 忙完」的尾巴，也让面板难读。达上限就拦下并提示，
-      // 不入队、不清 anchor——让用户看到提示后自行取消几个或等跑完再排。
-      const MAX_REVISION_QUEUE = 10
-      if (useProposalStore.getState().revisionQueue.length >= MAX_REVISION_QUEUE) {
-        useProposalStore.getState().setRevisionQueueNotice('排队已满（上限 10 个），请等几个跑完再排')
-        return
+    // 路由用【现读的 streaming】而非渲染期的 disabled prop（复审 M6）：streaming 刚翻真、气泡还没
+    // 重渲染那一帧点「开始改写」，若信旧 prop=false 会走直发→撞 dispatch 的 streaming 守卫静默 no-op、
+    // 指令和选区凭空消失。现读关掉这个竞态窗口（getState 与 dispatch 内的读同步背靠背、中间无 await）。
+    const ps = useProposalStore.getState()
+    const sid = ps.sessionId
+    const streamingNow = sid ? (useChatStore.getState().perSession[sid]?.streaming ?? false) : false
+    if (streamingNow) {
+      // 生成中：入队，等当前轮结束由 drainRevisionQueue 串行发起。软上限见 MAX_REVISION_QUEUE。
+      if (ps.revisionQueue.length >= MAX_REVISION_QUEUE) {
+        ps.setRevisionQueueNotice(`排队已满（上限 ${MAX_REVISION_QUEUE} 个），请等几个跑完再排`)
+        return // 不入队、不清 anchor
       }
-      // 生成中：入队，等当前轮结束由 drainRevisionQueue 串行发起（护栏#3 需要 hintRange 当消歧裁判）。
-      useProposalStore.getState().enqueueRevision({
+      ps.enqueueRevision({
         sectionId: anchor.sectionId,
         selectedText: anchor.selectedText,
         instruction: text,
         hintRange: { start: anchor.start, end: anchor.end }
       })
     } else {
-      // 护栏#4：同几块已挂待审阅卡时拦下即时发起，防两张卡先后应用致 blockRange 错位。
-      const { blockReviews } = useProposalStore.getState()
-      if (blockRangeOverlapsPendingReview(blockReviews, anchor.sectionId, { start: anchor.start, end: anchor.end })) {
-        useProposalStore.getState().setRevisionQueueNotice('这段还有待确认的改写，请先「应用」或「放弃」它，再改这几段')
+      // 直发：用 resolveRevisionTarget 按【选中文字】在最新 markdown 里重定位（复审 H2：不再信可能
+      // 已过期的 anchor 块序号——AI 若在这期间整节重写过，旧序号会指到别的段落），并顺带做审阅卡重叠
+      // 拦截（护栏#4，与排队路径同一判定，复审 H1）。
+      const sec = ps.sections.find((s) => s.id === anchor.sectionId)
+      if (!sec) return
+      const target = resolveRevisionTarget({
+        markdown: sec.markdown,
+        blockReviews: ps.blockReviews,
+        sectionId: anchor.sectionId,
+        selectedText: anchor.selectedText,
+        hintRange: { start: anchor.start, end: anchor.end }
+      })
+      if (target.status === 'missing') {
+        ps.setRevisionQueueNotice('选中的文字已变化，请重新选择这段再改')
         return // 不发起、不清 anchor
       }
-      await reviseProposalSectionBlocks(
-        anchor.sectionId,
-        { start: anchor.start, end: anchor.end },
-        text,
-        anchor.selectedText
-      )
+      if (target.status === 'overlap') {
+        ps.setRevisionQueueNotice('这段还有待确认的改写，请先「应用」或「放弃」它，再改这几段')
+        return // 不发起、不清 anchor
+      }
+      await reviseProposalSectionBlocks(anchor.sectionId, target.range, text, anchor.selectedText)
     }
     // 发起/入队后收起浮层、清指令与选区。
     setInstruction('')
