@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { ListChecks, MoreHorizontal } from 'lucide-react'
 
@@ -28,7 +28,9 @@ import { detectImageGen } from './ImageGenCard'
 
 /**
  * Every deliverable-looking path the foreground session has produced, newest
- * first. Two detection sources, mirroring what already renders inline so the
+ * first, plus `freshlyAdded` — the subset that just landed *while this hook
+ * stayed mounted* (drives the row entrance/accent-bar and the trigger's ring
+ * pulse). Two detection sources, mirroring what already renders inline so the
  * panel never surprises the user with a file they haven't seen a card for:
  *
  *   - Prose mentions (AssistantDeliverables' contract): any assistant text
@@ -41,8 +43,21 @@ import { detectImageGen } from './ImageGenCard'
  * Candidates are deduped by path and verified against disk via statFiles in
  * one batch (same pattern as AssistantDeliverables) — a path the model only
  * *mentioned* never earns a row.
+ *
+ * `freshlyAdded` semantics (why this needs its own tracking, not just a
+ * files.length diff): switching to a session that already has 5 outputs must
+ * NOT play the "just arrived" animation — nothing just happened, you just
+ * looked at it. Only a genuine same-session growth counts as fresh. The seed
+ * baseline is captured inside the SAME statFiles resolution that first
+ * populates `files` for a given sessionId — seeding it any earlier (e.g. off
+ * a bare sessionId-changed effect) would race the async fetch and seed off
+ * the PREVIOUS session's stale path list.
  */
-function useSessionOutputs(): { files: readonly string[]; loading: boolean } {
+function useSessionOutputs(): {
+  files: readonly string[]
+  freshlyAdded: ReadonlySet<string>
+} {
+  const sessionId = useChatStore((s) => s.sessionId)
   const messages = useChatStore((s) => s.messages)
   const candidatesKey = useMemo(() => {
     const seen = new Set<string>()
@@ -70,39 +85,77 @@ function useSessionOutputs(): { files: readonly string[]; loading: boolean } {
   }, [messages])
 
   const [files, setFiles] = useState<readonly string[]>([])
-  const [loading, setLoading] = useState(false)
+  const [freshlyAdded, setFreshlyAdded] = useState<ReadonlySet<string>>(new Set())
+  // 累积"已见过"的路径，按 sessionId 隔离——每次 statFiles resolve 都在
+  // 这同一个回调里既 setFiles 又做新增 diff，两者共享同一份新鲜数据，
+  // 避免用单独的 effect 追 sessionId 变化时跟异步 fetch 产生竞态。
+  const seenRef = useRef<{ sessionId: string | null; seen: Set<string> }>({
+    sessionId: null,
+    seen: new Set()
+  })
+
   useEffect(() => {
     if (!candidatesKey) {
       setFiles([])
       return
     }
     let cancelled = false
-    setLoading(true)
     void window.chatApi
       .statFiles({ paths: candidatesKey.split('\n') })
       .then((r) => {
-        if (!cancelled) setFiles([...r.files].reverse())
+        if (cancelled) return
+        const next = [...r.files].reverse()
+        setFiles(next)
+        if (seenRef.current.sessionId !== sessionId) {
+          // 这个会话第一次拿到数据——当作"历史已有"，不触发新增动效。
+          seenRef.current = { sessionId, seen: new Set(next) }
+          return
+        }
+        const fresh = next.filter((f) => !seenRef.current.seen.has(f))
+        next.forEach((f) => seenRef.current.seen.add(f))
+        if (fresh.length > 0) setFreshlyAdded(new Set(fresh))
       })
       .catch(() => {
         /* transient IPC failure — keep the previous list */
       })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
     return () => {
       cancelled = true
     }
-  }, [candidatesKey])
+  }, [candidatesKey, sessionId])
 
-  return { files, loading }
+  // "刚新增"标记只活 2.6s（陪着行入场的强调条 + 触发按钮的提示环一起
+  // 播完），到点自动清空——不清的话下一次任意重渲染都会把这批路径
+  // 继续当"新"的，强调条会诡异地常驻。
+  useEffect(() => {
+    if (freshlyAdded.size === 0) return
+    const timer = window.setTimeout(() => setFreshlyAdded(new Set()), 2600)
+    return () => window.clearTimeout(timer)
+  }, [freshlyAdded])
+
+  return { files, freshlyAdded }
 }
 
 /** One row in the outputs popover: type badge + filename (click = smart open,
  *  same branching as DeliverableCard) plus a 更多 menu offering an explicit
  *  「打开」（system app）/「在文件夹中显示」pair — mirrors DeliverableCard's
  *  「打开方式」pill so the same file behaves identically whether the user
- *  meets it inline in a message or here in the aggregated list. */
-function OutputRow({ path }: { path: string }): React.JSX.Element {
+ *  meets it inline in a message or here in the aggregated list.
+ *
+ *  `isNew` drives the "just landed" treatment (docs/ui-prototype-outputs-panel
+ *  .html 定稿的「左侧强调条」方案): a slide+fade entrance plus a brand-colored
+ *  left accent bar that draws in then fades — no full-row color wash, no
+ *  inline text tag next to the filename (both were the rejected first pass:
+ *  a flat brand/16% background read as a warning flash, and an inline "刚
+ *  生成" tag made the filename's truncation width jump twice). `layout`
+ *  gives every row (new or not) a free FLIP-style reposition animation when
+ *  a fresh row lands above it and pushes it down. */
+function OutputRow({
+  path,
+  isNew
+}: {
+  path: string
+  isNew: boolean
+}): React.JSX.Element {
   const lang = useI18n((s) => s.lang)
   const zh = lang === 'zh'
   const name = path.split('/').pop() ?? path
@@ -129,7 +182,26 @@ function OutputRow({ path }: { path: string }): React.JSX.Element {
   }
 
   return (
-    <div className="group/orow flex items-center gap-1 rounded-xl px-2 py-2 transition-colors hover:bg-muted/50">
+    <motion.div
+      layout
+      initial={isNew ? { opacity: 0, y: -12 } : false}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.42, ease: [0.34, 1.56, 0.64, 1] }}
+      className="group/orow relative flex items-center gap-1.5 rounded-xl px-1.5 py-[7px] transition-colors hover:bg-muted/50"
+    >
+      {isNew ? (
+        <motion.span
+          aria-hidden
+          initial={{ scaleY: 0, opacity: 1 }}
+          animate={{ scaleY: 1, opacity: 0 }}
+          transition={{
+            scaleY: { duration: 0.38, ease: [0.22, 1, 0.36, 1], delay: 0.06 },
+            opacity: { duration: 0.42, ease: 'easeIn', delay: 1.9 }
+          }}
+          style={{ transformOrigin: 'top' }}
+          className="absolute inset-y-[6px] left-0 w-[2.5px] rounded-full bg-brand"
+        />
+      ) : null}
       <button
         type="button"
         onClick={open}
@@ -139,18 +211,26 @@ function OutputRow({ path }: { path: string }): React.JSX.Element {
         <span
           aria-hidden
           className={
-            'grid size-6 shrink-0 place-items-center rounded-md text-[9px] font-bold text-white ' +
+            // 34px + 9px 圆角——逐字对齐 docs/ui-prototype-outputs-panel.html
+            // 的 .out-row .thumb 尺寸；此前落地时误用了旧版 24px 徽标规格。
+            'relative grid size-[34px] shrink-0 place-items-center overflow-hidden rounded-[9px] text-[9px] font-bold text-white shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)] ' +
             kind.badgeClass
           }
         >
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/28 to-transparent"
+          />
           {kind.isImage ? (
-            <svg viewBox="0 0 20 20" className="size-3.5 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <svg viewBox="0 0 20 20" className="relative size-4 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="1.5">
               <rect x="2.5" y="3.5" width="15" height="13" rx="2" />
               <circle cx="7.2" cy="8" r="1.4" fill="currentColor" stroke="none" />
               <path d="M4 14.5l4-4 3 3 2.5-2.5 2.5 2.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
+          ) : kind.icon ? (
+            <span className="relative">{kind.icon('size-[19px]')}</span>
           ) : (
-            kind.badge
+            <span className="relative">{kind.badge}</span>
           )}
         </span>
         <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-foreground group-hover/orow:underline">
@@ -193,7 +273,7 @@ function OutputRow({ path }: { path: string }): React.JSX.Element {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    </div>
+    </motion.div>
   )
 }
 
@@ -201,7 +281,21 @@ function OutputRow({ path }: { path: string }): React.JSX.Element {
  *  the foreground session has produced so far (see useSessionOutputs). */
 export function OutputsButton(): React.JSX.Element {
   const t = useT()
-  const { files } = useSessionOutputs()
+  const { files, freshlyAdded } = useSessionOutputs()
+
+  // 环形提示的播放钥匙：freshlyAdded 每次非空就是一次真实的"到达"，用自增
+  // 序号而不是 Set 本身当 key（我们只关心"发生过一次"，序号变化足以让
+  // AnimatePresence 里的 motion.span 重新挂载重播）。徽标的 pop 动画共用
+  // 同一把钥匙——旧实现用 key={files.length}，切到一个本来就有 N 个产出物
+  // 的会话也会让 length 从 0 跳到 N 从而误播"新增"弹跳，这里改成只在真
+  // 正的新增事件上才重播。
+  const pingSeqRef = useRef(0)
+  const [pingKey, setPingKey] = useState(0)
+  useEffect(() => {
+    if (freshlyAdded.size === 0) return
+    pingSeqRef.current += 1
+    setPingKey(pingSeqRef.current)
+  }, [freshlyAdded])
 
   return (
     <Popover>
@@ -214,16 +308,39 @@ export function OutputsButton(): React.JSX.Element {
           className="relative shrink-0 text-muted-foreground hover:text-foreground [-webkit-app-region:no-drag]"
         >
           <ListChecks className="size-4" />
-          {/* 数量徽标：0 不渲染（没产出物就没有角标可言）。key={files.length}
-              让数字每次变化都触发一次全新挂载——不只是新增出现时弹一下，
-              数字本身递增/递减也重播同一下 spring pop，读作"这里有变化"。 */}
+          {/* 双层同心圆提示环——圆形脉冲而非方框描边放大（方框缩放读起来
+              像 UI 报错闪烁），面板关着也能被余光注意到"有新东西"。两层
+              错峰 90ms，比单环更像 iOS/macOS 系统级通知的语言。 */}
+          <AnimatePresence>
+            {pingKey > 0 ? (
+              <motion.span
+                key={`ring-a-${pingKey}`}
+                initial={{ opacity: 0.5, scale: 0.7 }}
+                animate={{ opacity: 0, scale: 1.7 }}
+                transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
+                className="pointer-events-none absolute inset-0 rounded-full border-[1.5px] border-brand/50"
+              />
+            ) : null}
+          </AnimatePresence>
+          <AnimatePresence>
+            {pingKey > 0 ? (
+              <motion.span
+                key={`ring-b-${pingKey}`}
+                initial={{ opacity: 0.5, scale: 0.7 }}
+                animate={{ opacity: 0, scale: 1.7 }}
+                transition={{ duration: 0.65, delay: 0.09, ease: [0.22, 1, 0.36, 1] }}
+                className="pointer-events-none absolute inset-0 rounded-full border-[1.5px] border-brand/50"
+              />
+            ) : null}
+          </AnimatePresence>
+          {/* 数量徽标：0 不渲染。key={pingKey} 只在真正的新增事件上重播
+              spring pop——切会话时数字照常更新，但不重播弹跳（同上）。 */}
           <AnimatePresence>
             {files.length > 0 ? (
               <motion.span
-                key={files.length}
-                initial={{ scale: 0, opacity: 0 }}
+                key={pingKey}
+                initial={pingKey > 0 ? { scale: 0, opacity: 0 } : false}
                 animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0, opacity: 0 }}
                 transition={{ type: 'spring', stiffness: 500, damping: 22 }}
                 className="absolute -right-0.5 -top-0.5 flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-brand px-[3px] text-[9px] font-semibold leading-none text-brand-foreground"
               >
@@ -239,24 +356,40 @@ export function OutputsButton(): React.JSX.Element {
           浮层本身已靠阴影立起来，粗边框反而显生硬。 */}
       <PopoverContent
         align="end"
-        className="w-80 rounded-[20px] border-border/50 p-4 shadow-[0_2px_8px_rgba(0,0,0,0.06),0_16px_40px_-20px_rgba(0,0,0,0.35)]"
+        className="w-80 rounded-[20px] border-border/50 p-3.5 shadow-[0_2px_8px_rgba(0,0,0,0.06),0_16px_40px_-20px_rgba(0,0,0,0.35)]"
       >
-        <div className="flex items-center px-0.5 pb-3">
+        <div className="flex items-baseline gap-2 px-0.5 pb-2.5">
           <span className="text-[14px] font-semibold text-foreground">
             {t('chatHeaderOutputs')}
           </span>
           {files.length > 0 ? (
-            <span className="ml-2 text-[12px] text-muted-foreground">{files.length}</span>
+            // 品牌色胶囊——原型定稿形态，此前落地时误退化成纯灰文字。
+            <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand/12 px-[5px] text-[11px] font-bold text-brand">
+              {files.length}
+            </span>
           ) : null}
         </div>
         {files.length === 0 ? (
-          <div className="px-0.5 pb-1 text-[13px] text-muted-foreground/80">
-            {t('chatHeaderOutputsEmpty')}
+          // 空态三段式（图标 + 主文案 + 副文案）——原型定稿形态，此前落地
+          // 时误退化成单行灰字。
+          <div className="flex flex-col items-center gap-2.5 px-3 pb-5 pt-[30px] text-center">
+            <span className="grid size-10 place-items-center rounded-xl bg-muted text-muted-foreground">
+              <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 4h9l7 7v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" />
+                <path d="M13 4v6a1 1 0 0 0 1 1h6" />
+              </svg>
+            </span>
+            <span className="text-[12.5px] font-medium text-foreground/85">
+              {t('chatHeaderOutputsEmpty')}
+            </span>
+            <span className="max-w-[26ch] text-[11.5px] leading-relaxed text-muted-foreground">
+              {t('chatHeaderOutputsEmptyHint')}
+            </span>
           </div>
         ) : (
           <div className="max-h-[360px] space-y-0.5 overflow-y-auto">
             {files.map((f) => (
-              <OutputRow key={f} path={f} />
+              <OutputRow key={f} path={f} isNew={freshlyAdded.has(f)} />
             ))}
           </div>
         )}

@@ -55,6 +55,45 @@ import { spliceBlocks } from '@desktop-shared/proposalBlocks'
 export const DELIVERABLE_PATH_RE =
   /(?:~\/|\/)[^\s"'`«»<>|()[\]{}]*\.(?:pptx?|pdf|docx?|xlsx?|csv|zip|key|mp3|mp4|mov|wav|m4a|jpe?g|png|gif|webp)\b/gi
 
+/**
+ * 文档折角家族图标——Material Design Icons（Pictogrammers/Templarian，
+ * Apache 2.0，github.com/Templarian/MaterialDesign-SVG），不是微软/Adobe
+ * 官方商标 logo 的复刻，纯白单色描边填充，叠在下面 badgeClass 的彩色圆角
+ * 方块上（配色沿用本文件已有的行业惯例色）。PDF 用双色镂空写法——第二个
+ * path 的 fill 直接写 PDF 徽标色的字面值（不能用 currentColor，镂空字是
+ * 叠在白色文档壳之上露出背景色的视觉技巧）。四个之外的类型（zip/音频/
+ * 视频/未知文件/Keynote）先留字母徽标，没找到同一家族的对应图标。
+ * docs/ui-prototype-outputs-panel.html 是这批图标最初验证观感的原型。
+ */
+const ICON_DOC_SHELL =
+  'M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M13,9V3.5L18.5,9H13Z'
+/** className 承载具体尺寸——两处调用方的徽标大小不同（消息卡片 40px 徽标
+ *  用更大图标，输出面板 24px 徽标用更小图标），图标本身按同一比例缩放。 */
+function DocIcon({ d, className }: { d: string; className: string }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="white" className={className} aria-hidden>
+      <path d={d} />
+    </svg>
+  )
+}
+function PdfIcon({ className }: { className: string }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      <path fill="white" d={ICON_DOC_SHELL} />
+      <path
+        fill="#E5252A"
+        d="M9.5 11.5C9.5 12.3 8.8 13 8 13H7V15H5.5V9H8C8.8 9 9.5 9.7 9.5 10.5V11.5M14.5 13.5C14.5 14.3 13.8 15 13 15H10.5V9H13C13.8 9 14.5 9.7 14.5 10.5V13.5M18.5 10.5H17V11.5H18.5V13H17V15H15.5V9H18.5V10.5M12 10.5H13V13.5H12V10.5M7 10.5H8V11.5H7V10.5"
+      />
+    </svg>
+  )
+}
+const PPTX_PATH =
+  'M12.6,12.3H10.6V15.5H12.7C13.3,15.5 13.6,15.3 13.9,15C14.2,14.7 14.3,14.4 14.3,13.9C14.3,13.4 14.2,13.1 13.9,12.8C13.6,12.5 13.2,12.3 12.6,12.3M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M15.2,16C14.6,16.5 14.1,16.7 12.8,16.7H10.6V20H9V11H12.8C14.1,11 14.7,11.3 15.2,11.8C15.8,12.4 16,13 16,13.9C16,14.8 15.8,15.5 15.2,16M13,9V3.5L18.5,9H13Z'
+const DOCX_PATH =
+  'M15.2,20H13.8L12,13.2L10.2,20H8.8L6.6,11H8.1L9.5,17.8L11.3,11H12.6L14.4,17.8L15.8,11H17.3L15.2,20M13,9V3.5L18.5,9H13M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2Z'
+const XLSX_PATH =
+  'M15.8,20H14L12,16.6L10,20H8.2L11.1,15.5L8.2,11H10L12,14.4L14,11H15.8L12.9,15.5L15.8,20M13,9V3.5L18.5,9H13M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2Z'
+
 /** Per-extension card presentation: type label (zh/en), icon-badge text and
  *  badge color. Image types render a glyph instead of badge text. Exported
  *  for OutputsPanel — the session-wide outputs popover reuses the same
@@ -65,22 +104,49 @@ export function deliverableKind(ext: string): {
   badge: string
   badgeClass: string
   isImage?: boolean
+  /** 按调用方需要的尺寸渲染图标（className 传 size-* 工具类）；未定义
+   *  的类型没有对应的真实图标，调用方回退渲染 badge 字母。 */
+  icon?: (className: string) => React.ReactNode
 } {
   switch (ext) {
     case 'ppt':
     case 'pptx':
-      return { zh: '幻灯片', en: 'Slides', badge: 'P', badgeClass: 'bg-[#D24726]' }
+      return {
+        zh: '幻灯片',
+        en: 'Slides',
+        badge: 'P',
+        badgeClass: 'bg-[#D24726]',
+        icon: (className) => <DocIcon d={PPTX_PATH} className={className} />
+      }
     case 'key':
       return { zh: '幻灯片', en: 'Slides', badge: 'K', badgeClass: 'bg-sky-600' }
     case 'pdf':
-      return { zh: '文档', en: 'Document', badge: 'PDF', badgeClass: 'bg-[#E5252A]' }
+      return {
+        zh: '文档',
+        en: 'Document',
+        badge: 'PDF',
+        badgeClass: 'bg-[#E5252A]',
+        icon: (className) => <PdfIcon className={className} />
+      }
     case 'doc':
     case 'docx':
-      return { zh: '文档', en: 'Document', badge: 'W', badgeClass: 'bg-[#2B579A]' }
+      return {
+        zh: '文档',
+        en: 'Document',
+        badge: 'W',
+        badgeClass: 'bg-[#2B579A]',
+        icon: (className) => <DocIcon d={DOCX_PATH} className={className} />
+      }
     case 'xls':
     case 'xlsx':
     case 'csv':
-      return { zh: '表格', en: 'Spreadsheet', badge: 'X', badgeClass: 'bg-[#217346]' }
+      return {
+        zh: '表格',
+        en: 'Spreadsheet',
+        badge: 'X',
+        badgeClass: 'bg-[#217346]',
+        icon: (className) => <DocIcon d={XLSX_PATH} className={className} />
+      }
     case 'zip':
       return { zh: '压缩包', en: 'Archive', badge: 'ZIP', badgeClass: 'bg-amber-500' }
     case 'mp3':
@@ -195,7 +261,9 @@ function DeliverableCard({
                 aria-hidden
                 className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/25 to-transparent"
               />
-              <span className="relative">{kind.badge}</span>
+              <span className="relative">
+                {kind.icon ? kind.icon('size-[22px]') : kind.badge}
+              </span>
             </>
           )}
         </span>

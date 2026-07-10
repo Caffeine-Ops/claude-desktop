@@ -78,6 +78,7 @@ const STRINGS = {
     // 聚合列表，复用与消息内成果卡片相同的类型识别（2026-07-10）。
     chatHeaderOutputs: '输出',
     chatHeaderOutputsEmpty: '本次对话还没有产出物',
+    chatHeaderOutputsEmptyHint: '生成图片、文档或表格后，会自动出现在这里',
     sidebarStatusRunning: '运行中',
     // 两类挂起二分文案（2026-07-07）：权限门=「等待批准」，AskUserQuestion=
     // 「等待回答」——AI 在等回答时写「等待批准」语义就是错的（用户实锤）。
@@ -415,6 +416,7 @@ const STRINGS = {
     chatHeaderUntitled: 'New chat',
     chatHeaderOutputs: 'Outputs',
     chatHeaderOutputsEmpty: 'No outputs yet in this chat',
+    chatHeaderOutputsEmptyHint: 'Images, documents, and spreadsheets will show up here as they’re created',
     sidebarStatusRunning: 'Running',
     sidebarStatusAwaitingPermission: 'Awaiting approval',
     sidebarStatusAwaitingAnswer: 'Awaiting answer',

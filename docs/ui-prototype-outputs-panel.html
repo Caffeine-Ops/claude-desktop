@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>输出面板重设计 · 含新增动画</title>
+<style>
+/* ============================================================
+   Tokens — 逐字摘自 packages/design-tokens/tokens.css
+   ============================================================ */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 3% 12%;
+  --popover: 0 0% 100%;
+  --primary: 211 100% 45%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 6% 94%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --border: 240 6% 84%;
+  --brand: 142 76% 36%;
+  --brand-foreground: 0 0% 100%;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+  --w-medium: 500;
+  --w-strong: 650;
+
+  --card-shadow:
+    0 0 0 1px hsl(240 6% 10% / 0.045),
+    0 1px 2px hsl(240 6% 10% / 0.05),
+    0 12px 32px hsl(240 6% 10% / 0.08);
+  --pop-shadow:
+    0 2px 8px hsl(240 6% 10% / 0.06),
+    0 16px 40px hsl(240 6% 10% / 0.16);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 180ms;
+
+  /* 文件类型品牌色 —— 逐字摘自 AssistantMessage.tsx 的 deliverableKind */
+  --c-pptx: #D24726;
+  --c-pdf: #E5252A;
+  --c-docx: #2B579A;
+  --c-xlsx: #217346;
+}
+html.dark {
+  color-scheme: dark;
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --card-foreground: 39 35% 92%;
+  --popover: 36 6% 15%;
+  --primary: 210 100% 58%;
+  --secondary: 30 5% 15%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --border: 49 12% 18%;
+  --brand: 145 60% 52%;
+  --brand-foreground: 40 6% 10%;
+  --card-shadow:
+    0 0 0 1px hsl(0 0% 100% / 0.06),
+    0 1px 2px hsl(0 0% 0% / 0.4),
+    0 12px 32px hsl(0 0% 0% / 0.5);
+  --pop-shadow:
+    0 0 0 1px hsl(0 0% 100% / 0.06),
+    0 2px 8px hsl(0 0% 0% / 0.3),
+    0 20px 48px hsl(0 0% 0% / 0.5);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+  transition: background var(--dur) var(--ease-out);
+  text-wrap: pretty;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+svg { display: block; }
+
+/* ── 原型工具条 ─────────────────────────────────────────── */
+.proto-bar {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 18px;
+  background: hsl(var(--background) / 0.86);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+  font-size: 12px;
+}
+.proto-bar .hint { color: hsl(var(--muted-foreground)); margin-right: auto; }
+.proto-bar .lbl { color: hsl(var(--muted-foreground) / 0.8); font-size: 11px; }
+.seg { display: inline-flex; gap: 2px; background: hsl(var(--secondary)); border-radius: 8px; padding: 2px; }
+.seg button {
+  padding: 4px 12px; border-radius: 6px; font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  transition: all var(--dur) var(--ease-out);
+}
+.seg button:hover { color: hsl(var(--foreground)); }
+.seg button[aria-pressed="true"] {
+  background: hsl(var(--card)); color: hsl(var(--foreground));
+  font-weight: var(--w-medium); box-shadow: 0 1px 2px hsl(240 6% 10% / 0.12);
+}
+.icon-btn {
+  display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  transition: all var(--dur) var(--ease-out);
+}
+.icon-btn:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+.cta {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 7px;
+  background: hsl(var(--brand)); color: hsl(var(--brand-foreground));
+  font-size: 12px; font-weight: var(--w-medium);
+  transition: filter var(--dur) var(--ease-out);
+}
+.cta:hover { filter: brightness(1.08); }
+.cta:active { filter: brightness(0.96); }
+
+/* ── 页面骨架 ───────────────────────────────────────────── */
+.page { max-width: 1060px; margin: 0 auto; padding: 36px 24px 120px; }
+.page-title { font-size: 21px; font-weight: var(--w-strong); letter-spacing: -0.01em; }
+.page-sub {
+  margin-top: 6px; font-size: 13px; line-height: 1.6;
+  color: hsl(var(--muted-foreground)); max-width: 70ch;
+}
+.variant { margin-top: 40px; }
+.variant-head { display: flex; align-items: baseline; gap: 10px; }
+.variant-no { font-family: var(--font-mono); font-size: 12px; color: hsl(var(--brand)); font-weight: 600; }
+.variant-name { font-size: 15px; font-weight: var(--w-strong); }
+.variant-why {
+  margin-top: 5px; font-size: 12.5px; line-height: 1.65;
+  color: hsl(var(--muted-foreground)); max-width: 76ch;
+}
+.spec {
+  margin-top: 10px; font-family: var(--font-mono); font-size: 10.5px;
+  color: hsl(var(--muted-foreground) / 0.75); letter-spacing: 0.01em; line-height: 1.7;
+}
+
+/* ── 模拟窗口（rail + chat 列 + 顶栏，还原真实上下文）────── */
+.mock {
+  margin-top: 14px;
+  position: relative;
+  display: flex; height: 420px;
+  border-radius: 12px; overflow: hidden;
+  background: hsl(var(--background));
+  box-shadow: var(--card-shadow);
+}
+.rail {
+  width: 196px; flex-shrink: 0;
+  background: hsl(var(--background));
+  border-right: 1px solid hsl(var(--border) / 0.5);
+  padding: 12px 10px;
+}
+.lights { display: flex; gap: 7px; padding: 2px 4px 12px; }
+.lights i { width: 11px; height: 11px; border-radius: 50%; }
+.lights i:nth-child(1) { background: #ff5f57; }
+.lights i:nth-child(2) { background: #febc2e; }
+.lights i:nth-child(3) { background: #28c840; }
+.rail-row {
+  height: 26px; border-radius: 7px; margin-top: 3px;
+  display: flex; align-items: center; padding: 0 9px;
+  font-size: 11.5px; color: hsl(var(--muted-foreground));
+  white-space: nowrap; overflow: hidden;
+}
+.rail-row.active { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+.chat {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  background: hsl(var(--background)); overflow: hidden; position: relative;
+}
+.hdr {
+  flex-shrink: 0; height: 46px; display: flex; align-items: center;
+  border-bottom: 1px solid hsl(var(--border) / 0.45);
+  padding: 0 16px; gap: 8px;
+}
+.hdr .title { font-size: 13px; font-weight: 590; letter-spacing: -0.005em; }
+.hdr .spacer { flex: 1; }
+.content { flex: 1; overflow-y: auto; }
+.col { max-width: 520px; margin: 0 auto; padding: 18px 24px 28px; }
+.msg-user {
+  margin-left: auto; width: fit-content; max-width: 78%;
+  background: hsl(var(--card)); border: 1px solid hsl(var(--border) / 0.5);
+  border-radius: 14px; padding: 8px 13px; font-size: 13px; line-height: 1.55;
+}
+.msg-ai { margin-top: 14px; font-size: 13px; line-height: 1.7; }
+.tool-card {
+  margin-top: 10px; border: 1px solid hsl(var(--border) / 0.7);
+  background: hsl(var(--card)); border-radius: 10px; padding: 8px 12px;
+  font-family: var(--font-mono); font-size: 11px; color: hsl(var(--muted-foreground));
+  display: flex; align-items: center; gap: 8px;
+}
+.tool-card .dot { width: 6px; height: 6px; border-radius: 50%; background: hsl(var(--brand)); flex-shrink: 0; }
+
+/* ── 输出按钮（顶栏图标 + 数量徽标）───────────────────────── */
+.out-btn {
+  position: relative; display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  transition: all var(--dur) var(--ease-out);
+}
+.out-btn:hover, .out-btn[data-open="true"] { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+.out-btn .badge {
+  position: absolute; top: -3px; right: -3px;
+  min-width: 16px; height: 16px; padding: 0 3px;
+  border-radius: 999px; background: hsl(var(--brand)); color: hsl(var(--brand-foreground));
+  font-size: 9.5px; font-weight: 700; line-height: 16px; text-align: center;
+  box-shadow: 0 0 0 2px hsl(var(--background));
+}
+/* back-out 曲线（AssistantMessage.tsx 成果卡片 badge hover 同款 cubic-bezier）
+   ——只标 0→1 两个端点，弹性由曲线本身的过冲区间提供，不用手写三段式
+   关键帧夸张地弹到 1.22 再回落，观感更沉稳。 */
+.out-btn .badge.pop { animation: badgePop 420ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes badgePop {
+  0% { transform: scale(0); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+/* 提示环：圆形脉冲（贴合图标视觉重心，不是描边方框放大——方框缩放会显
+   得像 UI 报错闪烁）。两层同心圆错峰扩散淡出，比单环更像 iOS/macOS
+   系统级"有新通知"的语言，起始透明度也压低到 .5，克制不刺眼。两层圆环
+   类名彻底分离（ring-a/ring-b），不共享同一个 .fire 触发规则——避免
+   两条同特异性选择器谁覆盖谁要靠源码顺序才能确定的隐式依赖。 */
+.out-btn .ring-a, .out-btn .ring-b {
+  position: absolute; left: 50%; top: 50%; width: 30px; height: 30px;
+  margin: -15px 0 0 -15px; border-radius: 50%;
+  border: 1.5px solid hsl(var(--brand) / 0.5);
+  opacity: 0; pointer-events: none;
+}
+.out-btn .ring-a.fire { animation: pingRing 650ms cubic-bezier(0.22, 1, 0.36, 1); }
+.out-btn .ring-b.fire { animation: pingRing 650ms cubic-bezier(0.22, 1, 0.36, 1) 90ms; }
+@keyframes pingRing {
+  0% { opacity: 0.5; transform: scale(0.7); }
+  100% { opacity: 0; transform: scale(1.7); }
+}
+
+/* ── 输出面板 ──────────────────────────────────────────── */
+.out-pop {
+  position: absolute; top: 40px; right: 12px; z-index: 10;
+  width: 320px;
+  background: hsl(var(--popover));
+  border-radius: 20px;
+  box-shadow: var(--pop-shadow);
+  padding: 14px;
+  opacity: 0; transform: translateY(-6px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+.out-pop[data-open="true"] { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+
+.out-pop .head { display: flex; align-items: baseline; gap: 8px; padding: 2px 2px 10px; }
+.out-pop .head .t { font-size: 14px; font-weight: var(--w-strong); }
+.out-pop .head .n {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+  background: hsl(var(--brand) / 0.12); color: hsl(var(--brand));
+  font-size: 11px; font-weight: 700;
+}
+
+.out-list { display: flex; flex-direction: column; max-height: 340px; overflow-y: auto; }
+.out-group-label {
+  padding: 8px 6px 4px; font-size: 10.5px; font-weight: var(--w-medium);
+  color: hsl(var(--muted-foreground) / 0.75); letter-spacing: 0.02em;
+  overflow: hidden;
+}
+.out-group-label:first-child { padding-top: 2px; }
+
+.out-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 6px; border-radius: 12px;
+  transition: background var(--dur) var(--ease-out);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.out-row:hover { background: hsl(var(--foreground) / 0.045); }
+.out-row:hover .out-more { opacity: 1; }
+.out-row .thumb {
+  flex-shrink: 0; width: 34px; height: 34px; border-radius: 9px;
+  display: grid; place-items: center; position: relative; overflow: hidden;
+  box-shadow: inset 0 0 0 1px hsl(0 0% 0% / 0.04);
+}
+.out-row .thumb::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(160deg, hsl(0 0% 100% / 0.28), transparent 60%);
+}
+.out-row .body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.out-row .name {
+  /* display:flex 是删掉「刚生成」文字标签前的遗留——flex 容器里的裸文本
+     节点会变成拒绝收缩的匿名 flex item，text-overflow:ellipsis 直接失效，
+     长文件名会把行撑爆而不是截断。现在 .name 只包纯文本，退回默认的
+     block/inline 盒模型，ellipsis 才能正常生效。 */
+  display: block;
+  font-size: 12.5px; font-weight: 555; color: hsl(var(--foreground));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.out-row .meta { font-size: 11px; color: hsl(var(--muted-foreground) / 0.9); }
+.out-more {
+  flex-shrink: 0; opacity: 0; display: grid; place-items: center;
+  width: 22px; height: 22px; border-radius: 6px;
+  color: hsl(var(--muted-foreground));
+  transition: opacity 120ms var(--ease-out), background var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
+}
+.out-more:hover { background: hsl(var(--foreground) / 0.08); color: hsl(var(--foreground)); }
+
+/* ============================================================
+   新增动效 · 三档方案（data-motion 挂在 <html>，同一份 DOM/JS 复用）
+   ============================================================
+   原版问题：整行铺一层品牌色底色淡出 + 文件名旁插文字标签——色块读
+   起来像警告闪烁而不是"新增"的欣喜，标签插入还会让文件名截断宽度
+   跳一下（标签消失时又跳回去），两次布局抖动叠加显得毛躁。三档新
+   方案共享同一条"位移+淡入"入场底座（去掉了原来的 scale 抖动，纯
+   position spring 更沉稳），差异只在"新在哪"这件事上给多少提示。 */
+
+/* 共享底座：spring 味位移入场，用 back-out 曲线模拟弹性而非线性
+   ease——比原 rowIn 少了 scale 维度，动作更"整"，不是几个属性各弹各的。 */
+.out-row.entering {
+  animation: rowIn 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes rowIn {
+  0% { opacity: 0; transform: translateY(-12px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* 方案 A · minimal —— 只有上面的位移淡入，不额外强调"这行是新的"。
+   最克制，交给用户自己扫一眼列表顶部。 */
+
+/* 方案 B · accent —— 左侧细强调条扫入再淡出（Linear「新动态」同款语言）。
+   条宽 2.5px 落在行自身 6px 左内边距的空隙里（padding-box 内、缩略图
+   左侧），不改行的 padding、不挤文字，动画播完也不会有任何残留布局
+   差异——这点很重要：entering 类本身不再被 JS 事后摘除（见 addOutput
+   注释），任何"只在 entering 期间生效"的布局改动都会一直滞留到下次
+   整体重渲染，必须避免。 */
+html[data-motion="accent"] .out-row.entering::before {
+  content: '';
+  position: absolute; left: 0; top: 6px; bottom: 6px; width: 2.5px;
+  border-radius: 2px; background: hsl(var(--brand));
+  transform-origin: top;
+  animation: accentBar 380ms var(--ease-out) 60ms both, accentFade 420ms ease-in 1.9s both;
+  pointer-events: none;
+}
+@keyframes accentBar { 0% { transform: scaleY(0); } 100% { transform: scaleY(1); } }
+@keyframes accentFade { to { opacity: 0; } }
+
+/* 方案 C · dot —— 缩略图右上角一枚呼吸圆点，脉冲两下后常驻淡出。
+   借用 app 图标未读角标的通用语汇，不侵入文字行。.thumb 自身
+   overflow:hidden（渐变光泽裁边用），角标嵌在内角而非凸出边缘外，
+   避免被裁掉——同样读作角标，只是不做经典"半悬空"处理。 */
+html[data-motion="dot"] .out-row.entering .thumb::before {
+  content: '';
+  position: absolute; top: 2px; right: 2px; z-index: 2;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: hsl(var(--brand));
+  box-shadow: 0 0 0 2px hsl(0 0% 100% / 0.35);
+  animation: dotPulse 560ms ease-out 2, dotFade 380ms ease-in 2.15s both;
+}
+@keyframes dotPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.35); } }
+@keyframes dotFade { to { opacity: 0; transform: scale(0); } }
+
+/* 空态 */
+.out-empty {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  padding: 30px 12px 20px; gap: 10px;
+}
+.out-empty .ic {
+  width: 40px; height: 40px; border-radius: 12px;
+  display: grid; place-items: center;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+.out-empty .t1 { font-size: 12.5px; font-weight: var(--w-medium); color: hsl(var(--foreground) / 0.85); }
+.out-empty .t2 { font-size: 11.5px; color: hsl(var(--muted-foreground)); line-height: 1.6; max-width: 26ch; }
+</style>
+</head>
+<body>
+
+<div class="proto-bar">
+  <span class="hint">「输出」面板重设计 · 点触发按钮开关面板 · 「模拟新增产出物」看落地动画</span>
+  <span class="lbl">新增动效</span>
+  <div class="seg" id="seg-motion">
+    <button data-v="minimal" aria-pressed="false">极简·仅位移淡入</button>
+    <button data-v="accent" aria-pressed="true">左侧强调条</button>
+    <button data-v="dot" aria-pressed="false">角标圆点</button>
+  </div>
+  <span class="lbl">分组</span>
+  <div class="seg" id="seg-group">
+    <button data-v="off" aria-pressed="true">平铺</button>
+    <button data-v="on" aria-pressed="false">按时间分组</button>
+  </div>
+  <button class="cta" id="btn-add">＋ 模拟新增产出物</button>
+  <button class="icon-btn" id="btn-reset" title="重置为空态">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 1 3 6.7M3 12v5h5"/></svg>
+  </button>
+  <button class="icon-btn" id="dark-toggle" title="切换深浅模式" aria-label="切换深浅模式">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+  </button>
+</div>
+
+<div class="page">
+  <h1 class="page-title">输出面板 · 重设计</h1>
+  <p class="page-sub">
+    上一版新增动效的问题：整行铺一层品牌色底色再渐隐，读起来像警告闪烁而不是"新增"的欣喜；文件名旁插一个
+    文字标签，标签出现/消失各挤一次文字截断宽度，两次布局抖动叠加显得毛躁。这版把"新在哪"这件事从"整行强调"
+    收窄成三种克制程度不同的局部提示，颜色/字体/圆角/缓动全部取自 design-tokens 与现有卡片配方，
+    可用上方「新增动效」切换实时对比。
+  </p>
+
+  <section class="variant">
+    <div class="variant-head"><span class="variant-no">01</span><span class="variant-name">重设计后的输出面板</span></div>
+    <p class="variant-why">
+      三档新增动效共享同一条位移淡入底座（back-out 缓动，不带 scale 抖动）：<b>极简</b> 只有这层底座，
+      不额外强调"这行是新的"，交给用户自己扫一眼列表顶部；<b>左侧强调条</b> 借用 Linear「新动态」的语言，
+      细条扫入再淡出，不碰行内背景、不占用文字空间；<b>角标圆点</b> 是 app 图标未读角标的通用语汇，落在
+      缩略图内角脉冲两下后常驻淡出。触发按钮本身统一是双层同心圆提示环（圆形而非方框描边放大，方框缩放
+      容易读成 UI 报错）+ 数字徽标弹出，面板关着也能被余光注意到。
+    </p>
+    <div class="mock">
+      <div class="rail">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <div class="rail-row active">武汉大学介绍 PPT</div>
+        <div class="rail-row">个人月度支出记录</div>
+        <div class="rail-row">生成猫咪图片</div>
+      </div>
+      <div class="chat">
+        <header class="hdr">
+          <span class="title">/ppt-master 武汉大学介绍</span>
+          <span class="spacer"></span>
+          <button class="out-btn" id="out-btn" data-open="false" title="输出" aria-label="输出">
+            <span class="ring-a" id="out-ring-a"></span>
+            <span class="ring-b" id="out-ring-b"></span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 7 3 3 5-5M3 15l3 3 5-5M13 8h8M13 16h8"/></svg>
+            <span class="badge" id="out-badge" style="display:none">0</span>
+          </button>
+        </header>
+        <div class="content"><div class="col">
+          <div class="msg-user">帮我把这份预算做成表格，再配几张配图</div>
+          <p class="msg-ai">好的，我先生成表格，再补两张配图。</p>
+          <div class="tool-card"><span class="dot"></span>Write · 个人月度支出记录.xlsx</div>
+          <div class="tool-card"><span class="dot"></span>image_gen.py · generate</div>
+          <p class="msg-ai">表格和图片都做好了，点右上角「输出」能看到这次对话产出的所有文件。</p>
+        </div></div>
+
+        <div class="out-pop" id="out-pop" data-open="false">
+          <div class="head">
+            <span class="t">输出</span>
+            <span class="n" id="out-count" style="display:none">0</span>
+          </div>
+          <div class="out-list" id="out-list"></div>
+          <div class="out-empty" id="out-empty">
+            <span class="ic">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h9l7 7v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/><path d="M13 4v6a1 1 0 0 0 1 1h6"/></svg>
+            </span>
+            <span class="t1">本次对话还没有产出物</span>
+            <span class="t2">生成图片、文档或表格后，会自动出现在这里</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="spec">
+      popover: radius 20px · shadow 双层(6%/16%) · w 320px · row radius 12px 无边框 hover fg/4.5%
+      · thumb 34px radius 9px 渐变sheen · 新行底座: translateY(-12→0) 420ms back-out(.34,1.56,.64,1)
+      · accent 强调条: 2.5px scaleY 380ms + 420ms淡出@1.9s · dot 角标: 7px 圆点 pulse×2 + 380ms淡出@2.15s
+      · 徽标: scale 0→1 420ms back-out · 提示环: 双层同心圆 scale .7→1.7 op.5→0 650ms 错峰90ms
+    </p>
+  </section>
+</div>
+
+<script>
+/* ============================================================
+   演示数据 & 状态
+   ============================================================ */
+// 图标来源：Material Design Icons（Pictogrammers/Templarian，Apache 2.0，
+// github.com/Templarian/MaterialDesign-SVG）——通用"文档折角"家族图标，
+// 不是微软/Adobe 官方商标 logo 的复刻，配色沿用 AssistantMessage.tsx
+// deliverableKind 里已经在用的行业惯例色（PPT橙红/Excel绿/Word蓝/PDF红）。
+const ICON_DOC_SHELL = 'M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M13,9V3.5L18.5,9H13Z'
+const KIND = {
+  xlsx: {
+    label: '表格', color: 'var(--c-xlsx)',
+    icon: `<path d="M15.8,20H14L12,16.6L10,20H8.2L11.1,15.5L8.2,11H10L12,14.4L14,11H15.8L12.9,15.5L15.8,20M13,9V3.5L18.5,9H13M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2Z"/>`
+  },
+  pptx: {
+    label: '幻灯片', color: 'var(--c-pptx)',
+    icon: `<path d="M12.6,12.3H10.6V15.5H12.7C13.3,15.5 13.6,15.3 13.9,15C14.2,14.7 14.3,14.4 14.3,13.9C14.3,13.4 14.2,13.1 13.9,12.8C13.6,12.5 13.2,12.3 12.6,12.3M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M15.2,16C14.6,16.5 14.1,16.7 12.8,16.7H10.6V20H9V11H12.8C14.1,11 14.7,11.3 15.2,11.8C15.8,12.4 16,13 16,13.9C16,14.8 15.8,15.5 15.2,16M13,9V3.5L18.5,9H13Z"/>`
+  },
+  docx: {
+    label: '文档', color: 'var(--c-docx)',
+    icon: `<path d="M15.2,20H13.8L12,13.2L10.2,20H8.8L6.6,11H8.1L9.5,17.8L11.3,11H12.6L14.4,17.8L15.8,11H17.3L15.2,20M13,9V3.5L18.5,9H13M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2Z"/>`
+  },
+  pdf: {
+    label: '文档', color: 'var(--c-pdf)',
+    // 双色：白底文档壳 + 品牌色"PDF"镂空字样（第二个 path 的 fill 要跟
+    // 徽标背景色一致，这里直接用 --c-pdf 的字面值，因为镂空字是叠在
+    // 白色文档壳之上、露出背景色的视觉技巧，不能用 currentColor）。
+    icon: `<path fill="white" d="${ICON_DOC_SHELL}"/><path fill="#E5252A" d="M9.5 11.5C9.5 12.3 8.8 13 8 13H7V15H5.5V9H8C8.8 9 9.5 9.7 9.5 10.5V11.5M14.5 13.5C14.5 14.3 13.8 15 13 15H10.5V9H13C13.8 9 14.5 9.7 14.5 10.5V13.5M18.5 10.5H17V11.5H18.5V13H17V15H15.5V9H18.5V10.5M12 10.5H13V13.5H12V10.5M7 10.5H8V11.5H7V10.5"/>`
+  },
+  image:{ label: '图像', color: null }
+}
+// 图片缩略图占位的渐变池——诚实占位（非伪造具体照片），只是比灰色图标
+// 方块更有质感的抽象色块，真实实现里这里会换成 IPC 解码出的缩略图 dataURL。
+const IMG_GRADIENTS = [
+  'linear-gradient(135deg,#f6a85c,#e9724c)',
+  'linear-gradient(135deg,#7fb3e8,#4e6fb0)',
+  'linear-gradient(135deg,#8fd3a6,#4f9d6e)',
+  'linear-gradient(135deg,#c98fd6,#8a5fc7)'
+]
+let seq = 0
+const now = () => Date.now()
+let items = [
+  { id: seq++, name: '个人月度支出记录.xlsx', kind: 'xlsx', t: now() - 26 * 60000 },
+  { id: seq++, name: 'a-cute-fluffy-kitten-drinking-milk.png', kind: 'image', t: now() - 24 * 60000, grad: 0 },
+  { id: seq++, name: 'remove-the-water-droplets.png', kind: 'image', t: now() - 22 * 60000, grad: 1 },
+  { id: seq++, name: '空白表格.xlsx', kind: 'xlsx', t: now() - 9 * 60000 },
+  { id: seq++, name: '空白表格2.xlsx', kind: 'xlsx', t: now() - 3 * 60000 }
+]
+const ADD_POOL = [
+  { name: '武汉大学介绍.pptx', kind: 'pptx' },
+  { name: 'Q3 复盘报告.docx', kind: 'docx' },
+  { name: '预算说明.pdf', kind: 'pdf' },
+  { name: 'a-golden-retriever-running-on-beach.png', kind: 'image' }
+]
+let addPtr = 0
+let groupMode = 'off'
+
+function relTime(ts) {
+  const m = Math.round((now() - ts) / 60000)
+  if (m < 1) return '刚刚'
+  if (m < 60) return m + ' 分钟前'
+  const h = Math.round(m / 60)
+  return h + ' 小时前'
+}
+
+function rowHtml(it) {
+  const k = KIND[it.kind]
+  const thumbStyle = it.kind === 'image'
+    ? `background:${IMG_GRADIENTS[it.grad % IMG_GRADIENTS.length]}`
+    : `background:${k.color}`
+  const glyph = it.kind === 'image'
+    ? `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="#fff" stroke-width="1.6" style="position:relative;z-index:1"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><circle cx="7.2" cy="8" r="1.3" fill="#fff" stroke="none"/><path d="M4 14.5l4-4 3 3 2.5-2.5 2.5 2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+    : `<svg width="19" height="19" viewBox="0 0 24 24" fill="white" style="position:relative;z-index:1">${k.icon}</svg>`
+  return `
+    <div class="out-row${it.entering ? ' entering' : ''}" data-id="${it.id}">
+      <span class="thumb" style="${thumbStyle}">${glyph}</span>
+      <span class="body">
+        <span class="name">${it.name}</span>
+        <span class="meta">${k.label} · ${relTime(it.t)}</span>
+      </span>
+      <button class="out-more" title="更多" aria-label="更多">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg>
+      </button>
+    </div>`
+}
+
+function render(opts = {}) {
+  const list = document.getElementById('out-list')
+  const empty = document.getElementById('out-empty')
+  const countEl = document.getElementById('out-count')
+  const badgeEl = document.getElementById('out-badge')
+
+  // FLIP「First」：重建列表前，记下现有行的当前位置——新行落地会把它们
+  // 挤下去，重建后要让它们从旧位置补间到新位置，而不是瞬间跳位。
+  const firstRects = new Map()
+  list.querySelectorAll('.out-row[data-id]').forEach((el) => {
+    firstRects.set(el.dataset.id, el.getBoundingClientRect())
+  })
+
+  const sorted = [...items].sort((a, b) => b.t - a.t)
+
+  if (sorted.length === 0) {
+    list.innerHTML = ''
+    list.style.display = 'none'
+    empty.style.display = 'flex'
+    countEl.style.display = 'none'
+    badgeEl.style.display = 'none'
+    return
+  }
+  list.style.display = 'flex'
+  empty.style.display = 'none'
+  countEl.style.display = 'inline-flex'
+  countEl.textContent = sorted.length
+  badgeEl.style.display = 'inline-block'
+  badgeEl.textContent = sorted.length > 99 ? '99+' : sorted.length
+
+  if (groupMode === 'on') {
+    const fresh = sorted.filter((it) => now() - it.t < 5 * 60000)
+    const older = sorted.filter((it) => now() - it.t >= 5 * 60000)
+    let html = ''
+    if (fresh.length) html += `<div class="out-group-label">刚刚生成</div>` + fresh.map(rowHtml).join('')
+    if (older.length) html += `<div class="out-group-label">更早</div>` + older.map(rowHtml).join('')
+    list.innerHTML = html
+  } else {
+    list.innerHTML = sorted.map(rowHtml).join('')
+  }
+
+  if (opts.badgePop) {
+    badgeEl.classList.remove('pop')
+    void badgeEl.offsetWidth
+    badgeEl.classList.add('pop')
+  }
+
+  // FLIP「Last→Invert→Play」：对重建前就存在的行，用 top 差值反推一次
+  // transform 位移，下一帧清空 transform 触发过渡——读作「旧行被新行挤下去」。
+  // 新行本身不在 firstRects 里（重建前它还不存在），交给自己的 .entering
+  // keyframe 负责入场，两套动画各管一段、互不冲突。
+  requestAnimationFrame(() => {
+    list.querySelectorAll('.out-row[data-id]').forEach((el) => {
+      const before = firstRects.get(el.dataset.id)
+      if (!before) return
+      const after = el.getBoundingClientRect()
+      const dy = before.top - after.top
+      if (Math.abs(dy) < 1) return
+      el.style.transition = 'none'
+      el.style.transform = `translateY(${dy}px)`
+      requestAnimationFrame(() => {
+        el.style.transition = 'transform 340ms var(--ease-out)'
+        el.style.transform = ''
+      })
+    })
+  })
+}
+
+/* ── 「模拟新增产出物」：追加一条新数据，播当前选中方案的落地动效 ──
+   entering 类只用于「这次渲染要不要播入场动画」，不需要事后摘除——
+   下一次 render() 会用全新 DOM 节点重建列表，且此时 item.entering 已
+   经是 false，新节点的 class 里天然不带 entering，不会重播。三档方案
+   都在 CSS 里用 .entering 选择器直接驱动，JS 这边完全不用关心具体是
+   哪一档、播多久。 */
+function addOutput() {
+  const src = ADD_POOL[addPtr % ADD_POOL.length]
+  addPtr++
+  const grad = Math.floor(Math.random() * IMG_GRADIENTS.length)
+  const item = { id: seq++, name: src.name, kind: src.kind, t: now(), entering: true, grad }
+  items.push(item)
+
+  // 面板关着时用户看不到行动画，只在触发按钮上放双层同心圆提示环 + 徽标 pop。
+  const ringA = document.getElementById('out-ring-a')
+  const ringB = document.getElementById('out-ring-b')
+  ringA.classList.remove('fire'); void ringA.offsetWidth; ringA.classList.add('fire')
+  ringB.classList.remove('fire'); void ringB.offsetWidth; ringB.classList.add('fire')
+
+  render({ badgePop: true })
+  item.entering = false
+}
+
+// stopPropagation：这两个按钮都在 proto-bar 里，落在 outPop/outBtn 之外——
+// 没有它们，点击会被下面 document 的「点击面板外关闭」监听器一起捕获，
+// 面板刚新增一行就被同一次点击关掉，用户看不到入场动画播放。
+document.getElementById('btn-add').addEventListener('click', (e) => {
+  e.stopPropagation()
+  addOutput()
+})
+document.getElementById('btn-reset').addEventListener('click', (e) => {
+  e.stopPropagation()
+  items = []
+  render()
+})
+
+/* 新增动效方案切换 —— data-motion 挂 <html>，三档 CSS 各自选择器生效。
+   切换本身不重放已存在行的动画，只影响"之后再模拟新增"的观感，所以
+   这里不用 render()。 */
+document.documentElement.setAttribute('data-motion', 'accent')
+document.getElementById('seg-motion').addEventListener('click', (e) => {
+  e.stopPropagation()
+  const btn = e.target.closest('button[data-v]')
+  if (!btn) return
+  document.documentElement.setAttribute('data-motion', btn.dataset.v)
+  document.getElementById('seg-motion').querySelectorAll('button').forEach((b) =>
+    b.setAttribute('aria-pressed', String(b === btn)))
+})
+
+/* 分组切换 */
+document.getElementById('seg-group').addEventListener('click', (e) => {
+  e.stopPropagation()
+  const btn = e.target.closest('button[data-v]')
+  if (!btn) return
+  groupMode = btn.dataset.v
+  document.getElementById('seg-group').querySelectorAll('button').forEach((b) =>
+    b.setAttribute('aria-pressed', String(b === btn)))
+  render()
+})
+
+/* 面板开关 */
+const outBtn = document.getElementById('out-btn')
+const outPop = document.getElementById('out-pop')
+outBtn.addEventListener('click', () => {
+  const open = outPop.dataset.open !== 'true'
+  outPop.dataset.open = String(open)
+  outBtn.dataset.open = String(open)
+})
+document.addEventListener('click', (e) => {
+  if (!outPop.contains(e.target) && !outBtn.contains(e.target)) {
+    outPop.dataset.open = 'false'
+    outBtn.dataset.open = 'false'
+  }
+})
+
+document.getElementById('dark-toggle').addEventListener('click', () => {
+  document.documentElement.classList.toggle('dark')
+})
+
+render()
+</script>
+</body>
+</html>
