@@ -1,7 +1,8 @@
 import { useProposalStore, type ProposalSection } from '../stores/proposal'
 import { useChatStore } from '../stores/chat'
 import { USER_SUPPLIED_SOURCE, type ProposalKind } from '@desktop-shared/proposal'
-import { splitBlocks, locateBlockRangeByTextWithHint } from '@desktop-shared/proposalBlocks'
+import { splitBlocks } from '@desktop-shared/proposalBlocks'
+import { resolveRevisionTarget } from './proposalRevisionGuards'
 import { sendProposalStageMessage } from './sendProposalStageMessage'
 
 // 溯源后缀按节类型分叉：正文节要标《来源》、守 trigram 引用落地校验；封面/目录不引用知识库、无
@@ -245,64 +246,82 @@ export async function continueProposalSectionBlocks(
 // 不会跨会话争用（sessionId 已在 store 里自持）。
 let draining = false
 
+// 队列跳过项的统一提示文案（复审 M5：提示【绝不】被清成 null，只由用户「知道了」清——否则用户
+// 没盯着面板就再也看不到「我排的改写被跳过了」，违反零静默失败）。
+function skipNotice(n: number): string {
+  return `${n} 个排队改写被跳过（原文已变化，或与待确认的改写重叠）`
+}
+
 /**
- * 排空改写队列（选区改写排队·消费端）。一轮 end 后由 FusionRuntimeProvider 调用。
- * 三条 CEO 护栏就地落实：
+ * 排空改写队列（选区改写排队·消费端）。一轮 end/error 后由 FusionRuntimeProvider 调用。
+ * 护栏就地落实：
  *  #1 并发闸 draining——防 end 双触发导致并发 send；
- *  #6 失败重排——发起抛错也不让队列停摆（catch 后靠下一轮 end 兜底，见下）；
- *  #2 丢弃提示——重定位失败/目标节已删时置 revisionQueueNotice，让用户看得见被跳过的项。
+ *  #4 重叠拦截 + #3 重定位——收口在 resolveRevisionTarget，与直发路径同一判定（复审 H1）；
+ *  H3 起飞判定——reviseProposalSectionBlocks【不会 reject】（dispatchChatTurn 吞掉 send 失败），故
+ *      不能靠 catch 判成败（那是死代码，复审查实）。改判 streaming：发起后仍为假=这轮没起飞
+ *      （streaming 守卫 no-op / 切走会话早退 / send 被吞），head 已消费→计跳过、继续下一项，绝不空等
+ *      一个永不到来的 end；为真=真起飞→返回等这轮 end/error 再排下一个。这样任何失败都不会让队列停摆。
+ *  #2/M5 跳过提示——跳过项累计后置持久提示（不清空）。
  *
- * 串行不变量：一次只发一个。reviseProposalSectionBlocks 发起后 streaming 转真（下一轮 start），
- * 下一轮 end 再次调本函数取下一个。
+ * 串行不变量：任一时刻最多一个改写在飞（并发闸 + 起飞后即返回）。
  */
 export async function drainRevisionQueue(): Promise<void> {
-  if (draining) return // 护栏#1：已有 drain 在跑，直接退（另一个 end 触发的重入）
+  if (draining) return // 护栏#1：已有 drain 在跑，直接退（另一个 end/error 触发的重入）
   draining = true
   try {
     const ps = useProposalStore.getState()
     if (!ps.active || !ps.sessionId) return
-    // streaming 闸：与 dispatchSectionRevision 同源，忙时按兵不动（下一轮 end 会再来）。
-    const streaming = useChatStore.getState().perSession[ps.sessionId]?.streaming ?? false
-    if (streaming) return
+    const sid = ps.sessionId
+    const isStreaming = (): boolean => useChatStore.getState().perSession[sid]?.streaming ?? false
+    if (isStreaming()) return // 忙时按兵不动（下一轮 end/error 会再来）
 
-    let dropped = 0
-    // 循环丢弃"文字已不存在/节已删"的死项，直到发起一个或排空。
+    let skipped = 0
+    // 逐项处理：节已删/原文找不到/与待审阅卡重叠 → 计跳过、继续下一项；成功【真起飞】→ 返回等 end。
     for (;;) {
       const head = useProposalStore.getState().dequeueRevision()
       if (!head) break // 队列空
-      const sec = useProposalStore.getState().sections.find((s) => s.id === head.sectionId)
+      const cur = useProposalStore.getState()
+      const sec = cur.sections.find((s) => s.id === head.sectionId)
       if (!sec) {
-        dropped++
-        console.warn('[proposal-queue] 丢弃排队项：目标节已不存在', { sectionId: head.sectionId })
+        skipped++
+        console.warn('[proposal-queue] 跳过排队项：目标节已不存在', { sectionId: head.sectionId })
         continue
       }
-      const range = locateBlockRangeByTextWithHint(sec.markdown, head.selectedText, head.hintRange)
-      if (!range) {
-        dropped++
-        console.warn('[proposal-queue] 丢弃排队项：选中文字在最新草稿里已找不到', { sectionId: head.sectionId })
+      // 复审 H1/H2/M4：定位（带 hint 距离上限）+ 审阅卡重叠，与直发路径共用 resolveRevisionTarget。
+      const target = resolveRevisionTarget({
+        markdown: sec.markdown,
+        blockReviews: cur.blockReviews,
+        sectionId: head.sectionId,
+        selectedText: head.selectedText,
+        hintRange: head.hintRange
+      })
+      if (target.status !== 'ok') {
+        skipped++
+        console.warn(
+          `[proposal-queue] 跳过排队项：${target.status === 'missing' ? '原文已变化找不到' : '与待确认改写重叠'}`,
+          { sectionId: head.sectionId }
+        )
         continue
       }
-      // 护栏#6（复审 B 修正）：发起可能抛错（send 早退 reject）。此路径【不产生 runtime 'end' 事件】
-      // ——dispatchChatTurn 的 catch 走的是 store action endAssistantMessage，不是能触发本函数的
-      // runtime 'end'（复审查实：两者是不同的东西，误以为 send 失败会自动再触发一轮 drain 是错的）。
-      // 若不在此显式补一次排空，剩余队列会永久停摆。head 已在 dispatch 前出队，重排只会走下一项、
-      // 不会重试同一项，队列有限、不会死循环。queueMicrotask 让本轮 finally 先释放 draining 再重入。
+      // 发起。见函数头 H3 注释：不靠 catch（不会 reject），靠发起后 streaming 是否为真判「有没有起飞」。
       try {
-        await reviseProposalSectionBlocks(head.sectionId, range, head.instruction, head.selectedText)
+        await reviseProposalSectionBlocks(head.sectionId, target.range, head.instruction, head.selectedText)
       } catch (err) {
-        console.error('[proposal-queue] 发起排队改写抛错，显式重排下一项（不依赖 end 兜底）', err)
-        queueMicrotask(() => {
-          void drainRevisionQueue()
-        })
+        console.error('[proposal-queue] 发起排队改写意外抛错', err)
       }
-      if (dropped > 0) {
-        useProposalStore.getState().setRevisionQueueNotice(`${dropped} 个排队改写因原文已变化被跳过`)
+      if (isStreaming()) {
+        if (skipped > 0) useProposalStore.getState().setRevisionQueueNotice(skipNotice(skipped))
+        return // 真起飞，等这轮 end/error 触发下一次 drain
       }
-      return // 发起了一个（或尝试过），等它的 end 再排下一个
+      // 没起飞：这一项没发出去（已消费）。计跳过、继续排下一项，绝不空等 end（否则队列永久停摆）。
+      skipped++
+      console.warn('[proposal-queue] 跳过排队项：本轮未能起飞（可能已切走会话/发送失败）', {
+        sectionId: head.sectionId
+      })
     }
-    // 走到这里=队列排空。若本轮有丢弃项，置提示；否则清掉旧提示。
-    useProposalStore.getState().setRevisionQueueNotice(dropped > 0 ? `${dropped} 个排队改写因原文已变化被跳过` : null)
+    // 队列排空。仅在有跳过项时置提示；【绝不】把提示清成 null（复审 M5）——留给用户「知道了」清。
+    if (skipped > 0) useProposalStore.getState().setRevisionQueueNotice(skipNotice(skipped))
   } finally {
-    draining = false // 护栏#1：务必释放，否则一次异常永久锁死排空
+    draining = false // 务必释放，否则一次异常永久锁死排空
   }
 }
