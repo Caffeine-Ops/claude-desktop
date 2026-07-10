@@ -1,6 +1,6 @@
 import type { SuggestionItem } from './suggestionPlugin'
 import type { SuggestionAdapter } from './ProseMirrorComposerInput'
-import { findSkillChipSpec } from './skillChipRegistry'
+import { findSkillChipSpec, type SkillChipSpec } from './skillChipRegistry'
 
 import type { SessionMeta } from '@desktop-shared/types'
 
@@ -107,4 +107,40 @@ export function buildSlashAdapter(sessionMeta: SessionMeta | null): SuggestionAd
       )
     }
   }
+}
+
+/** A registered skill, ready for a dedicated picker UI (SkillPickerPopover). */
+export interface SkillPickerEntry {
+  /** The literal `/value` to insert — same wire value the chip carries. */
+  value: string
+  spec: SkillChipSpec
+}
+
+/**
+ * The skills the running session's fusion-code CLI actually reports
+ * (`sessionMeta.slashCommands`), matched against the chip registry for
+ * display polish — same source of truth as `buildSlashAdapter`'s 「技能」
+ * group, just without the 「命令」 bucket and without collapsing to
+ * `SuggestionItem`'s single-line shape (SkillPickerPopover wants the
+ * spec's `description` for a two-line row).
+ *
+ * Deduped by `spec.label`: `SKILL_CHIP_SPECS` registers a skill under both
+ * its plugin-namespaced and bare command name (see skillChipRegistry.ts),
+ * but the CLI only ever reports ONE of those two per install — this simply
+ * guards against both somehow appearing in `slashCommands` at once and
+ * the picker showing "制作PPT" twice.
+ */
+export function buildSkillPickerEntries(sessionMeta: SessionMeta | null): SkillPickerEntry[] {
+  const entries: SkillPickerEntry[] = []
+  const seenLabels = new Set<string>()
+  for (const name of sessionMeta?.slashCommands ?? []) {
+    const value = `/${name}`
+    const spec = findSkillChipSpec(value)
+    if (!spec) continue
+    const label = spec.label ?? value
+    if (seenLabels.has(label)) continue
+    seenLabels.add(label)
+    entries.push({ value, spec })
+  }
+  return entries
 }

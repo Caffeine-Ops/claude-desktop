@@ -15,6 +15,8 @@ import { useChatStore, useDelayedSessionLoading } from '../../../stores/chat'
 import { useComposerModeStore } from '../../../stores/composerMode'
 import { useComposerOverlayStore } from '../../../stores/composerOverlay'
 import { useSessionTitleStore } from '../../../stores/sessionTitle'
+import { findSkillChipSpec } from '../../../composer/skillChipRegistry'
+import { fileIconPathsByKey } from '../FileTypeIcon'
 import { Composer } from './Composer'
 import { PermissionFloatDock } from '../../permissions/PermissionFloatCard'
 import { UserMessage } from './UserMessage'
@@ -1025,6 +1027,13 @@ function ChatHeader(): React.JSX.Element {
     ? '/' + (cmdMatch[1].split(':').pop() ?? cmdMatch[1])
     : null
   const restTitle = cmdMatch ? cmdMatch[2] : display
+  // 已知技能命令（ppt-master/spreadsheets/…）→ 复用消息气泡同一份注册表，
+  // 拿彩色图标 + 友好文案（「处理表格」），换掉裸 mono chip 的字面命令名。
+  // 命名空间/裸名两种形态都试一遍（注册表本身双注册，见 skillChipRegistry）。
+  // 未登记的命令仍走原样 mono chip 兜底，不是每个 / 开头都配得上产品化展示。
+  const skillSpec = cmdFull
+    ? (findSkillChipSpec(cmdFull) ?? findSkillChipSpec(cmdShort ?? ''))
+    : null
 
   // ── In-place rename ──
   // The title itself is the rename entry point (mirrors the sidebar's
@@ -1113,14 +1122,30 @@ function ChatHeader(): React.JSX.Element {
           钉右端。（旧结构在外层+内层各标一份 drag——现在拖拽由根
           .window-drag-strip 负责，声明已摘除。） */}
       <div className="flex h-full w-full min-w-0 items-center gap-2 px-4">
-        {/* 会话图标（参考形态的左端锚点）：纯装饰的 muted 线性图标，给
-            左贴边的标题一个视觉起笔；编辑态也保留，rename 输入框展开时
-            行首不跳。 */}
-        <MessageSquareText
-          aria-hidden
-          strokeWidth={1.75}
-          className="size-4 shrink-0 text-muted-foreground/80"
-        />
+        {/* 会话图标（参考形态的左端锚点）：已知技能命令换成该技能的彩色
+            图标（同消息气泡 / composer 「处理表格」按钮那份 skillChipRegistry），
+            让标题栏一眼认出「这是张表格会话」而不是读 mono 命令名；未识别
+            命令或纯聊天标题回退成纯装饰的 muted 线性图标。编辑态也保留，
+            rename 输入框展开时行首不跳。 */}
+        {skillSpec ? (
+          <svg
+            width={16}
+            height={16}
+            viewBox="0 0 48 48"
+            aria-hidden="true"
+            className="size-4 shrink-0"
+          >
+            {fileIconPathsByKey(skillSpec.icon).map((p, pi) => (
+              <path key={pi} d={p.d} fill={p.fill} />
+            ))}
+          </svg>
+        ) : (
+          <MessageSquareText
+            aria-hidden
+            strokeWidth={1.75}
+            className="size-4 shrink-0 text-muted-foreground/80"
+          />
+        )}
         {editing ? (
           <input
             ref={titleInputRef}
@@ -1149,7 +1174,14 @@ function ChatHeader(): React.JSX.Element {
           />
         ) : (
           <>
-            {cmdShort ? (
+            {skillSpec ? (
+              <span
+                title={cmdFull ?? undefined}
+                className="shrink-0 rounded-full border border-border/70 bg-card/70 px-2 py-0.5 text-[11px] font-medium leading-none text-muted-foreground"
+              >
+                {skillSpec.label}
+              </span>
+            ) : cmdShort ? (
               <span
                 title={cmdFull ?? undefined}
                 className="shrink-0 rounded-full border border-brand/20 bg-brand/10 px-2 py-0.5 font-mono text-[11px] leading-none text-brand"

@@ -1,5 +1,5 @@
 import type { Node as PMNode } from 'prosemirror-model'
-import type { NodeView } from 'prosemirror-view'
+import type { EditorView, NodeView } from 'prosemirror-view'
 
 import { fileIconPathsByKey, fileTypeIconPaths, type IconPath } from '../components/chat/FileTypeIcon'
 import { findSkillChipSpec } from './skillChipRegistry'
@@ -22,96 +22,31 @@ import { findSkillChipSpec } from './skillChipRegistry'
  * (the old `findAtomicTokenContaining` / overlay caret) is needed.
  */
 
-const SLASH_ICON_PATHS = [
-  'M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z',
-  'm3.27 6.96 8.73 5.05 8.73-5.05',
-  'M12 22.08V12'
+/** Generic "skill/command" glyph — same sparkle the composer's 技能 toolbar
+ * button draws, so an unregistered slash chip and the entry point that
+ * inserts registered ones read as the same visual language. */
+const SPARKLE_ICON_PATHS = [
+  'M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1',
+  'M12 8a4 4 0 0 0 4 4 4 4 0 0 0-4 4 4 4 0 0 0-4-4 4 4 0 0 0 4-4Z'
 ]
+/** × glyph shown in place of the icon on hover — the click target that
+ * deletes the chip. */
+const CLOSE_ICON_PATHS = ['M18 6 6 18M6 6l12 12']
 const NS = 'http://www.w3.org/2000/svg'
 
-/**
- * The `gradient` skill-chip appearance (the larger card the user picked
- * for `/ppt-master`) needs a `::before` pseudo-element for its
- * accent-gradient border — a 1.5px gradient frame masked into a ring
- * with `mask-composite: exclude`. A pseudo-element can't be expressed
- * via inline `style` on an imperative-DOM node, so we inject one shared
- * stylesheet the first time such a chip mounts. Idempotent: a module
- * flag plus an id check means repeated mounts (and HMR) never duplicate
- * it.
- *
- * The gradient runs `--accent` → a same-hue darker stop derived with
- * `color-mix` (the same technique the design-tokens sheet already uses),
- * so it re-skins with the theme picker and introduces no new token.
- */
-const GRADIENT_CHIP_STYLE_ID = 'skill-chip-gradient-style'
-let gradientChipStyleInjected = false
-function ensureGradientChipStyle(): void {
-  if (gradientChipStyleInjected || document.getElementById(GRADIENT_CHIP_STYLE_ID)) {
-    gradientChipStyleInjected = true
-    return
-  }
-  const style = document.createElement('style')
-  style.id = GRADIENT_CHIP_STYLE_ID
-  style.textContent = `
-.skill-chip-gradient {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 14px 7px 11px;
-  border-radius: 13px;
-  background: hsl(var(--card));
-  color: hsl(var(--accent));
-  font-weight: 600;
-  font-size: 14px;
-  letter-spacing: -0.01em;
-  line-height: 1.3;
-  vertical-align: middle;
-  user-select: none;
-  box-shadow: 0 1px 3px hsl(220 40% 2% / 0.08);
-  transition: background 0.18s ease;
-}
-.skill-chip-gradient::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1.5px;
-  background: linear-gradient(120deg,
-    hsl(var(--accent)),
-    color-mix(in oklch, hsl(var(--accent)) 62%, hsl(240 30% 12%)));
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  pointer-events: none;
-}
-.skill-chip-gradient:hover { background: hsl(var(--accent) / 0.05); }
-.skill-chip-gradient svg { flex-shrink: 0; display: block; }
-`
-  document.head.appendChild(style)
-  gradientChipStyleInjected = true
-}
-
-/**
- * Slash-command chip glyph: a single-colour Lucide stroke icon tinted
- * with the accent `stroke`. (Mentions — and registered skills — use the
- * coloured builder below because they draw multi-colour Icons8 fills,
- * not strokes.)
- */
-function buildSlashIcon(stroke: string): SVGSVGElement {
+function buildStrokeIcon(paths: readonly string[], size: number, strokeWidth: string): SVGSVGElement {
   const svg = document.createElementNS(NS, 'svg')
-  svg.setAttribute('width', '11')
-  svg.setAttribute('height', '11')
+  svg.setAttribute('width', String(size))
+  svg.setAttribute('height', String(size))
   svg.setAttribute('viewBox', '0 0 24 24')
   svg.setAttribute('fill', 'none')
-  svg.setAttribute('stroke', stroke)
-  svg.setAttribute('stroke-width', '2')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', strokeWidth)
   svg.setAttribute('stroke-linecap', 'round')
   svg.setAttribute('stroke-linejoin', 'round')
   svg.setAttribute('aria-hidden', 'true')
-  svg.style.flexShrink = '0'
-  for (const d of SLASH_ICON_PATHS) {
+  svg.style.display = 'block'
+  for (const d of paths) {
     const p = document.createElementNS(NS, 'path')
     p.setAttribute('d', d)
     svg.appendChild(p)
@@ -127,13 +62,13 @@ function buildSlashIcon(stroke: string): SVGSVGElement {
  * registered skill (see `skillChipRegistry.ts`) passes the table for
  * its `icon` key — e.g. `/ppt-master` reuses the PowerPoint glyph.
  */
-function buildColorIcon(paths: readonly IconPath[], size = 12): SVGSVGElement {
+function buildColorIcon(paths: readonly IconPath[], size = 14): SVGSVGElement {
   const svg = document.createElementNS(NS, 'svg')
   svg.setAttribute('width', String(size))
   svg.setAttribute('height', String(size))
   svg.setAttribute('viewBox', '0 0 48 48')
   svg.setAttribute('aria-hidden', 'true')
-  svg.style.flexShrink = '0'
+  svg.style.display = 'block'
   for (const spec of paths) {
     const p = document.createElementNS(NS, 'path')
     p.setAttribute('d', spec.d)
@@ -148,83 +83,103 @@ function buildColorIcon(paths: readonly IconPath[], size = 12): SVGSVGElement {
  * palette + icon; the raw value comes from `node.attrs.value`.
  */
 export function createChipNodeView(variant: 'slash' | 'mention') {
-  return (node: PMNode): NodeView => {
+  return (node: PMNode, view: EditorView, getPos: () => number | undefined): NodeView => {
     const raw = (node.attrs.value as string) ?? ''
 
     // A known slash skill (e.g. `/ppt-master`) swaps the glyph for its
-    // coloured Icons8 icon and gives the pill a friendly label. The pill
-    // itself keeps the default accent palette — the coloured icon
-    // already carries the brand cue, so tinting the pill too would
-    // over-saturate it. Everything else — and all mentions — keeps the
-    // default token-driven look. Lookup is by the verbatim `value`, so
-    // this is purely visual; serialization is untouched.
+    // coloured Icons8 icon and gives the pill a friendly label. Everything
+    // else — and all mentions — keeps the neutral sparkle/file glyph.
+    // Lookup is by the verbatim `value`, so this is purely visual;
+    // serialization is untouched.
     const skill = variant === 'slash' ? findSkillChipSpec(raw) : null
 
     const dom = document.createElement('span')
     dom.setAttribute(variant === 'slash' ? 'data-pm-slash' : 'data-pm-mention', node.attrs.value as string)
 
-    // ── Gradient-border appearance (the larger card the user picked for
-    // `/ppt-master`). A class drives the look because the gradient frame
-    // needs a `::before` pseudo (see `ensureGradientChipStyle`); the
-    // bigger 22px coloured glyph + label go inside. Everything that
-    // serializes is untouched — purely visual.
-    if (skill?.appearance === 'gradient') {
-      ensureGradientChipStyle()
-      dom.className = 'skill-chip-gradient'
-      dom.appendChild(buildColorIcon(fileIconPathsByKey(skill.icon), 22))
-      const gLabel = document.createElement('span')
-      gLabel.textContent = skill.label ?? raw.slice(1)
-      dom.appendChild(gLabel)
-      return {
-        dom,
-        ignoreMutation: () => true,
-        update: (updated) => updated.type === node.type
-      }
-    }
-
-    // Slash chips follow the accent token; mention chips use the
-    // dedicated `--chip-mention` token — same split the old <Chip> used
-    // so files stay visually distinct from commands and both re-skin
-    // with the theme picker.
-    const colorVar = variant === 'slash' ? '--accent' : '--chip-mention'
-    const text = `hsl(var(${colorVar}))`
-    const background = `hsl(var(${colorVar}) / 0.16)`
-
+    // Unified bordered-pill chrome for BOTH variants: a plain outline
+    // pill (no accent fill) with an icon slot + label. Slash chips used
+    // to split into a flat accent-tint pill vs. a bespoke gradient card
+    // per skill (`appearance: 'gradient'`) — retired in favour of one
+    // consistent look, with delete-on-hover added (see iconSlot below).
     Object.assign(dom.style, {
       display: 'inline-flex',
       alignItems: 'center',
-      gap: '4px',
-      padding: '1px 8px 1px 7px',
-      background,
-      color: text,
-      fontWeight: '600',
+      gap: '6px',
+      padding: '3px 10px 3px 7px',
+      border: '1px solid hsl(var(--border))',
       borderRadius: '9999px',
-      verticalAlign: 'baseline',
+      background: 'hsl(var(--card))',
+      color: 'hsl(var(--foreground))',
+      fontWeight: '500',
+      fontSize: '13px',
       lineHeight: '1.35',
-      // The PM caret can sit on either side of an atom; a subtle
-      // user-select:none keeps double-click from selecting the inner
-      // text instead of the node.
-      userSelect: 'none'
+      verticalAlign: 'middle',
+      userSelect: 'none',
+      transition: 'background 0.15s ease, border-color 0.15s ease'
     } satisfies Partial<CSSStyleDeclaration>)
 
-    // Icon: a registered skill → its coloured Icons8 glyph; a file
-    // mention → the per-extension coloured glyph; everything else → the
-    // accent-tinted Lucide box.
-    let icon: SVGSVGElement
-    if (skill) {
-      icon = buildColorIcon(fileIconPathsByKey(skill.icon))
-    } else if (variant === 'mention') {
-      icon = buildColorIcon(fileTypeIconPaths(raw.replace(/^@"?|"$/g, '')))
-    } else {
-      icon = buildSlashIcon(text)
+    // Icon slot: holds the real glyph by default, swaps to a × delete
+    // button on hover. A registered skill shows its coloured Icons8 glyph
+    // (kept as its own multi-fill SVG, untouched by hover); a file
+    // mention shows its per-extension coloured glyph; a plain/unknown
+    // slash command shows the neutral sparkle.
+    const iconSlot = document.createElement('span')
+    Object.assign(iconSlot.style, {
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: '0'
+    } satisfies Partial<CSSStyleDeclaration>)
+
+    const buildRestingIcon = (): SVGSVGElement => {
+      if (skill) return buildColorIcon(fileIconPathsByKey(skill.icon))
+      if (variant === 'mention') return buildColorIcon(fileTypeIconPaths(raw.replace(/^@"?|"$/g, '')))
+      return buildStrokeIcon(SPARKLE_ICON_PATHS, 13, '1.9')
     }
-    dom.appendChild(icon)
+    iconSlot.appendChild(buildRestingIcon())
+    dom.appendChild(iconSlot)
 
     // Strip the leading `/` or `@` — the icon replaces it visually. A
     // registered skill supplies its own friendly label instead.
     const label = document.createElement('span')
     label.textContent = skill?.label ?? raw.slice(1)
     dom.appendChild(label)
+
+    // Delete-on-hover: mouseenter swaps the icon slot for a × (click
+    // removes this atom node from the doc); mouseleave restores the
+    // resting icon. The click handler is only meaningful while hovering
+    // (`hovering` guard) — desktop pointer events always fire
+    // mouseenter→click→mouseleave in that order, so this is a belt-and-
+    // braces guard, not load-bearing.
+    let hovering = false
+    dom.addEventListener('mouseenter', () => {
+      hovering = true
+      dom.style.background = 'hsl(var(--muted))'
+      dom.style.borderColor = 'hsl(var(--border))'
+      iconSlot.replaceChildren(buildStrokeIcon(CLOSE_ICON_PATHS, 12, '2'))
+      iconSlot.style.cursor = 'pointer'
+      iconSlot.style.color = 'hsl(var(--muted-foreground))'
+    })
+    dom.addEventListener('mouseleave', () => {
+      hovering = false
+      dom.style.background = 'hsl(var(--card))'
+      iconSlot.replaceChildren(buildRestingIcon())
+      iconSlot.style.cursor = ''
+      iconSlot.style.color = ''
+    })
+    iconSlot.addEventListener('mousedown', (e) => {
+      if (!hovering) return
+      // mousedown (not click): fires before the editor would otherwise
+      // move focus/selection on click, matching insertSuggestion's own
+      // mousedown-based picks elsewhere in the composer.
+      e.preventDefault()
+      e.stopPropagation()
+      const pos = getPos()
+      if (pos === undefined) return
+      const tr = view.state.tr.delete(pos, pos + node.nodeSize)
+      view.dispatch(tr.scrollIntoView())
+      view.focus()
+    })
 
     return {
       dom,

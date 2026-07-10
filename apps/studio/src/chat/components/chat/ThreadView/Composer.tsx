@@ -16,12 +16,15 @@ import { useChatStore, useTurnActivity } from '../../../stores/chat'
 import { useWorkspaceStore } from '../../../stores/workspace'
 import { useComposerModeStore, type ComposerModeId } from '../../../stores/composerMode'
 import { useComposerOverlayStore } from '../../../stores/composerOverlay'
-import { buildSlashAdapter } from '../../../composer/slashAdapter'
+import { buildSlashAdapter, buildSkillPickerEntries, type SkillPickerEntry } from '../../../composer/slashAdapter'
 import { buildFileMentionAdapter } from '../../../composer/fileMentionAdapter'
-import { ProseMirrorComposerInput } from '../../../composer/ProseMirrorComposerInput'
+import {
+  ProseMirrorComposerInput,
+  type ProseMirrorComposerInputHandle
+} from '../../../composer/ProseMirrorComposerInput'
 import { QueuePanel } from './QueuePanel'
 import { useMessageQueueStore } from '../../../stores/messageQueue'
-import { FileTypeIcon } from '../FileTypeIcon'
+import { FileTypeIcon, fileIconPathsByKey } from '../FileTypeIcon'
 import { DictationWaveform } from '../DictationWaveform'
 import { PermissionModePicker } from '../../permissions/PermissionModePicker'
 import { cancelActiveDictation } from '../../../runtime/openaiWhisperDictationAdapter'
@@ -280,6 +283,10 @@ export function Composer(): React.JSX.Element {
   // Both kinds therefore appear in the SAME attachments row above the
   // composer, exactly like pasted/dropped images already do.
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  // 技能按钮的入口 ref：点击时调用 openSlashMenu() 在编辑器里敲一个 `/`，
+  // 复用建议插件自己的弹窗，而不是另起一套菜单实现（见 ProseMirrorComposerInput
+  // 里 ProseMirrorComposerInputHandle 的注释）。
+  const composerInputRef = useRef<ProseMirrorComposerInputHandle | null>(null)
 
   const handleFilesPicked = useCallback(
     async (fileList: FileList | null): Promise<void> => {
@@ -332,7 +339,7 @@ export function Composer(): React.JSX.Element {
             radius. No segment carries its own border/radius/negative margin, so
             nothing can overlap or clip anything else — the status row is always
             a full, un-obscured line. */}
-        <ComposerPrimitive.AttachmentDropzone className="relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--brand)/0.4)] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.12),0_1px_3px_-1px_rgba(0,0,0,0.06)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--brand)/0.5)] data-[dragging=true]:bg-brand/[0.08] dark:ring-white/[0.08]">
+        <ComposerPrimitive.AttachmentDropzone className="relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--brand)/0.4)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--brand)/0.5)] data-[dragging=true]:bg-brand/[0.08] dark:ring-white/[0.08]">
           {/* Segment 1 — message queue. Renders null when empty (so no divider
               shows either). Its own frame styling was stripped; it's pure
               content here. */}
@@ -397,6 +404,7 @@ export function Composer(): React.JSX.Element {
                 {/* —— Top row: the multi-line input —— */}
                 <div className="min-h-[52px] max-h-52 overflow-y-auto px-5 pb-1 pt-4 text-[15px] leading-relaxed">
                   <ProseMirrorComposerInput
+                    ref={composerInputRef}
                     placeholder={
                       streaming
                         ? t('composerPlaceholderStreaming')
@@ -439,11 +447,27 @@ export function Composer(): React.JSX.Element {
                     </svg>
                   </button>
 
+                  {/* 技能入口图标（Sparkles）：ComposerModePicker 在
+                      hasMessages 后收起会留下空档，这颗图标补在同一位置。
+                      点击直接打开 SkillPickerPopover（搜索框 + 技能列表，
+                      WorkBuddy 参考样式），跟旧的「复用 / 建议弹窗」是两套
+                      UI——手动打 `/` 仍走原来的紧凑单行菜单，互不影响。选中
+                      一项后调用 insertSlashCommand 把同一个 slash 原子节点
+                      插进编辑器，跟手动 `/` 选中同一项产出的 chip 一致。 */}
+                  <SkillPickerButton
+                    sessionMeta={sessionMeta}
+                    onPick={(value) => composerInputRef.current?.insertSlashCommand(value)}
+                  />
+
                   {/* Composer mode picker (通用 / 设计 / 幻灯片 / 写作). The
                       幻灯片 option is the slides entry point: choosing it sets
                       mode='slides', and sending then marks the session as a
                       slides session → ThreadView's two-pane layout. Replaces
-                      the old single monitor-icon slides toggle. */}
+                      the old single monitor-icon slides toggle. Read-only
+                      once the session has messages: the picker itself hides
+                      (see its hasMessages guard) — the skill it dispatched
+                      is shown in the chat header instead (ChatHeader in
+                      ThreadView.tsx), not re-shown here. */}
                   <ComposerModePicker />
 
                   {/* Spacer pushes the rest to the right edge. */}
@@ -496,19 +520,11 @@ export function Composer(): React.JSX.Element {
 
         {/* Below-card chips (figure 18): 选择工作目录已实装（统一会话管理，
             2026-07-07：新会话可选工作目录，发过消息后锁定只读）；语气 创意
-            仍是 VISUAL-ONLY 占位; the 权限模式 chip on the right is
+            占位 chip 已移除（从未接实际功能）。权限模式 chip on the right is
             FUNCTIONAL（2026-07-05 与模型 chip 互换位置后落这排）——它切换
             引擎的权限模式（default/plan/acceptEdits/bypass/dontAsk）。 */}
         <div className="mt-3 flex items-center gap-4 px-2">
           <WorkspaceDirPicker />
-          <ComposerBelowChip
-            label="语气 创意"
-            icon={
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden="true">
-                <path d="m12 3 2.5 5.5L20 11l-5.5 2.5L12 19l-2.5-5.5L4 11l5.5-2.5z" />
-              </svg>
-            }
-          />
           <div className="ml-auto">
             <PermissionModePicker />
           </div>
@@ -617,9 +633,13 @@ const COMPOSER_MODES: readonly ComposerModeMeta[] = [
  * composer sits at the window bottom), click-outside + Esc to close, motion
  * fade, a check on the selected row. 幻灯片 / 写作 carry a blue "Beta" tag.
  */
-function ComposerModePicker(): React.JSX.Element {
+function ComposerModePicker(): React.JSX.Element | null {
   const mode = useComposerModeStore((s) => s.mode)
   const setMode = useComposerModeStore((s) => s.setMode)
+  // 仅新会话（还没发过消息）可选：mode 是全局单例，发送时会被实时读取去拼
+  // 技能斜杠命令，选定后不再允许中途改判——发过消息就整体收起，而不是像
+  // WorkspaceDirPicker 那样退化成禁用态展示。
+  const hasMessages = useChatStore((s) => s.messages.length > 0)
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const btnRef = useRef<HTMLButtonElement | null>(null)
@@ -685,6 +705,10 @@ function ComposerModePicker(): React.JSX.Element {
     setMode(next)
     setOpen(false)
   }
+
+  // hooks 必须先跑完再判断——上面的 useLayoutEffect/useEffect 依赖 open 状态，
+  // 提前 return 必须放在所有 hook 调用之后。
+  if (hasMessages) return null
 
   return (
     <div ref={rootRef} className="relative">
@@ -773,6 +797,260 @@ function ComposerModePicker(): React.JSX.Element {
                     </button>
                   )
                 })}
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+    </div>
+  )
+}
+
+/**
+ * 技能按钮 + 弹窗（截图参考 WorkBuddy 的技能选择器）：搜索框 + 彩色图标/
+ * 标题/副标题两行式条目。数据只用本项目已有的——`buildSkillPickerEntries`
+ * 读 sessionMeta.slashCommands 匹配 skillChipRegistry，跟旧的 `/` 建议菜单
+ * 「技能」分组同一份真源，只是过滤掉「命令」分组、换成更大的两行式行高。
+ * 不做截图里的「从本地添加技能」「管理技能」——本项目没有对应的技能安装/
+ * 管理能力（那是另一产品 WorkBuddy 的功能），加两行点了没反应的假按钮不如
+ * 不加。
+ *
+ * 交互形状照抄 ComposerModePicker：portal 到 body + fixed 锚点（同样要逃出
+ * AttachmentDropzone 的 overflow-hidden 裁剪）、点外 / Esc 关闭、
+ * AnimatePresence 淡入淡出。区别于 ComposerModePicker 的是自带一个受控
+ * 搜索框和键盘上下选择。
+ */
+function SkillPickerButton({
+  sessionMeta,
+  onPick
+}: {
+  sessionMeta: SessionMeta | null
+  onPick: (value: string) => void
+}): React.JSX.Element | null {
+  const entries = useMemo(() => buildSkillPickerEntries(sessionMeta), [sessionMeta])
+  // 新会话（还没发过消息）时 sessionMeta.slashCommands 尚未从 CLI 的
+  // `system init` 握手回填（lazy spawn：冷启动延迟到第一次 send），技能
+  // 列表恒为空——与其露出一个点开永远空的按钮，不如整颗按钮跟 hasMessages
+  // 挂钩，仅在发过消息（技能真的有得选）之后出现。
+  const hasMessages = useChatStore((s) => s.messages.length > 0)
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [highlighted, setHighlighted] = useState(0)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(null)
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return entries
+    return entries.filter(
+      (e) =>
+        (e.spec.label ?? e.value).toLowerCase().includes(q) ||
+        (e.spec.description?.toLowerCase().includes(q) ?? false)
+    )
+  }, [entries, query])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const measure = (): void => {
+      const b = btnRef.current?.getBoundingClientRect()
+      if (b) setAnchor({ left: b.left, bottom: window.innerHeight - b.top })
+    }
+    measure()
+    window.addEventListener('scroll', measure, true)
+    window.addEventListener('resize', measure)
+    return () => {
+      window.removeEventListener('scroll', measure, true)
+      window.removeEventListener('resize', measure)
+    }
+  }, [open])
+
+  // 打开即清空搜索、重置高亮、把焦点丢给搜索框——跟截图一致，弹出即可
+  // 直接打字过滤，不用先点一下输入框。
+  useEffect(() => {
+    if (!open) return
+    setQuery('')
+    setHighlighted(0)
+    const timer = window.setTimeout(() => searchInputRef.current?.focus(), 0)
+    return () => window.clearTimeout(timer)
+  }, [open])
+
+  useEffect(() => {
+    setHighlighted((h) => (h >= filtered.length ? 0 : h))
+  }, [filtered])
+
+  useEffect(() => {
+    if (!open) return
+    const overlay = useComposerOverlayStore.getState()
+    overlay.setOpen(true)
+    const onDown = (e: MouseEvent): void => {
+      const target = e.target as Node
+      const inRoot = rootRef.current?.contains(target)
+      const inMenu = menuRef.current?.contains(target)
+      if (!inRoot && !inMenu) setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => {
+      overlay.setOpen(false)
+      window.removeEventListener('mousedown', onDown)
+    }
+  }, [open])
+
+  const choose = (entry: SkillPickerEntry): void => {
+    onPick(entry.value)
+    setOpen(false)
+  }
+
+  const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Escape') {
+      setOpen(false)
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlighted((h) => Math.min(h + 1, Math.max(0, filtered.length - 1)))
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlighted((h) => Math.max(h - 1, 0))
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const entry = filtered[highlighted]
+      if (entry) choose(entry)
+    }
+  }
+
+  // hooks 必须先跑完再判断——上面的 useLayoutEffect/useEffect 依赖 open 状态，
+  // 提前 return 必须放在所有 hook 调用之后（同 ComposerModePicker 的写法）。
+  if (!hasMessages) return null
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="技能"
+        title="技能"
+        className={
+          'flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground/80 ring-1 ring-black/[0.06] transition-colors hover:bg-foreground/[0.06] hover:text-foreground dark:ring-white/[0.08] ' +
+          (open ? 'bg-foreground/[0.06] text-foreground' : '')
+        }
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.9"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
+          <path d="M12 8a4 4 0 0 0 4 4 4 4 0 0 0-4 4 4 4 0 0 0-4-4 4 4 0 0 0 4-4Z" />
+        </svg>
+      </button>
+
+      {anchor !== null &&
+        createPortal(
+          <AnimatePresence>
+            {open && (
+              <motion.div
+                ref={menuRef}
+                initial={{ opacity: 0, y: 4, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 4, scale: 0.98 }}
+                transition={{ duration: 0.12, ease: 'easeOut' }}
+                style={{ left: anchor.left, bottom: anchor.bottom }}
+                className="fixed z-[9999] mb-1.5 flex w-[340px] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                role="listbox"
+              >
+                {/* 搜索框 */}
+                <div className="flex items-center gap-2 border-b border-border/70 px-3.5 py-3">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="shrink-0 text-muted-foreground/60"
+                    aria-hidden
+                  >
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m21 21-4.35-4.35" />
+                  </svg>
+                  <input
+                    ref={searchInputRef}
+                    data-slot="skill-picker-search"
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={onSearchKeyDown}
+                    placeholder="搜索技能"
+                    className="w-full min-w-0 bg-transparent text-[13.5px] text-foreground outline-none placeholder:text-muted-foreground/50"
+                  />
+                </div>
+
+                {/* 列表 */}
+                <div className="max-h-[320px] overflow-y-auto py-1.5">
+                  {filtered.length === 0 ? (
+                    <div className="px-3.5 py-6 text-center text-[13px] text-muted-foreground/60">
+                      没有匹配的技能
+                    </div>
+                  ) : (
+                    filtered.map((entry, i) => (
+                      <button
+                        key={entry.value}
+                        type="button"
+                        data-slot="skill-picker-item"
+                        role="option"
+                        aria-selected={i === highlighted}
+                        onMouseEnter={() => setHighlighted(i)}
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          choose(entry)
+                        }}
+                        className={
+                          'flex w-full items-start gap-3 px-3.5 py-2.5 text-left transition-colors ' +
+                          (i === highlighted ? 'bg-muted' : '')
+                        }
+                      >
+                        <svg
+                          width={20}
+                          height={20}
+                          viewBox="0 0 48 48"
+                          aria-hidden="true"
+                          className="mt-0.5 shrink-0"
+                        >
+                          {fileIconPathsByKey(entry.spec.icon).map((p, pi) => (
+                            <path key={pi} d={p.d} fill={p.fill} />
+                          ))}
+                        </svg>
+                        <span className="flex min-w-0 flex-col gap-0.5">
+                          <span className="truncate text-[13.5px] font-medium text-foreground">
+                            {entry.spec.label ?? entry.value}
+                          </span>
+                          {entry.spec.description && (
+                            <span className="truncate text-[12px] text-muted-foreground/70">
+                              {entry.spec.description}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>,
@@ -1727,31 +2005,6 @@ function WorkspaceDirPicker(): React.JSX.Element {
           document.body
         )}
     </div>
-  )
-}
-
-/**
- * A below-card placeholder chip (语气 创意 in figure 18).
- * VISUAL-ONLY for now.
- */
-function ComposerBelowChip({
-  label,
-  icon
-}: {
-  label: string
-  icon: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <span
-      className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70"
-      aria-hidden="true"
-    >
-      {icon}
-      {label}
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground/40">
-        <path d="m6 9 6 6 6-6" />
-      </svg>
-    </span>
   )
 }
 

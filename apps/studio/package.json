@@ -35,6 +35,7 @@
   "//note-build-productName": "2026-07-05 productName Claude Desktop → Cowork（应用显示名 = dock/菜单/关于/退出确认框）。改 productName 通常会漂 userData 目录（默认按显示名组织）丢用户历史，但 main/index.ts 已在 whenReady 前 app.setPath('userData', 读回的当前真实目录) 显式钉死存储路径——显示名与数据目录彻底解耦，故此处可安全改名、老会话零丢失。appId 不跟着改（updater/TCC 缓存按它组织，见上）。",
   "//note-build-publish": "自动更新 feed（方案 A，2026-07-05）：代码仓私有，安装包发到独立的**公开** release 仓——electron-updater 匿名读公开 release，客户端不携带任何 GitHub token（私有仓 provider 需要把 token 打进客户端，官方明说仅供测试）。build.publish 的 owner/repo 会被 electron-builder 写进安装包内的 app-update.yml（即客户端 feed 地址）；CI 的 action-gh-release 用 repository 参数发到同一个仓，两处必须一致。",
   "//note-build-mac-identity": "mac 刻意**不写 identity**（2026-07-05 移除）：曾硬编码 'Shenzhen Panda Run…(LBL475BGZL)'，本地钥匙串命中没事，但 CI 上证书是经 CSC_LINK 临时导入的，electron-builder 在 CI 环境按名匹配不到就把 identity 字符串当 CSC 文件路径找 → 报 'apps/studio/<identity> doesn't exist'、签名步骤根本没走到（v0.0.18 首发翻车实锤）。删掉后 electron-builder 自动用 CSC_LINK 导入的证书（p12 里只有一张 Developer ID，无歧义）；本地免签打包一律 -c.mac.identity=null，不受钥匙串多证书干扰。",
+  "//note-build-files": "build.files 的否定 glob（2026-07-09）：!.next/**、!out/** 挡住 Next 两条构建链的巨大缓存/导出产物——它们不是 Electron 运行时资源，且 .next/dev/cache 会被 dev server 高频增删，电子打包遍历时撞文件生命周期竞态报 ENOENT（曾致整包失败）。!**/onnxruntime-web/** 剔掉 @huggingface/transformers 的 web 后端：embedWorker 是 Node utilityProcess，走 transformers.node.cjs，只 require onnxruntime-node + onnxruntime-common（web 版全是浏览器 .wasm，Node 侧一行都不加载），前端也无 import——纯 129M 死重量。删这条前先确认前端没有直接 import transformers/onnxruntime-web。",
   "build": {
     "appId": "com.caffeineops.claude-desktop",
     "productName": "Cowork",
@@ -53,7 +54,10 @@
       "out-electron/**/*",
       "resources/**/*",
       "env.json",
-      "package.json"
+      "package.json",
+      "!.next/**/*",
+      "!out/**/*",
+      "!**/onnxruntime-web/**"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

@@ -10,7 +10,8 @@ description: Start the browser SVG editor when it is not running, and apply subm
 
 ## When to Run
 
-- **Start (Step 1)** — preview service is not currently running and the user wants to look at the deck or click an element. Typical cases: post-export re-entry in a fresh chat, or the user clicked **Exit preview** earlier and now wants it back.
+- **Start (Step 1) — mandatory before ANY edit to an existing project's SVGs.** If `svg_output/*.svg` already exists for this project and the user asks for ANY change to it — a full style pass, a single word, one color, one coordinate, no matter how small — start the preview first (if not already running) and only then touch the SVG. There is no "too small to bother" exception: the tab's only signal to the user that an edit landed is the live preview, so skipping the startup makes the edit invisible in the UI even though the file changed correctly on disk.
+- Also start whenever the user wants to look at the deck or click an element (post-export re-entry in a fresh chat, or after **Exit preview**).
 - **Apply annotations (Step 2)** — Step 7 has produced at least one PPTX, and the user signals that submitted annotations should now be applied. Triggers include:
   - quoting the browser prompt (`Changes saved to svg_output...` / `修改已保存到 svg_output...`)
   - saying `apply my annotations` / `apply my edits` / `应用注解` / `开始应用` / 等价表达
@@ -18,9 +19,9 @@ description: Start the browser SVG editor when it is not running, and apply subm
 ## When NOT to Run
 
 - The preview service is already running → just give the user the URL; do not restart.
-- The user gave a precise chat edit ("change page 3 title to X") → edit the SVG directly.
 - The user wants a full regeneration → use the main workflow.
 - Step 7 has never run for this project → annotations cannot be applied yet; finish the main pipeline first.
+- No `svg_output/*.svg` exists yet for this project → Step 6's mandatory auto-startup (`SKILL.md`) handles the first launch when Executor begins generating; nothing to preview before that.
 
 ---
 

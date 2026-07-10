@@ -36,6 +36,7 @@ import {
   PanelLeft,
   PanelLeftClose,
   Plus,
+  Search,
   Settings,
   Sun
 } from 'lucide-react'
@@ -46,6 +47,7 @@ import type { AuthUser } from '@desktop-shared/ipc-channels'
 import { Button } from '@/src/components/ui/button'
 import { RailProjectList } from '@/src/components/RailProjectList'
 import { RailSessionList } from '@/src/components/RailSessionList'
+import { useDialogStore } from '@/src/chat/stores/dialogs'
 import { cn } from '@/src/lib/utils'
 import { Tabs, TabsList, TabsTrigger } from '@/src/components/ui/tabs'
 import {
@@ -299,10 +301,26 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
         * 悬浮面板本就是移出即消失的瞬态 UI，拖窗口语义在此无意义。 */}
       <div
         className={cn(
-          'relative flex h-12 shrink-0 items-center justify-end',
+          'relative flex h-12 shrink-0 items-center justify-end gap-0.5',
           overlay ? '[-webkit-app-region:no-drag]' : '[-webkit-app-region:drag]'
         )}
       >
+        {/* 搜索：展开态顶栏补上收起态 CollapsedToolbar 已有的入口（2026-07-10
+          * 用户要求展开时也能看到）——仅聊天面（同 CollapsedToolbar 的
+          * isChat 判断，canvas 没有对应的统一搜索）。落在收起按钮左侧，
+          * 同样需要 no-drag 挖洞（整条默认是窗口拖拽区）。 */}
+        {isChat && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="搜索会话"
+            title="搜索会话"
+            className="-translate-y-px text-muted-foreground [-webkit-app-region:no-drag] hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            onClick={() => useDialogStore.getState().openDialog('search')}
+          >
+            <Search className="size-4" />
+          </Button>
+        )}
         {/* 收起按钮与右侧内容面标题栏（红绿灯 / 标题 / 收起态图标排）垂直
           * 对齐（2026-07-05 用户要求）。rail 顶栏从视口 y=0 起、items-center
           * 让 32px 按钮中线落 y=24；内容面标题栏平铺后也从 y=0 起（2026-07-08

@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { createPortal } from 'react-dom'
 import type { Node as PMNode } from 'prosemirror-model'
 import { EditorState } from 'prosemirror-state'
@@ -51,6 +59,23 @@ export interface SuggestionAdapter {
   search: (query: string) => SuggestionItem[]
 }
 
+/**
+ * Imperative handle exposed to parents that need to drive the editor from
+ * outside (the toolbar's 技能 button / SkillPickerPopover). Kept to one
+ * method — anything richer belongs in the composer store, not here.
+ */
+export interface ProseMirrorComposerInputHandle {
+  /**
+   * Append a `/value` slash chip at the end of the doc, exactly like
+   * picking a row from the inline `/` suggestion popover would
+   * (`insertSuggestion` in suggestionPlugin.ts) — same atom node, same
+   * trailing space + focus — just without requiring an active trigger
+   * state first. Used by SkillPickerPopover so picking a skill there
+   * inserts the same coloured chip the inline menu would.
+   */
+  insertSlashCommand: (value: string) => void
+}
+
 interface Props {
   placeholder: string
   slashAdapter: SuggestionAdapter
@@ -59,12 +84,11 @@ interface Props {
   onSubmit: () => void
 }
 
-export function ProseMirrorComposerInput({
-  placeholder,
-  slashAdapter,
-  mentionAdapter,
-  onSubmit
-}: Props): React.JSX.Element {
+export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandle, Props>(
+  function ProseMirrorComposerInput(
+    { placeholder, slashAdapter, mentionAdapter, onSubmit }: Props,
+    forwardedRef
+  ): React.JSX.Element {
   const runtime = useComposerRuntime()
   const composerText = useAuiState((s) => ((s as { composer?: { text?: string } }).composer?.text as string | undefined) ?? '')
 
@@ -319,6 +343,41 @@ export function ProseMirrorComposerInput({
     view.dom.setAttribute('data-placeholder', placeholder)
   }, [composerText, placeholder])
 
+  // SkillPickerPopover 的入口：拿到用户选的技能 value 后，在编辑器末尾插入
+  // 同一个 slash 原子节点（跟手动打 `/` 挑同一项时 insertSuggestion 产出的
+  // 节点一模一样），而不是插入裸文本——这样才会渲染成彩色图标 chip，且
+  // serializeDoc 吐回去的还是那串命令原文，下游 matchSlashCommand /
+  // fusion-code 无感。
+  useImperativeHandle(
+    forwardedRef,
+    (): ProseMirrorComposerInputHandle => ({
+      insertSlashCommand: (value: string) => {
+        const view = viewRef.current
+        if (!view) return
+        view.focus()
+        // `doc.content.size` is the position right AFTER the last
+        // paragraph closes (a doc-level boundary) — inserting inline
+        // content there doesn't fit `doc`'s `paragraph+` content
+        // expression, so ProseMirror auto-wraps it in a brand-new
+        // paragraph to make the doc valid, which is what showed up as
+        // "换行" (an unwanted line break) when picking a skill. `- 1`
+        // targets the position just *inside* the last paragraph instead,
+        // right before its closing token — the same kind of interior
+        // position `detectTrigger`/`insertSuggestion` always operate on.
+        const endPos = view.state.doc.content.size - 1
+        const $end = view.state.doc.resolve(endPos)
+        const lastChar = $end.parent.textContent.slice(-1)
+        const needsSpace = lastChar !== '' && lastChar !== ' ' && lastChar !== '\t' && lastChar !== '\n'
+        const atom = composerSchema.nodes.slash!.create({ value })
+        const space = composerSchema.text(' ')
+        const content = needsSpace ? [composerSchema.text(' '), atom, space] : [atom, space]
+        const tr = view.state.tr.insert(endPos, content)
+        view.dispatch(tr.scrollIntoView())
+      }
+    }),
+    []
+  )
+
   return (
     <div className="relative w-full">
       <div ref={editorHostRef} className="w-full" />
@@ -335,7 +394,8 @@ export function ProseMirrorComposerInput({
       )}
     </div>
   )
-}
+  }
+)
 
 function SuggestionPopover({
   items,

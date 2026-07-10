@@ -4,11 +4,12 @@ import { PROPOSAL_WRITER_SLASH_NAMES } from '../lib/proposalSlash'
 /**
  * Per-skill chip appearance registry.
  *
- * Most slash chips render with the generic accent-tinted Lucide "box"
- * glyph (see `chipNodeView.ts`). A handful of *known* skills get a
- * bespoke look instead — a coloured Icons8 glyph plus a friendly label
- * (e.g. `/ppt-master` → orange PowerPoint icon + 「制作PPT」) — so the
- * composer reads as a product surface rather than a raw CLI prompt.
+ * Every slash chip renders as the same bordered pill (see
+ * `chipNodeView.ts`) — icon + label, hover reveals a × to delete. A
+ * handful of *known* skills get a bespoke icon + friendly label instead
+ * of the generic glyph + raw command name (e.g. `/ppt-master` → orange
+ * PowerPoint icon + 「制作PPT」) — so the composer reads as a product
+ * surface rather than a raw CLI prompt.
  *
  * This is the single place to register that. Adding a new skill means
  * appending ONE entry below; nothing in the NodeView changes. Keep the
@@ -26,14 +27,7 @@ import { PROPOSAL_WRITER_SLASH_NAMES } from '../lib/proposalSlash'
  *     recognition.
  *   - `label`: the pill text. Defaults to the value minus its leading
  *     `/` (the raw skill name) when omitted.
- *   - `appearance`: which visual treatment the NodeView draws. Defaults
- *     to `'tinted'` (the flat accent-tint pill). `'gradient'` is the
- *     larger gradient-border card prototype the user picked for
- *     `/ppt-master` — see `chipNodeView.ts` for how each is rendered.
  */
-
-/** Visual treatments a skill chip can opt into. See `chipNodeView.ts`. */
-export type SkillChipAppearance = 'tinted' | 'gradient'
 
 export interface SkillChipSpec {
   /** Literal chip value to match, e.g. `/ppt-master`. */
@@ -42,8 +36,12 @@ export interface SkillChipSpec {
   icon: FileIconKey
   /** Pill text. Defaults to the value without its leading `/`. */
   label?: string
-  /** Visual treatment. Defaults to `'tinted'`. */
-  appearance?: SkillChipAppearance
+  /**
+   * One-line blurb for surfaces that show more than a pill (the 技能 button's
+   * SkillPickerPopover). Optional — the composer chip and the inline `/`
+   * suggestion menu don't use it, only the dedicated picker does.
+   */
+  description?: string
 }
 
 /**
@@ -59,13 +57,13 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     match: '/claude-desktop:ppt-master',
     icon: 'ppt',
     label: '制作PPT',
-    appearance: 'gradient'
+    description: '生成、编辑幻灯片演示文稿'
   },
   {
     match: '/ppt-master',
     icon: 'ppt',
     label: '制作PPT',
-    appearance: 'gradient'
+    description: '生成、编辑幻灯片演示文稿'
   },
   // imagegen — 生成图片。namespaced + 裸名双注册，理由同 ppt-master。
   // 2026-07-09：「生成图片」按钮从 gpt-image-2 换绑到 imagegen（imagegen 已
@@ -76,26 +74,26 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     match: '/claude-desktop:imagegen',
     icon: 'image',
     label: '生成图片',
-    appearance: 'gradient'
+    description: 'AI 图片生成与编辑'
   },
   {
     match: '/imagegen',
     icon: 'image',
     label: '生成图片',
-    appearance: 'gradient'
+    description: 'AI 图片生成与编辑'
   },
   // spreadsheets — 处理表格。namespaced + 裸名双注册，理由同 ppt-master。
   {
     match: '/claude-desktop:spreadsheets',
     icon: 'excel',
     label: '处理表格',
-    appearance: 'gradient'
+    description: '生成、编辑 Excel 表格'
   },
   {
     match: '/spreadsheets',
     icon: 'excel',
     label: '处理表格',
-    appearance: 'gradient'
+    description: '生成、编辑 Excel 表格'
   },
   // remotion — 制作视频。namespaced + 裸名双注册，理由同 ppt-master。
   // FileIconKey 尚无 video/film 图标，暂借 'image'（remotion 产出即渲染画面，
@@ -104,13 +102,13 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     match: '/claude-desktop:remotion',
     icon: 'image',
     label: '制作视频',
-    appearance: 'gradient'
+    description: '用 React 生成动画短视频'
   },
   {
     match: '/remotion',
     icon: 'image',
     label: '制作视频',
-    appearance: 'gradient'
+    description: '用 React 生成动画短视频'
   },
   // proposal-writer — 写方案。namespaced + 裸名双注册，理由同 ppt-master。
   // 注意：这个命令不会发给 fusion-code——FusionRuntimeProvider.onNew 会拦截它、
@@ -123,7 +121,7 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
       match: `/${name}`,
       icon: 'word',
       label: '写方案',
-      appearance: 'gradient'
+      description: '起草文档、方案与报告'
     })
   )
 ]
@@ -133,4 +131,20 @@ const BY_VALUE = new Map(SKILL_CHIP_SPECS.map((s) => [s.match, s]))
 /** Look up a bespoke chip spec by its literal value, or `null`. */
 export function findSkillChipSpec(value: string): SkillChipSpec | null {
   return BY_VALUE.get(value) ?? null
+}
+
+/**
+ * A leading slash command, e.g. `/claude-desktop:ppt-master rest...`. Only
+ * the command token at the very start is matched — a `/` mid-text is left
+ * alone. The command may carry a plugin namespace (`claude-desktop:`) and
+ * hyphens. Shared by every consumer that recovers "which skill did this
+ * message invoke" from raw text (message-bubble chip, composer's read-only
+ * mode indicator) so the parsing rule has exactly one definition.
+ */
+export const LEADING_SLASH_COMMAND_RE = /^(\/[\w:-]+)(\s|$)/
+
+/** Find the skill chip spec for a message's leading slash command, if any. */
+export function findSkillChipSpecInText(text: string): SkillChipSpec | null {
+  const match = LEADING_SLASH_COMMAND_RE.exec(text)
+  return match ? findSkillChipSpec(match[1]!) : null
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'motion/react'
-import { Plus, X } from 'lucide-react'
+import { FolderOpen, Maximize2, Plus, X } from 'lucide-react'
 
 import { useI18n } from '../../../i18n'
 import { useChatStore } from '../../../stores/chat'
@@ -505,7 +505,11 @@ export function ImageEditPanel(): React.JSX.Element | null {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col bg-background">
-      {/* 顶栏：文件名 + 关闭。样式对齐表格预览面板的壳。 */}
+      {/* 顶栏：文件名 + 关闭。样式对齐表格预览面板的壳。窗口拖拽由根
+          layout 的 .window-drag-strip 统一负责（46px），本栏 h-12 与之
+          重叠，本栏不声明 drag；末尾按钮组要显式 no-drag 在 strip 上
+          挖洞（同 SpreadsheetPreviewPanel 顶栏纪律）——漏挖会被 macOS
+          当窗口拖拽区截走点击，reset-view/关闭钮点不动。 */}
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
         <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-foreground">
           {name}
@@ -515,26 +519,53 @@ export function ImageEditPanel(): React.JSX.Element | null {
             ? '点选 / 拖拽框选 · 滚轮缩放 · 空格拖移'
             : 'Click / drag to mark · scroll to zoom · space to pan'}
         </span>
-        {/* 视图偏离适配态时显示当前倍率，点击一键复位。 */}
-        {viewMoved ? (
-          <button
-            type="button"
+        <span className="flex shrink-0 items-center gap-2 [-webkit-app-region:no-drag]">
+          {/* 视图偏离适配态时显示当前倍率，点击一键复位（与下面恒显的
+              「适应窗口」钮同一个 resetView，只是这个 chip 顺带报百分比）。 */}
+          {viewMoved ? (
+            <button
+              type="button"
+              onClick={resetView}
+              title={zh ? '重置视图' : 'Reset view'}
+              className="shrink-0 rounded-md border border-border px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground transition-colors hover:border-input hover:text-foreground"
+            >
+              {Math.round(view.zoom * 100)}%
+            </button>
+          ) : null}
+          {/* 适应窗口：恒显（2026-07-10 用户要求不依赖百分比 chip 间接
+              触发的明确入口）。zoom 已在 100% 时点击是无害 no-op。 */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0"
             onClick={resetView}
-            title={zh ? '重置视图' : 'Reset view'}
-            className="shrink-0 rounded-md border border-border px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground transition-colors hover:border-input hover:text-foreground"
+            aria-label={zh ? '适应窗口' : 'Fit to window'}
+            title={zh ? '适应窗口' : 'Fit to window'}
           >
-            {Math.round(view.zoom * 100)}%
-          </button>
-        ) : null}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7 shrink-0"
-          onClick={closeEditor}
-          aria-label={zh ? '关闭' : 'Close'}
-        >
-          <X className="size-4" />
-        </Button>
+            <Maximize2 className="size-4" />
+          </Button>
+          {/* 在文件夹中显示：与 ImagesPanel 的 ImageLightbox 同款能力，
+              走同一个 SHELL_REVEAL_PATH IPC。 */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0"
+            onClick={() => void window.chatApi.revealPath({ absPath: path })}
+            aria-label={zh ? '在 Finder 中显示' : 'Reveal in Finder'}
+            title={zh ? '在 Finder 中显示' : 'Reveal in Finder'}
+          >
+            <FolderOpen className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0"
+            onClick={closeEditor}
+            aria-label={zh ? '关闭' : 'Close'}
+          >
+            <X className="size-4" />
+          </Button>
+        </span>
       </div>
 
       {/* 图区：居中铺图，滚轮/pinch 缩放（wheel 原生挂 stageRef）、空格拖拽

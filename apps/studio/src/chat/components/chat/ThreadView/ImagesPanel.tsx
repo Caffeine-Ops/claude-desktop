@@ -434,6 +434,9 @@ function ImageLightbox({
 }): React.JSX.Element {
   const [full, setFull] = useState<string | null>(null)
   const [ratio, setRatio] = useState<number | null>(null)
+  // 'cover' 裁切填满舞台（默认，跟卡片缩略图的观感一致）；'contain' 整图
+  // 收进舞台不裁切（长图/竖图这样才看得全）。纯本地 UI 态，不必跨开合记忆。
+  const [fit, setFit] = useState<'cover' | 'contain'>('cover')
 
   // Fetch the full-resolution original (original bytes over IPC).
   useEffect(() => {
@@ -498,7 +501,10 @@ function ImageLightbox({
               setRatio(el.naturalWidth / el.naturalHeight)
             }
           }}
-          className="absolute inset-0 h-full w-full object-cover"
+          className={
+            'absolute inset-0 h-full w-full ' +
+            (fit === 'contain' ? 'object-contain' : 'object-cover')
+          }
         />
         {full && (
           <motion.img
@@ -508,7 +514,10 @@ function ImageLightbox({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.35, ease: 'easeOut' }}
-            className="absolute inset-0 h-full w-full object-cover"
+            className={
+              'absolute inset-0 h-full w-full ' +
+              (fit === 'contain' ? 'object-contain' : 'object-cover')
+            }
           />
         )}
       </motion.div>
@@ -534,7 +543,24 @@ function ImageLightbox({
         <button
           type="button"
           // data-slot：lightbox portal 到 body、脱离 .chat-app 豁免子树，
-          // 防 canvas 裸 button reset 泄漏（描边卡片化）。下方关闭钮同理。
+          // 防 canvas 裸 button reset 泄漏（描边卡片化）。下方三颗钮同理。
+          data-slot="modal-action"
+          title={fit === 'contain' ? '铺满画布（裁切）' : '适应窗口（完整显示）'}
+          onClick={() => setFit((f) => (f === 'contain' ? 'cover' : 'contain'))}
+          className="inline-flex h-7 shrink-0 items-center rounded-full bg-muted px-3 text-[11.5px] font-medium text-foreground transition-colors hover:bg-border/70"
+        >
+          {fit === 'contain' ? '铺满画布' : '适应窗口'}
+        </button>
+        <button
+          type="button"
+          data-slot="modal-action"
+          onClick={() => void window.chatApi.revealPath({ absPath: item.absPath })}
+          className="inline-flex h-7 shrink-0 items-center rounded-full bg-muted px-3 text-[11.5px] font-medium text-foreground transition-colors hover:bg-border/70"
+        >
+          在 Finder 中显示
+        </button>
+        <button
+          type="button"
           data-slot="modal-action"
           onClick={() => void window.chatApi.openPath({ absPath: item.absPath })}
           className="inline-flex h-7 shrink-0 items-center rounded-full bg-muted px-3 text-[11.5px] font-medium text-foreground transition-colors hover:bg-border/70"

@@ -4,7 +4,10 @@ import { MessagePrimitive, useMessage } from '@assistant-ui/react'
 import { AnimatePresence, motion } from 'motion/react'
 
 import { useI18n, useT } from '../../../i18n'
-import { findSkillChipSpec } from '../../../composer/skillChipRegistry'
+import {
+  LEADING_SLASH_COMMAND_RE,
+  findSkillChipSpec
+} from '../../../composer/skillChipRegistry'
 import { FileTypeIcon, fileIconPathsByKey } from '../FileTypeIcon'
 import {
   parseImageEditMessage,
@@ -486,13 +489,6 @@ function basenameOf(path: string): string {
   return name || path
 }
 
-/**
- * A leading slash command, e.g. `/claude-desktop:ppt-master rest...`. Only the
- * command token at the very start is matched — a `/` mid-text is left alone.
- * The command may carry a plugin namespace (`claude-desktop:`) and hyphens.
- */
-const USER_SLASH_RE = /^(\/[\w:-]+)(\s|$)/
-
 function UserBubbleText({ text }: { text: string }): React.JSX.Element {
   // Split into alternating plain-text / mention segments. We keep the
   // leading-whitespace capture group so spacing around chips is faithful.
@@ -504,7 +500,7 @@ function UserBubbleText({ text }: { text: string }): React.JSX.Element {
   // mirroring the composer chip. Pure display transform: the stored/sent text
   // keeps the raw `/claude-desktop:…` verbatim. Only known skills (those in the
   // chip registry) get the treatment; other `/cmd` stays plain text.
-  const slashMatch = USER_SLASH_RE.exec(text)
+  const slashMatch = LEADING_SLASH_COMMAND_RE.exec(text)
   const slashSkill = slashMatch ? findSkillChipSpec(slashMatch[1]!) : null
   if (slashMatch && slashSkill) {
     nodes.push(

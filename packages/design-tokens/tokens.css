@@ -103,11 +103,6 @@
   --brand: 142 76% 36%;
   --brand-foreground: 0 0% 100%;
 
-  /* Composer mention chip — semantic green for "this is a file or symbol",
-   * kept distinct from accent so the two chip variants stay separable
-   * regardless of which accent the user picks. */
-  --chip-mention: 158 64% 40%;
-
   --ui-font-size: 13px;
   --code-font-size: 12px;
 
@@ -250,8 +245,6 @@
    * 对比度不够）。foreground 用暖黑而非白：提亮后的绿够浅，深字更清晰。 */
   --brand: 145 60% 52%;
   --brand-foreground: 40 6% 10%;
-
-  --chip-mention: 158 64% 65%;
 }
 
 /* High-contrast modifier — bumps borders, ring, muted text. Toggled on

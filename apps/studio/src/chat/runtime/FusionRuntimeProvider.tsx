@@ -493,6 +493,20 @@ export function FusionRuntimeProvider({
             : mentionSuffix
           : baseText
 
+      // Slides/spreadsheet/video mode's slash-prepend only belongs on this
+      // session's FIRST message. The mode picker (Composer.tsx) hides itself
+      // once a session has messages — mode can't change mid-session anymore
+      // — so if mode is still e.g. 'video' on message #2+, it was already
+      // 'video' at message #1 too, meaning message #1 already carried the
+      // slash and re-invoked the skill. Re-prepending on every later send
+      // (queued follow-ups included) put a raw literal `/claude-desktop:remotion`
+      // in front of routine continuation text — every queued message, forever,
+      // for the rest of the session (2026-07-09 user report: queue preview
+      // showing the command repeated on a plain "2" follow-up). Proposal mode
+      // right below already gets this right ("语义只属于「再入」"); slides/
+      // spreadsheet/video lacked the equivalent guard until now.
+      const isFirstMessage = useChatStore.getState().messages.length === 0
+
       // Slides mode → drive the ppt-master skill. When the composer's mode
       // picker is on 幻灯片, prepend the skill's slash invocation so fusion-code
       // runs ppt-master for this turn. The bundled backend exposes it under the
@@ -504,7 +518,7 @@ export function FusionRuntimeProvider({
       const SLIDES_SLASH = '/claude-desktop:ppt-master'
       const slidesMode = useComposerModeStore.getState().mode === 'slides'
       const alreadyPptSlash = /^\/(claude-desktop:)?ppt-master\b/.test(baseText)
-      if (slidesMode && !alreadyPptSlash) {
+      if (slidesMode && !alreadyPptSlash && isFirstMessage) {
         text = text ? `${SLIDES_SLASH} ${text}` : SLIDES_SLASH
       }
 
@@ -516,7 +530,7 @@ export function FusionRuntimeProvider({
         useComposerModeStore.getState().mode === 'spreadsheet'
       const alreadySpreadsheetSlash =
         /^\/(claude-desktop:)?spreadsheets\b/.test(baseText)
-      if (spreadsheetMode && !alreadySpreadsheetSlash) {
+      if (spreadsheetMode && !alreadySpreadsheetSlash && isFirstMessage) {
         text = text ? `${SPREADSHEET_SLASH} ${text}` : SPREADSHEET_SLASH
       }
 
@@ -529,7 +543,7 @@ export function FusionRuntimeProvider({
       const videoMode = useComposerModeStore.getState().mode === 'video'
       const alreadyRemotionSlash =
         /^\/(claude-desktop:)?remotion\b/.test(baseText)
-      if (videoMode && !alreadyRemotionSlash) {
+      if (videoMode && !alreadyRemotionSlash && isFirstMessage) {
         text = text ? `${VIDEO_SLASH} ${text}` : VIDEO_SLASH
       }
 
