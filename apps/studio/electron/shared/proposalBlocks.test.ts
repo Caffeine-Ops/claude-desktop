@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'bun:test'
-import { splitBlocks, joinBlocks, spliceBlocks, locateBlockRangeByText } from './proposalBlocks'
+import {
+  splitBlocks,
+  joinBlocks,
+  spliceBlocks,
+  locateBlockRangeByText,
+  locateBlockRangeByTextWithHint
+} from './proposalBlocks'
 
 describe('splitBlocks', () => {
   it('空行分隔的段落各自成块', () => {
@@ -86,5 +92,25 @@ describe('locateBlockRangeByText', () => {
   it('多处命中取第一处', () => {
     const dup = ['复用段。', '中间段。', '复用段。'].join('\n\n')
     expect(locateBlockRangeByText(dup, '复用段。')).toEqual({ start: 0, end: 0 })
+  })
+})
+
+describe('locateBlockRangeByTextWithHint', () => {
+  const dup = ['复用段。', '中间段甲。', '复用段。', '中间段乙。', '复用段。'].join('\n\n')
+
+  it('多处命中：选起点块离 hint 最近的一处', () => {
+    // hint 指向第 2 处（块 2），应命中块 2 而非块 0
+    expect(locateBlockRangeByTextWithHint(dup, '复用段。', { start: 2, end: 2 })).toEqual({ start: 2, end: 2 })
+    // hint 指向末处（块 4）
+    expect(locateBlockRangeByTextWithHint(dup, '复用段。', { start: 4, end: 4 })).toEqual({ start: 4, end: 4 })
+  })
+
+  it('单处命中：hint 无影响', () => {
+    const md = ['甲。', '乙。', '丙。'].join('\n\n')
+    expect(locateBlockRangeByTextWithHint(md, '乙。', { start: 0, end: 0 })).toEqual({ start: 1, end: 1 })
+  })
+
+  it('找不到：返回 null（同无 hint 版）', () => {
+    expect(locateBlockRangeByTextWithHint('甲。', '幽灵', { start: 0, end: 0 })).toBeNull()
   })
 })

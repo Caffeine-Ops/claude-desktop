@@ -112,46 +112,68 @@ export function spliceBlocks(
 // 相连，与源码 markdown 的空白不一致，不去空白会永远匹配不上。
 //
 // 算法：切块后把每块规范化文本顺次拼成一条长串，同时记住每块在长串里的字符区间；在长串里
-// indexOf(规范化选区文本)，命中区间的首尾字符各落在哪个块，就是 [start,end]。找不到 → null。
-// 多处命中取第一处（indexOf 语义），第一版够用。
-export function locateBlockRangeByText(
-  markdown: string,
-  selectedText: string
-): { start: number; end: number } | null {
+// indexOf(规范化选区文本)，命中区间的首尾字符各落在哪个块，就是 [start,end]。
+
+// 内部：返回 selectedText 在 markdown 里【所有】命中的块区间（规范化去空白后匹配）。空则空数组。
+function locateAllBlockRanges(markdown: string, selectedText: string): Array<{ start: number; end: number }> {
   const norm = (s: string): string => s.replace(/\s+/g, '')
   const needle = norm(selectedText)
-  if (!needle) return null
+  if (!needle) return []
   const blocks = splitBlocks(markdown)
-  if (blocks.length === 0) return null
+  if (blocks.length === 0) return []
 
-  // 每块规范化文本 + 它在拼接长串里的 [起, 止) 字符区间。
   let hay = ''
   const spans: Array<{ start: number; end: number }> = []
   for (const blk of blocks) {
     const nb = norm(blk)
     const begin = hay.length
     hay += nb
-    spans.push({ start: begin, end: hay.length }) // [begin, hay.length)
+    spans.push({ start: begin, end: hay.length })
   }
 
-  const at = hay.indexOf(needle)
-  if (at < 0) return null
-  const hitStart = at
-  const hitEnd = at + needle.length - 1 // 命中末字符下标（含）
-
-  // 找命中首/末字符各自落在哪个块。空块（nb 为空、span.start===span.end）跳过。
-  let start = -1
-  let end = -1
-  for (let k = 0; k < spans.length; k++) {
-    const sp = spans[k]
-    if (sp.start === sp.end) continue // 规范化后为空的块不参与
-    if (start < 0 && hitStart < sp.end) start = k
-    if (hitEnd < sp.end) {
-      end = k
-      break
+  const blockOf = (charIdx: number, forEnd: boolean): number => {
+    let found = -1
+    for (let k = 0; k < spans.length; k++) {
+      const sp = spans[k]
+      if (sp.start === sp.end) continue // 规范化后空块跳过
+      if (charIdx < sp.end) return k
+      found = k
     }
+    return forEnd ? found : -1
   }
-  if (start < 0) return null
-  if (end < 0) end = blocks.length - 1 // 命中延伸到末尾（理论兜底）
-  return { start, end }
+
+  const out: Array<{ start: number; end: number }> = []
+  let from = 0
+  for (;;) {
+    const at = hay.indexOf(needle, from)
+    if (at < 0) break
+    const start = blockOf(at, false)
+    const end = blockOf(at + needle.length - 1, true)
+    if (start >= 0 && end >= start) out.push({ start, end })
+    from = at + 1 // 允许重叠命中的下一处
+  }
+  return out
+}
+
+// 无 hint 版（Task 1 契约不变）：取第一处命中。
+export function locateBlockRangeByText(
+  markdown: string,
+  selectedText: string
+): { start: number; end: number } | null {
+  const all = locateAllBlockRanges(markdown, selectedText)
+  return all[0] ?? null
+}
+
+// 带 hint 版（CEO 护栏#3）：多处命中时选 start 离 hint.start 最近的一处（并列取更靠前）。
+export function locateBlockRangeByTextWithHint(
+  markdown: string,
+  selectedText: string,
+  hint: { start: number; end: number }
+): { start: number; end: number } | null {
+  const all = locateAllBlockRanges(markdown, selectedText)
+  if (all.length === 0) return null
+  if (all.length === 1) return all[0]
+  return all.reduce((best, cur) =>
+    Math.abs(cur.start - hint.start) < Math.abs(best.start - hint.start) ? cur : best
+  )
 }
