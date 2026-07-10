@@ -634,18 +634,16 @@ function ProposalRevisionReview(): React.JSX.Element | null {
             className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-2 text-[12px] leading-relaxed outline-none focus:border-accent"
           />
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
-            <Tip label="取消，不再继续改">
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                onClick={() => {
-                  setContinuing(false)
-                  setInstruction('')
-                }}
-              >
-                取消
-              </button>
-            </Tip>
+            <button
+              type="button"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={() => {
+                setContinuing(false)
+                setInstruction('')
+              }}
+            >
+              取消
+            </button>
             <Tip label="在当前改写稿上再改一版（快捷键 ⌘/Ctrl + 回车）">
               <button
                 type="button"

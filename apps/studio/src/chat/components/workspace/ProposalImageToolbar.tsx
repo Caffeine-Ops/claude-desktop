@@ -129,35 +129,31 @@ export function ProposalImageToolbar({
               <TrashIcon />
             </button>
           </Tip>
-          <Tip label="关闭这个工具栏">
-            <button
-              type="button"
-              className={iconBtn}
-              aria-label="关闭"
-              onClick={onClose}
-            >
-              <XIcon />
-            </button>
-          </Tip>
+          <button
+            type="button"
+            className={iconBtn}
+            aria-label="关闭"
+            onClick={onClose}
+          >
+            <XIcon />
+          </button>
         </div>
       ) : (
         <div className="w-72 p-1">
           <div className="flex items-center justify-between">
             <span className="text-[12px] font-medium text-foreground">改图指令</span>
-            <Tip label="取消改图，返回上一层">
-              <button
-                type="button"
-                className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-                aria-label="取消"
-                disabled={loading}
-                onClick={() => {
-                  setMode('buttons')
-                  setError(null)
-                }}
-              >
-                <XIcon />
-              </button>
-            </Tip>
+            <button
+              type="button"
+              className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+              aria-label="取消"
+              disabled={loading}
+              onClick={() => {
+                setMode('buttons')
+                setError(null)
+              }}
+            >
+              <XIcon />
+            </button>
           </div>
           {/* 改图是秒级到数十秒的网络往返，纯按钮文字变「改图中…」反馈太弱（GUI 走查：等太久
               不知在不在动）。loading 时用转圈 + 说明文字的独立块替换输入区，明确「在处理、别关」。 */}
@@ -211,18 +207,16 @@ export function ProposalImageToolbar({
             </div>
           )}
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
-            <Tip label="取消改图，返回上一层">
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                onClick={() => {
-                  setMode('buttons')
-                  setError(null)
-                }}
-              >
-                取消
-              </button>
-            </Tip>
+            <button
+              type="button"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={() => {
+                setMode('buttons')
+                setError(null)
+              }}
+            >
+              取消
+            </button>
             <Tip label="提交改图指令（快捷键 ⌘/Ctrl + 回车）">
               <button
                 type="button"

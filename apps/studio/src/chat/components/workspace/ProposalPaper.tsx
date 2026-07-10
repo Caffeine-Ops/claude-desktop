@@ -939,46 +939,42 @@ export function ProposalPaper(): React.JSX.Element {
               </Tip>
               {/* 上移/下移不关菜单：连续排序时不必反复重开。禁用逻辑与 moveSection 的
                   同 kind 约束精确对齐（见 canMoveUp/Down 注释）。 */}
-              <Tip label="把这一节和上一节交换位置（仅同区段内）">
-                <button
-                  className={menuItem}
-                  disabled={!canMoveUp}
-                  onClick={() => moveSection(sec.id, 'up')}
-                >
-                  <ArrowUpIcon className="shrink-0 text-muted-foreground" />
-                  上移
-                </button>
-              </Tip>
-              <Tip label="把这一节和下一节交换位置（仅同区段内）">
-                <button
-                  className={menuItem}
-                  disabled={!canMoveDown}
-                  onClick={() => moveSection(sec.id, 'down')}
-                >
-                  <ArrowDownIcon className="shrink-0 text-muted-foreground" />
-                  下移
-                </button>
-              </Tip>
+              <button
+                className={menuItem}
+                disabled={!canMoveUp}
+                title={canMoveUp ? undefined : '已是本区段第一节，不能跨区段上移'}
+                onClick={() => moveSection(sec.id, 'up')}
+              >
+                <ArrowUpIcon className="shrink-0 text-muted-foreground" />
+                上移
+              </button>
+              <button
+                className={menuItem}
+                disabled={!canMoveDown}
+                title={canMoveDown ? undefined : '已是本区段最后一节，不能跨区段下移'}
+                onClick={() => moveSection(sec.id, 'down')}
+              >
+                <ArrowDownIcon className="shrink-0 text-muted-foreground" />
+                下移
+              </button>
               {/* 分隔线：把不可逆的「删除」与上方动作分组隔开，降低误触（design-review F5）。
                   两步确认保留：第一击武装成红底确认项（3s 无操作自动撤销，见 confirmDeleteId
                   effect），第二击才真删。 */}
               <div className="my-1 h-px bg-border" />
               {confirmDeleteId === sec.id ? (
-                <Tip label="再点一次，永久删除本节（3 秒后自动取消）">
-                  <button
-                    className="flex w-full items-center gap-2 rounded-md bg-rose-500 px-2.5 py-1.5 text-left text-[12px] font-medium text-white"
-                    onClick={() => {
-                      if (editingId === sec.id) setEditingId(null)
-                      if (editingBlock?.sectionId === sec.id) setEditingBlock(null)
-                      removeSection(sec.id)
-                      setConfirmDeleteId(null)
-                      setMenuSecId(null)
-                    }}
-                  >
-                    <CheckIcon className="shrink-0" />
-                    再点一次确认删除
-                  </button>
-                </Tip>
+                <button
+                  className="flex w-full items-center gap-2 rounded-md bg-rose-500 px-2.5 py-1.5 text-left text-[12px] font-medium text-white"
+                  onClick={() => {
+                    if (editingId === sec.id) setEditingId(null)
+                    if (editingBlock?.sectionId === sec.id) setEditingBlock(null)
+                    removeSection(sec.id)
+                    setConfirmDeleteId(null)
+                    setMenuSecId(null)
+                  }}
+                >
+                  <CheckIcon className="shrink-0" />
+                  再点一次确认删除
+                </button>
               ) : (
                 <Tip label="删除本节（需再点一次确认）">
                   <button
@@ -1160,16 +1156,14 @@ export function ProposalPaper(): React.JSX.Element {
           {revisionQueueNotice && (
             <div className="mb-2 flex items-start gap-1 rounded bg-amber-500/10 px-2 py-1 text-[12px] text-amber-700 dark:text-amber-400">
               <span>{revisionQueueNotice}</span>
-              <Tip label="知道了，关闭这条提示">
-                <button
-                  type="button"
-                  data-slot="queue-notice-close"
-                  className="ml-auto shrink-0 hover:underline"
-                  onClick={() => useProposalStore.getState().setRevisionQueueNotice(null)}
-                >
-                  知道了
-                </button>
-              </Tip>
+              <button
+                type="button"
+                data-slot="queue-notice-close"
+                className="ml-auto shrink-0 hover:underline"
+                onClick={() => useProposalStore.getState().setRevisionQueueNotice(null)}
+              >
+                知道了
+              </button>
             </div>
           )}
           {revisionQueue.length > 0 && (
@@ -1179,16 +1173,14 @@ export function ProposalPaper(): React.JSX.Element {
                 <div key={r.id} className="flex items-center gap-2 py-0.5">
                   <span className="shrink-0 text-muted-foreground">{i + 1}.</span>
                   <span className="truncate">{r.instruction}</span>
-                  <Tip label="取消这条排队中的改写">
-                    <button
-                      type="button"
-                      data-slot="queue-cancel"
-                      className="ml-auto shrink-0 text-muted-foreground hover:text-foreground"
-                      onClick={() => useProposalStore.getState().removeRevision(r.id)}
-                    >
-                      取消
-                    </button>
-                  </Tip>
+                  <button
+                    type="button"
+                    data-slot="queue-cancel"
+                    className="ml-auto shrink-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => useProposalStore.getState().removeRevision(r.id)}
+                  >
+                    取消
+                  </button>
                 </div>
               ))}
             </div>

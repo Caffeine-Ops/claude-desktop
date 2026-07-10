@@ -192,19 +192,17 @@ export function ProposalImageReview({
             className="w-full resize-none rounded-md border border-border bg-card px-2 py-1.5 text-[12px] leading-relaxed text-foreground outline-none focus:border-accent disabled:opacity-60"
           />
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
-            <Tip label="取消重改，返回上一层">
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                disabled={busy}
-                onClick={() => {
-                  setRetrying(false)
-                  setPrompt('')
-                }}
-              >
-                取消
-              </button>
-            </Tip>
+            <button
+              type="button"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              disabled={busy}
+              onClick={() => {
+                setRetrying(false)
+                setPrompt('')
+              }}
+            >
+              取消
+            </button>
             <Tip label="提交，按新指令再生成一次（快捷键 ⌘/Ctrl + 回车）">
               <button
                 type="button"

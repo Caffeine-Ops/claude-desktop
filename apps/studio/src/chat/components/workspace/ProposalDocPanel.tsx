@@ -356,14 +356,12 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                   确认清空
                 </button>
               </Tip>
-              <Tip label="取消，保留当前草稿">
-                <button
-                  className="rounded px-2 py-0.5 hover:bg-muted"
-                  onClick={() => setConfirmingNew(false)}
-                >
-                  取消
-                </button>
-              </Tip>
+              <button
+                className="rounded px-2 py-0.5 hover:bg-muted"
+                onClick={() => setConfirmingNew(false)}
+              >
+                取消
+              </button>
             </span>
           ) : (
             // 说明用【始终成立】的语义（清空草稿是干嘛的）——禁用态（生成中/空草稿）radix 不弹气泡，
@@ -548,15 +546,13 @@ export function ProposalDocPanel(): React.JSX.Element | null {
               重新生成目录
             </button>
           </Tip>
-          <Tip label="忽略此提示">
-            <button
-              className="text-muted-foreground hover:text-foreground"
-              onClick={clearStageSkip}
-              aria-label="忽略此提示"
-            >
-              <XIcon />
-            </button>
-          </Tip>
+          <button
+            className="text-muted-foreground hover:text-foreground"
+            onClick={clearStageSkip}
+            aria-label="忽略此提示"
+          >
+            <XIcon />
+          </button>
         </div>
       )}
 
@@ -723,15 +719,13 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             </ol>
             <p className="mb-3 text-muted-foreground">每步 AI 会停下来等你，点“确认”才继续。</p>
             <p className="mb-4 text-xs text-muted-foreground/70">↓ 在下方输入框描述你的方案需求</p>
-            <Tip label="关闭这个引导，之后不再出现">
-              <button
-                type="button"
-                className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                onClick={dismissOnboarding}
-              >
-                知道了
-              </button>
-            </Tip>
+            <button
+              type="button"
+              className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              onClick={dismissOnboarding}
+            >
+              知道了
+            </button>
           </div>
         </div>
       ) : (

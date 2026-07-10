@@ -276,18 +276,16 @@ export function SelectionAiBubble({
           <span className="text-accent">✦</span>
           <span>{mode === 'genimage' ? '生成图片' : disabled ? 'AI 改写 · 排队中' : 'AI 改写'}</span>
         </div>
-        <Tip label="关闭这个改写框">
-          <button
-            type="button"
-            className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="关闭"
-            onClick={close}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M6 6l12 12M18 6L6 18" />
-            </svg>
-          </button>
-        </Tip>
+        <button
+          type="button"
+          className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+          aria-label="关闭"
+          onClick={close}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
       </div>
 
       {/* 选中原文预览：最多 4 行，超出以 … 省略。无背景色，仅左 accent 竖线作引用感。
@@ -335,15 +333,13 @@ export function SelectionAiBubble({
 
           {/* 底栏：取消 / 开始改写（仅此按钮或 ⌘↵ 才真正发起）。 */}
           <div className="mt-2.5 flex items-center justify-between">
-            <Tip label="取消，关闭这个改写框">
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                onClick={close}
-              >
-                取消
-              </button>
-            </Tip>
+            <button
+              type="button"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={close}
+            >
+              取消
+            </button>
             <Tip label={disabled ? 'AI 忙，先排队；轮到即改（快捷键 ⌘/Ctrl + 回车）' : '按指令改写选中内容（快捷键 ⌘/Ctrl + 回车）'}>
               <button
                 type="button"
@@ -473,20 +469,18 @@ export function SelectionAiBubble({
             />
           )}
           <div className="mt-2.5 flex items-center justify-between">
-            <Tip label="返回 AI 改写">
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-                disabled={imgBusy}
-                onClick={() => {
-                  setMode('rewrite')
-                  setImgPrompt('')
-                  setImgError(null)
-                }}
-              >
-                返回
-              </button>
-            </Tip>
+            <button
+              type="button"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+              disabled={imgBusy}
+              onClick={() => {
+                setMode('rewrite')
+                setImgPrompt('')
+                setImgError(null)
+              }}
+            >
+              返回
+            </button>
             <Tip label="按描述生成插图（快捷键 ⌘/Ctrl + 回车）">
               <button
                 type="button"
