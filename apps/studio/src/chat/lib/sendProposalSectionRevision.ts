@@ -1,18 +1,10 @@
 import { useProposalStore, type ProposalSection } from '../stores/proposal'
 import { useChatStore } from '../stores/chat'
-import { USER_SUPPLIED_SOURCE, type ProposalKind } from '@desktop-shared/proposal'
+import { USER_SUPPLIED_SOURCE } from '@desktop-shared/proposal'
 import { splitBlocks } from '@desktop-shared/proposalBlocks'
 import { resolveRevisionTarget } from './proposalRevisionGuards'
 import { sendProposalStageMessage } from './sendProposalStageMessage'
-
-// 溯源后缀按节类型分叉：正文节要标《来源》、守 trigram 引用落地校验；封面/目录不引用知识库、无
-// 溯源语义（renderVerification 对非 content 直接不渲染），故只要求「按指令改这一小段、保持简短、
-// 别臆造事实」——否则会逼 AI 给「武汉协和医院」这类封面字段硬凑一个《来源》，反成噪声。
-function groundingSuffix(kind: ProposalKind): string {
-  return kind === 'content'
-    ? '段末按既有规则标注《来源》，绝不臆造知识库之外的内容。'
-    : '这是封面/目录里的字段，只按指令改这一小段、保持简短，不要标注《来源》，也不要臆造任何事实信息。'
-}
+import { buildSelectionRevisionMessage, groundingSuffix } from './proposalRevisionMessages'
 
 /**
  * 三个定向修订入口（整章重写/补料续写/选区块修订）的公共骨架：并发守卫 → 取 content 节 →
@@ -187,20 +179,12 @@ export async function reviseProposalSectionBlocks(
     return {
       blockRange: { start, end },
       displayText: trimmed,
-      message:
-        // 硬边界（实测踩坑）：fusion-code 是带 Write/Bash 的 agent，连做几轮小改后会「自作主张」
-        // 觉得方案该收尾了，转去【评估整份方案 / 往桌面写「评估总结报告.md」】，完全无视改写指令。
-        // 方案系统提示词只管三阶段生成、没禁这些，故在此把边界钉死：只改这一小段、只用哨兵返回、
-        // 严禁写文件/评估/交付/另起任务。
-        `【就地小改·硬性边界】这是针对方案正文里【某一小段】的一次就地改写，不是新任务、更不是收尾。` +
-        `你【唯一要做的事】：把下面这一小段按要求改写，并用方案【正文】哨兵原样返回。` +
-        `【严禁】写入或创建任何文件（别碰桌面、别生成任何 .md/报告）、评估或点评整份方案、总结或交付、` +
-        `另起新章节、输出这一小段以外的任何内容；如需核对来源仅用 Read，绝不调用任何写类工具。\n\n` +
-        `改写要求：${trimmed}\n\n` +
-        (focus ? `用户特别想改的是这句：「${focus}」。\n\n` : '') +
-        `这一小段的原文如下：\n\n${context}\n\n` +
-        `只输出【重写后的这一小段本身】（不要重复章节标题、不要写章节序号），仍用方案【正文】哨兵包裹，` +
-        groundingSuffix(sec.kind)
+      message: buildSelectionRevisionMessage({
+        instruction: trimmed,
+        focus,
+        context,
+        kind: sec.kind
+      })
     }
   })
 }
