@@ -46,6 +46,18 @@ export interface BlockRevisionReview {
   after: string // AI 改写后正文（去哨兵的干净 markdown）
 }
 
+// 选区改写排队项：AI 忙时用户又发起的改写意图。故意【不存最终 blockRange】——排队期间前面的
+// 改写可能落地、块序号会漂；排空时才用 selectedText 在最新 markdown 里重定位（locateBlockRangeByText）。
+// hintRange = 入队那刻的块区间，【仅】在 selectedText 多处命中时当裁判选最近的一处（CEO 护栏#3），
+// 不作主定位。瞬时 UI 信号，不持久化（同 blockReviews/pendingRevision）。
+export interface QueuedRevision {
+  id: string
+  sectionId: string
+  selectedText: string
+  instruction: string
+  hintRange: { start: number; end: number }
+}
+
 // 点图工具栏（Task 9）发起改图/生成后的「待审阅」项，挂在数组里（非 blockReviews 那种以助手
 // 消息 id 为 key——图片操作不经 SDK 轮，没有 messageId 可挂）。Task 11 在此之上渲染「原图 vs
 // 新图」对照卡 + 应用/放弃。id 由 addImageReview 生成（crypto.randomUUID()），供 Task 11 增删。
@@ -154,6 +166,13 @@ interface ProposalState {
   // 选区即改的待审阅提案，key=发起那轮的助手消息 id。非空项由 ThreadView 在该消息下渲染对照+按钮，
   // 应用才落地。瞬时 UI 信号，不持久化。可同时挂多条（不同消息各自独立审阅）。
   blockReviews: Record<string, BlockRevisionReview>
+  // 选区改写排队（FIFO）：AI 生成中用户又发起的改写按顺序排这里，一轮 end 后排空函数取队头串行发。
+  // 见 QueuedRevision 顶注。瞬时 UI 信号，不持久化，与 blockReviews 同重置点清空。
+  revisionQueue: QueuedRevision[]
+  // 排队项被跳过的可见提示（CEO 护栏#2·零静默失败）：重定位失败/目标节已删时，排空函数置一句文案，
+  // 面板据此显示一行黄字（用户看得见"我排的某个改写没执行"），而非只往 console 里 warn 后静默丢。
+  // 纯瞬时 UI 信号，用户手动关或下次成功排空时清。
+  revisionQueueNotice: string | null
   // 点图工具栏（Task 9）发起的改图/换图/生图「待审阅」项列表，Task 11 据此渲染对照卡。同
   // blockReviews：瞬时 UI 信号，不持久化，在与 blockReviews 相同的重置点一并清空。
   imageReviews: ImageReview[]
@@ -197,6 +216,12 @@ interface ProposalState {
   // removeBlockReview：用户点应用/放弃、或「继续改」发起新一轮时，撤掉旧项。
   addBlockReview: (messageId: string, review: BlockRevisionReview) => void
   removeBlockReview: (messageId: string) => void
+  // 选区改写排队增删。enqueue 返回稳定 id 供 UI 取消；dequeue 弹队头供排空函数；clear 用于各重置点。
+  enqueueRevision: (item: Omit<QueuedRevision, 'id'>) => string
+  dequeueRevision: () => QueuedRevision | null
+  removeRevision: (id: string) => void
+  clearRevisionQueue: () => void
+  setRevisionQueueNotice: (notice: string | null) => void
   // 点图工具栏·审阅项增删（Task 9 产出、Task 11 消费）。addImageReview 生成并返回稳定 id
   // （调用方目前不必用，但契约要求返回，供 Task 11 未来精确定位/去重）。
   addImageReview: (review: Omit<ImageReview, 'id'>) => string
@@ -281,6 +306,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
   pendingRevision: null,
   pendingGapFill: null,
   blockReviews: {},
+  revisionQueue: [],
+  revisionQueueNotice: null,
   imageReviews: [],
   genImageJobs: {},
   draftSaveFailed: false,
@@ -299,6 +326,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       pendingRevision: null,
       pendingGapFill: null,
       blockReviews: {},
+      revisionQueue: [],
+      revisionQueueNotice: null,
       imageReviews: [],
       genImageJobs: {},
       draftSaveFailed: false
@@ -358,6 +387,28 @@ export const useProposalStore = create<ProposalState>((set) => ({
       delete next[messageId]
       return { blockReviews: next }
     }),
+  enqueueRevision: (item) => {
+    const id = crypto.randomUUID()
+    set((s) => ({ revisionQueue: [...s.revisionQueue, { ...item, id }] }))
+    return id
+  },
+  dequeueRevision: () => {
+    let head: QueuedRevision | null = null
+    set((s) => {
+      if (s.revisionQueue.length === 0) return s
+      head = s.revisionQueue[0]
+      return { revisionQueue: s.revisionQueue.slice(1) }
+    })
+    return head
+  },
+  removeRevision: (id) =>
+    set((s) => {
+      const next = s.revisionQueue.filter((r) => r.id !== id)
+      if (next.length === s.revisionQueue.length) return s
+      return { revisionQueue: next }
+    }),
+  clearRevisionQueue: () => set({ revisionQueue: [] }),
+  setRevisionQueueNotice: (notice) => set({ revisionQueueNotice: notice }),
   addImageReview: (review) => {
     const id = crypto.randomUUID()
     set((s) => ({ imageReviews: [...s.imageReviews, { ...review, id }] }))
@@ -473,6 +524,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       pendingRevision: null,
       pendingGapFill: null,
       blockReviews: {},
+      revisionQueue: [],
+      revisionQueueNotice: null,
       imageReviews: []
     }),
   // genImageJobs 不清的理由同 reopen（幂等记录随 sections 存活，防再入后旧指令自动重发）。
@@ -483,6 +536,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       pendingRevision: null,
       pendingGapFill: null,
       blockReviews: {},
+      revisionQueue: [],
+      revisionQueueNotice: null,
       imageReviews: []
     }),
   restoreFromTranscript: ({ sessionId, sections, consumedDraftIds, phase }) => {
@@ -509,6 +564,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       pendingRevision: null,
       pendingGapFill: null,
       blockReviews: {},
+      revisionQueue: [],
+      revisionQueueNotice: null,
       imageReviews: [],
       // 对【最终放进 state 的那份 sections】（折叠+归并之后）预登记 manual 哨兵（终审 I-1）——
       // 若对折叠前的数组登记，被 collapseSingletonSections 丢弃的旧版封面/目录键会成孤儿，
@@ -538,6 +595,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       pendingRevision: null,
       pendingGapFill: null,
       blockReviews: {},
+      revisionQueue: [],
+      revisionQueueNotice: null,
       imageReviews: [],
       // 同 restoreFromTranscript：必须对折叠+归并后的最终 sections 预登记，避免孤儿键/漏登记。
       genImageJobs: seedManualGenImageJobs(finalSections),
@@ -559,6 +618,8 @@ export const useProposalStore = create<ProposalState>((set) => ({
       pendingRevision: null,
       pendingGapFill: null,
       blockReviews: {},
+      revisionQueue: [],
+      revisionQueueNotice: null,
       imageReviews: [],
       genImageJobs: {},
       draftSaveFailed: false
