@@ -3,7 +3,6 @@ import {
   splitBlocks,
   joinBlocks,
   spliceBlocks,
-  locateBlockRangeByText,
   locateBlockRangeByTextWithHint
 } from './proposalBlocks'
 
@@ -64,38 +63,32 @@ describe('spliceBlocks', () => {
   })
 })
 
-describe('locateBlockRangeByText', () => {
+describe('locateBlockRangeByTextWithHint', () => {
   const md = ['# 标题', '第一段讲的是产品背景。', '第二段讲的是技术方案。', '第三段讲的是落地计划。'].join('\n\n')
+  const H = { start: 0, end: 0 } // 单处命中时 hint 无影响，用零位占位
 
   it('单块命中：定位到该块', () => {
-    expect(locateBlockRangeByText(md, '第二段讲的是技术方案。')).toEqual({ start: 2, end: 2 })
+    expect(locateBlockRangeByTextWithHint(md, '第二段讲的是技术方案。', { start: 2, end: 2 })).toEqual({ start: 2, end: 2 })
   })
 
   it('选区文本的空白被折叠也能命中（换行 vs 源码空行）', () => {
     // 浏览器选区常把块间空行变成一个空格或直接相连
-    expect(locateBlockRangeByText(md, '第一段讲的是产品背景。 第二段讲的是技术方案。')).toEqual({ start: 1, end: 2 })
+    expect(locateBlockRangeByTextWithHint(md, '第一段讲的是产品背景。 第二段讲的是技术方案。', H)).toEqual({ start: 1, end: 2 })
   })
 
   it('跨块选区：返回覆盖它的最小连续区间', () => {
-    expect(locateBlockRangeByText(md, '技术方案。第三段')).toEqual({ start: 2, end: 3 })
+    expect(locateBlockRangeByTextWithHint(md, '技术方案。第三段', H)).toEqual({ start: 2, end: 3 })
   })
 
-  it('文字已不存在（被上一轮改写覆盖）：返回 null', () => {
-    expect(locateBlockRangeByText(md, '这段文字草稿里根本没有')).toBeNull()
+  it('文字已不存在：返回 null', () => {
+    expect(locateBlockRangeByTextWithHint(md, '这段文字草稿里根本没有', H)).toBeNull()
   })
 
   it('空 markdown / 空选区：返回 null', () => {
-    expect(locateBlockRangeByText('', '任意')).toBeNull()
-    expect(locateBlockRangeByText(md, '   ')).toBeNull()
+    expect(locateBlockRangeByTextWithHint('', '任意', H)).toBeNull()
+    expect(locateBlockRangeByTextWithHint(md, '   ', H)).toBeNull()
   })
 
-  it('多处命中取第一处', () => {
-    const dup = ['复用段。', '中间段。', '复用段。'].join('\n\n')
-    expect(locateBlockRangeByText(dup, '复用段。')).toEqual({ start: 0, end: 0 })
-  })
-})
-
-describe('locateBlockRangeByTextWithHint', () => {
   const dup = ['复用段。', '中间段甲。', '复用段。', '中间段乙。', '复用段。'].join('\n\n')
 
   it('多处命中：选起点块离 hint 最近的一处', () => {
@@ -106,11 +99,12 @@ describe('locateBlockRangeByTextWithHint', () => {
   })
 
   it('单处命中：hint 无影响', () => {
-    const md = ['甲。', '乙。', '丙。'].join('\n\n')
-    expect(locateBlockRangeByTextWithHint(md, '乙。', { start: 0, end: 0 })).toEqual({ start: 1, end: 1 })
+    const m = ['甲。', '乙。', '丙。'].join('\n\n')
+    expect(locateBlockRangeByTextWithHint(m, '乙。', { start: 0, end: 0 })).toEqual({ start: 1, end: 1 })
   })
 
-  it('找不到：返回 null（同无 hint 版）', () => {
-    expect(locateBlockRangeByTextWithHint('甲。', '幽灵', { start: 0, end: 0 })).toBeNull()
+  it('多处命中但离 hint 都很远：返回 null（复审 M4·防远处重复文字被误当目标）', () => {
+    // dup 的命中在块 0/2/4；hint 指向块 20，最近命中（块 4）距离 16 > 5 上限 → 判原文已不在
+    expect(locateBlockRangeByTextWithHint(dup, '复用段。', { start: 20, end: 20 })).toBeNull()
   })
 })

@@ -155,16 +155,15 @@ function locateAllBlockRanges(markdown: string, selectedText: string): Array<{ s
   return out
 }
 
-// 无 hint 版（Task 1 契约不变）：取第一处命中。
-export function locateBlockRangeByText(
-  markdown: string,
-  selectedText: string
-): { start: number; end: number } | null {
-  const all = locateAllBlockRanges(markdown, selectedText)
-  return all[0] ?? null
-}
+// 多处命中消歧的块距离上限（复审 M4）：selectedText 出现多处、且【离 hint 最近的一处都超过】此
+// 距离时，说明原选中位置很可能已被删/大改，最近命中只是碰巧重复的远处文字——宁可返回 null 让上层
+// 跳过并提示，也不静默改错段落。5 块足以容忍「一次上游改写造成的正常位移」，又能挡住整节重写后的
+// 远处误配。单处命中不设限（唯一幸存的那段几乎必是本意，哪怕整体位移较大也应命中它）。
+const HINT_MAX_BLOCK_DISTANCE = 5
 
-// 带 hint 版（CEO 护栏#3）：多处命中时选 start 离 hint.start 最近的一处（并列取更靠前）。
+// 带 hint 版（护栏#3 消歧 + 复审 M4 距离上限）：多处命中时选 start 离 hint.start 最近的一处；
+// 若连最近的都超出 HINT_MAX_BLOCK_DISTANCE，判为「原文已不在」返回 null（防远处重复文字被误当目标，
+// 这正是排队期间原选段被删/改后、carbon copy 短语害人的场景）。无命中返回 null；唯一命中直接信。
 export function locateBlockRangeByTextWithHint(
   markdown: string,
   selectedText: string,
@@ -173,7 +172,8 @@ export function locateBlockRangeByTextWithHint(
   const all = locateAllBlockRanges(markdown, selectedText)
   if (all.length === 0) return null
   if (all.length === 1) return all[0]
-  return all.reduce((best, cur) =>
+  const nearest = all.reduce((best, cur) =>
     Math.abs(cur.start - hint.start) < Math.abs(best.start - hint.start) ? cur : best
   )
+  return Math.abs(nearest.start - hint.start) <= HINT_MAX_BLOCK_DISTANCE ? nearest : null
 }
