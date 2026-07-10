@@ -34,6 +34,7 @@ import {
   useImageEditStore,
   useSheetPreviewStore
 } from '../../../stores/filePreview'
+import { OutputsButton } from './OutputsPanel'
 
 /**
  * ThreadView
@@ -1271,10 +1272,14 @@ function ChatHeader(): React.JSX.Element {
             ) : null}
           </>
         )}
-        {/* 「AI 生成」合规声明：从独占一行的副行收敛为右端 hairline 徽标。 */}
-        <span className="ml-auto shrink-0 rounded-full border border-border/90 px-2 py-0.5 text-[10.5px] leading-none text-muted-foreground/85">
-          {t('chatHeaderAiBadge')}
-        </span>
+        {/* 「输出」按钮：本会话所有产出物（幻灯片/文档/表格/生成图片…）的
+            聚合入口，见 OutputsPanel.tsx。无会话时数据源为空数组，按钮仍
+            渲染（空态弹层）。原「AI 生成」hairline 徽标（chatHeaderAiBadge）
+            已按用户要求移除（2026-07-10），i18n key 留存未删——若后续要恢复
+            合规声明，直接在这里加回 <span> 即可，不必重新翻译。 */}
+        <div className="ml-auto shrink-0">
+          <OutputsButton />
+        </div>
       </div>
     </div>
   )

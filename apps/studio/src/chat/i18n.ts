@@ -74,6 +74,10 @@ const STRINGS = {
     // 收敛成一枚右端胶囊徽标（docs/ui-prototype-tool-card.html 定稿）。
     chatHeaderAiBadge: 'AI 生成',
     chatHeaderUntitled: '新对话',
+    // 顶栏「输出」按钮：弹出本会话所有产出物（幻灯片/文档/表格/图片…）的
+    // 聚合列表，复用与消息内成果卡片相同的类型识别（2026-07-10）。
+    chatHeaderOutputs: '输出',
+    chatHeaderOutputsEmpty: '本次对话还没有产出物',
     sidebarStatusRunning: '运行中',
     // 两类挂起二分文案（2026-07-07）：权限门=「等待批准」，AskUserQuestion=
     // 「等待回答」——AI 在等回答时写「等待批准」语义就是错的（用户实锤）。
@@ -409,6 +413,8 @@ const STRINGS = {
     sidebarNewChat: 'New chat',
     chatHeaderAiBadge: 'AI-generated',
     chatHeaderUntitled: 'New chat',
+    chatHeaderOutputs: 'Outputs',
+    chatHeaderOutputsEmpty: 'No outputs yet in this chat',
     sidebarStatusRunning: 'Running',
     sidebarStatusAwaitingPermission: 'Awaiting approval',
     sidebarStatusAwaitingAnswer: 'Awaiting answer',

@@ -52,12 +52,14 @@ import { spliceBlocks } from '@desktop-shared/proposalBlocks'
  * Bracket/quote characters are excluded so a markdown link `[x](/a/b.pptx)`
  * or a quoted path scrapes to just the path.
  */
-const DELIVERABLE_PATH_RE =
+export const DELIVERABLE_PATH_RE =
   /(?:~\/|\/)[^\s"'`«»<>|()[\]{}]*\.(?:pptx?|pdf|docx?|xlsx?|csv|zip|key|mp3|mp4|mov|wav|m4a|jpe?g|png|gif|webp)\b/gi
 
 /** Per-extension card presentation: type label (zh/en), icon-badge text and
- *  badge color. Image types render a glyph instead of badge text. */
-function deliverableKind(ext: string): {
+ *  badge color. Image types render a glyph instead of badge text. Exported
+ *  for OutputsPanel — the session-wide outputs popover reuses the same
+ *  type→badge mapping so a file reads identically there and inline. */
+export function deliverableKind(ext: string): {
   zh: string
   en: string
   badge: string
