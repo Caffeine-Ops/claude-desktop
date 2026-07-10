@@ -19,7 +19,7 @@
     "build:icons": "bash scripts/build-icons.sh",
     "prebundle:daemon": "bun scripts/prebundle-daemon.mjs",
     "verify:fusion": "bun scripts/verify-fusion-bin.mjs",
-    "build:mac": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --mac ${EB_MAC_ARCH:---arm64} --publish never",
+    "build:mac": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --mac dmg:${EB_MAC_ARCH_NAME:-arm64} zip:${EB_MAC_ARCH_NAME:-arm64} --publish never",
     "build:win": "bun run verify:fusion win && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --win --publish never",
     "build:linux": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --linux --publish never",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
@@ -106,6 +106,7 @@
       ]
     },
     "win": {
+      "artifactName": "Claude-Desktop-${version}-${arch}.${ext}",
       "target": [
         {
           "target": "nsis",

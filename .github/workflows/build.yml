@@ -385,12 +385,43 @@ jobs:
       - name: Build (${{ matrix.platform }}-${{ matrix.arch }})
         env:
           # Pin electron-builder's mac arch to THIS matrix leg. build:mac
-          # defaults to --arm64 (${EB_MAC_ARCH:---arm64}); the x64 leg overrides
-          # it here. Without this, the mac target now lists both arm64+x64 in
-          # package.json, so a no-flag build would try to emit BOTH arches on one
-          # runner — and cross-arch native addons (better-sqlite3/sharp/onnx)
-          # would be wrong for the other arch. One runner = one arch = one flag.
-          EB_MAC_ARCH: ${{ matrix.platform == 'mac' && format('--{0}', matrix.arch) || '' }}
+          # consumes this as EB_MAC_ARCH_NAME (bare arch name, e.g. "x64") to
+          # build `--mac dmg:${EB_MAC_ARCH_NAME} zip:${EB_MAC_ARCH_NAME}`.
+          #
+          # 2026-07-10 incident: the OLD form passed a bare CLI flag
+          # (EB_MAC_ARCH="--arm64"/"--x64", i.e. `electron-builder --mac
+          # --arm64`). That does NOT limit the arch when a config target
+          # entry already declares its own `arch` array — and package.json's
+          # mac.target entries declare arch: ["arm64", "x64"] on BOTH the dmg
+          # and zip targets. electron-builder's computeArchToTargetNamesMap
+          # (app-builder-lib/out/targets/targetFactory.js) only honors the
+          # CLI-side arch restriction when the CLI's per-arch target-name list
+          # is non-empty; a bare `--arm64`/`--x64` flag (no target name
+          # attached) leaves that list empty, so it falls through to iterating
+          # every target's OWN declared arch list — i.e. the config's
+          # ["arm64","x64"] wins over the CLI flag, and BOTH arches get built
+          # on ONE runner. Confirmed from raw job logs (bypassing `gh run view
+          # --log`'s job-log mixup — fetch via `gh api .../actions/jobs/<id>/
+          # logs` for a trustworthy read): both the mac-arm64 and mac-x64 legs
+          # independently produced all 4 files (arm64+x64 zip+dmg) instead of
+          # 2. The two legs' independently-rebuilt "same-named" files aren't
+          # byte-identical (codesign/notarize timestamps differ), so whichever
+          # leg's file the publish job's merged manifest pointed at usually
+          # didn't match whichever leg's file got downloaded — sha512
+          # mismatch on every mac asset (caught by the SAME DAY's new
+          # "Verify asset checksums against manifests" step, working as
+          # intended — it did NOT let a bad build reach the release, unlike
+          # the OLDER v0.0.26/27 concurrent-write incident this file's other
+          # comments describe, which is a different bug entirely).
+          #
+          # Fix: use electron-builder's `target:arch` suffix syntax instead of
+          # a bare arch flag. `--mac dmg:arm64 zip:arm64` makes the CLI's
+          # per-arch target-name list non-empty (["dmg"]/["zip"]), which trips
+          # computeArchToTargetNamesMap's early-return (`if targetNames.length
+          # > 0: return raw as-is`) — the config's own arch arrays are never
+          # consulted, so only the ONE arch named on the CLI is ever built.
+          # One runner = one arch, now actually enforced.
+          EB_MAC_ARCH_NAME: ${{ matrix.arch }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.platform == 'mac' && 'true' || 'false' }}
           CSC_LINK: ${{ matrix.platform == 'mac' && env.CSC_FILE || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
