@@ -5,6 +5,7 @@ import { useProposalStore } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
 import type { ProposalKind } from '@desktop-shared/proposal'
 import { ImagePlusIcon, UploadIcon, SpinnerIcon, AlertTriangleIcon } from './proposalIcons'
+import { Tip } from './ProposalTooltip'
 
 // 排队软上限（复审 L8：常量与提示文案共用同一个数，改一处即改两处，绝不自相矛盾）。
 const MAX_REVISION_QUEUE = 10
@@ -275,16 +276,18 @@ export function SelectionAiBubble({
           <span className="text-accent">✦</span>
           <span>{mode === 'genimage' ? '生成图片' : disabled ? 'AI 改写 · 排队中' : 'AI 改写'}</span>
         </div>
-        <button
-          type="button"
-          className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-          title="关闭"
-          onClick={close}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M6 6l12 12M18 6L6 18" />
-          </svg>
-        </button>
+        <Tip label="关闭这个改写框">
+          <button
+            type="button"
+            className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label="关闭"
+            onClick={close}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </Tip>
       </div>
 
       {/* 选中原文预览：最多 4 行，超出以 … 省略。无背景色，仅左 accent 竖线作引用感。
@@ -302,15 +305,15 @@ export function SelectionAiBubble({
           {/* 快捷动作：点了只把指令模板填进下方文本域（不发起），可再编辑。 */}
           <div className="mt-2.5 flex flex-wrap gap-1.5">
             {QUICK.map((q) => (
-              <button
-                key={q.label}
-                type="button"
-                className="rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent"
-                onClick={() => applyPreset(q.prefill)}
-                title={`填入「${q.label}」指令，可再编辑后点「开始改写」`}
-              >
-                {q.label}
-              </button>
+              <Tip key={q.label} label={`填入「${q.label}」指令，可再编辑后点「开始改写」`}>
+                <button
+                  type="button"
+                  className="rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent"
+                  onClick={() => applyPreset(q.prefill)}
+                >
+                  {q.label}
+                </button>
+              </Tip>
             ))}
           </div>
 
@@ -332,23 +335,26 @@ export function SelectionAiBubble({
 
           {/* 底栏：取消 / 开始改写（仅此按钮或 ⌘↵ 才真正发起）。 */}
           <div className="mt-2.5 flex items-center justify-between">
-            <button
-              type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-              onClick={close}
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              className="flex items-center gap-1 rounded-lg bg-foreground px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
-              disabled={!instruction.trim()}
-              onClick={() => void fire()}
-              title={disabled ? 'AI 忙，⌘/Ctrl+回车 排队' : '⌘/Ctrl + 回车'}
-            >
-              <span className="text-[11px]">✦</span>
-              {disabled ? '排队改写' : '开始改写'}
-            </button>
+            <Tip label="取消，关闭这个改写框">
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={close}
+              >
+                取消
+              </button>
+            </Tip>
+            <Tip label={disabled ? 'AI 忙，先排队；轮到即改（快捷键 ⌘/Ctrl + 回车）' : '按指令改写选中内容（快捷键 ⌘/Ctrl + 回车）'}>
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-lg bg-foreground px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
+                disabled={!instruction.trim()}
+                onClick={() => void fire()}
+              >
+                <span className="text-[11px]">✦</span>
+                {disabled ? '排队改写' : '开始改写'}
+              </button>
+            </Tip>
           </div>
 
           {/* 插入图片（仅正文节）：生成图片切到 genimage 子模式填 prompt；上传图片直接弹原生对话框。
@@ -363,13 +369,15 @@ export function SelectionAiBubble({
                   <span>
                     {imgError}
                     {imgError.includes('设置') && (
-                      <button
-                        type="button"
-                        onClick={onOpenSettings}
-                        className="ml-1 underline underline-offset-2 hover:text-rose-700"
-                      >
-                        去设置
-                      </button>
+                      <Tip label="打开设置页，填写出图 API 配置">
+                        <button
+                          type="button"
+                          onClick={onOpenSettings}
+                          className="ml-1 underline underline-offset-2 hover:text-rose-700"
+                        >
+                          去设置
+                        </button>
+                      </Tip>
                     )}
                   </span>
                 </div>
@@ -383,29 +391,31 @@ export function SelectionAiBubble({
                 <div className="flex items-center gap-1.5">
                   <div className="mr-auto text-[11px] text-muted-foreground">插入图片</div>
                   {/* 图片入口本次不排队：生成中禁用，避免用户误以为图片也会排队（改写才排队）。 */}
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-foreground"
-                    disabled={disabled}
-                    onClick={() => {
-                      setImgError(null)
-                      setMode('genimage')
-                    }}
-                    title={disabled ? 'AI 忙，插图暂不可用（图片不排队）' : 'AI 按文字描述生成一张插图，插入选中段落之后（落地前可确认）'}
-                  >
-                    <ImagePlusIcon />
-                    <span>生成图片</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-foreground"
-                    disabled={disabled}
-                    onClick={() => void fireUpload()}
-                    title={disabled ? 'AI 忙，插图暂不可用（图片不排队）' : '上传本地图片，插入选中段落之后'}
-                  >
-                    <UploadIcon />
-                    <span>上传图片</span>
-                  </button>
+                  <Tip label="AI 按文字描述生成一张插图，插入选中段落之后（落地前可确认）">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-foreground"
+                      disabled={disabled}
+                      onClick={() => {
+                        setImgError(null)
+                        setMode('genimage')
+                      }}
+                    >
+                      <ImagePlusIcon />
+                      <span>生成图片</span>
+                    </button>
+                  </Tip>
+                  <Tip label="上传本地图片，插入选中段落之后">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-foreground"
+                      disabled={disabled}
+                      onClick={() => void fireUpload()}
+                    >
+                      <UploadIcon />
+                      <span>上传图片</span>
+                    </button>
+                  </Tip>
                 </div>
               )}
             </>
@@ -420,13 +430,15 @@ export function SelectionAiBubble({
               <span>
                 {imgError}
                 {imgError.includes('设置') && (
-                  <button
-                    type="button"
-                    onClick={onOpenSettings}
-                    className="ml-1 underline underline-offset-2 hover:text-rose-700"
-                  >
-                    去设置
-                  </button>
+                  <Tip label="打开设置页，填写出图 API 配置">
+                    <button
+                      type="button"
+                      onClick={onOpenSettings}
+                      className="ml-1 underline underline-offset-2 hover:text-rose-700"
+                    >
+                      去设置
+                    </button>
+                  </Tip>
                 )}
               </span>
             </div>
@@ -461,29 +473,31 @@ export function SelectionAiBubble({
             />
           )}
           <div className="mt-2.5 flex items-center justify-between">
-            <button
-              type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-              disabled={imgBusy}
-              onClick={() => {
-                setMode('rewrite')
-                setImgPrompt('')
-                setImgError(null)
-              }}
-              title="返回 AI 改写"
-            >
-              返回
-            </button>
-            <button
-              type="button"
-              className="flex items-center gap-1 rounded-lg bg-foreground px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
-              disabled={!imgPrompt.trim() || imgBusy}
-              onClick={() => void fireGenerate()}
-              title="⌘/Ctrl + 回车"
-            >
-              <ImagePlusIcon />
-              生成图片
-            </button>
+            <Tip label="返回 AI 改写">
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                disabled={imgBusy}
+                onClick={() => {
+                  setMode('rewrite')
+                  setImgPrompt('')
+                  setImgError(null)
+                }}
+              >
+                返回
+              </button>
+            </Tip>
+            <Tip label="按描述生成插图（快捷键 ⌘/Ctrl + 回车）">
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-lg bg-foreground px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
+                disabled={!imgPrompt.trim() || imgBusy}
+                onClick={() => void fireGenerate()}
+              >
+                <ImagePlusIcon />
+                生成图片
+              </button>
+            </Tip>
           </div>
         </>
       )}

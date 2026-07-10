@@ -23,6 +23,7 @@ import {
 import { ProposalPaper } from './ProposalPaper'
 import { ProposalPreview } from './ProposalPreview'
 import { ProposalStyleModal } from './ProposalStyleModal'
+import { Tip, TooltipProvider } from './ProposalTooltip'
 import {
   PencilIcon,
   EyeIcon,
@@ -252,12 +253,16 @@ export function ProposalDocPanel(): React.JSX.Element | null {
 
   if (!show) return null
   return (
-    // 只在工作台接管时渲染（show=useProposalWorkspace），故恒为顶替右栏的第 3 列：
-    // flex-1 吃满。旧的「返回态 w-96 靠右停靠」分支已随门控统一而消失。
-    // relative：作浮动导出 toast（exportMsg，见下方）的定位锚——toast 不再占布局、不再
-    // 和其它状态条叠成一堵彩色墙（design-review F3）。
-    // proposal-feature：作用域 class，让 index.css 给区内所有可聚焦控件统一补 focus-visible
-    // 焦点环（design-review F6）；Paper/Preview/StyleModal 都在本根 DOM 子树内，一处全覆盖。
+    // TooltipProvider（radix）：写方案区所有按钮的 hover 说明气泡都靠它供上下文。挂在本面板根即
+    // 覆盖 Paper/Preview/StyleModal 及其内部各浮层（选区气泡/图片工具栏/审阅卡/配图卡）——它们全在
+    // 本根 DOM 子树内、无 createPortal 逃逸，故一处 Provider 全覆盖（见 ProposalTooltip.tsx）。
+    <TooltipProvider>
+    {/* 只在工作台接管时渲染（show=useProposalWorkspace），故恒为顶替右栏的第 3 列：
+        flex-1 吃满。旧的「返回态 w-96 靠右停靠」分支已随门控统一而消失。
+        relative：作浮动导出 toast（exportMsg，见下方）的定位锚——toast 不再占布局、不再
+        和其它状态条叠成一堵彩色墙（design-review F3）。
+        proposal-feature：作用域 class，让 index.css 给区内所有可聚焦控件统一补 focus-visible
+        焦点环（design-review F6）；Paper/Preview/StyleModal 都在本根 DOM 子树内，一处全覆盖。 */}
     <div className="proposal-feature relative flex min-w-0 flex-1 flex-col border-l border-border bg-background text-foreground">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
         <span className="flex min-w-0 items-center gap-2">
@@ -297,28 +302,32 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         {/* 编辑 ｜ 预览 segmented：muted 槽底 + 选中项白卡浮起（bg-card + shadow）——
             原先容器用 card 白底，选中项 bg-background 与之几乎同色，选中态看不出来。 */}
         <div className="inline-flex rounded-lg bg-muted p-0.5">
-          <button
-            className={
-              'inline-flex items-center gap-1 rounded-md px-3 py-1 transition-colors ' +
-              (mode === 'edit'
-                ? 'bg-card font-medium text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground')
-            }
-            onClick={() => setMode('edit')}
-          >
-            <PencilIcon /> 编辑
-          </button>
-          <button
-            className={
-              'inline-flex items-center gap-1 rounded-md px-3 py-1 transition-colors ' +
-              (mode === 'preview'
-                ? 'bg-card font-medium text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground')
-            }
-            onClick={() => setMode('preview')}
-          >
-            <EyeIcon /> 预览
-          </button>
+          <Tip label="编辑视图：逐块修改正文、双击就地改字">
+            <button
+              className={
+                'inline-flex items-center gap-1 rounded-md px-3 py-1 transition-colors ' +
+                (mode === 'edit'
+                  ? 'bg-card font-medium text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground')
+              }
+              onClick={() => setMode('edit')}
+            >
+              <PencilIcon /> 编辑
+            </button>
+          </Tip>
+          <Tip label="预览视图：与导出的 Word 逐像素一致">
+            <button
+              className={
+                'inline-flex items-center gap-1 rounded-md px-3 py-1 transition-colors ' +
+                (mode === 'preview'
+                  ? 'bg-card font-medium text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground')
+              }
+              onClick={() => setMode('preview')}
+            >
+              <EyeIcon /> 预览
+            </button>
+          </Tip>
         </div>
 
         <div className="flex items-center gap-1">
@@ -329,64 +338,66 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           {confirmingNew ? (
             <span className="mr-1 inline-flex items-center gap-1">
               <span className="text-[11px] text-muted-foreground">清空当前草稿？</span>
-              <button
-                className="rounded bg-rose-500 px-2 py-0.5 text-white hover:bg-rose-600"
-                onClick={() => {
-                  // proposalSid 在 show=true 时恒非空（门控要求 sessionId===前台会话）；
-                  // 仍守一手 null，绝不把 start('') 透出去污染 gating。
-                  if (proposalSid) {
-                    // 先删盘再清内存：否则清完一刷新/切回，草稿又从盘上 restoreFromDisk 回来。
-                    // start() 把 sections 清空，订阅器因空草稿不再写盘，故不会复活该文件。
-                    void window.chatApi.deleteProposalDraft({ sessionId: proposalSid })
-                    useProposalStore.getState().start(proposalSid)
-                  }
-                  setConfirmingNew(false)
-                }}
-              >
-                确认清空
-              </button>
-              <button
-                className="rounded px-2 py-0.5 hover:bg-muted"
-                onClick={() => setConfirmingNew(false)}
-              >
-                取消
-              </button>
+              <Tip label="确认清空：删除整份草稿并重新开始，不可撤销">
+                <button
+                  className="rounded bg-rose-500 px-2 py-0.5 text-white hover:bg-rose-600"
+                  onClick={() => {
+                    // proposalSid 在 show=true 时恒非空（门控要求 sessionId===前台会话）；
+                    // 仍守一手 null，绝不把 start('') 透出去污染 gating。
+                    if (proposalSid) {
+                      // 先删盘再清内存：否则清完一刷新/切回，草稿又从盘上 restoreFromDisk 回来。
+                      // start() 把 sections 清空，订阅器因空草稿不再写盘，故不会复活该文件。
+                      void window.chatApi.deleteProposalDraft({ sessionId: proposalSid })
+                      useProposalStore.getState().start(proposalSid)
+                    }
+                    setConfirmingNew(false)
+                  }}
+                >
+                  确认清空
+                </button>
+              </Tip>
+              <Tip label="取消，保留当前草稿">
+                <button
+                  className="rounded px-2 py-0.5 hover:bg-muted"
+                  onClick={() => setConfirmingNew(false)}
+                >
+                  取消
+                </button>
+              </Tip>
             </span>
           ) : (
-            <button
-              className="mr-1 rounded-md px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-              // 草稿为空（sections 无内容）时没什么可清，置灰避免空操作 + 误触发二次确认条；
-              // 流式期间也禁用（清空和进行中的那轮叠加会乱）。
-              disabled={generating || sections.length === 0}
-              title={
-                generating
-                  ? 'AI 生成中，无法清空'
-                  : sections.length === 0
-                    ? '草稿为空，无需清空'
-                    : '清空当前草稿，重新开始一份'
-              }
-              onClick={() => setConfirmingNew(true)}
-            >
-              清空草稿
-            </button>
+            // 说明用【始终成立】的语义（清空草稿是干嘛的）——禁用态（生成中/空草稿）radix 不弹气泡，
+            // 而禁用原因由置灰本身 + 状态徽标传达，故这里只讲用途。
+            <Tip label="清空当前草稿，重新开始一份">
+              <button
+                className="mr-1 rounded-md px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                // 草稿为空（sections 无内容）时没什么可清，置灰避免空操作 + 误触发二次确认条；
+                // 流式期间也禁用（清空和进行中的那轮叠加会乱）。
+                disabled={generating || sections.length === 0}
+                onClick={() => setConfirmingNew(true)}
+              >
+                清空草稿
+              </button>
+            </Tip>
           )}
           {/* 导出下拉（重设计 A）：唯一导出入口。三格式各带一句用途说明，让「这个按钮干嘛用」
               一目了然；分隔线下「调整样式模板…」打开纯调样式弹窗。Word/PDF 用当前已生效样式
               （useProposalStyleStore，跨会话持久）；先调样式就先走「调整样式模板…」应用再导出。 */}
           <div className="relative">
-            <button
-              className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-50"
-              disabled={exporting}
-              onClick={() => setExportMenuOpen((o) => !o)}
-              title="导出方案（Word / PDF / Markdown）"
-            >
-              {exporting ? '导出中…' : (
-                <>
-                  导出
-                  <ChevronDownIcon />
-                </>
-              )}
-            </button>
+            <Tip label="导出方案（Word / PDF / Markdown）">
+              <button
+                className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-50"
+                disabled={exporting}
+                onClick={() => setExportMenuOpen((o) => !o)}
+              >
+                {exporting ? '导出中…' : (
+                  <>
+                    导出
+                    <ChevronDownIcon />
+                  </>
+                )}
+              </button>
+            </Tip>
             {exportMenuOpen && (
               <>
                 {/* 点击空白处关闭（全屏透明捕获层，置于菜单下方）。 */}
@@ -528,22 +539,24 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         <div className="proposal-anim-fade flex items-center gap-2 border-b border-sky-500/20 bg-sky-500/5 px-3 py-1 text-[11px] text-sky-600">
           <InfoIcon className="shrink-0" />
           <span className="flex-1">正在整理目录，请稍候…若反复未生成，可手动重试。</span>
-          <button
-            className="rounded bg-accent px-2 py-0.5 text-white disabled:opacity-40"
-            disabled={generating}
-            onClick={regenerateToc}
-            title={generating ? 'AI 生成中，请稍候' : '让 AI 重新只生成目录'}
-          >
-            重新生成目录
-          </button>
-          <button
-            className="text-muted-foreground hover:text-foreground"
-            onClick={clearStageSkip}
-            title="忽略此提示"
-            aria-label="忽略此提示"
-          >
-            <XIcon />
-          </button>
+          <Tip label="让 AI 重新只生成目录、并停下等你确认">
+            <button
+              className="rounded bg-accent px-2 py-0.5 text-white disabled:opacity-40"
+              disabled={generating}
+              onClick={regenerateToc}
+            >
+              重新生成目录
+            </button>
+          </Tip>
+          <Tip label="忽略此提示">
+            <button
+              className="text-muted-foreground hover:text-foreground"
+              onClick={clearStageSkip}
+              aria-label="忽略此提示"
+            >
+              <XIcon />
+            </button>
+          </Tip>
         </div>
       )}
 
@@ -556,11 +569,11 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           缺口旁加「补充资料」入口做定点续写——此处先把缺失变可见。 */}
       {gaps.length > 0 && (
         <div className="proposal-anim-fade border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+          <Tip label="知识库未覆盖、AI 未编造的缺口；待补料后续写">
           <button
             type="button"
             className="flex w-full items-center gap-2 text-left"
             onClick={() => setGapsOpen((v) => !v)}
-            title="知识库未覆盖、AI 未编造的缺口；待补料后续写"
           >
             <AlertTriangleIcon className="shrink-0" />
             <span className="font-medium">资料缺失 {gaps.length} 处</span>
@@ -582,6 +595,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
               )}
             </span>
           </button>
+          </Tip>
           {gapsOpen && (
             <ul className="mt-1.5 max-h-60 space-y-1 overflow-auto">
               {gaps.map((g, i) => {
@@ -601,19 +615,16 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                           告诉你缺什么、请你在下方输入这段资料原文（或指认知识库文件）并发送。你发送后 AI 才
                           运行，一轮内把资料并进去、只重写这一章、删掉缺口标记。任何增删改都回对话框执行。
                           流式中禁用（避免和进行中那轮叠发）。 */}
-                      <button
-                        type="button"
-                        className="shrink-0 rounded border border-amber-500/40 px-1.5 py-0.5 text-[11px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-40 dark:text-amber-400"
-                        disabled={generating}
-                        title={
-                          generating
-                            ? 'AI 生成中，请稍候'
-                            : '去左侧对话框补充这处资料——点后在输入框里贴入资料并发送，AI 才会据此续写这一章'
-                        }
-                        onClick={() => startProposalGapFill(g.sectionId, g.desc)}
-                      >
-                        去对话框补充
-                      </button>
+                      <Tip label="去左侧对话框补充这处资料——在输入框里贴入资料并发送，AI 才会据此续写这一章">
+                        <button
+                          type="button"
+                          className="shrink-0 rounded border border-amber-500/40 px-1.5 py-0.5 text-[11px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-40 dark:text-amber-400"
+                          disabled={generating}
+                          onClick={() => startProposalGapFill(g.sectionId, g.desc)}
+                        >
+                          去对话框补充
+                        </button>
+                      </Tip>
                     </div>
                   </li>
                 )
@@ -672,18 +683,20 @@ export function ProposalDocPanel(): React.JSX.Element | null {
               {p.product}
               {/* 删除 ✕ 仅编辑态：预览页头部只做展示、不做修改（用户要求 2026-07-08）。 */}
               {mode === 'edit' && (
-                <button
-                  type="button"
-                  aria-label={`移除 ${p.product}`}
-                  className="grid size-3.5 place-items-center rounded-sm text-muted-foreground hover:bg-accent/20 hover:text-foreground"
-                  onClick={() =>
-                    setProducts(
-                      products.filter((x) => !(x.productLine === p.productLine && x.product === p.product))
-                    )
-                  }
-                >
-                  <XIcon />
-                </button>
+                <Tip label={`移除「${p.product}」，不从它取料`}>
+                  <button
+                    type="button"
+                    aria-label={`移除 ${p.product}`}
+                    className="grid size-3.5 place-items-center rounded-sm text-muted-foreground hover:bg-accent/20 hover:text-foreground"
+                    onClick={() =>
+                      setProducts(
+                        products.filter((x) => !(x.productLine === p.productLine && x.product === p.product))
+                      )
+                    }
+                  >
+                    <XIcon />
+                  </button>
+                </Tip>
               )}
             </span>
           ))
@@ -710,13 +723,15 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             </ol>
             <p className="mb-3 text-muted-foreground">每步 AI 会停下来等你，点“确认”才继续。</p>
             <p className="mb-4 text-xs text-muted-foreground/70">↓ 在下方输入框描述你的方案需求</p>
-            <button
-              type="button"
-              className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              onClick={dismissOnboarding}
-            >
-              知道了
-            </button>
+            <Tip label="关闭这个引导，之后不再出现">
+              <button
+                type="button"
+                className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                onClick={dismissOnboarding}
+              >
+                知道了
+              </button>
+            </Tip>
           </div>
         </div>
       ) : (
@@ -771,5 +786,6 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           打开，点「应用样式」把 draft 提交进 store，之后导出走顶栏下拉。 */}
       <ProposalStyleModal open={styleModalOpen} onClose={() => setStyleModalOpen(false)} />
     </div>
+    </TooltipProvider>
   )
 }

@@ -3,6 +3,7 @@ import type { ImageReview } from '../../stores/proposal'
 import { toKbAssetUrl } from '../../lib/kbAssetUrl'
 import { toProposalAssetUrl } from '../../lib/proposalAssetUrl'
 import { CheckIcon, TrashIcon, PencilIcon, XIcon, AlertTriangleIcon, SpinnerIcon } from './proposalIcons'
+import { Tip } from './ProposalTooltip'
 
 // 改图/生图「先审后落地」对照卡（Task 11）。挂在 ProposalPaper 里对应节的正文之后（就地内联，
 // 非浮层——图片改写不像选区改写/点图工具栏那样有一个天然的锚点坐标，且审阅项可能在用户滚动
@@ -73,16 +74,17 @@ export function ProposalImageReview({
       {/* 标题栏：× 语义等同「放弃」——审阅卡本就是一次性的临时提议，关闭=不采纳。 */}
       <div className="flex items-center justify-between">
         <span className="text-[12px] font-medium text-foreground">{title}</span>
-        <button
-          type="button"
-          className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-          title="放弃"
-          aria-label="放弃"
-          disabled={busy}
-          onClick={onDiscard}
-        >
-          <XIcon />
-        </button>
+        <Tip label="放弃这次结果，正文保持不变">
+          <button
+            type="button"
+            className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+            aria-label="放弃"
+            disabled={busy}
+            onClick={onDiscard}
+          >
+            <XIcon />
+          </button>
+        </Tip>
       </div>
 
       {/* 预览区：edit 模式原图/改后图并排对照；generate/directive 模式只有新图，落位提示按
@@ -154,13 +156,15 @@ export function ProposalImageReview({
           <span>
             {error}
             {onOpenSettings && error.includes('设置') && (
-              <button
-                type="button"
-                onClick={onOpenSettings}
-                className="ml-1 underline underline-offset-2 hover:text-rose-700"
-              >
-                去设置
-              </button>
+              <Tip label="打开设置页，填写出图 API 配置">
+                <button
+                  type="button"
+                  onClick={onOpenSettings}
+                  className="ml-1 underline underline-offset-2 hover:text-rose-700"
+                >
+                  去设置
+                </button>
+              </Tip>
             )}
           </span>
         </div>
@@ -188,66 +192,72 @@ export function ProposalImageReview({
             className="w-full resize-none rounded-md border border-border bg-card px-2 py-1.5 text-[12px] leading-relaxed text-foreground outline-none focus:border-accent disabled:opacity-60"
           />
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
-            <button
-              type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-              disabled={busy}
-              onClick={() => {
-                setRetrying(false)
-                setPrompt('')
-              }}
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              className="flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
-              disabled={!prompt.trim() || busy}
-              onClick={submitRetry}
-              title="⌘/Ctrl + 回车"
-            >
-              {busy ? <span>处理中…</span> : <span>提交</span>}
-            </button>
+            <Tip label="取消重改，返回上一层">
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                disabled={busy}
+                onClick={() => {
+                  setRetrying(false)
+                  setPrompt('')
+                }}
+              >
+                取消
+              </button>
+            </Tip>
+            <Tip label="提交，按新指令再生成一次（快捷键 ⌘/Ctrl + 回车）">
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
+                disabled={!prompt.trim() || busy}
+                onClick={submitRetry}
+              >
+                {busy ? <span>处理中…</span> : <span>提交</span>}
+              </button>
+            </Tip>
           </div>
         </div>
       ) : (
         <div className="mt-2.5 flex items-center justify-end gap-1.5">
-          <button
-            type="button"
-            className="flex items-center gap-1 rounded-md border border-border bg-card px-2.5 py-1 text-[12px] text-foreground hover:border-rose-400 hover:text-rose-500 disabled:opacity-40"
-            disabled={busy}
-            onClick={onDiscard}
-            title="放弃这次结果"
-          >
-            <TrashIcon />
-            <span>放弃</span>
-          </button>
-          <button
-            type="button"
-            className="flex items-center gap-1 rounded-md border border-border bg-card px-2.5 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent disabled:opacity-40"
-            disabled={busy}
-            onClick={() => setRetrying(true)}
-            title="重新描述指令再来一次"
-          >
-            <PencilIcon />
-            <span>重改</span>
-          </button>
-          <button
-            type="button"
-            className="flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
-            disabled={busy}
-            onClick={onApply}
-            title="采纳这次结果，写入正文"
-          >
-            {busy ? (
-              <span>处理中…</span>
-            ) : (
-              <>
-                <CheckIcon />
-                <span>应用</span>
-              </>
-            )}
-          </button>
+          <Tip label="放弃这次结果，正文保持不变">
+            <button
+              type="button"
+              className="flex items-center gap-1 rounded-md border border-border bg-card px-2.5 py-1 text-[12px] text-foreground hover:border-rose-400 hover:text-rose-500 disabled:opacity-40"
+              disabled={busy}
+              onClick={onDiscard}
+            >
+              <TrashIcon />
+              <span>放弃</span>
+            </button>
+          </Tip>
+          <Tip label="重新描述指令，再生成一次">
+            <button
+              type="button"
+              className="flex items-center gap-1 rounded-md border border-border bg-card px-2.5 py-1 text-[12px] text-foreground hover:border-accent hover:text-accent disabled:opacity-40"
+              disabled={busy}
+              onClick={() => setRetrying(true)}
+            >
+              <PencilIcon />
+              <span>重改</span>
+            </button>
+          </Tip>
+          <Tip label="采纳这次结果，写入正文">
+            <button
+              type="button"
+              className="flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
+              disabled={busy}
+              onClick={onApply}
+            >
+              {busy ? (
+                <span>处理中…</span>
+              ) : (
+                <>
+                  <CheckIcon />
+                  <span>应用</span>
+                </>
+              )}
+            </button>
+          </Tip>
         </div>
       )}
     </div>

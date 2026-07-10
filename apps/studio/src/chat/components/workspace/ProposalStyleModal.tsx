@@ -15,6 +15,7 @@ import {
 import { useProposalStyleStore } from '../../stores/proposalStyle'
 import { ProposalPreview } from './ProposalPreview'
 import { XIcon, RotateCcwIcon } from './proposalIcons'
+import { Tip } from './ProposalTooltip'
 
 /**
  * 「样式模板」弹窗：左侧实时预览（复用 ProposalPreview 的真 PDF 渲染——printToPDF 出真 PDF 塞
@@ -48,6 +49,13 @@ const ALIGN_OPTS: { value: ProposalAlign; label: string }[] = [
   { value: 'center', label: '中' },
   { value: 'justify', label: '两端' }
 ]
+
+// 对齐三键的 hover 说明：短标签「左/中/两端」本身不够自明，气泡给全称。
+const ALIGN_TIP: Record<ProposalAlign, string> = {
+  left: '左对齐',
+  center: '居中对齐',
+  justify: '两端对齐'
+}
 
 export function ProposalStyleModal({
   open,
@@ -117,13 +125,15 @@ export function ProposalStyleModal({
               选择风格 → 左侧实时预览 → 微调字体字号 → 应用（导出走顶栏「导出 ▾」）
             </div>
           </div>
-          <button
-            className="grid size-8 place-items-center rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={onClose}
-            aria-label="关闭"
-          >
-            <XIcon className="size-4" />
-          </button>
+          <Tip label="关闭，丢弃未应用的调整">
+            <button
+              className="grid size-8 place-items-center rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={onClose}
+              aria-label="关闭"
+            >
+              <XIcon className="size-4" />
+            </button>
+          </Tip>
         </div>
 
         {/* 主体两栏 */}
@@ -204,14 +214,15 @@ export function ProposalStyleModal({
                     className="h-8 w-full rounded-md border border-border bg-card px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
                   />
                 </label>
-                <button
-                  className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-border px-3 text-[11px] text-accent hover:bg-accent/5"
-                  onClick={resetToTemplateDefault}
-                  title="放弃微调，回到该模板默认值"
-                >
-                  <RotateCcwIcon />
-                  还原模板默认
-                </button>
+                <Tip label="放弃当前所有微调，回到该模板的默认样式">
+                  <button
+                    className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-border px-3 text-[11px] text-accent hover:bg-accent/5"
+                    onClick={resetToTemplateDefault}
+                  >
+                    <RotateCcwIcon />
+                    还原模板默认
+                  </button>
+                </Tip>
               </div>
 
               {/* 高级折叠（方案二）：模板默认值覆盖 99% 场景，逐级字体/字号/排版微调收进
@@ -263,31 +274,34 @@ export function ProposalStyleModal({
                               </option>
                             ))}
                           </select>
-                          <button
-                            onClick={() => patchLevel(r.key, { bold: !cfg.bold })}
-                            className={
-                              'grid size-7 place-items-center rounded-md border font-serif text-[13px] font-bold ' +
-                              (cfg.bold
-                                ? 'border-accent bg-accent text-white'
-                                : 'border-border bg-card text-muted-foreground')
-                            }
-                          >
-                            B
-                          </button>
+                          <Tip label={`${r.label}加粗（点一下切换）`}>
+                            <button
+                              onClick={() => patchLevel(r.key, { bold: !cfg.bold })}
+                              className={
+                                'grid size-7 place-items-center rounded-md border font-serif text-[13px] font-bold ' +
+                                (cfg.bold
+                                  ? 'border-accent bg-accent text-white'
+                                  : 'border-border bg-card text-muted-foreground')
+                              }
+                            >
+                              B
+                            </button>
+                          </Tip>
                           <div className="inline-flex overflow-hidden rounded-md border border-border">
                             {ALIGN_OPTS.map((a) => (
-                              <button
-                                key={a.value}
-                                onClick={() => patchLevel(r.key, { align: a.value })}
-                                className={
-                                  'border-r border-border px-2 py-1 text-[11px] last:border-r-0 ' +
-                                  (cfg.align === a.value
-                                    ? 'bg-accent text-white'
-                                    : 'bg-card text-muted-foreground hover:bg-muted')
-                                }
-                              >
-                                {a.label}
-                              </button>
+                              <Tip key={a.value} label={`${r.label}${ALIGN_TIP[a.value]}`}>
+                                <button
+                                  onClick={() => patchLevel(r.key, { align: a.value })}
+                                  className={
+                                    'border-r border-border px-2 py-1 text-[11px] last:border-r-0 ' +
+                                    (cfg.align === a.value
+                                      ? 'bg-accent text-white'
+                                      : 'bg-card text-muted-foreground hover:bg-muted')
+                                  }
+                                >
+                                  {a.label}
+                                </button>
+                              </Tip>
                             ))}
                           </div>
                           <select
@@ -384,19 +398,22 @@ export function ProposalStyleModal({
 
             {/* 底部操作 */}
             <div className="flex items-center justify-end gap-2.5 border-t border-border px-5 py-3.5">
-              <button
-                className="rounded-lg border border-border px-3.5 py-2 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                onClick={onClose}
-              >
-                取消
-              </button>
-              <button
-                className="rounded-lg bg-accent px-5 py-2 text-[13px] font-semibold text-white hover:opacity-90"
-                onClick={doApply}
-                title="把当前样式应用到草稿，之后用顶栏「导出 ▾」导出 Word / PDF"
-              >
-                应用样式
-              </button>
+              <Tip label="取消，丢弃本次样式调整">
+                <button
+                  className="rounded-lg border border-border px-3.5 py-2 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                  onClick={onClose}
+                >
+                  取消
+                </button>
+              </Tip>
+              <Tip label="把当前样式应用到草稿，之后用顶栏「导出 ▾」导出 Word / PDF">
+                <button
+                  className="rounded-lg bg-accent px-5 py-2 text-[13px] font-semibold text-white hover:opacity-90"
+                  onClick={doApply}
+                >
+                  应用样式
+                </button>
+              </Tip>
             </div>
           </div>
         </div>

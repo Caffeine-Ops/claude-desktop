@@ -14,6 +14,7 @@ import { triggerProposalCitationVerification } from '../../../lib/proposalVerifi
 import { autoFireProposalGenImages } from '../../../lib/proposalGenImageFire'
 import { diffChars } from '@desktop-shared/textDiff'
 import { spliceBlocks } from '@desktop-shared/proposalBlocks'
+import { Tip, TooltipProvider } from '../../workspace/ProposalTooltip'
 
 /* ───────────────────── Assistant message ───────────────────── */
 
@@ -557,6 +558,9 @@ function ProposalRevisionReview(): React.JSX.Element | null {
   }
 
   return (
+    // TooltipProvider：这块「选区即改审阅」渲染在聊天线程里，与写方案文档面板是两棵独立子树，
+    // 故各自需要一个 Provider 供 hover 说明气泡上下文（见 ProposalTooltip.tsx）。
+    <TooltipProvider>
     <div className="mt-1 rounded-lg border border-border bg-muted/30 p-3 text-[13px]">
       <div className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-accent">
         <span>✦</span>
@@ -630,56 +634,66 @@ function ProposalRevisionReview(): React.JSX.Element | null {
             className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-2 text-[12px] leading-relaxed outline-none focus:border-accent"
           />
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
-            <button
-              type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-              onClick={() => {
-                setContinuing(false)
-                setInstruction('')
-              }}
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              className="rounded-lg bg-foreground px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
-              disabled={!instruction.trim() || streaming}
-              onClick={() => void submitContinue()}
-              title="⌘/Ctrl + 回车"
-            >
-              发送
-            </button>
+            <Tip label="取消，不再继续改">
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={() => {
+                  setContinuing(false)
+                  setInstruction('')
+                }}
+              >
+                取消
+              </button>
+            </Tip>
+            <Tip label="在当前改写稿上再改一版（快捷键 ⌘/Ctrl + 回车）">
+              <button
+                type="button"
+                className="rounded-lg bg-foreground px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
+                disabled={!instruction.trim() || streaming}
+                onClick={() => void submitContinue()}
+              >
+                发送
+              </button>
+            </Tip>
           </div>
         </div>
       ) : (
         <div className="mt-2.5 flex items-center gap-1.5">
-          <button
-            type="button"
-            className="flex items-center gap-1 rounded-lg bg-foreground px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90"
-            onClick={apply}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 6L9 17l-5-5" />
-            </svg>
-            应用
-          </button>
-          <button
-            type="button"
-            className="rounded-lg border border-border px-3 py-1.5 text-[12px] text-foreground hover:bg-muted"
-            onClick={discard}
-          >
-            放弃
-          </button>
-          <button
-            type="button"
-            className="rounded-lg border border-border px-3 py-1.5 text-[12px] text-foreground hover:border-accent hover:text-accent"
-            onClick={() => setContinuing(true)}
-          >
-            继续改
-          </button>
+          <Tip label="采纳这次改写，写入正文草稿">
+            <button
+              type="button"
+              className="flex items-center gap-1 rounded-lg bg-foreground px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90"
+              onClick={apply}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6L9 17l-5-5" />
+              </svg>
+              应用
+            </button>
+          </Tip>
+          <Tip label="放弃这次改写，正文保持原样">
+            <button
+              type="button"
+              className="rounded-lg border border-border px-3 py-1.5 text-[12px] text-foreground hover:bg-muted"
+              onClick={discard}
+            >
+              放弃
+            </button>
+          </Tip>
+          <Tip label="在这次结果上再补一句指令接着改">
+            <button
+              type="button"
+              className="rounded-lg border border-border px-3 py-1.5 text-[12px] text-foreground hover:border-accent hover:text-accent"
+              onClick={() => setContinuing(true)}
+            >
+              继续改
+            </button>
+          </Tip>
         </div>
       )}
     </div>
+    </TooltipProvider>
   )
 }
 

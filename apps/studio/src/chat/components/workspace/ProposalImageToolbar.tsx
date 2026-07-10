@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { PencilIcon, ImageIcon, TrashIcon, CheckIcon, XIcon, AlertTriangleIcon, SpinnerIcon } from './proposalIcons'
+import { Tip } from './ProposalTooltip'
 
 // 点图浮动工具栏（Task 9）：编辑态点中一张图后，在其右上角浮出 [改图][换图][删除]。定位靠
 // ProposalPaper 算好的 left/top（与 SelectionAiBubble 同一套「容器相对坐标」范式），本组件
@@ -93,65 +94,70 @@ export function ProposalImageToolbar({
     >
       {mode === 'buttons' ? (
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            className={iconBtn}
-            disabled={disabled}
-            title="改图（AI 按指令改这张图）"
-            aria-label="改图"
-            onClick={() => setMode('editing')}
-          >
-            <PencilIcon />
-          </button>
-          <button
-            type="button"
-            className={iconBtn}
-            disabled={disabled || !onReplace}
-            title={onReplace ? '换图' : '换图·处理中'}
-            aria-label="换图"
-            onClick={() => onReplace?.()}
-          >
-            <ImageIcon />
-          </button>
-          <button
-            type="button"
-            className={
-              'grid size-7 place-items-center rounded-md border border-border bg-card text-[13px] text-rose-500 hover:border-rose-400 disabled:opacity-30'
-            }
-            disabled={disabled}
-            title="删除这张图"
-            aria-label="删除"
-            onClick={onDelete}
-          >
-            <TrashIcon />
-          </button>
-          <button
-            type="button"
-            className={iconBtn}
-            title="关闭"
-            aria-label="关闭"
-            onClick={onClose}
-          >
-            <XIcon />
-          </button>
+          <Tip label="改图：AI 按你的指令改这张图">
+            <button
+              type="button"
+              className={iconBtn}
+              disabled={disabled}
+              aria-label="改图"
+              onClick={() => setMode('editing')}
+            >
+              <PencilIcon />
+            </button>
+          </Tip>
+          <Tip label="换图：从本地选一张图替换这张">
+            <button
+              type="button"
+              className={iconBtn}
+              disabled={disabled || !onReplace}
+              aria-label="换图"
+              onClick={() => onReplace?.()}
+            >
+              <ImageIcon />
+            </button>
+          </Tip>
+          <Tip label="删除这张图">
+            <button
+              type="button"
+              className={
+                'grid size-7 place-items-center rounded-md border border-border bg-card text-[13px] text-rose-500 hover:border-rose-400 disabled:opacity-30'
+              }
+              disabled={disabled}
+              aria-label="删除"
+              onClick={onDelete}
+            >
+              <TrashIcon />
+            </button>
+          </Tip>
+          <Tip label="关闭这个工具栏">
+            <button
+              type="button"
+              className={iconBtn}
+              aria-label="关闭"
+              onClick={onClose}
+            >
+              <XIcon />
+            </button>
+          </Tip>
         </div>
       ) : (
         <div className="w-72 p-1">
           <div className="flex items-center justify-between">
             <span className="text-[12px] font-medium text-foreground">改图指令</span>
-            <button
-              type="button"
-              className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-              title="取消"
-              aria-label="取消"
-              disabled={loading}
-              onClick={() => {
-                setMode('buttons')
-                setError(null)
-              }}
-            >
-              <XIcon />
-            </button>
+            <Tip label="取消改图，返回上一层">
+              <button
+                type="button"
+                className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                aria-label="取消"
+                disabled={loading}
+                onClick={() => {
+                  setMode('buttons')
+                  setError(null)
+                }}
+              >
+                <XIcon />
+              </button>
+            </Tip>
           </div>
           {/* 改图是秒级到数十秒的网络往返，纯按钮文字变「改图中…」反馈太弱（GUI 走查：等太久
               不知在不在动）。loading 时用转圈 + 说明文字的独立块替换输入区，明确「在处理、别关」。 */}
@@ -191,38 +197,43 @@ export function ProposalImageToolbar({
               <span>
                 {error}
                 {onOpenSettings && error.includes('设置') && (
-                  <button
-                    type="button"
-                    onClick={onOpenSettings}
-                    className="ml-1 underline underline-offset-2 hover:text-rose-700"
-                  >
-                    去设置
-                  </button>
+                  <Tip label="打开设置页，填写出图 API 配置">
+                    <button
+                      type="button"
+                      onClick={onOpenSettings}
+                      className="ml-1 underline underline-offset-2 hover:text-rose-700"
+                    >
+                      去设置
+                    </button>
+                  </Tip>
                 )}
               </span>
             </div>
           )}
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
-            <button
-              type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-              onClick={() => {
-                setMode('buttons')
-                setError(null)
-              }}
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              className="flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
-              disabled={!prompt.trim()}
-              onClick={() => void submit()}
-              title="⌘/Ctrl + 回车"
-            >
-              <CheckIcon />
-              <span>提交</span>
-            </button>
+            <Tip label="取消改图，返回上一层">
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={() => {
+                  setMode('buttons')
+                  setError(null)
+                }}
+              >
+                取消
+              </button>
+            </Tip>
+            <Tip label="提交改图指令（快捷键 ⌘/Ctrl + 回车）">
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-[12px] font-medium text-background hover:opacity-90 disabled:opacity-40"
+                disabled={!prompt.trim()}
+                onClick={() => void submit()}
+              >
+                <CheckIcon />
+                <span>提交</span>
+              </button>
+            </Tip>
           </div>
           </>
           )}

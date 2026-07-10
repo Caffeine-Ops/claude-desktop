@@ -8,6 +8,7 @@ import { friendlyImageError } from '../../lib/imageErrorText'
 import { SelectionAiBubble } from './SelectionAiBubble'
 import { ProposalImageToolbar } from './ProposalImageToolbar'
 import { ProposalImageReview } from './ProposalImageReview'
+import { Tip } from './ProposalTooltip'
 import type { ProposalKind } from '@desktop-shared/proposal'
 import { splitBlocks, joinBlocks } from '@desktop-shared/proposalBlocks'
 import {
@@ -54,13 +55,15 @@ function renderVerification(sec: ProposalSection, generating: boolean): React.JS
   // 「据来源修正」：把发现的溯源问题接回 AI——只依据所引《来源》原文重写本节（方案一·闭环）。
   // 流式中禁用，避免与进行中的那轮叠发。措辞产品化：不再向用户暴露 trigram/重叠率/索引等工程词。
   const fixBtn = (
-    <button
-      className="ml-1 whitespace-nowrap underline hover:text-rose-800 disabled:opacity-40"
-      disabled={generating}
-      onClick={() => void reviseProposalSection(sec.id, 'fixSource')}
-    >
-      据来源修正
-    </button>
+    <Tip label="让 AI 只依据所引《来源》原文重写本段，删掉无来源支撑的表述">
+      <button
+        className="ml-1 whitespace-nowrap underline hover:text-rose-800 disabled:opacity-40"
+        disabled={generating}
+        onClick={() => void reviseProposalSection(sec.id, 'fixSource')}
+      >
+        据来源修正
+      </button>
+    </Tip>
   )
   if (v.degraded) {
     return (
@@ -835,21 +838,22 @@ export function ProposalPaper(): React.JSX.Element {
             : 'pointer-events-none opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100')
         }
       >
-        <button
-          className={
-            'grid size-6 place-items-center rounded-md hover:bg-muted hover:text-foreground ' +
-            (menuSecId === sec.id ? 'bg-muted text-foreground' : 'text-muted-foreground')
-          }
-          onClick={() => {
-            setConfirmDeleteId(null)
-            setMenuSecId(menuSecId === sec.id ? null : sec.id)
-          }}
-          title="节操作（AI 修订 / 移动 / 删除）"
-          aria-label="节操作菜单"
-          aria-expanded={menuSecId === sec.id}
-        >
-          <GripIcon />
-        </button>
+        <Tip label="节操作（AI 修订 / 移动 / 删除）">
+          <button
+            className={
+              'grid size-6 place-items-center rounded-md hover:bg-muted hover:text-foreground ' +
+              (menuSecId === sec.id ? 'bg-muted text-foreground' : 'text-muted-foreground')
+            }
+            onClick={() => {
+              setConfirmDeleteId(null)
+              setMenuSecId(menuSecId === sec.id ? null : sec.id)
+            }}
+            aria-label="节操作菜单"
+            aria-expanded={menuSecId === sec.id}
+          >
+            <GripIcon />
+          </button>
+        </Tip>
         {menuSecId === sec.id && (
           <>
             {/* 点击空白处关闭（全屏透明捕获层，置于菜单下方）——与导出下拉同款模式。 */}
@@ -867,113 +871,124 @@ export function ProposalPaper(): React.JSX.Element {
               {/* AI 修订组：仅正文节（封面/目录无修订语义）。发起【整节替换】式重写，流式中禁用。 */}
               {sec.kind === 'content' && (
                 <>
-                  <button
-                    className={menuItem}
-                    disabled={generating}
-                    title={generating ? 'AI 生成中，请稍候' : undefined}
-                    onClick={() => {
-                      setMenuSecId(null)
-                      void reviseProposalSection(sec.id, 'rewrite')
-                    }}
-                  >
-                    <RotateCwIcon className="shrink-0 text-muted-foreground" />
-                    AI 重写本章
-                  </button>
-                  <button
-                    className={menuItem}
-                    disabled={generating}
-                    title={generating ? 'AI 生成中，请稍候' : undefined}
-                    onClick={() => {
-                      setMenuSecId(null)
-                      void reviseProposalSection(sec.id, 'expand')
-                    }}
-                  >
-                    <PlusIcon className="shrink-0 text-muted-foreground" />
-                    AI 展开（更详尽）
-                  </button>
-                  <button
-                    className={menuItem}
-                    disabled={generating}
-                    title={generating ? 'AI 生成中，请稍候' : undefined}
-                    onClick={() => {
-                      setMenuSecId(null)
-                      void reviseProposalSection(sec.id, 'shorten')
-                    }}
-                  >
-                    <MinusIcon className="shrink-0 text-muted-foreground" />
-                    AI 精简（去冗余）
-                  </button>
+                  <Tip label="让 AI 整节重写这一章，替换现有内容">
+                    <button
+                      className={menuItem}
+                      disabled={generating}
+                      onClick={() => {
+                        setMenuSecId(null)
+                        void reviseProposalSection(sec.id, 'rewrite')
+                      }}
+                    >
+                      <RotateCwIcon className="shrink-0 text-muted-foreground" />
+                      AI 重写本章
+                    </button>
+                  </Tip>
+                  <Tip label="让 AI 在原有基础上补充细节、把这一章写得更详尽">
+                    <button
+                      className={menuItem}
+                      disabled={generating}
+                      onClick={() => {
+                        setMenuSecId(null)
+                        void reviseProposalSection(sec.id, 'expand')
+                      }}
+                    >
+                      <PlusIcon className="shrink-0 text-muted-foreground" />
+                      AI 展开（更详尽）
+                    </button>
+                  </Tip>
+                  <Tip label="让 AI 删去冗余与重复、精简这一章">
+                    <button
+                      className={menuItem}
+                      disabled={generating}
+                      onClick={() => {
+                        setMenuSecId(null)
+                        void reviseProposalSection(sec.id, 'shorten')
+                      }}
+                    >
+                      <MinusIcon className="shrink-0 text-muted-foreground" />
+                      AI 精简（去冗余）
+                    </button>
+                  </Tip>
                   <div className="my-1 h-px bg-border" />
                   {/* 生成图片/上传图片入口在选区弹框（SelectionAiBubble）——图片操作需要「插到
                       哪里」的落点，选中段落天然就是那个锚点。 */}
                 </>
               )}
-              <button
-                className={menuItem}
-                // 生成中禁止【打开】整节源码逃生舱（review V2）：某节 blockRange 修订在飞时，若用户开
-                // 源码框改动本节使块布局变化，轮末 spliceBlocks 会按旧下标拼进错块、静默覆盖。已打开
-                // 的仍允许关闭。
-                disabled={generating && editingId !== sec.id}
-                onClick={() => {
-                  if (generating && editingId !== sec.id) return
-                  setEditingBlock(null)
-                  setEditingId(editingId === sec.id ? null : sec.id)
-                  setMenuSecId(null)
-                }}
-              >
-                {editingId === sec.id ? (
-                  <CheckIcon className="shrink-0 text-muted-foreground" />
-                ) : (
-                  <PencilIcon className="shrink-0 text-muted-foreground" />
-                )}
-                {editingId === sec.id ? '完成源码编辑' : '编辑整节源码（逃生舱）'}
-              </button>
+              <Tip label="直接编辑这一节的 Markdown 源码，用于修表格、批量替换等场景">
+                <button
+                  className={menuItem}
+                  // 生成中禁止【打开】整节源码逃生舱（review V2）：某节 blockRange 修订在飞时，若用户开
+                  // 源码框改动本节使块布局变化，轮末 spliceBlocks 会按旧下标拼进错块、静默覆盖。已打开
+                  // 的仍允许关闭。
+                  disabled={generating && editingId !== sec.id}
+                  onClick={() => {
+                    if (generating && editingId !== sec.id) return
+                    setEditingBlock(null)
+                    setEditingId(editingId === sec.id ? null : sec.id)
+                    setMenuSecId(null)
+                  }}
+                >
+                  {editingId === sec.id ? (
+                    <CheckIcon className="shrink-0 text-muted-foreground" />
+                  ) : (
+                    <PencilIcon className="shrink-0 text-muted-foreground" />
+                  )}
+                  {editingId === sec.id ? '完成源码编辑' : '编辑整节源码（逃生舱）'}
+                </button>
+              </Tip>
               {/* 上移/下移不关菜单：连续排序时不必反复重开。禁用逻辑与 moveSection 的
                   同 kind 约束精确对齐（见 canMoveUp/Down 注释）。 */}
-              <button
-                className={menuItem}
-                disabled={!canMoveUp}
-                title={canMoveUp ? undefined : '已是本区段第一节，不能跨区段上移'}
-                onClick={() => moveSection(sec.id, 'up')}
-              >
-                <ArrowUpIcon className="shrink-0 text-muted-foreground" />
-                上移
-              </button>
-              <button
-                className={menuItem}
-                disabled={!canMoveDown}
-                title={canMoveDown ? undefined : '已是本区段最后一节，不能跨区段下移'}
-                onClick={() => moveSection(sec.id, 'down')}
-              >
-                <ArrowDownIcon className="shrink-0 text-muted-foreground" />
-                下移
-              </button>
+              <Tip label="把这一节和上一节交换位置（仅同区段内）">
+                <button
+                  className={menuItem}
+                  disabled={!canMoveUp}
+                  onClick={() => moveSection(sec.id, 'up')}
+                >
+                  <ArrowUpIcon className="shrink-0 text-muted-foreground" />
+                  上移
+                </button>
+              </Tip>
+              <Tip label="把这一节和下一节交换位置（仅同区段内）">
+                <button
+                  className={menuItem}
+                  disabled={!canMoveDown}
+                  onClick={() => moveSection(sec.id, 'down')}
+                >
+                  <ArrowDownIcon className="shrink-0 text-muted-foreground" />
+                  下移
+                </button>
+              </Tip>
               {/* 分隔线：把不可逆的「删除」与上方动作分组隔开，降低误触（design-review F5）。
                   两步确认保留：第一击武装成红底确认项（3s 无操作自动撤销，见 confirmDeleteId
                   effect），第二击才真删。 */}
               <div className="my-1 h-px bg-border" />
               {confirmDeleteId === sec.id ? (
-                <button
-                  className="flex w-full items-center gap-2 rounded-md bg-rose-500 px-2.5 py-1.5 text-left text-[12px] font-medium text-white"
-                  onClick={() => {
-                    if (editingId === sec.id) setEditingId(null)
-                    if (editingBlock?.sectionId === sec.id) setEditingBlock(null)
-                    removeSection(sec.id)
-                    setConfirmDeleteId(null)
-                    setMenuSecId(null)
-                  }}
-                >
-                  <CheckIcon className="shrink-0" />
-                  再点一次确认删除
-                </button>
+                <Tip label="再点一次，永久删除本节（3 秒后自动取消）">
+                  <button
+                    className="flex w-full items-center gap-2 rounded-md bg-rose-500 px-2.5 py-1.5 text-left text-[12px] font-medium text-white"
+                    onClick={() => {
+                      if (editingId === sec.id) setEditingId(null)
+                      if (editingBlock?.sectionId === sec.id) setEditingBlock(null)
+                      removeSection(sec.id)
+                      setConfirmDeleteId(null)
+                      setMenuSecId(null)
+                    }}
+                  >
+                    <CheckIcon className="shrink-0" />
+                    再点一次确认删除
+                  </button>
+                </Tip>
               ) : (
-                <button
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] text-rose-500 hover:bg-rose-500/10"
-                  onClick={() => setConfirmDeleteId(sec.id)}
-                >
-                  <TrashIcon className="shrink-0" />
-                  删除本节
-                </button>
+                <Tip label="删除本节（需再点一次确认）">
+                  <button
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] text-rose-500 hover:bg-rose-500/10"
+                    onClick={() => setConfirmDeleteId(sec.id)}
+                  >
+                    <TrashIcon className="shrink-0" />
+                    删除本节
+                  </button>
+                </Tip>
               )}
             </div>
           </>
@@ -986,13 +1001,15 @@ export function ProposalPaper(): React.JSX.Element {
           {/* 续写只对正文节有意义（reviseProposalSection 对非 content 直接 no-op）；封面/目录极少
               截断，若真发生则只提示不给按钮，避免一个点了没反应的死按钮。 */}
           {sec.kind === 'content' && (
-            <button
-              className="whitespace-nowrap underline hover:text-amber-800 disabled:opacity-40"
-              disabled={generating}
-              onClick={() => void reviseProposalSection(sec.id, 'resume')}
-            >
-              继续写完
-            </button>
+            <Tip label="让 AI 接着把这一段被中断的内容写完">
+              <button
+                className="whitespace-nowrap underline hover:text-amber-800 disabled:opacity-40"
+                disabled={generating}
+                onClick={() => void reviseProposalSection(sec.id, 'resume')}
+              >
+                继续写完
+              </button>
+            </Tip>
           )}
         </div>
       )}
@@ -1143,14 +1160,16 @@ export function ProposalPaper(): React.JSX.Element {
           {revisionQueueNotice && (
             <div className="mb-2 flex items-start gap-1 rounded bg-amber-500/10 px-2 py-1 text-[12px] text-amber-700 dark:text-amber-400">
               <span>{revisionQueueNotice}</span>
-              <button
-                type="button"
-                data-slot="queue-notice-close"
-                className="ml-auto shrink-0 hover:underline"
-                onClick={() => useProposalStore.getState().setRevisionQueueNotice(null)}
-              >
-                知道了
-              </button>
+              <Tip label="知道了，关闭这条提示">
+                <button
+                  type="button"
+                  data-slot="queue-notice-close"
+                  className="ml-auto shrink-0 hover:underline"
+                  onClick={() => useProposalStore.getState().setRevisionQueueNotice(null)}
+                >
+                  知道了
+                </button>
+              </Tip>
             </div>
           )}
           {revisionQueue.length > 0 && (
@@ -1160,14 +1179,16 @@ export function ProposalPaper(): React.JSX.Element {
                 <div key={r.id} className="flex items-center gap-2 py-0.5">
                   <span className="shrink-0 text-muted-foreground">{i + 1}.</span>
                   <span className="truncate">{r.instruction}</span>
-                  <button
-                    type="button"
-                    data-slot="queue-cancel"
-                    className="ml-auto shrink-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => useProposalStore.getState().removeRevision(r.id)}
-                  >
-                    取消
-                  </button>
+                  <Tip label="取消这条排队中的改写">
+                    <button
+                      type="button"
+                      data-slot="queue-cancel"
+                      className="ml-auto shrink-0 text-muted-foreground hover:text-foreground"
+                      onClick={() => useProposalStore.getState().removeRevision(r.id)}
+                    >
+                      取消
+                    </button>
+                  </Tip>
                 </div>
               ))}
             </div>

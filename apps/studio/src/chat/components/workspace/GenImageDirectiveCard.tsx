@@ -1,5 +1,6 @@
 import type { GenImageJob } from '../../stores/proposal'
 import { SpinnerIcon, AlertTriangleIcon, ImageIcon } from './proposalIcons'
+import { Tip } from './ProposalTooltip'
 
 // genimage 指令块的编辑态卡片（配图密度③）：指令块本身留在草稿 markdown 里当锚点，编辑态
 // 不渲染成代码块而渲染成此卡。四态：
@@ -57,22 +58,26 @@ export function GenImageDirectiveCard({
         <div className="mt-1.5 flex flex-wrap items-center gap-2 text-rose-600">
           <AlertTriangleIcon />
           <span>{job.error ?? '生成失败，请稍后重试。'}</span>
-          <button
-            type="button"
-            className="rounded border border-border bg-card px-2 py-0.5 text-foreground hover:border-accent hover:text-accent disabled:opacity-40"
-            disabled={generating}
-            onClick={onGenerate}
-          >
-            重试
-          </button>
-          {needsSettings && (
+          <Tip label="重新调用生图模型再试一次">
             <button
               type="button"
-              className="rounded border border-border bg-card px-2 py-0.5 text-foreground hover:border-accent hover:text-accent"
-              onClick={onOpenSettings}
+              className="rounded border border-border bg-card px-2 py-0.5 text-foreground hover:border-accent hover:text-accent disabled:opacity-40"
+              disabled={generating}
+              onClick={onGenerate}
             >
-              去设置
+              重试
             </button>
+          </Tip>
+          {needsSettings && (
+            <Tip label="打开设置页，填写出图 API 配置">
+              <button
+                type="button"
+                className="rounded border border-border bg-card px-2 py-0.5 text-foreground hover:border-accent hover:text-accent"
+                onClick={onOpenSettings}
+              >
+                去设置
+              </button>
+            </Tip>
           )}
         </div>
       )}
@@ -84,27 +89,31 @@ export function GenImageDirectiveCard({
           // 丢失，唯一出路是重新生成。
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-muted-foreground">
             <span>生成结果已失效（离开工作台会清掉未确认的审阅卡），可重新生成。</span>
+            <Tip label="重新生成这张配图">
+              <button
+                type="button"
+                className="rounded border border-border bg-card px-2 py-0.5 text-foreground hover:border-accent hover:text-accent disabled:opacity-40"
+                disabled={generating}
+                onClick={onGenerate}
+              >
+                重新生成
+              </button>
+            </Tip>
+          </div>
+        ))}
+      {(!job || job.status === 'manual') && (
+        <div className="mt-1.5 flex items-center gap-2 text-muted-foreground">
+          <span>尚未生成，可点击按钮生成这张图。</span>
+          <Tip label="按指令生成这张配图，插入文档">
             <button
               type="button"
               className="rounded border border-border bg-card px-2 py-0.5 text-foreground hover:border-accent hover:text-accent disabled:opacity-40"
               disabled={generating}
               onClick={onGenerate}
             >
-              重新生成
+              生成这张图
             </button>
-          </div>
-        ))}
-      {(!job || job.status === 'manual') && (
-        <div className="mt-1.5 flex items-center gap-2 text-muted-foreground">
-          <span>尚未生成，可点击按钮生成这张图。</span>
-          <button
-            type="button"
-            className="rounded border border-border bg-card px-2 py-0.5 text-foreground hover:border-accent hover:text-accent disabled:opacity-40"
-            disabled={generating}
-            onClick={onGenerate}
-          >
-            生成这张图
-          </button>
+          </Tip>
         </div>
       )}
     </div>
