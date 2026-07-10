@@ -47,7 +47,8 @@ export interface BlockRevisionReview {
 }
 
 // 选区改写排队项：AI 忙时用户又发起的改写意图。故意【不存最终 blockRange】——排队期间前面的
-// 改写可能落地、块序号会漂；排空时才用 selectedText 在最新 markdown 里重定位（locateBlockRangeByText）。
+// 改写可能落地、块序号会漂；排空时才用 selectedText 在最新 markdown 里重定位（resolveRevisionTarget
+// → locateBlockRangeByTextWithHint）。
 // hintRange = 入队那刻的块区间，【仅】在 selectedText 多处命中时当裁判选最近的一处（CEO 护栏#3），
 // 不作主定位。瞬时 UI 信号，不持久化（同 blockReviews/pendingRevision）。
 export interface QueuedRevision {
