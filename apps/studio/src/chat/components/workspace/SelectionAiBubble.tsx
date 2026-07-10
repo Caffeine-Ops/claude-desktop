@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { reviseProposalSectionBlocks } from '../../lib/sendProposalSectionRevision'
+import { blockRangeOverlapsPendingReview } from '../../lib/proposalRevisionGuards'
 import { useProposalStore } from '../../stores/proposal'
 import type { ProposalKind } from '@desktop-shared/proposal'
 import { ImagePlusIcon, UploadIcon, SpinnerIcon, AlertTriangleIcon } from './proposalIcons'
@@ -212,6 +213,12 @@ export function SelectionAiBubble({
         hintRange: { start: anchor.start, end: anchor.end }
       })
     } else {
+      // 护栏#4：同几块已挂待审阅卡时拦下即时发起，防两张卡先后应用致 blockRange 错位。
+      const { blockReviews } = useProposalStore.getState()
+      if (blockRangeOverlapsPendingReview(blockReviews, anchor.sectionId, { start: anchor.start, end: anchor.end })) {
+        useProposalStore.getState().setRevisionQueueNotice('这段还有待确认的改写，请先「应用」或「放弃」它，再改这几段')
+        return // 不发起、不清 anchor
+      }
       await reviseProposalSectionBlocks(
         anchor.sectionId,
         { start: anchor.start, end: anchor.end },
