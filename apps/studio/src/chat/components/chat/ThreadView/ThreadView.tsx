@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ThreadPrimitive } from '@assistant-ui/react'
+import { ThreadPrimitive, ComposerPrimitive } from '@assistant-ui/react'
 import { AnimatePresence, motion } from 'motion/react'
 import { MessageSquareText, MoreHorizontal, Pencil } from 'lucide-react'
 import { Button } from '@/src/components/ui/button'
@@ -563,23 +563,37 @@ export function ThreadView(): React.JSX.Element {
           width — visually identical to the old single column. In slides
           mode it shrinks to a fixed-width chat rail card and the slides
           workspace card takes the rest (figure 27); the workflow-script
-          split rails it the same way. */}
-      <div
-        className={
-          'relative flex h-full min-h-0 flex-col ' +
-          // 4px (the smallest radius, matching .chat-app's clip) — explicit so
-          // it can't drift if Tailwind's bare `rounded` default ever changes.
-          (chatRailed
-            ? 'shrink-0 overflow-hidden rounded-[4px] bg-card'
-            : 'min-w-0 flex-1 bg-card')
-        }
-        // Split mode (slides / proposal / workflow script): width is
-        // user-controlled (drag handle) and persisted. The old fixed
-        // `w-[560px]` + `border-r` hairline are both gone — the gutter handle
-        // now provides the visual separation. In normal modes width stays
-        // flex-driven, so leave style unset.
-        style={chatRailed ? { width: chatColWidth } : undefined}
-      >
+          split rails it the same way.
+
+          It's also the file-drop target: `AttachmentDropzone` (asChild) is
+          applied to this ENTIRE column rather than just the composer card,
+          so dragging a file over the message viewport or header works too,
+          not only over the input. `asChild` (Radix Slot) merges the
+          primitive's drag handlers onto this div without adding a wrapper
+          element or touching layout. The primitive doesn't need to be
+          nested inside `ComposerPrimitive.Root` — its drop handler resolves
+          `aui.composer()` directly via `useAui()` — so moving the boundary
+          up here is safe and drops still land through the same
+          `addAttachment` pipeline the composer's own dropzone used. The
+          `group/dropzone` marker lets the full-column highlight overlay
+          below react to the primitive's internal `data-dragging` state. */}
+      <ComposerPrimitive.AttachmentDropzone asChild>
+        <div
+          className={
+            'group/dropzone relative flex h-full min-h-0 flex-col ' +
+            // 4px (the smallest radius, matching .chat-app's clip) — explicit so
+            // it can't drift if Tailwind's bare `rounded` default ever changes.
+            (chatRailed
+              ? 'shrink-0 overflow-hidden rounded-[4px] bg-card'
+              : 'min-w-0 flex-1 bg-card')
+          }
+          // Split mode (slides / proposal / workflow script): width is
+          // user-controlled (drag handle) and persisted. The old fixed
+          // `w-[560px]` + `border-r` hairline are both gone — the gutter handle
+          // now provides the visual separation. In normal modes width stays
+          // flex-driven, so leave style unset.
+          style={chatRailed ? { width: chatColWidth } : undefined}
+        >
       {/* Chat header — 46px 单行顶栏：命令 chip + 标题 + 「AI 生成」徽标，
           hairline 底边（见 ChatHeader 注释）。shrink-0 so it never gets
           squeezed by the scrolling viewport below. */}
@@ -741,7 +755,21 @@ export function ThreadView(): React.JSX.Element {
           )}
         </div>
       </ThreadPrimitive.If>
+
+      {/* Full-column drag highlight. Sibling of the header/viewport/dock
+          stack (not a descendant), absolutely positioned over the whole
+          column, so it reads as "drop anywhere in this chat" rather than
+          just tinting the composer card. Driven purely by CSS via the
+          `group/dropzone` marker + the primitive's `data-dragging`
+          attribute — no local state needed here. pointer-events-none so it
+          never steals the dragover/drop events the primitive is capturing
+          on the column itself. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 z-30 hidden rounded-[4px] ring-2 ring-inset ring-[hsl(var(--brand)/0.5)] bg-brand/[0.06] group-data-[dragging=true]/dropzone:block"
+      />
       </div>
+      </ComposerPrimitive.AttachmentDropzone>
 
       {/* Drag handle + gutter between the chat rail and the slides pane.
           Replaces the old `border-r` hairline: it carries the visual gap

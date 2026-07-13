@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useDrag } from '@use-gesture/react'
 import { useComposerRuntime } from '@assistant-ui/react'
 import { create } from 'zustand'
+import { TransformWrapper, TransformComponent, useControls } from 'react-zoom-pan-pinch'
 
 import { Button } from '@/src/components/ui/button'
 import { Textarea } from '@/src/components/ui/textarea'
@@ -323,9 +324,59 @@ export function LivePreviewEditor({
   const [geomVersion, setGeomVersion] = useState(0)
   const bumpGeom = useCallback(() => setGeomVersion((v) => v + 1), [])
   const reduceMotion = useReducedMotion()
+  // Current TransformWrapper scale, kept in a ref (written from onTransform)
+  // so measureRects can un-scale getBoundingClientRect() deltas back to the
+  // LOCAL coordinate space that HighlightOverlay's CSS left/top/w/h live in.
+  // HighlightOverlay is a sibling of svgHost INSIDE the same transformed
+  // subtree — its own box gets scaled by the wrapper too, so feeding it
+  // already-scaled screen-space px would double-apply the zoom (a selection
+  // box would drift further from its element the more you zoom). marquee's
+  // hit-test stays screen-space-vs-screen-space (both sides read live rects)
+  // so it's unaffected; only these CSS-positioned overlay boxes need the
+  // divide-by-scale correction.
+  const scaleRef = useRef(1)
   // The scrollable stage that hosts the SVG + overlay. Overlay boxes and
-  // marquee coords are all measured relative to THIS element's rect.
+  // marquee coords are all measured relative to THIS element's rect — that
+  // stays true even inside the zoom/pan wrapper because it only applies a
+  // CSS transform: every getBoundingClientRect()/elementFromPoint() call in
+  // this file already reads screen space, so the transformed (zoomed/panned)
+  // position falls out for free with zero coordinate-math changes. The ONE
+  // exception is HighlightOverlay/FloatingInstruction, which are positioned
+  // via CSS inside the same transformed subtree — see scaleRef above.
   const stageRef = useRef<HTMLDivElement | null>(null)
+  // The outer overflow-hidden box that actually clips what's visible (the
+  // TransformWrapper viewport — see its JSX ~line 1402). Distinct from
+  // stageRef: stageRef is INSIDE the zoomed/panned subtree and grows/shrinks
+  // with the slide's content, while this one is the fixed on-screen window
+  // the user looks through. FloatingInstruction needs both rects to figure
+  // out which part of local (pre-zoom) coordinate space is currently
+  // visible, so it can keep itself from sliding off-screen when the
+  // selected element sits near the edge of a zoomed/panned slide.
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  // Space-bar held = pan mode (Figma/PS convention). While held, marquee
+  // selection (useDrag below) is disabled so the same left-click-drag
+  // gesture unambiguously means "pan the canvas" instead of racing with
+  // rubber-band select for the same pointer events.
+  const [spacePanning, setSpacePanning] = useState(false)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      // Ignore repeats + typing contexts (the floating annotation textarea
+      // uses space as a normal character).
+      if (e.code !== 'Space' || e.repeat) return
+      const target = e.target as HTMLElement | null
+      if (target && /^(INPUT|TEXTAREA)$/.test(target.tagName)) return
+      setSpacePanning(true)
+    }
+    const onKeyUp = (e: KeyboardEvent): void => {
+      if (e.code === 'Space') setSpacePanning(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
+  }, [])
   // The floating instruction box's textarea, so a fresh selection can focus it
   // immediately (the user selects → types, no extra click to reach the input).
   const floatingInputRef = useRef<HTMLTextAreaElement | null>(null)
@@ -586,6 +637,16 @@ export function LivePreviewEditor({
   // Every box is stage-relative CSS px (getBoundingClientRect handles the
   // [&>svg]:w-full scaling for free). Recomputed when the selection/hover set,
   // the page content, or `geomVersion` (resize/scroll/image-load) changes.
+  //
+  // The /scaleRef.current divide: getBoundingClientRect() returns SCREEN px
+  // (post-zoom), but HighlightOverlay paints these numbers as CSS left/top/
+  // w/h on a div that lives INSIDE the same zoomed subtree — so whatever we
+  // hand it gets multiplied by the zoom a second time when the browser lays
+  // it out. Dividing back out here cancels that, landing the overlay's local
+  // coordinates at their pre-zoom (content-space) values so the ONE zoom the
+  // wrapper applies is the only one that ever happens. Without this, boxes
+  // drift further from their element the more you zoom (works by coincidence
+  // at scale=1, which is why it wasn't caught immediately).
   const measureRects = useCallback(
     (ids: string[]): OverlayRect[] => {
       const svg = svgRoot()
@@ -595,6 +656,7 @@ export function LivePreviewEditor({
       // exactly this host (inset-0), so element rects measured relative to it
       // land dead-on regardless of stage padding / scroll / flex-centering.
       const base = host.getBoundingClientRect()
+      const scale = scaleRef.current || 1
       const out: OverlayRect[] = []
       for (const id of ids) {
         const el = svg.querySelector(`#${CSS.escape(id)}`)
@@ -603,10 +665,10 @@ export function LivePreviewEditor({
         if (r.width === 0 && r.height === 0) continue
         out.push({
           id,
-          x: r.left - base.left,
-          y: r.top - base.top,
-          w: r.width,
-          h: r.height
+          x: (r.left - base.left) / scale,
+          y: (r.top - base.top) / scale,
+          w: r.width / scale,
+          h: r.height / scale
         })
       }
       return out
@@ -681,6 +743,37 @@ export function LivePreviewEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRects])
 
+  // Visible viewport window, expressed in the SAME local (pre-zoom) coordinate
+  // space as selectionBounds/measureRects — i.e. "which part of the zoomed/
+  // panned slide can the user actually see right now." Needed because
+  // FloatingInstruction's left clamp used to only guard against going
+  // negative (`Math.max(0, bounds.x)`), which assumed local x=0 was always the
+  // visible left edge. That held before pan/zoom existed; now that the stage
+  // can be scrolled/zoomed, local x=0 can be panned well off-screen, and an
+  // element selected near the (possibly off-screen) left edge of the SLIDE
+  // pushed the card past the actually-visible viewport's left edge, hiding it
+  // behind the app's own chrome (sidebar etc). Same divide-by-scale idiom as
+  // measureRects, just applied to the viewport container's rect instead of a
+  // selected element's. (top/bottom are computed too, for a future vertical
+  // clamp if that edge turns out to need it, but aren't consumed yet — the
+  // reported bug was horizontal only.)
+  const visibleLocalBounds = useMemo(() => {
+    const viewport = viewportRef.current
+    const host = svgHostRef.current
+    if (!viewport || !host) return null
+    const v = viewport.getBoundingClientRect()
+    const base = host.getBoundingClientRect()
+    const scale = scaleRef.current || 1
+    return {
+      left: (v.left - base.left) / scale,
+      right: (v.right - base.left) / scale,
+      top: (v.top - base.top) / scale,
+      bottom: (v.bottom - base.top) / scale
+    }
+    // geomVersion intentionally in deps: pan/zoom/resize must re-measure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geomVersion])
+
   // 量测已选芯片条的溢出：条是定高单行 overflow-hidden，溢出时算出「没
   // 完整露出的芯片数」（含被 +N 角标遮住的），驱动渐隐 mask + 角标 +
   // hover 面板的显隐。ResizeObserver 让分栏拖宽/拖窄时数字实时跟手；
@@ -717,6 +810,21 @@ export function LivePreviewEditor({
     ro.observe(stage)
     const svg = svgRoot()
     if (svg) ro.observe(svg)
+    // Also observe the outer viewport (the overflow-hidden box viewportRef
+    // points at), NOT just the inner stage. The two can drift apart: the
+    // stage wrapper is capped at max-w-[900px] (~line 1494) and zoom is a
+    // pure CSS transform on TransformComponent's content, so neither changes
+    // stageRef's own layout box. Dragging the chat-rail resize handle (or
+    // resizing the window) narrows/widens the VIEWPORT without moving
+    // stageRef at all once past that cap — without observing viewportRef
+    // too, that resize never bumps geomVersion, so visibleLocalBounds keeps
+    // FloatingInstruction's left-edge clamp pinned to a stale (usually too
+    // wide) viewport rect, and the card can still render partly behind the
+    // chat rail even though the clamp math itself is correct (2026-07-10,
+    // "input 还是会被挡住" — the clamp was computing against yesterday's
+    // width).
+    const viewport = viewportRef.current
+    if (viewport) ro.observe(viewport)
     const onScroll = (): void => bumpGeom()
     stage.addEventListener('scroll', onScroll, { passive: true })
     // Late-loading <image> tags change bboxes after injection — re-measure on
@@ -875,11 +983,16 @@ export function LivePreviewEditor({
         pickAt(cx, cy, { alt: mods.alt, additive: mods.additive })
         return
       }
-      // Marquee coords are host-relative to match the overlay's origin.
+      // Marquee coords are host-relative to match the overlay's origin, then
+      // divided by the live zoom scale — same reason as measureRects: this
+      // box is painted as CSS left/top/w/h on a div INSIDE the zoomed
+      // subtree, so it must be expressed in local (pre-zoom) units or the
+      // rubber-band rectangle drifts off the actual drag path once zoomed.
       const base = host.getBoundingClientRect()
+      const scale = scaleRef.current || 1
       const toHost = (px: number, py: number): { x: number; y: number } => ({
-        x: px - base.left,
-        y: py - base.top
+        x: (px - base.left) / scale,
+        y: (py - base.top) / scale
       })
       if (first) {
         draggingRef.current = true
@@ -927,7 +1040,8 @@ export function LivePreviewEditor({
       }
       setMarquee(box)
     },
-    { filterTaps: true, threshold: 4, pointer: { touch: true } }
+    // enabled: false while space is held — pan mode owns the left-drag then.
+    { filterTaps: true, threshold: 4, pointer: { touch: true }, enabled: !spacePanning }
   )
 
   // ── annotation actions ───────────────────────────────────────────────────
@@ -1336,9 +1450,16 @@ export function LivePreviewEditor({
               SVG <text>. onMouseDown here clears the selection when the user
               clicks the empty margin AROUND the card (outside stageRef) — a
               natural "click blank to deselect" that the card's own handler
-              can't cover since that whitespace isn't part of the card. */}
+              can't cover since that whitespace isn't part of the card.
+              overflow-hidden (not overflow-auto): the native scrollbar is
+              retired in favour of react-zoom-pan-pinch's own viewport — pan
+              (space+drag) and wheel-zoom now own all movement in this box. */}
           <div
-            className="flex min-h-0 flex-1 items-center justify-center overflow-auto px-6 pb-6 pt-1 @max-lg/editor:px-3 @max-lg/editor:pb-4"
+            ref={viewportRef}
+            className={cn(
+              'relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-6 pb-6 pt-1 @max-lg/editor:px-3 @max-lg/editor:pb-4',
+              spacePanning && 'cursor-grab'
+            )}
             onMouseDown={(e) => {
               if (stageRef.current && !stageRef.current.contains(e.target as Node)) {
                 setSelectedIds([])
@@ -1346,45 +1467,84 @@ export function LivePreviewEditor({
             }}
           >
             {content ? (
-              <div className="flex w-full max-w-[900px] flex-col items-center gap-3.5">
-                {/* Two nested layers so the selection overlay is NOT clipped by
-                    the card's rounded corners:
-                     - outer (stageRef): the drag/hover surface + overlay origin.
-                       NO overflow-hidden, so boxes/handles on elements near the
-                       edge render fully (they'd otherwise be cut by the round
-                       corner — the bug this fixes).
-                     - inner (svgHost): rounded-xl + overflow-hidden clips only
-                       the SVG itself to the card shape + carries the shadow. */}
-                <div
-                  ref={stageRef}
-                  {...bindDrag()}
-                  onMouseMove={onStageMouseMove}
-                  onMouseLeave={onStageMouseLeave}
-                  className="relative w-full select-none"
-                  style={{ touchAction: 'none' }}
+              <TransformWrapper
+                minScale={0.25}
+                maxScale={4}
+                initialScale={1}
+                centerOnInit
+                // Left-drag pans ONLY while space is held (Figma/PS
+                // convention) — otherwise it must stay free for marquee
+                // select (useDrag above), which is disabled in lockstep via
+                // its own `enabled: !spacePanning`.
+                panning={{ disabled: !spacePanning, velocityDisabled: true }}
+                doubleClick={{ disabled: true }}
+                // step 0.12 felt fine for a discrete mouse wheel but way too
+                // fast on a trackpad — a two-finger swipe fires dozens of
+                // wheel events per gesture, so the same per-event step
+                // compounds into a much bigger jump. The library has no
+                // separate trackpad sensitivity knob, so lowering step is the
+                // only lever; 0.04 keeps mouse-wheel zoom usable (just needs
+                // a couple more notches) while taming trackpad swipes.
+                wheel={{ step: 0.04 }}
+                // The selection/hover/marquee overlay boxes are computed from
+                // getBoundingClientRect() (screen space) — correct after a
+                // zoom/pan for free, but only once React re-renders them. The
+                // library mutates the DOM transform imperatively and does NOT
+                // trigger a re-render on its own, so without this the overlay
+                // would freeze at its pre-zoom position until some unrelated
+                // state change happened to bump geomVersion. Also capture the
+                // live scale into scaleRef — measureRects needs it to convert
+                // screen-space deltas back to the overlay's local (pre-zoom)
+                // coordinate space (see measureRects' comment).
+                onTransform={(_ref, state) => {
+                  scaleRef.current = state.scale
+                  bumpGeom()
+                }}
+              >
+                <ZoomControls />
+                <TransformComponent
+                  wrapperClass="!w-full !h-full"
+                  contentClass="!w-full !h-full flex items-center justify-center"
                 >
-                  {/* The amber .svg-annotated outline is gone — annotated
-                      elements now wear the overlay's dashed indigo frame +
-                      number chip (HighlightOverlay), so a class outline here
-                      would double-frame them. .svg-selectable keeps the pointer
-                      affordance. */}
-                  <div
-                    ref={svgHostRef}
-                    // Redesign「舞台托盘」: a warmer, deeper two-layer shadow lifts
-                    // the slide off the sunken well (bg-muted/30 around it) — the
-                    // old flat 0.06 shadow left the card visually glued to the bg.
-                    className="w-full max-w-full overflow-hidden rounded-xl bg-background shadow-[0_18px_44px_-20px_rgba(30,41,74,0.28),0_4px_12px_-6px_rgba(30,41,74,0.14)] ring-1 ring-black/[0.03] [&_.svg-selectable]:cursor-pointer [&>svg]:block [&>svg]:h-auto [&>svg]:w-full"
-                    // eslint-disable-next-line react/no-danger
-                    dangerouslySetInnerHTML={{ __html: content }}
-                  />
-                  <HighlightOverlay
-                    selected={selectedRects}
-                    annotated={annotatedRects}
-                    hover={hoverRect}
-                    marquee={marquee}
-                    reduceMotion={!!reduceMotion}
-                    onEditBadge={editBadge}
-                  />
+                  <div className="flex w-full max-w-[900px] flex-col items-center gap-3.5">
+                    {/* Two nested layers so the selection overlay is NOT clipped by
+                        the card's rounded corners:
+                         - outer (stageRef): the drag/hover surface + overlay origin.
+                           NO overflow-hidden, so boxes/handles on elements near the
+                           edge render fully (they'd otherwise be cut by the round
+                           corner — the bug this fixes).
+                         - inner (svgHost): rounded-xl + overflow-hidden clips only
+                           the SVG itself to the card shape + carries the shadow. */}
+                    <div
+                      ref={stageRef}
+                      {...bindDrag()}
+                      onMouseMove={onStageMouseMove}
+                      onMouseLeave={onStageMouseLeave}
+                      className="relative w-full select-none"
+                      style={{ touchAction: 'none' }}
+                    >
+                      {/* The amber .svg-annotated outline is gone — annotated
+                          elements now wear the overlay's dashed indigo frame +
+                          number chip (HighlightOverlay), so a class outline here
+                          would double-frame them. .svg-selectable keeps the pointer
+                          affordance. */}
+                      <div
+                        ref={svgHostRef}
+                        // Redesign「舞台托盘」: a warmer, deeper two-layer shadow lifts
+                        // the slide off the sunken well (bg-muted/30 around it) — the
+                        // old flat 0.06 shadow left the card visually glued to the bg.
+                        className="w-full max-w-full overflow-hidden rounded-xl bg-background shadow-[0_18px_44px_-20px_rgba(30,41,74,0.28),0_4px_12px_-6px_rgba(30,41,74,0.14)] ring-1 ring-black/[0.03] [&_.svg-selectable]:cursor-pointer [&>svg]:block [&>svg]:h-auto [&>svg]:w-full"
+                        // eslint-disable-next-line react/no-danger
+                        dangerouslySetInnerHTML={{ __html: content }}
+                      />
+                      <HighlightOverlay
+                        selected={selectedRects}
+                        annotated={annotatedRects}
+                        hover={hoverRect}
+                        marquee={marquee}
+                        reduceMotion={!!reduceMotion}
+                        onEditBadge={editBadge}
+                      />
                   {/* Floating instruction box — pops just above the selection so
                       the user writes the edit right where they're looking,
                       instead of walking over to the side panel. Positioned in
@@ -1395,6 +1555,8 @@ export function LivePreviewEditor({
                       Esc clears the selection (dismiss). */}
                   <FloatingInstruction
                     bounds={selectionBounds}
+                    scale={scaleRef.current || 1}
+                    visibleBounds={visibleLocalBounds}
                     count={selectedIds.length}
                     value={annotationText}
                     busy={busy}
@@ -1418,18 +1580,27 @@ export function LivePreviewEditor({
                       setAnnotationText('')
                     }}
                   />
-                </div>
-                <div className="flex flex-wrap items-center justify-center gap-1.5 text-[11.5px] text-muted-foreground/70">
-                  点击元素选择 · 拖拽框选多个 ·
-                  <kbd className="grid h-[17px] min-w-[17px] place-items-center rounded border border-border bg-muted/50 px-1 text-[10px]">⌘</kbd>
-                  加选 ·
-                  <kbd className="grid h-[17px] min-w-[17px] place-items-center rounded border border-border bg-muted/50 px-1 text-[10px]">⌥</kbd>
-                  选父级
-                </div>
-              </div>
+                    </div>
+                  </div>
+                </TransformComponent>
+              </TransformWrapper>
             ) : (
               <div className="text-[13px] text-muted-foreground">
                 {error ? `加载失败：${error}` : '加载中…'}
+              </div>
+            )}
+            {/* Static hint row — stays fixed to the viewport (outside the
+                zoom/pan transform), otherwise it would shrink/pan away with
+                the canvas instead of reading as chrome. */}
+            {content && (
+              <div className="pointer-events-none absolute bottom-1.5 left-0 flex w-full flex-wrap items-center justify-center gap-1.5 text-[11.5px] text-muted-foreground/70">
+                点击元素选择 · 拖拽框选多个 ·
+                <kbd className="grid h-[17px] min-w-[17px] place-items-center rounded border border-border bg-muted/50 px-1 text-[10px]">⌘</kbd>
+                加选 ·
+                <kbd className="grid h-[17px] min-w-[17px] place-items-center rounded border border-border bg-muted/50 px-1 text-[10px]">⌥</kbd>
+                选父级 · 按住
+                <kbd className="grid h-[17px] min-w-[17px] place-items-center rounded border border-border bg-muted/50 px-1 text-[10px]">空格</kbd>
+                拖拽平移 · 滚轮缩放
               </div>
             )}
           </div>
@@ -1701,6 +1872,33 @@ export function LivePreviewEditor({
 }
 
 /**
+ * ZoomControls
+ * ------------
+ * Small floating +/−/reset cluster, bottom-right of the stage. Must be a
+ * child of TransformWrapper (not a sibling) — useControls() reads its zoom
+ * API from context, there's no other way to reach zoomIn/zoomOut/reset from
+ * outside the library's own tree.
+ */
+function ZoomControls(): React.JSX.Element {
+  const { zoomIn, zoomOut, resetTransform } = useControls()
+  const btnClass =
+    'grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground'
+  return (
+    <div className="absolute bottom-3 right-3 z-10 flex items-center gap-0.5 rounded-lg border border-border/60 bg-background/95 p-1 shadow-sm backdrop-blur-sm">
+      <button type="button" title="缩小" className={btnClass} onClick={() => zoomOut()}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14" /></svg>
+      </button>
+      <button type="button" title="还原" className={btnClass} onClick={() => resetTransform()}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="2" /></svg>
+      </button>
+      <button type="button" title="放大" className={btnClass} onClick={() => zoomIn()}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+      </button>
+    </div>
+  )
+}
+
+/**
  * HighlightOverlay
  * ----------------
  * The Figma-style selection layer, painted from measured element boxes rather
@@ -1842,6 +2040,8 @@ function HighlightOverlay({
  */
 function FloatingInstruction({
   bounds,
+  scale,
+  visibleBounds,
   count,
   value,
   busy,
@@ -1856,6 +2056,23 @@ function FloatingInstruction({
   // needed so the flip anchors off the correct edge: above → sit over the top;
   // below → sit under the BOTTOM (never over the element).
   bounds: { x: number; y: number; y2: number } | null
+  // Live zoom level (scaleRef.current from the wrapper). This box lives inside
+  // the same zoomed/panned subtree as HighlightOverlay (see the scaleRef
+  // comment ~line 330), so its left/top need to stay in pre-zoom coordinates
+  // for the anchor to track the element — but unlike a selection box, this
+  // card's own SIZE/font must stay constant on screen regardless of zoom.
+  // The counter-scale below (1/scale) undoes the wrapper's transform for just
+  // this element, canceling the "input box balloons when you zoom in" bug.
+  scale: number
+  // Visible viewport window in the same local coords as `bounds` (see
+  // visibleLocalBounds' comment at its definition). Used to keep the card's
+  // LEFT edge from sliding past the actually-visible part of a zoomed/panned
+  // slide — an element selected near the slide's own left edge can, once
+  // zoomed in and panned, have that edge sit well outside the viewport, and
+  // `bounds.x` alone doesn't know that. Null before the refs it needs have
+  // measured anything (first paint) — falls back to the pre-viewport-aware
+  // clamp in that case.
+  visibleBounds: { left: number; right: number; top: number; bottom: number } | null
   count: number
   value: string
   busy: boolean
@@ -1886,20 +2103,57 @@ function FloatingInstruction({
   // card straight over the selected element and hide it (the bug being fixed).
   const GAP = 10
   const BOX_H = 128
+  const CARD_W = 300 // matches the w-[300px] below
   const above = bounds.y >= BOX_H + GAP
-  const left = Math.max(0, bounds.x)
+  let left = Math.max(0, bounds.x)
+  // Keep the card's left edge inside the part of the slide that's actually
+  // visible right now, not just >= the slide's own local x=0. Without this,
+  // an element near the (possibly panned-off-screen) left edge of a zoomed
+  // slide drags the card off the left of the viewport with it, hiding it
+  // behind whatever chrome sits to the left (sidebar etc — the bug this
+  // fixes). EDGE_MARGIN is a constant on-screen gap, converted to local units
+  // via /scale (same reasoning as the counter-scale below: a raw local value
+  // would grow/shrink on screen as zoom changes, but the margin shouldn't).
+  if (visibleBounds) {
+    const EDGE_MARGIN = 8
+    const s = scale || 1
+    const marginLocal = EDGE_MARGIN / s
+    const cardWLocal = CARD_W / s
+    const minLeft = visibleBounds.left + marginLocal
+    const maxLeft = visibleBounds.right - cardWLocal - marginLocal
+    // Viewport narrower than the card (heavy zoom-in / very narrow panel):
+    // prefer keeping the left edge on-screen over fitting the whole width.
+    left = maxLeft >= minLeft ? Math.min(Math.max(left, minLeft), maxLeft) : minLeft
+  }
   // below 分支用 CSS min() 钳住下缘：选大元素时 y2+GAP 会伸出画布、被
   // dock 裁掉半张卡（2026-07-07 窄屏实锤）。100% 指定位上下文（stage
   // wrap）的高度，浮层最多贴底 4px——盖住选区下沿也比被裁切强。
   const style: React.CSSProperties = above
-    ? { left, top: bounds.y - GAP, transform: 'translateY(-100%)' }
+    ? { left, top: bounds.y - GAP }
     : { left, top: `min(${bounds.y2 + GAP}px, calc(100% - ${BOX_H + 4}px))` }
+  // Counter-scale so the card renders at a constant on-screen size no matter
+  // how far the stage is zoomed — only its ANCHOR position (left/top above,
+  // in pre-zoom stage px) should track the selected element; the card itself
+  // is chrome, not content. Split into two nested divs rather than folding
+  // both transforms into one `transform` string: the outer div's
+  // `transform-origin` must sit at the anchor corner (top-left, since
+  // left/top position that corner) so the 1/scale un-zoom doesn't also drag
+  // the anchor away from the element, while the `above` case's flip-up still
+  // needs a plain, unscaled translateY(-100%) of the card's own rendered
+  // height. Composing that into a single `scale(1/s) translateY(-100%)`
+  // would scale the translate distance too (wrong offset); nesting keeps the
+  // two transforms independent instead of fighting over one origin/order.
+  const counterScale = 1 / (scale || 1)
 
   return (
     <div
       data-floating-input
+      // w-[300px] must match the CARD_W constant above (the horizontal
+      // viewport clamp needs to know this box's real width to keep it fully
+      // on-screen; Tailwind's arbitrary value can't be parameterized by a JS
+      // const, so keep the two in sync by hand if this ever changes).
       className="pointer-events-auto absolute z-10 w-[300px] max-w-[calc(100%-8px)]"
-      style={style}
+      style={{ ...style, transformOrigin: 'top left', transform: `scale(${counterScale})` }}
       // Clicks inside the box must NOT bubble to the stage's select/deselect
       // handlers (that would clear the selection out from under the input). The
       // [data-floating-input] guard in bindDrag covers use-gesture's pointer
@@ -1911,8 +2165,18 @@ function FloatingInstruction({
           system surface, not a coloured widget. 品牌绿只落在色点 + 提交钮 +
           输入焦点环上（2026-07-07 原型定稿布局：色点标题行 → 输入区 →
           底部动作行）。选中框（HighlightOverlay）同为品牌绿——操作色全链
-          统一，靛蓝已退役。 */}
-      <div className="rounded-xl border border-border bg-popover/95 p-2.5 shadow-[0_10px_30px_-6px_rgba(20,30,50,0.22)] ring-1 ring-black/[0.02] backdrop-blur-md">
+          统一，靛蓝已退役。
+
+          The `above` flip's translateY(-100%) lives HERE, not on the outer
+          positioned div: by this nesting level the parent's counter-scale
+          has already normalized the coordinate space to real screen px, so
+          "-100%" shifts by exactly this card's own rendered height — doing
+          it on the outer div instead would translate in pre-zoom stage px,
+          landing the flip-up offset wrong at any zoom level other than 1. */}
+      <div
+        className="rounded-xl border border-border bg-popover/95 p-2.5 shadow-[0_10px_30px_-6px_rgba(20,30,50,0.22)] ring-1 ring-black/[0.02] backdrop-blur-md"
+        style={above ? { transform: 'translateY(-100%)' } : undefined}
+      >
         <div className="flex items-center gap-1.5 px-0.5 text-[11.5px] text-muted-foreground">
           <span className="size-2 shrink-0 rounded-[3px] bg-[hsl(var(--brand))]" />
           {editingId ? (

@@ -262,6 +262,16 @@ const STRINGS = {
     composerLoadingFiles: '正在加载文件…',
     composerNoMatchingFiles: '没有匹配的文件',
 
+    // Context usage chip (popover above the composer)
+    contextUsageLabel: '上下文',
+    contextUsageTitle: '上下文用量',
+    contextUsageUsed: '已用',
+    contextUsageWindow: '上下文窗口',
+    contextUsageInput: '输入',
+    contextUsageCacheRead: '缓存命中',
+    contextUsageCacheWrite: '缓存新写入',
+    contextUsageOutput: '本轮输出',
+
     // Workspace pill (inline switcher above the composer)
     workspacePillLabel: '在文件夹中工作',
     workspacePillEmpty: '未选择文件夹',
@@ -597,6 +607,16 @@ const STRINGS = {
     composerNoMatchingCommands: 'No matching commands',
     composerLoadingFiles: 'Loading files…',
     composerNoMatchingFiles: 'No matching files',
+
+    // Context usage chip (popover above the composer)
+    contextUsageLabel: 'Context',
+    contextUsageTitle: 'Context usage',
+    contextUsageUsed: 'Used',
+    contextUsageWindow: 'Context window',
+    contextUsageInput: 'Input',
+    contextUsageCacheRead: 'Cache read',
+    contextUsageCacheWrite: 'Cache write',
+    contextUsageOutput: 'Last output',
 
     // Workspace pill (inline switcher above the composer)
     workspacePillLabel: 'Work in a folder',

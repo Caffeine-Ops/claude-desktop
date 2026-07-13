@@ -324,8 +324,16 @@ export function Composer(): React.JSX.Element {
             rounded boxes joined by negative margins, which clipped the status
             row and doubled up borders; see the bug screenshots).
 
-            The AttachmentDropzone is now the ONE rounded frame for the whole
-            stack. Everything lives INSIDE it as flat, full-width segments
+            This used to be its own `AttachmentDropzone` (the drop target was
+            just the composer card). The drop target has since moved up to
+            wrap the whole ThreadView column (see ThreadView.tsx's
+            `group/dropzone` — drops now work anywhere over the viewport too,
+            not just the input), so this is now a plain rounded frame; the
+            `group-data-[dragging=true]/dropzone:*` variants below still tint
+            this card while a drag is in progress, driven by the ancestor
+            dropzone's state rather than one of its own.
+
+            Everything lives INSIDE it as flat, full-width segments
             separated by 1px hairline dividers, top-to-bottom:
 
               ┌─ message queue (QueuePanel) ─┐   ← only while queue non-empty
@@ -339,7 +347,7 @@ export function Composer(): React.JSX.Element {
             radius. No segment carries its own border/radius/negative margin, so
             nothing can overlap or clip anything else — the status row is always
             a full, un-obscured line. */}
-        <ComposerPrimitive.AttachmentDropzone className="relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--brand)/0.4)] data-[dragging=true]:ring-2 data-[dragging=true]:ring-[hsl(var(--brand)/0.5)] data-[dragging=true]:bg-brand/[0.08] dark:ring-white/[0.08]">
+        <div className="relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--brand)/0.4)] group-data-[dragging=true]/dropzone:ring-2 group-data-[dragging=true]/dropzone:ring-[hsl(var(--brand)/0.5)] group-data-[dragging=true]/dropzone:bg-brand/[0.08] dark:ring-white/[0.08]">
           {/* Segment 1 — message queue. Renders null when empty (so no divider
               shows either). Its own frame styling was stripped; it's pure
               content here. */}
@@ -516,13 +524,18 @@ export function Composer(): React.JSX.Element {
               </>
             )}
           </ComposerPrimitive.Root>
-        </ComposerPrimitive.AttachmentDropzone>
+        </div>
 
         {/* Below-card chips (figure 18): 选择工作目录已实装（统一会话管理，
             2026-07-07：新会话可选工作目录，发过消息后锁定只读）；语气 创意
             占位 chip 已移除（从未接实际功能）。权限模式 chip on the right is
             FUNCTIONAL（2026-07-05 与模型 chip 互换位置后落这排）——它切换
-            引擎的权限模式（default/plan/acceptEdits/bypass/dontAsk）。 */}
+            引擎的权限模式（default/plan/acceptEdits/bypass/dontAsk）。上下文
+            用量 chip（ContextUsageChip，2026-07-10）暂时隐藏不挂载——它的
+            200k 窗口分母是从 ThreadListSidebar 抄来的写死常量，没有按当前
+            会话实际模型取值，模型切换到非 200k 窗口时百分比会算错。组件与
+            数据链路（engine.ts usage 事件的三个分量字段）保留，待窗口容量
+            改成按模型动态取值后再挂回这排。 */}
         <div className="mt-3 flex items-center gap-4 px-2">
           <WorkspaceDirPicker />
           <div className="ml-auto">

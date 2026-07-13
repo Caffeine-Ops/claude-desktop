@@ -1654,7 +1654,13 @@ function makeSessionEventHandler(
     endAssistantMessage: (sid: string) => void
     setUsage: (
       sid: string,
-      usage: { contextTokens: number; outputTokens: number }
+      usage: {
+        contextTokens: number
+        outputTokens: number
+        inputTokens: number
+        cacheReadTokens: number
+        cacheCreateTokens: number
+      }
     ) => void
   }
 ): (event: ChatEvent) => void {
@@ -1780,7 +1786,10 @@ function makeSessionEventHandler(
       case 'usage':
         actions.setUsage(sid, {
           contextTokens: event.contextTokens,
-          outputTokens: event.outputTokens
+          outputTokens: event.outputTokens,
+          inputTokens: event.inputTokens,
+          cacheReadTokens: event.cacheReadTokens,
+          cacheCreateTokens: event.cacheCreateTokens
         })
         break
       case 'end':

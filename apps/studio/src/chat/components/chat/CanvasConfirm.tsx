@@ -417,9 +417,11 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
 
   // Live selection summary for the action bar — the user's last glance before
   // committing. Catalog ids resolve to their localized labels; a custom value
-  // (not in the catalog) shows the user's own text verbatim.
-  const summaryText = useMemo(() => {
-    if (!cat) return ''
+  // (not in the catalog) shows the user's own text verbatim. Kept as an array
+  // (not pre-joined) so the action bar can render each choice as its own chip
+  // — 2026-07-10 redesign, was a single "·"-joined string.
+  const summaryParts = useMemo(() => {
+    if (!cat) return []
     const labelFor = (list: CatalogOption[] | undefined, id: string | undefined): string | null => {
       if (!id) return null
       const o = flattenCatalog(list).find((x) => x.id === id)
@@ -442,7 +444,7 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
             state.typography?.name,
             state.typography?.body_size ? `${state.typography.body_size}px` : null
           ]
-    return parts.filter(Boolean).join(' · ')
+    return parts.filter((p): p is string => Boolean(p))
   }, [cat, state, stage, lang])
 
   // ── render ───────────────────────────────────────────────────────────────
@@ -713,17 +715,65 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
           priority) + the single primary action. No back button — tier1 has
           already been consumed by the server's --wait-only loop by the time
           tier2 renders, so "going back" has nothing to re-submit into. */}
-      <div className="shrink-0 border-t border-border bg-background px-6 py-2.5">
+      {/* bg-white (light) instead of bg-background: the user's ask was a
+          WHITE action bar ("背景用白色") — bg-background is both light-gray
+          by token default AND runtime-overridden by the appearance store to
+          whatever background the user picked, so it can never be relied on
+          to read as white. Literal white in light mode; dark keeps the
+          semantic token so the bar doesn't flash white in dark mode. */}
+      <div className="shrink-0 border-t border-border bg-white px-6 py-2.5 dark:bg-background">
         <div className="mx-auto flex w-full max-w-[860px] items-center gap-3">
-          <span
-            className={
-              'min-w-0 flex-1 truncate text-[11.5px] ' +
-              (statusText ? 'text-muted-foreground' : 'text-muted-foreground/80')
-            }
-            title={statusText || summaryText}
-          >
-            {statusText || summaryText}
-          </span>
+          {statusText ? (
+            <span
+              className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground"
+              title={statusText}
+            >
+              {statusText}
+            </span>
+          ) : (
+            // Each choice as its own chip instead of one "·"-joined line —
+            // reads as a set of tags rather than a sentence.
+            //
+            // 形态定稿 = 原型 V5「品牌绿点缀」（docs/
+            // ui-prototype-confirm-actionbar-tags.html，2026-07-13 用户选
+            // 定）：品牌绿淡底 + 绿字 + 勾选图标，与右侧确认按钮同色呼
+            // 应——「这些是你确认过的选择」。配色沿用 app 里既有的同款
+            // chip 词汇（ThreadListSidebar 的 bg-brand/[0.12]+text-brand、
+            // PermissionFloatCard 的 bg-brand/[0.09]），全静态 brand
+            // token：此前三轮「怎么调都发灰」的教训是 --card/--background
+            // 会被外观设置运行时改写、深浅关系随用户主题漂移，brand 不在
+            // applyThemeOverrides 的改写清单里（用户改的是 --accent），
+            // dark 档位 tokens.css 自带。勾选 path 与本文件 confirmed
+            // 状态页的大勾同一条，视觉语言一致。overflow-x-auto (not
+            // wrap) keeps this single-line/fixed-height like the status
+            // text it swaps with; scrollbar hidden since this is a
+            // glance-only summary, not something meant to be scrolled
+            // deliberately.
+            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {summaryParts.map((part, i) => (
+                <span
+                  key={i}
+                  className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-brand/[0.09] px-3 py-1.5 text-[12px] font-medium text-brand"
+                >
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                    className="shrink-0"
+                  >
+                    <path d="M4.5 12.5l5 5L19.5 7" />
+                  </svg>
+                  {part}
+                </span>
+              ))}
+            </div>
+          )}
           <button
             type="button"
             disabled={submitting}

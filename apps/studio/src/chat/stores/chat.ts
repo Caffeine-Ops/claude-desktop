@@ -94,10 +94,18 @@ interface PerSessionState {
    * Per-session accumulated usage, reported at the end of each turn.
    * `contextTokens` is the full prompt size fed into the model for
    * the latest turn (input + cache_read + cache_create) — i.e. the
-   * value the sidebar badge uses for a "xk / 200k" indicator.
+   * value the sidebar badge uses for a "xk / 200k" indicator. The
+   * three token buckets sum to `contextTokens` and back the context
+   * usage breakdown popover above the composer.
    * `null` until the first turn completes for this session.
    */
-  usage: { contextTokens: number; outputTokens: number } | null
+  usage: {
+    contextTokens: number
+    outputTokens: number
+    inputTokens: number
+    cacheReadTokens: number
+    cacheCreateTokens: number
+  } | null
 }
 
 const EMPTY_SLOT: PerSessionState = {
@@ -239,7 +247,13 @@ interface ChatState {
    */
   setUsage: (
     sessionId: string,
-    usage: { contextTokens: number; outputTokens: number }
+    usage: {
+      contextTokens: number
+      outputTokens: number
+      inputTokens: number
+      cacheReadTokens: number
+      cacheCreateTokens: number
+    }
   ) => void
 
   /** Wipe every session slot and foreground state. */

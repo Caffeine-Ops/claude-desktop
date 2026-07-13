@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Confirm UI · Tier 1 锚点确认</title>
+<style>
+  :root {
+    color-scheme: light;
+    --background: 240 7% 97%;
+    --foreground: 240 3% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 3% 12%;
+    --primary: 211 100% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 6% 94%;
+    --secondary-foreground: 240 3% 18%;
+    --muted: 240 5% 93%;
+    --muted-foreground: 240 4% 40%;
+    --accent: 211 100% 45%;
+    --accent-foreground: 0 0% 100%;
+    --border: 240 6% 84%;
+    --input: 240 6% 86%;
+    --ring: 211 100% 45%;
+    --brand: 142 76% 36%;
+    --brand-foreground: 0 0% 100%;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    --shadow-apple: rgba(0,0,0,.14) 0px 2px 14px 0px;
+  }
+  :root[data-theme="dark"], .dark {
+    color-scheme: dark;
+    --background: 40 6% 10%;
+    --foreground: 40 21% 89%;
+    --card: 30 3% 13%;
+    --card-foreground: 39 35% 92%;
+    --primary: 210 100% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 30 5% 15%;
+    --secondary-foreground: 40 21% 89%;
+    --muted: 36 6% 17%;
+    --muted-foreground: 36 5% 58%;
+    --accent: 210 100% 58%;
+    --accent-foreground: 0 0% 100%;
+    --border: 49 12% 18%;
+    --input: 42 8% 25%;
+    --ring: 210 100% 58%;
+    --brand: 145 60% 52%;
+    --brand-foreground: 0 0% 100%;
+    --shadow-apple: rgba(0,0,0,.4) 0px 2px 16px 0px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --background: 40 6% 10%;
+      --foreground: 40 21% 89%;
+      --card: 30 3% 13%;
+      --card-foreground: 39 35% 92%;
+      --primary: 210 100% 58%;
+      --primary-foreground: 0 0% 100%;
+      --secondary: 30 5% 15%;
+      --secondary-foreground: 40 21% 89%;
+      --muted: 36 6% 17%;
+      --muted-foreground: 36 5% 58%;
+      --accent: 210 100% 58%;
+      --accent-foreground: 0 0% 100%;
+      --border: 49 12% 18%;
+      --input: 42 8% 25%;
+      --ring: 210 100% 58%;
+      --brand: 145 60% 52%;
+      --brand-foreground: 0 0% 100%;
+      --shadow-apple: rgba(0,0,0,.4) 0px 2px 16px 0px;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: var(--font-sans);
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    -webkit-font-smoothing: antialiased;
+  }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+
+  /* ── shell：模拟「问题」tab 的受限宽度侧栏容器 ───────────────────── */
+  .shell {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    max-width: 620px;
+    margin: 0 auto;
+    width: 100%;
+    height: 100vh;
+    border-left: 1px solid hsl(var(--border) / 0.6);
+    border-right: 1px solid hsl(var(--border) / 0.6);
+  }
+
+  /* ── 顶部条 ──────────────────────────────────────────────────── */
+  .topbar {
+    flex-shrink: 0;
+    padding: 14px 20px 12px;
+    border-bottom: 1px solid hsl(var(--border));
+    background: hsl(var(--background));
+  }
+  .topbar-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .topbar-title {
+    font-size: 14.5px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+  .topbar-hint {
+    font-size: 11.5px;
+    color: hsl(var(--muted-foreground));
+    margin-top: 2px;
+    font-weight: 400;
+  }
+  .lang-toggle {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    background: hsl(var(--muted));
+    border-radius: 8px;
+  }
+  .lang-btn {
+    border: none;
+    background: transparent;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 9px;
+    border-radius: 6px;
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .lang-btn.active {
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  }
+
+  /* ── Stepper ─────────────────────────────────────────────────── */
+  .stepper {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+  }
+  .step-dot {
+    width: 22px; height: 22px;
+    border-radius: 999px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10.5px;
+    font-weight: 700;
+    flex-shrink: 0;
+    transition: all .2s ease;
+  }
+  .step.active .step-dot {
+    background: hsl(var(--accent));
+    color: hsl(var(--accent-foreground));
+    box-shadow: 0 0 0 4px hsl(var(--accent) / 0.14);
+  }
+  .step.pending .step-dot {
+    background: hsl(var(--muted));
+    color: hsl(var(--muted-foreground));
+  }
+  .step-text { display: flex; flex-direction: column; min-width: 0; }
+  .step-name {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+  .step.pending .step-name { color: hsl(var(--muted-foreground)); }
+  .step-sub {
+    font-size: 10px;
+    color: hsl(var(--muted-foreground));
+    line-height: 1.3;
+  }
+  .step-line {
+    flex: 0 0 28px;
+    height: 1.5px;
+    background: hsl(var(--border));
+    margin: 0 8px;
+    border-radius: 1px;
+  }
+
+  /* ── 滚动区 ──────────────────────────────────────────────────── */
+  .scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px 20px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .scroll::-webkit-scrollbar { width: 8px; }
+  .scroll::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 4px;
+    border: 2px solid hsl(var(--background));
+  }
+
+  /* ── Section 卡片 ────────────────────────────────────────────── */
+  .section {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .section-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px 18px 12px;
+  }
+  .section-num {
+    width: 20px; height: 20px;
+    border-radius: 6px;
+    background: hsl(var(--accent) / 0.1);
+    color: hsl(var(--accent));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10.5px;
+    font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .section-titles { flex: 1; min-width: 0; }
+  .section-title {
+    font-size: 13.5px;
+    font-weight: 650;
+    letter-spacing: -0.005em;
+  }
+  .section-note {
+    font-size: 11px;
+    color: hsl(var(--muted-foreground));
+    margin-top: 2px;
+    line-height: 1.4;
+  }
+  .section-body {
+    padding: 0 18px 18px;
+  }
+
+  /* ── Canvas 格式卡片网格 ─────────────────────────────────────── */
+  .canvas-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .canvas-card {
+    position: relative;
+    border: 1.5px solid hsl(var(--border));
+    border-radius: 10px;
+    padding: 10px 8px 8px;
+    cursor: pointer;
+    background: hsl(var(--muted) / 0.4);
+    transition: all .15s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .canvas-card:hover { border-color: hsl(var(--accent) / 0.4); }
+  .canvas-card.selected {
+    border-color: hsl(var(--accent));
+    background: hsl(var(--accent) / 0.06);
+    box-shadow: 0 0 0 3px hsl(var(--accent) / 0.12);
+  }
+  .canvas-stage {
+    width: 100%;
+    height: 46px;
+    border-radius: 6px;
+    background:
+      linear-gradient(135deg, hsl(var(--muted-foreground)/0.08) 25%, transparent 25%) -4px 0/8px 8px,
+      linear-gradient(315deg, hsl(var(--muted-foreground)/0.08) 25%, transparent 25%) -4px 0/8px 8px,
+      hsl(var(--foreground) / 0.06);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .canvas-paper {
+    background: hsl(var(--card));
+    box-shadow: 0 1px 3px rgba(0,0,0,.12);
+    border-radius: 2px;
+  }
+  .canvas-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    line-height: 1.3;
+  }
+  .canvas-dim {
+    font-size: 9.5px;
+    color: hsl(var(--muted-foreground));
+    font-variant-numeric: tabular-nums;
+  }
+  .canvas-tick {
+    position: absolute;
+    top: -6px; right: -6px;
+    width: 18px; height: 18px;
+    border-radius: 999px;
+    background: hsl(var(--accent));
+    color: hsl(var(--accent-foreground));
+    display: none;
+    align-items: center; justify-content: center;
+    font-size: 10px;
+    box-shadow: 0 0 0 2px hsl(var(--card));
+  }
+  .canvas-card.selected .canvas-tick { display: flex; }
+  .canvas-card.custom {
+    border-style: dashed;
+    justify-content: center;
+    color: hsl(var(--muted-foreground));
+  }
+  .canvas-card.custom .canvas-stage {
+    background: transparent;
+    border: 1.5px dashed hsl(var(--border));
+  }
+
+  /* ── 文本输入 ────────────────────────────────────────────────── */
+  .field-label {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: hsl(var(--muted-foreground));
+    margin-bottom: 6px;
+    margin-top: 14px;
+  }
+  .field-label:first-child { margin-top: 0; }
+  textarea, .text-input {
+    width: 100%;
+    border: 1px solid hsl(var(--input));
+    border-radius: 8px;
+    padding: 9px 11px;
+    font-size: 12.5px;
+    font-family: inherit;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    resize: none;
+    line-height: 1.5;
+  }
+  textarea:focus, .text-input:focus {
+    outline: none;
+    border-color: hsl(var(--ring));
+    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.12);
+  }
+  textarea::placeholder { color: hsl(var(--muted-foreground) / 0.7); }
+
+  /* ── Enum chips ──────────────────────────────────────────────── */
+  .chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+  .chip {
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--background));
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 12px;
+    font-weight: 550;
+    cursor: pointer;
+    transition: all .15s ease;
+    color: hsl(var(--foreground));
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .chip:hover { border-color: hsl(var(--accent) / 0.5); }
+  .chip.selected {
+    background: hsl(var(--accent) / 0.1);
+    border-color: hsl(var(--accent));
+    color: hsl(var(--accent));
+    box-shadow: 0 0 0 3px hsl(var(--accent) / 0.1);
+  }
+  .chip.custom-chip {
+    border-style: dashed;
+    color: hsl(var(--muted-foreground));
+  }
+  .chip-desc {
+    font-size: 10.5px;
+    color: hsl(var(--muted-foreground));
+    margin-top: 8px;
+    line-height: 1.5;
+    padding: 8px 10px;
+    background: hsl(var(--muted) / 0.5);
+    border-radius: 7px;
+  }
+
+  /* ── 视觉风格卡片（图片占位）───────────────────────────────── */
+  .style-recommend-strip {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: linear-gradient(135deg, hsl(var(--accent)/0.05), hsl(var(--accent)/0.02));
+    border: 1px solid hsl(var(--accent) / 0.15);
+    border-radius: 10px;
+  }
+  .spectrum-item { flex: 1; min-width: 0; }
+  .spectrum-tag {
+    font-size: 10px;
+    font-weight: 700;
+    color: hsl(var(--accent));
+    margin-bottom: 3px;
+  }
+  .spectrum-note {
+    font-size: 10px;
+    color: hsl(var(--muted-foreground));
+    line-height: 1.4;
+  }
+
+  .style-group { margin-bottom: 14px; }
+  .style-group:last-child { margin-bottom: 0; }
+  .style-group-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: hsl(var(--muted-foreground));
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+  }
+  .style-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .style-card {
+    position: relative;
+    border: 1.5px solid hsl(var(--border));
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .style-card:hover { border-color: hsl(var(--accent) / 0.4); transform: translateY(-1px); }
+  .style-card.selected {
+    border-color: hsl(var(--accent));
+    box-shadow: 0 0 0 3px hsl(var(--accent) / 0.12);
+  }
+  .style-thumb {
+    aspect-ratio: 16 / 10;
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+  }
+  .style-thumb::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(0,0,0,.02) 5px, rgba(0,0,0,.02) 10px);
+  }
+  .style-thumb-label {
+    font-size: 9px;
+    color: rgba(255,255,255,.85);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    z-index: 1;
+    text-shadow: 0 1px 2px rgba(0,0,0,.3);
+  }
+  .style-name {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 7px 9px 8px;
+  }
+  .style-tick {
+    position: absolute; top: 6px; right: 6px;
+    width: 18px; height: 18px;
+    border-radius: 999px;
+    background: hsl(var(--accent));
+    color: hsl(var(--accent-foreground));
+    display: none;
+    align-items: center; justify-content: center;
+    font-size: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.2);
+    z-index: 2;
+  }
+  .style-card.selected .style-tick { display: flex; }
+  .rec-badge {
+    position: absolute; top: 6px; left: 6px;
+    background: rgba(245,158,11,.92);
+    color: #fff;
+    font-size: 8.5px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 999px;
+    z-index: 2;
+    letter-spacing: 0.02em;
+  }
+  .style-card.custom {
+    border-style: dashed;
+  }
+  .style-card.custom .style-thumb {
+    background: hsl(var(--muted) / 0.4);
+  }
+  .style-card.custom .style-thumb-label { color: hsl(var(--muted-foreground)); text-shadow: none; }
+
+  /* ── 底部操作条 ──────────────────────────────────────────────── */
+  .actionbar {
+    flex-shrink: 0;
+    border-top: 1px solid hsl(var(--border));
+    background: hsl(var(--background));
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+  }
+  .summary {
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    color: hsl(var(--muted-foreground));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .summary strong { color: hsl(var(--foreground)); font-weight: 600; }
+  .btn-primary {
+    flex-shrink: 0;
+    background: hsl(var(--accent));
+    color: hsl(var(--accent-foreground));
+    border: none;
+    padding: 10px 20px;
+    border-radius: 980px;
+    font-size: 13px;
+    font-weight: 650;
+    cursor: pointer;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all .15s ease;
+    box-shadow: var(--shadow-apple);
+  }
+  .btn-primary:hover { filter: brightness(1.06); transform: translateY(-1px); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-primary svg { width: 13px; height: 13px; }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <div class="topbar">
+    <div class="topbar-row">
+      <div>
+        <div class="topbar-title">确认设计方向</div>
+        <div class="topbar-hint">先锁定锚点，AI 会据此重新派生配色与字体候选</div>
+      </div>
+      <div class="lang-toggle">
+        <button class="lang-btn active">中</button>
+        <button class="lang-btn">EN</button>
+      </div>
+    </div>
+    <div class="stepper">
+      <div class="step active">
+        <div class="step-dot">1</div>
+        <div class="step-text">
+          <div class="step-name">锚点确认</div>
+          <div class="step-sub">画布 · 受众 · 风格</div>
+        </div>
+      </div>
+      <div class="step-line"></div>
+      <div class="step pending">
+        <div class="step-dot">2</div>
+        <div class="step-text">
+          <div class="step-name">实现确认</div>
+          <div class="step-sub">配色 · 字体 · 图片</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="scroll">
+
+    <!-- Section 1: 画布格式 -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-num">1</div>
+        <div class="section-titles">
+          <div class="section-title">画布格式</div>
+          <div class="section-note">决定构图与信息密度，之后不可更换</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="canvas-grid">
+          <div class="canvas-card selected">
+            <div class="canvas-tick">✓</div>
+            <div class="canvas-stage"><div class="canvas-paper" style="width:32px;height:18px;"></div></div>
+            <div class="canvas-label">宽屏演示 16:9</div>
+            <div class="canvas-dim">1280×720</div>
+          </div>
+          <div class="canvas-card">
+            <div class="canvas-tick">✓</div>
+            <div class="canvas-stage"><div class="canvas-paper" style="width:26px;height:19.5px;"></div></div>
+            <div class="canvas-label">传统演示 4:3</div>
+            <div class="canvas-dim">1024×768</div>
+          </div>
+          <div class="canvas-card">
+            <div class="canvas-tick">✓</div>
+            <div class="canvas-stage"><div class="canvas-paper" style="width:36px;height:15px;"></div></div>
+            <div class="canvas-label">公众号头图</div>
+            <div class="canvas-dim">900×383</div>
+          </div>
+          <div class="canvas-card">
+            <div class="canvas-tick">✓</div>
+            <div class="canvas-stage"><div class="canvas-paper" style="width:18px;height:24px;"></div></div>
+            <div class="canvas-label">小红书图文</div>
+            <div class="canvas-dim">1242×1660</div>
+          </div>
+          <div class="canvas-card">
+            <div class="canvas-tick">✓</div>
+            <div class="canvas-stage"><div class="canvas-paper" style="width:18px;height:24px;"></div></div>
+            <div class="canvas-label">朋友圈图文</div>
+            <div class="canvas-dim">1080×1440</div>
+          </div>
+          <div class="canvas-card custom">
+            <div class="canvas-stage" style="background:transparent;"><span style="font-size:16px;color:hsl(var(--muted-foreground));">+</span></div>
+            <div class="canvas-label">自定义</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 2: 目标受众 -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-num">2</div>
+        <div class="section-titles">
+          <div class="section-title">目标受众</div>
+          <div class="section-note">AI 依此决定叙述口吻与内容深度</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="field-label">受众描述</div>
+        <textarea rows="2" placeholder="例如：投资人、内部管理层、技术团队…">To B SaaS 产品的天使轮投资人，熟悉企业软件但不了解具体技术栈</textarea>
+
+        <div class="field-label">材料发散度</div>
+        <textarea rows="2" placeholder="例如：严格按原文，还是允许适度扩展…">允许适度扩展案例和数据支撑，但核心论点不偏离原始材料</textarea>
+
+        <div class="field-label">交付目的</div>
+        <div class="chip-row">
+          <button class="chip">文字型 · 近读</button>
+          <button class="chip selected">均衡 · 商务</button>
+          <button class="chip">展示型 · 演讲</button>
+        </div>
+        <div class="chip-desc">既投影也阅读（路演、业务评审）。默认档，正文 24px。</div>
+      </div>
+    </div>
+
+    <!-- Section 3: 风格目标 -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-num">3</div>
+        <div class="section-titles">
+          <div class="section-title">风格目标</div>
+          <div class="section-note">叙事结构与视觉风格，决定整体调性</div>
+        </div>
+      </div>
+      <div class="section-body">
+
+        <div class="field-label">叙事模式</div>
+        <div class="chip-row">
+          <button class="chip selected">金字塔</button>
+          <button class="chip">叙事</button>
+          <button class="chip">教学</button>
+          <button class="chip">展演</button>
+          <button class="chip custom-chip">+ 自定义</button>
+        </div>
+        <div class="chip-desc">结论先行、相互独立且完全穷尽的论证、每个数据都带比较。适合决策、分析、战略、汇报。</div>
+
+        <div class="field-label" style="margin-top:16px;">视觉风格</div>
+
+        <div class="style-recommend-strip">
+          <div class="spectrum-item">
+            <div class="spectrum-tag">★ 稳妥专业</div>
+            <div class="spectrum-note">像 Notion 官网，低风险</div>
+          </div>
+          <div class="spectrum-item">
+            <div class="spectrum-tag">均衡现代</div>
+            <div class="spectrum-note">兼顾专业感与视觉记忆点</div>
+          </div>
+          <div class="spectrum-item">
+            <div class="spectrum-tag">大胆表现</div>
+            <div class="spectrum-note">强烈风格化，适合品牌秀</div>
+          </div>
+        </div>
+
+        <div class="style-group">
+          <div class="style-group-label">企业 / 产品</div>
+          <div class="style-grid">
+            <div class="style-card selected">
+              <div class="rec-badge">★ 推荐</div>
+              <div class="style-tick">✓</div>
+              <div class="style-thumb" style="background:linear-gradient(135deg,#e8eaed,#ffffff);">
+                <span class="style-thumb-label" style="color:#334155;text-shadow:none;">Aa</span>
+              </div>
+              <div class="style-name">瑞士极简</div>
+            </div>
+            <div class="style-card">
+              <div class="style-tick">✓</div>
+              <div class="style-thumb" style="background:linear-gradient(135deg,#fdf2f8,#fce7f3);">
+                <span class="style-thumb-label" style="color:#9d174d;text-shadow:none;">Aa</span>
+              </div>
+              <div class="style-name">柔和圆角</div>
+            </div>
+            <div class="style-card">
+              <div class="style-tick">✓</div>
+              <div class="style-thumb" style="background:linear-gradient(135deg,#dbeafe,#bfdbfe);">
+                <span class="style-thumb-label" style="color:#1e3a8a;text-shadow:none;">Aa</span>
+              </div>
+              <div class="style-name">玻璃拟态</div>
+            </div>
+            <div class="style-card">
+              <div class="style-tick">✓</div>
+              <div class="style-thumb" style="background:linear-gradient(135deg,#0f172a,#1e293b);">
+                <span class="style-thumb-label">Aa</span>
+              </div>
+              <div class="style-name">深色科技</div>
+            </div>
+            <div class="style-card">
+              <div class="style-tick">✓</div>
+              <div class="style-thumb" style="background:linear-gradient(135deg,#0c1e3e,#13294b);">
+                <span class="style-thumb-label">Aa</span>
+              </div>
+              <div class="style-name">蓝图</div>
+            </div>
+            <div class="style-card custom">
+              <div class="style-thumb"><span class="style-thumb-label">+</span></div>
+              <div class="style-name">自定义</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="style-group">
+          <div class="style-group-label">编辑 / 出版</div>
+          <div class="style-grid">
+            <div class="style-card">
+              <div class="style-tick">✓</div>
+              <div class="style-thumb" style="background:linear-gradient(135deg,#fafaf9,#f5f5f4);">
+                <span class="style-thumb-label" style="color:#292524;text-shadow:none;">Aa</span>
+              </div>
+              <div class="style-name">编辑出版</div>
+            </div>
+            <div class="style-card">
+              <div class="style-tick">✓</div>
+              <div class="style-thumb" style="background:linear-gradient(135deg,#78716c,#57534e);">
+                <span class="style-thumb-label">Aa</span>
+              </div>
+              <div class="style-name">摄影编辑</div>
+            </div>
+            <div class="style-card">
+              <div class="style-tick">✓</div>
+              <div class="style-thumb" style="background:linear-gradient(135deg,#f1f5f9,#e2e8f0);">
+                <span class="style-thumb-label" style="color:#334155;text-shadow:none;">Aa</span>
+              </div>
+              <div class="style-name">数据新闻</div>
+            </div>
+            <div class="style-card">
+              <div class="style-tick">✓</div>
+              <div class="style-thumb" style="background:#171717;">
+                <span class="style-thumb-label">Aa</span>
+              </div>
+              <div class="style-name">粗野主义</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <div class="actionbar">
+    <div class="summary">
+      <strong>宽屏演示 16:9</strong> · 均衡·商务 · 金字塔 · <strong>瑞士极简</strong>
+    </div>
+    <button class="btn-primary" id="nextBtn">
+      下一步 · 实现确认
+      <svg viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</div>
+
+<script>
+  // ── canvas 卡片单选 ─────────────────────────────────────────────
+  document.querySelectorAll('.canvas-card').forEach(card => {
+    if (card.classList.contains('custom')) return;
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.canvas-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+    });
+  });
+
+  // ── 通用 chip 单选组（每组内互斥）───────────────────────────────
+  document.querySelectorAll('.chip-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      const chip = e.target.closest('.chip');
+      if (!chip || chip.classList.contains('custom-chip')) return;
+      row.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
+      chip.classList.add('selected');
+    });
+  });
+
+  // ── 视觉风格卡片：跨分组互斥单选 ──────────────────────────────
+  document.querySelectorAll('.style-card').forEach(card => {
+    if (card.classList.contains('custom')) return;
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.style-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+    });
+  });
+
+  // ── 下一步 → 跳转 tier2 原型（模拟真实向导流转）─────────────────
+  document.getElementById('nextBtn').addEventListener('click', () => {
+    window.location.href = 'ui-prototype-confirm-tier2-v2.html';
+  });
+</script>
+
+</body>
+</html>

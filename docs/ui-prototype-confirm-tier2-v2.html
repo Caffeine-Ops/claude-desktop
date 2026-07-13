@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Confirm UI · Tier 2 实现确认</title>
+<style>
+  :root {
+    color-scheme: light;
+    --background: 240 7% 97%;
+    --foreground: 240 3% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 3% 12%;
+    --primary: 211 100% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 6% 94%;
+    --secondary-foreground: 240 3% 18%;
+    --muted: 240 5% 93%;
+    --muted-foreground: 240 4% 40%;
+    --accent: 211 100% 45%;
+    --accent-foreground: 0 0% 100%;
+    --border: 240 6% 84%;
+    --input: 240 6% 86%;
+    --ring: 211 100% 45%;
+    --brand: 142 76% 36%;
+    --brand-foreground: 0 0% 100%;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    --shadow-apple: rgba(0,0,0,.14) 0px 2px 14px 0px;
+  }
+  :root[data-theme="dark"], .dark {
+    color-scheme: dark;
+    --background: 40 6% 10%;
+    --foreground: 40 21% 89%;
+    --card: 30 3% 13%;
+    --card-foreground: 39 35% 92%;
+    --primary: 210 100% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 30 5% 15%;
+    --secondary-foreground: 40 21% 89%;
+    --muted: 36 6% 17%;
+    --muted-foreground: 36 5% 58%;
+    --accent: 210 100% 58%;
+    --accent-foreground: 0 0% 100%;
+    --border: 49 12% 18%;
+    --input: 42 8% 25%;
+    --ring: 210 100% 58%;
+    --brand: 145 60% 52%;
+    --brand-foreground: 0 0% 100%;
+    --shadow-apple: rgba(0,0,0,.4) 0px 2px 16px 0px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --background: 40 6% 10%;
+      --foreground: 40 21% 89%;
+      --card: 30 3% 13%;
+      --card-foreground: 39 35% 92%;
+      --primary: 210 100% 58%;
+      --primary-foreground: 0 0% 100%;
+      --secondary: 30 5% 15%;
+      --secondary-foreground: 40 21% 89%;
+      --muted: 36 6% 17%;
+      --muted-foreground: 36 5% 58%;
+      --accent: 210 100% 58%;
+      --accent-foreground: 0 0% 100%;
+      --border: 49 12% 18%;
+      --input: 42 8% 25%;
+      --ring: 210 100% 58%;
+      --brand: 145 60% 52%;
+      --brand-foreground: 0 0% 100%;
+      --shadow-apple: rgba(0,0,0,.4) 0px 2px 16px 0px;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: var(--font-sans);
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    -webkit-font-smoothing: antialiased;
+  }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+
+  .shell {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    max-width: 620px;
+    margin: 0 auto;
+    width: 100%;
+    height: 100vh;
+    border-left: 1px solid hsl(var(--border) / 0.6);
+    border-right: 1px solid hsl(var(--border) / 0.6);
+    position: relative;
+  }
+
+  /* ── 顶部条 + Stepper（同 tier1）───────────────────────────── */
+  .topbar {
+    flex-shrink: 0;
+    padding: 14px 20px 12px;
+    border-bottom: 1px solid hsl(var(--border));
+    background: hsl(var(--background));
+    z-index: 5;
+  }
+  .topbar-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .topbar-title-group { display: flex; align-items: center; gap: 8px; }
+  .back-btn {
+    border: none;
+    background: hsl(var(--muted));
+    color: hsl(var(--muted-foreground));
+    width: 24px; height: 24px;
+    border-radius: 7px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    transition: all .15s ease;
+  }
+  .back-btn:hover { background: hsl(var(--border)); color: hsl(var(--foreground)); }
+  .back-btn svg { width: 12px; height: 12px; }
+  .topbar-title { font-size: 14.5px; font-weight: 650; letter-spacing: -0.01em; }
+  .topbar-hint { font-size: 11.5px; color: hsl(var(--muted-foreground)); margin-top: 2px; font-weight: 400; }
+  .lang-toggle { display: flex; align-items: center; gap: 2px; padding: 2px; background: hsl(var(--muted)); border-radius: 8px; }
+  .lang-btn { border: none; background: transparent; font-size: 11px; font-weight: 600; padding: 4px 9px; border-radius: 6px; color: hsl(var(--muted-foreground)); cursor: pointer; font-family: inherit; }
+  .lang-btn.active { background: hsl(var(--card)); color: hsl(var(--foreground)); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+
+  .stepper { display: flex; align-items: center; gap: 0; }
+  .step { display: flex; align-items: center; gap: 8px; flex: 1; }
+  .step-dot { width: 22px; height: 22px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 700; flex-shrink: 0; transition: all .2s ease; }
+  .step.done .step-dot { background: hsl(var(--brand)); color: hsl(var(--brand-foreground)); }
+  .step.active .step-dot { background: hsl(var(--accent)); color: hsl(var(--accent-foreground)); box-shadow: 0 0 0 4px hsl(var(--accent) / 0.14); }
+  .step-text { display: flex; flex-direction: column; min-width: 0; }
+  .step-name { font-size: 12px; font-weight: 600; line-height: 1.2; }
+  .step-sub { font-size: 10px; color: hsl(var(--muted-foreground)); line-height: 1.3; }
+  .step-line { flex: 0 0 28px; height: 1.5px; background: hsl(var(--border)); margin: 0 8px; border-radius: 1px; }
+  .step.done .step-line-fill, .step-line.done { background: hsl(var(--brand)); }
+  .step.done { cursor: pointer; }
+
+  /* ── deriving 派生过渡态（覆盖整个滚动区）───────────────────── */
+  .deriving-overlay {
+    position: absolute;
+    inset: 63px 0 0 0; /* 顶部条高度以下 */
+    background: hsl(var(--background) / 0.97);
+    backdrop-filter: blur(2px);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+    padding: 0 32px;
+  }
+  .deriving-overlay.hidden { display: none; }
+
+  .deriving-ring {
+    width: 46px; height: 46px;
+    border-radius: 999px;
+    border: 3px solid hsl(var(--accent) / 0.15);
+    border-top-color: hsl(var(--accent));
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .deriving-title {
+    font-size: 13.5px;
+    font-weight: 650;
+    text-align: center;
+  }
+
+  .deriving-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    max-width: 280px;
+  }
+  .deriving-step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: hsl(var(--muted-foreground));
+    opacity: 0.4;
+    transition: opacity .3s ease;
+  }
+  .deriving-step.active { opacity: 1; color: hsl(var(--foreground)); }
+  .deriving-step.complete { opacity: 0.75; color: hsl(var(--muted-foreground)); }
+  .deriving-step-icon {
+    width: 16px; height: 16px;
+    border-radius: 999px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: hsl(var(--muted));
+    font-size: 9px;
+    transition: all .3s ease;
+  }
+  .deriving-step.active .deriving-step-icon {
+    background: hsl(var(--accent) / 0.15);
+  }
+  .deriving-step.active .deriving-step-icon::after {
+    content: '';
+    width: 6px; height: 6px;
+    border-radius: 999px;
+    background: hsl(var(--accent));
+    animation: pulse 1s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.8); } }
+  .deriving-step.complete .deriving-step-icon {
+    background: hsl(var(--brand));
+    color: hsl(var(--brand-foreground));
+    font-size: 9px;
+  }
+
+  .deriving-anchor-recap {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 4px;
+  }
+  .anchor-pill {
+    font-size: 10px;
+    padding: 3px 9px;
+    background: hsl(var(--muted));
+    border-radius: 999px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  /* ── 滚动区 ──────────────────────────────────────────────────── */
+  .scroll { flex: 1; overflow-y: auto; padding: 0 20px 28px; display: flex; flex-direction: column; gap: 14px; }
+  .scroll::-webkit-scrollbar { width: 8px; }
+  .scroll::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 4px; border: 2px solid hsl(var(--background)); }
+
+  /* ── sticky StylePreview 综合预览条 ──────────────────────────── */
+  .style-preview-wrap {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    padding: 14px 0 10px;
+    background: hsl(var(--background));
+    margin: 0 -20px;
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+  .style-preview-card {
+    border-radius: 14px;
+    padding: 18px 20px;
+    box-shadow: var(--shadow-apple), inset 0 0 0 1px rgba(0,0,0,.04);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    transition: background .25s ease;
+  }
+  .sp-left { flex: 1; min-width: 0; }
+  .sp-heading { font-weight: 700; margin-bottom: 4px; transition: color .25s ease; letter-spacing: -0.01em; }
+  .sp-body { display: flex; align-items: center; gap: 8px; }
+  .sp-accent-bar { width: 3px; height: 26px; border-radius: 2px; flex-shrink: 0; transition: background .25s ease; }
+  .sp-body-text { font-size: 12px; line-height: 1.5; transition: color .25s ease; }
+  .sp-chip { flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 999px; transition: background .25s ease; }
+  .sp-chip-dot { width: 8px; height: 8px; border-radius: 999px; transition: background .25s ease; }
+  .sp-chip-text { font-size: 10.5px; font-weight: 600; }
+  .style-preview-caption {
+    font-size: 10px;
+    color: hsl(var(--muted-foreground));
+    text-align: center;
+    margin-top: 6px;
+  }
+
+  /* ── Section 卡片（复用 tier1 样式）──────────────────────────── */
+  .section { background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 14px; overflow: hidden; }
+  .section-head { display: flex; align-items: flex-start; gap: 10px; padding: 14px 18px 12px; }
+  .section-num { width: 20px; height: 20px; border-radius: 6px; background: hsl(var(--accent) / 0.1); color: hsl(var(--accent)); display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 700; flex-shrink: 0; margin-top: 1px; }
+  .section-titles { flex: 1; min-width: 0; }
+  .section-title { font-size: 13.5px; font-weight: 650; letter-spacing: -0.005em; }
+  .section-note { font-size: 11px; color: hsl(var(--muted-foreground)); margin-top: 2px; line-height: 1.4; }
+  .section-body { padding: 0 18px 18px; }
+
+  .field-label { font-size: 11.5px; font-weight: 600; color: hsl(var(--muted-foreground)); margin-bottom: 6px; margin-top: 14px; }
+  .field-label:first-child { margin-top: 0; }
+  .text-input { width: 100%; border: 1px solid hsl(var(--input)); border-radius: 8px; padding: 9px 11px; font-size: 12.5px; font-family: inherit; background: hsl(var(--background)); color: hsl(var(--foreground)); }
+  .text-input:focus { outline: none; border-color: hsl(var(--ring)); box-shadow: 0 0 0 3px hsl(var(--ring) / 0.12); }
+  .input-hint { font-size: 10.5px; color: hsl(var(--muted-foreground)); margin-top: 5px; }
+
+  .chip-row { display: flex; flex-wrap: wrap; gap: 7px; }
+  .chip { border: 1px solid hsl(var(--border)); background: hsl(var(--background)); border-radius: 8px; padding: 7px 12px; font-size: 12px; font-weight: 550; cursor: pointer; transition: all .15s ease; color: hsl(var(--foreground)); font-family: inherit; white-space: nowrap; }
+  .chip:hover { border-color: hsl(var(--accent) / 0.5); }
+  .chip.selected { background: hsl(var(--accent) / 0.1); border-color: hsl(var(--accent)); color: hsl(var(--accent)); box-shadow: 0 0 0 3px hsl(var(--accent) / 0.1); }
+  .chip-desc { font-size: 10.5px; color: hsl(var(--muted-foreground)); margin-top: 8px; line-height: 1.5; padding: 8px 10px; background: hsl(var(--muted) / 0.5); border-radius: 7px; }
+
+  /* ── Color 候选卡片 ──────────────────────────────────────────── */
+  .candidate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .color-card {
+    position: relative;
+    border: 1.5px solid hsl(var(--border));
+    border-radius: 11px;
+    padding: 11px;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .color-card:hover { border-color: hsl(var(--accent) / 0.4); }
+  .color-card.selected { border-color: hsl(var(--accent)); box-shadow: 0 0 0 3px hsl(var(--accent) / 0.12); }
+  .color-swatch-row { display: flex; gap: 4px; margin-bottom: 9px; }
+  .swatch { flex: 1; aspect-ratio: 1; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.06); position: relative; }
+  .swatch-label {
+    position: absolute; bottom: -14px; left: 50%; transform: translateX(-50%);
+    font-size: 7.5px; color: hsl(var(--muted-foreground)); white-space: nowrap;
+  }
+  .color-card-name { font-size: 11.5px; font-weight: 650; margin-top: 16px; }
+  .color-card-note { font-size: 10px; color: hsl(var(--muted-foreground)); margin-top: 3px; line-height: 1.4; }
+  .card-tick {
+    position: absolute; top: 8px; right: 8px;
+    width: 18px; height: 18px; border-radius: 999px;
+    background: hsl(var(--accent)); color: hsl(var(--accent-foreground));
+    display: none; align-items: center; justify-content: center;
+    font-size: 10px;
+  }
+  .color-card.selected .card-tick { display: flex; }
+  .card-custom {
+    border-style: dashed;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: hsl(var(--muted-foreground));
+    min-height: 96px;
+    gap: 6px;
+  }
+  .card-custom-plus { font-size: 18px; }
+  .card-custom-label { font-size: 11px; font-weight: 600; }
+
+  /* ── Typography 候选卡片 ─────────────────────────────────────── */
+  .type-card {
+    position: relative;
+    border: 1.5px solid hsl(var(--border));
+    border-radius: 11px;
+    padding: 13px 14px;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .type-card:hover { border-color: hsl(var(--accent) / 0.4); }
+  .type-card.selected { border-color: hsl(var(--accent)); box-shadow: 0 0 0 3px hsl(var(--accent) / 0.12); }
+  .type-card + .type-card { margin-top: 9px; }
+  .type-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+  .type-card-name { font-size: 12px; font-weight: 650; }
+  .type-card-meta { font-size: 9.5px; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+  .type-sample-heading { font-size: 16px; font-weight: 700; margin-bottom: 4px; letter-spacing: -0.01em; }
+  .type-sample-body { font-size: 12px; color: hsl(var(--muted-foreground)); line-height: 1.5; }
+
+  /* ── 图片使用 & 生成策略 ─────────────────────────────────────── */
+  .strategy-card {
+    position: relative;
+    border: 1.5px solid hsl(var(--border));
+    border-radius: 10px;
+    padding: 11px 13px;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .strategy-card:hover { border-color: hsl(var(--accent) / 0.4); }
+  .strategy-card.selected { border-color: hsl(var(--accent)); box-shadow: 0 0 0 3px hsl(var(--accent) / 0.12); }
+  .strategy-card + .strategy-card { margin-top: 8px; }
+  .strategy-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+  .strategy-card-name { font-size: 12px; font-weight: 650; }
+  .strategy-card-meta { font-size: 9.5px; color: hsl(var(--muted-foreground)); }
+  .strategy-card-desc { font-size: 10.5px; color: hsl(var(--muted-foreground)); line-height: 1.5; }
+
+  .toggle-row { display: flex; gap: 8px; }
+  .toggle-chip {
+    flex: 1;
+    text-align: center;
+    border: 1px solid hsl(var(--border));
+    border-radius: 8px;
+    padding: 9px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .toggle-chip.selected { background: hsl(var(--accent) / 0.1); border-color: hsl(var(--accent)); color: hsl(var(--accent)); }
+
+  /* ── 底部操作条 ──────────────────────────────────────────────── */
+  .actionbar { flex-shrink: 0; border-top: 1px solid hsl(var(--border)); background: hsl(var(--background)); padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 14px; z-index: 5; }
+  .summary { flex: 1; min-width: 0; font-size: 11.5px; color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .summary strong { color: hsl(var(--foreground)); font-weight: 600; }
+  .btn-primary { flex-shrink: 0; background: hsl(var(--accent)); color: hsl(var(--accent-foreground)); border: none; padding: 10px 20px; border-radius: 980px; font-size: 13px; font-weight: 650; cursor: pointer; font-family: inherit; display: flex; align-items: center; gap: 6px; transition: all .15s ease; box-shadow: var(--shadow-apple); }
+  .btn-primary:hover { filter: brightness(1.06); transform: translateY(-1px); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-primary svg { width: 13px; height: 13px; }
+  .btn-primary.confirming { opacity: 0.7; pointer-events: none; }
+
+  /* ── confirmed 完成态覆盖层 ──────────────────────────────────── */
+  .confirmed-overlay {
+    position: absolute; inset: 0;
+    background: hsl(var(--background) / 0.96);
+    backdrop-filter: blur(3px);
+    z-index: 20;
+    display: none;
+    align-items: center; justify-content: center;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .confirmed-overlay.visible { display: flex; }
+  .confirmed-check {
+    width: 54px; height: 54px;
+    border-radius: 999px;
+    background: hsl(var(--brand) / 0.12);
+    color: hsl(var(--brand));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px;
+    animation: pop .35s cubic-bezier(.34,1.56,.64,1);
+  }
+  @keyframes pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .confirmed-title { font-size: 15px; font-weight: 700; color: hsl(var(--brand)); }
+  .confirmed-sub { font-size: 12px; color: hsl(var(--muted-foreground)); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <div class="topbar">
+    <div class="topbar-row">
+      <div class="topbar-title-group">
+        <button class="back-btn" id="backBtn" title="返回锚点确认">
+          <svg viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div>
+          <div class="topbar-title">确认设计方向</div>
+          <div class="topbar-hint" id="topHint">锚点已确定，请确认视觉与生成细节</div>
+        </div>
+      </div>
+      <div class="lang-toggle">
+        <button class="lang-btn active">中</button>
+        <button class="lang-btn">EN</button>
+      </div>
+    </div>
+    <div class="stepper">
+      <div class="step done" id="stepBack" title="返回修改锚点">
+        <div class="step-dot">✓</div>
+        <div class="step-text">
+          <div class="step-name">锚点确认</div>
+          <div class="step-sub">16:9 · 瑞士极简</div>
+        </div>
+      </div>
+      <div class="step-line done"></div>
+      <div class="step active">
+        <div class="step-dot">2</div>
+        <div class="step-text">
+          <div class="step-name">实现确认</div>
+          <div class="step-sub">配色 · 字体 · 图片</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- deriving 派生过渡态 -->
+  <div class="deriving-overlay" id="derivingOverlay">
+    <div class="deriving-ring"></div>
+    <div class="deriving-title">正在根据锚点派生实现层建议…</div>
+    <div class="deriving-steps">
+      <div class="deriving-step complete" data-step="0">
+        <div class="deriving-step-icon">✓</div>
+        <span>已锁定：16:9 · 瑞士极简 · 金字塔</span>
+      </div>
+      <div class="deriving-step active" data-step="1">
+        <div class="deriving-step-icon"></div>
+        <span>生成配色候选与字体配对</span>
+      </div>
+      <div class="deriving-step" data-step="2">
+        <div class="deriving-step-icon"></div>
+        <span>规划配图策略</span>
+      </div>
+    </div>
+    <div class="deriving-anchor-recap">
+      <span class="anchor-pill">投资人 · 天使轮</span>
+      <span class="anchor-pill">均衡 · 商务</span>
+      <span class="anchor-pill">正文 24px</span>
+    </div>
+  </div>
+
+  <div class="scroll" id="scrollArea">
+
+    <!-- sticky StylePreview -->
+    <div class="style-preview-wrap">
+      <div class="style-preview-card" id="stylePreviewCard" style="background:#F4F6F8;">
+        <div class="sp-left">
+          <div class="sp-heading" id="spHeading" style="color:#1A3A6B;">标题示例 · 报告结论</div>
+          <div class="sp-body">
+            <div class="sp-accent-bar" id="spAccentBar" style="background:#E8A317;"></div>
+            <div class="sp-body-text" id="spBodyText" style="color:#1D2430;">正文示例：这是当前配色与字体的整体形象预览</div>
+          </div>
+        </div>
+        <div class="sp-chip" id="spChip" style="background:#4A7BB520;">
+          <div class="sp-chip-dot" id="spChipDot" style="background:#4A7BB5;"></div>
+          <span class="sp-chip-text" id="spChipText" style="color:#4A7BB5;">强调点</span>
+        </div>
+      </div>
+      <div class="style-preview-caption">仅大致形象预览，非实际版式</div>
+    </div>
+
+    <!-- Section: 页数 -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-num">4</div>
+        <div class="section-titles">
+          <div class="section-title">页数</div>
+          <div class="section-note">预估总页数区间</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <input class="text-input" value="12-15" inputmode="numeric" placeholder="例如 12-15">
+      </div>
+    </div>
+
+    <!-- Section: 色彩方案 -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-num">5</div>
+        <div class="section-titles">
+          <div class="section-title">色彩方案</div>
+          <div class="section-note">六个角色色一起换，保证整套和谐</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="candidate-grid">
+
+          <div class="color-card selected" data-preview-bg="#F4F6F8" data-preview-heading="#1A3A6B" data-preview-accent="#E8A317" data-preview-body="#1D2430" data-preview-chip="#4A7BB5">
+            <div class="card-tick">✓</div>
+            <div class="color-swatch-row">
+              <div class="swatch" style="background:#F4F6F8;"></div>
+              <div class="swatch" style="background:#E9EDF2;"></div>
+              <div class="swatch" style="background:#1A3A6B;"></div>
+              <div class="swatch" style="background:#E8A317;"></div>
+              <div class="swatch" style="background:#4A7BB5;"></div>
+              <div class="swatch" style="background:#1D2430;"></div>
+            </div>
+            <div class="color-card-name">沉稳商务蓝</div>
+            <div class="color-card-note">深蓝主色配暖金强调，专业且不失温度</div>
+          </div>
+
+          <div class="color-card" data-preview-bg="#FBFAF7" data-preview-heading="#2B2620" data-preview-accent="#C4622D" data-preview-body="#3A342C" data-preview-chip="#8A7B5C">
+            <div class="card-tick">✓</div>
+            <div class="color-swatch-row">
+              <div class="swatch" style="background:#FBFAF7;"></div>
+              <div class="swatch" style="background:#F0EBE1;"></div>
+              <div class="swatch" style="background:#2B2620;"></div>
+              <div class="swatch" style="background:#C4622D;"></div>
+              <div class="swatch" style="background:#8A7B5C;"></div>
+              <div class="swatch" style="background:#3A342C;"></div>
+            </div>
+            <div class="color-card-name">暖调橄榄棕</div>
+            <div class="color-card-note">纸感米白配陶土橙，亲和而不失质感</div>
+          </div>
+
+          <div class="color-card" data-preview-bg="#0F172A" data-preview-heading="#F1F5F9" data-preview-accent="#38BDF8" data-preview-body="#CBD5E1" data-preview-chip="#38BDF8">
+            <div class="card-tick">✓</div>
+            <div class="color-swatch-row">
+              <div class="swatch" style="background:#0F172A;"></div>
+              <div class="swatch" style="background:#1E293B;"></div>
+              <div class="swatch" style="background:#F1F5F9;"></div>
+              <div class="swatch" style="background:#38BDF8;"></div>
+              <div class="swatch" style="background:#818CF8;"></div>
+              <div class="swatch" style="background:#CBD5E1;"></div>
+            </div>
+            <div class="color-card-name">深色科技蓝</div>
+            <div class="color-card-note">深底配亮蓝紫光感，适合投影展示</div>
+          </div>
+
+          <div class="card-custom">
+            <div class="card-custom-plus">+</div>
+            <div class="card-custom-label">自定义配色</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Section: 图标使用 -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-num">6</div>
+        <div class="section-titles">
+          <div class="section-title">图标使用</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="chip-row">
+          <button class="chip selected">线性描边图标</button>
+          <button class="chip">圆润实心图标</button>
+          <button class="chip">几何实心图标</button>
+          <button class="chip">双色层次图标</button>
+        </div>
+        <div class="chip-desc">线性描边，轻盈精致，适合屏幕阅读和编辑型图标。</div>
+      </div>
+    </div>
+
+    <!-- Section: 字体方案 -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-num">7</div>
+        <div class="section-titles">
+          <div class="section-title">字体方案</div>
+          <div class="section-note">标题与正文成对确定，字样为实时预览</div>
+        </div>
+      </div>
+      <div class="section-body">
+
+        <div class="type-card selected">
+          <div class="card-tick" style="display:flex;">✓</div>
+          <div class="type-card-head">
+            <div class="type-card-name">思源黑体 × Inter</div>
+            <div class="type-card-meta">CJK: 思源黑体 · Latin: Inter</div>
+          </div>
+          <div class="type-sample-heading">标题示例 Aa 报告结论</div>
+          <div class="type-sample-body">正文示例 Sample body text 这是正文字体的实际渲染效果</div>
+        </div>
+
+        <div class="type-card">
+          <div class="card-tick" style="display:flex;">✓</div>
+          <div class="type-card-head">
+            <div class="type-card-name">霞鹜文楷 × Georgia</div>
+            <div class="type-card-meta">CJK: 霞鹜文楷 · Latin: Georgia</div>
+          </div>
+          <div class="type-sample-heading" style="font-family: Georgia, serif;">标题示例 Aa 报告结论</div>
+          <div class="type-sample-body" style="font-family: Georgia, serif;">正文示例 Sample body text 这是正文字体的实际渲染效果</div>
+        </div>
+
+        <div class="type-card">
+          <div class="card-tick" style="display:flex;">✓</div>
+          <div class="type-card-head">
+            <div class="type-card-name">阿里巴巴普惠体 × Poppins</div>
+            <div class="type-card-meta">CJK: 阿里巴巴普惠体 · Latin: Poppins</div>
+          </div>
+          <div class="type-sample-heading">标题示例 Aa 报告结论</div>
+          <div class="type-sample-body">正文示例 Sample body text 这是正文字体的实际渲染效果</div>
+        </div>
+
+        <div class="field-label" style="margin-top:14px;">正文基准字号</div>
+        <input class="text-input" value="24" inputmode="numeric" style="width:100px;">
+        <div class="input-hint">建议范围 20–28px（均衡·商务档）</div>
+
+      </div>
+    </div>
+
+    <!-- Section: 图片使用 -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-num">8</div>
+        <div class="section-titles">
+          <div class="section-title">图片使用</div>
+          <div class="section-note">决定插图从哪来、长什么样</div>
+        </div>
+      </div>
+      <div class="section-body">
+
+        <div class="chip-row">
+          <button class="chip">生成配图</button>
+          <button class="chip selected">网络来源</button>
+          <button class="chip">用户提供</button>
+          <button class="chip">占位符</button>
+          <button class="chip custom-chip">+ 自定义</button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Section: 生成模式 -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-num">9</div>
+        <div class="section-titles">
+          <div class="section-title">生成模式</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="toggle-row">
+          <div class="toggle-chip selected">连续模式</div>
+          <div class="toggle-chip">分段模式</div>
+        </div>
+        <div class="input-hint" style="margin-top:8px;">一次性连续生成全部页面，适合页数较少、风格统一的场景</div>
+      </div>
+    </div>
+
+    <!-- Section: 精修设计规范 -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-num">10</div>
+        <div class="section-titles">
+          <div class="section-title">先精修设计规范</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="toggle-row">
+          <div class="toggle-chip">关闭</div>
+          <div class="toggle-chip selected">开启</div>
+        </div>
+        <div class="input-hint" style="margin-top:8px;">生成前先产出一份设计规范供确认，更稳妥但耗时更长</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="actionbar">
+    <div class="summary">
+      12-15 页 · <strong>沉稳商务蓝</strong> · 思源黑体×Inter 24px · 网络配图
+    </div>
+    <button class="btn-primary" id="confirmBtn">
+      确认，开始生成
+      <svg viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3.5 3.5L13 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+
+  <!-- confirmed 完成态 -->
+  <div class="confirmed-overlay" id="confirmedOverlay">
+    <div class="confirmed-check">✓</div>
+    <div class="confirmed-title">已确认，开始生成</div>
+    <div class="confirmed-sub">这个面板即将自动关闭</div>
+  </div>
+
+</div>
+
+<script>
+  // ── deriving 派生过渡态：模拟服务端轮询直到 tier2 候选就绪 ────────
+  const derivingOverlay = document.getElementById('derivingOverlay');
+  const steps = document.querySelectorAll('.deriving-step');
+  let stepIndex = 1;
+
+  function advanceDeriving() {
+    if (stepIndex >= steps.length) {
+      setTimeout(() => { derivingOverlay.classList.add('hidden'); }, 420);
+      return;
+    }
+    steps[stepIndex].classList.remove('active');
+    steps[stepIndex].classList.add('complete');
+    steps[stepIndex].querySelector('.deriving-step-icon').textContent = '✓';
+    stepIndex++;
+    if (stepIndex < steps.length) {
+      steps[stepIndex].classList.add('active');
+    }
+    setTimeout(advanceDeriving, 1100);
+  }
+  setTimeout(advanceDeriving, 1300);
+
+  // ── 返回锚点确认（本地浏览用，真实实现里 Tier1 已确认不可退）──────
+  function goBack() {
+    window.location.href = 'ui-prototype-confirm-tier1-v2.html';
+  }
+  document.getElementById('backBtn').addEventListener('click', goBack);
+  document.getElementById('stepBack').addEventListener('click', goBack);
+
+  // ── 通用单选组：chip / toggle ────────────────────────────────
+  document.querySelectorAll('.chip-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      const chip = e.target.closest('.chip');
+      if (!chip || chip.classList.contains('custom-chip')) return;
+      row.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
+      chip.classList.add('selected');
+    });
+  });
+  document.querySelectorAll('.toggle-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      const chip = e.target.closest('.toggle-chip');
+      if (!chip) return;
+      row.querySelectorAll('.toggle-chip').forEach(c => c.classList.remove('selected'));
+      chip.classList.add('selected');
+    });
+  });
+
+  // ── Color 候选卡：点击选中 + 实时更新 StylePreview ──────────────
+  const spCard = document.getElementById('stylePreviewCard');
+  const spHeading = document.getElementById('spHeading');
+  const spAccentBar = document.getElementById('spAccentBar');
+  const spBodyText = document.getElementById('spBodyText');
+  const spChip = document.getElementById('spChip');
+  const spChipDot = document.getElementById('spChipDot');
+  const spChipText = document.getElementById('spChipText');
+
+  document.querySelectorAll('.color-card').forEach(card => {
+    if (card.classList.contains('card-custom')) return;
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.color-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      const bg = card.dataset.previewBg;
+      const heading = card.dataset.previewHeading;
+      const accent = card.dataset.previewAccent;
+      const body = card.dataset.previewBody;
+      const chip = card.dataset.previewChip;
+      spCard.style.background = bg;
+      spHeading.style.color = heading;
+      spAccentBar.style.background = accent;
+      spBodyText.style.color = body;
+      spChip.style.background = chip + '20';
+      spChipDot.style.background = chip;
+      spChipText.style.color = chip;
+    });
+  });
+
+  // ── Typography 候选卡 ───────────────────────────────────────────
+  document.querySelectorAll('.type-card').forEach(card => {
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+    });
+  });
+
+  // ── 确认按钮 → confirmed 完成态 ─────────────────────────────────
+  document.getElementById('confirmBtn').addEventListener('click', function() {
+    this.classList.add('confirming');
+    this.innerHTML = '提交中…';
+    setTimeout(() => {
+      document.getElementById('confirmedOverlay').classList.add('visible');
+    }, 500);
+  });
+</script>
+
+</body>
+</html>

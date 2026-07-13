@@ -2927,7 +2927,10 @@ export class ChatEngine extends EventEmitter {
               type: 'usage',
               messageId: active.messageId,
               contextTokens,
-              outputTokens
+              outputTokens,
+              inputTokens,
+              cacheReadTokens: cacheRead,
+              cacheCreateTokens: cacheCreate
             })
           }
           this.emitEvent(sessionId, {

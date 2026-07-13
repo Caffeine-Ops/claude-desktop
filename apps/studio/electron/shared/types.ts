@@ -101,12 +101,19 @@ export type ChatEvent =
        * (input_tokens + cache_read + cache_create), i.e. the number
        * the sidebar badge should show as "how much of the 200k
        * window am I using right now". `outputTokens` is this turn's
-       * output only — not cumulative.
+       * output only — not cumulative. `inputTokens`/`cacheReadTokens`/
+       * `cacheCreateTokens` are the three buckets that sum to
+       * `contextTokens` — kept alongside it (not just the total) so a
+       * usage breakdown UI can show fresh vs. cache-hit vs. cache-write
+       * without re-deriving anything.
        */
       type: 'usage'
       messageId: string
       contextTokens: number
       outputTokens: number
+      inputTokens: number
+      cacheReadTokens: number
+      cacheCreateTokens: number
     }
   | { type: 'end'; messageId: string }
   | { type: 'error'; messageId: string; error: string }
