@@ -5,7 +5,7 @@ import { app, dialog } from 'electron'
 // out-electron 产物里运行时会炸。必须 default import 再解构。
 import electronUpdaterPkg from 'electron-updater'
 import type { UpdaterState } from '../../shared/ipc-channels'
-import { broadcastUpdaterState } from '../tabRegistry'
+import { broadcastUpdaterState, setQuitting } from '../tabRegistry'
 
 const { autoUpdater } = electronUpdaterPkg
 
@@ -43,6 +43,13 @@ let state: UpdaterState = {
 
 let initialized = false
 
+/**
+ * installUpdate 已发起、还没真正退出的窗口期标记。只用于失败复位：
+ * quitAndInstall 之后 Squirrel 报错（签名校验失败等）时把 isQuitting
+ * 翻回 false，否则残留的真退出标记会让之后的红叉真关窗、杀掉引擎。
+ */
+let quitForUpdateInitiated = false
+
 function setState(patch: Partial<UpdaterState>): void {
   state = { ...state, ...patch }
   broadcastUpdaterState(state)
@@ -75,11 +82,25 @@ export function checkForUpdates(): UpdaterState {
 /** 仅在下载就绪后有效；其余相位静默无操作（按钮竞态点击不能炸）。 */
 export function installUpdate(): void {
   if (!state.supported || state.phase !== 'ready') return
+  // 必须先置真退出标记，再调 quitAndInstall。两个原因（2026-07-13 事故）：
+  //
+  // 1. mac 的 quitAndInstall（Squirrel.Mac）**不走 before-quit**——Electron
+  //    原生实现是「对所有窗口调 window.close()，等 window-all-closed 再重启
+  //    安装」。而 tabRegistry 的 close 拦截（红叉=hide 不退出）在
+  //    isQuitting=false 时会把这次 close preventDefault 掉：窗口只是被隐藏，
+  //    window-all-closed 永不触发，进程卡死、更新永远装不上。
+  // 2. win/linux 走 app.quit() → before-quit，那里有活跃任务时会弹「确定
+  //    退出吗」确认框——用户刚点了「立即重启更新」，不该再拦一道；且此时
+  //    NSIS 安装器已被 spawn，取消退出反而会跟安装器打架。
+  //
+  // 先置位后，close 放行 → closed 走完整 dispose（杀 fusion-code 子进程），
+  // 随后的 app.quit() 进 before-quit 时 getQuitting() 已 true，跳过确认框、
+  // 照常 destroyTray + stopOpenDesignServices，清理链一个不少。
+  quitForUpdateInitiated = true
+  setQuitting(true)
   // isSilent=false：Windows NSIS 显示安装小窗（用户刚点了「重启安装」，
   // 有反馈比黑屏等待好）；isForceRunAfter=true：装完自动拉起新版。
-  // mac（Squirrel.Mac）忽略这两个参数。app.quit() 由 quitAndInstall 内部
-  // 触发，走正常退出流：shell closed → engine.dispose（杀 fusion-code 子
-  // 进程）→ before-quit 停 daemon。
+  // mac（Squirrel.Mac）忽略这两个参数。
   autoUpdater.quitAndInstall(false, true)
 }
 
@@ -188,6 +209,12 @@ export function initAppUpdater(): void {
     })
   })
   autoUpdater.on('error', (err) => {
+    if (quitForUpdateInitiated) {
+      // 重启安装发起后失败（签名校验、staged 包损坏等）：撤销真退出标记，
+      // 别让残留的 isQuitting 把用户之后的红叉变成真关窗杀引擎。
+      quitForUpdateInitiated = false
+      setQuitting(false)
+    }
     setState({
       phase: 'error',
       downloadPercent: null,
