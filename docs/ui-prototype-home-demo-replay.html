@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>首页 · 演示回放入口 — UI 原型</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════
+   Design tokens —— 与 packages/design-tokens/tokens.css 同源（HSL 三元组
+   直接抄真实值），原型与 app 视觉零漂移。
+   ═══════════════════════════════════════════════════════════════════ */
+:root {
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --border: 240 6% 84%;
+  --sidebar: 240 7% 96%;
+  --sidebar-accent: 240 6% 90%;
+  --brand: 142 76% 36%;
+  --brand-foreground: 0 0% 100%;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / .04), 0 4px 16px rgb(0 0 0 / .05);
+  --shadow-float: 0 2px 8px rgb(0 0 0 / .08), 0 12px 32px rgb(0 0 0 / .10);
+}
+[data-theme="dark"] {
+  --background: 240 4% 9%;
+  --foreground: 240 6% 92%;
+  --card: 240 4% 13%;
+  --muted: 240 4% 18%;
+  --muted-foreground: 240 4% 62%;
+  --border: 240 4% 24%;
+  --sidebar: 240 4% 11%;
+  --sidebar-accent: 240 4% 19%;
+  --brand: 145 60% 52%; /* 暗档提亮 ≈ #3bce78 */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / .3), 0 4px 16px rgb(0 0 0 / .25);
+  --shadow-float: 0 2px 8px rgb(0 0 0 / .4), 0 12px 32px rgb(0 0 0 / .45);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, "PingFang SC", "SF Pro Text", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+/* ── 外壳：左 rail + 主区（复刻 app 骨架，rail 仅示意） ── */
+.shell { display: flex; height: 100vh; }
+.rail {
+  width: 264px; flex-shrink: 0;
+  background: hsl(var(--sidebar));
+  border-right: 1px solid hsl(var(--border) / .6);
+  padding: 14px 12px;
+  display: flex; flex-direction: column; gap: 2px;
+  user-select: none;
+}
+.rail .new-chat {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; border-radius: 10px;
+  background: hsl(var(--brand) / .1); color: hsl(var(--brand));
+  font-size: 13.5px; font-weight: 600; margin-bottom: 10px;
+}
+.rail .nav-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: 8px;
+  font-size: 13px; color: hsl(var(--foreground) / .75);
+}
+.rail .nav-item:hover { background: hsl(var(--sidebar-accent)); }
+.rail .group-label { padding: 18px 12px 6px; font-size: 11px; color: hsl(var(--muted-foreground) / .8); }
+.rail .row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 12px; border-radius: 8px; font-size: 13px;
+  color: hsl(var(--foreground) / .72); white-space: nowrap;
+}
+.rail .row:hover { background: hsl(var(--sidebar-accent)); }
+.rail .row .t { overflow: hidden; text-overflow: ellipsis; }
+.rail .row .time { font-size: 11px; color: hsl(var(--muted-foreground) / .7); flex-shrink: 0; }
+.icon-ph { /* 图标占位：真实实现用 lucide */
+  width: 15px; height: 15px; flex-shrink: 0; border-radius: 4px;
+  border: 1.5px solid currentColor; opacity: .8;
+}
+
+.main { flex: 1; min-width: 0; position: relative; background: hsl(var(--card)); margin: 0; display: flex; flex-direction: column; }
+
+/* ═══════════════ HOME 态（重设计的空白页） ═══════════════ */
+.home {
+  flex: 1; overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center;
+  padding: clamp(24px, 6vh, 64px) 32px 40px;
+}
+.home-inner { width: 100%; max-width: 720px; display: flex; flex-direction: column; align-items: center; }
+
+.hero-icon {
+  width: 56px; height: 56px; border-radius: 16px;
+  background: hsl(var(--brand) / .1);
+  display: grid; place-items: center; margin-bottom: 20px;
+}
+.hero-icon svg { width: 26px; height: 26px; stroke: hsl(var(--brand)); }
+h1 {
+  font-size: clamp(26px, 3.4vw, 34px); font-weight: 700; letter-spacing: -0.02em;
+  margin-bottom: 10px; text-align: center;
+}
+.hero-sub { font-size: 15px; color: hsl(var(--muted-foreground)); margin-bottom: 30px; text-align: center; }
+
+/* composer 卡（视觉复刻，仅示意） */
+.composer {
+  width: 100%; background: hsl(var(--card));
+  border: 1px solid hsl(var(--border) / .8); border-radius: 18px;
+  box-shadow: var(--shadow-card); padding: 16px 16px 12px;
+  transition: box-shadow .2s ease, border-color .2s ease;
+}
+.composer:hover { border-color: hsl(var(--border)); box-shadow: var(--shadow-float); }
+.composer .ph { font-size: 14.5px; color: hsl(var(--muted-foreground) / .85); padding: 2px 4px 18px; }
+.composer .bar { display: flex; align-items: center; gap: 10px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 12px; border-radius: 999px;
+  border: 1px solid hsl(var(--border) / .9);
+  font-size: 12.5px; color: hsl(var(--foreground) / .8);
+}
+.send-btn {
+  width: 38px; height: 38px; border-radius: 999px; margin-left: auto;
+  background: hsl(var(--brand)); color: hsl(var(--brand-foreground));
+  display: grid; place-items: center; font-size: 16px;
+  transition: transform .15s ease, filter .15s ease;
+}
+.send-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+
+/* ── 演示区（本次设计核心） ── */
+.demo-section { width: 100%; margin-top: 40px; }
+.demo-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; padding: 0 2px; }
+.demo-head h2 { font-size: 15px; font-weight: 600; }
+.demo-head .hint { font-size: 12.5px; color: hsl(var(--muted-foreground)); }
+
+.demo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+
+/* Tweaks 布局变体 */
+body[data-layout="feature"] .demo-grid { grid-template-columns: 1.7fr 1fr; grid-auto-rows: 1fr; }
+body[data-layout="feature"] .demo-card:first-child { grid-row: span 2; }
+body[data-layout="feature"] .demo-card:first-child .demo-cover { aspect-ratio: auto; flex: 1; }
+/* 主打卡封面被拉高后 16:9 版式的骨架中段发空——成果块放大补重心 */
+body[data-layout="feature"] .demo-card:first-child .artifact { height: 52%; width: 74%; margin: auto auto 0; font-size: 11px; }
+body[data-layout="list"] .demo-grid { grid-template-columns: 1fr; gap: 10px; }
+body[data-layout="list"] .demo-card { flex-direction: row; align-items: stretch; }
+body[data-layout="list"] .demo-cover { width: 200px; aspect-ratio: auto; flex-shrink: 0; }
+body[data-layout="list"] .demo-meta { align-self: center; }
+
+.demo-card {
+  display: flex; flex-direction: column;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border) / .7); border-radius: 14px;
+  overflow: hidden; text-align: left;
+  transition: transform .2s cubic-bezier(.2,.8,.3,1), box-shadow .2s ease, border-color .2s ease;
+}
+.demo-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-float); border-color: hsl(var(--border)); }
+.demo-card:active { transform: translateY(-1px); }
+.demo-card:focus-visible { outline: 2px solid hsl(var(--brand)); outline-offset: 2px; }
+
+/* 封面 = 产品界面抽象微缩（CSS 示意，非伪造截图）+ 播放浮层 */
+.demo-cover {
+  position: relative; aspect-ratio: 16 / 9;
+  background:
+    radial-gradient(120% 90% at 20% 0%, hsl(var(--brand) / .07), transparent 55%),
+    hsl(var(--muted) / .55);
+  padding: 14px 16px; overflow: hidden;
+}
+.mini { display: flex; flex-direction: column; gap: 6px; height: 100%; }
+.mini .bubble-u {
+  align-self: flex-end; height: 12px; width: 46%;
+  border-radius: 999px; background: hsl(var(--brand) / .28);
+}
+.mini .line { height: 8px; border-radius: 999px; background: hsl(var(--foreground) / .12); }
+.mini .line.w60 { width: 60%; } .mini .line.w80 { width: 80%; } .mini .line.w40 { width: 40%; }
+.mini .toolrow {
+  display: flex; align-items: center; gap: 6px;
+  height: 18px; padding: 0 8px; width: 74%;
+  border-radius: 6px; background: hsl(var(--card));
+  border: 1px solid hsl(var(--border) / .6);
+}
+.mini .toolrow .dot { width: 7px; height: 7px; border-radius: 999px; background: hsl(var(--brand)); }
+.mini .toolrow .bar { height: 6px; border-radius: 999px; background: hsl(var(--foreground) / .12); flex: 1; }
+.mini .artifact {
+  margin-top: auto; height: 34%; width: 58%;
+  border-radius: 8px; background: hsl(var(--card));
+  border: 1px solid hsl(var(--border) / .6);
+  display: grid; place-items: center;
+  font-size: 9px; color: hsl(var(--muted-foreground) / .8); letter-spacing: .02em;
+}
+.demo-cover .play {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  background: hsl(var(--foreground) / 0); transition: background .2s ease;
+}
+.demo-cover .play .pbtn {
+  width: 44px; height: 44px; border-radius: 999px;
+  background: hsl(var(--brand)); color: #fff;
+  display: grid; place-items: center;
+  box-shadow: 0 4px 14px hsl(var(--brand) / .45);
+  transform: scale(.92); opacity: .95;
+  transition: transform .2s cubic-bezier(.2,.8,.3,1);
+}
+.demo-card:hover .play { background: hsl(var(--foreground) / .05); }
+.demo-card:hover .pbtn { transform: scale(1.06); }
+.demo-cover .dur {
+  position: absolute; right: 10px; bottom: 10px;
+  padding: 2px 8px; border-radius: 999px;
+  background: rgb(0 0 0 / .55); color: #fff;
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(4px);
+}
+.demo-meta { padding: 12px 14px 13px; }
+.demo-meta .t {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13.5px; font-weight: 600; margin-bottom: 3px;
+}
+.demo-meta .t .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.demo-meta .d { font-size: 12px; color: hsl(var(--muted-foreground)); line-height: 1.5; }
+.demo-tag {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 999px;
+  background: hsl(var(--brand) / .1); color: hsl(var(--brand));
+  font-size: 11px; font-weight: 600;
+}
+.demo-tag .dot { width: 5px; height: 5px; border-radius: 999px; background: currentColor; }
+
+/* 新用户横幅（保留原有，可在 Tweaks 关掉） */
+.promo {
+  width: 100%; margin-top: 26px;
+  display: flex; align-items: center; gap: 14px;
+  background: hsl(var(--muted) / .5);
+  border-radius: 14px; padding: 14px 18px;
+}
+body[data-promo="off"] .promo { display: none; }
+.promo .pic { width: 44px; height: 44px; border-radius: 10px; background: linear-gradient(135deg, hsl(var(--brand) / .35), hsl(var(--brand) / .12)); flex-shrink: 0; }
+.promo .tx { flex: 1; min-width: 0; }
+.promo .tx b { font-size: 13.5px; display: block; margin-bottom: 2px; }
+.promo .tx span { font-size: 12px; color: hsl(var(--muted-foreground)); }
+.promo .cta {
+  flex-shrink: 0; height: 34px; padding: 0 16px; border-radius: 999px;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  font-size: 13px; font-weight: 600;
+}
+
+/* ═══════════════ REPLAY 态（点卡片后的就地回放） ═══════════════ */
+.replay { position: absolute; inset: 0; display: none; flex-direction: column; background: hsl(var(--card)); }
+body[data-mode="replay"] .replay { display: flex; }
+body[data-mode="replay"] .home { display: none; }
+
+.replay-head {
+  height: 46px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 10px; padding: 0 16px;
+  border-bottom: 1px solid hsl(var(--border) / .5);
+  font-size: 13.5px; font-weight: 600;
+}
+.replay-head .live-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 999px;
+  background: hsl(var(--brand) / .1); color: hsl(var(--brand));
+  font-size: 11.5px; font-weight: 600;
+}
+.replay-head .live-badge .pulse { width: 6px; height: 6px; border-radius: 999px; background: currentColor; animation: pulse 1.4s ease infinite; }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+.replay-head .exit-link { margin-left: auto; font-size: 12.5px; font-weight: 500; color: hsl(var(--muted-foreground)); }
+.replay-head .exit-link:hover { color: hsl(var(--foreground)); }
+
+.msgs { flex: 1; overflow-y: auto; padding: 28px 0 120px; }
+.msgs-inner { max-width: 640px; margin: 0 auto; padding: 0 24px; display: flex; flex-direction: column; gap: 18px; }
+
+.m-user {
+  align-self: flex-end; max-width: 78%;
+  background: hsl(var(--muted) / .8);
+  padding: 10px 14px; border-radius: 16px 16px 4px 16px;
+  font-size: 14px; line-height: 1.6;
+  animation: rise .3s cubic-bezier(.2,.8,.3,1);
+}
+.m-ai { font-size: 14px; line-height: 1.75; animation: rise .3s cubic-bezier(.2,.8,.3,1); }
+.m-ai .cursor { display: inline-block; width: 2px; height: 1em; background: hsl(var(--brand)); vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0 } }
+@keyframes rise { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+
+.m-think {
+  font-size: 12.5px; color: hsl(var(--muted-foreground));
+  display: flex; align-items: center; gap: 8px;
+  animation: rise .3s ease;
+}
+.m-think .spin, .m-tool .spin {
+  width: 13px; height: 13px; border-radius: 999px; flex-shrink: 0;
+  border: 2px solid hsl(var(--brand) / .25); border-top-color: hsl(var(--brand));
+  animation: rot .8s linear infinite;
+}
+@keyframes rot { to { transform: rotate(360deg) } }
+
+.m-tool {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: 12px;
+  border: 1px solid hsl(var(--border) / .6);
+  background: hsl(var(--muted) / .25);
+  font-size: 13px; animation: rise .3s ease;
+}
+.m-tool .check { width: 15px; height: 15px; flex-shrink: 0; display: none; }
+.m-tool .check svg { width: 100%; height: 100%; stroke: hsl(var(--brand)); }
+.m-tool.done .spin { display: none; }
+.m-tool.done .check { display: block; }
+.m-tool .name { font-weight: 600; flex-shrink: 0; }
+.m-tool .detail { color: hsl(var(--muted-foreground)); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-tool .dur { margin-left: auto; font-size: 11.5px; color: hsl(var(--muted-foreground) / .8); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+
+.m-artifact {
+  width: 320px; max-width: 80%; aspect-ratio: 16 / 10;
+  border-radius: 12px; border: 1px solid hsl(var(--border) / .7);
+  background:
+    linear-gradient(135deg, hsl(var(--brand) / .10), transparent 60%),
+    hsl(var(--muted) / .4);
+  display: grid; place-items: center; gap: 0;
+  font-size: 12px; color: hsl(var(--muted-foreground));
+  animation: rise .35s cubic-bezier(.2,.8,.3,1);
+}
+
+/* 底部播放控制条（与 app 内 ReplayControlBar 同款语言） */
+.ctrl-wrap { position: absolute; left: 0; right: 0; bottom: 18px; display: flex; justify-content: center; pointer-events: none; }
+.ctrl {
+  pointer-events: auto;
+  display: flex; align-items: center; gap: 12px;
+  width: min(560px, calc(100% - 48px));
+  background: hsl(var(--card) / .95); backdrop-filter: blur(12px);
+  border: 1px solid hsl(var(--border) / .8); border-radius: 999px;
+  padding: 8px 14px 8px 8px; box-shadow: var(--shadow-float);
+}
+.ctrl .pp {
+  width: 34px; height: 34px; border-radius: 999px; flex-shrink: 0;
+  display: grid; place-items: center;
+  transition: background .15s ease;
+}
+.ctrl .pp:hover { background: hsl(var(--muted)); }
+.ctrl .pp svg { width: 15px; height: 15px; fill: hsl(var(--foreground)); }
+.ctrl .mid { flex: 1; min-width: 0; }
+.ctrl .row1 { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+.ctrl .label { font-size: 11px; font-weight: 500; color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctrl .time { font-size: 10.5px; color: hsl(var(--muted-foreground) / .8); font-variant-numeric: tabular-nums; flex-shrink: 0; margin-left: 10px; }
+.ctrl .track { position: relative; height: 5px; border-radius: 999px; background: hsl(var(--muted)); cursor: pointer; }
+.ctrl .fill { position: absolute; inset: 0 auto 0 0; width: 0%; border-radius: 999px; background: hsl(var(--brand)); transition: width .12s linear; }
+.ctrl .speed {
+  flex-shrink: 0; width: 40px; height: 30px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+  color: hsl(var(--foreground) / .8);
+}
+.ctrl .speed:hover, .ctrl .close:hover { background: hsl(var(--muted)); }
+.ctrl .close { flex-shrink: 0; width: 30px; height: 30px; border-radius: 999px; display: grid; place-items: center; color: hsl(var(--muted-foreground)); font-size: 15px; }
+
+/* replay 尾帧 CTA：demo 播完引导上手 */
+.replay-cta {
+  display: none; align-self: center; margin-top: 6px;
+  animation: rise .35s ease;
+  text-align: center;
+}
+.replay-cta.show { display: block; }
+.replay-cta .big {
+  height: 40px; padding: 0 22px; border-radius: 999px;
+  background: hsl(var(--brand)); color: #fff; font-size: 14px; font-weight: 600;
+  box-shadow: 0 4px 14px hsl(var(--brand) / .35);
+  transition: transform .15s ease, filter .15s ease;
+}
+.replay-cta .big:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.replay-cta .sub { margin-top: 10px; font-size: 12px; color: hsl(var(--muted-foreground)); }
+
+/* ═══════════════ Tweaks ═══════════════ */
+.tweaks-toggle {
+  position: fixed; right: 18px; bottom: 18px; z-index: 60;
+  width: 40px; height: 40px; border-radius: 999px;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  font-size: 15px; box-shadow: var(--shadow-float);
+}
+.tweaks {
+  position: fixed; right: 18px; bottom: 68px; z-index: 60;
+  width: 250px; background: hsl(var(--card));
+  border: 1px solid hsl(var(--border)); border-radius: 14px;
+  box-shadow: var(--shadow-float); padding: 14px 16px;
+  display: none;
+}
+.tweaks.open { display: block; }
+.tweaks h3 { font-size: 13px; margin-bottom: 12px; }
+.tweaks .field { margin-bottom: 12px; }
+.tweaks label { display: block; font-size: 11.5px; color: hsl(var(--muted-foreground)); margin-bottom: 5px; }
+.tweaks .seg { display: flex; gap: 4px; background: hsl(var(--muted)); border-radius: 8px; padding: 3px; }
+.tweaks .seg button { flex: 1; height: 26px; border-radius: 6px; font-size: 11.5px; color: hsl(var(--muted-foreground)); }
+.tweaks .seg button.on { background: hsl(var(--card)); color: hsl(var(--foreground)); box-shadow: 0 1px 3px rgb(0 0 0 / .1); font-weight: 600; }
+
+@media (max-width: 980px) { .demo-grid { grid-template-columns: 1fr 1fr; } .rail { display: none; } }
+@media (max-width: 640px) { .demo-grid { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { * { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+</style>
+</head>
+<body data-mode="home" data-layout="grid" data-promo="on">
+
+<div class="shell">
+  <!-- ── 左 rail（示意，非本次设计对象） ── -->
+  <aside class="rail">
+    <div class="new-chat"><span class="icon-ph"></span>新对话</div>
+    <div class="nav-item"><span class="icon-ph"></span>知识库</div>
+    <div class="group-label">今天</div>
+    <div class="row"><span class="t">季度汇报 PPT</span><span class="time">1 小时前</span></div>
+    <div class="row"><span class="t">产品图修改</span><span class="time">2 小时前</span></div>
+    <div class="row"><span class="t">销售数据整理</span><span class="time">3 小时前</span></div>
+    <div class="group-label">本周</div>
+    <div class="row"><span class="t">竞品调研方案</span><span class="time">周二</span></div>
+    <div class="row"><span class="t">官网首页文案</span><span class="time">周一</span></div>
+  </aside>
+
+  <main class="main">
+    <!-- ═══ HOME：重设计的空白页 ═══ -->
+    <section class="home">
+      <div class="home-inner">
+        <div class="hero-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+        </div>
+        <h1>不止聊天，搞定一切</h1>
+        <p class="hero-sub">本地运行、自主规划、安全可控的 AI 工作搭子</p>
+
+        <div class="composer">
+          <div class="ph">随便问点什么…&nbsp;&nbsp;↵ 发送 · ⇧↵ 换行 · / 命令 · @ 文件</div>
+          <div class="bar">
+            <span class="chip">＋</span>
+            <span class="chip">通用 ▾</span>
+            <span class="chip" style="margin-left:auto">Sonnet 5 ▾</span>
+            <button class="send-btn" aria-label="发送">↑</button>
+          </div>
+        </div>
+
+        <!-- ── 演示区：本次设计核心 ── -->
+        <div class="demo-section">
+          <div class="demo-head">
+            <h2>看看它能做什么</h2>
+            <span class="hint">每段不到 1 分钟，都是真实使用过程的回放</span>
+          </div>
+          <div class="demo-grid" id="demoGrid"><!-- JS 注入卡片 --></div>
+        </div>
+
+        <!-- 新用户横幅（保留，Tweaks 可关） -->
+        <div class="promo">
+          <div class="pic"></div>
+          <div class="tx">
+            <b>新用户首登立领 2000 积分，教师/学生认证再送 4000</b>
+            <span>2000 积分含注册赠送的 300 积分，查看认证入口和活动规则</span>
+          </div>
+          <button class="cta">领取 PRO</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ REPLAY：点卡片后的就地回放 ═══ -->
+    <section class="replay">
+      <div class="replay-head">
+        <span id="replayTitle">演示</span>
+        <span class="live-badge"><span class="pulse"></span>演示回放</span>
+        <button class="exit-link" onclick="exitReplay()">退出演示 ⟶</button>
+      </div>
+      <div class="msgs" id="msgScroll">
+        <div class="msgs-inner" id="msgs"></div>
+      </div>
+      <div class="ctrl-wrap">
+        <div class="ctrl">
+          <button class="pp" id="ppBtn" aria-label="播放/暂停" onclick="togglePlay()">
+            <svg id="ppIcon" viewBox="0 0 16 16"><rect x="3" y="2" width="3.6" height="12" rx="1"/><rect x="9.4" y="2" width="3.6" height="12" rx="1"/></svg>
+          </button>
+          <div class="mid">
+            <div class="row1">
+              <span class="label" id="ctrlLabel">演示回放</span>
+              <span class="time" id="ctrlTime">0:00 / 0:00</span>
+            </div>
+            <div class="track" id="track"><div class="fill" id="fill"></div></div>
+          </div>
+          <button class="speed" id="speedBtn" onclick="cycleSpeed()">1x</button>
+          <button class="close" aria-label="退出" onclick="exitReplay()">✕</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Tweaks -->
+<button class="tweaks-toggle" onclick="document.getElementById('tweaks').classList.toggle('open')" aria-label="Tweaks">⚙</button>
+<div class="tweaks" id="tweaks">
+  <h3>Tweaks</h3>
+  <div class="field">
+    <label>演示区布局</label>
+    <div class="seg" data-tweak="layout">
+      <button data-v="grid" class="on">三卡网格</button>
+      <button data-v="feature">主打+双卡</button>
+      <button data-v="list">列表</button>
+    </div>
+  </div>
+  <div class="field">
+    <label>主题</label>
+    <div class="seg" data-tweak="theme">
+      <button data-v="light" class="on">亮色</button>
+      <button data-v="dark">暗色</button>
+    </div>
+  </div>
+  <div class="field">
+    <label>新用户横幅</label>
+    <div class="seg" data-tweak="promo">
+      <button data-v="on" class="on">显示</button>
+      <button data-v="off">隐藏</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   演示数据：3 个真实使用场景的回放脚本。
+   step 类型: user | think | text(打字机) | tool(spinner→勾) | artifact | cta
+   ms = 该步骤表演时长(1x)
+   ═══════════════════════════════════════════════════════════ */
+const DEMOS = [
+  {
+    id: 'ppt', title: '一句话做出整份 PPT',
+    desc: '从大纲到成片全自动，右侧实时预览、随口修改',
+    dur: 32,
+    cover: 'ppt',
+    steps: [
+      { t: 'user', text: '帮我把这份产品介绍做成 PPT，商务风格，12 页左右', ms: 900 },
+      { t: 'think', text: '正在梳理内容结构、确定版式与配色…', ms: 1600 },
+      { t: 'text', text: '好的。我先列大纲：封面 → 产品价值 → 三个核心功能 → 客户案例 → 报价与联系方式，然后逐页生成。', ms: 2600 },
+      { t: 'tool', name: '生成幻灯片', detail: '产品介绍.pptx · 12 页', ms: 3400, dur: '28s' },
+      { t: 'artifact', label: '[ 幻灯片预览 · 16:9 ]', ms: 1200 },
+      { t: 'text', text: '做好了，一共 12 页。右侧可以翻页预览，想改哪页直接说，比如「第 3 页配图换成产品截图」。', ms: 2400 },
+      { t: 'cta', ms: 600 }
+    ]
+  },
+  {
+    id: 'image', title: '在图上圈一下就能改图',
+    desc: '打开图片、圈出要改的地方、说句话，AI 就照着改',
+    dur: 24,
+    cover: 'image',
+    steps: [
+      { t: 'user', text: '这张海报的标题帮我改成「Fusion 2.0 发布」，其他别动', ms: 900 },
+      { t: 'think', text: '正在读取原图、定位标记区域…', ms: 1400 },
+      { t: 'tool', name: '读取文件', detail: 'poster-v7.png', ms: 1400, dur: '2.5s' },
+      { t: 'text', text: '看到了，标记 1 圈的是主标题区域。我在原图基础上只改这一处，其余保持不变。', ms: 2200 },
+      { t: 'tool', name: '修改图片', detail: 'edit · 保持原图其余部分', ms: 3000, dur: '31s' },
+      { t: 'artifact', label: '[ 修改后的图片 · 对比预览 ]', ms: 1200 },
+      { t: 'text', text: '改好了，只动了标题文字，版式和底图都没变。不满意可以继续圈继续改。', ms: 2200 },
+      { t: 'cta', ms: 600 }
+    ]
+  },
+  {
+    id: 'sheet', title: '表格数据自动整理分析',
+    desc: '扔进一份 Excel，让它算汇总、找异常、出图表',
+    dur: 28,
+    cover: 'sheet',
+    steps: [
+      { t: 'user', text: '这份销售表帮我按区域汇总一下，找出环比下滑最多的三个城市', ms: 900 },
+      { t: 'think', text: '正在解析表格结构、识别区域与月份字段…', ms: 1500 },
+      { t: 'tool', name: '读取表格', detail: '2026-Q2-销售明细.xlsx · 1,842 行', ms: 1800, dur: '3.1s' },
+      { t: 'tool', name: '数据分析', detail: '按区域聚合 · 环比计算', ms: 2600, dur: '12s' },
+      { t: 'text', text: '汇总好了：华东环比 +12%，华南 +4%。下滑最多的三个城市是成都（-18%）、西安（-11%）、长沙（-9%），我把明细和图表放在了右侧预览里。', ms: 3000 },
+      { t: 'artifact', label: '[ 汇总表格 + 图表预览 ]', ms: 1200 },
+      { t: 'cta', ms: 600 }
+    ]
+  }
+];
+
+/* ── 首页演示卡片渲染 ── */
+const COVER_MINIS = {
+  ppt: `<div class="mini">
+          <div class="bubble-u"></div>
+          <div class="line w60"></div>
+          <div class="toolrow"><span class="dot"></span><span class="bar"></span></div>
+          <div class="artifact">幻灯片 16:9</div>
+        </div>`,
+  image: `<div class="mini">
+          <div class="bubble-u"></div>
+          <div class="toolrow"><span class="dot"></span><span class="bar"></span></div>
+          <div class="line w80"></div>
+          <div class="artifact">图片 · 标记 ①</div>
+        </div>`,
+  sheet: `<div class="mini">
+          <div class="bubble-u"></div>
+          <div class="toolrow"><span class="dot"></span><span class="bar"></span></div>
+          <div class="toolrow"><span class="dot"></span><span class="bar"></span></div>
+          <div class="artifact">表格 + 图表</div>
+        </div>`
+};
+
+const grid = document.getElementById('demoGrid');
+grid.innerHTML = DEMOS.map((d, i) => `
+  <button class="demo-card" onclick="startReplay(${i})" aria-label="播放演示：${d.title}">
+    <div class="demo-cover">
+      ${COVER_MINIS[d.cover]}
+      <div class="play"><div class="pbtn">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8v10.4c0 .8.9 1.3 1.6.9l8-5.2c.6-.4.6-1.4 0-1.8l-8-5.2c-.7-.4-1.6.1-1.6.9z"/></svg>
+      </div></div>
+      <span class="dur">0:${String(d.dur).padStart(2,'0')}</span>
+    </div>
+    <div class="demo-meta">
+      <div class="t"><span class="txt">${d.title}</span><span class="demo-tag"><span class="dot"></span>演示回放</span></div>
+      <div class="d">${d.desc}</div>
+    </div>
+  </button>
+`).join('');
+
+/* ═══════════════ 回放引擎（原型级：脚本化表演） ═══════════════ */
+let R = null; // 当前回放态
+
+/* rAF 链防重入：任何入口（开播/恢复/seek）都先 cancel 旧链再起新链——
+   两条链并行会对同一 step 各自 beginStep，消息全部双份（实测踩过）。 */
+function armTick() {
+  if (R?.raf) cancelAnimationFrame(R.raf);
+  R.raf = requestAnimationFrame(tick);
+}
+
+function startReplay(idx) {
+  if (R?.raf) cancelAnimationFrame(R.raf);
+  const demo = DEMOS[idx];
+  document.body.dataset.mode = 'replay';
+  document.getElementById('replayTitle').textContent = demo.title;
+  document.getElementById('ctrlLabel').textContent = '演示回放 · ' + demo.title;
+  document.getElementById('msgs').innerHTML = '';
+  const total = demo.steps.reduce((s, x) => s + x.ms, 0);
+  R = { demo, total, elapsed: 0, step: 0, stepElapsed: 0, playing: true, speed: 1, node: null, typed: 0, last: performance.now(), raf: 0 };
+  setPP(true);
+  document.getElementById('speedBtn').textContent = '1x';
+  armTick();
+}
+
+function exitReplay() {
+  if (R?.raf) cancelAnimationFrame(R.raf);
+  R = null;
+  document.body.dataset.mode = 'home';
+}
+
+function togglePlay() {
+  if (!R) return;
+  if (R.step >= R.demo.steps.length) { // done → 重播
+    startReplay(DEMOS.indexOf(R.demo)); return;
+  }
+  R.playing = !R.playing;
+  R.last = performance.now();
+  setPP(R.playing);
+  if (R.playing) armTick();
+}
+
+function setPP(playing) {
+  document.getElementById('ppIcon').innerHTML = playing
+    ? '<rect x="3" y="2" width="3.6" height="12" rx="1"/><rect x="9.4" y="2" width="3.6" height="12" rx="1"/>'
+    : '<path d="M4.5 2.8v10.4c0 .8.9 1.3 1.6.9l8-5.2c.6-.4.6-1.4 0-1.8l-8-5.2c-.7-.4-1.6.1-1.6.9z"/>';
+}
+
+function cycleSpeed() {
+  if (!R) return;
+  const s = [1, 2, 4, 8];
+  R.speed = s[(s.indexOf(R.speed) + 1) % s.length];
+  document.getElementById('speedBtn').textContent = R.speed + 'x';
+}
+
+function fmt(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+function tick(now) {
+  if (!R || !R.playing) return;
+  const dt = (now - R.last) * R.speed;
+  R.last = now;
+
+  const steps = R.demo.steps;
+  if (R.step < steps.length) {
+    const st = steps[R.step];
+    if (R.stepElapsed === 0) beginStep(st);
+    R.stepElapsed += dt;
+    R.elapsed += dt;
+    progressStep(st, Math.min(R.stepElapsed / st.ms, 1));
+    if (R.stepElapsed >= st.ms) { finishStep(st); R.step++; R.stepElapsed = 0; }
+  }
+
+  // 进度条（用表演总时长做骨架，映射到卡片标称秒数只是展示口径）
+  const p = Math.min(R.elapsed / R.total, 1);
+  document.getElementById('fill').style.width = (p * 100) + '%';
+  document.getElementById('ctrlTime').textContent =
+    fmt(p * R.demo.dur * 1000) + ' / ' + fmt(R.demo.dur * 1000);
+
+  if (R.step >= steps.length) { setPP(false); return; } // done：按钮变重播
+  R.raf = requestAnimationFrame(tick);
+}
+
+const msgs = () => document.getElementById('msgs');
+function autoscroll() {
+  const sc = document.getElementById('msgScroll');
+  sc.scrollTop = sc.scrollHeight; /* 不用 scrollIntoView（iframe 环境规范） */
+}
+
+function beginStep(st) {
+  const el = document.createElement('div');
+  if (st.t === 'user') { el.className = 'm-user'; el.textContent = st.text; }
+  if (st.t === 'think') { el.className = 'm-think'; el.innerHTML = '<span class="spin"></span><span>' + st.text + '</span>'; }
+  if (st.t === 'text') { el.className = 'm-ai'; el.innerHTML = '<span class="tx"></span><span class="cursor"></span>'; }
+  if (st.t === 'tool') {
+    el.className = 'm-tool';
+    el.innerHTML = '<span class="spin"></span><span class="check"><svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>'
+      + '<span class="name">' + st.name + '</span><span class="detail">' + st.detail + '</span><span class="dur"></span>';
+  }
+  if (st.t === 'artifact') { el.className = 'm-artifact'; el.textContent = st.label; }
+  if (st.t === 'cta') {
+    el.className = 'replay-cta show';
+    el.innerHTML = '<button class="big" onclick="exitReplay()">我也试试 → 开始对话</button>'
+      + '<div class="sub">回放结束 · 点左下角播放键可再看一遍</div>';
+  }
+  msgs().appendChild(el);
+  R.node = el;
+  autoscroll();
+}
+
+function progressStep(st, p) {
+  if (st.t === 'text' && R.node) {
+    const n = Math.floor(st.text.length * p);
+    if (n !== R.typed) { R.typed = n; R.node.querySelector('.tx').textContent = st.text.slice(0, n); autoscroll(); }
+  }
+}
+
+function finishStep(st) {
+  if (st.t === 'text' && R.node) {
+    R.node.querySelector('.tx').textContent = st.text;
+    R.node.querySelector('.cursor')?.remove();
+    R.typed = 0;
+  }
+  if (st.t === 'think' && R.node) R.node.remove(); // 思考行完成后收起（与产品一致）
+  if (st.t === 'tool' && R.node) {
+    R.node.classList.add('done');
+    R.node.querySelector('.dur').textContent = st.dur || '';
+  }
+  autoscroll();
+}
+
+/* 进度条点击 seek（原型级：按比例快进/回退 = 重播到目标点） */
+document.getElementById('track').addEventListener('click', (e) => {
+  if (!R) return;
+  if (R.raf) cancelAnimationFrame(R.raf); // 重建 R 前先掐旧链（防双链双份消息）
+  const rect = e.currentTarget.getBoundingClientRect();
+  const target = ((e.clientX - rect.left) / rect.width) * R.total;
+  const demo = R.demo, speed = R.speed;
+  // 重建到目标：instant flush
+  document.getElementById('msgs').innerHTML = '';
+  R = { demo, total: R.total, elapsed: 0, step: 0, stepElapsed: 0, playing: false, speed, node: null, typed: 0, last: performance.now(), raf: 0 };
+  let remain = target;
+  while (R.step < demo.steps.length && remain > 0) {
+    const st = demo.steps[R.step];
+    beginStep(st);
+    if (remain >= st.ms) { progressStep(st, 1); finishStep(st); remain -= st.ms; R.elapsed += st.ms; R.step++; }
+    else { R.stepElapsed = remain; R.elapsed += remain; progressStep(st, remain / st.ms); remain = 0; }
+  }
+  R.playing = true; R.last = performance.now(); setPP(true);
+  document.getElementById('speedBtn').textContent = speed + 'x';
+  armTick();
+});
+
+/* ═══════════════ Tweaks 交互 ═══════════════ */
+document.querySelectorAll('.tweaks .seg').forEach((seg) => {
+  seg.addEventListener('click', (e) => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn));
+    const k = seg.dataset.tweak, v = btn.dataset.v;
+    if (k === 'layout') document.body.dataset.layout = v;
+    if (k === 'promo') document.body.dataset.promo = v;
+    if (k === 'theme') {
+      if (v === 'dark') document.documentElement.dataset.theme = 'dark';
+      else delete document.documentElement.dataset.theme;
+    }
+  });
+});
+</script>
+</body>
+</html>

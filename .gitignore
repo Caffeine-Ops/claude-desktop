@@ -76,3 +76,8 @@ prototypes/
 
 # 一次性分析脚本 (与本项目无关：读别的项目数据生成 Excel，输出路径写死本机桌面)
 scripts/export_his_analysis.py
+
+# 会话录像演示素材 (.claudereplay 二进制，几百 KB~数 MB/个，本机录制产物)：
+# 首页演示区按目录扫描自动上/下架，丢文件即用，不需要入库；README.md 说明
+# 这个目录的用途，继续跟踪。
+apps/studio/demo-replays/*.claudereplay

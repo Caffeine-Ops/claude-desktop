@@ -14,6 +14,7 @@ import type {
   ProposalMetricRecord,
   SectionVerification
 } from './proposal'
+import type { ReplayMeta, ReplayTimeline } from './replayTypes'
 
 /**
  * Central registry of IPC channel names. Main and renderer both import
@@ -747,6 +748,24 @@ export const IPC_CHANNELS = {
    * docx-preview 屏显不做溢出重排、而 Chromium 打印做真分页导致的「预览一页装下、PDF 分两页」错位。
    */
   PROPOSAL_RENDER_PDF: 'proposal:render-pdf',
+  /**
+   * Renderer → main. 把一个已有会话导出成 .claudereplay 演示录像包
+   * （transcript 编译成多轨时间线 + 收集图片资产打 zip，走 OS 保存对话框）。
+   * 返回 `{ok:true, path:null}` = 用户取消。详见 main/replay/exportReplay.ts。
+   */
+  REPLAY_EXPORT: 'replay:export',
+  /**
+   * Renderer → main. 打开一个 .claudereplay 录像包：弹选择框（或用显式
+   * path——内置演示留口）→ 解包资产到 userData/replay-cache → 路径重写 →
+   * 返回 meta + timeline，renderer 侧 ReplayController 接手播放。
+   */
+  REPLAY_OPEN: 'replay:open',
+  /**
+   * Renderer → main. 列出内置演示录像（demo-replays 目录扫描，见
+   * main/replay/listDemos.ts）。首页空态的「看看它能做什么」演示区数据源；
+   * 空数组 = 不渲染演示区。
+   */
+  REPLAY_LIST_DEMOS: 'replay:list-demos',
   /** Renderer → main. 写入/读出/删除某会话的持久化草稿（userData/proposal-drafts/<id>.json）。 */
   PROPOSAL_SAVE_DRAFT: 'proposal:save-draft',
   PROPOSAL_LOAD_DRAFT: 'proposal:load-draft',
@@ -1563,6 +1582,52 @@ export interface MermaidImage {
   png: string
   width: number
   height: number
+}
+
+/** Payload for REPLAY_EXPORT. */
+export interface ReplayExportPayload {
+  sessionId: string
+  /** 会话标题快照（保存对话框默认文件名 + 包 meta 展示用）。 */
+  title?: string
+  /**
+   * 会话工作区模式（'slides' = PPT 会话）。由导出入口从 renderer 的
+   * slidesSessions 标记读出——main 无从推断，透传进 manifest.meta.mode，
+   * 回放端据此撑开双分栏。
+   */
+  mode?: 'slides'
+}
+
+/** Result of REPLAY_EXPORT. `path: null` = 用户取消了保存对话框。 */
+export type ReplayExportResult =
+  | { ok: true; path: string; skippedAssets: string[] }
+  | { ok: true; path: null }
+  | { ok: false; error: string }
+
+/** Payload for REPLAY_OPEN. `path` 省略 → 弹系统打开对话框。 */
+export interface ReplayOpenPayload {
+  path?: string
+}
+
+/** Result of REPLAY_OPEN. `cancelled` = 用户取消了打开对话框（非错误）。 */
+export type ReplayOpenResult =
+  | { ok: true; meta: ReplayMeta; timeline: ReplayTimeline }
+  | { ok: false; cancelled: true }
+  | { ok: false; cancelled?: false; error: string }
+
+/** 一条内置演示录像的卡片信息（REPLAY_LIST_DEMOS）。 */
+export interface ReplayDemoInfo {
+  /** 录像包绝对路径——点卡片时原样传给 openReplay({ path })。 */
+  path: string
+  title: string
+  description?: string
+  /** 虚拟播放时长（卡片角标），与实际播放同一套 shared 调度算法。 */
+  virtualDurationMs: number
+  messageCount: number
+}
+
+/** Result of REPLAY_LIST_DEMOS. */
+export interface ReplayListDemosResult {
+  demos: ReplayDemoInfo[]
 }
 
 /** Payload for PROPOSAL_EXPORT. */
@@ -2526,6 +2591,12 @@ export interface ChatApi {
    * 是因为 PDF 的产物来自 renderer 渲染（main 无 DOM），不能从 markdown 直接生成——见通道注释。
    */
   exportProposalPdf(payload: ProposalExportPdfPayload): Promise<ProposalExportPdfResult>
+  /** 把已有会话导出成 .claudereplay 演示录像包（REPLAY_EXPORT，见通道注释）。 */
+  exportReplay(payload: ReplayExportPayload): Promise<ReplayExportResult>
+  /** 打开 .claudereplay 录像包，返回 meta + 重写后的 timeline（REPLAY_OPEN）。 */
+  openReplay(payload: ReplayOpenPayload): Promise<ReplayOpenResult>
+  /** 列出内置演示录像（首页演示区数据源，REPLAY_LIST_DEMOS）。 */
+  listReplayDemos(): Promise<ReplayListDemosResult>
   /**
    * 与 exportProposalPdf 同引擎，但不弹保存框、不落盘——直接回 PDF 字节。预览标签用它拿到与
    * 导出逐字节一致的 PDF，塞进 <iframe> 显示，保证「预览分页 = 导出 PDF 分页」。渲染失败时

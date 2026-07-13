@@ -25,13 +25,15 @@ import { useI18n, useT } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
 import { useDialogStore, type DialogKind } from '../stores/dialogs'
-import {
-  useTodosStore,
-  extractTodoWriteItems,
-  parsePartialToolArgs
-} from '../stores/todos'
 import type { ChatEvent, ThreadSummary } from '@desktop-shared/types'
 import type { ChatImagePayload } from '@desktop-shared/ipc-channels'
+import {
+  applyChatEventToStore,
+  createChatEventCtx,
+  type ChatEventActions,
+  type LiveHooks
+} from './applyChatEventToStore'
+import { isReplaySessionId } from '../replay/replayStore'
 import { fileAttachmentAdapter, FILE_PATH_MIME } from './imageAttachmentAdapter'
 import { useProposalStore } from '../stores/proposal'
 import type { ProposalProduct, ProposalSection } from '../stores/proposal'
@@ -221,9 +223,14 @@ export function FusionRuntimeProvider({
   // Union of main-reported runtimes + foreground session — sorted +
   // stringified so the multi-subscription effect below only re-runs
   // when the set actually changes, not on every parent rerender.
+  //
+  // 回放 slot（replay: 前缀）结构性排除：它是纯前端表演会话，main 侧没有
+  // 对应 runtime——订阅它的 onEvent 只是空转，但配套的 queueList 种子会
+  // 拿着假 id 打真 IPC。回放事件由 ReplayController 直接喂 store，不走
+  // CHAT_EVENT，这里根本不需要它。
   const subscribedIdsKey = useMemo(() => {
     const merged = new Set<string>(activeRuntimeIds)
-    if (sessionId) merged.add(sessionId)
+    if (sessionId && !isReplaySessionId(sessionId)) merged.add(sessionId)
     return Array.from(merged).sort().join('|')
   }, [activeRuntimeIds, sessionId])
 
@@ -393,6 +400,12 @@ export function FusionRuntimeProvider({
     convertMessage: (m: ThreadMessageLike): ThreadMessageLike => m,
 
     onNew: async (message: AppendMessage) => {
+      // 回放会话绝不发送：replay: slot 是纯前端表演，把它的 id 交给
+      // chatApi.send 会让 main 为一个不存在的会话 spawn CLI。回放期
+      // composer 因 streaming 只读，这里是最后一道结构性闸门（done 态
+      // streaming 已翻 false，唯有这道守卫拦住误触）。读 LIVE 前台 id
+      //（getState，同本回调内 streaming 的既有惯例——闭包可能 stale）。
+      if (isReplaySessionId(useChatStore.getState().sessionId)) return
       // ──────────────────────────────────────────────────────────────
       // Reading layout of AppendMessage (assistant-ui contract)
       // ──────────────────────────────────────────────────────────────
@@ -1516,7 +1529,15 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
   // a freshly-minted session isn't in `threads` yet (its first turn hasn't
   // hit the JSONL, so listSessions hasn't surfaced it) — the header falls back
   // to a placeholder in that window.
+  //
+  // 回放 slot 不豁免会撞车：replay: 前缀的 sessionId 永远不在 threads 里
+  // （它是纯前端 id，没有对应的 ThreadSummary），这里会把它解析成 null 并
+  // 覆盖掉 ReplayController.start() 刚写入 useSessionTitleStore 的录像
+  // 标题——「新对话」顶栏就是这么来的（2026-07-13 实测）。回放期间这个
+  // store 的唯一写手改为 ReplayController（start 写录像标题、exit 复位
+  // 回退出会话的标题），这个 effect 对回放 slot 直接跳过，不要覆盖。
   useEffect(() => {
+    if (isReplaySessionId(sessionId)) return
     const current = sessionId
       ? (threads.find((t) => t.id === sessionId)?.title ?? null)
       : null
@@ -1621,365 +1642,183 @@ function wrapDictationWithLogging(inner: DictationAdapter): DictationAdapter {
 }
 
 /**
- * Build a ChatEvent handler bound to a single session id. The closure
- * owns per-tool-use state (toolNames / argsBuffers) so concurrent
- * sessions streaming TodoWrite can't cross-contaminate their right-rail
- * partial-parse state. Every mutation targets the captured `sid`,
- * which is what keeps background runtimes writing into their own
- * perSession slot instead of the foreground.
+ * Build a ChatEvent handler bound to a single session id（薄壳）。
+ *
+ * core 的「event → store mutation」switch 已抽到 applyChatEventToStore（live
+ * 流与 .claudereplay 回放共用同一份语义）。本函数只负责两件事：
+ *   1. 建 per-handler 的 ChatEventCtx——每个订阅私有 toolNames/argsBuffers，
+ *      并发会话流式 TodoWrite 不会互相污染右栏 partial-parse 状态；
+ *   2. 组 LiveHooks：把 live 会话专属副作用（队列气泡补发 / 历史缓存失效 /
+ *      方案模式全链路 / 后台未读 / 队列镜像）接到本模块的既有实现上。
+ * 回放 driver 调 applyChatEventToStore 时 live 传 null 整体关断这些副作用。
+ * Every mutation targets the captured `sid`, which is what keeps background
+ * runtimes writing into their own perSession slot instead of the foreground.
  */
 function makeSessionEventHandler(
   sid: string,
-  actions: {
-    appendUserMessage: (
-      sid: string,
-      content: Array<{ type: string; [key: string]: unknown }>
-    ) => void
-    startAssistantMessage: (sid: string, messageId: string) => void
-    appendAssistantDelta: (
-      sid: string,
-      messageId: string,
-      delta: string
-    ) => void
-    startReasoning: (sid: string, messageId: string) => void
-    appendThinkingDelta: (
-      sid: string,
-      messageId: string,
-      delta: string
-    ) => void
-    startToolCall: (
-      sid: string,
-      messageId: string,
-      toolUseId: string,
-      toolName: string
-    ) => void
-    appendToolCallArgsDelta: (
-      sid: string,
-      toolUseId: string,
-      delta: string
-    ) => void
-    finalizeToolCall: (sid: string, toolUseId: string) => void
-    addToolCall: (
-      sid: string,
-      messageId: string,
-      toolUseId: string,
-      toolName: string,
-      input: unknown
-    ) => void
-    updateToolCallResult: (
-      sid: string,
-      toolUseId: string,
-      output: unknown
-    ) => void
-    updateToolCallTasks: (
-      sid: string,
-      ev: Extract<ChatEvent, { type: 'task_update' }>
-    ) => void
-    setError: (sid: string, messageId: string, error: string) => void
-    endAssistantMessage: (sid: string) => void
-    setUsage: (
-      sid: string,
-      usage: {
-        contextTokens: number
-        outputTokens: number
-        inputTokens: number
-        cacheReadTokens: number
-        cacheCreateTokens: number
-      }
-    ) => void
-  }
+  actions: ChatEventActions
 ): (event: ChatEvent) => void {
-  const toolNames = new Map<string, string>()
-  const argsBuffers = new Map<string, string>()
-  // 方案流式硬门：每条 messageId 至多 abort 一次的去重集（见 maybeAbortOnTocSkip）。
-  const tocGuardAborted = new Set<string>()
-  return (event: ChatEvent) => {
-    switch (event.type) {
-      case 'start': {
-        // If this turn was drained from the queue, its user bubble was
-        // withheld from the transcript until now (see rememberQueuedTurn).
-        // Replay it just before opening the assistant bubble so the pair
-        // appears together and in order. Ordinary idle turns stashed
-        // nothing here — the composer already appended their user bubble.
-        const queuedContent = takeQueuedTurn(sid, event.messageId)
-        if (queuedContent) {
-          actions.appendUserMessage(sid, queuedContent)
-        }
-        // A new assistant turn is starting → this session's transcript is
-        // about to grow. Drop any cached history snapshot so the next
-        // switch-back re-reads fresh JSONL instead of the pre-turn copy.
-        invalidateHistoryCache(sid)
-        actions.startAssistantMessage(sid, event.messageId)
-        break
+  const ctx = createChatEventCtx()
+  const live: LiveHooks = {
+    takeQueuedTurn,
+    invalidateHistoryCache,
+    maybeAbortOnTocSkip,
+    syncProposalDraftFromInflight,
+    onTurnEnd: handleProposalTurnEnd,
+    // Unread: a reply just finished. If the user isn't currently looking
+    // at this session (it's a background task, or they're on the canvas /
+    // another chat), flag it unread so the rail shows a dot until they
+    // open it. A turn that finished in the foreground is already-read —
+    // skip. Read the foreground id live from the store (getState, not a
+    // render-time closure).
+    markUnreadIfBackground: (s) => {
+      if (useChatStore.getState().sessionId !== s) {
+        useUnreadStore.getState().markUnread(s)
       }
-      case 'chunk':
-        actions.appendAssistantDelta(sid, event.messageId, event.delta)
-        // 流式硬门（方案模式）：目录阶段若 AI 跳过确认、刚冒出正文哨兵，立即 abort
-        // 本轮，避免它跑飞整篇正文（见 maybeAbortOnTocSkip）。非方案/正文阶段内部
-        // 短路，开销可忽略。
-        maybeAbortOnTocSkip(sid, event.messageId, tocGuardAborted)
-        break
-      case 'thinking_start':
-        actions.startReasoning(sid, event.messageId)
-        break
-      case 'thinking_delta':
-        actions.appendThinkingDelta(sid, event.messageId, event.delta)
-        break
-      case 'thinking_end':
-        break
-      case 'tool_use_start':
-        toolNames.set(event.toolUseId, event.toolName)
-        argsBuffers.set(event.toolUseId, '')
-        actions.startToolCall(
-          sid,
-          event.messageId,
-          event.toolUseId,
-          event.toolName
-        )
-        if (event.toolName === 'TodoWrite') {
-          useTodosStore.getState().setTodos(sid, [])
-        }
-        // 方案模式：AI 生成封面/目录后用 AskUserQuestion 暂停确认，此刻把已闭合的哨兵块即时
-        // 同步进右侧草稿——否则要等整轮 'end' 才入库，确认期间右侧一直空着。
-        // 封面文本块先于本工具调用流完，故此时已在 store。幂等（内容级去重），与轮末不冲突。
-        if (event.toolName === 'AskUserQuestion') {
-          syncProposalDraftFromInflight(sid, event.messageId)
-        }
-        break
-      case 'tool_use_delta': {
-        actions.appendToolCallArgsDelta(sid, event.toolUseId, event.partialJson)
-        const toolName = toolNames.get(event.toolUseId)
-        if (toolName !== 'TodoWrite') break
-        const prev = argsBuffers.get(event.toolUseId) ?? ''
-        const next = prev + event.partialJson
-        argsBuffers.set(event.toolUseId, next)
-        const parsed = parsePartialToolArgs(next)
-        if (parsed !== null) {
-          const items = extractTodoWriteItems(parsed, /* partial */ true)
-          if (items) {
-            useTodosStore.getState().setTodos(sid, items)
+    },
+    // 选区改写排队·排空（复审 B 修正）：排队改写起飞后以 'error' 失败（子进程崩溃/abort/超时）时，
+    // 若不在此补排空，队列剩余项会永久停摆——与 onTurnEnd 分支对称，同款 queueMicrotask 触发下一轮。
+    onTurnError: () => {
+      queueMicrotask(() => {
+        void drainRevisionQueue()
+      })
+    },
+    onQueueChanged: (s, queue) =>
+      useMessageQueueStore.getState().setQueue(s, queue)
+  }
+  return (event: ChatEvent) =>
+    applyChatEventToStore(sid, event, actions, ctx, live)
+}
+
+/**
+ * 轮末（'end'）方案草稿处理：accumulate the just-finished assistant message's
+ * DRAFT sections into the right-side document panel. We read HERE (at 'end',
+ * once per message) rather than on 'chunk', because the store already holds
+ * the fully assembled text and 'end' is the correct once-per-message point.
+ *
+ * 三道门，缺一不可：
+ *   1. 会话门控：只累积方案绑定会话（ps.sessionId === sid）的输出，防止别的
+ *      会话（多 tab / 后台 agent）的 end 污染方案草稿 sections。
+ *   2. 消息级去重：按 messageId 记账，end 对同一 messageId 二次触发
+ *      （异常路径重发等）时不重复累积同一段。
+ *   3. 精确定位：用 messageId 找到刚结束的那条消息，而非倒序抓「最后
+ *      一条 assistant」——后者会误抓错误占位等尾随消息、把报错写进草稿。
+ *
+ * 本函数同步抛错最终由 applyChatEventToStore 的 'end' case 兜住（endAssistantMessage
+ * 落在那边的 finally——「抛错不得搁浅 spinner」的不变量由 core 保证），故这里不再 catch。
+ * 但选区改写排队·排空（CEO 护栏#1/#6 在 drainRevisionQueue 内部）必须【无论方案草稿处理
+ * 是否抛错】都触发，故本函数自带一层 try/finally（只 finally、不 catch——异常仍会继续向上
+ * 抛给 core）：queueMicrotask 让 core finally 里的 endAssistantMessage 先落定
+ *（streaming=false 对 drain 内的闸可见），再排空。
+ */
+function handleProposalTurnEnd(sid: string, messageId: string): void {
+  try {
+    const _ps = useProposalStore.getState()
+    if (
+      _ps.active &&
+      _ps.sessionId === sid &&
+      !_ps.consumedDraftIds.has(messageId)
+    ) {
+      const slot = useChatStore.getState().perSession[sid]
+      const msg = slot?.messages.find((m) => m.id === messageId) as
+        | { role: string; content: Array<{ type: string; text?: string }> }
+        | undefined
+      if (msg && msg.role === 'assistant') {
+        // Collect all 'text' parts (skip 'reasoning' / tool-call parts).
+        const fullText = msg.content
+          .filter((p) => p.type === 'text' && p.text)
+          .map((p) => p.text!)
+          .join('')
+        // 每个闭合哨兵块映射为一节；提问 / 过程对话不带哨兵 → 不入节。哨兵与
+        // 抽取器在 shared/proposal.ts，与提示词规则同源。
+        const { blocks, truncated } = extractProposalDraftResult(fullText)
+        // 定向修订分流：pendingRevision 非空 = 上一动作（节重写/展开/精简/据来源
+        // 修正/截断续写）要求本轮产出【整节替换】某节，而非 append 新节。三种结局：
+        //   ① 目标节仍在 + 拿到 content 块 → reviseSection 整节替换，清指针，重新校验。
+        //   ② 目标节仍在 + 本轮无可用产出（修订被截断/空）→ 放弃替换，原节不动，仅记账。
+        //   ③ 目标节已不在（pending stale）→ 回退正常累积路径，绝不让产出被静默吞掉。
+        const pending = useProposalStore.getState().pendingRevision
+        const target = pending
+          ? useProposalStore
+              .getState()
+              .sections.find((s) => s.id === pending.sectionId)
+          : undefined
+        const revised = blocks.find((b) => b.kind === 'content') ?? blocks[0]
+        if (pending && target && revised) {
+          useProposalStore.getState().setPendingRevision(null)
+          if (pending.blockRange) {
+            // blockRange 存在=选区即改：【不即时落地】。把「原文 vs 改写后」登记成一条挂在
+            // 本条助手消息下的待审阅项，由 ThreadView 的 ProposalRevisionReview 在该消息
+            // 下方渲染对照 + [应用/放弃/继续改]，用户点「应用」才 spliceBlocks 落地。
+            const secBlocks = splitBlocks(target.markdown)
+            const start = Math.max(
+              0,
+              Math.min(pending.blockRange.start, secBlocks.length - 1)
+            )
+            const end = Math.max(
+              start,
+              Math.min(pending.blockRange.end, secBlocks.length - 1)
+            )
+            useProposalStore.getState().addBlockReview(messageId, {
+              sectionId: pending.sectionId,
+              blockRange: { start, end },
+              before: secBlocks.slice(start, end + 1).join('\n\n'),
+              after: revised.markdown
+            })
+            // 记账：产出已转存进 blockReview，不能再被 appendSections 当新节追加。
+            useProposalStore.getState().markDraftConsumed(messageId)
+          } else {
+            // 缺省=整章替换：即时落地整节替换，reviseSection（重置 verification
+            // 触发重校验、更新 baseline、清 truncated）。
+            useProposalStore
+              .getState()
+              .reviseSection(pending.sectionId, revised.markdown)
+            triggerProposalCitationVerification()
           }
-        }
-        break
-      }
-      case 'tool_use_end':
-        actions.finalizeToolCall(sid, event.toolUseId)
-        if (toolNames.get(event.toolUseId) === 'TodoWrite') {
-          const text = argsBuffers.get(event.toolUseId) ?? ''
-          try {
-            const final = JSON.parse(text)
-            const items = extractTodoWriteItems(final, /* partial */ false)
-            if (items) {
-              useTodosStore.getState().setTodos(sid, items)
+        } else if (pending && target) {
+          // 修订轮被截断 / 空产出：保留原节（不变量：绝不用半截覆盖好内容），清指针 + 记账。
+          console.warn(
+            '[proposal-revise] 本轮修订未产出可用的【方案正文哨兵块】——模型可能跑偏（评估/写文件/闲聊），' +
+              '未生成「应用/放弃」审阅项、正文保持不变。建议重试或新开方案会话。',
+            {
+              sectionId: pending.sectionId,
+              blockRange: pending.blockRange,
+              messageId
             }
-          } catch {
-            // Keep whatever the partial parser produced last.
-          }
-        }
-        toolNames.delete(event.toolUseId)
-        argsBuffers.delete(event.toolUseId)
-        break
-      case 'tool_use':
-        actions.addToolCall(
-          sid,
-          event.messageId,
-          event.toolUseId,
-          event.toolName,
-          event.input
-        )
-        if (event.toolName === 'TodoWrite') {
-          const items = extractTodoWriteItems(event.input)
-          if (items) {
-            useTodosStore.getState().setTodos(sid, items)
-          }
-        }
-        // 同 tool_use_start：非流式 tool_use 路径也兜一道 AskUserQuestion 轮内同步（两条路径
-        // 互斥触发，幂等故双触发也无害）。
-        if (event.toolName === 'AskUserQuestion') {
-          syncProposalDraftFromInflight(sid, event.messageId)
-        }
-        break
-      case 'tool_result':
-        actions.updateToolCallResult(sid, event.toolUseId, event.output)
-        break
-      case 'task_update':
-        // Workflow/Task subagent lifecycle — merge into the spawning
-        // Task card's sub-task list. Routed by toolUseId/taskId inside
-        // the store, independent of any active assistant turn.
-        actions.updateToolCallTasks(sid, event)
-        break
-      case 'usage':
-        actions.setUsage(sid, {
-          contextTokens: event.contextTokens,
-          outputTokens: event.outputTokens,
-          inputTokens: event.inputTokens,
-          cacheReadTokens: event.cacheReadTokens,
-          cacheCreateTokens: event.cacheCreateTokens
-        })
-        break
-      case 'end':
-        // Proposal mode: accumulate the just-finished assistant message's
-        // DRAFT sections into the right-side document panel. We read HERE
-        // (at 'end', once per message) rather than on 'chunk', because the
-        // store already holds the fully assembled text and 'end' is the
-        // correct once-per-message point.
-        //
-        // 三道门，缺一不可：
-        //   1. 会话门控：只累积方案绑定会话（ps.sessionId === sid）的输出，防止别的
-        //      会话（多 tab / 后台 agent）的 end 污染方案草稿 sections。
-        //   2. 消息级去重：按 event.messageId 记账，end 对同一 messageId 二次触发
-        //      （异常路径重发等）时不重复累积同一段。
-        //   3. 精确定位：用 event.messageId 找到刚结束的那条消息，而非倒序抓「最后
-        //      一条 assistant」——后者会误抓错误占位等尾随消息、把报错写进草稿。
-        // 防御性兜底：下面整段方案草稿处理（抽取/入库/校验）一旦同步抛错，绝不能漏掉
-        // 清 spinner 的 endAssistantMessage——否则 streaming 永远停在 true，聊天气泡的
-        // ThinkingSpinner 与右栏「AI 生成中」两处 loading 都永久搁浅（「永远在思考」）。
-        // 故全段包 try、endAssistantMessage 落在 finally；catch 只记日志、不重抛。
-        try {
-          const _ps = useProposalStore.getState()
-          if (
-            _ps.active &&
-            _ps.sessionId === sid &&
-            !_ps.consumedDraftIds.has(event.messageId)
-          ) {
-            const slot = useChatStore.getState().perSession[sid]
-            const msg = slot?.messages.find((m) => m.id === event.messageId) as
-              | { role: string; content: Array<{ type: string; text?: string }> }
-              | undefined
-            if (msg && msg.role === 'assistant') {
-              // Collect all 'text' parts (skip 'reasoning' / tool-call parts).
-              const fullText = msg.content
-                .filter((p) => p.type === 'text' && p.text)
-                .map((p) => p.text!)
-                .join('')
-              // 每个闭合哨兵块映射为一节；提问 / 过程对话不带哨兵 → 不入节。哨兵与
-              // 抽取器在 shared/proposal.ts，与提示词规则同源。
-              const { blocks, truncated } = extractProposalDraftResult(fullText)
-              // 定向修订分流：pendingRevision 非空 = 上一动作（节重写/展开/精简/据来源
-              // 修正/截断续写）要求本轮产出【整节替换】某节，而非 append 新节。三种结局：
-              //   ① 目标节仍在 + 拿到 content 块 → reviseSection 整节替换，清指针，重新校验。
-              //   ② 目标节仍在 + 本轮无可用产出（修订被截断/空）→ 放弃替换，原节不动，仅记账。
-              //   ③ 目标节已不在（pending stale）→ 回退正常累积路径，绝不让产出被静默吞掉。
-              const pending = useProposalStore.getState().pendingRevision
-              const target = pending
-                ? useProposalStore
-                    .getState()
-                    .sections.find((s) => s.id === pending.sectionId)
-                : undefined
-              const revised = blocks.find((b) => b.kind === 'content') ?? blocks[0]
-              if (pending && target && revised) {
-                useProposalStore.getState().setPendingRevision(null)
-                if (pending.blockRange) {
-                  // blockRange 存在=选区即改：【不即时落地】。把「原文 vs 改写后」登记成一条挂在
-                  // 本条助手消息下的待审阅项，由 ThreadView 的 ProposalRevisionReview 在该消息
-                  // 下方渲染对照 + [应用/放弃/继续改]，用户点「应用」才 spliceBlocks 落地。
-                  const secBlocks = splitBlocks(target.markdown)
-                  const start = Math.max(
-                    0,
-                    Math.min(pending.blockRange.start, secBlocks.length - 1)
-                  )
-                  const end = Math.max(
-                    start,
-                    Math.min(pending.blockRange.end, secBlocks.length - 1)
-                  )
-                  useProposalStore.getState().addBlockReview(event.messageId, {
-                    sectionId: pending.sectionId,
-                    blockRange: { start, end },
-                    before: secBlocks.slice(start, end + 1).join('\n\n'),
-                    after: revised.markdown
-                  })
-                  // 记账：产出已转存进 blockReview，不能再被 appendSections 当新节追加。
-                  useProposalStore.getState().markDraftConsumed(event.messageId)
-                } else {
-                  // 缺省=整章替换：即时落地整节替换，reviseSection（重置 verification
-                  // 触发重校验、更新 baseline、清 truncated）。
-                  useProposalStore
-                    .getState()
-                    .reviseSection(pending.sectionId, revised.markdown)
-                  triggerProposalCitationVerification()
-                }
-              } else if (pending && target) {
-                // 修订轮被截断 / 空产出：保留原节（不变量：绝不用半截覆盖好内容），清指针 + 记账。
-                console.warn(
-                  '[proposal-revise] 本轮修订未产出可用的【方案正文哨兵块】——模型可能跑偏（评估/写文件/闲聊），' +
-                    '未生成「应用/放弃」审阅项、正文保持不变。建议重试或新开方案会话。',
-                  {
-                    sectionId: pending.sectionId,
-                    blockRange: pending.blockRange,
-                    messageId: event.messageId
-                  }
-                )
-                useProposalStore.getState().setPendingRevision(null)
-                useProposalStore.getState().markDraftConsumed(event.messageId)
-              } else {
-                // 无 pending，或 pending 已 stale → 回归正常累积。stale 指针在此一并清除。
-                if (pending) useProposalStore.getState().setPendingRevision(null)
-                if (blocks.length || truncated) {
-                  useProposalStore
-                    .getState()
-                    .appendSections(event.messageId, blocks, truncated)
-                  // 引用落地校验：appendSections 内部生成节 id，这里无法直接拿到新节，
-                  // 故扫一遍 store 对「未校验的正文节」异步触发——已校验/在飞的天然跳过，
-                  // 重复调用幂等、只补新节。封面/目录与截断残节不校验。
-                  triggerProposalCitationVerification()
-                } else {
-                  useProposalStore.getState().markDraftConsumed(event.messageId)
-                }
-              }
-              // genimage 自动发起：本轮入库/替换的节里可能带新指令块。放在分流之后统一扫
-              // ——append 与 reviseSection 两条路径都可能引入指令块，扫描自身按 genImageJobs
-              // 幂等，重复调用零成本。
-              autoFireProposalGenImages(sid)
-              // 阶段确认硬门的轮末兜底：本轮发生过「空口确认」拦截、模型补写了节却没重新
-              // 发起确认就收工 → 自动补发一条催促。内部单发保险+阶段守卫，正常轮零成本。
-              maybeNudgeStageConfirmAfterTurn(sid)
-            }
-            // msg 未找到（end 早于消息入 store 的竞态）或 role 非 assistant 时，
-            // 刻意【不】记账：若 end 对同一 messageId 二次触发，第一次 msg 尚未就绪就
-            // 记账会让第二次 msg 已就绪的正文被 consumedDraftIds 挡掉而永久丢失。
-          }
-        } catch (err) {
-          console.error(
-            '[runtime] proposal end-handler threw (草稿可能未入库，turn 状态照常复位):',
-            err
           )
-        } finally {
-          actions.endAssistantMessage(sid)
-          // 选区改写排队·排空（CEO 护栏#1/#6 在 drainRevisionQueue 内部）：queueMicrotask 让
-          // endAssistantMessage 的 set 先落定（streaming=false 对 drain 内的闸可见），再排空。
-          queueMicrotask(() => {
-            void drainRevisionQueue()
-          })
+          useProposalStore.getState().setPendingRevision(null)
+          useProposalStore.getState().markDraftConsumed(messageId)
+        } else {
+          // 无 pending，或 pending 已 stale → 回归正常累积。stale 指针在此一并清除。
+          if (pending) useProposalStore.getState().setPendingRevision(null)
+          if (blocks.length || truncated) {
+            useProposalStore
+              .getState()
+              .appendSections(messageId, blocks, truncated)
+            // 引用落地校验：appendSections 内部生成节 id，这里无法直接拿到新节，
+            // 故扫一遍 store 对「未校验的正文节」异步触发——已校验/在飞的天然跳过，
+            // 重复调用幂等、只补新节。封面/目录与截断残节不校验。
+            triggerProposalCitationVerification()
+          } else {
+            useProposalStore.getState().markDraftConsumed(messageId)
+          }
         }
-        // Unread: a reply just finished. If the user isn't currently
-        // looking at this session (it's a background task, or they're on
-        // the canvas / another chat), flag it unread so the rail shows a
-        // dot until they open it. A turn that finished in the foreground
-        // is already-read — skip. Read the foreground id live from the
-        // store (getState, not a render-time closure).
-        if (useChatStore.getState().sessionId !== sid) {
-          useUnreadStore.getState().markUnread(sid)
-        }
-        break
-      case 'error':
-        actions.setError(sid, event.messageId, event.error)
-        actions.endAssistantMessage(sid)
-        // 选区改写排队·排空（复审 B 修正）：排队改写起飞后以 'error' 失败（子进程崩溃/abort/超时）时，
-        // 若不在此补排空，队列剩余项会永久停摆——与 'end' 分支对称，同款 queueMicrotask 触发下一轮。
-        queueMicrotask(() => {
-          void drainRevisionQueue()
-        })
-        break
-      case 'queue_changed':
-        // Authoritative queue snapshot from main — overwrite the local
-        // mirror wholesale. Fires on enqueue, post-result promotion, and
-        // every panel edit/remove/reorder. Independent of any active
-        // turn, so it lives outside the `actions.*` (chat-store) surface.
-        useMessageQueueStore.getState().setQueue(sid, event.queue)
-        break
-      default:
-        break
+        // genimage 自动发起：本轮入库/替换的节里可能带新指令块。放在分流之后统一扫
+        // ——append 与 reviseSection 两条路径都可能引入指令块，扫描自身按 genImageJobs
+        // 幂等，重复调用零成本。
+        autoFireProposalGenImages(sid)
+        // 阶段确认硬门的轮末兜底：本轮发生过「空口确认」拦截、模型补写了节却没重新
+        // 发起确认就收工 → 自动补发一条催促。内部单发保险+阶段守卫，正常轮零成本。
+        maybeNudgeStageConfirmAfterTurn(sid)
+      }
+      // msg 未找到（end 早于消息入 store 的竞态）或 role 非 assistant 时，
+      // 刻意【不】记账：若 end 对同一 messageId 二次触发，第一次 msg 尚未就绪就
+      // 记账会让第二次 msg 已就绪的正文被 consumedDraftIds 挡掉而永久丢失。
     }
+  } finally {
+    queueMicrotask(() => {
+      void drainRevisionQueue()
+    })
   }
 }
 

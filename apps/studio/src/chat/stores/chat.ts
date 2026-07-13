@@ -1966,6 +1966,83 @@ export function useWrittenFiles(): WrittenFile[] {
   }, [messages])
 }
 
+/* ───────────────── ppt-master SVG-edit-in-flight feed ──────────────── */
+
+/** The deck page (.svg) the assistant is modifying RIGHT NOW, or null. */
+export type EditingSvgFile = {
+  /** Absolute path from the tool call's `file_path` arg. */
+  path: string
+  /** Bare filename — matches the svg_editor server's slide `name`. */
+  name: string
+}
+
+/**
+ * Best-effort `file_path` off any file tool-call part (Edit / MultiEdit /
+ * Write). Prefers parsed `args`; while args are still streaming it regexes the
+ * half-open JSON, same as writeFieldsFromPart — file_path is the FIRST field
+ * the model emits, so the live feed below knows the target page within the
+ * first few tokens of the call.
+ */
+function filePathFromToolPart(part: ContentPart): string | null {
+  const args = part.args
+  if (args && typeof args === 'object') {
+    const p = (args as Record<string, unknown>).file_path
+    if (typeof p === 'string') return p
+  }
+  if (typeof part.argsText === 'string') {
+    const m = /"file_path"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(part.argsText)
+    if (m) return unescapeWriteFragment(m[1]!)
+  }
+  return null
+}
+
+/**
+ * The `.svg` file the foreground session is editing at THIS moment — the last
+ * Edit/MultiEdit/Write tool call targeting an .svg that hasn't settled yet —
+ * or null when no such call is in flight. Drives the live-preview editor's
+ * "follow the AI" behavior: jump to the page being modified + skeleton overlay
+ * while the modification runs (LivePreviewEditor), and the 幻灯片 tab's busy
+ * dot (SlidesWorkspace).
+ *
+ * "In flight" uses useTurnActivity's settled-tool predicate: `result` still
+ * undefined AND no `endedAt` stamp — endAssistantMessage's settlement sweep
+ * backfills endedAt on interrupted calls, so an Esc'd edit drops out instead
+ * of pinning the skeleton forever. The whole feed is additionally gated on the
+ * session's `streaming` flag: a restored transcript can't claim an edit is
+ * live, whatever shape its parts survived in.
+ *
+ * Same derive-in-useMemo shape as useWrittenFiles (and same reason — a
+ * selector building a fresh object every call trips the getSnapshot loop).
+ */
+export function useEditingSvgFile(): EditingSvgFile | null {
+  const messages = useChatStore((s) => s.messages)
+  const streaming = useChatStore((s) => s.streaming)
+  return useMemo(() => {
+    if (!streaming) return null
+    let latest: EditingSvgFile | null = null
+    for (const m of messages) {
+      if (!Array.isArray(m.content)) continue
+      for (const p of (m.content as unknown) as ContentPart[]) {
+        if (p.type !== 'tool-call') continue
+        if (
+          p.toolName !== 'Edit' &&
+          p.toolName !== 'MultiEdit' &&
+          p.toolName !== 'Write'
+        ) {
+          continue
+        }
+        if (p.result !== undefined || typeof p.endedAt === 'number') continue
+        const path = filePathFromToolPart(p)
+        if (!path || !/\.svg$/i.test(path)) continue
+        // Last in-flight match wins (mirrors useStreamingAskArgsText): a fresh
+        // edit supersedes any stale unsettled part earlier in the thread.
+        latest = { path, name: baseFileName(path) }
+      }
+    }
+    return latest
+  }, [messages, streaming])
+}
+
 /**
  * Debounced view of `sessionLoading` for *visual* loading affordances
  * (top progress bar, sidebar dim). Returns `true` only if the raw

@@ -14,7 +14,9 @@
 #      扩展无 cp314 wheel 退化源码编译卡死的坑）；没注入则回退系统 python3.12
 #      / python3.11 / python3，并对 3.14+ 提前告警。
 #   3. 首次 pip install -r requirements.txt（用户机器联网拉 wheel，几分钟）；
-#      之后用一个 .deps-ok 哨兵文件标记完成，命中就秒过。
+#      之后用一个 .deps-ok 哨兵文件标记完成，命中就秒过。依次尝试清华 → 阿里
+#      → 官方 PyPI 三个源（国内直连官方源常被墙握手中断/卡死，见历史教训
+#      2026-05-14），每源加超时，卡住就换下一个而不是无限等。
 #   4. export PPT_PY 指向 venv 里的解释器，供文档里所有 `python3 ...` 命令替换。
 #
 # 失败时打印明确原因并 return 1（不 exit，避免把调用方 shell 一起带走）。
@@ -74,14 +76,41 @@ fi
 
 echo "[ppt-master] 安装依赖（首次约几分钟，之后秒过）…"
 "$__ppt_py" -m pip install --upgrade pip >/dev/null 2>&1
-if "$__ppt_py" -m pip install -r "$__ppt_req"; then
+
+# 依次尝试清华 → 阿里 → 官方 PyPI；单源卡住/中断（国内直连官方源常见）就换
+# 下一个，而不是无限等（历史教训：远程代理下 pip 曾卡死 20+ 分钟无输出）。
+__ppt_mirrors=(
+  "https://pypi.tuna.tsinghua.edu.cn/simple"
+  "https://mirrors.aliyun.com/pypi/simple"
+  ""
+)
+__ppt_ok=0
+for __ppt_idx in "${__ppt_mirrors[@]}"; do
+  if [ -n "$__ppt_idx" ]; then
+    echo "[ppt-master] 尝试镜像源：$__ppt_idx"
+    __ppt_host="$(echo "$__ppt_idx" | sed -E 's#https?://([^/]+).*#\1#')"
+    if "$__ppt_py" -m pip install -r "$__ppt_req" -i "$__ppt_idx" --trusted-host "$__ppt_host" --timeout 30; then
+      __ppt_ok=1
+      break
+    fi
+  else
+    echo "[ppt-master] 尝试官方源：pypi.org"
+    if "$__ppt_py" -m pip install -r "$__ppt_req" --timeout 30; then
+      __ppt_ok=1
+      break
+    fi
+  fi
+  echo "[ppt-master] 该源失败/超时，换下一个…"
+done
+
+if [ "$__ppt_ok" = 1 ]; then
   : > "$PPT_MASTER_VENV_DIR/.deps-ok"
   export PPT_PY="$__ppt_py"
   echo "[ppt-master] Python 就绪：$PPT_PY"
-  unset __ppt_py __ppt_req __ppt_base __c __ppt_ver
+  unset __ppt_py __ppt_req __ppt_base __c __ppt_ver __ppt_mirrors __ppt_idx __ppt_host __ppt_ok
   return 0 2>/dev/null || exit 0
 fi
 
-echo "[ppt-master] 错误：pip install 失败。检查网络后重跑本脚本（venv 已建，只补依赖）。"
-unset __ppt_py __ppt_req __ppt_base __c __ppt_ver
+echo "[ppt-master] 错误：清华/阿里/官方三个源均安装失败。检查网络后重跑本脚本（venv 已建，只补依赖）。"
+unset __ppt_py __ppt_req __ppt_base __c __ppt_ver __ppt_mirrors __ppt_idx __ppt_host __ppt_ok
 return 1 2>/dev/null || exit 1

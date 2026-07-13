@@ -49,6 +49,7 @@ import {
 } from './services/openDesignServices'
 import { APP_SCHEME, registerAppProtocol } from './services/appProtocol'
 import { checkForUpdatesInteractive, initAppUpdater } from './services/appUpdater'
+import { cleanReplayCache } from './replay/replayPackage'
 import { KB_ASSET_SCHEME, registerKbAssetProtocol } from './services/kbAssetProtocol'
 import {
   PROPOSAL_ASSET_SCHEME,
@@ -339,6 +340,10 @@ app.whenReady().then(async () => {
   })()
 
   createTray(() => getShellWindow())
+
+  // 回放录像解包缓存的后台清理（>14 天未用的目录）。失败静默、不阻塞启动；
+  // 被清掉的包重开时自动重新解包，无功能损失。
+  void cleanReplayCache()
 
   // 自动更新：打包形态才真正初始化（dev 下降级为 supported:false 只读态），
   // 内部自带 15s 延迟首查，不跟冷启动抢资源。

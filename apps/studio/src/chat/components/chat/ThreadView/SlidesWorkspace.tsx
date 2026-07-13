@@ -2,17 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   useChatStore,
+  useEditingSvgFile,
   useStreamingAskArgsText,
   usePreviewServer,
   useWrittenFiles,
   useImageFeeds
 } from '../../../stores/chat'
 import { usePendingAskUserQuestion } from '../../../stores/permissions'
+import { isReplaySessionId, useReplayStore } from '../../../replay/replayStore'
 import { CanvasConfirm } from '../CanvasConfirm'
 import { LivePreviewEditor, usePreviewReadinessStore } from '../LivePreviewEditor'
 import { OutlinePanel } from '../OutlinePanel'
 import { CanvasQuestionnaire } from './CanvasQuestionnaire'
 import { ImagesPanel, useImageFeedsLive } from './ImagesPanel'
+import { ReplaySlidesViewer, useReplaySlideDeck } from './ReplaySlidesViewer'
 import { WrittenFilesPanel } from './WrittenFilesPanel'
 
 /* ─────────────────────── Slides workspace ───────────────────── */
@@ -62,22 +65,46 @@ const CANVAS_TAB_ICONS: Record<CanvasTab, React.ReactNode> = {
  */
 export function SlidesWorkspace(): React.JSX.Element {
   const sessionId = useChatStore((s) => s.sessionId)
+  // 回放会话：大纲/文件/图片 tab 全是消息派生（useWrittenFiles /
+  // useImageFeeds 走 s.messages），回放喂进消息后免费复活——工作区整体
+  // 复用，只有依赖 live server 的部分（预览 tab / confirm 面板）按下面的
+  // isReplay 分支替换或关断。
+  const isReplay = isReplaySessionId(sessionId)
+  // 回放版预览数据源：manifest 权威幻灯片清单 + 消息扫描揭示进度；非
+  // 回放恒为 null（hook 内部短路，live 路径零开销）。
+  const replayDeck = useReplaySlideDeck()
   // Two sources for the 问题 tab, covering the whole AskUserQuestion lifecycle:
   //   - streamingArgs: the tool's input WHILE it streams (no requestId yet →
   //     read-only preview, rendered from half-open JSON via parsePartialToolArgs).
   //   - pendingAsk: the permission request once canUseTool fires (has requestId
   //     → the form becomes answerable). pendingAsk supersedes streamingArgs.
+  // 两者都读真实权限 broker / live 流状态，回放态恒为 null（回放不走真实
+  // canUseTool）——回放态的问卷改由 ReplayController 写入 replayStore 的
+  // activeQuestionsPanel/activeQuestions 驱动，见下方 replay* 变量。
   const pendingAsk = usePendingAskUserQuestion(sessionId)
   const streamingArgs = useStreamingAskArgsText()
-  const hasQuestions = pendingAsk !== null || streamingArgs !== null
+  const replayActivePanel = useReplayStore((s) => s.activeQuestionsPanel)
+  const replayQuestions = useReplayStore((s) => s.activeQuestions)
+  const replayConfirmSnapshots = useReplayStore((s) => s.confirmSnapshots)
+  const hasQuestions = isReplay
+    ? replayActivePanel === 'questionnaire'
+    : pendingAsk !== null || streamingArgs !== null
   // Active ppt-master server (kind + URL) when one is up, else null. Two phases:
   //   - kind 'confirm' → the Eight-Confirmations page, rendered NATIVELY in
   //     the 「问题」tab (CanvasConfirm — the old 浏览器 iframe tab is gone).
   //   - kind 'preview' → Executor live preview, rendered NATIVELY in
   //     「预览幻灯片」(LivePreviewEditor fetches the server's SVG itself).
   // See usePreviewServer in stores/chat.
-  const server = usePreviewServer()
-  const hasConfirm = server?.kind === 'confirm'
+  // 回放会话必须把 server 归零：回放消息里含真实的 launch 命令（URL 能被
+  // usePreviewServer 解析出来），不归零的话 identity probe 会去 fetch
+  // localhost:PORT——演示机上若恰有【别的会话】的预览 server 正在跑同一
+  // 端口，回放的预览 tab 会错接到那个 live server（confirm 面板同理）。
+  // 归零后 hasPreview/identity probe 自然关断；hasConfirm 单独在下面按
+  // isReplay 分支改读 activeQuestionsPanel（confirm 面板离线渲染，不需要
+  // 真实 server，见 CanvasConfirm 的 replaySnapshots prop）。
+  const liveServer = usePreviewServer()
+  const server = isReplay ? null : liveServer
+  const hasConfirm = isReplay ? replayActivePanel === 'confirm' : server?.kind === 'confirm'
   const hasPreview = server?.kind === 'preview'
   // usePreviewServer resolves the preview URL from the launch command in the
   // transcript, which OUTLIVES the server when it stops by idle-timeout or
@@ -141,7 +168,12 @@ export function SlidesWorkspace(): React.JSX.Element {
   // launches and drops out when it dies (idle-timeout / self-exit). No
   // pre-launch placeholder shell, no dead "预览服务已停止" tab lingering after
   // — the tab's presence IS the signal that a live deck is previewable now.
-  const showSlidesTab = hasPreview && !previewDown && identityOk
+  // 回放版对齐同一语义：第一页在播放进度里被「生成出来」（揭示）之前 tab
+  // 不存在——用户先看到大纲/文件逐步落地，随后预览 tab 出现并抢焦点，
+  // 重现 live 的节奏。
+  const showSlidesTab = isReplay
+    ? (replayDeck?.ready.length ?? 0) > 0
+    : hasPreview && !previewDown && identityOk
   // Every file this session has written via Write. Drives the auto-focus on each
   // new write (which needs to see EVERY write, including .svg deck pages, to
   // route them to the right tab). See useWrittenFiles in stores/chat.
@@ -180,6 +212,11 @@ export function SlidesWorkspace(): React.JSX.Element {
   // auto-focus would never clear. useImageFeedsLive polls the worklist
   // itself and overrides the lie.
   const imagesGenerating = useImageFeedsLive(imageFeeds)
+  // Edit/MultiEdit 改 deck 页时 writtenFiles（只认 Write）看不见——
+  // useEditingSvgFile 给出前台会话此刻 in-flight 的 .svg 编辑目标。驱动
+  // 两处：编辑中的 tab 抢焦点（下方 effect），以及幻灯片 tab 的脉冲点
+  // （tabBusy）。LivePreviewEditor 里同源信号驱动跳页 + 骨架屏。
+  const editingSvg = useEditingSvgFile()
   // Default landing is 大纲 — 预览幻灯片 only exists once the live-preview
   // server is up (see showSlidesTab above), so it can't be the initial tab.
   const [tab, setTab] = useState<CanvasTab>('outline')
@@ -218,6 +255,21 @@ export function SlidesWorkspace(): React.JSX.Element {
     // bounce off the redirect guard below and never come back.
     if (showSlidesTab) setTab('slides')
   }, [showSlidesTab, wantsQuestionsTab, wantsImagesTab])
+
+  // AI 开始修改一张 deck 页（svg_output/ 下的 .svg 有 Edit/Write in flight）
+  // → 抢焦点到 预览幻灯片：用户停在 文件/大纲 tab 时也立刻被带去看跳页 +
+  // 骨架屏（LivePreviewEditor 挂载后自己会选中正在编辑的那页）。判定用
+  // 路径而不是 slide 列表匹配——列表在 LivePreviewEditor 里，而它只在
+  // slides tab 激活时才挂载，靠它上报会死锁（不挂载就永远没信号）。
+  // 优先级：问题 tab 仍最高；声明在 图片 effect 之后，两信号同真时本
+  // effect 后跑、编辑赢（AI 在改页面比图片生成更即时）。编辑期间用户手动
+  // 切走不再强拽（editingDeckSvg 不变则不重跑）；下一轮编辑开始会再抢回。
+  const editingDeckSvg =
+    editingSvg !== null && /[/\\]svg_output[/\\]/.test(editingSvg.path)
+  useEffect(() => {
+    if (wantsQuestionsTab) return
+    if (editingDeckSvg && showSlidesTab) setTab('slides')
+  }, [editingDeckSvg, showSlidesTab, wantsQuestionsTab])
 
   // Whenever we're pointed at 预览幻灯片 while the tab doesn't exist (server
   // not launched yet, or launched-then-died, or the questions fallback picked
@@ -294,7 +346,7 @@ export function SlidesWorkspace(): React.JSX.Element {
   )
   const tabBusy: Partial<Record<CanvasTab, boolean>> = {
     images: imagesGenerating,
-    slides: anySvgStreaming,
+    slides: anySvgStreaming || editingDeckSvg,
     outline: designSpec?.streaming === true,
     files: anyPlainFileStreaming
   }
@@ -409,24 +461,43 @@ export function SlidesWorkspace(): React.JSX.Element {
           a questionnaire on the 问题 tab (the two never coincide, but if they
           did, the active confirm phase is the right surface — hence the
           `!hasConfirm` guard on the questionnaire branch below). */}
-      {hasConfirm && server && (
+      {/* 回放态：CanvasConfirm 没有真实 server 可 fetch，baseUrl 只是占位
+          key（组件内部 isReplay=replaySnapshots!==undefined 早退所有网络
+          请求，见该组件头注释）——离线数据源是 replayConfirmSnapshots
+          （manifest.meta.confirmSnapshots，ReplayController load() 时灌入
+          replayStore）。旧格式包该字段为 null 时 hasConfirm 也不会为真
+          （activeQuestionsPanel 只有 confirm.open 命中快照时才置位）。 */}
+      {hasConfirm && (server || isReplay) && (
         <div
           className={
             tab === 'questions' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'
           }
         >
-          <CanvasConfirm key={server.url} baseUrl={server.url} />
+          {isReplay ? (
+            <CanvasConfirm
+              key="replay-confirm"
+              baseUrl=""
+              replaySnapshots={replayConfirmSnapshots ?? []}
+            />
+          ) : (
+            <CanvasConfirm key={server!.url} baseUrl={server!.url} />
+          )}
         </div>
       )}
       {/* When CanvasConfirm owns the 问题 tab (above), the fallback switch must
           render nothing — otherwise its trailing `else` occupancy placeholder
           would stack under the keep-alive confirm panel. */}
-      {hasConfirm && server && tab === 'questions' ? null : tab ===
+      {hasConfirm && (server || isReplay) && tab === 'questions' ? null : tab ===
           'questions' && !hasConfirm && hasQuestions ? (
         <CanvasQuestionnaire
           request={pendingAsk}
           streamingArgsText={streamingArgs}
+          {...(isReplay ? { replayQuestions: replayQuestions ?? [] } : {})}
         />
+      ) : tab === 'slides' && showSlidesTab && isReplay && replayDeck ? (
+        // 回放：静态幻灯片查看器，数据 = 录像包里的 svg 资产（LivePreviewEditor
+        // 依赖的 ppt-master server 回放时早已不在）。见 ReplaySlidesViewer。
+        <ReplaySlidesViewer deck={replayDeck} />
       ) : tab === 'slides' && showSlidesTab && server ? (
         // Live-preview phase: the native editor (replaces the old read-only
         // SlidesLivePreview). Fetches the svg_editor server's SVG and renders

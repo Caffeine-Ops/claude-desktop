@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReplayConfirmSnapshot } from '@desktop-shared/replayTypes'
 import {
   type Catalogs,
   type CatalogOption,
@@ -31,6 +32,11 @@ import {
   typographyBodySize,
   usesCustomImagePlanValue
 } from './canvasConfirm.helpers'
+import {
+  registerConfirmDemoHandle,
+  unregisterConfirmDemoHandle,
+  type ConfirmDemoHandle
+} from '../../replay/confirmDemoRegistry'
 
 /**
  * CanvasConfirm
@@ -106,7 +112,21 @@ const UI_MESSAGES: Record<Lang, Record<string, string>> = {
   }
 }
 
-export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Element {
+export function CanvasConfirm({
+  baseUrl,
+  replaySnapshots
+}: {
+  baseUrl: string
+  /**
+   * 回放态：manifest.meta.confirmSnapshots（该会话录制时命中的 tier1/final
+   * 快照，按命中顺序排列，通常 0~2 条）。传入即视为回放模式——组件不 fetch
+   * 真实 baseUrl（回放没有真实 server 在跑），改为等 confirmDemoHandle.open
+   * 用 toolUseId 取快照做离线初始化；baseUrl 此时只是个占位 key（仍传因为
+   * 上层 SlidesWorkspace 用它做 React key，见该文件 hasConfirm 分支）。
+   */
+  replaySnapshots?: ReplayConfirmSnapshot[]
+}): React.JSX.Element {
+  const isReplay = replaySnapshots !== undefined
   const [lang, setLang] = useState<Lang>(detectLang)
   const t = useMemo(() => makeT(lang), [lang])
   const uiT = useCallback(
@@ -201,44 +221,13 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
     []
   )
 
-  // ── boot: fetch catalogs + recommendations (with startup retry) ──────────
-  // usePreviewServer surfaces the server's URL the instant its stdout prints it
-  // — which is BEFORE the detached Flask child has actually bound the port (the
-  // launch / wait split: URL first, listen a beat later). So the very first
-  // fetch can hit ERR_CONNECTION_REFUSED on a server that is moments from being
-  // up. A single attempt would then strand the tab in an error state forever,
-  // even though the server comes alive a second later. So we retry on failure
-  // with a fixed backoff across the cold-start window before giving up. (curl
-  // confirms the server, once bound, returns 200 + CORS — see the after_request
-  // hook in confirm_ui/server.py.)
-  useEffect(() => {
-    pollAlive.current = true
-    let cancelled = false
-    const MAX_ATTEMPTS = 20 // ~16s at 800ms — covers a Flask cold start
-    const RETRY_MS = 800
-
-    const tryBoot = async (): Promise<boolean> => {
-      // recommendations.json is the hard dependency; catalogs has a /static
-      // fallback. A throw here (incl. ERR_CONNECTION_REFUSED → TypeError) means
-      // "not ready yet" → caller retries.
-      const recRes = await fetch(api('/api/recommendations'), { cache: 'no-store' }).then((r) => {
-        if (!r.ok) throw new Error('load failed')
-        return r.json()
-      })
-      const catRes = await fetch(api('/api/catalogs'))
-        .then((r) => {
-          if (r.ok) return r.json()
-          throw new Error('no api')
-        })
-        .catch(() => fetch(api('/static/catalogs.json')).then((r) => r.json()))
-      if (cancelled) return true
-      const c = catRes as Catalogs
-      const r = recRes as Recommendations
+  // applyBoot: 从 catalogs+recommendations 落地 cat/rec/state/stage/phase，
+  // 与数据来源无关（fetch 结果或回放快照都调它）——live boot 与 replay
+  // open() 共用同一段 seed 逻辑，避免两条路径的初始化语义漂移。
+  const applyBoot = useCallback(
+    (c: Catalogs, r: Recommendations) => {
       // recommendations.json may pin a language; honor it only if the user
       // hasn't explicitly chosen one (no localStorage), matching app.js.
-      // `effLang` is the language that will actually be in effect after this
-      // boot — seed names with it (setLang is async; reading `lang` here would
-      // use the stale value and the recommended card could miss highlight).
       let effLang: Lang = lang
       if (r.lang === 'zh' || r.lang === 'en') {
         let hasStored = false
@@ -260,6 +249,46 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
       setStage(r.tier === 1 ? 1 : r.tier === 2 ? 2 : 'all')
       setPhase('ready')
       if (r._already_confirmed) setStatusText(t('already_confirmed'))
+    },
+    [lang, seedTier1, seedTier2, t]
+  )
+
+  // ── boot: fetch catalogs + recommendations (with startup retry) ──────────
+  // usePreviewServer surfaces the server's URL the instant its stdout prints it
+  // — which is BEFORE the detached Flask child has actually bound the port (the
+  // launch / wait split: URL first, listen a beat later). So the very first
+  // fetch can hit ERR_CONNECTION_REFUSED on a server that is moments from being
+  // up. A single attempt would then strand the tab in an error state forever,
+  // even though the server comes alive a second later. So we retry on failure
+  // with a fixed backoff across the cold-start window before giving up. (curl
+  // confirms the server, once bound, returns 200 + CORS — see the after_request
+  // hook in confirm_ui/server.py.)
+  useEffect(() => {
+    // 回放态：没有真实 server 可 fetch——离线初始化改由下面注册的
+    // confirmDemoHandle.open() 驱动，在 ReplayController 决定表演开始的
+    // 那一刻才发生（不是 mount 就抢跑，早于 chat 轨切到「问题」tab 会很怪）。
+    if (isReplay) return
+    pollAlive.current = true
+    let cancelled = false
+    const MAX_ATTEMPTS = 20 // ~16s at 800ms — covers a Flask cold start
+    const RETRY_MS = 800
+
+    const tryBoot = async (): Promise<boolean> => {
+      // recommendations.json is the hard dependency; catalogs has a /static
+      // fallback. A throw here (incl. ERR_CONNECTION_REFUSED → TypeError) means
+      // "not ready yet" → caller retries.
+      const recRes = await fetch(api('/api/recommendations'), { cache: 'no-store' }).then((r) => {
+        if (!r.ok) throw new Error('load failed')
+        return r.json()
+      })
+      const catRes = await fetch(api('/api/catalogs'))
+        .then((r) => {
+          if (r.ok) return r.json()
+          throw new Error('no api')
+        })
+        .catch(() => fetch(api('/static/catalogs.json')).then((r) => r.json()))
+      if (cancelled) return true
+      applyBoot(catRes as Catalogs, recRes as Recommendations)
       return true
     }
 
@@ -287,7 +316,51 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
     // baseUrl changing means a different server → re-boot. lang/t excluded on
     // purpose: a language toggle must not re-fetch or reset selections.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseUrl])
+  }, [baseUrl, isReplay])
+
+  // ── 回放态：注册命令式 handle，供 ReplayController 驱动 ──────────────────
+  useEffect(() => {
+    if (!replaySnapshots) return
+    const byToolUseId = new Map(replaySnapshots.map((s) => [s.toolUseId, s]))
+    const handle: ConfirmDemoHandle = {
+      open(toolUseId) {
+        const snap = byToolUseId.get(toolUseId)
+        if (!snap) return false
+        // catalogs 缺失（server.py 读取失败的 best-effort 落空）没法摆出
+        // 选项列表——放弃这段表演，比渲染一个空壳页面更诚实。
+        if (!snap.catalogs) return false
+        const c = snap.catalogs as Catalogs
+        // recommendations 缺失时退化成「只有 result 决定的选中态，没有推荐
+        // 星标/候选」——仍然可以摆出选中态表演，用 result 兜底一个最小
+        // Recommendations 形状（tier 从 stage 推、其余字段留空）。
+        const r = (snap.recommendations as Recommendations | null) ?? {
+          tier: snap.stage === 'tier1' ? 1 : 2
+        }
+        applyBoot(c, r)
+        return true
+      },
+      selectField(field, value) {
+        patch({ [field]: value } as Partial<ConfirmState>)
+      },
+      typeField(field, text) {
+        patch({ [field]: text } as Partial<ConfirmState>)
+      },
+      advanceTier2() {
+        setPhase('deriving')
+        // 短暂展示 deriving 骨架屏后切到 tier2——tier2 的数据在下一次
+        // open(toolUseId) 里才会到（对应 final 快照），这里只做视觉过渡。
+        setTimeout(() => setPhase('ready'), 900)
+      },
+      submitFinal() {
+        setPhase('confirmed')
+      }
+    }
+    registerConfirmDemoHandle(handle)
+    return () => unregisterConfirmDemoHandle(handle)
+    // replaySnapshots 是每次渲染新数组？不——上层 SlidesWorkspace 从
+    // manifest.meta.confirmSnapshots 直接传（同一个引用），不会每帧重建。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReplay, replaySnapshots, applyBoot, patch])
 
   // Reset the scroll position to the top whenever the page becomes ready or the
   // stage advances (tier1 → tier2). Without this the container keeps whatever
@@ -399,9 +472,14 @@ export function CanvasConfirm({ baseUrl }: { baseUrl: string }): React.JSX.Eleme
   }, [api, cat, rec, state, t])
 
   const onPrimary = useCallback(() => {
+    // 回放态：面板只读，主按钮不触发任何网络请求（没有真实 server，baseUrl
+    // 是占位值）——真实的「确认」结果早已由 chat 轨的 tool_result 呈现，
+    // 这里的按钮点击视觉全由 confirmDemoHandle.selectField/advanceTier2/
+    // submitFinal 驱动，见上面的回放 useEffect。
+    if (isReplay) return
     if (stage === 1) submitTier1()
     else submitFinal()
-  }, [stage, submitTier1, submitFinal])
+  }, [isReplay, stage, submitTier1, submitFinal])
 
   const toggleLang = useCallback(() => {
     setLang((l) => {

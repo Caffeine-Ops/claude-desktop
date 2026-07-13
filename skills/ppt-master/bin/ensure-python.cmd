@@ -51,9 +51,31 @@ if not exist "%VENV_PY%" (
 
 echo [ppt-master] 安装依赖（首次约几分钟，之后秒过）…
 "%VENV_PY%" -m pip install --upgrade pip >nul 2>&1
-"%VENV_PY%" -m pip install -r "%REQ%"
-if errorlevel 1 (
-  echo [ppt-master] 错误：pip install 失败。检查网络后重跑本脚本。
+
+REM 依次尝试清华 -> 阿里 -> 官方 PyPI；单源卡住/中断（国内直连官方源常见）
+REM 就换下一个，而不是无限等。
+set "PPT_DEPS_OK="
+
+echo [ppt-master] 尝试镜像源：https://pypi.tuna.tsinghua.edu.cn/simple
+"%VENV_PY%" -m pip install -r "%REQ%" -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn --timeout 30
+if not errorlevel 1 set "PPT_DEPS_OK=1"
+
+if not defined PPT_DEPS_OK (
+  echo [ppt-master] 该源失败/超时，换下一个…
+  echo [ppt-master] 尝试镜像源：https://mirrors.aliyun.com/pypi/simple
+  "%VENV_PY%" -m pip install -r "%REQ%" -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com --timeout 30
+  if not errorlevel 1 set "PPT_DEPS_OK=1"
+)
+
+if not defined PPT_DEPS_OK (
+  echo [ppt-master] 该源失败/超时，换下一个…
+  echo [ppt-master] 尝试官方源：pypi.org
+  "%VENV_PY%" -m pip install -r "%REQ%" --timeout 30
+  if not errorlevel 1 set "PPT_DEPS_OK=1"
+)
+
+if not defined PPT_DEPS_OK (
+  echo [ppt-master] 错误：清华/阿里/官方三个源均安装失败。检查网络后重跑本脚本。
   exit /b 1
 )
 break > "%PPT_MASTER_VENV_DIR%\.deps-ok"

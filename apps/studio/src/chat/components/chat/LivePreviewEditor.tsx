@@ -8,7 +8,7 @@ import { TransformWrapper, TransformComponent, useControls } from 'react-zoom-pa
 import { Button } from '@/src/components/ui/button'
 import { Textarea } from '@/src/components/ui/textarea'
 import { cn } from '@/src/lib/utils'
-import { useChatStore } from '../../stores/chat'
+import { useChatStore, useEditingSvgFile } from '../../stores/chat'
 import { useMessageQueueStore, useSessionQueue } from '../../stores/messageQueue'
 
 /**
@@ -554,6 +554,43 @@ export function LivePreviewEditor({
     },
     [loadSlide]
   )
+
+  // ── AI 修改跟拍：跳到正在被修改的页 + 骨架屏 ────────────────────────
+  // useEditingSvgFile 给出前台会话此刻 in-flight 的 .svg 编辑目标（Edit/
+  // MultiEdit/Write）。只有当它对应本 deck 的一页（名字在 slide 列表里）才
+  // 认——别的项目/目录里的 svg 编辑与这个预览无关。注意生成新页的 Write
+  // 天然不匹配（文件落盘前 /api/slides 里没有它），新页跟随仍归 poll 的
+  // follow-latest 管，这里只接管「改已有页」。
+  const editingSvg = useEditingSvgFile()
+  const editingName = useMemo(() => {
+    if (!editingSvg) return null
+    return slides.some((s) => s.name === editingSvg.name) ? editingSvg.name : null
+  }, [editingSvg, slides])
+  // AI 开始修改某页 → 把预览带到那一页，并 pin 住（followLatest=false，否
+  // 则 2s poll 会立刻把视图拽回最新页）。同一次编辑只跳一次（lastAutoJump
+  // 记账），编辑期间用户仍可自由点走；同页的下一轮编辑会再拉回来——AI 正
+  // 在改的页就是当下的焦点。编辑收尾（editingName → null）时主动 loadSlide
+  // 立即上屏新内容：骨架屏揭开就是改完的页，不等下一拍 poll（最多 2s 的
+  // 「旧内容空窗」会让『修改完成』读成『没改』）。
+  const lastAutoJumpRef = useRef<string | null>(null)
+  const prevEditingRef = useRef<string | null>(null)
+  useEffect(() => {
+    const prev = prevEditingRef.current
+    prevEditingRef.current = editingName
+    if (!editingName) {
+      lastAutoJumpRef.current = null
+      if (prev && activeRef.current === prev) void loadSlide(prev)
+      return
+    }
+    if (lastAutoJumpRef.current === editingName) return
+    lastAutoJumpRef.current = editingName
+    if (activeRef.current !== editingName) {
+      followLatestRef.current = false
+      setActive(editingName)
+      activeRef.current = editingName
+      void loadSlide(editingName)
+    }
+  }, [editingName, loadSlide])
 
   // ── imperative selection on the real SVG DOM ─────────────────────────────
   const svgRoot = useCallback((): SVGSVGElement | null => {
@@ -1381,6 +1418,22 @@ export function LivePreviewEditor({
                     )}
                     {/* transparent shield so SVG internals never intercept clicks */}
                     <span className="absolute inset-0" />
+                    {/* AI 修改中：磨砂罩 + 琥珀脉冲点盖在缩略图上（琥珀 =
+                        「AI 在动这页」的信号色，与舞台骨架屏胶囊同色）。罩层
+                        在就绪点之下、shield 之上——就绪状态仍可读。 */}
+                    {s.name === editingName && (
+                      <span className="absolute inset-0 grid place-items-center bg-background/60 backdrop-blur-[1px]">
+                        <span aria-hidden className="relative flex size-2.5">
+                          <span
+                            className={cn(
+                              'absolute inline-flex size-full rounded-full bg-amber-500 opacity-75',
+                              !reduceMotion && 'animate-ping'
+                            )}
+                          />
+                          <span className="relative inline-flex size-2.5 rounded-full bg-amber-500" />
+                        </span>
+                      </span>
+                    )}
                     <span
                       className={
                         'absolute right-1 top-1 size-[7px] rounded-full ring-2 ring-background ' +
@@ -1418,6 +1471,22 @@ export function LivePreviewEditor({
             <span className="truncate text-[13px] font-semibold text-foreground">
               {activeDisplayName || '未命名'}
             </span>
+            {/* AI 正在修改当前页：面包屑挂琥珀胶囊，和缩略图罩层/舞台骨架
+                屏同一信号，切走再切回也能一眼看到这页在动。 */}
+            {active !== null && active === editingName && (
+              <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber-500/12 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                <span aria-hidden className="relative flex size-1.5">
+                  <span
+                    className={cn(
+                      'absolute inline-flex size-full rounded-full bg-amber-500 opacity-75',
+                      !reduceMotion && 'animate-ping'
+                    )}
+                  />
+                  <span className="relative inline-flex size-1.5 rounded-full bg-amber-500" />
+                </span>
+                AI 修改中
+              </span>
+            )}
             {/* 尺寸 meta 从底部状态条上移到这里（离画布更近，状态条只留
                 工作区身份 + 快捷键）。 */}
             <span className="text-[11px] text-muted-foreground/60 @max-lg/editor:hidden">16:9 · 1280 × 720</span>
@@ -1580,6 +1649,50 @@ export function LivePreviewEditor({
                       setAnnotationText('')
                     }}
                   />
+                      {/* ── AI 修改中骨架屏 ──
+                          盖住整张 slide 卡（与 svgHost 同形 rounded-xl；
+                          z-20 压过 HighlightOverlay 和 FloatingInstruction
+                          的 z-10）。半透明磨砂让旧内容隐约可见（用户知道
+                          改的是哪页），骨架条 + 胶囊说明「在改、还没好」。
+                          罩层顺带挡掉选择/标注交互——页面马上要被重写，
+                          此刻标注的元素 id 大概率失效。修改收尾时上面的
+                          跟拍 effect 会立即 loadSlide，揭开即新内容。 */}
+                      {active !== null && active === editingName && (
+                        <div className="absolute inset-0 z-20 overflow-hidden rounded-xl bg-background/72 backdrop-blur-[2.5px]">
+                          <div
+                            className={cn(
+                              'flex h-full w-full flex-col justify-center gap-[4%] px-[9%]',
+                              !reduceMotion && 'animate-pulse'
+                            )}
+                          >
+                            <div className="h-[8%] w-[52%] rounded-md bg-foreground/[0.09]" />
+                            <div className="h-[4.5%] w-[34%] rounded-md bg-foreground/[0.07]" />
+                            <div className="mt-[3%] flex h-[36%] gap-[5%]">
+                              <div className="h-full flex-[1.2] rounded-lg bg-foreground/[0.07]" />
+                              <div className="flex h-full flex-1 flex-col justify-center gap-[10%]">
+                                <div className="h-[11%] w-full rounded-full bg-foreground/[0.08]" />
+                                <div className="h-[11%] w-[86%] rounded-full bg-foreground/[0.06]" />
+                                <div className="h-[11%] w-[92%] rounded-full bg-foreground/[0.06]" />
+                                <div className="h-[11%] w-[58%] rounded-full bg-foreground/[0.06]" />
+                              </div>
+                            </div>
+                          </div>
+                          <div className="absolute inset-0 grid place-items-center">
+                            <div className="flex items-center gap-2 rounded-full bg-background/95 px-3.5 py-1.5 text-[12px] font-medium text-foreground shadow-[0_8px_28px_-10px_rgba(0,0,0,0.25)] ring-1 ring-border/60">
+                              <span aria-hidden className="relative flex size-2">
+                                <span
+                                  className={cn(
+                                    'absolute inline-flex size-full rounded-full bg-amber-500 opacity-75',
+                                    !reduceMotion && 'animate-ping'
+                                  )}
+                                />
+                                <span className="relative inline-flex size-2 rounded-full bg-amber-500" />
+                              </span>
+                              AI 正在修改本页…
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </TransformComponent>

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'motion/react'
 
 import type { PermissionRequest } from '@desktop-shared/types'
@@ -10,6 +10,11 @@ import {
   seedAnswers,
   type AskUserQuestionItem
 } from '../../permissions/AskUserQuestionView'
+import {
+  registerQuestionDemoHandle,
+  unregisterQuestionDemoHandle,
+  type QuestionDemoHandle
+} from '../../../replay/questionDemoRegistry'
 import { AppleGlowEffect } from '../AppleGlowEffect'
 import { ToolElapsed } from './ToolCallCard'
 
@@ -31,15 +36,25 @@ import { ToolElapsed } from './ToolCallCard'
  */
 export function CanvasQuestionnaire({
   request,
-  streamingArgsText
+  streamingArgsText,
+  replayQuestions
 }: {
   request: PermissionRequest | null
   streamingArgsText: string | null
+  /**
+   * 回放态：题目内容直接由 SlidesWorkspace 从（回放态）tool item 的 args
+   * 派生传入——不走 request/streamingArgsText（两者都读真实权限 broker /
+   * live 流状态，回放时永远是 null，见 usePendingAskUserQuestion 的头注
+   * 释）。传入即视为回放模式：answerable 恒真（题目已经「生成完毕」，直接
+   * 进选中态表演）、submit 变成纯视觉（不触发真实 respond()）。
+   */
+  replayQuestions?: AskUserQuestionItem[]
 }): React.JSX.Element {
+  const isReplay = replayQuestions !== undefined
   const respond = usePermissionStore((s) => s.respond)
   // answerable once the permission request exists (has a requestId); during the
-  // pure-streaming phase it's a read-only preview.
-  const answerable = request !== null
+  // pure-streaming phase it's a read-only preview. 回放态恒可答（题目已就绪）。
+  const answerable = isReplay || request !== null
   // Elapsed timer for the questionnaire header. The inline ToolCallCard (which
   // normally carries this) is suppressed in slides mode, so we read the same
   // AskUserQuestion timing here and show it next to「请回答以下问题」. Still
@@ -51,6 +66,8 @@ export function CanvasQuestionnaire({
   // doesn't blank the preview — we keep showing the previous good parse.
   const lastQuestionsRef = useRef<AskUserQuestionItem[]>([])
   const questions = useMemo(() => {
+    // 回放态：题目由外部一次性给定，不参与 streaming 增量解析。
+    if (replayQuestions) return replayQuestions
     // Prefer the finalized permission input; fall back to the streaming text.
     if (request) {
       const qs = parseQuestions(request.input)
@@ -64,7 +81,7 @@ export function CanvasQuestionnaire({
       if (qs.length > 0) lastQuestionsRef.current = qs
     }
     return lastQuestionsRef.current
-  }, [request, streamingArgsText])
+  }, [replayQuestions, request, streamingArgsText])
   // Per-question selection: question text → chosen option label (or the user's
   // free-text for 其他). Seeded from any prior answers on the input (resume).
   const [answers, setAnswers] = useState<Record<string, string>>(() =>
@@ -76,6 +93,26 @@ export function CanvasQuestionnaire({
 
   const pick = (q: string, label: string): void =>
     setAnswers((a) => ({ ...a, [q]: label }))
+
+  // 回放态：注册命令式 handle，供 ReplayController 驱动选中态表演。
+  useEffect(() => {
+    if (!isReplay) return
+    const handle: QuestionDemoHandle = {
+      select(question, label) {
+        setAnswers((a) => ({ ...a, [question]: label }))
+      },
+      typeOther(question, text) {
+        setOtherDraft((d) => ({ ...d, [question]: text }))
+        setAnswers((a) => ({ ...a, [question]: text }))
+      },
+      submit() {
+        // 纯视觉——真实结果已经由 chat 轨的 tool_result 呈现，这里不调用
+        // respond()（回放没有真实 requestId 可答）。
+      }
+    }
+    registerQuestionDemoHandle(handle)
+    return () => unregisterQuestionDemoHandle(handle)
+  }, [isReplay])
 
   const typeOther = (q: string, text: string): void => {
     setOtherDraft((d) => ({ ...d, [q]: text }))

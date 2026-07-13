@@ -12,6 +12,11 @@ import {
 } from '../../../stores/filePreview'
 import { dispatchChatTurn } from '../../../lib/dispatchChatTurn'
 import { removeComposerAttachmentsByPath } from '../../../runtime/imageAttachmentAdapter'
+import {
+  registerImageEditDemoHandle,
+  unregisterImageEditDemoHandle,
+  type ImageEditDemoHandle
+} from '../../../replay/imageEditDemoRegistry'
 import { Button } from '@/src/components/ui/button'
 
 /* ─────────────── 图片标记编辑面板（右栏） ─────────────── */
@@ -358,6 +363,48 @@ export function ImageEditPanel(): React.JSX.Element | null {
     setActiveId(m.id)
     setDraft(m.note)
   }
+
+  // ── 回放演示驱动接口（.claudereplay ui 轨）──
+  // ReplayController 经 imageEditDemoRegistry 命令式驱动面板重演一次真实
+  // 编辑：标记弹出→输入条逐字→提交→按下发送。方法体直接调本组件的现有
+  // setState/闭包，交互路径与手工操作完全一致；demoPressed 只负责发送按钮
+  // 的按压视觉——回放里的「发送」绝不走 send()/dispatchChatTurn（后续的
+  // 消息由录像 chat 轨提供）。commitDraft 每渲染重建，经 ref 转发取最新。
+  const [demoPressed, setDemoPressed] = useState(false)
+  const demoRef = useRef({ commitDraft })
+  demoRef.current = { commitDraft }
+  useEffect(() => {
+    // dataUrl 就绪才注册：controller 以 handle 出现为「面板可表演」信号
+    //（buffering 等待的就是这一刻），提前注册会在空画布上落标记。
+    if (!dataUrl) return
+    const handle: ImageEditDemoHandle = {
+      addMarker: (x, y, w, h) => {
+        demoRef.current.commitDraft()
+        const id = nextId.current++
+        setMarkers((ms) => [
+          ...ms,
+          w !== undefined && h !== undefined
+            ? { id, x, y, w, h, note: '' }
+            : { id, x, y, note: '' }
+        ])
+        setActiveId(id)
+        setDraft('')
+      },
+      setDraftText: (text) => setDraft(text),
+      commitDraft: () => demoRef.current.commitDraft(),
+      setExtraText: (text) => setExtra(text),
+      pressSend: () => {
+        setDemoPressed(true)
+        window.setTimeout(() => {
+          setDemoPressed(false)
+          // closeEditor 是 zustand action（终身稳定），卸载后调用也无害。
+          useImageEditStore.getState().closeEditor()
+        }, 280)
+      }
+    }
+    registerImageEditDemoHandle(handle)
+    return () => unregisterImageEditDemoHandle(handle)
+  }, [dataUrl])
 
   const removeMarker = (id: number): void => {
     setMarkers((ms) => ms.filter((m) => m.id !== id))
@@ -889,7 +936,11 @@ export function ImageEditPanel(): React.JSX.Element | null {
               : `${noted.length + (draftCounts ? 1 : 0)} marks`}
           </span>
           <Button
-            className="h-9 shrink-0 rounded-full bg-brand px-5 text-white transition-[filter] hover:bg-brand hover:brightness-110"
+            className={
+              'h-9 shrink-0 rounded-full bg-brand px-5 text-white transition-[filter,transform] hover:bg-brand hover:brightness-110' +
+              // 回放表演的「按下发送」视觉（demoPressed 由 demo handle 置位）。
+              (demoPressed ? ' scale-95 brightness-90' : '')
+            }
             disabled={!canSend}
             onClick={() => void send()}
           >
