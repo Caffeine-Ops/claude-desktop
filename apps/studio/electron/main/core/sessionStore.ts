@@ -750,7 +750,9 @@ async function fileExists(path: string): Promise<boolean> {
  * 的源查找兜底（见调用处注释）。一次 readdir + 每目录一次 stat，
  * 百级目录量级下可忽略；只在已知工作区全部 miss 时才走到。
  */
-async function findSessionJsonlGlobal(sessionId: string): Promise<string | null> {
+export async function findSessionJsonlGlobal(
+  sessionId: string
+): Promise<string | null> {
   const projectsDir = join(homedir(), '.claude', 'projects')
   let entries
   try {

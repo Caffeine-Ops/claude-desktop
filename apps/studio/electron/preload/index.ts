@@ -85,6 +85,11 @@ import {
   type WorkspaceState,
   type ProposalExportPayload,
   type ProposalExportResult,
+  type ReplayExportPayload,
+  type ReplayExportResult,
+  type ReplayListDemosResult,
+  type ReplayOpenPayload,
+  type ReplayOpenResult,
   type ProposalExportPdfPayload,
   type ProposalExportPdfResult,
   type ProposalRenderPdfPayload,
@@ -711,6 +716,26 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PROPOSAL_RENDER_PDF,
       payload
     ) as Promise<ProposalRenderPdfResult>
+  },
+
+  exportReplay(payload: ReplayExportPayload): Promise<ReplayExportResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.REPLAY_EXPORT,
+      payload
+    ) as Promise<ReplayExportResult>
+  },
+
+  openReplay(payload: ReplayOpenPayload): Promise<ReplayOpenResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.REPLAY_OPEN,
+      payload
+    ) as Promise<ReplayOpenResult>
+  },
+
+  listReplayDemos(): Promise<ReplayListDemosResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.REPLAY_LIST_DEMOS
+    ) as Promise<ReplayListDemosResult>
   },
 
   renderProposal(payload: ProposalRenderPayload): Promise<ProposalRenderResult> {

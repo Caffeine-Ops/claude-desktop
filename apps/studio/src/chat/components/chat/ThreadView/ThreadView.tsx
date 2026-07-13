@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ThreadPrimitive, ComposerPrimitive } from '@assistant-ui/react'
 import { AnimatePresence, motion } from 'motion/react'
-import { MessageSquareText, MoreHorizontal, Pencil } from 'lucide-react'
+import {
+  Clapperboard,
+  MessageSquareText,
+  MoreHorizontal,
+  Pencil,
+  Play
+} from 'lucide-react'
 import { Button } from '@/src/components/ui/button'
 import {
   DropdownMenu,
@@ -28,6 +34,10 @@ import { useSessionTitleStore } from '../../../stores/sessionTitle'
 import { findSkillChipSpec } from '../../../composer/skillChipRegistry'
 import { fileIconPathsByKey } from '../FileTypeIcon'
 import { Composer } from './Composer'
+import { DemoShowcase } from './DemoShowcase'
+import { ReplayControlBar } from '../ReplayControlBar'
+import { ReplayController } from '../../../replay/ReplayController'
+import { isReplaySessionId } from '../../../replay/replayStore'
 import { PermissionFloatDock } from '../../permissions/PermissionFloatCard'
 import { UserMessage } from './UserMessage'
 import { AssistantMessage, SystemMessage } from './AssistantMessage'
@@ -779,6 +789,10 @@ export function ThreadView(): React.JSX.Element {
         aria-hidden
         className="pointer-events-none absolute inset-0 z-30 hidden rounded-[4px] ring-2 ring-inset ring-[hsl(var(--brand)/0.5)] bg-brand/[0.06] group-data-[dragging=true]/dropzone:block"
       />
+      {/* 回放播放控制条：录像播放期悬浮在聊天列底部中央（absolute 挂本列
+          的 relative 容器，贴底避开顶部 drag-strip）。status==='idle' 时
+          自渲染 null，零成本常驻。 */}
+      <ReplayControlBar />
       </div>
       </ComposerPrimitive.AttachmentDropzone>
 
@@ -796,7 +810,10 @@ export function ThreadView(): React.JSX.Element {
       {/* Right pane: slides workspace. Only in slides mode AND once the
           thread has messages (empty={false}) — so picking 幻灯片 on the
           empty state keeps the centered hero until the first message is
-          sent, then the layout splits (figure 27). */}
+          sent, then the layout splits (figure 27).
+          回放的 slides 会话也走 SlidesWorkspace——大纲/文件/图片 tab 全是
+          消息派生的，回放免费复活；只有依赖 live server 的预览 tab 在
+          workspace 内部按回放态换成静态查看器（见 ReplaySlidesViewer）。 */}
       {isSlidesMode && !isProposalMode ? (
         <ThreadPrimitive.If empty={false}>
           <SlidesWorkspace />
@@ -848,7 +865,7 @@ export function ThreadView(): React.JSX.Element {
 }
 
 /**
- * Floating "scroll to bottom" affordance.
+ * Floating "scroll to bottom" affordance + 钉底跟随兜底 (sticky-bottom).
  *
  * Click behavior comes from `ThreadPrimitive.ScrollToBottom` (its
  * scroll-to-end math is fine). VISIBILITY, however, we compute
@@ -869,6 +886,22 @@ export function ThreadView(): React.JSX.Element {
  * Fix: walk up to the scroll container, listen to scroll + resize, and
  * recompute "at bottom" with a 2px tolerance that swallows the rounding
  * jitter. We drive a `data-at-bottom` attribute the className keys on.
+ *
+ * 钉底跟随兜底（2026-07-13）：同一个坏判定式还杀死了 Viewport 的
+ * autoScroll——库的跟随条件是内部 isAtBottom 标志，而该标志只在 scroll
+ * 事件里按 `<1` 式重算，且「向下滚动未到底一律忽略」：用户滚上去一次
+ * （标志置 false）再滚回底部，在半像素几何下判定式恒为 ±1，标志永远
+ * 回不到 true → 内容再长高也不跟随（「明明在最底部却不动」）。库的
+ * isAtBottom 无法从外部矫正（useThreadViewportStore 不在包根导出，
+ * exports map 只开放 "."，deep import 会被构建器拒绝），所以这里用
+ * 同一套 2px 容差自己实现跟随：`sticky` 随每个 scroll 事件更新（滚上
+ * 去解除、滚回底部挂上），任何几何变化（内容长高 / 视口盒子变化）时
+ * sticky 就把 scrollTop 钉回底。与库的原生 autoScroll 并存不冲突——
+ * 几何完好时两边滚向同一位置（幂等），几何坏时我们兜底。
+ *
+ * RO 同时观察内容列（Viewport 的唯一子元素）：视口自身盒子不随内容
+ * 长高变化，只观察视口盒子的话，跟随失效期间纯内容增长连按钮重算都
+ * 不触发（按钮迟到出现的次生 bug，与跟随一起修）。
  *
  * Positioned absolutely inside the composer-dock wrapper (`bottom-full`
  * + mb-2), so it floats just above the input over the fading bottom of
@@ -903,6 +936,9 @@ function ScrollToBottomButton(): React.JSX.Element {
     }
 
     const TOLERANCE = 2 // px — absorbs sub-pixel clientHeight rounding
+    const distanceToBottom = (vp: HTMLElement): number =>
+      vp.scrollHeight - vp.scrollTop - vp.clientHeight
+
     const recompute = (): void => {
       const vp = viewportRef.current
       if (!vp) {
@@ -910,8 +946,7 @@ function ScrollToBottomButton(): React.JSX.Element {
         setAtBottom(true)
         return
       }
-      const distance = vp.scrollHeight - vp.scrollTop - vp.clientHeight
-      setAtBottom(distance <= TOLERANCE)
+      setAtBottom(distanceToBottom(vp) <= TOLERANCE)
     }
 
     const viewport = findViewport()
@@ -919,13 +954,59 @@ function ScrollToBottomButton(): React.JSX.Element {
     recompute()
     if (!viewport) return
 
-    viewport.addEventListener('scroll', recompute, { passive: true })
-    // Content height changes (streaming, message resize) move the bottom
-    // without firing a scroll event, so watch the box too.
-    const ro = new ResizeObserver(recompute)
+    // 自研跟随的开关：到底挂上、向上滚离底解除。初值按 mount 时的真实
+    // 位置定——恢复的历史会话可能停在上方，别拽人。
+    //
+    // 解除必须带方向判断（scrollTop 较上次减小 = 用户向上滚），不能只看
+    // 「这个事件没停在底部」：scrollTop 写入同步生效，但 scroll 事件下一
+    // 帧才合并派发一次，处理器读到的是【派发时刻】的几何——钉底写入后
+    // 同帧内容又长高（流式输出、Read 大内容卡渐进渲染时必现），事件读
+    // 到几百 px 的距离，无方向判断就会误判「用户离开了底部」，sticky
+    // 熄火跟随死亡（2026-07-13 实测：一直钉底却突然不滚，大内容卡落地
+    // 触发）。assistant-ui 原版「向下滚未到底一律忽略」防的正是这个竞
+    // 态。「向下滚但停在中途」（从上方往下翻没到底）两个分支都不进：
+    // sticky 保持原值 false，不会误挂。
+    let sticky = distanceToBottom(viewport) <= TOLERANCE
+    let lastScrollTop = viewport.scrollTop
+
+    const onScroll = (): void => {
+      const vp = viewportRef.current
+      if (!vp) return
+      const dist = distanceToBottom(vp)
+      if (dist <= TOLERANCE) {
+        sticky = true
+      } else if (vp.scrollTop < lastScrollTop) {
+        sticky = false
+      }
+      lastScrollTop = vp.scrollTop
+      setAtBottom(dist <= TOLERANCE)
+    }
+
+    // 几何变化（内容长高 / 视口盒子 resize）：sticky 时钉回底部。收缩
+    // （工具卡折叠）无需分支——浏览器先 clamp scrollTop，distance 已是
+    // 0，不进 if；prepend 补偿场景用户必在顶部，sticky 为 false 不干扰
+    // （EarlierMessagesGate 自管 scrollTop）。钉底写入后同步刷新
+    // lastScrollTop：这次位移是程序化的，不能算进下个 scroll 事件的
+    // 方向判定（否则 clamp 类回退会被误读成用户上滚）。
+    const followIfSticky = (): void => {
+      const vp = viewportRef.current
+      if (!vp) return
+      if (sticky && distanceToBottom(vp) > TOLERANCE) {
+        vp.scrollTop = vp.scrollHeight
+        lastScrollTop = vp.scrollTop
+      }
+      recompute()
+    }
+
+    viewport.addEventListener('scroll', onScroll, { passive: true })
+    const ro = new ResizeObserver(followIfSticky)
+    // 视口盒子：窗口/分栏 resize 改变 clientHeight。内容列：流式输出、
+    // 消息展开等一切内容增长（视口自身盒子对这些纹丝不动）。
     ro.observe(viewport)
+    const content = viewport.firstElementChild
+    if (content instanceof HTMLElement) ro.observe(content)
     return () => {
-      viewport.removeEventListener('scroll', recompute)
+      viewport.removeEventListener('scroll', onScroll)
       ro.disconnect()
     }
   }, [])
@@ -1055,6 +1136,11 @@ function ChatHeader(): React.JSX.Element {
   // commit 落到正确会话）。曾同时给标题入场动画做 remount key，动画已于
   // 2026-07-04 退役。
   const sessionId = useChatStore((s) => s.sessionId)
+  // 回放会话（replay: 前缀，纯前端 id，无对应真实会话）：标题不可重命名、
+  // ··· 菜单（重命名/导出为演示都要真实 sessionId 走 IPC）整个不渲染，
+  // 标题旁挂「演示回放」标签——与首页 DemoShowcase 卡片标题同款视觉语言
+  // （静态品牌绿点 + 文案，见该组件）。
+  const isReplay = isReplaySessionId(sessionId)
   // 消息内嵌协议标记（[[sheet-selection]]/[[image-edit]]）剥离在 slash
   // 命令拆分之前——否则表格「框选问 AI」这类消息的 firstPrompt（marker
   // JSON + 提示语 + TSV）会原样顶栏展示，撑成一整行（2026-07-13 事故，
@@ -1213,14 +1299,14 @@ function ChatHeader(): React.JSX.Element {
         {/* 无切换动画：曾是 key={sessionId} 重挂载的 motion.h1（淡入+3px
            上浮入场），2026-07-04 应用户要求退役——切会话时标题即时呈现，
            与 rail 选中态同一节奏（同日退役的 glider 滑块）。 */}
-        <h1 className="flex min-w-0 items-center text-[14px] font-medium leading-tight text-foreground">
+        <h1 className="flex min-w-0 items-center gap-1.5 text-[14px] font-medium leading-tight text-foreground">
           <button
             type="button"
             onClick={startEdit}
-            disabled={!sessionId}
-            title={sessionId ? t('renameChat') : undefined}
+            disabled={!sessionId || isReplay}
+            title={sessionId && !isReplay ? t('renameChat') : undefined}
             aria-label={
-              sessionId ? `${t('renameChat')}: ${display}` : undefined
+              sessionId && !isReplay ? `${t('renameChat')}: ${display}` : undefined
             }
             // group/title scopes the pencil reveal to hovering the title
             // itself, not the whole header band.
@@ -1229,7 +1315,7 @@ function ChatHeader(): React.JSX.Element {
             <span className="min-w-0 truncate" title={display}>
               {restTitle}
             </span>
-            {sessionId ? (
+            {sessionId && !isReplay ? (
               <svg
                 width="12"
                 height="12"
@@ -1246,15 +1332,26 @@ function ChatHeader(): React.JSX.Element {
               </svg>
             ) : null}
           </button>
+          {/* 演示回放标签——与首页 DemoShowcase 卡片标题旁的同款标签像素级
+              一致（bg-brand/[0.09] + text-brand 静态品牌绿，不跟用户主题走，
+              见该组件注释）。h1 加 gap-1.5 让它跟标题按钮保持同样间距。 */}
+          {isReplay ? (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-brand/[0.09] px-2 py-0.5 text-[10.5px] font-medium text-brand">
+              <span className="size-[5px] rounded-full bg-current" />
+              {t('demoShowcaseTag')}
+            </span>
+          ) : null}
         </h1>
         {/* ··· 会话操作菜单（2026-07-08 用户要求，Notion 顶栏样式）：
            紧跟截断标题右侧，超长标题省略后菜单钮仍然贴着可见文本。
            目前只有「重命名」（与点击标题打开同一个弹窗）；后续
            会话级操作（删除/移动工作区…）往这里加。无会话时不渲染
-           ——菜单里全是会话操作，空态挂个禁用按钮只是噪音。
+           ——菜单里全是会话操作，空态挂个禁用按钮只是噪音。回放会话
+           同样不渲染：菜单项（重命名/导出为演示）全部要真实 sessionId
+           走 IPC，对 replay: 前缀的假 id 调用只会静默失败或报错。
            Content portal 到 body、脱离 .chat-app 豁免，但 shadcn 原语
            自带 data-slot，天然逃逸 canvas 裸元素 reset（CLAUDE.md）。 */}
-        {sessionId ? (
+        {sessionId && !isReplay ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -1286,6 +1383,56 @@ function ChatHeader(): React.JSX.Element {
                 }}
               >
                 <Pencil strokeWidth={1.75} /> {t('renameChat')}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => {
+                  // 成功反馈 = Finder 定位导出文件；取消静默、失败记日志
+                  // （与 rail 行菜单的同名动作一致，见 RailSessionList）。
+                  // slides 会话带 mode 标记——回放端据此撑开双分栏。
+                  const mode = useComposerModeStore.getState().slidesSessions[
+                    sessionId
+                  ]
+                    ? ('slides' as const)
+                    : undefined
+                  void window.chatApi
+                    .exportReplay({
+                      sessionId,
+                      title: display,
+                      ...(mode ? { mode } : {})
+                    })
+                    .then((r) => {
+                      if (r.ok && r.path) {
+                        void window.chatApi.revealPath({ absPath: r.path })
+                      } else if (!r.ok) {
+                        console.warn('[chat-header] exportReplay failed:', r.error)
+                      }
+                    })
+                    .catch((err: unknown) =>
+                      console.warn('[chat-header] exportReplay error:', err)
+                    )
+                }}
+              >
+                <Clapperboard strokeWidth={1.75} /> {t('replayExportMenu')}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => {
+                  // main 弹文件选择框 → 解包 + 路径重写 → controller 接管播放。
+                  // 取消静默；失败记日志（选择框已给过交互反馈）。
+                  void window.chatApi
+                    .openReplay({})
+                    .then((r) => {
+                      if (r.ok) {
+                        ReplayController.start(r.meta, r.timeline)
+                      } else if (!r.cancelled) {
+                        console.warn('[chat-header] openReplay failed:', r.error)
+                      }
+                    })
+                    .catch((err: unknown) =>
+                      console.warn('[chat-header] openReplay error:', err)
+                    )
+                }}
+              >
+                <Play strokeWidth={1.75} /> {t('replayOpenFile')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1421,6 +1568,10 @@ function EmptyState(): React.JSX.Element {
 
       {/* Composer sits inside the centered block (not the bottom dock). */}
       <Composer />
+
+      {/* 「看看它能做什么」演示区：内置演示录像的卡片入口（点卡片就地
+          回放）。没有内置录像时自渲染 null，页面与旧版完全一致。 */}
+      <DemoShowcase />
 
       {/* Promo banner (figure 26) — VISUAL-ONLY placeholder; the desktop app
           has no credits/PRO system behind it. */}

@@ -37,7 +37,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { Folder, Loader2, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import {
+  Clapperboard,
+  Folder,
+  Loader2,
+  MoreHorizontal,
+  Pencil,
+  Trash2
+} from 'lucide-react'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import type { ComponentType, ReactNode } from 'react'
 import type { ThreadSummary } from '@desktop-shared/types'
@@ -193,11 +200,13 @@ function SessionMenuItems({
   Item,
   Separator,
   onRename,
+  onExportReplay,
   onDelete
 }: {
   Item: MenuItemComponent
   Separator: MenuSeparatorComponent
   onRename: () => void
+  onExportReplay: () => void
   onDelete: () => void
 }) {
   return (
@@ -207,6 +216,9 @@ function SessionMenuItems({
     <>
       <Item onSelect={onRename}>
         <Pencil strokeWidth={1.75} /> 重命名
+      </Item>
+      <Item onSelect={onExportReplay}>
+        <Clapperboard strokeWidth={1.75} /> 导出为演示
       </Item>
       <Separator />
       <Item variant="destructive" onSelect={onDelete}>
@@ -418,6 +430,44 @@ export function RailSessionList() {
     [threads, activeId, reload]
   )
 
+  /* ── 导出为演示：main 弹保存框写 .claudereplay ── */
+
+  const performExportReplay = useCallback(async (target: ThreadSummary) => {
+    // slides 模式标记住在带 persist 的 chat store（composerMode）——本文件
+    // 禁止静态 import 求值期碰 window 的模块（SSR 约束，见头注释），动态
+    // import 在点击时才加载，安全。
+    let mode: 'slides' | undefined
+    try {
+      const { useComposerModeStore } = await import(
+        '../chat/stores/composerMode'
+      )
+      mode = useComposerModeStore.getState().slidesSessions[target.id]
+        ? 'slides'
+        : undefined
+    } catch {
+      /* 读不到标记就不带 mode——回放退化为单栏，不阻塞导出 */
+    }
+    void window.chatApi
+      ?.exportReplay({
+        sessionId: target.id,
+        title: displayTitle(target.title),
+        ...(mode ? { mode } : {})
+      })
+      .then((r) => {
+        // 成功反馈 = 直接在 Finder 里定位导出的文件（比任何提示都直观）；
+        // 取消（path:null）静默。失败仅记日志——保存对话框已给过用户交互，
+        // rail 这层没有常驻消息位可用。
+        if (r.ok && r.path) {
+          void window.chatApi.revealPath({ absPath: r.path })
+        } else if (!r.ok) {
+          console.warn('[RailSessionList] exportReplay failed:', r.error)
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn('[RailSessionList] exportReplay error:', err)
+      })
+  }, [])
+
   if (threads.length === 0) {
     // 首次拉取还在路上：骨架屏占位（2026-07-07 用户反馈——启动时 rail
     // 空白一拍像坏了）。loaded 在 store 里跨挂载持久，这块骨架只在应用
@@ -480,6 +530,7 @@ export function RailSessionList() {
                     justRenamed={item.thread.id === justRenamedId}
                     onSwitch={() => switchTo(item.thread.id)}
                     onStartRename={() => openRename(item.thread)}
+                    onExportReplay={() => void performExportReplay(item.thread)}
                     onStartDelete={() => setDeleteTarget(item.thread)}
                   />
                 )
@@ -645,6 +696,7 @@ function SessionRow({
   justRenamed,
   onSwitch,
   onStartRename,
+  onExportReplay,
   onStartDelete
 }: {
   thread: ThreadSummary
@@ -655,6 +707,7 @@ function SessionRow({
   justRenamed: boolean
   onSwitch: () => void
   onStartRename: () => void
+  onExportReplay: () => void
   onStartDelete: () => void
 }) {
   const awaitingLabel =
@@ -793,6 +846,7 @@ function SessionRow({
                   Item={DropdownMenuItem}
                   Separator={DropdownMenuSeparator}
                   onRename={onStartRename}
+                  onExportReplay={onExportReplay}
                   onDelete={onStartDelete}
                 />
               </DropdownMenuContent>
@@ -804,6 +858,7 @@ function SessionRow({
             Item={ContextMenuItem}
             Separator={ContextMenuSeparator}
             onRename={onStartRename}
+            onExportReplay={onExportReplay}
             onDelete={onStartDelete}
           />
         </ContextMenuContent>

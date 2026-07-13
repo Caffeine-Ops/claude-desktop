@@ -101,6 +101,7 @@ def _wait_for_result(
             try:
                 if result_file.stat().st_mtime >= started_at:
                     logger.info('confirmation received: %s', result_file)
+                    _log_result_snapshot(result_file, _result_stage(result_file) or 'final')
                     try:
                         proc.wait(timeout=3)
                     except subprocess.TimeoutExpired:
@@ -131,6 +132,63 @@ def _result_stage(result_file: Path) -> Optional[str]:
     except (OSError, json.JSONDecodeError):
         return None
     return data.get('stage') if isinstance(data, dict) else None
+
+
+# Marker for the one-line JSON dump logged when --wait-only detects the stage
+# it was watching for. This is NOT read by the skill flow (which only
+# re-reads result.json from disk) — its sole consumer is claude-desktop's
+# replay compiler (electron/main/replay/compileReplay.ts + replayPackage.ts),
+# which has no other way to learn what the Eight-Confirmations page actually
+# showed and what the user picked: recommendations.json/result.json are plain
+# files the CLI never echoes, and by the time someone replays the session
+# later, recommendations.json may already be overwritten (tier 2 overwrites
+# tier 1 in place) or deleted by a subsequent run in the same project — so a
+# from-disk re-read at export time would be unreliable even if the project
+# directory still exists. catalogs.json is technically static (ships with the
+# skill), but bundling it here too means the replay side never has to locate
+# a skill install directory at all — one self-contained snapshot, one read,
+# zero cross-environment path lookups. Logging all three together, at the
+# exact moment this stage is confirmed, is the only point where a consistent
+# snapshot of "what options existed" + "what was recommended" + "what the
+# user chose" all still exist (see [[claude-desktop会话录制回放架构]] for the
+# replay side of this contract). Kept human-scannable (prefix + compact JSON
+# on its own line) rather than folded into the existing `logger.info`
+# sentence so a regex can lift it without also matching the surrounding prose.
+RESULT_LOG_MARKER = '[[confirm-result]]'
+
+
+def _log_result_snapshot(result_file: Path, stage: str) -> None:
+    """Best-effort: log the just-written result.json, the recommendations.json
+    it was answering, and the static catalogs.json, all together, behind the
+    marker above. ``result_file`` is always ``<confirm_dir>/result.json``, so
+    its parent IS confirm_dir — no separate parameter needed. Never raises —
+    a malformed/unreadable file only costs the replay-only marker line, not
+    the actual wait-for-confirmation contract."""
+    try:
+        result = json.loads(result_file.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(result, dict):
+        return
+    recommendations: object = None
+    try:
+        recommendations = json.loads(
+            (result_file.parent / RECOMMENDATIONS_NAME).read_text(encoding='utf-8')
+        )
+    except (OSError, json.JSONDecodeError):
+        pass  # recommendations snapshot is best-effort — result alone still logs
+    catalogs: object = None
+    try:
+        catalogs = json.loads(_CATALOGS_PATH.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        pass  # catalogs snapshot is best-effort too, same reasoning
+    snapshot = {
+        'stage': stage,
+        'result': result,
+        'recommendations': recommendations,
+        'catalogs': catalogs,
+    }
+    logger.info('%s%s', RESULT_LOG_MARKER, json.dumps(snapshot, ensure_ascii=False))
 
 
 # Tier-1 anchors. On the Tier-2 page these sections are not rendered (they were
@@ -192,6 +250,7 @@ def _wait_only_for_result(
         # 'final' is the tier-2 submit. A mtime gate would race-miss a fast user.
         if _result_stage(result_file) == stage:
             logger.info('%s confirmation received: %s', stage, result_file)
+            _log_result_snapshot(result_file, stage)
             return 0
 
         lock = _read_lock(lock_file)

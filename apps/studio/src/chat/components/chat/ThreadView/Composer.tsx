@@ -13,6 +13,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import type { SessionMeta } from '@desktop-shared/types'
 import { useI18n, useT } from '../../../i18n'
 import { useChatStore, useTurnActivity } from '../../../stores/chat'
+import { isReplaySessionId } from '../../../replay/replayStore'
 import { useWorkspaceStore } from '../../../stores/workspace'
 import { useComposerModeStore, type ComposerModeId } from '../../../stores/composerMode'
 import { useComposerOverlayStore } from '../../../stores/composerOverlay'
@@ -237,6 +238,9 @@ export function Composer(): React.JSX.Element {
   // cheap (one IPC round-trip).
   useEffect(() => {
     if (streaming) return
+    // 回放期 streaming 每个 turn 都翻转（表演需要），但 replay: slot 在
+    // main 侧没有会话——别拿着表演节拍去打真 IPC（读实时前台 id，闭包外）。
+    if (isReplaySessionId(useChatStore.getState().sessionId)) return
     let cancelled = false
     window.chatApi
       .getSessionMeta()
@@ -286,6 +290,8 @@ export function Composer(): React.JSX.Element {
   // has data available before the user even types.
   useEffect(() => {
     if (streaming) return
+    // 同上：回放的 streaming 翻转不该触发文件列表拉取。
+    if (isReplaySessionId(useChatStore.getState().sessionId)) return
     let cancelled = false
     window.chatApi
       .listFileSuggestions()

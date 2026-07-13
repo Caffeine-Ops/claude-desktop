@@ -75,6 +75,11 @@ import {
   PROPOSAL_IMAGE_API_KEY_MASK,
   type ProposalExportPayload,
   type ProposalExportResult,
+  type ReplayExportPayload,
+  type ReplayExportResult,
+  type ReplayListDemosResult,
+  type ReplayOpenPayload,
+  type ReplayOpenResult,
   type ProposalExportPdfPayload,
   type ProposalExportPdfResult,
   type ProposalRenderPdfPayload,
@@ -127,6 +132,9 @@ import type { KbIndex } from '../../shared/kbIndex'
 import type { KbRemoteConfig } from '../../shared/kbConfig'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
 import { exportProposalPdf, renderProposalPdfBytes } from '../core/proposalPdf'
+import { exportReplay } from '../replay/exportReplay'
+import { openReplay } from '../replay/openReplay'
+import { listReplayDemos } from '../replay/listDemos'
 import { markdownToDocxBuffer } from '../core/proposalDocx'
 import { verifyCitations, collectUngroundedImagePaths } from '../core/proposalVerify'
 import { retrievePassages } from '../core/proposalRetrieve'
@@ -353,6 +361,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_BUILD_STATUS_GET)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT_PDF)
+  ipcMain.removeHandler(IPC_CHANNELS.REPLAY_EXPORT)
+  ipcMain.removeHandler(IPC_CHANNELS.REPLAY_OPEN)
+  ipcMain.removeHandler(IPC_CHANNELS.REPLAY_LIST_DEMOS)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_RENDER)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_SAVE_DRAFT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_LOAD_DRAFT)
@@ -1922,6 +1933,42 @@ export function registerIpcHandlers(): void {
       return renderProposalPdfBytes(html)
     }
   )
+
+  // 会话 → .claudereplay 演示录像导出。全部编排在 replay/exportReplay.ts
+  // （读 transcript 时间戳 → 编译时间线 → 收资产 → 保存框 → 写 zip）。
+  ipcMain.handle(
+    IPC_CHANNELS.REPLAY_EXPORT,
+    async (event, payload: ReplayExportPayload): Promise<ReplayExportResult> => {
+      const sessionId =
+        payload && typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (!sessionId) return { ok: false, error: 'Missing sessionId.' }
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { ok: true, path: null }
+      const title = typeof payload?.title === 'string' ? payload.title : undefined
+      const mode = payload?.mode === 'slides' ? 'slides' : undefined
+      return exportReplay(win, sessionId, title, mode)
+    }
+  )
+
+  // 打开 .claudereplay：弹选择框（或显式 path）→ 解包 + 路径重写 → 回 timeline。
+  ipcMain.handle(
+    IPC_CHANNELS.REPLAY_OPEN,
+    async (event, payload: ReplayOpenPayload): Promise<ReplayOpenResult> => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { ok: false, cancelled: true }
+      const path = typeof payload?.path === 'string' ? payload.path : undefined
+      return openReplay(win, path)
+    }
+  )
+
+  // 内置演示录像清单（首页演示区数据源）。
+  ipcMain.handle(
+    IPC_CHANNELS.REPLAY_LIST_DEMOS,
+    async (): Promise<ReplayListDemosResult> => ({
+      demos: await listReplayDemos()
+    })
+  )
+
 
   // 预览专用：复用与「导出 Word」完全相同的引擎（markdownToDocxBuffer），
   // 保证 docx-preview 渲染出的分页 = 导出成品逐像素一致。不弹保存框、不落盘——
