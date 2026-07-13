@@ -9,6 +9,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from '@/src/components/ui/dropdown-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/src/components/ui/dialog'
+import { Input } from '@/src/components/ui/input'
+import { Label } from '@/src/components/ui/label'
 
 import { useI18n, useT } from '../../../i18n'
 import { useChatStore, useDelayedSessionLoading } from '../../../stores/chat'
@@ -34,6 +44,7 @@ import {
   useImageEditStore,
   useSheetPreviewStore
 } from '../../../stores/filePreview'
+import { stripMessageMarker } from '../../../lib/messageMarkers'
 import { OutputsButton } from './OutputsPanel'
 
 /**
@@ -1044,7 +1055,15 @@ function ChatHeader(): React.JSX.Element {
   // commit 落到正确会话）。曾同时给标题入场动画做 remount key，动画已于
   // 2026-07-04 退役。
   const sessionId = useChatStore((s) => s.sessionId)
-  const display = title && title.trim() ? title : t('chatHeaderUntitled')
+  // 消息内嵌协议标记（[[sheet-selection]]/[[image-edit]]）剥离在 slash
+  // 命令拆分之前——否则表格「框选问 AI」这类消息的 firstPrompt（marker
+  // JSON + 提示语 + TSV）会原样顶栏展示，撑成一整行（2026-07-13 事故，
+  // 详见 RailSessionList.displayTitle 同款修复的注释）。
+  const strippedTitle = title ? stripMessageMarker(title) : title
+  const display =
+    strippedTitle && strippedTitle.trim()
+      ? strippedTitle
+      : t('chatHeaderUntitled')
 
   // 斜杠命令标题拆分：'/claude-desktop:ppt-master 武汉大学介绍' →
   // chip '/ppt-master'（冒号后短名；完整命令进 hover title）+ 正文标题。
@@ -1064,47 +1083,46 @@ function ChatHeader(): React.JSX.Element {
     ? (findSkillChipSpec(cmdFull) ?? findSkillChipSpec(cmdShort ?? ''))
     : null
 
-  // ── In-place rename ──
-  // The title itself is the rename entry point (mirrors the sidebar's
-  // in-row editor; both funnel into the same renameSession IPC). Blur
-  // COMMITS here — dropping half-typed input on a stray click reads as
-  // data loss for a lightweight edit like this; Esc is the explicit
-  // "never mind". (The sidebar editor keeps cancel-on-outside-click
-  // because rows have a competing click action: switching sessions.)
-  const [editing, setEditing] = useState(false)
+  // ── Rename dialog ──
+  // 与 rail 会话行同一套交互（2026-07-13 统一：此前是标题原地切换成
+  // input 的行内编辑，用户要求改成跟左侧 RailSessionList 一致的弹窗）。
+  // 复用同一份 shadcn Dialog 精修档（见 RailSessionList.tsx 的
+  // renameTarget 弹窗注释：Notion 风格、440px 卡、48px 输入框、品牌绿
+  // 渐变提交按钮）——两处保持像素级同款，改一处记得同步另一处。
+  const [renameOpen, setRenameOpen] = useState(false)
   const [draft, setDraft] = useState('')
-  const titleInputRef = useRef<HTMLInputElement | null>(null)
+  const renameInputRef = useRef<HTMLInputElement | null>(null)
   // ··· 菜单选「重命名」时置 true：菜单关闭的 auto-focus 默认把焦点还给
-  // trigger 按钮，会跟 useEffect 里 rename input 的 focus 打架（radix 的
-  // restore 也是异步的，晚一拍就把 input 的焦点抢走）。选中重命名的那次
-  // 关闭用它拦掉 auto-focus，让 input 独占焦点；Esc/点外关闭不受影响，
-  // 焦点照常回 trigger（键盘可达性）。
+  // trigger 按钮，会跟弹窗聚焦 input 打架（radix 的 restore 也是异步的，
+  // 晚一拍就把焦点抢走）。选中重命名的那次关闭用它拦掉 auto-focus。
   const pendingEditRef = useRef(false)
 
   const startEdit = useCallback((): void => {
     if (!sessionId) return
     setDraft(title ?? '')
-    setEditing(true)
+    setRenameOpen(true)
   }, [sessionId, title])
 
+  // 弹窗开后聚焦全选输入框（等 radix 菜单关闭抢完焦点，与内容挂载对齐；
+  // 同 RailSessionList 的 renameTarget 弹窗）。
   useEffect(() => {
-    if (!editing) return
+    if (!renameOpen) return undefined
     const timer = window.setTimeout(() => {
-      titleInputRef.current?.focus()
-      titleInputRef.current?.select()
+      renameInputRef.current?.focus()
+      renameInputRef.current?.select()
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [editing])
+  }, [renameOpen])
 
   // A session switch mid-edit discards the editor — the draft belonged to
   // the PREVIOUS session's title; committing it against the new sessionId
   // would rename the wrong chat.
   useEffect(() => {
-    setEditing(false)
+    setRenameOpen(false)
   }, [sessionId])
 
   const commitEdit = useCallback(async (): Promise<void> => {
-    setEditing(false)
+    setRenameOpen(false)
     const trimmed = draft.trim()
     if (!sessionId || !trimmed || trimmed === title) return
     const previous = title
@@ -1175,131 +1193,101 @@ function ChatHeader(): React.JSX.Element {
             className="size-4 shrink-0 text-muted-foreground/80"
           />
         )}
-        {editing ? (
-          <input
-            ref={titleInputRef}
-            value={draft}
-            maxLength={200}
-            name="rename-session-title"
-            aria-label={t('renameChatPrompt')}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                void commitEdit()
-              } else if (e.key === 'Escape') {
-                e.preventDefault()
-                setEditing(false)
-              }
-            }}
-            onBlur={() => void commitEdit()}
-            // Same type metrics as the h1 (14px/medium/leading-tight) so the
-            // header doesn't jump a pixel entering/leaving edit mode; negative
-            // margin re-absorbs the input's own padding for the same reason.
-            // 编辑的是完整原始标题（含命令前缀）——chip 只是展示态拆分。
-            // border 用 --brand 而非 --ring：ring 会被 appearance applier 换成
-            // 用户主题色，而「正在重命名」的绿框与 rail 行内编辑是同一身份。
-            className="-mx-1.5 -my-0.5 w-[min(480px,100%)] rounded-md border-[1.5px] border-brand bg-background px-1.5 py-0.5 text-[14px] font-medium leading-tight text-foreground outline-none ring-2 ring-brand/20 [-webkit-app-region:no-drag]"
-          />
-        ) : (
-          <>
-            {skillSpec ? (
-              <span
-                title={cmdFull ?? undefined}
-                className="shrink-0 rounded-full border border-border/70 bg-card/70 px-2 py-0.5 text-[11px] font-medium leading-none text-muted-foreground"
-              >
-                {skillSpec.label}
-              </span>
-            ) : cmdShort ? (
-              <span
-                title={cmdFull ?? undefined}
-                className="shrink-0 rounded-full border border-brand/20 bg-brand/10 px-2 py-0.5 font-mono text-[11px] leading-none text-brand"
-              >
-                {cmdShort}
-              </span>
-            ) : null}
-            {/* 无切换动画：曾是 key={sessionId} 重挂载的 motion.h1（淡入+3px
-               上浮入场），2026-07-04 应用户要求退役——切会话时标题即时呈现，
-               与 rail 选中态同一节奏（同日退役的 glider 滑块）。 */}
-            <h1 className="flex min-w-0 items-center text-[14px] font-medium leading-tight text-foreground">
-              <button
-                type="button"
-                onClick={startEdit}
-                disabled={!sessionId}
-                title={sessionId ? t('renameChat') : undefined}
-                aria-label={
-                  sessionId ? `${t('renameChat')}: ${display}` : undefined
-                }
-                // group/title scopes the pencil reveal to hovering the title
-                // itself, not the whole header band.
-                className="group/title flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 -mx-1.5 -my-0.5 text-left transition-colors [-webkit-app-region:no-drag] enabled:cursor-text enabled:hover:bg-foreground/[0.05] disabled:cursor-default"
-              >
-                <span className="min-w-0 truncate" title={display}>
-                  {restTitle}
-                </span>
-                {sessionId ? (
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden
-                    className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/title:opacity-80 group-focus-visible/title:opacity-80"
-                  >
-                    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                  </svg>
-                ) : null}
-              </button>
-            </h1>
-            {/* ··· 会话操作菜单（2026-07-08 用户要求，Notion 顶栏样式）：
-               紧跟截断标题右侧，超长标题省略后菜单钮仍然贴着可见文本。
-               目前只有「重命名」（与点击标题的行内编辑同一入口）；后续
-               会话级操作（删除/移动工作区…）往这里加。无会话时不渲染
-               ——菜单里全是会话操作，空态挂个禁用按钮只是噪音。
-               Content portal 到 body、脱离 .chat-app 豁免，但 shadcn 原语
-               自带 data-slot，天然逃逸 canvas 裸元素 reset（CLAUDE.md）。 */}
+        {skillSpec ? (
+          <span
+            title={cmdFull ?? undefined}
+            className="shrink-0 rounded-full border border-border/70 bg-card/70 px-2 py-0.5 text-[11px] font-medium leading-none text-muted-foreground"
+          >
+            {skillSpec.label}
+          </span>
+        ) : cmdShort ? (
+          <span
+            title={cmdFull ?? undefined}
+            className="shrink-0 rounded-full border border-brand/20 bg-brand/10 px-2 py-0.5 font-mono text-[11px] leading-none text-brand"
+          >
+            {cmdShort}
+          </span>
+        ) : null}
+        {/* 无切换动画：曾是 key={sessionId} 重挂载的 motion.h1（淡入+3px
+           上浮入场），2026-07-04 应用户要求退役——切会话时标题即时呈现，
+           与 rail 选中态同一节奏（同日退役的 glider 滑块）。 */}
+        <h1 className="flex min-w-0 items-center text-[14px] font-medium leading-tight text-foreground">
+          <button
+            type="button"
+            onClick={startEdit}
+            disabled={!sessionId}
+            title={sessionId ? t('renameChat') : undefined}
+            aria-label={
+              sessionId ? `${t('renameChat')}: ${display}` : undefined
+            }
+            // group/title scopes the pencil reveal to hovering the title
+            // itself, not the whole header band.
+            className="group/title flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 -mx-1.5 -my-0.5 text-left transition-colors [-webkit-app-region:no-drag] enabled:cursor-pointer enabled:hover:bg-foreground/[0.05] disabled:cursor-default"
+          >
+            <span className="min-w-0 truncate" title={display}>
+              {restTitle}
+            </span>
             {sessionId ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={t('chatHeaderMenu')}
-                    title={t('chatHeaderMenu')}
-                    className="shrink-0 text-muted-foreground hover:text-foreground [-webkit-app-region:no-drag]"
-                  >
-                    <MoreHorizontal className="size-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                {/* 样式零覆盖：菜单精修档已是 ui/dropdown-menu 基件默认
-                   （2026-07-08 晋升，见其头注释），与 rail 行菜单天然同款，
-                   不再需要手工同步数值。 */}
-                <DropdownMenuContent
-                  align="start"
-                  onCloseAutoFocus={(e) => {
-                    if (pendingEditRef.current) {
-                      pendingEditRef.current = false
-                      e.preventDefault()
-                    }
-                  }}
-                >
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      pendingEditRef.current = true
-                      startEdit()
-                    }}
-                  >
-                    <Pencil strokeWidth={1.75} /> {t('renameChat')}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+                className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/title:opacity-80 group-focus-visible/title:opacity-80"
+              >
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+              </svg>
             ) : null}
-          </>
-        )}
+          </button>
+        </h1>
+        {/* ··· 会话操作菜单（2026-07-08 用户要求，Notion 顶栏样式）：
+           紧跟截断标题右侧，超长标题省略后菜单钮仍然贴着可见文本。
+           目前只有「重命名」（与点击标题打开同一个弹窗）；后续
+           会话级操作（删除/移动工作区…）往这里加。无会话时不渲染
+           ——菜单里全是会话操作，空态挂个禁用按钮只是噪音。
+           Content portal 到 body、脱离 .chat-app 豁免，但 shadcn 原语
+           自带 data-slot，天然逃逸 canvas 裸元素 reset（CLAUDE.md）。 */}
+        {sessionId ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('chatHeaderMenu')}
+                title={t('chatHeaderMenu')}
+                className="shrink-0 text-muted-foreground hover:text-foreground [-webkit-app-region:no-drag]"
+              >
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            {/* 样式零覆盖：菜单精修档已是 ui/dropdown-menu 基件默认
+               （2026-07-08 晋升，见其头注释），与 rail 行菜单天然同款，
+               不再需要手工同步数值。 */}
+            <DropdownMenuContent
+              align="start"
+              onCloseAutoFocus={(e) => {
+                if (pendingEditRef.current) {
+                  pendingEditRef.current = false
+                  e.preventDefault()
+                }
+              }}
+            >
+              <DropdownMenuItem
+                onSelect={() => {
+                  pendingEditRef.current = true
+                  startEdit()
+                }}
+              >
+                <Pencil strokeWidth={1.75} /> {t('renameChat')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
         {/* 「输出」按钮：本会话所有产出物（幻灯片/文档/表格/生成图片…）的
             聚合入口，见 OutputsPanel.tsx。无会话时数据源为空数组，按钮仍
             渲染（空态弹层）。原「AI 生成」hairline 徽标（chatHeaderAiBadge）
@@ -1309,6 +1297,71 @@ function ChatHeader(): React.JSX.Element {
           <OutputsButton />
         </div>
       </div>
+
+      {/* 重命名弹窗——与 RailSessionList.tsx 的会话行重命名同一套 shadcn
+          Dialog 精修档（Notion 风格：440px 圆角卡、19px 大标题、48px 高
+          输入框、品牌绿渐变提交按钮）。2026-07-13 从原地 input 行内编辑
+          改成弹窗，统一两处的重命名交互。 */}
+      <Dialog
+        open={renameOpen}
+        onOpenChange={(open) => {
+          if (!open) setRenameOpen(false)
+        }}
+      >
+        <DialogContent className="rounded-2xl sm:max-w-[440px]">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              void commitEdit()
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle className="text-[19px]">
+                {t('renameChat')}
+              </DialogTitle>
+              <DialogDescription className="text-[13px]">
+                保持简短且易于识别
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-2 py-4">
+              <Label htmlFor="chat-header-rename-input" className="sr-only">
+                对话名称
+              </Label>
+              <Input
+                id="chat-header-rename-input"
+                ref={renameInputRef}
+                value={draft}
+                maxLength={200}
+                name="rename-session-title"
+                autoComplete="off"
+                placeholder="输入新名称"
+                className="h-12 rounded-xl px-4 text-[15px] md:text-[15px]"
+                onChange={(e) => setDraft(e.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setRenameOpen(false)}
+              >
+                取消
+              </Button>
+              {/* transition-[opacity,box-shadow] 覆盖基件的 transition-all：
+                * disabled↔enabled 的底色是「渐变图像 ↔ 灰底」——background-image
+                * 不可过渡会瞬跳，color 却吃 transition-all 慢慢变，中间帧=绿底
+                * 半灰字（同 RailSessionList 的重命名按钮注释）。 */}
+              <Button
+                type="submit"
+                className="bg-[linear-gradient(135deg,hsl(var(--brand)),color-mix(in_srgb,hsl(var(--brand))_85%,#000))] text-white shadow-[0_1px_2px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.18)] transition-[opacity,box-shadow] hover:opacity-95 disabled:bg-none disabled:bg-muted disabled:text-muted-foreground/70 disabled:opacity-100 disabled:shadow-none"
+                disabled={!draft.trim() || draft.trim() === title}
+              >
+                保存
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

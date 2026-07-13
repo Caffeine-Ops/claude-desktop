@@ -186,6 +186,41 @@ function ClampedUserBubble(): React.JSX.Element {
 }
 
 /**
+ * 胶囊 hover 浮层的展开方向决策（SheetSelectionCard / ImageEditCard 共
+ * 用）。浮层默认往上弹（bottom-full）——但当这条消息是会话头几条、胶囊
+ * 贴着消息列表顶部时，向上没有空间，浮层会顶进 ChatHeader 底下被盖住
+ * （2026-07-13 用户截图实锤）。浮层常驻 DOM 只是 opacity-0，高度可以
+ * 直接量（opacity 不影响布局），所以 mouseenter 时拿浮层实高 + 胶囊
+ * viewport 坐标做一次实测：上方放不下就翻到胶囊下方展开。只在进入时
+ * 判一次——hover 期间不追（滚动会先断 hover，无需响应式）。
+ */
+const HOVER_CARD_TOP_SAFE_PX = 54 // ChatHeader 46px + 8px 呼吸位
+
+function useHoverCardFlip(): {
+  flipBelow: boolean
+  popRef: React.RefObject<HTMLDivElement | null>
+  onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => void
+} {
+  const popRef = useRef<HTMLDivElement | null>(null)
+  const [flipBelow, setFlipBelow] = useState(false)
+  const onMouseEnter = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const cardH = popRef.current?.offsetHeight ?? 0
+    const capsuleTop = e.currentTarget.getBoundingClientRect().top
+    setFlipBelow(capsuleTop - cardH < HOVER_CARD_TOP_SAFE_PX)
+  }
+  return { flipBelow, popRef, onMouseEnter }
+}
+
+/** 浮层容器类名（方向差分 + 共同部分）。间隙桥接用内边距不用外边距的
+ *  原因见 SheetSelectionCard 内注释（外边距会瞬断 hover）。 */
+function hoverCardWrapClass(flipBelow: boolean): string {
+  return (
+    'pointer-events-none absolute right-0 z-20 w-[400px] max-w-[72vw] opacity-0 transition-opacity duration-150 group-hover/selcard:pointer-events-auto group-hover/selcard:opacity-100 ' +
+    (flipBelow ? 'top-full pt-2' : 'bottom-full pb-2')
+  )
+}
+
+/**
  * 表格选区消息(替代绿气泡)。默认收起为「💬 1 条注释」小胶囊,鼠标
  * 移入在上方浮出完整卡片:Excel 徽章 + 文件名(点击重开预览)、
  * 「范围:工作表!A1:B2」、用户的问题——观感对齐文档类应用的注释交互
@@ -197,8 +232,9 @@ function SheetSelectionCard({
   meta: SheetSelectionMeta
 }): React.JSX.Element {
   const t = useT()
+  const { flipBelow, popRef, onMouseEnter } = useHoverCardFlip()
   return (
-    <div className="group/selcard relative">
+    <div className="group/selcard relative" onMouseEnter={onMouseEnter}>
       {/* 收起态胶囊。hover 反馈只提边框,展开动作由浮层自己接管。 */}
       <div className="flex cursor-default items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-[13.5px] font-medium text-foreground shadow-sm transition-colors group-hover/selcard:border-input">
         <svg
@@ -218,13 +254,14 @@ function SheetSelectionCard({
         </svg>
         {t('sheetSelectionPill')}
       </div>
-      {/* hover 浮层:pill 上方右对齐展开。opacity 过渡 + hover 时才接管
-          指针(文件名可点击重开预览);离开即收。
-          pill 与卡片间的 8px 间隙用容器的 pb-2 透明内边距桥接(不是 mb-2
+      {/* hover 浮层:pill 上方右对齐展开(顶部空间不足时翻到下方,见
+          useHoverCardFlip)。opacity 过渡 + hover 时才接管指针(文件名可
+          点击重开预览);离开即收。
+          pill 与卡片间的 8px 间隙用容器的 pb-2/pt-2 透明内边距桥接(不是
           外边距)——外边距不在 group 的命中盒里,鼠标穿过缝隙会瞬断 hover
           致卡片抖没(2026-07-08 用户反馈「hover 不上去」)。内边距仍属容器,
           指针全程不脱离 .group/selcard。 */}
-      <div className="pointer-events-none absolute bottom-full right-0 z-20 w-[400px] max-w-[72vw] pb-2 opacity-0 transition-opacity duration-150 group-hover/selcard:pointer-events-auto group-hover/selcard:opacity-100">
+      <div ref={popRef} className={hoverCardWrapClass(flipBelow)}>
         <div
           data-selectable="true"
           className="overflow-hidden rounded-2xl border border-border bg-card text-left shadow-[0_2px_6px_rgba(0,0,0,0.06),0_16px_40px_-16px_rgba(0,0,0,0.35)]"
@@ -280,8 +317,9 @@ function ImageEditCard({ meta }: { meta: ImageEditMeta }): React.JSX.Element {
   const lang = useI18n((s) => s.lang)
   const zh = lang === 'zh'
   const editCount = meta.edits.length + (meta.extra ? 1 : 0)
+  const { flipBelow, popRef, onMouseEnter } = useHoverCardFlip()
   return (
-    <div className="group/selcard relative">
+    <div className="group/selcard relative" onMouseEnter={onMouseEnter}>
       <div className="flex cursor-default items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-[13.5px] font-medium text-foreground shadow-sm transition-colors group-hover/selcard:border-input">
         <svg
           width="15"
@@ -301,7 +339,7 @@ function ImageEditCard({ meta }: { meta: ImageEditMeta }): React.JSX.Element {
         </svg>
         {zh ? `${editCount} 处图片修改` : `${editCount} image edits`}
       </div>
-      <div className="pointer-events-none absolute bottom-full right-0 z-20 w-[400px] max-w-[72vw] pb-2 opacity-0 transition-opacity duration-150 group-hover/selcard:pointer-events-auto group-hover/selcard:opacity-100">
+      <div ref={popRef} className={hoverCardWrapClass(flipBelow)}>
         <div
           data-selectable="true"
           className="overflow-hidden rounded-2xl border border-border bg-card text-left shadow-[0_2px_6px_rgba(0,0,0,0.06),0_16px_40px_-16px_rgba(0,0,0,0.35)]"

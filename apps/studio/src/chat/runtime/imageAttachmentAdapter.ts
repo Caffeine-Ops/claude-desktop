@@ -1,8 +1,15 @@
 import type {
   AttachmentAdapter,
   CompleteAttachment,
+  ComposerRuntime,
   PendingAttachment
 } from '@assistant-ui/core'
+
+import {
+  splitWorkspaceBusyNow,
+  useImageEditStore,
+  useSheetPreviewStore
+} from '../stores/filePreview'
 
 /**
  * Unified attachment adapter for the composer — handles BOTH images and
@@ -85,6 +92,56 @@ function isImageFile(file: File): boolean {
 }
 
 /**
+ * 按磁盘路径移除 composer 里的 pending 附件——给右栏面板的「面板内直发」
+ * 路径用（ImageEditPanel.send / UniverSheetView.askAI 走 dispatchChatTurn
+ * 直发，完全绕过 assistant-ui 的 composer.send()，chip 不会像正常发送
+ * 那样被消费掉）。面板消息里已经带了文件路径，chip 的使命结束；只删
+ * path 匹配的那一颗，用户为下一条文字消息挂着的其它附件不动。路径匹配
+ * 读 add() stash 进 content 的 FILE_PATH_MIME part（与 send() 同一套
+ * type-guard）。
+ */
+export function removeComposerAttachmentsByPath(
+  runtime: ComposerRuntime,
+  absPath: string
+): void {
+  // 公开 ComposerRuntime 没有按 id 删除，只有 getAttachmentByIndex →
+  // AttachmentRuntime.remove()（chip 上 × 按钮的同一条路）。倒序遍历 +
+  // 逐个立即 remove：runtime 绑定按 index 解析，正序删会让后面的 index
+  // 左移错位，倒序删则未处理的低位 index 恒稳。
+  const attachments = runtime.getState().attachments
+  for (let i = attachments.length - 1; i >= 0; i--) {
+    const stashed = attachments[i].content?.find(
+      (p): p is { type: 'file'; data: string; mimeType: string } =>
+        p.type === 'file' && p.mimeType === FILE_PATH_MIME
+    )
+    if (stashed?.data === absPath) {
+      void runtime.getAttachmentByIndex(i).remove()
+    }
+  }
+}
+
+/**
+ * 上传即预览（2026-07-13）：add() 解析出磁盘路径后，若是右栏面板认的
+ * 类型就直接把面板开出来——用户拖一张图/一份表进输入框，右侧立刻能看
+ * 到，不用再点一次 chip（chip 的点击入口保留，面板被关掉后还能重开）。
+ * 判定与 DeliverableCard / ComposerAttachmentChip 的点击分支同一套：
+ * 表格三件套 → SpreadsheetPreviewPanel；图片只放 edit API 认的格式
+ * （gif 不进面板）。slides/proposal 分栏占用右栏时不抢（面板本来就会
+ * 让位，openXxx 只会写下一个不渲染的僵尸 path，等分栏关闭时突然弹出
+ * 来）；剪贴板粘贴无路径的图片跳过。与点击路径不同这里不降级系统应用
+ * ——自动弹一个外部窗口太突兀，降级只留给用户主动点击。
+ */
+function autoOpenPreviewPanel(name: string, path: string): void {
+  if (!path || splitWorkspaceBusyNow()) return
+  const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
+  if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
+    useSheetPreviewStore.getState().openPreview(path)
+  } else if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp') {
+    useImageEditStore.getState().openEditor(path)
+  }
+}
+
+/**
  * The adapter itself is a plain object, not a class — assistant-ui only
  * looks at its public methods. An exported constant is easier to memoize
  * in the runtime provider than a `new Adapter()` call on every render.
@@ -108,6 +165,7 @@ export const fileAttachmentAdapter: AttachmentAdapter = {
         type: file.type,
         path
       })
+      autoOpenPreviewPanel(file.name, path)
       return {
         id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         // type 保持 'image':composer chip 据此渲染缩略图预览,与发送
@@ -134,6 +192,7 @@ export const fileAttachmentAdapter: AttachmentAdapter = {
       type: file.type,
       path
     })
+    autoOpenPreviewPanel(file.name, path)
     return {
       id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       type: 'file',

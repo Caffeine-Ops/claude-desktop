@@ -2,7 +2,20 @@ import { create } from 'zustand'
 
 import { useChatStore } from './chat'
 import { useComposerModeStore } from './composerMode'
-import { useProposalWorkspace } from './proposal'
+import { useProposalStore, useProposalWorkspace } from './proposal'
+
+/* marker 协议解析是纯函数，抽在 lib/messageMarkers.ts（无 zustand/window
+ * 依赖）——RailSessionList 等 SSR 敏感组件要用同一套解析但不能 import 本
+ * 文件（顶层有 store 求值）。这里 re-export 保持既有消费方 import 路径
+ * 不变。 */
+export {
+  IMAGE_EDIT_MARKER,
+  type ImageEditMeta,
+  parseImageEditMessage,
+  SHEET_SELECTION_MARKER,
+  type SheetSelectionMeta,
+  parseSheetSelectionMessage
+} from '../lib/messageMarkers'
 
 /**
  * 应用内表格预览面板的开关状态（面板本体见
@@ -59,108 +72,6 @@ export const useImageEditStore = create<ImageEditStore>((set) => ({
   closeEditor: () => set({ path: null })
 }))
 
-/* ── 图片编辑消息协议 ──
- * 与 sheet-selection 同一套路：面板「发送」发出的消息首行嵌标记 + JSON
- * 元数据；UserMessage 识别后渲染成紧凑卡片（图片名 + N 处标记 + 素材数），
- * 完整指令文本只进 CLI。display 与 CLI 文本首行都带标记——transcript 存
- * 的是 CLI 侧文本，历史恢复也照样卡片化。 */
-
-export const IMAGE_EDIT_MARKER = '[[image-edit]]'
-
-export type ImageEditMeta = {
-  /** 图片文件名（展示）与绝对路径（卡片点击重开编辑面板）。 */
-  name: string
-  path: string
-  /** 标记列表：x/y 为图内百分比坐标（0~100，原点左上）。带 w/h = 框选
-   * （x/y 是框左上角，w/h 是框宽高百分比）；不带 = 点标记（x/y 是圆心）。
-   * note 为该处的改动描述。 */
-  edits: { x: number; y: number; w?: number; h?: number; note: string }[]
-  /** 底栏「（可选）添加额外编辑」的全图级要求；空串 = 未填。 */
-  extra: string
-  /** 融合素材图的绝对路径列表（作为额外 --image 输入与原图合成）。 */
-  fusion: string[]
-}
-
-/** 消息文本 → 图片编辑元数据；非图片编辑消息返回 null。 */
-export function parseImageEditMessage(text: string): ImageEditMeta | null {
-  const nl = text.indexOf('\n')
-  const firstLine = nl === -1 ? text : text.slice(0, nl)
-  const idx = firstLine.indexOf(IMAGE_EDIT_MARKER)
-  if (idx === -1) return null
-  // marker 允许被 skill slash 领跑（CLI 文本形态 `/claude-desktop:imagegen
-  // [[image-edit]]{…}`）：slash 必须占消息开头才能强制触发 imagegen skill，
-  // 而 transcript 历史恢复渲染的是 CLI 侧文本。除 `/xxx ` 之外的前缀一律
-  // 不认，防止正文里引用 marker 字样被误卡片化。
-  if (idx > 0 && !/^\/[\w.:-]+\s+$/.test(firstLine.slice(0, idx))) return null
-  const jsonStr = firstLine.slice(idx + IMAGE_EDIT_MARKER.length)
-  try {
-    const m = JSON.parse(jsonStr) as Partial<ImageEditMeta>
-    if (typeof m.name === 'string' && Array.isArray(m.edits)) {
-      return {
-        name: m.name,
-        path: typeof m.path === 'string' ? m.path : '',
-        edits: m.edits.filter(
-          (e): e is ImageEditMeta['edits'][number] =>
-            typeof e === 'object' &&
-            e !== null &&
-            typeof (e as { note?: unknown }).note === 'string'
-        ),
-        extra: typeof m.extra === 'string' ? m.extra : '',
-        fusion: Array.isArray(m.fusion)
-          ? m.fusion.filter((f): f is string => typeof f === 'string')
-          : []
-      }
-    }
-  } catch {
-    /* 坏 JSON → 当普通文本渲染 */
-  }
-  return null
-}
-
-/* ── 选区消息协议 ──
- * 预览面板「框选问 AI」发出的消息,首行嵌一个标记 + JSON 元数据;
- * UserMessage 识别后渲染成结构化卡片(文件名/范围/问题),而不是把
- * 原始长文本(含 TSV)糊在气泡里。发给 CLI 的 text 与气泡 display 首行
- * 都带标记——transcript 里存的是 CLI 侧文本,历史恢复也照样卡片化。 */
-
-export const SHEET_SELECTION_MARKER = '[[sheet-selection]]'
-
-export type SheetSelectionMeta = {
-  /** 文件名(展示)与绝对路径(卡片点击重开预览)。 */
-  name: string
-  path: string
-  sheet: string
-  range: string
-  /** 用户的问题(卡片正文;完整 TSV 只进 CLI 文本,不进卡片)。 */
-  q: string
-}
-
-/** 消息文本 → 选区元数据;非选区消息返回 null。 */
-export function parseSheetSelectionMessage(
-  text: string
-): SheetSelectionMeta | null {
-  if (!text.startsWith(SHEET_SELECTION_MARKER)) return null
-  const nl = text.indexOf('\n')
-  const jsonStr = (nl === -1 ? text : text.slice(0, nl)).slice(
-    SHEET_SELECTION_MARKER.length
-  )
-  try {
-    const m = JSON.parse(jsonStr) as Partial<SheetSelectionMeta>
-    if (typeof m.name === 'string' && typeof m.range === 'string') {
-      return {
-        name: m.name,
-        path: typeof m.path === 'string' ? m.path : '',
-        sheet: typeof m.sheet === 'string' ? m.sheet : '',
-        range: m.range,
-        q: typeof m.q === 'string' ? m.q : ''
-      }
-    }
-  } catch {
-    /* 坏 JSON → 当普通文本渲染 */
-  }
-  return null
-}
-
 /**
  * 右栏是否已被 slides / proposal 工作区占用 —— DeliverableCard 用它决定
  * 表格卡片的点击去向：占用时降级回系统应用打开（ThreadView 里预览面板
@@ -173,4 +84,21 @@ export function useSplitWorkspaceBusy(): boolean {
   const slidesSessions = useComposerModeStore((s) => s.slidesSessions)
   const proposal = useProposalWorkspace()
   return proposal || (sessionId !== null && slidesSessions[sessionId] === true)
+}
+
+/**
+ * useSplitWorkspaceBusy 的命令式快照版——给非 React 上下文用（附件
+ * adapter 的 add() 在 assistant-ui runtime 层跑，没有 hook 环境）。判定
+ * 逻辑必须与上面的 hook 逐项同步：proposal 半边内联的是
+ * useProposalWorkspace 的展开（active + 前台会话匹配 + workspaceOpen，
+ * 见 stores/proposal.ts），slides 半边同源。只做一次性读取不订阅——
+ * 调用方都是「此刻要不要开面板」的瞬时决策，不需要响应后续变化。
+ */
+export function splitWorkspaceBusyNow(): boolean {
+  const chatSid = useChatStore.getState().sessionId
+  const p = useProposalStore.getState()
+  const proposalBusy =
+    p.active && p.sessionId !== null && p.sessionId === chatSid && p.workspaceOpen
+  const slidesSessions = useComposerModeStore.getState().slidesSessions
+  return proposalBusy || (chatSid !== null && slidesSessions[chatSid] === true)
 }

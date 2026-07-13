@@ -43,6 +43,7 @@ import type { ComponentType, ReactNode } from 'react'
 import type { ThreadSummary } from '@desktop-shared/types'
 
 import { railEaseOut } from '@/src/chat/shell/railMotion'
+import { stripMessageMarker } from '@/src/chat/lib/messageMarkers'
 import { useChatStore, useRunningSessionIdsKey } from '@/src/chat/stores/chat'
 import { usePendingPermissionKindsBySession } from '@/src/chat/stores/permissions'
 import { useRailSessionsStore } from '@/src/chat/stores/railSessions'
@@ -95,8 +96,14 @@ const UNTITLED_LABEL = '新对话'
 /**
  * rail 行的**展示**标题。ThreadSummary.title 无 custom/ai 标题时兜底到
  * firstPrompt——以 slash 命令开头的会话会把命令原文糊满整行，噪音吃掉真正
- * 的语义。展示层归一化成可读文本，按优先级处理三种形态：
+ * 的语义。展示层归一化成可读文本，按优先级处理四种形态：
  *
+ *  0. **消息内嵌协议标记**（`[[sheet-selection]]{...}` / `[[image-edit]]
+ *     {...}`）——表格「框选问 AI」、图片标记编辑面板发出的消息，firstPrompt
+ *     是完整 CLI 文本（marker JSON + 提示语 + TSV/编辑指令），不剥离会把
+ *     整段 JSON 糊满整行（2026-07-13 事故：表格框选消息把 rail 行和顶栏
+ *     标题都撑成了一整条 JSON）。用 stripMessageMarker 换成人类可读的
+ *     问题/备注短文本。
  *  1. **XML 包裹的命令**（`<command-name>/x</command-name>
  *     <command-args>参数</command-args>`）——这是 fusion-code 落盘 slash
  *     命令 user turn 的原始格式，会话【进行中或 SDK 尚未归一化】时 firstPrompt
@@ -110,10 +117,12 @@ const UNTITLED_LABEL = '新对话'
  *  3. 其它纯文本原样返回。
  *
  * 任何一步产出空串都兜底到「新对话」，绝不让 rail 出现无名行。只影响 rail
- * 展示；行 title 属性仍是完整原文，悬停可看全。
+ * 展示；行 title 属性也过同一层归一化（见下方 title={displayTitle(...)}），
+ * 避免 hover tooltip 把未剥离的原始 marker JSON 全量吐出来。
  */
 function displayTitle(raw: string): string {
-  const t = raw.trim()
+  const marked = stripMessageMarker(raw)
+  const t = marked.trim()
   if (!t) return UNTITLED_LABEL
 
   // 形态 1：XML 包裹的 slash 命令。
@@ -679,7 +688,7 @@ function SessionRow({
               type="button"
               variant="ghost"
               onClick={onSwitch}
-              title={thread.firstPrompt ?? thread.title}
+              title={displayTitle(thread.firstPrompt ?? thread.title)}
               className={cn(
                 // h-8（32px，原型 .session-row）：36px 行配 13px 字在长列表里
                 // 显得松散又占地，32px 才是「工具列表」的密度。

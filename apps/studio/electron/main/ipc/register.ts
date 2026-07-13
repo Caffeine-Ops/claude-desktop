@@ -729,6 +729,9 @@ export function registerIpcHandlers(): void {
       const input = Array.isArray(payload?.paths) ? payload.paths : []
       const MAX_CANDIDATES = 50
       const files: string[] = []
+      // infos 与 files 同一次 statSync 里双写，保证 1:1 同序——契约见
+      // ShellStatFilesResult 的注释（只读路径数组的旧调用方不受影响）。
+      const infos: { path: string; size: number; mtimeMs: number }[] = []
       const seen = new Set<string>()
       for (const raw of input.slice(0, MAX_CANDIDATES)) {
         if (typeof raw !== 'string' || !raw) continue
@@ -740,12 +743,16 @@ export function registerIpcHandlers(): void {
         if (seen.has(p)) continue
         seen.add(p)
         try {
-          if (statSync(p).isFile()) files.push(p)
+          const st = statSync(p)
+          if (st.isFile()) {
+            files.push(p)
+            infos.push({ path: p, size: st.size, mtimeMs: st.mtimeMs })
+          }
         } catch {
           // ENOENT / EACCES / etc. — not a usable file, drop silently.
         }
       }
-      return { files }
+      return { files, infos }
     }
   )
 

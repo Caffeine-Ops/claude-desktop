@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>输出面板 v2 · 行式与缩略图重设计</title>
+<style>
+  /* ============================================================
+     输出面板（OutputsButton 弹层）v2 —— 现状对照 + 5 种方案
+       · v1（ui-prototype-outputs-panel.html，已定稿落地）解决的是
+         「新增动效」；本档只重设计面板的静态布局：行式、缩略图、
+         类型呈现、快捷操作。
+       · 弹层规格沿用线上代码：w-320 / rounded-20 / border/50 /
+         同款双层阴影；标题「输出」+ 品牌绿计数胶囊不动。
+       · 类型徽标沿用 deliverableKind 的彩色瓷片语言
+         （PPT #D24726 / PDF #E5252A / Excel #217346 / 视频 violet），
+         不混入 composer 侧的 Icons8 图标体系。
+       · 核心升级点：图像产出物显示真实缩略图（面板手里就有绝对
+         路径，Electron 可走 file:// 或 IPC 缩略图），替换现在的
+         灰色占位图标。
+       · 右下角 Tweaks：明暗 + 产出物数量（2 / 6）。
+     ============================================================ */
+  :root {
+    color-scheme: light;
+    --bg-app: #f5f5f7;
+    --bg-card: #ffffff;
+    --bg-muted: #ebebee;
+    --bg-secondary: #eeeef1;
+
+    --text: #1d1d1f;
+    --text-soft: #62626b;
+    --text-faint: #9b9ba2;
+
+    --border: #d4d4da;
+    --border-strong: #c9c9d1;
+
+    --primary: #0071e3;
+    --brand: #16a34a;
+    --brand-fg: #ffffff;
+
+    --shadow-pop: 0 2px 8px rgba(0,0,0,.06), 0 16px 40px -20px rgba(0,0,0,.35);
+    --shadow-soft: 0 4px 14px rgba(0,0,0,.10);
+
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+            "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+  }
+  [data-theme="dark"] {
+    color-scheme: dark;
+    --bg-app: #1a1917;
+    --bg-card: #222120;
+    --bg-muted: #2e2c29;
+    --bg-secondary: #272523;
+
+    --text: #e8e4dc;
+    --text-soft: #9a9690;
+    --text-faint: #6e6b65;
+
+    --border: #333128;
+    --border-strong: #46433c;
+
+    --primary: #2997ff;
+    --brand: #3bd47f;
+    --brand-fg: #1a1917;
+
+    --shadow-pop: 0 2px 8px rgba(0,0,0,.35), 0 16px 40px -18px rgba(0,0,0,.7);
+    --shadow-soft: 0 4px 16px rgba(0,0,0,.45);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font);
+    background: var(--bg-app);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    padding: 56px 24px 120px;
+    transition: background .25s, color .25s;
+  }
+  .page { max-width: 860px; margin: 0 auto; }
+
+  .page-head { margin-bottom: 48px; }
+  .page-head h1 { font-size: 28px; font-weight: 700; letter-spacing: -.02em; }
+  .page-head p { margin-top: 10px; font-size: 14px; color: var(--text-soft); line-height: 1.7; }
+  .page-head .kbd {
+    display: inline-block; padding: 1px 7px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--bg-card); font-size: 12px; color: var(--text-soft);
+  }
+
+  section { margin-bottom: 64px; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+  .sec-tag {
+    font-size: 11px; font-weight: 700; letter-spacing: .06em;
+    padding: 3px 9px; border-radius: 999px;
+    background: var(--bg-muted); color: var(--text-soft);
+  }
+  .sec-tag.hot { background: color-mix(in srgb, var(--brand) 14%, transparent); color: var(--brand); }
+  .sec-head h2 { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+  .sec-desc { font-size: 13px; color: var(--text-soft); margin-bottom: 18px; line-height: 1.7; }
+  .sec-note { font-size: 12px; color: var(--text-faint); margin-top: 12px; line-height: 1.8; }
+
+  /* ===== 锚点场景：chat header 右侧簇 + 弹层（还原截图上下文）===== */
+  .demo { display: flex; flex-direction: column; align-items: flex-end; width: 440px; margin-left: auto; margin-right: auto; }
+  .hdr {
+    display: flex; align-items: center; gap: 6px; justify-content: flex-end;
+    width: 100%; padding: 6px 4px;
+  }
+  .hdr-title {
+    display: flex; align-items: center; gap: 6px; min-width: 0;
+    padding: 4px 10px; border-radius: 8px;
+    font-size: 12.5px; color: var(--text-soft);
+  }
+  .hdr-title span { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; }
+  .hdr-btn {
+    position: relative; width: 28px; height: 28px; border: 0; border-radius: 7px;
+    background: transparent; color: var(--text-soft); cursor: pointer;
+    display: grid; place-items: center;
+  }
+  .hdr-btn:hover { background: var(--bg-muted); color: var(--text); }
+  .hdr-badge {
+    position: absolute; top: -2px; right: -2px;
+    min-width: 15px; height: 15px; padding: 0 3px;
+    border-radius: 999px; background: var(--brand); color: var(--brand-fg);
+    font-size: 9px; font-weight: 600; line-height: 15px; text-align: center;
+  }
+
+  /* ===== 弹层（规格与线上 PopoverContent 一致）===== */
+  .pop {
+    width: 320px; margin-top: 4px;
+    background: var(--bg-card);
+    border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+    border-radius: 20px;
+    box-shadow: var(--shadow-pop);
+    padding: 14px;
+  }
+  .pop-head { display: flex; align-items: baseline; gap: 8px; padding: 0 2px 10px; }
+  .pop-title { font-size: 14px; font-weight: 600; }
+  .pop-count {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 5px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--brand) 12%, transparent);
+    color: var(--brand); font-size: 11px; font-weight: 700;
+  }
+  .pop-body { max-height: 400px; overflow-y: auto; }
+
+  /* 类型彩色瓷片（deliverableKind 语言）：34px / 9px 圆角 / 顶部高光 */
+  .tile {
+    position: relative; width: 34px; height: 34px; flex-shrink: 0;
+    border-radius: 9px; overflow: hidden;
+    display: grid; place-items: center;
+    color: #fff; font-size: 9px; font-weight: 700;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.04);
+  }
+  .tile::before {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,.28), transparent);
+  }
+  .tile > * { position: relative; }
+  .tile.plain { background: var(--bg-card); border: 1px solid var(--border); color: var(--text-soft); box-shadow: none; }
+
+  /* 快捷操作小圆钮（悬停显现） */
+  .qa { display: flex; gap: 2px; flex-shrink: 0; opacity: 0; transition: opacity .16s; }
+  .qa button {
+    width: 24px; height: 24px; border: 0; border-radius: 7px;
+    background: transparent; color: var(--text-soft); cursor: pointer;
+    display: grid; place-items: center;
+  }
+  .qa button:hover { background: var(--bg-secondary); color: var(--text); }
+
+  /* ===== 方案 0 · 现状还原 ===== */
+  .v0-row {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid var(--border); border-radius: 12px;
+    padding: 10px; margin-bottom: 8px;
+  }
+  .v0-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+             font-size: 12.5px; font-weight: 500; }
+  .v0-kind { flex-shrink: 0; font-size: 10.5px; color: var(--text-soft); }
+
+  /* ===== 方案 A · 轻量行式 + 真缩略图 ===== */
+  .va-row {
+    position: relative; display: flex; align-items: center; gap: 10px;
+    border-radius: 12px; padding: 6px 8px; margin-bottom: 2px;
+    transition: background .16s; cursor: pointer;
+  }
+  .va-row:hover { background: color-mix(in srgb, var(--bg-muted) 55%, transparent); }
+  .va-row:hover .qa { opacity: 1; }
+  .va-accent {
+    position: absolute; left: 0; top: 7px; bottom: 7px; width: 2.5px;
+    border-radius: 999px; background: var(--brand);
+  }
+  .va-thumb {
+    width: 36px; height: 36px; flex-shrink: 0; border-radius: 9px;
+    object-fit: cover; display: block;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.06), 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+  }
+  .va-main { flex: 1; min-width: 0; }
+  /* display:block 必须显式给——span 保持 inline 的话 ellipsis 不生效 */
+  .va-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+             font-size: 12.5px; font-weight: 500; }
+  .va-row:hover .va-name { text-decoration: underline; }
+  .va-meta { margin-top: 2px; font-size: 10.5px; color: var(--text-faint); }
+
+  /* ===== 方案 B · 大缩略图行 ===== */
+  .vb-row {
+    display: flex; align-items: center; gap: 12px;
+    border-radius: 14px; padding: 8px; margin-bottom: 2px;
+    transition: background .16s; cursor: pointer;
+  }
+  .vb-row:hover { background: color-mix(in srgb, var(--bg-muted) 55%, transparent); }
+  .vb-row:hover .qa { opacity: 1; }
+  .vb-thumb {
+    width: 62px; height: 46px; flex-shrink: 0; border-radius: 10px;
+    object-fit: cover; display: block;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.06), 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+  }
+  .vb-tilebox { width: 62px; height: 46px; flex-shrink: 0; border-radius: 10px;
+    display: grid; place-items: center; background: var(--bg-muted); }
+  .vb-main { flex: 1; min-width: 0; }
+  .vb-name {
+    font-size: 12.5px; font-weight: 500; line-height: 1.45;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; word-break: break-all;
+  }
+  .vb-meta { margin-top: 3px; font-size: 10.5px; color: var(--text-faint); }
+
+  /* ===== 方案 C · 图像成组网格 + 文档行 ===== */
+  .vc-label { font-size: 10.5px; font-weight: 600; letter-spacing: .04em;
+              color: var(--text-faint); padding: 6px 2px 6px; }
+  .vc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .vc-cell {
+    position: relative; aspect-ratio: 1; border-radius: 12px; overflow: hidden;
+    cursor: pointer;
+  }
+  .vc-cell img { width: 100%; height: 100%; object-fit: cover; display: block;
+                 transition: transform .25s; }
+  .vc-cell:hover img { transform: scale(1.04); }
+  .vc-cell-name {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    padding: 16px 7px 5px; font-size: 9px; color: #fff;
+    background: linear-gradient(transparent, rgba(0,0,0,.6));
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    opacity: 0; transition: opacity .16s;
+  }
+  .vc-cell:hover .vc-cell-name { opacity: 1; }
+  .vc-fresh-dot {
+    position: absolute; top: 6px; right: 6px; width: 7px; height: 7px;
+    border-radius: 50%; background: var(--brand);
+    box-shadow: 0 0 0 2px var(--bg-card);
+  }
+
+  /* ===== 方案 D · 最新置顶 hero ===== */
+  .vd-hero {
+    border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    border-radius: 14px; overflow: hidden; margin-bottom: 8px;
+  }
+  .vd-hero-visual { position: relative; height: 150px; }
+  .vd-hero-visual img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .vd-hero-tag {
+    position: absolute; top: 8px; left: 8px;
+    padding: 2px 8px; border-radius: 999px;
+    background: var(--brand); color: var(--brand-fg);
+    font-size: 10px; font-weight: 700;
+  }
+  .vd-hero-body { padding: 10px 12px 12px; }
+  .vd-hero-name { font-size: 12.5px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vd-hero-meta { margin-top: 2px; font-size: 10.5px; color: var(--text-faint); }
+  .vd-hero-actions { display: flex; gap: 6px; margin-top: 10px; }
+  .vd-hero-actions .act {
+    height: 26px; padding: 0 12px; border-radius: 8px; cursor: pointer;
+    font-size: 11.5px; font-weight: 600;
+    border: 1px solid var(--border); background: var(--bg-card); color: var(--text);
+  }
+  .vd-hero-actions .act.primary { background: var(--brand); border-color: var(--brand); color: var(--brand-fg); }
+  .vd-hero-actions .act:hover { filter: brightness(.97); }
+  .vd-hero-actions .act.primary:hover { filter: brightness(1.06); }
+
+  /* ===== 方案 E · 极简单行 ===== */
+  .ve-row {
+    display: flex; align-items: center; gap: 8px;
+    height: 32px; border-radius: 8px; padding: 0 8px;
+    transition: background .16s; cursor: pointer;
+  }
+  .ve-row:hover { background: color-mix(in srgb, var(--bg-muted) 55%, transparent); }
+  .ve-row:hover .qa { opacity: 1; }
+  .ve-mini {
+    width: 20px; height: 20px; flex-shrink: 0; border-radius: 6px;
+    object-fit: cover; display: block;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+  }
+  .ve-minitile {
+    width: 20px; height: 20px; flex-shrink: 0; border-radius: 6px;
+    display: grid; place-items: center; color: #fff;
+    font-size: 7.5px; font-weight: 700;
+  }
+  .ve-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap;
+             font-size: 12px; }
+  .ve-ext { flex-shrink: 0; display: flex; align-items: center; gap: 5px;
+            font-size: 10px; color: var(--text-faint); font-weight: 600; letter-spacing: .03em; }
+  .ve-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+  /* ===== Tweaks 面板 ===== */
+  #tweaksBtn {
+    position: fixed; right: 20px; bottom: 20px; z-index: 50;
+    height: 34px; padding: 0 14px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--bg-card); color: var(--text-soft);
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    box-shadow: var(--shadow-soft);
+  }
+  #tweaksPanel {
+    position: fixed; right: 20px; bottom: 62px; z-index: 50;
+    width: 232px; padding: 14px;
+    border: 1px solid var(--border); border-radius: 14px;
+    background: var(--bg-card); box-shadow: var(--shadow-soft);
+  }
+  #tweaksPanel[hidden] { display: none; }
+  .tw-title { font-size: 12px; font-weight: 700; letter-spacing: .05em; color: var(--text-soft); margin-bottom: 12px; }
+  .tw-row { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 12px; }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button {
+    border: 0; background: var(--bg-card); color: var(--text-soft);
+    font-size: 12px; padding: 4px 10px; cursor: pointer;
+  }
+  .seg button.on { background: var(--bg-muted); color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page-head">
+    <h1>输出面板 v2 · 行式与缩略图</h1>
+    <p>OutputsButton 弹层的静态布局重设计：现状对照 + 5 种方案。v1 定稿的新增动效
+      （左侧强调条 / 双层提示环）不在本档范围，各方案均可兼容叠加。
+      核心升级：图像产出物用真实缩略图替换灰色占位图标。
+      右下角 <span class="kbd">Tweaks</span> 切换明暗与产出物数量（2 → 6 看混合类型表现）。</p>
+  </div>
+  <main id="stage"></main>
+</div>
+
+<button id="tweaksBtn">Tweaks</button>
+<div id="tweaksPanel" hidden>
+  <div class="tw-title">TWEAKS</div>
+  <div class="tw-row"><span>外观</span>
+    <div class="seg" id="segTheme">
+      <button data-v="light" class="on">亮</button><button data-v="dark">暗</button>
+    </div>
+  </div>
+  <div class="tw-row"><span>产出物数量</span>
+    <div class="seg" id="segCount">
+      <button data-v="2" class="on">2 个</button><button data-v="6">6 个</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── 缩略图占位（内联 SVG data-URI）── */
+function makeThumb(c1, c2, seed) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240">` +
+    `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">` +
+    `<stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient></defs>` +
+    `<rect width="240" height="240" fill="url(#g)"/>` +
+    `<circle cx="${170 + seed * 10}" cy="${66 - seed * 8}" r="52" fill="rgba(255,255,255,.26)"/>` +
+    `<rect x="${26 + seed * 6}" y="142" width="136" height="70" rx="14" fill="rgba(255,255,255,.20)"/></svg>`
+  return 'data:image/svg+xml,' + encodeURIComponent(svg)
+}
+const THUMB_INDIGO = makeThumb('#6366f1', '#a78bfa', 0)
+const THUMB_TEAL   = makeThumb('#0d9488', '#34d399', 1)
+
+/* ── deliverableKind 的类型语言（颜色与 zh 标签同源）── */
+const KINDS = {
+  image: { zh: '图像', dot: '#9b9ba2' },
+  ppt:   { zh: '幻灯片', color: '#D24726', glyph: 'P',   dot: '#D24726' },
+  pdf:   { zh: '文档',   color: '#E5252A', glyph: 'PDF', dot: '#E5252A' },
+  excel: { zh: '表格',   color: '#217346', glyph: 'X',   dot: '#217346' },
+  video: { zh: '视频',   color: '#7c3aed', glyph: '▶',  dot: '#7c3aed' }
+}
+
+/* ── 示例产出物（前两条来自截图场景：imagegen 会话的两张图）── */
+const FRESH = [
+  { name: 'add-a-clean-thin-solid-border-around-the-image.png',
+    type: 'image', size: '1.6 MB', time: '刚刚', thumb: THUMB_INDIGO, fresh: true },
+  { name: 'download.png',
+    type: 'image', size: '890 KB', time: '刚刚', thumb: THUMB_TEAL, fresh: true }
+]
+const OLDER = [
+  { name: 'stanford_university_presentation.pptx', type: 'ppt',   size: '4.2 MB', time: '10 分钟前' },
+  { name: '季度复盘报告_final.pdf',                 type: 'pdf',   size: '2.1 MB', time: '26 分钟前' },
+  { name: '个人月度支出记录.xlsx',                  type: 'excel', size: '86 KB',  time: '1 小时前' },
+  { name: 'demo-recording.mp4',                    type: 'video', size: '12 MB',  time: '2 小时前' }
+]
+
+function ext(name) {
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(dot + 1).toUpperCase() : ''
+}
+/* 中段截断：留住扩展名和结尾（imagegen 的长描述名，结尾往往才是变体差异） */
+function midTruncate(name, max = 34, tail = 14) {
+  if (name.length <= max) return name
+  return name.slice(0, max - tail - 1) + '…' + name.slice(-tail)
+}
+
+/* ── 图标 ── */
+const IC = {
+  pencil: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11.2 2.3l2.5 2.5L5.5 13H3v-2.5z"/></svg>',
+  more: '<svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>',
+  listChecks: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 4h5M8.5 8h5M8.5 12h5M2.5 3.5l1 1 2-2M2.5 7.5l1 1 2-2M2.5 11.5l1 1 2-2"/></svg>',
+  open: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3H3.5v9.5H13V10M9.5 2.5H13.5V6.5M13.5 2.5L8 8"/></svg>',
+  folder: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2 4h4l1.2 1.6H14V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4z"/></svg>',
+  img: '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><circle cx="7.2" cy="8" r="1.4" fill="currentColor" stroke="none"/><path d="M4 14.5l4-4 3 3 2.5-2.5 2.5 2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+}
+function qaGroup() {
+  return `<span class="qa">
+    <button aria-label="打开" title="打开">${IC.open}</button>
+    <button aria-label="在文件夹中显示" title="在文件夹中显示">${IC.folder}</button>
+  </span>`
+}
+function tileFor(f, extraCls = '') {
+  const k = KINDS[f.type]
+  if (f.type === 'image') return `<span class="tile plain ${extraCls}">${IC.img}</span>`
+  return `<span class="tile ${extraCls}" style="background:${k.color}"><span>${k.glyph}</span></span>`
+}
+
+/* ── 弹层壳（标题 + 计数胶囊固定，body 由方案渲染器填充）── */
+function popShell(count, bodyHTML) {
+  return `<div class="demo">
+    <div class="hdr">
+      <span class="hdr-title"><span>&#8206;"download.png","edits":[{"x":2.1,"y":4.…</span>${IC.pencil}</span>
+      <button class="hdr-btn" aria-label="更多">${IC.more}</button>
+      <button class="hdr-btn" aria-label="输出">${IC.listChecks}<span class="hdr-badge">${count}</span></button>
+    </div>
+    <div class="pop">
+      <div class="pop-head"><span class="pop-title">输出</span><span class="pop-count">${count}</span></div>
+      <div class="pop-body">${bodyHTML}</div>
+    </div>
+  </div>`
+}
+
+/* ── 各方案渲染器 ── */
+function renderV0(files) {
+  return files.map(f => `<div class="v0-row">
+    ${tileFor(f)}
+    <span class="v0-name">${f.name}</span>
+    <span class="v0-kind">${KINDS[f.type].zh}</span>
+  </div>`).join('')
+}
+
+function renderVA(files) {
+  return files.map(f => `<div class="va-row">
+    ${f.fresh ? '<span class="va-accent" aria-hidden="true"></span>' : ''}
+    ${f.thumb ? `<img class="va-thumb" src="${f.thumb}" alt="">` : tileFor(f)}
+    <span class="va-main">
+      <span class="va-name">${f.name}</span>
+      <span class="va-meta" style="display:block">${KINDS[f.type].zh} · ${f.size} · ${f.time}</span>
+    </span>
+    ${qaGroup()}
+  </div>`).join('')
+}
+
+function renderVB(files) {
+  return files.map(f => `<div class="vb-row">
+    ${f.thumb ? `<img class="vb-thumb" src="${f.thumb}" alt="">`
+              : `<span class="vb-tilebox">${tileFor(f)}</span>`}
+    <span class="vb-main">
+      <span class="vb-name">${f.name}</span>
+      <span class="vb-meta" style="display:block">${KINDS[f.type].zh} · ${f.size} · ${f.time}</span>
+    </span>
+    ${qaGroup()}
+  </div>`).join('')
+}
+
+function renderVC(files) {
+  const imgs = files.filter(f => f.type === 'image')
+  const docs = files.filter(f => f.type !== 'image')
+  let html = ''
+  if (imgs.length) {
+    html += `<div class="vc-label">图像</div>
+      <div class="vc-grid">` + imgs.map(f => `
+        <div class="vc-cell">
+          <img src="${f.thumb}" alt="">
+          ${f.fresh ? '<span class="vc-fresh-dot" aria-hidden="true"></span>' : ''}
+          <span class="vc-cell-name">${f.name}</span>
+        </div>`).join('') + `</div>`
+  }
+  if (docs.length) {
+    html += `<div class="vc-label">文件</div>` + docs.map(f => `<div class="va-row">
+      ${tileFor(f)}
+      <span class="va-main">
+        <span class="va-name">${f.name}</span>
+        <span class="va-meta" style="display:block">${KINDS[f.type].zh} · ${f.size} · ${f.time}</span>
+      </span>
+      ${qaGroup()}
+    </div>`).join('')
+  }
+  return html
+}
+
+function renderVD(files) {
+  const [hero, ...rest] = files
+  let html = `<div class="vd-hero">
+    <div class="vd-hero-visual">
+      ${hero.thumb
+        ? `<img src="${hero.thumb}" alt="">`
+        : `<div style="height:100%;display:grid;place-items:center;background:var(--bg-muted)">${tileFor(hero)}</div>`}
+      <span class="vd-hero-tag">最新</span>
+    </div>
+    <div class="vd-hero-body">
+      <div class="vd-hero-name">${hero.name}</div>
+      <div class="vd-hero-meta">${KINDS[hero.type].zh} · ${hero.size} · ${hero.time}</div>
+      <div class="vd-hero-actions">
+        <button class="act primary">打开</button>
+        <button class="act">在文件夹中显示</button>
+      </div>
+    </div>
+  </div>`
+  if (rest.length) {
+    html += `<div class="vc-label">更早</div>` + rest.map(f => `<div class="va-row">
+      ${f.thumb ? `<img class="va-thumb" src="${f.thumb}" alt="">` : tileFor(f)}
+      <span class="va-main">
+        <span class="va-name">${f.name}</span>
+        <span class="va-meta" style="display:block">${KINDS[f.type].zh} · ${f.size} · ${f.time}</span>
+      </span>
+      ${qaGroup()}
+    </div>`).join('')
+  }
+  return html
+}
+
+function renderVE(files) {
+  return files.map(f => {
+    const k = KINDS[f.type]
+    return `<div class="ve-row">
+      ${f.thumb ? `<img class="ve-mini" src="${f.thumb}" alt="">`
+                : `<span class="ve-minitile" style="background:${k.color}">${k.glyph}</span>`}
+      <span class="ve-name">${midTruncate(f.name)}</span>
+      <span class="ve-ext"><span class="ve-dot" style="background:${k.dot}"></span>${ext(f.name)}</span>
+      ${qaGroup()}
+    </div>`
+  }).join('')
+}
+
+/* ── 方案清单 ── */
+const SECTIONS = [
+  {
+    tag: '对照', hot: false, title: '现状还原',
+    desc: '截图状态的 1:1 还原：描边盒子行、图像用灰色占位图标、类型标签纯文字靠右。',
+    note: '三个可改进点：① 弹层有边框，行再各套一层边框，「框中框」显重；② 明明是图片、手里也有路径，却只给灰色占位图标；③ 一行只有文件名，大小/时间都没有。',
+    render: renderV0
+  },
+  {
+    tag: '方案 A', hot: true, title: '轻量行式 + 真缩略图',
+    desc: '去掉行边框改为悬停底色；图像换成 36px 真实缩略图（file:// 或 IPC 缩略图），文档保留彩色类型瓷片；名称下加「类型 · 大小 · 时间」元信息行；悬停右侧出「打开 / 文件夹」快捷钮，不用再进 ⋯ 菜单。',
+    note: '与现有代码差异最小：行结构不变，只是加一行 meta、替换图像 tile 为 <img>、把 ⋯ 菜单拆成两个直达钮。v1 定稿的左侧强调条原样兼容（第 1、2 行示意）。',
+    render: renderVA
+  },
+  {
+    tag: '方案 B', hot: false, title: '大缩略图行',
+    desc: '62×46 横版缩略图，文件名放开到两行——imagegen 的长描述名不再被截得只剩前半句。',
+    note: '预览与可读性最好，单行成本更高（约 62px/行），产出物多时列表更长。适合以图像为主、数量不多的会话。',
+    render: renderVB
+  },
+  {
+    tag: '方案 C', hot: true, title: '图像成组网格 + 文档行',
+    desc: '按类型分组：图像收进三列正方网格（悬停浮出文件名，右上角绿点=刚生成），文档继续用 A 的行式。',
+    note: '截图这种 imagegen 会话的最优形态——两张图并排一眼看全。混合会话也不乱：图归图、文件归文件。需要多一层分组逻辑（图像/文件两个 section）。',
+    render: renderVC
+  },
+  {
+    tag: '方案 D', hot: false, title: '最新置顶 Hero',
+    desc: '最新产出升格为大预览卡（150px 封面 + 常驻「打开 / 在文件夹中显示」按钮），更早的收成紧凑行。',
+    note: '押注「用户 90% 只关心最新那个文件」的判断——最新产出零悬停直达。代价是弹层明显变高，且第 2 新的产出降级感强。适合与 C 二选一。',
+    render: renderVD
+  },
+  {
+    tag: '方案 E', hot: false, title: '极简单行',
+    desc: '32px 单行：20px 迷你缩略图/瓷片，文件名中段截断（保住结尾的变体差异和扩展名），右侧类型色点 + 扩展名。',
+    note: '密度最高，长列表（几十个产出物）最耐看。中段截断对 imagegen 长名尤其有用：add-a-clean…he-image.png 比 add-a-clean-thin-solid… 信息量大。牺牲了预览性。',
+    render: renderVE
+  }
+]
+
+/* ── 渲染 & Tweaks ── */
+let fileCount = 2
+function renderAll() {
+  const files = fileCount === 6 ? FRESH.concat(OLDER) : FRESH
+  document.getElementById('stage').innerHTML = SECTIONS.map(s => `
+    <section>
+      <div class="sec-head">
+        <span class="sec-tag${s.hot ? ' hot' : ''}">${s.tag}</span>
+        <h2>${s.title}</h2>
+      </div>
+      <p class="sec-desc">${s.desc}</p>
+      ${popShell(files.length, s.render(files))}
+      <p class="sec-note">${s.note}</p>
+    </section>`).join('')
+}
+
+const tweaksBtn = document.getElementById('tweaksBtn')
+const tweaksPanel = document.getElementById('tweaksPanel')
+tweaksBtn.addEventListener('click', () => { tweaksPanel.hidden = !tweaksPanel.hidden })
+
+function bindSeg(id, onPick) {
+  const seg = document.getElementById(id)
+  seg.addEventListener('click', (e) => {
+    const btn = e.target.closest('button')
+    if (!btn) return
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn))
+    onPick(btn.dataset.v)
+  })
+}
+bindSeg('segTheme', v => { document.documentElement.dataset.theme = v === 'dark' ? 'dark' : '' })
+bindSeg('segCount', v => { fileCount = Number(v); renderAll() })
+
+if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+  document.documentElement.dataset.theme = 'dark'
+  document.querySelectorAll('#segTheme button').forEach(b =>
+    b.classList.toggle('on', b.dataset.v === 'dark'))
+}
+
+renderAll()
+</script>
+</body>
+</html>

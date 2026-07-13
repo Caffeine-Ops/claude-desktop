@@ -1079,8 +1079,21 @@ export type ShellStatFilesPayload = { paths: readonly string[] }
  * with any `~` prefix expanded to the absolute home path (so entries are
  * directly usable with SHELL_OPEN_PATH / SHELL_REVEAL_PATH).
  * Non-absolute / missing / directory entries are dropped.
+ *
+ * `infos` mirrors `files` 1:1（同序同长，main 侧同一次 statSync 双写）——
+ * 给需要渲染「大小 · 时间」元信息的调用方（OutputsPanel 的行式元信息行）。
+ * 单独加字段而不是改 `files` 的元素类型，是为了不动只消费路径数组的
+ * 既有调用方（AssistantDeliverables）。
  */
-export type ShellStatFilesResult = { files: readonly string[] }
+export type ShellStatFileInfo = {
+  path: string
+  size: number
+  mtimeMs: number
+}
+export type ShellStatFilesResult = {
+  files: readonly string[]
+  infos: readonly ShellStatFileInfo[]
+}
 
 /**
  * SHELL_REVEAL_PATH reuses the open-path contract: absolute file path in,

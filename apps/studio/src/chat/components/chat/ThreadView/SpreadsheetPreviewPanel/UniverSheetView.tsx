@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useComposerRuntime } from '@assistant-ui/react'
 import { ArrowUp, Check, Copy } from 'lucide-react'
 import {
   CommandType,
@@ -41,6 +42,7 @@ import {
   type SheetSelectionMeta
 } from '../../../../stores/filePreview'
 import { dispatchChatTurn } from '../../../../lib/dispatchChatTurn'
+import { removeComposerAttachmentsByPath } from '../../../../runtime/imageAttachmentAdapter'
 import { Button } from '@/src/components/ui/button'
 import {
   SheetMiniChart,
@@ -276,6 +278,10 @@ export default function UniverSheetView({
 }: UniverSheetViewProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const bundleRef = useRef<UniverBundle | null>(null)
+  // 「框选问 AI」走 dispatchChatTurn 直发、绕过 composer.send()——askAI
+  // 里手动清掉输入框里同一份表格的附件 chip（runtime 引用稳定，闭包
+  // 捕获安全，不需要 ref 镜像）。
+  const composerRuntime = useComposerRuntime()
   /** 最新 zoom / activeIndex 的同步镜像(原生 handler 闭包跨 render)。 */
   const zoomRef = useRef(zoom)
   const activeIndexRef = useRef(activeIndex)
@@ -865,6 +871,8 @@ export default function UniverSheetView({
       q
     const display = `${marker}\n${q}`
     clearAsk()
+    // 表格路径已随本消息发出，composer 里同源的附件 chip 使命结束。
+    removeComposerAttachmentsByPath(composerRuntime, path)
     await dispatchChatTurn({
       sessionId,
       storeContent: [{ type: 'text', text: display }],

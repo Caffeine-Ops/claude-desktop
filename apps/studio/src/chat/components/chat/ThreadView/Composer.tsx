@@ -28,6 +28,12 @@ import { FileTypeIcon, fileIconPathsByKey } from '../FileTypeIcon'
 import { DictationWaveform } from '../DictationWaveform'
 import { PermissionModePicker } from '../../permissions/PermissionModePicker'
 import { cancelActiveDictation } from '../../../runtime/openaiWhisperDictationAdapter'
+import { FILE_PATH_MIME } from '../../../runtime/imageAttachmentAdapter'
+import {
+  useImageEditStore,
+  useSheetPreviewStore,
+  useSplitWorkspaceBusy
+} from '../../../stores/filePreview'
 
 /* ───────────────────── Composer ────────────────────────────── */
 
@@ -2301,6 +2307,45 @@ function ComposerAttachmentChip({
 
   const isImage = attachment.type === 'image'
 
+  // ── click-to-preview（2026-07-13）──────────────────────────────────
+  // 点击 chip 主体在右栏打开预览：表格 → SpreadsheetPreviewPanel、图片 →
+  // ImageEditPanel，与消息里 DeliverableCard / OutputsPanel 的 open() 分支
+  // 完全同构（AssistantMessage.tsx ~L209），空白新会话也能开——两个面板在
+  // ThreadView 里没有 empty gate，且 sessionId 在空态就已定死不会因首条
+  // 发送而变。磁盘路径取 add() 时 stash 进 content 的 FILE_PATH_MIME
+  // part（imageAttachmentAdapter），剪贴板粘贴的图片没有磁盘路径
+  // （content 为空）→ chip 保持不可点，不能拿 blob 喂面板。
+  const stashedPath = attachment.content?.find(
+    (p): p is { type: 'file'; data: string; mimeType: string; filename?: string } =>
+      p.type === 'file' && p.mimeType === FILE_PATH_MIME
+  )
+  const diskPath = stashedPath?.data ?? ''
+  const ext = attachment.name.includes('.')
+    ? attachment.name.split('.').pop()!.toLowerCase()
+    : ''
+  // 与 DeliverableCard 同一套判定：表格三件套进预览面板；图片只放 edit
+  // API 认的格式（gif 只能看不能改，走系统应用）。
+  const previewableSheet = ext === 'xlsx' || ext === 'xls' || ext === 'csv'
+  const editableImage = ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp'
+  const splitBusy = useSplitWorkspaceBusy()
+  const zh = useI18n((s) => s.lang) === 'zh'
+
+  const openPreview = (): void => {
+    if (!diskPath) return
+    // slides/proposal 分栏时右栏被工作区占用、预览面板让位——降级回系统
+    // 应用打开，点了必须有反应（与 DeliverableCard 的纪律一致）。其余
+    // 不可预览的类型（pdf/docx/…）也走系统应用。
+    if (previewableSheet && !splitBusy) {
+      useSheetPreviewStore.getState().openPreview(diskPath)
+      return
+    }
+    if (editableImage && !splitBusy) {
+      useImageEditStore.getState().openEditor(diskPath)
+      return
+    }
+    void window.chatApi.openPath({ absPath: diskPath })
+  }
+
   const [previewURL, setPreviewURL] = useState<string | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
 
@@ -2343,31 +2388,52 @@ function ComposerAttachmentChip({
   }, [file, isImage])
 
   return (
-    <AttachmentPrimitive.Root className="group/att relative flex items-center gap-2 rounded-lg border border-border bg-card/60 p-1.5 pr-6">
-      {isImage && previewURL ? (
-        <img
-          src={previewURL}
-          alt=""
-          className="h-10 w-10 shrink-0 rounded object-cover"
-        />
-      ) : (
-        <div
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground/80"
-          title={previewError ?? undefined}
-        >
-          {previewError ? (
-            <span className="text-[10px] font-mono">!</span>
-          ) : (
-            // Per-type file glyph for non-image attachments. The file
-            // name is shown to the right; the icon signals the file kind
-            // (PDF / Word / code / …) without previewing unknown bytes.
-            <FileTypeIcon pathOrName={attachment.name} size={22} />
-          )}
-        </div>
-      )}
-      <span className="max-w-[140px] truncate text-[11px] text-foreground/80">
-        {attachment.name}
-      </span>
+    <AttachmentPrimitive.Root className="group/att relative flex items-center rounded-lg border border-border bg-card/60 p-1.5 pr-6">
+      {/* chip 主体是一个真 <button>（可达性 + 焦点态免费拿），点击开右栏
+          预览；Remove ×是独立兄弟元素不经过这里，无冒泡冲突。无磁盘路径
+          （剪贴板粘贴图）时禁用，视觉与旧版静态 chip 一致。 */}
+      <button
+        type="button"
+        disabled={!diskPath}
+        onClick={openPreview}
+        title={
+          diskPath
+            ? (previewableSheet || editableImage) && !splitBusy
+              ? zh
+                ? '点击预览'
+                : 'Click to preview'
+              : zh
+                ? '用系统应用打开'
+                : 'Open with system app'
+            : undefined
+        }
+        className="flex min-w-0 cursor-pointer items-center gap-2 text-left disabled:cursor-default"
+      >
+        {isImage && previewURL ? (
+          <img
+            src={previewURL}
+            alt=""
+            className="h-10 w-10 shrink-0 rounded object-cover"
+          />
+        ) : (
+          <div
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground/80"
+            title={previewError ?? undefined}
+          >
+            {previewError ? (
+              <span className="text-[10px] font-mono">!</span>
+            ) : (
+              // Per-type file glyph for non-image attachments. The file
+              // name is shown to the right; the icon signals the file kind
+              // (PDF / Word / code / …) without previewing unknown bytes.
+              <FileTypeIcon pathOrName={attachment.name} size={22} />
+            )}
+          </div>
+        )}
+        <span className="max-w-[140px] truncate text-[11px] text-foreground/80">
+          {attachment.name}
+        </span>
+      </button>
       <AttachmentPrimitive.Remove
         className="absolute right-1 top-1 flex size-4 items-center justify-center rounded-full bg-muted text-[10px] leading-none text-muted-foreground opacity-0 transition group-hover/att:opacity-100 hover:bg-secondary hover:text-foreground"
         aria-label="Remove attachment"

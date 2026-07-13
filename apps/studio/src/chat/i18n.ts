@@ -79,6 +79,10 @@ const STRINGS = {
     chatHeaderOutputs: '输出',
     chatHeaderOutputsEmpty: '本次对话还没有产出物',
     chatHeaderOutputsEmptyHint: '生成图片、文档或表格后，会自动出现在这里',
+    // 输出面板 v2（docs/ui-prototype-outputs-panel-v2.html 方案 C 定稿）：
+    // 图像收三列网格、其余走行式，两组并存时的分组标签。
+    outputsGroupImages: '图像',
+    outputsGroupFiles: '文件',
     sidebarStatusRunning: '运行中',
     // 两类挂起二分文案（2026-07-07）：权限门=「等待批准」，AskUserQuestion=
     // 「等待回答」——AI 在等回答时写「等待批准」语义就是错的（用户实锤）。
@@ -427,6 +431,8 @@ const STRINGS = {
     chatHeaderOutputs: 'Outputs',
     chatHeaderOutputsEmpty: 'No outputs yet in this chat',
     chatHeaderOutputsEmptyHint: 'Images, documents, and spreadsheets will show up here as they’re created',
+    outputsGroupImages: 'Images',
+    outputsGroupFiles: 'Files',
     sidebarStatusRunning: 'Running',
     sidebarStatusAwaitingPermission: 'Awaiting approval',
     sidebarStatusAwaitingAnswer: 'Awaiting answer',

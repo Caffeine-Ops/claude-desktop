@@ -5,6 +5,7 @@ import type { ThreadSummary } from '@desktop-shared/types'
 import type { SessionContentHit } from '@desktop-shared/ipc-channels'
 import { useDialogStore } from '../../stores/dialogs'
 import { useT } from '../../i18n'
+import { stripMessageMarker } from '../../lib/messageMarkers'
 
 /**
  * SessionSearchDialog — Spotlight-style unified chat search (⌘K).
@@ -132,7 +133,7 @@ export function SessionSearchDialog(): React.JSX.Element {
     if (!q) {
       return threads.slice(0, RECENT_LIMIT).map((s) => ({
         id: s.id,
-        title: s.title,
+        title: stripMessageMarker(s.title),
         titleHit: false,
         hitCount: 0
       }))
@@ -141,12 +142,17 @@ export function SessionSearchDialog(): React.JSX.Element {
     const titleFirst: SearchRow[] = []
     const contentOnly: SearchRow[] = []
     for (const s of threads) {
-      const titleHit = s.title.toLowerCase().includes(q)
+      // 剥离 [[sheet-selection]]/[[image-edit]] marker 后再匹配/展示——
+      // 否则协议 JSON（含被 SDK 截断的半成品）会原样进搜索结果标题
+      // （2026-07-13 事故同源，见 lib/messageMarkers.ts 顶部注释）。剥离后
+      // 的短文本通常就是用户真实提的问题，匹配语义也更准。
+      const displayTitle = stripMessageMarker(s.title)
+      const titleHit = displayTitle.toLowerCase().includes(q)
       const hit = hitsById.get(s.id)
       if (!titleHit && !hit) continue
       const row: SearchRow = {
         id: s.id,
-        title: s.title,
+        title: displayTitle,
         titleHit,
         snippet: hit?.snippet,
         who: hit?.who,

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useComposerRuntime } from '@assistant-ui/react'
 import { motion } from 'motion/react'
 import { FolderOpen, Maximize2, Plus, X } from 'lucide-react'
 
@@ -10,6 +11,7 @@ import {
   type ImageEditMeta
 } from '../../../stores/filePreview'
 import { dispatchChatTurn } from '../../../lib/dispatchChatTurn'
+import { removeComposerAttachmentsByPath } from '../../../runtime/imageAttachmentAdapter'
 import { Button } from '@/src/components/ui/button'
 
 /* ─────────────── 图片标记编辑面板（右栏） ─────────────── */
@@ -135,6 +137,10 @@ export function ImageEditPanel(): React.JSX.Element | null {
   const path = useImageEditStore((s) => s.path)
   const closeEditor = useImageEditStore((s) => s.closeEditor)
   const streaming = useChatStore((s) => s.streaming)
+  // 面板直发（dispatchChatTurn）绕过 composer.send()，输入框里同一张图
+  // 的附件 chip 不会被正常发送路径消费——send() 里手动清（只清 path
+  // 匹配的那颗，见 removeComposerAttachmentsByPath 注释）。
+  const composerRuntime = useComposerRuntime()
 
   const [dataUrl, setDataUrl] = useState<string | null>(null)
   const [loadErr, setLoadErr] = useState<string | null>(null)
@@ -481,6 +487,8 @@ export function ImageEditPanel(): React.JSX.Element | null {
     const cliText = `/claude-desktop:imagegen ${markerLine}\n${lines.join('\n')}`
     const display = markerLine
     closeEditor()
+    // 图片路径已随本消息发出，composer 里同源的附件 chip 使命结束。
+    removeComposerAttachmentsByPath(composerRuntime, path)
     await dispatchChatTurn({
       sessionId,
       storeContent: [{ type: 'text', text: display }],
