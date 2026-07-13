@@ -218,6 +218,9 @@ const STRINGS = {
     kbSyncLocal: '同步本地文件夹',
     kbSyncLocalHint: '把知识库对齐成本地源文件夹的当前状态（新增/删除/改名都会同步，只重转变动的文件）',
     kbSyncDone: '同步完成：新增 {a} · 更新 {u} · 删除 {d}',
+    kbSyncConfirm: '本次同步将：新增 {a} 个 · 更新 {u} 个 · 删除 {d} 个。\n\n将从知识库删除以下文件（你本地文件夹里的原件不受影响）：\n{list}\n\n提示：若某个文件是你改名时把扩展名也改了（如 .docx 改成 .doc），它会因不受支持而被当作「删除」。确认继续同步吗？',
+    kbSyncMore: '\n…等共 {n} 个',
+    kbSyncCancelled: '已取消同步，知识库未改动。',
 
     // Code block copy affordance
     codeBlockCopy: '复制',
@@ -597,6 +600,9 @@ const STRINGS = {
     kbSyncLocal: 'Sync from folder',
     kbSyncLocalHint: 'Align the KB with the current state of your local source folder (adds/deletes/renames sync; only changed files are re-processed)',
     kbSyncDone: 'Synced — added {a} · updated {u} · deleted {d}',
+    kbSyncConfirm: 'This sync will add {a}, update {u}, and delete {d} file(s).\n\nThe following files will be removed from the knowledge base (your local originals are untouched):\n{list}\n\nNote: if you renamed a file and also changed its extension (e.g. .docx → .doc), it becomes unsupported and shows up here as a deletion. Continue syncing?',
+    kbSyncMore: '\n…and {n} more',
+    kbSyncCancelled: 'Sync cancelled — the knowledge base was not changed.',
 
     codeBlockCopy: 'Copy',
     codeBlockCopied: '✓ Copied',

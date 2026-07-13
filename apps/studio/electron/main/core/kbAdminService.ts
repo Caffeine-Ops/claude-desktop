@@ -14,7 +14,8 @@ import * as store from './kbStore'
 import { validateSegmentName, isSafeRelPath } from './kbStore.core'
 import { scanKb } from './kbBuild/scan'
 import { planLocalSync, type LocalSyncSourceFile } from './kbLocalSync.core'
-import { buildKbTree, type KbDocRaw, type KbDocsListResult, type KbImportPayload, type KbImportResultDto, type KbLocalSyncResult, type KbMovePayload, type KbCategoryPayload, type KbCategoryRenamePayload } from '../../shared/kbAdmin'
+import { buildKbTree, type KbDocRaw, type KbDocsListResult, type KbImportPayload, type KbImportResultDto, type KbLocalSyncResult, type KbSyncPreview, type KbMovePayload, type KbCategoryPayload, type KbCategoryRenamePayload } from '../../shared/kbAdmin'
+import type { LocalSyncPlan } from './kbLocalSync.core'
 import type { KbStoreDirs } from './kbStore'
 import type { KbIndex } from '../../shared/kbIndex'
 
@@ -141,20 +142,20 @@ export function migrateFromFolder(deps: KbAdminDeps, folder: string): { imported
 }
 
 /**
- * 从本地源文件夹增量同步（「刷新」）：把 kb-store 对齐成 folder 的当前状态。
- * 增/改 → 拷（overwrite=true）；本地删/改名 → 删库里多出的。只重转变动件由构建自理
- * （build.ts 增量：mtime→sha1 跳过未变），故这里只负责把文件集对齐 + schedule 一轮。
+ * 算这次同步的计划（不写盘）：把本地 folder 的当前状态与库副本对比，得出 toCopy/toDelete。
+ * preview（弹确认）与 apply（真同步）共用它，杜绝两处逻辑漂移——否则「确认时说删 3 个、
+ * 实际删 5 个」就是新的信任事故。
  *
- * 关键：库内 relPath 用「拍平」规则 `docRelPath(productLine, product, fileName)`——与 migrate/
- * importDocs 落盘完全一致（源可能深层嵌套 产品线/产品/子目录/文件，入库只留 产品线/产品/文件）。
- * 早期误用 scanKb 的完整深层 relPath 去比库内拍平 relPath → 一个都对不上 → 全判为「新」→ 整库
- * 重拷+全量重建（2026-07-07 事故）。同源多文件拍平后撞同一 relPath 时按 first-wins 去重（与
- * migrate overwrite=false 一致），避免每轮同步在撞名两文件间反复翻拷。
+ * 关键：库内 relPath 用 scanKb 的**完整 relPath**（保全层级、天然唯一）落库——与 migrate/
+ * importAtRelPaths 完全一致（不拍平）。早期误用拍平 relPath 去比完整 relPath → 一个都对不上
+ * → 全判为「新」→ 整库重拷+全量重建（2026-07-07 事故）。
  *
  * 「变没变」：库里已有该 relPath 且大小与索引一致才算 sha1 做内容级确认；大小不同=必变（免算）、
  * 库里没有=新（免算）。sha1 走异步 readFile 逐文件让路，避免同步读算 2.8G 冻死主进程。
  */
-export async function syncFromLocal(deps: KbAdminDeps, folder: string): Promise<KbLocalSyncResult> {
+async function buildSyncPlan(
+  deps: KbAdminDeps, folder: string
+): Promise<{ plan: LocalSyncPlan; added: number; updated: number }> {
   const entries = scanKb(folder)
   const storeRelPaths = store.listStoreRelPaths(deps.dirs)
   const prefix = deps.dirs.storeDir + sep
@@ -182,10 +183,29 @@ export async function syncFromLocal(deps: KbAdminDeps, folder: string): Promise<
     source.push({ relPath, sha1, productLine: e.productLine, product: e.product, sourcePath: e.sourcePath })
   }
   const plan = planLocalSync(source, storeRelPaths, indexSha1ByRel)
-
   // added/updated 用同步前的 storeRelPaths 快照分：库里原本没有=新增，否则=更新。
   const added = plan.toCopy.filter((c) => !storeRelPaths.has(c.relPath)).length
   const updated = plan.toCopy.length - added
+  return { plan, added, updated }
+}
+
+/**
+ * 同步「预览」：只算不写盘，供 UI 在真删文件前弹确认（防静默删除，见 KbSyncPreview 注释）。
+ * toDelete 摊给用户看——改名成不受支持扩展名（.docx→.doc）会表现为「删旧不补新」，静默执行=丢文件。
+ */
+export async function previewSyncFromLocal(deps: KbAdminDeps, folder: string): Promise<KbSyncPreview> {
+  const { plan, added, updated } = await buildSyncPlan(deps, folder)
+  return { added, updated, deleted: plan.toDelete.length, toDelete: plan.toDelete }
+}
+
+/**
+ * 从本地源文件夹增量同步（「刷新」）：把 kb-store 对齐成 folder 的当前状态。
+ * 增/改 → 拷（overwrite=true）；本地删/改名 → 删库里多出的。只重转变动件由构建自理
+ * （build.ts 增量：mtime→sha1 跳过未变），故这里只负责把文件集对齐 + schedule 一轮。
+ * 计划由 buildSyncPlan 统一算出——与 previewSyncFromLocal 同源，确保「确认所见=实际所删」。
+ */
+export async function syncFromLocal(deps: KbAdminDeps, folder: string): Promise<KbLocalSyncResult> {
+  const { plan, added, updated } = await buildSyncPlan(deps, folder)
 
   // 先删（toDelete 的 relPath 来自磁盘扫描、非 renderer 入参，天然无穿越风险）。
   for (const rel of plan.toDelete) store.deleteDoc(deps.dirs, rel)

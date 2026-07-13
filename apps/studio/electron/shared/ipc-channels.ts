@@ -885,6 +885,7 @@ export const IPC_CHANNELS = {
   KB_DOC_OPEN_SOURCE: 'kb:doc-open-source',
   KB_DOC_PREVIEW: 'kb:doc-preview',
   KB_MIGRATE_FROM_FOLDER: 'kb:migrate-from-folder',
+  KB_SYNC_PREVIEW: 'kb:sync-preview',
   KB_SYNC_FROM_LOCAL: 'kb:sync-from-local',
   KB_BUILD_STATUS_GET: 'kb:build-status-get',
   KB_BUILD_STATUS: 'kb:build-status'
@@ -2452,6 +2453,8 @@ export interface ChatApi {
   kbDocPreview(relPath: string): Promise<{ text: string }>
   /** 内部弹目录选择器迁移旧资料；用户取消返回 null。 */
   kbMigrateFromFolder(): Promise<{ imported: number } | null>
+  /** 预览同步计划（不写盘），供 UI 在真删文件前弹确认；无记住的源返回 null。 */
+  kbSyncPreview(): Promise<import('./kbAdmin').KbSyncPreview | null>
   /** 从记住的本地源文件夹增量同步（增/删/改）；首次无源则弹目录选择器，取消返回 null。 */
   kbSyncFromLocal(): Promise<import('./kbAdmin').KbLocalSyncResult | null>
   kbBuildStatusGet(): Promise<import('./kbBuildStatus').KbBuildStatus>

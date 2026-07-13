@@ -131,6 +131,7 @@ import type {
   KbImportPayload,
   KbImportResultDto,
   KbLocalSyncResult,
+  KbSyncPreview,
   KbMovePayload,
   KbCategoryPayload,
   KbCategoryRenamePayload
@@ -832,6 +833,9 @@ const chatApi: ChatApi = {
   },
   kbMigrateFromFolder(): Promise<{ imported: number } | null> {
     return ipcRenderer.invoke(IPC_CHANNELS.KB_MIGRATE_FROM_FOLDER) as Promise<{ imported: number } | null>
+  },
+  kbSyncPreview(): Promise<KbSyncPreview | null> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_SYNC_PREVIEW) as Promise<KbSyncPreview | null>
   },
   kbSyncFromLocal(): Promise<KbLocalSyncResult | null> {
     return ipcRenderer.invoke(IPC_CHANNELS.KB_SYNC_FROM_LOCAL) as Promise<KbLocalSyncResult | null>

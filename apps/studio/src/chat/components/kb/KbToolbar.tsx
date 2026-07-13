@@ -31,10 +31,21 @@ export function KbToolbar({ readOnly }: {
   }
 
   // 增量同步本地源文件夹（「刷新」）：把库对齐成本地当前状态（增/删/改），只重转变动件。
+  // 有删除时先弹确认——把要删的文件摊给用户看，堵住「改名把扩展名也改了（.docx→.doc）→
+  // 扫描跳过 → 删旧不补新」的静默丢文件事故（用户报的 bug）。预览不写盘，确认后才真同步。
   const sync = async (): Promise<void> => {
     if (busy) return
     setBusy(true)
     try {
+      const preview = await window.chatApi.kbSyncPreview()
+      if (preview && preview.deleted > 0) {
+        const shown = preview.toDelete.slice(0, 10).map((p) => '• ' + p).join('\n')
+        const more = preview.toDelete.length > 10 ? tFormat('kbSyncMore', { n: preview.toDelete.length - 10 }) : ''
+        const ok = window.confirm(tFormat('kbSyncConfirm', {
+          a: preview.added, u: preview.updated, d: preview.deleted, list: shown + more
+        }))
+        if (!ok) return // finally 会复位 busy；知识库未动
+      }
       const r = await window.chatApi.kbSyncFromLocal()
       if (r) { await refresh(); alert(tFormat('kbSyncDone', { a: r.added, u: r.updated, d: r.deleted })) }
     } catch (err) {

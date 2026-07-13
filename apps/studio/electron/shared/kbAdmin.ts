@@ -30,6 +30,13 @@ export interface KbImportPayload { paths: string[]; productLine: string; product
 export interface KbImportResultDto { imported: string[]; conflicted: string[] }
 /** 本地文件夹增量同步结果：新增/更新/删除的文档数（供 UI 汇报）。 */
 export interface KbLocalSyncResult { added: number; updated: number; deleted: number }
+/**
+ * 同步「预览」：不写盘，只算这次同步会怎么动库——给 UI 在真正删文件前弹确认用。
+ * toDelete 是「库里有、源里已无」的 relPath（本地删了/改名了/改成不受支持扩展名的都在此）。
+ * 静默删除是数据丢失事故的根源（改名把 .docx 改成 .doc → 扫描跳过 → 删旧不补新），
+ * 故 deleted>0 时 UI 必须把 toDelete 摊给用户看、确认后才 apply。
+ */
+export interface KbSyncPreview { added: number; updated: number; deleted: number; toDelete: string[] }
 export interface KbMovePayload { relPath: string; toProductLine: string; toProduct: string; newFileName?: string }
 export interface KbCategoryPayload { productLine: string; product?: string }
 export interface KbCategoryRenamePayload { prefix: string; newName: string }

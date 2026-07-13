@@ -348,6 +348,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_DOC_OPEN_SOURCE)
   ipcMain.removeHandler(IPC_CHANNELS.KB_DOC_PREVIEW)
   ipcMain.removeHandler(IPC_CHANNELS.KB_MIGRATE_FROM_FOLDER)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_SYNC_PREVIEW)
   ipcMain.removeHandler(IPC_CHANNELS.KB_SYNC_FROM_LOCAL)
   ipcMain.removeHandler(IPC_CHANNELS.KB_BUILD_STATUS_GET)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT)
@@ -2178,6 +2179,15 @@ export function registerIpcHandlers(): void {
     // 记住这个文件夹为「同步源」（复用 kbRoot 字段）：之后「同步本地文件夹」按钮免再手选。
     setKbRoot(r.filePaths[0]!)
     return kbAdmin.migrateFromFolder(kbDeps(), r.filePaths[0]!)
+  })
+
+  // 预览同步计划（不写盘）：只用记住的 kbRoot，无则返回 null（首次同步走 apply 弹目录选择器，
+  // 空库无可删、无需确认）。UI 拿它在真删文件前弹确认——堵住「改名成不受支持扩展名→静默删除」。
+  ipcMain.handle(IPC_CHANNELS.KB_SYNC_PREVIEW, async (): Promise<import('../../shared/kbAdmin').KbSyncPreview | null> => {
+    assertWritable()
+    const folder = getKbRoot()
+    if (!folder) return null
+    return kbAdmin.previewSyncFromLocal(kbDeps(), folder)
   })
 
   // 从本地源文件夹增量同步（「刷新」）：优先用记住的 kbRoot；无则弹目录选择器并记住。
