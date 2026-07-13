@@ -39,6 +39,18 @@ import { cn } from '@/src/lib/utils'
 
 export function RailShell() {
   const collapsed = useRailStore((s) => s.collapsed)
+  // ── 收起态浮层的 z 按面分档（2026-07-13「canvas 面看不到菜单按钮」实锤）──
+  // canvas 面的 tab 栏（base.css .workspace-tabs-chrome）是 z-index:120 +
+  // 不透明 backdrop 背景：图标排 z-30 / overlay z-40 在它底下，工作画布收起
+  // rail 后整排按钮直接被盖没（不可见也不可点，hover 展开也失效——事件全
+  // 打在 tab 栏上）。chat 面顶栏无 z，30/40 够用且**必须维持**：chat 的
+  // dialog 层在 z-50（shadcn 默认），图标排/overlay 低于它才会被 modal
+  // backdrop 正常罩住。故 canvas 面提到 125/135——压过 tab 栏（120），
+  // 仍让给 canvas 全屏层（1200/9000）；overlay 恒高图标排 10，保持
+  // 「浮出面板盖住按钮排」的既有不变式。tab 搜索 popover（z-130）与
+  // 图标排（125）几何不相交（一个右上一个左上），无碰撞。
+  const pathname = usePathname()
+  const isChat = pathname.startsWith('/chat')
   // 收起态下 AppRail 临时浮出。展开态永远为 false（collapsed 翻回 false 时
   // 一并清掉，否则钉住展开后残留的 peek=true 会让下次收起瞬间又浮出）。
   const [peek, setPeek] = useState(false)
@@ -139,7 +151,14 @@ export function RailShell() {
         * 不受 portal 出 .chat-app 豁免后的 canvas 裸元素 reset 影响。 */}
       {mounted &&
         createPortal(
-          <div className="fixed left-[100px] top-0 z-30 flex h-[46px] items-center gap-0.5 [-webkit-app-region:no-drag]">
+          <div
+            className={cn(
+              'fixed left-[100px] top-0 flex h-[46px] items-center gap-0.5 [-webkit-app-region:no-drag]',
+              // z 分档理由见 RailShell 顶部注释：canvas 面要压过 tab 栏
+              // （z-120），chat 面维持低位让 dialog（z-50）罩得住。
+              isChat ? 'z-30' : 'z-[125]'
+            )}
+          >
             <CollapsedToolbar peek={peek} onPeek={() => setPeek(true)} />
           </div>,
           document.body
@@ -173,8 +192,12 @@ export function RailShell() {
         createPortal(
           <div
             className={cn(
-              'fixed left-0 top-0 z-40 h-full transition-transform duration-200 ease-out',
+              'fixed left-0 top-0 h-full transition-transform duration-200 ease-out',
               'bg-sidebar shadow-[0_8px_40px_rgba(0,0,0,0.18)]',
+              // z 分档理由见 RailShell 顶部注释：canvas 面不提的话，overlay
+              // 滑出后顶部 46px 会被 tab 栏（z-120）压住，AppRail 自己的
+              // 收起按钮被盖没点不到。恒比图标排高 10，浮出时盖住按钮排。
+              isChat ? 'z-40' : 'z-[135]',
               peek
                 ? 'translate-x-0 [-webkit-app-region:no-drag]'
                 : '-translate-x-full'

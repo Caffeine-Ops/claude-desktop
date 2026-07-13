@@ -706,6 +706,19 @@ code:where(:not([data-slot], .chat-app *)) {
 .workspace-tabs-chrome .workspace-tabs-traffic {
   margin-right: calc(var(--app-chrome-traffic-margin) + 8px);
 }
+/* Rail 收起态（body[data-rail-collapsed]，写手 RailShell）：内容面顶到窗口
+   左缘，tab 栏左端会依次撞上 ① macOS 红绿灯（浮在窗口 x≈30~90，tabRegistry
+   trafficLightPosition.x=30）② RailShell 收起态图标排（fixed left-[100px]
+   的展开/搜索/新建钮，右缘 x≈184）——不留净空则第一个 tab pill 直接被
+   红绿灯和图标排压住。展开态无此问题：rail（244px）把内容面整体推开，
+   红绿灯落在 rail 顶栏、图标排不渲染，占位保持 0px。
+   190px 的推导：chrome 左 padding 10 + 占位 190 + traffic margin 8 = 208，
+   与 chat 面 ThreadView 收起态 pl-[208px] 同一净空基线（图标排右缘 184 +
+   24 呼吸，完整推导见 ThreadView 的注释）。联动约定：红绿灯 x / 图标排
+   left 右移时，这里与 ThreadView 的 pl 同增。 */
+body[data-rail-collapsed] .workspace-tabs-chrome.app-chrome-header {
+  --app-chrome-traffic-space: 190px;
+}
 /* Right-side action cluster (prototype `.tabbar__actions`): + (new) and
    search are both 32px square buttons sharing one neutral hover, with a
    1px divider between them. */

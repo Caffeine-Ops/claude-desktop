@@ -1160,7 +1160,9 @@ function ChatHeader(): React.JSX.Element {
     // 标题与图标排（尤其紧挨的「+」新建钮）之间留出呼吸（2026-07-05 用户要求
     // 「新对话钮跟标题加间距」，用户选 +24）。起点必须跟 tabRegistry 的
     // trafficLightPosition 与 RailShell 图标排 left-[100px] 联动（红绿灯/图标
-    // 排右移则同增）。
+    // 排右移则同增）。canvas 面 tab 栏的同款净空在 base.css（收起态
+    // --app-chrome-traffic-space: 190px，同一 208 基线）——改这里必同步那边，
+    // 否则两面顶栏起点分家（2026-07-13 canvas 面漏配被红绿灯压住的教训）。
     <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [body[data-rail-collapsed]_&]:pl-[208px]">
       {/* 内层容器：标题左贴边（2026-07-08 用户定稿，参考 Claude.ai 顶栏
           「图标 + 标题 + ···」左对齐形态）。此前是 mx-auto max-w-4xl 与
