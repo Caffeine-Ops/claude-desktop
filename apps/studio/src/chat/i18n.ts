@@ -157,7 +157,7 @@ const STRINGS = {
     scenarioProposalPrompt:
       '要写哪个产品的方案、给哪个客户或什么场景用；想分成哪几部分、每部分重点写什么。',
 
-    catKnowledgeBase: '知识库',
+    catKnowledgeBase: '方案知识库',
     // Settings — Configuration category — 出图 API（编辑器内 P 图功能的凭据配置）
     imageApiTitle: '出图 API',
     imageApiDesc: '配置图像生成/改图接口凭据，供编辑器内「出图」「改图」使用；未配置时对应入口置灰。',
@@ -189,8 +189,8 @@ const STRINGS = {
     kbNeverSynced: '尚未同步',
 
     // KB 托管仓库管理页（P2）
-    kbManageOpen: '打开知识库管理',
-    kbManageTitle: '知识库管理',
+    kbManageOpen: '打开方案知识库',
+    kbManageTitle: '方案知识库',
     kbManageEmpty: '知识库还没有文档，点「导入」添加。',
     kbManageLoading: '正在加载知识库…',
     kbManageReadOnly: '本库由主编机管理，此处仅供浏览。',
@@ -532,7 +532,7 @@ const STRINGS = {
     scenarioProposalPrompt:
       'Which product the proposal is for, and which customer or scenario; how to split it into sections, and what each section should focus on.',
 
-    catKnowledgeBase: 'Knowledge Base',
+    catKnowledgeBase: 'Proposal Knowledge Base',
     // Settings — Configuration category — Image API credentials for the
     // in-editor image generate/edit feature.
     imageApiTitle: 'Image API',
@@ -569,7 +569,7 @@ const STRINGS = {
 
     // KB managed repository manager (P2)
     kbManageOpen: 'Open KB manager',
-    kbManageTitle: 'Knowledge Base',
+    kbManageTitle: 'Proposal Knowledge Base',
     kbManageEmpty: 'No documents yet — click Import to add.',
     kbManageLoading: 'Loading knowledge base…',
     kbManageReadOnly: 'Managed by the editor machine — browse only.',
