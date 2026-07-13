@@ -28,8 +28,10 @@ describe('kbAdminService', () => {
     const r = svc.listDocs(deps, false)
     expect(r.readOnly).toBe(false)
     expect(r.total).toBe(1)
-    expect(r.tree.lines[0]!.name).toBe('智慧水务')
-    expect(r.tree.lines[0]!.products[0]!.docs[0]!.ext).toBe('.txt') // ext 从 sourcePath 补出
+    // 树是 n 级 { roots:[{ name, folders, docs }] }（旧的 lines/products 两级结构已重构）
+    expect(r.tree.roots[0]!.name).toBe('智慧水务')
+    expect(r.tree.roots[0]!.folders[0]!.name).toBe('平台A')
+    expect(r.tree.roots[0]!.folders[0]!.docs[0]!.ext).toBe('.txt') // ext 从 sourcePath 补出
   })
 
   test('importDocs 非法产品线名先抛，一个文件都不拷', async () => {
