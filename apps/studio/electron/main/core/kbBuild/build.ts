@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { scanKb } from './scan'
 import { convertFile } from './convert'
-import { buildVectors } from './embed'
 import type { KbIndex, KbIndexFile } from '../../../shared/kbIndex'
 
 export interface BuildProgress { phase: 'convert' | 'vectors'; done: number; total: number }
@@ -100,6 +99,14 @@ export async function buildKbIndex(opts: BuildOptions): Promise<KbIndex> {
 
   if (opts.vectors !== false) {
     opts.onProgress?.({ phase: 'vectors', done: 0, total: 1 })
+    // 懒加载：embed.ts 顶层 import @huggingface/transformers 会在模块图加载时
+    // 就 require onnxruntime-node 探测 native binding，而该包从未发布过
+    // darwin-x64（mac Intel）二进制（上游长期缺口，1.24.3～1.27.0 均缺，见
+    // errors/）——静态 import 会让所有 import buildKbIndex 的调用方（含
+    // vectors:false 的测试）在 CI mac-x64 runner 上模块加载即崩。改动态
+    // import 后只有真正走到向量化这一步才触发探测，vectors:false 的路径
+    // （测试全部如此）绝不加载 embed.ts。
+    const { buildVectors } = await import('./embed')
     await buildVectors(files, outDir, now, opts.vectors.localModelPath)
     opts.onProgress?.({ phase: 'vectors', done: 1, total: 1 })
   }
