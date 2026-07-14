@@ -88,81 +88,26 @@ export function SurfaceHost() {
     return undefined
   }, [chatShowing])
 
-  // ── 切面后强制重采集原生窗口拖拽区（2026-07-05「切回 chat 顶栏拖不动」实锤）──
-  // chat 与 canvas 是**同一个 WebContentsView 里的两棵 React 树**，切换只翻
-  // CSS class（content-visibility + surface-inactive），view bounds 不变。
-  // Electron 的原生 draggable region 由 Chromium 的 DraggableRegionsChanged
-  // 事件驱动上报——而这个事件只在 layout 里 draggable region 集合发生**增量
-  // 变化**时才触发。纯 class 切换（尤其隐藏面用 content-visibility:hidden、
-  // 其子树整个退出渲染管线）在这里不可靠地触发不了该事件：切回 chat 后 CSS
-  // 层 -webkit-app-region 值全对（CDP 实测 region=drag 正常），但**原生层的
-  // 拖拽矩形缓存没刷新**，仍是切走前那套 → 顶栏真机拖不动（DOM 命中正常、
-  // 只有真实鼠标经过窗口系统时才暴露，同 .surface-inactive / 收起态图标排
-  // 家族的坑，Electron issue #20926「app-region drag stops working when
-  // BrowserView is changed」同类）。初次加载正常是因为原生层首采集恰好就是
-  // 当前面。
+  // ── 切面**不再**做任何 region-refresh 脉冲（2026-07-14 拖拽机制重构，删）──
+  // 历史上这里有个切面 effect：瞬时给 documentElement 挂 `.region-refresh` 类
+  // 再移除（把 .window-drag-strip 一缩一放），逼 Chromium 重采集原生拖拽区。
+  // 它存在的**唯一理由**是：当年隐藏面的后代会注册 no-drag/drag 矩形、DOM 序
+  // 在后盖穿常驻 strip，切面后需要逼一次重采集让 strip 恢复。
   //
-  // 修法：切面后给 documentElement 瞬时挂 `region-refresh` 类再移除——
-  // 它让根 layout 的**窗口拖拽条**（.window-drag-strip，fixed 全宽 46px
-  // 常驻，兼任脉冲探针）一缩一放两次 region 变化，必然逼出
-  // DraggableRegionsChanged；该事件全量上报，主进程据此重采集**全文档**
-  // 拖拽区。2026-07-08 性能收窄：最初规则是全文档 `*` 压平，每轮脉冲两次
-  // 16k+ 节点 recalc ≈ 165ms（切面「不丝滑」主因）——事件既然全量上报，
-  // 一个探针的变化就够，详见 globals.css 的 .window-drag-strip 注释。
-  // 同日拖拽面收敛重构后，组件顶栏不再自带 drag、strip 恒在缓存里，本
-  // 脉冲的兜底对象缩小为「新挂载控件的 no-drag 洞未入缓存」。
+  // 但脉冲机制本身是**竞态源**（CDP 真机实测坐实）：快速来回切多面时，某次
+  // 脉冲「加类压 no-drag → rAF 放回」的「放回」拍被另一个写手（本 effect /
+  // RailShell / 主进程 tabRegistry）的同步 cleanup 摘类打断，`.region-refresh`
+  // 卡在 documentElement 上不移除 → strip 永久 no-drag → 整窗拖不动（手动清掉
+  // 类 strip 立刻恢复 drag，实测确认）。补 rAF / 加兜底轮 / 换 deps 都治不了这
+  // 个「多写手争抢一个全局类 + React 同步 cleanup」的结构性竞态。
   //
-  // 2026-07-08 加固（「切换几次页面后又拖不动」实锤）：v1 的单轮双 rAF
-  // （rAF 加类 → 下一 rAF 移除）有两个败点——
-  //  ① 快速连续切面：effect cleanup 同步摘类，若「加类」尚未被任何一帧
-  //     commit 就被摘掉，这一轮净变化为零、事件不发；用户停在最后一次
-  //     切换上时若恰逢该竞态，就没有下一轮补救了。
-  //  ② 「压缩拍」只依赖单个 rAF 间隙被 commit——切面瞬间主线程正忙
-  //     （隐藏面 content-visibility 恢复的大 layout），帧调度无保证。
-  // 现在每轮 pulse 改为「加类 → 双 rAF（至少一次完整帧带着 no-drag 状态
-  // commit）→ 移除」，并在 250ms 后追加第二轮兜底：彼时切面大 layout 已
-  // 落定，这轮的一缩一放不再与切面自身的 region 变化交错，必然干净逼出
-  // 两次上报。比插 1px 探针稳（探针太小可能被舍入/合并优化掉）；toggle
-  // 期间顶栏短暂不可拖（各约 2 帧），用户无感。仅桌面壳（有 app-region
-  // 语义）生效，浏览器无此层、无副作用。
-  //
-  // 同族修复：window tab 切换（removeChildView/addChildView swap）后
-  // renderer 的 region 集合零变化、不会重新上报——那条路径由主进程
-  // tabRegistry.activateTab 注入同款扰动兜底（本 effect 感知不到 swap）。
-  useEffect(() => {
-    if (isProbe) return undefined
-    const root = document.documentElement
-    const rafs: number[] = []
-    const timers: ReturnType<typeof setTimeout>[] = []
-    const raf = (fn: FrameRequestCallback) => {
-      rafs.push(requestAnimationFrame(fn))
-    }
-    // 单轮扰动：探针压 no-drag → 双 rAF 保证该状态至少随一次完整帧
-    // commit → 恢复。offsetHeight 强制同步 layout，让探针的 region 变化
-    // 在本帧就绪（收窄后 invalidation 只有探针一个元素，此处 ≈0ms）。
-    const pulse = () => {
-      root.classList.add('region-refresh')
-      void root.offsetHeight
-      raf(() =>
-        raf(() => {
-          root.classList.remove('region-refresh')
-        })
-      )
-    }
-    // 第一轮：下一帧起跳（等本次 class 切换 / content-visibility 恢复的
-    // layout 先落定，重采集读到的才是新面的 region）。
-    raf(pulse)
-    // 第二轮兜底：切面重活干完后的稳定态再逼一次。
-    timers.push(setTimeout(pulse, 250))
-    return () => {
-      rafs.forEach(cancelAnimationFrame)
-      timers.forEach(clearTimeout)
-      root.classList.remove('region-refresh')
-    }
-    // deps 是 chatShowing（不是 isChat）：设置页/知识库页盖上/揭开也是一次
-    // 面切换（chat 面 content-visibility 翻转、drag region 集合变化），同样
-    // 需要逼一次原生拖拽区重采集——两者都经 chatShowing 翻转，无需单列。
-  }, [chatShowing, isProbe])
+  // 根治：**隐藏面整棵 app-region:initial**（globals.css .surface-inactive）。注意
+  // 是 `initial` 不是 `none`——app-region 合法值只有 drag/no-drag，`none` 非法会被
+  // 静默忽略、保留继承来的 no-drag（2026-07-14 第六版实测，此前用 none 从未生效）；
+  // `initial` 回初始态才真不注册矩形、对拖拽透明。于是隐藏面永不盖 strip；strip 几
+  // 何恒定、永不重挂载，其 drag 矩形从首次采集起就恒在原生缓存里，切面时它本身的
+  // 矩形零变化 → 根本不需要重采集。脉冲存在的前提消失，遂全删（本 effect + RailShell
+  // + 主进程 tabRegistry 注入 + globals.css 的 .region-refresh 规则）。
 
   // 面元素**冻结**（引用恒定）：本组件每次随 usePathname 重渲染，若在
   // render 里裸写 <ChatSurface/>，元素引用每次都是新的 → React 对两棵
@@ -184,6 +129,15 @@ export function SurfaceHost() {
 
   return (
     <div className="relative h-full">
+      {/* chat 面的窗口拖拽由根 layout 的 .window-drag-strip（body 首子、fixed
+        * 全宽 46px 常驻 drag）统一负责，ChatHeader 只在其上挖 no-drag 洞——这条
+        * 一直是对的，真正的病根不在 chat 侧，而在隐藏 canvas 面容器的**全屏
+        * no-drag**（.surface-inactive 容器自身）DOM 序在最后、盖过 strip 的 drag
+        * （详见 globals.css 的 .surface-inactive 2026-07-14 修正注释）。那条修好
+        * 后 strip 恒生效，chat 面无需自带任何 drag 源。历史上此处试过的浅层
+        * drag 探条 / ChatHeader 自带 drag 均因误诊「盒子恢复赛跑」而加、真因见
+        * 底后已全部撤除。 */}
+
       {/* 隐藏用 content-visibility:hidden（而非 visibility:hidden）：隐藏
         * 子树整个退出样式重算/布局/绘制管线（实测 UpdateLayoutTree 356ms
         * 的主要来源就是隐藏面仍参与全文档 recalc），DOM/状态/iframe/滚动

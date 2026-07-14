@@ -567,13 +567,14 @@ export function EntryShell({
             :1252、canvas tab 栏退役前的 --app-chrome-traffic-space:190 同一
             208 基线，改这里必同步那两处）。常驻所有 entry 子视图（首页/项目
             /插件/设计体系），让画布面切子视图时顶部不跳。
-            自带 app-region:drag（2026-07-14，修「切到工作画布顶部拖不动」）：
-            删多标签栏（.workspace-tabs-chrome，canvas 面唯一 drag 写手）后，
-            canvas 顶部第一次纯靠根 .window-drag-strip 兜底，暴露出 strip 单点在
-            chat→canvas 方向重采集不可靠（详见 base.css .app-chrome-header 那条
-            同批注释 + globals.css）。给这条 nav 补一条自带 drag、不赌 strip 缓存
-            ——它是纯静态图标+标题、无交互元素，整条可拖不用挖 no-drag 洞。 */}
-        <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [-webkit-app-region:drag] [body[data-rail-collapsed]_&]:pl-[208px]">
+            **不声明 drag**（2026-07-14 拖拽机制重构定稿）：窗口拖拽由根
+            .window-drag-strip 统一负责，本 nav 是纯静态图标+标题、无交互元素，
+            落在 strip 的 drag 上天然可拖、无需挖洞、也不用自带 drag。此前一版
+            曾给它自带 drag（赌 strip 缓存不可靠），但真因是「隐藏面 no-drag 盖
+            穿 strip + region-refresh 脉冲竞态卡死」，已由「隐藏面整棵 app-region:
+            initial（非 none，none 非法静默无效）+ 删所有脉冲」根治（见 globals.css .surface-inactive / .window-
+            drag-strip 注释）——strip 恒定生效，本 nav 回归纯静态、不再自带 drag。 */}
+        <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [body[data-rail-collapsed]_&]:pl-[208px]">
           <div className="flex h-full w-full min-w-0 items-center gap-2 px-4">
             <ImageIcon
               aria-hidden
