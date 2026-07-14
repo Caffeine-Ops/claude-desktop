@@ -91,12 +91,6 @@ function goChatShallow(): void {
   window.history.pushState(null, '', '/chat')
 }
 
-/* 账户菜单里尚未接入功能的占位项共用的空动作（帮助/更新日志/关于我们，
- * 2026-07-05 用户确认先做占位；退出登录与升级订阅已于 2026-07-06 接真实
- * 链路）。模块级常量＝稳定引用，不随渲染重建。接入真实链路时逐项换掉
- * 对应 onSelect 即可。 */
-const noop = (): void => {}
-
 /* 账户菜单 V1「精修基准」（2026-07-07 二次定稿，原型见
  * docs/ui-prototype-account-menu.html；先定 V3 后用户改选 V1——绿只留
  * 套餐状态点与升级文字动作，渐变钮/头像圆随 V3 退役）的品牌绿墨色：
@@ -581,9 +575,10 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
                   </span>
                   <AppearanceSeg />
                 </div>
-                {/* 帮助与反馈：占位（noop 不置灰，同 2026-07-05 观感原则）。 */}
+                {/* 帮助与反馈：打开全局反馈弹窗（useDialogStore('feedback')，
+                  * 组件挂在 canvas/AppRoot.tsx，与设置页 about 区共用同一实例）。 */}
                 <DropdownMenuItem
-                  onSelect={noop}
+                  onSelect={() => useDialogStore.getState().openDialog('feedback')}
                   className="gap-2.5 rounded-[9px] px-2.5 py-[7px] text-[13px]"
                 >
                   <CircleHelp strokeWidth={1.75} />

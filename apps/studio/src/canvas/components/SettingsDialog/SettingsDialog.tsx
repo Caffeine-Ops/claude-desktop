@@ -38,6 +38,7 @@ import { LOCALE_LABEL, LOCALES, useI18n } from '../../i18n';
 import type { Locale } from '../../i18n';
 import { AgentIcon } from '../shared/AgentIcon';
 import { ExportDiagnosticsRow } from '../settings/ExportDiagnosticsButton';
+import { useDialogStore } from '@/src/chat/stores/dialogs';
 import { Icon } from '../shared/Icon';
 import {
   CUSTOM_MODEL_SENTINEL,
@@ -3010,6 +3011,25 @@ export function SettingsDialog({
                   <p className="hint">{t('diagnostics.exportHint')}</p>
                 </div>
                 <ExportDiagnosticsRow />
+              </div>
+              {/* 新增行：shadcn 原语 + utility（本 about section 尚未整体迁移，
+                  但新 markup 一律走 shadcn，见 CLAUDE.md 设置页迁移纪律）。
+                  文案硬编码中文（不走 canvas i18n）：FeedbackDialog 本身也是
+                  硬编码中文，见该文件头注释——它现在挂在根 layout 的
+                  RailShell.tsx，不在 canvas 的 I18nProvider 边界内。 */}
+              <div className="flex items-center justify-between gap-4 border-t border-border pt-4">
+                <div>
+                  <h4 className="text-sm font-medium text-foreground">问题反馈</h4>
+                  <p className="hint">描述你遇到的问题，最多可以附 4 张截图。</p>
+                </div>
+                {typeof window !== 'undefined' && window.chatApi ? (
+                  <Button
+                    variant="outline"
+                    onClick={() => useDialogStore.getState().openDialog('feedback')}
+                  >
+                    反馈问题
+                  </Button>
+                ) : null}
               </div>
             </section>
           ) : null}

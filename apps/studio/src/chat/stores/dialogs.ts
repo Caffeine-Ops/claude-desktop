@@ -1,7 +1,13 @@
 import { create } from 'zustand'
 
 /**
- * Modal dialog state for client-side slash commands.
+ * Modal dialog state for client-side slash commands, plus a couple of
+ * globally-triggerable dialogs that don't come from a slash command
+ * (`feedback`) but reuse this same "one dialog at a time, opened from
+ * anywhere" plumbing since chat + canvas coexist in one document via
+ * SurfaceHost — any component in either surface can call
+ * `useDialogStore.getState().openDialog(...)` regardless of which
+ * surface is currently visible.
  *
  * The renderer intercepts a small whitelist of `/<cmd>` inputs in
  * FusionRuntimeProvider's onNew callback before they're sent to
@@ -15,7 +21,7 @@ import { create } from 'zustand'
  * Only one dialog can be open at a time. Opening a new one replaces
  * whichever was open before — `null` means none.
  */
-export type DialogKind = 'skills' | 'mcp' | 'logs' | 'search' | null
+export type DialogKind = 'skills' | 'mcp' | 'logs' | 'search' | 'feedback' | null
 
 interface DialogState {
   open: DialogKind

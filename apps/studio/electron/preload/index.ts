@@ -57,6 +57,8 @@ import {
   type TabListResult,
   type TranscribeAudioPayload,
   type TranscribeAudioResult,
+  type FeedbackSubmitPayload,
+  type FeedbackSubmitResult,
   type WorkspaceFileOpenPayload,
   type WorkspaceFileOpenResult,
   type ShellOpenPathPayload,
@@ -486,6 +488,15 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.TRANSCRIBE_AUDIO,
       payload
     ) as Promise<TranscribeAudioResult>
+  },
+
+  submitFeedback(
+    payload: FeedbackSubmitPayload
+  ): Promise<FeedbackSubmitResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.FEEDBACK_SUBMIT,
+      payload
+    ) as Promise<FeedbackSubmitResult>
   },
 
   getCliBackend(): Promise<CliBackendState> {

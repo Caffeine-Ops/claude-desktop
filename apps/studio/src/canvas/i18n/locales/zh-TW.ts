@@ -1923,6 +1923,7 @@ export const zhTW: Dict = {
   'diagnostics.exporting': '匯出中…',
   'diagnostics.exportSuccess': '診斷日誌已儲存至 {path}',
   'diagnostics.exportFailed': '匯出診斷日誌失敗：{message}',
+
   // Plugin card actions (issue #2079)
   'pluginCard.details': '詳情',
   'pluginCard.use': '使用',

@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "claude-desktop-feedback",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // 非密钥配置：仓库信息、R2 公开域名。GITHUB_TOKEN / HMAC_SECRET 用
+  // `wrangler secret put` 单独设置，不进这个文件（见 README.md）。
+  "vars": {
+    "GITHUB_OWNER": "Caffeine-Ops",
+    "GITHUB_REPO": "claude-desktop-feedback",
+    "R2_PUBLIC_BASE_URL": "https://pub-284d37200f4f4f6899d0d87b08a021d0.r2.dev"
+  },
+
+  "r2_buckets": [
+    {
+      "binding": "FEEDBACK_ASSETS",
+      "bucket_name": "claude-desktop-feedback-assets"
+    }
+  ],
+
+  // 按下发请求头里的客户端 IP（CF-Connecting-IP）做粗粒度限流；
+  // 官方文档明确这是 "loose filter" 不是强反滥用工具，配合 HMAC 请求签名一起用。
+  "ratelimits": [
+    {
+      "name": "FEEDBACK_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 5,
+        "period": 60
+      }
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  }
+}
