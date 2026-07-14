@@ -461,6 +461,14 @@ export function ThreadView(): React.JSX.Element {
   // keeps the user's focus anchored on content, while the fade on
   // swap preserves the sense of "the view changed".
   const sessionId = useChatStore((s) => s.sessionId)
+  // 空态（新对话欢迎页：hero 标题 + 居中 composer + 演示区 + 积分横幅）刷新后
+  // 是否放开 assistant-ui Viewport 的 autoScroll（stick-to-bottom）。空态**必须
+  // 关掉**：Viewport 的 autoScroll 不区分空/有消息，`isAtBottom` 初始为 true，
+  // 刷新后 DemoShowcase 的演示卡片异步（IPC listReplayDemos）注入使内容突然超
+  // 一屏、触发库的 useOnResizeContent → scrollToBottom('instant') → 把欢迎页怼到
+  // 底、hero 标题被顶栏切掉、直接看到底部积分横幅（用户实测）。有消息态才需要
+  // 跟随到底。用 messages.length 派生（本地 store 镜像当前会话消息，响应式）。
+  const hasMessages = useChatStore((s) => s.messages.length > 0)
   // Debounced variant for the *visual* progress bar only: a fast switch
   // (cache hit / lazy engine) clears `sessionLoading` within a frame or
   // two, and lighting the bar for that flicker reads as "always busy".
@@ -638,7 +646,9 @@ export function ThreadView(): React.JSX.Element {
           above — animating the inner column is what used to jitter). */}
       <div className="relative min-h-0 flex-1">
         <ThreadPrimitive.Viewport
-          autoScroll
+          // 空态关掉 autoScroll，防止欢迎页被 stick-to-bottom 怼到底（见上方
+          // hasMessages 定义处的完整注释）。有消息态保持跟随到底（=true）。
+          autoScroll={hasMessages}
           // (Removed) top/bottom fade mask. The viewport used to fade its first
           // ~44px and last ~56px to transparent so scrolling text dissolved
           // near the header / composer; per design that fade-out is gone, so
@@ -1207,13 +1217,29 @@ function ChatHeader(): React.JSX.Element {
     setRenameOpen(false)
   }, [sessionId])
 
-  // ── 拖拽策略：本顶栏自带 app-region:drag（2026-07-14 定，退役了上一版
-  //    的会话切换 region-refresh 脉冲）───────────────────────────────────
-  // 曾经在这里挂过一个 `[sessionId, isReplay]` 的 region-refresh 脉冲 effect，
-  // 想靠"切会话后逼原生拖拽区重采集"来修「顶栏间歇能拖不能点 / 能点不能拖」。
-  // 它治标不治本，且反而是新的竞态源，已删。真因与新解见下方 return 处顶栏
-  // 外层 div 的 `[-webkit-app-region:drag]` 注释——**本顶栏现在自己声明 drag**，
-  // 不再纯寄生根 .window-drag-strip 的原生缓存，两种失效态从根上消除。
+  // ── 拖拽策略：本顶栏只挖 no-drag 洞、不自带 drag——窗口拖拽由根
+  //    .window-drag-strip 统一负责（2026-07-14 四改定稿，真因终于见底）─────
+  // 「切到工作画布能拖、切回智能助手拖不动」查了四层，前三层全是误诊：
+  //  ① 会话切换 region-refresh 脉冲 effect（deps [sessionId,isReplay]）——以为
+  //     是「切会话改 no-drag 洞集合没逼重采集」，补脉冲，是竞态源，实测仍复发。删。
+  //  ② 本顶栏外层 div 自带 [-webkit-app-region:drag]——以为「纯寄生 strip 缓存」
+  //     脆，想像 canvas EntryShell 一样自带 drag。删。
+  //  ③ drag 源挪到 SurfaceHost 浅层探条——以为是「ChatHeader 埋 .chat-app 深树、
+  //     切回 chat 时 content-visibility 恢复 ~570ms 盒子晚落定、被切面脉冲赛跑
+  //     抢先采不到」。删。
+  //  ④（真因，现行——2026-07-14 第六版实测见底）以上全错。真因是**隐藏 canvas
+  //     面整棵注册了全屏 no-drag、盖穿 strip 的 drag**：SurfaceHost 两个面 DOM 序
+  //     chat→canvas，隐藏面标 .surface-inactive，其后代（含铺满 inset-0 的容器、
+  //     46px nav）有实布局盒子、computed app-region 继承为 no-drag、DOM 序在 body
+  //     首子 .window-drag-strip 之后 → **最后注册、盖过 strip 在内容区那段 drag**
+  //     （后注册覆盖先注册）→ 内容区顶部拖不动（rail 区 x<245 没被盖仍能拖）。
+  //     曾以为「把 .surface-inactive 中和成 app-region:none」就根治——但 app-region
+  //     合法值只有 drag/no-drag，**`none` 非法、被静默忽略、computed 保留 no-drag，
+  //     那条规则从未生效过**（这是前五版都栽的错误前提）。真正的修法：中和值用
+  //     `initial`（回初始态、才真不注册矩形、computed 才是透明），globals.css 的
+  //     `.surface-inactive,.surface-inactive *{app-region:initial !important}`。strip
+  //     恒生效，本顶栏回归**纯挖 no-drag 洞**（标题按钮 :1351 / ⋯菜单 :1400 / 输出
+  //     按钮），①②③加的东西已全撤。
 
   const commitEdit = useCallback(async (): Promise<void> => {
     setRenameOpen(false)
@@ -1233,39 +1259,18 @@ function ChatHeader(): React.JSX.Element {
   }, [draft, sessionId, title, setTitle, t])
 
   return (
-    // 本 header 自带 app-region:drag（2026-07-14 定，退役了纯靠根 strip 的
-    // 旧策略）——为什么改回、为什么现在安全，完整事故链如下：
+    // 本 header **不声明 drag**，只给顶部 46px 内的交互控件挖 no-drag 洞。
+    // 窗口拖拽由根 layout 的 .window-drag-strip（body 首子、fixed 全宽 46px 常驻
+    // drag）负责——这条一直是对的，「切回智能助手拖不动」的真因不在本顶栏，而在
+    // 隐藏 canvas 面容器的全屏 no-drag 盖住了 strip（见上方「拖拽策略」注释④ 与
+    // globals.css 的 .surface-inactive 2026-07-14 修正）。那条修好后 strip 恒
+    // 生效，本顶栏无需自带任何 drag。
     //
-    // 【旧策略】2026-07-08 拖拽面收敛重构规定「组件顶栏一律不声明 drag、只
-    //   靠根 .window-drag-strip 提供 drag」。ChatHeader 照此只挖 no-drag 洞、
-    //   不自带 drag。但这让 chat 顶栏的可拖性**100% 寄生**在 strip 的原生
-    //   缓存上，而 strip 的 drag 值会被四处 region-refresh 脉冲反复临时压成
-    //   no-drag 再放回——只要有任一次「放回 drag」被别的写手的同步 cleanup
-    //   打断（多写手争抢同一个全局 .region-refresh 类），strip 就卡在
-    //   no-drag，整条 chat 顶栏立刻「能点不能拖」；反过来切会话新增的 ⋯菜单
-    //   no-drag 洞若没被脉冲逼进缓存，又变「能拖不能点」。给这里补脉冲只是
-    //   再添一个争抢者，越补越不稳（2026-07-14 实测：补了仍复发）。
-    //
-    // 【新策略】本顶栏**自己声明 drag**（外层 div 的 `[-webkit-app-region:drag]`），
-    //   保留内部交互控件（标题按钮 :1351 / ··· 菜单 :1400）的 no-drag 洞。
-    //   于是 chat 顶栏的可拖性由**它自己的 drag** 保证、drag 与洞在同一棵
-    //   子树里一起注册（re-render 时 Chromium 天然重采集），不再依赖 strip
-    //   缓存是否被脉冲搞脏——「能点不能拖」「能拖不能点」两态从根消除。
-    //   与 canvas 首页顶栏（EntryShell.tsx 的自带 drag，已验证稳定）走同一条路。
-    //
-    // 【为何现在安全】2026-07-08 禁组件自带 drag 的前提是「顶栏随会话切换
-    //   反复 remount、remount 时 region 上报被竞态吞掉」。但 ChatHeader **无
-    //   key、会话切换只 re-render 不 remount**（v1 keyed remount 2026-07-04
-    //   已退役），那个前提在它身上不成立。隐藏态由 SurfaceHost 的
-    //   `.surface-inactive *{no-drag!important}` 统一压平（与 canvas drag 顶栏
-    //   同路径，零新机制）。strip 仍常驻兜住其余非顶栏区域，与本条 drag 在
-    //   顶部 46px 重叠——两个 drag 叠加仍是 drag，不冲突；本 div DOM 序晚于
-    //   strip（strip 是 body 首子），洞的注册顺序不受影响。
-    //
-    // header 的职责不变：布局 + 给顶部 46px 内的交互控件（标题按钮 / rename
-    // 输入框 / ··· 菜单）挖 no-drag 洞——点它们是改名/开菜单，不是拖窗。
-    // `select-none` keeps a press-drag on the chrome from starting a text
-    // selection.
+    // 洞在 strip 的 drag 上有效：strip 是 body 首子、DOM 序最靠前 → drag 先注册；
+    // 本顶栏的 no-drag 洞（标题按钮 :1351 / ··· 菜单 :1400 / 输出按钮）DOM 序更晚
+    // → 后注册的 no-drag 在先注册的 drag 上挖洞，洞生效、三个按钮点得动。点它们
+    // 是改名/开菜单/看产出，不是拖窗。`select-none` keeps a press-drag on the
+    // chrome from starting a text selection.
     //
     // 收起态左净空（2026-07-05，2026-07-08 标题左贴边后机制更直白）：rail
     // 收起后 chat 列顶到窗口左缘，左贴边的标题行会依次撞上左上角两样东西
@@ -1281,7 +1286,7 @@ function ChatHeader(): React.JSX.Element {
     // 排右移则同增）。canvas 面 tab 栏的同款净空在 base.css（收起态
     // --app-chrome-traffic-space: 190px，同一 208 基线）——改这里必同步那边，
     // 否则两面顶栏起点分家（2026-07-13 canvas 面漏配被红绿灯压住的教训）。
-    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [-webkit-app-region:drag] [body[data-rail-collapsed]_&]:pl-[208px]">
+    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [body[data-rail-collapsed]_&]:pl-[208px]">
       {/* 内层容器：标题左贴边（2026-07-08 用户定稿，参考 Claude.ai 顶栏
           「图标 + 标题 + ···」左对齐形态）。此前是 mx-auto max-w-4xl 与
           消息列同参居中——宽窗口时标题漂在中间偏左、与左缘脱节，用户

@@ -32,58 +32,84 @@
  * 让 Tailwind 扫到 page/layout 里用的类名。路径相对本文件。 */
 @source '../app/**/*.{ts,tsx}';
 
-/* ── SurfaceHost 隐藏面：注销窗口拖拽区（2026-07-03「tab 点不动」实锤根因）──
- * 双面 keep-alive 后，隐藏面虽有 content-visibility:hidden + pointer-events-
- * none，DOM 命中测试确实穿透了——但 Electron 收集 -webkit-app-region: drag
- * 是按 layout box 注册成**原生窗口拖拽矩形**，根本不看 pointer-events / 可见
- * 性。实测（CDP elementFromPoint 能拿到按钮、点击却被吞）：chat 面顶部的
- * canvas tab bar 正好落在隐藏 canvas 面的 .workspace-tabs-chrome（全宽 46px
- * drag 顶栏）矩形里，mousedown 被窗口系统截走，click 永远到不了页面；反向
- * 同理（canvas 可见时 chat 的 ChatHeader drag 残留）。浏览器无 app-region
- * 语义，所以浏览器里永远复现不出来——别再往「嵌套 no-drag 不可靠」上猜。
- * 修法：隐藏面整棵子树强制 no-drag，!important 压过面内所有 drag 声明；
- * 面切回可见（类移除）时 Chromium 会重算拖拽区，各自的 drag 恢复生效。 */
+/* ── SurfaceHost 隐藏面：让隐藏面对原生拖拽区**完全透明**（app-region:initial）
+ *    ──（2026-07-03「tab 点不动」实锤起，2026-07-14 第六版 CDP 实测定稿：
+ *    此前用 none 无效、none 非合法值，改 initial 回初始态才真透明）───
+ * 双面 keep-alive：chat/canvas 是同一 webContents 里两棵 React 树、absolute
+ * inset-0 叠放，切换只翻 CSS class（隐藏面加 content-visibility:hidden +
+ * surface-inactive）。隐藏面虽 content-visibility:hidden + pointer-events-none，
+ * 但**其后代仍有实布局盒子（rect 不归零）**——而 Electron 收集 app-region 是
+ * 按 layout box 注册成原生窗口拖拽矩形、**根本不看 pointer-events / 可见性 /
+ * content-visibility**（CDP 实测：隐藏 canvas 面的 .workspace-shell 后代 rect
+ * 仍是 [245,0,1035,800]、覆盖内容区顶部）。所以隐藏面必须显式中和，否则：
+ *  · 隐藏面里**自带 drag 的顶栏**（EntryShell nav / 旧 workspace-tabs-chrome）
+ *    会把可见面顶部的点击吞给窗口拖拽（2026-07-03 原始 bug）。
+ *
+ * ⚠️ 中和要回到「不注册矩形」的初始态，**必须用 `initial`，不能写 `none`**
+ * （2026-07-14 第六版 CDP 实测才见底的真因，推翻此前所有版本）：
+ * app-region 的**合法值只有 `drag` 和 `no-drag` 两个**，`none` 不是可赋关键字。
+ * 「不注册矩形」是它的**初始值**，而初始值的 computed 文本恰好显示为 `none`
+ * ——这正是历史误诊的根源：看到隐藏面没渲染时 computed 是 `none`，就以为
+ * 「写 app-region:none 能达到这个态」。实测坐实 `setProperty('-webkit-app-region','none')`
+ * 后 inline 文本虽存进了 `none`、getMatchedStyles 也显示 `none !important`，但
+ * **computed 纹丝不动、保留层叠继承来的 no-drag**（引擎把 `none` 当无效值忽略，
+ * 不改变当前值）。所以旧规则 `app-region:none !important` **从未生效过**，隐藏面
+ * 一直是继承来的 no-drag。
+ *
+ * 为什么 no-drag 就拖不动：drag 和 no-drag **都注册原生矩形、都按「后注册覆盖
+ * 先注册」盖穿前面的矩形**；只有回到初始态（无矩形）才对拖拽真正透明。两个面
+ * DOM 序是 chat→canvas，隐藏面后代 DOM 序在后、有实 rect 覆盖内容区顶部
+ * x[245-1280]。隐藏面继承的 no-drag 后代（DOM 序远晚于 body 首子 .window-drag-strip）
+ * **盖穿 strip 在 x[245-1280] 的 drag** → 可见 chat 内容区顶部整条拖不动（rail
+ * 区 x[0-245] 没被盖仍能拖——正是「切到 chat 内容区顶部拖不动、只有 rail 顶能
+ * 拖」的现象，CDP 坐实）。改成 `initial` 后：computed 回落到无矩形初始态（实测
+ * `app-region:initial` → computed `none`），隐藏面整棵不注册矩形，strip 的 drag
+ * 由它独占、恢复可拖。
+ *
+ * 误诊史（全栽在「app-region:none 是有效声明」这个错误前提上）：①会话切换脉冲
+ * ②ChatHeader 自带 drag ③SurfaceHost 浅层探条 ④只摘 .surface-inactive 容器自身
+ * ⑤把 no-drag「改成」none（自以为根治、实则 none 无效 = 从未改动）——全是在
+ * 错误值上打转。⑥（真因）none 不合法，必须 `initial`。
+ *
+ * 选择器含容器自身 + 后代：删 region-refresh 脉冲后没有兜底重采集，必须保证
+ * 隐藏面**整棵**（含 absolute inset-0 容器自身）回到无矩形态。两个前缀都写：
+ * 页面顶栏的 no-drag 洞大量只写 -webkit-app-region（前缀名），中和要盖住它
+ * 必须也写 -webkit-app-region:initial，无前缀那条覆盖不到。 */
 .surface-inactive,
 .surface-inactive * {
-  -webkit-app-region: no-drag !important;
-  app-region: no-drag !important;
+  -webkit-app-region: initial !important;
+  app-region: initial !important;
 }
 
-/* ── 窗口拖拽条（2026-07-08 重构：拖拽面收敛为单一常驻写手）─────────
- * hiddenInset 窗口的「标题栏」= 内容顶部 46px。旧结构把 app-region:drag
- * 分散写在各组件顶栏上（ChatHeader / SlidesWorkspace tab 栏 / Workflow
- * 面板栏……），它们随会话/分栏/切面反复重挂载——而原生 draggable region
- * 是**事件驱动 + 缓存**（renderer 只在 region 集合增量变化时上报，缓存
- * 永不主动刷新），任何一次上报被竞态吞掉，整窗就「拖不动 + 双击不放大」，
- * 打了四轮补丁（region-refresh 脉冲、双 rAF、250ms 兜底、tab-swap 注入）
- * 仍间歇复发。
+/* ── 窗口拖拽条：全局唯一的常驻 drag 源（2026-07-08 收敛，2026-07-14 定稿：
+ *    删脉冲、隐藏面 initial 后，这是真·唯一 drag 写手）──────────────────
+ * hiddenInset 窗口的「标题栏」= 内容顶部 46px。旧结构把 app-region:drag 分散
+ * 写在各组件顶栏（ChatHeader / EntryShell / app-chrome-header / SlidesWorkspace
+ * tab 栏……），它们随会话/分栏/切面重挂载，而原生 draggable region 事件驱动+
+ * 缓存、缓存不主动刷新，任一上报被竞态吞掉整窗就拖不动，靠 region-refresh
+ * 脉冲兜底又引入「多写手争抢全局类 + 同步 cleanup」的卡死竞态（2026-07-14 CDP
+ * 实测：类卡住 strip 永久 no-drag）。
  *
- * 现结构：根 layout 挂**这一条** fixed 全宽 46px drag 条，永不重挂载、
- * 几何永不变化——它的矩形从首次采集起就恒在原生缓存里，组件层怎么折腾
- * 都不影响「窗口顶部可拖 / 可双击缩放」这条底线。纪律：
- *  · 组件顶栏**不再声明 drag**（chat 侧已全部摘除；canvas 面自己的顶栏
- *    drag 是冗余声明，无冲突，由 surface-inactive 管隐藏态）；
- *  · 顶部 46px 内的交互元素一律 [-webkit-app-region:no-drag] 挖洞——
- *    它们 DOM 在本条之后，洞必然有效（矩形按树序注册，后者覆盖前者）；
- *  · 全屏 overlay/portal（lightbox、弹窗）落在顶部 46px 内的按钮同样要
- *    no-drag，这是 hiddenInset 的固有约束，不是本条引入的；
- *  · pointer-events:none —— app-region 是原生层语义不吃 DOM 事件，
- *    本条不得拦截底下元素的 hover/点击。
+ * 现结构（唯一稳定解）：根 layout 挂**这一条** fixed 全宽 46px drag 条
+ * （layout.tsx，body 首个可渲染子，DOM 最靠前 = drag 最先注册），永不重挂载、
+ * 几何永不变化——矩形从首次采集起恒在原生缓存里。**所有页面顶栏、所有面都
+ * 靠它拖窗，自己一律不声明 drag、只挖 no-drag 洞。** 纪律：
+ *  · 页面顶栏（chat ChatHeader / canvas EntryShell / ProjectView
+ *    app-chrome-header / rail 顶栏）**一律不声明 drag**——只给顶部 46px 内的
+ *    交互元素标 [app-region:no-drag] 挖洞。它们 DOM 在本条之后，洞必然有效
+ *    （矩形按树序注册、后者覆盖前者、no-drag 只能在先注册的 drag 上挖洞）。
+ *  · 隐藏面（SurfaceHost 的 content-visibility 面）整棵 app-region:initial
+ *    （.surface-inactive，见上；initial 才回到无矩形初始态，none 不合法无效），
+ *    **不注册任何矩形、永不盖本条 drag**——这是删掉 region-refresh 脉冲后
+ *    strip 能恒定生效的前提。
+ *  · 例外——全屏 overlay 自带独立 drag 条（LoginScreen/UpgradeScreen 的
+ *    z-9999 墙、桌宠独立窗）：它们盖住本 strip、DOM 序更晚，必须自带 drag +
+ *    各自的 no-drag 洞，不靠本条。
+ *  · pointer-events:none —— app-region 是原生层语义不吃 DOM 事件，本条不得
+ *    拦截底下元素的 hover/点击（点击靠 DOM 穿透、拖拽靠原生层，两条正交）。
  *
- * 本条兼任 region-refresh 脉冲的探针（前身 .app-region-probe，48×48）：
- * 缓存陈旧的残余风险只剩「新挂载控件的 no-drag 洞未入缓存 → 点击被吞」，
- * 仍由三处脉冲写手兜底——
- *  · SurfaceHost 切面 effect（双 rAF 保 commit + 250ms 二轮兜底）；
- *  · RailShell（收起态浮出面板）；
- *  · 主进程 tabRegistry.activateTab（view swap 后 executeJavaScript 注入
- *    ——swap 时 renderer 集合零变化不会自发上报，renderer 侧无从感知）。
- * 脉冲让本条瞬时变 no-drag 再复原，两次 region 变化必然逼 Chromium 重发
- * DraggableRegionsChanged（该事件**全量上报**，原生缓存整体刷新）。
- *
- * ⚠️ 别把脉冲规则改回 `.region-refresh *`：全元素选择器每轮脉冲对全文档
- * 双次 recalc ≈ 165ms（2026-07-08 切面卡顿实锤）；事件既然全量上报，
- * 单探针变化就够。真需要压平某棵子树用 surface-inactive（语义不同）。
- * 探针别做小（历史教训：1px 级探针可能被 Chromium 舍入/合并优化掉）。 */
+ * ⚠️ 不要再引入任何「瞬时改本条 app-region 再改回」的脉冲机制——那是 2026-07
+ * 反复踩的竞态源，已彻底退役。隐藏面 initial 让本条永不被盖，就不需要重采集。 */
 .window-drag-strip {
   position: fixed;
   top: 0;
@@ -93,10 +119,6 @@
   pointer-events: none;
   -webkit-app-region: drag;
   app-region: drag;
-}
-.region-refresh .window-drag-strip {
-  -webkit-app-region: no-drag !important;
-  app-region: no-drag !important;
 }
 
 /* ── 外壳形态：分界线（2026-07-08 二次定稿，原型

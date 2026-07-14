@@ -718,18 +718,15 @@ body[data-rail-collapsed] .workspace-shell__body {
   background: hsl(var(--card));
   gap: 12px;
   flex-shrink: 0;
-  /* canvas 顶栏自带 drag 重申（2026-07-14，修「切到工作画布顶部拖不动」）——
-     canvas 面此前一直靠已退役的 .workspace-tabs-chrome（唯一 app-region:drag
-     写手）在顶部重申可拖；那条多标签栏这次删掉后，canvas 顶部第一次变成「纯靠
-     根 .window-drag-strip 兜底」，暴露出 strip 单点在 chat→canvas 切换方向重
-     采集不可靠（Electron #20926 同族：原生拖拽矩形事件驱动+缓存、切面时与
-     content-visibility 大 layout 交错、脉冲救不了「本就缺 drag 声明」）。chat 面
-     早在 2026-07-08 就纯靠 strip 且被反复验证稳定，canvas 是这次删顶栏才首次
-     暴露。**这是对 globals.css「组件顶栏不再声明 drag」收敛纪律的必要 canvas
-     例外**：让 canvas 顶部可拖性自带、不赌 strip 缓存。下方交互容器的 no-drag
-     洞 DOM 排在本声明之后，照常覆盖（后者覆盖前者），点击不受影响。 */
-  -webkit-app-region: drag;
-  app-region: drag;
+  /* **不声明 drag**（2026-07-14 拖拽机制重构定稿，撤销同日早些的自带 drag）——
+     窗口拖拽由根 .window-drag-strip 统一负责。此前给本返回栏自带 drag，是误以为
+     「strip 单点在 chat→canvas 方向重采集不可靠」；真因其实是「隐藏面 no-drag 盖
+     穿 strip + region-refresh 脉冲多写手竞态卡死」，已由「隐藏面整棵 app-region:
+     initial（非 none，none 非法静默无效）+ 删所有脉冲」根治（见 studio globals.css .surface-inactive / .window-
+     drag-strip 注释）。strip 恒定生效，本返回栏回归「只挖 no-drag 洞、靠 strip」，
+     与 chat/canvas 所有页面顶栏统一。header 本身与两个纯占位 spacer
+     （.app-chrome-traffic-space / .app-chrome-drag）不挖洞——它们是留给拖窗的空白，
+     落在 strip 的 drag 上正好可拖。下方交互容器各自挖 no-drag 洞（见下条规则）。 */
 }
 /* 顶栏交互元素挖 no-drag（2026-07-14，修「项目页顶栏按钮点不中」）——
    AppChromeHeader 这条返回栏落在顶部 46px window-drag-strip 带内。多标签栏

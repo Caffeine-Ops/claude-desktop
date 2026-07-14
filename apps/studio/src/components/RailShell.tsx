@@ -77,35 +77,18 @@ export function RailShell() {
     }
   }, [collapsed])
 
-  // ── peek 翻转后强制重采集原生拖拽区（2026-07-06「hover 按钮周围面板仍
-  // 消失」二次实锤）──给 overlay 挂 no-drag 类只改了 CSS 层；Electron 的
-  // 原生 draggable region 缓存靠 DraggableRegionsChanged 事件刷新，而纯
-  // class 切换/transform 位移不可靠地触发不了它（SurfaceHost「切回 chat
-  // 顶栏拖不动」同根，Electron issue #20926 同类）。结果：overlay 滑入后
-  // 原生层还是滑入前的矩形集合——chat header 那条全宽 46px drag 依然罩着
-  // 面板顶部，鼠标一进那片就被当 non-client 合成 mouse-leave，面板自杀，
-  // 顶部按钮也点不动。修法复用 globals.css 的 .region-refresh 脉冲：等
-  // 滑入/滑回动画落定（200ms + 余量）后整片压 no-drag 一帧再放开，一缩
-  // 一放逼 Chromium 重发事件，重采集读到的就是 overlay 当前几何（挖洞
-  // 生效/恢复）。挂 body：规则是 .region-refresh 及其后代，body 覆盖全
-  // 文档，与 SurfaceHost 挂宿主根的用法互不冲突。
-  useEffect(() => {
-    if (!collapsed) return undefined
-    let raf = 0
-    const timer = window.setTimeout(() => {
-      document.body.classList.add('region-refresh')
-      // 读一次 layout 让「所有 drag 消失」这一拍真的被采集到。
-      void document.body.offsetHeight
-      raf = requestAnimationFrame(() => {
-        document.body.classList.remove('region-refresh')
-      })
-    }, 240)
-    return () => {
-      window.clearTimeout(timer)
-      cancelAnimationFrame(raf)
-      document.body.classList.remove('region-refresh')
-    }
-  }, [peek, collapsed])
+  // ── peek 翻转**不再**做 region-refresh 脉冲（2026-07-14 拖拽机制重构，删）──
+  // 历史上这里有个 240ms 后给 body 挂 `.region-refresh` 再摘的脉冲，逼原生层
+  // 重采集，让浮出 overlay 的 no-drag（peek 时容器上标的，见下方 overlay）生效
+  // ——因为当年 chat header / canvas 顶栏在 overlay 之外还各有一条 drag 罩着面板
+  // 顶部，overlay 的 no-drag 不逼重采集不生效。
+  // 现在两条前提都没了：① 组件顶栏统一不再自带 drag（EntryShell/app-chrome-header
+  // 的 drag 已撤，全靠常驻 strip）；② overlay 是 portal 到 body 末尾（DOM 最后）、
+  // peek 时标 no-drag——它 DOM 序最晚、no-drag 天然最后注册、稳压 strip 的 drag，
+  // 不需要任何脉冲就生效（RailShell 收起态图标排同理，见下方 portal 注释）。
+  // 且脉冲是全局 .region-refresh 类的多写手争抢竞态源（详见 SurfaceHost 删脉冲
+  // 注释），留着有害无益，遂删。overlay 的「假-leave 免疫」靠 no-drag 挖洞本身，
+  // 与脉冲无关，保留。
 
   // 展开态：AppRail 原样占 flex 列，零额外包装（保持与加功能前一致的布局，
   // 避免多套一层 div 影响 w-61 shrink-0 的 flex 行为）。FeedbackDialog 挂
