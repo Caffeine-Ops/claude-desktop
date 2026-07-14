@@ -18,7 +18,12 @@ import { PetOverlay, type PetTaskCenter } from './components/pet/PetOverlay';
 import { buildPetTaskCenter } from './components/pet/taskCenter';
 import { migrateCustomPetAtlas } from './components/pet/pets';
 import { ProjectView } from './components/ProjectView';
-import { openWorkspaceTab, WorkspaceTabsBar } from './components/WorkspaceTabsBar';
+// WorkspaceTabsBar（多标签工作区顶栏）已退役并删除（2026-07-14）——工作画布
+// 改为与智能助手对称的「无顶栏、内容直顶到窗口顶部」形态，消除「一面有 46px
+// 顶栏、一面没有」的切换割裂。多标签导航由左侧 rail（RailProjectList /
+// AppRail 的 canvas.navigate）承担；打开项目改为就地 navigate（原
+// openWorkspaceTab 调用点删除，navigate 本就并排在调）。组件文件已删（零引用
+// 死代码，它是最后一处 .workspace-tabs-chrome / 顶栏冗余 drag 写手）。
 import {
   DesignSystemCreationFlow,
   DesignSystemDetailView,
@@ -1068,7 +1073,7 @@ export function App({
         projectId: project.id,
         fileName: null,
       } as const;
-      openWorkspaceTab(projectRoute);
+      // 顶栏退役后不再往多标签栏塞 tab；navigate 本就在做就地导航，功能完整。
       navigate(projectRoute);
       return true;
     },
@@ -1813,14 +1818,13 @@ export function App({
   }
   return (
     <>
+      {/* 顶栏退役：workspace-shell 的 grid row1（auto）无子元素后自然塌 0，
+          workspace-shell__body 直接顶满、内容顶到窗口顶部（与 chat 面对称）。
+          红绿灯让位改由内容区各视图顶部内边距接管（见 base.css）。 */}
       <div
         className={`workspace-shell workspace-shell--${clientType}`}
         data-client-type={clientType}
       >
-        <WorkspaceTabsBar
-          route={route}
-          projects={projects}
-        />
         <div className="workspace-shell__body">{appMain}</div>
       </div>
       {clientType === 'desktop' ? null : (

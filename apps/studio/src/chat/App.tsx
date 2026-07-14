@@ -16,6 +16,7 @@ import { useApplyAppearance } from './stores/appearance.applier'
 import { hydrateAppearanceFromDaemon, useAppearanceStore } from './stores/appearance'
 import { SettingsView } from './components/settings/SettingsView'
 import { KbManagerView } from './components/kb/KbManagerView'
+import { ChatLoadingSkeleton } from '@/src/components/ChatLoadingSkeleton'
 import { MotionConfig } from 'motion/react'
 
 /**
@@ -225,9 +226,15 @@ function App(): React.JSX.Element {
   }, [])
 
   // Loading slice: brief flash-prevention. `.chat-app` keeps the window
-  // chrome / background consistent with the mounted state.
+  // chrome / background consistent with the mounted state. 骨架接力：chunk
+  // loading 已显示 ChatLoadingSkeleton，这里 getWorkspace() 未 resolve 的几 ms
+  // 复用同一骨架，避免骨架倒退成纯空白再到内容（两段加载态无凹陷衔接）。
   if (workspace === 'loading') {
-    return <div className="chat-app" />
+    return (
+      <div className="chat-app">
+        <ChatLoadingSkeleton />
+      </div>
+    )
   }
 
   // No-workspace slice. The engine now defaults every tab to the OS

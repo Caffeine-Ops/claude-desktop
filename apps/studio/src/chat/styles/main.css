@@ -169,7 +169,10 @@ html[data-surface='chat'] .chat-app {
   background-color: hsl(var(--background) / 0.72);
   backdrop-filter: saturate(180%) blur(28px);
   -webkit-backdrop-filter: saturate(180%) blur(28px);
-  -webkit-app-region: drag;
+  /* app-region:drag 已删（2026-07-14）：.header 是旧折叠面板顶栏，studio 的
+     chat/App.tsx 早已不渲染它（整块死代码），这条 drag 是「唯一 drag 写手 =
+     .window-drag-strip」纪律外的历史残留噪音。整块 .header CSS 可后续随死代码
+     清理一并退役。 */
   flex-shrink: 0;
   min-height: 48px;
 }
@@ -228,7 +231,10 @@ html[data-surface='chat'] .chat-app {
      floating chat card. A self-painted bg + a 1px line would both break that
      continuity. (--rail-bg is still the source of truth — the root copies
      its value; keep the two in sync.) */
-  -webkit-app-region: drag;
+  /* app-region:drag 已删（2026-07-14）：.shell-chrome 是旧独立 shell-window
+     架构（?shell=1 / ShellApp / TabBar）的左 rail，studio 改成 layout.tsx +
+     RailShell 后该类零 className 消费者（整块死代码）。同 .header，drag 声明
+     是「唯一 drag 写手」纪律外的历史残留。 */
 }
 
 /* Dark theme: a dark-friendly rail palette aligned with web's
@@ -294,7 +300,8 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
   border-radius: 999px;
   background: hsl(var(--muted));
   color: hsl(var(--muted-foreground));
-  -webkit-app-region: no-drag;
+  /* app-region:no-drag 已删（2026-07-14）：.badge 曾在 .header（drag 带）里，
+     需挖洞逃逸；.header 退役后本类零 tsx 消费者、这条挖洞是死代码。 */
 }
 
 .badge-stage {

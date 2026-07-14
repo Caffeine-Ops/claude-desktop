@@ -50,6 +50,7 @@ import type { ComponentType, ReactNode } from 'react'
 import type { ThreadSummary } from '@desktop-shared/types'
 
 import { railEaseOut } from '@/src/chat/shell/railMotion'
+import { rememberCanvasPath } from '@/src/stores/canvasNav'
 import { stripMessageMarker } from '@/src/chat/lib/messageMarkers'
 import { useChatStore, useRunningSessionIdsKey } from '@/src/chat/stores/chat'
 import { usePendingPermissionKindsBySession } from '@/src/chat/stores/permissions'
@@ -343,7 +344,12 @@ export function RailSessionList() {
   const goChat = useCallback(() => {
     // shallow pushState 而非 router.push：两面常驻 SurfaceHost、page 是
     // 空壳，Next 无需做任何导航工作（见 AppRail goChatShallow 注释）。
-    if (!pathname.startsWith('/chat')) window.history.pushState(null, '', '/chat')
+    // 切走前记住画布路径（2026-07-14，删多标签栏连带修复）：这也是「从画布
+    // 切到聊天」的入口之一，不记的话切回画布会用陈旧的 lastCanvasPath。
+    if (!pathname.startsWith('/chat')) {
+      rememberCanvasPath()
+      window.history.pushState(null, '', '/chat')
+    }
   }, [pathname])
 
   /** 点击行：高亮 + 导航到聊天 + 通知 main 切 runtime + 清未读。 */

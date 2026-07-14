@@ -4,6 +4,13 @@ import { useAnalytics } from '../../analytics/provider';
 import { trackSettingsMediaProvidersClick } from '../../analytics/events';
 import { useI18n } from '../../i18n';
 import { Icon } from '../shared/Icon';
+// 顶栏统一后的第一个 P2 迁移单元（2026-07-14）：本 section 的裸 input/button
+// 换成 chat 面的 shadcn 原语（透明底 + 3px 柔光聚焦环，取代 canvas 的白实底 +
+// 硬 outline），使表单手感与聊天面一致。原语自带 data-slot、天然豁免 canvas
+// 的裸元素 reset；布局用 Tailwind utility 重建，不复用 .media-provider-*/.field-*
+// legacy 类（canvas CSS unlayered，同名属性会压过 utility）。
+import { Button } from '@/src/components/ui/button';
+import { Input } from '@/src/components/ui/input';
 import {
   isStoredMediaProviderEntryEmpty,
   isStoredMediaProviderEntryPresent,
@@ -246,13 +253,17 @@ export function MediaProvidersSection({
               </div>
               {provider.id === 'grok' ? <XaiOAuthControl /> : null}
               <div className="media-provider-body">
-                <div className="media-provider-secret-field">
-                  <input
+                {/* 密钥输入 + 显隐切换：relative 容器承载 Input，眼睛按钮绝对
+                    定位在右内缘（取代 legacy .media-provider-secret-field 的
+                    组合布局）。Input 右内边距留出眼睛空间。 */}
+                <div className="relative">
+                  <Input
                     type={apiKeyVisible ? 'text' : 'password'}
                     value={entry.apiKey}
                     placeholder={isSavedState ? t('settings.connectorsReplaceKeyPlaceholder') : t('settings.mediaProviderPlaceholder')}
                     aria-label={`${provider.label} ${t('settings.mediaProviderApiKey')}`}
                     disabled={disabled}
+                    className="pr-9"
                     onFocus={() => {
                       trackSettingsMediaProvidersClick(analytics.track, {
                         page_name: 'settings',
@@ -266,7 +277,8 @@ export function MediaProvidersSection({
                   />
                   <button
                     type="button"
-                    className="secret-visibility-button"
+                    data-slot="secret-visibility"
+                    className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                     disabled={disabled}
                     aria-label={
                       apiKeyVisible
@@ -276,10 +288,10 @@ export function MediaProvidersSection({
                     aria-pressed={apiKeyVisible}
                     onClick={() => toggleApiKeyVisibility(provider.id)}
                   >
-                      <Icon name={apiKeyVisible ? 'eye' : 'eye-off'} size={15} />
-                    </button>
-                  </div>
-                <input
+                    <Icon name={apiKeyVisible ? 'eye' : 'eye-off'} size={15} />
+                  </button>
+                </div>
+                <Input
                   value={entry.baseUrl}
                   placeholder={provider.defaultBaseUrl || t('settings.mediaProviderBaseUrlPlaceholder')}
                   aria-label={`${provider.label} ${t('settings.mediaProviderBaseUrl')}`}
@@ -296,7 +308,7 @@ export function MediaProvidersSection({
                   onChange={(e) => updateProvider(provider, { baseUrl: e.target.value })}
                 />
                 {supportsCustomModel ? (
-                  <input
+                  <Input
                     value={entry.model ?? ''}
                     placeholder="gemini-3.1-flash-image-preview"
                     aria-label={`${provider.label} model`}
@@ -304,9 +316,11 @@ export function MediaProvidersSection({
                     onChange={(e) => updateProvider(provider, { model: e.target.value })}
                   />
                 ) : null}
-                <button
+                <Button
                   type="button"
-                  className="ghost"
+                  variant="ghost"
+                  size="sm"
+                  className="w-fit"
                   disabled={!clearable}
                   onClick={() => {
                     trackSettingsMediaProvidersClick(analytics.track, {
@@ -344,7 +358,7 @@ export function MediaProvidersSection({
                   }}
                 >
                   {t('settings.mediaProviderClear')}
-                </button>
+                </Button>
               </div>
             </div>
           );

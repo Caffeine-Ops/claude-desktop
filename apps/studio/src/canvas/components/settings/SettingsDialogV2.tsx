@@ -29,13 +29,28 @@
  *
  *   迁移进度（✓=已迁 shadcn；其余仍靠 .sv2 reskin 撑着，按用户可见频率排序）：
  *   ✓ V2 壳（本文件）        ✓ execution（SettingsDialog.tsx 内联，含 BYOK）
+ *   ✓ AppearanceSection      ✓ MediaProvidersSection（2026-07-14：27 个裸 input
+ *                              → shadcn Input 透明底 + 柔光 ring，眼睛/清除按钮
+ *                              → shadcn Button，退役 .media-provider-secret-field /
+ *                              .secret-visibility-button）
+ *   ✓ NotificationsSection   ✓ CritiqueTheaterSection ✓ IntegrationsSection
+ *   ✓ McpClientSection       ✓ PrivacySection         ✓ LogAnalysisSection
+ *   ✓ ConnectorSection       ✓ OrbitSection           ✓ MemoryModelInline
+ *   ✓ MemorySection（以上 10 个 2026-07-14 并行 workflow 迁完 markup：裸
+ *     input/select/button → shadcn Input/Radix Select/Button + Switch，utility
+ *     重建布局，typecheck 全绿、目视无回归。memory/ 目录已加 @source。）
+ *   ✓ SkillsSection / DesignSystemsSection 的筛选下拉（2026-07-14：二者共享的
+ *     4 个原生 .library-filter-select select 整组迁 Radix Select（不造新割裂）+
+ *     搜索框 → shadcn Input；已退役 quick-switcher.css 的 library-filter-select
+ *     与 library-toolbar-row 全段 73 行死代码 CSS——这是本轮唯一「共享类全消费者
+ *     迁完、CSS 真能退役」的例子）。两 section 的其余 button 未迁，仍待收尾。
  *   ☐ language / about（SettingsDialog.tsx 内联，小）
- *   ☐ AppearanceSection      ☐ NotificationsSection   ☐ CritiqueTheaterSection
- *   ☐ MediaProvidersSection  ☐ IntegrationsSection    ☐ McpClientSection
- *   ☐ SkillsSection          ☐ PrivacySection         ☐ LogAnalysisSection
- *   ☐ ConnectorSection       ☐ OrbitSection           ☐ memory / instructions /
- *     pet / designSystems（各自组件）  ☐ MemoryModelInline（不在 @source 内，
- *     迁时要么挪目录要么给它所在目录也加 @source）
+ *   ☐ instructions / pet
+ *   ⚠️ 退役 legacy CSS 的纪律（2026-07-14 实测）：上面 10 个 section 腾出的
+ *     legacy 类（field/hint/ghost/primary/settings-section/seg-btn 等）**几乎全是
+ *     跨 section/跨视图共享类，实测仍有大量其它消费者（hint 67、ghost 70、
+ *     primary 31 处…）**，现在删 CSS 会破坏未迁组件。退役判据是「该类全 canvas
+ *     零消费者」，共享类要等最后一个消费者也迁完才能删——markup 迁完 ≠ CSS 能退。
  *   全部打勾后：删 .sv2 兼容类、settings-v2.css、settings-modal.css 及
  *   settings-orbit.css 里 agent- 与 field- 两族选择器段；var(--green) 等状态
  *   色在 design-tokens 转正（见 SettingsDialog.tsx 顶部 TEST_STATUS_TONES

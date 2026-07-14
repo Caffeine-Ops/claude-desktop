@@ -8,6 +8,17 @@ import {
   importLocalDesignSystem,
 } from '../../providers/registry';
 import { DesignSystemPreviewModal } from './DesignSystemPreviewModal';
+// P2 迁移（2026-07-14）：与 SkillsSection 共享的 .library-filter-select 筛选下拉
+// 整组迁 Radix Select——原生 select 的操作系统弹层换成 chat 的统一弹层，搜索框
+// 换 shadcn Input（透明底 + 柔光 ring）。原语自带 data-slot 豁免 canvas reset。
+import { Input } from '@/src/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/src/components/ui/select';
 
 // Sibling Settings section that hosts the design-systems registry.
 // Lifted out of the previous LibrarySection so each surface (functional
@@ -351,37 +362,38 @@ export function DesignSystemsSection({ cfg, setCfg }: Props) {
         </div>
       </div>
 
-      <div className="library-toolbar library-toolbar-row">
-        <input
+      {/* 筛选栏（P2 迁移）：搜索 Input + 分类 Radix Select，flex 行用 utility 重建
+          （取代 legacy .library-toolbar / .library-search / .library-filter-select）。 */}
+      <div className="flex items-center gap-2">
+        <Input
           type="search"
-          className="library-search"
           placeholder={t('settings.librarySearch')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          className="flex-1"
         />
-        <label className="library-filter-select">
-          <select
+        <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v)}>
+          <SelectTrigger
             aria-label={t('settings.designSystemsCategory')}
-            value={categoryFilter}
             data-active={categoryFilter !== 'All' ? 'true' : undefined}
-            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="w-[180px]"
           >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
             {categories.map((cat) => {
               const count =
                 cat === 'All'
                   ? designSystems.length
                   : designSystems.filter((d) => d.category === cat).length;
               return (
-                <option
-                  key={cat}
-                  value={cat}
-                >
+                <SelectItem key={cat} value={cat}>
                   {cat === 'All' ? t('settings.designSystemsAllCategories') : cat} ({count})
-                </option>
+                </SelectItem>
               );
             })}
-          </select>
-        </label>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="library-content">

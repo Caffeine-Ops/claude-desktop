@@ -728,6 +728,8 @@ export interface Dict {
   'entry.loadingWorkspace': string;
   'entry.useEverywhereTitle': string;
   'entry.useEverywhereAria': string;
+  // 工作画布顶栏标题（对称智能助手「新对话」顶栏，2026-07-14 加）
+  'entry.navTitle': string;
   // Left nav rail (icon-only) — surface labels also serve as tooltips
   'entry.navNewProject': string;
   'entry.navHome': string;

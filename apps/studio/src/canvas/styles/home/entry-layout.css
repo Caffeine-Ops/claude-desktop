@@ -18,10 +18,18 @@
    misc-widgets.css）仍是「rail 列 + 1fr」双列——rail 子元素没了之后
    main 会掉进 56px 的 rail 列里，这里收成单列压过它。下方的
    .entry-nav-rail 系列选择器保留：UpdaterPopup 的按钮还复用
-   .entry-nav-rail__btn 皮肤。 */
+   .entry-nav-rail__btn 皮肤。
+
+   两行布局（2026-07-14）：EntryShell 在 .entry-main 之前常驻一条 46px
+   「工作画布」顶栏（对称 chat「新对话」，删多标签栏后补上的顶部锚点）。
+   row1=auto 吃顶栏自身高度，row2=minmax(0,1fr) 让滚动的 .entry-main 独占
+   剩余高度并能收缩（不写 minmax(0) 的裸 1fr 会被内容撑高、破坏
+   overflow-y:auto——P1 删顶栏时塌半屏踩过同款坑）。.entry-updater-float
+   是 absolute 不进轨道流，顶栏与 main 是仅有的两个 grid 子项。 */
 .entry-shell--no-header .entry {
   position: relative;
   grid-template-columns: 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 /* 原 rail 里 UpdaterPopup 的新落点：入口视图右下角悬浮。仅桌面端有
@@ -282,7 +290,10 @@
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  background: var(--bg);
+  /* 透明透出 shell-content-card，对齐 chat（2026-07-14，见 base.css .app 同批注释）。
+     ⚠️ 这是滚动容器：sticky 顶栏（.entry-main__topbar、plugins-home 筛选条）自带
+     半透明磨砂底覆盖滚动内容，不受本层透明影响。 */
+  background: transparent;
   padding: 0;
   /* Used by descendants (e.g. the plugins-home Scenario row) to
      pin themselves directly below the sticky topbar. Mirrors the

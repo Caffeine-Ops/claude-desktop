@@ -86,6 +86,25 @@
  * 会被 purge，知识库壳样式全丢。 */
 @source '../../canvas/components/knowledge-base/**/*.{ts,tsx}';
 
+/* 首页（home，2026-07-14 起）：工作画布落地页，「整体风格不统一」的第一印象
+ * 在此定，故 P2 迁到 chat 栈。同 settings/knowledge-base 的 scoped @source——
+ * 只扫这一个目录，绝不扫整个 src/canvas/**。已核实 home 目录无裸的
+ * grid/hero/badge/flex 等撞 Tailwind utility 名的独立类（都是 home-hero /
+ * entry-grid 等复合 legacy 类，scanner 不生成 utility），加本条无污染风险。
+ * 迁移期文件仍住 canvas 树，新/改 markup 用 shadcn 原语 + utility。 */
+@source '../../canvas/components/home/**/*.{ts,tsx}';
+
+/* 记忆页（memory，2026-07-14 P2 并行迁移）：MemorySection / MemoryModelInline
+ * 迁到 chat 栈。同款 scoped @source——只扫 memory 目录，已核实无裸的
+ * grid/hero/badge 等撞 Tailwind utility 名的独立类，加本条无污染风险。 */
+@source '../../canvas/components/memory/**/*.{ts,tsx}';
+
+/* 设计系统页（design-system，2026-07-14）：DesignSystemsSection 与 SkillsSection
+ * 共享 .library-filter-select 筛选下拉（原生 select），整组一起迁 Radix Select
+ * 才不造「一个 Radix 一个原生」的新割裂——故 design-system 目录一并纳入。
+ * scoped、只扫本目录，已核实无撞 Tailwind utility 名的裸类。 */
+@source '../../canvas/components/design-system/**/*.{ts,tsx}';
+
 /* ─────────────────────────────────────────────────────────────────────
  * Theme — migrated verbatim from the former tailwind.config.js. Apple
  * DESIGN.md type/radius/shadow scale + the shadcn-style HSL token system.

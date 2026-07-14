@@ -1283,10 +1283,25 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     try {
       // 切走前把当前会话草稿的最后改动落盘（防抖可能还没触发）。
       flushProposalSave()
-      setSessionLoading(true)
-      // Switch chrome (ThreadView curtain): the two IPC round-trips below
-      // leave the OLD transcript on screen until setSession mounts the empty
-      // thread — the switching flag lets ThreadView veil that stale content.
+      // 【2026-07-14 修 composer 从底部 dock 跳到居中空态的抖动】
+      // 关键坑：assistant-ui 的 thread.isEmpty = messages.length===0 && !isLoading
+      // （@assistant-ui/core thread-runtime-client），isLoading 由 sessionLoading
+      // 派生。新建对话的 composer 位置切换（dock ↔ 居中 EmptyState）是靠 isEmpty
+      // 翻转驱动的——若这里像历史那样 setSessionLoading(true)，isEmpty 会被
+      // `&& !isLoading` 卡住不翻，直到 finally 的 setSessionLoading(false) 第二拍
+      // 才翻，于是出现「messages 已空、composer 却还钉在底部 dock，一拍后才猛地
+      // 跳到中间」的晚跳/诡异抖动。
+      //
+      // 新建空会话根本没有需要等的 cold-start：newSession 只分配 id（不 spawn）、
+      // switchSession(resume:false) 是 lazy 切指针（engine.ts 注释「~0ms」）、cli
+      // 到首次 send 才 spawn。所以这里的 sessionLoading 是「人为」的 loading 窗口，
+      // 没有任何真实等待要它遮。**新建路径不置 sessionLoading**：两次 ~0ms IPC 后
+      // 的 setSession([]) 一拍就让 isEmpty 翻真、composer 一次到位，不再晚跳。
+      // （sessionLoading 还驱动发送钮禁用/进度条——新建即可发、无冷启动进度可显，
+      // 不置它反而语义更正确。）
+      //
+      // beginSessionSwitch 保留：它置的 sessionSwitching 会被 setSession 清掉，且
+      // 切换 curtain 目前关着（SESSION_SWITCH_TRANSITION_ENABLED=false），无副作用。
       beginSessionSwitch()
       const { sessionId: newId } = await window.chatApi.newSession()
       // `--session-id newId` (no resume) — cli should honor it, but
@@ -1303,7 +1318,6 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
       console.error('[runtime] new thread failed', err)
     } finally {
       if (switchSeqRef.current === seq) {
-        setSessionLoading(false)
         // Idempotent: setSession already cleared it on the success path;
         // this covers the throw path so the veil can't get stuck on.
         endSessionSwitch()
@@ -1311,7 +1325,6 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     }
   }, [
     setSession,
-    setSessionLoading,
     beginSessionSwitch,
     endSessionSwitch,
     flushProposalSave
@@ -1434,24 +1447,36 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
 
   // Cold-start auto-select. Ensures that by the time the user types
   // into the composer, `sessionId` is already non-null — no "No active
-  // session" errors on an empty workspace, no need to click "New chat"
-  // before typing. Two branches:
+  // session" errors (the plain-send path hard-returns on a null id, see
+  // onNew's `sessionId === null` guard), no need to click "New chat"
+  // before typing.
   //
-  //   - Workspace already has chats → resume the most recently updated
-  //     one. `threads` is sorted newest-first by sessionStore.listSessions,
-  //     so threads[0] is "the chat the user was most recently in".
-  //   - Workspace is empty → auto-create a fresh chat, equivalent to
-  //     clicking the "+ New chat" button at mount time. With engine.ts
-  //     in lazy-spawn mode, this only allocates a sessionId; no cli
-  //     is spawned until the user actually sends a message.
+  // 【2026-07-14 用户定稿：reload 后一律停在新对话空态】
+  // 历史行为是「有历史 → resume threads[0]（最近用过的会话）」，但那条
+  // 分支制造了 reload 的抖动中间帧：先渲染 sessionId===null 的 EmptyState
+  // 空态，等磁盘扫描的 listSessions() 回来（threadsLoaded=true）才切到
+  // threads[0]——用户先看到「说说你的需求吧」空态闪一下，又被历史会话替
+  // 换。用户要的是 reload 干脆停在新对话空态、不做这次切换。故两支合并成
+  // 统一 onSwitchToNewThread()：不再读 threads[0]，中间帧从因果上消失
+  // （不再有「空态→切历史」两拍，EmptyState 从头到尾稳定在屏）。
+  //
+  // 为什么仍需 onSwitchToNewThread 而不是「什么都不做、留 sessionId=null」：
+  // 空态的 composer 要能直接打字发送，但 onNew 的 plain-send 对 null id 是
+  // 硬报错 return（无自动建会话兜底）。onSwitchToNewThread 预建一个
+  // sessionId（engine lazy-spawn，只分配 id、不 spawn cli，也不写盘——
+  // transcript 要到第一次 send 才落地，故 reload 停在空态不发消息 = 零污染
+  // 会话列表）。这样空态可发送，又不切走。
+  //
+  // 代价（用户已知情接受）：reload 不再回到「最近用过的会话」，要回历史
+  // 会话得从左侧 rail 点。
   //
   // Guards:
   //   - `autoSelectedRef` latches true the instant we trigger, so this
   //     is idempotent even if `threads` changes later in the session.
   //   - wait for `threadsLoaded` before running — during the initial
-  //     tick `threads` is `[]` because listSessions hasn't returned yet,
-  //     and acting on that stale value would create a spurious new
-  //     chat in every launch of a workspace that actually has history.
+  //     tick `threads` is `[]` because listSessions hasn't returned yet;
+  //     waiting keeps the trigger deterministic (also lets a future
+  //     branch tell empty-vs-populated workspaces apart if needed).
   //   - skip if the user has already picked a thread (`sessionId` set)
   //   - skip if a switch is already in flight (`sessionLoading`)
   const autoSelectedRef = useRef(false)
@@ -1461,17 +1486,12 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
     if (sessionId !== null) return
     if (sessionLoading) return
     autoSelectedRef.current = true
-    if (threads.length > 0) {
-      void onSwitchToThread(threads[0].id)
-    } else {
-      void onSwitchToNewThread()
-    }
+    void onSwitchToNewThread()
   }, [
     threads,
     threadsLoaded,
     sessionId,
     sessionLoading,
-    onSwitchToThread,
     onSwitchToNewThread
   ])
 

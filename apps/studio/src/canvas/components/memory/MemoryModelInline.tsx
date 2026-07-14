@@ -34,6 +34,15 @@ import {
   useState,
 } from 'react';
 import { useT } from '../../i18n';
+import { Button } from '@/src/components/ui/button';
+import { Input } from '@/src/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/src/components/ui/select';
 import type {
   MemoryExtractionConfig as MemoryExtractionConfigShape,
   MemoryExtractionMaskedConfig,
@@ -397,66 +406,60 @@ export function MemoryModelInline({
   // the labelling element is just the short title; we now use a div
   // with an explicit id-based association via `aria-labelledby`.
   return (
-    <div className="field">
-      <span id={labelId} className="field-label">
-        {t('settings.memoryModelInlineLabel')}
-      </span>
-      {flash ? (
-        <span
-          role="status"
-          aria-live="polite"
-          style={{
-            display: 'inline-block',
-            marginLeft: 8,
-            marginTop: -2,
-            fontSize: 11,
-            fontWeight: 500,
-            color: 'var(--text-success, #1f7a3a)',
-            textTransform: 'none',
-            letterSpacing: 0,
-          }}
-        >
-          {flash}
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <span id={labelId} className="text-sm font-medium text-foreground">
+          {t('settings.memoryModelInlineLabel')}
         </span>
-      ) : null}
-      <select
-        aria-labelledby={labelId}
+        {flash ? (
+          <span
+            role="status"
+            aria-live="polite"
+            className="text-[11px] font-medium text-[var(--text-success,#1f7a3a)]"
+          >
+            {flash}
+          </span>
+        ) : null}
+      </div>
+      <Select
         value={selectValue}
         disabled={busy}
-        onChange={(e) => void onSelectChange(e.target.value)}
+        onValueChange={(value) => void onSelectChange(value)}
       >
-        <option value={SAME_AS_CHAT_SENTINEL}>
-          {sameAsChatCliLabel
-            ? t('settings.memoryModelInlineSameAsChatWithModel', {
-                model: sameAsChatCliLabel,
-              })
-            : effectiveChatProtocol
-            ? t('settings.memoryModelInlineSameAsChatWithProvider', {
-                provider: effectiveChatProtocol,
-              })
-            : chatModel
+        <SelectTrigger aria-labelledby={labelId} className="w-full bg-card">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent position="popper">
+          <SelectItem value={SAME_AS_CHAT_SENTINEL}>
+            {sameAsChatCliLabel
               ? t('settings.memoryModelInlineSameAsChatWithModel', {
-                  model: chatModel,
+                  model: sameAsChatCliLabel,
                 })
-              : t('settings.memoryModelInlineSameAsChat')}
-        </option>
-        {showSuggestedOptions
-          ? modelOptions.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))
-          : null}
-        <option value={CUSTOM_MODEL_SENTINEL}>
-          {t('settings.modelCustom')}
-        </option>
-      </select>
+              : effectiveChatProtocol
+              ? t('settings.memoryModelInlineSameAsChatWithProvider', {
+                  provider: effectiveChatProtocol,
+                })
+              : chatModel
+                ? t('settings.memoryModelInlineSameAsChatWithModel', {
+                    model: chatModel,
+                  })
+                : t('settings.memoryModelInlineSameAsChat')}
+          </SelectItem>
+          {showSuggestedOptions
+            ? modelOptions.map((m) => (
+                <SelectItem key={m} value={m}>
+                  {m}
+                </SelectItem>
+              ))
+            : null}
+          <SelectItem value={CUSTOM_MODEL_SENTINEL}>
+            {t('settings.modelCustom')}
+          </SelectItem>
+        </SelectContent>
+      </Select>
       {customActive ? (
-        <div
-          className="field-row"
-          style={{ marginTop: 6, display: 'flex', gap: 6 }}
-        >
-          <input
+        <div className="flex gap-1.5">
+          <Input
             type="text"
             aria-label={t('settings.memoryModelInlineLabel')}
             value={customDraft}
@@ -469,17 +472,18 @@ export function MemoryModelInline({
               }
             }}
           />
-          <button
+          <Button
             type="button"
-            className="ghost"
+            variant="ghost"
+            size="sm"
             onClick={() => void onSaveCustom()}
             disabled={busy || !customDraft.trim()}
           >
             {t('common.save')}
-          </button>
+          </Button>
         </div>
       ) : null}
-      <p className="hint" style={{ marginTop: 4, fontSize: 11 }}>
+      <p className="text-[11px] text-muted-foreground">
         {mode === 'api'
           ? t('settings.memoryModelInlineHintByokNeutral')
           : effectiveChatProtocol

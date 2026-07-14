@@ -24,10 +24,14 @@ import dynamic from 'next/dynamic'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/src/components/ui/button'
+import { ChatLoadingSkeleton } from '@/src/components/ChatLoadingSkeleton'
 
 const ChatApp = dynamic(() => import('@/src/chat/App'), {
   ssr: false,
-  loading: () => <div className="flex min-h-screen items-center justify-center text-sm opacity-60">加载聊天界面…</div>
+  // chat App chunk 下载/求值期的骨架（预示 chat 形态，替代旧的「加载聊天
+  // 界面…」文案）。同一骨架也在 chat App 的 workspace-loading 分支复用，两
+  // 段加载态接力无空白凹陷——见 ChatLoadingSkeleton 头注释。
+  loading: () => <ChatLoadingSkeleton />
 })
 
 const HOST_GATE_GRACE_MS = 2000

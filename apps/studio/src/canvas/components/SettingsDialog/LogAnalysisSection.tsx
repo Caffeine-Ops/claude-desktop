@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
+import { Button } from '@/src/components/ui/button';
 // Type-only import across the process boundary — single source of truth for
 // the entry shape (the old hand-copied DesktopRuntimeLogEntry drifted: it
 // was missing the `studio` source, which NaN'd the tab badge counts).
@@ -156,66 +157,68 @@ export function LogAnalysisSection() {
         }}
       >
         <div
-          className="seg-control"
           role="tablist"
           aria-label="日志来源"
-          style={{ ['--seg-cols' as string]: tabs.length } as CSSProperties}
+          className="grid min-h-[42px] min-w-0 gap-0.5 rounded-lg border border-border bg-muted/50 p-[3px]"
+          style={
+            {
+              gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))`,
+            } as CSSProperties
+          }
         >
           {tabs.map((tab) => {
             const active = activeSource === tab.id;
             const count = tab.id === 'all' ? logs.length : counts[tab.id];
             return (
-              <button
+              <Button
                 key={tab.id}
                 type="button"
                 role="tab"
+                variant="ghost"
                 aria-selected={active}
-                className={'seg-btn seg-btn--inline' + (active ? ' active' : '')}
                 onClick={() => setActiveSource(tab.id)}
+                className={
+                  'h-auto min-w-0 rounded-md px-3 py-2 text-xs font-semibold ' +
+                  (active
+                    ? 'bg-background text-foreground shadow-sm hover:bg-background'
+                    : 'text-muted-foreground')
+                }
               >
-                <span
-                  className="seg-title"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
-                >
+                <span className="inline-flex min-w-0 items-center gap-1.5">
                   {tab.id !== 'all' ? (
                     <span
-                      style={{
-                        width: 7,
-                        height: 7,
-                        borderRadius: 999,
-                        background: LOG_SOURCE_COLOR[tab.id],
-                        display: 'inline-block',
-                      }}
+                      className="inline-block size-[7px] shrink-0 rounded-full"
+                      style={{ background: LOG_SOURCE_COLOR[tab.id] }}
                     />
                   ) : null}
-                  {tab.label}
-                  <span style={{ opacity: 0.6, fontVariantNumeric: 'tabular-nums' }}>
-                    {count}
-                  </span>
+                  <span className="truncate">{tab.label}</span>
+                  <span className="tabular-nums opacity-60">{count}</span>
                 </span>
-              </button>
+              </Button>
             );
           })}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
           {bridge.revealLogFile ? (
-            <button
+            <Button
               type="button"
-              className="btn btn-ghost btn-sm"
+              variant="ghost"
+              size="sm"
               onClick={() => void bridge.revealLogFile?.()}
               title="在文件管理器中显示日志文件（面板内容 + 进程级错误都会持久化到该文件）"
             >
               查看日志文件
-            </button>
+            </Button>
           ) : null}
-          <button
+          <Button
             type="button"
-            className="btn btn-ghost btn-sm"
+            variant="ghost"
+            size="sm"
             onClick={handleClear}
             title="清空内存日志并删除磁盘上的日志文件"
           >
             清空
-          </button>
+          </Button>
         </div>
       </div>
 

@@ -32,6 +32,17 @@ import { fetchAgents } from '../../providers/registry';
 import type { AgentInfo } from '../../types';
 import { Icon } from '../shared/Icon';
 import { useT } from '../../i18n';
+import { Button } from '@/src/components/ui/button';
+import { Input } from '@/src/components/ui/input';
+import { Textarea } from '@/src/components/ui/textarea';
+import { Switch } from '@/src/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/src/components/ui/select';
 
 interface Props {
   // Receive a notification when servers list changes so the parent can
@@ -437,9 +448,10 @@ export const McpClientSection = forwardRef<McpClientSectionHandle, Props>(
           <h3>{t('mcpClient.title')}</h3>
           <p className="hint">{t('mcpClient.subtitle')}</p>
         </div>
-        <button
+        <Button
           type="button"
-          className="primary mcp-add-btn"
+          variant="default"
+          size="sm"
           onClick={() => {
             trackIntegrationsMcpTabClick(analytics.track, {
               page_name: 'integrations',
@@ -452,7 +464,7 @@ export const McpClientSection = forwardRef<McpClientSectionHandle, Props>(
         >
           <Icon name="sparkles" size={13} />
           <span>{t('mcpClient.addServer')}</span>
-        </button>
+        </Button>
       </div>
 
       <McpAgentSupportBanner agents={agents} />
@@ -502,9 +514,10 @@ export const McpClientSection = forwardRef<McpClientSectionHandle, Props>(
       )}
 
       <div className="mcp-foot">
-        <button
+        <Button
           type="button"
-          className="primary"
+          variant="default"
+          size="sm"
           onClick={() => {
             trackIntegrationsMcpTabClick(analytics.track, {
               page_name: 'integrations',
@@ -516,7 +529,7 @@ export const McpClientSection = forwardRef<McpClientSectionHandle, Props>(
           disabled={saving || !dirty}
         >
           {saving ? t('settings.autosaveSaving') : dirty ? t('mcpClient.saveChanges') : t('settings.autosaveSaved')}
-        </button>
+        </Button>
         {savedAt && !dirty ? (
           <span className="hint mcp-saved-msg">{t('settings.connectorsSaved')}.</span>
         ) : null}
@@ -617,22 +630,23 @@ function PickerPanel({
       <div className="mcp-picker-head">
         <div className="mcp-picker-head-row">
           <strong>Pick a template</strong>
-          <button
+          <Button
             type="button"
-            className="icon-btn mcp-picker-close"
+            variant="ghost"
+            size="icon"
+            className="size-7 text-base"
             onClick={onClose}
             title="Close picker"
             aria-label="Close picker"
           >
             ×
-          </button>
+          </Button>
         </div>
         <span className="hint">
           Pre-fills the form. You can still edit any field after.
         </span>
-        <input
+        <Input
           type="search"
-          className="mcp-picker-search"
           placeholder="Filter by name, transport, capability…"
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
@@ -654,6 +668,7 @@ function PickerPanel({
       <div className="mcp-picker-foot">
         <button
           type="button"
+          data-slot="mcp-picker-custom"
           className="mcp-picker-item mcp-picker-item-action mcp-picker-custom"
           onClick={onPickBlank}
         >
@@ -681,6 +696,7 @@ function PickerCard({
     <div className="mcp-picker-item">
       <button
         type="button"
+        data-slot="mcp-picker-card"
         className="mcp-picker-item-action"
         onClick={onPick}
         title={tpl.description}
@@ -743,18 +759,20 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
       }`}
     >
       <div className="mcp-row-head">
-        <label className="mcp-row-toggle" title={row.enabled ? 'Enabled' : 'Disabled'}>
-          <input
-            type="checkbox"
+        <span
+          className="flex items-center"
+          title={row.enabled ? 'Enabled' : 'Disabled'}
+        >
+          <Switch
             checked={row.enabled}
-            onChange={(e) => onChange({ enabled: e.target.checked })}
+            onCheckedChange={(checked) => onChange({ enabled: checked })}
             aria-label="Enable this MCP server"
           />
-        </label>
+        </span>
         {expanded ? (
-          <input
+          <Input
             type="text"
-            className="mcp-row-label"
+            className="h-8 flex-1"
             value={row.label ?? ''}
             placeholder="Display name (optional)"
             onChange={(e) => onChange({ label: e.target.value })}
@@ -762,6 +780,7 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
         ) : (
           <button
             type="button"
+            data-slot="mcp-row-summary-title"
             className="mcp-row-summary-title"
             onClick={() => setExpanded(true)}
             title="Expand to edit"
@@ -780,33 +799,51 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
         </span>
         <div className="mcp-row-actions">
           {onMoveUp ? (
-            <button type="button" className="icon-btn" onClick={onMoveUp} title="Move up">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              onClick={onMoveUp}
+              title="Move up"
+            >
               ↑
-            </button>
+            </Button>
           ) : null}
           {onMoveDown ? (
-            <button type="button" className="icon-btn" onClick={onMoveDown} title="Move down">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              onClick={onMoveDown}
+              title="Move down"
+            >
               ↓
-            </button>
+            </Button>
           ) : null}
-          <button
+          <Button
             type="button"
-            className="icon-btn"
+            variant="ghost"
+            size="icon"
+            className="size-7 text-base"
             onClick={onRemove}
             title="Remove this MCP server"
           >
             ×
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className="icon-btn mcp-row-toggle-btn"
+            variant="ghost"
+            size="icon"
+            className="size-7 mcp-row-toggle-btn"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
             aria-label={expanded ? 'Collapse this MCP server' : 'Expand this MCP server'}
             title={expanded ? 'Collapse' : 'Expand'}
           >
             <Icon name="chevron-down" size={13} />
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -876,7 +913,7 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
           <div className="mcp-row-grid">
             <label className="mcp-row-field">
               <span className="mcp-row-field-label">ID</span>
-              <input
+              <Input
                 type="text"
                 value={row.id}
                 onChange={(e) => onChange({ id: e.target.value })}
@@ -885,10 +922,10 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
             </label>
             <label className="mcp-row-field">
               <span className="mcp-row-field-label">Transport</span>
-              <select
+              <Select
                 value={row.transport}
-                onChange={(e) => {
-                  const transport = e.target.value as DraftRow['transport'];
+                onValueChange={(v) => {
+                  const transport = v as DraftRow['transport'];
                   onChange({
                     transport,
                     ...(transport === 'http' || transport === 'sse'
@@ -897,10 +934,15 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
                   });
                 }}
               >
-                <option value="stdio">stdio</option>
-                <option value="sse">SSE</option>
-                <option value="http">streamable HTTP</option>
-              </select>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="stdio">stdio</SelectItem>
+                  <SelectItem value="sse">SSE</SelectItem>
+                  <SelectItem value="http">streamable HTTP</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
           </div>
 
@@ -908,7 +950,7 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
             <>
               <label className="mcp-row-field mcp-row-field-stack">
                 <span className="mcp-row-field-label">Command</span>
-                <input
+                <Input
                   type="text"
                   value={row.command ?? ''}
                   placeholder="e.g. npx, node, /path/to/binary"
@@ -918,7 +960,7 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
               </label>
               <label className="mcp-row-field mcp-row-field-stack">
                 <span className="mcp-row-field-label">Args</span>
-                <input
+                <Input
                   type="text"
                   value={(row.args ?? []).join(' ')}
                   placeholder="space-separated"
@@ -935,7 +977,7 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
               </label>
               <label className="mcp-row-field mcp-row-field-stack">
                 <span className="mcp-row-field-label">Env (KEY=VALUE)</span>
-                <textarea
+                <Textarea
                   rows={Math.max(2, (row._envText ?? '').split('\n').length)}
                   value={row._envText ?? ''}
                   placeholder="GITHUB_TOKEN=ghp_…"
@@ -948,21 +990,26 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
             <>
               <label className="mcp-row-field mcp-row-field-stack">
                 <span className="mcp-row-field-label">OAuth mode</span>
-                <select
+                <Select
                   value={effectiveMcpAuthMode(row)}
-                  onChange={(e) =>
+                  onValueChange={(v) =>
                     onChange({
-                      authMode: e.target.value as NonNullable<McpServerConfig['authMode']>,
+                      authMode: v as NonNullable<McpServerConfig['authMode']>,
                     })
                   }
                 >
-                  <option value="none">No managed OAuth</option>
-                  <option value="oauth">Managed OAuth</option>
-                </select>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No managed OAuth</SelectItem>
+                    <SelectItem value="oauth">Managed OAuth</SelectItem>
+                  </SelectContent>
+                </Select>
               </label>
               <label className="mcp-row-field mcp-row-field-stack">
                 <span className="mcp-row-field-label">URL</span>
-                <input
+                <Input
                   type="text"
                   value={row.url ?? ''}
                   placeholder="https://mcp.higgsfield.ai/mcp"
@@ -975,7 +1022,7 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
               </label>
               <label className="mcp-row-field mcp-row-field-stack">
                 <span className="mcp-row-field-label">Headers (KEY=VALUE)</span>
-                <textarea
+                <Textarea
                   rows={Math.max(2, (row._headersText ?? '').split('\n').length)}
                   value={row._headersText ?? ''}
                   placeholder="Authorization=Bearer …"
@@ -989,6 +1036,7 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
           <div className={`mcp-json-helper ${showMcpExample ? 'is-open' : ''}`}>
             <button
               type="button"
+              data-slot="mcp-json-helper-toggle"
               className="mcp-json-helper-toggle"
               aria-expanded={showMcpExample}
               aria-controls={helperId}
@@ -1293,55 +1341,62 @@ function McpOAuthControl({ serverId }: { serverId: string }) {
       <div className="mcp-oauth-actions">
         {connected ? (
           <>
-            <button
+            <Button
               type="button"
-              className="primary"
+              variant="default"
+              size="sm"
               onClick={onConnect}
               disabled={busy !== 'idle' && busy !== 'refreshing'}
               title="Reauthenticate (replaces the existing token)"
             >
               {busy === 'starting' || busy === 'awaiting' ? 'Connecting…' : 'Reconnect'}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={onRefreshStatus}
               disabled={busy !== 'idle' && busy !== 'refreshing'}
               title="Re-check token status against the daemon"
             >
               {busy === 'refreshing' ? 'Checking…' : 'Refresh'}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={onDisconnect}
               disabled={busy !== 'idle' && busy !== 'refreshing'}
             >
               {busy === 'disconnecting' ? 'Disconnecting…' : 'Disconnect'}
-            </button>
+            </Button>
           </>
         ) : isAwaiting ? (
           <>
-            <button
+            <Button
               type="button"
-              className="primary"
+              variant="default"
+              size="sm"
               onClick={onRefreshStatus}
               disabled={busy === 'refreshing'}
               title="I've completed authorization — check connection status now"
             >
               {busy === 'refreshing' ? 'Checking…' : 'I\u2019ve approved — Refresh'}
-            </button>
-            <button type="button" onClick={onCancelPending}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={onCancelPending}>
               Cancel
-            </button>
+            </Button>
           </>
         ) : (
-          <button
+          <Button
             type="button"
-            className="primary"
+            variant="default"
+            size="sm"
             onClick={onConnect}
             disabled={busy !== 'idle'}
           >
             {busy === 'starting' ? 'Starting…' : 'Connect'}
-          </button>
+          </Button>
         )}
       </div>
 

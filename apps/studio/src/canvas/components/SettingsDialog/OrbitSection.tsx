@@ -3,6 +3,18 @@ import type { Dispatch, SetStateAction } from 'react';
 import { useI18n } from '../../i18n';
 import type { Dict } from '../../i18n/types';
 import { Icon } from '../shared/Icon';
+import { Button } from '@/src/components/ui/button';
+import { Input } from '@/src/components/ui/input';
+import { Switch } from '@/src/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/src/components/ui/select';
 import {
   DEFAULT_ORBIT,
   syncConfigToDaemon,
@@ -404,9 +416,10 @@ export function OrbitSection({
               ? t('settings.orbit.statusActive')
               : t('settings.orbit.statusOff')}
           </span>
-          <button
+          <Button
             type="button"
-            className={'orbit-run-cta' + (isBusy ? ' is-busy' : '')}
+            variant="default"
+            size="sm"
             onClick={() => void triggerNow()}
             disabled={runDisabled}
             title={runDisabledTitle}
@@ -422,7 +435,7 @@ export function OrbitSection({
                 <span>{t('settings.orbit.runOpen')}</span>
               </>
             )}
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -463,15 +476,16 @@ export function OrbitSection({
             </p>
           </div>
           <div className="orbit-config-gate-actions">
-            <button
+            <Button
               type="button"
-              className="orbit-config-gate-action"
+              variant="default"
+              size="sm"
               onClick={onOpenComposioSection}
               data-testid="orbit-config-gate-action"
             >
               <span>{t(gateActionKey)}</span>
               <Icon name="chevron-right" size={13} />
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -511,23 +525,22 @@ export function OrbitSection({
               {t('settings.orbit.dailySummarySub')}
             </span>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={orbit.enabled}
-            aria-disabled={controlsLocked || undefined}
-            className={`orbit-switch${orbit.enabled ? ' is-on' : ''}${controlsLocked ? ' is-locked' : ''}`}
-            disabled={controlsLocked}
+          <label
+            className={`flex items-center gap-2.5 text-xs font-semibold tracking-[0.02em] ${
+              controlsLocked ? 'cursor-not-allowed opacity-55' : 'cursor-pointer'
+            } ${orbit.enabled ? 'text-primary' : 'text-muted-foreground'}`}
             title={controlsLockedHint}
-            onClick={() => updateOrbit({ enabled: !orbit.enabled })}
           >
-            <span className="orbit-switch-track" aria-hidden="true">
-              <span className="orbit-switch-thumb" />
-            </span>
-            <span className="orbit-switch-text">
+            <Switch
+              aria-label={t('settings.orbit.dailySummaryTitle')}
+              checked={orbit.enabled}
+              disabled={controlsLocked}
+              onCheckedChange={(next) => updateOrbit({ enabled: next })}
+            />
+            <span className="min-w-[22px] text-right tabular-nums">
               {orbit.enabled ? t('settings.orbit.on') : t('settings.orbit.off')}
             </span>
-          </button>
+          </label>
         </div>
 
         <div className="orbit-automation-divider" aria-hidden="true" />
@@ -540,9 +553,9 @@ export function OrbitSection({
             </span>
           </div>
           <div className="orbit-automation-schedule-controls">
-            <input
+            <Input
               type="time"
-              className="orbit-time-input"
+              className="w-[140px] text-center tabular-nums tracking-[0.02em]"
               value={orbit.time}
               onChange={(e) => updateOrbit({ time: e.target.value || DEFAULT_ORBIT.time })}
               aria-label={t('settings.orbit.runTimeAria')}
@@ -613,9 +626,11 @@ export function OrbitSection({
                 </span>
                 {DEFAULT_ORBIT.templateSkillId &&
                 effectiveTemplateSkillId !== DEFAULT_ORBIT.templateSkillId ? (
-                  <button
+                  <Button
                     type="button"
-                    className="orbit-automation-sub-action"
+                    variant="outline"
+                    size="xs"
+                    className="ml-auto"
                     disabled={controlsLocked}
                     aria-disabled={controlsLocked || undefined}
                     onClick={() =>
@@ -630,7 +645,7 @@ export function OrbitSection({
                     }
                   >
                     {t('settings.orbit.templateReset')}
-                  </button>
+                  </Button>
                 ) : null}
               </span>
             ) : (
@@ -640,72 +655,68 @@ export function OrbitSection({
             )}
           </div>
           <div className="orbit-automation-template-controls">
-            <div className="orbit-template-select">
-              <div className="orbit-template-select-wrap">
-                <select
-                  id="orbit-template-select"
-                  className="orbit-template-select-input"
-                  aria-label={t('settings.orbit.templateAria')}
-                  aria-disabled={controlsLocked || undefined}
-                  value={effectiveTemplateSkillId}
-                  disabled={orbitTemplates === null || controlsLocked}
-                  title={controlsLockedHint}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    // Guard against the loading placeholder making it
-                    // through onChange — only persist real skill ids.
-                    if (!next) return;
-                    updateOrbit({ templateSkillId: next });
-                  }}
-                >
-                  {/* While the skill registry is still loading we render a
-                      single non-interactive placeholder so the select has
-                      a value to display. Once `orbitTemplates` resolves we
-                      drop the placeholder entirely — the dropdown lists
-                      only real Orbit skill templates, so there is no
-                      "no template" / "use built-in" option to pick. */}
-                  {orbitTemplates === null ? (
-                    <option value="">{t('settings.orbit.templatesLoading')}</option>
-                  ) : null}
-                  {/* If the saved id no longer exists in the registry,
-                      surface it as a hidden placeholder so the controlled
-                      <select> doesn't fall back to the first real option
-                      and silently mutate the user's stored choice. The
-                      inline warning above offers the explicit Reset
-                      action. */}
-                  {orbitTemplates &&
-                  effectiveTemplateSkillId &&
-                  !orbitTemplates.some((s) => s.id === effectiveTemplateSkillId) ? (
-                    <option value={effectiveTemplateSkillId} hidden>
-                      {t('settings.orbit.templateMissingOption', {
-                        id: effectiveTemplateSkillId,
-                      })}
-                    </option>
-                  ) : null}
-                  {orbitTemplates && orbitTemplates.length > 0 ? (
-                    <optgroup label={t('settings.orbit.templatesOptgroup')}>
-                      {orbitTemplates.map((s) => (
-                        <option
-                          key={s.id}
-                          value={s.id}
-                          // Browser-native tooltip — surfaces the skill
-                          // description on hover without needing a
-                          // dedicated preview panel.
-                          title={s.description ?? undefined}
-                        >
-                          {s.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : null}
-                </select>
-                <Icon
-                  name="chevron-down"
-                  size={12}
-                  className="orbit-template-select-chevron"
-                />
-              </div>
-            </div>
+            {/* Radix Select provides its own chevron + portal listbox, so the
+                former absolute-positioned chevron and the wrapper divs are
+                gone. The trigger stretches to fill the column via w-full.
+                onChange(e)=>e.target.value became onValueChange(next). */}
+            <Select
+              value={effectiveTemplateSkillId || undefined}
+              disabled={orbitTemplates === null || controlsLocked}
+              onValueChange={(next) => {
+                // Guard against an empty value making it through — only
+                // persist real skill ids.
+                if (!next) return;
+                updateOrbit({ templateSkillId: next });
+              }}
+            >
+              <SelectTrigger
+                id="orbit-template-select"
+                size="sm"
+                className="w-full"
+                aria-label={t('settings.orbit.templateAria')}
+                aria-disabled={controlsLocked || undefined}
+                title={controlsLockedHint}
+              >
+                {/* While the skill registry is still loading (orbitTemplates
+                    === null) no item matches, so SelectValue falls back to
+                    this loading placeholder. Once resolved the selected
+                    template's name shows. */}
+                <SelectValue placeholder={t('settings.orbit.templatesLoading')} />
+              </SelectTrigger>
+              <SelectContent>
+                {/* If the saved id no longer exists in the registry, surface
+                    it as its own (disabled) item so the controlled Select
+                    still renders a label for the current value instead of
+                    silently showing the loading placeholder. The inline
+                    warning above offers the explicit Reset action. */}
+                {orbitTemplates &&
+                effectiveTemplateSkillId &&
+                !orbitTemplates.some((s) => s.id === effectiveTemplateSkillId) ? (
+                  <SelectItem value={effectiveTemplateSkillId} disabled>
+                    {t('settings.orbit.templateMissingOption', {
+                      id: effectiveTemplateSkillId,
+                    })}
+                  </SelectItem>
+                ) : null}
+                {orbitTemplates && orbitTemplates.length > 0 ? (
+                  <SelectGroup>
+                    <SelectLabel>{t('settings.orbit.templatesOptgroup')}</SelectLabel>
+                    {orbitTemplates.map((s) => (
+                      <SelectItem
+                        key={s.id}
+                        value={s.id}
+                        // Browser-native tooltip — surfaces the skill
+                        // description on hover without needing a
+                        // dedicated preview panel.
+                        title={s.description ?? undefined}
+                      >
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ) : null}
+              </SelectContent>
+            </Select>
           </div>
         </div>
       </div>
@@ -834,9 +845,10 @@ export function OrbitSection({
           </div>
           <div className="orbit-artifact-strip-actions">
             {lastRun.markdown ? (
-              <button
+              <Button
                 type="button"
-                className="orbit-artifact-ghost"
+                variant="ghost"
+                size="sm"
                 onClick={() => void copyMarkdown()}
                 title={t('settings.orbit.copyMarkdownTitle')}
               >
@@ -851,7 +863,7 @@ export function OrbitSection({
                     <span>{t('settings.orbit.copy')}</span>
                   </>
                 )}
-              </button>
+              </Button>
             ) : null}
             {liveArtifactHref ? (
               <a
