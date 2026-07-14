@@ -362,6 +362,14 @@ export const IPC_CHANNELS = {
    */
   TRANSCRIBE_AUDIO: 'speech:transcribe',
   /**
+   * Renderer → main. 提交问题反馈（文字描述 + 可选截图）。main 补上
+   * appVersion/platform/osVersion，用 FEEDBACK_HMAC_SECRET（env.json）
+   * 给请求体签名后转发给反馈代理 Worker——渲染层和 Worker 都不持有
+   * GitHub Token。Worker 把截图传 R2、在目标仓库建 Issue，返回
+   * issueUrl。未配置 FEEDBACK_WORKER_URL 时返回 error，UI 隐藏入口。
+   */
+  FEEDBACK_SUBMIT: 'feedback:submit',
+  /**
    * Renderer → main. Reads the current CLI backend choice plus
    * detection info for the user's system `claude` binary. Called by
    * the settings page every time the CLI backend section opens so the
@@ -976,6 +984,23 @@ export interface TranscribeAudioPayload {
 export type TranscribeAudioResult =
   | { text: string; error?: undefined }
   | { text?: undefined; error: string }
+
+export interface FeedbackImagePayload {
+  filename: string
+  /** 反馈代理 Worker 只收白名单类型：image/png | image/jpeg | image/webp。 */
+  contentType: string
+  /** base64（不带 data URL 前缀），已在 renderer 侧压缩到 Worker 的体积上限内。 */
+  dataBase64: string
+}
+
+export interface FeedbackSubmitPayload {
+  description: string
+  images?: readonly FeedbackImagePayload[]
+}
+
+export type FeedbackSubmitResult =
+  | { issueUrl: string; error?: undefined }
+  | { issueUrl?: undefined; error: string }
 
 export type ChatSendPayload = {
   sessionId: string
@@ -2296,6 +2321,14 @@ export interface ChatApi {
   transcribeAudio(
     payload: TranscribeAudioPayload
   ): Promise<TranscribeAudioResult>
+
+  /**
+   * 提交问题反馈。main 补齐 appVersion/platform/osVersion、签名后转发给
+   * 反馈代理 Worker，成功返回创建出的 GitHub Issue 链接。失败（网络错误 /
+   * Worker 未配置 / Worker 返回非 2xx）一律 resolve 成 `{ error }`，不
+   * reject——UI 用同一分支渲染提交失败态。
+   */
+  submitFeedback(payload: FeedbackSubmitPayload): Promise<FeedbackSubmitResult>
 
   /**
    * Read the current CLI backend setting plus fresh detection info

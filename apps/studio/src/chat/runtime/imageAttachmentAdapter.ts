@@ -323,7 +323,7 @@ export const fileAttachmentAdapter: AttachmentAdapter = {
  *   5. **Hard failure**: only throw if even the baseline read fails
  *      (meaning the File blob is genuinely unreadable).
  */
-async function processImageFile(file: File): Promise<string> {
+export async function processImageFile(file: File): Promise<string> {
   // ── Step 1: baseline read ────────────────────────────────────────
   // FileReader.readAsDataURL is the authoritative way to extract a
   // File's bytes in the renderer. No GPU/canvas dependency, works on

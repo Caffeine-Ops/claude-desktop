@@ -37,6 +37,8 @@ import {
   type TabSwitchPayload,
   type TranscribeAudioPayload,
   type TranscribeAudioResult,
+  type FeedbackSubmitPayload,
+  type FeedbackSubmitResult,
   type WorkspaceFileOpenPayload,
   type WorkspaceFileOpenResult,
   type ShellOpenPathPayload,
@@ -147,6 +149,7 @@ import {
 } from '../core/proposalDraftStore'
 import { appendProposalMetric } from '../core/proposalMetricsStore'
 import { generateImage, editImage, sniffImageExt } from '../services/imageGenService'
+import { submitFeedback } from '../services/feedbackService'
 import { writeProposalImage } from '../services/proposalImageWriter'
 import { mimeForImagePath } from '../../shared/imageMime'
 import { EMBEDDABLE_IMAGE_EXTS, type ProposalMetricRecord } from '../../shared/proposal'
@@ -392,6 +395,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_OPEN_PATH)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_STAT_FILES)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_REVEAL_PATH)
+  ipcMain.removeHandler(IPC_CHANNELS.FEEDBACK_SUBMIT)
   ipcMain.removeHandler(IPC_CHANNELS.IMAGE_MANIFEST_READ)
   ipcMain.removeHandler(IPC_CHANNELS.IMAGE_FILE_READ)
   ipcMain.removeHandler(IPC_CHANNELS.SHEET_FILE_READ)
@@ -1426,6 +1430,18 @@ export function registerIpcHandlers(): void {
         error:
           'No STT API key configured — set GEMINI_API_KEY or OPENAI_API_KEY in env.json.'
       }
+    }
+  )
+
+  // 问题反馈提交。main 补 appVersion/platform/osVersion + 签名后转发给
+  // apps/feedback-worker，渲染层和 IPC payload 都不碰 GitHub Token。
+  ipcMain.handle(
+    IPC_CHANNELS.FEEDBACK_SUBMIT,
+    async (
+      _event,
+      payload: FeedbackSubmitPayload
+    ): Promise<FeedbackSubmitResult> => {
+      return submitFeedback(payload)
     }
   )
 

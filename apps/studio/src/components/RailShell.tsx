@@ -31,6 +31,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { AppRail } from '@/src/components/AppRail'
+import { FeedbackDialog } from '@/src/components/FeedbackDialog'
 import { Button } from '@/src/components/ui/button'
 import { useUnreadIdsKey } from '@/src/chat/stores/unread'
 import { useDialogStore } from '@/src/chat/stores/dialogs'
@@ -107,8 +108,17 @@ export function RailShell() {
   }, [peek, collapsed])
 
   // 展开态：AppRail 原样占 flex 列，零额外包装（保持与加功能前一致的布局，
-  // 避免多套一层 div 影响 w-61 shrink-0 的 flex 行为）。
-  if (!collapsed) return <AppRail />
+  // 避免多套一层 div 影响 w-61 shrink-0 的 flex 行为）。FeedbackDialog 挂
+  // 在两个分支里各一份而不是外面包一层 Fragment——本函数两分支各自都是
+  // 独立 return，包一层会打破「展开态零额外包装」这条不变式；反正
+  // Dialog 本身不渲染任何可见 DOM（open=false 时 Radix 直接不出内容）。
+  if (!collapsed)
+    return (
+      <>
+        <AppRail />
+        <FeedbackDialog />
+      </>
+    )
 
   return (
     // 收起态：本节点在 flex 流里宽度为 0（不占位，内容卡补满）。overlay 与
@@ -223,6 +233,7 @@ export function RailShell() {
           </div>,
           document.body
         )}
+      <FeedbackDialog />
     </div>
   )
 }
