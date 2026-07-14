@@ -13,6 +13,16 @@ import {
   updateSkill,
   type SkillFileEntry,
 } from '../../providers/registry';
+// P2 迁移（2026-07-14）：3 个 .library-filter-select 筛选下拉（Source/Type/Category）
+// 与 DesignSystemsSection 共享同款 legacy 类，整组迁 Radix Select——原生 select 的
+// 操作系统弹层换成 chat 统一弹层。原语自带 data-slot 豁免 canvas reset。
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/src/components/ui/select';
 
 // Functional skills only — design templates render in EntryView's
 // Templates tab and are managed under their own daemon registry. See
@@ -380,65 +390,85 @@ export function SkillsSection({ cfg, setCfg }: Props) {
             <span>{t('settings.skillsNew')}</span>
           </button>
         </div>
-        {/* Row 2: filter dropdowns */}
-        <div className="library-filter-selects">
-          <label className="library-filter-select">
-            <span className="library-filter-select-label">Source</span>
-            <select
+        {/* Row 2: filter dropdowns（P2 迁移：3 个原生 select → Radix Select，
+            与 DesignSystemsSection 共享的 .library-filter-select 整组迁完。每组
+            保留「标签 span + 下拉」结构，flex 布局用 utility 重建）。 */}
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-[13px] text-muted-foreground">
+            <span>Source</span>
+            <Select
               value={sourceFilter}
-              data-active={sourceFilter !== 'all' ? 'true' : undefined}
-              onChange={(e) => setSourceFilter(e.target.value as SourceFilter)}
+              onValueChange={(v) => setSourceFilter(v as SourceFilter)}
             >
-              <option value="all">
-                {t('settings.libraryAll')} ({skills.length})
-              </option>
-              {(['user', 'built-in'] as const).map((s) => {
-                const count = skills.filter((sk) => sk.source === s).length;
-                return (
-                  <option key={s} value={s}>
-                    {s} ({count})
-                  </option>
-                );
-              })}
-            </select>
+              <SelectTrigger
+                data-active={sourceFilter !== 'all' ? 'true' : undefined}
+                className="w-[150px]"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">
+                  {t('settings.libraryAll')} ({skills.length})
+                </SelectItem>
+                {(['user', 'built-in'] as const).map((s) => {
+                  const count = skills.filter((sk) => sk.source === s).length;
+                  return (
+                    <SelectItem key={s} value={s}>
+                      {s} ({count})
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
           </label>
-          <label className="library-filter-select">
-            <span className="library-filter-select-label">Type</span>
-            <select
-              value={modeFilter}
-              data-active={modeFilter !== 'all' ? 'true' : undefined}
-              onChange={(e) => setModeFilter(e.target.value)}
-            >
-              <option value="all">
-                {t('settings.libraryAll')} ({skills.length})
-              </option>
-              {modeOptions.map(([mode, count]) => (
-                <option key={mode} value={mode}>
-                  {mode} ({count})
-                </option>
-              ))}
-            </select>
+          <label className="flex items-center gap-2 text-[13px] text-muted-foreground">
+            <span>Type</span>
+            <Select value={modeFilter} onValueChange={(v) => setModeFilter(v)}>
+              <SelectTrigger
+                data-active={modeFilter !== 'all' ? 'true' : undefined}
+                className="w-[150px]"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">
+                  {t('settings.libraryAll')} ({skills.length})
+                </SelectItem>
+                {modeOptions.map(([mode, count]) => (
+                  <SelectItem key={mode} value={mode}>
+                    {mode} ({count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
           {categoryOptions.length > 0 ? (
             <label
-              className="library-filter-select"
+              className="flex items-center gap-2 text-[13px] text-muted-foreground"
               data-testid="skills-category-filters"
             >
-              <span className="library-filter-select-label">Category</span>
-              <select
+              <span>Category</span>
+              <Select
                 value={categoryFilter}
-                data-active={categoryFilter !== 'all' ? 'true' : undefined}
-                onChange={(e) => setCategoryFilter(e.target.value)}
+                onValueChange={(v) => setCategoryFilter(v)}
               >
-                <option value="all">
-                  {t('settings.libraryAll')} ({skills.length})
-                </option>
-                {categoryOptions.map(([cat, count]) => (
-                  <option key={cat} value={cat}>
-                    {humanizeCategory(cat)} ({count})
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  data-active={categoryFilter !== 'all' ? 'true' : undefined}
+                  className="w-[150px]"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">
+                    {t('settings.libraryAll')} ({skills.length})
+                  </SelectItem>
+                  {categoryOptions.map(([cat, count]) => (
+                    <SelectItem key={cat} value={cat}>
+                      {humanizeCategory(cat)} ({count})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </label>
           ) : null}
         </div>

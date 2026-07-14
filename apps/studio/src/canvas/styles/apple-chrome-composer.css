@@ -21,13 +21,11 @@
      capsule (rounded.md 11px, surface-pearl #fafafc).
    - SF Pro tight tracking on the title (-0.01em) + caption meta.
    ============================================================ */
-/* `:not(.workspace-tabs-chrome)` is load-bearing: `.app-chrome-header`
-   is shared by BOTH the project chrome row AND the top workspace-tabs
-   strip. The tab strip is a fixed 46px `height`; applying `min-height:
-   52px` here would win over that height (min > height) and push the
-   whole tab bar 6px taller, clipping a sliver off the `.app` body. So
-   the Apple restyle is scoped to the project header only. */
-.app .app-chrome-header:not(.workspace-tabs-chrome) {
+/* 这套 Apple 皮肤只作用于 ProjectView 的项目 header 行。当年用
+   `:not(.workspace-tabs-chrome)` 排除多标签 tab 条（它 fixed 46px，被这条
+   min-height:46 命中会互相干扰）；WorkspaceTabsBar 于 2026-07-14 退役、组件
+   已删、`.workspace-tabs-chrome` 类不复存在，守卫恒真、已简化去除。 */
+.app .app-chrome-header {
   /* Apple palette anchored locally so this strip speaks Apple's
      blue regardless of the app's themeable --accent. */
   --apple-blue: #0066cc;
@@ -37,7 +35,11 @@
   --apple-hairline: #e0e0e0;
   --apple-font: "SF Pro Text", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 
-  min-height: 52px;                 /* DESIGN.md sub-nav-frosted height */
+  /* 2026-07-14：52 → 46px，与聊天面顶栏（ThreadView 的 h-[46px] 单行栏）
+     统一——顶栏统一后两面顶部并排看高度必须一致，52px 的项目页返回栏比
+     聊天顶栏高一截是唯一离群值。base.css 的 .app-chrome-header 基类也是
+     46px，此处这条 Apple 皮肤（选择器更具体）曾用 52px 压过它。 */
+  min-height: 46px;
   /* Parchment-frosted bar; chrome carries NO shadow, only a hairline. */
   background: color-mix(in srgb, var(--bg-panel) 72%, var(--bg));
   -webkit-backdrop-filter: saturate(180%) blur(20px);
@@ -45,7 +47,7 @@
   border-bottom: 1px solid var(--apple-hairline);
   box-shadow: none;
 }
-[data-theme="dark"] .app .app-chrome-header:not(.workspace-tabs-chrome) {
+[data-theme="dark"] .app .app-chrome-header {
   --apple-blue: #2997ff;            /* Sky Link Blue — Apple's on-dark blue */
   --apple-blue-focus: #2997ff;
   --apple-pearl: #2a2a2c;           /* surface-tile-2 */

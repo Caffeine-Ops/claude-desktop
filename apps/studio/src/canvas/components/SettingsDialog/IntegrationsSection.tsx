@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { Icon } from '../shared/Icon';
+import { Button } from '@/src/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from '@/src/components/ui/select';
 
 // Per-client install paths. Each entry's `snippet` is what the user
 // copies; some clients also support a richer `deeplink` flow that
@@ -218,11 +225,9 @@ export function IntegrationsSection() {
   ];
 
   const [clientId, setClientId] = useState<McpClientId>('claude');
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [info, setInfo] = useState<McpInstallInfo | null>(null);
   const [infoError, setInfoError] = useState<string | null>(null);
-  const pickerRef = useRef<HTMLDivElement | null>(null);
   // The reset is wired through a ref-driven timer rather than effect
   // cleanup so re-clicks during the 2s window restart the countdown.
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -231,24 +236,6 @@ export function IntegrationsSection() {
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     };
   }, []);
-
-  // Close the dropdown on outside click or Escape.
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!pickerRef.current) return;
-      if (!pickerRef.current.contains(e.target as Node)) setPickerOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPickerOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [pickerOpen]);
 
   // Pull the absolute paths to node + cli.js from the running daemon
   // so snippets work even when `od` isn't on PATH (the realistic
@@ -334,65 +321,40 @@ export function IntegrationsSection() {
 
         {/* Group 2: setup flow */}
         <div className="mcp-setup-card">
-          <div
-            className="ds-picker"
-            ref={pickerRef}
+          <Select
+            value={clientId}
+            onValueChange={(v) => setClientId(v as McpClientId)}
           >
-          <button
-            type="button"
-            className={`ds-picker-trigger${pickerOpen ? ' open' : ''}`}
-            onClick={() => setPickerOpen((v) => !v)}
-            aria-haspopup="listbox"
-            aria-expanded={pickerOpen}
-          >
-            <span className="ds-picker-meta">
-              <span className="ds-picker-title">{client.label}</span>
-              <span className="ds-picker-sub">
-                {info ? client.buildMethod(info) : ''}
+            {/* Custom two-line trigger content (client label + install
+                method) instead of a plain <SelectValue> so the collapsed
+                picker keeps the same title/sub-label pairing the popover
+                rows show. */}
+            <SelectTrigger
+              className="h-auto w-full py-2"
+              aria-label={client.label}
+            >
+              <span className="flex min-w-0 flex-col items-start gap-0.5">
+                <span className="text-sm font-medium text-foreground">
+                  {client.label}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {info ? client.buildMethod(info) : ''}
+                </span>
               </span>
-            </span>
-            <Icon
-              name="chevron-down"
-              size={14}
-              className="ds-picker-chevron"
-              style={{ transform: pickerOpen ? 'rotate(180deg)' : undefined }}
-            />
-          </button>
-          {pickerOpen ? (
-            <div className="ds-picker-popover" role="listbox">
-              <div className="ds-picker-list">
-                {MCP_CLIENTS.map((c) => {
-                  const active = c.id === clientId;
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      role="option"
-                      aria-selected={active}
-                      className={`ds-picker-item${active ? ' active' : ''}`}
-                      onClick={() => {
-                        setClientId(c.id);
-                        setPickerOpen(false);
-                      }}
-                    >
-                      <span className="ds-picker-item-text">
-                        <span className="ds-picker-item-title">{c.label}</span>
-                        <span
-                          style={{
-                            fontSize: 11,
-                            color: 'var(--text-muted)',
-                          }}
-                        >
-                          {info ? c.buildMethod(info) : ''}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-        </div>
+            </SelectTrigger>
+            <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
+              {MCP_CLIENTS.map((c) => (
+                <SelectItem key={c.id} value={c.id} className="py-2">
+                  <span className="flex min-w-0 flex-col items-start gap-0.5">
+                    <span className="text-sm font-medium">{c.label}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {info ? c.buildMethod(info) : ''}
+                    </span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
         {info ? (
           <p style={{ margin: 0 }}>{client.buildInstruction(info)}</p>
@@ -400,9 +362,10 @@ export function IntegrationsSection() {
 
         {client.buildDeeplink && info ? (
           <div style={{ marginBottom: 12 }}>
-            <button
+            <Button
               type="button"
-              className="primary"
+              variant="default"
+              size="sm"
               onClick={() => {
                 // Use a hidden anchor so the cursor:// scheme is
                 // handled the same way as a normal link click; some
@@ -415,11 +378,10 @@ export function IntegrationsSection() {
                 a.click();
               }}
               disabled={!info.cliExists || !info.nodeExists}
-              style={{ padding: '6px 14px', fontSize: 13 }}
             >
               <Icon name="link" size={14} />
-              <span style={{ marginLeft: 6 }}>{client.deeplinkLabel ? client.deeplinkLabel() : ''}</span>
-            </button>
+              <span>{client.deeplinkLabel ? client.deeplinkLabel() : ''}</span>
+            </Button>
             <span
               style={{
                 marginLeft: 10,
@@ -467,23 +429,18 @@ export function IntegrationsSection() {
                   : t('settings.mcpLoadingPaths'))}
             </code>
           </pre>
-          <button
+          <Button
             type="button"
-            className="ghost mcp-copy-btn"
+            variant="ghost"
+            size="sm"
+            className="absolute top-2 right-2 h-7 gap-1.5 px-2.5 text-xs"
             onClick={onCopy}
             disabled={!snippet}
-            style={{
-              position: 'absolute',
-              top: 8,
-              right: 8,
-              padding: '4px 10px',
-              fontSize: 12,
-            }}
             aria-label={t('settings.mcpCopyAria')}
           >
             <Icon name={copied ? 'check' : 'copy'} size={14} />
-            <span style={{ marginLeft: 6 }}>{copied ? t('settings.mcpCopied') : t('settings.mcpCopy')}</span>
-          </button>
+            <span>{copied ? t('settings.mcpCopied') : t('settings.mcpCopy')}</span>
+          </Button>
         </div>
 
         {/* "Build the daemon first" lives here — next to the code

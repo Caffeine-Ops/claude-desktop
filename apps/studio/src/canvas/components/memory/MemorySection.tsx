@@ -9,6 +9,16 @@ import {
 import { Icon, type IconName } from '../shared/Icon';
 import { ConnectorLogo, useResolvedTheme } from '../settings/ConnectorLogo';
 import { useT } from '../../i18n';
+import { Button } from '@/src/components/ui/button';
+import { Input } from '@/src/components/ui/input';
+import { Textarea } from '@/src/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/src/components/ui/select';
 
 type Translate = ReturnType<typeof useT>;
 import { renderMarkdown } from '../../runtime/markdown';
@@ -1743,70 +1753,69 @@ export function MemorySection({
                     <label style={FIELD_LABEL_STYLE}>
                       {t('settings.memoryNameLabel')}
                     </label>
-                    <input
+                    <Input
                       ref={editorNameRef}
                       type="text"
+                      className="w-full"
                       placeholder={t('settings.memoryName')}
                       value={editing.name}
                       onChange={(e) =>
                         setEditing({ ...editing, name: e.target.value })
                       }
-                      style={{ width: '100%' }}
                     />
                   </div>
                   <div style={{ flex: '0 0 auto', minWidth: 120 }}>
                     <label style={FIELD_LABEL_STYLE}>
                       {t('settings.memoryTypeLabel')}
                     </label>
-                    <select
+                    <Select
                       value={editing.type}
-                      onChange={(e) =>
+                      onValueChange={(v) =>
                         setEditing({
                           ...editing,
-                          type: e.target.value as MemoryType,
+                          type: v as MemoryType,
                         })
                       }
-                      style={{ width: '100%' }}
                     >
-                      {TYPES.map((tt) => (
-                        <option key={tt} value={tt}>
-                          {TYPE_LABEL[tt]}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent position="popper">
+                        {TYPES.map((tt) => (
+                          <SelectItem key={tt} value={tt}>
+                            {TYPE_LABEL[tt]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
                 <div>
                   <label style={FIELD_LABEL_STYLE}>
                     {t('settings.memoryDescLabel')}
                   </label>
-                  <input
+                  <Input
                     type="text"
+                    className="w-full"
                     placeholder={t('settings.memoryDesc')}
                     value={editing.description}
                     onChange={(e) =>
                       setEditing({ ...editing, description: e.target.value })
                     }
-                    style={{ width: '100%' }}
                   />
                 </div>
                 <div>
                   <label style={FIELD_LABEL_STYLE}>
                     {t('settings.memoryBodyLabel')}
                   </label>
-                  <textarea
+                  <Textarea
                     placeholder={t('settings.memoryBody')}
                     value={editing.body}
                     onChange={(e) =>
                       setEditing({ ...editing, body: e.target.value })
                     }
                     rows={7}
-                    style={{
-                      width: '100%',
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      lineHeight: 1.5,
-                    }}
+                    className="w-full font-mono text-xs leading-relaxed"
                   />
                   <p className="hint" style={{ fontSize: 11, marginTop: 4 }}>
                     {t('settings.memoryBodyHint')}
@@ -1833,17 +1842,23 @@ export function MemorySection({
                   {t('settings.memorySaveHint')}
                 </span>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" className="ghost" onClick={cancelEdit}>
-                    {t('common.cancel')}
-                  </button>
-                  <button
+                  <Button
                     type="button"
-                    className="primary"
+                    variant="ghost"
+                    size="sm"
+                    onClick={cancelEdit}
+                  >
+                    {t('common.cancel')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
                     onClick={onSave}
                     disabled={busy || !editing.name.trim()}
                   >
                     {editing.id ? t('common.save') : t('common.create')}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -2364,15 +2379,11 @@ export function MemorySection({
                   {t('settings.memoryIndex')}
                 </span>
               </summary>
-              <textarea
+              <Textarea
                 value={indexDraft ?? index}
                 onChange={(e) => setIndexDraft(e.target.value)}
                 rows={8}
-                style={{
-                  width: '100%',
-                  marginTop: 8,
-                  fontFamily: 'monospace',
-                }}
+                className="mt-2 w-full font-mono"
               />
               <div
                 style={{
@@ -2401,22 +2412,24 @@ export function MemorySection({
                     : t('settings.memoryIndexSaveHint')}
                 </span>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button
+                  <Button
                     type="button"
-                    className="ghost"
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setIndexDraft(null)}
                     disabled={indexDraft === null}
                   >
                     {t('settings.memoryIndexReset')}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
-                    className="primary"
+                    variant="default"
+                    size="sm"
                     onClick={onSaveIndex}
                     disabled={busy || indexDraft === null}
                   >
                     {t('settings.memoryIndexSave')}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </details>

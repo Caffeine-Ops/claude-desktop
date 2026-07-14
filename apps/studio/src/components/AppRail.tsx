@@ -61,6 +61,7 @@ import {
 import { useAppearanceStore } from '@/src/chat/stores/appearance'
 import { useRailStore } from '@/src/stores/rail'
 import { useUpgradeStore } from '@/src/stores/upgrade'
+import { getLastCanvasPath, rememberCanvasPath } from '@/src/stores/canvasNav'
 
 /* 两个 surface 的切换是「同级二选一」而非普通导航列表——语义和视觉都用
  * shadcn Tabs（segmented：muted 底槽 + 选中段白卡凸起），不再用 ghost pill。
@@ -80,14 +81,26 @@ const SURFACE_TABS: { value: 'chat' | 'canvas'; label: string; icon: ReactNode }
 ]
 
 /**
+ * 记住离开工作画布时的 canvas 路径（模块级，跨 rail 重挂载存活）。
+ * 背景（2026-07-14，删多标签工作区顶栏的连带修复）：切到聊天面时
+ * goChatShallow 用 pushState('/chat') 覆盖了 canvas 的当前 URL（如
+ * '/project/xxx'），canvas 之前的路径就丢了。切回工作画布若硬编码
+ * navigate({home})，就回不到用户刚才打开的项目——多标签栏还在时，用户
+ * 能从 tab 栏点回去，栏一删这个「回到上次画布视图」的能力就必须由这里
+ * 接管：切走前记住画布路径，切回时 parseRoute 还原。'/chat*' 不记
+ * （那是聊天面路径，不是画布视图）。 */
+/**
  * 切到聊天面 —— **原生 pushState（shallow）**而非 router.push：两个面都
  * 常驻在 SurfaceHost、page 全是空壳，切换其实不需要 Next 做任何导航工作
  * （dev 下 router.push 的 RSC 请求 + 内部处理实测占 ~276ms EvaluateScript）。
  * Next 16 官方支持原生 History API：usePathname/useSearchParams 照常同步
  * （SurfaceHost 因此切面），但零 RSC fetch、零 page 切换。canvas 侧的
  * navigate() 本来就是同款机制。
+ * 覆盖 URL 前先 rememberCanvasPath()，供画布 tab 切回时还原上次画布视图
+ * （2026-07-14 删多标签栏连带修复，见 stores/canvasNav.ts）。
  */
 function goChatShallow(): void {
+  rememberCanvasPath()
   window.history.pushState(null, '', '/chat')
 }
 
@@ -411,13 +424,20 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
           if (value === 'canvas') {
             // 工作画布不能走 Next <Link>：canvas 树常驻在 SurfaceHost
             // （keep-alive），它的自制 router 只听 popstate——Next 软导航
-            // 改了 URL 它不知道，视图不会回首页。canvas.navigate 自己
-            // pushState + 派发 popstate：canvas 回首页，Next 的 native
+            // 改了 URL 它不知道，视图不会更新。canvas.navigate 自己
+            // pushState + 派发 popstate：canvas 切到目标视图，Next 的 native
             // history 集成同步 usePathname，SurfaceHost 随之切面。
             // 动态 import：canvas 模块求值期触碰 window，不能静态 import
             // 进本组件（layout SSR 会炸）；事件处理器内加载则安全。
-            void import('@/src/canvas/router').then(({ navigate }) => {
-              navigate({ kind: 'home', view: 'home' })
+            //
+            // 还原上次画布视图（2026-07-14，删多标签栏连带修复）：切回工作
+            // 画布时 parseRoute(lastCanvasPath) 还原用户离开前的项目/视图，
+            // 而非硬编码回首页（多标签栏删除后，「切回上次画布」的能力从 tab
+            // 栏转由这里接管，见 lastCanvasPath 注释）。无记录（首次进画布）
+            // 才回首页兜底。
+            void import('@/src/canvas/router').then(({ navigate, parseRoute }) => {
+              const last = getLastCanvasPath()
+              navigate(last ? parseRoute(last) : { kind: 'home', view: 'home' })
             })
           } else {
             // 智能助手同为 shallow pushState（见 goChatShallow 注释）。

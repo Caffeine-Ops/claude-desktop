@@ -424,6 +424,7 @@ export const en: Dict = {
   'entry.loadingWorkspace': 'Loading workspace…',
   'entry.useEverywhereTitle': 'Use everywhere',
   'entry.useEverywhereAria': 'Open the Use Everywhere guide (CLI, MCP, HTTP, Skills)',
+  'entry.navTitle': 'Canvas',
   'entry.navNewProject': 'New project',
   'entry.navHome': 'Home',
   'entry.navProjects': 'Projects',

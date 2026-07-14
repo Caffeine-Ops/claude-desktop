@@ -641,7 +641,13 @@ code:where(:not([data-slot], .chat-app *)) {
   grid-template-rows: auto auto 1fr;
   /* 100%（原 100vh）：卡内布局，见 .od-loading-shell 注释。 */
   height: 100%;
-  background: var(--bg-app);
+  /* 背景透明，透出根 layout 的白/暗色 .shell-content-card（hsl(var(--card))）——
+     与 chat 面同构（chat 也是透明透出同一层）。2026-07-14：canvas 内容区原本
+     铺 var(--bg-app) 浅灰(#f7f7f8)、盖住下面白色 shell-content-card，与 chat 纯白
+     内容区并排一看两面底色不一致（用户实锤）。改透明后两面共用同一张内容面底，
+     亮/暗自动一致（card 有暗色值），无需给 canvas 单独处理暗色。⚠️ 与 .workspace-shell
+     的透明是一对（这两层共同盖住 shell-content-card），改一处必改另一处。 */
+  background: transparent;
   overflow: hidden;
 }
 .app > .split {
@@ -658,17 +664,16 @@ code:where(:not([data-slot], .chat-app *)) {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  /* Row 1 must match the real tab-strip height. `.workspace-tabs-chrome`
-     is `height: 46px` (min-height: 46px), so a 36px track here is too
-     short: the strip's own min-height forces it to 46px and the 10px
-     overflow eats into row 2's body inside this `overflow: hidden`
-     grid, clipping a sliver off the top of `.app`. (This was latent —
-     the track stayed 36px when the strip grew from 36→46px to match the
-     prototype — and any extra strip height made it visible.) Use `auto`
-     so the row always fits the strip's intrinsic height, immune to
-     future strip-height changes. */
-  grid-template-rows: auto minmax(0, 1fr);
-  background: var(--bg-app);
+  /* 顶栏退役后（2026-07-14）改为单行 minmax(0,1fr)：workspace-shell__body 是
+     唯一子元素、独占整个高度撑满窗口，内容直顶到窗口顶部（与 chat 面对称）。
+     ⚠️ 不能保留旧的 `auto minmax(0,1fr)` 两行——顶栏删除后 body 会流进 row1
+     (auto)、只拿到内容自然高度，row2(1fr) 空着吃掉剩余空间，导致 ProjectView
+     等 height:100% 依赖父高的视图整体塌成半屏（2026-07-14 实测，删顶栏时误判
+     「auto 空行不占高」）。单行 1fr 才让 body 拿到全高。 */
+  grid-template-rows: minmax(0, 1fr);
+  /* 透明透出白/暗色 shell-content-card，对齐 chat 内容区——见上方 .app 的同批注释
+     （这两层共同盖住 shell-content-card，成对透明）。 */
+  background: transparent;
   overflow: hidden;
 }
 .workspace-shell__body {
@@ -676,529 +681,79 @@ code:where(:not([data-slot], .chat-app *)) {
   min-height: 0;
   overflow: hidden;
 }
+/* 红绿灯/图标排让位（顶栏退役后接管，2026-07-14）——
+   展开态：rail（244px）把内容整体推开，红绿灯（窗口 x≈30~90，tabRegistry
+   trafficLightPosition {x:30,y:17}）落在 rail 头部、收起态图标排（RailShell
+   fixed 展开/新建，x≈100~184）不渲染，内容面够不到二者 → 无需让位。
+   收起态（body[data-rail-collapsed]）：内容顶到窗口左缘，顶部左贴边的视图
+   header 会撞红绿灯 + 图标排（2026-07-13「canvas 面漏配被红绿灯压住」错误库
+   同款坑）。让位量 = --canvas-collapsed-inset，默认 0（首页等内容居中/靠下
+   的视图不受影响），**顶部有左贴边 header 的视图各自 opt-in 声明该变量**
+   （如 marketplace，见 plugins 样式）。基线 208px 与 chat ThreadView 收起态
+   pl-[208px]、被删顶栏的 --app-chrome-traffic-space:190px 同源（图标排右缘
+   184 + 呼吸），改一处必同步另两处。 */
+body[data-rail-collapsed] .workspace-shell__body {
+  padding-left: var(--canvas-collapsed-inset, 0);
+}
 .workspace-shell__body > .app,
 .workspace-shell__body > .entry-shell {
   height: 100%;
   min-height: 0;
 }
 
-/* Top multi-tab bar — visual language lifted 1:1 from
-   prototypes/open-design-nav-v0.html `.tabbar`: a 46px browser-style
-   strip with a translucent saturate+blur backdrop. Accent tokens are
-   untouched; only chrome geometry and neutral surfaces changed. */
-.workspace-tabs-chrome.app-chrome-header {
-  min-width: 0;
-  max-width: 100%;
-  min-height: 46px;
-  height: 46px;
-  padding: 0 10px;
-  gap: 6px;
-  background: color-mix(in srgb, var(--bg-panel) 70%, var(--bg));
-  border-bottom: 1px solid var(--od-border);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  backdrop-filter: saturate(180%) blur(20px);
-  user-select: none;
-  -webkit-app-region: drag;
-  overflow: hidden;
-  position: relative;
-  z-index: 120;
-}
-.workspace-tabs-chrome .workspace-tabs-traffic {
-  margin-right: calc(var(--app-chrome-traffic-margin) + 8px);
-}
-/* Rail 收起态（body[data-rail-collapsed]，写手 RailShell）：内容面顶到窗口
-   左缘，tab 栏左端会依次撞上 ① macOS 红绿灯（浮在窗口 x≈30~90，tabRegistry
-   trafficLightPosition.x=30）② RailShell 收起态图标排（fixed left-[100px]
-   的展开/搜索/新建钮，右缘 x≈184）——不留净空则第一个 tab pill 直接被
-   红绿灯和图标排压住。展开态无此问题：rail（244px）把内容面整体推开，
-   红绿灯落在 rail 顶栏、图标排不渲染，占位保持 0px。
-   190px 的推导：chrome 左 padding 10 + 占位 190 + traffic margin 8 = 208，
-   与 chat 面 ThreadView 收起态 pl-[208px] 同一净空基线（图标排右缘 184 +
-   24 呼吸，完整推导见 ThreadView 的注释）。联动约定：红绿灯 x / 图标排
-   left 右移时，这里与 ThreadView 的 pl 同增。 */
-body[data-rail-collapsed] .workspace-tabs-chrome.app-chrome-header {
-  --app-chrome-traffic-space: 190px;
-}
-/* Right-side action cluster (prototype `.tabbar__actions`): + (new) and
-   search are both 32px square buttons sharing one neutral hover, with a
-   1px divider between them. */
-.workspace-tabs-new-btn,
-.workspace-tabs-icon-btn {
-  position: relative;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--od-radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  -webkit-app-region: no-drag;
-  transition: background 120ms ease, color 120ms ease, transform 120ms ease;
-}
-.workspace-tabs-new-btn:hover,
-.workspace-tabs-icon-btn:hover:not(:disabled),
-.workspace-tabs-icon-btn.is-active {
-  background: color-mix(in srgb, var(--text) 6%, transparent);
-  color: var(--text);
-}
-.workspace-tabs-new-btn:active,
-.workspace-tabs-icon-btn:active {
-  transform: scale(0.92);
-}
-.workspace-tabs-strip {
-  align-self: stretch;
-  min-width: 0;
-  flex: 1 1 0;
-  display: flex;
-  align-items: center;
-  /* 4px gaps between independent pill tabs (prototype `.tabbar__scroll`),
-     replacing the old gap:0 connected-row + sibling divider model. */
-  gap: 4px;
-  padding-left: 0;
-  /* Horizontal scroll inside the strip — tabs keep their natural width
-     and the strip itself scrolls when it overflows the chrome. This
-     replaces the previous "slice to N visible + overflow chip" model
-     which let lots of tabs squish-shrink and could push the rest of
-     the chrome out of view. */
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  contain: layout style;
-  -webkit-app-region: drag;
-  /* Allow the user's trackpad / shift-wheel to scroll horizontally
-     without the OS turning it into a back-gesture. */
-  overscroll-behavior-x: contain;
-}
-.workspace-tabs-strip::-webkit-scrollbar {
-  height: 0;
-  display: none;
-}
-.workspace-tab {
-  position: relative;
-  height: 32px;
-  /* Content-fit width capped at 200px (prototype `.tab`): the tab is a
-     standalone pill that grows with its label and shrinks for short
-     ones, instead of a fixed 156px slot. The strip still scrolls
-     horizontally once the pills overflow the chrome. */
-  max-width: 200px;
-  min-width: 0;
-  flex: 0 0 auto;
-  /* Padding lives on the inner __main / __close so the click targets fill
-     the pill; the pill itself just bounds them. */
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  border: 1px solid transparent;
-  border-radius: var(--od-radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  overflow: hidden;
-  contain: layout style;
-  /* transform joins the list so the :active press animates; new tabs
-     fade+rise in via the keyframe below. */
-  transition: background 100ms ease, border-color 100ms ease, color 100ms ease,
-    transform 120ms cubic-bezier(0.32, 0.72, 0, 1);
-  animation: workspace-tab-in 200ms cubic-bezier(0.32, 0.72, 0, 1);
-  -webkit-app-region: no-drag;
-}
-@keyframes workspace-tab-in {
-  from { opacity: 0; transform: translateY(-3px) scale(0.97); }
-}
-.workspace-tab:active .workspace-tab__main {
-  transform: scale(0.97);
-}
-/* Independent pills need no sibling divider (prototype relies on the 4px
-   gap), and hover is a subtle neutral tint rather than a panel fill +
-   border swap. Active is the browser convention: solid panel fill, a
-   real border, and a hairline shadow lifting it off the bar. */
-.workspace-tab:hover {
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-  color: var(--text);
-}
-.workspace-tab.is-active {
-  background: var(--bg-panel);
-  border-color: var(--od-border);
-  color: var(--text-strong);
-  box-shadow: var(--od-shadow-xs);
-}
-/* Active tab echoes the rail's accent language: its leading icon goes
-   brand-green and the label firms to medium, so "which tab am I on" reads
-   at a glance. 用 --brand 而非 --od-accent：rail 的 surface tabs 选中 icon
-   就是品牌绿（AppRail data-[state=active] svg → --sidebar-primary 同值），
-   跟用户可调主题色走会让两层 tab 选中态各说各话。 */
-.workspace-tab.is-active .workspace-tab__icon {
-  color: hsl(var(--brand));
-  opacity: 1;
-}
-.workspace-tab.is-active .workspace-tab__label {
-  font-weight: 500;
-}
-.workspace-tab__main:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--od-accent);
-  border-radius: var(--od-radius-sm);
-}
-.workspace-tab__main {
-  min-width: 0;
-  height: 100%;
-  /* 11px lead-in matches the prototype `.tab`; 8px icon↔label gap. The
-     trailing 4px leaves a hair of breathing room before the close glyph. */
-  padding: 0 4px 0 11px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: inherit;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  text-align: left;
-}
-.workspace-tab__main:hover:not(:disabled) {
-  background: transparent;
-  border-color: transparent;
-}
-.workspace-tab__icon {
-  width: 14px;
-  height: 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: currentColor;
-  opacity: 0.7;
-  flex: 0 0 auto;
-  line-height: 0;
-}
-.workspace-tab__icon svg,
-.workspace-tab__close svg,
-.workspace-tabs-icon-btn svg {
-  display: block;
-  flex: none;
-}
-.workspace-tab__label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  /* Prototype `.tab__label`: 13px / 500 / -0.01em. The active-state rule
-     below no longer needs to bump weight since the resting weight is
-     already medium. */
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-.workspace-tab__close {
-  width: 18px;
-  height: 18px;
-  /* Sits flush at the pill's right edge with the prototype's 8px inset. */
-  margin-right: 8px;
-  margin-left: 1px;
-  padding: 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-faint);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  /* Hidden until hover / active, scaling in from 0.85 (prototype). */
-  transform: scale(0.85);
-  flex: 0 0 auto;
-  transition: opacity 120ms ease, transform 120ms ease,
-    background-color 120ms ease, color 120ms ease;
-}
-.workspace-tab:hover .workspace-tab__close,
-.workspace-tab.is-active .workspace-tab__close,
-.workspace-tab__close:focus-visible {
-  opacity: 1;
-  transform: scale(1);
-}
-.workspace-tab__close:hover {
-  color: var(--text);
-  background: color-mix(in srgb, var(--text) 10%, transparent);
-}
-.workspace-tab__close:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--od-accent);
-}
-@media (prefers-reduced-motion: reduce) {
-  .workspace-tab,
-  .workspace-tab__close,
-  .workspace-tab .workspace-tab__main {
-    animation: none;
-    transition-duration: 1ms;
-  }
-  .workspace-tab:active .workspace-tab__main { transform: none; }
-}
-.workspace-tabs-actions {
-  position: relative;
-  align-self: stretch;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  flex: 0 0 auto;
-  margin-left: 4px;
-  padding-left: 4px;
-  z-index: 35;
-  -webkit-app-region: no-drag;
-}
-/* 1px divider between the + (new) and search buttons (prototype
-   `.tabbar__sep`). Rendered as a pseudo-element so we don't have to add a
-   DOM node: the search button gets 9px of left room and the hairline is
-   centered in it. */
-.workspace-tabs-new-btn + .workspace-tabs-icon-btn {
-  margin-left: 9px;
-}
-.workspace-tabs-new-btn + .workspace-tabs-icon-btn::before {
-  content: '';
-  position: absolute;
-  left: -5px;
-  top: 50%;
-  width: 1px;
-  height: 18px;
-  background: var(--od-border);
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-/* ── Search-tabs popover — Apple redesign ──────────────────────────────
-   Reworked against the project's Apple DESIGN.md (Apple-design-analysis):
-   Action Blue #0066cc / focus #0071e3, SF Pro caption type, hairline
-   dividers, recessed rounded selection fills (no edge-to-edge color bars),
-   and generous list-row breathing room. Chrome itself stays shadow-free
-   except this floating layer, which is one of the few surfaces allowed the
-   single signature drop shadow. DOM/behaviour unchanged — visual only. */
-.workspace-tabs-popover {
-  /* Anchored to the viewport, not to .workspace-tabs-actions, because the
-     actions group sits next to the tab strip on the left side of the chrome
-     header — not the right. `position: absolute; right: 0` against that
-     narrow inline-flex container made the 380px popover hang off the left
-     edge of the window. Fixed positioning keeps it inside the viewport
-     regardless of where the actions group lands as tabs accumulate. */
-  position: fixed;
-  top: calc(var(--workspace-tabs-chrome-height, 46px) + 8px);
-  right: max(10px, env(safe-area-inset-right));
-  width: min(380px, calc(100vw - 24px));
-  max-height: min(620px, calc(100vh - var(--workspace-tabs-chrome-height, 46px) - 24px));
-  /* DESIGN.md spacing.xs (8) outer pad, rounded.md (11) corners. */
-  padding: 8px;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius);
-  background: var(--bg-panel);
-  box-shadow: var(--od-shadow-lg);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  z-index: 130;
-  -webkit-app-region: no-drag;
-}
-.workspace-tabs-popover,
-.workspace-tabs-popover * {
-  -webkit-app-region: no-drag;
-}
-/* Search field: a calm hairline pill at rest; on focus it gets Apple's
-   restrained Action-Blue ring (border firms to #0071e3 + a soft 4px halo)
-   instead of the heavy always-on blue box it had before. */
-.workspace-tabs-search {
-  height: 38px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-sm);
-  background: var(--bg);
-  color: var(--text-muted);
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-.workspace-tabs-search:focus-within {
-  border-color: #0071e3;
-  box-shadow: 0 0 0 4px rgba(0, 102, 204, 0.16);
-}
-.workspace-tabs-search input {
-  flex: 1;
-  min-width: 0;
-  height: 36px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  color: var(--text);
-  /* DESIGN.md caption: 14 / -0.224em. */
-  font-size: 14px;
-  letter-spacing: -0.224px;
-}
-.workspace-tabs-search input:focus {
-  border: 0;
-  box-shadow: none;
-}
-.workspace-tabs-search input::placeholder {
-  color: var(--text-faint);
-}
-/* Section header ("Open tabs · 19"): DESIGN.md caption-strong, tracked in. */
-.workspace-tabs-popover__section {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 6px 2px;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: -0.08px;
-}
-.workspace-tabs-list {
-  min-height: 0;
-  max-height: 500px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  scrollbar-width: thin;
-  contain: layout style paint;
-}
-/* Rows get real vertical room (title + meta breathe) and a recessed
-   rounded fill on hover/selection — Apple's pearl/parchment grey, never an
-   edge-to-edge tinted bar. */
-.workspace-tabs-list__item {
-  min-height: 46px;
-  border-radius: var(--od-radius-sm);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
-  align-items: center;
-  contain: layout style;
-}
-.workspace-tabs-list__item:hover {
-  background: var(--bg-subtle);
-}
-.workspace-tabs-list__item.is-active {
-  background: var(--bg-muted);
-}
-.workspace-tabs-list__main {
-  min-width: 0;
-  height: 100%;
-  padding: 7px 10px;
-  border: 0;
-  border-radius: var(--od-radius-sm);
-  background: transparent;
-  color: var(--text);
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  text-align: left;
-}
-.workspace-tabs-list__main:hover:not(:disabled) {
-  background: transparent;
-  border-color: transparent;
-}
-.workspace-tabs-list__icon {
-  width: 18px;
-  height: 18px;
-  color: var(--text-soft);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  line-height: 0;
-}
-.workspace-tabs-list__icon svg,
-.workspace-tabs-list__close svg,
-.workspace-tabs-search svg {
-  display: block;
-  flex: none;
-}
-.workspace-tabs-list__text {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.workspace-tabs-list__title,
-.workspace-tabs-list__meta {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* Title = DESIGN.md caption-strong (14/600/-0.224); meta = caption (13/400
-   muted). Softer pairing than the old bold-title + grey-link contrast. */
-.workspace-tabs-list__title {
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.224px;
-}
-.workspace-tabs-list__meta {
-  color: var(--text-muted);
-  font-size: 13px;
-  letter-spacing: -0.08px;
-}
-.workspace-tabs-list__close {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--od-radius-sm);
-  background: transparent;
-  color: var(--text-faint);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color 150ms ease, color 150ms ease;
-}
-.workspace-tabs-list__close:hover:not(:disabled) {
-  color: var(--text);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-}
-.workspace-tabs-empty {
-  padding: 24px 8px;
-  text-align: center;
-  color: var(--text-muted);
-  font-size: 14px;
-  letter-spacing: -0.224px;
-}
-@media (max-width: 720px) {
-  .workspace-tabs-chrome.app-chrome-header {
-    padding-right: 6px;
-  }
-  /* Narrow-screen degrade: collapse pills to icon-only. Prefixed with
-     `.workspace-shell` so it out-specifies the shell tab rules that
-     otherwise paint the bar (the bar only mounts inside the shell). */
-  .workspace-shell .workspace-tab,
-  .workspace-tab {
-    min-width: 40px;
-    max-width: 44px;
-    flex: 0 0 44px;
-    padding: 0;
-  }
-  .workspace-shell .workspace-tab__main,
-  .workspace-tab__main {
-    justify-content: center;
-    padding: 0;
-  }
-  .workspace-shell .workspace-tab__label,
-  .workspace-shell .workspace-tab__close,
-  .workspace-tab__label,
-  .workspace-tab__close {
-    display: none;
-  }
-}
 
+/* ProjectView 返回栏（AppChromeHeader）——项目内导航条（返回箭头 + 文件
+   操作 portal），性质是「视图内 header」，与已退役的工作区多标签栏不同，
+   保留。2026-07-14 顶栏统一：背景从实底 var(--bg) 改为与内容面同底
+   hsl(var(--card))、高度 48→46px 对齐整体，读起来是同一张纸的延续而非
+   另一条深色栏。 */
 .app-chrome-header {
   --app-chrome-traffic-space: 0px;
   --app-chrome-traffic-margin: 0px; /* Set to 8px on macOS */
   display: flex;
   align-items: center;
-  min-height: 48px;
+  min-height: 46px;
   padding: 5px 14px;
-  border-bottom: 1px solid var(--od-border);
-  background: var(--bg);
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
   gap: 12px;
   flex-shrink: 0;
+  /* canvas 顶栏自带 drag 重申（2026-07-14，修「切到工作画布顶部拖不动」）——
+     canvas 面此前一直靠已退役的 .workspace-tabs-chrome（唯一 app-region:drag
+     写手）在顶部重申可拖；那条多标签栏这次删掉后，canvas 顶部第一次变成「纯靠
+     根 .window-drag-strip 兜底」，暴露出 strip 单点在 chat→canvas 切换方向重
+     采集不可靠（Electron #20926 同族：原生拖拽矩形事件驱动+缓存、切面时与
+     content-visibility 大 layout 交错、脉冲救不了「本就缺 drag 声明」）。chat 面
+     早在 2026-07-08 就纯靠 strip 且被反复验证稳定，canvas 是这次删顶栏才首次
+     暴露。**这是对 globals.css「组件顶栏不再声明 drag」收敛纪律的必要 canvas
+     例外**：让 canvas 顶部可拖性自带、不赌 strip 缓存。下方交互容器的 no-drag
+     洞 DOM 排在本声明之后，照常覆盖（后者覆盖前者），点击不受影响。 */
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+/* 顶栏交互元素挖 no-drag（2026-07-14，修「项目页顶栏按钮点不中」）——
+   AppChromeHeader 这条返回栏落在顶部 46px window-drag-strip 带内。多标签栏
+   退役前它在带下方（y46）、按钮不受影响；退役后上移到 y0，返回箭头 / 标题 /
+   文件操作 / 交付·齿轮全落进 drag 带，mousedown 被窗口系统截走、click 到不了
+   页面（点不中）。此前 AppChromeHeader 零 no-drag 挖洞、只赌 DOM 排在 strip
+   之后的顺序兜底，删顶栏后暴露成 bug。这里给所有交互容器统一挖洞（对齐知识库
+   三面板「头部整行 no-drag」的做法）；header 本身与 .app-chrome-traffic-space /
+   .app-chrome-drag 两个纯占位 spacer 不挖——它们是 header 里留给拖窗的空白。 */
+.app-chrome-header .app-chrome-back,
+.app-chrome-header .app-chrome-content,
+.app-chrome-header .app-chrome-file-actions,
+.app-chrome-header .app-chrome-actions {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+/* 收起态红绿灯/图标排让位（顶栏退役后接管，2026-07-14）——多标签栏退役前，
+   返回栏在其下方 46px、红绿灯（y17~37）够不到；退役后返回栏上移到 y0，收起
+   态会撞红绿灯 + 图标排（x≈30~184）。用返回栏自带的 .app-chrome-traffic-space
+   flex spacer 把返回箭头右推 190px（与被删多标签栏 base.css 收起态同值、与
+   chat ThreadView 收起态 pl-[208px] 同源；改一处同步另两处）。展开态 rail
+   已把内容整体推开、spacer 保持 0。 */
+body[data-rail-collapsed] .app-chrome-header {
+  --app-chrome-traffic-space: 190px;
 }
 .app-chrome-traffic-space {
   width: var(--app-chrome-traffic-space);

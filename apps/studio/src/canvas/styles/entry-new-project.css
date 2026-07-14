@@ -7,7 +7,9 @@
   /* 100%（原 100vh）：卡内布局，见 .od-loading-shell 注释。 */
   height: 100%;
   min-height: 0;
-  background: var(--bg);
+  /* 透明透出白/暗色 shell-content-card，对齐 chat 内容区（2026-07-14，见 base.css
+     .app 的同批注释）。canvas 内容区顶层容器统一透明、共用同一张内容面底。 */
+  background: transparent;
 }
 /* Note: `.entry-shell--no-header` and the rest of the entry-view
    redesign live in `src/styles/home/`. Keeping that bundle out of
@@ -18,7 +20,8 @@
   grid-template-columns: var(--entry-rail-width, 64px) 1fr;
   height: 100%;
   min-height: 0;
-  background: var(--bg);
+  /* 透明透出 shell-content-card，对齐 chat（2026-07-14，见 base.css .app 同批注释）。 */
+  background: transparent;
 }
 
 .entry-side {

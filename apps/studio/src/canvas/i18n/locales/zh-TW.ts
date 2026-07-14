@@ -385,6 +385,7 @@ export const zhTW: Dict = {
   'entry.loadingWorkspace': '正在載入工作區…',
   'entry.useEverywhereTitle': '隨處使用',
   'entry.useEverywhereAria': '開啟「隨處使用」指南（CLI、MCP、HTTP、Skills）',
+  'entry.navTitle': '工作畫布',
   'entry.navNewProject': '新建專案',
   'entry.navHome': '主頁',
   'entry.navProjects': '專案',

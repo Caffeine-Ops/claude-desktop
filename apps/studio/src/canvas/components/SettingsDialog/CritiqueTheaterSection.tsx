@@ -1,3 +1,5 @@
+import { Switch } from '@/src/components/ui/switch';
+
 import { useI18n } from '../../i18n';
 import { useRoute } from '../../router';
 import {
@@ -37,44 +39,50 @@ export function CritiqueTheaterSection() {
   const enabled = useCritiqueTheaterEnabled();
   const route = useRoute();
   const activeProjectId = route.kind === 'project' ? route.projectId : null;
+  const setEnabled = (next: boolean) => {
+    if (activeProjectId !== null) {
+      void setCritiqueTheaterEnabled(next, { projectId: activeProjectId });
+    } else {
+      void setCritiqueTheaterEnabled(next);
+    }
+  };
   return (
-    <section className="settings-section">
-      <div className="section-head">
-        <div>
-          <h3>{t('critiqueTheater.settingsNav')}</h3>
-          <p className="hint">{t('critiqueTheater.settingsNavHint')}</p>
-        </div>
+    <section className="flex flex-col gap-3">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">
+          {t('critiqueTheater.settingsNav')}
+        </h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t('critiqueTheater.settingsNavHint')}
+        </p>
       </div>
-      <label className="field">
-        <span className="field-label">
-          <input
-            type="checkbox"
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="flex items-center justify-between gap-4">
+          <label
+            className="cursor-pointer text-[13px] font-medium text-foreground"
+            htmlFor="critique-theater-enabled"
+          >
+            {t('critiqueTheater.settingsEnabledLabel')}
+          </label>
+          <Switch
+            id="critique-theater-enabled"
             checked={enabled}
-            onChange={(e) => {
-              const next = e.target.checked;
-              if (activeProjectId !== null) {
-                void setCritiqueTheaterEnabled(next, { projectId: activeProjectId });
-              } else {
-                void setCritiqueTheaterEnabled(next);
-              }
-            }}
+            onCheckedChange={setEnabled}
           />
-          {' '}
-          {t('critiqueTheater.settingsEnabledLabel')}
-        </span>
-        <small className="hint">
+        </div>
+        <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
           {t('critiqueTheater.settingsEnabledDescription')}
-        </small>
+        </p>
         {activeProjectId !== null ? (
-          <small className="hint">
+          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
             {t('critiqueTheater.settingsEnabledProjectHint')}
-          </small>
+          </p>
         ) : (
-          <small className="hint">
+          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
             {t('critiqueTheater.settingsEnabledNoProjectHint')}
-          </small>
+          </p>
         )}
-      </label>
+      </div>
     </section>
   );
 }

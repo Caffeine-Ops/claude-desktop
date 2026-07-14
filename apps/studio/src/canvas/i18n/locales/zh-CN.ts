@@ -424,6 +424,7 @@ export const zhCN: Dict = {
   'entry.loadingWorkspace': '正在加载工作区…',
   'entry.useEverywhereTitle': '随处使用',
   'entry.useEverywhereAria': '打开「随处使用」指南（CLI、MCP、HTTP、Skills）',
+  'entry.navTitle': '工作画布',
   'entry.navNewProject': '新建项目',
   'entry.navHome': '主页',
   'entry.navProjects': '项目',

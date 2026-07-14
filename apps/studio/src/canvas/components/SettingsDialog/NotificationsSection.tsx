@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
+
+import { Button } from '@/src/components/ui/button';
+import { Switch } from '@/src/components/ui/switch';
+import { cn } from '@/src/lib/utils';
 import { useAnalytics } from '../../analytics/provider';
 import { trackSettingsNotificationsClick } from '../../analytics/events';
 import { useI18n } from '../../i18n';
@@ -13,6 +17,17 @@ import {
   requestNotificationPermission,
   showCompletionNotification,
 } from '../../utils/notifications';
+
+/* 2026-07-14 迁 chat 栈（shadcn + Tailwind utility）：seg-control/seg-btn/
+   settings-notify-card/settings-field/settings-section/hint 等 legacy 类全部
+   退役。二元开关（完成提示音 / 桌面通知总开关）用 shadcn Switch（与
+   AppearanceSection 的指针光标开关同构件）；提示音多选（成功/失败音）保持
+   分段式裸 button + data-slot 逃逸 canvas reset（同 AppearanceSection 的
+   cli-backend-tab 模式，Radix 组件对这种「选一个还带试听副作用」的组不贴）。 */
+
+const cardCls = 'rounded-xl border border-border bg-card p-4';
+const cardLabelCls = 'mb-3 text-xs font-medium text-muted-foreground';
+const hintCls = 'text-xs leading-relaxed text-muted-foreground';
 
 // Map the runtime SoundId (hyphenated, used by utils/notifications.ts) onto
 // the contract's underscored enum. Sounds that don't have a tracking entry
@@ -133,129 +148,160 @@ export function NotificationsSection({
   };
 
   return (
-    <section className="settings-section">
-      <div className="settings-subsection">
-        <div className="settings-notify-card">
-          <div className="settings-notify-card-header">
-            <h4>{t('settings.notifyCompletionSound')}</h4>
-            <div className="section-head-actions">
-              <div className="seg-control" role="group" aria-label={t('settings.notifyCompletionSound')} style={{ '--seg-cols': 1 } as React.CSSProperties}>
-                <button
-                  type="button"
-                  className={'seg-btn' + (notif.soundEnabled ? ' active' : '')}
-                  aria-pressed={notif.soundEnabled}
-                  onClick={toggleSound}
-                >
-                  <span className="seg-title">{notif.soundEnabled ? t('common.active') : t('common.offline')}</span>
-                </button>
-              </div>
-            </div>
+    <section className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3">
+        <div className={cardCls}>
+          <div className="flex items-center justify-between gap-4">
+            <h4 className="text-[13px] font-medium text-foreground">{t('settings.notifyCompletionSound')}</h4>
+            <Switch
+              checked={notif.soundEnabled}
+              onCheckedChange={toggleSound}
+              aria-label={t('settings.notifyCompletionSound')}
+            />
           </div>
-          <p className="hint settings-notify-card-hint">{t('settings.notifyCompletionSoundHint')}</p>
+          <p className={cn(hintCls, 'mt-2')}>{t('settings.notifyCompletionSoundHint')}</p>
         </div>
 
         {notif.soundEnabled ? (
           <>
-            <div className="settings-field">
-              <label>{t('settings.notifySuccessSound')}</label>
-              <div className="seg-control" role="group" aria-label={t('settings.notifySuccessSound')} style={{ '--seg-cols': SUCCESS_SOUNDS.length } as React.CSSProperties}>
-                {SUCCESS_SOUNDS.map((sound) => (
-                  <button
-                    key={sound.id}
-                    type="button"
-                    className={'seg-btn' + (notif.successSoundId === sound.id ? ' active' : '')}
-                    aria-pressed={notif.successSoundId === sound.id}
-                    onClick={() => {
-                      const trackingSoundId = soundIdToTracking(sound.id);
-                      trackSettingsNotificationsClick(analytics.track, {
-                        page_name: 'settings',
-                        area: 'notifications',
-                        element: 'success_sound',
-                        ...(trackingSoundId ? { sound_id: trackingSoundId } : {}),
-                      });
-                      updateNotif({ successSoundId: sound.id });
-                      playSound(sound.id);
-                    }}
-                  >
-                    <span className="seg-title">{t(sound.labelKey)}</span>
-                  </button>
-                ))}
-              </div>
+            <div className={cardCls}>
+              <div className={cardLabelCls}>{t('settings.notifySuccessSound')}</div>
+              <SoundPicker
+                ariaLabel={t('settings.notifySuccessSound')}
+                sounds={SUCCESS_SOUNDS}
+                selectedId={notif.successSoundId}
+                onSelect={(sound) => {
+                  const trackingSoundId = soundIdToTracking(sound.id);
+                  trackSettingsNotificationsClick(analytics.track, {
+                    page_name: 'settings',
+                    area: 'notifications',
+                    element: 'success_sound',
+                    ...(trackingSoundId ? { sound_id: trackingSoundId } : {}),
+                  });
+                  updateNotif({ successSoundId: sound.id });
+                  playSound(sound.id);
+                }}
+                label={(sound) => t(sound.labelKey)}
+              />
             </div>
 
-            <div className="settings-field">
-              <label>{t('settings.notifyFailureSound')}</label>
-              <div className="seg-control" role="group" aria-label={t('settings.notifyFailureSound')} style={{ '--seg-cols': FAILURE_SOUNDS.length } as React.CSSProperties}>
-                {FAILURE_SOUNDS.map((sound) => (
-                  <button
-                    key={sound.id}
-                    type="button"
-                    className={'seg-btn' + (notif.failureSoundId === sound.id ? ' active' : '')}
-                    aria-pressed={notif.failureSoundId === sound.id}
-                    onClick={() => {
-                      const trackingSoundId = soundIdToTracking(sound.id);
-                      trackSettingsNotificationsClick(analytics.track, {
-                        page_name: 'settings',
-                        area: 'notifications',
-                        element: 'failure_sound',
-                        ...(trackingSoundId ? { sound_id: trackingSoundId } : {}),
-                      });
-                      updateNotif({ failureSoundId: sound.id });
-                      playSound(sound.id);
-                    }}
-                  >
-                    <span className="seg-title">{t(sound.labelKey)}</span>
-                  </button>
-                ))}
-              </div>
+            <div className={cardCls}>
+              <div className={cardLabelCls}>{t('settings.notifyFailureSound')}</div>
+              <SoundPicker
+                ariaLabel={t('settings.notifyFailureSound')}
+                sounds={FAILURE_SOUNDS}
+                selectedId={notif.failureSoundId}
+                onSelect={(sound) => {
+                  const trackingSoundId = soundIdToTracking(sound.id);
+                  trackSettingsNotificationsClick(analytics.track, {
+                    page_name: 'settings',
+                    area: 'notifications',
+                    element: 'failure_sound',
+                    ...(trackingSoundId ? { sound_id: trackingSoundId } : {}),
+                  });
+                  updateNotif({ failureSoundId: sound.id });
+                  playSound(sound.id);
+                }}
+                label={(sound) => t(sound.labelKey)}
+              />
             </div>
           </>
         ) : null}
       </div>
 
-      <div className="settings-subsection">
-        <div className="settings-notify-card">
-          <div className="settings-notify-card-header">
-            <h4>{t('settings.notifyDesktop')}</h4>
-            <div className="section-head-actions">
-              <div className="seg-control" role="group" aria-label={t('settings.notifyDesktop')} style={{ '--seg-cols': 1 } as React.CSSProperties}>
-                <button
-                  type="button"
-                  className={'seg-btn' + (notif.desktopEnabled ? ' active' : '')}
-                  aria-pressed={notif.desktopEnabled}
-                  disabled={permission === 'unsupported'}
-                  onClick={() => { void toggleDesktop(); }}
-                >
-                  <span className="seg-title">{notif.desktopEnabled ? t('common.active') : t('common.offline')}</span>
-                </button>
-              </div>
-            </div>
+      <div className="flex flex-col gap-3">
+        <div className={cardCls}>
+          <div className="flex items-center justify-between gap-4">
+            <h4 className="text-[13px] font-medium text-foreground">{t('settings.notifyDesktop')}</h4>
+            <Switch
+              checked={notif.desktopEnabled}
+              disabled={permission === 'unsupported'}
+              onCheckedChange={() => { void toggleDesktop(); }}
+              aria-label={t('settings.notifyDesktop')}
+            />
           </div>
-          <p className="hint settings-notify-card-hint">{t('settings.notifyDesktopHint')}</p>
+          <p className={cn(hintCls, 'mt-2')}>{t('settings.notifyDesktopHint')}</p>
         </div>
         {permission === 'unsupported' ? (
-          <p className="hint">{t('settings.notifyDesktopUnsupported')}</p>
+          <p className={hintCls}>{t('settings.notifyDesktopUnsupported')}</p>
         ) : null}
         {permission === 'denied' ? (
-          <p className="hint">{t('settings.notifyDesktopBlocked')}</p>
+          <p className={hintCls}>{t('settings.notifyDesktopBlocked')}</p>
         ) : null}
         {notif.desktopEnabled && permission === 'granted' ? (
           <>
-            <button type="button" className="ghost" onClick={() => {
-              trackSettingsNotificationsClick(analytics.track, {
-                page_name: 'settings',
-                area: 'notifications',
-                element: 'send_test',
-              });
-              void sendTestNotification();
-            }}>
-              {t('settings.notifyTest')}
-            </button>
-            {testStatus ? <p className="hint" role="status">{t(testStatus)}</p> : null}
+            <div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  trackSettingsNotificationsClick(analytics.track, {
+                    page_name: 'settings',
+                    area: 'notifications',
+                    element: 'send_test',
+                  });
+                  void sendTestNotification();
+                }}
+              >
+                {t('settings.notifyTest')}
+              </Button>
+            </div>
+            {testStatus ? <p className={hintCls} role="status">{t(testStatus)}</p> : null}
           </>
         ) : null}
       </div>
     </section>
+  );
+}
+
+/**
+ * Segmented sound picker — pick one sound from a group, with an audible
+ * preview side-effect on select. Kept as data-slot bare buttons (not Radix)
+ * for the same reason AppearanceSection keeps its cli-backend-tab group bare:
+ * one-of-N + preview doesn't map cleanly onto a Radix primitive, and the
+ * data-slot escapes the canvas bare-element reset. Skinned with utility only.
+ */
+function SoundPicker<S extends { id: string }>({
+  ariaLabel,
+  sounds,
+  selectedId,
+  onSelect,
+  label,
+}: {
+  ariaLabel: string;
+  sounds: readonly S[];
+  selectedId: string;
+  onSelect: (sound: S) => void;
+  label: (sound: S) => string;
+}) {
+  return (
+    <div
+      className="flex flex-wrap gap-1.5 rounded-[10px] bg-secondary p-[3px]"
+      role="group"
+      aria-label={ariaLabel}
+    >
+      {sounds.map((sound) => {
+        const active = selectedId === sound.id;
+        return (
+          <button
+            key={sound.id}
+            type="button"
+            data-slot="sound-option"
+            aria-pressed={active}
+            className={cn(
+              'min-w-0 flex-1 cursor-pointer truncate rounded-lg px-3 py-1.5 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow]',
+              active
+                ? 'bg-card text-foreground shadow-[0_1px_3px_hsl(240_6%_10%/0.12),0_0_0_1px_hsl(240_6%_10%/0.04)]'
+                : 'hover:text-foreground/80',
+            )}
+            onClick={() => onSelect(sound)}
+          >
+            {label(sound)}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

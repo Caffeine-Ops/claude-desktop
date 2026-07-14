@@ -3,6 +3,17 @@ import type { Dispatch, SetStateAction } from 'react';
 import { useI18n } from '../../i18n';
 import { Icon } from '../shared/Icon';
 import { ConnectorsBrowser } from '../settings/ConnectorsBrowser';
+// P2 shadcn 迁移（2026-07-14，紧随 MediaProvidersSection）：Composio 密钥字段
+// 的裸 input/button 换成 chat 面的 shadcn 原语，让表单手感与聊天面一致（透明
+// 底 + 3px 柔光聚焦环，取代 canvas 的白实底 + 硬 outline）。原语自带 data-slot、
+// 天然豁免 canvas 的裸元素 reset；每个控件的即时皮肤用 Tailwind utility 重建，
+// 不复用 .settings-connectors-save / .settings-connectors-clear 等 legacy 交互类
+//（canvas CSS unlayered，同名属性会压过 utility）。清除确认面板的两级按钮同样
+// 换成 Button 原语；唯独「最终提交」按钮带绝对定位的 arming 扫光 overlay + ref +
+// is-armed 阴影态（复杂自定义控件），保留裸 <button> 并加 data-slot 逃逸 reset，
+// 沿用其原有 .settings-connectors-clear-commit* 皮肤（rule 4 的豁免路径）。
+import { Button } from '@/src/components/ui/button';
+import { Input } from '@/src/components/ui/input';
 import type { AppConfig } from '../../types';
 
 /**
@@ -296,7 +307,11 @@ export function ConnectorSection({
               browser keeps any in-progress autofill, focus, and
               accessibility tree intact when hydration completes. */}
           <span className="field-input-skeleton-wrap">
-            <input
+            {/* 裸 <input> → shadcn <Input>（自带 data-slot，豁免 canvas 裸元素
+                reset）。外层 .field-input-skeleton-wrap 是加载 shimmer 的覆盖层
+                基建、非交互皮肤，其 CSS 命中 `> input` 仍成立（Input 渲染真实
+                <input>），保留不动。 */}
+            <Input
               type="password"
               value={composio.apiKey ?? ''}
               placeholder={
@@ -329,9 +344,16 @@ export function ConnectorSection({
               <span className="field-input-skeleton-shimmer" aria-hidden="true" />
             ) : null}
           </span>
-          <button
+          {/* 主操作：className="primary" → variant="default"。原
+              .settings-connectors-save 只补 inline-flex/gap/nowrap（Button
+              基座已含），is-busy 的 opacity/cursor 用条件 utility 重建。 */}
+          <Button
             type="button"
-            className={'primary settings-connectors-save' + (keySaveStatus === 'saving' ? ' is-busy' : '')}
+            variant="default"
+            className={
+              'whitespace-nowrap'
+              + (keySaveStatus === 'saving' ? ' cursor-progress opacity-[0.85]' : '')
+            }
             disabled={saveDisabled}
             onClick={() => {
               onConnectorsTabClick?.('save_key');
@@ -356,12 +378,18 @@ export function ConnectorSection({
             ) : (
               t('settings.connectorsSaveKey')
             )}
-          </button>
-          <button
+          </Button>
+          {/* 次要操作：className="ghost" → variant="ghost"。原
+              .settings-connectors-clear.is-arming 的红色描边/文字/软红底在打开
+              确认面板时提示「即将撤销」，用条件 utility 重建（红 token 走
+              destructive 语义色）。 */}
+          <Button
             type="button"
+            variant="ghost"
             className={
-              'ghost settings-connectors-clear'
-              + (clearStage !== 'idle' ? ' is-arming' : '')
+              clearStage !== 'idle'
+                ? 'border border-destructive/60 text-destructive bg-destructive/10'
+                : ''
             }
             disabled={clearDisabled}
             title={
@@ -377,7 +405,7 @@ export function ConnectorSection({
             }}
           >
             {t('settings.connectorsClear')}
-          </button>
+          </Button>
         </div>
         {/* Two-stage destructive confirmation panel. Lives inside the
             credentials field so it visually grows out of the row that
@@ -413,26 +441,38 @@ export function ConnectorSection({
               </span>
             </div>
             <div className="settings-connectors-clear-confirm-actions">
-              <button
+              {/* 取消：className="ghost" → variant="ghost" size="sm"。 */}
+              <Button
                 type="button"
-                className="ghost"
+                variant="ghost"
+                size="sm"
                 onClick={handleClearAbort}
               >
                 {t('settings.connectorsClearCancel')}
-              </button>
+              </Button>
               {clearStage === 'confirm' ? (
-                <button
+                // 「继续」→ 次要操作，variant="outline" size="sm"。原
+                // .settings-connectors-clear-step 是红色描边药丸（destructive
+                // 但未提交），用 utility 把边框/文字/hover 底染红重建。
+                <Button
                   type="button"
-                  className="settings-connectors-clear-step"
+                  variant="outline"
+                  size="sm"
+                  className="border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/10"
                   onClick={handleClearContinue}
                 >
                   {t('settings.connectorsClearConfirmContinue')}
                   <Icon name="chevron-right" size={12} />
-                </button>
+                </Button>
               ) : (
+                // 「最终提交」保留裸 <button>：带绝对定位的 arming 扫光 overlay
+                // + ref + is-armed 阴影态（复杂自定义控件，见 settings-modal.css
+                // 的 .settings-connectors-clear-commit*）。加 data-slot 逃逸
+                // canvas 裸元素 reset，沿用原皮肤（rule 4 的自定义控件豁免路径）。
                 <button
                   ref={finalConfirmButtonRef}
                   type="button"
+                  data-slot="connectors-clear-commit"
                   className={
                     'settings-connectors-clear-commit'
                     + (clearArmed ? ' is-armed' : '')

@@ -163,71 +163,15 @@
 .palette-tweaks-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .palette-tweaks-check { display: inline-flex; align-items: center; color: var(--text-muted); }
 
-/* Project-shell tab bar.
-   `WorkspaceTabsBar` only ever mounts inside `.workspace-shell` (see
-   App.tsx), so THIS is the rule set that actually paints the visible
-   navbar — the un-prefixed base block above is the shared fallback. We
-   align it 1:1 with prototypes/open-design-nav-v0.html `.tabbar`: a 46px
-   translucent browser-style strip of content-fit pill tabs. The earlier
-   compact 36px / fixed-width / divider-row treatment is gone. */
-.workspace-shell .workspace-tabs-chrome.app-chrome-header {
-  --workspace-tabs-chrome-height: 46px;
-  height: 46px;
-  min-height: 46px;
-  padding: 0 10px;
-  background: color-mix(in srgb, var(--bg-panel) 70%, var(--bg));
-  border-bottom: 1px solid var(--od-border);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  backdrop-filter: saturate(180%) blur(20px);
-  box-shadow: none;
-}
-.workspace-shell .workspace-tabs-strip {
-  gap: 4px;
-}
-.workspace-shell .workspace-tab {
-  height: 32px;
-  min-height: 32px;
-  /* Content-fit pill, capped at 200px — not a stretched fixed slot. */
-  min-width: 0;
-  max-width: 200px;
-  flex: 0 0 auto;
-  border-radius: var(--od-radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  box-shadow: none;
-}
-.workspace-shell .workspace-tab.is-active {
-  background: var(--bg-panel);
-  border-color: var(--od-border);
-  box-shadow: var(--od-shadow-xs);
-}
-.workspace-shell .workspace-tab__main {
-  gap: 8px;
-  padding-inline: 11px 4px;
-}
-.workspace-shell .workspace-tab__label {
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-.workspace-shell .workspace-tab__close {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-}
-.workspace-shell .workspace-tabs-new-btn,
-.workspace-shell .workspace-tabs-icon-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--od-radius-sm);
-}
-
 .app {
   background: var(--bg-panel);
 }
 .app > .app-chrome-header {
-  height: 44px;
-  min-height: 44px;
+  /* 2026-07-14：44 → 46px，与聊天面顶栏 + Apple 皮肤（apple-chrome-composer.css
+     的 46px）+ base.css 基类统一。三处 app-chrome-header 高度收敛到同一个 46px，
+     消除「项目页返回栏比聊天顶栏矮/高」的离群值。 */
+  height: 46px;
+  min-height: 46px;
   padding: 0 18px;
   gap: 10px;
   background: var(--bg-panel);

@@ -9,6 +9,9 @@
 // thin wrapper that passes data and callbacks through to this shell.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+// Image 图标：与壳层 AppRail「工作画布」tab 同款（AppRail.tsx 用 Image as
+// ImageIcon），让顶栏图标与 rail 里的画布身份图标一眼对得上。
+import { Image as ImageIcon } from 'lucide-react';
 import {
   defaultScenarioPluginIdForProjectMetadata,
   type ConnectorDetail,
@@ -555,6 +558,32 @@ export function EntryShell({
       <div className="entry">
         <div className="entry-updater-float">
           <UpdaterPopup />
+        </div>
+        {/* 工作画布顶栏——与智能助手（chat ThreadView）「新对话」顶栏对称：
+            删多标签栏后画布面顶部彻底空了、与聊天面「图标+标题」的稳定顶
+            锚点分家，切两面顶部重量跳变（"像两个应用"的最后一处结构不对
+            称）。这里补一条同规格的轻量标题栏——像素照抄 chat：h-[46px] +
+            border-b border-border/55 + 收起态 pl-208 让红绿灯（与 ThreadView
+            :1252、canvas tab 栏退役前的 --app-chrome-traffic-space:190 同一
+            208 基线，改这里必同步那两处）。常驻所有 entry 子视图（首页/项目
+            /插件/设计体系），让画布面切子视图时顶部不跳。
+            自带 app-region:drag（2026-07-14，修「切到工作画布顶部拖不动」）：
+            删多标签栏（.workspace-tabs-chrome，canvas 面唯一 drag 写手）后，
+            canvas 顶部第一次纯靠根 .window-drag-strip 兜底，暴露出 strip 单点在
+            chat→canvas 方向重采集不可靠（详见 base.css .app-chrome-header 那条
+            同批注释 + globals.css）。给这条 nav 补一条自带 drag、不赌 strip 缓存
+            ——它是纯静态图标+标题、无交互元素，整条可拖不用挖 no-drag 洞。 */}
+        <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [-webkit-app-region:drag] [body[data-rail-collapsed]_&]:pl-[208px]">
+          <div className="flex h-full w-full min-w-0 items-center gap-2 px-4">
+            <ImageIcon
+              aria-hidden
+              strokeWidth={1.75}
+              className="size-4 shrink-0 text-muted-foreground/80"
+            />
+            <h1 className="min-w-0 truncate text-[14px] font-medium leading-tight text-foreground">
+              {t('entry.navTitle')}
+            </h1>
+          </div>
         </div>
         {/* In the Electron shell `avatarMenu` is null (the desktop tab strip
             already owns the settings gear), so the topbar collapses to an

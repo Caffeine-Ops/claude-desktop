@@ -1422,40 +1422,11 @@
   gap: 2px;
   min-width: 0;
 }
-.media-provider-secret-field {
-  position: relative;
-  min-width: 0;
-}
-.media-provider-secret-field input {
-  width: 100%;
-  padding-right: 34px;
-}
-.secret-visibility-button {
-  position: absolute;
-  top: 50%;
-  right: 8px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  color: var(--text-muted);
-  background: transparent;
-  border: 0;
-  border-radius: var(--od-radius-pill);
-  box-shadow: none;
-  transform: translateY(-50%);
-}
-.secret-visibility-button:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--bg-subtle);
-  box-shadow: none;
-}
-.secret-visibility-button:disabled {
-  color: var(--text-faint);
-  cursor: not-allowed;
-}
+/* .media-provider-secret-field / .secret-visibility-button 已退役
+   （2026-07-14）——MediaProvidersSection 的密钥框显隐切换改用 shadcn Input
+   + Tailwind utility（relative 容器 + absolute 眼睛按钮）重建，这两个 legacy
+   类零消费者。.media-provider-body 的 3 列 grid、.media-provider-name/-hint
+   等卡片布局类仍在用，保留。 */
 .section-head {
   display: flex;
   justify-content: space-between;

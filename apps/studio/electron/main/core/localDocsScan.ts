@@ -65,9 +65,10 @@ const IMAGE_EXT_SET = new Set<string>(LOCAL_IMAGE_EXTS)
 /** 扫描目标种类：docs=「全部文件」页+文档归类；images=「图片识别」归类。 */
 export type LocalScanKind = 'docs' | 'images'
 
-/** 根目录记 0；2 = 最多下钻两层子目录（root/a/b/file）。下载/桌面上的文档
- *  绝大多数在前两层，更深的基本是解压出来的工程目录，钻进去只捞噪音。 */
-const MAX_DEPTH = 2
+/** 根目录记 0。用户自定义目录（如整理好的多级分类资料库）可能深达数层，
+ *  不能按「下载/桌面」的噪音特征去限深——真实限流交给 MAX_MATCHES/MAX_VISITED。
+ *  999 等同不限深，只是留一个数值上限防御病态符号链接循环之类的极端情况。 */
+const MAX_DEPTH = 999
 /** 返回给渲染层的条数上限（参考产品同为 1000）。 */
 const MAX_RESULTS = 1000
 /** 排序前的命中收集上限——过此即置 truncated，防病态目录撑爆内存。 */
