@@ -25,6 +25,17 @@ export interface KbDocEntry {
 export interface KbFolderNode { name: string; path: string; folders: KbFolderNode[]; docs: KbDocEntry[] }
 export interface KbTree { roots: KbFolderNode[] }
 export interface KbToolingStatus { markitdown: boolean; soffice: boolean }
+/**
+ * 一键安装工具链的结果（管理页「未检测到 markitdown」卡片用）。三态见
+ * kbTooling.installMarkitdown 注释：ok=装上且（补全 PATH 后）即刻可用；unsupported=缺 Python/pipx
+ * 前置、无法自动装，引导手动装；其余即失败。log=安装命令完整输出（失败时给用户排查）。
+ */
+export interface KbToolingInstallResult {
+  ok: boolean
+  unsupported: boolean
+  tooling: KbToolingStatus
+  log: string
+}
 export interface KbDocsListResult { tree: KbTree; readOnly: boolean; total: number }
 export interface KbImportPayload { paths: string[]; productLine: string; product: string; overwrite: boolean }
 export interface KbImportResultDto { imported: string[]; conflicted: string[] }

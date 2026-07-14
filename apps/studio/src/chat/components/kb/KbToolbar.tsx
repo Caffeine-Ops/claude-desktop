@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useKbStore } from '../../stores/kb'
 import { useT, useTFormat } from '../../i18n'
 import { kbIcons } from './kbIcons'
+import { KbToolingCard } from './KbToolingCard'
 
 /**
  * 顶部工具栏：同步本地文件夹（增量刷新）、空库时的批量迁移入口、构建进度、工具缺失提示。
@@ -80,12 +81,10 @@ export function KbToolbar({ readOnly }: {
           </span>
         )}
       </div>
-      {/* 工具缺失横幅只对可写机有意义（只读机不本地构建、装不装 markitdown 无所谓）。 */}
-      {!readOnly && tooling?.markitdown === false && (
-        <p className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive">
-          <kbIcons.alert className="size-3.5 shrink-0" />{t('kbToolingMissing')}
-        </p>
-      )}
+      {/* 工具缺失只对可写机有意义（只读机不本地构建、装不装 markitdown 无所谓）。原来的一行红字
+          报错已升级为带「一键安装」的引导卡片（KbToolingCard）：点按钮即由主进程装 markitdown，
+          装完给三态反馈（就绪／需重启／缺前置引导手动装）。 */}
+      {!readOnly && tooling?.markitdown === false && <KbToolingCard />}
     </div>
   )
 }

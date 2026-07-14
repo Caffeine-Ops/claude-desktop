@@ -128,6 +128,7 @@ import type { KbBuildStatus } from '../shared/kbBuildStatus'
 import type {
   KbDocsListResult,
   KbToolingStatus,
+  KbToolingInstallResult,
   KbImportPayload,
   KbImportResultDto,
   KbLocalSyncResult,
@@ -800,6 +801,9 @@ const chatApi: ChatApi = {
   },
   kbToolingCheck(): Promise<KbToolingStatus> {
     return ipcRenderer.invoke(IPC_CHANNELS.KB_TOOLING_CHECK) as Promise<KbToolingStatus>
+  },
+  kbInstallTooling(): Promise<KbToolingInstallResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_INSTALL_TOOLING) as Promise<KbToolingInstallResult>
   },
   kbPickImportFiles(): Promise<{ paths: string[] }> {
     return ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_PICK) as Promise<{ paths: string[] }>

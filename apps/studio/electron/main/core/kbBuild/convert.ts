@@ -3,6 +3,7 @@ import { readFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import type { ScanEntry } from './scan'
 import { extractDataUriImages } from './assets'
+import { toolingExecEnv } from '../kbTooling'
 
 export interface ConvertResult {
   markdown: string
@@ -26,7 +27,10 @@ function tryMarkitdown(
   const args = keepDataUris ? ['--keep-data-uris', src] : [src]
   const md = execFileSync('markitdown', args, {
     encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024
+    maxBuffer: 64 * 1024 * 1024,
+    // 补全 PATH：GUI 启动的 app 继承 launchd 精简 PATH，裸调会 ENOENT。与 detectTooling 同款，
+    // 保证「探到 ⟺ 转换得了」。
+    env: toolingExecEnv()
   })
   // 内嵌图以 data-uri 形式留在 md 里，由 extractDataUriImages 统一抽取落盘。
   return { md, assets: [] }
@@ -36,7 +40,7 @@ function tryLibreOffice(src: string, tmpDir: string): string {
   mkdirSync(tmpDir, { recursive: true })
   execFileSync('soffice', [
     '--headless', '--convert-to', 'txt:Text', '--outdir', tmpDir, src
-  ], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  ], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: toolingExecEnv() })
   const base = basename(src).replace(/\.[^.]+$/, '.txt')
   const out = join(tmpDir, base)
   return existsSync(out) ? readFileSync(out, 'utf8') : ''

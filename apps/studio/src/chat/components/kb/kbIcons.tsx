@@ -17,5 +17,6 @@ export const kbIcons = {
   refresh: (p: IconProps) => <S {...p}><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></S>,
   open: (p: IconProps) => <S {...p}><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></S>,
   retry: (p: IconProps) => <S {...p}><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-6.7 3L3 8" /><path d="M3 3v5h5" /></S>,
-  alert: (p: IconProps) => <S {...p}><path d="M12 9v4M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></S>
+  alert: (p: IconProps) => <S {...p}><path d="M12 9v4M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></S>,
+  check: (p: IconProps) => <S {...p}><path d="M20 6 9 17l-5-5" /></S>
 }

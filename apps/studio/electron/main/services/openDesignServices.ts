@@ -31,6 +31,7 @@ import { app } from 'electron'
 import { is } from '@electron-toolkit/utils'
 
 import { pushLog } from '../core/logCollector'
+import { extraBinPath } from '../core/systemPath'
 import type { LogSource } from '../../shared/ipc-channels'
 
 /**
@@ -252,25 +253,8 @@ function resolveBunBin(): string {
  * 全部用 existsSync 守卫，目录不存在就跳过——补丁 PATH 只增不减，不会破坏已有解析。
  */
 function buildAgentDetectionPath(): string {
-  const home = process.env.HOME ?? homedir()
-  const dirs = [
-    join(home, '.local', 'bin'), // claude, cursor-agent
-    join(home, '.bun', 'bin'), // bun 装的全局 CLI
-    '/opt/homebrew/bin', // Apple Silicon homebrew：codex, opencode
-    '/usr/local/bin' // Intel homebrew / 手动安装
-  ]
-
-  // nvm：枚举每个已安装 Node 版本的 bin（gemini 等 npm 全局 CLI 落在这）。
-  const nvmVersions = join(home, '.nvm', 'versions', 'node')
-  try {
-    for (const ver of readdirSync(nvmVersions)) {
-      dirs.push(join(nvmVersions, ver, 'bin'))
-    }
-  } catch {
-    // 没装 nvm 或读不动，跳过
-  }
-
-  return dirs.filter((d) => existsSync(d)).join(delimiter)
+  // 补丁目录逻辑已收敛到 core/systemPath（daemon 探测与知识库探测/安装/转换共用，避免漂移）。
+  return extraBinPath()
 }
 
 /**

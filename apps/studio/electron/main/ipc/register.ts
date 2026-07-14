@@ -120,7 +120,7 @@ import {
 } from '../core/kbCatalogService'
 import { triggerKbSyncNow, lastKbSyncInfo, invalidateKbSyncBaseline } from '../core/kbSyncScheduler'
 import * as kbAdmin from '../core/kbAdminService'
-import { detectTooling } from '../core/kbTooling'
+import { detectTooling, installMarkitdown } from '../core/kbTooling'
 import { docPaths, isSafeRelPath } from '../core/kbStore.core'
 import { scheduleKbBuild, getKbBuildStatus } from '../core/kbBuildRunner'
 import type { KbIndex } from '../../shared/kbIndex'
@@ -337,6 +337,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_IMAGE_THUMBS)
   ipcMain.removeHandler(IPC_CHANNELS.KB_DOCS_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.KB_TOOLING_CHECK)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_INSTALL_TOOLING)
   ipcMain.removeHandler(IPC_CHANNELS.KB_IMPORT_PICK)
   ipcMain.removeHandler(IPC_CHANNELS.KB_IMPORT)
   ipcMain.removeHandler(IPC_CHANNELS.KB_DOC_DELETE)
@@ -2118,6 +2119,11 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.KB_TOOLING_CHECK, async (): Promise<import('../../shared/kbAdmin').KbToolingStatus> =>
     detectTooling())
+
+  // 一键安装 markitdown（管理页缺失卡片触发）。installMarkitdown 内部走异步 spawn，不冻主进程；
+  // 至多 5 分钟，UI 侧以「正在安装」态告知用户等待。三态结果见 KbToolingInstallResult。
+  ipcMain.handle(IPC_CHANNELS.KB_INSTALL_TOOLING, async (): Promise<import('../../shared/kbAdmin').KbToolingInstallResult> =>
+    installMarkitdown())
 
   ipcMain.handle(IPC_CHANNELS.KB_IMPORT_PICK, async (event): Promise<{ paths: string[] }> => {
     const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0]

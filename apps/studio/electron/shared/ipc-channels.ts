@@ -874,6 +874,7 @@ export const IPC_CHANNELS = {
   // ── KB 托管仓库管理页（P2）──────────────────────────────────────
   KB_DOCS_LIST: 'kb:docs-list',
   KB_TOOLING_CHECK: 'kb:tooling-check',
+  KB_INSTALL_TOOLING: 'kb:install-tooling',
   KB_IMPORT_PICK: 'kb:import-pick',
   KB_IMPORT: 'kb:import',
   KB_DOC_DELETE: 'kb:doc-delete',
@@ -2441,6 +2442,8 @@ export interface ChatApi {
   // ── KB 托管仓库管理页（P2）。renderer 只传相对路径，绝对路径还原在 main 完成防越权。──
   kbDocsList(): Promise<import('./kbAdmin').KbDocsListResult>
   kbToolingCheck(): Promise<import('./kbAdmin').KbToolingStatus>
+  /** 一键安装 markitdown（管理页缺失卡片）。三态见 KbToolingInstallResult。 */
+  kbInstallTooling(): Promise<import('./kbAdmin').KbToolingInstallResult>
   kbPickImportFiles(): Promise<{ paths: string[] }>
   kbImport(payload: import('./kbAdmin').KbImportPayload): Promise<import('./kbAdmin').KbImportResultDto>
   kbDeleteDoc(relPath: string): Promise<void>
