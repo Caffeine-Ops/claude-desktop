@@ -1,5 +1,13 @@
 import { test, expect } from 'bun:test'
-import { cosineTopK, cosineTopKRows, fuseRRF, passagesToHits, fillHitsToK } from './proposalSemantic.core'
+import {
+  cosineTopK,
+  cosineTopKRows,
+  fuseRRF,
+  passagesToHits,
+  fillHitsToK,
+  rerankWindow,
+  applyRerank
+} from './proposalSemantic.core'
 import type { SemanticHit } from '../../shared/kbIndex'
 
 test('cosineTopK: 取最近邻、k 截断、降序', () => {
@@ -120,4 +128,35 @@ test('fillHitsToK: primary 不足时补齐到 k', () => {
   const out = fillHitsToK(primary, backs, 3)
   expect(out.length).toBe(3)
   expect(out[0].mirrorPath).toBe('/a.md')
+})
+
+// ── P1 cross-encoder 重排选择纯核 ────────────────────────────────────────────
+
+test('rerankWindow: 取融合结果前 M 行、保序、不足 M 全取', () => {
+  const fused = [{ row: 7, score: 3 }, { row: 2, score: 2 }, { row: 5, score: 1 }]
+  expect(rerankWindow(fused, 2)).toEqual([7, 2])   // 前 2，保 RRF 序
+  expect(rerankWindow(fused, 10)).toEqual([7, 2, 5]) // 不足 M → 全取
+  expect(rerankWindow([], 5)).toEqual([])            // 空融合 → 空
+  expect(rerankWindow(fused, 0)).toEqual([])         // M=0 → 空（负数亦然，见实现 max(0,m)）
+})
+
+test('applyRerank: 按 reranker 分降序取 top-k、score 用 reranker 分', () => {
+  const rows = [7, 2, 5]
+  const scores = [0.1, 0.9, 0.5] // row2 最相关、row5 次、row7 最低
+  expect(applyRerank(rows, scores, 2)).toEqual([
+    { row: 2, score: 0.9 },
+    { row: 5, score: 0.5 }
+  ])
+})
+
+test('applyRerank: 同分保留输入(RRF)序——稳定降序', () => {
+  expect(applyRerank([7, 2], [0.5, 0.5], 2)).toEqual([
+    { row: 7, score: 0.5 },
+    { row: 2, score: 0.5 }
+  ])
+})
+
+test('applyRerank: 长度不匹配 / 空 → 空数组（调用方据此回落 RRF）', () => {
+  expect(applyRerank([7, 2], [0.5], 2)).toEqual([]) // reranker 输出与候选错位 → 视为失败
+  expect(applyRerank([], [], 5)).toEqual([])
 })

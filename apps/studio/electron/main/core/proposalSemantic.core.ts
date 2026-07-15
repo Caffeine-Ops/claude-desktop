@@ -83,3 +83,35 @@ export function fuseRRF(
   for (const { row, rank } of vector) acc.set(row, (acc.get(row) ?? 0) + 1 / (k + rank))
   return [...acc.entries()].map(([row, score]) => ({ row, score })).sort((a, b) => b.score - a.score)
 }
+
+// ── P1 cross-encoder 二阶段重排的选择纯核 ────────────────────────────────────
+// RRF 是【排名融合】，重排是对 (query, passage) 联合编码【重算相关性】——两者正交。
+// 这两个纯函数只管「送哪些进重排」「重排分出来后怎么取 top-k」，不碰模型（推理在
+// embedWorker 里跑，见 Task 4）。抽出来是为了让选择逻辑能被 bun test 钉死。
+
+/**
+ * 过量召回窗口：从 RRF 融合结果里取【前 M 行】送 cross-encoder 重排。候选已在产品域内
+ * 收窄，M 取 30 足够（参 AnythingLLM 的 max(10,min(50,…))，但我们域已窄，上限更小）。
+ * 保 RRF 序返回行号；fused 少于 M 则全取。M≤0 → 空（负数经 max(0,m) 归零）。
+ */
+export function rerankWindow(fused: readonly { row: number; score: number }[], m: number): number[] {
+  return fused.slice(0, Math.max(0, m)).map((f) => f.row)
+}
+
+/**
+ * 用 reranker 分对候选行重排、取 top-k。`scores[i]` 对应 `candidateRows[i]`。
+ * 稳定降序：同分按原下标（即入参的 RRF 序）升序，保留融合排名当 tie-break。
+ *
+ * 【长度不匹配或空 → 返回空数组】：这是给上游的失败信号——reranker 输出条数与候选
+ * 错位（推理异常/截断）时，调用方据「空」回落到未重排的 RRF top-k，绝不拿错位分排序。
+ */
+export function applyRerank(
+  candidateRows: readonly number[], scores: readonly number[], k: number
+): { row: number; score: number }[] {
+  if (candidateRows.length === 0 || candidateRows.length !== scores.length) return []
+  return candidateRows
+    .map((row, i) => ({ row, score: scores[i]!, i }))
+    .sort((a, b) => b.score - a.score || a.i - b.i)
+    .slice(0, k)
+    .map(({ row, score }) => ({ row, score }))
+}
