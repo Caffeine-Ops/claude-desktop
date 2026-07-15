@@ -3,8 +3,8 @@
 /**
  * 嵌入模型 id —— TS 侧唯一事实源（embedWorker 运行期加载 + scripts/kb-index/embed.ts 离线
  * 向量化都从这里 import，本地目录布局为 <localModelPath>/<KB_MODEL_ID>/，远程拉取需加
- * `Xenova/` org 前缀）。.mjs 打包脚本因不能 import TS，另有
- * apps/desktop/scripts/kb-model-manifest.mjs 持有同名常量——改模型两处都要动，互相有指路注释。
+ * `Xenova/` org 前缀）。运行时下载清单 electron/main/core/kbModelManifest.ts 持有同名常量
+ * （MODEL_DIR_NAME/sha256/size/revision）——改模型两处都要动，互相有指路注释。
  */
 export const KB_MODEL_ID = 'bge-small-zh-v1.5'
 

@@ -58,7 +58,10 @@ export function warmEmbedWorker(): void {
   if (worker) return
   const idx = readKbIndex()
   const fp = idx ? String(idx.builtAtMs) : ''
-  const workerPath = join(dirname(fileURLToPath(import.meta.url)), 'embedWorker.js') // out/main/embedWorker.js
+  // out/main/embedWorker.js：依赖 electron-vite 把 embedWorker 配成第二入口点产出到此路径；
+  // 该入口配置错/产物缺失会导致 fork 静默失败（下面 catch 吞掉）→ worker 永收不到 ready →
+  // 永久 BM25 降级，且不报错、不易察觉。
+  const workerPath = join(dirname(fileURLToPath(import.meta.url)), 'embedWorker.js')
   // fork+监听接线必须 try/catch（F9）：openSession 的调用点在任何 try 之外——fork 同步抛
   //（可执行文件缺失/资源耗尽等）会直接炸穿 openSession。吞掉并置空 worker，调用方自然降级 BM25。
   try {

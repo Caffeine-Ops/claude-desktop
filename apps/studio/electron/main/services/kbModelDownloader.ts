@@ -170,10 +170,15 @@ export async function startKbModelDownload(): Promise<void> {
       }
     }
     setState({ phase: 'ready', percent: 100, currentFile: null, installed: true })
-    // 模型就绪：回收旧 worker 重热；有知识库文档才触发重建（守卫照 index.ts:302 现有模式）。
-    resetEmbedWorker()
-    warmEmbedWorker()
-    if (kbStoreHasDocs()) scheduleKbBuild()
+    // 下载已成功并落盘；下面的重热/重建是"锦上添花"，其失败不该把已成功的下载翻成 error
+    // （建库本身已有降级：stale→BM25、缺模型跳向量化）。故单独 try 包住，不让 fork 异常窜到外层 catch。
+    try {
+      resetEmbedWorker()
+      warmEmbedWorker()
+      if (kbStoreHasDocs()) scheduleKbBuild()
+    } catch {
+      // 重热/重建失败：下载仍视为成功，降级链兜底，不改 state。
+    }
   } catch (err) {
     if (currentTmp) rmSync(currentTmp, { force: true }) // 清掉中断留下的半截 .part
     if (cancelled) {

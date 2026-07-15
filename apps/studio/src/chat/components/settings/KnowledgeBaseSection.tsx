@@ -129,6 +129,10 @@ export function KnowledgeBaseSection(): React.JSX.Element {
   }
 
   const isSyncing = sync.state === 'syncing'
+  // 独立布尔而非直接内联 model?.phase === 'downloading'：下载/重试按钮所在的 JSX 分支已经
+  // 靠外层三元把 phase 收窄成排除 'downloading' 后的联合类型，内联比较会被 TS 判定为
+  // 不可能重叠（永远 false）而报编译错；提前算好的布尔不受该分支收窄影响，可安全传给 disabled。
+  const modelDownloading = model?.phase === 'downloading'
 
   return (
     <section className="space-y-8">
@@ -168,6 +172,7 @@ export function KnowledgeBaseSection(): React.JSX.Element {
               <button
                 type="button"
                 onClick={() => void window.chatApi.startKbModelDownload()}
+                disabled={modelDownloading}
                 className="inline-flex h-8 shrink-0 items-center rounded-md bg-accent px-3 text-[12px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {model?.phase === 'error' ? t('kbModelRetry') : t('kbModelDownload')}
