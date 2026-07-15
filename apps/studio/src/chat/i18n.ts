@@ -187,6 +187,15 @@ const STRINGS = {
     kbVersion: '知识库版本',
     kbSyncFailed: '同步失败',
     kbNeverSynced: '尚未同步',
+    kbModelTitle: '嵌入模型',
+    kbModelDesc: '语义检索需要一个本地嵌入模型（约 23MB）。未下载时检索退回关键词匹配（BM25）。',
+    kbModelInstalled: '模型已就绪，语义检索已启用。',
+    kbModelDownload: '下载模型',
+    kbModelDownloading: '正在下载',
+    kbModelCancel: '取消',
+    kbModelRetry: '重试',
+    kbModelError: '下载失败，可重试；期间检索继续走关键词匹配。',
+    kbModelMissingHint: '语义检索未启用（未下载嵌入模型）',
 
     // KB 托管仓库管理页（P2）
     kbManageOpen: '打开方案知识库',
@@ -576,6 +585,15 @@ const STRINGS = {
     kbVersion: 'KB version',
     kbSyncFailed: 'Sync failed',
     kbNeverSynced: 'Never synced',
+    kbModelTitle: 'Embedding model',
+    kbModelDesc: 'Semantic search needs a local embedding model (~23MB). Until it is downloaded, search falls back to keyword matching (BM25).',
+    kbModelInstalled: 'Model ready — semantic search enabled.',
+    kbModelDownload: 'Download model',
+    kbModelDownloading: 'Downloading',
+    kbModelCancel: 'Cancel',
+    kbModelRetry: 'Retry',
+    kbModelError: 'Download failed — you can retry; search keeps using keyword matching meanwhile.',
+    kbModelMissingHint: 'Semantic search off (embedding model not downloaded)',
 
     // KB managed repository manager (P2)
     kbManageOpen: 'Open KB manager',

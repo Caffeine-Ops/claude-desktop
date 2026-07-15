@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 
 import { useT } from '../../i18n'
 import type { KbSyncStatus } from '@desktop-shared/kbSyncStatus'
+import type { KbModelDownloadState } from '@desktop-shared/kbModelDownload'
 import { Section } from './SettingsView'
 
 type KbPathState = Awaited<ReturnType<typeof window.chatApi.getKbPath>>
@@ -27,6 +28,7 @@ export function KnowledgeBaseSection(): React.JSX.Element {
   const [urlDraft, setUrlDraft] = useState('')
   const [sync, setSync] = useState<KbSyncStatus>({ state: 'idle' })
   const [uiTab, setUiTab] = useState<'local' | 'remote'>('local')
+  const [model, setModel] = useState<KbModelDownloadState | null>(null)
 
   // 三个独立 busy 标记而非共用一个：选目录、切本地、保存远程地址是三个互斥但各自
   // 独立触发的动作，共用一个 busy 会导致点了 A 按钮时 B 按钮的 disabled 态失真
@@ -53,6 +55,12 @@ export function KnowledgeBaseSection(): React.JSX.Element {
       setSync(s)
       if (s.state === 'success') refresh() // 成功后 lastSync 变了，重拉一次
     })
+    return off
+  }, [])
+
+  useEffect(() => {
+    void window.chatApi.kbModelDownloadStatusGet().then(setModel)
+    const off = window.chatApi.onKbModelDownload(setModel)
     return off
   }, [])
 
@@ -130,6 +138,44 @@ export function KnowledgeBaseSection(): React.JSX.Element {
 
       {/* 管理页入口已移到聊天框底栏的「知识库」chip（Composer.tsx），
           与「选择工作目录」并排——比藏在设置里更好找。此处不再重复放按钮。 */}
+
+      <Section title={t('kbModelTitle')} description={t('kbModelDesc')}>
+        <div className="rounded-xl border border-border/60 bg-card/40 px-4 py-3">
+          {model?.phase === 'ready' || model?.installed ? (
+            <p className="text-[12px] text-emerald-600 dark:text-emerald-400">{t('kbModelInstalled')}</p>
+          ) : model?.phase === 'downloading' ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-[12px] text-muted-foreground">
+                <span>{t('kbModelDownloading')}{model.currentFile ? ` · ${model.currentFile}` : ''}</span>
+                <span>{model.percent}%</span>
+              </div>
+              <div className="relative h-1.5 w-full rounded-full bg-muted">
+                <div className="absolute inset-y-0 left-0 rounded-full bg-accent transition-[width]" style={{ width: `${model.percent}%` }} />
+              </div>
+              <button
+                type="button"
+                onClick={() => void window.chatApi.cancelKbModelDownload()}
+                className="inline-flex h-8 shrink-0 items-center rounded-md border border-border bg-card px-3 text-[12px] font-medium text-foreground transition-colors hover:bg-muted/60"
+              >
+                {t('kbModelCancel')}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {model?.phase === 'error' && (
+                <p className="text-[12px] text-destructive">{model.errorMessage || t('kbModelError')}</p>
+              )}
+              <button
+                type="button"
+                onClick={() => void window.chatApi.startKbModelDownload()}
+                className="inline-flex h-8 shrink-0 items-center rounded-md bg-accent px-3 text-[12px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {model?.phase === 'error' ? t('kbModelRetry') : t('kbModelDownload')}
+              </button>
+            </div>
+          )}
+        </div>
+      </Section>
 
       <Section title={t('kbSourceTitle')} description={t('kbSourceDesc')}>
         <div className="space-y-2">
