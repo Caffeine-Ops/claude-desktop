@@ -81,8 +81,9 @@ description: >
 本 skill 约 50 张卡，**绝不预加载全部**（烧钱 + 挤爆上下文）。加载纪律：
 
 1. 永远先读本 SKILL.md（判模式 / 判任务 / 判类型 / 采集偏好 / 本索引）。
-2. 判定类型后，读**那个类型的 `_skeleton.md`（售前建设读 `presales-construction/healthcare.md`）**
-   ——它列出本方案调用哪些 section 卡、什么顺序。
+2. 判定类型后，读**该类型的骨架卡**——多数类型是扁平单文件 `proposal-types/<type>.md`
+   （如 `technical-solution.md`）；只有售前建设是目录，读 `presales-construction/_skeleton.md`
+   + `presales-construction/healthcare.md`。骨架卡列出本方案调用哪些 section 卡、什么顺序。
 3. 写到某一节时，**只读那一节对应的 section 卡** + 命中的 methodology 卡（如本节要表格才读 `tables.md`）。
 4. 需要相应能力时才读对应 methodology 卡。
 

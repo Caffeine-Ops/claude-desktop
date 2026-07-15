@@ -418,12 +418,12 @@ git commit -m "feat(proposal-writer): append-template 补主动性/缺料/偏好
 ## Task 10: NOTES.md 修订 + 质量验收（G7）+ 独立模式冒烟
 
 **Files:**
-- Modify：`skills/proposal-writer/NOTES.md`（修陈旧路径 `apps/desktop`→`apps/studio`；补「append-template 与 SKILL.md 的不编造/溯源底线必须同步改」的漂移警告）
+- Modify：`skills/proposal-writer/NOTES.md`（修陈旧路径 `apps/desktop`→`apps/studio`；补「append-template 与 SKILL.md 的不编造/溯源底线必须同步改」的漂移警告；**把原先住在 SKILL.md「维护须知」里、Task 1 重写时移走的开发者维护指引搬进这里**：app 如何消费 skill——`proposalPrompt.ts` 按目录名读 `references/append-template.md`、斜杠拦截在 `FusionRuntimeProvider.tsx` + `proposalSlash.ts`（`PROPOSAL_WRITER_SLASH_NAMES`）、协议字样事实源 `shared/proposal.ts`；改 append-template 的测试须从 `apps/studio` 跑、契约 vs 快照两类后果；目录 `proposal-writer/` 不可改名）
 
 **Interfaces:**
 - Consumes: 全部前置任务产出的 skill。
 
-- [ ] **Step 1: 修订 NOTES.md（路径 + 漂移警告 + 双份方法论同步须知）**
+- [ ] **Step 1: 修订 NOTES.md（路径 + 漂移警告 + 双份方法论同步须知 + 搬回 SKILL.md 移走的开发者维护指引，见上 Files）**
 
 - [ ] **Step 2: 独立模式冒烟 —— 用真实范例源料重生成一节（G7 质量验收）**
 
