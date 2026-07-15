@@ -7,6 +7,21 @@
  * apps/desktop/scripts/kb-model-manifest.mjs 持有同名常量——改模型两处都要动，互相有指路注释。
  */
 export const KB_MODEL_ID = 'bge-small-zh-v1.5'
+
+/**
+ * bge s2p（短查询→长文档）检索的【查询侧】指令前缀。BAAI 官方建议：检索场景把此指令拼在
+ * query 前再嵌入，passage 侧不加——非对称。方案召回正是「短需求→长产品文档」这种 s2p 场景。
+ *
+ * 【只加查询侧、passage 侧不动】是关键：passage 现状无前缀，只改 query 不需重建向量库；且
+ * BM25 词面那路【绝不】加前缀（前缀词会污染 tf/df）。前缀绑模型——换 KB_MODEL_ID 须同步复核。
+ *
+ * ⚠️ bge v1.5 已弱化对指令的依赖（官方称无指令亦有良好检索力），故本前缀是「近零成本、可 A/B」
+ * 的增强而非必涨。KB_QUERY_INSTRUCTION_ENABLED 是一键开关——若 A/B 显示无益或有害，置 false
+ * 即回到裸 query（无需重建索引，因为它只作用于查询期嵌入）。
+ */
+export const KB_QUERY_INSTRUCTION = '为这个句子生成表示以用于检索相关文章：'
+export const KB_QUERY_INSTRUCTION_ENABLED = true
+
 export interface KbIndexFile {
   sourcePath: string
   mirrorPath: string

@@ -6,7 +6,14 @@ import { join } from 'node:path'
 import { pipeline, env, type FeatureExtractionPipeline } from '@huggingface/transformers'
 import { rankChunks, type RetrievalChunk } from '../core/proposalRetrieve.core'
 import { cosineTopKRows, fuseRRF } from '../core/proposalSemantic.core'
-import { KB_MODEL_ID, type VectorStoreMeta, type VectorMeta, type SemanticHit } from '../../shared/kbIndex'
+import {
+  KB_MODEL_ID,
+  KB_QUERY_INSTRUCTION,
+  KB_QUERY_INSTRUCTION_ENABLED,
+  type VectorStoreMeta,
+  type VectorMeta,
+  type SemanticHit
+} from '../../shared/kbIndex'
 
 // ── process.parentPort 类型注记 ──────────────────────────────────────────────
 // Electron 把 `parentPort: Electron.ParentPort` 追加到 NodeJS.Process（electron.d.ts
@@ -87,7 +94,10 @@ async function search(
       if (scopeSet.has(`${m.productLine}\0${m.product}`)) allowedRows.push(i)
     }
   }
-  const out = await extractor(query, { pooling: 'mean', normalize: true })
+  // P0 非对称前缀：【仅】向量腿的 query 拼 bge s2p 检索指令（passage 侧无前缀、无需重建库）。
+  // 下方 BM25 rankChunks(query,…) 那路【故意】用裸 query——前缀词会污染词面 tf/df。
+  const embedInput = KB_QUERY_INSTRUCTION_ENABLED ? KB_QUERY_INSTRUCTION + query : query
+  const out = await extractor(embedInput, { pooling: 'mean', normalize: true })
   const qvec = out.data as Float32Array
   // N=40：两路在【域内子空间】各取前 40，RRF 融合后截 k。
   // vTop 用 cosineTopKRows（只对域内行打分），bm 走 BM25 rankChunks（proposalRetrieve.core，
