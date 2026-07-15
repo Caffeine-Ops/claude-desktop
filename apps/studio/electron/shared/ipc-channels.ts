@@ -889,7 +889,11 @@ export const IPC_CHANNELS = {
   KB_SYNC_PREVIEW: 'kb:sync-preview',
   KB_SYNC_FROM_LOCAL: 'kb:sync-from-local',
   KB_BUILD_STATUS_GET: 'kb:build-status-get',
-  KB_BUILD_STATUS: 'kb:build-status'
+  KB_BUILD_STATUS: 'kb:build-status',
+  KB_MODEL_DOWNLOAD_STATUS_GET: 'kb:model-download-status-get',
+  KB_MODEL_DOWNLOAD_START: 'kb:model-download-start',
+  KB_MODEL_DOWNLOAD_CANCEL: 'kb:model-download-cancel',
+  KB_MODEL_DOWNLOAD_STATUS: 'kb:model-download-status',
 } as const
 
 /**
@@ -2463,6 +2467,10 @@ export interface ChatApi {
   kbBuildStatusGet(): Promise<import('./kbBuildStatus').KbBuildStatus>
   /** 订阅构建进度广播（管理页进度条）。返回取消订阅函数。 */
   onKbBuildStatus(handler: (s: import('./kbBuildStatus').KbBuildStatus) => void): () => void
+  kbModelDownloadStatusGet(): Promise<import('./kbModelDownload').KbModelDownloadState>
+  startKbModelDownload(): Promise<void>
+  cancelKbModelDownload(): Promise<void>
+  onKbModelDownload(handler: (s: import('./kbModelDownload').KbModelDownloadState) => void): () => void
 
   /**
    * 扫描授权目录（下载 + 桌面）里的文档文件，返回元数据清单（mtime 降序、

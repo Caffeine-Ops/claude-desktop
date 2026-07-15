@@ -125,6 +125,7 @@ import type { KbRemoteConfig } from '../shared/kbConfig'
 import type { KbSyncStatus } from '../shared/kbSyncStatus'
 import type { KbCatalog, KbCatalogStatus } from '../shared/kbCatalog'
 import type { KbBuildStatus } from '../shared/kbBuildStatus'
+import type { KbModelDownloadState } from '../shared/kbModelDownload'
 import type {
   KbDocsListResult,
   KbToolingStatus,
@@ -852,6 +853,22 @@ const chatApi: ChatApi = {
     ipcRenderer.on(IPC_CHANNELS.KB_BUILD_STATUS, listener)
     return () => {
       ipcRenderer.off(IPC_CHANNELS.KB_BUILD_STATUS, listener)
+    }
+  },
+  kbModelDownloadStatusGet(): Promise<KbModelDownloadState> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS_GET) as Promise<KbModelDownloadState>
+  },
+  startKbModelDownload(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_MODEL_DOWNLOAD_START) as Promise<void>
+  },
+  cancelKbModelDownload(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.KB_MODEL_DOWNLOAD_CANCEL) as Promise<void>
+  },
+  onKbModelDownload(cb: (s: KbModelDownloadState) => void): () => void {
+    const listener = (_e: unknown, s: KbModelDownloadState): void => cb(s)
+    ipcRenderer.on(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS, listener)
     }
   },
 

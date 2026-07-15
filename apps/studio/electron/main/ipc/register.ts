@@ -123,6 +123,7 @@ import * as kbAdmin from '../core/kbAdminService'
 import { detectTooling, installMarkitdown } from '../core/kbTooling'
 import { docPaths, isSafeRelPath } from '../core/kbStore.core'
 import { scheduleKbBuild, getKbBuildStatus } from '../core/kbBuildRunner'
+import { getKbModelDownloadState, startKbModelDownload, cancelKbModelDownload } from '../services/kbModelDownloader'
 import type { KbIndex } from '../../shared/kbIndex'
 import type { KbRemoteConfig } from '../../shared/kbConfig'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
@@ -352,6 +353,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_SYNC_PREVIEW)
   ipcMain.removeHandler(IPC_CHANNELS.KB_SYNC_FROM_LOCAL)
   ipcMain.removeHandler(IPC_CHANNELS.KB_BUILD_STATUS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_MODEL_DOWNLOAD_START)
+  ipcMain.removeHandler(IPC_CHANNELS.KB_MODEL_DOWNLOAD_CANCEL)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT_PDF)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_RENDER)
@@ -2214,6 +2218,16 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.KB_BUILD_STATUS_GET, async (): Promise<import('../../shared/kbBuildStatus').KbBuildStatus> =>
     getKbBuildStatus())
+
+  ipcMain.handle(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS_GET, async (): Promise<import('../../shared/kbModelDownload').KbModelDownloadState> =>
+    getKbModelDownloadState())
+  // 触发即返回：下载在后台跑，进度经 KB_MODEL_DOWNLOAD_STATUS 广播推送（不阻塞 invoke）。
+  ipcMain.handle(IPC_CHANNELS.KB_MODEL_DOWNLOAD_START, async (): Promise<void> => {
+    void startKbModelDownload()
+  })
+  ipcMain.handle(IPC_CHANNELS.KB_MODEL_DOWNLOAD_CANCEL, async (): Promise<void> => {
+    cancelKbModelDownload()
+  })
 
   // 引用落地校验（#1）：核对一节正文的 `（据《X》）` 是否真出自镜像原文。verifyCitations
   // 内部全程防御式（索引缺失/读失败/异常 → degraded），这里再兜一道 catch 保证绝不 reject——

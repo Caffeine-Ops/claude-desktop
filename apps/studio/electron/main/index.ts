@@ -39,7 +39,8 @@ import {
   hasActiveRuntimes,
   newStudioTab,
   setQuitting,
-  broadcastKbBuildStatus
+  broadcastKbBuildStatus,
+  broadcastKbModelDownload
 } from './tabRegistry'
 import {
   startOpenDesignServices,
@@ -56,6 +57,7 @@ import {
 } from './services/proposalAssetProtocol'
 import { startKbSyncScheduler } from './core/kbSyncScheduler'
 import { onKbBuildStatus, scheduleKbBuild } from './core/kbBuildRunner'
+import { onKbModelDownload, refreshKbModelInstalled } from './services/kbModelDownloader'
 import { readKbIndex, kbStoreHasDocs } from './core/kbIndexStore'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -295,6 +297,10 @@ app.whenReady().then(async () => {
   // 构建进度广播：kbBuildRunner 是 app 级单飞行单例（管理页导入/删改触发重建），
   // 与 startKbSyncScheduler 同层订阅——状态变化推给所有能收 IPC 的 renderer（管理页进度条）。
   onKbBuildStatus((s) => broadcastKbBuildStatus(s))
+
+  // 嵌入模型首次运行下载：同层订阅推送 + 启动时刷新一次已安装状态（供管理页初始渲染）。
+  onKbModelDownload((s) => broadcastKbModelDownload(s))
+  refreshKbModelInstalled()
 
   // 缺索引自愈：kb-store 有原件但 index.json 缺失（迁移/换机灌库后、或 app 更新令索引失效）
   // → 补触发一次构建。构建平时只由写操作触发（导入/删改），没有这个启动兜底，迁移进来的库
