@@ -49,3 +49,36 @@
 > 输出 <div align="center">、<br>、</div> 等裸 HTML——预览用的 react-markdown 未启用
 > rehype-raw，这些标签会原样当成纯文本显示、污染成品（见用户反馈）。居中、留白、分页等
 > 排版交给导出器处理，正文里只写纯 markdown。
+
+---
+
+# 开发者维护指引（2026-07-15 多模式重塑后补；原住 SKILL.md「维护须知」，重写后迁来此处）
+
+本 skill 2026-07-15 从「app 专用薄模板」重塑为**多模式、自给自足**：`SKILL.md` 是 app 外独立模式的大脑
+（判模式/任务/类型、按需加载 `references/` 下约 50 张卡）；`references/append-template.md` 仍是 app 满血
+模式的注入契约。两侧并存，改动前务必分清改的是哪一侧。
+
+## app 如何消费本 skill（满血模式）
+
+- **注入**：`apps/studio/electron/main/core/proposalPrompt.ts` 的 `buildProposalAppend` **按目录名**读
+  `skills/proposal-writer/references/append-template.md`，渲染 `{{占位符}}` 后注入系统提示词。
+  **app 根本不读 SKILL.md**（阶段纪律必须无条件常驻系统提示词）。
+- **斜杠拦截**：`apps/studio/src/chat/runtime/FusionRuntimeProvider.tsx`（onNew）+
+  `apps/studio/src/chat/lib/proposalSlash.ts` 的硬编码 `PROPOSAL_WRITER_SLASH_NAMES`
+  （`claude-desktop:proposal-writer` / `proposal-writer`）。**拦截认目录名/命令名，不读 frontmatter**——
+  故 `SKILL.md` 的 `description` 可自由改，但 **`name` 保持 `proposal-writer`、目录 `proposal-writer/` 不可改名**。
+- **协议事实源**：`apps/studio/electron/shared/proposal.ts`（哨兵、`⚠️ 资料缺失：`＝GAP_PREFIX、确认 header 等）。
+
+## 改 append-template.md 的纪律（高危）
+
+- **只动散文，绝不碰 `{{占位符}}` 及其贴邻常量**（哨兵/GAP 前缀/确认 header 是解析器逐字节硬协议）。
+- 改后测试**从 `apps/studio` 跑**（cwd 决定 skills 插件目录解析，仓库根跑会全红）：
+  - 契约测试（先跑，必须 PASS）：`cd apps/studio && bun test electron/main/core/proposalPromptTemplate`
+  - 快照（刷新基线）：`cd apps/studio && bun test electron/main/core/proposalPrompt.snapshot --update-snapshots`，`.snap` 一起提交。
+- 两类后果别混：契约测试红＝碰到硬协议要回退措辞；快照红＝散文改动，刷新即可。
+
+## 双份方法论的漂移警告（重要）
+
+核心底线（**不编造 / 逐句溯源（据《X》）/ 缺料标注 / 图文并茂**）在 `append-template.md`（app 用）
+与 `SKILL.md`＋`references/methodology/`（独立用）**各写了一份**。改其中任一处的这些底线纪律，
+**必须同步改另一处**，否则两种模式行为漂移。v1 有意接受此重复（彻底消除需更大重构）。
