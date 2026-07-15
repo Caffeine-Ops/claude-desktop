@@ -12,7 +12,7 @@
 - **一、公司资质与实力**：资质证书、类似案例（数据/证书号必须来自素材，不编）
 - **二、需求理解与响应**
   - 对招标需求的理解 → `sections/overview/background.md`
-  - **需求点逐条应答**：招标要求 → 我方响应，用表格 → `sections/features/`+`tables.md`
+  - **需求点逐条应答**：招标要求 → 我方响应，用表格（`methodology/tables.md`）
 - **三、技术方案**（按招标要求繁简）→ 复用 `architecture/` + `features/`
 - **四、实施方案**
   - 实施计划 / 里程碑 → `sections/delivery/implementation-plan.md`
