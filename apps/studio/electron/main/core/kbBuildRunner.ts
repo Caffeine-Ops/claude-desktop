@@ -3,12 +3,13 @@
  * 这里只做 fork/转发/回调。为什么不复用 kbSyncScheduler：sync 是定时拉取（周期驱动），
  * build 是写操作驱动（事件驱动），两者唯一的共同点「单飞行」已经薄到不值得抽象。
  */
-import { app, utilityProcess } from 'electron'
+import { utilityProcess } from 'electron'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   initialKbBuildStatus, reduceKbBuildStatus, type KbBuildEvent, type KbBuildStatus
 } from '../../shared/kbBuildStatus'
+import { kbModelDir } from './kbModelDir'
 import { kbOutDir, kbStoreDir } from './kbIndexStore'
 import { resetEmbedWorker, warmEmbedWorker } from './kbSemanticSearch'
 
@@ -20,16 +21,10 @@ function dispatch(e: KbBuildEvent): void {
   for (const cb of listeners) cb(status)
 }
 
-/** 模型目录解析与 kbSemanticSearch.modelDir 同式（打包=resourcesPath，dev=apps/desktop/kb-model）。 */
-function modelDir(): string {
-  if (app.isPackaged) return join(process.resourcesPath, 'kb-model')
-  return join(dirname(fileURLToPath(import.meta.url)), '../../kb-model')
-}
-
 function start(): void {
   dispatch({ type: 'start' })
   const workerPath = join(dirname(fileURLToPath(import.meta.url)), 'kbBuildWorker.js')
-  const child = utilityProcess.fork(workerPath, [kbStoreDir(), kbOutDir(), String(Date.now()), modelDir()])
+  const child = utilityProcess.fork(workerPath, [kbStoreDir(), kbOutDir(), String(Date.now()), kbModelDir()])
   let done = false
   child.on('message', (msg: { type: string; phase?: 'convert' | 'vectors'; done?: number; total?: number; ok?: boolean; error?: string; line?: string }) => {
     if (msg.type === 'progress' && msg.phase) {

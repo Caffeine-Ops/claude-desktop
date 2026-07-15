@@ -9,13 +9,14 @@
  *      main 侧 init 计时器（没人调参）更安全稳定。
  */
 
-import { app, utilityProcess, type UtilityProcess } from 'electron'
+import { utilityProcess, type UtilityProcess } from 'electron'
 import { statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ProposalProductScope } from './proposalPrompt'
 import type { SemanticHit } from '../../shared/kbIndex'
 import { readKbIndex, kbOutDir } from './kbIndexStore'
+import { kbModelDir } from './kbModelDir'
 import { retrievePassages } from './proposalRetrieve'
 import { passagesToHits, fillHitsToK } from './proposalSemantic.core'
 
@@ -52,27 +53,6 @@ function maybeRecycleWorker(): void {
   }
 }
 
-/**
- * 模型/向量目录解析：
- *   打包 = resourcesPath/kb-model
- *   dev   = <repo>/apps/studio/kb-model
- *
- * dev 路径推导（该模块打包到 out-electron/main/index.js）：
- *   dirname(import.meta.url) = apps/studio/out-electron/main
- *   ../../kb-model            = apps/studio/out-electron/main/../../kb-model
- *                             = apps/studio/kb-model  ✓
- *
- * 三层 '../../../' 会多跳一级到 apps/kb-model（错）——只用两层。
- * workerPath = join(dirname, 'embedWorker.js') 指向 out-electron/main/embedWorker.js
- *（electron.vite.config 的 embedWorker 第二入口输出，漏配该入口 fork 会静默失败
- *  → 永久 BM25 降级，见 config 注释）。
- */
-function modelDir(): string {
-  if (app.isPackaged) return join(process.resourcesPath, 'kb-model')
-  // out-electron/main → out-electron → apps/studio（两层 ..）
-  return join(dirname(fileURLToPath(import.meta.url)), '../../kb-model')
-}
-
 /** 空闲 warmup：fork worker 子进程预载模型+向量。绝不在首次用户查询同步路径里跑。 */
 export function warmEmbedWorker(): void {
   if (worker) return
@@ -83,7 +63,7 @@ export function warmEmbedWorker(): void {
   //（可执行文件缺失/资源耗尽等）会直接炸穿 openSession。吞掉并置空 worker，调用方自然降级 BM25。
   try {
     forkedIndexMtime = indexJsonMtime() // fork 时快照，供 maybeRecycleWorker 对比侦测本地重建
-    worker = utilityProcess.fork(workerPath, [modelDir(), kbOutDir(), fp])
+    worker = utilityProcess.fork(workerPath, [kbModelDir(), kbOutDir(), fp])
     worker.on('message', (msg: { type: string; id?: number; hits?: SemanticHit[] }) => {
       if (msg.type === 'ready') ready = true
       else if (msg.type === 'stale') { stale = true; ready = false }
