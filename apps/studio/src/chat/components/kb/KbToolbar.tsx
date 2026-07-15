@@ -1,4 +1,5 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
+import type { KbModelDownloadState } from '@desktop-shared/kbModelDownload'
 import { useKbStore } from '../../stores/kb'
 import { useT, useTFormat } from '../../i18n'
 import { kbIcons } from './kbIcons'
@@ -19,6 +20,12 @@ export function KbToolbar({ readOnly }: {
   const refresh = useKbStore((s) => s.refresh)
   const total = useKbStore((s) => s.total)
   const [busy, setBusy] = useState(false)
+  const [model, setModel] = useState<KbModelDownloadState | null>(null)
+  useEffect(() => {
+    void window.chatApi.kbModelDownloadStatusGet().then(setModel)
+    const off = window.chatApi.onKbModelDownload(setModel)
+    return off
+  }, [])
 
   const migrate = async (): Promise<void> => {
     if (busy) return
@@ -74,11 +81,26 @@ export function KbToolbar({ readOnly }: {
             )}
           </>
         )}
-        {build?.running && (
+        {/* 右侧状态区：建库中 / 模型下载中 / 缺模型引导互斥展示，同一时刻只顶一个最相关的
+            （都带 ml-auto，叠加渲染会互相打架），优先级：正在建库 > 正在下模型 > 缺模型引导。 */}
+        {build?.running ? (
           <span className="ml-auto flex items-center gap-1.5 text-[11.5px] text-muted-foreground/80">
             <kbIcons.refresh className="size-3.5 animate-spin" />
             {t('kbBuilding')}{build.phase ? ` ${build.phase.done}/${build.phase.total}` : ''}
           </span>
+        ) : model?.phase === 'downloading' ? (
+          <span className="ml-auto flex items-center gap-1.5 text-[11.5px] text-muted-foreground/80">
+            <kbIcons.refresh className="size-3.5 animate-spin" />
+            {t('kbModelDownloading')} {model.percent}%
+          </span>
+        ) : model && !model.installed && (
+          <button
+            type="button"
+            onClick={() => void window.chatApi.startKbModelDownload()}
+            className="ml-auto inline-flex items-center gap-1 text-[11.5px] text-muted-foreground/80 transition-colors hover:text-foreground"
+          >
+            {t('kbModelMissingHint')} · {t('kbModelDownload')}
+          </button>
         )}
       </div>
       {/* 工具缺失只对可写机有意义（只读机不本地构建、装不装 markitdown 无所谓）。原来的一行红字
