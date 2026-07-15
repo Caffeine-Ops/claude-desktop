@@ -86,8 +86,15 @@ function downloadFile(
         res.on('data', (c: Buffer) => onBytes(c.length))
         res.pipe(ws)
         ws.on('finish', () => resolve())
-        ws.on('error', reject)
-        res.on('error', reject)
+        // 出错路径显式 destroy 写句柄（否则靠 GC 回收 fd；反复取消/重试会攒 fd）。
+        ws.on('error', (err) => {
+          ws.destroy()
+          reject(err)
+        })
+        res.on('error', (err) => {
+          ws.destroy()
+          reject(err)
+        })
       })
       req.setTimeout(DOWNLOAD_TIMEOUT_MS, () => req.destroy(new Error('下载超时（60s 无响应）')))
       req.on('error', reject)
@@ -109,17 +116,20 @@ let controller: AbortController | null = null
 export async function startKbModelDownload(): Promise<void> {
   if (downloading) return
   downloading = true
-  cancelled = false
-  controller = new AbortController()
-  setState({ phase: 'downloading', percent: 0, currentFile: null, errorMessage: null })
-
-  // 进度分母 = 所有文件真实字节数之和（onnx 24MB 占绝对多数，进度条精确跟大文件走，不会早跳 100%）。
-  const totalBytes = KB_DOWNLOADABLE_MODELS.flatMap((m) => m.files).reduce((sum, f) => sum + f.size, 0)
-  let doneBytes = 0
+  // currentTmp 声明在 try 外、downloading=true 之后：catch 分支要读它清残留 .part，
+  // 若声明挪进 try 块内 catch 就够不着（块级作用域）。
   let currentTmp: string | null = null
-  const pushPercent = (): void => setState({ percent: Math.min(100, Math.round((doneBytes / totalBytes) * 100)) })
 
   try {
+    cancelled = false
+    controller = new AbortController()
+    setState({ phase: 'downloading', percent: 0, currentFile: null, errorMessage: null })
+
+    // 进度分母 = 所有文件真实字节数之和（onnx 24MB 占绝对多数，进度条精确跟大文件走，不会早跳 100%）。
+    const totalBytes = KB_DOWNLOADABLE_MODELS.flatMap((m) => m.files).reduce((sum, f) => sum + f.size, 0)
+    let doneBytes = 0
+    const pushPercent = (): void => setState({ percent: Math.min(100, Math.round((doneBytes / totalBytes) * 100)) })
+
     for (const model of KB_DOWNLOADABLE_MODELS) {
       const destRoot = join(kbModelDir(), model.dirName)
       for (const file of model.files) {
@@ -149,6 +159,7 @@ export async function startKbModelDownload(): Promise<void> {
         const sha = await sha256File(tmp)
         if (size !== file.size || sha !== file.sha256) {
           rmSync(tmp, { force: true })
+          currentTmp = null // 已清理，避免 catch 里 rmSync 同一路径两次
           throw new Error(`模型文件校验失败：${file.relPath}`)
         }
         renameSync(tmp, dest)
