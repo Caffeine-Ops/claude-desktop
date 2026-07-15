@@ -15,7 +15,7 @@
 // connection or mutates state.
 
 import { promises as fsp } from 'node:fs';
-import type Database from 'better-sqlite3';
+import type Database from '../lib/sqlite.js';
 
 type SqliteDb = Database.Database;
 

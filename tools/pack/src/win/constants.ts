@@ -7,7 +7,10 @@ export const ELECTRON_BUILDER_BUILD_DEPENDENCIES_FROM_SOURCE = false;
 export const ELECTRON_BUILDER_NODE_GYP_REBUILD = false;
 export const ELECTRON_BUILDER_NPM_REBUILD = false;
 export const ELECTRON_REBUILD_MODE = "sequential" as const;
-export const ELECTRON_REBUILD_NATIVE_MODULES = ["better-sqlite3"] as const;
+// Empty since 2026-07-15: the daemon's only native module (better-sqlite3) was
+// replaced by node:sqlite (runtime built-in). Nothing left to rebuild for the
+// Electron ABI, so this list is empty and the rebuild step becomes a no-op.
+export const ELECTRON_REBUILD_NATIVE_MODULES = [] as const;
 export const ELECTRON_BUILDER_FILE_PATTERNS = [
   "**/*",
   "!**/node_modules/.bin",

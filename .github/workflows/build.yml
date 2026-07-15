@@ -13,10 +13,8 @@ env:
   # fusion-code CLI version is per-matrix (matrix.fusion_version), NOT a single
   # global — darwin-x64 lives in v2.1.91 while arm64/win are still on v2.1.90
   # until v2.1.91 is backfilled with all arches. See the matrix comment below.
-  # Node version bundled INTO the app to run the daemon. Must match .nvmrc
-  # (the version better-sqlite3 is compiled for, ABI 137) — see the
-  # "Bundle Node runtime" step.
-  BUNDLED_NODE_VERSION: v24.16.0
+  # (Removed 2026-07-15: BUNDLED_NODE_VERSION — the daemon no longer needs a
+  # bundled Node; it runs on Electron's own node after the node:sqlite migration.)
   # Standalone Python bundled INTO the app for the ppt-master skill (a Python
   # skill with native-extension deps: PyMuPDF/Pillow/numpy). python-build-
   # standalone (astral, what uv uses) ships relocatable, install_only tarballs.
@@ -44,15 +42,15 @@ jobs:
           # collapse these back to a single v2.1.91 for every leg.
           #
           # Apple Silicon. macos-latest is an arm64 runner, so `bun install`
-          # here compiles/fetches arm64 native addons (better-sqlite3, sharp,
-          # onnxruntime-node) — matching this build's arch.
+          # here compiles/fetches arm64 native addons (sharp, onnxruntime-node)
+          # — matching this build's arch. (better-sqlite3 is no longer among
+          # them; the daemon uses node:sqlite now.)
           - os: macos-latest
             platform: mac
             arch: arm64
             fusion_version: v2.1.90
             fusion_asset: fusion-code-darwin-arm64
             fusion_target: apps/studio/fusion-bin/fusion-code-cli
-            node_dist: darwin-arm64
             python_dist: aarch64-apple-darwin
           # Intel Mac. MUST run on an Intel (x64) runner so `bun install`
           # fetches x64 native addons; an arm64 runner would bundle arm64 .node
@@ -68,7 +66,6 @@ jobs:
             fusion_version: v2.1.91
             fusion_asset: fusion-code-darwin-x64
             fusion_target: apps/studio/fusion-bin/fusion-code-cli
-            node_dist: darwin-x64
             python_dist: x86_64-apple-darwin
           - os: windows-latest
             platform: win
@@ -76,7 +73,6 @@ jobs:
             fusion_version: v2.1.90
             fusion_asset: fusion-code-win32-x64.exe
             fusion_target: apps/studio/fusion-bin/fusion-code-cli.exe
-            node_dist: win-x64
             python_dist: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
@@ -88,14 +84,11 @@ jobs:
         with:
           bun-version: latest
 
-      # Pin Node to the version the daemon RUNS under (.nvmrc → 24, ABI 137).
-      # Without this the runner uses the Node that ships with setup-bun (22,
-      # ABI 127); `bun install` then compiles daemon's better-sqlite3 native
-      # addon for ABI 127, prebundle copies that .node into the app, and at
-      # runtime the daemon (spawned with Node 24) fails to dlopen it:
-      #   "compiled against NODE_MODULE_VERSION 127 … requires 137"
-      #   → ERR_DLOPEN_FAILED → daemon dies → settings/web /api all break.
-      # Install-time Node MUST equal run-time Node for native addons.
+      # Pin Node to .nvmrc (24) so build-time tooling (tsc, esbuild prebundle)
+      # runs on the same major the daemon runs under. (Pre-2026-07-15 this also
+      # had to match the ABI the daemon's better-sqlite3 native addon was
+      # compiled for; that native dependency is gone — SQLite is node:sqlite —
+      # so there is no ABI to align and no native-addon verify step anymore.)
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -103,25 +96,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      # Fail fast if the native addon's ABI doesn't match the daemon's
-      # runtime Node (24 / ABI 137). The whole point of the Setup Node step
-      # above is to make `bun install` compile better-sqlite3 for 137 — this
-      # asserts it actually happened, so a mis-pinned runner can never ship a
-      # package whose daemon dies with ERR_DLOPEN_FAILED at the user's machine.
-      - name: Verify better-sqlite3 ABI matches daemon runtime
-        run: |
-          node -e "
-            const { createRequire } = require('node:module');
-            const req = createRequire(require('node:path').resolve('apps/daemon/package.json'));
-            req('better-sqlite3');
-            const abi = process.versions.modules;
-            console.log('node ' + process.version + ' — better-sqlite3 ABI ' + abi);
-            if (abi !== '137') {
-              console.error('::error::better-sqlite3 ABI is ' + abi + ', expected 137 (Node 24). Daemon will fail to dlopen at runtime.');
-              process.exit(1);
-            }
-          "
 
       - name: Write env.json from secret
         shell: bash
@@ -193,41 +167,11 @@ jobs:
             exit 1
           fi
 
-      # Bundle a standalone Node 24 (ABI 137) INTO the app so the daemon runs
-      # against the exact ABI its better-sqlite3 was compiled for — never the
-      # user's machine Node (uncontrollable; Windows users often have Node 22 =
-      # ABI 127 on PATH → ERR_DLOPEN_FAILED). resolveNodeBin() picks
-      # <resources>/node-runtime/node[.exe] in prod. Only the single `node`
-      # binary is kept (npm/corepack/headers dropped) to keep the size down.
-      - name: Bundle Node runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          ver="$BUNDLED_NODE_VERSION"
-          dist="${{ matrix.node_dist }}"
-          dest="apps/studio/node-runtime/${{ matrix.platform }}"
-          mkdir -p "$dest"
-          if [ "${{ matrix.platform }}" = "win" ]; then
-            url="https://nodejs.org/dist/${ver}/node-${ver}-${dist}.zip"
-            curl -fsSL "$url" -o node.zip
-            unzip -q node.zip
-            cp "node-${ver}-${dist}/node.exe" "$dest/node.exe"
-          else
-            url="https://nodejs.org/dist/${ver}/node-${ver}-${dist}.tar.gz"
-            curl -fsSL "$url" -o node.tar.gz
-            tar -xzf node.tar.gz
-            cp "node-${ver}-${dist}/bin/node" "$dest/node"
-            chmod +x "$dest/node"
-          fi
-          ls -la "$dest"
-          # Assert the bundled Node's ABI is 137 (Node 24) — the daemon's
-          # better-sqlite3 is compiled for exactly this.
-          abi=$("$dest"/node* -e "process.stdout.write(process.versions.modules)")
-          echo "bundled node ABI: $abi"
-          if [ "$abi" != "137" ]; then
-            echo "::error::Bundled Node ABI is $abi, expected 137"
-            exit 1
-          fi
+      # (Removed 2026-07-15) The daemon used to need a standalone Node 24 bundled
+      # into the app to match its better-sqlite3 ABI. That native dependency is
+      # gone — the SQLite layer moved to node:sqlite (built into the runtime) —
+      # so the daemon now runs on Electron's own node and no node-runtime is
+      # shipped. See resolveNodeBin() / prebundle-daemon.mjs.
 
       # Bundle a standalone Python 3.12 INTO the app for the ppt-master skill.
       # python-build-standalone install_only tarballs are relocatable (a top

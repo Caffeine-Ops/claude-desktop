@@ -24,7 +24,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { homedir } from 'node:os'
 import { app } from 'electron'
@@ -137,93 +137,37 @@ function resolveRepoRoot(selfDir: string): string {
 }
 
 /**
- * 找一个能用的系统 node 可执行文件。**不能**用 process.execPath（那是 Electron
- * 二进制，ABI 与 better-sqlite3 不匹配）。
+ * 解析出一个跑 daemon 的 JS 运行时可执行文件。
  *
- * 不变量：daemon 的 better-sqlite3 .node 按仓库 .nvmrc 钉的 Node 版本（当前 24 =
- * ABI 137）编译。所以这里**绝不能裸返回 'node' 赌 PATH**——这是踩过两次的坑：
- *  - dev：GUI 启动的 Electron 继承的父 shell PATH 可能是别的 nvm 版本。
- *  - prod：`spawnDaemon` 给 daemon 的 PATH 里拼了 `buildAgentDetectionPath()`，
- *    它枚举了 nvm **所有**版本的 bin（v18/v22/v24…），裸 'node' 会按字典序撞上
- *    **第一个**（v18/v22 而非 v24），ABI 错配 → ERR_DLOPEN_FAILED → daemon 立即
- *    exit 1 → waitForDaemonReady 等满 30s 超时 → web tab「无法连接本地 daemon」+
- *    总启动卡 ~40s。
- *    见 [[2026-05-23-prod缺nvmrc回退裸node撞ABI致daemon起不来]]、
- *    [[2026-05-23-daemon子进程裸node赌PATH撞ABI错配崩溃]]。
+ * **历史大反转（2026-07-15）**：本函数以前**刻意避开** process.execPath（Electron
+ * 二进制），因为 daemon 的 better-sqlite3 .node 死绑 Node ABI，Electron 内嵌 node 的
+ * ABI（148）与之不符会 ERR_DLOPEN_FAILED。为此项目打包了一份独立的 node-runtime
+ * （ABI 与 better-sqlite3 对齐），并层层回退到 nvm 版本，全为「拿到 ABI 正确的 node」。
  *
- * prod 下 repoRoot == <prebundled>，prebundle-daemon.mjs 已把仓库 .nvmrc 拷进去，
- * 所以这里读 `repoRoot/.nvmrc` 在 dev/prod 都能拿到钉死的版本。
+ * 现在 daemon **没有任何 native 模块**了——SQLite 层已迁到 node:sqlite（Node 24 内置，
+ * 零 native 编译，无 ABI 可谈）。于是 ABI 匹配这个约束整个消失，process.execPath 从
+ * 「禁忌」变成「首选」：Electron 43 内嵌 node 24.17 满足 node:sqlite 的运行要求
+ * （≥22.5，无标志），且它必然存在、不赌用户环境、不占安装包额外体积。
  *
- * 优先级：① OD_NODE_BIN 显式覆盖 → ② **prod：app 自带的 Node**（见下）→
- * ③ 读 .nvmrc 钉的版本，拼 nvm 绝对路径 → ④ 扫 nvm 目录挑最高版本 →
- * ⑤ 实在没有才裸 'node'（赌运行环境，最后手段）。
+ * 用 ELECTRON_RUN_AS_NODE=1（由 spawnDaemon 注入）让 Electron 以纯 node 模式跑 daemon。
  *
- * 为什么 prod 必须自带 Node（②）：daemon 的 better-sqlite3 .node 在 CI 按 Node 24
- * （ABI 137）编译，但**用户机器装的 Node 版本不可控**——尤其 Windows 没有 nvm 布局，
- * 旧逻辑会落到裸 'node' 撞上系统 Node 22（ABI 127）→ ERR_DLOPEN_FAILED → daemon
- * 崩。把对应平台的 Node 24 二进制打进包（CI 下载，electron-builder extraResources
- * 投到 <resources>/node-runtime/），daemon 固定用它跑，彻底不赌用户环境。
- * 见 [[2026-05-25-daemon自带Node彻底摆脱用户机器Node版本ABI错配]]。
+ * 优先级：① OD_NODE_BIN 显式覆盖（逃生口 / 特殊调试）→ ② process.execPath
+ * （Electron 自身，dev/prod 统一，主路径）。
  */
-function resolveNodeBin(repoRoot: string): string {
+function resolveNodeBin(_repoRoot: string): string {
   const override = process.env.OD_NODE_BIN
   if (override && existsSync(override)) return override
 
-  // ② prod：app 自带的 Node 24（与 better-sqlite3 编译期 ABI 一致）。
-  //    electron-builder 把它投到 process.resourcesPath/node-runtime/。
-  if (app.isPackaged) {
-    const bundledNode = join(
-      process.resourcesPath,
-      'node-runtime',
-      process.platform === 'win32' ? 'node.exe' : 'node'
-    )
-    if (existsSync(bundledNode)) return bundledNode
-    console.warn(`[od-services] 自带 Node 缺失：${bundledNode}，回退 nvm/裸 node（ABI 可能不匹配）`)
-  }
+  // Electron 自身，以 ELECTRON_RUN_AS_NODE 模式跑（spawnDaemon 负责设该 env）。
+  // dev（bun run dev 起的 electron-vite）与 prod（打包 app）下 process.execPath 都
+  // 指向 Electron 二进制，其内嵌 node 24 满足 node:sqlite；无 native 依赖，无需 ABI 对齐。
+  return process.execPath
+}
 
-  const nvmNodeDir = join(homedir(), '.nvm', 'versions', 'node')
-
-  // ② 读 .nvmrc 钉的版本，拼 ~/.nvm/versions/node/v<ver>/bin/node。
-  // .nvmrc 可能写 "24.16.0" 或 "v24.16.0"，统一去掉前缀 v 再补回。
-  try {
-    const nvmrc = readFileSync(join(repoRoot, '.nvmrc'), 'utf8').trim()
-    if (nvmrc) {
-      const ver = nvmrc.replace(/^v/, '')
-      const pinned = join(nvmNodeDir, `v${ver}`, 'bin', 'node')
-      if (existsSync(pinned)) return pinned
-      console.warn(`[od-services] .nvmrc 钉 v${ver} 但 ${pinned} 不存在，尝试 nvm 最高版本`)
-    }
-  } catch {
-    // 没 .nvmrc 或读不动，落到 ③
-  }
-
-  // ③ 扫 nvm 目录挑最高的 major（语义版本降序）。better-sqlite3 通常向上兼容到
-  // 更高的 Node major（ABI 单调递增），挑最高比挑字典序第一（可能是 v18）安全得多。
-  try {
-    const versions = readdirSync(nvmNodeDir)
-      .filter((v) => /^v\d+/.test(v))
-      .sort((a, b) => {
-        const pa = a.slice(1).split('.').map(Number)
-        const pb = b.slice(1).split('.').map(Number)
-        for (let i = 0; i < 3; i++) {
-          if ((pb[i] ?? 0) !== (pa[i] ?? 0)) return (pb[i] ?? 0) - (pa[i] ?? 0)
-        }
-        return 0
-      })
-    for (const v of versions) {
-      const cand = join(nvmNodeDir, v, 'bin', 'node')
-      if (existsSync(cand)) {
-        console.warn(`[od-services] 用 nvm 最高版本 node: ${cand}`)
-        return cand
-      }
-    }
-  } catch {
-    // 没装 nvm，落到 ④
-  }
-
-  // ④ 实在没有 nvm 布局，裸 'node' 赌 PATH（spawn shell:false 用 PATH 解析）。最后手段。
-  console.warn('[od-services] 找不到 nvm node，回退裸 node（ABI 可能不匹配）')
-  return 'node'
+/** nodeBin 是否为 Electron 自身（需以 ELECTRON_RUN_AS_NODE 模式跑）。 */
+function isElectronRunAsNode(nodeBin: string): boolean {
+  // OD_NODE_BIN 覆盖成真·node 时不是 Electron，不该设 ELECTRON_RUN_AS_NODE。
+  return nodeBin === process.execPath
 }
 
 /** 找 bun（dev 下 spawn web dev server 用）。 */
@@ -304,6 +248,15 @@ function spawnDaemon(repoRoot: string): void {
 
   const nodeBin = resolveNodeBin(repoRoot)
   const extraPath = buildAgentDetectionPath()
+  // 当 nodeBin 是 Electron 自身时，用 ELECTRON_RUN_AS_NODE=1 让它以纯 node 模式跑 daemon。
+  // 孙进程传播由 daemon 侧已有机制正确处理，无需在此 delete：
+  //  · daemon 自我 spawn 子命令（od mcp 等，走 process.execPath=Electron）时，
+  //    mcp-routes.ts 探测 `ELECTRON_RUN_AS_NODE === '1'` 并**主动传播**给孙进程
+  //    （mcp-install-info.ts），让孙进程也用同一个 Electron-as-node 跑——正是所需。
+  //  · daemon spawn 第三方二进制（agent CLI / git / ffmpeg）时，即便继承了该 env 也
+  //    无害：ELECTRON_RUN_AS_NODE 只改变 **Electron 二进制自身** 被启动时的行为，对
+  //    非 Electron 程序完全无意义、被忽略。
+  const runAsNodeEnv = isElectronRunAsNode(nodeBin) ? { ELECTRON_RUN_AS_NODE: '1' } : {}
 
   // prod：项目数据写到用户可写目录（app 资源目录只读）。dev 留空，daemon 默认写
   // 仓库 .od/。提前建好，避免 daemon 首次 mkdir 时 race。
@@ -320,6 +273,7 @@ function spawnDaemon(repoRoot: string): void {
     cwd: repoRoot,
     env: {
       ...process.env,
+      ...runAsNodeEnv,
       PATH: `${process.env.PATH ?? ''}${delimiter}${extraPath}`,
       // 关键：放行 web dev origin，否则 dev 下跨源 /api 调用被 daemon 403。
       // 见 [[2026-05-23-daemon-origin校验拒跨源致web调api全403]]

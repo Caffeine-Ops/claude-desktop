@@ -5,10 +5,15 @@
 // (apps/daemon/dist/cli.js) with the whole 2.8G node_modules on disk. A
 // packaged .app can't carry that. Mirroring open-design's tools-pack approach,
 // we esbuild-bundle the daemon's ENTIRE JS dependency graph into one mjs and
-// keep only the two native modules (better-sqlite3 / blake3-wasm) as external,
-// copied alongside with their .node binaries. Resource dirs the daemon reads
-// at runtime (skills, design-systems, …) and the web static export are copied
-// verbatim.
+// keep only the one remaining non-bundlable module (blake3-wasm, loads a .wasm)
+// as external, copied alongside. Resource dirs the daemon reads at runtime
+// (skills, design-systems, …) and the web static export are copied verbatim.
+//
+// NOTE (2026-07-15): better-sqlite3 (the only NATIVE .node module) is gone —
+// the daemon's SQLite layer moved to node:sqlite (built into the runtime).
+// So there is no .node to ship, no ABI to pin, and the daemon now runs on
+// Electron's own node (see resolveNodeBin). That removed the standalone
+// node-runtime and the .nvmrc copy this script used to do.
 //
 // Layout produced (must mirror the monorepo so daemon's resolveProjectRoot(
 // __dirname) === <prebundled root>, satisfying its OD_RESOURCE_ROOT-under-root
@@ -16,7 +21,7 @@
 //
 //   prebundled/
 //     apps/daemon/dist/daemon-cli.mjs        ← esbuild bundle (entry)
-//     apps/daemon/dist/node_modules/         ← better-sqlite3, blake3-wasm, deps
+//     apps/daemon/dist/node_modules/         ← blake3-wasm (+ its runtime deps)
 //     apps/studio/out/                       ← next static export (app://studio serves it)
 //     skills/ design-systems/ design-templates/ craft/ assets/
 //     prompt-templates/ plugins/             ← daemon resource roots
@@ -57,10 +62,11 @@ const result = await build({
   target: 'node24',
   entryPoints: [daemonEntry],
   outfile: join(daemonDistOut, 'daemon-cli.mjs'),
-  // Native modules can't be bundled — keep them external and ship their
-  // node_modules folders next to the bundle (resolved via the dist/node_modules
-  // dir below). better-sqlite3 loads a .node; blake3-wasm loads a .wasm.
-  external: ['better-sqlite3', 'blake3-wasm'],
+  // blake3-wasm can't be bundled (it loads a .wasm at runtime) — keep it
+  // external and ship its node_modules folder next to the bundle (resolved via
+  // the dist/node_modules dir below). (better-sqlite3 used to be here too; it's
+  // gone now — SQLite is node:sqlite, nothing to externalize.)
+  external: ['blake3-wasm'],
   // Several transitive deps are CJS and call require(); an ESM bundle has no
   // require by default, so inject one bound to the bundle's own URL.
   banner: {
@@ -71,9 +77,8 @@ const result = await build({
 })
 console.log(`[prebundle] daemon bundle ok — ${Object.keys(result.metafile.inputs).length} inputs`)
 
-// Copy the two native packages + their runtime deps into the bundle-adjacent
-// node_modules so the external require() resolves them. prebuild-install is a
-// build-time dep of better-sqlite3 and not needed at runtime — skip it.
+// Copy the external package(s) into the bundle-adjacent node_modules so the
+// external require() resolves them. Only blake3-wasm remains (loads a .wasm).
 const nativeNodeModules = join(daemonDistOut, 'node_modules')
 mkdirSync(nativeNodeModules, { recursive: true })
 
@@ -88,41 +93,22 @@ function findPkgDir(pkg) {
   return existsSync(dir) ? dir : null
 }
 
-const RUNTIME_NATIVE_PKGS = ['better-sqlite3', 'blake3-wasm', 'bindings', 'file-uri-to-path']
-for (const pkg of RUNTIME_NATIVE_PKGS) {
+// blake3-wasm pulls in no native .node and no transitive runtime deps we need
+// to hand-copy (it's self-contained wasm). Ship just the one package.
+const RUNTIME_EXTERNAL_PKGS = ['blake3-wasm']
+for (const pkg of RUNTIME_EXTERNAL_PKGS) {
   const src = findPkgDir(pkg)
   if (!src) {
-    console.error(`[prebundle] native runtime package not found in store: ${pkg}`)
+    console.error(`[prebundle] external runtime package not found in store: ${pkg}`)
     process.exit(1)
   }
-  // Dereference symlinks (-L equivalent) so the .node binary is a real file in
-  // the package, not a dangling link into the store.
   cpSync(src, join(nativeNodeModules, pkg), { recursive: true, dereference: true })
-  console.log(`[prebundle] copied native pkg: ${pkg}`)
+  console.log(`[prebundle] copied external pkg: ${pkg}`)
 }
 
-// Sanity-check the better-sqlite3 .node landed.
-const sqliteNode = join(nativeNodeModules, 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')
-if (!existsSync(sqliteNode)) {
-  console.error(`[prebundle] better_sqlite3.node missing after copy: ${sqliteNode}`)
-  process.exit(1)
-}
-
-// Copy the repo's .nvmrc into the prebundled root. The daemon MUST be spawned
-// with the exact Node version its better-sqlite3 .node was compiled against
-// (ABI 137 = Node 24); resolveNodeBin() reads <prebundled>/.nvmrc to pin the
-// nvm absolute path. Without it, prod falls back to a bare `node` off PATH and
-// hits whatever nvm version comes first — which is NOT necessarily the one the
-// native module needs, causing ERR_DLOPEN_FAILED + daemon exit 1 + a 30s
-// waitForDaemonReady timeout + "无法连接本地 daemon".
-// See errors/2026-05-23-prod缺nvmrc回退裸node撞ABI致daemon起不来.md.
-const nvmrcSrc = join(repoRoot, '.nvmrc')
-if (existsSync(nvmrcSrc)) {
-  cpSync(nvmrcSrc, join(out, '.nvmrc'))
-  console.log('[prebundle] copied .nvmrc')
-} else {
-  console.warn('[prebundle] .nvmrc missing — prod daemon may pick wrong Node ABI')
-}
+// No .nvmrc copy and no native-addon sanity-check anymore: the daemon has no
+// native module and runs on Electron's own node (ELECTRON_RUN_AS_NODE), so
+// there is no ABI to pin. See resolveNodeBin in openDesignServices.ts.
 
 // （apps/web 已随 Phase 4 物理下线——prod 唯一 UI 是 studio/out。）
 

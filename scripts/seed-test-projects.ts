@@ -606,8 +606,16 @@ function assertOfflineDataDirIsExplicit(args: Args): void {
 }
 
 function loadBetterSqlite(): new (filename: string) => OfflineDatabase {
+  // daemon 不再依赖 better-sqlite3——它的 SQLite 层是 node:sqlite 适配器
+  // （apps/daemon/src/lib/sqlite.ts → dist/lib/sqlite.js），导出同样的
+  // Database 接口（prepare/exec/pragma/all/run…）。offline seed 直接复用它，
+  // 与 daemon 运行时走完全相同的建库/迁移路径。需先 build 过 daemon（dist 存在）。
   const daemonRequire = createRequire(path.join(REPO_ROOT, 'apps', 'daemon', 'package.json'));
-  return daemonRequire('better-sqlite3') as new (filename: string) => OfflineDatabase;
+  const mod = daemonRequire('./dist/lib/sqlite.js') as
+    | { default: new (filename: string) => OfflineDatabase }
+    | (new (filename: string) => OfflineDatabase);
+  const Ctor = (mod as { default?: unknown }).default ?? mod;
+  return Ctor as new (filename: string) => OfflineDatabase;
 }
 
 function ensureColumn(db: OfflineDatabase, table: string, column: string, definition: string): void {

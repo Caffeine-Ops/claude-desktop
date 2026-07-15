@@ -9,7 +9,7 @@
 // run-level snapshot link is carried on the in-memory run object plus
 // the messages.run_id row instead of a SQL ALTER TABLE.
 
-import type Database from 'better-sqlite3';
+import type Database from '../lib/sqlite.js';
 
 type SqliteDb = Database.Database;
 type DbRow = Record<string, unknown>;

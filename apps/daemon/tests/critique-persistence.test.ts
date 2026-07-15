@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import Database from 'better-sqlite3';
+import Database from '../src/lib/sqlite.js';
 import {
   migrateCritique,
   insertCritiqueRun,

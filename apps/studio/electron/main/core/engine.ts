@@ -55,6 +55,7 @@ import {
   resolveBundledPythonHome,
   resolveBundledSkillsPluginDir,
   resolveJsRuntimeBin,
+  isElectronJsRuntime,
   resolveSystemClaudeJsEntry
 } from './cliDetect'
 import { envJsonInjectedKeys } from '../bootstrap/loadEnv'
@@ -1734,11 +1735,19 @@ export class ChatEngine extends EventEmitter {
     const cliPath = resolveSystemClaudeJsEntry(rawCliPath)
     // 当 cliPath 是 JS 入口（Windows 系统 claude 解析后、或未来任何 .js cli）时，SDK
     // 需要一个 node 去跑它，默认取裸 'node'——但打包 Electron 的精简 PATH 里常无
-    // node.exe → spawn EINVAL。显式指到 app 自带的 node-runtime（绝对路径，绕开 PATH）。
+    // node.exe → spawn EINVAL。显式指到 Electron 自身（resolveJsRuntimeBin 返回
+    // process.execPath，配合下方 ELECTRON_RUN_AS_NODE=1 以纯 node 跑）。
     // 对非 JS 入口（fusion-code-cli[.exe]、mac 无后缀 claude 脚本）SDK 直接执行二进制，
-    // executable 不参与，给了也无害；但仅在确有自带 node 且确是 JS 入口时才设，避免
-    // 改变现状行为。
+    // executable 不参与，给了也无害；但仅在确是 JS 入口时才设，避免改变现状行为。
     const jsRuntimeBin = /\.m?js$/i.test(cliPath) ? resolveJsRuntimeBin() : null
+    // 当 SDK 的 executable 是 Electron 自身（prod 下 resolveJsRuntimeBin 返回
+    // process.execPath）时，必须给 SDK spawn 的子进程带 ELECTRON_RUN_AS_NODE=1，
+    // 否则 Electron 会以 GUI 模式启动而非跑那个 cli.js。下方两个 backend 的 env
+    // 分支都 spread 这个变量。dev（jsRuntimeBin=null）或 OD_NODE_BIN 覆盖成真·node
+    // 时为空对象，不影响现状。
+    const runAsNodeEnv: Record<string, string> = isElectronJsRuntime(jsRuntimeBin)
+      ? { ELECTRON_RUN_AS_NODE: '1' }
+      : {}
     // Repo-root skills/ packaged as a local plugin (see
     // resolveBundledSkillsPluginDir). null when the manifest is missing — we
     // then omit the `plugins` option entirely rather than pass an empty array.
@@ -1974,6 +1983,7 @@ export class ChatEngine extends EventEmitter {
       env: (backend === 'bundled'
         ? {
             ...process.env,
+            ...runAsNodeEnv,
             CLAUDE_CODE_MCP_INSTR_DELTA:
               process.env.CLAUDE_CODE_MCP_INSTR_DELTA ?? 'true',
             CLAUDE_CODE_ATTRIBUTION_HEADER:
@@ -2002,6 +2012,7 @@ export class ChatEngine extends EventEmitter {
           }
         : {
             ...systemBackendEnv(),
+            ...runAsNodeEnv,
             // Same passthrough under system claude: PPT_MASTER_PYTHON_HOME is a
             // main-process runtime path, not an env.json gateway key, so it
             // never affects claude's model routing — safe to hand over so the

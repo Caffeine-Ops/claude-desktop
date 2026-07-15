@@ -36,7 +36,7 @@ import type {
   PluginSourceKind,
   TrustTier,
 } from '@open-design/contracts';
-import type Database from 'better-sqlite3';
+import type Database from '../lib/sqlite.js';
 import { recordPluginEvent } from './events.js';
 import { upsertPluginLockfileEntry } from './lockfile.js';
 

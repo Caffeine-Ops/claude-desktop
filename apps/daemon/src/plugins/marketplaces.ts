@@ -14,7 +14,7 @@
 // unless `--trust` is passed.
 
 import { randomUUID } from 'node:crypto';
-import type Database from 'better-sqlite3';
+import type Database from '../lib/sqlite.js';
 import {
   parseMarketplace,
   type MarketplaceParseResult,
