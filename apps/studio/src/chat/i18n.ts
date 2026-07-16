@@ -176,6 +176,7 @@ const STRINGS = {
     compRetry: '重试',
     compReady: '已就绪',
     compHowToInstall: '如何安装',
+    compCopyLink: '复制链接',
     compBundled: '随包',
     kbModelMovedHint: '语义检索模型已移至「组件 / 扩展」设置',
 
@@ -591,6 +592,7 @@ const STRINGS = {
     compRetry: 'Retry',
     compReady: 'Ready',
     compHowToInstall: 'How to install',
+    compCopyLink: 'Copy link',
     compBundled: 'Bundled',
     kbModelMovedHint: 'The semantic search model moved to Settings → Components',
 

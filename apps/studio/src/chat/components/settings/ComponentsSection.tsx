@@ -8,7 +8,8 @@ import { Section } from './SettingsView'
 // guideUrl（soffice）也在此硬映射，避免前端依赖 main 档案卡。
 const ROWS: { id: string; titleKey: StringKey; descKey: StringKey; guideUrl?: string }[] = [
   { id: 'kb-embed', titleKey: 'compEmbedTitle', descKey: 'compEmbedDesc' },
-  { id: 'markitdown', titleKey: 'compMarkitdownTitle', descKey: 'compMarkitdownDesc' },
+  // markitdown 的 unavailable 成因是「缺 Python」（pipx 连 python 都探不到），guideUrl 指向 Python 官方下载页。
+  { id: 'markitdown', titleKey: 'compMarkitdownTitle', descKey: 'compMarkitdownDesc', guideUrl: 'https://www.python.org/downloads/' },
   { id: 'soffice', titleKey: 'compSofficeTitle', descKey: 'compSofficeDesc', guideUrl: 'https://www.libreoffice.org/download/download/' },
 ]
 
@@ -94,10 +95,14 @@ function RowAction({ id, guideUrl, state }: {
     )
   }
   if (state.status === 'unavailable') {
-    // 装不了（soffice / 缺 python 前置）：给「如何安装」引导。
+    // 装不了（soffice / markitdown 缺 python 前置）：给可见的安装引导链接。
     // preload 未暴露任何「打开外部链接」的 IPC 方法（grep 过 electron/preload/index.ts 确认），
-    // 所以这里退化成「点击复制安装页地址」而非真正跳转浏览器；guideUrl 本身也作为
-    // title 提示（tooltip）可见，用户手动选中也能看到完整地址。
+    // 所以这里退化成「点击复制安装页地址」而非真正跳转浏览器——但退化不等于装糊涂：链接本身
+    // 用 <code> 摆在按钮里可见（不用 hover 也看得到复制的是什么），按钮文案明写「复制链接」这个
+    // 动作，不再用「如何安装」当动作标签（评审 Important：原先静默复制、唯一线索是 hover
+    // tooltip，全仓其它复制控件——AssistantMarkdown CopyButton / WorkspaceTreePanel
+    // CopyNameButton / KbToolingCard 手动命令——无一例外都是「标签明写复制」或「内容可见摆出来」，
+    // 这里补齐同一惯例）。复制成功后 1.5s 内文案闪一下「已复制」，沿用既有 filesCopyNameCopied。
     return guideUrl ? (
       <button type="button" title={guideUrl} onClick={() => {
         void navigator.clipboard?.writeText(guideUrl).then(() => {
@@ -105,8 +110,9 @@ function RowAction({ id, guideUrl, state }: {
           window.setTimeout(() => setCopied(false), 1500)
         })
       }}
-        className="inline-flex h-8 items-center rounded-md border border-border bg-card px-3 text-[12px] font-medium text-foreground hover:bg-muted/60">
-        {copied ? t('filesCopyNameCopied') : t('compHowToInstall')}
+        className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-card px-2.5 text-[11.5px] text-foreground hover:bg-muted/60">
+        <code className="whitespace-nowrap font-mono text-[11px] text-muted-foreground">{guideUrl}</code>
+        <span className="whitespace-nowrap text-[11.5px] font-medium">{copied ? t('filesCopyNameCopied') : t('compCopyLink')}</span>
       </button>
     ) : (
       <span className="text-[12px] text-muted-foreground">{t('compHowToInstall')}</span>
