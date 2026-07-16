@@ -12,6 +12,16 @@ export type SingleUrlDownloader = (
 ) => Promise<void>
 
 /**
+ * 把重定向 location 解析成绝对 URL。HuggingFace 的 resolve 端点会返回**相对路径**重定向
+ * （如 `/api/resolve-cache/...`）——直接喂 https.get 会抛 "Invalid URL"（2026-07-16 实机首下踩到）。
+ * 用当前 URL 作 base 解析：相对→补全为绝对；本就绝对→原样返回。loc 可能是数组，取第一个。
+ * 非法 location 会抛（调用方 catch 转 reject）。
+ */
+export function resolveRedirectLocation(loc: string | string[], base: string): string {
+  return new URL(Array.isArray(loc) ? loc[0] : loc, base).toString()
+}
+
+/**
  * 依次尝试 urls，第一个成功即返回；每个失败继续下一个；全失败抛最后一个错误。
  * signal 已 abort：立即抛，不尝试任何下载（避免明知取消还发请求）。
  */
@@ -40,23 +50,38 @@ export async function downloadWithMirrors(
 export const downloadOneUrl: SingleUrlDownloader = (url, dest, signal, onBytes) =>
   new Promise((resolve, reject) => {
     const follow = (u: string, remaining: number): void => {
-      const req = https.get(u, { signal }, (res) => {
-        const code = res.statusCode ?? 0
-        const loc = res.headers.location
-        if ([301, 302, 303, 307, 308].includes(code) && loc) {
-          if (remaining <= 0) return reject(new Error(`Too many redirects for ${url}`))
-          return follow(Array.isArray(loc) ? loc[0] : loc, remaining - 1)
-        }
-        if (code !== 200) return reject(new Error(`HTTP ${code} from ${u}`))
-        const ws = createWriteStream(dest)
-        res.on('data', (c: Buffer) => onBytes(c.length))
-        res.pipe(ws)
-        ws.on('finish', () => resolve())
-        ws.on('error', (err) => { ws.destroy(); reject(err) })
-        res.on('error', (err) => { ws.destroy(); reject(err) })
-      })
-      req.setTimeout(DOWNLOAD_TIMEOUT_MS, () => req.destroy(new Error('下载超时（60s 无响应）')))
-      req.on('error', reject)
+      // https.get 可能同步抛 "Invalid URL"（u 非法/相对）——且这里的 follow 递归发生在响应
+      // 回调（异步）里，不在 new Promise executor 的同步范围内，抛出去会变 uncaughtException、
+      // Promise 永久挂起（下载卡死零字节，2026-07-16 实机首下踩到）。故整体 try/catch → reject。
+      try {
+        const req = https.get(u, { signal }, (res) => {
+          const code = res.statusCode ?? 0
+          const loc = res.headers.location
+          if ([301, 302, 303, 307, 308].includes(code) && loc) {
+            if (remaining <= 0) return reject(new Error(`Too many redirects for ${url}`))
+            // 重定向 location 可能是相对路径（HF/CDN 常见）——用当前 URL 作 base 解析成绝对地址，
+            // 否则 https.get(相对路径) 抛 Invalid URL。new URL 本身也可能抛，一并 catch。
+            let next: string
+            try {
+              next = resolveRedirectLocation(loc, u)
+            } catch {
+              return reject(new Error(`重定向地址非法："${Array.isArray(loc) ? loc[0] : loc}"（来自 ${u}）`))
+            }
+            return follow(next, remaining - 1)
+          }
+          if (code !== 200) return reject(new Error(`HTTP ${code} from ${u}`))
+          const ws = createWriteStream(dest)
+          res.on('data', (c: Buffer) => onBytes(c.length))
+          res.pipe(ws)
+          ws.on('finish', () => resolve())
+          ws.on('error', (err) => { ws.destroy(); reject(err) })
+          res.on('error', (err) => { ws.destroy(); reject(err) })
+        })
+        req.setTimeout(DOWNLOAD_TIMEOUT_MS, () => req.destroy(new Error('下载超时（60s 无响应）')))
+        req.on('error', reject)
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)))
+      }
     }
     follow(url, 10)
   })
