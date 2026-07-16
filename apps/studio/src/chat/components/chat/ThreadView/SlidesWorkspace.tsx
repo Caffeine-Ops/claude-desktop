@@ -395,21 +395,25 @@ export function SlidesWorkspace(): React.JSX.Element {
           // the "still writing" signal). It clears the instant work settles.
           const busy = tabBusy[tDef.id] === true
           return (
+            // whitespace-nowrap + min-w-0 + 文字 truncate（2026-07-16 用户
+            // 实锤）：分栏拖窄时按钮曾把「大纲」挤成一行一个字的竖排惨状
+            // ——文字默认可换行，宽度不够就断行。对齐图片查看器顶栏的
+            // 处理：禁换行，窄时文字截断出省略号（图标恒显、shrink-0）。
             <button
               key={tDef.id}
               type="button"
               onClick={() => setTab(tDef.id)}
               className={
-                'flex items-center gap-1 rounded-md px-2 py-1 text-[12px] transition-colors [-webkit-app-region:no-drag] ' +
+                'flex min-w-0 shrink items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-[12px] transition-colors [-webkit-app-region:no-drag] ' +
                 (active
                   ? 'bg-foreground/[0.06] font-medium text-foreground'
                   : 'text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground/90')
               }
             >
-              {CANVAS_TAB_ICONS[tDef.id]}
-              {tDef.label}
+              <span className="shrink-0 [&>svg]:block">{CANVAS_TAB_ICONS[tDef.id]}</span>
+              <span className="truncate">{tDef.label}</span>
               {busy && (
-                <span aria-hidden className="relative ml-0.5 flex size-1.5">
+                <span aria-hidden className="relative ml-0.5 flex size-1.5 shrink-0">
                   <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-75" />
                   <span className="relative inline-flex size-1.5 rounded-full bg-accent" />
                 </span>

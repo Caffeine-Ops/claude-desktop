@@ -43,20 +43,15 @@ let currentLang: Lang = 'zh'
 // `ipc/register.ts` when an assistant turn finishes while the window is
 // not focused, cleared from the focus/show listeners in `main/index.ts`.
 let unreadCount = 0
-// Cached idle and unread tray icons. The idle one is the platform icon
-// returned by `buildIcon()`, captured at tray-creation time so we can
-// swap back to it after the badge is cleared without re-resolving the
-// asset path. The unread one is the runtime-generated red dot — we
-// pay the bitmap-build cost once and re-use the NativeImage for every
-// subsequent bump.
+// Cached tray icon (the platform icon returned by `buildIcon()`).
+// 曾配对一个 unreadIcon（未读时换成红点 + setTitle 计数），2026-07-16
+// 随「菜单栏红点退役、未读只留 Dock 徽标」删除——tray 图标恒为此 idle 态。
 let idleIcon: Electron.NativeImage | null = null
-let unreadIcon: Electron.NativeImage | null = null
 
 function buildIcon(): Electron.NativeImage {
   if (process.platform === 'darwin') {
     // Bind the 18×18 and 36×36 template PNGs to one logical 18-point image
-    // via addRepresentation — same pattern as buildUnreadIcon and for the
-    // same reason: macOS would normally auto-pair `name@2x.png` sitting next
+    // via addRepresentation: macOS would normally auto-pair `name@2x.png` sitting next
     // to `name.png`, but electron-vite's `?asset` pipeline emits hashed
     // filenames, which breaks that filename convention. Explicit
     // representations survive the rename. Template mode (pure black +
@@ -177,91 +172,20 @@ export function clearUnread(): void {
 }
 
 /**
- * Push the current unread count to every surface that can show it:
+ * Push the current unread count to the Dock badge (`app.setBadgeCount`,
+ * macOS Dock icon; Linux Unity too if the desktop has libdbusmenu, no-op
+ * on Windows).
  *
- *   - **Tray icon swap** (`tray.setImage`): the only way to actually
- *     get a *red* mark in the macOS menubar. `setTitle` text is
- *     forced to the menubar text color (mono black/white), so a "red
- *     badge" can't ride on title alone — we generate a red-dot
- *     NativeImage at runtime and swap it in. When the count drops
- *     back to zero, we restore the cached idle icon.
- *   - **Tray title** (`tray.setTitle`): macOS-only. Shows the count
- *     next to the swapped icon so the user knows *how many* unread,
- *     not just *whether* there are any.
- *   - **Dock badge** (`app.setBadgeCount`): macOS Dock icon. Linux
- *     Unity too if the desktop has libdbusmenu. No-op on Windows.
+ * 菜单栏 tray 的红点交换 + setTitle 计数已退役（2026-07-16 用户定稿：
+ * 「去掉顶部的红色形状，保留 Dock 徽标」）——两处红色徽标同屏重复，
+ * 菜单栏那颗又抢眼又常驻在视线顶部，Dock 徽标足以承担「有未读」的
+ * 提醒。tray 图标此后恒为 idle 态。历史实现（运行时画红点 NativeImage
+ * 双倍率位图 + tray.setImage 交换）见 git 历史的 buildUnreadIcon，若要
+ * 恢复从那里找。
  *
  * Windows tray overlays would need `setOverlayIcon` with a generated
  * number-PNG — skipped until we hear a real ask.
  */
 function applyUnread(): void {
   app.setBadgeCount(unreadCount)
-  if (!tray || tray.isDestroyed()) return
-
-  if (unreadCount > 0) {
-    if (!unreadIcon) unreadIcon = buildUnreadIcon()
-    tray.setImage(unreadIcon)
-    if (process.platform === 'darwin') {
-      tray.setTitle(` ${unreadCount}`)
-    }
-  } else {
-    if (idleIcon) tray.setImage(idleIcon)
-    if (process.platform === 'darwin') {
-      tray.setTitle('')
-    }
-  }
-}
-
-/**
- * Draw the red "unread" dot at runtime — a filled circle rendered
- * straight into a premultiplied BGRA bitmap, bound at @1x and @2x via
- * `addRepresentation` so it stays crisp on retina menubars. This used
- * to load two pre-baked PNGs from `resources/`; drawing in code drops
- * the asset files entirely and keeps color/size tweakable in one
- * place. The image is *not* a template — the red must render as red,
- * not be tinted to the menubar text color.
- *
- * Drawing a real composite of "chat icon + red corner dot" runs into
- * macOS template-image color rules — templates are tinted to the
- * menubar text color, so a partial-color overlay can't share an image
- * with a tinted body. Replacing the whole icon with a single red dot
- * sidesteps that entirely and gives an unmistakable "needs attention"
- * signal that works in both light and dark menubars.
- */
-function buildUnreadIcon(): Electron.NativeImage {
-  const img = nativeImage.createEmpty()
-  // #EC443B — close to macOS systemRed; ~13pt disc on a 16pt canvas.
-  const RED = 0xec
-  const GREEN = 0x44
-  const BLUE = 0x3b
-  for (const scale of [1, 2] as const) {
-    const size = 16 * scale
-    // Raw bitmap is BGRA with premultiplied alpha (Chromium N32) —
-    // un-premultiplied edge pixels would render with a bright fringe.
-    const buf = Buffer.alloc(size * size * 4)
-    const center = size / 2
-    const radius = 6.5 * scale
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const dist = Math.hypot(x + 0.5 - center, y + 0.5 - center)
-        // One physical pixel of anti-aliased falloff at the rim.
-        const alpha = Math.max(0, Math.min(1, radius - dist + 0.5))
-        if (alpha <= 0) continue
-        const i = (y * size + x) * 4
-        buf[i] = Math.round(BLUE * alpha)
-        buf[i + 1] = Math.round(GREEN * alpha)
-        buf[i + 2] = Math.round(RED * alpha)
-        buf[i + 3] = Math.round(255 * alpha)
-      }
-    }
-    img.addRepresentation({
-      scaleFactor: scale,
-      width: 16,
-      height: 16,
-      buffer: nativeImage
-        .createFromBuffer(buf, { width: size, height: size })
-        .toPNG()
-    })
-  }
-  return img
 }

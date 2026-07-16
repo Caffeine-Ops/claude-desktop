@@ -159,7 +159,21 @@ export function navigate(route: Route, opts: { replace?: boolean } = {}): void {
 export function useRoute(): Route {
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
   useEffect(() => {
-    const onPop = () => setRoute(parseRoute(window.location.pathname));
+    // 等价保引用：parseRoute 每次返回新对象，若无条件 setRoute，「语义上没变」
+    // 的 popstate 也会触发订阅者全树 re-render。这不是理论洁癖——chat ↔ 画布
+    // 切面时 AppRail 的 navigate() 必派发一次 popstate（此刻 URL 是 '/chat'，
+    // 同路径早退永远不命中），而 keep-alive 的 canvas 树多半就停在目标视图上：
+    // CDP 实测这次「视图零变化」的 setRoute 让 App.tsx（巨型根组件）+
+    // EntryShell 白渲染 ~220ms/次（2026-07-16，dev 模式）。等价判定用
+    // buildPath 序列化对比（Route 的规范形式，顺带抹平 conversationId 的
+    // undefined/null 差异）；等价则返回 prev 保引用，React 对更新直接 bailout。
+    // 真实的 back/forward 与视图切换 path 必不同，不受影响。
+    const onPop = () => {
+      setRoute((prev) => {
+        const next = parseRoute(window.location.pathname);
+        return buildPath(prev) === buildPath(next) ? prev : next;
+      });
+    };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
