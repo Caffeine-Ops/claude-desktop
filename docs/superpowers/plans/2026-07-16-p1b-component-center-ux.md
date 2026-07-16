@@ -780,6 +780,7 @@ git commit -m "feat(component-download): 前端组件状态 store（拉快照 + 
 ```tsx
 // apps/studio/src/chat/components/settings/ComponentsSection.tsx
 import React, { useEffect } from 'react'
+import { initialComponentState } from '@desktop-shared/componentDownload'
 import { useT } from '../../i18n'
 import { useComponentStore } from '../../stores/components'
 import { Section } from './SettingsView'
@@ -795,7 +796,10 @@ const ROWS: { id: string; titleKey: string; descKey: string; guideUrl?: string }
 export function ComponentsSection(): React.JSX.Element {
   const t = useT()
   const init = useComponentStore((s) => s.init)
-  const stateOf = useComponentStore((s) => s.stateOf)
+  // 必须订阅 table 本身，不能选 stateOf 函数：函数引用恒定不变，选它等于没订阅任何会变的东西，
+  // 后台推来新进度时组件不会重渲染、进度条永远不动。也别写 useComponentStore((s) => s.stateOf(id))
+  // ——那样每次都新建对象、Object.is 恒 false，无关更新也触发重渲染。选 table、在外面派生最省。
+  const table = useComponentStore((s) => s.table)
   // 订阅整表（组件卸载时退订）。
   useEffect(() => init(), [init])
 
@@ -805,7 +809,7 @@ export function ComponentsSection(): React.JSX.Element {
       <Section title={t('componentsTitle')} description={t('componentsDesc')}>
         <div className="space-y-2">
           {ROWS.map((row) => (
-            <ComponentRow key={row.id} row={row} state={stateOf(row.id)} />
+            <ComponentRow key={row.id} row={row} state={table[row.id] ?? initialComponentState(row.id)} />
           ))}
         </div>
       </Section>
@@ -1148,6 +1152,7 @@ export function promptComponent(id: string): void {
 ```tsx
 // apps/studio/src/chat/components/ComponentPrompt.tsx
 import React, { useEffect, useRef } from 'react'
+import { initialComponentState } from '@desktop-shared/componentDownload'
 import { useT, useTFormat } from '../i18n'
 import { useComponentPromptStore } from '../stores/componentPrompt'
 import { useComponentStore } from '../stores/components'
@@ -1174,14 +1179,16 @@ export function ComponentPrompt(): React.JSX.Element | null {
   const tFormat = useTFormat()
   const openFor = useComponentPromptStore((s) => s.openFor)
   const close = useComponentPromptStore((s) => s.close)
-  const stateOf = useComponentStore((s) => s.stateOf)
   const init = useComponentStore((s) => s.init)
+  // 订阅 table 本身而非 stateOf 函数：函数引用恒定，选它等于没订阅会变的东西，进度推送来了
+  // 弹窗不会重渲染、进度条不动（同 ComponentsSection 的注释）。
+  const table = useComponentStore((s) => s.table)
   const openSettings = useSettingsStore((s) => s.open) // 打开设置页（跳组件中心分类）
 
   // 订阅整表（弹窗独立订阅一次，保证即便组件中心没开也能拿进度）。
   useEffect(() => init(), [init])
 
-  const state = openFor ? stateOf(openFor) : null
+  const state = openFor ? (table[openFor] ?? initialComponentState(openFor)) : null
   const title = openFor ? t(TITLE_KEY[openFor] ?? '') : ''
 
   // 成功后：短暂展示成功话再自动关；若此刻弹窗已被用户关掉（openFor 变 null 由 close 触发），
@@ -1304,9 +1311,19 @@ import { promptComponent } from '../../stores/componentPrompt'
 
 ```tsx
   const init = useComponentStore((s) => s.init)
-  const embed = useComponentStore((s) => s.stateOf('kb-embed'))
-  const markitdown = useComponentStore((s) => s.stateOf('markitdown'))
+  // 订阅 table 本身再派生：写 useComponentStore((s) => s.stateOf('kb-embed')) 会每次新建对象、
+  // Object.is 恒 false，无关更新也重渲染；写 (s) => s.stateOf 则函数引用恒定、等于没订阅，
+  // 进度推送来了不重渲染。选 table 是唯一两头都对的写法。
+  const table = useComponentStore((s) => s.table)
+  const embed = table['kb-embed'] ?? initialComponentState('kb-embed')
+  const markitdown = table['markitdown'] ?? initialComponentState('markitdown')
   useEffect(() => init(), [init])
+```
+
+顶部 import 同时加：
+
+```tsx
+import { initialComponentState } from '@desktop-shared/componentDownload'
 ```
 
 - `migrate` 与 `sync` 两个函数体最前面（`if (busy) return` 之后）加「缺 markitdown 先弹窗」的非阻断守卫：
