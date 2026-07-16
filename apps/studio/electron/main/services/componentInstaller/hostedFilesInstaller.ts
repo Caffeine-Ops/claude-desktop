@@ -7,11 +7,12 @@ import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from '
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { downloadWithMirrors, downloadOneUrl } from './downloadUnit'
-import type { ComponentDescriptor, DownloadUnit, HostedArchiveInstall } from '../../../shared/componentDownload'
+import type { ComponentDescriptor, DownloadUnit, HostedArchiveInstall, HostedInstall } from '../../../shared/componentDownload'
 
 /** readyCheck 的绝对路径：root/destSubdir/readyCheck。 */
 export function readyCheckAbsPath(d: ComponentDescriptor, root: string): string {
-  return join(root, d.install.destSubdir, d.install.readyCheck ?? '')
+  const i = d.install as HostedInstall // only called with hosted installs
+  return join(root, i.destSubdir, i.readyCheck ?? '')
 }
 
 /**
@@ -22,11 +23,15 @@ export function isComponentInstalled(
   d: ComponentDescriptor, root: string, exists: (p: string) => boolean
 ): boolean {
   const i = d.install
-  if (i.readyCheck) return exists(readyCheckAbsPath(d, root))
-  if (i.kind === 'files') {
-    return i.files.every((f) => exists(join(root, i.destSubdir, f.relPath)))
+  if (i.kind === 'files' || i.kind === 'archive') {
+    const readyCheck = 'readyCheck' in i ? i.readyCheck : undefined
+    if (readyCheck) return exists(readyCheckAbsPath(d, root))
+    if (i.kind === 'files') {
+      return i.files.every((f) => exists(join(root, i.destSubdir, f.relPath)))
+    }
+    return false // archive 必须给 readyCheck（类型上 readyCheck 必填，这里兜底）
   }
-  return false // archive 必须给 readyCheck（类型上 readyCheck 必填，这里兜底）
+  return false // pipx/detect-only 不涉及磁盘
 }
 
 /** tar 解压参数：-xzf <tmp> [--strip-components N] -C <destDir>。 */
@@ -84,6 +89,10 @@ export async function installComponent(
   onProgress: (p: InstallProgress) => void
 ): Promise<void> {
   const i = d.install
+  if (i.kind !== 'files' && i.kind !== 'archive') {
+    throw new Error(`installComponent only supports hosted installs, got ${i.kind}`)
+  }
+
   const total = i.kind === 'files' ? i.files.reduce((s, f) => s + f.size, 0) : i.archive.size
   let done = 0
   const push = (abs: number, file: string | null): void => {
@@ -103,21 +112,22 @@ export async function installComponent(
   }
 
   // archive：下整包到 <destSubdir>.tar.gz.part → 校验 → tar 解压到 destSubdir → chmod → 判据
-  const destDir = join(root, i.destSubdir)
+  const archive = i as HostedArchiveInstall
+  const destDir = join(root, archive.destSubdir)
   mkdirSync(destDir, { recursive: true })
-  const tmp = join(root, `${i.destSubdir}.tar.gz.part`)
+  const tmp = join(root, `${archive.destSubdir}.tar.gz.part`)
   try {
     // 同 fetchUnit：n 是增量字节，本地累加成 local 再叠加 base（下载开始前的已完成基数）。
     // base 必须是快照而非直接读 done——push() 内部会把 done 改写成刚上报的绝对值，若回调里
     // 继续引用 done 会变成「旧done+旧local」再叠加 local，进度三角级暴涨（2026-07-16 修复）。
     const base = done
     let local = 0
-    await downloadWithMirrors(i.archive.urls, tmp, signal, (n) => { local += n; push(base + local, i.destSubdir) }, downloadOneUrl)
-    if (statSync(tmp).size !== i.archive.size || (await sha256File(tmp)) !== i.archive.sha256) {
+    await downloadWithMirrors(archive.archive.urls, tmp, signal, (n) => { local += n; push(base + local, archive.destSubdir) }, downloadOneUrl)
+    if (statSync(tmp).size !== archive.archive.size || (await sha256File(tmp)) !== archive.archive.sha256) {
       rmSync(tmp, { force: true }); throw new Error(`整包校验失败：${d.id}`)
     }
-    execFileSync('tar', tarExtractArgs(i, tmp, destDir))
-    for (const rel of i.chmodExec ?? []) chmodSync(join(destDir, rel), 0o755)
+    execFileSync('tar', tarExtractArgs(archive, tmp, destDir))
+    for (const rel of archive.chmodExec ?? []) chmodSync(join(destDir, rel), 0o755)
     rmSync(tmp, { force: true })
     push(total, null)
   } catch (err) {

@@ -26,3 +26,13 @@ describe('descriptorTotalBytes', () => {
     expect(descriptorTotalBytes(archiveDesc)).toBe(100)
   })
 })
+
+import { initialComponentState } from './componentDownload'
+
+describe('initialComponentState', () => {
+  test('新组件初态 = idle、无进度、无错误', () => {
+    expect(initialComponentState('foo')).toEqual({
+      id: 'foo', status: 'idle', percent: null, currentFile: null, errorMessage: null,
+    })
+  })
+})
