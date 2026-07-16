@@ -1,6 +1,6 @@
 // apps/studio/electron/main/core/componentRegistry.test.ts
 import { describe, expect, test } from 'bun:test'
-import { COMPONENT_REGISTRY, EMBED_COMPONENT_ID, getComponentDescriptor } from './componentRegistry'
+import { COMPONENT_REGISTRY, EMBED_COMPONENT_ID, MARKITDOWN_COMPONENT_ID, SOFFICE_COMPONENT_ID, getComponentDescriptor } from './componentRegistry'
 import { KB_DOWNLOADABLE_MODELS } from './kbModelManifest'
 
 describe('componentRegistry', () => {
@@ -24,5 +24,21 @@ describe('componentRegistry', () => {
       expect(got!.sha256).toBe(f.sha256)
       expect(got!.size).toBe(f.size)
     }
+  })
+})
+
+describe('markitdown / soffice 档案卡', () => {
+  test('markitdown 是 pipx 策略', () => {
+    const d = getComponentDescriptor(MARKITDOWN_COMPONENT_ID)!
+    expect(d.strategy).toBe('pipx')
+    if (d.install.kind !== 'pipx') throw new Error('应为 pipx')
+    expect(d.install.pkg).toBe('markitdown')
+    expect(d.install.probeCmd).toBe('markitdown')
+  })
+  test('soffice 是 detect-only 策略', () => {
+    const d = getComponentDescriptor(SOFFICE_COMPONENT_ID)!
+    expect(d.strategy).toBe('detect-only')
+    if (d.install.kind !== 'detect-only') throw new Error('应为 detect-only')
+    expect(d.install.probeCmd).toBe('soffice')
   })
 })
