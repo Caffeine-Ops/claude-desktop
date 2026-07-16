@@ -4,7 +4,7 @@
 // (HTML artifacts, sketches, uploads); this database tracks the metadata
 // that used to live in localStorage.
 
-import Database from 'better-sqlite3';
+import Database from './lib/sqlite.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';

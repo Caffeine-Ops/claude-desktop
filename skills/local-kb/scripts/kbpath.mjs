@@ -8,8 +8,8 @@
 //   node 进程、不在 Electron 里，算不出来。所以 main 侧把它经环境变量 CLAUDE_DESKTOP_KB_DIR
 //   注入给 fusion-code 子进程（与 PPT_MASTER_PYTHON_HOME 同套路），本脚本读它。
 //
-// 为什么是 .mjs：安装包只带 node-runtime（不带 bun/tsx），node 原生跑不了 .ts。纯 JS
-//   用打包自带的 node 直接跑，用户新电脑零额外依赖。
+// 为什么是 .mjs：安装包不带 bun/tsx，node 原生跑不了 .ts。纯 JS 用 Electron 自带的
+//   node 直接跑，用户新电脑零额外依赖。
 
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'

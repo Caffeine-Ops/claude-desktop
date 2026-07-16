@@ -64,29 +64,40 @@ export function resolveBundledCliPath(): string {
  * 见 [[2026-05-25-windows系统claude.cmd经SDK裸node-spawn-EINVAL]]、
  * [[2026-05-23-GUI启动Electron精简PATH致agent检测全失败]]。
  *
- * 所以 prod 下统一把 SDK 的 `executable` 显式指到 app 自带的
- * `<resources>/node-runtime/node[.exe]`（CI 从 nodejs.org 下载打进 extraResources，
- * 与 daemon 共用同一份；见 resolveNodeBin / [[2026-05-25-daemon自带Node彻底摆脱用户机器Node版本ABI错配]]）。
- * 绝对路径绕开 PATH，跨平台一致。注意：这里**不要求** ABI 匹配——SDK 只是用它
- * 执行 claude 的 cli.js 脚本，不加载 better-sqlite3 那类 native 模块。
+ * 所以 prod 下统一把 SDK 的 `executable` 显式指到 **Electron 自身**
+ * （process.execPath）——它内嵌的 node 就是我们要的运行时，绝对路径绕开 PATH、
+ * 跨平台一致、且必然存在。注意：这里**不要求** ABI 匹配——SDK 只是用它执行
+ * claude 的 cli.js 脚本，不加载任何 native 模块。
  *
- * 返回 null 表示「prod 但自带 Node 缺失」或「dev」，调用方应回退到 SDK 默认
- * （dev 下裸 'node' 通常能在 PATH 命中，且 dev 不是 GUI 精简 PATH 场景）。
+ * 历史（2026-07-15 前）：这里曾返回 app 自带的 `<resources>/node-runtime/node`。
+ * 那份独立 Node 是为 daemon 的 better-sqlite3 ABI 对齐而打包的；daemon 迁到
+ * node:sqlite 去掉 native 依赖后，node-runtime 整个不再打包，此处随之改用
+ * process.execPath。
+ *
+ * 关键：Electron 二进制默认会启动 GUI 模式，必须让调用方在 spawn 时设置
+ * `ELECTRON_RUN_AS_NODE=1` 才会以纯 node 跑那个 .js（见 engine.ts SDK env 注入，
+ * 用 isElectronJsRuntime() 判断）。
+ *
+ * 返回 null 表示「dev」——dev 下裸 'node' 通常能在 PATH 命中，SDK 走默认即可，
+ * 无需强指 Electron（也避免 dev 下给 SDK 设 ELECTRON_RUN_AS_NODE 的额外分支）。
  */
 export function resolveJsRuntimeBin(): string | null {
   const override = process.env.OD_NODE_BIN
   if (override && existsSync(override)) return override
 
   if (app.isPackaged) {
-    const bundledNode = join(
-      process.resourcesPath,
-      'node-runtime',
-      process.platform === 'win32' ? 'node.exe' : 'node'
-    )
-    if (existsSync(bundledNode)) return bundledNode
-    console.warn(`[cliDetect] 自带 Node 缺失：${bundledNode}，SDK executable 回退默认 node`)
+    // Electron 自身。以 ELECTRON_RUN_AS_NODE=1 模式跑（engine.ts SDK env 负责设）。
+    return process.execPath
   }
   return null
+}
+
+/**
+ * jsRuntimeBin 是否为 Electron 自身（SDK 需以 ELECTRON_RUN_AS_NODE 模式 spawn 它）。
+ * OD_NODE_BIN 覆盖成真·node 时返回 false，不该设该 env。
+ */
+export function isElectronJsRuntime(jsRuntimeBin: string | null): boolean {
+  return jsRuntimeBin === process.execPath
 }
 
 /**

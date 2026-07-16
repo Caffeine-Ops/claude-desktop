@@ -31,7 +31,7 @@ import type {
   PluginSourceKind,
   TrustTier,
 } from '@open-design/contracts';
-import type Database from 'better-sqlite3';
+import type Database from '../lib/sqlite.js';
 
 type SqliteDb = Database.Database;
 type DbRow = Record<string, unknown>;

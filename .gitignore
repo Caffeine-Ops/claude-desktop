@@ -22,9 +22,8 @@ apps/studio/build/*
 # .github/workflows/build.yml 的 FUSION_CODE_VERSION），不是源码，不入库。
 apps/studio/fusion-bin/
 
-# 自带 Node runtime (~50M/平台)：CI 从 nodejs.org 下载对应平台 Node 24
-# （版本钉在 build.yml 的 BUNDLED_NODE_VERSION），打进包给 daemon 用，不入库。
-apps/studio/node-runtime/
+# (移除 2026-07-15) 自带 Node runtime：daemon 已改用 node:sqlite（无 native 依赖），
+# 直接跑 Electron 自带 node，不再打包独立 Node runtime。
 
 # 自带 Python 3.12 runtime (~40-50M/平台)：CI 从 astral-sh/python-build-standalone
 # 下载（版本钉在 build.yml 的 PYTHON_STANDALONE_TAG/VERSION），打进包给 ppt-master

@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type Database from '../lib/sqlite.js';
 import type { MarketplaceManifest, MarketplacePluginEntry } from '@open-design/contracts';
 import type {
   RegistryEntry,
