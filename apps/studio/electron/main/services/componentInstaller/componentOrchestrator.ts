@@ -6,7 +6,7 @@
 // 不泄进通用编排逻辑（只 embed 有）。
 import { existsSync } from 'node:fs'
 import {
-  initialComponentState, type ComponentState, type ComponentStatus, type ComponentTable,
+  initialComponentState, type ComponentState, type ComponentTable,
 } from '../../../shared/componentDownload'
 import {
   COMPONENT_REGISTRY, getComponentDescriptor, EMBED_COMPONENT_ID,
@@ -17,25 +17,12 @@ import { kbModelDir } from '../../core/kbModelDir'
 import { resetEmbedWorker, warmEmbedWorker } from '../../core/kbSemanticSearch'
 import { scheduleKbBuild } from '../../core/kbBuildRunner'
 import { kbStoreHasDocs } from '../../core/kbIndexStore'
-import type { KbToolingInstallResult } from '../../../shared/kbAdmin'
 
-// ── 纯函数（可单测）────────────────────────────────────────────────
-
-/** 不可变地更新一格；未知 id 先补初态。 */
-export function applyComponentPatch(
-  table: ComponentTable, id: string, patch: Partial<ComponentState>,
-): ComponentTable {
-  const cur = table[id] ?? initialComponentState(id)
-  return { ...table, [id]: { ...cur, ...patch } }
-}
-
-/** pipx 安装结果 → 状态标签。unsupported=缺 python 前置（装不了）；普通失败带 log 摘要供排查。 */
-export function mapPipxResult(r: KbToolingInstallResult): { status: ComponentStatus; errorMessage: string | null } {
-  if (r.ok) return { status: 'ready', errorMessage: null }
-  if (r.unsupported) return { status: 'unavailable', errorMessage: null }
-  const tail = (r.log || '').trim().slice(-400) // 只留尾部摘要，别把整段日志塞状态
-  return { status: 'error', errorMessage: tail || '安装失败' }
-}
+// 纯函数（applyComponentPatch/mapPipxResult）已拆进 componentOrchestrator.core.ts（electron-free，
+// bun test 可直测，不必再靠 mock.module 打桩 'electron' 绕开本文件顶层的 electron 依赖链）。
+// re-export 保住对外契约：后续任务仍从 './componentOrchestrator' import 这两个名字。
+export { applyComponentPatch, mapPipxResult } from './componentOrchestrator.core'
+import { applyComponentPatch, mapPipxResult } from './componentOrchestrator.core'
 
 // ── 状态单例 + 广播 ────────────────────────────────────────────────
 
@@ -66,21 +53,46 @@ const SUCCESS_HOOKS: Record<string, () => void> = {
   },
 }
 
+// 探测后覆盖状态的公共规则（hosted-files/archive 与 pipx 共用）：
+// - 探到「已就绪」→ 落 ready（清空 percent/currentFile/errorMessage）。这是唯一能覆盖
+//   error/unavailable 的情形——用户手动装好了，理应转正。
+// - 没探到「未就绪」→ **保留** installing/error/unavailable 三态原样（连同 errorMessage）不动；
+//   refresh 会在每次 status-get 前跑（Task 4 接线），若在此处也把 error 抹掉，用户永远看不到
+//   失败原因（下载失败→error→切走设置页再切回→refresh→error 被抹成 idle）。其余（idle/ready，
+//   即之前 ready 但磁盘上的东西被用户删了）才落 idle——正确地把已失效的 ready 降级。
+//   基线 kbModelDownloader.refreshKbModelInstalled 写的是
+//   `phase: installed ? 'ready' : state.phase`，同样刻意保留非 ready 态，这里对齐同一语义。
+function applyDetectedStatus(id: string, ready: boolean): void {
+  if (ready) {
+    patch(id, { status: 'ready', percent: null, currentFile: null, errorMessage: null })
+    return
+  }
+  const cur = table[id]?.status
+  if (cur === 'installing' || cur === 'error' || cur === 'unavailable') return // 保留原态，不覆盖
+  patch(id, { status: 'idle', percent: null, currentFile: null, errorMessage: null })
+}
+
+// detectTooling() 是 execFileSync + timeout:4000 × 两个探针（markitdown/soffice）＝最坏约 8 秒
+// 同步阻塞主进程（阻塞期间所有窗口 + IPC 都卡住）。只应由 status-get 这类用户触发的懒路径
+// 调用；不可挂在启动路径上（会卡住 splash 交接，见 CLAUDE.md 启动里程碑一段）。
 /** 探测磁盘/工具链，重设整表就绪态（启动时 + 每次 status-get 前调）。 */
 export function refreshComponentInstalled(): void {
   const t = detectTooling() // { markitdown, soffice }
   for (const d of COMPONENT_REGISTRY) {
     const i = d.install
-    let status: ComponentStatus
     if (i.kind === 'files' || i.kind === 'archive') {
-      status = isComponentInstalled(d, kbModelDir(), existsSync) ? 'ready' : 'idle'
+      applyDetectedStatus(d.id, isComponentInstalled(d, kbModelDir(), existsSync))
     } else if (i.kind === 'pipx') {
-      status = t.markitdown ? 'ready' : 'idle'
+      // 本期唯一 pipx 组件是 markitdown，探测写死 t.markitdown；加第二个 pipx 组件时须按
+      // 档案卡 probeCmd 分派探测，勿再写死——本期 YAGNI。
+      applyDetectedStatus(d.id, t.markitdown)
     } else {
-      status = t.soffice ? 'ready' : 'unavailable' // detect-only：没探到 = 需手动
+      // 本期唯一 detect-only 组件是 soffice，探测写死 t.soffice；加第二个时须按档案卡
+      // probeCmd 分派探测，勿再写死——本期 YAGNI。
+      // detect-only 状态纯由探测派生（探到→ready、没探到→unavailable），两个值本就是探测
+      // 结论，不需要上面 applyDetectedStatus 的「保留」逻辑。
+      patch(d.id, { status: t.soffice ? 'ready' : 'unavailable', percent: null, currentFile: null, errorMessage: null })
     }
-    // 正在装的格别被探测覆盖（探测在装的中途可能仍为 false）。
-    if (table[d.id]?.status !== 'installing') patch(d.id, { status, percent: null, currentFile: null, errorMessage: null })
   }
 }
 
@@ -113,7 +125,9 @@ async function run(id: string): Promise<void> {
       })
       patch(id, { status: 'ready', percent: 100, currentFile: null })
     } else {
-      // pipx：无字节进度（percent 恒 null），不可取消。
+      // pipx：无字节进度（percent 恒 null），不可取消。本期唯一 pipx 组件是 markitdown，
+      // 装法写死 installMarkitdown()、没读档案卡的 PipxInstall.pkg；加第二个 pipx 组件时须
+      // 按 pkg 分派装法，勿再写死——本期 YAGNI。
       const r = await installMarkitdown()
       const { status, errorMessage } = mapPipxResult(r)
       patch(id, { status, percent: null, currentFile: null, errorMessage })
