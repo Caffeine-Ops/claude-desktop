@@ -194,35 +194,10 @@ export function fileTypeIconPaths(pathOrName: string): readonly IconPath[] {
   return pathsForExt(extOf(pathOrName))
 }
 
-/**
- * The same Icons8 colour tables, addressable by a stable key rather
- * than a file extension. The slash-skill chip registry
- * (`skillChipRegistry.ts`) uses this to give a known skill the matching
- * coloured file glyph — e.g. `/ppt-master` reuses the PowerPoint icon —
- * instead of a single-stroke Lucide glyph.
- */
-export type FileIconKey = 'ppt' | 'word' | 'excel' | 'pdf' | 'html' | 'image' | 'archive' | 'code'
-
-export function fileIconPathsByKey(key: FileIconKey): readonly IconPath[] {
-  switch (key) {
-    case 'ppt':
-      return PPT
-    case 'word':
-      return WORD
-    case 'excel':
-      return EXCEL
-    case 'pdf':
-      return PDF
-    case 'html':
-      return HTML
-    case 'image':
-      return IMAGE
-    case 'archive':
-      return ARCHIVE
-    case 'code':
-      return CODE
-  }
-}
+// （历史：这里曾有 fileIconPathsByKey / FileIconKey——按稳定 key 取表，供
+// skillChipRegistry 给技能 chip 复用 Office 风格文件图标。2026-07-16 技能
+// 图标整体换成 public/skill-icons/ 位图切片（registry 的 `image` 字段 +
+// SkillChipIcon 组件）后无消费者，已删。文件类型图标（按扩展名）不受影响。）
 
 export function FileTypeIcon({
   pathOrName,

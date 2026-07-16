@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AskUserQuestion · 替换 composer 的状态切换</title>
+<style>
+/* ================================================================
+   Design tokens —— 照抄 packages/design-tokens/tokens.css 亮/暗双档
+   ================================================================ */
+:root {
+  --card: 0 0% 100%;
+  --card-foreground: 240 3% 12%;
+  --foreground: 240 3% 12%;
+  --background: 240 6% 97%;
+  --primary: 211 100% 45%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --border: 240 6% 84%;
+  --brand: 142 76% 36%;
+  --brand-foreground: 0 0% 100%;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --panel-shadow:
+    0 18px 50px hsl(240 8% 12% / 0.14),
+    0 4px 12px hsl(240 8% 12% / 0.07),
+    0 0 0 1px hsl(var(--border) / 0.8);
+  --composer-ring: 0 0 0 1.5px hsl(var(--brand) / 0.45), 0 2px 10px hsl(240 8% 12% / 0.05);
+}
+html.dark {
+  --card: 30 3% 13%;
+  --card-foreground: 39 35% 92%;
+  --foreground: 40 21% 89%;
+  --background: 40 6% 10%;
+  --primary: 210 100% 58%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --border: 49 12% 18%;
+  --brand: 145 60% 52%;
+  --brand-foreground: 40 6% 10%;
+  --panel-shadow:
+    0 20px 56px hsl(0 0% 0% / 0.6),
+    0 5px 14px hsl(0 0% 0% / 0.4),
+    0 0 0 1px hsl(var(--border));
+  --composer-ring: 0 0 0 1.5px hsl(var(--brand) / 0.5), 0 2px 10px hsl(0 0% 0% / 0.3);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  transition: background .25s ease;
+}
+
+/* ── 页面骨架 ─────────────────────────────────────── */
+.page { max-width: 980px; margin: 0 auto; padding: 44px 40px 80px; }
+.page-head h1 { font-size: 24px; font-weight: 650; letter-spacing: -0.4px; }
+.page-head p { margin-top: 8px; font-size: 13px; color: hsl(var(--muted-foreground)); line-height: 1.7; }
+
+/* ── 舞台 ── */
+.stage {
+  margin-top: 28px; position: relative;
+  border-radius: 18px; overflow: hidden;
+  background: hsl(var(--card) / 0.5);
+  box-shadow: inset 0 0 0 1px hsl(var(--border));
+  padding: 28px 28px 24px;
+  min-height: 620px;
+  display: flex; flex-direction: column;
+}
+.mock-thread { flex: 1; display: flex; flex-direction: column; gap: 14px; }
+.mock-bubble-user {
+  align-self: flex-end;
+  background: hsl(var(--primary)); color: #fff;
+  border-radius: 18px; padding: 9px 15px; font-size: 14px;
+}
+.mock-line { display: flex; align-items: center; gap: 9px; font-size: 14px; }
+.mock-line .dot { width: 6px; height: 6px; border-radius: 999px; background: hsl(var(--muted-foreground) / 0.6); flex: none; }
+.mock-tool {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: hsl(var(--brand)); font-weight: 500;
+}
+.mock-tool .arc {
+  width: 13px; height: 13px; flex: none;
+  border: 2px solid hsl(var(--brand) / 0.25); border-top-color: hsl(var(--brand));
+  border-radius: 999px; animation: rot 1s linear infinite;
+}
+.mock-tool .arc.done { border-color: hsl(var(--brand)); animation: none; }
+@keyframes rot { to { transform: rotate(360deg); } }
+
+/* ================================================================
+   morph shell —— idle(composer) ⇄ asking(提问面板) 共用的一张卡。
+   两态只切内容与表皮 class：高度由 JS 做 FLIP 过渡，圆角/阴影/描边
+   走 CSS transition，视觉上是「同一块表面变形」而非两个组件互换。
+   ================================================================ */
+.morph-shell {
+  position: relative;
+  margin-top: 20px;
+  background: hsl(var(--card));
+  overflow: hidden;
+  transition:
+    height .34s cubic-bezier(.32,.94,.35,1),
+    border-radius .34s cubic-bezier(.32,.94,.35,1),
+    box-shadow .34s ease;
+}
+.morph-shell.idle { border-radius: 22px; box-shadow: var(--composer-ring); }
+.morph-shell.asking { border-radius: 18px; box-shadow: var(--panel-shadow); }
+
+/* faces：正常流一次只有一个；退场的那张被钉成 absolute 播退场后移除 */
+.face { padding: 16px 18px 14px; }
+.face.leaving {
+  position: absolute; inset: 0 0 auto 0;
+  animation: face-out .18s cubic-bezier(.4,0,1,1) both;
+  pointer-events: none;
+}
+@keyframes face-out { to { opacity: 0; transform: translateY(-6px); } }
+.face.entering { animation: face-in .26s cubic-bezier(.25,.9,.3,1) .1s both; }
+@keyframes face-in { from { opacity: 0; transform: translateY(10px); } }
+
+/* ── composer face ── */
+.composer .hint { font-size: 14.5px; color: hsl(var(--muted-foreground) / 0.75); }
+.composer .bar { margin-top: 26px; display: flex; align-items: center; gap: 10px; }
+.composer .cbtn {
+  width: 34px; height: 34px; border-radius: 999px; flex: none;
+  border: 1px solid hsl(var(--border)); background: transparent;
+  display: grid; place-items: center; color: hsl(var(--muted-foreground));
+  font-size: 17px; cursor: default;
+}
+.composer .spacer { flex: 1; }
+.composer .model { font-size: 13px; color: hsl(var(--muted-foreground)); }
+.composer .send {
+  width: 38px; height: 38px; border-radius: 999px; flex: none; border: 0;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  display: grid; place-items: center; cursor: default;
+}
+
+/* ── ask face（提问面板，ChatGPT 风格单行选项） ── */
+.ask-head { display: flex; align-items: flex-start; gap: 12px; padding: 2px 2px 0; }
+.ask-q { flex: 1; font-size: 15.5px; font-weight: 650; letter-spacing: -0.2px; line-height: 1.45; }
+.ask-nav { display: flex; align-items: center; gap: 2px; flex: none; color: hsl(var(--muted-foreground)); padding-top: 1px; }
+.ask-nav .cnt { font-size: 12.5px; margin: 0 4px; font-variant-numeric: tabular-nums; }
+.icon-btn {
+  width: 26px; height: 26px; border-radius: 8px; border: 0; cursor: pointer;
+  background: transparent; color: hsl(var(--muted-foreground));
+  display: grid; place-items: center;
+  transition: background .15s ease, color .15s ease;
+}
+.icon-btn:hover:not(:disabled) { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+.icon-btn:disabled { opacity: .35; cursor: default; }
+.icon-btn svg { width: 14px; height: 14px; }
+
+.ask-opts { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; }
+.opt {
+  display: flex; align-items: center; gap: 11px;
+  width: 100%; text-align: left; border: 0; cursor: pointer;
+  padding: 9px 12px; border-radius: 12px;
+  background: transparent; font-family: inherit;
+  transition: background .13s ease;
+}
+.opt:hover { background: hsl(var(--muted) / 0.6); }
+.opt .num {
+  width: 26px; height: 26px; border-radius: 999px; flex: none;
+  display: grid; place-items: center;
+  font-size: 12.5px; font-weight: 600; color: hsl(var(--muted-foreground));
+  box-shadow: inset 0 0 0 1.2px hsl(var(--border));
+  background: hsl(var(--card));
+  font-variant-numeric: tabular-nums;
+}
+.opt .lbl { font-size: 14px; font-weight: 600; flex: none; }
+.opt .badge {
+  flex: none; font-size: 11px; font-weight: 550; color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted)); border-radius: 6px; padding: 2px 7px;
+}
+.opt .desc {
+  font-size: 13.5px; color: hsl(var(--muted-foreground));
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.opt .go { flex: none; margin-left: auto; color: hsl(var(--muted-foreground)); opacity: 0; transition: opacity .13s ease; }
+.opt .go svg { width: 15px; height: 15px; display: block; }
+.opt.hot { background: hsl(var(--muted) / 0.75); }
+.opt.hot .go, .opt:hover .go { opacity: .8; }
+.opt.picked .num {
+  background: hsl(var(--brand)); color: hsl(var(--brand-foreground));
+  box-shadow: none;
+}
+
+.ask-foot { margin-top: 6px; display: flex; align-items: center; gap: 11px; padding: 5px 12px 4px; }
+.ask-foot .pen {
+  width: 26px; height: 26px; border-radius: 999px; flex: none;
+  display: grid; place-items: center; color: hsl(var(--muted-foreground));
+  box-shadow: inset 0 0 0 1.2px hsl(var(--border));
+}
+.ask-foot .pen svg { width: 12px; height: 12px; }
+.ask-free {
+  flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
+  font-family: inherit; font-size: 13.5px; color: hsl(var(--foreground));
+  padding: 6px 0;
+}
+.ask-free::placeholder { color: hsl(var(--muted-foreground) / 0.8); }
+.skip-btn {
+  flex: none; border: 1px solid hsl(var(--border)); background: transparent;
+  border-radius: 999px; padding: 6px 16px; cursor: pointer;
+  font-family: inherit; font-size: 13px; font-weight: 500; color: hsl(var(--foreground));
+  transition: background .15s ease;
+}
+.skip-btn:hover { background: hsl(var(--muted)); }
+.send-free {
+  flex: none; border: 0; border-radius: 999px; padding: 6px 16px; cursor: pointer;
+  font-family: inherit; font-size: 13px; font-weight: 550;
+  background: hsl(var(--brand)); color: hsl(var(--brand-foreground));
+  display: none;
+}
+.ask-foot.editing .send-free { display: block; }
+.ask-foot.editing .skip-btn { display: none; }
+
+/* 回到 idle 后 composer hint 里的短暂确认（绿勾 + 文案，替代浮 chip：
+   面板已经收进卡里了，确认信息也留在卡内更连贯） */
+.hint-done { display: inline-flex; align-items: center; gap: 7px; color: hsl(var(--brand)); }
+.hint-done svg { width: 14px; height: 14px; }
+
+/* 控制 & 说明 */
+.controls { margin-top: 16px; display: flex; gap: 8px; }
+.chip-btn {
+  font-family: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+  border: 1px solid hsl(var(--border)); border-radius: 999px;
+  background: hsl(var(--card)); color: hsl(var(--foreground)); padding: 7px 14px;
+  transition: border-color .15s ease;
+}
+.chip-btn:hover { border-color: hsl(var(--muted-foreground) / 0.4); }
+.notes { margin-top: 26px; font-size: 13px; color: hsl(var(--muted-foreground)); line-height: 1.9; }
+.notes b { color: hsl(var(--foreground)); font-weight: 600; }
+kbd {
+  font-family: inherit; font-size: 11px; padding: 1px 6px; border-radius: 5px;
+  box-shadow: inset 0 0 0 1px hsl(var(--border)); color: hsl(var(--muted-foreground));
+}
+
+/* Tweaks */
+.tweaks-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 100;
+  width: 42px; height: 42px; border-radius: 999px; border: 0; cursor: pointer;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  box-shadow: 0 6px 20px hsl(0 0% 0% / .25); display: grid; place-items: center;
+}
+.tweaks {
+  position: fixed; right: 20px; bottom: 72px; z-index: 100; width: 230px;
+  border-radius: 14px; background: hsl(var(--card)); box-shadow: var(--panel-shadow);
+  padding: 14px; display: none;
+}
+.tweaks.open { display: block; }
+.tweaks h3 { font-size: 12px; font-weight: 650; letter-spacing: .8px; text-transform: uppercase; color: hsl(var(--muted-foreground)); margin-bottom: 6px; }
+.tweaks .row { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 12.5px; }
+.switch { position: relative; width: 34px; height: 20px; border-radius: 999px; border: 0; cursor: pointer; background: hsl(var(--muted)); transition: background .2s ease; }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 999px; background: #fff; box-shadow: 0 1px 3px #0003; transition: transform .2s ease; }
+.switch[aria-checked="true"] { background: hsl(var(--brand)); }
+.switch[aria-checked="true"]::after { transform: translateX(14px); }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header class="page-head">
+    <h1>AskUserQuestion · 替换 composer 的状态切换</h1>
+    <p>提问到达时 composer <b>整个变形为</b>提问面板（同一张卡：高度 FLIP + 内容错拍 crossfade + 圆角/描边/阴影渐变），
+       答完/取消再变回来——提问态下不存在输入框，自由回答走面板内的「其他」行。</p>
+  </header>
+
+  <div class="stage">
+    <div class="mock-thread">
+      <div class="mock-bubble-user">使用 AskUserQuestion 向我提问</div>
+      <div class="mock-line"><span class="dot"></span>我用 AskUserQuestion 问你这次想做什么。</div>
+      <div class="mock-tool" id="toolLine"><span class="arc"></span><span id="toolLabel">询问用户 · 等待回答</span><span style="margin-left:auto;font-variant-numeric:tabular-nums" id="toolTime">12.6s</span></div>
+    </div>
+
+    <div class="morph-shell idle" id="shell"></div>
+
+    <div class="controls">
+      <button class="chip-btn" onclick="startAsk()">模拟提问到达</button>
+      <button class="chip-btn" onclick="startAsk(true)">模拟提问（单题）</button>
+    </div>
+  </div>
+
+  <div class="notes">
+    <b>状态机</b>：idle（composer）⇄ asking（提问面板）。工具请求到达 → morph 进 asking；全部作答 / 全部跳过 / 点 × 取消 → morph 回 idle，
+    答案回传 AskUserQuestion，消息流 tool 行同步翻「已回答」。<br>
+    <b>morph 规格</b>：容器高度 FLIP 340ms <code>cubic-bezier(.32,.94,.35,1)</code>；旧面 180ms 上飘淡出（absolute 钉住不占高），
+    新面延迟 100ms 下方浮入；圆角 22↔18px、绿描边 ↔ 大投影同步过渡。题间切换（1/2 → 2/2）同样走高度 FLIP。<br>
+    <b>键盘</b>：<kbd>1</kbd>–<kbd>9</kbd> 直选 · <kbd>Esc</kbd> 跳过当前题 · 输入态 <kbd>Enter</kbd> 发送。
+    ‹ › 可回看已答题（绿勾圈，可改答案）；最后一题跳过 = 提交已答部分。
+  </div>
+</div>
+
+<button class="tweaks-fab" onclick="document.getElementById('tweaks').classList.toggle('open')" aria-label="Tweaks">
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+</button>
+<div class="tweaks" id="tweaks">
+  <h3>Tweaks</h3>
+  <div class="row">
+    <span>深色模式</span>
+    <button class="switch" role="switch" aria-checked="false"
+      onclick="const on=this.getAttribute('aria-checked')!=='true';this.setAttribute('aria-checked',on);document.documentElement.classList.toggle('dark',on)"></button>
+  </div>
+  <div class="row">
+    <span>推荐项常驻浅底</span>
+    <button class="switch" role="switch" aria-checked="true"
+      onclick="const on=this.getAttribute('aria-checked')!=='true';this.setAttribute('aria-checked',on);HOT_STYLE=on;if(mode==='asking')renderAsk(false)"></button>
+  </div>
+</div>
+
+<script>
+/* ── 数据 ── */
+const QUESTIONS_FULL = [
+  {
+    q: '这次想让我做什么？',
+    options: [
+      { l: '写代码 / 改功能', d: '在某个项目里实现新功能、修改现有逻辑，或者做重构。', rec: true },
+      { l: '排查 Bug', d: '定位并修复一个具体问题，我会先复现再动手。' },
+      { l: '读代码 / 理解架构', d: '梳理某个项目或模块的结构、调用链、数据流，产出一份说明。' },
+      { l: '只是测试这个工具', d: '你只是想看看 AskUserQuestion 长什么样，没有实际任务。' }
+    ]
+  },
+  {
+    q: '这次改动预期的范围有多大？',
+    options: [
+      { l: '小改动', d: '单文件或几行代码的修补。', rec: true },
+      { l: '中等特性', d: '跨几个文件的完整功能。' },
+      { l: '大重构', d: '牵动架构或多模块的系统性改动。' }
+    ]
+  }
+]
+
+let QUESTIONS = QUESTIONS_FULL
+let HOT_STYLE = true
+let mode = 'idle' // 'idle' | 'asking'
+let cur = 0
+let answers = []
+let editing = false
+
+const shell = document.getElementById('shell')
+const toolLabel = document.getElementById('toolLabel')
+const toolLine = document.getElementById('toolLine')
+
+const PEN = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>`
+const ARROW = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>`
+const CHEV_L = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>`
+const CHEV_R = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>`
+const XI = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`
+const CK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`
+
+/* ── faces 的 HTML ── */
+function composerFaceHTML(hintHTML) {
+  return `
+    <div class="composer">
+      <div class="hint">${hintHTML}</div>
+      <div class="bar">
+        <button class="cbtn" tabindex="-1">+</button>
+        <button class="cbtn" tabindex="-1">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+        </button>
+        <span class="spacer"></span>
+        <span class="model">✦ Opus 4.8 · 1M</span>
+        <button class="send" tabindex="-1">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        </button>
+      </div>
+    </div>`
+}
+
+function askFaceHTML() {
+  const Q = QUESTIONS[cur]
+  const ans = answers[cur]
+  const total = QUESTIONS.length
+  return `
+    <div class="ask-head">
+      <div class="ask-q">${Q.q}</div>
+      <div class="ask-nav">
+        ${total > 1 ? `
+          <button class="icon-btn" ${cur === 0 ? 'disabled' : ''} onclick="nav(-1)" aria-label="上一题">${CHEV_L}</button>
+          <span class="cnt">${cur + 1} / ${total}</span>
+          <button class="icon-btn" ${cur === total - 1 ? 'disabled' : ''} onclick="nav(1)" aria-label="下一题">${CHEV_R}</button>
+        ` : ''}
+        <button class="icon-btn" onclick="cancelAsk()" aria-label="取消">${XI}</button>
+      </div>
+    </div>
+    <div class="ask-opts">
+      ${Q.options.map((o, i) => {
+        const picked = ans?.type === 'option' && ans.i === i
+        const hot = HOT_STYLE && !ans && o.rec
+        return `
+        <button class="opt ${hot ? 'hot' : ''} ${picked ? 'picked' : ''}" onclick="pick(${i})">
+          <span class="num">${picked ? '✓' : i + 1}</span>
+          <span class="lbl">${o.l}</span>
+          ${o.rec ? '<span class="badge">推荐</span>' : ''}
+          <span class="desc">${o.d}</span>
+          <span class="go">${ARROW}</span>
+        </button>`
+      }).join('')}
+    </div>
+    <div class="ask-foot ${editing ? 'editing' : ''}" id="foot">
+      <span class="pen">${PEN}</span>
+      <input class="ask-free" id="freeInput" placeholder="其他——用自己的话回答"
+        value="${ans?.type === 'free' ? ans.text.replace(/"/g, '&quot;') : ''}" />
+      <button class="skip-btn" onclick="skip()">跳过</button>
+      <button class="send-free" onclick="sendFree()">回答</button>
+    </div>`
+}
+
+/* ── morph 核心：高度 FLIP + 面 crossfade ──
+   swapFace(html, cross)：cross=true 时旧面钉 absolute 播退场（态切换），
+   false 时直接替换只做高度过渡（同态内的题间刷新）。 */
+function swapFace(html, cross) {
+  const from = shell.offsetHeight
+  const old = shell.querySelector('.face:not(.leaving)')
+  const next = document.createElement('div')
+  next.className = 'face' + (cross ? ' entering' : '')
+  next.innerHTML = html
+  if (old) {
+    if (cross) {
+      old.classList.add('leaving')
+      setTimeout(() => old.remove(), 200)
+    } else {
+      old.remove()
+    }
+  }
+  shell.appendChild(next)
+  wireFace(next)
+  // FLIP：从旧高过渡到新自然高，完成后回 auto（内容再变化不憋死）
+  shell.style.height = 'auto'
+  const to = shell.offsetHeight
+  shell.style.height = from + 'px'
+  void shell.offsetWidth
+  shell.style.height = to + 'px'
+  clearTimeout(swapFace._t)
+  swapFace._t = setTimeout(() => { shell.style.height = 'auto' }, 360)
+}
+
+function wireFace(face) {
+  const input = face.querySelector('#freeInput')
+  if (!input) return
+  input.addEventListener('focus', () => { editing = true; face.querySelector('#foot').classList.add('editing') })
+  input.addEventListener('blur', () => {
+    if (!input.value.trim()) { editing = false; face.querySelector('#foot')?.classList.remove('editing') }
+  })
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); sendFree() }
+    e.stopPropagation()
+  })
+}
+
+function renderComposer(cross, hintHTML) {
+  shell.classList.remove('asking'); shell.classList.add('idle')
+  swapFace(composerFaceHTML(hintHTML ?? '随便问点什么… ↵ 发送 · ⇧↵ 换行 · / 命令 · @ 文件'), cross)
+}
+function renderAsk(cross) {
+  shell.classList.remove('idle'); shell.classList.add('asking')
+  swapFace(askFaceHTML(), cross)
+}
+
+/* ── 状态机 ── */
+function startAsk(single = false) {
+  if (mode === 'asking') return
+  QUESTIONS = single ? [QUESTIONS_FULL[0]] : QUESTIONS_FULL
+  cur = 0
+  answers = new Array(QUESTIONS.length).fill(undefined)
+  editing = false
+  mode = 'asking'
+  toolLabel.textContent = '询问用户 · 等待回答'
+  toolLine.querySelector('.arc').classList.remove('done')
+  renderAsk(true)
+}
+
+function advanceOrFinish() {
+  const anyUnanswered = QUESTIONS.some((_, i) => answers[i] === undefined)
+  if (!anyUnanswered) { finish(); return }
+  let target = -1
+  for (let i = cur + 1; i < QUESTIONS.length; i++) if (answers[i] === undefined) { target = i; break }
+  if (target < 0) for (let i = 0; i < QUESTIONS.length; i++) if (answers[i] === undefined) { target = i; break }
+  cur = target
+  editing = false
+  renderAsk(false)
+}
+
+function pick(i) {
+  answers[cur] = { type: 'option', i }
+  renderAsk(false) // 一拍选中反馈
+  setTimeout(advanceOrFinish, 240)
+}
+function sendFree() {
+  const input = shell.querySelector('#freeInput')
+  const v = input?.value.trim()
+  if (!v) return
+  answers[cur] = { type: 'free', text: v }
+  editing = false
+  renderAsk(false)
+  setTimeout(advanceOrFinish, 240)
+}
+function skip() {
+  answers[cur] = { type: 'skip' }
+  advanceOrFinish()
+}
+function nav(d) {
+  cur = Math.max(0, Math.min(QUESTIONS.length - 1, cur + d))
+  editing = false
+  renderAsk(false)
+}
+function cancelAsk() { finish(true) }
+
+function finish(cancelled = false) {
+  mode = 'idle'
+  const n = answers.filter((a) => a && a.type !== 'skip').length
+  toolLabel.textContent = cancelled ? '询问用户 · 已取消' : `询问用户 · 已回答 ${n}/${QUESTIONS.length}`
+  toolLine.querySelector('.arc').classList.add('done')
+  const doneHint = `<span class="hint-done">${CK}${cancelled ? '已取消提问' : '回答已发送，继续处理中…'}</span>`
+  renderComposer(true, doneHint)
+  // 3s 后 hint 回落为常规 placeholder（不再重播动画，只换文案）
+  setTimeout(() => {
+    if (mode !== 'idle') return
+    const hintEl = shell.querySelector('.hint')
+    if (hintEl) hintEl.innerHTML = '随便问点什么… ↵ 发送 · ⇧↵ 换行 · / 命令 · @ 文件'
+  }, 3000)
+}
+
+/* 键盘（asking 态生效） */
+document.addEventListener('keydown', (e) => {
+  if (mode !== 'asking') return
+  if (e.key === 'Escape') { skip(); return }
+  const n = parseInt(e.key, 10)
+  if (n >= 1 && n <= QUESTIONS[cur].options.length) pick(n - 1)
+})
+
+/* 初始：idle，2s 后自动演示一次提问到达 */
+renderComposer(false)
+setTimeout(() => startAsk(), 1600)
+</script>
+</body>
+</html>

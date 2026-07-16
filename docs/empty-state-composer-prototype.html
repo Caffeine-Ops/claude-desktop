@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>空态 Composer 原型 — 分类 tab + 技能 chip + 大输入区</title>
+<style>
+/* ============================================================
+   Design tokens — 对齐 packages/design-tokens/tokens.css：
+   底色 #f5f5f7 / 前景 #1d1d1f / 品牌绿 142 76% 36%。
+   ink-* 是参考图的「墨黑选中态」，Tweaks 可切换为品牌绿。
+   ============================================================ */
+:root {
+  --bg: hsl(240 7% 97%);
+  --fg: hsl(240 3% 12%);
+  --fg-muted: hsl(240 4% 40%);
+  --fg-faint: hsl(240 4% 58%);
+  --card: hsl(0 0% 100%);
+  --surface: hsl(240 6% 94%);      /* composer 外层灰壳 / prompt chip 底 */
+  --surface-hover: hsl(240 5% 90%);
+  --border: hsl(240 6% 86%);
+  --brand: hsl(142 76% 36%);
+  --brand-soft: hsl(142 60% 95%);
+  --brand-soft-2: hsl(150 45% 91%);
+
+  /* 选中态（tab 选中、composer 内技能 chip、发送键激活）——默认墨黑 */
+  --active-bg: hsl(240 3% 12%);
+  --active-fg: hsl(0 0% 100%);
+
+  --radius-shell: 28px;
+  --radius-card: 22px;
+  --shadow-card: 0 1px 2px hsl(240 5% 40% / .06), 0 12px 32px hsl(240 5% 40% / .07);
+  --ease-out: cubic-bezier(.22, .8, .3, 1);
+}
+:root[data-active="brand"] {
+  --active-bg: var(--brand);
+  --active-fg: hsl(0 0% 100%);
+}
+:root[data-theme="dark"] {
+  --bg: hsl(240 5% 10%);
+  --fg: hsl(0 0% 95%);
+  --fg-muted: hsl(240 4% 64%);
+  --fg-faint: hsl(240 4% 48%);
+  --card: hsl(240 4% 15%);
+  --surface: hsl(240 4% 19%);
+  --surface-hover: hsl(240 4% 24%);
+  --border: hsl(240 4% 26%);
+  --brand: hsl(145 60% 52%);
+  --brand-soft: hsl(145 30% 18%);
+  --brand-soft-2: hsl(150 25% 15%);
+  --shadow-card: 0 1px 2px hsl(0 0% 0% / .3), 0 12px 32px hsl(0 0% 0% / .35);
+}
+:root[data-theme="dark"]:not([data-active="brand"]) {
+  --active-bg: hsl(0 0% 96%);   /* 暗色下 ink 反转为白底黑字 */
+  --active-fg: hsl(240 3% 12%);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  transition: background .3s var(--ease-out), color .3s var(--ease-out);
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+svg { display: block; flex: none; }
+
+/* ============ 页面骨架 ============ */
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 72px 40px 96px;
+  position: relative;
+}
+.hero { width: 100%; max-width: 1120px; position: relative; }
+
+/* 右上角积分 pill */
+.top-pill {
+  position: fixed; top: 20px; right: 24px; z-index: 5;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px 8px 10px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 999px;
+  font-size: 13px; color: var(--fg-muted);
+  box-shadow: 0 1px 3px hsl(240 5% 40% / .07);
+  transition: color .15s, transform .2s var(--ease-out);
+}
+.top-pill:hover { color: var(--fg); transform: translateY(-1px); }
+.top-pill .dot {
+  width: 20px; height: 20px; border-radius: 999px;
+  background: var(--brand); color: #fff;
+  display: grid; place-items: center;
+}
+
+/* ============ 标题区 ============ */
+.hero-head { position: relative; }
+.hero h1 {
+  font-size: clamp(44px, 5vw, 64px);
+  line-height: 1.16;
+  font-weight: 700;
+  letter-spacing: .01em;
+}
+.slogan { margin-top: 18px; font-size: 15px; color: var(--fg-faint); }
+
+/* 活动通知卡（标题右侧） */
+.notice-card {
+  position: absolute; right: 0; top: 8px;
+  width: 320px;
+  padding: 18px 18px 16px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, var(--brand-soft), var(--brand-soft-2) 55%, var(--card));
+  border: 1px solid hsl(from var(--brand) h s l / .14);
+  box-shadow: 0 8px 24px hsl(150 40% 30% / .07);
+  transition: opacity .25s var(--ease-out), transform .25s var(--ease-out);
+}
+.notice-card.is-hidden { opacity: 0; transform: translateY(-6px); pointer-events: none; }
+.notice-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.notice-head .megaphone {
+  width: 22px; height: 22px; border-radius: 999px;
+  background: var(--brand); color: #fff;
+  display: grid; place-items: center;
+}
+.notice-head b { font-size: 14px; font-weight: 600; }
+.notice-close {
+  margin-left: auto; width: 24px; height: 24px; border-radius: 8px;
+  display: grid; place-items: center; color: var(--fg-faint);
+}
+.notice-close:hover { background: hsl(240 5% 50% / .12); color: var(--fg); }
+.notice-body { font-size: 13.5px; line-height: 1.65; color: var(--fg-muted); }
+.notice-cta {
+  display: block; margin: 12px 0 0 auto;
+  padding: 7px 16px; border-radius: 999px;
+  background: var(--card); border: 1px solid var(--border);
+  font-size: 13px; font-weight: 600;
+  transition: transform .15s var(--ease-out), box-shadow .15s;
+}
+.notice-cta:hover { transform: translateY(-1px); box-shadow: 0 3px 10px hsl(240 5% 40% / .1); }
+
+/* ============ 分类 tab ============ */
+.cat-tabs {
+  margin-top: 36px;
+  display: inline-flex; gap: 4px;
+  padding: 5px;
+  background: var(--surface);
+  border-radius: 16px;
+}
+.cat-tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 16px;
+  border-radius: 12px;
+  font-size: 14.5px; font-weight: 500;
+  color: var(--fg-muted);
+  transition: background .18s var(--ease-out), color .18s;
+}
+.cat-tab:hover { color: var(--fg); }
+.cat-tab.is-active {
+  background: var(--active-bg); color: var(--active-fg);
+  font-weight: 600;
+  box-shadow: 0 2px 8px hsl(240 5% 20% / .18);
+}
+
+/* ============ 技能 / 推荐 prompt 双态 chip 行 ============ */
+.chip-row {
+  margin-top: 56px;
+  display: flex; flex-wrap: wrap; gap: 12px;
+  min-height: 44px;
+  align-items: center;
+}
+.chip-row.is-swapping .chip { animation: chipIn .3s var(--ease-out) both; }
+@keyframes chipIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 10px 16px;
+  border-radius: 13px;
+  font-size: 14px;
+  transition: transform .15s var(--ease-out), box-shadow .15s, background .15s, border-color .15s;
+}
+.chip:hover { transform: translateY(-1px); }
+/* 技能态：白卡 + hairline */
+.chip--skill { background: var(--card); border: 1px solid var(--border); }
+.chip--skill:hover { box-shadow: 0 3px 12px hsl(240 5% 40% / .1); border-color: var(--fg-faint); }
+.chip--skill svg { color: var(--fg-muted); }
+/* 推荐 prompt 态：浅灰实底 + ↘ */
+.chip--prompt { background: var(--surface); color: var(--fg); }
+.chip--prompt:hover { background: var(--surface-hover); }
+.chip--prompt svg { color: var(--fg-faint); }
+.chip-row .stagger { animation-delay: calc(var(--i) * 35ms); }
+
+/* ============ Composer ============ */
+.composer-block { margin-top: 16px; position: relative; }
+
+/* 吉祥物占位（骑在 composer 右上沿，z 序在卡片之下） */
+.mascot {
+  position: absolute; right: 36px; top: -96px; z-index: 0;
+  width: 104px; height: 112px;
+  border: 1.5px dashed hsl(240 5% 60% / .55);
+  border-radius: 18px;
+  display: grid; place-items: center;
+  color: var(--fg-faint); font-size: 12px; text-align: center; line-height: 1.5;
+  background: hsl(from var(--card) h s l / .5);
+}
+
+/* 外层灰壳：白卡叠上去，底部露出工作空间/权限行 */
+.composer-shell {
+  position: relative; z-index: 1;
+  background: var(--surface);
+  border-radius: var(--radius-shell);
+}
+.composer-card {
+  background: var(--card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: 20px 20px 14px;
+  transition: box-shadow .2s var(--ease-out);
+}
+.composer-card:focus-within {
+  box-shadow: var(--shadow-card), 0 0 0 1.5px hsl(from var(--active-bg) h s l / .35);
+}
+
+/* 编辑区：contenteditable，技能 chip 作为不可编辑内联节点 */
+.editor-wrap { position: relative; min-height: 118px; }
+.editor {
+  min-height: 118px;
+  font-size: 15.5px; line-height: 1.9;
+  outline: none;
+  word-break: break-word;
+}
+.editor-placeholder {
+  position: absolute; inset: 0 0 auto 0;
+  font-size: 15.5px; line-height: 1.9;
+  color: var(--fg-faint);
+  pointer-events: none;
+  transition: opacity .12s;
+}
+.editor-placeholder.is-hidden { opacity: 0; }
+
+/* composer 内的技能标签 */
+.skill-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  vertical-align: -6px;
+  margin-right: 10px;
+  padding: 5px 6px 5px 10px;
+  border-radius: 10px;
+  background: var(--active-bg); color: var(--active-fg);
+  font-size: 13px; font-weight: 500;
+  user-select: none;
+  animation: tagIn .22s var(--ease-out) both;
+}
+@keyframes tagIn { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: none; } }
+.skill-tag svg { color: var(--active-fg); }
+.skill-tag .tag-x {
+  width: 18px; height: 18px; border-radius: 6px;
+  display: grid; place-items: center;
+  color: hsl(from var(--active-fg) h s l / .75);
+}
+.skill-tag .tag-x:hover { background: hsl(from var(--active-fg) h s l / .18); color: var(--active-fg); }
+
+/* 工具行 */
+.toolbar { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.icon-btn {
+  width: 38px; height: 38px; border-radius: 12px;
+  display: grid; place-items: center;
+  color: var(--fg-muted);
+  transition: background .15s, color .15s;
+}
+.icon-btn:hover { background: var(--surface); color: var(--fg); }
+.toolbar .grow { flex: 1; }
+.model-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 38px; padding: 0 12px; border-radius: 12px;
+  font-size: 14px; color: var(--fg-muted);
+  transition: background .15s, color .15s;
+}
+.model-btn:hover { background: var(--surface); color: var(--fg); }
+.send-btn {
+  width: 42px; height: 42px; margin-left: 4px;
+  border-radius: 999px;
+  display: grid; place-items: center;
+  background: var(--surface); color: var(--fg-faint);
+  transition: background .2s var(--ease-out), color .2s, transform .15s var(--ease-out);
+}
+.send-btn.is-ready { background: var(--active-bg); color: var(--active-fg); }
+.send-btn.is-ready:hover { transform: scale(1.06); }
+.send-btn.is-ready:active { transform: scale(.94); }
+
+/* 底部延伸条 */
+.composer-footer {
+  display: flex; align-items: center; gap: 22px;
+  padding: 13px 24px 14px;
+}
+.footer-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 13.5px; color: var(--fg-faint);
+  transition: color .15s;
+}
+.footer-btn:hover { color: var(--fg-muted); }
+
+/* ============ Toast ============ */
+.toast {
+  position: fixed; left: 50%; bottom: 40px; z-index: 60;
+  transform: translate(-50%, 16px);
+  padding: 10px 18px; border-radius: 12px;
+  background: var(--active-bg); color: var(--active-fg);
+  font-size: 13.5px;
+  opacity: 0; pointer-events: none;
+  transition: opacity .2s var(--ease-out), transform .2s var(--ease-out);
+}
+.toast.is-show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ============ Tweaks ============ */
+.tweaks-fab {
+  position: fixed; right: 22px; bottom: 22px; z-index: 50;
+  width: 40px; height: 40px; border-radius: 999px;
+  background: var(--card); border: 1px solid var(--border);
+  display: grid; place-items: center; color: var(--fg-faint);
+  box-shadow: 0 2px 10px hsl(240 5% 30% / .12);
+  transition: color .15s, transform .15s var(--ease-out);
+}
+.tweaks-fab:hover { color: var(--fg); transform: rotate(30deg); }
+.tweaks {
+  position: fixed; right: 22px; bottom: 72px; z-index: 50;
+  width: 240px; padding: 16px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: 0 12px 40px hsl(240 5% 20% / .18);
+  display: none;
+}
+.tweaks.is-open { display: block; }
+.tweaks h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; letter-spacing: .04em; }
+.tweaks .row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--fg-muted); padding: 7px 0; }
+.tweaks .seg { display: inline-flex; background: var(--surface); border-radius: 8px; padding: 2px; }
+.tweaks .seg button { padding: 4px 10px; border-radius: 6px; font-size: 12px; color: var(--fg-muted); }
+.tweaks .seg button.on { background: var(--card); color: var(--fg); box-shadow: 0 1px 3px hsl(240 5% 30% / .15); font-weight: 600; }
+.tweaks input[type="checkbox"] { accent-color: var(--brand); width: 16px; height: 16px; }
+
+@media (max-width: 980px) {
+  .notice-card { position: static; width: auto; margin-top: 24px; }
+  .mascot { display: none; }
+}
+</style>
+</head>
+<body>
+
+<button class="top-pill" data-stub="活动中心">
+  <span class="dot">
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 1v10M1 6h10"/></svg>
+  </span>
+  做任务赢积分好礼
+  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 2.5 3.5 3.5-3.5 3.5"/></svg>
+</button>
+
+<div class="page">
+  <main class="hero">
+    <div class="hero-head">
+      <h1>不止聊天，<br>搞定一切</h1>
+
+      <aside class="notice-card" id="noticeCard">
+        <div class="notice-head">
+          <span class="megaphone">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5.5v3l7 3v-9l-7 3Z"/><path d="M11 5a3 3 0 0 1 0 4"/></svg>
+          </span>
+          <b>活动通知</b>
+          <button class="notice-close" id="noticeClose" aria-label="关闭">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m2.5 2.5 7 7M9.5 2.5l-7 7"/></svg>
+          </button>
+        </div>
+        <p class="notice-body">［活动文案占位：新版本发布 / 分享有礼等运营内容，两行以内。］</p>
+        <button class="notice-cta" data-stub="活动落地页">立即体验</button>
+      </aside>
+    </div>
+
+    <p class="slogan">本地运行、自主规划、安全可控的 AI 工作搭子</p>
+
+    <div class="cat-tabs" id="catTabs"></div>
+
+    <div class="chip-row" id="chipRow"></div>
+
+    <div class="composer-block">
+      <div class="mascot">吉祥物插画<br>104 × 112</div>
+
+      <div class="composer-shell">
+        <div class="composer-card">
+          <div class="editor-wrap">
+            <div class="editor" id="editor" contenteditable="true" spellcheck="false"></div>
+            <span class="editor-placeholder" id="placeholder">今天帮你做些什么？&ensp;/ 调用技能与指令，@ 引用对话文件</span>
+          </div>
+          <div class="toolbar">
+            <button class="icon-btn" data-stub="添加附件" aria-label="添加附件">
+              <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>
+            </button>
+            <div class="grow"></div>
+            <button class="icon-btn" data-stub="提示词优化" aria-label="提示词优化">
+              <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 3l1.2 3.3L15.5 7.5l-3.3 1.2L11 12l-1.2-3.3L6.5 7.5l3.3-1.2L11 3Z"/><path d="M5 13l.7 1.8L7.5 15.5l-1.8.7L5 18l-.7-1.8-1.8-.7 1.8-.7L5 13Z"/></svg>
+            </button>
+            <button class="model-btn" data-stub="模型选择">
+              <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="7"/><path d="M6.5 11.5 9 5.5l2.5 6M7.3 9.8h3.4"/></svg>
+              Auto
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 4.5 3 3 3-3"/></svg>
+            </button>
+            <button class="icon-btn" data-stub="语音输入" aria-label="语音输入">
+              <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="7.2" y="2.5" width="5.6" height="9.5" rx="2.8"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5"/></svg>
+            </button>
+            <button class="send-btn" id="sendBtn" aria-label="发送">
+              <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14.5v-11M4.5 8 9 3.5 13.5 8"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="composer-footer">
+          <button class="footer-btn" data-stub="工作空间选择">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5.5v6A1.5 1.5 0 0 0 3.5 13h9A1.5 1.5 0 0 0 14 11.5v-5A1.5 1.5 0 0 0 12.5 5H8L6.5 3h-3A1.5 1.5 0 0 0 2 4.5v1Z"/></svg>
+            选择工作空间
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 4.5 3 3 3-3"/></svg>
+          </button>
+          <button class="footer-btn" data-stub="权限模式">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.8 3 3.6v3.6c0 3.2 2.1 5.4 5 6.4 2.9-1 5-3.2 5-6.4V3.6L8 1.8Z"/><path d="m5.8 7.8 1.6 1.6 2.8-3"/></svg>
+            默认权限
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 4.5 3 3 3-3"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<button class="tweaks-fab" id="tweaksFab" aria-label="Tweaks">
+  <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 5h12M3 9h12M3 13h12"/><circle cx="7" cy="5" r="1.6" fill="var(--card)"/><circle cx="12" cy="9" r="1.6" fill="var(--card)"/><circle cx="5.5" cy="13" r="1.6" fill="var(--card)"/></svg>
+</button>
+<div class="tweaks" id="tweaksPanel">
+  <h3>Tweaks</h3>
+  <div class="row">选中态颜色
+    <span class="seg" id="segActive">
+      <button data-v="ink" class="on">墨黑</button>
+      <button data-v="brand">品牌绿</button>
+    </span>
+  </div>
+  <div class="row">暗色模式 <input type="checkbox" id="ckDark"></div>
+  <div class="row">活动通知卡 <input type="checkbox" id="ckNotice" checked></div>
+</div>
+
+<script>
+/* ============================================================
+   数据：分类 → 技能 → 推荐 prompt。
+   prompt 文本是演示占位，落地时由运营/技能包配置提供。
+   ============================================================ */
+const ICONS = {
+  cup:    '<path d="M4 6h9v5.5A3.5 3.5 0 0 1 9.5 15h-2A3.5 3.5 0 0 1 4 11.5V6Z"/><path d="M13 7.5h1.2a1.8 1.8 0 0 1 0 3.6H13M6.5 3.5v1M9 3v1.5M11.5 3.5v1"/>',
+  code:   '<path d="m6 5.5-3.5 3.5L6 12.5M12 5.5l3.5 3.5L12 12.5"/>',
+  palette:'<path d="M9 2.5a6.5 6.5 0 1 0 0 13c1 0 1.4-.6 1.4-1.3 0-1.1-1-1.5-.4-2.5.5-.9 3-.2 4.3-1.5.9-.9.2-7.7-5.3-7.7Z"/><circle cx="5.8" cy="7" r=".9"/><circle cx="9" cy="5.3" r=".9"/><circle cx="12.2" cy="7" r=".9"/>',
+  doc:    '<path d="M5 2.5h5.5L14 6v9.5H5V2.5Z"/><path d="M10.5 2.5V6H14M7 9h4M7 11.5h4"/>',
+  wallet: '<path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h9a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 13 14H4a1.5 1.5 0 0 1-1.5-1.5v-7Z"/><path d="M10.5 8.5h4v2h-4a1 1 0 0 1 0-2Z"/>',
+  pie:    '<circle cx="9" cy="9" r="6.5"/><path d="M9 2.5V9l4.5 4.5"/>',
+  search: '<circle cx="8" cy="8" r="5"/><path d="m11.8 11.8 3.2 3.2"/>',
+  video:  '<rect x="2.5" y="4.5" width="10" height="9" rx="1.5"/><path d="m12.5 8 3-2v6l-3-2"/>',
+  slides: '<rect x="2.5" y="3" width="13" height="9" rx="1.2"/><path d="M9 12v2.5M6.5 15.5h5"/>',
+  bug:    '<circle cx="9" cy="10" r="4"/><path d="M9 6V4M5.5 7 4 5.5M12.5 7 14 5.5M4.5 10H2.5M15.5 10h-2M5.5 13 4 14.5M12.5 13l1.5 1.5"/>',
+  box:    '<path d="M2.5 5.5 9 2.5l6.5 3v7L9 15.5l-6.5-3v-7Z"/><path d="M2.5 5.5 9 8.5l6.5-3M9 8.5v7"/>',
+  wrench: '<path d="M14.5 4.5a4 4 0 0 1-5.3 5L5 13.7a1.7 1.7 0 0 1-2.4-2.4L6.8 7a4 4 0 0 1 5-5.3L9.5 4l.7 2.5 2.5.7 1.8-2.7Z"/>',
+  gauge:  '<path d="M3 13.5a6.5 6.5 0 1 1 12 0"/><path d="m9 11 3-4"/>',
+  image:  '<rect x="2.5" y="3.5" width="13" height="11" rx="1.5"/><circle cx="6.5" cy="7" r="1.2"/><path d="m4 13 3.8-3.8 2.7 2.7 2-2L15 12.5"/>',
+  pen:    '<path d="m3 15 1-3.5L12.5 3a1.8 1.8 0 0 1 2.5 2.5L6.5 14 3 15Z"/><path d="m11 4.5 2.5 2.5"/>',
+  layout: '<rect x="2.5" y="3" width="13" height="12" rx="1.5"/><path d="M2.5 7.5h13M7.5 7.5V15"/>',
+  arrow:  '<path d="M4.5 4.5 11.5 11.5M11.5 6v5.5H6"/>',
+  more:   '<circle cx="4" cy="9" r="1.1"/><circle cx="9" cy="9" r="1.1"/><circle cx="14" cy="9" r="1.1"/>'
+};
+function icon(name, size = 16) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
+}
+
+const DATA = {
+  daily: {
+    label: '日常办公', icon: 'cup',
+    skills: [
+      { id: 'docs', label: '文档处理', icon: 'doc', prompts: [
+        { label: '财报分析全流程', text: '帮我分析【上传的财报文件】，输出一份包含营收结构、盈利能力、现金流与风险提示的完整分析报告，最后给出投资要点摘要。' },
+        { label: 'MD转PDF文档', text: '帮我把【上传的 Markdown 文件】转换成排版精美的 PDF 文档，要求：自定义封面页（标题 + 作者 + 日期）、自动生成目录、代码块带语法高亮、表格有交替行底色、页脚显示页码。' },
+        { label: '竞品对比分析', text: '帮我把【竞品调研资料】整理成一份竞品对比分析文档，按功能、定价、目标用户、优劣势四个维度输出对比表格与结论。' },
+        { label: '项目周报转Word', text: '把【本周的工作记录】整理成一份正式的项目周报 Word 文档，包含本周进展、风险与阻塞、下周计划三个部分。' },
+      ]},
+      { id: 'finance', label: '金融服务', icon: 'wallet', prompts: [
+        { label: '发票批量整理', text: '帮我把【发票截图或 PDF】批量识别并整理成 Excel 台账，包含开票日期、金额、税率、销售方，最后输出汇总合计。' },
+        { label: '预算执行监控', text: '基于【预算表和实际支出明细】，生成一份预算执行监控报告，标出超支科目并给出预警建议。' },
+        { label: '报销单自动核对', text: '核对【报销单与发票附件】的金额、日期、事由是否一致，列出有问题的条目和原因。' },
+      ]},
+      { id: 'dataviz', label: '数据分析及可视化', icon: 'pie', prompts: [
+        { label: '销售数据看板', text: '基于【销售数据表】生成一个交互式数据看板，包含月度趋势、区域分布、Top 10 客户排名三个图表。' },
+        { label: '用户增长分析', text: '分析【用户注册与活跃数据】，输出增长趋势、留存率曲线和流失预警名单。' },
+        { label: 'Excel 数据清洗', text: '帮我清洗【上传的 Excel】：去重、补全缺失值、统一日期与金额格式，输出干净的新表并说明改动。' },
+      ]},
+      { id: 'research', label: '深度研究', icon: 'search', prompts: [
+        { label: '行业趋势报告', text: '围绕【目标行业】做一次多来源深度调研，输出一份带引用的行业趋势报告，覆盖市场规模、关键玩家和未来两年判断。' },
+        { label: '技术选型调研', text: '针对【要解决的技术问题】调研主流方案，从成熟度、社区、成本、迁移难度四个维度对比并给出推荐。' },
+      ]},
+      { id: 'video', label: '视频生成', icon: 'video', prompts: [
+        { label: '产品宣传短片', text: '根据【产品介绍资料】生成一支 30 秒左右的产品宣传短片，节奏明快，结尾带行动号召。' },
+        { label: '功能演示视频', text: '把【功能说明文档】做成一支带字幕和转场的功能演示视频，每个功能点一个镜头。' },
+      ]},
+      { id: 'slides', label: '幻灯片', icon: 'slides', prompts: [
+        { label: 'AI 发展历程 PPT', text: '请生成一个 AI 人工智能发展历程的 PPT，从图灵测试讲到大语言模型，每页一个里程碑，配时间轴。' },
+        { label: '季度汇报模板', text: '帮我生成一套季度业务汇报 PPT，包含业绩回顾、关键项目、问题与风险、下季度规划四个章节。' },
+      ]},
+    ],
+  },
+  code: {
+    label: '代码开发', icon: 'code',
+    skills: [
+      { id: 'review', label: '代码审查', icon: 'search', prompts: [
+        { label: '当前分支全量 Review', text: '审查当前分支相对 main 的全部改动，按严重程度列出正确性问题和可简化点，并给出修复建议。' },
+        { label: 'PR 风险评估', text: '评估【这个 PR】的合入风险：影响面、缺失的测试、潜在的回归点，各给一条结论。' },
+      ]},
+      { id: 'bugfix', label: 'Bug 排查', icon: 'bug', prompts: [
+        { label: '从报错日志定位', text: '这是【报错日志/堆栈】，帮我定位根因，找到对应源码位置并给出修复方案。' },
+        { label: '偶现问题复现', text: '这个问题偶现难复现：【现象描述】。帮我设计最小复现路径和埋点方案，逐步收窄根因。' },
+      ]},
+      { id: 'scaffold', label: '项目脚手架', icon: 'box', prompts: [
+        { label: '新建全栈项目', text: '帮我初始化一个【技术栈】的全栈项目：目录结构、lint、CI 和一个可运行的示例页面。' },
+        { label: '接入 CI 流水线', text: '为当前仓库配置 GitHub Actions：typecheck、构建、产物上传三个阶段，main 分支保护。' },
+      ]},
+      { id: 'refactor', label: '重构优化', icon: 'wrench', prompts: [
+        { label: '大文件拆分', text: '这个文件超过 1500 行了，帮我按职责拆成目录 + index 重导出，保持对外 import 路径不变。' },
+        { label: '性能热点分析', text: '分析【这段代码/页面】的性能热点，量化每个问题的开销，按收益排序给出优化方案。' },
+      ]},
+    ],
+  },
+  design: {
+    label: '设计创意', icon: 'palette',
+    skills: [
+      { id: 'deck', label: '幻灯片美化', icon: 'slides', prompts: [
+        { label: '老 PPT 焕新', text: '把【这份旧 PPT】按现代风格重新排版：统一字体层级、配色和图表样式，内容不变。' },
+        { label: '演讲稿配图建议', text: '通读【演讲稿】，为每一节推荐视觉呈现方式（图表 / 示意图 / 大字金句），输出分页脚本。' },
+      ]},
+      { id: 'poster', label: '海报设计', icon: 'image', prompts: [
+        { label: '活动海报', text: '为【活动主题】设计一张竖版活动海报：主视觉 + 时间地点 + 二维码占位，输出可打印尺寸。' },
+        { label: '社交媒体配图', text: '围绕【文案主题】出 3 张社交媒体配图方案，统一风格但构图各不相同。' },
+      ]},
+      { id: 'proto', label: 'UI 原型', icon: 'layout', prompts: [
+        { label: '截图转交互原型', text: '把【界面截图】还原成可点击的 HTML 交互原型，关键流程可以走通，附设计 token 清单。' },
+        { label: '新功能页面设计', text: '为【功能描述】设计一个页面：先给 3 个布局方向的低保真，选定后再出高保真原型。' },
+      ]},
+      { id: 'brand', label: '品牌视觉', icon: 'pen', prompts: [
+        { label: '品牌色系推导', text: '基于【品牌主色】推导一整套 UI 色板：语义色、中性灰阶、暗色映射，输出 CSS 变量。' },
+      ]},
+    ],
+  },
+};
+
+/* ============ 状态 ============ */
+let currentCat = 'daily';
+let activeSkill = null;   // { catId, skill } — composer 里插入的技能
+
+const $ = (id) => document.getElementById(id);
+const catTabs = $('catTabs'), chipRow = $('chipRow'), editor = $('editor'),
+      placeholder = $('placeholder'), sendBtn = $('sendBtn'), toast = $('toast');
+
+/* ============ 渲染：分类 tab ============ */
+function renderTabs() {
+  catTabs.innerHTML = Object.entries(DATA).map(([id, cat]) =>
+    `<button class="cat-tab ${id === currentCat ? 'is-active' : ''}" data-cat="${id}">${icon(cat.icon, 17)}${cat.label}</button>`
+  ).join('');
+}
+catTabs.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-cat]');
+  if (!btn || btn.dataset.cat === currentCat) return;
+  currentCat = btn.dataset.cat;
+  renderTabs();
+  renderChips();
+});
+
+/* ============ 渲染：chip 行（技能态 / 推荐 prompt 态） ============ */
+function renderChips() {
+  let html;
+  if (activeSkill) {
+    html = activeSkill.skill.prompts.map((p, i) =>
+      `<button class="chip chip--prompt stagger" style="--i:${i}" data-prompt="${i}">${p.label}${icon('arrow', 13)}</button>`
+    ).join('');
+  } else {
+    const skills = DATA[currentCat].skills.map((s, i) =>
+      `<button class="chip chip--skill stagger" style="--i:${i}" data-skill="${s.id}">${icon(s.icon, 15)}${s.label}</button>`
+    ).join('');
+    html = skills + `<button class="chip chip--skill stagger" style="--i:${DATA[currentCat].skills.length}" data-stub="更多技能">更多</button>`;
+  }
+  chipRow.innerHTML = html;
+  chipRow.classList.remove('is-swapping');
+  void chipRow.offsetWidth;           // 重启入场动画
+  chipRow.classList.add('is-swapping');
+}
+chipRow.addEventListener('click', (e) => {
+  const skillBtn = e.target.closest('[data-skill]');
+  if (skillBtn) {
+    const skill = DATA[currentCat].skills.find(s => s.id === skillBtn.dataset.skill);
+    insertSkillTag(skill);
+    return;
+  }
+  const promptBtn = e.target.closest('[data-prompt]');
+  if (promptBtn) fillPrompt(activeSkill.skill.prompts[+promptBtn.dataset.prompt].text);
+});
+
+/* ============ Composer：技能标签的插入 / 删除 ============ */
+function insertSkillTag(skill) {
+  removeSkillTag(false);
+  activeSkill = { catId: currentCat, skill };
+  const tag = document.createElement('span');
+  tag.className = 'skill-tag';
+  tag.contentEditable = 'false';
+  tag.dataset.tag = skill.id;
+  tag.innerHTML = `${icon(skill.icon, 13)}${skill.label}<button class="tag-x" aria-label="移除技能"><svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m2.5 2.5 7 7M9.5 2.5l-7 7"/></svg></button>`;
+  editor.prepend(tag);
+  tag.querySelector('.tag-x').addEventListener('click', () => removeSkillTag(true));
+  placeCaretAtEnd();
+  syncState();
+  renderChips();
+}
+function removeSkillTag(rerender) {
+  editor.querySelector('.skill-tag')?.remove();
+  activeSkill = null;
+  if (rerender) { syncState(); renderChips(); editor.focus(); }
+}
+function fillPrompt(text) {
+  // 清掉 chip 之外的旧文本，再填入推荐 prompt
+  [...editor.childNodes].forEach(n => { if (!(n.nodeType === 1 && n.classList?.contains('skill-tag'))) n.remove(); });
+  editor.appendChild(document.createTextNode(text));
+  placeCaretAtEnd();
+  syncState();
+}
+function placeCaretAtEnd() {
+  editor.focus();
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  const sel = getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+/* ============ 状态同步：placeholder / 发送键 / chip 被键盘删除 ============ */
+function syncState() {
+  const hasTag = !!editor.querySelector('.skill-tag');
+  const hasText = editor.textContent.trim().length > 0;
+  placeholder.classList.toggle('is-hidden', hasTag || hasText);
+  sendBtn.classList.toggle('is-ready', hasTag || hasText);
+  // 用户用 Backspace 整体删掉了 chip → 回到技能列表
+  if (activeSkill && !hasTag) { activeSkill = null; renderChips(); }
+}
+editor.addEventListener('input', syncState);
+editor.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+
+/* ============ 发送（原型演示：清空 + toast） ============ */
+function send() {
+  if (!sendBtn.classList.contains('is-ready')) return;
+  editor.innerHTML = '';
+  activeSkill = null;
+  syncState();
+  renderChips();
+  showToast('已发送（原型演示，不触发真实请求）');
+}
+sendBtn.addEventListener('click', send);
+
+/* ============ 占位交互统一走 toast ============ */
+let toastTimer;
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('is-show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('is-show'), 1800);
+}
+document.addEventListener('click', (e) => {
+  const stub = e.target.closest('[data-stub]');
+  if (stub) showToast(`${stub.dataset.stub} — 原型占位，落地时接真实菜单`);
+});
+
+/* ============ 活动通知卡 ============ */
+$('noticeClose').addEventListener('click', () => $('noticeCard').classList.add('is-hidden'));
+
+/* ============ Tweaks ============ */
+$('tweaksFab').addEventListener('click', () => $('tweaksPanel').classList.toggle('is-open'));
+$('segActive').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-v]');
+  if (!btn) return;
+  document.documentElement.dataset.active = btn.dataset.v === 'brand' ? 'brand' : '';
+  if (btn.dataset.v !== 'brand') document.documentElement.removeAttribute('data-active');
+  $('segActive').querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+});
+$('ckDark').addEventListener('change', (e) => {
+  if (e.target.checked) document.documentElement.dataset.theme = 'dark';
+  else document.documentElement.removeAttribute('data-theme');
+});
+$('ckNotice').addEventListener('change', (e) => $('noticeCard').classList.toggle('is-hidden', !e.target.checked));
+
+/* ============ 初始化 ============ */
+renderTabs();
+renderChips();
+syncState();
+
+/* ?demo=skill|filled|dark — 直接进入指定演示状态，方便截图/分享链接 */
+const demo = new URLSearchParams(location.search).get('demo');
+if (demo === 'skill' || demo === 'filled') {
+  insertSkillTag(DATA.daily.skills[0]);                       // 文档处理
+  if (demo === 'filled') fillPrompt(DATA.daily.skills[0].prompts[1].text); // MD转PDF
+  editor.blur();
+}
+if (demo === 'dark') {
+  document.documentElement.dataset.theme = 'dark';
+  $('ckDark').checked = true;
+}
+</script>
+</body>
+</html>

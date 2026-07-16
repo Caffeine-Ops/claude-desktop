@@ -1,5 +1,5 @@
-import { type FileIconKey } from '../components/chat/FileTypeIcon'
 import { PROPOSAL_WRITER_SLASH_NAMES } from '../lib/proposalSlash'
+import { SCENARIO_SLASH_SPECS } from '../lib/scenarioSlash'
 
 /**
  * Per-skill chip appearance registry.
@@ -7,9 +7,9 @@ import { PROPOSAL_WRITER_SLASH_NAMES } from '../lib/proposalSlash'
  * Every slash chip renders as the same bordered pill (see
  * `chipNodeView.ts`) — icon + label, hover reveals a × to delete. A
  * handful of *known* skills get a bespoke icon + friendly label instead
- * of the generic glyph + raw command name (e.g. `/ppt-master` → orange
- * PowerPoint icon + 「制作PPT」) — so the composer reads as a product
- * surface rather than a raw CLI prompt.
+ * of the generic glyph + raw command name (e.g. `/ppt-master` → PPT
+ * icon + 「制作PPT」) — so the composer reads as a product surface
+ * rather than a raw CLI prompt.
  *
  * This is the single place to register that. Adding a new skill means
  * appending ONE entry below; nothing in the NodeView changes. Keep the
@@ -20,11 +20,13 @@ import { PROPOSAL_WRITER_SLASH_NAMES } from '../lib/proposalSlash'
  *     value is the verbatim text we serialize back to fusion-code, so
  *     matching on it keeps the wire format untouched — this is *only* a
  *     visual override.
- *   - `icon`: a key into the shared Icons8 colour table
- *     (`fileIconPathsByKey`). Self-coloured multi-fill glyph, drawn the
- *     same way file-mention chips draw their type icon, so a skill that
- *     produces a `.pptx` can reuse the PowerPoint icon for instant
- *     recognition.
+ *   - `image`: public URL of the skill's colour icon (PNG with
+ *     transparent background). 2026-07-16 起从 Icons8 Office 风格 SVG
+ *     path 表换成定制雪碧图切片（public/skill-icons/，源图 4×2 网格，
+ *     切图脚本见 docs/ui-prototype-update-toast.html 同期会话记录）。
+ *     新增技能先切好透明底 PNG 放进 public/skill-icons/ 再注册；备用
+ *     切片 code.png / web.png / petal.png 已就位。所有消费方（React 的
+ *     SkillChipIcon 组件 + chipNodeView 的 imperative img）按此渲染。
  *   - `label`: the pill text. Defaults to the value minus its leading
  *     `/` (the raw skill name) when omitted.
  */
@@ -32,8 +34,8 @@ import { PROPOSAL_WRITER_SLASH_NAMES } from '../lib/proposalSlash'
 export interface SkillChipSpec {
   /** Literal chip value to match, e.g. `/ppt-master`. */
   match: string
-  /** Key into the shared Icons8 colour icon table. */
-  icon: FileIconKey
+  /** Public URL of the colour icon, e.g. `/skill-icons/ppt.png`. */
+  image: string
   /** Pill text. Defaults to the value without its leading `/`. */
   label?: string
   /**
@@ -55,13 +57,13 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
   // user-installed copies surface it without the namespace).
   {
     match: '/claude-desktop:ppt-master',
-    icon: 'ppt',
+    image: '/skill-icons/ppt.png',
     label: '制作PPT',
     description: '生成、编辑幻灯片演示文稿'
   },
   {
     match: '/ppt-master',
-    icon: 'ppt',
+    image: '/skill-icons/ppt.png',
     label: '制作PPT',
     description: '生成、编辑幻灯片演示文稿'
   },
@@ -72,41 +74,39 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
   // 彩色按钮背后的那个 skill。
   {
     match: '/claude-desktop:imagegen',
-    icon: 'image',
+    image: '/skill-icons/image.png',
     label: '生成图片',
     description: 'AI 图片生成与编辑'
   },
   {
     match: '/imagegen',
-    icon: 'image',
+    image: '/skill-icons/image.png',
     label: '生成图片',
     description: 'AI 图片生成与编辑'
   },
   // spreadsheets — 处理表格。namespaced + 裸名双注册，理由同 ppt-master。
   {
     match: '/claude-desktop:spreadsheets',
-    icon: 'excel',
+    image: '/skill-icons/sheet.png',
     label: '处理表格',
     description: '生成、编辑 Excel 表格'
   },
   {
     match: '/spreadsheets',
-    icon: 'excel',
+    image: '/skill-icons/sheet.png',
     label: '处理表格',
     description: '生成、编辑 Excel 表格'
   },
   // remotion — 制作视频。namespaced + 裸名双注册，理由同 ppt-master。
-  // FileIconKey 尚无 video/film 图标，暂借 'image'（remotion 产出即渲染画面，
-  // 不违和）；要专属视频图标须先在 FileTypeIcon 加 key + 多色 path。
   {
     match: '/claude-desktop:remotion',
-    icon: 'image',
+    image: '/skill-icons/video.png',
     label: '制作视频',
     description: '用 React 生成动画短视频'
   },
   {
     match: '/remotion',
-    icon: 'image',
+    image: '/skill-icons/video.png',
     label: '制作视频',
     description: '用 React 生成动画短视频'
   },
@@ -119,9 +119,22 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
   ...PROPOSAL_WRITER_SLASH_NAMES.map(
     (name): SkillChipSpec => ({
       match: `/${name}`,
-      icon: 'word',
+      image: '/skill-icons/write.png',
       label: '写方案',
       description: '起草文档、方案与报告'
+    })
+  ),
+  // 代码开发场景伪命令（日常开发 / 网站开发 / Agent 应用）——ScenarioRail
+  // 的二级导航标签，不是真实 CLI skill：发送时 FusionRuntimeProvider.onNew
+  // 会把命令剥掉只发正文（stripScenarioSlash）。从 SCENARIO_SLASH_SPECS
+  // 派生（同 proposal 的单一名单纪律），这里注册只为让 chip 渲染出中文
+  // 标签 + 场景图标。
+  ...SCENARIO_SLASH_SPECS.map(
+    (s): SkillChipSpec => ({
+      match: `/${s.name}`,
+      image: s.image,
+      label: s.label,
+      description: s.description
     })
   )
 ]

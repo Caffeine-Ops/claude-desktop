@@ -1,7 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
 import { useComposerRuntime } from '@assistant-ui/react'
 import { motion } from 'motion/react'
-import { FolderOpen, Maximize2, Plus, X } from 'lucide-react'
+import {
+  TransformWrapper,
+  TransformComponent,
+  type ReactZoomPanPinchRef
+} from 'react-zoom-pan-pinch'
+import {
+  FolderOpen,
+  ImageIcon,
+  Minus,
+  PanelRight,
+  Plus,
+  Square,
+  Trash2,
+  X
+} from 'lucide-react'
 
 import { useI18n } from '../../../i18n'
 import { useChatStore } from '../../../stores/chat'
@@ -158,17 +172,31 @@ export function ImageEditPanel(): React.JSX.Element | null {
   const [fusion, setFusion] = useState<FusionImage[]>([])
   /** 拖拽框选的实时预览矩形。 */
   const [drag, setDrag] = useState<DragRect | null>(null)
-  /** 画布视图：zoom 缩放倍率（1=适配），x/y 平移像素。transform 承担缩放，
-   *  布局尺寸不变，故 getBoundingClientRect 换算百分比坐标天然正确。 */
-  const [view, setView] = useState({ zoom: 1, x: 0, y: 0 })
-  /** 空格按住（平移模式）。ref 供事件闭包同步读，state 驱动 cursor。 */
+  /** 当前缩放倍率。react-zoom-pan-pinch 掌管真正的 transform（transform 只做
+   *  视觉缩放、布局尺寸不变，故 getBoundingClientRect 换算百分比仍天然正确）；
+   *  这里镜像一份 scale 仅供顶栏百分比 chip 与框标记线宽 1/scale 补偿用，由
+   *  onTransform 回调同步。ref 供非渲染路径同步读，state 驱动 UI。 */
+  const [scale, setScale] = useState(1)
+  const scaleRef = useRef(1)
+  /** 空格按住：库靠 panning.activationKeys 自行判定平移，此标记只用于
+   *  ①图区 cursor 视觉 ②空格按下时点图不落标记（见 onImageMouseDown）。 */
   const [spaceDown, setSpaceDown] = useState(false)
-  const [panning, setPanning] = useState(false)
+  /** 正在平移拖拽中（接库的 onPanningStart/Stop）：cursor 由 grab → grabbing。 */
+  const [panningNow, setPanningNow] = useState(false)
+  /** 右侧标记列表栏显隐（默认藏，图区占满；顶栏按钮拉出总览）。 */
+  const [showMarkerList, setShowMarkerList] = useState(false)
+  /** 列表↔图上徽章 hover 联动高亮的 marker id（null=无）。 */
+  const [hoveredId, setHoveredId] = useState<number | null>(null)
+  /** 拖拽图片文件进面板中（显示「松手添加素材」遮罩）。dragenter/leave 会
+   *  在子元素间反复冒泡，用计数器抵消进出对，避免遮罩闪烁。 */
+  const [dragActive, setDragActive] = useState(false)
+  const dragDepth = useRef(0)
   const spaceRef = useRef(false)
   const nextId = useRef(1)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
-  const stageRef = useRef<HTMLDivElement | null>(null)
+  /** react-zoom-pan-pinch 控制句柄：顶栏「适应窗口」经它 resetTransform。 */
+  const transformRef = useRef<ReactZoomPanPinchRef | null>(null)
 
   // 换图（或首开）即整体重置：标记/草稿/素材/视图都属于上一张图。
   useEffect(() => {
@@ -179,7 +207,12 @@ export function ImageEditPanel(): React.JSX.Element | null {
     setDraft('')
     setExtra('')
     setFusion([])
-    setView({ zoom: 1, x: 0, y: 0 })
+    setScale(1)
+    scaleRef.current = 1
+    setHoveredId(null)
+    setDragActive(false)
+    dragDepth.current = 0
+    // showMarkerList 刻意不复位：栏的展开/收起是用户界面偏好，换图应保持。
     nextId.current = 1
     if (!path) return
     let cancelled = false
@@ -234,61 +267,14 @@ export function ImageEditPanel(): React.JSX.Element | null {
     }
   }, [])
 
-  // 滚轮 / 触控板 pinch 缩放，以光标为锚点。必须原生非 passive 挂载——
-  // React 的 onWheel 是 passive 的，preventDefault 拦不住容器滚动。
-  // pinch 手势浏览器报成 ctrlKey+wheel，deltaY 小而密，灵敏度单独调高。
-  useEffect(() => {
-    const el = stageRef.current
-    if (!el) return
-    const onWheel = (e: WheelEvent): void => {
-      e.preventDefault()
-      const rect = el.getBoundingClientRect()
-      // 光标相对视口中心（content 布局中心恒在视口中心，flex 居中且缩放
-      // 走 transform 不改布局）。
-      const sx = e.clientX - rect.left - rect.width / 2
-      const sy = e.clientY - rect.top - rect.height / 2
-      const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0022))
-      setView((v) => {
-        const nz = Math.min(8, Math.max(0.5, v.zoom * factor))
-        const k = nz / v.zoom
-        // 保持光标下的内容点不动：s = x + p·z 不变 ⇒ x' = s − (s − x)·k
-        return { zoom: nz, x: sx - (sx - v.x) * k, y: sy - (sy - v.y) * k }
-      })
-    }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-    // stageRef 的宿主节点随 path 非空稳定存在；path 变化时重挂保险。
-  }, [path])
+  // 缩放/平移由 react-zoom-pan-pinch 掌管（wheel 非 passive、以光标为锚点、
+  // 惯性、触控板 pinch 都由库内部处理）。空格平移经 panning.activationKeys=[' ']；
+  // 图片本体/标记经 panning.excluded 排除，左键在图上拖拽保持为「框选」语义。
+  // 顶栏「适应窗口」/百分比 chip 经 transformRef.resetTransform；scale 由
+  // TransformWrapper.onTransform 镜像到 state（chip 与标记反缩放共用）。
 
   if (path === null) return null
   const name = path.split('/').pop() ?? path
-
-  const resetView = (): void => setView({ zoom: 1, x: 0, y: 0 })
-  const viewMoved = view.zoom !== 1 || view.x !== 0 || view.y !== 0
-
-  /** 空格按住时在图区任意处拖拽平移画布。 */
-  const onStagePanStart = (e: React.MouseEvent): void => {
-    if (!spaceRef.current || e.button !== 0) return
-    e.preventDefault()
-    setPanning(true)
-    const startX = e.clientX
-    const startY = e.clientY
-    const base = view
-    const onMove = (ev: MouseEvent): void => {
-      setView({
-        zoom: base.zoom,
-        x: base.x + (ev.clientX - startX),
-        y: base.y + (ev.clientY - startY)
-      })
-    }
-    const onUp = (): void => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      setPanning(false)
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-  }
 
   /** 把当前草稿写回 active 标记；空草稿视为放弃 → 删掉该标记（点错了）。 */
   const commitDraft = (): void => {
@@ -417,6 +403,9 @@ export function ImageEditPanel(): React.JSX.Element | null {
   const addFusionFiles = (files: FileList | null): void => {
     if (!files) return
     for (const file of Array.from(files)) {
+      // 只收图片：<input> 有 accept 门控，但拖放（onDrop）没有——统一在此
+      // 按 MIME 过滤，非图片文件直接跳过。
+      if (!file.type.startsWith('image/')) continue
       const abs = window.chatApi.pathForFile(file)
       if (!abs) continue // 合成/blob File 拿不到盘上路径，融合需要真实文件
       const reader = new FileReader()
@@ -430,6 +419,40 @@ export function ImageEditPanel(): React.JSX.Element | null {
       }
       reader.readAsDataURL(file)
     }
+  }
+
+  // ── 拖放添加融合素材 ──
+  // 从 Finder 把图片拖进面板任意处即可添加（等价于点 + 选文件）。用
+  // dataTransfer.types 含 'Files' 判定「拖的是文件」——拖面板内元素（标记
+  // 等）不含 Files，不会误触发遮罩。dragenter/dragleave 会在子元素边界反复
+  // 冒泡，用 dragDepth 计数抵消进出对，避免遮罩在子元素间移动时闪烁。
+  const isFileDrag = (e: React.DragEvent): boolean =>
+    Array.from(e.dataTransfer.types).includes('Files')
+  const onDragEnter = (e: React.DragEvent): void => {
+    if (!isFileDrag(e)) return
+    e.preventDefault()
+    dragDepth.current += 1
+    setDragActive(true)
+  }
+  const onDragOver = (e: React.DragEvent): void => {
+    if (!isFileDrag(e)) return
+    e.preventDefault() // 必须——否则浏览器默认「打开文件」，drop 收不到
+    e.dataTransfer.dropEffect = 'copy'
+  }
+  const onDragLeave = (e: React.DragEvent): void => {
+    if (!isFileDrag(e)) return
+    dragDepth.current -= 1
+    if (dragDepth.current <= 0) {
+      dragDepth.current = 0
+      setDragActive(false)
+    }
+  }
+  const onDrop = (e: React.DragEvent): void => {
+    if (!isFileDrag(e)) return
+    e.preventDefault()
+    dragDepth.current = 0
+    setDragActive(false)
+    addFusionFiles(e.dataTransfer.files)
   }
 
   // 已成文的标记数（发送按钮可用性与「N 条评论」计数都看它）。
@@ -559,101 +582,237 @@ export function ImageEditPanel(): React.JSX.Element | null {
   }
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col bg-background">
-      {/* 顶栏：文件名 + 关闭。样式对齐表格预览面板的壳。窗口拖拽由根
-          layout 的 .window-drag-strip 统一负责（46px），本栏 h-12 与之
-          重叠，本栏不声明 drag；末尾按钮组要显式 no-drag 在 strip 上
-          挖洞（同 SpreadsheetPreviewPanel 顶栏纪律）——漏挖会被 macOS
-          当窗口拖拽区截走点击，reset-view/关闭钮点不动。 */}
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-        <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-foreground">
-          {name}
+    <div
+      // @container/imgedit：面板住在可拖分栏里，视口媒体查询探不到面板实际
+      // 宽度（窗口很宽但面板可以被拖窄）——顶栏元素的响应显隐必须按容器宽
+      // 而不是视口宽（同 LivePreviewEditor 的 @container/editor 先例；此前
+      // 提示组用 lg:flex 视口断点，分栏拖窄后被压成逐字竖排，2026-07-16）。
+      className="@container/imgedit relative flex min-w-0 flex-1 flex-col bg-card"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {/* 拖放添加素材遮罩：拖图片文件进面板时覆盖全面板，提示可松手。
+          pointer-events-none 让底下的 drag 事件继续冒泡到根 div 的 onDrop
+          （遮罩自己不能截走 drop）。 */}
+      {dragActive ? (
+        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-brand/[0.06] backdrop-blur-[1px]">
+          <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-brand/50 bg-popover/95 px-10 py-8 shadow-xl">
+            <span className="grid size-12 place-items-center rounded-xl bg-brand/[0.12] text-brand">
+              <ImageIcon className="size-6" />
+            </span>
+            <p className="text-[13.5px] font-medium text-foreground">
+              {zh ? '松手添加为融合素材' : 'Drop to add as fusion source'}
+            </p>
+          </div>
+        </div>
+      ) : null}
+      {/* 顶栏（重设计 2026-07-16）：文件名 chip + 分段操作提示 + 缩放 chip +
+          标记栏开关 + 图标钮组。窗口拖拽由根 layout 的 .window-drag-strip 统一
+          负责（46px），本栏 h-12 与之重叠、不声明 drag；交互元素要显式 no-drag
+          在 strip 上挖洞（同 SpreadsheetPreviewPanel 纪律）——漏挖会被 macOS 当
+          窗口拖拽区截走点击。整栏都是交互元素，故 no-drag 提到最外层。 */}
+      <div className="flex h-[46px] shrink-0 items-center gap-2 border-b border-border/55 px-3 [-webkit-app-region:no-drag]">
+        {/* 文件名 chip：截断 + title 显全名，图标暗示这是图片文件。 */}
+        <span
+          title={name}
+          className="flex min-w-0 max-w-[260px] shrink items-center gap-1.5 rounded-lg bg-secondary px-2.5 py-1 @max-2xl/imgedit:max-w-[150px]"
+        >
+          <ImageIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate text-[12.5px] font-medium text-foreground">
+            {name}
+          </span>
         </span>
-        <span className="shrink-0 text-[12px] text-muted-foreground">
-          {zh
-            ? '点选 / 拖拽框选 · 滚轮缩放 · 空格拖移'
-            : 'Click / drag to mark · scroll to zoom · space to pan'}
+
+        {/* 操作提示：分段小标签，滚轮/空格用键帽样式，替代原来一行长文字。 */}
+        {/* 面板容器 < 48rem 时整组隐藏（操作提示是辅助信息，窄面板首先牺牲）；
+            shrink-0 + nowrap 兜底：任何挤压下都不允许逐字竖排折行。 */}
+        <span className="flex shrink-0 items-center gap-0.5 whitespace-nowrap text-[11px] text-muted-foreground @max-3xl/imgedit:hidden">
+          <span className="rounded-md px-1.5 py-0.5">
+            {zh ? '点选 · 框选' : 'Click · Box'}
+          </span>
+          <span className="flex items-center gap-1 rounded-md px-1.5 py-0.5">
+            <kbd className="rounded border border-border bg-muted px-1 py-px text-[10px] font-medium text-foreground">
+              {zh ? '滚轮' : 'Wheel'}
+            </kbd>
+            {zh ? '缩放' : 'zoom'}
+          </span>
+          <span className="flex items-center gap-1 rounded-md px-1.5 py-0.5">
+            <kbd className="rounded border border-border bg-muted px-1 py-px text-[10px] font-medium text-foreground">
+              {zh ? '空格' : 'Space'}
+            </kbd>
+            {zh ? '拖移' : 'pan'}
+          </span>
         </span>
-        <span className="flex shrink-0 items-center gap-2 [-webkit-app-region:no-drag]">
-          {/* 视图偏离适配态时显示当前倍率，点击一键复位（与下面恒显的
-              「适应窗口」钮同一个 resetView，只是这个 chip 顺带报百分比）。 */}
-          {viewMoved ? (
-            <button
-              type="button"
-              onClick={resetView}
-              title={zh ? '重置视图' : 'Reset view'}
-              className="shrink-0 rounded-md border border-border px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground transition-colors hover:border-input hover:text-foreground"
-            >
-              {Math.round(view.zoom * 100)}%
-            </button>
-          ) : null}
-          {/* 适应窗口：恒显（2026-07-10 用户要求不依赖百分比 chip 间接
-              触发的明确入口）。zoom 已在 100% 时点击是无害 no-op。 */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0"
-            onClick={resetView}
-            aria-label={zh ? '适应窗口' : 'Fit to window'}
-            title={zh ? '适应窗口' : 'Fit to window'}
+
+        <span className="flex-1" />
+
+        {/* 缩放 chip：−/百分比/+ 一体。百分比点击复位（resetTransform），±按钮
+            走库的 zoomIn/zoomOut。scale 由 onTransform 同步。 */}
+        <span className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border bg-card p-0.5">
+          <button
+            type="button"
+            onClick={() => transformRef.current?.zoomOut()}
+            aria-label={zh ? '缩小' : 'Zoom out'}
+            // 面板极窄（<36rem）时 ± 钮让位，缩放 chip 只留百分比（点击可复位；
+            // 滚轮/pinch 缩放不受影响）。
+            className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground @max-xl/imgedit:hidden"
           >
-            <Maximize2 className="size-4" />
-          </Button>
-          {/* 在文件夹中显示：与 ImagesPanel 的 ImageLightbox 同款能力，
-              走同一个 SHELL_REVEAL_PATH IPC。 */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0"
-            onClick={() => void window.chatApi.revealPath({ absPath: path })}
-            aria-label={zh ? '在 Finder 中显示' : 'Reveal in Finder'}
-            title={zh ? '在 Finder 中显示' : 'Reveal in Finder'}
+            <Minus className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => transformRef.current?.resetTransform()}
+            title={zh ? '重置视图' : 'Reset view'}
+            className="min-w-[42px] rounded-md px-1 py-0.5 text-[11.5px] tabular-nums text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            <FolderOpen className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0"
-            onClick={closeEditor}
-            aria-label={zh ? '关闭' : 'Close'}
+            {Math.round(scale * 100)}%
+          </button>
+          <button
+            type="button"
+            onClick={() => transformRef.current?.zoomIn()}
+            aria-label={zh ? '放大' : 'Zoom in'}
+            className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground @max-xl/imgedit:hidden"
           >
-            <X className="size-4" />
-          </Button>
+            <Plus className="size-3.5" />
+          </button>
         </span>
+
+        {/* 「适应窗口」独立钮已去掉（2026-07-16 用户要求）——复位入口保留在
+            缩放 chip：点中间的百分比即 resetTransform，功能不丢。 */}
+
+        {/* 标记列表栏开关：拉出/收起右侧总览。有标记时 active 态高亮。 */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className={
+            'size-7 shrink-0 ' +
+            (showMarkerList ? 'bg-secondary text-foreground' : '')
+          }
+          onClick={() => setShowMarkerList((v) => !v)}
+          aria-label={zh ? '标记列表' : 'Marker list'}
+          title={zh ? '标记列表' : 'Marker list'}
+        >
+          <PanelRight className="size-4" />
+        </Button>
+
+        <span className="mx-0.5 h-5 w-px shrink-0 bg-border" />
+
+        {/* 在文件夹中显示：走 SHELL_REVEAL_PATH IPC（同 ImageLightbox）。 */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0"
+          onClick={() => void window.chatApi.revealPath({ absPath: path })}
+          aria-label={zh ? '在 Finder 中显示' : 'Reveal in Finder'}
+          title={zh ? '在 Finder 中显示' : 'Reveal in Finder'}
+        >
+          <FolderOpen className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0"
+          onClick={closeEditor}
+          aria-label={zh ? '关闭' : 'Close'}
+        >
+          <X className="size-4" />
+        </Button>
       </div>
 
-      {/* 图区：居中铺图，滚轮/pinch 缩放（wheel 原生挂 stageRef）、空格拖拽
-          平移。overflow-hidden——超界内容由 zoom/pan 掌管，不走滚动条。 */}
+      {/* 主体：图区 + 可收起的右侧标记栏并列。 */}
+      <div className="flex min-h-0 flex-1">
+      {/* 图区：react-zoom-pan-pinch 掌管缩放/平移（惯性 + 触控板 pinch + 以光
+          标为锚点，均库内实现）。key={path} 换图即重挂，视图回到初始适配态。
+          panning.activationKeys=[' ']：仅空格拖拽平移；panning.excluded 排除
+          img 与标记 → 图上左键拖拽保持「框选」语义（见 onImageMouseDown）。
+          smooth + wheel.step 平滑缩放，velocityAnimation 给平移加惯性。
+          底色继承面板根的 bg-card（纯白，对齐左侧 chat 内容区，2026-07-16
+          用户要求整面板与 chat 一个系统）——点阵纹理已去除，白底上无意义。 */}
       <div
-        ref={stageRef}
-        onMouseDown={onStagePanStart}
         className={
-          'relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-6 ' +
-          (spaceDown ? (panning ? 'cursor-grabbing' : 'cursor-grab') : '')
+          // p-6 留白放在这里（不放 TransformComponent 的 content 上——padding
+          // 会被算进 centerOnInit 的填充尺寸，把初始 scale 顶成 >1、图被放大
+          // 且溢出视口，点选落点全乱，2026-07-16 真机 CDP 实测过）。
+          'relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-6 ' +
+          (spaceDown ? (panningNow ? 'cursor-grabbing' : 'cursor-grab') : '')
         }
       >
         {loadErr ? (
-          <div className="text-[13px] text-muted-foreground">{loadErr}</div>
+          <div className="flex flex-1 items-center justify-center text-[13px] text-muted-foreground">
+            {loadErr}
+          </div>
         ) : dataUrl === null ? (
-          <div className="text-[13px] text-muted-foreground">
+          <div className="flex flex-1 items-center justify-center text-[13px] text-muted-foreground">
             {zh ? '加载中…' : 'Loading…'}
           </div>
         ) : (
-          <div
-            className="relative inline-block max-h-full max-w-full"
-            style={{
-              transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`
+          <TransformWrapper
+            key={path}
+            ref={transformRef}
+            minScale={0.5}
+            maxScale={8}
+            initialScale={1}
+            centerOnInit
+            smooth
+            // 触控板两指滑动一次手势会触发几十个 wheel 事件，同一 per-event
+            // step 会累积成过猛的跳变（库无独立触控板灵敏度旋钮，只能压低
+            // step）。0.05 让鼠标滚轮仍够用、又驯住触控板——与同项目
+            // LivePreviewEditor 的 0.04 同源经验（那里更保守未开 smooth）。
+            wheel={{ step: 0.05 }}
+            pinch={{ step: 6 }}
+            doubleClick={{ disabled: true }}
+            // 只用 activationKeys 门控平移：空格按住才平移，松开则库根本不
+            // 启动平移（isPressingKeys=false 时 onPanningStart 直接 return），
+            // 图上左键拖拽自然落到我们的框选。不要再把 img/marker 塞进
+            // excluded——那会让「空格+在图上拖拽」既不落标记（handler 里
+            // spaceRef 时 return）又不平移（excluded 拒绝库平移）＝死区
+            // （2026-07-16 真机 CDP 实测 panned:false）。activationKeys 一个
+            // 机制就同时管住两种场景。
+            panning={{ activationKeys: [' '] }}
+            velocityAnimation={{ disabled: false }}
+            onPanningStart={() => setPanningNow(true)}
+            onPanningStop={() => setPanningNow(false)}
+            onTransform={(_ref, s) => {
+              // 镜像 scale 给顶栏 chip 与标记反缩放。只在变化时 setState，避免
+              // 每帧重渲整棵标记树（惯性/缩放的连续帧里 scale 大量重复）。
+              scaleRef.current = s.scale
+              setScale((prev) => (prev === s.scale ? prev : s.scale))
             }}
           >
-            {/* 单击落点、拖拽框选（阈值二选一见 onImageMouseDown）。 */}
+            <TransformComponent
+              wrapperClass="!h-full !w-full"
+              contentClass="!h-full !w-full !flex !items-center !justify-center"
+            >
+            {/* 单击落点、拖拽框选（阈值二选一见 onImageMouseDown）。相对定位
+                容器承载标记的百分比绝对定位；随 content 一起被 transform 缩放。 */}
+            <div className="relative inline-block">
+            {/* pointerEvents 必须内联恢复：react-zoom-pan-pinch 的
+                `.transform-component-module_content__FBWxo img { pointer-events:
+                none }`（特异性 0,1,1）会关掉图片命中测试（库默认图片不接事件、
+                只当被平移的画布），但本面板正靠 img 的 mousedown 落标记。用
+                Tailwind 的 `pointer-events-auto`（0,1,0）压不过它——必须内联
+                style（内联恒胜，库那条非 !important），否则真实鼠标穿透、点选/
+                框选全失效（2026-07-16 真机 CDP 实测 imgPE=none、elementFromPoint
+                命中外层 div 而非 img；先试 class 覆盖仍 none，改内联才生效）。 */}
             <img
               ref={imgRef}
               src={dataUrl}
               alt={name}
               draggable={false}
               onMouseDown={onImageMouseDown}
-              className="block max-h-[calc(100vh-220px)] max-w-full cursor-crosshair select-none rounded-lg"
+              style={{ pointerEvents: 'auto' }}
+              className={
+                // 空格模式下 cursor 跟着平移态走（grab/grabbing），否则十字（落
+                // 标记）。图片自身的 cursor 会盖过外层图区容器的，故这里也要判。
+                'block max-h-[calc(100vh-220px)] max-w-full select-none rounded-xl shadow-[0_8px_32px_-8px_hsl(240_20%_15%/0.35),0_0_0_1px_hsl(var(--foreground)/0.06)] ' +
+                (spaceDown
+                  ? panningNow
+                    ? 'cursor-grabbing'
+                    : 'cursor-grab'
+                  : 'cursor-crosshair')
+              }
             />
             {/* 拖拽中的实时预览框（虚线），松手落定为正式框标记。 */}
             {drag ? (
@@ -664,7 +823,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
                   top: `${Math.min(drag.y0, drag.y1)}%`,
                   width: `${Math.abs(drag.x1 - drag.x0)}%`,
                   height: `${Math.abs(drag.y1 - drag.y0)}%`,
-                  borderWidth: `${2 / view.zoom}px`
+                  borderWidth: `${2 / scale}px`
                 }}
               />
             ) : null}
@@ -676,8 +835,9 @@ export function ImageEditPanel(): React.JSX.Element | null {
               // ── 框选标记 ──
               if (m.w !== undefined && m.h !== undefined) {
                 return (
-                  // 容器即矩形区域。pointer-events 全关（别挡住底下图片的
-                  // 再次点选/框选），只有编号徽章与浮条恢复可点。
+                  // 容器即矩形区域。pointer-events 全关（别挡住底下图片的再次
+                  // 点选/框选），只有编号徽章与浮条恢复可点。平移门控靠库的
+                  // activationKeys（空格）——标记上没按空格拖拽不会平移。
                   <div
                     key={m.id}
                     className="absolute"
@@ -689,30 +849,40 @@ export function ImageEditPanel(): React.JSX.Element | null {
                     }}
                   >
                     {/* 矩形本体：白描边 + 内外黑晕，任何底色上都可见。描边宽
-                        随 1/zoom 补偿——矩形跟画布缩放（区域语义），线宽不跟。 */}
+                        随 1/scale 补偿——矩形跟画布缩放（区域语义），线宽不跟。 */}
                     <div
                       className="pointer-events-none absolute inset-0 rounded-[3px] border-solid border-white shadow-[0_0_0_1.5px_rgba(17,17,17,0.6),inset_0_0_0_1px_rgba(17,17,17,0.35)]"
-                      style={{ borderWidth: `${2 / view.zoom}px` }}
+                      style={{ borderWidth: `${2 / scale}px` }}
                     />
                     {/* 编号徽章骑在框左上角。translate 在 wrapper 上，motion
                         只管缩放（transform 分层，理由同点标记）。 */}
                     <span
                       className="group/marker absolute left-0 top-0"
                       style={{
-                        transform: `translate(-50%, -50%) scale(${1 / view.zoom})`
+                        transform: `translate(-50%, -50%) scale(${1 / scale})`
                       }}
                     >
                       <motion.button
                         type="button"
                         initial={{ scale: 0.4, opacity: 0 }}
-                        animate={{ scale: active ? 1.12 : 1, opacity: 1 }}
+                        animate={{
+                          scale: active || m.id === hoveredId ? 1.12 : 1,
+                          opacity: 1
+                        }}
                         whileHover={{ scale: 1.12 }}
                         transition={{ type: 'spring', stiffness: 520, damping: 26 }}
+                        onMouseEnter={() => setHoveredId(m.id)}
+                        onMouseLeave={() => setHoveredId(null)}
                         onClick={(e) => {
                           e.stopPropagation()
                           openMarker(m)
                         }}
-                        className="grid size-[26px] place-items-center rounded-full border-2 border-white bg-black text-[11.5px] font-bold tabular-nums text-white shadow-[0_1px_4px_rgba(0,0,0,0.4)]"
+                        className={
+                          'grid size-[26px] place-items-center rounded-full border-2 border-white bg-black text-[11.5px] font-bold tabular-nums text-white transition-shadow ' +
+                          (active || m.id === hoveredId
+                            ? 'shadow-[0_0_0_4px_hsl(var(--brand)/0.25),0_1px_4px_rgba(0,0,0,0.4)]'
+                            : 'shadow-[0_1px_4px_rgba(0,0,0,0.4)]')
+                        }
                       >
                         {markers.indexOf(m) + 1}
                       </motion.button>
@@ -729,7 +899,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
                           (flipLeft ? 'right-[calc(100%+12px)]' : 'left-[22px]')
                         }
                         style={{
-                          transform: `translateY(-50%) scale(${1 / view.zoom})`,
+                          transform: `translateY(-50%) scale(${1 / scale})`,
                           transformOrigin: flipLeft ? 'right center' : 'left center'
                         }}
                         onClick={(e) => e.stopPropagation()}
@@ -738,7 +908,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
                           initial={{ opacity: 0, scale: 0.96 }}
                           animate={{ opacity: 1, scale: 1 }}
                           transition={{ duration: 0.16, ease: 'easeOut' }}
-                          className="flex w-72 items-center gap-1 rounded-full bg-white py-1.5 pl-4 pr-2 shadow-[0_4px_20px_rgba(0,0,0,0.25)]"
+                          className="flex w-72 items-center gap-1 rounded-xl border border-border bg-popover py-1.5 pl-3.5 pr-1.5 shadow-[0_8px_28px_-6px_hsl(240_20%_15%/0.3),0_2px_6px_hsl(240_10%_10%/0.12)]"
                         >
                           <input
                             autoFocus
@@ -749,15 +919,15 @@ export function ImageEditPanel(): React.JSX.Element | null {
                               if (e.key === 'Escape') removeMarker(m.id)
                             }}
                             placeholder={zh ? '描述改动' : 'Describe the change'}
-                            className="min-w-0 flex-1 bg-transparent text-[13px] text-neutral-900 outline-none placeholder:text-neutral-400"
+                            className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
                           />
                           <button
                             type="button"
                             onClick={commitDraft}
                             aria-label={zh ? '确认' : 'Confirm'}
-                            className="grid size-6 shrink-0 place-items-center rounded-full bg-brand text-white transition-[filter] hover:brightness-110"
+                            className="grid size-[26px] shrink-0 place-items-center rounded-lg bg-brand text-white transition-[filter] hover:brightness-110"
                           >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                               <path d="M12 19V5M5 12l7-7 7 7" />
                             </svg>
                           </button>
@@ -765,7 +935,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
                             type="button"
                             onClick={() => removeMarker(m.id)}
                             aria-label={zh ? '删除标记' : 'Remove marker'}
-                            className="grid size-6 shrink-0 place-items-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-200"
+                            className="grid size-[26px] shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                           >
                             <X className="size-3.5" />
                           </button>
@@ -777,7 +947,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
               }
               // ── 点标记 ──
               return (
-                // 锚点承载 -50% 平移（圆心对准坐标点）+ 1/zoom 反缩放（画布
+                // 锚点承载 -50% 平移（圆心对准坐标点）+ 1/scale 反缩放（画布
                 // 放大时圈与浮条保持屏幕尺寸）；弹跳动画交给 motion 管内层
                 // transform——分层放两个元素，否则互相覆盖（原型稿验证过）。
                 <div
@@ -786,21 +956,32 @@ export function ImageEditPanel(): React.JSX.Element | null {
                   style={{
                     left: `${m.x}%`,
                     top: `${m.y}%`,
-                    transform: `translate(-50%, -50%) scale(${1 / view.zoom})`
+                    transform: `translate(-50%, -50%) scale(${1 / scale})`
                   }}
                 >
-                  {/* 编号圈：黑底白字（参考图样式），落点弹跳入场。点击重开编辑。 */}
+                  {/* 编号圈：黑底白字（参考图样式），落点弹跳入场。点击重开编辑。
+                      active/hover（含列表联动 hoveredId）加品牌绿光环。 */}
                   <motion.button
                     type="button"
                     initial={{ scale: 0.4, opacity: 0 }}
-                    animate={{ scale: active ? 1.12 : 1, opacity: 1 }}
+                    animate={{
+                      scale: active || m.id === hoveredId ? 1.12 : 1,
+                      opacity: 1
+                    }}
                     whileHover={{ scale: 1.12 }}
                     transition={{ type: 'spring', stiffness: 520, damping: 26 }}
+                    onMouseEnter={() => setHoveredId(m.id)}
+                    onMouseLeave={() => setHoveredId(null)}
                     onClick={(e) => {
                       e.stopPropagation()
                       openMarker(m)
                     }}
-                    className="grid size-[26px] place-items-center rounded-full border-2 border-white bg-black text-[11.5px] font-bold tabular-nums text-white shadow-[0_1px_4px_rgba(0,0,0,0.4)]"
+                    className={
+                      'grid size-[26px] place-items-center rounded-full border-2 border-white bg-black text-[11.5px] font-bold tabular-nums text-white transition-shadow ' +
+                      (active || m.id === hoveredId
+                        ? 'shadow-[0_0_0_4px_hsl(var(--brand)/0.25),0_1px_4px_rgba(0,0,0,0.4)]'
+                        : 'shadow-[0_1px_4px_rgba(0,0,0,0.4)]')
+                    }
                   >
                     {markers.indexOf(m) + 1}
                   </motion.button>
@@ -861,12 +1042,108 @@ export function ImageEditPanel(): React.JSX.Element | null {
                 </div>
               )
             })}
-          </div>
+            </div>
+            </TransformComponent>
+          </TransformWrapper>
         )}
       </div>
 
+      {/* ── 右侧标记列表栏（重设计 2026-07-16 新增，默认收起）──
+          图上每个 marker 一行：编号 + 描述 + 位置元信息（点/框、坐标）。
+          点行→openMarker（跳到编辑）；hover 行↔图上徽章双向高亮（hoveredId）。 */}
+      {showMarkerList ? (
+        // 底色 bg-card（纯白）与图区连成一片白、只靠 border-l 分隔——整面板对齐
+        // 左侧 chat 内容区的白底，成为一个系统（2026-07-16 用户要求，前两版的
+        // 灰底/白卡与 chat 冷灰不同源，显得脱节）。
+        <aside className="flex w-[280px] shrink-0 flex-col border-l border-border/55 bg-card">
+          <div className="flex h-[46px] shrink-0 items-center justify-between border-b border-border/55 px-3.5">
+            <span className="text-[12.5px] font-semibold text-foreground">
+              {zh ? '标记' : 'Markers'}
+            </span>
+            <span className="rounded-full bg-secondary px-2 py-0.5 text-[11px] tabular-nums text-muted-foreground">
+              {zh ? `${markers.length} 条` : markers.length}
+            </span>
+          </div>
+          {markers.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-6 text-center text-muted-foreground">
+              <span className="grid size-11 place-items-center rounded-xl border border-dashed border-border">
+                <Square className="size-5 opacity-60" />
+              </span>
+              <p className="text-[12px] leading-relaxed">
+                {zh
+                  ? '在图片上点选或框选，添加标记'
+                  : 'Click or drag on the image to add markers'}
+              </p>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto p-2">
+              {markers.map((m, i) => {
+                const rowActive = m.id === activeId
+                return (
+                  <div
+                    key={m.id}
+                    onClick={() => openMarker(m)}
+                    onMouseEnter={() => setHoveredId(m.id)}
+                    onMouseLeave={() => setHoveredId(null)}
+                    className={
+                      // 白栏上用轻量行：透明底 + hover 浅灰 + active 品牌绿描边淡绿底
+                      //（和 chat 列表行交互一致，白底上不再叠白卡阴影）。
+                      'group/row relative flex cursor-pointer gap-2.5 rounded-lg p-2.5 transition-colors ' +
+                      (rowActive
+                        ? 'bg-brand/[0.06] shadow-[inset_0_0_0_1px_hsl(var(--brand)/0.35)]'
+                        : 'hover:bg-secondary')
+                    }
+                  >
+                    <span className="grid size-[22px] shrink-0 place-items-center rounded-full bg-[hsl(240_4%_12%)] text-[11px] font-bold tabular-nums text-white">
+                      {i + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div
+                        className={
+                          'line-clamp-2 text-[12.5px] leading-snug ' +
+                          (m.note
+                            ? 'text-foreground'
+                            : 'italic text-muted-foreground')
+                        }
+                      >
+                        {m.note || (zh ? '未填写描述…' : 'No description…')}
+                      </div>
+                      <div className="mt-1 flex items-center gap-1 text-[10.5px] tabular-nums text-muted-foreground">
+                        {m.w !== undefined && m.h !== undefined ? (
+                          <>
+                            <Square className="size-2.5" />
+                            {zh ? '框' : 'Box'} · {m.w}×{m.h}%
+                          </>
+                        ) : (
+                          <>
+                            <span className="size-1.5 rounded-full bg-current" />
+                            {zh ? '点' : 'Point'} · {m.x}, {m.y}%
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeMarker(m.id)
+                      }}
+                      aria-label={zh ? '删除标记' : 'Remove marker'}
+                      className="absolute right-2 top-2 grid size-[22px] place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/[0.12] hover:text-destructive group-hover/row:opacity-100"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </aside>
+      ) : null}
+      </div>
+
       {/* 底栏：融合素材 chips + 计数 + 额外编辑输入 + 发送。 */}
-      <div className="shrink-0 border-t border-border px-4 py-3">
+      <div className="shrink-0 border-t border-border/55 px-4 py-3">
         {fusion.length > 0 ? (
           <div className="mb-2 flex flex-wrap items-center gap-2">
             {fusion.map((f) => (
@@ -937,9 +1214,13 @@ export function ImageEditPanel(): React.JSX.Element | null {
           </span>
           <Button
             className={
-              'h-9 shrink-0 rounded-full bg-brand px-5 text-white transition-[filter,transform] hover:bg-brand hover:brightness-110' +
+              'h-9 shrink-0 rounded-full px-5 transition-[filter,transform,background-color,color] ' +
+              // 禁用态变灰（原来禁用仍实心绿，状态不清；2026-07-16 重设计）；
+              // 可用态品牌绿。用 disabled:!... 覆盖 shadcn Button 的默认禁用样式。
+              'bg-brand text-white hover:bg-brand hover:brightness-110 ' +
+              'disabled:!bg-muted disabled:!text-muted-foreground disabled:!opacity-100 ' +
               // 回放表演的「按下发送」视觉（demoPressed 由 demo handle 置位）。
-              (demoPressed ? ' scale-95 brightness-90' : '')
+              (demoPressed ? 'scale-95 brightness-90' : '')
             }
             disabled={!canSend}
             onClick={() => void send()}

@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>空态三级导航样式方案</title>
+<style>
+/* ================= 设计 token（tokens.css 子集，与前两份原型同源） ================= */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --popover: 0 0% 100%;
+  --border: 240 6% 84%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --brand: 142 76% 36%;
+  --primary: 211 100% 45%;
+
+  --chip-bg: hsl(var(--foreground) / 0.05);
+  --chip-bg-hover: hsl(var(--foreground) / 0.09);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --ring-hairline: rgba(0, 0, 0, 0.08);
+  --skill-ring: rgba(0, 0, 0, 0.07);
+}
+.dark {
+  color-scheme: dark;
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --popover: 36 6% 15%;
+  --border: 49 12% 18%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --brand: 145 60% 52%;
+  --primary: 210 100% 58%;
+
+  --chip-bg: hsl(0 0% 100% / 0.08);
+  --chip-bg-hover: hsl(0 0% 100% / 0.13);
+
+  --ring-hairline: rgba(255, 255, 255, 0.08);
+  --skill-ring: rgba(255, 255, 255, 0.09);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { -webkit-font-smoothing: antialiased; }
+body {
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  transition: background 0.25s ease, color 0.25s ease;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+img { user-select: none; }
+
+.page { max-width: 920px; margin: 0 auto; padding: 56px 32px 120px; }
+.page-header h1 { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
+.page-header p {
+  margin-top: 8px; font-size: 13px; line-height: 1.7;
+  color: hsl(var(--muted-foreground)); text-wrap: pretty; max-width: 66ch;
+}
+
+/* ================= 方案卡骨架 ================= */
+.variants { margin-top: 36px; display: flex; flex-direction: column; gap: 20px; }
+.variant-card {
+  border-radius: 18px; background: hsl(var(--card));
+  box-shadow: 0 0 0 1px hsl(var(--border) / 0.7);
+  padding: 20px 22px 22px;
+}
+.variant-card .head { display: flex; align-items: baseline; gap: 10px; }
+.variant-card .key { font-size: 12px; font-weight: 650; letter-spacing: 0.08em; color: hsl(var(--brand)); }
+.variant-card h3 { font-size: 15px; font-weight: 650; }
+.variant-card .desc {
+  margin-top: 6px; font-size: 13px; line-height: 1.65;
+  color: hsl(var(--muted-foreground)); text-wrap: pretty; max-width: 74ch;
+}
+/* 演示面：铺回真实空态所在的页面底色（rail 不住在白卡上） */
+.demo {
+  margin-top: 16px; border-radius: 14px;
+  background: hsl(var(--background));
+  box-shadow: inset 0 0 0 1px hsl(var(--border) / 0.55);
+  padding: 26px 26px 22px;
+}
+
+/* ================= 通用：rail 布局 ================= */
+.rail-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-height: 40px; margin-top: 22px; }
+.rail-row.enter { animation: rowIn 0.22s cubic-bezier(0.22, 0.8, 0.3, 1); }
+@keyframes rowIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.icon-15 svg { display: block; }
+
+/* ================= 迷你 composer（真实参数：14px 加粗正文 + 柔底 chip） ================= */
+.composer-shell { margin-top: 22px; border-radius: 24px; padding: 5px; background: hsl(var(--foreground) / 0.035); }
+.dark .composer-shell { background: hsl(0 0% 100% / 0.045); }
+.composer-card {
+  border-radius: 19px; background: hsl(var(--popover) / 0.95);
+  box-shadow: 0 0 0 1px var(--ring-hairline), 0 1px 2px rgba(0,0,0,0.04), 0 10px 28px -4px rgba(0,0,0,0.07);
+  padding: 14px 16px;
+}
+.composer-editor { font-size: 14px; font-weight: 700; line-height: 1.625; min-height: 46px; }
+.composer-editor .ph { color: hsl(var(--muted-foreground) / 0.6); }
+.sk-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px 3px 7px; border-radius: 8px;
+  background: var(--chip-bg); font-size: 13px; font-weight: 500; line-height: 1.35;
+  vertical-align: -2px; user-select: none; white-space: nowrap;
+}
+.sk-chip img { width: 14px; height: 14px; object-fit: contain; display: block; }
+.file-slot {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; margin: 0 4px; border: 1px dashed hsl(var(--brand) / 0.55);
+  border-radius: 8px; background: hsl(var(--brand) / 0.07); color: hsl(var(--brand));
+  font-size: 13px; font-weight: 500; line-height: 1.35; vertical-align: -2px; white-space: nowrap;
+}
+
+/* ════════════════ 方案 A · 现状基准 ════════════════ */
+.v-a .tabs { display: inline-flex; gap: 4px; border-radius: 16px; background: hsl(var(--foreground) / 0.045); padding: 4px; }
+.dark .v-a .tabs { background: hsl(0 0% 100% / 0.055); }
+.v-a .tab { display: flex; align-items: center; gap: 6px; border-radius: 12px; padding: 8px 14px; font-size: 13.5px; font-weight: 500; color: hsl(var(--muted-foreground)); transition: color 0.15s ease; }
+.v-a .tab:hover { color: hsl(var(--foreground)); }
+.v-a .tab[data-active="true"] { background: hsl(var(--foreground)); color: hsl(var(--background)); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+.v-a .skill {
+  display: flex; align-items: center; gap: 8px; border-radius: 13px; padding: 8px 14px;
+  font-size: 13.5px; background: hsl(var(--card)); box-shadow: 0 0 0 1px var(--skill-ring);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.v-a .skill:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px var(--skill-ring), 0 3px 12px rgba(0,0,0,0.08); }
+.v-a .skill img { width: 16px; height: 16px; object-fit: contain; }
+.v-a .prompt {
+  display: flex; align-items: center; gap: 6px; border-radius: 13px; padding: 8px 14px;
+  font-size: 13.5px; background: hsl(var(--foreground) / 0.05); transition: background 0.15s ease;
+}
+.v-a .prompt:hover { background: hsl(var(--foreground) / 0.09); }
+.dark .v-a .prompt { background: hsl(0 0% 100% / 0.07); }
+.dark .v-a .prompt:hover { background: hsl(0 0% 100% / 0.11); }
+.v-a .prompt svg { opacity: 0.6; }
+
+/* ════════════════ 方案 B · 同族渐进 + 技能锚点 ════════════════
+ * 一个家族三档权重：实心（选中）→ 柔底（可选实体）→ 幽灵（建议）。
+ * 二级与 composer chip 同族（柔底无边 8-10px 圆角），三级退为幽灵行，
+ * 层级靠视觉重量递减表达，不再三种语言打架。 */
+.v-b .tabs { display: inline-flex; gap: 4px; border-radius: 14px; background: hsl(var(--foreground) / 0.045); padding: 4px; }
+.dark .v-b .tabs { background: hsl(0 0% 100% / 0.055); }
+.v-b .tab { display: flex; align-items: center; gap: 6px; border-radius: 10px; padding: 7px 13px; font-size: 13.5px; font-weight: 500; color: hsl(var(--muted-foreground)); transition: color 0.15s ease; }
+.v-b .tab:hover { color: hsl(var(--foreground)); }
+.v-b .tab[data-active="true"] { background: hsl(var(--foreground)); color: hsl(var(--background)); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+.v-b .skill {
+  display: flex; align-items: center; gap: 8px; border-radius: 10px; padding: 8px 13px;
+  font-size: 13.5px; font-weight: 500; background: var(--chip-bg); transition: background 0.15s ease;
+}
+.v-b .skill:hover { background: var(--chip-bg-hover); }
+.v-b .skill img { width: 16px; height: 16px; object-fit: contain; }
+.v-b .anchor {
+  display: flex; align-items: center; gap: 7px; border-radius: 10px; padding: 7px 12px;
+  font-size: 13.5px; font-weight: 600; background: hsl(var(--foreground)); color: hsl(var(--background));
+  box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+}
+.v-b .anchor img { width: 15px; height: 15px; object-fit: contain; }
+.v-b .anchor svg { opacity: 0.55; }
+.v-b .anchor:hover svg { opacity: 1; }
+.v-b .divider { width: 1px; height: 18px; background: hsl(var(--border)); }
+.v-b .prompt {
+  display: flex; align-items: center; gap: 7px; border-radius: 10px; padding: 7px 11px;
+  font-size: 13.5px; color: hsl(var(--muted-foreground)); transition: background 0.15s ease, color 0.15s ease;
+}
+.v-b .prompt:hover { background: var(--chip-bg); color: hsl(var(--foreground)); }
+.v-b .prompt svg { color: hsl(var(--brand)); opacity: 0.75; }
+
+/* ════════════════ 方案 C · 面板收纳 ════════════════
+ * 三层收进一个连续面板：tab 是面板头（白卡分段器），技能是带一句
+ * 描述的实体卡，推荐是列表行。层级=容器嵌套，menu 感最强。 */
+.v-c .panel { border-radius: 20px; background: hsl(var(--foreground) / 0.03); padding: 8px; max-width: 640px; }
+.dark .v-c .panel { background: hsl(0 0% 100% / 0.045); }
+.v-c .tabs { display: flex; gap: 2px; padding: 2px; }
+.v-c .tab { flex: none; display: flex; align-items: center; gap: 6px; border-radius: 11px; padding: 8px 14px; font-size: 13.5px; font-weight: 500; color: hsl(var(--muted-foreground)); transition: color 0.15s ease; }
+.v-c .tab:hover { color: hsl(var(--foreground)); }
+.v-c .tab[data-active="true"] { background: hsl(var(--card)); color: hsl(var(--foreground)); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px var(--ring-hairline); }
+.v-c .body { margin-top: 6px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.v-c .skill {
+  display: flex; align-items: flex-start; gap: 10px; text-align: left;
+  border-radius: 13px; padding: 12px 13px; background: hsl(var(--card));
+  box-shadow: 0 0 0 1px var(--ring-hairline); transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.v-c .skill:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px var(--ring-hairline), 0 4px 14px rgba(0,0,0,0.07); }
+.v-c .skill img { width: 22px; height: 22px; object-fit: contain; margin-top: 1px; }
+.v-c .skill .t { font-size: 13.5px; font-weight: 600; line-height: 1.3; }
+.v-c .skill .d { margin-top: 3px; font-size: 11.5px; line-height: 1.45; color: hsl(var(--muted-foreground)); }
+.v-c .body.prompts { grid-template-columns: 1fr; gap: 2px; }
+.v-c .crumb { display: flex; align-items: center; gap: 8px; padding: 8px 10px 6px; font-size: 12.5px; font-weight: 600; color: hsl(var(--muted-foreground)); }
+.v-c .crumb img { width: 15px; height: 15px; object-fit: contain; }
+.v-c .crumb .back { display: flex; align-items: center; gap: 3px; color: hsl(var(--muted-foreground)); border-radius: 7px; padding: 2px 6px 2px 3px; transition: background 0.15s ease, color 0.15s ease; }
+.v-c .crumb .back:hover { background: var(--chip-bg); color: hsl(var(--foreground)); }
+.v-c .prow {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  border-radius: 11px; padding: 9px 12px; font-size: 13.5px; transition: background 0.15s ease;
+}
+.v-c .prow:hover { background: hsl(var(--card)); box-shadow: 0 0 0 1px var(--ring-hairline); }
+.v-c .prow svg { color: hsl(var(--muted-foreground)); opacity: 0.7; flex-shrink: 0; }
+
+/* ════════════════ 方案 D · 下划线编辑部 ════════════════
+ * 去掉所有容器：一级是文字 tab + 品牌绿下划线，二级柔底 chip，
+ * 三级纯文字行。最安静，留白当结构用。 */
+.v-d .tabs { display: inline-flex; gap: 22px; }
+.v-d .tab {
+  position: relative; display: flex; align-items: center; gap: 6px;
+  padding: 6px 1px 9px; font-size: 13.5px; font-weight: 500;
+  color: hsl(var(--muted-foreground)); transition: color 0.15s ease;
+}
+.v-d .tab:hover { color: hsl(var(--foreground)); }
+.v-d .tab::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  border-radius: 2px; background: hsl(var(--brand)); opacity: 0; transform: scaleX(0.4);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.v-d .tab[data-active="true"] { color: hsl(var(--foreground)); font-weight: 600; }
+.v-d .tab[data-active="true"]::after { opacity: 1; transform: scaleX(1); }
+.v-d .skill {
+  display: flex; align-items: center; gap: 8px; border-radius: 10px; padding: 8px 13px;
+  font-size: 13.5px; font-weight: 500; background: var(--chip-bg); transition: background 0.15s ease;
+}
+.v-d .skill:hover { background: var(--chip-bg-hover); }
+.v-d .skill img { width: 16px; height: 16px; object-fit: contain; }
+.v-d .anchor {
+  display: flex; align-items: center; gap: 7px; border-radius: 10px; padding: 7px 12px;
+  font-size: 13.5px; font-weight: 600;
+  background: hsl(var(--brand) / 0.1); color: hsl(var(--brand));
+}
+.dark .v-d .anchor { background: hsl(var(--brand) / 0.16); }
+.v-d .anchor img { width: 15px; height: 15px; object-fit: contain; }
+.v-d .anchor svg { opacity: 0.65; }
+.v-d .prompt {
+  display: flex; align-items: center; gap: 7px; padding: 7px 4px;
+  font-size: 13.5px; color: hsl(var(--muted-foreground)); border-radius: 8px;
+  transition: color 0.15s ease;
+}
+.v-d .prompt:hover { color: hsl(var(--brand)); }
+.v-d .prompt svg { opacity: 0.65; }
+
+/* ════════════════ 方案 E · 分类色染 ════════════════
+ * 每个分类一个色相（办公琥珀 / 代码蓝 / 设计紫），选中 tab、
+ * 推荐行、锚点都浸同一色——「你在哪个世界里」用颜色回答。 */
+.v-e .tabs { display: inline-flex; gap: 4px; border-radius: 14px; background: hsl(var(--foreground) / 0.045); padding: 4px; }
+.dark .v-e .tabs { background: hsl(0 0% 100% / 0.055); }
+.v-e .tab { display: flex; align-items: center; gap: 6px; border-radius: 10px; padding: 7px 13px; font-size: 13.5px; font-weight: 500; color: hsl(var(--muted-foreground)); transition: color 0.15s ease, background 0.15s ease; }
+.v-e .tab:hover { color: hsl(var(--foreground)); }
+.v-e .tab[data-active="true"] {
+  background: hsl(var(--ck) / 0.13); font-weight: 600;
+  color: color-mix(in oklab, hsl(var(--ck)) 70%, hsl(var(--foreground)));
+}
+.dark .v-e .tab[data-active="true"] { background: hsl(var(--ck) / 0.2); color: color-mix(in oklab, hsl(var(--ck)) 65%, white); }
+.v-e .skill {
+  display: flex; align-items: center; gap: 8px; border-radius: 11px; padding: 8px 13px;
+  font-size: 13.5px; font-weight: 500; background: hsl(var(--card));
+  box-shadow: 0 0 0 1px var(--skill-ring); transition: box-shadow 0.15s ease;
+}
+.v-e .skill:hover { box-shadow: 0 0 0 1px hsl(var(--ck) / 0.45), 0 3px 12px hsl(var(--ck) / 0.12); }
+.v-e .skill img { width: 16px; height: 16px; object-fit: contain; }
+.v-e .anchor {
+  display: flex; align-items: center; gap: 7px; border-radius: 10px; padding: 7px 12px;
+  font-size: 13.5px; font-weight: 600;
+  background: hsl(var(--ck) / 0.14); color: color-mix(in oklab, hsl(var(--ck)) 65%, hsl(var(--foreground)));
+}
+.dark .v-e .anchor { background: hsl(var(--ck) / 0.22); color: color-mix(in oklab, hsl(var(--ck)) 62%, white); }
+.v-e .anchor img { width: 15px; height: 15px; object-fit: contain; }
+.v-e .anchor svg { opacity: 0.6; }
+.v-e .prompt {
+  display: flex; align-items: center; gap: 6px; border-radius: 11px; padding: 8px 13px;
+  font-size: 13.5px; background: hsl(var(--ck) / 0.07);
+  color: color-mix(in oklab, hsl(var(--ck)) 45%, hsl(var(--foreground)));
+  transition: background 0.15s ease;
+}
+.v-e .prompt:hover { background: hsl(var(--ck) / 0.13); }
+.dark .v-e .prompt { background: hsl(var(--ck) / 0.13); color: color-mix(in oklab, hsl(var(--ck)) 55%, white); }
+.dark .v-e .prompt:hover { background: hsl(var(--ck) / 0.2); }
+.v-e .prompt svg { opacity: 0.6; }
+
+/* ================= Tweaks ================= */
+.tweaks-fab {
+  position: fixed; right: 22px; bottom: 22px; z-index: 30;
+  width: 44px; height: 44px; border-radius: 9999px;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); display: flex; align-items: center; justify-content: center;
+}
+.tweaks {
+  position: fixed; right: 22px; bottom: 76px; z-index: 30; width: 248px;
+  background: hsl(var(--popover)); border-radius: 14px; padding: 16px;
+  box-shadow: 0 0 0 1px var(--ring-hairline), 0 24px 60px rgba(0, 0, 0, 0.25); display: none;
+}
+.tweaks.open { display: block; }
+.tweaks h4 { font-size: 13px; font-weight: 650; margin-bottom: 12px; }
+.tweaks .row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; padding: 7px 0; }
+.tweaks .row + .row { border-top: 1px solid hsl(var(--border) / 0.5); }
+.switch { position: relative; width: 36px; height: 21px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 100%; height: 100%; position: absolute; cursor: pointer; margin: 0; }
+.switch .knob { position: absolute; inset: 0; border-radius: 9999px; background: hsl(var(--foreground) / 0.15); transition: background 0.15s ease; pointer-events: none; }
+.switch .knob::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px;
+  border-radius: 9999px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.25); transition: transform 0.15s ease;
+}
+.switch input:checked + .knob { background: hsl(var(--brand)); }
+.switch input:checked + .knob::after { transform: translateX(15px); }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="page-header">
+    <h1>空态三级导航样式方案</h1>
+    <p>一级分类 tab、二级技能、三级推荐 prompt 的五套完整体系。每张卡都是可点穿的活原型：点分类换技能、点技能进推荐（下方迷你输入框同步插 chip）、点推荐填正文并退回技能行——与线上双态逻辑一致。B/C/D/E 补了现状缺失的「技能锚点」：进入三级后仍能看见并退出当前技能。</p>
+  </header>
+
+  <section class="variants" id="variants"></section>
+
+</div>
+
+<button class="tweaks-fab" id="tweaksFab" aria-label="Tweaks">
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2.2"/><circle cx="8" cy="16" r="2.2"/></svg>
+</button>
+<div class="tweaks" id="tweaks">
+  <h4>Tweaks</h4>
+  <div class="row">
+    <span>深色模式</span>
+    <label class="switch"><input type="checkbox" id="twDark"><span class="knob"></span></label>
+  </div>
+  <div class="row">
+    <span>全部跳到三级态</span>
+    <label class="switch"><input type="checkbox" id="twLevel3"><span class="knob"></span></label>
+  </div>
+</div>
+
+<script>
+/* ---------- 数据（1:1 取自 ScenarioRail.tsx / skillChipRegistry.ts） ---------- */
+const SKILLS = {
+  'ppt-master':      { label: '制作PPT',   icon: 'skill-icons/ppt.png',   desc: '生成、编辑幻灯片演示文稿' },
+  'spreadsheets':    { label: '处理表格',  icon: 'skill-icons/sheet.png', desc: '生成、编辑 Excel 表格' },
+  'proposal-writer': { label: '写方案',    icon: 'skill-icons/write.png', desc: '起草文档、方案与报告' },
+  'daily-dev':       { label: '日常开发',  icon: 'skill-icons/code.png',  desc: '功能开发、重构、修 Bug、补测试' },
+  'web-dev':         { label: '网站开发',  icon: 'skill-icons/web.png',   desc: '官网、后台、博客、电商页面' },
+  'agent-app':       { label: 'Agent 应用', icon: 'skill-icons/petal.png', desc: 'Agent、聊天应用与智能客服' },
+  'imagegen':        { label: '生成图片',  icon: 'skill-icons/image.png', desc: 'AI 图片生成与编辑' },
+  'remotion':        { label: '制作视频',  icon: 'skill-icons/video.png', desc: '用 React 生成动画短视频' }
+};
+const PROMPTS = {
+  'ppt-master': [
+    { label: 'AI 发展历程 PPT', text: '请生成一个 AI 人工智能发展历程的 PPT，从图灵测试讲到大语言模型，每页一个里程碑，配时间轴。' },
+    { label: '修改PPT文件', text: '帮我修改【PPT 文件】：【说明要改什么，例如换主题色、更新第 3 页数据、统一字体】，其余保持原样。' },
+    { label: '季度业务汇报', text: '帮我生成一套季度业务汇报 PPT，包含业绩回顾、关键项目、问题与风险、下季度规划四个章节。' },
+    { label: '产品介绍页', text: '为【产品名称】做一份 10 页以内的产品介绍 PPT，突出核心卖点和客户案例。' }
+  ],
+  'spreadsheets': [
+    { label: 'Excel 数据清洗', text: '帮我清洗【Excel 文件】：去重、补全缺失值、统一日期与金额格式，输出干净的新表并说明改动。' },
+    { label: '销售数据透视', text: '基于【Excel 文件】生成透视汇总：按月份和区域统计销售额，标出环比变化最大的三项。' },
+    { label: '发票台账整理', text: '把【发票信息】批量整理成 Excel 台账，包含日期、金额、税率、销售方，最后输出汇总合计。' }
+  ],
+  'proposal-writer': [
+    { label: '项目投标方案', text: '给【客户名称】写一份项目投标方案，包含需求理解、技术方案、实施计划、报价构成四部分。' },
+    { label: '产品需求文档', text: '把【功能想法】整理成一份 PRD，包含背景、目标用户、功能清单、验收标准。' },
+    { label: '活动策划案', text: '帮我写一份【活动主题】的策划方案，覆盖目标、流程安排、物料清单和预算。' }
+  ],
+  'daily-dev': [
+    { label: '新增功能开发', text: '在【项目/模块】里新增【功能描述】：先说明改动方案，确认后实现并跑通类型检查。' },
+    { label: '代码重构优化', text: '重构【目标文件/模块】：按职责拆分、消除重复，保持对外接口不变，改完列出改动清单。' },
+    { label: '修复Bug', text: '这个 bug 的表现是：【现象描述】。帮我定位根因并修复，附上验证方式。' },
+    { label: '性能优化', text: '分析【页面/接口】的性能瓶颈，量化每个热点的开销，按收益排序逐个优化。' },
+    { label: '补充单元测试', text: '为【模块/函数】补充单元测试，覆盖正常路径、边界条件和报错分支。' }
+  ],
+  'web-dev': [
+    { label: '企业官网开发', text: '帮我搭一个企业官网：首页 + 产品介绍 + 关于我们 + 联系方式，响应式布局，先出首页。' },
+    { label: '后台管理系统', text: '初始化一个后台管理系统：登录、侧边导航、数据表格增删改查，用【技术栈】。' },
+    { label: '个人博客网站', text: '帮我做一个个人博客网站：文章列表、详情页、标签分类，支持 Markdown 写作。' },
+    { label: '电商首页开发', text: '开发一个电商首页：轮播 banner、商品分类栅格、推荐位，移动端优先。' }
+  ],
+  'agent-app': [
+    { label: 'Agent应用开发', text: '帮我开发一个 Agent 应用来解决【要处理的任务】，包含工具调用和多轮对话能力。' },
+    { label: '聊天应用初始化', text: '初始化一个 AI 聊天应用：流式回复、会话历史、Markdown 渲染，用【技术栈】。' },
+    { label: '智能客服Agent', text: '搭建一个智能客服 Agent：接入【知识库/FAQ】，支持转人工和多轮追问。' }
+  ],
+  'imagegen': [
+    { label: '活动海报', text: '为【活动主题】生成一张竖版活动海报，主视觉醒目，留出时间地点文字区域。' },
+    { label: '公众号头图', text: '生成一张公众号头图，主题是【文章主题】，简洁大气，宽幅横版构图。' },
+    { label: '产品示意图', text: '为【产品/功能】生成一张干净的概念示意图，白底，适合放进 PPT。' }
+  ],
+  'remotion': [
+    { label: '产品宣传短片', text: '根据【产品介绍】生成一支 30 秒左右的产品宣传短视频，节奏明快，结尾带行动号召。' },
+    { label: '数据动画', text: '把【这组数据】做成一段动态图表短视频，逐项展示增长趋势。' }
+  ]
+};
+/* 分类色（方案 E 用）：办公琥珀 / 代码蓝(=--primary) / 设计紫 */
+const CATEGORIES = [
+  { id: 'daily',  label: '日常办公', ck: '28 70% 46%',  skills: ['ppt-master', 'spreadsheets', 'proposal-writer'] },
+  { id: 'code',   label: '代码开发', ck: '211 100% 45%', skills: ['daily-dev', 'web-dev', 'agent-app'] },
+  { id: 'design', label: '设计创意', ck: '262 55% 58%',  skills: ['imagegen', 'remotion', 'ppt-master'] }
+];
+const CAT_ICONS = {
+  daily: '<svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h9v5.5A3.5 3.5 0 0 1 9.5 15h-2A3.5 3.5 0 0 1 4 11.5V6Z"/><path d="M13 7.5h1.2a1.8 1.8 0 0 1 0 3.6H13M6.5 3.5v1M9 3v1.5M11.5 3.5v1"/></svg>',
+  code: '<svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 5.5-3.5 3.5L6 12.5M12 5.5l3.5 3.5L12 12.5"/></svg>',
+  design: '<svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2.5a6.5 6.5 0 1 0 0 13c1 0 1.4-.6 1.4-1.3 0-1.1-1-1.5-.4-2.5.5-.9 3-.2 4.3-1.5.9-.9.2-7.7-5.3-7.7Z"/><circle cx="5.8" cy="7" r=".9"/><circle cx="9" cy="5.3" r=".9"/><circle cx="12.2" cy="7" r=".9"/></svg>'
+};
+const ARROW = '<svg width="12" height="12" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 4.5 11.5 11.5M11.5 6v5.5H6"/></svg>';
+const BACK = '<svg width="12" height="12" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4 6 9l5 5"/></svg>';
+const X = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+const VARIANTS = [
+  { key: 'a', name: '现状基准', desc: '线上原样：一级墨黑 pill、二级白卡描边、三级灰底 pill。三层三种语言，层级靠位置猜；进三级后技能行整行消失，rail 上没有「我在哪」。留作对照。' },
+  { key: 'b', name: '同族渐进 + 技能锚点', desc: '一个家族三档权重：实心（选中）→ 柔底（技能，与输入框 chip 同族）→ 幽灵（建议，绿箭头前置）。三级行首常驻当前技能的墨黑锚点，点锚点或 × 退回技能行——「在哪、怎么回」一眼清楚。推荐起点。' },
+  { key: 'c', name: '面板收纳', desc: '三层收进一个连续圆角面板：分类是面板头分段器，技能升级成「图标 + 名称 + 一句能干嘛」的实体卡（新用户第一眼就懂），推荐是带面包屑的列表行。信息量最大，占位也最大。' },
+  { key: 'd', name: '下划线编辑部', desc: '拆掉所有容器：一级纯文字 tab + 品牌绿下划线滑动，二级柔底 chip，三级纯文字行 hover 变绿。最安静的一版，留白当结构用；锚点用品牌绿浅底呼应下划线。' },
+  { key: 'e', name: '分类色染', desc: '每个分类一个色相：办公琥珀、代码蓝（=系统 primary）、设计紫。选中 tab、三级推荐、锚点都浸同一色——「你在哪个世界」用颜色回答，切 tab 时整个 rail 换色，记忆点最强。' }
+];
+
+/* ---------- 渲染 ---------- */
+function fileSlotify(text) {
+  /* 【…文件】→ 虚线文件槽 pill（filePlaceholderPlugin 同款隐喻） */
+  return text.replace(/【([^【】]{0,24}文件)】/g,
+    '<span class="file-slot"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>$1</span>');
+}
+
+function buildVariant(v) {
+  const card = document.createElement('div');
+  card.className = 'variant-card v-' + v.key;
+  card.innerHTML =
+    `<div class="head"><span class="key">方案 ${v.key.toUpperCase()}</span><h3>${v.name}</h3></div>` +
+    `<p class="desc">${v.desc}</p>` +
+    `<div class="demo"><div class="rail"></div><div class="composer-shell"><div class="composer-card"><div class="composer-editor"></div></div></div></div>`;
+
+  const rail = card.querySelector('.rail');
+  const editor = card.querySelector('.composer-editor');
+  const state = { catId: 'daily', skill: null, body: '' };
+
+  function cat() { return CATEGORIES.find((c) => c.id === state.catId); }
+
+  function renderComposer() {
+    if (!state.skill) {
+      editor.innerHTML = '<span class="ph">随便问点什么…</span>';
+      return;
+    }
+    const s = SKILLS[state.skill];
+    editor.innerHTML =
+      `<span class="sk-chip"><img src="${s.icon}" alt="" draggable="false"><span>${s.label}</span></span>` +
+      (state.body ? ' ' + fileSlotify(state.body) : '');
+  }
+
+  function renderRail(animate) {
+    const c = cat();
+    const showPrompts = state.skill && !state.body && PROMPTS[state.skill];
+    let html =
+      `<div class="tabs" ${v.key === 'e' ? `style="--ck:${c.ck}"` : ''}>` +
+      CATEGORIES.map((x) =>
+        `<button class="tab" data-cat="${x.id}" data-active="${x.id === state.catId}" ${v.key === 'e' ? `style="--ck:${x.ck}"` : ''}>${CAT_ICONS[x.id]}${x.label}</button>`
+      ).join('') + `</div>`;
+
+    if (v.key === 'c') {
+      /* 面板收纳：tabs + body 同住一个面板 */
+      let body;
+      if (showPrompts) {
+        const s = SKILLS[state.skill];
+        body =
+          `<div class="body prompts enter">` +
+          `<div class="crumb"><button class="back" data-back>${BACK}返回</button><img src="${s.icon}" alt="">${s.label} · 试试这些</div>` +
+          PROMPTS[state.skill].map((p, i) =>
+            `<button class="prow" data-prompt="${i}">${ARROW}${p.label}</button>`).join('') +
+          `</div>`;
+      } else {
+        body =
+          `<div class="body enter">` +
+          c.skills.map((k) => {
+            const s = SKILLS[k];
+            return `<button class="skill" data-skill="${k}"><img src="${s.icon}" alt=""><span><span class="t">${s.label}</span><span class="d" style="display:block">${s.desc}</span></span></button>`;
+          }).join('') + `</div>`;
+      }
+      rail.innerHTML = `<div class="panel">${html}${body}</div>`;
+    } else {
+      let row;
+      if (showPrompts) {
+        const s = SKILLS[state.skill];
+        const anchor = v.key === 'a' ? '' :
+          `<button class="anchor" data-back ${v.key === 'e' ? `style="--ck:${c.ck}"` : ''} title="退出该技能"><img src="${s.icon}" alt="">${s.label}${X}</button>` +
+          (v.key === 'b' ? '<span class="divider"></span>' : '');
+        row = anchor + PROMPTS[state.skill].map((p, i) =>
+          v.key === 'b' || v.key === 'd'
+            ? `<button class="prompt" data-prompt="${i}">${ARROW}${p.label}</button>`
+            : `<button class="prompt" data-prompt="${i}" ${v.key === 'e' ? `style="--ck:${c.ck}"` : ''}>${p.label}${ARROW}</button>`
+        ).join('');
+      } else {
+        row = c.skills.map((k) => {
+          const s = SKILLS[k];
+          return `<button class="skill" data-skill="${k}" ${v.key === 'e' ? `style="--ck:${c.ck}"` : ''}><img src="${s.icon}" alt="">${s.label}</button>`;
+        }).join('');
+      }
+      rail.innerHTML = html + `<div class="rail-row${animate ? ' enter' : ''}">${row}</div>`;
+    }
+    renderComposer();
+  }
+
+  rail.addEventListener('click', (e) => {
+    const tab = e.target.closest('[data-cat]');
+    if (tab) { state.catId = tab.dataset.cat; state.skill = null; state.body = ''; renderRail(true); return; }
+    const skill = e.target.closest('[data-skill]');
+    if (skill) { state.skill = skill.dataset.skill; state.body = ''; renderRail(true); return; }
+    const back = e.target.closest('[data-back]');
+    if (back) { state.skill = null; state.body = ''; renderRail(true); return; }
+    const prompt = e.target.closest('[data-prompt]');
+    if (prompt) { state.body = PROMPTS[state.skill][Number(prompt.dataset.prompt)].text; renderRail(true); return; }
+  });
+
+  card._jumpLevel3 = (on) => {
+    if (on && !state.skill) { state.skill = cat().skills[0]; state.body = ''; }
+    if (!on) { state.skill = null; state.body = ''; }
+    renderRail(false);
+  };
+
+  renderRail(false);
+  return card;
+}
+
+const wrap = document.getElementById('variants');
+const cards = VARIANTS.map((v) => { const c = buildVariant(v); wrap.appendChild(c); return c; });
+
+/* ---------- Tweaks ---------- */
+const fab = document.getElementById('tweaksFab');
+const panel = document.getElementById('tweaks');
+fab.addEventListener('click', () => panel.classList.toggle('open'));
+
+const twDark = document.getElementById('twDark');
+twDark.addEventListener('change', () => document.documentElement.classList.toggle('dark', twDark.checked));
+if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+  twDark.checked = true;
+  document.documentElement.classList.add('dark');
+}
+document.getElementById('twLevel3').addEventListener('change', (e) => {
+  cards.forEach((c) => c._jumpLevel3(e.target.checked));
+});
+</script>
+</body>
+</html>

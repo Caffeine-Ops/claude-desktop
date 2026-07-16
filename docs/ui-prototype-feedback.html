@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问题反馈弹窗 · 重设计原型</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════
+ * 设计 token —— 1:1 取自 packages/design-tokens/tokens.css
+ * （HSL 三元组按仓库同款语义命名；零新色相）
+ * ═══════════════════════════════════════════════════════════════════ */
+:root {
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --border: 240 6% 84%;
+  --destructive: 0 72% 50%;
+  --brand: 142 76% 36%;
+  --brand-foreground: 0 0% 100%;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+html.dark {
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 40 6% 13%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --border: 49 12% 22%;
+  --destructive: 0 72% 55%;
+  --brand: 145 60% 52%;
+  --brand-foreground: 40 6% 10%;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  min-height: 100vh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── 模拟 app 背景（低保真示意，让弹窗有真实落点）────────────── */
+.app-mock {
+  position: fixed; inset: 0;
+  display: flex;
+  filter: blur(0px);
+}
+.app-mock .rail {
+  width: 245px; height: 100%;
+  background: hsl(var(--muted) / 0.6);
+  border-right: 1px solid hsl(var(--border) / 0.5);
+  padding: 56px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.app-mock .rail .bar {
+  height: 30px; border-radius: 8px;
+  background: hsl(var(--border) / 0.35);
+}
+.app-mock .rail .bar:nth-child(2) { width: 82%; }
+.app-mock .rail .bar:nth-child(3) { width: 64%; }
+.app-mock .rail .bar:nth-child(4) { width: 90%; }
+.app-mock .main { flex: 1; padding: 80px 120px; display: flex; flex-direction: column; gap: 18px; }
+.app-mock .main .line { height: 14px; border-radius: 7px; background: hsl(var(--border) / 0.3); }
+.app-mock .main .line:nth-child(1) { width: 45%; }
+.app-mock .main .line:nth-child(2) { width: 72%; }
+.app-mock .main .line:nth-child(3) { width: 60%; }
+
+/* ── 遮罩 ────────────────────────────────────────────────────── */
+.overlay {
+  position: fixed; inset: 0;
+  background: hsl(240 5% 8% / 0.42);
+  backdrop-filter: blur(2px);
+  animation: overlay-in 200ms ease-out;
+}
+html.dark .overlay { background: hsl(0 0% 0% / 0.55); }
+@keyframes overlay-in { from { opacity: 0; } }
+
+/* ═══════════════════════════════════════════════════════════════════
+ * 弹窗本体 —— Notion 精修档（与重命名/删除弹窗同族）
+ * ═══════════════════════════════════════════════════════════════════ */
+.dialog {
+  position: fixed;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 480px; max-width: calc(100vw - 48px);
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 16px;
+  box-shadow:
+    0 1px 2px hsl(240 5% 8% / 0.05),
+    0 12px 32px -8px hsl(240 5% 8% / 0.18),
+    0 24px 64px -16px hsl(240 5% 8% / 0.14);
+  padding: 24px;
+  animation: dialog-in 220ms var(--ease-out-expo);
+}
+html.dark .dialog {
+  box-shadow:
+    0 1px 2px hsl(0 0% 0% / 0.3),
+    0 12px 32px -8px hsl(0 0% 0% / 0.5);
+}
+@keyframes dialog-in {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.965); }
+}
+
+.dialog .close-x {
+  position: absolute; top: 16px; right: 16px;
+  width: 28px; height: 28px;
+  display: grid; place-items: center;
+  border: none; background: transparent; border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  transition: background 150ms, color 150ms;
+}
+.dialog .close-x:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+.dialog .close-x svg { width: 15px; height: 15px; }
+
+/* 头部：19px 标题 / 13px 副文（精修档节奏） */
+.dlg-title { font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+.dlg-desc  { font-size: 13px; color: hsl(var(--muted-foreground)); margin-top: 6px; line-height: 1.5; }
+
+/* ── V2：反馈类型分段 ─────────────────────────────────────────── */
+.type-seg {
+  display: none;
+  gap: 6px; margin-top: 16px;
+}
+.dialog[data-variant="v2"] .type-seg,
+.dialog[data-variant="v3"] .type-seg { display: flex; }
+.type-seg button {
+  flex: none;
+  padding: 6px 14px;
+  font-size: 13px; font-weight: 500;
+  font-family: inherit;
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 150ms;
+}
+.type-seg button:hover { border-color: hsl(var(--foreground) / 0.3); color: hsl(var(--foreground)); }
+.type-seg button.on {
+  background: hsl(var(--foreground));
+  border-color: hsl(var(--foreground));
+  color: hsl(var(--card));
+}
+
+/* ── 描述输入 ────────────────────────────────────────────────── */
+.desc-wrap { position: relative; margin-top: 16px; }
+.dialog textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: none;
+  font-family: inherit;
+  font-size: 15px; line-height: 1.6;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background) / 0.5);
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  padding: 12px 14px;
+  outline: none;
+  transition: border-color 150ms, box-shadow 150ms, background 150ms;
+}
+html.dark .dialog textarea { background: hsl(var(--muted) / 0.4); }
+.dialog textarea::placeholder { color: hsl(var(--muted-foreground) / 0.75); }
+.dialog textarea:focus {
+  border-color: hsl(var(--brand) / 0.55);
+  box-shadow: 0 0 0 3px hsl(var(--brand) / 0.12);
+  background: hsl(var(--card));
+}
+.dialog textarea:disabled { opacity: 0.55; pointer-events: none; }
+
+/* ── 附件区：整行热区（V1+）─────────────────────────────────── */
+.attach-row { display: flex; gap: 8px; margin-top: 12px; align-items: stretch; }
+.thumb {
+  position: relative;
+  width: 64px; height: 64px; flex: none;
+  border-radius: 10px;
+  border: 1px solid hsl(var(--border));
+  overflow: hidden;
+  animation: thumb-in 180ms var(--ease-out-expo);
+}
+@keyframes thumb-in { from { opacity: 0; transform: scale(0.9); } }
+/* 截图占位：真图缺席时用编号占位卡（占位 > 伪造） */
+.thumb .ph {
+  width: 100%; height: 100%;
+  display: grid; place-items: center;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  font-size: 10px; font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.thumb .rm {
+  position: absolute; top: 3px; right: 3px;
+  width: 18px; height: 18px;
+  display: grid; place-items: center;
+  border: none; border-radius: 999px;
+  background: hsl(240 5% 8% / 0.62);
+  color: white; cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms;
+}
+.thumb:hover .rm { opacity: 1; }
+.thumb .rm svg { width: 9px; height: 9px; }
+
+.dropzone {
+  flex: 1;
+  min-height: 64px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  border: 1.5px dashed hsl(var(--border));
+  border-radius: 10px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 12.5px; font-family: inherit;
+  cursor: pointer;
+  transition: all 150ms;
+}
+.dropzone:hover {
+  border-color: hsl(var(--brand) / 0.5);
+  color: hsl(var(--foreground));
+  background: hsl(var(--brand) / 0.04);
+}
+.dropzone svg { width: 14px; height: 14px; flex: none; }
+.dropzone.compact { flex: none; width: 64px; }
+.dropzone.compact .dz-label { display: none; }
+.dropzone kbd {
+  font-family: inherit; font-size: 11px;
+  padding: 1px 5px; border-radius: 4px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / 0.6);
+  color: hsl(var(--muted-foreground));
+}
+
+.attach-count {
+  font-size: 11.5px; color: hsl(var(--muted-foreground) / 0.8);
+  margin-top: 8px;
+  display: none;
+}
+.attach-count.show { display: block; }
+
+/* ── 错误条 ─────────────────────────────────────────────────── */
+.error-bar {
+  display: none;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: hsl(var(--destructive) / 0.08);
+  border: 1px solid hsl(var(--destructive) / 0.25);
+  color: hsl(var(--destructive));
+  font-size: 13px; line-height: 1.5;
+  animation: thumb-in 180ms var(--ease-out-expo);
+}
+.error-bar.show { display: flex; gap: 8px; align-items: flex-start; }
+.error-bar svg { width: 14px; height: 14px; flex: none; margin-top: 2px; }
+.error-bar .retry {
+  margin-left: auto; flex: none;
+  font-size: 12.5px; font-weight: 500; font-family: inherit;
+  color: hsl(var(--destructive));
+  background: none; border: none;
+  text-decoration: underline; text-underline-offset: 2px;
+  cursor: pointer;
+}
+.error-bar .retry:hover { text-decoration: none; }
+
+/* ── 底部：诚实披露 + 主按钮 ────────────────────────────────── */
+.dlg-footer {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 20px;
+}
+.diag-note {
+  font-size: 11.5px; line-height: 1.45;
+  color: hsl(var(--muted-foreground) / 0.75);
+  flex: 1;
+}
+.btn-submit {
+  flex: none;
+  height: 38px;
+  padding: 0 22px;
+  font-size: 14px; font-weight: 600; font-family: inherit;
+  color: hsl(var(--brand-foreground));
+  background: linear-gradient(135deg, hsl(var(--brand)), color-mix(in srgb, hsl(var(--brand)) 85%, #000));
+  border: none; border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.18);
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  transition: opacity 150ms, box-shadow 150ms;
+}
+.btn-submit:hover:not(:disabled) { opacity: 0.94; }
+.btn-submit:active:not(:disabled) { opacity: 0.88; }
+.btn-submit:disabled {
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground) / 0.7);
+  box-shadow: none;
+  cursor: default;
+}
+.spinner {
+  width: 14px; height: 14px;
+  border: 2px solid hsl(var(--brand-foreground) / 0.3);
+  border-top-color: hsl(var(--brand-foreground));
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ═══════════════════════════════════════════════════════════════════
+ * 成功态
+ *  V1/V2：内联绿条（原文案「感谢反馈，我们已收到！」的精修版）
+ *  V3   ：整卡切换成功叙事（对勾动画 + issue 链接卡）
+ * ═══════════════════════════════════════════════════════════════════ */
+.success-inline {
+  display: none;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: hsl(var(--brand) / 0.08);
+  border: 1px solid hsl(var(--brand) / 0.25);
+  color: hsl(var(--brand));
+  font-size: 13px; line-height: 1.5;
+  animation: thumb-in 200ms var(--ease-out-expo);
+}
+.success-inline.show { display: flex; gap: 8px; align-items: center; }
+.success-inline svg { width: 14px; height: 14px; flex: none; }
+.success-inline a { color: inherit; font-weight: 500; }
+.success-inline a:hover { text-decoration: none; }
+
+.success-view { display: none; text-align: center; padding: 12px 8px 4px; }
+.success-view.show { display: block; }
+.check-disc {
+  width: 56px; height: 56px;
+  margin: 8px auto 0;
+  border-radius: 999px;
+  background: hsl(var(--brand) / 0.12);
+  display: grid; place-items: center;
+  animation: disc-pop 380ms var(--ease-out-expo);
+}
+@keyframes disc-pop { from { transform: scale(0.5); opacity: 0; } }
+.check-disc svg { width: 26px; height: 26px; }
+.check-disc path {
+  stroke: hsl(var(--brand));
+  stroke-width: 2.6; fill: none;
+  stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 24; stroke-dashoffset: 24;
+  animation: draw 320ms 180ms var(--ease-out-expo) forwards;
+}
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.success-view h3 { font-size: 17px; font-weight: 650; margin-top: 16px; }
+.success-view .sub { font-size: 13px; color: hsl(var(--muted-foreground)); margin-top: 6px; line-height: 1.5; }
+
+.issue-card {
+  display: flex; align-items: center; gap: 10px;
+  margin: 18px auto 0;
+  padding: 11px 14px;
+  max-width: 340px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--background) / 0.5);
+  text-decoration: none;
+  color: hsl(var(--foreground));
+  transition: border-color 150ms, background 150ms;
+}
+html.dark .issue-card { background: hsl(var(--muted) / 0.4); }
+.issue-card:hover { border-color: hsl(var(--foreground) / 0.3); background: hsl(var(--card)); }
+.issue-card .gh-ph {
+  width: 28px; height: 28px; flex: none;
+  border-radius: 8px;
+  background: hsl(var(--muted));
+  display: grid; place-items: center;
+  font-size: 9px; font-weight: 600;
+  color: hsl(var(--muted-foreground));
+  letter-spacing: 0.03em;
+}
+.issue-card .meta { flex: 1; min-width: 0; text-align: left; }
+.issue-card .meta .t {
+  font-size: 13px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.issue-card .meta .u { font-size: 11.5px; color: hsl(var(--muted-foreground)); margin-top: 1px; }
+.issue-card .arrow { flex: none; color: hsl(var(--muted-foreground)); font-size: 13px; }
+
+.success-actions { display: flex; gap: 10px; justify-content: center; margin-top: 22px; }
+.btn-ghost {
+  height: 38px; padding: 0 18px;
+  font-size: 14px; font-weight: 500; font-family: inherit;
+  color: hsl(var(--muted-foreground));
+  background: transparent;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 150ms;
+}
+.btn-ghost:hover { color: hsl(var(--foreground)); border-color: hsl(var(--foreground) / 0.3); }
+
+/* V3 提交按钮整行宽 */
+.dialog[data-variant="v3"] .dlg-footer { flex-direction: column; align-items: stretch; gap: 10px; }
+.dialog[data-variant="v3"] .btn-submit { width: 100%; height: 42px; }
+.dialog[data-variant="v3"] .diag-note { text-align: center; order: 2; }
+
+/* 表单区在 V3 成功态整体隐藏 */
+.dialog.success-full .form-body, .dialog.success-full .dlg-header-grp { display: none; }
+
+/* ═══════════════════════════════════════════════════════════════════
+ * Tweaks 面板
+ * ═══════════════════════════════════════════════════════════════════ */
+.tweaks-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 60;
+  width: 40px; height: 40px;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  color: hsl(var(--muted-foreground));
+  font-size: 15px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px hsl(240 5% 8% / 0.1);
+  transition: color 150ms;
+}
+.tweaks-fab:hover { color: hsl(var(--foreground)); }
+.tweaks {
+  position: fixed; right: 20px; bottom: 70px; z-index: 60;
+  width: 240px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 14px;
+  box-shadow: 0 8px 32px hsl(240 5% 8% / 0.16);
+  padding: 16px;
+  display: none;
+}
+.tweaks.open { display: block; }
+.tweaks h5 {
+  font-size: 12px; font-weight: 650;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: hsl(var(--muted-foreground));
+  margin-bottom: 12px;
+}
+.tweaks .grp { margin-bottom: 14px; }
+.tweaks .grp:last-child { margin-bottom: 0; }
+.tweaks label { display: block; font-size: 11.5px; color: hsl(var(--muted-foreground)); margin-bottom: 6px; }
+.tweaks .seg { display: flex; gap: 4px; flex-wrap: wrap; }
+.tweaks .seg button {
+  flex: 1; min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px; font-family: inherit;
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 130ms;
+  white-space: nowrap;
+}
+.tweaks .seg button.on {
+  background: hsl(var(--foreground));
+  border-color: hsl(var(--foreground));
+  color: hsl(var(--card));
+}
+</style>
+</head>
+<body>
+
+<!-- 模拟 app 背景 -->
+<div class="app-mock" aria-hidden="true">
+  <div class="rail">
+    <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
+  </div>
+  <div class="main">
+    <div class="line"></div><div class="line"></div><div class="line"></div>
+  </div>
+</div>
+
+<div class="overlay"></div>
+
+<!-- ══════════ 弹窗 ══════════ -->
+<div class="dialog" id="dlg" data-variant="v1">
+  <button class="close-x" aria-label="关闭">
+    <svg viewBox="0 0 15 15" fill="none"><path d="M2 2l11 11M13 2L2 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+  </button>
+
+  <div class="dlg-header-grp">
+    <div class="dlg-title">问题反馈</div>
+    <div class="dlg-desc" id="dlgDesc">描述你遇到的问题，最多可以附 4 张截图。</div>
+
+    <!-- V2/V3：反馈类型 -->
+    <div class="type-seg" id="typeSeg">
+      <button class="on" data-type="bug">问题</button>
+      <button data-type="idea">建议</button>
+      <button data-type="other">其他</button>
+    </div>
+  </div>
+
+  <div class="form-body">
+    <div class="desc-wrap">
+      <textarea id="descInput" rows="5" placeholder="发生了什么？你原本期望的是什么？"></textarea>
+    </div>
+
+    <div class="attach-row" id="attachRow">
+      <button class="dropzone" id="dropzone">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M10.5 4.5L5.8 9.2a1.7 1.7 0 002.4 2.4l5-5a3.2 3.2 0 00-4.5-4.5l-5 5a4.7 4.7 0 006.6 6.6l4.2-4.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="dz-label">点击、拖拽或 <kbd>⌘V</kbd> 粘贴截图</span>
+      </button>
+    </div>
+    <div class="attach-count" id="attachCount"></div>
+
+    <div class="error-bar" id="errorBar">
+      <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3"/><path d="M8 5v3.4M8 10.8v.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      <span>提交失败：网络连接超时，内容已为你保留。</span>
+      <button class="retry" id="retryBtn">重试</button>
+    </div>
+
+    <div class="success-inline" id="successInline">
+      <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3"/><path d="M5.4 8.2l1.8 1.8 3.4-3.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>感谢反馈，我们已收到！<a href="#" onclick="return false">查看反馈</a></span>
+    </div>
+  </div>
+
+  <!-- V3 成功叙事视图 -->
+  <div class="success-view" id="successView">
+    <div class="check-disc">
+      <svg viewBox="0 0 26 26"><path d="M7 13.5l4.5 4.5L19.5 9"/></svg>
+    </div>
+    <h3>已收到你的反馈</h3>
+    <p class="sub">我们会尽快跟进，处理进度可以随时查看。</p>
+    <a class="issue-card" href="#" onclick="return false">
+      <span class="gh-ph">GH</span>
+      <span class="meta">
+        <span class="t">切换会话时列表出现闪烁</span>
+        <span class="u">github.com · #128</span>
+      </span>
+      <span class="arrow">↗</span>
+    </a>
+    <div class="success-actions">
+      <button class="btn-ghost" id="againBtn">再提一条</button>
+      <button class="btn-submit" id="doneBtn" style="flex:none;width:auto;height:38px;">完成</button>
+    </div>
+  </div>
+
+  <div class="dlg-footer" id="dlgFooter">
+    <p class="diag-note">提交时会附带应用版本与系统信息，帮助我们定位问题。</p>
+    <button class="btn-submit" id="submitBtn" disabled>提交</button>
+  </div>
+</div>
+
+<!-- ══════════ Tweaks ══════════ -->
+<button class="tweaks-fab" id="tweaksFab" aria-label="Tweaks">⚙</button>
+<div class="tweaks" id="tweaksPanel">
+  <h5>Tweaks</h5>
+  <div class="grp">
+    <label>变体</label>
+    <div class="seg" data-tweak="variant">
+      <button class="on" data-v="v1">V1 精修</button>
+      <button data-v="v2">V2 分类</button>
+      <button data-v="v3">V3 叙事</button>
+    </div>
+  </div>
+  <div class="grp">
+    <label>状态</label>
+    <div class="seg" data-tweak="state">
+      <button class="on" data-v="idle">空</button>
+      <button data-v="filled">已填</button>
+      <button data-v="submitting">提交中</button>
+    </div>
+    <div class="seg" data-tweak="state2" style="margin-top:4px">
+      <button data-v="success">成功</button>
+      <button data-v="error">失败</button>
+      <button data-v="max">图满</button>
+    </div>
+  </div>
+  <div class="grp">
+    <label>外观</label>
+    <div class="seg" data-tweak="theme">
+      <button class="on" data-v="light">浅色</button>
+      <button data-v="dark">深色</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ══════════ 原型状态机 ══════════ */
+const dlg = document.getElementById('dlg');
+const descInput = document.getElementById('descInput');
+const attachRow = document.getElementById('attachRow');
+const dropzone = document.getElementById('dropzone');
+const attachCount = document.getElementById('attachCount');
+const errorBar = document.getElementById('errorBar');
+const successInline = document.getElementById('successInline');
+const successView = document.getElementById('successView');
+const dlgFooter = document.getElementById('dlgFooter');
+const submitBtn = document.getElementById('submitBtn');
+const typeSeg = document.getElementById('typeSeg');
+const dlgDesc = document.getElementById('dlgDesc');
+
+const MAX_IMAGES = 4;
+let imageCount = 0;
+let state = 'idle';   // idle | filled | submitting | success | error | max
+let variant = 'v1';
+
+const PLACEHOLDERS = {
+  bug:   '发生了什么？你原本期望的是什么？',
+  idea:  '你希望我们加上或改进什么？',
+  other: '想说什么都可以。'
+};
+
+/* ── 附件缩略图（占位卡：真图缺席时用编号占位，不伪造） ── */
+function renderThumbs() {
+  attachRow.querySelectorAll('.thumb').forEach(t => t.remove());
+  for (let i = 0; i < imageCount; i++) {
+    const t = document.createElement('div');
+    t.className = 'thumb';
+    t.innerHTML = '<div class="ph">IMG ' + (i + 1) + '</div>' +
+      '<button class="rm" aria-label="移除"><svg viewBox="0 0 9 9" fill="none"><path d="M1 1l7 7M8 1L1 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button>';
+    t.querySelector('.rm').addEventListener('click', () => { imageCount--; renderThumbs(); });
+    attachRow.insertBefore(t, dropzone);
+  }
+  const full = imageCount >= MAX_IMAGES;
+  dropzone.style.display = full ? 'none' : '';
+  dropzone.classList.toggle('compact', imageCount > 0);
+  attachCount.textContent = full ? '已达 4 张上限' : (imageCount > 0 ? imageCount + ' / 4 张截图' : '');
+  attachCount.classList.toggle('show', imageCount > 0);
+}
+
+dropzone.addEventListener('click', () => {
+  if (imageCount < MAX_IMAGES) { imageCount++; renderThumbs(); }
+});
+
+/* ── 提交按钮可用性 ── */
+function syncSubmit() {
+  const submitting = state === 'submitting';
+  submitBtn.disabled = !descInput.value.trim() || submitting;
+  submitBtn.innerHTML = submitting
+    ? '<span class="spinner"></span>提交中…'
+    : '提交';
+  descInput.disabled = submitting || state === 'success';
+}
+descInput.addEventListener('input', syncSubmit);
+
+/* ── 提交模拟：800ms 提交中 → 成功 ── */
+submitBtn.addEventListener('click', () => {
+  setState('submitting');
+  setTimeout(() => setState('success'), 900);
+});
+document.getElementById('retryBtn').addEventListener('click', () => {
+  setState('submitting');
+  setTimeout(() => setState('success'), 900);
+});
+document.getElementById('againBtn').addEventListener('click', () => {
+  descInput.value = ''; imageCount = 0; renderThumbs(); setState('idle');
+});
+document.getElementById('doneBtn').addEventListener('click', () => {
+  descInput.value = ''; imageCount = 0; renderThumbs(); setState('idle');
+});
+
+/* ── 状态切换 ── */
+function setState(next) {
+  state = next;
+  errorBar.classList.toggle('show', next === 'error');
+  const fullSuccess = next === 'success' && variant === 'v3';
+  successInline.classList.toggle('show', next === 'success' && variant !== 'v3');
+  successView.classList.toggle('show', fullSuccess);
+  dlg.classList.toggle('success-full', fullSuccess);
+  dlgFooter.style.display = fullSuccess ? 'none' : '';
+
+  if (next === 'filled' || next === 'error') {
+    if (!descInput.value.trim()) descInput.value = '点击左侧会话切换时，列表偶尔整体闪烁一下，之前删掉的会话还会短暂出现again。期望：切换即时、删除后不再出现。';
+  }
+  if (next === 'idle') { descInput.value = ''; errorBar.classList.remove('show'); successInline.classList.remove('show'); }
+  if (next === 'max') { imageCount = MAX_IMAGES; renderThumbs(); if (!descInput.value.trim()) descInput.value = '附了 4 张截图的情况。'; }
+  syncSubmit();
+  // 状态选中态同步到 Tweaks
+  document.querySelectorAll('[data-tweak="state"] button, [data-tweak="state2"] button').forEach(b => {
+    b.classList.toggle('on', b.dataset.v === next);
+  });
+}
+
+/* ── 类型分段（V2/V3）── */
+typeSeg.querySelectorAll('button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    typeSeg.querySelectorAll('button').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    descInput.placeholder = PLACEHOLDERS[btn.dataset.type];
+  });
+});
+
+/* ── Tweaks 面板 ── */
+const tweaksPanel = document.getElementById('tweaksPanel');
+document.getElementById('tweaksFab').addEventListener('click', () => {
+  tweaksPanel.classList.toggle('open');
+});
+document.querySelector('[data-tweak="variant"]').addEventListener('click', (e) => {
+  const btn = e.target.closest('button'); if (!btn) return;
+  document.querySelectorAll('[data-tweak="variant"] button').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  variant = btn.dataset.v;
+  dlg.dataset.variant = variant;
+  // V1 无类型分段 → 副文保持全信息；V2/V3 分段承担分类，副文精简
+  dlgDesc.textContent = variant === 'v1'
+    ? '描述你遇到的问题，最多可以附 4 张截图。'
+    : '告诉我们发生了什么，或想要什么。';
+  setState(state); // 变体切换时重算成功态形态
+});
+['state', 'state2'].forEach(k => {
+  document.querySelector('[data-tweak="' + k + '"]').addEventListener('click', (e) => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    setState(btn.dataset.v);
+  });
+});
+document.querySelector('[data-tweak="theme"]').addEventListener('click', (e) => {
+  const btn = e.target.closest('button'); if (!btn) return;
+  document.querySelectorAll('[data-tweak="theme"] button').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  document.documentElement.classList.toggle('dark', btn.dataset.v === 'dark');
+});
+
+renderThumbs();
+syncSubmit();
+</script>
+</body>
+</html>

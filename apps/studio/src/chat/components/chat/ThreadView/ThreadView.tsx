@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ThreadPrimitive, ComposerPrimitive } from '@assistant-ui/react'
+import { ThreadPrimitive, ComposerPrimitive, useComposerRuntime } from '@assistant-ui/react'
 import { AnimatePresence, motion } from 'motion/react'
 import {
   Clapperboard,
@@ -27,12 +27,13 @@ import { Input } from '@/src/components/ui/input'
 import { Label } from '@/src/components/ui/label'
 
 import { useI18n, useT } from '../../../i18n'
+import { attachFilesToComposer } from '../../../composer/attachFiles'
 import { useChatStore, useDelayedSessionLoading } from '../../../stores/chat'
 import { useComposerModeStore } from '../../../stores/composerMode'
 import { useComposerOverlayStore } from '../../../stores/composerOverlay'
 import { useSessionTitleStore } from '../../../stores/sessionTitle'
 import { findSkillChipSpec } from '../../../composer/skillChipRegistry'
-import { fileIconPathsByKey } from '../FileTypeIcon'
+import { SkillChipIcon } from '../SkillChipIcon'
 import { Composer } from './Composer'
 import { DemoShowcase } from './DemoShowcase'
 import { ReplayControlBar } from '../ReplayControlBar'
@@ -55,6 +56,7 @@ import {
   useSheetPreviewStore
 } from '../../../stores/filePreview'
 import { stripMessageMarker } from '../../../lib/messageMarkers'
+import { condenseFileMentions } from '../../../lib/mentionDisplay'
 import { OutputsButton } from './OutputsPanel'
 
 /**
@@ -517,6 +519,12 @@ export function ThreadView(): React.JSX.Element {
   // 预览 / 图片编辑任一右栏打开。宽度共用同一条持久化的 chatColWidth。
   const chatRailed =
     isSplitMode || showWorkflowPanel || showSheetPreview || showImageEdit
+  // 自管整列 dropzone（原 AttachmentDropzone，2026-07-16 附件内联化）：
+  // dragenter/leave 深度计数（子元素间成对冒泡，归零才是真离开），drop 走
+  // attachFilesToComposer 统一分流。runtime 只给无路径文件的 addAttachment
+  // 兜底用。
+  const dragDepthRef = useRef(0)
+  const composerRuntime = useComposerRuntime()
   // 切会话即收起表格预览与图片编辑：路径虽跨会话有效（文件还在盘上），但
   // 都是「点开看一眼/改一下」的瞬时动作，残留与新会话无关的旧面板读作
   // 串台。挂载首跑也会触发一次——两个 close 都幂等，启动时 path 本就是 null。
@@ -594,20 +602,38 @@ export function ThreadView(): React.JSX.Element {
           workspace card takes the rest (figure 27); the workflow-script
           split rails it the same way.
 
-          It's also the file-drop target: `AttachmentDropzone` (asChild) is
-          applied to this ENTIRE column rather than just the composer card,
-          so dragging a file over the message viewport or header works too,
-          not only over the input. `asChild` (Radix Slot) merges the
-          primitive's drag handlers onto this div without adding a wrapper
-          element or touching layout. The primitive doesn't need to be
-          nested inside `ComposerPrimitive.Root` — its drop handler resolves
-          `aui.composer()` directly via `useAui()` — so moving the boundary
-          up here is safe and drops still land through the same
-          `addAttachment` pipeline the composer's own dropzone used. The
-          `group/dropzone` marker lets the full-column highlight overlay
-          below react to the primitive's internal `data-dragging` state. */}
-      <ComposerPrimitive.AttachmentDropzone asChild>
+          It's also the file-drop target, applied to this ENTIRE column
+          rather than just the composer card, so dragging a file over the
+          message viewport or header works too, not only over the input.
+          （2026-07-16 附件内联化）曾是 assistant-ui 的 AttachmentDropzone
+          (asChild)——其 drop 只会 addAttachment；换成自管的四个 drag
+          handler 后，drop 走统一分流 attachFilesToComposer：有路径 →
+          编辑器内联 `@"path"` mention chip，无路径 → attachments 兜底。
+          `data-dragging` 由 dragenter 深度计数命令式维护（enter/leave 在
+          子元素间成对冒泡，计数归零才算真正离开），高亮 overlay 的
+          `group-data-[dragging=true]/dropzone` CSS 原样复用。 */}
         <div
+          onDragEnter={(e) => {
+            if (!e.dataTransfer?.types.includes('Files')) return
+            e.preventDefault()
+            if (++dragDepthRef.current === 1)
+              e.currentTarget.setAttribute('data-dragging', 'true')
+          }}
+          onDragOver={(e) => {
+            if (!e.dataTransfer?.types.includes('Files')) return
+            e.preventDefault()
+          }}
+          onDragLeave={(e) => {
+            if (dragDepthRef.current > 0 && --dragDepthRef.current === 0)
+              e.currentTarget.setAttribute('data-dragging', 'false')
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            dragDepthRef.current = 0
+            e.currentTarget.setAttribute('data-dragging', 'false')
+            const files = Array.from(e.dataTransfer?.files ?? [])
+            if (files.length > 0) void attachFilesToComposer(files, composerRuntime)
+          }}
           className={
             'group/dropzone relative flex h-full min-h-0 flex-col ' +
             // 4px (the smallest radius, matching .chat-app's clip) — explicit so
@@ -804,7 +830,6 @@ export function ThreadView(): React.JSX.Element {
           自渲染 null，零成本常驻。 */}
       <ReplayControlBar />
       </div>
-      </ComposerPrimitive.AttachmentDropzone>
 
       {/* Drag handle + gutter between the chat rail and the slides pane.
           Replaces the old `border-r` hairline: it carries the visual gap
@@ -1151,14 +1176,29 @@ function ChatHeader(): React.JSX.Element {
   // 标题旁挂「演示回放」标签——与首页 DemoShowcase 卡片标题同款视觉语言
   // （静态品牌绿点 + 文案，见该组件）。
   const isReplay = isReplaySessionId(sessionId)
+  // 新会话（有 sessionId 但还没有任何消息）同样不渲染 ··· 菜单和标题的
+  // 重命名入口（2026-07-16 用户实锤，两处同族）：sessionId 在首条消息
+  // 之前就已分配，光判 sessionId 挡不住空会话——而重命名/导出对没内容
+  // 的会话既无意义又可能因 transcript 未落盘而静默失败。
+  const hasMessages = useChatStore((s) => s.messages.length > 0)
+  // 标题可重命名 = 真会话 + 非回放 + 已有消息。标题按钮 disabled/title/
+  // aria/铅笔与 ··· 菜单五处共用这一个判定，别再各写各的条件。
+  // ⚠️ 写法必须是 `sessionId !== null &&`（不能 Boolean(sessionId)）——
+  // TS 的 aliased-condition narrowing 才能在 `canRename ?` 分支里把
+  // sessionId 收窄成 string（菜单内部拿它当索引/传参）。
+  const canRename = sessionId !== null && !isReplay && hasMessages
   // 消息内嵌协议标记（[[sheet-selection]]/[[image-edit]]）剥离在 slash
   // 命令拆分之前——否则表格「框选问 AI」这类消息的 firstPrompt（marker
   // JSON + 提示语 + TSV）会原样顶栏展示，撑成一整行（2026-07-13 事故，
   // 详见 RailSessionList.displayTitle 同款修复的注释）。
   const strippedTitle = title ? stripMessageMarker(title) : title
+  // 标题里的 `@"path"` mention 压成 basename——首条消息带内联文件时，
+  // 原始标题是一整条绝对路径（「帮我修改@/Users/…/deck.pptx：…」），
+  // 头部一行放不下也没人想读；与气泡 chip 同一份识别规则（mentionDisplay）。
+  const condensedTitle = strippedTitle ? condenseFileMentions(strippedTitle) : strippedTitle
   const display =
-    strippedTitle && strippedTitle.trim()
-      ? strippedTitle
+    condensedTitle && condensedTitle.trim()
+      ? condensedTitle
       : t('chatHeaderUntitled')
 
   // 斜杠命令标题拆分：'/claude-desktop:ppt-master 武汉大学介绍' →
@@ -1300,17 +1340,7 @@ function ChatHeader(): React.JSX.Element {
             命令或纯聊天标题回退成纯装饰的 muted 线性图标。编辑态也保留，
             rename 输入框展开时行首不跳。 */}
         {skillSpec ? (
-          <svg
-            width={16}
-            height={16}
-            viewBox="0 0 48 48"
-            aria-hidden="true"
-            className="size-4 shrink-0"
-          >
-            {fileIconPathsByKey(skillSpec.icon).map((p, pi) => (
-              <path key={pi} d={p.d} fill={p.fill} />
-            ))}
-          </svg>
+          <SkillChipIcon src={skillSpec.image} size={16} className="size-4" />
         ) : (
           <MessageSquareText
             aria-hidden
@@ -1340,10 +1370,10 @@ function ChatHeader(): React.JSX.Element {
           <button
             type="button"
             onClick={startEdit}
-            disabled={!sessionId || isReplay}
-            title={sessionId && !isReplay ? t('renameChat') : undefined}
+            disabled={!canRename}
+            title={canRename ? t('renameChat') : undefined}
             aria-label={
-              sessionId && !isReplay ? `${t('renameChat')}: ${display}` : undefined
+              canRename ? `${t('renameChat')}: ${display}` : undefined
             }
             // group/title scopes the pencil reveal to hovering the title
             // itself, not the whole header band.
@@ -1352,7 +1382,7 @@ function ChatHeader(): React.JSX.Element {
             <span className="min-w-0 truncate" title={display}>
               {restTitle}
             </span>
-            {sessionId && !isReplay ? (
+            {canRename ? (
               <svg
                 width="12"
                 height="12"
@@ -1386,9 +1416,10 @@ function ChatHeader(): React.JSX.Element {
            ——菜单里全是会话操作，空态挂个禁用按钮只是噪音。回放会话
            同样不渲染：菜单项（重命名/导出为演示）全部要真实 sessionId
            走 IPC，对 replay: 前缀的假 id 调用只会静默失败或报错。
+           新会话（有 id 没消息）也不渲染——见 hasMessages 注释。
            Content portal 到 body、脱离 .chat-app 豁免，但 shadcn 原语
            自带 data-slot，天然逃逸 canvas 裸元素 reset（CLAUDE.md）。 */}
-        {sessionId && !isReplay ? (
+        {canRename ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -1562,16 +1593,22 @@ function ChatHeader(): React.JSX.Element {
    i18n.ts. Restore from git history to bring the grid back. */
 
 /**
- * Empty thread state (figure 26): a vertically-centered block of
- * mascot → title → subtitle → composer → promo banner. The composer is
- * rendered HERE (not in the bottom dock) so it sits in the centered group;
- * the bottom dock is hidden while empty (ThreadPrimitive.If empty={false}
- * in the main render) so there's only ever one Composer instance. Once the
+ * Empty thread state（2026-07-16 重排，原型 docs/empty-state-composer-
+ * prototype.html，参考 WorkBuddy 空态）: a vertically-centered block of
+ * hero title (two big lines) → slogan → Composer variant='hero'（自带
+ * ScenarioRail 分类 tab + 技能/推荐 prompt chips + 灰壳托盘，见 Composer
+ * 的注释）→ demo showcase → promo banner. The composer is rendered HERE
+ * (not in the bottom dock) so it sits in the centered group; the bottom
+ * dock is hidden while empty (ThreadPrimitive.If empty={false} in the
+ * main render) so there's only ever one Composer instance. Once the
  * thread has messages, the dock takes over and the composer pins to the
  * bottom as usual.
  */
 function EmptyState(): React.JSX.Element {
   const t = useT()
+  // Hero 标题在全角逗号处断成两行大字（「不止聊天，」/「搞定一切」）。英文
+  // 标题没有全角逗号 → parts 只有一个元素，单行渲染，无多余 <br>。
+  const titleParts = t('emptyStateTitle').split('，')
   return (
     // Enter fade on mount (new chat / switching to an empty session). Pure
     // opacity ONLY: this block lives INSIDE the scroll viewport, where any
@@ -1583,35 +1620,30 @@ function EmptyState(): React.JSX.Element {
       transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
       className="flex flex-1 flex-col items-stretch justify-center py-10"
     >
-      {/* Mascot — green chat-bubble glyph. */}
-      <div className="mb-5 flex size-14 items-center justify-center rounded-2xl bg-[var(--rail-accent-soft,#dcf5e6)]">
-        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path
-            d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 16.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z"
-            stroke="var(--rail-accent-ink,#0f7a38)"
-            strokeWidth="1.6"
-            strokeLinejoin="round"
-          />
-          <circle cx="9" cy="11" r="1" fill="var(--rail-accent-ink,#0f7a38)" />
-          <circle cx="15" cy="11" r="1" fill="var(--rail-accent-ink,#0f7a38)" />
-        </svg>
-      </div>
-      <h1 className="mb-2.5 text-[30px] font-bold tracking-tight text-foreground">
-        {t('emptyStateTitle')}
+      <h1 className="text-[clamp(36px,4.5vw,52px)] font-bold leading-[1.18] tracking-tight text-foreground">
+        {titleParts.map((part, i) => (
+          <span key={i} className="block">
+            {i < titleParts.length - 1 ? `${part}，` : part}
+          </span>
+        ))}
       </h1>
-      <p className="mb-7 text-[14px] text-muted-foreground/80">
+      <p className="mb-8 mt-4 text-[14px] text-muted-foreground/80">
         {t('emptyStateScenarioHint')}
       </p>
 
-      {/* Composer sits inside the centered block (not the bottom dock). */}
-      <Composer />
+      {/* Composer sits inside the centered block (not the bottom dock).
+          hero 形态：分类 tab + 技能 chips 的 ScenarioRail 由它自己渲染在
+          卡片上方，工作目录/权限行收进灰壳托盘的延伸条。 */}
+      <Composer variant="hero" />
 
       {/* 「看看它能做什么」演示区：内置演示录像的卡片入口（点卡片就地
           回放）。没有内置录像时自渲染 null，页面与旧版完全一致。 */}
       <DemoShowcase />
 
       {/* Promo banner (figure 26) — VISUAL-ONLY placeholder; the desktop app
-          has no credits/PRO system behind it. */}
+          has no credits/PRO system behind it.
+          暂时下线（2026-07-16 用户要求）：积分/PRO 体系尚未接入，占位横幅
+          先注释掉；等真实系统落地后恢复下面这段并接上真实数据与链接。
       <div className="mt-7 flex items-center gap-4 rounded-2xl bg-foreground/[0.03] px-5 py-4 ring-1 ring-black/[0.04] dark:ring-white/[0.06]">
         <div className="size-11 shrink-0 rounded-xl bg-gradient-to-br from-sky-200 to-emerald-200" aria-hidden />
         <div className="min-w-0 flex-1">
@@ -1631,6 +1663,7 @@ function EmptyState(): React.JSX.Element {
           领取PRO
         </button>
       </div>
+      */}
     </motion.div>
   )
 }

@@ -131,14 +131,26 @@ export function removeComposerAttachmentsByPath(
  * 来）；剪贴板粘贴无路径的图片跳过。与点击路径不同这里不降级系统应用
  * ——自动弹一个外部窗口太突兀，降级只留给用户主动点击。
  */
-function autoOpenPreviewPanel(name: string, path: string): void {
+export function autoOpenPreviewPanel(name: string, path: string): void {
   if (!path || splitWorkspaceBusyNow()) return
-  const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
-  if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
+  const kind = previewPanelKind(name)
+  if (kind === 'sheet') {
     useSheetPreviewStore.getState().openPreview(path)
-  } else if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp') {
+  } else if (kind === 'image') {
     useImageEditStore.getState().openEditor(path)
   }
+}
+
+/**
+ * 右栏面板认不认这个文件（按扩展名）——「哪些类型可预览」的单一真源：
+ * autoOpenPreviewPanel 的分流、composer mention chip 的可点判定（点 chip
+ * 重开面板，chipNodeView 2026-07-16）都读这里。
+ */
+export function previewPanelKind(name: string): 'sheet' | 'image' | null {
+  const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
+  if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') return 'sheet'
+  if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp') return 'image'
+  return null
 }
 
 /**

@@ -70,9 +70,20 @@ function DialogContent({
       >
         {children}
         {showCloseButton && (
+          // hover 语法对齐 ghost icon 按钮（会话行 ···、顶栏图标钮同款）：
+          // 圆角 muted 底 + 前景色抬升，替换 shadcn 默认的纯透明度渐显
+          // ——全 app 图标钮 hover 都出底，唯独弹窗 × 不出，交互语言不
+          // 一致（2026-07-16 用户对照实锤）。28px 点击区（原来是裸 16px
+          // 图标），定位从 top-4 收到 top-3 让图标光学位置基本不动。
+          // hover 底是 muted 不是 upstream 的 accent——本项目 --accent 被
+          // 产品语义占用（用户主题色，默认绿），照抄 upstream 会 hover 出
+          // 一块主题色底（2026-07-16 实锤），与 button.tsx ghost 变体的
+          // 本地化偏离同因同解，data-[state=open] 一并改掉。焦点环同理
+          // 照 Button 基件：focus-visible（键盘导航才出）而非 upstream 的
+          // focus——后者鼠标点一下就套一圈主题色 ring（同日实锤）。
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+            className="absolute top-3 right-3 grid size-7 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none data-[state=open]:bg-muted data-[state=open]:text-muted-foreground dark:hover:bg-muted/60 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
             <XIcon />
             <span className="sr-only">Close</span>
