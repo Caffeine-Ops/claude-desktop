@@ -1,6 +1,6 @@
 {
   "name": "@claude-desktop/studio",
-  "version": "0.0.33",
+  "version": "0.0.34",
   "description": "Claude Desktop 单包形态（原 apps/desktop 已并入）：electron/ 是 Electron 宿主（main+preload+shared），app/ + src/ 是统一前端（Next.js，prod 走 static export 由 app:// 协议加载）。",
   "private": true,
   "author": "Caffeine-Ops",
