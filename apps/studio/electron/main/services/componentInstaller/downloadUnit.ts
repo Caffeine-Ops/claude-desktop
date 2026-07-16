@@ -32,6 +32,7 @@ export async function downloadWithMirrors(
       lastErr = err // 记下继续试下一个镜像
     }
   }
+  if (reported > 0) { onBytes(-reported); reported = 0 } // 全失败也回滚，不留幽灵进度
   throw lastErr
 }
 

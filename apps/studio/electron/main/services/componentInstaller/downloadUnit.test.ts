@@ -30,4 +30,22 @@ describe('downloadWithMirrors', () => {
     await expect(downloadWithMirrors(['a'], '/tmp/x', ac.signal, () => {}, dl)).rejects.toThrow()
     expect(tried).toEqual([])
   })
+  test('换镜像回滚：首镜像已报字节被负增量冲销，净累计=成功镜像字节', async () => {
+    const deltas: number[] = []
+    const dl: SingleUrlDownloader = async (url, _dest, _sig, onBytes) => {
+      if (url === 'a') { onBytes(300); throw new Error('a mid-fail') }
+      onBytes(500)
+    }
+    await downloadWithMirrors(['a', 'b'], '/tmp/x', noopSignal, (n) => deltas.push(n), dl)
+    expect(deltas).toContain(-300)
+    expect(deltas.reduce((s, n) => s + n, 0)).toBe(500)
+  })
+  test('全镜像失败：所有已报字节都被回滚，净累计=0', async () => {
+    const deltas: number[] = []
+    const dl: SingleUrlDownloader = async (_url, _dest, _sig, onBytes) => {
+      onBytes(200); throw new Error('down')
+    }
+    await expect(downloadWithMirrors(['a', 'b'], '/tmp/x', noopSignal, (n) => deltas.push(n), dl)).rejects.toThrow()
+    expect(deltas.reduce((s, n) => s + n, 0)).toBe(0)
+  })
 })
