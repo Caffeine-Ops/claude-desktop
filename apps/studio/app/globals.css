@@ -179,6 +179,109 @@
   }
 }
 
+/* ── 问题反馈成功叙事（FeedbackDialog，原型 docs/ui-prototype-feedback.html
+ * V3）──────────────────────────────────────────────────────────────
+ * disc-pop：品牌绿圆底从 0.5 缩放弹入；check-draw：对勾 SVG 描线
+ * （stroke-dashoffset 24→0，延迟 180ms 等圆底先落定）。提交成功一次性
+ * 播放，remount（success 态整卡切换）自动触发。纯装饰，reduced-motion
+ * 下关停——描线动画关掉后 dashoffset 停在 24 会让对勾隐形，所以 reduce
+ * 分支要直接把 dashoffset 归零而不是只停动画。 */
+@keyframes fb-disc-pop {
+  from {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+}
+.fb-disc-pop {
+  animation: fb-disc-pop 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes fb-check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.fb-check-draw {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: fb-check-draw 0.32s cubic-bezier(0.16, 1, 0.3, 1) 0.18s forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-disc-pop {
+    animation: none;
+  }
+  .fb-check-draw {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ── 更新反馈 toast（UpdateReadyToast，原型 docs/ui-prototype-update-toast.html
+ * V1「精修基线」，2026-07-16）─────────────────────────────────────────
+ * enter：spring 上浮入场（轻微过冲）；leave：下沉淡出退场（收起前播 220ms，
+ * 组件里 leaving 态驱动）；life：自动收起进度线（scaleX 1→0 线性走完，
+ * 时长由组件内联 animation-duration 提供，hover 经容器 .group 暂停——JS 的
+ * 收起定时器同步暂停/重置，两边必须一起动，见组件 pause/resume 注释）；
+ * check-draw：绿勾描线，参数同 fb-check-draw 但 dasharray 26（lucide Check
+ * 的路径更长）。reduced-motion：enter/leave 关停；life 线整个藏掉（动画停在
+ * 满格会误导「不会自动消失」，收起仍由 JS 定时器保证）；描线归零显形。 */
+@keyframes od-toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.95);
+  }
+}
+.od-toast-enter {
+  animation: od-toast-enter 0.38s cubic-bezier(0.34, 1.35, 0.64, 1) both;
+}
+@keyframes od-toast-leave {
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+}
+.od-toast-leave {
+  animation: od-toast-leave 0.22s cubic-bezier(0.4, 0, 1, 1) both;
+}
+@keyframes od-toast-life {
+  to {
+    transform: scaleX(0);
+  }
+}
+.od-toast-life {
+  transform-origin: left;
+  animation-name: od-toast-life;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  /* animation-duration 由组件按档位内联（4s / 8s） */
+}
+.group:hover > .od-toast-life {
+  animation-play-state: paused;
+}
+@keyframes od-check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.od-check-draw path {
+  stroke-dasharray: 26;
+  stroke-dashoffset: 26;
+  animation: od-check-draw 0.45s cubic-bezier(0.55, 0, 0.35, 1) 0.18s forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .od-toast-enter,
+  .od-toast-leave {
+    animation: none;
+  }
+  .od-toast-life {
+    animation: none;
+    visibility: hidden;
+  }
+  .od-check-draw path {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
+
 /* ── 工作目录 chip 的切换动效（Composer 的 WorkspaceDirPicker，原型
  * docs/ui-prototype-workspace-picker.html 的 C「搬家」变体）──────────
  * dot-travel：三粒点在源/目标两个文件夹图标之间依次流动——把

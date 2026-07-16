@@ -8,7 +8,13 @@ import {
   LEADING_SLASH_COMMAND_RE,
   findSkillChipSpec
 } from '../../../composer/skillChipRegistry'
-import { FileTypeIcon, fileIconPathsByKey } from '../FileTypeIcon'
+import { FileTypeIcon } from '../FileTypeIcon'
+import { SkillChipIcon } from '../SkillChipIcon'
+import {
+  FILE_MENTION_DISPLAY_RE,
+  basenameOf,
+  mentionInnerToPath
+} from '../../../lib/mentionDisplay'
 import {
   parseImageEditMessage,
   parseSheetSelectionMessage,
@@ -512,20 +518,12 @@ function CloseGlyph(): React.JSX.Element {
  * stored/sent string is untouched, exactly like the composer's own
  * mention chips (chipNodeView) are a view layer over the same text.
  *
- * Matching mirrors fusion-code's own regexes (and pmSchema's TOKEN_RE):
- *   - quoted:  @"path with spaces.pdf"
- *   - bare:    @src/foo.ts   (runs to the next whitespace)
- * A mention is only recognized at start-of-string or after whitespace,
- * so `a@b` / `http://x` don't false-trigger.
+ * Matching lives in lib/mentionDisplay.ts (FILE_MENTION_DISPLAY_RE)，与
+ * ChatHeader / 侧栏标题的 condenseFileMentions 同一份规则：quoted 任意
+ * 位置命中、bare 允许中文前缀零空格相邻（占位 pill 替换出的 chip 常紧贴
+ * 中文），路径体在中文标点处截断（旧 `@\S+` 会把「：【说明…】」整段吞进
+ * chip）。email 的 `user@host` 由 lookbehind 拒掉。
  */
-const USER_MENTION_RE = /(^|\s)(@"[^"]+"|@\S+)/g
-
-function basenameOf(path: string): string {
-  const trimmed = path.replace(/\/+$/, '')
-  const slash = trimmed.lastIndexOf('/')
-  const name = slash >= 0 ? trimmed.slice(slash + 1) : trimmed
-  return name || path
-}
 
 function UserBubbleText({ text }: { text: string }): React.JSX.Element {
   // Split into alternating plain-text / mention segments. We keep the
@@ -547,11 +545,7 @@ function UserBubbleText({ text }: { text: string }): React.JSX.Element {
         title={slashMatch[1]}
         className="mr-0.5 inline-flex items-center gap-1 rounded-md bg-white/20 px-1.5 py-0.5 align-baseline text-[13px] font-medium ring-1 ring-white/25"
       >
-        <svg width={12} height={12} viewBox="0 0 48 48" aria-hidden="true" className="shrink-0">
-          {fileIconPathsByKey(slashSkill.icon).map((p, pi) => (
-            <path key={pi} d={p.d} fill={p.fill} />
-          ))}
-        </svg>
+        <SkillChipIcon src={slashSkill.image} size={12} />
         <span>{slashSkill.label}</span>
       </span>
     )
@@ -560,19 +554,15 @@ function UserBubbleText({ text }: { text: string }): React.JSX.Element {
   }
 
   let m: RegExpExecArray | null
-  USER_MENTION_RE.lastIndex = last
-  while ((m = USER_MENTION_RE.exec(text)) !== null) {
-    const lead = m[1] ?? ''
-    const token = m[2]!
-    const tokenStart = m.index + lead.length
-    // Plain text before this mention (including the captured leading WS).
+  FILE_MENTION_DISPLAY_RE.lastIndex = last
+  while ((m = FILE_MENTION_DISPLAY_RE.exec(text)) !== null) {
+    const token = m[0]
+    const tokenStart = m.index
+    // Plain text before this mention.
     if (tokenStart > last) {
       nodes.push(text.slice(last, tokenStart))
     }
-    // Strip the `@` and any surrounding quotes to get the raw path.
-    const raw = token.slice(1)
-    const path =
-      raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw
+    const path = mentionInnerToPath(m[1]!)
     nodes.push(
       <span
         key={`fm-${key++}`}

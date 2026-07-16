@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>更新反馈 Toast · 设计原型</title>
+<style>
+/* ================================================================
+   Design tokens —— 全部照抄 packages/design-tokens/tokens.css，
+   亮/暗双档，无一新造色相。原型定稿后类名直接映射回 Tailwind。
+   ================================================================ */
+:root {
+  --card: 0 0% 100%;
+  --card-foreground: 240 3% 12%;
+  --foreground: 240 3% 12%;
+  --background: 240 6% 97%;
+  --primary: 211 100% 45%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --destructive: 0 72% 50%;
+  --border: 240 6% 84%;
+  --brand: 142 76% 36%;
+  --brand-foreground: 0 0% 100%;
+  --sidebar: 240 6% 94%;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* 阴影三层：ambient 大扩散 + key 近投影 + 1px 边缘定形（暗档换更深值） */
+  --toast-shadow:
+    0 12px 36px hsl(240 8% 12% / 0.13),
+    0 3px 10px hsl(240 8% 12% / 0.07),
+    0 0 0 1px hsl(var(--border) / 0.9);
+  --stage-bg: 240 6% 91%;
+}
+html.dark {
+  --card: 30 3% 13%;
+  --card-foreground: 39 35% 92%;
+  --foreground: 40 21% 89%;
+  --background: 40 6% 10%;
+  --primary: 210 100% 58%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --destructive: 0 72% 55%;
+  --border: 49 12% 18%;
+  --brand: 145 60% 52%;
+  --brand-foreground: 40 6% 10%;
+  --sidebar: 40 6% 12%;
+  --toast-shadow:
+    0 16px 44px hsl(0 0% 0% / 0.55),
+    0 4px 12px hsl(0 0% 0% / 0.35),
+    0 0 0 1px hsl(var(--border));
+  --stage-bg: 40 5% 8%;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  transition: background .25s ease, color .25s ease;
+  padding-bottom: 120px;
+}
+
+/* ── 页面骨架 ─────────────────────────────────────── */
+.page { max-width: 1080px; margin: 0 auto; padding: 56px 40px 0; }
+.page-head h1 { font-size: 26px; font-weight: 650; letter-spacing: -0.4px; }
+.page-head p  { margin-top: 8px; font-size: 13px; color: hsl(var(--muted-foreground)); line-height: 1.7; }
+.section { margin-top: 52px; }
+.section > h2 {
+  font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.2px;
+  color: hsl(var(--muted-foreground));
+  display: flex; align-items: center; gap: 10px;
+}
+.section > h2::after { content: ''; flex: 1; height: 1px; background: hsl(var(--border)); }
+.section > .sub { margin-top: 6px; font-size: 12.5px; color: hsl(var(--muted-foreground)); }
+
+/* 陈列网格：每格 = 一张卡 + 下方标注 */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 28px; margin-top: 24px; }
+.slot { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.slot .label { font-size: 11.5px; color: hsl(var(--muted-foreground)); display: flex; gap: 8px; align-items: baseline; }
+.slot .label b { font-size: 12px; font-weight: 600; color: hsl(var(--foreground)); }
+
+/* ================================================================
+   Toast 本体（transient 反馈小卡）
+   ================================================================ */
+.toast {
+  position: relative;
+  display: flex; align-items: center; gap: 11px;
+  max-width: 336px;
+  background: hsl(var(--card));
+  border-radius: 13px;
+  padding: 12px 16px 12px 12px;
+  box-shadow: var(--toast-shadow);
+  overflow: hidden;
+  transition: background .25s ease, box-shadow .25s ease;
+}
+.toast .msg { font-size: 13px; line-height: 1.55; color: hsl(var(--card-foreground)); min-width: 0; }
+.toast .msg small { display: block; font-size: 11.5px; color: hsl(var(--muted-foreground)); margin-top: 1px; }
+
+/* 小卡关闭钮：常驻右端（hover 显现的可发现性差），muted 起步 hover 加深。
+ * 点击 = 提前收起；checking 态也可关（检查仍后台完成，只是放弃看结论）。 */
+.toast .tclose {
+  flex: none; width: 22px; height: 22px; border-radius: 6px; border: 0; cursor: pointer;
+  background: transparent; color: hsl(var(--muted-foreground) / 0.65);
+  display: grid; place-items: center;
+  margin-left: 1px; margin-right: -5px;
+  transition: background .15s ease, color .15s ease;
+}
+.toast .tclose:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+.toast .tclose svg { width: 12px; height: 12px; }
+
+/* 图标位：26px 圆，语义 tint 底（V1 基线形态） */
+.toast .ico {
+  width: 26px; height: 26px; border-radius: 8px; flex: none;
+  display: grid; place-items: center;
+}
+.toast .ico svg { width: 14px; height: 14px; }
+.toast[data-tone="ok"]    .ico { background: hsl(var(--brand) / 0.13); color: hsl(var(--brand)); }
+.toast[data-tone="info"]  .ico { background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); }
+.toast[data-tone="err"]   .ico { background: hsl(var(--destructive) / 0.11); color: hsl(var(--destructive)); }
+.toast[data-tone="busy"]  .ico { background: hsl(var(--primary) / 0.10); color: hsl(var(--primary)); }
+
+/* 自动收起进度线：底部 2px，hover 暂停（真实实现 = 暂停收起定时器） */
+.toast .life {
+  position: absolute; left: 0; bottom: 0; height: 2px; width: 100%;
+  transform-origin: left;
+  background: currentColor; opacity: .22;
+}
+.toast[data-tone="ok"]  .life { color: hsl(var(--brand)); }
+.toast[data-tone="info"].life-on .life { color: hsl(var(--muted-foreground)); }
+.toast[data-tone="err"] .life { color: hsl(var(--destructive)); }
+.life-on .life { animation: lifeline var(--life, 4s) linear forwards; }
+.toast:hover .life { animation-play-state: paused; }
+@keyframes lifeline { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* spinner：SVG 圆环 dash 旋转（比字体图标更细腻） */
+.spin { animation: rot 0.9s linear infinite; }
+@keyframes rot { to { transform: rotate(360deg); } }
+
+/* 绿勾 stroke 画入 */
+.draw path, .draw polyline {
+  stroke-dasharray: 26; stroke-dashoffset: 26;
+  animation: draw .45s cubic-bezier(.55,0,.35,1) .18s forwards;
+}
+@keyframes draw { to { stroke-dashoffset: 0; } }
+
+/* 入场/退场（重播按钮与 live 演示共用） */
+.enter { animation: enter .38s cubic-bezier(.34,1.35,.64,1) both; }
+@keyframes enter {
+  from { opacity: 0; transform: translateY(14px) scale(.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.leave { animation: leave .22s cubic-bezier(.4,0,1,1) both; }
+@keyframes leave {
+  to { opacity: 0; transform: translateY(8px) scale(.97); }
+}
+
+/* ================================================================
+   主卡片（发现新版 / 已就绪）—— 现有 UpdateReadyToast 的精修版
+   ================================================================ */
+.bigcard {
+  position: relative;
+  width: 336px;
+  background: hsl(var(--card));
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: var(--toast-shadow);
+  display: flex; gap: 12px; align-items: flex-start;
+  overflow: hidden;
+}
+.bigcard .ico {
+  width: 38px; height: 38px; border-radius: 11px; flex: none;
+  display: grid; place-items: center;
+}
+.bigcard .ico svg { width: 18px; height: 18px; }
+.bigcard[data-tone="dl"] .ico { background: hsl(var(--primary) / 0.11); color: hsl(var(--primary)); }
+.bigcard[data-tone="ok"] .ico { background: hsl(var(--brand) / 0.13); color: hsl(var(--brand)); }
+.bigcard .body { flex: 1; min-width: 0; }
+.bigcard .title { font-size: 13.5px; font-weight: 600; letter-spacing: -0.1px; }
+.bigcard .desc { margin-top: 3px; font-size: 12.5px; line-height: 1.6; color: hsl(var(--muted-foreground)); }
+.bigcard .close {
+  position: absolute; top: 10px; right: 10px;
+  width: 24px; height: 24px; border-radius: 7px; border: 0; cursor: pointer;
+  background: transparent; color: hsl(var(--muted-foreground));
+  display: grid; place-items: center;
+  transition: background .15s ease, color .15s ease;
+}
+.bigcard .close:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+.bigcard .close svg { width: 13px; height: 13px; }
+
+/* 下载进度：轨 + 填充 + 端点亮斑；右侧百分比等宽数字 */
+.prog { margin-top: 10px; display: flex; align-items: center; gap: 8px; }
+.prog .track { flex: 1; height: 4px; border-radius: 999px; background: hsl(var(--muted)); overflow: hidden; }
+.prog .fill {
+  height: 100%; border-radius: 999px; width: 0%;
+  background: hsl(var(--primary));
+  position: relative;
+  transition: width .45s cubic-bezier(.3,.7,.3,1);
+}
+.prog .fill::after {
+  content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 10px;
+  background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.0) 0%, #fff3 100%);
+}
+.prog .pct { font-size: 11px; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); min-width: 30px; text-align: right; }
+
+.bigcard .row { margin-top: 12px; display: flex; gap: 6px; align-items: center; }
+.btn {
+  font-family: inherit; font-size: 12.5px; font-weight: 550;
+  border: 0; border-radius: 9px; cursor: pointer;
+  padding: 7px 13px;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: background .15s ease, transform .1s ease, box-shadow .15s ease;
+}
+.btn:active { transform: scale(.97); }
+.btn svg { width: 13px; height: 13px; }
+.btn.brand {
+  background: hsl(var(--brand)); color: hsl(var(--brand-foreground));
+  box-shadow: 0 1px 2px hsl(var(--brand) / 0.4), inset 0 1px 0 #ffffff2e;
+}
+.btn.brand:hover { background: hsl(var(--brand) / 0.9); }
+.btn.ghost { background: transparent; color: hsl(var(--muted-foreground)); }
+.btn.ghost:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+
+/* ================================================================
+   变体 V2 —— 语义浸染：卡底极淡语义 tint + 状态 hairline + 实心图标圆
+   ================================================================ */
+body[data-variant="v2"] .toast[data-tone="ok"]   { background: color-mix(in srgb, hsl(var(--brand)) 5%, hsl(var(--card))); box-shadow: var(--toast-shadow), inset 0 0 0 1px hsl(var(--brand) / 0.25); }
+body[data-variant="v2"] .toast[data-tone="err"]  { background: color-mix(in srgb, hsl(var(--destructive)) 5%, hsl(var(--card))); box-shadow: var(--toast-shadow), inset 0 0 0 1px hsl(var(--destructive) / 0.25); }
+body[data-variant="v2"] .toast[data-tone="busy"] { background: color-mix(in srgb, hsl(var(--primary)) 4%, hsl(var(--card))); }
+body[data-variant="v2"] .toast[data-tone="ok"] .ico   { background: hsl(var(--brand)); color: hsl(var(--brand-foreground)); border-radius: 999px; }
+body[data-variant="v2"] .toast[data-tone="err"] .ico  { background: hsl(var(--destructive)); color: #fff; border-radius: 999px; }
+body[data-variant="v2"] .toast[data-tone="info"] .ico { border-radius: 999px; }
+body[data-variant="v2"] .toast[data-tone="busy"] .ico { border-radius: 999px; }
+body[data-variant="v2"] .bigcard[data-tone="ok"] { box-shadow: var(--toast-shadow), inset 0 0 0 1px hsl(var(--brand) / 0.3); }
+body[data-variant="v2"] .bigcard[data-tone="ok"] .ico { background: hsl(var(--brand)); color: hsl(var(--brand-foreground)); border-radius: 999px; }
+
+/* ================================================================
+   变体 V3 —— 浮层玻璃：backdrop-blur + 半透卡底 + 顶缘高光
+   （挂在 z-9999 浮层上方,blur 吃得到底下内容,浮起感最强）
+   ================================================================ */
+body[data-variant="v3"] .toast,
+body[data-variant="v3"] .bigcard {
+  background: hsl(var(--card) / 0.72);
+  backdrop-filter: blur(18px) saturate(1.6);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow:
+    0 16px 44px hsl(240 10% 10% / 0.18),
+    0 3px 10px hsl(240 10% 10% / 0.08),
+    0 0 0 1px hsl(var(--border) / 0.7),
+    inset 0 1px 0 hsl(0 0% 100% / 0.5);
+}
+html.dark body[data-variant="v3"] .toast,
+html.dark body[data-variant="v3"] .bigcard {
+  background: hsl(var(--card) / 0.68);
+  box-shadow:
+    0 18px 50px hsl(0 0% 0% / 0.6),
+    0 4px 12px hsl(0 0% 0% / 0.4),
+    0 0 0 1px hsl(var(--border)),
+    inset 0 1px 0 hsl(0 0% 100% / 0.08);
+}
+
+/* ================================================================
+   Live 演示舞台：模拟 app 左下角（rail + 内容卡的极简 mock）
+   ================================================================ */
+.stage {
+  margin-top: 24px; position: relative; height: 300px;
+  border-radius: 16px; overflow: hidden;
+  background: hsl(var(--stage-bg));
+  box-shadow: inset 0 0 0 1px hsl(var(--border));
+  display: flex;
+}
+.stage .mock-rail {
+  width: 176px; background: hsl(var(--sidebar));
+  border-right: 1px solid hsl(var(--border));
+  padding: 18px 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.stage .mock-rail i {
+  display: block; height: 9px; border-radius: 4px;
+  background: hsl(var(--muted-foreground) / 0.16);
+}
+.stage .mock-rail i:nth-child(1) { width: 70%; }
+.stage .mock-rail i:nth-child(2) { width: 88%; }
+.stage .mock-rail i:nth-child(3) { width: 55%; }
+.stage .mock-rail i:nth-child(4) { width: 78%; }
+.stage .mock-main { flex: 1; padding: 18px; }
+.stage .mock-card {
+  height: 100%; border-radius: 12px; background: hsl(var(--card) / 0.6);
+  box-shadow: inset 0 0 0 1px hsl(var(--border) / 0.6);
+}
+.stage .toast-anchor { position: absolute; left: 16px; bottom: 16px; }
+.controls { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+.chip {
+  font-family: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+  border: 1px solid hsl(var(--border)); border-radius: 999px;
+  background: hsl(var(--card)); color: hsl(var(--foreground));
+  padding: 7px 14px;
+  transition: background .15s ease, border-color .15s ease, transform .1s ease;
+}
+.chip:hover { border-color: hsl(var(--muted-foreground) / 0.4); }
+.chip:active { transform: scale(.97); }
+
+/* ================================================================
+   Tweaks 面板
+   ================================================================ */
+.tweaks-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 100;
+  width: 42px; height: 42px; border-radius: 999px; border: 0; cursor: pointer;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  box-shadow: 0 6px 20px hsl(0 0% 0% / .25);
+  display: grid; place-items: center; font-size: 15px;
+  transition: transform .15s ease;
+}
+.tweaks-fab:hover { transform: scale(1.06); }
+.tweaks {
+  position: fixed; right: 20px; bottom: 72px; z-index: 100;
+  width: 240px; border-radius: 14px;
+  background: hsl(var(--card));
+  box-shadow: var(--toast-shadow);
+  padding: 14px; display: none;
+}
+.tweaks.open { display: block; animation: enter .25s cubic-bezier(.34,1.3,.64,1); }
+.tweaks h3 { font-size: 12px; font-weight: 650; letter-spacing: .8px; text-transform: uppercase; color: hsl(var(--muted-foreground)); margin-bottom: 12px; }
+.tweaks .row { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 12.5px; }
+.tweaks select {
+  font-family: inherit; font-size: 12px; padding: 4px 8px; border-radius: 7px;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--card)); color: hsl(var(--foreground));
+}
+.switch { position: relative; width: 34px; height: 20px; border-radius: 999px; border: 0; cursor: pointer; background: hsl(var(--muted)); transition: background .2s ease; }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 999px; background: #fff; box-shadow: 0 1px 3px #0003; transition: transform .2s cubic-bezier(.3,.7,.3,1.3); }
+.switch[aria-checked="true"] { background: hsl(var(--brand)); }
+.switch[aria-checked="true"]::after { transform: translateX(14px); }
+</style>
+</head>
+<body data-variant="v1">
+
+<div class="page">
+  <header class="page-head">
+    <h1>更新反馈 Toast</h1>
+    <p>手动「检查更新」的过程/结论反馈（transient 小卡）与「发现新版/已就绪」主卡片的视觉精修。<br>
+       全部色值来自 packages/design-tokens/tokens.css（亮/暗双档），右下角 Tweaks 可切换 3 个变体方向与主题。</p>
+  </header>
+
+  <!-- ── transient 小卡：四个状态 ─────────────────── -->
+  <section class="section">
+    <h2>Transient 反馈小卡</h2>
+    <p class="sub">左下角浮层位，与主卡片互斥。带自动收起进度线（hover 暂停），入场 spring 上浮。</p>
+    <div class="grid">
+
+      <div class="slot">
+        <div class="toast" data-tone="busy">
+          <span class="ico">
+            <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+              <circle cx="12" cy="12" r="9" opacity=".18"/>
+              <path d="M21 12a9 9 0 0 0-9-9"/>
+            </svg>
+          </span>
+          <span class="msg">正在检查更新…</span>
+          <button class="tclose" aria-label="关闭" onclick="demoClose(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+        </div>
+        <div class="label"><b>checking</b>无自动收起 · 由结论替换（25s 保险丝）· 可手动关</div>
+      </div>
+
+      <div class="slot">
+        <div class="toast life-on" data-tone="ok" style="--life: 4s">
+          <span class="ico">
+            <svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+          </span>
+          <span class="msg">已是最新版本 v0.0.34</span>
+          <button class="tclose" aria-label="关闭" onclick="demoClose(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+          <span class="life"></span>
+        </div>
+        <div class="label"><b>none</b>4s 自动收起 · 绿勾 stroke 画入</div>
+      </div>
+
+      <div class="slot">
+        <div class="toast life-on" data-tone="err" style="--life: 8s">
+          <span class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z"/>
+              <path d="M12 9v4"/><path d="M12 17h.01"/>
+            </svg>
+          </span>
+          <span class="msg">检查更新失败<small>net::ERR_CONNECTION_TIMED_OUT</small></span>
+          <button class="tclose" aria-label="关闭" onclick="demoClose(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+          <span class="life"></span>
+        </div>
+        <div class="label"><b>error</b>8s 自动收起 · 原因收进副行不撑破一行</div>
+      </div>
+
+      <div class="slot">
+        <div class="toast life-on" data-tone="info" style="--life: 4s">
+          <span class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
+            </svg>
+          </span>
+          <span class="msg">开发模式下无法检查更新<small>打包安装后可用</small></span>
+          <button class="tclose" aria-label="关闭" onclick="demoClose(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+          <span class="life"></span>
+        </div>
+        <div class="label"><b>unsupported</b>4s 自动收起 · dev / 未打包</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── 主卡片 ───────────────────────────────────── -->
+  <section class="section">
+    <h2>主卡片（沿用现有结构，层次精修）</h2>
+    <p class="sub">下载进度换 4px 圆角轨 + 等宽百分比；按钮改品牌绿实底 + 内高光；关闭钮收进右上角。</p>
+    <div class="grid">
+
+      <div class="slot">
+        <div class="bigcard" data-tone="dl">
+          <span class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </span>
+          <div class="body">
+            <div class="title">发现新版本 0.0.35</div>
+            <div class="desc">正在后台下载，完成后可一键重启更新。</div>
+            <div class="prog">
+              <div class="track"><div class="fill" id="demoFill" style="width:62%"></div></div>
+              <span class="pct" id="demoPct">62%</span>
+            </div>
+          </div>
+          <button class="close" aria-label="关闭" onclick="demoClose(this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="label"><b>available / downloading</b>进度实时推进 · 关闭 = 忽略此版本</div>
+      </div>
+
+      <div class="slot">
+        <div class="bigcard" data-tone="ok">
+          <span class="ico">
+            <svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+          </span>
+          <div class="body">
+            <div class="title">0.0.35 已就绪</div>
+            <div class="desc">新版本已下载完成，重启应用即可完成更新。</div>
+            <div class="row">
+              <button class="btn brand">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>
+                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>
+                </svg>
+                立即重启更新
+              </button>
+              <button class="btn ghost">稍后</button>
+            </div>
+          </div>
+          <button class="close" aria-label="关闭" onclick="demoClose(this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="label"><b>ready</b>绿勾画入 · 品牌绿 CTA</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── live 时序演示 ─────────────────────────────── -->
+  <section class="section">
+    <h2>Live 时序演示</h2>
+    <p class="sub">模拟 app 左下角完整流程：点击 → spinner → 结论 → 自动收起。演示压缩了真实网络耗时。</p>
+    <div class="stage">
+      <div class="mock-rail"><i></i><i></i><i></i><i></i></div>
+      <div class="mock-main"><div class="mock-card"></div></div>
+      <div class="toast-anchor" id="liveAnchor"></div>
+    </div>
+    <div class="controls">
+      <button class="chip" onclick="playScenario('none')">检查 → 已是最新</button>
+      <button class="chip" onclick="playScenario('error')">检查 → 失败</button>
+      <button class="chip" onclick="playScenario('unsupported')">检查 → 开发模式</button>
+      <button class="chip" onclick="playScenario('found')">检查 → 发现新版（下载→就绪）</button>
+    </div>
+  </section>
+</div>
+
+<!-- ── Tweaks ─────────────────────────────────────── -->
+<button class="tweaks-fab" onclick="document.getElementById('tweaks').classList.toggle('open')" aria-label="Tweaks">
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
+    <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
+    <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
+    <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
+  </svg>
+</button>
+<div class="tweaks" id="tweaks">
+  <h3>Tweaks</h3>
+  <div class="row">
+    <span>视觉变体</span>
+    <select onchange="document.body.dataset.variant = this.value">
+      <option value="v1">V1 · 精修基线</option>
+      <option value="v2">V2 · 语义浸染</option>
+      <option value="v3">V3 · 浮层玻璃</option>
+    </select>
+  </div>
+  <div class="row">
+    <span>深色模式</span>
+    <button class="switch" role="switch" aria-checked="false"
+      onclick="const on = this.getAttribute('aria-checked') !== 'true'; this.setAttribute('aria-checked', on); document.documentElement.classList.toggle('dark', on)"></button>
+  </div>
+  <div class="row">
+    <span>重播入场动画</span>
+    <button class="chip" style="padding:4px 10px" onclick="replayAll()">重播</button>
+  </div>
+</div>
+
+<script>
+/* 下载进度演示：62% ↔ 平滑推进循环 */
+(function loopProgress() {
+  const fill = document.getElementById('demoFill');
+  const pct = document.getElementById('demoPct');
+  let v = 18;
+  setInterval(() => {
+    v += 6 + Math.random() * 10;
+    if (v >= 100) v = 18;
+    fill.style.width = v.toFixed(0) + '%';
+    pct.textContent = v.toFixed(0) + '%';
+  }, 900);
+})();
+
+/* 重播：陈列区所有卡片重新入场 + 重画勾 + 重走进度线 */
+function replayAll() {
+  document.querySelectorAll('.toast, .bigcard').forEach((el, i) => {
+    el.classList.remove('enter');
+    el.querySelectorAll('.draw').forEach((s) => { const c = s.cloneNode(true); s.replaceWith(c); });
+    const life = el.querySelector('.life');
+    if (life) { const c = life.cloneNode(true); life.replaceWith(c); }
+    void el.offsetWidth; /* reflow 重启动画 */
+    el.style.animationDelay = (i * 45) + 'ms';
+    el.classList.add('enter');
+  });
+}
+
+/* ── Live 时序 ── */
+const anchor = document.getElementById('liveAnchor');
+let playToken = 0;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const TCLOSE = `<button class="tclose" aria-label="关闭" onclick="demoClose(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>`;
+function toastHTML(tone, inner, life) {
+  return `<div class="toast enter ${life ? 'life-on' : ''}" data-tone="${tone}" ${life ? `style="--life:${life}ms"` : ''}>${inner}${TCLOSE}${life ? '<span class="life"></span>' : ''}</div>`;
+}
+
+/* 关闭钮演示：live 区真收起（播退场后移除并终止时序）；陈列区播一遍
+ * 退场动画后自动回场（留着继续看，不真删）。 */
+function demoClose(btn) {
+  const card = btn.closest('.toast, .bigcard');
+  if (!card) return;
+  const inLive = !!btn.closest('#liveAnchor');
+  card.classList.remove('enter');
+  card.classList.add('leave');
+  if (inLive) {
+    playToken++;
+    setTimeout(() => card.remove(), 230);
+  } else {
+    setTimeout(() => {
+      card.classList.remove('leave');
+      void card.offsetWidth;
+      card.classList.add('enter');
+    }, 800);
+  }
+}
+const ICO = {
+  busy: `<span class="ico"><svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9" opacity=".18"/><path d="M21 12a9 9 0 0 0-9-9"/></svg></span>`,
+  ok: `<span class="ico"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>`,
+  err: `<span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></span>`,
+  info: `<span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span>`,
+  dl: `<span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>`
+};
+
+async function leaveThen(token) {
+  const el = anchor.firstElementChild;
+  if (!el) return;
+  el.classList.add('leave');
+  await sleep(230);
+  if (token === playToken) anchor.innerHTML = '';
+}
+
+async function playScenario(kind) {
+  const token = ++playToken;
+  anchor.innerHTML = toastHTML('busy', ICO.busy + '<span class="msg">正在检查更新…</span>');
+  await sleep(1100); if (token !== playToken) return;
+
+  if (kind === 'none') {
+    anchor.innerHTML = toastHTML('ok', ICO.ok + '<span class="msg">已是最新版本 v0.0.34</span>', 4000);
+    await sleep(4000); if (token !== playToken) return;
+    await leaveThen(token);
+  } else if (kind === 'error') {
+    anchor.innerHTML = toastHTML('err', ICO.err + '<span class="msg">检查更新失败<small>net::ERR_CONNECTION_TIMED_OUT</small></span>', 8000);
+    await sleep(8000); if (token !== playToken) return;
+    await leaveThen(token);
+  } else if (kind === 'unsupported') {
+    anchor.innerHTML = toastHTML('info', ICO.info + '<span class="msg">开发模式下无法检查更新<small>打包安装后可用</small></span>', 4000);
+    await sleep(4000); if (token !== playToken) return;
+    await leaveThen(token);
+  } else if (kind === 'found') {
+    /* 小卡换主卡：下载推进 → 就绪 */
+    anchor.innerHTML = `
+      <div class="bigcard enter" data-tone="dl">
+        ${ICO.dl}
+        <div class="body">
+          <div class="title">发现新版本 0.0.35</div>
+          <div class="desc">正在后台下载，完成后可一键重启更新。</div>
+          <div class="prog"><div class="track"><div class="fill" id="liveFill"></div></div><span class="pct" id="livePct">0%</span></div>
+        </div>
+        <button class="close" aria-label="关闭" onclick="demoClose(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+      </div>`;
+    const fill = document.getElementById('liveFill');
+    const pct = document.getElementById('livePct');
+    for (let v = 0; v <= 100; v += 4 + Math.random() * 9) {
+      if (token !== playToken) return;
+      const w = Math.min(100, v).toFixed(0);
+      fill.style.width = w + '%'; pct.textContent = w + '%';
+      await sleep(320);
+    }
+    fill.style.width = '100%'; pct.textContent = '100%';
+    await sleep(500); if (token !== playToken) return;
+    anchor.innerHTML = `
+      <div class="bigcard enter" data-tone="ok">
+        ${ICO.ok.replace('class="ico"', 'class="ico"').replace('stroke-width="2.6"', 'stroke-width="2.4"')}
+        <div class="body">
+          <div class="title">0.0.35 已就绪</div>
+          <div class="desc">新版本已下载完成，重启应用即可完成更新。</div>
+          <div class="row">
+            <button class="btn brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>立即重启更新</button>
+            <button class="btn ghost" onclick="demoClose(this)">稍后</button>
+          </div>
+        </div>
+        <button class="close" aria-label="关闭" onclick="demoClose(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+      </div>`;
+  }
+}
+</script>
+</body>
+</html>

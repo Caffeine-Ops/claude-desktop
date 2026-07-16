@@ -33,10 +33,7 @@ import {
   MessageCircle,
   Moon,
   Palette,
-  PanelLeft,
-  PanelLeftClose,
   Plus,
-  Search,
   Settings,
   Sun
 } from 'lucide-react'
@@ -59,7 +56,6 @@ import {
   DropdownMenuTrigger
 } from '@/src/components/ui/dropdown-menu'
 import { useAppearanceStore } from '@/src/chat/stores/appearance'
-import { useRailStore } from '@/src/stores/rail'
 import { useUpgradeStore } from '@/src/stores/upgrade'
 import { getLastCanvasPath, rememberCanvasPath } from '@/src/stores/canvasNav'
 
@@ -162,12 +158,11 @@ function AppearanceSeg() {
 
 export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   const pathname = usePathname()
-  // 折叠意图（跨 chat/canvas 共享，见 src/stores/rail.ts）。收起态下这个
-  // 组件本体被 RailShell 复用为 hover 浮出的 overlay——所以顶部 toggle 的
-  // 语义天然自洽：collapsed=false 点击=收起，collapsed=true（overlay 里）
-  // 点击=展开钉住，都是同一个 toggle()。图标也随 collapsed 翻。
-  const collapsed = useRailStore((s) => s.collapsed)
-  const toggleCollapsed = useRailStore((s) => s.toggle)
+  // 侧栏开关不在本组件里（2026-07-16 用户参照 Codex 定稿）：开关是
+  // RailShell 的**常驻 fixed 按钮**（portal 到 body、钉死红绿灯右侧），
+  // 不随 rail 卸载/滑动——此前开关挂在本组件顶栏里，收起时随 AppRail
+  // 卸载、peek 浮出时随 overlay 滑动，按钮在动画中跟着跑，位置连续性
+  // 破功。折叠状态见 src/stores/rail.ts（RailShell 消费）。
   // '/chat*' 归聊天面，其余一切路径都是 canvas 的地盘——rail 上所有
   // 「跟随当前 surface」的元素（顶部主按钮 / Tabs 选中态 / 中段列表）
   // 都从这一个判定派生。
@@ -273,10 +268,14 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
       .catch(() => {})
   }
 
-  // 手动检查更新：结果走既有 updater 链路——发现新版由 UpdateReadyToast
-  // 弹卡提示；「已是最新」暂无主动反馈（设置页「更新应用」区可看结论）。
+  // 手动检查更新：哑触发——dispatch 同 document 事件桥（机制同
+  // od:cli-backend-changed），UpdateReadyToast 统一接手：invoke + 快照判定 +
+  // 等广播结论 + 左下角 toast 反馈（检查中/已是最新/失败/开发模式不支持；
+  // 发现新版则唤起其主卡片）。此前这里直连 chatApi.checkForUpdates() 静默
+  // 触发，「已是最新/失败/dev」三种结论毫无反馈，用户实锤「点了像没功能」
+  // （2026-07-16）。逻辑收拢在 UpdateReadyToast 一处，这里不再直连 chatApi。
   const checkUpdates = () => {
-    void window.chatApi?.checkForUpdates?.()
+    window.dispatchEvent(new CustomEvent('od:manual-update-check'))
   }
 
   return (
@@ -306,50 +305,16 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
         * app-region 矩形按 DOM 遍历顺序注册：外层容器标 no-drag 也会被这条
         * 后遍历的 drag 重新填回，所以洞必须在这里挖，标 prop 不标 CSS 覆盖。
         * 悬浮面板本就是移出即消失的瞬态 UI，拖窗口语义在此无意义。 */}
+      {/* 侧栏开关**不在这条里**（2026-07-16 Codex 定稿）：它是 RailShell
+        * 的常驻 fixed 按钮，恰好浮在这条的 x=100 处——本条只剩红绿灯净空
+        * 与窗口拖拽职责，开关钮自带 no-drag 挖洞（portal 到 body 末尾，
+        * 后注册稳压这条 drag）。 */}
       <div
         className={cn(
-          'relative flex h-12 shrink-0 items-center justify-end gap-0.5',
+          'relative flex h-12 shrink-0 items-center gap-0.5',
           overlay ? '[-webkit-app-region:no-drag]' : '[-webkit-app-region:drag]'
         )}
-      >
-        {/* 搜索：展开态顶栏补上收起态 CollapsedToolbar 已有的入口（2026-07-10
-          * 用户要求展开时也能看到）——仅聊天面（同 CollapsedToolbar 的
-          * isChat 判断，canvas 没有对应的统一搜索）。落在收起按钮左侧，
-          * 同样需要 no-drag 挖洞（整条默认是窗口拖拽区）。 */}
-        {isChat && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="搜索会话"
-            title="搜索会话"
-            className="-translate-y-px text-muted-foreground [-webkit-app-region:no-drag] hover:bg-sidebar-accent hover:text-sidebar-foreground"
-            onClick={() => useDialogStore.getState().openDialog('search')}
-          >
-            <Search className="size-4" />
-          </Button>
-        )}
-        {/* 收起按钮与右侧内容面标题栏（红绿灯 / 标题 / 收起态图标排）垂直
-          * 对齐（2026-07-05 用户要求）。rail 顶栏从视口 y=0 起、items-center
-          * 让 32px 按钮中线落 y=24；内容面标题栏平铺后也从 y=0 起（2026-07-08
-          * stage gutter 归零，见 globals.css .shell-stage）、46px 高中线在
-          * y=23——差 1px，用 -translate-y-px 补齐（纯视觉位移，不改 flex 流、
-          * 不推挤下方主按钮，拖拽条高度语义不变）。浮卡时代 header 从 y=10
-          * 起中线 33，这里曾是 translate-y-[9px]。改标题栏几何时同步核偏移。 */}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
-          title={collapsed ? '展开侧边栏' : '收起侧边栏'}
-          className="-translate-y-px text-muted-foreground [-webkit-app-region:no-drag] hover:bg-sidebar-accent hover:text-sidebar-foreground"
-          onClick={toggleCollapsed}
-        >
-          {collapsed ? (
-            <PanelLeft className="size-4" />
-          ) : (
-            <PanelLeftClose className="size-4" />
-          )}
-        </Button>
-      </div>
+      />
       {/* 顶部主按钮跟随当前 surface（2026-07-04 用户要求）：
         *  - 聊天面「新对话」= 切到「新会话」再进聊天路由。sessionId null 的
         *    SWITCH_REQUEST 经 main 正规化后由 chat 的 FusionRuntimeProvider
@@ -361,6 +326,9 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
       {/* 主按钮强调色用 --primary（用户主题色，appearance applier 写入）——
         * rail 的「CTA/选中/身份点位」随主题色走（2026-07-08 用户定稿，此前
         * 钉品牌绿 --sidebar-primary）。品牌绿只保留给账户菜单的套餐语义。 */}
+      {/* 搜索不在本行（2026-07-16 用户定稿）：搜索钮住在 RailShell 的常驻
+        * 顶栏按钮组里（开关右侧、两态恒显、永不移动），rail 内容区不再
+        * 重复放搜索入口。 */}
       <Button
         variant="ghost"
         className="mb-2 justify-start gap-2 bg-primary/12 px-3 text-primary hover:bg-primary/18 hover:text-primary"

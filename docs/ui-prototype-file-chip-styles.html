@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文件引用 Chip 样式方案</title>
+<style>
+/* ================= 设计 token ==================
+ * 与 docs/ui-prototype-composer-chip-styles.html 同源（tokens.css 子集）。
+ * 新增文件类型色板：取 Office/常见格式的惯用色，饱和度压到与技能图标
+ * 同一档，避免行内比技能 chip 更抢。 */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --popover: 0 0% 100%;
+  --border: 240 6% 84%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --brand: 142 76% 36%;
+
+  --chip-bg: hsl(var(--foreground) / 0.05);
+  --chip-bg-hover: hsl(var(--foreground) / 0.09);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+
+  --ring-hairline: rgba(0, 0, 0, 0.08);
+}
+.dark {
+  color-scheme: dark;
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --popover: 36 6% 15%;
+  --border: 49 12% 18%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --brand: 145 60% 52%;
+
+  --chip-bg: hsl(0 0% 100% / 0.08);
+  --chip-bg-hover: hsl(0 0% 100% / 0.13);
+
+  --ring-hairline: rgba(255, 255, 255, 0.08);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { -webkit-font-smoothing: antialiased; }
+body {
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+.page { max-width: 880px; margin: 0 auto; padding: 56px 32px 120px; }
+.page-header h1 { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
+.page-header p {
+  margin-top: 8px; font-size: 13px; line-height: 1.7;
+  color: hsl(var(--muted-foreground)); text-wrap: pretty; max-width: 64ch;
+}
+
+/* ================= chip 基础 =================
+ * 几何对齐真实 chipNodeView（方案 B 柔底无边已落地版）：13px/500、gap 6、
+ * padding 3px 9px 3px 7px、8px 圆角、透明 1px 边。图标槽两层常驻只切
+ * visibility——hover 换态零几何变化。 */
+.fc {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px 3px 7px;
+  font-size: 13px; font-weight: 500; line-height: 1.35;
+  border-radius: 8px; border: 1px solid transparent;
+  background: var(--chip-bg);
+  vertical-align: -2px; user-select: none; white-space: nowrap;
+  transition: background 0.15s ease;
+}
+.fc:hover { background: var(--chip-bg-hover); }
+
+.fc__slot {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; width: var(--icon-size, 15px); height: var(--icon-size, 15px);
+}
+.fc__slot svg.fc__rest { width: 100%; height: 100%; display: block; }
+.fc__x {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  visibility: hidden; color: hsl(var(--muted-foreground)); cursor: pointer;
+}
+/* 删除交互 · 模式一「图标顶替」（现状）：hover 时 × 盖住图标 */
+body:not(.delete-badge) .fc:hover .fc__rest,
+body:not(.delete-badge) .show-hover .fc .fc__rest { visibility: hidden; }
+body:not(.delete-badge) .fc:hover .fc__x,
+body:not(.delete-badge) .show-hover .fc .fc__x { visibility: visible; }
+/* 删除交互 · 模式二「右上角标」：图标不被顶替，× 浮在角上（零几何变化） */
+.fc__badge {
+  position: absolute; top: -5px; right: -5px; z-index: 2;
+  width: 14px; height: 14px; border-radius: 9999px;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  display: flex; align-items: center; justify-content: center;
+  visibility: hidden; cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+body.delete-badge .fc:hover .fc__badge,
+body.delete-badge .show-hover .fc .fc__badge,
+.fc--badge-demo:hover .fc__badge,
+.show-hover .fc--badge-demo .fc__badge { visibility: visible; }
+/* 方案 D 卡片自身永远走角标模式（它演示的就是这个交互） */
+.fc--badge-demo:hover .fc__rest { visibility: visible !important; }
+.fc--badge-demo:hover .fc__x { visibility: hidden !important; }
+
+.fc__name {
+  max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fc__ext-badge {
+  flex-shrink: 0;
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 1.5px 4.5px; border-radius: 4px;
+  background: hsl(var(--foreground) / 0.07); color: hsl(var(--muted-foreground));
+}
+.fc__ext-inline {
+  flex-shrink: 0; font-weight: 650; color: hsl(var(--fk));
+}
+
+/* ── 方案 C · 类型色染（chip 内联 --fk 类型色三元组） ── */
+.fc--c { background: hsl(var(--fk) / 0.09); }
+.fc--c:hover { background: hsl(var(--fk) / 0.15); }
+.fc--c .fc__name { color: color-mix(in oklab, hsl(var(--fk)) 55%, hsl(var(--foreground))); }
+.fc--c .fc__ext-badge {
+  background: hsl(var(--fk) / 0.13);
+  color: color-mix(in oklab, hsl(var(--fk)) 70%, hsl(var(--foreground)));
+}
+.fc--c .fc__x { color: color-mix(in oklab, hsl(var(--fk)) 55%, hsl(var(--foreground))); }
+.dark .fc--c { background: hsl(var(--fk) / 0.16); }
+.dark .fc--c:hover { background: hsl(var(--fk) / 0.24); }
+.dark .fc--c .fc__name { color: color-mix(in oklab, hsl(var(--fk)) 60%, white); }
+.dark .fc--c .fc__ext-badge {
+  background: hsl(var(--fk) / 0.22);
+  color: color-mix(in oklab, hsl(var(--fk)) 70%, white);
+}
+.dark .fc--c .fc__x { color: color-mix(in oklab, hsl(var(--fk)) 60%, white); }
+
+/* ================= 技能 chip（对照，真实已落地样式） ================= */
+.sk {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px 3px 7px; border-radius: 8px; border: 1px solid transparent;
+  background: var(--chip-bg);
+  font-size: 13px; font-weight: 500; line-height: 1.35;
+  vertical-align: -2px; user-select: none; white-space: nowrap;
+}
+.sk img { width: 14px; height: 14px; object-fit: contain; display: block; }
+
+/* ================= composer 实景预览 ================= */
+.stage { margin-top: 36px; }
+.seg {
+  display: inline-flex; gap: 4px; padding: 4px;
+  background: hsl(var(--foreground) / 0.05); border-radius: 12px;
+}
+.dark .seg { background: hsl(0 0% 100% / 0.06); }
+.seg button {
+  border: none; background: transparent; font: inherit;
+  font-size: 13px; font-weight: 500; color: hsl(var(--muted-foreground));
+  padding: 6px 13px; border-radius: 8px; cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.seg button:hover { color: hsl(var(--foreground)); }
+.seg button[aria-pressed="true"] {
+  background: hsl(var(--card)); color: hsl(var(--foreground));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--ring-hairline);
+}
+
+.composer-shell {
+  margin-top: 16px; border-radius: 28px; padding: 6px;
+  background: hsl(var(--foreground) / 0.035);
+}
+.dark .composer-shell { background: hsl(0 0% 100% / 0.045); }
+.composer-card {
+  border-radius: 22px; background: hsl(var(--popover) / 0.95);
+  box-shadow: 0 0 0 1px var(--ring-hairline),
+    0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 28px -4px rgba(0, 0, 0, 0.07);
+  padding: 16px 18px 12px;
+}
+/* 编辑器正文 = 当前线上参数：14px 加粗、leading-relaxed */
+.composer-editor { font-size: 14px; font-weight: 700; line-height: 1.625; min-height: 54px; }
+.composer-toolbar { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
+.tool-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 32px; width: 32px; border-radius: 9999px;
+  border: 1px solid hsl(var(--border)); background: transparent;
+  color: hsl(var(--muted-foreground)); font: inherit; cursor: pointer;
+}
+.send-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: 9999px; border: none; cursor: pointer;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 0 2px 8px -2px rgba(0, 0, 0, 0.15);
+}
+
+/* ================= 方案对比卡 ================= */
+.variants { margin-top: 44px; display: flex; flex-direction: column; gap: 16px; }
+.section-title { font-size: 15px; font-weight: 650; }
+.section-sub { margin-top: 4px; font-size: 13px; color: hsl(var(--muted-foreground)); }
+
+.variant-card {
+  position: relative; border-radius: 16px; background: hsl(var(--card));
+  box-shadow: 0 0 0 1px hsl(var(--border) / 0.7);
+  padding: 18px 20px 20px; cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+.variant-card:hover { box-shadow: 0 0 0 1px hsl(var(--border)); }
+.variant-card[data-active="true"] {
+  box-shadow: 0 0 0 2px hsl(var(--brand)), 0 8px 24px -8px hsl(var(--brand) / 0.25);
+}
+.variant-card .head { display: flex; align-items: baseline; gap: 10px; }
+.variant-card .key { font-size: 12px; font-weight: 650; letter-spacing: 0.08em; color: hsl(var(--muted-foreground)); }
+.variant-card[data-active="true"] .key { color: hsl(var(--brand)); }
+.variant-card h3 { font-size: 15px; font-weight: 650; }
+.variant-card .desc {
+  margin-top: 6px; font-size: 13px; line-height: 1.65;
+  color: hsl(var(--muted-foreground)); text-wrap: pretty; max-width: 68ch;
+}
+.variant-card .active-badge {
+  position: absolute; top: 16px; right: 18px;
+  font-size: 12px; font-weight: 600; color: hsl(var(--brand));
+  display: none; align-items: center; gap: 4px;
+}
+.variant-card[data-active="true"] .active-badge { display: inline-flex; }
+.variant-card .chip-row { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.variant-card .row-label {
+  margin-top: 14px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  color: hsl(var(--muted-foreground) / 0.8); text-transform: uppercase;
+}
+.variant-card .row-label + .chip-row { margin-top: 8px; }
+
+/* ================= Tweaks ================= */
+.tweaks-fab {
+  position: fixed; right: 22px; bottom: 22px; z-index: 30;
+  width: 44px; height: 44px; border-radius: 9999px; border: none; cursor: pointer;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  display: flex; align-items: center; justify-content: center;
+}
+.tweaks {
+  position: fixed; right: 22px; bottom: 76px; z-index: 30; width: 260px;
+  background: hsl(var(--popover)); border-radius: 14px; padding: 16px;
+  box-shadow: 0 0 0 1px var(--ring-hairline), 0 24px 60px rgba(0, 0, 0, 0.25);
+  display: none;
+}
+.tweaks.open { display: block; }
+.tweaks h4 { font-size: 13px; font-weight: 650; margin-bottom: 12px; }
+.tweaks .row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; padding: 7px 0; }
+.tweaks .row + .row { border-top: 1px solid hsl(var(--border) / 0.5); }
+.switch { position: relative; width: 36px; height: 21px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 100%; height: 100%; position: absolute; cursor: pointer; margin: 0; }
+.switch .knob { position: absolute; inset: 0; border-radius: 9999px; background: hsl(var(--foreground) / 0.15); transition: background 0.15s ease; pointer-events: none; }
+.switch .knob::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px;
+  border-radius: 9999px; background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform 0.15s ease;
+}
+.switch input:checked + .knob { background: hsl(var(--brand)); }
+.switch input:checked + .knob::after { transform: translateX(15px); }
+.mini-seg { display: inline-flex; gap: 2px; background: hsl(var(--foreground) / 0.06); border-radius: 8px; padding: 2px; }
+.mini-seg button {
+  border: none; background: transparent; font: inherit; font-size: 12px;
+  color: hsl(var(--muted-foreground)); padding: 3px 8px; border-radius: 6px; cursor: pointer;
+}
+.mini-seg button[aria-pressed="true"] { background: hsl(var(--card)); color: hsl(var(--foreground)); box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="page-header">
+    <h1>文件引用 Chip 样式方案</h1>
+    <p>针对三个现状问题重做：文件类型图标细碎发灰、hover 时 × 顶掉图标让文件身份消失、文件名一坨没有类型信号。图标统一换成「类型色圆角块 + 白色形状」（14–16px 下比拟物 logo 清晰得多）。点击方案卡切换上方实景；Tweaks 里可切删除交互、深色模式与图标尺寸。</p>
+  </header>
+
+  <!-- ══════════ 实景预览 ══════════ -->
+  <section class="stage">
+    <div class="seg" id="seg" role="tablist" aria-label="文件 chip 样式"></div>
+    <div class="composer-shell">
+      <div class="composer-card">
+        <div class="composer-editor" id="editor"></div>
+        <div class="composer-toolbar">
+          <button class="tool-btn" aria-label="添加附件">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <button class="send-btn" aria-label="发送">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ 方案对比 ══════════ -->
+  <section class="variants" id="variants">
+    <div>
+      <div class="section-title">全部方案</div>
+      <div class="section-sub">每张卡：六种文件类型 + 长文件名截断。hover 任一 chip 看删除态。</div>
+    </div>
+  </section>
+
+</div>
+
+<button class="tweaks-fab" id="tweaksFab" aria-label="Tweaks">
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2.2"/><circle cx="8" cy="16" r="2.2"/></svg>
+</button>
+<div class="tweaks" id="tweaks">
+  <h4>Tweaks</h4>
+  <div class="row">
+    <span>深色模式</span>
+    <label class="switch"><input type="checkbox" id="twDark"><span class="knob"></span></label>
+  </div>
+  <div class="row">
+    <span>常显删除态</span>
+    <label class="switch"><input type="checkbox" id="twHover"><span class="knob"></span></label>
+  </div>
+  <div class="row">
+    <span>删除交互</span>
+    <span class="mini-seg" id="twDelete">
+      <button data-mode="swap" aria-pressed="true">图标顶替</button>
+      <button data-mode="badge">右上角标</button>
+    </span>
+  </div>
+  <div class="row">
+    <span>图标尺寸</span>
+    <span class="mini-seg" id="twIcon">
+      <button data-size="14px">14</button>
+      <button data-size="15px" aria-pressed="true">15</button>
+      <button data-size="16px">16</button>
+    </span>
+  </div>
+</div>
+
+<script>
+/* ---------- 文件类型定义 ----------
+ * 每类：类型色（HSL 三元组）+ 圆角色块内的白色形状。饱和度对齐技能图标
+ * 切片，明度压在中档保证白色形状 4.5:1 以上可读。 */
+const FILE_TYPES = {
+  slides:  { fk: '9 72% 55%',   glyph: 'pie'   },  /* pptx/keynote — 珊瑚红 */
+  sheet:   { fk: '155 55% 37%', glyph: 'grid'  },  /* xlsx/csv — Excel 绿 */
+  doc:     { fk: '215 75% 52%', glyph: 'lines' },  /* docx — Word 蓝 */
+  pdf:     { fk: '4 70% 50%',   glyph: 'fold'  },  /* pdf — 红 */
+  image:   { fk: '262 55% 58%', glyph: 'photo' },  /* png/webp/jpg — 紫 */
+  archive: { fk: '35 80% 45%',  glyph: 'zip'   },  /* zip — 琥珀 */
+  other:   { fk: '240 4% 46%',  glyph: 'fold'  }   /* 兜底 — 中性灰 */
+};
+const EXT_TYPE = {
+  pptx: 'slides', ppt: 'slides', key: 'slides',
+  xlsx: 'sheet', xls: 'sheet', csv: 'sheet',
+  docx: 'doc', doc: 'doc',
+  pdf: 'pdf',
+  png: 'image', jpg: 'image', jpeg: 'image', webp: 'image', svg: 'image', gif: 'image',
+  zip: 'archive', rar: 'archive', tar: 'archive'
+};
+
+const FILES = [
+  'AI医疗软件开发讲座.pptx',
+  'Quotation Template.xlsx',
+  '季度报告.pdf',
+  '产品需求说明.docx',
+  'logo.webp',
+  'README.md'
+];
+const LONG_FILE = '2026上半年医疗AI产品线季度经营分析与预测报告-final-v3.pptx';
+
+/* ---------- 图标：类型色圆角块 + 白色形状 ---------- */
+const GLYPHS = {
+  pie:   '<circle cx="10" cy="10" r="4.4" fill="none" stroke="#fff" stroke-width="1.6"/><path d="M10 10V5.6A4.4 4.4 0 0 1 14.4 10Z" fill="#fff" stroke="none"/>',
+  grid:  '<path d="M6 7.2h8M6 10h8M6 12.8h8M8.8 7.2v5.6M11.6 7.2v5.6" stroke="#fff" stroke-width="1.4" fill="none" stroke-linecap="round"/>',
+  lines: '<path d="M6 7h8M6 10h8M6 13h5" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round"/>',
+  fold:  '<path d="M7 5.2h4.2L13.8 8v6.8a.8.8 0 0 1-.8.8H7a.8.8 0 0 1-.8-.8V6a.8.8 0 0 1 .8-.8Z" fill="none" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 5.4V8h2.6" fill="none" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/>',
+  photo: '<circle cx="8" cy="7.8" r="1.5" fill="#fff" stroke="none"/><path d="M5.5 14l3-3.4 2 2 1.8-2.2 2.2 3.6" fill="none" stroke="#fff" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>',
+  zip:   '<path d="M10 5v1.6M10 8.2v1.6M10 11.4v1.6" stroke="#fff" stroke-width="1.7" fill="none" stroke-linecap="round"/><circle cx="10" cy="14.6" r="1.2" fill="none" stroke="#fff" stroke-width="1.3"/>'
+};
+function fileIconSVG(type) {
+  const t = FILE_TYPES[type];
+  return `<svg class="fc__rest" viewBox="0 0 20 20" aria-hidden="true">` +
+    `<rect x="1" y="1" width="18" height="18" rx="5" fill="hsl(${t.fk})"/>` +
+    GLYPHS[t.glyph] + `</svg>`;
+}
+
+const X_SVG = '<span class="fc__x"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></span>';
+const BADGE_SVG = '<span class="fc__badge"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></span>';
+
+function splitName(filename) {
+  const dot = filename.lastIndexOf('.');
+  if (dot <= 0) return { stem: filename, ext: '' };
+  return { stem: filename.slice(0, dot), ext: filename.slice(dot + 1) };
+}
+function typeOf(ext) { return EXT_TYPE[ext.toLowerCase()] ?? 'other'; }
+
+/* ---------- chip 渲染（五方案） ---------- */
+function chipHTML(variant, filename) {
+  const { stem, ext } = splitName(filename);
+  const type = typeOf(ext);
+  const fk = FILE_TYPES[type].fk;
+  const icon = `<span class="fc__slot">${fileIconSVG(type)}${X_SVG}</span>`;
+
+  switch (variant) {
+    case 'a': /* 现状结构：图标 + 完整文件名（仅换新图标做公平对照） */
+      return `<span class="fc" style="--fk:${fk}" title="${filename}">${icon}` +
+        `<span class="fc__name">${filename}</span>${BADGE_SVG}</span>`;
+    case 'b': /* 扩展名徽章 */
+      return `<span class="fc" style="--fk:${fk}" title="${filename}">${icon}` +
+        `<span class="fc__name">${stem}</span>` +
+        (ext ? `<span class="fc__ext-badge">${ext}</span>` : '') + BADGE_SVG + `</span>`;
+    case 'c': /* 类型色染 + 徽章 */
+      return `<span class="fc fc--c" style="--fk:${fk}" title="${filename}">${icon}` +
+        `<span class="fc__name">${stem}</span>` +
+        (ext ? `<span class="fc__ext-badge">${ext}</span>` : '') + BADGE_SVG + `</span>`;
+    case 'd': /* 角标删除（视觉同 B，交互演示右上角标） */
+      return `<span class="fc fc--badge-demo" style="--fk:${fk}" title="${filename}">${icon}` +
+        `<span class="fc__name">${stem}</span>` +
+        (ext ? `<span class="fc__ext-badge">${ext}</span>` : '') + BADGE_SVG + `</span>`;
+    case 'e': /* 分节文件名：主名中性、.ext 类型色加粗 */
+      return `<span class="fc" style="--fk:${fk}" title="${filename}">${icon}` +
+        `<span class="fc__name">${stem}</span>` +
+        (ext ? `<span class="fc__ext-inline">.${ext}</span>` : '') + BADGE_SVG + `</span>`;
+  }
+}
+
+const VARIANTS = [
+  { key: 'a', name: '新图标 · 原结构', desc: '结构不动（图标 + 完整文件名），只把拟物 logo 换成「类型色圆角块 + 白色形状」——PPT 红块饼图、Excel 绿块网格、图像紫块山形。小尺寸下轮廓干净，暗色底不再发灰。作为最小改动的基准。' },
+  { key: 'b', name: '扩展名徽章', desc: '把扩展名从文件名里拆出来做成等宽小徽章：主名可以放心截断，类型信号永不丢；「Quotation Template + XLSX」比一整串文件名更好扫。推荐起点。' },
+  { key: 'c', name: '类型色染', desc: 'B 的基础上整颗 chip 按类型染色（Excel 绿底、PPT 红底、图像紫底），行内扫一眼就能数出引了几个什么文件。信息量最高，文件多时也最热闹。' },
+  { key: 'd', name: '角标删除', desc: '视觉同 B，删除键改成 hover 时右上角浮出的小角标——图标不再被 × 顶替，文件身份与删除操作同屏（解决红框截图里「hover 后不知道删的是哪个文件」）。chip 本体零几何变化。' },
+  { key: 'e', name: '分节文件名', desc: '不加徽章：主名保持中性色，「.pptx」尾巴染类型色并加粗。比 B 更轻、比 A 信息更清楚，适合不想引入新形状的最小方案。' }
+];
+
+/* ---------- 实景 composer ---------- */
+const editor = document.getElementById('editor');
+function renderEditor(variant) {
+  editor.innerHTML =
+    `<span class="sk"><img src="skill-icons/sheet.png" alt="" draggable="false"><span>处理表格</span></span>` +
+    ' 基于 ' + chipHTML(variant, 'Quotation Template.xlsx') +
+    ' 生成透视汇总：按月份和区域统计销售额，标出环比变化最大的三项。参考 ' +
+    chipHTML(variant, 'AI医疗软件开发讲座.pptx') + ' 的口径。';
+}
+
+/* ---------- 分段器 + 方案卡 ---------- */
+const seg = document.getElementById('seg');
+const variantsWrap = document.getElementById('variants');
+
+VARIANTS.forEach((v) => {
+  const btn = document.createElement('button');
+  btn.textContent = v.key.toUpperCase() + ' ' + v.name.split(' · ')[0];
+  btn.dataset.key = v.key;
+  btn.addEventListener('click', () => select(v.key));
+  seg.appendChild(btn);
+
+  const card = document.createElement('div');
+  card.className = 'variant-card';
+  card.dataset.key = v.key;
+  card.innerHTML =
+    `<div class="head"><span class="key">方案 ${v.key.toUpperCase()}</span><h3>${v.name}</h3></div>` +
+    `<span class="active-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>已应用</span>` +
+    `<p class="desc">${v.desc}</p>` +
+    `<div class="chip-row">${FILES.map((f) => chipHTML(v.key, f)).join('')}</div>` +
+    `<div class="row-label">长文件名</div>` +
+    `<div class="chip-row">${chipHTML(v.key, LONG_FILE)}</div>`;
+  card.addEventListener('click', () => select(v.key));
+  variantsWrap.appendChild(card);
+});
+
+function select(key) {
+  renderEditor(key);
+  seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.key === key)));
+  variantsWrap.querySelectorAll('.variant-card').forEach((c) => (c.dataset.active = String(c.dataset.key === key)));
+}
+select('b');
+
+/* ---------- Tweaks ---------- */
+const fab = document.getElementById('tweaksFab');
+const panel = document.getElementById('tweaks');
+fab.addEventListener('click', () => panel.classList.toggle('open'));
+
+const twDark = document.getElementById('twDark');
+twDark.addEventListener('change', () => document.documentElement.classList.toggle('dark', twDark.checked));
+if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+  twDark.checked = true;
+  document.documentElement.classList.add('dark');
+}
+
+const twHover = document.getElementById('twHover');
+twHover.addEventListener('change', () => {
+  document.querySelectorAll('.chip-row, .composer-editor').forEach((el) =>
+    el.classList.toggle('show-hover', twHover.checked));
+});
+
+document.getElementById('twDelete').addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  document.body.classList.toggle('delete-badge', btn.dataset.mode === 'badge');
+  btn.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+});
+
+document.getElementById('twIcon').addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  document.documentElement.style.setProperty('--icon-size', btn.dataset.size);
+  btn.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+});
+</script>
+</body>
+</html>

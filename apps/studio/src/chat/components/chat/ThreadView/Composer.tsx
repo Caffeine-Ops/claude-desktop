@@ -15,7 +15,8 @@ import { useI18n, useT } from '../../../i18n'
 import { useChatStore, useTurnActivity } from '../../../stores/chat'
 import { isReplaySessionId } from '../../../replay/replayStore'
 import { useWorkspaceStore } from '../../../stores/workspace'
-import { useComposerModeStore, type ComposerModeId } from '../../../stores/composerMode'
+import { matchProposalSlash } from '../../../lib/proposalSlash'
+import { attachFilesToComposer } from '../../../composer/attachFiles'
 import { useComposerOverlayStore } from '../../../stores/composerOverlay'
 import { useProposalStore } from '../../../stores/proposal'
 import { buildSlashAdapter, buildSkillPickerEntries, type SkillPickerEntry } from '../../../composer/slashAdapter'
@@ -25,10 +26,18 @@ import {
   type ProseMirrorComposerInputHandle
 } from '../../../composer/ProseMirrorComposerInput'
 import { QueuePanel } from './QueuePanel'
+import { ScenarioRail } from './ScenarioRail'
 import { useMessageQueueStore } from '../../../stores/messageQueue'
-import { FileTypeIcon, fileIconPathsByKey } from '../FileTypeIcon'
+import { FileTypeIcon } from '../FileTypeIcon'
+import { SkillChipIcon } from '../SkillChipIcon'
 import { DictationWaveform } from '../DictationWaveform'
 import { PermissionModePicker } from '../../permissions/PermissionModePicker'
+import {
+  AskComposerSwap,
+  AskUserComposerPanel
+} from '../../permissions/AskUserComposerPanel'
+import { usePermissionStore } from '../../../stores/permissions'
+import { useComposerModeStore } from '../../../stores/composerMode'
 import { cancelActiveDictation } from '../../../runtime/openaiWhisperDictationAdapter'
 import { FILE_PATH_MIME } from '../../../runtime/imageAttachmentAdapter'
 import {
@@ -189,7 +198,16 @@ function GapFillBanner({ sessionId }: { sessionId: string | null }): React.JSX.E
   )
 }
 
-export function Composer(): React.JSX.Element {
+/**
+ * Composer 的两种形态：
+ *   - 'default' — 底部 dock（有消息后）：卡片 + 裸排的工作目录/权限 chips，
+ *     维持原布局不动。
+ *   - 'hero'    — EmptyState 空态（原型 docs/empty-state-composer-prototype
+ *     .html）：卡片上方多一条 ScenarioRail（分类 tab + 技能/推荐 prompt
+ *     chips），卡片和底行一起包进一个浅灰圆角「托盘」，底行成为托盘露出的
+ *     延伸条——WorkBuddy 参考里的「选择工作空间 / 默认权限」灰条。
+ */
+export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero' } = {}): React.JSX.Element {
   const t = useT()
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [files, setFiles] = useState<readonly string[]>([])
@@ -211,14 +229,19 @@ export function Composer(): React.JSX.Element {
   const hasQueue = useMessageQueueStore((s) =>
     composerSessionId ? (s.queues[composerSessionId]?.length ?? 0) > 0 : false
   )
-  const markIfSlides = useCallback(() => {
-    const st = useComposerModeStore.getState()
-    if (st.mode === 'slides') st.markSlidesSession(composerSessionId ?? '')
-  }, [composerSessionId])
-  // 知识库只服务「写方案」——聊天框底栏的知识库 chip 仅在写方案模式下露出，
-  // 其它模式（通用/设计/幻灯片/写作）不显示，免得让用户以为知识库对它们也生效。
-  // 订阅全局 mode 而不是读 getState()，这样切换模式时 chip 能实时显隐。
-  const composerMode = useComposerModeStore((s) => s.mode)
+  // 知识库只服务「写方案」——聊天框底栏的知识库 chip 仅在写方案语境下露出。
+  // ComposerModePicker 退役后（2026-07-16，模式入口统一到 EmptyState 的
+  // ScenarioRail 技能 chip），「写方案语境」的判定改为两个真源的并集：
+  //   1. 方案已激活且绑定本会话（proposal store，发送/斜杠拦截后的进行时）；
+  //   2. composer 正文以 /proposal-writer 命令开头（选了技能 chip 还没发）。
+  // 两个 selector 都返回稳定布尔，逐键输入不会白重渲染整个 Composer。
+  const proposalActiveHere = useProposalStore(
+    (s) => s.active && s.sessionId !== null && s.sessionId === composerSessionId
+  )
+  const composerLeadsProposal = useAuiState((s) => {
+    const text = ((s as { composer?: { text?: string } }).composer?.text as string | undefined) ?? ''
+    return matchProposalSlash(text) !== null
+  })
   // Read dictation state at the Composer level (single subscription)
   // and branch the composer row layout on it. When dictating, the
   // textarea is replaced by a live waveform, the send + mic slots
@@ -230,6 +253,25 @@ export function Composer(): React.JSX.Element {
   // Composer runtime — used to submit via the same path Send uses
   // (the ProseMirror input's onSubmit calls composerRuntime.send()).
   const composerRuntime = useComposerRuntime()
+
+  // 当前会话最早的 pending AskUserQuestion（2026-07-16 形态迁移，见
+  // AskUserComposerPanel 头注释）：有它时输入卡整个变形为提问面板。
+  // 只认本会话（后台会话的提问不劫持前台输入区）；请求对象引用稳定，
+  // Map 变更时 selector 重跑但引用相同不触发重渲染。
+  const askRequest = usePermissionStore((s) => {
+    if (!composerSessionId) return null
+    for (const r of s.requests.values()) {
+      if (r.toolName === 'AskUserQuestion' && r.sessionId === composerSessionId) return r
+    }
+    return null
+  })
+  // slides 会话的 AskUserQuestion 由 canvas 问题 tab 全权接管（同
+  // ToolCallCard 的 askHandledByCanvas 判定），composer 不抢；听写态
+  // 不切面（面板 morph 会把听写 UI 连同波形一起藏掉，等确认/取消后再切）。
+  const composerIsSlides = useComposerModeStore((s) =>
+    composerSessionId ? s.slidesSessions[composerSessionId] === true : false
+  )
+  const showAskPanel = askRequest !== null && !composerIsSlides && !isDictating
 
   // Pull session meta on mount and whenever a turn ends. The first
   // pull (mount) returns empty arrays because fusion-code hasn't
@@ -347,14 +389,10 @@ export function Composer(): React.JSX.Element {
   const handleFilesPicked = useCallback(
     async (fileList: FileList | null): Promise<void> => {
       if (!fileList || fileList.length === 0) return
-      const picked = Array.from(fileList)
-      await Promise.all(
-        picked.map((file) =>
-          composerRuntime.addAttachment(file).catch((err) => {
-            console.error('[Composer] addAttachment failed', err)
-          })
-        )
-      )
+      // 统一附件分流（2026-07-16 附件内联化）：有路径 → 编辑器内联
+      // `@"path"` mention chip；无路径 → attachments 行兜底。选择器拿到
+      // 的 File 永远有磁盘路径，实际都走内联分支。
+      await attachFilesToComposer(Array.from(fileList), composerRuntime)
       // Reset the input so re-picking the same file fires `change` again.
       if (fileInputRef.current) fileInputRef.current.value = ''
     },
@@ -375,7 +413,28 @@ export function Composer(): React.JSX.Element {
           assistant-ui pieces that read the composer *store*
           (AttachmentDropzone / Attachments / Send / Cancel / Dictation)
           remain. */}
-      <div className="relative">
+      {variant === 'hero' ? (
+        // 场景导航挂在 Composer 内（而不是 EmptyState）：它的两个动作都要
+        // 驱动 composerInputRef（插 slash chip / fillBody 填正文），ref 不
+        // 出组件边界，联动状态（composer.text）走 assistant-ui store。
+        <div className="mb-4">
+          <ScenarioRail
+            onInsertSkill={(value) => composerInputRef.current?.resetWithSlashCommand(value)}
+            onFillPrompt={(text) => composerInputRef.current?.fillBody(text)}
+            snapshotDraft={() => composerInputRef.current?.snapshotDoc() ?? null}
+            restoreDraft={(snapshot) => composerInputRef.current?.restoreDoc(snapshot)}
+          />
+        </div>
+      ) : null}
+      <div
+        className={
+          variant === 'hero'
+            ? // hero 托盘：比页面底色深一档的圆角灰壳，白卡叠在上面，底部
+              // 露出工作目录/权限延伸条（原型 .composer-shell）。
+              'relative rounded-[28px] bg-foreground/[0.035] dark:bg-white/[0.045]'
+            : 'relative'
+        }
+      >
         {/* SINGLE-CONTAINER COMPOSER (redesign — replaces the old three stacked
             rounded boxes joined by negative margins, which clipped the status
             row and doubled up borders; see the bug screenshots).
@@ -403,7 +462,27 @@ export function Composer(): React.JSX.Element {
             radius. No segment carries its own border/radius/negative margin, so
             nothing can overlap or clip anything else — the status row is always
             a full, un-obscured line. */}
-        <div className="relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--brand)/0.4)] group-data-[dragging=true]/dropzone:ring-2 group-data-[dragging=true]/dropzone:ring-[hsl(var(--brand)/0.5)] group-data-[dragging=true]/dropzone:bg-brand/[0.08] dark:ring-white/[0.08]">
+        {/* AskComposerSwap（2026-07-16）：pending AskUserQuestion 时输入卡
+            morph 成提问面板。输入卡是 children **常驻不卸载**（卸载毁
+            ProseMirror 草稿），提问态只脱流隐藏——见 AskUserComposerPanel
+            尾部的 swap 实现注释。下方整张输入卡的 JSX 原封未动。 */}
+        <AskComposerSwap
+          ask={
+            showAskPanel && askRequest ? (
+              <AskUserComposerPanel key={askRequest.requestId} request={askRequest} />
+            ) : null
+          }
+        >
+        <div
+          className={
+            'relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--brand)/0.4)] group-data-[dragging=true]/dropzone:ring-2 group-data-[dragging=true]/dropzone:ring-[hsl(var(--brand)/0.5)] group-data-[dragging=true]/dropzone:bg-brand/[0.08] dark:ring-white/[0.08]' +
+            // hero：卡片浮在托盘上，需要一层柔和投影把「白卡叠灰壳」的层次
+            // 立起来（dock 态背景就是页面底色，不加）。
+            (variant === 'hero'
+              ? ' shadow-[0_1px_2px_rgba(0,0,0,0.04),0_10px_28px_-4px_rgba(0,0,0,0.07)]'
+              : '')
+          }
+        >
           {/* Segment 0 — 资料缺失·补料提示条。仅当用户点了草稿里某处缺口的「去对话框补充」
               （pendingGapFill 属于本会话）时露出，指引其在下方输入资料并发送；自带底部 hairline。 */}
           <GapFillBanner sessionId={composerSessionId} />
@@ -470,7 +549,18 @@ export function Composer(): React.JSX.Element {
             ) : (
               <>
                 {/* —— Top row: the multi-line input —— */}
-                <div className="min-h-[52px] max-h-52 overflow-y-auto px-5 pb-1 pt-4 text-[15px] leading-relaxed">
+                {/* hero 空态给一块「敞口」输入区（原型 ~118px）——大输入区
+                    本身就是「从这里开始」的视觉邀请；dock 态维持紧凑高度。
+                    正文 14px 加粗（2026-07-16 用户拍板）：chip/占位 pill 仍是
+                    13px/500 的内联样式不受继承影响，字重差让用户键入的正文
+                    成为行内视觉主体；placeholder（.is-empty::before）同步继承
+                    这组字号字重。 */}
+                <div
+                  className={
+                    (variant === 'hero' ? 'min-h-[108px]' : 'min-h-[52px]') +
+                    ' max-h-52 overflow-y-auto px-5 pb-1 pt-4 text-[14px] font-bold leading-relaxed'
+                  }
+                >
                   <ProseMirrorComposerInput
                     ref={composerInputRef}
                     placeholder={
@@ -481,7 +571,6 @@ export function Composer(): React.JSX.Element {
                     slashAdapter={slashAdapter}
                     mentionAdapter={fileAdapter}
                     onSubmit={() => {
-                      markIfSlides()
                       composerRuntime.send()
                     }}
                   />
@@ -527,16 +616,14 @@ export function Composer(): React.JSX.Element {
                     onPick={(value) => composerInputRef.current?.insertSlashCommand(value)}
                   />
 
-                  {/* Composer mode picker (通用 / 设计 / 幻灯片 / 写作). The
-                      幻灯片 option is the slides entry point: choosing it sets
-                      mode='slides', and sending then marks the session as a
-                      slides session → ThreadView's two-pane layout. Replaces
-                      the old single monitor-icon slides toggle. Read-only
-                      once the session has messages: the picker itself hides
-                      (see its hasMessages guard) — the skill it dispatched
-                      is shown in the chat header instead (ChatHeader in
-                      ThreadView.tsx), not re-shown here. */}
-                  <ComposerModePicker />
+                  {/* （已退役，2026-07-16）ComposerModePicker——通用/设计/幻灯
+                      片/写作/写方案/处理表格/制作视频的模式弹窗。模式入口统一
+                      收敛到 EmptyState 的 ScenarioRail 技能 chip：chip 直接把
+                      技能斜杠写进 composer，发送链路按 leading 命令自适应
+                      （slides 标记见 FusionRuntimeProvider onNew、方案激活见
+                      matchProposalSlash 拦截），不再经由全局 mode 单例。通用/
+                      设计/写作三个模式本就没有任何发送效果，随 picker 一并
+                      退役。组件与 COMPOSER_MODES 定义已删，恢复从 git 历史。 */}
 
                   {/* Spacer pushes the rest to the right edge. */}
                   <div className="flex-1" />
@@ -550,7 +637,6 @@ export function Composer(): React.JSX.Element {
                   <ThreadPrimitive.If running={false}>
                     <ComposerPrimitive.Send
                       aria-label="Send message"
-                      onClick={markIfSlides}
                       // ready 态品牌绿（原型 .btn-send.ready）：空输入是 muted
                       // disabled 盘，有内容才亮绿——状态差本身就是「可以发了」
                       // 的信号，比常亮黑盘的信息量大。
@@ -585,6 +671,7 @@ export function Composer(): React.JSX.Element {
             )}
           </ComposerPrimitive.Root>
         </div>
+        </AskComposerSwap>
 
         {/* Below-card chips (figure 18): 选择工作目录已实装（统一会话管理，
             2026-07-07：新会话可选工作目录，发过消息后锁定只读）；语气 创意
@@ -596,289 +683,28 @@ export function Composer(): React.JSX.Element {
             会话实际模型取值，模型切换到非 200k 窗口时百分比会算错。组件与
             数据链路（engine.ts usage 事件的三个分量字段）保留，待窗口容量
             改成按模型动态取值后再挂回这排。 */}
-        <div className="mt-3 flex items-center gap-4 px-2">
+        <div
+          className={
+            variant === 'hero'
+              ? // hero：这排就是托盘露出的延伸条（原型 .composer-footer），
+                // 间距从托盘内侧起算，不再需要 mt。
+                'flex items-center gap-4 px-6 pb-3.5 pt-3'
+              : 'mt-3 flex items-center gap-4 px-2'
+          }
+        >
           <WorkspaceDirPicker />
           {/* 知识库管理入口：与「选择工作目录」并排的 FUNCTIONAL chip——点开
               接管聊天区的 KbManagerView（openManager 会先 refresh 一次）。
-              仅在「写方案」模式露出：知识库只喂写方案流程，其它模式隐藏它。 */}
-          {composerMode === 'proposal' ? <ComposerKbChip label={t('catKnowledgeBase')} /> : null}
+              仅在「写方案」语境露出（方案进行中，或 composer 里已选写方案
+              chip 待发）：知识库只喂写方案流程，其它场景隐藏它。 */}
+          {proposalActiveHere || composerLeadsProposal ? (
+            <ComposerKbChip label={t('catKnowledgeBase')} />
+          ) : null}
           <div className="ml-auto">
             <PermissionModePicker />
           </div>
         </div>
       </div>
-    </div>
-  )
-}
-
-/** Composer mode metadata for the picker (通用 / 设计 / 幻灯片 / 写作 / 写方案 / 处理表格 / 制作视频). */
-interface ComposerModeMeta {
-  id: ComposerModeId
-  label: string
-  beta?: boolean
-  icon: React.ReactNode
-}
-
-const COMPOSER_MODES: readonly ComposerModeMeta[] = [
-  {
-    id: 'general',
-    label: '通用',
-    icon: (
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
-        <path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z" />
-      </svg>
-    )
-  },
-  {
-    id: 'design',
-    label: '设计',
-    icon: (
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
-        <rect x="4" y="4" width="16" height="16" rx="2" />
-        <path d="M4 9h16M9 9v11" />
-      </svg>
-    )
-  },
-  {
-    id: 'slides',
-    label: '幻灯片',
-    beta: true,
-    icon: (
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
-        <rect x="3" y="4.5" width="18" height="12" rx="2" />
-        <path d="M8 20.5h8M12 16.5v4" />
-      </svg>
-    )
-  },
-  {
-    id: 'writing',
-    label: '写作',
-    beta: true,
-    icon: (
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M16.5 3.5 20.5 7.5 8 20 3.5 20.5 4 16z" />
-        <path d="M14 6 18 10" />
-      </svg>
-    )
-  },
-  {
-    id: 'proposal',
-    label: '写方案',
-    beta: true,
-    icon: (
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M14 3.5H6.5A1.5 1.5 0 0 0 5 5v14a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19V8.5z" />
-        <path d="M14 3.5V8.5H19M8.5 12.5h7M8.5 16h4.5" />
-      </svg>
-    )
-  },
-  {
-    id: 'spreadsheet',
-    label: '处理表格',
-    beta: true,
-    icon: (
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
-        <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
-        <path d="M3.5 9.5h17M9.5 9.5v10M3.5 14.5h17" />
-      </svg>
-    )
-  },
-  {
-    id: 'video',
-    label: '制作视频',
-    beta: true,
-    // 影片胶片框 + 中央播放三角：一眼是「视频」。描边同其余项 1.7 无填充。
-    icon: (
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
-        <rect x="3" y="5" width="18" height="14" rx="2" />
-        <path d="M3 9.5h18M8 5v4.5M16 5v4.5" />
-        <path d="M11 12.5v3l2.5-1.5z" />
-      </svg>
-    )
-  }
-]
-
-/**
- * Composer mode picker in the toolbar — a pill showing the current mode
- * (icon + label, e.g.「通用」) that opens a popover to switch between
- * 通用 / 设计 / 幻灯片 / 写作 / 写方案 / 处理表格 / 制作视频. Replaces the old single monitor-icon slides
- * toggle: the popover's 幻灯片 row is now the slides entry point (picking it
- * sets mode='slides'; sending then marks the session as a slides session via
- * markIfSlides → ThreadView's two-pane layout).
- *
- * Reuses PermissionModePicker's interaction shape: upward popover (the
- * composer sits at the window bottom), click-outside + Esc to close, motion
- * fade, a check on the selected row. 幻灯片 / 写作 carry a blue "Beta" tag.
- */
-function ComposerModePicker(): React.JSX.Element | null {
-  const mode = useComposerModeStore((s) => s.mode)
-  const setMode = useComposerModeStore((s) => s.setMode)
-  // 仅新会话（还没发过消息）可选：mode 是全局单例，发送时会被实时读取去拼
-  // 技能斜杠命令，选定后不再允许中途改判——发过消息就整体收起，而不是像
-  // WorkspaceDirPicker 那样退化成禁用态展示。
-  const hasMessages = useChatStore((s) => s.messages.length > 0)
-  const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  const btnRef = useRef<HTMLButtonElement | null>(null)
-  const menuRef = useRef<HTMLDivElement | null>(null)
-  // 菜单 portal 到 body 后用 fixed 定位，锚点靠测量按钮 rect 得出（见下方
-  // 「为什么必须 portal」注释）。null = 还没测量 / 未打开。
-  const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(
-    null
-  )
-
-  const current =
-    COMPOSER_MODES.find((m) => m.id === mode) ?? COMPOSER_MODES[0]!
-
-  // 打开时测量按钮位置换算成 fixed 锚点：菜单左缘对齐按钮左缘，菜单底缘
-  // 贴按钮顶缘上方（bottom = 视口高 − 按钮 top，配 mb 间距向上弹）。
-  // useLayoutEffect：在浏览器绘制前定位好，避免菜单先闪现在 (0,0) 再跳位。
-  useLayoutEffect(() => {
-    if (!open) return
-    const measure = (): void => {
-      const b = btnRef.current?.getBoundingClientRect()
-      if (b) setAnchor({ left: b.left, bottom: window.innerHeight - b.top })
-    }
-    measure()
-    // 滚动 / 缩放时跟随重定位（composer 在滚动视口内，滚动会移动按钮）。
-    window.addEventListener('scroll', measure, true)
-    window.addEventListener('resize', measure)
-    return () => {
-      window.removeEventListener('scroll', measure, true)
-      window.removeEventListener('resize', measure)
-    }
-  }, [open])
-
-  useEffect(() => {
-    if (!open) return
-    // Hold an "overlay open" count while this popover is up so the composer's
-    // blur strip hides (its backdrop-blur otherwise slices across the menu).
-    // +1 on open, -1 in cleanup → balanced (open→false runs the cleanup, then
-    // the early return skips re-incrementing).
-    const overlay = useComposerOverlayStore.getState()
-    overlay.setOpen(true)
-    const onDown = (e: MouseEvent): void => {
-      // 菜单已 portal 到 body（不在 rootRef 子树内），点击既不在按钮壳
-      // 也不在菜单里才算「点外面」→ 关闭。少了 menuRef 这半边，点菜单项
-      // 会被当成点外部先关掉菜单、选择丢失。
-      const target = e.target as Node
-      const inRoot = rootRef.current?.contains(target)
-      const inMenu = menuRef.current?.contains(target)
-      if (!inRoot && !inMenu) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    window.addEventListener('mousedown', onDown)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      overlay.setOpen(false)
-      window.removeEventListener('mousedown', onDown)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  const choose = (next: ComposerModeId): void => {
-    setMode(next)
-    setOpen(false)
-  }
-
-  // hooks 必须先跑完再判断——上面的 useLayoutEffect/useEffect 依赖 open 状态，
-  // 提前 return 必须放在所有 hook 调用之后。
-  if (hasMessages) return null
-
-  return (
-    <div ref={rootRef} className="relative">
-      <button
-        ref={btnRef}
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-label="对话模式"
-        className={
-          'group inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[12.5px] transition-colors ' +
-          'border-border/70 bg-card/70 text-muted-foreground hover:border-brand/50 hover:bg-card hover:text-foreground ' +
-          (open ? ' border-brand/60 text-foreground' : '')
-        }
-      >
-        <span className="flex shrink-0 items-center">{current.icon}</span>
-        <span className="leading-none">{current.label}</span>
-        <svg
-          width="10" height="10" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-          className={'opacity-60 transition-transform ' + (open ? 'rotate-180' : '')}
-          aria-hidden
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
-
-      {/* ⚠️ 为什么必须 portal 到 body（2026-07-05「菜单顶部被欢迎语盖住」实锤）：
-        * 菜单原本 `absolute bottom-full` 相对本组件向上弹，但 Composer 卡片
-        * 外壳是 `relative overflow-hidden rounded-[…]`（圆角裁剪必需，不能去），
-        * 向上溢出卡片的菜单顶部被 overflow-hidden **裁掉**、露出后面的空态欢迎语
-        * 标题（CDP elementFromPoint 命中 H1 实锤）——不是 z-index 能救的（裁剪
-        * 与层叠无关）。portal 到 body 让菜单脱离卡片的 overflow 裁剪，fixed 定位
-        * 靠测量按钮 rect 得出锚点（anchor）。菜单在 .chat-app 之外，canvas 的裸
-        * <button> reset 会命中菜单项 → 每项加 data-slot 逃逸（同 2026-07-04 打开
-        * 方式菜单/lightbox 家族）。 */}
-      {anchor !== null &&
-        createPortal(
-          <AnimatePresence>
-            {open && (
-              <motion.div
-                ref={menuRef}
-                initial={{ opacity: 0, y: 4, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 4, scale: 0.98 }}
-                transition={{ duration: 0.12, ease: 'easeOut' }}
-                style={{ left: anchor.left, bottom: anchor.bottom }}
-                className="fixed z-[9999] mb-1.5 w-56 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
-                role="listbox"
-              >
-                {COMPOSER_MODES.map((meta) => {
-                  const selected = meta.id === mode
-                  return (
-                    <button
-                      key={meta.id}
-                      data-slot="composer-mode-option"
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      onClick={() => choose(meta.id)}
-                      className={
-                        'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors ' +
-                        (selected
-                          ? 'bg-brand/10 text-foreground'
-                          : 'text-muted-foreground hover:bg-muted hover:text-foreground')
-                      }
-                    >
-                      <span className="flex shrink-0 items-center">{meta.icon}</span>
-                      <span className="font-medium">{meta.label}</span>
-                      {meta.beta ? (
-                        <span className="rounded-md bg-sky-500/15 px-1.5 py-0.5 text-[10.5px] font-semibold leading-none text-sky-500">
-                          Beta
-                        </span>
-                      ) : null}
-                      <span className="flex-1" />
-                      {selected ? (
-                        <svg
-                          width="14" height="14" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                          className="shrink-0 text-brand"
-                          aria-hidden
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      ) : null}
-                    </button>
-                  )
-                })}
-              </motion.div>
-            )}
-          </AnimatePresence>,
-          document.body
-        )}
     </div>
   )
 }
@@ -1103,17 +929,11 @@ function SkillPickerButton({
                           (i === highlighted ? 'bg-muted' : '')
                         }
                       >
-                        <svg
-                          width={20}
-                          height={20}
-                          viewBox="0 0 48 48"
-                          aria-hidden="true"
-                          className="mt-0.5 shrink-0"
-                        >
-                          {fileIconPathsByKey(entry.spec.icon).map((p, pi) => (
-                            <path key={pi} d={p.d} fill={p.fill} />
-                          ))}
-                        </svg>
+                        <SkillChipIcon
+                          src={entry.spec.image}
+                          size={20}
+                          className="mt-0.5"
+                        />
                         <span className="flex min-w-0 flex-col gap-0.5">
                           <span className="truncate text-[13.5px] font-medium text-foreground">
                             {entry.spec.label ?? entry.value}
@@ -1715,6 +1535,23 @@ function WorkspaceDirPicker(): React.JSX.Element {
     p === defaultWorkspace
       ? zh ? '桌面' : 'Desktop'
       : p.split(/[\\/]/).filter(Boolean).pop() ?? p
+  // 菜单行的路径胶囊（2026-07-16 重设计，docs/ui-prototype-workspace-
+  // picker-v2.html 的 V3「胶囊」变体落地）：完整绝对路径的噪音太大
+  // （/Users/xxx/ 前缀每行重复一遍，把面板撑得又高又宽——用户实锤
+  // 「太丑」），压缩成「父目录尾两段」的 mono 小胶囊，全路径留给行
+  // title 的 hover tooltip。home 前缀从 defaultWorkspace（main 侧恒为
+  // 「桌面」目录）反推——推不出（非标准桌面路径）就不做 ~ 替换，胶囊
+  // 退化为真实尾段，无害。
+  const homePrefix = defaultWorkspace
+    ? /^(.*)[\\/](?:Desktop|桌面)$/.exec(defaultWorkspace)?.[1] ?? null
+    : null
+  const parentCapsule = (p: string): string => {
+    const t =
+      homePrefix && p.startsWith(homePrefix) ? `~${p.slice(homePrefix.length)}` : p
+    const parent = t.split(/[\\/]/).filter(Boolean).slice(0, -1)
+    if (parent.length <= 1) return parent[0] ?? '~'
+    return parent.slice(-2).join('/')
+  }
   const label =
     displayPath === null
       ? zh ? '选择工作目录' : 'Choose folder'
@@ -1997,18 +1834,24 @@ function WorkspaceDirPicker(): React.JSX.Element {
                 exit={{ opacity: 0, y: 4, scale: 0.98 }}
                 transition={{ duration: 0.12, ease: 'easeOut' }}
                 style={{ left: anchor.left, bottom: anchor.bottom }}
-                className="fixed z-[9999] mb-1.5 w-72 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                className="fixed z-[9999] mb-1.5 w-72 overflow-hidden rounded-xl border border-border bg-card p-[5px] shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
                 role="listbox"
               >
                 {/* 已有记录的会话：换目录 = main 侧迁移 transcript。一行
                   * 大白话说清后果，不弹确认框打断。 */}
                 {hasHistory && (
-                  <div className="px-3 pb-1.5 pt-1 text-[11px] leading-snug text-muted-foreground/70">
+                  <div className="px-2 pb-1.5 pt-1 text-[11px] leading-snug text-muted-foreground/70">
                     {zh
                       ? '更改后，这个对话和它的记录会搬到新文件夹继续。'
                       : 'Changing folders moves this chat and its history to the new folder.'}
                   </div>
                 )}
+                {/* 行形态 = 原型 V3「胶囊」（2026-07-16 用户定稿）：单行制
+                  * ——名称为主 + 「默认」小 tag + 父目录尾两段的 mono 胶囊，
+                  * 全路径进 title 走 hover tooltip（此前名称/全路径两行制，
+                  * 面板被路径撑得又高又宽）。选中态做减法：绿勾（复用
+                  * ws-dest-pop 弹入）+ 名称加重，退掉大块 brand/10 底色——
+                  * 勾尾端恒占位（w-3.5 空槽），选中与否行内胶囊右缘对齐。 */}
                 {known.map((path, i) => {
                   const isDef = i === 0
                   const name = isDef
@@ -2023,54 +1866,60 @@ function WorkspaceDirPicker(): React.JSX.Element {
                       role="option"
                       aria-selected={selected}
                       onClick={() => choose(path)}
+                      title={path}
                       className={
-                        'flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors ' +
+                        'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted/70 ' +
                         (selected
-                          ? 'bg-brand/10 text-foreground'
-                          : 'text-muted-foreground hover:bg-muted hover:text-foreground')
+                          ? 'text-foreground'
+                          : 'text-muted-foreground hover:text-foreground')
                       }
                     >
-                      <span className="shrink-0 opacity-70">{folderIcon}</span>
-                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span className="truncate text-[12px] font-medium">
-                          {name}
-                          {isDef && (
-                            <span className="ml-1.5 text-[11px] font-normal opacity-60">
-                              {zh ? '默认' : 'default'}
-                            </span>
-                          )}
-                        </span>
-                        <span className="truncate text-[11px] opacity-60">
-                          {path}
-                        </span>
+                      <span className="shrink-0 opacity-60">{folderIcon}</span>
+                      <span
+                        className={
+                          'min-w-0 flex-1 truncate text-[13px] ' +
+                          (selected ? 'font-semibold' : '')
+                        }
+                      >
+                        {name}
                       </span>
-                      {selected && (
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          className="shrink-0 text-brand"
-                          aria-hidden
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
+                      {isDef && (
+                        <span className="shrink-0 rounded bg-muted px-[5px] py-px text-[10px] font-medium text-muted-foreground/85">
+                          {zh ? '默认' : 'default'}
+                        </span>
                       )}
+                      <span className="max-w-[46%] shrink-0 truncate rounded-full bg-muted/75 px-1.5 py-px font-mono text-[10px] text-muted-foreground/80">
+                        {parentCapsule(path)}
+                      </span>
+                      <span className="flex w-3.5 shrink-0 justify-center">
+                        {selected && (
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="ws-dest-pop text-brand"
+                            aria-hidden
+                          >
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        )}
+                      </span>
                     </button>
                   )
                 })}
-                <div className="mx-3 my-1 border-t border-border/60" aria-hidden />
+                <div className="mx-2 my-1 border-t border-border/60" aria-hidden />
                 <button
                   data-slot="workspace-option"
                   type="button"
                   onClick={browse}
-                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="shrink-0 opacity-70" aria-hidden>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="shrink-0 opacity-60" aria-hidden>
                     <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                     <path d="M12 11v4M10 13h4" />
                   </svg>

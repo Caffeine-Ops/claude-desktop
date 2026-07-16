@@ -367,6 +367,25 @@
 .pm-composer-input {
   position: relative;
 }
+
+/*
+ * Composer chip 底色（「柔底无边」，2026-07-16 选定；六方案对比稿见
+ * docs/ui-prototype-composer-chip-styles.html 的方案 B）。chip 本体是
+ * chipNodeView 的 imperative inline style——inline 样式吃不到 .dark 选择
+ * 器，所以浅/暗双档收在这两个变量里，由主题类翻转、实时换肤自动生效。
+ * 暗色不沿用 foreground 低透明度（暗档 foreground 是暖白，5% 铺在暖黑
+ * 卡上存在感不足），改提到白 8%/13%——与 Composer 外壳
+ * bg-foreground/[0.035] dark:bg-white/[0.045] 是同一种双档手法。
+ */
+.pm-composer-input {
+  --composer-chip-bg: hsl(var(--foreground) / 0.05);
+  --composer-chip-bg-hover: hsl(var(--foreground) / 0.09);
+}
+.dark .pm-composer-input {
+  --composer-chip-bg: hsl(0 0% 100% / 0.08);
+  --composer-chip-bg-hover: hsl(0 0% 100% / 0.13);
+}
+
 .pm-composer-input.is-empty::before {
   content: attr(data-placeholder);
   position: absolute;

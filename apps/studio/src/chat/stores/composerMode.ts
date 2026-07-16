@@ -2,41 +2,24 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 /**
- * Composer mode store.
+ * Slides-session store（原 Composer mode store 瘦身，2026-07-16）。
  *
- * Two things live here:
+ * 曾经还持有全局 `mode`（通用 / 设计 / 幻灯片 / … 的 ComposerModePicker
+ * 选项）——picker 退役后模式入口统一到 EmptyState ScenarioRail 的技能
+ * chip（leading 斜杠命令即语义，见 FusionRuntimeProvider onNew），全局
+ * mode 单例连同 setMode/ComposerModeId 一并删除，恢复从 git 历史。
  *
- *  1. `mode` — the option picked in the composer's "写作 Beta ⌄" pill
- *     (通用 / 设计 / 幻灯片 / 写作 / 写方案 / 处理表格 / 制作视频). This is the GLOBAL current
- *     selection. FRONTEND-ONLY: it doesn't change what gets sent to the
- *     model yet.
- *
- *  2. `slidesSessions` — the set of session ids that are "slides sessions".
- *     A session becomes one when the user sends their first message while
- *     the global `mode` is `slides` (see markSlidesSession, called from the
- *     composer send path). The two-pane slides layout in ThreadView is
- *     gated on THIS per-session flag, NOT on the live global `mode` — so
- *     only a session that was *started* in slides mode shows the right-hand
- *     workspace, and it keeps showing it regardless of what the picker is
- *     set to later. Other sessions stay single-column. Switching sessions
- *     therefore flips single/two-pane based on each session's own flag.
+ * 现在只剩 `slidesSessions` —— "slides 会话" 的 id 集合：首条消息以
+ * ppt-master 斜杠开头的会话在发送时被打上标记（onNew），ThreadView 的
+ * 双分栏工作台 gate 在这个 per-session 标记上，与用户后来在 composer 里
+ * 选什么无关；切会话时按各自标记翻单/双栏。
  *
  * Stored as a `Record<id, true>` (not a Set) so zustand `persist` can
  * JSON-serialise it without a custom replacer. Persisted to localStorage
  * so the binding survives reloads.
  */
-export type ComposerModeId =
-  | 'general'
-  | 'design'
-  | 'slides'
-  | 'writing'
-  | 'proposal'
-  | 'spreadsheet'
-  | 'video'
 
 interface ComposerModeState {
-  mode: ComposerModeId
-  setMode: (mode: ComposerModeId) => void
   /** Session ids that were started in slides mode. */
   slidesSessions: Record<string, true>
   /** Mark a session as a slides session (idempotent). */
@@ -54,8 +37,6 @@ interface ComposerModeState {
 export const useComposerModeStore = create<ComposerModeState>()(
   persist(
     (set, get) => ({
-      mode: 'writing',
-      setMode: (mode) => set({ mode }),
       slidesSessions: {},
       markSlidesSession: (sessionId) => {
         if (!sessionId) return
@@ -79,7 +60,7 @@ export const useComposerModeStore = create<ComposerModeState>()(
       name: 'claude-desktop:composer-mode',
       // Only persist the durable fields, not the function refs (zustand
       // handles that, but being explicit keeps the storage shape clean).
-      partialize: (s) => ({ mode: s.mode, slidesSessions: s.slidesSessions }),
+      partialize: (s) => ({ slidesSessions: s.slidesSessions }),
       // 回放临时标记的崩溃兜底：正常退出由 ReplayController.exit 的
       // unmark 摘除；强退/崩溃残留的 replay: 键在下次启动 rehydrate 后
       // 清掉，防止 localStorage 越积越脏。microtask 延迟避开 create()

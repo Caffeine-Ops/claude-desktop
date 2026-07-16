@@ -186,6 +186,7 @@
     "@open-design/sidecar-proto": "workspace:*",
     "@open-design/ui": "workspace:*",
     "@tailwindcss/postcss": "4.3.0",
+    "@tanstack/react-virtual": "^3.14.6",
     "@types/adm-zip": "^0.5.8",
     "@types/mdast": "^4.0.4",
     "@types/node": "^22.9.0",

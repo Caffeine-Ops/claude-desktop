@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -8,8 +9,8 @@ import {
   useState
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { Node as PMNode } from 'prosemirror-model'
-import { EditorState } from 'prosemirror-state'
+import { Node as PMNodeCls, type Node as PMNode } from 'prosemirror-model'
+import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { history, undo, redo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
@@ -19,7 +20,16 @@ import { useAuiState, useComposerRuntime } from '@assistant-ui/react'
 import { composerSchema, serializeDoc, parseText } from './pmSchema'
 import { createChipNodeView } from './chipNodeView'
 import { findSkillChipSpec } from './skillChipRegistry'
-import { fileIconPathsByKey } from '../components/chat/FileTypeIcon'
+import { fileMentionValue } from './fileMentionAdapter'
+import { registerFileMentionInserter } from './composerBridge'
+import { attachFilesToComposer } from './attachFiles'
+import { autoOpenPreviewPanel } from '../runtime/imageAttachmentAdapter'
+import {
+  acceptForPlaceholder,
+  createFilePlaceholderPlugin,
+  filePlaceholderKey
+} from './filePlaceholderPlugin'
+import { SkillChipIcon } from '../components/chat/SkillChipIcon'
 import {
   createSuggestionPlugin,
   insertSuggestion,
@@ -61,8 +71,9 @@ export interface SuggestionAdapter {
 
 /**
  * Imperative handle exposed to parents that need to drive the editor from
- * outside (the toolbar's 技能 button / SkillPickerPopover). Kept to one
- * method — anything richer belongs in the composer store, not here.
+ * outside (the toolbar's 技能 button / SkillPickerPopover, and the
+ * EmptyState ScenarioRail). Only doc-surgery that must understand PM
+ * positions belongs here — anything richer belongs in the composer store.
  */
 export interface ProseMirrorComposerInputHandle {
   /**
@@ -74,6 +85,58 @@ export interface ProseMirrorComposerInputHandle {
    * inserts the same coloured chip the inline menu would.
    */
   insertSlashCommand: (value: string) => void
+  /**
+   * Reset the WHOLE doc to just a `/value` slash chip (+ trailing space).
+   * The ScenarioRail's skill chips use this instead of
+   * `insertSlashCommand`: picking a skill means "start this skill's flow
+   * over" — any previous body (a filled prompt template, half-typed text)
+   * is cleared so the rail lands back on the skill's recommended-prompt
+   * row（用户明确要求，2026-07-16：chip+正文状态下点技能要清空 input 再进
+   * 推荐态，不保留旧正文）. A leading chip is also required for the rail's
+   * two-state logic at all — `findSkillChipSpecInText` only matches a
+   * LEADING command, so a merely appended chip would never flip the row.
+   */
+  resetWithSlashCommand: (value: string) => void
+  /**
+   * Replace everything AFTER the leading slash chip (or the whole doc when
+   * there is no chip) with `text`, keeping the chip itself intact. Used by
+   * the EmptyState ScenarioRail's recommended-prompt chips: pick a skill →
+   * chip goes in via `insertLeadingSlashCommand`; pick a prompt → its
+   * template fills the body without blowing the chip away.
+   *
+   * Why not `runtime.setText(`${slash} ${text}`)`: the external-sync
+   * rebuild goes through `parseText`, whose TOKEN_RE doesn't accept `:` —
+   * a namespaced command (`/claude-desktop:ppt-master`) would come back as
+   * a broken half-chip. Direct doc surgery sidesteps the tokenizer.
+   */
+  fillBody: (text: string) => void
+  /**
+   * Append an `@"path"` mention chip at the end of the doc — the inline
+   * form of "attach this file"（2026-07-16 附件内联化，对齐 WorkBuddy：有
+   * 磁盘路径的上传/拖拽附件不再进输入框上方的 attachments 行，直接以
+   * mention chip 混排进正文）. Serialization is the SAME `@"path"` string
+   * the attachments pipeline already emitted at send time, so the wire
+   * format to fusion-code is untouched — only where the pre-send visual
+   * lives changed. Value formatting comes from `fileMentionValue` (the
+   * `@` menu's single source of truth for quoting).
+   */
+  insertFileMention: (path: string) => void
+  /**
+   * Opaque snapshot of the current doc (PM `doc.toJSON()`), for the
+   * ScenarioRail's per-category drafts: switching a tab stashes the doc,
+   * switching back restores it VERBATIM — chips, mentions, paragraphs —
+   * because JSON round-trips through the schema and never touches
+   * `parseText`'s tokenizer (which would shred namespaced commands, see
+   * `fillBody`). `null` when the editor isn't mounted (e.g. dictation).
+   */
+  snapshotDoc: () => unknown | null
+  /**
+   * Replace the whole doc with a `snapshotDoc()` result; `null` (no draft
+   * stashed for that tab) clears the editor. The change dispatches through
+   * the normal transaction path, so `composer.text` writeback — and with
+   * it the rail's two-state chip row — follows automatically.
+   */
+  restoreDoc: (snapshot: unknown | null) => void
 }
 
 interface Props {
@@ -123,6 +186,22 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
   useEffect(() => {
     liveRef.current = { suggestion, items, highlighted }
   }, [suggestion, items, highlighted])
+
+  // --- 文件占位 tag（filePlaceholderPlugin）---------------------------
+  // 点「【PPT 文件】」这类占位 → 记下它的 doc 区间 → 打开 hidden
+  // file input；选完文件在 onPlaceholderFilePicked 里做原位替换。两个
+  // 回调都 deps=[]（读 ref），mount-once 的 plugin 闭包捕获它们是安全的。
+  const pendingPlaceholderRef = useRef<{ from: number; to: number } | null>(null)
+  const placeholderFileInputRef = useRef<HTMLInputElement | null>(null)
+  const onPickPlaceholderFile = useCallback((from: number, to: number, placeholderText: string) => {
+    pendingPlaceholderRef.current = { from, to }
+    const input = placeholderFileInputRef.current
+    if (!input) return
+    // 按占位描述过滤可选类型（「PPT 文件」→ .ppt/.pptx）；命不中关键词
+    // 就不限制。原生对话框据 accept 置灰不匹配项。
+    input.accept = acceptForPlaceholder(placeholderText) ?? ''
+    input.click()
+  }, [])
 
   // --- mount the editor once -----------------------------------------
   useLayoutEffect(() => {
@@ -242,6 +321,7 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
       schema: composerSchema,
       doc: parseText(composerText),
       plugins: [
+        createFilePlaceholderPlugin(onPickPlaceholderFile),
         history(),
         navKeymap,
         keymap(baseKeymap),
@@ -265,21 +345,20 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
         role: 'textbox',
         'aria-multiline': 'true'
       },
-      // Pasted images go to assistant-ui attachments, not into the doc.
-      // The old ComposerPrimitive.Input did this via its built-in
-      // `addAttachmentOnPaste`; since we replaced that component we
-      // re-implement it here. Returning `true` consumes the event so
-      // ProseMirror doesn't also try to paste the image as text/HTML —
-      // that double-handling was what made the screen flicker (PM
-      // rebuilt the doc → setText → external sync → rebuild, in a loop).
+      // Pasted files route through the unified attach pipeline
+      // (attachFilesToComposer, 2026-07-16 附件内联化)：有磁盘路径的
+      // （Finder 复制的文件）插 `@"path"` mention chip 内联进正文；无
+      // 路径的剪贴板截图走 assistant-ui attachments（顶部缩略图行 +
+      // base64 vision block），与旧行为一致。Returning `true` consumes
+      // the event so ProseMirror doesn't also try to paste the image as
+      // text/HTML — that double-handling was what made the screen
+      // flicker (PM rebuilt the doc → setText → external sync →
+      // rebuild, in a loop).
       handlePaste(_view, event) {
         const files = Array.from(event.clipboardData?.files ?? [])
-        const images = files.filter((f) => f.type.startsWith('image/'))
-        if (images.length === 0) return false
+        if (files.length === 0) return false
         event.preventDefault()
-        void Promise.all(images.map((file) => runtime.addAttachment(file))).catch((err) => {
-          console.error('[ProseMirrorComposerInput] addAttachment failed', err)
-        })
+        void attachFilesToComposer(files, runtime)
         return true
       },
       dispatchTransaction(tr) {
@@ -343,6 +422,92 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
     view.dom.setAttribute('data-placeholder', placeholder)
   }, [composerText, placeholder])
 
+  // 末尾追加一个 atom chip（slash 或 mention）的共享实现。
+  // `doc.content.size` is the position right AFTER the last paragraph
+  // closes (a doc-level boundary) — inserting inline content there
+  // doesn't fit `doc`'s `paragraph+` content expression, so ProseMirror
+  // auto-wraps it in a brand-new paragraph to make the doc valid, which
+  // is what showed up as "换行" (an unwanted line break) when picking a
+  // skill. `- 1` targets the position just *inside* the last paragraph
+  // instead, right before its closing token — the same kind of interior
+  // position `detectTrigger`/`insertSuggestion` always operate on.
+  const appendAtomAtEnd = useCallback((nodeType: 'slash' | 'mention', value: string) => {
+    const view = viewRef.current
+    if (!view) return
+    view.focus()
+    const endPos = view.state.doc.content.size - 1
+    const $end = view.state.doc.resolve(endPos)
+    const lastChar = $end.parent.textContent.slice(-1)
+    const needsSpace = lastChar !== '' && lastChar !== ' ' && lastChar !== '\t' && lastChar !== '\n'
+    const atom = composerSchema.nodes[nodeType]!.create({ value })
+    const space = composerSchema.text(' ')
+    const content = needsSpace ? [composerSchema.text(' '), atom, space] : [atom, space]
+    const tr = view.state.tr.insert(endPos, content)
+    view.dispatch(tr.scrollIntoView())
+  }, [])
+
+  // 附件内联化的跨组件入口：ThreadView 整列 dropzone / Composer 的「+」
+  // 选择器经 attachFiles → composerBridge 走到这里。挂载即注册、卸载即
+  // 注销——同一时刻只有一个编辑器实例（hero XOR dock），单槽正确。
+  useEffect(() => {
+    registerFileMentionInserter((path) => appendAtomAtEnd('mention', fileMentionValue(path)))
+    return () => registerFileMentionInserter(null)
+  }, [appendAtomAtEnd])
+
+  // 文件占位 tag 的选择器回调：把选中文件的 mention chip【原位替换】进
+  // 占位区间。区间从当前 plugin state 重新求证（选择器打开期间 doc 理论
+  // 上不会变，但求证零成本）：pending 区间还压着占位 → 用它；漂移了 →
+  // 落到 doc 里第一个占位；占位全没了（被手动删掉）→ 末尾追加兜底。
+  const onPlaceholderFilePicked = useCallback(
+    (fileList: FileList | null) => {
+      const input = placeholderFileInputRef.current
+      const file = fileList?.[0]
+      if (input) input.value = ''
+      const pending = pendingPlaceholderRef.current
+      pendingPlaceholderRef.current = null
+      if (!file) return
+      const path = window.chatApi?.pathForFile(file) ?? ''
+      const view = viewRef.current
+      if (!path || !view) return
+      // 占位一套两条 decoration（replace 区间 + 零宽 widget）——求证目标
+      // 区间只认 from<to 的 replace，零宽 widget 不能当替换范围用。
+      const decoSet = filePlaceholderKey.getState(view.state)
+      const spans = (list: readonly { from: number; to: number }[] | undefined) =>
+        (list ?? []).filter((d) => d.from < d.to)
+      const target =
+        (pending ? spans(decoSet?.find(pending.from, pending.to))[0] : undefined) ??
+        spans(decoSet?.find())[0]
+      if (!target) {
+        appendAtomAtEnd('mention', fileMentionValue(path))
+        return
+      }
+      const atom = composerSchema.nodes.mention!.create({ value: fileMentionValue(path) })
+      // chip 前后补空格（相邻字符已是空白则不补）：占位常与中文零空格相邻
+      // （「修改【…】：」），序列化出的 `修改@"path"：` 会让下游按边界识别
+      // mention 的消费方（气泡渲染、CLI 的 bare 解析）掉坑——空格让文本
+      // 自带边界，视觉上 chip 自身 margin 已吞掉这一格，不影响排版观感。
+      const $from = view.state.doc.resolve(target.from)
+      const before = $from.parent.textBetween(0, $from.parentOffset).slice(-1)
+      const afterStart = target.to
+      const $to = view.state.doc.resolve(afterStart)
+      const after = $to.parent.textBetween($to.parentOffset, $to.parent.content.size).slice(0, 1)
+      const content = [
+        ...(before && !/\s/.test(before) ? [composerSchema.text(' ')] : []),
+        atom,
+        ...(after && !/\s/.test(after) ? [composerSchema.text(' ')] : [])
+      ]
+      const tr = view.state.tr.replaceWith(target.from, target.to, content)
+      // 光标停在 chip 后，用户接着补下一个【】里的内容。
+      tr.setSelection(TextSelection.create(tr.doc, Math.min(target.from + 1, tr.doc.content.size - 1)))
+      view.dispatch(tr.scrollIntoView())
+      view.focus()
+      // 「上传即预览」一致性：拖拽 / 「+」选择器路径（attachFiles）都会
+      // 自动开右栏预览，占位 pill 选完文件同样开——三个入口一个行为。
+      autoOpenPreviewPanel(file.name, path)
+    },
+    [appendAtomAtEnd]
+  )
+
   // SkillPickerPopover 的入口：拿到用户选的技能 value 后，在编辑器末尾插入
   // 同一个 slash 原子节点（跟手动打 `/` 挑同一项时 insertSuggestion 产出的
   // 节点一模一样），而不是插入裸文本——这样才会渲染成彩色图标 chip，且
@@ -351,28 +516,66 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
   useImperativeHandle(
     forwardedRef,
     (): ProseMirrorComposerInputHandle => ({
-      insertSlashCommand: (value: string) => {
+      insertSlashCommand: (value: string) => appendAtomAtEnd('slash', value),
+      insertFileMention: (path: string) => appendAtomAtEnd('mention', fileMentionValue(path)),
+      resetWithSlashCommand: (value: string) => {
         const view = viewRef.current
         if (!view) return
-        view.focus()
-        // `doc.content.size` is the position right AFTER the last
-        // paragraph closes (a doc-level boundary) — inserting inline
-        // content there doesn't fit `doc`'s `paragraph+` content
-        // expression, so ProseMirror auto-wraps it in a brand-new
-        // paragraph to make the doc valid, which is what showed up as
-        // "换行" (an unwanted line break) when picking a skill. `- 1`
-        // targets the position just *inside* the last paragraph instead,
-        // right before its closing token — the same kind of interior
-        // position `detectTrigger`/`insertSuggestion` always operate on.
-        const endPos = view.state.doc.content.size - 1
-        const $end = view.state.doc.resolve(endPos)
-        const lastChar = $end.parent.textContent.slice(-1)
-        const needsSpace = lastChar !== '' && lastChar !== ' ' && lastChar !== '\t' && lastChar !== '\n'
+        // 整 doc 重置为「chip + 空格」：不是前插/换 chip——旧正文一并清掉，
+        // 这样点技能永远回到该技能的干净起点（正文空 → rail 显示推荐行）。
         const atom = composerSchema.nodes.slash!.create({ value })
-        const space = composerSchema.text(' ')
-        const content = needsSpace ? [composerSchema.text(' '), atom, space] : [atom, space]
-        const tr = view.state.tr.insert(endPos, content)
+        const para = composerSchema.nodes.paragraph!.create(null, [atom, composerSchema.text(' ')])
+        const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, para)
+        tr.setSelection(TextSelection.create(tr.doc, tr.doc.content.size - 1))
         view.dispatch(tr.scrollIntoView())
+        view.focus()
+      },
+      fillBody: (text: string) => {
+        const view = viewRef.current
+        if (!view) return
+        const { doc } = view.state
+        // Keep a leading slash chip (first inline of the first paragraph)
+        // and replace from just after it; otherwise replace the whole doc
+        // interior. Positions: 1 = inside the first paragraph, before its
+        // first child; an atom chip has nodeSize 1.
+        const firstInline = doc.firstChild?.firstChild
+        const hasChip = firstInline?.type.name === 'slash'
+        const from = hasChip ? 1 + firstInline.nodeSize : 1
+        // `content.size - 1` is the interior end of the LAST paragraph.
+        // A multi-paragraph body is replaced across block boundaries —
+        // ProseMirror's replace fitting collapses it back to one block.
+        const to = doc.content.size - 1
+        // Prompt templates are single-line by contract (PM text nodes
+        // cannot contain `\n`); flatten any stray newlines defensively.
+        const body = (hasChip ? ' ' : '') + text.replace(/\n+/g, ' ')
+        const tr = view.state.tr.replaceWith(from, Math.max(from, to), composerSchema.text(body))
+        tr.setSelection(TextSelection.create(tr.doc, tr.doc.content.size - 1))
+        view.dispatch(tr.scrollIntoView())
+        view.focus()
+      },
+      snapshotDoc: () => {
+        const view = viewRef.current
+        return view ? view.state.doc.toJSON() : null
+      },
+      restoreDoc: (snapshot: unknown | null) => {
+        const view = viewRef.current
+        if (!view) return
+        let doc: PMNode
+        if (snapshot == null) {
+          doc = parseText('')
+        } else {
+          try {
+            doc = PMNodeCls.fromJSON(composerSchema, snapshot)
+          } catch (err) {
+            // 陈旧/异构快照（理论上只有 schema 变更会走到）→ 当作无草稿清空。
+            console.warn('[ProseMirrorComposerInput] restoreDoc: bad snapshot, clearing', err)
+            doc = parseText('')
+          }
+        }
+        const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content)
+        tr.setSelection(TextSelection.create(tr.doc, tr.doc.content.size - 1))
+        view.dispatch(tr.scrollIntoView())
+        view.focus()
       }
     }),
     []
@@ -381,6 +584,16 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
   return (
     <div className="relative w-full">
       <div ref={editorHostRef} className="w-full" />
+      {/* 文件占位 tag 的选择器（filePlaceholderPlugin）：点占位 → click()
+          这个 hidden input → onChange 原位替换成 mention chip。 */}
+      <input
+        ref={placeholderFileInputRef}
+        type="file"
+        className="hidden"
+        aria-hidden="true"
+        tabIndex={-1}
+        onChange={(e) => onPlaceholderFilePicked(e.target.files)}
+      />
       {suggestion && items.length > 0 && (
         <SuggestionPopover
           items={items}
@@ -567,17 +780,7 @@ function SuggestionPopover({
                   gets a neutral command glyph so EVERY row carries a left icon
                   and the names line up — matching the file-mention menu's look. */}
               {skill ? (
-                <svg
-                  width={16}
-                  height={16}
-                  viewBox="0 0 48 48"
-                  aria-hidden="true"
-                  className="shrink-0"
-                >
-                  {fileIconPathsByKey(skill.icon).map((p, pi) => (
-                    <path key={pi} d={p.d} fill={p.fill} />
-                  ))}
-                </svg>
+                <SkillChipIcon src={skill.image} size={16} />
               ) : (
                 <svg
                   width={16}

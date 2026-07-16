@@ -78,11 +78,7 @@ export function buildFileMentionAdapter(files: readonly string[]): SuggestionAda
 }
 
 function toItem(path: string): SuggestionItem {
-  // The value carries the `@` prefix and any quoting so it serializes
-  // back to exactly what fusion-code's extractAtMentionedFiles expects:
-  //   - bare:   @src/foo.ts   (regularAtMentionRegex = /@([^\s]+)/)
-  //   - quoted: @"path with space.txt"  (quotedAtMentionRegex)
-  const value = needsQuoting(path) ? `@"${path}"` : `@${path}`
+  const value = fileMentionValue(path)
   return {
     id: `file-${path}`,
     value,
@@ -91,6 +87,22 @@ function toItem(path: string): SuggestionItem {
   }
 }
 
+/**
+ * Path → the literal mention `value` a mention atom carries. The value
+ * includes the `@` prefix and any quoting so it serializes back to exactly
+ * what fusion-code's extractAtMentionedFiles expects:
+ *   - bare:   @src/foo.ts   (regularAtMentionRegex = /@([^\s]+)/)
+ *   - quoted: @"path with space.txt"  (quotedAtMentionRegex)
+ * 单一真源：`@` 菜单（toItem）与附件内联化（insertFileMention，2026-07-16
+ * 起上传/拖拽的有路径附件直接插 mention chip）共用，两边格式永远一致。
+ */
+export function fileMentionValue(path: string): string {
+  return needsQuoting(path) ? `@"${path}"` : `@${path}`
+}
+
 function needsQuoting(path: string): boolean {
-  return /\s/.test(path)
+  // 空格是 fusion-code bare 解析的硬边界；中文标点是【展示层】识别
+  // （mentionDisplay 的 bare 截断集）的边界——文件名里带「（）：」等
+  // 时裸形式会被展示层截错，quoted 形式两边都稳。
+  return /[\s，。：:；;、！？（）【】「」]/.test(path)
 }

@@ -21,8 +21,11 @@
  *    条目只负责设置 target 打开对应弹窗，删/改逻辑集中在根组件。
  *  - ··· 菜单与右键菜单是同一组条目（SessionMenuItems 分别塞进
  *    DropdownMenu / ContextMenu 两个 radix 壳）。
- *  - 选中态即时呈现（无滑动动画，2026-07-04 退役），删除行播高度折叠动画，
- *    删的是当前会话时选中态移交相邻行。
+ *  - 选中态即时呈现（无滑动动画，2026-07-04 退役），删除行即时消失（折叠
+ *    退场动画随虚拟滚动退役，2026-07-16——AnimatePresence 需要被删节点留在
+ *    DOM 播完退场，与虚拟化冲突），删的是当前会话时选中态移交相邻行。
+ *  - 列表虚拟滚动（@tanstack/react-virtual，2026-07-16）：几百条会话时只
+ *    渲染可视区十几行，重渲成本与会话总数解耦，细节见渲染处注释。
  *
  * 本组件不 import 任何模块求值期会触碰 window 的 src/chat/ 模块（那会
  * 破坏所在 layout 的 SSR）；railMotion 是纯常量模块，属安全例外——rail
@@ -35,7 +38,7 @@
  * 重挂载首帧直接渲染缓存，挂载 effect 的 reload 只做后台静默校正。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import {
   Clapperboard,
@@ -45,13 +48,13 @@ import {
   Pencil,
   Trash2
 } from 'lucide-react'
-import { AnimatePresence, MotionConfig, motion } from 'motion/react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type { ComponentType, ReactNode } from 'react'
 import type { ThreadSummary } from '@desktop-shared/types'
 
-import { railEaseOut } from '@/src/chat/shell/railMotion'
 import { rememberCanvasPath } from '@/src/stores/canvasNav'
 import { stripMessageMarker } from '@/src/chat/lib/messageMarkers'
+import { condenseFileMentions } from '@/src/chat/lib/mentionDisplay'
 import { useChatStore, useRunningSessionIdsKey } from '@/src/chat/stores/chat'
 import { usePendingPermissionKindsBySession } from '@/src/chat/stores/permissions'
 import { useRailSessionsStore } from '@/src/chat/stores/railSessions'
@@ -147,19 +150,20 @@ function displayTitle(raw: string): string {
   const m = /^(\/[\w.:-]+)\s*([\s\S]*)$/.exec(t)
   if (m) {
     const rest = m[2].trim()
-    if (rest) return rest
+    if (rest) return condenseFileMentions(rest)
     return m[1].slice(1).split(':').pop() || UNTITLED_LABEL
   }
 
-  // 形态 3：普通文本。
-  return t
+  // 形态 3：普通文本。`@"path"` mention 压成 basename（内联附件的首条
+  // 消息标题原本是一整条绝对路径，rail 行放不下），规则同气泡/头部标题。
+  return condenseFileMentions(t)
 }
 
 /* groupLabel / relativeTime 抽到 railTime.ts 与 RailProjectList 共用
  *（两个 rail 列表的时间节奏必须同源）。 */
 
-/** 列表渲染项：分组标签与会话行拍平进同一个 AnimatePresence，
- * 组内最后一行被删时标签跟着播同一支折叠退场。 */
+/** 列表渲染项：分组标签与会话行拍平成一维数组喂给虚拟滚动
+ * （useVirtualizer 按 index 取项、按 kind 分别渲染）。 */
 type RailItem =
   | { kind: 'label'; key: string; text: string }
   | { kind: 'row'; key: string; thread: ThreadSummary }
@@ -425,12 +429,22 @@ export function RailSessionList() {
         setOptimisticId(next?.id ?? null)
         void window.tabApi?.switchShellSession?.(next?.id ?? null)
       }
+      // 删除 IPC 的收尾走墓碑集协议（2026-07-16）：
+      //  - applyRemove 已把行乐观折叠 + 把 id 记进墓碑，删盘的 ~1.2s 窗口期内
+      //    任何来源的 reload 都会过滤掉这个 id，不会让已删行复活（此前的 bug：
+      //    cli 退出等无关事件的并发 reload 拿到还没删完的磁盘旧列表，把乐观
+      //    移除覆盖回来，删除的会话短暂又冒出来）。
+      //  - 成功 → confirmRemove 摘墓碑：此刻磁盘已删，且 main 已 emit
+      //    sessionListChanged，fan-out 的 reload 会拿到不含它的权威列表；不再
+      //    显式 .then(reload)（那会叠加成一次删除多趟扫盘）。
+      //  - 失败 → cancelRemove 摘墓碑 + reload，把误删移除的行从磁盘拉回来。
+      const store = useRailSessionsStore.getState()
       void window.tabApi
         ?.deleteShellSession?.({ sessionId: target.id })
-        .then(reload)
+        .then(() => store.confirmRemove(target.id))
         .catch((err: unknown) => {
           console.warn('[RailSessionList] delete failed', err)
-          reload()
+          store.cancelRemove(target.id)
         })
     },
     [threads, activeId, reload]
@@ -474,6 +488,36 @@ export function RailSessionList() {
       })
   }, [])
 
+  // items 随 threads 变化才重建（useMemo）：虚拟化后组件会在每个滚动帧
+  // 重渲（getVirtualItems 变化驱动），不能每帧重跑 O(n) 的 buildItems。
+  const items = useMemo(() => buildItems(threads), [threads])
+
+  /* ── 虚拟滚动（2026-07-16，@tanstack/react-virtual）──
+   *
+   * 会话到几百条后全量渲染是切换卡顿的大头：每次列表重渲都要 diff/commit
+   * 全部行。虚拟化后只渲染可视区 ±overscan 的十几行，重渲成本与会话总数
+   * 解耦。配套取舍：
+   *  - 删除行的 Framer 折叠退场动画退役（AnimatePresence 需要被删节点留在
+   *    DOM 播完退场，与「滚出可视区即卸载」的虚拟化模型天然冲突；虚拟项的
+   *    translateY 定位也会和 motion 的 layout 动画争抢 transform）。删除
+   *    即时消失，用户已确认「优先流畅、简化动画」。
+   *  - 滚动容器仍是 Radix ScrollArea——virtualizer 只要求拿到真正 overflow
+   *    的元素（Viewport，经 viewportRef 透出），滚动条外观不变。
+   *  - label（分组标签，~40px）与 row（32px）高度不同 → estimateSize 按
+   *    kind 给初值，measureElement 渲染后实测校正（首个 label 的 pt-1.5
+   *    与后续 pt-5 的差异也靠实测覆盖）。
+   *  - getItemKey 用 items 的稳定 key（label=`g:组名`、row=会话 id）——
+   *    尺寸缓存跟着 key 走，删行/重排后不会把旧行的高度错配到新行上。
+   */
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: (i) => (items[i]?.kind === 'label' ? 40 : 32),
+    getItemKey: (i) => items[i].key,
+    overscan: 8
+  })
+
   if (threads.length === 0) {
     // 首次拉取还在路上：骨架屏占位（2026-07-07 用户反馈——启动时 rail
     // 空白一拍像坏了）。loaded 在 store 里跨挂载持久，这块骨架只在应用
@@ -484,12 +528,8 @@ export function RailSessionList() {
     return null
   }
 
-  const items = buildItems(threads)
-
   return (
-    // reducedMotion="user"：折叠退场尊重系统「减弱动态效果」，
-    // 与 chat App 的 MotionConfig 行为一致（rail 挂在 layout，不在那棵树里）。
-    <MotionConfig reducedMotion="user">
+    <>
       {/* 无「对话」标题（shell-floating 原型）：分组标签（今天/昨天/…）
         * 自己就是节奏，多一行总标题只会把 rail 撑得更碎。 */}
       <div className="flex min-h-0 flex-1 flex-col pt-2">
@@ -505,43 +545,67 @@ export function RailSessionList() {
           * px-3（右 12px）把列表推离 rail 右缘。右负外边距吃满这 12px，让
           * 滚动条容器右缘 = rail 右缘 = 内容卡左缘，滚动条紧贴内容不留缝。
           * 左侧仍 -ml-1（选中行圆角背景略往左伸的呼吸），故拆成不对称。 */}
-        <ScrollArea className="-ml-1 -mr-3 min-h-0 flex-1 pl-1 [&>[data-slot=scroll-area-viewport]>div]:block!">
-          {/* pr-3：滚动条贴到容器右缘后，行文字 truncate 到右缘会被 10px 宽
-              的 overlay 滚动条盖住尾巴——内容侧留出 ≥滚动条宽度的右 padding
-              让文字避开（这段 padding 落在 ScrollArea 容器内、滚动条之内）。 */}
-          <ul className="flex flex-col pr-3">
-            <AnimatePresence initial={false}>
-              {items.map((item) =>
-                item.kind === 'label' ? (
-                  <motion.li
-                    key={item.key}
-                    layout="position"
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.22, ease: railEaseOut }}
+        <ScrollArea
+          viewportRef={viewportRef}
+          className="-ml-1 -mr-3 min-h-0 flex-1 pl-1 [&>[data-slot=scroll-area-viewport]>div]:block!"
+        >
+          {/* 虚拟滚动容器：ul 撑起全列表总高度（totalSize，滚动条比例由它
+            * 决定），只有可视区 ±overscan 的虚拟项真正挂进 DOM，各自绝对
+            * 定位 + translateY 到自己的槽位。li 挂 measureElement 实测行高
+            * 回填 virtualizer（data-index 是它的读数协议）。
+            * pr-3 从 ul 挪到每个 li：滚动条贴容器右缘后行文字要留出 ≥滚动条
+            * 宽度的右 padding 避让（绝对定位子项的 w-full 解析到 ul 的
+            * padding box，ul 上的 pr-3 拦不住它们）。 */}
+          <ul
+            className="relative w-full"
+            style={{ height: `${virtualizer.getTotalSize()}px` }}
+          >
+            {virtualizer.getVirtualItems().map((v) => {
+              const item = items[v.index]
+              return (
+                <li
+                  key={item.key}
+                  data-index={v.index}
+                  ref={virtualizer.measureElement}
+                  className="absolute left-0 top-0 w-full pr-3"
+                  style={{ transform: `translateY(${v.start}px)` }}
+                >
+                  {item.kind === 'label' ? (
                     // 分组标签是列表的呼吸位：字号压到 11px、透明度降档、上方
                     // 留足空（pt-5）让组与组之间有明确的段落感——行墙太密正是
-                    // 「丑」的主因之一。
-                    className="overflow-hidden px-3 pb-1.5 pt-5 text-[11px] font-medium text-muted-foreground/70 first:pt-1.5"
-                  >
-                    {item.text}
-                  </motion.li>
-                ) : (
-                  <SessionRow
-                    key={item.key}
-                    thread={item.thread}
-                    active={item.thread.id === activeId}
-                    running={runningIds.has(item.thread.id)}
-                    awaitingKind={awaitingKinds[item.thread.id]}
-                    unread={unreadIds.has(item.thread.id)}
-                    justRenamed={item.thread.id === justRenamedId}
-                    onSwitch={() => switchTo(item.thread.id)}
-                    onStartRename={() => openRename(item.thread)}
-                    onExportReplay={() => void performExportReplay(item.thread)}
-                    onStartDelete={() => setDeleteTarget(item.thread)}
-                  />
-                )
-              )}
-            </AnimatePresence>
+                    // 「丑」的主因之一。首个标签收窄到 pt-1.5（原 first:pt-1.5
+                    // ——虚拟化后 DOM 首子未必是列表首项，改按 index===0 判定）。
+                    <div
+                      className={cn(
+                        'px-3 pb-1.5 text-[11px] font-medium text-muted-foreground/70',
+                        v.index === 0 ? 'pt-1.5' : 'pt-5'
+                      )}
+                    >
+                      {item.text}
+                    </div>
+                  ) : (
+                    // 回调一律传**稳定引用**（switchTo/openRename/… 都是终身稳定
+                    // 的 useCallback / setState），thread 也是稳定引用（threads
+                    // 数组元素在 reload 未换列时恒等），配合 SessionRow 的 memo
+                    // 让高频重渲（滚动帧、running/unread/权限/切换事件）下行
+                    // 内容不重渲——虚拟化后组件每个滚动帧都会重渲，没有这层
+                    // memo 每帧都要重跑所有可见行（含两次带正则的 displayTitle）。
+                    <SessionRow
+                      thread={item.thread}
+                      active={item.thread.id === activeId}
+                      running={runningIds.has(item.thread.id)}
+                      awaitingKind={awaitingKinds[item.thread.id]}
+                      unread={unreadIds.has(item.thread.id)}
+                      justRenamed={item.thread.id === justRenamedId}
+                      onSwitch={switchTo}
+                      onStartRename={openRename}
+                      onExportReplay={performExportReplay}
+                      onStartDelete={setDeleteTarget}
+                    />
+                  )}
+                </li>
+              )
+            })}
           </ul>
         </ScrollArea>
       </div>
@@ -656,7 +720,7 @@ export function RailSessionList() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </MotionConfig>
+    </>
   )
 }
 
@@ -692,8 +756,20 @@ function RailSessionSkeleton() {
  * 单个会话行。两态：常规（标题 + hover 浮现 ···）、选中（目标行上的中性
  * 灰底 + 主题色圆点，即时呈现）。重命名/删除都改走列表级弹窗，行本身不再
  * 承载行内编辑与上膛态（2026-07-05）。
+ *
+ * memo 包裹（2026-07-16 性能优化）：根组件订阅 running/unread/权限/前台
+ * sessionId 四个高频切片，AI 流式回复时会被逐 delta 反复重渲；不 memo 则
+ * 每次都重渲**全部**行（每行还跑两次带正则的 displayTitle）。所有 prop
+ * 都是原始值或稳定引用（回调由根组件的 useCallback / setState 提供，thread
+ * 是 threads 数组元素、reload 未换列时恒等），故默认浅比较即可精确到「只
+ * 重渲状态真变了的那一行」。**新增/改 prop 时务必保证它是原始值或稳定
+ * 引用**，否则 memo 静默失效、退回全量重渲。
+ *
+ * 回调签名（onSwitch 收 id、其余收 thread）与根组件的 switchTo/openRename/
+ * performExportReplay/setDeleteTarget 直接对齐，行内用 useCallback 自绑
+ * thread——绑定后的引用只随 thread/回调变化，配合外层稳定 prop 保持恒等。
  */
-function SessionRow({
+const SessionRow = memo(function SessionRow({
   thread,
   active,
   running,
@@ -711,21 +787,34 @@ function SessionRow({
   awaitingKind?: 'approval' | 'question'
   unread: boolean
   justRenamed: boolean
-  onSwitch: () => void
-  onStartRename: () => void
-  onExportReplay: () => void
-  onStartDelete: () => void
+  onSwitch: (id: string) => void
+  onStartRename: (thread: ThreadSummary) => void
+  onExportReplay: (thread: ThreadSummary) => void
+  onStartDelete: (thread: ThreadSummary) => void
 }) {
   const awaitingLabel =
     awaitingKind === 'question' ? '等待回答' : '等待批准'
+  // 自绑 thread：把根组件传下来的稳定回调与本行的 thread 收敛成零参
+  // handler。deps 只有 thread + 对应回调（都稳定），故这些绑定引用也稳定，
+  // 不会因父级高频重渲而变。
+  const handleSwitch = useCallback(() => onSwitch(thread.id), [onSwitch, thread.id])
+  const handleStartRename = useCallback(
+    () => onStartRename(thread),
+    [onStartRename, thread]
+  )
+  const handleExportReplay = useCallback(
+    () => void onExportReplay(thread),
+    [onExportReplay, thread]
+  )
+  const handleStartDelete = useCallback(
+    () => onStartDelete(thread),
+    [onStartDelete, thread]
+  )
+  // 不再自带 li 壳：虚拟化后 li（绝对定位 + translateY + measureElement）
+  // 由父级的虚拟项 map 统一提供，本组件只渲染行内容。原 motion.li 的折叠
+  // 退场随虚拟化退役（2026-07-16，取舍见根组件虚拟滚动注释）。
   return (
-    <motion.li
-      layout="position"
-      exit={{ height: 0, opacity: 0 }}
-      transition={{ duration: 0.22, ease: railEaseOut }}
-      className="overflow-hidden"
-    >
-      <ContextMenu>
+    <ContextMenu>
         <ContextMenuTrigger asChild>
           <div className="group relative">
             {active && (
@@ -746,7 +835,7 @@ function SessionRow({
             <Button
               type="button"
               variant="ghost"
-              onClick={onSwitch}
+              onClick={handleSwitch}
               title={displayTitle(thread.firstPrompt ?? thread.title)}
               className={cn(
                 // h-8（32px，原型 .session-row）：36px 行配 13px 字在长列表里
@@ -851,9 +940,9 @@ function SessionRow({
                 <SessionMenuItems
                   Item={DropdownMenuItem}
                   Separator={DropdownMenuSeparator}
-                  onRename={onStartRename}
-                  onExportReplay={onExportReplay}
-                  onDelete={onStartDelete}
+                  onRename={handleStartRename}
+                  onExportReplay={handleExportReplay}
+                  onDelete={handleStartDelete}
                 />
               </DropdownMenuContent>
             </DropdownMenu>
@@ -863,12 +952,11 @@ function SessionRow({
           <SessionMenuItems
             Item={ContextMenuItem}
             Separator={ContextMenuSeparator}
-            onRename={onStartRename}
-            onExportReplay={onExportReplay}
-            onDelete={onStartDelete}
+            onRename={handleStartRename}
+            onExportReplay={handleExportReplay}
+            onDelete={handleStartDelete}
           />
         </ContextMenuContent>
       </ContextMenu>
-    </motion.li>
   )
-}
+})

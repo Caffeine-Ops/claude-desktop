@@ -12,7 +12,6 @@ import { usePermissionForToolUseId } from '../../../stores/permissions'
 import { useWorkflowScriptPanelStore } from '../../../stores/workflowScript'
 import { extractText, safeStringify } from '../toolHelpers'
 import { friendlyToolView } from '../ToolFormatters'
-import { InlinePermissionPrompt } from '../../permissions/InlinePermissionPrompt'
 import { PermissionWaitAnchor } from '../../permissions/PermissionFloatCard'
 import { escapeHtml, languageFromPath } from './codeViewUtils'
 import { detectImageGen, ImageGenToolCard } from './ImageGenCard'
@@ -366,19 +365,14 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
               </ToolPane>
             )}
 
-            {/* Pending-permission routing (2026-07-07 float redesign):
-                AskUserQuestion keeps its interactive questionnaire inline
-                (it's conversational content); every other tool renders a
-                one-line wait anchor here while the actual decision UI is
-                the floating card docked above the composer — see
-                PermissionFloatCard.tsx for why. */}
-            {pendingPermission &&
-              !askHandledByCanvas &&
-              (toolName === 'AskUserQuestion' ? (
-                <InlinePermissionPrompt request={pendingPermission} />
-              ) : (
-                <PermissionWaitAnchor />
-              ))}
+            {/* Pending-permission routing（2026-07-16 提问面板迁移）：
+                AskUserQuestion 的问卷不再内联在这张卡里——它渲染为 composer
+                位的提问面板（AskUserComposerPanel，输入卡 morph 换面），本卡
+                只留一行「等待你回答」锚点指过去；其余工具照旧一行等待锚点 +
+                浮动权限卡（PermissionFloatCard）。两种锚点只差文案。 */}
+            {pendingPermission && !askHandledByCanvas && (
+              <PermissionWaitAnchor ask={toolName === 'AskUserQuestion'} />
+            )}
 
             {subtasks.length > 0 && <WorkflowTaskList tasks={subtasks} />}
 

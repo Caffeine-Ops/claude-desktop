@@ -8,8 +8,14 @@ import { cn } from "@/src/lib/utils"
 function ScrollArea({
   className,
   children,
+  viewportRef,
   ...props
-}: React.ComponentProps<typeof ScrollAreaPrimitive.Root>) {
+}: React.ComponentProps<typeof ScrollAreaPrimitive.Root> & {
+  /** 透出 Viewport（真正 overflow 滚动的元素）的 DOM ref——虚拟滚动
+   * （@tanstack/react-virtual 的 getScrollElement）需要拿到它测量/订阅
+   * 滚动。可选，不传时行为与原来完全一致。 */
+  viewportRef?: React.Ref<HTMLDivElement>
+}) {
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
@@ -17,6 +23,7 @@ function ScrollArea({
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
+        ref={viewportRef}
         data-slot="scroll-area-viewport"
         className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
       >

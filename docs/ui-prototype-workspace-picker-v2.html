@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工作目录选择器 · 重设计原型 v2</title>
+<style>
+/* ═══ 设计 token —— 1:1 取自 packages/design-tokens/tokens.css ═══ */
+:root {
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --border: 240 6% 84%;
+  --destructive: 0 72% 50%;
+  --brand: 142 76% 36%;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue',
+    Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+}
+html.dark {
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 40 6% 13%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --border: 49 12% 22%;
+  --destructive: 0 72% 55%;
+  --brand: 145 60% 52%;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: 12vh;
+}
+
+/* ═══ 模拟 composer 灰壳托盘（chip 的真实生存环境）═══ */
+.composer-mock {
+  width: 640px; max-width: calc(100vw - 48px);
+  border-radius: 20px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border) / 0.6);
+  box-shadow: 0 8px 32px hsl(240 5% 8% / 0.08);
+  padding: 16px 16px 12px;
+}
+.composer-mock .input-ph {
+  height: 44px;
+  color: hsl(var(--muted-foreground) / 0.55);
+  font-size: 14px;
+  padding: 4px 2px;
+}
+.chip-row {
+  display: flex; align-items: center; gap: 18px;
+  padding-top: 8px;
+  border-top: 1px solid hsl(var(--border) / 0.4);
+}
+
+/* ═══ chip（触发器 + 切换状态宿主）═══ */
+.ws-chip {
+  position: relative;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-family: inherit;
+  color: hsl(var(--muted-foreground) / 0.8);
+  background: none; border: none; cursor: pointer;
+  transition: color 150ms;
+}
+.ws-chip:hover, .ws-chip.open { color: hsl(var(--foreground)); }
+.ws-chip svg { flex: none; }
+.ws-chip .caret { transition: transform 150ms; color: hsl(var(--muted-foreground) / 0.4); }
+.ws-chip.open .caret { transform: rotate(180deg); }
+.chip-neighbor {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: hsl(var(--muted-foreground) / 0.55);
+}
+
+/* 切换在途：三点流动（复刻 ws-move-dot 动效语言） */
+.ws-status { display: flex; align-items: center; gap: 6px; font-size: 13px; color: hsl(var(--muted-foreground) / 0.8); }
+.move-dots { display: inline-flex; gap: 3px; margin: 0 3px; }
+.move-dots i {
+  width: 3px; height: 3px; border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.8);
+  animation: dot-travel 900ms ease-in-out infinite;
+}
+.move-dots i:nth-child(2) { animation-delay: 150ms; }
+.move-dots i:nth-child(3) { animation-delay: 300ms; }
+@keyframes dot-travel {
+  0%, 100% { opacity: 0.25; transform: translateX(0); }
+  50% { opacity: 1; transform: translateX(3px); }
+}
+/* 成功：目标位绿勾弹一下（复刻 ws-dest-pop） */
+.dest-pop { color: hsl(var(--brand)); animation: dest-pop 320ms cubic-bezier(0.16,1,0.3,1); }
+@keyframes dest-pop { from { transform: scale(0.4); opacity: 0; } }
+/* 失败：chip 轻抖（复刻 ws-chip-shake）+ 红字淡出 */
+.shake { animation: chip-shake 360ms ease-in-out; }
+@keyframes chip-shake {
+  20% { transform: translateX(-2px); } 40% { transform: translateX(2px); }
+  60% { transform: translateX(-1.5px); } 80% { transform: translateX(1px); }
+}
+.fail-note {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; color: hsl(var(--destructive));
+  animation: fail-fade 2.4s forwards;
+}
+@keyframes fail-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ═══ 菜单面板 ═══ */
+.menu {
+  position: absolute;
+  left: 0; bottom: calc(100% + 8px);
+  width: 288px;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--border) / 0.8);
+  background: hsl(var(--card));
+  box-shadow:
+    0 1px 2px hsl(240 5% 8% / 0.04),
+    0 12px 40px hsl(240 5% 8% / 0.16);
+  padding: 5px;
+  opacity: 0; transform: translateY(4px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+  z-index: 50;
+}
+.menu.open { opacity: 1; transform: none; pointer-events: auto; }
+html.dark .menu { box-shadow: 0 12px 40px hsl(0 0% 0% / 0.45); }
+
+/* 迁移提示（有历史时） */
+.menu .hint {
+  padding: 6px 9px 8px;
+  font-size: 11px; line-height: 1.5;
+  color: hsl(var(--muted-foreground) / 0.75);
+}
+
+/* 组标题（V2） */
+.menu .grp-label {
+  display: none;
+  padding: 7px 9px 3px;
+  font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.05em;
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+.menu[data-variant="v2"] .grp-label { display: block; }
+
+/* ── 选项行 ── */
+.opt {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none; background: none; cursor: pointer;
+  font-family: inherit; text-align: left;
+  border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  transition: background 120ms, color 120ms;
+}
+.opt:hover { background: hsl(var(--muted) / 0.7); color: hsl(var(--foreground)); }
+.opt svg.folder { flex: none; opacity: 0.55; }
+.opt .name {
+  font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: none; max-width: 45%;
+}
+.opt .def-tag {
+  flex: none;
+  font-size: 10px; font-weight: 500;
+  padding: 1px 5px; border-radius: 4px;
+  background: hsl(var(--muted) / 0.9);
+  color: hsl(var(--muted-foreground) / 0.85);
+}
+.opt .path {
+  flex: 1; min-width: 0;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground) / 0.55);
+  text-align: right;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; /* 长路径头部省略，尾段（真正区分信息）恒可见 */
+}
+.opt .path bdi { direction: ltr; unicode-bidi: isolate; }
+.opt .check { flex: none; width: 14px; color: hsl(var(--brand)); opacity: 0; transform: scale(0.6); transition: opacity 120ms, transform 160ms cubic-bezier(0.16,1,0.3,1); }
+.opt.selected { color: hsl(var(--foreground)); }
+.opt.selected .name { font-weight: 600; }
+.opt.selected .check { opacity: 1; transform: none; }
+
+/* V2：分组模式——行内藏路径（组标题已携带位置语义），名称放开宽度 */
+.menu[data-variant="v2"] .opt .path { display: none; }
+.menu[data-variant="v2"] .opt .name { max-width: none; flex: 1; }
+.menu[data-variant="v2"] .opt { padding: 5px 8px; }
+
+/* V3：胶囊路径——路径尾两段做成 mono 小胶囊 */
+.menu[data-variant="v3"] .opt .path {
+  flex: none; direction: ltr; text-align: left;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1.5px 6px;
+  border-radius: 999px;
+  background: hsl(var(--muted) / 0.75);
+  color: hsl(var(--muted-foreground) / 0.8);
+  max-width: 46%;
+}
+.menu[data-variant="v3"] .opt { justify-content: flex-start; }
+.menu[data-variant="v3"] .opt .name { flex: 1; max-width: none; }
+
+.menu .sep { height: 1px; margin: 5px 8px; background: hsl(var(--border) / 0.6); }
+.opt.browse { color: hsl(var(--muted-foreground) / 0.85); }
+.opt.browse .name { font-size: 12.5px; max-width: none; flex: 1; }
+
+/* ═══ Tweaks ═══ */
+.tweaks-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 90;
+  width: 40px; height: 40px; border-radius: 12px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card)); color: hsl(var(--muted-foreground));
+  font-size: 15px; cursor: pointer;
+  box-shadow: 0 4px 16px hsl(240 5% 8% / 0.1);
+}
+.tweaks-fab:hover { color: hsl(var(--foreground)); }
+.tweaks {
+  position: fixed; right: 20px; bottom: 70px; z-index: 90;
+  width: 250px; padding: 16px;
+  border-radius: 14px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  box-shadow: 0 8px 32px hsl(240 5% 8% / 0.16);
+  display: none;
+}
+.tweaks.show { display: block; }
+.tweaks h5 { font-size: 12px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: hsl(var(--muted-foreground)); margin-bottom: 12px; }
+.tweaks .grp { margin-bottom: 13px; }
+.tweaks .grp:last-child { margin-bottom: 0; }
+.tweaks label { display: block; font-size: 11.5px; color: hsl(var(--muted-foreground)); margin-bottom: 6px; }
+.tweaks .seg { display: flex; gap: 4px; flex-wrap: wrap; }
+.tweaks .seg button {
+  flex: 1; min-width: 0; padding: 5px 8px;
+  font-size: 12px; font-family: inherit; white-space: nowrap;
+  border: 1px solid hsl(var(--border)); background: none;
+  color: hsl(var(--muted-foreground)); border-radius: 7px; cursor: pointer;
+  transition: all 130ms;
+}
+.tweaks .seg button.on { background: hsl(var(--foreground)); border-color: hsl(var(--foreground)); color: hsl(var(--card)); }
+.tweaks .toggle { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; color: hsl(var(--foreground)); }
+.tweaks .sw { position: relative; width: 34px; height: 20px; border-radius: 999px; background: hsl(var(--muted)); border: none; cursor: pointer; transition: background 150ms; }
+.tweaks .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 999px; background: hsl(var(--card)); box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: transform 150ms; }
+.tweaks .sw.on { background: hsl(var(--brand)); }
+.tweaks .sw.on::after { transform: translateX(14px); }
+</style>
+</head>
+<body>
+
+<div class="composer-mock">
+  <div class="input-ph">随便问点什么…</div>
+  <div class="chip-row">
+    <!-- chip 状态宿主：default / open / moving / done / fail 由 JS 切换 -->
+    <div style="position:relative" id="chipHost"></div>
+    <span class="chip-neighbor">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M14 3v5h5M8 13h8M8 17h5"/></svg>
+      知识库
+    </span>
+  </div>
+</div>
+
+<button class="tweaks-fab" id="fab">⚙</button>
+<div class="tweaks" id="panel">
+  <h5>Tweaks</h5>
+  <div class="grp">
+    <label>菜单变体</label>
+    <div class="seg" id="segVariant">
+      <button class="on" data-v="v1">V1 单行</button>
+      <button data-v="v2">V2 分组</button>
+      <button data-v="v3">V3 胶囊</button>
+    </div>
+  </div>
+  <div class="grp">
+    <label>chip 状态（点击直接预览）</label>
+    <div class="seg" id="segState">
+      <button class="on" data-v="default">默认</button>
+      <button data-v="moving">在途</button>
+    </div>
+    <div class="seg" id="segState2" style="margin-top:4px">
+      <button data-v="done">成功</button>
+      <button data-v="fail">失败</button>
+    </div>
+  </div>
+  <div class="grp">
+    <label>行为</label>
+    <div class="toggle">迁移提示（有历史）<button class="sw on" id="swHint"></button></div>
+    <div class="toggle" style="margin-top:8px">下次切换失败<button class="sw" id="swFail"></button></div>
+  </div>
+  <div class="grp">
+    <label>外观</label>
+    <div class="seg" id="segTheme">
+      <button class="on" data-v="light">浅色</button>
+      <button data-v="dark">深色</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══ 数据（截图真实列表，/Users/andersenaxel → ~ 去噪）═══ */
+const HOME = '/Users/andersenaxel';
+const WORKSPACES = [
+  { name: '桌面',      path: HOME + '/Desktop', def: true },
+  { name: '方案分类',  path: HOME + '/Desktop/方案分类' },
+  { name: 'Xboard',    path: HOME + '/Documents/Php/Xboard' },
+  { name: 'Documents', path: HOME + '/Documents' },
+  { name: '小火箭备份', path: HOME + '/Documents/小火箭备份' },
+  { name: 'Downloads', path: HOME + '/Downloads' },
+  { name: 'grpc-demo', path: HOME + '/Documents/Go/learngo/grpc-demo' },
+  { name: '方案配图',  path: HOME + '/Desktop/方案配图' },
+  { name: 'kimi',      path: HOME + '/Documents/kimi' }
+];
+const tilde = (p) => p.startsWith(HOME) ? '~' + p.slice(HOME.length) : p;
+/* V3 胶囊：路径尾两段（不含自身名）——如 ~/Documents/Go/learngo/grpc-demo → Go/learngo */
+const capsule = (p) => {
+  const segs = tilde(p).split('/').filter(Boolean);
+  const parent = segs.slice(0, -1);
+  return parent.length <= 1 ? (parent[0] ?? '~') : parent.slice(-2).join('/');
+};
+/* V2 分组：按第一层位置归类 */
+const groupOf = (p) => {
+  const t = tilde(p);
+  if (t === '~/Desktop') return '桌面';
+  if (t.startsWith('~/Desktop/')) return '桌面';
+  if (t.startsWith('~/Documents')) return '文稿';
+  if (t.startsWith('~/Downloads')) return '下载';
+  return '其他';
+};
+
+let selectedPath = WORKSPACES[0].path;
+let variant = 'v1';
+let chipState = 'default';   // default | moving | done | fail
+let menuOpen = false;
+let showHint = true;
+let failNext = false;
+let pendingTarget = null;
+let timers = [];
+const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
+
+const host = document.getElementById('chipHost');
+const FOLDER = '<svg class="folder" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+const CHECK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+const nameOf = (p) => (WORKSPACES.find(w => w.path === p) || { name: p.split('/').pop() }).name;
+
+/* ═══ 渲染 ═══ */
+function render() {
+  const sel = nameOf(selectedPath);
+  if (chipState === 'moving') {
+    const target = nameOf(pendingTarget ?? selectedPath);
+    host.innerHTML =
+      '<span class="ws-status" aria-busy="true">' + FOLDER +
+      '<span class="move-dots"><i></i><i></i><i></i></span>' + FOLDER +
+      '<span>正在把对话搬到「' + target + '」…</span></span>';
+    return;
+  }
+  if (chipState === 'done') {
+    host.innerHTML =
+      '<span class="ws-status">' + FOLDER +
+      '<span class="move-dots"><i></i><i></i><i></i></span>' +
+      '<span class="dest-pop">' + CHECK + '</span>' +
+      '<span>已搬到「' + sel + '」</span></span>';
+    return;
+  }
+  /* default / fail：正常 chip（fail 附抖动 + 红字） */
+  host.innerHTML =
+    '<button type="button" class="ws-chip' + (menuOpen ? ' open' : '') + (chipState === 'fail' ? ' shake' : '') + '" id="chipBtn">' +
+    FOLDER + '<span>' + sel + '</span>' +
+    '<svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>' +
+    '</button>' +
+    (chipState === 'fail'
+      ? '<span class="fail-note" style="position:absolute;left:calc(100% + 10px);top:50%;transform:translateY(-50%);white-space:nowrap">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>' +
+        '没切成，还留在「' + sel + '」</span>'
+      : '') +
+    buildMenu();
+  document.getElementById('chipBtn').addEventListener('click', () => {
+    menuOpen = !menuOpen; render();
+  });
+  bindMenu();
+}
+
+function buildMenu() {
+  let rows = '';
+  if (showHint) {
+    rows += '<div class="hint">更改后，这个对话和它的记录会搬到新文件夹继续。</div>';
+  }
+  const renderOpt = (w) => {
+    const selected = w.path === selectedPath;
+    const pathHtml = variant === 'v3'
+      ? '<span class="path">' + capsule(w.path) + '</span>'
+      : '<span class="path"><bdi>' + tilde(w.path) + '</bdi></span>';
+    return '<button type="button" class="opt' + (selected ? ' selected' : '') + '" data-path="' + w.path + '" title="' + w.path + '">' +
+      FOLDER +
+      '<span class="name">' + w.name + '</span>' +
+      (w.def ? '<span class="def-tag">默认</span>' : '') +
+      pathHtml +
+      '<span class="check">' + CHECK + '</span>' +
+      '</button>';
+  };
+  if (variant === 'v2') {
+    const groups = {};
+    for (const w of WORKSPACES) (groups[groupOf(w.path)] ??= []).push(w);
+    for (const [g, list] of Object.entries(groups)) {
+      rows += '<div class="grp-label">' + g + '</div>';
+      rows += list.map(renderOpt).join('');
+    }
+  } else {
+    rows += WORKSPACES.map(renderOpt).join('');
+  }
+  rows += '<div class="sep"></div>' +
+    '<button type="button" class="opt browse">' +
+    '<svg class="folder" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v4M10 13h4"/></svg>' +
+    '<span class="name">选择其他文件夹…</span></button>';
+  return '<div class="menu' + (menuOpen ? ' open' : '') + '" data-variant="' + variant + '" role="listbox">' + rows + '</div>';
+}
+
+function bindMenu() {
+  host.querySelectorAll('.opt[data-path]').forEach(btn => {
+    btn.addEventListener('click', () => beginSwitch(btn.dataset.path));
+  });
+  const browse = host.querySelector('.opt.browse');
+  if (browse) browse.addEventListener('click', () => { menuOpen = false; render(); });
+}
+
+/* ═══ 切换流程模拟：菜单点选 → 在途 900ms → 成功(1.2s)/失败(2.4s) → 回默认 ═══ */
+function beginSwitch(path) {
+  clearTimers();
+  menuOpen = false;
+  if (path === selectedPath) { render(); return; }
+  pendingTarget = path;
+  chipState = 'moving';
+  render();
+  syncStateSeg();
+  timers.push(setTimeout(() => {
+    if (failNext) {
+      failNext = false; syncFailSw();
+      chipState = 'fail';           // 回落原目录 + 抖 + 红字
+      pendingTarget = null;
+      render(); syncStateSeg();
+      timers.push(setTimeout(() => { chipState = 'default'; render(); syncStateSeg(); }, 2400));
+    } else {
+      selectedPath = path;
+      pendingTarget = null;
+      chipState = 'done';           // 绿勾拍
+      render(); syncStateSeg();
+      timers.push(setTimeout(() => { chipState = 'default'; render(); syncStateSeg(); }, 1200));
+    }
+  }, 900));
+}
+
+/* ═══ Tweaks 绑定 ═══ */
+document.getElementById('fab').addEventListener('click', () =>
+  document.getElementById('panel').classList.toggle('show'));
+
+document.getElementById('segVariant').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#segVariant button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); variant = b.dataset.v;
+  menuOpen = true; chipState = 'default'; clearTimers(); render(); syncStateSeg();
+});
+function syncStateSeg() {
+  document.querySelectorAll('#segState button, #segState2 button').forEach(x =>
+    x.classList.toggle('on', x.dataset.v === chipState));
+}
+[['segState'], ['segState2']].forEach(([id]) => {
+  document.getElementById(id).addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    clearTimers(); menuOpen = false;
+    chipState = b.dataset.v;
+    if (chipState === 'moving') pendingTarget = WORKSPACES[1].path;
+    render(); syncStateSeg();
+  });
+});
+document.getElementById('swHint').addEventListener('click', (e) => {
+  e.currentTarget.classList.toggle('on');
+  showHint = e.currentTarget.classList.contains('on');
+  render();
+});
+const swFail = document.getElementById('swFail');
+const syncFailSw = () => swFail.classList.toggle('on', failNext);
+swFail.addEventListener('click', () => { failNext = !failNext; syncFailSw(); });
+document.getElementById('segTheme').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#segTheme button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on');
+  document.documentElement.classList.toggle('dark', b.dataset.v === 'dark');
+});
+
+/* 点击外部关菜单 */
+window.addEventListener('mousedown', (e) => {
+  if (menuOpen && !host.contains(e.target)) { menuOpen = false; render(); }
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && menuOpen) { menuOpen = false; render(); }
+});
+
+render();
+menuOpen = true; render();   // 初始即展开菜单，落地即见重点
+</script>
+</body>
+</html>

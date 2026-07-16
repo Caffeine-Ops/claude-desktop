@@ -331,14 +331,16 @@ function PermissionFloatCard({
  * prompt relationship legible ("this spinner is waiting on the question
  * below") without duplicating the choices.
  */
-export function PermissionWaitAnchor(): React.JSX.Element {
+export function PermissionWaitAnchor({ ask = false }: { ask?: boolean } = {}): React.JSX.Element {
   const t = useT()
   return (
     <div className="flex items-center gap-2 rounded-[10px] bg-brand/[0.07] px-3 py-2 text-[12.5px] font-medium text-brand">
       <span aria-hidden className="perm-wait-dot size-1.5 shrink-0 rounded-full bg-brand" />
-      {t('permissionWaitAnchor')}
+      {/* ask 变体（2026-07-16 提问面板迁移）：AskUserQuestion 的答题 UI 在
+          composer 位的提问面板，不是浮动权限卡——文案指向输入区。 */}
+      {t(ask ? 'askWaitAnchor' : 'permissionWaitAnchor')}
       <span className="ml-auto shrink-0 text-[12px] opacity-80" aria-hidden>
-        {t('permissionWaitAnchorHint')}
+        {t(ask ? 'askWaitAnchorHint' : 'permissionWaitAnchorHint')}
       </span>
     </div>
   )

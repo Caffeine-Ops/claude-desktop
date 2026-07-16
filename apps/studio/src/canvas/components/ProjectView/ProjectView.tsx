@@ -3393,12 +3393,15 @@ export function ProjectView({
       <AppChromeHeader
         // 顶栏统一（2026-07-14）：多标签工作区顶栏退役后，本返回栏从原来的
         // 「多标签栏下方 46px」上移成最顶部 chrome，必须自己渲染红绿灯净空
-        // spacer——否则收起态返回箭头会被红绿灯/图标排压住（旧值 false 是
+        // spacer——否则收起态标题会被红绿灯/图标排压住（旧值 false 是
         // 因为当年多标签栏在其上方已顶开红绿灯）。展开态 spacer 宽 0（base.css
         // 的 --app-chrome-traffic-space 默认 0），收起态 190px 让位（同上处规则）。
+        //
+        // 不传 onBack（2026-07-16 用户要求去掉返回箭头）：回项目列表/首页
+        // 的路径由左侧 rail 承担（「新画布」回首页、rail 列表直达项目），
+        // 顶栏返回钮与之重复。onBack prop 链保留——键盘等其它返回路径不受
+        // 影响，只是顶栏不再渲染这颗箭头。
         showTrafficSpace
-        onBack={onBack}
-        backLabel={t('project.backToProjects')}
         actions={(
           <>
             <HandoffButton projectId={project.id} />

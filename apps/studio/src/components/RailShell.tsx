@@ -10,17 +10,20 @@
  *   1. **展开态**：把 AppRail 原样放回 flex 流，占 w-61（AppRail 自带宽度），
  *      和加折叠功能前完全一致。
  *   2. **收起态**：AppRail 退出常驻流（RailShell 在 flex 里宽度收成 0，右侧
- *      内容卡的 flex-1 自动补位占满）。左上角标题栏那一行留一排常驻图标做
- *      入口（展开 / 搜索 / 新建，见下方 CollapsedToolbar）。
+ *      内容卡的 flex-1 自动补位占满）。
  *   3. **收起态 hover 浮出**（用户三选一确认的交互，2026-07-05）：
- *      - 触发：hover 屏幕左边缘热区，或 hover 那排图标里的展开钮 → peek=true
+ *      - 触发：hover 屏幕左边缘热区，或 hover 常驻按钮组里的开关钮 → peek=true
  *      - 表现：AppRail 作为 overlay 从左侧滑出，**悬浮盖在内容上**（fixed +
  *        阴影，内容区纹丝不动，不重排——这是「悬浮盖住」而非「推开」的关键）
  *      - 收回：鼠标移出 overlay 区域 → peek=false，滑回屏外消失
  *
+ * 顶部常驻按钮组（开关 / 搜索 / 新建，见 railTopButtons，2026-07-16 Codex
+ * 定稿）：独立于侧栏的 fixed 容器、钉死红绿灯右侧，两态共用同一组 DOM——
+ * 侧栏的一切收起/展开/滑动动画都在它底下进行，按钮永不移动。
+ *
  * peek 是纯本地 UI 态（不进 rail store）：它是转瞬即逝的悬停预览，和「用户
- * 收起 rail」的持久意图是两码事。collapsed 一旦被 toggle 回 false（在 overlay
- * 里点顶部按钮），rail 立刻钉回常驻态，peek 自然失去意义。
+ * 收起 rail」的持久意图是两码事。collapsed 一旦被 toggle 回 false（点常驻
+ * 开关钮），rail 立刻钉回常驻态，peek 自然失去意义。
  *
  * 渲染在根 layout（body 的第一个 flex item），chat / canvas 两面共享。
  */
@@ -40,6 +43,11 @@ import { cn } from '@/src/lib/utils'
 
 export function RailShell() {
   const collapsed = useRailStore((s) => s.collapsed)
+  const toggleCollapsed = useRailStore((s) => s.toggle)
+  // 空串 = 无未读；任意非空 = 有未读会话 → 收起态开关钮亮蓝点（未读发生
+  // 在收起的会话列表里，蓝点是「侧栏里有新回复」的提示）。稳定字符串 key
+  // 避免 fresh-Set 的 getSnapshot 循环（和 RailSessionList 同一订阅姿势）。
+  const hasUnread = useUnreadIdsKey() !== ''
   // ── 收起态浮层的 z 按面分档（2026-07-13「canvas 面看不到菜单按钮」实锤）──
   // canvas 面的 tab 栏（base.css .workspace-tabs-chrome）是 z-index:120 +
   // 不透明 backdrop 背景：图标排 z-30 / overlay z-40 在它底下，工作画布收起
@@ -90,6 +98,110 @@ export function RailShell() {
   // 注释），留着有害无益，遂删。overlay 的「假-leave 免疫」靠 no-drag 挖洞本身，
   // 与脉冲无关，保留。
 
+  /* ── 常驻顶栏按钮组：开关 / 搜索 / 新建（2026-07-16 用户参照 Codex 定稿，
+   * 同日搜索从「新对话」行迁入开关右侧）────────────────────────────
+   * 整组是**独立于侧栏的 fixed 容器**，钉死在红绿灯右侧 x=100——侧栏
+   * 收起/展开/peek 滑动的所有动画都在它底下进行，按钮自身永不移动（此前
+   * 开关挂在 AppRail 顶栏里：收起时随 rail 卸载、peek 时随 overlay 滑动，
+   * 动画过程中按钮跟着跑，用户对照 Codex 实锤）。三个钮的显隐：
+   *  - **开关**：恒显。点击 = toggle（直接钉住展开/收起，Codex 同款）；
+   *    收起态 hover = peek 浮出预览。收起且有未读时亮蓝点。
+   *  - **搜索**：仅聊天面（SessionSearchDialog 只挂在 chat 树里，canvas
+   *    点了也看不到），两态恒显——收起/展开时它和开关一样原地不动。
+   *  - **新建**：仅收起态（展开态 rail 内已有「新对话」主按钮）；peek
+   *    浮出时淡出——浮出面板顶部空白条正好露出本组，面板内已有新对话
+   *    主按钮，这颗不淡出会语义重复。跟随 surface（聊天面新对话/画布面
+   *    新画布，与 AppRail 主按钮同一套逻辑）。
+   *
+   * ⚠️ 为什么必须 portal 到 body 末尾（2026-07-05「三图标点不动」实锤）：
+   * 按钮组标了 no-drag，但覆盖它所在 y 的窗口拖拽矩形不止一条——根
+   * .window-drag-strip（body 首子元素，比 RailShell 更靠前，对它不
+   * portal 也能挖动）之外，canvas 面自己的顶栏 drag（base.css 的
+   * .workspace-tabs-chrome，冗余保留）在 shell-stage 深处、DOM 比
+   * RailShell **靠后**。Electron 收集 app-region 是按渲染树遍历顺序
+   * 注册原生拖拽矩形、**后注册覆盖先注册**，且 no-drag 只能在「先
+   * 注册的 drag」上挖洞——不 portal 则按钮组 no-drag 先注册、被后面
+   * 的 drag 整片盖过 → macOS 把点击当窗口拖拽截走，mousedown 根本
+   * 不下发给 renderer（DOM elementFromPoint 仍能命中按钮、CDP 的
+   * Input.dispatchMouseEvent 也能点 → 都是假象，app-region 拦截在
+   * 原生层、只有真实鼠标经过窗口系统时才发生；同 .surface-inactive
+   * 家族的坑）。portal 到 body 末尾让按钮组 no-drag **最后注册**，
+   * 稳压一切 drag，真实点击才落到按钮上。mounted 前不 portal（SSR
+   * 无 body + 防 hydration）。组里全是 shadcn Button（带 data-slot），
+   * 不受 portal 出 .chat-app 豁免后的 canvas 裸元素 reset 影响。
+   *
+   * z 分档：chat z-[45]——高于 peek overlay（z-40）让按钮浮出时仍可点，
+   * 低于 dialog（z-50）被 modal 正常罩住；canvas z-[140]——高于该面
+   * overlay（z-135）。坐标联动：红绿灯 x=30（tabRegistry
+   * trafficLightPosition）/ 本组 left=100，改一个必须同步另一个；组内
+   * 间距 gap 自动排布，无需手算。 */
+  const railTopButtons =
+    mounted &&
+    createPortal(
+      <div
+        className={cn(
+          'fixed left-[100px] top-0 flex h-[46px] items-center gap-0.5 [-webkit-app-region:no-drag]',
+          isChat ? 'z-[45]' : 'z-[140]'
+        )}
+      >
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
+          title={collapsed ? '展开侧边栏' : '收起侧边栏'}
+          className="relative text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          onClick={toggleCollapsed}
+          onMouseEnter={collapsed ? () => setPeek(true) : undefined}
+        >
+          <RailToggleIcon collapsed={collapsed} />
+          {collapsed && hasUnread && (
+            // 未读徽标：钉在图标右上角的小蓝点。bg-[#3b82f6] 与会话行未读
+            // 点同色（RailSessionList），描一圈 sidebar 底色让它从图标上
+            // 「浮」出来。
+            <span className="absolute right-1 top-1 size-2 rounded-full bg-[#3b82f6] ring-2 ring-sidebar" />
+          )}
+        </Button>
+        {isChat && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="搜索会话"
+            title="搜索会话"
+            className="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            onClick={() => useDialogStore.getState().openDialog('search')}
+          >
+            <Search className="size-4" />
+          </Button>
+        )}
+        {collapsed && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={isChat ? '新对话' : '新画布'}
+            title={isChat ? '新对话' : '新画布'}
+            className={cn(
+              'text-muted-foreground transition-opacity hover:bg-sidebar-accent hover:text-sidebar-foreground',
+              peek && 'pointer-events-none opacity-0'
+            )}
+            onClick={() => {
+              if (isChat) {
+                void window.tabApi?.switchShellSession?.(null)
+              } else {
+                // canvas router 模块求值期触碰 window，不能静态 import——
+                // 同 AppRail 主按钮的约束。
+                void import('@/src/canvas/router').then(({ navigate }) => {
+                  navigate({ kind: 'home', view: 'home' })
+                })
+              }
+            }}
+          >
+            <Plus className="size-4" />
+          </Button>
+        )}
+      </div>,
+      document.body
+    )
+
   // 展开态：AppRail 原样占 flex 列，零额外包装（保持与加功能前一致的布局，
   // 避免多套一层 div 影响 w-61 shrink-0 的 flex 行为）。FeedbackDialog 挂
   // 在两个分支里各一份而不是外面包一层 Fragment——本函数两分支各自都是
@@ -99,6 +211,7 @@ export function RailShell() {
     return (
       <>
         <AppRail />
+        {railTopButtons}
         <FeedbackDialog />
       </>
     )
@@ -115,47 +228,6 @@ export function RailShell() {
         className="fixed left-0 top-12 z-30 h-[calc(100%-3rem)] w-3"
         onMouseEnter={() => setPeek(true)}
       />
-
-      {/* 常驻工具栏：收起后 rail 整个没了，在内容面自己的 46px 标题栏那一行
-        * （平铺后标题栏从视口 y=0 起、红绿灯右侧、标题左侧的空白处）留一排
-        * 图标——展开 / 搜索 / 新建，仿 macOS 常见的「红绿灯后跟一排
-        * 工具钮」布局（用户提供的目标截图）。left-[100px] 让过红绿灯净空——
-        * 这个起点必须跟 tabRegistry 的 trafficLightPosition.x（当前 30）联动：
-        * 红绿灯右移多少，这里同增多少，否则两者不成一横（2026-07-05 用户要求
-        * 整组往右移，红绿灯 x 14→30、本值 84→100 同步）。top-0：容器高与
-        * header 同为 46px，顶对顶即中线对中线（23）；浮卡时代是 top-2.5，
-        * 对的是从 y=10 起的 header——2026-07-08 平铺化随 stage gutter 归零。
-        *
-        * ⚠️ 为什么必须 portal 到 body 末尾（2026-07-05「三图标点不动」实锤）：
-        * 图标排标了 no-drag，但覆盖它所在 y 的窗口拖拽矩形不止一条——根
-        * .window-drag-strip（body 首子元素，比 RailShell 更靠前，对它不
-        * portal 也能挖动）之外，canvas 面自己的顶栏 drag（base.css 的
-        * .workspace-tabs-chrome，冗余保留）在 shell-stage 深处、DOM 比
-        * RailShell **靠后**。Electron 收集 app-region 是按渲染树遍历顺序
-        * 注册原生拖拽矩形、**后注册覆盖先注册**，且 no-drag 只能在「先
-        * 注册的 drag」上挖洞——不 portal 则图标排 no-drag 先注册、被后面
-        * 的 drag 整片盖过 → macOS 把点击当窗口拖拽截走，mousedown 根本
-        * 不下发给 renderer（DOM elementFromPoint 仍能命中按钮、CDP 的
-        * Input.dispatchMouseEvent 也能点 → 都是假象，app-region 拦截在
-        * 原生层、只有真实鼠标经过窗口系统时才发生；同 .surface-inactive
-        * 家族的坑）。portal 到 body 末尾让图标排 no-drag **最后注册**，
-        * 稳压一切 drag，真实点击才落到按钮上。mounted 前不 portal（SSR
-        * 无 body + 防 hydration）。图标排里全是 shadcn Button（带 data-slot），
-        * 不受 portal 出 .chat-app 豁免后的 canvas 裸元素 reset 影响。 */}
-      {mounted &&
-        createPortal(
-          <div
-            className={cn(
-              'fixed left-[100px] top-0 flex h-[46px] items-center gap-0.5 [-webkit-app-region:no-drag]',
-              // z 分档理由见 RailShell 顶部注释：canvas 面要压过 tab 栏
-              // （z-120），chat 面维持低位让 dialog（z-50）罩得住。
-              isChat ? 'z-30' : 'z-[125]'
-            )}
-          >
-            <CollapsedToolbar peek={peek} onPeek={() => setPeek(true)} />
-          </div>,
-          document.body
-        )}
 
       {/* 浮出的 overlay：完整 AppRail（含红绿灯净空条、顶部收起按钮、列表、
         * 设置）。fixed 贴左，默认 -translate-x-full 藏在屏外，peek 时滑入。
@@ -216,111 +288,34 @@ export function RailShell() {
           </div>,
           document.body
         )}
+      {railTopButtons}
       <FeedbackDialog />
     </div>
   )
 }
 
 /**
- * 收起态标题栏那一排图标（展开 / 搜索 / 新建）。
+ * 侧栏开关图标——带状态过渡（2026-07-16 用户定稿，三版迭代）。
  *
- * 三个钮的语义按用户确认（2026-07-05）落定：
- *  - **展开**：实心侧栏图标 + 蓝点未读徽标（见 CollapseSidebarIcon）。hover
- *    或点击都触发浮出（对不习惯蹭左边缘的用户更友好）。浮出时它和 overlay
- *    里 AppRail 顶部的收起按钮位置重叠，淡出让位避免两个图标叠在一起。
- *  - **搜索**：只在聊天面显示——它开的是 chat 的会话搜索框（SessionSearchDialog
- *    只挂在 chat 树里，openDialog('search') 的弹窗在 canvas 面是隐藏面里的
- *    DOM，点了也看不到）。canvas 没有对应的统一搜索，故该面不渲染此钮。
- *  - **新建**：跟随当前 surface（与 AppRail 顶部主按钮同一套逻辑）——聊天面
- *    「新对话」（切到 null 会话），画布面「新画布」（回 canvas 首页）。
+ * 几何基于 lucide PanelLeft（外框 rect 3,3,18,18 + 竖线 x=9），外框圆角
+ * 加大到 rx=4（lucide 原版 rx=2 在 16px 渲染下近乎直角，观感生硬）。
+ * 外框与竖线**恒定显示**，状态语义交给左格的实心填充：
+ *  - **收起态**：左格填充淡入（实心 = 「侧栏收着、点开」，与 2026-07-05
+ *    确认的实心款同一语义）。第二版曾让竖线淡出剩纯空框，用户实锤
+ *    「里面是空的、太丑」——面板指示不能消失，遂回归实心表收起。
+ *  - **展开态**：填充淡出，剩线条版 PanelLeft。
  *
- * 蓝点挂在展开钮上：未读发生在收起的会话列表里，蓝点是「侧栏里有新回复」
- * 的提示。数据源用 useUnreadIdsKey()——空串即无未读，稳定字符串 key 避免
- * fresh-Set 的 getSnapshot 循环（和 RailSessionList 同一订阅姿势）。
+ * 过渡只动填充的 opacity（200ms ease-out）：开关按钮本体永不移动（常驻
+ * fixed，见 railTopButtons），左格填充的亮起/熄灭就是「收起/展开」的
+ * 全部视觉反馈，克制不抢戏。motion-reduce 下瞬变。
+ *
+ * 填充 path 左侧带 r2.5 圆弧（跟外框 rx=4 的内壁弧贴合），右缘到竖线
+ * x=9 —— 直角填充会戳出外框圆角，弧度必须配对。
  */
-function CollapsedToolbar({ peek, onPeek }: { peek: boolean; onPeek: () => void }) {
-  const pathname = usePathname()
-  const isChat = pathname.startsWith('/chat')
-  // 空串 = 无未读；任意非空 = 有未读会话 → 展开钮亮蓝点。
-  const hasUnread = useUnreadIdsKey() !== ''
-
-  return (
-    <>
-      {/* 展开钮：浮出时淡出让位（见上）。图标是自定义实心侧栏（lucide 只有
-        * 描边版 PanelLeft，目标截图是左格填充的实心款，故手写 SVG）。 */}
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label="展开侧边栏"
-        title="展开侧边栏"
-        className={cn(
-          'relative text-muted-foreground transition-opacity hover:bg-sidebar-accent hover:text-sidebar-foreground',
-          peek && 'pointer-events-none opacity-0'
-        )}
-        onMouseEnter={onPeek}
-        onClick={onPeek}
-      >
-        <CollapseSidebarIcon className="size-4" />
-        {hasUnread && (
-          // 未读徽标：钉在图标右上角的小蓝点。bg-[#3b82f6] 与会话行未读点
-          // 同色（RailSessionList），描一圈 sidebar 底色让它从图标上「浮」
-          // 出来（避免和图标线条糊在一起）。
-          <span className="absolute right-1 top-1 size-2 rounded-full bg-[#3b82f6] ring-2 ring-sidebar" />
-        )}
-      </Button>
-
-      {/* 搜索：仅聊天面（见 CollapsedToolbar 头注释） */}
-      {isChat && (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="搜索会话"
-          title="搜索会话"
-          className="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
-          onClick={() => useDialogStore.getState().openDialog('search')}
-        >
-          <Search className="size-4" />
-        </Button>
-      )}
-
-      {/* 新建：跟随 surface（与 AppRail 顶部主按钮同逻辑）。浏览器直开无
-        * tabApi 时聊天分支退化为 no-op；canvas 分支动态 import router（其
-        * 模块求值期触碰 window，不能静态进本组件——同 AppRail 的约束）。 */}
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label={isChat ? '新对话' : '新画布'}
-        title={isChat ? '新对话' : '新画布'}
-        className="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
-        onClick={() => {
-          if (isChat) {
-            void window.tabApi?.switchShellSession?.(null)
-          } else {
-            void import('@/src/canvas/router').then(({ navigate }) => {
-              navigate({ kind: 'home', view: 'home' })
-            })
-          }
-        }}
-      >
-        <Plus className="size-4" />
-      </Button>
-    </>
-  )
-}
-
-/**
- * 实心侧栏图标 —— 收起态展开钮专用。
- *
- * lucide 的 PanelLeft 是「圆角外框 + 一条竖分割线」的纯描边款；用户目标
- * 截图要的是**左侧那一格被填充成实心**的观感（表达「侧栏在这、点开」）。
- * lucide 无此变体，故手写：外框 rect 走 stroke（跟随 currentColor），左格
- * 用一个 filled rect 补实心。stroke-width 2、圆角 2，和 lucide 同款几何，
- * 混排在 lucide 图标堆里不违和。
- */
-function CollapseSidebarIcon({ className }: { className?: string }) {
+function RailToggleIcon({ collapsed }: { collapsed: boolean }) {
   return (
     <svg
-      className={className}
+      className="size-4"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -329,12 +324,20 @@ function CollapseSidebarIcon({ className }: { className?: string }) {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      {/* 外框 */}
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      {/* 左格实心填充：从外框内壁到 x=9 分割线，填 currentColor */}
-      <path d="M4 4h5v16H4z" fill="currentColor" stroke="none" />
-      {/* 分割线（x=9），与 lucide PanelLeft 对齐 */}
-      <path d="M9 3v18" />
+      <rect x="3" y="3" width="18" height="18" rx="4" />
+      {/* 左格实心填充：收起态亮起，展开态熄灭。 */}
+      <path
+        d="M9 4.5H7a2.5 2.5 0 0 0-2.5 2.5v10a2.5 2.5 0 0 0 2.5 2.5h2z"
+        fill="currentColor"
+        stroke="none"
+        className={cn(
+          'transition-opacity duration-200 ease-out motion-reduce:transition-none',
+          collapsed ? 'opacity-100' : 'opacity-0'
+        )}
+      />
+      <path d="M9 3.5v17" />
     </svg>
   )
 }
+
+

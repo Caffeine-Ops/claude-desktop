@@ -176,6 +176,14 @@ const STRINGS = {
       '要写哪个产品的方案、给哪个客户或什么场景用；想分成哪几部分、每部分重点写什么。',
 
     catKnowledgeBase: '方案知识库',
+
+    // EmptyState 场景导航（ScenarioRail）：分类 tab 标签。chip 上的技能名来自
+    // skillChipRegistry（单一真源），推荐 prompt 是中文内容配置（与 promo
+    // banner 同等对待，不进翻译表）——这里只放 chrome 文案。
+    scenarioCatDaily: '日常办公',
+    scenarioCatCode: '代码开发',
+    scenarioCatDesign: '设计创意',
+
     // Settings — Configuration category — 出图 API（编辑器内 P 图功能的凭据配置）
     imageApiTitle: '出图 API',
     imageApiDesc: '配置图像生成/改图接口凭据，供编辑器内「出图」「改图」使用；未配置时对应入口置灰。',
@@ -398,6 +406,8 @@ const STRINGS = {
     permissionFloatSubmit: '提交',
     permissionWaitAnchor: '需要你的授权才能继续',
     permissionWaitAnchorHint: '见下方 ↓',
+    askWaitAnchor: '等待你回答',
+    askWaitAnchorHint: '在下方输入区作答 ↓',
 
     // Tool-call card — labels for the default input/output panes and
     // the raw-data toggle that friendly-view tool cards show at the
@@ -572,6 +582,12 @@ const STRINGS = {
       'Which product the proposal is for, and which customer or scenario; how to split it into sections, and what each section should focus on.',
 
     catKnowledgeBase: 'Proposal Knowledge Base',
+
+    // EmptyState scenario navigation (ScenarioRail): category tab labels.
+    scenarioCatDaily: 'Everyday work',
+    scenarioCatCode: 'Coding',
+    scenarioCatDesign: 'Design & creative',
+
     // Settings — Configuration category — Image API credentials for the
     // in-editor image generate/edit feature.
     imageApiTitle: 'Image API',
@@ -793,6 +809,8 @@ const STRINGS = {
     permissionFloatSubmit: 'Submit',
     permissionWaitAnchor: 'Waiting for your approval to continue',
     permissionWaitAnchorHint: 'See below ↓',
+    askWaitAnchor: 'Waiting for your answer',
+    askWaitAnchorHint: 'Answer in the input area below ↓',
 
     toolPaneInputLabel: 'Input',
     toolPaneOutputLabel: 'Output',

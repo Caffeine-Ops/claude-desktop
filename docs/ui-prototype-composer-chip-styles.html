@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>输入框 Chip 样式方案</title>
+<style>
+/* ================= 设计 token ==================
+ * 1:1 取自 packages/design-tokens/tokens.css（Apple 系浅色 + 暖黑深色），
+ * 只保留本原型用到的子集。技能色（--sk-*）从 public/skill-icons 各切片
+ * 的主色取样，供「技能色染」方案用。 */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --popover: 0 0% 100%;
+  --border: 240 6% 84%;
+  --muted: 240 5% 93%;
+  --muted-foreground: 240 4% 40%;
+  --brand: 142 76% 36%;
+  --primary: 211 100% 45%;
+
+  --chip-fs: 13px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+
+  --ring-hairline: rgba(0, 0, 0, 0.08);
+}
+.dark {
+  color-scheme: dark;
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --popover: 36 6% 15%;
+  --border: 49 12% 18%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --brand: 145 60% 52%;
+  --primary: 210 100% 58%;
+
+  --ring-hairline: rgba(255, 255, 255, 0.08);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { -webkit-font-smoothing: antialiased; }
+body {
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+.page { max-width: 880px; margin: 0 auto; padding: 56px 32px 120px; }
+
+.page-header h1 { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
+.page-header p {
+  margin-top: 8px; font-size: 13px; line-height: 1.7;
+  color: hsl(var(--muted-foreground)); text-wrap: pretty; max-width: 62ch;
+}
+
+/* ================= chip 基础 =================
+ * 几何与真实 chipNodeView 对齐：13px/500、gap 6、竖 padding 3px、
+ * vertical-align -2px（与编辑器 15px 正文基线重合）。图标槽定死尺寸、
+ * rest 图标与 × 叠在同一 grid 格里切换 —— hover 换态零几何变化
+ * （2026-07-16 hover 抖动事故的纪律）。 */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px 3px 7px;
+  font-size: var(--chip-fs); font-weight: 500; line-height: 1.35;
+  border-radius: 9999px; border: 1px solid transparent;
+  vertical-align: -2px; user-select: none; white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.chip__slot {
+  display: grid; place-items: center;
+  width: 14px; height: 14px; flex-shrink: 0; overflow: hidden;
+}
+.chip__slot > * { grid-area: 1 / 1; }
+.chip__rest { width: 14px; height: 14px; object-fit: contain; display: block; user-select: none; }
+svg.chip__rest { width: 13px; height: 13px; }
+.chip__x { visibility: hidden; color: hsl(var(--muted-foreground)); display: block; }
+.chip:hover .chip__rest, .show-hover .chip .chip__rest { visibility: hidden; }
+.chip:hover .chip__x,    .show-hover .chip .chip__x    { visibility: visible; }
+.chip:hover .chip__slot { cursor: pointer; }
+
+/* ── 方案 A · 描边胶囊（现状基准） ── */
+.chip--a { border-color: hsl(var(--border)); background: hsl(var(--card)); }
+.chip--a:hover { background: hsl(var(--muted)); }
+
+/* ── 方案 B · 柔底无边 ── */
+.chip--b { background: hsl(var(--foreground) / 0.05); border-radius: 8px; padding: 3px 9px 3px 7px; }
+.chip--b:hover { background: hsl(var(--foreground) / 0.09); }
+.dark .chip--b { background: hsl(0 0% 100% / 0.08); }
+.dark .chip--b:hover { background: hsl(0 0% 100% / 0.13); }
+
+/* ── 方案 C · 图标托盘 ── */
+.chip--c {
+  background: hsl(var(--foreground) / 0.04);
+  border-radius: 10px; padding: 3px 10px 3px 3px; gap: 7px;
+}
+.chip--c .chip__slot {
+  width: 20px; height: 20px; border-radius: 6px;
+  background: hsl(var(--card));
+  box-shadow: 0 0 0 1px hsl(var(--border) / 0.9), 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.chip--c .chip__rest { width: 13px; height: 13px; }
+.chip--c svg.chip__rest { width: 12px; height: 12px; }
+.chip--c:hover { background: hsl(var(--foreground) / 0.08); }
+.dark .chip--c { background: hsl(0 0% 100% / 0.07); }
+.dark .chip--c:hover { background: hsl(0 0% 100% / 0.11); }
+.dark .chip--c .chip__slot {
+  box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.14), 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* ── 方案 D · 技能色染（每 chip 内联 --sk 三元组） ── */
+.chip--d {
+  background: hsl(var(--sk) / 0.10);
+  border-color: hsl(var(--sk) / 0.25);
+  color: color-mix(in oklab, hsl(var(--sk)) 60%, hsl(var(--foreground)));
+}
+.chip--d:hover { background: hsl(var(--sk) / 0.16); }
+.chip--d .chip__x { color: color-mix(in oklab, hsl(var(--sk)) 60%, hsl(var(--foreground))); }
+.dark .chip--d {
+  background: hsl(var(--sk) / 0.16);
+  border-color: hsl(var(--sk) / 0.30);
+  color: color-mix(in oklab, hsl(var(--sk)) 65%, white);
+}
+.dark .chip--d:hover { background: hsl(var(--sk) / 0.22); }
+.dark .chip--d .chip__x { color: color-mix(in oklab, hsl(var(--sk)) 65%, white); }
+
+/* ── 方案 E · 墨黑实心（与发送键/选中态同语言，暗色自动反转为浅底深字） ── */
+.chip--e {
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 0 2px 8px -2px rgba(0, 0, 0, 0.15);
+}
+.chip--e:hover { background: color-mix(in oklab, hsl(var(--foreground)) 86%, hsl(var(--background))); }
+.chip--e .chip__x { color: hsl(var(--background)); }
+
+/* ── 方案 F · 无壳内联（rest 态融进正文，hover 才浮出底色） ── */
+.chip--f { background: transparent; padding: 3px 8px 3px 6px; border-radius: 8px; }
+.chip--f .chip__label {
+  text-decoration: underline dotted hsl(var(--muted-foreground) / 0.5);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.15s ease;
+}
+.chip--f:hover { background: hsl(var(--foreground) / 0.06); }
+.chip--f:hover .chip__label { text-decoration-color: transparent; }
+.dark .chip--f:hover { background: hsl(0 0% 100% / 0.09); }
+
+/* ================= composer 实景预览 =================
+ * 复刻真实 Composer 的双层壳：外层 28px 圆角灰壳 + 内层 22px 卡片
+ * （popover/95 + 1px hairline ring + 浮起阴影），编辑区 15px 正文。 */
+.stage { margin-top: 36px; }
+.seg {
+  display: inline-flex; gap: 4px; padding: 4px;
+  background: hsl(var(--foreground) / 0.05); border-radius: 12px;
+}
+.dark .seg { background: hsl(0 0% 100% / 0.06); }
+.seg button {
+  border: none; background: transparent; font: inherit;
+  font-size: 13px; font-weight: 500; color: hsl(var(--muted-foreground));
+  padding: 6px 13px; border-radius: 8px; cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.seg button:hover { color: hsl(var(--foreground)); }
+.seg button[aria-pressed="true"] {
+  background: hsl(var(--card)); color: hsl(var(--foreground));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--ring-hairline);
+}
+
+.composer-shell {
+  margin-top: 16px; border-radius: 28px; padding: 6px;
+  background: hsl(var(--foreground) / 0.035);
+}
+.dark .composer-shell { background: hsl(0 0% 100% / 0.045); }
+.composer-card {
+  border-radius: 22px; background: hsl(var(--popover) / 0.95);
+  box-shadow: 0 0 0 1px var(--ring-hairline),
+    0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 28px -4px rgba(0, 0, 0, 0.07);
+  padding: 16px 18px 12px;
+}
+.composer-editor { font-size: 15px; line-height: 1.7; min-height: 54px; }
+.composer-toolbar {
+  display: flex; align-items: center; justify-content: space-between; margin-top: 12px;
+}
+.composer-toolbar .left { display: flex; align-items: center; gap: 8px; }
+.tool-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  height: 32px; min-width: 32px; padding: 0 10px; border-radius: 9999px;
+  border: 1px solid hsl(var(--border)); background: transparent;
+  color: hsl(var(--muted-foreground)); font: inherit; font-size: 13px; cursor: pointer;
+}
+.tool-btn.icon-only { padding: 0; width: 32px; }
+.send-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: 9999px; border: none; cursor: pointer;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 0 2px 8px -2px rgba(0, 0, 0, 0.15);
+}
+
+/* ================= 方案对比卡 ================= */
+.variants { margin-top: 44px; display: flex; flex-direction: column; gap: 16px; }
+.section-title { font-size: 15px; font-weight: 650; }
+.section-sub { margin-top: 4px; font-size: 13px; color: hsl(var(--muted-foreground)); }
+
+.variant-card {
+  position: relative; border-radius: 16px; background: hsl(var(--card));
+  box-shadow: 0 0 0 1px hsl(var(--border) / 0.7);
+  padding: 18px 20px 20px; cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+.variant-card:hover { box-shadow: 0 0 0 1px hsl(var(--border)); }
+.variant-card[data-active="true"] {
+  box-shadow: 0 0 0 2px hsl(var(--brand)),
+    0 8px 24px -8px hsl(var(--brand) / 0.25);
+}
+.variant-card .head { display: flex; align-items: baseline; gap: 10px; }
+.variant-card .key {
+  font-size: 12px; font-weight: 650; letter-spacing: 0.08em;
+  color: hsl(var(--muted-foreground));
+}
+.variant-card[data-active="true"] .key { color: hsl(var(--brand)); }
+.variant-card h3 { font-size: 15px; font-weight: 650; }
+.variant-card .desc {
+  margin-top: 6px; font-size: 13px; line-height: 1.65;
+  color: hsl(var(--muted-foreground)); text-wrap: pretty; max-width: 68ch;
+}
+.variant-card .active-badge {
+  position: absolute; top: 16px; right: 18px;
+  font-size: 12px; font-weight: 600; color: hsl(var(--brand));
+  display: none; align-items: center; gap: 4px;
+}
+.variant-card[data-active="true"] .active-badge { display: inline-flex; }
+.variant-card .chip-row {
+  margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+}
+.variant-card .inline-demo {
+  margin-top: 12px; font-size: 15px; line-height: 1.7;
+  padding-top: 12px; border-top: 1px solid hsl(var(--border) / 0.5);
+}
+
+/* ================= Tweaks 面板 ================= */
+.tweaks-fab {
+  position: fixed; right: 22px; bottom: 22px; z-index: 30;
+  width: 44px; height: 44px; border-radius: 9999px; border: none; cursor: pointer;
+  background: hsl(var(--foreground)); color: hsl(var(--background));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  display: flex; align-items: center; justify-content: center;
+}
+.tweaks {
+  position: fixed; right: 22px; bottom: 76px; z-index: 30; width: 248px;
+  background: hsl(var(--popover)); border-radius: 14px; padding: 16px;
+  box-shadow: 0 0 0 1px var(--ring-hairline), 0 24px 60px rgba(0, 0, 0, 0.25);
+  display: none;
+}
+.tweaks.open { display: block; }
+.tweaks h4 { font-size: 13px; font-weight: 650; margin-bottom: 12px; }
+.tweaks .row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 13px; padding: 7px 0;
+}
+.tweaks .row + .row { border-top: 1px solid hsl(var(--border) / 0.5); }
+.switch { position: relative; width: 36px; height: 21px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 100%; height: 100%; position: absolute; cursor: pointer; margin: 0; }
+.switch .knob {
+  position: absolute; inset: 0; border-radius: 9999px;
+  background: hsl(var(--foreground) / 0.15); transition: background 0.15s ease;
+  pointer-events: none;
+}
+.switch .knob::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px;
+  border-radius: 9999px; background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform 0.15s ease;
+}
+.switch input:checked + .knob { background: hsl(var(--brand)); }
+.switch input:checked + .knob::after { transform: translateX(15px); }
+.mini-seg { display: inline-flex; gap: 2px; background: hsl(var(--foreground) / 0.06); border-radius: 8px; padding: 2px; }
+.mini-seg button {
+  border: none; background: transparent; font: inherit; font-size: 12px;
+  color: hsl(var(--muted-foreground)); padding: 3px 8px; border-radius: 6px; cursor: pointer;
+}
+.mini-seg button[aria-pressed="true"] { background: hsl(var(--card)); color: hsl(var(--foreground)); box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="page-header">
+    <h1>输入框 Chip 样式方案</h1>
+    <p>六个方案（A 为线上现状基准），token、字号、几何均与真实 chipNodeView 对齐。点击下方任一方案卡即可在输入框实景中切换预览；hover 任一 chip 可查看删除态（图标槽定尺寸，换 × 零几何跳变）。</p>
+  </header>
+
+  <!-- ══════════ 实景预览 ══════════ -->
+  <section class="stage">
+    <div class="seg" id="seg" role="tablist" aria-label="Chip 样式"></div>
+
+    <div class="composer-shell">
+      <div class="composer-card">
+        <div class="composer-editor" id="editor"></div>
+        <div class="composer-toolbar">
+          <div class="left">
+            <button class="tool-btn icon-only" aria-label="添加附件">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button class="tool-btn">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><path d="M12 8a4 4 0 0 0 4 4 4 4 0 0 0-4 4 4 4 0 0 0-4-4 4 4 0 0 0 4-4Z"/></svg>
+              技能
+            </button>
+          </div>
+          <button class="send-btn" aria-label="发送">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ 方案对比 ══════════ -->
+  <section class="variants" id="variants">
+    <div>
+      <div class="section-title">全部方案</div>
+      <div class="section-sub">每张卡展示五个技能 chip + 一个文件引用 chip，及其在 15px 正文中的混排效果。</div>
+    </div>
+  </section>
+
+</div>
+
+<!-- ══════════ Tweaks ══════════ -->
+<button class="tweaks-fab" id="tweaksFab" aria-label="Tweaks">
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2.2"/><circle cx="8" cy="16" r="2.2"/></svg>
+</button>
+<div class="tweaks" id="tweaks">
+  <h4>Tweaks</h4>
+  <div class="row">
+    <span>深色模式</span>
+    <label class="switch"><input type="checkbox" id="twDark"><span class="knob"></span></label>
+  </div>
+  <div class="row">
+    <span>常显删除态</span>
+    <label class="switch"><input type="checkbox" id="twHover"><span class="knob"></span></label>
+  </div>
+  <div class="row">
+    <span>chip 字号</span>
+    <span class="mini-seg" id="twFs">
+      <button data-fs="12px">12</button>
+      <button data-fs="13px" aria-pressed="true">13</button>
+      <button data-fs="14px">14</button>
+    </span>
+  </div>
+</div>
+
+<script>
+/* ---------- 数据 ---------- */
+// 技能表与 skillChipRegistry 对齐；sk = 从图标切片取样的主色 HSL 三元组，
+// 只有「技能色染」方案消费。
+const SKILLS = [
+  { icon: 'skill-icons/ppt.png',   label: '制作PPT', sk: '10 82% 58%'  },
+  { icon: 'skill-icons/image.png', label: '生成图片', sk: '203 90% 52%' },
+  { icon: 'skill-icons/sheet.png', label: '处理表格', sk: '161 70% 36%' },
+  { icon: 'skill-icons/video.png', label: '制作视频', sk: '258 72% 62%' },
+  { icon: 'skill-icons/write.png', label: '写方案',   sk: '221 82% 55%' }
+];
+// 文件引用 chip：真实实现里图标按扩展名着色，原型统一用中性描边文档形。
+const MENTION = { label: '季度报告.pdf', sk: '240 4% 40%' };
+
+const VARIANTS = [
+  { key: 'a', name: '描边胶囊 · 现状', desc: '线上基准：白底 + 1px hairline 描边 + 全圆角。轮廓清晰但与输入框同为白底，全靠描边撑存在感，密排时线框感偏重。' },
+  { key: 'b', name: '柔底无边', desc: '去描边，改前景色 5% 柔和底 + 8px 圆角。比现状更安静、更「对象化」（Notion / macOS token 风格），暗色下自动换白色 8% 底，hover 加深一档。' },
+  { key: 'c', name: '图标托盘', desc: '图标坐进 20px 白色小托盘（自带 hairline 与微阴影），外层柔底包住标签。层次最丰富，chip 读作「一个产品实体」，适合想强调技能感的方向。' },
+  { key: 'd', name: '技能色染', desc: '每个技能按图标主色染 10% 底 + 25% 描边 + 深化同色文字：PPT 珊瑚红、图片天蓝、表格青绿、视频紫、方案宝蓝。识别度最高，也最热闹——文件引用回落中性灰。' },
+  { key: 'e', name: '墨黑实心', desc: '前景色实心 + 反色文字，与发送键、空态技能选中态同一「墨黑」语言（暗色自动反转为浅底深字）。权重最高，一眼锁定「本条消息在用什么技能」。' },
+  { key: 'f', name: '无壳内联', desc: 'rest 态完全融进正文：只有图标 + 点状下划线暗示可交互，hover 才浮出柔底与删除键。最克制，句子读起来最顺，代价是 chip 的「可删除对象」感最弱。' }
+];
+
+/* ---------- chip 渲染 ---------- */
+const X_SVG = '<svg class="chip__x" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+const DOC_SVG = '<svg class="chip__rest" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color:hsl(var(--muted-foreground))"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>';
+
+function chipHTML(variant, item, isMention) {
+  const style = variant === 'd' ? ` style="--sk:${item.sk}"` : '';
+  const icon = isMention
+    ? DOC_SVG
+    : `<img class="chip__rest" src="${item.icon}" alt="" draggable="false">`;
+  return `<span class="chip chip--${variant}"${style}>` +
+    `<span class="chip__slot">${icon}${X_SVG}</span>` +
+    `<span class="chip__label">${item.label}</span>` +
+    `</span>`;
+}
+
+/* ---------- 实景 composer ---------- */
+const editor = document.getElementById('editor');
+function renderEditor(variant) {
+  editor.innerHTML =
+    chipHTML(variant, SKILLS[0]) +
+    ' 请生成一个 AI 人工智能发展史的演示文稿，结构参考 ' +
+    chipHTML(variant, MENTION, true) +
+    '，风格简洁现代';
+}
+
+/* ---------- 分段器 + 方案卡 ---------- */
+const seg = document.getElementById('seg');
+const variantsWrap = document.getElementById('variants');
+let active = 'a';
+
+VARIANTS.forEach((v) => {
+  const btn = document.createElement('button');
+  btn.textContent = v.key.toUpperCase() + ' ' + v.name.split(' · ')[0];
+  btn.dataset.key = v.key;
+  btn.setAttribute('role', 'tab');
+  btn.addEventListener('click', () => select(v.key));
+  seg.appendChild(btn);
+
+  const card = document.createElement('div');
+  card.className = 'variant-card';
+  card.dataset.key = v.key;
+  card.innerHTML =
+    `<div class="head"><span class="key">方案 ${v.key.toUpperCase()}</span><h3>${v.name}</h3></div>` +
+    `<span class="active-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>已应用</span>` +
+    `<p class="desc">${v.desc}</p>` +
+    `<div class="chip-row">` +
+      SKILLS.map((s) => chipHTML(v.key, s)).join('') +
+      chipHTML(v.key, MENTION, true) +
+    `</div>` +
+    `<div class="inline-demo">${chipHTML(v.key, SKILLS[0])} 请生成一个 AI 人工智能发展史的演示文稿</div>`;
+  card.addEventListener('click', () => select(v.key));
+  variantsWrap.appendChild(card);
+});
+
+function select(key) {
+  active = key;
+  renderEditor(key);
+  seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.key === key)));
+  variantsWrap.querySelectorAll('.variant-card').forEach((c) => (c.dataset.active = String(c.dataset.key === key)));
+}
+select('a');
+
+/* ---------- Tweaks ---------- */
+const fab = document.getElementById('tweaksFab');
+const panel = document.getElementById('tweaks');
+fab.addEventListener('click', () => panel.classList.toggle('open'));
+
+const twDark = document.getElementById('twDark');
+twDark.addEventListener('change', () => document.documentElement.classList.toggle('dark', twDark.checked));
+if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+  twDark.checked = true;
+  document.documentElement.classList.add('dark');
+}
+
+const twHover = document.getElementById('twHover');
+twHover.addEventListener('change', () => document.body.classList.toggle('show-hover', twHover.checked));
+
+document.getElementById('twFs').addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  document.documentElement.style.setProperty('--chip-fs', btn.dataset.fs);
+  btn.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+});
+</script>
+</body>
+</html>

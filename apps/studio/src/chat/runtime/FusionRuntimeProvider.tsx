@@ -46,6 +46,8 @@ import { triggerProposalCitationVerification } from '../lib/proposalVerification
 import { autoFireProposalGenImages } from '../lib/proposalGenImageFire'
 import { maybeNudgeStageConfirmAfterTurn } from '../lib/proposalStageGate'
 import { matchProposalSlash } from '../lib/proposalSlash'
+import { stripScenarioSlash } from '../lib/scenarioSlash'
+import { useRailSessionsStore } from '../stores/railSessions'
 import { buildGapFillRewriteMessage, drainRevisionQueue } from '../lib/sendProposalSectionRevision'
 import { startOrReopenProposal } from '../lib/startOrReopenProposal'
 import { matchProducts } from '../lib/kbProductMatch'
@@ -489,6 +491,13 @@ export function FusionRuntimeProvider({
 
       // let（非 const）：/proposal-writer 拦截命中时会把两者改写成剥掉命令后的正文。
       let baseText = textParts.map((p) => p.text).join('\n').trim()
+
+      // 代码开发场景伪命令（/daily-dev 等，ScenarioRail 二级导航标签）：
+      // fusion-code 不认识它们，发送前必须剥掉、只发正文。放在 mention 后缀
+      // 拼接之前——改写 baseText，下面的 text 组装自然拿到干净正文。没有
+      // 任何模式激活语义（场景信息已蕴含在推荐 prompt 正文里），剥掉即完。
+      const scenarioStripped = stripScenarioSlash(baseText)
+      if (scenarioStripped) baseText = scenarioStripped.rest
       const images: ChatImagePayload[] = imageParts.map((p) => ({
         dataUrl: p.image,
         filename: p.filename
@@ -521,44 +530,33 @@ export function FusionRuntimeProvider({
       // spreadsheet/video lacked the equivalent guard until now.
       const isFirstMessage = useChatStore.getState().messages.length === 0
 
-      // Slides mode → drive the ppt-master skill. When the composer's mode
-      // picker is on 幻灯片, prepend the skill's slash invocation so fusion-code
-      // runs ppt-master for this turn. The bundled backend exposes it under the
-      // plugin namespace as `/claude-desktop:ppt-master` (the chip registry
-      // renders that verbatim as a「制作PPT」chip in the user bubble). Skip if
-      // the user already typed a ppt-master slash so we never double-prefix.
-      // Note: composerMode is read via getState() (not subscribed) — onNew runs
-      // imperatively at send time, so a snapshot is exactly right.
-      const SLIDES_SLASH = '/claude-desktop:ppt-master'
-      const slidesMode = useComposerModeStore.getState().mode === 'slides'
+      // Slides 会话标记（ComposerModePicker 退役后的唯一写手，2026-07-16）：
+      // 首条消息以 ppt-master 斜杠开头（EmptyState ScenarioRail 的「制作PPT」
+      // chip、SkillPicker、或手敲 `/`，殊途同归都是 leading 命令）就把本会话
+      // 标记为 slides 会话 → ThreadView 双分栏工作台。旧机制是「发送时全局
+      // mode===slides 则 markIfSlides + 拼 /ppt-master 前缀」，模式入口收敛到
+      // 技能 chip 后，斜杠本身就在正文里，不再需要拼前缀——spreadsheets /
+      // remotion 两段同款拼前缀逻辑同理一并退役（chip 自带命令）。
       const alreadyPptSlash = /^\/(claude-desktop:)?ppt-master\b/.test(baseText)
-      if (slidesMode && !alreadyPptSlash && isFirstMessage) {
-        text = text ? `${SLIDES_SLASH} ${text}` : SLIDES_SLASH
+      if (alreadyPptSlash && isFirstMessage && sessionId !== null) {
+        useComposerModeStore.getState().markSlidesSession(sessionId)
       }
 
-      // Spreadsheet mode → drive the spreadsheets skill, same shape as slides
-      // above: prepend the namespaced slash so fusion-code runs the skill for
-      // this turn, skip when the user already typed it (no double-prefix).
-      const SPREADSHEET_SLASH = '/claude-desktop:spreadsheets'
-      const spreadsheetMode =
-        useComposerModeStore.getState().mode === 'spreadsheet'
-      const alreadySpreadsheetSlash =
-        /^\/(claude-desktop:)?spreadsheets\b/.test(baseText)
-      if (spreadsheetMode && !alreadySpreadsheetSlash && isFirstMessage) {
-        text = text ? `${SPREADSHEET_SLASH} ${text}` : SPREADSHEET_SLASH
-      }
-
-      // Video mode → drive the remotion skill, same shape as slides/spreadsheet
-      // above: prepend the namespaced slash so fusion-code loads remotion's
-      // best-practices for this turn (project scaffold, animations, render).
-      // Skip when the user already typed it (no double-prefix). The chip
-      // registry renders /remotion verbatim as a「制作视频」chip in the bubble.
-      const VIDEO_SLASH = '/claude-desktop:remotion'
-      const videoMode = useComposerModeStore.getState().mode === 'video'
-      const alreadyRemotionSlash =
-        /^\/(claude-desktop:)?remotion\b/.test(baseText)
-      if (videoMode && !alreadyRemotionSlash && isFirstMessage) {
-        text = text ? `${VIDEO_SLASH} ${text}` : VIDEO_SLASH
+      // Rail 乐观新生行（2026-07-16 用户报「新开的对话左侧列表没看到」）：
+      // 新会话的 jsonl 要等 CLI 冷启动 + 首条落盘才进 listShellSessions，
+      // 空窗几秒到几十秒里 rail 见不到这个会话。首条消息发出的此刻就插一
+      // 行占位（title=正文截断，与 main 侧 firstPrompt 回退同语义），落盘
+      // 后的权威 reload 自动接管校正（保护机制见 railSessions 的
+      // optimisticBirths）。turnCount 记 1（就是本条）。
+      if (isFirstMessage && sessionId !== null) {
+        const optimisticTitle = (baseText || text).slice(0, 120)
+        useRailSessionsStore.getState().applyBirth({
+          id: sessionId,
+          title: optimisticTitle,
+          updatedAt: Date.now(),
+          firstPrompt: optimisticTitle,
+          turnCount: 1
+        })
       }
 
       console.log('[runtime] onNew', {
@@ -628,20 +626,10 @@ export function FusionRuntimeProvider({
         }
       }
 
-      // Composer 模式选择器上的「写方案」（proposal）：发送时等价于 /proposal-writer
-      // 激活——首次在该会话发送即激活方案模式（布局接管 + 后续 send 带 proposalMode）。
-      // 仅在「方案未激活或未绑定本会话」时触发：进行中的方案会话每轮发送不再重复
-      // reopen（否则 reopened+brief 会让每轮都补跑产品匹配，语义只属于「再入」）。
-      if (
-        useComposerModeStore.getState().mode === 'proposal' &&
-        sessionId !== null
-      ) {
-        const psNow = useProposalStore.getState()
-        if (!(psNow.active && psNow.sessionId === sessionId)) {
-          const outcome = startOrReopenProposal(sessionId)
-          if (outcome === 'reopened' && baseText) proposalReopenedWithBrief = true
-        }
-      }
+      // （已退役，2026-07-16）「发送时全局 mode===proposal 则激活方案模式」——
+      // ComposerModePicker 退役后写方案的唯一入口是 /proposal-writer 斜杠
+      // （ScenarioRail chip / SkillPicker / 手敲），上方 matchProposalSlash
+      // 拦截已完整承载激活语义，这里不再需要按全局 mode 兜底。
 
       // ─── 资料缺失·补料落地（发送时收口）─────────────────────────────
       // 用户在只读草稿点了某处缺口的「去对话框补充」→ pendingGapFill 记着「这一章有这处缺口正等你
