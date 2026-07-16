@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import type { CliBackendState } from '@desktop-shared/ipc-channels'
 import { useI18n, useT } from '../../i18n'
+import { ComponentsSection } from './ComponentsSection'
 import { KnowledgeBaseSection } from './KnowledgeBaseSection'
 import {
   PROPOSAL_IMAGE_API_KEY_MASK,
@@ -86,6 +87,7 @@ export function SettingsBody(): React.JSX.Element {
       { id: 'appearance', label: t('catAppearance'), icon: <SunIcon /> },
       { id: 'configuration', label: t('catConfiguration'), icon: <SlidersIcon /> },
       { id: 'knowledgeBase', label: t('catKnowledgeBase'), icon: <ServerIcon /> },
+      { id: 'components', label: t('catComponents'), icon: <SlidersIcon /> },
       { id: 'personalization', label: t('catPersonalization'), icon: <PersonIcon /> },
       { id: 'usage', label: t('catUsage'), icon: <BarChartIcon /> },
       { id: 'mcp', label: t('catMcpServers'), icon: <ServerIcon /> },
@@ -139,6 +141,8 @@ export function SettingsBody(): React.JSX.Element {
             <ConfigurationSection />
           ) : activeCategory === 'knowledgeBase' ? (
             <KnowledgeBaseSection />
+          ) : activeCategory === 'components' ? (
+            <ComponentsSection />
           ) : (
             <PlaceholderSection
               title={categories.find((c) => c.id === activeCategory)?.label ?? ''}
@@ -155,6 +159,7 @@ type CategoryId =
   | 'appearance'
   | 'configuration'
   | 'knowledgeBase'
+  | 'components'
   | 'personalization'
   | 'usage'
   | 'mcp'

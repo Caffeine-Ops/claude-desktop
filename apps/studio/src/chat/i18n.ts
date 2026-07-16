@@ -158,6 +158,27 @@ const STRINGS = {
       '要写哪个产品的方案、给哪个客户或什么场景用；想分成哪几部分、每部分重点写什么。',
 
     catKnowledgeBase: '方案知识库',
+
+    // Settings — Components category（按需下载的可选组件：embed 模型 / markitdown / soffice）
+    catComponents: '组件 / 扩展',
+    componentsTitle: '组件 / 扩展',
+    componentsDesc: '按需下载的可选组件，用到才装、不撑大安装包',
+    compEmbedTitle: '语义检索模型',
+    compEmbedDesc: 'bge 嵌入模型，启用向量语义检索（缺失时降级关键词检索）',
+    compMarkitdownTitle: '文档转换工具 markitdown',
+    compMarkitdownDesc: '把 Office / PDF 文档转成 Markdown 存进知识库（缺失时降级纯文本）',
+    compSofficeTitle: 'LibreOffice（soffice）',
+    compSofficeDesc: '文档转换的最后兜底；本机未安装时部分格式导入会失败，可选装',
+    compDownload: '下载',
+    compInstall: '安装',
+    compInstalling: '正在安装…',
+    compCancel: '取消',
+    compRetry: '重试',
+    compReady: '已就绪',
+    compHowToInstall: '如何安装',
+    compBundled: '随包',
+    kbModelMovedHint: '语义检索模型已移至「组件 / 扩展」设置',
+
     // Settings — Configuration category — 出图 API（编辑器内 P 图功能的凭据配置）
     imageApiTitle: '出图 API',
     imageApiDesc: '配置图像生成/改图接口凭据，供编辑器内「出图」「改图」使用；未配置时对应入口置灰。',
@@ -552,6 +573,27 @@ const STRINGS = {
       'Which product the proposal is for, and which customer or scenario; how to split it into sections, and what each section should focus on.',
 
     catKnowledgeBase: 'Proposal Knowledge Base',
+
+    // Settings — Components category (on-demand optional components: embed model / markitdown / soffice)
+    catComponents: 'Components',
+    componentsTitle: 'Components',
+    componentsDesc: 'Optional components downloaded on demand — installed only when needed, keeping the app small',
+    compEmbedTitle: 'Semantic search model',
+    compEmbedDesc: 'bge embedding model for vector search (falls back to keyword search when missing)',
+    compMarkitdownTitle: 'Document converter (markitdown)',
+    compMarkitdownDesc: 'Converts Office / PDF documents to Markdown for the knowledge base (falls back to plain text)',
+    compSofficeTitle: 'LibreOffice (soffice)',
+    compSofficeDesc: 'Last-resort document conversion; some formats fail to import if not installed. Optional.',
+    compDownload: 'Download',
+    compInstall: 'Install',
+    compInstalling: 'Installing…',
+    compCancel: 'Cancel',
+    compRetry: 'Retry',
+    compReady: 'Ready',
+    compHowToInstall: 'How to install',
+    compBundled: 'Bundled',
+    kbModelMovedHint: 'The semantic search model moved to Settings → Components',
+
     // Settings — Configuration category — Image API credentials for the
     // in-editor image generate/edit feature.
     imageApiTitle: 'Image API',
