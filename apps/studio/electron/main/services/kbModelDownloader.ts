@@ -2,26 +2,20 @@
 // 为何在此而非打包时：正式安装包从不含模型（见 kbModelDir.ts 头注释），生产语义检索因此
 // 永久降级 BM25。改为运行时下载后模型落可写的 userData，安装包不撑大、CI 不需联网。
 //
-// 网络用 node:https 不用 fetch：环境常有 SSL-MITM 代理，node https 自动尊重 NODE_EXTRA_CA_CERTS；
-// 下载核心（跟随重定向 + sha256 校验 + 幂等跳过）移植自 scripts/prebundle-kb-model.mjs，但跑在运行时
-// main 进程，并加了：字节进度回调、临时文件 rename（防半截被当成功）、每请求 60s 超时（防卡死）、
-// AbortController 取消。**故意不调 HF /api/models 端点**——版本号钉在 manifest（那个 API 正是
-// 2026-07-06 害死 CI 下载的元凶），少一个失败点。
-import { createHash } from 'node:crypto'
-import { createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
-import https from 'node:https'
-import { dirname, join } from 'node:path'
-import { KB_MODEL_ID } from '../../shared/kbIndex'
+// 本文件现为薄壳：实际下载/校验/落盘编排已收拢进通用组件下载引擎
+// （componentRegistry.ts 的档案卡 + componentInstaller/hostedFilesInstaller.ts 的 installComponent），
+// P1a 把 embed 迁到通用引擎，此文件只负责保持对外导出签名不变（IPC/UI 零改动）并接住
+// 下载成功后的业务收尾（重热 embed worker / 有文档则重建索引）。
+import { existsSync } from 'node:fs'
 import { INITIAL_KB_MODEL_DOWNLOAD_STATE, type KbModelDownloadState } from '../../shared/kbModelDownload'
-import { KB_DOWNLOADABLE_MODELS } from '../core/kbModelManifest'
+import { getComponentDescriptor, EMBED_COMPONENT_ID } from '../core/componentRegistry'
+import { isComponentInstalled, installComponent } from './componentInstaller/hostedFilesInstaller'
 import { kbModelDir } from '../core/kbModelDir'
 import { resetEmbedWorker, warmEmbedWorker } from '../core/kbSemanticSearch'
 import { scheduleKbBuild } from '../core/kbBuildRunner'
 import { kbStoreHasDocs } from '../core/kbIndexStore'
 
-/** 单请求无数据超时（毫秒）：连上但不传数据也不会永久卡死。 */
-const DOWNLOAD_TIMEOUT_MS = 60_000
+const embedDescriptor = getComponentDescriptor(EMBED_COMPONENT_ID)!
 
 let state: KbModelDownloadState = { ...INITIAL_KB_MODEL_DOWNLOAD_STATE }
 
@@ -45,9 +39,9 @@ export function getKbModelDownloadState(): KbModelDownloadState {
   return state
 }
 
-/** 模型是否已就绪：判据与 kbBuildWorker 的 modelReady 完全一致（onnx 权重存在）。 */
+/** 模型是否已就绪：判据等价于原 onnx 权重存在——embed 档案卡的 readyCheck 就是该路径。 */
 export function isKbModelInstalled(): boolean {
-  return existsSync(join(kbModelDir(), KB_MODEL_ID, 'onnx', 'model_quantized.onnx'))
+  return isComponentInstalled(embedDescriptor, kbModelDir(), existsSync)
 }
 
 /** 启动时刷新 installed 旗标，让设置页首帧就知道要不要显示「下载」。 */
@@ -56,122 +50,32 @@ export function refreshKbModelInstalled(): void {
   setState({ installed, phase: installed ? 'ready' : state.phase })
 }
 
-async function sha256File(filePath: string): Promise<string> {
-  const buf = await readFile(filePath)
-  return createHash('sha256').update(buf).digest('hex')
-}
-
-// 下载 url → filePath，跟随重定向、流式落盘，每收到数据块回调字节数（进度）。
-// signal：AbortController.signal，abort 时请求报错 → 上层落进取消分支。
-// setTimeout：DOWNLOAD_TIMEOUT_MS 内无数据即 destroy 请求（防连上却不传数据的永久卡死）。
-function downloadFile(
-  url: string,
-  filePath: string,
-  signal: AbortSignal,
-  onBytes: (n: number) => void,
-  maxRedirects = 10
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const follow = (u: string, remaining: number): void => {
-      const req = https.get(u, { signal }, (res) => {
-        const code = res.statusCode ?? 0
-        const loc = res.headers.location
-        if ([301, 302, 303, 307, 308].includes(code) && loc) {
-          if (remaining <= 0) return reject(new Error(`Too many redirects for ${url}`))
-          // location 极少是数组；收窄成 string 传下一跳。
-          return follow(Array.isArray(loc) ? loc[0] : loc, remaining - 1)
-        }
-        if (code !== 200) return reject(new Error(`HTTP ${code} from ${u}`))
-        const ws = createWriteStream(filePath)
-        res.on('data', (c: Buffer) => onBytes(c.length))
-        res.pipe(ws)
-        ws.on('finish', () => resolve())
-        // 出错路径显式 destroy 写句柄（否则靠 GC 回收 fd；反复取消/重试会攒 fd）。
-        ws.on('error', (err) => {
-          ws.destroy()
-          reject(err)
-        })
-        res.on('error', (err) => {
-          ws.destroy()
-          reject(err)
-        })
-      })
-      req.setTimeout(DOWNLOAD_TIMEOUT_MS, () => req.destroy(new Error('下载超时（60s 无响应）')))
-      req.on('error', reject)
-    }
-    follow(url, maxRedirects)
-  })
-}
-
 let downloading = false
 let cancelled = false
 let controller: AbortController | null = null
 
 /**
- * 触发首次下载。按 KB_DOWNLOADABLE_MODELS 循环（P1 reranker 零改动复用）。
- * 每文件：临时 .part 下载 → 精确尺寸 + sha256 校验 → rename 到位（防半截被当成功）；已存在且 sha
- * 匹配则幂等跳过。全部成功后 resetEmbedWorker + warmEmbedWorker +（有文档才）scheduleKbBuild 重建向量。
- * 失败：phase='error'；取消：回未安装态、不当错误。两者都清残留 .part。现有降级链继续兜底，不崩不空。
+ * 触发首次下载。委托通用引擎 installComponent（临时 .part → 精确尺寸 + sha256 校验 →
+ * rename 到位，已存在且 sha 匹配则幂等跳过，`.part` 残留清理已在引擎内部完成）。
+ * 全部成功后 resetEmbedWorker + warmEmbedWorker +（有文档才）scheduleKbBuild 重建向量——
+ * 这段收尾是"锦上添花"，单独 try 包住，失败不把已成功的下载翻成 error（现有降级链继续兜底）。
+ * 失败：phase='error'；取消：回未安装态、不当错误。
  */
 export async function startKbModelDownload(): Promise<void> {
   if (downloading) return
   downloading = true
-  // currentTmp 声明在 try 外、downloading=true 之后：catch 分支要读它清残留 .part，
-  // 若声明挪进 try 块内 catch 就够不着（块级作用域）。
-  let currentTmp: string | null = null
-
   try {
     cancelled = false
     controller = new AbortController()
     setState({ phase: 'downloading', percent: 0, currentFile: null, errorMessage: null })
 
-    // 进度分母 = 所有文件真实字节数之和（onnx 24MB 占绝对多数，进度条精确跟大文件走，不会早跳 100%）。
-    const totalBytes = KB_DOWNLOADABLE_MODELS.flatMap((m) => m.files).reduce((sum, f) => sum + f.size, 0)
-    let doneBytes = 0
-    const pushPercent = (): void => setState({ percent: Math.min(100, Math.round((doneBytes / totalBytes) * 100)) })
+    await installComponent(embedDescriptor, kbModelDir(), controller.signal, (p) => {
+      setState({ percent: p.percent, currentFile: p.currentFile })
+    })
 
-    for (const model of KB_DOWNLOADABLE_MODELS) {
-      const destRoot = join(kbModelDir(), model.dirName)
-      for (const file of model.files) {
-        const dest = join(destRoot, file.relPath)
-        // 幂等：已存在且 sha 匹配则跳过（累加真实 size 让进度不倒退）。
-        if (existsSync(dest) && (await sha256File(dest)) === file.sha256) {
-          doneBytes += file.size
-          pushPercent()
-          continue
-        }
-        setState({ currentFile: file.relPath })
-        mkdirSync(dirname(dest), { recursive: true })
-        const tmp = `${dest}.part`
-        currentTmp = tmp
-        const base = doneBytes
-        await downloadFile(
-          `https://huggingface.co/${model.hfRepo}/resolve/${model.revision}/${file.relPath}`,
-          tmp,
-          controller.signal,
-          (n) => {
-            doneBytes += n
-            pushPercent()
-          }
-        )
-        // 校验：精确尺寸 + sha256，任一不符删临时文件并抛（不留半截污染幂等跳过）。
-        const size = statSync(tmp).size
-        const sha = await sha256File(tmp)
-        if (size !== file.size || sha !== file.sha256) {
-          rmSync(tmp, { force: true })
-          currentTmp = null // 已清理，避免 catch 里 rmSync 同一路径两次
-          throw new Error(`模型文件校验失败：${file.relPath}`)
-        }
-        renameSync(tmp, dest)
-        currentTmp = null
-        // 用真实 size 对齐进度（下载回调是流式累加，rename 后归位到 base+size）。
-        doneBytes = base + file.size
-        pushPercent()
-      }
-    }
     setState({ phase: 'ready', percent: 100, currentFile: null, installed: true })
-    // 下载已成功并落盘；下面的重热/重建是"锦上添花"，其失败不该把已成功的下载翻成 error
-    // （建库本身已有降级：stale→BM25、缺模型跳向量化）。故单独 try 包住，不让 fork 异常窜到外层 catch。
+    // 下载已落盘成功；下面的重热/重建是"锦上添花"，其失败不该把已成功的下载翻成 error
+    // （建库本身已有降级）。故单独 try 包住（承接 b5636bb3）。
     try {
       resetEmbedWorker()
       warmEmbedWorker()
@@ -180,7 +84,6 @@ export async function startKbModelDownload(): Promise<void> {
       // 重热/重建失败：下载仍视为成功，降级链兜底，不改 state。
     }
   } catch (err) {
-    if (currentTmp) rmSync(currentTmp, { force: true }) // 清掉中断留下的半截 .part
     if (cancelled) {
       // 用户主动取消：回到未安装/已安装态，不当错误。
       const installed = isKbModelInstalled()
