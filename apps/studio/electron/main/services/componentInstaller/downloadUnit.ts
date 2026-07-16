@@ -21,10 +21,12 @@ export async function downloadWithMirrors(
 ): Promise<void> {
   if (signal.aborted) throw new Error('下载已取消')
   let lastErr: unknown = new Error(`无可用下载地址：${dest}`)
+  let reported = 0 // 本次尝试已经报给 onBytes 的字节，换镜像时回滚
   for (const url of urls) {
     if (signal.aborted) throw new Error('下载已取消')
+    if (reported > 0) { onBytes(-reported); reported = 0 } // 回滚上一个失败镜像已报的进度
     try {
-      await downloadOne(url, dest, signal, onBytes)
+      await downloadOne(url, dest, signal, (n) => { reported += n; onBytes(n) })
       return
     } catch (err) {
       lastErr = err // 记下继续试下一个镜像

@@ -107,9 +107,12 @@ export async function installComponent(
   mkdirSync(destDir, { recursive: true })
   const tmp = join(root, `${i.destSubdir}.tar.gz.part`)
   try {
-    // 同 fetchUnit：n 是增量字节，本地累加成 local 再叠加 done（下载开始前的已完成基数）。
+    // 同 fetchUnit：n 是增量字节，本地累加成 local 再叠加 base（下载开始前的已完成基数）。
+    // base 必须是快照而非直接读 done——push() 内部会把 done 改写成刚上报的绝对值，若回调里
+    // 继续引用 done 会变成「旧done+旧local」再叠加 local，进度三角级暴涨（2026-07-16 修复）。
+    const base = done
     let local = 0
-    await downloadWithMirrors(i.archive.urls, tmp, signal, (n) => { local += n; push(done + local, i.destSubdir) }, downloadOneUrl)
+    await downloadWithMirrors(i.archive.urls, tmp, signal, (n) => { local += n; push(base + local, i.destSubdir) }, downloadOneUrl)
     if (statSync(tmp).size !== i.archive.size || (await sha256File(tmp)) !== i.archive.sha256) {
       rmSync(tmp, { force: true }); throw new Error(`整包校验失败：${d.id}`)
     }
