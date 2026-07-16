@@ -491,7 +491,8 @@ git commit -m "feat(component-download): 通用安装编排器（三策略分派
 - Modify: `apps/studio/electron/preload/index.ts`
 - Modify: `apps/studio/electron/main/ipc/register.ts`（加 handler + removeHandler）
 - Modify: `apps/studio/electron/main/tabRegistry.ts`（加 `broadcastComponentStatus`）
-- Modify: `apps/studio/electron/main/index.ts`（订阅 `onComponentStatus` + 启动 `refreshComponentInstalled`）
+- Modify: `apps/studio/electron/main/index.ts`（只订阅 `onComponentStatus`，**不**在启动时 refresh——见 Step 6 注释）
+- Modify: `apps/studio/electron/main/services/componentInstaller/componentOrchestrator.ts`（补一行 `installing` 守卫，见 Step 0）
 - Read（确认 index.d.ts 无需改）: `apps/studio/electron/preload/index.d.ts`
 
 **Interfaces:**
@@ -500,6 +501,20 @@ git commit -m "feat(component-download): 通用安装编排器（三策略分派
   - 通道常量 `COMPONENT_STATUS_GET='component:status-get'` / `COMPONENT_INSTALL_START='component:install-start'` / `COMPONENT_INSTALL_CANCEL='component:install-cancel'` / `COMPONENT_STATUS='component:status'`
   - preload 方法 `componentStatusGet(): Promise<ComponentTable>` / `startComponentInstall(id: string): Promise<void>` / `cancelComponentInstall(id: string): Promise<void>` / `onComponentStatus(cb: (t: ComponentTable) => void): () => void`
   - main `broadcastComponentStatus(t: ComponentTable): void`
+
+- [ ] **Step 0: 补 `installing` 守卫（componentOrchestrator.ts，Task 3 复审遗留的 Minor）**
+
+Task 3 的 `applyDetectedStatus` 在 ready 分支无条件转正，丢了原先双向的 `installing` 守卫。本任务把 `refreshComponentInstalled()` 接到每次 status-get 前，正是激活它的时机：装到一半时探测若说「已就绪」，会把格子提前拍成 ready、清空 percent，UI 在装完前一直显示「已就绪」（最终自愈，但过程视觉错乱）。
+
+在 `applyDetectedStatus` 函数最前面加 early-return，恢复双向语义（in-flight 的格子由 `run()` 独占写，探测不该插手任一方向）：
+
+```ts
+  // 正在装的格由 run() 独占写：探测既不该把它降级、也不该提前转正（提前转正会清空 percent，
+  // UI 在装完前一直显示「已就绪」）。双向守卫，勿只挡一边。
+  if (table[id]?.status === 'installing') return
+```
+
+> 具体变量名/签名以该函数实际实现为准（Task 3 的 `applyDetectedStatus` 收的是组件 id 与探测结论）；语义以「installing 格在两个方向上都不被探测覆盖」为准。
 
 - [ ] **Step 1: 加通道常量 + ChatApi 接口签名（ipc-channels.ts）**
 
@@ -618,15 +633,18 @@ export function broadcastComponentStatus(payload: import('../shared/componentDow
 在 `onKbModelDownload(...)` + `refreshKbModelInstalled()`（约 302-303）之后加：
 
 ```ts
-  // 通用组件下载：同层订阅整表推送 + 启动时探一次就绪态（供组件中心/弹窗初始渲染）。
+  // 通用组件下载：同层订阅整表推送。
+  // 刻意「只订阅、不在启动时 refresh」：refreshComponentInstalled() 内部的 detectTooling() 是
+  // execFileSync × 2 探针 × 4s 超时 = 最坏约 8s 同步阻塞主进程（所有窗口 + IPC），挂启动路径
+  // 会卡住 splash 交接。就绪态由 COMPONENT_STATUS_GET 这条用户触发的懒路径负责探（前端 store
+  // 的 init() 必调 componentStatusGet()，每个消费方首帧前都会拿到探测过的整表），故启动探测冗余。
   onComponentStatus((t) => broadcastComponentStatus(t))
-  refreshComponentInstalled()
 ```
 
 在 index.ts 顶部 import 区加：
 
 ```ts
-import { onComponentStatus, refreshComponentInstalled } from './services/componentInstaller/componentOrchestrator'
+import { onComponentStatus } from './services/componentInstaller/componentOrchestrator'
 import { broadcastComponentStatus } from './tabRegistry'
 ```
 
