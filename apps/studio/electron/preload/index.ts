@@ -126,6 +126,7 @@ import type { KbSyncStatus } from '../shared/kbSyncStatus'
 import type { KbCatalog, KbCatalogStatus } from '../shared/kbCatalog'
 import type { KbBuildStatus } from '../shared/kbBuildStatus'
 import type { KbModelDownloadState } from '../shared/kbModelDownload'
+import type { ComponentTable } from '../shared/componentDownload'
 import type {
   KbDocsListResult,
   KbToolingStatus,
@@ -869,6 +870,22 @@ const chatApi: ChatApi = {
     ipcRenderer.on(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS, listener)
     return () => {
       ipcRenderer.off(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS, listener)
+    }
+  },
+  componentStatusGet(): Promise<ComponentTable> {
+    return ipcRenderer.invoke(IPC_CHANNELS.COMPONENT_STATUS_GET) as Promise<ComponentTable>
+  },
+  startComponentInstall(id: string): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.COMPONENT_INSTALL_START, id) as Promise<void>
+  },
+  cancelComponentInstall(id: string): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.COMPONENT_INSTALL_CANCEL, id) as Promise<void>
+  },
+  onComponentStatus(cb: (t: ComponentTable) => void): () => void {
+    const listener = (_e: unknown, t: ComponentTable): void => cb(t)
+    ipcRenderer.on(IPC_CHANNELS.COMPONENT_STATUS, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.COMPONENT_STATUS, listener)
     }
   },
 

@@ -894,6 +894,11 @@ export const IPC_CHANNELS = {
   KB_MODEL_DOWNLOAD_START: 'kb:model-download-start',
   KB_MODEL_DOWNLOAD_CANCEL: 'kb:model-download-cancel',
   KB_MODEL_DOWNLOAD_STATUS: 'kb:model-download-status',
+  // ── 通用按需下载组件（P1b）：一套 id 键控通道服务所有组件（embed/markitdown/soffice…）──
+  COMPONENT_STATUS_GET: 'component:status-get',
+  COMPONENT_INSTALL_START: 'component:install-start',
+  COMPONENT_INSTALL_CANCEL: 'component:install-cancel',
+  COMPONENT_STATUS: 'component:status',
 } as const
 
 /**
@@ -2471,6 +2476,14 @@ export interface ChatApi {
   startKbModelDownload(): Promise<void>
   cancelKbModelDownload(): Promise<void>
   onKbModelDownload(handler: (s: import('./kbModelDownload').KbModelDownloadState) => void): () => void
+  /** 拉整张组件状态表快照（组件中心/弹窗初始渲染）。 */
+  componentStatusGet(): Promise<import('./componentDownload').ComponentTable>
+  /** 触发某组件安装（组件中心/渐进弹窗）。触发即返回，进度经 onComponentStatus 推。 */
+  startComponentInstall(id: string): Promise<void>
+  /** 取消某组件安装（仅下载型真能取消）。 */
+  cancelComponentInstall(id: string): Promise<void>
+  /** 订阅组件状态表整块推送。返回取消订阅函数。 */
+  onComponentStatus(handler: (t: import('./componentDownload').ComponentTable) => void): () => void
 
   /**
    * 扫描授权目录（下载 + 桌面）里的文档文件，返回元数据清单（mtime 降序、

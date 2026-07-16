@@ -124,6 +124,7 @@ import { detectTooling, installMarkitdown } from '../core/kbTooling'
 import { docPaths, isSafeRelPath } from '../core/kbStore.core'
 import { scheduleKbBuild, getKbBuildStatus } from '../core/kbBuildRunner'
 import { getKbModelDownloadState, startKbModelDownload, cancelKbModelDownload } from '../services/kbModelDownloader'
+import { getComponentTable, startComponentInstall, cancelComponentInstall, refreshComponentInstalled } from '../services/componentInstaller/componentOrchestrator'
 import type { KbIndex } from '../../shared/kbIndex'
 import type { KbRemoteConfig } from '../../shared/kbConfig'
 import { exportProposal, isProposalExportFormat } from '../core/proposalExport'
@@ -356,6 +357,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS_GET)
   ipcMain.removeHandler(IPC_CHANNELS.KB_MODEL_DOWNLOAD_START)
   ipcMain.removeHandler(IPC_CHANNELS.KB_MODEL_DOWNLOAD_CANCEL)
+  ipcMain.removeHandler(IPC_CHANNELS.COMPONENT_STATUS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.COMPONENT_INSTALL_START)
+  ipcMain.removeHandler(IPC_CHANNELS.COMPONENT_INSTALL_CANCEL)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_EXPORT_PDF)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_RENDER)
@@ -2227,6 +2231,17 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle(IPC_CHANNELS.KB_MODEL_DOWNLOAD_CANCEL, async (): Promise<void> => {
     cancelKbModelDownload()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.COMPONENT_STATUS_GET, async (): Promise<import('../../shared/componentDownload').ComponentTable> => {
+    refreshComponentInstalled() // 拉快照前先探一遍磁盘/工具链，反映用户手动装/删
+    return getComponentTable()
+  })
+  ipcMain.handle(IPC_CHANNELS.COMPONENT_INSTALL_START, async (_e, id: string): Promise<void> => {
+    startComponentInstall(id)
+  })
+  ipcMain.handle(IPC_CHANNELS.COMPONENT_INSTALL_CANCEL, async (_e, id: string): Promise<void> => {
+    cancelComponentInstall(id)
   })
 
   // 引用落地校验（#1）：核对一节正文的 `（据《X》）` 是否真出自镜像原文。verifyCitations

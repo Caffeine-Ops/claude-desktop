@@ -63,12 +63,15 @@ const SUCCESS_HOOKS: Record<string, () => void> = {
 //   基线 kbModelDownloader.refreshKbModelInstalled 写的是
 //   `phase: installed ? 'ready' : state.phase`，同样刻意保留非 ready 态，这里对齐同一语义。
 function applyDetectedStatus(id: string, ready: boolean): void {
+  // 正在装的格由 run() 独占写：探测既不该把它降级、也不该提前转正（提前转正会清空 percent，
+  // UI 在装完前一直显示「已就绪」）。双向守卫，勿只挡一边。
+  if (table[id]?.status === 'installing') return
   if (ready) {
     patch(id, { status: 'ready', percent: null, currentFile: null, errorMessage: null })
     return
   }
   const cur = table[id]?.status
-  if (cur === 'installing' || cur === 'error' || cur === 'unavailable') return // 保留原态，不覆盖
+  if (cur === 'error' || cur === 'unavailable') return // 保留原态，不覆盖（installing 已在函数顶部早返回挡掉）
   patch(id, { status: 'idle', percent: null, currentFile: null, errorMessage: null })
 }
 

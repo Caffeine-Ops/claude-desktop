@@ -40,7 +40,8 @@ import {
   newStudioTab,
   setQuitting,
   broadcastKbBuildStatus,
-  broadcastKbModelDownload
+  broadcastKbModelDownload,
+  broadcastComponentStatus
 } from './tabRegistry'
 import {
   startOpenDesignServices,
@@ -58,6 +59,7 @@ import {
 import { startKbSyncScheduler } from './core/kbSyncScheduler'
 import { onKbBuildStatus, scheduleKbBuild } from './core/kbBuildRunner'
 import { onKbModelDownload, refreshKbModelInstalled } from './services/kbModelDownloader'
+import { onComponentStatus } from './services/componentInstaller/componentOrchestrator'
 import { readKbIndex, kbStoreHasDocs } from './core/kbIndexStore'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -301,6 +303,13 @@ app.whenReady().then(async () => {
   // 嵌入模型首次运行下载：同层订阅推送 + 启动时刷新一次已安装状态（供管理页初始渲染）。
   onKbModelDownload((s) => broadcastKbModelDownload(s))
   refreshKbModelInstalled()
+
+  // 通用组件下载：同层订阅整表推送。
+  // 刻意「只订阅、不在启动时 refresh」：refreshComponentInstalled() 内部的 detectTooling() 是
+  // execFileSync × 2 探针 × 4s 超时 = 最坏约 8s 同步阻塞主进程（所有窗口 + IPC），挂启动路径
+  // 会卡住 splash 交接。就绪态由 COMPONENT_STATUS_GET 这条用户触发的懒路径负责探（前端 store
+  // 的 init() 必调 componentStatusGet()，每个消费方首帧前都会拿到探测过的整表），故启动探测冗余。
+  onComponentStatus((t) => broadcastComponentStatus(t))
 
   // 缺索引自愈：kb-store 有原件但 index.json 缺失（迁移/换机灌库后、或 app 更新令索引失效）
   // → 补触发一次构建。构建平时只由写操作触发（导入/删改），没有这个启动兜底，迁移进来的库

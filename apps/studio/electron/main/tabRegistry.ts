@@ -25,6 +25,7 @@ import type { KbSyncStatus } from '../shared/kbSyncStatus'
 import type { KbCatalogStatusPayload } from '../shared/ipc-channels'
 import type { KbBuildStatus } from '../shared/kbBuildStatus'
 import type { KbModelDownloadState } from '../shared/kbModelDownload'
+import type { ComponentTable } from '../shared/componentDownload'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -1023,6 +1024,18 @@ export function broadcastKbModelDownload(payload: KbModelDownloadState): void {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
     if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS, payload)
+  }
+}
+
+/** 把组件状态表整块推给每个能收 IPC 的 renderer。来源在 MAIN（编排器单飞行），每窗同等「other」。 */
+export function broadcastComponentStatus(payload: ComponentTable): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    shellWindow.webContents.send(IPC_CHANNELS.COMPONENT_STATUS, payload)
+  }
+  for (const ctx of tabs.values()) {
+    if (ctx.kind === 'web') continue
+    const wc = ctx.view.webContents
+    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.COMPONENT_STATUS, payload)
   }
 }
 
