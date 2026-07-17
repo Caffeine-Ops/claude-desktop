@@ -8,6 +8,7 @@ import { McpDialog } from './components/dialogs/McpDialog'
 import { LogsDialog } from './components/dialogs/LogsDialog'
 import { SessionSearchDialog } from './components/dialogs/SessionSearchDialog'
 import { Toaster } from './components/Toaster'
+import { ComponentPrompt } from './components/ComponentPrompt'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
 import { useI18n } from './i18n'
@@ -310,6 +311,9 @@ function App(): React.JSX.Element {
           useDelayedSessionLoading 数据源），交互闸门在别处不受影响
           （composer 发送钮走 isLoading、侧栏行走 pointer-events-none）。 */}
       <Toaster />
+      {/* 渐进式组件下载弹窗（Task 9）：非阻断，右下角浮出。常挂 App 根——
+          它同时兼任「用户走开也报喜」的整表观察点（见组件内注释），需要全程在场。 */}
+      <ComponentPrompt />
     </div>
     </MotionConfig>
   )

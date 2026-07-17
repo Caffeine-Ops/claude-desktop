@@ -180,6 +180,15 @@ const STRINGS = {
     compBundled: '随包',
     kbModelMovedHint: '语义检索模型已移至「组件 / 扩展」设置',
 
+    // 渐进式组件下载弹窗（非阻断，右下角浮出；Task 9）
+    compPromptTitle: '需要一个可选组件',
+    compPromptBody: '这个功能需要「{title}」。要现在下载吗？下载在后台进行，不打断你。',
+    compPromptNow: '现在下载',
+    compPromptLater: '暂不',
+    compPromptDetails: '查看下载详情',
+    compPromptDone: '「{title}」已就绪，正在后台更新，稍后自动生效。',
+    compPromptToast: '「{title}」已就绪',
+
     // Settings — Configuration category — 出图 API（编辑器内 P 图功能的凭据配置）
     imageApiTitle: '出图 API',
     imageApiDesc: '配置图像生成/改图接口凭据，供编辑器内「出图」「改图」使用；未配置时对应入口置灰。',
@@ -595,6 +604,15 @@ const STRINGS = {
     compCopyLink: 'Copy link',
     compBundled: 'Bundled',
     kbModelMovedHint: 'The semantic search model moved to Settings → Components',
+
+    // Progressive component-download prompt (non-blocking, bottom-right; Task 9)
+    compPromptTitle: 'An optional component is needed',
+    compPromptBody: 'This feature needs “{title}”. Download it now? It runs in the background and won’t interrupt you.',
+    compPromptNow: 'Download now',
+    compPromptLater: 'Not now',
+    compPromptDetails: 'View download details',
+    compPromptDone: '“{title}” is ready and updating in the background; it will take effect shortly.',
+    compPromptToast: '“{title}” is ready',
 
     // Settings — Configuration category — Image API credentials for the
     // in-editor image generate/edit feature.
