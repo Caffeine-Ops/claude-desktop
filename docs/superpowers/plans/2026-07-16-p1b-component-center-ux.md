@@ -1306,10 +1306,11 @@ git commit -m "feat(component-download): 渐进式非阻断弹窗（四阶段 + 
 **Files:**
 - Modify: `apps/studio/src/chat/components/kb/KbToolbar.tsx`
 - Modify: `apps/studio/src/chat/components/kb/KbToolingCard.tsx`
+- Modify: `apps/studio/src/chat/stores/componentPrompt.ts`（加 `dismissed` 表 + `isDismissed`，见下）
 
 **Interfaces:**
-- Consumes: Task 5 `useComponentStore`；Task 9 `promptComponent`。
-- Produces: 导入/同步缺 markitdown → 弹渐进弹窗；embed 缺模型引导 → 打开组件中心/弹窗；markitdown 卡片改读组件表、安装走编排器。
+- Consumes: Task 5 `useComponentStore`；Task 9 `promptComponent` / `useComponentPromptStore`。
+- Produces: 导入/同步缺 markitdown → **第一次**弹渐进弹窗、之后照旧走既有静默降级；embed 缺模型引导 → 弹窗；markitdown 卡片改读组件表、安装走编排器；`useComponentPromptStore` 新增 `dismissed: Record<string, boolean>` 与 `isDismissed(id)`。
 
 - [ ] **Step 1: KbToolbar 改用组件表 + 接触发点**
 
@@ -1341,13 +1342,44 @@ import { promptComponent } from '../../stores/componentPrompt'
 import { initialComponentState } from '@desktop-shared/componentDownload'
 ```
 
-- `migrate` 与 `sync` 两个函数体最前面（`if (busy) return` 之后）加「缺 markitdown 先弹窗」的非阻断守卫：
+- `migrate` 与 `sync` 两个函数体最前面（`if (busy) return` 之后）加「缺 markitdown 先弹窗，但只拦第一次」的守卫：
 
 ```tsx
-    if (markitdown.status !== 'ready') { promptComponent('markitdown'); return }
+    // 功能门：导入/同步要用 markitdown 转格式。缺它时**第一次**点先弹提示（这是有天然弹窗
+    // 时机的用户动作）；用户点了[暂不]之后再点，就照旧跑——缺 markitdown 本来就有静默三级
+    // 降级（markitdown → 丢内嵌图重试 → soffice 纯文本兜底），拦着不让导入会让功能比「没这
+    // 个组件」时更糟，违反「增强层永不拖累基础层」。dismissed 让[暂不]真的等于「优雅降级」，
+    // 也堵死「点同步→弹窗→暂不→再点同步→又弹窗」的死循环。
+    if (markitdown.status !== 'ready' && !promptDismissed('markitdown')) {
+      promptComponent('markitdown')
+      return
+    }
 ```
 
-> 语义：导入/同步是用到 markitdown 的功能门，缺就弹渐进弹窗、本次动作先不跑（用户装好后再点一次）。这是非阻断——弹窗不挡别的操作。
+组件体内取 `promptDismissed`：
+
+```tsx
+  const promptDismissed = useComponentPromptStore((s) => s.isDismissed)
+```
+
+（import：`import { useComponentPromptStore, promptComponent } from '../../stores/componentPrompt'`）
+
+**同时扩 `stores/componentPrompt.ts`**（Task 9 建的）：加一张「本次会话里用户已对哪些组件说过[暂不]」的表，`close()` 时记下。
+
+```ts
+interface PromptState {
+  openFor: string | null
+  /** 本次会话里用户已经关掉过其提示的组件 id（[暂不] 或成功淡出都算）。功能门据此只拦第一次，
+   *  之后照旧走既有的静默降级——否则 [暂不] 等于永久拦死该功能，比没这个组件还糟。
+   *  只存内存、不持久化：重启后再提醒一次是可接受的，用户也可能已经装好了。 */
+  dismissed: Record<string, boolean>
+  promptComponent: (id: string) => void
+  close: () => void
+  isDismissed: (id: string) => boolean
+}
+```
+
+`close()` 改为在清 `openFor` 的同时把当前 `openFor` 记进 `dismissed`；`isDismissed: (id) => !!get().dismissed[id]`。（`create<PromptState>((set, get) => …)` 需要 `get`。）
 
 - 右侧状态区（约 86-104 行）把 `model?.phase === 'downloading'` / `model && !model.installed` 改成读 `embed`：
 
@@ -1399,7 +1431,7 @@ Expected: PASS（`tooling`/`model`/`KbModelDownloadState`/`KbToolingInstallResul
 - [ ] **Step 4: 提交**
 
 ```bash
-git add apps/studio/src/chat/components/kb/KbToolbar.tsx apps/studio/src/chat/components/kb/KbToolingCard.tsx
+git add apps/studio/src/chat/components/kb/KbToolbar.tsx apps/studio/src/chat/components/kb/KbToolingCard.tsx apps/studio/src/chat/stores/componentPrompt.ts
 git commit -m "feat(component-download): 功能门接线——导入缺 markitdown 弹窗 + embed 引导升级 + 卡片读新表"
 ```
 
