@@ -306,10 +306,12 @@ function App(): React.JSX.Element {
       {/* 会话搜索（⌘K / shell rail 的「搜索对话」）。常挂载：它自己订阅
           dialog store 并在关闭态渲染 null，⌘K 监听因此全程有效。 */}
       <SessionSearchDialog />
-      {/* 右下角的「正在打开会话」toast 已退役（2026-07-07 用户要求去掉）：
-          冷启动信号由 ThreadView 顶部进度条独自承担（同一个
-          useDelayedSessionLoading 数据源），交互闸门在别处不受影响
-          （composer 发送钮走 isLoading、侧栏行走 pointer-events-none）。 */}
+      {/* 下面这个 <Toaster /> 是活的、通用的角落浮条渲染器（Toaster.tsx），当前承载组件安装
+          成功的「走开报喜」提示（ComponentPrompt.tsx）——不要跟本段注释混为一谈。这段注释单纯
+          记录一段已退役的历史：右下角曾有一条专用的「正在打开会话」toast（2026-07-07 用户要求
+          去掉），冷启动信号现在由 ThreadView 顶部进度条独自承担（同一个 useDelayedSessionLoading
+          数据源），交互闸门在别处不受影响（composer 发送钮走 isLoading、侧栏行走
+          pointer-events-none）。 */}
       <Toaster />
       {/* 渐进式组件下载弹窗（Task 9）：非阻断，右下角浮出。常挂 App 根——
           它同时兼任「用户走开也报喜」的整表观察点（见组件内注释），需要全程在场。 */}

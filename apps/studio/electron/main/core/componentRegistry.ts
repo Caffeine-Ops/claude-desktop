@@ -1,6 +1,6 @@
 // 通用组件名册——「加一个可下载组件 = 往这里加一张档案卡」。P1a 只有 embed 一张（从既有
-// kbModelManifest 派生，sha256/size 复用那份唯一事实源，绝不再抄一份防漂移）。
-// P1b 会把 reranker/python-runtime/markitdown/soffice 追加进来。
+// kbModelManifest 派生，sha256/size 复用那份唯一事实源，绝不再抄一份防漂移）。P1b 已把
+// markitdown/soffice 追加进来（见下方两张档案卡）；reranker/python-runtime 仍待后续任务加。
 import type { ComponentDescriptor } from '../../shared/componentDownload'
 import { KB_MODEL_ID } from '../../shared/kbIndex'
 import { KB_DOWNLOADABLE_MODELS } from './kbModelManifest'

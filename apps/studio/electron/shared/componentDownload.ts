@@ -60,12 +60,6 @@ export interface ComponentDescriptor {
   install: ComponentInstallSpec
 }
 
-/** 仅托管形态（files/archive）的组件描述符，用于下载/安装操作。 */
-export type HostedComponentDescriptor = Omit<ComponentDescriptor, 'strategy' | 'install'> & {
-  strategy: 'hosted-files'
-  install: HostedInstall
-}
-
 // ── 运行时状态（每组件一格，main 单一事实源、前台整块镜像；范式对齐 kbBuildStatus/updaterState）──
 
 /** 一个组件当前所处状态。三种安装策略都归一到这五态。 */

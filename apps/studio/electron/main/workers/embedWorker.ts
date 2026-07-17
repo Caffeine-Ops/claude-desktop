@@ -65,8 +65,9 @@ async function init(): Promise<void> {
     row
   }))
   // 本地模型、零网络：localModelPath 下须有 <KB_MODEL_ID>/onnx/... + tokenizer.json
-  // （模型由 electron/main/services/kbModelDownloader.ts 首次运行时下载到 userData，
-  // modelDir 路径以 argv 传入）。
+  // （模型由 electron/main/services/componentInstaller/componentOrchestrator.ts 首次运行时下载到
+  // userData，经 componentRegistry 的 embed 档案卡 + hostedFilesInstaller.installComponent 落盘，
+  // modelDir 路径以 argv 传入。旧的 kbModelDownloader.ts 单模型薄壳已在收尾任务里退役删除）。
   // KB_MODEL_ID 来自 shared/kbIndex（模型 id 唯一事实源，F8）。
   env.allowRemoteModels = false
   env.localModelPath = modelDir
