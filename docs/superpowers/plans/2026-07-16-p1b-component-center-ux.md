@@ -1093,7 +1093,7 @@ git commit -m "feat(component-download): 最小全局 toast（store + Toaster + 
 - Consumes: Task 5 `useComponentStore`；Task 8 `toast`；Task 6 的组件标题 i18n 键。
 - Produces:
   - `useComponentPromptStore` — `{ openFor: string | null; promptComponent(id): void; close(): void }`
-  - `<ComponentPrompt />` — 渐进四阶段弹窗。
+  - `<ComponentPrompt />` — 渐进四阶段弹窗，**兼任「用户走开也报喜」的整表观察点**：它常挂 App 根、是唯一 always-on 的整表订阅者，故在其内观察任一组件 `installing→ready` 跃迁，弹窗未展示该组件时发一条角落 toast（兑现设计决策「顺手建最小 toast」的服务场景；弹窗正展示它时不发，避免与弹窗自己的成功话重复）。
   - `promptComponent(id: string): void`（便捷导出）
 
 - [ ] **Step 1: 加弹窗文案键（i18n.ts，zh + en 各一组）**
@@ -1152,7 +1152,7 @@ export function promptComponent(id: string): void {
 ```tsx
 // apps/studio/src/chat/components/ComponentPrompt.tsx
 import React, { useEffect, useRef } from 'react'
-import { initialComponentState } from '@desktop-shared/componentDownload'
+import { initialComponentState, type ComponentTable } from '@desktop-shared/componentDownload'
 import { useT, useTFormat } from '../i18n'
 import { useComponentPromptStore } from '../stores/componentPrompt'
 import { useComponentStore } from '../stores/components'
@@ -1187,6 +1187,21 @@ export function ComponentPrompt(): React.JSX.Element | null {
 
   // 订阅整表（弹窗独立订阅一次，保证即便组件中心没开也能拿进度）。
   useEffect(() => init(), [init])
+
+  // 「用户走开也知道装好了」——本组件常挂 App 根，是唯一always-on 的整表观察点，故把这个
+  // 兜底放这。观察任一组件 installing→ready 的跃迁：若此刻弹窗没在展示该组件（用户点了叉、
+  // 或压根是从组件中心触发的），就用角落 toast 报喜；弹窗正展示它时不发，避免和弹窗自己的
+  // 成功话重复。prevRef 存上一帧整表用于做边沿判断（只在跃迁那一下发一次，不是每次推送都发）。
+  const prevRef = useRef<ComponentTable>({})
+  useEffect(() => {
+    const prev = prevRef.current
+    for (const [id, st] of Object.entries(table)) {
+      if (prev[id]?.status === 'installing' && st.status === 'ready' && openFor !== id) {
+        toast(tFormat('compPromptToast', { title: t(TITLE_KEY[id] ?? '') }), 'ok')
+      }
+    }
+    prevRef.current = table
+  }, [table, openFor, t, tFormat])
 
   const state = openFor ? (table[openFor] ?? initialComponentState(openFor)) : null
   const title = openFor ? t(TITLE_KEY[openFor] ?? '') : ''
