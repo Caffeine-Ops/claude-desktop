@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-durs="hover">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>回合叙事 · 工具流重设计原型</title>
+<style>
+/* ============================================================
+ * chat 线程「回合叙事」重设计原型（ui-prototype-tool-flow.html 的下一代）
+ *
+ * 出发点（用户原话）：满屏的工具调用、命令执行，普通用户看不懂。
+ * 上一版原型只做了「视觉降档」（绿勾变细、行距收紧），这一版做
+ * 「语义翻译」——工具调用不再逐条平铺，而是：
+ *
+ *   1. TodoWrite 的计划映射成「工作阶段」：每个阶段一句大白话标题
+ *      （了解项目配置 / 编写首页 / 构建检查与修复），完成后折成一行
+ *      摘要（"看了 3 个配置文件 · 6秒"）。
+ *   2. 阶段内每一步用「动词 + 对象」的人话（"创建首屏区块 Hero.tsx"），
+ *      原始路径 / 命令 / 输出全部收进点开的详情卡——文案直白优先，
+ *      原始数据折叠（vault 协作偏好）。
+ *   3. 回合顶部一条总状态行（参考截图1 的"已处理 4m 32s"）：进行中
+ *      shimmer + 计时，完成后可一键折叠全部过程只看结论。
+ *   4. 报错不再是一行红字：失败步骤 + 修复动作串成因果链
+ *      （构建失败 → 查文档 → 改配置 → 重新构建通过）。
+ *
+ * 三个变体（Tweaks 切换）：
+ *   A 阶段叙事（推荐）——上述全部
+ *   B 安静直排——参考截图1 的 codex 风：不分组不折叠，行内降档
+ *   C 现状对照——复刻当前满屏工具行，给"改前改后"对比用
+ *
+ * 交互：▶ 回放按钮重演整个回合的流式过程（打字、arc 转勾、阶段
+ * 收拢、计时爬升）。token 全部取自 packages/design-tokens/tokens.css。
+ * ============================================================ */
+
+:root {
+  --background: hsl(240 7% 97%);
+  --foreground: hsl(240 3% 12%);
+  --card: hsl(0 0% 100%);
+  --muted: hsl(0 0% 95.3%);
+  --muted-foreground: hsl(240 4% 40%);
+  --border: hsl(240 6% 84%);
+  --brand: hsl(142 76% 36%);
+  --accent: hsl(211 100% 45%);
+  --warn: hsl(32 88% 44%);
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue',
+    Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+}
+[data-theme="dark"] {
+  --background: hsl(40 6% 10%);
+  --foreground: hsl(40 21% 89%);
+  --card: hsl(30 3% 13%);
+  --muted: hsl(36 6% 17%);
+  --muted-foreground: hsl(36 5% 58%);
+  --border: hsl(49 12% 18%);
+  --brand: hsl(145 60% 52%);
+  --accent: hsl(210 100% 58%);
+  --warn: hsl(36 90% 58%);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scrollbar-gutter: stable; }
+html, body { min-height: 100%; background: var(--background); }
+body {
+  font-family: var(--font-sans);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+svg { display: block; }
+
+/* ── 页面骨架 ── */
+.topbar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 28px;
+  background: color-mix(in srgb, var(--background) 86%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+.topbar h1 { font-size: 14px; font-weight: 600; }
+.topbar .badge {
+  margin-left: auto; font-size: 11px; color: var(--muted-foreground);
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px;
+}
+.thread { max-width: 780px; margin: 0 auto; padding: 30px 32px 170px; }
+
+/* ── 用户气泡（截图2 的右侧灰 pill） ── */
+.user-msg { display: flex; justify-content: flex-end; margin: 4px 0 26px; }
+.user-msg .bubble {
+  max-width: 70%;
+  background: var(--muted);
+  border-radius: 18px;
+  padding: 9px 16px;
+  font-size: 14px; line-height: 1.6;
+}
+
+/* ── AI 叙述文本：主角 ── */
+.msg {
+  font-size: 14.5px; line-height: 1.8; margin: 20px 0;
+  text-wrap: pretty;
+}
+.msg code {
+  font-family: var(--font-mono); font-size: 12.5px;
+  background: var(--muted); border-radius: 5px; padding: 1px 6px;
+}
+
+/* ════════════════════════════════════════════════════
+ * 回合总状态行——参考截图1 顶部的"已处理 4m 32s"。
+ * 进行中：brand 弧线 + shimmer 文案 + 计时爬升。
+ * 完成后：细描边勾 + "已处理 4分32秒"，chevron 一键折叠
+ * 全部过程块（.turn.digest），只留叙述文本。
+ * ════════════════════════════════════════════════════ */
+.turn-status {
+  display: flex; align-items: center; gap: 8px;
+  padding: 2px 0 12px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.turn-status .ts-main {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 8px; margin-left: -8px;
+  border-radius: 8px;
+  font-size: 13px; color: var(--muted-foreground);
+  transition: background 130ms ease;
+}
+.turn-status .ts-main:hover, .turn-status .ts-main:focus-visible { background: var(--muted); outline: none; }
+.turn-status .ts-icon { width: 14px; height: 14px; flex-shrink: 0; }
+.turn-status .ts-chev {
+  font-size: 9px; color: color-mix(in srgb, var(--muted-foreground) 55%, transparent);
+  transition: transform 200ms ease;
+}
+.turn.digest ~ * .ts-chev { transform: none; }
+.turn-status .ts-main[aria-expanded="false"] .ts-chev { transform: rotate(-90deg); }
+.turn-status .replay-btn {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--muted-foreground);
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 4px 12px;
+  transition: color 130ms ease, border-color 130ms ease, background 130ms ease;
+}
+.turn-status .replay-btn:hover {
+  color: var(--foreground); border-color: color-mix(in srgb, var(--muted-foreground) 40%, transparent);
+  background: var(--card);
+}
+.turn-status .replay-btn svg { width: 10px; height: 10px; }
+.turn-status .replay-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* ── shimmer（现有 .shimmer-text 语言） ── */
+.shim {
+  background: linear-gradient(90deg, var(--muted-foreground) 40%, var(--foreground) 50%, var(--muted-foreground) 60%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 1.6s linear infinite;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* ── 状态小图标：arc / 细描边勾 / 警示（与产品 tc-spin / StatusCheck 同语言） ── */
+.arc-svg { animation: spin 0.9s linear infinite; }
+.arc-svg circle {
+  fill: none; stroke: var(--brand); stroke-width: 1.7;
+  stroke-linecap: round; stroke-dasharray: 21 14;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.tick-svg .ring { fill: none; stroke: color-mix(in srgb, var(--brand) 50%, transparent); stroke-width: 1.3; }
+.tick-svg .mark { fill: none; stroke: var(--brand); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+/* 完成瞬间：圆环 pop + 勾画线（产品 tc-pop / tc-draw 的降配版） */
+.tick-svg.pop { animation: pop 300ms cubic-bezier(.2,1.4,.4,1); }
+.tick-svg.pop .mark {
+  stroke-dasharray: 12; stroke-dashoffset: 12;
+  animation: draw 240ms 90ms cubic-bezier(.3,.7,.3,1) forwards;
+}
+@keyframes pop { 0% { transform: scale(0.4); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+
+/* ════════════════════════════════════════════════════
+ * 折叠动画容器：阶段 / 思考块统一包一层 .act。总状态行的
+ * "只看结论"（.turn.digest）把它们一起收成 0fr——grid-rows
+ * 过渡，高度动画不用量 scrollHeight。
+ * ════════════════════════════════════════════════════ */
+.act {
+  display: grid; grid-template-rows: 1fr;
+  transition: grid-template-rows 320ms cubic-bezier(.3,.9,.3,1), opacity 240ms ease, margin 320ms ease;
+}
+.act > .act-inner { min-height: 0; overflow: hidden; }
+.turn.digest .act { grid-template-rows: 0fr; opacity: 0; margin: 0; }
+
+/* ════════════════════════════════════════════════════
+ * 变体 A：工作阶段
+ * 收起 = 一行安静摘要（勾 + 标题 + 汇总 + 时长 + chevron）
+ * 展开 = 左侧发丝竖线 + 人话步骤行
+ * ════════════════════════════════════════════════════ */
+.stage { margin: 10px 0; }
+.stage-head {
+  width: 100%;
+  display: flex; align-items: center; gap: 9px;
+  min-height: 34px;
+  padding: 4px 10px 4px 8px; margin-left: -8px;
+  border-radius: 9px;
+  text-align: left;
+  transition: background 130ms ease;
+  outline: none;
+}
+.stage-head:hover, .stage-head:focus-visible { background: var(--muted); }
+.stage-head .sh-icon { width: 14px; height: 14px; flex-shrink: 0; }
+.stage-head .sh-title { font-size: 13.5px; font-weight: 500; flex-shrink: 0; }
+.stage-head .sh-summary {
+  font-size: 12.5px; color: var(--muted-foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.stage-head .sh-dur {
+  margin-left: auto; flex-shrink: 0;
+  font-size: 11.5px; color: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.stage-head .sh-chev {
+  flex-shrink: 0; width: 10px;
+  font-size: 9px; color: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+  transition: transform 200ms ease;
+}
+.stage[data-open="true"] .stage-head .sh-chev { transform: rotate(90deg); }
+.stage.running .sh-title { font-weight: 500; }
+
+/* 阶段展开体：grid 0fr→1fr 高度动画 */
+.stage-body {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows 300ms cubic-bezier(.3,.9,.3,1);
+}
+.stage[data-open="true"] .stage-body { grid-template-rows: 1fr; }
+.stage-body > .sb-inner { min-height: 0; overflow: hidden; }
+.stage-rail {
+  position: relative;
+  margin: 2px 0 4px 14px;
+  padding-left: 16px;
+}
+.stage-rail::before {
+  content: ''; position: absolute; left: 0; top: 6px; bottom: 6px;
+  width: 1px;
+  background: color-mix(in srgb, var(--muted-foreground) 26%, transparent);
+}
+
+/* ── 步骤行：动词人话 + mono 对象名，原始细节点开 ── */
+.srow {
+  width: 100%;
+  display: flex; align-items: center; gap: 8px;
+  min-height: 29px;
+  padding: 2px 10px 2px 8px;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 12.5px;
+  transition: background 120ms ease;
+  outline: none;
+}
+.srow:hover, .srow:focus-visible { background: var(--muted); }
+.srow .sr-icon { width: 14px; height: 14px; flex-shrink: 0; color: color-mix(in srgb, var(--muted-foreground) 80%, transparent); }
+.srow .sr-icon svg { width: 14px; height: 14px; }
+.srow .sr-label { color: color-mix(in srgb, var(--foreground) 88%, transparent); flex-shrink: 0; }
+.srow .sr-file {
+  font-family: var(--font-mono); font-size: 11.5px;
+  color: var(--muted-foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.srow .sr-note {
+  flex-shrink: 0;
+  font-size: 10.5px; border-radius: 999px; padding: 1px 8px;
+}
+/* 不限定 .srow 作用域：变体 B 的 .brow 行同样要用这对 chip 色 */
+.sr-note.fail { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.sr-note.pass { color: var(--brand); background: color-mix(in srgb, var(--brand) 12%, transparent); }
+.srow .sr-dur {
+  margin-left: auto; flex-shrink: 0;
+  font-family: var(--font-mono); font-size: 10.5px;
+  color: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
+  font-variant-numeric: tabular-nums;
+  transition: opacity 130ms ease;
+}
+/* 每步耗时三档：hover 才显 / 常显 / 隐藏（Tweaks） */
+[data-durs="hover"] .srow .sr-dur { opacity: 0; }
+[data-durs="hover"] .srow:hover .sr-dur, [data-durs="hover"] .srow:focus-visible .sr-dur { opacity: 1; }
+[data-durs="never"] .srow .sr-dur { display: none; }
+.srow .sr-chev {
+  flex-shrink: 0; width: 9px;
+  font-size: 8.5px; color: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+  transition: transform 180ms ease;
+}
+.srow[aria-expanded="true"] .sr-chev { transform: rotate(90deg); }
+.srow.running .sr-label { font-weight: 500; }
+.srow.running .sr-file {
+  background: linear-gradient(90deg, var(--muted-foreground) 40%, var(--foreground) 50%, var(--muted-foreground) 60%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 1.6s linear infinite;
+}
+.srow .sr-icon.warn-tone { color: var(--warn); }
+
+/* ── 步骤详情：原始路径 / 命令 / 输出，收进软卡 ── */
+.sdetail {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows 260ms cubic-bezier(.3,.9,.3,1);
+}
+.sdetail.open { grid-template-rows: 1fr; }
+.sdetail > .sd-inner { min-height: 0; overflow: hidden; }
+.sd-card {
+  margin: 4px 4px 8px 22px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--card) 60%, transparent);
+  padding: 10px 12px;
+  font-size: 12px; line-height: 1.65;
+  color: color-mix(in srgb, var(--foreground) 82%, transparent);
+}
+.sd-card .sd-lbl {
+  display: block; font-family: var(--font-mono);
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--muted-foreground) 75%, transparent);
+  margin-bottom: 5px;
+}
+.sd-card .mono { font-family: var(--font-mono); font-size: 11.5px; word-break: break-all; }
+
+/* Shell 输出软卡（参考截图1 的灰底 Shell 卡） */
+.shellcard {
+  margin: 4px 4px 8px 22px;
+  border-radius: 12px;
+  background: var(--muted);
+  padding: 11px 14px 12px;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.7;
+  overflow: hidden;
+}
+.shellcard .sd-lbl {
+  display: block; font-family: var(--font-sans);
+  font-size: 11px; color: var(--muted-foreground); margin-bottom: 6px;
+}
+.shellcard .cmd { color: var(--foreground); }
+.shellcard .cmd::before { content: '$ '; color: var(--muted-foreground); }
+.shellcard .out { color: var(--muted-foreground); white-space: pre-wrap; word-break: break-word; }
+.shellcard .out .em { color: var(--warn); }
+.shellcard .out .ok { color: var(--brand); }
+.shellcard pre { font: inherit; white-space: pre-wrap; word-break: break-word; }
+.diffline { font-family: var(--font-mono); font-size: 11.5px; }
+.diffline.add { color: var(--brand); }
+.diffline.add::before { content: '+ '; }
+
+/* ── 思考块：一行极安静的可展开行 ── */
+.think { margin: 6px 0; }
+.think-head {
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 26px;
+  padding: 2px 10px 2px 8px; margin-left: -8px;
+  border-radius: 8px;
+  font-size: 12px; color: var(--muted-foreground);
+  transition: background 120ms ease;
+  outline: none;
+}
+.think-head:hover, .think-head:focus-visible { background: var(--muted); }
+.think-head .th-dot {
+  width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0;
+  background: color-mix(in srgb, var(--muted-foreground) 55%, transparent);
+}
+.think-head .th-chev {
+  font-size: 8.5px; color: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+  transition: transform 180ms ease;
+}
+.think[data-open="true"] .th-chev { transform: rotate(90deg); }
+.think-body {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows 260ms cubic-bezier(.3,.9,.3,1);
+}
+.think[data-open="true"] .think-body { grid-template-rows: 1fr; }
+.think-body > .tb-inner { min-height: 0; overflow: hidden; }
+.think-body .tb-text {
+  margin: 2px 0 6px 14px; padding-left: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--muted-foreground) 22%, transparent);
+  font-size: 12.5px; line-height: 1.75; color: var(--muted-foreground);
+}
+
+/* ════════════════════════════════════════════════════
+ * 变体 B：安静直排（参考截图1 的 codex 风）——不分组卡，
+ * 每步一行灰色人话句子 + 小图标；阶段名降为可折叠灰标签。
+ * ════════════════════════════════════════════════════ */
+.b-group-label {
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 28px;
+  padding: 2px 10px 2px 8px; margin: 8px 0 0 -8px;
+  border-radius: 8px;
+  font-size: 12.5px; color: var(--muted-foreground);
+  transition: background 120ms ease;
+  outline: none;
+}
+.b-group-label:hover, .b-group-label:focus-visible { background: var(--muted); }
+.b-group-label .th-chev {
+  font-size: 8.5px; color: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+  transition: transform 180ms ease;
+}
+.b-group[data-open="true"] .b-group-label .th-chev { transform: rotate(90deg); }
+.b-rows {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows 280ms cubic-bezier(.3,.9,.3,1);
+}
+.b-group[data-open="true"] .b-rows { grid-template-rows: 1fr; }
+.b-rows > .br-inner { min-height: 0; overflow: hidden; }
+.brow {
+  display: flex; align-items: center; gap: 9px;
+  min-height: 29px;
+  padding: 2px 10px 2px 8px;
+  font-size: 13px; color: var(--muted-foreground);
+  border-radius: 8px;
+}
+.brow:hover { background: var(--muted); }
+.brow .sr-icon { width: 14px; height: 14px; flex-shrink: 0; color: color-mix(in srgb, var(--muted-foreground) 70%, transparent); }
+.brow .sr-icon svg { width: 14px; height: 14px; }
+.brow .b-obj { font-family: var(--font-mono); font-size: 12px; }
+
+/* ════════════════════════════════════════════════════
+ * 变体 C：现状对照——复刻当前满屏工具行（15px 实心绿勾、
+ * 工具名加粗、全 mono 路径、右侧耗时 + ▾）。只为对比。
+ * ════════════════════════════════════════════════════ */
+.crow {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 32px;
+  padding: 3px 4px;
+  font-size: 13px;
+}
+.crow .c-check { width: 15px; height: 15px; flex-shrink: 0; }
+.crow .c-check circle { fill: var(--brand); }
+.crow .c-check path { fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.crow .c-name { font-weight: 500; flex-shrink: 0; }
+.crow .c-args {
+  font-family: var(--font-mono); font-size: 12px;
+  color: var(--muted-foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.crow .c-dur {
+  margin-left: auto; flex-shrink: 0;
+  font-family: var(--font-mono); font-size: 11.5px;
+  color: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.crow .c-chev { flex-shrink: 0; font-size: 9px; color: color-mix(in srgb, var(--muted-foreground) 45%, transparent); }
+.crow-think {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 30px; padding: 3px 4px;
+  font-size: 13px; color: var(--muted-foreground);
+}
+.crow-think .ct-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); flex-shrink: 0; }
+.crow-think .ct-chev { font-size: 9px; }
+
+/* ── 入场：流式落块的上浮显影（产品 tc-row-in 语言） ── */
+.pre { opacity: 0; transform: translateY(7px); }
+.in { opacity: 1; transform: none; transition: opacity 380ms ease, transform 380ms cubic-bezier(.3,.9,.3,1); }
+
+/* ── composer 占位（语境完整性） ── */
+.composer {
+  position: fixed; left: 50%; bottom: 24px; translate: -50% 0; z-index: 10;
+  width: min(720px, calc(100vw - 64px));
+  border: 1px solid var(--border); border-radius: 20px;
+  background: var(--card);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+  padding: 14px 18px;
+  color: var(--muted-foreground); font-size: 13.5px;
+}
+
+/* ── Tweaks ── */
+.tweaks-fab {
+  position: fixed; right: 16px; bottom: 16px; z-index: 30;
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--card);
+  color: var(--muted-foreground); font-size: 15px;
+  opacity: 0.4; transition: opacity 150ms ease;
+}
+.tweaks-fab:hover { opacity: 1; }
+.tweaks {
+  position: fixed; right: 16px; bottom: 60px; z-index: 30;
+  width: 262px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--card); box-shadow: 0 12px 40px rgba(0,0,0,0.16);
+  display: none;
+}
+.tweaks.open { display: block; }
+.tweaks h3 {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--muted-foreground); margin-bottom: 12px;
+}
+.tweaks .row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.tweaks label { font-size: 12.5px; }
+.tweaks select {
+  font: inherit; font-size: 12px; color: var(--foreground);
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 7px; padding: 3px 6px; max-width: 150px;
+}
+.tweaks .hint { font-size: 11px; color: var(--muted-foreground); line-height: 1.6; margin-top: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .arc-svg { animation-duration: 2.4s; }
+  .shim, .srow.running .sr-file { animation: none; -webkit-text-fill-color: currentColor; background: none; }
+  .in { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>企业官网 · 首页落地</h1>
+  <span class="badge">AI 生成</span>
+</div>
+
+<div class="thread">
+  <div class="user-msg in" id="userMsg"><div class="bubble">可以帮我落地</div></div>
+
+  <!-- 回合总状态行 + 回放入口 -->
+  <div class="turn-status" id="turnStatus">
+    <button class="ts-main" id="tsMain" aria-expanded="true" title="折叠 / 展开工作过程">
+      <span class="ts-icon" id="tsIcon"></span>
+      <span id="tsText">已处理 4分32秒</span>
+      <span class="ts-chev">▼</span>
+    </button>
+    <button class="replay-btn" id="replayBtn" title="回放这一回合的流式过程">
+      <svg viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M3 1.8v8.4L10 6z"/></svg>
+      回放
+    </button>
+  </div>
+
+  <!-- 回合内容（变体渲染目标） -->
+  <div class="turn" id="turn"></div>
+</div>
+
+<div class="composer">随便问点什么…&nbsp;&nbsp;<span style="opacity:0.55">↵ 发送 · ⇧↵ 换行 · / 命令 · @ 文件</span></div>
+
+<button class="tweaks-fab" onclick="document.getElementById('tw').classList.toggle('open')" aria-label="Tweaks">⚙</button>
+<div class="tweaks" id="tw">
+  <h3>Tweaks</h3>
+  <div class="row">
+    <label for="twVariant">呈现方式</label>
+    <select id="twVariant" autocomplete="off">
+      <option value="a" selected>A · 阶段叙事（推荐）</option>
+      <option value="b">B · 安静直排</option>
+      <option value="c">C · 现状对照（改前）</option>
+    </select>
+  </div>
+  <div class="row">
+    <label for="twTheme">主题</label>
+    <select id="twTheme" autocomplete="off">
+      <option value="light" selected>亮色</option>
+      <option value="dark">暗色</option>
+    </select>
+  </div>
+  <div class="row">
+    <label for="twDurs">每步耗时</label>
+    <select id="twDurs" autocomplete="off">
+      <option value="hover" selected>悬停显示</option>
+      <option value="always">常显</option>
+      <option value="never">隐藏</option>
+    </select>
+  </div>
+  <div class="hint">点「回放」重演流式过程；点总状态行可折叠全部过程只看结论。</div>
+</div>
+
+<script>
+/* ══════════════ 数据模型：一整个回合（对应截图2 的真实会话） ══════════════
+ * 单一数据源，三个变体都从这里渲染——阶段标题即 TodoWrite 计划的
+ * 大白话映射；每步存人话 label + mono 对象名 + 原始细节（detail）。 */
+const TURN = [
+  { type: 'prose', text: '我会按已确认的设计系统落地首页，并完成响应式与构建验证。' },
+  { type: 'stage', id: 's1', title: '了解项目配置', summary: '看了 3 个配置文件', dur: '6秒', steps: [
+    { icon: 'read', label: '查看样式配置', file: 'tailwind.config.js', durS: 0.3, dur: '0.3s', tool: '读取文件',
+      full: '/Users/andersenaxel/Desktop/enterprise-website/tailwind.config.js',
+      detail: { kind: 'path', lbl: '文件', text: '/Users/andersenaxel/Desktop/enterprise-website/tailwind.config.js' } },
+    { icon: 'read', label: '查看 TypeScript 配置', file: 'tsconfig.json', durS: 0.1, dur: '0.1s', tool: '读取文件',
+      full: '/Users/andersenaxel/Desktop/enterprise-website/tsconfig.json',
+      detail: { kind: 'path', lbl: '文件', text: '/Users/andersenaxel/Desktop/enterprise-website/tsconfig.json' } },
+    { icon: 'read', label: '查看构建配置', file: 'next.config.js', durS: 0.1, dur: '0.1s', tool: '读取文件',
+      full: '/Users/andersenaxel/Desktop/enterprise-website/next.config.js',
+      detail: { kind: 'path', lbl: '文件', text: '/Users/andersenaxel/Desktop/enterprise-website/next.config.js' } }
+  ]},
+  { type: 'think', chars: 104, text: '页面分区已经明确：首屏价值主张、能力矩阵、行动号召，再加导航与页脚。先落组件骨架和全局样式，再统一做响应式；构建验证放最后一步。' },
+  { type: 'stage', id: 's2', title: '编写首页', summary: '创建了 8 个文件', dur: '1分54秒', steps: [
+    { icon: 'write', label: '创建首屏区块', file: 'Hero.tsx', durS: 0.4, dur: '0.4s', tool: '写入文件',
+      full: '/Users/andersenaxel/Desktop/enterprise-website/src/components/Hero.tsx',
+      detail: { kind: 'path', lbl: '文件', text: '/Users/andersenaxel/Desktop/enterprise-website/src/components/Hero.tsx' } },
+    { icon: 'write', label: '创建能力矩阵', file: 'Features.tsx', durS: 0.1, dur: '0.1s', tool: '写入文件',
+      full: '/Users/andersenaxel/Desktop/enterprise-website/src/components/Features.tsx',
+      detail: { kind: 'path', lbl: '文件', text: '/Users/andersenaxel/Desktop/enterprise-website/src/components/Features.tsx' } },
+    { icon: 'write', label: '创建行动号召', file: 'CTA.tsx', durS: 0.1, dur: '0.1s', tool: '写入文件',
+      full: '/Users/andersenaxel/Desktop/enterprise-website/src/components/CTA.tsx',
+      detail: { kind: 'path', lbl: '文件', text: '/Users/andersenaxel/Desktop/enterprise-website/src/components/CTA.tsx' } },
+    { icon: 'write', label: '组装首页', file: 'page.tsx', durS: 0.1, dur: '0.1s', tool: '写入文件',
+      full: '/Users/andersenaxel/Desktop/enterprise-website/src/app/page.tsx',
+      detail: { kind: 'path', lbl: '文件', text: '/Users/andersenaxel/Desktop/enterprise-website/src/app/page.tsx' } },
+    { icon: 'write', label: '编写全局样式与设计令牌', file: 'globals.css', durS: 108.7, dur: '1分49秒', tool: '写入文件',
+      full: '/Users/andersenaxel/Desktop/enterprise-website/src/globals.css',
+      detail: { kind: 'path', lbl: '文件', text: '/Users/andersenaxel/Desktop/enterprise-website/src/globals.css' } },
+    { icon: 'write', label: '创建导航栏', file: 'Navigation.tsx', durS: 0.4, dur: '0.4s', tool: '写入文件',
+      full: '/Users/andersenaxel/Desktop/enterprise-website/src/components/Navigation.tsx',
+      detail: { kind: 'path', lbl: '文件', text: '/Users/andersenaxel/Desktop/enterprise-website/src/components/Navigation.tsx' } },
+    { icon: 'write', label: '创建页脚', file: 'Footer.tsx', durS: 0.1, dur: '0.1s', tool: '写入文件',
+      full: '/Users/andersenaxel/Desktop/enterprise-website/src/components/Footer.tsx',
+      detail: { kind: 'path', lbl: '文件', text: '/Users/andersenaxel/Desktop/enterprise-website/src/components/Footer.tsx' } },
+    { icon: 'write', label: '创建页面骨架', file: 'layout.tsx', durS: 0.1, dur: '0.1s', tool: '写入文件',
+      full: '/Users/andersenaxel/Desktop/enterprise-website/src/app/layout.tsx',
+      detail: { kind: 'path', lbl: '文件', text: '/Users/andersenaxel/Desktop/enterprise-website/src/app/layout.tsx' } }
+  ]},
+  { type: 'stage', id: 's3', title: '构建检查与修复', summary: '发现并修好 1 个报错', dur: '32秒', fixed: true, steps: [
+    { icon: 'terminal', label: '运行构建', file: 'npm run build', durS: 3.0, dur: '3.0s', tool: '运行命令', note: 'fail', noteText: '失败',
+      full: 'npm run build --prefix "/Users/andersenaxel/Desktop/enterprise-website"',
+      detail: { kind: 'shell', cmd: 'npm run build',
+        out: '▲ Next.js 16.0.1\nCreating an optimized production build …\n<em>⨯ Next.js inferred your workspace root, but it may not be correct.</em>\n  We detected multiple lockfiles. To silence this warning,\n  set turbopack.root in next.config.js.\n<em>Build failed</em>' } },
+    { icon: 'book', label: '查阅 Next.js 16 文档', file: 'turbopack.root', durS: 9.3, dur: '9.3s', tool: '查资料',
+      full: 'context7 · How to configure turbopack.root in next.config.js',
+      detail: { kind: 'text', lbl: '查到的结论', text: 'Next.js 16 会自动推断 workspace 根目录，多 lockfile 时可能猜错；官方做法是在 next.config.js 里显式声明 turbopack.root。报错来自项目环境，不是页面代码。' } },
+    { icon: 'edit', label: '修正构建配置', file: 'next.config.js', durS: 2.3, dur: '2.3s', tool: '编辑文件',
+      full: '/Users/andersenaxel/Desktop/enterprise-website/next.config.js',
+      detail: { kind: 'diff', lbl: '改动', lines: ['turbopack: { root: __dirname },'] } },
+    { icon: 'terminal', label: '重新构建', file: 'npm run build', durS: 2.8, dur: '2.8s', tool: '运行命令', note: 'pass', noteText: '通过',
+      full: 'npm run build --prefix "/Users/andersenaxel/Desktop/enterprise-website"',
+      detail: { kind: 'shell', cmd: 'npm run build',
+        out: '▲ Next.js 16.0.1\nCreating an optimized production build …\n<span class="ok">✓ Compiled successfully</span>\n<span class="ok">✓ Generating static pages (5/5)</span>' } }
+  ]},
+  { type: 'prose', text: '首页已经完成。中途构建报过一次错——那是 Next.js 16 对项目根目录的自动推断出了偏差，不是页面代码的问题；我已经在配置里写明根目录，重新构建通过。你可以直接预览效果，后续要补「产品 / 关于 / 联系」页随时说。' }
+];
+const TOTAL_LABEL = '4分32秒';
+const TOTAL_SEC = 272;
+
+/* ══════════════ 小图标库（14px 线性，lucide 风手绘路径） ══════════════ */
+function iconSvg(name) {
+  const P = {
+    read: '<path d="M13 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M13 2v6h6"/>',
+    write: '<path d="M13 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M13 2v6h6"/><path d="M9.5 14.5h5M12 12v5"/>',
+    edit: '<path d="M17 3a2.85 2.85 0 1 1 4 4L8 20.5 3 22l1.5-5z"/>',
+    terminal: '<path d="m5 16 5-5-5-5"/><path d="M12 19h8"/>',
+    book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+    warn: '<path d="M10.3 3.9 2.6 17.3a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'
+  };
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (P[name] || P.read) + '</svg>';
+}
+function arcSvg() {
+  return '<svg class="arc-svg" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="5.6"/></svg>';
+}
+function tickSvg(pop) {
+  return '<svg class="tick-svg' + (pop ? ' pop' : '') + '" viewBox="0 0 14 14" aria-hidden="true">' +
+    '<circle class="ring" cx="7" cy="7" r="5.8"/>' +
+    '<path class="mark" d="M4.4 7.3l1.9 1.9 3.5-4"/></svg>';
+}
+function warnSvg() {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:14px;height:14px"><path d="M10.3 3.9 2.6 17.3a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
+}
+function esc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/* ══════════════ 变体 A：阶段叙事 ══════════════ */
+function stepDetailHtml(step) {
+  const d = step.detail;
+  if (!d) return '';
+  let card;
+  if (d.kind === 'shell') {
+    card = '<div class="shellcard"><span class="sd-lbl">Shell</span>' +
+      '<div class="cmd">' + esc(d.cmd) + '</div>' +
+      '<pre class="out">' + d.out.replace(/<em>/g, '<span class="em">').replace(/<\/em>/g, '</span>') + '</pre></div>';
+  } else if (d.kind === 'diff') {
+    card = '<div class="sd-card"><span class="sd-lbl">' + d.lbl + '</span>' +
+      d.lines.map(function (l) { return '<div class="diffline add">' + esc(l) + '</div>'; }).join('') + '</div>';
+  } else if (d.kind === 'path') {
+    card = '<div class="sd-card"><span class="sd-lbl">' + d.lbl + '</span><span class="mono">' + esc(d.text) + '</span></div>';
+  } else {
+    card = '<div class="sd-card"><span class="sd-lbl">' + d.lbl + '</span>' + esc(d.text) + '</div>';
+  }
+  return '<div class="sdetail"><div class="sd-inner">' + card + '</div></div>';
+}
+function stepRowHtml(step) {
+  const iconTone = step.note === 'fail' ? ' warn-tone' : '';
+  const iconName = step.note === 'fail' ? 'warn' : step.icon;
+  return '<button class="srow" aria-expanded="false">' +
+    '<span class="sr-icon' + iconTone + '">' + iconSvg(iconName) + '</span>' +
+    '<span class="sr-label">' + step.label + '</span>' +
+    '<span class="sr-file">' + esc(step.file) + '</span>' +
+    (step.note ? '<span class="sr-note ' + step.note + '">' + step.noteText + '</span>' : '') +
+    '<span class="sr-dur">' + step.dur + '</span>' +
+    '<span class="sr-chev">▶</span>' +
+    '</button>' + stepDetailHtml(step);
+}
+function stageHtml(block, opts) {
+  const open = opts && opts.open;
+  return '<div class="act"><div class="act-inner">' +
+    '<div class="stage" data-open="' + (open ? 'true' : 'false') + '" id="' + block.id + '">' +
+    '<button class="stage-head" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+    '<span class="sh-icon">' + tickSvg(false) + '</span>' +
+    '<span class="sh-title">' + block.title + '</span>' +
+    '<span class="sh-summary">' + block.summary + '</span>' +
+    '<span class="sh-dur">' + block.dur + '</span>' +
+    '<span class="sh-chev">▶</span>' +
+    '</button>' +
+    '<div class="stage-body"><div class="sb-inner"><div class="stage-rail">' +
+    block.steps.map(stepRowHtml).join('') +
+    '</div></div></div>' +
+    '</div></div></div>';
+}
+function thinkHtml(block) {
+  return '<div class="act"><div class="act-inner">' +
+    '<div class="think" data-open="false">' +
+    '<button class="think-head" aria-expanded="false">' +
+    '<span class="th-dot"></span>' +
+    '<span>思考了一会儿 · ' + block.chars + ' 字</span>' +
+    '<span class="th-chev">▶</span>' +
+    '</button>' +
+    '<div class="think-body"><div class="tb-inner"><div class="tb-text">' + esc(block.text) + '</div></div></div>' +
+    '</div></div></div>';
+}
+function proseHtml(block) {
+  return '<div class="msg">' + esc(block.text) + '</div>';
+}
+function renderA(container) {
+  container.innerHTML = TURN.map(function (b) {
+    if (b.type === 'prose') return proseHtml(b);
+    if (b.type === 'think') return thinkHtml(b);
+    return stageHtml(b, { open: false });
+  }).join('');
+}
+
+/* ══════════════ 变体 B：安静直排（codex 风） ══════════════ */
+function renderB(container) {
+  const VERB = { read: '读取', write: '写入', edit: '修改', terminal: '运行命令', book: '查阅文档', search: '搜索' };
+  container.innerHTML = TURN.map(function (b) {
+    if (b.type === 'prose') return proseHtml(b);
+    if (b.type === 'think') {
+      return '<div class="act"><div class="act-inner"><div class="b-group" data-open="false">' +
+        '<button class="b-group-label" aria-expanded="false"><span>思考过程 · ' + b.chars + ' 字</span><span class="th-chev">▶</span></button>' +
+        '<div class="b-rows"><div class="br-inner"><div class="tb-text" style="margin:2px 0 6px 14px;padding-left:12px;border-left:2px solid color-mix(in srgb, var(--muted-foreground) 22%, transparent);font-size:12.5px;line-height:1.75;color:var(--muted-foreground)">' + esc(b.text) + '</div></div></div>' +
+        '</div></div></div>';
+    }
+    return '<div class="act"><div class="act-inner"><div class="b-group" data-open="true">' +
+      '<button class="b-group-label" aria-expanded="true"><span>' + b.title + '</span><span class="th-chev">▶</span></button>' +
+      '<div class="b-rows"><div class="br-inner">' +
+      b.steps.map(function (s) {
+        const iconName = s.note === 'fail' ? 'warn' : s.icon;
+        const tone = s.note === 'fail' ? ' warn-tone' : '';
+        return '<div class="brow"><span class="sr-icon' + tone + '">' + iconSvg(iconName) + '</span>' +
+          '<span>' + (VERB[s.icon] || '执行') + '</span><span class="b-obj">' + esc(s.file) + '</span>' +
+          (s.note ? '<span class="sr-note ' + s.note + '" style="font-size:10.5px;border-radius:999px;padding:1px 8px;flex-shrink:0">' + s.noteText + '</span>' : '') +
+          '</div>';
+      }).join('') +
+      '</div></div></div></div></div>';
+  }).join('');
+}
+
+/* ══════════════ 变体 C：现状对照（改前的满屏工具行） ══════════════ */
+function renderC(container) {
+  function crow(name, args, dur) {
+    return '<div class="crow">' +
+      '<svg class="c-check" viewBox="0 0 15 15" aria-hidden="true"><circle cx="7.5" cy="7.5" r="7.5"/><path d="M4.4 7.8l2.1 2.1 4.1-4.4"/></svg>' +
+      '<span class="c-name">' + name + '</span>' +
+      '<span class="c-args">' + esc(args) + '</span>' +
+      '<span class="c-dur">' + dur + '</span><span class="c-chev">▾</span></div>';
+  }
+  function cthink(chars) {
+    return '<div class="crow-think"><span class="ct-dot"></span><span class="ct-chev">▶</span><span>思考过程 · ' + chars + ' 字</span></div>';
+  }
+  const TOOL = { read: '读取文件', write: '写入文件', edit: '编辑', terminal: '运行命令', book: 'mcp__context7__query-docs', search: '工具搜索' };
+  let html = '';
+  TURN.forEach(function (b) {
+    if (b.type === 'prose') { html += proseHtml(b); return; }
+    if (b.type === 'think') { html += '<div class="act"><div class="act-inner">' + cthink(b.chars) + '</div></div>'; return; }
+    let rows = '';
+    if (b.id === 's1') {
+      rows += cthink(54) + crow('工具搜索', 'select:TodoWrite', '0.4s') + crow('待办事项', '', '1.2s');
+    }
+    if (b.id === 's2') rows += crow('待办事项', '', '2.0s');
+    if (b.id === 's3') rows += crow('待办事项', '', '2.3s');
+    b.steps.forEach(function (s) {
+      if (s.icon === 'book') {
+        rows += crow('工具搜索', 'select:mcp__context7__resolve-library-id,mcp__context7__q…', '0.5s');
+        rows += crow('mcp__context7__resolve-library-id', 'Next.js 16 next.config.js turbopack.root absolute project…', '4.0s');
+        rows += crow('mcp__context7__query-docs', 'How to configure turbopack.root in next.config.js when Ne…', '5.3s');
+        return;
+      }
+      rows += crow(TOOL[s.icon] || '工具', s.full || s.file, s.dur);
+    });
+    html += '<div class="act"><div class="act-inner">' + rows + '</div></div>';
+  });
+  container.innerHTML = html;
+}
+
+/* ══════════════ 变体切换 & 交互 ══════════════ */
+const turnEl = document.getElementById('turn');
+const state = { playing: false, abort: false, clockTimer: null };
+
+function setVariant(v) {
+  stopReplay();
+  if (v === 'b') renderB(turnEl);
+  else if (v === 'c') renderC(turnEl);
+  else renderA(turnEl);
+  setStatusDone();
+  document.getElementById('replayBtn').style.display = v === 'a' ? '' : 'none';
+}
+
+/* 点击委托：阶段头 / 步骤行 / 思考行 / B 组标签的展开收拢 */
+turnEl.addEventListener('click', function (e) {
+  const head = e.target.closest('.stage-head');
+  if (head) {
+    const stage = head.closest('.stage');
+    const open = stage.dataset.open !== 'true';
+    stage.dataset.open = String(open);
+    head.setAttribute('aria-expanded', String(open));
+    return;
+  }
+  const srow = e.target.closest('.srow');
+  if (srow) {
+    const open = srow.getAttribute('aria-expanded') !== 'true';
+    srow.setAttribute('aria-expanded', String(open));
+    const det = srow.nextElementSibling;
+    if (det && det.classList.contains('sdetail')) det.classList.toggle('open', open);
+    return;
+  }
+  const th = e.target.closest('.think-head');
+  if (th) {
+    const think = th.closest('.think');
+    const open = think.dataset.open !== 'true';
+    think.dataset.open = String(open);
+    th.setAttribute('aria-expanded', String(open));
+    return;
+  }
+  const bg = e.target.closest('.b-group-label');
+  if (bg) {
+    const grp = bg.closest('.b-group');
+    const open = grp.dataset.open !== 'true';
+    grp.dataset.open = String(open);
+    bg.setAttribute('aria-expanded', String(open));
+  }
+});
+
+/* 总状态行：折叠 / 展开全部过程块（"只看结论"） */
+const tsMain = document.getElementById('tsMain');
+tsMain.addEventListener('click', function () {
+  if (state.playing) return;
+  const digest = !document.getElementById('turn').classList.contains('digest');
+  document.getElementById('turn').classList.toggle('digest', digest);
+  tsMain.setAttribute('aria-expanded', String(!digest));
+});
+
+function setStatusDone() {
+  document.getElementById('tsIcon').innerHTML = tickSvg(false);
+  const t = document.getElementById('tsText');
+  t.textContent = '已处理 ' + TOTAL_LABEL;
+  t.classList.remove('shim');
+  document.getElementById('turn').classList.remove('digest');
+  tsMain.setAttribute('aria-expanded', 'true');
+}
+function setStatusRunning() {
+  document.getElementById('tsIcon').innerHTML = arcSvg();
+  const t = document.getElementById('tsText');
+  t.textContent = '正在处理 · 0分00秒';
+  t.classList.add('shim');
+}
+
+/* ══════════════ 回放引擎（仅变体 A） ══════════════
+ * 思路：整份 DOM 先渲染好、顶层块全部 .pre 隐身，再按时间轴逐块
+ * 显影 + 状态变换（arc→勾、shimmer→安静、阶段收拢）。假时钟不匀速
+ * 走——每步落定把该步真实耗时加进目标值，数字往目标缓动，读起来
+ * 跟内容进度是同一件事。 */
+function sleep(ms) {
+  return new Promise(function (res) { setTimeout(res, ms); });
+}
+function fmtClock(sec) {
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  return m + '分' + String(s).padStart(2, '0') + '秒';
+}
+function follow() {
+  window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+}
+function stepDelay(durS) {
+  return Math.max(300, Math.min(durS * 260, 1400));
+}
+function stopReplay() {
+  state.abort = true;
+  state.playing = false;
+  if (state.clockTimer) { clearInterval(state.clockTimer); state.clockTimer = null; }
+}
+
+async function replay() {
+  if (state.playing) return;
+  stopReplay();
+  state.abort = false;
+  state.playing = true;
+  document.getElementById('replayBtn').disabled = true;
+  document.getElementById('twVariant').value = 'a';
+
+  renderA(turnEl);
+  turnEl.classList.remove('digest');
+  tsMain.setAttribute('aria-expanded', 'true');
+  /* 顶层块全部隐身，阶段头也先不给勾（回放时逐个点亮） */
+  const blocks = Array.prototype.slice.call(turnEl.children);
+  blocks.forEach(function (el) { el.classList.add('pre'); });
+
+  /* 假时钟：目标值随内容推进，显示值缓动追 */
+  let clockVal = 0, clockTarget = 4;
+  setStatusRunning();
+  window.scrollTo({ top: 0 });
+  state.clockTimer = setInterval(function () {
+    clockVal += Math.max(0.35, (clockTarget - clockVal) * 0.14);
+    if (clockVal > clockTarget) clockVal = clockTarget;
+    if (state.playing) document.getElementById('tsText').textContent = '正在处理 · ' + fmtClock(clockVal);
+  }, 110);
+
+  try {
+    let bi = 0;
+    for (const block of TURN) {
+      if (state.abort) return;
+      const el = blocks[bi++];
+      if (block.type === 'prose') {
+        el.classList.add('in');
+        clockTarget += 6;
+        follow();
+        await sleep(950);
+        continue;
+      }
+      if (block.type === 'think') {
+        el.classList.add('in');
+        clockTarget += 10;
+        follow();
+        await sleep(620);
+        continue;
+      }
+      /* 阶段：进行中形态入场 → 逐行跑步骤 → 落定收拢 */
+      const stage = el.querySelector('.stage');
+      const head = stage.querySelector('.stage-head');
+      const icon = head.querySelector('.sh-icon');
+      const title = head.querySelector('.sh-title');
+      const summary = head.querySelector('.sh-summary');
+      const durEl = head.querySelector('.sh-dur');
+      const rows = Array.prototype.slice.call(stage.querySelectorAll('.srow'));
+
+      icon.innerHTML = arcSvg();
+      title.classList.add('shim');
+      summary.textContent = '';
+      durEl.textContent = '';
+      rows.forEach(function (r) {
+        r.style.display = 'none';
+        const det = r.nextElementSibling;
+        if (det && det.classList.contains('sdetail')) det.classList.remove('open');
+      });
+      stage.classList.add('running');
+      stage.dataset.open = 'true';
+      head.setAttribute('aria-expanded', 'true');
+      el.classList.add('in');
+      follow();
+      await sleep(420);
+      if (state.abort) return;
+
+      for (const [i, step] of block.steps.entries()) {
+        const row = rows[i];
+        row.style.display = '';
+        row.classList.add('running');
+        const ric = row.querySelector('.sr-icon');
+        const saved = ric.innerHTML;
+        ric.innerHTML = arcSvg();
+        const note = row.querySelector('.sr-note');
+        if (note) note.style.visibility = 'hidden';
+        follow();
+        await sleep(stepDelay(step.durS));
+        if (state.abort) return;
+        row.classList.remove('running');
+        ric.innerHTML = saved;
+        if (note) note.style.visibility = '';
+        clockTarget += step.durS;
+      }
+
+      /* 阶段落定：勾 pop + 摘要浮现 + 身体收拢 */
+      stage.classList.remove('running');
+      title.classList.remove('shim');
+      icon.innerHTML = tickSvg(true);
+      summary.textContent = block.summary;
+      durEl.textContent = block.dur;
+      await sleep(560);
+      if (state.abort) return;
+      stage.dataset.open = 'false';
+      head.setAttribute('aria-expanded', 'false');
+      await sleep(380);
+    }
+
+    /* 回合落定 */
+    clockTarget = TOTAL_SEC;
+    await sleep(700);
+    if (state.abort) return;
+    setStatusDone();
+    document.getElementById('tsIcon').innerHTML = tickSvg(true);
+    follow();
+  } finally {
+    state.playing = false;
+    if (state.clockTimer) { clearInterval(state.clockTimer); state.clockTimer = null; }
+    document.getElementById('replayBtn').disabled = false;
+  }
+}
+
+document.getElementById('replayBtn').addEventListener('click', replay);
+
+/* 键盘可达：Enter/Space 已由 <button> 原生覆盖，无需额外处理 */
+
+/* Tweaks 绑定。加载时与页面状态强制对齐——Chrome 会在重载时回填
+ * 表单值但不触发 onchange，select 显示与实际渲染会分家（上一版
+ * 原型踩过）。 */
+document.getElementById('twVariant').addEventListener('change', function () { setVariant(this.value); });
+document.getElementById('twTheme').addEventListener('change', function () {
+  document.documentElement.dataset.theme = this.value;
+});
+document.getElementById('twDurs').addEventListener('change', function () {
+  document.documentElement.dataset.durs = this.value;
+});
+window.addEventListener('load', function () {
+  document.documentElement.dataset.theme = document.getElementById('twTheme').value;
+  document.documentElement.dataset.durs = document.getElementById('twDurs').value;
+  const v = document.getElementById('twVariant').value;
+  setVariant(v);
+  /* 首次进入自动回放一遍（尊重 reduced-motion），让流式形态自己说话 */
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (v === 'a' && !reduce) setTimeout(replay, 500);
+});
+</script>
+</body>
+</html>

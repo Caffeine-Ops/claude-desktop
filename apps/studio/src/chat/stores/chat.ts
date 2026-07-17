@@ -139,9 +139,12 @@ interface ChatState {
    * that mounts the target transcript). Distinct from `sessionLoading`,
    * which stays true through the multi-second cli cold start — by then the
    * history is already on screen and must NOT be covered by switch chrome.
-   * Drives the ThreadView switch transition (curtain / skeleton): a
-   * cache-hit switch sets and clears this within one synchronous batch, so
-   * subscribers never observe `true` and fast switches show zero chrome.
+   * Drives the ThreadView switch skeleton: a cache-hit switch sets and
+   * clears this within one synchronous batch, so subscribers never observe
+   * `true` and fast switches show zero chrome.
+   *
+   * 只有 onSwitchToThread 置它（新建会话不置——无 transcript 可加载 = 无加载
+   * 态可显，置了只会让骨架在注定空态的新会话上闪一下）。
    */
   sessionSwitching: boolean
   /**
@@ -1129,7 +1132,7 @@ function toolActivityKey(toolName: string | undefined): string {
       return 'running' // 执行中…
     case 'WebFetch':
     case 'WebSearch':
-      return 'searching' // 联网中…
+      return 'searching' // 上网查资料…（一个档覆盖搜索与按 URL 抓取两种）
     case 'AskUserQuestion':
       return 'asking' // 等待你回答…
     default:
@@ -2044,10 +2047,14 @@ export function useEditingSvgFile(): EditingSvgFile | null {
 }
 
 /**
- * Debounced view of `sessionLoading` for *visual* loading affordances
- * (top progress bar, sidebar dim). Returns `true` only if the raw
- * `sessionLoading` flag has been continuously true for at least
- * `delayMs`, and resets to `false` the instant the flag clears.
+ * Debounced view of `sessionLoading` for *visual* loading affordances.
+ * Returns `true` only if the raw `sessionLoading` flag has been
+ * continuously true for at least `delayMs`, and resets to `false` the
+ * instant the flag clears.
+ *
+ * 现存唯一消费者是 ThreadListSidebar 的整列调暗（2026-07-17 起）：原先的另
+ * 一个消费者 ThreadView 顶部进度条已删，切换加载态改由骨架屏承担——骨架订
+ * 阅的是 `sessionSwitching` 而非本 hook，两者别混（见 sessionSwitching 注释）。
  *
  * Why this exists
  * ---------------

@@ -657,7 +657,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
             aria-label={zh ? '缩小' : 'Zoom out'}
             // 面板极窄（<36rem）时 ± 钮让位，缩放 chip 只留百分比（点击可复位；
             // 滚轮/pinch 缩放不受影响）。
-            className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground @max-xl/imgedit:hidden"
+            className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground @max-xl/imgedit:hidden"
           >
             <Minus className="size-3.5" />
           </button>
@@ -665,7 +665,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
             type="button"
             onClick={() => transformRef.current?.resetTransform()}
             title={zh ? '重置视图' : 'Reset view'}
-            className="min-w-[42px] rounded-md px-1 py-0.5 text-[11.5px] tabular-nums text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="min-w-[42px] rounded-md px-1 py-0.5 text-[11.5px] tabular-nums text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
           >
             {Math.round(scale * 100)}%
           </button>
@@ -673,7 +673,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
             type="button"
             onClick={() => transformRef.current?.zoomIn()}
             aria-label={zh ? '放大' : 'Zoom in'}
-            className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground @max-xl/imgedit:hidden"
+            className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground @max-xl/imgedit:hidden"
           >
             <Plus className="size-3.5" />
           </button>
@@ -880,7 +880,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
                         className={
                           'grid size-[26px] place-items-center rounded-full border-2 border-white bg-black text-[11.5px] font-bold tabular-nums text-white transition-shadow ' +
                           (active || m.id === hoveredId
-                            ? 'shadow-[0_0_0_4px_hsl(var(--brand)/0.25),0_1px_4px_rgba(0,0,0,0.4)]'
+                            ? 'shadow-[0_0_0_4px_hsl(var(--accent)/0.25),0_1px_4px_rgba(0,0,0,0.4)]'
                             : 'shadow-[0_1px_4px_rgba(0,0,0,0.4)]')
                         }
                       >
@@ -925,7 +925,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
                             type="button"
                             onClick={commitDraft}
                             aria-label={zh ? '确认' : 'Confirm'}
-                            className="grid size-[26px] shrink-0 place-items-center rounded-lg bg-brand text-white transition-[filter] hover:brightness-110"
+                            className="grid size-[26px] shrink-0 place-items-center rounded-lg bg-accent text-white transition-[filter] hover:brightness-110"
                           >
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                               <path d="M12 19V5M5 12l7-7 7 7" />
@@ -935,7 +935,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
                             type="button"
                             onClick={() => removeMarker(m.id)}
                             aria-label={zh ? '删除标记' : 'Remove marker'}
-                            className="grid size-[26px] shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            className="grid size-[26px] shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
                           >
                             <X className="size-3.5" />
                           </button>
@@ -960,7 +960,8 @@ export function ImageEditPanel(): React.JSX.Element | null {
                   }}
                 >
                   {/* 编号圈：黑底白字（参考图样式），落点弹跳入场。点击重开编辑。
-                      active/hover（含列表联动 hoveredId）加品牌绿光环。 */}
+                      active/hover（含列表联动 hoveredId）加主题色光环（2026-07-17
+                      从品牌绿改 --accent，跟设置页选的主题色走）。 */}
                   <motion.button
                     type="button"
                     initial={{ scale: 0.4, opacity: 0 }}
@@ -979,7 +980,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
                     className={
                       'grid size-[26px] place-items-center rounded-full border-2 border-white bg-black text-[11.5px] font-bold tabular-nums text-white transition-shadow ' +
                       (active || m.id === hoveredId
-                        ? 'shadow-[0_0_0_4px_hsl(var(--brand)/0.25),0_1px_4px_rgba(0,0,0,0.4)]'
+                        ? 'shadow-[0_0_0_4px_hsl(var(--accent)/0.25),0_1px_4px_rgba(0,0,0,0.4)]'
                         : 'shadow-[0_1px_4px_rgba(0,0,0,0.4)]')
                     }
                   >
@@ -1022,7 +1023,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
                         type="button"
                         onClick={commitDraft}
                         aria-label={zh ? '确认' : 'Confirm'}
-                        className="grid size-6 shrink-0 place-items-center rounded-full bg-brand text-white transition-[filter] hover:brightness-110"
+                        className="grid size-6 shrink-0 place-items-center rounded-full bg-accent text-white transition-[filter] hover:brightness-110"
                       >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                           <path d="M12 19V5M5 12l7-7 7 7" />
@@ -1086,11 +1087,12 @@ export function ImageEditPanel(): React.JSX.Element | null {
                     onMouseEnter={() => setHoveredId(m.id)}
                     onMouseLeave={() => setHoveredId(null)}
                     className={
-                      // 白栏上用轻量行：透明底 + hover 浅灰 + active 品牌绿描边淡绿底
-                      //（和 chat 列表行交互一致，白底上不再叠白卡阴影）。
+                      // 白栏上用轻量行：透明底 + hover 浅灰 + active 主题色描边淡底
+                      //（和 chat 列表行交互一致，白底上不再叠白卡阴影；
+                      // 2026-07-17 从品牌绿改 --accent，跟主题色走）。
                       'group/row relative flex cursor-pointer gap-2.5 rounded-lg p-2.5 transition-colors ' +
                       (rowActive
-                        ? 'bg-brand/[0.06] shadow-[inset_0_0_0_1px_hsl(var(--brand)/0.35)]'
+                        ? 'bg-accent/[0.06] shadow-[inset_0_0_0_1px_hsl(var(--accent)/0.35)]'
                         : 'hover:bg-secondary')
                     }
                   >
@@ -1166,7 +1168,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
                     setFusion((fs) => fs.filter((x) => x.path !== f.path))
                   }
                   aria-label={zh ? '移除素材' : 'Remove'}
-                  className="grid size-4 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                  className="grid size-4 place-items-center rounded-full text-muted-foreground hover:bg-hover hover:text-foreground"
                 >
                   <X className="size-3" />
                 </button>
@@ -1190,7 +1192,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
           <Button
             variant="outline"
             size="icon"
-            className="size-9 shrink-0 rounded-full transition-colors hover:border-brand/60 hover:text-brand"
+            className="size-9 shrink-0 rounded-full transition-colors hover:border-accent/60 hover:text-accent"
             onClick={() => fileInputRef.current?.click()}
             title={zh ? '添加图片（与原图融合）' : 'Add images to composite'}
           >
@@ -1205,7 +1207,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
             placeholder={
               zh ? '（可选）添加额外编辑' : '(Optional) additional edits'
             }
-            className="h-9 min-w-0 flex-1 rounded-full border border-border bg-card px-4 text-[13px] text-foreground outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus:border-brand/60 focus:ring-[3px] focus:ring-brand/15"
+            className="h-9 min-w-0 flex-1 rounded-full border border-border bg-card px-4 text-[13px] text-foreground outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus:border-accent/60 focus:ring-[3px] focus:ring-accent/15"
           />
           <span className="shrink-0 text-[12px] tabular-nums text-muted-foreground">
             {zh
@@ -1216,8 +1218,9 @@ export function ImageEditPanel(): React.JSX.Element | null {
             className={
               'h-9 shrink-0 rounded-full px-5 transition-[filter,transform,background-color,color] ' +
               // 禁用态变灰（原来禁用仍实心绿，状态不清；2026-07-16 重设计）；
-              // 可用态品牌绿。用 disabled:!... 覆盖 shadcn Button 的默认禁用样式。
-              'bg-brand text-white hover:bg-brand hover:brightness-110 ' +
+              // 可用态跟主题色（2026-07-17 从品牌绿改 --accent）。用
+              // disabled:!... 覆盖 shadcn Button 的默认禁用样式。
+              'bg-accent text-white hover:bg-accent hover:brightness-110 ' +
               'disabled:!bg-muted disabled:!text-muted-foreground disabled:!opacity-100 ' +
               // 回放表演的「按下发送」视觉（demoPressed 由 demo handle 置位）。
               (demoPressed ? 'scale-95 brightness-90' : '')

@@ -15,6 +15,15 @@ import { friendlyToolView } from '../ToolFormatters'
 import { PermissionWaitAnchor } from '../../permissions/PermissionFloatCard'
 import { escapeHtml, languageFromPath } from './codeViewUtils'
 import { detectImageGen, ImageGenToolCard } from './ImageGenCard'
+import {
+  ArcSpinner,
+  FoldRegion,
+  StageHeader,
+  StageTick,
+  ToolGlyph,
+  useStageMember,
+  useTurnActivityCtx
+} from './TurnActivity'
 import { WorkflowTaskList } from './WorkflowTaskTree'
 
 /* ───────────────────── Tool-call card ──────────────────────── */
@@ -81,6 +90,11 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
   // own decision UI and the assistant never stalls waiting on a lost
   // sibling request. See stores/permissions.ts for the store shape.
   const pendingPermission = usePermissionForToolUseId(toolCallId)
+  // 阶段分组组籍（TurnActivity）：本行属于哪个「工作阶段」、是否组首、
+  // 是否隐藏（TodoWrite）。null = 不在任何组（AskUserQuestion / 图片生成
+  // Bash 被分组器排除，保持独立卡）。
+  const stageMember = useStageMember(toolCallId)
+  const turnActivity = useTurnActivityCtx()
   // Workflow/Task subagents spawned by THIS tool call (Task / Workflow
   // tools). Looked up by id from the chat store — same indirection as
   // the permission prompt above, since assistant-ui's Fallback props
@@ -232,20 +246,35 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
       : null
   if (imageGen) return <ImageGenToolCard info={imageGen} running={running} />
 
+  // TodoWrite 在组内隐藏——它的信息已经被 TurnActivity 消化成阶段标题，
+  // 再渲染一行「待办事项」是重复噪音。权限待决除外：等待锚点必须可见，
+  // 走下面的独立卡路径（stageMember.hidden 但 pendingPermission 非空时
+  // inStage 为 false）。
+  if (stageMember?.hidden && !pendingPermission) return <></>
+
   // Visual error tone (red badge / name / output pane). Heuristic on the
   // settled result text — see resultLooksError above.
   const failed = !running && resultLooksError(result)
 
-  return (
-    // tc-row-in 只在实时落卡时挂（enteredLive）：历史恢复/切会话的卡即时
-    // 呈现，不重播入场（原先无条件挂类，切会话整屏卡片齐刷刷上浮）。
-    <div className={(enteredLive ? 'tc-row-in ' : '') + 'w-full min-w-0'}>
-      {/* tc-details animates expand/collapse height via ::details-content
-          (see main.css) — the native <details> stays, no controlled state. */}
-      {/* data-selectable：放开工具卡输出（命令输出 / diff 内容 / JSON / 搜索
-          结果…）可复制。.chat-app 全局禁选之上，后代继承（见 main.css）；
-          已标 select-none 的 diff 行号列 / ± 前缀符仍不进剪贴板（CSS 规则
-          用 :not(.select-none) 排除）。头部短标签一并可选，无碍功能。 */}
+  // ── 阶段分组装配（TurnActivity，2026-07-17 回合叙事重设计）──
+  // inStage：组内可见成员，行级换「灰图标 + 悬停耗时」的安静词表。
+  // railed：≥2 行的组才有阶段头 + 左竖线缩进——单行组立头比现状更吵。
+  // rowFolded：组收拢（用户点头 / 落定自动）或 digest（回合总状态行的
+  // 「只看结论」）都折行体。
+  const inStage = stageMember !== null && !stageMember.hidden
+  const railed = inStage && stageMember.group.visibleCount >= 2
+  const digest = turnActivity?.digest ?? false
+  const rowFolded = railed
+    ? (turnActivity?.isCollapsed(stageMember.group.key) ?? false) || digest
+    : digest && inStage
+
+  const card = (
+      // tc-details animates expand/collapse height via ::details-content
+      // (see main.css) — the native <details> stays, no controlled state.
+      // data-selectable：放开工具卡输出（命令输出 / diff 内容 / JSON / 搜索
+      // 结果…）可复制。.chat-app 全局禁选之上，后代继承（见 main.css）；
+      // 已标 select-none 的 diff 行号列 / ± 前缀符仍不进剪贴板（CSS 规则
+      // 用 :not(.select-none) 排除）。头部短标签一并可选，无碍功能。
       <details open={running} data-selectable="true" className="group/tool tc-details">
           {/* Compact tool header (DESIGN.md §4): a status badge, the tool
               label, and the most-informative arg (command / file / query)
@@ -254,10 +283,29 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
               reference design. The summary stays visible when expanded
               (it IS the headline), so we drop the old group-open hide. */}
           <summary className="flex cursor-pointer list-none items-center gap-2 text-[13px]">
-            <StatusCheck running={running} error={failed} />
+            {/* 组内行：实心绿盘换灰色工具图标（词表按「看/写/跑/查」类别，
+                见 ToolGlyph）——绿的浓度收敛到阶段头一颗。运行中弧线、
+                失败琥珀警示不变。独立卡保持原 StatusCheck。 */}
+            {inStage ? (
+              <span className="grid size-[15px] shrink-0 place-items-center">
+                {running ? (
+                  <ArcSpinner />
+                ) : failed ? (
+                  <StageTick warn animate={false} />
+                ) : (
+                  <ToolGlyph toolName={toolName} />
+                )}
+              </span>
+            ) : (
+              <StatusCheck running={running} error={failed} />
+            )}
             <span
               className={
-                'shrink-0 font-medium ' + (failed ? 'text-red-500' : 'text-foreground')
+                inStage
+                  ? 'shrink-0 text-[12.5px] ' +
+                    (failed ? 'text-red-500' : 'text-foreground/85')
+                  : 'shrink-0 font-medium ' +
+                    (failed ? 'text-red-500' : 'text-foreground')
               }
             >
               {toolLabel(toolName)}
@@ -275,11 +323,18 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
                 {summary}
               </span>
             )}
+            {/* 组内行的耗时悬停才现身（2026-07-17 Tweaks 定稿「悬停显示」）
+                ——一列常驻数字是报表感的主要来源。running 时常驻：活着的
+                计时是进度信号，不该藏。 */}
             <ToolElapsed
               startedAt={toolStartedAt}
               endedAt={toolEndedAt}
               running={running}
-              className="ml-auto"
+              className={
+                inStage && !running
+                  ? 'ml-auto opacity-0 transition-opacity duration-150 group-focus-within/tool:opacity-100 group-hover/tool:opacity-100'
+                  : 'ml-auto'
+              }
             />
             <span
               aria-hidden
@@ -423,6 +478,52 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
               subtasks.length === 0 && <ToolRunningHint />}
           </div>
       </details>
+  )
+
+  // ── 装配 ──
+  // 组首行：外层 FoldRegion 只认 digest（阶段头在组收拢时要常驻），行体
+  // 再套一层认 rowFolded。其余组内行单层。左竖线画在每行的包装 div 上，
+  // 相邻 stack 块靠 .am-parts 的 2px 紧排规则拼成视觉上连续的一条。
+  if (inStage && railed && stageMember.isFirst) {
+    return (
+      <FoldRegion folded={digest} stack>
+        <StageHeader group={stageMember.group} />
+        <FoldRegion folded={rowFolded}>
+          <div
+            className={
+              (enteredLive ? 'tc-row-in ' : '') +
+              'ml-[7px] min-w-0 border-l border-border/60 py-[2px] pl-[14px]'
+            }
+          >
+            {card}
+          </div>
+        </FoldRegion>
+      </FoldRegion>
+    )
+  }
+  if (inStage) {
+    return (
+      <FoldRegion folded={rowFolded} stack={railed}>
+        <div
+          className={
+            (enteredLive ? 'tc-row-in ' : '') +
+            (railed
+              ? 'ml-[7px] min-w-0 border-l border-border/60 py-[2px] pl-[14px]'
+              : 'w-full min-w-0')
+          }
+        >
+          {card}
+        </div>
+      </FoldRegion>
+    )
+  }
+
+  // 组外独立卡（AskUserQuestion / 图片生成 / 无分组上下文）：原样。
+  // tc-row-in 只在实时落卡时挂（enteredLive）：历史恢复/切会话的卡即时
+  // 呈现，不重播入场（原先无条件挂类，切会话整屏卡片齐刷刷上浮）。
+  return (
+    <div className={(enteredLive ? 'tc-row-in ' : '') + 'w-full min-w-0'}>
+      {card}
     </div>
   )
 }

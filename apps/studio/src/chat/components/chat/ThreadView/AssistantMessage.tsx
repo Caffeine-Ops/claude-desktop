@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MessagePrimitive, useMessage } from '@assistant-ui/react'
+import { ActionBarPrimitive, MessagePrimitive, useMessage } from '@assistant-ui/react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { Check, Copy, ThumbsDown, ThumbsUp } from 'lucide-react'
 
 import {
   DropdownMenu,
@@ -8,6 +9,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from '@/src/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/src/components/ui/tooltip'
+import { cn } from '@/src/lib/utils'
 import { useI18n } from '../../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../../stores/chat'
 import {
@@ -18,6 +21,12 @@ import {
 import { ThinkingSpinner } from '../ThinkingSpinner'
 import { AssistantMarkdown } from '../AssistantMarkdown'
 import { ToolCallCard } from './ToolCallCard'
+import {
+  FoldRegion,
+  TurnActivityProvider,
+  TurnStatusRow,
+  useTurnActivityCtx
+} from './TurnActivity'
 import { useProposalStore } from '../../../stores/proposal'
 import { continueProposalSectionBlocks } from '../../../lib/sendProposalSectionRevision'
 import { triggerProposalCitationVerification } from '../../../lib/proposalVerification'
@@ -223,7 +232,7 @@ function DeliverableCard({
     // parent's p-1 inset edge-to-edge, so the hover wash reads as a full block
     // (not a gapped stripe). `group/card` scopes hover so badge + pill react
     // together without leaking into sibling rows.
-    <div className="group/card flex items-center gap-3 rounded-xl px-2.5 py-2 transition-colors duration-200 hover:bg-muted/50">
+    <div className="group/card flex items-center gap-3 rounded-xl px-2.5 py-2 transition-colors duration-200 hover:bg-hover/50">
       {/* File zone: icon + names. Clicking opens the file — the card IS the
           affordance; the pill is for the alternatives. */}
       <button
@@ -289,7 +298,7 @@ function DeliverableCard({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="group/owb inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-background/60 pl-3 pr-2.5 text-[12px] font-medium text-foreground transition-colors duration-150 hover:bg-muted"
+              className="group/owb inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-background/60 pl-3 pr-2.5 text-[12px] font-medium text-foreground transition-colors duration-150 hover:bg-hover"
             >
               {zh ? '打开方式' : 'Open with'}
               <svg
@@ -470,42 +479,152 @@ function AssistantDeliverables(): React.JSX.Element | null {
 
 export function AssistantMessage(): React.JSX.Element {
   return (
-    <MessagePrimitive.Root className="mb-6 flex w-full flex-col gap-3">
-      {/* unstable_showEmptyOnNonTextEnd={false}: without this, Empty
-          (= ThinkingSpinner) fires after every part whose type isn't
-          text — i.e. after every tool-call. A turn that's [Bash, Grep,
-          Glob, Read, ...] would then render a Thinking row between
-          every pair of tools, all reading the same elapsed seconds
-          because they share the global turnStartedAt. We only want
-          the spinner to appear in the genuine "no parts yet" gap. */}
-      <MessagePrimitive.Parts
-        unstable_showEmptyOnNonTextEnd={false}
-        components={{
-          Text: AssistantTextRow,
-          // Reasoning (extended-thinking) parts. assistant-ui's
-          // default for this slot is `() => null`, which is why
-          // thinking blocks were invisible before. Our custom card
-          // makes them collapsible so they don't overwhelm the chat
-          // when the model thinks for a long time.
-          Reasoning: ReasoningCard,
-          tools: {
-            Fallback: ToolCallCard
-          },
-          // Empty fires when the assistant message has no content
-          // parts yet — typically the runtime-injected optimistic
-          // placeholder during the pre-text gap of a new turn.
-          // ThinkingSpinner already renders its own animated glyph
-          // in the gutter, so it slots right in next to text rows.
-          Empty: ThinkingSpinner
-        }}
-      />
-      {/* Deliverable file cards: real on-disk files this message's text
-          points at, rendered as openable cards once the message settles. */}
-      <AssistantDeliverables />
-      {/* 写方案·选区即改待审阅对照 + [应用/放弃/继续改]。仅当本条助手消息是一轮
-          选区改写的产出（store.blockReviews[messageId] 存在）时渲染，挂在消息体下方。 */}
-      <ProposalRevisionReview />
+    // group/msg：给下面的 AssistantActionBar 用——复制/喜欢/不喜欢默认
+    // 隐去，鼠标移到本条消息任意位置才淡入（同 ChatGPT/Claude.ai 的
+    // hover-reveal 惯例，避免一堆图标常驻抢戏）。
+    //
+    // am-parts（2026-07-17 回合叙事重设计）：兄弟间距从 gap-3 迁到
+    // main.css 的 `.am-parts > * + *` 规则——flex gap 是刚性的，阶段组
+    // 内的工具行要紧排（2px，拼连续竖线）、digest 折叠块要间距归零，
+    // 只有 margin 方案能按 data-stack / data-folded 分档。视觉默认档
+    // 与原 gap-3 等值（12px）。
+    <MessagePrimitive.Root className="group/msg am-parts mb-6 flex w-full flex-col">
+      <TurnActivityProvider>
+        {/* 回合总状态行（"正在处理 · 1分24秒" → "已处理 4分32秒"）：
+            可见工具行 ≥ 2 时出现，点击折叠全部过程块只看结论。 */}
+        <TurnStatusRow />
+        {/* unstable_showEmptyOnNonTextEnd={false}: without this, Empty
+            (= ThinkingSpinner) fires after every part whose type isn't
+            text — i.e. after every tool-call. A turn that's [Bash, Grep,
+            Glob, Read, ...] would then render a Thinking row between
+            every pair of tools, all reading the same elapsed seconds
+            because they share the global turnStartedAt. We only want
+            the spinner to appear in the genuine "no parts yet" gap. */}
+        <MessagePrimitive.Parts
+          unstable_showEmptyOnNonTextEnd={false}
+          components={{
+            Text: AssistantTextRow,
+            // Reasoning (extended-thinking) parts. assistant-ui's
+            // default for this slot is `() => null`, which is why
+            // thinking blocks were invisible before. Our custom card
+            // makes them collapsible so they don't overwhelm the chat
+            // when the model thinks for a long time.
+            Reasoning: ReasoningCard,
+            tools: {
+              Fallback: ToolCallCard
+            },
+            // Empty fires when the assistant message has no content
+            // parts yet — typically the runtime-injected optimistic
+            // placeholder during the pre-text gap of a new turn.
+            // ThinkingSpinner already renders its own animated glyph
+            // in the gutter, so it slots right in next to text rows.
+            Empty: ThinkingSpinner
+          }}
+        />
+        {/* Deliverable file cards: real on-disk files this message's text
+            points at, rendered as openable cards once the message settles. */}
+        <AssistantDeliverables />
+        {/* 写方案·选区即改待审阅对照 + [应用/放弃/继续改]。仅当本条助手消息是一轮
+            选区改写的产出（store.blockReviews[messageId] 存在）时渲染，挂在消息体下方。 */}
+        <ProposalRevisionReview />
+        {/* 复制 / 喜欢 / 不喜欢——见 AssistantActionBar 头注释。 */}
+        <AssistantActionBar />
+      </TurnActivityProvider>
     </MessagePrimitive.Root>
+  )
+}
+
+/**
+ * 消息末尾的操作栏：复制、喜欢、不喜欢。三个按钮都是 assistant-ui 内置的
+ * ActionBarPrimitive（Copy 直接写剪贴板；FeedbackPositive/Negative 调用
+ * runtime 的 feedback adapter——落地实现见 FusionRuntimeProvider 的
+ * messageFeedbackAdapter：两者都打开已有的「问题反馈」弹窗，预选分段 +
+ * 静默附带这条回复原文，而不是另起一套消息评分后端）。
+ *
+ * 流式中不渲染：半成品回复既不该被复制也不该被评价，等 status 落定
+ * （非 running）再出现，与 AssistantDeliverables 的 running 门控同源。
+ *
+ * 可见性分两档（2026-07-17 用户拍板）：
+ *  - **最后一条**回复落定后**常驻**——回复刚写完时「复制 / 评价」正是用户
+ *    最可能立刻要用的动作，让主路径等一次 hover 才现身是把它藏起来。
+ *  - 往上的历史消息仍是 hover 才淡入：一屏几十条各挂三个常驻图标，转录会
+ *    读成一列工具栏而不是对话。
+ * `isLast` 取自 assistant-ui 的 message state（库自己的 ActionBarPrimitive.Root
+ * 那套 autohide="not-last" 读的是同一个字段）。没直接换用那个 primitive 是
+ * 因为它在隐藏档位是 `return null` 整个卸载，会把这里的 opacity 淡入过渡一起
+ * 弄没——历史消息 hover 时图标硬闪出来。
+ *
+ * 喜欢/不喜欢按下后常驻高亮（读 message.metadata.submittedFeedback，
+ * assistant-ui 落到消息上的持久状态）——即便鼠标移开、操作栏淡出，下次
+ * hover 回来仍能看出这条消息已经评价过。
+ */
+function AssistantActionBar(): React.JSX.Element | null {
+  const message = useMessage() as {
+    status?: { type?: string }
+    isCopied?: boolean
+    isLast?: boolean
+    metadata?: { submittedFeedback?: { type: 'positive' | 'negative' } }
+  }
+  if (message.status?.type === 'running') return null
+  const feedback = message.metadata?.submittedFeedback?.type
+
+  return (
+    <div
+      className={cn(
+        // pl-[18px]：对齐 AssistantTextRow 的正文缩进（gutter 圆点 6px + gap-3）。
+        'flex items-center gap-0.5 pl-[18px] transition-opacity duration-150',
+        message.isLast
+          ? 'opacity-100'
+          : 'opacity-0 group-hover/msg:opacity-100 group-focus-within/msg:opacity-100'
+      )}
+    >
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <ActionBarPrimitive.Copy
+            copiedDuration={1500}
+            className={actionBarButtonClass()}
+          >
+            {message.isCopied ? (
+              <Check className="size-3.5" />
+            ) : (
+              <Copy className="size-3.5" />
+            )}
+          </ActionBarPrimitive.Copy>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {message.isCopied ? '已复制' : '复制'}
+        </TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <ActionBarPrimitive.FeedbackPositive
+            className={actionBarButtonClass(feedback === 'positive')}
+          >
+            <ThumbsUp className="size-3.5" />
+          </ActionBarPrimitive.FeedbackPositive>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">喜欢这个回答</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <ActionBarPrimitive.FeedbackNegative
+            className={actionBarButtonClass(feedback === 'negative')}
+          >
+            <ThumbsDown className="size-3.5" />
+          </ActionBarPrimitive.FeedbackNegative>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">不喜欢这个回答</TooltipContent>
+      </Tooltip>
+    </div>
+  )
+}
+
+function actionBarButtonClass(active?: boolean): string {
+  return cn(
+    'flex size-7 items-center justify-center rounded-md transition-colors',
+    active
+      ? 'text-accent'
+      : 'text-muted-foreground hover:bg-hover hover:text-foreground'
   )
 }
 
@@ -650,7 +769,7 @@ function ProposalRevisionReview(): React.JSX.Element | null {
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
             <button
               type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-hover hover:text-foreground"
               onClick={() => {
                 setContinuing(false)
                 setInstruction('')
@@ -683,7 +802,7 @@ function ProposalRevisionReview(): React.JSX.Element | null {
           </button>
           <button
             type="button"
-            className="rounded-lg border border-border px-3 py-1.5 text-[12px] text-foreground hover:bg-muted"
+            className="rounded-lg border border-border px-3 py-1.5 text-[12px] text-foreground hover:bg-hover"
             onClick={discard}
           >
             放弃
@@ -761,6 +880,8 @@ function ReasoningCard({
   status?: { type: string }
 }): React.JSX.Element {
   const isStreaming = status?.type === 'running'
+  // digest（回合总状态行的「只看结论」）把思考块和阶段组一起折掉。
+  const turnDigest = useTurnActivityCtx()?.digest ?? false
   // A ZWSP-only reasoning part is our "pre-show placeholder" — the
   // card label should appear immediately, but the body should stay
   // collapsed until a real delta replaces the placeholder. We also
@@ -798,6 +919,7 @@ function ReasoningCard({
 
 
   return (
+    <FoldRegion folded={turnDigest}>
     <div className="flex w-full gap-3">
       <span
         aria-hidden
@@ -884,6 +1006,7 @@ function ReasoningCard({
         </AnimatePresence>
       </div>
     </div>
+    </FoldRegion>
   )
 }
 

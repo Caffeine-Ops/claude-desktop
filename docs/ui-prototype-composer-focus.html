@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Composer 聚焦效果重设计 · 原型</title>
+<style>
+/* ─────────────────────────────────────────────────────────────
+   设计 token — 1:1 取自 packages/design-tokens/tokens.css。
+   品牌绿只用于聚焦/发送等「身份点位」，与代码一致；不引入新色相。
+   ───────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;      /* #f5f5f7 */
+  --foreground: 240 3% 12%;      /* #1d1d1f */
+  --popover: 0 0% 100%;
+  --muted-fg: 240 4% 40%;
+  --border: 240 6% 84%;
+  --brand: 142 76% 36%;          /* green-600 #16a34a */
+  --brand-fg: 0 0% 100%;
+  --ring-base: rgba(0, 0, 0, 0.08);   /* ring-1 ring-black/[0.08] */
+  --btn-ring: rgba(0, 0, 0, 0.06);
+  --tray: rgba(29, 29, 31, 0.035);     /* hero 托盘 bg-foreground/[0.035] */
+
+  /* Tweaks 可调参数（JS 写在 documentElement 上） */
+  --glow: 1;      /* 光晕强度倍率 */
+  --speed: 1;     /* 动画时长倍率（越大越慢） */
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+}
+.dark {
+  color-scheme: dark;
+  --background: 40 6% 10%;       /* #1a1917 暖黑 */
+  --foreground: 40 21% 89%;
+  --popover: 36 6% 15%;
+  --muted-fg: 36 5% 58%;
+  --border: 49 12% 18%;
+  --brand: 145 60% 52%;          /* 暗档提亮绿 */
+  --brand-fg: 40 6% 10%;
+  --ring-base: rgba(255, 255, 255, 0.08);
+  --btn-ring: rgba(255, 255, 255, 0.08);
+  --tray: rgba(255, 255, 255, 0.045);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { height: 100%; }
+body {
+  min-height: 100%;
+  font-family: var(--font-sans);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  transition: background 0.3s ease, color 0.3s ease;
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+  padding: 56px 24px 120px;
+}
+main { max-width: 880px; margin: 0 auto; }
+
+/* ── 页头 ─────────────────────────────────────────────────── */
+.page-head { margin-bottom: 40px; }
+.page-head .eyebrow {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.08em;
+  color: hsl(var(--brand)); text-transform: uppercase; margin-bottom: 10px;
+}
+.page-head h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 10px; }
+.page-head p { font-size: 14px; line-height: 1.7; color: hsl(var(--muted-fg)); max-width: 620px; }
+.page-head code {
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  font-size: 12px; background: hsl(var(--foreground) / 0.06);
+  padding: 1px 5px; border-radius: 5px;
+}
+
+/* ── 主演示台 ─────────────────────────────────────────────── */
+.stage {
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 20px;
+  padding: 72px 64px 56px;
+  margin-bottom: 16px;
+  background:
+    radial-gradient(1200px 400px at 50% -10%, hsl(var(--popover) / 0.5), transparent 70%),
+    hsl(var(--background));
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+.stage-note {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 44px;
+}
+.stage-note .hint { font-size: 13px; color: hsl(var(--muted-fg)); }
+.stage-note .hint strong { color: hsl(var(--foreground)); font-weight: 600; }
+.demo-btn {
+  font: 600 12.5px/1 var(--font-sans);
+  color: hsl(var(--foreground));
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.demo-btn:hover { background: hsl(var(--foreground) / 0.05); }
+.demo-btn:active { transform: scale(0.96); }
+.demo-btn svg { width: 12px; height: 12px; }
+
+/* ── hero 托盘（空态形态；dock 形态时托盘退化为透明容器） ── */
+.tray {
+  border-radius: 28px;
+  transition: background 0.3s ease, padding 0.3s ease;
+}
+[data-form="hero"] .tray { background: var(--tray); }
+
+/* ─────────────────────────────────────────────────────────────
+   Composer 卡片 — 复刻 Composer.tsx 的
+   rounded-[22px] bg-popover/95 ring-1 backdrop-blur-xl。
+   聚焦效果由 data-v 变体控制；.force-focus 用于对比网格里
+   静态展示聚焦态（与 :focus-within 共用同一组选择器）。
+   ───────────────────────────────────────────────────────────── */
+.card {
+  position: relative;
+  border-radius: 22px;
+  background: hsl(var(--popover) / 0.95);
+  backdrop-filter: blur(24px) saturate(1.5);
+  box-shadow: 0 0 0 1px var(--ring-base);
+  transition:
+    box-shadow calc(0.35s * var(--speed)) cubic-bezier(0.25, 0.6, 0.3, 1),
+    transform  calc(0.35s * var(--speed)) cubic-bezier(0.3, 1.3, 0.45, 1),
+    background 0.3s ease;
+}
+[data-form="hero"] .card {
+  box-shadow:
+    0 0 0 1px var(--ring-base),
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 10px 28px -4px rgba(0, 0, 0, 0.07);
+}
+
+/* 输入区：外层不滚动持有纵向 padding，与线上一致 */
+.input-wrap { min-height: 52px; padding: 16px 0 12px; }
+[data-form="hero"] .input-wrap { min-height: 108px; }
+.input-scroll { max-height: 208px; overflow-y: auto; padding: 0 20px; }
+.card textarea {
+  display: block; width: 100%;
+  border: 0; outline: 0; resize: none; background: transparent;
+  font: 700 14px/1.65 var(--font-sans);   /* text-[14px] font-bold */
+  color: hsl(var(--foreground));
+  caret-color: hsl(var(--brand));
+  min-height: 23px;
+}
+.card textarea::placeholder {
+  color: hsl(var(--muted-fg) / 0.55);
+  font-weight: 700;
+  transition: color calc(0.3s * var(--speed)) ease;
+}
+/* 聚焦微交互（全变体共享）：placeholder 轻轻退后一步，把舞台让给光标 */
+.card:is(:focus-within, .force-focus) textarea::placeholder {
+  color: hsl(var(--muted-fg) / 0.38);
+}
+
+/* 工具栏 */
+.toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px 12px; }
+.icon-btn {
+  width: 36px; height: 36px; flex-shrink: 0;
+  display: grid; place-items: center;
+  border: 0; border-radius: 999px; background: transparent;
+  color: hsl(var(--muted-fg) / 0.8);
+  box-shadow: 0 0 0 1px var(--btn-ring);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.icon-btn:hover { background: hsl(var(--foreground) / 0.06); color: hsl(var(--foreground)); }
+.toolbar .spacer { flex: 1; }
+.model-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: 500 12px/1 var(--font-sans);
+  color: hsl(var(--muted-fg));
+  background: transparent; border: 0; border-radius: 999px;
+  padding: 7px 10px; cursor: pointer;
+  transition: background 0.15s ease;
+}
+.model-chip:hover { background: hsl(var(--foreground) / 0.05); }
+.send {
+  width: 40px; height: 40px; flex-shrink: 0;
+  display: grid; place-items: center;
+  border: 0; border-radius: 999px; cursor: not-allowed;
+  background: hsl(var(--foreground) / 0.08);
+  color: hsl(var(--muted-fg) / 0.5);
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
+.send.ready {
+  cursor: pointer;
+  background: hsl(var(--brand));
+  color: hsl(var(--brand-fg));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 0 2px 8px -2px rgba(0, 0, 0, 0.18);
+  animation: send-pop 0.3s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.send.ready:hover { filter: brightness(1.08); }
+.send.ready:active { transform: scale(0.95); }
+@keyframes send-pop { 0% { transform: scale(0.85); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }
+.send svg { transition: transform 0.25s ease, opacity 0.25s ease; }
+.send.sent svg { animation: fly-up 0.4s ease forwards; }
+@keyframes fly-up {
+  40% { transform: translateY(-18px); opacity: 0; }
+  41% { transform: translateY(14px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+/* 卡下 chips 行：dock 在卡外裸排，hero 收进托盘延伸条 */
+.chips { display: flex; align-items: center; gap: 16px; font-size: 12px; color: hsl(var(--muted-fg)); }
+.chips-outside { margin-top: 12px; padding: 0 8px; }
+[data-form="hero"] .chips-outside { display: none; }
+.chips-inside { display: none; padding: 12px 24px 14px; }
+[data-form="hero"] .chips-inside { display: flex; }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: transparent; border: 0; padding: 0; cursor: pointer;
+  font: 500 12px/1 var(--font-sans); color: hsl(var(--muted-fg));
+  transition: color 0.15s ease;
+}
+.chip:hover { color: hsl(var(--foreground)); }
+.chip.right { margin-left: auto; }
+.chip svg { width: 13px; height: 13px; }
+
+/* ═════════════════════════════════════════════════════════════
+   五个聚焦变体。全部走 :is(:focus-within, .force-focus)，
+   对比网格用 .force-focus 静态呈现同一套样式。
+   ═════════════════════════════════════════════════════════════ */
+
+/* A · 现状对照 — 1px 描边换成 brand/0.4（即线上被吐槽的效果） */
+.card[data-v="current"]:is(:focus-within, .force-focus) {
+  box-shadow: 0 0 0 1px hsl(var(--brand) / 0.4);
+}
+[data-form="hero"] .card[data-v="current"]:is(:focus-within, .force-focus) {
+  box-shadow: 0 0 0 1px hsl(var(--brand) / 0.4),
+    0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 28px -4px rgba(0, 0, 0, 0.07);
+}
+
+/* B · 柔光聚拢（推荐）— 描边加深到 55% + 4px 品牌光晕徐徐晕开，
+   再垫一层带绿意的环境投影，让卡片「亮起来」而不是「画条线」 */
+.card[data-v="glow"]:is(:focus-within, .force-focus) {
+  box-shadow:
+    0 0 0 1px hsl(var(--brand) / 0.55),
+    0 0 0 4px hsl(var(--brand) / calc(0.12 * var(--glow))),
+    0 2px 6px rgba(0, 0, 0, 0.04),
+    0 10px 32px -6px hsl(var(--brand) / calc(0.22 * var(--glow)));
+}
+
+/* C · 光环收拢 — macOS 式聚焦环：光环从外圈 14px 收拢落定到 3.5px，
+   落定后常驻。描边同时点亮到 65%，比 B 更「事件感」 */
+.card[data-v="pop"]::after {
+  content: ""; position: absolute; inset: -1px; border-radius: 23px;
+  pointer-events: none;
+  box-shadow: 0 0 0 0 hsl(var(--brand) / 0);
+}
+.card[data-v="pop"]:is(:focus-within, .force-focus) {
+  box-shadow: 0 0 0 1.5px hsl(var(--brand) / 0.65);
+}
+.card[data-v="pop"]:is(:focus-within, .force-focus)::after {
+  animation: halo-settle calc(0.5s * var(--speed)) cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+@keyframes halo-settle {
+  0%   { box-shadow: 0 0 0 14px hsl(var(--brand) / 0); }
+  45%  { box-shadow: 0 0 0 7px  hsl(var(--brand) / calc(0.2 * var(--glow))); }
+  100% { box-shadow: 0 0 0 3.5px hsl(var(--brand) / calc(0.15 * var(--glow))); }
+}
+
+/* D · 抬升入场 — 聚焦=海拔变化：上浮 2px、中性投影加深、描边点亮。
+   透视带轻微回弹（cubic-bezier 超调），绿意只留一丝在投影里 */
+.card[data-v="lift"]:is(:focus-within, .force-focus) {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 1px hsl(var(--brand) / 0.5),
+    0 2px 4px rgba(0, 0, 0, 0.05),
+    0 18px 44px -10px rgba(0, 0, 0, 0.18),
+    0 6px 20px -4px hsl(var(--brand) / calc(0.16 * var(--glow)));
+}
+
+/* E · 流光描边 — 品牌绿光带沿边缘缓缓巡游（conic-gradient + mask
+   镂空出 1.5px 边），底下垫 35% 静态描边兜底。最大胆的一档 */
+@property --sweep {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+.card[data-v="shimmer"]::before {
+  content: ""; position: absolute; inset: 0; border-radius: 22px;
+  padding: 1.5px; pointer-events: none;
+  background: conic-gradient(from calc(var(--sweep) - 90deg),
+    hsl(var(--brand) / 0) 0deg,
+    hsl(var(--brand) / 0.95) 45deg,
+    hsl(152 70% 62% / 0.95) 75deg,
+    hsl(var(--brand) / 0) 140deg,
+    hsl(var(--brand) / 0) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity calc(0.3s * var(--speed)) ease;
+}
+.card[data-v="shimmer"]:is(:focus-within, .force-focus) {
+  box-shadow:
+    0 0 0 1px hsl(var(--brand) / 0.35),
+    0 8px 26px -6px hsl(var(--brand) / calc(0.18 * var(--glow)));
+}
+.card[data-v="shimmer"]:is(:focus-within, .force-focus)::before {
+  opacity: 1;
+  animation: sweep calc(3s * var(--speed)) linear infinite;
+}
+@keyframes sweep { to { --sweep: 360deg; } }
+
+/* ── 变体对比网格（点击选用） ─────────────────────────────── */
+.grid-head { margin: 44px 0 16px; }
+.grid-head h2 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+.grid-head p { font-size: 13px; color: hsl(var(--muted-fg)); }
+.variant-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 14px;
+}
+.pick {
+  text-align: left; cursor: pointer;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 16px;
+  background: hsl(var(--popover) / 0.5);
+  padding: 22px 18px 16px;
+  font-family: var(--font-sans);
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+.pick:hover { transform: translateY(-1px); background: hsl(var(--popover) / 0.8); }
+.pick[aria-pressed="true"] {
+  border-color: hsl(var(--brand) / 0.6);
+  background: hsl(var(--brand) / 0.05);
+}
+/* 网格里的迷你 composer：同一套 .card 样式的缩小版，常驻聚焦态 */
+.mini { margin-bottom: 16px; pointer-events: none; }
+.mini .card { border-radius: 14px; }
+.mini .card[data-v="pop"]::after { border-radius: 15px; }
+.mini .card[data-v="shimmer"]::before { border-radius: 14px; padding: 1.2px; }
+.mini .ph-line { padding: 12px 14px 6px; font: 700 11px/1.5 var(--font-sans); color: hsl(var(--muted-fg) / 0.5); }
+.mini .caret {
+  display: inline-block; width: 1.5px; height: 12px; vertical-align: -2px;
+  background: hsl(var(--brand)); margin-right: 3px;
+  animation: blink 1.1s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+.mini .bar { display: flex; align-items: center; gap: 5px; padding: 4px 10px 10px; }
+.mini .dot {
+  width: 18px; height: 18px; border-radius: 999px;
+  box-shadow: 0 0 0 1px var(--btn-ring);
+}
+.mini .dot.send-dot {
+  margin-left: auto; width: 20px; height: 20px;
+  background: hsl(var(--foreground) / 0.08); box-shadow: none;
+}
+.pick .name { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 650; margin-bottom: 3px; }
+.pick .badge {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.03em;
+  color: hsl(var(--brand)); background: hsl(var(--brand) / 0.1);
+  border-radius: 999px; padding: 2px 7px;
+}
+.pick .desc { font-size: 12px; line-height: 1.55; color: hsl(var(--muted-fg)); }
+
+/* ── Tweaks 面板 ──────────────────────────────────────────── */
+.tweaks-toggle {
+  position: fixed; right: 20px; bottom: 20px; z-index: 50;
+  font: 600 12px/1 var(--font-sans);
+  color: hsl(var(--foreground));
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px; padding: 9px 15px; cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  transition: transform 0.15s ease;
+}
+.tweaks-toggle:hover { transform: translateY(-1px); }
+.tweaks {
+  position: fixed; right: 20px; bottom: 64px; z-index: 50;
+  width: 250px;
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.16);
+  padding: 16px;
+  display: none;
+}
+.tweaks.open { display: block; }
+.tweaks h3 { font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: hsl(var(--muted-fg)); margin-bottom: 14px; }
+.tweaks .row { margin-bottom: 14px; }
+.tweaks .row:last-child { margin-bottom: 0; }
+.tweaks label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 7px; }
+.tweaks label .val { float: right; font-weight: 500; color: hsl(var(--muted-fg)); font-variant-numeric: tabular-nums; }
+.seg {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  background: hsl(var(--foreground) / 0.05);
+  border-radius: 9px; padding: 2px; gap: 2px;
+}
+.seg button {
+  font: 550 12px/1 var(--font-sans);
+  color: hsl(var(--muted-fg));
+  background: transparent; border: 0; border-radius: 7px;
+  padding: 6px 0; cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.seg button[aria-pressed="true"] {
+  color: hsl(var(--foreground));
+  background: hsl(var(--popover));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.tweaks input[type="range"] { width: 100%; accent-color: hsl(var(--brand)); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="page-head">
+    <div class="eyebrow">Composer · Focus Redesign</div>
+    <h1>输入卡聚焦效果重设计</h1>
+    <p>
+      现状：聚焦仅把 1px hairline 换成 <code>hsl(--brand / 0.4)</code>——描边细、颜色发虚，
+      「亮起来」的感知很弱。下面 4 个新方案都保持既有 token（品牌绿 / 22px 圆角 / Apple 系投影），
+      只重写聚焦这一拍。点击输入框体验真实聚焦，或点「演示」自动走一遍聚焦→失焦。
+    </p>
+  </header>
+
+  <!-- 主演示台 -->
+  <section class="stage" id="stage" data-form="dock">
+    <div class="stage-note">
+      <div class="hint">当前方案：<strong id="variant-name">B · 柔光聚拢</strong></div>
+      <button class="demo-btn" id="demo-btn" type="button">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+        演示 聚焦 → 失焦
+      </button>
+    </div>
+
+    <div class="tray">
+      <div class="card" id="main-card" data-v="glow">
+        <div class="input-wrap">
+          <div class="input-scroll">
+            <textarea id="ta" rows="1"
+              placeholder="随便问点什么…   ↵ 发送 · ⇧↵ 换行 · / 命令 · @ 文件"></textarea>
+          </div>
+        </div>
+        <div class="toolbar">
+          <button class="icon-btn" type="button" aria-label="添加附件">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <button class="icon-btn" type="button" aria-label="技能">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><path d="M12 8a4 4 0 0 0 4 4 4 4 0 0 0-4 4 4 4 0 0 0-4-4 4 4 0 0 0 4-4Z"/></svg>
+          </button>
+          <div class="spacer"></div>
+          <button class="model-chip" type="button">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.3 6.2L21 11l-6.7 1.8L12 19l-2.3-6.2L3 11l6.7-1.8z"/></svg>
+            Fable 5
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <button class="icon-btn" type="button" aria-label="语音输入">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg>
+          </button>
+          <button class="send" id="send-btn" type="button" aria-label="发送" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m6 11 6-6 6 6"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- hero 形态：托盘延伸条 -->
+      <div class="chips chips-inside">
+        <button class="chip" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          选择工作目录
+        </button>
+        <button class="chip right" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4 6v6c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10V6z"/></svg>
+          全自动
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- dock 形态：卡外裸排 chips -->
+    <div class="chips chips-outside">
+      <button class="chip" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        claude-desktop
+      </button>
+      <button class="chip right" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4 6v6c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10V6z"/></svg>
+        全自动
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+    </div>
+  </section>
+
+  <!-- 变体对比网格：迷你卡常驻聚焦态，点击切换主演示台 -->
+  <div class="grid-head">
+    <h2>五个方案 · 聚焦态对照</h2>
+    <p>迷你卡展示的都是「聚焦落定后」的样子，点任意一张切到上方大图体验完整动画。</p>
+  </div>
+  <div class="variant-grid" id="variant-grid">
+    <button class="pick" type="button" data-v="current" aria-pressed="false">
+      <div class="mini">
+        <div class="card force-focus" data-v="current">
+          <div class="ph-line"><span class="caret"></span>随便问点什么…</div>
+          <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot send-dot"></span></div>
+        </div>
+      </div>
+      <div class="name">A · 现状对照</div>
+      <div class="desc">1px 描边换成 40% 品牌绿。细、发虚，几乎感知不到「聚焦了」。</div>
+    </button>
+
+    <button class="pick" type="button" data-v="glow" aria-pressed="true">
+      <div class="mini">
+        <div class="card force-focus" data-v="glow">
+          <div class="ph-line"><span class="caret"></span>随便问点什么…</div>
+          <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot send-dot"></span></div>
+        </div>
+      </div>
+      <div class="name">B · 柔光聚拢 <span class="badge">推荐</span></div>
+      <div class="desc">描边加深 + 4px 品牌光晕徐徐晕开，再垫一层绿意环境投影。稳，但明确「亮了」。</div>
+    </button>
+
+    <button class="pick" type="button" data-v="pop" aria-pressed="false">
+      <div class="mini">
+        <div class="card force-focus" data-v="pop">
+          <div class="ph-line"><span class="caret"></span>随便问点什么…</div>
+          <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot send-dot"></span></div>
+        </div>
+      </div>
+      <div class="name">C · 光环收拢</div>
+      <div class="desc">macOS 式聚焦环从外圈 14px 收拢落定，事件感最强，一眼看到焦点落位。</div>
+    </button>
+
+    <button class="pick" type="button" data-v="lift" aria-pressed="false">
+      <div class="mini">
+        <div class="card force-focus" data-v="lift">
+          <div class="ph-line"><span class="caret"></span>随便问点什么…</div>
+          <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot send-dot"></span></div>
+        </div>
+      </div>
+      <div class="name">D · 抬升入场</div>
+      <div class="desc">聚焦=海拔变化：上浮 2px、投影加深、描边点亮。绿意最克制的一档。</div>
+    </button>
+
+    <button class="pick" type="button" data-v="shimmer" aria-pressed="false">
+      <div class="mini">
+        <div class="card force-focus" data-v="shimmer">
+          <div class="ph-line"><span class="caret"></span>随便问点什么…</div>
+          <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot send-dot"></span></div>
+        </div>
+      </div>
+      <div class="name">E · 流光描边</div>
+      <div class="desc">品牌绿光带沿边缘缓缓巡游，聚焦期间持续呼吸。最大胆，适合 hero 空态。</div>
+    </button>
+  </div>
+</main>
+
+<!-- Tweaks -->
+<button class="tweaks-toggle" id="tweaks-toggle" type="button" aria-expanded="false">Tweaks</button>
+<div class="tweaks" id="tweaks-panel" role="group" aria-label="Tweaks">
+  <h3>Tweaks</h3>
+  <div class="row">
+    <label>主题</label>
+    <div class="seg" id="seg-theme">
+      <button type="button" data-val="light" aria-pressed="true">浅色</button>
+      <button type="button" data-val="dark" aria-pressed="false">深色</button>
+    </div>
+  </div>
+  <div class="row">
+    <label>形态</label>
+    <div class="seg" id="seg-form">
+      <button type="button" data-val="dock" aria-pressed="true">对话 dock</button>
+      <button type="button" data-val="hero" aria-pressed="false">空态 hero</button>
+    </div>
+  </div>
+  <div class="row">
+    <label>光晕强度 <span class="val" id="glow-val">1.0×</span></label>
+    <input type="range" id="glow-range" min="0.4" max="1.8" step="0.1" value="1">
+  </div>
+  <div class="row">
+    <label>动画时长 <span class="val" id="speed-val">1.0×</span></label>
+    <input type="range" id="speed-range" min="0.5" max="2" step="0.1" value="1">
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var root = document.documentElement;
+  var card = document.getElementById('main-card');
+  var ta = document.getElementById('ta');
+  var send = document.getElementById('send-btn');
+  var stage = document.getElementById('stage');
+  var variantName = document.getElementById('variant-name');
+
+  var NAMES = {
+    current: 'A · 现状对照',
+    glow: 'B · 柔光聚拢',
+    pop: 'C · 光环收拢',
+    lift: 'D · 抬升入场',
+    shimmer: 'E · 流光描边'
+  };
+
+  /* ── 变体切换（对比网格即选择器） ── */
+  var grid = document.getElementById('variant-grid');
+  grid.addEventListener('click', function (e) {
+    var pick = e.target.closest('.pick');
+    if (!pick) return;
+    var v = pick.dataset.v;
+    card.dataset.v = v;
+    variantName.textContent = NAMES[v];
+    grid.querySelectorAll('.pick').forEach(function (p) {
+      p.setAttribute('aria-pressed', String(p === pick));
+    });
+    ta.focus();
+  });
+
+  /* ── 输入：自动增高 + 发送按钮 ready 态 + Enter 假发送 ── */
+  function grow() {
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+  }
+  ta.addEventListener('input', function () {
+    grow();
+    var ready = ta.value.trim().length > 0;
+    send.classList.toggle('ready', ready);
+    send.disabled = !ready;
+  });
+  ta.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!ta.value.trim()) return;
+      send.classList.add('sent');
+      setTimeout(function () {
+        send.classList.remove('sent', 'ready');
+        send.disabled = true;
+        ta.value = '';
+        grow();
+      }, 380);
+    }
+  });
+  send.addEventListener('click', function () {
+    if (send.disabled) return;
+    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  });
+
+  /* ── 演示：程序化聚焦 → 停留 → 失焦 ── */
+  var demoTimer = null;
+  document.getElementById('demo-btn').addEventListener('click', function () {
+    if (demoTimer) { clearTimeout(demoTimer); demoTimer = null; }
+    ta.blur();
+    setTimeout(function () { ta.focus(); }, 250);
+    demoTimer = setTimeout(function () { ta.blur(); demoTimer = null; }, 2400);
+  });
+
+  /* ── Tweaks ── */
+  var toggle = document.getElementById('tweaks-toggle');
+  var panel = document.getElementById('tweaks-panel');
+  toggle.addEventListener('click', function () {
+    var open = panel.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', String(open));
+  });
+
+  function bindSeg(id, apply) {
+    var seg = document.getElementById(id);
+    seg.addEventListener('click', function (e) {
+      var btn = e.target.closest('button');
+      if (!btn) return;
+      seg.querySelectorAll('button').forEach(function (b) {
+        b.setAttribute('aria-pressed', String(b === btn));
+      });
+      apply(btn.dataset.val);
+    });
+  }
+  bindSeg('seg-theme', function (v) {
+    root.classList.toggle('dark', v === 'dark');
+  });
+  bindSeg('seg-form', function (v) {
+    stage.dataset.form = v;
+    grow();
+  });
+
+  var glowRange = document.getElementById('glow-range');
+  var glowVal = document.getElementById('glow-val');
+  glowRange.addEventListener('input', function () {
+    root.style.setProperty('--glow', glowRange.value);
+    glowVal.textContent = Number(glowRange.value).toFixed(1) + '×';
+  });
+  var speedRange = document.getElementById('speed-range');
+  var speedVal = document.getElementById('speed-val');
+  speedRange.addEventListener('input', function () {
+    root.style.setProperty('--speed', speedRange.value);
+    speedVal.textContent = Number(speedRange.value).toFixed(1) + '×';
+  });
+})();
+</script>
+</body>
+</html>

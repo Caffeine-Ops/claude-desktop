@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MessagePrimitive, useMessage } from '@assistant-ui/react'
 import { AnimatePresence, motion } from 'motion/react'
+import { ChevronDown } from 'lucide-react'
 
+import { cn } from '@/src/lib/utils'
 import { useI18n, useT } from '../../../i18n'
 import {
   LEADING_SLASH_COMMAND_RE,
@@ -28,6 +30,23 @@ import {
 
 export function UserMessage(): React.JSX.Element {
   return (
+    // （2026-07-17 删掉了这里原有的 `data-[aui-top-anchor-user]:pt-8`：
+    // assistant-ui 0.12.24 根本不渲染 data-aui-top-anchor-user 这个属性——
+    // MessageRoot.js 里本节点只会拿到 data-message-id 一个 data-*，全库
+    // grep 不到 top-anchor 字样，运行时探测该标记也恒为 false。那条变体
+    // 从来没匹配上过，pt-8 一天都没生效，删掉不改变任何视觉。
+    //
+    // 连带作废的还有它头注释里那套「库按 anchorTop 把本节点滚到贴顶、所以
+    // 只有内部 padding 能挤出呼吸位」的推导：库里没有 computeTopAnchorSlack，
+    // 也没有任何按消息位置算 scrollTop 的代码，唯一的滚动写入是
+    // `div.scrollTo({ top: div.scrollHeight })`——恒定滚到底。turnAnchor="top"
+    // 的「钉顶」纯粹是 slack 把最后一条 assistant 消息撑到
+    // viewport-inset-clamp 高之后、滚到底时挤出来的几何结果。
+    //
+    // 也就是说「被钉顶的消息离视口顶边留呼吸位」这个诉求至今没有实现。真要
+    // 做，得往 slack 的 min-height 公式那边使劲（让它少撑一点），而不是给
+    // 本节点加 padding——本节点贴的是视口顶边，加 padding 只会把气泡往下推、
+    // 边框盒还在原位，反而和「第一条消息」的 pt-8 呼吸位对不齐。
     <MessagePrimitive.Root className="mb-6 flex w-full flex-col items-end gap-2">
       {/* User bubble — text content. `components.Image` overrides the
           default renderer with our own, and `components.Text` (implicit
@@ -47,31 +66,39 @@ export function UserMessage(): React.JSX.Element {
           Text: () => null
         }}
       />
-      {/* Apple iMessage-style user bubble. rounded-[22px] is the
-          softer inner curve iMessage/Messages uses. Pure `bg-accent`
-          (Apple Blue, no alpha) is DESIGN.md §2's mandate: Apple Blue
-          is the singular interactive accent and should never be
-          diluted. 15px body with apple-body tracking gives the
-          signature tight-but-readable Apple rhythm.
+      {/* User bubble.
+
+          底色是中性 `bg-muted`，不是主题色实底（2026-07-17 用户拍板，对齐
+          参考截图）：用户消息在转录里是「我说过的话」，不是需要抢注意力的
+          交互元素——实底强调色会让每条自己发的话都比 AI 的回答更响。长短
+          消息共用同一底色，长消息只是多一个折叠 toggle，不另换视觉语言。
+
+          圆角 `rounded-xl`（12px）同样是长短共用一个值。别再往大调：半径
+          一旦逼近短气泡的半高（旧值 22px 就是），同一个类会把长消息渲染成
+          圆角卡片、把「你好」这种一行短句渲染成药丸——**同一份声明产出两种
+          形状**，读起来像两套语言（2026-07-17 用户截图实锤）。12px 在短气泡
+          上仍远小于半高，长短都稳定读作圆角矩形。
 
           ClampedUserBubble caps the height of a very long message so one
           giant paste can't fill the whole transcript — it clamps to
-          USER_BUBBLE_MAX_PX and fades the overflow out at the bottom. */}
+          USER_BUBBLE_MAX_PX, fades the overflow out at the bottom, and
+          offers a 「显示更多 / 收起」toggle to expand it in place. */}
       <ClampedUserBubble />
     </MessagePrimitive.Root>
   )
 }
 
 /**
- * Max rendered height (px) of a user bubble before it clamps. ~6 lines at
- * the bubble's 15px/1.47 rhythm plus its py-2.5 padding. A long paste gets
- * cut here so it can't dominate the transcript; shorter messages render in
- * full and never clamp.
+ * Max rendered height (px) of a user bubble before it clamps. ~5-6 lines at
+ * the bubble's text-[14px]/leading-relaxed rhythm (matches AssistantMarkdown's
+ * body rhythm, see the text container's className comment) plus its py-2.5
+ * padding. A long paste gets cut here so it can't dominate the transcript;
+ * shorter messages render in full and never clamp.
  */
 const USER_BUBBLE_MAX_PX = 150
 
-/** Join a user message's text parts into the full raw string (for the
- *  full-text modal + copy). */
+/** Join a user message's text parts into the full raw string (drives the
+ *  sheet-selection / image-edit card detection + the empty-message check). */
 function useUserMessageText(): string {
   const message = useMessage()
   return useMemo(() => {
@@ -93,16 +120,24 @@ function useUserMessageText(): string {
  * content's natural scrollHeight against USER_BUBBLE_MAX_PX (re-measuring on
  * resize) and only then apply the max-height + a bottom fade mask — so a
  * short message keeps clean edges and only a genuinely long one gets the
- * truncation + fade.
+ * truncation treatment.
  *
- * When clamped, the bubble becomes clickable: a click opens a modal showing
- * the full message text (scrollable) with a copy button and close affordances
- * (✕ / backdrop / Esc). Short, un-clamped bubbles aren't clickable.
+ * A long one grows a 「显示更多 ⌄」toggle under the faded text; pressing it
+ * expands the card **in place**（就地展开，按钮变「收起 ⌃」）rather than
+ * opening a modal —— 2026-07-17 用户对齐参考截图定的形态。两条纪律来自那次
+ * 对照：
+ *  - 折叠文本与 toggle 之间**不加分隔线**：mask 渐隐已经把「下面还有」说清
+ *    楚了，再压一条 border 会把一条消息读成两个区块（第一版实现踩过）。
+ *  - toggle 是 inline-flex：命中盒贴着文字，不铺满整行——整行热区会让这条
+ *    「次要动作」在视觉与手感上都压过消息本身。
+ *
+ * `clamped` 与 `expanded` 是两件事：前者＝内容确实超高（展开后仍为真，
+ * 所以「收起」不会自己消失），后者＝用户当下选择看全。
  */
 function ClampedUserBubble(): React.JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null)
   const [clamped, setClamped] = useState(false)
-  const [open, setOpen] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const fullText = useUserMessageText()
 
   useEffect(() => {
@@ -120,74 +155,99 @@ function ClampedUserBubble(): React.JSX.Element {
   }, [])
 
   // 表格预览「框选问 AI」的消息(首行协议标记,见 stores/filePreview):
-  // 不走绿气泡,渲染成结构化卡片——文件名 + 范围 + 问题;完整 TSV 只在
+  // 不走普通气泡,渲染成结构化卡片——文件名 + 范围 + 问题;完整 TSV 只在
   // CLI 侧文本里,不上屏。(hooks 已全部跑完,分支安全。)
   const sheetSel = parseSheetSelectionMessage(fullText)
   if (sheetSel) return <SheetSelectionCard meta={sheetSel} />
 
-  // 图片标记编辑面板发出的消息（同一套首行协议标记）：渲染成紧凑卡片
-  // ——图片名 + 各标记点描述 + 素材数；完整指令只在 CLI 侧文本里。
+  // 图片标记编辑面板发出的消息（同一套首行协议标记）：同样替掉普通气泡，
+  // 渲染成紧凑卡片——图片名 + 各标记点描述 + 素材数；完整指令只在 CLI 侧
+  // 文本里。
   const imgEdit = parseImageEditMessage(fullText)
   if (imgEdit) return <ImageEditCard meta={imgEdit} />
 
+  // 无文本(纯图片消息)时整卡不渲染——原先靠单一 div 的 CSS `empty:hidden`
+  // 判定，拆成卡片+按钮两层后 `:empty` 在外层永远命不中(外层结构上总有
+  // 内层这个子元素)，改用 hasText 在 JS 侧同等短路：外层 div 没有任何
+  // JSX 子节点时才会真的“空”。
+  const hasText = fullText.trim().length > 0
+
+  // 折叠中（超高且未展开）才裁切 + 渐隐；展开后彻底撤掉 maxHeight/mask，
+  // 让内容照原高铺开。
+  const collapsed = clamped && !expanded
+
   return (
-    <>
-      <div
-        ref={ref}
-        // data-selectable：放开用户消息气泡文本可选（.chat-app 全局禁选之上）。
-        // clamp 态下本 div 是 role=button，但拖选后松手不落在原点不算 click，
-        // 选中与"点击展开全文"可共存。
-        data-selectable="true"
-        onClick={clamped ? () => setOpen(true) : undefined}
-        role={clamped ? 'button' : undefined}
-        tabIndex={clamped ? 0 : undefined}
-        onKeyDown={
-          clamped
-            ? (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  setOpen(true)
-                }
-              }
-            : undefined
-        }
-        title={clamped ? '点击查看完整内容' : undefined}
-        style={
-          clamped
-            ? {
-                maxHeight: `${USER_BUBBLE_MAX_PX}px`,
-                // Fade the bottom ~40px to transparent so the cut reads as
-                // "there's more" rather than a hard slice. WebkitMaskImage for
-                // Chromium (Electron's renderer).
-                WebkitMaskImage:
-                  'linear-gradient(to bottom, black 0, black calc(100% - 40px), transparent 100%)',
-                maskImage:
-                  'linear-gradient(to bottom, black 0, black calc(100% - 40px), transparent 100%)'
-              }
-            : undefined
-        }
-        className={
-          'max-w-[80%] overflow-hidden whitespace-pre-wrap break-words rounded-[22px] bg-accent px-4 py-2.5 text-[15px] leading-[1.47] tracking-apple-body text-white empty:hidden ' +
-          (clamped ? 'cursor-pointer transition hover:brightness-[1.06]' : '')
-        }
-      >
-        <MessagePrimitive.Parts
-          unstable_showEmptyOnNonTextEnd={false}
-          components={{
-            // Within the bubble, skip image parts — they're already
-            // rendered above. We provide a no-op Image component so
-            // nothing appears here, and render Text via UserBubbleText
-            // so `@"path"` file mentions become inline file chips
-            // instead of raw absolute paths.
-            Image: () => null,
-            Text: UserBubbleText
-          }}
-        />
-      </div>
-      {open ? (
-        <UserMessageModal text={fullText} onClose={() => setOpen(false)} />
+    <div className="max-w-[80%] overflow-hidden rounded-xl bg-muted text-foreground">
+      {hasText ? (
+        <>
+          <div
+            ref={ref}
+            // data-selectable：放开用户消息气泡文本可选（.chat-app 全局禁选之上）。
+            data-selectable="true"
+            style={
+              collapsed
+                ? {
+                    maxHeight: `${USER_BUBBLE_MAX_PX}px`,
+                    // Fade the bottom ~40px into the card's own background so
+                    // the cut reads as "there's more" rather than a hard slice.
+                    // WebkitMaskImage for Chromium (Electron's renderer).
+                    WebkitMaskImage:
+                      'linear-gradient(to bottom, black 0, black calc(100% - 40px), transparent 100%)',
+                    maskImage:
+                      'linear-gradient(to bottom, black 0, black calc(100% - 40px), transparent 100%)'
+                  }
+                : undefined
+            }
+            className={cn(
+              // 字体样式跟 AssistantMarkdown 的正文容器对齐（text-[14px]
+              // font-medium leading-relaxed tracking-normal，一字不差）——
+              // 之前这里用的是 tracking-apple-body（-0.022em，AssistantMarkdown
+              // 头注释解释过：这个负字距是给英文字形的侧边距调的，中文全角
+              // 表意字本来就很密，同样的负值会把中文字挤得发闷）+ leading-
+              // [1.47]（比 leading-relaxed 的 1.625 更紧），两条叠在一起让用户
+              // 自己发的消息读起来比 AI 回复局促——两种气泡本该是同一种字体
+              // 语言的两侧，不该分叉。
+              'overflow-hidden whitespace-pre-wrap break-words px-4 pt-2.5 text-[14px] font-medium leading-relaxed tracking-normal',
+              // 有 toggle 时底部留白由 toggle 那一行给，避免两份 padding 叠出
+              // 一道空带。
+              clamped ? 'pb-1' : 'pb-2.5'
+            )}
+          >
+            <MessagePrimitive.Parts
+              unstable_showEmptyOnNonTextEnd={false}
+              components={{
+                // Within the bubble, skip image parts — they're already
+                // rendered above. We provide a no-op Image component so
+                // nothing appears here, and render Text via UserBubbleText
+                // so `@"path"` file mentions become inline file chips
+                // instead of raw absolute paths.
+                Image: () => null,
+                Text: UserBubbleText
+              }}
+            />
+          </div>
+          {clamped ? (
+            <div className="px-4 pb-2.5">
+              <button
+                type="button"
+                data-slot="button"
+                onClick={() => setExpanded((v) => !v)}
+                aria-expanded={expanded}
+                className="inline-flex items-center gap-1 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {expanded ? '收起' : '显示更多'}
+                <ChevronDown
+                  className={cn(
+                    'size-3.5 transition-transform',
+                    expanded && 'rotate-180'
+                  )}
+                />
+              </button>
+            </div>
+          ) : null}
+        </>
       ) : null}
-    </>
+    </div>
   )
 }
 
@@ -415,101 +475,9 @@ function ImageEditCard({ meta }: { meta: ImageEditMeta }): React.JSX.Element {
 }
 
 /**
- * Full-text modal for a clamped user message. Portal'd to <body> over a
- * blurred backdrop (same lightbox pattern as the image viewer). Dismisses on
- * ✕ / backdrop click / Esc. A copy button lifts the raw text to the clipboard.
- */
-function UserMessageModal({
-  text,
-  onClose
-}: {
-  text: string
-  onClose: () => void
-}): React.JSX.Element {
-  const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  const copy = (): void => {
-    void navigator.clipboard?.writeText(text)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
-  }
-
-  return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-8">
-      {/* Backdrop — owns dismiss-on-click. */}
-      <div
-        className="absolute inset-0 bg-background/78 backdrop-blur-lg"
-        onClick={onClose}
-        aria-hidden
-      />
-      {/* Card */}
-      <div
-        role="dialog"
-        aria-modal="true"
-        className="relative z-10 flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_30px_80px_-20px_rgba(0,0,0,0.4)]"
-      >
-        {/* Header: copy + close. data-slot 是功能性的：本弹窗 portal 到
-            document.body、不在 .chat-app 子树内，缺它会被 canvas 裸 button
-            reset 填成描边卡片（同 AssistantMessage 打开方式菜单的泄漏）。 */}
-        <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border px-3 py-2">
-          <button
-            type="button"
-            data-slot="modal-action"
-            onClick={copy}
-            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-          >
-            <CopyGlyph />
-            {copied ? '已复制' : '复制'}
-          </button>
-          <button
-            type="button"
-            data-slot="modal-action"
-            onClick={onClose}
-            aria-label="关闭"
-            className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-          >
-            <CloseGlyph />
-          </button>
-        </div>
-        {/* Full text — scrollable, preserves wrapping. */}
-        <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words px-5 py-4 text-[14px] leading-[1.6] text-foreground">
-          {text}
-        </div>
-      </div>
-    </div>,
-    document.body
-  )
-}
-
-function CopyGlyph(): React.JSX.Element {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden>
-      <rect x="9" y="9" width="11" height="11" rx="2" />
-      <path d="M5 15V5a2 2 0 0 1 2-2h8" />
-    </svg>
-  )
-}
-
-function CloseGlyph(): React.JSX.Element {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-      <path d="M6 6l12 12M18 6 6 18" />
-    </svg>
-  )
-}
-
-/**
  * Render the user bubble's text, turning `@"/abs/path"` / `@/abs/path`
  * file mentions into inline chips (document glyph + file name) instead
- * of dumping the raw absolute path into the blue bubble.
+ * of dumping the raw absolute path into the bubble.
  *
  * Why here and not upstream: the wire format sent to fusion-code MUST
  * stay `@"path"` (extractAtMentionedFiles parses it), and the chat
@@ -543,7 +511,9 @@ function UserBubbleText({ text }: { text: string }): React.JSX.Element {
       <span
         key={`sk-${key++}`}
         title={slashMatch[1]}
-        className="mr-0.5 inline-flex items-center gap-1 rounded-md bg-white/20 px-1.5 py-0.5 align-baseline text-[13px] font-medium ring-1 ring-white/25"
+        // 底色/描边走中性 token 而不是半透明白：气泡自 2026-07-17 起是
+        // `bg-muted` 中性底，白系 chip 在浅色主题下等于隐形。
+        className="mr-0.5 inline-flex items-center gap-1 rounded-md bg-background px-1.5 py-0.5 align-baseline text-[13px] font-medium ring-1 ring-border"
       >
         <SkillChipIcon src={slashSkill.image} size={12} />
         <span>{slashSkill.label}</span>
@@ -567,15 +537,16 @@ function UserBubbleText({ text }: { text: string }): React.JSX.Element {
       <span
         key={`fm-${key++}`}
         title={path}
-        className="mx-0.5 inline-flex max-w-[220px] items-center gap-1 rounded-md bg-white/20 px-1.5 py-0.5 align-baseline text-[13px] font-medium ring-1 ring-white/25"
+        // 中性 token 而非半透明白，同上面的技能 chip。
+        className="mx-0.5 inline-flex max-w-[220px] items-center gap-1 rounded-md bg-background px-1.5 py-0.5 align-baseline text-[13px] font-medium ring-1 ring-border"
       >
-        {/* Per-type glyph, but NOT coloured — the chip sits on the blue
-            user bubble where the icon inherits the bubble's white text;
-            a type accent colour would read as dirty here. */}
+        {/* Per-type glyph, kept un-coloured: 一行文字里嵌三四个各带类型色的
+            小图标会比文字本身还吵，chip 的职责是「这是个文件」而不是「这是
+            哪类文件」。 */}
         <FileTypeIcon
           pathOrName={path}
           size={12}
-          className="shrink-0 opacity-90"
+          className="shrink-0 text-muted-foreground"
         />
         <span className="truncate">{basenameOf(path)}</span>
       </span>
@@ -772,7 +743,7 @@ function UserImagePart({
               >
                 <span
                   aria-hidden
-                  className="flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-lg transition-colors group-hover/close:border-input group-hover/close:bg-muted"
+                  className="flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-lg transition-colors group-hover/close:border-input group-hover/close:bg-hover"
                 >
                   <svg
                     width="18"

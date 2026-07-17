@@ -28,7 +28,7 @@ import { Label } from '@/src/components/ui/label'
 
 import { useI18n, useT } from '../../../i18n'
 import { attachFilesToComposer } from '../../../composer/attachFiles'
-import { useChatStore, useDelayedSessionLoading } from '../../../stores/chat'
+import { useChatStore } from '../../../stores/chat'
 import { useComposerModeStore } from '../../../stores/composerMode'
 import { useSessionTitleStore } from '../../../stores/sessionTitle'
 import { findSkillChipSpec } from '../../../composer/skillChipRegistry'
@@ -212,85 +212,75 @@ function ChatColumnResizeHandle({
 }
 
 /**
- * Session-switch transition phases. See the curtain comment inside
- * ThreadView for the full design rationale.
+ * 会话切换加载态 = 骨架屏，唯一信号是 store 的 `sessionSwitching`
+ * （2026-07-17 用户要求：去掉顶部进度条，对话区改骨架屏加载）。
  *
- *   idle → (beginSessionSwitch) → out → [600ms unresolved] → skeleton
- *        → (setSession mounts target) ──────────────────────→ in → idle
+ *   idle ──(beginSessionSwitch)──> skeleton ──(setSession 挂载目标)──> idle
  *
- * Two independent triggers feed the machine:
- *   - `sessionSwitching` (store): raised on click, cleared on mount. Only
- *     observable when the mount is asynchronous (disk load) — a cache-hit
- *     switch sets+clears it inside one store batch, invisible here.
- *   - `sessionId` change: fires for every switch INCLUDING cache hits, and
- *     is what plays the entrance that masks the message-array swap +
- *     scroll reset.
+ * 为什么绑 `sessionSwitching` 而不是 `sessionLoading`（进度条的旧数据源）：
+ * 两者看着都是「切换中」，语义却差一整个冷启动——
+ *   - sessionSwitching：click → 目标 transcript 上屏。**正是历史还没内容
+ *     可显的窗口**，也正是骨架该占位的窗口。
+ *   - sessionLoading：一路 true 到 switchSession resolve。历史那时早已上屏，
+ *     拿骨架盖住已在屏的内容是错的（见 stores/chat.ts 对该字段的警告）。
+ * 实测两窗口现已几乎重合：engine.switchToSession 是 lazy 的（只切指针、
+ * 单微任务返回，cli 冷启动推迟到首次 send），所以 sessionLoading 实际只
+ * 跟着 loadSession 的磁盘读走——换句话说进度条能覆盖的时间，骨架一样覆盖，
+ * 删它不留反馈真空。冷启动期的交互闸门另在别处（composer 走 isLoading）。
+ *
+ * 不做延迟门槛（旧进度条要 200ms 去抖、旧帘幕要 600ms 才升级骨架）：
+ * cache-hit 路径的 setSession 与 beginSessionSwitch 落在同一个 store batch，
+ * 订阅者根本观察不到 true，快切天然零骨架；真有磁盘读时骨架立刻占位才是
+ * 「点了有反应」。
+ *
+ * ⚠️ 更要命的是：**延迟门槛在这条路径上根本不可能生效**。冷路径一 resolve，
+ * 主线程就被 IPC 大 payload 的反序列化 + setSession 的同步大 commit 连续占满
+ * （实测切一个 PPT 长会话，8ms 的 setInterval 探针被推迟到 ~130ms 才跑一次，
+ * 持续 400ms）。setTimeout / rAF / React 渲染在那扇窗口里全部停摆——门槛的
+ * timer 只会在阻塞结束后才 fire，骨架反而卡在「加载已完成」的时刻才出现。
+ * 骨架必须在阻塞**开始之前**就已合成上屏，也就是 beginSessionSwitch 的同一拍。
  */
-type SessionSwitchPhase = 'idle' | 'out' | 'skeleton' | 'in'
-
-/**
- * 会话切换过渡总开关。2026-07-04 应用户要求关闭：切换即时呈现——不播
- * 帘幕（ssw-out 的沉降磨砂 / ssw-in 的显影归位），也不升级骨架屏；慢加载
- * 的用户反馈只剩右下角「正在打开会话…」toast。相位机与骨架组件原样保留：
- * 机器挂着 store 的 sessionSwitching 信号与 600ms 升级时序，删了再装回
- * 成本高，翻这个开关即可恢复。
- */
-const SESSION_SWITCH_TRANSITION_ENABLED = false
-
-function useSessionSwitchPhase(sessionId: string | null): SessionSwitchPhase {
-  const switching = useChatStore((s) => s.sessionSwitching)
-  const [phase, setPhase] = useState<SessionSwitchPhase>('idle')
-
-  useEffect(() => {
-    if (switching) {
-      setPhase('out')
-      // Escalate to the skeleton only when the load outlives the curtain —
-      // 600ms ≈ well past any cache hit / normal JSONL parse, so it only
-      // shows for genuinely slow loads (huge transcript, cold disk).
-      const t = window.setTimeout(() => setPhase('skeleton'), 600)
-      return () => window.clearTimeout(t)
-    }
-    // Switch ended without a sessionId change (throw path, or a rebind to
-    // the same id): lift the veil through the entrance rather than
-    // snapping, so the error path still resolves gracefully.
-    setPhase((p) => (p === 'out' || p === 'skeleton' ? 'in' : p))
-    return undefined
-  }, [switching])
-
-  // Entrance on every mounted switch — the only signal a cache-hit switch
-  // emits (see above).
-  const prevIdRef = useRef(sessionId)
-  useEffect(() => {
-    if (prevIdRef.current === sessionId) return
-    prevIdRef.current = sessionId
-    setPhase('in')
-  }, [sessionId])
-
-  // The entrance is a one-shot CSS animation; return to idle afterwards so
-  // the class (and its filter/transform) is removed and the viewport goes
-  // back to a plain unfiltered scroll container.
-  useEffect(() => {
-    if (phase !== 'in') return
-    const t = window.setTimeout(() => setPhase('idle'), 400)
-    return () => window.clearTimeout(t)
-  }, [phase])
-
-  // 开关关闭时对外恒等 'idle'（消费端零 ssw 类、零骨架/veil 挂载）。内部
-  // 状态机照常空转——保持 hooks 顺序稳定，也让开关翻回来即刻能用。
-  return SESSION_SWITCH_TRANSITION_ENABLED ? phase : 'idle'
+function useSessionSwitchLoading(): boolean {
+  return useChatStore((s) => s.sessionSwitching)
 }
 
 /**
- * Chat-shaped shimmer skeleton shown when a session load outlives the
- * switch curtain. The rows mirror the transcript's real anatomy — a
+ * Chat-shaped shimmer skeleton shown while a session switch loads its
+ * transcript. The rows mirror the transcript's real anatomy — a
  * right-aligned user pill, then left-aligned assistant paragraph bars —
  * so the loading state previews the shape of what's coming instead of
  * showing a generic spinner. Shimmer gradient matches `.pes-sk`
  * (main.css); classes live there too (`.ssw-*`).
+ *
+ * 底必须不透明：帘幕退役后，身下是**清晰未磨砂的旧会话内容**，半透明
+ * 会让两个会话的文字叠印在一起。骨架必须完全接管这块区域。
+ *
+ * ⚠️ 底色是 bg-card 不是 bg-background——聊天内容列自身铺的就是 bg-card
+ * （见 dropzone 容器的 className），而两个 token 差着一档（浅色 100% vs
+ * 97%、暗色 13% vs 10%）。盖错会在白卡上糊出一块灰色矩形，正是「canvas
+ * 内容区铺灰底盖住共享白色 shell-content-card」那条事故的同族。改这里的
+ * 底色前先确认身下那层现在铺的是什么。
+ *
+ * ⚠️ **刻意没有淡入**（只有 exit 淡出）——别「补」回来。第一版写了
+ * initial/animate 的 150ms opacity 淡入，实测（CDP 逐帧采样）峰值透明度只
+ * 到 **0.27**：motion 的 opacity 是 JS 驱动的，而骨架服役的整个窗口恰恰是
+ * 主线程被 IPC 反序列化 + 大 commit 占满的窗口，淡入根本跑不动，直到加载
+ * 结束主线程空闲才爬起来——然后立刻被 exit 打断。骨架于是只在「已经不需要
+ * 它」的一瞬现身，把「立刻占位」这个唯一使命弄丢了。mount 即 opacity:1 与
+ * 主线程状态无关，任何时候都成立。
+ * （exit 淡出可以留：那时 mount 已完成、主线程空闲，实测曲线平滑。）
+ * 骨架条自身的交错入场仍由 .ssw-sk 的 CSS animation 负责——CSS 的
+ * opacity/transform 动画跑在合成器线程上，不受主线程阻塞影响，与这里的
+ * JS 驱动动画是两回事。
  */
 function SessionSwitchSkeleton(): React.JSX.Element {
   return (
-    <div className="absolute inset-0 z-10 overflow-hidden bg-background/55">
+    <motion.div
+      aria-hidden
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15, ease: 'easeOut' }}
+      className="absolute inset-0 z-10 overflow-hidden bg-card"
+    >
       <div className="mx-auto flex w-full max-w-4xl flex-col px-3 pt-10">
         <div className="ssw-sk mb-7 h-9 w-1/3 self-end rounded-[18px]" />
         <div className="mb-7 flex flex-col gap-2.5 pl-[18px]">
@@ -310,7 +300,7 @@ function SessionSwitchSkeleton(): React.JSX.Element {
       {/* Composer skeleton for the dock-less case. The dock renders under
           `ThreadPrimitive.If empty={false}` (see the main layout):
           switching away from the empty-state hero (composer centered
-          inside the now-veiled viewport, no dock) leaves the bottom of the
+          inside the now-covered viewport, no dock) leaves the bottom of the
           pane hollow — this fills that hole and previews the target
           session's layout. The NON-empty case (real dock present) gets its
           own overlay INSIDE the dock instead (same ComposerSkeleton,
@@ -320,7 +310,7 @@ function SessionSwitchSkeleton(): React.JSX.Element {
           <ComposerSkeleton />
         </div>
       </ThreadPrimitive.If>
-    </div>
+    </motion.div>
   )
 }
 
@@ -419,7 +409,7 @@ function EarlierMessagesGate(): React.JSX.Element | null {
       <button
         type="button"
         onClick={onReveal}
-        className="rounded-full border border-border/70 bg-background px-3.5 py-1.5 text-[12px] text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+        className="rounded-full border border-border/70 bg-background px-3.5 py-1.5 text-[12px] text-muted-foreground shadow-sm transition-colors hover:bg-hover hover:text-foreground"
       >
         {lang === 'zh'
           ? `显示更早的消息（还有 ${hiddenCount} 条）`
@@ -446,37 +436,12 @@ function findScrollParent(el: HTMLElement | null): HTMLElement | null {
 export function ThreadView(): React.JSX.Element {
   // Session transition signals from the chat store.
   //   - sessionId      : switches when loadSession resolves (~100ms, or
-  //                      synchronously on a history-cache hit). Drives the
-  //                      controlled opacity fade-in below (NOT a keyed
-  //                      remount — see the content column).
-  //   - sessionLoading : stays true until switchSession resolves
-  //                      (~3-8s cold start). Drives ONLY the thin
-  //                      top progress bar — no full-column veil, no
-  //                      content hide. Old content stays visible
-  //                      until the new messages arrive, then swaps
-  //                      with a soft fade.
-  // Rationale: the full-screen loading overlay was reading as a hard
-  // interrupt — eye jumped to the center, waited, jumped back. A
-  // thin top bar is standard "something is loading" signal that
-  // keeps the user's focus anchored on content, while the fade on
-  // swap preserves the sense of "the view changed".
+  //                      synchronously on a history-cache hit).
+  //   - sessionSwitching : click → 目标 transcript 上屏的窗口，驱动骨架屏
+  //                      （见 useSessionSwitchLoading 的长注释）。
+  // 旧的 sessionLoading → 顶部细进度条这条链已删（2026-07-17）：切换加载
+  // 态统一由骨架屏承担，形状即目标页面，而不是一条与内容无关的顶部细线。
   const sessionId = useChatStore((s) => s.sessionId)
-  // 空态（新对话欢迎页：hero 标题 + 居中 composer + 演示区 + 积分横幅）刷新后
-  // 是否放开 assistant-ui Viewport 的 autoScroll（stick-to-bottom）。空态**必须
-  // 关掉**：Viewport 的 autoScroll 不区分空/有消息，`isAtBottom` 初始为 true，
-  // 刷新后 DemoShowcase 的演示卡片异步（IPC listReplayDemos）注入使内容突然超
-  // 一屏、触发库的 useOnResizeContent → scrollToBottom('instant') → 把欢迎页怼到
-  // 底、hero 标题被顶栏切掉、直接看到底部积分横幅（用户实测）。有消息态才需要
-  // 跟随到底。用 messages.length 派生（本地 store 镜像当前会话消息，响应式）。
-  const hasMessages = useChatStore((s) => s.messages.length > 0)
-  // Debounced variant for the *visual* progress bar only: a fast switch
-  // (cache hit / lazy engine) clears `sessionLoading` within a frame or
-  // two, and lighting the bar for that flicker reads as "always busy".
-  // `useDelayedSessionLoading` only returns true once loading has held
-  // for ~200ms, so a quick switch shows no bar at all while a real cold
-  // start still surfaces it. The raw `sessionLoading` is kept for any
-  // logic that must react immediately.
-  const sessionLoadingChrome = useDelayedSessionLoading()
   // Slides two-pane layout is bound PER SESSION, not to the live composer
   // picker: a session shows the right-hand slides workspace only if it was
   // *started* in slides mode (marked on first send — see the composer send
@@ -537,36 +502,25 @@ export function ThreadView(): React.JSX.Element {
   // rail's width in px, persisted to localStorage so a drag survives reloads
   // and session switches. See useResizableChatColumn for the clamp + persist.
   const { width: chatColWidth, onResizeStart } = useResizableChatColumn()
-  // Session-switch curtain (replaces both the old keyed content remount and
-  // the interim 0.3→1 opacity fade).
+  // 会话切换加载态：骨架屏盖住内容区直到目标 transcript 上屏。
   //
-  // History, so nobody re-treads it:
+  // History, so nobody re-treads it（这块反复翻烧过三轮，别再往回走）：
   //   v1 keyed the content column by sessionId → full subtree remount, every
   //      code block re-highlighting in one frame ("switch jank").
   //   v2 kept node identity + played a 0.3→1 opacity fade on the INNER
   //      column. Deliberately opacity-only, because a y+blur intro applied
   //      to the inner column had pushed the scroll container past its
   //      viewport and flickered the scrollbar.
-  //   v3 (this): the curtain animates the SCROLL CONTAINER itself, not the
-  //      inner column — transform/filter on the container are composited on
-  //      the whole box and cannot alter its internal scroll geometry, so the
-  //      v2 regression physically can't recur. That unlocks the richer
-  //      blur+rise transition without the jitter that killed it in v2.
+  //   v3 帘幕：把 blur+位移挪到滚动容器自身（不碰内部滚动几何，v2 的抖动
+  //      物理上不可能复现）。2026-07-04 用户否决——切换要即时呈现，整套被
+  //      SESSION_SWITCH_TRANSITION_ENABLED 关停，只留顶部细进度条报进度。
+  //   v4 (this，2026-07-17)：进度条也去掉，加载态回归骨架屏——一条与内容
+  //      无关的顶部细线读不出「在加载什么」，骨架的形状本身就是答案。帘幕
+  //      连同那个开关一并删除（两次判定同向：切换不要转场动画）。
   //
-  // Phase machine (useSessionSwitchPhase):
-  //   out      — click → target transcript not yet mounted: old content
-  //              sinks behind a frost veil (masks the array swap + scroll
-  //              reset that used to read as "抖动").
-  //   skeleton — mount outlived the curtain (>600ms: huge JSONL / cold
-  //              disk): chat-shaped shimmer rows over the veil.
-  //   in       — transcript mounted: pane rises + unblurs. A cache-hit
-  //              switch collapses begin/end into one store batch, so it
-  //              plays ONLY this phase — zero pre-mount chrome.
-  //
-  // ⚠️ 目前整套过渡被 SESSION_SWITCH_TRANSITION_ENABLED=false 关停
-  //（用户要求切换零动画），本值恒为 'idle'——下面所有 ssw 类与骨架/veil
-  // 分支都是死路，重新启用翻那个开关即可。
-  const switchPhase = useSessionSwitchPhase(sessionId)
+  // 骨架只在 sessionSwitching 期间挂载，快切（cache hit）零骨架——原因见
+  // useSessionSwitchLoading 的注释。
+  const switchLoading = useSessionSwitchLoading()
 
   return (
     <ThreadPrimitive.Root
@@ -648,27 +602,33 @@ export function ThreadView(): React.JSX.Element {
           squeezed by the scrolling viewport below. */}
       <ChatHeader />
 
-      {/* Top indeterminate progress bar. Absolute at the very top of
-          the Thread root so it sits above the viewport mask and the
-          composer. Presence-animated so it also fades in/out rather
-          than popping. */}
-      <AnimatePresence>
-        {sessionLoadingChrome && <TopProgressBar />}
-      </AnimatePresence>
+      {/* （已删）顶部细进度条 —— 2026-07-17 用户要求，切换加载态改由下面的
+          骨架屏承担。 */}
 
       {/* Scrollable message area. The wrapper takes the flex slot
           (min-h-0 + flex-1, the canonical shrink-inside-flex-column
-          pattern) and stays UNfiltered — it hosts the skeleton overlay,
-          which must not inherit the curtain's blur. The Viewport fills it
-          (h-full) and carries the switch-phase classes: transform/filter
-          on the scroll CONTAINER composite the whole box without touching
-          its internal scroll geometry (see the curtain history comment
-          above — animating the inner column is what used to jitter). */}
+          pattern) and is the positioning context for the skeleton overlay
+          （骨架是它的绝对定位子节点，盖住 Viewport 但不盖 header）。 */}
       <div className="relative min-h-0 flex-1">
         <ThreadPrimitive.Viewport
-          // 空态关掉 autoScroll，防止欢迎页被 stick-to-bottom 怼到底（见上方
-          // hasMessages 定义处的完整注释）。有消息态保持跟随到底（=true）。
-          autoScroll={hasMessages}
+          // turnAnchor="top"：新一轮开始时，把刚发的用户消息钉在视口顶部
+          // （assistant-ui 内置行为，MessagePrimitive.Root 已经在用、不需要
+          // 额外标记——见其自身文档："No additional component is required"）。
+          // 效果是发送后整页基本只看得到这一条消息，下面留白随回复流式填满，
+          // 而不是像旧版那样把整段历史继续钉在屏幕上、新消息只是缀在底部。
+          //
+          // 不再传 autoScroll（连带上面旧的 hasMessages 派生一起删）：库在
+          // turnAnchor="top" 时把它默认成 false（useThreadViewportAutoScroll.js
+          // 的 `autoScroll = turnAnchor !== "top"`）。这里刻意不显式传 true 扳回
+          // 来——库的跟随分支门槛是它自己的 isAtBottom，而那个判定式
+          // `|scrollHeight-scrollTop-clientHeight| < 1` 在本项目的半像素视口下
+          // 不可靠（实测视口真实高 1009.5、clientHeight 取整成 1010，差值 −0.5；
+          // 换个窗口尺寸就能凑出 ±1 让判定恒假，2026-07-13 那次「明明在最底部
+          // 却不动」就是它）。跟随统一交给 ScrollToBottomButton 里那套 2px 容差
+          // 的自研实现（followIfSticky），不受亚像素影响，见其注释。
+          //
+          // 空态（欢迎页）关闭 autoScroll 的旧诉求也顺带被这个默认值覆盖了。
+          turnAnchor="top"
           // (Removed) top/bottom fade mask. The viewport used to fade its first
           // ~44px and last ~56px to transparent so scrolling text dissolved
           // near the header / composer; per design that fade-out is gone, so
@@ -681,14 +641,10 @@ export function ThreadView(): React.JSX.Element {
           // can land at the "just fits" boundary and any sub-pixel wobble
           // (font-metric changes, motion, font loading) flickers the scrollbar
           // in/out → horizontal reflow → visible jitter.
-          className={
-            'h-full overflow-y-auto [scrollbar-gutter:stable] ' +
-            (switchPhase === 'out' || switchPhase === 'skeleton'
-              ? 'ssw-out'
-              : switchPhase === 'in'
-                ? 'ssw-in'
-                : '')
-          }
+          // 不再挂 ssw-out / ssw-in 帘幕类（v3 随进度条一起退役）：切换期
+          // 视口保持原样，由骨架屏不透明盖住即可——容器上再叠 filter 会让
+          // 它成为 fixed 后代的 containing block，白付一份合成开销。
+          className="h-full overflow-y-auto [scrollbar-gutter:stable]"
         >
           {/* Inner column caps reading width and centers messages. The
               `min-h-full` lets the empty-state `flex-1` stretch so the
@@ -714,10 +670,12 @@ export function ThreadView(): React.JSX.Element {
           </div>
         </ThreadPrimitive.Viewport>
 
-        {/* Chat-shaped shimmer rows for loads that outlive the curtain.
-            Sibling of the (blurred) Viewport, so it renders crisp on top
-            of the veil. */}
-        {switchPhase === 'skeleton' && <SessionSwitchSkeleton />}
+        {/* 切换加载骨架：Viewport 的兄弟节点，不透明盖住旧 transcript 直到
+            目标会话上屏。AnimatePresence 在这里只为**延迟 unmount** 以播 exit
+            淡出（入场刻意无动画，理由见 SessionSwitchSkeleton 注释）。 */}
+        <AnimatePresence>
+          {switchLoading && <SessionSwitchSkeleton />}
+        </AnimatePresence>
       </div>
 
       {/* (Removed) 顶部渐进模糊带 — the backdrop-blur strip over the viewport
@@ -756,22 +714,31 @@ export function ThreadView(): React.JSX.Element {
                 同一个 AskComposerSwap 槽），恢复自 git 历史。 */}
             <Composer />
           </div>
-          {/* Dock veil for the skeleton phase of a session switch: the real
-              composer stays mounted (no layout jump — the veil just covers
-              it), and the shared ComposerSkeleton draws the loading shape
-              exactly over it. Opaque background: unlike the viewport
-              overlay (which sits on frosted content), the composer beneath
-              is crisp text and would bleed through a translucent wash.
+          {/* Dock veil during a session switch: the real composer stays
+              mounted (no layout jump — the veil just covers it), and the
+              shared ComposerSkeleton draws the loading shape exactly over
+              it. Opaque background：身下是清晰的真 composer，半透明会透出
+              文字；底色同视口骨架取 bg-card（= 内容列自身的底，别改成
+              bg-background，两者差一档会糊出灰块）。
               justify-end pins the skeleton to the dock's bottom so any
               extra dock height (status strip / attachment row) is simply
               covered above it. Padding 与 dock 同参（px-3 pb-3，dock 的
               pt-4 已随 frosted band 一起退役）——骨架必须画在真 composer
-              的精确位置上。 */}
-          {switchPhase === 'skeleton' && (
-            <div className="absolute inset-0 z-20 flex flex-col justify-end rounded-b-[4px] bg-background px-3 pb-3">
-              <ComposerSkeleton />
-            </div>
-          )}
+              的精确位置上。淡入淡出与视口骨架同参，两块一起进退。 */}
+          <AnimatePresence>
+            {switchLoading && (
+              <motion.div
+                aria-hidden
+                // 与视口骨架同参：无淡入（主线程阻塞期跑不动，理由见
+                // SessionSwitchSkeleton 注释），只淡出。
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15, ease: 'easeOut' }}
+                className="absolute inset-0 z-20 flex flex-col justify-end rounded-b-[4px] bg-card px-3 pb-3"
+              >
+                <ComposerSkeleton />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </ThreadPrimitive.If>
 
@@ -936,6 +903,31 @@ function ScrollToBottomButton(): React.JSX.Element {
     const distanceToBottom = (vp: HTMLElement): number =>
       vp.scrollHeight - vp.scrollTop - vp.clientHeight
 
+    // 「用户正在展开/收起某个折叠块」的让路窗口（见 followIfSticky 的门控）。
+    // 事件委托在视口上，而不是给每个折叠组件挂钩子：聊天流里的折叠块有四处
+    // <details>（ToolCallCard / WorkflowTaskTree / bash、web 两个 formatter）
+    // 外加思考过程那个 aria-expanded 按钮，将来还会有——委托一处全覆盖，新增
+    // 折叠块零改动。
+    //
+    // 只认 summary / [aria-expanded]，不是「点了任何东西都让路」：流式期间
+    // 用户点个复制按钮、选段文字都不该让跟随停摆。
+    //
+    // 用 click 而不是 details 的 toggle 事件：toggle 分不清人点的还是代码改
+    // 的，而 ToolCallCard 的 <details open={running}> 在 running→settled 时会
+    // 自己 toggle 一次——那次不是用户主导，不该让路。click.isTrusted 精确区分。
+    // capture 阶段挂，抢在 React 合成事件之前，避免被 stopPropagation 吃掉。
+    const USER_TOGGLE_GRACE_MS = 400 // details 展开动画 0.32s + 余量
+    let userToggleAt = 0
+    const isUserToggling = (): boolean =>
+      Date.now() - userToggleAt < USER_TOGGLE_GRACE_MS
+    const onViewportClick = (e: Event): void => {
+      if (!e.isTrusted) return
+      const t = e.target
+      if (t instanceof Element && t.closest('summary, [aria-expanded]')) {
+        userToggleAt = Date.now()
+      }
+    }
+
     const recompute = (): void => {
       const vp = viewportRef.current
       if (!vp) {
@@ -988,7 +980,36 @@ function ScrollToBottomButton(): React.JSX.Element {
     const followIfSticky = (): void => {
       const vp = viewportRef.current
       if (!vp) return
-      if (sticky && distanceToBottom(vp) > TOLERANCE) {
+      // 跟随的唯一门槛：这次内容长高【不是用户自己点出来的】(2026-07-17)。
+      //
+      // 【为什么必须有人跟】turnAnchor="top" 并不像旧注释设想的那样「接管了
+      // 这一轮该怎么滚」——读 0.12.24 源码，它只做三件事：把 autoScroll 的
+      // 默认值翻成 false（useThreadViewportAutoScroll.js 的
+      // `autoScroll = turnAnchor !== "top"`）、注册用户消息高度当 inset、给
+      // 最后一条 assistant 消息挂 slack 的 min-height。一次滚动都不执行。
+      // 库里唯一的滚动写入是 `div.scrollTo({ top: div.scrollHeight })`，而
+      // 驱动它的 scrollingToBottomBehaviorRef 在 handleScroll 判定到底那一拍
+      // 就被清成 null——「到达底部」本身就是关掉跟随的开关。于是 autoScroll
+      // 为 false 时，runStart 后第一帧到底、开关即关，整轮流式无人跟随
+      // （用户实测：滚动条停在原地、↓ 按钮常驻）。这里就是那个缺位的写手。
+      //
+      // 【怕「怼掉钉顶」是多余的】库的「钉顶」本身就是靠「滚到底」实现的：
+      // slack 把最后一条 assistant 消息撑到 viewport-inset-clamp 高，滚到底
+      // 时用户消息恰好被顶到视口顶部。钉底与钉顶是同一个动作，抢不起来。
+      //
+      // 【为什么不用 streaming 当门控】试过 `streamingRef.current &&`，实测
+      // 流式收尾掉队 39.5px：streaming 翻 false 的那一刻内容还在长（ActionBar
+      // 落地约 40px），门一关就没人跟了。流式与否根本不是这里要问的问题——
+      // 要问的是「这次长高是谁引起的」。AI 吐字、ActionBar 落地、图片加载完
+      // 都该跟；只有用户自己点开一张卡不该跟（无条件钉底会把他正在看的那张
+      // 卡推出视口顶部，实测 −398px，让路后只剩 −1px）。让路期交给 Chromium
+      // 的 scroll anchoring（视口 overflow-anchor: auto），它保住的正是
+      // 「用户正在看的东西不动」，比我们钉底更对。
+      if (
+        !isUserToggling() &&
+        sticky &&
+        distanceToBottom(vp) > TOLERANCE
+      ) {
         vp.scrollTop = vp.scrollHeight
         lastScrollTop = vp.scrollTop
       }
@@ -996,6 +1017,7 @@ function ScrollToBottomButton(): React.JSX.Element {
     }
 
     viewport.addEventListener('scroll', onScroll, { passive: true })
+    viewport.addEventListener('click', onViewportClick, true)
     const ro = new ResizeObserver(followIfSticky)
     // 视口盒子：窗口/分栏 resize 改变 clientHeight。内容列：流式输出、
     // 消息展开等一切内容增长（视口自身盒子对这些纹丝不动）。
@@ -1004,6 +1026,7 @@ function ScrollToBottomButton(): React.JSX.Element {
     if (content instanceof HTMLElement) ro.observe(content)
     return () => {
       viewport.removeEventListener('scroll', onScroll)
+      viewport.removeEventListener('click', onViewportClick, true)
       ro.disconnect()
     }
   }, [])
@@ -1045,64 +1068,6 @@ function ScrollToBottomButton(): React.JSX.Element {
         </svg>
       </button>
     </ThreadPrimitive.ScrollToBottom>
-  )
-}
-
-/* ───────────────────────── TopProgressBar ───────────────────────── */
-
-/**
- * Thin indeterminate progress bar pinned to the top of ThreadView.
- * Shown while a session switch / new-session IPC is in flight
- * (see FusionRuntimeProvider.onSwitchToThread / onSwitchToNewThread —
- * both toggle `sessionLoading` on the chat store).
- *
- * Replaces the old full-column SessionLoadingView: that one read as a
- * hard interrupt (focus jumped to center, waited, jumped back). A
- * 2px top bar is the standard "something is loading" signal for modern
- * apps — keeps the user's focus on content and lets the existing keyed
- * enter animation do the "view changed" work on its own.
- *
- * Visual anatomy:
- *   - Track: full-width line, transparent so it only reads as the
- *            moving segment on top of the thread.
- *   - Segment: 35%-wide accent-colored strip that slides left → right
- *              in a 1.1s loop. The segment has a soft box-shadow in
- *              the accent color so it looks like a faint glow trailing
- *              the leading edge, echoing browser loading bars.
- *   - Fade in/out: the whole container fades 0 → 1 / 1 → 0 via
- *                  AnimatePresence in ThreadView. Keeps the bar from
- *                  popping in harshly for very fast switches.
- */
-function TopProgressBar(): React.JSX.Element {
-  return (
-    <motion.div
-      role="progressbar"
-      aria-label="Loading session"
-      aria-busy="true"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.18, ease: 'easeOut' }}
-      className="pointer-events-none absolute inset-x-0 top-0 z-30 h-[2px] overflow-hidden"
-    >
-      {/* Inner slider is absolutely positioned inside the track (which
-          is already `absolute`, so it's the positioning context). A
-          35%-wide accent segment animates from off-screen left to
-          off-screen right in a 1.1s loop — the track's `overflow-hidden`
-          clips the ends so it reads as a sliding highlight rather
-          than a wrapping strip. Box-shadow in accent gives the
-          leading edge a soft glow trail. */}
-      <motion.div
-        className="absolute top-0 h-full w-[35%] rounded-r-full bg-brand shadow-[0_0_10px_0_hsl(var(--brand)/0.55)]"
-        initial={{ left: '-40%' }}
-        animate={{ left: '100%' }}
-        transition={{
-          duration: 1.1,
-          repeat: Infinity,
-          ease: [0.42, 0, 0.58, 1]
-        }}
-      />
-    </motion.div>
   )
 }
 
@@ -1189,17 +1154,31 @@ function ChatHeader(): React.JSX.Element {
   // 渐变提交按钮）——两处保持像素级同款，改一处记得同步另一处。
   const [renameOpen, setRenameOpen] = useState(false)
   const [draft, setDraft] = useState('')
+  // 打开弹窗那一刻的预填值，作为「用户到底改没改」的比较基准。不能拿 store
+  // 里的原始 title 当基准——预填的是顶栏显示文字（已剥标记/压路径/拆命令
+  // 前缀），跟原始 title 天然不相等，用原始 title 比会把「打开就点保存」
+  // 判成真改名，静默把命令前缀和完整路径写没。
+  const initialDraftRef = useRef('')
   const renameInputRef = useRef<HTMLInputElement | null>(null)
   // ··· 菜单选「重命名」时置 true：菜单关闭的 auto-focus 默认把焦点还给
   // trigger 按钮，会跟弹窗聚焦 input 打架（radix 的 restore 也是异步的，
   // 晚一拍就把焦点抢走）。选中重命名的那次关闭用它拦掉 auto-focus。
   const pendingEditRef = useRef(false)
 
+  // 预填 = 顶栏此刻显示的那行文字（restTitle），不是 store 里的原始 title
+  // （2026-07-17 用户要求「跟顶部文字保持一致」）。原始 title 是首条消息
+  // 原文——带 `/claude-desktop:ppt-master` 命令前缀、整条绝对路径、可能还有
+  // [[image-edit]] 协议标记；顶栏早把它剥/压/拆成人话了，弹窗却把没处理的
+  // 原文摊开，用户看到的和要编辑的不是同一个东西。
+  // 空标题（display 落到「未命名」兜底）预填空串让 placeholder 出场，而不是
+  // 让用户对着「未命名」三个字改。
   const startEdit = useCallback((): void => {
     if (!sessionId) return
-    setDraft(title ?? '')
+    const prefill = condensedTitle && condensedTitle.trim() ? restTitle : ''
+    setDraft(prefill)
+    initialDraftRef.current = prefill
     setRenameOpen(true)
-  }, [sessionId, title])
+  }, [sessionId, condensedTitle, restTitle])
 
   // 弹窗开后聚焦全选输入框（等 radix 菜单关闭抢完焦点，与内容挂载对齐；
   // 同 RailSessionList 的 renameTarget 弹窗）。
@@ -1246,7 +1225,10 @@ function ChatHeader(): React.JSX.Element {
   const commitEdit = useCallback(async (): Promise<void> => {
     setRenameOpen(false)
     const trimmed = draft.trim()
-    if (!sessionId || !trimmed || trimmed === title) return
+    // 与「打开时的预填」比而不是与原始 title 比——理由见 initialDraftRef。
+    // 没动过内容就当取消：原始 title（连同命令前缀与完整路径）原样留着，
+    // 顶栏渲染出来的文字一模一样，用户看不出差别，也没白丢信息。
+    if (!sessionId || !trimmed || trimmed === initialDraftRef.current) return
     const previous = title
     // Optimistic: the header repaints now; the rename's sessionListChanged
     // broadcast re-derives the same value from disk via the list adapter.
@@ -1341,7 +1323,11 @@ function ChatHeader(): React.JSX.Element {
             // itself, not the whole header band.
             className="group/title flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 -mx-1.5 -my-0.5 text-left transition-colors [-webkit-app-region:no-drag] enabled:cursor-pointer enabled:hover:bg-foreground/[0.05] disabled:cursor-default"
           >
-            <span className="min-w-0 truncate" title={display}>
+            {/* max-w：truncate 本身只在「空间不够」时才省略——宽窗口下这个
+                flex 行里没别的东西跟标题抢空间，min-w-0+truncate 从不触发，
+                长标题就整条铺满顶栏（用户截图实锤）。加个硬上限，多长的
+                标题都不会比这更宽，超出走省略号，参考截图的紧凑宽度对齐。 */}
+            <span className="min-w-0 max-w-[320px] truncate" title={display}>
               {restTitle}
             </span>
             {canRename ? (
@@ -1533,7 +1519,10 @@ function ChatHeader(): React.JSX.Element {
               <Button
                 type="submit"
                 className="bg-[linear-gradient(135deg,hsl(var(--brand)),color-mix(in_srgb,hsl(var(--brand))_85%,#000))] text-white shadow-[0_1px_2px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.18)] transition-[opacity,box-shadow] hover:opacity-95 disabled:bg-none disabled:bg-muted disabled:text-muted-foreground/70 disabled:opacity-100 disabled:shadow-none"
-                disabled={!draft.trim() || draft.trim() === title}
+                // 只挡空标题，不再挡「没改过」（2026-07-17 用户要求一直可点）：
+                // 一个默认就灰、要先改字才亮的主按钮，读起来像功能坏了。没改
+                // 内容就点＝commitEdit 里短路成取消，行为上安全。
+                disabled={!draft.trim()}
               >
                 保存
               </Button>

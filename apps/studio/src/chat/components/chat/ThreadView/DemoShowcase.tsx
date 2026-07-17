@@ -70,13 +70,16 @@ export function DemoShowcase(): React.JSX.Element | null {
             type="button"
             onClick={() => play(d)}
             aria-label={`${t('demoShowcasePlay')}: ${d.title}`}
-            className="group flex flex-col overflow-hidden rounded-[14px] border border-border/70 bg-card text-left transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-[3px] hover:border-border hover:shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--brand))] active:-translate-y-px"
+            className="group flex flex-col overflow-hidden rounded-[14px] border border-border/70 bg-card text-left transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-[3px] hover:border-border hover:shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--accent))] active:-translate-y-px"
           >
-            <div className="relative aspect-video overflow-hidden bg-[radial-gradient(120%_90%_at_20%_0%,hsl(var(--brand)/0.07),transparent_55%)] p-4">
+            {/* 卡片配色跟主题色（2026-07-17 从写死品牌绿改 --accent）：
+                这张卡是「点了会播放」的交互卡片，不是身份标识，颜色该
+                随设置页选的主题色走。 */}
+            <div className="relative aspect-video overflow-hidden bg-[radial-gradient(120%_90%_at_20%_0%,hsl(var(--accent)/0.07),transparent_55%)] p-4">
               <CoverSketch variant={i % 3} />
               {/* hover 播放钮 */}
               <div className="absolute inset-0 grid place-items-center bg-transparent transition-colors duration-200 group-hover:bg-foreground/5">
-                <div className="grid size-11 scale-[0.92] place-items-center rounded-full bg-[hsl(var(--brand))] text-white shadow-[0_4px_14px_hsl(var(--brand)/0.45)] transition-transform duration-200 group-hover:scale-105">
+                <div className="grid size-11 scale-[0.92] place-items-center rounded-full bg-[hsl(var(--accent))] text-white shadow-[0_4px_14px_hsl(var(--accent)/0.45)] transition-transform duration-200 group-hover:scale-105">
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
                     <path d="M4.5 2.8v10.4c0 .8.9 1.3 1.6.9l8-5.2c.6-.4.6-1.4 0-1.8l-8-5.2c-.7-.4-1.6.1-1.6.9z" />
                   </svg>
@@ -91,7 +94,7 @@ export function DemoShowcase(): React.JSX.Element | null {
                 <span className="min-w-0 truncate text-[13.5px] font-semibold text-foreground">
                   {d.title}
                 </span>
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-brand/[0.09] px-2 py-0.5 text-[10.5px] font-medium text-brand">
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-accent/[0.09] px-2 py-0.5 text-[10.5px] font-medium text-accent">
                   <span className="size-[5px] rounded-full bg-current" />
                   {t('demoShowcaseTag')}
                 </span>
@@ -114,11 +117,11 @@ export function DemoShowcase(): React.JSX.Element | null {
  */
 function CoverSketch({ variant }: { variant: number }): React.JSX.Element {
   const bubble = (
-    <div className="h-3 w-[46%] self-end rounded-full bg-[hsl(var(--brand)/0.28)]" />
+    <div className="h-3 w-[46%] self-end rounded-full bg-[hsl(var(--accent)/0.28)]" />
   )
   const toolRow = (
     <div className="flex h-[18px] w-[74%] items-center gap-1.5 rounded-md border border-border/60 bg-card px-2">
-      <span className="size-[7px] rounded-full bg-[hsl(var(--brand))]" />
+      <span className="size-[7px] rounded-full bg-[hsl(var(--accent))]" />
       <span className="h-1.5 flex-1 rounded-full bg-foreground/10" />
     </div>
   )

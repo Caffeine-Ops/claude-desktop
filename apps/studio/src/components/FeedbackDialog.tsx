@@ -48,8 +48,8 @@
  * feedback-worker 每张图 6MB 的收件预算内，不需要另起一份压缩逻辑。
  */
 
-import { useCallback, useRef, useState } from 'react'
-import { ArrowUpRight, Loader2, Paperclip, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Loader2, Paperclip, X } from 'lucide-react'
 
 import { Button } from '@/src/components/ui/button'
 import { Textarea } from '@/src/components/ui/textarea'
@@ -62,14 +62,14 @@ import {
 } from '@/src/components/ui/dialog'
 import { cn } from '@/src/lib/utils'
 import { processImageFile } from '@/src/chat/runtime/imageAttachmentAdapter'
-import { useDialogStore } from '@/src/chat/stores/dialogs'
+import { useDialogStore, type FeedbackKind } from '@/src/chat/stores/dialogs'
 
 const MAX_IMAGES = 4
 
 /** 反馈类型。placeholder 按类型引导；prefix 拼进 description 传给 worker
  * ——「问题」留空保持与旧 payload 同形（bug 是默认场景，别让存量 issue
- * 突然都多出一行类型标）。 */
-type FeedbackKind = 'bug' | 'idea' | 'other'
+ * 突然都多出一行类型标）。FeedbackKind 本身定义在 stores/dialogs.ts——
+ * 消息操作栏的喜欢/不喜欢按钮（openFeedbackDialog）也要引用同一个类型。 */
 const KIND_META: Record<
   FeedbackKind,
   { label: string; placeholder: string; prefix: string }
@@ -111,22 +111,11 @@ function splitDataUrl(dataUrl: string): { contentType: string; dataBase64: strin
   return { contentType: header || 'image/png', dataBase64: dataUrl.slice(commaIdx + 1) }
 }
 
-/** issueUrl → 成功卡片上的「github.com · #128」次要行。解析失败（worker
- * 换了返回形态之类）就原样截断展示，别让成功态因为一行装饰崩掉。 */
-function issueUrlMeta(issueUrl: string): string {
-  try {
-    const u = new URL(issueUrl)
-    const num = /\/issues\/(\d+)/.exec(u.pathname)?.[1]
-    return num ? `${u.host} · #${num}` : u.host
-  } catch {
-    return issueUrl.length > 40 ? `${issueUrl.slice(0, 40)}…` : issueUrl
-  }
-}
-
 export function FeedbackDialog(): React.JSX.Element | null {
   const chatApi = typeof window !== 'undefined' ? window.chatApi : undefined
 
   const open = useDialogStore((s) => s.open === 'feedback')
+  const feedbackPrefill = useDialogStore((s) => s.feedbackPrefill)
   const closeDialog = useDialogStore((s) => s.closeDialog)
 
   const [kind, setKind] = useState<FeedbackKind>('bug')
@@ -134,7 +123,19 @@ export function FeedbackDialog(): React.JSX.Element | null {
   const [images, setImages] = useState<PendingImage[]>([])
   const [state, setState] = useState<SubmitState>({ kind: 'idle' })
   const [dragActive, setDragActive] = useState(false)
+  // 消息操作栏喜欢/不喜欢触发时携带的被评价消息原文——静默附加进
+  // description（见 handleSubmit），不进用户可见/可编辑的 textarea。
+  const [attachedContext, setAttachedContext] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // 打开这一刻（false→true）按 store 里的 feedbackPrefill 预选类型 + 记下
+  // 附带上下文；通用入口（rail 菜单/设置页）没有 prefill，维持原样默认值。
+  // 依赖数组只放 open——只关心「打开」这个瞬间，prefill 引用变化不重触发。
+  useEffect(() => {
+    if (!open || !feedbackPrefill) return
+    setKind(feedbackPrefill.kind)
+    setAttachedContext(feedbackPrefill.context)
+  }, [open])
 
   const resetForm = useCallback(() => {
     setKind('bug')
@@ -145,6 +146,7 @@ export function FeedbackDialog(): React.JSX.Element | null {
     })
     setState({ kind: 'idle' })
     setDragActive(false)
+    setAttachedContext(null)
   }, [])
 
   const handleOpenChange = useCallback(
@@ -190,8 +192,17 @@ export function FeedbackDialog(): React.JSX.Element | null {
           return { filename: img.file.name || 'screenshot.png', contentType, dataBase64 }
         })
       )
+      // 消息级反馈的隐藏上下文块——与下面 KIND_META[kind].prefix 同一手法
+      // （静默拼接，不进用户可见的 textarea）：把触发这次反馈的 AI 回复
+      // 原文带给处理反馈的人，方便定位是哪条回复的问题。
+      const contextBlock = attachedContext
+        ? `> 针对以下 AI 回复：\n\n${attachedContext
+            .split('\n')
+            .map((line) => `> ${line}`)
+            .join('\n')}\n\n---\n\n`
+        : ''
       const result = await chatApi.submitFeedback({
-        description: KIND_META[kind].prefix + description.trim(),
+        description: contextBlock + KIND_META[kind].prefix + description.trim(),
         images: encodedImages
       })
       if (!result.issueUrl) {
@@ -202,7 +213,7 @@ export function FeedbackDialog(): React.JSX.Element | null {
     } catch (err) {
       setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
     }
-  }, [chatApi, description, images, kind])
+  }, [chatApi, description, images, kind, attachedContext])
 
   const submitting = state.kind === 'submitting'
   const success = state.kind === 'success'
@@ -248,27 +259,8 @@ export function FeedbackDialog(): React.JSX.Element | null {
             </div>
             <h3 className="mt-4 text-[17px] font-semibold">已收到你的反馈</h3>
             <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
-              我们会尽快跟进，处理进度可以随时查看。
+              我们会尽快跟进，谢谢你的反馈。
             </p>
-            <a
-              href={state.issueUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mx-auto mt-4 flex max-w-[340px] items-center gap-2.5 rounded-xl border border-border bg-background/50 px-3.5 py-2.5 text-left no-underline transition-colors hover:border-foreground/30 hover:bg-card"
-            >
-              <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-muted text-[9px] font-semibold tracking-wide text-muted-foreground">
-                GH
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-medium text-foreground">
-                  {description.trim().split('\n')[0] || '你的反馈'}
-                </span>
-                <span className="mt-px block text-[11.5px] text-muted-foreground">
-                  {issueUrlMeta(state.issueUrl)}
-                </span>
-              </span>
-              <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
-            </a>
             <div className="mt-5 flex justify-center gap-2.5">
               <Button
                 variant="outline"
@@ -321,6 +313,16 @@ export function FeedbackDialog(): React.JSX.Element | null {
                 </button>
               ))}
             </div>
+
+            {/* 消息级反馈的透明披露：附带内容不进 textarea（用户仍只看到/编辑
+              * 自己写的话），但提交前必须让用户知道这条 AI 回复的原文会一并
+              * 发出——与下面「提交时会附带应用版本与系统信息」同一诚实披露
+              * 原则。 */}
+            {attachedContext ? (
+              <p className="-mt-1 text-[11.5px] leading-snug text-muted-foreground/80">
+                已附带这条 AI 回复的内容，帮助我们定位具体是哪次回答的问题。
+              </p>
+            ) : null}
 
             <Textarea
               value={description}

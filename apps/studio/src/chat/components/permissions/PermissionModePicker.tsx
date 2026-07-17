@@ -209,8 +209,8 @@ export function PermissionModePicker(): React.JSX.Element {
         title={pickDesc(current, lang)}
         className={
           'group inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] shadow-sm backdrop-blur-sm transition-colors ' +
-          'border-border/70 bg-card/70 text-muted-foreground hover:border-brand/50 hover:bg-card hover:text-foreground ' +
-          (open ? ' border-brand/60 text-foreground' : '')
+          'border-border/70 bg-card/70 text-muted-foreground hover:border-accent/50 hover:bg-card hover:text-foreground ' +
+          (open ? ' border-accent/60 text-foreground' : '')
         }
       >
         <span
@@ -278,8 +278,8 @@ export function PermissionModePicker(): React.JSX.Element {
                       className={
                         'flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors ' +
                         (selected
-                          ? 'bg-brand/10 text-foreground'
-                          : 'text-muted-foreground hover:bg-muted hover:text-foreground')
+                          ? 'bg-accent/10 text-foreground'
+                          : 'text-muted-foreground hover:bg-hover hover:text-foreground')
                       }
                     >
                   <span
@@ -312,7 +312,7 @@ export function PermissionModePicker(): React.JSX.Element {
                       strokeWidth="2.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      className="mt-0.5 shrink-0 text-brand"
+                      className="mt-0.5 shrink-0 text-accent"
                       aria-hidden
                     >
                       <polyline points="20 6 9 17 4 12" />
