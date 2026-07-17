@@ -83,11 +83,11 @@ const PYTHON_DISTS = {
 
 **挂哪**:引擎处理 assistant 消息、finalize `tool_use` 事件的那条路(`handleAssistantMessage` 一线)——**不是 `canUseTool`**(预放行/allowedTools/bypass 模式会跳过权限回调,技能调用大概率被预放行;而画卡片的转发路所有工具调用必经)。
 
-**匹配什么(双信号,纯函数)**:(a) `Skill` 工具且 skill 参数含 `ppt-master`;(b) `Bash` 工具且 command 含 `ensure-python.sh`(技能真正要 python 的那一刻,兜底信号)。⚠️ 仓内无硬编码 `Skill` 字面量可抄,**实施时须用一次真实 ppt-master 调用核实 tool_use 的准确形状**(工具名/参数字段),匹配器按核实结果定稿——此为计划里的显式验证步骤,不许拍脑袋。
+**匹配什么(双信号,纯函数)**:(a) `Skill` 工具且 skill 参数含 `ppt-master`;(b) `Bash` 工具且 command 含 `ensure-python.sh`(技能真正要 python 的那一刻,兜底信号)。~~实施时须核实 tool_use 形状~~ → **已核实(2026-07-17,写计划时)**:SDK 自带 CLI 包(`node_modules/@anthropic-ai/claude-agent-sdk/cli.js`)内有 `if(q!=="Skill")return; ... "skill" in K && typeof K.skill==="string"` 的字面证据——工具名 `'Skill'`、参数字段 `input.skill: string`,匹配器可放心写;运行时实机验证仍留一项「真调一次 ppt-master 看弹窗」兜底。
 
 **发什么**:命中 → 查编排器组件表,python-runtime 非 `ready` → 经**新增单向 IPC**(main→renderer,广播型,名如 `COMPONENT_PROMPT`)向**本引擎绑定的 webContents**(发起会话的那个 tab,同 canUseTool 回归 runtime 的纪律)发 `{ id:'python-runtime' }`。渲染进程收到 → 调 P1b 既有 `promptComponent('python-runtime')` 打开渐进弹窗。
 
-**防骚扰三层**:main 只在「非 ready」时发;引擎每 SessionRuntime 一个 fire-once 标记(同会话反复调技能不轰炸);渲染层 componentPrompt store 既有 dismissed 语义(`[暂不]` 后本次不再提)第三重兜底。
+**防骚扰三层**:main 只在「非 ready」时发——就绪判据用**廉价同步探测**(existsSync 落点 + `resolveBundledPythonHome()`),**绝不在此路径调 `refreshComponentInstalled()`**(那会拖进 detectTooling 最坏 8s 同步阻塞,P1b 终审 Important 3 的教训);引擎一个 fire-once 标记(写计划时把「每 SessionRuntime」简化为「每 engine 实例」=每 tab 一次,防骚扰更强且不用动 SessionRuntime 结构);渲染层 componentPrompt store 既有 dismissed 语义(`[暂不]` 后本次不再提)第三重兜底。
 
 **IPC 四处同改铁律**照走:`ipc-channels.ts`(通道常量)→ `preload/index.ts`(暴露 `onComponentPrompt` 订阅)→ `preload/index.d.ts`(如承载则同步)→ main 侧发送点。弹窗文案对兜底诚实:「制作 PPT 建议下载 Python 运行环境(约 24MB)。本次先用系统环境继续,不打断。」
 
@@ -96,6 +96,8 @@ const PYTHON_DISTS = {
 dev 环境(仓库内 `apps/studio/python-runtime/<platform>/` 可能被填过;升级是整包替换,正式包里不存在「新代码+旧随包」共存,resourcesPath 候选纯属防御性保留)下,python 明明可用,组件表若只认 userData 判据会报 idle → 触发器误弹、组件中心误催。
 
 改法:python 组件的就绪探测在通用 readyCheck(userData 落点)之外**额外认 `resolveBundledPythonHome()` 非空**——找到即 `ready`。挂法沿 P1b「按组件 id 挂小表」的既有模式(同成功收尾钩子),**不污染通用编排器**。组件中心该行就绪时若来源是随包,显示 `compBundled`('随包')灰字——P1b 预留死键转正。
+
+> **写计划时的修正(2026-07-17)**:「随包」灰字要求前端知道就绪来源,`ComponentState` 须**追加**一个来源字段(`origin: 'bundled' | null`,默认 null,仅 python 探针写 'bundled')。这与下方「零改动清单」的 componentDownload.ts 条目冲突,按最小侵入放行:**纯追加字段 + `initialComponentState` 补 null,既有字段与函数一概不动**,embed 行为仍字节等价。清单该条相应放宽为「仅允许此一项追加」。
 
 ## ⑥ CI / 打包退场(瘦身兑现点)
 
