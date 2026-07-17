@@ -7,6 +7,7 @@ import { SkillsDialog } from './components/dialogs/SkillsDialog'
 import { McpDialog } from './components/dialogs/McpDialog'
 import { LogsDialog } from './components/dialogs/LogsDialog'
 import { SessionSearchDialog } from './components/dialogs/SessionSearchDialog'
+import { Toaster } from './components/Toaster'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
 import { useI18n } from './i18n'
@@ -308,6 +309,7 @@ function App(): React.JSX.Element {
           冷启动信号由 ThreadView 顶部进度条独自承担（同一个
           useDelayedSessionLoading 数据源），交互闸门在别处不受影响
           （composer 发送钮走 isLoading、侧栏行走 pointer-events-none）。 */}
+      <Toaster />
     </div>
     </MotionConfig>
   )
