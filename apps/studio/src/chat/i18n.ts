@@ -163,6 +163,9 @@ const STRINGS = {
     catComponents: '组件 / 扩展',
     componentsTitle: '组件 / 扩展',
     componentsDesc: '按需下载的可选组件，用到才装、不撑大安装包',
+    // 首个快照落地前（stores/components.ts 的 loaded=false）的占位文案，避免空表兜底成
+    // idle 把三行都误显成「可下载」（终审 Important 1）。
+    componentsLoading: '正在检测组件状态…',
     compEmbedTitle: '语义检索模型',
     compEmbedDesc: 'bge 嵌入模型，启用向量语义检索（缺失时降级关键词检索）',
     compMarkitdownTitle: '文档转换工具 markitdown',
@@ -186,6 +189,10 @@ const STRINGS = {
     compPromptNow: '现在下载',
     compPromptLater: '暂不',
     compPromptDetails: '查看下载详情',
+    // installing 分支的关闭/收起键（终审 Important 2）：embed 几百 MB、markitdown 的 pipx 最长
+    // 5 分钟，这段时间不能让弹窗钉死在屏幕上关不掉——文案自己说了「下载在后台进行，不打断你」。
+    // 点击只关弹窗，不碰后端：安装继续跑，装好时走本文件「走开报喜」的 toast 兜底分支。
+    compPromptHide: '收起',
     // 非 embed 成功话：装完即用，不提「后台」——它们没有任何后台收尾步骤（修复轮 Fix 3）。
     compPromptDone: '「{title}」已就绪，现在就能用了。',
     // embed 专属成功话：后台重建索引只在知识库已有资料时才跑（SUCCESS_HOOKS 里
@@ -227,14 +234,11 @@ const STRINGS = {
     kbVersion: '知识库版本',
     kbSyncFailed: '同步失败',
     kbNeverSynced: '尚未同步',
-    kbModelTitle: '嵌入模型',
-    kbModelDesc: '语义检索需要一个本地嵌入模型（约 23MB）。未下载时检索退回关键词匹配（BM25）。',
-    kbModelInstalled: '模型已就绪，语义检索已启用。',
+    // kbModelTitle/Desc/Installed/Cancel/Retry/Error 六个键已随 Task 7 删掉
+    // KnowledgeBaseSection 的模型区退役（模型下载改走「组件 / 扩展」+ ComponentPrompt，见
+    // compEmbed* / compPrompt* 系列键）；下面三个仍被 KbToolbar.tsx 引用，保留。
     kbModelDownload: '下载模型',
     kbModelDownloading: '正在下载',
-    kbModelCancel: '取消',
-    kbModelRetry: '重试',
-    kbModelError: '下载失败，可重试；期间检索继续走关键词匹配。',
     kbModelMissingHint: '语义检索未启用（未下载嵌入模型）',
 
     // KB 托管仓库管理页（P2）
@@ -597,6 +601,9 @@ const STRINGS = {
     catComponents: 'Components',
     componentsTitle: 'Components',
     componentsDesc: 'Optional components downloaded on demand — installed only when needed, keeping the app small',
+    // Placeholder shown before the first snapshot lands (loaded=false in stores/components.ts) —
+    // avoids the empty table falling back to idle and mislabeling all three rows "downloadable".
+    componentsLoading: 'Checking component status…',
     compEmbedTitle: 'Semantic search model',
     compEmbedDesc: 'bge embedding model for vector search (falls back to keyword search when missing)',
     compMarkitdownTitle: 'Document converter (markitdown)',
@@ -620,6 +627,13 @@ const STRINGS = {
     compPromptNow: 'Download now',
     compPromptLater: 'Not now',
     compPromptDetails: 'View download details',
+    // Close/collapse button for the installing branch (final review Important 2): embed can be
+    // hundreds of MB and markitdown's pipx install can take up to 5 minutes — the prompt can't be
+    // stuck on screen with no way to dismiss it for that long, especially since its own copy says
+    // "runs in the background and won't interrupt you". Clicking only closes the prompt; the
+    // install keeps running in main and the "closed while installing" toast fallback in this file
+    // picks up the success.
+    compPromptHide: 'Hide',
     // Non-embed success copy: ready to use right away, no "background" mention — they have no
     // background follow-up step at all (fix round Fix 3).
     compPromptDone: '“{title}” is ready to use now.',
@@ -669,14 +683,12 @@ const STRINGS = {
     kbVersion: 'KB version',
     kbSyncFailed: 'Sync failed',
     kbNeverSynced: 'Never synced',
-    kbModelTitle: 'Embedding model',
-    kbModelDesc: 'Semantic search needs a local embedding model (~23MB). Until it is downloaded, search falls back to keyword matching (BM25).',
-    kbModelInstalled: 'Model ready — semantic search enabled.',
+    // kbModelTitle/Desc/Installed/Cancel/Retry/Error were dropped along with Task 7's removal of
+    // KnowledgeBaseSection's model section (model download now lives under Settings → Components +
+    // ComponentPrompt — see the compEmbed* / compPrompt* keys). The three below are still used by
+    // KbToolbar.tsx, so they stay.
     kbModelDownload: 'Download model',
     kbModelDownloading: 'Downloading',
-    kbModelCancel: 'Cancel',
-    kbModelRetry: 'Retry',
-    kbModelError: 'Download failed — you can retry; search keeps using keyword matching meanwhile.',
     kbModelMissingHint: 'Semantic search off (embedding model not downloaded)',
 
     // KB managed repository manager (P2)

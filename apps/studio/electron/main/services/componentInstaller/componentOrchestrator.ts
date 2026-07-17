@@ -78,8 +78,26 @@ function applyDetectedStatus(id: string, ready: boolean): void {
 // detectTooling() 是 execFileSync + timeout:4000 × 两个探针（markitdown/soffice）＝最坏约 8 秒
 // 同步阻塞主进程（阻塞期间所有窗口 + IPC 都卡住）。只应由 status-get 这类用户触发的懒路径
 // 调用；不可挂在启动路径上（会卡住 splash 交接，见 CLAUDE.md 启动里程碑一段）。
-/** 探测磁盘/工具链，重设整表就绪态（启动时 + 每次 status-get 前调）。 */
+//
+// 但「用户触发」不等于「只触发一次」：<ComponentPrompt /> 常挂 App 根，它的 init() 无条件调
+// componentStatusGet()，于是每个 studio tab 首帧后都会发一次；四个消费方各自 init() 又互相
+// 不去重（前端那侧的去重见 stores/components.ts 的 fetchSnapshotOnce，但那只挡得住同一个
+// 渲染进程内的并发 in-flight 请求，挡不住「先后两次都各自等到了上一次已经 resolve」的情形，
+// 也挡不住不同 tab/不同窗口各发各的）。冷开一个挂了知识库管理页的窗口，实测能背靠背触发
+// 2~3 次完整 detect；装了 LibreOffice 的机器上 `soffice --version` 还会真起一次 LibreOffice
+// 进程，主进程同步等它——首帧后全窗口卡顿、splash 交接期 IPC 停摆（终审 Important 3）。
+// TTL 就是这道防线的兜底：距上次真正探测不足 TTL 就直接跳过、复用现表，不管调用方是谁、
+// 隔了几个 tab。安全性：安装成功后的状态由 run() 直接 patch、不依赖这里的探测结果，所以
+// TTL 不会让「刚装好却仍显示没装」——它只影响「用户在别处手动装好/卸载了，我们多久才发现」，
+// 30s 对这种小概率的手动操作完全够用。
+const REFRESH_TTL_MS = 30_000
+let lastRefreshAt = 0
+
+/** 探测磁盘/工具链，重设整表就绪态（启动时 + 每次 status-get 前调，TTL 内的重复调用直接跳过）。 */
 export function refreshComponentInstalled(): void {
+  const now = Date.now()
+  if (now - lastRefreshAt < REFRESH_TTL_MS) return
+  lastRefreshAt = now
   const t = detectTooling() // { markitdown, soffice }
   for (const d of COMPONENT_REGISTRY) {
     const i = d.install

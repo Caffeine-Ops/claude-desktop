@@ -26,6 +26,10 @@ export function KbToolbar({ readOnly }: {
   // Object.is 恒 false，无关更新也重渲染；写 (s) => s.stateOf 则函数引用恒定、等于没订阅，
   // 进度推送来了不重渲染。选 table 是唯一两头都对的写法。
   const table = useComponentStore((s) => s.table)
+  // 组件表是否已加载过首个快照（见 stores/components.ts 头注释）——「还没查清楚」不等于
+  // 「探测过、真的没装」，下面几处依据「没装」去拦用户操作/亮警告的地方都要带上这个守卫，
+  // 否则冷启动早期点同步会被空表误判成「缺 markitdown」静默拦掉（终审 Important 1）。
+  const loaded = useComponentStore((s) => s.loaded)
   const embed = table['kb-embed'] ?? initialComponentState('kb-embed')
   const markitdown = table['markitdown'] ?? initialComponentState('markitdown')
   useEffect(() => init(), [init])
@@ -37,8 +41,9 @@ export function KbToolbar({ readOnly }: {
     // 时机的用户动作）；用户点了[暂不]之后再点，就照旧跑——缺 markitdown 本来就有静默三级
     // 降级（markitdown → 丢内嵌图重试 → soffice 纯文本兜底），拦着不让导入会让功能比「没这
     // 个组件」时更糟，违反「增强层永不拖累基础层」。dismissed 让[暂不]真的等于「优雅降级」，
-    // 也堵死「点同步→弹窗→暂不→再点同步→又弹窗」的死循环。
-    if (markitdown.status !== 'ready' && !promptDismissed('markitdown')) {
+    // 也堵死「点同步→弹窗→暂不→再点同步→又弹窗」的死循环。`loaded` 同理：表还没查清楚时
+    // 不拦——宁可放行走一次可能会降级的转换，也不要把「没数据」误判成「没装」而拦死用户。
+    if (loaded && markitdown.status !== 'ready' && !promptDismissed('markitdown')) {
       promptComponent('markitdown')
       return
     }
@@ -56,8 +61,8 @@ export function KbToolbar({ readOnly }: {
   // 扫描跳过 → 删旧不补新」的静默丢文件事故（用户报的 bug）。预览不写盘，确认后才真同步。
   const sync = async (): Promise<void> => {
     if (busy) return
-    // 功能门：见 migrate 同名注释——只拦第一次，之后照旧走既有的静默降级。
-    if (markitdown.status !== 'ready' && !promptDismissed('markitdown')) {
+    // 功能门：见 migrate 同名注释——只拦第一次，之后照旧走既有的静默降级；`loaded` 前不拦。
+    if (loaded && markitdown.status !== 'ready' && !promptDismissed('markitdown')) {
       promptComponent('markitdown')
       return
     }
@@ -111,7 +116,9 @@ export function KbToolbar({ readOnly }: {
             <kbIcons.refresh className="size-3.5 animate-spin" />
             {t('kbModelDownloading')} {embed.percent ?? 0}%
           </span>
-        ) : embed.status !== 'ready' && (
+        ) : loaded && embed.status !== 'ready' && (
+          // loaded 守卫：表未加载时 embed 兜底成 idle（≠ready），不带 loaded 会在冷启动早期
+          // 真闪一下「缺模型」引导——此刻探测结论可能压根还没到（终审 Important 1）。
           <button
             type="button"
             onClick={() => promptComponent('kb-embed')}
@@ -123,8 +130,9 @@ export function KbToolbar({ readOnly }: {
       </div>
       {/* 工具缺失只对可写机有意义（只读机不本地构建、装不装 markitdown 无所谓）。原来的一行红字
           报错已升级为带「一键安装」的引导卡片（KbToolingCard）：点按钮即由主进程装 markitdown，
-          装完给三态反馈（就绪／需重启／缺前置引导手动装）。 */}
-      {!readOnly && markitdown.status !== 'ready' && <KbToolingCard />}
+          装完给三态反馈（就绪／需重启／缺前置引导手动装）。loaded 守卫同上——未加载时不闪
+          「未检测到 markitdown」的琥珀色警告卡（终审 Important 1）。 */}
+      {loaded && !readOnly && markitdown.status !== 'ready' && <KbToolingCard />}
     </div>
   )
 }

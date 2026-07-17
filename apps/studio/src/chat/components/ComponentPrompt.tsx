@@ -27,11 +27,12 @@ const GUIDE_URL: Record<string, string | undefined> = {
 }
 
 /**
- * 渐进式非阻断弹窗，右下角浮出。五个渲染分支（修复轮 Fix 1 前是四支，unavailable 混在
+ * 渐进式非阻断弹窗，右下角浮出。四个渲染分支（修复轮 Fix 1 前是三支，unavailable 混在
  * 「初始」分支里点了没反应——soffice 是 detect-only、markitdown 缺 python 时都会落到
  * unavailable，后端对前者早退、对后者重试也注定同样失败，不能给一个亮着的主按钮）：
  *  1. idle/error   [现在下载/重试][暂不]（error 态额外显 errorMessage）
- *  2. installing   进度条/转圈 + [查看下载详情]（跳组件中心）
+ *  2. installing   进度条/转圈 + [查看下载详情] + [收起]（终审 Important 2：embed 几百 MB、
+ *                   markitdown 的 pipx 最长 5 分钟，这段时间不能没有关闭键——见下方分支内注释）
  *  3. unavailable  引导手动安装：guideUrl（可见 + 复制）+ [暂不]，无主安装按钮
  *  4. ready        一句「说清变了什么」+ 自动淡出；若用户已关掉弹窗 → toast 报喜
  * 常驻挂载：openFor==null 时渲染 null。
@@ -123,10 +124,22 @@ export function ComponentPrompt(): React.JSX.Element | null {
                 {t('compInstalling')}
               </span>
             )}
-            <button type="button" onClick={goDetails}
-              className="text-[11.5px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
-              {t('compPromptDetails')}
-            </button>
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={goDetails}
+                className="text-[11.5px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+                {t('compPromptDetails')}
+              </button>
+              {/* 关闭/收起键（终审 Important 2）：装几百 MB / pipx 最长 5 分钟，这段时间弹窗不该
+                  钉死在屏幕上关不掉——自己的文案（compPromptBody）都写着「下载在后台进行，不打断
+                  你」。close() 只碰 componentPromptStore 的 openFor/dismissed，不触碰后端：安装
+                  继续跑、广播照推。装好那一刻 openFor 已是 null，正好落进上面「走开报喜」toast
+                  兜底的 useEffect（`openFor !== id` 成立）——两处逻辑本就是为此配套的，不是新增
+                  一条独立路径。 */}
+              <button type="button" onClick={close}
+                className="text-[11.5px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+                {t('compPromptHide')}
+              </button>
+            </div>
           </>
         ) : state.status === 'unavailable' ? (
           <UnavailablePanel title={title} guideUrl={guideUrl} onLater={close} />

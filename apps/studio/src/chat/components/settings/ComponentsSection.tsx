@@ -20,18 +20,31 @@ export function ComponentsSection(): React.JSX.Element {
   // 后台推来新进度时组件不会重渲染、进度条永远不动。也别写 useComponentStore((s) => s.stateOf(id))
   // ——那样每次都新建对象、Object.is 恒 false，无关更新也触发重渲染。选 table、在外面派生最省。
   const table = useComponentStore((s) => s.table)
+  // 首个快照是否已落地——未加载时 table 是空表，三行会统一兜底成 idle 渲染成「可下载」，
+  // 而实际探测结论可能是「已装」，这是会误导用户的一闪（终审 Important 1，酌情处理：只在
+  // 这里插一句加载态占位，不逐行做骨架屏，避免过度设计）。
+  const loaded = useComponentStore((s) => s.loaded)
   // 订阅整表（组件卸载时退订）。
   useEffect(() => init(), [init])
 
   return (
     <section className="space-y-8">
       <h1 className="text-[20px] font-semibold text-foreground">{t('componentsTitle')}</h1>
-      <Section title={t('componentsTitle')} description={t('componentsDesc')}>
-        <div className="space-y-2">
-          {ROWS.map((row) => (
-            <ComponentRow key={row.id} row={row} state={table[row.id] ?? initialComponentState(row.id)} />
-          ))}
-        </div>
+      {/* Section 省略 title：紧跟在上面的 <h1>{componentsTitle}</h1> 之后再叠一遍同一句
+          「组件 / 扩展」会重复（终审 Minor 5）。KnowledgeBaseSection 的 h1/Section 分别用
+          catKnowledgeBase/kbSourceTitle 两个不同层级的键区分；这里没有对应的「子标题」概念
+          （三行本就是同一个类目下的平铺列表），description 已经把这块内容交代清楚，直接省掉
+          Section 的 title 最省事，不硬造一个没有信息量的新键。 */}
+      <Section description={t('componentsDesc')}>
+        {loaded ? (
+          <div className="space-y-2">
+            {ROWS.map((row) => (
+              <ComponentRow key={row.id} row={row} state={table[row.id] ?? initialComponentState(row.id)} />
+            ))}
+          </div>
+        ) : (
+          <p className="text-[12px] text-muted-foreground">{t('componentsLoading')}</p>
+        )}
       </Section>
     </section>
   )
