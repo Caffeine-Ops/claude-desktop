@@ -54,6 +54,7 @@ import {
   resolveBundledCliPath,
   resolveBundledPythonHome,
   resolveBundledSkillsPluginDir,
+  resolveCoworkPluginEntries,
   resolveJsRuntimeBin,
   isElectronJsRuntime,
   resolveSystemClaudeJsEntry
@@ -1752,6 +1753,14 @@ export class ChatEngine extends EventEmitter {
     // resolveBundledSkillsPluginDir). null when the manifest is missing — we
     // then omit the `plugins` option entirely rather than pass an empty array.
     const skillsPluginDir = resolveBundledSkillsPluginDir()
+    // User-installed marketplace skills (~/.cowork/skills), each market item
+    // registered as its OWN local plugin (namespaced `cowork:<subid>`; one
+    // entry can bundle more than one SKILL.md subdir). The daemon's
+    // skills-market installer writes each item's manifest on install; until
+    // then this is empty and no extra plugin entries are added. NOTE: plugins
+    // are baked into the child at spawn — skills installed mid-session only
+    // appear in NEW sessions (the market UI says so on install success).
+    const coworkPluginEntries = resolveCoworkPluginEntries()
     // Bundled standalone Python home for the ppt-master skill's bootstrap.
     // Injected as PPT_MASTER_PYTHON_HOME into BOTH backends' child env (see the
     // env: block below) so `bin/ensure-python.sh` can build its venv off our
@@ -1785,6 +1794,9 @@ export class ChatEngine extends EventEmitter {
       // null here means the repo-root skills/ plugin manifest wasn't found,
       // so its skills won't appear in the `/` popover for this session.
       skillsPluginDir: skillsPluginDir ?? '(none)',
+      // empty array = nothing installed from the skills market yet.
+      coworkPluginDirs:
+        coworkPluginEntries.length > 0 ? coworkPluginEntries.map((e) => e.pluginDir) : '(none)',
       // null = no bundled Python runtime (dev / unbundled platform); the
       // ppt-master bootstrap then falls back to system python3.
       pythonHome: pythonHome ?? '(none)'
@@ -2093,16 +2105,26 @@ export class ChatEngine extends EventEmitter {
       mcpServers: kbSearchMcpServer
         ? { ...this.externalMcpServers, 'kb-search': kbSearchMcpServer }
         : this.externalMcpServers,
-      // Repo-root skills/ wired in as a local plugin so its SKILL.md entries
-      // become `/`-triggerable in this chat tab (namespaced
-      // `claude-desktop:<skill>`). Spread-omit when null: the SDK type allows
-      // `plugins?: SdkPluginConfig[]`, and passing `undefined` is the same as
-      // not setting it, so a missing manifest degrades to "no extra plugin"
-      // instead of a load error. Independent of the daemon, which reads the
-      // SAME dir over /api/skills for the Settings → Skills panel.
-      ...(skillsPluginDir
-        ? { plugins: [{ type: 'local' as const, path: skillsPluginDir }] }
-        : {}),
+      // Local plugins: repo-root skills/ (`claude-desktop:<skill>`, at most
+      // one) plus one entry PER user-installed marketplace item at
+      // ~/.cowork/skills (`cowork:<subid>`, zero or more — each market item
+      // is its own independently-loaded local plugin, see
+      // resolveCoworkPluginEntries). Spread-omit when the combined list is
+      // empty: the SDK type allows `plugins?: SdkPluginConfig[]`, and passing
+      // `undefined` is the same as not setting it, so missing manifests
+      // degrade to "no extra plugin" instead of a load error. Independent of
+      // the daemon, which reads the bundled dir over /api/skills for
+      // Settings → Skills and WRITES the cowork dirs via
+      // /api/skills-market/install.
+      ...((): { plugins?: { type: 'local'; path: string }[] } => {
+        const dirs = [
+          ...(skillsPluginDir ? [skillsPluginDir] : []),
+          ...coworkPluginEntries.map((e) => e.pluginDir)
+        ]
+        return dirs.length > 0
+          ? { plugins: dirs.map((path) => ({ type: 'local' as const, path })) }
+          : {}
+      })(),
       ...(resume ? { resume: sessionId } : { sessionId })
     }
 

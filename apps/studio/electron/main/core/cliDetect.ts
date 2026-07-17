@@ -170,7 +170,11 @@ export function resolveSystemClaudeJsEntry(cliPath: string): string {
 // proposalPrompt.ts 运行期读 skills/proposal-writer 模板要用它，且其 bun test
 // 在无 electron 的进程里跑，依赖链上不允许出现本文件顶部的 electron import。
 // 这里 re-export 保住既有 import 路径（seedSkills/engine 等）。
-export { resolveBundledSkillsPluginDir } from './skillsDir'
+export {
+  resolveBundledSkillsPluginDir,
+  resolveCoworkPluginEntries,
+  type CoworkPluginEntry
+} from './skillsDir'
 
 /**
  * Resolve the bundled standalone Python *home* directory (the dir holding
