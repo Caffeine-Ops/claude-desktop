@@ -296,7 +296,7 @@ export function AskUserComposerPanel({ request }: Props): React.JSX.Element {
                     onClick={() => commit(opt.label)}
                     className={
                       'group flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors duration-100 ' +
-                      (hot ? 'bg-muted/75' : 'hover:bg-muted/50')
+                      (hot ? 'bg-muted/75' : 'hover:bg-hover/50')
                     }
                   >
                     <span
@@ -405,9 +405,9 @@ export function AskUserComposerPanel({ request }: Props): React.JSX.Element {
 export const PANEL_SHELL =
   'relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 shadow-[0_12px_36px_rgba(18,18,23,0.12),0_3px_10px_rgba(18,18,23,0.06)] dark:ring-white/[0.08] dark:shadow-[0_16px_44px_rgba(0,0,0,0.5)]'
 const NAV_BTN =
-  'grid size-[26px] place-items-center rounded-lg transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35 disabled:hover:bg-transparent'
+  'grid size-[26px] place-items-center rounded-lg transition-colors hover:bg-hover hover:text-foreground disabled:opacity-35 disabled:hover:bg-transparent'
 export const SKIP_BTN =
-  'flex h-9 shrink-0 items-center rounded-full px-4 text-[13px] font-medium text-foreground shadow-[inset_0_0_0_1px_hsl(var(--border))] transition-colors hover:bg-muted'
+  'flex h-9 shrink-0 items-center rounded-full px-4 text-[13px] font-medium text-foreground shadow-[inset_0_0_0_1px_hsl(var(--border))] transition-colors hover:bg-hover'
 
 /* ================================================================
    AskComposerSwap —— composer 输入卡 ⇄ 提问面板的 morph 容器。

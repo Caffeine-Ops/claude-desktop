@@ -105,7 +105,7 @@ function DialogHeader({
         type="button"
         onClick={onClose}
         aria-label={closeLabel}
-        className="flex size-7 items-center justify-center rounded-md text-muted-foreground/80 transition hover:bg-muted/80 hover:text-foreground"
+        className="flex size-7 items-center justify-center rounded-md text-muted-foreground/80 transition hover:bg-hover/80 hover:text-foreground"
       >
         ✕
       </button>

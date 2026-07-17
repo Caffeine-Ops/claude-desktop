@@ -578,7 +578,7 @@ function ImageLightbox({
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, transition: { duration: 0.12 } }}
         transition={{ type: 'spring', bounce: 0.3, visualDuration: 0.3, delay: 0.12 }}
-        className="absolute right-5 top-5 z-10 grid size-9 place-items-center rounded-full border border-border/60 bg-card/90 text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-muted"
+        className="absolute right-5 top-5 z-10 grid size-9 place-items-center rounded-full border border-border/60 bg-card/90 text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-hover"
       >
         <svg viewBox="0 0 14 14" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
           <path d="M2 2l10 10M12 2L2 12" />

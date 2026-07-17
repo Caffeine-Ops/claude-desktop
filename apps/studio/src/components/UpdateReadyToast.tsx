@@ -318,7 +318,7 @@ export function UpdateReadyToast() {
           variant="ghost"
           aria-label="关闭"
           onClick={closeFeedback}
-          className="-mr-[5px] ml-px size-[22px] shrink-0 rounded-md text-muted-foreground/65 hover:bg-muted hover:text-foreground"
+          className="-mr-[5px] ml-px size-[22px] shrink-0 rounded-md text-muted-foreground/65 hover:bg-hover hover:text-foreground"
         >
           <X className="size-3" />
         </Button>
@@ -427,7 +427,7 @@ export function UpdateReadyToast() {
         variant="ghost"
         aria-label="关闭"
         onClick={dismiss}
-        className="-mr-1.5 -mt-1.5 size-7 shrink-0 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+        className="-mr-1.5 -mt-1.5 size-7 shrink-0 rounded-lg text-muted-foreground hover:bg-hover hover:text-foreground"
       >
         <X aria-hidden="true" className="size-4" />
       </Button>

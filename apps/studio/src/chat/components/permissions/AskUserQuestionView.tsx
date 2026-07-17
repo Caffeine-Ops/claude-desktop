@@ -374,7 +374,7 @@ export function AskUserQuestionView({
           <button
             type="button"
             onClick={onCancel}
-            className="flex w-full items-center gap-3 rounded-md border border-border bg-card/60 px-3 py-2 text-left text-[13px] text-foreground transition hover:border-input hover:bg-muted"
+            className="flex w-full items-center gap-3 rounded-md border border-border bg-card/60 px-3 py-2 text-left text-[13px] text-foreground transition hover:border-input hover:bg-hover"
           >
             {pick(lang, '取消', 'Cancel')}
           </button>

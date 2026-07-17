@@ -130,7 +130,7 @@ export function AppearanceSection({
           {/* 自定义色：原生 color input 铺满圆形 label 隐形接管点击 —— 圆形
               外观交给 label（native color swatch 没法直接圆形化）。 */}
           <label
-            className="relative flex size-7 cursor-pointer items-center justify-center rounded-full bg-secondary text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="relative flex size-7 cursor-pointer items-center justify-center rounded-full bg-secondary text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
             title={customAccentLabel}
           >
             <Plus className="size-3.5" />

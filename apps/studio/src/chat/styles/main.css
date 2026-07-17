@@ -603,6 +603,23 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
 .perm-wait-dot { animation: perm-wait-pulse 1.6s ease-in-out infinite; }
 @keyframes perm-wait-pulse { 50% { opacity: 0.35; } }
 
+/* ═══ 回合叙事间距（AssistantMessage .am-parts，2026-07-17）═══
+ * 兄弟间距从 flex gap-3 迁到 margin 规则——gap 是刚性的，无法按块分档：
+ *   默认档   12px = 原 gap-3 等值，视觉不变；
+ *   stack 档  2px = 阶段组内的工具行紧排，行包装 div 上的 border-l
+ *                   逐行相接，拼成视觉连续的一条组竖线；
+ *   folded 档 0   = digest / 组收拢后高度归零的块，margin 一起归零——
+ *                   不然每个隐形块仍占 12px，正文段落之间凭空多出一串
+ *                   死空隙。
+ * margin-top 带过渡：folded 档的归零是瞬时的 CSS 切换，和 FoldRegion
+ * 的 spring 高度动画同拍收敛才不显跳。曲线取 tc-rise 同族。 */
+.am-parts > * + * { margin-top: 0.75rem; }
+/* stack 档取 0 而不是 2px：组竖线画在每行包装 div 的 border-l 上，行与
+ * 行之间只要有 1px margin 线就断成虚线——行内的 py-[2px] 已经提供呼吸。 */
+.am-parts > [data-stack='true'] + [data-stack='true'] { margin-top: 0; }
+.am-parts > [data-folded='true'] { margin-top: 0 !important; }
+.am-parts > * { transition: margin-top 0.3s cubic-bezier(0.3, 0.9, 0.3, 1); }
+
 @media (prefers-reduced-motion: reduce) {
   .tc-row-in { animation: none; }
   .tc-details::details-content { transition: none; }
@@ -611,6 +628,7 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
   .tc-draw { animation: none; stroke-dashoffset: 0; }
   .tc-breathe { animation: none; }
   .perm-wait-dot { animation: none; }
+  .am-parts > * { transition: none; }
 }
 
 /* 思考行（ThinkingSpinner）✻ 星标：慢速旋转 + 透明度呼吸。纯 CSS 合成器
@@ -739,47 +757,17 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
   .ig-img-in { animation: none; }
 }
 
-/* ═══ 会话切换过渡「帘幕 + 骨架」（ThreadView session switch）═══
- * 原型见 scratchpad/SessionSwitchLoading.html（用户选定混合策略：短切换
- * 只播帘幕，>600ms 未挂载升级骨架）。ssw- 前缀 = session switch。
+/* ═══ 会话切换骨架屏（ThreadView session switch）═══
+ * ssw- 前缀 = session switch。切换会话时骨架不透明盖住内容区，直到目标
+ * transcript 上屏（信号见 ThreadView 的 useSessionSwitchLoading）。
  *
- * 关键约束：这三个类只允许挂在「滚动容器本身」（ThreadPrimitive.Viewport）
- * 上，绝不能挂到容器内部的列上——transform/filter 作用于滚动容器时由合成器
- * 处理整个盒子，不改变其内部滚动几何；而历史上加在内部列上的 y+blur 曾把
- * 滚动容器顶出视口、闪滚动条（见 ThreadView 帘幕注释的 v2 教训）。
- * filter 会让该容器成为 fixed 后代的 containing block——视口内所有弹层
- * （slash 菜单、打开方式菜单）都已 portal 到 body，不受影响。 */
-
-/* 帘幕落下：旧内容沉降进磨砂里。forwards 保持终态，撑过 skeleton 阶段。 */
-.ssw-out {
-  animation: ssw-out 0.26s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-}
-@keyframes ssw-out {
-  to {
-    opacity: 0.25;
-    transform: translateY(6px) scale(0.995);
-    filter: blur(10px);
-  }
-}
-
-/* 帘幕升起：新内容从微沉的磨砂态显影归位。one-shot，播完由相位机摘类。 */
-.ssw-in {
-  animation: ssw-in 0.34s cubic-bezier(0.22, 1, 0.36, 1);
-}
-@keyframes ssw-in {
-  from {
-    opacity: 0.25;
-    transform: translateY(-4px) scale(0.997);
-    filter: blur(8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-    filter: none;
-  }
-}
-
-/* 骨架条：形状即聊天（右侧 user 药丸 + 左侧 assistant 段落条）。高光配方
+ * 【已删】.ssw-out / .ssw-in 帘幕（沉降磨砂 / 显影归位）：2026-07-04 用户
+ * 否决「切换要即时呈现」后就被开关关停，2026-07-17 换骨架屏时连同开关一起
+ * 删除。别再往回加——同一诉求已两次判定同向：切换不要转场动画。
+ * （历史教训仍有效，若将来又想给视口加动效：这类类只能挂「滚动容器本身」，
+ * 挂到容器内部的列上会把滚动容器顶出视口、闪滚动条。见 ThreadView v2 注释。）
+ *
+ * 骨架条：形状即聊天（右侧 user 药丸 + 左侧 assistant 段落条）。高光配方
  * 与 .pes-sk 同源（muted 混 12% 白，深浅色都向白抬一档）；入场用交错
  * animation-delay（内联）+ backwards 从透明升起，扫光紧随其后。 */
 .ssw-sk {
@@ -805,11 +793,9 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* 帘幕退化为轻度调暗（保留「在切换」的信息量，去掉位移与模糊），
-   * 骨架静止但仍显示——它本身就是加载语义，不该随动画一起消失。 */
-  .ssw-out { animation: none; opacity: 0.45; }
-  .ssw-in  { animation: none; }
-  .ssw-sk  { animation: none; }
+  /* 骨架静止但仍显示——它本身就是加载语义（形状即目标页面），不该随
+   * 动画一起消失；去掉的只是扫光与交错入场。 */
+  .ssw-sk { animation: none; }
 }
 
 /* ═══ 写方案（proposal）功能样式（ProposalDocPanel / ProposalPaper / ProposalPreview）═══

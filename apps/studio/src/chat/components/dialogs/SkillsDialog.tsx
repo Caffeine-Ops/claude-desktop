@@ -129,7 +129,7 @@ export function SkillsDialog(): React.JSX.Element | null {
             <ul className="space-y-0.5">
               {filtered.map((skill) => (
                 <li key={skill}>
-                  <div className="flex items-center gap-3 rounded-md px-3 py-1.5 text-[13px] hover:bg-muted/60">
+                  <div className="flex items-center gap-3 rounded-md px-3 py-1.5 text-[13px] hover:bg-hover/60">
                     <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/80" />
                     <span className="truncate font-mono text-foreground">
                       {skill}

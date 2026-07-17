@@ -1,10 +1,15 @@
 import { useEffect, useLayoutEffect } from 'react'
 
+import { createThemeTransitionGate } from '@/src/lib/themeTransition'
+
 import {
   hexToHslString,
   type ThemeOverrides,
   useAppearanceStore
 } from './appearance'
+
+/** 本写手专属的闸门（canvas 写手另持一个，理由见 themeTransition.ts）。 */
+const themeGate = createThemeTransitionGate()
 
 /**
  * Single applier for the appearance store. Mounted once at the App
@@ -39,17 +44,26 @@ export function useApplyAppearance(): void {
   // useLayoutEffect 在本次提交 paint 前同步写 inline token，把中间态压到
   // 不可见。canvas 侧写手（canvas/App.tsx）同为 useLayoutEffect。
   useLayoutEffect(() => {
+    // themeGate：翻明暗这一拍掐掉全局 transition，否则带 transition 的元素
+    // （shadcn Button 的 transition-all / 会话行的 transition-colors，均 150ms）
+    // 会把换色演成动画——rail 底色第一帧就到位、账户 chip 的灰底还在爬，就是
+    // 用户报的「这块比其他地方慢半拍」（2026-07-17）。本写手写的 inline token
+    // （--background/--card/…）正是 chat 面主体颜色的来源，漏掐这里等于没修。
+    // 只在真的翻明暗时生效，调色板/字号触发的 apply 不受影响；三步顺序与
+    // 「为什么每个写手各持一个闸门」见 lib/themeTransition.ts。
     const apply = (isDark: boolean): void => {
-      const root = document.documentElement
-      root.classList.toggle('dark', isDark)
-      // 明暗双标记桥接：canvas 面（src/canvas/）的 27k 行 CSS 用
-      // [data-theme='dark'] 选 dark、html:not([data-theme]) + @media 兜底，
-      // 而 chat 侧只翻 .dark 类——两套开关各走各的曾造成两面明暗分裂。
-      // 这里写显式 data-theme（永不留空）：canvas 的 @media 兜底分支从此
-      // 不参与，两面的明暗由同一次 apply 统一落地。canvas 侧的写手
-      // （applyAppearanceToDocument）做了对称桥接，谁后写都保持一致。
-      root.setAttribute('data-theme', isDark ? 'dark' : 'light')
-      applyThemeOverrides(root, isDark ? dark : light)
+      themeGate(isDark, () => {
+        const root = document.documentElement
+        root.classList.toggle('dark', isDark)
+        // 明暗双标记桥接：canvas 面（src/canvas/）的 27k 行 CSS 用
+        // [data-theme='dark'] 选 dark、html:not([data-theme]) + @media 兜底，
+        // 而 chat 侧只翻 .dark 类——两套开关各走各的曾造成两面明暗分裂。
+        // 这里写显式 data-theme（永不留空）：canvas 的 @media 兜底分支从此
+        // 不参与，两面的明暗由同一次 apply 统一落地。canvas 侧的写手
+        // （applyAppearanceToDocument）做了对称桥接，谁后写都保持一致。
+        root.setAttribute('data-theme', isDark ? 'dark' : 'light')
+        applyThemeOverrides(root, isDark ? dark : light)
+      })
     }
 
     if (themeMode !== 'system') {

@@ -273,11 +273,12 @@ function pruneLastActivityCache(
  * blank thread rather than crash.
  */
 export async function loadSession(
-  sessionId: string
+  sessionId: string,
+  opts?: { mergeTurns?: boolean }
 ): Promise<ThreadMessageLike[]> {
   try {
     const raws = await getSessionMessages(sessionId)
-    return convertSdkMessages(raws)
+    return convertSdkMessages(raws, opts)
   } catch (err) {
     console.warn(`${TAG} loadSession ${sessionId} failed:`, err)
     return []
@@ -823,8 +824,14 @@ function toThreadSummary(
  *           tool_result from the map built in pass 1.
  */
 export function convertSdkMessages(
-  raws: readonly SessionMessage[]
+  raws: readonly SessionMessage[],
+  /** mergeTurns（默认 true）：连续 assistant 条目合并成一条回合消息，
+   *  与流式路径的消息形状对齐（见 pass 2 内注释）。回放导出传 false——
+   *  compileReplay 按每条目的 uuid→timestamp 分配表演窗口，合并会把
+   *  整个回合压进一个窗口，时间编排失真。 */
+  opts?: { mergeTurns?: boolean }
 ): ThreadMessageLike[] {
+  const mergeTurns = opts?.mergeTurns !== false
   const resultByToolUseId = new Map<string, unknown>()
   // Workflow/Task completion records, keyed by the spawning Workflow
   // tool-call's id. On a live run these subtasks arrive as `task_update`
@@ -878,6 +885,37 @@ export function convertSdkMessages(
         tasksByToolUseId
       )
       if (parts.length === 0) continue
+      // 连续的 assistant 条目合并进同一条消息（2026-07-17 回合叙事修复）。
+      // 流式路径整个回合的 parts 都追加在一条 assistant 消息里（engine 的
+      // startAssistantMessage 每回合一次），而 transcript 里一轮 agent 回合
+      // = 每次 API 调用一条 assistant 条目——不合并的话恢复后每条消息只有
+      // 1-2 个 part：
+      //   1. TurnActivity 的阶段分组是 per-message 的，恢复态永远只有
+      //      单行组——没有阶段头、没有回合总状态行，与流式态两副面孔；
+      //   2. 每条消息自带的 chrome（隐形 ActionBar + mb-6）× N 条 =
+      //      工具行之间莫名的大段空白；TodoWrite-only 消息在行隐藏后
+      //      更是纯空壳。
+      // 合并边界天然正确：真人 user 气泡（parts 非空的 user 轮）会 push
+      // 进 out 打断连续性；纯 tool_result / 注入的 user 轮在上面被 skip，
+      // 不产出消息、也就不打断——这正是「同一回合」的语义。合并消息保留
+      // 首条目的 uuid（与流式一致：一回合一个消息 id）。
+      const last = out[out.length - 1]
+      if (
+        mergeTurns &&
+        last &&
+        last.role === 'assistant' &&
+        Array.isArray(last.content)
+      ) {
+        // ThreadMessageLike.content 是 readonly——整条消息重建替换。
+        out[out.length - 1] = {
+          ...last,
+          content: [
+            ...(last.content as unknown[]),
+            ...parts
+          ] as unknown as ThreadMessageLike['content']
+        }
+        continue
+      }
       out.push({
         id: raw.uuid,
         role: 'assistant',
@@ -949,15 +987,45 @@ function collectTaskNotification(
 type ContentPart = { type: string; [key: string]: unknown }
 
 /**
+ * The CLI's bookkeeping turn for a request the user stopped. When a
+ * `tool_use` is still in flight, the API contract demands a matching
+ * `tool_result` or the next request is rejected outright — so the CLI
+ * fabricates an `is_error: true` result for the orphaned call and appends
+ * this text turn to tell the model *why* the tool never ran (the `for tool
+ * use` suffix marks that flavour; a plain text-stream interrupt omits it).
+ *
+ * Anchored to the whole message because these turns carry no `isMeta` flag
+ * — on the wire they are byte-identical to something the human typed, so
+ * the text is all we have to discriminate on. A real message that quotes
+ * the string in passing still renders.
+ */
+const INTERRUPT_BOOKKEEPING_RE =
+  /^\[Request interrupted by user(?: for tool use)?\]$/
+
+/**
  * True for `user` messages that are fusion-code housekeeping injections
- * rather than human input — currently the `<task-notification>` block a
- * backgrounded task/workflow posts on completion. These belong on the
- * spawning tool card, not in the transcript as a user bubble. Matched on
- * the leading tag (trimmed) so we don't accidentally hide a real message
- * that merely mentions the word elsewhere.
+ * rather than human input:
+ *
+ *   1. `<task-notification>` — a backgrounded task/workflow's completion.
+ *      Belongs on the spawning tool card, not in the transcript as a bubble.
+ *   2. `[Request interrupted by user…]` — see INTERRUPT_BOOKKEEPING_RE. The
+ *      orphaned tool_result it accompanies still merges onto the tool card
+ *      (pass 1), so the card reads as failed — dropping only this turn hides
+ *      the CLI's internal note without hiding that the tool was cut short.
+ *
+ * Both matched strictly (leading tag / whole-message equality) so a real
+ * message that merely mentions one of these strings survives.
+ *
+ * Only history replay reaches here: the live path (`engine.handleUserMessage`)
+ * forwards `tool_result` blocks and nothing else, so a text-only user turn
+ * never makes it to the renderer to begin with.
  */
 function isInjectedAgentMessage(text: string): boolean {
-  return text.trimStart().startsWith('<task-notification>')
+  const trimmed = text.trim()
+  return (
+    trimmed.startsWith('<task-notification>') ||
+    INTERRUPT_BOOKKEEPING_RE.test(trimmed)
+  )
 }
 
 /**

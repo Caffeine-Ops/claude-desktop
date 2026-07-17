@@ -31,6 +31,7 @@ import { useEffect, useMemo, useRef } from 'react'
 
 import { ChatSurface } from '@/src/components/ChatSurface'
 import { UpdateReadyToast } from '@/src/components/UpdateReadyToast'
+import { useSurfaceOverlayStore } from '@/src/stores/surfaceOverlay'
 import { cn } from '@/src/lib/utils'
 
 // canvas App 与 ChatSurface 内部的 ChatApp 同策略：ssr:false，模块只在
@@ -43,6 +44,45 @@ const CanvasApp = dynamic(() => import('@/src/canvas/AppRoot').then((m) => m.App
   loading: () => <div className="od-loading-shell">加载工作画布…</div>
 })
 
+// 外观写手 + 同步桥（零 DOM）。ssr:false 与上面同理：applier 走 useLayoutEffect、
+// 且链上是 chat 的 store 树，不能进 SSR。
+//
+// 挂在**这里**而不是 chat/App.tsx 里（2026-07-17 迁移）：chat 面随 chatShowing
+// 整棵拆装，设置页一开写手和 od:theme-mode-applied 监听器就双双缺席——偏偏
+// 「在设置页里切主题」正是它们最该在岗的场景。本组件由根 layout 渲染、跨路由
+// 保活，挂这层后它们的存活与任何面的可见性策略解耦（此前是靠 keep-alive 的
+// visitedRef 侥幸兜住的，见 AppearanceBridge 头注释）。
+const AppearanceBridge = dynamic(
+  () => import('@/src/chat/AppearanceBridge').then((m) => m.AppearanceBridge),
+  { ssr: false }
+)
+
+// 插件市场面（?market=1）。ssr:false 与上面两个同理。它是**第三个面**而不是
+// canvas 内部的 overlay（设置页那样）：SurfaceHost 渲染在 rail 右侧的
+// shell-stage 里（app/layout.tsx），所以挂在这一层天然就是「rail 常驻 + 右侧
+// 换成市场」——用户定稿的形态（2026-07-17）。市场树本身住 canvas 目录但生在
+// chat 栈（shadcn + scoped @source，见 chat/styles/index.css），依赖链只有
+// shadcn 原语 + contracts，不碰 canvas 的 window 触碰路径，dynamic 只是为了
+// 按需加载 + 与另两面策略一致。
+const MarketSurface = dynamic(
+  () => import('@/src/canvas/components/market/MarketSurface').then((m) => m.MarketSurface),
+  { ssr: false }
+)
+
+// 知识库面（?kb=1）—— **第四个面，与市场面同构**（2026-07-17 用户要求「改造成
+// 跟插件页面交互一样，不要切换页面」）。此前它是 canvas App 内部 `fixed inset-0
+// z-50` 的全屏 overlay（同设置页），逃出 stage 连 rail 一起盖住，所以得自画一条
+// 244px 左导航 + 「返回应用」；抬到这一层后 rail 常驻，那条自画导航收成顶栏
+// tabs、返回按钮直接删（退出路径就是 rail 本身）。设置页仍留在 canvas 内部
+// overlay 那一族——它是「模态化的系统配置」，盖住 rail 是刻意的。
+const KnowledgeBaseSurface = dynamic(
+  () =>
+    import('@/src/canvas/components/knowledge-base/KnowledgeBaseSurface').then(
+      (m) => m.KnowledgeBaseSurface
+    ),
+  { ssr: false }
+)
+
 export function SurfaceHost() {
   const pathname = usePathname()
   // settings=1 的判定收在这里（而不是 canvas App 根组件自己订阅
@@ -51,31 +91,45 @@ export function SurfaceHost() {
   // 整棵 canvas 树拖着 re-render。
   const searchParams = useSearchParams()
   const settingsOverlay = searchParams?.get('settings') === '1'
-  // 知识库页：**与设置页同一套机制**——canvas App 渲染的全屏 overlay
-  // （fixed inset-0 + 不透明底），?kb=1 挂在当前 pathname 上（AppRail 的
-  // openKnowledgeBase 软导航 pushState 进来）。它不是独立的第三个面，而是
-  // 复用 canvas 面：kb=1 时和 settings=1 一样强制放映 canvas 面，由 canvas
-  // App 内部按 kbOverlay 提前 return 只渲染知识库 UI（见 App.tsx）。
+  // 面开关（?market=1 插件市场 / ?kb=1 知识库）：与 settings 同一套「query 挂
+  // 当前 pathname」机制，但**不是** canvas 内部的全屏 overlay，而是下面与
+  // chat/canvas 平级的独立面（本组件已在 rail 右侧的 stage 里，故它们天然不盖
+  // rail）。机制与形态取舍详见 src/stores/surfaceOverlay.ts 头注释。
+  const marketOverlay = searchParams?.get('market') === '1'
   const kbOverlay = searchParams?.get('kb') === '1'
   const isProbe = pathname.startsWith('/chat-probe')
   const isChat = !isProbe && pathname.startsWith('/chat')
-  // 哪个面正在「放映」：设置页/知识库页都是 canvas App 渲染的全屏 overlay
-  // （fixed inset-0 + 不透明底），settings=1 或 kb=1 时无论 pathname 在哪都
-  // 必须放映 canvas 面。两个参数都挂在**当前 pathname** 上（AppRail 的
-  // openSettings / openKnowledgeBase），打开/关闭 pathname 全程不动——rail
-  // tab 高亮、rail 中段列表、back() 的落点都保持原面（2026-07-08「返回应用时
-  // tab 从工作画布切到智能助手」的根修：旧方案 pushState('/?settings=1') 把
-  // pathname 拽到 '/'，rail 在设置页底下默默切到画布态，揭开时再翻回，
-  // 用户看到一次假切换）。本组件所有可见性判定一律用 chatShowing，
-  // isChat 只是它的原料。
-  const chatShowing = isChat && !settingsOverlay && !kbOverlay
+  // 哪个面正在「放映」：设置页是 canvas App 渲染的全屏 overlay（fixed inset-0
+  // + 不透明底），settings=1 时无论 pathname 在哪都必须放映 canvas 面。所有
+  // overlay 参数都挂在**当前 pathname** 上（AppRail 的 openSettings /
+  // openSurfaceOverlay），打开/关闭 pathname 全程不动——rail tab 高亮、rail
+  // 中段列表、back() 的落点都保持原面（2026-07-08「返回应用时 tab 从工作画布
+  // 切到智能助手」的根修：旧方案 pushState('/?settings=1') 把 pathname 拽到
+  // '/'，rail 在设置页底下默默切到画布态，揭开时再翻回，用户看到一次假切换）。
+  // 本组件所有可见性判定一律用 chatShowing，isChat 只是它的原料。
+  //
+  // 面开关（market/kb）优先级最高：它们盖住 chat/canvas 任一面（参数可以挂在
+  // 两个面的 pathname 上）。四者互斥、恰有一个在放映——两个面开关同时出现在
+  // URL 上是不可能的（openSurfaceOverlay 开新面时先剥旧面），万一手工构造出
+  // 这种 URL，下面的 || 顺序让 market 赢，不会两个一起渲染。
+  const marketShowing = !isProbe && marketOverlay
+  const kbShowing = !isProbe && kbOverlay && !marketShowing
+  const overlayShowing = marketShowing || kbShowing
+  const chatShowing = isChat && !settingsOverlay && !overlayShowing
+  // 画布面：chat 与两个面开关都没在放映时显示——这囊括「画布 pathname」与
+  // 「设置 overlay」两种情形（后者是 canvas App 内部的全屏 overlay，共用画布
+  // 面容器）。
+  const canvasShowing = !chatShowing && !overlayShowing
 
   // 面首次可见后永久保活（ref 而非 state：render 期读写、不需要触发
   // 额外渲染——pathname 变化本身就会重渲染本组件）。
+  // market/kb 两面**不进这套**：它们轻量且是临时目的地，走条件渲染即用即卸
+  // （理由见 MarketSurface 头注释）。这里必须用 canvasShowing 而不是
+  // `else`——否则面开着时会把 canvas 误标成 visited，白挂一棵重型树。
   const visited = useRef({ chat: false, canvas: false })
   if (!isProbe) {
     if (chatShowing) visited.current.chat = true
-    else visited.current.canvas = true
+    else if (canvasShowing) visited.current.canvas = true
   }
 
   useEffect(() => {
@@ -87,6 +141,14 @@ export function SurfaceHost() {
     }
     return undefined
   }, [chatShowing])
+
+  // 把当前放映的面镜像进 store 供 rail 订阅（rail 不在 Suspense 内、不能自己
+  // useSearchParams，理由见 stores/surfaceOverlay.ts）。本组件是唯一写手。
+  useEffect(() => {
+    useSurfaceOverlayStore.setState({
+      open: marketShowing ? 'market' : kbShowing ? 'kb' : null
+    })
+  }, [marketShowing, kbShowing])
 
   // ── 切面**不再**做任何 region-refresh 脉冲（2026-07-14 拖拽机制重构，删）──
   // 历史上这里有个切面 effect：瞬时给 documentElement 挂 `.region-refresh` 类
@@ -115,14 +177,14 @@ export function SurfaceHost() {
   // useMemo 固定引用后，切换时只有包装 div 的 className 变，React 对
   // children 直接 bailout。
   const chatFace = useMemo(() => <ChatSurface />, [])
-  // 设置页与知识库页都是 canvas App 内部的全屏 overlay（提前 return），
-  // 由这两个 prop 驱动——memo 依赖二者，settings/kb 翻转时才重建 canvas
-  // 元素，普通 chat↔画布切换（两参不变）canvas 树 bailout 不 re-render。
+  // 设置页是 canvas App 内部的全屏 overlay（提前 return），由这个 prop 驱动
+  // ——memo 只依赖它，settings 翻转时才重建 canvas 元素，普通 chat↔画布切换
+  //（该参不变）canvas 树 bailout 不 re-render。
+  // 知识库曾是这里的第二个 prop（knowledgeBaseOverlay），2026-07-17 抬成独立
+  // 的第四个面后不再经 canvas 树，故摘除——canvas 面从此少一个重建触发源。
   const canvasFace = useMemo(
-    () => (
-      <CanvasApp settingsOverlay={settingsOverlay} knowledgeBaseOverlay={kbOverlay} />
-    ),
-    [settingsOverlay, kbOverlay]
+    () => <CanvasApp settingsOverlay={settingsOverlay} />,
+    [settingsOverlay]
   )
 
   if (isProbe) return null
@@ -165,10 +227,7 @@ export function SurfaceHost() {
         <div
           className={cn(
             'absolute inset-0',
-            // canvas 面在 chat 未放映时显示——这囊括了「画布 pathname」「设置
-            // overlay（settings=1）」「知识库 overlay（kb=1）」三种情形，后两者
-            // 都是 canvas App 内部的全屏 overlay，共用这块画布面容器。
-            !chatShowing
+            canvasShowing
               ? ''
               : '[content-visibility:hidden] pointer-events-none surface-inactive'
           )}
@@ -176,6 +235,24 @@ export function SurfaceHost() {
           {canvasFace}
         </div>
       )}
+      {/* 两个面开关（?market=1 / ?kb=1）——与上面两面平级、DOM 序在后（放映时
+        * 另两面都已是隐藏态，不存在盖穿问题）。条件渲染而非 keep-alive：轻量
+        * 临时目的地，见 MarketSurface 头注释。顶部 46px 是 window-drag-strip
+        * 的地盘，两个面的顶栏都自己挖了 no-drag 洞（各自组件里）。 */}
+      {marketShowing && (
+        <div className="absolute inset-0">
+          <MarketSurface />
+        </div>
+      )}
+      {kbShowing && (
+        <div className="absolute inset-0">
+          <KnowledgeBaseSurface />
+        </div>
+      )}
+      {/* 外观写手 + 同步桥：零 DOM，但和 UpdateReadyToast 同理必须在两个面的
+        * 包装 div 之外——它要在「chat 面被撤掉（设置页/知识库页开着）」时继续
+        * 在岗，那正是 canvas 写手广播 themeMode 的时刻。 */}
+      <AppearanceBridge />
       {/* 全局更新就绪提示：fixed 定位 + 顶层 z，必须在两个（可能被
         * content-visibility:hidden 冻结的）面包装 div 之外。 */}
       <UpdateReadyToast />

@@ -52,7 +52,7 @@ export function SettingsView(): React.JSX.Element | null {
         <button
           type="button"
           onClick={closeSettings}
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-muted-foreground transition-colors hover:bg-hover/60 hover:text-foreground"
         >
           <ArrowLeftIcon className="size-3.5" />
           <span>{t('backToApp')}</span>
@@ -109,7 +109,7 @@ export function SettingsBody(): React.JSX.Element {
               'mb-0.5 flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[12.5px] transition-colors ' +
               (activeCategory === cat.id
                 ? 'bg-muted/80 text-foreground'
-                : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')
+                : 'text-muted-foreground hover:bg-hover/50 hover:text-foreground')
             }
           >
             <span
@@ -722,7 +722,7 @@ function SizeStepper({
         onClick={dec}
         disabled={atMin}
         aria-label="decrease"
-        className="flex w-7 items-center justify-center text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground disabled:cursor-default disabled:text-muted-foreground/60 disabled:hover:bg-transparent"
+        className="flex w-7 items-center justify-center text-muted-foreground transition-colors hover:bg-hover/80 hover:text-foreground disabled:cursor-default disabled:text-muted-foreground/60 disabled:hover:bg-transparent"
       >
         −
       </button>
@@ -735,7 +735,7 @@ function SizeStepper({
         onClick={inc}
         disabled={atMax}
         aria-label="increase"
-        className="flex w-7 items-center justify-center text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground disabled:cursor-default disabled:text-muted-foreground/60 disabled:hover:bg-transparent"
+        className="flex w-7 items-center justify-center text-muted-foreground transition-colors hover:bg-hover/80 hover:text-foreground disabled:cursor-default disabled:text-muted-foreground/60 disabled:hover:bg-transparent"
       >
         +
       </button>

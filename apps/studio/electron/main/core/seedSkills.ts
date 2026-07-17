@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { resolveBundledSkillsPluginDir } from './cliDetect'
+import { resolveBundledSkillsPluginDir, resolveCoworkPluginEntries } from './cliDetect'
 
 /**
  * Pre-warm the skill list from disk so the `/` composer popover and the
@@ -56,6 +56,18 @@ export async function seedSkillsFromDisk(workspaceDir: string | null): Promise<s
   if (bundledPluginDir) {
     await scanSkillsRoot(bundledPluginDir, 'claude-desktop', found)
   }
+
+  // Marketplace-installed skills (~/.cowork/skills). Each installed item is
+  // now its own local plugin (2026-07-17 redesign) — `skillsDir` is either
+  // the shared root itself (legacy flat hand-placed skills) or
+  // `<item>/skills/` (market-installed items with a nested skills/ subdir,
+  // see resolveCoworkPluginEntries). Namespace `cowork` MUST equal the
+  // plugin.json name every entry's installer writes — that's the exact
+  // string fusion-code's `system init` reports later, keeping seed and
+  // authoritative list identical (no flicker / dupes).
+  await Promise.all(
+    resolveCoworkPluginEntries().map((e) => scanSkillsRoot(e.skillsDir, 'cowork', found))
+  )
 
   // Other plugin skills — driven by installed_plugins.json so we never show
   // stale cached plugin versions the user uninstalled.

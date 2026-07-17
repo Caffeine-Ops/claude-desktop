@@ -64,7 +64,12 @@ const ACTIVITY_LABELS: Record<string, string> = {
   reading: '查阅中',
   writing: '编写中',
   running: '执行中',
-  searching: '联网中',
+  // 「上网查资料」而非「联网中」（2026-07-17 用户拍板）：联网可以是任何网络
+  // 动作，说了等于没说——用户要知道的是「AI 在干嘛」。也刻意没用「搜索网页
+  // 中」：本档同时覆盖 WebSearch 与 WebFetch（见 stores/chat.ts 的 toolActivity
+  // 映射），而 WebFetch 是按 URL 抓取、并不是搜索，「上网查资料」两者都成立。
+  // 不带「中」字与其余动词的节奏略异，是有意的口语化（同「拆一下任务」）。
+  searching: '上网查资料',
   asking: '等待你回答',
   working: '处理中'
 }
@@ -91,6 +96,28 @@ const ACTIVITY_LABELS: Record<string, string> = {
  * The verb swaps with a keyed re-mount (slide-up-in); no exit animation — an
  * AnimatePresence popLayout here would make the pill width snap around the
  * outgoing word, which reads worse than the simple swap.
+ *
+ * 窄档收起动词（2026-07-17，用户实锤截图：窄窗口下「联网中 · 16.2s」压在
+ * 技能按钮与模型 chip 上）。成因是 flex 的收缩规则，不是定位错误：本 pill
+ * `whitespace-nowrap` 且没有 min-w-0，作为 flex item 的默认 min-width:auto
+ * 意味着**它不会缩到内容宽度以下**；toolbar 两侧的按钮又全是 shrink-0，唯一
+ * 能让的只有中间那个 flex-1 spacer——它被压到比 pill 还窄后，pill 就在
+ * justify-center 下朝**左右对称溢出**，正好各盖住一边。
+ * 退化策略取「留图标+耗时、收动词」而非 truncate：运行状态的核心信息是
+ * 「在动」+「多久」，动词是锦上添花；truncate 会切出「联网…」这种半个中文。
+ * 断点挂在 spacer 的 @container/status 上而不是视口——composer 宽度由 rail
+ * 收放 / 分栏决定，视口媒体查询探不到（同 SlidesWorkspace 的理由）。
+ * 两级退化，断点都按 spacer 实测宽度定（真机量的，不是估的）：
+ *   @max-10rem(160px) 收动词 → pill 64px。完整 pill 宽度随动词字数在 116px
+ *     （3 字，如「思考中」）~140px（5 字，如「上网查资料」「等待你回答」）之间，
+ *     160px 断点按最长的 5 字留了余量——加新动词别超 5 字，超了要重算这里。
+ *   @max-4rem(64px)  连耗时也收，只剩转圈图标 → pill 约 38px。这是为
+ *     toolbar ≤410px 的极窄档兜底：388px 时 spacer 被压到只剩 53px，光收
+ *     动词后的 64px 仍会左右各溢出 5px 压住技能按钮与模型 chip（2026-07-17
+ *     用户第二次实锤截图）。只留图标不算丢信息——图标在转本身就是「在运行」，
+ *     Stop 按钮同排佐证；aria-label 始终保留完整动词+耗时，读屏不受影响。
+ * 为什么不靠隐藏麦克风/模型 chip 让位：那是让功能不可达换布局，代价比
+ * 状态文字降级大；pill 是临时态，退化只持续到本轮结束。
  */
 const PILL_SPRING = { type: 'spring', bounce: 0, visualDuration: 0.25 } as const
 
@@ -130,13 +157,14 @@ function ComposerStatusPill({
         initial={{ opacity: 0, y: 5 }}
         animate={{ opacity: 1, y: 0 }}
         transition={PILL_SPRING}
+        className="@max-[10rem]/status:hidden"
       >
         {verb}
       </motion.span>
-      <span aria-hidden className="opacity-40">
+      <span aria-hidden className="opacity-40 @max-[10rem]/status:hidden">
         ·
       </span>
-      <span className="shrink-0 font-mono text-[11px] font-medium tabular-nums opacity-75">
+      <span className="shrink-0 font-mono text-[11px] font-medium tabular-nums opacity-75 @max-[4rem]/status:hidden">
         {label}
       </span>
     </motion.div>
@@ -511,11 +539,24 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
             ) : null
           }
         >
+        {/* 聚焦效果 = 方案 B「柔光聚拢」（docs/ui-prototype-composer-focus
+            .html 定稿，2026-07-17；同日撤换掉的方案 E「流光描边」实际观感
+            不好看，改用这版更稳的纯 CSS 效果）。描边加深 + 4px 光晕徐徐
+            晕开 + 一层带色环境投影——三层堆一个 box-shadow，:focus-within
+            零 JS 驱动。
+
+            颜色特意用 --accent 不是 --brand：截图实锤 composer 聚焦环是
+            写死的品牌绿，但用户在设置页选的主题色是蓝——两者对不上。
+            --accent 由 appearance.applier.ts 写在 documentElement.style
+            上（最高优先级），用户切主题色即改写这个 token，这里引用它就
+            自动跟着变，不需要额外监听。resting 态的中性 ring-1 保留；
+            focus-within:ring-0 把它清零，避免跟下面的 shadow 堆叠出双环。 */}
         <div
           className={
-            'relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-[hsl(var(--brand)/0.4)] group-data-[dragging=true]/dropzone:ring-2 group-data-[dragging=true]/dropzone:ring-[hsl(var(--brand)/0.5)] group-data-[dragging=true]/dropzone:bg-brand/[0.08] dark:ring-white/[0.08]' +
+            'relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-0 focus-within:shadow-[0_0_0_1px_hsl(var(--accent)/0.55),0_0_0_4px_hsl(var(--accent)/0.12),0_2px_6px_rgba(0,0,0,0.04),0_10px_32px_-6px_hsl(var(--accent)/0.22)] group-data-[dragging=true]/dropzone:ring-2 group-data-[dragging=true]/dropzone:ring-[hsl(var(--brand)/0.5)] group-data-[dragging=true]/dropzone:bg-brand/[0.08] dark:ring-white/[0.08]' +
             // hero：卡片浮在托盘上，需要一层柔和投影把「白卡叠灰壳」的层次
-            // 立起来（dock 态背景就是页面底色，不加）。
+            // 立起来（dock 态背景就是页面底色，不加）。聚焦时投影被
+            // focus-within 整体接管（主题色环境光替换中性环境光），失焦回落。
             (variant === 'hero'
               ? ' shadow-[0_1px_2px_rgba(0,0,0,0.04),0_10px_28px_-4px_rgba(0,0,0,0.07)]'
               : '')
@@ -575,30 +616,47 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
                     正文 14px 加粗（2026-07-16 用户拍板）：chip/占位 pill 仍是
                     13px/500 的内联样式不受继承影响，字重差让用户键入的正文
                     成为行内视觉主体；placeholder（.is-empty::before）同步继承
-                    这组字号字重。 */}
+                    这组字号字重。
+                    pt-4/pb-3（纵向）挪到这层**不滚动**的外层，`overflow-y-auto`
+                    单独留给内层——此前纵向 padding 跟滚动同挂一个 div，只是
+                    "内容顶端"的留白，只有真滚到最开头那一行才看得见；输入撑到
+                    max-h-52 触发内部滚动后，可视区顶部贴着的是当前滚到的那一
+                    行，不再是内容头部，留白视觉上就消失了（2026-07-17 用户
+                    截图实锤）。外层不滚动，纵向 padding 就是滚动视口和卡片
+                    边框之间恒定的一圈框，不随滚动位置变化。
+                    横向 px-5 留在内层（滚动的这个 div）没挪——滚动只发生在
+                    纵向，横向 padding 不会有「滚过就消失」的问题，反而是
+                    原生滚动条（main.css 定的 10px 宽）需要落脚的位置：挪去
+                    外层会让内层贴着卡片右边界铺满，滚动条只能直接压在文字
+                    上（2026-07-17 用户第二次截图实锤：内容一多滚动条就叠住
+                    最后几个字）。 */}
                 <div
                   className={
                     (variant === 'hero' ? 'min-h-[108px]' : 'min-h-[52px]') +
-                    ' max-h-52 overflow-y-auto px-5 pb-1 pt-4 text-[14px] font-bold leading-relaxed'
+                    ' pb-3 pt-4'
                   }
                 >
-                  <ProseMirrorComposerInput
-                    ref={composerInputRef}
-                    placeholder={
-                      streaming
-                        ? t('composerPlaceholderStreaming')
-                        : t('composerPlaceholder')
-                    }
-                    slashAdapter={slashAdapter}
-                    mentionAdapter={fileAdapter}
-                    onSubmit={() => {
-                      composerRuntime.send()
-                    }}
-                  />
+                  {/* caret 跟主题色（同下面聚焦柔光用同一个 --accent），
+                      不用 --brand——理由见上方卡片聚焦效果的注释。 */}
+                  <div className="max-h-52 overflow-y-auto px-5 text-[14px] font-bold leading-relaxed [caret-color:hsl(var(--accent))]">
+                    <ProseMirrorComposerInput
+                      ref={composerInputRef}
+                      placeholder={
+                        streaming
+                          ? t('composerPlaceholderStreaming')
+                          : t('composerPlaceholder')
+                      }
+                      slashAdapter={slashAdapter}
+                      mentionAdapter={fileAdapter}
+                      onSubmit={() => {
+                        composerRuntime.send()
+                      }}
+                    />
+                  </div>
                 </div>
 
                 {/* —— Bottom row: toolbar —— */}
-                <div className="flex items-center gap-2 px-3 pb-3 pt-1">
+                <div className="flex items-center gap-2 px-3 pb-3 pt-2">
                   {/* Left: attachment "+". We do NOT use
                       ComposerPrimitive.AddAttachment (it hard-wires
                       accept='image/*'); the hidden input above accepts any
@@ -650,8 +708,11 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
                       working-status pill dead-center. The pill's anchor is
                       this fixed slot — same row as the Stop button (status
                       next to its action), zero extra card height, and it
-                      cannot drift when the queue segment comes and goes. */}
-                  <div className="flex min-w-0 flex-1 items-center justify-center">
+                      cannot drift when the queue segment comes and goes.
+                      @container/status：pill 按**本槽实际宽度**收起动词（窄档
+                      防溢出，理由见 ComposerStatusPill 头注释）。容器必须是
+                      这里而不是卡片/视口——本槽宽度才是 pill 真正能用的空间。 */}
+                  <div className="@container/status flex min-w-0 flex-1 items-center justify-center">
                     <AnimatePresence>
                       {turnActivity.active && turnActivity.startedAt !== undefined ? (
                         <ComposerStatusPill
@@ -671,10 +732,14 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
                   <ThreadPrimitive.If running={false}>
                     <ComposerPrimitive.Send
                       aria-label="Send message"
-                      // ready 态品牌绿（原型 .btn-send.ready）：空输入是 muted
-                      // disabled 盘，有内容才亮绿——状态差本身就是「可以发了」
-                      // 的信号，比常亮黑盘的信息量大。
-                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.18)] transition-all hover:brightness-[1.08] active:scale-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.08] disabled:text-muted-foreground/50 disabled:shadow-none"
+                      // ready 态跟主题色（原型 .btn-send.ready，2026-07-17
+                      // 从写死品牌绿改 --accent——截图实锤发送键是绿的但
+                      // 用户选的主题色是蓝，两者对不上；--accent 由
+                      // appearance.applier.ts 写在 documentElement 上，切
+                      // 主题色这里自动跟着变）：空输入是 muted disabled
+                      // 盘，有内容才亮色——状态差本身就是「可以发了」的
+                      // 信号，比常亮黑盘的信息量大。
+                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.18)] transition-all hover:brightness-[1.08] active:scale-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.08] disabled:text-muted-foreground/50 disabled:shadow-none"
                     >
                       <svg
                         width="18"
@@ -1335,6 +1400,7 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
 
   // chip 上显示当前模型的友好名（未知 id 原样）。
   const currentMeta = current ? modelMetaOf(current) : null
+  const modelLabel = currentMeta?.name ?? current ?? '模型'
   // 菜单分两组：auto 挡（default）单列顶部，具名模型在下（图 2 的分隔线）。
   const list = models ?? []
   const autoIds = list.filter((id) => modelMetaOf(id).auto)
@@ -1401,8 +1467,17 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden="true">
           <path d="m12 3 2.3 6.2L21 11l-6.7 1.8L12 19l-2.3-6.2L3 11l6.7-1.8z" />
         </svg>
-        <span className="max-w-[160px] truncate leading-none">
-          {currentMeta?.name ?? current ?? '模型'}
+        {/* max-w 160→6rem(96px)（2026-07-17 用户实锤截图：模型名把 toolbar
+            撑到挤掉状态 pill）。160px 形同虚设——`gpt-5.2-pro-2025-12-11`
+            实测自然宽度才 145px，够不着阈值，整个 chip 吃掉 200px。
+            96px 的由来：长 id 的信息在**前缀**（`gpt-5.2-pro` 是标识，
+            `-2025-12-11` 是日期噪音），截成「gpt-5.2-pro-…」关键部分不丢；
+            同时短名不受影响——`Sonnet 5`≈53px、`gpt-5.6-terra`≈86px 都在
+            阈值内不截断（实测每字符 6.6px）。
+            title 是截断的配套，不是可选项：截了就必须能 hover 看全名，
+            同菜单行 `title={meta.name}` 的既有惯例。 */}
+        <span className="max-w-[6rem] truncate leading-none" title={modelLabel}>
+          {modelLabel}
         </span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={'text-muted-foreground/50 transition-transform ' + (open ? 'rotate-180' : '')} aria-hidden="true">
           <path d="m6 9 6 6 6-6" />
@@ -1902,7 +1977,7 @@ function WorkspaceDirPicker(): React.JSX.Element {
                       onClick={() => choose(path)}
                       title={path}
                       className={
-                        'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted/70 ' +
+                        'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-hover/70 ' +
                         (selected
                           ? 'text-foreground'
                           : 'text-muted-foreground hover:text-foreground')
@@ -1951,7 +2026,7 @@ function WorkspaceDirPicker(): React.JSX.Element {
                   data-slot="workspace-option"
                   type="button"
                   onClick={browse}
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-muted-foreground transition-colors hover:bg-hover/70 hover:text-foreground"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="shrink-0 opacity-60" aria-hidden>
                     <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />

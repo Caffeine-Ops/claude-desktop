@@ -222,7 +222,7 @@ function OutputRow({
       initial={isNew ? { opacity: 0, y: -12 } : false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.42, ease: [0.34, 1.56, 0.64, 1] }}
-      className="group/orow relative flex items-center gap-1.5 rounded-xl px-1.5 py-[7px] transition-colors hover:bg-muted/50"
+      className="group/orow relative flex items-center gap-1.5 rounded-xl px-1.5 py-[7px] transition-colors hover:bg-hover/50"
     >
       {isNew ? (
         <motion.span
@@ -292,7 +292,7 @@ function OutputRow({
           aria-label={zh ? '打开' : 'Open'}
           title={zh ? '打开' : 'Open'}
           onClick={openExternal}
-          className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="rounded-md p-1 text-muted-foreground hover:bg-hover hover:text-foreground"
         >
           <svg viewBox="0 0 20 20" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
             <path d="M10 3v10m0 0l-3.5-3.5M10 13l3.5-3.5M4 16h12" strokeLinecap="round" strokeLinejoin="round" />
@@ -306,7 +306,7 @@ function OutputRow({
           onClick={() => {
             void window.chatApi.revealPath({ absPath: path })
           }}
-          className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="rounded-md p-1 text-muted-foreground hover:bg-hover hover:text-foreground"
         >
           <svg viewBox="0 0 20 20" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
             <path

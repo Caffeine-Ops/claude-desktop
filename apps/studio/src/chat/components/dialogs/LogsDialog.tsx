@@ -146,7 +146,7 @@ export function LogsDialog(): React.JSX.Element | null {
                   ? t('logsClearTitleEngine')
                   : t('logsClearTitleUi')
               }
-              className="rounded-md border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-foreground/80 transition hover:border-input hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-md border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-foreground/80 transition hover:border-input hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
             >
               {t('logsClear')}
             </button>
@@ -154,7 +154,7 @@ export function LogsDialog(): React.JSX.Element | null {
               type="button"
               onClick={close}
               aria-label={t('logsClose')}
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground/80 transition hover:bg-muted/80 hover:text-foreground"
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground/80 transition hover:bg-hover/80 hover:text-foreground"
             >
               ✕
             </button>
@@ -233,7 +233,7 @@ function TabButton({
         'flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium transition ' +
         (active
           ? 'bg-muted text-foreground'
-          : 'text-muted-foreground/80 hover:bg-muted/60 hover:text-foreground/80')
+          : 'text-muted-foreground/80 hover:bg-hover/60 hover:text-foreground/80')
       }
     >
       <span>{children}</span>

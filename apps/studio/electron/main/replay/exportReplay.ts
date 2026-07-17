@@ -61,7 +61,9 @@ export async function exportReplay(
   }
 
   // 2. 权威解析（tool result 配对 / workflow 卡 / slash 清洗都在这一步）。
-  const messages = await loadSession(sessionId)
+  // mergeTurns:false——回放编译按每条 assistant 条目的 uuid→timestamp
+  // 分配表演窗口，聊天恢复用的回合合并会把整轮压进一个窗口，节奏失真。
+  const messages = await loadSession(sessionId, { mergeTurns: false })
   if (messages.length === 0) {
     return { ok: false, error: '该会话没有可导出的消息。' }
   }

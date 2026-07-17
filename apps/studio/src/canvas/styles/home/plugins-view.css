@@ -1,14 +1,27 @@
 .plugins-view {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  width: min(880px, 100%);
+  margin: 0 auto;
+  gap: 26px;
 }
 
 .plugins-view__hero {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: 24px;
+  padding-top: 8px;
+}
+
+.plugins-view .entry-section__title {
+  margin: 0;
+  color: var(--text-strong);
+  font-family: var(--sans);
+  font-size: clamp(27px, 3vw, 32px);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.08;
 }
 
 .plugins-view__kicker {
@@ -25,7 +38,7 @@
   margin: 8px 0 0;
   color: var(--text-muted);
   font-size: 14px;
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .plugins-view__badge {
@@ -48,56 +61,111 @@
   flex: 0 0 auto;
 }
 
-.plugins-view__stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.plugins-view__hero-actions .plugins-view__primary,
+.plugins-view__hero-actions .plugins-view__secondary {
+  min-height: 30px;
+  padding-inline: 13px;
+  border-radius: 999px;
+}
+
+.plugins-view__installed-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.plugins-view__installed-strip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.plugins-view__installed-strip-head h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.plugins-view__installed-strip-head button {
+  display: inline-grid;
+  min-width: 26px;
+  height: 24px;
+  place-items: center;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.plugins-view__installed-strip-head button:hover {
+  background: var(--border-soft);
+  color: var(--text);
+}
+
+.plugins-view__installed-icons {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
-.plugins-view__stat {
-  padding: 14px;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius);
-  background: var(--bg-panel);
+.plugins-view__installed-icon {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 1px solid hsl(var(--plugin-hue) 52% 36% / 0.22);
+  border-radius: 9px;
+  background: linear-gradient(
+    145deg,
+    hsl(var(--plugin-hue) 66% 56%),
+    hsl(var(--plugin-hue) 58% 40%)
+  );
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+  color: white;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease;
 }
 
-.plugins-view__stat-value {
-  display: block;
-  color: var(--text-strong);
-  /* Stat figure is UI chrome, not a displayed design artifact — Apple
-     keeps numerics in SF Pro (var(--sans)), reserving serif for content
-     previews only. */
-  font-family: var(--sans);
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1;
+.plugins-view__installed-icon:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 12px rgb(0 0 0 / 0.16);
 }
 
-.plugins-view__stat-label {
-  display: block;
-  margin-top: 6px;
+.plugins-view__installed-empty {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
 .plugins-view__tabs {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  padding: 5px;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-lg);
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 3px;
+  border: 0;
+  border-radius: 10px;
   background: var(--bg-subtle);
 }
 
 .plugins-view__tab {
   appearance: none;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: center;
+  gap: 0;
   min-width: 0;
-  padding: 9px 10px;
+  padding: 5px 12px;
   border: 1px solid transparent;
   border-radius: var(--od-radius);
   background: transparent;
@@ -126,7 +194,7 @@
 
 .plugins-view__tab.is-active {
   background: var(--bg-panel);
-  border-color: var(--od-border);
+  border-color: transparent;
   color: var(--text-strong);
   box-shadow: var(--od-shadow-sm);
 }
@@ -137,12 +205,7 @@
 }
 
 .plugins-view__tab-hint {
-  overflow: hidden;
-  max-width: 100%;
-  color: var(--text-faint);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none;
 }
 
 .plugins-view__gallery,
@@ -192,11 +255,17 @@
 }
 
 .plugins-view__list,
-.plugins-view__marketplaces,
-.plugins-view__available-list {
+.plugins-view__marketplaces {
   display: flex;
   flex-direction: column;
   gap: 9px;
+}
+
+.plugins-view__available-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  column-gap: 28px;
+  row-gap: 2px;
 }
 
 .plugins-view__available-controls {
@@ -213,9 +282,9 @@
   align-items: center;
   flex: 1 1 320px;
   min-width: 180px;
-  max-width: 420px;
+  max-width: none;
   border: 1px solid var(--od-border);
-  border-radius: 999px;
+  border-radius: 11px;
   background: var(--bg-panel);
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
@@ -237,8 +306,9 @@
   appearance: none;
   width: 100%;
   border: 0;
-  border-radius: 999px;
-  padding: 7px 30px;
+  min-height: 40px;
+  border-radius: 11px;
+  padding: 8px 34px;
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -285,6 +355,17 @@
   flex: 0 0 auto;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.plugins-view__filter > span {
+  /* The select keeps its associated label for assistive tech; the visible
+     word consumed scarce toolbar width and wrapped vertically in Chinese. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .plugins-view__filter select {
@@ -431,15 +512,75 @@
   padding: 13px;
 }
 
+.plugins-view__available-card {
+  align-items: center;
+  min-width: 0;
+  padding: 11px 10px;
+  border-color: transparent;
+  border-radius: 10px;
+  background: transparent;
+  transition: background-color 140ms ease;
+}
+
+.plugins-view__available-card:hover {
+  background: var(--bg-subtle);
+}
+
+.plugins-view__available-icon {
+  display: inline-grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  background: linear-gradient(
+    145deg,
+    hsl(var(--plugin-hue) 65% 56%),
+    hsl(var(--plugin-hue) 58% 40%)
+  );
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
 .plugins-view__available-main {
   min-width: 0;
 }
 
 .plugins-view__available-main p {
   margin: 5px 0 0;
+  overflow: hidden;
+  max-width: 100%;
   color: var(--text-muted);
   font-size: 12.5px;
   line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugins-view__available-card .plugins-view__meta {
+  overflow: hidden;
+  max-height: 22px;
+  flex-wrap: nowrap;
+}
+
+.plugins-view__available-card .plugins-view__row-actions {
+  gap: 4px;
+}
+
+.plugins-view__available-card .plugins-view__primary,
+.plugins-view__available-card .plugins-view__secondary {
+  min-height: 28px;
+  padding: 0 11px;
+  border-radius: 999px;
+}
+
+.plugins-view__available-card .plugins-view__secondary {
+  padding-inline: 8px;
+  border-color: transparent;
+  background: transparent;
 }
 
 .plugins-view__marketplace a {
@@ -785,14 +926,11 @@
   .plugins-view__hero-actions,
   .plugins-view__row,
   .plugins-view__marketplace,
-  .plugins-view__available-card,
   .plugins-view__available-controls,
   .plugins-view__source-actions {
     flex-direction: column;
   }
 
-  .plugins-view__stats,
-  .plugins-view__tabs,
   .plugins-view__future-grid {
     grid-template-columns: 1fr;
   }
@@ -835,5 +973,28 @@
   .plugins-import-modal__foot {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 760px) {
+  .plugins-view__available-list {
+    grid-template-columns: 1fr;
+  }
+
+  .plugins-view__tabs {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .plugins-view__available-card {
+    flex-wrap: wrap;
+  }
+
+  .plugins-view__available-card .plugins-view__available-main {
+    flex: 1 1 220px;
+  }
+
+  .plugins-view__available-card .plugins-view__row-actions {
+    margin-left: 48px;
   }
 }

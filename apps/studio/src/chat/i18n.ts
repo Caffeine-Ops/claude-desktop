@@ -428,6 +428,24 @@ const STRINGS = {
     toolWorkflowResultLabel: '结果',
     toolWorkflowAgentsLabel: 'agents',
 
+    // 回合叙事（TurnActivity，2026-07-17）：总状态行 + 阶段头。
+    // 摘要模板刻意用大白话动词（看了/写了/跑了）——这套 UI 的目标读者
+    // 是普通用户，不是工程师（vault 协作偏好「文案直白优先」）。
+    turnWorking: '正在处理',
+    turnDone: '已处理',
+    turnDigestHint: '折叠 / 展开工作过程',
+    stageTitle_reading: '查阅资料',
+    stageTitle_writing: '编写文件',
+    stageTitle_running: '执行命令',
+    stageTitle_searching: '检索信息',
+    stageTitle_working: '处理任务',
+    stageSumRead: '看了 {count} 个文件',
+    stageSumWrite: '写了 {count} 个文件',
+    stageSumRun: '跑了 {count} 条命令',
+    stageSumSearch: '查了 {count} 次资料',
+    stageSumOther: '{count} 个步骤',
+    stageSumError: '有步骤失败',
+
     // Workflow script panel (left pane) + the script entry chip on the
     // Workflow tool card that reopens it.
     workflowScriptPanelTitle: '编排脚本',
@@ -813,6 +831,22 @@ const STRINGS = {
     toolStatusStopped: 'stopped',
     toolWorkflowResultLabel: 'Result',
     toolWorkflowAgentsLabel: 'agents',
+
+    // Turn narrative (TurnActivity): turn status row + stage headers.
+    turnWorking: 'Working',
+    turnDone: 'Done',
+    turnDigestHint: 'Collapse / expand the work log',
+    stageTitle_reading: 'Reading files',
+    stageTitle_writing: 'Writing files',
+    stageTitle_running: 'Running commands',
+    stageTitle_searching: 'Searching',
+    stageTitle_working: 'Working',
+    stageSumRead: 'read {count} files',
+    stageSumWrite: 'wrote {count} files',
+    stageSumRun: 'ran {count} commands',
+    stageSumSearch: '{count} lookups',
+    stageSumOther: '{count} steps',
+    stageSumError: 'one step failed',
 
     workflowScriptPanelTitle: 'Workflow script',
     workflowScriptWriting: 'Writing',

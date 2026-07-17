@@ -380,6 +380,7 @@ import { registerHandoffRoutes } from './handoff-routes.js';
 import { EmptyTranscriptError, synthesizeHandoffPrompt } from './handoff-design.js';
 import { TranscriptExportLockedError } from './transcript-export.js';
 import { registerChatRoutes } from './chat-routes.js';
+import { registerSkillsMarketRoutes } from './skills-market/routes.js';
 import { registerStaticResourceRoutes } from './static-resource-routes.js';
 import { registerRoutineRoutes, routineDbRowToContract } from './routine-routes.js';
 import { assertServerContextSatisfiesRoutes } from './route-context-contract.js';
@@ -11890,6 +11891,10 @@ export async function startServer({
   // Restore the plugin-runs-must-go-through-daemon gate by adding it
   // to chat-routes.ts if needed.
 
+
+  // Gitee/静态源技能市场（安装到 ~/.cowork/skills，见 skills-market/market.ts）。
+  // 引擎全 DI、无 db/deps 依赖，故不走 RouteDeps 注入。
+  registerSkillsMarketRoutes(app);
 
   registerChatRoutes(app, {
     db,

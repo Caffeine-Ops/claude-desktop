@@ -35,5 +35,6 @@ export * from './prompts/plugin-block.js';
 export * from './prompts/atom-block.js';
 export * from './critique.js';
 export * from './plugins/index.js';
+export * from './skills-market.js';
 export * from './analytics/events.js';
 export * from './analytics/public-params.js';

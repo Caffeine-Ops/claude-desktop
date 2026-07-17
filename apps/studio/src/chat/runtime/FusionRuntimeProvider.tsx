@@ -12,6 +12,8 @@ import {
   type AppendMessage,
   type DictationAdapter,
   type ExternalStoreThreadListAdapter,
+  type FeedbackAdapter,
+  type ThreadMessage,
   type ThreadMessageLike
 } from '@assistant-ui/react'
 
@@ -25,6 +27,7 @@ import { useI18n, useT } from '../i18n'
 import { pushUiLog } from '../stores/uiLogs'
 import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAdapter'
 import { useDialogStore, type DialogKind } from '../stores/dialogs'
+import { openSurfaceOverlay } from '@/src/stores/surfaceOverlay'
 import type { ChatEvent, ThreadSummary } from '@desktop-shared/types'
 import type { ChatImagePayload } from '@desktop-shared/ipc-channels'
 import {
@@ -134,6 +137,45 @@ async function rebuildProposalFromTranscript(
     .restoreFromTranscript({ sessionId, sections, consumedDraftIds: consumed, phase })
   // 同盘恢复路径：transcript 重建的节同样无 verification，补触发校验（幂等、异步、不阻塞）。
   triggerProposalCitationVerification()
+}
+
+/** 「问题反馈」弹窗单条 description 里带的消息原文超过这个长度就截断——
+ *  长代码块/长文档回答会把每条反馈都膨胀成巨型 issue，截断只影响反馈
+ *  正文附带的引用，不影响真实 transcript。 */
+const FEEDBACK_CONTEXT_MAX_CHARS = 3000
+
+/** 拼出一条助手消息的可见文本：只取 text part，跳过 reasoning/tool-call
+ *  等内部块——反馈里附带的应该是用户在屏幕上读到的那段回复，不是思考
+ *  过程或工具调用细节。 */
+function extractAssistantVisibleText(message: ThreadMessage): string {
+  let out = ''
+  for (const part of message.content) {
+    if (part.type === 'text' && typeof part.text === 'string') {
+      out += (out ? '\n' : '') + part.text
+    }
+  }
+  return out.length > FEEDBACK_CONTEXT_MAX_CHARS
+    ? `${out.slice(0, FEEDBACK_CONTEXT_MAX_CHARS)}…（已截断）`
+    : out
+}
+
+/**
+ * 消息操作栏喜欢/不喜欢（ActionBarPrimitive.FeedbackPositive/Negative）的
+ * 落地点。没有单独的消息评分后端——两个按钮都打开已有的「问题反馈」弹窗
+ * （FeedbackDialog），只是预选分段 + 静默附带触发它的那条 AI 回复原文：
+ *   - 不喜欢 → 「问题」分段（三段里语义最直接，也是弹窗原有默认值）
+ *   - 喜欢   → 「其他」分段（三段里没有「点赞/夸奖」语义，「其他」最贴近
+ *     「补充说明」而不是暗示这是个 bug）
+ * 模块级常量而非组件内联对象：submit 不读任何组件状态，只需 message 参数
+ * + useDialogStore.getState()，没有必要随每次渲染重建。
+ */
+const messageFeedbackAdapter: FeedbackAdapter = {
+  submit: ({ message, type }) => {
+    useDialogStore.getState().openFeedbackDialog({
+      kind: type === 'negative' ? 'bug' : 'other',
+      context: extractAssistantVisibleText(message)
+    })
+  }
 }
 
 /**
@@ -595,6 +637,15 @@ export function FusionRuntimeProvider({
           return
         }
 
+        // /plugin(s)：不是弹窗，而是 SurfaceHost 的市场面（?market=1，rail
+        // 常驻 + 右侧换成市场）——所以走 openSurfaceOverlay 而不是上面的
+        // DialogKind 分支。与 rail「插件」按钮同一个入口，见
+        // stores/surfaceOverlay.ts。
+        if (matchMarketSlash(baseText)) {
+          openSurfaceOverlay('market')
+          return
+        }
+
         // ─── /proposal-writer：写方案斜杠入口（拦截，不发给 CLI）────────
         // 方法论必须经 systemPrompt.append 无条件注入（硬门纪律不能靠模型自愿展开
         // skill），所以这个命令在 renderer 侧消化：激活方案模式后，空调用=引导语义
@@ -897,7 +948,15 @@ export function FusionRuntimeProvider({
       // expose SpeechRecognition — ComposerPrimitive.Dictate's
       // useComposerDictate() returns `null` in that case and the mic
       // button auto-disables.
-      dictation: dictationAdapter
+      dictation: dictationAdapter,
+      // Message-level 喜欢/不喜欢（AssistantMessage 的 ActionBar，
+      // ActionBarPrimitive.FeedbackPositive/Negative）落地点。没有这个
+      // adapter，assistant-ui 的 submitFeedback 会直接 throw（"Feedback
+      // adapter not configured"）——两个按钮点了会静默报错。我们复用
+      // 已有的「问题反馈」弹窗承接：不新起一套消息评分后端，喜欢/不喜欢
+      // 都打开同一个 FeedbackDialog，只是预选分段 + 静默附带这条 AI 回复
+      // 的原文（见 openFeedbackDialogForMessageFeedback）。
+      feedback: messageFeedbackAdapter
     }
   })
 
@@ -1285,12 +1344,16 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
       // 到首次 send 才 spawn。所以这里的 sessionLoading 是「人为」的 loading 窗口，
       // 没有任何真实等待要它遮。**新建路径不置 sessionLoading**：两次 ~0ms IPC 后
       // 的 setSession([]) 一拍就让 isEmpty 翻真、composer 一次到位，不再晚跳。
-      // （sessionLoading 还驱动发送钮禁用/进度条——新建即可发、无冷启动进度可显，
-      // 不置它反而语义更正确。）
+      // （sessionLoading 还驱动发送钮禁用——新建即可发，不置它反而语义更正确。）
       //
-      // beginSessionSwitch 保留：它置的 sessionSwitching 会被 setSession 清掉，且
-      // 切换 curtain 目前关着（SESSION_SWITCH_TRANSITION_ENABLED=false），无副作用。
-      beginSessionSwitch()
+      // 【2026-07-17】beginSessionSwitch 也一并去掉。它曾以「sessionSwitching
+      // 会被 setSession 清掉、且切换帘幕关着（SESSION_SWITCH_TRANSITION_ENABLED
+      // =false），无副作用」为由保留——那个前提已经没了：sessionSwitching 现在
+      // 驱动骨架屏（ThreadView 的 useSessionSwitchLoading）。新建路径要连过两次
+      // IPC round-trip 才 setSession，够跨若干帧，于是骨架**会**被观察到——而它
+      // 画的是「历史消息条」，在一个注定空态的新会话上闪一下语义就是错的（新建
+      // 该直奔居中 hero）。新建无 transcript 可加载 = 无加载态可显。
+      // finally 的 endSessionSwitch 反而要留（见那里）。
       const { sessionId: newId } = await window.chatApi.newSession()
       // `--session-id newId` (no resume) — cli should honor it, but
       // use the returned activeId defensively in case of a rebind.
@@ -1306,14 +1369,16 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
       console.error('[runtime] new thread failed', err)
     } finally {
       if (switchSeqRef.current === seq) {
-        // Idempotent: setSession already cleared it on the success path;
-        // this covers the throw path so the veil can't get stuck on.
+        // 本路径自己不再 begin，但这个 end 必须留：抢在前面的一次
+        // onSwitchToThread（已 begin、骨架已上）可能还没落地就被「新建」
+        // 抢走了 seq——它的 finally 会因 seq 不匹配而放弃清 flag，只能由
+        // 最新这次来清，否则骨架永久卡住。成功路径上 setSession 已经清过，
+        // 这里幂等；throw 路径同样兜底。
         endSessionSwitch()
       }
     }
   }, [
     setSession,
-    beginSessionSwitch,
     endSessionSwitch,
     flushProposalSave
   ])
@@ -1329,33 +1394,34 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
         // 切走前把当前会话草稿的最后改动落盘（防抖可能还没触发）。
         flushProposalSave()
         setSessionLoading(true)
-        // Switch chrome: veil the old transcript until the target one
-        // mounts. On the cache-hit path below, setSession runs in this
-        // same synchronous batch — subscribers never observe the flag as
-        // true, so a fast switch renders zero switch chrome by design.
+        // Switch chrome: 骨架屏盖住旧 transcript 直到目标会话上屏
+        // （ThreadView 的 useSessionSwitchLoading 订阅这个 flag）。
+        // On the cache-hit path below, setSession runs in this same
+        // synchronous batch — subscribers never observe the flag as true,
+        // so a fast switch renders zero switch chrome by design.
         beginSessionSwitch()
 
         // Fire both IPCs in parallel. They don't depend on each other:
         //   - loadSession reads `<id>.jsonl` off disk and maps it to
         //     ThreadMessageLike[] (~tens to hundreds of ms, dominated
         //     by fs + JSON.parse for long transcripts).
-        //   - switchSession tears down the previous fusion-code child
-        //     and spawns a fresh one with `--resume <id>`, then blocks
-        //     until it sees `system init` (~3-8s, the real cold start).
+        //   - switchSession 只在 engine 里切指针 / 分配 runtime 槽位。
         //
-        // Running them sequentially used to make loadSession wait
-        // behind switchSession — so the user sat through the full ~8s
-        // looking at a blank thread, even though the history was
-        // readable off disk in under 100ms. Now we render history the
-        // moment loadSession resolves and let the cli cold start
-        // continue in the background; the composer stays disabled via
-        // `sessionLoading` → `useExternalStoreRuntime.isLoading` until
-        // switchSession also resolves, so the user can read but not
-        // send until the cli is actually accepting turns.
+        // ⚠️ 这里曾写着「switchSession 会 spawn 新 cli 并阻塞到 system init
+        // （~3-8s 真实冷启动）」——**该描述已过时**，multi-runtime lazy spawn
+        // 之后 engine.switchToSession 单微任务就返回（它自己的注释：「The
+        // expensive work — spawning a fresh fusion-code child and waiting for
+        // its system init — is deferred to the first send()」）。并行发起仍然
+        // 保留（两者无依赖，且 loadSession 才是真正的耗时项），但别再据此
+        // 以为 sessionLoading 覆盖着一个多秒的冷启动窗口：它实际只跟着
+        // loadSession 的磁盘读走，与 sessionSwitching 几乎同长。
+        //
+        // 冷启动真正发生在首次 send()，那时的闸门是 composer 自己的 isLoading，
+        // 不在这条路径上。
         //
         // switchSession still fires immediately (in parallel) regardless
         // of the cache — only the *display* of history is short-circuited
-        // below; the cli cold start can't be cached and must always run.
+        // below.
         const switchPromise = window.chatApi.switchSession({
           sessionId: id,
           resume: true
@@ -1914,4 +1980,13 @@ function matchSlashCommand(text: string): Exclude<DialogKind, null> | null {
     default:
       return null
   }
+}
+
+/** `/plugin(s)` —— 独立于 matchSlashCommand（那个只管 DialogKind 弹窗）：
+ *  市场是 SurfaceHost 的一个面、不是弹窗，落点不同故单独匹配。 */
+function matchMarketSlash(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('/')) return false
+  const head = trimmed.slice(1).split(/\s+/, 1)[0]?.toLowerCase()
+  return head === 'plugin' || head === 'plugins'
 }

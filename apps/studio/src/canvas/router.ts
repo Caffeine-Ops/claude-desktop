@@ -5,6 +5,8 @@
 
 import { useEffect, useState } from 'react';
 
+import { stripSurfaceOverlayParams } from '@/src/stores/surfaceOverlay';
+
 // Entry-shell sub-views. The home/project landing renders one of three
 // columns and each sub-view now owns a top-level path so the browser
 // back/forward buttons work, deep links are shareable, and per-tab
@@ -37,6 +39,18 @@ export type Route =
     }
   | { kind: 'marketplace' }
   | { kind: 'marketplace-detail'; pluginId: string };
+
+// 注：曾有 `/market` + `/market/:id` 两条路由（Gitee 技能市场的画布面宿主，
+// 2026-07-17 上午）。同日下午市场改成 SurfaceHost 的第三个面（?market=1，
+// rail 常驻 + 右侧换成市场）后这两条被删——**故意不保留**：market 占 pathname
+// 就会让 SurfaceHost 翻到画布面（它只认 pathname 二分），正是「在智能助手点
+// 插件被踢去工作画布」那个 bug 的成因，留着等于留一个能复现该行为的入口。
+// 面开关（market / kb）见 src/stores/surfaceOverlay.ts。老 od 插件体系的
+// /marketplace 不受影响，仍可达（只是撤了 rail 入口）。
+//
+// 知识库同理**从来没有过路由**（?kb=1）：它 2026-07-17 从「canvas 内部全屏
+// overlay」改造成 SurfaceHost 的第四个面时，直接沿用了 market 的 query 机制，
+// 没走一遍「先加路由再删」的弯路。
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.replace(/\/+$/, '').split('/').filter(Boolean);
@@ -140,14 +154,27 @@ export function buildPath(route: Route): string {
 export function navigate(route: Route, opts: { replace?: boolean } = {}): void {
   const target = buildPath(route);
   const current = window.location.pathname;
-  if (target === current) return;
   // Preserve the existing query string across in-app view switches. Routes
   // only carry pathname info, but boot-time flags like `?host=desktop`
   // (set by the Electron shell so the embedded web tab can hide its
   // duplicate settings cog) and `?settings=1` must survive navigation —
   // otherwise pushState would drop them and the flag-gated UI would flip
-  // back on the first nav. Path comparison above stays pathname-only.
-  const targetWithQuery = target + window.location.search;
+  // back on the first nav.
+  //
+  // **面开关**（`?market=1` 插件市场 / `?kb=1` 知识库）是**例外，必须剥掉**
+  // （2026-07-17）：上面那些参数是「跟着画布面走的状态」（host flag、canvas
+  // 自己的设置 overlay），而面开关是 SurfaceHost 层**盖在画布面之上的另一个
+  // 面**——语义相反。不剥的话：rail 的项目列表点一个项目 → navigate →
+  // market=1 被带到 /projects/xxx 上 → 那个面继续盖着，用户以为「点了没反应」。
+  // 在这里剥而不是让每个调用方各自 close：canvas 导航的入口很多（rail 项目
+  // 列表、面包屑、卡片、返回按钮…），逐个打补丁必漏——「我要去画布的某个视图」
+  // 这个意图本身就蕴含「面让位」，收在唯一出口最稳。剥哪些参数由
+  // stores/surfaceOverlay.ts 的 PARAM_BY_KIND 单点决定，加面不用改这里。
+  const search = stripSurfaceOverlayParams(window.location.search);
+  // early return 的条件同时看 pathname 与 query：pathname 没变但面开关要剥
+  // 时（画布面开着市场、点当前项目）仍须走下去把参数剥掉，否则又是一条死路。
+  if (target === current && search === window.location.search) return;
+  const targetWithQuery = target + search;
   if (opts.replace) {
     window.history.replaceState(null, '', targetWithQuery);
   } else {

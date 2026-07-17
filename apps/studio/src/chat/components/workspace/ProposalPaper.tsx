@@ -859,7 +859,7 @@ export function ProposalPaper(): React.JSX.Element {
         >
           <DropdownMenuTrigger asChild>
             <button
-              className="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground"
+              className="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground data-[state=open]:bg-hover data-[state=open]:text-foreground"
               title="节操作（AI 修订 / 移动 / 删除）"
               aria-label="节操作菜单"
             >

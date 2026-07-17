@@ -360,7 +360,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                 确认清空
               </button>
               <button
-                className="rounded px-2 py-0.5 hover:bg-muted"
+                className="rounded px-2 py-0.5 hover:bg-hover"
                 onClick={() => setConfirmingNew(false)}
               >
                 取消
@@ -368,7 +368,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             </span>
           ) : (
             <button
-              className="mr-1 rounded-md px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+              className="mr-1 rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground disabled:opacity-50"
               // 草稿为空（sections 无内容）时没什么可清，置灰避免空操作 + 误触发二次确认条；
               // 流式期间也禁用（清空和进行中的那轮叠加会乱）。
               disabled={generating || sections.length === 0}
@@ -717,7 +717,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             <p className="mb-4 text-xs text-muted-foreground/70">↓ 在下方输入框描述你的方案需求</p>
             <button
               type="button"
-              className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
               onClick={dismissOnboarding}
             >
               知道了

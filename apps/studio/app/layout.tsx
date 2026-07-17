@@ -4,6 +4,7 @@ import { AuthGate } from '@/src/components/AuthGate'
 import { RailShell } from '@/src/components/RailShell'
 import { SurfaceHost } from '@/src/components/SurfaceHost'
 import { UpgradeScreen } from '@/src/components/UpgradeScreen'
+import { TooltipProvider } from '@/src/components/ui/tooltip'
 import './globals.css'
 // canvas（迁移自 apps/web）的两个样式入口，沿用 web 原版 layout.tsx 的
 // JS-import 方式——不能并进 globals.css 的 @import 链（位置违规会被静默
@@ -82,41 +83,49 @@ export default function RootLayout({ children }: { children: ReactNode }) {
          * 与原理见 THEME_BOOT_SCRIPT 注释）。html 已有
          * suppressHydrationWarning，脚本改 documentElement 不打架。 */}
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
-        {/* 窗口拖拽条：整个 app 唯一的常驻 app-region:drag 写手（fixed
-         * 全宽 46px，顶部标题栏带）。组件顶栏一律不再声明 drag，顶部 46px
-         * 内的交互元素各自 no-drag 挖洞；本条兼任 region-refresh 脉冲的
-         * 探针。必须早于一切内容渲染（矩形按树序注册、后者覆盖前者——
-         * 后面所有子树的 no-drag 洞都依赖排在本条之后）。语义与纪律见
-         * globals.css 的 .window-drag-strip 注释。 */}
-        <div aria-hidden className="window-drag-strip" />
-        {/* rail 外壳：展开态放回 w-61 常驻列，收起态宽度收成 0（内容面
-         * flex-1 补满）+ hover 左边缘浮出。见 RailShell 头注释。 */}
-        <RailShell />
-        {/* 右侧舞台（原型 .stage）：平铺无 gutter（2026-07-08 去浮卡化，
-         * 旧版上/右/下各 10px 呼吸 + 圆角阴影浮卡）。内容面样式在
-         * globals.css 的 .shell-content-card。chat 与 canvas 两棵重型树
-         * 常驻面内的 SurfaceHost（layout 跨路由保活，切换只翻显隐——见其
-         * 头注释），面是两面共用的壳层元素，切面时本身纹丝不动。children
-         * 是空壳 page（仅承担路由命中，chat-probe 除外）。 */}
-        <div className="shell-stage">
-          <div className="shell-content-card">
-            {children}
-            {/* Suspense：SurfaceHost 用 useSearchParams（settings=1 判定），
-             * 静态预渲染要求它在 Suspense 边界内（否则 _not-found 等页的
-             * prerender 直接报错）。fallback null——SurfaceHost 本来就是
-             * 纯客户端表面。 */}
-            <Suspense fallback={null}>
-              <SurfaceHost />
-            </Suspense>
+        {/* 全局 TooltipProvider：Radix 的 Tooltip.Root 没有 Provider 祖先会
+         * 直接 throw（"Tooltip must be used within TooltipProvider"），
+         * 挂在这里一次覆盖 rail + 两面内容——不渲染任何 DOM（纯 context），
+         * 包住谁都零副作用。首个消费方是消息操作栏的复制/喜欢/不喜欢
+         * tooltip（AssistantMessage.tsx），未来别处用 Tooltip 不用再各自
+         * 补 Provider。 */}
+        <TooltipProvider>
+          {/* 窗口拖拽条：整个 app 唯一的常驻 app-region:drag 写手（fixed
+           * 全宽 46px，顶部标题栏带）。组件顶栏一律不再声明 drag，顶部 46px
+           * 内的交互元素各自 no-drag 挖洞；本条兼任 region-refresh 脉冲的
+           * 探针。必须早于一切内容渲染（矩形按树序注册、后者覆盖前者——
+           * 后面所有子树的 no-drag 洞都依赖排在本条之后）。语义与纪律见
+           * globals.css 的 .window-drag-strip 注释。 */}
+          <div aria-hidden className="window-drag-strip" />
+          {/* rail 外壳：展开态放回 w-61 常驻列，收起态宽度收成 0（内容面
+           * flex-1 补满）+ hover 左边缘浮出。见 RailShell 头注释。 */}
+          <RailShell />
+          {/* 右侧舞台（原型 .stage）：平铺无 gutter（2026-07-08 去浮卡化，
+           * 旧版上/右/下各 10px 呼吸 + 圆角阴影浮卡）。内容面样式在
+           * globals.css 的 .shell-content-card。chat 与 canvas 两棵重型树
+           * 常驻面内的 SurfaceHost（layout 跨路由保活，切换只翻显隐——见其
+           * 头注释），面是两面共用的壳层元素，切面时本身纹丝不动。children
+           * 是空壳 page（仅承担路由命中，chat-probe 除外）。 */}
+          <div className="shell-stage">
+            <div className="shell-content-card">
+              {children}
+              {/* Suspense：SurfaceHost 用 useSearchParams（settings=1 判定），
+               * 静态预渲染要求它在 Suspense 边界内（否则 _not-found 等页的
+               * prerender 直接报错）。fallback null——SurfaceHost 本来就是
+               * 纯客户端表面。 */}
+              <Suspense fallback={null}>
+                <SurfaceHost />
+              </Suspense>
+            </div>
           </div>
-        </div>
-        {/* 订阅购买页 overlay（z-9980）：账户菜单「升级订阅」打开，
-         * 开关在 src/stores/upgrade.ts。挂在 AuthGate 之前——登出时
-         * 登录墙（z-9999 + DOM 更靠后）必须盖得住它。 */}
-        <UpgradeScreen />
-        {/* 登录墙：body 最后一个子元素——未登录时全屏盖住 rail + 舞台
-         * （两棵树照常挂载，墙只是视觉+交互门禁，见 AuthGate 头注释）。 */}
-        <AuthGate />
+          {/* 订阅购买页 overlay（z-9980）：账户菜单「升级订阅」打开，
+           * 开关在 src/stores/upgrade.ts。挂在 AuthGate 之前——登出时
+           * 登录墙（z-9999 + DOM 更靠后）必须盖得住它。 */}
+          <UpgradeScreen />
+          {/* 登录墙：body 最后一个子元素——未登录时全屏盖住 rail + 舞台
+           * （两棵树照常挂载，墙只是视觉+交互门禁，见 AuthGate 头注释）。 */}
+          <AuthGate />
+        </TooltipProvider>
       </body>
     </html>
   )

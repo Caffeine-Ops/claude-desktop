@@ -36,7 +36,6 @@ import {
 } from './components/SettingsDialog';
 import { SettingsDialogV2 } from './components/settings/SettingsDialogV2';
 import type { SettingsWorkspaceHost } from './components/settings/WorkspaceSections';
-import { KnowledgeBaseDialog } from './components/knowledge-base/KnowledgeBaseDialog';
 import {
   createPluginAuthoringHandoff,
   createPluginUseHandoff,
@@ -265,7 +264,6 @@ declare global {
 
 export function App({
   settingsOverlay = false,
-  knowledgeBaseOverlay = false,
 }: {
   /**
    * Settings-overlay mode: `?settings=1` renders ONLY the settings UI over
@@ -280,17 +278,18 @@ export function App({
    * 重渲染。响应性不变：进/出设置依旧零刷新。
    */
   settingsOverlay?: boolean;
-  /**
-   * Knowledge-base-overlay mode: `?kb=1` —— **与 settingsOverlay 同一套机制**，
-   * 渲染 ONLY 知识库管理 UI 覆盖在正常 App init 之上（第一版内容为空白）。
-   * 同样由 SurfaceHost 经 props 传入并 memo，理由同 settingsOverlay。
+  /*
+   * 注：曾有第二个 prop `knowledgeBaseOverlay`（`?kb=1`，与 settingsOverlay
+   * 同一套机制，在下方提前 return 一个全屏 KnowledgeBaseDialog）。2026-07-17
+   * 知识库改造成 SurfaceHost 的第四个面（rail 常驻 + 右侧内容区换成知识库，
+   * 同插件市场）后，它不再经 canvas 树，prop 与分支一并删除——见
+   * src/stores/surfaceOverlay.ts 与 components/knowledge-base/
+   * KnowledgeBaseSurface.tsx。设置页仍留在这套 overlay 机制里。
    */
-  knowledgeBaseOverlay?: boolean;
 } = {}) {
   const { t } = useI18n();
   const clientType = useMemo(() => detectClientType(), []);
   const isSettingsOverlay = settingsOverlay;
-  const isKnowledgeBaseOverlay = knowledgeBaseOverlay;
   const [config, setConfig] = useState<AppConfig>(() => loadConfig());
   const configRef = useRef(config);
   configRef.current = config;
@@ -1361,17 +1360,6 @@ export function App({
     };
   }, [isSettingsOverlay]);
 
-  // 知识库 overlay 的「返回应用」防重入复位——overlayBackFiredRef 与设置页
-  // **共用**（两个 overlay 互斥不并存），但上面的复位 effect 只挂在
-  // isSettingsOverlay 上：第一次从知识库返回后 ref 停在 true，再进知识库时
-  // 点「返回应用」被 handleKnowledgeBaseClose 的防重入守卫永久吞掉（2026-07-08
-  // 「chat 与知识库切换几次后返回失效」实锤）。进 kb overlay 时同样复位。
-  // 不需要 settings-overlay html 类——那只服务 V1 设置 modal 的 backdrop 规则。
-  useEffect(() => {
-    if (!isKnowledgeBaseOverlay) return;
-    overlayBackFiredRef.current = false;
-  }, [isKnowledgeBaseOverlay]);
-
   const openMcpSettings = useCallback(() => {
     // 同 openSettings 的改道取消：MCP 配置的正身是设置页 mcpClient section。
     openSettings('mcpClient');
@@ -1729,39 +1717,6 @@ export function App({
         onOpenSettings={openSettings}
         onCompleteOnboarding={handleCompleteOnboarding}
       />
-    );
-  }
-  // 知识库-overlay 模式（?kb=1）：**与设置 overlay 同一套机制**——渲染
-  // ONLY 知识库管理 UI 覆盖在正常 App init 之上（其余 App chrome 不渲染）。
-  // 第一版内容为空白（用户要求），仅一个全屏容器 + 顶栏标题 + 关闭。关闭
-  // 走与设置页完全相同的 studio 单视图导航：back() 同文档回退剥掉 ?kb=1，
-  // isKnowledgeBaseOverlay 随 popstate 翻 false，SurfaceHost 由 chatShowing
-  // 翻转把原面（聊天/画布）重新放映——URL 驱动的同一次 commit 里完成，无
-  // 中间帧（同 handleOverlayClose 的时序纪律：不提前拆 UI，等 popstate）。
-  // 防重入复用 overlayBackFiredRef（设置与知识库互斥，不会同时在 overlay）。
-  if (isKnowledgeBaseOverlay) {
-    const handleKnowledgeBaseClose = () => {
-      if (overlayBackFiredRef.current) return;
-      overlayBackFiredRef.current = true;
-      // studio 单视图：?kb=1 是 URL 态，关闭 = 回上一页（剥参回原面）。
-      // 有历史走 back()（同文档回退，Next 处理 popstate）；无历史（deep
-      // link 直开）原地剥参硬跳，留在同一个面。
-      if (window.history.length > 1) {
-        window.history.back();
-      } else {
-        const url = new URL(window.location.href);
-        url.searchParams.delete('kb');
-        window.location.assign(url.pathname + url.search);
-      }
-    };
-    return (
-      // 全屏容器（同设置 overlay 的 fixed inset-0 z-50）盖住底下透明的宿主
-      // view。壳内布局 = KnowledgeBaseDialog，照搬 SettingsDialogV2 的骨架
-      // （左侧 w-61 导航栏 + 右侧 border-l bg-card 内容区），返回按钮走
-      // handleKnowledgeBaseClose 剥参回原面。
-      <div className="fixed inset-0 z-50">
-        <KnowledgeBaseDialog onClose={handleKnowledgeBaseClose} />
-      </div>
     );
   }
   // Settings-overlay mode: render ONLY the settings dialog over a dimming

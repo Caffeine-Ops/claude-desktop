@@ -79,12 +79,19 @@
 @source '../../canvas/components/SettingsDialog/**/*.{ts,tsx}';
 @source '../../canvas/components/settings/**/*.{ts,tsx}';
 
-/* 知识库页（2026-07-08）：照搬设置页 V2 骨架的全新壳（KnowledgeBaseDialog），
+/* 知识库面（2026-07-08 建，2026-07-17 从设置页式的全屏 overlay 抬成 SurfaceHost
+ * 的独立面 KnowledgeBaseSurface，同市场面：rail 常驻 + 右侧内容区换成它）。
  * 纯 shadcn + Tailwind utility，文件住在 canvas 树里（同 settings 的理由）。
  * 与 settings 同款 scoped @source——只扫这一个目录，绝不扫整个 src/canvas/**
  * （撞名 utility 会静默套到 canvas 元素上）。不加这条，本目录用到的 utility
  * 会被 purge，知识库壳样式全丢。 */
 @source '../../canvas/components/knowledge-base/**/*.{ts,tsx}';
+
+/* 技能市场页（market，2026-07-17）：全新页面直接生在 chat 栈上（shadcn +
+ * Tailwind utility），文件住 canvas 树（同 settings/knowledge-base 的理由）。
+ * 同款 scoped @source——只扫这一个目录，绝不扫整个 src/canvas/**。目录内
+ * 无 legacy 类、交互元素全 shadcn 原语（自带 data-slot 逃逸 canvas reset）。 */
+@source '../../canvas/components/market/**/*.{ts,tsx}';
 
 /* 首页（home，2026-07-14 起）：工作画布落地页，「整体风格不统一」的第一印象
  * 在此定，故 P2 迁到 chat 栈。同 settings/knowledge-base 的 scoped @source——
@@ -224,6 +231,11 @@
   --color-muted: hsl(var(--muted));
   --color-muted-foreground: hsl(var(--muted-foreground));
 
+  /* `hover:bg-hover` ——交互 hover 专用底，与 --muted（静态底）分家的理由
+   * 写在 design-tokens/tokens.css 的 --hover 注释里。类名读着重复，但语义
+   * 一目了然，且好 grep：改 hover 视觉只需搜 bg-hover，不会扫出气泡/代码块。 */
+  --color-hover: hsl(var(--hover));
+
   --color-accent: hsl(var(--accent));
   --color-accent-foreground: hsl(var(--accent-foreground));
 
@@ -260,6 +272,46 @@
   ::backdrop,
   ::file-selector-button {
     border-color: hsl(var(--border));
+  }
+
+  /* 焦点环的最后兜底（2026-07-17）：任何「没人声明过 outline」的可聚焦
+     元素，给一个主题色环，替掉 Chromium 的 UA 默认环。
+     起因：UA 默认 `outline: auto 1px -webkit-focus-ring-color` 在本机实测
+     解析成 rgb(229,151,0) 橙，与主题色环（--ring）并排出现两种颜色。橙色
+     跟系统强调色无关（AppleAccentColor 未设=多彩），是 Chromium 自己的
+     取色，所以调主题永远治不好它——必须由我们接管。
+     为什么会有元素三不管：shadcn 基件自带 `outline-none + ring-ring/50`
+     走 box-shadow 环，canvas 的裸元素 reset（canvas/styles/base.css）又用
+     `:where(:not([data-slot], .chat-app *))` 豁免了聊天树与所有 data-slot
+     元素——两边都不画，手写的裸 button/input 就直接漏给 UA。data-slot 不
+     是护身符：它只是 canvas reset 的豁免记号，不提供任何焦点样式（ActionBar
+     三颗按钮带着 Radix 的 data-slot="tooltip-trigger" 照样漏）。修前真机扫
+     131 个可聚焦元素，14 个落 UA 橙环。
+     为什么是全局而不是 scope 到 .chat-app：portal 出去的子树（createPortal
+     到 document.body）脱离 .chat-app，同时又常带 data-slot 逃 canvas reset
+     （UserMessage 的 modal-action、ProseMirrorComposerInput 的 slash 建议项
+     都是），scope 到 .chat-app 正好漏掉这批两头不沾的元素。全局兜底 + 双降
+     权反而语义最干净：只填空白，不跟任何人抢。
+     三重降权都是必须的，别照抄成高特异性规则：
+       1. `:where()` 零特异性 + @layer base（components/utilities 都在其后）；
+       2. shadcn 的 `outline-none` utility 必须赢，否则 shadcn 元素会同时吃
+          outline 与 box-shadow 变双环；
+       3. canvas 的裸元素 reset（@layer components，画 --od-accent 环）与
+          .pm-composer-input / .proposal-feature 那两条未分层规则也都压得过
+          这里，各自既有行为原样保留。
+     用 --ring 而非 --accent：与 shadcn 基件的环同源（applier 把两者连同
+     --primary 一起写成主题色），换主题时全项目焦点环一起走。 */
+  :where(
+    button,
+    [role='button'],
+    a[href],
+    input,
+    select,
+    textarea,
+    summary
+  ):focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 1px;
   }
 
   /* html 必须自带主题底色（2026-07-04 暗色白闪事故）：studio 的

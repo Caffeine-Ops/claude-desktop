@@ -75,7 +75,7 @@ export function ProposalImageReview({
         <span className="text-[12px] font-medium text-foreground">{title}</span>
         <button
           type="button"
-          className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+          className="rounded p-0.5 text-muted-foreground hover:bg-hover hover:text-foreground disabled:opacity-40"
           title="放弃"
           aria-label="放弃"
           disabled={busy}
@@ -190,7 +190,7 @@ export function ProposalImageReview({
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
             <button
               type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-hover hover:text-foreground"
               disabled={busy}
               onClick={() => {
                 setRetrying(false)

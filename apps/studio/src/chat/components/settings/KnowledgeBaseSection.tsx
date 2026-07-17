@@ -159,7 +159,7 @@ export function KnowledgeBaseSection(): React.JSX.Element {
                 type="button"
                 onClick={() => void pickLocal()}
                 disabled={picking}
-                className="inline-flex h-8 shrink-0 items-center rounded-md border border-border bg-card px-3 text-[12px] font-medium text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-8 shrink-0 items-center rounded-md border border-border bg-card px-3 text-[12px] font-medium text-foreground transition-colors hover:bg-hover/60 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {t('kbPickFolder')}
               </button>
@@ -203,7 +203,7 @@ export function KnowledgeBaseSection(): React.JSX.Element {
                     type="button"
                     onClick={() => void syncNow()}
                     disabled={syncNowBusy || isSyncing}
-                    className="inline-flex h-8 items-center rounded-md border border-border bg-card px-3 text-[12px] font-medium text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex h-8 items-center rounded-md border border-border bg-card px-3 text-[12px] font-medium text-foreground transition-colors hover:bg-hover/60 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isSyncing ? t('kbSyncing') : t('kbSyncNow')}
                   </button>

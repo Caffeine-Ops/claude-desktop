@@ -31,6 +31,7 @@ import type { Project } from '@open-design/contracts'
 import { groupLabel, relativeTime } from '@/src/components/railTime'
 import { ScrollArea } from '@/src/components/ui/scroll-area'
 import { Button } from '@/src/components/ui/button'
+import { useSurfaceOverlayStore } from '@/src/stores/surfaceOverlay'
 import { cn } from '@/src/lib/utils'
 
 /** 列表渲染项：分组标签与项目行拍平（与 RailSessionList 同构）。 */
@@ -58,7 +59,14 @@ export function RailProjectList() {
 
   // 当前打开的项目 = /projects/:id 路径前缀（canvas router buildPath 的
   // 编码格式）。项目列表页（/projects 无 id）没有选中项。
+  //
+  // 有面（插件市场/知识库）盖着时一个项目都不高亮：同 RailSessionList 的
+  // 理由——此刻内容区是那个面而不是那个项目，rail 的「当前位置」由该面入口
+  // 按钮的选中态表达。点项目会走 canvas 的 navigate()，它自己会剥掉面开关
+  // 参数（见其 stripSurfaceOverlayParams 注释），高亮随即回来。
+  const overlayOpen = useSurfaceOverlayStore((s) => s.open !== null)
   const activeId = (() => {
+    if (overlayOpen) return null
     const m = /^\/projects\/([^/]+)/.exec(pathname)
     return m ? decodeURIComponent(m[1]) : null
   })()
@@ -98,9 +106,16 @@ export function RailProjectList() {
   return (
     <div className="flex min-h-0 flex-1 flex-col pt-2">
       {/* [&>…]:block! 的原因见 RailSessionList：Radix Viewport 的
-        * display:table 会让长名字把行撑出 rail 右缘。 */}
-      <ScrollArea className="-mx-1 min-h-0 flex-1 px-1 [&>[data-slot=scroll-area-viewport]>div]:block!">
-        <ul className="flex flex-col pr-2">
+        * display:table 会让长名字把行撑出 rail 右缘。
+        * 净空挪进 ul、不留在 ScrollArea 上（2026-07-17，同 RailSessionList 的
+        * 修法）：ScrollArea 上的 px-1 是 overflow-x:hidden 的 Viewport **外面**
+        * 的 padding，会把裁剪边界推回与行左缘重合，-mx-1 白扩、focus ring 左半
+        * 被裁。挪进 ul 后 Viewport 左右缘各退 4px 成为真正的裁剪净空。
+        * pr 同步 2→3：这里的 -mx-1 是**对称**的（不同于 RailSessionList 的
+        * -ml-1/-mr-3），去掉 px-1 后 Viewport 右缘也外扩 4px，pr-2 会让行右缘
+        * 跟着宽 4px；补成 pr-3 才把行右缘钉回原位。行几何左右都一分不变。 */}
+      <ScrollArea className="-mx-1 min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]>div]:block!">
+        <ul className="flex flex-col pl-1 pr-3">
           {items.map((item) =>
             item.kind === 'label' ? (
               <li
