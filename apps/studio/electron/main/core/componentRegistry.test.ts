@@ -42,3 +42,48 @@ describe('markitdown / soffice 档案卡', () => {
     expect(d.install.probeCmd).toBe('soffice')
   })
 })
+
+import { PYTHON_COMPONENT_ID, pickPythonDist } from './componentRegistry'
+
+describe('python-runtime 档案卡(P1c)', () => {
+  test('三个已支持平台各返回一份完整 dist,未知平台返回 undefined', () => {
+    const mac = pickPythonDist('darwin', 'arm64')!
+    const macX64 = pickPythonDist('darwin', 'x64')!
+    const win = pickPythonDist('win32', 'x64')!
+    expect(mac.url).toContain('aarch64-apple-darwin-install_only.tar.gz')
+    expect(macX64.url).toContain('x86_64-apple-darwin-install_only.tar.gz')
+    expect(win.url).toContain('x86_64-pc-windows-msvc-install_only.tar.gz')
+    // 版本钉出现在 url 里(名册是唯一事实源,CI 的 env 钉在 Task 8 退役)
+    for (const d of [mac, macX64, win]) {
+      expect(d.url).toContain('20260510')
+      expect(d.url).toContain('3.12.13')
+      expect(d.sha256).toMatch(/^[0-9a-f]{64}$/)
+      expect(d.size).toBeGreaterThan(10_000_000)
+    }
+    // 就绪判据/chmod 按平台分岔:mac 解释器在 bin/python3(需补 +x),win 在根下 python.exe
+    expect(mac.readyCheck).toBe('bin/python3')
+    expect(mac.chmodExec).toEqual(['bin/python3'])
+    expect(win.readyCheck).toBe('python.exe')
+    expect(win.chmodExec).toEqual([])
+    expect(pickPythonDist('linux', 'x64')).toBeUndefined()
+    expect(pickPythonDist('win32', 'arm64')).toBeUndefined()
+  })
+
+  test('本机平台(darwin-arm64 CI/dev 机)注册了 python 卡且忠实于 pickPythonDist', () => {
+    // 本仓 dev/CI 都是 mac;若将来在别的平台跑测试,这条按平台自适应即可
+    const dist = pickPythonDist(process.platform, process.arch)
+    const d = getComponentDescriptor(PYTHON_COMPONENT_ID)
+    if (!dist) { expect(d).toBeUndefined(); return }
+    expect(d).toBeDefined()
+    expect(d!.strategy).toBe('hosted-files')
+    if (d!.install.kind !== 'archive') throw new Error('python 应为 archive 形态')
+    expect(d!.install.destSubdir).toBe('python-runtime')
+    expect(d!.install.format).toBe('tar.gz')
+    expect(d!.install.stripComponents).toBe(1)
+    expect(d!.install.readyCheck).toBe(dist.readyCheck)
+    expect(d!.install.archive.urls).toEqual([dist.url])
+    expect(d!.install.archive.sha256).toBe(dist.sha256)
+    expect(d!.install.archive.size).toBe(dist.size)
+    expect(d!.sizeEstimateBytes).toBe(dist.size)
+  })
+})
