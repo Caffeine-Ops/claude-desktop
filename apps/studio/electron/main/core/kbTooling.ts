@@ -164,7 +164,12 @@ export async function installMarkitdown(): Promise<KbToolingInstallResult> {
   let args: string[]
   const pipxPath = resolveExecutable('pipx')
   if (pipxPath) {
-    bareCmd = 'pipx'; absCmd = pipxPath; args = ['install', 'markitdown']
+    // --force 不是装饰（实机验证抓的死锁）：上面 5 分钟超时中止只杀进程、不清 pipx 建到一半的
+    // venv 残骸；pipx 看到 ~/.local/pipx/venvs/markitdown 目录存在就报 "already seems to be
+    // installed" 拒装 → 重试永远失败，用户无自愈手段。走到这一行的前提是 detectTooling 刚判过
+    // markitdown 不可用——此时若 venv 存在必是坏的，--force 覆盖重装永远正确；venv 不存在时
+    // --force 是无操作。不选「超时后清理」方案：那治不了盘上已有的历史残骸。
+    bareCmd = 'pipx'; absCmd = pipxPath; args = ['install', '--force', 'markitdown']
   } else {
     const primary = win ? 'py' : 'python3'
     absCmd = resolveExecutable(primary); bareCmd = primary
