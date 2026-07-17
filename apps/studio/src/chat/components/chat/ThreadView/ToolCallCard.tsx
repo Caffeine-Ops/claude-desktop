@@ -365,11 +365,11 @@ export function ToolCallCard(props: ToolFallbackProps): React.JSX.Element {
               </ToolPane>
             )}
 
-            {/* Pending-permission routing（2026-07-16 提问面板迁移）：
-                AskUserQuestion 的问卷不再内联在这张卡里——它渲染为 composer
-                位的提问面板（AskUserComposerPanel，输入卡 morph 换面），本卡
-                只留一行「等待你回答」锚点指过去；其余工具照旧一行等待锚点 +
-                浮动权限卡（PermissionFloatCard）。两种锚点只差文案。 */}
+            {/* Pending-permission routing（2026-07-16 接管面板迁移）：
+                决策 UI 都在 composer 位的整卡接管面板——AskUserQuestion 走
+                提问面板（AskUserComposerPanel），其余工具的权限门走
+                PermissionComposerPanel（输入卡 morph 换面），本卡只留一行
+                等待锚点指过去。两种锚点只差文案。 */}
             {pendingPermission && !askHandledByCanvas && (
               <PermissionWaitAnchor ask={toolName === 'AskUserQuestion'} />
             )}

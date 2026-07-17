@@ -300,7 +300,6 @@ import {
   resolveProjectDir,
   sanitizeName,
   searchProjectFiles,
-  resolveProjectDir,
   resolveProjectFilePath,
   writeProjectFile,
 } from './projects.js';
@@ -5219,10 +5218,14 @@ export async function startServer({
     res.json({ ok: true });
   });
 
-  app.get('/api/agents', async (_req, res) => {
+  // 注意：这份路由被 registerStaticResourceRoutes()（上方 ~4824 行，先
+  // 注册先匹配）里的同路径路由遮蔽，实际不会命中；与那份保持行为一致
+  // （缓存 + ?refresh=1 穿透），防止未来注册顺序调整时语义悄悄回退。
+  app.get('/api/agents', async (req, res) => {
     try {
       const config = await readAppConfig(RUNTIME_DATA_DIR);
-      const list = await detectAgents(config.agentCliEnv ?? {});
+      const refresh = req.query?.refresh === '1' || req.query?.refresh === 'true';
+      const list = await detectAgents(config.agentCliEnv ?? {}, { refresh });
       res.json({ agents: list });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -8506,6 +8509,9 @@ export async function startServer({
     }
   });
 
+  // 注意：这份路由被 registerProjectFileRoutes()（project-routes.ts，
+  // 上方 ~4800 行注册，先注册先匹配）里的同路径路由遮蔽，实际不会命中；
+  // 与那份保持一致（预览结果缓存），防止未来注册顺序调整时语义悄悄回退。
   app.get('/api/projects/:id/files/:name/preview', async (req, res) => {
     try {
       const project = getProject(db, req.params.id);
@@ -8515,7 +8521,9 @@ export async function startServer({
         req.params.name,
         project?.metadata,
       );
-      const preview = await buildDocumentPreview(file);
+      const preview = await buildDocumentPreview(file, {
+        cacheKey: [req.params.id, file.name, file.mtime, file.size].join('\u0000'),
+      });
       res.json(preview);
     } catch (err) {
       const status =

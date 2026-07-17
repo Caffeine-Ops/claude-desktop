@@ -314,7 +314,7 @@ const STRINGS = {
 
     // Composer
     composerPlaceholder: '随便问点什么…   ↵ 发送 · ⇧↵ 换行 · / 命令 · @ 文件',
-    composerPlaceholderStreaming: '正在回复中 — 消息将加入队列，回复完成后自动发送…',
+    composerPlaceholderStreaming: '回复中仍可输入，Enter 加入队列',
     composerAttachImage: '附加图片',
     composerAttachFile: '附加文件或图片',
     composerDictate: '语音输入',
@@ -404,6 +404,9 @@ const STRINGS = {
     permissionFloatHint: '数字键直选，↑↓ 切换',
     permissionFloatSkip: '跳过',
     permissionFloatSubmit: '提交',
+    // composer 接管面板（PermissionComposerPanel，2026-07-16 迁移）追加
+    permissionWaitElapsed: '等待 {s}s',
+    permissionDenySend: '发送',
     permissionWaitAnchor: '需要你的授权才能继续',
     permissionWaitAnchorHint: '见下方 ↓',
     askWaitAnchor: '等待你回答',
@@ -454,21 +457,6 @@ const STRINGS = {
     sheetSelectionRange: '范围:',
     sheetSelectionPill: '1 条注释',
 
-    // Settings → General → CLI backend
-    cliBackendTitle: 'CLI 后端',
-    cliBackendDesc:
-      '选择 Agent SDK 要启动哪个 CLI 二进制。切换立即生效——正在进行的对话回合会保持当前后端，下一回合起切换到新后端。',
-    cliBackendBundled: '内置 fusion-code',
-    cliBackendBundledDesc:
-      '随应用打包的版本，已针对 prompt cache 和 MCP 工具做了优化',
-    cliBackendSystem: '系统 Claude Code',
-    cliBackendSystemDesc:
-      '使用本机安装的 claude 命令（失去 fusion-code 的 token 优化，按 ~/.claude 配置运行）',
-    cliBackendNotInstalled: '未检测到本机安装的 claude',
-    cliBackendDetected: '已检测到',
-    cliBackendVersion: '版本',
-    cliBackendPath: '路径',
-    cliBackendApplyHint: '立即生效——正在进行的对话回合保持当前后端'
   },
   en: {
     appTitle: 'Claude Desktop',
@@ -721,8 +709,7 @@ const STRINGS = {
 
     composerPlaceholder:
       'Ask anything…   ↵ send · ⇧↵ newline · / commands · @ files',
-    composerPlaceholderStreaming:
-      'Replying — your message will queue and send when the reply finishes…',
+    composerPlaceholderStreaming: 'Keep typing — Enter adds to the queue',
     composerAttachImage: 'Attach image',
     composerAttachFile: 'Attach file or image',
     composerDictate: 'Voice input',
@@ -807,6 +794,8 @@ const STRINGS = {
     permissionFloatHint: 'Numbers select · ↑↓ move',
     permissionFloatSkip: 'Skip',
     permissionFloatSubmit: 'Submit',
+    permissionWaitElapsed: 'waiting {s}s',
+    permissionDenySend: 'Send',
     permissionWaitAnchor: 'Waiting for your approval to continue',
     permissionWaitAnchorHint: 'See below ↓',
     askWaitAnchor: 'Waiting for your answer',
@@ -848,22 +837,7 @@ const STRINGS = {
     sheetPreviewStale: 'Refresh to see latest changes',
     sheetPreviewStaleDismiss: 'Dismiss this change',
     sheetSelectionRange: 'Range: ',
-    sheetSelectionPill: '1 note',
-
-    cliBackendTitle: 'CLI backend',
-    cliBackendDesc:
-      'Choose which CLI binary the Agent SDK spawns. Takes effect immediately — an in-flight turn keeps its current backend; the next turn switches.',
-    cliBackendBundled: 'Bundled fusion-code',
-    cliBackendBundledDesc:
-      'The CLI shipped with the app — tuned for prompt cache and MCP tool loading',
-    cliBackendSystem: 'System Claude Code',
-    cliBackendSystemDesc:
-      'Use the claude binary installed on your machine (no fusion-code token optimizations; runs under your own ~/.claude config)',
-    cliBackendNotInstalled: 'No system claude detected',
-    cliBackendDetected: 'Detected',
-    cliBackendVersion: 'Version',
-    cliBackendPath: 'Path',
-    cliBackendApplyHint: 'Applies immediately — an in-flight turn keeps its current backend'
+    sheetSelectionPill: '1 note'
   }
 } as const
 

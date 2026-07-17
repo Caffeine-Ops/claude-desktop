@@ -220,9 +220,73 @@ function stripFns(
   return rest;
 }
 
+// ── 检测结果缓存 ────────────────────────────────────────────────────────
+// 一次全量探测 = 对全部 agent def（17 个内置 + 本地 profiles）并行跑
+// --version / --help / listModels / auth status——每个已安装 CLI 最多 4 次
+// 子进程 spawn，且多为 node 冷启动。瞬时几十个进程把 CPU 打满：
+// /api/agents 自身 5-7s，还把 daemon（单事件循环）同期的所有轻请求连坐
+// 拖到秒级（2026-07-16 线上实测：config 4ms → 2.6s）。而检测输入在一次
+// 会话里几乎不变——CLI 装卸 / re-auth / agentCliEnv 修改都是低频的用户
+// 主动动作——所以默认返回缓存，规则如下：
+//
+//   - 缓存的是 **Promise**：并发调用（多个窗口 tab 同时 bootstrap 打
+//     /api/agents）合并进同一次 in-flight 探测，不会各自掀进程风暴。
+//   - key = agentCliEnv 的 JSON 序列化。env 一变 key 就换、立刻重探，
+//     所以「改 env 后刷新」不依赖 TTL。
+//   - TTL 只兜「用户在终端里装/卸/re-auth 而 UI 没人点刷新」的被动感知；
+//     主动动作（设置页重新检测、HTTP ?refresh=1）传 { refresh: true }
+//     无条件穿透。
+//   - 探测 reject 时清掉缓存条目——瞬时失败不能被钉住一个 TTL。
+//     （probe 内部把单 agent 失败吞成 unavailable，整体 reject 很罕见，
+//     但语义上必须兜。）
+//
+// 单槽即可：agentCliEnv 全局只有一份（app-config），不存在多 key 并存，
+// 换 key 直接覆盖旧槽。
+const DETECT_CACHE_TTL_MS = 5 * 60_000;
+
+type DetectCacheEntry = {
+  key: string;
+  promise: Promise<DetectedAgent[]>;
+  /** null = 探测仍 in-flight；resolve 后打上时间戳供 TTL 判断。 */
+  settledAt: number | null;
+};
+
+let detectCache: DetectCacheEntry | null = null;
+
 export async function detectAgents(
   configuredEnvByAgent: Record<string, Record<string, string>> = {},
+  options: { refresh?: boolean } = {},
 ) {
+  const key = JSON.stringify(configuredEnvByAgent ?? {});
+  const hit = detectCache;
+  if (
+    !options.refresh &&
+    hit != null &&
+    hit.key === key &&
+    (hit.settledAt == null || Date.now() - hit.settledAt < DETECT_CACHE_TTL_MS)
+  ) {
+    return hit.promise;
+  }
+  const entry: DetectCacheEntry = {
+    key,
+    settledAt: null,
+    promise: runDetection(configuredEnvByAgent),
+  };
+  detectCache = entry;
+  entry.promise.then(
+    () => {
+      entry.settledAt = Date.now();
+    },
+    () => {
+      if (detectCache === entry) detectCache = null;
+    },
+  );
+  return entry.promise;
+}
+
+async function runDetection(
+  configuredEnvByAgent: Record<string, Record<string, string>>,
+): Promise<DetectedAgent[]> {
   const results = await Promise.all(
     AGENT_DEFS.map((def) => probe(def, configuredEnvByAgent?.[def.id] ?? {})),
   );

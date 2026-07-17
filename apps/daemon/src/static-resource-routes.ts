@@ -56,10 +56,15 @@ export function registerStaticResourceRoutes(app: Express, ctx: RegisterStaticRe
     return false;
   };
 
-  app.get('/api/agents', async (_req, res) => {
+  app.get('/api/agents', async (req, res) => {
     try {
       const config = await readAppConfig(RUNTIME_DATA_DIR);
-      const list = await detectAgents(config.agentCliEnv ?? {});
+      // 默认命中 detectAgents 的结果缓存（见 runtimes/detection.ts 顶注）：
+      // 全量 CLI 探测是进程风暴级开销，不能让每个 tab 的 bootstrap 都掀
+      // 一次。?refresh=1 是用户主动动作（设置页重新检测、装完 CLI 后
+      // 刷新）的穿透口。
+      const refresh = req.query?.refresh === '1' || req.query?.refresh === 'true';
+      const list = await detectAgents(config.agentCliEnv ?? {}, { refresh });
       res.json({ agents: list });
     } catch (err: any) {
       res.status(500).json({ error: String(err) });

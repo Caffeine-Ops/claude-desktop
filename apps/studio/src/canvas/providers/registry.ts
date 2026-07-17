@@ -84,9 +84,18 @@ function deployProviderQuery(providerId?: WebDeployProviderId): string {
   return providerId ? `?providerId=${encodeURIComponent(providerId)}` : '';
 }
 
-export async function fetchAgents(options?: { throwOnError?: boolean }): Promise<AgentInfo[]> {
+export async function fetchAgents(options?: {
+  throwOnError?: boolean;
+  /**
+   * 穿透 daemon 的检测缓存、强制重探所有 CLI（进程风暴级开销，秒级耗时）。
+   * 只给用户主动动作用（App.refreshAgents 的「重新检测」路径）；bootstrap
+   * 和普通列表读取一律走缓存——这正是缓存要解决的问题（每个 tab 的
+   * bootstrap 都掀一次全量探测，把 daemon 拖垮）。
+   */
+  refresh?: boolean;
+}): Promise<AgentInfo[]> {
   try {
-    const resp = await fetch('/api/agents');
+    const resp = await fetch(options?.refresh ? '/api/agents?refresh=1' : '/api/agents');
     if (!resp.ok) {
       if (options?.throwOnError) throw new Error(`agents ${resp.status}`);
       return [];

@@ -29,14 +29,12 @@ import {
   trackSettingsByokProviderOptionClick,
   trackSettingsConnectorAuthResult,
   trackSettingsLanguageClick,
-  trackSettingsLocalCliClick,
   trackSettingsExecutionModeTabClick,
   trackSettingsPrivacyClick,
   trackSettingsView,
 } from '../../analytics/events';
 import { LOCALE_LABEL, LOCALES, useI18n } from '../../i18n';
 import type { Locale } from '../../i18n';
-import { AgentIcon } from '../shared/AgentIcon';
 import { ExportDiagnosticsRow } from '../settings/ExportDiagnosticsButton';
 import { useDialogStore } from '@/src/chat/stores/dialogs';
 import { Icon } from '../shared/Icon';
@@ -96,13 +94,10 @@ import { isAutosaveDraftOnlyChange } from '../../App';
 import {
   API_KEY_CONSOLE_LINKS,
   AGENT_CLI_ENV_FIELDS,
-  AGENT_SHORT_DESCRIPTIONS,
   agentRefreshOptionsForConfig,
   apiModelOptionLabel,
   byokProviderRequiresApiKey,
   canRunProviderConnectionTest,
-  cleanAgentVersionLabel,
-  codexPathRepairState,
   codexPathStrings,
   isValidApiBaseUrl,
   mergeProviderModelOptions,
@@ -110,7 +105,6 @@ import {
   missingByokModelFetchFields,
   providerConnectionTestKey,
   providerModelsCacheKey,
-  sanitizeHttpsUrl,
   shouldShowCustomModelInput,
   switchApiProtocolConfig,
   testStatusVariant,
@@ -131,6 +125,7 @@ import { OrbitSection } from './OrbitSection';
 import { MediaProvidersSection } from './MediaProvidersSection';
 import { IntegrationsSection } from './IntegrationsSection';
 import { AppearanceSection } from './AppearanceSection';
+import { CliBackendCard } from './CliBackendCard';
 import { LogAnalysisSection } from './LogAnalysisSection';
 import { CritiqueTheaterSection } from './CritiqueTheaterSection';
 import { NotificationsSection } from './NotificationsSection';
@@ -302,7 +297,6 @@ export function SettingsDialog({
   const agentTestAbortRef = useRef<AbortController | null>(null);
   const providerTestAbortRef = useRef<AbortController | null>(null);
   const providerModelsAbortRef = useRef<AbortController | null>(null);
-  const pendingAgentInstallRescanRef = useRef(false);
   const agentTestRevisionRef = useRef(0);
   const providerTestRevisionRef = useRef(0);
   const providerModelsRevisionRef = useRef(0);
@@ -433,11 +427,6 @@ export function SettingsDialog({
     };
   }, []);
 
-  const installedCount = useMemo(
-    () => agents.filter((a) => a.available).length,
-    [agents],
-  );
-
   const setMode = (mode: ExecMode) => {
     setCfg((c) => {
       const modeBefore = executionModeToTracking(c.mode);
@@ -462,9 +451,6 @@ export function SettingsDialog({
   };
   const updateApiConfig = (patch: Partial<ApiProtocolConfig>) =>
     setCfg((c) => updateCurrentApiProtocolConfig(c, patch));
-  const markAgentInstallIntent = () => {
-    pendingAgentInstallRescanRef.current = true;
-  };
   const handleRefreshAgents = async () => {
     if (agentRescanRunning) return;
     setAgentRescanRunning(true);
@@ -482,26 +468,6 @@ export function SettingsDialog({
       setAgentRescanRunning(false);
     }
   };
-  useEffect(() => {
-    const handleReturnToSettings = () => {
-      if (
-        !pendingAgentInstallRescanRef.current ||
-        agentRescanRunning ||
-        document.visibilityState === 'hidden'
-      ) {
-        return;
-      }
-      pendingAgentInstallRescanRef.current = false;
-      void handleRefreshAgents();
-    };
-    document.addEventListener('visibilitychange', handleReturnToSettings);
-    window.addEventListener('focus', handleReturnToSettings);
-    return () => {
-      document.removeEventListener('visibilitychange', handleReturnToSettings);
-      window.removeEventListener('focus', handleReturnToSettings);
-    };
-  }, [agentRescanRunning, handleRefreshAgents]);
-
   const handleTestAgent = async () => {
     if (agentTestState.status === 'running') {
       return;
@@ -882,16 +848,6 @@ export function SettingsDialog({
       default:
         return t('settings.testUnknown', { detail: result.detail ?? '' });
     }
-  };
-
-  const applyCodexDetectedPath = (detectedPath: string) => {
-    setCfg((c) => updateAgentCliEnvValue(c, 'codex', 'CODEX_BIN', detectedPath));
-    setAgentTestState({ status: 'idle' });
-  };
-
-  const clearCodexCustomPath = () => {
-    setCfg((c) => updateAgentCliEnvValue(c, 'codex', 'CODEX_BIN', ''));
-    setAgentTestState({ status: 'idle' });
   };
 
   const apiProtocol = cfg.apiProtocol ?? 'anthropic';
@@ -1361,8 +1317,6 @@ export function SettingsDialog({
     about: { title: t('settings.about'), subtitle: t('settings.aboutHint') },
   };
   const activeHeader = sectionHeader[activeSection];
-  const installedAgents = agents.filter((a) => a.available);
-  const unavailableAgents = agents.filter((a) => !a.available);
 
   // Embedded mode renders ONLY the section content pane (no dialog chrome),
   // so SettingsDialogV2 can host it inside its own `.sv2` shell. The content
@@ -1694,7 +1648,7 @@ export function SettingsDialog({
                     <span className="text-[13.5px]">{t('settings.localCli')}</span>
                     <span className="text-[11px] font-normal text-muted-foreground">
                       {daemonLive
-                        ? t('settings.modeDaemonInstalledMeta', { count: installedCount })
+                        ? t('settings.modeDaemonBackendMeta')
                         : t('settings.modeDaemonOfflineMeta')}
                     </span>
                   </TabsTrigger>
@@ -1763,11 +1717,27 @@ export function SettingsDialog({
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center justify-between gap-3">
                       <h4 className="m-0 text-[13px] font-semibold text-foreground">
-                        {t('settings.agentInstalledGroup', {
-                          count: installedAgents.length,
-                        })}
+                        {t('settings.chatCliBackendTitle')}
                       </h4>
                       <div className="inline-flex min-w-0 items-center gap-2.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="rounded-[9px] border-accent/40 font-medium text-[var(--accent-strong)] shadow-none hover:border-accent/60 hover:bg-accent/10 hover:text-[var(--accent-strong)]"
+                          onClick={() => void handleTestAgent()}
+                          disabled={agentTestState.status === 'running'}
+                          title={t('settings.testTitle')}
+                        >
+                          {agentTestState.status === 'running' ? (
+                            <>
+                              <Loader2 className="size-3.5 animate-spin" />
+                              <span>{t('settings.test')}</span>
+                            </>
+                          ) : (
+                            t('settings.test')
+                          )}
+                        </Button>
                         {agentRescanNotice ? (
                           <span
                             className={cn(
@@ -1809,231 +1779,48 @@ export function SettingsDialog({
                         </Button>
                       </div>
                     </div>
-                    {installedAgents.length > 0 ? (
-                      <div className="grid grid-cols-1 gap-2">
-                        {installedAgents.flatMap((a) => {
-                          const active = cfg.agentId === a.id;
-                          const running =
-                            active && agentTestState.status === 'running';
-                          const description = AGENT_SHORT_DESCRIPTIONS[a.id];
-                          const versionLabel = cleanAgentVersionLabel(
-                            a.name,
-                            a.version,
-                          );
-                          const cardEl = (
-                            <div
-                              key={a.id}
+                    <CliBackendCard setCfg={setCfg} />
+                    {agentTestState.status !== 'idle' ? (
+                      <div className="flex flex-col gap-2">
+                        {agentTestState.status === 'running' ? (
+                          <p
+                            className={cn(testStatusBoxCls, TEST_STATUS_TONES.running)}
+                            role="status"
+                            aria-live="polite"
+                          >
+                            {t('settings.testRunning')}
+                          </p>
+                        ) : (
+                          <>
+                            <p
                               className={cn(
-                                /* 选中态 = accent tint + 1px ring（chip 选中同语），
-                                   替换旧的左侧色条——色条是 canvas 旧语言。 */
-                                'relative flex min-h-[72px] items-center gap-2.5 overflow-hidden rounded-xl border border-border bg-card transition-[border-color,background-color,box-shadow,transform] duration-150',
-                                active
-                                  ? 'border-accent/50 bg-accent/[0.07] shadow-[0_0_0_1px] shadow-accent/25'
-                                  : 'hover:-translate-y-px hover:border-foreground/25 hover:shadow-[0_3px_12px_hsl(240_6%_10%/0.07)]',
+                                testStatusBoxCls,
+                                TEST_STATUS_TONES[
+                                  testStatusVariant(agentTestState.result)
+                                ],
                               )}
+                              role={agentTestState.result.ok ? 'status' : 'alert'}
                             >
-                              {/* 整行选中按钮：裸 <button> + data-slot（canvas
-                                  裸元素 reset 的豁免标记）。不用 shadcn Button
-                                  是因为其 [&_svg]:size-4 会把 32px 的 AgentIcon
-                                  压成 16px。 */}
-                              <button
-                                type="button"
-                                data-slot="agent-card-select"
-                                className="flex min-h-[70px] min-w-0 flex-1 cursor-pointer items-center gap-3 py-2.5 pl-[18px] pr-3.5 text-left"
-                                onClick={() => {
-                                  trackSettingsLocalCliClick(analytics.track, {
-                                    page_name: 'settings',
-                                    area: 'configure_execution_mode_local_cli',
-                                    element: 'cli_provider',
-                                    cli_provider_id: agentIdToTracking(a.id),
-                                    install_status: 'installed',
-                                  });
-                                  setCfg((c) => ({ ...c, agentId: a.id }));
-                                }}
-                                aria-pressed={active}
-                              >
-                                {/* 图标底座 tile（原 .agent-card-select > .agent-icon
-                                    的 content-box + padding 视觉，改为包一层 span）。 */}
-                                <span
-                                  className={cn(
-                                    'flex shrink-0 items-center justify-center rounded-[10px] border border-border p-[5px] transition-colors',
-                                    active
-                                      ? 'border-accent/25 bg-accent/15'
-                                      : 'bg-muted/60',
-                                  )}
-                                >
-                                  <AgentIcon id={a.id} size={32} />
-                                </span>
-                                <div className="flex min-w-0 flex-1 flex-col">
-                                  <div className="flex min-w-0 items-baseline gap-[5px] overflow-hidden whitespace-nowrap text-[12.5px] font-semibold text-foreground">
-                                    <span className="min-w-0 flex-initial truncate">{a.name}</span>
-                                    {description ? (
-                                      <>
-                                        <span
-                                          className="font-normal text-muted-foreground"
-                                          aria-hidden="true"
-                                        >
-                                          ·
-                                        </span>
-                                        <span className="min-w-0 flex-1 truncate font-normal text-muted-foreground">
-                                          {description}
-                                        </span>
-                                      </>
-                                    ) : null}
-                                  </div>
-                                  <div className="truncate text-[11px] leading-[1.35] tabular-nums text-muted-foreground">
-                                    {a.authStatus === 'missing' ? (
-                                      <span title={a.authMessage ?? a.path ?? ''}>
-                                        {t('settings.agentAuthRequired')}
-                                      </span>
-                                    ) : a.authStatus === 'unknown' ? (
-                                      <span title={a.authMessage ?? a.path ?? ''}>
-                                        {t('settings.agentAuthUnknown')}
-                                      </span>
-                                    ) : versionLabel ? (
-                                      <span title={a.path ?? ''}>
-                                        {versionLabel}
-                                      </span>
-                                    ) : (
-                                      <span title={a.path ?? ''}>
-                                        {t('common.installed')}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              </button>
-                              {active ? (
-                                <button
+                              {renderTestMessage(agentTestState.result, 'cli')}
+                            </p>
+                            {!agentTestState.result.ok ? (
+                              <div className="flex flex-wrap gap-2">
+                                <Button
                                   type="button"
-                                  data-slot="agent-card-test-btn"
-                                  className={cn(
-                                    /* 紧凑 accent 胶囊（原整高右栏 + border-l 分隔
-                                       是 canvas 旧语言）。 */
-                                    'mr-3 flex min-w-[76px] shrink-0 items-center justify-center gap-1.5 rounded-[9px] border border-accent/40 px-3.5 py-1.5 text-[12.5px] font-medium text-[var(--accent-strong)] transition-[background-color,border-color,transform]',
-                                    running
-                                      ? 'opacity-60'
-                                      : 'cursor-pointer hover:-translate-y-px hover:border-accent/60 hover:bg-accent/10 active:translate-y-0',
-                                  )}
+                                  variant="outline"
+                                  size="sm"
+                                  className="rounded-full font-normal shadow-none"
                                   onClick={() => void handleTestAgent()}
-                                  disabled={running}
-                                  title={t('settings.testTitle')}
                                 >
-                                  {running ? (
-                                    <>
-                                      <Loader2 className="size-3.5 animate-spin" />
-                                      <span>{t('settings.test')}</span>
-                                    </>
-                                  ) : (
-                                    t('settings.test')
-                                  )}
-                                </button>
-                              ) : null}
-                            </div>
-                          );
-                          if (active && agentTestState.status !== 'idle') {
-                            const resultRow = (
-                              <div
-                                key={`${a.id}__test-result`}
-                                className="col-span-full flex flex-col gap-2"
-                              >
-                                {agentTestState.status === 'running' ? (
-                                  <p
-                                    className={cn(testStatusBoxCls, TEST_STATUS_TONES.running)}
-                                    role="status"
-                                    aria-live="polite"
-                                  >
-                                    {t('settings.testRunning')}
-                                  </p>
-                                ) : (
-                                  <>
-                                    <p
-                                      className={cn(
-                                        testStatusBoxCls,
-                                        TEST_STATUS_TONES[
-                                          testStatusVariant(agentTestState.result)
-                                        ],
-                                      )}
-                                      role={
-                                        agentTestState.result.ok
-                                          ? 'status'
-                                          : 'alert'
-                                      }
-                                    >
-                                      {renderTestMessage(
-                                        agentTestState.result,
-                                        'cli',
-                                      )}
-                                    </p>
-                                    {!agentTestState.result.ok ? (
-                                      <div className="flex flex-col gap-2">
-                                        <div className="flex flex-wrap gap-2">
-                                          <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="sm"
-                                            className="rounded-full font-normal shadow-none"
-                                            onClick={() => void handleTestAgent()}
-                                          >
-                                            <RotateCw className="size-3.5" />
-                                            <span>{t('settings.testRetry')}</span>
-                                          </Button>
-                                        </div>
-                                      </div>
-                                    ) : null}
-                                    {cfg.agentId === 'codex' && (() => {
-                                      const repair = codexPathRepairState(
-                                        agentTestState.result,
-                                      );
-                                      if (!repair) return null;
-                                      const codexStrings = codexPathStrings(locale);
-                                      return (
-                                        <div className="flex flex-col gap-2">
-                                          <span className="text-xs text-muted-foreground">
-                                            {codexStrings.repairHint}
-                                          </span>
-                                          <div className="flex flex-wrap gap-2">
-                                            {repair.canUseDetected ? (
-                                              <Button
-                                                type="button"
-                                                variant="outline"
-                                                size="sm"
-                                                className="rounded-full font-normal shadow-none"
-                                                onClick={() =>
-                                                  applyCodexDetectedPath(
-                                                    repair.detectedPath,
-                                                  )
-                                                }
-                                              >
-                                                {codexStrings.useDetected}
-                                              </Button>
-                                            ) : null}
-                                            <Button
-                                              type="button"
-                                              variant="outline"
-                                              size="sm"
-                                              className="rounded-full font-normal shadow-none"
-                                              onClick={clearCodexCustomPath}
-                                            >
-                                              {codexStrings.clearCustom}
-                                            </Button>
-                                          </div>
-                                        </div>
-                                      );
-                                    })()}
-                                  </>
-                                )}
+                                  <RotateCw className="size-3.5" />
+                                  <span>{t('settings.testRetry')}</span>
+                                </Button>
                               </div>
-                            );
-                            return [cardEl, resultRow];
-                          }
-                          return [cardEl];
-                        })}
+                            ) : null}
+                          </>
+                        )}
                       </div>
-                    ) : (
-                      <div className="rounded-md border border-dashed border-border bg-muted/40 p-4 text-xs text-muted-foreground">
-                        {t('settings.noAgentsDetected')}
-                      </div>
-                    )}
+                    ) : null}
                   </div>
               {(() => {
                 const selected = agents.find(
@@ -2186,113 +1973,6 @@ export function SettingsDialog({
                   </div>
                 );
               })()}
-                  {unavailableAgents.length > 0 ? (
-                    /* 统一 disclosure 语言：card 底 + 12px 圆角，padding 挂在
-                       summary/body 上让 hover 条铺满整行；安装卡走竖排小卡
-                       （logo+名 / 描述 / 安装·文档），不再整体压暗——「可安装」
-                       本身已表达未安装态，opacity 叠上去只降可读性。 */
-                    <details
-                      className="group mt-2.5 overflow-hidden rounded-xl border border-border bg-card"
-                      open={installedAgents.length > 0 ? undefined : true}
-                    >
-                      <summary className="flex cursor-pointer select-none list-none items-center gap-2 px-3.5 py-3 text-[13px] font-medium text-foreground transition-colors hover:bg-secondary/50 [&::-webkit-details-marker]:hidden">
-                        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
-                        <span>
-                          {t('settings.agentInstallGroup', {
-                            count: unavailableAgents.length,
-                          })}
-                        </span>
-                      </summary>
-                      <div className="border-t border-border/50 px-3.5 pb-4 pt-3">
-                        <div className="grid grid-cols-[repeat(auto-fill,minmax(198px,1fr))] gap-2">
-                        {unavailableAgents.map((a) => {
-                          const installUrl = sanitizeHttpsUrl(a.installUrl);
-                          const docsUrl = sanitizeHttpsUrl(a.docsUrl);
-                          const hasLinks = Boolean(installUrl || docsUrl);
-                          const description = AGENT_SHORT_DESCRIPTIONS[a.id];
-                          const cardLabel = `${a.name} · ${t('common.notInstalled')}`;
-                          const linkBtnCls =
-                            'rounded-[7px] border border-border px-2.5 py-[3px] text-[11px] font-medium text-foreground/80 transition-colors hover:border-accent/50 hover:bg-accent/[0.07] hover:text-foreground';
-                          return (
-                            <div
-                              key={a.id}
-                              className="flex flex-col gap-2 rounded-[10px] border border-border/70 bg-card p-3 transition-[border-color,box-shadow] hover:border-foreground/25 hover:shadow-[0_2px_8px_hsl(240_6%_10%/0.05)]"
-                              role="group"
-                              aria-label={cardLabel}
-                            >
-                              <div className="flex min-w-0 items-center gap-2">
-                                <span className="flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-[7px] bg-muted/60">
-                                  <AgentIcon id={a.id} size={20} />
-                                </span>
-                                <span className="truncate text-[12.5px] font-medium text-foreground">
-                                  {a.name}
-                                </span>
-                              </div>
-                              {description ? (
-                                <div className="text-[11px] text-muted-foreground">
-                                  {description}
-                                </div>
-                              ) : null}
-                              {hasLinks ? (
-                                <div className="mt-auto flex items-center gap-1.5 pt-0.5">
-                                  {installUrl ? (
-                                    <a
-                                      href={installUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className={linkBtnCls}
-                                      onClick={markAgentInstallIntent}
-                                    >
-                                      {t('settings.agentInstall.install')}
-                                    </a>
-                                  ) : null}
-                                  {docsUrl ? (
-                                    <a
-                                      href={docsUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className={linkBtnCls}
-                                      onClick={markAgentInstallIntent}
-                                    >
-                                      {t('settings.agentInstall.docs')}
-                                    </a>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                        </div>
-                      </div>
-                    </details>
-                  ) : null}
-                  {/*
-                    Show the install guide only when the user has *no*
-                    working agent picked yet. Older logic surfaced it
-                    whenever any agent on the support list was missing,
-                    which fired for almost everyone (few people install
-                    all 14 supported CLIs) — the four-step quickstart
-                    then sat between the agent grid and the model picker
-                    forever, even after the user had successfully picked
-                    Claude Code months ago. Once a working agent is
-                    selected, the guide has done its job and only adds
-                    noise.
-                  */}
-                  {!agents.find(
-                    (a) => a.id === cfg.agentId && a.available,
-                  ) ? (
-                    <div className="mt-2.5">
-                      <p className="m-0 rounded-[9px] bg-secondary/55 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-                        {t('settings.agentInstall.pathHint')}
-                      </p>
-                      <ol className="mt-2 list-decimal pl-[18px] text-xs leading-relaxed text-muted-foreground [&_li+li]:mt-1">
-                        <li>{t('settings.agentInstall.stepOpenLinks')}</li>
-                        <li>{t('settings.agentInstall.stepAuth')}</li>
-                        <li>{t('settings.agentInstall.stepRescan')}</li>
-                        <li>{t('settings.agentInstall.stepSelect')}</li>
-                      </ol>
-                    </div>
-                  ) : null}
                 </>
               )}
               {(() => {

@@ -16,13 +16,21 @@ import {
   checkPromptArgvBudget,
   checkWindowsCmdShimCommandLineBudget,
   checkWindowsDirectExeCommandLineBudget,
-  detectAgents,
+  detectAgents as detectAgentsCached,
   inspectAgentExecutableResolution,
   resolveAgentLaunch,
   resolveAgentExecutable,
   spawnEnvForAgent,
 } from '../../../src/agents.js';
 import type { RuntimeAgentDef } from '../../../src/runtimes/types.js';
+
+// src 侧 detectAgents 现在默认回模块级缓存（见 src/runtimes/detection.ts
+// 顶注）。测试用例在同一进程里串行跑、各自改 PATH/env 后断言检测结果，
+// 命中上一个用例的缓存会互相污染——这里 re-export 的版本永远穿透，保持
+// 「每次调用 = 此刻真探测」的测试语义。
+const detectAgents = (
+  env?: Parameters<typeof detectAgentsCached>[0],
+): ReturnType<typeof detectAgentsCached> => detectAgentsCached(env, { refresh: true });
 
 export {
   assert,
