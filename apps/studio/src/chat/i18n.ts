@@ -186,8 +186,17 @@ const STRINGS = {
     compPromptNow: '现在下载',
     compPromptLater: '暂不',
     compPromptDetails: '查看下载详情',
-    compPromptDone: '「{title}」已就绪，正在后台更新，稍后自动生效。',
+    // 非 embed 成功话：装完即用，不提「后台」——它们没有任何后台收尾步骤（修复轮 Fix 3）。
+    compPromptDone: '「{title}」已就绪，现在就能用了。',
+    // embed 专属成功话：后台重建索引只在知识库已有资料时才跑（SUCCESS_HOOKS 里
+    // scheduleKbBuild() 判了 kbStoreHasDocs()），空库时压根不会有后台动作，措辞必须条件式，
+    // 不能断言「正在后台更新」（修复轮 Fix 3，对应设计决策「成功措辞对后台重建保持诚实」）。
+    compPromptDoneEmbed: '「{title}」已就绪。若知识库已有资料，会在后台重建索引后自动用上语义检索。',
     compPromptToast: '「{title}」已就绪',
+    // unavailable 态弹窗文案：不给「现在下载」死按钮（后端对 detect-only 早退、对缺 python 的
+    // pipx 组件重跑也注定失败），改引导手动安装 + 复制链接（修复轮 Fix 1，语义对齐
+    // ComponentsSection.tsx 的 RowAction unavailable 分支）。
+    compPromptUnavailableBody: '「{title}」暂时没法自动安装，需要手动装一下：',
 
     // Settings — Configuration category — 出图 API（编辑器内 P 图功能的凭据配置）
     imageApiTitle: '出图 API',
@@ -611,8 +620,21 @@ const STRINGS = {
     compPromptNow: 'Download now',
     compPromptLater: 'Not now',
     compPromptDetails: 'View download details',
-    compPromptDone: '“{title}” is ready and updating in the background; it will take effect shortly.',
+    // Non-embed success copy: ready to use right away, no "background" mention — they have no
+    // background follow-up step at all (fix round Fix 3).
+    compPromptDone: '“{title}” is ready to use now.',
+    // Embed-only success copy: the background reindex only runs when the knowledge base already
+    // has documents (SUCCESS_HOOKS gates scheduleKbBuild() behind kbStoreHasDocs()) — an empty
+    // base gets no background work at all, so the wording must stay conditional instead of
+    // asserting a background update always happens (fix round Fix 3; matches the project's
+    // "never overclaim background rebuilds" rule).
+    compPromptDoneEmbed: '“{title}” is ready. If your knowledge base already has documents, it will reindex in the background and semantic search will kick in automatically.',
     compPromptToast: '“{title}” is ready',
+    // Unavailable-state copy: no dead "download now" button (the backend early-returns for
+    // detect-only components and a pipx retry would just fail the same way without Python) —
+    // guide the user to install manually + copy the link instead (fix round Fix 1; mirrors
+    // ComponentsSection.tsx's RowAction unavailable branch).
+    compPromptUnavailableBody: '“{title}” can’t be installed automatically right now — install it manually:',
 
     // Settings — Configuration category — Image API credentials for the
     // in-editor image generate/edit feature.

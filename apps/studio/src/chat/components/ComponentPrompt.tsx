@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { initialComponentState, type ComponentTable } from '@desktop-shared/componentDownload'
 import { useT, useTFormat, type StringKey } from '../i18n'
 import { useComponentPromptStore } from '../stores/componentPrompt'
@@ -16,12 +16,24 @@ const TITLE_KEY: Record<string, StringKey> = {
   'soffice': 'compSofficeTitle',
 }
 
+// unavailable 态的手动安装引导链接（修复轮 Fix 1）。与 ComponentsSection.tsx 的 ROWS
+// 硬映射保持一致的成因：markitdown 的 unavailable 是「pipx 探不到 python」，soffice 是
+// 「detect-only 没探测到本机安装」。前端不 import main 侧 componentRegistry（同 ComponentsSection
+// 头注释的既有理由），故在这里重复一份而非跨进程共享。kb-embed 是 hosted-files 策略，
+// 永远不会落到 unavailable，不在此表——留空走下面的 compHowToInstall 兜底文案。
+const GUIDE_URL: Record<string, string | undefined> = {
+  'markitdown': 'https://www.python.org/downloads/',
+  'soffice': 'https://www.libreoffice.org/download/download/',
+}
+
 /**
- * 渐进式非阻断弹窗，右下角浮出。四阶段：
- *  1. 初始   [现在下载][暂不]
- *  2. 下载中 进度条/转圈 + [查看下载详情]（跳组件中心）
- *  3. 成功   一句「说清变了什么」+ 自动淡出；若用户已关掉弹窗 → toast 报喜
- *  4. 失败/暂不 → 关掉，功能照旧静默降级
+ * 渐进式非阻断弹窗，右下角浮出。五个渲染分支（修复轮 Fix 1 前是四支，unavailable 混在
+ * 「初始」分支里点了没反应——soffice 是 detect-only、markitdown 缺 python 时都会落到
+ * unavailable，后端对前者早退、对后者重试也注定同样失败，不能给一个亮着的主按钮）：
+ *  1. idle/error   [现在下载/重试][暂不]（error 态额外显 errorMessage）
+ *  2. installing   进度条/转圈 + [查看下载详情]（跳组件中心）
+ *  3. unavailable  引导手动安装：guideUrl（可见 + 复制）+ [暂不]，无主安装按钮
+ *  4. ready        一句「说清变了什么」+ 自动淡出；若用户已关掉弹窗 → toast 报喜
  * 常驻挂载：openFor==null 时渲染 null。
  */
 export function ComponentPrompt(): React.JSX.Element | null {
@@ -82,12 +94,22 @@ export function ComponentPrompt(): React.JSX.Element | null {
 
   const start = (): void => { void window.chatApi.startComponentInstall(openFor) }
   const goDetails = (): void => { openSettingsPage(); /* 保留弹窗，用户可在两处看进度 */ }
+  const guideUrl = GUIDE_URL[openFor]
 
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-[55] w-[340px]" data-slot="component-prompt">
+    // bottom 偏移不是 bottom-4：Toaster.tsx（Task 8，不可改）常驻挂在同一角 bottom-4 right-4
+    // z-[60]，从下往上堆叠 toast；而本弹窗「走开报喜」逻辑存在的意义恰恰是「弹窗正开着看 A、
+    // 后台 B 装好了」——这正是两块面同屏的主场景，不是边角情形。留出约两条 toast 的净空
+    // （单条 toast 实测约 40px 高 + gap-2 8px + Toaster 自己的 bottom-4 16px），弹窗坐在
+    // toast 堆叠区上方，两者不再重叠（修复轮 Fix 2）。
+    <div className="pointer-events-none fixed bottom-28 right-4 z-[55] w-[340px]" data-slot="component-prompt">
       <div className="pointer-events-auto space-y-3 rounded-xl border border-border bg-card p-4 shadow-xl">
         {state.status === 'ready' ? (
-          <p className="text-[12.5px] text-emerald-700 dark:text-emerald-300">{tFormat('compPromptDone', { title })}</p>
+          <p className="text-[12.5px] text-emerald-700 dark:text-emerald-300">
+            {/* embed 的成功话必须条件式（后台重建只在知识库已有资料时才跑），非 embed
+                没有任何后台收尾，措辞不能提「后台」——两个键分岔，见 Fix 3 注释 */}
+            {tFormat(openFor === 'kb-embed' ? 'compPromptDoneEmbed' : 'compPromptDone', { title })}
+          </p>
         ) : state.status === 'installing' ? (
           <>
             <p className="text-[12.5px] font-medium text-foreground">{title}</p>
@@ -106,6 +128,8 @@ export function ComponentPrompt(): React.JSX.Element | null {
               {t('compPromptDetails')}
             </button>
           </>
+        ) : state.status === 'unavailable' ? (
+          <UnavailablePanel title={title} guideUrl={guideUrl} onLater={close} />
         ) : (
           <>
             <p className="text-[12.5px] font-medium text-foreground">{t('compPromptTitle')}</p>
@@ -116,7 +140,8 @@ export function ComponentPrompt(): React.JSX.Element | null {
             <div className="flex items-center gap-2">
               <button type="button" onClick={start}
                 className="inline-flex h-8 items-center rounded-md bg-accent px-3 text-[12px] font-medium text-accent-foreground hover:bg-accent/90">
-                {t('compPromptNow')}
+                {/* error 态叫「重试」而非「现在下载」，对齐 ComponentsSection.tsx 的 RowAction（Fix 4） */}
+                {state.status === 'error' ? t('compRetry') : t('compPromptNow')}
               </button>
               <button type="button" onClick={close}
                 className="inline-flex h-8 items-center rounded-md border border-border bg-card px-3 text-[12px] font-medium text-foreground hover:bg-muted/60">
@@ -127,5 +152,49 @@ export function ComponentPrompt(): React.JSX.Element | null {
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * unavailable 分支（修复轮 Fix 1）：不给死按钮——soffice 是 detect-only，
+ * `startComponentInstall` 对它早退什么都不发生；markitdown 缺 python 时重跑一次注定
+ * 同样失败。改成可见的手动安装引导，语义对齐 ComponentsSection.tsx 的 RowAction：
+ * 有 guideUrl 就摆出 `<code>` + 复制按钮（unavailable 态不带 errorMessage，链接本身
+ * 就是全部的解释），没有则退化成一句「如何安装」占位文案（当前只有 kb-embed 会落进这个
+ * 兜底，但它不会到 unavailable 态，纯类型兜底）。
+ */
+function UnavailablePanel({ title, guideUrl, onLater }: {
+  title: string
+  guideUrl: string | undefined
+  onLater: () => void
+}): React.JSX.Element {
+  const t = useT()
+  const tFormat = useTFormat()
+  const [copied, setCopied] = useState(false)
+  return (
+    <>
+      <p className="text-[12.5px] font-medium text-foreground">{title}</p>
+      <p className="text-[11.5px] leading-relaxed text-muted-foreground">{tFormat('compPromptUnavailableBody', { title })}</p>
+      {guideUrl ? (
+        <button type="button" title={guideUrl} onClick={() => {
+          void navigator.clipboard?.writeText(guideUrl).then(() => {
+            setCopied(true)
+            window.setTimeout(() => setCopied(false), 1500)
+          })
+        }}
+          className="flex w-full items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-left hover:bg-muted/60">
+          <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{guideUrl}</code>
+          <span className="shrink-0 whitespace-nowrap text-[11.5px] font-medium text-foreground">
+            {copied ? t('filesCopyNameCopied') : t('compCopyLink')}
+          </span>
+        </button>
+      ) : (
+        <p className="text-[11.5px] text-muted-foreground">{t('compHowToInstall')}</p>
+      )}
+      <button type="button" onClick={onLater}
+        className="inline-flex h-8 items-center rounded-md border border-border bg-card px-3 text-[12px] font-medium text-foreground hover:bg-muted/60">
+        {t('compPromptLater')}
+      </button>
+    </>
   )
 }
