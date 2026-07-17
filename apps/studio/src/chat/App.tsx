@@ -12,8 +12,6 @@ import { useWorkspaceStore } from './stores/workspace'
 import { useI18n } from './i18n'
 import { useSettingsStore } from './stores/settings'
 import { useDialogStore } from './stores/dialogs'
-import { useApplyAppearance } from './stores/appearance.applier'
-import { hydrateAppearanceFromDaemon, useAppearanceStore } from './stores/appearance'
 import { SettingsView } from './components/settings/SettingsView'
 import { KbManagerView } from './components/kb/KbManagerView'
 import { ChatLoadingSkeleton } from '@/src/components/ChatLoadingSkeleton'
@@ -71,54 +69,11 @@ function App(): React.JSX.Element {
   // 按钮 + 随窗口宽度自动收起的逻辑（sidebarOpen / rightRailOpen state +
   // useMediaQuery + AnimatePresence），随面板一并删除；整条 .header--tab 也
   // 早已删了，chat 内容直接顶到 shell 左导航栏右侧。
-  useApplyAppearance()
-
-  // Adopt the daemon's shared appearance as the source of truth — once on
-  // mount, then again every time main says it changed (APPEARANCE_CHANGED,
-  // fired after ANY window edits appearance). The applier above has already
-  // rendered the localStorage cache (no flash); the mount hydrate overwrites
-  // it with the daemon copy when reachable, and the subscription keeps this
-  // renderer in lockstep with a theme switch made in the settings overlay or
-  // another tab — without it the change only landed here on a reload. No-op
-  // when the daemon is offline (cache stays). main skips the window that made
-  // the change, and hydrate's own isHydrating guard prevents an echo back.
-  //
-  // 另外必须监听同 document 的 'od:appearance-changed' window 事件：studio
-  // 单视图形态下 canvas 面与本组件共存同一 webContents，canvas 入口切主题
-  // 直连 daemon（PUT /api/app-config），main 毫不知情或按 skip-sender 跳过
-  // 本 webContents——IPC 广播对「同屋对面」永远到不了。少了这条监听，chat
-  // store 停在旧档、applier 留在 documentElement.style 的 inline token 会把
-  // chat 面钉在旧配色（2026-07-04 暗色花斑事故）。事件由 canvas 的
-  // syncConfigToDaemon 成功后 dispatch（src/canvas/state/config.ts）。
-  useEffect(() => {
-    void hydrateAppearanceFromDaemon()
-    const onSameDocChange = () => {
-      void hydrateAppearanceFromDaemon()
-    }
-    // 即时通道：canvas 写手每次落双标记都会同帧广播 themeMode（见
-    // canvas/state/appearance.ts 的 dispatch 注释）。直接改本地 store——
-    // applier（deps 含 themeMode）同帧重写 inline token，主题切换一拍完成，
-    // 不必等下面那条「daemon 写入成功 → od:appearance-changed → 再 GET」的
-    // 持久化校准链（慢两次网络往返，是 2026-07-04「切主题一点点变」分拍
-    // 的根源）。「值相同不 set」断回声环：本组件 applier 触发的 canvas
-    // 重 apply 会再次广播同值，此处直接忽略。
-    const onThemeModeApplied = (e: Event) => {
-      const mode = (e as CustomEvent<{ themeMode?: 'light' | 'dark' | 'system' }>).detail?.themeMode
-      if (!mode) return
-      const store = useAppearanceStore.getState()
-      if (store.themeMode !== mode) store.setThemeMode(mode)
-    }
-    window.addEventListener('od:theme-mode-applied', onThemeModeApplied)
-    window.addEventListener('od:appearance-changed', onSameDocChange)
-    const offIpc = window.chatApi?.onAppearanceChanged?.(() => {
-      void hydrateAppearanceFromDaemon()
-    })
-    return () => {
-      window.removeEventListener('od:theme-mode-applied', onThemeModeApplied)
-      window.removeEventListener('od:appearance-changed', onSameDocChange)
-      offIpc?.()
-    }
-  }, [])
+  // 外观（applier + daemon/同 document 同步桥）已迁去 chat/AppearanceBridge，
+  // 由 SurfaceHost 与两个面并列常驻挂载（2026-07-17）。原因：本组件**不是**
+  // 常驻的——设置页/知识库页一开，SurfaceHost 的 chatShowing 翻 false 把
+  // chat 面整棵撤掉，写手和 `od:theme-mode-applied` 监听器跟着消失，正是在
+  // 「用户在设置页里切主题」这个最主要的场景下缺席。详见该文件头注释。
 
   // Subscribe to settings-menu actions forwarded from the shell's tab-strip
   // menu (the menu used to live in this renderer's sidebar; it now lives in
@@ -307,14 +262,17 @@ function App(): React.JSX.Element {
           level as PermissionDialog so they overlay everything. */}
       <SkillsDialog />
       <McpDialog />
+      {/* PluginsDialog 已退役（2026-07-17）：插件市场改成 SurfaceHost 的第三个
+          面（?market=1，rail 常驻 + 右侧换成市场），不再是弹窗。 */}
       <LogsDialog />
       {/* 会话搜索（⌘K / shell rail 的「搜索对话」）。常挂载：它自己订阅
           dialog store 并在关闭态渲染 null，⌘K 监听因此全程有效。 */}
       <SessionSearchDialog />
-      {/* 右下角的「正在打开会话」toast 已退役（2026-07-07 用户要求去掉）：
-          冷启动信号由 ThreadView 顶部进度条独自承担（同一个
-          useDelayedSessionLoading 数据源），交互闸门在别处不受影响
-          （composer 发送钮走 isLoading、侧栏行走 pointer-events-none）。 */}
+      {/* 右下角的「正在打开会话」toast 已退役（2026-07-07 用户要求去掉）。
+          接棒它的顶部进度条也已退役（2026-07-17）：切换加载态改由 ThreadView
+          的骨架屏承担（订阅 sessionSwitching，形状即目标页面）。交互闸门始终
+          在别处、不受这些视觉件增删影响（composer 发送钮走 isLoading、侧栏行
+          走 pointer-events-none）。 */}
     </div>
     </MotionConfig>
   )

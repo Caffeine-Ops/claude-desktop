@@ -39,6 +39,7 @@ import { Button } from '@/src/components/ui/button'
 import { useUnreadIdsKey } from '@/src/chat/stores/unread'
 import { useDialogStore } from '@/src/chat/stores/dialogs'
 import { useRailStore } from '@/src/stores/rail'
+import { closeSurfaceOverlay } from '@/src/stores/surfaceOverlay'
 import { cn } from '@/src/lib/utils'
 
 export function RailShell() {
@@ -185,10 +186,14 @@ export function RailShell() {
             )}
             onClick={() => {
               if (isChat) {
+                // 面（插件市场/知识库）盖着就先掀掉（同 AppRail 主按钮，理由
+                // 见那里）：switchShellSession 只切 runtime 不导航，不掀的话
+                // 新会话被面盖住，用户以为点了没反应。
+                closeSurfaceOverlay()
                 void window.tabApi?.switchShellSession?.(null)
               } else {
                 // canvas router 模块求值期触碰 window，不能静态 import——
-                // 同 AppRail 主按钮的约束。
+                // 同 AppRail 主按钮的约束。navigate 自己会剥掉面开关。
                 void import('@/src/canvas/router').then(({ navigate }) => {
                   navigate({ kind: 'home', view: 'home' })
                 })

@@ -53,6 +53,7 @@ import type { ComponentType, ReactNode } from 'react'
 import type { ThreadSummary } from '@desktop-shared/types'
 
 import { rememberCanvasPath } from '@/src/stores/canvasNav'
+import { hasSurfaceOverlay, useSurfaceOverlayStore } from '@/src/stores/surfaceOverlay'
 import { stripMessageMarker } from '@/src/chat/lib/messageMarkers'
 import { condenseFileMentions } from '@/src/chat/lib/mentionDisplay'
 import { useChatStore, useRunningSessionIdsKey } from '@/src/chat/stores/chat'
@@ -287,7 +288,15 @@ export function RailSessionList() {
   // 乐观覆盖的使命就完成了，交还给 store 权威值——否则一次点击后 activeId
   // 会被本地值永久钉住，store 侧的后续切换（如 AI 在别的会话里被切到前台）
   // 反而高亮不到。
-  const activeId = optimisticId ?? foregroundSessionId
+  //
+  // 有面盖着时（插件市场 / 知识库）**一个会话都不高亮**（activeId = null）：
+  // 此刻内容区根本不是那个会话，留着高亮等于骗人——rail 的「当前位置」指示交给
+  // 那个面自己的入口按钮的选中态（见 AppRail）。前台会话本身没变，关掉面（点
+  // 会话/切面）高亮立刻回来，这里只是不显示。2026-07-17 用户实锤：「如果当前是
+  // 插件，会话应该取消选中状态，选中状态应该在插件」。
+  // selector 直接返回 boolean（不是 kind）：换面时不必让整条列表跟着重渲染。
+  const overlayOpen = useSurfaceOverlayStore((s) => s.open !== null)
+  const activeId = overlayOpen ? null : (optimisticId ?? foregroundSessionId)
   useEffect(() => {
     if (optimisticId !== null && optimisticId === foregroundSessionId) {
       setOptimisticId(null)
@@ -297,6 +306,11 @@ export function RailSessionList() {
   // 重命名弹窗：target = 正在改名的会话；draft = 输入框当前值。
   const [renameTarget, setRenameTarget] = useState<ThreadSummary | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
+  // 打开弹窗那一刻的预填值，作为「用户到底改没改」的比较基准。不能拿
+  // ThreadSummary.title 当基准——预填的是 displayTitle() 归一化后的行文字，
+  // 跟原文天然不相等，用原文比会把「打开就点保存」判成真改名（同 ChatHeader
+  // 那个弹窗的 initialDraftRef）。
+  const renameInitialRef = useRef('')
   const renameInputRef = useRef<HTMLInputElement | null>(null)
   // 删除确认弹窗：target = 待删会话。
   const [deleteTarget, setDeleteTarget] = useState<ThreadSummary | null>(null)
@@ -350,10 +364,15 @@ export function RailSessionList() {
     // 空壳，Next 无需做任何导航工作（见 AppRail goChatShallow 注释）。
     // 切走前记住画布路径（2026-07-14，删多标签栏连带修复）：这也是「从画布
     // 切到聊天」的入口之一，不记的话切回画布会用陈旧的 lastCanvasPath。
-    if (!pathname.startsWith('/chat')) {
-      rememberCanvasPath()
-      window.history.pushState(null, '', '/chat')
-    }
+    const onChat = pathname.startsWith('/chat')
+    // 已在聊天面**且**没有面（插件市场/知识库）盖着 → 真 no-op。
+    // 面开关（?market=1 / ?kb=1）挂在当前 pathname 上，开在聊天面时 pathname
+    // 仍是 '/chat'——只判 pathname 的话这里直接 return，参数不被剥掉、面继续
+    // 盖着，用户点会话「没反应」（2026-07-17 用户实锤）。pushState('/chat')
+    // 写死路径不带 query，天然剥掉所有面开关。同族陷阱见 AppRail 的 goSurface。
+    if (onChat && !hasSurfaceOverlay()) return
+    if (!onChat) rememberCanvasPath()
+    window.history.pushState(null, '', '/chat')
   }, [pathname])
 
   /** 点击行：高亮 + 导航到聊天 + 通知 main 切 runtime + 清未读。 */
@@ -369,8 +388,16 @@ export function RailSessionList() {
 
   /* ── 重命名：shadcn Dialog ── */
 
+  // 预填 = rail 行此刻显示的那行文字，不是 ThreadSummary.title 原文
+  // （2026-07-17 用户要求，同 ChatHeader 的重命名弹窗）。原文可能是命令
+  // XML、裸 slash 命令、或整条绝对路径——displayTitle 已经把这些归一化成
+  // 人话摆在行上了，弹窗不该再把原文摊开让用户对着它改。
+  // 兜底文案（「新对话」）预填空串，让 placeholder 出场。
   const openRename = useCallback((t: ThreadSummary) => {
-    setRenameDraft(t.title)
+    const shown = displayTitle(t.title)
+    const prefill = shown === UNTITLED_LABEL ? '' : shown
+    setRenameDraft(prefill)
+    renameInitialRef.current = prefill
     setRenameTarget(t)
   }, [])
 
@@ -388,8 +415,10 @@ export function RailSessionList() {
     const target = renameTarget
     const title = renameDraft.trim()
     if (!target) return
-    // 无变化/清空视作取消，直接关窗不打 IPC。
-    if (!title || title === target.title) {
+    // 无变化/清空视作取消，直接关窗不打 IPC。基准是打开时的预填值而不是
+    // target.title 原文——理由见 renameInitialRef。没动过就原样留着原文
+    // （行上渲染出来的文字一模一样，用户看不出差别，也没白丢命令前缀/路径）。
+    if (!title || title === renameInitialRef.current) {
       setRenameTarget(null)
       return
     }
@@ -513,7 +542,10 @@ export function RailSessionList() {
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => viewportRef.current,
-    estimateSize: (i) => (items[i]?.kind === 'label' ? 40 : 32),
+    // row 36 = 32（h-8 行本身）+ 4（li 的 pb-1 行间距，见下方 li 注释）。
+    // 必须跟 li 的实测高度对齐：estimateSize 只管**尚未挂载**的项，估矮了
+    // totalSize 偏小、滚动条比例失真，滚过去被 measureElement 修正时位置还会跳。
+    estimateSize: (i) => (items[i]?.kind === 'label' ? 40 : 36),
     getItemKey: (i) => items[i].key,
     overscan: 8
   })
@@ -544,10 +576,21 @@ export function RailSessionList() {
           * overlay 滚动条定位在 ScrollArea 容器右缘，而 AppRail 的 nav 有
           * px-3（右 12px）把列表推离 rail 右缘。右负外边距吃满这 12px，让
           * 滚动条容器右缘 = rail 右缘 = 内容卡左缘，滚动条紧贴内容不留缝。
-          * 左侧仍 -ml-1（选中行圆角背景略往左伸的呼吸），故拆成不对称。 */}
+          * 左侧仍 -ml-1（选中行圆角背景略往左伸的呼吸），故拆成不对称。
+          *
+          * 左净空 pl-1 必须落在 li 上、不能留在这里（2026-07-17）：Viewport
+          * 是 overflow-x:hidden 的裁剪盒，而这条 pl-1 是它**外面**的 padding
+          * ——4px 全被吃在裁剪边界之外，等于把 Viewport 左缘又推回与行左缘
+          * 重合（实测 -ml-1 让本容器 left=8，pl-1 又把 Viewport 推到 12 =
+          * 行 left），-ml-1 白扩、focus ring（shadcn 的 ring-[3px]，向外 3px）
+          * 左半被裁；右侧因 li 自带 pr-3 有 12px 净空所以完好，表现为「环左
+          * 边缺一块、右边完整」。挪到 li 后 Viewport 左缘退到 8 成为真正的
+          * 裁剪净空，li 的 pl-1 再把行推回 left=12，行几何一分不变。
+          * 同 pr-3 的道理：li 是 absolute + w-full，w-full 解析到 ul 的
+          * padding box，padding 加在 ul/ScrollArea 上都拦不住它。 */}
         <ScrollArea
           viewportRef={viewportRef}
-          className="-ml-1 -mr-3 min-h-0 flex-1 pl-1 [&>[data-slot=scroll-area-viewport]>div]:block!"
+          className="-ml-1 -mr-3 min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]>div]:block!"
         >
           {/* 虚拟滚动容器：ul 撑起全列表总高度（totalSize，滚动条比例由它
             * 决定），只有可视区 ±overscan 的虚拟项真正挂进 DOM，各自绝对
@@ -562,12 +605,25 @@ export function RailSessionList() {
           >
             {virtualizer.getVirtualItems().map((v) => {
               const item = items[v.index]
+              /* pb-1 只给 row：4px 行间距让 hover/选中的灰底读成一块块分离的
+               * 卡片，而不是贴死的行墙（2026-07-17 用户要求）。
+               * 间距**必须是 padding 不能是 margin**——measureElement 走
+               * getBoundingClientRect().height，margin 不在盒内测不到，
+               * virtualizer 会按 32px 累加 translateY 让行叠在一起。
+               * 灰底由内层 h-8 的 Button/选中 span 画，正好不铺进这 4px，
+               * 缝隙透出 rail 底色。label 不加：它自带 pt-5 的组间呼吸。 */
               return (
                 <li
                   key={item.key}
                   data-index={v.index}
                   ref={virtualizer.measureElement}
-                  className="absolute left-0 top-0 w-full pr-3"
+                  className={cn(
+                    // pl-1：给 focus ring 留出裁剪净空（理由见上方 ScrollArea
+                    // 注释）。行/标签的可视左缘仍是 12px——Viewport 左缘退到
+                    // 8px，这 4px 正好补回来。
+                    'absolute left-0 top-0 w-full pl-1 pr-3',
+                    item.kind === 'row' && 'pb-1'
+                  )}
                   style={{ transform: `translateY(${v.start}px)` }}
                 >
                   {item.kind === 'label' ? (
@@ -667,11 +723,14 @@ export function RailSessionList() {
                 * 与背景同步瞬时完成，过渡只留给 hover 的 opacity/阴影。 */}
               <Button
                 type="submit"
-                className="bg-[linear-gradient(135deg,hsl(var(--brand)),color-mix(in_srgb,hsl(var(--brand))_85%,#000))] text-white shadow-[0_1px_2px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.18)] transition-[opacity,box-shadow] hover:opacity-95 disabled:bg-none disabled:bg-muted disabled:text-muted-foreground/70 disabled:opacity-100 disabled:shadow-none"
-                disabled={
-                  !renameDraft.trim() ||
-                  renameDraft.trim() === renameTarget?.title
-                }
+                // 主按钮跟主题色（2026-07-17 从写死品牌绿改 --accent，同
+                // Composer 发送键的理由：这颗按钮是用户动作的确认态，颜色
+                // 该跟着设置页选的主题色走，不是固定身份色）。
+                className="bg-[linear-gradient(135deg,hsl(var(--accent)),color-mix(in_srgb,hsl(var(--accent))_85%,#000))] text-white shadow-[0_1px_2px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.18)] transition-[opacity,box-shadow] hover:opacity-95 disabled:bg-none disabled:bg-muted disabled:text-muted-foreground/70 disabled:opacity-100 disabled:shadow-none"
+                // 只挡空标题，不再挡「没改过」（2026-07-17 用户要求一直可点，
+                // 同 ChatHeader 的重命名弹窗）：默认就灰、要先改字才亮的主按钮
+                // 读起来像功能坏了。没改内容就点＝commitRename 里短路成取消。
+                disabled={!renameDraft.trim()}
               >
                 保存
               </Button>

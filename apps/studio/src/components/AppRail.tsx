@@ -34,7 +34,9 @@ import {
   Moon,
   Palette,
   Plus,
+  Puzzle,
   Settings,
+  SquarePen,
   Sun
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -44,6 +46,7 @@ import type { AuthUser } from '@desktop-shared/ipc-channels'
 import { Button } from '@/src/components/ui/button'
 import { RailProjectList } from '@/src/components/RailProjectList'
 import { RailSessionList } from '@/src/components/RailSessionList'
+import { useChatStore } from '@/src/chat/stores/chat'
 import { useDialogStore } from '@/src/chat/stores/dialogs'
 import { cn } from '@/src/lib/utils'
 import { Tabs, TabsList, TabsTrigger } from '@/src/components/ui/tabs'
@@ -58,6 +61,12 @@ import {
 import { useAppearanceStore } from '@/src/chat/stores/appearance'
 import { useUpgradeStore } from '@/src/stores/upgrade'
 import { getLastCanvasPath, rememberCanvasPath } from '@/src/stores/canvasNav'
+import {
+  closeSurfaceOverlay,
+  hasSurfaceOverlay,
+  openSurfaceOverlay,
+  useSurfaceOverlayStore
+} from '@/src/stores/surfaceOverlay'
 
 /* 两个 surface 的切换是「同级二选一」而非普通导航列表——语义和视觉都用
  * shadcn Tabs（segmented：muted 底槽 + 选中段白卡凸起），不再用 ghost pill。
@@ -98,6 +107,53 @@ const SURFACE_TABS: { value: 'chat' | 'canvas'; label: string; icon: ReactNode }
 function goChatShallow(): void {
   rememberCanvasPath()
   window.history.pushState(null, '', '/chat')
+}
+
+/**
+ * rail 的两个 surface tab 的**唯一**导航入口（TabsTrigger 的 onClick，不是
+ * Tabs 的 onValueChange——理由见调用处注释）。因为 onClick 无条件触发，这里
+ * 必须自己判断「点的是不是当前面」，否则重复 pushState 会往历史里塞垃圾。
+ *
+ * 「有面开着」是这里的关键分支：此时 pathname 还停在原面（插件市场/知识库都是
+ * 挂在它上面的 ?market=1 / ?kb=1 面开关），用户点当前面的 tab 意思是「关掉那个
+ * 面回来」，不是 no-op。**判定必须覆盖所有面**——只判其中一个的话，另一个面开着
+ * 时点当前 tab 什么也不会发生，人被困在面里出不去（2026-07-17 市场面实锤，
+ * 见 errors/ 同日「市场面 rail 常驻暴露 overlay 与 tab 语义冲突」）。
+ * hasSurfaceOverlay 从 PARAM_BY_KIND 派生，加面自动覆盖。
+ */
+function goSurface(value: 'chat' | 'canvas'): void {
+  const onChat = window.location.pathname.startsWith('/chat')
+  const overlayOpen = hasSurfaceOverlay()
+
+  if (value === 'chat') {
+    // 已经在聊天面、且没有面盖着 → 真 no-op（别重复 push 同一条 URL）
+    if (onChat && !overlayOpen) return
+    // goChatShallow 的 pushState('/chat') 写死路径不带 query，天然剥掉所有
+    // 面开关参数，不需要额外 closeSurfaceOverlay()。
+    goChatShallow()
+    return
+  }
+
+  // → 工作画布
+  if (!onChat && !overlayOpen) return // 已在画布面且无面盖着：no-op
+  // 面开关由 canvas 的 navigate() 自己剥（它是所有画布导航的唯一出口，
+  // 见 canvas/router.ts 的 stripSurfaceOverlayParams 注释），这里不用管。
+  //
+  // 工作画布不能走 Next <Link>：canvas 树常驻在 SurfaceHost（keep-alive），
+  // 它的自制 router 只听 popstate——Next 软导航改了 URL 它不知道，视图不会
+  // 更新。canvas.navigate 自己 pushState + 派发 popstate：canvas 切到目标视图，
+  // Next 的 native history 集成同步 usePathname，SurfaceHost 随之切面。
+  // 动态 import：canvas 模块求值期触碰 window，不能静态 import 进本组件
+  // （layout SSR 会炸）；事件处理器内加载则安全。
+  //
+  // 还原上次画布视图（2026-07-14，删多标签栏连带修复）：切回工作画布时
+  // parseRoute(lastCanvasPath) 还原用户离开前的项目/视图，而非硬编码回首页
+  // （多标签栏删除后，「切回上次画布」的能力从 tab 栏转由这里接管，见
+  // lastCanvasPath 注释）。无记录（首次进画布）才回首页兜底。
+  void import('@/src/canvas/router').then(({ navigate, parseRoute }) => {
+    const last = getLastCanvasPath()
+    navigate(last ? parseRoute(last) : { kind: 'home', view: 'home' })
+  })
 }
 
 /* 账户菜单 V1「精修基准」（2026-07-07 二次定稿，原型见
@@ -167,6 +223,28 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   // 「跟随当前 surface」的元素（顶部主按钮 / Tabs 选中态 / 中段列表）
   // 都从这一个判定派生。
   const isChat = pathname.startsWith('/chat')
+  // 当前开着哪个面（?market=1 / ?kb=1 的镜像，写手是 SurfaceHost）——驱动
+  //「插件」「知识库」两个按钮的选中态。不用 useSearchParams：rail 不在
+  // Suspense 内，理由见 stores/surfaceOverlay.ts 的 useSurfaceOverlayStore 注释。
+  const overlayOpen = useSurfaceOverlayStore((s) => s.open)
+  // 「新对话/新画布」主按钮的选中态：当前就停在它指向的那个目的地时点亮，
+  // 与「插件」按钮同一套视觉（都是 rail 上的目的地）。
+  //  - 聊天面：**空态 = 有 id 没消息**，不是 sessionId === null。
+  //    `switchShellSession(null)` 的语义是「让 main mint 一个新 session」
+  //    （见 TabBar 的注释），点完「新对话」store 里的 sessionId 是那个**新会话
+  //    的 id**、不是 null——按 null 判定会永远点不亮（2026-07-17 实测栽过）。
+  //    真正的空态信号与 ThreadView 同源（`messages.length > 0` 的 hasMessages，
+  //    那边注释也写着「新会话（有 id 没消息）」），这里取它的反面。
+  //    与 rail 会话行高亮天然互斥：新会话没消息、不进历史列表，那边自然无高亮。
+  //  - 画布面：canvas 首页（buildPath({kind:'home',view:'home'}) === '/'）就是
+  //    「新画布」落点。
+  //  - 有面（插件市场/知识库）盖着时两个都不亮——此刻的目的地是那个面，选中
+  //    态归它自己的入口按钮。
+  //
+  // selector 直接返回 boolean（不是整个 messages 数组）：只有空/非空翻转时才
+  // 重渲染 rail，流式追加消息不会把 rail 一起拖着重渲染。
+  const chatIsEmpty = useChatStore((s) => s.messages.length === 0)
+  const newTargetActive = !overlayOpen && (isChat ? chatIsEmpty : pathname === '/')
 
   // 底部 user chip 的真实数据：OS 用户名（preload 启动时 os.userInfo() 读定，
   // 同步属性）+ 当前 CLI 后端（bundled → fusion-code / system → Claude Code）。
@@ -238,15 +316,6 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   const openSettings = () => {
     const url = new URL(window.location.href)
     url.searchParams.set('settings', '1')
-    window.history.pushState(null, '', url.pathname + url.search)
-  }
-  // 打开知识库管理面（?kb=1）——同 openSettings 一套机制：shallow
-  // pushState 挂在**当前 pathname** 上（不跳宿主路径），SurfaceHost 用
-  // useSearchParams 响应式读参、就地放映知识库面盖住聊天/画布，back()
-  // 剥掉参数即回原面。pathname 不动，rail tab 高亮/中段列表全程不变。
-  const openKnowledgeBase = () => {
-    const url = new URL(window.location.href)
-    url.searchParams.set('kb', '1')
     window.history.pushState(null, '', url.pathname + url.search)
   }
   // 打开订阅购买页 overlay（UpgradeScreen 常驻根 layout，store 翻开关即现）。
@@ -331,32 +400,80 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
         * 重复放搜索入口。 */}
       <Button
         variant="ghost"
-        className="mb-2 justify-start gap-2 bg-primary/12 px-3 text-primary hover:bg-primary/18 hover:text-primary"
+        className={cn(
+          'mb-2 justify-start gap-2 px-3',
+          // 绿色 tint 退役（2026-07-08 的 bg-primary/12 + text-primary，
+          // 2026-07-17 用户要求去掉）：rail 上的绿只留给「真·品牌时刻」，
+          // 一个常驻导航按钮不该长期占用主题色。现在与「知识库」「插件」
+          // 同一套 ghost 视觉，**选中态也与「插件」逐字一致**——三者都是
+          // 「rail 上的目的地」，选中语义该长一个样。
+          newTargetActive
+            ? 'bg-sidebar-accent font-medium text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground'
+            : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground'
+        )}
         onClick={() => {
           if (isChat) {
+            // 面（插件市场/知识库）盖着就先掀掉：switchShellSession 只切
+            // runtime、**不导航**，不掀的话新会话建好了却被面盖住，用户以为
+            //「点了没反应」（2026-07-17 同族陷阱，见 stores/surfaceOverlay.ts）。
+            // 没盖着时 closeSurfaceOverlay 是 no-op，且它用 replaceState 不塞
+            // 历史——「新对话」是个动作不是导航，本来就不该产生历史条目。
+            closeSurfaceOverlay()
             void window.tabApi?.switchShellSession?.(null)
           } else {
+            // canvas 的 navigate() 自己会剥掉面开关，这边不用管。
             void import('@/src/canvas/router').then(({ navigate }) => {
               navigate({ kind: 'home', view: 'home' })
             })
           }
         }}
       >
-        <Plus className="size-4" /> {isChat ? '新对话' : '新画布'}
+        {/* SquarePen 而非 Plus（2026-07-17 用户要求换掉裸 + 号）：这颗是
+          * 「开一个新的写作面」，不是往列表里加一项——ChatGPT/Claude 的
+          * 新建对话都用这个图标，视觉重量也比裸 + 饱满。下方「新建项目」
+          * 保留 Plus 是刻意的：那才是真·往列表加一条。 */}
+        <SquarePen className="size-4" /> {isChat ? '新对话' : '新画布'}
       </Button>
-      {/* 知识库（2026-07-08）：只在聊天面显示，落位「新对话」下方。点击
-        * 写 ?kb=1（openKnowledgeBase），SurfaceHost 就地放映知识库管理面
-        * 盖住聊天/画布——机制同「设置」overlay。样式对齐「新建项目」的
-        * 次级入口（ghost + muted 文字），与主按钮的品牌绿 tint 区分层级。 */}
-      {isChat && (
+      {/* 知识库 / 插件 —— rail 上的两个「面入口」，**除了图标与文案完全同构**
+        * （2026-07-17 用户要求知识库「改造成跟插件页面交互一样」）。
+        *
+        * 两点纪律，两个按钮都遵守：
+        *  - **不按当前面分流**：两个 surface 共用同一个入口、开同一个面
+        *    （?market=1 / ?kb=1 → SurfaceHost 的独立面，rail 常驻、右侧内容区
+        *    换成它）。知识库此前有 `isChat &&` 门控（那时它是盖住 rail 的全屏
+        *    overlay，画布面有没有入口无所谓）；抬成面之后必须两面都在——否则
+        *    在知识库面上点「工作画布」，入口按钮跟着消失，rail 上再没有任何
+        *    东西指示「我刚才在知识库」。
+        *  - **选中态是必需品不是装饰**：面开着 = 这个入口就是「当前所在」。
+        *    会话/项目列表那边此刻已取消高亮（见 RailSessionList 的 activeId），
+        *    没有这个选中态整个 rail 看不出当前位置。点会话/切面关掉面后自动
+        *    回落普通态。
+        *
+        * 早期版本插件入口 navigate 到 canvas 的 `/market` 路由：pathname 一被
+        * 拽走 SurfaceHost 就翻到画布面，用户在聊天面点插件会被踢去工作画布
+        *（2026-07-17 实锤，同 2026-07-08 设置页 pathname 假切换那一族）。现在
+        * 两个入口与 openSettings 同为「query 挂当前 pathname」，pathname 全程
+        * 不动。机制与形态取舍见 stores/surfaceOverlay.ts。 */}
+      {(
+        [
+          { kind: 'kb', icon: BookOpen, label: '知识库' },
+          { kind: 'market', icon: Puzzle, label: '插件' }
+        ] as const
+      ).map(({ kind, icon: Icon, label }) => (
         <Button
+          key={kind}
           variant="ghost"
-          className="mb-2 justify-start gap-2 px-3 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
-          onClick={openKnowledgeBase}
+          className={cn(
+            'mb-2 justify-start gap-2 px-3',
+            overlayOpen === kind
+              ? 'bg-sidebar-accent font-medium text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground'
+              : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground'
+          )}
+          onClick={() => openSurfaceOverlay(kind)}
         >
-          <BookOpen className="size-4" /> 知识库
+          <Icon className="size-4" /> {label}
         </Button>
-      )}
+      ))}
       {/* 新建项目（2026-07-04 从画布首页 EntryNavRail 迁入，那条 rail 已
         * 退役）——只在画布面显示，落位「新画布」下方。NewProjectModal 归
         * EntryShell 所有（canvas 树），跨树触达走「事件 + pending 信箱」
@@ -386,33 +503,10 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
       {/* '/chat*' 归聊天，其余一切路径（'/'、'/projects'、'/project/x'…）
         * 都是 canvas SPA 的地盘——受控 value 直接从 pathname 派生，切面后
         * usePathname 同步，选中态无需本地 state。 */}
-      <Tabs
-        value={pathname.startsWith('/chat') ? 'chat' : 'canvas'}
-        onValueChange={(value) => {
-          if (value === 'canvas') {
-            // 工作画布不能走 Next <Link>：canvas 树常驻在 SurfaceHost
-            // （keep-alive），它的自制 router 只听 popstate——Next 软导航
-            // 改了 URL 它不知道，视图不会更新。canvas.navigate 自己
-            // pushState + 派发 popstate：canvas 切到目标视图，Next 的 native
-            // history 集成同步 usePathname，SurfaceHost 随之切面。
-            // 动态 import：canvas 模块求值期触碰 window，不能静态 import
-            // 进本组件（layout SSR 会炸）；事件处理器内加载则安全。
-            //
-            // 还原上次画布视图（2026-07-14，删多标签栏连带修复）：切回工作
-            // 画布时 parseRoute(lastCanvasPath) 还原用户离开前的项目/视图，
-            // 而非硬编码回首页（多标签栏删除后，「切回上次画布」的能力从 tab
-            // 栏转由这里接管，见 lastCanvasPath 注释）。无记录（首次进画布）
-            // 才回首页兜底。
-            void import('@/src/canvas/router').then(({ navigate, parseRoute }) => {
-              const last = getLastCanvasPath()
-              navigate(last ? parseRoute(last) : { kind: 'home', view: 'home' })
-            })
-          } else {
-            // 智能助手同为 shallow pushState（见 goChatShallow 注释）。
-            goChatShallow()
-          }
-        }}
-      >
+      {/* 选中态仍按 pathname 派生：市场面（?market=1）开着时高亮**保持原面**
+        * ——它是挂在当前 pathname 上的 overlay，语义上是「我在智能助手，顺手
+        * 开了插件市场」，同 settings=1/kb=1 的既定取向（见 openSettings 注释）。 */}
+      <Tabs value={pathname.startsWith('/chat') ? 'chat' : 'canvas'}>
         {/* 样式对齐 shadcn 官方 TabsDemo（2026-07-08 用户要求）：零覆盖类，
           * 选中态/暗档细节全部交给 ui/tabs.tsx 基件默认（bg-background 白卡
           * + shadow-sm + 暗档 border-input/bg-input/30）。此前的 bg-card 强制
@@ -420,7 +514,18 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
           * （rail 通栏两段均分），不属于样式覆盖。 */}
         <TabsList className="w-full">
           {SURFACE_TABS.map((item) => (
-            <TabsTrigger key={item.value} value={item.value}>
+            <TabsTrigger
+              key={item.value}
+              value={item.value}
+              // 导航走 **onClick 而非 Tabs 的 onValueChange**（2026-07-17）：
+              // onValueChange 只在 value 真的变化时触发，而 value 由 pathname
+              // 派生——市场面开在聊天面上时（/chat?market=1）value 仍是 'chat'，
+              // 用户点「智能助手」想回聊天，onValueChange 不触发、什么也不会
+              // 发生，人被困在市场面里出不去（rail 常驻才暴露的死路：知识库/
+              // 设置盖住了 rail，用户只能走它们自带的「返回应用」，撞不到这个）。
+              // onClick 每次点击都跑，由 goSurface 自己判断该做什么。
+              onClick={() => goSurface(item.value)}
+            >
               {item.icon}
               {item.label}
             </TabsTrigger>

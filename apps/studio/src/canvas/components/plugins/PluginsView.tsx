@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   PLUGIN_SHARE_ACTION_PLUGIN_IDS,
   type ApplyResult,
@@ -121,7 +121,10 @@ export function PluginsView({
   const [allInstalledPlugins, setAllInstalledPlugins] = useState<InstalledPluginRecord[]>([]);
   const [marketplaces, setMarketplaces] = useState<PluginMarketplace[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<PluginsTab>('installed');
+  // Discovery is the primary marketplace action. Installed plugins remain
+  // visible in the compact strip above, while successful installs still
+  // switch to the full Installed tab through finishImport().
+  const [activeTab, setActiveTab] = useState<PluginsTab>('available');
   const [importOpen, setImportOpen] = useState(false);
   const [pendingApplyId, setPendingApplyId] = useState<string | null>(null);
   const [pendingInstallEntry, setPendingInstallEntry] = useState<string | null>(null);
@@ -277,7 +280,6 @@ export function PluginsView({
     <section className="plugins-view" aria-labelledby="plugins-title">
       <header className="plugins-view__hero">
         <div>
-          <p className="plugins-view__kicker">{t('entry.navPlugins')}</p>
           <h1 id="plugins-title" className="entry-section__title">
             {t('entry.navPlugins')}
           </h1>
@@ -319,18 +321,38 @@ export function PluginsView({
             <Icon name="plus" size={13} />
             <span>{t('pluginsView.importPlugin')}</span>
           </button>
-          <div className="plugins-view__badge" aria-hidden="true">
-            <Icon name="grid" size={15} />
-            <span>{t('pluginsView.agentContext')}</span>
-          </div>
         </div>
       </header>
 
-      <div className="plugins-view__stats" aria-label={t('pluginsView.summaryAria')}>
-        <StatCard label={t('pluginsView.tab.installed')} value={userPlugins.length} />
-        <StatCard label={t('pluginsView.tab.available')} value={availablePlugins.length} />
-        <StatCard label={t('pluginsView.tab.sources')} value={marketplaces.length} />
-      </div>
+      <section className="plugins-view__installed-strip" aria-labelledby="plugins-installed-strip-title">
+        <div className="plugins-view__installed-strip-head">
+          <h2 id="plugins-installed-strip-title">{t('pluginsView.tab.installed')}</h2>
+          <button type="button" onClick={() => setActiveTab('installed')}>
+            {userPlugins.length}
+          </button>
+        </div>
+        <div className="plugins-view__installed-icons">
+          {loading ? (
+            <span className="plugins-view__installed-empty">{t('pluginsView.loading')}</span>
+          ) : userPlugins.length === 0 ? (
+            <span className="plugins-view__installed-empty">{t('pluginsView.installedEmpty')}</span>
+          ) : (
+            userPlugins.slice(0, 18).map((plugin, index) => (
+              <button
+                key={plugin.id}
+                type="button"
+                className="plugins-view__installed-icon"
+                title={plugin.title}
+                aria-label={plugin.title}
+                style={{ '--plugin-hue': String((index * 47 + 208) % 360) } as CSSProperties}
+                onClick={() => setDetailsRecord(plugin)}
+              >
+                {plugin.title.trim().slice(0, 2).toUpperCase()}
+              </button>
+            ))
+          )}
+        </div>
+      </section>
 
       <nav className="plugins-view__tabs" role="tablist" aria-label={t('pluginsView.areasAria')}>
         {PLUGINS_TABS.map((tab) => {
@@ -735,15 +757,6 @@ function pluginShareSlug(name: string): string {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="plugins-view__stat">
-      <span className="plugins-view__stat-value">{value}</span>
-      <span className="plugins-view__stat-label">{label}</span>
-    </div>
-  );
-}
-
 function pluginTabLabel(id: PluginsTab, t: ReturnType<typeof useI18n>['t']): string {
   switch (id) {
     case 'installed': return t('pluginsView.tab.installed');
@@ -924,6 +937,13 @@ function AvailablePluginsPanel({
             const title = plugin.entry.title ?? plugin.entry.name;
             return (
               <article key={plugin.key} className="plugins-view__available-card">
+                <span
+                  className="plugins-view__available-icon"
+                  aria-hidden="true"
+                  style={{ '--plugin-hue': String(pluginHue(title)) } as CSSProperties}
+                >
+                  {title.trim().slice(0, 2).toUpperCase()}
+                </span>
                 <div className="plugins-view__available-main">
                   <div className="plugins-view__row-title">
                     <span>{title}</span>
@@ -965,6 +985,12 @@ function AvailablePluginsPanel({
       )}
     </section>
   );
+}
+
+function pluginHue(value: string): number {
+  let hash = 0;
+  for (const char of value) hash = (hash * 31 + char.charCodeAt(0)) | 0;
+  return Math.abs(hash) % 360;
 }
 
 function AvailablePluginDetailsModal({
