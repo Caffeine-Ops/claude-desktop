@@ -873,8 +873,6 @@ export const IPC_CHANNELS = {
   KB_IMAGE_THUMBS: 'kb:image-thumbs',
   // ── KB 托管仓库管理页（P2）──────────────────────────────────────
   KB_DOCS_LIST: 'kb:docs-list',
-  KB_TOOLING_CHECK: 'kb:tooling-check',
-  KB_INSTALL_TOOLING: 'kb:install-tooling',
   KB_IMPORT_PICK: 'kb:import-pick',
   KB_IMPORT: 'kb:import',
   KB_DOC_DELETE: 'kb:doc-delete',
@@ -890,10 +888,6 @@ export const IPC_CHANNELS = {
   KB_SYNC_FROM_LOCAL: 'kb:sync-from-local',
   KB_BUILD_STATUS_GET: 'kb:build-status-get',
   KB_BUILD_STATUS: 'kb:build-status',
-  KB_MODEL_DOWNLOAD_STATUS_GET: 'kb:model-download-status-get',
-  KB_MODEL_DOWNLOAD_START: 'kb:model-download-start',
-  KB_MODEL_DOWNLOAD_CANCEL: 'kb:model-download-cancel',
-  KB_MODEL_DOWNLOAD_STATUS: 'kb:model-download-status',
   // ── 通用按需下载组件（P1b）：一套 id 键控通道服务所有组件（embed/markitdown/soffice…）──
   COMPONENT_STATUS_GET: 'component:status-get',
   COMPONENT_INSTALL_START: 'component:install-start',
@@ -2450,9 +2444,6 @@ export interface ChatApi {
 
   // ── KB 托管仓库管理页（P2）。renderer 只传相对路径，绝对路径还原在 main 完成防越权。──
   kbDocsList(): Promise<import('./kbAdmin').KbDocsListResult>
-  kbToolingCheck(): Promise<import('./kbAdmin').KbToolingStatus>
-  /** 一键安装 markitdown（管理页缺失卡片）。三态见 KbToolingInstallResult。 */
-  kbInstallTooling(): Promise<import('./kbAdmin').KbToolingInstallResult>
   kbPickImportFiles(): Promise<{ paths: string[] }>
   kbImport(payload: import('./kbAdmin').KbImportPayload): Promise<import('./kbAdmin').KbImportResultDto>
   kbDeleteDoc(relPath: string): Promise<void>
@@ -2472,10 +2463,6 @@ export interface ChatApi {
   kbBuildStatusGet(): Promise<import('./kbBuildStatus').KbBuildStatus>
   /** 订阅构建进度广播（管理页进度条）。返回取消订阅函数。 */
   onKbBuildStatus(handler: (s: import('./kbBuildStatus').KbBuildStatus) => void): () => void
-  kbModelDownloadStatusGet(): Promise<import('./kbModelDownload').KbModelDownloadState>
-  startKbModelDownload(): Promise<void>
-  cancelKbModelDownload(): Promise<void>
-  onKbModelDownload(handler: (s: import('./kbModelDownload').KbModelDownloadState) => void): () => void
   /** 拉整张组件状态表快照（组件中心/弹窗初始渲染）。 */
   componentStatusGet(): Promise<import('./componentDownload').ComponentTable>
   /** 触发某组件安装（组件中心/渐进弹窗）。触发即返回，进度经 onComponentStatus 推。 */

@@ -125,12 +125,9 @@ import type { KbRemoteConfig } from '../shared/kbConfig'
 import type { KbSyncStatus } from '../shared/kbSyncStatus'
 import type { KbCatalog, KbCatalogStatus } from '../shared/kbCatalog'
 import type { KbBuildStatus } from '../shared/kbBuildStatus'
-import type { KbModelDownloadState } from '../shared/kbModelDownload'
 import type { ComponentTable } from '../shared/componentDownload'
 import type {
   KbDocsListResult,
-  KbToolingStatus,
-  KbToolingInstallResult,
   KbImportPayload,
   KbImportResultDto,
   KbLocalSyncResult,
@@ -801,12 +798,6 @@ const chatApi: ChatApi = {
   kbDocsList(): Promise<KbDocsListResult> {
     return ipcRenderer.invoke(IPC_CHANNELS.KB_DOCS_LIST) as Promise<KbDocsListResult>
   },
-  kbToolingCheck(): Promise<KbToolingStatus> {
-    return ipcRenderer.invoke(IPC_CHANNELS.KB_TOOLING_CHECK) as Promise<KbToolingStatus>
-  },
-  kbInstallTooling(): Promise<KbToolingInstallResult> {
-    return ipcRenderer.invoke(IPC_CHANNELS.KB_INSTALL_TOOLING) as Promise<KbToolingInstallResult>
-  },
   kbPickImportFiles(): Promise<{ paths: string[] }> {
     return ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_PICK) as Promise<{ paths: string[] }>
   },
@@ -854,22 +845,6 @@ const chatApi: ChatApi = {
     ipcRenderer.on(IPC_CHANNELS.KB_BUILD_STATUS, listener)
     return () => {
       ipcRenderer.off(IPC_CHANNELS.KB_BUILD_STATUS, listener)
-    }
-  },
-  kbModelDownloadStatusGet(): Promise<KbModelDownloadState> {
-    return ipcRenderer.invoke(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS_GET) as Promise<KbModelDownloadState>
-  },
-  startKbModelDownload(): Promise<void> {
-    return ipcRenderer.invoke(IPC_CHANNELS.KB_MODEL_DOWNLOAD_START) as Promise<void>
-  },
-  cancelKbModelDownload(): Promise<void> {
-    return ipcRenderer.invoke(IPC_CHANNELS.KB_MODEL_DOWNLOAD_CANCEL) as Promise<void>
-  },
-  onKbModelDownload(cb: (s: KbModelDownloadState) => void): () => void {
-    const listener = (_e: unknown, s: KbModelDownloadState): void => cb(s)
-    ipcRenderer.on(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS, listener)
-    return () => {
-      ipcRenderer.off(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS, listener)
     }
   },
   componentStatusGet(): Promise<ComponentTable> {

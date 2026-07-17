@@ -24,7 +24,6 @@ import {
 import type { KbSyncStatus } from '../shared/kbSyncStatus'
 import type { KbCatalogStatusPayload } from '../shared/ipc-channels'
 import type { KbBuildStatus } from '../shared/kbBuildStatus'
-import type { KbModelDownloadState } from '../shared/kbModelDownload'
 import type { ComponentTable } from '../shared/componentDownload'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -1006,24 +1005,6 @@ export function broadcastKbBuildStatus(payload: KbBuildStatus): void {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
     if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_BUILD_STATUS, payload)
-  }
-}
-
-/**
- * Push KB embedding-model download progress to every renderer that can
- * receive IPC. Same shape as broadcastKbBuildStatus — the download
- * originates in MAIN (kbModelDownloader single-flight), never a renderer
- * write, so every window is equally "other". Web tabs are skipped (no
- * preload, no KB UI).
- */
-export function broadcastKbModelDownload(payload: KbModelDownloadState): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
-    shellWindow.webContents.send(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS, payload)
-  }
-  for (const ctx of tabs.values()) {
-    if (ctx.kind === 'web') continue
-    const wc = ctx.view.webContents
-    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS, payload)
   }
 }
 

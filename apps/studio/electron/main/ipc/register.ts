@@ -120,10 +120,8 @@ import {
 } from '../core/kbCatalogService'
 import { triggerKbSyncNow, lastKbSyncInfo, invalidateKbSyncBaseline } from '../core/kbSyncScheduler'
 import * as kbAdmin from '../core/kbAdminService'
-import { detectTooling, installMarkitdown } from '../core/kbTooling'
 import { docPaths, isSafeRelPath } from '../core/kbStore.core'
 import { scheduleKbBuild, getKbBuildStatus } from '../core/kbBuildRunner'
-import { getKbModelDownloadState, startKbModelDownload, cancelKbModelDownload } from '../services/kbModelDownloader'
 import { getComponentTable, startComponentInstall, cancelComponentInstall, refreshComponentInstalled } from '../services/componentInstaller/componentOrchestrator'
 import type { KbIndex } from '../../shared/kbIndex'
 import type { KbRemoteConfig } from '../../shared/kbConfig'
@@ -338,8 +336,6 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_CATEGORIES_UPDATE)
   ipcMain.removeHandler(IPC_CHANNELS.KB_IMAGE_THUMBS)
   ipcMain.removeHandler(IPC_CHANNELS.KB_DOCS_LIST)
-  ipcMain.removeHandler(IPC_CHANNELS.KB_TOOLING_CHECK)
-  ipcMain.removeHandler(IPC_CHANNELS.KB_INSTALL_TOOLING)
   ipcMain.removeHandler(IPC_CHANNELS.KB_IMPORT_PICK)
   ipcMain.removeHandler(IPC_CHANNELS.KB_IMPORT)
   ipcMain.removeHandler(IPC_CHANNELS.KB_DOC_DELETE)
@@ -354,9 +350,6 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_SYNC_PREVIEW)
   ipcMain.removeHandler(IPC_CHANNELS.KB_SYNC_FROM_LOCAL)
   ipcMain.removeHandler(IPC_CHANNELS.KB_BUILD_STATUS_GET)
-  ipcMain.removeHandler(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS_GET)
-  ipcMain.removeHandler(IPC_CHANNELS.KB_MODEL_DOWNLOAD_START)
-  ipcMain.removeHandler(IPC_CHANNELS.KB_MODEL_DOWNLOAD_CANCEL)
   ipcMain.removeHandler(IPC_CHANNELS.COMPONENT_STATUS_GET)
   ipcMain.removeHandler(IPC_CHANNELS.COMPONENT_INSTALL_START)
   ipcMain.removeHandler(IPC_CHANNELS.COMPONENT_INSTALL_CANCEL)
@@ -2125,14 +2118,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.KB_DOCS_LIST, async (): Promise<import('../../shared/kbAdmin').KbDocsListResult> =>
     kbAdmin.listDocs(kbDeps(), kbReadOnly()))
 
-  ipcMain.handle(IPC_CHANNELS.KB_TOOLING_CHECK, async (): Promise<import('../../shared/kbAdmin').KbToolingStatus> =>
-    detectTooling())
-
-  // 一键安装 markitdown（管理页缺失卡片触发）。installMarkitdown 内部走异步 spawn，不冻主进程；
-  // 至多 5 分钟，UI 侧以「正在安装」态告知用户等待。三态结果见 KbToolingInstallResult。
-  ipcMain.handle(IPC_CHANNELS.KB_INSTALL_TOOLING, async (): Promise<import('../../shared/kbAdmin').KbToolingInstallResult> =>
-    installMarkitdown())
-
   ipcMain.handle(IPC_CHANNELS.KB_IMPORT_PICK, async (event): Promise<{ paths: string[] }> => {
     const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0]
     if (!win) return { paths: [] }
@@ -2222,16 +2207,6 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.KB_BUILD_STATUS_GET, async (): Promise<import('../../shared/kbBuildStatus').KbBuildStatus> =>
     getKbBuildStatus())
-
-  ipcMain.handle(IPC_CHANNELS.KB_MODEL_DOWNLOAD_STATUS_GET, async (): Promise<import('../../shared/kbModelDownload').KbModelDownloadState> =>
-    getKbModelDownloadState())
-  // 触发即返回：下载在后台跑，进度经 KB_MODEL_DOWNLOAD_STATUS 广播推送（不阻塞 invoke）。
-  ipcMain.handle(IPC_CHANNELS.KB_MODEL_DOWNLOAD_START, async (): Promise<void> => {
-    void startKbModelDownload()
-  })
-  ipcMain.handle(IPC_CHANNELS.KB_MODEL_DOWNLOAD_CANCEL, async (): Promise<void> => {
-    cancelKbModelDownload()
-  })
 
   ipcMain.handle(IPC_CHANNELS.COMPONENT_STATUS_GET, async (): Promise<import('../../shared/componentDownload').ComponentTable> => {
     refreshComponentInstalled() // 拉快照前先探一遍磁盘/工具链，反映用户手动装/删

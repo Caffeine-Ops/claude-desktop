@@ -40,7 +40,6 @@ import {
   newStudioTab,
   setQuitting,
   broadcastKbBuildStatus,
-  broadcastKbModelDownload,
   broadcastComponentStatus
 } from './tabRegistry'
 import {
@@ -58,7 +57,6 @@ import {
 } from './services/proposalAssetProtocol'
 import { startKbSyncScheduler } from './core/kbSyncScheduler'
 import { onKbBuildStatus, scheduleKbBuild } from './core/kbBuildRunner'
-import { onKbModelDownload, refreshKbModelInstalled } from './services/kbModelDownloader'
 import { onComponentStatus } from './services/componentInstaller/componentOrchestrator'
 import { readKbIndex, kbStoreHasDocs } from './core/kbIndexStore'
 
@@ -299,10 +297,6 @@ app.whenReady().then(async () => {
   // 构建进度广播：kbBuildRunner 是 app 级单飞行单例（管理页导入/删改触发重建），
   // 与 startKbSyncScheduler 同层订阅——状态变化推给所有能收 IPC 的 renderer（管理页进度条）。
   onKbBuildStatus((s) => broadcastKbBuildStatus(s))
-
-  // 嵌入模型首次运行下载：同层订阅推送 + 启动时刷新一次已安装状态（供管理页初始渲染）。
-  onKbModelDownload((s) => broadcastKbModelDownload(s))
-  refreshKbModelInstalled()
 
   // 通用组件下载：同层订阅整表推送。
   // 刻意「只订阅、不在启动时 refresh」：refreshComponentInstalled() 内部的 detectTooling() 是
