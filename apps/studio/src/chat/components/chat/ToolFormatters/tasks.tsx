@@ -16,7 +16,7 @@ import type { FormatterCtx, FriendlyView } from './types'
 
 /** Pull the task id out of args regardless of key spelling — the SDK
  *  uses `taskId`, older shapes used `task_id` / `id`. */
-function taskIdArg(args: unknown): string | undefined {
+export function taskIdArg(args: unknown): string | undefined {
   if (!isObj(args)) return undefined
   const v = args.taskId ?? args.task_id ?? args.id
   return typeof v === 'string' || typeof v === 'number'
@@ -137,6 +137,43 @@ export function formatTaskUpdate({
         }
       : null,
     output: resultIsBoilerplate ? null : undefined
+  }
+}
+
+/* ───────────── TaskOutput (background shell / agent / remote-session poll) ─────────────
+ *
+ * Unlike TaskCreate/Update/Stop above (the todo-list task system), this
+ * tool polls the OUTPUT of a background job — `{task_id, block, timeout}`
+ * is pure plumbing to a regular user (an opaque id + a wait budget in
+ * ms). The actual payload worth showing is the task's own output, which
+ * lands in `result` and already renders through the default Output pane
+ * — only the Input JSON needs replacing.
+ */
+export function formatTaskOutput({
+  args,
+  running,
+  lang
+}: FormatterCtx): FriendlyView | null {
+  const id = taskIdArg(args)
+  if (!id) return null
+  const block = isObj(args) ? args.block !== false : true
+  const taskRef = pick(lang, `任务 #${id}`, `task #${id}`)
+
+  return {
+    headline: (
+      <span>
+        {pick(lang, `查看${taskRef}的输出`, `Output of ${taskRef}`)}
+        {running && block && (
+          <span className="ml-1.5 text-[11px] text-muted-foreground/60">
+            {pick(lang, '等待完成中…', 'waiting to finish…')}
+          </span>
+        )}
+      </span>
+    ),
+    input: null,
+    // Leave the default Output pane alone — it's the task's real
+    // stdout/report, not noise.
+    output: undefined
   }
 }
 

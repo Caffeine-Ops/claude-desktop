@@ -4,7 +4,7 @@
  * 全局「有新版本」提示（左下角常驻卡片，2026-07-05 重设计），并兼任账户菜单
  * 「检查更新」的结论反馈（2026-07-16）。视觉为 V1「精修基线」
  * （docs/ui-prototype-update-toast.html，2026-07-16 用户定稿：小卡带常驻
- * 关闭钮；下载中主卡去掉「忽略此版本」按钮行，关闭 X 承担同一语义）。
+ * 关闭钮；下载中主卡去掉「忽略此版本」按钮行，收起语义并进关闭 X）。
  *
  * 挂在 SurfaceHost 层（chat / canvas / 设置 overlay 之上都可见）——更新是
  * app 级事件，不属于任何一个面。数据经 window.chatApi 订阅 main 的
@@ -12,9 +12,13 @@
  *
  * 时机（用户 2026-07-05 要求「发现新版就提示」）：不再等下载完，phase 进入
  * available/downloading 就浮现「发现新版本 + 后台下载中（进度）」；下载完
- * （ready）切成「已就绪 + 立即重启更新」。同一 availableVersion 用「关闭」
- * 记忆（= 忽略此版本），本会话内不再打扰（忽略后直接退出应用时
- * autoInstallOnAppQuit 顺手装上）。
+ * （ready）切成「已就绪 + 立即重启更新」。
+ *
+ * 「关掉了」的记忆分两份、按卡片各查各的（2026-07-17 修，别再合并回去）：
+ * 进度卡的 X 只收起本次下载的进度显示，ready 时提示必须重弹；就绪卡的 X /
+ * 「稍后」才是「忽略此版本」，本会话内不再打扰（之后直接退出应用时
+ * autoInstallOnAppQuit 顺手装上）。合成单份的后果是下载中点一次 X 就把终点
+ * 的「立即重启更新」永久吞掉——用户实锤过。
  *
  * 手动「检查更新」反馈（2026-07-16，用户实锤「点了像没功能」）：main 的
  * checkForUpdates 是静默触发（结论只进状态流），菜单栏那条 interactive 链路
@@ -85,7 +89,15 @@ function SpinnerRing() {
 
 export function UpdateReadyToast() {
   const [state, setState] = useState<UpdaterState | null>(null)
-  const [dismissedVersion, setDismissedVersion] = useState<string | null>(null)
+  // 「关掉了」的记忆按卡片分家成两份（2026-07-17）。此前是单份 dismissedVersion
+  // 被两张卡片共用，而 X 在两张卡上都在：用户在下载中点 X 收起进度条 → 记忆被
+  // 写成当前版本 → 下载完 phase 进 ready 时被同一个判据挡掉，「立即重启更新」
+  // 永远不出现（用户实锤）。两个动作的语义本就不同，不能共用一份记忆：
+  //  - 进度卡的 X =「知道在下了，别挡着」，只对本次下载有效，ready 必须重弹；
+  //  - 就绪卡的 X /「稍后」=「这个版本先不装」，本会话不再打扰（用户之后直接
+  //    退出应用时 autoInstallOnAppQuit 会顺手装上，不会丢更新）。
+  const [dismissedProgressVersion, setDismissedProgressVersion] = useState<string | null>(null)
+  const [dismissedReadyVersion, setDismissedReadyVersion] = useState<string | null>(null)
   // 小卡状态：内容 + 自动收起时长（null = 不自动收起，checking 用）。
   const [manualFeedback, setManualFeedback] = useState<{
     fb: ManualFeedback
@@ -175,11 +187,14 @@ export function UpdateReadyToast() {
         clearPendingTimeout()
         setFeedback({ kind: 'error', message: s.errorMessage }, FEEDBACK_ERROR_DISMISS_MS)
       } else if (s.phase === 'available' || s.phase === 'downloading' || s.phase === 'ready') {
-        // 发现新版：主卡片就是结论反馈。收掉小卡并解除同版本忽略，让主卡必现。
+        // 发现新版：主卡片就是结论反馈。收掉小卡并解除两份忽略记忆（用户刚
+        // 亲手点了「检查更新」= 明确想看结论，之前收起过什么都不该挡着），
+        // 让主卡必现。
         manualPendingRef.current = false
         clearPendingTimeout()
         setFeedback(null)
-        setDismissedVersion(null)
+        setDismissedProgressVersion(null)
+        setDismissedReadyVersion(null)
       }
       // checking 等中间态：保持 spinner，不消费。
     })
@@ -208,9 +223,10 @@ export function UpdateReadyToast() {
         }
         if (snap.phase === 'available' || snap.phase === 'downloading' || snap.phase === 'ready') {
           // main 的 early-return 快照就是结论（下载在途/已就绪时不会再有
-          // 「本次检查」的广播）：直接唤起主卡片。
+          // 「本次检查」的广播）：直接唤起主卡片，同样解除两份忽略记忆。
           setFeedback(null)
-          setDismissedVersion(null)
+          setDismissedProgressVersion(null)
+          setDismissedReadyVersion(null)
           return
         }
         // checking（新发起，或撞上在途检查）：开 pending 门等广播结论。
@@ -340,14 +356,22 @@ export function UpdateReadyToast() {
   // ── 主卡片（发现新版 / 已就绪）─────────────────────────────────
   const phase = state?.phase
   const version = state?.availableVersion ?? null
-  // 发现新版（下载中）或已就绪都弹；同版本被关闭（= 忽略）后不再出现。
+  // 发现新版（下载中）或已就绪都弹，但**各查各的记忆**：进度卡被收起绝不影响
+  // 就绪卡浮现——「重启装上」是这条链路的终点，不能被半途的收起动作吞掉
+  // （见 state 声明处注释）。
   const isFound = phase === 'available' || phase === 'downloading'
   const isReady = phase === 'ready'
   const visible =
-    (isFound || isReady) && version !== null && version !== dismissedVersion
+    version !== null &&
+    (isReady
+      ? version !== dismissedReadyVersion
+      : isFound && version !== dismissedProgressVersion)
   if (!visible) return null
 
-  const dismiss = () => setDismissedVersion(version)
+  // 同一个 X 在两张卡上写不同的记忆：就绪卡（含「稍后」按钮）写忽略记忆，
+  // 进度卡只写「本次下载别挡着」。
+  const dismiss = () =>
+    isReady ? setDismissedReadyVersion(version) : setDismissedProgressVersion(version)
   const install = () => {
     void window.chatApi?.installUpdate?.()
   }
