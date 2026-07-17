@@ -97,7 +97,7 @@ describe('probe (issue #658) — ghost CLI after the binary is uninstalled', () 
       execAgentFileMock.mockRejectedValue(spawnError(failingCode));
       const { detectAgents } = await import('../../src/runtimes/detection.js');
 
-      const agents = await detectAgents();
+      const agents = await detectAgents({}, { refresh: true });
       const codex = agents.find((agent) => agent.id === 'codex');
 
       expect(codex).toBeDefined();
@@ -116,7 +116,7 @@ describe('probe (issue #658) — ghost CLI after the binary is uninstalled', () 
       execAgentFileMock.mockRejectedValue(exitCodeError(stalenessExit));
       const { detectAgents } = await import('../../src/runtimes/detection.js');
 
-      const agents = await detectAgents();
+      const agents = await detectAgents({}, { refresh: true });
       const codex = agents.find((agent) => agent.id === 'codex');
 
       expect(codex).toBeDefined();
@@ -131,7 +131,7 @@ describe('probe (issue #658) — ghost CLI after the binary is uninstalled', () 
     execAgentFileMock.mockRejectedValue(spawnError('ETIMEDOUT'));
     const { detectAgents } = await import('../../src/runtimes/detection.js');
 
-    const agents = await detectAgents();
+    const agents = await detectAgents({}, { refresh: true });
     const codex = agents.find((agent) => agent.id === 'codex');
 
     expect(codex).toBeDefined();
@@ -143,7 +143,7 @@ describe('probe (issue #658) — ghost CLI after the binary is uninstalled', () 
     execAgentFileMock.mockRejectedValue(exitCodeError(1));
     const { detectAgents } = await import('../../src/runtimes/detection.js');
 
-    const agents = await detectAgents();
+    const agents = await detectAgents({}, { refresh: true });
     const codex = agents.find((agent) => agent.id === 'codex');
 
     expect(codex).toBeDefined();
@@ -155,7 +155,7 @@ describe('probe (issue #658) — ghost CLI after the binary is uninstalled', () 
     execAgentFileMock.mockResolvedValue({ stdout: 'codex 1.2.3\n', stderr: '' });
     const { detectAgents } = await import('../../src/runtimes/detection.js');
 
-    const agents = await detectAgents();
+    const agents = await detectAgents({}, { refresh: true });
     const codex = agents.find((agent) => agent.id === 'codex');
 
     expect(codex).toBeDefined();
@@ -205,7 +205,7 @@ describe('probe (issue #658) — ghost CLI after the binary is uninstalled', () 
     // existsSync check will reject the stale override, so we need to
     // verify the chain ends up at the same place detection probes.
     const { detectAgents } = await import('../../src/runtimes/detection.js');
-    const agents = await detectAgents(configuredEnv);
+    const agents = await detectAgents(configuredEnv, { refresh: true });
     const codex = agents.find((agent) => agent.id === 'codex');
 
     expect(codex).toBeDefined();

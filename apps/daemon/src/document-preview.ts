@@ -11,7 +11,7 @@ const MAX_COMPRESSED_PREVIEW_BYTES = 10 * 1024 * 1024;
 const MAX_UNCOMPRESSED_PREVIEW_BYTES = 50 * 1024 * 1024;
 const MAX_XML_ENTRY_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_PREVIEW_CONCURRENCY = 2;
-const pdfPreviewQueue = createLimiter(MAX_PDF_PREVIEW_CONCURRENCY);
+const pdfPreviewQueue = createLimiter<PreviewSection[]>(MAX_PDF_PREVIEW_CONCURRENCY);
 
 type PreviewKind = 'pdf' | 'document' | 'presentation' | 'spreadsheet';
 type PreviewSection = { title: string; lines: string[] };
@@ -29,7 +29,58 @@ class PreviewHttpError extends Error {
   }
 }
 
-export async function buildDocumentPreview(file: PreviewFile) {
+type DocumentPreview = {
+  kind: PreviewKind;
+  title: string;
+  sections: PreviewSection[];
+};
+
+// ── 预览结果缓存 ────────────────────────────────────────────────────────
+// 解析一个 office 文档 = JSZip 解压 + 正则全文匹配（pdf 则 spawn
+// pdftotext），同步 CPU 重活跑在 daemon 唯一的事件循环上：单文档
+// 1-2.6s（2026-07-16 线上实测），期间所有并发请求排队。而触发方（文件
+// 查看器 / 附件上下文）组件一 remount（切会话/切面/切 tab）就重拉同一个
+// 没变过的文档——重复解析占绝大多数调用。所以：
+//
+//   - 由调用方组 cacheKey（路由层用 projectId + 项目内路径 + mtime +
+//     size）：文件一改 mtime/size 就变、key 自然换新，无需任何主动失效
+//     逻辑；旧 key 条目留在 LRU 里等挤出，不会误命中。
+//   - 缓存的是 **Promise**：同一文档的并发请求合并进同一次解析。
+//   - reject 时清条目——瞬时失败（损坏 zip、体积超限）不能钉死缓存。
+//   - LRU 上限刻意保守：xlsx 的 sections 可能有上万行文本，别让缓存
+//     本身变成内存问题。
+//   - 不传 cacheKey 就直算，保持旧语义（现有测试与内部消费不受影响）。
+const PREVIEW_CACHE_MAX_ENTRIES = 32;
+const previewCache = new Map<string, Promise<DocumentPreview>>();
+
+export async function buildDocumentPreview(
+  file: PreviewFile,
+  options: { cacheKey?: string } = {},
+): Promise<DocumentPreview> {
+  const { cacheKey } = options;
+  if (cacheKey == null) return buildDocumentPreviewUncached(file);
+  const hit = previewCache.get(cacheKey);
+  if (hit != null) {
+    // Map 迭代序 = 插入序；命中时删掉重插到尾部，让 keys() 头部始终是
+    // 最久未用的条目——这就是整个 LRU，不需要引库。
+    previewCache.delete(cacheKey);
+    previewCache.set(cacheKey, hit);
+    return hit;
+  }
+  const promise = buildDocumentPreviewUncached(file);
+  previewCache.set(cacheKey, promise);
+  promise.catch(() => {
+    if (previewCache.get(cacheKey) === promise) previewCache.delete(cacheKey);
+  });
+  while (previewCache.size > PREVIEW_CACHE_MAX_ENTRIES) {
+    const oldest = previewCache.keys().next().value;
+    if (oldest == null) break;
+    previewCache.delete(oldest);
+  }
+  return promise;
+}
+
+async function buildDocumentPreviewUncached(file: PreviewFile): Promise<DocumentPreview> {
   const kind = kindFor(file.name);
   if (!['pdf', 'document', 'presentation', 'spreadsheet'].includes(kind)) {
     throw new PreviewHttpError('unsupported preview type', 415);

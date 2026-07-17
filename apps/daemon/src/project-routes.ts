@@ -981,7 +981,13 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         req.params.name,
         project?.metadata,
       );
-      const preview = await buildDocumentPreview(file);
+      // 解析很贵（秒级、占死事件循环），按 projectId+路径+mtime+size 缓存
+      // ——文件一改 key 就变，见 document-preview.ts 顶注。file.name 用
+      // readProjectFile 归一化后的项目内路径（非原始 req 参数），同一文件
+      // 的不同写法命中同一条目。
+      const preview = await buildDocumentPreview(file, {
+        cacheKey: [req.params.id, file.name, file.mtime, file.size].join('\u0000'),
+      });
       res.json(preview);
     } catch (err: any) {
       const status =
