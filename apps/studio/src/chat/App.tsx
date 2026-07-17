@@ -9,6 +9,7 @@ import { LogsDialog } from './components/dialogs/LogsDialog'
 import { SessionSearchDialog } from './components/dialogs/SessionSearchDialog'
 import { Toaster } from './components/Toaster'
 import { ComponentPrompt } from './components/ComponentPrompt'
+import { promptComponent, useComponentPromptStore } from './stores/componentPrompt'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
 import { useI18n } from './i18n'
@@ -142,6 +143,16 @@ function App(): React.JSX.Element {
         // this renderer because the rail's 220px can't host a 580px panel.
         useDialogStore.getState().openDialog('search')
       }
+    })
+  }, [])
+
+  // P1c 触发器的渲染端:main 侦听到「AI 正在做 PPT 且 python 未就绪」时经 COMPONENT_PROMPT
+  // 推组件 id,这里开渐进弹窗。dismissed 复核是第二重防骚扰(main 侧 fire-once 是第一重):
+  // 用户对同一组件点过[暂不]后,即便换了个 tab 的 engine 再推,本渲染进程也不再弹。
+  useEffect(() => {
+    if (!window.chatApi?.onComponentPrompt) return
+    return window.chatApi.onComponentPrompt((id) => {
+      if (!useComponentPromptStore.getState().isDismissed(id)) promptComponent(id)
     })
   }, [])
 

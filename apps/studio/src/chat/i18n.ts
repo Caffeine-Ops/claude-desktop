@@ -172,6 +172,8 @@ const STRINGS = {
     compMarkitdownDesc: '把 Office / PDF 文档转成 Markdown 存进知识库（缺失时降级纯文本）',
     compSofficeTitle: 'LibreOffice（soffice）',
     compSofficeDesc: '文档转换的最后兜底；本机未安装时部分格式导入会失败，可选装',
+    compPythonTitle: 'Python 运行环境',
+    compPythonDesc: '制作 PPT(ppt-master 技能)的运行基座,钉死 3.12;缺失时用系统 Python 兜底',
     compDownload: '下载',
     compInstall: '安装',
     compInstalling: '正在安装…',
@@ -186,6 +188,9 @@ const STRINGS = {
     // 渐进式组件下载弹窗（非阻断，右下角浮出；Task 9）
     compPromptTitle: '需要一个可选组件',
     compPromptBody: '这个功能需要「{title}」。要现在下载吗？下载在后台进行，不打断你。',
+    // python 专属邀请正文(P1c):触发点是「AI 正在做 PPT」,必须对兜底诚实——本次不等下载、
+    // 系统 Python 照跑,下载的收益是之后的会话用上钉版 3.12(避开系统版本无 wheel 的坑)。
+    compPromptBodyPython: '用「{title}」制作 PPT 更稳(钉死 3.12,避开系统 Python 版本坑)。要现在下载吗?本次会先用系统 Python 继续,不打断你。',
     // error 态专用标题/正文（实机验证抓的文案缺口）：设计原稿写「失败 → 关掉弹窗」，实现改成了
     // 更好的「留在原地给重试」（关掉会让用户不知道装失败了），但正文当时没跟着分岔，error 下
     // 仍显示邀请语气的 compPromptBody——「要现在下载吗？」和红字报错自相矛盾。
@@ -615,6 +620,8 @@ const STRINGS = {
     compMarkitdownDesc: 'Converts Office / PDF documents to Markdown for the knowledge base (falls back to plain text)',
     compSofficeTitle: 'LibreOffice (soffice)',
     compSofficeDesc: 'Last-resort document conversion; some formats fail to import if not installed. Optional.',
+    compPythonTitle: 'Python runtime',
+    compPythonDesc: 'Runtime base for making PPTs (ppt-master skill), pinned to 3.12; falls back to system Python when missing',
     compDownload: 'Download',
     compInstall: 'Install',
     compInstalling: 'Installing…',
@@ -629,6 +636,9 @@ const STRINGS = {
     // Progressive component-download prompt (non-blocking, bottom-right; Task 9)
     compPromptTitle: 'An optional component is needed',
     compPromptBody: 'This feature needs “{title}”. Download it now? It runs in the background and won’t interrupt you.',
+    // Python-specific invitation body (P1c): triggered while the AI is already making a PPT, so the
+    // copy must stay honest about the fallback — this run continues on system Python regardless.
+    compPromptBodyPython: 'Downloading “{title}” makes PPT generation more reliable (pinned 3.12, avoids system-Python wheel issues). Download now? This run continues on system Python — no interruption.',
     // Error-state title/body (copy gap caught in on-device verification): the design draft said
     // "failure → close the prompt", the implementation improved that to "stay open with a retry"
     // (closing silently would hide the failure), but the body copy was never forked — the error

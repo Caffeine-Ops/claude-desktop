@@ -11,6 +11,9 @@ const ROWS: { id: string; titleKey: StringKey; descKey: StringKey; guideUrl?: st
   // markitdown 的 unavailable 成因是「缺 Python」（pipx 连 python 都探不到），guideUrl 指向 Python 官方下载页。
   { id: 'markitdown', titleKey: 'compMarkitdownTitle', descKey: 'compMarkitdownDesc', guideUrl: 'https://www.python.org/downloads/' },
   { id: 'soffice', titleKey: 'compSofficeTitle', descKey: 'compSofficeDesc', guideUrl: 'https://www.libreoffice.org/download/download/' },
+  // python-runtime(P1c):hosted-files/archive 策略,状态机与 embed 同款。linux 等未支持平台
+  // 上名册不注册此卡→整表无此格→本行兜底渲染成 idle 死按钮,但正式包只发 mac/win,不处理。
+  { id: 'python-runtime', titleKey: 'compPythonTitle', descKey: 'compPythonDesc' },
 ]
 
 export function ComponentsSection(): React.JSX.Element {
@@ -82,7 +85,17 @@ function RowAction({ id, guideUrl, state }: {
   const cancel = (): void => { void window.chatApi.cancelComponentInstall(id) }
 
   if (state.status === 'ready') {
-    return <span className="text-[12px] font-medium text-emerald-600 dark:text-emerald-400">✓ {t('compReady')}</span>
+    return (
+      <span className="text-[12px] font-medium text-emerald-600 dark:text-emerald-400">
+        ✓ {t('compReady')}
+        {/* 「随包」来源注记(P1c):就绪是靠随包/dev 目录里的现成 runtime 判的(userData 无下载
+            副本)时,补一个灰字标签——P1b 预留的 compBundled 死键就此转正。只有 python 的就绪
+            探针会写 origin='bundled'(componentOrchestrator READY_PROBES)。 */}
+        {state.origin === 'bundled' && (
+          <span className="ml-1.5 font-normal text-muted-foreground/70">{t('compBundled')}</span>
+        )}
+      </span>
+    )
   }
   if (state.status === 'installing') {
     return (

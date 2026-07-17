@@ -14,6 +14,14 @@ const TITLE_KEY: Record<string, StringKey> = {
   'kb-embed': 'compEmbedTitle',
   'markitdown': 'compMarkitdownTitle',
   'soffice': 'compSofficeTitle',
+  'python-runtime': 'compPythonTitle',
+}
+
+// idle 态邀请正文的 per-id 覆盖(仅 python):它的触发场景是「AI 正在做 PPT」,通用的
+// compPromptBody(「这个功能需要 X」)说不清「本次不等你、系统 Python 照跑」这层诚实,
+// 单独给一句。其余组件继续走通用键。
+const BODY_KEY: Record<string, StringKey> = {
+  'python-runtime': 'compPromptBodyPython',
 }
 
 // unavailable 态的手动安装引导链接（修复轮 Fix 1）。与 ComponentsSection.tsx 的 ROWS
@@ -167,7 +175,7 @@ export function ComponentPrompt(): React.JSX.Element | null {
               {t(state.status === 'error' ? 'compPromptErrorTitle' : 'compPromptTitle')}
             </p>
             <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-              {tFormat(state.status === 'error' ? 'compPromptErrorBody' : 'compPromptBody', { title })}
+              {tFormat(state.status === 'error' ? 'compPromptErrorBody' : (BODY_KEY[openFor] ?? 'compPromptBody'), { title })}
             </p>
             {state.status === 'error' && state.errorMessage && (
               <p className="text-[11px] text-destructive">{state.errorMessage}</p>
