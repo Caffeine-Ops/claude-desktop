@@ -398,12 +398,15 @@ export function AskUserComposerPanel({ request }: Props): React.JSX.Element {
 }
 
 /** 面板皮肤：与 composer 输入卡同族材质（bg-popover/95 + blur + ring），
- * 圆角同 22px——morph 时读起来是同一张卡，只有投影加重表达「聚焦」。 */
-const PANEL_SHELL =
+ * 圆角同 22px——morph 时读起来是同一张卡，只有投影加重表达「聚焦」。
+ * PANEL_SHELL / SKIP_BTN 导出给 PermissionComposerPanel 共用——权限面板
+ * 与提问面板是同一形态家族（2026-07-16 权限也迁入 composer 接管），
+ * 面板皮肤只在这里定义一次。 */
+export const PANEL_SHELL =
   'relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 shadow-[0_12px_36px_rgba(18,18,23,0.12),0_3px_10px_rgba(18,18,23,0.06)] dark:ring-white/[0.08] dark:shadow-[0_16px_44px_rgba(0,0,0,0.5)]'
 const NAV_BTN =
   'grid size-[26px] place-items-center rounded-lg transition-colors hover:bg-muted hover:text-foreground disabled:opacity-35 disabled:hover:bg-transparent'
-const SKIP_BTN =
+export const SKIP_BTN =
   'flex h-9 shrink-0 items-center rounded-full px-4 text-[13px] font-medium text-foreground shadow-[inset_0_0_0_1px_hsl(var(--border))] transition-colors hover:bg-muted'
 
 /* ================================================================
@@ -425,12 +428,21 @@ const FACE_SPRING = { type: 'spring', bounce: 0, visualDuration: 0.3 } as const
 
 export function AskComposerSwap({
   ask,
-  children
+  children,
+  anchor = 'top'
 }: {
   /** 提问面板元素；null = 常态（显示输入卡）。 */
   ask: React.ReactNode | null
   /** composer 输入卡（常驻，提问态只隐藏不卸载）。 */
   children: React.ReactNode
+  /**
+   * 高度动画期间内容锚哪条边（2026-07-16 用户拍板）：dock 态传
+   * 'bottom'——卡底贴窗口底，input/工具行的屏幕位置必须**全程纹丝
+   * 不动**，队列段、接管面板的高度差一律表现为卡顶向上生长/收缩。
+   * 顶对齐（默认 'top'，hero 空态沿用）在中间帧会把贴底的 input
+   * 推下再回弹——就是「input 位置跟着动画跑」的根源。
+   */
+  anchor?: 'top' | 'bottom'
 }): React.JSX.Element {
   const asking = ask != null
   const innerRef = useRef<HTMLDivElement | null>(null)
@@ -448,8 +460,16 @@ export function AskComposerSwap({
   }, [])
 
   return (
-    <motion.div animate={{ height }} transition={HEIGHT_SPRING} className="relative">
-      <div ref={innerRef}>
+    <motion.div
+      animate={{ height }}
+      transition={HEIGHT_SPRING}
+      // bottom 锚：flex + justify-end 让内容贴住容器底边——容器高度
+      // spring 追赶内容的中间帧里，溢出/空隙都发生在顶部（那里是透明
+      // 的 thread 区，没有视觉边界可破坏），底部的 input 恒定。刻意
+      // 不加 overflow-hidden：裁切矩形会砍掉卡的 ring/阴影。
+      className={anchor === 'bottom' ? 'relative flex flex-col justify-end' : 'relative'}
+    >
+      <div ref={innerRef} className="w-full">
         <AnimatePresence mode="popLayout" initial={false}>
           {asking ? (
             <motion.div
@@ -469,7 +489,16 @@ export function AskComposerSwap({
           inert={asking || undefined}
           style={
             asking
-              ? { position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1, pointerEvents: 'none' }
+              ? {
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  // 隐藏的输入卡与可见面同边对齐：bottom 锚时贴底淡出，
+                  // 面板退场后它从底部原位淡回——不跨边跳位。
+                  ...(anchor === 'bottom' ? { bottom: 0 } : { top: 0 }),
+                  zIndex: 1,
+                  pointerEvents: 'none'
+                }
               : undefined
           }
         >

@@ -599,16 +599,6 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
   50%      { transform: scale(1.45); opacity: 0.55; }
 }
 
-/* 权限浮层卡入场：从 composer 后方浮起（14px 上移 + 轻微缩放）。曲线用
- * Apple 系 (0.32,0.72,0,1)——比 tc-rise 更「弹出层」的果断减速；每个新
- * 请求经 keyed remount 重播一次。 */
-.perm-float-in {
-  animation: perm-float-in 0.26s cubic-bezier(0.32, 0.72, 0, 1) both;
-}
-@keyframes perm-float-in {
-  from { opacity: 0; transform: translateY(14px) scale(0.985); }
-}
-
 /* 等待授权锚点圆点呼吸（ToolCallCard 的「需要你的授权才能继续」行） */
 .perm-wait-dot { animation: perm-wait-pulse 1.6s ease-in-out infinite; }
 @keyframes perm-wait-pulse { 50% { opacity: 0.35; } }
@@ -620,7 +610,6 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
   .tc-pop { animation: none; transform: scale(1); }
   .tc-draw { animation: none; stroke-dashoffset: 0; }
   .tc-breathe { animation: none; }
-  .perm-float-in { animation: none; }
   .perm-wait-dot { animation: none; }
 }
 

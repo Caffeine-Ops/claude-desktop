@@ -30,7 +30,6 @@ import { useI18n, useT } from '../../../i18n'
 import { attachFilesToComposer } from '../../../composer/attachFiles'
 import { useChatStore, useDelayedSessionLoading } from '../../../stores/chat'
 import { useComposerModeStore } from '../../../stores/composerMode'
-import { useComposerOverlayStore } from '../../../stores/composerOverlay'
 import { useSessionTitleStore } from '../../../stores/sessionTitle'
 import { findSkillChipSpec } from '../../../composer/skillChipRegistry'
 import { SkillChipIcon } from '../SkillChipIcon'
@@ -39,7 +38,6 @@ import { DemoShowcase } from './DemoShowcase'
 import { ReplayControlBar } from '../ReplayControlBar'
 import { ReplayController } from '../../../replay/ReplayController'
 import { isReplaySessionId } from '../../../replay/replayStore'
-import { PermissionFloatDock } from '../../permissions/PermissionFloatCard'
 import { UserMessage } from './UserMessage'
 import { AssistantMessage, SystemMessage } from './AssistantMessage'
 import { SlidesWorkspace } from './SlidesWorkspace'
@@ -539,10 +537,6 @@ export function ThreadView(): React.JSX.Element {
   // rail's width in px, persisted to localStorage so a drag survives reloads
   // and session switches. See useResizableChatColumn for the clamp + persist.
   const { width: chatColWidth, onResizeStart } = useResizableChatColumn()
-  // Hide the composer's frosted transition strip while any composer popover
-  // (mode / permission picker) is open — its backdrop-blur otherwise sliced a
-  // blurred band across the open menu (see stores/composerOverlay).
-  const composerOverlayOpen = useComposerOverlayStore((s) => s.openCount > 0)
   // Session-switch curtain (replaces both the old keyed content remount and
   // the interim 0.3→1 opacity fade).
   //
@@ -736,21 +730,9 @@ export function ThreadView(): React.JSX.Element {
           the centered EmptyState block instead (figure 26), so the dock is
           hidden to avoid a second Composer instance.
 
-          `relative` so the frosted transition strip can absolutely position
-          itself directly ABOVE the dock (bottom-full). The strip is a thin
-          backdrop-blur band whose blur + opacity fade UPWARD to zero via a
-          mask, so messages scrolling toward the composer soften and dissolve
-          into it instead of hitting a hard edge — the bottom counterpart of
-          the (removed) top blur band. pointer-events-none so it never blocks
-          scrolling or text selection underneath. */}
+          `relative` anchors the scroll-to-bottom button (absolute, just
+          above the dock). */}
       <ThreadPrimitive.If empty={false}>
-        {/* Wrapper carries NO backdrop-filter of its own — critical, because a
-            backdrop-filter on an ancestor cancels a descendant's
-            backdrop-filter (CSS spec). The earlier strip lived INSIDE the
-            blurred dock and so never blurred anything. Here the strip is a
-            child of this clean wrapper, with the blur kept on the inner dock,
-            so the strip's own backdrop-blur actually applies to the messages
-            behind it. */}
         <div className="relative shrink-0">
           {/* Scroll-to-bottom affordance. Anchored to THIS wrapper (which hugs
               the composer dock) rather than Thread.Root, so it floats just
@@ -761,39 +743,17 @@ export function ThreadView(): React.JSX.Element {
               to the dock's width now, so it stays centered over the chat column
               instead of the whole ThreadView (which includes the slides pane). */}
           <ScrollToBottomButton />
-          {/* Frosted transition strip — sits directly above the dock
-              (bottom-full), blur + opacity fading UPWARD via the mask, so
-              messages soften and dissolve into the composer instead of a hard
-              edge. pointer-events-none so it never blocks scroll / selection. */}
-          {/* Geometry: `bottom` is measured from the WRAPPER's bottom, and the
-              wrapper hugs the dock, so bottom:100% puts the strip's bottom edge
-              at the dock's TOP. The dock's pt-4 is 16px, so to drop the strip
-              down to ~1px above the input we offset by (16px − 1px) = 15px:
-              bottom-[calc(100%-15px)]. This covers the dock's pale pt-4
-              background gap while leaving a 1px sliver for the input's top
-              border. (Earlier 1px offset barely entered the dock → full gap;
-              16px reached the input → blurred its border.) */}
-          {!composerOverlayOpen ? (
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-x-0 bottom-[calc(100%-15px)] z-10 h-14 backdrop-blur-md [mask-image:linear-gradient(to_top,black_0,black_40%,transparent_100%)]"
-            />
-          ) : null}
-          {/* rounded-b-[4px] matches the card's bottom corners (the unified 4px
-              radius). The dock's `backdrop-blur` rasterizes independently of the
-              card's overflow-hidden + rounded clip (Chromium behavior), so
-              without its OWN bottom radius the dock's square corners punched
-              through and the card's bottom-left/right read as square. Rounding
-              the dock itself to the same 4px restores the corners. */}
-          <div className="rounded-b-[4px] bg-background/45 px-3 pb-3 pt-4 backdrop-blur-xl backdrop-saturate-150">
-            {/* Floating permission card — docked directly above the
-                composer (Codex-style), replacing the old amber inline
-                prompt inside each tool card. Lives INSIDE the dock so it
-                shares the frosted band and the composer's width column
-                (the dock itself is full-rail width; the card's own
-                max-w-4xl wrapper keeps it on the composer's axis).
-                Renders null when nothing is pending. */}
-            <PermissionFloatDock />
+          {/* Frosted band 全退役（2026-07-16 用户实锤「去掉模糊」）：dock 的
+              backdrop-blur-xl 毛玻璃底 + 上沿的渐变 blur 过渡条曾让滚到
+              composer 上方的消息糊成一片。现在 dock 纯透明——消息清晰滚过，
+              滚到卡后面由卡自身的 bg-popover/95 遮住。连带退役的还有为
+              blur 光栅化服务的 rounded-b-[4px] workaround 和「盖住 pt-4
+              浅色 gap」的 15px 偏移几何（gap 随半透明底一起消失了）。 */}
+          <div className="px-3 pb-3">
+            {/* 权限请求不再是这里的浮卡（PermissionFloatDock 已退役，
+                2026-07-16）：pending 权限时 Composer 输入卡自己整卡 morph
+                成 PermissionComposerPanel（与 AskUserQuestion 提问面板
+                同一个 AskComposerSwap 槽），恢复自 git 历史。 */}
             <Composer />
           </div>
           {/* Dock veil for the skeleton phase of a session switch: the real
@@ -804,9 +764,11 @@ export function ThreadView(): React.JSX.Element {
               is crisp text and would bleed through a translucent wash.
               justify-end pins the skeleton to the dock's bottom so any
               extra dock height (status strip / attachment row) is simply
-              covered above it. */}
+              covered above it. Padding 与 dock 同参（px-3 pb-3，dock 的
+              pt-4 已随 frosted band 一起退役）——骨架必须画在真 composer
+              的精确位置上。 */}
           {switchPhase === 'skeleton' && (
-            <div className="absolute inset-0 z-20 flex flex-col justify-end rounded-b-[4px] bg-background px-3 pb-3 pt-4">
+            <div className="absolute inset-0 z-20 flex flex-col justify-end rounded-b-[4px] bg-background px-3 pb-3">
               <ComposerSkeleton />
             </div>
           )}

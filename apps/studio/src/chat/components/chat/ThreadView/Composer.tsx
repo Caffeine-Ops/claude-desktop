@@ -27,7 +27,6 @@ import {
 } from '../../../composer/ProseMirrorComposerInput'
 import { QueuePanel } from './QueuePanel'
 import { ScenarioRail } from './ScenarioRail'
-import { useMessageQueueStore } from '../../../stores/messageQueue'
 import { FileTypeIcon } from '../FileTypeIcon'
 import { SkillChipIcon } from '../SkillChipIcon'
 import { DictationWaveform } from '../DictationWaveform'
@@ -36,7 +35,11 @@ import {
   AskComposerSwap,
   AskUserComposerPanel
 } from '../../permissions/AskUserComposerPanel'
-import { usePermissionStore } from '../../../stores/permissions'
+import { PermissionComposerPanel } from '../../permissions/PermissionComposerPanel'
+import {
+  usePendingFloatPermissions,
+  usePermissionStore
+} from '../../../stores/permissions'
 import { useComposerModeStore } from '../../../stores/composerMode'
 import { cancelActiveDictation } from '../../../runtime/openaiWhisperDictationAdapter'
 import { FILE_PATH_MIME } from '../../../runtime/imageAttachmentAdapter'
@@ -67,24 +70,31 @@ const ACTIVITY_LABELS: Record<string, string> = {
 }
 
 /**
- * ComposerStatusBar
- * -----------------
- * The "✻ 探索中…  ·······  2.5s" strip that sits flush on top of the composer
- * input, sharing one outer green frame with it so the two read as a SINGLE
- * piece (see the reference). It carries no border/background of its own — the
- * parent wrapper (in Composer) owns the green ring + tint and the rounded
- * outer corners; this row only paints its content and a hairline divider
- * above the input.
+ * ComposerStatusPill
+ * ------------------
+ * The "✺ 探索中 · 2.5s" pill that lives IN the toolbar's center slot
+ * (2026-07-16 redesign, prototype docs/ui-prototype-composer-states.html).
+ * It replaced the old full-width green strip on top of the card: the strip's
+ * position DRIFTED — card top with no queue, mid-card once the queue segment
+ * appeared — so the same information kept jumping around. The toolbar slot is
+ * a fixed anchor (the flex spacer between the attach/skill buttons and the
+ * model chip), sits on the same row as the Stop button (status next to its
+ * action), and costs zero extra card height.
  *
  * Pure presentation: `active`/`startedAt`/`activity` come from the parent
- * (which calls useTurnActivity once), so the wrapper and this row stay in
- * sync. Ticks every 100ms for the tenths-of-a-second readout. Timer basis is
- * the CURRENT STEP's start (useTurnActivity picks it): the label names the
- * current activity, so the number must be that activity's elapsed — a
- * turn-total next to "执行中…" reads as a lie. The readout restarts as each
- * new tool begins.
+ * (which calls useTurnActivity once). Ticks every 100ms for the
+ * tenths-of-a-second readout. Timer basis is the CURRENT STEP's start
+ * (useTurnActivity picks it): the label names the current activity, so the
+ * number must be that activity's elapsed — a turn-total next to "执行中"
+ * reads as a lie. The readout restarts as each new tool begins.
+ *
+ * The verb swaps with a keyed re-mount (slide-up-in); no exit animation — an
+ * AnimatePresence popLayout here would make the pill width snap around the
+ * outgoing word, which reads worse than the simple swap.
  */
-function ComposerStatusBar({
+const PILL_SPRING = { type: 'spring', bounce: 0, visualDuration: 0.25 } as const
+
+function ComposerStatusPill({
   startedAt,
   activity
 }: {
@@ -102,20 +112,34 @@ function ComposerStatusBar({
   const verb = ACTIVITY_LABELS[activity] ?? ACTIVITY_LABELS.thinking
 
   return (
-    <div
-      className="flex items-center gap-2 px-4 pb-2 pt-2.5 text-[13px]"
+    <motion.div
+      initial={{ opacity: 0, scale: 0.92 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.92 }}
+      transition={PILL_SPRING}
+      className="flex items-center gap-1.5 whitespace-nowrap rounded-full bg-brand/[0.09] px-3 py-1 text-[12px] font-semibold text-brand"
       role="status"
       aria-live="polite"
       aria-label={`${verb}, ${label}`}
     >
-      <span aria-hidden className="shrink-0 animate-spin text-brand [animation-duration:2.4s]">
+      <span aria-hidden className="shrink-0 animate-spin [animation-duration:2.4s]">
         ✺
       </span>
-      <span className="font-medium text-brand">{verb}…</span>
-      <span className="ml-auto shrink-0 font-mono text-[12px] tabular-nums text-brand/80">
+      <motion.span
+        key={verb}
+        initial={{ opacity: 0, y: 5 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={PILL_SPRING}
+      >
+        {verb}
+      </motion.span>
+      <span aria-hidden className="opacity-40">
+        ·
+      </span>
+      <span className="shrink-0 font-mono text-[11px] font-medium tabular-nums opacity-75">
         {label}
       </span>
-    </div>
+    </motion.div>
   )
 }
 
@@ -212,9 +236,9 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [files, setFiles] = useState<readonly string[]>([])
   const streaming = useChatStore((s) => s.streaming)
-  // Working-status for the strip fused on top of the composer. `active` also
-  // toggles the shared green frame that makes the strip + input read as one
-  // piece; when inactive the composer renders as its normal standalone card.
+  // Working-status for the toolbar pill (ComposerStatusPill) — the single
+  // useTurnActivity subscription both the pill's presence and its content
+  // derive from.
   const turnActivity = useTurnActivity()
   // Slides binding: when the user sends while the global picker is on
   // 幻灯片, mark the CURRENT session as a slides session so ThreadView
@@ -222,13 +246,6 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
   // Called on every send path (Enter → onSubmit, and the Send button's
   // onClick); markSlidesSession is idempotent so double-calls are fine.
   const composerSessionId = useChatStore((s) => s.sessionId)
-  // Whether this session has any queued turns — drives the hairline divider
-  // BELOW the queue segment (the divider must not show when the queue is
-  // empty, and QueuePanel itself renders null then). A boolean selector, so
-  // it's a stable scalar (no fresh-array churn / useShallow pitfalls).
-  const hasQueue = useMessageQueueStore((s) =>
-    composerSessionId ? (s.queues[composerSessionId]?.length ?? 0) > 0 : false
-  )
   // 知识库只服务「写方案」——聊天框底栏的知识库 chip 仅在写方案语境下露出。
   // ComposerModePicker 退役后（2026-07-16，模式入口统一到 EmptyState 的
   // ScenarioRail 技能 chip），「写方案语境」的判定改为两个真源的并集：
@@ -272,6 +289,14 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
     composerSessionId ? s.slidesSessions[composerSessionId] === true : false
   )
   const showAskPanel = askRequest !== null && !composerIsSlides && !isDictating
+  // 权限请求（AskUserQuestion 之外的 canUseTool 门）同走 composer 接管
+  // （2026-07-16 迁移，替代 ThreadView 的 PermissionFloatDock 浮卡）：
+  // 显示最旧一个 + 排队计数，与提问面板同一形态。权限先于提问——权限门
+  // 是硬阻塞（模型完全走不下去），提问只是要输入（对齐 store 里
+  // usePendingPermissionKindsBySession 的 approval-wins 语义）。
+  const floatPermissions = usePendingFloatPermissions(composerSessionId)
+  const permRequest = floatPermissions[0] ?? null
+  const showPermPanel = permRequest !== null && !isDictating
 
   // Pull session meta on mount and whenever a turn ends. The first
   // pull (mount) returns empty arrays because fusion-code hasn't
@@ -451,24 +476,37 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
             Everything lives INSIDE it as flat, full-width segments
             separated by 1px hairline dividers, top-to-bottom:
 
-              ┌─ message queue (QueuePanel) ─┐   ← only while queue non-empty
-              ├──────── hairline ────────────┤
-              │ working-status strip (green) │   ← only while streaming
-              ├──────── hairline ────────────┤
-              │ attachments · input · toolbar│
+              ┌─ message queue (QueuePanel) ─┐   ← only while queue non-empty,
+              ├──────── hairline ────────────┤     collapsed to a summary row
+              │ attachments · input · toolbar│     by default
               └──────────────────────────────┘
+
+            The working status lives IN the toolbar as a centered pill
+            (ComposerStatusPill) — a fixed anchor that never drifts when other
+            segments come and go; the old full-width green strip is gone
+            (2026-07-16 redesign, docs/ui-prototype-composer-states.html).
 
             `overflow-hidden` clips each segment's square corners to the card's
             radius. No segment carries its own border/radius/negative margin, so
-            nothing can overlap or clip anything else — the status row is always
-            a full, un-obscured line. */}
-        {/* AskComposerSwap（2026-07-16）：pending AskUserQuestion 时输入卡
-            morph 成提问面板。输入卡是 children **常驻不卸载**（卸载毁
-            ProseMirror 草稿），提问态只脱流隐藏——见 AskUserComposerPanel
-            尾部的 swap 实现注释。下方整张输入卡的 JSX 原封未动。 */}
+            nothing can overlap or clip anything else. */}
+        {/* AskComposerSwap（2026-07-16）：pending 的权限请求 / AskUserQuestion
+            时输入卡 morph 成对应接管面板（同一个槽，权限优先）。输入卡是
+            children **常驻不卸载**（卸载毁 ProseMirror 草稿），接管态只
+            脱流隐藏——见 AskUserComposerPanel 尾部的 swap 实现注释。下方
+            整张输入卡的 JSX 原封未动。 */}
         <AskComposerSwap
+          // dock 态卡底贴窗口底：所有高度动画（队列展开/收起、接管面板
+          // morph）锚定底边，input 屏幕位置全程不动，变化都长在卡顶。
+          // hero 空态卡在页面中段，维持默认顶锚。
+          anchor={variant === 'hero' ? 'top' : 'bottom'}
           ask={
-            showAskPanel && askRequest ? (
+            showPermPanel && permRequest ? (
+              <PermissionComposerPanel
+                key={permRequest.requestId}
+                request={permRequest}
+                queuedCount={floatPermissions.length - 1}
+              />
+            ) : showAskPanel && askRequest ? (
               <AskUserComposerPanel key={askRequest.requestId} request={askRequest} />
             ) : null
           }
@@ -487,30 +525,13 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
               （pendingGapFill 属于本会话）时露出，指引其在下方输入资料并发送；自带底部 hairline。 */}
           <GapFillBanner sessionId={composerSessionId} />
 
-          {/* Segment 1 — message queue. Renders null when empty (so no divider
-              shows either). Its own frame styling was stripped; it's pure
-              content here. */}
+          {/* Segment 1 — message queue. Renders null when empty; owns its own
+              enter/exit height animation AND the hairline divider below it
+              (so segment + divider appear/disappear as one animated block).
+              Its own frame styling was stripped; it's pure content here. */}
           <QueuePanel sessionId={composerSessionId} />
-          {hasQueue ? <div className="h-px bg-border/70" /> : null}
 
-          {/* Segment 2 — working-status strip: animated glyph + current Chinese
-              activity on the left, live elapsed timer on the right. A slim band
-              with a faint green tint (accent only, never floods the input).
-              Only while the turn streams (and not during plain prose output).
-              A full, un-clipped row — the whole point of the redesign. */}
-          {turnActivity.active && turnActivity.startedAt !== undefined ? (
-            <>
-              <div className="bg-brand/[0.07]">
-                <ComposerStatusBar
-                  startedAt={turnActivity.startedAt}
-                  activity={turnActivity.activity}
-                />
-              </div>
-              <div className="h-px bg-border/70" />
-            </>
-          ) : null}
-
-          {/* Segment 3 — the input body (attachments · text · toolbar). */}
+          {/* Segment 2 — the input body (attachments · text · toolbar). */}
           {/* Attachment preview row (pasted / dropped / picked). */}
           <div className="flex flex-wrap gap-2 px-4 pt-3 empty:hidden">
             <ComposerPrimitive.Attachments>
@@ -625,8 +646,21 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
                       设计/写作三个模式本就没有任何发送效果，随 picker 一并
                       退役。组件与 COMPOSER_MODES 定义已删，恢复从 git 历史。 */}
 
-                  {/* Spacer pushes the rest to the right edge. */}
-                  <div className="flex-1" />
+                  {/* Spacer pushes the rest to the right edge AND hosts the
+                      working-status pill dead-center. The pill's anchor is
+                      this fixed slot — same row as the Stop button (status
+                      next to its action), zero extra card height, and it
+                      cannot drift when the queue segment comes and goes. */}
+                  <div className="flex min-w-0 flex-1 items-center justify-center">
+                    <AnimatePresence>
+                      {turnActivity.active && turnActivity.startedAt !== undefined ? (
+                        <ComposerStatusPill
+                          startedAt={turnActivity.startedAt}
+                          activity={turnActivity.activity}
+                        />
+                      ) : null}
+                    </AnimatePresence>
+                  </div>
 
                   {/* Right cluster: 模型选择器 · mic · send（2026-07-05 用户要求
                       把模型 chip 与「全自动」权限 chip 互换——模型放这排紧挨麦克风/
