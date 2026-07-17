@@ -30,24 +30,23 @@ import {
 
 export function UserMessage(): React.JSX.Element {
   return (
-    // （2026-07-17 删掉了这里原有的 `data-[aui-top-anchor-user]:pt-8`：
-    // assistant-ui 0.12.24 根本不渲染 data-aui-top-anchor-user 这个属性——
-    // MessageRoot.js 里本节点只会拿到 data-message-id 一个 data-*，全库
-    // grep 不到 top-anchor 字样，运行时探测该标记也恒为 false。那条变体
-    // 从来没匹配上过，pt-8 一天都没生效，删掉不改变任何视觉。
+    // 钉顶呼吸位（data-[aui-top-anchor-user]:pt-5，2026-07-17 二进宫）：
+    // turnAnchor="top" 把最新用户消息滚到视口顶部时，气泡不贴死顶栏 hairline，
+    // 留 20px 呼吸。
     //
-    // 连带作废的还有它头注释里那套「库按 anchorTop 把本节点滚到贴顶、所以
-    // 只有内部 padding 能挤出呼吸位」的推导：库里没有 computeTopAnchorSlack，
-    // 也没有任何按消息位置算 scrollTop 的代码，唯一的滚动写入是
-    // `div.scrollTo({ top: div.scrollHeight })`——恒定滚到底。turnAnchor="top"
-    // 的「钉顶」纯粹是 slack 把最后一条 assistant 消息撑到
-    // viewport-inset-clamp 高之后、滚到底时挤出来的几何结果。
+    // 这条变体今天早些时候被删过一次——当时的考古结论（assistant-ui 0.12.24
+    // 不渲染 data-aui-top-anchor-user、库里没有按锚点算 scrollTop 的代码）
+    // 在当时成立；随后包升到 0.14.27，两个前提都翻了：MessageRoot 对锚点
+    // 消息渲染 `data-aui-top-anchor-user=""`（非锚点为 undefined 不渲染），
+    // mountTopAnchorReserve 会按 computeTopAnchorTargetScrollTop（anchor 的
+    // offsetTop 链）手算 scrollTop 执行 viewport.scrollTo——真锚定滚动。
     //
-    // 也就是说「被钉顶的消息离视口顶边留呼吸位」这个诉求至今没有实现。真要
-    // 做，得往 slack 的 min-height 公式那边使劲（让它少撑一点），而不是给
-    // 本节点加 padding——本节点贴的是视口顶边，加 padding 只会把气泡往下推、
-    // 边框盒还在原位，反而和「第一条消息」的 pt-8 呼吸位对不齐。
-    <MessagePrimitive.Root className="mb-6 flex w-full flex-col items-end gap-2">
+    // 为什么是 padding 而不是 margin / scroll-margin：那套手算钉的是本节点
+    // **border-box 顶缘**（offsetTop 不含自身 margin，也不是 scrollIntoView
+    // 不认 scroll-margin），margin 会被滚出视野，只有 border-box 之内的
+    // padding 在锚定后仍然可见。挂在 data 变体上而不是常驻 pt：呼吸位只属于
+    // 「被钉顶」这一态，历史消息的行距、首条消息与视口列 pt-8 的关系都不动。
+    <MessagePrimitive.Root className="mb-6 flex w-full flex-col items-end gap-2 data-[aui-top-anchor-user]:pt-5">
       {/* User bubble — text content. `components.Image` overrides the
           default renderer with our own, and `components.Text` (implicit
           default) just returns the raw string, which is then wrapped by
