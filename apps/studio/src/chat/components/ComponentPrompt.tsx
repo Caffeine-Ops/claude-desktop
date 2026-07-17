@@ -42,6 +42,7 @@ export function ComponentPrompt(): React.JSX.Element | null {
   const tFormat = useTFormat()
   const openFor = useComponentPromptStore((s) => s.openFor)
   const close = useComponentPromptStore((s) => s.close)
+  const hide = useComponentPromptStore((s) => s.hide)
   const init = useComponentStore((s) => s.init)
   // 订阅 table 本身而非 stateOf 函数：函数引用恒定，选它等于没订阅会变的东西，进度推送来了
   // 弹窗不会重渲染、进度条不动（同 ComponentsSection 的注释）。
@@ -79,17 +80,27 @@ export function ComponentPrompt(): React.JSX.Element | null {
   const titleKey = openFor ? TITLE_KEY[openFor] : undefined
   const title = titleKey ? t(titleKey) : ''
 
-  // 成功后：短暂展示成功话再自动关；若此刻弹窗已被用户关掉（openFor 变 null 由 close 触发），
+  // 成功后：短暂展示成功话再自动关；若此刻弹窗已被用户关掉（openFor 变 null 由 close/hide 触发），
   // 则在 KbToolbar/触发点侧用 toast 兜底（此处只管弹窗还开着的情形）。
+  //
+  // 用 hide() 不用 close()（复审判断，Fix 1 收尾）：这次自动收起不是「用户拒绝」，是「装好了，
+  // 弹窗任务完成，自己收起」——语义上更贴近 hide。眼下功能门是 `status !== 'ready' && !dismissed`，
+  // 此刻 status 已经是 ready，写不写 dismissed 对*这一次*门禁判断确实没差（hint 提到的这点成立）。
+  // 但 dismissed 是会话级状态，不会随 ready 一起清零；而 ready 不是终态——`applyDetectedStatus`
+  // 会在下次探测时把「磁盘上东西被删了」的组件从 ready 降回 idle（componentOrchestrator.ts 同名
+  // 函数）。如果这里错误地 close()，dismissed[id] 会被永久置 true，之后哪怕组件真的掉回非
+  // ready，功能门也会因为 dismissed 已经是 true 而不再提示——等于「装好一次」换来「以后被卸载
+  // 也不会再提醒」，这正是 Fix 1 要堵的同一类「误标拒绝」后果。hide() 不写 dismissed，不会有
+  // 这层副作用。
   const doneShownRef = useRef(false)
   useEffect(() => {
     if (state?.status === 'ready' && openFor && !doneShownRef.current) {
       doneShownRef.current = true
-      const id = window.setTimeout(() => { close(); doneShownRef.current = false }, 3000)
+      const id = window.setTimeout(() => { hide(); doneShownRef.current = false }, 3000)
       return () => window.clearTimeout(id)
     }
     if (!openFor) doneShownRef.current = false
-  }, [state?.status, openFor, close])
+  }, [state?.status, openFor, hide])
 
   if (!openFor || !state) return null
 
@@ -131,11 +142,15 @@ export function ComponentPrompt(): React.JSX.Element | null {
               </button>
               {/* 关闭/收起键（终审 Important 2）：装几百 MB / pipx 最长 5 分钟，这段时间弹窗不该
                   钉死在屏幕上关不掉——自己的文案（compPromptBody）都写着「下载在后台进行，不打断
-                  你」。close() 只碰 componentPromptStore 的 openFor/dismissed，不触碰后端：安装
-                  继续跑、广播照推。装好那一刻 openFor 已是 null，正好落进上面「走开报喜」toast
-                  兜底的 useEffect（`openFor !== id` 成立）——两处逻辑本就是为此配套的，不是新增
-                  一条独立路径。 */}
-              <button type="button" onClick={close}
+                  你」。用 hide() 不用 close()（复审 Minor，Fix 1）：安装正在跑，用户此刻只是不想
+                  看进度条，不是在拒绝这个组件——close() 会把 openFor 写进 dismissed，而 dismissed
+                  的语义是「用户说过[暂不]」，KbToolbar 的功能门据此本次会话内不再提示。故障剧本：
+                  点[收起]（本意只是收起面板）→ 安装恰好失败（error）→ 用户点「同步」→ 因
+                  promptDismissed('markitdown') 已是 true 而不再弹提示 → 静默降级，用户完全不知道
+                  装失败了。hide() 只碰 openFor，不写 dismissed，不触碰后端：安装继续跑、广播照推。
+                  装好那一刻 openFor 已是 null，正好落进上面「走开报喜」toast 兜底的 useEffect
+                  （`openFor !== id` 成立）——两处逻辑本就是为此配套的，不是新增一条独立路径。 */}
+              <button type="button" onClick={hide}
                 className="text-[11.5px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
                 {t('compPromptHide')}
               </button>

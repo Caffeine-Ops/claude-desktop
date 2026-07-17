@@ -93,7 +93,10 @@ function applyDetectedStatus(id: string, ready: boolean): void {
 const REFRESH_TTL_MS = 30_000
 let lastRefreshAt = 0
 
-/** 探测磁盘/工具链，重设整表就绪态（启动时 + 每次 status-get 前调，TTL 内的重复调用直接跳过）。 */
+/** 探测磁盘/工具链，重设整表就绪态。只由 COMPONENT_STATUS_GET 这条用户触发的懒路径调
+ *  （register.ts 的 status-get handler；全仓唯一调用点）——不在启动时调，见上方 TTL 注释与
+ *  index.ts 里 onComponentStatus 订阅处「刻意只订阅、不在启动时 refresh」的说明，8s 最坏阻塞
+ *  会卡住 splash 交接。TTL 内的重复调用直接跳过。 */
 export function refreshComponentInstalled(): void {
   const now = Date.now()
   if (now - lastRefreshAt < REFRESH_TTL_MS) return

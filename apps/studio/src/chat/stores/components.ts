@@ -50,7 +50,17 @@ export const useComponentStore = create<ComponentsState>((set, get) => ({
   table: {},
   loaded: false,
   init: () => {
-    void fetchSnapshotOnce().then((t) => set({ table: t, loaded: true }))
+    // .catch 必须有（复审 Minor）：componentStatusGet() 走 IPC，handler 内部若抛错（reject）,
+    // 光 .then 不接 catch 就是「这个 promise 永远不会把 loaded 推成 true」+ 一条 unhandled
+    // rejection。本轮新加的 loaded 守卫把后果从「三行误显示成可下载」放大成「组件中心永久卡
+    // 在『正在检测组件状态…』、KbToolbar 的缺模型引导和 KbToolingCard 永久不出现」——从「误导」
+    // 升级成「功能不可达」。这里选择 fail-open（吞掉错误、直接把 loaded 置 true，表维持上次的
+    // 值/空表），与 `loaded` 守卫本身「宁可放行也不误拦」的取向一致：派生态会退回 idle，功能门
+    // 顶多再提示一次装组件，好过永久卡死。发生概率很低（detectTooling 内部把每个探针都
+    // try/catch 吞了，见 componentOrchestrator.ts），但一旦发生代价被放大了，所以值得兜底。
+    void fetchSnapshotOnce()
+      .then((t) => set({ table: t, loaded: true }))
+      .catch(() => set({ loaded: true }))
     const off = window.chatApi.onComponentStatus((t) => set({ table: t, loaded: true }))
     return off
   },
