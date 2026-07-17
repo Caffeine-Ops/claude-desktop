@@ -619,6 +619,35 @@ export const IPC_CHANNELS = {
   APPEARANCE_BROADCAST: 'appearance:broadcast',
 
   /**
+   * Renderer → main. Native "choose an image" dialog (filters: png/jpg/
+   * jpeg/webp) → downsample if the long edge exceeds the 3200px cap → run
+   * the adaptive analysis (backgroundAnalysis.ts) once → persist image +
+   * meta.json under `<userData>/background-themes/u-<id>/` → return the
+   * meta. Cancel resolves null. Activation is a separate step (a plain
+   * APPEARANCE_SET patch with `background.themeId`) — this channel only
+   * imports and analyzes, so re-activating an already-imported theme never
+   * re-runs the analysis.
+   */
+  BACKGROUND_THEME_IMPORT: 'background-theme:import',
+  /**
+   * Renderer → main. Lists every saved theme (bundled presets are NOT
+   * included — those are static `public/bg-presets/` assets the renderer
+   * already knows about at build time). Scans each background-themes
+   * subdirectory's meta.json; a directory with a missing/corrupt meta is
+   * silently skipped rather than failing the whole list — one bad theme
+   * shouldn't blank the picker.
+   */
+  BACKGROUND_THEME_LIST: 'background-theme:list',
+  /**
+   * Renderer → main. Deletes a user-imported theme directory by id (id is
+   * re-validated against the same `u-<id>` shape the import flow generates
+   * before touching disk). If the deleted theme was active, the caller is
+   * responsible for clearing `background.themeId` first — this handler only
+   * removes files, it does not touch appearance prefs.
+   */
+  BACKGROUND_THEME_DELETE: 'background-theme:delete',
+
+  /**
    * Renderer → main. One-shot pull of the current updater state — the
    * settings「更新应用」section calls this on mount so it renders the real
    * phase (downloading / ready / …) even when it mounts mid-flight.
@@ -1451,6 +1480,16 @@ export interface ThemeOverridesPrefs {
   translucentSidebar?: boolean
 }
 
+// Sits at the top of AppearancePrefs (not inside light/dark) — one image
+// serves both modes; veil opacity derives from --card/--sidebar at apply
+// time so it repaints for free on mode flip. themeId absent/null = off.
+export interface BackgroundPrefs {
+  themeId?: string | null
+  scrim?: number
+  focusX?: number
+  focusY?: number
+}
+
 /**
  * Shared appearance prefs persisted by the daemon and read/written by both
  * the desktop shell and the web tab. Mirror of the contracts `AppearancePrefs`.
@@ -1464,6 +1503,39 @@ export interface AppearancePrefs {
   uiFontSize?: number
   codeFontSize?: number
   usePointerCursor?: boolean
+  background?: BackgroundPrefs
+}
+
+/**
+ * Persisted once per user-imported background theme, at
+ * `<userData>/background-themes/<id>/meta.json`. Written by the
+ * BACKGROUND_THEME_IMPORT handler (analysis runs exactly once, at import
+ * time) and read back by BACKGROUND_THEME_LIST — never recomputed on boot.
+ * Bundled `preset-*` themes have the same shape but ship as source constants
+ * (`src/lib/backgroundArt/presets.ts`), not files on disk.
+ */
+export interface BackgroundThemeMeta {
+  version: 1
+  id: string
+  name: string
+  /**
+   * For a user-imported (`u-*`) theme: the absolute path to the stored image
+   * on disk — the renderer has no other way to learn the userData root, so
+   * it passes this straight to toBgAssetUrl() (same convention kbasset://
+   * and proposalasset:// already use for KB/draft images). For a bundled
+   * (`preset-*`) theme: a public/-relative URL path (e.g.
+   * '/bg-presets/preset-dawn.png'), served over app:// like any other
+   * static asset — presets aren't user files and never touch bgasset://.
+   */
+  file: string
+  width: number
+  height: number
+  /** Rec. 709 mean, 0-1. Only nudges scrim alpha — never overrides theme mode. */
+  luminance: number
+  focus: { x: number; y: number }
+  safeSide: 'left' | 'right' | 'none'
+  palette: { accent: string; secondary: string; highlight: string }
+  createdAt: number
 }
 
 /**
@@ -1984,6 +2056,10 @@ export interface ProposalImageUploadPayload {
   sessionId: string
 }
 
+/** Payload for BACKGROUND_THEME_DELETE. */
+export interface BackgroundThemeDeletePayload {
+  themeId: string
+}
 
 /**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
@@ -2398,6 +2474,18 @@ export interface ChatApi {
    * against echoing its own write back). Returns an unsubscribe.
    */
   onAppearanceChanged(handler: () => void): () => void
+
+  /**
+   * Native "choose an image" dialog → downsample/analyze → persist under
+   * `background-themes/<id>/` → returns the new theme's meta. Null on
+   * cancel. Does not activate the theme — the caller still has to
+   * `setAppearance({ background: { themeId } })` afterward.
+   */
+  importBackgroundTheme(): Promise<BackgroundThemeMeta | null>
+  /** Lists user-imported themes only — bundled presets are static assets, not IPC data. */
+  listBackgroundThemes(): Promise<BackgroundThemeMeta[]>
+  /** Deletes a user-imported theme's files. Does not touch appearance prefs. */
+  deleteBackgroundTheme(payload: BackgroundThemeDeletePayload): Promise<boolean>
 
   /**
    * Subscribe to menu actions forwarded from the shell's tab-strip

@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
 import type { ReplayConfirmSnapshot } from '@desktop-shared/replayTypes'
+import { railEaseOut, railGliderSpring } from '../../shell/railMotion'
 import {
   type Catalogs,
   type CatalogOption,
@@ -71,6 +73,51 @@ import {
 type Stage = 1 | 2 | 'all'
 
 /** Deep clone via JSON — matches app.js `JSON.parse(JSON.stringify(STATE))`. */
+/* ───────────────── motion ─────────────────
+ *
+ * 动效 token 一律复用 shell/railMotion 的两条（railEaseOut 入场 /
+ * railGliderSpring 位移），不自立一套：全 app 的节奏统一比这一页「有自己
+ * 的手感」重要得多，先例是 WorkflowAgentsView 同样借用了 rail 的 spring。
+ *
+ * 分工沿用 railMotion 头注释定的规矩：
+ *  - **入场 = ease-out，不回弹**。「只做『出现』不做戏」——确认页是一屏
+ *    需要**读**的决策项，卡片弹跳会把注意力从内容上拽走。
+ *  - **位移/增删 = spring**。会被打断的动画（用户连点改选项时 chip 增删）
+ *    必须能从当前位置和速度重新求解，ease 曲线被打断会从头重放，肉眼可见
+ *    地「顿一下再走」。
+ *
+ * reduced-motion 不在这里处理：App.tsx 的 <MotionConfig reducedMotion="user">
+ * 已对整个 renderer 生效，会自动把下面的 y/scale 降级、只留 opacity。
+ */
+
+/**
+ * 卡片入场：淡入 + 上移 8px。8 是「看得出方向」与「不晃眼」的折中。
+ *
+ * 写 `transform: translateY()` 而不是独立的 `y: 8`：两者视觉等价，但只有
+ * 整条 transform 字符串能走 WAAPI（合成器线程），独立 transform 会退回主
+ * 线程 rAF。这里差别是实打实的——卡片入场恰好撞上主线程正在建这 7 张卡的
+ * DOM，掉帧就掉在这一拍上（同族教训：骨架屏 JS 淡入撞主线程阻塞，峰值透明
+ * 度只有 0.27）。两端都必须是完整 transform 值，不能一端写 none。
+ */
+const SECTION_VARIANTS = {
+  hidden: { opacity: 0, transform: 'translateY(8px)' },
+  show: {
+    opacity: 1,
+    transform: 'translateY(0px)',
+    transition: { duration: 0.32, ease: railEaseOut }
+  }
+} as const
+
+/**
+ * 卡片容器：staggerChildren 0.045s —— 7 张卡片总共 ~0.3s 铺完，读起来是
+ * 「依次落位」而不是「排队等待」。再大就拖沓（末卡要等半秒），再小就糊成
+ * 一次性闪现、白做。
+ */
+const SECTIONS_CONTAINER = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.045 } }
+} as const
+
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v))
 }
@@ -616,7 +663,15 @@ export function CanvasConfirm({
 
       {/* scrollable sections */}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 pb-5">
-        <div className="mx-auto flex w-full max-w-[860px] flex-col gap-3.5 pt-4">
+        {/* stagger 容器：卡片依次落位。stage 1→2 时新增的 Section 以 hidden
+            初始态挂载再 animate 到 show（Motion 默认行为），所以「下一步」
+            换层同样是渐次入场，不用额外接线。 */}
+        <motion.div
+          initial="hidden"
+          animate="show"
+          variants={SECTIONS_CONTAINER}
+          className="mx-auto flex w-full max-w-[860px] flex-col gap-3.5 pt-4"
+        >
         {showAnchors && (
           <>
             <Section num={next()} title={t('sec_canvas')} note={uiT('note_canvas')}>
@@ -786,20 +841,34 @@ export function CanvasConfirm({
             </Section>
           </>
         )}
-        </div>
+        </motion.div>
       </div>
 
       {/* action bar: live selection summary (or a status/error, which takes
           priority) + the single primary action. No back button — tier1 has
           already been consumed by the server's --wait-only loop by the time
           tier2 renders, so "going back" has nothing to re-submit into. */}
-      {/* bg-white (light) instead of bg-background: the user's ask was a
-          WHITE action bar ("背景用白色") — bg-background is both light-gray
-          by token default AND runtime-overridden by the appearance store to
-          whatever background the user picked, so it can never be relied on
-          to read as white. Literal white in light mode; dark keeps the
-          semantic token so the bar doesn't flash white in dark mode. */}
-      <div className="shrink-0 border-t border-border bg-white px-6 py-2.5 dark:bg-background">
+      {/* bg-card —— 2026-07-17 定案，别再换回 bg-white / bg-background。
+
+          本栏坐在 .shell-content-card 上（globals.css:399，`background:
+          hsl(var(--card))`，整个右侧内容面都是它），所以它的底就该是 --card：
+          「跟自己所在的那张面同色」，而不是去追某个绝对色值。
+
+          历史（两版都错，错法相反）：
+           1. `bg-background` —— 追错了对象。--background 是**页面**底，比内容
+              面暗一档（--card = shiftLightness(bg, +3)），本栏用它必然比周围
+              暗，暗档下用户一眼看出（截图取样实锤：卡片与页面底同为 #23221f
+              而本栏 #1b1a18）。
+           2. `bg-white dark:bg-background` —— 为「用户要白色 action bar」写死
+              白，代价是彻底脱离主题体系：用户改背景色它纹丝不动。亮档之所以
+              一直没露馅纯属巧合 —— 亮档默认 background #f5f5f7 (L=97%) 提亮
+              3 点 clamp 到 100% 正好是白，写死的白恰好等于 --card。
+
+          bg-card 同时满足两头，且不需要 dark: 变体：亮档默认下它**就是**白
+          （见 appearance.applier 注释「the lift clamps to 100% = white cards」），
+          原始诉求达成；暗档 #232220 与内容面严丝合缝；用户改主题色时它跟着
+          走，不会再被钉死。 */}
+      <div className="shrink-0 border-t border-border bg-card px-6 py-2.5">
         <div className="mx-auto flex w-full max-w-[860px] items-center gap-3">
           {statusText ? (
             <span
@@ -828,9 +897,24 @@ export function CanvasConfirm({
             // glance-only summary, not something meant to be scrolled
             // deliberately.
             <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {/* key 带上 part 而不只是 index：改选项时文本变了 key 才会变，
+                  旧 chip 才走 exit、新 chip 才走 enter —— 纯 index 做 key 会
+                  让内容原地替换，用户改了选择却看不到任何反馈。带上 i 是因为
+                  两个维度理论上可能选出同名文案，纯 part 会撞 key。
+                  mode="popLayout"：退场的 chip 立刻脱离布局流，剩下的用 layout
+                  动画平滑补位，不会先空出一个洞再塌缩。
+                  initial={false}：首屏不播 —— action bar 是跟着 7 张卡片一起
+                  出现的，这里再 pop 一串就成了两处抢戏；chip 的动画只为「你
+                  刚改了选择」这件事服务。 */}
+              <AnimatePresence mode="popLayout" initial={false}>
               {summaryParts.map((part, i) => (
-                <span
-                  key={i}
+                <motion.span
+                  key={`${i}-${part}`}
+                  layout
+                  initial={{ opacity: 0, scale: 0.85 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.85 }}
+                  transition={railGliderSpring}
                   className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-brand/[0.09] px-3 py-1.5 text-[12px] font-medium text-brand"
                 >
                   <svg
@@ -848,8 +932,9 @@ export function CanvasConfirm({
                     <path d="M4.5 12.5l5 5L19.5 7" />
                   </svg>
                   {part}
-                </span>
+                </motion.span>
               ))}
+              </AnimatePresence>
             </div>
           )}
           <button
@@ -915,9 +1000,21 @@ function Stepper({ stage, uiT }: { stage: 1 | 2; uiT: (k: string) => string }): 
         {dot(stage === 1, stage === 2, '1')}
         {name(stage === 1, 'step1_name', 'step1_sub')}
       </div>
-      <span
-        className={'h-[2px] w-11 shrink-0 rounded-full ' + (stage === 2 ? 'bg-accent' : 'bg-border')}
-      />
+      {/* 连接线：灰轨 + 绿条 scaleX 填充，而不是整条换 bg 类。换类是瞬时跳
+          变（这里原本连 transition 都没有），而这条线是全页唯一表达「你推进
+          了一步」的元件 —— 让它从左往右长出来，进度才有因果感。
+          origin-left 决定生长方向；initial={false} 让「进来时就已在第 2 步」
+          （恢复/回放）直接呈满格，不补播一次填充动画。
+          用 spring 而非 ease：stage 可能被快速推进打断，spring 从当前进度接着
+          走，ease 会从头重放。 */}
+      <span className="relative h-[2px] w-11 shrink-0 overflow-hidden rounded-full bg-border">
+        <motion.span
+          className="absolute inset-0 origin-left rounded-full bg-accent"
+          initial={false}
+          animate={{ scaleX: stage === 2 ? 1 : 0 }}
+          transition={railGliderSpring}
+        />
+      </span>
       <div className="flex items-center gap-2">
         {dot(stage === 2, false, '2')}
         {name(stage === 2, 'step2_name', 'step2_sub')}
@@ -953,8 +1050,14 @@ function Section({
 }): React.JSX.Element {
   // One card per confirmation — the flat border-b list read as one endless
   // form; discrete cards give each decision its own visual breath.
+  //
+  // variants 而非直接写 initial/animate：入场时机交给父容器的 staggerChildren
+  // 统一编排，卡片自己不认识 index，也就不必把序号一路 prop 传下来。
   return (
-    <div className="rounded-xl border border-border bg-card px-[18px] pb-[18px] pt-4 shadow-sm">
+    <motion.div
+      variants={SECTION_VARIANTS}
+      className="rounded-xl border border-border bg-card px-[18px] pb-[18px] pt-4 shadow-sm"
+    >
       <div className="mb-3 flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
         <span className="inline-flex size-[22px] shrink-0 -translate-y-px items-center justify-center self-center rounded-[7px] bg-accent/10 text-[11px] font-bold text-accent">
           {num}
@@ -963,7 +1066,7 @@ function Section({
         {note && <span className="text-[11px] text-muted-foreground">{note}</span>}
       </div>
       {children}
-    </div>
+    </motion.div>
   )
 }
 
@@ -981,6 +1084,32 @@ function SubLabel({ children }: { children: React.ReactNode }): React.JSX.Elemen
 }
 
 /* ───────────────── enum field (chips) ───────────────── */
+
+/**
+ * 选中高亮框。用 layoutId 让它在同组选项间**滑过去**，而不是在旧 chip 上
+ * 消失、在新 chip 上出现 —— 后者是原来的做法（selected 直接换 border/bg
+ * 类），换色有 transition-colors 兜着，但那圈框本身是瞬移的。
+ *
+ * 这正是 railGliderSpring 的本职（见 railMotion 头注释：glider 是会被连点
+ * 打断的位移动画，spring 中断后从当前位置和速度重新求解，ease 会从头重放
+ * 「顿一下再走」）—— rail 的选中态就是这么做的，这里复用同一条，两处手感
+ * 一致。附带好处：chip 宽度不等，layout 动画会把宽高一起插值，框是「变形
+ * 着滑过去」的。
+ *
+ * 为什么高亮框要单独一层而不是给 button 加类：layoutId 需要一个**跨 chip
+ * 共享身份**的元素，只有它单独存在、并在同一时刻全组仅一个，Motion 才能
+ * 把 A 上的它和 B 上的它认成同一个东西并做 FLIP。
+ */
+function ChipGlider({ layoutId }: { layoutId: string }): React.JSX.Element {
+  return (
+    <motion.span
+      layoutId={layoutId}
+      transition={railGliderSpring}
+      aria-hidden="true"
+      className="absolute inset-0 rounded-lg border border-accent bg-accent/10 ring-1 ring-accent"
+    />
+  )
+}
 
 type SpectrumEntry = { id: string; tag_zh?: string; tag_en?: string; note_zh?: string; note_en?: string }
 
@@ -1030,6 +1159,11 @@ function EnumField({
 
   const [customText, setCustomText] = useState(isCustom && cur ? cur : '')
 
+  // 每个 EnumField 一个独立的 glider 身份。共用一个常量 layoutId 会让不同
+  // 字段的高亮互相认亲：点「生成模式」时，「图片使用」那圈框会横跨半屏飞
+  // 过来。useId 保证同页多实例各滑各的。
+  const gliderId = `chip-glider-${useId()}`
+
   const chip = (o: CatalogOption): React.JSX.Element => {
     // Main label and description render as separate spans (weight + tone),
     // not one concatenated string — the option name has to be scannable.
@@ -1039,24 +1173,30 @@ function EnumField({
     const sub = [optionDesc(o, lang), spec && spec.note].filter(Boolean).join(' · ')
     const selected = !isCustom && o.id === cur
     const recommended = spec ? true : !hasSpectrum && o.id === recommendedId
+    // 选中态的 border/bg/ring 全部交给 ChipGlider 那一层，button 自己让出
+    // border（transparent 而非去掉，否则盒子会缩 1px、整行跳一下）。文字层
+    // 一律 relative：glider 是 absolute，不抬升就会盖住文字。
     return (
       <button
         key={o.id}
         type="button"
         onClick={() => onChange(o.id)}
         className={
-          'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-left text-[12px] transition-colors ' +
+          'relative inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-left text-[12px] transition-colors ' +
           (selected
-            ? 'border-accent bg-accent/10 text-accent ring-1 ring-accent'
+            ? 'border-transparent text-accent'
             : 'border-border bg-background/60 text-foreground hover:bg-hover')
         }
       >
-        <span className="font-medium">{main}</span>
+        {selected && <ChipGlider layoutId={gliderId} />}
+        <span className="relative font-medium">{main}</span>
         {sub && (
-          <span className={selected ? 'text-accent/70' : 'text-muted-foreground'}>{sub}</span>
+          <span className={'relative ' + (selected ? 'text-accent/70' : 'text-muted-foreground')}>
+            {sub}
+          </span>
         )}
         {recommended && (
-          <span className="shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+          <span className="relative shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
             ★ {spec ? spec.tag || t('recommended') : t('recommended')}
           </span>
         )}
@@ -1066,21 +1206,25 @@ function EnumField({
 
   const customChip = (): React.JSX.Element => {
     const recommended = !!recommendedId && ids.indexOf(recommendedId) === -1
+    // 与上面的 chip 共用同一个 gliderId：「自定义」是这组选项的一员，从某个
+    // 预设切到它时高亮该滑过来，而不是在那边灭、在这边亮。未选中保持 dashed
+    // （「这里要你自己填」的既有语义），选中时框由 glider 接管、自然是实线。
     return (
       <button
         key="__custom__"
         type="button"
         onClick={() => onChange(customText || '')}
         className={
-          'inline-flex items-center gap-1.5 rounded-lg border border-dashed px-2.5 py-1.5 text-[12px] transition-colors ' +
+          'relative inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ' +
           (isCustom
-            ? 'border-solid border-accent bg-accent/10 text-accent ring-1 ring-accent'
-            : 'border-border bg-background/60 text-muted-foreground hover:bg-hover')
+            ? 'border-transparent text-accent'
+            : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-hover')
         }
       >
-        <span className="font-medium">{t('custom')}</span>
+        {isCustom && <ChipGlider layoutId={gliderId} />}
+        <span className="relative font-medium">{t('custom')}</span>
         {recommended && (
-          <span className="shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+          <span className="relative shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
             ★ {t('recommended')}
           </span>
         )}
@@ -1106,19 +1250,37 @@ function EnumField({
         </div>
       )}
       {grouped && allowCustom && <div className="flex flex-wrap gap-1.5">{customChip()}</div>}
-      {allowCustom && isCustom && (
-        <input
-          type="text"
-          value={customText}
-          autoFocus
-          onChange={(e) => {
-            setCustomText(e.target.value)
-            onChange(e.target.value || '')
-          }}
-          placeholder={t('custom_placeholder')}
-          className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
-        />
-      )}
+      {/* 自定义输入框：height auto 展开而非瞬间蹦出。它是点「自定义」chip 后
+          长出来的**因果结果**，撑开高度的过程把这层因果画出来；瞬间出现则会
+          把下方内容一把推走，读者得重新找位置。
+          overflow-hidden 是 height 动画的前提（否则内容在 0 高度时溢出可见）。
+          exit 同样收起：取消自定义时不该留一个塌缩的空洞。
+          ease-out 不用 spring：这是纯「出现/消失」，回弹会让输入框抖两下，
+          而它下一拍就要接住 autoFocus 的光标。 */}
+      <AnimatePresence initial={false}>
+        {allowCustom && isCustom && (
+          <motion.div
+            key="custom-input"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.24, ease: railEaseOut }}
+            className="overflow-hidden"
+          >
+            <input
+              type="text"
+              value={customText}
+              autoFocus
+              onChange={(e) => {
+                setCustomText(e.target.value)
+                onChange(e.target.value || '')
+              }}
+              placeholder={t('custom_placeholder')}
+              className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

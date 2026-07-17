@@ -114,7 +114,9 @@ import {
   type ProposalImageGeneratePayload,
   type ProposalImageEditPayload,
   type ProposalImageResult,
-  type ProposalImageUploadPayload
+  type ProposalImageUploadPayload,
+  type BackgroundThemeMeta,
+  type BackgroundThemeDeletePayload
 } from '../../shared/ipc-channels'
 import { setKbRoot, getKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote, kbStoreDir, setKbMode } from '../core/kbIndexStore'
 import { scanLocalDocs, listLocalDocsDirs, setLocalDocsDir } from '../core/localDocsScan'
@@ -151,6 +153,11 @@ import { appendProposalMetric } from '../core/proposalMetricsStore'
 import { generateImage, editImage, sniffImageExt } from '../services/imageGenService'
 import { submitFeedback } from '../services/feedbackService'
 import { writeProposalImage } from '../services/proposalImageWriter'
+import {
+  importBackgroundThemeFromFile,
+  listBackgroundThemes,
+  deleteBackgroundTheme
+} from '../services/backgroundThemes'
 import { mimeForImagePath } from '../../shared/imageMime'
 import { EMBEDDABLE_IMAGE_EXTS, type ProposalMetricRecord } from '../../shared/proposal'
 import { readFile } from 'node:fs/promises'
@@ -379,6 +386,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_GENERATE)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_EDIT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_UPLOAD)
+  ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_IMPORT)
+  ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_LIST)
+  ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_DELETE)
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_ABORT)
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_QUEUE_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_QUEUE_REMOVE)
@@ -1589,6 +1599,42 @@ export function registerIpcHandlers(): void {
       })
       .catch(() => {})
   })
+
+  // ── 背景主题（壁纸换肤）：导入/列举/删除，落盘归 backgroundThemes.ts ──
+  //
+  // 与 PROPOSAL_IMAGE_UPLOAD 同一个理由用原生 dialog 而非 <input type=file>：
+  // 渲染进程拿不到选中文件的绝对磁盘路径。激活/scrim 调整不走这里——那是一次
+  // 普通的 APPEARANCE_SET patch（background.themeId），本组三个 handler 只管
+  // 文件本身。
+  ipcMain.handle(
+    IPC_CHANNELS.BACKGROUND_THEME_IMPORT,
+    async (event): Promise<BackgroundThemeMeta | null> => {
+      const window = resolveBrowserWindow(event)
+      const result = await dialog.showOpenDialog(window, {
+        title: '选择背景图',
+        properties: ['openFile'],
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+      })
+      if (result.canceled || result.filePaths.length === 0) return null
+      return importBackgroundThemeFromFile(result.filePaths[0]!)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.BACKGROUND_THEME_LIST,
+    async (): Promise<BackgroundThemeMeta[]> => {
+      return listBackgroundThemes()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.BACKGROUND_THEME_DELETE,
+    async (_event, payload: BackgroundThemeDeletePayload): Promise<boolean> => {
+      const themeId = typeof payload?.themeId === 'string' ? payload.themeId : ''
+      if (!themeId) return false
+      return deleteBackgroundTheme(themeId)
+    }
+  )
 
   // ── 自动更新（electron-updater，状态机在 services/appUpdater.ts）──
   // 三个 handler 都是薄转发：状态归 main 单独持有，结论走

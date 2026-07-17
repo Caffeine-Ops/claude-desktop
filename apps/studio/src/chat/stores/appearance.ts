@@ -34,6 +34,25 @@ export interface ThemeOverrides {
   translucentSidebar: boolean
 }
 
+// Background art (wallpaper). Sits alongside light/dark, not inside them —
+// one image serves both modes; the applier derives veil opacity from the
+// semantic --card/--sidebar tokens at apply time, so it repaints for free
+// when themeMode flips. themeId null = feature off (default), which must
+// render byte-identical to pre-feature output.
+export interface BackgroundThemeState {
+  themeId: string | null
+  /** Veil strength, 0-100. */
+  scrim: number
+  /** 0-1 focal point override; unset falls back to the theme's analyzed focus. */
+  focusX?: number
+  focusY?: number
+}
+
+const BACKGROUND_DEFAULTS: BackgroundThemeState = {
+  themeId: null,
+  scrim: 55
+}
+
 // Light defaults aligned 1:1 with the shared design tokens
 // (packages/design-tokens/tokens.css): canvas `--background` #f5f5f7
 // (Apple's signature off-white gray), foreground #1d1d1f, accent Apple
@@ -100,12 +119,17 @@ interface AppearanceState {
   uiFontSize: number
   codeFontSize: number
   usePointerCursor: boolean
+  background: BackgroundThemeState
   setThemeMode: (m: ThemeMode) => void
   setUiFontSize: (n: number) => void
   setCodeFontSize: (n: number) => void
   setUsePointerCursor: (v: boolean) => void
   patchTheme: (mode: 'light' | 'dark', patch: Partial<ThemeOverrides>) => void
   resetTheme: (mode: 'light' | 'dark') => void
+  /** Switching themes clears any focus override — it belonged to the old image. */
+  setBackgroundTheme: (themeId: string | null) => void
+  setBackgroundScrim: (n: number) => void
+  setBackgroundFocus: (focus: { x: number; y: number } | null) => void
 }
 
 const clamp = (n: number, lo: number, hi: number): number =>
@@ -120,6 +144,7 @@ export const useAppearanceStore = create<AppearanceState>()(
       uiFontSize: 13,
       codeFontSize: 12,
       usePointerCursor: false,
+      background: BACKGROUND_DEFAULTS,
       setThemeMode: (m) => set({ themeMode: m }),
       setUiFontSize: (n) => set({ uiFontSize: clamp(n, UI_MIN, UI_MAX) }),
       setCodeFontSize: (n) =>
@@ -130,11 +155,21 @@ export const useAppearanceStore = create<AppearanceState>()(
           [mode]: { ...s[mode], ...patch }
         })),
       resetTheme: (mode) =>
-        set({ [mode]: mode === 'light' ? LIGHT_DEFAULTS : DARK_DEFAULTS })
+        set({ [mode]: mode === 'light' ? LIGHT_DEFAULTS : DARK_DEFAULTS }),
+      setBackgroundTheme: (themeId) =>
+        set((s) => ({
+          background: { ...s.background, themeId, focusX: undefined, focusY: undefined }
+        })),
+      setBackgroundScrim: (n) =>
+        set((s) => ({ background: { ...s.background, scrim: clamp(n, 0, 100) } })),
+      setBackgroundFocus: (focus) =>
+        set((s) => ({
+          background: { ...s.background, focusX: focus?.x, focusY: focus?.y }
+        }))
     }),
     {
       name: 'claude-desktop:appearance',
-      version: 4,
+      version: 5,
       // v1 only had themeMode/uiFontSize/codeFontSize/usePointerCursor.
       // Backfill the new theme objects so persisted v1 users don't crash
       // before they touch any color picker.
@@ -149,6 +184,13 @@ export const useAppearanceStore = create<AppearanceState>()(
       // the token-aligned Apple off-white (#f5f5f7) so the gray-page /
       // white-floating-card hierarchy from design-tokens actually renders.
       // Same stale-fingerprint contract as v3.
+      //
+      // v5: added `background` (wallpaper). Not strictly required for
+      // zustand's default merge (spreading the initial-state default over a
+      // persisted object missing the key is already a no-op preserving the
+      // default) — bumped anyway to leave an explicit trail matching v1-v4,
+      // and because the version<2 branch below constructs a full object by
+      // hand and would otherwise silently omit the field.
       migrate: (persisted: unknown, version: number): AppearanceState => {
         const base = (persisted ?? {}) as Partial<AppearanceState>
         if (version < 2) {
@@ -158,7 +200,8 @@ export const useAppearanceStore = create<AppearanceState>()(
             dark: DARK_DEFAULTS,
             uiFontSize: base.uiFontSize ?? 13,
             codeFontSize: base.codeFontSize ?? 12,
-            usePointerCursor: base.usePointerCursor ?? false
+            usePointerCursor: base.usePointerCursor ?? false,
+            background: BACKGROUND_DEFAULTS
           } as AppearanceState
         }
         let next = base
@@ -167,6 +210,9 @@ export const useAppearanceStore = create<AppearanceState>()(
         }
         if (version < 4 && isStaleLightDefault(next.light)) {
           next = { ...next, light: LIGHT_DEFAULTS }
+        }
+        if (version < 5 && !next.background) {
+          next = { ...next, background: BACKGROUND_DEFAULTS }
         }
         return next as AppearanceState
       }
@@ -207,6 +253,7 @@ interface DaemonAppearance {
   uiFontSize?: number
   codeFontSize?: number
   usePointerCursor?: boolean
+  background?: Partial<BackgroundThemeState>
 }
 
 // Guards the subscribe-push below from firing while we're applying the
@@ -223,7 +270,8 @@ function snapshotForDaemon(s: AppearanceState): DaemonAppearance {
     dark: s.dark,
     uiFontSize: s.uiFontSize,
     codeFontSize: s.codeFontSize,
-    usePointerCursor: s.usePointerCursor
+    usePointerCursor: s.usePointerCursor,
+    background: s.background
   }
 }
 
@@ -270,7 +318,8 @@ export async function hydrateAppearanceFromDaemon(): Promise<void> {
         typeof remote.codeFontSize === 'number'
           ? clamp(remote.codeFontSize, CODE_MIN, CODE_MAX)
           : s.codeFontSize,
-      usePointerCursor: remote.usePointerCursor ?? s.usePointerCursor
+      usePointerCursor: remote.usePointerCursor ?? s.usePointerCursor,
+      background: remote.background ? { ...s.background, ...remote.background } : s.background
     }))
   } finally {
     isHydrating = false

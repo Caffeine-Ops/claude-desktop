@@ -12,6 +12,9 @@ import './globals.css'
 // 手写 CSS 要能覆盖 chat 链的 preflight。
 import '@/src/canvas/index.css'
 import '@/src/canvas/styles/home/index.css'
+// 背景图换肤——必须排在 canvas 链之后：要覆盖 canvas 建立的 .shell-content-card
+// 不透明底，顺序即级联（见该文件头注释）。
+import './background-art.css'
 
 export const metadata: Metadata = {
   title: 'Claude Studio',
@@ -69,6 +72,29 @@ set('--accent-tint','color-mix(in srgb, '+a+' 12%, var(--bg-panel))');
 set('--accent-hover','color-mix(in srgb, '+a+' 90%, var(--text-strong))');
 }catch(e){}})();`
 
+/**
+ * Pre-hydration 背景图（壁纸）脚本——同一防闪变套路，独立的第二个 IIFE 而非
+ * 塞进上面那个：上面那段有好几处 `if(!x)return`（缺 accent 就整段跳过），本
+ * 段读的是完全独立的 localStorage key（'claude-desktop:bg-art'，由
+ * backgroundArt.applier.ts 写），两个缓存互不依赖对方存在——合并进同一个
+ * try 块会让「有壁纸缓存但主题色缓存这次恰好读失败」这种边缘情况被上面的
+ * 提前 return 误伤，跳过本该照常生效的壁纸。写入的字段（url/posX/posY/
+ * weak/mid/strong）与 backgroundArt.applier.ts 的 BgArtCache 是同一份契约，
+ * 改一个要同步改另一个。
+ */
+const BG_ART_BOOT_SCRIPT = `(function(){try{
+var raw=localStorage.getItem('claude-desktop:bg-art');if(!raw)return;
+var c=JSON.parse(raw);if(!c||!c.url)return;
+var root=document.documentElement;
+root.setAttribute('data-bg-art',c.id||'1');
+root.style.setProperty('--bg-art-url',c.url);
+root.style.setProperty('--bg-art-pos-x',c.posX+'%');
+root.style.setProperty('--bg-art-pos-y',c.posY+'%');
+root.style.setProperty('--bg-art-veil-weak',String(c.weak));
+root.style.setProperty('--bg-art-veil-mid',String(c.mid));
+root.style.setProperty('--bg-art-veil-strong',String(c.strong));
+}catch(e){}})();`
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
@@ -83,6 +109,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
          * 与原理见 THEME_BOOT_SCRIPT 注释）。html 已有
          * suppressHydrationWarning，脚本改 documentElement 不打架。 */}
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+        {/* 背景图（壁纸）boot 脚本：独立缓存/独立 IIFE（理由见
+         * BG_ART_BOOT_SCRIPT 注释），但同样必须先于 rail/内容面渲染同步执行，
+         * 紧跟在主题脚本后面。 */}
+        <script dangerouslySetInnerHTML={{ __html: BG_ART_BOOT_SCRIPT }} />
         {/* 全局 TooltipProvider：Radix 的 Tooltip.Root 没有 Provider 祖先会
          * 直接 throw（"Tooltip must be used within TooltipProvider"），
          * 挂在这里一次覆盖 rail + 两面内容——不渲染任何 DOM（纯 context），

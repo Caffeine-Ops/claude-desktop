@@ -55,6 +55,7 @@ import {
   PROPOSAL_ASSET_SCHEME,
   registerProposalAssetProtocol
 } from './services/proposalAssetProtocol'
+import { BG_ASSET_SCHEME, registerBgAssetProtocol } from './services/bgAssetProtocol'
 import { startKbSyncScheduler } from './core/kbSyncScheduler'
 import { onKbBuildStatus, scheduleKbBuild } from './core/kbBuildRunner'
 import { readKbIndex, kbStoreHasDocs } from './core/kbIndexStore'
@@ -95,6 +96,18 @@ protocol.registerSchemesAsPrivileged([
   },
   {
     scheme: PROPOSAL_ASSET_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true
+    }
+  },
+  // bgasset:// = 用户导入的背景主题图（壁纸换肤）。同 kbasset/proposalasset 的
+  // 隐私原因：privileged 声明必须在 ready 前、只能一次；实际 handler 在
+  // whenReady 里注册（见下方 registerBgAssetProtocol）。
+  {
+    scheme: BG_ASSET_SCHEME,
     privileges: {
       standard: true,
       secure: true,
@@ -306,6 +319,7 @@ app.whenReady().then(async () => {
   // ready 前）。知识库镜像内嵌图 / 写方案草稿产出图靠它们在 <img src> 里显形。
   await registerKbAssetProtocol()
   await registerProposalAssetProtocol()
+  await registerBgAssetProtocol()
 
   // **studio 单视图**是唯一形态（Phase 4 起，legacy 三 tab 架构已物理下线）：
   // 一个全屏 studio tab，聊天(/chat)、工作画布(/)、设置(/?settings=1)、导航

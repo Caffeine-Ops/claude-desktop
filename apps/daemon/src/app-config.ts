@@ -91,6 +91,17 @@ export interface ThemeOverridesPrefs {
   translucentSidebar?: boolean;
 }
 
+// Sits at the top of AppearancePrefs (not inside light/dark) — one image
+// serves both modes; the veil opacity is derived from the semantic
+// --card/--sidebar tokens at apply time, so it repaints for free on mode
+// flip. themeId absent/null means the feature is off.
+export interface BackgroundPrefs {
+  themeId?: string | null;
+  scrim?: number;
+  focusX?: number;
+  focusY?: number;
+}
+
 export interface AppearancePrefs {
   themeMode?: 'light' | 'dark' | 'system';
   light?: ThemeOverridesPrefs;
@@ -98,6 +109,7 @@ export interface AppearancePrefs {
   uiFontSize?: number;
   codeFontSize?: number;
   usePointerCursor?: boolean;
+  background?: BackgroundPrefs;
 }
 
 export interface AppConfigPrefs {
@@ -263,6 +275,20 @@ const THEME_OVERRIDE_KEYS: ReadonlySet<string> = new Set([
   'translucentSidebar',
 ]);
 
+const BACKGROUND_KEYS: ReadonlySet<string> = new Set([
+  'themeId',
+  'scrim',
+  'focusX',
+  'focusY',
+]);
+
+// 'preset-*' (bundled, generated at build time) or 'u-<id>' (user-imported,
+// written by the background-theme import IPC). This regex is also the first
+// line of defense against path traversal — the main-process theme lookup
+// re-derives a userData-relative path from this id, so anything outside
+// [a-z0-9-] never reaches the filesystem.
+const BACKGROUND_THEME_ID = /^[a-z0-9-]{1,64}$/;
+
 // Font-size bounds mirror the desktop appearance store's clamps so a value
 // written by either frontend stays inside the range the other will render.
 const UI_FONT_MIN = 11;
@@ -302,6 +328,32 @@ function validateThemeOverrides(raw: unknown): ThemeOverridesPrefs | undefined {
     : undefined;
 }
 
+function validateBackground(raw: unknown): BackgroundPrefs | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const result: Record<string, unknown> = Object.create(null);
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (k === '__proto__' || k === 'constructor') continue;
+    if (!BACKGROUND_KEYS.has(k)) continue;
+    if (k === 'themeId') {
+      if (v === null) result[k] = null;
+      else if (typeof v === 'string' && BACKGROUND_THEME_ID.test(v)) result[k] = v;
+    } else if (k === 'scrim') {
+      if (typeof v === 'number' && Number.isFinite(v)) result[k] = clampNumber(v, 0, 100);
+    } else if (k === 'focusX' || k === 'focusY') {
+      // Not clampNumber: focus is a 0-1 fraction, not a percent, and must
+      // stay unrounded or the applier's background-position math degrades
+      // to 0%/100% steps.
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        result[k] = Math.max(0, Math.min(1, v));
+      }
+    }
+  }
+  return Object.keys(result).length > 0
+    ? (result as BackgroundPrefs)
+    : undefined;
+}
+
 function validateAppearance(raw: unknown): AppearancePrefs | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== 'object' || Array.isArray(raw)) return undefined;
@@ -337,6 +389,9 @@ function validateAppearance(raw: unknown): AppearancePrefs | undefined {
   if (typeof obj.usePointerCursor === 'boolean') {
     result.usePointerCursor = obj.usePointerCursor;
   }
+
+  const background = validateBackground(obj.background);
+  if (background) result.background = background;
 
   return Object.keys(result).length > 0 ? result : undefined;
 }
@@ -442,6 +497,11 @@ function applyConfigValue(
     }
     if (prev.dark || validated.dark) {
       merged.dark = { ...prev.dark, ...validated.dark };
+    }
+    // Same reasoning as light/dark above: a scrim-only patch from the
+    // settings slider must not wipe the themeId the import flow just wrote.
+    if (prev.background || validated.background) {
+      merged.background = { ...prev.background, ...validated.background };
     }
     target[key] = merged;
     return;

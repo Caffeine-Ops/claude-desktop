@@ -359,7 +359,12 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
     // ⚠️ w-61（244px）与设置页 V2 的 --sv2-sidebar-w（settings-v2.css）配对：
     // 设置页是全屏 overlay、自己画 rail + 浮卡，两边宽度不等则切换
     // 设置 ↔ 聊天时内容卡左边缘跳动。改宽度必须两处同步。
-    <nav className="flex h-full w-61 shrink-0 flex-col gap-1 bg-sidebar px-3 pb-3">
+    // app-rail：语义类名，仅供 background-art.css 在背景图换肤开启时把这层
+    // 从不透明 bg-sidebar 转半透明（html[data-bg-art] .app-rail）。不参与
+    // 样式本身（样式仍是下面这串 Tailwind utility），只是给那条规则一个稳定
+    // 挂点——rail 之前没有语义类名，只能靠 utility 类名选中，容易和其它同
+    // utility 的元素一起被误选。
+    <nav className="app-rail flex h-full w-61 shrink-0 flex-col gap-1 bg-sidebar px-3 pb-3">
       {/* 顶部 48px：macOS 红绿灯的净空 + 窗口拖拽面（原型 .traffic）。
         * 原来是 nav 的 pt-12 padding——padding 不能标 app-region，改成
         * 实体条后这块「空白」真的能拖动窗口。收起/展开按钮叠在这条的

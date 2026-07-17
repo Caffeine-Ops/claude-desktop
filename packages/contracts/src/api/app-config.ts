@@ -40,6 +40,24 @@ export interface ThemeOverridesPrefs {
 }
 
 /**
+ * Background art (wallpaper) preferences. Sits at the top of `AppearancePrefs`
+ * rather than inside `light`/`dark` — one image serves both modes, the veil
+ * opacity is derived from the semantic `--card`/`--sidebar` tokens at apply
+ * time so it repaints for free when the mode flips. `themeId` absent/null
+ * means the feature is off and every consumer must render byte-identical to
+ * pre-feature output.
+ */
+export interface BackgroundPrefs {
+  /** `preset-*` (bundled) or `u-<id>` (user-imported). Null/absent = off. */
+  themeId?: string | null;
+  /** Veil strength, 0-100. Defaults to 55. */
+  scrim?: number;
+  /** 0-1 focal point override; unset falls back to the theme's analyzed focus. */
+  focusX?: number;
+  focusY?: number;
+}
+
+/**
  * Cross-process appearance preferences. The daemon is the single source of
  * truth for theme so the desktop shell and the embedded Open Design web tab
  * stay in lockstep — both read this on boot and write every change back.
@@ -59,6 +77,7 @@ export interface AppearancePrefs {
   uiFontSize?: number;
   codeFontSize?: number;
   usePointerCursor?: boolean;
+  background?: BackgroundPrefs;
 }
 
 export interface AppConfigPrefs {

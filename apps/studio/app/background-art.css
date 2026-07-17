@@ -1,0 +1,121 @@
+/**
+ * 背景图换肤（壁纸）图层。整份文件门控在 html[data-bg-art] 属性的存在性上——
+ * background.themeId === null（默认关闭态）时该属性不存在，本文件里的每条
+ * 规则零命中，与关闭本功能前的产物逐像素一致。写手见
+ * src/chat/stores/backgroundArt.applier.ts（+ 首帧防闪变的 boot 脚本，
+ * app/layout.tsx 的 BG_ART_BOOT_SCRIPT）。
+ *
+ * import 顺序：必须排在 canvas CSS 链（canvas/index.css、
+ * canvas/styles/home/index.css）之后（见 app/layout.tsx）——下面 .shell-
+ * content-card 的规则要覆盖 canvas 链此前建立的不透明 --card 底，顺序即级联。
+ *
+ * 不用 backdrop-blur / 光斑：globals.css 记录过一次相邻尝试（主题色光斑壁纸 +
+ * rail 半透明 backdrop-blur）被用户否决（"太丑"）。本实现只用纯色/纯色渐变
+ * scrim，没有 blur、没有光斑。
+ */
+
+/* body 自身的不透明底让位给壁纸——CSS2.1 Appendix E 绘制顺序：负 z-index 的
+ * 定位后代（下面的 body::before/::after）画在 html 背景之上、但**在 body 自己
+ * 这个 in-flow 非定位元素的背景之下**。body 一直有不透明底（三个写手都要压
+ * 过：main.css 的 `html, body, #root` 规则、这个 body 标签本身的 `bg-sidebar`
+ * utility、canvas base.css `@layer components` 里的 `body { background:
+ * var(--bg-app) }`）——不管壁纸/veil 变量算得多准，只要这条不打掉，壁纸从头
+ *到尾没有机会参与绘制（2026-07-17 真机实锤：veil 系数怎么调都没用，整屏就是
+ * 均匀的 --sidebar 纯色，因为壁纸压根没画出来）。只清 background-color、不写
+ * background 整个 shorthand：base.css 那条是 shorthand 写的，我们只需要打掉
+ * 颜色分量，不需要顺带清它可能设置的其它子属性。specificity (0,1,2) 压过
+ * utility 的 (0,1,0) 和 main.css 的 (0,0,1)；对 base.css 那条未分层规则天然
+ * 赢 @layer components 里的规则，不需要额外抬 specificity。html 自己的背景
+ * **保留**：画在壁纸层之下，是图片解码期间的兜底底色，防止之前 useLayoutEffect
+ * 用 Image.decode() 预解码那段时间窗口里出现白闪/黑闪。 */
+html[data-bg-art] body {
+  background-color: transparent;
+}
+
+/* rail 半透明——原计划本就要求的一环，实现时漏掉了，导致就算 body 透明化，
+ * 左侧栏仍是不透明实底，壁纸只能透过内容区，不是「一张图铺满整窗」。
+ * specificity (0,2,1) 压过 AppRail.tsx 上的 `bg-sidebar` utility (0,1,0)。
+ * 收起态浮出的 peek overlay（RailShell.tsx 的 fixed 包裹 div）刻意不在这条
+ * 规则的选择范围内、维持不透明——它是浮在内容之上的悬浮面板，半透明会跟身下
+ * 内容混色，伤到那层本来就窄的可读性，同弹窗/菜单保持不透明是同一个道理，
+ * 不是遗漏。 */
+html[data-bg-art] .app-rail {
+  background-color: hsl(var(--sidebar) / 0.55);
+}
+
+/* 聊天列自身的底色（ThreadView.tsx 的 .chat-content-column，⚠️ 见该文件
+ * 259 行注释「底色是 bg-card 不是 bg-background」）——这层不透明底挡在
+ * .surface-face--chat 的遮罩之上，是 body 透明化生效后「rail/空态能看到
+ * 壁纸、但进了有消息的会话整个消息区还是纯黑」的真正原因（2026-07-17 第三
+ * 轮真机实锤：EmptyState 与消息+dock 都在这个容器内部，body 修好只让容器
+ * 外的 rail 透了，容器本身还是不透明，两个 ThreadPrimitive 分支一起被挡）。
+ * 会话切换时的两处瞬态骨架（SessionSwitchSkeleton、dock 切换骨架）刻意保留
+ * 不透明——它们必须完全接管画面防止新旧会话文字叠印，与壁纸无关，不在这条
+ * 规则的选择范围内（各自的 class 名不是 chat-content-column）。 */
+html[data-bg-art] .chat-content-column {
+  background-color: transparent;
+}
+
+html[data-bg-art] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-image: var(--bg-art-url);
+  background-size: cover;
+  background-position: var(--bg-art-pos-x, 50%) var(--bg-art-pos-y, 50%);
+  pointer-events: none;
+}
+
+/* 全局基础纱：固定薄纱，只保顶部拖拽带/rail 文字底线可读，与用户的 scrim
+ * 滑杆无关——比下面的不透明 --card 底薄得多，壁纸仍是主视觉。 */
+html[data-bg-art] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(
+    to bottom,
+    hsl(var(--sidebar) / 0.3),
+    hsl(var(--sidebar) / 0.12) 30%,
+    hsl(var(--sidebar) / 0.24)
+  );
+  pointer-events: none;
+}
+
+/* 内容面共享的不透明 --card 底让位给壁纸——可读性交给下面按面分级的
+ * .surface-face 遮罩接管，不再靠这层不透明兜底。border-left hairline
+ * 不受影响（本规则只清 background）。 */
+html[data-bg-art] .shell-content-card {
+  background: transparent;
+}
+
+/* keep-alive 陷阱：SurfaceHost 隐藏一个面用 content-visibility:hidden，只跳过
+ * 隐藏面的内容渲染，不隐藏 wrapper 自身的 background——隐藏面 DOM 序在后，
+ * 若没有这条豁免它的 scrim 会盖穿到可见面上。所有分级规则必须都带
+ * :not(.surface-inactive)，这是唯一止血点（现成钩子，SurfaceHost 隐藏面本就
+ * 挂这个类）。canvas 的 .app/.workspace-shell 早已是 transparent
+ * background（2026-07-14 修复，见 canvas/styles/base.css），这里只管两个面
+ * 外层 wrapper 自己的遮罩色，不需要再单独清 canvas 内部背景。
+ *
+ * 默认（无 data-bg-zone，或值为 'ambient'）：氛围感优先的轻纱渐变——首页/
+ * 空态希望壁纸的存在感强一些。 */
+html[data-bg-art] .surface-face--chat:not(.surface-inactive) {
+  background: linear-gradient(
+    to bottom,
+    hsl(var(--card) / var(--bg-art-veil-weak)),
+    hsl(var(--card) / var(--bg-art-veil-mid))
+  );
+}
+
+/* 会话区（'focus'）：可读性优先，遮罩顶到近实底。选择器比上面多一个属性
+ * 条件，特异性自然更高，不依赖源码顺序取胜。 */
+html[data-bg-art][data-bg-zone='focus'] .surface-face--chat:not(.surface-inactive) {
+  background: hsl(var(--card) / var(--bg-art-veil-strong));
+}
+
+/* canvas 面 v1 恒中档遮罩——工作区密集 UI，没有 ambient/focus 区分（SurfaceHost
+ * 头注释）。 */
+html[data-bg-art] .surface-face--canvas:not(.surface-inactive) {
+  background: hsl(var(--card) / var(--bg-art-veil-mid));
+}

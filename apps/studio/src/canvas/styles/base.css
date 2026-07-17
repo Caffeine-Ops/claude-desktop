@@ -22,6 +22,26 @@
  * components' classes are generated and not purged. */
 @source '../../../../../packages/ui/src/**/*.{ts,tsx}';
 
+/* Selector-based dark mode —— 必须与 chat 链（src/chat/styles/index.css 第
+ * 49 行）的同名定义**逐字一致**，漏这一行是静默的（2026-07-17 实锤）。
+ *
+ * 本链 import 的是 tailwindcss/utilities.css 分片（见 index.css 顶部），它
+ * 自带的 dark 变体默认是 @media (prefers-color-scheme: dark) —— 只认**系统
+ * 外观**，不认 app 内的主题开关。而两条链会各自生成一份**同名** utility：
+ * v4 的自动内容检测让本链也扫到了 src/chat/ 的类名（本链产物 843KB > chat
+ * 链 261KB，多出来的正是这份重复），且 canvas 链经 layout.tsx 的 JS import
+ * **后注入** —— 同特异性（都是 0,1,0）下后写者胜。
+ *
+ * 漏掉这行的后果不是「canvas 的 dark 不灵」而是**打穿 chat 面**：本链那条
+ * 无条件的 .bg-white 盖掉 chat 链的 .dark\:bg-background:where(.dark,…)，
+ * 而本链自己的 .dark\:bg-background 被关在 media 块里；用户在 app 内切深色
+ * 但系统外观是浅色时，media 不匹配 → chat 组件里**所有** dark: utility 静默
+ * 失效（案发点：CanvasConfirm action bar 暗档白栏）。
+ *
+ * 验证方式（改这块后必做）：build:next 后 grep 产物，本链 chunk 里
+ * `:where(.dark` 应 > 0 且 `prefers-color-scheme:dark` 应为 0。 */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ============================================================
    Open Design — neutral product workspace
    ============================================================ */

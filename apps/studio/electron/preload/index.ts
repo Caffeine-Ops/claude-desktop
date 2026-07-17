@@ -125,7 +125,9 @@ import {
   type ProposalImageGeneratePayload,
   type ProposalImageEditPayload,
   type ProposalImageResult,
-  type ProposalImageUploadPayload
+  type ProposalImageUploadPayload,
+  type BackgroundThemeMeta,
+  type BackgroundThemeDeletePayload
 } from '../shared/ipc-channels'
 import type { ProposalMetricRecord } from '../shared/proposal'
 import type { KbRemoteConfig } from '../shared/kbConfig'
@@ -554,6 +556,25 @@ const chatApi: ChatApi = {
     return () => {
       ipcRenderer.off(IPC_CHANNELS.APPEARANCE_CHANGED, listener)
     }
+  },
+
+  importBackgroundTheme(): Promise<BackgroundThemeMeta | null> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.BACKGROUND_THEME_IMPORT
+    ) as Promise<BackgroundThemeMeta | null>
+  },
+
+  listBackgroundThemes(): Promise<BackgroundThemeMeta[]> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.BACKGROUND_THEME_LIST
+    ) as Promise<BackgroundThemeMeta[]>
+  },
+
+  deleteBackgroundTheme(payload: BackgroundThemeDeletePayload): Promise<boolean> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.BACKGROUND_THEME_DELETE,
+      payload
+    ) as Promise<boolean>
   },
 
   onShellMenuAction(handler: (action: ShellMenuAction) => void): () => void {

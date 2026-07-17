@@ -26,6 +26,7 @@ import {
 import { Input } from '@/src/components/ui/input'
 import { Label } from '@/src/components/ui/label'
 
+import { useBackgroundZoneStore } from '@/src/stores/backgroundZone'
 import { useI18n, useT } from '../../../i18n'
 import { attachFilesToComposer } from '../../../composer/attachFiles'
 import { useChatStore } from '../../../stores/chat'
@@ -433,6 +434,22 @@ function findScrollParent(el: HTMLElement | null): HTMLElement | null {
   return null
 }
 
+/**
+ * Reports "which background-art scrim tier does the chat face want" to
+ * SurfaceHost (the sole `data-bg-zone` writer) — renders nothing. Mounted
+ * once in each of the two `ThreadPrimitive.Empty` / `ThreadPrimitive.If
+ * empty={false}` branches below; since assistant-ui only ever keeps one of
+ * the two mounted at a time, this is a plain last-write on mount, not a
+ * race between siblings. See stores/backgroundZone.ts for why this lives
+ * outside chat/stores.
+ */
+function BgZoneReporter({ zone }: { zone: 'ambient' | 'focus' }): null {
+  useEffect(() => {
+    useBackgroundZoneStore.getState().setChatZone(zone)
+  }, [zone])
+  return null
+}
+
 export function ThreadView(): React.JSX.Element {
   // Session transition signals from the chat store.
   //   - sessionId      : switches when loadSession resolves (~100ms, or
@@ -583,7 +600,12 @@ export function ThreadView(): React.JSX.Element {
             if (files.length > 0) void attachFilesToComposer(files, composerRuntime)
           }}
           className={
-            'group/dropzone relative flex h-full min-h-0 flex-col ' +
+            // chat-content-column：语义类名，仅供 background-art.css 在背景图
+            // 换肤开启时把这层从不透明 bg-card 转透明（html[data-bg-art]
+            // .chat-content-column）——这是聊天列自己的底色（见上面 ⚠️ 注释），
+            // 挡在 .surface-face--chat 的壁纸遮罩之上，不打透整个消息区就是
+            // 纯黑（2026-07-17 真机实锤）。不参与本来的视觉语义，只是挂点。
+            'group/dropzone chat-content-column relative flex h-full min-h-0 flex-col ' +
             // 4px (the smallest radius, matching .chat-app's clip) — explicit so
             // it can't drift if Tailwind's bare `rounded` default ever changes.
             (chatRailed
@@ -654,6 +676,7 @@ export function ThreadView(): React.JSX.Element {
               remounting the whole subtree on a switch. */}
           <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-3 pb-20 pt-8">
             <ThreadPrimitive.Empty>
+              <BgZoneReporter zone="ambient" />
               <EmptyState />
             </ThreadPrimitive.Empty>
 
@@ -691,6 +714,7 @@ export function ThreadView(): React.JSX.Element {
           `relative` anchors the scroll-to-bottom button (absolute, just
           above the dock). */}
       <ThreadPrimitive.If empty={false}>
+        <BgZoneReporter zone="focus" />
         <div className="relative shrink-0">
           {/* Scroll-to-bottom affordance. Anchored to THIS wrapper (which hugs
               the composer dock) rather than Thread.Root, so it floats just
