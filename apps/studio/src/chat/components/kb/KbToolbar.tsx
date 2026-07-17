@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import type { KbModelDownloadState } from '@desktop-shared/kbModelDownload'
+import { initialComponentState } from '@desktop-shared/componentDownload'
 import { useKbStore } from '../../stores/kb'
+import { useComponentStore } from '../../stores/components'
+import { useComponentPromptStore, promptComponent } from '../../stores/componentPrompt'
 import { useT, useTFormat } from '../../i18n'
 import { kbIcons } from './kbIcons'
 import { KbToolingCard } from './KbToolingCard'
@@ -15,20 +17,31 @@ export function KbToolbar({ readOnly }: {
 }): React.JSX.Element {
   const t = useT()
   const tFormat = useTFormat()
-  const tooling = useKbStore((s) => s.tooling)
   const build = useKbStore((s) => s.build)
   const refresh = useKbStore((s) => s.refresh)
   const total = useKbStore((s) => s.total)
   const [busy, setBusy] = useState(false)
-  const [model, setModel] = useState<KbModelDownloadState | null>(null)
-  useEffect(() => {
-    void window.chatApi.kbModelDownloadStatusGet().then(setModel)
-    const off = window.chatApi.onKbModelDownload(setModel)
-    return off
-  }, [])
+  const init = useComponentStore((s) => s.init)
+  // 订阅 table 本身再派生：写 useComponentStore((s) => s.stateOf('kb-embed')) 会每次新建对象、
+  // Object.is 恒 false，无关更新也重渲染；写 (s) => s.stateOf 则函数引用恒定、等于没订阅，
+  // 进度推送来了不重渲染。选 table 是唯一两头都对的写法。
+  const table = useComponentStore((s) => s.table)
+  const embed = table['kb-embed'] ?? initialComponentState('kb-embed')
+  const markitdown = table['markitdown'] ?? initialComponentState('markitdown')
+  useEffect(() => init(), [init])
+  const promptDismissed = useComponentPromptStore((s) => s.isDismissed)
 
   const migrate = async (): Promise<void> => {
     if (busy) return
+    // 功能门：导入/同步要用 markitdown 转格式。缺它时**第一次**点先弹提示（这是有天然弹窗
+    // 时机的用户动作）；用户点了[暂不]之后再点，就照旧跑——缺 markitdown 本来就有静默三级
+    // 降级（markitdown → 丢内嵌图重试 → soffice 纯文本兜底），拦着不让导入会让功能比「没这
+    // 个组件」时更糟，违反「增强层永不拖累基础层」。dismissed 让[暂不]真的等于「优雅降级」，
+    // 也堵死「点同步→弹窗→暂不→再点同步→又弹窗」的死循环。
+    if (markitdown.status !== 'ready' && !promptDismissed('markitdown')) {
+      promptComponent('markitdown')
+      return
+    }
     setBusy(true)
     try {
       const r = await window.chatApi.kbMigrateFromFolder()
@@ -43,6 +56,11 @@ export function KbToolbar({ readOnly }: {
   // 扫描跳过 → 删旧不补新」的静默丢文件事故（用户报的 bug）。预览不写盘，确认后才真同步。
   const sync = async (): Promise<void> => {
     if (busy) return
+    // 功能门：见 migrate 同名注释——只拦第一次，之后照旧走既有的静默降级。
+    if (markitdown.status !== 'ready' && !promptDismissed('markitdown')) {
+      promptComponent('markitdown')
+      return
+    }
     setBusy(true)
     try {
       const preview = await window.chatApi.kbSyncPreview()
@@ -88,15 +106,15 @@ export function KbToolbar({ readOnly }: {
             <kbIcons.refresh className="size-3.5 animate-spin" />
             {t('kbBuilding')}{build.phase ? ` ${build.phase.done}/${build.phase.total}` : ''}
           </span>
-        ) : model?.phase === 'downloading' ? (
+        ) : embed.status === 'installing' ? (
           <span className="ml-auto flex items-center gap-1.5 text-[11.5px] text-muted-foreground/80">
             <kbIcons.refresh className="size-3.5 animate-spin" />
-            {t('kbModelDownloading')} {model.percent}%
+            {t('kbModelDownloading')} {embed.percent ?? 0}%
           </span>
-        ) : model && !model.installed && (
+        ) : embed.status !== 'ready' && (
           <button
             type="button"
-            onClick={() => void window.chatApi.startKbModelDownload()}
+            onClick={() => promptComponent('kb-embed')}
             className="ml-auto inline-flex items-center gap-1 text-[11.5px] text-muted-foreground/80 transition-colors hover:text-foreground"
           >
             {t('kbModelMissingHint')} · {t('kbModelDownload')}
@@ -106,7 +124,7 @@ export function KbToolbar({ readOnly }: {
       {/* 工具缺失只对可写机有意义（只读机不本地构建、装不装 markitdown 无所谓）。原来的一行红字
           报错已升级为带「一键安装」的引导卡片（KbToolingCard）：点按钮即由主进程装 markitdown，
           装完给三态反馈（就绪／需重启／缺前置引导手动装）。 */}
-      {!readOnly && tooling?.markitdown === false && <KbToolingCard />}
+      {!readOnly && markitdown.status !== 'ready' && <KbToolingCard />}
     </div>
   )
 }
