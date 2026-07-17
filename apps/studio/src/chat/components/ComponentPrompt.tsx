@@ -160,8 +160,15 @@ export function ComponentPrompt(): React.JSX.Element | null {
           <UnavailablePanel title={title} guideUrl={guideUrl} onLater={close} />
         ) : (
           <>
-            <p className="text-[12.5px] font-medium text-foreground">{t('compPromptTitle')}</p>
-            <p className="text-[11.5px] leading-relaxed text-muted-foreground">{tFormat('compPromptBody', { title })}</p>
+            {/* error 态用自己的标题/正文（实机验证抓的缺口）：这支分支同时渲染 idle 和 error，
+                原先两态共用邀请语气的 compPromptBody——「要现在下载吗？」贴着红字报错自相矛盾。
+                按钮早已按态分岔（error 叫「重试」，Fix 4），文案跟上同一分岔。 */}
+            <p className="text-[12.5px] font-medium text-foreground">
+              {t(state.status === 'error' ? 'compPromptErrorTitle' : 'compPromptTitle')}
+            </p>
+            <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+              {tFormat(state.status === 'error' ? 'compPromptErrorBody' : 'compPromptBody', { title })}
+            </p>
             {state.status === 'error' && state.errorMessage && (
               <p className="text-[11px] text-destructive">{state.errorMessage}</p>
             )}

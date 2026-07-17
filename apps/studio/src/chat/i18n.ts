@@ -186,6 +186,11 @@ const STRINGS = {
     // 渐进式组件下载弹窗（非阻断，右下角浮出；Task 9）
     compPromptTitle: '需要一个可选组件',
     compPromptBody: '这个功能需要「{title}」。要现在下载吗？下载在后台进行，不打断你。',
+    // error 态专用标题/正文（实机验证抓的文案缺口）：设计原稿写「失败 → 关掉弹窗」，实现改成了
+    // 更好的「留在原地给重试」（关掉会让用户不知道装失败了），但正文当时没跟着分岔，error 下
+    // 仍显示邀请语气的 compPromptBody——「要现在下载吗？」和红字报错自相矛盾。
+    compPromptErrorTitle: '安装没有成功',
+    compPromptErrorBody: '「{title}」这次没装上，原因见下。可以重试；先不管也不影响使用，相关功能会自动降级。',
     compPromptNow: '现在下载',
     compPromptLater: '暂不',
     compPromptDetails: '查看下载详情',
@@ -624,6 +629,12 @@ const STRINGS = {
     // Progressive component-download prompt (non-blocking, bottom-right; Task 9)
     compPromptTitle: 'An optional component is needed',
     compPromptBody: 'This feature needs “{title}”. Download it now? It runs in the background and won’t interrupt you.',
+    // Error-state title/body (copy gap caught in on-device verification): the design draft said
+    // "failure → close the prompt", the implementation improved that to "stay open with a retry"
+    // (closing silently would hide the failure), but the body copy was never forked — the error
+    // state kept showing the invitational compPromptBody, contradicting the red error line.
+    compPromptErrorTitle: 'Installation didn’t succeed',
+    compPromptErrorBody: '“{title}” didn’t install this time — the reason is below. You can retry; leaving it alone is fine too, features degrade gracefully.',
     compPromptNow: 'Download now',
     compPromptLater: 'Not now',
     compPromptDetails: 'View download details',
