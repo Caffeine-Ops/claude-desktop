@@ -893,6 +893,10 @@ export const IPC_CHANNELS = {
   COMPONENT_INSTALL_START: 'component:install-start',
   COMPONENT_INSTALL_CANCEL: 'component:install-cancel',
   COMPONENT_STATUS: 'component:status',
+  /** main→renderer 单向:建议下载某组件(P1c 触发器;payload = 组件 id)。只发给触发它的
+   *  会话所在 tab 的 webContents(engine 直发,不走 tabRegistry 广播——别的窗口没在做 PPT,
+   *  不该被打扰),renderer 收到后经 componentPrompt store 开渐进弹窗。 */
+  COMPONENT_PROMPT: 'component:prompt',
 } as const
 
 /**
@@ -2471,6 +2475,8 @@ export interface ChatApi {
   cancelComponentInstall(id: string): Promise<void>
   /** 订阅组件状态表整块推送。返回取消订阅函数。 */
   onComponentStatus(handler: (t: import('./componentDownload').ComponentTable) => void): () => void
+  /** 订阅「建议下载组件」推送(P1c 触发器,main 直发本 tab)。返回退订函数。 */
+  onComponentPrompt(handler: (id: string) => void): () => void
 
   /**
    * 扫描授权目录（下载 + 桌面）里的文档文件，返回元数据清单（mtime 降序、

@@ -86,6 +86,9 @@ import {
   imagegenOutDir,
   localKbReadDirs
 } from './kbIndexStore'
+import { matchesPptPythonTrigger } from '../services/componentInstaller/componentTrigger.core'
+import { isPythonRuntimeReady } from '../services/componentInstaller/componentOrchestrator'
+import { PYTHON_COMPONENT_ID } from './componentRegistry'
 
 // resolveDefaultWorkspace moved to ./workspaceRegistry — the default
 // workspace doubles as the known-workspaces registry's implicit first
@@ -475,6 +478,11 @@ export class ChatEngine extends EventEmitter {
    * when the composer mounts, so seeding from there covers the resume path.
    */
   private seedAttempted = false
+
+  /** P1c 触发器的 fire-once 标记:本 engine(=本 tab)整个生命周期至多推一次「建议下载
+   *  python」。spec 原写「每 SessionRuntime」,收紧为每 engine——防骚扰更强、不用动
+   *  SessionRuntime 结构;renderer 侧 dismissed 语义是第二重,main 的就绪检查是第三重。 */
+  private componentPromptFired = false
 
   /**
    * DEFAULT workspace directory —— 统一会话管理（2026-07-07）后不再是
@@ -3609,6 +3617,20 @@ export class ChatEngine extends EventEmitter {
     })
   }
 
+  /** tool_use 转发路上的组件触发器(P1c):侦听「AI 正要做 PPT」,python 未就绪则向本 tab
+   *  推一条 COMPONENT_PROMPT(renderer 开渐进弹窗)。为什么挂这条路而非 canUseTool:预放行
+   *  /bypassPermissions 会跳过权限回调,而这里所有 tool_use 必经。isPythonRuntimeReady 是
+   *  廉价 existsSync 探测(绝不 detectTooling,8s 同步阻塞的教训见 componentOrchestrator)。
+   *  命中即熄火(含已就绪的情形):就绪了永远不需要提示,未就绪也只提示这一次。 */
+  private maybeSendComponentPrompt(toolName: string, input: unknown): void {
+    if (this.componentPromptFired) return
+    if (!matchesPptPythonTrigger(toolName, input)) return
+    this.componentPromptFired = true
+    if (isPythonRuntimeReady()) return
+    if (this.webContents.isDestroyed()) return
+    this.webContents.send(IPC_CHANNELS.COMPONENT_PROMPT, PYTHON_COMPONENT_ID)
+  }
+
   private handleAssistantMessage(
     sessionId: string,
     active: ActiveTurn,
@@ -3653,6 +3675,7 @@ export class ChatEngine extends EventEmitter {
         typeof block.name === 'string'
       ) {
         active.toolNameByUseId.set(block.id, block.name)
+        this.maybeSendComponentPrompt(block.name, block.input)
         // Two paths:
         //
         //   a) We already streamed this block via content_block_start +

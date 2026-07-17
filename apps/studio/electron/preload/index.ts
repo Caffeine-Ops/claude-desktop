@@ -863,6 +863,13 @@ const chatApi: ChatApi = {
       ipcRenderer.off(IPC_CHANNELS.COMPONENT_STATUS, listener)
     }
   },
+  onComponentPrompt(cb: (id: string) => void): () => void {
+    const listener = (_e: unknown, id: string): void => cb(id)
+    ipcRenderer.on(IPC_CHANNELS.COMPONENT_PROMPT, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.COMPONENT_PROMPT, listener)
+    }
+  },
 
   proposalImageSettingsGet(): Promise<ProposalImageApiConfig | null> {
     return ipcRenderer.invoke(
