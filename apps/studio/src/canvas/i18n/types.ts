@@ -196,6 +196,17 @@ export interface Dict {
   'settings.modeApiMeta': string;
   'settings.codeAgent': string;
   'settings.codeAgentHint': string;
+  'settings.chatCliBackendTitle': string;
+  'settings.chatCliBackendHint': string;
+  'settings.cliBackendBundledTitle': string;
+  'settings.cliBackendBundledDesc': string;
+  'settings.cliBackendBundledMeta': string;
+  'settings.cliBackendSystemTitle': string;
+  'settings.cliBackendSystemDesc': string;
+  'settings.cliBackendDetected': string;
+  'settings.cliBackendNotInstalled': string;
+  'settings.cliBackendDesktopOnly': string;
+  'settings.modeDaemonBackendMeta': string;
   'settings.rescan': string;
   'settings.rescanTitle': string;
   'settings.rescanRunning': string;

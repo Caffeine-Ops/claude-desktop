@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useLayoutEffect } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Minus, Moon, Plus, Sun } from 'lucide-react';
 
@@ -16,13 +16,11 @@ import {
   normalizeAccentColor,
 } from '../../state/appearance';
 import type { AppConfig, AppTheme } from '../../types';
-import type { DesktopCliBackendState } from '../../App';
 
 /* 2026-07-04 迁 chat 栈（shadcn + Tailwind utility）：seg-control/pet-swatch/
    font-stepper/settings-card 等 legacy 类全部退役。主题模式用 shadcn Tabs
-   （与执行模式双档同构件）；CLI backend 不用 Tabs——它是 async 切换 + busy/
-   disabled 态，Radix 受控 value 会在请求失败时和真实状态打架，分段式裸
-   button + data-slot 更贴（BYOK 协议 tab 同模式）。 */
+   （与执行模式双档同构件）。CLI backend 卡片 2026-07-16 迁去执行模式
+   section（CliBackendCard.tsx）——它管的是聊天执行链路，与外观无关。 */
 
 const THEMES: Array<{
   value: AppTheme;
@@ -148,13 +146,13 @@ export function AppearanceSection({
         </div>
       </div>
 
-      {/* Desktop-only appearance controls — font sizes, pointer cursor, and
-          the CLI backend. These were the native Electron settings; they now
-          live in this one overlay. Font size / cursor round-trip through the
-          daemon `appearance` (the Electron renderer reads it). The CLI backend
-          goes through the studio tab's chatApi preload (getCliBackend /
-          setCliBackend). The whole block renders only inside the desktop
-          shell (window.chatApi present) — a plain browser never sees it. */}
+      {/* Desktop-only appearance controls — font sizes and pointer cursor.
+          These were the native Electron settings; they now live in this one
+          overlay and round-trip through the daemon `appearance` (the Electron
+          renderer reads it). The block renders only inside the desktop shell
+          (window.chatApi present) — a plain browser never sees it. The CLI
+          backend card that used to sit here moved to the execution section
+          (CliBackendCard.tsx, 2026-07-16). */}
       <DesktopAppearanceControls cfg={cfg} setCfg={setCfg} />
     </section>
   );
@@ -177,14 +175,13 @@ function clampFont(n: number, lo: number, hi: number): number {
  *
  * Font size / pointer cursor live on the shared AppConfig and persist to the
  * daemon `appearance` via the normal config save path, so the Electron shell
- * renderer picks them up. The CLI backend (bundled fusion-code vs system
- * claude) is Electron-only state read/written through the studio tab's
- * chatApi preload (`window.chatApi.getCliBackend/setCliBackend`)。
+ * renderer picks them up.
  *
  * 历史：这里原本走独立设置窗口的 `window.electronSettings` 桥——那个
- * settings preload 已随设置窗口在 Phase 4 下线（本区块因此静默消失过，
- * 「CLI 后端」一度无处可选）。studio 单视图里 canvas 与 chat 同一
- * webContents、共享同一份 chatApi preload，直接用它即可，不需要第二座桥。
+ * settings preload 已随设置窗口在 Phase 4 下线（本区块因此静默消失过）。
+ * studio 单视图里 canvas 与 chat 同一 webContents、共享同一份 chatApi
+ * preload，直接用它即可，不需要第二座桥。CLI backend 卡片曾在此，
+ * 2026-07-16 迁至执行模式 section（CliBackendCard.tsx）。
  */
 function DesktopAppearanceControls({
   cfg,
@@ -194,24 +191,6 @@ function DesktopAppearanceControls({
   setCfg: Dispatch<SetStateAction<AppConfig>>;
 }) {
   const chatApi = typeof window !== 'undefined' ? window.chatApi : undefined;
-  const [cliBackend, setCliBackend] = useState<DesktopCliBackendState | null>(null);
-  const [cliBusy, setCliBusy] = useState(false);
-
-  useEffect(() => {
-    if (!chatApi?.getCliBackend) return;
-    let cancelled = false;
-    chatApi
-      .getCliBackend()
-      .then((s) => {
-        if (!cancelled) setCliBackend(s);
-      })
-      .catch(() => {
-        /* shell-only; ignore in browser / on error */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [chatApi]);
 
   // Not inside the desktop shell → render nothing.
   if (!chatApi) return null;
@@ -229,27 +208,6 @@ function DesktopAppearanceControls({
     }));
   const setPointer = (v: boolean) =>
     setCfg((c) => ({ ...c, usePointerCursor: v }));
-
-  const switchCliBackend = async (mode: 'bundled' | 'system') => {
-    if (cliBusy || !chatApi.setCliBackend || cliBackend?.mode === mode) return;
-    if (mode === 'system' && !cliBackend?.systemInfo) return;
-    setCliBusy(true);
-    try {
-      const next = await chatApi.setCliBackend({ mode });
-      setCliBackend(next);
-      // 同 document 即时广播：rail 底部 user chip 只在挂载时拉一次后端，
-      // 不派发这个事件切换后 chip 文案不更新（2026-07-05）。rail 与本
-      // 设置页同一个 studio webContents，派 window 事件让 AppRail 就地
-      // re-pull——同 'od:appearance-changed' 桥的跨面同步机制。
-      window.dispatchEvent(
-        new CustomEvent('od:cli-backend-changed', { detail: next })
-      );
-    } catch {
-      /* ignore */
-    } finally {
-      setCliBusy(false);
-    }
-  };
 
   return (
     <>
@@ -289,51 +247,6 @@ function DesktopAppearanceControls({
           />
         </div>
       </div>
-
-      {cliBackend ? (
-        <div className={cardCls}>
-          <div className={cardLabelCls}>CLI backend</div>
-          <div className="flex rounded-[10px] bg-secondary p-[3px]" role="group" aria-label="CLI backend">
-            {(
-              [
-                { mode: 'bundled' as const, label: 'Bundled (fusion-code)', disabled: cliBusy },
-                {
-                  mode: 'system' as const,
-                  label: `System claude${
-                    cliBackend.systemInfo?.version
-                      ? ` (v${cliBackend.systemInfo.version})`
-                      : !cliBackend.systemInfo
-                        ? ' (not installed)'
-                        : ''
-                  }`,
-                  disabled: cliBusy || !cliBackend.systemInfo,
-                },
-              ]
-            ).map(({ mode, label, disabled }) => (
-              <button
-                key={mode}
-                type="button"
-                data-slot="cli-backend-tab"
-                aria-pressed={cliBackend.mode === mode}
-                disabled={disabled}
-                className={cn(
-                  'min-w-0 flex-1 cursor-pointer truncate rounded-lg px-3 py-1.5 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] disabled:cursor-not-allowed disabled:opacity-60',
-                  cliBackend.mode === mode
-                    ? 'bg-card text-foreground shadow-[0_1px_3px_hsl(240_6%_10%/0.12),0_0_0_1px_hsl(240_6%_10%/0.04)]'
-                    : 'hover:text-foreground/80',
-                )}
-                onClick={() => void switchCliBackend(mode)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <p className="mb-0 mt-2.5 text-xs leading-relaxed text-muted-foreground">
-            Takes effect immediately — an in-flight turn keeps its current
-            backend; the next turn switches.
-          </p>
-        </div>
-      ) : null}
     </>
   );
 }

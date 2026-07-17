@@ -69,6 +69,7 @@ import {
   syncConfigToDaemon,
   syncMediaProvidersToDaemon,
 } from './state/config';
+import { applyCliBackendToConfig } from './state/cliBackend';
 import { applyAppearanceToDocument } from './state/appearance';
 import { isMacPlatform } from './utils/platform';
 import {
@@ -659,6 +660,39 @@ export function App({
     };
   }, []);
 
+  // 统一 CLI 后端对账（2026-07-16 统一执行模型）：main 的 cliBackend
+  // 是 chat 面真源（默认 bundled），必须映射到 daemon 侧的
+  // agentCliEnv.claude.CLAUDE_BIN + agentId='claude'，否则开箱即分叉——
+  // chat 跑 bundled fusion-code 而画布 run 走 PATH 检测的系统 claude。
+  // 设置页切换时 CliBackendCard 会双写；这里兜「从未打开设置页 / main
+  // 设置被外部改动」的漂移。传导机制详见 state/cliBackend.ts 顶注。
+  // 纯浏览器（无 chatApi）不跑——backend 状态住在 Electron main，浏览器
+  // 直开的 canvas 保持原多 agent 行为。
+  useEffect(() => {
+    if (!daemonConfigLoaded) return;
+    const chatApi = typeof window !== 'undefined' ? window.chatApi : undefined;
+    if (!chatApi?.getCliBackend) return;
+    let cancelled = false;
+    chatApi
+      .getCliBackend()
+      .then((state) => {
+        if (cancelled || !state) return;
+        setConfig((prev) => {
+          const next = applyCliBackendToConfig(prev, state.mode, state.bundledPath);
+          if (next === prev) return prev;
+          saveConfig(next);
+          void syncConfigToDaemon(next);
+          return next;
+        });
+      })
+      .catch(() => {
+        /* IPC 失败——保持现状，下次打开设置页仍有机会对齐 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [daemonConfigLoaded]);
+
   // Auto-pick the first available agent once both the daemon-stored config
   // and the agents listing have landed. Splitting this out of bootstrap
   // avoids racing the local-config initial value against a slow agents
@@ -943,7 +977,10 @@ export function App({
         await syncConfigToDaemon(nextConfig);
         setConfig(nextConfig);
       }
-      const next = await fetchAgents({ throwOnError: options?.throwOnError });
+      // refreshAgents 是用户主动的「重新检测」动作（装完 CLI / re-auth /
+      // 改 agentCliEnv 后），必须穿透 daemon 的检测缓存拿新鲜结果——
+      // bootstrap 的 fetchAgents() 则刻意走缓存，见 registry.fetchAgents。
+      const next = await fetchAgents({ throwOnError: options?.throwOnError, refresh: true });
       setAgents(next);
       return next;
     },

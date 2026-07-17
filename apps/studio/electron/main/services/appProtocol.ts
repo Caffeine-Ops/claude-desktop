@@ -156,10 +156,49 @@ export function registerAppProtocol(): void {
     const direct = fileResponse(staticDir, pathname)
     if (direct) return direct
 
-    // ③ SPA fallback：未知非资源路径回 index.html，让客户端 router 接管
-    //    （对齐 daemon 的 registerStaticSpaFallback）。带扩展名的请求
-    //    （.js/.css/缺失的资源）不 fallback，返回 404，避免把 HTML 当 JS 喂给浏览器。
     const looksLikeAsset = /\.[a-z0-9]+$/i.test(pathname)
+
+    // ②b 页面路由 → 补一次 `<route>.html` 再读盘（2026-07-16 修 React #418）。
+    //    next export 没开 trailingSlash，页面产物是 out/chat.html 这种平铺
+    //    文件；而同名的 out/chat/ 目录只装 RSC payload（__next._*.txt）。于是
+    //    ② 按原样找 `/chat` 命中的是**那个目录**，fileResponse 的 isFile() 为
+    //    假直接吐 null——out/chat.html 从构建出来起就没被送达过一次。
+    //
+    //    不补这层，`/chat` 会掉进 ③ 拿到按 `/` 预渲染的 index.html：HTML 里
+    //    AppRail 主按钮是「新画布」（构建期 pathname='/'），客户端 usePathname()
+    //    却是 '/chat' 要渲染「新对话」→ hydration 文本不匹配 → React 丢弃整棵
+    //    SSG HTML 客户端重渲染，控制台每次启动一条 minified error #418。dev 走
+    //    next dev server 能正确路由到 /chat，**这个 bug 在 dev 下无法复现**，
+    //    只在 app:// + static export 形态下活。
+    //
+    //    受害面比「启动那一次」大：`/chat` 的 document-load 入口有三个——启动
+    //    （resolveStudioTabUrl）、硬刷新、以及 canvas overlay 无历史可退时的
+    //    location.assign（App.tsx:1720/1792）；`/chat-probe` 同样中招，因为
+    //    `'/chat-probe'.startsWith('/chat')` 为真 → 客户端 isChat=true，而 shell
+    //    里是 false。canvas 深链接（/project/xxx…）无恙：它与 `/` 同属「非 chat
+    //    路径」，isChat 两端都是 false，fallback 到 index.html 语义本就正确。
+    //    别因为「看起来只错一个按钮」就把它当文案 bug 在组件里治——mismatch 还
+    //    含 AppRail:351 的 {isChat && 知识库} / :368 的 {!isChat && 新建项目} 子树
+    //    与 RailShell 同类块，全部同源于「送错了 document」，serve 对就一起消失。
+    //    组件侧 mounted-gate / suppressHydrationWarning 治不了这些子树差异，也
+    //    治不了「out/chat.html 这份正确产物永远不被送达」。
+    //
+    //    `/` 不受影响：拼出的 `/.html` 不存在，照常走 ③ 拿 index.html。路径逃逸
+    //    仍由 fileResponse 的 normalize + 前缀校验兜住，拼接在它之前无妨。
+    if (!looksLikeAsset) {
+      const page = fileResponse(staticDir, `${pathname.replace(/\/+$/, '')}.html`)
+      if (page) return page
+    }
+
+    // ③ SPA fallback：未知非资源路径（canvas 的 /project/xyz 等 catch-all 深链）
+    //    回 index.html，让客户端 router 接管。带扩展名的请求（.js/.css/缺失的
+    //    资源）不 fallback，返回 404，避免把 HTML 当 JS 喂给浏览器。
+    //
+    //    此处原注「对齐 daemon 的 registerStaticSpaFallback」，2026-07-16 查证
+    //    那边**已是死代码**：server.ts 的 STATIC_DIR 仍指向随 Phase 4 物理删除的
+    //    apps/web/out，existsSync 守卫全程短路。它同样缺 ②b 的 .html 解析——若
+    //    将来把 STATIC_DIR 改指 studio 的 out/（浏览器直开场景），上面那个 #418
+    //    会在浏览器里原样复现。动 daemon 静态服务时要么删掉那段，要么同步补 ②b。
     if (!looksLikeAsset) {
       const shell = fileResponse(staticDir, '/index.html')
       if (shell) return shell
