@@ -23,3 +23,11 @@ export function mapPipxResult(r: KbToolingInstallResult): { status: ComponentSta
   const tail = (r.log || '').trim().slice(-400) // 只留尾部摘要，别把整段日志塞状态
   return { status: 'error', errorMessage: tail || '安装失败' }
 }
+
+/** 按组件挑安装根目录(P1c 根目录分家)。embed 历史落点是 userData/kb-model(P1a 迁移时
+ *  与 kbModelDir() 布局对齐,评审以「字节不变」为门,不能挪);其后一切新组件(python-runtime
+ *  起)统一住 userData/components/——python 不是知识库的东西,落 kb-model 语义错乱。
+ *  纯函数注入两个根路径,electron 依赖留在 orchestrator 侧(kbModelDir/componentsDir)。 */
+export function componentInstallRootFor(id: string, roots: { kbModel: string; components: string }): string {
+  return id === 'kb-embed' ? roots.kbModel : roots.components
+}

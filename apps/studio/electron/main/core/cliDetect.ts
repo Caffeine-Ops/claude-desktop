@@ -183,6 +183,9 @@ export { resolveBundledSkillsPluginDir } from './skillsDir'
  *     `<resourcesPath>/python-runtime` (extraResources, see package.json).
  *   - dev: use the in-repo `apps/studio/python-runtime/<platform>` if a dev
  *     populated it (normally absent in dev — bootstrap then uses system python).
+ *   - P1c on-demand download: `userData/components/python-runtime` (no
+ *     `<platform>` sub-layer — a single machine only ever has one platform),
+ *     populated by the component installer when the user downloads it.
  *
  * `PPT_MASTER_PYTHON_HOME` env overrides everything for diagnostics.
  */
@@ -199,6 +202,10 @@ export function resolveBundledPythonHome(): string | null {
     .resourcesPath
   const candidates = [
     ...(resourcesPath ? [resolve(resourcesPath, 'python-runtime')] : []),
+    // P1c 按需下载落点(componentsDir()/python-runtime,无平台子层——一台机器只有一种平台,
+    // 与随包/dev 的 <platform>/ 子目录布局不同)。排在 resourcesPath 之后:正式包自 P1c 起
+    // 不再随包,该候选通常落空、纯防御;排在 dev 仓内候选之前:用户真下载过就优先用钉版。
+    resolve(app.getPath('userData'), 'components', 'python-runtime'),
     resolve(selfDir, '../../python-runtime', platformDir),
     resolve(process.cwd(), 'python-runtime', platformDir),
     resolve(process.cwd(), 'apps/studio/python-runtime', platformDir)

@@ -9,7 +9,7 @@ import {
   initialComponentState, type ComponentState, type ComponentTable,
 } from '../../../shared/componentDownload'
 import {
-  COMPONENT_REGISTRY, getComponentDescriptor, EMBED_COMPONENT_ID,
+  COMPONENT_REGISTRY, getComponentDescriptor, EMBED_COMPONENT_ID, PYTHON_COMPONENT_ID,
 } from '../../core/componentRegistry'
 import { installComponent, isComponentInstalled } from './hostedFilesInstaller'
 import { installMarkitdown, detectTooling } from '../../core/kbTooling'
@@ -17,6 +17,9 @@ import { kbModelDir } from '../../core/kbModelDir'
 import { resetEmbedWorker, warmEmbedWorker } from '../../core/kbSemanticSearch'
 import { scheduleKbBuild } from '../../core/kbBuildRunner'
 import { kbStoreHasDocs } from '../../core/kbIndexStore'
+import { componentInstallRootFor } from './componentOrchestrator.core'
+import { componentsDir } from '../../core/componentsDir'
+import { resolveBundledPythonHome } from '../../core/cliDetect'
 
 // 纯函数（applyComponentPatch/mapPipxResult）已拆进 componentOrchestrator.core.ts（electron-free，
 // bun test 可直测，不必再靠 mock.module 打桩 'electron' 绕开本文件顶层的 electron 依赖链）。
@@ -51,6 +54,36 @@ const SUCCESS_HOOKS: Record<string, () => void> = {
     warmEmbedWorker()
     if (kbStoreHasDocs()) scheduleKbBuild()
   },
+}
+
+// 安装根目录(P1c 分家):embed 字节不变住 kb-model,其余住 components。
+function installRoot(d: { id: string }): string {
+  return componentInstallRootFor(d.id, { kbModel: kbModelDir(), components: componentsDir() })
+}
+
+// 就绪探测覆盖(只 python 有;模式同 SUCCESS_HOOKS——组件特例挂小表,不泄进通用循环)。
+// python 在通用判据(userData 落点 readyCheck)之外额外认随包/dev 目录里的现成 runtime
+// (resolveBundledPythonHome:resourcesPath / 仓内 dev 目录 / Task 3 新增的 userData 候选)——
+// 否则 dev 机上明明能用还会被组件中心/触发器催下载。origin:'bundled' 供 UI 显示「随包」灰字;
+// 判据来源只能由这里(唯一写手)注记,前端无从推断。
+const READY_PROBES: Record<string, () => { ready: boolean; origin: 'bundled' | null }> = {
+  [PYTHON_COMPONENT_ID]: () => {
+    const d = getComponentDescriptor(PYTHON_COMPONENT_ID)
+    if (!d) return { ready: false, origin: null } // 未注册平台不会走到(registry 无卡即无格)
+    const downloaded = isComponentInstalled(d, installRoot(d), existsSync)
+    const bundled = !downloaded && resolveBundledPythonHome() !== null
+    return { ready: downloaded || bundled, origin: bundled ? 'bundled' : null }
+  },
+}
+
+/** 触发器(engine 侦听 ppt-master 调用)的就绪判据。必须保持**廉价同步**(几次 existsSync)——
+ *  这条路挂在 assistant 消息处理热路径上,绝不能调 refreshComponentInstalled()(它会拖进
+ *  detectTooling 最坏 8s 同步阻塞,P1b 终审 Important 3 的教训)。
+ *  未注册平台(linux 等)返回 true = 永不提示,与「组件行不存在」一致。 */
+export function isPythonRuntimeReady(): boolean {
+  const probe = READY_PROBES[PYTHON_COMPONENT_ID]
+  if (!getComponentDescriptor(PYTHON_COMPONENT_ID)) return true
+  return probe().ready
 }
 
 // 探测后覆盖状态的公共规则（hosted-files/archive 与 pipx 共用）：
@@ -105,7 +138,18 @@ export function refreshComponentInstalled(): void {
   for (const d of COMPONENT_REGISTRY) {
     const i = d.install
     if (i.kind === 'files' || i.kind === 'archive') {
-      applyDetectedStatus(d.id, isComponentInstalled(d, kbModelDir(), existsSync))
+      const probe = READY_PROBES[d.id]
+      if (probe) {
+        const { ready, origin } = probe()
+        applyDetectedStatus(d.id, ready)
+        // origin 只在 ready 落定且值真的变了才补记,避免给广播添无谓 churn
+        // (applyDetectedStatus 本身的 churn 是 P1b 已知留后续项,不在此扩大)。
+        if (table[d.id]?.status === 'ready' && table[d.id]?.origin !== origin) {
+          patch(d.id, { origin })
+        }
+      } else {
+        applyDetectedStatus(d.id, isComponentInstalled(d, installRoot(d), existsSync))
+      }
     } else if (i.kind === 'pipx') {
       // 本期唯一 pipx 组件是 markitdown，探测写死 t.markitdown；加第二个 pipx 组件时须按
       // 档案卡 probeCmd 分派探测，勿再写死——本期 YAGNI。
@@ -144,7 +188,7 @@ async function run(id: string): Promise<void> {
     if (i.kind === 'files' || i.kind === 'archive') {
       const controller = new AbortController()
       controllers.set(id, controller)
-      await installComponent(d, kbModelDir(), controller.signal, (p) => {
+      await installComponent(d, installRoot(d), controller.signal, (p) => {
         patch(id, { percent: p.percent, currentFile: p.currentFile })
       })
       patch(id, { status: 'ready', percent: 100, currentFile: null })
@@ -162,7 +206,7 @@ async function run(id: string): Promise<void> {
   } catch (err) {
     // hosted-files 取消：controller.abort() 落这。回未装/已装态，不当错误。
     if (controllers.get(id)?.signal.aborted) {
-      const installed = isComponentInstalled(d, kbModelDir(), existsSync)
+      const installed = isComponentInstalled(d, installRoot(d), existsSync)
       patch(id, { status: installed ? 'ready' : 'idle', percent: null, currentFile: null, errorMessage: null })
     } else {
       patch(id, { status: 'error', currentFile: null, errorMessage: err instanceof Error ? err.message : String(err) })

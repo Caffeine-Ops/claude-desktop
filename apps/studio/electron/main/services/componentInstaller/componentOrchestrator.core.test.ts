@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { applyComponentPatch, mapPipxResult } from './componentOrchestrator.core'
+import { applyComponentPatch, mapPipxResult, componentInstallRootFor } from './componentOrchestrator.core'
 import { initialComponentState, type ComponentTable } from '../../../shared/componentDownload'
 
 describe('applyComponentPatch', () => {
@@ -32,5 +32,16 @@ describe('mapPipxResult', () => {
     const r = mapPipxResult({ ok: false, unsupported: false, tooling: { markitdown: false, soffice: false }, log: 'boom' })
     expect(r.status).toBe('error')
     expect(r.errorMessage).toContain('boom')
+  })
+})
+
+describe('componentInstallRootFor(P1c 根目录分家)', () => {
+  const roots = { kbModel: '/ud/kb-model', components: '/ud/components' }
+  test('embed 仍住 kb-model(字节不变铁律)', () => {
+    expect(componentInstallRootFor('kb-embed', roots)).toBe('/ud/kb-model')
+  })
+  test('python-runtime 与其他一切组件住 components', () => {
+    expect(componentInstallRootFor('python-runtime', roots)).toBe('/ud/components')
+    expect(componentInstallRootFor('anything-else', roots)).toBe('/ud/components')
   })
 })
