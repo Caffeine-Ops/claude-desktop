@@ -55,14 +55,10 @@ export function ComponentPrompt(): React.JSX.Element | null {
   // 订阅 table 本身而非 stateOf 函数：函数引用恒定，选它等于没订阅会变的东西，进度推送来了
   // 弹窗不会重渲染、进度条不动（同 ComponentsSection 的注释）。
   const table = useComponentStore((s) => s.table)
-  // 「查看下载详情」的开法核实结论（Task 9 Before You Begin 要求现场核实）：
-  // useSettingsStore 实际只有布尔 `open` 态 + 无参 `openSettings()`（apps/studio/src/chat/
-  // stores/settings.ts），不是 brief 假设的 `open(categoryId?)`。SettingsView.tsx 的
-  // activeCategory 是 SettingsBody 组件内的 local useState（该文件头注释明written「Active
-  // category lives inside the view as local state because nothing outside it cares」），
-  // 外部没有任何入口可以定位分类。故按 brief 允许的降级路径处理：只调用 openSettings() 打开
-  // 设置页首屏，不定位到「组件」分类，用户需要自己点开左侧 rail 的「组件 / 扩展」。不改
-  // SettingsView 的分类状态架构（超出本任务范围）。
+  // 「查看下载详情」直达「组件/扩展」分类（P1c 补齐）：Task 9 时代 useSettingsStore 只有无参
+  // openSettings()、activeCategory 是 SettingsBody 的 local state，按钮只能开到设置页首屏
+  // （当时评审裁定超范围、记录在案）。现在走 pendingCategory 便签（stores/settings.ts）：
+  // openSettings('components') 写下目标，SettingsBody 挂载/变化时消费定位。
   const openSettingsPage = useSettingsStore((s) => s.openSettings)
 
   // 订阅整表（弹窗独立订阅一次，保证即便组件中心没开也能拿进度）。
@@ -113,7 +109,7 @@ export function ComponentPrompt(): React.JSX.Element | null {
   if (!openFor || !state) return null
 
   const start = (): void => { void window.chatApi.startComponentInstall(openFor) }
-  const goDetails = (): void => { openSettingsPage(); /* 保留弹窗，用户可在两处看进度 */ }
+  const goDetails = (): void => { openSettingsPage('components') /* 保留弹窗，用户可在两处看进度 */ }
   const guideUrl = GUIDE_URL[openFor]
 
   return (

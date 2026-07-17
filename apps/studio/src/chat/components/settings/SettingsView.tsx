@@ -78,8 +78,19 @@ export function SettingsView(): React.JSX.Element | null {
  */
 export function SettingsBody(): React.JSX.Element {
   const t = useT()
-  const [activeCategory, setActiveCategory] =
-    useState<CategoryId>('appearance')
+  // 初始值先读一次便签：SettingsBody 随 open 翻真才挂载，「关着→带分类打开」走这里，零闪跳。
+  const [activeCategory, setActiveCategory] = useState<CategoryId>(
+    () => (useSettingsStore.getState().pendingCategory as CategoryId | null) ?? 'appearance'
+  )
+  // 「已经开着→又收到定位请求」（弹窗[查看下载详情]在设置页开着时被点）走这里：订阅便签，
+  // 变了就切分类并清空。挂载后首轮也会跑一次，顺手把初始化读走的那张便签清掉。
+  const pendingCategory = useSettingsStore((s) => s.pendingCategory)
+  useEffect(() => {
+    if (pendingCategory) {
+      setActiveCategory(pendingCategory as CategoryId)
+      useSettingsStore.getState().clearPendingCategory()
+    }
+  }, [pendingCategory])
 
   const categories: { id: CategoryId; label: string; icon: React.ReactNode }[] =
     [

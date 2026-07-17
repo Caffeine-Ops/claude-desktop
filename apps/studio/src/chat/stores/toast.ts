@@ -3,7 +3,9 @@ import { create } from 'zustand'
 export interface ToastItem { id: number; message: string; tone: 'ok' | 'err' | 'info' }
 
 let seq = 0
-const DURATION_MS = 4000
+// 6s(P1c 从 4s 加长):实机验证时用户切页错过 4s 的报喜 toast(2026-07-17 台账),报喜类
+// 消息读完需要的窗口比确认类长。
+const DURATION_MS = 6000
 
 interface ToastState {
   toasts: ToastItem[]
