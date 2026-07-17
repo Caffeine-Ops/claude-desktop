@@ -173,9 +173,9 @@
   },
   "//note-deps": "dependencies = Electron 运行时真正 require 的包，一个都不能多：electron-vite 的 externalizeDepsPlugin 按这里决定哪些包不打进 bundle（运行时从 node_modules require），electron-builder 按这里决定哪些 node_modules 进 asar。全部前端依赖（next/react/prosemirror/…）都在 devDependencies——UI 是构建期产物（next static export），运行时没人 require 它们；若放进 dependencies，整个前端依赖树会被打进安装包白白撑大体积。",
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.105.0",
-    "@assistant-ui/core": "^0.1.13",
-    "@assistant-ui/react": "^0.12.24",
+    "@anthropic-ai/sdk": "^0.112.1",
+    "@assistant-ui/core": "^0.2.21",
+    "@assistant-ui/react": "^0.14.27",
     "@claude-desktop/design-tokens": "workspace:*",
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@open-design/composer": "workspace:*",
