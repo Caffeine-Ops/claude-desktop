@@ -1619,7 +1619,8 @@ export function registerIpcHandlers(): void {
         action !== 'open-settings' &&
         action !== 'open-logs' &&
         action !== 'toggle-lang' &&
-        action !== 'open-search'
+        action !== 'open-search' &&
+        action !== 'open-components'
       ) {
         return
       }

@@ -133,6 +133,9 @@ function App(): React.JSX.Element {
     return window.chatApi.onShellMenuAction((action) => {
       if (action === 'open-settings') {
         useSettingsStore.getState().openSettings()
+      } else if (action === 'open-components') {
+        // 同 open-settings 但直达「组件/扩展」分类(pendingCategory 便签,见 stores/settings.ts)
+        useSettingsStore.getState().openSettings('components')
       } else if (action === 'open-logs') {
         useDialogStore.getState().openDialog('logs')
       } else if (action === 'toggle-lang') {

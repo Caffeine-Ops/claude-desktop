@@ -130,6 +130,11 @@ export default function TabBar(): React.ReactElement {
         onClick={() => void window.tabApi?.openSettingsWindow()}
       />
       <NavActionRow
+        label="组件与扩展"
+        icon={<PuzzleGlyph />}
+        onClick={() => void window.tabApi?.triggerMenuAction('open-components')}
+      />
+      <NavActionRow
         label="搜索对话"
         icon={<SearchGlyph />}
         trailing={
@@ -195,6 +200,19 @@ function GearGlyph(): React.ReactElement {
         stroke="currentColor"
         strokeWidth="1.4"
         strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function PuzzleGlyph(): React.ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true">
+      <path
+        d="M10 4.5A1.5 1.5 0 0 1 11.5 3h1A1.5 1.5 0 0 1 14 4.5V6h3a1 1 0 0 1 1 1v3h1.5a1.5 1.5 0 0 1 0 3H18v3a1 1 0 0 1-1 1h-3v-1.5a1.5 1.5 0 0 0-3 0V17H8a1 1 0 0 1-1-1v-3H5.5a1.5 1.5 0 0 1 0-3H7V7a1 1 0 0 1 1-1h2V4.5Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
         strokeLinejoin="round"
       />
     </svg>

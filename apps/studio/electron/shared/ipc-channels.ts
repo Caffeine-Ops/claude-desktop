@@ -1443,6 +1443,11 @@ export type ShellMenuAction =
   // 但弹窗 UI 渲染在 active chat tab 里 —— shell 可见区只有 220px 的 rail，
   // 一个 580px 的 Spotlight 弹窗只能住在 chat renderer（它覆盖整个内容区）。
   | 'open-search'
+  // 打开应用内设置页并直达「组件/扩展」分类(P1c 补入口)。此前该设置页(含组件中心)在正常
+  // UI 里不可达:rail/TabBar/UserInfoBar 的「设置」都开 web 版设置,监听 open-settings 的
+  // in-chat SettingsView 全仓零发送方(历史菜单搬迁只接了 open-search),唯一活入口是缺组件
+  // 弹窗——组件全齐时死循环。python 接入后组件中心承载 4 个组件,必须有正门。
+  | 'open-components'
 
 /** Payload for SHELL_MENU_ACTION / TAB_TRIGGER_MENU_ACTION. */
 export type ShellMenuActionPayload = { action: ShellMenuAction }
