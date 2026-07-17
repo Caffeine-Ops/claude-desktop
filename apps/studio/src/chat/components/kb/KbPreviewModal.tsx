@@ -18,7 +18,7 @@ export function KbPreviewModal({ relPath, title, onClose }: { relPath: string; t
       <div className="flex max-h-[80vh] w-full max-w-[720px] flex-col rounded-xl border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-border/50 px-4 py-2.5">
           <span className="truncate text-[13px] font-medium">{title}</span>
-          <button type="button" onClick={onClose} className="rounded px-2 py-0.5 text-[12px] text-muted-foreground hover:bg-muted">{t('backToApp')}</button>
+          <button type="button" onClick={onClose} className="rounded px-2 py-0.5 text-[12px] text-muted-foreground hover:bg-hover">{t('backToApp')}</button>
         </div>
         <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap px-4 py-3 font-mono text-[11.5px] leading-relaxed text-foreground/90">
           {text === null ? '…' : text || '（空）'}

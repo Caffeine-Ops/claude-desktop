@@ -66,7 +66,7 @@ export function KbManagerView(): React.JSX.Element | null {
       className="absolute inset-0 z-40 flex flex-col bg-background text-foreground">
       <div className="flex items-center gap-3 border-b border-border/50 px-6 py-3">
         <button type="button" onClick={closeManager}
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-muted-foreground hover:bg-muted/60 hover:text-foreground">
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-muted-foreground hover:bg-hover/60 hover:text-foreground">
           <kbIcons.folder className="size-3.5" /><span>{t('backToApp')}</span>
         </button>
         <h1 className="text-[15px] font-semibold">{t('kbManageTitle')}</h1>
@@ -86,7 +86,7 @@ export function KbManagerView(): React.JSX.Element | null {
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-[13px] text-muted-foreground/70">
           <p>{t('kbManageEmpty')}</p>
           <button type="button" onClick={() => void migrateFromFolder()}
-            className="rounded-md border border-border bg-card px-3 py-1.5 text-[12.5px] font-medium text-foreground hover:bg-muted/60">
+            className="rounded-md border border-border bg-card px-3 py-1.5 text-[12.5px] font-medium text-foreground hover:bg-hover/60">
             {t('kbMigrateCta')}
           </button>
         </div>
@@ -137,7 +137,7 @@ function KbTreeNode({ node, sel, onSelect, depth }: {
 }): React.JSX.Element {
   const rowCls = (active: boolean): string =>
     'flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[12.5px] ' +
-    (active ? 'bg-accent/12 text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')
+    (active ? 'bg-accent/12 text-foreground' : 'text-muted-foreground hover:bg-hover/50 hover:text-foreground')
   return (
     <div>
       <button type="button" className={rowCls(sel === node.path)}

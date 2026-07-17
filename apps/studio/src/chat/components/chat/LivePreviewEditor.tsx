@@ -1747,7 +1747,7 @@ export function LivePreviewEditor({
               <button
                 type="button"
                 onClick={() => setSelectedIds([])}
-                className="rounded px-1 text-[10.5px] text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
+                className="rounded px-1 text-[10.5px] text-muted-foreground/70 transition-colors hover:bg-hover hover:text-foreground"
               >
                 清空
               </button>

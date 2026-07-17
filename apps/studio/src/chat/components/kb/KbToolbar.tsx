@@ -62,12 +62,12 @@ export function KbToolbar({ readOnly }: {
         {!readOnly && (
           <>
             <button type="button" disabled={busy} onClick={() => void sync()} title={t('kbSyncLocalHint')}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-[12px] font-medium hover:bg-muted/60 disabled:opacity-50">
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-[12px] font-medium hover:bg-hover/60 disabled:opacity-50">
               <kbIcons.refresh className="size-3.5" />{t('kbSyncLocal')}
             </button>
             {total === 0 && (
               <button type="button" disabled={busy} onClick={() => void migrate()}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-[12px] font-medium hover:bg-muted/60 disabled:opacity-50">
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-[12px] font-medium hover:bg-hover/60 disabled:opacity-50">
                 {t('kbMigrateCta')}
               </button>
             )}

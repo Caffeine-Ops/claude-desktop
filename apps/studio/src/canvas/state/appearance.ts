@@ -1,4 +1,9 @@
+import { createThemeTransitionGate } from '@/src/lib/themeTransition';
+
 import type { AppTheme } from '../types';
+
+/** 本写手专属的闸门（chat 的 applier 另持一个，理由见 themeTransition.ts）。 */
+const themeGate = createThemeTransitionGate();
 
 // '--od-accent' 而非 '--accent'：canvas 的 legacy accent（完整颜色值）与
 // design-tokens 的共享 --accent（HSL 三元组）曾同名。这里往 documentElement
@@ -59,29 +64,35 @@ export function applyAppearanceToDocument({
   accentColor?: string;
 }): void {
   const root = document.documentElement;
-  // 明暗双标记桥接（对称实现见 chat 侧 appearance.applier.ts）：canvas CSS
-  // 认 data-theme，chat CSS 认 .dark 类——单写一种会让两面明暗分裂，所以
-  // 每次落 data-theme 时同步翻 .dark；system 模式按 matchMedia 解析后同样
-  // 双写，保证任意时刻两种标记指向同一明暗。
-  if (theme === 'light' || theme === 'dark') {
-    root.setAttribute('data-theme', theme);
-    root.classList.toggle('dark', theme === 'dark');
-  } else {
-    // system：按 matchMedia 解析后仍然**显式写** data-theme，不再
-    // removeAttribute——chat 写手（appearance.applier.ts）依赖「data-theme
-    // 永不留空」的契约压掉 canvas CSS 的 @media 兜底分支；这里留空会让
-    // 两面标记再度分叉（canvas 跟 @media 实时走、.dark 冻结在解析瞬间）。
-    // 解析值与 @media 兜底此刻等价，显式写不改变视觉、只锁一致性。
-    const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    root.setAttribute('data-theme', dark ? 'dark' : 'light');
-    root.classList.toggle('dark', dark);
-  }
+  // 本次要落的明暗先解析出来（闸门要用它比对本写手上次写的值）。
+  //
+  // system：按 matchMedia 解析后仍然**显式写** data-theme，不再
+  // removeAttribute——chat 写手（appearance.applier.ts）依赖「data-theme
+  // 永不留空」的契约压掉 canvas CSS 的 @media 兜底分支；这里留空会让
+  // 两面标记再度分叉（canvas 跟 @media 实时走、.dark 冻结在解析瞬间）。
+  // 解析值与 @media 兜底此刻等价，显式写不改变视觉、只锁一致性。
+  const nextDark =
+    theme === 'light' || theme === 'dark'
+      ? theme === 'dark'
+      : window.matchMedia('(prefers-color-scheme: dark)').matches;
 
-  const normalized = resolveAccentColor(accentColor);
-  const vars = accentVars(normalized);
-  for (const name of ACCENT_VARS) {
-    root.style.setProperty(name, vars[name]);
-  }
+  // 翻明暗这一拍掐掉全局 transition，否则带 transition 的元素会把换色演成
+  // 150ms 动画、比无 transition 的底色慢半拍（2026-07-17，实测与三步顺序见
+  // lib/themeTransition.ts）。chat 侧 applier 持有另一个闸门做同样处理——两个
+  // 写手串联时各判各的「上次写了什么」，谁先翻标记都不会让后一个漏掐。
+  themeGate(nextDark, () => {
+    // 明暗双标记桥接（对称实现见 chat 侧 appearance.applier.ts）：canvas CSS
+    // 认 data-theme，chat CSS 认 .dark 类——单写一种会让两面明暗分裂，所以
+    // 每次落 data-theme 时同步翻 .dark，保证任意时刻两种标记指向同一明暗。
+    root.setAttribute('data-theme', nextDark ? 'dark' : 'light');
+    root.classList.toggle('dark', nextDark);
+
+    const normalized = resolveAccentColor(accentColor);
+    const vars = accentVars(normalized);
+    for (const name of ACCENT_VARS) {
+      root.style.setProperty(name, vars[name]);
+    }
+  });
 
   // 同 document 即时广播（与走 daemon 的 'od:appearance-changed' 是两条不同
   // 语义的通道，勿合并）：chat 面的主体颜色被它的 applier 以 inline token

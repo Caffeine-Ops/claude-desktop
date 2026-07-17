@@ -647,7 +647,7 @@ function CopyNameButton({ name }: { name: string }): React.JSX.Element {
         'inline-flex size-[16px] shrink-0 items-center justify-center rounded ' +
         'transition-opacity ' +
         'opacity-0 group-hover/tree:opacity-100 focus-visible:opacity-100 ' +
-        'hover:bg-muted/60 ' +
+        'hover:bg-hover/60 ' +
         (copied
           ? 'text-emerald-500 opacity-100'
           : 'text-muted-foreground/70 hover:text-foreground')

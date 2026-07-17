@@ -277,7 +277,7 @@ export function SelectionAiBubble({
         </div>
         <button
           type="button"
-          className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="rounded p-0.5 text-muted-foreground hover:bg-hover hover:text-foreground"
           title="关闭"
           onClick={close}
         >
@@ -334,7 +334,7 @@ export function SelectionAiBubble({
           <div className="mt-2.5 flex items-center justify-between">
             <button
               type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-hover hover:text-foreground"
               onClick={close}
             >
               取消
@@ -463,7 +463,7 @@ export function SelectionAiBubble({
           <div className="mt-2.5 flex items-center justify-between">
             <button
               type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-hover hover:text-foreground disabled:opacity-40"
               disabled={imgBusy}
               onClick={() => {
                 setMode('rewrite')

@@ -141,7 +141,7 @@ export function ProposalImageToolbar({
             <span className="text-[12px] font-medium text-foreground">改图指令</span>
             <button
               type="button"
-              className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+              className="rounded p-0.5 text-muted-foreground hover:bg-hover hover:text-foreground disabled:opacity-40"
               title="取消"
               aria-label="取消"
               disabled={loading}
@@ -205,7 +205,7 @@ export function ProposalImageToolbar({
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
             <button
               type="button"
-              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-hover hover:text-foreground"
               onClick={() => {
                 setMode('buttons')
                 setError(null)

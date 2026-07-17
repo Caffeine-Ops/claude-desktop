@@ -61,8 +61,34 @@
   --secondary: 240 6% 94%;
   --secondary-foreground: 240 3% 18%;
 
-  --muted: 240 5% 93%;
+  /* 中性灰底：用户消息气泡、按钮 hover、面板/代码块底等一切 bg-muted
+   * （2026-07-17 用户指定 #f3f3f3）。旧值 240 5% 93% = #ececee 带一点冷蓝
+   * （S=5% 且 H=240，B 比 R/G 高 2），新值是**纯灰**（S=0）——气泡面积大，
+   * 冷色相在暖白底（--background #f5f5f7）上会读出脏感。
+   * 95.3% 不是凑整：0.953 × 255 = 243 = #f3f3f3 精确落点。
+   * 暗色档（下方 .dark）保持暖黑 36 6% 17% 不动——#f3f3f3 只有浅色语义，
+   * 跟着改会把暗档打成刺眼白。 */
+  --muted: 0 0% 95.3%;
   --muted-foreground: 240 4% 40%;
+
+  /* 交互 hover 底——全 app 图标钮 / 菜单项 / 列表行的 hover 与
+   * data-[state=open] 实底。刻意与 --muted 分家（2026-07-17 回归实锤）：
+   * --muted 同时是气泡 / 代码块 / kbd 的**静态**底，那些坐在纯白 --card 上，
+   * #f3f3f3 有 12 级差够看；而 hover 底多数坐在 --background (#f7f7f8) /
+   * --sidebar (#f4f4f6) 这类本就是浅灰的面上，同一个 #f3f3f3 只剩 3~5 级差
+   * ＝肉眼没反应。一个 token 两种底、要求相反，不可能同时满足，故拆开。
+   * 拆完 --muted 只管静态底，改它不会再误伤 hover，反之亦然。
+   *
+   * 亮档 240 6% 90% (#e4e4e7) 取自 --sidebar-accent —— rail 切换钮的 hover
+   * 底，用户指定「就要这个可见度」：在 background 上 19 级、card 上 27 级、
+   * sidebar 上 16 级，三种底全清楚。
+   * 暗档**不能**跟着抄 --sidebar-accent 的 30 5% 15%：那个值是为 rail 底
+   * (#1b1a18) 调的，放到 --popover (#292724) 上只剩 1 级差，会把暗档从好用
+   * 改成全瞎——暗档 hover 从来没坏过，别拿亮档的药治它。故沿用 --muted 的
+   * 暗档值 36 6% 17%（见下方 .dark），暗档逐像素与回归前一致。
+   * 两档独立取值正是拆 token 的意义；同值不同语义的先例见下方 --brand 与
+   * --sidebar-primary。 */
+  --hover: 240 6% 90%;
 
   --accent: 211 100% 45%;
   --accent-foreground: 0 0% 100%;
@@ -213,6 +239,11 @@
    * --text-muted (#9a9690). */
   --muted: 36 6% 17%;
   --muted-foreground: 36 5% 58%;
+
+  /* hover 底暗档——与 --muted 暗档同值，这是刻意的：暗档 hover 一直好用
+   * （#2e2c29 在 --background #1b1a18 上 19 级），拆 token 是为了修亮档，
+   * 不该顺手动暗档。别照抄 --sidebar-accent (30 5% 15%)，理由见 :root。 */
+  --hover: 36 6% 17%;
 
   --accent: 210 100% 58%;
   --accent-foreground: 0 0% 100%;

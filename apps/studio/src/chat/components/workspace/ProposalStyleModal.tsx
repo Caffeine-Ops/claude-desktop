@@ -118,7 +118,7 @@ export function ProposalStyleModal({
             </div>
           </div>
           <button
-            className="grid size-8 place-items-center rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="grid size-8 place-items-center rounded-lg border border-border text-muted-foreground hover:bg-hover hover:text-foreground"
             onClick={onClose}
             aria-label="关闭"
           >
@@ -283,7 +283,7 @@ export function ProposalStyleModal({
                                   'border-r border-border px-2 py-1 text-[11px] last:border-r-0 ' +
                                   (cfg.align === a.value
                                     ? 'bg-accent text-white'
-                                    : 'bg-card text-muted-foreground hover:bg-muted')
+                                    : 'bg-card text-muted-foreground hover:bg-hover')
                                 }
                               >
                                 {a.label}
@@ -385,7 +385,7 @@ export function ProposalStyleModal({
             {/* 底部操作 */}
             <div className="flex items-center justify-end gap-2.5 border-t border-border px-5 py-3.5">
               <button
-                className="rounded-lg border border-border px-3.5 py-2 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="rounded-lg border border-border px-3.5 py-2 text-[12px] text-muted-foreground hover:bg-hover hover:text-foreground"
                 onClick={onClose}
               >
                 取消

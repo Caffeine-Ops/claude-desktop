@@ -223,7 +223,7 @@ export function SpreadsheetPreviewPanel(): React.JSX.Element | null {
                 type="button"
                 title={t('sheetPreviewZoomReset')}
                 onClick={() => setZoom(1)}
-                className="min-w-11 rounded-md px-1 py-0.5 text-center text-[11.5px] tabular-nums text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="min-w-11 rounded-md px-1 py-0.5 text-center text-[11.5px] tabular-nums text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
               >
                 {Math.round(zoom * 100)}%
               </button>
@@ -274,7 +274,7 @@ export function SpreadsheetPreviewPanel(): React.JSX.Element | null {
                 'shrink-0 rounded-md px-2.5 py-1 text-[12px] transition-colors ' +
                 (i === activeSheet
                   ? 'bg-muted font-medium text-foreground'
-                  : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground')
+                  : 'text-muted-foreground hover:bg-hover/60 hover:text-foreground')
               }
             >
               {s.name}

@@ -90,7 +90,7 @@ export function McpDialog(): React.JSX.Element | null {
           <ul className="space-y-0.5">
             {servers.map((server) => (
               <li key={server.name}>
-                <div className="flex items-center gap-3 rounded-md px-3 py-2 text-[13px] hover:bg-muted/60">
+                <div className="flex items-center gap-3 rounded-md px-3 py-2 text-[13px] hover:bg-hover/60">
                   <ServerStatusBadge status={server.status} />
                   <span className="truncate font-mono text-foreground">
                     {server.name}

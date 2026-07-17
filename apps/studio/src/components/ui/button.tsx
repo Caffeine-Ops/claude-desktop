@@ -19,11 +19,11 @@ const buttonVariants = cva(
         // 语义占用（用户主题色，默认 Apple 蓝，appearance applier 会 live 改
         // 写）——沿用 upstream 会让全项目 ghost/outline 按钮 hover 闪蓝底。
         outline:
-          "border bg-background shadow-xs hover:bg-muted hover:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
+          "border bg-background shadow-xs hover:bg-hover hover:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         ghost:
-          "hover:bg-muted hover:text-foreground dark:hover:bg-muted/60",
+          "hover:bg-hover hover:text-foreground dark:hover:bg-hover/60",
         link: "text-primary underline-offset-4 hover:underline",
       },
       // 本地化偏离 upstream（2026-07-08 用户三轮定稿的统一按钮样式，

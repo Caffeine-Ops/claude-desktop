@@ -605,7 +605,7 @@ export function CanvasConfirm({
               type="button"
               onClick={toggleLang}
               title={t('lang_toggle_title')}
-              className="shrink-0 rounded-md border border-border bg-card/60 px-2.5 py-1 text-[12px] font-medium text-foreground transition hover:bg-muted"
+              className="shrink-0 rounded-md border border-border bg-card/60 px-2.5 py-1 text-[12px] font-medium text-foreground transition hover:bg-hover"
             >
               {lang === 'zh' ? 'EN' : '中'}
             </button>
@@ -1048,7 +1048,7 @@ function EnumField({
           'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-left text-[12px] transition-colors ' +
           (selected
             ? 'border-accent bg-accent/10 text-accent ring-1 ring-accent'
-            : 'border-border bg-background/60 text-foreground hover:bg-muted')
+            : 'border-border bg-background/60 text-foreground hover:bg-hover')
         }
       >
         <span className="font-medium">{main}</span>
@@ -1075,7 +1075,7 @@ function EnumField({
           'inline-flex items-center gap-1.5 rounded-lg border border-dashed px-2.5 py-1.5 text-[12px] transition-colors ' +
           (isCustom
             ? 'border-solid border-accent bg-accent/10 text-accent ring-1 ring-accent'
-            : 'border-border bg-background/60 text-muted-foreground hover:bg-muted')
+            : 'border-border bg-background/60 text-muted-foreground hover:bg-hover')
         }
       >
         <span className="font-medium">{t('custom')}</span>
@@ -1220,7 +1220,7 @@ function VisualStyleField({
           'flex aspect-[16/10] flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed p-3 text-center text-[12px] font-medium transition-colors ' +
           (isCustom
             ? 'border-accent bg-accent/[0.08] text-accent'
-            : 'border-border bg-background/60 text-muted-foreground hover:bg-muted')
+            : 'border-border bg-background/60 text-muted-foreground hover:bg-hover')
         }
       >
         <span>{t('custom')}</span>
@@ -1407,7 +1407,7 @@ function CanvasField({
         'flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed p-3 text-center text-[12px] font-medium transition-colors ' +
         (isCustom
           ? 'border-accent bg-accent/[0.08] text-accent'
-          : 'border-border bg-background/60 text-muted-foreground hover:bg-muted')
+          : 'border-border bg-background/60 text-muted-foreground hover:bg-hover')
       }
     >
       {t('custom')}
@@ -1686,7 +1686,7 @@ function ColorField({
                 'relative flex flex-col gap-1.5 rounded-lg border p-2.5 text-left transition-colors ' +
                 (selected
                   ? 'border-accent bg-accent/[0.08] ring-1 ring-accent'
-                  : 'border-border bg-background/60 hover:bg-muted')
+                  : 'border-border bg-background/60 hover:bg-hover')
               }
             >
               {selected && <SelTick />}
@@ -1717,7 +1717,7 @@ function ColorField({
             'flex items-center justify-center rounded-lg border p-2.5 text-[12px] font-medium transition-colors ' +
             (isCustom
               ? 'border-accent bg-accent/[0.08] text-accent ring-1 ring-accent'
-              : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-muted')
+              : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-hover')
           }
         >
           {t('custom_color')}
@@ -1816,7 +1816,7 @@ function TypographyField({
                 'relative flex flex-col gap-1.5 rounded-lg border p-2.5 text-left transition-colors ' +
                 (selected
                   ? 'border-accent bg-accent/[0.08] ring-1 ring-accent'
-                  : 'border-border bg-background/60 hover:bg-muted')
+                  : 'border-border bg-background/60 hover:bg-hover')
               }
             >
               {selected && <SelTick />}
@@ -1851,7 +1851,7 @@ function TypographyField({
             'rounded-lg border p-2.5 text-left text-[12px] font-medium transition-colors ' +
             (isCustom
               ? 'border-accent bg-accent/[0.08] text-accent ring-1 ring-accent'
-              : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-muted')
+              : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-hover')
           }
         >
           {t('custom_typography')}
@@ -2004,7 +2004,7 @@ function ImageField({
                         'relative flex flex-col gap-1 rounded-lg border p-2.5 text-left transition-colors ' +
                         (selected
                           ? 'border-accent bg-accent/[0.08] ring-1 ring-accent'
-                          : 'border-border bg-background/60 hover:bg-muted')
+                          : 'border-border bg-background/60 hover:bg-hover')
                       }
                     >
                       {selected && <SelTick />}

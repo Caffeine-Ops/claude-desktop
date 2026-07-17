@@ -205,7 +205,7 @@ export function PermissionComposerPanel({
                 onClick={() => allow(i)}
                 className={
                   'group flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors duration-100 ' +
-                  (hot ? 'bg-muted/75' : 'hover:bg-muted/50')
+                  (hot ? 'bg-muted/75' : 'hover:bg-hover/50')
                 }
               >
                 <span

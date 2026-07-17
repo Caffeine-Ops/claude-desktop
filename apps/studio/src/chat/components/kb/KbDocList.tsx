@@ -28,7 +28,7 @@ export function KbDocList({ docs, readOnly, onRetry, onOpen, onPreview }: {
   return (
     <div className="divide-y divide-border/50">
       {docs.map((d) => (
-        <div key={d.relPath} className="flex items-center gap-3 px-3 py-2 text-[12.5px] hover:bg-muted/40">
+        <div key={d.relPath} className="flex items-center gap-3 px-3 py-2 text-[12.5px] hover:bg-hover/40">
           <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/70">
             <kbIcons.doc className="size-4" />
           </span>
@@ -41,10 +41,10 @@ export function KbDocList({ docs, readOnly, onRetry, onOpen, onPreview }: {
           </span>
           <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground/70">
             {!readOnly && d.status === 'failed' && (
-              <button type="button" title={t('kbRetry')} onClick={() => onRetry(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.retry className="size-3.5" /></button>
+              <button type="button" title={t('kbRetry')} onClick={() => onRetry(d)} className="rounded p-1 hover:bg-hover hover:text-foreground"><kbIcons.retry className="size-3.5" /></button>
             )}
-            <button type="button" title={t('kbPreview')} onClick={() => onPreview(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.doc className="size-3.5" /></button>
-            <button type="button" title={t('kbOpenSource')} onClick={() => onOpen(d)} className="rounded p-1 hover:bg-muted hover:text-foreground"><kbIcons.open className="size-3.5" /></button>
+            <button type="button" title={t('kbPreview')} onClick={() => onPreview(d)} className="rounded p-1 hover:bg-hover hover:text-foreground"><kbIcons.doc className="size-3.5" /></button>
+            <button type="button" title={t('kbOpenSource')} onClick={() => onOpen(d)} className="rounded p-1 hover:bg-hover hover:text-foreground"><kbIcons.open className="size-3.5" /></button>
           </span>
         </div>
       ))}
