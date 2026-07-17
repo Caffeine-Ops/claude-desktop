@@ -5,14 +5,36 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      cli_source:
+        description: '打包进 App 的 CLI（auto = 跟随 repo variable CLI_SOURCE，两者都没设兜底 fusion）'
+        type: choice
+        options:
+          - auto
+          - fusion
+          - official
+        default: auto
 
 permissions:
   contents: write
 
 env:
+  # 打包进 apps/studio/fusion-bin/ 的 CLI 来源，二选一：
+  #   fusion   — Caffeine-Ops/fusion-code-install 的 fork 版二进制（当前默认）
+  #   official — Anthropic 官方 downloads.claude.ai 分发的原生 claude 二进制
+  # 优先级：workflow_dispatch 手动选的值（非 auto 时）> repo variable
+  # （Settings → Secrets and variables → Actions → Variables 里设 CLI_SOURCE）
+  # > 兜底 fusion。push tag 触发没有 input，只吃 repo variable——要临时切换
+  # 发布用哪个 CLI，必须先改 repo variable 再打 tag，不能在 tag push 那次
+  # 请求里临时指定。这条表达式只用 github/vars 两个 context，job 级 if:（下面
+  # resolve-cli-version 若要复用同一判断）拿不到 env context，别抄这条到那里。
+  CLI_SOURCE: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.cli_source != 'auto' && github.event.inputs.cli_source) || vars.CLI_SOURCE || 'fusion' }}
   # fusion-code CLI version is per-matrix (matrix.fusion_version), NOT a single
   # global — darwin-x64 lives in v2.1.91 while arm64/win are still on v2.1.90
   # until v2.1.91 is backfilled with all arches. See the matrix comment below.
+  # Only consulted when CLI_SOURCE=fusion. The official CLI's version is
+  # resolved dynamically by the resolve-cli-version job (always "latest",
+  # never pinned to a literal version string — see that job's comment).
   # (Removed 2026-07-15: BUNDLED_NODE_VERSION — the daemon no longer needs a
   # bundled Node; it runs on Electron's own node after the node:sqlite migration.)
   # Standalone Python bundled INTO the app for the ppt-master skill (a Python
@@ -27,8 +49,39 @@ env:
   PYTHON_STANDALONE_VERSION: '3.12.13'
 
 jobs:
+  # Resolves the official Claude Code CLI's latest version ONCE, up front, so
+  # all 3 build matrix legs (mac-arm64/mac-x64/win) bundle the SAME version —
+  # if each leg curled /latest independently, a release landing between two
+  # legs' requests would ship a mac build and a win build pinned to different
+  # official CLI versions (same class of cross-leg inconsistency the publish
+  # job's serial-merge exists to avoid for release manifests). Runs
+  # unconditionally (no `if: CLI_SOURCE == official` gate) even when
+  # CLI_SOURCE=fusion — job-level `if:` can't see the `env` context (only
+  # steps can), so gating it here would mean re-deriving the CLI_SOURCE
+  # expression a second time and keeping two copies in sync. The cost of an
+  # unconditional extra curl on a cheap ubuntu runner is negligible next to
+  # that duplication risk.
+  resolve-cli-version:
+    name: Resolve official Claude Code version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Resolve latest official Claude Code version
+        id: resolve
+        run: |
+          set -euo pipefail
+          VERSION=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)
+          if [ -z "$VERSION" ]; then
+            echo "::error::empty response resolving latest official Claude Code version"
+            exit 1
+          fi
+          echo "resolved official Claude Code version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build ${{ matrix.platform }}
+    needs: resolve-cli-version
     strategy:
       fail-fast: false
       matrix:
@@ -51,6 +104,8 @@ jobs:
             fusion_version: v2.1.90
             fusion_asset: fusion-code-darwin-arm64
             fusion_target: apps/studio/fusion-bin/fusion-code-cli
+            official_platform: darwin-arm64
+            official_binary: claude
             python_dist: aarch64-apple-darwin
           # Intel Mac. MUST run on an Intel (x64) runner so `bun install`
           # fetches x64 native addons; an arm64 runner would bundle arm64 .node
@@ -66,6 +121,8 @@ jobs:
             fusion_version: v2.1.91
             fusion_asset: fusion-code-darwin-x64
             fusion_target: apps/studio/fusion-bin/fusion-code-cli
+            official_platform: darwin-x64
+            official_binary: claude
             python_dist: x86_64-apple-darwin
           - os: windows-latest
             platform: win
@@ -73,6 +130,8 @@ jobs:
             fusion_version: v2.1.90
             fusion_asset: fusion-code-win32-x64.exe
             fusion_target: apps/studio/fusion-bin/fusion-code-cli.exe
+            official_platform: win32-x64
+            official_binary: claude.exe
             python_dist: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
@@ -121,6 +180,7 @@ jobs:
             || { echo "::error::env.json is not valid JSON"; exit 1; }
 
       - name: Download fusion-code CLI
+        if: env.CLI_SOURCE == 'fusion'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -166,6 +226,46 @@ jobs:
             echo "::error::fusion-code download is truncated: expected $expected bytes, got $actual. Re-run the job."
             exit 1
           fi
+
+      # Official Claude Code path — mutually exclusive with the fusion-code
+      # step above via CLI_SOURCE, writes to the SAME fusion_target path so
+      # every downstream consumer (verify:fusion, electron-builder
+      # extraResources) doesn't need to know or care which source produced
+      # the file. VERSION comes from resolve-cli-version's job output, NOT a
+      # literal here — that job re-resolves "latest" on every run, so this
+      # step never goes stale the way a hardcoded VERSION="2.1.212" would.
+      # Integrity check uses the per-platform sha256 from manifest.json
+      # (stronger than fusion-code's size-only truncation gate, since GCS
+      # already guarantees byte-exact transfer over HTTPS — the checksum here
+      # is about catching a corrupted/tampered manifest or binary, not just a
+      # truncated fetch).
+      - name: Download official Claude Code CLI
+        if: env.CLI_SOURCE == 'official'
+        shell: bash
+        env:
+          VERSION: ${{ needs.resolve-cli-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p apps/studio/fusion-bin
+          BASE="https://downloads.claude.ai/claude-code-releases/$VERSION"
+          echo "downloading official Claude Code v$VERSION (${{ matrix.official_platform }})"
+          MANIFEST=$(curl -fsSL "$BASE/manifest.json")
+          CHECKSUM=$(python -c "import json,sys; print(json.load(sys.stdin)['platforms']['${{ matrix.official_platform }}']['checksum'])" <<< "$MANIFEST")
+          if [ -z "$CHECKSUM" ]; then
+            echo "::error::manifest.json for $VERSION has no checksum for platform ${{ matrix.official_platform }}"
+            exit 1
+          fi
+          curl -fsSL -o "${{ matrix.fusion_target }}" "$BASE/${{ matrix.official_platform }}/${{ matrix.official_binary }}"
+          if [ "${{ matrix.platform }}" != "win" ]; then
+            chmod +x "${{ matrix.fusion_target }}"
+          fi
+          actual=$(python -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "${{ matrix.fusion_target }}")
+          if [ "$actual" != "$CHECKSUM" ]; then
+            echo "::error::official Claude Code checksum mismatch: expected $CHECKSUM, got $actual. Re-run the job."
+            exit 1
+          fi
+          echo "official Claude Code v$VERSION verified (sha256 $actual)"
+          ls -la apps/studio/fusion-bin/
 
       # (Removed 2026-07-15) The daemon used to need a standalone Node 24 bundled
       # into the app to match its better-sqlite3 ABI. That native dependency is
