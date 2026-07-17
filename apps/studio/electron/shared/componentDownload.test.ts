@@ -32,7 +32,10 @@ import { initialComponentState } from './componentDownload'
 describe('initialComponentState', () => {
   test('新组件初态 = idle、无进度、无错误', () => {
     expect(initialComponentState('foo')).toEqual({
-      id: 'foo', status: 'idle', percent: null, currentFile: null, errorMessage: null,
+      id: 'foo', status: 'idle', percent: null, currentFile: null, errorMessage: null, origin: null,
     })
+  })
+  test('initialComponentState 含 origin: null(P1c 随包来源注记的缺省值)', () => {
+    expect(initialComponentState('x').origin).toBeNull()
   })
 })

@@ -76,6 +76,11 @@ export interface ComponentState {
   percent: number | null      // 仅 installing 且可测量时有值，否则 null
   currentFile: string | null  // 下载型当前文件（供 UI 文本），否则 null
   errorMessage: string | null // error 态原因，否则 null
+  /** ready 态的来源注记:'bundled' = 靠随包/dev 目录里的现成品判的就绪(userData 没有下载副本)。
+   *  仅 python-runtime 的就绪探针会写它(componentOrchestrator 的 READY_PROBES),其余组件恒 null。
+   *  为什么进共享状态而不是前端推断:前端只见整表,不知道 main 侧探测走的哪条判据,来源只能由
+   *  唯一写手(编排器)注记。UI 用它在「✓ 已就绪」旁挂『随包』灰字(i18n compBundled 键转正)。 */
+  origin: 'bundled' | null
 }
 
 /** 整张组件状态表：组件 id → 状态。 */
@@ -83,7 +88,7 @@ export type ComponentTable = Record<string, ComponentState>
 
 /** 一个组件的初始状态（未探测前的保守态）。 */
 export function initialComponentState(id: string): ComponentState {
-  return { id, status: 'idle', percent: null, currentFile: null, errorMessage: null }
+  return { id, status: 'idle', percent: null, currentFile: null, errorMessage: null, origin: null }
 }
 
 /** 组件下载总字节数（进度分母）。files=各文件之和；archive=整包 size。 */
