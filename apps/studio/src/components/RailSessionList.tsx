@@ -678,8 +678,11 @@ export function RailSessionList() {
           * 48px 高 15px 字（安静 focus 与浅色 selection 已在 ui/input.tsx 基件
           * 层修）；取消走 outline 描边、保存走品牌绿渐变（与账户菜单升级钮
           * 同源——用户明确「主题色跟其他保持一致」，否掉 Notion 原版黑钮），
-          * disabled 用中性灰而非透明度——「还没改名」要读作待命，不是坏了。 */}
-        <DialogContent className="rounded-2xl sm:max-w-[440px]">
+          * disabled 用中性灰而非透明度——「还没改名」要读作待命，不是坏了。
+          * 2026-07-19 毛玻璃化，与 ThreadView.tsx 顶栏重命名弹窗同一套
+          * className 覆盖（局部覆盖不动共享 DialogContent 基件），保持两处
+          * 「同一套精修档」的既有惯例同步。 */}
+        <DialogContent className="rounded-2xl border-border/50 bg-background/70 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.35),0_8px_24px_-12px_rgba(0,0,0,0.18),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-2xl backdrop-saturate-150 sm:max-w-[440px]">
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -880,10 +883,12 @@ const SessionRow = memo(function SessionRow({
               // 选中底：中性灰（shell-floating 原型的用色纪律：绿只给 CTA
               // 与选中「点」记号，选中面本身不上色）。曾是 layoutId 共享的
               // motion 滑块（切换时在行间做 FLIP 滑动），2026-07-04 应用户
-              // 要求退役——切换即时呈现，普通 span 直接画在目标行。
+              // 要求退役——切换即时呈现，普通 span 直接画在目标行。毛玻璃
+              // 质感（2026-07-18，跟账户菜单/composer/surface tabs 同一批）：
+              // 实底 bg-sidebar-accent 换成半透明 + backdrop-blur。
               <span
                 aria-hidden
-                className="absolute inset-0 rounded-lg bg-sidebar-accent"
+                className="absolute inset-0 rounded-lg bg-sidebar-accent/55 backdrop-blur-md"
               />
             )}
             {/* shadcn Button 而非裸 <button>：canvas 的裸元素 reset 守卫

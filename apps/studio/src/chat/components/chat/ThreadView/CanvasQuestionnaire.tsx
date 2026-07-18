@@ -222,7 +222,11 @@ export function CanvasQuestionnaire({
                 initial={{ opacity: 0, y: 14, scale: 0.985 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={{ type: 'spring', bounce: 0.2, visualDuration: 0.4 }}
-                className="rounded-xl border border-border bg-card px-[18px] pb-[18px] pt-4 shadow-sm"
+                // 毛玻璃质感（2026-07-18，跟 workspace 面同一批 /70 + blur-xl）：
+                // bg-card 实底换成半透明 + backdrop-blur。下方选项行本就是
+                // ghost 样式（未选中透明、选中 bg-brand/[0.08] 半透明色块），
+                // 不带自己的不透明底，卡片一透它们自然跟着透。
+                className="rounded-xl border border-border bg-card/70 px-[18px] pb-[18px] pt-4 shadow-sm backdrop-blur-xl backdrop-saturate-150"
               >
                 <div className="flex items-start gap-2.5">
                   {/* Question badge: number → check, a 3D flip once answered.
@@ -230,7 +234,7 @@ export function CanvasQuestionnaire({
                   <span className="relative mt-px size-6 shrink-0 [perspective:80px]" aria-hidden>
                     <span
                       className={
-                        `absolute inset-0 grid place-items-center rounded-[7px] bg-accent/10 text-[11px] font-bold text-accent [backface-visibility:hidden] transition-transform duration-[450ms] ${springCss} ` +
+                        `absolute inset-0 grid place-items-center rounded-[7px] bg-brand/10 text-[11px] font-bold text-brand [backface-visibility:hidden] transition-transform duration-[450ms] ${springCss} ` +
                         (answered ? '[transform:rotateY(-180deg)]' : '')
                       }
                     >
@@ -238,7 +242,7 @@ export function CanvasQuestionnaire({
                     </span>
                     <span
                       className={
-                        `absolute inset-0 grid place-items-center rounded-[7px] bg-accent text-accent-foreground [backface-visibility:hidden] transition-transform duration-[450ms] ${springCss} ` +
+                        `absolute inset-0 grid place-items-center rounded-[7px] bg-brand text-brand-foreground [backface-visibility:hidden] transition-transform duration-[450ms] ${springCss} ` +
                         (answered ? '' : '[transform:rotateY(180deg)]')
                       }
                     >
@@ -280,7 +284,7 @@ export function CanvasQuestionnaire({
                         className={
                           'flex w-full items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-left transition-all duration-150 active:scale-[0.995] ' +
                           (selected
-                            ? 'border-accent bg-accent/[0.08] shadow-[0_0_0_1px_hsl(var(--accent))]'
+                            ? 'border-brand bg-brand/[0.08] shadow-[0_0_0_1px_hsl(var(--brand))]'
                             : 'border-border hover:border-border hover:bg-foreground/[0.03]') +
                           (!answerable ? ' cursor-default opacity-70' : '')
                         }
@@ -289,13 +293,13 @@ export function CanvasQuestionnaire({
                         <span
                           className={
                             'relative mt-[1.5px] size-4 shrink-0 rounded-full border-[1.5px] transition-colors ' +
-                            (selected ? 'border-accent' : 'border-muted-foreground/40')
+                            (selected ? 'border-brand' : 'border-muted-foreground/40')
                           }
                           aria-hidden
                         >
                           <span
                             className={
-                              `absolute inset-[2.5px] rounded-full bg-accent transition-transform duration-300 ${springCss} ` +
+                              `absolute inset-[2.5px] rounded-full bg-brand transition-transform duration-300 ${springCss} ` +
                               (selected ? 'scale-100' : 'scale-0')
                             }
                           />
@@ -304,7 +308,7 @@ export function CanvasQuestionnaire({
                           <span
                             className={
                               'block text-[13px] font-medium leading-snug ' +
-                              (selected ? 'text-accent' : 'text-foreground')
+                              (selected ? 'text-brand' : 'text-foreground')
                             }
                           >
                             {opt.label}
@@ -313,7 +317,7 @@ export function CanvasQuestionnaire({
                             <span
                               className={
                                 'mt-0.5 block text-[11.5px] leading-relaxed ' +
-                                (selected ? 'text-accent/70' : 'text-muted-foreground')
+                                (selected ? 'text-brand/70' : 'text-muted-foreground')
                               }
                             >
                               {opt.description}
@@ -330,20 +334,20 @@ export function CanvasQuestionnaire({
                     className={
                       'flex items-center gap-2.5 rounded-lg border border-dashed pl-3.5 pr-1 transition-all duration-150 focus-within:border-solid focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 ' +
                       (otherSelected
-                        ? 'border-solid border-accent bg-accent/[0.08] shadow-[0_0_0_1px_hsl(var(--accent))]'
+                        ? 'border-solid border-brand bg-brand/[0.08] shadow-[0_0_0_1px_hsl(var(--brand))]'
                         : 'border-border hover:border-foreground/20')
                     }
                   >
                     <span
                       className={
                         'relative size-4 shrink-0 rounded-full border-[1.5px] transition-colors ' +
-                        (otherSelected ? 'border-accent' : 'border-muted-foreground/40')
+                        (otherSelected ? 'border-brand' : 'border-muted-foreground/40')
                       }
                       aria-hidden
                     >
                       <span
                         className={
-                          `absolute inset-[2.5px] rounded-full bg-accent transition-transform duration-300 ${springCss} ` +
+                          `absolute inset-[2.5px] rounded-full bg-brand transition-transform duration-300 ${springCss} ` +
                           (otherSelected ? 'scale-100' : 'scale-0')
                         }
                       />
@@ -400,8 +404,10 @@ export function CanvasQuestionnaire({
           sweep) the moment every question is answered — the "ready to hand
           back" moment gets a visible beat instead of a silent color swap. */}
       {/* Footer bar: same card surface as the body, separated by the top
-          hairline alone (bg-card = white in light / card colour in dark). */}
-      <div className="shrink-0 border-t border-border bg-card px-8 py-2.5">
+          hairline alone (bg-card = white in light / card colour in dark).
+          毛玻璃质感（2026-07-18，同一批）：纯 chrome 条（进度点 + 提示文字 +
+          提交按钮），比正文卡片更透一点，对齐 composer dock 同档 /65。 */}
+      <div className="shrink-0 border-t border-border bg-card/65 px-8 py-2.5 backdrop-blur-xl backdrop-saturate-150">
         <div className="mx-auto flex w-full max-w-[760px] items-center gap-3.5">
           <div className="flex gap-[5px]" aria-hidden>
             {questions.map((q, i) => {
@@ -412,7 +418,7 @@ export function CanvasQuestionnaire({
                   key={i}
                   className={
                     'size-[7px] rounded-full transition-all duration-300 ease-[cubic-bezier(0.3,1.3,0.5,1)] ' +
-                    (on ? 'scale-110 bg-accent' : 'border border-border bg-muted')
+                    (on ? 'scale-110 bg-brand' : 'border border-border bg-muted')
                   }
                 />
               )

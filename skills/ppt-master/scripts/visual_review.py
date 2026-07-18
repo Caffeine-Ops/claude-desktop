@@ -2,23 +2,29 @@
 """
 PPT Master - Visual Review Renderer
 
-Renders project SVGs to 1280x720 PNGs that match the live-preview browser view
-(inlined <use data-icon>, resolved <image href>, full font fallback including CJK).
-The pure renderer for the visual-review workflow — does not edit SVGs, does not
-interpret the rubric.
+Renders project SVGs to 1280x720 PNGs that match the desktop app's native live
+preview (inlined <use data-icon>, resolved <image href>, full font fallback
+including CJK). The pure renderer for the visual-review workflow — does not
+edit SVGs, does not interpret the rubric.
 
 Backend: Playwright (Chromium). The cairosvg backend was evaluated and rejected
 because cairo's text API has no font-fallback chain — CJK characters render as
 tofu boxes for any deck whose font-family list relies on system fallback.
 
+Rendering is fully offline: slide_preview.py (icon inlining, same logic the
+old svg_editor/server.py used) builds each page's markup straight from
+svg_output/, and asset hrefs are rewritten to absolute file:// URLs so
+Chromium can resolve them without an HTTP server. There used to be a
+live-preview Flask server this script fetched from — it's gone; the desktop
+app's native preview and this script now read the same files independently.
+
 Usage:
     python3 scripts/visual_review.py <project_path>
     python3 scripts/visual_review.py <project_path> --pages 02 03
-    python3 scripts/visual_review.py <project_path> --server-url http://localhost:5050
 
 Exit codes (per references/visual-review.md §7):
     0 — all requested pages rendered
-    2 — live-preview server not reachable for this project
+    2 — project path or svg_output/ not found
     3 — rendering backend (playwright + chromium) missing or unable to launch
     4 — one or more page-level render failures (details in stderr)
 
@@ -31,12 +37,18 @@ import argparse
 import io
 import json
 import os
+import shutil
 import sys
 import time
-import urllib.error
-import urllib.request
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from pathlib import Path
+
+_SVG_EDITOR_DIR = Path(__file__).resolve().parent / 'svg_editor'
+if str(_SVG_EDITOR_DIR) not in sys.path:
+    sys.path.insert(0, str(_SVG_EDITOR_DIR))
+
+from slide_preview import absolutize_for_file, build_preview_svg  # noqa: E402
 
 
 # Histogram threshold: PNG counts as "all background" if a single quantized
@@ -106,84 +118,79 @@ def is_all_background(png_bytes: bytes) -> bool:
     return dominant / total >= ALL_BG_THRESHOLD
 
 
-def fetch_slide_text(server_url: str, page_name: str, timeout: float = 5.0) -> int:
-    """Probe that the server can return the slide. Returns content length.
-    Used only for failure detection — the actual fetch happens inside the
-    browser via fetch() so the response is parsed by JS, not Python."""
-    url = f"{server_url.rstrip('/')}/api/slide/{page_name}"
-    req = urllib.request.Request(url, headers={'Accept': 'application/json'})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        payload = json.loads(resp.read().decode('utf-8'))
-    if 'content' not in payload:
-        raise RuntimeError(f'unexpected response shape from {url}: {payload!r}')
-    return len(payload['content'])
+def render_pages(project_path: Path, pages: list[str], preview_dir: Path) -> list[dict]:
+    """Render all requested pages in a single browser session, fully offline.
 
-
-def render_pages(server_url: str, pages: list[str], preview_dir: Path) -> list[dict]:
-    """Render all requested pages in a single browser session.
-
-    Each render: page.goto(server_url) anchors the base URL so the SVG's
-    relative <image href="../images/..."> resolves against the server.
-    Then fetch the slide via the server's /api/slide endpoint (which inlines
-    <use data-icon> references) and inject it as the document body.
+    Each page: build_preview_svg() reads svg_output/<name>.svg and inlines
+    icons (same logic the old live-preview server used), absolutize_for_file()
+    rewrites asset hrefs to file:// URLs, then the markup is written to a
+    throwaway .html file and loaded via file://. Chromium is launched with
+    --allow-file-access-from-files so that file, itself served over file://,
+    can load its file:// image/asset sub-resources — the standard "referrer is
+    also file://" case that flag exists for. A real temp file (not
+    page.set_content()) sidesteps the ambiguity of what origin set_content()
+    puts an about:blank page on, which file:// sub-resource loading is picky
+    about.
     """
     from playwright.sync_api import sync_playwright
 
     preview_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir = preview_dir / '.render_tmp'
+    tmp_dir.mkdir(parents=True, exist_ok=True)
     records: list[dict] = []
 
-    inject_js = """
-async (pageName) => {
-    const res = await fetch('/api/slide/' + pageName + '?_=' + Date.now());
-    if (!res.ok) throw new Error('fetch /api/slide/' + pageName + ' returned ' + res.status);
-    const data = await res.json();
-    document.documentElement.innerHTML =
-        '<head><style>html,body{margin:0;padding:0;background:#0E1116;overflow:hidden}'
-        + ' svg{display:block;width:1280px;height:720px}</style></head>'
-        + '<body>' + data.content + '</body>';
-    return { len: data.content.length };
-}
-"""
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(args=['--allow-file-access-from-files'])
+            try:
+                context = browser.new_context(viewport={'width': 1280, 'height': 720})
+                for page_name in pages:
+                    rec: dict = {'page': page_name, 'ok': False}
+                    try:
+                        content, warnings = build_preview_svg(project_path, page_name)
+                        content = absolutize_for_file(content, project_path)
+                    except FileNotFoundError as e:
+                        rec['error'] = f'slide_not_found: {e}'
+                        records.append(rec)
+                        continue
+                    except ET.ParseError as e:
+                        rec['error'] = f'parse_error: {e}'
+                        records.append(rec)
+                        continue
+                    if warnings:
+                        rec['icon_warnings'] = warnings
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        try:
-            context = browser.new_context(viewport={'width': 1280, 'height': 720})
-            for page_name in pages:
-                rec: dict = {'page': page_name, 'ok': False}
-                try:
-                    fetch_slide_text(server_url, page_name)
-                except urllib.error.URLError as e:
-                    rec['error'] = f'server_unreachable: {e!r}'
+                    stem = page_name[:-4] if page_name.endswith('.svg') else page_name
+                    out_path = preview_dir / f'{stem}.png'
+                    tmp_html = tmp_dir / f'{stem}.html'
+                    tmp_html.write_text(
+                        '<!doctype html><html><head><meta charset="utf-8">'
+                        '<style>html,body{margin:0;padding:0;background:#0E1116;'
+                        'overflow:hidden}svg{display:block;width:1280px;height:720px}'
+                        f'</style></head><body>{content}</body></html>',
+                        encoding='utf-8',
+                    )
+
+                    try:
+                        pg = context.new_page()
+                        pg.goto(f'file://{tmp_html.resolve()}', wait_until='domcontentloaded')
+                        # Wait one frame so font/text shaping settles before capture.
+                        pg.wait_for_timeout(100)
+                        png_bytes = pg.screenshot(type='png', full_page=False)
+                        pg.close()
+
+                        out_path.write_bytes(png_bytes)
+                        rec['ok'] = True
+                        rec['path'] = str(out_path)
+                        rec['bytes'] = len(png_bytes)
+                        rec['all_background'] = is_all_background(png_bytes)
+                    except Exception as e:  # noqa: BLE001 — best-effort per-page
+                        rec['error'] = f'{type(e).__name__}: {e}'
                     records.append(rec)
-                    continue
-                except Exception as e:  # noqa: BLE001
-                    rec['error'] = f'{type(e).__name__}: {e}'
-                    records.append(rec)
-                    continue
-
-                stem = page_name[:-4] if page_name.endswith('.svg') else page_name
-                out_path = preview_dir / f'{stem}.png'
-
-                try:
-                    pg = context.new_page()
-                    pg.goto(server_url, wait_until='domcontentloaded')
-                    pg.evaluate(inject_js, page_name)
-                    # Wait one frame so font/text shaping settles before capture.
-                    pg.wait_for_timeout(100)
-                    png_bytes = pg.screenshot(type='png', full_page=False)
-                    pg.close()
-
-                    out_path.write_bytes(png_bytes)
-                    rec['ok'] = True
-                    rec['path'] = str(out_path)
-                    rec['bytes'] = len(png_bytes)
-                    rec['all_background'] = is_all_background(png_bytes)
-                except Exception as e:  # noqa: BLE001 — best-effort per-page
-                    rec['error'] = f'{type(e).__name__}: {e}'
-                records.append(rec)
-        finally:
-            browser.close()
+            finally:
+                browser.close()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return records
 
@@ -204,17 +211,6 @@ def discover_pages(project_path: Path, requested: list[str] | None) -> list[str]
     return selected
 
 
-def check_server(server_url: str) -> None:
-    """Probe server liveness via /api/slides. Raises RuntimeError if down."""
-    url = f"{server_url.rstrip('/')}/api/slides"
-    try:
-        with urllib.request.urlopen(url, timeout=3.0) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f'{url} returned HTTP {resp.status}')
-    except urllib.error.URLError as e:
-        raise RuntimeError(f'live-preview server not reachable at {server_url}: {e}')
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
         description='Render project SVGs to PNGs for visual review.',
@@ -224,10 +220,6 @@ def main() -> int:
         '--pages', nargs='+', default=None,
         help='Page tokens to render (default: all SVGs in svg_output/). '
              "Accepts '02', '02_three_steps', or '02_three_steps.svg'.",
-    )
-    parser.add_argument(
-        '--server-url', default='http://localhost:5050',
-        help='Live-preview server URL (default: http://localhost:5050)',
     )
     parser.add_argument(
         '--lock-timeout', type=float, default=30.0,
@@ -252,16 +244,6 @@ def main() -> int:
         return 3
 
     try:
-        check_server(args.server_url)
-    except RuntimeError as e:
-        _safe_print(str(e))
-        _safe_print(
-            'start it with:\n'
-            f'    python3 skills/ppt-master/scripts/svg_editor/server.py {project_path}'
-        )
-        return 2
-
-    try:
         pages = discover_pages(project_path, args.pages)
     except (FileNotFoundError, ValueError) as e:
         _safe_print(str(e))
@@ -272,7 +254,7 @@ def main() -> int:
 
     with file_lock(lock_path, timeout=args.lock_timeout):
         try:
-            records = render_pages(args.server_url, pages, preview_dir)
+            records = render_pages(project_path, pages, preview_dir)
         except Exception as e:  # noqa: BLE001 — browser launch failure
             _safe_print(f'browser session failed: {type(e).__name__}: {e}')
             _safe_print(
@@ -288,7 +270,6 @@ def main() -> int:
 
     summary = {
         'project': str(project_path),
-        'server_url': args.server_url,
         'rendered': sum(1 for r in records if r['ok']),
         'failed': sum(1 for r in records if not r['ok']),
         'all_background': sum(1 for r in records if r.get('all_background')),

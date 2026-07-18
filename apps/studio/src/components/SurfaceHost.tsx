@@ -258,23 +258,29 @@ export function SurfaceHost() {
         * 临时目的地，见 MarketSurface 头注释。顶部 46px 是 window-drag-strip
         * 的地盘，两个面的顶栏都自己挖了 no-drag 洞（各自组件里）。
         *
-        * bg-card 是本条**新加**的（2026-07-17，背景图换肤功能引出的回归）：
+        * bg-card 是 2026-07-17 新加的（背景图换肤功能引出的回归）：
         * MarketView.tsx/KnowledgeBaseSurface.tsx 自己的根节点从来没有背景色，
         * 一直白嫖 .shell-content-card 的不透明底（hsl(var(--card))）。壁纸
         * 功能把 .shell-content-card 在 html[data-bg-art] 时改成透明后，这两
-        * 个"本该保持不透明、不参与换肤"的临时面（用户已确认此范围，
-        * background-art.css 头注释）意外也漏了壁纸——页面里零散的卡片/搜索框
-        * 各自的 bg-card 底不会漏、但页面整体大面积区域会露出壁纸色调，跟那些
-        * 不透明色块拼成花斑（2026-07-17 真机实锤，看着像"配色不搭配"）。这里
-        * 直接给包装 div 补一层不受 data-bg-art 影响的固定不透明底，两个面
-        * 就永远不透壁纸，不用在每个组件内部分别处理。 */}
+        * 个当时"本该保持不透明、不参与换肤"的临时面意外也漏了壁纸——页面里
+        * 零散的卡片/搜索框各自的 bg-card 底不会漏、但页面整体大面积区域会
+        * 露出壁纸色调，跟那些不透明色块拼成花斑（2026-07-17 真机实锤，看着
+        * 像"配色不搭配"）。当时直接给包装 div 补了一层不受 data-bg-art 影响
+        * 的固定不透明底堵住回归。
+        *
+        * 2026-07-18 用户推翻此前的排除决定，要求这两个面也换肤——处理方式
+        * 与 5 个分栏工作面板（见 background-art.css 的 .workspace-split-panel
+        * 头注释）同构：加语义类 workspace-split-panel，data-bg-art 开启时
+        * 从 bg-card 变成 veil-strong 近实底（同 focus 档同一档位，两个面
+        * 内容密度不低于活跃会话），关闭态原样保留 bg-card 不透明——依旧是
+        * 组件内部零散卡片/搜索框各自 bg-card 兜底，不受这条影响。 */}
       {marketShowing && (
-        <div className="absolute inset-0 bg-card">
+        <div className="absolute inset-0 workspace-split-panel bg-card">
           <MarketSurface />
         </div>
       )}
       {kbShowing && (
-        <div className="absolute inset-0 bg-card">
+        <div className="absolute inset-0 workspace-split-panel bg-card">
           <KnowledgeBaseSurface />
         </div>
       )}

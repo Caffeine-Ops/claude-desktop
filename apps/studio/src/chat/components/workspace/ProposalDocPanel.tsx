@@ -264,7 +264,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
     // 和其它状态条叠成一堵彩色墙（design-review F3）。
     // proposal-feature：作用域 class，让 index.css 给区内所有可聚焦控件统一补 focus-visible
     // 焦点环（design-review F6）；Paper/Preview/StyleModal 都在本根 DOM 子树内，一处全覆盖。
-    <div className="proposal-feature relative flex min-w-0 flex-1 flex-col border-l border-border bg-background text-foreground">
+    <div className="proposal-feature workspace-split-panel relative flex min-w-0 flex-1 flex-col border-l border-border bg-background text-foreground">
       {/* 顶栏：h-[46px] + hairline /55 与 ChatHeader / slides tab 栏同参——
           分栏各列顶栏底边对齐成一条（2026-07-08 统一，旧 py-2 自适应高
           ≈40px 与左列 46px 错位）。窗口拖拽由根 .window-drag-strip 覆盖

@@ -220,17 +220,17 @@ export function OutlinePanel({ file }: { file: WrittenFile }): React.JSX.Element
                   className={
                     'relative flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors ' +
                     (on
-                      ? 'bg-accent/10 font-medium text-accent'
+                      ? 'bg-brand/10 font-medium text-brand'
                       : 'text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground')
                   }
                 >
                   {on && (
-                    <span className="absolute bottom-[7px] left-0 top-[7px] w-[2.5px] rounded-full bg-accent" />
+                    <span className="absolute bottom-[7px] left-0 top-[7px] w-[2.5px] rounded-full bg-brand" />
                   )}
                   <span
                     className={
                       'w-[24px] shrink-0 text-[10px] font-semibold tabular-nums ' +
-                      (on ? 'text-accent' : 'text-muted-foreground/60')
+                      (on ? 'text-brand' : 'text-muted-foreground/60')
                     }
                   >
                     {ch.roman ?? String(i + 1)}

@@ -81,7 +81,11 @@ export function UserMessage(): React.JSX.Element {
           ClampedUserBubble caps the height of a very long message so one
           giant paste can't fill the whole transcript — it clamps to
           USER_BUBBLE_MAX_PX, fades the overflow out at the bottom, and
-          offers a 「显示更多 / 收起」toggle to expand it in place. */}
+          offers a 「显示更多 / 收起」toggle to expand it in place.
+
+          毛玻璃质感（2026-07-18，跟账户菜单/composer/rail 同一批）：bg-muted
+          实底换成半透明 + backdrop-blur，见 ClampedUserBubble 容器。颜色/
+          圆角/字号等上面两条纪律都没动，只换材质。 */}
       <ClampedUserBubble />
     </MessagePrimitive.Root>
   )
@@ -176,7 +180,7 @@ function ClampedUserBubble(): React.JSX.Element {
   const collapsed = clamped && !expanded
 
   return (
-    <div className="max-w-[80%] overflow-hidden rounded-xl bg-muted text-foreground">
+    <div className="max-w-[80%] overflow-hidden rounded-xl bg-muted/65 text-foreground backdrop-blur-xl backdrop-saturate-150">
       {hasText ? (
         <>
           <div

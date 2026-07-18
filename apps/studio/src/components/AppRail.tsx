@@ -512,12 +512,14 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
         * ——它是挂在当前 pathname 上的 overlay，语义上是「我在智能助手，顺手
         * 开了插件市场」，同 settings=1/kb=1 的既定取向（见 openSettings 注释）。 */}
       <Tabs value={pathname.startsWith('/chat') ? 'chat' : 'canvas'}>
-        {/* 样式对齐 shadcn 官方 TabsDemo（2026-07-08 用户要求）：零覆盖类，
-          * 选中态/暗档细节全部交给 ui/tabs.tsx 基件默认（bg-background 白卡
-          * + shadow-sm + 暗档 border-input/bg-input/30）。此前的 bg-card 强制
-          * 白卡与选中 icon 染主题色两处覆盖一并退役。w-full 是布局适配
-          * （rail 通栏两段均分），不属于样式覆盖。 */}
-        <TabsList className="w-full">
+        {/* 样式对齐 shadcn 官方 TabsDemo（2026-07-08 用户要求）：选中态/暗档
+          * 细节交给 ui/tabs.tsx 基件默认（shadow-sm + 暗档 border-input）。
+          * 毛玻璃质感（2026-07-18，跟账户菜单/composer 同一批）：轨道
+          * bg-muted、选中段 bg-background 都是实底，这里用 className
+          * 覆盖成半透明 + backdrop-blur——只动这一处用法，不改 ui/tabs.tsx
+          * 基件（改基件会牵动全项目所有 Tabs 用法，超出这次的诉求范围）。
+          * w-full 是布局适配（rail 通栏两段均分），不属于样式覆盖。 */}
+        <TabsList className="w-full bg-muted/55 backdrop-blur-xl backdrop-saturate-150">
           {SURFACE_TABS.map((item) => (
             <TabsTrigger
               key={item.value}
@@ -530,6 +532,7 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
               // 设置盖住了 rail，用户只能走它们自带的「返回应用」，撞不到这个）。
               // onClick 每次点击都跑，由 goSurface 自己判断该做什么。
               onClick={() => goSurface(item.value)}
+              className="data-[state=active]:bg-background/70 data-[state=active]:backdrop-blur-md"
             >
               {item.icon}
               {item.label}
@@ -595,7 +598,13 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
               side="top"
               align="start"
               sideOffset={8}
-              className="w-[256px] rounded-[14px] p-[5px] shadow-[0_16px_50px_rgba(0,0,0,.14),0_2px_8px_rgba(0,0,0,.06)]"
+              // 玻璃质感（2026-07-18，用户参考 macOS「打开方式」原生毛玻璃菜单
+              // 定稿）：只在这一个实例上把基件的 bg-popover 实底换成半透明 +
+              // backdrop-blur + saturate（token 仍是 --popover，颜色本身没动，
+              // 只是材质从纸变成玻璃）。刻意不动 ui/dropdown-menu.tsx 基件或
+              // menus.css 的统一实底皮肤——那是 2026-07-08 全项目菜单定稿，
+              // 影响 ~15 个 canvas 菜单，本次需求只针对账户菜单这一处。
+              className="w-[256px] rounded-[14px] border-border/40 bg-popover/70 p-[5px] shadow-[0_16px_50px_rgba(0,0,0,.14),0_2px_8px_rgba(0,0,0,.06)] backdrop-blur-2xl backdrop-saturate-150"
             >
               {/* 用户名区：名字行（复制钮贴名字，copied 短暂变勾，非 menu
                 * item 点击不关菜单）+ 邮箱副行（浏览器直开无 authUser 时不

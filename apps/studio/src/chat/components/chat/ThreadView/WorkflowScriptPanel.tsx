@@ -166,7 +166,7 @@ export function WorkflowScriptPanel(): React.JSX.Element | null {
   const gutter = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n')
 
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card">
+    <div className="workspace-split-panel flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card">
       {/* 顶栏 —— 46px 与 ChatHeader 同高同 hairline，分栏两根栏底边对齐
           成一条（同 SlidesWorkspace tab 栏的对齐纪律）。窗口拖拽由根
           layout 的 .window-drag-strip 统一负责（2026-07-08 收敛重构，

@@ -143,6 +143,69 @@ export const IPC_CHANNELS = {
    */
   IMAGE_MANIFEST_READ: 'image-manifest:read',
   /**
+   * Renderer → main. One-shot read of a ppt-master project's
+   * `confirm_ui/` round-trip files (recommendations.json / result.json /
+   * catalogs.json — see ConfirmUiReadResult). CanvasConfirm (「问题」canvas
+   * tab) calls this on boot and polls it while waiting for the AI to
+   * re-derive Tier-2 recommendations. There is no confirm_ui HTTP server
+   * anymore (skills/ppt-master/scripts/confirm_ui/confirm_wait.py is a pure
+   * stdlib file-watcher, not a server) — this IS the read side of that file
+   * contract, main only ferries bytes the same way IMAGE_MANIFEST_READ does.
+   */
+  CONFIRM_UI_READ: 'confirm-ui:read',
+  /**
+   * Renderer → main. Writes the user's Eight-Confirmations submission to
+   * `<projectDir>/confirm_ui/result.json` (see ConfirmUiWriteResultPayload).
+   * main stamps `status`/`confirmed_at` (mirrors the old confirm_ui Flask
+   * server's POST /api/confirm shaping) and writes atomically so
+   * confirm_wait.py's poll never reads a torn file. Guarded so this can only
+   * write into a project that already has a Strategist-authored
+   * recommendations.json — see the handler for why that's the write
+   * authorization, not just a path allowlist.
+   */
+  CONFIRM_UI_WRITE_RESULT: 'confirm-ui:write-result',
+  /**
+   * Renderer → main. Lists `<projectDir>/svg_output/*.svg` with mtime/size,
+   * plus the bundled icon library root — replaces the old svg_editor Flask
+   * server's GET /api/slides. LivePreviewEditor polls this every few seconds
+   * (same "poll, don't fs.watch" call as SHEET_FILE_STAT) to detect pages the
+   * Executor just wrote or rewrote.
+   */
+  PPT_PREVIEW_LIST_SLIDES: 'ppt-preview:list-slides',
+  /**
+   * Renderer → main. Reads one slide's raw SVG bytes off disk — replaces the
+   * old svg_editor Flask server's GET /api/slide/<name>. Deliberately returns
+   * the UNTRANSFORMED file: icon inlining, temp-id assignment, and asset-href
+   * rewriting all happen renderer-side now (src/chat/lib/pptPreview/), so
+   * main's job here is just a path-guarded read, same division of labor as
+   * every other *_FILE_READ channel.
+   */
+  PPT_PREVIEW_READ_SLIDE: 'ppt-preview:read-slide',
+  /**
+   * Renderer → main. Writes back the slide files LivePreviewEditor staged
+   * annotations/edits for, plus appends their history to
+   * `live_preview/{edits,annotations}.jsonl` — replaces the old svg_editor
+   * Flask server's POST /api/save-all. Takes each file's `baseMtime` and
+   * refuses (reports in `conflicts`) any file whose on-disk mtime has moved
+   * since the renderer read it — the compare-and-swap that stands in for the
+   * old server's "always re-read from disk before writing" trick now that
+   * there's no long-lived process holding the file open.
+   */
+  PPT_PREVIEW_SAVE_ALL: 'ppt-preview:save-all',
+  /**
+   * Renderer → main. Converts a SOURCE .pptx (one the user handed the
+   * session, not a ppt-master-generated deck) to per-slide SVG via the
+   * skill's offline `pptx_to_svg.py`, so 「预览幻灯片」can show the original
+   * deck immediately — before the AI has produced any output of its own.
+   * Results are cached on disk by (path, mtime) hash under
+   * `<userData>/ppt-source-preview/`, so a repeat call for the same file is
+   * a cache hit, not a re-conversion. Requires the skill's Python venv to
+   * already be bootstrapped (see skills/ppt-master/bin/ensure-python.sh) —
+   * `ok:false` on a first-ever ppt-master use before that's happened is
+   * expected, not a bug; the caller shows a "预览准备中" copy instead.
+   */
+  PPT_SOURCE_PREVIEW: 'ppt-source:preview',
+  /**
    * Renderer → main. Lists chat-capable model ids from the backend
    * gateway's `/v1/models` catalog (see ModelListResult). Cached in main
    * with a short TTL — the composer's 模型 chip fetches on open.
@@ -1303,6 +1366,144 @@ export type SheetFileStatResult = {
   error?: string
 }
 
+/* ───────────────────────── ppt-master confirm_ui ─────────────────────── */
+
+/** Payload for CONFIRM_UI_READ. `projectDir` is the ppt-master project's
+ *  absolute directory (the argument confirm_wait.py was launched with). */
+export type ConfirmUiReadPayload = { projectDir: string }
+
+/**
+ * Result of CONFIRM_UI_READ — a snapshot of `<projectDir>/confirm_ui/`'s
+ * three round-trip files. Each is independently nullable: `recommendations`
+ * is null only if the Strategist hasn't written it yet (shouldn't happen —
+ * confirm_wait.py refuses to start without it, but the renderer boots before
+ * confirming that), `result` is null until the user submits, `catalogs` is
+ * null until confirm_wait.py's `--fresh` step has run. A null field means
+ * "not ready yet, keep polling", not an error — `ok`/`error` cover the
+ * actual failure case (bad projectDir).
+ */
+export type ConfirmUiReadResult = {
+  ok: boolean
+  recommendations: Record<string, unknown> | null
+  result: Record<string, unknown> | null
+  catalogs: Record<string, unknown> | null
+  error?: string
+}
+
+/**
+ * Payload for CONFIRM_UI_WRITE_RESULT. `payload` is the submission body
+ * CanvasConfirm built (tier-1 anchors or the full tier-2 shape) — passed
+ * through as-is; main only adds `status`/`confirmed_at` before writing.
+ */
+export type ConfirmUiWriteResultPayload = {
+  projectDir: string
+  payload: Record<string, unknown>
+}
+
+/** Result of CONFIRM_UI_WRITE_RESULT. */
+export type ConfirmUiWriteResultResult = { ok: boolean; error?: string }
+
+/* ───────────────────────── ppt-master live preview ─────────────────────── */
+
+/** Payload for PPT_PREVIEW_LIST_SLIDES. */
+export type PptPreviewListSlidesPayload = { projectDir: string }
+
+/** One `svg_output/*.svg` entry as reported by PPT_PREVIEW_LIST_SLIDES. */
+export type PptPreviewSlideEntry = { name: string; mtime: number; size: number }
+
+/**
+ * Result of PPT_PREVIEW_LIST_SLIDES. `dirMissing` distinguishes "the project
+ * folder / svg_output got deleted" (LivePreviewEditor drops its tab) from a
+ * transient read error (worth retrying). `iconsRoot` is the bundled skill's
+ * `templates/icons` absolute path, resolved main-side once per call so the
+ * renderer's icon inliner never has to guess SKILL_DIR from transcript text;
+ * null means the skill install couldn't be located — the renderer then skips
+ * inlining and reports every `<use data-icon>` as a warning instead of
+ * guessing wrong.
+ */
+export type PptPreviewListSlidesResult = {
+  ok: boolean
+  slides: PptPreviewSlideEntry[]
+  iconsRoot: string | null
+  dirMissing?: boolean
+  error?: string
+}
+
+/** Payload for PPT_PREVIEW_READ_SLIDE. `name` is a bare filename (no path
+ *  separators) — validated main-side against directory traversal. */
+export type PptPreviewReadSlidePayload = { projectDir: string; name: string }
+
+/** Result of PPT_PREVIEW_READ_SLIDE. `content` is the untransformed on-disk
+ *  SVG source; `mtime` is the compare-and-swap basis for a later save. */
+export type PptPreviewReadSlideResult = {
+  ok: boolean
+  content?: string
+  mtime?: number
+  error?: string
+}
+
+/**
+ * One file to persist in a PPT_PREVIEW_SAVE_ALL call. `content` is the full
+ * rewritten SVG (annotations/edits already replayed onto it renderer-side);
+ * `baseMtime` is the mtime PPT_PREVIEW_READ_SLIDE returned when the renderer
+ * last read this file — the compare-and-swap guard against an Executor
+ * rewrite racing this save.
+ */
+export type PptPreviewSaveFile = { name: string; content: string; baseMtime: number }
+
+/**
+ * Payload for PPT_PREVIEW_SAVE_ALL. `annotationLog`/`editLog` are pre-built
+ * jsonl records (one object each becomes one appended line) — the renderer
+ * computes the old/new diff that decides `annotation_saved` vs
+ * `annotation_updated` vs `annotation_removed` (it already holds both the
+ * disk-read baseline and the staged edits), main only appends bytes.
+ */
+export type PptPreviewSaveAllPayload = {
+  projectDir: string
+  files: PptPreviewSaveFile[]
+  annotationLog: Record<string, unknown>[]
+  editLog: Record<string, unknown>[]
+}
+
+/**
+ * Result of PPT_PREVIEW_SAVE_ALL. A batch can partially succeed — some files
+ * write while others conflict — so `ok` (true only when `conflicts` is
+ * empty and no fatal error occurred) is a summary, not a discriminant:
+ * `filesModified`/`conflicts` are both always populated (possibly empty),
+ * never gated behind `ok`. `conflicts` lists files whose on-disk mtime no
+ * longer matched `baseMtime` (not written) — the renderer re-reads just
+ * those, replays its staged changes onto the fresh content, and retries once
+ * before surfacing a "being rewritten" toast.
+ */
+export type PptPreviewSaveAllResult = {
+  ok: boolean
+  filesModified: string[]
+  conflicts: string[]
+  error?: string
+}
+
+/* ───────────────────────── ppt-master source pptx preview ─────────────────────── */
+
+/** Payload for PPT_SOURCE_PREVIEW. `pptxPath` is the absolute path to a
+ *  source .pptx the user handed the session (not a ppt-master project). */
+export type PptSourcePreviewPayload = { pptxPath: string }
+
+/** One converted slide — `content` is raw SVG text with STILL-RELATIVE
+ *  `../assets/*` hrefs (mirrors PPT_PREVIEW_READ_SLIDE: main only ferries
+ *  bytes, the renderer rewrites hrefs against `outDir` via the SAME
+ *  `rewriteAssetHrefs` the live preview pipeline uses). */
+export type PptSourceSlide = { name: string; content: string }
+
+/**
+ * Result of PPT_SOURCE_PREVIEW. `outDir` is the pptx_to_svg.py output root
+ * (contains `svg-flat/` and `assets/` as siblings) — the base directory
+ * `rewriteAssetHrefs(content, outDir)` needs to resolve each slide's
+ * relative asset hrefs into `pptasset://` URLs.
+ */
+export type PptSourcePreviewResult =
+  | { ok: true; outDir: string; slides: PptSourceSlide[] }
+  | { ok: false; error: string }
+
 /* ───────────────────────── Model switching ─────────────────────── */
 
 /**
@@ -2229,6 +2430,48 @@ export interface ChatApi {
    * change detection. See SHEET_FILE_STAT.
    */
   statSheetFile(payload: SheetFileStatPayload): Promise<SheetFileStatResult>
+
+  /**
+   * Read a ppt-master project's confirm_ui round-trip files
+   * (recommendations / result / catalogs). CanvasConfirm's boot and its
+   * tier1→tier2 poll both call this. See CONFIRM_UI_READ.
+   */
+  readConfirmUi(payload: ConfirmUiReadPayload): Promise<ConfirmUiReadResult>
+
+  /**
+   * Write the user's Eight-Confirmations submission to result.json. See
+   * CONFIRM_UI_WRITE_RESULT.
+   */
+  writeConfirmUiResult(
+    payload: ConfirmUiWriteResultPayload
+  ): Promise<ConfirmUiWriteResultResult>
+
+  /**
+   * List a ppt-master project's svg_output/ slides. LivePreviewEditor polls
+   * this to detect new/changed pages. See PPT_PREVIEW_LIST_SLIDES.
+   */
+  listPptPreviewSlides(
+    payload: PptPreviewListSlidesPayload
+  ): Promise<PptPreviewListSlidesResult>
+
+  /**
+   * Read one slide's raw SVG source. See PPT_PREVIEW_READ_SLIDE.
+   */
+  readPptPreviewSlide(
+    payload: PptPreviewReadSlidePayload
+  ): Promise<PptPreviewReadSlideResult>
+
+  /**
+   * Persist staged annotations/edits back to svg_output/ and append their
+   * jsonl history. See PPT_PREVIEW_SAVE_ALL.
+   */
+  savePptPreviewAll(payload: PptPreviewSaveAllPayload): Promise<PptPreviewSaveAllResult>
+
+  /**
+   * Convert a source .pptx to per-slide SVG for an immediate preview, before
+   * the AI has produced any output. See PPT_SOURCE_PREVIEW.
+   */
+  previewPptSource(payload: PptSourcePreviewPayload): Promise<PptSourcePreviewResult>
 
   /**
    * List chat-capable model ids from the backend gateway (main-side cached).

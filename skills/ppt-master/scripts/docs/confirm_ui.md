@@ -1,33 +1,26 @@
 # Confirm UI — Eight Confirmations Page
 
-> The interactive, visual surface for SKILL.md Step 4 (the Eight Confirmations). Enumerable fields list **all** options from a catalog with the AI's recommendation badged; generative fields (color, typography, generated-image style) show **≥3** AI candidates (creative recommendations always offer real choice — same rule as the h.5 image strategy; fewer only on the honest-shortfall exception, with a stated reason). Fields whose universe is open (canvas, mode, visual style, icons, image usage) also get a **Custom** box; fully closed fields (AI source when applicable, formula policy, generation mode, refine spec) do not. The AI writes its recommendation to `recommendations.json`; the user's final choices are written back to `result.json` for the AI to read. On confirm the page saves the result and shuts the server down (auto-close). The chat path is always a valid fallback — if the browser cannot open (remote / headless / web host), the AI presents the same confirmations in chat.
+> The interactive, visual surface for SKILL.md Step 4 (the Eight Confirmations), rendered NATIVELY by the Claude Desktop host (CanvasConfirm, in the 「问题」canvas tab) — there is no server or browser page on this path anymore. Enumerable fields list **all** options from a catalog with the AI's recommendation badged; generative fields (color, typography, generated-image style) show **≥3** AI candidates (creative recommendations always offer real choice — same rule as the h.5 image strategy; fewer only on the honest-shortfall exception, with a stated reason). Fields whose universe is open (canvas, mode, visual style, icons, image usage) also get a **Custom** box; fully closed fields (AI source when applicable, formula policy, generation mode, refine spec) do not. The AI writes its recommendation to `recommendations.json`; the user's final choices are written back to `result.json` for the AI to read. The chat path is always a valid fallback — if the app cannot render the tab (remote / headless / non-desktop), the AI presents the same confirmations in chat.
 
-## `confirm_ui/server.py`
+## `confirm_ui/confirm_wait.py`
 
-```bash
-python3 scripts/confirm_ui/server.py <project_path> --daemon --wait   # launch + wait for Tier 1
-python3 scripts/confirm_ui/server.py <project_path> --wait-only       # Tier 2: attach to the running page, wait for the final result
-python3 scripts/confirm_ui/server.py <project_path> --daemon
-python3 scripts/confirm_ui/server.py <project_path> --daemon --port 5051
-python3 scripts/confirm_ui/server.py <project_path> --no-browser
-python3 scripts/confirm_ui/server.py <project_path> --timeout 0   # disable idle auto-shutdown
-python3 scripts/confirm_ui/server.py <project_path> --shutdown    # Step 4 cleanup (idempotent)
-```
-
-- Binds `127.0.0.1:5050` by default — or the next free port if another project already holds it (the launch log prints the actual URL) — and auto-opens the browser (suppress with `--no-browser`). `--port <other>` forces a specific port.
-- **Shares port 5050 with the live preview server** (`svg_editor/server.py`). The two never run at once: confirm is Step 4, live preview is Step 6, and Step 4 always shuts this server down on exit (see `--shutdown`) so the port is free. One port = one forward rule for the whole pipeline. They still keep **separate processes and locks** (`.confirm_ui.lock` vs `.live_preview.lock`).
-- `--daemon` starts the Flask process in the background; add `--wait` in the main pipeline so the parent command returns only after the page writes a fresh `result.json`. The `--wait` budget defaults to **590 s** (`--wait-timeout`), kept under the typical 600 s tool ceiling — run the launch with a long tool timeout (≈600000 ms). On timeout the parent returns non-zero but the detached server keeps running, so the caller must re-check `result.json` once before the chat fallback (a slow user may confirm just after the wait returns).
-- `--wait-only` is the **second leg of the two-tier flow**: it does **not** launch a server — it attaches to the page already running from the first `--daemon --wait` and blocks until the page writes the **final** result (`stage: "final"`). It keys on the **stage alone** (no mtime gate): this run's tier-1 confirm already left result.json at `stage: "tier1"`, so any `final` is the tier-2 submit — and an mtime gate would race-miss a user who confirms tier 2 before this wait is issued. Same `--wait-timeout` budget; on timeout / server-gone it returns non-zero and the caller re-checks `result.json` once before the chat fallback.
-- `--shutdown` stops a confirm server left running for this project and exits — **idempotent** (a no-op when nothing is running). Tries a graceful `/api/shutdown`, falls back to killing the recorded pid, then clears the lock. SKILL.md Step 4 runs this on every path (page-confirm or chat-fallback) so the page never lingers on the shared port before live preview starts.
-- Refuses to start unless `<project_path>/confirm_ui/recommendations.json` exists (except `--shutdown`, which needs no recommendations).
-- Per-project lock at `<project_path>/.confirm_ui.lock` — duplicate launches are refused; stale locks (dead pid) are overwritten.
-- Idle auto-shutdown after 900 s by default; `/api/shutdown` exits gracefully and releases the lock.
-
-Dependency:
+A pure-stdlib waiter, not a server: it doesn't render anything, doesn't listen on a port, and doesn't care who writes `result.json` — it just blocks the calling Bash tool call until the stage it's watching shows up in that file. The desktop app's CanvasConfirm writes `result.json` via its own IPC (CONFIRM_UI_WRITE_RESULT); a hand-edit of the file would satisfy this script equally well.
 
 ```bash
-pip install flask
+python3 scripts/confirm_ui/confirm_wait.py <project_path> --stage tier1 --fresh   # start a round, wait for Tier 1
+python3 scripts/confirm_ui/confirm_wait.py <project_path> --stage final           # Tier 2: wait for the final result
+python3 scripts/confirm_ui/confirm_wait.py <project_path> --stage final --fresh   # single-pass (e.g. beautify-pptx)
 ```
+
+- `--fresh` **starts a new confirmation round**: clears any stale `result.json` left by a previous round (otherwise a leftover `stage: final` would make this run's stage guard return instantly with no real confirmation), and writes a fresh `<project_path>/confirm_ui/catalogs.json` snapshot (the merged option universe — see below) plus a `_meta.static_dir` pointer the desktop app reads its style/canvas preview images from. Pass it on the **first** wait of a round (Tier 1's leg, or the single leg of a single-pass flow) — never on Tier 2's leg, which would delete the Tier 1 result it depends on.
+- **No lock, no pid check, no port** — liveness is inferred purely from whether `result.json` reaches the target stage before the timeout. The budget is a **fixed 590 s ceiling** (`--timeout` is clamped to it — there is deliberately no way to wait longer or forever, so a stuck round can never strand the whole conversation turn), kept under the typical 600 s tool ceiling — run the wait with a long tool timeout (≈600000 ms). On timeout the script returns 124; the app may still be open and the user may confirm moments later, so the caller must re-check `result.json` once, then drop to the chat fallback — **never re-run the wait a second time** for the same non-result, that only repeats the same full 590 s for nothing.
+- Refuses to start unless `<project_path>/confirm_ui/recommendations.json` exists — the same "a confirm round is legitimately in progress" gate the app's write-side IPC also checks.
+- Exit codes: `0` target stage reached, `1` bad arguments / missing recommendations.json, `124` timed out.
+- No cleanup step — there is no server or port to release. Re-running the same stage without `--fresh` is safe (if `result.json` already has that stage, it returns immediately).
+
+Dependency: none (standard library only).
+
+`confirm_ui/server.py` — the Flask page this replaced — has been deleted along with its `static/` HTML/JS. The static **data** files it used to serve remain and are still read by the app: `static/catalogs.json` (the option universe) and `static/style-previews/` / `static/canvas-previews/` (preview images, read via the app's local-file IPC through the `_meta.static_dir` pointer above).
 
 ## Two kinds of field
 
@@ -41,7 +34,7 @@ pip install flask
 
 ## Catalogs — `static/catalogs.json` (the finite option universe)
 
-The front-end loads `/api/catalogs` (served by the confirm server) and falls back to the static `/static/catalogs.json` if that route is unavailable. `/api/catalogs` returns the static file **with the `canvas` list synced live from `config.py CANVAS_FORMATS`** — the set of formats and their `dim` come from config (single source of truth, zero drift), while bilingual labels / use text stay in catalogs.json (a plain fallback label is synthesized for any new id config adds). Keys: `canvas`, `modes`, `visual_styles` (grouped), `icons`, `image_usage`, `image_ai_path`, `formula_policy`, `generation_mode`, `delivery_purpose`. Each entry is `{ "id", "label", "label_zh", "label_en", ... }`; descriptions use `desc_zh` / `desc_en`, and `visual_styles` groups use `group_zh` / `group_en`. The front-end falls back to legacy `label` / `desc` / `group`, so old catalogs still load, but new user-facing catalog text must be bilingual. English labels should mirror canonical reference names (`pyramid`, `swiss-minimal`, `Path A`, `mixed`, etc.); Chinese labels should be translated for users. Descriptions render inline after the option title, not as a separate selected-option line. `visual_styles` is `[{ "group", "group_zh", "group_en", "items": [...] }]`. For `canvas` you only need to maintain the bilingual labels in catalogs.json; the format set and dimensions are authoritative in `config.py CANVAS_FORMATS`.
+`confirm_wait.py --fresh` writes `<project_path>/confirm_ui/catalogs.json` at the start of each confirmation round — the static `static/catalogs.json` merged **with the `canvas` list synced live from `config.py CANVAS_FORMATS`** (the set of formats and their `dim` come from config, single source of truth, zero drift; bilingual labels / use text stay in `static/catalogs.json`, a plain fallback label synthesized for any new id config adds), plus a `_meta.static_dir` pointer to `static/` for the app's preview-image reads. CanvasConfirm reads this project-local snapshot via CONFIRM_UI_READ — there is no `/api/catalogs` endpoint anymore. Keys: `canvas`, `modes`, `visual_styles` (grouped), `icons`, `image_usage`, `image_ai_path`, `formula_policy`, `generation_mode`, `delivery_purpose`. Each entry is `{ "id", "label", "label_zh", "label_en", ... }`; descriptions use `desc_zh` / `desc_en`, and `visual_styles` groups use `group_zh` / `group_en`. The front-end falls back to legacy `label` / `desc` / `group`, so old catalogs still load, but new user-facing catalog text must be bilingual. English labels should mirror canonical reference names (`pyramid`, `swiss-minimal`, `Path A`, `mixed`, etc.); Chinese labels should be translated for users. Descriptions render inline after the option title, not as a separate selected-option line. `visual_styles` is `[{ "group", "group_zh", "group_en", "items": [...] }]`. For `canvas` you only need to maintain the bilingual labels in catalogs.json; the format set and dimensions are authoritative in `config.py CANVAS_FORMATS`.
 
 ## Round-trip data contract
 
@@ -49,15 +42,15 @@ Both files live under `<project_path>/confirm_ui/`.
 
 ### Two-tier flow
 
-The page runs as a **two-tier wizard in one browser session**. `recommendations.json` carries a top-level `"tier"`:
+The page runs as a **two-tier wizard in one CanvasConfirm mount** (it stays mounted, just hidden, across tab switches — see the app's SlidesWorkspace KEEP-ALIVE comment). `recommendations.json` carries a top-level `"tier"`:
 
 | `tier` | Page renders | Button | On submit |
 |---|---|---|---|
-| `1` | anchors — canvas, audience + `content_divergence` + `delivery_purpose` *(PPT only — omitted on non-PPT canvases, not written to the result)* (all in the §c key-info area), mode + visual_style | **Next** | writes `result.json` `{ stage: "tier1", status: "tier1-confirmed", <anchors> }`; the page does **not** close — it shows a "deriving…" state and polls `GET /api/recommendations` |
+| `1` | anchors — canvas, audience + `content_divergence` + `delivery_purpose` *(PPT only — omitted on non-PPT canvases, not written to the result)* (all in the §c key-info area), mode + visual_style | **Next** | writes `result.json` `{ stage: "tier1", status: "tier1-confirmed", <anchors> }`; the page does **not** close — it shows a "deriving…" state and polls `recommendations.json` via CONFIRM_UI_READ |
 | `2` | realization — page count, color, typography, icons, formula, image usage + strategy, generation mode, refine spec | **Confirm** | writes `result.json` `{ stage: "final", status: "confirmed", <all fields> }`, then shuts the page down |
 | *(absent)* | legacy single-pass — every section on one page | **Confirm** | single final write (`status: "confirmed"`) — backward-compatible |
 
-The AI launches Tier 1 (`--daemon --wait`), reads the tier-1 result, **re-derives** the realization candidates from the user's actual anchors, overwrites `recommendations.json` with `"tier": 2` (realization fields only — it need not echo the anchors), and re-attaches with `--wait-only`. The page preserves the user's Tier 1 selections across the transition (single JS session). `GET /api/recommendations` is served `no-store` so the poll sees the tier-2 overwrite, and when `tier == 2` the server **folds the confirmed anchors from `result.json` back into the payload** (`recommend.canvas` / `mode` / `visual_style` / `delivery_purpose`, plus `audience` / `content_divergence` values) — so a **page refresh / reopen on Tier 2 re-initializes the anchors from the user's choices** instead of catalog defaults, even though those sections are not rendered on the Tier-2 page.
+The AI waits for Tier 1 (`confirm_wait.py --stage tier1 --fresh`), reads the tier-1 result, **re-derives** the realization candidates from the user's actual anchors, overwrites `recommendations.json` with `"tier": 2` (realization fields only — it need not echo the anchors), and waits again (`--stage final`, no `--fresh`). The page (CanvasConfirm) preserves the user's Tier 1 selections across the transition (it never remounts) and polls the CONFIRM_UI_READ IPC to notice the tier-2 overwrite; when `tier == 2` it **folds the confirmed anchors from `result.json` back into what it renders** (`recommend.canvas` / `mode` / `visual_style` / `delivery_purpose`, plus `audience` / `content_divergence` values) — so a **remount on Tier 2 re-initializes the anchors from the user's choices** instead of catalog defaults, even though those sections are not rendered on the Tier-2 page.
 
 ### Input — `recommendations.json` (written by Strategist before launch)
 
@@ -168,7 +161,7 @@ The shape above is the **final** (Tier 2) result, carrying all Tier 1 + Tier 2 f
 
 - Any option field may instead hold a **free-text custom string** (the user picked **Custom**); `color` / `typography` custom entries set `name: "custom"`. Image usage custom values must be concrete prose plans, not the literal string `"custom"`. The AI interprets custom text against the canonical references.
 - `image_ai_path` and `image_strategy` are omitted from `result.json` unless `image_usage` is `ai` or a custom image plan that may include generated images. Both are honored downstream as confirmed choices — and the page is only a convenience surface over the **canonical chat channel**: the same choices made in chat are honored identically when no `result.json` exists. `image_ai_path` drives the Step 5 generation path (`image-generator.md` §7 — `host-native` forces the host tool even when `IMAGE_BACKEND` is set); the chosen `image_strategy` candidate is locked verbatim by Strategist h.5 (no re-pick).
-- After the user clicks the **final Confirm** (Tier 2, or single-pass), the page saves `result.json` and shuts the server down (auto-close). A Tier-1 **Next** instead keeps the page open (it polls for the re-derived Tier 2). In the default flow, the first `--daemon --wait` returns on the tier-1 result and the second `--wait-only` returns on the final result; the AI reads each immediately — no extra chat confirmation is required. Chat confirmation remains the fallback when the page cannot be used. Either way, Step 4 ends with a `--shutdown` cleanup so a never-confirmed page cannot keep holding port 5050 ahead of the Step 6 live preview.
+- After the user clicks the **final Confirm** (Tier 2, or single-pass), the page writes `result.json` via CONFIRM_UI_WRITE_RESULT — there is no server to shut down, so nothing else happens on the app side. A Tier-1 **Next** instead keeps the page mounted (it polls for the re-derived Tier 2). In the default flow, `confirm_wait.py --stage tier1 --fresh` returns on the tier-1 result and `--stage final` returns on the final result; the AI reads each immediately — no extra chat confirmation is required. Chat confirmation remains the fallback when the page cannot be used.
 
 ## Scope
 

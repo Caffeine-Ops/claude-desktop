@@ -188,26 +188,33 @@ function ChatColumnResizeHandle({
       role="separator"
       aria-orientation="vertical"
       onPointerDown={onResizeStart}
-      // w-1.5 = 6px gutter between the two white panes, painted bg-sidebar
-      // （窗口底面同款灰）。透明版透出的是 .chat-app 背后的
-      // shell-content-card（--card，近白），白缝夹两白面板等于隐形，所以
-      // 必须自涂。Root 保持透明满铺（「双浮卡」方案已被否，见 Root 注释），
-      // 缝的颜色只能落在这里。（旧浮卡时代是 10px、与 rail↔卡的 gutter
-      // 同色同宽呼应；2026-07-08 平铺化后 gutter 没了，同日用户要求缝再
-      // 收窄——6px 是拖拽热区可抓性的下限档位，别再往下压。）
+      // w-1.5 = 6px gutter between the two panes，原是纯色 bg-sidebar（窗口底面
+      // 同款灰）：透明版透出的是 .chat-app 背后的 shell-content-card
+      // （--card，近白），白缝夹两白面板等于隐形，所以必须自涂。Root 保持
+      // 透明满铺（「双浮卡」方案已被否，见 Root 注释），缝的颜色只能落在
+      // 这里。（旧浮卡时代是 10px、与 rail↔卡的 gutter 同色同宽呼应；
+      // 2026-07-08 平铺化后 gutter 没了，同日用户要求缝再收窄——6px 是
+      // 拖拽热区可抓性的下限档位，别再往下压。）
+      // 毛玻璃质感（2026-07-18，跟 composer/rail/workspace 面同一批）：纯色
+      // 换成半透明 + backdrop-blur——两侧面板现在也都是玻璃质感，缝还按老
+      // 实色画会在两片玻璃中间夹一条突兀的纯色硬线。半透明不会重蹈"白缝
+      // 隐形"：blur 本身在边界处产生的折射/明暗过渡就是可见的缝，不需要
+      // 底色纯不透明来撑存在感。
       // The hit area spans the whole gutter so the handle is easy to
       // grab; touch-none stops scroll/pan hijacking the drag; `group`
       // drives the child divider's hover reveal.
-      className="group relative flex h-full w-1.5 shrink-0 cursor-col-resize touch-none items-stretch justify-center bg-sidebar"
+      className="group relative flex h-full w-1.5 shrink-0 cursor-col-resize touch-none items-stretch justify-center bg-sidebar/55 backdrop-blur-xl backdrop-saturate-150"
     >
-      {/* The visible divider: a soft accent (green) line, invisible at rest,
+      {/* The visible divider: a soft brand-green line, invisible at rest,
           fading in on hover and while dragging (group-active). A vertical
           mask-image gradient fades the line's TOP and BOTTOM ends out to
           transparent so it does NOT run edge-to-edge — it's strongest in the
-          middle and dissolves at both ends. A gentle accent glow keeps it
-          reading as the highlighted drag affordance. Centered in the gutter so
-          the whitespace splits evenly between the two panes. */}
-      <div className="h-full w-px bg-accent/80 opacity-0 shadow-[0_0_8px_2px_hsl(var(--accent)/0.3)] transition-opacity duration-150 [mask-image:linear-gradient(to_bottom,transparent_0,black_18%,black_82%,transparent_100%)] group-hover:opacity-100 group-active:opacity-100" />
+          middle and dissolves at both ends. A gentle glow keeps it reading as
+          the highlighted drag affordance. Fixed --brand (not --accent): this
+          is a chrome affordance, not a user-theme surface — it must stay the
+          same green regardless of the user's accent color. Centered in the
+          gutter so the whitespace splits evenly between the two panes. */}
+      <div className="h-full w-px bg-brand/80 opacity-0 shadow-[0_0_8px_2px_hsl(var(--brand)/0.3)] transition-opacity duration-150 [mask-image:linear-gradient(to_bottom,transparent_0,black_18%,black_82%,transparent_100%)] group-hover:opacity-100 group-active:opacity-100" />
     </div>
   )
 }
@@ -253,8 +260,26 @@ function useSessionSwitchLoading(): boolean {
  * showing a generic spinner. Shimmer gradient matches `.pes-sk`
  * (main.css); classes live there too (`.ssw-*`).
  *
- * 底必须不透明：帘幕退役后，身下是**清晰未磨砂的旧会话内容**，半透明
- * 会让两个会话的文字叠印在一起。骨架必须完全接管这块区域。
+ * 底必须挡住旧内容：帘幕退役后，身下是旧会话内容，纯透明会让两个会话的
+ * 文字**清晰**叠印在一起。骨架必须完全接管这块区域的可读性——但「完全
+ * 接管」≠「必须纯实底」：2026-07-18 毛玻璃质感统一改造后加了 backdrop-
+ * blur（2026-07-19 用户两轮要求调低模糊度，2xl → xl → 目前的 lg——比同批
+ * 其它玻璃面板的 xl 标准更轻，是刻意的例外，不要「统一」回 xl）。**lg 这一档
+ * 比 xl 更接近「能看清壁纸细节」和「旧文字彻底认不出」之间的临界点**——配
+ * 合下方 veil-strong（只有 ~0.5 不透明）已经不是很有富余了，以后如果真机
+ * 发现旧会话文字有可辨认的鬼影，先回调这里的 blur 档位，不要改 veil-strong
+ * （那个数值全项目其它玻璃面板共用）。所以配合较高但非 100% 的不透明度：
+ * 既跟全项目玻璃质感语言一致，又不会重新踩「两会话文字叠印」的坑。**别把
+ * 这里的不透明度降到跟菜单/composer 那些浮在壁纸上的用法一个档位**——那些
+ * 身下是壁纸，这里身下是真实文字内容，风险不对等。
+ *
+ * 壁纸换肤开着时（`html[data-bg-art]`）改走 veil 变量，不再是这里的固定
+ * `/85`（2026-07-18 用户要求骨架屏期间也要看得见壁纸图案）：`.session-
+ * switch-skeleton` 类是 background-art.css 的挂钩，那条规则把底色换成
+ * `--bg-art-veil-strong`——跟 focus 态消息区、workspace-split-panel 同一档，
+ * 因为身下同样是「真实内容 + 需要盖住」的风险类别，不是新发明一档。这里的
+ * `bg-card/85` 只在无壁纸（data-bg-art 不存在）时生效，是该规则的选择范围
+ * 之外，两者不冲突。
  *
  * ⚠️ 底色是 bg-card 不是 bg-background——聊天内容列自身铺的就是 bg-card
  * （见 dropzone 容器的 className），而两个 token 差着一档（浅色 100% vs
@@ -280,7 +305,7 @@ function SessionSwitchSkeleton(): React.JSX.Element {
       aria-hidden
       exit={{ opacity: 0 }}
       transition={{ duration: 0.15, ease: 'easeOut' }}
-      className="absolute inset-0 z-10 overflow-hidden bg-card"
+      className="session-switch-skeleton absolute inset-0 z-10 overflow-hidden bg-card/85 backdrop-blur-lg backdrop-saturate-150"
     >
       <div className="mx-auto flex w-full max-w-4xl flex-col px-3 pt-10">
         <div className="ssw-sk mb-7 h-9 w-1/3 self-end rounded-[18px]" />
@@ -410,7 +435,9 @@ function EarlierMessagesGate(): React.JSX.Element | null {
       <button
         type="button"
         onClick={onReveal}
-        className="rounded-full border border-border/70 bg-background px-3.5 py-1.5 text-[12px] text-muted-foreground shadow-sm transition-colors hover:bg-hover hover:text-foreground"
+        // 毛玻璃质感（2026-07-18，跟账户菜单/composer/rail 同一批）：实底
+        // bg-background 换成半透明 + backdrop-blur。
+        className="rounded-full border border-border/70 bg-background/55 px-3.5 py-1.5 text-[12px] text-muted-foreground shadow-sm backdrop-blur-xl backdrop-saturate-150 transition-colors hover:bg-hover hover:text-foreground"
       >
         {lang === 'zh'
           ? `显示更早的消息（还有 ${hiddenCount} 条）`
@@ -741,9 +768,14 @@ export function ThreadView(): React.JSX.Element {
           {/* Dock veil during a session switch: the real composer stays
               mounted (no layout jump — the veil just covers it), and the
               shared ComposerSkeleton draws the loading shape exactly over
-              it. Opaque background：身下是清晰的真 composer，半透明会透出
-              文字；底色同视口骨架取 bg-card（= 内容列自身的底，别改成
-              bg-background，两者差一档会糊出灰块）。
+              it. 身下是清晰的真 composer，所以配 backdrop-blur-lg 磨成认不出
+              字形的色斑（同视口骨架的论证与档位，两处一起调过，见
+              SessionSwitchSkeleton 注释——那边有临界点的提醒）—
+              —有了这层模糊，底色才能安全地跟视口骨架一样挂 `.session-switch-
+              skeleton` 钩子：无壁纸时是这里的 bg-card（= 内容列自身的底，
+              别改成 bg-background，两者差一档会糊出灰块），壁纸开着时
+              background-art.css 换成 --bg-art-veil-strong（2026-07-18，同
+              视口骨架一起要求「骨架屏也要看得见壁纸图案」）。
               justify-end pins the skeleton to the dock's bottom so any
               extra dock height (status strip / attachment row) is simply
               covered above it. Padding 与 dock 同参（px-3 pb-3，dock 的
@@ -757,7 +789,7 @@ export function ThreadView(): React.JSX.Element {
                 // SessionSwitchSkeleton 注释），只淡出。
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.15, ease: 'easeOut' }}
-                className="absolute inset-0 z-20 flex flex-col justify-end rounded-b-[4px] bg-card px-3 pb-3"
+                className="session-switch-skeleton absolute inset-0 z-20 flex flex-col justify-end rounded-b-[4px] bg-card px-3 pb-3 backdrop-blur-lg backdrop-saturate-150"
               >
                 <ComposerSkeleton />
               </motion.div>
@@ -1490,14 +1522,18 @@ function ChatHeader(): React.JSX.Element {
       {/* 重命名弹窗——与 RailSessionList.tsx 的会话行重命名同一套 shadcn
           Dialog 精修档（Notion 风格：440px 圆角卡、19px 大标题、48px 高
           输入框、品牌绿渐变提交按钮）。2026-07-13 从原地 input 行内编辑
-          改成弹窗，统一两处的重命名交互。 */}
+          改成弹窗，统一两处的重命名交互。2026-07-19 毛玻璃化（仅这两处重命名
+          弹窗，className 局部覆盖，不动共享 DialogContent 基件——避免波及
+          删除确认/设置等全 app 其它弹窗）：半透明 bg-background/70 +
+          backdrop-blur 让壁纸换肤背景透出来，border-border/50 弱化描边配合
+          透明底，inset 顶部高光是玻璃质感的装饰阴影非语义色，两档主题都够看。 */}
       <Dialog
         open={renameOpen}
         onOpenChange={(open) => {
           if (!open) setRenameOpen(false)
         }}
       >
-        <DialogContent className="rounded-2xl sm:max-w-[440px]">
+        <DialogContent className="rounded-2xl border-border/50 bg-background/70 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.35),0_8px_24px_-12px_rgba(0,0,0,0.18),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-2xl backdrop-saturate-150 sm:max-w-[440px]">
           <form
             onSubmit={(e) => {
               e.preventDefault()

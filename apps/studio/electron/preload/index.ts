@@ -75,6 +75,18 @@ import {
   type SheetFileReadResult,
   type SheetFileStatPayload,
   type SheetFileStatResult,
+  type ConfirmUiReadPayload,
+  type ConfirmUiReadResult,
+  type ConfirmUiWriteResultPayload,
+  type ConfirmUiWriteResultResult,
+  type PptPreviewListSlidesPayload,
+  type PptPreviewListSlidesResult,
+  type PptPreviewReadSlidePayload,
+  type PptPreviewReadSlideResult,
+  type PptPreviewSaveAllPayload,
+  type PptPreviewSaveAllResult,
+  type PptSourcePreviewPayload,
+  type PptSourcePreviewResult,
   type ModelListResult,
   type ModelSetPayload,
   type AuthLoginPayload,
@@ -346,6 +358,54 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.SHEET_FILE_STAT,
       payload
     ) as Promise<SheetFileStatResult>
+  },
+
+  readConfirmUi(payload: ConfirmUiReadPayload): Promise<ConfirmUiReadResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.CONFIRM_UI_READ,
+      payload
+    ) as Promise<ConfirmUiReadResult>
+  },
+
+  writeConfirmUiResult(
+    payload: ConfirmUiWriteResultPayload
+  ): Promise<ConfirmUiWriteResultResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.CONFIRM_UI_WRITE_RESULT,
+      payload
+    ) as Promise<ConfirmUiWriteResultResult>
+  },
+
+  listPptPreviewSlides(
+    payload: PptPreviewListSlidesPayload
+  ): Promise<PptPreviewListSlidesResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PPT_PREVIEW_LIST_SLIDES,
+      payload
+    ) as Promise<PptPreviewListSlidesResult>
+  },
+
+  readPptPreviewSlide(
+    payload: PptPreviewReadSlidePayload
+  ): Promise<PptPreviewReadSlideResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PPT_PREVIEW_READ_SLIDE,
+      payload
+    ) as Promise<PptPreviewReadSlideResult>
+  },
+
+  savePptPreviewAll(payload: PptPreviewSaveAllPayload): Promise<PptPreviewSaveAllResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PPT_PREVIEW_SAVE_ALL,
+      payload
+    ) as Promise<PptPreviewSaveAllResult>
+  },
+
+  previewPptSource(payload: PptSourcePreviewPayload): Promise<PptSourcePreviewResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PPT_SOURCE_PREVIEW,
+      payload
+    ) as Promise<PptSourcePreviewResult>
   },
 
   listModels(): Promise<ModelListResult> {

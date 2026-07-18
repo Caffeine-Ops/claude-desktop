@@ -37,18 +37,14 @@ For decks containing data charts, run [`verify-charts`](./verify-charts.md) firs
 ## Prerequisites
 
 ```bash
-# 1. playwright + chromium installed (the PNG renderer)
+# playwright + chromium installed (the PNG renderer)
 pip install playwright
 python3 -m playwright install chromium
-
-# 2. live-preview server running for this project (provides inlined SVG fetch)
-python3 skills/ppt-master/scripts/svg_editor/server.py <project_path> --no-browser
-# (single instance per project — if it's already running, skip)
 ```
 
-The renderer (`visual_review.py`) does **not** auto-start the live-preview server. It expects the server to be reachable at `http://localhost:5050` (override with `--server-url`).
+That's the only prerequisite. `visual_review.py` is fully offline — it builds each page's preview markup itself (icon inlining, temp-id assignment — the same `slide_preview.py` module the desktop app's native live preview mirrors in TypeScript) straight from `svg_output/`, with no server, no port, and no dependency on whether the 「预览幻灯片」tab has been signaled this session.
 
-> **Why playwright, not cairosvg**: cairo's text API has no font-fallback chain, so CJK characters render as tofu boxes for any deck whose font-family list relies on system fallback (Microsoft YaHei / PingFang SC / etc.). Playwright drives a real chromium and produces output identical to what the live-preview browser shows — the only fidelity-preserving option for bilingual decks.
+> **Why playwright, not cairosvg**: cairo's text API has no font-fallback chain, so CJK characters render as tofu boxes for any deck whose font-family list relies on system fallback (Microsoft YaHei / PingFang SC / etc.). Playwright drives a real chromium and produces output identical to what the live-preview tab shows — the only fidelity-preserving option for bilingual decks.
 
 ---
 
@@ -58,12 +54,12 @@ The renderer (`visual_review.py`) does **not** auto-start the live-preview serve
 python3 skills/ppt-master/scripts/visual_review.py <project_path>
 ```
 
-This writes one PNG per page to `<project_path>/.preview/<page>.png` at 1280×720, with `<use data-icon>` inlined and `<image href>` resolved exactly as the live-preview browser sees them. Renders are serialized via a project-local file lock — safe to invoke concurrently.
+This writes one PNG per page to `<project_path>/.preview/<page>.png` at 1280×720, with `<use data-icon>` inlined and `<image href>` resolved exactly as the 「预览幻灯片」tab sees them. Renders are serialized via a project-local file lock — safe to invoke concurrently.
 
 Exit codes:
 
 - `0` — all pages rendered
-- `2` — live-preview server unreachable (start it per Prerequisites)
+- `2` — project path or `svg_output/` not found
 - `3` — playwright python / chromium not installed (or browser failed to launch)
 - `4` — one or more page-level render failures (see stderr; partial output is on disk)
 
@@ -113,7 +109,7 @@ Statuses:
 - `ok` — page passed clean, no fixes applied
 - `fixed` — at least one fix applied, all Hard rules now pass
 - `needs_human` — fix attempted but rolled back (rule §4.2), or rule violation requires brand/structure decision outside the rubric's scope
-- `render_failed` — Iteration 0 PNG sanity failed (rare; usually means renderer / server issue)
+- `render_failed` — Iteration 0 PNG sanity failed (rare; usually means a renderer issue — playwright/chromium missing or a malformed SVG)
 - `prereq_failed` — static checker hadn't been run
 
 Plus a brand-token aggregate at `<project>/.review/brand_review.json` if any §1.1 escalations occurred — review this once at the end of the run, not per page.

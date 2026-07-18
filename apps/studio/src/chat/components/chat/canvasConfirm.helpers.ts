@@ -636,3 +636,44 @@ export function previewFontStack(primary: string | undefined, fallback: string |
   if (!fallback) return primary
   return primary + ', ' + fallback
 }
+
+// ---- ported from confirm_ui/server.py (not app.js) --------------------------
+//
+// The functions below have no app.js counterpart — they were server.py's own
+// logic (GET /api/recommendations' tier-2 merge step), now that CanvasConfirm
+// reads confirm_ui/ files directly over IPC instead of hitting that endpoint.
+// Kept in a separate section (rather than folded into the 1:1 app.js mirror
+// above) so the file's "everything above is app.js, byte-for-byte" invariant
+// stays legible.
+
+/** Tier-1 anchors. On the Tier-2 page these sections are not rendered (they
+ *  were confirmed in Tier 1), so their values live only in component STATE —
+ *  lost on a remount. Mirrors confirm_ui/server.py's `_ANCHOR_RECOMMEND_KEYS`. */
+const ANCHOR_RECOMMEND_KEYS = ['canvas', 'mode', 'visual_style', 'delivery_purpose'] as const
+/** Mirrors confirm_ui/server.py's `_ANCHOR_VALUE_KEYS`. */
+const ANCHOR_VALUE_KEYS = ['audience', 'content_divergence'] as const
+
+/**
+ * Fold the Tier-1 anchors confirmed in `result` into a Tier-2
+ * `recommendations` payload, so a remount / re-poll re-initializes them from
+ * the user's actual choices instead of catalog defaults. The confirmed value
+ * is truth — it overrides any stale `recommend` entry. Port of
+ * confirm_ui/server.py's `_merge_confirmed_anchors`; returns a shallow copy
+ * (React state discipline — never mutate what's already in state).
+ */
+export function mergeConfirmedAnchors(
+  rec: Recommendations,
+  result: Record<string, any>
+): Recommendations {
+  const merged: Recommendations = { ...rec }
+  const recommend: Record<string, any> = { ...(merged.recommend && typeof merged.recommend === 'object' ? merged.recommend : {}) }
+  for (const key of ANCHOR_RECOMMEND_KEYS) {
+    const value = result[key]
+    if (value !== null && value !== undefined && value !== '') recommend[key] = value
+  }
+  merged.recommend = recommend
+  for (const key of ANCHOR_VALUE_KEYS) {
+    if (key in result) merged[key] = { value: result[key] || '' }
+  }
+  return merged
+}

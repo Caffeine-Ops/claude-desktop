@@ -1,48 +1,48 @@
 ---
-description: Start the browser SVG editor when it is not running, and apply submitted annotations after Step 7 export
+description: Signal live preview activation when the tab is empty, and apply submitted annotations after Step 7 export
 ---
 
 # Live Preview Workflow
 
-> **Purpose**: (1) start/reopen the browser SVG editor when no preview service is currently running, and (2) apply user-submitted annotations after Step 7 export completes.
+> **Purpose**: (1) (re-)signal live preview activation when the 「预览幻灯片」canvas tab isn't showing anything for this project, and (2) apply user-submitted annotations after Step 7 export completes.
 >
-> **Not in scope**: Executor's mandatory auto-startup — that lives in [`SKILL.md`](../SKILL.md) Step 6. Do not re-launch a preview that is already running.
+> **Not in scope**: Executor's mandatory auto-startup — that lives in [`SKILL.md`](../SKILL.md) Step 6. Do not re-signal a preview that's already active this session.
 
 ## When to Run
 
-- **Start (Step 1) — mandatory before ANY edit to an existing project's SVGs.** If `svg_output/*.svg` already exists for this project and the user asks for ANY change to it — a full style pass, a single word, one color, one coordinate, no matter how small — start the preview first (if not already running) and only then touch the SVG. There is no "too small to bother" exception: the tab's only signal to the user that an edit landed is the live preview, so skipping the startup makes the edit invisible in the UI even though the file changed correctly on disk.
-- Also start whenever the user wants to look at the deck or click an element (post-export re-entry in a fresh chat, or after **Exit preview**).
+- **Signal activation (Step 1) — mandatory before ANY edit to an existing project's SVGs.** If `svg_output/*.svg` already exists for this project and the user asks for ANY change to it — a full style pass, a single word, one color, one coordinate, no matter how small — signal activation first (if not already signaled this session) and only then touch the SVG. There is no "too small to bother" exception: the tab's only signal to the user that an edit landed is the live preview, so skipping the startup makes the edit invisible in the UI even though the file changed correctly on disk.
+- Also signal whenever the user wants to look at the deck or click an element (post-export re-entry in a fresh chat, or a resumed session whose tab is empty).
 - **Apply annotations (Step 2)** — Step 7 has produced at least one PPTX, and the user signals that submitted annotations should now be applied. Triggers include:
-  - quoting the browser prompt (`Changes saved to svg_output...` / `修改已保存到 svg_output...`)
+  - quoting the composer message the app sends on their behalf (`应用我的标注`)
   - saying `apply my annotations` / `apply my edits` / `应用注解` / `开始应用` / 等价表达
 
 ## When NOT to Run
 
-- The preview service is already running → just give the user the URL; do not restart.
+- Live preview was already signaled this session → nothing to do; the 「预览幻灯片」tab already reflects `svg_output/` live.
 - The user wants a full regeneration → use the main workflow.
 - Step 7 has never run for this project → annotations cannot be applied yet; finish the main pipeline first.
-- No `svg_output/*.svg` exists yet for this project → Step 6's mandatory auto-startup (`SKILL.md`) handles the first launch when Executor begins generating; nothing to preview before that.
+- No `svg_output/*.svg` exists yet for this project → Step 6's mandatory auto-startup (`SKILL.md`) handles the first signal when Executor begins generating; nothing to preview before that.
 
 ---
 
-## Step 1: Start / reopen the editor
+## Step 1: Signal activation
 
-**Precondition**: no preview service running on this project.
+**Precondition**: the 「预览幻灯片」tab is showing its empty state for this project (nothing signaled yet this session, or a resumed session).
 
 ```bash
-python3 ${SKILL_DIR}/scripts/svg_editor/server.py <project_path> --daemon --no-browser
+python3 ${SKILL_DIR}/scripts/svg_editor/preview_open.py <project_path>
 ```
 
-(Plain mode — no `--live`. The `--live` flag is reserved for Step 6's auto-startup.)
+(Plain mode — no `--live`. The `--live` flag, which also creates `svg_output/` if missing, is reserved for Step 6's auto-startup where the directory may not exist yet.)
 
-The launcher binds `127.0.0.1:5050` (or the next free port), starts the server in the background, writes runtime files under `<project_path>/live_preview/`, and edits `<project_path>/svg_output/` in place. `--no-browser` suppresses the system browser window — the Claude Desktop host detects this `svg_editor/server.py` launch and embeds the editor in an in-app 「浏览器」canvas tab automatically. After it prints the running URL, tell the user in their language, in one short message:
+This is a one-shot signal, not a server launch: the script resolves the project's absolute path, prints `live preview ready: <path>` to stdout, and exits immediately. The Claude Desktop host detects the command and its printed path, and renders `svg_output/` NATIVELY in the 「预览幻灯片」canvas tab (LivePreviewEditor) — reading the files directly, no port, nothing to embed. After running it, tell the user in their language, in one short message:
 
-- editor is at the URL reported by the launcher, e.g. `http://localhost:5050`
-- **Direct edit** (deterministic tweaks — wording, color, coordinates, SVG attributes): select an element → change the controls in the right panel → preview updates immediately, but nothing is written to `svg_output/` until **Apply changes**. `Ctrl+Z` or the **Undo** button drops staged edits step by step; applied changes are logged to `<project>/live_preview/edits.jsonl`. Re-export stays chat-driven: say "re-export" / "重新导出" to refresh the PPTX.
-- **Annotate** (changes that need AI judgement / re-layout): select an element → write the instruction → click **Add annotation** to stage it → click **Apply changes** to write annotation markers → return to the chat and say `apply my annotations` (or quote the browser prompt)
-- to skip the editor, just describe the change in chat
+- the deck is now visible in the 「预览幻灯片」tab
+- **Annotate** (changes that need AI judgement / re-layout): select an element (click; Ctrl/Cmd-click or drag a marquee to select several) → write the instruction in the floating box → it stages locally → click **应用我的标注** to write annotation markers to `svg_output/` and send the apply message to chat
+- to skip the tab, just describe the change in chat
+- there is no direct attribute/text editing in this surface — only annotations that the AI acts on
 
-Do not wait for confirmation before launching — the user already asked for preview, so launching is the response. If another project already holds the port, the launcher auto-advances to the next free one — report the actual URL from the launch log (`--port <other>` still forces a specific port). Remote access → see the appendix.
+Do not wait for confirmation before signaling — the user already asked for preview, so signaling is the response. Remote access: nothing special to forward anymore — reading local files over IPC works identically over Remote-SSH / a remote desktop session, since there is no port to tunnel.
 
 ---
 
@@ -67,43 +67,20 @@ Triggered by the user signals listed in "When to Run".
    python3 ${SKILL_DIR}/scripts/finalize_svg.py <project_path>
    python3 ${SKILL_DIR}/scripts/svg_to_pptx.py <project_path>
    ```
-5. Tell the user (in their language): annotations applied, new PPTX exported, preview is still running. If the browser still shows the old slide, refresh or reselect the page.
-6. Loop: more annotations submitted → repeat from step 1. User signals done or "stop preview" → end.
+5. Tell the user (in their language): annotations applied, new PPTX exported, the 「预览幻灯片」tab reflects the cleared markers automatically. No refresh step — it's a live read of the files.
+6. Loop: more annotations submitted → repeat from step 1. User signals done → end.
 
 ---
 
-## Notes (editor invariants — referenced from SKILL.md Step 6)
+## Notes (native editor — referenced from SKILL.md Step 6)
 
-- **UI**: bilingual (EN/中); auto-detects from `navigator.language`, persists in `localStorage`, toggled via the **中 / EN** button on the right panel. Slide navigation: first/prev/next/last buttons at the top of the center panel, plus `←` / `→` / `Home` / `End` (suppressed while typing in the annotation textarea).
-- **Buttons**: `Add annotation` stages annotation text in memory; `Apply changes` writes staged direct edits plus annotation markers to disk and keeps the service running; `Exit preview` is the only UI action that stops Flask.
-- **Direct edit (no AI)**: selection mode determines the right-panel surface. Single element = full object inspector (geometry, safe text content, raw SVG attributes except protected fields like `id`, UI `class`, event handlers, and hrefs). SVG `<g>` group = group-level edit surface; select via `Alt/Option` + click or **Select parent group** from a child element. Multi-select = limited batch editor over top-level selected objects only: shared x/y plus `fill` / `stroke` / `opacity`; text style fields (`font-size` / `font-family` / `font-weight` / `text-anchor`) appear only when every selected object is `text`/`tspan`. Preview updates immediately; disk writes wait for **Apply changes**.
-- **Drag to move**: press and drag an already-selected element on the canvas to reposition it (selection stays a separate click, so the background is never dragged by accident); the whole selection moves together under multi-select. The pointer delta is mapped through each element's own CTM, so moves track the cursor regardless of viewport scale or group transforms. Each release stages one direct edit per moved element (the same `x`/`y`-or-`transform` write the geometry inputs produce), previewed live and written only on **Apply changes**; dragging on empty canvas is still rubber-band selection. A failed stage rolls the canvas back to the pre-drag position.
-- **Arrow-key nudge**: with one or more elements selected, `↑ ↓ ← →` moves the selection 1px and `Shift + arrow` moves 10px (suppressed while typing in the annotation box). Arrow keys navigate slides only when nothing is selected. Same staging/coalescing path as drag, so a burst of nudges collapses to one undo step.
-- **Overlap picker**: right-click anywhere on the canvas to list every selectable element under the pointer (top→bottom), so stacked shapes can be reached without blind cycling. Left-click is unchanged (selects the topmost). Hovering a row highlights that element; clicking it selects it; `Esc` or an outside click closes the list. With exactly one element under the pointer, right-click selects it directly.
-- **Undo**: `Ctrl+Z` or the **Undo** button drops the last staged direct edit on the current slide (per-slide LIFO, this session). Consecutive edits to the *same element and same field set* (e.g. nudging one color or coordinate several times) coalesce into a single undo step, keeping the original pre-edit value; switching element or field starts a new step. Applied old→new history is appended to `<project>/live_preview/edits.jsonl`; annotation save/update/remove history is appended to `<project>/live_preview/annotations.jsonl`; un-applied staged edits are in-memory only.
-- **Unsaved-work guard**: staged direct edits and annotation changes (added or removed) live in server memory until **Apply changes**; closing the tab triggers the browser's native "leave site?" prompt while any are unapplied, since an idle timeout or process kill would drop them.
-- **Re-export is chat-driven**: applying changes updates `svg_output/` only. Refreshing the PPTX (finalize + svg_to_pptx) stays a chat step — the editor never runs the export pipeline.
-- **Stop conditions**: the service stops when the user clicks **Exit preview** in the browser, asks in chat to stop it, the idle timeout fires, or the process is killed externally.
-- **Port**: default `5050`, auto-advancing to the next free port when another project already holds it (report the actual URL from the launch log); force a specific port with `--port <other>`.
-- **Idle timeout**: plain mode `900s`, `--live` mode `7200s`; override with `--timeout <seconds>` (`0` disables).
-- **Single instance per project**: `<project_path>/live_preview/lock.json` records the running pid + port. A second launch against the same project refuses to start and prints the existing URL; stale locks (dead pid) are overwritten on the next launch. Legacy root locks at `<project_path>/.live_preview.lock` are still detected when they point to a live process.
-- **Transient ids**: each element gets a temporary `_edit_N` id while the editor is running. On save, only annotated elements keep their id; unannotated `_edit_N` ids are stripped before write-back.
-- **Browser preview**: the server inlines `<use data-icon>` placeholders and serves `images/*` so SVG renders correctly; the on-disk SVG is unchanged by this preview.
+The interactive surface described here is LivePreviewEditor, rendered natively by the Claude Desktop app (no browser, no server). It reads `<project_path>/svg_output/` directly and writes back only through the app's own save flow — there is nothing on the skill side to configure beyond signaling activation (Step 1).
 
----
-
-## Appendix: Remote access
-
-If the project lives on a remote Linux server, run with `--no-browser`:
-
-```bash
-python3 ${SKILL_DIR}/scripts/svg_editor/server.py <project_path> --daemon --no-browser
-# or for Step 6's auto-startup on a remote host:
-python3 ${SKILL_DIR}/scripts/svg_editor/server.py <project_path> --live --daemon --no-browser
-```
-
-- **VS Code / Cursor Remote-SSH**: open the **PORTS** panel (`Ctrl+Shift+P` → `Ports: Focus on Ports View`), click **Forward a Port**, enter `5050`. The workspace remembers it.
-- **Termius**: open the **Port Forwarding** module from the left sidebar (top-level, not nested). Add a rule with **Type = Local**, Host = your remote, Binding `127.0.0.1:5050`, Destination `127.0.0.1:5050`. Save, then start the rule (▶ button).
-- **Plain SSH**: `ssh -L 5050:127.0.0.1:5050 <user>@<host>` (or add `LocalForward 5050 127.0.0.1:5050` to `~/.ssh/config`).
-
-Then open `http://localhost:5050` in your local browser.
+- **Selection**: click an element to select it; `Ctrl`/`Cmd`-click adds to the selection; drag on empty canvas draws a marquee (rubber-band) selecting everything it touches, with the same additive modifiers. Hovering pre-highlights the element under the pointer.
+- **Slide navigation**: rail thumbnails, prev/next controls, and `←` / `→` (suppressed while typing in the annotation textarea).
+- **Annotate**: with one or more elements selected, type an instruction in the floating box and submit — this stages the annotation locally (instant, no network/IPC round-trip to save). Clicking an existing annotation's number badge re-opens it for editing; the delete control on a staged annotation removes it. Nothing is written to `svg_output/` until **应用我的标注**.
+- **应用我的标注** (the sole write action): replays every staged annotation across every touched slide onto a FRESH read of each file (so an Executor rewrite that landed while the user was working is never clobbered — see the "并发写" note below), writes the result back to `svg_output/`, appends history to `<project>/live_preview/{annotations,edits}.jsonl`, and sends the `应用我的标注` message to chat so the AI picks up the work. The button is disabled while a previous apply's chat turn is still in flight.
+- **Concurrent writes**: if the Executor is rewriting a page at the exact moment the user applies, the write is refused (a compare-and-swap on the file's mtime) and retried once automatically after a fresh read; a toast asks the user to try again shortly if it still conflicts.
+- **No direct attribute/text editing, no undo, no drag-to-move, no arrow-key nudge** — these existed only in the retired browser editor's UI and were never carried over to the native one. If they're ever added, they'll layer onto the same annotation surface, not replace it.
+- **Icon rendering**: `<use data-icon="…">` placeholders are inlined into real paths for preview (same logic as the offline `pptx_to_svg`/`visual_review` renderers) — the on-disk SVG is unchanged by this; only the preview shows the expanded icon.
+- **Transient ids**: each element gets a temporary `_edit_N` id while being previewed/annotated. On save, only annotated elements keep their id; unannotated `_edit_N` ids are stripped before write-back.

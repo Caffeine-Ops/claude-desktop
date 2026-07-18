@@ -553,7 +553,17 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
             focus-within:ring-0 把它清零，避免跟下面的 shadow 堆叠出双环。 */}
         <div
           className={
-            'relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-0 focus-within:shadow-[0_0_0_1px_hsl(var(--accent)/0.55),0_0_0_4px_hsl(var(--accent)/0.12),0_2px_6px_rgba(0,0,0,0.04),0_10px_32px_-6px_hsl(var(--accent)/0.22)] group-data-[dragging=true]/dropzone:ring-2 group-data-[dragging=true]/dropzone:ring-[hsl(var(--brand)/0.5)] group-data-[dragging=true]/dropzone:bg-brand/[0.08] dark:ring-white/[0.08]' +
+            // 毛玻璃质感（2026-07-18，用户参考账户菜单的玻璃处理定稿；首版 /75
+            // 用户截图实锤"看不出效果"——CDP 量过 computed style，alpha/blur
+            // 确实生效，问题是 /75 在深色主题下跟大多数壁纸预设的暗色调太接近，
+            // 肉眼分辨不出"半透明+模糊"和"实底"的差异；强制降到 /35 现场对比
+            // 壁纸清晰透出后确认是纯粹的透明度不够，不是机制没生效。改到 /45
+            // 留一点余量给持续阅读的输入态可读性，比账户菜单的 /70（只是瞥一眼
+            // 的菜单，可以更保守）更激进。blur-xl + saturate-150 本就在。卡片内
+            // 所有子元素（+/模型 chip/麦克风）本就是 ghost 样式无自带底色，透明度
+            // 一降全跟着透出玻璃；发送/停止钮的实心色是功能色（就绪/生成中状态），
+            // 不在这次"材质"调整范围内。
+            'relative overflow-hidden rounded-[22px] bg-popover/45 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-0 focus-within:shadow-[0_0_0_1px_hsl(var(--accent)/0.55),0_0_0_4px_hsl(var(--accent)/0.12),0_2px_6px_rgba(0,0,0,0.04),0_10px_32px_-6px_hsl(var(--accent)/0.22)] group-data-[dragging=true]/dropzone:ring-2 group-data-[dragging=true]/dropzone:ring-[hsl(var(--brand)/0.5)] group-data-[dragging=true]/dropzone:bg-brand/[0.08] dark:ring-white/[0.08]' +
             // hero：卡片浮在托盘上，需要一层柔和投影把「白卡叠灰壳」的层次
             // 立起来（dock 态背景就是页面底色，不加）。聚焦时投影被
             // focus-within 整体接管（主题色环境光替换中性环境光），失焦回落。
@@ -732,14 +742,14 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
                   <ThreadPrimitive.If running={false}>
                     <ComposerPrimitive.Send
                       aria-label="Send message"
-                      // ready 态跟主题色（原型 .btn-send.ready，2026-07-17
-                      // 从写死品牌绿改 --accent——截图实锤发送键是绿的但
-                      // 用户选的主题色是蓝，两者对不上；--accent 由
-                      // appearance.applier.ts 写在 documentElement 上，切
-                      // 主题色这里自动跟着变）：空输入是 muted disabled
-                      // 盘，有内容才亮色——状态差本身就是「可以发了」的
-                      // 信号，比常亮黑盘的信息量大。
-                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.18)] transition-all hover:brightness-[1.08] active:scale-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.08] disabled:text-muted-foreground/50 disabled:shadow-none"
+                      // ready 态固定品牌绿（2026-07-18 从 --accent 改回——
+                      // 2026-07-17 那次改动是因为发送键跟用户选的主题色对
+                      // 不上而临时跟色，这次用户明确要求发送键不跟主题
+                      // 色、就要固定绿：改回 --brand，与聊天列拖拽分隔条 /
+                      // 大纲选中态等其它「chrome 级」绿色提示同变量）：
+                      // 空输入是 muted disabled 盘，有内容才亮色——状态差
+                      // 本身就是「可以发了」的信号，比常亮黑盘的信息量大。
+                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.18)] transition-all hover:brightness-[1.08] active:scale-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.08] disabled:text-muted-foreground/50 disabled:shadow-none"
                     >
                       <svg
                         width="18"

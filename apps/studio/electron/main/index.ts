@@ -56,6 +56,7 @@ import {
   registerProposalAssetProtocol
 } from './services/proposalAssetProtocol'
 import { BG_ASSET_SCHEME, registerBgAssetProtocol } from './services/bgAssetProtocol'
+import { PPT_ASSET_SCHEME, registerPptAssetProtocol } from './services/pptAssetProtocol'
 import { startKbSyncScheduler } from './core/kbSyncScheduler'
 import { onKbBuildStatus, scheduleKbBuild } from './core/kbBuildRunner'
 import { readKbIndex, kbStoreHasDocs } from './core/kbIndexStore'
@@ -108,6 +109,18 @@ protocol.registerSchemesAsPrivileged([
   // whenReady 里注册（见下方 registerBgAssetProtocol）。
   {
     scheme: BG_ASSET_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true
+    }
+  },
+  // pptasset:// = ppt-master 项目产物（svg_output/ 引用的图片、图标库源文件），
+  // 供原生 LivePreviewEditor/SourceDeckViewer 直接 <img src>/<use href> 加载，
+  // 不必逐个搬字节过 IPC。同上：privileged 声明必须在 ready 前、只能一次。
+  {
+    scheme: PPT_ASSET_SCHEME,
     privileges: {
       standard: true,
       secure: true,
@@ -320,6 +333,7 @@ app.whenReady().then(async () => {
   await registerKbAssetProtocol()
   await registerProposalAssetProtocol()
   await registerBgAssetProtocol()
+  await registerPptAssetProtocol()
 
   // **studio 单视图**是唯一形态（Phase 4 起，legacy 三 tab 架构已物理下线）：
   // 一个全屏 studio tab，聊天(/chat)、工作画布(/)、设置(/?settings=1)、导航

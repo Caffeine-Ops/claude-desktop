@@ -587,7 +587,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
       // 宽度（窗口很宽但面板可以被拖窄）——顶栏元素的响应显隐必须按容器宽
       // 而不是视口宽（同 LivePreviewEditor 的 @container/editor 先例；此前
       // 提示组用 lg:flex 视口断点，分栏拖窄后被压成逐字竖排，2026-07-16）。
-      className="@container/imgedit relative flex min-w-0 flex-1 flex-col bg-card"
+      className="@container/imgedit workspace-split-panel relative flex min-w-0 flex-1 flex-col bg-card"
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}

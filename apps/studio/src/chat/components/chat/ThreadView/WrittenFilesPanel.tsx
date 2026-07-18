@@ -120,7 +120,7 @@ export function WrittenFilesPanel({
               onClick={() => pick(f.path)}
               className={
                 'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] transition-colors ' +
-                (on ? 'bg-accent/10' : 'hover:bg-foreground/[0.04]')
+                (on ? 'bg-brand/10' : 'hover:bg-foreground/[0.04]')
               }
               title={f.path}
             >
@@ -131,7 +131,7 @@ export function WrittenFilesPanel({
                 className={
                   'grid size-[19px] shrink-0 place-items-center rounded-[5px] font-mono text-[7.5px] font-bold transition-colors ' +
                   (on
-                    ? 'bg-accent text-accent-foreground'
+                    ? 'bg-brand text-brand-foreground'
                     : 'border border-border bg-muted/60 text-muted-foreground')
                 }
               >
@@ -160,7 +160,7 @@ export function WrittenFilesPanel({
           Same pattern CanvasConfirm's style cards use (var(--color-border)
           dots track the theme), scaled up to a full pane. */}
       <div
-        className="flex min-w-0 flex-1 justify-center overflow-hidden bg-muted/30 p-5"
+        className="bg-art-transparent flex min-w-0 flex-1 justify-center overflow-hidden bg-muted/30 p-5"
         style={{
           backgroundImage:
             'radial-gradient(circle at 1px 1px, var(--color-border, rgba(0,0,0,0.12)) 1px, transparent 0)',
@@ -168,7 +168,10 @@ export function WrittenFilesPanel({
         }}
       >
         {selected ? (
-          <div className="flex min-h-0 w-full max-w-[880px] flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-[0_1px_2px_rgba(0,0,0,0.05),0_10px_28px_rgba(0,0,0,0.08)] dark:shadow-[0_1px_2px_rgba(0,0,0,0.4),0_14px_36px_rgba(0,0,0,0.45)]">
+          // 毛玻璃质感（2026-07-18，跟 workspace 面同一批 /70 + blur-xl）：
+          // 这张"纸片卡"承载源码/JSON 正文，优先保证可读性，透明度跟大块
+          // 阅读区（workspace 容器、问题卡）同档而不是更透的 chrome 档位。
+          <div className="flex min-h-0 w-full max-w-[880px] flex-col overflow-hidden rounded-xl border border-border/60 bg-card/70 shadow-[0_1px_2px_rgba(0,0,0,0.05),0_10px_28px_rgba(0,0,0,0.08)] backdrop-blur-xl backdrop-saturate-150 dark:shadow-[0_1px_2px_rgba(0,0,0,0.4),0_14px_36px_rgba(0,0,0,0.45)]">
             <div className="relative flex h-[46px] shrink-0 items-center gap-2.5 border-b border-border/60 px-3.5">
               <div className="grid size-[26px] shrink-0 place-items-center rounded-md bg-accent/10 text-accent">
                 <svg
