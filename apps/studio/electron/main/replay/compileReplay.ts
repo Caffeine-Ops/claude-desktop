@@ -34,7 +34,7 @@ const UI_TYPE_MS_PER_CHAR = 80
 /** UI 表演总时长的 clamp 区间。 */
 const UI_PERF_MIN_MS = 3000
 const UI_PERF_MAX_MS = 20_000
-/** confirm_ui server.py 里 _log_result_snapshot 打的标记（见该文件注释）。 */
+/** confirm_ui/confirm_wait.py 里 log_result_snapshot 打的标记（见该文件注释）。 */
 const CONFIRM_RESULT_MARKER = '[[confirm-result]]'
 
 export interface CompiledReplay {
@@ -480,7 +480,7 @@ function buildAskQuestionPerformance(
 
 /**
  * 从 Bash 工具的 result 文本里判定这次调用是否命中了
- * confirm_ui/server.py 打的 `[[confirm-result]]{...}` 日志行——只要「是
+ * confirm_ui/confirm_wait.py 打的 `[[confirm-result]]{...}` 日志行——只要「是
  * 否命中 + stage」，不在这里解析完整快照（那份含 recommendations 的完整
  * 数据走 replayPackage.ts 的 collectConfirmSnapshots，随 manifest 传给
  * CanvasConfirm 做离线渲染；这里只需要 result.json 的【最终选择】来编排

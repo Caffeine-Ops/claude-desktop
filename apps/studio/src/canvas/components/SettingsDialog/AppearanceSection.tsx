@@ -1,11 +1,21 @@
-import { useLayoutEffect } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import { Minus, Moon, Plus, Sun } from 'lucide-react';
+import { ImagePlus, Minus, Moon, Plus, Sun, Trash2 } from 'lucide-react';
+import type { BackgroundThemeMeta } from '@desktop-shared/ipc-channels';
 
 import { Button } from '@/src/components/ui/button';
+import { Slider } from '@/src/components/ui/slider';
 import { Switch } from '@/src/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/src/components/ui/tabs';
 import { cn } from '@/src/lib/utils';
+import { useAppearanceStore } from '@/src/chat/stores/appearance';
+import { toBgAssetUrl } from '@/src/chat/lib/bgAssetUrl';
+import {
+  useBackgroundArtStore,
+  resolveBackgroundTheme,
+  isUserBackgroundTheme,
+} from '@/src/stores/backgroundArt';
+import { BACKGROUND_PRESETS } from '@/src/lib/backgroundArt/presets';
 import { useAnalytics } from '../../analytics/provider';
 import { trackSettingsAppearanceClick } from '../../analytics/events';
 import { useI18n } from '../../i18n';
@@ -146,6 +156,15 @@ export function AppearanceSection({
         </div>
       </div>
 
+      {/* 背景图（壁纸）——独立于上面 theme/accent 的草稿+Save+取消回滚流程：
+          直接读写 chat 侧 useAppearanceStore.background，点击即生效即持久化
+          （该 store 自己的 subscribe 已经在做 daemon 推送，backgroundArt.
+          applier.ts 已经在响应式地把它应用到 DOM）。不经过 cfg/setCfg 草稿，
+          是因为这样能直接复用 Phase 3 已建好的整条链路，不用为背景图另起
+          一份"预览值计算"，桌面壳外（无 window.chatApi）不渲染，同
+          DesktopAppearanceControls。 */}
+      <BackgroundArtSection setCfg={setCfg} />
+
       {/* Desktop-only appearance controls — font sizes and pointer cursor.
           These were the native Electron settings; they now live in this one
           overlay and round-trip through the daemon `appearance` (the Electron
@@ -155,6 +174,218 @@ export function AppearanceSection({
           (CliBackendCard.tsx, 2026-07-16). */}
       <DesktopAppearanceControls cfg={cfg} setCfg={setCfg} />
     </section>
+  );
+}
+
+const FOCUS_GRID = [0, 0.5, 1] as const;
+
+/**
+ * Background art (wallpaper) picker. Desktop-only (same `window.chatApi`
+ * gate as DesktopAppearanceControls below) — the whole feature is main-
+ * process file IO + a custom protocol, meaningless in a plain browser tab.
+ *
+ * Reads/writes `useAppearanceStore.background` directly rather than the
+ * `cfg`/`setCfg` draft the rest of this section uses: that store already
+ * persists on every change (subscribe → daemon push) and is already applied
+ * reactively to the DOM (backgroundArt.applier.ts, built in the same pass as
+ * this section) — piggybacking on it means a click here IS the live preview,
+ * with no separate preview/revert machinery to build or keep in sync with
+ * the applier's own veil-alpha math.
+ */
+function BackgroundArtSection({
+  setCfg,
+}: {
+  setCfg: Dispatch<SetStateAction<AppConfig>>;
+}) {
+  const { t } = useI18n();
+  const chatApi = typeof window !== 'undefined' ? window.chatApi : undefined;
+  const background = useAppearanceStore((s) => s.background);
+  const userThemes = useBackgroundArtStore((s) => s.userThemes);
+  const [importing, setImporting] = useState(false);
+
+  useEffect(() => {
+    void useBackgroundArtStore.getState().refreshUserThemes();
+  }, []);
+
+  if (!chatApi) return null;
+
+  const activeMeta = resolveBackgroundTheme(background.themeId);
+  const tiles: BackgroundThemeMeta[] = [...BACKGROUND_PRESETS, ...userThemes];
+
+  const select = (id: string | null): void => {
+    useAppearanceStore.getState().setBackgroundTheme(id);
+  };
+
+  const applyAccentFromPhoto = (): void => {
+    if (!activeMeta) return;
+    const color = normalizeAccentColor(activeMeta.palette.accent);
+    if (!color) return;
+    setCfg((c) => ({ ...c, accentColor: color }));
+  };
+
+  const handleImport = async (): Promise<void> => {
+    if (!chatApi.importBackgroundTheme) return;
+    setImporting(true);
+    try {
+      const meta = await chatApi.importBackgroundTheme();
+      if (meta) {
+        await useBackgroundArtStore.getState().refreshUserThemes();
+        select(meta.id);
+      }
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleDelete = async (id: string): Promise<void> => {
+    if (!chatApi.deleteBackgroundTheme) return;
+    // Clear the active theme FIRST if we're about to delete it — the applier
+    // resolving a themeId to `null` (deleted) already renders nothing, but
+    // doing this first avoids a frame where the store still points at a
+    // themeId whose files are already gone.
+    if (background.themeId === id) select(null);
+    const ok = await chatApi.deleteBackgroundTheme({ themeId: id });
+    if (ok) await useBackgroundArtStore.getState().refreshUserThemes();
+  };
+
+  return (
+    <div className={cardCls}>
+      <div className={cardLabelCls}>{t('settings.background')}</div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          data-slot="bg-theme-tile"
+          onClick={() => select(null)}
+          aria-pressed={!background.themeId}
+          className={cn(
+            'flex size-16 items-center justify-center rounded-lg border text-[11px] text-muted-foreground transition-colors hover:text-foreground',
+            !background.themeId
+              ? 'border-primary ring-2 ring-primary/40'
+              : 'border-border bg-secondary',
+          )}
+        >
+          {t('settings.background.none')}
+        </button>
+
+        {tiles.map((meta) => {
+          const active = background.themeId === meta.id;
+          const deletable = isUserBackgroundTheme(meta.id);
+          const thumbUrl = deletable ? toBgAssetUrl(meta.file) : meta.file;
+          return (
+            <button
+              key={meta.id}
+              type="button"
+              data-slot="bg-theme-tile"
+              onClick={() => select(meta.id)}
+              aria-label={meta.name}
+              aria-pressed={active}
+              className={cn(
+                'group relative size-16 overflow-hidden rounded-lg border bg-cover bg-center',
+                active ? 'border-primary ring-2 ring-primary/40' : 'border-border',
+              )}
+              style={{ backgroundImage: `url("${thumbUrl}")` }}
+            >
+              {deletable && (
+                <span
+                  data-slot="bg-theme-delete"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={t('settings.background.delete')}
+                  className="absolute right-0.5 top-0.5 hidden size-5 cursor-pointer items-center justify-center rounded-full bg-black/60 text-white group-hover:flex"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDelete(meta.id);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return;
+                    e.stopPropagation();
+                    e.preventDefault();
+                    void handleDelete(meta.id);
+                  }}
+                >
+                  <Trash2 className="size-3" />
+                </span>
+              )}
+            </button>
+          );
+        })}
+
+        <button
+          type="button"
+          data-slot="bg-theme-import"
+          onClick={() => void handleImport()}
+          disabled={importing}
+          className="flex size-16 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border text-muted-foreground transition-colors hover:bg-hover hover:text-foreground disabled:opacity-60"
+        >
+          <ImagePlus className="size-4" />
+          <span className="text-[10px]">
+            {importing ? t('settings.background.importing') : t('settings.background.import')}
+          </span>
+        </button>
+      </div>
+
+      {background.themeId && activeMeta && (
+        <div className="mt-3 flex flex-col gap-3">
+          <div>
+            <div className="mb-1.5 flex items-center justify-between text-xs text-muted-foreground">
+              <span>{t('settings.background.scrim')}</span>
+              <span className="tabular-nums">{background.scrim}</span>
+            </div>
+            <Slider
+              value={[background.scrim]}
+              min={0}
+              max={100}
+              step={1}
+              aria-label={t('settings.background.scrim')}
+              onValueChange={([v]) => {
+                if (typeof v === 'number') useAppearanceStore.getState().setBackgroundScrim(v);
+              }}
+            />
+          </div>
+
+          {/* 焦点微调只对用户主题开放——预设的焦点是设计值，没有让用户改的必要。 */}
+          {isUserBackgroundTheme(activeMeta.id) && (
+            <div>
+              <div className="mb-1.5 text-xs text-muted-foreground">
+                {t('settings.background.focus')}
+              </div>
+              <div
+                className="grid w-24 grid-cols-3 gap-1"
+                role="group"
+                aria-label={t('settings.background.focus')}
+              >
+                {FOCUS_GRID.flatMap((y) =>
+                  FOCUS_GRID.map((x) => {
+                    const fx = background.focusX ?? activeMeta.focus.x;
+                    const fy = background.focusY ?? activeMeta.focus.y;
+                    const focusActive = Math.abs(fx - x) < 0.01 && Math.abs(fy - y) < 0.01;
+                    return (
+                      <button
+                        key={`${x}-${y}`}
+                        type="button"
+                        aria-label={`${Math.round(x * 100)}% ${Math.round(y * 100)}%`}
+                        aria-pressed={focusActive}
+                        onClick={() =>
+                          useAppearanceStore.getState().setBackgroundFocus({ x, y })
+                        }
+                        className={cn(
+                          'size-7 rounded-md border',
+                          focusActive ? 'border-primary bg-primary/20' : 'border-border bg-secondary',
+                        )}
+                      />
+                    );
+                  }),
+                )}
+              </div>
+            </div>
+          )}
+
+          <Button type="button" variant="outline" size="sm" onClick={applyAccentFromPhoto}>
+            {t('settings.background.applyAccent')}
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
 

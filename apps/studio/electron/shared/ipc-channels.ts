@@ -143,6 +143,69 @@ export const IPC_CHANNELS = {
    */
   IMAGE_MANIFEST_READ: 'image-manifest:read',
   /**
+   * Renderer → main. One-shot read of a ppt-master project's
+   * `confirm_ui/` round-trip files (recommendations.json / result.json /
+   * catalogs.json — see ConfirmUiReadResult). CanvasConfirm (「问题」canvas
+   * tab) calls this on boot and polls it while waiting for the AI to
+   * re-derive Tier-2 recommendations. There is no confirm_ui HTTP server
+   * anymore (skills/ppt-master/scripts/confirm_ui/confirm_wait.py is a pure
+   * stdlib file-watcher, not a server) — this IS the read side of that file
+   * contract, main only ferries bytes the same way IMAGE_MANIFEST_READ does.
+   */
+  CONFIRM_UI_READ: 'confirm-ui:read',
+  /**
+   * Renderer → main. Writes the user's Eight-Confirmations submission to
+   * `<projectDir>/confirm_ui/result.json` (see ConfirmUiWriteResultPayload).
+   * main stamps `status`/`confirmed_at` (mirrors the old confirm_ui Flask
+   * server's POST /api/confirm shaping) and writes atomically so
+   * confirm_wait.py's poll never reads a torn file. Guarded so this can only
+   * write into a project that already has a Strategist-authored
+   * recommendations.json — see the handler for why that's the write
+   * authorization, not just a path allowlist.
+   */
+  CONFIRM_UI_WRITE_RESULT: 'confirm-ui:write-result',
+  /**
+   * Renderer → main. Lists `<projectDir>/svg_output/*.svg` with mtime/size,
+   * plus the bundled icon library root — replaces the old svg_editor Flask
+   * server's GET /api/slides. LivePreviewEditor polls this every few seconds
+   * (same "poll, don't fs.watch" call as SHEET_FILE_STAT) to detect pages the
+   * Executor just wrote or rewrote.
+   */
+  PPT_PREVIEW_LIST_SLIDES: 'ppt-preview:list-slides',
+  /**
+   * Renderer → main. Reads one slide's raw SVG bytes off disk — replaces the
+   * old svg_editor Flask server's GET /api/slide/<name>. Deliberately returns
+   * the UNTRANSFORMED file: icon inlining, temp-id assignment, and asset-href
+   * rewriting all happen renderer-side now (src/chat/lib/pptPreview/), so
+   * main's job here is just a path-guarded read, same division of labor as
+   * every other *_FILE_READ channel.
+   */
+  PPT_PREVIEW_READ_SLIDE: 'ppt-preview:read-slide',
+  /**
+   * Renderer → main. Writes back the slide files LivePreviewEditor staged
+   * annotations/edits for, plus appends their history to
+   * `live_preview/{edits,annotations}.jsonl` — replaces the old svg_editor
+   * Flask server's POST /api/save-all. Takes each file's `baseMtime` and
+   * refuses (reports in `conflicts`) any file whose on-disk mtime has moved
+   * since the renderer read it — the compare-and-swap that stands in for the
+   * old server's "always re-read from disk before writing" trick now that
+   * there's no long-lived process holding the file open.
+   */
+  PPT_PREVIEW_SAVE_ALL: 'ppt-preview:save-all',
+  /**
+   * Renderer → main. Converts a SOURCE .pptx (one the user handed the
+   * session, not a ppt-master-generated deck) to per-slide SVG via the
+   * skill's offline `pptx_to_svg.py`, so 「预览幻灯片」can show the original
+   * deck immediately — before the AI has produced any output of its own.
+   * Results are cached on disk by (path, mtime) hash under
+   * `<userData>/ppt-source-preview/`, so a repeat call for the same file is
+   * a cache hit, not a re-conversion. Requires the skill's Python venv to
+   * already be bootstrapped (see skills/ppt-master/bin/ensure-python.sh) —
+   * `ok:false` on a first-ever ppt-master use before that's happened is
+   * expected, not a bug; the caller shows a "预览准备中" copy instead.
+   */
+  PPT_SOURCE_PREVIEW: 'ppt-source:preview',
+  /**
    * Renderer → main. Lists chat-capable model ids from the backend
    * gateway's `/v1/models` catalog (see ModelListResult). Cached in main
    * with a short TTL — the composer's 模型 chip fetches on open.
@@ -169,6 +232,13 @@ export const IPC_CHANNELS = {
    * the store can drop them in directly.
    */
   SESSION_LOAD: 'session:load',
+  /**
+   * Renderer → main. Loads one sub-agent's full transcript (an
+   * `Agent`/`Workflow` spawn's own `agent-<agentId>.jsonl`, keyed by the
+   * parent session + that agent's id) — same ThreadMessageLike shape as
+   * SESSION_LOAD, read-only, no relation to the parent's own history.
+   */
+  SUBAGENT_TRANSCRIPT_LOAD: 'subagent:transcript-load',
   /**
    * Renderer → main. Mints a new session UUID (not yet written to
    * disk). The caller then calls SESSION_SWITCH with `resume: false`
@@ -617,6 +687,35 @@ export const IPC_CHANNELS = {
    * is the desktop renderer's own write-through-main path (also broadcasts).
    */
   APPEARANCE_BROADCAST: 'appearance:broadcast',
+
+  /**
+   * Renderer → main. Native "choose an image" dialog (filters: png/jpg/
+   * jpeg/webp) → downsample if the long edge exceeds the 3200px cap → run
+   * the adaptive analysis (backgroundAnalysis.ts) once → persist image +
+   * meta.json under `<userData>/background-themes/u-<id>/` → return the
+   * meta. Cancel resolves null. Activation is a separate step (a plain
+   * APPEARANCE_SET patch with `background.themeId`) — this channel only
+   * imports and analyzes, so re-activating an already-imported theme never
+   * re-runs the analysis.
+   */
+  BACKGROUND_THEME_IMPORT: 'background-theme:import',
+  /**
+   * Renderer → main. Lists every saved theme (bundled presets are NOT
+   * included — those are static `public/bg-presets/` assets the renderer
+   * already knows about at build time). Scans each background-themes
+   * subdirectory's meta.json; a directory with a missing/corrupt meta is
+   * silently skipped rather than failing the whole list — one bad theme
+   * shouldn't blank the picker.
+   */
+  BACKGROUND_THEME_LIST: 'background-theme:list',
+  /**
+   * Renderer → main. Deletes a user-imported theme directory by id (id is
+   * re-validated against the same `u-<id>` shape the import flow generates
+   * before touching disk). If the deleted theme was active, the caller is
+   * responsible for clearing `background.themeId` first — this handler only
+   * removes files, it does not touch appearance prefs.
+   */
+  BACKGROUND_THEME_DELETE: 'background-theme:delete',
 
   /**
    * Renderer → main. One-shot pull of the current updater state — the
@@ -1274,6 +1373,144 @@ export type SheetFileStatResult = {
   error?: string
 }
 
+/* ───────────────────────── ppt-master confirm_ui ─────────────────────── */
+
+/** Payload for CONFIRM_UI_READ. `projectDir` is the ppt-master project's
+ *  absolute directory (the argument confirm_wait.py was launched with). */
+export type ConfirmUiReadPayload = { projectDir: string }
+
+/**
+ * Result of CONFIRM_UI_READ — a snapshot of `<projectDir>/confirm_ui/`'s
+ * three round-trip files. Each is independently nullable: `recommendations`
+ * is null only if the Strategist hasn't written it yet (shouldn't happen —
+ * confirm_wait.py refuses to start without it, but the renderer boots before
+ * confirming that), `result` is null until the user submits, `catalogs` is
+ * null until confirm_wait.py's `--fresh` step has run. A null field means
+ * "not ready yet, keep polling", not an error — `ok`/`error` cover the
+ * actual failure case (bad projectDir).
+ */
+export type ConfirmUiReadResult = {
+  ok: boolean
+  recommendations: Record<string, unknown> | null
+  result: Record<string, unknown> | null
+  catalogs: Record<string, unknown> | null
+  error?: string
+}
+
+/**
+ * Payload for CONFIRM_UI_WRITE_RESULT. `payload` is the submission body
+ * CanvasConfirm built (tier-1 anchors or the full tier-2 shape) — passed
+ * through as-is; main only adds `status`/`confirmed_at` before writing.
+ */
+export type ConfirmUiWriteResultPayload = {
+  projectDir: string
+  payload: Record<string, unknown>
+}
+
+/** Result of CONFIRM_UI_WRITE_RESULT. */
+export type ConfirmUiWriteResultResult = { ok: boolean; error?: string }
+
+/* ───────────────────────── ppt-master live preview ─────────────────────── */
+
+/** Payload for PPT_PREVIEW_LIST_SLIDES. */
+export type PptPreviewListSlidesPayload = { projectDir: string }
+
+/** One `svg_output/*.svg` entry as reported by PPT_PREVIEW_LIST_SLIDES. */
+export type PptPreviewSlideEntry = { name: string; mtime: number; size: number }
+
+/**
+ * Result of PPT_PREVIEW_LIST_SLIDES. `dirMissing` distinguishes "the project
+ * folder / svg_output got deleted" (LivePreviewEditor drops its tab) from a
+ * transient read error (worth retrying). `iconsRoot` is the bundled skill's
+ * `templates/icons` absolute path, resolved main-side once per call so the
+ * renderer's icon inliner never has to guess SKILL_DIR from transcript text;
+ * null means the skill install couldn't be located — the renderer then skips
+ * inlining and reports every `<use data-icon>` as a warning instead of
+ * guessing wrong.
+ */
+export type PptPreviewListSlidesResult = {
+  ok: boolean
+  slides: PptPreviewSlideEntry[]
+  iconsRoot: string | null
+  dirMissing?: boolean
+  error?: string
+}
+
+/** Payload for PPT_PREVIEW_READ_SLIDE. `name` is a bare filename (no path
+ *  separators) — validated main-side against directory traversal. */
+export type PptPreviewReadSlidePayload = { projectDir: string; name: string }
+
+/** Result of PPT_PREVIEW_READ_SLIDE. `content` is the untransformed on-disk
+ *  SVG source; `mtime` is the compare-and-swap basis for a later save. */
+export type PptPreviewReadSlideResult = {
+  ok: boolean
+  content?: string
+  mtime?: number
+  error?: string
+}
+
+/**
+ * One file to persist in a PPT_PREVIEW_SAVE_ALL call. `content` is the full
+ * rewritten SVG (annotations/edits already replayed onto it renderer-side);
+ * `baseMtime` is the mtime PPT_PREVIEW_READ_SLIDE returned when the renderer
+ * last read this file — the compare-and-swap guard against an Executor
+ * rewrite racing this save.
+ */
+export type PptPreviewSaveFile = { name: string; content: string; baseMtime: number }
+
+/**
+ * Payload for PPT_PREVIEW_SAVE_ALL. `annotationLog`/`editLog` are pre-built
+ * jsonl records (one object each becomes one appended line) — the renderer
+ * computes the old/new diff that decides `annotation_saved` vs
+ * `annotation_updated` vs `annotation_removed` (it already holds both the
+ * disk-read baseline and the staged edits), main only appends bytes.
+ */
+export type PptPreviewSaveAllPayload = {
+  projectDir: string
+  files: PptPreviewSaveFile[]
+  annotationLog: Record<string, unknown>[]
+  editLog: Record<string, unknown>[]
+}
+
+/**
+ * Result of PPT_PREVIEW_SAVE_ALL. A batch can partially succeed — some files
+ * write while others conflict — so `ok` (true only when `conflicts` is
+ * empty and no fatal error occurred) is a summary, not a discriminant:
+ * `filesModified`/`conflicts` are both always populated (possibly empty),
+ * never gated behind `ok`. `conflicts` lists files whose on-disk mtime no
+ * longer matched `baseMtime` (not written) — the renderer re-reads just
+ * those, replays its staged changes onto the fresh content, and retries once
+ * before surfacing a "being rewritten" toast.
+ */
+export type PptPreviewSaveAllResult = {
+  ok: boolean
+  filesModified: string[]
+  conflicts: string[]
+  error?: string
+}
+
+/* ───────────────────────── ppt-master source pptx preview ─────────────────────── */
+
+/** Payload for PPT_SOURCE_PREVIEW. `pptxPath` is the absolute path to a
+ *  source .pptx the user handed the session (not a ppt-master project). */
+export type PptSourcePreviewPayload = { pptxPath: string }
+
+/** One converted slide — `content` is raw SVG text with STILL-RELATIVE
+ *  `../assets/*` hrefs (mirrors PPT_PREVIEW_READ_SLIDE: main only ferries
+ *  bytes, the renderer rewrites hrefs against `outDir` via the SAME
+ *  `rewriteAssetHrefs` the live preview pipeline uses). */
+export type PptSourceSlide = { name: string; content: string }
+
+/**
+ * Result of PPT_SOURCE_PREVIEW. `outDir` is the pptx_to_svg.py output root
+ * (contains `svg-flat/` and `assets/` as siblings) — the base directory
+ * `rewriteAssetHrefs(content, outDir)` needs to resolve each slide's
+ * relative asset hrefs into `pptasset://` URLs.
+ */
+export type PptSourcePreviewResult =
+  | { ok: true; outDir: string; slides: PptSourceSlide[] }
+  | { ok: false; error: string }
+
 /* ───────────────────────── Model switching ─────────────────────── */
 
 /**
@@ -1304,6 +1541,18 @@ export type SessionListResult = { threads: readonly ThreadSummary[] }
 
 export type SessionLoadPayload = { sessionId: string }
 export type SessionLoadResult = { messages: readonly ThreadMessageLike[] }
+
+/** Payload for SUBAGENT_TRANSCRIPT_LOAD. `agentId` is `WorkflowAgent.agentId`
+ * (or any Agent-tool spawn's id) — the parent session's own sessionId, not
+ * the sub-agent's. */
+export type SubagentTranscriptLoadPayload = { sessionId: string; agentId: string }
+export type SubagentTranscriptLoadResult = {
+  messages: readonly ThreadMessageLike[]
+  /** Epoch ms of the transcript's last line, when parseable. */
+  updatedAt?: number
+  /** Summed straight off the transcript's own per-call usage figures. */
+  usage?: { inputTokens: number; outputTokens: number }
+}
 
 export type SessionNewResult = { sessionId: string }
 
@@ -1451,6 +1700,16 @@ export interface ThemeOverridesPrefs {
   translucentSidebar?: boolean
 }
 
+// Sits at the top of AppearancePrefs (not inside light/dark) — one image
+// serves both modes; veil opacity derives from --card/--sidebar at apply
+// time so it repaints for free on mode flip. themeId absent/null = off.
+export interface BackgroundPrefs {
+  themeId?: string | null
+  scrim?: number
+  focusX?: number
+  focusY?: number
+}
+
 /**
  * Shared appearance prefs persisted by the daemon and read/written by both
  * the desktop shell and the web tab. Mirror of the contracts `AppearancePrefs`.
@@ -1464,6 +1723,39 @@ export interface AppearancePrefs {
   uiFontSize?: number
   codeFontSize?: number
   usePointerCursor?: boolean
+  background?: BackgroundPrefs
+}
+
+/**
+ * Persisted once per user-imported background theme, at
+ * `<userData>/background-themes/<id>/meta.json`. Written by the
+ * BACKGROUND_THEME_IMPORT handler (analysis runs exactly once, at import
+ * time) and read back by BACKGROUND_THEME_LIST — never recomputed on boot.
+ * Bundled `preset-*` themes have the same shape but ship as source constants
+ * (`src/lib/backgroundArt/presets.ts`), not files on disk.
+ */
+export interface BackgroundThemeMeta {
+  version: 1
+  id: string
+  name: string
+  /**
+   * For a user-imported (`u-*`) theme: the absolute path to the stored image
+   * on disk — the renderer has no other way to learn the userData root, so
+   * it passes this straight to toBgAssetUrl() (same convention kbasset://
+   * and proposalasset:// already use for KB/draft images). For a bundled
+   * (`preset-*`) theme: a public/-relative URL path (e.g.
+   * '/bg-presets/preset-dawn.png'), served over app:// like any other
+   * static asset — presets aren't user files and never touch bgasset://.
+   */
+  file: string
+  width: number
+  height: number
+  /** Rec. 709 mean, 0-1. Only nudges scrim alpha — never overrides theme mode. */
+  luminance: number
+  focus: { x: number; y: number }
+  safeSide: 'left' | 'right' | 'none'
+  palette: { accent: string; secondary: string; highlight: string }
+  createdAt: number
 }
 
 /**
@@ -1984,6 +2276,10 @@ export interface ProposalImageUploadPayload {
   sessionId: string
 }
 
+/** Payload for BACKGROUND_THEME_DELETE. */
+export interface BackgroundThemeDeletePayload {
+  themeId: string
+}
 
 /**
  * The exact shape of the preload-exposed `window.chatApi`. Matches this
@@ -2155,6 +2451,48 @@ export interface ChatApi {
   statSheetFile(payload: SheetFileStatPayload): Promise<SheetFileStatResult>
 
   /**
+   * Read a ppt-master project's confirm_ui round-trip files
+   * (recommendations / result / catalogs). CanvasConfirm's boot and its
+   * tier1→tier2 poll both call this. See CONFIRM_UI_READ.
+   */
+  readConfirmUi(payload: ConfirmUiReadPayload): Promise<ConfirmUiReadResult>
+
+  /**
+   * Write the user's Eight-Confirmations submission to result.json. See
+   * CONFIRM_UI_WRITE_RESULT.
+   */
+  writeConfirmUiResult(
+    payload: ConfirmUiWriteResultPayload
+  ): Promise<ConfirmUiWriteResultResult>
+
+  /**
+   * List a ppt-master project's svg_output/ slides. LivePreviewEditor polls
+   * this to detect new/changed pages. See PPT_PREVIEW_LIST_SLIDES.
+   */
+  listPptPreviewSlides(
+    payload: PptPreviewListSlidesPayload
+  ): Promise<PptPreviewListSlidesResult>
+
+  /**
+   * Read one slide's raw SVG source. See PPT_PREVIEW_READ_SLIDE.
+   */
+  readPptPreviewSlide(
+    payload: PptPreviewReadSlidePayload
+  ): Promise<PptPreviewReadSlideResult>
+
+  /**
+   * Persist staged annotations/edits back to svg_output/ and append their
+   * jsonl history. See PPT_PREVIEW_SAVE_ALL.
+   */
+  savePptPreviewAll(payload: PptPreviewSaveAllPayload): Promise<PptPreviewSaveAllResult>
+
+  /**
+   * Convert a source .pptx to per-slide SVG for an immediate preview, before
+   * the AI has produced any output. See PPT_SOURCE_PREVIEW.
+   */
+  previewPptSource(payload: PptSourcePreviewPayload): Promise<PptSourcePreviewResult>
+
+  /**
    * List chat-capable model ids from the backend gateway (main-side cached).
    * The composer's 模型 chip calls this when its dropdown opens.
    */
@@ -2191,6 +2529,15 @@ export interface ChatApi {
    * straight to the chat store's `setSession` action.
    */
   loadSession(payload: SessionLoadPayload): Promise<SessionLoadResult>
+
+  /**
+   * Load one sub-agent's full transcript (an `Agent`/`Workflow` spawn's
+   * own `agent-<agentId>.jsonl`). Read-only, independent of the parent
+   * session's own history — used by the agent-team detail takeover view.
+   */
+  loadSubagentTranscript(
+    payload: SubagentTranscriptLoadPayload
+  ): Promise<SubagentTranscriptLoadResult>
 
   /**
    * Mint a new session UUID. Does not spawn the CLI; the caller
@@ -2398,6 +2745,18 @@ export interface ChatApi {
    * against echoing its own write back). Returns an unsubscribe.
    */
   onAppearanceChanged(handler: () => void): () => void
+
+  /**
+   * Native "choose an image" dialog → downsample/analyze → persist under
+   * `background-themes/<id>/` → returns the new theme's meta. Null on
+   * cancel. Does not activate the theme — the caller still has to
+   * `setAppearance({ background: { themeId } })` afterward.
+   */
+  importBackgroundTheme(): Promise<BackgroundThemeMeta | null>
+  /** Lists user-imported themes only — bundled presets are static assets, not IPC data. */
+  listBackgroundThemes(): Promise<BackgroundThemeMeta[]>
+  /** Deletes a user-imported theme's files. Does not touch appearance prefs. */
+  deleteBackgroundTheme(payload: BackgroundThemeDeletePayload): Promise<boolean>
 
   /**
    * Subscribe to menu actions forwarded from the shell's tab-strip

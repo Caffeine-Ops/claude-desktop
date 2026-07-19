@@ -30,7 +30,7 @@ import {
   type ReplayTimeline
 } from '../../shared/replayTypes'
 
-/** confirm_ui/server.py 的 _log_result_snapshot 打的标记（同名常量见
+/** confirm_ui/confirm_wait.py 的 log_result_snapshot 打的标记（同名常量见
  *  compileReplay.ts；两处独立持有是因为一个在「表演节奏」职责里只需要
  *  判定命中+取最终选择，一个在「快照收集」职责里需要取完整 JSON——两者
  *  都是纯字符串前缀判定，没有共享的必要）。 */
@@ -121,7 +121,7 @@ function extOf(path: string): string {
 /**
  * 扫编译好的 timeline items（不是序列化文本——tool 块的 toolUseId/result
  * 已经是结构化字段，直接读比再拿正则从字符串里抠更直接）找 Bash 工具调用
- * 里 confirm_ui/server.py 打的 `[[confirm-result]]{...}` 日志行，落定为
+ * 里 confirm_ui/confirm_wait.py 打的 `[[confirm-result]]{...}` 日志行，落定为
  * manifest.meta.confirmSnapshots。见 ReplayConfirmSnapshot 的字段注释：
  * 为什么快照必须在导出时从日志里落定，不能留到播放时去读项目目录。
  */

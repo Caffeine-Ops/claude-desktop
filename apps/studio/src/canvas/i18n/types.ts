@@ -297,6 +297,19 @@ export interface Dict {
   'settings.themeSystem': string;
   'settings.themeLight': string;
   'settings.themeDark': string;
+  // Background art (wallpaper). Optional — added for the 2026-07-17 feature
+  // without hand-translating into all 19 locales up front (only zh-CN/en are
+  // filled in below); every other locale falls back to `en` via the
+  // existing `t()` chain (`dict[key] ?? en[key] ?? key`), same escape hatch
+  // SettingsDialogV2's `tt()` helper exists for elsewhere in this migration.
+  'settings.background'?: string;
+  'settings.background.none'?: string;
+  'settings.background.import'?: string;
+  'settings.background.importing'?: string;
+  'settings.background.scrim'?: string;
+  'settings.background.focus'?: string;
+  'settings.background.applyAccent'?: string;
+  'settings.background.delete'?: string;
   'settings.agentModelHead': string;
   'settings.modelPicker': string;
   'settings.modelSourceLive': string;

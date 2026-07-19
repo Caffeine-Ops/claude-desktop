@@ -969,7 +969,7 @@ function AskBarPopup(props: {
         aria-label={t('sheetPreviewSend')}
         title={t('sheetPreviewSend')}
         disabled={!text.trim() || streaming || !sessionId}
-        className="size-6 rounded-full"
+        className="size-6 rounded-full bg-brand text-brand-foreground hover:bg-brand/90"
         onClick={send}
       >
         <ArrowUp className="size-3.5" />

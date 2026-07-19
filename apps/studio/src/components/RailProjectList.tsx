@@ -134,7 +134,9 @@ export function RailProjectList() {
                   className={cn(
                     'relative flex h-8 w-full items-center justify-start gap-2 rounded-lg px-3 text-left text-[13px] font-normal transition-colors',
                     item.project.id === activeId
-                      ? 'bg-sidebar-accent font-medium text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground'
+                      ? // 毛玻璃质感（2026-07-18，跟 RailSessionList 选中态同一批，
+                        // 两面对称——见该处同名注释）。
+                        'bg-sidebar-accent/55 backdrop-blur-md font-medium text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground'
                       : 'text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground'
                   )}
                 >

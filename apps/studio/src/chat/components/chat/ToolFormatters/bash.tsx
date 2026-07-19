@@ -638,8 +638,8 @@ function LsSection({
                   className={
                     'min-w-0 truncate ' +
                     (hidden
-                      ? 'text-accent/50'
-                      : 'font-medium text-accent')
+                      ? 'text-brand/50'
+                      : 'font-medium text-brand')
                   }
                 >
                   {name}
@@ -682,7 +682,7 @@ function FolderGlyph(): React.JSX.Element {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden
-      className="shrink-0 text-accent/80"
+      className="shrink-0 text-brand/80"
     >
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
     </svg>

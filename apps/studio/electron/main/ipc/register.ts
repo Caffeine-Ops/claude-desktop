@@ -1,6 +1,17 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, net, shell, type IpcMainInvokeEvent } from 'electron'
-import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'node:path'
 import type { PermissionResponse, QueuedMessage } from '../../shared/types'
@@ -22,6 +33,8 @@ import {
   type SessionListResult,
   type SessionLoadPayload,
   type SessionLoadResult,
+  type SubagentTranscriptLoadPayload,
+  type SubagentTranscriptLoadResult,
   type SessionNewResult,
   type SessionRenamePayload,
   type SessionDeletePayload,
@@ -56,6 +69,20 @@ import {
   type SheetFileReadResult,
   type SheetFileStatPayload,
   type SheetFileStatResult,
+  type ConfirmUiReadPayload,
+  type ConfirmUiReadResult,
+  type ConfirmUiWriteResultPayload,
+  type ConfirmUiWriteResultResult,
+  type PptPreviewListSlidesPayload,
+  type PptPreviewListSlidesResult,
+  type PptPreviewSlideEntry,
+  type PptPreviewReadSlidePayload,
+  type PptPreviewReadSlideResult,
+  type PptPreviewSaveAllPayload,
+  type PptPreviewSaveAllResult,
+  type PptSourcePreviewPayload,
+  type PptSourcePreviewResult,
+  type PptSourceSlide,
   type ModelListResult,
   type ModelSetPayload,
   type WorkspaceKnownListResult,
@@ -73,6 +100,7 @@ import {
   type AuthState
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
+import { resolveBundledSkillsPluginDir } from '../core/skillsDir'
 import {
   PROPOSAL_IMAGE_API_KEY_MASK,
   type ProposalExportPayload,
@@ -114,7 +142,9 @@ import {
   type ProposalImageGeneratePayload,
   type ProposalImageEditPayload,
   type ProposalImageResult,
-  type ProposalImageUploadPayload
+  type ProposalImageUploadPayload,
+  type BackgroundThemeMeta,
+  type BackgroundThemeDeletePayload
 } from '../../shared/ipc-channels'
 import { setKbRoot, getKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote, kbStoreDir, setKbMode } from '../core/kbIndexStore'
 import { scanLocalDocs, listLocalDocsDirs, setLocalDocsDir } from '../core/localDocsScan'
@@ -151,6 +181,11 @@ import { appendProposalMetric } from '../core/proposalMetricsStore'
 import { generateImage, editImage, sniffImageExt } from '../services/imageGenService'
 import { submitFeedback } from '../services/feedbackService'
 import { writeProposalImage } from '../services/proposalImageWriter'
+import {
+  importBackgroundThemeFromFile,
+  listBackgroundThemes,
+  deleteBackgroundTheme
+} from '../services/backgroundThemes'
 import { mimeForImagePath } from '../../shared/imageMime'
 import { EMBEDDABLE_IMAGE_EXTS, type ProposalMetricRecord } from '../../shared/proposal'
 import { readFile } from 'node:fs/promises'
@@ -164,6 +199,7 @@ import {
   deleteSessionFromDisk,
   listAllSessions,
   loadSession,
+  loadSubagent,
   renameSession,
   searchSessionContent
 } from '../core/sessionStore'
@@ -295,6 +331,43 @@ async function recycleAllEnginesForBackendChange(): Promise<void> {
   )
 }
 
+/**
+ * `YYYY-MM-DDTHH:mm:ss` in LOCAL time, no offset/millis — matches Python's
+ * `time.strftime('%Y-%m-%dT%H:%M:%S')`, which is what the old confirm_ui
+ * Flask server stamped `confirmed_at` with. CONFIRM_UI_WRITE_RESULT must
+ * produce byte-identical result.json shapes to that server so
+ * confirm_wait.py's `[[confirm-result]]` replay marker never depends on
+ * which side wrote the file.
+ */
+function formatLocalTimestamp(d: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  )
+}
+
+/**
+ * Validate a ppt-master slide filename and resolve it under
+ * `<projectDir>/svg_output/`, or return null if invalid. Two layers, mirror
+ * of the old svg_editor Flask server's `_safe_svg_path`: the string checks
+ * reject obvious bad input up front, and the resolve()+relative() check is
+ * the authoritative traversal guard (belt-and-suspenders — a bare filename
+ * that passed the string checks can't actually escape svg_output/ either,
+ * but the second check is what the Python original relied on and it costs
+ * nothing to keep both).
+ */
+function safePptSlidePath(projectDir: string, name: string): string | null {
+  if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) {
+    return null
+  }
+  const svgDir = join(projectDir, 'svg_output')
+  const target = join(svgDir, name)
+  const rel = relative(svgDir, target)
+  if (rel.startsWith('..') || isAbsolute(rel)) return null
+  return target
+}
+
 function resolveBrowserWindow(event: IpcMainInvokeEvent): BrowserWindow {
   // Native dialogs need a BrowserWindow reference — the folder
   // picker is modal to the shell window. WebContentsView senders
@@ -379,6 +452,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_GENERATE)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_EDIT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_UPLOAD)
+  ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_IMPORT)
+  ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_LIST)
+  ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_DELETE)
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_ABORT)
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_QUEUE_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.CHAT_QUEUE_REMOVE)
@@ -400,11 +476,18 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.IMAGE_FILE_READ)
   ipcMain.removeHandler(IPC_CHANNELS.SHEET_FILE_READ)
   ipcMain.removeHandler(IPC_CHANNELS.SHEET_FILE_STAT)
+  ipcMain.removeHandler(IPC_CHANNELS.CONFIRM_UI_READ)
+  ipcMain.removeHandler(IPC_CHANNELS.CONFIRM_UI_WRITE_RESULT)
+  ipcMain.removeHandler(IPC_CHANNELS.PPT_PREVIEW_LIST_SLIDES)
+  ipcMain.removeHandler(IPC_CHANNELS.PPT_PREVIEW_READ_SLIDE)
+  ipcMain.removeHandler(IPC_CHANNELS.PPT_PREVIEW_SAVE_ALL)
+  ipcMain.removeHandler(IPC_CHANNELS.PPT_SOURCE_PREVIEW)
   ipcMain.removeHandler(IPC_CHANNELS.MODEL_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.MODEL_SET)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_SEARCH)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LOAD)
+  ipcMain.removeHandler(IPC_CHANNELS.SUBAGENT_TRANSCRIPT_LOAD)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_NEW)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_SWITCH)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_RENAME)
@@ -1071,6 +1154,397 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // Read <projectDir>/confirm_ui/{recommendations,result,catalogs}.json in one
+  // shot. Each is independently nullable — a missing/torn file just means
+  // "not ready yet", not an error (confirm_wait.py's --fresh step writes
+  // catalogs.json a beat after recommendations.json exists; result.json only
+  // appears once the user submits) — CanvasConfirm's boot retry and its
+  // tier1→tier2 poll both key off which fields come back null, not `error`.
+  ipcMain.handle(
+    IPC_CHANNELS.CONFIRM_UI_READ,
+    async (_event, payload: ConfirmUiReadPayload): Promise<ConfirmUiReadResult> => {
+      const empty: ConfirmUiReadResult = {
+        ok: false,
+        recommendations: null,
+        result: null,
+        catalogs: null
+      }
+      const projectDir =
+        payload && typeof payload.projectDir === 'string' ? payload.projectDir : ''
+      if (!projectDir || !isAbsolute(projectDir)) {
+        return { ...empty, error: 'Invalid project directory (expected absolute).' }
+      }
+      try {
+        if (!statSync(projectDir).isDirectory()) {
+          return { ...empty, error: 'Not a directory.' }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ...empty, error: `Project not found: ${msg}` }
+      }
+      const confirmDir = join(projectDir, 'confirm_ui')
+      const MAX_BYTES = 2 * 1024 * 1024
+      const readJsonOrNull = (name: string): Record<string, unknown> | null => {
+        try {
+          const filePath = join(confirmDir, name)
+          const stat = statSync(filePath)
+          if (!stat.isFile() || stat.size > MAX_BYTES) return null
+          const parsed: unknown = JSON.parse(readFileSync(filePath, 'utf-8'))
+          return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : null
+        } catch {
+          // Missing (not written yet) or mid-write torn JSON — both fold to
+          // "not ready", the caller's poll loop retries on its own cadence.
+          return null
+        }
+      }
+      return {
+        ok: true,
+        recommendations: readJsonOrNull('recommendations.json'),
+        result: readJsonOrNull('result.json'),
+        catalogs: readJsonOrNull('catalogs.json')
+      }
+    }
+  )
+
+  // Write the user's Eight-Confirmations submission to result.json — the
+  // native replacement for the old confirm_ui Flask server's
+  // POST /api/confirm. Mirrors that handler's shaping exactly (status +
+  // confirmed_at) so confirm_wait.py's stage guard and its
+  // `[[confirm-result]]` replay marker see byte-identical result.json shapes
+  // regardless of which side (old server, this IPC) wrote them.
+  ipcMain.handle(
+    IPC_CHANNELS.CONFIRM_UI_WRITE_RESULT,
+    async (
+      _event,
+      payload: ConfirmUiWriteResultPayload
+    ): Promise<ConfirmUiWriteResultResult> => {
+      const projectDir =
+        payload && typeof payload.projectDir === 'string' ? payload.projectDir : ''
+      if (!projectDir || !isAbsolute(projectDir)) {
+        return { ok: false, error: 'Invalid project directory (expected absolute).' }
+      }
+      const body = payload?.payload
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return { ok: false, error: 'Invalid submission payload.' }
+      }
+      const confirmDir = join(projectDir, 'confirm_ui')
+      // Write authorization, not just a path allowlist: this channel may
+      // only land a result.json inside a project that already has a
+      // Strategist-authored recommendations.json — the same "a confirm round
+      // is legitimately in progress" gate confirm_wait.py itself refuses to
+      // start without. Without this check the channel would be a generic
+      // "write any JSON under any <dir>/confirm_ui/" primitive.
+      if (!existsSync(join(confirmDir, 'recommendations.json'))) {
+        return {
+          ok: false,
+          error: 'No confirm_ui session for this project (recommendations.json missing).'
+        }
+      }
+      const stage = typeof body.stage === 'string' ? body.stage : undefined
+      const shaped = {
+        ...body,
+        status: stage === 'tier1' ? 'tier1-confirmed' : 'confirmed',
+        confirmed_at: formatLocalTimestamp(new Date())
+      }
+      const resultPath = join(confirmDir, 'result.json')
+      const tmpPath = `${resultPath}.tmp-${process.pid}`
+      try {
+        // Atomic write: confirm_wait.py polls result.json every 500ms with no
+        // locking on its side, so a partial write would occasionally hand it
+        // torn JSON. rename() is atomic on the same filesystem, which tmpPath
+        // (sibling of resultPath) guarantees.
+        writeFileSync(tmpPath, JSON.stringify(shaped, null, 2), 'utf-8')
+        renameSync(tmpPath, resultPath)
+        return { ok: true }
+      } catch (err) {
+        try {
+          unlinkSync(tmpPath)
+        } catch {
+          // tmp file never got created — nothing to clean up.
+        }
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ok: false, error: `Write failed: ${msg}` }
+      }
+    }
+  )
+
+  // List <projectDir>/svg_output/*.svg with mtime/size — the native
+  // replacement for the old svg_editor Flask server's GET /api/slides.
+  // LivePreviewEditor polls this on a timer (see SHEET_FILE_STAT above for
+  // why this codebase prefers polling over fs.watch here) to notice pages
+  // the Executor just wrote or rewrote.
+  ipcMain.handle(
+    IPC_CHANNELS.PPT_PREVIEW_LIST_SLIDES,
+    async (
+      _event,
+      payload: PptPreviewListSlidesPayload
+    ): Promise<PptPreviewListSlidesResult> => {
+      const empty: PptPreviewListSlidesResult = { ok: false, slides: [], iconsRoot: null }
+      const projectDir =
+        payload && typeof payload.projectDir === 'string' ? payload.projectDir : ''
+      if (!projectDir || !isAbsolute(projectDir)) {
+        return { ...empty, error: 'Invalid project directory (expected absolute).' }
+      }
+      const svgDir = join(projectDir, 'svg_output')
+      let names: string[]
+      try {
+        names = readdirSync(svgDir).filter((n) => n.toLowerCase().endsWith('.svg'))
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code === 'ENOENT') {
+          return { ...empty, dirMissing: true, error: 'svg_output not found.' }
+        }
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ...empty, error: `List failed: ${msg}` }
+      }
+      names.sort()
+      const slides: PptPreviewSlideEntry[] = []
+      for (const name of names) {
+        try {
+          const stat = statSync(join(svgDir, name))
+          if (stat.isFile()) slides.push({ name, mtime: stat.mtimeMs, size: stat.size })
+        } catch {
+          // Raced with a delete between readdir and stat — the next poll
+          // simply won't list it either.
+        }
+      }
+      const skillsRoot = resolveBundledSkillsPluginDir()
+      return {
+        ok: true,
+        slides,
+        iconsRoot: skillsRoot ? join(skillsRoot, 'ppt-master', 'templates', 'icons') : null
+      }
+    }
+  )
+
+  // Read one slide's raw SVG bytes — the native replacement for the old
+  // svg_editor Flask server's GET /api/slide/<name>. Deliberately returns the
+  // UNTRANSFORMED file: icon inlining / temp-id assignment / asset-href
+  // rewriting all moved to the renderer (src/chat/lib/pptPreview/) so this
+  // handler's only job is the same path-guarded read every other
+  // *_FILE_READ channel does.
+  ipcMain.handle(
+    IPC_CHANNELS.PPT_PREVIEW_READ_SLIDE,
+    async (
+      _event,
+      payload: PptPreviewReadSlidePayload
+    ): Promise<PptPreviewReadSlideResult> => {
+      const projectDir =
+        payload && typeof payload.projectDir === 'string' ? payload.projectDir : ''
+      const name = payload && typeof payload.name === 'string' ? payload.name : ''
+      if (!projectDir || !isAbsolute(projectDir)) {
+        return { ok: false, error: 'Invalid project directory (expected absolute).' }
+      }
+      const svgFile = safePptSlidePath(projectDir, name)
+      if (!svgFile) {
+        return { ok: false, error: 'Invalid slide name.' }
+      }
+      const MAX_BYTES = 10 * 1024 * 1024
+      try {
+        const stat = statSync(svgFile)
+        if (!stat.isFile()) return { ok: false, error: 'Slide not found.' }
+        if (stat.size > MAX_BYTES) {
+          return { ok: false, error: 'Slide too large for in-app preview.' }
+        }
+        return { ok: true, content: readFileSync(svgFile, 'utf-8'), mtime: stat.mtimeMs }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ok: false, error: `Read failed: ${msg}` }
+      }
+    }
+  )
+
+  // Persist staged annotations/edits back to svg_output/ and append their
+  // jsonl history — the native replacement for the old svg_editor Flask
+  // server's POST /api/save-all. That server used to re-read each file from
+  // disk right before writing (an implicit guard against an Executor rewrite
+  // racing the save); with no long-lived process to do that implicitly, the
+  // guard is explicit here via `baseMtime` compare-and-swap.
+  ipcMain.handle(
+    IPC_CHANNELS.PPT_PREVIEW_SAVE_ALL,
+    async (
+      _event,
+      payload: PptPreviewSaveAllPayload
+    ): Promise<PptPreviewSaveAllResult> => {
+      const projectDir =
+        payload && typeof payload.projectDir === 'string' ? payload.projectDir : ''
+      if (!projectDir || !isAbsolute(projectDir)) {
+        return {
+          ok: false,
+          filesModified: [],
+          conflicts: [],
+          error: 'Invalid project directory (expected absolute).'
+        }
+      }
+      const files = Array.isArray(payload?.files) ? payload.files : []
+      const MAX_CONTENT_BYTES = 10 * 1024 * 1024
+      const filesModified: string[] = []
+      const conflicts: string[] = []
+      for (const file of files) {
+        const name = typeof file?.name === 'string' ? file.name : ''
+        const content = typeof file?.content === 'string' ? file.content : ''
+        const baseMtime = typeof file?.baseMtime === 'number' ? file.baseMtime : NaN
+        const svgFile = safePptSlidePath(projectDir, name)
+        // Invalid name / not-SVG-looking / oversized content: these are
+        // caller bugs, not user-facing conflicts — skip rather than abort
+        // the whole batch so the rest of the save still lands.
+        if (!svgFile) continue
+        const trimmed = content.trimStart()
+        if (!trimmed.startsWith('<?xml') && !trimmed.startsWith('<svg')) continue
+        if (Buffer.byteLength(content, 'utf-8') > MAX_CONTENT_BYTES) continue
+        try {
+          const stat = statSync(svgFile)
+          if (!stat.isFile()) continue
+          if (stat.mtimeMs !== baseMtime) {
+            conflicts.push(name)
+            continue
+          }
+          const tmpPath = `${svgFile}.tmp-${process.pid}`
+          writeFileSync(tmpPath, content, 'utf-8')
+          renameSync(tmpPath, svgFile)
+          filesModified.push(name)
+        } catch {
+          conflicts.push(name)
+        }
+      }
+
+      // History append is best-effort (mirrors the old server's
+      // _append_live_preview_log) — a logging failure never fails the save
+      // the user is waiting on.
+      const liveDir = join(projectDir, 'live_preview')
+      try {
+        mkdirSync(liveDir, { recursive: true })
+      } catch {
+        // If this fails the appends below will also fail and no-op.
+      }
+      const appendJsonl = (fileName: string, records: unknown): void => {
+        if (!Array.isArray(records) || records.length === 0) return
+        try {
+          const lines = records.map((r) => JSON.stringify(r)).join('\n') + '\n'
+          appendFileSync(join(liveDir, fileName), lines, 'utf-8')
+        } catch {
+          // Best-effort — the SVG write above already landed.
+        }
+      }
+      appendJsonl('annotations.jsonl', payload?.annotationLog)
+      appendJsonl('edits.jsonl', payload?.editLog)
+
+      return {
+        ok: conflicts.length === 0,
+        filesModified,
+        conflicts
+      }
+    }
+  )
+
+  // Convert a SOURCE .pptx (handed to the session, not a ppt-master project)
+  // to per-slide SVG via the skill's offline pptx_to_svg.py, so 「预览幻灯片」
+  // can show the original deck immediately. Blocks for the duration of the
+  // conversion (a local, CPU-bound OOXML→SVG parse — no LibreOffice/network
+  // — typically finishes in well under the timeout below) rather than
+  // returning an intermediate "converting" state to poll: simpler, and the
+  // renderer already shows a loading state for the length of this promise.
+  ipcMain.handle(
+    IPC_CHANNELS.PPT_SOURCE_PREVIEW,
+    async (_event, payload: PptSourcePreviewPayload): Promise<PptSourcePreviewResult> => {
+      const pptxPath =
+        payload && typeof payload.pptxPath === 'string' ? payload.pptxPath : ''
+      if (!pptxPath || !isAbsolute(pptxPath) || !/\.pptx?$/i.test(pptxPath)) {
+        return { ok: false, error: 'Invalid .pptx path (expected absolute).' }
+      }
+      let mtimeMs: number
+      try {
+        mtimeMs = statSync(pptxPath).mtimeMs
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ok: false, error: `Source file not found: ${msg}` }
+      }
+      const skillsRoot = resolveBundledSkillsPluginDir()
+      if (!skillsRoot) {
+        return { ok: false, error: 'ppt-master skill not found.' }
+      }
+      const scriptPath = join(skillsRoot, 'ppt-master', 'scripts', 'pptx_to_svg.py')
+      // Same venv ensure-python.sh bootstraps (skills/ppt-master/bin/ensure-
+      // python.sh) — resolved directly rather than sourcing that shell
+      // script, since this runs from the main process, not a Bash tool call.
+      const venvPython =
+        process.platform === 'win32'
+          ? join(homedir(), '.ppt-master', 'venv', 'Scripts', 'python.exe')
+          : join(homedir(), '.ppt-master', 'venv', 'bin', 'python3')
+      if (!existsSync(venvPython)) {
+        return {
+          ok: false,
+          error:
+            'ppt-master Python environment is not set up yet — run any ppt-master command in chat first.'
+        }
+      }
+
+      // Cache key = (path, mtime): a re-save of the same source file gets a
+      // fresh conversion; an unchanged file is a cache hit.
+      const hash = createHash('sha1')
+        .update(`${pptxPath}:${mtimeMs}`)
+        .digest('hex')
+        .slice(0, 16)
+      const outDir = join(app.getPath('userData'), 'ppt-source-preview', hash)
+      const flatDir = join(outDir, 'svg-flat')
+
+      const readSlides = (): PptSourceSlide[] => {
+        let names: string[]
+        try {
+          names = readdirSync(flatDir).filter((n) => n.toLowerCase().endsWith('.svg'))
+        } catch {
+          return []
+        }
+        names.sort()
+        const slides: PptSourceSlide[] = []
+        for (const name of names) {
+          try {
+            slides.push({ name, content: readFileSync(join(flatDir, name), 'utf-8') })
+          } catch {
+            // Skip an unreadable file rather than failing the whole preview.
+          }
+        }
+        return slides
+      }
+
+      const cached = readSlides()
+      if (cached.length > 0) {
+        return { ok: true, outDir, slides: cached }
+      }
+
+      try {
+        mkdirSync(outDir, { recursive: true })
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn(
+            venvPython,
+            [scriptPath, pptxPath, '-o', outDir, '--inheritance-mode', 'flat'],
+            { timeout: 30_000 }
+          )
+          let stderr = ''
+          child.stderr?.on('data', (d: Buffer) => {
+            stderr += d.toString()
+          })
+          child.on('error', reject)
+          child.on('close', (code) => {
+            if (code === 0) resolve()
+            else reject(new Error(stderr.slice(-500) || `pptx_to_svg.py exited with code ${code}`))
+          })
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ok: false, error: `Conversion failed: ${msg}` }
+      }
+
+      const slides = readSlides()
+      if (slides.length === 0) {
+        return { ok: false, error: 'Conversion produced no slides.' }
+      }
+      return { ok: true, outDir, slides }
+    }
+  )
+
   // Model catalog for the composer's 模型 chip — source depends on the CLI
   // backend, because the two run against DIFFERENT model providers:
   //   - bundled (fusion-code) → the csdn gateway env.json points it at; its
@@ -1178,6 +1652,21 @@ export function registerIpcHandlers(): void {
       validateSessionLoadPayload(payload)
       const messages = await loadSession(payload.sessionId)
       return { messages }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.SUBAGENT_TRANSCRIPT_LOAD,
+    async (
+      _event,
+      payload: SubagentTranscriptLoadPayload
+    ): Promise<SubagentTranscriptLoadResult> => {
+      validateSubagentTranscriptLoadPayload(payload)
+      const { messages, updatedAt, usage } = await loadSubagent(
+        payload.sessionId,
+        payload.agentId
+      )
+      return { messages, updatedAt, usage }
     }
   )
 
@@ -1589,6 +2078,42 @@ export function registerIpcHandlers(): void {
       })
       .catch(() => {})
   })
+
+  // ── 背景主题（壁纸换肤）：导入/列举/删除，落盘归 backgroundThemes.ts ──
+  //
+  // 与 PROPOSAL_IMAGE_UPLOAD 同一个理由用原生 dialog 而非 <input type=file>：
+  // 渲染进程拿不到选中文件的绝对磁盘路径。激活/scrim 调整不走这里——那是一次
+  // 普通的 APPEARANCE_SET patch（background.themeId），本组三个 handler 只管
+  // 文件本身。
+  ipcMain.handle(
+    IPC_CHANNELS.BACKGROUND_THEME_IMPORT,
+    async (event): Promise<BackgroundThemeMeta | null> => {
+      const window = resolveBrowserWindow(event)
+      const result = await dialog.showOpenDialog(window, {
+        title: '选择背景图',
+        properties: ['openFile'],
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+      })
+      if (result.canceled || result.filePaths.length === 0) return null
+      return importBackgroundThemeFromFile(result.filePaths[0]!)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.BACKGROUND_THEME_LIST,
+    async (): Promise<BackgroundThemeMeta[]> => {
+      return listBackgroundThemes()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.BACKGROUND_THEME_DELETE,
+    async (_event, payload: BackgroundThemeDeletePayload): Promise<boolean> => {
+      const themeId = typeof payload?.themeId === 'string' ? payload.themeId : ''
+      if (!themeId) return false
+      return deleteBackgroundTheme(themeId)
+    }
+  )
 
   // ── 自动更新（electron-updater，状态机在 services/appUpdater.ts）──
   // 三个 handler 都是薄转发：状态归 main 单独持有，结论走
@@ -2711,6 +3236,27 @@ function validateSessionLoadPayload(
   }
   if (v.sessionId.length > 128) {
     throw new Error('Invalid session-load sessionId (too long)')
+  }
+}
+
+function validateSubagentTranscriptLoadPayload(
+  value: unknown
+): asserts value is SubagentTranscriptLoadPayload {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('Invalid subagent-transcript-load payload')
+  }
+  const v = value as Record<string, unknown>
+  if (typeof v.sessionId !== 'string' || v.sessionId.length === 0) {
+    throw new Error('Invalid subagent-transcript-load sessionId (empty or missing)')
+  }
+  if (v.sessionId.length > 128) {
+    throw new Error('Invalid subagent-transcript-load sessionId (too long)')
+  }
+  if (typeof v.agentId !== 'string' || v.agentId.length === 0) {
+    throw new Error('Invalid subagent-transcript-load agentId (empty or missing)')
+  }
+  if (v.agentId.length > 128) {
+    throw new Error('Invalid subagent-transcript-load agentId (too long)')
   }
 }
 

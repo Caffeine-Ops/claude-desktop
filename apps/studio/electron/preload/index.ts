@@ -29,6 +29,8 @@ import {
   type SessionListResult,
   type SessionLoadPayload,
   type SessionLoadResult,
+  type SubagentTranscriptLoadPayload,
+  type SubagentTranscriptLoadResult,
   type SessionNewResult,
   type SessionRenamePayload,
   type SessionDeletePayload,
@@ -75,6 +77,18 @@ import {
   type SheetFileReadResult,
   type SheetFileStatPayload,
   type SheetFileStatResult,
+  type ConfirmUiReadPayload,
+  type ConfirmUiReadResult,
+  type ConfirmUiWriteResultPayload,
+  type ConfirmUiWriteResultResult,
+  type PptPreviewListSlidesPayload,
+  type PptPreviewListSlidesResult,
+  type PptPreviewReadSlidePayload,
+  type PptPreviewReadSlideResult,
+  type PptPreviewSaveAllPayload,
+  type PptPreviewSaveAllResult,
+  type PptSourcePreviewPayload,
+  type PptSourcePreviewResult,
   type ModelListResult,
   type ModelSetPayload,
   type AuthLoginPayload,
@@ -125,7 +139,9 @@ import {
   type ProposalImageGeneratePayload,
   type ProposalImageEditPayload,
   type ProposalImageResult,
-  type ProposalImageUploadPayload
+  type ProposalImageUploadPayload,
+  type BackgroundThemeMeta,
+  type BackgroundThemeDeletePayload
 } from '../shared/ipc-channels'
 import type { ProposalMetricRecord } from '../shared/proposal'
 import type { KbRemoteConfig } from '../shared/kbConfig'
@@ -346,6 +362,54 @@ const chatApi: ChatApi = {
     ) as Promise<SheetFileStatResult>
   },
 
+  readConfirmUi(payload: ConfirmUiReadPayload): Promise<ConfirmUiReadResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.CONFIRM_UI_READ,
+      payload
+    ) as Promise<ConfirmUiReadResult>
+  },
+
+  writeConfirmUiResult(
+    payload: ConfirmUiWriteResultPayload
+  ): Promise<ConfirmUiWriteResultResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.CONFIRM_UI_WRITE_RESULT,
+      payload
+    ) as Promise<ConfirmUiWriteResultResult>
+  },
+
+  listPptPreviewSlides(
+    payload: PptPreviewListSlidesPayload
+  ): Promise<PptPreviewListSlidesResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PPT_PREVIEW_LIST_SLIDES,
+      payload
+    ) as Promise<PptPreviewListSlidesResult>
+  },
+
+  readPptPreviewSlide(
+    payload: PptPreviewReadSlidePayload
+  ): Promise<PptPreviewReadSlideResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PPT_PREVIEW_READ_SLIDE,
+      payload
+    ) as Promise<PptPreviewReadSlideResult>
+  },
+
+  savePptPreviewAll(payload: PptPreviewSaveAllPayload): Promise<PptPreviewSaveAllResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PPT_PREVIEW_SAVE_ALL,
+      payload
+    ) as Promise<PptPreviewSaveAllResult>
+  },
+
+  previewPptSource(payload: PptSourcePreviewPayload): Promise<PptSourcePreviewResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PPT_SOURCE_PREVIEW,
+      payload
+    ) as Promise<PptSourcePreviewResult>
+  },
+
   listModels(): Promise<ModelListResult> {
     return ipcRenderer.invoke(IPC_CHANNELS.MODEL_LIST) as Promise<ModelListResult>
   },
@@ -372,6 +436,15 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.SESSION_LOAD,
       payload
     ) as Promise<SessionLoadResult>
+  },
+
+  loadSubagentTranscript(
+    payload: SubagentTranscriptLoadPayload
+  ): Promise<SubagentTranscriptLoadResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SUBAGENT_TRANSCRIPT_LOAD,
+      payload
+    ) as Promise<SubagentTranscriptLoadResult>
   },
 
   newSession(): Promise<SessionNewResult> {
@@ -554,6 +627,25 @@ const chatApi: ChatApi = {
     return () => {
       ipcRenderer.off(IPC_CHANNELS.APPEARANCE_CHANGED, listener)
     }
+  },
+
+  importBackgroundTheme(): Promise<BackgroundThemeMeta | null> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.BACKGROUND_THEME_IMPORT
+    ) as Promise<BackgroundThemeMeta | null>
+  },
+
+  listBackgroundThemes(): Promise<BackgroundThemeMeta[]> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.BACKGROUND_THEME_LIST
+    ) as Promise<BackgroundThemeMeta[]>
+  },
+
+  deleteBackgroundTheme(payload: BackgroundThemeDeletePayload): Promise<boolean> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.BACKGROUND_THEME_DELETE,
+      payload
+    ) as Promise<boolean>
   },
 
   onShellMenuAction(handler: (action: ShellMenuAction) => void): () => void {

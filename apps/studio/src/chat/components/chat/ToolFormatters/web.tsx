@@ -20,7 +20,7 @@ export function formatWebFetch({
     headline: (
       <span>
         {pick(lang, '抓取网页', 'Fetch')}{' '}
-        <code className="break-all font-mono text-[11.5px] text-accent">
+        <code className="break-all font-mono text-[11.5px] text-brand">
           {url}
         </code>
       </span>
@@ -142,16 +142,19 @@ export function formatWebSearch({
             <ol className="space-y-0.5">
               {links.map((l, i) => (
                 <li key={l.url + i}>
+                  {/* hover 色钉死品牌绿 --brand（不跟主题色 --accent 走），
+                      同 AssistantMarkdown 的 a 标签一致——这也是条可点外链
+                      （2026-07-19 用户实锤）。 */}
                   <a
                     href={l.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="group/link flex items-baseline gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-accent/10"
+                    className="group/link flex items-baseline gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-brand/10"
                   >
                     <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-muted-foreground/50">
                       {i + 1}
                     </span>
-                    <span className="min-w-0 truncate text-[12px] text-foreground/85 transition-colors group-hover/link:text-accent">
+                    <span className="min-w-0 truncate text-[12px] text-foreground/85 transition-colors group-hover/link:text-brand">
                       {l.title || l.url}
                     </span>
                     <span className="ml-auto shrink-0 text-[10.5px] text-muted-foreground/60">
@@ -255,7 +258,7 @@ export function formatToolSearch({
     ) : (
       <span>
         {pick(lang, '搜索工具', 'Tool search')}{' '}
-        <span className="text-accent">
+        <span className="text-brand">
           “
           <span className="font-mono text-[11.5px]">
             {query.replace(/^\+/, '')}
@@ -329,7 +332,7 @@ function ToolChip({
       title={name}
     >
       <WrenchGlyph
-        className={missing ? 'text-muted-foreground/40' : 'text-accent/70'}
+        className={missing ? 'text-muted-foreground/40' : 'text-brand/70'}
       />
       {server && (
         <>

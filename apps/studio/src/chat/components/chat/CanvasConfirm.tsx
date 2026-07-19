@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
 import type { ReplayConfirmSnapshot } from '@desktop-shared/replayTypes'
+import { railEaseOut, railGliderSpring } from '../../shell/railMotion'
 import {
   type Catalogs,
   type CatalogOption,
@@ -20,6 +22,7 @@ import {
   hexOr,
   localized,
   makeT,
+  mergeConfirmedAnchors,
   needsGeneratedImagesForUsage,
   normPalette,
   normTypography,
@@ -42,21 +45,22 @@ import {
  * CanvasConfirm
  * -------------
  * Native React replication of the ppt-master confirm_ui Eight-Confirmations
- * page (skills/ppt-master/scripts/confirm_ui/static/app.js), rendered inside
- * the 「问题」canvas tab instead of iframing the Flask page. It fetches the
- * server's own `/api/catalogs` + `/api/recommendations`, lets the user pick,
- * and POSTs back to `/api/confirm` — the SAME data contract, so the server's
- * `--wait-only` loop (which only watches result.json) is unchanged. The Flask
- * server stays running exactly as before; we just paint its UI natively.
+ * page (originally skills/ppt-master/scripts/confirm_ui/static/app.js, now
+ * deleted along with the Flask server it ran on), rendered inside the
+ * 「问题」canvas tab. There is no HTTP server on this path anymore: the data
+ * contract is `<projectDir>/confirm_ui/{recommendations,result,catalogs}.json`
+ * on disk, read via the CONFIRM_UI_READ IPC and written via
+ * CONFIRM_UI_WRITE_RESULT (see electron/main/ipc/register.ts). The skill-side
+ * synchronization point is `scripts/confirm_ui/confirm_wait.py`, a pure
+ * stdlib script that blocks on the Bash tool call until the stage it's
+ * watching shows up in result.json — it does not care who wrote that file,
+ * so this component's IPC write and the old Flask server's HTTP write are
+ * interchangeable from confirm_wait.py's point of view. Same reasoning as
+ * always: it just paints the data natively.
  *
- * `baseUrl` is the server's real (possibly auto-advanced) origin, resolved by
- * usePreviewServer from the launch command's stdout — never guessed. All fetch
- * calls MUST be absolute against it: the original app.js used relative paths
- * because it ran ON that origin; we run on the app's origin, so a relative
- * `/api/confirm` would hit the app, not the Flask server, and the confirm
- * would silently never land (the exact "spinner forever" failure class from
- * the iframe-era bug). CSP `connect-src http://localhost:*` already permits the
- * cross-origin fetch (see renderer/index.html).
+ * `projectDir` is the ppt-master project's absolute directory, resolved by
+ * usePreviewServer from the confirm_wait.py command's own argument — never
+ * guessed at a URL/port (there is none to guess anymore).
  *
  * STAGE ONE scope: every field is rendered and answerable, the tier1→tier2
  * polling state machine works, and the submit contract is byte-for-byte
@@ -71,8 +75,104 @@ import {
 type Stage = 1 | 2 | 'all'
 
 /** Deep clone via JSON — matches app.js `JSON.parse(JSON.stringify(STATE))`. */
+/* ───────────────── motion ─────────────────
+ *
+ * 动效 token 一律复用 shell/railMotion 的两条（railEaseOut 入场 /
+ * railGliderSpring 位移），不自立一套：全 app 的节奏统一比这一页「有自己
+ * 的手感」重要得多，先例是 WorkflowAgentsView 同样借用了 rail 的 spring。
+ *
+ * 分工沿用 railMotion 头注释定的规矩：
+ *  - **入场 = ease-out，不回弹**。「只做『出现』不做戏」——确认页是一屏
+ *    需要**读**的决策项，卡片弹跳会把注意力从内容上拽走。
+ *  - **位移/增删 = spring**。会被打断的动画（用户连点改选项时 chip 增删）
+ *    必须能从当前位置和速度重新求解，ease 曲线被打断会从头重放，肉眼可见
+ *    地「顿一下再走」。
+ *
+ * reduced-motion 不在这里处理：App.tsx 的 <MotionConfig reducedMotion="user">
+ * 已对整个 renderer 生效，会自动把下面的 y/scale 降级、只留 opacity。
+ */
+
+/**
+ * 卡片入场：淡入 + 上移 8px。8 是「看得出方向」与「不晃眼」的折中。
+ *
+ * 写 `transform: translateY()` 而不是独立的 `y: 8`：两者视觉等价，但只有
+ * 整条 transform 字符串能走 WAAPI（合成器线程），独立 transform 会退回主
+ * 线程 rAF。这里差别是实打实的——卡片入场恰好撞上主线程正在建这 7 张卡的
+ * DOM，掉帧就掉在这一拍上（同族教训：骨架屏 JS 淡入撞主线程阻塞，峰值透明
+ * 度只有 0.27）。两端都必须是完整 transform 值，不能一端写 none。
+ */
+const SECTION_VARIANTS = {
+  hidden: { opacity: 0, transform: 'translateY(8px)' },
+  show: {
+    opacity: 1,
+    transform: 'translateY(0px)',
+    transition: { duration: 0.32, ease: railEaseOut }
+  }
+} as const
+
+/**
+ * 卡片容器：staggerChildren 0.045s —— 7 张卡片总共 ~0.3s 铺完，读起来是
+ * 「依次落位」而不是「排队等待」。再大就拖沓（末卡要等半秒），再小就糊成
+ * 一次性闪现、白做。
+ */
+const SECTIONS_CONTAINER = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.045 } }
+} as const
+
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v))
+}
+
+/** Pull `_meta.static_dir` out of the raw catalogs.json snapshot
+ *  confirm_wait.py's `--fresh` step writes (see that script's
+ *  `_prepare_fresh`) — the absolute path VisualStyleField/CanvasField read
+ *  their preview JPEGs from via `useLocalPreviewImage`. Kept loose
+ *  (`Record<string, unknown>`, not the `Catalogs` type) because `Catalogs`'s
+ *  index signature is `CatalogOption[]` — `_meta` is a desktop-only addition
+ *  the catalog schema itself doesn't know about. */
+function extractStaticDir(catalogs: Record<string, unknown>): string | undefined {
+  const meta = catalogs._meta
+  if (!meta || typeof meta !== 'object') return undefined
+  const dir = (meta as Record<string, unknown>).static_dir
+  return typeof dir === 'string' ? dir : undefined
+}
+
+/**
+ * Module-level cache: absolute image path → resolved data URL (`null` if the
+ * IPC read failed). Survives component remounts within the renderer session
+ * — a language toggle or tier1→tier2 transition re-renders StyleCard/
+ * CanvasCard, but the same handful of style-previews/canvas-previews JPEGs
+ * shouldn't be re-read from disk every time.
+ */
+const previewImageCache = new Map<string, string | null>()
+
+/**
+ * Read a local preview image (style-previews/<id>.jpg, canvas-previews/<id>.jpg)
+ * via the existing IMAGE_FILE_READ IPC and return its data URL — replaces the
+ * old `<img src="{baseUrl}/static/style-previews/{id}.jpg">` cross-origin
+ * fetch now that there's no Flask server to serve `/static/*` from.
+ * Undefined while loading OR on failure — StyleCard/CanvasCard already
+ * degrade `src === undefined`-ish states to a labeled placeholder, so the two
+ * cases don't need to be distinguished here (a fast local disk read makes the
+ * "loading" flash imperceptible in practice).
+ */
+function useLocalPreviewImage(absPath: string | undefined): string | undefined {
+  const [, bump] = useState(0)
+  useEffect(() => {
+    if (!absPath || previewImageCache.has(absPath)) return
+    let cancelled = false
+    void window.chatApi.readImageFile({ absPath }).then((res) => {
+      if (cancelled) return
+      previewImageCache.set(absPath, res.ok && res.dataUrl ? res.dataUrl : null)
+      bump((n) => n + 1)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [absPath])
+  if (!absPath) return undefined
+  return previewImageCache.get(absPath) ?? undefined
 }
 
 /**
@@ -113,15 +213,17 @@ const UI_MESSAGES: Record<Lang, Record<string, string>> = {
 }
 
 export function CanvasConfirm({
-  baseUrl,
+  projectDir,
   replaySnapshots
 }: {
-  baseUrl: string
+  /** ppt-master project's absolute directory — the key CONFIRM_UI_READ /
+   *  CONFIRM_UI_WRITE_RESULT read/write `confirm_ui/*.json` under. */
+  projectDir: string
   /**
    * 回放态：manifest.meta.confirmSnapshots（该会话录制时命中的 tier1/final
-   * 快照，按命中顺序排列，通常 0~2 条）。传入即视为回放模式——组件不 fetch
-   * 真实 baseUrl（回放没有真实 server 在跑），改为等 confirmDemoHandle.open
-   * 用 toolUseId 取快照做离线初始化；baseUrl 此时只是个占位 key（仍传因为
+   * 快照，按命中顺序排列，通常 0~2 条）。传入即视为回放模式——组件不走 IPC
+   * 读盘（回放没有真实项目目录），改为等 confirmDemoHandle.open 用
+   * toolUseId 取快照做离线初始化；projectDir 此时只是个占位 key（仍传因为
    * 上层 SlidesWorkspace 用它做 React key，见该文件 hasConfirm 分支）。
    */
   replaySnapshots?: ReplayConfirmSnapshot[]
@@ -143,14 +245,17 @@ export function CanvasConfirm({
   )
   const [statusText, setStatusText] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // Absolute dir the style-previews/canvas-previews JPEGs live under (from
+  // catalogs.json's `_meta.static_dir`, written by confirm_wait.py's --fresh
+  // step). Undefined until boot resolves it; VisualStyleField/CanvasField
+  // degrade to placeholder cards while it's unset (same as a load failure).
+  const [previewsDir, setPreviewsDir] = useState<string | undefined>(undefined)
   // Cancels an in-flight tier2 poll loop when the component unmounts.
   const pollAlive = useRef(true)
   // The scrollable sections container — reset to the top when the page first
   // becomes ready and on each stage change, so the confirm page always opens at
   // the top instead of wherever a prior scroll left it.
   const scrollRef = useRef<HTMLDivElement | null>(null)
-
-  const api = useCallback((path: string) => baseUrl.replace(/\/$/, '') + path, [baseUrl])
 
   // patch helper — STATE is mutated wholesale in app.js; here we merge.
   const patch = useCallback((p: Partial<ConfirmState>) => {
@@ -253,42 +358,68 @@ export function CanvasConfirm({
     [lang, seedTier1, seedTier2, t]
   )
 
-  // ── boot: fetch catalogs + recommendations (with startup retry) ──────────
-  // usePreviewServer surfaces the server's URL the instant its stdout prints it
-  // — which is BEFORE the detached Flask child has actually bound the port (the
-  // launch / wait split: URL first, listen a beat later). So the very first
-  // fetch can hit ERR_CONNECTION_REFUSED on a server that is moments from being
-  // up. A single attempt would then strand the tab in an error state forever,
-  // even though the server comes alive a second later. So we retry on failure
-  // with a fixed backoff across the cold-start window before giving up. (curl
-  // confirms the server, once bound, returns 200 + CORS — see the after_request
-  // hook in confirm_ui/server.py.)
+  // ── boot: read confirm_ui/ files over IPC (with startup retry) ───────────
+  // usePreviewServer lights this tab the instant confirm_wait.py's COMMAND
+  // TEXT appears in the transcript — which is before the (blocking) tool call
+  // has actually run, let alone finished its `--fresh` preprocessing that
+  // writes catalogs.json. So the very first read can find recommendations.json
+  // present but catalogs.json still missing. A single attempt would then
+  // strand the tab in an error state forever, even though the file lands a
+  // moment later. So we retry on "not ready" with a fixed backoff before
+  // giving up — same budget the old fetch-based version used for a Flask
+  // cold start, generous enough to cover this analogous race too.
   useEffect(() => {
-    // 回放态：没有真实 server 可 fetch——离线初始化改由下面注册的
+    // 回放态：没有真实项目目录可读——离线初始化改由下面注册的
     // confirmDemoHandle.open() 驱动，在 ReplayController 决定表演开始的
     // 那一刻才发生（不是 mount 就抢跑，早于 chat 轨切到「问题」tab 会很怪）。
     if (isReplay) return
     pollAlive.current = true
     let cancelled = false
-    const MAX_ATTEMPTS = 20 // ~16s at 800ms — covers a Flask cold start
+    const MAX_ATTEMPTS = 20 // ~16s at 800ms
     const RETRY_MS = 800
 
     const tryBoot = async (): Promise<boolean> => {
-      // recommendations.json is the hard dependency; catalogs has a /static
-      // fallback. A throw here (incl. ERR_CONNECTION_REFUSED → TypeError) means
-      // "not ready yet" → caller retries.
-      const recRes = await fetch(api('/api/recommendations'), { cache: 'no-store' }).then((r) => {
-        if (!r.ok) throw new Error('load failed')
-        return r.json()
-      })
-      const catRes = await fetch(api('/api/catalogs'))
-        .then((r) => {
-          if (r.ok) return r.json()
-          throw new Error('no api')
-        })
-        .catch(() => fetch(api('/static/catalogs.json')).then((r) => r.json()))
+      const readRes = await window.chatApi.readConfirmUi({ projectDir })
+      if (!readRes.ok) throw new Error(readRes.error || 'read failed')
+      // recommendations.json is the hard dependency (Strategist writes it
+      // before confirm_wait.py would even start waiting); catalogs.json only
+      // exists once confirm_wait.py's --fresh step has run. Either missing
+      // means "not ready yet" → caller retries.
+      if (!readRes.recommendations || !readRes.catalogs) throw new Error('not ready')
+      const previewsDirValue = extractStaticDir(readRes.catalogs)
+      if (previewsDirValue) setPreviewsDir(previewsDirValue)
+      let rec = { ...readRes.recommendations } as Recommendations
+      // Mirrors the old confirm_ui Flask server's GET /api/recommendations:
+      // mark whether a result already exists (re-open after confirm), and
+      // fold Tier-1 anchors into a Tier-2 payload so a remount re-initializes
+      // them from the user's actual choices instead of catalog defaults.
+      if (readRes.result) {
+        rec._already_confirmed = true
+        if (rec.tier === 2) {
+          rec = mergeConfirmedAnchors(rec, readRes.result)
+        } else if ((readRes.result as { stage?: unknown }).stage === 'tier1') {
+          // Tier 1 was confirmed (result.json says so) but recommendations.json
+          // is STILL tier 1 — the AI hasn't overwritten it with Tier 2 yet
+          // (mid re-derive, SKILL.md step 3). A boot landing exactly here (this
+          // component remounting mid-derive — HMR, or the user tabbing away
+          // and back) must NOT re-show the tier-1 form as if it's still
+          // awaiting an answer: that reads as "confirm this again?" for a
+          // choice the user already made and the AI is actively acting on.
+          // Show the same waiting state a live UI-driven submit shows
+          // (phase 'deriving') and poll the same way, so the panel flips to
+          // Tier 2 on its own the instant recommendations.json catches up —
+          // matching the "有问题才出现，回复完了没用的时候不显示" ask: nothing
+          // actionable is shown while there's genuinely nothing to act on.
+          const catalogs = readRes.catalogs as unknown as Catalogs
+          if (cancelled) return true
+          applyBoot(catalogs, rec)
+          setPhase('deriving')
+          pollForTier2(catalogs)
+          return true
+        }
+      }
       if (cancelled) return true
-      applyBoot(catRes as Catalogs, recRes as Recommendations)
+      applyBoot(readRes.catalogs as unknown as Catalogs, rec)
       return true
     }
 
@@ -313,10 +444,11 @@ export function CanvasConfirm({
       cancelled = true
       pollAlive.current = false
     }
-    // baseUrl changing means a different server → re-boot. lang/t excluded on
-    // purpose: a language toggle must not re-fetch or reset selections.
+    // projectDir changing means a different project → re-boot. lang/t
+    // excluded on purpose: a language toggle must not re-read or reset
+    // selections.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseUrl, isReplay])
+  }, [projectDir, isReplay])
 
   // ── 回放态：注册命令式 handle，供 ReplayController 驱动 ──────────────────
   useEffect(() => {
@@ -371,33 +503,45 @@ export function CanvasConfirm({
   }, [phase, stage])
 
   // ── tier-1 submit → deriving → poll for tier-2 ───────────────────────────
-  const pollForTier2 = useCallback(() => {
-    const tick = (): void => {
-      if (!pollAlive.current) return
-      fetch(api('/api/recommendations'), { cache: 'no-store' })
-        .then((r) => {
-          if (!r.ok) throw new Error('poll failed')
-          return r.json()
-        })
-        .then((data) => {
-          if (!pollAlive.current) return
-          if (data && data.tier === 2) {
-            // enterTier2: re-read realization fields, preserve tier-1 STATE.
-            setRec(data)
-            setState((prev) => ({ ...prev, ...seedTier2(cat as Catalogs, data, prev, lang) }))
-            setStage(2)
-            setPhase('ready')
-            setStatusText('')
-          } else {
-            setTimeout(tick, 1200)
-          }
-        })
-        .catch(() => {
-          if (pollAlive.current) setTimeout(tick, 1500)
-        })
-    }
-    tick()
-  }, [api, cat, seedTier2, lang])
+  // The poll doesn't need mergeConfirmedAnchors (unlike boot): the anchor
+  // fields it would fold in (canvas/mode/visual_style/delivery_purpose) are
+  // only ever rendered while `showAnchors` (stage 1) is true, and this
+  // transition sets stage to 2 — those fields simply stop being displayed,
+  // their already-confirmed values living on undisturbed in local `state`.
+  // The merge only earns its keep on a boot/remount, where `state` doesn't
+  // persist and has to be reconstructed from disk.
+  // `catalogs` is an explicit param, not the `cat` state, so this can also be
+  // kicked off from the boot path (see tryBoot below) BEFORE `cat` state has
+  // landed from that same boot — closing over `cat` there would poll against
+  // a stale null and crash seedTier2 once tier 2 actually shows up.
+  const pollForTier2 = useCallback(
+    (catalogs: Catalogs) => {
+      const tick = (): void => {
+        if (!pollAlive.current) return
+        window.chatApi
+          .readConfirmUi({ projectDir })
+          .then((res) => {
+            if (!pollAlive.current) return
+            const data = res.ok ? (res.recommendations as Recommendations | null) : null
+            if (data && data.tier === 2) {
+              // enterTier2: re-read realization fields, preserve tier-1 STATE.
+              setRec(data)
+              setState((prev) => ({ ...prev, ...seedTier2(catalogs, data, prev, lang) }))
+              setStage(2)
+              setPhase('ready')
+              setStatusText('')
+            } else {
+              setTimeout(tick, 1200)
+            }
+          })
+          .catch(() => {
+            if (pollAlive.current) setTimeout(tick, 1500)
+          })
+      }
+      tick()
+    },
+    [projectDir, seedTier2, lang]
+  )
 
   const submitTier1 = useCallback(() => {
     if (!cat) return
@@ -412,22 +556,19 @@ export function CanvasConfirm({
     // delivery_purpose is PPT-only — never write it as an anchor on non-PPT.
     if (isPptCanvas(cat, state.canvas)) payload.delivery_purpose = state.delivery_purpose
     setSubmitting(true)
-    fetch(api('/api/confirm'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error('tier1 failed')
+    window.chatApi
+      .writeConfirmUiResult({ projectDir, payload })
+      .then((res) => {
+        if (!res.ok) throw new Error(res.error || 'tier1 write failed')
         setPhase('deriving')
         setSubmitting(false)
-        pollForTier2()
+        pollForTier2(cat)
       })
       .catch(() => {
         setSubmitting(false)
         setStatusText(t('error_retry'))
       })
-  }, [api, cat, state, pollForTier2, t])
+  }, [projectDir, cat, state, pollForTier2, t])
 
   const submitFinal = useCallback(() => {
     if (!cat) return
@@ -448,32 +589,25 @@ export function CanvasConfirm({
       delete payload.image_strategy
     }
     setSubmitting(true)
-    fetch(api('/api/confirm'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error('confirm failed')
+    // No shutdown call — there's no server to shut down. confirm_wait.py's
+    // own blocking wait exits the instant this write lands (it polls
+    // result.json directly), which is what used to require an explicit
+    // POST /api/shutdown to make happen.
+    window.chatApi
+      .writeConfirmUiResult({ projectDir, payload })
+      .then((res) => {
+        if (!res.ok) throw new Error(res.error || 'confirm write failed')
         setPhase('confirmed')
-        // fire-and-forget shutdown; server may already be exiting.
-        fetch(api('/api/shutdown'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason: 'confirmed' })
-        }).catch(() => {
-          /* server gone — fine */
-        })
       })
       .catch(() => {
         setSubmitting(false)
         setStatusText(t('error_retry'))
       })
-  }, [api, cat, rec, state, t])
+  }, [projectDir, cat, rec, state, t])
 
   const onPrimary = useCallback(() => {
-    // 回放态：面板只读，主按钮不触发任何网络请求（没有真实 server，baseUrl
-    // 是占位值）——真实的「确认」结果早已由 chat 轨的 tool_result 呈现，
+    // 回放态：面板只读，主按钮不触发任何 IPC 写入（没有真实项目目录，
+    // projectDir 是占位值）——真实的「确认」结果早已由 chat 轨的 tool_result 呈现，
     // 这里的按钮点击视觉全由 confirmDemoHandle.selectField/advanceTier2/
     // submitFinal 驱动，见上面的回放 useEffect。
     if (isReplay) return
@@ -531,7 +665,7 @@ export function CanvasConfirm({
     // no icon); the ring renders the check here, so strip it from the text.
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 py-10 text-center">
-        <div className="grid size-[52px] place-items-center rounded-full bg-accent/15 text-accent">
+        <div className="grid size-[52px] place-items-center rounded-full bg-brand/15 text-brand">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
             <path d="M4.5 12.5l5 5L19.5 7" />
           </svg>
@@ -564,7 +698,7 @@ export function CanvasConfirm({
     // cards, instead of the bare one-liner that read like a stall.
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 py-10 text-center">
-        <div className="size-[34px] animate-spin rounded-full border-[3px] border-accent/25 border-t-accent" />
+        <div className="size-[34px] animate-spin rounded-full border-[3px] border-brand/25 border-t-brand" />
         <div className="text-[15px] font-semibold text-foreground">{uiT('deriving_title')}</div>
         <div className="max-w-sm text-[12px] leading-relaxed text-muted-foreground">{t('deriving')}</div>
         <div className="mt-1.5 flex gap-2.5">
@@ -616,7 +750,15 @@ export function CanvasConfirm({
 
       {/* scrollable sections */}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 pb-5">
-        <div className="mx-auto flex w-full max-w-[860px] flex-col gap-3.5 pt-4">
+        {/* stagger 容器：卡片依次落位。stage 1→2 时新增的 Section 以 hidden
+            初始态挂载再 animate 到 show（Motion 默认行为），所以「下一步」
+            换层同样是渐次入场，不用额外接线。 */}
+        <motion.div
+          initial="hidden"
+          animate="show"
+          variants={SECTIONS_CONTAINER}
+          className="mx-auto flex w-full max-w-[860px] flex-col gap-3.5 pt-4"
+        >
         {showAnchors && (
           <>
             <Section num={next()} title={t('sec_canvas')} note={uiT('note_canvas')}>
@@ -630,7 +772,7 @@ export function CanvasConfirm({
                   patch({ canvas: v, typography: { ...tp, body_size } })
                 }}
                 allowCustom
-                baseUrl={baseUrl}
+                previewsDir={previewsDir}
                 lang={lang}
                 t={t}
               />
@@ -681,7 +823,7 @@ export function CanvasConfirm({
                   value={state.visual_style}
                   onChange={(v) => patch({ visual_style: v })}
                   spectrum={rec.visual_style_spectrum}
-                  baseUrl={baseUrl}
+                  previewsDir={previewsDir}
                   lang={lang}
                   t={t}
                 />
@@ -786,20 +928,34 @@ export function CanvasConfirm({
             </Section>
           </>
         )}
-        </div>
+        </motion.div>
       </div>
 
       {/* action bar: live selection summary (or a status/error, which takes
           priority) + the single primary action. No back button — tier1 has
           already been consumed by the server's --wait-only loop by the time
           tier2 renders, so "going back" has nothing to re-submit into. */}
-      {/* bg-white (light) instead of bg-background: the user's ask was a
-          WHITE action bar ("背景用白色") — bg-background is both light-gray
-          by token default AND runtime-overridden by the appearance store to
-          whatever background the user picked, so it can never be relied on
-          to read as white. Literal white in light mode; dark keeps the
-          semantic token so the bar doesn't flash white in dark mode. */}
-      <div className="shrink-0 border-t border-border bg-white px-6 py-2.5 dark:bg-background">
+      {/* bg-card —— 2026-07-17 定案，别再换回 bg-white / bg-background。
+
+          本栏坐在 .shell-content-card 上（globals.css:399，`background:
+          hsl(var(--card))`，整个右侧内容面都是它），所以它的底就该是 --card：
+          「跟自己所在的那张面同色」，而不是去追某个绝对色值。
+
+          历史（两版都错，错法相反）：
+           1. `bg-background` —— 追错了对象。--background 是**页面**底，比内容
+              面暗一档（--card = shiftLightness(bg, +3)），本栏用它必然比周围
+              暗，暗档下用户一眼看出（截图取样实锤：卡片与页面底同为 #23221f
+              而本栏 #1b1a18）。
+           2. `bg-white dark:bg-background` —— 为「用户要白色 action bar」写死
+              白，代价是彻底脱离主题体系：用户改背景色它纹丝不动。亮档之所以
+              一直没露馅纯属巧合 —— 亮档默认 background #f5f5f7 (L=97%) 提亮
+              3 点 clamp 到 100% 正好是白，写死的白恰好等于 --card。
+
+          bg-card 同时满足两头，且不需要 dark: 变体：亮档默认下它**就是**白
+          （见 appearance.applier 注释「the lift clamps to 100% = white cards」），
+          原始诉求达成；暗档 #232220 与内容面严丝合缝；用户改主题色时它跟着
+          走，不会再被钉死。 */}
+      <div className="shrink-0 border-t border-border bg-card px-6 py-2.5">
         <div className="mx-auto flex w-full max-w-[860px] items-center gap-3">
           {statusText ? (
             <span
@@ -828,9 +984,24 @@ export function CanvasConfirm({
             // glance-only summary, not something meant to be scrolled
             // deliberately.
             <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {/* key 带上 part 而不只是 index：改选项时文本变了 key 才会变，
+                  旧 chip 才走 exit、新 chip 才走 enter —— 纯 index 做 key 会
+                  让内容原地替换，用户改了选择却看不到任何反馈。带上 i 是因为
+                  两个维度理论上可能选出同名文案，纯 part 会撞 key。
+                  mode="popLayout"：退场的 chip 立刻脱离布局流，剩下的用 layout
+                  动画平滑补位，不会先空出一个洞再塌缩。
+                  initial={false}：首屏不播 —— action bar 是跟着 7 张卡片一起
+                  出现的，这里再 pop 一串就成了两处抢戏；chip 的动画只为「你
+                  刚改了选择」这件事服务。 */}
+              <AnimatePresence mode="popLayout" initial={false}>
               {summaryParts.map((part, i) => (
-                <span
-                  key={i}
+                <motion.span
+                  key={`${i}-${part}`}
+                  layout
+                  initial={{ opacity: 0, scale: 0.85 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.85 }}
+                  transition={railGliderSpring}
                   className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-brand/[0.09] px-3 py-1.5 text-[12px] font-medium text-brand"
                 >
                   <svg
@@ -848,15 +1019,16 @@ export function CanvasConfirm({
                     <path d="M4.5 12.5l5 5L19.5 7" />
                   </svg>
                   {part}
-                </span>
+                </motion.span>
               ))}
+              </AnimatePresence>
             </div>
           )}
           <button
             type="button"
             disabled={submitting}
             onClick={onPrimary}
-            className="rounded-lg bg-accent px-[18px] py-2 text-[13px] font-semibold text-accent-foreground shadow-sm transition-all hover:opacity-90 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100"
+            className="rounded-lg bg-brand px-[18px] py-2 text-[13px] font-semibold text-brand-foreground shadow-sm transition-all hover:opacity-90 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100"
           >
             {primaryLabel}
           </button>
@@ -872,9 +1044,13 @@ export function CanvasConfirm({
  * Stepper
  * -------
  * Makes the server's two-tier flow (anchors → derived realization) visible:
- * step 1 shows a check once tier 2 is reached, the connector fills with the
- * accent, and the active step gets a soft accent ring. Only rendered for
- * tiered recommendations (stage 1 | 2) — 'all' shows every section at once.
+ * step 1 shows a check once tier 2 is reached, the connector fills with
+ * brand green, and the active step gets a soft brand ring. Fixed --brand
+ * rather than the user's --accent theme colour (2026-07-19, user-requested,
+ * same reasoning as the summary chips above: this confirm flow's colour
+ * language should read as a stable app identity, not drift with whatever
+ * accent the user picks). Only rendered for tiered recommendations
+ * (stage 1 | 2) — 'all' shows every section at once.
  */
 function Stepper({ stage, uiT }: { stage: 1 | 2; uiT: (k: string) => string }): React.JSX.Element {
   const dot = (active: boolean, done: boolean, label: string): React.JSX.Element => (
@@ -882,9 +1058,9 @@ function Stepper({ stage, uiT }: { stage: 1 | 2; uiT: (k: string) => string }): 
       className={
         'grid size-[22px] shrink-0 place-items-center rounded-full text-[11px] font-bold transition-all ' +
         (active
-          ? 'bg-accent text-accent-foreground shadow-[0_0_0_3px_hsl(var(--accent)/0.25)]'
+          ? 'bg-brand text-brand-foreground shadow-[0_0_0_3px_hsl(var(--brand)/0.25)]'
           : done
-            ? 'bg-accent/15 text-accent'
+            ? 'bg-brand/15 text-brand'
             : 'border border-border bg-muted text-muted-foreground')
       }
     >
@@ -915,9 +1091,21 @@ function Stepper({ stage, uiT }: { stage: 1 | 2; uiT: (k: string) => string }): 
         {dot(stage === 1, stage === 2, '1')}
         {name(stage === 1, 'step1_name', 'step1_sub')}
       </div>
-      <span
-        className={'h-[2px] w-11 shrink-0 rounded-full ' + (stage === 2 ? 'bg-accent' : 'bg-border')}
-      />
+      {/* 连接线：灰轨 + 绿条 scaleX 填充，而不是整条换 bg 类。换类是瞬时跳
+          变（这里原本连 transition 都没有），而这条线是全页唯一表达「你推进
+          了一步」的元件 —— 让它从左往右长出来，进度才有因果感。
+          origin-left 决定生长方向；initial={false} 让「进来时就已在第 2 步」
+          （恢复/回放）直接呈满格，不补播一次填充动画。
+          用 spring 而非 ease：stage 可能被快速推进打断，spring 从当前进度接着
+          走，ease 会从头重放。 */}
+      <span className="relative h-[2px] w-11 shrink-0 overflow-hidden rounded-full bg-border">
+        <motion.span
+          className="absolute inset-0 origin-left rounded-full bg-brand"
+          initial={false}
+          animate={{ scaleX: stage === 2 ? 1 : 0 }}
+          transition={railGliderSpring}
+        />
+      </span>
       <div className="flex items-center gap-2">
         {dot(stage === 2, false, '2')}
         {name(stage === 2, 'step2_name', 'step2_sub')}
@@ -930,7 +1118,7 @@ function Stepper({ stage, uiT }: { stage: 1 | 2; uiT: (k: string) => string }): 
  *  be `relative`. */
 function SelTick(): React.JSX.Element {
   return (
-    <span className="absolute right-2 top-2 z-[3] grid size-[18px] place-items-center rounded-full bg-accent text-accent-foreground shadow-sm">
+    <span className="absolute right-2 top-2 z-[3] grid size-[18px] place-items-center rounded-full bg-brand text-brand-foreground shadow-sm">
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5">
         <path d="M5 13l4 4L19 7" />
       </svg>
@@ -953,17 +1141,23 @@ function Section({
 }): React.JSX.Element {
   // One card per confirmation — the flat border-b list read as one endless
   // form; discrete cards give each decision its own visual breath.
+  //
+  // variants 而非直接写 initial/animate：入场时机交给父容器的 staggerChildren
+  // 统一编排，卡片自己不认识 index，也就不必把序号一路 prop 传下来。
   return (
-    <div className="rounded-xl border border-border bg-card px-[18px] pb-[18px] pt-4 shadow-sm">
+    <motion.div
+      variants={SECTION_VARIANTS}
+      className="rounded-xl border border-border bg-card px-[18px] pb-[18px] pt-4 shadow-sm"
+    >
       <div className="mb-3 flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-        <span className="inline-flex size-[22px] shrink-0 -translate-y-px items-center justify-center self-center rounded-[7px] bg-accent/10 text-[11px] font-bold text-accent">
+        <span className="inline-flex size-[22px] shrink-0 -translate-y-px items-center justify-center self-center rounded-[7px] bg-brand/10 text-[11px] font-bold text-brand">
           {num}
         </span>
         <span className="text-[14px] font-semibold text-foreground">{title}</span>
         {note && <span className="text-[11px] text-muted-foreground">{note}</span>}
       </div>
       {children}
-    </div>
+    </motion.div>
   )
 }
 
@@ -981,6 +1175,32 @@ function SubLabel({ children }: { children: React.ReactNode }): React.JSX.Elemen
 }
 
 /* ───────────────── enum field (chips) ───────────────── */
+
+/**
+ * 选中高亮框。用 layoutId 让它在同组选项间**滑过去**，而不是在旧 chip 上
+ * 消失、在新 chip 上出现 —— 后者是原来的做法（selected 直接换 border/bg
+ * 类），换色有 transition-colors 兜着，但那圈框本身是瞬移的。
+ *
+ * 这正是 railGliderSpring 的本职（见 railMotion 头注释：glider 是会被连点
+ * 打断的位移动画，spring 中断后从当前位置和速度重新求解，ease 会从头重放
+ * 「顿一下再走」）—— rail 的选中态就是这么做的，这里复用同一条，两处手感
+ * 一致。附带好处：chip 宽度不等，layout 动画会把宽高一起插值，框是「变形
+ * 着滑过去」的。
+ *
+ * 为什么高亮框要单独一层而不是给 button 加类：layoutId 需要一个**跨 chip
+ * 共享身份**的元素，只有它单独存在、并在同一时刻全组仅一个，Motion 才能
+ * 把 A 上的它和 B 上的它认成同一个东西并做 FLIP。
+ */
+function ChipGlider({ layoutId }: { layoutId: string }): React.JSX.Element {
+  return (
+    <motion.span
+      layoutId={layoutId}
+      transition={railGliderSpring}
+      aria-hidden="true"
+      className="absolute inset-0 rounded-lg border border-brand bg-brand/10 ring-1 ring-brand"
+    />
+  )
+}
 
 type SpectrumEntry = { id: string; tag_zh?: string; tag_en?: string; note_zh?: string; note_en?: string }
 
@@ -1030,6 +1250,11 @@ function EnumField({
 
   const [customText, setCustomText] = useState(isCustom && cur ? cur : '')
 
+  // 每个 EnumField 一个独立的 glider 身份。共用一个常量 layoutId 会让不同
+  // 字段的高亮互相认亲：点「生成模式」时，「图片使用」那圈框会横跨半屏飞
+  // 过来。useId 保证同页多实例各滑各的。
+  const gliderId = `chip-glider-${useId()}`
+
   const chip = (o: CatalogOption): React.JSX.Element => {
     // Main label and description render as separate spans (weight + tone),
     // not one concatenated string — the option name has to be scannable.
@@ -1039,24 +1264,30 @@ function EnumField({
     const sub = [optionDesc(o, lang), spec && spec.note].filter(Boolean).join(' · ')
     const selected = !isCustom && o.id === cur
     const recommended = spec ? true : !hasSpectrum && o.id === recommendedId
+    // 选中态的 border/bg/ring 全部交给 ChipGlider 那一层，button 自己让出
+    // border（transparent 而非去掉，否则盒子会缩 1px、整行跳一下）。文字层
+    // 一律 relative：glider 是 absolute，不抬升就会盖住文字。
     return (
       <button
         key={o.id}
         type="button"
         onClick={() => onChange(o.id)}
         className={
-          'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-left text-[12px] transition-colors ' +
+          'relative inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-left text-[12px] transition-colors ' +
           (selected
-            ? 'border-accent bg-accent/10 text-accent ring-1 ring-accent'
+            ? 'border-transparent text-brand'
             : 'border-border bg-background/60 text-foreground hover:bg-hover')
         }
       >
-        <span className="font-medium">{main}</span>
+        {selected && <ChipGlider layoutId={gliderId} />}
+        <span className="relative font-medium">{main}</span>
         {sub && (
-          <span className={selected ? 'text-accent/70' : 'text-muted-foreground'}>{sub}</span>
+          <span className={'relative ' + (selected ? 'text-brand/70' : 'text-muted-foreground')}>
+            {sub}
+          </span>
         )}
         {recommended && (
-          <span className="shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+          <span className="relative shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
             ★ {spec ? spec.tag || t('recommended') : t('recommended')}
           </span>
         )}
@@ -1066,21 +1297,25 @@ function EnumField({
 
   const customChip = (): React.JSX.Element => {
     const recommended = !!recommendedId && ids.indexOf(recommendedId) === -1
+    // 与上面的 chip 共用同一个 gliderId：「自定义」是这组选项的一员，从某个
+    // 预设切到它时高亮该滑过来，而不是在那边灭、在这边亮。未选中保持 dashed
+    // （「这里要你自己填」的既有语义），选中时框由 glider 接管、自然是实线。
     return (
       <button
         key="__custom__"
         type="button"
         onClick={() => onChange(customText || '')}
         className={
-          'inline-flex items-center gap-1.5 rounded-lg border border-dashed px-2.5 py-1.5 text-[12px] transition-colors ' +
+          'relative inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ' +
           (isCustom
-            ? 'border-solid border-accent bg-accent/10 text-accent ring-1 ring-accent'
-            : 'border-border bg-background/60 text-muted-foreground hover:bg-hover')
+            ? 'border-transparent text-brand'
+            : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-hover')
         }
       >
-        <span className="font-medium">{t('custom')}</span>
+        {isCustom && <ChipGlider layoutId={gliderId} />}
+        <span className="relative font-medium">{t('custom')}</span>
         {recommended && (
-          <span className="shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+          <span className="relative shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
             ★ {t('recommended')}
           </span>
         )}
@@ -1106,19 +1341,37 @@ function EnumField({
         </div>
       )}
       {grouped && allowCustom && <div className="flex flex-wrap gap-1.5">{customChip()}</div>}
-      {allowCustom && isCustom && (
-        <input
-          type="text"
-          value={customText}
-          autoFocus
-          onChange={(e) => {
-            setCustomText(e.target.value)
-            onChange(e.target.value || '')
-          }}
-          placeholder={t('custom_placeholder')}
-          className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
-        />
-      )}
+      {/* 自定义输入框：height auto 展开而非瞬间蹦出。它是点「自定义」chip 后
+          长出来的**因果结果**，撑开高度的过程把这层因果画出来；瞬间出现则会
+          把下方内容一把推走，读者得重新找位置。
+          overflow-hidden 是 height 动画的前提（否则内容在 0 高度时溢出可见）。
+          exit 同样收起：取消自定义时不该留一个塌缩的空洞。
+          ease-out 不用 spring：这是纯「出现/消失」，回弹会让输入框抖两下，
+          而它下一拍就要接住 autoFocus 的光标。 */}
+      <AnimatePresence initial={false}>
+        {allowCustom && isCustom && (
+          <motion.div
+            key="custom-input"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.24, ease: railEaseOut }}
+            className="overflow-hidden"
+          >
+            <input
+              type="text"
+              value={customText}
+              autoFocus
+              onChange={(e) => {
+                setCustomText(e.target.value)
+                onChange(e.target.value || '')
+              }}
+              placeholder={t('custom_placeholder')}
+              className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -1138,11 +1391,13 @@ function EnumField({
  * untouched. Kept separate from EnumField so the image treatment never leaks
  * into the other enum fields (canvas / mode / icons …) that share EnumField.
  *
- * Previews are static PNGs served by the Flask server from
- * static/style-previews/<id>.png; the <img> loads cross-origin against the same
- * `baseUrl` the fetch calls use (CSP img-src + the server's CORS hook both
- * already permit it). A missing/failed image degrades to a styled placeholder
- * rather than a broken-image glyph, so a partial preview set never breaks layout.
+ * Previews are JPEGs that ship with the skill at
+ * <static_dir>/style-previews/<id>.jpg (static_dir = the `previewsDir` prop,
+ * resolved from catalogs.json's `_meta.static_dir` — see extractStaticDir).
+ * Each StyleCard reads its own file via IMAGE_FILE_READ (there's no Flask
+ * `/static/*` route to cross-origin-fetch from anymore). A missing/failed
+ * image degrades to a styled placeholder rather than a broken-image glyph,
+ * so a partial preview set never breaks layout.
  */
 function VisualStyleField({
   list,
@@ -1150,7 +1405,7 @@ function VisualStyleField({
   value,
   onChange,
   spectrum,
-  baseUrl,
+  previewsDir,
   lang,
   t
 }: {
@@ -1159,14 +1414,18 @@ function VisualStyleField({
   value: string | undefined
   onChange: (v: string) => void
   spectrum?: SpectrumEntry[]
-  baseUrl: string
+  previewsDir: string | undefined
   lang: Lang
   t: (k: string) => string
 }): React.JSX.Element {
   const flat = flattenCatalog(list)
   const ids = flat.map((o) => o.id)
   const grouped = isGrouped(list)
-  const previewBase = useMemo(() => baseUrl.replace(/\/$/, '') + '/static/style-previews/', [baseUrl])
+  const previewAbsPath = useCallback(
+    (id: string): string | undefined =>
+      previewsDir ? `${previewsDir}/style-previews/${id}.jpg` : undefined,
+    [previewsDir]
+  )
 
   const specById = useMemo(() => {
     const m: Record<string, { tag: string; note: string }> = {}
@@ -1197,7 +1456,7 @@ function VisualStyleField({
     return (
       <StyleCard
         key={o.id}
-        src={previewBase + o.id + '.jpg'}
+        absPath={previewAbsPath(o.id)}
         label={label}
         note={note}
         selected={selected}
@@ -1219,7 +1478,7 @@ function VisualStyleField({
         className={
           'flex aspect-[16/10] flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed p-3 text-center text-[12px] font-medium transition-colors ' +
           (isCustom
-            ? 'border-accent bg-accent/[0.08] text-accent'
+            ? 'border-brand bg-brand/[0.08] text-brand'
             : 'border-border bg-background/60 text-muted-foreground hover:bg-hover')
         }
       >
@@ -1265,7 +1524,7 @@ function VisualStyleField({
             onChange(e.target.value || '')
           }}
           placeholder={t('custom_placeholder')}
-          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
         />
       )}
     </div>
@@ -1273,24 +1532,25 @@ function VisualStyleField({
 }
 
 /** One visual-style image card: preview thumbnail + label + note + optional
- *  recommendation badge. The image falls back to a labeled placeholder on load
- *  error so a missing PNG degrades gracefully instead of showing a broken glyph. */
+ *  recommendation badge. Falls back to a labeled placeholder while the image
+ *  is loading (or missing) so a partial preview set degrades gracefully
+ *  instead of showing a broken glyph — see useLocalPreviewImage. */
 function StyleCard({
-  src,
+  absPath,
   label,
   note,
   selected,
   badge,
   onClick
 }: {
-  src: string
+  absPath: string | undefined
   label: string
   note?: string
   selected: boolean
   badge?: string
   onClick: () => void
 }): React.JSX.Element {
-  const [failed, setFailed] = useState(false)
+  const src = useLocalPreviewImage(absPath)
   return (
     <button
       type="button"
@@ -1298,24 +1558,22 @@ function StyleCard({
       title={note || label}
       className={
         'group relative flex flex-col overflow-hidden rounded-lg border text-left transition-colors ' +
-        (selected ? 'border-accent ring-1 ring-accent' : 'border-border hover:border-accent/50')
+        (selected ? 'border-brand ring-1 ring-brand' : 'border-border hover:border-brand/50')
       }
     >
       {selected && <SelTick />}
       <div className="relative aspect-[16/10] w-full overflow-hidden bg-muted">
-        {failed ? (
-          <div className="flex size-full items-center justify-center px-2 text-center text-[11px] text-muted-foreground">
-            {label}
-          </div>
-        ) : (
+        {src ? (
           <img
             src={src}
             alt={label}
-            loading="lazy"
             draggable={false}
-            onError={() => setFailed(true)}
             className="size-full object-cover"
           />
+        ) : (
+          <div className="flex size-full items-center justify-center px-2 text-center text-[11px] text-muted-foreground">
+            {label}
+          </div>
         )}
         {badge && (
           <span className="absolute left-1.5 top-1.5 rounded-full bg-amber-400/90 px-1.5 py-0.5 text-[10px] font-medium text-amber-950 shadow-sm">
@@ -1325,10 +1583,10 @@ function StyleCard({
       </div>
       <div
         className={
-          'flex flex-col gap-0.5 px-2 py-1.5 ' + (selected ? 'bg-accent/[0.08]' : 'bg-background/40')
+          'flex flex-col gap-0.5 px-2 py-1.5 ' + (selected ? 'bg-brand/[0.08]' : 'bg-background/40')
         }
       >
-        <span className={'text-[12px] font-medium ' + (selected ? 'text-accent' : 'text-foreground')}>
+        <span className={'text-[12px] font-medium ' + (selected ? 'text-brand' : 'text-foreground')}>
           {label}
         </span>
         {note && <span className="line-clamp-2 text-[10px] text-muted-foreground">{note}</span>}
@@ -1349,10 +1607,11 @@ function StyleCard({
  * which is the whole point of this field, while the grid stays tidy. Mirror of
  * VisualStyleField's contract: emits a catalog `id` (or free text for custom),
  * so seedTier1's `recOrFirst` pick and the result.json contract are unchanged.
- * Previews are static PNGs the Flask server serves from
- * static/canvas-previews/<id>.png; loaded cross-origin against `baseUrl` (CSP
- * img-src + the server CORS hook already permit it), with a graceful fallback to
- * the dim text when an image is missing.
+ * Previews are JPEGs that ship with the skill at
+ * <static_dir>/canvas-previews/<id>.jpg (see extractStaticDir / the
+ * `previewsDir` prop); each CanvasCard reads its own file via
+ * IMAGE_FILE_READ, with a graceful fallback to the dim text when an image is
+ * missing.
  */
 function CanvasField({
   list,
@@ -1360,7 +1619,7 @@ function CanvasField({
   value,
   onChange,
   allowCustom,
-  baseUrl,
+  previewsDir,
   lang,
   t
 }: {
@@ -1369,13 +1628,17 @@ function CanvasField({
   value: string | undefined
   onChange: (v: string) => void
   allowCustom?: boolean
-  baseUrl: string
+  previewsDir: string | undefined
   lang: Lang
   t: (k: string) => string
 }): React.JSX.Element {
   const flat = flattenCatalog(list)
   const ids = flat.map((o) => o.id)
-  const previewBase = useMemo(() => baseUrl.replace(/\/$/, '') + '/static/canvas-previews/', [baseUrl])
+  const previewAbsPath = useCallback(
+    (id: string): string | undefined =>
+      previewsDir ? `${previewsDir}/canvas-previews/${id}.jpg` : undefined,
+    [previewsDir]
+  )
 
   const isCustom = value != null && value !== '' && ids.indexOf(value) === -1
   const [customText, setCustomText] = useState(isCustom && value ? value : '')
@@ -1386,7 +1649,7 @@ function CanvasField({
     return (
       <CanvasCard
         key={o.id}
-        src={previewBase + o.id + '.jpg'}
+        absPath={previewAbsPath(o.id)}
         label={optionLabel(o, lang)}
         dim={o.dim}
         use={localized(o, 'use', lang)}
@@ -1406,7 +1669,7 @@ function CanvasField({
       className={
         'flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed p-3 text-center text-[12px] font-medium transition-colors ' +
         (isCustom
-          ? 'border-accent bg-accent/[0.08] text-accent'
+          ? 'border-brand bg-brand/[0.08] text-brand'
           : 'border-border bg-background/60 text-muted-foreground hover:bg-hover')
       }
     >
@@ -1430,7 +1693,7 @@ function CanvasField({
             onChange(e.target.value || '')
           }}
           placeholder={t('custom_placeholder')}
-          className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+          className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
         />
       )}
     </div>
@@ -1447,7 +1710,7 @@ function dimAspect(dim: string | undefined): string {
  *  sheet caps at both 100% width and the stage height so wide formats fill width
  *  and stay short, tall formats grow within the fixed-height stage. */
 function CanvasCard({
-  src,
+  absPath,
   label,
   dim,
   use,
@@ -1456,7 +1719,7 @@ function CanvasCard({
   recommendedLabel,
   onClick
 }: {
-  src: string
+  absPath: string | undefined
   label: string
   dim?: string
   use?: string
@@ -1465,7 +1728,7 @@ function CanvasCard({
   recommendedLabel: string
   onClick: () => void
 }): React.JSX.Element {
-  const [failed, setFailed] = useState(false)
+  const src = useLocalPreviewImage(absPath)
   return (
     <button
       type="button"
@@ -1473,14 +1736,14 @@ function CanvasCard({
       title={use || label}
       className={
         'relative flex flex-col overflow-hidden rounded-xl border text-left transition-colors ' +
-        (selected ? 'border-accent ring-1 ring-accent' : 'border-border hover:border-accent/50')
+        (selected ? 'border-brand ring-1 ring-brand' : 'border-border hover:border-brand/50')
       }
     >
       {selected && <SelTick />}
       <div
         className={
           'relative flex h-[112px] items-center justify-center p-3 ' +
-          (selected ? 'bg-accent/[0.08]' : 'bg-background/40')
+          (selected ? 'bg-brand/[0.08]' : 'bg-background/40')
         }
         style={{
           backgroundImage:
@@ -1492,19 +1755,17 @@ function CanvasCard({
           className="overflow-hidden rounded-[4px] border border-border bg-white shadow-[0_2px_6px_-2px_rgba(0,0,0,0.25)]"
           style={{ aspectRatio: dimAspect(dim), height: 88, maxHeight: 88, maxWidth: '100%' }}
         >
-          {failed ? (
-            <div className="flex size-full items-center justify-center text-[10px] text-muted-foreground">
-              {dim}
-            </div>
-          ) : (
+          {src ? (
             <img
               src={src}
               alt={label}
-              loading="lazy"
               draggable={false}
-              onError={() => setFailed(true)}
               className="size-full object-cover"
             />
+          ) : (
+            <div className="flex size-full items-center justify-center text-[10px] text-muted-foreground">
+              {dim}
+            </div>
           )}
         </div>
         {recommended && (
@@ -1516,10 +1777,10 @@ function CanvasCard({
       <div
         className={
           'flex flex-col gap-0.5 border-t border-border/40 px-2.5 py-2 ' +
-          (selected ? 'bg-accent/[0.08]' : '')
+          (selected ? 'bg-brand/[0.08]' : '')
         }
       >
-        <span className={'text-[12px] font-medium ' + (selected ? 'text-accent' : 'text-foreground')}>
+        <span className={'text-[12px] font-medium ' + (selected ? 'text-brand' : 'text-foreground')}>
           {label}
         </span>
         {dim && <span className="text-[10px] text-muted-foreground">{dim}</span>}
@@ -1548,7 +1809,7 @@ function TextField({
       value={value || ''}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+      className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
     />
   )
 }
@@ -1685,7 +1946,7 @@ function ColorField({
               className={
                 'relative flex flex-col gap-1.5 rounded-lg border p-2.5 text-left transition-colors ' +
                 (selected
-                  ? 'border-accent bg-accent/[0.08] ring-1 ring-accent'
+                  ? 'border-brand bg-brand/[0.08] ring-1 ring-brand'
                   : 'border-border bg-background/60 hover:bg-hover')
               }
             >
@@ -1716,7 +1977,7 @@ function ColorField({
           className={
             'flex items-center justify-center rounded-lg border p-2.5 text-[12px] font-medium transition-colors ' +
             (isCustom
-              ? 'border-accent bg-accent/[0.08] text-accent ring-1 ring-accent'
+              ? 'border-brand bg-brand/[0.08] text-brand ring-1 ring-brand'
               : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-hover')
           }
         >
@@ -1730,7 +1991,7 @@ function ColorField({
           autoFocus
           onChange={(e) => onChange({ name: 'custom', custom: e.target.value, palette: {} })}
           placeholder={t('custom_color_placeholder')}
-          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
         />
       )}
       {/* STAGE TWO: per-role HEX override grid with dual-target live swatch repaint */}
@@ -1815,7 +2076,7 @@ function TypographyField({
               className={
                 'relative flex flex-col gap-1.5 rounded-lg border p-2.5 text-left transition-colors ' +
                 (selected
-                  ? 'border-accent bg-accent/[0.08] ring-1 ring-accent'
+                  ? 'border-brand bg-brand/[0.08] ring-1 ring-brand'
                   : 'border-border bg-background/60 hover:bg-hover')
               }
             >
@@ -1850,7 +2111,7 @@ function TypographyField({
           className={
             'rounded-lg border p-2.5 text-left text-[12px] font-medium transition-colors ' +
             (isCustom
-              ? 'border-accent bg-accent/[0.08] text-accent ring-1 ring-accent'
+              ? 'border-brand bg-brand/[0.08] text-brand ring-1 ring-brand'
               : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-hover')
           }
         >
@@ -1873,7 +2134,7 @@ function TypographyField({
             })
           }
           placeholder={t('custom_typography_placeholder')}
-          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
         />
       )}
       {/* Body baseline size (kept; the per-role ramp grid is STAGE TWO). */}
@@ -1891,7 +2152,7 @@ function TypographyField({
               body_size: e.target.value
             })
           }
-          className="w-28 rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+          className="w-28 rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
         />
         <div className="mt-1 text-[11px] text-muted-foreground">
           {t('font_body_size_hint')}{' '}
@@ -2003,7 +2264,7 @@ function ImageField({
                       className={
                         'relative flex flex-col gap-1 rounded-lg border p-2.5 text-left transition-colors ' +
                         (selected
-                          ? 'border-accent bg-accent/[0.08] ring-1 ring-accent'
+                          ? 'border-brand bg-brand/[0.08] ring-1 ring-brand'
                           : 'border-border bg-background/60 hover:bg-hover')
                       }
                     >

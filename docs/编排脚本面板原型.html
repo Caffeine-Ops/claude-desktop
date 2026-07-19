@@ -1,0 +1,1300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>编排脚本 · 工作流面板原型</title>
+<style>
+/* ============================================================
+   设计 token —— 取自 Claude 桌面暖暗灰语言
+   ============================================================ */
+:root {
+  /* 面 */
+  --bg-stage:  #1f1e1c;
+  --bg-panel:  #262624;
+  --bg-raised: #30302e;
+  --bg-inset:  #21201e;
+  --bg-hover:  #34332f;
+
+  /* 线 */
+  --border:        rgba(255,255,255,.07);
+  --border-strong: rgba(255,255,255,.13);
+
+  /* 字 */
+  --text-1: #ece9e2;
+  --text-2: #a8a49a;
+  --text-3: #74716a;
+
+  /* 状态 */
+  --ok:   #42b871;
+  --ok-dim: rgba(66,184,113,.14);
+  --err:  #e5645a;
+  --err-dim: rgba(229,100,90,.12);
+  --wait: #74716a;
+
+  /* 代码高亮(陶土橙 + 蓝,对齐截图) */
+  --code-kw:      #d47d5f;
+  --code-str:     #c9a173;
+  --code-fn:      #82a7e0;
+  --code-prop:    #9db6e3;
+  --code-num:     #d9a06b;
+  --code-comment: #716d64;
+  --code-default: #c9c6bd;
+  --code-lineno:  #5a574f;
+
+  --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+
+  --r-panel: 12px;
+  --r-card:  8px;
+  --r-chip:  99px;
+}
+
+/* 亮色变体(Tweaks 切换) */
+html[data-theme="light"] {
+  --bg-stage:  #e8e6e1;
+  --bg-panel:  #faf9f5;
+  --bg-raised: #ffffff;
+  --bg-inset:  #f1efe9;
+  --bg-hover:  #eeece5;
+  --border:        rgba(30,28,24,.09);
+  --border-strong: rgba(30,28,24,.16);
+  --text-1: #33312c;
+  --text-2: #6f6b62;
+  --text-3: #9b968b;
+  --ok:  #1f9d58;
+  --ok-dim: rgba(31,157,88,.12);
+  --err: #cc4a41;
+  --err-dim: rgba(204,74,65,.10);
+  --code-kw:      #bb5533;
+  --code-str:     #9a7038;
+  --code-fn:      #3565b8;
+  --code-prop:    #4a6fae;
+  --code-num:     #b07327;
+  --code-comment: #9b968b;
+  --code-default: #4a4740;
+  --code-lineno:  #b5b0a5;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg-stage);
+  font-family: var(--sans);
+  color: var(--text-1);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: none; padding: 0; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; border-radius: 4px; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(128,124,115,.28); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background-color: rgba(128,124,115,.5); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ============================================================
+   面板骨架
+   ============================================================ */
+.stage {
+  position: fixed; inset: 0;
+  padding: 18px;
+  display: flex;
+}
+.panel {
+  flex: 1;
+  display: flex; flex-direction: column;
+  min-width: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-panel);
+  box-shadow: 0 24px 64px rgba(0,0,0,.45), 0 2px 8px rgba(0,0,0,.3);
+  overflow: hidden;
+}
+html[data-theme="light"] .panel { box-shadow: 0 24px 64px rgba(40,36,28,.18), 0 2px 8px rgba(40,36,28,.08); }
+
+/* —— 头部 —— */
+.panel-head {
+  display: flex; align-items: center; gap: 10px;
+  height: 46px; flex: none;
+  padding: 0 14px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+.panel-head .code-ico { color: var(--text-3); display: flex; }
+.panel-head .head-title { font-weight: 600; font-size: 13px; }
+.panel-head .head-name { font-family: var(--mono); font-size: 12px; color: var(--text-3); }
+.head-spacer { flex: 1; }
+
+.run-badge {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--text-2);
+}
+.run-badge .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ok);
+}
+.run-badge.running .dot { animation: pulse 1.8s ease-in-out infinite; }
+.run-badge.done { color: var(--ok); }
+.run-badge.done .dot { background: var(--ok); animation: none; }
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(66,184,113,.45); }
+  55%      { box-shadow: 0 0 0 5px rgba(66,184,113,0); }
+}
+
+.head-close {
+  width: 26px; height: 26px; border-radius: 6px;
+  display: grid; place-items: center;
+  color: var(--text-3);
+}
+.head-close:hover { background: var(--bg-hover); color: var(--text-1); }
+
+/* —— Tab 栏 —— */
+.tabbar {
+  position: relative;
+  display: flex; align-items: stretch; gap: 2px;
+  height: 40px; flex: none;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  position: relative;
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 12px;
+  font-size: 12.5px; color: var(--text-2);
+  transition: color .15s ease;
+}
+.tab:hover { color: var(--text-1); }
+.tab[aria-selected="true"] { color: var(--text-1); font-weight: 600; }
+.tab .tab-count {
+  font-family: var(--mono); font-size: 10.5px;
+  padding: 1px 6px; border-radius: var(--r-chip);
+  background: var(--bg-raised); color: var(--text-2);
+  border: 1px solid var(--border);
+}
+.tab .tab-live {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ok);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+.tab-indicator {
+  position: absolute; bottom: -1px; height: 2px;
+  background: var(--text-1); border-radius: 2px 2px 0 0;
+  transition: left .22s cubic-bezier(.4,0,.2,1), width .22s cubic-bezier(.4,0,.2,1);
+}
+.tab-meta {
+  margin-left: auto;
+  display: flex; align-items: center;
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* —— 视图容器 —— */
+.views { flex: 1; min-height: 0; position: relative; }
+.view { position: absolute; inset: 0; display: none; flex-direction: column; }
+.view.active { display: flex; animation: viewIn .18s ease; }
+@keyframes viewIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ============================================================
+   Tab 1 · 工作流脚本
+   ============================================================ */
+.phase-strip {
+  flex: none;
+  display: flex; align-items: center; gap: 18px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-inset) 55%, var(--bg-panel));
+}
+.phase-step { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); }
+.phase-step .p-ico {
+  width: 16px; height: 16px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 10px;
+  border: 1.5px solid var(--border-strong); color: var(--text-3);
+  flex: none;
+}
+.phase-step.running { color: var(--text-1); }
+.phase-step.running .p-ico { border-color: var(--ok); color: var(--ok); }
+.phase-step.done .p-ico { border-color: transparent; background: var(--ok-dim); color: var(--ok); }
+.phase-step.done { color: var(--text-2); }
+.phase-step .p-sub { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
+.phase-arrow { color: var(--text-3); opacity: .55; }
+.phase-strip .strip-right {
+  margin-left: auto; font-size: 11.5px; color: var(--text-3);
+  display: flex; align-items: center; gap: 6px;
+}
+.phase-strip .strip-right .live-line {
+  font-family: var(--mono); font-size: 11px; color: var(--text-2);
+}
+
+.code-scroll {
+  flex: 1; overflow: auto;
+  padding: 14px 0 40px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.75;
+}
+.code-line { display: flex; min-width: max-content; padding: 0 20px 0 0; position: relative; }
+.code-line .ln {
+  flex: none; width: 58px;
+  text-align: right; padding-right: 18px;
+  color: var(--code-lineno);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  position: relative;
+}
+/* phase 色条:挂在行号列左缘 */
+.code-line[data-phaseband="active"] .ln::before,
+.code-line[data-phaseband="wait"] .ln::before {
+  content: ""; position: absolute; left: 8px; top: 2px; bottom: 2px;
+  width: 2px; border-radius: 2px;
+}
+.code-line[data-phaseband="active"] .ln::before { background: var(--ok); opacity: .75; }
+.code-line[data-phaseband="wait"] .ln::before   { background: var(--text-3); opacity: .3; }
+.code-line .lc { white-space: pre; color: var(--code-default); }
+.code-line.hl-exec { background: color-mix(in srgb, var(--ok) 7%, transparent); }
+.code-line.hl-exec .ln { color: var(--ok); }
+
+.cm-kw      { color: var(--code-kw); }
+.cm-str     { color: var(--code-str); }
+.cm-fn      { color: var(--code-fn); }
+.cm-prop    { color: var(--code-prop); }
+.cm-num     { color: var(--code-num); }
+.cm-comment { color: var(--code-comment); font-style: italic; }
+
+/* 代码行内 agent 状态 chip */
+.line-chips { display: inline-flex; gap: 6px; margin-left: 22px; vertical-align: 1px; }
+.agent-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 19px; padding: 0 8px 0 6px;
+  border-radius: var(--r-chip);
+  font-family: var(--sans); font-size: 10.5px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.agent-chip .s-ico { flex: none; }
+.agent-chip.st-done    { color: var(--text-2); }
+.agent-chip.st-running { border-color: color-mix(in srgb, var(--ok) 45%, transparent); color: var(--text-1); }
+.agent-chip.st-error   { border-color: color-mix(in srgb, var(--err) 45%, transparent); }
+.agent-chip.st-pending { opacity: .65; }
+
+/* ============================================================
+   状态图标(共用)
+   ============================================================ */
+.s-ico { display: inline-grid; place-items: center; }
+.s-ico svg { display: block; }
+.s-ico.done  { color: var(--ok); }
+.s-ico.error { color: var(--err); }
+.s-ico.pending { color: var(--text-3); }
+.spinner {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--ok) 30%, transparent);
+  border-top-color: var(--ok);
+  animation: spin .9s linear infinite;
+}
+.spinner.lg { width: 15px; height: 15px; border-width: 2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.5s; }
+  .run-badge .dot, .tab .tab-live { animation: none !important; }
+}
+
+/* ============================================================
+   Tab 2 · 多智能体视图
+   ============================================================ */
+/* —— 总览条 —— */
+.overview {
+  flex: none;
+  display: flex; align-items: center; gap: 28px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-inset) 55%, var(--bg-panel));
+}
+.ov-progress { flex: 1; min-width: 160px; }
+.ov-progress .ov-label {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 7px;
+}
+.ov-progress .ov-label b { font-size: 13px; font-weight: 600; }
+.ov-progress .ov-label span { font-family: var(--mono); font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.seg-bar { display: flex; gap: 4px; }
+.seg {
+  flex: 1; height: 5px; border-radius: 3px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  position: relative; overflow: hidden;
+}
+.seg.done { background: var(--ok); border-color: transparent; }
+.seg.error { background: var(--err); border-color: transparent; }
+.seg.running { border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.seg.running::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ok) 55%, transparent), transparent);
+  animation: segflow 1.6s linear infinite;
+}
+@keyframes segflow { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+.ov-metrics { display: flex; gap: 28px; flex: none; }
+.ov-metric .m-v {
+  font-family: var(--mono); font-size: 16px; font-weight: 600;
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+}
+.ov-metric .m-k { font-size: 10.5px; color: var(--text-3); margin-top: 1px; }
+
+/* —— 左右分栏 —— */
+.agents-split { flex: 1; min-height: 0; display: flex; }
+.agent-list {
+  flex: none; width: 292px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 12px 10px 32px;
+}
+.pl-group + .pl-group { margin-top: 16px; }
+.pl-head {
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 8px 6px;
+  font-size: 10.5px; letter-spacing: .08em; color: var(--text-3);
+}
+.pl-head .ph-badge {
+  font-family: var(--mono); font-size: 10px;
+  color: var(--text-3);
+  margin-left: auto; letter-spacing: 0;
+}
+.pl-head .ph-state { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); opacity: .5; flex: none; }
+.pl-group.running .ph-state { background: var(--ok); opacity: 1; animation: pulse 1.8s ease-in-out infinite; }
+.pl-group.done .ph-state { background: var(--ok); opacity: .8; }
+
+.agent-row {
+  width: 100%;
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--r-card);
+  text-align: left;
+  border: 1px solid transparent;
+  transition: background .12s ease;
+  position: relative;
+}
+.agent-row:hover { background: var(--bg-hover); }
+.agent-row.selected { background: var(--bg-raised); border-color: var(--border-strong); }
+.agent-row.selected::before {
+  content: ""; position: absolute; left: -1px; top: 8px; bottom: 8px;
+  width: 2px; border-radius: 2px; background: var(--text-2);
+}
+.agent-row.selected.is-running::before { background: var(--ok); }
+.agent-row .ar-ico { flex: none; width: 16px; display: grid; place-items: center; }
+.agent-row .ar-main { flex: 1; min-width: 0; }
+.agent-row .ar-name { font-size: 12.5px; font-weight: 550; color: var(--text-1); }
+.agent-row .ar-sub {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+.agent-row.is-pending .ar-name { color: var(--text-2); }
+
+/* —— 右侧详情 —— */
+.agent-detail { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 24px 48px; }
+.detail-empty {
+  height: 100%; display: grid; place-items: center;
+  color: var(--text-3); font-size: 12.5px;
+}
+
+.dt-head { display: flex; align-items: flex-start; gap: 12px; }
+.dt-head .dt-ico { flex: none; margin-top: 3px; }
+.dt-head h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+.dt-head .dt-titlebox { flex: 1; min-width: 0; }
+.dt-head .dt-tags { display: flex; gap: 6px; margin-top: 5px; }
+.mini-tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 20px; padding: 0 8px;
+  border-radius: var(--r-chip);
+  font-size: 10.5px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  color: var(--text-2);
+}
+.mini-tag.tone-ok  { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); background: var(--ok-dim); }
+.mini-tag.tone-err { color: var(--err); border-color: color-mix(in srgb, var(--err) 35%, transparent); background: var(--err-dim); }
+
+.dt-prompt {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  color: var(--text-2); font-size: 12px; line-height: 1.65;
+  cursor: pointer;
+}
+.dt-prompt .p-label {
+  font-size: 10px; letter-spacing: .08em; color: var(--text-3);
+  margin-bottom: 3px; display: flex; align-items: center; gap: 6px;
+}
+.dt-prompt .p-label .p-caret { transition: transform .15s ease; display: inline-flex; }
+.dt-prompt.open .p-label .p-caret { transform: rotate(90deg); }
+.dt-prompt .p-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dt-prompt.open .p-text { display: block; }
+
+.dt-metrics {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  margin-top: 14px;
+}
+.dm-card {
+  padding: 11px 13px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+}
+.dm-card .dm-v {
+  font-family: var(--mono); font-size: 17px; font-weight: 600;
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+}
+.dm-card .dm-v small { font-size: 11px; font-weight: 500; color: var(--text-3); margin-left: 2px; }
+.dm-card .dm-k { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+
+.dt-section { margin-top: 22px; }
+.dt-section > .sec-head {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-bottom: 10px;
+}
+.dt-section > .sec-head h3 {
+  margin: 0; font-size: 11px; font-weight: 600;
+  letter-spacing: .08em; color: var(--text-3);
+}
+.dt-section > .sec-head .sec-count { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
+
+/* 工具调用时间线 */
+.timeline { position: relative; padding-left: 7px; }
+.timeline::before {
+  content: ""; position: absolute; left: 12px; top: 10px; bottom: 10px;
+  width: 1px; background: var(--border-strong);
+}
+.tl-item {
+  position: relative;
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 10px 5px 16px;
+  border-radius: var(--r-card);
+}
+.tl-item .tl-node {
+  position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--bg-panel);
+  border: 1.5px solid var(--text-3);
+  z-index: 1;
+}
+.tl-item.done  .tl-node { border-color: var(--ok); background: var(--ok); }
+.tl-item.error .tl-node { border-color: var(--err); background: var(--err); }
+.tl-item.running .tl-node {
+  border-color: var(--ok); background: var(--bg-panel);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.tl-item.running {
+  background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--ok) 6%, transparent) 50%, transparent 80%);
+  background-size: 220% 100%;
+  animation: shimmer 2.2s linear infinite;
+}
+@keyframes shimmer { from { background-position: 130% 0; } to { background-position: -90% 0; } }
+.tl-item .tl-tool {
+  flex: none;
+  font-family: var(--mono); font-size: 11.5px; font-weight: 600;
+  color: var(--text-1);
+  min-width: 118px;
+}
+.tl-item.error .tl-tool { color: var(--err); }
+.tl-item .tl-sum {
+  flex: 1; min-width: 0;
+  font-family: var(--mono); font-size: 11px; color: var(--text-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tl-item .tl-dur {
+  flex: none;
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.tl-item.running .tl-dur { color: var(--ok); }
+.tl-item .tl-err-tag {
+  flex: none; font-size: 10px; color: var(--err);
+  background: var(--err-dim); border-radius: var(--r-chip);
+  padding: 1px 7px;
+}
+
+/* 输出区 */
+.output-box {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: 12px 14px;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.7;
+  overflow-x: auto;
+}
+.output-box pre { margin: 0; white-space: pre; }
+.j-key { color: var(--code-prop); }
+.j-str { color: var(--code-str); }
+.j-num { color: var(--code-num); }
+.j-lit { color: var(--code-kw); }
+
+.stream-box {
+  background: var(--bg-inset);
+  border: 1px solid color-mix(in srgb, var(--ok) 22%, var(--border));
+  border-radius: var(--r-card);
+  padding: 12px 14px;
+  font-size: 12px; line-height: 1.7; color: var(--text-2);
+}
+.stream-box .stream-tool {
+  font-family: var(--mono); font-size: 11px; color: var(--ok);
+  margin-bottom: 4px; display: flex; align-items: center; gap: 7px;
+}
+.caret-blink {
+  display: inline-block; width: 7px; height: 14px;
+  background: var(--text-2); vertical-align: -2px; margin-left: 2px;
+  animation: blink 1s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.pending-box {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-card);
+  padding: 18px 14px;
+  text-align: center;
+  color: var(--text-3); font-size: 12px;
+}
+
+/* ============================================================
+   Tweaks 面板
+   ============================================================ */
+.tweaks-fab {
+  position: fixed; right: 22px; bottom: 22px; z-index: 50;
+  height: 32px; padding: 0 14px;
+  border-radius: var(--r-chip);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  color: var(--text-2); font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.35);
+}
+.tweaks-fab:hover { color: var(--text-1); background: var(--bg-hover); }
+.tweaks-pop {
+  position: fixed; right: 22px; bottom: 62px; z-index: 50;
+  width: 250px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.5);
+  padding: 14px;
+  display: none;
+}
+.tweaks-pop.open { display: block; animation: viewIn .15s ease; }
+.tweaks-pop h4 { margin: 0 0 12px; font-size: 12px; font-weight: 650; }
+.tw-row { margin-bottom: 12px; }
+.tw-row:last-child { margin-bottom: 0; }
+.tw-row .tw-label { font-size: 11px; color: var(--text-3); margin-bottom: 5px; }
+.seg-ctl { display: flex; background: var(--bg-inset); border: 1px solid var(--border); border-radius: 7px; padding: 2px; }
+.seg-ctl button {
+  flex: 1; height: 24px; border-radius: 5px;
+  font-size: 11.5px; color: var(--text-2);
+}
+.seg-ctl button.on { background: var(--bg-raised); color: var(--text-1); box-shadow: 0 1px 3px rgba(0,0,0,.25); font-weight: 550; }
+.tw-btn {
+  width: 100%; height: 28px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  font-size: 11.5px; color: var(--text-1);
+}
+.tw-btn:hover { background: var(--bg-hover); }
+
+/* 紧凑密度 */
+html[data-density="compact"] .agent-row { padding: 6px 10px; }
+html[data-density="compact"] .agent-detail { padding: 14px 18px 40px; }
+html[data-density="compact"] .dt-metrics { gap: 8px; }
+html[data-density="compact"] .dm-card { padding: 8px 11px; }
+html[data-density="compact"] .tl-item { padding-top: 3px; padding-bottom: 3px; }
+html[data-density="compact"] .code-scroll { line-height: 1.55; }
+html[data-density="compact"] .overview { padding: 10px 20px; }
+
+/* 窄屏兜底 */
+@media (max-width: 860px) {
+  .agents-split { flex-direction: column; }
+  .agent-list { width: auto; border-right: none; border-bottom: 1px solid var(--border); max-height: 40%; }
+  .ov-metrics { gap: 18px; }
+  .tab-meta { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="panel">
+
+    <!-- 头部 -->
+    <header class="panel-head">
+      <span class="code-ico">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/>
+        </svg>
+      </span>
+      <span class="head-title">编排脚本</span>
+      <span class="head-name" id="wf-name">wuhan-tomorrow-weather</span>
+      <div class="head-spacer"></div>
+      <div class="run-badge running" id="run-badge">
+        <span class="dot"></span><span id="run-badge-text">正在执行</span>
+      </div>
+      <button class="head-close" aria-label="关闭">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l10 10M12 2 2 12"/></svg>
+      </button>
+    </header>
+
+    <!-- Tab 栏 -->
+    <nav class="tabbar" role="tablist">
+      <button class="tab" role="tab" id="tab-script" aria-selected="false" data-view="script">
+        工作流脚本
+      </button>
+      <button class="tab" role="tab" id="tab-agents" aria-selected="true" data-view="agents">
+        多智能体视图
+        <span class="tab-live" id="tab-live"></span>
+        <span class="tab-count" id="tab-count">2/4</span>
+      </button>
+      <div class="tab-indicator" id="tab-indicator"></div>
+      <div class="tab-meta" id="tab-meta">2m36s · 37.3k tok · 20 tools</div>
+    </nav>
+
+    <div class="views">
+
+      <!-- ================= Tab 1 · 工作流脚本 ================= -->
+      <section class="view" id="view-script" role="tabpanel">
+        <div class="phase-strip" id="phase-strip"></div>
+        <div class="code-scroll" id="code-scroll"></div>
+      </section>
+
+      <!-- ================= Tab 2 · 多智能体视图 ================= -->
+      <section class="view active" id="view-agents" role="tabpanel">
+        <div class="overview" id="overview"></div>
+        <div class="agents-split">
+          <aside class="agent-list" id="agent-list"></aside>
+          <main class="agent-detail" id="agent-detail"></main>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<!-- Tweaks -->
+<button class="tweaks-fab" id="tweaks-fab">Tweaks</button>
+<div class="tweaks-pop" id="tweaks-pop">
+  <h4>Tweaks</h4>
+  <div class="tw-row">
+    <div class="tw-label">主题</div>
+    <div class="seg-ctl" data-tweak="theme">
+      <button data-v="dark" class="on">暗色</button>
+      <button data-v="light">亮色</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <div class="tw-label">密度</div>
+    <div class="seg-ctl" data-tweak="density">
+      <button data-v="comfy" class="on">舒适</button>
+      <button data-v="compact">紧凑</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <div class="tw-label">模拟运行(演示状态流转)</div>
+    <button class="tw-btn" id="tw-replay">重新播放</button>
+  </div>
+</div>
+
+<!-- 工作流脚本源码(text/plain 免转义) -->
+<script type="text/plain" id="wf-src">export const meta = {
+  name: 'wuhan-tomorrow-weather',
+  description: '多源核对武汉明日天气并给出出行建议',
+  phases: [
+    { title: '查询', detail: '三个独立信源并行联网查询' },
+    { title: '核对', detail: '交叉核对并产出结论' },
+  ],
+}
+
+const RESULT_SCHEMA = {
+  type: 'object',
+  properties: {
+    condition:    { type: 'string' },
+    forecastDate: { type: 'string' },
+    highC:        { type: 'number' },
+    lowC:         { type: 'number' },
+    rain:         { type: 'string' },
+    observedAt:   { type: 'string' },
+    notes:        { type: 'string' },
+    source:       { type: 'string' },
+  },
+  required: ['condition', 'forecastDate', 'highC', 'lowC', 'rain', 'observedAt'],
+  additionalProperties: false,
+}
+
+const sources = [
+  {
+    label: '中国天气网',
+    prompt: '查询中国天气网(weather.com.cn)对中国湖北武汉 2026-07-18 的官方预报。必须实际联网获取页面,给出高低温、天气现象、降水信息与页面更新时间。',
+  },
+  {
+    label: '中央气象台',
+    prompt: '查询中央气象台(nmc.cn)对中国湖北武汉 2026-07-18 的最新发布预报。必须实际联网获取页面,提取最新发布时间与逐要素预报。',
+  },
+  {
+    label: '主流天气源',
+    prompt: '查询一个可公开访问的主流天气数据源(优先 AccuWeather、The Weather Channel、Meteoblue 或 Open-Meteo)对中国湖北武汉 2026-07-18 的最新预报。必须实际联网获取。',
+  },
+]
+
+const reports = await parallel(sources.map(s => () =>
+  agent(s.prompt, { label: s.label, phase: '查询', schema: RESULT_SCHEMA })
+))
+
+phase('核对')
+const valid = reports.filter(Boolean)
+const synthesis = await agent(`你是天气信息核对员。当前日期是 2026-07-17,用户问的是湖北武汉市明天,即 2026-07-18。请只依据下面这些联网查询结果交叉核对,不要捏造数据。判断分歧并给出结论:${JSON.stringify(valid)}`, {
+  label: '交叉核对',
+  phase: '核对',
+  schema: {
+    type: 'object',
+    properties: {
+      date:        { type: 'string' },
+      summary:     { type: 'string' },
+      temperature: { type: 'string' },
+      rain:        { type: 'string' },
+      wind:        { type: 'string' },
+      advice:      { type: 'string' },
+      confidence:  { type: 'string' },
+      sourceLinks: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            url:  { type: 'string' },
+          },
+          required: ['name', 'url'],
+          additionalProperties: false,
+        },
+      },
+      discrepancies: { type: 'string' },
+    },
+    required: ['date', 'summary', 'temperature', 'rain', 'wind', 'advice', 'confidence', 'sourceLinks', 'discrepancies'],
+    additionalProperties: false,
+  },
+})
+
+return { reports: valid, synthesis }</script>
+
+<script>
+/* ============================================================
+   数据模型 —— 与截图场景一致的示意数据(占位,非真实运行)
+   ============================================================ */
+const AGENTS = [
+  {
+    id: 'cn-weather', label: '中国天气网', phase: '查询', status: 'done',
+    tok: 19800, tools: 10, dur: 156,
+    prompt: '查询中国天气网(weather.com.cn)对中国湖北武汉 2026-07-18 的官方预报。必须实际联网获取页面,给出高低温、天气现象、降水信息与页面更新时间,并注明观测/更新时间。',
+    timeline: [
+      { tool: 'WebSearch', sum: '武汉 2026-07-18 天气预报 中国天气网', dur: '4.1s', st: 'done' },
+      { tool: 'WebFetch',  sum: 'weather.com.cn/weather1d/101200101.shtml', dur: '6.8s', st: 'done' },
+      { tool: 'WebFetch',  sum: 'weather.com.cn/weather/101200101.shtml', dur: '5.2s', st: 'done' },
+      { tool: 'WebSearch', sum: '中国天气网 武汉 城区 18日 明天', dur: '3.4s', st: 'done' },
+      { tool: 'WebFetch',  sum: 'weather.com.cn/weather15d/101200101.shtml', dur: '7.1s', st: 'done' },
+      { tool: 'WebFetch',  sum: 't.weather.com.cn/api/weather/city/101200101 — HTTP 404', dur: '2.9s', st: 'error' },
+      { tool: 'WebSearch', sum: '武汉 降水概率 明天 逐小时', dur: '3.8s', st: 'done' },
+      { tool: 'WebFetch',  sum: 'm.weather.com.cn/mweather/101200101.shtml', dur: '6.3s', st: 'done' },
+      { tool: 'WebFetch',  sum: 'weather.com.cn 页面更新时间核验(18:00 更新)', dur: '4.4s', st: 'done' },
+      { tool: 'StructuredOutput', sum: '提交结构化结果', dur: '1.2s', st: 'done' },
+    ],
+    result: {
+      condition: '小雨转阵雨', forecastDate: '2026-07-18', highC: 31, lowC: 25,
+      rain: '有雨:小雨转阵雨;页面未列出降水概率',
+      observedAt: '页面显示 2026-07-17 18:00 更新',
+      source: '中国天气网(weather.com.cn)',
+    },
+  },
+  {
+    id: 'nmc', label: '中央气象台', phase: '查询', status: 'running',
+    tok: 9400, tools: 5, dur: 156,
+    prompt: '查询中央气象台(nmc.cn)对中国湖北武汉 2026-07-18 的最新发布预报。必须实际联网获取页面,提取页面明确显示的最新发布时间,以及武汉市 2026 年 7 月 18 日逐要素预报。',
+    timeline: [
+      { tool: 'WebSearch', sum: '中央气象台 武汉 预报 官网', dur: '3.6s', st: 'done' },
+      { tool: 'WebFetch',  sum: 'nmc.cn/publish/forecast/AHB/wuhan.html', dur: '8.2s', st: 'done' },
+      { tool: 'WebFetch',  sum: 'www.nmc.cn/publish/forecast/AHB/wuhan.html(渲染重试)', dur: '6.4s', st: 'done' },
+      { tool: 'WebSearch', sum: '中央气象台 武汉 7天预报 发布时间', dur: '2.9s', st: 'done' },
+      { tool: 'WebFetch',  sum: '请提取页面明确显示的最新发布时间,以及武汉市2026年7月18日逐…', dur: '', st: 'running' },
+    ],
+    stream: '正在读取 nmc.cn 页面渲染结果,提取「发布时间」与逐 3 小时要素表',
+    result: null,
+  },
+  {
+    id: 'mainstream', label: '主流天气源', phase: '查询', status: 'done',
+    tok: 17500, tools: 5, dur: 88,
+    prompt: '查询一个可公开访问的主流天气数据源(优先 AccuWeather、The Weather Channel、Meteoblue 或 Open-Meteo)对中国湖北武汉 2026-07-18 的最新预报。必须实际联网获取。',
+    timeline: [
+      { tool: 'WebFetch',  sum: 'api.open-meteo.com/v1/forecast?lat=30.6151&lon=114.2756&daily=…', dur: '2.3s', st: 'done' },
+      { tool: 'WebSearch', sum: 'AccuWeather Wuhan July 18 forecast', dur: '3.1s', st: 'done' },
+      { tool: 'WebFetch',  sum: 'accuweather.com/en/cn/wuhan — HTTP 403 拒绝抓取', dur: '5.0s', st: 'error' },
+      { tool: 'WebFetch',  sum: 'api.open-meteo.com …&daily=rain_sum,precipitation_probability_max', dur: '1.9s', st: 'done' },
+      { tool: 'StructuredOutput', sum: '提交结构化结果', dur: '0.9s', st: 'done' },
+    ],
+    result: {
+      condition: '雷暴,伴轻微冰雹(WMO 天气代码 96)', forecastDate: '2026-07-18',
+      highC: 30.7, lowC: 25.9,
+      rain: '最高降水概率 81%;日累计总降水量 19.1 mm(rain_sum 8.3 mm)',
+      observedAt: '2026-07-17T17:39:16+08:00',
+      source: 'Open-Meteo',
+    },
+  },
+  {
+    id: 'synthesis', label: '交叉核对', phase: '核对', status: 'pending',
+    tok: 0, tools: 0, dur: 0,
+    prompt: '你是天气信息核对员。当前日期是 2026-07-17,用户问的是湖北武汉市明天,即 2026-07-18。请只依据下面这些联网查询结果交叉核对,不要捏造数据。判断分歧并给出结论。',
+    timeline: [],
+    result: null,
+    pendingNote: '等待「查询」阶段全部完成(parallel 屏障)',
+  },
+];
+
+const state = {
+  t: 156,                 // 全局运行秒数(起点 2m36s,对齐截图)
+  view: 'agents',
+  selected: 'nmc',
+  workflowDone: false,
+  promptOpen: {},
+  simTimer: null,
+};
+
+/* ============================================================
+   小工具
+   ============================================================ */
+const $ = s => document.querySelector(s);
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const fmtDur = s => s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;
+const fmtTok = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+
+const ICONS = {
+  done: `<span class="s-ico done"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 8.6 6.5 12l6.3-8"/></svg></span>`,
+  running: `<span class="s-ico"><span class="spinner"></span></span>`,
+  runningLg: `<span class="s-ico"><span class="spinner lg"></span></span>`,
+  pending: `<span class="s-ico pending"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2.4 2.6" stroke-linecap="round"><circle cx="8" cy="8" r="6"/></svg></span>`,
+  error: `<span class="s-ico error"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l6 6M11 5l-6 6"/></svg></span>`,
+};
+const STATUS_TEXT = { done: '已完成', running: '运行中', pending: '等待中', error: '失败' };
+
+function statusIcon(st, lg) {
+  if (st === 'running') return lg ? ICONS.runningLg : ICONS.running;
+  return ICONS[st] || ICONS.pending;
+}
+
+/* JSON 高亮 */
+function hlJson(obj) {
+  const s = esc(JSON.stringify(obj, null, 2));
+  return s.replace(/("(?:[^"\\]|\\.)*")(\s*:)?|(-?\d+\.?\d*)|\b(true|false|null)\b/g,
+    (m, str, colon, num, lit) => {
+      if (str) return colon ? `<span class="j-key">${str}</span>${colon}` : `<span class="j-str">${str}</span>`;
+      if (num) return `<span class="j-num">${num}</span>`;
+      if (lit) return `<span class="j-lit">${lit}</span>`;
+      return m;
+    });
+}
+
+/* JS 代码高亮(极简 tokenizer,够原型用) */
+function hlCode(line) {
+  const re = /(\/\/.*$)|('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`)|\b(export|const|let|var|await|async|return|new|function|if|else|for|while|of|in|true|false|null)\b|((?<![\w$])\d+\.?\d*(?![\w$]))|([A-Za-z_$][\w$]*)(?=\s*\()|([A-Za-z_$][\w$]*)(?=\s*:)/g;
+  let out = '', last = 0;
+  for (const m of line.matchAll(re)) {
+    out += esc(line.slice(last, m.index));
+    const cls = m[1] ? 'cm-comment' : m[2] ? 'cm-str' : m[3] ? 'cm-kw' : m[4] ? 'cm-num' : m[5] ? 'cm-fn' : 'cm-prop';
+    out += `<span class="${cls}">${esc(m[0])}</span>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(line.slice(last));
+}
+
+/* ============================================================
+   渲染 —— 头部 / tab meta
+   ============================================================ */
+function totals() {
+  // 对齐截图口径:总 tok 只累计已上报(完成)的 agent
+  const tok = AGENTS.reduce((a, x) => a + (x.status === 'done' ? x.tok : 0), 0);
+  const tools = AGENTS.reduce((a, x) => a + x.timeline.length, 0);
+  const done = AGENTS.filter(x => x.status === 'done').length;
+  return { tok, tools, done };
+}
+
+function renderHeader() {
+  const badge = $('#run-badge'), text = $('#run-badge-text');
+  if (state.workflowDone) {
+    badge.className = 'run-badge done';
+    text.textContent = '已完成';
+  } else {
+    badge.className = 'run-badge running';
+    text.textContent = '正在执行';
+  }
+  const { tok, tools, done } = totals();
+  $('#tab-meta').textContent = `${fmtDur(state.t)} · ${fmtTok(tok)} tok · ${tools} tools`;
+  $('#tab-count').textContent = `${done}/${AGENTS.length}`;
+  $('#tab-live').style.display = state.workflowDone ? 'none' : '';
+}
+
+/* ============================================================
+   渲染 —— Tab 1 工作流脚本
+   ============================================================ */
+let codeRendered = false;
+function renderCode() {
+  if (codeRendered) { renderCodeChips(); renderPhaseStrip(); return; }
+  codeRendered = true;
+  const src = $('#wf-src').textContent.split('\n');
+  const scroll = $('#code-scroll');
+  const frag = document.createDocumentFragment();
+
+  src.forEach((line, i) => {
+    const n = i + 1;
+    const div = document.createElement('div');
+    div.className = 'code-line';
+    div.dataset.line = n;
+    // phase 色带:parallel 段 = 查询,synthesis 段 = 核对
+    if (line.includes('await parallel(') || (n > 0 && isInsideParallel(src, i))) {}
+    div.innerHTML = `<span class="ln">${n}</span><span class="lc">${hlCode(line) || '&nbsp;'}</span>`;
+    frag.appendChild(div);
+  });
+  scroll.appendChild(frag);
+
+  // 找到挂 chip 的行
+  const lines = [...scroll.querySelectorAll('.code-line')];
+  for (const el of lines) {
+    const txt = src[el.dataset.line - 1];
+    if (txt.includes('await parallel(')) el.dataset.chips = 'cn-weather,nmc,mainstream';
+    // synthesis 的 agent() 调用行是超长字符串,chip 挂行尾会被顶出可视区 —— 挂到下一行短的 label 行
+    if (txt.includes(`label: '交叉核对'`)) el.dataset.chips = 'synthesis';
+  }
+  // phase 色带范围
+  const pStart = src.findIndex(l => l.includes('await parallel(')) + 1;
+  const pEnd = src.findIndex(l => l.trim() === '))') + 1;
+  const sStart = src.findIndex(l => l.includes(`phase('核对')`)) + 1;
+  for (const el of lines) {
+    const n = +el.dataset.line;
+    if (n >= pStart && n <= pEnd) el.dataset.band = 'query';
+    if (n >= sStart && n <= src.length - 2) el.dataset.band = 'synth';
+  }
+  renderCodeChips();
+  renderPhaseStrip();
+}
+function isInsideParallel() { return false; } // 占位:色带用 data-band 统一处理
+
+function renderCodeChips() {
+  const queryRunning = AGENTS.some(a => a.phase === '查询' && a.status === 'running');
+  const synthAgent = AGENTS.find(a => a.id === 'synthesis');
+
+  document.querySelectorAll('#code-scroll .code-line').forEach(el => {
+    // phase 色带状态
+    const band = el.dataset.band;
+    if (band === 'query') el.dataset.phaseband = queryRunning ? 'active' : '';
+    if (band === 'synth') el.dataset.phaseband = synthAgent.status === 'running' ? 'active' : (synthAgent.status === 'pending' ? 'wait' : '');
+    if (el.dataset.phaseband === '') delete el.dataset.phaseband;
+
+    // 执行到的行高亮
+    el.classList.toggle('hl-exec',
+      (band === 'query' && queryRunning && el.dataset.chips) ||
+      (band === 'synth' && synthAgent.status === 'running' && el.dataset.chips) ? true : false);
+
+    // chips
+    const ids = el.dataset.chips;
+    let box = el.querySelector('.line-chips');
+    if (!ids) return;
+    if (!box) {
+      box = document.createElement('span');
+      box.className = 'line-chips';
+      el.querySelector('.lc').appendChild(box);
+    }
+    box.innerHTML = ids.split(',').map(id => {
+      const a = AGENTS.find(x => x.id === id);
+      const metric = a.status === 'done' ? `${fmtTok(a.tok)} tok`
+                   : a.status === 'running' ? fmtDur(state.t - 0) : '等待';
+      return `<span class="agent-chip st-${a.status}">${statusIcon(a.status)}${esc(a.label)}<span style="opacity:.55">·</span><span style="font-family:var(--mono);font-size:10px">${a.status === 'pending' ? '等待' : (a.status === 'done' ? fmtTok(a.tok) + ' tok' : '运行中')}</span></span>`;
+    }).join('');
+  });
+}
+
+function renderPhaseStrip() {
+  const strip = $('#phase-strip');
+  const query = AGENTS.filter(a => a.phase === '查询');
+  const synth = AGENTS.find(a => a.id === 'synthesis');
+  const qDone = query.every(a => a.status === 'done');
+  const qState = qDone ? 'done' : 'running';
+  const sState = synth.status === 'done' ? 'done' : synth.status === 'running' ? 'running' : 'idle';
+
+  const stepIco = st => st === 'done'
+    ? `<span class="p-ico">✓</span>`
+    : st === 'running' ? `<span class="p-ico"><span class="spinner" style="width:8px;height:8px;border-width:1.5px"></span></span>`
+    : `<span class="p-ico"></span>`;
+
+  const running = AGENTS.find(a => a.status === 'running');
+  strip.innerHTML = `
+    <div class="phase-step ${qState}">${stepIco(qState)}<span>查询</span><span class="p-sub">${query.filter(a => a.status === 'done').length}/${query.length} agents</span></div>
+    <span class="phase-arrow">→</span>
+    <div class="phase-step ${sState}">${stepIco(sState)}<span>核对</span><span class="p-sub">${synth.status === 'done' ? '1/1 agents' : synth.status === 'running' ? '运行中' : '等待上游'}</span></div>
+    <div class="strip-right">${
+      state.workflowDone
+        ? `<span style="color:var(--ok)">✓</span><span>工作流已返回 { reports, synthesis }</span>`
+        : running
+          ? `<span class="live-line">▸ ${esc(running.label)}</span><span>正在执行 agent() 调用</span>`
+          : ''
+    }</div>`;
+}
+
+/* ============================================================
+   渲染 —— Tab 2 多智能体视图
+   ============================================================ */
+function renderOverview() {
+  const { tok, tools, done } = totals();
+  const segs = AGENTS.map(a =>
+    `<div class="seg ${a.status === 'done' ? 'done' : a.status === 'running' ? 'running' : a.status === 'error' ? 'error' : ''}"></div>`
+  ).join('');
+  $('#overview').innerHTML = `
+    <div class="ov-progress">
+      <div class="ov-label">
+        <b>${state.workflowDone ? '工作流已完成' : '正在执行'}</b>
+        <span>${done}/${AGENTS.length} agents</span>
+      </div>
+      <div class="seg-bar">${segs}</div>
+    </div>
+    <div class="ov-metrics">
+      <div class="ov-metric"><div class="m-v">${fmtDur(state.t)}</div><div class="m-k">运行时长</div></div>
+      <div class="ov-metric"><div class="m-v">${fmtTok(tok)}</div><div class="m-k">Token 总量</div></div>
+      <div class="ov-metric"><div class="m-v">${tools}</div><div class="m-k">工具调用</div></div>
+      <div class="ov-metric"><div class="m-v">2</div><div class="m-k">阶段</div></div>
+    </div>`;
+}
+
+function renderList() {
+  const groups = [
+    { key: '查询', agents: AGENTS.filter(a => a.phase === '查询') },
+    { key: '核对', agents: AGENTS.filter(a => a.phase === '核对') },
+  ];
+  $('#agent-list').innerHTML = groups.map(g => {
+    const gState = g.agents.every(a => a.status === 'done') ? 'done'
+                 : g.agents.some(a => a.status === 'running') ? 'running' : 'idle';
+    return `
+    <div class="pl-group ${gState}">
+      <div class="pl-head"><span class="ph-state"></span>阶段 · ${g.key}<span class="ph-badge">${g.agents.filter(a => a.status === 'done').length}/${g.agents.length}</span></div>
+      ${g.agents.map(a => {
+        const sub = a.status === 'done' ? `${fmtTok(a.tok)} tok · ${a.timeline.length} tools · ${fmtDur(a.dur)}`
+                  : a.status === 'running' ? `${fmtTok(a.tok)} tok · ${a.timeline.length} tools · 运行中`
+                  : a.pendingNote ? '等待上游阶段' : '等待中';
+        return `
+        <button class="agent-row ${state.selected === a.id ? 'selected' : ''} is-${a.status} ${a.status === 'running' ? 'is-running' : ''}" data-id="${a.id}">
+          <span class="ar-ico">${statusIcon(a.status)}</span>
+          <span class="ar-main">
+            <div class="ar-name">${esc(a.label)}</div>
+            <div class="ar-sub">${sub}</div>
+          </span>
+        </button>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+
+  document.querySelectorAll('.agent-row').forEach(el =>
+    el.addEventListener('click', () => { state.selected = el.dataset.id; renderList(); renderDetail(); }));
+}
+
+function renderDetail() {
+  const box = $('#agent-detail');
+  const prevScroll = box.scrollTop;
+  const a = AGENTS.find(x => x.id === state.selected);
+  if (!a) { box.innerHTML = `<div class="detail-empty">选择左侧任一智能体查看运行详情</div>`; return; }
+
+  const open = !!state.promptOpen[a.id];
+  const doneTools = a.timeline.filter(t => t.st === 'done').length;
+  const errTools = a.timeline.filter(t => t.st === 'error').length;
+
+  /* 输出区 */
+  let output;
+  if (a.result) {
+    output = `<div class="output-box"><pre>${hlJson(a.result)}</pre></div>`;
+  } else if (a.status === 'running') {
+    output = `
+      <div class="stream-box">
+        <div class="stream-tool"><span class="spinner" style="width:10px;height:10px"></span>${esc(a.timeline.at(-1)?.tool || 'Agent')} 进行中</div>
+        ${esc(a.stream || '')}<span class="caret-blink"></span>
+      </div>`;
+  } else {
+    output = `<div class="pending-box">${esc(a.pendingNote || '尚未开始')}</div>`;
+  }
+
+  box.innerHTML = `
+    <div class="dt-head">
+      <span class="dt-ico">${statusIcon(a.status, true)}</span>
+      <div class="dt-titlebox">
+        <h2>${esc(a.label)}</h2>
+        <div class="dt-tags">
+          <span class="mini-tag ${a.status === 'done' ? 'tone-ok' : ''}">${STATUS_TEXT[a.status]}</span>
+          <span class="mini-tag">阶段 · ${esc(a.phase)}</span>
+          ${errTools ? `<span class="mini-tag tone-err">${errTools} 次调用失败(已自动换路)</span>` : ''}
+        </div>
+      </div>
+    </div>
+
+    <div class="dt-prompt ${open ? 'open' : ''}" id="dt-prompt">
+      <div class="p-label"><span class="p-caret">▸</span>任务指令(prompt)</div>
+      <div class="p-text">${esc(a.prompt)}</div>
+    </div>
+
+    <div class="dt-metrics">
+      <div class="dm-card"><div class="dm-v">${a.tok ? fmtTok(a.tok) : '—'}<small>tok</small></div><div class="dm-k">Token 用量</div></div>
+      <div class="dm-card"><div class="dm-v">${a.timeline.length || '—'}</div><div class="dm-k">工具调用</div></div>
+      <div class="dm-card"><div class="dm-v">${a.status === 'pending' ? '—' : fmtDur(a.status === 'running' ? state.t : a.dur)}</div><div class="dm-k">${a.status === 'running' ? '已运行' : '耗时'}</div></div>
+      <div class="dm-card"><div class="dm-v">${doneTools}<small>/ ${a.timeline.length || 0}</small></div><div class="dm-k">调用成功</div></div>
+    </div>
+
+    <div class="dt-section">
+      <div class="sec-head"><h3>工具调用</h3><span class="sec-count">${a.timeline.length} 次</span></div>
+      ${a.timeline.length ? `
+      <div class="timeline">
+        ${a.timeline.map(t => `
+          <div class="tl-item ${t.st}">
+            <span class="tl-node"></span>
+            <span class="tl-tool">${esc(t.tool)}</span>
+            <span class="tl-sum">${esc(t.sum)}</span>
+            ${t.st === 'error' ? `<span class="tl-err-tag">失败</span>` : ''}
+            <span class="tl-dur">${t.st === 'running' ? '进行中' : esc(t.dur)}</span>
+          </div>`).join('')}
+      </div>` : `<div class="pending-box">尚无工具调用</div>`}
+    </div>
+
+    <div class="dt-section">
+      <div class="sec-head"><h3>${a.result ? '结构化输出' : a.status === 'running' ? '实时输出' : '输出'}</h3></div>
+      ${output}
+    </div>`;
+
+  $('#dt-prompt').addEventListener('click', () => {
+    state.promptOpen[a.id] = !state.promptOpen[a.id];
+    renderDetail();
+  });
+  box.scrollTop = prevScroll;
+}
+
+/* ============================================================
+   Tab 切换
+   ============================================================ */
+function moveIndicator() {
+  const active = document.querySelector(`.tab[data-view="${state.view}"]`);
+  const bar = $('#tab-indicator');
+  bar.style.left = active.offsetLeft + 'px';
+  bar.style.width = active.offsetWidth + 'px';
+}
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  state.view = t.dataset.view;
+  document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x === t));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + state.view));
+  moveIndicator();
+  if (state.view === 'script') renderCode();
+}));
+window.addEventListener('resize', moveIndicator);
+
+/* ============================================================
+   模拟运行 —— 演示 运行中→完成、等待→运行 的完整弧线
+   ============================================================ */
+const SIM_EVENTS = [
+  { at: 162, run() {   // nmc 第 5 次调用完成,追加第 6 次
+      const a = AGENTS.find(x => x.id === 'nmc');
+      Object.assign(a.timeline[4], { st: 'done', dur: '6.2s' });
+      a.timeline.push({ tool: 'WebFetch', sum: 'nmc.cn 逐 3 小时预报表(温度/降水/风)', dur: '', st: 'running' });
+      a.stream = '已取得发布时间 2026-07-17 16:00,正在解析逐 3 小时要素表';
+  }},
+  { at: 170, run() {   // 第 6 次完成,开始提交结构化结果
+      const a = AGENTS.find(x => x.id === 'nmc');
+      Object.assign(a.timeline[5], { st: 'done', dur: '7.8s' });
+      a.timeline.push({ tool: 'StructuredOutput', sum: '提交结构化结果', dur: '', st: 'running' });
+      a.stream = '正在按 RESULT_SCHEMA 组装结构化结果';
+  }},
+  { at: 173, run() {   // nmc 完成 → 查询阶段收口,交叉核对启动
+      const a = AGENTS.find(x => x.id === 'nmc');
+      Object.assign(a.timeline[6], { st: 'done', dur: '2.4s' });
+      a.status = 'done'; a.tok = 12600; a.dur = 173;
+      a.result = {
+        condition: '中雨转小雨,局部雷阵雨', forecastDate: '2026-07-18',
+        highC: 31, lowC: 26,
+        rain: '白天中雨,夜间转小雨;偏东风 3~4 级',
+        observedAt: '页面显示发布于 2026-07-17 16:00',
+        source: '中央气象台(nmc.cn)',
+      };
+      const s = AGENTS.find(x => x.id === 'synthesis');
+      s.status = 'running'; s.tok = 800;
+      s.stream = '正在交叉比对 3 份信源报告:温度区间一致,天气现象强度存在分歧(小雨 ~ 雷暴)';
+      s.timeline.push({ tool: 'Synthesize', sum: '交叉比对 3 份信源报告(仅依据上游结构化结果)', dur: '', st: 'running' });
+  }},
+  { at: 179, run() {
+      const s = AGENTS.find(x => x.id === 'synthesis');
+      Object.assign(s.timeline[0], { st: 'done', dur: '5.6s' });
+      s.timeline.push({ tool: 'StructuredOutput', sum: '提交核对结论', dur: '', st: 'running' });
+      s.stream = '分歧已定性,正在生成出行建议与置信度';
+  }},
+  { at: 184, run() {   // 全部完成
+      const s = AGENTS.find(x => x.id === 'synthesis');
+      Object.assign(s.timeline[1], { st: 'done', dur: '4.9s' });
+      s.status = 'done'; s.tok = 4100; s.dur = 11;
+      s.result = {
+        date: '2026-07-18',
+        summary: '多云转小雨,午后至傍晚有阵性降水,局地可能出现雷暴',
+        temperature: '25 ~ 31°C(三源一致,±0.5°C)',
+        rain: '降水概率高(约 80%),日累计约 19 mm',
+        wind: '偏东风 3~4 级',
+        advice: '建议携带雨具;傍晚尽量避免户外长时间活动,注意雷电',
+        confidence: '高(温度与降水趋势三源一致)',
+        sourceLinks: [
+          { name: '中国天气网', url: 'https://www.weather.com.cn/weather1d/101200101.shtml' },
+          { name: '中央气象台', url: 'https://www.nmc.cn/publish/forecast/AHB/wuhan.html' },
+          { name: 'Open-Meteo', url: 'https://open-meteo.com/' },
+        ],
+        discrepancies: '天气现象强度不一:中国天气网报小雨转阵雨,Open-Meteo 报雷暴伴轻微冰雹;温度高度一致',
+      };
+      state.workflowDone = true;
+  }},
+];
+
+function tick() {
+  if (state.workflowDone) { clearInterval(state.simTimer); state.simTimer = null; renderAll(); return; }
+  state.t += 1;
+  // 运行中 agent 的 token 缓慢增长
+  for (const a of AGENTS) if (a.status === 'running') a.tok += 60 + Math.floor(((state.t * 7919) % 97));
+  for (const e of SIM_EVENTS) if (e.at === state.t) e.run();
+  renderAll();
+}
+
+function startSim() {
+  if (state.simTimer) clearInterval(state.simTimer);
+  state.simTimer = setInterval(tick, 1000);
+}
+
+function resetSim() {
+  clearInterval(state.simTimer); state.simTimer = null;
+  location.reload(); // 原型级重置:直接刷新回初始态(localStorage 无状态依赖)
+}
+
+/* ============================================================
+   Tweaks
+   ============================================================ */
+$('#tweaks-fab').addEventListener('click', () => $('#tweaks-pop').classList.toggle('open'));
+document.querySelectorAll('.seg-ctl').forEach(ctl => {
+  ctl.addEventListener('click', e => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    ctl.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+    const kind = ctl.dataset.tweak, v = btn.dataset.v;
+    if (kind === 'theme') document.documentElement.dataset.theme = v === 'light' ? 'light' : '';
+    if (kind === 'density') document.documentElement.dataset.density = v === 'compact' ? 'compact' : '';
+  });
+});
+$('#tw-replay').addEventListener('click', resetSim);
+
+/* ============================================================
+   启动
+   ============================================================ */
+function renderAll() {
+  renderHeader();
+  renderOverview();
+  renderList();
+  renderDetail();
+  if (codeRendered) { renderCodeChips(); renderPhaseStrip(); }
+}
+renderAll();
+moveIndicator();
+startSim();
+</script>
+</body>
+</html>

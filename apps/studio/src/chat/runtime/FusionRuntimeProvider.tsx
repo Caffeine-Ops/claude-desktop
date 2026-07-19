@@ -573,14 +573,20 @@ export function FusionRuntimeProvider({
       const isFirstMessage = useChatStore.getState().messages.length === 0
 
       // Slides 会话标记（ComposerModePicker 退役后的唯一写手，2026-07-16）：
-      // 首条消息以 ppt-master 斜杠开头（EmptyState ScenarioRail 的「制作PPT」
+      // 消息以 ppt-master 斜杠开头（EmptyState ScenarioRail 的「制作PPT」
       // chip、SkillPicker、或手敲 `/`，殊途同归都是 leading 命令）就把本会话
       // 标记为 slides 会话 → ThreadView 双分栏工作台。旧机制是「发送时全局
       // mode===slides 则 markIfSlides + 拼 /ppt-master 前缀」，模式入口收敛到
       // 技能 chip 后，斜杠本身就在正文里，不再需要拼前缀——spreadsheets /
       // remotion 两段同款拼前缀逻辑同理一并退役（chip 自带命令）。
+      // 故意不判 isFirstMessage（2026-07-18 用户报：先聊两句"你好"再点「制作
+      // PPT」chip，右侧栏目整个不出现）——那个判断是从上面已退役的"拼前缀"
+      // 逻辑挪来的，对这里的用途没有保护意义：markSlidesSession 是幂等的
+      // one-way 标记（unmarkSlidesSession 只由 ReplayController 用于回放清
+      // 场），会话中途才第一次带上 ppt-master 命令同样应该点亮两栏工作台，
+      // 不该被"必须是第 1 条消息"卡住。
       const alreadyPptSlash = /^\/(claude-desktop:)?ppt-master\b/.test(baseText)
-      if (alreadyPptSlash && isFirstMessage && sessionId !== null) {
+      if (alreadyPptSlash && sessionId !== null) {
         useComposerModeStore.getState().markSlidesSession(sessionId)
       }
 

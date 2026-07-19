@@ -155,7 +155,7 @@ export function SpreadsheetPreviewPanel(): React.JSX.Element | null {
   )
 
   return (
-    <div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card">
+    <div className="workspace-split-panel relative flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card">
       {/* 盘上文件变更提示条:悬浮在顶栏下方,点击重新解析(保留 zoom/
           当前 sheet),✕ 忽略本次变更。 */}
       {stale && (

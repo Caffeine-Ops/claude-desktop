@@ -5,6 +5,7 @@ import {
   useEditingSvgFile,
   useStreamingAskArgsText,
   usePreviewServer,
+  useSourcePptx,
   useWrittenFiles,
   useImageFeeds
 } from '../../../stores/chat'
@@ -16,6 +17,7 @@ import { OutlinePanel } from '../OutlinePanel'
 import { CanvasQuestionnaire } from './CanvasQuestionnaire'
 import { ImagesPanel, useImageFeedsLive } from './ImagesPanel'
 import { ReplaySlidesViewer, useReplaySlideDeck } from './ReplaySlidesViewer'
+import { SourceDeckViewer } from './SourceDeckViewer'
 import { WrittenFilesPanel } from './WrittenFilesPanel'
 
 /* ─────────────────────── Slides workspace ───────────────────── */
@@ -55,13 +57,18 @@ const CANVAS_TAB_ICONS: Record<CanvasTab, React.ReactNode> = {
 }
 
 /**
- * Right-hand canvas workspace, shown beside the chat in slides mode. Tabs:
- * 幻灯片 / 大纲 / 文件 are still static shells; 「问题」is live — it appears
- * only while this session has a pending AskUserQuestion and hosts the
+ * Right-hand canvas workspace, shown beside the chat in slides mode. All
+ * five tabs (预览幻灯片/大纲/文件/图片/问题) are always present (2026-07-18
+ * redesign — calling ppt-master should give a stable shell from the first
+ * turn, not one that pops tabs in and out); a tab with nothing to show yet
+ * renders EmptyTabState instead of disappearing. 「问题」still auto-focuses
+ * the moment this session has a pending AskUserQuestion and hosts the
  * questionnaire there (instead of inline in the chat stream — ThreadView
- * suppresses the inline prompt for AskUserQuestion, see suppressAskInline).
- * When a question arrives we auto-switch to 「问题」; after the user submits,
- * the tab disappears and we fall back to 幻灯片.
+ * suppresses the inline prompt for AskUserQuestion, see suppressAskInline);
+ * after the user submits we fall back to 预览幻灯片. 预览幻灯片 itself shows
+ * whichever of THREE sources applies, in priority order: a live-preview
+ * session (LivePreviewEditor) > a detected source .pptx with no live
+ * session yet (SourceDeckViewer) > empty.
  */
 export function SlidesWorkspace(): React.JSX.Element {
   const sessionId = useChatStore((s) => s.sessionId)
@@ -89,91 +96,63 @@ export function SlidesWorkspace(): React.JSX.Element {
   const hasQuestions = isReplay
     ? replayActivePanel === 'questionnaire'
     : pendingAsk !== null || streamingArgs !== null
-  // Active ppt-master server (kind + URL) when one is up, else null. Two phases:
+  // Active ppt-master surface (kind + project dir) when one is up, else null.
+  // Two phases:
   //   - kind 'confirm' → the Eight-Confirmations page, rendered NATIVELY in
-  //     the 「问题」tab (CanvasConfirm — the old 浏览器 iframe tab is gone).
+  //     the 「问题」tab (CanvasConfirm).
   //   - kind 'preview' → Executor live preview, rendered NATIVELY in
-  //     「预览幻灯片」(LivePreviewEditor fetches the server's SVG itself).
+  //     「预览幻灯片」(LivePreviewEditor reads the project's SVGs over IPC).
   // See usePreviewServer in stores/chat.
-  // 回放会话必须把 server 归零：回放消息里含真实的 launch 命令（URL 能被
-  // usePreviewServer 解析出来），不归零的话 identity probe 会去 fetch
-  // localhost:PORT——演示机上若恰有【别的会话】的预览 server 正在跑同一
-  // 端口，回放的预览 tab 会错接到那个 live server（confirm 面板同理）。
-  // 归零后 hasPreview/identity probe 自然关断；hasConfirm 单独在下面按
-  // isReplay 分支改读 activeQuestionsPanel（confirm 面板离线渲染，不需要
-  // 真实 server，见 CanvasConfirm 的 replaySnapshots prop）。
+  // 回放会话必须把 server 归零：回放消息里含真实的 confirm_wait.py/
+  // preview_open.py 命令（projectDir 能被 usePreviewServer 解析出来），不
+  // 归零的话回放的预览/confirm 面板会去读【当前磁盘上】那个项目目录——
+  // 演示机上若恰好存在同名项目，回放会错接到 live 数据而非录制快照。
+  // 归零后 hasPreview 自然关断；hasConfirm 单独在下面按 isReplay 分支改读
+  // activeQuestionsPanel（confirm 面板离线渲染，不需要真实项目目录，见
+  // CanvasConfirm 的 replaySnapshots prop）。
   const liveServer = usePreviewServer()
   const server = isReplay ? null : liveServer
   const hasConfirm = isReplay ? replayActivePanel === 'confirm' : server?.kind === 'confirm'
   const hasPreview = server?.kind === 'preview'
-  // usePreviewServer resolves the preview URL from the launch command in the
-  // transcript, which OUTLIVES the server when it stops by idle-timeout or
-  // self-exit (no `--shutdown` line ever lands to clear it). LivePreviewEditor
-  // polls the URL and reports reachability up here; once it's unreachable we
-  // treat the preview as gone and drop the 幻灯片 tab — a stale launch URL must
-  // not leave a dead "预览服务已停止" tab behind. Keyed off server?.url so a
-  // fresh launch (new URL) clears the flag and the tab returns.
-  const [previewDown, setPreviewDown] = useState(false)
-  const previewUrl = server?.url
+  // No more port-reuse identity risk — file+IPC only ever answers questions
+  // about the exact `projectDir` it's given, there's no server that could be
+  // answering for a DIFFERENT project on a reused port (the old identity
+  // probe against `/api/config` existed solely to catch that class of bug).
+  // What replaces it: LivePreviewEditor reports `projectGone` when
+  // PPT_PREVIEW_LIST_SLIDES says the project's svg_output/ doesn't exist
+  // (deleted, or a stale resumed-transcript path) — same "drop the tab
+  // rather than leave a dead shell up" role the old `previewDown` played.
+  const previewProjectDir = hasPreview && server ? server.projectDir : undefined
+  const [projectGone, setProjectGone] = useState(false)
   useEffect(() => {
-    // New (or cleared) preview server → reset reachability for the new URL.
-    setPreviewDown(false)
-  }, [previewUrl])
-  // Identity gate: ports are REUSED across sessions — the URL recorded in a
-  // resumed session's transcript may now be answered by a DIFFERENT project's
-  // editor (real incident: deck A's :5050 died overnight, deck B pinned
-  // --port 5050, resuming deck A's session rendered deck B). Reachability
-  // alone would happily paint the wrong deck, so before trusting a preview
-  // server we ask WHO it is (/api/config reports `project`, see
-  // svg_editor/server.py) and compare against the project the launch command
-  // named (PreviewServer.project). Mismatch — or a server too old to report
-  // its identity — keeps the tab hidden. No expected project (command-shape
-  // extraction failed) → reachability-only, the previous behavior.
-  const expectedProject = server?.project
-  const [identityOk, setIdentityOk] = useState(false)
-  useEffect(() => {
-    if (!hasPreview || !previewUrl) {
-      setIdentityOk(false)
-      return
-    }
-    if (!expectedProject) {
-      setIdentityOk(true)
-      return
-    }
-    setIdentityOk(false)
-    let cancelled = false
-    let attempt = 0
-    const probe = async (): Promise<void> => {
-      attempt += 1
-      try {
-        const res = await fetch(`${previewUrl}/api/config`)
-        const cfg = (await res.json()) as { project?: unknown }
-        if (cancelled) return
-        setIdentityOk(cfg.project === expectedProject)
-      } catch {
-        if (cancelled) return
-        // A transient loopback hiccup would otherwise hide the tab forever
-        // (nothing re-probes this URL) — retry briefly, then give up. The
-        // launched-then-dies case is LivePreviewEditor's polling's job.
-        if (attempt < 3) setTimeout(probe, 700)
-      }
-    }
-    void probe()
-    return () => {
-      cancelled = true
-    }
-  }, [hasPreview, previewUrl, expectedProject])
-  // 预览幻灯片 exists ONLY while the live-preview server is up, reachable AND
-  // verified to be THIS session's deck: the tab appears when the server
-  // launches and drops out when it dies (idle-timeout / self-exit). No
-  // pre-launch placeholder shell, no dead "预览服务已停止" tab lingering after
-  // — the tab's presence IS the signal that a live deck is previewable now.
+    // New (or cleared) preview project → reset gone-ness for the new dir.
+    setProjectGone(false)
+  }, [previewProjectDir])
+  // 预览幻灯片 exists ONLY while a live-preview session is active for THIS
+  // project: the tab appears once preview_open.py's ready line names it and
+  // drops out once its svg_output/ is confirmed gone. No pre-launch
+  // placeholder shell, no dead "预览服务已停止" tab lingering after — the
+  // tab's presence IS the signal that a live deck is previewable now.
   // 回放版对齐同一语义：第一页在播放进度里被「生成出来」（揭示）之前 tab
   // 不存在——用户先看到大纲/文件逐步落地，随后预览 tab 出现并抢焦点，
   // 重现 live 的节奏。
   const showSlidesTab = isReplay
     ? (replayDeck?.ready.length ?? 0) > 0
-    : hasPreview && !previewDown && identityOk
+    : hasPreview && !projectGone
+  // The .pptx path named in this session's first user message, if any — the
+  // signal the user handed ppt-master an EXISTING deck to work from
+  // (beautify/modify). While showSlidesTab is false (no live-preview session
+  // yet — the AI hasn't produced any svg_output/ pages), 预览幻灯片 shows
+  // THIS source file's own pages instead (SourceDeckViewer, converted
+  // offline via PPT_SOURCE_PREVIEW), so the user sees something immediately
+  // rather than staring at an empty tab until the AI's first write. Once a
+  // live-preview session starts, showSlidesTab takes over and this yields —
+  // see the tab body below, the two never render at once. Replay sessions
+  // don't have a live message store to scan the same way replay's other
+  // hooks short-circuit; skip it there too (isReplay's own static asset
+  // viewer already covers the "show something" need).
+  const sourcePptxHook = useSourcePptx()
+  const sourcePptx = isReplay ? null : sourcePptxHook
   // Every file this session has written via Write. Drives the auto-focus on each
   // new write (which needs to see EVERY write, including .svg deck pages, to
   // route them to the right tab). See useWrittenFiles in stores/chat.
@@ -201,11 +180,9 @@ export function SlidesWorkspace(): React.JSX.Element {
   // ppt-master image acquisition runs — AI generation (`image_gen.py
   // --manifest`) and/or web download (`image_search.py --batch`). Each feed
   // names the worklist JSON to poll and whether that run is still in flight.
-  // Drives the 「图片」tab: it appears once any run is detected and stays
-  // (like 文件), and we auto-focus it while any run is live. See
-  // useImageFeeds in stores/chat.
+  // Drives the 「图片」tab's content (empty state vs panels) and auto-focus
+  // while any run is live. See useImageFeeds in stores/chat.
   const imageFeeds = useImageFeeds()
-  const hasImages = imageFeeds.length > 0
   // Data-corrected liveness, NOT the raw command flag: a resumed session's
   // restored launch command claims "generating" forever (endedAt/tasks are
   // runtime-only fields the JSONL restore doesn't carry), so the busy dot /
@@ -217,9 +194,15 @@ export function SlidesWorkspace(): React.JSX.Element {
   // 两处：编辑中的 tab 抢焦点（下方 effect），以及幻灯片 tab 的脉冲点
   // （tabBusy）。LivePreviewEditor 里同源信号驱动跳页 + 骨架屏。
   const editingSvg = useEditingSvgFile()
-  // Default landing is 大纲 — 预览幻灯片 only exists once the live-preview
-  // server is up (see showSlidesTab above), so it can't be the initial tab.
-  const [tab, setTab] = useState<CanvasTab>('outline')
+  // All five tabs are always present now (see the `tabs` array below), so
+  // any of them is a valid landing spot — no existence redirect needed the
+  // way 预览幻灯片 used to require one. Default is 大纲, EXCEPT when the
+  // first message already named a source .pptx: lazy-initialized so a
+  // remount of an existing session (switching back to a chat that already
+  // has this message) lands straight on 预览幻灯片 with the source preview,
+  // not a flash of 大纲 first. A brand-new session's message lands a tick
+  // after mount instead — the auto-focus effect below catches that case.
+  const [tab, setTab] = useState<CanvasTab>(() => (sourcePptx ? 'slides' : 'outline'))
 
   // Auto-focus 问题 the moment a questionnaire OR the confirm server appears.
   // The confirm Eight-Confirmations page now renders NATIVELY in the 问题 tab
@@ -245,16 +228,18 @@ export function SlidesWorkspace(): React.JSX.Element {
     if (wantsImagesTab) setTab('images')
   }, [wantsImagesTab, wantsQuestionsTab])
 
-  // Auto-focus the right tab for the live-preview server phase (unless the 问题
-  // or 图片 tab is commanding focus): preview → 预览幻灯片 (which renders the
-  // live SVG itself). The confirm phase is handled above (native 问题 tab).
+  // Auto-focus 预览幻灯片 for either phase that wants it (unless 问题/图片 is
+  // commanding focus): a live-preview session starting (showSlidesTab), OR —
+  // while there's no live session yet — a detected source .pptx (the
+  // "先打开预览" affordance: SourceDeckViewer shows the original deck the
+  // instant it's known, without waiting for the AI's first svg_output/
+  // write). `sourcePptx` is stable for the whole session once set (see its
+  // hook), so this only actually MOVES focus once, at whichever transition
+  // happens first — it doesn't keep yanking the user back after that.
   useEffect(() => {
     if (wantsQuestionsTab || wantsImagesTab) return
-    // Keyed on showSlidesTab (not raw hasPreview) so the focus grab waits for
-    // the identity probe — grabbing while the tab is still hidden would just
-    // bounce off the redirect guard below and never come back.
-    if (showSlidesTab) setTab('slides')
-  }, [showSlidesTab, wantsQuestionsTab, wantsImagesTab])
+    if (showSlidesTab || sourcePptx) setTab('slides')
+  }, [showSlidesTab, sourcePptx, wantsQuestionsTab, wantsImagesTab])
 
   // AI 开始修改一张 deck 页（svg_output/ 下的 .svg 有 Edit/Write in flight）
   // → 抢焦点到 预览幻灯片：用户停在 文件/大纲 tab 时也立刻被带去看跳页 +
@@ -270,17 +255,6 @@ export function SlidesWorkspace(): React.JSX.Element {
     if (wantsQuestionsTab) return
     if (editingDeckSvg && showSlidesTab) setTab('slides')
   }, [editingDeckSvg, showSlidesTab, wantsQuestionsTab])
-
-  // Whenever we're pointed at 预览幻灯片 while the tab doesn't exist (server
-  // not launched yet, or launched-then-died, or the questions fallback picked
-  // 'slides' blindly), redirect to a tab that does exist: 文件 if there are
-  // written files, else 大纲. `tab` is a dep on purpose — showSlidesTab alone
-  // wouldn't re-fire when a later setTab('slides') lands while the tab is
-  // hidden.
-  useEffect(() => {
-    if (showSlidesTab) return
-    setTab((t) => (t === 'slides' ? (hasFileTabFiles ? 'files' : 'outline') : t))
-  }, [showSlidesTab, hasFileTabFiles, tab])
 
   // Auto-focus the right tab on each new write so the user watches files land as
   // they're written (mirrors the 问题 auto-focus). Keyed off a "write
@@ -356,29 +330,39 @@ export function SlidesWorkspace(): React.JSX.Element {
   // 56px 标题头（2026-07-07 工作区重设计），见 store 的头注释。
   const readiness = usePreviewReadinessStore((s) => s.readiness)
 
+  // The four content tabs are always present (2026-07-18 redesign) — calling
+  // ppt-master should give a stable, predictable workspace shell from the
+  // first turn, not one that pops tabs in and out as signals arrive. What
+  // used to gate EXISTENCE (showSlidesTab / hasImages) now only gates
+  // CONTENT vs. empty state (see the body switch and EmptyTabState below).
+  //
+  // 问题 is the one exception (2026-07-18, same day, user follow-up): unlike
+  // the other four it isn't a content surface you browse, it's a pending-
+  // action surface — there's either something to answer right now or there
+  // isn't. A permanent button that mostly reads "暂无问题" reads as a
+  // standing false alarm, and the STALE-FORM bug this same day (CanvasConfirm
+  // re-showing an already-answered tier-1 form on remount) made that worse:
+  // users kept finding themselves back on a tab with nothing left to do.
+  // So 问题 stays purely signal-driven, exactly like before the tab-always-
+  // present redesign: mounted (and auto-focused, see the effect above) only
+  // while wantsQuestionsTab is true, gone the instant it clears.
   const tabs: { id: CanvasTab; label: string }[] = [
-    // 预览幻灯片 only exists while the live-preview server is up and reachable
-    // (appears on launch, drops out on idle-timeout / self-exit) — see
-    // showSlidesTab above.
-    ...(showSlidesTab ? [{ id: 'slides' as const, label: '预览幻灯片' }] : []),
+    { id: 'slides', label: '预览幻灯片' },
     { id: 'outline', label: '大纲' },
     { id: 'files', label: '文件' },
-    // 图片 tab: appears once this session ran an AI image-generation command
-    // (image_gen.py --manifest) and stays for the rest of the session so the
-    // user can revisit the generated previews. Auto-focused while generating.
-    ...(hasImages ? [{ id: 'images' as const, label: '图片' }] : []),
-    // 问题 tab: while a questionnaire is streaming/pending, OR while the
-    // confirm server is up (the Eight-Confirmations page renders natively here
-    // via CanvasConfirm — see body below).
+    { id: 'images', label: '图片' },
     ...(wantsQuestionsTab ? [{ id: 'questions' as const, label: '问题' }] : [])
-    // NOTE: the old 浏览器 iframe-fallback tab for the confirm phase is gone —
-    // the native 问题 tab (CanvasConfirm) is the ONLY confirm surface now.
   ]
 
   return (
     // @container/workspace：分栏里视口断点失真，tab 栏的窄档适配（就绪
     // 胶囊降级）用容器查询。容器断点：lg=512 xl=576px。
-    <div className="@container/workspace flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card">
+    // 毛玻璃质感（2026-07-18，跟账户菜单/composer/rail 同一批）：唯一背景层
+    // 就是这个容器的 bg-card（tab 栏、EmptyTabState 等下游都不带自己的
+    // 不透明底，改这一处即覆盖整块工作画布面），实底换成半透明 + blur。
+    // /70 对齐账户菜单同档——这个面持续承载大纲/文件/图片等正文内容，
+    // 比 composer 的 /45 更保守，优先保证长时间阅读的可读性。
+    <div className="@container/workspace workspace-split-panel flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card/70 backdrop-saturate-150">
       {/* Tab bar —— 不再自带窗口拖拽 drag（2026-07-08 拖拽面收敛重构）：
           右列顶部的拖拽/双击缩放由根 layout 的 .window-drag-strip（常驻
           fixed 全宽 46px）覆盖，本 bar 曾经的 drag 声明随分栏开合反复
@@ -446,11 +430,12 @@ export function SlidesWorkspace(): React.JSX.Element {
       </div>
 
       {/* Body */}
-      {/* Confirm phase: the Eight-Confirmations page rendered NATIVELY (not an
-          iframe). CanvasConfirm fetches the same Flask server's
-          /api/catalogs + /api/recommendations off `server.url`, lets the user
-          pick, and POSTs the SAME contract back to /api/confirm — the server's
-          --wait-only loop (watching result.json) is unchanged.
+      {/* Confirm phase: the Eight-Confirmations page rendered NATIVELY.
+          CanvasConfirm reads `<projectDir>/confirm_ui/*.json` over the
+          CONFIRM_UI_READ IPC, lets the user pick, and writes back via
+          CONFIRM_UI_WRITE_RESULT — confirm_wait.py's blocking wait (watching
+          result.json) doesn't care which side wrote the file, so this IPC
+          write and a hand-edit of the JSON would be equally valid to it.
 
           KEEP-ALIVE: this is rendered OUTSIDE the mutually-exclusive tab
           switch below and hidden with `hidden` (display:none) when another tab
@@ -459,15 +444,15 @@ export function SlidesWorkspace(): React.JSX.Element {
           React state; unmounting it on a tab switch (e.g. peeking at 「文件」)
           would destroy all of that and remounting re-boots from
           recommendations.json, snapping the user back to stage-1 while the
-          server's `_already_confirmed` flag persists — the "confirmed once but
+          on-disk `_already_confirmed` state persists — the "confirmed once but
           back at step one" bug. So it stays mounted for the whole confirm
           phase and only its visibility toggles. It still takes precedence over
           a questionnaire on the 问题 tab (the two never coincide, but if they
           did, the active confirm phase is the right surface — hence the
           `!hasConfirm` guard on the questionnaire branch below). */}
-      {/* 回放态：CanvasConfirm 没有真实 server 可 fetch，baseUrl 只是占位
-          key（组件内部 isReplay=replaySnapshots!==undefined 早退所有网络
-          请求，见该组件头注释）——离线数据源是 replayConfirmSnapshots
+      {/* 回放态：CanvasConfirm 没有真实项目目录可读，projectDir 只是占位
+          key（组件内部 isReplay=replaySnapshots!==undefined 早退所有 IPC
+          读写，见该组件头注释）——离线数据源是 replayConfirmSnapshots
           （manifest.meta.confirmSnapshots，ReplayController load() 时灌入
           replayStore）。旧格式包该字段为 null 时 hasConfirm 也不会为真
           （activeQuestionsPanel 只有 confirm.open 命中快照时才置位）。 */}
@@ -480,11 +465,11 @@ export function SlidesWorkspace(): React.JSX.Element {
           {isReplay ? (
             <CanvasConfirm
               key="replay-confirm"
-              baseUrl=""
+              projectDir=""
               replaySnapshots={replayConfirmSnapshots ?? []}
             />
           ) : (
-            <CanvasConfirm key={server!.url} baseUrl={server!.url} />
+            <CanvasConfirm key={server!.projectDir} projectDir={server!.projectDir} />
           )}
         </div>
       )}
@@ -504,11 +489,23 @@ export function SlidesWorkspace(): React.JSX.Element {
         <ReplaySlidesViewer deck={replayDeck} />
       ) : tab === 'slides' && showSlidesTab && server ? (
         // Live-preview phase: the native editor (replaces the old read-only
-        // SlidesLivePreview). Fetches the svg_editor server's SVG and renders
-        // it natively WITH the annotation/edit interactions (element select →
-        // edit instruction → annotate / 应用修改 / 撤销 / 退出), the same flow the
-        // browser editor at :5050 offered. See LivePreviewEditor.
-        <LivePreviewEditor baseUrl={server.url} onServerDownChange={setPreviewDown} />
+        // SlidesLivePreview). Reads the project's svg_output/ over IPC and
+        // renders it natively WITH the annotation interactions (element
+        // select → edit instruction → annotate / 应用修改 / 退出), the same
+        // flow the deleted browser editor offered. See LivePreviewEditor.
+        <LivePreviewEditor
+          projectDir={server.projectDir}
+          onProjectGoneChange={setProjectGone}
+        />
+      ) : tab === 'slides' && !showSlidesTab && sourcePptx ? (
+        // Source-preview phase: no live-preview session yet (the AI hasn't
+        // written any svg_output/ pages), but the user handed ppt-master an
+        // EXISTING deck to work from — show that deck's own pages so 预览幻灯片
+        // isn't empty while the AI is still reading/planning. Yields to the
+        // branch above the moment a live-preview session starts (the two
+        // never render at once). `key` by path so switching to a different
+        // source file (a later message naming another one) restarts cleanly.
+        <SourceDeckViewer key={sourcePptx.path} pptxPath={sourcePptx.path} />
       ) : tab === 'files' && hasFileTabFiles ? (
         // 文件 tab: the full content of files written this session, two-pane
         // (file list + content) like SlidesLivePreview. The inline Write card's
@@ -547,17 +544,30 @@ export function SlidesWorkspace(): React.JSX.Element {
           </div>
         )
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-          <div className="text-[15px] font-semibold text-foreground">
-            {tab === 'outline' ? '暂无大纲' : '未命名'}
-          </div>
-          <div className="mt-1 text-[13px] text-muted-foreground">
-            {tab === 'outline'
-              ? '生成 design_spec.md 后将在此处展示大纲'
-              : '确认大纲后将在此处展示幻灯片'}
-          </div>
-        </div>
+        <EmptyTabState tab={tab} />
       )}
+    </div>
+  )
+}
+
+/** Per-tab empty-state copy — every tab is always mounted now (see the
+ *  `tabs` array above), so each needs its own "nothing here yet" state
+ *  instead of the old single generic fallback (which only ever had to cover
+ *  大纲 explicitly and a catch-all "确认大纲后…" for everything else, back
+ *  when 幻灯片/图片/问题 only existed once they had content). */
+function EmptyTabState({ tab }: { tab: CanvasTab }): React.JSX.Element {
+  const COPY: Record<CanvasTab, { title: string; hint: string }> = {
+    slides: { title: '暂无预览', hint: '确认大纲后将在此处展示幻灯片' },
+    outline: { title: '暂无大纲', hint: '生成 design_spec.md 后将在此处展示大纲' },
+    files: { title: '暂无文件', hint: 'AI 写出的文件将出现在此处' },
+    images: { title: '暂无图片', hint: '生成配图时将在此处展示进度与结果' },
+    questions: { title: '暂无问题', hint: '需要你确认方案时会出现在这里' }
+  }
+  const { title, hint } = COPY[tab]
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+      <div className="text-[15px] font-semibold text-foreground">{title}</div>
+      <div className="mt-1 text-[13px] text-muted-foreground">{hint}</div>
     </div>
   )
 }

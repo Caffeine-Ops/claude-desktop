@@ -50,7 +50,7 @@ export function formatTodoWrite({
                   t.status === 'completed'
                     ? 'text-muted-foreground/60 line-through'
                     : t.status === 'in_progress'
-                      ? 'text-accent'
+                      ? 'text-brand'
                       : 'text-foreground/85'
                 }
               >
@@ -344,7 +344,7 @@ export function formatSkill({ args, lang }: FormatterCtx): FriendlyView | null {
     headline: (
       <span>
         {pick(lang, '调用技能', 'Launch skill')}{' '}
-        <code className="font-mono text-[11.5px] text-accent">{skill}</code>
+        <code className="font-mono text-[11.5px] text-brand">{skill}</code>
         {skillArgs && (
           <span className="ml-1 text-muted-foreground/60">
             · {pick(lang, '参数', 'args')}{' '}

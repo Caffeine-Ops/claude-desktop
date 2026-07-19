@@ -351,15 +351,42 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
     // 分界线 rail（2026-07-08 二次定稿，原型 docs/ui-prototype-shell-refined.html
     // 形态 3「分界线」）：--sidebar 灰实面，与近白内容面之间由
     // .shell-content-card 的左缘竖线定边界（globals.css）。同日上午的
-    // 「毛玻璃」形态（bg-sidebar/40 + backdrop-blur + body 光斑壁纸）用户
-    // 真机看过定「太丑」退役，别加回。
+    // 「毛玻璃」形态（bg-sidebar/40 + backdrop-blur + body 主题色光斑壁纸）
+    // 用户真机看过定「太丑」退役——**当时否决的是「blur + 主题色光斑」组合**。
+    // 2026-07-19 用户在背景图换肤功能正式做好之后重新要求 rail 加毛玻璃，
+    // 这次明确排除光斑，只要半透明 + backdrop-blur：见 background-art.css
+    // 的 `html[data-bg-art] .app-rail` 规则（背景图关闭时这里仍是不透明
+    // bg-sidebar，同下面 utility 类，只有开着壁纸换肤才切换成玻璃态）。
+    // 光斑效果依旧不加回。
     // 无右边框：分界线由内容面左缘承担，rail 自己不画线（两条会叠粗）。
     // 宽度对齐原型 --sidebar-w: 244px（旧值 220 给不下「标题 + 相对时间」
     // 的会话行）。
     // ⚠️ w-61（244px）与设置页 V2 的 --sv2-sidebar-w（settings-v2.css）配对：
     // 设置页是全屏 overlay、自己画 rail + 浮卡，两边宽度不等则切换
     // 设置 ↔ 聊天时内容卡左边缘跳动。改宽度必须两处同步。
-    <nav className="flex h-full w-61 shrink-0 flex-col gap-1 bg-sidebar px-3 pb-3">
+    // app-rail：语义类名，仅供 background-art.css 在背景图换肤开启时把这层
+    // 从不透明 bg-sidebar 转半透明（html[data-bg-art] .app-rail）。不参与
+    // 样式本身（样式仍是下面这串 Tailwind utility），只是给那条规则一个稳定
+    // 挂点——rail 之前没有语义类名，只能靠 utility 类名选中，容易和其它同
+    // utility 的元素一起被误选。
+    //
+    // overlay 分支不挂 app-rail 类、直接 bg-transparent（2026-07-19，用户
+    // 点名要求收起态浮出面板也要毛玻璃）：真正的玻璃底色 + backdrop-blur
+    // 画在 RailShell.tsx 的 fixed 包裹 div 上（那层背后是真实聊天/画布内容，
+    // 不是像本组件平时那样只挡在壁纸前面，所以不挂靠 data-bg-art、始终
+    // 生效）。⚠️ 这里必须把 app-rail 类也摘掉，不能只把 bg-sidebar 换成
+    // bg-transparent——开着壁纸换肤时 `html[data-bg-art] .app-rail` 规则
+    // 的 specificity (0,2,1) 会压过 bg-transparent 这个 utility (0,1,0)，
+    // 照样把 nav 自己的半透明+blur 糊上去，跟包裹 div 的玻璃层嵌套 backdrop-
+    // filter 叠两次（CDP 真机验证过：开着壁纸时 nav 计算出的背景不是
+    // transparent 而是 hsl(var(--sidebar)/0.55)，就是这条规则赢的）。摘掉
+    // class 后这条规则对 overlay 态零命中，绘制职责完全交给外层包裹 div。
+    <nav
+      className={cn(
+        'flex h-full w-61 shrink-0 flex-col gap-1 px-3 pb-3',
+        overlay ? 'bg-transparent' : 'app-rail bg-sidebar'
+      )}
+    >
       {/* 顶部 48px：macOS 红绿灯的净空 + 窗口拖拽面（原型 .traffic）。
         * 原来是 nav 的 pt-12 padding——padding 不能标 app-region，改成
         * 实体条后这块「空白」真的能拖动窗口。收起/展开按钮叠在这条的
@@ -507,12 +534,14 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
         * ——它是挂在当前 pathname 上的 overlay，语义上是「我在智能助手，顺手
         * 开了插件市场」，同 settings=1/kb=1 的既定取向（见 openSettings 注释）。 */}
       <Tabs value={pathname.startsWith('/chat') ? 'chat' : 'canvas'}>
-        {/* 样式对齐 shadcn 官方 TabsDemo（2026-07-08 用户要求）：零覆盖类，
-          * 选中态/暗档细节全部交给 ui/tabs.tsx 基件默认（bg-background 白卡
-          * + shadow-sm + 暗档 border-input/bg-input/30）。此前的 bg-card 强制
-          * 白卡与选中 icon 染主题色两处覆盖一并退役。w-full 是布局适配
-          * （rail 通栏两段均分），不属于样式覆盖。 */}
-        <TabsList className="w-full">
+        {/* 样式对齐 shadcn 官方 TabsDemo（2026-07-08 用户要求）：选中态/暗档
+          * 细节交给 ui/tabs.tsx 基件默认（shadow-sm + 暗档 border-input）。
+          * 毛玻璃质感（2026-07-18，跟账户菜单/composer 同一批）：轨道
+          * bg-muted、选中段 bg-background 都是实底，这里用 className
+          * 覆盖成半透明 + backdrop-blur——只动这一处用法，不改 ui/tabs.tsx
+          * 基件（改基件会牵动全项目所有 Tabs 用法，超出这次的诉求范围）。
+          * w-full 是布局适配（rail 通栏两段均分），不属于样式覆盖。 */}
+        <TabsList className="w-full bg-muted/55 backdrop-blur-xl backdrop-saturate-150">
           {SURFACE_TABS.map((item) => (
             <TabsTrigger
               key={item.value}
@@ -525,6 +554,7 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
               // 设置盖住了 rail，用户只能走它们自带的「返回应用」，撞不到这个）。
               // onClick 每次点击都跑，由 goSurface 自己判断该做什么。
               onClick={() => goSurface(item.value)}
+              className="data-[state=active]:bg-background/70 data-[state=active]:backdrop-blur-md"
             >
               {item.icon}
               {item.label}
@@ -590,7 +620,13 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
               side="top"
               align="start"
               sideOffset={8}
-              className="w-[256px] rounded-[14px] p-[5px] shadow-[0_16px_50px_rgba(0,0,0,.14),0_2px_8px_rgba(0,0,0,.06)]"
+              // 玻璃质感（2026-07-18，用户参考 macOS「打开方式」原生毛玻璃菜单
+              // 定稿）：只在这一个实例上把基件的 bg-popover 实底换成半透明 +
+              // backdrop-blur + saturate（token 仍是 --popover，颜色本身没动，
+              // 只是材质从纸变成玻璃）。刻意不动 ui/dropdown-menu.tsx 基件或
+              // menus.css 的统一实底皮肤——那是 2026-07-08 全项目菜单定稿，
+              // 影响 ~15 个 canvas 菜单，本次需求只针对账户菜单这一处。
+              className="w-[256px] rounded-[14px] border-border/40 bg-popover/70 p-[5px] shadow-[0_16px_50px_rgba(0,0,0,.14),0_2px_8px_rgba(0,0,0,.06)] backdrop-blur-2xl backdrop-saturate-150"
             >
               {/* 用户名区：名字行（复制钮贴名字，copied 短暂变勾，非 menu
                 * item 点击不关菜单）+ 邮箱副行（浏览器直开无 authUser 时不

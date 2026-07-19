@@ -185,12 +185,15 @@ const components: Components = {
 
   hr: () => <hr className="my-4 border-border" />,
 
+  // 链接颜色钉死品牌绿 --brand（不跟用户可调主题色 --accent 走）——同登录页/
+  // 账户菜单/LivePreviewEditor 应用按钮同一套品牌绿渐变的既有惯例
+  // （2026-07-19 用户实锤：聊天正文链接不该随主题色变，这里是品牌露出位）。
   a: ({ children, href }) => (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-accent underline decoration-blue-400/40 underline-offset-2 transition hover:decoration-blue-400"
+      className="text-brand underline decoration-brand/40 underline-offset-2 transition hover:decoration-brand"
     >
       {children}
     </a>

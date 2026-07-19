@@ -32,6 +32,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { ChatSurface } from '@/src/components/ChatSurface'
 import { UpdateReadyToast } from '@/src/components/UpdateReadyToast'
 import { useSurfaceOverlayStore } from '@/src/stores/surfaceOverlay'
+import { useBackgroundZoneStore } from '@/src/stores/backgroundZone'
 import { cn } from '@/src/lib/utils'
 
 // canvas App 与 ChatSurface 内部的 ChatApp 同策略：ssr:false，模块只在
@@ -142,6 +143,21 @@ export function SurfaceHost() {
     return undefined
   }, [chatShowing])
 
+  // 背景图（壁纸）的 route-aware 遮罩分级：唯一写手，与上面的 data-surface
+  // 同款「本组件是本属性的唯一写手」纪律。chat 面放映时跟着
+  // useBackgroundZoneStore（BgZoneReporter 在 ThreadView 的空态/会话态两分支
+  // 各报一次）；canvas/market/kb 任一面放映时恒 'focus'——v1 只有 chat 面分
+  // 氛围/工作两档，其余面密度高，没有氛围态可言（background-art.css 消费）。
+  // isProbe 下不写，避免探针页染上属性。
+  const chatZone = useBackgroundZoneStore((s) => s.chatZone)
+  useEffect(() => {
+    if (isProbe) return undefined
+    document.documentElement.setAttribute('data-bg-zone', chatShowing ? chatZone : 'focus')
+    return () => {
+      document.documentElement.removeAttribute('data-bg-zone')
+    }
+  }, [isProbe, chatShowing, chatZone])
+
   // 把当前放映的面镜像进 store 供 rail 订阅（rail 不在 Suspense 内、不能自己
   // useSearchParams，理由见 stores/surfaceOverlay.ts）。本组件是唯一写手。
   useEffect(() => {
@@ -214,7 +230,9 @@ export function SurfaceHost() {
       {visited.current.chat && (
         <div
           className={cn(
-            'absolute inset-0',
+            // surface-face(--chat): background-art.css 的路由感知遮罩挂点
+            // （门控在 html[data-bg-art]，功能关闭时零命中）。
+            'absolute inset-0 surface-face surface-face--chat',
             chatShowing
               ? ''
               : '[content-visibility:hidden] pointer-events-none surface-inactive'
@@ -226,7 +244,7 @@ export function SurfaceHost() {
       {visited.current.canvas && (
         <div
           className={cn(
-            'absolute inset-0',
+            'absolute inset-0 surface-face surface-face--canvas',
             canvasShowing
               ? ''
               : '[content-visibility:hidden] pointer-events-none surface-inactive'
@@ -238,14 +256,31 @@ export function SurfaceHost() {
       {/* 两个面开关（?market=1 / ?kb=1）——与上面两面平级、DOM 序在后（放映时
         * 另两面都已是隐藏态，不存在盖穿问题）。条件渲染而非 keep-alive：轻量
         * 临时目的地，见 MarketSurface 头注释。顶部 46px 是 window-drag-strip
-        * 的地盘，两个面的顶栏都自己挖了 no-drag 洞（各自组件里）。 */}
+        * 的地盘，两个面的顶栏都自己挖了 no-drag 洞（各自组件里）。
+        *
+        * bg-card 是 2026-07-17 新加的（背景图换肤功能引出的回归）：
+        * MarketView.tsx/KnowledgeBaseSurface.tsx 自己的根节点从来没有背景色，
+        * 一直白嫖 .shell-content-card 的不透明底（hsl(var(--card))）。壁纸
+        * 功能把 .shell-content-card 在 html[data-bg-art] 时改成透明后，这两
+        * 个当时"本该保持不透明、不参与换肤"的临时面意外也漏了壁纸——页面里
+        * 零散的卡片/搜索框各自的 bg-card 底不会漏、但页面整体大面积区域会
+        * 露出壁纸色调，跟那些不透明色块拼成花斑（2026-07-17 真机实锤，看着
+        * 像"配色不搭配"）。当时直接给包装 div 补了一层不受 data-bg-art 影响
+        * 的固定不透明底堵住回归。
+        *
+        * 2026-07-18 用户推翻此前的排除决定，要求这两个面也换肤——处理方式
+        * 与 5 个分栏工作面板（见 background-art.css 的 .workspace-split-panel
+        * 头注释）同构：加语义类 workspace-split-panel，data-bg-art 开启时
+        * 从 bg-card 变成 veil-strong 近实底（同 focus 档同一档位，两个面
+        * 内容密度不低于活跃会话），关闭态原样保留 bg-card 不透明——依旧是
+        * 组件内部零散卡片/搜索框各自 bg-card 兜底，不受这条影响。 */}
       {marketShowing && (
-        <div className="absolute inset-0">
+        <div className="absolute inset-0 workspace-split-panel bg-card">
           <MarketSurface />
         </div>
       )}
       {kbShowing && (
-        <div className="absolute inset-0">
+        <div className="absolute inset-0 workspace-split-panel bg-card">
           <KnowledgeBaseSurface />
         </div>
       )}

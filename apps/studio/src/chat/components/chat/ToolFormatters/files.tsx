@@ -77,7 +77,7 @@ export function formatRead({
           {pick(lang, '读取文件', 'Read file')}
         </span>
         <code
-          className="min-w-0 truncate font-mono text-[11.5px] text-accent"
+          className="min-w-0 truncate font-mono text-[11.5px] text-brand"
           title={filePath}
         >
           {basename(filePath)}
@@ -155,7 +155,7 @@ export function formatWrite({
         </span>
         {filePath && (
           <code
-            className="min-w-0 truncate font-mono text-[11.5px] text-accent"
+            className="min-w-0 truncate font-mono text-[11.5px] text-brand"
             title={filePath}
           >
             {basename(filePath)}
@@ -250,7 +250,7 @@ export function formatEdit({ args, lang }: FormatterCtx): FriendlyView | null {
     headline: (
       <span>
         {pick(lang, '编辑文件', 'Edit file')}{' '}
-        <code className="font-mono text-[11.5px] text-accent">{filePath}</code>
+        <code className="font-mono text-[11.5px] text-brand">{filePath}</code>
         {replaceAll && (
           <span className="ml-1 text-muted-foreground/60">
             · {pick(lang, '替换全部匹配', 'replace all')}
@@ -291,7 +291,7 @@ export function formatMultiEdit({
     headline: (
       <span>
         {pick(lang, '批量编辑', 'Multi-edit')}{' '}
-        <code className="font-mono text-[11.5px] text-accent">{filePath}</code>
+        <code className="font-mono text-[11.5px] text-brand">{filePath}</code>
         <span className="ml-1 text-muted-foreground/60">
           · {pick(lang, `${edits.length} 处改动`, `${edits.length} edits`)}
         </span>

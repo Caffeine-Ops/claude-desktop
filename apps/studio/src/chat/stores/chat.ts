@@ -1391,6 +1391,47 @@ export function useActiveWorkflowRunId(): string | null {
 }
 
 /**
+ * Every subtask the foreground session's Task/Agent/Workflow tool calls
+ * have ever spawned, flattened across ALL such tool calls (not just the
+ * latest one) — active OR fully settled. Feeds the agent-team bar/detail
+ * takeover: unlike `useActiveWorkflowRunId` (which the script panel uses to
+ * know when to auto-collapse), the team bar's whole point is staying
+ * visible so the user can revisit a finished run's members, so this
+ * deliberately does NOT null out once every agent reaches a terminal state.
+ *
+ * `toolName` check mirrors the precedent in `useImageFeeds` above ('Task'
+ * and 'Agent' both name the same plain-subagent tool call depending on SDK
+ * version/build — see that selector's comment) plus `'Workflow'` for
+ * script-driven runs. `p.tasks` is already deduplicated by `taskId` within
+ * each tool-call part (see `mergeWorkflowTask`), and a given `taskId` can't
+ * appear under two different tool calls, so a plain flatten is safe — no
+ * cross-call dedup needed.
+ */
+export function useTeamMemberTasks(): WorkflowTask[] {
+  return useChatStore(
+    useShallow((s): WorkflowTask[] => {
+      const out: WorkflowTask[] = []
+      for (const m of s.messages) {
+        if (!Array.isArray(m.content)) continue
+        for (const p of (m.content as unknown) as ContentPart[]) {
+          if (
+            p.type === 'tool-call' &&
+            (p.toolName === 'Task' ||
+              p.toolName === 'Agent' ||
+              p.toolName === 'Workflow') &&
+            Array.isArray(p.tasks) &&
+            p.tasks.length > 0
+          ) {
+            out.push(...(p.tasks as WorkflowTask[]))
+          }
+        }
+      }
+      return out
+    })
+  )
+}
+
+/**
  * The SETTLED script text of a Workflow tool call, looked up by id in the
  * foreground session's messages — feeds the script panel's manual-open path
  * (点击卡片里的脚本入口重新打开). Returns null while the call is still
@@ -1460,40 +1501,63 @@ export function usePendingAskTiming(): {
 /* ───────────────── ppt-master in-app preview detection ──────────────── */
 
 /**
- * ppt-master spins up a local Flask server on http://localhost:5050 (AUTO-
- * ADVANCING to 5051+ whenever 5050 is already held) for two distinct phases:
- *   - `confirm_ui/server.py` — the Eight-Confirmations page. Rendered in the
- *     in-app 「浏览器」canvas tab via an <iframe> (it's an interactive form).
- *   - `svg_editor/server.py` — Executor live preview. Rendered NATIVELY in the
- *     「幻灯片」canvas tab: the renderer fetches /api/slides + /api/slide/<name>
- *     and paints the SVG itself (not an iframe of the editor UI).
- * Both used to pop a system Chrome window; now the host embeds them. Same shape
- * as `useStreamingAskArgsText`: walk the foreground session's tool-call parts
- * and surface the most recent preview server's real URL + which kind it is —
- * read from the server's own stdout, never guessed (see usePreviewServer).
+ * ppt-master's confirm_ui and live-preview surfaces are file+IPC now — no
+ * HTTP server, no port, no URL to parse. This hook's only job is to detect
+ * that one of them is ACTIVE for the foreground session and hand the
+ * renderer the ppt-master project's ABSOLUTE directory, which every IPC
+ * these tabs call (CONFIRM_UI_READ, PPT_PREVIEW_LIST_SLIDES, …) keys off of:
+ *   - `confirm_ui/confirm_wait.py <project> --stage {tier1,final} [--fresh]`
+ *     — CanvasConfirm renders in the 「问题」canvas tab while a wait for this
+ *     round is outstanding (see the stage-liveness rule on usePreviewServer).
+ *   - `svg_editor/preview_open.py <project> [--live]` — LivePreviewEditor
+ *     renders in the 「预览幻灯片」canvas tab once THIS COMMAND'S OWN STDOUT
+ *     confirms the resolved project directory (never the raw argument text —
+ *     preview_open.py resolves and prints it so the host never has to guess
+ *     shell-variable expansion, same discipline the old URL-parsing version
+ *     used for ports).
+ * A legacy path also recognizes the OLD Flask launch commands
+ * (`confirm_ui/server.py` / `svg_editor/server.py`) purely for their project
+ * argument — those servers no longer exist (deleted along with their
+ * `static/` pages), but a RESUMED session whose transcript still shows one of
+ * those launches should light the same tab from the same on-disk files (the
+ * SVGs/JSON are still there; only the HTTP layer is gone) instead of losing
+ * the tab on old transcripts.
  */
-const CONFIRM_SERVER_RE = /confirm_ui[/\\]server\.py/
-const EDITOR_SERVER_RE = /svg_editor[/\\]server\.py/
-const PREVIEW_SERVER_RE = /(?:confirm_ui|svg_editor)[/\\]server\.py/
-// Match the URL the SERVER PRINTS — anchored on the launcher's log phrasings
-// ("running at <url>" / "started confirm UI in background: <url>" /
-// "Running on <url>") so we never pick up a localhost URL that merely appears
-// in the command text or a doc comment. Captures the real (possibly
-// auto-advanced) port from stdout, the only trustworthy source.
-//
-// "failed to become reachable: <url>" is deliberately in the accepted set:
-// it's the OLD svg_editor launcher's probe-timeout phrasing, and that URL is
-// just as trustworthy as the success one — the launcher deterministically
-// allocated the port itself before spawning; only its 15s readiness probe
-// timed out (routinely, under load) while the detached server kept booting
-// and came up fine. Accepting it costs nothing even when the server really
-// died: showSlidesTab keeps its own reachability + project-identity gate, so
-// a dead URL never surfaces a tab. (The launcher itself now prints the
-// success phrasing for a live-but-slow child, but the DMG-bundled skill
-// lags this repo — the fallback keeps old bundles working.)
-const PREVIEW_URL_RE =
-  /(?:running (?:at|on)|started[^\n]*background:|failed to become reachable:)\s*(https?:\/\/(?:localhost|127\.0\.0\.1):\d+)/i
-const PREVIEW_PORT_FLAG_RE = /--port[=\s]+(\d+)/
+const CONFIRM_WAIT_RE = /confirm_ui[/\\]confirm_wait\.py/
+// The `["']?` before `\s+` is load-bearing, not decoration: real invocations
+// quote the SCRIPT PATH itself (`"$SKILL_DIR/scripts/confirm_ui/confirm_wait.py"
+// "$PROJECT" --stage …`), so the closing quote sits directly after `.py` with
+// no whitespace before it. Without this, `\s+` right after `confirm_wait\.py`
+// never matches, the regex returns null, and the 「问题」tab silently never
+// lights up — confirm_wait.py still runs and blocks for real (recommendations
+// + catalogs land on disk fine), but nothing renders for the user to submit
+// through, so it just times out ~590s later. Caught from a real transcript
+// where the AI wrote exactly that quoted-script-path form.
+const CONFIRM_WAIT_ARG_RE = /confirm_wait\.py["']?\s+(?:"([^"]+)"|'([^']+)'|((?:\\ |\S)+))/
+const CONFIRM_STAGE_RE = /--stage[=\s]+(tier1|final)/
+// confirm_wait.py's own timeout log line — the ONE textual signal that a
+// confirm round ended WITHOUT a result (as opposed to still running, or
+// having ended WITH one). Matched verbatim against the script's `logger.error`
+// phrasing (see confirm_wait.py's stderr message); Bash tool results merge
+// stdout+stderr, so this is visible the same way stdout is.
+const CONFIRM_WAIT_TIMEOUT_RE = /timed out waiting for (?:tier1|final) confirmation/
+
+const PREVIEW_OPEN_RE = /svg_editor[/\\]preview_open\.py/
+// preview_open.py prints exactly one line on success: "live preview ready:
+// <absolute path>". Anchored on that exact phrase so a path merely mentioned
+// in a doc comment or an unrelated log line is never mistaken for it.
+const PREVIEW_OPEN_READY_RE = /live preview ready:\s*(.+)$/m
+
+// Legacy (pre-refactor) Flask launch commands — recognized ONLY so an
+// already-resumed session's tab stays lit on the same files. A fresh session
+// never produces these anymore (SKILL.md no longer emits them); the project
+// argument sits in the same position `--daemon`/`--wait-only`/plain launches
+// all share, so no stdout URL is needed to resolve it.
+const LEGACY_CONFIRM_SERVER_RE = /confirm_ui[/\\]server\.py/
+const LEGACY_PREVIEW_SERVER_RE = /svg_editor[/\\]server\.py/
+// Same quoted-script-path fix as CONFIRM_WAIT_ARG_RE above — a resumed old
+// transcript can equally have quoted its server.py path.
+const LEGACY_SERVER_ARG_RE = /server\.py["']?\s+(?:"([^"]+)"|'([^']+)'|((?:\\ |\S)+))/
 
 /** Best-effort plain-text from a tool-result that may be string/array/object. */
 function previewResultText(result: unknown): string {
@@ -1529,67 +1593,44 @@ function previewCommandText(part: ContentPart): string {
   return typeof part.argsText === 'string' ? part.argsText : ''
 }
 
-/** Which ppt-master server is up and where. `confirm` → iframe in 「浏览器」;
- *  `preview` → native render in 「幻灯片」. `project` is the project DIRECTORY
- *  NAME the launch command targeted (best-effort; undefined when the command
- *  shape defeats extraction) — used to verify the server answering at `url`
- *  is actually THIS deck's server and not another project squatting on a
- *  reused port (see the identity gate in SlidesWorkspace). */
-export type PreviewServer = {
-  kind: 'confirm' | 'preview'
-  url: string
-  project?: string
-}
+/** Which ppt-master surface is active + the project it's for. `confirm` →
+ *  native render in 「问题」; `preview` → native render in 「预览幻灯片」.
+ *  `projectDir` is always an ABSOLUTE path — the IPC these tabs call rejects
+ *  relative ones. */
+export type PreviewServer =
+  | { kind: 'confirm'; projectDir: string }
+  | { kind: 'preview'; projectDir: string }
 
 /**
- * Extract the project identity (directory name) from a `server.py` launch
- * command. Real launches look like either:
- *   python3 ${SKILL_DIR}/scripts/svg_editor/server.py <project_path> --live …
- *   PROJ="projects/<name>" && … "$PPT_PY" scripts/svg_editor/server.py "$PROJ" …
- * i.e. the first non-flag argument after server.py is the project path — but
- * it may be a shell VARIABLE whose assignment sits earlier on the same command
- * line, so `$PROJ`/`${PROJ}` is resolved against a `PROJ=…` assignment.
- * Returns the path's basename: stable identity whether the launch used an
- * absolute or a skill-relative path. Best-effort — undefined disables the
- * identity check rather than breaking the preview.
- */
-function extractServerProject(command: string): string | undefined {
-  const argMatch = /server\.py\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(command)
-  if (!argMatch) return undefined
-  let arg = argMatch[1] ?? argMatch[2] ?? argMatch[3] ?? ''
-  const varMatch = /^\$\{?(\w+)\}?$/.exec(arg)
-  if (varMatch) {
-    const assign = new RegExp(
-      `(?:^|[\\s;&])${varMatch[1]}=(?:"([^"]+)"|'([^']+)'|(\\S+))`
-    ).exec(command)
-    if (!assign) return undefined
-    arg = assign[1] ?? assign[2] ?? assign[3] ?? ''
-  }
-  if (!arg || arg.startsWith('-') || arg.startsWith('$')) return undefined
-  const segments = arg.replace(/[/\\]+$/, '').split(/[/\\]/)
-  const name = segments[segments.length - 1]
-  return name || undefined
-}
-
-/**
- * The foreground session's active ppt-master preview server (kind + URL), or
- * null when none is up.
+ * The foreground session's active ppt-master surface, or null when neither
+ * is up. Scans every Bash tool-call part once, in transcript order — later
+ * matches override earlier ones, so a confirm → live-preview handoff (or a
+ * retry after a timeout) swaps which tab is driven, same rule the old
+ * URL-based version used.
  *
- * Scans every Bash tool-call part for one whose command launches a server and
- * resolves its URL. The port is NEVER guessed: 5050 is routinely still held by
- * a previous session's server, so the launcher auto-advances to 5051+, and a
- * guessed 5050 would point at a STALE server from another project. So we trust
- * only two sources, in order:
- *   1. the URL the server PRINTS to stdout ("running at …" / "started … in
- *      background: …") — the real, post-advance port, the source of truth;
- *   2. an explicit `--port <N>` on the command — the launcher honors it.
- * Until one of those is available the hook returns null and no tab appears yet
- * — correct, because there is no trustworthy URL to load. The LAST matching
- * launch wins, so a confirm → live-preview handoff swaps which tab is driven.
- * `kind` comes from whether the command names confirm_ui or svg_editor.
+ * Liveness rules — there is no server process to ask "are you still up", so
+ * activity is inferred purely from which commands appear and how they ended:
+ *   - `confirm_wait.py --stage tier1` succeeding or still running → active
+ *     (tier1 completing does NOT end the confirm round; the AI immediately
+ *     re-derives and waits on tier2 next — the panel stays up through
+ *     CanvasConfirm's own "deriving" phase). Only a TIER1 TIMEOUT clears it —
+ *     that's the AI abandoning to the AskUserQuestion chat fallback, which
+ *     must not be shadowed by a stale confirm panel (`wantsQuestionsTab`
+ *     already prioritizes questions over confirm; clearing here is what lets
+ *     that priority actually take effect instead of confirm never yielding).
+ *   - `confirm_wait.py --stage final` — active while still running; clears
+ *     the instant it returns, confirmed OR timed out (the round is over
+ *     either way).
+ *   - `preview_open.py` — active once ITS OWN STDOUT prints the ready
+ *     phrase; never the raw argument (mirrors the old code's refusal to
+ *     guess a port before the server confirmed one).
+ *   - legacy `server.py` commands — active as soon as recognized, except
+ *     `--shutdown` (explicit teardown, clears) — there's no stdout contract
+ *     to wait on since nothing runs these anymore; this path only serves
+ *     already-resumed transcripts.
  *
- * Uses `useShallow` so the returned object is compared by value — callers only
- * re-render when the kind or URL actually changes, not on every store tick.
+ * Uses `useShallow` so the returned object is compared by value — callers
+ * only re-render when the kind or projectDir actually changes.
  */
 export function usePreviewServer(): PreviewServer | null {
   return useChatStore(
@@ -1600,41 +1641,96 @@ export function usePreviewServer(): PreviewServer | null {
         for (const p of (m.content as unknown) as ContentPart[]) {
           if (p.type !== 'tool-call' || p.toolName !== 'Bash') continue
           const command = previewCommandText(p)
-          if (!PREVIEW_SERVER_RE.test(command)) continue
-          // `--shutdown` tears the server down; clear any prior launch.
-          if (/--shutdown\b/.test(command)) {
-            result = null
-            continue
-          }
-          // `--wait-only` attaches to an already-running server (no new launch,
-          // no fresh stdout URL) — skip so it can't clear `result`.
-          if (/--wait-only\b/.test(command)) continue
-          const kind: PreviewServer['kind'] = CONFIRM_SERVER_RE.test(command)
-            ? 'confirm'
-            : EDITOR_SERVER_RE.test(command)
-              ? 'preview'
-              : 'confirm'
-          // 1. The URL the server actually printed (real, post-advance port).
-          const fromOut = PREVIEW_URL_RE.exec(previewResultText(p.result))
-          if (fromOut) {
-            result = { kind, url: fromOut[1], project: extractServerProject(command) }
-            continue
-          }
-          // 2. An explicitly pinned --port (honored verbatim by the launcher).
-          const fromFlag = PREVIEW_PORT_FLAG_RE.exec(command)
-          if (fromFlag) {
-            result = {
-              kind,
-              url: `http://localhost:${fromFlag[1]}`,
-              project: extractServerProject(command)
+
+          if (CONFIRM_WAIT_RE.test(command)) {
+            const stage = CONFIRM_STAGE_RE.exec(command)?.[1]
+            const hasResult = p.result !== undefined
+            const timedOut =
+              hasResult && CONFIRM_WAIT_TIMEOUT_RE.test(previewResultText(p.result))
+            if ((stage === 'final' && hasResult) || (stage === 'tier1' && timedOut)) {
+              result = null
+              continue
             }
+            const argMatch = CONFIRM_WAIT_ARG_RE.exec(command)
+            const rawPath = argMatch?.[1] ?? argMatch?.[2] ?? argMatch?.[3] ?? ''
+            const projectDir = rawPath ? resolveCommandPath(rawPath, command) : ''
+            if (projectDir) result = { kind: 'confirm', projectDir }
             continue
           }
-          // Otherwise the server hasn't printed its URL yet — do NOT guess a
-          // port. Leave `result` as-is; the tab appears once stdout arrives.
+
+          if (PREVIEW_OPEN_RE.test(command)) {
+            const readyMatch = PREVIEW_OPEN_READY_RE.exec(previewResultText(p.result))
+            if (readyMatch) {
+              result = { kind: 'preview', projectDir: readyMatch[1].trim() }
+            }
+            // No ready line yet (still booting, or failed) — leave `result`
+            // as-is. Same "don't guess" discipline the old code applied to
+            // an unprinted port.
+            continue
+          }
+
+          if (
+            LEGACY_CONFIRM_SERVER_RE.test(command) ||
+            LEGACY_PREVIEW_SERVER_RE.test(command)
+          ) {
+            if (/--shutdown\b/.test(command)) {
+              result = null
+              continue
+            }
+            const argMatch = LEGACY_SERVER_ARG_RE.exec(command)
+            const rawPath = argMatch?.[1] ?? argMatch?.[2] ?? argMatch?.[3] ?? ''
+            const projectDir = rawPath ? resolveCommandPath(rawPath, command) : ''
+            if (!projectDir) continue
+            result = {
+              kind: LEGACY_CONFIRM_SERVER_RE.test(command) ? 'confirm' : 'preview',
+              projectDir
+            }
+          }
         }
       }
       return result
+    })
+  )
+}
+
+/* ───────────────── ppt-master source pptx detection ──────────────── */
+
+// An absolute path ending in .pptx/.ppt — matches both the composer's
+// `@"<path>"` mention quoting (the quotes aren't part of the match, so a
+// quoted or bare occurrence extracts the same path) and a plain path typed
+// directly into the message.
+const SOURCE_PPTX_RE = /\/[^\s"'<>|]*\.pptx?\b/i
+
+/** Best-effort plain text from a message's content parts (text parts only —
+ *  a user message never carries tool-call parts). */
+function messageText(content: unknown): string {
+  if (!Array.isArray(content)) return ''
+  return content
+    .map((p) =>
+      p && typeof p === 'object' && (p as ContentPart).type === 'text'
+        ? String((p as ContentPart).text ?? '')
+        : ''
+    )
+    .join('\n')
+}
+
+/**
+ * The .pptx/.ppt path named in this session's FIRST user message, if any —
+ * the signal that the user handed ppt-master an EXISTING deck to work from
+ * (beautify/modify), which SlidesWorkspace uses to open a preview of that
+ * source file (see PPT_SOURCE_PREVIEW / SourceDeckViewer) before the AI has
+ * produced any output of its own. A path only in a LATER message doesn't
+ * count — the affordance is "the user just handed us a file to start from",
+ * not "a .pptx path was ever mentioned" (e.g. a follow-up asking to export
+ * TO a specific .pptx name shouldn't re-open a stale source preview).
+ */
+export function useSourcePptx(): { path: string } | null {
+  return useChatStore(
+    useShallow((s): { path: string } | null => {
+      const first = s.messages.find((m) => m.role === 'user')
+      if (!first) return null
+      const match = SOURCE_PPTX_RE.exec(messageText(first.content))
+      return match ? { path: match[0] } : null
     })
   )
 }
@@ -1704,13 +1800,16 @@ function isAbsolutePosix(p: string): boolean {
 }
 
 /**
- * Resolve the (possibly relative) manifest path against the command's `cd`
- * target. Handles `.`/`..` segments so `cd /a/b && … --manifest c/d.json`
+ * Resolve a (possibly relative) command-argument path against the command's
+ * `cd` target. Handles `.`/`..` segments so `cd /a/b && … --manifest c/d.json`
  * yields `/a/b/c/d.json`. Returns '' when it can't produce an absolute path
- * (relative manifest with no `cd` to anchor it) — the caller skips those.
+ * (relative path with no `cd` to anchor it) — the caller skips those. Shared
+ * by every "read a real value out of the command text" detector in this
+ * file — originally written for the image manifest path, now also used to
+ * resolve ppt-master project directories (usePreviewServer).
  */
-function resolveManifestPath(rawPath: string, command: string): string {
-  // Both the manifest arg and the `cd` target routinely arrive as shell
+function resolveCommandPath(rawPath: string, command: string): string {
+  // Both the argument and the `cd` target routinely arrive as shell
   // variables (`"$SKILL_DIR"`, `"${PROJ}/images/…"`) — expand them against
   // the command's own assignments before judging absoluteness. This exact
   // shape is what silently killed the 图片 tab once the model started
@@ -1834,7 +1933,7 @@ export function useImageFeeds(): ImageFeed[] {
           if (!match) continue
           const rawPath = match[1] ?? match[2] ?? match[3] ?? ''
           if (!rawPath) continue
-          const manifestPath = resolveManifestPath(rawPath, text)
+          const manifestPath = resolveCommandPath(rawPath, text)
           if (!manifestPath) continue
           const tasks = Array.isArray(p.tasks)
             ? (p.tasks as WorkflowTask[])

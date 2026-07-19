@@ -1,7 +1,8 @@
 import type {
   WorkflowAgent,
   WorkflowPhaseInfo,
-  WorkflowTask
+  WorkflowTask,
+  WorkflowTaskStatus
 } from '@desktop-shared/types'
 import { useT } from '../../../i18n'
 
@@ -148,6 +149,47 @@ function WorkflowTaskRow({ task }: { task: WorkflowTask }): React.JSX.Element {
  * `phaseIndex`; ones with an index no phase claims (defensive: the
  * snapshot is an internal CLI structure) collect in a trailing group.
  */
+/**
+ * Phase 分组算法，`WorkflowAgentTree`（本文件）与 `WorkflowAgentsView`
+ * （多智能体详情面板）共用——两处对同一份 `workflow_progress` 快照分别做
+ * 「收纳视图」与「铺开视图」，分组规则必须一个像素不差地同源（同
+ * WorkflowTaskList 头部注释的同源纪律）。骨架来自脚本的 phase 列表，
+ * 所以运行还没到达的 phase 仍会出现（只是 rows 为空）；agent 按
+ * `phaseIndex` 认领，没有对应 phase 的（防御性：快照是内部 CLI 结构）
+ * 落进按 index 排序的尾部分组。组内固定按 `.index`（spawn 顺序）排序。
+ */
+export function groupWfRowsByPhase<
+  T extends { phaseIndex?: number; phaseTitle?: string; index: number }
+>(
+  phases: WorkflowPhaseInfo[] | undefined,
+  items: T[]
+): { key: number; title?: string; rows: T[] }[] {
+  const byPhase = new Map<number, T[]>()
+  for (const item of items) {
+    const key = item.phaseIndex ?? 0
+    const list = byPhase.get(key)
+    if (list) list.push(item)
+    else byPhase.set(key, [item])
+  }
+  const groups: { key: number; title?: string; rows: T[] }[] = []
+  for (const phase of phases ?? []) {
+    groups.push({
+      key: phase.index,
+      title: phase.title,
+      rows: (byPhase.get(phase.index) ?? []).slice().sort((a, b) => a.index - b.index)
+    })
+    byPhase.delete(phase.index)
+  }
+  for (const [key, rest] of [...byPhase.entries()].sort((a, b) => a[0] - b[0])) {
+    groups.push({
+      key,
+      title: rest[0]?.phaseTitle,
+      rows: rest.slice().sort((a, b) => a.index - b.index)
+    })
+  }
+  return groups
+}
+
 function WorkflowAgentTree({
   phases,
   agents
@@ -155,25 +197,7 @@ function WorkflowAgentTree({
   phases?: WorkflowPhaseInfo[]
   agents: WorkflowAgent[]
 }): React.JSX.Element {
-  const byPhase = new Map<number, WorkflowAgent[]>()
-  for (const agent of agents) {
-    const key = agent.phaseIndex ?? 0
-    const list = byPhase.get(key)
-    if (list) list.push(agent)
-    else byPhase.set(key, [agent])
-  }
-  const groups: { key: number; title?: string; rows: WorkflowAgent[] }[] = []
-  for (const phase of phases ?? []) {
-    groups.push({
-      key: phase.index,
-      title: phase.title,
-      rows: byPhase.get(phase.index) ?? []
-    })
-    byPhase.delete(phase.index)
-  }
-  for (const [key, rows] of [...byPhase.entries()].sort((a, b) => a[0] - b[0])) {
-    groups.push({ key, title: rows[0]?.phaseTitle, rows })
-  }
+  const groups = groupWfRowsByPhase(phases, agents)
   const showTitles = groups.length > 1 || Boolean(groups[0]?.title)
   return (
     <div className="space-y-1 pl-5 pt-0.5">
@@ -184,12 +208,9 @@ function WorkflowAgentTree({
               {group.title}
             </div>
           )}
-          {group.rows
-            .slice()
-            .sort((a, b) => a.index - b.index)
-            .map((agent) => (
-              <WorkflowAgentRow key={agent.index} agent={agent} />
-            ))}
+          {group.rows.map((agent) => (
+            <WorkflowAgentRow key={agent.index} agent={agent} />
+          ))}
         </div>
       ))}
     </div>
@@ -204,19 +225,30 @@ function WorkflowAgentTree({
  * This second line is the actual "what is this sub-agent doing right
  * now" the whole feature exists for.
  */
+/** One agent()'s current one-line "what's happening" text: while running,
+ * its most recent real tool call; before that, the prompt preview; once
+ * settled, the result (or, if it failed with no result, the last tool's
+ * summary). Shared by the compact row below and `WorkflowAgentsView`'s
+ * detail panel so the two never disagree about "what is this doing". */
+export function computeWfAgentActivity(agent: WorkflowAgent): string | undefined {
+  if (agent.status === 'completed' || agent.status === 'stopped') {
+    return agent.resultPreview
+  }
+  if (agent.status === 'failed') {
+    return agent.resultPreview || agent.lastToolSummary
+  }
+  return (
+    [agent.lastToolName, agent.lastToolSummary].filter(Boolean).join(' — ') ||
+    agent.promptPreview
+  )
+}
+
 function WorkflowAgentRow({
   agent
 }: {
   agent: WorkflowAgent
 }): React.JSX.Element {
-  const activity =
-    agent.status === 'completed' || agent.status === 'stopped'
-      ? agent.resultPreview
-      : agent.status === 'failed'
-        ? agent.resultPreview || agent.lastToolSummary
-        : [agent.lastToolName, agent.lastToolSummary]
-            .filter(Boolean)
-            .join(' — ') || agent.promptPreview
+  const activity = computeWfAgentActivity(agent)
   const meta = formatWfMeta({
     tokens: agent.tokens,
     toolUses: agent.toolCalls,
@@ -253,8 +285,9 @@ function WorkflowAgentRow({
 
 /** Right-aligned `27.2k tok · 1 tool · 16s` metadata for a task or
  * agent row (WorkflowAgent callers map their `toolCalls` onto
- * `toolUses`). */
-function formatWfMeta(task: {
+ * `toolUses`). Exported — `WorkflowAgentsView` reuses it verbatim so the
+ * detail panel's metadata reads identically to the compact tree's. */
+export function formatWfMeta(task: {
   tokens?: number
   toolUses?: number
   durationMs?: number
@@ -273,13 +306,13 @@ function formatWfMeta(task: {
 }
 
 /** 27200 → "27.2k", 950 → "950". */
-function formatWfTokens(n: number): string {
+export function formatWfTokens(n: number): string {
   if (n < 1000) return String(n)
   return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
 }
 
 /** 16000 → "16s", 95000 → "1m35s". */
-function formatWfDuration(ms: number): string {
+export function formatWfDuration(ms: number): string {
   const s = Math.round(ms / 1000)
   if (s < 60) return `${s}s`
   const m = Math.floor(s / 60)
@@ -292,7 +325,7 @@ function formatWfDuration(ms: number): string {
  * `✔` done · `✗` failed · `⊘` stopped · `◐` (pulsing) running ·
  * `○` pending. Coloured per state; only the running glyph animates.
  */
-function WorkflowTaskGlyph({
+export function WorkflowTaskGlyph({
   status
 }: {
   status: WorkflowTask['status']
@@ -310,4 +343,101 @@ function WorkflowTaskGlyph({
       {glyph}
     </span>
   )
+}
+
+/**
+ * One row in the flattened, UI-facing view of a workflow's units — the
+ * shared shape `WorkflowAgentsView` (multi-agent detail panel) selects
+ * and displays. Unifies the two shapes `task_update` can carry: a
+ * `local_workflow` task's nested `WorkflowAgent[]` (the common case, rich
+ * per-agent fields) and a plain Task-tool subtask with no nested agents
+ * (itself the unit — `subagentType` stands in for `label`/model niceties
+ * the wire protocol doesn't give plain subtasks).
+ */
+export interface WfRow {
+  id: string
+  index: number
+  label: string
+  status: WorkflowTaskStatus
+  phaseIndex?: number
+  phaseTitle?: string
+  model?: string
+  subagentType?: string
+  promptPreview?: string
+  resultText?: string
+  error?: string
+  /** Current one-line "what's happening" text — see computeWfAgentActivity. */
+  activity?: string
+  lastToolName?: string
+  lastToolSummary?: string
+  tokens?: number
+  toolCalls?: number
+  durationMs?: number
+  /** Transcript id (`agent-<agentId>.jsonl` under the parent session's
+   * `subagents/` dir). For `local_workflow` agents this is the wire's own
+   * `agentId`. For a plain Task/Agent tool call (no nested `agents[]`),
+   * the SDK's `task_id` IS the subagent's `agentId` (verified on the wire:
+   * the `task_started` event's `task_id` and the tool_result's `agentId`
+   * are the same string for a plain Agent-tool spawn) — so it's set here
+   * too, not left undefined like before (that bug meant plain-task rows
+   * could never load a real transcript and always fell back to the
+   * snapshot-only detail view). Lets the detail view fetch this agent's
+   * full history via SUBAGENT_TRANSCRIPT_LOAD instead of the latest-only
+   * snapshot fields above. */
+  agentId?: string
+}
+
+/** Flatten a tool call's `WorkflowTask[]` into `WfRow[]`. A task carrying
+ * `agents` (local_workflow) expands into one row per agent; a plain task
+ * (Task tool, no nested agents) becomes one row itself. Mixing both
+ * shapes in the same call is not a real scenario today, but handling it
+ * defensively costs nothing — the array traversal already covers it. */
+export function buildWfRows(tasks: WorkflowTask[]): WfRow[] {
+  const rows: WfRow[] = []
+  tasks.forEach((task, taskIdx) => {
+    if (task.agents && task.agents.length > 0) {
+      for (const agent of task.agents) {
+        rows.push({
+          id: `${task.taskId}:${agent.index}`,
+          index: agent.index,
+          label: agent.label,
+          status: agent.status,
+          phaseIndex: agent.phaseIndex,
+          phaseTitle: agent.phaseTitle,
+          model: agent.model,
+          promptPreview: agent.promptPreview,
+          resultText: agent.resultPreview,
+          activity: computeWfAgentActivity(agent),
+          lastToolName: agent.lastToolName,
+          lastToolSummary: agent.lastToolSummary,
+          tokens: agent.tokens,
+          toolCalls: agent.toolCalls,
+          durationMs: agent.durationMs,
+          agentId: agent.agentId
+        })
+      }
+    } else {
+      rows.push({
+        id: task.taskId,
+        index: taskIdx,
+        label: task.workflowName || task.description || task.subagentType || task.taskId,
+        status: task.status,
+        subagentType: task.subagentType,
+        promptPreview: task.description,
+        resultText: task.result,
+        error: task.error,
+        activity: task.error || task.summary,
+        lastToolName: task.lastToolName,
+        tokens: task.tokens,
+        toolCalls: task.toolUses,
+        durationMs: task.durationMs,
+        // Only a genuine plain Task/Agent spawn (carries subagentType) has
+        // task_id === agentId — a local_workflow task with no agents[] yet
+        // (workflowName set instead) is the orchestrator's own task, not a
+        // subagent, and has no `agent-<id>.jsonl` to load.
+        agentId: task.subagentType ? task.taskId : undefined
+      })
+    }
+  })
+  return rows
 }

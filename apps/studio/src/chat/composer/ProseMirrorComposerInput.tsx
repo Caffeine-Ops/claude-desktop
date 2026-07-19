@@ -339,8 +339,11 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
         // `focus:outline-none` kills the browser's default focus ring
         // on the contenteditable (the orange box). `whitespace-pre-wrap`
         // + `break-words` make long words wrap instead of overflowing.
+        // `caret-[hsl(var(--brand))]`：光标用固定品牌绿（不跟用户主题色
+        // --accent 走，与 LivePreviewEditor「应用标注」按钮同一份 --brand），
+        // 给这个契约输入一个跟其它 chrome 不同、始终认得出的焦点信号。
         class:
-          'pm-composer-input min-h-[24px] w-full whitespace-pre-wrap break-words text-foreground focus:outline-none [&_p]:m-0',
+          'pm-composer-input min-h-[24px] w-full whitespace-pre-wrap break-words text-foreground caret-[hsl(var(--brand))] focus:outline-none [&_p]:m-0',
         'aria-label': placeholder,
         role: 'textbox',
         'aria-multiline': 'true'
@@ -714,7 +717,13 @@ function SuggestionPopover({
   return createPortal(
     <>
     <div
-      className="fixed z-30 overflow-y-auto rounded-xl bg-popover/95 py-1 ring-1 ring-black/[0.06] backdrop-blur-2xl shadow-[0_12px_40px_-12px_rgba(0,0,0,0.25)] dark:ring-white/[0.08]"
+      // 毛玻璃化（2026-07-19，用户点名要求）：原来 bg-popover/95 已经接近
+      // 不透明，backdrop-blur-2xl 基本看不出效果——同 dropdown-menu.tsx /
+      // context-menu.tsx 那套配方，降到 /55 + backdrop-saturate-150 +
+      // backdrop-brightness-125（暗色背景不提亮混合后无「透视感」，同一踩坑
+      // 教训见 input.tsx / ScrollToBottomButton 历史注释），ring 换成固定
+      // border-white/15 + inset 顶部高光，与其它玻璃 popover 统一视觉语言。
+      className="fixed z-30 overflow-y-auto rounded-xl border border-white/15 bg-popover/55 py-1 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.25),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125"
       style={{
         left: pos.left,
         ...(pos.placement === 'above'

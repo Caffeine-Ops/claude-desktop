@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 
 import { hydrateAppearanceFromDaemon, useAppearanceStore } from './stores/appearance'
 import { useApplyAppearance } from './stores/appearance.applier'
+import { useApplyBackgroundArt } from './stores/backgroundArt.applier'
 
 /**
  * 外观的**常驻**写手 + 同步桥。不渲染任何 DOM，只承载副作用。
@@ -40,6 +41,9 @@ import { useApplyAppearance } from './stores/appearance.applier'
  */
 export function AppearanceBridge(): null {
   useApplyAppearance()
+  // Background-art (wallpaper) writer — same keep-alive-immune mount point
+  // as the appearance applier above, same reason (see file header).
+  useApplyBackgroundArt()
 
   // Adopt the daemon's shared appearance as the source of truth — once on
   // mount, then again every time main says it changed (APPEARANCE_CHANGED,

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import hljs from 'highlight.js/lib/common'
+import { motion } from 'motion/react'
 import { X } from 'lucide-react'
+import type { WorkflowTask } from '@desktop-shared/types'
 
 import { useT } from '../../../i18n'
 import {
@@ -12,9 +14,11 @@ import {
 } from '../../../stores/chat'
 import { parsePartialToolArgs } from '../../../stores/todos'
 import { useWorkflowScriptPanelStore } from '../../../stores/workflowScript'
+import { railGliderSpring } from '../../../shell/railMotion'
 import { Button } from '@/src/components/ui/button'
+import { cn } from '@/src/lib/utils'
 import { escapeHtml } from './codeViewUtils'
-import { WorkflowTaskList } from './WorkflowTaskTree'
+import { WorkflowAgentsView } from './WorkflowAgentsView'
 
 /* ───────────────── Workflow script panel (left pane) ───────────────── */
 
@@ -22,18 +26,21 @@ import { WorkflowTaskList } from './WorkflowTaskTree'
  * 右侧 Workflow 编排面板：AI 生成 Workflow tool call 的 `script` 参数时，
  * 这里实时铺开完整脚本（语法高亮 + 跟底滚动），替代 tool card 里那坨
  * 转义 JSON 的阅读体验；脚本定稿、workflow 开跑后面板不收——切到任务
- * 视图（与工具卡片同源的 per-agent 实时树，见 WorkflowTaskTree），直到
- * 全部 agent 终态才自动退出。完整生命周期：
+ * 视图，直到全部 agent 终态才自动退出。完整生命周期：
  *
  *   1. 自动弹出（写脚本）—— 前台会话有 still-streaming 的 Workflow 调用
  *      (useStreamingWorkflowCallId)：面板出现，脚本随 delta 逐行长出。
+ *      此时还没有任务数据，只有「工作流脚本」一个视图，没有 tab 栏。
  *   2. 保持打开（跑任务）—— args 定稿后流式信号消失，但该调用 spawn 的
- *      run 还在飞 (useActiveWorkflowRunId)：任务树顶到面板上半区实时
- *      跳动，脚本沉到下半区。
+ *      run 还在飞 (useActiveWorkflowRunId)：第一批 task_update 一到，
+ *      两个 tab 出现（工作流脚本 / 多智能体视图，见 WorkflowPanelBody +
+ *      WorkflowAgentsView）并自动切到「多智能体视图」——运行状态才是这
+ *      个阶段用户想看的；用户手动切回脚本 tab 后本次 run 内不再被抢回。
  *   3. 自动退出 —— 全部 agent 终态，面板收起。任一自动阶段用户点 ✕ =
  *      对这个 toolCallId 投否决票（dismissAuto），同一调用不再自动弹。
  *   4. 手动重开 —— ToolCallCard 里 Workflow 卡片的脚本入口
- *      (openManual) 按 toolCallId 捞 settled script + 最终任务树展示。
+ *      (openManual) 按 toolCallId 捞 settled script + 最终任务树展示，
+ *      两个 tab 都在，默认落在「多智能体视图」（复盘已完成的 run）。
  *
  * 布局与 slides/proposal 分栏完全同构：chat 列收窄成持久化的
  * chatColWidth rail 在左，面板 flex-1 吃大头在右（代码要宽）。挂载与否
@@ -154,23 +161,12 @@ export function WorkflowScriptPanel(): React.JSX.Element | null {
     return { html: rendered, lineCount: text.length === 0 ? 0 : text.split('\n').length }
   }, [script])
 
-  // 流式跟底滚动：贴底时新行进来自动跟下去；用户往上滚（离底 >48px）即
-  // 停手，交还阅读控制权——同聊天视口 autoScroll 的语义。atBottom 存
-  // ref 不存 state（滚动事件高频，不值得重渲染）。
-  const scrollRef = useRef<HTMLDivElement | null>(null)
-  const atBottomRef = useRef(true)
-  useEffect(() => {
-    if (!streaming) return
-    const el = scrollRef.current
-    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
-  }, [script, streaming])
-
   if (!visible) return null
 
   const gutter = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n')
 
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card">
+    <div className="workspace-split-panel flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-[4px] bg-card">
       {/* 顶栏 —— 46px 与 ChatHeader 同高同 hairline，分栏两根栏底边对齐
           成一条（同 SlidesWorkspace tab 栏的对齐纪律）。窗口拖拽由根
           layout 的 .window-drag-strip 统一负责（2026-07-08 收敛重构，
@@ -200,20 +196,17 @@ export function WorkflowScriptPanel(): React.JSX.Element | null {
           </span>
         )}
         {/* 状态区：写脚本=呼吸点+「正在编写」shimmer；跑任务=呼吸点+
-            「正在执行」（done/total 计数在任务树自己的 header，不重复）；
-            终态/手动=行数。 */}
+            「正在执行」。终态/手动不重复——done/total 在多智能体视图自己
+            的总览条，行数在脚本 tab 自己的栏（WorkflowPanelTabs）；容器
+            本身常驻（哪怕内容为空）只为了保住 ml-auto 把关闭按钮推到最右。 */}
         <span className="ml-auto flex shrink-0 items-center gap-2 text-[11.5px] text-muted-foreground">
-          {streaming || runActive ? (
+          {(streaming || runActive) && (
             <>
               <span aria-hidden className="tc-breathe inline-block size-1.5 rounded-full bg-brand" />
               <span className="shimmer-text">
                 {streaming ? t('workflowScriptWriting') : t('toolRunningHint')}
               </span>
             </>
-          ) : (
-            <span className="tabular-nums">
-              {t('workflowScriptLines').replace('{count}', String(lineCount))}
-            </span>
           )}
         </span>
         <Button
@@ -232,58 +225,200 @@ export function WorkflowScriptPanel(): React.JSX.Element | null {
         </Button>
       </div>
 
-      {/* 任务区 —— 该调用 spawn 的 per-agent 实时树（与工具卡片同源，
-          见 WorkflowTaskTree）。跑任务阶段是面板主角：占上半区自己滚动，
-          脚本沉到下半区；无脚本（scriptPath 形态）时独占全高。 */}
-      {tasks.length > 0 && (
-        <div
-          data-selectable="true"
-          className={
-            script !== null
-              ? 'max-h-[55%] shrink-0 overflow-y-auto border-b border-border/55 px-4 py-3'
-              : 'min-h-0 flex-1 overflow-y-auto px-4 py-3'
-          }
-        >
-          <WorkflowTaskList tasks={tasks} />
-        </div>
-      )}
+      {/* 主体 —— key={shownId} 让「切换到不同的 Workflow 调用」时整个子树
+          重挂载：tab 选择、已累积的 agent 活动记录、代码区滚动位置，全部
+          随之清零重来，不必手写一堆按 id 比对的 reset effect。 */}
+      <WorkflowPanelBody
+        key={shownId ?? 'none'}
+        script={script}
+        html={html}
+        lineCount={lineCount}
+        gutter={gutter}
+        tasks={tasks}
+        streaming={streaming}
+      />
+    </div>
+  )
+}
 
-      {/* 代码区：行号 gutter + hljs 高亮，全高滚动（CodeFileView 的面板化
-          变体——去掉 max-h 与渐隐 mask，面板自己就是阅读主体）。流式最
-          早期 script 字段还没长出来（args 才写到 `{"scri`）→ 等待态；
-          scriptPath 形态（无内联脚本）且任务树在场 → 上面的任务区独占，
-          这里整个不渲染。 */}
-      {script === null ? (
-        tasks.length === 0 && (
-          <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-[12.5px] text-muted-foreground">
-            <span aria-hidden className="tc-breathe inline-block size-1.5 rounded-full bg-brand" />
-            <span className="tool-loading-dots">{t('workflowScriptPreparing')}</span>
-          </div>
-        )
-      ) : (
-        <div
-          ref={scrollRef}
-          onScroll={(e) => {
-            const el = e.currentTarget
-            atBottomRef.current =
-              el.scrollHeight - el.scrollTop - el.clientHeight < 48
-          }}
-          data-selectable="true"
-          className="min-h-0 flex-1 overflow-auto"
+/**
+ * 面板主体：脚本为 null 且无任务时是等待占位（原样保留）；只有其中一侧
+ * 有内容时该侧独占全高、不上 tab 栏；两侧都有内容才出现「工作流脚本 /
+ * 多智能体视图」两个 tab。两个视图都用 motion 做 opacity 交叉淡出淡入，
+ * 且两棵子树全程挂载（只切 opacity + pointer-events）——切 tab 不会丢
+ * 代码区的滚动位置，也不会丢 WorkflowAgentsView 内部累积的 agent 活动
+ * 记录/选中态。
+ */
+function WorkflowPanelBody({
+  script,
+  html,
+  lineCount,
+  gutter,
+  tasks,
+  streaming
+}: {
+  script: string | null
+  html: string
+  lineCount: number
+  gutter: string
+  tasks: WorkflowTask[]
+  streaming: boolean
+}): React.JSX.Element {
+  const t = useT()
+  const hasScript = script !== null
+  const hasAgents = tasks.length > 0
+
+  // 默认落脚：写脚本阶段（还没有任务数据）只能是 script；手动重开一个已
+  // 结束的 run 直接两者都有，落 agents（复盘运行状态更有用）。
+  const [tab, setTab] = useState<'script' | 'agents'>(hasScript && !hasAgents ? 'script' : 'agents')
+  // 任务数据是运行途中才出现的（写脚本阶段是 0）——首次从 0 变为 >0 时
+  // 自动跳一次 agents tab；用户若已手动选过 tab（哪怕选的还是 script），
+  // 之后 tasks 再怎么变化都不再抢焦点。
+  const autoSwitchedRef = useRef(false)
+  const manualRef = useRef(false)
+  useEffect(() => {
+    if (hasAgents && !autoSwitchedRef.current && !manualRef.current) {
+      autoSwitchedRef.current = true
+      setTab('agents')
+    }
+  }, [hasAgents])
+
+  const selectTab = (next: 'script' | 'agents'): void => {
+    manualRef.current = true
+    setTab(next)
+  }
+
+  // 流式跟底滚动：贴底时新行进来自动跟下去；用户往上滚（离底 >48px）即
+  // 停手，交还阅读控制权——同聊天视口 autoScroll 的语义。atBottom 存
+  // ref 不存 state（滚动事件高频，不值得重渲染）。
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const atBottomRef = useRef(true)
+  useEffect(() => {
+    if (!streaming) return
+    const el = scrollRef.current
+    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
+  }, [script, streaming])
+
+  // 脚本还没长出来、任务也还没开始 —— 等待占位，原样保留。
+  if (!hasScript && !hasAgents) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-[12.5px] text-muted-foreground">
+        <span aria-hidden className="tc-breathe inline-block size-1.5 rounded-full bg-brand" />
+        <span className="tool-loading-dots">{t('workflowScriptPreparing')}</span>
+      </div>
+    )
+  }
+
+  const scriptPane = (
+    <div
+      ref={scrollRef}
+      onScroll={(e) => {
+        const el = e.currentTarget
+        atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+      }}
+      data-selectable="true"
+      className="min-h-0 flex-1 overflow-auto"
+    >
+      <div className="flex min-w-fit font-mono text-[12px] leading-[1.6]">
+        <pre
+          aria-hidden
+          className="sticky left-0 select-none whitespace-pre bg-card py-3 pl-4 pr-3 text-right tabular-nums text-muted-foreground/45"
         >
-          <div className="flex min-w-fit font-mono text-[12px] leading-[1.6]">
-            <pre
+          {gutter}
+        </pre>
+        <pre
+          className="flex-1 whitespace-pre py-3 pr-6 text-foreground/90 [font-feature-settings:'calt','tnum'] [hyphens:none]"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      </div>
+    </div>
+  )
+
+  // scriptPath 形态（无内联脚本）——任务视图独占全高，没有 tab 栏。
+  if (!hasScript) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <WorkflowAgentsView tasks={tasks} />
+      </div>
+    )
+  }
+  // 写脚本阶段 / 任务还没起来——脚本独占全高，没有 tab 栏。
+  if (!hasAgents) return scriptPane
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <WorkflowPanelTabs tab={tab} onChange={selectTab} lineCount={lineCount} />
+      <div className="relative min-h-0 flex-1">
+        <motion.div
+          className="absolute inset-0 flex flex-col"
+          style={{ pointerEvents: tab === 'script' ? 'auto' : 'none' }}
+          animate={{ opacity: tab === 'script' ? 1 : 0 }}
+          transition={{ duration: 0.15 }}
+          aria-hidden={tab !== 'script'}
+        >
+          {scriptPane}
+        </motion.div>
+        <motion.div
+          className="absolute inset-0 flex flex-col overflow-hidden"
+          style={{ pointerEvents: tab === 'agents' ? 'auto' : 'none' }}
+          animate={{ opacity: tab === 'agents' ? 1 : 0 }}
+          transition={{ duration: 0.15 }}
+          aria-hidden={tab !== 'agents'}
+        >
+          <WorkflowAgentsView tasks={tasks} />
+        </motion.div>
+      </div>
+    </div>
+  )
+}
+
+/** Script/agents tab strip. The active indicator is a shared-layout
+ * `motion.span` (same glider idiom as the rail nav, see railMotion.ts) —
+ * switching tabs slides the underline instead of it popping to the new
+ * position. */
+function WorkflowPanelTabs({
+  tab,
+  onChange,
+  lineCount
+}: {
+  tab: 'script' | 'agents'
+  onChange: (next: 'script' | 'agents') => void
+  lineCount: number
+}): React.JSX.Element {
+  const t = useT()
+  const items: { id: 'script' | 'agents'; label: string }[] = [
+    { id: 'script', label: t('workflowTabScript') },
+    { id: 'agents', label: t('workflowTabAgents') }
+  ]
+  return (
+    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border/55 px-3">
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          onClick={() => onChange(item.id)}
+          className={cn(
+            'relative px-2.5 py-1.5 text-[12.5px] transition-colors',
+            tab === item.id
+              ? 'font-medium text-foreground'
+              : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          {item.label}
+          {tab === item.id && (
+            <motion.span
               aria-hidden
-              className="sticky left-0 select-none whitespace-pre bg-card py-3 pl-4 pr-3 text-right tabular-nums text-muted-foreground/45"
-            >
-              {gutter}
-            </pre>
-            <pre
-              className="flex-1 whitespace-pre py-3 pr-6 text-foreground/90 [font-feature-settings:'calt','tnum'] [hyphens:none]"
-              dangerouslySetInnerHTML={{ __html: html }}
+              layoutId="workflow-panel-tab-glider"
+              transition={railGliderSpring}
+              className="absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-foreground"
             />
-          </div>
-        </div>
+          )}
+        </button>
+      ))}
+      {tab === 'script' && (
+        <span className="ml-auto shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/60">
+          {t('workflowScriptLines').replace('{count}', String(lineCount))}
+        </span>
       )}
     </div>
   )

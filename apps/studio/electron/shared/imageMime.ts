@@ -37,3 +37,28 @@ const EXT_BY_IMAGE_MIME: Record<string, string> = {
 export function extForImageMime(mime: string, fallback = 'png'): string {
   return EXT_BY_IMAGE_MIME[mime] ?? fallback
 }
+
+/**
+ * Non-image extensions the pptasset:// protocol may need to serve —
+ * ppt-master project `assets/` can hold narration audio extracted alongside
+ * SVG media. Kept separate from IMAGE_MIME_BY_EXT (named/typed around "this
+ * is an image") rather than folded in; pptasset is the only caller that
+ * needs audio/video too.
+ */
+const MEDIA_MIME_BY_EXT: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4'
+}
+
+/** Like mimeForImagePath, but also resolves the media extensions above —
+ *  used by localAssetProtocol's shared handler (all four schemes it serves,
+ *  including image-only ones, since a superset lookup is harmless there). */
+export function mimeForAssetPath(filePath: string, fallback = 'application/octet-stream'): string {
+  const idx = filePath.lastIndexOf('.')
+  if (idx === -1) return fallback
+  const ext = filePath.slice(idx).toLowerCase()
+  return IMAGE_MIME_BY_EXT[ext] ?? MEDIA_MIME_BY_EXT[ext] ?? fallback
+}

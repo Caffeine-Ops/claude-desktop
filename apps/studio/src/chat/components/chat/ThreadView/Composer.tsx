@@ -8,11 +8,12 @@ import {
   useComposerRuntime
 } from '@assistant-ui/react'
 import type { Attachment } from '@assistant-ui/core'
+import { useComposerSend } from '@assistant-ui/core/react'
 import { AnimatePresence, motion } from 'motion/react'
 
 import type { SessionMeta } from '@desktop-shared/types'
 import { useI18n, useT } from '../../../i18n'
-import { useChatStore, useTurnActivity } from '../../../stores/chat'
+import { useChatStore, useTeamMemberTasks, useTurnActivity } from '../../../stores/chat'
 import { isReplaySessionId } from '../../../replay/replayStore'
 import { useWorkspaceStore } from '../../../stores/workspace'
 import { matchProposalSlash } from '../../../lib/proposalSlash'
@@ -27,6 +28,9 @@ import {
 } from '../../../composer/ProseMirrorComposerInput'
 import { QueuePanel } from './QueuePanel'
 import { ScenarioRail } from './ScenarioRail'
+import { AgentTeamBar } from './AgentTeamBar'
+import { buildWfRows } from './WorkflowTaskTree'
+import { useAgentTeamStore } from '../../../stores/agentTeam'
 import { FileTypeIcon } from '../FileTypeIcon'
 import { SkillChipIcon } from '../SkillChipIcon'
 import { DictationWaveform } from '../DictationWaveform'
@@ -439,6 +443,64 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
   // 里 ProseMirrorComposerInputHandle 的注释）。
   const composerInputRef = useRef<ProseMirrorComposerInputHandle | null>(null)
 
+  // Agent-team takeover addressing (2026-07-19, fourth pass): there's no
+  // separate mailbox UI (user rejected a second standalone input box in
+  // AgentTeamDetail, "都共用这个input不可以吗") — the ONE shared composer
+  // doubles as "message a member" when a takeover is active.
+  //
+  // The prefix uses the member's REAL `agentId` when one exists — verified
+  // live (fusion-code-cli, resume-probe, 2026-07-19): given a prompt
+  // addressed by real agentId, the model calls `SendMessage({to: agentId,
+  // ...})`, whose result text is literally `"Agent \"<id>\" had no active
+  // task; resumed from transcript in the background with your message"` —
+  // it genuinely re-runs that COMPLETED subagent with the new text as its
+  // next prompt, not just a generic reply from the main agent. This
+  // corrects an earlier (wrong) assumption in this file that a finished
+  // subagent process is unreachable — it isn't; only a fabricated persona
+  // NAME is (an earlier attempt used one and the model replied "没找到叫
+  // 清拓野的agent" — the model has no way to resolve a name it never
+  // assigned, but it resolves a real agentId fine). Falls back to the
+  // member's `label` (task description) when there's no agentId (a
+  // `local_workflow` top-level row — that's the script's own bookkeeping
+  // task, not a subagent, so there's nothing to resume).
+  //
+  // `submitTurn` wraps BOTH send triggers (Enter's onSubmit below, and the
+  // custom Send button that replaces `<ComposerPrimitive.Send>` further
+  // down) so the prefix applies no matter which one the user actually
+  // uses — `<ComposerPrimitive.Send>` calls straight into
+  // `@assistant-ui/core`'s internal send, bypassing our onSubmit entirely,
+  // which is exactly the gap the first attempt at this fix missed.
+  const teamMemberTasks = useTeamMemberTasks()
+  const teamSelectedRowId = useAgentTeamStore((s) => s.selectedRowId)
+  const teamSelectedRowAddress = useMemo(() => {
+    if (!teamSelectedRowId) return null
+    const row = buildWfRows(teamMemberTasks).find((r) => r.id === teamSelectedRowId)
+    if (!row) return null
+    return row.agentId
+      ? `发给 agentId: ${row.agentId}（${row.label}）`
+      : row.label
+  }, [teamMemberTasks, teamSelectedRowId])
+  const submitTurn = useCallback(
+    (rawSend: () => void) => {
+      // trim-guard: an empty composer reaching here (e.g. an errant Enter)
+      // must NOT gain a prefix — that would turn "nothing to send" into a
+      // real non-empty message that assistant-ui's own isEmpty-based
+      // disabled check no longer catches.
+      if (teamSelectedRowAddress) {
+        const currentText = composerRuntime.getState().text
+        if (currentText.trim().length > 0) {
+          composerInputRef.current?.fillBody(`[${teamSelectedRowAddress}] ${currentText}`)
+          // 退出接管、回到主视口——这样用户能实际看到这轮消息怎么被处理，
+          // 而不是发完仍卡在详情页里看不到效果（上一版原样复现的 bug）。
+          useAgentTeamStore.getState().clear()
+        }
+      }
+      rawSend()
+    },
+    [teamSelectedRowAddress, composerRuntime]
+  )
+  const composerSend = useComposerSend()
+
   const handleFilesPicked = useCallback(
     async (fileList: FileList | null): Promise<void> => {
       if (!fileList || fileList.length === 0) return
@@ -479,6 +541,10 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
           />
         </div>
       ) : null}
+      {/* Agent team bar — mounted unconditionally in both variants; it
+          self-hides (returns null) when the session has no workflow team
+          to show, so there's no variant branch to keep in sync here. */}
+      <AgentTeamBar />
       <div
         className={
           variant === 'hero'
@@ -553,7 +619,17 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
             focus-within:ring-0 把它清零，避免跟下面的 shadow 堆叠出双环。 */}
         <div
           className={
-            'relative overflow-hidden rounded-[22px] bg-popover/95 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-0 focus-within:shadow-[0_0_0_1px_hsl(var(--accent)/0.55),0_0_0_4px_hsl(var(--accent)/0.12),0_2px_6px_rgba(0,0,0,0.04),0_10px_32px_-6px_hsl(var(--accent)/0.22)] group-data-[dragging=true]/dropzone:ring-2 group-data-[dragging=true]/dropzone:ring-[hsl(var(--brand)/0.5)] group-data-[dragging=true]/dropzone:bg-brand/[0.08] dark:ring-white/[0.08]' +
+            // 毛玻璃质感（2026-07-18，用户参考账户菜单的玻璃处理定稿；首版 /75
+            // 用户截图实锤"看不出效果"——CDP 量过 computed style，alpha/blur
+            // 确实生效，问题是 /75 在深色主题下跟大多数壁纸预设的暗色调太接近，
+            // 肉眼分辨不出"半透明+模糊"和"实底"的差异；强制降到 /35 现场对比
+            // 壁纸清晰透出后确认是纯粹的透明度不够，不是机制没生效。改到 /45
+            // 留一点余量给持续阅读的输入态可读性，比账户菜单的 /70（只是瞥一眼
+            // 的菜单，可以更保守）更激进。blur-xl + saturate-150 本就在。卡片内
+            // 所有子元素（+/模型 chip/麦克风）本就是 ghost 样式无自带底色，透明度
+            // 一降全跟着透出玻璃；发送/停止钮的实心色是功能色（就绪/生成中状态），
+            // 不在这次"材质"调整范围内。
+            'relative overflow-hidden rounded-[22px] bg-popover/45 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-0 focus-within:shadow-[0_0_0_1px_hsl(var(--accent)/0.55),0_0_0_4px_hsl(var(--accent)/0.12),0_2px_6px_rgba(0,0,0,0.04),0_10px_32px_-6px_hsl(var(--accent)/0.22)] group-data-[dragging=true]/dropzone:ring-2 group-data-[dragging=true]/dropzone:ring-[hsl(var(--brand)/0.5)] group-data-[dragging=true]/dropzone:bg-brand/[0.08] dark:ring-white/[0.08]' +
             // hero：卡片浮在托盘上，需要一层柔和投影把「白卡叠灰壳」的层次
             // 立起来（dock 态背景就是页面底色，不加）。聚焦时投影被
             // focus-within 整体接管（主题色环境光替换中性环境光），失焦回落。
@@ -649,7 +725,7 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
                       slashAdapter={slashAdapter}
                       mentionAdapter={fileAdapter}
                       onSubmit={() => {
-                        composerRuntime.send()
+                        submitTurn(() => composerRuntime.send())
                       }}
                     />
                   </div>
@@ -730,16 +806,30 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
                   <MicButton label={t('composerDictate')} />
                   {/* Mutually exclusive Send / Stop slot. */}
                   <ThreadPrimitive.If running={false}>
-                    <ComposerPrimitive.Send
+                    {/* Custom button instead of `<ComposerPrimitive.Send>` —
+                        that primitive calls straight into
+                        `@assistant-ui/core`'s internal send, bypassing our
+                        `submitTurn` wrapper entirely (it doesn't go through
+                        the ProseMirror input's onSubmit either). Sourcing
+                        `send`/`disabled` from the SAME public hook the
+                        primitive itself uses (`useComposerSend` from
+                        `@assistant-ui/core/react`) keeps behavior identical
+                        — only the click handler routes through submitTurn
+                        first. See its declaration above for why that
+                        matters (agent-team takeover addressing). */}
+                    <button
+                      type="button"
                       aria-label="Send message"
-                      // ready 态跟主题色（原型 .btn-send.ready，2026-07-17
-                      // 从写死品牌绿改 --accent——截图实锤发送键是绿的但
-                      // 用户选的主题色是蓝，两者对不上；--accent 由
-                      // appearance.applier.ts 写在 documentElement 上，切
-                      // 主题色这里自动跟着变）：空输入是 muted disabled
-                      // 盘，有内容才亮色——状态差本身就是「可以发了」的
-                      // 信号，比常亮黑盘的信息量大。
-                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.18)] transition-all hover:brightness-[1.08] active:scale-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.08] disabled:text-muted-foreground/50 disabled:shadow-none"
+                      disabled={composerSend.disabled}
+                      onClick={() => submitTurn(() => composerSend.send())}
+                      // ready 态固定品牌绿（2026-07-18 从 --accent 改回——
+                      // 2026-07-17 那次改动是因为发送键跟用户选的主题色对
+                      // 不上而临时跟色，这次用户明确要求发送键不跟主题
+                      // 色、就要固定绿：改回 --brand，与聊天列拖拽分隔条 /
+                      // 大纲选中态等其它「chrome 级」绿色提示同变量）：
+                      // 空输入是 muted disabled 盘，有内容才亮色——状态差
+                      // 本身就是「可以发了」的信号，比常亮黑盘的信息量大。
+                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-[0_1px_2px_rgba(0,0,0,0.1),0_2px_8px_-2px_rgba(0,0,0,0.18)] transition-all hover:brightness-[1.08] active:scale-95 disabled:cursor-not-allowed disabled:bg-foreground/[0.08] disabled:text-muted-foreground/50 disabled:shadow-none"
                     >
                       <svg
                         width="18"
@@ -755,7 +845,7 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
                         <path d="M12 19V5" />
                         <path d="m6 11 6-6 6 6" />
                       </svg>
-                    </ComposerPrimitive.Send>
+                    </button>
                   </ThreadPrimitive.If>
                   <ThreadPrimitive.If running>
                     <ComposerPrimitive.Cancel
@@ -972,7 +1062,12 @@ function SkillPickerButton({
                 exit={{ opacity: 0, y: 4, scale: 0.98 }}
                 transition={{ duration: 0.12, ease: 'easeOut' }}
                 style={{ left: anchor.left, bottom: anchor.bottom }}
-                className="fixed z-[9999] mb-1.5 flex w-[340px] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                // 毛玻璃化（2026-07-19，用户点名要求）：同重命名弹窗/dropdown-
+                // menu 那套配方——bg-card/55 + backdrop-blur-xl + backdrop-
+                // saturate-150 + backdrop-brightness-125，border 换固定
+                // border-white/15 + inset 顶部高光，原来是完全不透明的
+                // bg-card，零 blur。
+                className="fixed z-[9999] mb-1.5 flex w-[340px] flex-col overflow-hidden rounded-2xl border border-white/15 bg-card/55 shadow-[0_24px_80px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125"
                 role="listbox"
               >
                 {/* 搜索框 */}
@@ -1789,6 +1884,14 @@ function WorkspaceDirPicker(): React.JSX.Element {
     </svg>
   )
 
+  // 三个非交互态（切换在途/切换成功一拍/只读）共用的胶囊壳（2026-07-19）：
+  // 之前这仨是裸 flex span，紧挨着已经玻璃化的交互态胶囊摆在同一排时，
+  // 流状态切过来会突然掉回没有边框/底色的纯文字，一眼看出「这里坏了」
+  // （用户实锤截图，流式回复期间 readonly 态正是这样）。跟交互按钮同一套
+  // h-7 + border-white/15 + bg-card/50 + 满配方玻璃，只是没有 hover/群组态。
+  const staticChipClass =
+    'inline-flex h-7 items-center gap-1.5 rounded-full border border-white/15 bg-card/50 px-2.5 text-[12px] text-muted-foreground/70 shadow-[0_1px_2px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.4)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125'
+
   // 切换在途（C 搬家，原型 docs/ui-prototype-workspace-picker.html）：
   // 三粒点在源/目标两个文件夹图标之间依次流动——把「transcript 在物理
   // 搬家」讲成故事，非交互。已有记录的会话换目录要 teardown 子进程 +
@@ -1798,7 +1901,7 @@ function WorkspaceDirPicker(): React.JSX.Element {
   if (switchingPath !== undefined) {
     return (
       <span
-        className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70"
+        className={staticChipClass}
         title={switchingPath}
         aria-busy="true"
       >
@@ -1834,7 +1937,7 @@ function WorkspaceDirPicker(): React.JSX.Element {
   if (flash?.kind === 'done') {
     return (
       <span
-        className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70"
+        className={staticChipClass}
         title={flash.path}
       >
         <span className="inline-flex items-center gap-[3px]">
@@ -1861,12 +1964,22 @@ function WorkspaceDirPicker(): React.JSX.Element {
     )
   }
 
-  // 只读态（本轮进行中 / 无会话）：纯展示，hover 出全路径。
+  // 只读态（本轮进行中 / 无会话）：纯展示。hover 之前只给全路径，灰底
+  // 看着像坏了却猜不出原因（2026-07-19 用户实锤）——改成先说明「为什么
+  // 点不动」，路径信息跟在后面保留，两个只读成因文案不同（进行中 vs
+  // 压根没有会话）。
   if (readonly) {
+    const reason = streaming
+      ? zh
+        ? '对话进行中，暂时无法切换工作区'
+        : "Chat is running — can't switch workspace right now"
+      : zh
+        ? '暂无对话，无法切换工作区'
+        : 'No active chat to switch workspace for'
     return (
       <span
-        className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70"
-        title={displayPath ?? undefined}
+        className={staticChipClass}
+        title={displayPath ? `${reason} · ${displayPath}` : reason}
       >
         {folderIcon}
         {label}
@@ -1883,9 +1996,18 @@ function WorkspaceDirPicker(): React.JSX.Element {
         aria-expanded={open}
         aria-label={zh ? '选择工作目录' : 'Choose working folder'}
         title={displayPath ?? undefined}
+        // 2026-07-19 补一颗真正的按钮壳：此前是裸文字+图标贴在壁纸上，没有
+        // 任何可点击affordance，跟右侧 PermissionModePicker 的胶囊比显得很
+        // 「没做完」。中间两版 /70+blur-sm、/55+blur-md 真机逐像素采样过都太
+        // 弱（胶囊底色跟壁纸只差个位数 RGB），跟 PermissionModePicker 同步
+        // 换成大弹层那套满配方：blur-xl + brightness-125 + border-white/15 +
+        // inset 顶部高光，理由见该组件同处更长注释。h-7 显式定高——12px 字号
+        // 撑出的行高跟 PermissionModePicker 的 11px 不一样，py-1 撑高会让两颗
+        // 胶囊差 7px（实测 28 vs 21），锁 h-7 后两端对齐。
         className={
-          'flex items-center gap-1.5 text-[13px] text-muted-foreground/70 transition-colors hover:text-foreground ' +
-          (open ? 'text-foreground ' : '') +
+          'group inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.4)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 transition-colors ' +
+          'border-white/15 bg-card/50 text-muted-foreground hover:border-accent/50 hover:bg-card/75 hover:text-foreground ' +
+          (open ? 'border-accent/60 text-foreground ' : '') +
           (flash?.kind === 'fail' ? 'ws-chip-shake' : '')
         }
       >
@@ -1943,7 +2065,9 @@ function WorkspaceDirPicker(): React.JSX.Element {
                 exit={{ opacity: 0, y: 4, scale: 0.98 }}
                 transition={{ duration: 0.12, ease: 'easeOut' }}
                 style={{ left: anchor.left, bottom: anchor.bottom }}
-                className="fixed z-[9999] mb-1.5 w-72 overflow-hidden rounded-xl border border-border bg-card p-[5px] shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                // 毛玻璃化（2026-07-19），跟 PermissionModePicker 那颗独立
+                // 手写弹层同一套配方——理由见该组件同处注释。
+                className="fixed z-[9999] mb-1.5 w-72 overflow-hidden rounded-xl border border-white/15 bg-popover/55 p-[5px] shadow-[0_24px_80px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125"
                 role="listbox"
               >
                 {/* 已有记录的会话：换目录 = main 侧迁移 transcript。一行

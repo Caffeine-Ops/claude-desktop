@@ -33,6 +33,7 @@ import {
   deleteSession as sdkDeleteSession,
   getSessionInfo,
   getSessionMessages,
+  getSubagentMessages,
   listSessions as sdkListSessions,
   type SDKSessionInfo,
   type SessionMessage
@@ -282,6 +283,70 @@ export async function loadSession(
   } catch (err) {
     console.warn(`${TAG} loadSession ${sessionId} failed:`, err)
     return []
+  }
+}
+
+export interface SubagentTranscript {
+  messages: ThreadMessageLike[]
+  /** Epoch ms of the last transcript line's `timestamp` (SDK preserves
+   * this field at runtime even though it's absent from `SessionMessage`'s
+   * narrowed .d.ts — verified against the raw JSONL on disk). Undefined
+   * when the transcript is empty or the field is unparseable. */
+  updatedAt?: number
+  /** Summed straight off each assistant entry's own Anthropic API
+   * `usage.input_tokens`/`output_tokens` — real per-call accounting, not
+   * derived from the `workflow_progress` snapshot's single combined
+   * `tokens` figure. Undefined when no assistant entry carries usage. */
+  usage?: { inputTokens: number; outputTokens: number }
+}
+
+/**
+ * Load one sub-agent's full transcript — the `agent-<agentId>.jsonl` the
+ * SDK writes under `<sessionId>/subagents/` for every `Agent`/`Workflow`
+ * spawn (own agentId, not the parent session's). Same wire shape as the
+ * parent transcript (`SessionMessage[]`), so `convertSdkMessages` handles
+ * the message conversion unchanged — this is deliberately a thin twin of
+ * `loadSession` above, not a new parser. `updatedAt`/`usage` are a small
+ * extra pass over the SAME raw array, computed before conversion since
+ * `convertSdkMessages` drops both (it only builds `ThreadMessageLike`
+ * content parts).
+ */
+export async function loadSubagent(
+  sessionId: string,
+  agentId: string,
+  opts?: { mergeTurns?: boolean }
+): Promise<SubagentTranscript> {
+  try {
+    const raws = await getSubagentMessages(sessionId, agentId)
+
+    let updatedAt: number | undefined
+    let inputTokens = 0
+    let outputTokens = 0
+    let sawUsage = false
+    for (const raw of raws) {
+      // `timestamp` is on every raw JSONL line at runtime (verified against
+      // the SDK's own line-mapping code) but absent from the narrowed
+      // `SessionMessage` .d.ts — same "wire has it, types don't" situation
+      // as `workflow_progress` in engine.ts, hence the loose cast here.
+      const rawBag = raw as unknown as Record<string, unknown>
+      const ts = typeof rawBag.timestamp === 'string' ? Date.parse(rawBag.timestamp) : NaN
+      if (!Number.isNaN(ts)) updatedAt = ts
+      if (raw.type !== 'assistant') continue
+      const usage = isRecord(raw.message) ? raw.message.usage : undefined
+      if (!isRecord(usage)) continue
+      if (typeof usage.input_tokens === 'number') inputTokens += usage.input_tokens
+      if (typeof usage.output_tokens === 'number') outputTokens += usage.output_tokens
+      sawUsage = true
+    }
+
+    return {
+      messages: convertSdkMessages(raws, opts),
+      updatedAt,
+      usage: sawUsage ? { inputTokens, outputTokens } : undefined
+    }
+  } catch (err) {
+    console.warn(`${TAG} loadSubagent ${sessionId}/${agentId} failed:`, err)
+    return { messages: [] }
   }
 }
 
@@ -840,8 +905,46 @@ export function convertSdkMessages(
   // `<task-notification>` user message the workflow injected at
   // completion — otherwise the deliverable vanishes after a reload.
   const tasksByToolUseId = new Map<string, WorkflowTask[]>()
+  // A plain Task/Agent spawn's `description`, keyed by its own toolUseId
+  // (== the `<tool-use-id>` a later `<task-notification>` for the same
+  // spawn references). The LIVE path gets this (plus `subagent_type`)
+  // straight off the `task_started` SYSTEM message — but verified against
+  // real on-disk transcripts (grepped ~900 session files): `task_started`/
+  // `task_progress`/`task_updated` are NEVER persisted to the JSONL
+  // history, only the terminal `<task-notification>` survives (which is
+  // why that XML-tag reconstruction below exists at all). So there is no
+  // restore-time source for `subagent_type` — also verified on real data
+  // that this build's spawn tool is always named "Agent" (never "Task")
+  // and its `input` is `{description, name, prompt}` with NO
+  // `subagent_type` key at all, live or historical. `description` IS
+  // recoverable, from the tool_use block itself — that's the one field
+  // this map exists to carry forward, fixing restored members showing a
+  // raw taskId instead of a real title (see WfRow's `agentId` comment in
+  // WorkflowTaskTree.tsx for the other half of this fix). Chronologically
+  // the tool_use always precedes its own completion notification, so
+  // collecting it in this same forward pass is enough — no need for the
+  // two-pass dance `resultByToolUseId` uses.
+  const spawnDescriptionByToolUseId = new Map<string, string | undefined>()
 
   for (const raw of raws) {
+    if (raw.type === 'assistant') {
+      const blocks = extractContentBlocks(raw.message)
+      if (blocks) {
+        for (const block of blocks) {
+          if (!isRecord(block)) continue
+          if (block.type !== 'tool_use') continue
+          if (block.name !== 'Task' && block.name !== 'Agent') continue
+          const toolUseId = block.id
+          if (typeof toolUseId !== 'string') continue
+          const input = isRecord(block.input) ? block.input : {}
+          spawnDescriptionByToolUseId.set(
+            toolUseId,
+            typeof input.description === 'string' ? input.description : undefined
+          )
+        }
+      }
+      continue
+    }
     if (raw.type !== 'user') continue
     const blocks = extractContentBlocks(raw.message)
     if (blocks) {
@@ -859,7 +962,7 @@ export function convertSdkMessages(
     // The completion notification is a plain-text user message, not a
     // block array, so it isn't in `blocks` above — pull it off the raw
     // string content separately.
-    collectTaskNotification(raw.message, tasksByToolUseId)
+    collectTaskNotification(raw.message, tasksByToolUseId, spawnDescriptionByToolUseId)
   }
 
   const out: ThreadMessageLike[] = []
@@ -932,10 +1035,23 @@ export function convertSdkMessages(
  * parse it into a `WorkflowTask` and stash it under its spawning
  * tool-use id. Mirrors engine.ts `parseTaskNotification` so live and
  * replayed cards look identical. No-op for anything else.
+ *
+ * `spawnDescription` backfills `description` for a plain Task/Agent spawn
+ * (see its declaration in `convertSdkMessages` for why — short version:
+ * the notification text itself doesn't carry it, only the tool_use block
+ * that spawned this task does). Its mere presence for a given toolUseId
+ * also doubles as "this was a genuine Agent-tool spawn, not a Workflow's
+ * own task" — so `subagentType` is set to this build's one real value
+ * ('general-purpose', verified against live + historical data — the
+ * Agent tool has no other subagent_type on the wire right now) whenever
+ * a description entry exists, `undefined` otherwise. `WfRow.agentId`
+ * (WorkflowTaskTree.tsx) keys off that presence to know whether taskId
+ * is safe to treat as a real subagent's transcript id.
  */
 function collectTaskNotification(
   message: unknown,
-  into: Map<string, WorkflowTask[]>
+  into: Map<string, WorkflowTask[]>,
+  spawnDescription: Map<string, string | undefined>
 ): void {
   const content = isRecord(message) ? message.content : undefined
   if (typeof content !== 'string') return
@@ -970,12 +1086,15 @@ function collectTaskNotification(
     }
   }
 
+  const isAgentSpawn = spawnDescription.has(toolUseId)
   const task: WorkflowTask = {
     taskId,
     status,
     summary: tag('summary'),
     result,
-    outputFile: tag('output-file')
+    outputFile: tag('output-file'),
+    description: spawnDescription.get(toolUseId),
+    subagentType: isAgentSpawn ? 'general-purpose' : undefined
   }
   const list = into.get(toolUseId) ?? []
   list.push(task)

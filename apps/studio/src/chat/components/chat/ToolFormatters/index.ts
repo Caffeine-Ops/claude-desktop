@@ -2,7 +2,12 @@ import { formatBash } from './bash'
 import { formatEdit, formatMultiEdit, formatRead, formatWrite } from './files'
 import { formatAskUserQuestion, formatSkill, formatTodoWrite } from './interaction'
 import { formatGlob, formatGrep } from './search'
-import { formatTaskCreate, formatTaskStop, formatTaskUpdate } from './tasks'
+import {
+  formatTaskCreate,
+  formatTaskOutput,
+  formatTaskStop,
+  formatTaskUpdate
+} from './tasks'
 import type { Formatter, FormatterCtx, FriendlyView } from './types'
 import { formatToolSearch, formatWebFetch, formatWebSearch } from './web'
 
@@ -45,5 +50,6 @@ const FORMATTERS: Record<string, Formatter> = {
   AskUserQuestion: formatAskUserQuestion,
   TaskCreate: formatTaskCreate,
   TaskUpdate: formatTaskUpdate,
-  TaskStop: formatTaskStop
+  TaskStop: formatTaskStop,
+  TaskOutput: formatTaskOutput
 }

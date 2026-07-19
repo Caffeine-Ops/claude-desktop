@@ -587,7 +587,7 @@ export function ToolElapsed({
     <span
       className={
         'shrink-0 font-mono text-[11.5px] tabular-nums ' +
-        (done ? 'text-muted-foreground/70' : 'text-accent') +
+        (done ? 'text-muted-foreground/70' : 'text-brand') +
         (className ? ' ' + className : '')
       }
       aria-label={`耗时 ${label}`}

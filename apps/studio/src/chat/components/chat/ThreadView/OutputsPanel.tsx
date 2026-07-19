@@ -551,10 +551,18 @@ export function OutputsButton(): React.JSX.Element {
       {/* 圆角/阴影配方与 AssistantDeliverables 的成果卡片同源（"浮在内容上的
           柔和卡片"语言），比 popover 基件默认的 rounded-md + shadow-md 更贴合
           参考设计的圆润浮层观感；border 淡化到 /50 而非基件默认 border-border，
-          浮层本身已靠阴影立起来，粗边框反而显生硬。 */}
+          浮层本身已靠阴影立起来，粗边框反而显生硬。
+          毛玻璃质感（2026-07-18，跟账户菜单同一批）：基件的 bg-popover 实底
+          在这个实例上换成半透明 + backdrop-blur——只改这一个用法，不动
+          ui/popover.tsx 基件（全项目其余 Popover 用法不受影响）。首版 /70
+          用户截图实锤"看不出效果"——computed style 量过 alpha/blur 确实都
+          生效，是这个弹层触发位置（chat 顶栏右侧、贴窗口顶部）经常落在
+          用户当前壁纸偏暗/低细节的那一块区域，/70 的差量在深色区域肉眼分
+          不出（同 composer 那次 /75→/45 一个病灶）。降到 /50 加大透明度
+          余量，对暗背景更有辨识度。 */}
       <PopoverContent
         align="end"
-        className="w-80 rounded-[20px] border-border/50 p-3.5 shadow-[0_2px_8px_rgba(0,0,0,0.06),0_16px_40px_-20px_rgba(0,0,0,0.35)]"
+        className="w-80 rounded-[20px] border-border/50 bg-popover/50 p-3.5 shadow-[0_2px_8px_rgba(0,0,0,0.06),0_16px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur-2xl backdrop-saturate-150"
       >
         <div className="flex items-baseline gap-2 px-0.5 pb-2.5">
           <span className="text-[14px] font-semibold text-foreground">

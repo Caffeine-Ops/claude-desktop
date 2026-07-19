@@ -10,6 +10,23 @@ import { Textarea } from '@/src/components/ui/textarea'
 import { cn } from '@/src/lib/utils'
 import { useChatStore, useEditingSvgFile } from '../../stores/chat'
 import { useMessageQueueStore, useSessionQueue } from '../../stores/messageQueue'
+import {
+  assignTempIds,
+  clearAllAnnotations,
+  parseAnnotations,
+  parseSvgDocument,
+  rewriteAssetHrefs,
+  serializeSvg,
+  setAnnotation as setSvgAnnotation,
+  stripUnusedTempIds
+} from '../../lib/pptPreview/slidePipeline'
+import { createIconLoader, inlineIcons, type IconLoader } from '../../lib/pptPreview/inlineIcons'
+import {
+  buildAnnotationLog,
+  mergeStagedAnnotations,
+  usePreviewStore,
+  type StagedAnnotationMap
+} from '../../lib/pptPreview/previewStore'
 
 /**
  * The instruction we send when the user clicks 应用标注到我的 PPT. Kept as a
@@ -79,20 +96,29 @@ const TAG_LABEL: Record<string, string> = {
  * LivePreviewEditor
  * -----------------
  * Native React replication of the ppt-master svg_editor live-preview editor
- * (skills/ppt-master/scripts/svg_editor/static/app.js), rendered inside the
- * 「幻灯片」canvas tab instead of iframing localhost:5050. It fetches the same
- * Flask server's `/api/slides` + `/api/slide/<name>`, lets the user select SVG
- * elements and attach edit instructions (annotations), and POSTs the SAME
- * contract back — the server is unchanged.
+ * (originally skills/ppt-master/scripts/svg_editor/static/app.js, now deleted
+ * along with the Flask server it ran on), rendered inside the 「预览幻灯片」
+ * canvas tab. There is no HTTP server on this path anymore: slide bytes come
+ * from `<projectDir>/svg_output/*.svg` on disk via PPT_PREVIEW_LIST_SLIDES /
+ * PPT_PREVIEW_READ_SLIDE, and everything the old server used to do to a slide
+ * before serving it — assign stable ids, inline `<use data-icon>`
+ * placeholders, rewrite asset hrefs — happens HERE, in the renderer, using
+ * src/chat/lib/pptPreview/{slidePipeline,inlineIcons}.ts (real DOM APIs
+ * instead of Python's ElementTree). Staged (unsaved) annotations live in
+ * src/chat/lib/pptPreview/previewStore.ts, a module-level store keyed by
+ * project directory — the old Flask server's in-process memory played this
+ * role before; see that file's docstring for why a store (not component
+ * state) is what replaces it. Saving goes through PPT_PREVIEW_SAVE_ALL.
  *
- * Architecture (per the reference's design): the editor does NOT use a virtual
- * DOM for the slide. The server returns an SVG string with a stable `id` on
- * every element (backend assign_temp_ids); we inject it via innerHTML into a
- * ref'd container and operate the REAL SVG DOM imperatively — selection,
- * highlight classes, geometry — because geometry depends on the browser's live
- * layout (getBBox/getCTM/DOMMatrix). React state holds only METADATA: which ids
- * are selected, the annotation map, the slide list, the current page. We never
- * let React re-render the SVG internals (that would fight the imperative ops).
+ * Architecture (unchanged from the original design): the editor does NOT use
+ * a virtual DOM for the slide. Each loaded slide's SVG carries a stable `id`
+ * on every element (assignTempIds); we inject it via innerHTML into a ref'd
+ * container and operate the REAL SVG DOM imperatively — selection, highlight
+ * classes, geometry — because geometry depends on the browser's live layout
+ * (getBBox/getCTM/DOMMatrix). React state holds only METADATA: which ids are
+ * selected, the annotation map, the slide list, the current page. We never
+ * let React re-render the SVG internals (that would fight the imperative
+ * ops).
  *
  * MODULE 1 (this file, current scope): slide list + nav, element pick (click +
  * Ctrl/Cmd multi-select) with highlight, a bottom dock (选中 chip 列表 + 本页标注
@@ -103,12 +129,16 @@ const TAG_LABEL: Record<string, string> = {
  * redo a page).
  *
  * LATER MODULES (not here yet — marked `MODULE N:`): direct attribute editing
- * (X/Y/FILL/STROKE → /edit with the CTM/matrix geometry engine), marquee
- * rubber-band selection, drag/resize on canvas, tspan promotion.
+ * (X/Y/FILL/STROKE, the CTM/matrix geometry engine), marquee rubber-band
+ * selection, drag/resize on canvas, tspan promotion. This was true of the old
+ * browser editor too — none of it was ever carried over to this native one,
+ * so `pendingEdits` in previewStore.ts is a reserved, currently-empty slot
+ * for whenever it is.
  *
- * All fetches are absolute against `baseUrl` (the server's real origin from
- * usePreviewServer's stdout parse); CSP connect-src + the server's CORS hook
- * already permit the cross-origin calls.
+ * Images/assets/icons load via `pptasset://` URLs (see pptAssetUrl.ts +
+ * electron/main/services/pptAssetProtocol.ts) — a registered Electron
+ * protocol, not a cross-origin HTTP fetch, so there is no CORS/CSP
+ * `connect-src` concern the way there was against a Flask origin.
  */
 
 export interface LiveSlide {
@@ -120,43 +150,26 @@ export interface LiveSlide {
   mtime?: number
 }
 
-interface SlideAnnotation {
-  element_id: string
-  tag?: string
-  annotation: string
-}
-
-/** Rewrite a fetched slide's relative image refs to absolute server URLs so
- *  they load cross-origin. Mirror of the old SlidesLivePreview helper. */
-function absolutizeSlideImages(svg: string, baseUrl: string): string {
-  const base = baseUrl.replace(/\/$/, '')
-  return svg
-    .replace(/(["'(])\.\.\/images\//g, `$1${base}/images/`)
-    .replace(/(["'(])\.\.\/assets\//g, `$1${base}/assets/`)
-    .replace(/(xlink:href|href)=("|')(?!https?:|data:|#|\/)([^"')]+\.(?:png|jpe?g|gif|webp|svg|bmp))\2/gi,
-      (_m, attr, q, file) => `${attr}=${q}${base}/${file}${q}`)
-}
-
 /**
- * Warm the browser cache for every image an (absolutized) slide references,
- * BEFORE its innerHTML is swapped in. The swap rebuilds the whole SVG DOM,
- * so every `<image>` re-fetches from scratch — without warming, each swap
- * blanks all the photos for a network round-trip and the deck visibly
- * flashes on every regeneration (worst while the assistant is editing pages
- * in a loop). Warm cache = the rebuilt tree paints images synchronously.
+ * Warm the browser cache for every image an (href-rewritten) slide
+ * references, BEFORE its innerHTML is swapped in. The swap rebuilds the
+ * whole SVG DOM, so every `<image>` re-fetches from scratch — without
+ * warming, each swap blanks all the photos for a round-trip and the deck
+ * visibly flashes on every regeneration (worst while the assistant is
+ * editing pages in a loop). Warm cache = the rebuilt tree paints images
+ * synchronously.
  *
- * Missing images (still generating in the background → 404) settle fast and
- * resolve like everything else — the swap then shows the same blank spot it
- * showed before, i.e. no NEW flash. A slow straggler is capped by
- * `timeoutMs`: better to swap with one image late than hold the page on a
- * stale slide.
+ * Missing images (still generating in the background → the pptasset://
+ * protocol handler 404s) settle fast and resolve like everything else — the
+ * swap then shows the same blank spot it showed before, i.e. no NEW flash. A
+ * slow straggler is capped by `timeoutMs`: better to swap with one image
+ * late than hold the page on a stale slide.
  */
 function preloadSlideImages(svg: string, timeoutMs: number): Promise<void> {
   const urls = new Set<string>()
   const attrRe =
-    /(?:xlink:href|href)=["'](https?:\/\/[^"']+\.(?:png|jpe?g|gif|webp|svg|bmp))["']/gi
-  const cssRe =
-    /url\((['"]?)(https?:\/\/[^)'"]+\.(?:png|jpe?g|gif|webp|svg|bmp))\1\)/gi
+    /(?:xlink:href|href)=["'](pptasset:\/\/[^"']+)["']/gi
+  const cssRe = /url\((['"]?)(pptasset:\/\/[^)'"]+)\1\)/gi
   let m: RegExpExecArray | null
   while ((m = attrRe.exec(svg))) urls.add(m[1])
   while ((m = cssRe.exec(svg))) urls.add(m[2])
@@ -217,18 +230,19 @@ function resolvePickedId(
 }
 
 export function LivePreviewEditor({
-  baseUrl,
-  onServerDownChange
+  projectDir,
+  onProjectGoneChange
 }: {
-  baseUrl: string
-  // Reported up whenever reachability flips. The parent (SlidesWorkspace) uses
-  // it to hide the 幻灯片 tab once the server is gone, so a stale launch URL in
-  // the transcript no longer leaves a dead tab behind. The component keeps
-  // polling while mounted, so it also reports recovery (false) if the URL comes
-  // back to life before the parent unmounts it.
-  onServerDownChange?: (down: boolean) => void
+  /** ppt-master project's absolute directory — the key every PPT_PREVIEW_*
+   *  IPC reads/writes `svg_output/` and `live_preview/` under. */
+  projectDir: string
+  // Reported up whenever the project's existence flips. The parent
+  // (SlidesWorkspace) uses it to hide the 预览幻灯片 tab once the project is
+  // gone, so a stale detection signal doesn't leave a dead tab behind. The
+  // component keeps polling while mounted, so it also reports recovery
+  // (false) if svg_output/ reappears before the parent unmounts it.
+  onProjectGoneChange?: (gone: boolean) => void
 }): React.JSX.Element {
-  const api = useCallback((p: string) => baseUrl.replace(/\/$/, '') + p, [baseUrl])
   // The chat composer, so 应用修改 can prefill an instruction for the user to
   // send (LivePreviewEditor renders inside ThreadView's provider, so this is in
   // scope — same runtime the ProseMirror input drives via setText).
@@ -271,10 +285,34 @@ export function LivePreviewEditor({
   const [content, setContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   // Per-slide SVG thumbnails for the rail. Keyed by slide name; each holds the
-  // (image-absolutized) SVG string + the mtime it was fetched at, so we only
-  // re-fetch a page when its mtime advances. SVG scales to the tiny thumb frame
-  // by its own viewBox (vector, lossless), so this is a cheap real preview.
+  // (icon-inlined, href-rewritten) SVG string + the mtime it was fetched at,
+  // so we only re-fetch a page when its mtime advances. SVG scales to the
+  // tiny thumb frame by its own viewBox (vector, lossless), so this is a
+  // cheap real preview.
   const [thumbs, setThumbs] = useState<Record<string, { svg: string; mtime: number }>>({})
+  // templates/icons/ absolute path, resolved main-side (PPT_PREVIEW_LIST_SLIDES)
+  // so this component never has to guess where the skill is installed. Feeds
+  // the memoized icon loader below; null while unresolved (or if the skill
+  // install can't be located) — inlineIcons degrades every `<use data-icon>`
+  // to a warning in that case rather than guessing a path.
+  const [iconsRoot, setIconsRoot] = useState<string | null>(null)
+  const iconLoader: IconLoader | null = useMemo(
+    () => (iconsRoot ? createIconLoader(iconsRoot) : null),
+    [iconsRoot]
+  )
+  // Per-slide annotation presence, computed by the thumbnail-fetch effect
+  // (which already parses every slide's content) since the list IPC only
+  // reports name/mtime/size — replaces the old server's `_LIST_CACHE`-backed
+  // annotation_count in GET /api/slides. Merged into `slides` for display via
+  // `slidesWithMeta` below; a slide with no entry yet (thumbnail not fetched)
+  // degrades to "unknown" the same way a slow server response used to.
+  const [slideMeta, setSlideMeta] = useState<
+    Record<string, { annotated: boolean; annotationCount: number; ok: boolean }>
+  >({})
+  const slidesWithMeta = useMemo(
+    () => slides.map((s) => ({ ...s, ...slideMeta[s.name] })),
+    [slides, slideMeta]
+  )
 
   // 已选芯片条的溢出量（被定高单行裁掉的芯片数）。2026-07-07 定稿：芯片
   // 条固定 26px 单行——多选折行会让 dock 纵向无上限、把舞台挤没（窄屏
@@ -288,7 +326,7 @@ export function LivePreviewEditor({
   // 定位的提示卡放带内会被滚动容器裁掉，所以卡渲染在簇（section）层级，
   // 锚点 x 在 mouseenter 时换算到簇坐标系并钳制，横滚时直接清掉。
   const annSectionRef = useRef<HTMLElement | null>(null)
-  const [annTip, setAnnTip] = useState<{ eid: string; left: number } | null>(null)
+  const [annTip, setAnnTip] = useState<{ ids: string[]; left: number } | null>(null)
   // 提示卡带删除入口（2026-07-07 用户要求）→ 卡必须可进入：钮和卡之间
   // 有 8px 空隙，mouseleave 立即关卡鼠标永远走不进去。离开钮/卡都只
   // 「预约」160ms 后关，进入另一方即取消预约——标准 hover-card 宽限期。
@@ -310,7 +348,6 @@ export function LivePreviewEditor({
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [annotations, setAnnotations] = useState<Record<string, string>>({})
   const [annotationText, setAnnotationText] = useState('')
-  const [undoDepth, setUndoDepth] = useState(0)
   // ── interaction layer (hover / marquee) ──────────────────────────────────
   // The element under the cursor (drives the faint hover highlight box).
   const [hoverId, setHoverId] = useState<string | null>(null)
@@ -382,14 +419,11 @@ export function LivePreviewEditor({
   const floatingInputRef = useRef<HTMLTextAreaElement | null>(null)
   const [busy, setBusy] = useState(false)
   const [statusMsg, setStatusMsg] = useState<string | null>(null)
-  // True once the slide-list poll can't even reach the server (a network-level
-  // "Failed to fetch", not an HTTP error). usePreviewServer resolves the URL
-  // from the launch command in the transcript, which can outlive the server
-  // (idle-timeout / manual stop) — so a dead URL would otherwise leave this tab
-  // spinning on "等待幻灯片生成…(Failed to fetch)" forever. Detecting the
-  // unreachable server lets us say so plainly instead. Recovers automatically
-  // when the server comes back (a later poll succeeds).
-  const [serverDown, setServerDown] = useState(false)
+  // True once PPT_PREVIEW_LIST_SLIDES reports the project's svg_output/ is
+  // gone (deleted, or a stale resumed-transcript path) — so this tab would
+  // otherwise spin on "等待幻灯片生成…" forever. Recovers automatically if a
+  // later poll finds the directory again.
+  const [projectGone, setProjectGone] = useState(false)
 
   // Refs so the poll closure / delegated handler always see latest values
   // without re-arming. activeRef gates late slide responses.
@@ -397,6 +431,14 @@ export function LivePreviewEditor({
   const activeRef = useRef<string | null>(null)
   const mtimesRef = useRef<Record<string, number>>({})
   const followLatestRef = useRef(true)
+  // Distinct from followLatestRef, on purpose: the editingName auto-jump
+  // effect below ALSO writes followLatestRef=false on every jump it makes
+  // (to stop the *other* "follow newest written page" poll from fighting
+  // it), so reusing that flag to detect "the user manually picked a page"
+  // would make the jump effect look self-suppressing after its own very
+  // first jump. This ref is written ONLY by pickSlide (real manual
+  // navigation) and read ONLY by the auto-jump effect.
+  const userTookManualControlRef = useRef(false)
   const selectedIdsRef = useRef<string[]>([])
   // Latest annotations, so the drag-bound pickAt closure can prefill an already-
   // annotated element's saved text WITHOUT re-arming the gesture on every edit.
@@ -415,55 +457,70 @@ export function LivePreviewEditor({
   // loop below probes these and swaps them in place once servable.
   const failedImagesRef = useRef<Map<string, number>>(new Map())
 
-  // Report reachability changes up to the parent (tab visibility).
+  // Report existence changes up to the parent (tab visibility).
   useEffect(() => {
-    onServerDownChange?.(serverDown)
-  }, [serverDown, onServerDownChange])
+    onProjectGoneChange?.(projectGone)
+  }, [projectGone, onProjectGoneChange])
 
   // ── load one slide ───────────────────────────────────────────────────────
   const loadSlide = useCallback(
     async (name: string) => {
       try {
-        const r = await fetch(api(`/api/slide/${encodeURIComponent(name)}`), { cache: 'no-store' })
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        const data = await r.json()
-        if (typeof data?.content !== 'string') throw new Error('no content')
-        if (typeof data.mtime === 'number') mtimesRef.current[name] = data.mtime
+        const readRes = await window.chatApi.readPptPreviewSlide({ projectDir, name })
+        if (!readRes.ok || typeof readRes.content !== 'string') {
+          throw new Error(readRes.error || 'no content')
+        }
+        if (typeof readRes.mtime === 'number') {
+          mtimesRef.current[name] = readRes.mtime
+          usePreviewStore.getState().setBaseMtime(projectDir, name, readRes.mtime)
+        }
         if (activeRef.current !== name) return
-        const absolutized = absolutizeSlideImages(data.content, baseUrl)
+        const root = parseSvgDocument(readRes.content)
+        if (!root) throw new Error('failed to parse SVG')
+        assignTempIds(root)
+        // Seed annotations from disk, then layer this project's staged delta
+        // on top (see previewStore.ts — staged wins, `null` tombstones a
+        // disk-persisted one that's been locally removed but not saved yet).
+        const diskMap: Record<string, string> = {}
+        parseAnnotations(root).forEach((a) => {
+          if (a.element_id) diskMap[a.element_id] = a.annotation
+        })
+        const staged = usePreviewStore.getState().byProject[projectDir]?.annotations[name]
+        const merged = mergeStagedAnnotations(diskMap, staged)
+        const { content: inlined } = await inlineIcons(serializeSvg(root), iconLoader)
+        const rewritten = rewriteAssetHrefs(inlined, projectDir)
+        if (activeRef.current !== name) return
         // Only wait for the warm-up when a slide is already on screen — that's
         // the case where the innerHTML swap would flash. First paint (host not
         // mounted yet) should show content ASAP instead.
         if (svgHostRef.current) {
-          await preloadSlideImages(absolutized, 1500)
+          await preloadSlideImages(rewritten, 1500)
           // Re-check after the await: the user may have switched pages while
           // we were warming this one's images.
           if (activeRef.current !== name) return
         }
-        setContent(absolutized)
-        setUndoDepth(typeof data.undo_depth === 'number' ? data.undo_depth : 0)
-        // Seed annotations from the server's per-slide list.
-        const list: SlideAnnotation[] = Array.isArray(data.annotations) ? data.annotations : []
-        const map: Record<string, string> = {}
-        list.forEach((a) => {
-          if (a && a.element_id) map[a.element_id] = a.annotation
-        })
-        setAnnotations(map)
+        setContent(rewritten)
+        setAnnotations(merged)
         setSelectedIds([])
         setError(null)
       } catch (e) {
         if (activeRef.current === name) setError(e instanceof Error ? e.message : String(e))
       }
     },
-    [api, baseUrl]
+    [projectDir, iconLoader]
   )
 
   // ── fetch per-slide SVG thumbnails for the rail ───────────────────────────
   // Runs whenever the slide list changes. For each slide whose thumbnail is
-  // missing or stale (mtime advanced), fetch its SVG once and cache it. We read
-  // `thumbs` through a ref so this effect isn't re-armed by its own setState
-  // (which would loop). Fetches are fire-and-forget; each resolves into the map
-  // independently, so thumbnails fill in as they arrive.
+  // missing or stale (mtime advanced), read its SVG once, inline icons, and
+  // cache it. We read `thumbs` through a ref so this effect isn't re-armed by
+  // its own setState (which would loop). Reads are fire-and-forget; each
+  // resolves into the map independently, so thumbnails fill in as they
+  // arrive. Also computes `slideMeta` (annotation presence/count, parse
+  // health) for the rail's badges — the list IPC only reports name/mtime/
+  // size, so this pass (which already parses every slide) is the one place
+  // that information can come from now that there's no server-side
+  // `_LIST_CACHE` to ask.
   const thumbsRef = useRef(thumbs)
   thumbsRef.current = thumbs
   useEffect(() => {
@@ -473,45 +530,80 @@ export function LivePreviewEditor({
       // Fetch when uncached, or when the list's mtime is newer than the cached
       // one (a page was regenerated). Slides with no mtime fetch once.
       if (cached && (s.mtime === undefined || cached.mtime >= s.mtime)) return
-      void fetch(api(`/api/slide/${encodeURIComponent(s.name)}`), { cache: 'no-store' })
-        .then((r) => (r.ok ? r.json() : null))
-        .then(async (data) => {
-          if (cancelled || !data || typeof data.content !== 'string') return
-          const svg = absolutizeSlideImages(data.content, baseUrl)
-          // Same warm-before-swap as loadSlide: a regenerated page replaces
-          // its rail thumbnail's innerHTML too, and 15 tiny frames flashing
-          // in a row reads worse than the main stage doing it once.
-          await preloadSlideImages(svg, 1500)
-          if (cancelled) return
-          const mtime = typeof data.mtime === 'number' ? data.mtime : (s.mtime ?? 0)
-          setThumbs((prev) => {
-            const existing = prev[s.name]
-            if (existing && existing.mtime >= mtime && existing.svg === svg) return prev
-            return { ...prev, [s.name]: { svg, mtime } }
-          })
+      void (async () => {
+        const readRes = await window.chatApi.readPptPreviewSlide({
+          projectDir,
+          name: s.name
         })
-        .catch(() => {
-          /* transient — a later slide-list poll re-triggers this effect */
+        if (cancelled) return
+        if (!readRes.ok || typeof readRes.content !== 'string') {
+          setSlideMeta((prev) => ({
+            ...prev,
+            [s.name]: { annotated: false, annotationCount: 0, ok: false }
+          }))
+          return
+        }
+        const root = parseSvgDocument(readRes.content)
+        if (!root) {
+          setSlideMeta((prev) => ({
+            ...prev,
+            [s.name]: { annotated: false, annotationCount: 0, ok: false }
+          }))
+          return
+        }
+        assignTempIds(root)
+        const diskMap: Record<string, string> = {}
+        parseAnnotations(root).forEach((a) => {
+          if (a.element_id) diskMap[a.element_id] = a.annotation
         })
+        const staged = usePreviewStore.getState().byProject[projectDir]?.annotations[s.name]
+        const merged = mergeStagedAnnotations(diskMap, staged)
+        const count = Object.keys(merged).length
+        setSlideMeta((prev) => ({
+          ...prev,
+          [s.name]: { annotated: count > 0, annotationCount: count, ok: true }
+        }))
+        const { content: inlined } = await inlineIcons(serializeSvg(root), iconLoader)
+        const svg = rewriteAssetHrefs(inlined, projectDir)
+        // Same warm-before-swap as loadSlide: a regenerated page replaces
+        // its rail thumbnail's innerHTML too, and 15 tiny frames flashing
+        // in a row reads worse than the main stage doing it once.
+        await preloadSlideImages(svg, 1500)
+        if (cancelled) return
+        const mtime = typeof readRes.mtime === 'number' ? readRes.mtime : (s.mtime ?? 0)
+        setThumbs((prev) => {
+          const existing = prev[s.name]
+          if (existing && existing.mtime >= mtime && existing.svg === svg) return prev
+          return { ...prev, [s.name]: { svg, mtime } }
+        })
+      })().catch(() => {
+        /* transient — a later slide-list poll re-triggers this effect */
+      })
     })
     return () => {
       cancelled = true
     }
-  }, [slides, api, baseUrl])
+  }, [slides, projectDir, iconLoader])
 
   // ── poll slide list (2s) ─────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false
     const poll = async (): Promise<void> => {
       try {
-        const r = await fetch(api('/api/slides'), { cache: 'no-store' })
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        const data = await r.json()
-        const list: LiveSlide[] = Array.isArray(data?.slides) ? data.slides : []
+        const res = await window.chatApi.listPptPreviewSlides({ projectDir })
         if (cancelled) return
+        if (!res.ok) {
+          if (res.dirMissing) {
+            setProjectGone(true)
+            return
+          }
+          throw new Error(res.error || 'list failed')
+        }
+        setIconsRoot(res.iconsRoot)
+        const list: LiveSlide[] = res.slides.map((s) => ({ name: s.name, mtime: s.mtime }))
         setSlides(list)
         setError(null)
-        setServerDown(false) // reachable again
+        setProjectGone(false) // reachable again
         if (list.length === 0) return
         const cur = activeRef.current
         const newest = list[list.length - 1]?.name ?? null
@@ -530,11 +622,6 @@ export function LivePreviewEditor({
       } catch (e) {
         if (cancelled) return
         setError(e instanceof Error ? e.message : String(e))
-        // A network-level failure (TypeError "Failed to fetch") means the URL
-        // is unreachable — the server is gone (idle-timeout / stopped) even
-        // though usePreviewServer still surfaces its stale launch URL. Flag it
-        // so the empty state can say "服务已停止" instead of "等待生成".
-        if (e instanceof TypeError) setServerDown(true)
       }
     }
     void poll()
@@ -543,11 +630,12 @@ export function LivePreviewEditor({
       cancelled = true
       window.clearInterval(id)
     }
-  }, [api, loadSlide])
+  }, [projectDir, loadSlide])
 
   const pickSlide = useCallback(
     (name: string): void => {
       followLatestRef.current = false // manual pick pins the view
+      userTookManualControlRef.current = true // see the ref's own comment
       setActive(name)
       activeRef.current = name
       void loadSlide(name)
@@ -568,10 +656,18 @@ export function LivePreviewEditor({
   }, [editingSvg, slides])
   // AI 开始修改某页 → 把预览带到那一页，并 pin 住（followLatest=false，否
   // 则 2s poll 会立刻把视图拽回最新页）。同一次编辑只跳一次（lastAutoJump
-  // 记账），编辑期间用户仍可自由点走；同页的下一轮编辑会再拉回来——AI 正
-  // 在改的页就是当下的焦点。编辑收尾（editingName → null）时主动 loadSlide
-  // 立即上屏新内容：骨架屏揭开就是改完的页，不等下一拍 poll（最多 2s 的
-  // 「旧内容空窗」会让『修改完成』读成『没改』）。
+  // 记账）。编辑收尾（editingName → null）时主动 loadSlide 立即上屏新内容：
+  // 骨架屏揭开就是改完的页，不等下一拍 poll（最多 2s 的「旧内容空窗」会让
+  // 『修改完成』读成『没改』）。
+  //
+  // 但一旦用户手动点走过（pickSlide → userTookManualControlRef），本轮就不
+  // 再跟拍：「应用标注到我的PPT」常常是连续改多页（每页都会触发一次新的
+  // editingName），如果每次都不由分说把视图拽回 AI 正在改的那页，用户在
+  // 「其它页」追加新标注这件事就变得不可能——刚选中元素、刚打开编辑框，
+  // 下一页的编辑一开始视图就被扯走，标注框跟着消失（2026-07-18 用户报：
+  // 点了应用之后其它页也没法追加新标注）。userTookManualControlRef 在每次
+  // 「应用标注到我的PPT」发起时重置（见 applyChanges），所以下一轮 apply
+  // 仍然从"自动跟拍"开始——只在用户于本轮期间主动导航后才让路。
   const lastAutoJumpRef = useRef<string | null>(null)
   const prevEditingRef = useRef<string | null>(null)
   useEffect(() => {
@@ -584,6 +680,7 @@ export function LivePreviewEditor({
     }
     if (lastAutoJumpRef.current === editingName) return
     lastAutoJumpRef.current = editingName
+    if (userTookManualControlRef.current) return
     if (activeRef.current !== editingName) {
       followLatestRef.current = false
       setActive(editingName)
@@ -623,6 +720,28 @@ export function LivePreviewEditor({
     })
   }, [content, svgRoot])
 
+  // Every element on this page sharing `elementId`'s EXACT existing
+  // annotation text, including itself — the "group" a shared multi-element
+  // instruction forms (see annotationGroups below). An unannotated id has no
+  // group, so it just returns itself. Reads annotationsRef (not the
+  // `annotations` state) so callers stay stable across renders while still
+  // seeing the LATEST saved text. Shared by pickAt (clicking an element
+  // directly) and the on-canvas per-element badge click — both need to
+  // reopen the WHOLE group a single member belongs to, not just that one
+  // element, so an update from either surface propagates to every sibling
+  // (2026-07-18 user report: editing one member of a group should update
+  // the group in sync, not silently split it into two). Declared BEFORE
+  // pickAt on purpose — pickAt's useCallback deps array references it, and
+  // that array evaluates eagerly at render time (unlike a callback BODY),
+  // so a forward reference here is a real TDZ error, not just a style nit.
+  const groupMembersOf = useCallback((elementId: string): string[] => {
+    const text = annotationsRef.current[elementId]
+    if (text === undefined) return [elementId]
+    return Object.keys(annotationsRef.current).filter(
+      (eid) => annotationsRef.current[eid] === text
+    )
+  }, [])
+
   // Tap-select at a screen point (called from the useDrag tap branch). Uses
   // elementFromPoint so it works whether the tap originated on the stage or an
   // overlay — then resolves the real element id and applies the same
@@ -650,24 +769,32 @@ export function LivePreviewEditor({
       // existing note in place; otherwise clear the box. Without this, clicking
       // the badge (prefill) and clicking its element (clear) diverge — the user
       // gets two conflicting edit surfaces for the same element ("否则会出现两个").
-      // Guard (mirrors editBadge): if this element is ALREADY the sole selection
-      // the user is likely mid-edit — don't clobber in-progress text back to the
+      // And if that annotation is SHARED with other elements (a multi-select
+      // instruction), expand the selection to the WHOLE group (groupMembersOf)
+      // — clicking any one member reopens the shared instruction, so an update
+      // propagates to every sibling instead of silently peeling this one
+      // element off with its own text while the rest keep the old one
+      // (2026-07-18 user report). Ctrl/Cmd-additive is exempt: that's the user
+      // deliberately building/adjusting a selection element-by-element, not
+      // reopening a saved group.
+      const pickedIds = mods.additive ? [id] : groupMembersOf(id)
+      // Guard (mirrors editBadge): if this is ALREADY the exact selection the
+      // user is likely mid-edit — don't clobber in-progress text back to the
       // saved version; only (re)prefill when jumping in from a different state.
-      // Ctrl/Cmd-additive KEEPS whatever's typed: the user is gathering several
-      // elements to give ONE shared instruction.
       if (!mods.additive) {
         const cur = selectedIdsRef.current
-        const alreadyEditing = cur.length === 1 && cur[0] === id
+        const alreadyEditing =
+          cur.length === pickedIds.length && pickedIds.every((eid) => cur.includes(eid))
         if (!alreadyEditing) setAnnotationText(annotationsRef.current[id] ?? '')
       }
       setSelectedIds((prev) => {
         if (mods.additive) {
           return prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
         }
-        return [id]
+        return pickedIds
       })
     },
-    [svgRoot]
+    [svgRoot, groupMembersOf]
   )
 
   // ── highlight geometry: measure selected/hover element boxes ──────────────
@@ -882,20 +1009,20 @@ export function LivePreviewEditor({
   }, [content])
 
   // ── missing-image recovery ────────────────────────────────────────────────
-  // Collect load failures for THIS server's images. A window capture-phase
+  // Collect load failures for pptasset:// images. A window capture-phase
   // listener sees resource `error` events (they don't bubble, but capture
   // reaches them — same mechanism as the geometry effect's `load` listener),
   // covering both the main stage and the thumbnail rail with one hook.
-  // Filtering on the server origin keeps unrelated app images (avatars etc.)
-  // out of the retry set.
+  // Filtering on the scheme keeps unrelated app images (avatars etc.) out of
+  // the retry set — every slide asset URL is pptasset://, nothing else in
+  // this component's DOM ever is.
   useEffect(() => {
-    const base = baseUrl.replace(/\/$/, '')
     const onError = (e: Event): void => {
       const t = e.target
       let url = ''
       if (t instanceof SVGImageElement) url = t.href.baseVal
       else if (t instanceof HTMLImageElement) url = t.currentSrc || t.src
-      if (!url || !url.startsWith(base)) return
+      if (!url || !url.startsWith('pptasset://')) return
       const canonical = canonicalImageUrl(url)
       if (!failedImagesRef.current.has(canonical)) {
         failedImagesRef.current.set(canonical, 0)
@@ -903,7 +1030,7 @@ export function LivePreviewEditor({
     }
     window.addEventListener('error', onError, true)
     return () => window.removeEventListener('error', onError, true)
-  }, [baseUrl])
+  }, [])
 
   // Probe failed images on a slow tick. On success, repoint every matching
   // `<image>` in the live SVG at a cache-busted URL IN PLACE — no innerHTML
@@ -1082,43 +1209,30 @@ export function LivePreviewEditor({
   )
 
   // ── annotation actions ───────────────────────────────────────────────────
-  const addAnnotation = useCallback(async () => {
+  // Synchronous now — no network round-trip, just a store write (see
+  // previewStore.ts). `setBusy` is deliberately NOT used here: it exists to
+  // disable the Apply button during the genuinely-async save-all, and
+  // wrapping an instant local mutation in it would just flash true→false.
+  const addAnnotation = useCallback(() => {
     const name = activeRef.current
     const ids = selectedIdsRef.current
     const text = annotationText.trim()
     if (!name || ids.length === 0 || !text) return
-    setBusy(true)
-    try {
-      await Promise.all(
-        ids.map((eid) =>
-          fetch(api(`/api/slide/${encodeURIComponent(name)}/annotate`), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ element_id: eid, annotation: text })
-          }).then((r) => {
-            if (!r.ok) throw new Error(`HTTP ${r.status}`)
-            return r.json()
-          })
-        )
-      )
-      setAnnotations((prev) => {
-        const next = { ...prev }
-        ids.forEach((eid) => (next[eid] = text))
-        return next
-      })
-      setAnnotationText('')
-      setStatusMsg(null)
-      // Clear the selection so the floating input dismisses and the just-marked
-      // elements settle into their persistent numbered (dashed) callout. The
-      // user can re-select to add another note; leaving them selected would keep
-      // the input hovering over freshly-annotated elements.
-      setSelectedIds([])
-    } catch (e) {
-      setStatusMsg('添加标注失败：' + (e instanceof Error ? e.message : String(e)))
-    } finally {
-      setBusy(false)
-    }
-  }, [api, annotationText])
+    const store = usePreviewStore.getState()
+    ids.forEach((eid) => store.setAnnotation(projectDir, name, eid, text))
+    setAnnotations((prev) => {
+      const next = { ...prev }
+      ids.forEach((eid) => (next[eid] = text))
+      return next
+    })
+    setAnnotationText('')
+    setStatusMsg(null)
+    // Clear the selection so the floating input dismisses and the just-marked
+    // elements settle into their persistent numbered (dashed) callout. The
+    // user can re-select to add another note; leaving them selected would keep
+    // the input hovering over freshly-annotated elements.
+    setSelectedIds([])
+  }, [projectDir, annotationText])
 
   // Click a number badge → edit that element's EXISTING annotation. This is the
   // SAME operation as clicking the element itself in pickAt (single, non-additive
@@ -1130,34 +1244,84 @@ export function LivePreviewEditor({
   // the box because a fresh single-selection triggers FloatingInstruction's
   // anchor-keyed focus. Reads annotationsRef (not the `annotations` state) so the
   // callback stays stable — identical to pickAt's prefill source.
-  const editBadge = useCallback((elementId: string): void => {
-    // Guard (identical to pickAt): if this element is ALREADY the sole selection
-    // the user is likely mid-edit — don't clobber their in-progress text back to
+  //
+  // Takes an ARRAY, not a single id: the 本页标注 dock's grouped badges (see
+  // annotationGroups) click through here too, with every member id of the
+  // group — re-opens the shared instruction for the WHOLE group, and a
+  // subsequent 更新/删除 acts on all of them at once (same as when they were
+  // first added together via a multi-select 添加标注).
+  const editBadge = useCallback((elementIds: string[]): void => {
+    // Guard (identical to pickAt): if this is ALREADY the exact selection the
+    // user is likely mid-edit — don't clobber their in-progress text back to
     // the saved version. Only prefill when jumping in from a different state.
     const cur = selectedIdsRef.current
-    const alreadyEditing = cur.length === 1 && cur[0] === elementId
-    setSelectedIds([elementId])
-    if (!alreadyEditing) setAnnotationText(annotationsRef.current[elementId] ?? '')
+    const alreadyEditing =
+      cur.length === elementIds.length && elementIds.every((id) => cur.includes(id))
+    setSelectedIds(elementIds)
+    if (!alreadyEditing) setAnnotationText(annotationsRef.current[elementIds[0]] ?? '')
   }, [])
 
+  // Synchronous, same reasoning as addAnnotation — a store tombstone write
+  // (see previewStore.ts), not a network call.
   const removeAnnotation = useCallback(
-    async (elementId: string) => {
+    (elementId: string) => {
       const name = activeRef.current
       if (!name) return
-      try {
-        await fetch(api(`/api/slide/${encodeURIComponent(name)}/annotate/${encodeURIComponent(elementId)}`), {
-          method: 'DELETE'
-        })
-        setAnnotations((prev) => {
-          const next = { ...prev }
-          delete next[elementId]
-          return next
-        })
-      } catch (e) {
-        setStatusMsg('删除标注失败：' + (e instanceof Error ? e.message : String(e)))
-      }
+      usePreviewStore.getState().removeAnnotation(projectDir, name, elementId)
+      setAnnotations((prev) => {
+        const next = { ...prev }
+        delete next[elementId]
+        return next
+      })
     },
-    [api]
+    [projectDir]
+  )
+
+  // Re-read a slide fresh from disk, replay this project's staged delta onto
+  // it, and produce both the file to save and its jsonl log records. Shared
+  // by applyChanges' first pass and its one conflict-retry pass — re-reading
+  // right before writing (rather than reusing whatever was last displayed)
+  // is what stands in for the old server's "always re-read from disk before
+  // writing" trick now that there's no long-lived process to do that
+  // implicitly (see PPT_PREVIEW_SAVE_ALL's mtime compare-and-swap, which this
+  // fresh read's `mtime` feeds).
+  const prepareSaveFiles = useCallback(
+    async (
+      names: string[]
+    ): Promise<{
+      files: { name: string; content: string; baseMtime: number }[]
+      annotationLog: ReturnType<typeof buildAnnotationLog>
+    }> => {
+      const files: { name: string; content: string; baseMtime: number }[] = []
+      const annotationLog: ReturnType<typeof buildAnnotationLog> = []
+      const ts = Date.now() / 1000
+      for (const name of names) {
+        const readRes = await window.chatApi.readPptPreviewSlide({ projectDir, name })
+        if (!readRes.ok || typeof readRes.content !== 'string' || typeof readRes.mtime !== 'number') {
+          continue
+        }
+        const root = parseSvgDocument(readRes.content)
+        if (!root) continue
+        assignTempIds(root)
+        const diskMap: Record<string, string> = {}
+        parseAnnotations(root).forEach((a) => {
+          if (a.element_id) diskMap[a.element_id] = a.annotation
+        })
+        const staged: StagedAnnotationMap | undefined =
+          usePreviewStore.getState().byProject[projectDir]?.annotations[name]
+        const merged = mergeStagedAnnotations(diskMap, staged)
+        // Clear then rewrite, mirroring the old server's save_all: every
+        // data-edit-* pair is dropped first so a locally-removed (tombstoned)
+        // annotation actually disappears, not just fails to be re-added.
+        clearAllAnnotations(root)
+        Object.entries(merged).forEach(([eid, text]) => setSvgAnnotation(root, eid, text))
+        stripUnusedTempIds(root, new Set(Object.keys(merged)))
+        annotationLog.push(...buildAnnotationLog(name, diskMap, merged, ts))
+        files.push({ name, content: serializeSvg(root), baseMtime: readRes.mtime })
+      }
+      return { files, annotationLog }
+    },
+    [projectDir]
   )
 
   const applyChanges = useCallback(async () => {
@@ -1169,61 +1333,99 @@ export function LivePreviewEditor({
       const liveSid = useChatStore.getState().sessionId
       if (liveSid && useApplyPhaseStore.getState().bySid[liveSid]) return
     }
+    const staged = usePreviewStore.getState().byProject[projectDir]?.annotations ?? {}
+    const slideNames = Object.keys(staged)
+    if (slideNames.length === 0) {
+      setStatusMsg('没有待应用的标注')
+      return
+    }
     setBusy(true)
     setStatusMsg('正在应用…')
     try {
-      const r = await fetch(api('/api/save-all'), { method: 'POST' })
-      const data = await r.json()
-      if (data.error) {
-        setStatusMsg('应用失败：' + data.error)
-      } else {
-        setUndoDepth(0)
-        const name = activeRef.current
-        // save-all wrote the annotations into svg_output, so the AI can read
-        // them to redo the page. Instead of only prefilling the composer and
-        // making the user hit Enter, we SEND the instruction ourselves through
-        // the same composer runtime the chat input drives. setText+send lands
-        // in FusionRuntimeProvider's onNew, which already owns the "running →
-        // enqueue behind the active turn / idle → send now" branch (it reads
-        // the LIVE streaming flag via getState). So we don't reimplement that
-        // decision here — we just mirror it for the status message, reading the
-        // SAME flag onNew will read a beat later, so the feedback matches what
-        // actually happens (queued vs sent).
-        if (name) {
-          void loadSlide(name) // reflect the written state
-          // Dedup: if an 应用我的标注 turn is already waiting in this session's
-          // queue, don't stack a second identical one — it'd just make the AI
-          // redo the whole page twice. Read the LIVE queue (getState, not the
-          // render-time `applyQueued` snapshot) so a fast double-click that
-          // outruns the re-render still can't slip a duplicate through.
-          const sid = useChatStore.getState().sessionId
-          const dup =
-            !!sid &&
-            (useMessageQueueStore.getState().queues[sid] ?? []).some(
-              (q) => q.text === APPLY_ANNOTATION_TEXT
-            )
-          if (dup) {
-            setStatusMsg('已在队列中，无需重复添加')
-          } else {
-            const willQueue = useChatStore.getState().streaming
-            composerRuntime.setText(APPLY_ANNOTATION_TEXT)
-            composerRuntime.send()
-            // 从这一刻起进入 apply 生命周期（见 applyPhase 声明处注释）：按钮
-            // 转 loading 并锁死，由下面的状态机 effect 在 turn 结束时解锁。
-            // 写进 sid 那格——send 发向的就是这个会话的 composer。
-            if (sid) useApplyPhaseStore.getState().set(sid, 'sent')
-            setStatusMsg(willQueue ? '会话进行中，已加入队列' : '已发送，AI 正在修改')
-          }
-        } else {
-          setStatusMsg('已应用到 svg_output')
+      const first = await prepareSaveFiles(slideNames)
+      let res = await window.chatApi.savePptPreviewAll({
+        projectDir,
+        files: first.files,
+        // IPC payload types annotationLog as Record<string, unknown>[] (main
+        // only JSON-stringifies each record, it doesn't care about the
+        // shape) — AnnotationLogRecord's fields all satisfy that structurally,
+        // but TS requires an explicit index signature to see it, hence the cast.
+        annotationLog: first.annotationLog as unknown as Record<string, unknown>[],
+        editLog: []
+      })
+      if (res.conflicts.length > 0) {
+        // One retry pass: an Executor rewrite racing the save is the only
+        // realistic cause, and its write has almost certainly landed by now
+        // — re-read just the conflicted files fresh and try once more.
+        const retry = await prepareSaveFiles(res.conflicts)
+        const retryRes = await window.chatApi.savePptPreviewAll({
+          projectDir,
+          files: retry.files,
+          annotationLog: retry.annotationLog as unknown as Record<string, unknown>[],
+          editLog: []
+        })
+        res = {
+          ok: retryRes.conflicts.length === 0,
+          filesModified: [...res.filesModified, ...retryRes.filesModified],
+          conflicts: retryRes.conflicts
         }
+      }
+      for (const name of res.filesModified) {
+        usePreviewStore.getState().clearSlideStaged(projectDir, name)
+      }
+      if (res.conflicts.length > 0) {
+        setStatusMsg(`应用失败：${res.conflicts.join('、')} 正在被 AI 重写，请稍后再试`)
+        return
+      }
+      // save-all wrote the annotations into svg_output, so the AI can read
+      // them to redo the page. Instead of only prefilling the composer and
+      // making the user hit Enter, we SEND the instruction ourselves through
+      // the same composer runtime the chat input drives. setText+send lands
+      // in FusionRuntimeProvider's onNew, which already owns the "running →
+      // enqueue behind the active turn / idle → send now" branch (it reads
+      // the LIVE streaming flag via getState). So we don't reimplement that
+      // decision here — we just mirror it for the status message, reading the
+      // SAME flag onNew will read a beat later, so the feedback matches what
+      // actually happens (queued vs sent).
+      const name = activeRef.current
+      if (name) void loadSlide(name) // reflect the written state
+      if (res.filesModified.length === 0) {
+        setStatusMsg('没有需要应用的更改')
+        return
+      }
+      // Dedup: if an 应用我的标注 turn is already waiting in this session's
+      // queue, don't stack a second identical one — it'd just make the AI
+      // redo the whole page twice. Read the LIVE queue (getState, not the
+      // render-time `applyQueued` snapshot) so a fast double-click that
+      // outruns the re-render still can't slip a duplicate through.
+      const sid = useChatStore.getState().sessionId
+      const dup =
+        !!sid &&
+        (useMessageQueueStore.getState().queues[sid] ?? []).some(
+          (q) => q.text === APPLY_ANNOTATION_TEXT
+        )
+      if (dup) {
+        setStatusMsg('已在队列中，无需重复添加')
+      } else {
+        const willQueue = useChatStore.getState().streaming
+        composerRuntime.setText(APPLY_ANNOTATION_TEXT)
+        composerRuntime.send()
+        // 新一轮 apply 从「自动跟拍」重新起步——哪怕上一轮期间用户点走过、
+        // 压住了跟拍（见 editingName effect 的注释），这一轮 AI 逐页重写时
+        // 应该照常从第一页跳起，只在用户于*这一轮*里再次手动导航后才让路。
+        userTookManualControlRef.current = false
+        // 从这一刻起进入 apply 生命周期（见 applyPhase 声明处注释）：按钮
+        // 转 loading 并锁死，由下面的状态机 effect 在 turn 结束时解锁。
+        // 写进 sid 那格——send 发向的就是这个会话的 composer。
+        if (sid) useApplyPhaseStore.getState().set(sid, 'sent')
+        setStatusMsg(willQueue ? '会话进行中，已加入队列' : '已发送，AI 正在修改')
       }
     } catch (e) {
       setStatusMsg('应用失败：' + (e instanceof Error ? e.message : String(e)))
     } finally {
       setBusy(false)
     }
-  }, [api, loadSlide, composerRuntime])
+  }, [projectDir, prepareSaveFiles, loadSlide, composerRuntime])
 
   // apply 生命周期状态机：sent →（见到 streaming 或入队）→ active →（turn
   // 结束且队列已空）→ idle（= 从 store 清掉该 sid）。phase 与两个判定信号都
@@ -1261,15 +1463,55 @@ export function LivePreviewEditor({
   }, [applyPhase, chatStreaming, applyQueued, chatSessionId])
 
   // 撤销 / 退出预览 的 UI 已按需求移除（应用标注是唯一动作），对应的
-  // runUndo / exitPreview 回调随之删除。undoDepth state 仍由 loadSlide /
-  // applyChanges 维护，仅不再有按钮读它——保留以免牵动应用流程；若确认永久
-  // 不再需要撤销入口，可连同 /undo、/shutdown 端点调用一起清理。
+  // runUndo / exitPreview 回调随之删除；undoDepth state 也已一并删除
+  // （直接编辑/undo 从未在原生编辑器里实现过，见本文件头注释）。
 
   const annotationEntries = useMemo(() => Object.entries(annotations), [annotations])
 
+  // 本页标注 dock 用的分组视图：一次多选（"修改所选 76 个元素"）提交后，
+  // addAnnotation 会给每个选中元素各写一条 previewStore 记录（SVG 侧要求
+  // 每个元素自己带 data-edit-* 才能让 Executor 定位到它——这是正确的存储
+  // 形状，不能改），但那意味着 annotationEntries 里会出现 76 条文字完全
+  // 相同的记录。dock 若照原样每条渲染一个徽标，就会在原本"一次批注"的地
+  // 方铺开一整排数字（2026-07-18 用户报：选了很多元素，本页标注该显示一
+  // 个却显示了一堆）。这里按文字去重分组——纯展示层聚合，previewStore 的
+  // 底层记录数不变，画布上每个元素仍各自带自己的常驻编号（那是有意保留
+  // 的"标记过的元素清单"，见 annotatedRects 注释）。组的代表编号取组内
+  // 最小的 annotationBadges 序号（= 最早加入这组文字的那个元素），组大小
+  // 变化时编号也不会跳来跳去。
+  const annotationGroups = useMemo(() => {
+    const order: string[] = []
+    const byText = new Map<string, string[]>()
+    for (const [eid, text] of annotationEntries) {
+      let ids = byText.get(text)
+      if (!ids) {
+        ids = []
+        byText.set(text, ids)
+        order.push(text)
+      }
+      ids.push(eid)
+    }
+    return order.map((text) => {
+      const ids = byText.get(text)!
+      let repId = ids[0]
+      for (const id of ids) {
+        if ((annotationBadges[id] ?? Infinity) < (annotationBadges[repId] ?? Infinity)) {
+          repId = id
+        }
+      }
+      return { text, ids, badge: annotationBadges[repId] }
+    })
+  }, [annotationEntries, annotationBadges])
+
   // ── deck-level derived state (top bar / breadcrumb / status bar) ──────────
-  // Ready count: a slide is "ready" when it rendered without error (ok !== false).
-  const readyCount = useMemo(() => slides.filter((s) => s.ok !== false).length, [slides])
+  // Ready count: a slide is "ready" when it rendered without error (ok !==
+  // false — a slide slideMeta hasn't caught up to yet defaults to ready,
+  // same optimistic-until-proven-otherwise rule the old server-driven
+  // version had while a response was in flight).
+  const readyCount = useMemo(
+    () => slidesWithMeta.filter((s) => s.ok !== false).length,
+    [slidesWithMeta]
+  )
   // 就绪进度推给 tab 栏胶囊（见 usePreviewReadinessStore 头注释）。
   useEffect(() => {
     usePreviewReadinessStore
@@ -1320,22 +1562,23 @@ export function LivePreviewEditor({
 
   // ── empty / loading state ────────────────────────────────────────────────
   if (slides.length === 0) {
-    // serverDown: the URL is unreachable (server stopped) — say so plainly
-    // (and statically: an inviting "materializing" animation would imply
-    // generation is still pending, which is exactly the wrong signal here).
-    if (serverDown) {
+    // projectGone: svg_output/ (or the project itself) is gone — say so
+    // plainly (and statically: an inviting "materializing" animation would
+    // imply generation is still pending, which is exactly the wrong signal
+    // here).
+    if (projectGone) {
       return (
         <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-5">
           <div className="text-center">
-            <div className="text-[14px] font-medium text-foreground">预览服务已停止</div>
+            <div className="text-[14px] font-medium text-foreground">预览已停止</div>
             <div className="mt-1 text-[13px] text-muted-foreground">
-              预览服务已关闭（空闲超时或已退出）。重新生成或重启预览后会再次出现。
+              项目目录已找不到。重新生成后会再次出现。
             </div>
           </div>
         </div>
       )
     }
-    // Server alive, no slides yet → the animated "materializing" empty state.
+    // Project present, no slides yet → the animated "materializing" empty state.
     return (
       <PreviewEmptyState
         hint={error ? `等待幻灯片生成…（${error}）` : '生成的幻灯片会在这里实时出现'}
@@ -1347,7 +1590,7 @@ export function LivePreviewEditor({
     // @container/editor：工作区住在可拖分栏里，视口媒体查询探不到面板的
     // 真实宽度——所有窄档适配（dock 换行/缩略栏收窄/meta 隐藏）用容器
     // 查询打在这个根上。容器断点：md=448 lg=512 xl=576 2xl=672px。
-    <div className="@container/editor flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+    <div className="@container/editor bg-art-transparent flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {/* 原 56px「幻灯片预览」标题头已删（2026-07-07 重设计）：文案与
           tab 名重复，就绪进度上移为 tab 栏右端胶囊（usePreviewReadinessStore
           → SlidesWorkspace），省出一整行给画布。 */}
@@ -1368,7 +1611,7 @@ export function LivePreviewEditor({
             </span>
           </div>
           <div className="flex-1 space-y-1.5 overflow-y-auto px-2.5 pb-3">
-            {slides.map((s, i) => {
+            {slidesWithMeta.map((s, i) => {
               const on = s.name === active
               const ready = s.ok !== false
               return (
@@ -1612,7 +1855,7 @@ export function LivePreviewEditor({
                         hover={hoverRect}
                         marquee={marquee}
                         reduceMotion={!!reduceMotion}
-                        onEditBadge={editBadge}
+                        onEditBadge={(id) => editBadge(groupMembersOf(id))}
                       />
                   {/* Floating instruction box — pops just above the selection so
                       the user writes the edit right where they're looking,
@@ -1629,22 +1872,43 @@ export function LivePreviewEditor({
                     count={selectedIds.length}
                     value={annotationText}
                     busy={busy}
+                    // Separate from `busy` (that one's only true for the brief
+                    // save-call inside applyChanges itself — see its own
+                    // comment). This covers the much longer window AFTER that
+                    // call returns, while the AI is still working through the
+                    // apply turn's pages (applyPhase 'sent'/'active'): staging
+                    // a submit here during that window is technically safe
+                    // (it just queues for the NEXT apply, the AI's current
+                    // rewrite already has its own frozen instruction set), but
+                    // letting 更新/添加标注 stay clickable while the main
+                    // 应用 button reads "AI 正在修改…" reads as inconsistent
+                    // and invites confusion about whether this edit is being
+                    // acted on right now (2026-07-18 user report).
+                    applying={applyPhase !== 'idle'}
                     inputRef={floatingInputRef}
-                    // 编辑既有标注的判定：恰好单选且该元素已有标注（dock 序号
-                    // 钮/画布徽标点进来就是这个形态）。此时浮层换「编辑标注」
-                    // 文案并露出删除入口——dock 的标注卡片退役后（只剩序号
-                    // 钮），删除唯一的家就在这里。
+                    // 编辑既有标注的判定：当前选中集里每个元素的既有标注文字
+                    // 都相同（单选一个已标注元素，或点 dock 的分组徽标/画布
+                    // 徽标带回整组，都落这个形态——同一条指令覆盖的元素本来
+                    // 就该被当一个整体重开）。此时浮层换「编辑标注」文案并露
+                    // 出删除入口——dock 的标注卡片退役后（只剩序号钮），删
+                    // 除唯一的家就在这里。选中集里有任何元素还没标注、或几
+                    // 个元素标注文字彼此不同（一次新的多选）时判 null，落回
+                    // 「修改所选 N 个元素」的添加态。
                     editingId={
-                      selectedIds.length === 1 &&
-                      annotations[selectedIds[0]] !== undefined
+                      selectedIds.length > 0 &&
+                      annotations[selectedIds[0]] !== undefined &&
+                      selectedIds.every((id) => annotations[id] === annotations[selectedIds[0]])
                         ? selectedIds[0]
                         : null
                     }
                     onChange={setAnnotationText}
                     onSubmit={() => void addAnnotation()}
                     onDismiss={() => setSelectedIds([])}
-                    onDelete={(id) => {
-                      void removeAnnotation(id)
+                    onDelete={() => {
+                      // 删整个当前选中集，不是只删被点开的那一个 id——一条
+                      // 指令覆盖的所有元素本来就该一起删（同 dock/画布徽标
+                      // 分组点入的语义）。
+                      selectedIdsRef.current.forEach((eid) => void removeAnnotation(eid))
                       setSelectedIds([])
                       setAnnotationText('')
                     }}
@@ -1726,12 +1990,16 @@ export function LivePreviewEditor({
           border-l 竖线把 dock 切成表格感，是被毙的主因之一。已选簇定宽
           260px：空态提示与芯片列表天然宽度不同，跟内容走会让整条 dock 在
           选中/取消时左右抖动（2026-07-07 用户实锤）。dock 回到明面
-          bg-background，舞台井色只留给 rail 和 stage。 ── */}
+          bg-background，舞台井色只留给 rail 和 stage。
+          毛玻璃质感（2026-07-18，跟 composer/rail/workspace 面同一批）：
+          bg-background 实底换成半透明 + backdrop-blur——/65 比账户菜单
+          的 /70 略透一点，这条 dock 更贴近纯 chrome（标签 + 一个 CTA
+          按钮），文字密度比 workspace 大面板低，可以更透。 ── */}
       {/* 窄档（容器 ≤672px）：dock 从「三簇一行」变「三条单行带竖排」——
           簇内标签翻到左侧、内容条 flex-1，应用簇整行占满。芯片/序号钮
           永不折行（折行让 dock 纵向无上限、把舞台挤没，2026-07-07 窄屏
           实锤），dock 总高度因此有界。 */}
-      <div className="flex min-h-[62px] shrink-0 items-center gap-5 border-t border-border/60 bg-background px-4 py-2.5 @max-2xl/editor:min-h-0 @max-2xl/editor:flex-col @max-2xl/editor:items-stretch @max-2xl/editor:gap-2 @max-2xl/editor:px-3.5">
+      <div className="flex min-h-[62px] shrink-0 items-center gap-5 border-t border-border/60 bg-background/65 backdrop-blur-xl backdrop-saturate-150 px-4 py-2.5 @max-2xl/editor:min-h-0 @max-2xl/editor:flex-col @max-2xl/editor:items-stretch @max-2xl/editor:gap-2 @max-2xl/editor:px-3.5">
         {/* 已选元素 */}
         <section className="flex w-[260px] shrink-0 flex-col gap-1.5 @max-2xl/editor:w-auto @max-2xl/editor:flex-row @max-2xl/editor:items-center @max-2xl/editor:gap-2.5">
           <div className="flex items-center gap-1.5 @max-2xl/editor:shrink-0">
@@ -1823,7 +2091,9 @@ export function LivePreviewEditor({
             打开）。编号取 annotationBadges，与画布虚线框的徽标同一套，两边
             可互相对照；文字/元素名收进 tooltip。点击 = editBadge：选中对应
             元素并弹出就地编辑浮层——删除入口也在浮层里（原卡片的 ✕ 随卡片
-            一起退役）。 */}
+            一起退役）。按 annotationGroups 渲染而非 annotationEntries：一
+            次多选提交的同一条指令只露一个徽标（右上角小计数角标），不铺开
+            一整排重复文字的号码（2026-07-18 用户报）。 */}
         <section
           ref={annSectionRef}
           className="relative flex min-w-0 flex-1 flex-col gap-1.5 @max-2xl/editor:flex-none @max-2xl/editor:flex-row @max-2xl/editor:items-center @max-2xl/editor:gap-2.5"
@@ -1832,13 +2102,13 @@ export function LivePreviewEditor({
             <span className="text-[10.5px] font-semibold tracking-wide text-muted-foreground">
               本页标注
             </span>
-            {annotationEntries.length > 0 && (
+            {annotationGroups.length > 0 && (
               <span className="grid h-[15px] min-w-[15px] place-items-center rounded-full bg-amber-500/15 px-1 text-[9.5px] font-bold tabular-nums text-amber-600">
-                {annotationEntries.length}
+                {annotationGroups.length}
               </span>
             )}
           </div>
-          {annotationEntries.length === 0 ? (
+          {annotationGroups.length === 0 ? (
             <div className="flex h-[26px] items-center text-[11.5px] text-muted-foreground/60">
               暂无标注
             </div>
@@ -1847,13 +2117,13 @@ export function LivePreviewEditor({
               className="flex h-[26px] items-center gap-1.5 overflow-x-auto pb-0.5 @max-2xl/editor:min-w-0 @max-2xl/editor:flex-1"
               onScroll={() => setAnnTip(null)}
             >
-              {annotationEntries.map(([eid]) => (
+              {annotationGroups.map((group) => (
                 <button
-                  key={eid}
+                  key={group.ids[0]}
                   type="button"
                   onClick={() => {
                     setAnnTip(null)
-                    editBadge(eid)
+                    editBadge(group.ids)
                   }}
                   onMouseEnter={(e) => {
                     cancelAnnTipClose()
@@ -1871,20 +2141,29 @@ export function LivePreviewEditor({
                       0,
                       Math.min(bLeft - 9, s.width - 260)
                     )
-                    setAnnTip({ eid, left })
+                    setAnnTip({ ids: group.ids, left })
                   }}
                   onMouseLeave={closeAnnTipSoon}
-                  className="grid h-[22px] min-w-[22px] shrink-0 place-items-center rounded-full bg-amber-500 px-1.5 text-[11px] font-bold tabular-nums text-white shadow-sm transition-all hover:bg-amber-600 active:scale-90"
+                  className="relative grid h-[22px] min-w-[22px] shrink-0 place-items-center rounded-full bg-amber-500 px-1.5 text-[11px] font-bold tabular-nums text-white shadow-sm transition-all hover:bg-amber-600 active:scale-90"
                 >
-                  {annotationBadges[eid]}
+                  {group.badge}
+                  {/* 群组角标：同一条指令覆盖 >1 个元素时露出，与主号码区分
+                      开——不是"第 N 条标注"，是"这条标注覆盖了 N 个元素"。 */}
+                  {group.ids.length > 1 && (
+                    <span className="absolute -right-1 -top-1 grid h-[13px] min-w-[13px] place-items-center rounded-full border border-background bg-foreground px-0.5 text-[8.5px] font-bold tabular-nums text-background">
+                      {group.ids.length}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
           )}
-          {/* hover 提示卡：序号 + 元素名 + 删除 + 标注全文（超 4 行截断）。
-              可交互（带删除入口），进出走 160ms 宽限期（见 closeAnnTipSoon
-              注释）。标注刚被删时 eid 可能已失效，渲染前再查一次。 */}
-          {annTip && annotations[annTip.eid] !== undefined && (
+          {/* hover 提示卡：序号 + 元素名（或元素计数）+ 删除 + 标注全文（超
+              4 行截断）。可交互（带删除入口），进出走 160ms 宽限期（见
+              closeAnnTipSoon 注释）。标注刚被删时 ids[0] 可能已失效，渲染
+              前再查一次。删除按组内全部 id 一起删——这条标注本来就是当
+              一个整体添加的。 */}
+          {annTip && annotations[annTip.ids[0]] !== undefined && (
             <div
               className="absolute bottom-[calc(100%+8px)] z-30 w-max max-w-[260px] rounded-[10px] border border-border bg-popover px-3 py-2 shadow-[0_12px_40px_rgba(0,0,0,0.16),0_2px_8px_rgba(0,0,0,0.08)]"
               style={{ left: annTip.left }}
@@ -1893,15 +2172,17 @@ export function LivePreviewEditor({
             >
               <div className="mb-0.5 flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
                 <span className="grid h-[15px] min-w-[15px] place-items-center rounded-full bg-amber-500 px-1 text-[9px] font-bold tabular-nums text-white">
-                  {annotationBadges[annTip.eid]}
+                  {annotationBadges[annTip.ids[0]]}
                 </span>
-                {friendlyLabel(annTip.eid)}
+                {annTip.ids.length > 1
+                  ? `${annTip.ids.length} 个元素`
+                  : friendlyLabel(annTip.ids[0])}
                 <button
                   type="button"
                   onClick={() => {
-                    const eid = annTip.eid
+                    const ids = annTip.ids
                     setAnnTip(null)
-                    void removeAnnotation(eid)
+                    ids.forEach((eid) => void removeAnnotation(eid))
                   }}
                   className="ml-auto rounded px-1 py-0.5 text-[10.5px] text-muted-foreground/70 transition-colors hover:bg-destructive/10 hover:text-destructive"
                 >
@@ -1909,7 +2190,7 @@ export function LivePreviewEditor({
                 </button>
               </div>
               <div className="line-clamp-4 text-[12px] leading-relaxed text-foreground">
-                {annotations[annTip.eid]}
+                {annotations[annTip.ids[0]]}
               </div>
             </div>
           )}
@@ -2150,6 +2431,8 @@ function HighlightOverlay({
  *
  * Empty `value` while busy still lets 添加 fire nothing — the parent's
  * addAnnotation no-ops on empty text, and the button is disabled to match.
+ * Submit is ALSO disabled while `applying` (an apply turn is in flight) — see
+ * the call site's comment for why that's a separate signal from `busy`.
  */
 function FloatingInstruction({
   bounds,
@@ -2158,6 +2441,7 @@ function FloatingInstruction({
   count,
   value,
   busy,
+  applying,
   inputRef,
   editingId,
   onChange,
@@ -2189,6 +2473,9 @@ function FloatingInstruction({
   count: number
   value: string
   busy: boolean
+  // True while an apply turn is in flight (applyPhase !== 'idle') — see the
+  // call site's comment for why this is a separate signal from `busy`.
+  applying: boolean
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   // 非空 = 正在编辑该元素的既有标注（单选且已有标注）：文案换「编辑
   // 标注」、提交钮换「更新」、左下角露删除入口。
@@ -2317,7 +2604,7 @@ function FloatingInstruction({
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
-              if (!busy && value.trim()) onSubmit()
+              if (!busy && !applying && value.trim()) onSubmit()
             } else if (e.key === 'Escape') {
               e.preventDefault()
               onDismiss()
@@ -2329,6 +2616,17 @@ function FloatingInstruction({
             'focus-visible:border-[hsl(var(--brand)/0.7)] focus-visible:ring-[hsl(var(--brand)/0.25)]'
           )}
         />
+        {/* AI 正在处理上一轮 apply 时，提交按钮跟着主「应用」按钮一起读锁定
+            态——技术上这里提交是安全的（只是给下一轮 apply 排队），但主按钮
+            已经写着"AI 正在修改…"，这个小浮层的按钮却还能点，读起来前后
+            矛盾、也让人搞不清这次编辑到底有没有被处理（2026-07-18 用户
+            报）。加一行同款措辞的等待提示，呼应主按钮下面的"修改完成后可
+            再次应用"。 */}
+        {applying && (
+          <div className="mt-1.5 text-[10.5px] text-muted-foreground/70">
+            AI 正在修改中，请等待完成后再提交
+          </div>
+        )}
         <div className="mt-2 flex items-center gap-1.5">
           {editingId ? (
             <button
@@ -2350,7 +2648,7 @@ function FloatingInstruction({
           <Button
             type="button"
             size="sm"
-            disabled={busy || !value.trim()}
+            disabled={busy || applying || !value.trim()}
             onClick={onSubmit}
             className={cn(
               'h-7 gap-1.5 rounded-full bg-[hsl(var(--brand))] px-3 text-[12px] font-medium text-[hsl(var(--brand-foreground))] shadow-[0_2px_8px_-1px_hsl(var(--brand)/0.5)]',

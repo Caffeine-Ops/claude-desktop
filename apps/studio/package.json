@@ -27,6 +27,7 @@
     "postinstall": "electron-builder install-app-deps",
     "prebundle:kb-model": "node scripts/prebundle-kb-model.mjs",
     "verify:kb-model": "node scripts/verify-kb-model.mjs",
+    "generate:bg-presets": "bun scripts/generate-bg-presets.mjs",
     "test": "bun test electron/ src/chat/lib"
   },
   "//note-scripts": "dev = 整个桌面应用（electron-vite dev；main 启动时自动 spawn daemon 与 dev:next）。dev:next / build:next 是 Next 前端的独立入口——openDesignServices.spawnStudioDev 调的就是 dev:next。刻意没有裸 build：两条构建链必须显式指名（root 的 build 转发到 build:electron，root 的 prebuild:resources 转发到 build:next），避免合包前『desktop build=electron、studio build=next』的二义性复活。",
