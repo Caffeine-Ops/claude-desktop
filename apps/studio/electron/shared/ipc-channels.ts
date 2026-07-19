@@ -233,6 +233,13 @@ export const IPC_CHANNELS = {
    */
   SESSION_LOAD: 'session:load',
   /**
+   * Renderer → main. Loads one sub-agent's full transcript (an
+   * `Agent`/`Workflow` spawn's own `agent-<agentId>.jsonl`, keyed by the
+   * parent session + that agent's id) — same ThreadMessageLike shape as
+   * SESSION_LOAD, read-only, no relation to the parent's own history.
+   */
+  SUBAGENT_TRANSCRIPT_LOAD: 'subagent:transcript-load',
+  /**
    * Renderer → main. Mints a new session UUID (not yet written to
    * disk). The caller then calls SESSION_SWITCH with `resume: false`
    * to actually spawn the CLI on this id.
@@ -1535,6 +1542,18 @@ export type SessionListResult = { threads: readonly ThreadSummary[] }
 export type SessionLoadPayload = { sessionId: string }
 export type SessionLoadResult = { messages: readonly ThreadMessageLike[] }
 
+/** Payload for SUBAGENT_TRANSCRIPT_LOAD. `agentId` is `WorkflowAgent.agentId`
+ * (or any Agent-tool spawn's id) — the parent session's own sessionId, not
+ * the sub-agent's. */
+export type SubagentTranscriptLoadPayload = { sessionId: string; agentId: string }
+export type SubagentTranscriptLoadResult = {
+  messages: readonly ThreadMessageLike[]
+  /** Epoch ms of the transcript's last line, when parseable. */
+  updatedAt?: number
+  /** Summed straight off the transcript's own per-call usage figures. */
+  usage?: { inputTokens: number; outputTokens: number }
+}
+
 export type SessionNewResult = { sessionId: string }
 
 export type SessionSwitchPayload = { sessionId: string; resume: boolean }
@@ -2510,6 +2529,15 @@ export interface ChatApi {
    * straight to the chat store's `setSession` action.
    */
   loadSession(payload: SessionLoadPayload): Promise<SessionLoadResult>
+
+  /**
+   * Load one sub-agent's full transcript (an `Agent`/`Workflow` spawn's
+   * own `agent-<agentId>.jsonl`). Read-only, independent of the parent
+   * session's own history — used by the agent-team detail takeover view.
+   */
+  loadSubagentTranscript(
+    payload: SubagentTranscriptLoadPayload
+  ): Promise<SubagentTranscriptLoadResult>
 
   /**
    * Mint a new session UUID. Does not spawn the CLI; the caller

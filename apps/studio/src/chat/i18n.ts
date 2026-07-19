@@ -467,6 +467,19 @@ const STRINGS = {
     workflowAgentEmptyDetail: '选择左侧的智能体查看详情',
     workflowAgentNoActivityYet: '尚无工具调用',
 
+    // Agent team bar（composer 上方常驻团队栏）+ 详情接管面
+    // （AgentTeamBar / AgentTeamDetail）。成员标签用真实 label，不再有
+    // 虚构角色/花名（2026-07-19 第三轮移除，见 agentPersona.ts 头注释）。
+    agentTeamBarMore: '更多成员',
+    agentTeamBarCollapse: '收起团队栏',
+    agentTeamBarExpand: '展开团队栏',
+    agentTeamDetailUpdatedAt: '更新时间',
+    agentTeamDetailToolCalls: '工具调用',
+    agentTeamDetailTokensIO: 'Token（输入/输出）',
+    agentTeamDetailLoading: '正在加载子 Agent 历史…',
+    agentTeamDetailLoadError: '子 Agent 历史加载失败',
+    agentTeamDetailBackToMain: '返回主会话继续对话',
+
     // Spreadsheet preview panel (right pane, opened from deliverable
     // file cards for xlsx / xls / csv).
     sheetPreviewOpenExternal: '用系统应用打开',
@@ -876,6 +889,16 @@ const STRINGS = {
     workflowAgentActivityLabel: 'Activity',
     workflowAgentEmptyDetail: 'Select an agent on the left to see details',
     workflowAgentNoActivityYet: 'No tool calls yet',
+
+    agentTeamBarMore: 'More members',
+    agentTeamBarCollapse: 'Collapse team bar',
+    agentTeamBarExpand: 'Expand team bar',
+    agentTeamDetailUpdatedAt: 'Updated',
+    agentTeamDetailToolCalls: 'Tool calls',
+    agentTeamDetailTokensIO: 'Tokens (in/out)',
+    agentTeamDetailLoading: 'Loading sub-agent history…',
+    agentTeamDetailLoadError: 'Failed to load sub-agent history',
+    agentTeamDetailBackToMain: 'Back to main conversation',
 
     sheetPreviewOpenExternal: 'Open in default app',
     sheetPreviewClose: 'Close spreadsheet preview',

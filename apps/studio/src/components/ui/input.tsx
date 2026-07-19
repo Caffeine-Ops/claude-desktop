@@ -14,7 +14,13 @@ function Input({ className, type, ...props }: React.ComponentProps<"input">) {
         // --primary 被 appearance applier 换成用户主题色后，预填全选的输入框
         // 整段变成「主题色底 + 白字」的荧光块（2026-07-07 重命名弹窗用户实锤）。
         // 改 25% 透明主题色底、文字保持原色——高亮可辨且始终可读。
-        "h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none selection:bg-primary/25 file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm dark:bg-input/30",
+        // 2026-07-19 用户实锤 25% 在深色/低明度主题色下形同虚设（重命名弹窗
+        // 全选文字肉眼看不出任何高亮）：CDP 截图实测该用户主题色 HSL 明度仅
+        // 23%，本身就和暗色背景很接近，纯调高 alpha 天花板很低——alpha 拉到
+        // 100% 也只比背景亮一点点。改成先把 primary 和白按 7:3 混合提亮
+        // （不透传给文字，只用于选中底色），再取 60% 不透明度叠加——不管用户
+        // 主题色多暗或多亮都保底可辨，且不是纯白底的「荧光块」。
+        "h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none selection:bg-[color-mix(in_srgb,color-mix(in_srgb,hsl(var(--primary))_70%,white_30%)_60%,transparent)] file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm dark:bg-input/30",
         // ring/50 → ring/15：3px 半透明主题色环叠在变色 border 上是「荧光笔」
         // 的另一半，收敛成低透光晕（1px 主题色边界 + 柔和 3px 晕）。
         "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/15",

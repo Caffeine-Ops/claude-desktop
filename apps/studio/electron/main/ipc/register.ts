@@ -33,6 +33,8 @@ import {
   type SessionListResult,
   type SessionLoadPayload,
   type SessionLoadResult,
+  type SubagentTranscriptLoadPayload,
+  type SubagentTranscriptLoadResult,
   type SessionNewResult,
   type SessionRenamePayload,
   type SessionDeletePayload,
@@ -197,6 +199,7 @@ import {
   deleteSessionFromDisk,
   listAllSessions,
   loadSession,
+  loadSubagent,
   renameSession,
   searchSessionContent
 } from '../core/sessionStore'
@@ -484,6 +487,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_SEARCH)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_LOAD)
+  ipcMain.removeHandler(IPC_CHANNELS.SUBAGENT_TRANSCRIPT_LOAD)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_NEW)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_SWITCH)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_RENAME)
@@ -1648,6 +1652,21 @@ export function registerIpcHandlers(): void {
       validateSessionLoadPayload(payload)
       const messages = await loadSession(payload.sessionId)
       return { messages }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.SUBAGENT_TRANSCRIPT_LOAD,
+    async (
+      _event,
+      payload: SubagentTranscriptLoadPayload
+    ): Promise<SubagentTranscriptLoadResult> => {
+      validateSubagentTranscriptLoadPayload(payload)
+      const { messages, updatedAt, usage } = await loadSubagent(
+        payload.sessionId,
+        payload.agentId
+      )
+      return { messages, updatedAt, usage }
     }
   )
 
@@ -3217,6 +3236,27 @@ function validateSessionLoadPayload(
   }
   if (v.sessionId.length > 128) {
     throw new Error('Invalid session-load sessionId (too long)')
+  }
+}
+
+function validateSubagentTranscriptLoadPayload(
+  value: unknown
+): asserts value is SubagentTranscriptLoadPayload {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('Invalid subagent-transcript-load payload')
+  }
+  const v = value as Record<string, unknown>
+  if (typeof v.sessionId !== 'string' || v.sessionId.length === 0) {
+    throw new Error('Invalid subagent-transcript-load sessionId (empty or missing)')
+  }
+  if (v.sessionId.length > 128) {
+    throw new Error('Invalid subagent-transcript-load sessionId (too long)')
+  }
+  if (typeof v.agentId !== 'string' || v.agentId.length === 0) {
+    throw new Error('Invalid subagent-transcript-load agentId (empty or missing)')
+  }
+  if (v.agentId.length > 128) {
+    throw new Error('Invalid subagent-transcript-load agentId (too long)')
   }
 }
 

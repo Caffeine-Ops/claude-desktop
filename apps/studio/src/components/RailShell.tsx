@@ -263,7 +263,16 @@ export function RailShell() {
           <div
             className={cn(
               'fixed left-0 top-0 h-full transition-transform duration-200 ease-out',
-              'bg-sidebar shadow-[0_8px_40px_rgba(0,0,0,0.18)]',
+              // 毛玻璃化（2026-07-19，用户点名要求）：background-art.css 头部
+              // 注释里这层曾被有意排除在「壁纸开启才半透明」的 .app-rail 规则
+              // 之外——理由是它浮在真实聊天/画布内容之上，半透明会跟身下内容
+              // 混色，伤到本就窄的可读性（不是遗漏）。用户看过这条理由后仍要
+              // 求做，这里改成同重命名弹窗/dropdown-menu 那套「始终毛玻璃」
+              // 配方，不挂靠 data-bg-art、不看壁纸开关。AppRail.tsx 的
+              // overlay 分支已把 nav 自己的 bg-sidebar 让位成 transparent，
+              // 玻璃底色 + blur 完全由本层承担，避免两层嵌套 backdrop-filter
+              // 叠加糊成一团。
+              'border-r border-white/15 bg-sidebar/55 shadow-[0_8px_40px_rgba(0,0,0,0.28),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125',
               // z 分档理由见 RailShell 顶部注释：canvas 面不提的话，overlay
               // 滑出后顶部 46px 会被 tab 栏（z-120）压住，AppRail 自己的
               // 收起按钮被盖没点不到。恒比图标排高 10，浮出时盖住按钮排。

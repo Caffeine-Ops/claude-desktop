@@ -77,5 +77,22 @@ export const BACKGROUND_PRESETS: readonly BackgroundThemeMeta[] = [
       highlight: "#646578"
     },
     createdAt: 0
+  },
+  {
+    version: 1,
+    id: "preset-starry",
+    name: "星夜",
+    file: "/bg-presets/preset-starry.png",
+    width: 1920,
+    height: 1200,
+    luminance: 0.0478,
+    focus: { x: 0.5038, y: 0.5135 },
+    safeSide: "none",
+    palette: {
+      accent: "#282c3c",
+      secondary: "#44545f",
+      highlight: "#403b54"
+    },
+    createdAt: 0
   }
 ] as const

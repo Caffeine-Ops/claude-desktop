@@ -351,8 +351,13 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
     // 分界线 rail（2026-07-08 二次定稿，原型 docs/ui-prototype-shell-refined.html
     // 形态 3「分界线」）：--sidebar 灰实面，与近白内容面之间由
     // .shell-content-card 的左缘竖线定边界（globals.css）。同日上午的
-    // 「毛玻璃」形态（bg-sidebar/40 + backdrop-blur + body 光斑壁纸）用户
-    // 真机看过定「太丑」退役，别加回。
+    // 「毛玻璃」形态（bg-sidebar/40 + backdrop-blur + body 主题色光斑壁纸）
+    // 用户真机看过定「太丑」退役——**当时否决的是「blur + 主题色光斑」组合**。
+    // 2026-07-19 用户在背景图换肤功能正式做好之后重新要求 rail 加毛玻璃，
+    // 这次明确排除光斑，只要半透明 + backdrop-blur：见 background-art.css
+    // 的 `html[data-bg-art] .app-rail` 规则（背景图关闭时这里仍是不透明
+    // bg-sidebar，同下面 utility 类，只有开着壁纸换肤才切换成玻璃态）。
+    // 光斑效果依旧不加回。
     // 无右边框：分界线由内容面左缘承担，rail 自己不画线（两条会叠粗）。
     // 宽度对齐原型 --sidebar-w: 244px（旧值 220 给不下「标题 + 相对时间」
     // 的会话行）。
@@ -364,7 +369,24 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
     // 样式本身（样式仍是下面这串 Tailwind utility），只是给那条规则一个稳定
     // 挂点——rail 之前没有语义类名，只能靠 utility 类名选中，容易和其它同
     // utility 的元素一起被误选。
-    <nav className="app-rail flex h-full w-61 shrink-0 flex-col gap-1 bg-sidebar px-3 pb-3">
+    //
+    // overlay 分支不挂 app-rail 类、直接 bg-transparent（2026-07-19，用户
+    // 点名要求收起态浮出面板也要毛玻璃）：真正的玻璃底色 + backdrop-blur
+    // 画在 RailShell.tsx 的 fixed 包裹 div 上（那层背后是真实聊天/画布内容，
+    // 不是像本组件平时那样只挡在壁纸前面，所以不挂靠 data-bg-art、始终
+    // 生效）。⚠️ 这里必须把 app-rail 类也摘掉，不能只把 bg-sidebar 换成
+    // bg-transparent——开着壁纸换肤时 `html[data-bg-art] .app-rail` 规则
+    // 的 specificity (0,2,1) 会压过 bg-transparent 这个 utility (0,1,0)，
+    // 照样把 nav 自己的半透明+blur 糊上去，跟包裹 div 的玻璃层嵌套 backdrop-
+    // filter 叠两次（CDP 真机验证过：开着壁纸时 nav 计算出的背景不是
+    // transparent 而是 hsl(var(--sidebar)/0.55)，就是这条规则赢的）。摘掉
+    // class 后这条规则对 overlay 态零命中，绘制职责完全交给外层包裹 div。
+    <nav
+      className={cn(
+        'flex h-full w-61 shrink-0 flex-col gap-1 px-3 pb-3',
+        overlay ? 'bg-transparent' : 'app-rail bg-sidebar'
+      )}
+    >
       {/* 顶部 48px：macOS 红绿灯的净空 + 窗口拖拽面（原型 .traffic）。
         * 原来是 nav 的 pt-12 padding——padding 不能标 app-region，改成
         * 实体条后这块「空白」真的能拖动窗口。收起/展开按钮叠在这条的

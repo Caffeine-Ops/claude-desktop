@@ -9,9 +9,12 @@
  * canvas/styles/home/index.css）之后（见 app/layout.tsx）——下面 .shell-
  * content-card 的规则要覆盖 canvas 链此前建立的不透明 --card 底，顺序即级联。
  *
- * 不用 backdrop-blur / 光斑：globals.css 记录过一次相邻尝试（主题色光斑壁纸 +
- * rail 半透明 backdrop-blur）被用户否决（"太丑"）。本实现只用纯色/纯色渐变
- * scrim，没有 blur、没有光斑。
+ * 不用 backdrop-blur / 光斑（整体方针）：globals.css 记录过一次相邻尝试
+ * （主题色光斑壁纸 + rail 半透明 backdrop-blur）被用户否决（"太丑"，
+ * 2026-07-08）。本文件其余所有 scrim 只用纯色/纯色渐变，没有 blur、没有光斑。
+ * **唯一例外**：下面 `.app-rail` 规则，2026-07-19 用户在背景图换肤功能正式
+ * 做好、veil 系数也修过之后重新要求 rail 侧栏加毛玻璃——这次明确排除光斑，
+ * 只要 backdrop-blur + 半透明，不算推翻整体方针，是限定范围的例外。
  */
 
 /* body 自身的不透明底让位给壁纸——CSS2.1 Appendix E 绘制顺序：负 z-index 的
@@ -36,11 +39,23 @@ html[data-bg-art] body {
  * 左侧栏仍是不透明实底，壁纸只能透过内容区，不是「一张图铺满整窗」。
  * specificity (0,2,1) 压过 AppRail.tsx 上的 `bg-sidebar` utility (0,1,0)。
  * 收起态浮出的 peek overlay（RailShell.tsx 的 fixed 包裹 div）刻意不在这条
- * 规则的选择范围内、维持不透明——它是浮在内容之上的悬浮面板，半透明会跟身下
- * 内容混色，伤到那层本来就窄的可读性，同弹窗/菜单保持不透明是同一个道理，
- * 不是遗漏。 */
+ * 规则的选择范围内——它是浮在内容之上的悬浮面板，半透明跟着壁纸开关走的话，
+ * 关闭壁纸时会退回不透明、开启时又要跟身下真实聊天/画布内容混色，两种状态
+ * 观感不一致还伤可读性，跟本规则的「只在壁纸开启时才半透明」不是同一个需求。
+ * 2026-07-19 用户后来还是点名要求这层也做毛玻璃，改法是在 RailShell.tsx
+ * 里单独给它一套不挂靠 data-bg-art、无论壁纸开关与否都生效的 Tailwind 配方
+ * （同重命名弹窗/dropdown-menu 那套），本文件对它保持零命中。
+ *
+ * backdrop-blur（2026-07-19 补，本文件唯一的 blur 例外，见头注释）：单纯
+ * 0.55 透明度在壁纸偏暗的区域混合结果跟不透明几乎没区别（同重命名弹窗毛
+ * 玻璃踩过的同一个坑——真机截图核对过，纯调不透明度肉眼看不出效果），
+ * 补 blur + saturate + brightness 一起才读得出「玻璃」质感；brightness 提亮
+ * 背后模糊内容一档，避免暗色壁纸角落把 rail 糊成一样暗的死黑。不加光斑/
+ * 主题色发光（用户明确排除），也不是重命名弹窗那份 Tailwind 任意值——这里
+ * 是纯 CSS，两处数值取向一致但各自维护。 */
 html[data-bg-art] .app-rail {
   background-color: hsl(var(--sidebar) / 0.55);
+  backdrop-filter: blur(20px) saturate(150%) brightness(1.15);
 }
 
 /* 聊天列自身的底色（ThreadView.tsx 的 .chat-content-column，⚠️ 见该文件

@@ -207,9 +207,19 @@ export function PermissionModePicker(): React.JSX.Element {
         aria-expanded={open}
         aria-label={lang === 'zh' ? '权限模式' : 'Permission mode'}
         title={pickDesc(current, lang)}
+        // 2026-07-19：/70+blur-sm、后来 /55+blur-md 实测都太弱——真机截图
+        // 逐像素采样过，胶囊底色跟壁纸只差个位数 RGB，肉眼读不出玻璃感（浅色
+        // 主题下前后景同亮度，跟暗色那版「重命名弹窗」踩的是同一类坑）。换
+        // 大弹层那套满配方：blur-xl + brightness-125 + border-white/15 +
+        // inset 顶部高光——brightness-125 是关键，把背后模糊内容「提亮」一档
+        // 才会显出透视感，光加 blur/saturate 不够。
+        // h-7 显式定高（2026-07-19）：这颗 11px 字号 + WorkspaceDirPicker
+        // 那颗 12px 字号，靠 py-1 撑高时行高不同→两颗胶囊实测差 7px（28 vs
+        // 21），并排摆在同一排肉眼很明显。两处都锁 h-7，不再让内容行高
+        // 决定盒高。
         className={
-          'group inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] shadow-sm backdrop-blur-sm transition-colors ' +
-          'border-border/70 bg-card/70 text-muted-foreground hover:border-accent/50 hover:bg-card hover:text-foreground ' +
+          'group inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[11px] shadow-[0_1px_2px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.4)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 transition-colors ' +
+          'border-white/15 bg-card/50 text-muted-foreground hover:border-accent/50 hover:bg-card/75 hover:text-foreground ' +
           (open ? ' border-accent/60 text-foreground' : '')
         }
       >
@@ -261,7 +271,13 @@ export function PermissionModePicker(): React.JSX.Element {
                 exit={{ opacity: 0, y: 4, scale: 0.98 }}
                 transition={{ duration: 0.12, ease: 'easeOut' }}
                 style={{ right: anchor.right, bottom: anchor.bottom }}
-                className="fixed z-[9999] mb-1.5 w-64 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                // 毛玻璃化（2026-07-19）：跟 ui/dropdown-menu.tsx、ui/context-menu.tsx
+                // 基件同一套配方（这两个基件已在更早一批统一玻璃化，但本菜单是
+                // 独立手写的 portal + motion 弹层、不走那两个基件，故没被那批
+                // 覆盖到，需要单独补上）——border-white/15 + bg-popover/55 +
+                // backdrop-blur-xl + backdrop-saturate-150 + backdrop-brightness-125
+                // + inset 顶部高光，理由见 dropdown-menu.tsx 头注释。
+                className="fixed z-[9999] mb-1.5 w-64 overflow-hidden rounded-xl border border-white/15 bg-popover/55 py-1 shadow-[0_24px_80px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125"
                 role="listbox"
               >
                 {MODES.filter((m) => !MENU_HIDDEN.has(m.id)).map((meta) => {
@@ -312,7 +328,11 @@ export function PermissionModePicker(): React.JSX.Element {
                       strokeWidth="2.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      className="mt-0.5 shrink-0 text-accent"
+                      // text-accent 换 text-brand（2026-07-19，用户对照
+                      // WorkspaceDirPicker 的选中勾要求统一）：accent 跟用户
+                      // 主题色走，主题色若非绿/蓝系就会跟「已选」的惯用语义
+                      // 脱节；brand 是固定品牌绿，跟工作目录菜单的选中勾同源。
+                      className="mt-0.5 shrink-0 text-brand"
                       aria-hidden
                     >
                       <polyline points="20 6 9 17 4 12" />

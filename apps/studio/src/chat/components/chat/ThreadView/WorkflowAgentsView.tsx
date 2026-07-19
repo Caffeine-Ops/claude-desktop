@@ -288,7 +288,11 @@ function WfRowButton({
   )
 }
 
-function WfDetail({ row, history }: { row: WfRow; history: ToolEvent[] }): React.JSX.Element {
+/** Exported so `AgentTeamDetail` can reuse it as a snapshot-based fallback
+ * when a row has no `agentId` (no transcript to fetch) or the transcript
+ * fetch fails — same latest-only data this view has always shown, just
+ * borrowed by the other surface instead of duplicated. */
+export function WfDetail({ row, history }: { row: WfRow; history: ToolEvent[] }): React.JSX.Element {
   const t = useT()
   const metrics: { value: string; label: string }[] = []
   if (typeof row.tokens === 'number' && row.tokens > 0) {

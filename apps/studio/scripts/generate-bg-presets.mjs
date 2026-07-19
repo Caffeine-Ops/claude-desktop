@@ -189,6 +189,28 @@ const PRESETS = [
       { x: 0.78, y: 0.72, r: 0.55, intensity: 0.24, color: '#c9d3de' }
     ],
     blend: 'tint'
+  },
+  {
+    id: 'preset-starry',
+    name: '星夜',
+    bg: ['#0b1026', '#000000'],
+    // A soft moon glow (wide, low-intensity) plus a handful of small
+    // high-intensity points standing in for stars — same "lights" array
+    // mechanism every other preset already uses (screen blend = points
+    // stay luminous against the near-black base instead of muddying it),
+    // just tuned smaller/brighter for a starfield instead of one big glow.
+    lights: [
+      { x: 0.5, y: 0.14, r: 0.2, intensity: 0.45, color: '#eef2ff' },
+      { x: 0.74, y: 0.22, r: 0.014, intensity: 0.9, color: '#ffffff' },
+      { x: 0.18, y: 0.3, r: 0.011, intensity: 0.85, color: '#dbe4ff' },
+      { x: 0.32, y: 0.6, r: 0.009, intensity: 0.8, color: '#ffffff' },
+      { x: 0.6, y: 0.7, r: 0.012, intensity: 0.75, color: '#cfe0ff' },
+      { x: 0.86, y: 0.52, r: 0.009, intensity: 0.7, color: '#ffffff' },
+      { x: 0.44, y: 0.4, r: 0.007, intensity: 0.6, color: '#ffffff' },
+      { x: 0.1, y: 0.68, r: 0.008, intensity: 0.65, color: '#ffffff' },
+      { x: 0.92, y: 0.82, r: 0.007, intensity: 0.55, color: '#dbe4ff' }
+    ],
+    blend: 'screen'
   }
 ]
 

@@ -29,6 +29,8 @@ import {
   type SessionListResult,
   type SessionLoadPayload,
   type SessionLoadResult,
+  type SubagentTranscriptLoadPayload,
+  type SubagentTranscriptLoadResult,
   type SessionNewResult,
   type SessionRenamePayload,
   type SessionDeletePayload,
@@ -434,6 +436,15 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.SESSION_LOAD,
       payload
     ) as Promise<SessionLoadResult>
+  },
+
+  loadSubagentTranscript(
+    payload: SubagentTranscriptLoadPayload
+  ): Promise<SubagentTranscriptLoadResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SUBAGENT_TRANSCRIPT_LOAD,
+      payload
+    ) as Promise<SubagentTranscriptLoadResult>
   },
 
   newSession(): Promise<SessionNewResult> {

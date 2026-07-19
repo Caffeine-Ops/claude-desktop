@@ -32,6 +32,8 @@ import { attachFilesToComposer } from '../../../composer/attachFiles'
 import { useChatStore } from '../../../stores/chat'
 import { useComposerModeStore } from '../../../stores/composerMode'
 import { useSessionTitleStore } from '../../../stores/sessionTitle'
+import { useAgentTeamStore } from '../../../stores/agentTeam'
+import { AgentTeamDetail } from './AgentTeamDetail'
 import { findSkillChipSpec } from '../../../composer/skillChipRegistry'
 import { SkillChipIcon } from '../SkillChipIcon'
 import { Composer } from './Composer'
@@ -522,6 +524,10 @@ export function ThreadView(): React.JSX.Element {
   const showImageEdit = imageEditPath !== null && !isSplitMode
   const showWorkflowPanel =
     workflowPanelWanted && !isSplitMode && !showSheetPreview && !showImageEdit
+  // Agent-team detail takeover: replaces the message viewport (below) while
+  // a team member is selected. Composer + AgentTeamBar stay mounted in
+  // their own dock area untouched — only this pane's content swaps.
+  const agentTeamMemberSelected = useAgentTeamStore((s) => s.selectedRowId !== null)
   // chat 列收窄成 rail 的诱因：slides / proposal / workflow 脚本 / 表格
   // 预览 / 图片编辑任一右栏打开。宽度共用同一条持久化的 chatColWidth。
   const chatRailed =
@@ -659,73 +665,79 @@ export function ThreadView(): React.JSX.Element {
           pattern) and is the positioning context for the skeleton overlay
           （骨架是它的绝对定位子节点，盖住 Viewport 但不盖 header）。 */}
       <div className="relative min-h-0 flex-1">
-        <ThreadPrimitive.Viewport
-          // turnAnchor="top"：新一轮开始时，把刚发的用户消息钉在视口顶部
-          // （assistant-ui 内置行为，MessagePrimitive.Root 已经在用、不需要
-          // 额外标记——见其自身文档："No additional component is required"）。
-          // 效果是发送后整页基本只看得到这一条消息，下面留白随回复流式填满，
-          // 而不是像旧版那样把整段历史继续钉在屏幕上、新消息只是缀在底部。
-          //
-          // 不再传 autoScroll（连带上面旧的 hasMessages 派生一起删）：库在
-          // turnAnchor="top" 时把它默认成 false（useThreadViewportAutoScroll.js
-          // 的 `autoScroll = turnAnchor !== "top"`）。这里刻意不显式传 true 扳回
-          // 来——库的跟随分支门槛是它自己的 isAtBottom，而那个判定式
-          // `|scrollHeight-scrollTop-clientHeight| < 1` 在本项目的半像素视口下
-          // 不可靠（实测视口真实高 1009.5、clientHeight 取整成 1010，差值 −0.5；
-          // 换个窗口尺寸就能凑出 ±1 让判定恒假，2026-07-13 那次「明明在最底部
-          // 却不动」就是它）。跟随统一交给 ScrollToBottomButton 里那套 2px 容差
-          // 的自研实现（followIfSticky），不受亚像素影响，见其注释。
-          //
-          // 空态（欢迎页）关闭 autoScroll 的旧诉求也顺带被这个默认值覆盖了。
-          turnAnchor="top"
-          // (Removed) top/bottom fade mask. The viewport used to fade its first
-          // ~44px and last ~56px to transparent so scrolling text dissolved
-          // near the header / composer; per design that fade-out is gone, so
-          // messages now cut off cleanly at the edges. The inner column's
-          // `pt-8` / `pb-20` padding still keeps the first/last message clear of
-          // the header and composer dock.
-          //
-          // `scrollbar-gutter: stable` (kept) reserves the scrollbar track slot
-          // whether or not the content overflows. Without it, the empty state
-          // can land at the "just fits" boundary and any sub-pixel wobble
-          // (font-metric changes, motion, font loading) flickers the scrollbar
-          // in/out → horizontal reflow → visible jitter.
-          // 不再挂 ssw-out / ssw-in 帘幕类（v3 随进度条一起退役）：切换期
-          // 视口保持原样，由骨架屏不透明盖住即可——容器上再叠 filter 会让
-          // 它成为 fixed 后代的 containing block，白付一份合成开销。
-          className="h-full overflow-y-auto [scrollbar-gutter:stable]"
-        >
-          {/* Inner column caps reading width and centers messages. The
-              `min-h-full` lets the empty-state `flex-1` stretch so the
-              hero text lands at the vertical center of the viewport
-              even when there are no messages yet. The node identity is
-              stable (no `key`) so the message list diffs by id instead of
-              remounting the whole subtree on a switch. */}
-          <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-3 pb-20 pt-8">
-            <ThreadPrimitive.Empty>
-              <BgZoneReporter zone="ambient" />
-              <EmptyState />
-            </ThreadPrimitive.Empty>
+        {agentTeamMemberSelected ? (
+          <AgentTeamDetail />
+        ) : (
+          <>
+          <ThreadPrimitive.Viewport
+            // turnAnchor="top"：新一轮开始时，把刚发的用户消息钉在视口顶部
+            // （assistant-ui 内置行为，MessagePrimitive.Root 已经在用、不需要
+            // 额外标记——见其自身文档："No additional component is required"）。
+            // 效果是发送后整页基本只看得到这一条消息，下面留白随回复流式填满，
+            // 而不是像旧版那样把整段历史继续钉在屏幕上、新消息只是缀在底部。
+            //
+            // 不再传 autoScroll（连带上面旧的 hasMessages 派生一起删）：库在
+            // turnAnchor="top" 时把它默认成 false（useThreadViewportAutoScroll.js
+            // 的 `autoScroll = turnAnchor !== "top"`）。这里刻意不显式传 true 扳回
+            // 来——库的跟随分支门槛是它自己的 isAtBottom，而那个判定式
+            // `|scrollHeight-scrollTop-clientHeight| < 1` 在本项目的半像素视口下
+            // 不可靠（实测视口真实高 1009.5、clientHeight 取整成 1010，差值 −0.5；
+            // 换个窗口尺寸就能凑出 ±1 让判定恒假，2026-07-13 那次「明明在最底部
+            // 却不动」就是它）。跟随统一交给 ScrollToBottomButton 里那套 2px 容差
+            // 的自研实现（followIfSticky），不受亚像素影响，见其注释。
+            //
+            // 空态（欢迎页）关闭 autoScroll 的旧诉求也顺带被这个默认值覆盖了。
+            turnAnchor="top"
+            // (Removed) top/bottom fade mask. The viewport used to fade its first
+            // ~44px and last ~56px to transparent so scrolling text dissolved
+            // near the header / composer; per design that fade-out is gone, so
+            // messages now cut off cleanly at the edges. The inner column's
+            // `pt-8` / `pb-20` padding still keeps the first/last message clear of
+            // the header and composer dock.
+            //
+            // `scrollbar-gutter: stable` (kept) reserves the scrollbar track slot
+            // whether or not the content overflows. Without it, the empty state
+            // can land at the "just fits" boundary and any sub-pixel wobble
+            // (font-metric changes, motion, font loading) flickers the scrollbar
+            // in/out → horizontal reflow → visible jitter.
+            // 不再挂 ssw-out / ssw-in 帘幕类（v3 随进度条一起退役）：切换期
+            // 视口保持原样，由骨架屏不透明盖住即可——容器上再叠 filter 会让
+            // 它成为 fixed 后代的 containing block，白付一份合成开销。
+            className="h-full overflow-y-auto [scrollbar-gutter:stable]"
+          >
+            {/* Inner column caps reading width and centers messages. The
+                `min-h-full` lets the empty-state `flex-1` stretch so the
+                hero text lands at the vertical center of the viewport
+                even when there are no messages yet. The node identity is
+                stable (no `key`) so the message list diffs by id instead of
+                remounting the whole subtree on a switch. */}
+            <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-3 pb-20 pt-8">
+              <ThreadPrimitive.Empty>
+                <BgZoneReporter zone="ambient" />
+                <EmptyState />
+              </ThreadPrimitive.Empty>
 
-            {/* 尾部窗口 gate：窗口外还有更早消息时出现在列顶。 */}
-            <EarlierMessagesGate />
+              {/* 尾部窗口 gate：窗口外还有更早消息时出现在列顶。 */}
+              <EarlierMessagesGate />
 
-            <ThreadPrimitive.Messages
-              components={{
-                UserMessage,
-                AssistantMessage,
-                SystemMessage
-              }}
-            />
-          </div>
-        </ThreadPrimitive.Viewport>
+              <ThreadPrimitive.Messages
+                components={{
+                  UserMessage,
+                  AssistantMessage,
+                  SystemMessage
+                }}
+              />
+            </div>
+          </ThreadPrimitive.Viewport>
 
-        {/* 切换加载骨架：Viewport 的兄弟节点，不透明盖住旧 transcript 直到
-            目标会话上屏。AnimatePresence 在这里只为**延迟 unmount** 以播 exit
-            淡出（入场刻意无动画，理由见 SessionSwitchSkeleton 注释）。 */}
-        <AnimatePresence>
-          {switchLoading && <SessionSwitchSkeleton />}
-        </AnimatePresence>
+            {/* 切换加载骨架：Viewport 的兄弟节点，不透明盖住旧 transcript 直到
+                目标会话上屏。AnimatePresence 在这里只为**延迟 unmount** 以播
+                exit 淡出（入场刻意无动画，理由见 SessionSwitchSkeleton 注释）。 */}
+            <AnimatePresence>
+              {switchLoading && <SessionSwitchSkeleton />}
+            </AnimatePresence>
+          </>
+        )}
       </div>
 
       {/* (Removed) 顶部渐进模糊带 — the backdrop-blur strip over the viewport
@@ -1095,7 +1107,13 @@ function ScrollToBottomButton(): React.JSX.Element {
         aria-label="Scroll to bottom"
         data-at-bottom={atBottom ? '' : undefined}
         className={
-          'pointer-events-auto absolute left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-lg shadow-black/10 backdrop-blur transition-all duration-200 ease-out hover:border-brand/60 hover:bg-background hover:text-brand active:scale-95 ' +
+          // 毛玻璃化（2026-07-19，用户点名要求）：同重命名弹窗/dropdown-menu
+          // 那套配方——bg/55 + backdrop-blur-xl + backdrop-saturate-150 +
+          // backdrop-brightness-125（暗色主题下背后内容本就偏暗，不提亮混合
+          // 后看不出「透视感」，同一踩坑教训见 input.tsx 附近历史注释）+
+          // border-white/15 固定白描边 + inset 顶部高光，而不是原来 bg/90
+          // 的近乎不透明底（backdrop-blur 在 90% 不透明度下形同虚设）。
+          'pointer-events-auto absolute left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/15 bg-background/55 text-foreground shadow-[0_4px_16px_-4px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 transition-all duration-200 ease-out hover:border-brand/60 hover:bg-background hover:text-brand active:scale-95 ' +
           // Anchored to the dock wrapper: `bottom-full` puts the button's bottom
           // edge at the dock's TOP, then mb-2 lifts it 8px clear so it floats
           // just above the input. This tracks the dock height automatically —
@@ -1521,19 +1539,24 @@ function ChatHeader(): React.JSX.Element {
 
       {/* 重命名弹窗——与 RailSessionList.tsx 的会话行重命名同一套 shadcn
           Dialog 精修档（Notion 风格：440px 圆角卡、19px 大标题、48px 高
-          输入框、品牌绿渐变提交按钮）。2026-07-13 从原地 input 行内编辑
+          输入框、跟随主题色的渐变提交按钮）。2026-07-13 从原地 input 行内编辑
           改成弹窗，统一两处的重命名交互。2026-07-19 毛玻璃化（仅这两处重命名
           弹窗，className 局部覆盖，不动共享 DialogContent 基件——避免波及
-          删除确认/设置等全 app 其它弹窗）：半透明 bg-background/70 +
-          backdrop-blur 让壁纸换肤背景透出来，border-border/50 弱化描边配合
-          透明底，inset 顶部高光是玻璃质感的装饰阴影非语义色，两档主题都够看。 */}
+          删除确认/设置等全 app 其它弹窗）：首版 bg-background/70 + blur-2xl
+          实测发现暗色主题下背后内容本就偏暗，混合后效果太不明显（真机 CDP
+          截图核对过），改成更低的 /55 不透明度 + backdrop-brightness-125
+          把背后模糊内容"提亮"一档、backdrop-blur-xl（比 2xl 略浅，保留更多
+          背后色块/文字轮廓的模糊纹理，纯色糊成一片反而看不出"透视感"）；
+          border-white/15 + inset 顶部高光都是固定白色装饰性描边/阴影而非
+          语义色 token（同 RailSessionList 保存按钮渐变的做法），负责给玻璃
+          面板勾一条能在深浅两色背景下都看得见的边缘反光。 */}
       <Dialog
         open={renameOpen}
         onOpenChange={(open) => {
           if (!open) setRenameOpen(false)
         }}
       >
-        <DialogContent className="rounded-2xl border-border/50 bg-background/70 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.35),0_8px_24px_-12px_rgba(0,0,0,0.18),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-2xl backdrop-saturate-150 sm:max-w-[440px]">
+        <DialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 sm:max-w-[440px]">
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -1575,10 +1598,14 @@ function ChatHeader(): React.JSX.Element {
               {/* transition-[opacity,box-shadow] 覆盖基件的 transition-all：
                 * disabled↔enabled 的底色是「渐变图像 ↔ 灰底」——background-image
                 * 不可过渡会瞬跳，color 却吃 transition-all 慢慢变，中间帧=绿底
-                * 半灰字（同 RailSessionList 的重命名按钮注释）。 */}
+                * 半灰字（同 RailSessionList 的重命名按钮注释）。
+                * 2026-07-19 用户实锤这里和 RailSessionList 的重命名弹窗保存按钮
+                * 颜色不一致（这里是品牌绿，那边是主题色）：2026-07-17 把
+                * RailSessionList 那颗从写死 --brand 改 --accent 时漏改了这个
+                * "同一套精修档"的另一份拷贝，这次补上同步。 */}
               <Button
                 type="submit"
-                className="bg-[linear-gradient(135deg,hsl(var(--brand)),color-mix(in_srgb,hsl(var(--brand))_85%,#000))] text-white shadow-[0_1px_2px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.18)] transition-[opacity,box-shadow] hover:opacity-95 disabled:bg-none disabled:bg-muted disabled:text-muted-foreground/70 disabled:opacity-100 disabled:shadow-none"
+                className="bg-[linear-gradient(135deg,hsl(var(--accent)),color-mix(in_srgb,hsl(var(--accent))_85%,#000))] text-white shadow-[0_1px_2px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.18)] transition-[opacity,box-shadow] hover:opacity-95 disabled:bg-none disabled:bg-muted disabled:text-muted-foreground/70 disabled:opacity-100 disabled:shadow-none"
                 // 只挡空标题，不再挡「没改过」（2026-07-17 用户要求一直可点）：
                 // 一个默认就灰、要先改字才亮的主按钮，读起来像功能坏了。没改
                 // 内容就点＝commitEdit 里短路成取消，行为上安全。

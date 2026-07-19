@@ -443,10 +443,13 @@ export function CanvasQuestionnaire({
             // replays only when `animate` changes (ready false → true).
             animate={answerable && allAnswered ? { scale: [1, 1.05, 1] } : { scale: 1 }}
             transition={{ duration: 0.45, ease: [0.3, 1.3, 0.5, 1] }}
+            // 就绪色钉死品牌绿 --brand（不跟主题色 --accent 走，2026-07-19
+            // 用户实锤）——同上面进度点的 bg-brand 保持一致，之前两者不同色
+            // 其实是既有的不一致。
             className={
               'relative overflow-hidden rounded-lg px-[18px] py-2 text-[13px] font-semibold transition-colors duration-300 ' +
               (answerable && allAnswered
-                ? 'bg-accent text-accent-foreground shadow-sm hover:opacity-90'
+                ? 'bg-brand text-brand-foreground shadow-sm hover:opacity-90'
                 : 'cursor-not-allowed border border-border bg-muted text-muted-foreground/70')
             }
           >

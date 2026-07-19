@@ -681,8 +681,13 @@ export function RailSessionList() {
           * disabled 用中性灰而非透明度——「还没改名」要读作待命，不是坏了。
           * 2026-07-19 毛玻璃化，与 ThreadView.tsx 顶栏重命名弹窗同一套
           * className 覆盖（局部覆盖不动共享 DialogContent 基件），保持两处
-          * 「同一套精修档」的既有惯例同步。 */}
-        <DialogContent className="rounded-2xl border-border/50 bg-background/70 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.35),0_8px_24px_-12px_rgba(0,0,0,0.18),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-2xl backdrop-saturate-150 sm:max-w-[440px]">
+          * 「同一套精修档」的既有惯例同步。首版 /70 不透明度+blur-2xl 真机
+          * CDP 截图核对后发现暗色主题下效果太不明显，改成 /55 + backdrop-
+          * brightness-125 提亮背后模糊内容、blur-xl（比 2xl 浅一档，保留纹理
+          * 更看得出"透视感"）+ border-white/15 固定白描边（装饰性非语义色，
+          * 同保存按钮渐变里的 inset 高光做法），具体理由见 ThreadView.tsx
+          * 同处更长的注释。 */}
+        <DialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 sm:max-w-[440px]">
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -751,8 +756,14 @@ export function RailSessionList() {
       >
         {/* 精修档（同重命名弹窗，2026-07-08 Notion 案）：与重命名弹窗同一排版
           * 节奏（大标题 / 副文 / 右下双按钮），07-07 的红 tint 垃圾桶徽章随之
-          * 退役——危险语义由红色主按钮 + 标题疑问句承担，会话名加重嵌进副文。 */}
-        <AlertDialogContent className="rounded-2xl sm:max-w-[440px]">
+          * 退役——危险语义由红色主按钮 + 标题疑问句承担，会话名加重嵌进副文。
+          * 2026-07-19 补毛玻璃化：07-19 重命名弹窗那版收窄范围时特意没带上
+          * 删除确认（怕波及全 app 其它 AlertDialog），用户回头点名要这一处
+          * 也要玻璃质感，于是原样搬重命名弹窗那份 className 覆盖（/55 不透明
+          * 度 + backdrop-brightness-125 提亮 + backdrop-blur-xl + border-
+          * white/15 固定白描边），具体理由见 ThreadView.tsx 重命名弹窗同处
+          * 长注释。 */}
+        <AlertDialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 sm:max-w-[440px]">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-[19px]">
               删除这个对话？
@@ -908,18 +919,26 @@ const SessionRow = memo(function SessionRow({
                 justRenamed && 'just-renamed',
                 active
                   ? // 选中态文字回中性前景（滑块已是中性灰），身份记号交给
-                    // 下面的主题色圆点（--primary，2026-07-08 随主题色）。
+                    // 下面的圆点。2026-07-19 从跟主题走的 --primary 改成固定
+                    // 品牌绿 --brand（用户实锤要跟 Composer 工作区切换弹层
+                    // 的绿勾同一个颜色）——主题色可能跟 sidebar 底色撞色到
+                    // 看不清，brand 绿不跟用户主题走，识别度恒定。
                     'font-medium text-sidebar-foreground hover:bg-transparent hover:text-sidebar-foreground'
-                  : // 实色 sidebar-accent（原型 .row:hover 的 rail-hover 同款）：
-                    // 60% 透明版叠在灰 rail 上若隐若现，反馈感太弱。
-                    'text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground'
+                  : // hover 底毛玻璃化（2026-07-19，同选中态 2026-07-18 那批
+                    // /55 + backdrop-blur-md 配方）：原实色 sidebar-accent
+                    // 曾是刻意选择（60% 透明版叠在灰 rail 上若隐若现，反馈感
+                    // 太弱），但那是选中态玻璃化之前的判断——现在选中滑块已是
+                    // 玻璃底，hover 态保持实色会两态质感不一致（悬停到「菜单
+                    // 收起后仍留在行上」的常见场景尤其明显），故跟进同款半透明
+                    // + 模糊。
+                    'text-sidebar-foreground/75 hover:bg-sidebar-accent/55 hover:backdrop-blur-md hover:text-sidebar-foreground'
               )}
             >
               <span
                 aria-hidden
                 className={cn(
                   'size-[5px] shrink-0 rounded-full transition-colors',
-                  active ? 'bg-primary' : 'bg-transparent'
+                  active ? 'bg-brand' : 'bg-transparent'
                 )}
               />
               <span className="min-w-0 flex-1 truncate">{displayTitle(thread.title)}</span>

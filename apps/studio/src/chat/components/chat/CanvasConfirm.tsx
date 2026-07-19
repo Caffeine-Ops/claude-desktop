@@ -665,7 +665,7 @@ export function CanvasConfirm({
     // no icon); the ring renders the check here, so strip it from the text.
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 py-10 text-center">
-        <div className="grid size-[52px] place-items-center rounded-full bg-accent/15 text-accent">
+        <div className="grid size-[52px] place-items-center rounded-full bg-brand/15 text-brand">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
             <path d="M4.5 12.5l5 5L19.5 7" />
           </svg>
@@ -698,7 +698,7 @@ export function CanvasConfirm({
     // cards, instead of the bare one-liner that read like a stall.
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 py-10 text-center">
-        <div className="size-[34px] animate-spin rounded-full border-[3px] border-accent/25 border-t-accent" />
+        <div className="size-[34px] animate-spin rounded-full border-[3px] border-brand/25 border-t-brand" />
         <div className="text-[15px] font-semibold text-foreground">{uiT('deriving_title')}</div>
         <div className="max-w-sm text-[12px] leading-relaxed text-muted-foreground">{t('deriving')}</div>
         <div className="mt-1.5 flex gap-2.5">
@@ -1028,7 +1028,7 @@ export function CanvasConfirm({
             type="button"
             disabled={submitting}
             onClick={onPrimary}
-            className="rounded-lg bg-accent px-[18px] py-2 text-[13px] font-semibold text-accent-foreground shadow-sm transition-all hover:opacity-90 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100"
+            className="rounded-lg bg-brand px-[18px] py-2 text-[13px] font-semibold text-brand-foreground shadow-sm transition-all hover:opacity-90 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100"
           >
             {primaryLabel}
           </button>
@@ -1044,9 +1044,13 @@ export function CanvasConfirm({
  * Stepper
  * -------
  * Makes the server's two-tier flow (anchors → derived realization) visible:
- * step 1 shows a check once tier 2 is reached, the connector fills with the
- * accent, and the active step gets a soft accent ring. Only rendered for
- * tiered recommendations (stage 1 | 2) — 'all' shows every section at once.
+ * step 1 shows a check once tier 2 is reached, the connector fills with
+ * brand green, and the active step gets a soft brand ring. Fixed --brand
+ * rather than the user's --accent theme colour (2026-07-19, user-requested,
+ * same reasoning as the summary chips above: this confirm flow's colour
+ * language should read as a stable app identity, not drift with whatever
+ * accent the user picks). Only rendered for tiered recommendations
+ * (stage 1 | 2) — 'all' shows every section at once.
  */
 function Stepper({ stage, uiT }: { stage: 1 | 2; uiT: (k: string) => string }): React.JSX.Element {
   const dot = (active: boolean, done: boolean, label: string): React.JSX.Element => (
@@ -1054,9 +1058,9 @@ function Stepper({ stage, uiT }: { stage: 1 | 2; uiT: (k: string) => string }): 
       className={
         'grid size-[22px] shrink-0 place-items-center rounded-full text-[11px] font-bold transition-all ' +
         (active
-          ? 'bg-accent text-accent-foreground shadow-[0_0_0_3px_hsl(var(--accent)/0.25)]'
+          ? 'bg-brand text-brand-foreground shadow-[0_0_0_3px_hsl(var(--brand)/0.25)]'
           : done
-            ? 'bg-accent/15 text-accent'
+            ? 'bg-brand/15 text-brand'
             : 'border border-border bg-muted text-muted-foreground')
       }
     >
@@ -1096,7 +1100,7 @@ function Stepper({ stage, uiT }: { stage: 1 | 2; uiT: (k: string) => string }): 
           走，ease 会从头重放。 */}
       <span className="relative h-[2px] w-11 shrink-0 overflow-hidden rounded-full bg-border">
         <motion.span
-          className="absolute inset-0 origin-left rounded-full bg-accent"
+          className="absolute inset-0 origin-left rounded-full bg-brand"
           initial={false}
           animate={{ scaleX: stage === 2 ? 1 : 0 }}
           transition={railGliderSpring}
@@ -1114,7 +1118,7 @@ function Stepper({ stage, uiT }: { stage: 1 | 2; uiT: (k: string) => string }): 
  *  be `relative`. */
 function SelTick(): React.JSX.Element {
   return (
-    <span className="absolute right-2 top-2 z-[3] grid size-[18px] place-items-center rounded-full bg-accent text-accent-foreground shadow-sm">
+    <span className="absolute right-2 top-2 z-[3] grid size-[18px] place-items-center rounded-full bg-brand text-brand-foreground shadow-sm">
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5">
         <path d="M5 13l4 4L19 7" />
       </svg>
@@ -1146,7 +1150,7 @@ function Section({
       className="rounded-xl border border-border bg-card px-[18px] pb-[18px] pt-4 shadow-sm"
     >
       <div className="mb-3 flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-        <span className="inline-flex size-[22px] shrink-0 -translate-y-px items-center justify-center self-center rounded-[7px] bg-accent/10 text-[11px] font-bold text-accent">
+        <span className="inline-flex size-[22px] shrink-0 -translate-y-px items-center justify-center self-center rounded-[7px] bg-brand/10 text-[11px] font-bold text-brand">
           {num}
         </span>
         <span className="text-[14px] font-semibold text-foreground">{title}</span>
@@ -1193,7 +1197,7 @@ function ChipGlider({ layoutId }: { layoutId: string }): React.JSX.Element {
       layoutId={layoutId}
       transition={railGliderSpring}
       aria-hidden="true"
-      className="absolute inset-0 rounded-lg border border-accent bg-accent/10 ring-1 ring-accent"
+      className="absolute inset-0 rounded-lg border border-brand bg-brand/10 ring-1 ring-brand"
     />
   )
 }
@@ -1271,14 +1275,14 @@ function EnumField({
         className={
           'relative inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-left text-[12px] transition-colors ' +
           (selected
-            ? 'border-transparent text-accent'
+            ? 'border-transparent text-brand'
             : 'border-border bg-background/60 text-foreground hover:bg-hover')
         }
       >
         {selected && <ChipGlider layoutId={gliderId} />}
         <span className="relative font-medium">{main}</span>
         {sub && (
-          <span className={'relative ' + (selected ? 'text-accent/70' : 'text-muted-foreground')}>
+          <span className={'relative ' + (selected ? 'text-brand/70' : 'text-muted-foreground')}>
             {sub}
           </span>
         )}
@@ -1304,7 +1308,7 @@ function EnumField({
         className={
           'relative inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ' +
           (isCustom
-            ? 'border-transparent text-accent'
+            ? 'border-transparent text-brand'
             : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-hover')
         }
       >
@@ -1363,7 +1367,7 @@ function EnumField({
                 onChange(e.target.value || '')
               }}
               placeholder={t('custom_placeholder')}
-              className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+              className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
             />
           </motion.div>
         )}
@@ -1474,7 +1478,7 @@ function VisualStyleField({
         className={
           'flex aspect-[16/10] flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed p-3 text-center text-[12px] font-medium transition-colors ' +
           (isCustom
-            ? 'border-accent bg-accent/[0.08] text-accent'
+            ? 'border-brand bg-brand/[0.08] text-brand'
             : 'border-border bg-background/60 text-muted-foreground hover:bg-hover')
         }
       >
@@ -1520,7 +1524,7 @@ function VisualStyleField({
             onChange(e.target.value || '')
           }}
           placeholder={t('custom_placeholder')}
-          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
         />
       )}
     </div>
@@ -1554,7 +1558,7 @@ function StyleCard({
       title={note || label}
       className={
         'group relative flex flex-col overflow-hidden rounded-lg border text-left transition-colors ' +
-        (selected ? 'border-accent ring-1 ring-accent' : 'border-border hover:border-accent/50')
+        (selected ? 'border-brand ring-1 ring-brand' : 'border-border hover:border-brand/50')
       }
     >
       {selected && <SelTick />}
@@ -1579,10 +1583,10 @@ function StyleCard({
       </div>
       <div
         className={
-          'flex flex-col gap-0.5 px-2 py-1.5 ' + (selected ? 'bg-accent/[0.08]' : 'bg-background/40')
+          'flex flex-col gap-0.5 px-2 py-1.5 ' + (selected ? 'bg-brand/[0.08]' : 'bg-background/40')
         }
       >
-        <span className={'text-[12px] font-medium ' + (selected ? 'text-accent' : 'text-foreground')}>
+        <span className={'text-[12px] font-medium ' + (selected ? 'text-brand' : 'text-foreground')}>
           {label}
         </span>
         {note && <span className="line-clamp-2 text-[10px] text-muted-foreground">{note}</span>}
@@ -1665,7 +1669,7 @@ function CanvasField({
       className={
         'flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed p-3 text-center text-[12px] font-medium transition-colors ' +
         (isCustom
-          ? 'border-accent bg-accent/[0.08] text-accent'
+          ? 'border-brand bg-brand/[0.08] text-brand'
           : 'border-border bg-background/60 text-muted-foreground hover:bg-hover')
       }
     >
@@ -1689,7 +1693,7 @@ function CanvasField({
             onChange(e.target.value || '')
           }}
           placeholder={t('custom_placeholder')}
-          className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+          className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
         />
       )}
     </div>
@@ -1732,14 +1736,14 @@ function CanvasCard({
       title={use || label}
       className={
         'relative flex flex-col overflow-hidden rounded-xl border text-left transition-colors ' +
-        (selected ? 'border-accent ring-1 ring-accent' : 'border-border hover:border-accent/50')
+        (selected ? 'border-brand ring-1 ring-brand' : 'border-border hover:border-brand/50')
       }
     >
       {selected && <SelTick />}
       <div
         className={
           'relative flex h-[112px] items-center justify-center p-3 ' +
-          (selected ? 'bg-accent/[0.08]' : 'bg-background/40')
+          (selected ? 'bg-brand/[0.08]' : 'bg-background/40')
         }
         style={{
           backgroundImage:
@@ -1773,10 +1777,10 @@ function CanvasCard({
       <div
         className={
           'flex flex-col gap-0.5 border-t border-border/40 px-2.5 py-2 ' +
-          (selected ? 'bg-accent/[0.08]' : '')
+          (selected ? 'bg-brand/[0.08]' : '')
         }
       >
-        <span className={'text-[12px] font-medium ' + (selected ? 'text-accent' : 'text-foreground')}>
+        <span className={'text-[12px] font-medium ' + (selected ? 'text-brand' : 'text-foreground')}>
           {label}
         </span>
         {dim && <span className="text-[10px] text-muted-foreground">{dim}</span>}
@@ -1805,7 +1809,7 @@ function TextField({
       value={value || ''}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+      className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
     />
   )
 }
@@ -1942,7 +1946,7 @@ function ColorField({
               className={
                 'relative flex flex-col gap-1.5 rounded-lg border p-2.5 text-left transition-colors ' +
                 (selected
-                  ? 'border-accent bg-accent/[0.08] ring-1 ring-accent'
+                  ? 'border-brand bg-brand/[0.08] ring-1 ring-brand'
                   : 'border-border bg-background/60 hover:bg-hover')
               }
             >
@@ -1973,7 +1977,7 @@ function ColorField({
           className={
             'flex items-center justify-center rounded-lg border p-2.5 text-[12px] font-medium transition-colors ' +
             (isCustom
-              ? 'border-accent bg-accent/[0.08] text-accent ring-1 ring-accent'
+              ? 'border-brand bg-brand/[0.08] text-brand ring-1 ring-brand'
               : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-hover')
           }
         >
@@ -1987,7 +1991,7 @@ function ColorField({
           autoFocus
           onChange={(e) => onChange({ name: 'custom', custom: e.target.value, palette: {} })}
           placeholder={t('custom_color_placeholder')}
-          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
         />
       )}
       {/* STAGE TWO: per-role HEX override grid with dual-target live swatch repaint */}
@@ -2072,7 +2076,7 @@ function TypographyField({
               className={
                 'relative flex flex-col gap-1.5 rounded-lg border p-2.5 text-left transition-colors ' +
                 (selected
-                  ? 'border-accent bg-accent/[0.08] ring-1 ring-accent'
+                  ? 'border-brand bg-brand/[0.08] ring-1 ring-brand'
                   : 'border-border bg-background/60 hover:bg-hover')
               }
             >
@@ -2107,7 +2111,7 @@ function TypographyField({
           className={
             'rounded-lg border p-2.5 text-left text-[12px] font-medium transition-colors ' +
             (isCustom
-              ? 'border-accent bg-accent/[0.08] text-accent ring-1 ring-accent'
+              ? 'border-brand bg-brand/[0.08] text-brand ring-1 ring-brand'
               : 'border-dashed border-border bg-background/60 text-muted-foreground hover:bg-hover')
           }
         >
@@ -2130,7 +2134,7 @@ function TypographyField({
             })
           }
           placeholder={t('custom_typography_placeholder')}
-          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
         />
       )}
       {/* Body baseline size (kept; the per-role ramp grid is STAGE TWO). */}
@@ -2148,7 +2152,7 @@ function TypographyField({
               body_size: e.target.value
             })
           }
-          className="w-28 rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-accent focus:outline-none"
+          className="w-28 rounded-md border border-input bg-background px-2.5 py-1.5 text-[13px] text-foreground focus:border-brand focus:outline-none"
         />
         <div className="mt-1 text-[11px] text-muted-foreground">
           {t('font_body_size_hint')}{' '}
@@ -2260,7 +2264,7 @@ function ImageField({
                       className={
                         'relative flex flex-col gap-1 rounded-lg border p-2.5 text-left transition-colors ' +
                         (selected
-                          ? 'border-accent bg-accent/[0.08] ring-1 ring-accent'
+                          ? 'border-brand bg-brand/[0.08] ring-1 ring-brand'
                           : 'border-border bg-background/60 hover:bg-hover')
                       }
                     >

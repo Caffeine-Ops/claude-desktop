@@ -684,13 +684,16 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
   45%      { transform: scale(1.15); opacity: 1; }
 }
 
-/* 分段进度条「当前生成中」段：accent 渐变流动 */
+/* 分段进度条「当前生成中」段：固定品牌绿渐变流动(不跟用户主题
+ * --accent 走——同 ToolCallCard/ToolFormatters 的标识文字,见
+ * 2026-07-19 修复:--accent 在部分自定义主题下明度过低,深色卡片
+ * 背景上文字/进度条难以辨认)。 */
 .imgp-seg-active {
   background: linear-gradient(
     90deg,
-    hsl(var(--accent) / 0.25),
-    hsl(var(--accent)),
-    hsl(var(--accent) / 0.25)
+    hsl(var(--brand) / 0.25),
+    hsl(var(--brand)),
+    hsl(var(--brand) / 0.25)
   );
   background-size: 200% 100%;
   animation: imgp-seg-flow 1.4s linear infinite;
@@ -705,7 +708,7 @@ html[data-platform='darwin'][data-fullscreen='true'] .header {
   .imgp-badge-in,
   .imgp-beacon-core,
   .imgp-beacon-halo { animation: none; }
-  .imgp-seg-active { animation: none; background: hsl(var(--accent)); }
+  .imgp-seg-active { animation: none; background: hsl(var(--brand)); }
 }
 
 /* ═══ 图片生成占位卡「点阵显影」（ImageGenCard，Bash image_gen.py 特判）═══

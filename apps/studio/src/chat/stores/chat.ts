@@ -1391,6 +1391,47 @@ export function useActiveWorkflowRunId(): string | null {
 }
 
 /**
+ * Every subtask the foreground session's Task/Agent/Workflow tool calls
+ * have ever spawned, flattened across ALL such tool calls (not just the
+ * latest one) — active OR fully settled. Feeds the agent-team bar/detail
+ * takeover: unlike `useActiveWorkflowRunId` (which the script panel uses to
+ * know when to auto-collapse), the team bar's whole point is staying
+ * visible so the user can revisit a finished run's members, so this
+ * deliberately does NOT null out once every agent reaches a terminal state.
+ *
+ * `toolName` check mirrors the precedent in `useImageFeeds` above ('Task'
+ * and 'Agent' both name the same plain-subagent tool call depending on SDK
+ * version/build — see that selector's comment) plus `'Workflow'` for
+ * script-driven runs. `p.tasks` is already deduplicated by `taskId` within
+ * each tool-call part (see `mergeWorkflowTask`), and a given `taskId` can't
+ * appear under two different tool calls, so a plain flatten is safe — no
+ * cross-call dedup needed.
+ */
+export function useTeamMemberTasks(): WorkflowTask[] {
+  return useChatStore(
+    useShallow((s): WorkflowTask[] => {
+      const out: WorkflowTask[] = []
+      for (const m of s.messages) {
+        if (!Array.isArray(m.content)) continue
+        for (const p of (m.content as unknown) as ContentPart[]) {
+          if (
+            p.type === 'tool-call' &&
+            (p.toolName === 'Task' ||
+              p.toolName === 'Agent' ||
+              p.toolName === 'Workflow') &&
+            Array.isArray(p.tasks) &&
+            p.tasks.length > 0
+          ) {
+            out.push(...(p.tasks as WorkflowTask[]))
+          }
+        }
+      }
+      return out
+    })
+  )
+}
+
+/**
  * The SETTLED script text of a Workflow tool call, looked up by id in the
  * foreground session's messages — feeds the script panel's manual-open path
  * (点击卡片里的脚本入口重新打开). Returns null while the call is still

@@ -367,7 +367,9 @@ export function AskUserQuestionView({
           <button
             type="button"
             onClick={() => onSubmit({ answers: {} })}
-            className="flex w-full items-center gap-3 rounded-md border border-accent/40 bg-accent/15 px-3 py-2 text-left text-[13px] font-medium text-accent transition hover:border-accent hover:bg-accent/25"
+            // 品牌绿 --brand，不跟主题色 --accent 走（2026-07-19，与
+            // CanvasQuestionnaire 同一个功能的两个入口保持一致）。
+            className="flex w-full items-center gap-3 rounded-md border border-brand/40 bg-brand/15 px-3 py-2 text-left text-[13px] font-medium text-brand transition hover:border-brand hover:bg-brand/25"
           >
             {pick(lang, '继续', 'Continue')}
           </button>
@@ -515,7 +517,9 @@ export function AskUserQuestionView({
   )
 }
 
-/* ─────────────────── Option row ─────────────────── */
+/* ─────────────────── Option row ───────────────────
+   高亮态（本组件 + 下面 OtherRow）钉死品牌绿 --brand，不跟主题色 --accent
+   走（2026-07-19，同 CanvasQuestionnaire.tsx 那份画布大表单版本对齐）。 */
 
 function OptionRow({
   index,
@@ -540,7 +544,7 @@ function OptionRow({
       className={
         'group flex w-full items-start gap-3 rounded-xl px-3.5 py-3 text-left transition-colors duration-150 focus:outline-none ' +
         (highlighted
-          ? 'bg-accent/[0.12] dark:bg-accent/[0.18]'
+          ? 'bg-brand/[0.12] dark:bg-brand/[0.18]'
           : 'bg-transparent hover:bg-foreground/[0.04] dark:hover:bg-white/[0.05]')
       }
       style={{ letterSpacing: '-0.012em' }}
@@ -549,7 +553,7 @@ function OptionRow({
         className={
           'mt-0.5 inline-flex size-[22px] shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-colors duration-150 ' +
           (highlighted
-            ? 'bg-accent text-accent-foreground'
+            ? 'bg-brand text-brand-foreground'
             : 'bg-foreground/[0.08] text-muted-foreground group-hover:bg-foreground/[0.12] dark:bg-white/[0.1] dark:group-hover:bg-white/[0.14]')
         }
       >
@@ -559,7 +563,7 @@ function OptionRow({
         <div
           className={
             'truncate font-medium ' +
-            (highlighted ? 'text-accent' : 'text-foreground')
+            (highlighted ? 'text-brand' : 'text-foreground')
           }
           style={{ fontSize: '14px', lineHeight: 1.35 }}
         >
@@ -633,7 +637,7 @@ function OtherRow({
       className={
         'group flex w-full cursor-text items-start gap-3 rounded-xl px-3.5 py-3 text-left transition-colors duration-150 ' +
         (active
-          ? 'bg-accent/[0.12] dark:bg-accent/[0.18]'
+          ? 'bg-brand/[0.12] dark:bg-brand/[0.18]'
           : 'bg-transparent hover:bg-foreground/[0.04] dark:hover:bg-white/[0.05]')
       }
       style={{ letterSpacing: '-0.012em' }}
@@ -643,7 +647,7 @@ function OtherRow({
         className={
           'mt-0.5 inline-flex size-[22px] shrink-0 items-center justify-center rounded-full text-[13px] font-semibold leading-none transition-colors duration-150 ' +
           (active
-            ? 'bg-accent text-accent-foreground'
+            ? 'bg-brand text-brand-foreground'
             : 'bg-foreground/[0.08] text-muted-foreground group-hover:bg-foreground/[0.12] dark:bg-white/[0.1] dark:group-hover:bg-white/[0.14]')
         }
       >
@@ -661,14 +665,14 @@ function OtherRow({
             onBlur={onBlur}
             onClick={(e) => e.stopPropagation()}
             placeholder={pick(lang, '输入你的回答…', 'Type your own answer…')}
-            className="w-full bg-transparent font-medium text-foreground caret-accent placeholder:text-muted-foreground focus:outline-none"
+            className="w-full bg-transparent font-medium text-foreground caret-brand placeholder:text-muted-foreground focus:outline-none"
             style={{ fontSize: '14px', lineHeight: 1.35, letterSpacing: '-0.012em' }}
           />
         ) : (
           <div
             className={
               'truncate font-medium ' +
-              (active ? 'text-accent' : 'text-foreground/85')
+              (active ? 'text-brand' : 'text-foreground/85')
             }
             style={{ fontSize: '14px', lineHeight: 1.35 }}
           >

@@ -373,6 +373,18 @@ export interface WfRow {
   tokens?: number
   toolCalls?: number
   durationMs?: number
+  /** Transcript id (`agent-<agentId>.jsonl` under the parent session's
+   * `subagents/` dir). For `local_workflow` agents this is the wire's own
+   * `agentId`. For a plain Task/Agent tool call (no nested `agents[]`),
+   * the SDK's `task_id` IS the subagent's `agentId` (verified on the wire:
+   * the `task_started` event's `task_id` and the tool_result's `agentId`
+   * are the same string for a plain Agent-tool spawn) — so it's set here
+   * too, not left undefined like before (that bug meant plain-task rows
+   * could never load a real transcript and always fell back to the
+   * snapshot-only detail view). Lets the detail view fetch this agent's
+   * full history via SUBAGENT_TRANSCRIPT_LOAD instead of the latest-only
+   * snapshot fields above. */
+  agentId?: string
 }
 
 /** Flatten a tool call's `WorkflowTask[]` into `WfRow[]`. A task carrying
@@ -400,7 +412,8 @@ export function buildWfRows(tasks: WorkflowTask[]): WfRow[] {
           lastToolSummary: agent.lastToolSummary,
           tokens: agent.tokens,
           toolCalls: agent.toolCalls,
-          durationMs: agent.durationMs
+          durationMs: agent.durationMs,
+          agentId: agent.agentId
         })
       }
     } else {
@@ -417,7 +430,12 @@ export function buildWfRows(tasks: WorkflowTask[]): WfRow[] {
         lastToolName: task.lastToolName,
         tokens: task.tokens,
         toolCalls: task.toolUses,
-        durationMs: task.durationMs
+        durationMs: task.durationMs,
+        // Only a genuine plain Task/Agent spawn (carries subagentType) has
+        // task_id === agentId — a local_workflow task with no agents[] yet
+        // (workflowName set instead) is the orchestrator's own task, not a
+        // subagent, and has no `agent-<id>.jsonl` to load.
+        agentId: task.subagentType ? task.taskId : undefined
       })
     }
   })

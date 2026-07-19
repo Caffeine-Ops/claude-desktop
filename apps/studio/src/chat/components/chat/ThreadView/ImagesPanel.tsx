@@ -284,12 +284,12 @@ export function ImagesPanel({
           >
             {live ? (
               <>
-                <span className="imgp-beacon-halo absolute inset-0 rounded-full bg-accent/25" />
-                <span className="imgp-beacon-core size-2 rounded-full bg-accent" />
+                <span className="imgp-beacon-halo absolute inset-0 rounded-full bg-brand/25" />
+                <span className="imgp-beacon-core size-2 rounded-full bg-brand" />
               </>
             ) : allDone ? (
               <svg viewBox="0 0 18 18" className="size-[18px]">
-                <circle cx="9" cy="9" r="9" className="fill-accent" />
+                <circle cx="9" cy="9" r="9" className="fill-brand" />
                 <path
                   d="M5.4 9.4l2.4 2.4 4.8-5.2"
                   fill="none"
@@ -336,7 +336,7 @@ export function ImagesPanel({
                   className={
                     'flex-1 rounded-full transition-colors duration-500 ' +
                     (done
-                      ? 'bg-accent'
+                      ? 'bg-brand'
                       : fail
                         ? 'bg-red-500'
                         : i === activeIdx
@@ -831,7 +831,7 @@ function ImageCard({
               aria-hidden
               className={
                 'absolute right-1.5 top-1.5 grid size-[18px] place-items-center rounded-full ' +
-                (done ? 'bg-accent ' : 'bg-red-500 ') +
+                (done ? 'bg-brand ' : 'bg-red-500 ') +
                 (developing ? 'imgp-badge-in' : '')
               }
             >

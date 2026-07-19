@@ -97,7 +97,7 @@ export function formatGrep({
           <ul className="max-h-80 space-y-0.5 overflow-auto font-mono text-[11.5px] text-foreground/85">
             {rows.map((r, i) => (
               <li key={i} className="flex gap-3">
-                <span className="w-10 shrink-0 text-right tabular-nums text-accent">
+                <span className="w-10 shrink-0 text-right tabular-nums text-brand">
                   {r.count}
                 </span>
                 <span className="min-w-0 flex-1 truncate" title={r.file}>
@@ -177,7 +177,7 @@ export function formatGrep({
                           className={
                             'w-10 shrink-0 select-none text-right font-mono tabular-nums ' +
                             (line.isMatch
-                              ? 'text-accent'
+                              ? 'text-brand'
                               : 'text-muted-foreground/40')
                           }
                         >
@@ -223,7 +223,7 @@ function renderGrepHeadline(
   return (
     <span>
       {pick(lang, '搜索', 'Search')}{' '}
-      <code className="font-mono text-[11.5px] text-accent">{pattern}</code>
+      <code className="font-mono text-[11.5px] text-brand">{pattern}</code>
       {scopeLabel && (
         <span
           className="ml-1 text-muted-foreground/60"
@@ -367,7 +367,7 @@ function highlightTerms(
     parts.push(
       <mark
         key={key++}
-        className="rounded-sm bg-accent/25 px-[1px] text-accent"
+        className="rounded-sm bg-brand/25 px-[1px] text-brand"
       >
         {m[1]}
       </mark>
@@ -442,7 +442,7 @@ export function formatGlob({
         <span className="shrink-0">
           {pick(lang, '查找文件', 'Find files')}
         </span>
-        <code className="min-w-0 truncate font-mono text-[11.5px] text-accent">
+        <code className="min-w-0 truncate font-mono text-[11.5px] text-brand">
           {pattern}
         </code>
         {path && (

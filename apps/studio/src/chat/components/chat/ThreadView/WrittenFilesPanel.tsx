@@ -8,7 +8,10 @@ import { escapeHtml, languageFromPath } from './codeViewUtils'
 /**
  * Per-type glyph text for the file-list rows: a tiny mono badge standing in
  * for a real icon set. Deliberately neutral (no per-type colours) — the only
- * colour channel in the list is accent = selected, so state stays readable.
+ * colour channel in the list is brand green = selected, so state stays
+ * readable. Fixed --brand rather than the user's --accent theme colour
+ * (2026-07-19, user-requested): this panel's colour accents should read as
+ * a stable app identity, not shift with whatever accent the user picks.
  */
 function fileGlyph(name: string): string {
   const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
@@ -148,7 +151,7 @@ export function WrittenFilesPanel({
               {f.streaming && (
                 <span
                   aria-hidden
-                  className="ml-auto size-1.5 shrink-0 animate-pulse rounded-full bg-accent"
+                  className="ml-auto size-1.5 shrink-0 animate-pulse rounded-full bg-brand"
                 />
               )}
             </button>
@@ -173,7 +176,7 @@ export function WrittenFilesPanel({
           // 阅读区（workspace 容器、问题卡）同档而不是更透的 chrome 档位。
           <div className="flex min-h-0 w-full max-w-[880px] flex-col overflow-hidden rounded-xl border border-border/60 bg-card/70 shadow-[0_1px_2px_rgba(0,0,0,0.05),0_10px_28px_rgba(0,0,0,0.08)] backdrop-blur-xl backdrop-saturate-150 dark:shadow-[0_1px_2px_rgba(0,0,0,0.4),0_14px_36px_rgba(0,0,0,0.45)]">
             <div className="relative flex h-[46px] shrink-0 items-center gap-2.5 border-b border-border/60 px-3.5">
-              <div className="grid size-[26px] shrink-0 place-items-center rounded-md bg-accent/10 text-accent">
+              <div className="grid size-[26px] shrink-0 place-items-center rounded-md bg-brand/10 text-brand">
                 <svg
                   viewBox="0 0 24 24"
                   fill="none"
@@ -199,7 +202,7 @@ export function WrittenFilesPanel({
                     <>
                       <span
                         aria-hidden
-                        className="size-[5px] animate-pulse rounded-full bg-accent"
+                        className="size-[5px] animate-pulse rounded-full bg-brand"
                       />
                       写入中…
                     </>
@@ -237,7 +240,7 @@ export function WrittenFilesPanel({
                 className={
                   'grid size-7 shrink-0 place-items-center rounded-md transition-colors ' +
                   (copied
-                    ? 'text-accent'
+                    ? 'text-brand'
                     : 'text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground')
                 }
               >
@@ -269,10 +272,10 @@ export function WrittenFilesPanel({
                 )}
               </button>
 
-              {/* Reading progress: hairline accent fill along the header's
+              {/* Reading progress: hairline brand-green fill along the header's
                   bottom edge, width driven imperatively via progressRef. */}
               <div className="pointer-events-none absolute inset-x-0 -bottom-px h-[1.5px]">
-                <div ref={progressRef} className="h-full w-0 bg-accent" />
+                <div ref={progressRef} className="h-full w-0 bg-brand" />
               </div>
             </div>
             {/* Keyed by path so switching files resets the scroll/follow state
@@ -427,7 +430,7 @@ function WrittenFileContent({
         {paper && file.streaming && (
           <div
             aria-hidden
-            className="mt-3 h-[17px] w-[7px] animate-pulse rounded-[2px] bg-accent"
+            className="mt-3 h-[17px] w-[7px] animate-pulse rounded-[2px] bg-brand"
           />
         )}
       </div>
