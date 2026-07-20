@@ -312,7 +312,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
         <div className="inline-flex rounded-lg bg-muted p-0.5 [-webkit-app-region:no-drag]">
           <button
             className={
-              'inline-flex items-center gap-1 rounded-md px-3 py-1 transition-colors ' +
+              'inline-flex items-center gap-1 whitespace-nowrap rounded-md px-3 py-1 transition-colors ' +
               (mode === 'edit'
                 ? 'bg-card font-medium text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground')
@@ -323,7 +323,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           </button>
           <button
             className={
-              'inline-flex items-center gap-1 rounded-md px-3 py-1 transition-colors ' +
+              'inline-flex items-center gap-1 whitespace-nowrap rounded-md px-3 py-1 transition-colors ' +
               (mode === 'preview'
                 ? 'bg-card font-medium text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground')
@@ -342,9 +342,9 @@ export function ProposalDocPanel(): React.JSX.Element | null {
               彻底清空并在【当前会话】重开一份空白方案）。二次确认 + 流式期间禁用。 */}
           {confirmingNew ? (
             <span className="mr-1 inline-flex items-center gap-1">
-              <span className="text-[11px] text-muted-foreground">清空当前草稿？</span>
+              <span className="whitespace-nowrap text-[11px] text-muted-foreground">清空当前草稿？</span>
               <button
-                className="rounded bg-rose-500 px-2 py-0.5 text-white hover:bg-rose-600"
+                className="whitespace-nowrap rounded bg-rose-500 px-2 py-0.5 text-white hover:bg-rose-600"
                 onClick={() => {
                   // proposalSid 在 show=true 时恒非空（门控要求 sessionId===前台会话）；
                   // 仍守一手 null，绝不把 start('') 透出去污染 gating。
@@ -360,7 +360,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
                 确认清空
               </button>
               <button
-                className="rounded px-2 py-0.5 hover:bg-hover"
+                className="whitespace-nowrap rounded px-2 py-0.5 hover:bg-hover"
                 onClick={() => setConfirmingNew(false)}
               >
                 取消
@@ -368,7 +368,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
             </span>
           ) : (
             <button
-              className="mr-1 rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground disabled:opacity-50"
+              className="mr-1 whitespace-nowrap rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground disabled:opacity-50"
               // 草稿为空（sections 无内容）时没什么可清，置灰避免空操作 + 误触发二次确认条；
               // 流式期间也禁用（清空和进行中的那轮叠加会乱）。
               disabled={generating || sections.length === 0}
@@ -395,7 +395,7 @@ export function ProposalDocPanel(): React.JSX.Element | null {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
-                className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-50"
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-accent px-2.5 py-1 font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-50"
                 disabled={exporting}
                 title="导出方案（Word / PDF / Markdown）"
               >
