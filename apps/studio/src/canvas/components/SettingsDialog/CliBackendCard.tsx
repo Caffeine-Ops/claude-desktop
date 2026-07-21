@@ -16,7 +16,7 @@ import { AgentIcon } from '../shared/AgentIcon';
  *
  * 一次切换写两条链路（语义与传导机制见 state/cliBackend.ts 顶注）：
  *   1. chat 面：chatApi.setCliBackend —— main 持久化 + 回收所有 tab 的
- *      runtime，in-flight 回合保持当前后端、下一回合切换（即时生效）；
+ *      runtime（即时生效，下一回合起切换）；
  *   2. canvas 面：applyCliBackendToConfig 写 cfg（agentCliEnv.claude.
  *      CLAUDE_BIN + agentId），经 SettingsDialog 的 autosave 管线落
  *      daemon app-config，下次 run 生效。
@@ -26,9 +26,20 @@ import { AgentIcon } from '../shared/AgentIcon';
  * 让 AppRail 底部 user chip 就地 re-pull（同 'od:appearance-changed'
  * 桥的跨面同步机制）。
  *
+ * 有会话在运行时整个拒绝切换（2026-07-21 用户要求）：main 侧
+ * CLI_BACKEND_SET 会先查是否有 tab 有回合在飞（ChatEngine.hasInFlightTurn），
+ * 有就抛 CLI_BACKEND_SESSION_RUNNING_ERROR，这里捕获后换成本地化提示，
+ * 而不是像旧版本那样允许切换、把 in-flight 回合悄悄留在旧后端上跑完。
+ *
  * 纯浏览器（无 window.chatApi）显示禁用说明——backend 状态住在 Electron
  * main 进程，浏览器直开的 canvas 摸不到它。
  */
+// 必须与 electron/shared/ipc-channels.ts 的 CLI_BACKEND_SESSION_RUNNING_ERROR
+// 保持逐字节一致——前端经 @desktop-shared/* 只做 type-only 消费，这个错误码
+// 是运行时字符串常量，不能跨界 import，两边各自维护一份字面量，改一边记得
+// 改另一边。
+const SESSION_RUNNING_ERROR = 'cli-backend-switch-blocked:session-running';
+
 export function CliBackendCard({
   setCfg,
 }: {
@@ -38,6 +49,9 @@ export function CliBackendCard({
   const chatApi = typeof window !== 'undefined' ? window.chatApi : undefined;
   const [cliBackend, setCliBackend] = useState<DesktopCliBackendState | null>(null);
   const [cliBusy, setCliBusy] = useState(false);
+  // 切换被「有会话在运行」拒绝时置真，下次成功切换或再次尝试时清掉——不
+  // 用计时器自动消失，让用户读到消息、真正等会话结束后再操作。
+  const [switchBlocked, setSwitchBlocked] = useState(false);
 
   useEffect(() => {
     if (!chatApi?.getCliBackend) return;
@@ -67,6 +81,7 @@ export function CliBackendCard({
     if (cliBusy || !chatApi.setCliBackend || cliBackend?.mode === mode) return;
     if (mode === 'system' && !cliBackend?.systemInfo) return;
     setCliBusy(true);
+    setSwitchBlocked(false);
     try {
       const next = await chatApi.setCliBackend({ mode });
       setCliBackend(next);
@@ -74,8 +89,11 @@ export function CliBackendCard({
       window.dispatchEvent(
         new CustomEvent('od:cli-backend-changed', { detail: next })
       );
-    } catch {
-      /* ignore — 高亮仍跟随 main 返回的真实状态，失败即不动 */
+    } catch (err) {
+      if (err instanceof Error && err.message === SESSION_RUNNING_ERROR) {
+        setSwitchBlocked(true);
+      }
+      /* 其它错误 — 高亮仍跟随 main 返回的真实状态，失败即不动 */
     } finally {
       setCliBusy(false);
     }
@@ -155,9 +173,18 @@ export function CliBackendCard({
           );
         })}
       </div>
-      <p className="m-0 text-[11.5px] leading-relaxed text-muted-foreground">
-        {t('settings.chatCliBackendHint')}
-      </p>
+      {switchBlocked ? (
+        <p
+          className="m-0 text-[11.5px] leading-relaxed text-[var(--red)]"
+          role="alert"
+        >
+          {t('settings.cliBackendSwitchBlocked')}
+        </p>
+      ) : (
+        <p className="m-0 text-[11.5px] leading-relaxed text-muted-foreground">
+          {t('settings.chatCliBackendHint')}
+        </p>
+      )}
     </div>
   );
 }

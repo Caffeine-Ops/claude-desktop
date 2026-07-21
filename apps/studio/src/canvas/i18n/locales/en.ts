@@ -169,7 +169,9 @@ export const en: Dict = {
   'settings.codeAgentHint': 'Pick the Claude backend that runs your prompts — shared by chat and canvas.',
   'settings.chatCliBackendTitle': 'CLI backend',
   'settings.chatCliBackendHint':
-    'Chat sessions and canvas projects share this choice. Takes effect immediately — an in-flight turn keeps its current backend; the next turn switches.',
+    "Chat sessions and canvas projects share this choice. You can't switch while a session is in progress — wait for it to finish first.",
+  'settings.cliBackendSwitchBlocked':
+    'A session is in progress — wait for it to finish before switching the CLI backend.',
   'settings.cliBackendBundledTitle': 'Bundled fusion-code',
   'settings.cliBackendBundledDesc': 'The Claude Code build shipped with the app — tuned for prompt cache and MCP tools',
   'settings.cliBackendBundledMeta': 'Ships with the app',

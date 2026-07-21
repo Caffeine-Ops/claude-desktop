@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { motion } from 'motion/react'
+import { AnimatePresence, motion, type Variants } from 'motion/react'
 import { useAuiState } from '@assistant-ui/react'
 
 import { useT } from '../../../i18n'
@@ -128,6 +128,13 @@ const PROMPTS_BY_SKILL: Record<string, readonly ScenarioPrompt[]> = {
       // 选择器限定 image/*）；选完/拖入后点 chip 还能开右栏图片编辑面板。
       label: '编辑修改图片',
       text: '帮我修改【图片文件】：【说明要改什么，例如去掉背景、调整色调、加一行文字】，其余保持原样。'
+    },
+    {
+      // 融合＝多图合一，所以放两个文件槽（都含「图片」关键词 → 都限定
+      // image/*，见 filePlaceholderPlugin 的 ACCEPT_BY_KEYWORD）；用户也可
+      // 以直接拖多张图进输入框，两条路都汇进同一次生成。
+      label: '融合图片',
+      text: '把【图片文件】和【另一张图片文件】融合成一张：【说明想要的效果，例如把人物放进这个背景、两张图的元素合成一幅、统一整体光影风格】，输出一张自然协调的合成图。'
     },
     {
       label: '活动海报',
@@ -316,6 +323,58 @@ function FillArrowIcon({
   )
 }
 
+/**
+ * 分类 tab 的滑动高亮：不再靠 className 硬切 bg-foreground（那样切 tab
+ * 背景是瞬间跳变），改成一个带 layoutId 的绝对定位块——只有当前选中的
+ * tab 渲染它，切换时旧的卸载、新的挂载，Motion 认出同一个 layoutId 自动
+ * 补出中间的位移/尺寸过渡，是 segmented control 的标准手法，不需要额外
+ * state。
+ */
+const TAB_HIGHLIGHT_TRANSITION = { type: 'spring', bounce: 0.2, visualDuration: 0.4 } as const
+
+/**
+ * 外层容器的 `layout` 过渡：一级技能行（单行）↔ 三级推荐行（技能锚点+
+ * 分隔线+多条 prompt，常换行成两行）高度不同，交给 Motion 的自动布局
+ * 动画顺滑插值，而不是让高度硬跳、把下面的 composer 卡片瞬间顶下去。
+ * 用软阻尼弹簧（低 bounce）避免高度变化本身也弹一下。
+ */
+const LAYOUT_TRANSITION = { type: 'spring', bounce: 0.15, visualDuration: 0.3 } as const
+
+/**
+ * chip 行的进出场编排：整行一次性淡入淡出（跟子项一样纯 opacity，无
+ * 位移/弹簧），staggerChildren 只给子项之间错开个 20ms，不足以造成
+ * 「一个个蹦出来」的观感，只是让一整排不是死板地同时刷新。exit 不需要
+ * 错峰——退场很快，同时一起淡出比反向交错更干净。
+ */
+const ROW_VARIANTS: Variants = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: { duration: 0.16, ease: [0.4, 0, 0.2, 1], staggerChildren: 0.02 }
+  },
+  exit: {
+    opacity: 0,
+    transition: { duration: 0.1, ease: [0.4, 0, 1, 1] }
+  }
+}
+
+/**
+ * 单个 chip 的入场：位移+弹簧+错峰的组合试了两版都不理想——popLayout 下
+ * 旧行退场时还留在画面里（脱离文档流悬浮），跟正在淡入的新行重叠了一瞬
+ * 间，纯视觉上像重影/糊在一起；弹簧的回弹感在这么小的元素上又显得过于
+ * 「Q 弹」。收回最朴素的纯透明度淡出淡入，不带位移、不带缩放、不带
+ * 弹簧——安静的一次性交叉淡化，跟这一行紧挨 composer 的克制气质更配。 */
+const CHIP_VARIANTS: Variants = {
+  hidden: { opacity: 0 },
+  show: { opacity: 1, transition: { duration: 0.14, ease: [0.4, 0, 0.2, 1] } },
+  exit: { opacity: 0, transition: { duration: 0.08 } }
+}
+
+/** chip 悬停/按下反馈：轻微缩放 + 弹簧，用户快速划过多个 chip 时不会有
+ *  动画排队感（每次手势都能打断上一次）。 */
+const CHIP_HOVER = { scale: 1.035, transition: { type: 'spring', stiffness: 480, damping: 28 } } as const
+const CHIP_TAP = { scale: 0.965, transition: { type: 'spring', stiffness: 520, damping: 30 } } as const
+
 interface ScenarioRailProps {
   /**
    * 选定技能：整 input 重置为该技能的 slash chip（resetWithSlashCommand）。
@@ -373,112 +432,146 @@ export function ScenarioRail({
     bodyAfterChip === ''
 
   return (
-    <div>
-      {/* 分类 tab 组：浅灰 pill 容器，选中项墨黑（bg-foreground 暗色下自动
-          反转为白底黑字——原型 Tweaks 里验证过的 ink 选中态）。 */}
+    <motion.div layout transition={LAYOUT_TRANSITION}>
+      {/* 分类 tab 组：浅灰 pill 容器，选中项一个共享 layoutId 的墨黑块在
+          tab 间滑动（bg-foreground 暗色下自动反转为白底黑字——原型 Tweaks
+          里验证过的 ink 选中态）。 */}
       <div className="inline-flex gap-1 rounded-[14px] bg-foreground/[0.045] p-1">
         {CATEGORIES.map((cat) => {
           const active = cat.id === catId
           return (
-            <button
+            <motion.button
               key={cat.id}
               type="button"
+              whileTap={{ scale: 0.96 }}
               className={
-                'flex items-center gap-1.5 rounded-[10px] px-[13px] py-[7px] text-[13.5px] transition-colors ' +
+                'relative flex items-center gap-1.5 rounded-[10px] px-[13px] py-[7px] text-[13.5px] transition-colors ' +
                 (active
-                  ? 'bg-foreground font-semibold text-background shadow-sm'
+                  ? 'font-semibold text-background'
                   : 'font-medium text-muted-foreground hover:text-foreground')
               }
               onClick={() => switchCategory(cat.id)}
             >
-              {cat.icon}
-              {t(cat.labelKey)}
-            </button>
+              {active && (
+                <motion.span
+                  layoutId="scenario-cat-highlight"
+                  className="absolute inset-0 rounded-[10px] bg-foreground shadow-sm"
+                  transition={TAB_HIGHLIGHT_TRANSITION}
+                />
+              )}
+              <span className="relative z-10 flex items-center gap-1.5">
+                {cat.icon}
+                {t(cat.labelKey)}
+              </span>
+            </motion.button>
           )
         })}
       </div>
 
-      {/* 双态 chip 行。key 随内容源翻转，整行做一次轻微的上浮入场。 */}
-      <motion.div
-        key={showPrompts ? `prompts:${activeSpec.match}` : `cat:${catId}`}
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.22, ease: [0.22, 0.8, 0.3, 1] }}
-        className="mt-8 flex min-h-[40px] flex-wrap items-center gap-2.5"
-      >
-        {showPrompts ? (
-          <>
-            {/* 技能锚点：当前技能的墨黑 pill 常驻三级行首——与选中 tab 同一
-                「实心=选中」语言，回答「我在哪」；点击退出该技能、回技能行。
-                此前进三级后技能行整行消失，rail 上没有任何位置锚（重做动因
-                之一）。退出=清空输入：restoreDraft(null) 就是「无草稿」的清空
-                恢复路径；showPrompts 成立时正文必为空，清掉只丢 chip，无损。 */}
-            <button
-              type="button"
-              title="退出该技能"
-              className="group flex items-center gap-1.5 rounded-[10px] bg-foreground px-3 py-[7px] text-[13.5px] font-semibold text-background shadow-sm"
-              onClick={() => restoreDraft(null)}
-            >
-              <SkillChipIcon src={activeSpec.image} size={15} />
-              {activeSpec.label ?? activeSpec.match.slice(1)}
-              <svg
-                width={11}
-                height={11}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2.2}
-                strokeLinecap="round"
-                aria-hidden="true"
-                className="opacity-55 transition-opacity group-hover:opacity-100"
-              >
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
-            </button>
-            <span className="h-[18px] w-px bg-border" aria-hidden="true" />
-            {activePrompts.map((p) => (
-              <button
-                key={p.label}
+      {/* 双态 chip 行：key 随内容源翻转触发 AnimatePresence 进出场。
+          mode="wait" 让旧行完全淡出之后新行才开始淡入——两者绝不同屏，
+          没有 popLayout 那种「旧行悬浮着跟新行撞在一起」的重影感。行高
+          变化（一行 vs 两行）交给外层 <motion.div layout> 顺滑过渡，
+          不需要在这里额外处理塌陷/撑开。 */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={showPrompts ? `prompts:${activeSpec.match}` : `cat:${catId}`}
+          variants={ROW_VARIANTS}
+          initial="hidden"
+          animate="show"
+          exit="exit"
+          className="mt-8 flex min-h-[40px] flex-wrap items-center gap-2.5"
+        >
+          {showPrompts ? (
+            <>
+              {/* 技能锚点：当前技能的墨黑 pill 常驻三级行首——与选中 tab 同一
+                  「实心=选中」语言，回答「我在哪」；点击退出该技能、回技能行。
+                  此前进三级后技能行整行消失，rail 上没有任何位置锚（重做动因
+                  之一）。退出=清空输入：restoreDraft(null) 就是「无草稿」的清空
+                  恢复路径；showPrompts 成立时正文必为空，清掉只丢 chip，无损。 */}
+              <motion.button
                 type="button"
-                className="flex items-center gap-1.5 rounded-[10px] bg-foreground/[0.05] px-[13px] py-2 text-[13.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] dark:bg-white/[0.08] dark:hover:bg-white/[0.13]"
-                onClick={() => onFillPrompt(p.text)}
+                title="退出该技能"
+                variants={CHIP_VARIANTS}
+                whileHover={CHIP_HOVER}
+                whileTap={CHIP_TAP}
+                className="group flex items-center gap-1.5 rounded-[10px] bg-foreground px-3 py-[7px] text-[13.5px] font-semibold text-background shadow-sm"
+                onClick={() => restoreDraft(null)}
               >
-                <FillArrowIcon className="shrink-0 text-brand" />
-                {p.label}
-              </button>
-            ))}
-          </>
-        ) : (
-          category.items.map((item) => {
-            if (item.kind === 'skill') {
-              const spec = findSkillChipSpec(item.value)
-              if (!spec) return null // registry 里被移除的技能静默跳过
-              return (
-                <button
-                  key={item.value}
-                  type="button"
-                  className="flex items-center gap-2 rounded-[10px] bg-foreground/[0.05] px-[13px] py-2 text-[13.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] dark:bg-white/[0.08] dark:hover:bg-white/[0.13]"
-                  onClick={() => onInsertSkill(item.value)}
+                <SkillChipIcon src={activeSpec.image} size={15} />
+                {activeSpec.label ?? activeSpec.match.slice(1)}
+                <svg
+                  width={11}
+                  height={11}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2.2}
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                  className="opacity-55 transition-opacity group-hover:opacity-100"
                 >
-                  <SkillChipIcon src={spec.image} size={16} />
-                  {spec.label ?? item.value.slice(1)}
-                </button>
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </motion.button>
+              <motion.span
+                variants={CHIP_VARIANTS}
+                className="h-[18px] w-px bg-border"
+                aria-hidden="true"
+              />
+              {activePrompts.map((p) => (
+                <motion.button
+                  key={p.label}
+                  type="button"
+                  variants={CHIP_VARIANTS}
+                  whileHover={CHIP_HOVER}
+                  whileTap={CHIP_TAP}
+                  className="flex items-center gap-1.5 rounded-[10px] bg-foreground/[0.05] px-[13px] py-2 text-[13.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] dark:bg-white/[0.08] dark:hover:bg-white/[0.13]"
+                  onClick={() => onFillPrompt(p.text)}
+                >
+                  <FillArrowIcon className="shrink-0 text-brand" />
+                  {p.label}
+                </motion.button>
+              ))}
+            </>
+          ) : (
+            category.items.map((item) => {
+              if (item.kind === 'skill') {
+                const spec = findSkillChipSpec(item.value)
+                if (!spec) return null // registry 里被移除的技能静默跳过
+                return (
+                  <motion.button
+                    key={item.value}
+                    type="button"
+                    variants={CHIP_VARIANTS}
+                    whileHover={CHIP_HOVER}
+                    whileTap={CHIP_TAP}
+                    className="flex items-center gap-2 rounded-[10px] bg-foreground/[0.05] px-[13px] py-2 text-[13.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] dark:bg-white/[0.08] dark:hover:bg-white/[0.13]"
+                    onClick={() => onInsertSkill(item.value)}
+                  >
+                    <SkillChipIcon src={spec.image} size={16} />
+                    {spec.label ?? item.value.slice(1)}
+                  </motion.button>
+                )
+              }
+              return (
+                <motion.button
+                  key={item.label}
+                  type="button"
+                  variants={CHIP_VARIANTS}
+                  whileHover={CHIP_HOVER}
+                  whileTap={CHIP_TAP}
+                  className="flex items-center gap-1.5 rounded-[10px] bg-foreground/[0.05] px-[13px] py-2 text-[13.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] dark:bg-white/[0.08] dark:hover:bg-white/[0.13]"
+                  onClick={() => onFillPrompt(item.text)}
+                >
+                  {item.label}
+                  <FillArrowIcon />
+                </motion.button>
               )
-            }
-            return (
-              <button
-                key={item.label}
-                type="button"
-                className="flex items-center gap-1.5 rounded-[10px] bg-foreground/[0.05] px-[13px] py-2 text-[13.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] dark:bg-white/[0.08] dark:hover:bg-white/[0.13]"
-                onClick={() => onFillPrompt(item.text)}
-              >
-                {item.label}
-                <FillArrowIcon />
-              </button>
-            )
-          })
-        )}
-      </motion.div>
-    </div>
+            })
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </motion.div>
   )
 }

@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Confirm UI · v4 紧凑排版（Tier 1 + Tier 2）</title>
+<style>
+  /* ── 设计 token：与 app chat 面（tokens.css）同源，沿用 v3 原型的取值 ── */
+  :root {
+    color-scheme: light;
+    --background: 240 7% 97%;
+    --foreground: 240 3% 12%;
+    --card: 0 0% 100%;
+    --secondary: 240 6% 94%;
+    --muted: 240 5% 93%;
+    --muted-foreground: 240 4% 40%;
+    --border: 240 6% 84%;
+    --input: 240 6% 86%;
+    --brand: 142 76% 36%;
+    --brand-foreground: 0 0% 100%;
+    --star: 38 92% 50%;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    --shadow-card: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px -8px rgba(0,0,0,.10);
+    --shadow-pop: 0 4px 10px rgba(0,0,0,.08), 0 18px 44px -10px rgba(0,0,0,.22);
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --background: 40 6% 10%;
+    --foreground: 40 21% 89%;
+    --card: 30 3% 13%;
+    --secondary: 30 5% 15%;
+    --muted: 36 6% 17%;
+    --muted-foreground: 36 5% 58%;
+    --border: 49 12% 18%;
+    --input: 42 8% 25%;
+    --brand: 145 60% 52%;
+    --brand-foreground: 0 0% 100%;
+    --star: 42 90% 58%;
+    --shadow-card: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -8px rgba(0,0,0,.5);
+    --shadow-pop: 0 4px 10px rgba(0,0,0,.4), 0 18px 44px -10px rgba(0,0,0,.65);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --background: 40 6% 10%;
+      --foreground: 40 21% 89%;
+      --card: 30 3% 13%;
+      --secondary: 30 5% 15%;
+      --muted: 36 6% 17%;
+      --muted-foreground: 36 5% 58%;
+      --border: 49 12% 18%;
+      --input: 42 8% 25%;
+      --brand: 145 60% 52%;
+      --brand-foreground: 0 0% 100%;
+      --star: 42 90% 58%;
+      --shadow-card: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -8px rgba(0,0,0,.5);
+      --shadow-pop: 0 4px 10px rgba(0,0,0,.4), 0 18px 44px -10px rgba(0,0,0,.65);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: var(--font-sans);
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    -webkit-font-smoothing: antialiased;
+  }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  button { font-family: inherit; cursor: pointer; }
+  input { font-family: inherit; }
+
+  .shell {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+    max-width: 920px; width: 100%;
+    margin: 0 auto; height: 100vh;
+    transition: max-width .25s ease;
+  }
+  body.narrow .shell { max-width: 700px; }
+
+  /* ── 顶栏 + 步骤条 ─────────────────────────────────────────────── */
+  .topbar { flex-shrink: 0; padding: 18px 28px 0; }
+  .topbar-heading { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+  .topbar-sub { font-size: 12px; color: hsl(var(--muted-foreground)); margin-top: 3px; }
+  .stepper { display: flex; align-items: center; gap: 10px; margin: 14px 0 12px; }
+  .step { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 550; color: hsl(var(--muted-foreground)); }
+  .step-dot {
+    width: 20px; height: 20px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 11px; font-weight: 650;
+    background: hsl(var(--muted)); color: hsl(var(--muted-foreground));
+    transition: background .2s, color .2s;
+  }
+  .step.active { color: hsl(var(--foreground)); }
+  .step.active .step-dot { background: hsl(var(--brand)); color: hsl(var(--brand-foreground)); }
+  .step.done .step-dot { background: hsl(var(--brand) / .18); color: hsl(var(--brand)); }
+  .step-line { flex: 0 0 46px; height: 2px; border-radius: 1px; background: hsl(var(--border)); position: relative; overflow: hidden; }
+  .step-line::after {
+    content: ''; position: absolute; inset: 0; background: hsl(var(--brand));
+    transform: scaleX(0); transform-origin: left; transition: transform .45s ease;
+  }
+  .stepper[data-stage="2"] .step-line::after { transform: scaleX(1); }
+  .topbar-divider { border-bottom: 1px solid hsl(var(--border) / .6); }
+
+  /* ── 滚动区 + Section 卡 ───────────────────────────────────────── */
+  .scroll { min-height: 0; flex: 1; overflow-y: auto; padding: 14px 28px 20px; }
+  .sections { display: flex; flex-direction: column; gap: 12px; }
+  .section {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border) / .8);
+    border-radius: 13px;
+    padding: 13px 16px 14px;
+    box-shadow: var(--shadow-card);
+    animation: rise .35s ease both;
+  }
+  .sections .section:nth-child(2) { animation-delay: .05s; }
+  .sections .section:nth-child(3) { animation-delay: .10s; }
+  .sections .section:nth-child(4) { animation-delay: .15s; }
+  .sections .section:nth-child(5) { animation-delay: .20s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+  .sec-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .sec-num {
+    align-self: center;
+    width: 18px; height: 18px; border-radius: 6px;
+    display: grid; place-items: center;
+    background: hsl(var(--brand) / .12); color: hsl(var(--brand));
+    font-size: 11px; font-weight: 700;
+  }
+  .sec-title { font-size: 13.5px; font-weight: 650; }
+  .sec-note { font-size: 11px; color: hsl(var(--muted-foreground)); text-wrap: pretty; }
+
+  .sub-label { font-size: 11px; font-weight: 550; color: hsl(var(--muted-foreground)); margin: 10px 0 6px; }
+  .sub-label:first-child { margin-top: 0; }
+
+  /* ── 通用 chip ────────────────────────────────────────────────── */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--background) / .6);
+    color: hsl(var(--foreground));
+    border-radius: 8px; padding: 5px 10px;
+    font-size: 12px; font-weight: 500;
+    transition: border-color .15s, background .15s, color .15s;
+  }
+  .chip:hover { border-color: hsl(var(--brand) / .5); }
+  .chip.selected {
+    border-color: hsl(var(--brand));
+    background: hsl(var(--brand) / .10);
+    color: hsl(var(--brand));
+    font-weight: 600;
+  }
+  .chip .star { color: hsl(var(--star)); font-size: 10px; font-weight: 700; }
+
+  .text-input {
+    width: 100%;
+    border: 1px solid hsl(var(--input));
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    border-radius: 8px; padding: 7px 10px;
+    font-size: 12.5px;
+  }
+  .text-input:focus { outline: none; border-color: hsl(var(--brand)); }
+  .text-input::placeholder { color: hsl(var(--muted-foreground) / .7); }
+  .field-stack { display: flex; flex-direction: column; gap: 8px; }
+
+  /* ── 缩略图画作（纯 CSS 占位，实际实现读 style-previews/<id>.jpg）── */
+  .thumb {
+    /* display:block 必须有：.thumb 是 span，在 flex 容器里被自动块化所以
+       变体 A/B 正常，但浮层 .sc-pop 是普通块级父级，inline 的 width/
+       aspect-ratio 会静默失效、缩略图整个塌掉（CDP 截图实锤过）。 */
+    display: block;
+    position: relative; flex: none;
+    width: 92px; aspect-ratio: 16 / 10;
+    border-radius: 6px; overflow: hidden;
+    background: var(--tbg, hsl(var(--muted)));
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.07);
+  }
+  /* max-height/max-width 钳制：占位画按百分比缩放，放大到 .lg 预览时
+     标题条/圆点会变成巨块，钳住让它在任何尺寸下都读作「标题行」 */
+  .thumb .tt { position: absolute; top: 12%; left: 9%; width: 52%; height: 8%; max-height: 13px; border-radius: 1px; background: var(--tt, #999); }
+  .thumb .tb { position: absolute; bottom: 14%; left: 9%; right: 26%; height: 46%; display: flex; align-items: flex-end; gap: 5%; }
+  .thumb .tb i { flex: 1; border-radius: 1px; }
+  .thumb .tb i:nth-child(1) { height: 38%; background: var(--b1); }
+  .thumb .tb i:nth-child(2) { height: 64%; background: var(--b2); }
+  .thumb .tb i:nth-child(3) { height: 50%; background: var(--b3); }
+  .thumb .tb i:nth-child(4) { height: 84%; background: var(--b4); }
+  .thumb .td { position: absolute; top: 12%; right: 9%; width: 13%; max-width: 20px; aspect-ratio: 1; border-radius: 50%; background: var(--td, transparent); }
+  .thumb.md { width: 240px; }
+  .thumb.lg { width: 100%; border-radius: 9px; }
+  .thumb.xs { width: 44px; border-radius: 4px; }
+  .thumb.xs .tt { height: 10%; }
+
+  [data-art="swiss"]     { --tbg:#ffffff; --tt:#141414; --b1:#141414; --b2:#141414; --b3:#d02c2c; --b4:#d02c2c; --td:#d02c2c; }
+  [data-art="soft"]      { --tbg:#faf6ee; --tt:#2a4f46; --b1:#9fd3b8; --b2:#f2b98c; --b3:#b7a7e0; --b4:#8fc3e8; }
+  [data-art="soft"] .tb i { border-radius: 3px 3px 0 0; }
+  [data-art="glass"]     { --tbg:linear-gradient(135deg,#37379f 0%,#6d49c9 60%,#8f5fe0 100%); --tt:rgba(255,255,255,.85); --b1:rgba(255,255,255,.42); --b2:rgba(255,255,255,.34); --b3:rgba(255,255,255,.46); --b4:rgba(255,255,255,.30); --td:rgba(255,255,255,.5); }
+  [data-art="glass"]     { background: var(--tbg); }
+  [data-art="darktech"]  { --tbg:#0b0b14; --tt:#39dbe0; --b1:#2fd3e6; --b2:#e14fd2; --b3:#2fd3e6; --b4:#e14fd2; }
+  [data-art="darktech"] .tb i { box-shadow: 0 0 5px currentColor; }
+  [data-art="blueprint"] {
+    --tbg:#12308a; --tt:rgba(255,255,255,.85);
+    background:
+      repeating-linear-gradient(0deg, rgba(255,255,255,.10) 0 1px, transparent 1px 9px),
+      repeating-linear-gradient(90deg, rgba(255,255,255,.10) 0 1px, transparent 1px 9px),
+      #12308a;
+  }
+  [data-art="blueprint"] .tb i { background: transparent !important; box-shadow: inset 0 0 0 1px rgba(255,255,255,.8); }
+  [data-art="editorial"] { --tbg:#f6f3ea; --tt:#191919; --b1:#34506e; --b2:#7a8c60; --b3:#c8b89a; --b4:#44607e; }
+  [data-art="editorial"] .tt { height: 11%; }
+  [data-art="photo"]     { background: linear-gradient(180deg,#d9a06a 0%,#a06b48 55%,#4c3627 100%); }
+  [data-art="photo"] .tb { display: none; }
+  [data-art="photo"] .tt { top: auto; bottom: 16%; background: rgba(255,255,255,.92); width: 42%; }
+  [data-art="photo"]::after {
+    content: ''; position: absolute; bottom: 30%; right: 12%;
+    width: 34%; height: 26%;
+    background: #3a2b1e;
+    clip-path: polygon(0 100%, 50% 0, 100% 100%);
+    opacity: .8;
+  }
+  [data-art="datanews"]  { --tbg:#ffffff; --tt:#10306e; --b1:#1f4e9e; --b2:#e07020; --b3:#1f4e9e; --b4:#93a9c9; }
+  [data-art="datanews"] .tb { gap: 3%; right: 40%; }
+  [data-art="datanews"]::after {
+    content: ''; position: absolute; bottom: 14%; right: 9%; width: 26%; height: 46%;
+    background:
+      linear-gradient(0deg, #e0e6ef 0 1px, transparent 1px) 0 0 / 100% 33.3%,
+      linear-gradient(90deg, transparent 0 30%, #1f4e9e 30% 90%, transparent 90%) 0 15% / 100% 20% no-repeat;
+    opacity: .9;
+  }
+  [data-art="brutal"]    { --tbg:#ffffff; --tt:#0a0a0a; --b1:#0a0a0a; --b2:#0a0a0a; --b3:#0a0a0a; --b4:#0a0a0a; }
+  [data-art="brutal"]    { box-shadow: inset 0 0 0 2px #0a0a0a; }
+  [data-art="brutal"] .tt { height: 14%; width: 62%; }
+
+  .tick {
+    position: absolute; top: 5px; right: 5px; z-index: 2;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: hsl(var(--brand)); color: hsl(var(--brand-foreground));
+    display: grid; place-items: center;
+  }
+  .tick svg { width: 9px; height: 9px; }
+
+  .tag-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    background: hsl(var(--star) / .16); color: hsl(var(--star));
+    border-radius: 99px; padding: 1.5px 7px;
+    font-size: 10px; font-weight: 650; white-space: nowrap;
+  }
+
+  .group-label { font-size: 11px; font-weight: 550; color: hsl(var(--muted-foreground)); margin: 8px 0 5px; }
+  .group-label:first-child { margin-top: 0; }
+
+  /* ── 变体 A：紧凑双列横卡 ─────────────────────────────────────── */
+  .sa-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  body.narrow .sa-grid { grid-template-columns: 1fr; }
+  .sa-card {
+    position: relative;
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--background) / .5);
+    border-radius: 10px; padding: 7px 9px;
+    text-align: left;
+    transition: border-color .15s, background .15s;
+  }
+  .sa-card:hover { border-color: hsl(var(--brand) / .5); }
+  .sa-card.selected { border-color: hsl(var(--brand)); background: hsl(var(--brand) / .07); box-shadow: 0 0 0 1px hsl(var(--brand)); }
+  .sa-txt { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .sa-name { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
+  .sa-card.selected .sa-name { color: hsl(var(--brand)); }
+  .sa-note {
+    font-size: 11px; color: hsl(var(--muted-foreground)); line-height: 1.35;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    text-wrap: pretty;
+  }
+  .sa-card.custom { border-style: dashed; justify-content: center; min-height: 62px; color: hsl(var(--muted-foreground)); font-size: 12px; font-weight: 550; }
+  .sa-card.custom.selected { color: hsl(var(--brand)); }
+
+  /* ── 变体 B：缩略列表 + 大图预览 ──────────────────────────────── */
+  .sb { display: grid; grid-template-columns: 262px minmax(0, 1fr); gap: 14px; align-items: stretch; }
+  body.narrow .sb { grid-template-columns: 220px minmax(0, 1fr); }
+  .sb-list {
+    max-height: 328px; overflow-y: auto;
+    border: 1px solid hsl(var(--border) / .8);
+    border-radius: 10px;
+    padding: 8px;
+    display: flex; flex-direction: column; gap: 2px;
+    background: hsl(var(--background) / .4);
+  }
+  .sb-list .group-label { padding: 0 4px; }
+  .sb-row {
+    position: relative;
+    display: flex; align-items: center; gap: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    border-radius: 8px; padding: 4px 6px;
+    text-align: left;
+    transition: background .12s, border-color .12s;
+  }
+  .sb-row:hover { background: hsl(var(--muted) / .7); }
+  .sb-row.selected { border-color: hsl(var(--brand)); background: hsl(var(--brand) / .08); }
+  .sb-row-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sb-row.selected .sb-row-name { color: hsl(var(--brand)); }
+  .sb-row .star { color: hsl(var(--star)); font-size: 10px; font-weight: 700; flex: none; }
+  .sb-row .row-tick { flex: none; color: hsl(var(--brand)); display: grid; place-items: center; }
+  .sb-row .row-tick svg { width: 11px; height: 11px; }
+  .sb-detail {
+    display: flex; flex-direction: column; gap: 9px;
+    border: 1px solid hsl(var(--border) / .8);
+    border-radius: 10px; padding: 11px;
+    background: hsl(var(--background) / .4);
+  }
+  .sb-detail .thumb.lg { transition: opacity .18s ease; }
+  .sb-detail.fading .thumb.lg { opacity: .35; }
+  .sb-meta { display: flex; flex-direction: column; gap: 4px; }
+  .sb-meta-top { display: flex; align-items: center; gap: 8px; }
+  .sb-meta-name { font-size: 13.5px; font-weight: 650; }
+  .sb-meta-note { font-size: 11.5px; color: hsl(var(--muted-foreground)); line-height: 1.45; text-wrap: pretty; }
+  .sb-meta-state { margin-top: 1px; font-size: 11px; font-weight: 600; color: hsl(var(--brand)); display: flex; align-items: center; gap: 4px; }
+  .sb-meta-state.idle { color: hsl(var(--muted-foreground)); font-weight: 450; }
+  .sb-meta-state svg { width: 10px; height: 10px; }
+
+  /* ── 变体 C：文字 chip + 悬停浮层预览 ─────────────────────────── */
+  .sc { position: relative; display: flex; flex-direction: column; gap: 4px; }
+  .sc-selected {
+    margin-top: 8px;
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid hsl(var(--brand) / .45);
+    background: hsl(var(--brand) / .06);
+    border-radius: 10px; padding: 7px 10px;
+  }
+  .sc-selected .sc-sel-name { font-size: 12px; font-weight: 650; color: hsl(var(--brand)); }
+  .sc-selected .sc-sel-note { font-size: 11px; color: hsl(var(--muted-foreground)); margin-top: 1px; text-wrap: pretty; }
+  .sc-pop {
+    position: absolute; z-index: 30; width: 258px;
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: 11px; padding: 8px;
+    box-shadow: var(--shadow-pop);
+    pointer-events: none;
+    opacity: 0; transform: translateY(4px);
+    transition: opacity .15s ease, transform .15s ease;
+  }
+  .sc-pop.show { opacity: 1; transform: none; }
+  .sc-pop .thumb { width: 100%; border-radius: 7px; }
+  .sc-pop-name { margin-top: 7px; font-size: 12px; font-weight: 650; display: flex; align-items: center; gap: 6px; }
+  .sc-pop-note { margin-top: 2px; font-size: 11px; color: hsl(var(--muted-foreground)); line-height: 1.4; text-wrap: pretty; }
+
+  /* ── 画布字段：比例图形小卡（同样脱离大图卡）────────────────── */
+  .canvas-row { display: flex; flex-wrap: wrap; gap: 7px; }
+  .canvas-card {
+    position: relative;
+    display: flex; align-items: center; gap: 9px;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--background) / .5);
+    border-radius: 10px; padding: 7px 11px 7px 8px;
+    transition: border-color .15s, background .15s;
+  }
+  .canvas-card:hover { border-color: hsl(var(--brand) / .5); }
+  .canvas-card.selected { border-color: hsl(var(--brand)); background: hsl(var(--brand) / .07); box-shadow: 0 0 0 1px hsl(var(--brand)); }
+  .ratio-glyph {
+    flex: none; width: 34px; height: 26px;
+    display: grid; place-items: center;
+  }
+  .ratio-glyph i {
+    display: block;
+    border: 1.5px solid hsl(var(--muted-foreground));
+    border-radius: 2px;
+  }
+  .canvas-card.selected .ratio-glyph i { border-color: hsl(var(--brand)); }
+  .canvas-txt { display: flex; flex-direction: column; }
+  .canvas-name { font-size: 12px; font-weight: 600; display: flex; gap: 5px; align-items: center; }
+  .canvas-card.selected .canvas-name { color: hsl(var(--brand)); }
+  .canvas-sub { font-size: 10.5px; color: hsl(var(--muted-foreground)); }
+
+  /* ── Tier 2：风格速览条（sticky）──────────────────────────────── */
+  .stylestrip {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 12px;
+    background: hsl(var(--card) / .88);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid hsl(var(--border) / .8);
+    border-radius: 11px; padding: 8px 13px;
+    box-shadow: var(--shadow-card);
+    animation: rise .35s ease both;
+  }
+  .ss-label { font-size: 11px; font-weight: 650; color: hsl(var(--muted-foreground)); flex: none; }
+  .ss-swatches { display: flex; gap: 4px; }
+  .ss-swatches i { width: 15px; height: 15px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+  .ss-type { font-size: 12px; font-weight: 550; }
+  .ss-type b { font-family: Georgia, 'Songti SC', serif; font-weight: 700; margin-right: 4px; }
+  .ss-sep { width: 1px; height: 16px; background: hsl(var(--border)); }
+  .ss-chip {
+    margin-left: auto;
+    font-size: 11px; font-weight: 550; color: hsl(var(--muted-foreground));
+    border: 1px solid hsl(var(--border)); border-radius: 99px; padding: 2.5px 9px;
+    white-space: nowrap;
+  }
+
+  /* ── Tier 2：候选行（配色 / 字体）─────────────────────────────── */
+  .cand-stack { display: flex; flex-direction: column; gap: 6px; }
+  .cand-row {
+    position: relative;
+    display: flex; align-items: center; gap: 12px;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--background) / .5);
+    border-radius: 10px; padding: 8px 12px;
+    text-align: left;
+    transition: border-color .15s, background .15s;
+  }
+  .cand-row:hover { border-color: hsl(var(--brand) / .5); }
+  .cand-row.selected { border-color: hsl(var(--brand)); background: hsl(var(--brand) / .07); box-shadow: 0 0 0 1px hsl(var(--brand)); }
+  .cand-swatches { display: flex; gap: 4px; flex: none; }
+  .cand-swatches i { width: 17px; height: 17px; border-radius: 5px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+  .cand-name { font-size: 12.5px; font-weight: 600; flex: none; display: flex; align-items: center; gap: 6px; }
+  .cand-row.selected .cand-name { color: hsl(var(--brand)); }
+  .cand-desc { font-size: 11px; color: hsl(var(--muted-foreground)); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .type-preview { flex: none; font-size: 13px; color: hsl(var(--foreground)); }
+  .type-preview.serif { font-family: Georgia, 'Songti SC', 'STSong', serif; }
+  .type-preview.kai { font-family: 'Kaiti SC', 'KaiTi', 'STKaiti', serif; }
+  .cand-sub { flex: none; font-size: 10.5px; color: hsl(var(--muted-foreground)); border: 1px solid hsl(var(--border)); border-radius: 99px; padding: 1.5px 7px; }
+
+  /* ── Tier 2：插图策略摘要 ─────────────────────────────────────── */
+  .img-strategy {
+    margin-top: 8px;
+    display: flex; align-items: center; gap: 9px;
+    border: 1px dashed hsl(var(--border));
+    border-radius: 9px; padding: 7px 11px;
+    font-size: 11.5px; color: hsl(var(--muted-foreground));
+  }
+  .img-strategy b { color: hsl(var(--foreground)); font-weight: 600; }
+
+  /* ── Tier 2：生成参数 2×2 网格 ────────────────────────────────── */
+  .param-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 22px; }
+  body.narrow .param-grid { grid-template-columns: 1fr; }
+  .param-cell { display: flex; flex-direction: column; gap: 6px; }
+  .param-label { font-size: 11px; font-weight: 550; color: hsl(var(--muted-foreground)); }
+  .pages-input { display: flex; align-items: center; gap: 6px; }
+  .pages-input input {
+    width: 64px; text-align: center;
+    border: 1px solid hsl(var(--input)); border-radius: 8px;
+    background: hsl(var(--background)); color: hsl(var(--foreground));
+    padding: 5px 6px; font-size: 12.5px; font-weight: 600;
+  }
+  .pages-input input:focus { outline: none; border-color: hsl(var(--brand)); }
+  .pages-btn {
+    width: 26px; height: 26px; border-radius: 7px;
+    border: 1px solid hsl(var(--border)); background: hsl(var(--background) / .6);
+    color: hsl(var(--foreground)); font-size: 13px; line-height: 1;
+    display: grid; place-items: center;
+  }
+  .pages-btn:hover { border-color: hsl(var(--brand) / .5); }
+  .pages-unit { font-size: 11.5px; color: hsl(var(--muted-foreground)); }
+
+  /* ── deriving 过渡 ────────────────────────────────────────────── */
+  .deriving {
+    display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; padding: 64px 24px; text-align: center;
+  }
+  .deriving.show { display: flex; }
+  .spinner {
+    width: 32px; height: 32px; border-radius: 50%;
+    border: 3px solid hsl(var(--brand) / .22); border-top-color: hsl(var(--brand));
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .deriving-title { font-size: 14.5px; font-weight: 650; }
+  .deriving-sub { max-width: 340px; font-size: 11.5px; line-height: 1.5; color: hsl(var(--muted-foreground)); text-wrap: pretty; }
+  .deriving-cards { display: flex; gap: 10px; margin-top: 4px; }
+  .deriving-cards i { width: 104px; height: 58px; border-radius: 9px; background: hsl(var(--muted)); animation: pulse 1.2s ease-in-out infinite; }
+  .deriving-cards i:nth-child(2) { animation-delay: .15s; }
+  .deriving-cards i:nth-child(3) { animation-delay: .3s; }
+  @keyframes pulse { 50% { opacity: .45; } }
+
+  /* ── 底部 action bar（沿用 07-13 定案的品牌绿标签）────────────── */
+  .actionbar {
+    flex-shrink: 0;
+    border-top: 1px solid hsl(var(--border));
+    background: hsl(var(--card));
+    padding: 9px 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .tagrow { min-width: 0; flex: 1; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  .tagrow::-webkit-scrollbar { display: none; }
+  .tag {
+    flex: none;
+    display: inline-flex; align-items: center; gap: 4px;
+    background: hsl(var(--brand) / .12); color: hsl(var(--brand));
+    border-radius: 99px; padding: 3px 9px;
+    font-size: 11px; font-weight: 550; white-space: nowrap;
+  }
+  .tag svg { width: 9px; height: 9px; }
+  .primary-btn {
+    flex: none;
+    display: inline-flex; align-items: center; gap: 6px;
+    border: none; border-radius: 10px;
+    background: hsl(var(--brand)); color: hsl(var(--brand-foreground));
+    padding: 8px 16px;
+    font-size: 12.5px; font-weight: 650;
+    box-shadow: 0 2px 8px hsl(var(--brand) / .35);
+    transition: filter .15s, transform .1s;
+  }
+  .primary-btn:hover { filter: brightness(1.06); }
+  .primary-btn:active { transform: scale(.98); }
+  .primary-btn.confirmed { background: hsl(var(--brand) / .16); color: hsl(var(--brand)); box-shadow: none; cursor: default; }
+  .primary-btn svg { width: 11px; height: 11px; }
+
+  /* ── Tweaks 面板 ──────────────────────────────────────────────── */
+  .tweaks-fab {
+    position: fixed; right: 18px; bottom: 74px; z-index: 90;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--card)); color: hsl(var(--muted-foreground));
+    border-radius: 99px; padding: 6px 13px;
+    font-size: 11.5px; font-weight: 600;
+    box-shadow: var(--shadow-pop);
+  }
+  .tweaks {
+    position: fixed; right: 18px; bottom: 112px; z-index: 91;
+    width: 252px;
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: 13px; padding: 13px 14px;
+    box-shadow: var(--shadow-pop);
+    display: none;
+    flex-direction: column; gap: 11px;
+  }
+  .tweaks.open { display: flex; }
+  .tweaks-title { font-size: 12px; font-weight: 700; }
+  .tw-group { display: flex; flex-direction: column; gap: 5px; }
+  .tw-label { font-size: 10.5px; font-weight: 550; color: hsl(var(--muted-foreground)); }
+  .seg { display: flex; background: hsl(var(--muted)); border-radius: 8px; padding: 2px; gap: 2px; }
+  .seg button {
+    flex: 1; border: none; background: transparent;
+    color: hsl(var(--muted-foreground));
+    border-radius: 6px; padding: 4px 2px;
+    font-size: 11px; font-weight: 550;
+  }
+  .seg button.on { background: hsl(var(--card)); color: hsl(var(--foreground)); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <div class="topbar">
+    <div class="topbar-heading">生成前确认</div>
+    <div class="topbar-sub">先定三个锚点，AI 会基于它们派生实现层建议</div>
+    <div class="stepper" id="stepper" data-stage="1">
+      <div class="step active" id="step1"><span class="step-dot">1</span>锚点确认</div>
+      <div class="step-line"></div>
+      <div class="step" id="step2"><span class="step-dot">2</span>实现层微调 <span style="font-weight:450;color:hsl(var(--muted-foreground))">· 配色 字体 插图</span></div>
+    </div>
+    <div class="topbar-divider"></div>
+  </div>
+
+  <div class="scroll" id="scroll">
+
+    <!-- ═══════════ Tier 1 · 锚点 ═══════════ -->
+    <div class="sections" id="tier1">
+      <div class="section">
+        <div class="sec-head"><span class="sec-num">1</span><span class="sec-title">画布</span><span class="sec-note">决定成品的载体与比例</span></div>
+        <div class="canvas-row" id="canvasRow">
+          <button class="canvas-card selected" data-group="canvas" data-val="ppt">
+            <span class="ratio-glyph"><i style="width:30px;height:17px"></i></span>
+            <span class="canvas-txt"><span class="canvas-name">16:9 演示<span class="tag-badge">★ 推荐</span></span><span class="canvas-sub">PPT · 1920×1080</span></span>
+          </button>
+          <button class="canvas-card" data-group="canvas" data-val="doc">
+            <span class="ratio-glyph"><i style="width:16px;height:22px"></i></span>
+            <span class="canvas-txt"><span class="canvas-name">A4 文档</span><span class="canvas-sub">竖版 · 长文阅读</span></span>
+          </button>
+          <button class="canvas-card" data-group="canvas" data-val="card">
+            <span class="ratio-glyph"><i style="width:19px;height:19px"></i></span>
+            <span class="canvas-txt"><span class="canvas-name">1:1 卡片</span><span class="canvas-sub">社交分享图</span></span>
+          </button>
+          <button class="canvas-card" data-group="canvas" data-val="custom" style="border-style:dashed">
+            <span class="canvas-txt"><span class="canvas-name" style="color:hsl(var(--muted-foreground))">自定义…</span></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="sec-head"><span class="sec-num">2</span><span class="sec-title">受众与目的</span><span class="sec-note">AI 据此校准信息密度与语气</span></div>
+        <div class="field-stack">
+          <input class="text-input" name="audience" placeholder="谁会看到它？（如：公司全员大会、投资人、课程学员）" value="产品团队季度评审会，管理层 + 一线同学都在">
+          <div class="sub-label">内容发散度</div>
+          <input class="text-input" name="divergence" placeholder="希望 AI 严格贴合大纲，还是允许补充延伸？">
+          <div class="sub-label">用途</div>
+          <div class="chips">
+            <button class="chip selected" data-group="purpose" data-val="talk"><span class="star">★</span>演讲伴随</button>
+            <button class="chip" data-group="purpose" data-val="read">通读自阅</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="sec-head"><span class="sec-num">3</span><span class="sec-title">风格</span><span class="sec-note">表达模式 + 视觉风格，整套片子的气质锚点</span></div>
+        <div class="sub-label">表达模式</div>
+        <div class="chips">
+          <button class="chip selected" data-group="mode" data-val="balanced"><span class="star">★</span>图文平衡</button>
+          <button class="chip" data-group="mode" data-val="visual">视觉主导</button>
+          <button class="chip" data-group="mode" data-val="text">文字主导</button>
+          <button class="chip" data-group="mode" data-val="data">数据密集</button>
+        </div>
+        <div class="sub-label">视觉风格</div>
+        <div id="styleField"></div>
+        <input class="text-input" id="customStyleInput" name="customStyle" placeholder="描述你想要的风格（如：手绘水彩、复古像素……）" style="display:none;margin-top:8px">
+      </div>
+    </div>
+
+    <!-- ═══════════ tier1 → tier2 deriving ═══════════ -->
+    <div class="deriving" id="deriving">
+      <div class="spinner"></div>
+      <div class="deriving-title">正在派生实现层建议…</div>
+      <div class="deriving-sub">AI 正基于你选的画布、受众与视觉风格，重新推导配色、字体与插图策略</div>
+      <div class="deriving-cards"><i></i><i></i><i></i></div>
+    </div>
+
+    <!-- ═══════════ Tier 2 · 实现层 ═══════════ -->
+    <div class="sections" id="tier2" style="display:none">
+      <div class="stylestrip">
+        <span class="ss-label">风格速览</span>
+        <span class="ss-swatches" id="stripSwatches"></span>
+        <span class="ss-sep"></span>
+        <span class="ss-type" id="stripType"><b>Aa 永</b>思源宋体 · 正文 18px</span>
+        <span class="ss-chip" id="stripChip">16:9 演示 · 编辑出版</span>
+      </div>
+
+      <div class="section">
+        <div class="sec-head"><span class="sec-num">1</span><span class="sec-title">配色</span><span class="sec-note">决定整套片子的底色气质</span></div>
+        <div class="cand-stack" id="colorStack">
+          <button class="cand-row selected" data-group="color" data-val="paper"
+                  data-sw="#f7f4ec,#1a2b3c,#7d2e2e,#b0a58c,#44607e">
+            <span class="cand-swatches"></span>
+            <span class="cand-name">典雅纸墨<span class="tag-badge">★ 推荐</span></span>
+            <span class="cand-desc">米白纸感底 + 藏青正文 + 砖红强调，编辑出版的经典配比</span>
+          </button>
+          <button class="cand-row" data-group="color" data-val="econ"
+                  data-sw="#ffffff,#111111,#e3120b,#7a7a7a,#2c5d8a">
+            <span class="cand-swatches"></span>
+            <span class="cand-name">杂志红标</span>
+            <span class="cand-desc">纯白底 + 黑字 + 高饱和红色块，锐利的专题报道感</span>
+          </button>
+          <button class="cand-row" data-group="color" data-val="indigo"
+                  data-sw="#f4f6f8,#16324f,#2c6e63,#c9a227,#5b7089">
+            <span class="cand-swatches"></span>
+            <span class="cand-name">靛青学院</span>
+            <span class="cand-desc">冷灰底 + 靛青主色 + 芥末金点缀，沉稳的学术气</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="sec-head"><span class="sec-num">2</span><span class="sec-title">字体</span><span class="sec-note">标题与正文的字面气质</span></div>
+        <div class="cand-stack">
+          <button class="cand-row selected" data-group="type" data-val="serif" data-strip="思源宋体 · 正文 18px" data-serif="1">
+            <span class="type-preview serif">标题 Aa 永</span>
+            <span class="cand-name">思源宋体 × Source Serif<span class="tag-badge">★ 推荐</span></span>
+            <span class="cand-desc">双衬线，和编辑出版的栏线层级最搭</span>
+            <span class="cand-sub">正文 18px</span>
+          </button>
+          <button class="cand-row" data-group="type" data-val="sans" data-strip="思源黑体 · 正文 18px">
+            <span class="type-preview">标题 Aa 永</span>
+            <span class="cand-name">思源黑体 × Source Sans</span>
+            <span class="cand-desc">全无衬线，更中性现代，投影远看更稳</span>
+            <span class="cand-sub">正文 18px</span>
+          </button>
+          <button class="cand-row" data-group="type" data-val="kai" data-strip="霞鹜文楷 · 正文 20px">
+            <span class="type-preview kai">标题 Aa 永</span>
+            <span class="cand-name">霞鹜文楷 × Lora</span>
+            <span class="cand-desc">楷体笔意，人文温度高，适合叙事性内容</span>
+            <span class="cand-sub">正文 20px</span>
+          </button>
+        </div>
+        <div class="sub-label">公式排版</div>
+        <div class="chips">
+          <button class="chip selected" data-group="formula" data-val="auto"><span class="star">★</span>自动（有公式才启用）</button>
+          <button class="chip" data-group="formula" data-val="on">强制启用</button>
+          <button class="chip" data-group="formula" data-val="off">禁用</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="sec-head"><span class="sec-num">3</span><span class="sec-title">插图</span><span class="sec-note">决定插图从哪来、长什么样</span></div>
+        <div class="chips">
+          <button class="chip" data-group="img" data-val="none">无插图</button>
+          <button class="chip" data-group="img" data-val="geo">极简几何图形</button>
+          <button class="chip selected" data-group="img" data-val="ai"><span class="star">★</span>AI 生成插图</button>
+          <button class="chip" data-group="img" data-val="own">自备素材</button>
+        </div>
+        <div class="img-strategy" id="imgStrategy">
+          <span>统一风格提示词：<b>编辑出版风 · 纸感肌理 · 藏青与砖红</b></span>
+          <span class="ss-sep"></span>
+          <span>密度：<b>少量点缀（3–4 张）</b></span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="sec-head"><span class="sec-num">4</span><span class="sec-title">生成参数</span><span class="sec-note">页数、图标与生成节奏</span></div>
+        <div class="param-grid">
+          <div class="param-cell">
+            <span class="param-label">页数</span>
+            <div class="pages-input">
+              <button class="pages-btn" id="pageMinus" aria-label="减少页数">−</button>
+              <input type="number" id="pagesVal" name="pages" value="12" min="1" max="60">
+              <button class="pages-btn" id="pagePlus" aria-label="增加页数">＋</button>
+              <span class="pages-unit">页 · AI 建议 10–14</span>
+            </div>
+          </div>
+          <div class="param-cell">
+            <span class="param-label">图标风格</span>
+            <div class="chips">
+              <button class="chip selected" data-group="icons" data-val="line"><span class="star">★</span>线性单色</button>
+              <button class="chip" data-group="icons" data-val="duo">双色</button>
+              <button class="chip" data-group="icons" data-val="fill">面性</button>
+            </div>
+          </div>
+          <div class="param-cell">
+            <span class="param-label">生成模式</span>
+            <div class="chips">
+              <button class="chip selected" data-group="genmode" data-val="split"><span class="star">★</span>分批（每批确认）</button>
+              <button class="chip" data-group="genmode" data-val="cont">连续生成</button>
+            </div>
+          </div>
+          <div class="param-cell">
+            <span class="param-label">规格精修</span>
+            <div class="chips">
+              <button class="chip selected" data-group="refine" data-val="off"><span class="star">★</span>关（默认）</button>
+              <button class="chip" data-group="refine" data-val="on">开 · 逐页精修规格</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="actionbar">
+    <div class="tagrow" id="tagrow"></div>
+    <button class="primary-btn" id="primaryBtn"></button>
+  </div>
+</div>
+
+<button class="tweaks-fab" id="tweaksFab">Tweaks</button>
+<div class="tweaks" id="tweaksPanel">
+  <div class="tweaks-title">Tweaks</div>
+  <div class="tw-group">
+    <span class="tw-label">视觉风格选择器（核心变体）</span>
+    <div class="seg" id="segVariant">
+      <button data-v="A">A 双列横卡</button>
+      <button data-v="B" class="on">B 列表+预览</button>
+      <button data-v="C">C chip+悬停</button>
+    </div>
+  </div>
+  <div class="tw-group">
+    <span class="tw-label">阶段</span>
+    <div class="seg" id="segStage">
+      <button data-v="1" class="on">Tier 1 锚点</button>
+      <button data-v="2">Tier 2 实现层</button>
+    </div>
+  </div>
+  <div class="tw-group">
+    <span class="tw-label">主题</span>
+    <div class="seg" id="segTheme">
+      <button data-v="auto" class="on">跟随系统</button>
+      <button data-v="light">亮</button>
+      <button data-v="dark">暗</button>
+    </div>
+  </div>
+  <div class="tw-group">
+    <span class="tw-label">面板宽度</span>
+    <div class="seg" id="segWidth">
+      <button data-v="std" class="on">标准 920</button>
+      <button data-v="narrow">窄栏 700</button>
+    </div>
+  </div>
+  <div class="tw-label" style="line-height:1.5">缩略图为 CSS 占位示意，实装读取 skill 自带的 style-previews/&lt;id&gt;.jpg</div>
+</div>
+
+<script>
+/* ── 数据：与截图一致的真实目录（tag = spectrum 推荐语）───────────── */
+const GROUPS = [
+  { label: '企业 / 产品', items: [
+    { id: 'swiss',     name: '瑞士极简', tag: '★ 进阶 · 瑞士网格', note: '严谨留白、克制有力，像高端院校宣传册' },
+    { id: 'soft',      name: '柔和圆角', note: '圆角卡片、柔和投影、亲和现代。' },
+    { id: 'glass',     name: '玻璃拟态', note: '半透明玻璃面板、渐变光感、漂浮层次。' },
+    { id: 'darktech',  name: '深色科技', note: '深色画布、发光强调、几何精确。' },
+    { id: 'blueprint', name: '蓝图',     note: '深底蓝图线稿、等距结构、工程标注。' }
+  ]},
+  { label: '编辑 / 出版', items: [
+    { id: 'editorial', name: '编辑出版', tag: '★ 稳妥 · 编辑质感', note: '杂志式层级、栏线与衬线交织，像《经济学人》专题' },
+    { id: 'photo',     name: '摄影编辑', note: '满版摄影主导，文字点缀与图注配合。' },
+    { id: 'datanews',  name: '数据新闻', note: '多栏微图表、侧栏、来源线、信息密度高。' },
+    { id: 'brutal',    name: '粗野主义', note: '报纸密度、粗线框、原始结构、扁平表达。' }
+  ]}
+];
+const ALL_STYLES = GROUPS.flatMap(g => g.items);
+const findStyle = id => ALL_STYLES.find(s => s.id === id);
+
+const state = {
+  stage: 1, variant: 'B',
+  visual: 'editorial', hoverVisual: null,
+  canvas: 'ppt', canvasLabel: '16:9 演示',
+  colorLabel: '典雅纸墨', typeLabel: '思源宋体', imgLabel: 'AI 插图',
+  confirmed: false
+};
+
+const TICK_SVG = '<svg viewBox="0 0 12 12" fill="none"><path d="M2 6.2 4.8 9 10 3.4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const art = (id, cls) =>
+  `<span class="thumb ${cls || ''}" data-art="${id}"><span class="tt"></span><span class="tb"><i></i><i></i><i></i><i></i></span><span class="td"></span></span>`;
+const tagBadge = s => s.tag ? `<span class="tag-badge">${s.tag}</span>` : '';
+
+/* ── 视觉风格字段：三个变体共用同一份数据与选中态 ─────────────────── */
+const styleField = document.getElementById('styleField');
+
+function renderVariantA() {
+  let html = '';
+  GROUPS.forEach((g, gi) => {
+    html += `<div class="group-label">${g.label}</div><div class="sa-grid">`;
+    g.items.forEach(s => {
+      const sel = state.visual === s.id;
+      html += `<button class="sa-card ${sel ? 'selected' : ''}" data-vs="${s.id}">
+        ${sel ? `<span class="tick">${TICK_SVG}</span>` : ''}
+        ${art(s.id)}
+        <span class="sa-txt"><span class="sa-name">${s.name}${tagBadge(s)}</span><span class="sa-note">${s.note}</span></span>
+      </button>`;
+    });
+    if (gi === GROUPS.length - 1) {
+      const sel = state.visual === 'custom';
+      html += `<button class="sa-card custom ${sel ? 'selected' : ''}" data-vs="custom">自定义 · 描述你想要的风格</button>`;
+    }
+    html += '</div>';
+  });
+  styleField.innerHTML = html;
+}
+
+function sbDetailHTML(id) {
+  if (id === 'custom') {
+    return `<div style="display:flex;align-items:center;justify-content:center;min-height:180px;border:2px dashed hsl(var(--border));border-radius:9px;color:hsl(var(--muted-foreground));font-size:12px">自定义风格 · 在下方输入框描述</div>
+      <div class="sb-meta"><div class="sb-meta-top"><span class="sb-meta-name">自定义</span></div>
+      <div class="sb-meta-note">用一两句话描述想要的风格，AI 会照此建立整套视觉规范。</div></div>`;
+  }
+  const s = findStyle(id);
+  const sel = state.visual === s.id;
+  return `${art(s.id, 'lg')}
+    <div class="sb-meta">
+      <div class="sb-meta-top"><span class="sb-meta-name">${s.name}</span>${tagBadge(s)}</div>
+      <div class="sb-meta-note">${s.note}</div>
+      <div class="sb-meta-state ${sel ? '' : 'idle'}">${sel ? TICK_SVG + ' 已选定这个风格' : '点击左侧列表选定'}</div>
+    </div>`;
+}
+
+function renderVariantB() {
+  let rows = '';
+  GROUPS.forEach(g => {
+    rows += `<div class="group-label">${g.label}</div>`;
+    g.items.forEach(s => {
+      const sel = state.visual === s.id;
+      rows += `<button class="sb-row ${sel ? 'selected' : ''}" data-vs="${s.id}">
+        ${art(s.id, 'xs')}<span class="sb-row-name">${s.name}</span>
+        ${s.tag ? '<span class="star">★</span>' : ''}
+        ${sel ? `<span class="row-tick">${TICK_SVG}</span>` : ''}
+      </button>`;
+    });
+  });
+  const selCustom = state.visual === 'custom';
+  rows += `<div class="group-label">其他</div>
+    <button class="sb-row ${selCustom ? 'selected' : ''}" data-vs="custom" style="border-style:dashed;border-color:${selCustom ? '' : 'hsl(var(--border))'}">
+      <span class="sb-row-name" style="color:hsl(var(--muted-foreground))">自定义 · 描述你想要的风格</span>
+      ${selCustom ? `<span class="row-tick">${TICK_SVG}</span>` : ''}
+    </button>`;
+  styleField.innerHTML = `<div class="sb">
+    <div class="sb-list">${rows}</div>
+    <div class="sb-detail" id="sbDetail">${sbDetailHTML(state.hoverVisual || state.visual)}</div>
+  </div>`;
+  styleField.querySelectorAll('.sb-row').forEach(row => {
+    row.addEventListener('mouseenter', () => {
+      state.hoverVisual = row.dataset.vs;
+      const d = document.getElementById('sbDetail');
+      d.classList.add('fading');
+      setTimeout(() => { d.innerHTML = sbDetailHTML(state.hoverVisual); d.classList.remove('fading'); }, 90);
+    });
+  });
+  styleField.querySelector('.sb-list').addEventListener('mouseleave', () => {
+    state.hoverVisual = null;
+    const d = document.getElementById('sbDetail');
+    if (d) d.innerHTML = sbDetailHTML(state.visual);
+  });
+}
+
+function renderVariantC() {
+  let html = '<div class="sc">';
+  GROUPS.forEach(g => {
+    html += `<div class="group-label">${g.label}</div><div class="chips">`;
+    g.items.forEach(s => {
+      const sel = state.visual === s.id;
+      html += `<button class="chip ${sel ? 'selected' : ''}" data-vs="${s.id}">${s.tag ? '<span class="star">★</span>' : ''}${s.name}</button>`;
+    });
+    html += '</div>';
+  });
+  const selCustom = state.visual === 'custom';
+  html += `<div class="group-label">其他</div><div class="chips">
+    <button class="chip ${selCustom ? 'selected' : ''}" data-vs="custom" style="border-style:dashed">自定义…</button></div>`;
+  const cur = findStyle(state.visual);
+  if (cur) {
+    html += `<div class="sc-selected">${art(cur.id)}<span><span class="sc-sel-name">${cur.name}</span>${cur.tag ? ' ' + tagBadge(cur) : ''}<div class="sc-sel-note">${cur.note}</div></span></div>`;
+  }
+  html += '<div class="sc-pop" id="scPop"></div></div>';
+  styleField.innerHTML = html;
+
+  const pop = document.getElementById('scPop');
+  const scRoot = styleField.querySelector('.sc');
+  styleField.querySelectorAll('.chip[data-vs]').forEach(chip => {
+    chip.addEventListener('mouseenter', () => {
+      const s = findStyle(chip.dataset.vs);
+      if (!s) { pop.classList.remove('show'); return; }
+      pop.innerHTML = `${art(s.id)}<div class="sc-pop-name">${s.name}${tagBadge(s)}</div><div class="sc-pop-note">${s.note}</div>`;
+      const maxLeft = scRoot.clientWidth - 262;
+      pop.style.left = Math.max(0, Math.min(chip.offsetLeft, maxLeft)) + 'px';
+      pop.style.top = (chip.offsetTop + chip.offsetHeight + 7) + 'px';
+      pop.classList.add('show');
+    });
+    chip.addEventListener('mouseleave', () => pop.classList.remove('show'));
+  });
+}
+
+function renderStyleField() {
+  state.hoverVisual = null;
+  if (state.variant === 'A') renderVariantA();
+  else if (state.variant === 'B') renderVariantB();
+  else renderVariantC();
+  document.getElementById('customStyleInput').style.display = state.visual === 'custom' ? 'block' : 'none';
+}
+
+/* 选中风格：事件委托（变体内部 hover 已各自绑定） */
+styleField.addEventListener('click', e => {
+  const btn = e.target.closest('[data-vs]');
+  if (!btn) return;
+  state.visual = btn.dataset.vs;
+  renderStyleField();
+  updateActionbar();
+});
+
+/* ── 通用单选组（chips / canvas / 候选行）────────────────────────── */
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-group]');
+  if (!btn) return;
+  const group = btn.dataset.group;
+  document.querySelectorAll(`[data-group="${group}"]`).forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  if (group === 'canvas') state.canvasLabel = btn.querySelector('.canvas-name')?.childNodes[0]?.textContent?.trim() || '自定义';
+  if (group === 'color') {
+    state.colorLabel = btn.querySelector('.cand-name').childNodes[0].textContent.trim();
+    paintSwatches(document.getElementById('stripSwatches'), btn.dataset.sw);
+  }
+  if (group === 'type') {
+    state.typeLabel = btn.dataset.strip.split(' ·')[0];
+    document.getElementById('stripType').innerHTML =
+      `<b style="${btn.dataset.serif ? '' : 'font-family:inherit'}">Aa 永</b>${btn.dataset.strip}`;
+  }
+  if (group === 'img') {
+    const map = { none: '无插图', geo: '几何图形', ai: 'AI 插图', own: '自备素材' };
+    state.imgLabel = map[btn.dataset.val];
+    document.getElementById('imgStrategy').style.display = btn.dataset.val === 'ai' ? 'flex' : 'none';
+  }
+  updateActionbar();
+});
+
+function paintSwatches(el, sw) {
+  el.innerHTML = sw.split(',').map(c => `<i style="background:${c}"></i>`).join('');
+}
+
+/* ── 页数 stepper ────────────────────────────────────────────────── */
+const pagesVal = document.getElementById('pagesVal');
+document.getElementById('pageMinus').addEventListener('click', () => { pagesVal.value = Math.max(1, +pagesVal.value - 1); updateActionbar(); });
+document.getElementById('pagePlus').addEventListener('click', () => { pagesVal.value = Math.min(60, +pagesVal.value + 1); updateActionbar(); });
+pagesVal.addEventListener('input', updateActionbar);
+
+/* ── action bar：品牌绿标签 + 主按钮 ─────────────────────────────── */
+function updateActionbar() {
+  const visualName = state.visual === 'custom' ? '自定义风格' : (findStyle(state.visual)?.name || '');
+  const tags = state.stage === 1
+    ? [state.canvasLabel, '图文平衡', visualName]
+    : [state.canvasLabel, visualName, state.colorLabel, state.typeLabel, state.imgLabel, pagesVal.value + ' 页'];
+  document.getElementById('tagrow').innerHTML =
+    tags.filter(Boolean).map(t => `<span class="tag">${TICK_SVG}${t}</span>`).join('');
+  const btn = document.getElementById('primaryBtn');
+  if (state.confirmed) { btn.className = 'primary-btn confirmed'; btn.innerHTML = TICK_SVG + ' 已确认 · 开始生成'; return; }
+  btn.className = 'primary-btn';
+  btn.innerHTML = state.stage === 1 ? '下一步 · 实现层建议 →' : TICK_SVG + ' 确认，开始生成';
+}
+
+document.getElementById('primaryBtn').addEventListener('click', () => {
+  if (state.confirmed) return;
+  if (state.stage === 1) setStage(2, { derive: true });
+  else { state.confirmed = true; updateActionbar(); }
+});
+
+/* ── 阶段切换（含 deriving 过渡）────────────────────────────────── */
+function setStage(n, opts = {}) {
+  state.stage = n; state.confirmed = false;
+  const t1 = document.getElementById('tier1');
+  const t2 = document.getElementById('tier2');
+  const dv = document.getElementById('deriving');
+  const stepper = document.getElementById('stepper');
+  document.getElementById('scroll').scrollTop = 0;
+  if (n === 1) {
+    t1.style.display = 'flex'; t2.style.display = 'none'; dv.classList.remove('show');
+    stepper.dataset.stage = '1';
+    document.getElementById('step1').className = 'step active';
+    document.getElementById('step2').className = 'step';
+    syncStageSeg(); updateActionbar();
+    return;
+  }
+  t1.style.display = 'none';
+  stepper.dataset.stage = '2';
+  document.getElementById('step1').className = 'step done';
+  document.getElementById('step2').className = 'step active';
+  syncStageSeg();
+  if (opts.derive) {
+    dv.classList.add('show');
+    setTimeout(() => {
+      dv.classList.remove('show');
+      t2.style.display = 'flex';
+      t2.querySelectorAll('.section, .stylestrip').forEach(el => { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; });
+      updateActionbar();
+    }, 1100);
+  } else {
+    dv.classList.remove('show');
+    t2.style.display = 'flex';
+    updateActionbar();
+  }
+}
+function syncStageSeg() {
+  document.querySelectorAll('#segStage button').forEach(b => b.classList.toggle('on', +b.dataset.v === state.stage));
+}
+
+/* ── Tweaks ──────────────────────────────────────────────────────── */
+document.getElementById('tweaksFab').addEventListener('click', () =>
+  document.getElementById('tweaksPanel').classList.toggle('open'));
+
+function bindSeg(id, fn) {
+  document.querySelectorAll(`#${id} button`).forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll(`#${id} button`).forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    fn(b.dataset.v);
+  }));
+}
+bindSeg('segVariant', v => { state.variant = v; renderStyleField(); });
+bindSeg('segStage', v => setStage(+v));
+bindSeg('segTheme', v => {
+  if (v === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', v);
+});
+bindSeg('segWidth', v => document.body.classList.toggle('narrow', v === 'narrow'));
+
+/* ── init ────────────────────────────────────────────────────────── */
+paintSwatches(document.getElementById('stripSwatches'), '#f7f4ec,#1a2b3c,#7d2e2e,#b0a58c,#44607e');
+renderStyleField();
+updateActionbar();
+</script>
+</body>
+</html>

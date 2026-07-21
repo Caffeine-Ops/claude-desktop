@@ -783,6 +783,22 @@ export class ChatEngine extends EventEmitter {
   }
 
   /**
+   * Does any runtime in this engine have a turn actively in flight right
+   * now (`rt.active` — same flag `restartRuntimesForBackendChange` reads
+   * to decide which runtimes are safe to tear down)? Used to gate CLI
+   * backend switching (2026-07-21 用户要求): a "live" runtime
+   * (`listActiveRuntimeIds`) just means the subprocess is warm/idle, not
+   * that it's actually generating a reply — the backend switch should
+   * only be blocked while a reply is genuinely in flight.
+   */
+  hasInFlightTurn(): boolean {
+    for (const [, rt] of this.sessions) {
+      if (rt.active) return true
+    }
+    return false
+  }
+
+  /**
    * Recycle every live runtime so the NEXT turn re-spawns under the
    * current `cliBackend` setting. Called by CLI_BACKEND_SET when the
    * user flips between bundled fusion-code and system claude.

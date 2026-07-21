@@ -146,6 +146,48 @@
   animation: renamed-flash 0.9s cubic-bezier(0.22, 1, 0.36, 1) 1;
 }
 
+/* ── rail「毛玻璃浮起」segmented thumb 的切换呼吸（2026-07-20，替换 07-18
+ * 的静态毛玻璃）─────────────────────────────────────────────────────
+ * AppRail 的「智能助手/工作画布」切换：滑动 thumb 的**横滑**由内联 utility
+ * 的 transition-transform 管（外层），这里只补一个「切面瞬间放大再落回」的
+ * 呼吸缩放，落在**内层 fill**——两层各走各的 transform（外层 translateX、
+ * 内层 scale），互不覆盖。thumbPulse 为真时由 AppRail 挂 .is-moving 播一次，
+ * 480ms 后摘除以便下次切面重播（对应原型「毛玻璃浮起」）。纯装饰，
+ * reduced-motion 下关停。 */
+@keyframes surface-thumb-breathe {
+  0% {
+    transform: scale(1);
+  }
+  42% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+/* 抬升阴影 + 上缘 inset 高光走这里、**不用 Tailwind arbitrary shadow**：
+ * v4 的 shadow-[…] 会套 --tw-shadow-color 替换机制，复杂逗号值（多层 +
+ * inset）会被替换成 transparent，computed 三段全 rgba(0,0,0,0)、阴影静默
+ * 消失（2026-07-20 CDP 实测抓出）。box-shadow 是纯静态视觉，写 CSS 最稳。 */
+.surface-thumb-fill {
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.dark .surface-thumb-fill {
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+.surface-thumb-fill.is-moving {
+  animation: surface-thumb-breathe 0.44s cubic-bezier(0.22, 0.8, 0.3, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .surface-thumb-fill.is-moving {
+    animation: none;
+  }
+}
+
 /* ── 权限浮层（PermissionFloatCard）─────────────────────────────────
  * 入场：从 composer 后方浮起（原型 perm-in，0.26s 标准 spring-ish 曲线）。
  * key=requestId 换卡时 remount 自动重播。等待点：tool card 锚点与侧栏

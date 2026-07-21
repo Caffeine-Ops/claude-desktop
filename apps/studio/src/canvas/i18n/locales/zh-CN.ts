@@ -169,7 +169,8 @@ export const zhCN: Dict = {
   'settings.codeAgentHint': '选择用来运行提示词的 Claude 后端，聊天与画布共用。',
   'settings.chatCliBackendTitle': 'CLI 后端',
   'settings.chatCliBackendHint':
-    '聊天会话与画布项目共用此选择。切换立即生效——进行中的回合保持当前后端，下一回合起切换。',
+    '聊天会话与画布项目共用此选择。有会话正在进行时无法切换，请等会话结束后再切换。',
+  'settings.cliBackendSwitchBlocked': '有会话正在进行，请等待会话结束后再切换 CLI 后端。',
   'settings.cliBackendBundledTitle': '内置 fusion-code',
   'settings.cliBackendBundledDesc': '随应用打包的 Claude Code，已针对 prompt cache 与 MCP 工具做优化',
   'settings.cliBackendBundledMeta': '随应用打包',

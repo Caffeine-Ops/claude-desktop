@@ -723,7 +723,11 @@ function SuggestionPopover({
       // backdrop-brightness-125（暗色背景不提亮混合后无「透视感」，同一踩坑
       // 教训见 input.tsx / ScrollToBottomButton 历史注释），ring 换成固定
       // border-white/15 + inset 顶部高光，与其它玻璃 popover 统一视觉语言。
-      className="fixed z-30 overflow-y-auto rounded-xl border border-white/15 bg-popover/55 py-1 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.25),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125"
+      // 2026-07-20 补：brightness-125 只对暗档成立，亮档 popover 本身接近
+      // 纯白，同样提亮会把身后壁纸乘溢出到 255、反而把纹理漂白——改成
+      // brightness-100（不调整）+ dark:brightness-125，理由见 dropdown-
+      // menu.tsx 头注释第四条，全项目 ~15 处同配方一起改。
+      className="fixed z-30 overflow-y-auto rounded-xl border border-white/15 bg-popover/55 py-1 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.25),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125"
       style={{
         left: pos.left,
         ...(pos.placement === 'above'

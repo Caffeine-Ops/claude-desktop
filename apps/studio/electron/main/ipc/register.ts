@@ -17,6 +17,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'nod
 import type { PermissionResponse, QueuedMessage } from '../../shared/types'
 import {
   IPC_CHANNELS,
+  CLI_BACKEND_SESSION_RUNNING_ERROR,
   type ChatAbortPayload,
   type ChatImagePayload,
   type ChatQueueEditPayload,
@@ -41,6 +42,9 @@ import {
   type SessionSearchPayload,
   type SessionSearchResult,
   type SessionRenameResult,
+  type SessionOpenJsonlPayload,
+  type SessionOpenJsonlResult,
+  type SessionGetJsonlPathResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
   type SessionWorkspaceSetPayload,
@@ -197,6 +201,7 @@ import type { ChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
 import {
   deleteSessionFromDisk,
+  findSessionJsonlGlobal,
   listAllSessions,
   loadSession,
   loadSubagent,
@@ -329,6 +334,22 @@ async function recycleAllEnginesForBackendChange(): Promise<void> {
       })
     )
   )
+}
+
+/**
+ * Does ANY tab, anywhere in the app, currently have a turn actively in
+ * flight (`ChatEngine.hasInFlightTurn`)? Used to gate CLI_BACKEND_SET /
+ * SETTINGS_CLI_BACKEND_SET (2026-07-21 用户要求): 有会话正在运行时整个
+ * 不允许切换，而不是像以前那样允许切、把 in-flight 回合留在旧后端上跑完
+ * ——即使 restartRuntimesForBackendChange 本来就会跳过 in-flight 的
+ * runtime、不会真的打断它，用户还是明确要求切换动作本身在有会话运行时
+ * 就整体拒绝，给出「等会话结束再切」的提示，而不是让它悄悄延后生效。
+ */
+function anyTabHasInFlightTurn(): boolean {
+  return getAllTabs()
+    .map((ctx) => ctx.engine)
+    .filter((e): e is ChatEngine => e !== null)
+    .some((eng) => eng.hasInFlightTurn())
 }
 
 /**
@@ -491,6 +512,8 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_NEW)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_SWITCH)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_RENAME)
+  ipcMain.removeHandler(IPC_CHANNELS.SESSION_OPEN_JSONL)
+  ipcMain.removeHandler(IPC_CHANNELS.SESSION_GET_JSONL_PATH)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_WORKSPACE_SET)
   ipcMain.removeHandler(IPC_CHANNELS.APP_RELAUNCH)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_NEW)
@@ -1720,6 +1743,56 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // 用 VS Code 打开会话的原始 transcript jsonl（2026-07-20 用户要求，此前
+  // 走 shell.openPath 交给系统默认程序——.jsonl 没有稳定的默认关联，谁
+  // 装了就打开谁，体验不可控）。全局扫 `~/.claude/projects/`
+  // （findSessionJsonlGlobal，不需要 workspaceDirs——session id 本身唯一）
+  // 定位文件，再用 `vscode://file/<path>` URI 交给 shell.openExternal——
+  // 不依赖 PATH 里有没有 `code` CLI（GUI 启动的 Electron 进程环境变量比
+  // 终端窄是常见坑，这条项目的代理环境变量事故史踩过好几次同类"进程环境
+  // 跟终端不一样"的雷），只依赖 VS Code 本体注册过这个协议（装了 VS Code
+  // 就有，装的时候自动注册，不需要额外配置）。encodeURI 只编码路径里的
+  // 空格/非 ASCII 字符（会话标题带中文时目录名也可能带中文），斜杠等
+  // 路径分隔符原样保留。找不到文件、VS Code 未安装或协议打开失败都回
+  // 非空 error，不抛异常——菜单点击即发即弃，没有常驻消息位展示失败原因，
+  // 跟原来 shell.openPath 分支的错误处理惯例一致。
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_OPEN_JSONL,
+    async (
+      _event,
+      payload: SessionOpenJsonlPayload
+    ): Promise<SessionOpenJsonlResult> => {
+      const sessionId =
+        payload && typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (!sessionId) return { error: 'Missing sessionId.' }
+      const jsonlPath = await findSessionJsonlGlobal(sessionId)
+      if (!jsonlPath) return { error: 'Session transcript not found.' }
+      try {
+        await shell.openExternal(`vscode://file${encodeURI(jsonlPath)}`)
+        return { error: '' }
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
+
+  // 「复制 jsonl 路径」菜单项——同上定位逻辑，但不 shell.openPath，只把
+  // 绝对路径交回 renderer 由它写剪贴板（不在 main 侧碰剪贴板 API）。
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_GET_JSONL_PATH,
+    async (
+      _event,
+      payload: SessionOpenJsonlPayload
+    ): Promise<SessionGetJsonlPathResult> => {
+      const sessionId =
+        payload && typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (!sessionId) return { error: 'Missing sessionId.' }
+      const jsonlPath = await findSessionJsonlGlobal(sessionId)
+      if (!jsonlPath) return { error: 'Session transcript not found.' }
+      return { path: jsonlPath }
+    }
+  )
+
   // 会话工作目录（composer「选择工作目录」chip）。锁定校验（已有
   // transcript / 已 send 过 → reject）在 engine.setSessionWorkspace 里，
   // 这里只做 payload 形状检查——路径合法性（绝对/存在/目录）也归 engine，
@@ -1973,6 +2046,13 @@ export function registerIpcHandlers(): void {
       const mode = payload?.mode
       if (mode !== 'bundled' && mode !== 'system') {
         throw new Error(`Invalid cli backend mode: ${String(mode)}`)
+      }
+      // 有会话在运行时整个拒绝切换（2026-07-21 用户要求），而不是像以前那样
+      // 允许切、让 in-flight 回合继续跑在旧后端上——理由见
+      // anyTabHasInFlightTurn 声明处注释。renderer 侧靠这个固定错误消息
+      // 识别原因，换成本地化提示。
+      if (anyTabHasInFlightTurn()) {
+        throw new Error(CLI_BACKEND_SESSION_RUNNING_ERROR)
       }
       updateAppSettings({ cliBackend: mode })
       // Apply NOW instead of "on the next app restart": recycle every
@@ -2322,6 +2402,11 @@ export function registerIpcHandlers(): void {
       const mode = payload?.mode
       if (mode !== 'bundled' && mode !== 'system') {
         throw new Error(`Invalid CLI backend mode: ${String(mode)}`)
+      }
+      // Same as CLI_BACKEND_SET: 有会话在运行时整个拒绝切换，理由见
+      // anyTabHasInFlightTurn 声明处注释。
+      if (anyTabHasInFlightTurn()) {
+        throw new Error(CLI_BACKEND_SESSION_RUNNING_ERROR)
       }
       updateAppSettings({ cliBackend: mode })
       // Same as CLI_BACKEND_SET: apply immediately by recycling live

@@ -39,7 +39,7 @@ import {
   SquarePen,
   Sun
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import type { AuthUser } from '@desktop-shared/ipc-channels'
@@ -245,6 +245,23 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   // 重渲染 rail，流式追加消息不会把 rail 一起拖着重渲染。
   const chatIsEmpty = useChatStore((s) => s.messages.length === 0)
   const newTargetActive = !overlayOpen && (isChat ? chatIsEmpty : pathname === '/')
+
+  // surface 切换的「毛玻璃浮起 thumb」（2026-07-20，替换 07-18 静态毛玻璃）：
+  // thumb 横滑由内联 transition 管，这里只驱动**切面瞬间的一次呼吸缩放**。
+  // 用 ref diff 而非监听挂载——AppRail 会跨侧栏收起/peek/切会话重挂载（见
+  // 上方侧栏开关注释），若绑挂载或 data-state 会在每次重挂载误播呼吸。首帧
+  // prevSurfaceRef === 当前面、不脉冲（thumb 静止在初始段）；只有 isChat 真
+  // 翻转才 setThumbPulse(true)，480ms 后落定以便下次切面重播。
+  const activeSurface = isChat ? 'chat' : 'canvas'
+  const [thumbPulse, setThumbPulse] = useState(false)
+  const prevSurfaceRef = useRef(activeSurface)
+  useEffect(() => {
+    if (prevSurfaceRef.current === activeSurface) return
+    prevSurfaceRef.current = activeSurface
+    setThumbPulse(true)
+    const t = setTimeout(() => setThumbPulse(false), 480)
+    return () => clearTimeout(t)
+  }, [activeSurface])
 
   // 底部 user chip 的真实数据：OS 用户名（preload 启动时 os.userInfo() 读定，
   // 同步属性）+ 当前 CLI 后端（bundled → fusion-code / system → Claude Code）。
@@ -480,13 +497,24 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
         * 拽走 SurfaceHost 就翻到画布面，用户在聊天面点插件会被踢去工作画布
         *（2026-07-17 实锤，同 2026-07-08 设置页 pathname 假切换那一族）。现在
         * 两个入口与 openSettings 同为「query 挂当前 pathname」，pathname 全程
-        * 不动。机制与形态取舍见 stores/surfaceOverlay.ts。 */}
+        * 不动。机制与形态取舍见 stores/surfaceOverlay.ts。
+        *
+        * **插件例外（2026-07-20 用户要求）**：上面「不按当前面分流」的纪律
+        * 对知识库依旧成立，但插件入口现在只在聊天面显示——画布面本来就是
+        * 「工作」场景，用户明确不想在这里看到插件入口。这条 filter 只挑掉
+        * `market`，`kb` 不受影响，两面都在的原有行为对知识库继续有效。因为
+        * `market` 面只能从聊天面进入，画布面点会话/切回聊天面时如果之前正
+        * 巧开着插件面，`overlayOpen==='market'` 的选中态判断（下面
+        * `overlayOpen === kind`）不会因为按钮消失而出问题——按钮本来就不在
+        * DOM 里，没有悬空选中态可言。 */}
       {(
         [
           { kind: 'kb', icon: BookOpen, label: '知识库' },
           { kind: 'market', icon: Puzzle, label: '插件' }
         ] as const
-      ).map(({ kind, icon: Icon, label }) => (
+      )
+        .filter(({ kind }) => kind !== 'market' || isChat)
+        .map(({ kind, icon: Icon, label }) => (
         <Button
           key={kind}
           variant="ghost"
@@ -533,15 +561,56 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
       {/* 选中态仍按 pathname 派生：市场面（?market=1）开着时高亮**保持原面**
         * ——它是挂在当前 pathname 上的 overlay，语义上是「我在智能助手，顺手
         * 开了插件市场」，同 settings=1/kb=1 的既定取向（见 openSettings 注释）。 */}
-      <Tabs value={pathname.startsWith('/chat') ? 'chat' : 'canvas'}>
-        {/* 样式对齐 shadcn 官方 TabsDemo（2026-07-08 用户要求）：选中态/暗档
-          * 细节交给 ui/tabs.tsx 基件默认（shadow-sm + 暗档 border-input）。
-          * 毛玻璃质感（2026-07-18，跟账户菜单/composer 同一批）：轨道
-          * bg-muted、选中段 bg-background 都是实底，这里用 className
-          * 覆盖成半透明 + backdrop-blur——只动这一处用法，不改 ui/tabs.tsx
-          * 基件（改基件会牵动全项目所有 Tabs 用法，超出这次的诉求范围）。
-          * w-full 是布局适配（rail 通栏两段均分），不属于样式覆盖。 */}
-        <TabsList className="w-full bg-muted/55 backdrop-blur-xl backdrop-saturate-150">
+      <Tabs value={activeSurface}>
+        {/* 「毛玻璃浮起」segmented（2026-07-20，替换 07-18 的静态毛玻璃；先出
+          * HTML 原型六选一后定稿）：选中态不再靠 radix 每段各自淡入，而是一块
+          * **绝对定位的滑动 thumb**——半透明白玻璃卡 + 抬升阴影，用带回弹的
+          * spring 曲线在两段间横滑，切面瞬间做一次呼吸缩放（thumbPulse）。
+          *
+          * 只动这一处用法，不改 ui/tabs.tsx 基件（改基件牵动全项目所有 Tabs）：
+          *  · TabsList 加 relative 当 thumb 定位锚点；w-full 是布局适配。
+          *  · 毛玻璃的模糊**只留轨道这一层**——thumb 半透明即可「透出」底下这层
+          *    模糊，thumb 自己**不再叠 backdrop-filter**（嵌套两层会叠糊发灰，
+          *    errors 07-19 踩过）。
+          *  · thumb 的 w-[calc(50%-3px)] / translate-x-full 与基件 p-[3px] +
+          *    flex-1 均分**精确对齐**（left:3px 贴左段左缘，平移一个自身宽正好
+          *    落到右段，两侧各留 3px）——改基件 padding 会破坏这个对齐。
+          *  · trigger 的 active 底/阴影/边框用 important 中和（背景交给 thumb），
+          *    只保留基件的 text-foreground（选中字变亮）与 focus 环。
+          *
+          * 2026-07-20 补（亮色主题下用户报「没有毛玻璃效果」）：上面说的
+          * 「嵌套两层会叠糊」这条纪律漏用到了再上一层——TabsList 本身也是
+          * `.app-rail` 的后代，壁纸开启时 `.app-rail` 自己已经是
+          * `backdrop-filter: blur(20px)...`（background-art.css），TabsList
+          * 原来还叠一层自己的 backdrop-blur-xl，等于**两层嵌套**，跟 thumb
+          * 那条踩过的坑是同一个问题只是换了一层。双重模糊把壁纸纹理磨得比
+          * 单层更平，亮色壁纸+浅色 bg-muted/55 混合后剩下的层次差本来就小，
+          * 磨没了就成了一块看不出玻璃感的灰白色块（暗色主题因为底色深、
+          * 层次差天然大，双重模糊还没磨到看不出的地步，所以只在亮色下更
+          * 明显）。摘掉 TabsList 自己的 backdrop-blur/saturate，只留 rail
+          * 自身那层——bg-muted/55 的半透明色仍在，透出的是 rail 那层已经
+          * 模糊好的结果，不需要再模糊第二次。 */}
+        <TabsList className="relative w-full bg-muted/55">
+          {/* 滑动 thumb：纯装饰（aria-hidden），z-0 垫在 trigger 文字之下。外层
+            * 管横滑（translateX + spring transition），内层 fill 管玻璃观感与
+            * 呼吸缩放——两层各走各的 transform（外 translateX / 内 scale）互不
+            * 覆盖。data-active 驱动 translate-x-full；motion-reduce 关横滑。 */}
+          <span
+            aria-hidden
+            data-active={activeSurface}
+            className="pointer-events-none absolute inset-y-[3px] left-[3px] z-0 w-[calc(50%-3px)] translate-x-0 will-change-transform transition-transform duration-[440ms] ease-[cubic-bezier(0.34,1.42,0.5,1)] data-[active=canvas]:translate-x-full motion-reduce:transition-none"
+          >
+            <span
+              // 抬升阴影 + inset 高光在 globals.css 的 .surface-thumb-fill 里
+              // （不用 Tailwind arbitrary shadow——v4 的 --tw-shadow-color 替换会
+              // 把复杂逗号阴影值静默清成 transparent，见该文件注释）。
+              className={cn(
+                'surface-thumb-fill block size-full rounded-md border border-black/[0.06] bg-white/75',
+                'dark:border-white/[0.14] dark:bg-white/[0.12]',
+                thumbPulse && 'is-moving'
+              )}
+            />
+          </span>
           {SURFACE_TABS.map((item) => (
             <TabsTrigger
               key={item.value}
@@ -554,7 +623,7 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
               // 设置盖住了 rail，用户只能走它们自带的「返回应用」，撞不到这个）。
               // onClick 每次点击都跑，由 goSurface 自己判断该做什么。
               onClick={() => goSurface(item.value)}
-              className="data-[state=active]:bg-background/70 data-[state=active]:backdrop-blur-md"
+              className="relative z-10 data-[state=active]:bg-transparent! data-[state=active]:shadow-none! dark:data-[state=active]:border-transparent! dark:data-[state=active]:bg-transparent!"
             >
               {item.icon}
               {item.label}
@@ -586,7 +655,15 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
                 // 且常判为 :focus-visible——shadcn Button 默认的 3px ring 让
                 // chip 每次关菜单后都亮一整圈（用户 2026-07-07 要求去掉）。
                 // 开启态视觉反馈由 data-[state=open] 底色承担，不靠焦点环。
-                className="h-11 w-full justify-start gap-2.5 px-2.5 hover:bg-sidebar-accent focus-visible:ring-0 data-[state=open]:bg-sidebar-accent"
+                // hover/open 底透明化（2026-07-20 用户点名要求）：原来是纯
+                // 实底 bg-sidebar-accent，跟壁纸开启时已经玻璃化的 rail 自身
+                // （backdrop-blur-xl，见 background-art.css 的 .app-rail 规则）
+                // 拼在一起显得突兀——一块磨砂里嵌一块完全不透明的实心矩形。
+                // 这里只加透明度、不再叠一层 backdrop-filter：rail 容器自己
+                // 已经是模糊层，子元素只要半透明就能透出那层模糊结果，两层都
+                // 上 backdrop-filter 会重复模糊糊成一团（RailShell.tsx 头
+                // 注释踩过的同一条纪律）。
+                className="h-11 w-full justify-start gap-2.5 px-2.5 hover:bg-sidebar-accent/70 focus-visible:ring-0 data-[state=open]:bg-sidebar-accent/70"
               >
                 <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
                   {(authUser?.name ?? identity.user).charAt(0).toUpperCase()}
@@ -626,7 +703,22 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
               // 只是材质从纸变成玻璃）。刻意不动 ui/dropdown-menu.tsx 基件或
               // menus.css 的统一实底皮肤——那是 2026-07-08 全项目菜单定稿，
               // 影响 ~15 个 canvas 菜单，本次需求只针对账户菜单这一处。
-              className="w-[256px] rounded-[14px] border-border/40 bg-popover/70 p-[5px] shadow-[0_16px_50px_rgba(0,0,0,.14),0_2px_8px_rgba(0,0,0,.06)] backdrop-blur-2xl backdrop-saturate-150"
+              //
+              // 效果偏弱补强（2026-07-20 用户截图报「毛玻璃效果不是很强」）：
+              // 首版自定义了几处跟 ui/dropdown-menu.tsx 基件不一致的数值——
+              // /70 不透明度（基件 /55，更实）、border-border/40（基件固定
+              // border-white/15，语义色边框在浅色 popover 上对比弱）、shadow
+              // 丢了基件的 inset 顶部白高光（玻璃的镜面反光线索）。这几处
+              // 独立看都不算错，但叠在一起就是 ui/dropdown-menu.tsx 头注释
+              // 警告过的「不提亮混合看不出透视」同族问题——这次是浅色
+              // popover 叠浅色壁纸失效，跟暗色版重命名弹窗那次对称。修法：
+              // 不透明度/边框/高光三处对齐基件已验证过的配方，只保留
+              // blur-2xl 这一处「更 frosted」的刻意差异化（呼应 macOS 原生
+              // 菜单的浓雾感，不是本次要修的部分）。backdrop-brightness-125
+              // 按 twMerge 语义本会从基件继承（跟这条 override 没有任何类名
+              // 冲突），但不写出来等于把「这条菜单为什么看得出玻璃」的关键
+              // 变量藏进另一个文件，故意显式重复声明一遍。
+              className="w-[256px] rounded-[14px] border border-white/15 bg-popover/55 p-[5px] shadow-[0_16px_50px_rgba(0,0,0,.14),0_2px_8px_rgba(0,0,0,.06),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-2xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125"
             >
               {/* 用户名区：名字行（复制钮贴名字，copied 短暂变勾，非 menu
                 * item 点击不关菜单）+ 邮箱副行（浏览器直开无 authUser 时不

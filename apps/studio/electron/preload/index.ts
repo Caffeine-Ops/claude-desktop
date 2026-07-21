@@ -37,6 +37,9 @@ import {
   type SessionSearchPayload,
   type SessionSearchResult,
   type SessionRenameResult,
+  type SessionOpenJsonlPayload,
+  type SessionOpenJsonlResult,
+  type SessionGetJsonlPathResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
   type SessionWorkspaceSetPayload,
@@ -463,6 +466,24 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.SESSION_RENAME,
       payload
     ) as Promise<SessionRenameResult>
+  },
+
+  openSessionJsonl(
+    payload: SessionOpenJsonlPayload
+  ): Promise<SessionOpenJsonlResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SESSION_OPEN_JSONL,
+      payload
+    ) as Promise<SessionOpenJsonlResult>
+  },
+
+  getSessionJsonlPath(
+    payload: SessionOpenJsonlPayload
+  ): Promise<SessionGetJsonlPathResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SESSION_GET_JSONL_PATH,
+      payload
+    ) as Promise<SessionGetJsonlPathResult>
   },
 
   setSessionWorkspace(

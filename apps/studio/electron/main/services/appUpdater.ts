@@ -10,25 +10,68 @@ import { broadcastUpdaterState, setQuitting } from '../tabRegistry'
 const { autoUpdater } = electronUpdaterPkg
 
 /**
- * 自动更新服务（方案 A：公开 release 仓 + electron-updater github provider）。
+ * 自动更新服务：GitHub 主源 + 自建服务器 generic 源自动兜底。
  *
- * Feed 来自 electron-builder 打进 Resources 的 app-update.yml（owner/repo 即
- * package.json build.publish），仓库公开所以匿名可读，客户端不带任何 token。
+ * electron-updater 一次只认一个 feed，没有「多源」概念。我们在 check 阶段
+ * 手动做有序 fallback：按 FEEDS 顺序逐个 setFeedURL + checkForUpdates()，
+ * 某个源连不上（网络超时 / DNS 失败，国内访问 GitHub 常见）就静默切下一个，
+ * 全部耗尽才落 error 态。第一个「连得上」的源（不管有没有新版）即停在它上，
+ * 后续 autoDownload 的下载也走这个源。
  *
- * 策略：
+ * 两个源：
+ *  - github：electron-builder 打进 Resources 的 app-update.yml 同一套
+ *    owner/repo（package.json build.publish），公开仓匿名可读，不带 token。
+ *  - self-hosted：我们自己 VPS 上放 latest-*.yml + 安装包的目录 URL
+ *    （SELF_HOSTED_FEED_URL）。留空则该源被 usableFeeds() 过滤掉，行为
+ *    退化成纯 GitHub——没配 URL 时一切照旧，不会因为空 URL 去连而报错。
+ *  CI 把发给 GitHub Release 的同一批产物 rsync 到 VPS 目录，两边逐字节一致。
+ *
+ * 策略（不因多源而变）：
  *  - autoDownload：发现新版即后台静默下载，下载完只「提示」不强装——
  *    quitAndInstall 永远由用户点出来（设置页按钮 / 就绪 toast / 菜单对话框）。
  *  - autoInstallOnAppQuit：用户忽略提示直接退出时，退出即顺手装上，
  *    下次启动就是新版（electron-updater 默认行为，显式写出防止误改）。
  *  - 启动后延迟 15s 首查（让 daemon spawn / 首帧渲染先走完，别跟冷启动抢
- *    网络与 CPU），此后每 3h 复查一次（2026-07-05 用户从 4h 调到 3h）。
+ *    网络与 CPU），此后每 10min 复查一次（2026-07-21 用户从 3h 调到
+ *    10min，要更快感知新版本）。GitHub 匿名 API 限额 60 次/小时/IP，10min
+ *    间隔=6 次/小时，还在余量内；同一 IP 下多个用户共享配额时需留意。
  *
  * 状态是单份 module state：main 是唯一事实源，每次迁移全量推给所有
  * renderer（UPDATER_STATE_CHANGED），renderer 只做整体替换不自己拼装。
  */
 
 const CHECK_INITIAL_DELAY_MS = 15_000
-const CHECK_INTERVAL_MS = 3 * 60 * 60 * 1000
+const CHECK_INTERVAL_MS = 10 * 60 * 1000
+
+/**
+ * 自建更新源的目录 URL（generic provider 的 base）——指向 VPS 上放
+ * latest-mac.yml / latest.yml + 安装包的那个目录，务必以 `/` 结尾，例如
+ * 'https://updates.你的域名.com/'。electron-updater 会去 `<url>latest-mac.yml`
+ * 读清单、再按清单里的文件名到同目录下载安装包，所以清单和安装包必须同目录。
+ *
+ * 留空 = 禁用自建兜底，只走 GitHub（usableFeeds 会过滤掉空 URL 的源）。
+ * 也可用 env.json 里的 SELF_HOSTED_UPDATE_URL 覆盖，免改源码换源。
+ */
+const SELF_HOSTED_FEED_URL = process.env.SELF_HOSTED_UPDATE_URL ?? ''
+
+type UpdateFeed =
+  | { name: 'github'; config: { provider: 'github'; owner: string; repo: string } }
+  | { name: 'self-hosted'; config: { provider: 'generic'; url: string } }
+
+/**
+ * 源列表即 fallback 顺序：GitHub 优先，自建服务器兜底。owner/repo 与
+ * package.json build.publish 及打进去的 app-update.yml 保持一致（改仓库名
+ * 要三处一起改）。
+ */
+const FEEDS: UpdateFeed[] = [
+  { name: 'github', config: { provider: 'github', owner: 'Caffeine-Ops', repo: 'claude-desktop-releases' } },
+  { name: 'self-hosted', config: { provider: 'generic', url: SELF_HOSTED_FEED_URL } }
+]
+
+/** 过滤掉不可用的源（当前只有「自建 URL 为空」一种）。 */
+function usableFeeds(): UpdateFeed[] {
+  return FEEDS.filter((f) => f.config.provider !== 'generic' || f.config.url.length > 0)
+}
 
 let state: UpdaterState = {
   phase: 'idle',
@@ -50,6 +93,70 @@ let initialized = false
  */
 let quitForUpdateInitiated = false
 
+/**
+ * 一整轮跨源检查是否在进行中——防止 15s 首查与 3h 定时器（或设置页手动点）
+ * 并发进入 checkAllFeeds：两个 setFeedURL 交错会把 feed 搅乱。它比只看
+ * state.phase 更早置位，堵住「已进入 checkAllFeeds 但首个 checking 事件还
+ * 没 fire」的竞态窗口。
+ */
+let checkCycleActive = false
+
+/**
+ * 跨源 fallback 途中标记。为 true 时，单个源的 'error'（连不上/超时）被静默
+ * 吞掉、不落 error 态——因为马上要切下一个源重试，UI 应表现为持续「checking」
+ * 而不是闪一下「检查失败」。走到最后一个源前会复位它，让最后一个源的失败
+ * 正常落 error（见 checkAllFeeds 与 'error' handler）。
+ */
+let fallbackInFlight = false
+
+/** 切到指定源。dev/unsupported 不会走到这（入口有 supported guard）。 */
+function applyFeed(feed: UpdateFeed): void {
+  // autoUpdater 是全局单例，setFeedURL 改的是它下一次 check/download 的目标。
+  // github 与打进去的 app-update.yml 一致，幂等无害；generic 覆盖成自建 URL。
+  autoUpdater.setFeedURL(feed.config)
+}
+
+/**
+ * 按 FEEDS 顺序逐个源做 check，连不上就 fallback 到下一个。
+ *
+ * 关键时序：autoUpdater.checkForUpdates() 的 promise 成功 resolve（不管有没
+ * 有新版）就说明这个源连得上——停在它，后续 autoDownload 的下载也走它。
+ * reject 说明这个源挂了 → 切下一个。中间源失败期间 fallbackInFlight=true
+ * 抑制 'error' 事件避免中途闪错；轮到最后一个源前放开抑制，让它的失败
+ * 正常落 error 态。
+ *
+ * 只在 check 阶段做 fallback：这覆盖最有价值的场景（GitHub 整个连不上）。
+ * 下载阶段的失败（sha512、断流）不跨源重来，落 error 由用户手动重试——
+ * 重试会重新走这里、重新选源。
+ */
+async function checkAllFeeds(): Promise<void> {
+  const feeds = usableFeeds()
+  checkCycleActive = true
+  fallbackInFlight = feeds.length > 1
+  try {
+    for (let i = 0; i < feeds.length; i++) {
+      // 最后一个源之前放开抑制：它若也失败，'error' 事件要能落地。
+      if (i === feeds.length - 1) fallbackInFlight = false
+      applyFeed(feeds[i])
+      try {
+        await autoUpdater.checkForUpdates()
+        // resolve = 这个源连得上，本轮结束（有无新版走事件流）。
+        if (i > 0) console.log(`[updater] feed fallback 命中：${feeds[i].name}`)
+        return
+      } catch {
+        // 这个源连不上；不是最后一个就继续切。最后一个的失败已由 'error'
+        // handler 写进 state，这里直接走完循环结束。
+        if (i < feeds.length - 1) {
+          console.log(`[updater] feed 连不上，fallback：${feeds[i].name} → ${feeds[i + 1].name}`)
+        }
+      }
+    }
+  } finally {
+    checkCycleActive = false
+    fallbackInFlight = false
+  }
+}
+
 function setState(patch: Partial<UpdaterState>): void {
   state = { ...state, ...patch }
   broadcastUpdaterState(state)
@@ -69,13 +176,13 @@ function isInFlight(): boolean {
  * 广播，调用方不要 await 出最终结论。
  */
 export function checkForUpdates(): UpdaterState {
-  if (!state.supported || !initialized || isInFlight() || state.phase === 'ready') {
+  if (!state.supported || !initialized || checkCycleActive || isInFlight() || state.phase === 'ready') {
     return state
   }
-  // 事件流会把 phase 推进到 checking；这里不预设，让 checking-for-update
-  // 事件成为唯一写入点，避免事件与手写状态互相踩。promise 的 reject 与
-  // 'error' 事件是同一个错误的两个出口，catch 只为压掉 unhandled rejection。
-  autoUpdater.checkForUpdates().catch(() => {})
+  // checkAllFeeds 内部串行试各源；事件流把 phase 推进到 checking，这里不预设，
+  // 让 checking-for-update 事件成为唯一写入点，避免事件与手写状态互相踩。
+  // 不 await：结论走事件广播；catch 压掉最后一个源失败时冒上来的 rejection。
+  void checkAllFeeds().catch(() => {})
   return { ...state, phase: 'checking' }
 }
 
@@ -121,9 +228,9 @@ export async function checkForUpdatesInteractive(): Promise<void> {
     await promptInstallDialog()
     return
   }
-  if (isInFlight()) return
+  if (checkCycleActive || isInFlight()) return
   try {
-    await autoUpdater.checkForUpdates()
+    await checkAllFeeds()
   } catch {
     // 'error' 事件已把 errorMessage 写进 state，这里只负责弹框。
   }
@@ -209,6 +316,9 @@ export function initAppUpdater(): void {
     })
   })
   autoUpdater.on('error', (err) => {
+    // fallback 途中（还有下一个源要试）：吞掉这个源的失败，别闪 error 态，
+    // 让 checkAllFeeds 继续切源。轮到最后一个源时 fallbackInFlight 已复位。
+    if (fallbackInFlight) return
     if (quitForUpdateInitiated) {
       // 重启安装发起后失败（签名校验、staged 包损坏等）：撤销真退出标记，
       // 别让残留的 isQuitting 把用户之后的红叉变成真关窗杀引擎。

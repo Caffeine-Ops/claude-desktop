@@ -260,6 +260,24 @@ export const IPC_CHANNELS = {
    */
   SESSION_RENAME: 'session:rename',
   /**
+   * Renderer → main. 用系统默认程序打开某会话的原始 transcript jsonl
+   * （`~/.claude/projects/<slug>/<sessionId>.jsonl`）。main 侧全局扫
+   * `~/.claude/projects/` 找同名文件（sessionStore.findSessionJsonlGlobal，
+   * 与 renameSession 的按工作区探测同源但不需要 workspaceDirs——
+   * session id 本身唯一），再走 `shell.openPath` 交给注册的默认程序
+   * （通常是文本编辑器）。找不到文件或 shell 打开失败都回非空 error，
+   * 不抛异常——菜单点击是即发即弃，没有常驻消息位展示失败原因，
+   * 调用方按 exportReplay 同款惯例console.warn 记日志即可。
+   */
+  SESSION_OPEN_JSONL: 'session:open-jsonl',
+  /**
+   * Renderer → main. 「复制 jsonl 路径」菜单项用——跟 SESSION_OPEN_JSONL
+   * 同一套 findSessionJsonlGlobal 定位逻辑，只是不 shell.openPath，把
+   * 绝对路径原样交回 renderer 由它写剪贴板（navigator.clipboard，同
+   * WrittenFilesPanel.tsx 的既有用法，不在 main 侧碰剪贴板）。
+   */
+  SESSION_GET_JSONL_PATH: 'session:get-jsonl-path',
+  /**
    * Renderer → main. 给会话指定工作目录（composer 的「选择工作目录」
    * chip）。main 校验绝对路径/存在/目录后：无 transcript 的新会话写入
    * 引擎 pendingWorkspace（首次 send 烘焙进子进程 cwd）；已有记录的会
@@ -1562,6 +1580,16 @@ export type SessionSwitchResult = { sessionId: string }
 export type SessionRenamePayload = { sessionId: string; title: string }
 export type SessionRenameResult = { ok: true }
 
+/** Payload for SESSION_OPEN_JSONL. */
+export type SessionOpenJsonlPayload = { sessionId: string }
+/** Result of SESSION_OPEN_JSONL. `error` is '' on success, non-empty when
+ *  the transcript can't be found or `shell.openPath` fails. */
+export type SessionOpenJsonlResult = { error: string }
+
+/** Result of SESSION_GET_JSONL_PATH. `path` set on success, `error` set
+ *  when the transcript can't be found (mutually exclusive). */
+export type SessionGetJsonlPathResult = { path?: string; error?: string }
+
 /** Payload for SESSION_WORKSPACE_SET. `path` must be an absolute dir. */
 export type SessionWorkspaceSetPayload = { sessionId: string; path: string }
 export type SessionWorkspaceSetResult = { ok: true }
@@ -1628,6 +1656,18 @@ export interface CliBackendState {
 }
 
 export type CliBackendSetPayload = { mode: CliBackendMode }
+
+/**
+ * CLI_BACKEND_SET rejects with `new Error(CLI_BACKEND_SESSION_RUNNING_ERROR)`
+ * when any tab has a turn actively in flight (2026-07-21 用户要求：有会话在
+ * 运行时不允许切换 CLI 后端，而不是像以前那样允许切、把 in-flight 回合留在
+ * 旧后端上完成）。main/renderer 共用同一个 message 字符串常量，renderer 侧
+ * 靠 `err.message === CLI_BACKEND_SESSION_RUNNING_ERROR` 识别这个特定原因、
+ * 换成本地化提示；不是这个值的错误走通用的静默失败分支。字符串本身不面向
+ * 用户展示，纯粹是主进程/渲染进程之间的错误码。
+ */
+export const CLI_BACKEND_SESSION_RUNNING_ERROR =
+  'cli-backend-switch-blocked:session-running'
 
 /**
  * Origin of a runtime-log line shown in the「日志分析」panel.
@@ -2559,6 +2599,23 @@ export interface ChatApi {
    * so the sidebar refreshes without a manual reload.
    */
   renameSession(payload: SessionRenamePayload): Promise<SessionRenameResult>
+
+  /**
+   * 用 VS Code 打开某会话的原始 transcript jsonl 文件（2026-07-20 起，此前
+   * 是系统默认程序）。main 全局扫 `~/.claude/projects/` 定位
+   * `<sessionId>.jsonl` 再走 `vscode://file/<path>` 交给 `shell.openExternal`。
+   */
+  openSessionJsonl(
+    payload: SessionOpenJsonlPayload
+  ): Promise<SessionOpenJsonlResult>
+
+  /**
+   * 解析某会话原始 transcript jsonl 的绝对路径，不打开——「复制 jsonl
+   * 路径」菜单项用，跟 openSessionJsonl 同一套定位逻辑（findSessionJsonlGlobal）。
+   */
+  getSessionJsonlPath(
+    payload: SessionOpenJsonlPayload
+  ): Promise<SessionGetJsonlPathResult>
 
   /**
    * 给会话指定工作目录（composer chip）。新会话记预选；已有记录的会话

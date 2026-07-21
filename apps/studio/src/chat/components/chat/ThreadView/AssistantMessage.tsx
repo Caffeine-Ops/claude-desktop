@@ -925,15 +925,23 @@ function ReasoningCard({
         aria-hidden
         className="mt-[7px] flex size-[6px] shrink-0 items-center justify-center"
       >
-        {/* State indicator dot — mirrors the TodoRow status pattern:
-            in-progress = accent breathing (tc-breathe, main.css), done =
-            emerald. Same colours used for active todos / completed todos
-            in the right rail, so the chat reads as a single visual
-            language across surfaces. */}
+        {/* State indicator dot: in-progress = amber breathing (tc-breathe,
+            main.css), done = emerald. Deliberately NOT bg-accent — the
+            user's theme color has uncontrolled luminance and can end up
+            near-invisible against a dark bubble, whereas this dot is the
+            only "is the model still thinking" signal on screen. Amber
+            matches the "live" pulse convention used elsewhere (e.g.
+            LivePreviewEditor's collaborator cursor). */}
         <span
+          // origin-left：这一行整体坐在 FoldRegion 的 motion.div 里，那层为了做
+          // 折叠高度动画必须 overflow:hidden（TurnActivity.tsx）；这颗点又紧贴
+          // 行首（x=0，与裁剪盒左边界重合，右/上/下都还有 gap-3、mt-[7px] 留白）。
+          // tc-breathe 默认从中心放大到 1.45 倍，往左溢出的部分正好越过裁剪盒
+          // 左边界被切掉，肉眼看是「左边被削平」。改成从左边缘往右呼吸就不会
+          // 再越过左边界，不用去动共享的 FoldRegion 或 .tc-breathe 关键帧。
           className={
             'block size-[6px] rounded-full ' +
-            (isStreaming ? 'tc-breathe bg-accent' : 'bg-emerald-500')
+            (isStreaming ? 'tc-breathe origin-left bg-amber-500' : 'bg-emerald-500')
           }
         />
       </span>

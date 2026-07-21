@@ -147,6 +147,26 @@ html[data-bg-art] .workspace-split-panel {
   background-color: hsl(var(--card) / var(--bg-art-veil-strong));
 }
 
+/* 双重遮罩实锤（2026-07-20，用户截图报「幻灯片工作区底部 dock 没有毛玻璃
+ * 效果」）：上面这条注释里写的"跟 focus 同档"，本意是面板不透明度看起来
+ * 跟 focus 态消息区一样重，但 5 个分栏工作面板（写方案/幻灯片/表格预览/
+ * 图片编辑/工作流脚本）全部是 `.surface-face--chat` 的后代——那层容器只要
+ * `data-bg-zone='focus'`（面板打开时恒真，身下必有真实会话内容，见
+ * ThreadView.tsx 的 BgZoneReporter）就已经画过一次 veil-strong 了。
+ * 上面那条规则在它内部又叠一次同一个 veil-strong，两层 0.5 透明度相乘变成
+ * ~0.75——壁纸在到达面板前已经被压成接近纯色的一块，面板内部任何毛玻璃
+ * 处理（比如 LivePreviewEditor 底部 dock 自己的 backdrop-blur/半透明）都是
+ * 对着这块已经被压平的纯色再模糊一次，自然看不出玻璃质感（真机 CDP 读
+ * computed style 实锤两层背景色数值完全相同：都是 `hsl(var(--card) / 0.5)`）。
+ * "同一档"应该是复用祖先已经画好的那层，不是再画第二层——用更高特异性的
+ * 祖先限定选择器把嵌套态清成透明。市场/知识库两个常驻面不受影响：它们的
+ * `.workspace-split-panel` 包装 div 是 SurfaceHost 的顶层同级节点（不在
+ * `.surface-face--chat` 内部），没有祖先 veil 可复用，必须保留自己那层
+ * （见上一条规则，选择器特异性更低，这里的规则命中不到它们）。 */
+html[data-bg-art] .surface-face--chat:not(.surface-inactive) .workspace-split-panel {
+  background-color: transparent;
+}
+
 /* 会话切换两处瞬态骨架（视口骨架 SessionSwitchSkeleton + dock 切换骨架，
  * ThreadView.tsx 里共用同一个 `.session-switch-skeleton` 挂钩类）：此前整体
  * 排除在换肤范围外（见上方 .chat-content-column 注释旧版），2026-07-18 用户

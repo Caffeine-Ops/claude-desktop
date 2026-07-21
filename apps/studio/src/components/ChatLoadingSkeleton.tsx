@@ -39,12 +39,22 @@ export function ChatLoadingSkeleton(): React.JSX.Element {
       </div>
 
       {/* 底部输入卡骨架：对齐 dock 的 composer 卡（圆角矩形 + 左右圆按钮
-          占位），max-w-4xl 居中同消息列，pb-3 同 dock。 */}
+          占位），max-w-4xl 居中同消息列，pb-3 同 dock。
+
+          卡片本身的材质抄 Composer.tsx 那张真卡的静息态类名（bg-popover/45 +
+          ring-1 ring-black/[0.08] + backdrop-blur-xl backdrop-saturate-150，
+          dark 环同步），且不带 animate-pulse——此前这里是纯色
+          bg-foreground/[0.05] 且整卡呼吸，骨架卸载换上真 Composer 的磨砂玻璃
+          卡那一帧，材质从「纯色搏动」跳成「静态毛玻璃」，肉眼就是输入框背景
+          闪了一下（2026-07-19 用户反馈）。这两个 token 在根 layout 层已可用
+          （--popover 是 design-tokens 全局变量，backdrop-blur-xl 是 Tailwind
+          核心工具类，都不依赖 chat chunk），改真卡同款静息态类名后骨架→内容
+          这一帧背景零跳变。呼吸感挪到两个按钮占位上，不丢"仍在加载"的信号。 */}
       <div className="shrink-0 px-3 pb-3 pt-4">
         <div className="mx-auto w-full max-w-4xl">
-          <div className="relative h-[92px] animate-pulse rounded-[22px] bg-foreground/[0.05]">
-            <div className="absolute bottom-3 left-3 size-8 rounded-full bg-foreground/[0.07]" />
-            <div className="absolute bottom-3 right-3 size-8 rounded-full bg-foreground/[0.09]" />
+          <div className="relative h-[92px] rounded-[22px] bg-popover/45 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 dark:ring-white/[0.08]">
+            <div className="absolute bottom-3 left-3 size-8 animate-pulse rounded-full bg-foreground/[0.07]" />
+            <div className="absolute bottom-3 right-3 size-8 animate-pulse rounded-full bg-foreground/[0.09]" />
           </div>
         </div>
       </div>

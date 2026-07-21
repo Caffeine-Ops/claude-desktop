@@ -4,6 +4,7 @@ import type { EditorView, NodeView } from 'prosemirror-view'
 import { fileTypeIconPaths, type IconPath } from '../components/chat/FileTypeIcon'
 import { findSkillChipSpec } from './skillChipRegistry'
 import { autoOpenPreviewPanel, previewPanelKind } from '../runtime/imageAttachmentAdapter'
+import { splitWorkspaceBusyNow } from '../stores/filePreview'
 
 /**
  * NodeView for the `slash` / `mention` atom nodes. Renders the same pill
@@ -34,6 +35,221 @@ const SPARKLE_ICON_PATHS = [
  * deletes the chip. */
 const CLOSE_ICON_PATHS = ['M18 6 6 18M6 6l12 12']
 const NS = 'http://www.w3.org/2000/svg'
+
+// ── 图片 mention chip 的 hover 预览浮层 ────────────────────────────────
+// 需求（2026-07-20）：mention chip 若指向图片，hover 上去浮出缩略图预览。
+//
+// chip NodeView 是 imperative DOM（非 React，见文件头注释），复用不了 chat
+// 侧那套 `useLocalPreviewImage` React hook；这里手搓一个「模块级单例浮层 +
+// 磁盘读缓存」，实现同一条 IMAGE_FILE_READ IPC（浏览器环境拿不到 file://，
+// 本地图片只能经主进程读成 data URL）。
+//
+// 几处刻意的选择：
+//  - **单例浮层**：同一时刻只可能 hover 一颗 chip，一层共用即可，省得每颗
+//    chip 各挂一个 body 子节点。
+//  - **document.body 下 position:fixed**：composer 输入区常有 overflow 裁剪，
+//    浮层若 absolute 挂在 chip 内会被切掉上缘；fixed 脱离裁剪链。.dark /
+//    data-theme 挂在 documentElement（appearance.applier），故 body 下的浮层
+//    照样吃得到 hsl(var(--card)) 等 token（变量定义在 :root，继承到整个
+//    document）——与 ImageEditCard 的 hover 卡片同底色。
+//  - **浮层可点开面板 + hover 宽限桥接**（2026-07-20 用户反馈：看到预览大图
+//    自然想点它打开右栏面板）：浮层恒定位在 chip 上方/下方、留 8px 间隙，
+//    **从不与 chip 的命中区重叠**，所以没有当年「浮层盖 chip 致 enter/leave
+//    抖动」的老病，可以放心 pointer-events:auto。跨 8px 间隙够到浮层的空窗由
+//    「离开 chip/浮层只预约隐藏、进入另一方即取消」的宽限期桥接。
+//  - **绝对路径 + 图片扩展名双守卫**：IMAGE_FILE_READ 要求 isAbsolute（相对
+//    mention 读不到、静默跳过），扩展名对齐主进程 MIME 白名单（比
+//    previewPanelKind 只认可编辑的 png/jpg/jpeg/webp 更宽——预览只要能显示，
+//    gif/bmp/svg 也该出图）。
+
+/** IMAGE_FILE_READ（register.ts）主进程认的图片扩展名。 */
+const PREVIEWABLE_IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'])
+function isPreviewableImage(name: string): boolean {
+  const dot = name.lastIndexOf('.')
+  return dot >= 0 && PREVIEWABLE_IMAGE_EXT.has(name.slice(dot + 1).toLowerCase())
+}
+
+/**
+ * 用户主动点 chip（或其 hover 预览）打开右栏面板——与 ComposerAttachmentChip
+ * 的 openPreview 同一套分流：右栏能开就开对应面板（图片→ImageEditPanel、
+ * 表格→SpreadsheetPreviewPanel），右栏被 slides/proposal 分栏占用（或不是
+ * 面板认的类型，如 gif/bmp/svg）时降级用系统应用打开，保证「点了一定有反应」。
+ * 注意：这套「busy 降级系统应用」只用于**用户主动点击**；拖入即自动预览走
+ * autoOpenPreviewPanel（busy 时刻意静默不抢，见其注释），两条路不可混用。
+ */
+function openFileForClick(name: string, path: string): void {
+  if (!path) return
+  if (previewPanelKind(name) !== null && !splitWorkspaceBusyNow()) {
+    autoOpenPreviewPanel(name, path)
+  } else {
+    void window.chatApi?.openPath({ absPath: path })
+  }
+}
+
+const imagePreviewCache = new Map<string, string | null>() // absPath → dataUrl（null=读失败）
+let previewLayer: HTMLDivElement | null = null
+let previewImg: HTMLImageElement | null = null
+let previewOwner: HTMLElement | null = null // 当前浮层归属的 chip dom（竞态/清理判据）
+let previewMeta: { name: string; path: string } | null = null // 供浮层点击开面板
+let previewScrollBound = false
+let previewHideTimer: ReturnType<typeof setTimeout> | null = null
+// hover 宽限：从 chip 移到浮层要跨 8px 间隙、途中鼠标不在两者任一之上，立即
+// 隐藏会让浮层「够不着」。chip/浮层的 mouseleave 只「预约」隐藏，另一方的
+// mouseenter 取消预约，跨间隙的空窗被这段宽限桥接。
+const PREVIEW_HIDE_GRACE_MS = 140
+
+function cancelPreviewHide(): void {
+  if (previewHideTimer !== null) {
+    clearTimeout(previewHideTimer)
+    previewHideTimer = null
+  }
+}
+
+function ensurePreviewLayer(): { layer: HTMLDivElement; img: HTMLImageElement } {
+  if (previewLayer && previewImg) return { layer: previewLayer, img: previewImg }
+  const layer = document.createElement('div')
+  Object.assign(layer.style, {
+    position: 'fixed',
+    top: '-9999px', // 定位前先藏到视口外，杜绝首帧闪现在 (0,0)
+    left: '-9999px',
+    zIndex: '2147483000',
+    padding: '4px',
+    borderRadius: '12px',
+    background: 'hsl(var(--card))',
+    border: '1px solid hsl(var(--border))',
+    boxShadow: '0 10px 34px -10px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.14)',
+    // 可点：点预览大图直接开右栏面板。不与 chip 命中区重叠 → 不会抖动（见
+    // 头注释）；跨间隙靠 hover 宽限桥接。
+    cursor: 'pointer',
+    opacity: '0',
+    transition: 'opacity 0.12s ease'
+  } satisfies Partial<CSSStyleDeclaration>)
+  const img = document.createElement('img')
+  Object.assign(img.style, {
+    display: 'block',
+    maxWidth: '260px',
+    maxHeight: '260px',
+    width: 'auto',
+    height: 'auto',
+    borderRadius: '8px',
+    objectFit: 'contain'
+  } satisfies Partial<CSSStyleDeclaration>)
+  img.draggable = false
+  img.alt = ''
+  layer.appendChild(img)
+  // 移到浮层上→取消隐藏预约；移出→重新预约；按下→开面板并立即收起。
+  // mousedown（非 click）：与 chip 主体点击同约定，抢在编辑器移焦前动作。
+  layer.addEventListener('mouseenter', cancelPreviewHide)
+  layer.addEventListener('mouseleave', armPreviewHide)
+  layer.addEventListener('mousedown', (e) => {
+    if (!previewMeta) return
+    e.preventDefault()
+    e.stopPropagation()
+    openFileForClick(previewMeta.name, previewMeta.path)
+    hidePreviewNow()
+  })
+  document.body.appendChild(layer)
+  previewLayer = layer
+  previewImg = img
+  return { layer, img }
+}
+
+function positionPreviewLayer(anchor: HTMLElement): void {
+  if (!previewLayer) return
+  const layer = previewLayer
+  const a = anchor.getBoundingClientRect()
+  const lw = layer.offsetWidth
+  const lh = layer.offsetHeight
+  const GAP = 8
+  const MARGIN = 8
+  // 水平居中于 chip，再夹进视口内 8px 边距。
+  let left = a.left + a.width / 2 - lw / 2
+  left = Math.max(MARGIN, Math.min(left, window.innerWidth - lw - MARGIN))
+  // 优先放上方（composer 在底部，上方是消息区、空间更足）；上方放不下才翻下方。
+  let top = a.top - lh - GAP
+  if (top < MARGIN) top = a.bottom + GAP
+  layer.style.left = `${Math.round(left)}px`
+  layer.style.top = `${Math.round(top)}px`
+}
+
+function onPreviewScroll(): void {
+  // fixed 定位是一次性算的，消息区/输入框一滚就与 chip 脱节——滚动即收起。
+  hidePreviewNow()
+}
+
+function showImagePreview(anchor: HTMLElement, name: string, absPath: string): void {
+  const api = window.chatApi
+  if (!absPath || !api?.readImageFile) return
+  cancelPreviewHide() // 从别处（或宽限期）切回来：取消待执行的隐藏
+  previewOwner = anchor
+  previewMeta = { name, path: absPath } // 供浮层点击开面板
+  const { layer, img } = ensurePreviewLayer()
+  if (!previewScrollBound) {
+    window.addEventListener('scroll', onPreviewScroll, { capture: true, passive: true })
+    previewScrollBound = true
+  }
+
+  const reveal = (dataUrl: string | null): void => {
+    // 异步回来时用户可能已挪到别的 chip / 离开——只认当前 owner；读失败不出图。
+    if (previewOwner !== anchor || !dataUrl) return
+    const paint = (): void => {
+      if (previewOwner !== anchor) return
+      positionPreviewLayer(anchor) // 图片尺寸就绪后再定位，居中/翻转才量得准
+      layer.style.opacity = '1'
+    }
+    if (img.src === dataUrl && img.complete && img.naturalWidth > 0) {
+      paint() // 同一张图二次 hover：src 没变、已解码，直接定位
+    } else {
+      img.onload = paint
+      // src 相同但仍在加载时别重设（重设相同 src 不会再触发 load）——只更新
+      // onload，等这张在飞的 load 完成时 paint。
+      if (img.src !== dataUrl) img.src = dataUrl
+    }
+  }
+
+  const cached = imagePreviewCache.get(absPath)
+  if (cached !== undefined) {
+    reveal(cached)
+    return
+  }
+  void api
+    .readImageFile({ absPath })
+    .then((res) => {
+      const url = res?.ok && res.dataUrl ? res.dataUrl : null
+      imagePreviewCache.set(absPath, url)
+      reveal(url)
+    })
+    .catch(() => {
+      imagePreviewCache.set(absPath, null)
+    })
+}
+
+/** 立即收起浮层并解绑滚动监听（滚动 / 点击开面板 / 宽限到期 / chip 销毁时用）。 */
+function hidePreviewNow(): void {
+  cancelPreviewHide()
+  previewOwner = null
+  previewMeta = null
+  if (previewLayer) previewLayer.style.opacity = '0'
+  if (previewScrollBound) {
+    window.removeEventListener('scroll', onPreviewScroll, {
+      capture: true
+    } as EventListenerOptions)
+    previewScrollBound = false
+  }
+}
+
+/** 预约隐藏（宽限期）——鼠标离开 chip 或浮层时调；期间移到另一方会被
+ *  cancelPreviewHide 取消，从而支持「chip → 浮层」的跨间隙移动。 */
+function armPreviewHide(): void {
+  cancelPreviewHide()
+  if (!previewOwner) return
+  previewHideTimer = setTimeout(hidePreviewNow, PREVIEW_HIDE_GRACE_MS)
+}
+
+/** chip 销毁时清理：只收起归属于它的浮层（别误伤已经移到别颗 chip 的）。 */
+function hidePreviewForAnchor(anchor: HTMLElement): void {
+  if (previewOwner === anchor) hidePreviewNow()
+}
 
 function buildStrokeIcon(paths: readonly string[], size: number, strokeWidth: string): SVGSVGElement {
   const svg = document.createElementNS(NS, 'svg')
@@ -112,6 +328,15 @@ export function createChipNodeView(variant: 'slash' | 'mention') {
     // Lookup is by the verbatim `value`, so this is purely visual;
     // serialization is untouched.
     const skill = variant === 'slash' ? findSkillChipSpec(raw) : null
+
+    // 文件 mention 的完整路径 / basename 提前解出——下方 label、可预览点击
+    // 判定、hover 图片预览浮层三处共用（slash chip 用不到，留空串）。
+    const mentionPath = variant === 'mention' ? raw.replace(/^@"?|"$/g, '') : ''
+    const mentionBase = mentionPath.slice(mentionPath.lastIndexOf('/') + 1) || mentionPath
+    // hover 图片预览开关：mention + 绝对路径（IPC 读盘要求 isAbsolute）+ 图片
+    // 扩展名。三者缺一则不挂预览，chip 行为与从前一致。
+    const isImageMention =
+      variant === 'mention' && mentionPath.startsWith('/') && isPreviewableImage(mentionBase)
 
     const dom = document.createElement('span')
     dom.setAttribute(variant === 'slash' ? 'data-pm-slash' : 'data-pm-mention', node.attrs.value as string)
@@ -221,25 +446,25 @@ export function createChipNodeView(variant: 'slash' | 'mention') {
     // 路径挪到 hover title 供确认。
     const label = document.createElement('span')
     if (variant === 'mention') {
-      const path = raw.replace(/^@"?|"$/g, '')
-      const base = path.slice(path.lastIndexOf('/') + 1)
-      label.textContent = base || path
-      dom.title = path
+      label.textContent = mentionBase
+      dom.title = mentionPath
 
-      // 点 chip 主体重开右侧预览面板（用户要求 2026-07-16）：表格/图片这
-      // 类右栏认的文件（previewPanelKind 单一真源）点击走「上传即预览」
-      // 同一条 openPreview/openEditor 分流——面板被关掉后随时点 chip 重开。
-      // 只挂在可预览类型上（其它文件点击无意义，不给 pointer 误导）；
-      // mousedown 用于拦住编辑器抢焦点，实际动作在 mousedown 里直接做
-      // （与 × 删除钮同约定）。× 在 iconSlot 上已 stopPropagation，二者
-      // 不冲突。
-      if (previewPanelKind(base) !== null) {
+      // 点 chip 主体开右栏面板（用户要求 2026-07-16）：走 openFileForClick
+      // 分流——面板认的类型（表格/可编辑图片）开对应面板，右栏被 slides/
+      // proposal 占用、或系统级图片（gif/bmp/svg）则降级系统应用打开，点了
+      // 一定有反应（2026-07-20 修：原先只调 autoOpenPreviewPanel，右栏被占
+      // 用时静默 return，表现为「点了没反应」）。挂载条件放宽到「面板认的
+      // 类型 或 任意可预览图片」，与上方 hover 预览的覆盖面对齐，避免
+      // 「能预览却点不动」；其它文件点击无意义、不给 pointer 误导。mousedown
+      // 用于拦住编辑器抢焦点，实际动作在 mousedown 里直接做（与 × 删除钮同
+      // 约定）。× 在 iconSlot 上已 stopPropagation，二者不冲突。
+      if (previewPanelKind(mentionBase) !== null || isPreviewableImage(mentionBase)) {
         dom.style.cursor = 'pointer'
         dom.addEventListener('mousedown', (e) => {
           if (iconSlot.contains(e.target as Node)) return // × 区让给删除
           e.preventDefault()
           e.stopPropagation()
-          autoOpenPreviewPanel(base, path)
+          openFileForClick(mentionBase, mentionPath)
         })
       }
     } else {
@@ -260,6 +485,8 @@ export function createChipNodeView(variant: 'slash' | 'mention') {
       restingIcon.style.visibility = 'hidden'
       closeWrap.style.visibility = 'visible'
       iconSlot.style.cursor = 'pointer'
+      // 图片 chip：额外浮出可点的缩略图预览（点它开右栏面板）。
+      if (isImageMention) showImagePreview(dom, mentionBase, mentionPath)
     })
     dom.addEventListener('mouseleave', () => {
       hovering = false
@@ -267,6 +494,8 @@ export function createChipNodeView(variant: 'slash' | 'mention') {
       restingIcon.style.visibility = ''
       closeWrap.style.visibility = 'hidden'
       iconSlot.style.cursor = ''
+      // 只「预约」隐藏：给鼠标跨 8px 间隙移到浮层上点击的宽限（进浮层会取消）。
+      if (isImageMention) armPreviewHide()
     })
     iconSlot.addEventListener('mousedown', (e) => {
       if (!hovering) return
@@ -295,7 +524,12 @@ export function createChipNodeView(variant: 'slash' | 'mention') {
       // 新技能，ScenarioRail（订 composer.text）随之显示与可见 chip 错位的
       // 推荐行。真机 CDP 实锤：store=spreadsheets、DOM chip=ppt-master。
       update: (updated) =>
-        updated.type === node.type && (updated.attrs.value as string) === raw
+        updated.type === node.type && (updated.attrs.value as string) === raw,
+      // 兜底收起预览：× 删除走 mousedown 直接删节点，mouseleave 未必触发；
+      // chip 被退格/整段替换销毁时同理。不清理会把浮层留在 body 上。
+      destroy: () => {
+        if (isImageMention) hidePreviewForAnchor(dom)
+      }
     }
   }
 }

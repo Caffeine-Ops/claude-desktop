@@ -317,7 +317,7 @@ function OutlineHeader({
 }): React.JSX.Element {
   return (
     <div className="flex shrink-0 items-center gap-2.5 border-b border-border/60 px-4 py-2">
-      <div className="grid size-[26px] shrink-0 place-items-center rounded-md bg-accent/10 text-accent">
+      <div className="grid size-[26px] shrink-0 place-items-center rounded-md bg-brand/10 text-brand">
         <svg
           viewBox="0 0 24 24"
           fill="none"

@@ -1492,8 +1492,10 @@ function VisualStyleField({
     )
   }
 
-  // 2-up on narrow canvases, 3-up when there's room — image cards need width.
-  const gridCls = 'grid grid-cols-2 gap-2 sm:grid-cols-3'
+  // 2-up narrow → 3 mid → 4 lg → 5 xl — smaller cards so more styles are visible
+  // at once (用户 2026-07-20：「改小点，看的更多些」，再收一档）。5-up in the
+  // 860px container ≈ 167px/col; 16:10 thumbs are still legible at that size.
+  const gridCls = 'grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5'
 
   return (
     <div className="flex flex-col gap-3">
@@ -1583,13 +1585,13 @@ function StyleCard({
       </div>
       <div
         className={
-          'flex flex-col gap-0.5 px-2 py-1.5 ' + (selected ? 'bg-brand/[0.08]' : 'bg-background/40')
+          'flex flex-col gap-0.5 px-2 py-1 ' + (selected ? 'bg-brand/[0.08]' : 'bg-background/40')
         }
       >
-        <span className={'text-[12px] font-medium ' + (selected ? 'text-brand' : 'text-foreground')}>
+        <span className={'text-[11.5px] font-medium ' + (selected ? 'text-brand' : 'text-foreground')}>
           {label}
         </span>
-        {note && <span className="line-clamp-2 text-[10px] text-muted-foreground">{note}</span>}
+        {note && <span className="line-clamp-1 text-[10px] text-muted-foreground">{note}</span>}
       </div>
     </button>
   )

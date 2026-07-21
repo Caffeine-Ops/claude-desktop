@@ -135,8 +135,12 @@ export function RailProjectList() {
                     'relative flex h-8 w-full items-center justify-start gap-2 rounded-lg px-3 text-left text-[13px] font-normal transition-colors',
                     item.project.id === activeId
                       ? // 毛玻璃质感（2026-07-18，跟 RailSessionList 选中态同一批，
-                        // 两面对称——见该处同名注释）。
-                        'bg-sidebar-accent/55 backdrop-blur-md font-medium text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground'
+                        // 两面对称——见该处同名注释）。不带 backdrop-blur
+                        // （2026-07-20 摘掉，理由同 RailSessionList 那处：这里
+                        // 是 `.app-rail` 的后代，rail 自身壁纸开启时已经模糊
+                        // 过一次，再叠一层会嵌套模糊、亮色主题下磨得看不出
+                        // 玻璃感）。
+                        'bg-sidebar-accent/55 font-medium text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground'
                       : 'text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground'
                   )}
                 >
