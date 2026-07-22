@@ -61,8 +61,10 @@
 import { useState } from 'react';
 import {
   ArrowLeft,
+  BarChart3,
   Bell,
   Blocks,
+  CircleUserRound,
   Eye,
   Flag,
   Folder,
@@ -109,8 +111,10 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: 'settingsV2.groupGeneral',
     fallback: '通用',
     items: [
+      { id: 'account', labelKey: 'settingsV2.account', fallback: '账号', icon: CircleUserRound },
+      { id: 'usage', labelKey: 'settingsV2.usage', fallback: '使用记录', icon: BarChart3 },
       { id: 'execution', labelKey: 'settings.execution', fallback: '执行模式', icon: SlidersHorizontal },
-      { id: 'instructions', labelKey: 'settings.instructions', fallback: 'Instructions / Rules', icon: Pencil },
+      { id: 'instructions', labelKey: 'settings.instructions', fallback: '全局规则', icon: Pencil },
       { id: 'memory', labelKey: 'settings.memory', fallback: '记忆', icon: History },
       { id: 'language', labelKey: 'settings.language', fallback: '界面语言', icon: Languages },
       { id: 'appearance', labelKey: 'settings.appearance', fallback: '外观', icon: SunMoon },
@@ -210,30 +214,39 @@ export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Elemen
                 <div className="px-3 pb-1.5 text-[11.5px] font-semibold tracking-[0.04em] text-muted-foreground">
                   {tt(group.titleKey, group.fallback)}
                 </div>
-                {group.items.map((item) => {
-                  const active = activeSection === item.id;
-                  return (
-                    <Button
-                      key={item.id}
-                      variant="ghost"
-                      onClick={() => setActiveSection(item.id)}
-                      /* Selected row tints with the app accent（--accent-soft/
-                         --accent-strong 来自共享 design-tokens，非 canvas 私有），
-                         matches the chat sidebar's selected pill，跟随用户主题色。
-                         inactive 态照抄 RailProjectList 的行 idiom。 */
-                      className={cn(
-                        'h-9 w-full justify-start gap-[11px] px-3 font-normal text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground',
-                        active &&
-                          'bg-[var(--accent-soft)] font-semibold text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent-strong)]',
-                      )}
-                    >
-                      <item.icon aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate text-left">
-                        {tt(item.labelKey, item.fallback)}
-                      </span>
-                    </Button>
-                  );
-                })}
+                {/* flex-col + gap：items 之前是裸 map 出的 <Button> 直接块级堆叠，行间距=0。
+                    选中态改用中性 hover 底之后（同 diff 上一条注释）问题被放大——active
+                    与相邻行的 hover 现在是同一个 bg-sidebar-accent，0 间距时两行会糊成
+                    一整块看不出分界（2026-07-21 用户截图实锤）。加 gap 撑开分隔。 */}
+                <div className="flex flex-col gap-1">
+                  {group.items.map((item) => {
+                    const active = activeSection === item.id;
+                    return (
+                      <Button
+                        key={item.id}
+                        variant="ghost"
+                        onClick={() => setActiveSection(item.id)}
+                        /* 选中态改用中性 hover 底（2026-07-21，设计系统设置页重设计
+                           走查时用户实锤）：之前选中态跟主题 accent 色走（--accent-soft/
+                           --accent-strong），但用户默认主题色是饱和绿（DEFAULT_ACCENT_COLOR
+                           #059669），选中项在 rail 里显得像一枚"成功"徽章而非普通选中态。
+                           改沿用行本身的 hover 处理（bg-sidebar-accent），选中即常驻这个
+                           底，只加粗字重做区分——跟随用户主题色的诉求交给聊天区其它真正
+                           的 accent 点位（发送按钮、composer focus ring 等），设置导航项
+                           不需要。inactive 态照抄 RailProjectList 的行 idiom。 */
+                        className={cn(
+                          'h-9 w-full justify-start gap-[11px] px-3 font-normal text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground',
+                          active && 'bg-sidebar-accent font-semibold text-sidebar-foreground',
+                        )}
+                      >
+                        <item.icon aria-hidden="true" />
+                        <span className="min-w-0 flex-1 truncate text-left">
+                          {tt(item.labelKey, item.fallback)}
+                        </span>
+                      </Button>
+                    );
+                  })}
+                </div>
               </div>
             ))}
           </nav>
@@ -251,11 +264,17 @@ export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Elemen
           className="relative min-w-0 flex-1 overflow-y-auto border-l border-border/50 bg-card"
         >
           <div className="mx-auto max-w-[760px] px-10 pb-15 pt-11">
-            <div className="mb-[26px]">
-              <h1 className="text-[26px] font-semibold tracking-[-0.015em] text-foreground">
-                {activeLabel}
-              </h1>
-            </div>
+            {/* 'usage' 自己接管标题（见 UsageSection.tsx 头注释）：它需要一个
+                sticky 标题栏，随滚动压缩并挂靠时间范围控件，跟这里画一个
+                静态 <h1> 是两份独立的标题渲染逻辑——分别做 sticky 还要对齐
+                两者的高度差，脆弱且没必要，不如整段让 UsageSection 独占。 */}
+            {activeSection !== 'usage' && (
+              <div className="mb-[26px]">
+                <h1 className="text-[26px] font-semibold tracking-[-0.015em] text-foreground">
+                  {activeLabel}
+                </h1>
+              </div>
+            )}
 
             {/* The shared content pane: SettingsDialog in embedded mode renders
                 ONLY the active section's panel (no chrome), wired to the same

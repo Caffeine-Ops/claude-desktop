@@ -260,6 +260,24 @@ export const IPC_CHANNELS = {
    */
   SESSION_RENAME: 'session:rename',
   /**
+   * Renderer → main. 用系统默认程序打开某会话的原始 transcript jsonl
+   * （`~/.claude/projects/<slug>/<sessionId>.jsonl`）。main 侧全局扫
+   * `~/.claude/projects/` 找同名文件（sessionStore.findSessionJsonlGlobal，
+   * 与 renameSession 的按工作区探测同源但不需要 workspaceDirs——
+   * session id 本身唯一），再走 `shell.openPath` 交给注册的默认程序
+   * （通常是文本编辑器）。找不到文件或 shell 打开失败都回非空 error，
+   * 不抛异常——菜单点击是即发即弃，没有常驻消息位展示失败原因，
+   * 调用方按 exportReplay 同款惯例console.warn 记日志即可。
+   */
+  SESSION_OPEN_JSONL: 'session:open-jsonl',
+  /**
+   * Renderer → main. 「复制 jsonl 路径」菜单项用——跟 SESSION_OPEN_JSONL
+   * 同一套 findSessionJsonlGlobal 定位逻辑，只是不 shell.openPath，把
+   * 绝对路径原样交回 renderer 由它写剪贴板（navigator.clipboard，同
+   * WrittenFilesPanel.tsx 的既有用法，不在 main 侧碰剪贴板）。
+   */
+  SESSION_GET_JSONL_PATH: 'session:get-jsonl-path',
+  /**
    * Renderer → main. 给会话指定工作目录（composer 的「选择工作目录」
    * chip）。main 校验绝对路径/存在/目录后：无 transcript 的新会话写入
    * 引擎 pendingWorkspace（首次 send 烘焙进子进程 cwd）；已有记录的会
@@ -756,7 +774,14 @@ export const IPC_CHANNELS = {
    */
   AUTH_GET_STATE: 'auth:get-state',
   /**
-   * Renderer → main. Attempts a credential login. Resolves with
+   * Renderer → main. Requests a phone SMS verification code from the
+   * sub2api backend. Resolves with `{ ok: true, countdown }`（发码冷却
+   * 秒数，驱动「重新发送」按钮倒计时）or `{ ok: false, error }`（中文
+   * 错误文案）。不涉及登录态，纯代理转发。
+   */
+  AUTH_SEND_SMS_CODE: 'auth:send-sms-code',
+  /**
+   * Renderer → main. Attempts a phone + SMS code login. Resolves with
    * `{ ok: true, state }`（已登录快照）or `{ ok: false, error }`（中文
    * 错误文案，登录表单直接展示）。成功路径同时把状态写盘
    * （userData/auth.json）并广播 AUTH_STATE_CHANGED——发起登录的窗口
@@ -774,6 +799,51 @@ export const IPC_CHANNELS = {
    * their copy——同 UPDATER_STATE_CHANGED 的「整体替换不拼装」约定。
    */
   AUTH_STATE_CHANGED: 'auth:state-changed',
+  /**
+   * Renderer → main. 设置页「账号」面打开时拉一份详细资料（余额/并发/
+   * 角色/状态/注册时间），比 AuthState 携带的画像完整。未登录时返回
+   * `{ ok: false, error }`。
+   */
+  ACCOUNT_GET_PROFILE: 'account:get-profile',
+  /**
+   * Renderer → main. 改用户名/头像（sub2api 的 PUT /user，部分更新）。
+   * 成功时除了 resolve 最新 AccountProfile，还会同步更新
+   * AuthState.user.name 并广播 AUTH_STATE_CHANGED——rail 账户 chip 立刻
+   * 跟上新名字，不需要重新登录。
+   */
+  ACCOUNT_UPDATE_PROFILE: 'account:update-profile',
+  /**
+   * Renderer → main. 账户菜单「使用记录」页打开时拉筛选器下拉数据源
+   * （API 密钥 / 分组），对接 sub2api `GET /keys` + `GET /groups/available`。
+   * 未登录时返回 `{ ok: false, error }`。
+   */
+  USAGE_FILTER_OPTIONS_GET: 'usage:filter-options-get',
+  /**
+   * Renderer → main. 使用记录页顶部 4 张统计卡片 + 「端点分布」图表数据
+   * （sub2api `GET /usage/stats`，`endpoints` 字段即端点分布）。
+   */
+  USAGE_STATS_GET: 'usage:stats-get',
+  /**
+   * Renderer → main. 使用记录页「模型分布」图表数据
+   * （sub2api `GET /usage/dashboard/models`）。
+   */
+  USAGE_MODELS_GET: 'usage:models-get',
+  /**
+   * Renderer → main. 使用记录页「Token 使用趋势」+「分组使用分布」图表
+   * 数据，一次拉两块（sub2api `GET /usage/dashboard/snapshot-v2`）。
+   */
+  USAGE_SNAPSHOT_GET: 'usage:snapshot-get',
+  /**
+   * Renderer → main. 使用记录页底部分页明细表（sub2api `GET /usage`，
+   * 服务端真分页/排序）。CSV 导出复用同一个 IPC，前端循环翻页拉全量。
+   */
+  USAGE_LIST_GET: 'usage:list-get',
+  /**
+   * Renderer → main. 使用记录页「导出 CSV」——渲染层已拼好 CSV 文本，
+   * main 弹原生保存对话框落盘（同 PROPOSAL_EXPORT 的「渲染层生成内容 +
+   * main 只管保存框与写盘」分工）。`{ path: null }` = 用户取消。
+   */
+  USAGE_EXPORT_CSV: 'usage:export-csv',
   /**
    * Renderer → main. Returns the current KB root path (or null when
    * not yet configured) plus the fixed output directory for index
@@ -1514,7 +1584,23 @@ export type PptSourcePreviewResult =
 /* ───────────────────────── Model switching ─────────────────────── */
 
 /**
- * Result of MODEL_LIST: chat-capable model ids from the backend gateway's
+ * One selectable model. `displayName` is the backend's own human-readable
+ * label — the gateway's `/v1/models` catalog's `display_name` field for the
+ * bundled backend, the SDK's `ModelInfo.displayName` for system claude —
+ * and is preferred over the frontend's local id→name guess table
+ * (Composer.tsx's `MODEL_META`) whenever present, since the backend knows
+ * about models the frontend's small hardcoded table doesn't (e.g. a
+ * differently-branded model family behind the same gateway). Optional/absent
+ * for backends that don't supply one (the system-claude static alias
+ * fallback), in which case the frontend falls back to its own table.
+ */
+export interface ModelListEntry {
+  id: string
+  displayName?: string
+}
+
+/**
+ * Result of MODEL_LIST: chat-capable models from the backend gateway's
  * OpenAI-compatible `/v1/models` catalog (image / audio / realtime entries
  * filtered out in main). `ok` false (+ `error`) covers gateway-unreachable;
  * main still returns its last good list in that case (stale beats empty for
@@ -1522,7 +1608,7 @@ export type PptSourcePreviewResult =
  */
 export type ModelListResult = {
   ok: boolean
-  models: string[]
+  models: ModelListEntry[]
   error?: string
 }
 
@@ -1561,6 +1647,16 @@ export type SessionSwitchResult = { sessionId: string }
 
 export type SessionRenamePayload = { sessionId: string; title: string }
 export type SessionRenameResult = { ok: true }
+
+/** Payload for SESSION_OPEN_JSONL. */
+export type SessionOpenJsonlPayload = { sessionId: string }
+/** Result of SESSION_OPEN_JSONL. `error` is '' on success, non-empty when
+ *  the transcript can't be found or `shell.openPath` fails. */
+export type SessionOpenJsonlResult = { error: string }
+
+/** Result of SESSION_GET_JSONL_PATH. `path` set on success, `error` set
+ *  when the transcript can't be found (mutually exclusive). */
+export type SessionGetJsonlPathResult = { path?: string; error?: string }
 
 /** Payload for SESSION_WORKSPACE_SET. `path` must be an absolute dir. */
 export type SessionWorkspaceSetPayload = { sessionId: string; path: string }
@@ -1628,6 +1724,18 @@ export interface CliBackendState {
 }
 
 export type CliBackendSetPayload = { mode: CliBackendMode }
+
+/**
+ * CLI_BACKEND_SET rejects with `new Error(CLI_BACKEND_SESSION_RUNNING_ERROR)`
+ * when any tab has a turn actively in flight (2026-07-21 用户要求：有会话在
+ * 运行时不允许切换 CLI 后端，而不是像以前那样允许切、把 in-flight 回合留在
+ * 旧后端上完成）。main/renderer 共用同一个 message 字符串常量，renderer 侧
+ * 靠 `err.message === CLI_BACKEND_SESSION_RUNNING_ERROR` 识别这个特定原因、
+ * 换成本地化提示；不是这个值的错误走通用的静默失败分支。字符串本身不面向
+ * 用户展示，纯粹是主进程/渲染进程之间的错误码。
+ */
+export const CLI_BACKEND_SESSION_RUNNING_ERROR =
+  'cli-backend-switch-blocked:session-running'
 
 /**
  * Origin of a runtime-log line shown in the「日志分析」panel.
@@ -1833,16 +1941,23 @@ export interface UpdaterState {
 /**
  * 已登录用户的最小画像。plan 先随用户体系一起定义（套餐系统是同一条
  * 开发线）：`expiresAt` 为 epoch ms，null = 永久（无到期日）——与账户
- * 菜单套餐区的「永久」占位语义对齐。真实后端接入后字段只增不改。
+ * 菜单套餐区的「永久」占位语义对齐，真实套餐系统上线前维持固定文案。
+ *
+ * 刻意不带 token——access/refresh token 只留在 main 进程内存 +
+ * userData/auth.json，不经这个类型跨 IPC 边界，因为 renderer 目前没有
+ * 任何功能需要直接持有它（同 preload 暴露面「非必要不下放」的一贯纪律）。
  */
 export interface AuthUser {
-  /** 稳定用户标识（占位实现 = email；接后端后换成服务端 id）。 */
+  /** 稳定用户标识（sub2api 的数字 user id，转成字符串）。 */
   id: string
-  email: string
-  /** 展示名（占位实现 = email 的 @ 前段）。 */
+  /** 登录手机号。 */
+  phone: string
+  /** 展示名（sub2api 的 username；纯手机号自动注册时等于 phone）。 */
   name: string
+  /** null = 未设置头像，rail 账户 chip 回落姓名首字母占位。 */
+  avatarUrl: string | null
   plan: {
-    /** 套餐名，如「免费版」「专业版」；占位实现固定「基础版」。 */
+    /** 套餐名，如「免费版」「专业版」；套餐系统上线前固定「基础版」。 */
     name: string
     /** 到期时间 epoch ms；null = 永久。 */
     expiresAt: number | null
@@ -1864,9 +1979,18 @@ export interface AuthState {
 }
 
 export interface AuthLoginPayload {
-  email: string
-  password: string
+  phone: string
+  /** 6 位短信验证码。 */
+  code: string
 }
+
+/**
+ * AUTH_SEND_SMS_CODE 的结论。失败时 `error` 是给登录表单直接展示的中文
+ * 文案（main 侧把 sub2api 的 reason code 翻译成人话）。
+ */
+export type AuthSendSmsCodeResult =
+  | { ok: true; /** 下次可重新发送前的冷却秒数。 */ countdown: number }
+  | { ok: false; error: string }
 
 /**
  * AUTH_LOGIN 的结论。失败时 `error` 是给登录表单直接展示的中文文案
@@ -1876,6 +2000,238 @@ export interface AuthLoginPayload {
 export type AuthLoginResult =
   | { ok: true; state: AuthState }
   | { ok: false; error: string }
+
+/**
+ * 账户资料——设置页「账号」面用的详细画像，比 {@link AuthUser} 完整
+ * （余额/并发/角色/状态/注册时间），刻意不塞进 AuthUser：这些字段只有
+ * 设置页需要，AuthState 是全量广播给每个窗口的，没必要让 rail 账户
+ * chip 那类轻量消费者也背上这些字段。
+ */
+export interface AccountProfile {
+  id: string
+  phone: string
+  username: string
+  /** null = 未设置头像。 */
+  avatarUrl: string | null
+  role: string
+  status: string
+  /** 美元。 */
+  balance: number
+  concurrency: number
+  /** epoch ms。 */
+  createdAt: number
+}
+
+export type AccountProfileResult =
+  | { ok: true; profile: AccountProfile }
+  | { ok: false; error: string }
+
+/**
+ * 只传要改的字段（sub2api 的 PUT /user 是部分更新语义）。
+ * `avatarDataUrl` 传空串表示删除头像，跟 sub2api 网页端的约定一致。
+ */
+export interface AccountUpdatePayload {
+  username?: string
+  avatarDataUrl?: string
+}
+
+export type AccountUpdateResult =
+  | { ok: true; profile: AccountProfile }
+  | { ok: false; error: string }
+
+/**
+ * 使用记录页（对接 sub2api `/api/v1/usage*`）的共享类型。所有字段在
+ * usageService.ts 里从 sub2api 的 snake_case JSON 映射成这里的 camelCase
+ * ——同 {@link AuthUser} 的既有约定，UI 层不用碰任何 snake_case 字段名。
+ */
+
+/** stats / models / snapshot / list 四个查询共用的过滤器形状。 */
+export interface UsageQueryFilters {
+  /** YYYY-MM-DD，本地日历日。 */
+  startDate: string
+  /** YYYY-MM-DD，本地日历日。 */
+  endDate: string
+  /** IANA 时区（如 'Asia/Shanghai'），后端用它解释 start/end 的本地日界。 */
+  timezone: string
+  apiKeyId?: number
+  groupId?: number
+  model?: string
+  /** 'sync' | 'stream' | 'ws_v2' | 'cyber'。 */
+  requestType?: string
+  billingType?: number
+  /** 'token' | 'per_request' | 'image' | 'video'。 */
+  billingMode?: string
+}
+
+export interface UsageFilterOptionItem {
+  id: number
+  name: string
+}
+
+export interface UsageFilterOptions {
+  apiKeys: UsageFilterOptionItem[]
+  groups: UsageFilterOptionItem[]
+}
+
+export type UsageFilterOptionsResult =
+  | { ok: true; data: UsageFilterOptions }
+  | { ok: false; error: string }
+
+export interface UsageEndpointStat {
+  endpoint: string
+  requests: number
+  totalTokens: number
+  cost: number
+  actualCost: number
+}
+
+/**
+ * 统计卡片 + 端点分布图表数据（sub2api `GET /usage/stats`）。用户接口
+ * 恒不返回账号口径成本/上游端点/端点路径这几个管理员字段，故不建模。
+ */
+export interface UsageStats {
+  totalRequests: number
+  totalInputTokens: number
+  totalOutputTokens: number
+  totalCacheCreationTokens: number
+  totalCacheReadTokens: number
+  totalTokens: number
+  /** 标准计费。 */
+  totalCost: number
+  /** 实际扣除——统计卡片主数字用这个。 */
+  totalActualCost: number
+  averageDurationMs: number
+  endpoints: UsageEndpointStat[]
+}
+
+export type UsageStatsResult =
+  | { ok: true; data: UsageStats }
+  | { ok: false; error: string }
+
+export interface UsageModelStat {
+  model: string
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  cacheCreationTokens: number
+  cacheReadTokens: number
+  totalTokens: number
+  cost: number
+  actualCost: number
+}
+
+export interface UsageModelsData {
+  models: UsageModelStat[]
+  startDate: string
+  endDate: string
+}
+
+export type UsageModelsResult =
+  | { ok: true; data: UsageModelsData }
+  | { ok: false; error: string }
+
+export interface UsageGroupStat {
+  groupId: number
+  groupName: string
+  requests: number
+  totalTokens: number
+  cost: number
+  actualCost: number
+}
+
+/** date 的格式随 granularity 变化（day→YYYY-MM-DD，hour→带小时），UI 直接当字符串标签用，不二次 parse。 */
+export interface UsageTrendPoint {
+  date: string
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  cacheCreationTokens: number
+  cacheReadTokens: number
+  totalTokens: number
+  cost: number
+  actualCost: number
+}
+
+export interface UsageSnapshot {
+  startDate: string
+  endDate: string
+  granularity: 'day' | 'hour'
+  trend: UsageTrendPoint[]
+  groups: UsageGroupStat[]
+}
+
+export type UsageSnapshotResult =
+  | { ok: true; data: UsageSnapshot }
+  | { ok: false; error: string }
+
+export interface UsageLogRef {
+  id: number
+  name: string
+}
+
+/** 明细表一行（sub2api `GET /usage` 的 UsageLog，用户视角字段）。 */
+export interface UsageLogItem {
+  id: number
+  requestId: string
+  /** 请求时实际要求的模型名（requested_model，取不到回落 model）。 */
+  model: string
+  reasoningEffort: string | null
+  /** 客户端调用的端点路径，如 /v1/chat/completions。 */
+  inboundEndpoint: string | null
+  ipAddress: string | null
+  /** 'sync' | 'stream' | 'ws_v2' | 'cyber' | 'unknown'。 */
+  requestType: string
+  billingMode: string | null
+  /** 0=余额 1=订阅。 */
+  billingType: number
+  inputTokens: number
+  outputTokens: number
+  cacheCreationTokens: number
+  cacheReadTokens: number
+  /** 派生：input+output+cacheCreation+cacheRead，表格 TOKEN 列用。 */
+  totalTokens: number
+  rateMultiplier: number
+  /** 标准计费。 */
+  totalCost: number
+  /** 实际扣除——表格「费用」列用这个。 */
+  actualCost: number
+  durationMs: number | null
+  firstTokenMs: number | null
+  /** RFC3339。 */
+  createdAt: string
+  apiKey: UsageLogRef | null
+  group: UsageLogRef | null
+}
+
+export interface UsageListQuery extends UsageQueryFilters {
+  page: number
+  pageSize: number
+  sortBy?: string
+  sortOrder?: 'asc' | 'desc'
+}
+
+export interface UsageListData {
+  items: UsageLogItem[]
+  total: number
+  page: number
+  pageSize: number
+  pages: number
+}
+
+export type UsageListResult =
+  | { ok: true; data: UsageListData }
+  | { ok: false; error: string }
+
+/** 渲染层已经拼好 CSV 文本（含 BOM 前缀），main 只管保存框与写盘。 */
+export interface UsageExportCsvPayload {
+  csv: string
+  defaultFilename: string
+}
+
+/** `path: null` = 用户取消保存框。 */
+export interface UsageExportCsvResult {
+  path: string | null
+}
 
 /**
  * Supported export formats for a proposal document. Defined here (shared)
@@ -2561,6 +2917,23 @@ export interface ChatApi {
   renameSession(payload: SessionRenamePayload): Promise<SessionRenameResult>
 
   /**
+   * 用 VS Code 打开某会话的原始 transcript jsonl 文件（2026-07-20 起，此前
+   * 是系统默认程序）。main 全局扫 `~/.claude/projects/` 定位
+   * `<sessionId>.jsonl` 再走 `vscode://file/<path>` 交给 `shell.openExternal`。
+   */
+  openSessionJsonl(
+    payload: SessionOpenJsonlPayload
+  ): Promise<SessionOpenJsonlResult>
+
+  /**
+   * 解析某会话原始 transcript jsonl 的绝对路径，不打开——「复制 jsonl
+   * 路径」菜单项用，跟 openSessionJsonl 同一套定位逻辑（findSessionJsonlGlobal）。
+   */
+  getSessionJsonlPath(
+    payload: SessionOpenJsonlPayload
+  ): Promise<SessionGetJsonlPathResult>
+
+  /**
    * 给会话指定工作目录（composer chip）。新会话记预选；已有记录的会话
    * 迁移 transcript 到新目录（历史无损）。本轮对话进行中会被 main 拒绝
    * （Promise reject）——调用方应在 streaming 时把 chip 渲染成只读态，
@@ -2810,7 +3183,13 @@ export interface ChatApi {
   getAuthState(): Promise<AuthState>
 
   /**
-   * Credential login (see AUTH_LOGIN)。resolve 即结论：ok=false 时
+   * Request a phone SMS verification code (see AUTH_SEND_SMS_CODE)。
+   * resolve 即结论：ok=true 时携带冷却秒数驱动重发倒计时。
+   */
+  sendSmsCode(phone: string): Promise<AuthSendSmsCodeResult>
+
+  /**
+   * Phone + SMS code login (see AUTH_LOGIN)。resolve 即结论：ok=false 时
    * `error` 直接展示；ok=true 时携带已登录快照，发起窗口无需等广播。
    */
   login(payload: AuthLoginPayload): Promise<AuthLoginResult>
@@ -2823,6 +3202,40 @@ export interface ChatApi {
    * AuthState — replace, don't merge. Returns an unsubscribe.
    */
   onAuthStateChanged(handler: (state: AuthState) => void): () => void
+
+  /**
+   * Fetch the detailed account profile for the settings「账号」panel
+   * (see ACCOUNT_GET_PROFILE)。未登录时 ok=false。
+   */
+  getAccountProfile(): Promise<AccountProfileResult>
+
+  /**
+   * Update username/avatar (see ACCOUNT_UPDATE_PROFILE)。resolve 携带更新
+   * 后的完整 profile；成功时 rail 账户 chip 也会经 AUTH_STATE_CHANGED
+   * 广播自动跟上新用户名。
+   */
+  updateAccountProfile(payload: AccountUpdatePayload): Promise<AccountUpdateResult>
+
+  /** 使用记录页筛选器下拉数据源：API 密钥 + 分组列表（见 USAGE_FILTER_OPTIONS_GET）。 */
+  getUsageFilterOptions(): Promise<UsageFilterOptionsResult>
+
+  /** 使用记录页统计卡片 + 端点分布（见 USAGE_STATS_GET）。 */
+  getUsageStats(filters: UsageQueryFilters): Promise<UsageStatsResult>
+
+  /** 使用记录页「模型分布」图表数据（见 USAGE_MODELS_GET）。 */
+  getUsageModels(filters: UsageQueryFilters): Promise<UsageModelsResult>
+
+  /** 使用记录页「Token 使用趋势」+「分组使用分布」（见 USAGE_SNAPSHOT_GET）。 */
+  getUsageSnapshot(
+    filters: UsageQueryFilters,
+    granularity: 'day' | 'hour'
+  ): Promise<UsageSnapshotResult>
+
+  /** 使用记录页分页明细表（见 USAGE_LIST_GET）；CSV 导出复用同一个方法循环翻页。 */
+  getUsageList(query: UsageListQuery): Promise<UsageListResult>
+
+  /** 使用记录页「导出 CSV」——渲染层拼好文本，main 弹保存框落盘（见 USAGE_EXPORT_CSV）。 */
+  exportUsageCsv(payload: UsageExportCsvPayload): Promise<UsageExportCsvResult>
 
   /**
    * Read the current KB root path, the fixed output directory, the

@@ -198,6 +198,10 @@ export interface Dict {
   'settings.codeAgentHint': string;
   'settings.chatCliBackendTitle': string;
   'settings.chatCliBackendHint': string;
+  // 可选（同 settings.background.* 那批的先例）：只填了 zh-CN/en，其余
+  // 15 语言靠 t() 的 dict[key] ?? en[key] ?? key 链兜底到英文，不强制
+  // 为这一个新 key 回填 15 个语言文件。
+  'settings.cliBackendSwitchBlocked'?: string;
   'settings.cliBackendBundledTitle': string;
   'settings.cliBackendBundledDesc': string;
   'settings.cliBackendBundledMeta': string;
@@ -565,6 +569,8 @@ export interface Dict {
   // Memory (auto-extracted personalization saved as on-disk markdown)
   'settings.memory': string;
   'settings.memoryHint': string;
+  'settings.instructions': string;
+  'settings.instructionsHint': string;
   'settings.customInstructionsTitle': string;
   'settings.customInstructionsHint': string;
   'settings.customInstructionsPlaceholder': string;

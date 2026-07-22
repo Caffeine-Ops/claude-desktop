@@ -17,6 +17,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'nod
 import type { PermissionResponse, QueuedMessage } from '../../shared/types'
 import {
   IPC_CHANNELS,
+  CLI_BACKEND_SESSION_RUNNING_ERROR,
   type ChatAbortPayload,
   type ChatImagePayload,
   type ChatQueueEditPayload,
@@ -41,6 +42,9 @@ import {
   type SessionSearchPayload,
   type SessionSearchResult,
   type SessionRenameResult,
+  type SessionOpenJsonlPayload,
+  type SessionOpenJsonlResult,
+  type SessionGetJsonlPathResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
   type SessionWorkspaceSetPayload,
@@ -83,6 +87,7 @@ import {
   type PptSourcePreviewPayload,
   type PptSourcePreviewResult,
   type PptSourceSlide,
+  type ModelListEntry,
   type ModelListResult,
   type ModelSetPayload,
   type WorkspaceKnownListResult,
@@ -95,9 +100,22 @@ import {
   type AppearancePrefs,
   type ShellMenuActionPayload,
   type UpdaterState,
+  type AccountProfileResult,
+  type AccountUpdatePayload,
+  type AccountUpdateResult,
   type AuthLoginPayload,
   type AuthLoginResult,
-  type AuthState
+  type AuthSendSmsCodeResult,
+  type AuthState,
+  type UsageQueryFilters,
+  type UsageListQuery,
+  type UsageExportCsvPayload,
+  type UsageExportCsvResult,
+  type UsageFilterOptionsResult,
+  type UsageStatsResult,
+  type UsageModelsResult,
+  type UsageSnapshotResult,
+  type UsageListResult
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
 import { resolveBundledSkillsPluginDir } from '../core/skillsDir'
@@ -188,15 +206,30 @@ import {
 } from '../services/backgroundThemes'
 import { mimeForImagePath } from '../../shared/imageMime'
 import { EMBEDDABLE_IMAGE_EXTS, type ProposalMetricRecord } from '../../shared/proposal'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
 import { checkForUpdates, getUpdaterState, installUpdate } from '../services/appUpdater'
-import { getAuthState, login, logout } from '../services/authService'
+import {
+  getAccountProfile,
+  getAuthState,
+  login,
+  logout,
+  sendSmsCode,
+  updateAccountProfile
+} from '../services/authService'
 import { DAEMON_PORT } from '../services/openDesignServices'
+import {
+  getUsageFilterOptions,
+  getUsageList,
+  getUsageModels,
+  getUsageSnapshot,
+  getUsageStats
+} from '../services/usageService'
 import type { ChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
 import {
   deleteSessionFromDisk,
+  findSessionJsonlGlobal,
   listAllSessions,
   loadSession,
   loadSubagent,
@@ -220,6 +253,7 @@ import {
   listTabs,
   MAX_TABS,
   activateTab,
+  recycleAllEnginesRuntimes,
   syncShellBackgroundToTheme
 } from '../tabRegistry'
 import type {
@@ -247,16 +281,20 @@ import {
  * Settings-page switch (bundled ↔ system) invalidates immediately instead
  * of serving the other backend's list for up to a TTL.
  */
-let modelListCache: { key: string; models: string[]; at: number } | null = null
+let modelListCache: { key: string; models: ModelListEntry[]; at: number } | null = null
 const MODEL_LIST_TTL_MS = 5 * 60 * 1000
 
 /**
  * Fallback for the system-claude backend BEFORE its CLI is live (lazy spawn):
  * the stable alias set claude accepts for --model / setModel. Once a runtime
- * is up, the real `supportedModels` control-request list replaces this (and
- * only THAT gets cached, so the upgrade happens on the next dropdown open).
+ * is up, the real `supportedModels` control-request list (which also carries
+ * a `displayName` per entry) replaces this — and only THAT gets cached, so
+ * the upgrade happens on the next dropdown open. No displayName here; the
+ * frontend's local id→name table covers these well-known aliases.
  */
-const SYSTEM_CLAUDE_MODEL_ALIASES = ['default', 'opus', 'sonnet', 'haiku', 'sonnet[1m]']
+const SYSTEM_CLAUDE_MODEL_ALIASES: ModelListEntry[] = ['default', 'opus', 'sonnet', 'haiku', 'sonnet[1m]'].map(
+  (id) => ({ id })
+)
 
 /**
  * Resolve the ChatEngine for the window that sent this IPC event.
@@ -299,36 +337,19 @@ function embeddableExtFor(bytes: Buffer): string {
 }
 
 /**
- * Recycle every open tab's live runtimes so the next turn re-spawns
- * under the freshly-saved `cliBackend`. Shared by BOTH backend-set
- * paths:
- *
- *   - CLI_BACKEND_SET (engine-bound, fired from a tab's own settings),
- *   - SETTINGS_CLI_BACKEND_SET (engine-free overlay path).
- *
- * The overlay path has no engine reference at all, and even the
- * engine-bound path only knows the SENDER's engine — but a backend flip
- * is a global app setting, so EVERY tab's engine must recycle, not just
- * the one that happened to send the IPC. We iterate all tabs (web tabs
- * have no engine → skipped) and let each engine decide which of its
- * runtimes are safe to recycle (in-flight turns are preserved inside
- * restartRuntimesForBackendChange). Best-effort: one engine throwing
- * must not block the rest, and the setting is already persisted, so a
- * failed recycle just degrades to the old "restart to apply" behavior
- * for that one tab rather than losing the change.
+ * Does ANY tab, anywhere in the app, currently have a turn actively in
+ * flight (`ChatEngine.hasInFlightTurn`)? Used to gate CLI_BACKEND_SET /
+ * SETTINGS_CLI_BACKEND_SET (2026-07-21 用户要求): 有会话正在运行时整个
+ * 不允许切换，而不是像以前那样允许切、把 in-flight 回合留在旧后端上跑完
+ * ——即使 restartRuntimesForBackendChange 本来就会跳过 in-flight 的
+ * runtime、不会真的打断它，用户还是明确要求切换动作本身在有会话运行时
+ * 就整体拒绝，给出「等会话结束再切」的提示，而不是让它悄悄延后生效。
  */
-async function recycleAllEnginesForBackendChange(): Promise<void> {
-  const engines = getAllTabs()
+function anyTabHasInFlightTurn(): boolean {
+  return getAllTabs()
     .map((ctx) => ctx.engine)
     .filter((e): e is ChatEngine => e !== null)
-  await Promise.all(
-    engines.map((eng) =>
-      eng.restartRuntimesForBackendChange().catch((err) => {
-        console.warn('[cli-backend] runtime recycle failed for a tab:', err)
-        return 0
-      })
-    )
-  )
+    .some((eng) => eng.hasInFlightTurn())
 }
 
 /**
@@ -491,6 +512,8 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_NEW)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_SWITCH)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_RENAME)
+  ipcMain.removeHandler(IPC_CHANNELS.SESSION_OPEN_JSONL)
+  ipcMain.removeHandler(IPC_CHANNELS.SESSION_GET_JSONL_PATH)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_WORKSPACE_SET)
   ipcMain.removeHandler(IPC_CHANNELS.APP_RELAUNCH)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_NEW)
@@ -510,8 +533,17 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.UPDATER_CHECK)
   ipcMain.removeHandler(IPC_CHANNELS.UPDATER_INSTALL)
   ipcMain.removeHandler(IPC_CHANNELS.AUTH_GET_STATE)
+  ipcMain.removeHandler(IPC_CHANNELS.AUTH_SEND_SMS_CODE)
   ipcMain.removeHandler(IPC_CHANNELS.AUTH_LOGIN)
   ipcMain.removeHandler(IPC_CHANNELS.AUTH_LOGOUT)
+  ipcMain.removeHandler(IPC_CHANNELS.ACCOUNT_GET_PROFILE)
+  ipcMain.removeHandler(IPC_CHANNELS.ACCOUNT_UPDATE_PROFILE)
+  ipcMain.removeHandler(IPC_CHANNELS.USAGE_FILTER_OPTIONS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.USAGE_STATS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.USAGE_MODELS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.USAGE_SNAPSHOT_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.USAGE_LIST_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.USAGE_EXPORT_CSV)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_TRIGGER_MENU_ACTION)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_SWITCH_REQUEST)
@@ -1606,12 +1638,18 @@ export function registerIpcHandlers(): void {
           headers: token ? { Authorization: `Bearer ${token}` } : {}
         })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const body = (await res.json()) as { data?: Array<{ id?: unknown }> }
+        const body = (await res.json()) as {
+          data?: Array<{ id?: unknown; display_name?: unknown }>
+        }
         const NON_CHAT_RE = /image|audio|realtime|embedding|whisper|tts/i
         const models = (Array.isArray(body.data) ? body.data : [])
-          .map((m) => (typeof m.id === 'string' ? m.id : ''))
-          .filter((id) => id && !NON_CHAT_RE.test(id))
-          .sort()
+          .map((m) => ({
+            id: typeof m.id === 'string' ? m.id : '',
+            displayName:
+              typeof m.display_name === 'string' && m.display_name ? m.display_name : undefined
+          }))
+          .filter((m) => m.id && !NON_CHAT_RE.test(m.id))
+          .sort((a, b) => a.id.localeCompare(b.id))
         modelListCache = { key: cliBackend, models, at: now }
         return { ok: true, models }
       } catch (err) {
@@ -1717,6 +1755,56 @@ export function registerIpcHandlers(): void {
       // value without any in-memory state to invalidate.
       engine.emit('sessionListChanged')
       return { ok: true }
+    }
+  )
+
+  // 用 VS Code 打开会话的原始 transcript jsonl（2026-07-20 用户要求，此前
+  // 走 shell.openPath 交给系统默认程序——.jsonl 没有稳定的默认关联，谁
+  // 装了就打开谁，体验不可控）。全局扫 `~/.claude/projects/`
+  // （findSessionJsonlGlobal，不需要 workspaceDirs——session id 本身唯一）
+  // 定位文件，再用 `vscode://file/<path>` URI 交给 shell.openExternal——
+  // 不依赖 PATH 里有没有 `code` CLI（GUI 启动的 Electron 进程环境变量比
+  // 终端窄是常见坑，这条项目的代理环境变量事故史踩过好几次同类"进程环境
+  // 跟终端不一样"的雷），只依赖 VS Code 本体注册过这个协议（装了 VS Code
+  // 就有，装的时候自动注册，不需要额外配置）。encodeURI 只编码路径里的
+  // 空格/非 ASCII 字符（会话标题带中文时目录名也可能带中文），斜杠等
+  // 路径分隔符原样保留。找不到文件、VS Code 未安装或协议打开失败都回
+  // 非空 error，不抛异常——菜单点击即发即弃，没有常驻消息位展示失败原因，
+  // 跟原来 shell.openPath 分支的错误处理惯例一致。
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_OPEN_JSONL,
+    async (
+      _event,
+      payload: SessionOpenJsonlPayload
+    ): Promise<SessionOpenJsonlResult> => {
+      const sessionId =
+        payload && typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (!sessionId) return { error: 'Missing sessionId.' }
+      const jsonlPath = await findSessionJsonlGlobal(sessionId)
+      if (!jsonlPath) return { error: 'Session transcript not found.' }
+      try {
+        await shell.openExternal(`vscode://file${encodeURI(jsonlPath)}`)
+        return { error: '' }
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
+
+  // 「复制 jsonl 路径」菜单项——同上定位逻辑，但不 shell.openPath，只把
+  // 绝对路径交回 renderer 由它写剪贴板（不在 main 侧碰剪贴板 API）。
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_GET_JSONL_PATH,
+    async (
+      _event,
+      payload: SessionOpenJsonlPayload
+    ): Promise<SessionGetJsonlPathResult> => {
+      const sessionId =
+        payload && typeof payload.sessionId === 'string' ? payload.sessionId : ''
+      if (!sessionId) return { error: 'Missing sessionId.' }
+      const jsonlPath = await findSessionJsonlGlobal(sessionId)
+      if (!jsonlPath) return { error: 'Session transcript not found.' }
+      return { path: jsonlPath }
     }
   )
 
@@ -1974,12 +2062,19 @@ export function registerIpcHandlers(): void {
       if (mode !== 'bundled' && mode !== 'system') {
         throw new Error(`Invalid cli backend mode: ${String(mode)}`)
       }
+      // 有会话在运行时整个拒绝切换（2026-07-21 用户要求），而不是像以前那样
+      // 允许切、让 in-flight 回合继续跑在旧后端上——理由见
+      // anyTabHasInFlightTurn 声明处注释。renderer 侧靠这个固定错误消息
+      // 识别原因，换成本地化提示。
+      if (anyTabHasInFlightTurn()) {
+        throw new Error(CLI_BACKEND_SESSION_RUNNING_ERROR)
+      }
       updateAppSettings({ cliBackend: mode })
       // Apply NOW instead of "on the next app restart": recycle every
       // tab's live runtimes so the next turn cold-starts on the new
       // backend. In-flight turns keep their current backend (see
       // ChatEngine.restartRuntimesForBackendChange).
-      await recycleAllEnginesForBackendChange()
+      await recycleAllEnginesRuntimes()
       const eng = resolveEngine(event)
       const detection = await eng.refreshSystemClaudeDetection()
       let bundledPath: string | null = null
@@ -2138,16 +2233,27 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(
+    IPC_CHANNELS.AUTH_SEND_SMS_CODE,
+    async (_event, phone: string): Promise<AuthSendSmsCodeResult> => {
+      // 结构防御：preload 只透传，恶意/异常 payload 在此归一成失败结论。
+      if (typeof phone !== 'string') {
+        return { ok: false, error: '请输入手机号' }
+      }
+      return sendSmsCode(phone)
+    }
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.AUTH_LOGIN,
     async (_event, payload: AuthLoginPayload): Promise<AuthLoginResult> => {
       // 结构防御：preload 只透传，恶意/异常 payload 在此归一成失败结论
       // 而不是让 authService 对 undefined 调 .trim() 抛栈。
       if (
         !payload ||
-        typeof payload.email !== 'string' ||
-        typeof payload.password !== 'string'
+        typeof payload.phone !== 'string' ||
+        typeof payload.code !== 'string'
       ) {
-        return { ok: false, error: '请输入邮箱和密码' }
+        return { ok: false, error: '请输入手机号和验证码' }
       }
       return login(payload)
     }
@@ -2156,6 +2262,92 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async (): Promise<void> => {
     logout()
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.ACCOUNT_GET_PROFILE,
+    async (): Promise<AccountProfileResult> => {
+      return getAccountProfile()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.ACCOUNT_UPDATE_PROFILE,
+    async (_event, payload: AccountUpdatePayload): Promise<AccountUpdateResult> => {
+      if (!payload || typeof payload !== 'object') {
+        return { ok: false, error: '请求参数有误' }
+      }
+      return updateAccountProfile(payload)
+    }
+  )
+
+  // ── 使用记录页（对接 sub2api /api/v1/usage*，逻辑在 usageService.ts）──
+  // 结构防御同 AUTH_LOGIN：preload 只透传，异常 payload 在此归一成失败
+  // 结论，不让 service 层对 undefined 字段解引用炸栈。
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_FILTER_OPTIONS_GET,
+    async (): Promise<UsageFilterOptionsResult> => {
+      return getUsageFilterOptions()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_STATS_GET,
+    async (_event, filters: UsageQueryFilters): Promise<UsageStatsResult> => {
+      if (!isUsageQueryFilters(filters)) return { ok: false, error: '请求参数有误' }
+      return getUsageStats(filters)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_MODELS_GET,
+    async (_event, filters: UsageQueryFilters): Promise<UsageModelsResult> => {
+      if (!isUsageQueryFilters(filters)) return { ok: false, error: '请求参数有误' }
+      return getUsageModels(filters)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_SNAPSHOT_GET,
+    async (
+      _event,
+      filters: UsageQueryFilters,
+      granularity: unknown
+    ): Promise<UsageSnapshotResult> => {
+      if (!isUsageQueryFilters(filters)) return { ok: false, error: '请求参数有误' }
+      return getUsageSnapshot(filters, granularity === 'hour' ? 'hour' : 'day')
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_LIST_GET,
+    async (_event, query: UsageListQuery): Promise<UsageListResult> => {
+      if (!isUsageListQuery(query)) return { ok: false, error: '请求参数有误' }
+      return getUsageList(query)
+    }
+  )
+
+  // Engine-free 落盘：渲染层已拼好 CSV 文本（含 BOM），main 只弹原生保存框
+  // 写盘——同 PROPOSAL_EXPORT「渲染层生成内容 + main 管保存框与写盘」的分工。
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_EXPORT_CSV,
+    async (event, payload: UsageExportCsvPayload): Promise<UsageExportCsvResult> => {
+      const csv = typeof payload?.csv === 'string' ? payload.csv : ''
+      const defaultFilename =
+        typeof payload?.defaultFilename === 'string' && payload.defaultFilename
+          ? payload.defaultFilename
+          : 'usage.csv'
+      if (!csv) return { path: null }
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { path: null }
+      const r = await dialog.showSaveDialog(win, {
+        defaultPath: defaultFilename,
+        filters: [{ name: 'CSV', extensions: ['csv'] }]
+      })
+      if (r.canceled || !r.filePath) return { path: null }
+      await writeFile(r.filePath, csv, 'utf8')
+      return { path: r.filePath }
+    }
+  )
 
   // Shell tab-strip settings menu → active chat tab. The shell renderer
   // can't reach the chat renderer's stores directly, so it fires this and
@@ -2290,7 +2482,7 @@ export function registerIpcHandlers(): void {
   // The settings overlay isn't bound to any tab (no ChatEngine), so unlike
   // CLI_BACKEND_GET/SET these resolve the global app setting + run detection
   // directly via cliDetect. On SET we still recycle every tab's runtimes
-  // (via recycleAllEnginesForBackendChange) so the flip applies on the next
+  // (via recycleAllEnginesRuntimes) so the flip applies on the next
   // turn — `backend` is only read at spawn time, so a reused runtime would
   // otherwise keep the old backend until an app restart.
   ipcMain.handle(
@@ -2323,10 +2515,15 @@ export function registerIpcHandlers(): void {
       if (mode !== 'bundled' && mode !== 'system') {
         throw new Error(`Invalid CLI backend mode: ${String(mode)}`)
       }
+      // Same as CLI_BACKEND_SET: 有会话在运行时整个拒绝切换，理由见
+      // anyTabHasInFlightTurn 声明处注释。
+      if (anyTabHasInFlightTurn()) {
+        throw new Error(CLI_BACKEND_SESSION_RUNNING_ERROR)
+      }
       updateAppSettings({ cliBackend: mode })
       // Same as CLI_BACKEND_SET: apply immediately by recycling live
       // runtimes across all tabs (the overlay has no engine of its own).
-      await recycleAllEnginesForBackendChange()
+      await recycleAllEnginesRuntimes()
       const info = await detectSystemClaude()
       let bundledPath: string | null = null
       try {
@@ -3040,6 +3237,35 @@ function isValidPermissionMode(value: unknown): value is UiPermissionMode {
   return (
     typeof value === 'string' &&
     (VALID_PERMISSION_MODES as readonly string[]).includes(value)
+  )
+}
+
+/** USAGE_STATS_GET / USAGE_MODELS_GET / USAGE_SNAPSHOT_GET 的 payload 结构防御。 */
+function isUsageQueryFilters(value: unknown): value is UsageQueryFilters {
+  if (!value || typeof value !== 'object') return false
+  const f = value as Record<string, unknown>
+  return (
+    typeof f.startDate === 'string' &&
+    typeof f.endDate === 'string' &&
+    typeof f.timezone === 'string' &&
+    (f.apiKeyId === undefined || typeof f.apiKeyId === 'number') &&
+    (f.groupId === undefined || typeof f.groupId === 'number') &&
+    (f.model === undefined || typeof f.model === 'string') &&
+    (f.requestType === undefined || typeof f.requestType === 'string') &&
+    (f.billingType === undefined || typeof f.billingType === 'number') &&
+    (f.billingMode === undefined || typeof f.billingMode === 'string')
+  )
+}
+
+/** USAGE_LIST_GET 的 payload 结构防御——UsageQueryFilters 加分页/排序字段。 */
+function isUsageListQuery(value: unknown): value is UsageListQuery {
+  if (!isUsageQueryFilters(value)) return false
+  const f = value as unknown as Record<string, unknown>
+  return (
+    typeof f.page === 'number' &&
+    typeof f.pageSize === 'number' &&
+    (f.sortBy === undefined || typeof f.sortBy === 'string') &&
+    (f.sortOrder === undefined || f.sortOrder === 'asc' || f.sortOrder === 'desc')
   )
 }
 

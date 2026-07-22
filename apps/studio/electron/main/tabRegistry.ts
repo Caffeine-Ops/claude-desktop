@@ -747,6 +747,41 @@ export function getAllTabs(): TabContext[] {
 }
 
 /**
+ * Recycle every open tab's live runtimes so the next turn re-spawns picking
+ * up freshly-changed process.env. Two callers, both mutate `process.env`
+ * global state and need every already-warm bundled-backend runtime to
+ * observe it, not just the tab that triggered the change:
+ *
+ *   - CLI_BACKEND_SET / SETTINGS_CLI_BACKEND_SET (ipc/register.ts) — user
+ *     flips between bundled fusion-code and system claude.
+ *   - clientEnvConfigService.applyClientEnvConfig — a fresh per-user
+ *     ANTHROPIC_AUTH_TOKEN/OPENAI_API_KEY/GEMINI_API_KEY pulled from
+ *     sub2api's `/api/v1/keys/client-config` just landed in process.env
+ *     (see loadEnv.applyRemoteEnvConfig) and needs to reach the CLI child
+ *     process, which only reads env at spawn time.
+ *
+ * We iterate all tabs (web tabs have no engine → skipped) and let each
+ * engine decide which of its runtimes are safe to recycle (in-flight turns
+ * are preserved inside restartRuntimesForBackendChange — the method name
+ * predates this second caller but the recycle mechanics are identical:
+ * "some process.env keys changed, re-spawn on next send"). Best-effort:
+ * one engine throwing must not block the rest.
+ */
+export async function recycleAllEnginesRuntimes(): Promise<void> {
+  const engines = getAllTabs()
+    .map((ctx) => ctx.engine)
+    .filter((e): e is ChatEngine => e !== null)
+  await Promise.all(
+    engines.map((eng) =>
+      eng.restartRuntimesForBackendChange().catch((err) => {
+        console.warn('[tabRegistry] runtime recycle failed for a tab:', err)
+        return 0
+      })
+    )
+  )
+}
+
+/**
  * 是否有任何 tab 的 engine 还挂着活跃的 fusion-code runtime（pump 未退，
  * handle 或 queue 仍在）。用于 before-quit 决定要不要弹「退出会中断任务」
  * 确认框——没有任何任务在跑时直接静默退出，不打扰用户。

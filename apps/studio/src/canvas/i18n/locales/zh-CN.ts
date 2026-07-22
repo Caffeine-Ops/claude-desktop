@@ -169,7 +169,8 @@ export const zhCN: Dict = {
   'settings.codeAgentHint': '选择用来运行提示词的 Claude 后端，聊天与画布共用。',
   'settings.chatCliBackendTitle': 'CLI 后端',
   'settings.chatCliBackendHint':
-    '聊天会话与画布项目共用此选择。切换立即生效——进行中的回合保持当前后端，下一回合起切换。',
+    '聊天会话与画布项目共用此选择。有会话正在进行时无法切换，请等会话结束后再切换。',
+  'settings.cliBackendSwitchBlocked': '有会话正在进行，请等待会话结束后再切换 CLI 后端。',
   'settings.cliBackendBundledTitle': '内置 fusion-code',
   'settings.cliBackendBundledDesc': '随应用打包的 Claude Code，已针对 prompt cache 与 MCP 工具做优化',
   'settings.cliBackendBundledMeta': '随应用打包',
@@ -2204,6 +2205,12 @@ export const zhCN: Dict = {
   // Memory (auto-extracted personalization saved as on-disk markdown)
   'settings.memory': '记忆',
   'settings.memoryHint': '后续对话可复用的事实和上下文',
+  // 导航项/弹窗标题复用同一个 key（DRY，避免三处各自维护一份同义文案跑偏）：
+  // 侧栏「全局规则」nav 项 + 弹窗 header title + 面板内 h4 三处消费同一份。
+  'settings.instructions': '全局规则',
+  // nav 行 <small> 副标题 + 弹窗 header 副标题共用的短版描述（跟 memoryHint/
+  // appearanceHint 同款两级结构）；面板正文内的长版说明另见 customInstructionsHint。
+  'settings.instructionsHint': '助手每次对话都遵守的固定指令',
   'settings.customInstructionsTitle': '全局规则',
   'settings.customInstructionsHint': 'OpenDesign 每次对话都应遵守的固定指令。事实、偏好和项目上下文请保存为记忆。',
   'settings.customInstructionsPlaceholder': '例如："始终使用 TypeScript。优先使用函数式组件。保持回复简洁。"',

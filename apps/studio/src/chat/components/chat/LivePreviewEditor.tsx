@@ -2251,8 +2251,13 @@ export function LivePreviewEditor({
         </div>
       </div>
 
-      {/* ── bottom status bar ── */}
-      <footer className="flex h-9 shrink-0 items-center gap-2.5 border-t border-border/60 bg-background px-4 text-[11.5px] text-muted-foreground">
+      {/* ── bottom status bar ──
+          毛玻璃质感补齐（2026-07-20，用户截图报「底部这条还没有」）：上面
+          的 dock 早在 2026-07-18 那批就换成 bg-background/65 backdrop-blur-xl
+          了，这条状态栏当时漏了——同一块面板内两条紧挨着的 chrome 一个透
+          一个不透，观感不一致。跟 dock 用同一套数值（/65 + xl + saturate-
+          150），不新开一档。 */}
+      <footer className="flex h-9 shrink-0 items-center gap-2.5 border-t border-border/60 bg-background/65 backdrop-blur-xl backdrop-saturate-150 px-4 text-[11.5px] text-muted-foreground">
         <span className="text-muted-foreground/80">HTML 幻灯片工作区</span>
         <div className="flex-1" />
         <div className="flex items-center gap-1.5 text-muted-foreground/80">

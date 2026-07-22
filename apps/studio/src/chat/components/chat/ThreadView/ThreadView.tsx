@@ -1113,7 +1113,11 @@ function ScrollToBottomButton(): React.JSX.Element {
           // 后看不出「透视感」，同一踩坑教训见 input.tsx 附近历史注释）+
           // border-white/15 固定白描边 + inset 顶部高光，而不是原来 bg/90
           // 的近乎不透明底（backdrop-blur 在 90% 不透明度下形同虚设）。
-          'pointer-events-auto absolute left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/15 bg-background/55 text-foreground shadow-[0_4px_16px_-4px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 transition-all duration-200 ease-out hover:border-brand/60 hover:bg-background hover:text-brand active:scale-95 ' +
+          // 2026-07-20 补：brightness-125 只在暗档成立，亮档 --background 本身
+          // 接近纯白，同样提亮会把身后内容乘溢出到 255、反而漂白——改成
+          // brightness-100（不调整）+ dark:brightness-125，理由见 dropdown-
+          // menu.tsx 头注释第四条，全项目 ~15 处同配方一起改。
+          'pointer-events-auto absolute left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/15 bg-background/55 text-foreground shadow-[0_4px_16px_-4px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 transition-all duration-200 ease-out hover:border-brand/60 hover:bg-background hover:text-brand active:scale-95 ' +
           // Anchored to the dock wrapper: `bottom-full` puts the button's bottom
           // edge at the dock's TOP, then mb-2 lifts it 8px clear so it floats
           // just above the input. This tracks the dock height automatically —
@@ -1549,14 +1553,18 @@ function ChatHeader(): React.JSX.Element {
           背后色块/文字轮廓的模糊纹理，纯色糊成一片反而看不出"透视感"）；
           border-white/15 + inset 顶部高光都是固定白色装饰性描边/阴影而非
           语义色 token（同 RailSessionList 保存按钮渐变的做法），负责给玻璃
-          面板勾一条能在深浅两色背景下都看得见的边缘反光。 */}
+          面板勾一条能在深浅两色背景下都看得见的边缘反光。2026-07-20 补：
+          上面这套 brightness-125 提亮只在暗档验证过——亮档 --background
+          本身接近纯白，同样提亮会把身后内容乘溢出到 255、反而漂白，改成
+          brightness-100（不调整）+ dark:brightness-125，理由见 dropdown-
+          menu.tsx 头注释第四条，全项目 ~15 处同配方一起改。 */}
       <Dialog
         open={renameOpen}
         onOpenChange={(open) => {
           if (!open) setRenameOpen(false)
         }}
       >
-        <DialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 sm:max-w-[440px]">
+        <DialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 sm:max-w-[440px]">
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -1647,27 +1655,37 @@ function EmptyState(): React.JSX.Element {
   // Hero 标题在全角逗号处断成两行大字（「不止聊天，」/「搞定一切」）。英文
   // 标题没有全角逗号 → parts 只有一个元素，单行渲染，无多余 <br>。
   const titleParts = t('emptyStateTitle').split('，')
+  // Enter fade on mount (new chat / switching to an empty session). Pure
+  // opacity ONLY: this block lives INSIDE the scroll viewport, where any
+  // transform risks the scrollbar-flicker regression documented on the
+  // viewport — so no y/scale here, just a slightly longer fade for feel.
+  const heroFade = {
+    initial: { opacity: 0 },
+    animate: { opacity: 1 },
+    transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] }
+  } as const
   return (
-    // Enter fade on mount (new chat / switching to an empty session). Pure
-    // opacity ONLY: this block lives INSIDE the scroll viewport, where any
-    // transform risks the scrollbar-flicker regression documented on the
-    // viewport — so no y/scale here, just a slightly longer fade for feel.
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-      className="flex flex-1 flex-col items-stretch justify-center py-10"
-    >
-      <h1 className="text-[clamp(36px,4.5vw,52px)] font-bold leading-[1.18] tracking-tight text-foreground">
-        {titleParts.map((part, i) => (
-          <span key={i} className="block">
-            {i < titleParts.length - 1 ? `${part}，` : part}
-          </span>
-        ))}
-      </h1>
-      <p className="mb-8 mt-4 text-[14px] text-muted-foreground/80">
-        {t('emptyStateScenarioHint')}
-      </p>
+    // 外层退回纯 div：Composer 的毛玻璃卡片（backdrop-blur-xl）不能再当这层
+    // opacity 淡入的后代——祖先本身在半透明合成时，backdrop-filter 采样到的
+    // 是「过渡中的中间态」而不是静息态，280ms 淡完后模糊效果会「啪」地跳一下
+    // （2026-07-19 用户截图实锤：同一份骨架修复后，dock 态的 Composer 不闪，
+    // 只有走这条 EmptyState 淡入路径的 hero 态才闪，两者唯一差异就是这层
+    // motion.div）。标题/提示语/演示区没有 backdrop-filter，各自留在独立的
+    // motion.div 里继续淡入，观感上仍是「整块一起浮现」，只是 Composer 从
+    // 第一帧就是最终态，不参与这次半透明合成。
+    <div className="flex flex-1 flex-col items-stretch justify-center py-10">
+      <motion.div {...heroFade}>
+        <h1 className="text-[clamp(36px,4.5vw,52px)] font-bold leading-[1.18] tracking-tight text-foreground">
+          {titleParts.map((part, i) => (
+            <span key={i} className="block">
+              {i < titleParts.length - 1 ? `${part}，` : part}
+            </span>
+          ))}
+        </h1>
+        <p className="mb-8 mt-4 text-[14px] text-muted-foreground/80">
+          {t('emptyStateScenarioHint')}
+        </p>
+      </motion.div>
 
       {/* Composer sits inside the centered block (not the bottom dock).
           hero 形态：分类 tab + 技能 chips 的 ScenarioRail 由它自己渲染在
@@ -1676,7 +1694,9 @@ function EmptyState(): React.JSX.Element {
 
       {/* 「看看它能做什么」演示区：内置演示录像的卡片入口（点卡片就地
           回放）。没有内置录像时自渲染 null，页面与旧版完全一致。 */}
-      <DemoShowcase />
+      <motion.div {...heroFade}>
+        <DemoShowcase />
+      </motion.div>
 
       {/* Promo banner (figure 26) — VISUAL-ONLY placeholder; the desktop app
           has no credits/PRO system behind it.
@@ -1702,6 +1722,6 @@ function EmptyState(): React.JSX.Element {
         </button>
       </div>
       */}
-    </motion.div>
+    </div>
   )
 }

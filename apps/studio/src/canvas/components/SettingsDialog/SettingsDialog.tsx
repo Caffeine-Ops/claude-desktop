@@ -129,6 +129,8 @@ import { CliBackendCard } from './CliBackendCard';
 import { LogAnalysisSection } from './LogAnalysisSection';
 import { CritiqueTheaterSection } from './CritiqueTheaterSection';
 import { NotificationsSection } from './NotificationsSection';
+import { AccountSection } from './AccountSection';
+import { UsageSection } from './UsageSection';
 
 /* ── 执行模式面板已迁 chat 栈（shadcn + Tailwind utility），以下是迁移期的
    两件小基建。全部 section 迁完后考虑下沉到 src/components/ui/：
@@ -1275,10 +1277,12 @@ export function SettingsDialog({
   // BYOK content so "Local CLI" only renders once (in the seg-control tab),
   // not twice (heading + tab).
   const sectionHeader: Record<SettingsSection, { title: string; subtitle: string }> = {
+    account: { title: '账号', subtitle: '个人资料与账户信息' },
+    usage: { title: '使用记录', subtitle: '查看和分析您的 API 使用历史' },
     execution: { title: t('settings.title'), subtitle: t('settings.subtitle') },
     instructions: {
-      title: 'Instructions / Rules',
-      subtitle: 'Fixed behavior the assistant should follow',
+      title: t('settings.instructions'),
+      subtitle: t('settings.instructionsHint'),
     },
     media: { title: t('settings.mediaProviders'), subtitle: t('settings.mediaProvidersHint') },
     composio: { title: t('connectors.title'), subtitle: t('connectors.subtitle') },
@@ -1448,8 +1452,8 @@ export function SettingsDialog({
             >
               <Icon name="edit" size={18} />
               <span>
-                <strong>Instructions / Rules</strong>
-                <small>Fixed assistant behavior</small>
+                <strong>{t('settings.instructions')}</strong>
+                <small>{t('settings.instructionsHint')}</small>
               </span>
             </button>
             <button
@@ -2567,6 +2571,10 @@ export function SettingsDialog({
             <NotificationsSection cfg={cfg} setCfg={setCfg} />
           ) : null}
 
+          {activeSection === 'account' ? <AccountSection /> : null}
+
+          {activeSection === 'usage' ? <UsageSection /> : null}
+
           {activeSection === 'pet' ? (
             <PetSettings cfg={cfg} setCfg={setCfg} />
           ) : null}
@@ -2602,11 +2610,7 @@ export function SettingsDialog({
                 <div className="memory-block-head">
                   <div>
                     <h4>{t('settings.customInstructionsTitle')}</h4>
-                    <p className="hint">
-                      Fixed instructions OpenDesign follows in every chat. These are
-                      not saved memories; use Memory for facts, preferences, and
-                      project context.
-                    </p>
+                    <p className="hint">{t('settings.customInstructionsHint')}</p>
                   </div>
                 </div>
                 <textarea

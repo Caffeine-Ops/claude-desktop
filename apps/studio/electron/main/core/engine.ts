@@ -27,6 +27,7 @@ import {
   type ChatEventPayload,
   type ChatImagePayload,
   type LogEventPayload,
+  type ModelListEntry,
   type UiPermissionMode
 } from '../../shared/ipc-channels'
 import type {
@@ -68,6 +69,7 @@ import { invalidateFileSuggestions } from './fileSuggestions'
 import { PermissionBroker } from './permissionBroker'
 import { deriveScope } from './permissionScope'
 import { seedSkillsFromDisk } from './seedSkills'
+import { syncSessionTranscript } from '../services/sessionSyncService'
 import {
   moveSessionToWorkspace,
   resolveSessionWorkspace,
@@ -100,16 +102,22 @@ import {
  * plus the OPENAI and GEMINI keys for media). The user's own `claude`
  * install must NOT inherit any of it: system claude should run on the
  * user's ~/.claude login + default Anthropic models, not be hijacked onto
- * csdn / gpt-5.4.
+ * csdn / gpt-5.4. Same story for the LIVE replacement of those values:
+ * once signed in, clientEnvConfigService pulls each user's own csdn
+ * credentials from sub2api's `/api/v1/keys/client-config` and overwrites
+ * these same keys in `process.env` (loadEnv.applyRemoteEnvConfig) — still
+ * csdn-gateway creds, just per-user instead of one shared token baked into
+ * every build. System claude must not inherit those either.
  *
  * So: pass through the parent/shell env but DROP every key that loadEnv
- * injected from env.json. We strip the whole env.json key set (not a
- * hand-maintained gateway allowlist that could miss the OPENAI / GEMINI /
- * future keys). PATH, HOME, etc. survive (they came from the shell, not
- * env.json), so the child still launches. A key the user exported in their
- * OWN shell also survives — `envJsonInjectedKeys()` only holds keys loadEnv
- * actually set, and loadEnv skips keys already present in the shell,
- * cleanly separating "env.json leak" from "deliberate user config".
+ * injected from env.json OR applyRemoteEnvConfig applied from sub2api. We
+ * strip the whole tracked key set (not a hand-maintained gateway allowlist
+ * that could miss the OPENAI / GEMINI / future keys). PATH, HOME, etc.
+ * survive (they came from the shell, not env.json/sub2api), so the child
+ * still launches. A key the user exported in their OWN shell also
+ * survives — `envJsonInjectedKeys()` only holds keys this app actually
+ * set, never one already present in the shell, cleanly separating
+ * "env.json/sub2api leak" from "deliberate user config".
  */
 /**
  * env.json-injected keys that are SAFE to keep even under the system backend,
@@ -155,15 +163,22 @@ function systemBackendEnv(): Record<string, string> {
 
 // NOTE: there used to be a `SWITCH_READY_TIMEOUT_MS = 30_000` here,
 // used by the now-removed `waitForSessionReady` helper. That helper
-// blocked on `runtime.readyPromise` — which is only resolved after
+// blocked on a `runtime.readyPromise` — which only resolved after
 // fusion-code's first `system init`, yielded inside submitMessage
 // after a user prompt is pushed. Blocking before push always hit the
 // timeout for no real reason. The SDK's queue is buffered, so send()
 // can safely push userMsgs while the cli is still spawning, and the
-// consumer drains them once stdin is alive. Both the timeout constant
-// and the helper have been deleted — readyPromise stays around as a
-// "first system-init has landed" observation flag used by the
-// `send:begin` log event and the pump/finally bookkeeping.
+// consumer drains them once stdin is alive. The timeout constant and
+// the helper were deleted first, leaving the promise/resolve/reject
+// triple around as a "first system-init has landed" observation flag;
+// that triple was itself removed later (2026-07-21) once we noticed
+// `readyReject()` — with no awaiter left anywhere to attach a
+// `.catch()` — was firing a Node `unhandledRejection` every time the
+// bundled cli died before completing init (harmless, logCollector.ts's
+// global handler just logs it, but pure noise). `readySettled` alone
+// (a plain boolean, set true on first init / left false if the pump
+// exits first) carries the exact same information the log event needs,
+// with nothing to reject into the void.
 
 /**
  * util.inspect options for SDK message dumps in the pump log.
@@ -221,16 +236,15 @@ interface SessionRuntime {
   /** Promise of the background pump task; resolves when the SDK stream ends. */
   pumpPromise: Promise<void> | null
   /**
-   * Resolves on the first `system init` SDK message for this session —
+   * True from the first `system init` SDK message for this session —
    * i.e. the exact moment fusion-code is ready to accept a user turn.
-   * Rejects if the pump exits before init was seen (cli spawn failure).
-   *
-   * `switchToSession()` awaits this so UI `sessionLoading` covers the
-   * whole ~8s cli cold-start rather than just the sync spawn window.
+   * Stays false if the pump exits before init was seen (cli spawn
+   * failure — logged, see runPump's finally). Pure observation flag,
+   * consumed only by the `send:begin` log event's `runtimeReady` detail;
+   * nothing awaits it (see the NOTE above SDK_INSPECT_OPTS for why the
+   * promise-based version of this was removed — ensureSessionReady
+   * never blocks on cli readiness).
    */
-  readyPromise: Promise<void> | null
-  readyResolve: (() => void) | null
-  readyReject: ((err: Error) => void) | null
   readySettled: boolean
   /**
    * Per-runtime equivalent of the old class-level `pendingResume`.
@@ -783,6 +797,22 @@ export class ChatEngine extends EventEmitter {
   }
 
   /**
+   * Does any runtime in this engine have a turn actively in flight right
+   * now (`rt.active` — same flag `restartRuntimesForBackendChange` reads
+   * to decide which runtimes are safe to tear down)? Used to gate CLI
+   * backend switching (2026-07-21 用户要求): a "live" runtime
+   * (`listActiveRuntimeIds`) just means the subprocess is warm/idle, not
+   * that it's actually generating a reply — the backend switch should
+   * only be blocked while a reply is genuinely in flight.
+   */
+  hasInFlightTurn(): boolean {
+    for (const [, rt] of this.sessions) {
+      if (rt.active) return true
+    }
+    return false
+  }
+
+  /**
    * Recycle every live runtime so the NEXT turn re-spawns under the
    * current `cliBackend` setting. Called by CLI_BACKEND_SET when the
    * user flips between bundled fusion-code and system claude.
@@ -874,9 +904,6 @@ export class ChatEngine extends EventEmitter {
         rt.handle = null
         rt.queue = null
         rt.pumpPromise = null
-        rt.readyPromise = null
-        rt.readyResolve = null
-        rt.readyReject = null
         rt.readySettled = false
         rt.active = null
         rt.openedViaSend = false
@@ -1243,16 +1270,16 @@ export class ChatEngine extends EventEmitter {
       runtimeReady: !!(runtime.queue && runtime.handle && runtime.readySettled)
     })
 
-    // Make sure the cli is spawned and ready. This is a no-op when
-    // the background warmup kicked off in `switchToSession` has
-    // already completed (both queue/handle set AND readyPromise
-    // resolved), a await-on-same-promise when warmup is still in
-    // flight, and a full spawn+wait when nothing has happened yet
-    // (rare — only if the user hit send before the React effect
-    // pipeline committed the switch). ensureSessionReady swallows
-    // its own timeout / pump-failure, so we re-check the runtime
-    // state after the await and throw a clean error when the spawn
-    // didn't stick.
+    // Make sure the cli is spawned and ready. This is a no-op when the
+    // background warmup kicked off in `switchToSession` has already set
+    // `queue`/`handle` (openSession assigns both synchronously, so even a
+    // warmup still mid-flight has already claimed the slot by the time
+    // any other call gets a turn on the event loop — no promise-based
+    // dedup needed), and a full spawn+wait when nothing has happened yet
+    // (rare — only if the user hit send before the React effect pipeline
+    // committed the switch). ensureSessionReady swallows its own timeout /
+    // pump-failure, so we re-check the runtime state after the await and
+    // throw a clean error when the spawn didn't stick.
     try {
       await this.ensureSessionReady(sessionId)
       if (!runtime.queue || !runtime.handle) {
@@ -1823,22 +1850,10 @@ export class ChatEngine extends EventEmitter {
     const queue = new AsyncMessageQueue<unknown>()
     runtime.queue = queue
 
-    // Wire up the "ready" promise before the pump can start. It's
-    // resolved on the first `system init` SDK message (see runPump) and
-    // rejected from the pump's finally if the cli exited first.
+    // Reset the "ready" flag before the pump can start. Flipped true on
+    // the first `system init` SDK message (see runPump); stays false if
+    // the pump's finally sees the cli exit before that happened.
     runtime.readySettled = false
-    runtime.readyPromise = new Promise<void>((resolve, reject) => {
-      runtime.readyResolve = () => {
-        if (runtime.readySettled) return
-        runtime.readySettled = true
-        resolve()
-      }
-      runtime.readyReject = (err: Error) => {
-        if (runtime.readySettled) return
-        runtime.readySettled = true
-        reject(err)
-      }
-    })
 
     // kb_search in-process MCP server（仅方案模式挂载，非方案会话 null → 不传）。
     //
@@ -2314,9 +2329,11 @@ export class ChatEngine extends EventEmitter {
     // Without this, the first `send()` on a brand-new chat pays the
     // full cold start synchronously (30+s of spinner). ensureSessionReady
     // is idempotent — if the user hits send while we're still warming
-    // up, `send()` will await the same readyPromise and NOT spawn a
-    // second cli. Errors here are purely advisory; the real error path
-    // lives in `send()` where the user is actively waiting.
+    // up, it sees `queue`/`handle` already set by this warmup's
+    // openSession (synchronous assignment, see ensureSessionReady) and
+    // skips straight through without spawning a second cli. Errors here
+    // are purely advisory; the real error path lives in `send()` where
+    // the user is actively waiting.
     //
     // Crucial ordering: warm the external-MCP cache BEFORE the spawn when
     // it's still empty. The warmup is what actually spawns fusion-code on a
@@ -2370,10 +2387,11 @@ export class ChatEngine extends EventEmitter {
    * `system init` message. That message is yielded from inside
    * `QueryEngine.submitMessage` (free-code/src/QueryEngine.ts:540),
    * which only runs after a user msg has been pushed into the stream.
-   * Waiting on `readyPromise` here before send() has pushed would
-   * always hit the `waitForSessionReady` timeout for no reason — the
-   * earlier "wait for system init as a cli-ready handshake" design
-   * was based on a wrong assumption about cli lifecycle.
+   * Blocking here on that message before send() has pushed anything
+   * would always hit the old `waitForSessionReady` helper's timeout for
+   * no reason — the earlier "wait for system init as a cli-ready
+   * handshake" design (see the NOTE above SDK_INSPECT_OPTS) was based
+   * on a wrong assumption about cli lifecycle.
    *
    * The SDK's `AsyncMessageQueue` is a buffered channel, so send() can
    * safely push userMsgs into `runtime.queue` while openSession is
@@ -2832,9 +2850,9 @@ export class ChatEngine extends EventEmitter {
               break
             }
           }
-          // Resolve the ready promise so `switchToSession` unblocks:
-          // the cli is now fully initialized and will accept turns.
-          runtime.readyResolve?.()
+          // The cli is now fully initialized and will accept turns —
+          // flip the observation flag (see SessionRuntime.readySettled).
+          runtime.readySettled = true
         }
 
         let active = runtime.active
@@ -2981,6 +2999,11 @@ export class ChatEngine extends EventEmitter {
           // reply). The mtime-keyed listSessions cache invalidates itself
           // on the new mtime, so the re-pull reads the real new time.
           this.emit('sessionListChanged')
+          // 这轮的 jsonl 已经写完（本分支本身就是靠这一点触发）——顺手把
+          // 全量 jsonl 同步给 sub2api 供管理员分析。Fire-and-forget：
+          // syncSessionTranscript 内部吞掉所有失败（未登录/网络错误/文件
+          // 过大）只打日志，不阻塞消息泵、不影响本轮 UI。
+          void syncSessionTranscript(sessionId, this.getWorkingDirectory(runtime))
           // Message queue: with the slot free, promote the next queued
           // turn (if any) into a fresh active turn. beginTurn pushes its
           // user-message onto the still-open SDK queue, so the same cli
@@ -3020,14 +3043,14 @@ export class ChatEngine extends EventEmitter {
       runtime.handle = null
       runtime.pumpPromise = null
       // If the pump exited before we ever saw `system init`, the cli
-      // never became ready. Reject any awaiters (switchToSession) so
-      // the UI stops its loading spinner instead of hanging forever.
-      if (runtime.readyReject && !runtime.readySettled) {
-        runtime.readyReject(new Error('cli exited before first init'))
+      // never became ready — nothing to reject into (see readySettled
+      // doc: no one awaits it), just log it. Common cause: the backend
+      // it just tried to talk to rejected the very first request (e.g.
+      // a gateway 502 / no schedulable upstream account), which
+      // fusion-code treats as fatal and exits on instead of retrying.
+      if (!runtime.readySettled) {
+        console.warn('[engine] cli exited before first init', { sessionId })
       }
-      runtime.readyPromise = null
-      runtime.readyResolve = null
-      runtime.readyReject = null
       console.log('[engine] session reset after pump exit', { sessionId })
     }
   }
@@ -3413,6 +3436,35 @@ export class ChatEngine extends EventEmitter {
       case 'result':
         this.handleResultMessage(sessionId, active, sdkMessage)
         break
+      case 'system':
+        // `subtype: 'init'` is handled once at the top of runPump (session
+        // meta caching), before an active turn even exists. The only
+        // in-turn `system` subtype worth forwarding is 'api_retry' — the
+        // SDK's internal retry-on-502/529/rate-limit loop, fired BEFORE
+        // any assistant content streams. Everything else (there is
+        // currently nothing else) falls through and is dropped, same as
+        // before.
+        if (sdkMessage.subtype === 'api_retry') {
+          this.emitEvent(sessionId, {
+            type: 'retry',
+            messageId: active.messageId,
+            attempt:
+              typeof sdkMessage.attempt === 'number' ? sdkMessage.attempt : 0,
+            maxRetries:
+              typeof sdkMessage.max_retries === 'number'
+                ? sdkMessage.max_retries
+                : 0,
+            delayMs:
+              typeof sdkMessage.retry_delay_ms === 'number'
+                ? sdkMessage.retry_delay_ms
+                : undefined,
+            errorStatus:
+              typeof sdkMessage.error_status === 'number'
+                ? sdkMessage.error_status
+                : undefined
+          })
+        }
+        break
       default:
         break
     }
@@ -3787,9 +3839,6 @@ export class ChatEngine extends EventEmitter {
       queue: null,
       handle: null,
       pumpPromise: null,
-      readyPromise: null,
-      readyResolve: null,
-      readyReject: null,
       readySettled: false,
       pendingResume: false,
       cwd: null,
@@ -4102,24 +4151,28 @@ export class ChatEngine extends EventEmitter {
 
   /**
    * Ask the LIVE foreground CLI which models it supports (SDK
-   * `supportedModels` control request → ModelInfo[].value). Returns null
-   * when no runtime is live yet (lazy spawn hasn't happened) or the CLI
-   * predates the control request — the MODEL_LIST handler falls back to a
-   * static alias set in that case. Used for the system-claude backend,
-   * where the bundled gateway's /v1/models catalog doesn't apply (its
-   * env.json keys are stripped for system claude — see systemBackendEnv).
+   * `supportedModels` control request → ModelInfo[] with both `value` and a
+   * human-readable `displayName`). Returns null when no runtime is live yet
+   * (lazy spawn hasn't happened) or the CLI predates the control request —
+   * the MODEL_LIST handler falls back to a static alias set in that case.
+   * Used for the system-claude backend, where the bundled gateway's
+   * /v1/models catalog doesn't apply (its env.json keys are stripped for
+   * system claude — see systemBackendEnv).
    */
-  async listSupportedModels(): Promise<string[] | null> {
+  async listSupportedModels(): Promise<ModelListEntry[] | null> {
     const rt = this.activeSessionId
       ? this.sessions.get(this.activeSessionId)
       : undefined
     if (!rt?.handle) return null
     try {
       const infos = await rt.handle.supportedModels()
-      const ids = infos
-        .map((m) => m.value)
-        .filter((v): v is string => typeof v === 'string' && v.length > 0)
-      return ids.length > 0 ? ids : null
+      const entries = infos
+        .filter((m): m is typeof m & { value: string } => typeof m.value === 'string' && m.value.length > 0)
+        .map((m) => ({
+          id: m.value,
+          displayName: typeof m.displayName === 'string' && m.displayName ? m.displayName : undefined
+        }))
+      return entries.length > 0 ? entries : null
     } catch (err) {
       console.warn('[engine] supportedModels failed', err)
       return null

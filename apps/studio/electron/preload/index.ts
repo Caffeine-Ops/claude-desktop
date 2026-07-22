@@ -37,6 +37,9 @@ import {
   type SessionSearchPayload,
   type SessionSearchResult,
   type SessionRenameResult,
+  type SessionOpenJsonlPayload,
+  type SessionOpenJsonlResult,
+  type SessionGetJsonlPathResult,
   type SessionSwitchPayload,
   type SessionSwitchResult,
   type SessionWorkspaceSetPayload,
@@ -91,9 +94,22 @@ import {
   type PptSourcePreviewResult,
   type ModelListResult,
   type ModelSetPayload,
+  type AccountProfileResult,
+  type AccountUpdatePayload,
+  type AccountUpdateResult,
   type AuthLoginPayload,
   type AuthLoginResult,
+  type AuthSendSmsCodeResult,
   type AuthState,
+  type UsageQueryFilters,
+  type UsageListQuery,
+  type UsageExportCsvPayload,
+  type UsageExportCsvResult,
+  type UsageFilterOptionsResult,
+  type UsageStatsResult,
+  type UsageModelsResult,
+  type UsageSnapshotResult,
+  type UsageListResult,
   type UpdaterState,
   type WorkspaceKnownListResult,
   type WorkspacePickResult,
@@ -465,6 +481,24 @@ const chatApi: ChatApi = {
     ) as Promise<SessionRenameResult>
   },
 
+  openSessionJsonl(
+    payload: SessionOpenJsonlPayload
+  ): Promise<SessionOpenJsonlResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SESSION_OPEN_JSONL,
+      payload
+    ) as Promise<SessionOpenJsonlResult>
+  },
+
+  getSessionJsonlPath(
+    payload: SessionOpenJsonlPayload
+  ): Promise<SessionGetJsonlPathResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SESSION_GET_JSONL_PATH,
+      payload
+    ) as Promise<SessionGetJsonlPathResult>
+  },
+
   setSessionWorkspace(
     payload: SessionWorkspaceSetPayload
   ): Promise<SessionWorkspaceSetResult> {
@@ -698,6 +732,13 @@ const chatApi: ChatApi = {
     return ipcRenderer.invoke(IPC_CHANNELS.AUTH_GET_STATE) as Promise<AuthState>
   },
 
+  sendSmsCode(phone: string): Promise<AuthSendSmsCodeResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.AUTH_SEND_SMS_CODE,
+      phone
+    ) as Promise<AuthSendSmsCodeResult>
+  },
+
   login(payload: AuthLoginPayload): Promise<AuthLoginResult> {
     return ipcRenderer.invoke(
       IPC_CHANNELS.AUTH_LOGIN,
@@ -716,6 +757,65 @@ const chatApi: ChatApi = {
       ipcRenderer.off(IPC_CHANNELS.AUTH_STATE_CHANGED, listener)
     }
   },
+
+  getAccountProfile(): Promise<AccountProfileResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.ACCOUNT_GET_PROFILE
+    ) as Promise<AccountProfileResult>
+  },
+
+  updateAccountProfile(payload: AccountUpdatePayload): Promise<AccountUpdateResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.ACCOUNT_UPDATE_PROFILE,
+      payload
+    ) as Promise<AccountUpdateResult>
+  },
+
+  getUsageFilterOptions(): Promise<UsageFilterOptionsResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.USAGE_FILTER_OPTIONS_GET
+    ) as Promise<UsageFilterOptionsResult>
+  },
+
+  getUsageStats(filters: UsageQueryFilters): Promise<UsageStatsResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.USAGE_STATS_GET,
+      filters
+    ) as Promise<UsageStatsResult>
+  },
+
+  getUsageModels(filters: UsageQueryFilters): Promise<UsageModelsResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.USAGE_MODELS_GET,
+      filters
+    ) as Promise<UsageModelsResult>
+  },
+
+  getUsageSnapshot(
+    filters: UsageQueryFilters,
+    granularity: 'day' | 'hour'
+  ): Promise<UsageSnapshotResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.USAGE_SNAPSHOT_GET,
+      filters,
+      granularity
+    ) as Promise<UsageSnapshotResult>
+  },
+
+  getUsageList(query: UsageListQuery): Promise<UsageListResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.USAGE_LIST_GET,
+      query
+    ) as Promise<UsageListResult>
+  },
+
+  exportUsageCsv(payload: UsageExportCsvPayload): Promise<UsageExportCsvResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.USAGE_EXPORT_CSV,
+      payload
+    ) as Promise<UsageExportCsvResult>
+  },
+
   getKbPath(): Promise<{
     kbRoot: string | null
     outDir: string

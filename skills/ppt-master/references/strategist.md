@@ -810,10 +810,10 @@ This is what makes the axis meaningful: a `presentation` deck and a `text` deck 
 
 ## 7. Project Folder
 
-Project folder must exist before Strategist runs. If not, execute:
+Project folder must exist before Strategist runs. If not, execute (resolving `<resolved_dir>` per SKILL.md Step 2 — never the bare command's implicit cwd default):
 
 ```bash
-python3 scripts/project_manager.py init <project_name> --format <canvas_format>
+python3 scripts/project_manager.py init <project_name> --format <canvas_format> --dir <resolved_dir>
 ```
 
 Save outputs to `projects/<project_name>_<format>_<YYYYMMDD>/design_spec.md`.

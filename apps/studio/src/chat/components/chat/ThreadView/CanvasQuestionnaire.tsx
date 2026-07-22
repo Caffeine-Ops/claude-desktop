@@ -185,7 +185,7 @@ export function CanvasQuestionnaire({
           <div className="ml-auto flex shrink-0 items-center gap-3 self-center">
             {questions.length > 0 && (
               <span className="text-[11.5px] tabular-nums text-muted-foreground">
-                <span className="font-semibold text-accent">{answeredCount}</span> /{' '}
+                <span className="font-semibold text-brand">{answeredCount}</span> /{' '}
                 {questions.length} 已回答
               </span>
             )}
@@ -332,7 +332,7 @@ export function CanvasQuestionnaire({
                       the typed text; focus solidifies the dashed border. */}
                   <label
                     className={
-                      'flex items-center gap-2.5 rounded-lg border border-dashed pl-3.5 pr-1 transition-all duration-150 focus-within:border-solid focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 ' +
+                      'flex items-center gap-2.5 rounded-lg border border-dashed pl-3.5 pr-1 transition-all duration-150 focus-within:border-solid focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/20 ' +
                       (otherSelected
                         ? 'border-solid border-brand bg-brand/[0.08] shadow-[0_0_0_1px_hsl(var(--brand))]'
                         : 'border-border hover:border-foreground/20')
@@ -379,8 +379,8 @@ export function CanvasQuestionnaire({
               className="rounded-xl border border-dashed border-border px-[18px] py-4"
             >
               <div className="flex items-center gap-2.5">
-                <span className="grid size-6 shrink-0 place-items-center rounded-[7px] bg-accent/10">
-                  <span className="size-1 animate-pulse rounded-full bg-accent" />
+                <span className="grid size-6 shrink-0 place-items-center rounded-[7px] bg-brand/10">
+                  <span className="size-1 animate-pulse rounded-full bg-brand" />
                 </span>
                 <span className="h-[11px] w-28 animate-pulse rounded bg-muted" />
               </div>
@@ -400,7 +400,7 @@ export function CanvasQuestionnaire({
       </div>
 
       {/* Action bar: per-question progress dots + hint + the submit button.
-          The button UNLOCKS (grey → accent, one scale beat + a single sheen
+          The button UNLOCKS (grey → brand, one scale beat + a single sheen
           sweep) the moment every question is answered — the "ready to hand
           back" moment gets a visible beat instead of a silent color swap. */}
       {/* Footer bar: same card surface as the body, separated by the top

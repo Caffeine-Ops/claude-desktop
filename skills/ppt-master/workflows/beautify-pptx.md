@@ -51,8 +51,10 @@ Match the canvas to the source so 1:1 pages and paste-back align. Determine the 
 | ≈1.333 (4:3) | `ppt43` |
 | other | nearest format in [`canvas-formats.md`](../references/canvas-formats.md); record the source pixel size in the spec |
 
+Resolve `<resolved_dir>` the same way as SKILL.md Step 2 (`pwd`; `$HOME/ppt-master-projects` if cwd is dotfile-prefixed, else `$(pwd)/projects`) — never the bare command's implicit default.
+
 ```bash
-python3 ${SKILL_DIR}/scripts/project_manager.py init <project_name> --format <format>
+python3 ${SKILL_DIR}/scripts/project_manager.py init <project_name> --format <format> --dir <resolved_dir>
 python3 ${SKILL_DIR}/scripts/project_manager.py import-sources <project_path> <source.pptx> --move
 ```
 

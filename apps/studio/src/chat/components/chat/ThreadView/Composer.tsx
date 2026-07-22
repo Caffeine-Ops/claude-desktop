@@ -12,6 +12,7 @@ import { useComposerSend } from '@assistant-ui/core/react'
 import { AnimatePresence, motion } from 'motion/react'
 
 import type { SessionMeta } from '@desktop-shared/types'
+import type { ModelListEntry } from '@desktop-shared/ipc-channels'
 import { useI18n, useT } from '../../../i18n'
 import { useChatStore, useTeamMemberTasks, useTurnActivity } from '../../../stores/chat'
 import { isReplaySessionId } from '../../../replay/replayStore'
@@ -1067,7 +1068,7 @@ function SkillPickerButton({
                 // saturate-150 + backdrop-brightness-125，border 换固定
                 // border-white/15 + inset 顶部高光，原来是完全不透明的
                 // bg-card，零 blur。
-                className="fixed z-[9999] mb-1.5 flex w-[340px] flex-col overflow-hidden rounded-2xl border border-white/15 bg-card/55 shadow-[0_24px_80px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125"
+                className="fixed z-[9999] mb-1.5 flex w-[340px] flex-col overflow-hidden rounded-2xl border border-white/15 bg-card/55 shadow-[0_24px_80px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125"
                 role="listbox"
               >
                 {/* 搜索框 */}
@@ -1163,7 +1164,7 @@ function SkillPickerButton({
  * 只缓存成功结果；失败不写缓存（下次实例照常重试），也不吞错误（open 时的
  * fetch 兜底仍会把 error 显示出来）。
  */
-let modelCache: string[] | null = null
+let modelCache: ModelListEntry[] | null = null
 let modelPrefetch: Promise<void> | null = null
 
 function prefetchModels(): void {
@@ -1196,52 +1197,20 @@ function prefetchModels(): void {
  * 假图标）。'auto' 段（default）单列在菜单顶部，与具名模型用分隔线隔开（图 2）。
  */
 interface ModelMeta {
-  /** 友好显示名（chip + 菜单行 + 详情卡标题）。 */
+  /** 友好显示名（chip + 菜单行）。 */
   name: string
-  /** 一句话卖点（hover 详情卡）。 */
-  desc: string
-  /** 上下文窗口（详情卡）。 */
-  context: string
-  /** 消耗倍率文案（菜单行右侧 + 详情卡），null = 不显示倍率徽章。 */
-  rate: string | null
   /** 是否 auto 智能挡（菜单里单列顶部）。 */
   auto?: boolean
 }
 
-// 按「模型家族」键（不含 context 变体后缀）。1m 变体的 context/name 后缀
-// 由 modelMetaOf 动态加，不各写一份，避免 haiku/haiku[1m]/完整 id 三份漂移。
+// 按「模型家族」键。1m 变体的 name 后缀由 modelMetaOf 动态加，不各写一份，
+// 避免 haiku/haiku[1m]/完整 id 三份漂移。
 const MODEL_META: Record<string, ModelMeta> = {
-  default: {
-    name: 'Auto',
-    desc: '按任务自动挑选最合适的模型，省心之选。',
-    context: '自适应',
-    rate: '0.5X',
-    auto: true
-  },
-  opus: {
-    name: 'Opus 4.8',
-    desc: '最强推理与代码能力，攻坚复杂任务的旗舰。',
-    context: '200K',
-    rate: '1X'
-  },
-  sonnet: {
-    name: 'Sonnet 5',
-    desc: '速度与能力均衡，日常主力，写作、跑流程都靠得住。',
-    context: '200K',
-    rate: '0.3X'
-  },
-  haiku: {
-    name: 'Haiku 4.5',
-    desc: '轻量极速，简单问答与批量任务的性价比之选。',
-    context: '200K',
-    rate: '0.1X'
-  },
-  fable: {
-    name: 'Fable 5',
-    desc: '创意写作与叙事特化，文风生动、构思跳脱。',
-    context: '200K',
-    rate: '0.3X'
-  }
+  default: { name: 'Auto', auto: true },
+  opus: { name: 'Opus 4.8' },
+  sonnet: { name: 'Sonnet 5' },
+  haiku: { name: 'Haiku 4.5' },
+  fable: { name: 'Fable 5' }
 }
 
 /**
@@ -1274,17 +1243,22 @@ function normalizeModelId(id: string): { family: string; is1m: boolean } {
 }
 
 /**
- * 取模型元数据（按归一化家族查）。1m 变体在家族 meta 上叠加：name 加「· 1M」、
- * context 改 1M。未知家族走 fallback（id 原样当名、无倍率）。
+ * 取模型元数据。`apiDisplayName`（listModels 返回的 `display_name`，后端自己
+ * 的人类可读名）优先于本地 `MODEL_META` 猜测表——后端认识的模型本来就比这张
+ * 写死的小表多（新模型家族、非 claude 系列），不该硬凑成裸 id 或猜错的名字。
+ * 'auto' 是纯前端 UI 概念（并非真实模型），不管后端给不给这个 id 带
+ * display_name 都固定显示本地的 "Auto"。1m 变体仍按归一化家族叠加「· 1M」
+ * 后缀，不管 name 最终来自 API 还是本地表。未知家族且无 API 名时走 fallback
+ * （id 原样当名）。
  */
-function modelMetaOf(id: string): ModelMeta {
+function modelMetaOf(id: string, apiDisplayName?: string): ModelMeta {
   const { family, is1m } = normalizeModelId(id)
-  const base = MODEL_META[family]
-  if (!base) {
-    return { name: id, desc: '', context: '', rate: null }
-  }
+  const localBase = MODEL_META[family]
+  if (localBase?.auto) return localBase
+  const trimmedApiName = apiDisplayName?.trim()
+  const base = trimmedApiName ? { name: trimmedApiName } : (localBase ?? { name: id })
   if (is1m && !base.auto) {
-    return { ...base, name: `${base.name} · 1M`, context: '1M' }
+    return { ...base, name: `${base.name} · 1M` }
   }
   return base
 }
@@ -1298,51 +1272,52 @@ function sameModel(a: string | undefined, b: string | undefined): boolean {
 }
 
 /**
- * 模型行图标——极简几何占位（无品牌 svg 资源）。auto 挡用「闪电」示意智能，
- * 具名模型用「星芒」；同一套描边风格，混排不违和。
- */
-function ModelGlyph({ auto }: { auto?: boolean }): React.JSX.Element {
-  return (
-    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-foreground/[0.05] text-muted-foreground">
-      {auto ? (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M13 2 4 14h7l-1 8 9-12h-7z" />
-        </svg>
-      ) : (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden="true">
-          <path d="m12 3 2.3 6.2L21 11l-6.7 1.8L12 19l-2.3-6.2L3 11l6.7-1.8z" />
-        </svg>
-      )}
-    </span>
-  )
-}
-
-/**
  * 模型 chip — the composer footer's model switcher (moved into the in-card
  * toolbar's right cluster, left of mic/send — 2026-07-05). Shows the session's
- * current model as a friendly name + glyph, and opens an upward RICH dropdown
- * (portal'd to body to escape the composer card's overflow-hidden clip):
- * per-model rows with glyph / name / rate, an Auto row split off on top, a
- * hover detail card, and a 模型设置 footer link. Prefetch primes the catalog
- * so opening is instant. Picking an id calls MODEL_SET (live + future default);
- * the label flips optimistically (`pending`) until sessionMeta catches up.
+ * current model as a friendly name + glyph, and opens an upward dropdown
+ * (portal'd to body to escape the composer card's overflow-hidden clip): a
+ * plain-text list with a right-aligned checkmark on the selected row and an
+ * Auto row split off on top (2026-07-19 restyle to match a flatter reference
+ * design — dropped the per-row icon/rate badge and the hover detail card).
+ * Prefetch primes the catalog so opening is instant. Picking an id calls
+ * MODEL_SET (live + future default); the label flips optimistically
+ * (`pending`) until sessionMeta catches up.
+ *
+ * 二级弹出结构：点开 chip 先弹一级面板，只有「模型」一行摘要（当前值 +
+ * 箭头）；点这一行才在一级面板*左侧*再弹一个二级面板显示模型列表（chip 贴
+ * 窗口右边，参考设计里二级面板是往右弹——这里镜像成往左，否则出屏）。二级
+ * 面板的锚点由 `menuRef`（一级面板）的实测 rect 动态算，不是写死偏移，一级
+ * 面板高度随内容变也能跟上。选中某一项两级面板一起关（沿用 choose 里的
+ * setOpen(false)）。
  */
-function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
+function ComposerModelChip({
+  model
+}: {
+  model?: string
+}): React.JSX.Element {
   const [open, setOpen] = useState(false)
   // 初值取共享缓存：命中则首帧就有列表，点开零 loading。
-  const [models, setModels] = useState<string[] | null>(() => modelCache)
+  const [models, setModels] = useState<ModelListEntry[] | null>(() => modelCache)
   const [listError, setListError] = useState<string | null>(null)
   const [pending, setPending] = useState<string | null>(null)
-  // hover 的模型行 id → 右侧弹详情卡（图 2 那张）。null = 不弹。
-  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  // 二级面板当前展开哪个维度；null = 只显示一级摘要面板。
+  const [activeSection, setActiveSection] = useState<'model' | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const btnRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const secondaryMenuRef = useRef<HTMLDivElement | null>(null)
   // 菜单 portal 到 body 后用 fixed 定位（脱离 composer 卡片 overflow-hidden
   // 裁剪，同姊妹 picker）。右对齐：菜单右缘贴按钮右缘。
   const [anchor, setAnchor] = useState<{ right: number; bottom: number } | null>(
     null
   )
+  // 二级面板锚点：贴一级面板左侧（+8px 间隙），底缘对齐一级面板底缘。不在
+  // 关闭时清空——留着旧值让 AnimatePresence 退场动画有个稳定位置可以播完，
+  // 同 anchor 的既有惯例（见下面 useEffect 只清 activeSection 不清这个）。
+  const [secondaryAnchor, setSecondaryAnchor] = useState<{
+    right: number
+    bottom: number
+  } | null>(null)
 
   // 打开时测按钮 rect 换算 fixed 锚点；滚动/缩放跟随。
   useLayoutEffect(() => {
@@ -1363,6 +1338,34 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
       window.removeEventListener('resize', measure)
     }
   }, [open])
+
+  // 一级面板收起（chip 关闭）时二级也跟着收起，下次点开总是从摘要面板起。
+  // 不清 secondaryAnchor：留最后一次测量值，退场动画期间二级面板位置不跳。
+  useEffect(() => {
+    if (!open) setActiveSection(null)
+  }, [open])
+
+  // 二级面板紧贴一级面板左侧——一级面板高度随「模型」/「推理强度」两行摘要
+  // 固定不变，但仍按一级面板的实测 rect 算（不写死偏移），跟 anchor 那套
+  // 测量逻辑保持一致，扛得住字体/缩放差异。
+  useLayoutEffect(() => {
+    if (activeSection === null) return
+    const measureSecondary = (): void => {
+      const r = menuRef.current?.getBoundingClientRect()
+      if (r)
+        setSecondaryAnchor({
+          right: window.innerWidth - r.left + 8,
+          bottom: window.innerHeight - r.bottom
+        })
+    }
+    measureSecondary()
+    window.addEventListener('scroll', measureSecondary, true)
+    window.addEventListener('resize', measureSecondary)
+    return () => {
+      window.removeEventListener('scroll', measureSecondary, true)
+      window.removeEventListener('resize', measureSecondary)
+    }
+  }, [activeSection])
 
   // 挂载即预取模型目录（不等 open）：填充共享缓存，让首次点开也零 loading。
   // 若缓存已在（别的实例先预取过 / 本实例初值已命中），prefetchModels 内部
@@ -1400,7 +1403,7 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
             const changed =
               prev === null ||
               prev.length !== next.length ||
-              prev.some((id, i) => id !== next[i])
+              prev.some((m, i) => m.id !== next[i]?.id || m.displayName !== next[i]?.displayName)
             if (!changed) return prev
             // 列表变了：先 null 一帧走骨架屏，微任务后填新列表。
             queueMicrotask(() => {
@@ -1429,7 +1432,12 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
     const onDown = (e: MouseEvent): void => {
       const target = e.target as Node
       const inRoot = rootRef.current?.contains(target)
-      const inMenu = menuRef.current?.contains(target)
+      // 二级面板是独立 portal 出去的兄弟节点，不在 menuRef 子树里——两个都要
+      // 判，漏一个会导致点二级面板选项时先被 mousedown 关掉，click 追不上
+      // （元素已经从 DOM 摘掉），选不中。
+      const inMenu =
+        Boolean(menuRef.current?.contains(target)) ||
+        Boolean(secondaryMenuRef.current?.contains(target))
       if (!inRoot && !inMenu) setOpen(false)
     }
     const onKey = (e: KeyboardEvent): void => {
@@ -1442,11 +1450,6 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
       window.removeEventListener('mousedown', onDown)
       window.removeEventListener('keydown', onKey)
     }
-  }, [open])
-
-  // 关闭时清 hover 态，下次打开不残留上次的详情卡。
-  useEffect(() => {
-    if (!open) setHoveredId(null)
   }, [open])
 
   // Fetch the catalog on open to keep it fresh (prefetch already primed it,
@@ -1493,20 +1496,23 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
     })
   }
 
-  // chip 上显示当前模型的友好名（未知 id 原样）。
-  const currentMeta = current ? modelMetaOf(current) : null
-  const modelLabel = currentMeta?.name ?? current ?? '模型'
-  // 菜单分两组：auto 挡（default）单列顶部，具名模型在下（图 2 的分隔线）。
+  // 菜单分两组：auto 挡（default）单列顶部，具名模型在下，虚线分隔。
   const list = models ?? []
-  const autoIds = list.filter((id) => modelMetaOf(id).auto)
-  const namedIds = list.filter((id) => !modelMetaOf(id).auto)
-  // hover 详情卡的数据（悬停哪行取哪行 meta）。
-  const hoveredMeta = hoveredId ? modelMetaOf(hoveredId) : null
+  // chip 上显示当前模型的友好名（未知 id 原样）。current 可能是 system init
+  // 报的完整 id，跟菜单条目做归一化匹配找出它的 display_name（同 renderRow
+  // 的选中判断复用 sameModel，而不是要求字符串完全相等）。
+  const currentEntry = current
+    ? (list.find((m) => m.id === current) ?? list.find((m) => sameModel(m.id, current)))
+    : undefined
+  const currentMeta = current ? modelMetaOf(current, currentEntry?.displayName) : null
+  const modelLabel = currentMeta?.name ?? current ?? '模型'
+  const autoIds = list.filter((m) => modelMetaOf(m.id, m.displayName).auto).map((m) => m.id)
+  const namedIds = list.filter((m) => !modelMetaOf(m.id, m.displayName).auto).map((m) => m.id)
 
   const renderRow = (id: string): React.JSX.Element => {
     // 归一化比较：current（完整 id）与菜单行 id（短别名）指同一模型才打勾。
     const selected = sameModel(id, current)
-    const meta = modelMetaOf(id)
+    const meta = modelMetaOf(id, list.find((m) => m.id === id)?.displayName)
     return (
       <button
         key={id}
@@ -1515,30 +1521,55 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
         role="option"
         aria-selected={selected}
         onClick={() => choose(id)}
-        onMouseEnter={() => setHoveredId(id)}
         className={
-          'flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors ' +
-          (selected ? 'bg-foreground/[0.04]' : 'hover:bg-foreground/[0.04]')
+          'flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-[13.5px] transition-colors ' +
+          (selected ? 'font-medium text-foreground' : 'text-foreground/90 hover:bg-foreground/[0.05]')
         }
       >
-        {/* 选中打勾占位（图 2：选中行左侧一个实心勾圈）——未选留白等宽，行不跳。 */}
-        <span className="grid size-4 shrink-0 place-items-center">
-          {selected ? (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="text-foreground" aria-hidden="true">
-              <circle cx="12" cy="12" r="10" />
-              <path d="m8.5 12 2.5 2.5 4.5-5" fill="none" stroke="hsl(var(--card))" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          ) : null}
-        </span>
-        <ModelGlyph auto={meta.auto} />
-        <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-foreground" title={meta.name}>
+        <span className="min-w-0 flex-1 truncate" title={meta.name}>
           {meta.name}
         </span>
-        {meta.rate ? (
-          <span className="shrink-0 font-mono text-[12px] tabular-nums text-muted-foreground">
-            {meta.rate}
-          </span>
+        {/* 选中态：纯文本行 + 右侧对勾（参照目标设计），不再用左侧实心圆勾图标。 */}
+        {selected ? (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
         ) : null}
+      </button>
+    )
+  }
+
+  // 一级面板的摘要行——目前只有「模型」一行，label + 当前值 + 箭头，
+  // 点击展开/收起二级面板。
+  const renderSectionRow = (
+    section: 'model',
+    label: string,
+    value: string
+  ): React.JSX.Element => {
+    const active = activeSection === section
+    return (
+      <button
+        key={section}
+        data-slot="model-section-row"
+        type="button"
+        role="menuitem"
+        aria-haspopup="true"
+        aria-expanded={active}
+        onClick={() => setActiveSection((s) => (s === section ? null : section))}
+        className={
+          'flex w-full items-center justify-between gap-3 rounded-lg px-2 py-2.5 text-left text-[13.5px] transition-colors ' +
+          (active ? 'bg-foreground/[0.05] text-foreground' : 'text-foreground hover:bg-foreground/[0.05]')
+        }
+      >
+        <span>{label}</span>
+        <span className="flex min-w-0 items-center gap-1 text-muted-foreground">
+          <span className="max-w-[6.5rem] truncate" title={value}>
+            {value}
+          </span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+            <path d="m9 6 6 6-6 6" />
+          </svg>
+        </span>
       </button>
     )
   }
@@ -1553,7 +1584,7 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
         aria-expanded={open}
         aria-label="切换模型"
         className={
-          'flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors ' +
+          'flex items-center gap-1.5 rounded-full px-2 py-1.5 text-[13px] transition-colors ' +
           (open
             ? 'text-foreground'
             : 'text-muted-foreground/80 hover:bg-foreground/[0.05] hover:text-foreground')
@@ -1579,8 +1610,9 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
         </svg>
       </button>
 
-      {/* 富菜单 portal 到 body（脱离 composer 卡片 overflow-hidden 裁剪，同姊妹
-          picker）；fixed 定位，右缘贴按钮右缘、底缘贴按钮顶缘上方。 */}
+      {/* 一级面板 portal 到 body（脱离 composer 卡片 overflow-hidden 裁剪，同
+          姊妹 picker）；fixed 定位，右缘贴按钮右缘、底缘贴按钮顶缘上方。只有
+          「模型」一行摘要，点行才在左侧弹二级面板。 */}
       {anchor !== null &&
         createPortal(
           <AnimatePresence>
@@ -1592,60 +1624,49 @@ function ComposerModelChip({ model }: { model?: string }): React.JSX.Element {
                 exit={{ opacity: 0, y: 4, scale: 0.98 }}
                 transition={{ duration: 0.12, ease: 'easeOut' }}
                 style={{ right: anchor.right, bottom: anchor.bottom }}
-                className="fixed z-[9999] mb-2 w-80 overflow-hidden rounded-2xl border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
-                role="listbox"
-                onMouseLeave={() => setHoveredId(null)}
+                className="fixed z-[9999] mb-2 w-64 overflow-hidden rounded-2xl border border-border bg-card p-1.5 shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                role="menu"
               >
-                {/* hover 详情卡：悬停某行时在菜单左侧浮出（fixed，贴菜单左缘）。
-                    数据来自 MODEL_META。无描述（未知 id）不弹。 */}
-                {hoveredMeta && hoveredMeta.desc ? (
-                  <div
-                    className="fixed z-[10000] w-64 rounded-2xl border border-border bg-card p-4 shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
-                    // 详情卡贴菜单左侧：菜单右缘距视口右 anchor.right、菜单宽
-                    // 320(w-80)→左缘距右 anchor.right+320，详情卡再左移 12px 间隙。
-                    // 底缘与菜单底缘对齐上抬一点，读作从菜单「探出」。
-                    style={{ right: anchor.right + 320 + 12, bottom: anchor.bottom + 40 }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-[15px] font-semibold text-foreground">{hoveredMeta.name}</span>
-                    </div>
-                    <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
-                      {hoveredMeta.desc}
-                    </p>
-                    <div className="mt-3 flex flex-col gap-1.5 border-t border-border pt-3 text-[12.5px]">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">上下文窗口</span>
-                        <span className="font-mono tabular-nums text-foreground">{hoveredMeta.context}</span>
-                      </div>
-                      {hoveredMeta.rate ? (
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">消耗</span>
-                          <span className="font-mono tabular-nums text-foreground">{hoveredMeta.rate}</span>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
+                {renderSectionRow('model', '模型', modelLabel)}
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+
+      {/* 二级面板——「模型」的可选项列表，贴一级面板左侧弹出（chip 靠窗口
+          右边，参考设计里二级面板本是往右弹，这里镜像成往左，不然直接出屏）。
+          挂载 = 独立于一级面板的另一个 portal；secondaryAnchor 的测量见上面
+          useLayoutEffect。 */}
+      {secondaryAnchor !== null &&
+        createPortal(
+          <AnimatePresence>
+            {activeSection !== null && (
+              <motion.div
+                ref={secondaryMenuRef}
+                initial={{ opacity: 0, x: 4, scale: 0.98 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, x: 4, scale: 0.98 }}
+                transition={{ duration: 0.12, ease: 'easeOut' }}
+                style={{ right: secondaryAnchor.right, bottom: secondaryAnchor.bottom }}
+                className="fixed z-[9999] w-64 overflow-hidden rounded-2xl border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.35)]"
+                role="listbox"
+              >
+                <div className="border-b border-border px-3.5 py-2.5 text-[12px] font-medium text-muted-foreground">
+                  模型
+                </div>
 
                 {models === null && listError === null ? (
                   // 骨架屏（2026-07-05 用户要求：切 backend 列表突变太生硬）——
-                  // 每行仿真实模型行的布局（图标方块 + 名条 + 倍率条），脉冲
-                  // 动画。首次打开（有预取缓存）通常直接跳过 loading，这里主要
-                  // 覆盖切 backend 后缓存失效重拉的空窗。
+                  // 纯文本行的宽度脉冲条。首次打开（有预取缓存）通常直接跳过
+                  // loading，这里主要覆盖切 backend 后缓存失效重拉的空窗。
                   <div className="flex flex-col gap-1 p-1.5">
                     {[0, 1, 2, 3, 4].map((i) => (
-                      <div
-                        key={i}
-                        className="flex items-center gap-3 rounded-lg px-2.5 py-2"
-                      >
-                        <span className="size-4 shrink-0" />
-                        <span className="size-8 shrink-0 animate-pulse rounded-lg bg-foreground/[0.06]" />
+                      <div key={i} className="flex items-center rounded-lg px-3 py-2.5">
                         <span
                           className="h-3.5 animate-pulse rounded bg-foreground/[0.06]"
-                          style={{ width: `${[62, 48, 70, 54, 44][i]}%` }}
+                          style={{ width: `${[55, 40, 62, 46, 38][i]}%` }}
                         />
-                        <span className="flex-1" />
-                        <span className="h-3 w-8 animate-pulse rounded bg-foreground/[0.05]" />
                       </div>
                     ))}
                   </div>
@@ -2004,6 +2025,14 @@ function WorkspaceDirPicker(): React.JSX.Element {
         // inset 顶部高光，理由见该组件同处更长注释。h-7 显式定高——12px 字号
         // 撑出的行高跟 PermissionModePicker 的 11px 不一样，py-1 撑高会让两颗
         // 胶囊差 7px（实测 28 vs 21），锁 h-7 后两端对齐。
+        // 2026-07-20：全项目其它 ~13 处同配方在补「亮色主题 brightness-125
+        // 会把身后壁纸乘溢出到白」的 dark: 分流（见 dropdown-menu.tsx 头注释
+        // 第四条）时，这颗胶囊、它的下拉面板（下方 anchor !== null 那处）与
+        // staticChipClass（只读态镜像）三处刻意排除在外——上面这段注释就是
+        // 反例：2026-07-19 真机逐像素采样明确验证过，这颗胶囊贴在壁纸上时
+        // brightness-125 在亮色主题下同样是必要的、没有漂白问题（跟
+        // PermissionModePicker 那颗同步测的），不能凭亮色主题 popover/card
+        // 接近纯白这条通用推理就反过来改掉一个已经用真机验证过的具体反例。
         className={
           'group inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.4)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 transition-colors ' +
           'border-white/15 bg-card/50 text-muted-foreground hover:border-accent/50 hover:bg-card/75 hover:text-foreground ' +

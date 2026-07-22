@@ -42,6 +42,8 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import {
   Clapperboard,
+  Copy,
+  FileText,
   Folder,
   Loader2,
   MoreHorizontal,
@@ -207,12 +209,16 @@ function SessionMenuItems({
   Separator,
   onRename,
   onExportReplay,
+  onViewJsonl,
+  onCopyJsonlPath,
   onDelete
 }: {
   Item: MenuItemComponent
   Separator: MenuSeparatorComponent
   onRename: () => void
   onExportReplay: () => void
+  onViewJsonl: () => void
+  onCopyJsonlPath: () => void
   onDelete: () => void
 }) {
   return (
@@ -225,6 +231,12 @@ function SessionMenuItems({
       </Item>
       <Item onSelect={onExportReplay}>
         <Clapperboard strokeWidth={1.75} /> 导出为演示
+      </Item>
+      <Item onSelect={onViewJsonl}>
+        <FileText strokeWidth={1.75} /> 查看 jsonl
+      </Item>
+      <Item onSelect={onCopyJsonlPath}>
+        <Copy strokeWidth={1.75} /> 复制 jsonl 路径
       </Item>
       <Separator />
       <Item variant="destructive" onSelect={onDelete}>
@@ -517,6 +529,45 @@ export function RailSessionList() {
       })
   }, [])
 
+  /* ── 查看 jsonl：main 全局扫 ~/.claude/projects/ 找到会话原始 transcript
+   * 后用 vscode://file URI 交给 VS Code 打开（2026-07-20 用户要求，此前
+   * 是系统默认程序——.jsonl 没有稳定默认关联，体验不可控）。找不到文件/
+   * VS Code 未安装/打开失败都只记日志——菜单点击即发即弃，rail 没有常驻
+   * 消息位。 */
+  const performViewJsonl = useCallback((target: ThreadSummary) => {
+    void window.chatApi
+      ?.openSessionJsonl({ sessionId: target.id })
+      .then((r) => {
+        if (r.error) {
+          console.warn('[RailSessionList] openSessionJsonl failed:', r.error)
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn('[RailSessionList] openSessionJsonl error:', err)
+      })
+  }, [])
+
+  /* ── 复制 jsonl 路径：跟查看 jsonl 同一套 main 侧定位逻辑，只是不
+   * shell.openPath，而是把绝对路径写进剪贴板（navigator.clipboard，同
+   * WrittenFilesPanel.tsx 的既有用法）。菜单点击即发即弃，没有常驻消息位
+   * 展示成功/失败——与本文件其它菜单动作同一惯例，失败只记日志。 ── */
+  const performCopyJsonlPath = useCallback((target: ThreadSummary) => {
+    void window.chatApi
+      ?.getSessionJsonlPath({ sessionId: target.id })
+      .then((r) => {
+        if (!r.path) {
+          console.warn('[RailSessionList] getSessionJsonlPath failed:', r.error)
+          return
+        }
+        void navigator.clipboard.writeText(r.path).catch((err: unknown) => {
+          console.warn('[RailSessionList] clipboard write failed:', err)
+        })
+      })
+      .catch((err: unknown) => {
+        console.warn('[RailSessionList] getSessionJsonlPath error:', err)
+      })
+  }, [])
+
   // items 随 threads 变化才重建（useMemo）：虚拟化后组件会在每个滚动帧
   // 重渲（getVirtualItems 变化驱动），不能每帧重跑 O(n) 的 buildItems。
   const items = useMemo(() => buildItems(threads), [threads])
@@ -656,6 +707,8 @@ export function RailSessionList() {
                       onSwitch={switchTo}
                       onStartRename={openRename}
                       onExportReplay={performExportReplay}
+                      onViewJsonl={performViewJsonl}
+                      onCopyJsonlPath={performCopyJsonlPath}
                       onStartDelete={setDeleteTarget}
                     />
                   )}
@@ -687,7 +740,7 @@ export function RailSessionList() {
           * 更看得出"透视感"）+ border-white/15 固定白描边（装饰性非语义色，
           * 同保存按钮渐变里的 inset 高光做法），具体理由见 ThreadView.tsx
           * 同处更长的注释。 */}
-        <DialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 sm:max-w-[440px]">
+        <DialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 sm:max-w-[440px]">
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -763,7 +816,7 @@ export function RailSessionList() {
           * 度 + backdrop-brightness-125 提亮 + backdrop-blur-xl + border-
           * white/15 固定白描边），具体理由见 ThreadView.tsx 重命名弹窗同处
           * 长注释。 */}
-        <AlertDialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 sm:max-w-[440px]">
+        <AlertDialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 sm:max-w-[440px]">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-[19px]">
               删除这个对话？
@@ -852,6 +905,8 @@ const SessionRow = memo(function SessionRow({
   onSwitch,
   onStartRename,
   onExportReplay,
+  onViewJsonl,
+  onCopyJsonlPath,
   onStartDelete
 }: {
   thread: ThreadSummary
@@ -863,6 +918,8 @@ const SessionRow = memo(function SessionRow({
   onSwitch: (id: string) => void
   onStartRename: (thread: ThreadSummary) => void
   onExportReplay: (thread: ThreadSummary) => void
+  onViewJsonl: (thread: ThreadSummary) => void
+  onCopyJsonlPath: (thread: ThreadSummary) => void
   onStartDelete: (thread: ThreadSummary) => void
 }) {
   const awaitingLabel =
@@ -878,6 +935,14 @@ const SessionRow = memo(function SessionRow({
   const handleExportReplay = useCallback(
     () => void onExportReplay(thread),
     [onExportReplay, thread]
+  )
+  const handleViewJsonl = useCallback(
+    () => onViewJsonl(thread),
+    [onViewJsonl, thread]
+  )
+  const handleCopyJsonlPath = useCallback(
+    () => onCopyJsonlPath(thread),
+    [onCopyJsonlPath, thread]
   )
   const handleStartDelete = useCallback(
     () => onStartDelete(thread),
@@ -896,10 +961,16 @@ const SessionRow = memo(function SessionRow({
               // motion 滑块（切换时在行间做 FLIP 滑动），2026-07-04 应用户
               // 要求退役——切换即时呈现，普通 span 直接画在目标行。毛玻璃
               // 质感（2026-07-18，跟账户菜单/composer/surface tabs 同一批）：
-              // 实底 bg-sidebar-accent 换成半透明 + backdrop-blur。
+              // 实底 bg-sidebar-accent 换成半透明 + backdrop-blur。2026-07-20
+              // 摘掉 backdrop-blur（亮色主题用户报「没有毛玻璃效果」）：这个
+              // span 是 `.app-rail` 的后代，壁纸开启时 rail 自身已经是
+              // backdrop-filter: blur(20px)...（background-art.css），这里
+              // 再叠一层等于嵌套模糊两次——跟 AppRail.tsx 的 surface tabs
+              // thumb 同一条纪律（那边有更长的解释）。摘掉后只剩半透明色，
+              // 透出 rail 那层已经模糊好的结果就够了，不需要重复模糊。
               <span
                 aria-hidden
-                className="absolute inset-0 rounded-lg bg-sidebar-accent/55 backdrop-blur-md"
+                className="absolute inset-0 rounded-lg bg-sidebar-accent/55"
               />
             )}
             {/* shadcn Button 而非裸 <button>：canvas 的裸元素 reset 守卫
@@ -925,13 +996,14 @@ const SessionRow = memo(function SessionRow({
                     // 看不清，brand 绿不跟用户主题走，识别度恒定。
                     'font-medium text-sidebar-foreground hover:bg-transparent hover:text-sidebar-foreground'
                   : // hover 底毛玻璃化（2026-07-19，同选中态 2026-07-18 那批
-                    // /55 + backdrop-blur-md 配方）：原实色 sidebar-accent
-                    // 曾是刻意选择（60% 透明版叠在灰 rail 上若隐若现，反馈感
-                    // 太弱），但那是选中态玻璃化之前的判断——现在选中滑块已是
-                    // 玻璃底，hover 态保持实色会两态质感不一致（悬停到「菜单
-                    // 收起后仍留在行上」的常见场景尤其明显），故跟进同款半透明
-                    // + 模糊。
-                    'text-sidebar-foreground/75 hover:bg-sidebar-accent/55 hover:backdrop-blur-md hover:text-sidebar-foreground'
+                    // /55 配方）：原实色 sidebar-accent 曾是刻意选择（60% 透明
+                    // 版叠在灰 rail 上若隐若现，反馈感太弱），但那是选中态
+                    // 玻璃化之前的判断——现在选中滑块已是玻璃底，hover 态保持
+                    // 实色会两态质感不一致（悬停到「菜单收起后仍留在行上」的
+                    // 常见场景尤其明显），故跟进同款半透明。不带 backdrop-blur
+                    // （2026-07-20 摘掉，理由同上面选中底那段注释——`.app-rail`
+                    // 自身已经模糊过一次，这里不需要再模糊）。
+                    'text-sidebar-foreground/75 hover:bg-sidebar-accent/55 hover:text-sidebar-foreground'
               )}
             >
               <span
@@ -1025,6 +1097,8 @@ const SessionRow = memo(function SessionRow({
                   Separator={DropdownMenuSeparator}
                   onRename={handleStartRename}
                   onExportReplay={handleExportReplay}
+                  onViewJsonl={handleViewJsonl}
+                  onCopyJsonlPath={handleCopyJsonlPath}
                   onDelete={handleStartDelete}
                 />
               </DropdownMenuContent>
@@ -1037,6 +1111,8 @@ const SessionRow = memo(function SessionRow({
             Separator={ContextMenuSeparator}
             onRename={handleStartRename}
             onExportReplay={handleExportReplay}
+            onViewJsonl={handleViewJsonl}
+            onCopyJsonlPath={handleCopyJsonlPath}
             onDelete={handleStartDelete}
           />
         </ContextMenuContent>

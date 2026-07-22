@@ -689,3 +689,54 @@ jobs:
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
+
+      # 把发给 GitHub Release 的同一批产物（安装包 + 合并后的 latest-*.yml）
+      # rsync 到自建更新服务器，作为客户端 appUpdater 的 generic 兜底源。用的
+      # 就是上面那个 release-out/ 目录，两边逐字节一致——不会出现「GitHub 有
+      # 新版但自建源还是旧版」的分叉（sha512 已在前面校过一次）。
+      #
+      # 连接参数全走 Secrets（仓库 Settings → Secrets and variables →
+      # Actions），要配这几个：
+      #   SELFHOST_SSH_HOST     VPS 主机名 / IP
+      #   SELFHOST_SSH_USER     SSH 用户
+      #   SELFHOST_SSH_KEY      SSH 私钥（对应公钥已加到 VPS 的 authorized_keys）
+      #   SELFHOST_DEPLOY_PATH  目标目录，需被 Nginx 映射到客户端里的
+      #                         SELF_HOSTED_UPDATE_URL，如 /var/www/updates
+      #   SELFHOST_SSH_PORT     可选，默认 22
+      # 没配 SELFHOST_SSH_HOST 时本 step 自跳过（下面 shell 判空），不阻断
+      # GitHub 发布主链——所以「先只发 GitHub、自建源以后再接」也不会红。
+      #
+      # 放在 GitHub Release step 之后：GitHub 是主源，先确保它发成功；自建源
+      # 同步失败（VPS 临时不可达等）不该拖垮已成功的 GitHub 发布。若要严格
+      # 双源一致、任一失败即 fail，去掉 `|| exit 0` 那类容错即可（这里没加，
+      # 判空跳过是唯一的软路径）。
+      - name: Sync to self-hosted update server
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SELFHOST_SSH_HOST }}
+          SSH_USER: ${{ secrets.SELFHOST_SSH_USER }}
+          SSH_KEY: ${{ secrets.SELFHOST_SSH_KEY }}
+          SSH_PORT: ${{ secrets.SELFHOST_SSH_PORT }}
+          DEPLOY_PATH: ${{ secrets.SELFHOST_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_HOST}" ]; then
+            echo "SELFHOST_SSH_HOST 未配置，跳过自建更新服务器同步。"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "${SSH_KEY}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          PORT="${SSH_PORT:-22}"
+          # 不带 --delete：VPS 上累积保留历史版本安装包（可回滚，也不打断正
+          # 在下载旧包的客户端）；latest-*.yml 每次覆盖成最新，generic
+          # provider 只认它，历史包只是躺着。磁盘涨了自行清理。
+          # accept-new：首次连接自动信任 host key 并记进 known_hosts，之后
+          # 校验；比 StrictHostKeyChecking=no 稍安全，生产可改预置 known_hosts。
+          rsync -avz \
+            -e "ssh -i ~/.ssh/deploy_key -p ${PORT} -o StrictHostKeyChecking=accept-new" \
+            release-out/ \
+            "${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}/"
+          rm -f ~/.ssh/deploy_key
+          echo "已同步 release-out/ 到 ${SSH_HOST}:${DEPLOY_PATH}/"

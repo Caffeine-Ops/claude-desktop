@@ -173,8 +173,17 @@ When the user provides non-Markdown content, convert immediately:
 
 🚧 **GATE**: Step 1 complete; source content is ready (Markdown file, user-provided text, or requirements described in conversation are all valid).
 
+**Always pass `--dir` explicitly — never the bare command.** Without `--dir`, `project_manager.py init` silently falls back to `$(pwd)/projects`, so the project's user-facing files land wherever the shell's cwd happens to be. If that cwd is a dotfile directory (`~/.cowork`, `~/.claude`, or any path with a `.`-prefixed segment) — which happens whenever the session's workspace is one of the app's own internal directories — the deck ends up buried next to unrelated internal state (image knowledge base indices, marketplace skill installs) instead of somewhere the user can find it. Resolve the directory yourself before calling `init`:
+
 ```bash
-python3 ${SKILL_DIR}/scripts/project_manager.py init <project_name> --format <format>
+pwd   # inspect first — never assume
+```
+
+- **cwd (or any parent segment) starts with `.`** → pass `--dir "$HOME/ppt-master-projects"`.
+- **Otherwise** → pass `--dir "$(pwd)/projects"` (same location the default would have picked — but explicit, so the choice is visible in the transcript instead of silent).
+
+```bash
+python3 ${SKILL_DIR}/scripts/project_manager.py init <project_name> --format <format> --dir <resolved_dir>
 ```
 
 Format options: `ppt169` (default), `ppt43`, `xhs`, `story`, etc. For the full format list, see `references/canvas-formats.md`.
@@ -198,7 +207,7 @@ Multi-deck: several PPTX files may be imported into one main-pipeline project �
 
 > ⚠️ **MUST use `--move`** (not copy): all source files — Step 1's generated Markdown, original PDFs / MDs / images — go into `sources/` via `import-sources --move`. After execution they no longer exist at the original location. Intermediate artifacts (e.g., `_files/`) are handled automatically.
 
-**✅ Checkpoint — Confirm project structure created successfully, `sources/` contains all source files, converted materials are ready. Proceed to Step 3.**
+**✅ Checkpoint — Confirm project structure created successfully, the resolved `<project_path>` has no `.`-prefixed segment, `sources/` contains all source files, converted materials are ready. Proceed to Step 3.**
 
 ---
 

@@ -77,6 +77,14 @@ export function ThinkingSpinner(): React.JSX.Element | null {
   const turnStartedAt = useChatStore((s) => s.turnStartedAt)
   const streaming = useChatStore((s) => s.streaming)
   const turnVerb = useChatStore((s) => s.turnVerb)
+  // Snapshot of the SDK's transport-level auto-retry (502/529/rate-limit),
+  // when one is in flight — see PerSessionState.retryInfo. Previously the
+  // `system`/`api_retry` message was dropped in the main-process pump and
+  // the spinner just sat on its generic sampled verb for the whole
+  // multi-attempt retry window with no signal anything was happening
+  // (2026-07-22). Only ever set in the same pre-content gap this
+  // component renders in, so no separate hide logic is needed here.
+  const retryInfo = useChatStore((s) => s.retryInfo)
   const sessionId = useChatStore((s) => s.sessionId)
   const lang = useI18n((s) => s.lang)
 
@@ -120,8 +128,22 @@ export function ThinkingSpinner(): React.JSX.Element | null {
   // Display verb follows the UI language: the store samples an English
   // verb once per turn (turnVerb); Chinese UIs map it deterministically
   // onto the Chinese list so the label stays stable for the whole turn.
+  // A retry in flight overrides the generic sampled verb — it's a more
+  // useful thing to tell the user than "Pondering" while the SDK is
+  // silently hammering a 502 gateway.
   const enVerb = turnVerb ?? 'Thinking'
-  const verbLabel = lang === 'zh' ? zhSpinnerVerb(enVerb) : enVerb
+  const verbLabel = retryInfo
+    ? lang === 'zh'
+      ? '网络重连中'
+      : 'Reconnecting'
+    : lang === 'zh'
+      ? zhSpinnerVerb(enVerb)
+      : enVerb
+  const retryLabel = retryInfo
+    ? lang === 'zh'
+      ? `第 ${retryInfo.attempt}/${retryInfo.maxRetries} 次 · `
+      : `attempt ${retryInfo.attempt}/${retryInfo.maxRetries} · `
+    : ''
   const hint = lang === 'zh' ? ' · esc 中断)' : ' · esc to interrupt)'
 
   return (
@@ -129,17 +151,24 @@ export function ThinkingSpinner(): React.JSX.Element | null {
       className="flex min-w-0 items-baseline gap-3 font-mono text-[13px] leading-relaxed text-foreground/80"
       role="status"
       aria-live="polite"
-      aria-label={`${verbLabel}, ${elapsedSec} seconds elapsed`}
+      aria-label={`${verbLabel}${retryLabel ? ', ' + retryLabel : ''}, ${elapsedSec} seconds elapsed`}
     >
       {/* Gutter glyph — same column as ● / ⎿ on adjacent assistant rows
           so the visual tree down the left edge stays aligned no matter
-          what the row type is. tc-star = CSS-only rotation + breathe. */}
-      <span aria-hidden className="tc-star w-[1ch] shrink-0 text-emerald-500">
+          what the row type is. tc-star = CSS-only rotation + breathe.
+          Amber while a retry is in flight — same glyph, different signal. */}
+      <span
+        aria-hidden
+        className={`tc-star w-[1ch] shrink-0 ${retryInfo ? 'text-amber-500' : 'text-emerald-500'}`}
+      >
         {SPINNER_GLYPH}
       </span>
       <span className="shimmer-text">{verbLabel}…</span>
       <span className="truncate text-muted-foreground/80">
-        <span className="tabular-nums">({elapsedSec}s</span>
+        <span className="tabular-nums">
+          ({retryLabel}
+          {elapsedSec}s
+        </span>
         {hint}
       </span>
     </div>

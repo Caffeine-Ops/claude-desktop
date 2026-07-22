@@ -3,6 +3,10 @@
 /**
  * 全屏登录页（AuthGate 的 signedOut 面）——「HUD 分屏」科技感版。
  *
+ * 登录方式：手机号 + 短信验证码（sub2api 后端 `POST /auth/send-sms-code` +
+ * `POST /auth/login/phone`），不做邮箱登录。手机号首次登录由后端自动
+ * 注册，因此没有独立的「没有账号」提示——诚实反映这条链路的真实行为。
+ *
  * 视觉是 docs/ui-prototype-login-v2.html HUD 分屏布局的落地（2026-07-06
  * 用户从极光玻璃改选 HUD 分屏）：左 44% 品牌面（发光 C 核 + 双轨道环反向
  * 慢转 + slogan + mono 状态行），右侧表单面；画布铺品牌绿光晕呼吸 + 细
@@ -29,7 +33,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { Loader2, Monitor, Moon, Sun } from 'lucide-react'
 
 import type { AuthState } from '@desktop-shared/ipc-channels'
@@ -98,23 +102,27 @@ function ThemeToggle() {
  * 标准 shadcn 表单字段：Label 独立一行 + Input（2026-07-06 用户要求，
  * 替换掉此前覆盖过重的浮动 label 方案）。对 shadcn 默认样式的覆盖收敛
  * 到只动配色（--lg-* 变量，亮暗自动切），结构、高度语义、placeholder
- * 行为全是 shadcn 原生。
+ * 行为全是 shadcn 原生。`trailing` 给验证码字段挂「获取验证码」按钮，
+ * 不传时套壳 flex 容器只有一个子元素，行为等同直出 Input。
  */
 function FormField({
   id,
   label,
   type,
+  inputMode,
   autoComplete,
   autoFocus,
   placeholder,
   value,
   disabled,
   invalid,
-  onChange
+  onChange,
+  trailing
 }: {
   id: string
   label: string
   type: string
+  inputMode?: 'text' | 'numeric' | 'tel'
   autoComplete: string
   autoFocus?: boolean
   placeholder: string
@@ -122,51 +130,96 @@ function FormField({
   disabled: boolean
   invalid?: boolean
   onChange: (v: string) => void
+  trailing?: ReactNode
 }) {
   return (
     <div className="space-y-2">
       <Label htmlFor={id} className="text-[13px] font-medium text-[color:var(--lg-ink-2)]">
         {label}
       </Label>
-      <Input
-        id={id}
-        type={type}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-        autoFocus={autoFocus}
-        value={value}
-        disabled={disabled}
-        aria-invalid={invalid || undefined}
-        onChange={(e) => onChange(e.target.value)}
-        className={cn(
-          // 只覆盖配色（--lg-* 变量分档）；bg 双写 dark: 变体压过 shadcn
-          // 默认的 dark:bg-input/30（html 带 .dark 时其特异性更高，会反杀
-          // 无前缀的 arbitrary 类）。
-          'h-11 rounded-lg border-[color:var(--lg-line)]',
-          'bg-[color:var(--lg-input-bg)] dark:bg-[color:var(--lg-input-bg)]',
-          'text-[15px] text-[color:var(--lg-ink)] caret-[color:var(--lg-green)]',
-          'placeholder:text-[color:var(--lg-ink-3)]',
-          'hover:border-[color:var(--lg-line-hover)]',
-          'focus-visible:border-[color:var(--lg-focus-border)] focus-visible:ring-[3px] focus-visible:ring-[color:var(--lg-focus-ring)]',
-          'focus-visible:bg-[color:var(--lg-input-focus-bg)] dark:focus-visible:bg-[color:var(--lg-input-focus-bg)]',
-          'disabled:opacity-60',
-          // 错误态：红边红环（盖过 shadcn 的 aria-invalid destructive 默认）
-          'aria-invalid:border-[color:var(--lg-error)] aria-invalid:ring-[color:var(--lg-error-ring)] dark:aria-invalid:ring-[color:var(--lg-error-ring)]'
-        )}
-      />
+      <div className="flex gap-2">
+        <Input
+          id={id}
+          type={type}
+          inputMode={inputMode}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          autoFocus={autoFocus}
+          value={value}
+          disabled={disabled}
+          aria-invalid={invalid || undefined}
+          onChange={(e) => onChange(e.target.value)}
+          className={cn(
+            // 只覆盖配色（--lg-* 变量分档）；bg 双写 dark: 变体压过 shadcn
+            // 默认的 dark:bg-input/30（html 带 .dark 时其特异性更高，会反杀
+            // 无前缀的 arbitrary 类）。
+            'h-11 flex-1 rounded-lg border-[color:var(--lg-line)]',
+            'bg-[color:var(--lg-input-bg)] dark:bg-[color:var(--lg-input-bg)]',
+            'text-[15px] text-[color:var(--lg-ink)] caret-[color:var(--lg-green)]',
+            // 用 --lg-ink-2（同 Label 色阶）不用更淡的 --lg-ink-3——0.4 alpha
+            // 的 placeholder 在亮档背景上对比度不够，读起来发虚（2026-07-22
+            // 用户反馈样式不好看，见 FormField 头注释）。
+            'placeholder:text-[color:var(--lg-ink-2)]',
+            'hover:border-[color:var(--lg-line-hover)]',
+            'focus-visible:border-[color:var(--lg-focus-border)] focus-visible:ring-[3px] focus-visible:ring-[color:var(--lg-focus-ring)]',
+            'focus-visible:bg-[color:var(--lg-input-focus-bg)] dark:focus-visible:bg-[color:var(--lg-input-focus-bg)]',
+            'disabled:opacity-60',
+            // 错误态：红边红环（盖过 shadcn 的 aria-invalid destructive 默认）
+            'aria-invalid:border-[color:var(--lg-error)] aria-invalid:ring-[color:var(--lg-error-ring)] dark:aria-invalid:ring-[color:var(--lg-error-ring)]'
+          )}
+        />
+        {trailing}
+      </div>
     </div>
   )
 }
+
+/** 后端 isValidPhone 的镜像校验（纯数字，6-20 位，可选 + 前缀）——只挡
+ * 明显的手误，真实校验属于后端。 */
+const PHONE_RE = /^\+?\d{6,20}$/
 
 export function LoginScreen({
   onSignedIn
 }: {
   onSignedIn: (state: AuthState) => void
 }) {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const [phone, setPhone] = useState('')
+  const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [sendingCode, setSendingCode] = useState(false)
+  // 发码冷却倒计时（秒），驱动「获取验证码」按钮的禁用与文案。
+  const [countdown, setCountdown] = useState(0)
+
+  useEffect(() => {
+    if (countdown <= 0) return
+    const t = setTimeout(() => setCountdown((c) => c - 1), 1000)
+    return () => clearTimeout(t)
+  }, [countdown])
+
+  const phoneValid = PHONE_RE.test(phone.trim())
+
+  const handleSendCode = () => {
+    if (sendingCode || countdown > 0 || !phoneValid) return
+    const api = window.chatApi
+    if (!api?.sendSmsCode) return
+    setSendingCode(true)
+    setError(null)
+    void api
+      .sendSmsCode(phone.trim())
+      .then((result) => {
+        setSendingCode(false)
+        if (result.ok) {
+          setCountdown(result.countdown)
+        } else {
+          setError(result.error)
+        }
+      })
+      .catch(() => {
+        setSendingCode(false)
+        setError('验证码发送失败，请稍后重试')
+      })
+  }
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -176,7 +229,7 @@ export function LoginScreen({
     setSubmitting(true)
     setError(null)
     void api
-      .login({ email, password })
+      .login({ phone: phone.trim(), code: code.trim() })
       .then((result) => {
         if (result.ok) {
           // 成功后不清 submitting：直通 onSignedIn 让 AuthGate 卸载本组件，
@@ -304,6 +357,10 @@ export function LoginScreen({
               >
                 欢迎回来
               </h1>
+              {/* 原文案「使用你的账号登录」信息量为零——「欢迎回来」已经
+                  暗示了登录语境，这句只是填充。换成登录方式本身（手机号 +
+                  验证码），下面表单字段一眼就能对上，不是白说
+                  （2026-07-22 用户反馈样式文案不好看）。 */}
               <p
                 className={cn(
                   RISE,
@@ -311,7 +368,7 @@ export function LoginScreen({
                   'mt-2.5 text-[14.5px] leading-normal tracking-[-0.1px] text-[color:var(--lg-ink-2)]'
                 )}
               >
-                使用你的账号登录
+                手机号 + 验证码登录
               </p>
             </div>
 
@@ -327,37 +384,76 @@ export function LoginScreen({
               )}
             >
               <FormField
-                id="login-email"
-                label="邮箱"
-                type="email"
-                autoComplete="email"
+                id="login-phone"
+                label="手机号"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
                 autoFocus
-                placeholder="you@example.com"
-                value={email}
-                disabled={submitting}
-                onChange={setEmail}
-              />
-              <FormField
-                id="login-password"
-                label="密码"
-                type="password"
-                autoComplete="current-password"
-                placeholder="请输入密码"
-                value={password}
+                placeholder="请输入手机号"
+                value={phone}
                 disabled={submitting}
                 invalid={!!error}
-                onChange={setPassword}
+                onChange={setPhone}
+              />
+              <FormField
+                id="login-code"
+                label="验证码"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="请输入验证码"
+                value={code}
+                disabled={submitting}
+                invalid={!!error}
+                onChange={setCode}
+                trailing={
+                  // 原配色（白底 + 浅灰描边）跟旁边的 Input 完全同色，用户分不清
+                  // 这是个按钮还是第三个输入框；倒计时态又只降透明度，浅灰描边
+                  // 淡出后几乎看不出「被禁用」。改成可点时走品牌绿 ghost（跟主
+                  // 按钮同色系但克制，读作「次级动作」），禁用/倒计时时明确切
+                  // 灰且不透明——两态一眼能分（2026-07-22 用户反馈样式不好看）。
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={sendingCode || countdown > 0 || !phoneValid || submitting}
+                    onClick={handleSendCode}
+                    className={cn(
+                      'h-11 shrink-0 whitespace-nowrap rounded-lg px-3.5 text-[13px] font-medium transition-colors',
+                      'border-[color:var(--lg-green)]/35 bg-[color:var(--lg-green)]/[0.06] text-[color:var(--lg-green)]',
+                      'hover:border-[color:var(--lg-green)]/55 hover:bg-[color:var(--lg-green)]/[0.1]',
+                      'disabled:cursor-not-allowed disabled:border-[color:var(--lg-line)] disabled:bg-transparent',
+                      'disabled:text-[color:var(--lg-ink-3)] disabled:hover:border-[color:var(--lg-line)] disabled:hover:bg-transparent'
+                    )}
+                  >
+                    {sendingCode ? (
+                      <Loader2 aria-hidden className="size-3.5 animate-spin" />
+                    ) : countdown > 0 ? (
+                      `${countdown}s 后重发`
+                    ) : (
+                      '获取验证码'
+                    )}
+                  </Button>
+                }
               />
 
-              {/* 错误文案来自 main（AUTH_LOGIN 的 error 字段），mono 终端感 */}
-              {error ? (
-                <p
-                  role="alert"
-                  className="px-0.5 font-mono text-[12.5px] text-[color:var(--lg-error)] before:content-['✕_']"
-                >
-                  {error}
-                </p>
-              ) : null}
+              {/* 错误文案来自 main（AUTH_LOGIN 的 error 字段），mono 终端感。
+                  常驻占位（固定 h-5，无错误时 invisible）而不是有错误才挂载——
+                  右侧表单面是 items-center 垂直居中（见容器 className），这行
+                  一旦按条件挂载/卸载就会改变 form 高度，让整张卡片（含上面的
+                  标题）在报错瞬间被居中重算硬顶一下，无过渡、看起来像「抖了
+                  一下」（2026-07-22 用户反馈）。固定高度让卡片总高不随 error
+                  变化，报错只是在已预留的空间里淡入文字。 */}
+              <p
+                role={error ? 'alert' : undefined}
+                className={cn(
+                  'flex h-5 items-center px-0.5 font-mono text-[12.5px] text-[color:var(--lg-error)]',
+                  "before:content-['✕_']",
+                  !error && 'invisible'
+                )}
+              >
+                {error}
+              </p>
 
               <Button
                 type="submit"
@@ -384,7 +480,7 @@ export function LoginScreen({
               </Button>
             </form>
 
-            {/* 注册/找回密码链路尚不存在——只放诚实的静态说明，不放假链接。 */}
+            {/* 手机号首次登录由后端自动注册，没有独立的「无账号」态。 */}
             <p
               className={cn(
                 RISE,
@@ -392,7 +488,7 @@ export function LoginScreen({
                 'mt-[18px] text-[13px] tracking-[-0.1px] text-[color:var(--lg-ink-3)]'
               )}
             >
-              没有账号？联系管理员开通
+              首次登录将自动为你创建账号
             </p>
           </div>
         </div>

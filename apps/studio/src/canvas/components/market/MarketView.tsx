@@ -110,11 +110,19 @@ export function MarketView({ onOpenDetail }: { onOpenDetail: (id: string) => voi
           * （浅灰 #f5f5f7），而市场面住在共享的白色 shell-content-card 上，
           * 照搬会在白底上显出一条浅灰色带（vault 2026-07-14 底色一致性教训）。
           * 故 --background → --card，其余（渐变止点/模糊半径/mask 衰减）逐字
-          * 照原型。 */}
+          * 照原型。
+          *
+          * 材质改毛玻璃（2026-07-19 用户实锤壁纸开启时这条纯色 bg-card 是一块
+          * 生硬的实心矩形——外层 workspace-split-panel 与顶栏都已经是半透明+
+          * 模糊，就这条吸顶栏满宽实底，跟上下文断层）：改成跟正上方顶栏同款
+          * 配方（bg-card/70 + backdrop-blur-xl，见本文件顶栏 className），
+          * 吸顶栏与顶栏视觉上连成一整块磨砂玻璃，滚动内容钻进去时的模糊/半透
+          * 观感也统一。壁纸关闭时 bg-card/70 叠在不透明的 --card 面上，
+          * 70% 不透明度视觉上跟原来的纯色几乎无差——不引入回归。 */}
         {/* top-[46px] 而非 0：顶栏是浮起的（absolute z-30），搜索吸到 0 会被它
           * 盖住。吸在它正下方，hero 向上滚时先钻进顶栏那 46px 被磨砂糊掉、
           * 再被搜索栏挡住——两段过渡衔接，正是 Codex 那个观感。 */}
-        <div className="sticky top-[46px] z-20 -mx-10 mt-6 bg-card px-10 py-2.5">
+        <div className="sticky top-[46px] z-20 -mx-10 mt-6 px-10 py-2.5 ">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 size-[15px] -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -125,10 +133,15 @@ export function MarketView({ onOpenDetail }: { onOpenDetail: (id: string) => voi
               // 不能省**——shadcn Input 基件自带 `text-base md:text-sm`，媒体
               // 查询里的 md:text-sm 特异性压过裸 text-[13.5px]，只写后者在
               // ≥768px 时会被静默改回 14px（实测）。
-              className="h-10 rounded-[11px] pl-10 text-[13.5px] md:text-[13.5px]"
+              // focus 边框/光晕钉品牌绿：Input 基件默认 focus-visible 用 --ring
+              // （跟用户主题色走），本表面身份色一律品牌绿不跟主题（2026-07-20
+              // 用户实锤，同 CanvasQuestionnaire）。cn/tailwind-merge 里 className
+              // 后置，focus-visible:border/ring-brand 覆盖基件的 -ring。注：market
+              // 目录经 chat 链 scoped @source 扫描，brand utility 在此可用。
+              className="h-10 rounded-[11px] pl-10 text-[13.5px] md:text-[13.5px] focus-visible:border-brand focus-visible:ring-brand/15 backdrop-blur-xl"
             />
           </div>
-          <div
+          {/* <div
             className="pointer-events-none absolute inset-x-0 top-full h-[52px]"
             style={{
               background: 'linear-gradient(to bottom, hsl(var(--card)) 8%, transparent)',
@@ -137,7 +150,7 @@ export function MarketView({ onOpenDetail }: { onOpenDetail: (id: string) => voi
               maskImage: 'linear-gradient(to bottom, black 25%, transparent)',
               WebkitMaskImage: 'linear-gradient(to bottom, black 25%, transparent)',
             }}
-          />
+          /> */}
         </div>
 
         {market.loading && !market.registry ? (

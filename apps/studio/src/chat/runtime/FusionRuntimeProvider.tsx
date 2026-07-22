@@ -228,6 +228,7 @@ export function FusionRuntimeProvider({
   const addToolCall = useChatStore((s) => s.addToolCall)
   const updateToolCallResult = useChatStore((s) => s.updateToolCallResult)
   const updateToolCallTasks = useChatStore((s) => s.updateToolCallTasks)
+  const setRetryInfo = useChatStore((s) => s.setRetryInfo)
   const setError = useChatStore((s) => s.setError)
   const endAssistantMessage = useChatStore((s) => s.endAssistantMessage)
   const setUsage = useChatStore((s) => s.setUsage)
@@ -329,6 +330,7 @@ export function FusionRuntimeProvider({
         addToolCall,
         updateToolCallResult,
         updateToolCallTasks,
+        setRetryInfo,
         setError,
         endAssistantMessage,
         setUsage
@@ -364,6 +366,7 @@ export function FusionRuntimeProvider({
     addToolCall,
     updateToolCallResult,
     updateToolCallTasks,
+    setRetryInfo,
     setError,
     endAssistantMessage,
     setUsage

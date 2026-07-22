@@ -183,6 +183,8 @@ const STRINGS = {
     scenarioCatDaily: '日常办公',
     scenarioCatCode: '代码开发',
     scenarioCatDesign: '设计创意',
+    scenarioPromptMore: '更多 +{count}',
+    scenarioPromptCollapse: '收起',
 
     // Settings — Configuration category — 出图 API（编辑器内 P 图功能的凭据配置）
     imageApiTitle: '出图 API',
@@ -417,6 +419,10 @@ const STRINGS = {
     // bottom for power users.
     toolPaneInputLabel: 'Input',
     toolPaneOutputLabel: 'Output',
+    // Turn-level error card (AssistantErrorBanner) — assistant-ui's
+    // native message `status` error channel, replacing the old inline
+    // "⚠️ ..." text bubble.
+    assistantErrorTitle: '请求失败',
     toolRawDataSummary: '原始数据',
     toolWorkflowTasksLabel: '子任务',
     toolStatusRunning: '运行中',
@@ -618,6 +624,8 @@ const STRINGS = {
     scenarioCatDaily: 'Everyday work',
     scenarioCatCode: 'Coding',
     scenarioCatDesign: 'Design & creative',
+    scenarioPromptMore: 'More +{count}',
+    scenarioPromptCollapse: 'Collapse',
 
     // Settings — Configuration category — Image API credentials for the
     // in-editor image generate/edit feature.
@@ -846,6 +854,7 @@ const STRINGS = {
 
     toolPaneInputLabel: 'Input',
     toolPaneOutputLabel: 'Output',
+    assistantErrorTitle: 'Request failed',
     toolRawDataSummary: 'Raw data',
     toolWorkflowTasksLabel: 'Subtasks',
     toolStatusRunning: 'running',

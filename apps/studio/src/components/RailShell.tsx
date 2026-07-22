@@ -272,7 +272,7 @@ export function RailShell() {
               // overlay 分支已把 nav 自己的 bg-sidebar 让位成 transparent，
               // 玻璃底色 + blur 完全由本层承担，避免两层嵌套 backdrop-filter
               // 叠加糊成一团。
-              'border-r border-white/15 bg-sidebar/55 shadow-[0_8px_40px_rgba(0,0,0,0.28),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125',
+              'border-r border-white/15 bg-sidebar/55 shadow-[0_8px_40px_rgba(0,0,0,0.28),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125',
               // z 分档理由见 RailShell 顶部注释：canvas 面不提的话，overlay
               // 滑出后顶部 46px 会被 tab 栏（z-120）压住，AppRail 自己的
               // 收起按钮被盖没点不到。恒比图标排高 10，浮出时盖住按钮排。

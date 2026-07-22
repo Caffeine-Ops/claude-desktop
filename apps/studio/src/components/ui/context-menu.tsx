@@ -11,7 +11,9 @@ import { cn } from "@/src/lib/utils"
  * 让 ··· 按钮菜单与右键菜单在视觉上是同一个菜单（原型里两者共用
  * 一个 popmenu）。精修档数值（rounded-xl 容器 / 13.5px 条目 / 双层
  * 柔和投影，2026-07-08 定稿；毛玻璃 bg-popover/55 + backdrop-blur 配方，
- * 2026-07-19 定稿）以 dropdown-menu.tsx 为权威源，改那边
+ * 2026-07-19 定稿；backdrop-brightness 主题分流，2026-07-20 定稿——原因
+ * 见 dropdown-menu.tsx 头注释第四条，亮色 popover 身后同一个数值方向要
+ * 反过来）以 dropdown-menu.tsx 为权威源，改那边
  * 时这里逐类跟改——两边漂移则 ··· 与右键会读作两个不同的菜单。
  */
 
@@ -38,7 +40,7 @@ function ContextMenuContent({
       <ContextMenuPrimitive.Content
         data-slot="context-menu-content"
         className={cn(
-          "z-50 max-h-(--radix-context-menu-content-available-height) min-w-[9.5rem] origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-xl border border-white/15 bg-popover/55 p-1.5 text-popover-foreground shadow-[0_10px_38px_-10px_rgba(0,0,0,0.22),0_2px_10px_-2px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+          "z-50 max-h-(--radix-context-menu-content-available-height) min-w-[9.5rem] origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-xl border border-white/15 bg-popover/55 p-1.5 text-popover-foreground shadow-[0_10px_38px_-10px_rgba(0,0,0,0.22),0_2px_10px_-2px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
           className
         )}
         {...props}

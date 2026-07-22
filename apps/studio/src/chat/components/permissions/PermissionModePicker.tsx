@@ -217,6 +217,11 @@ export function PermissionModePicker(): React.JSX.Element {
         // 那颗 12px 字号，靠 py-1 撑高时行高不同→两颗胶囊实测差 7px（28 vs
         // 21），并排摆在同一排肉眼很明显。两处都锁 h-7，不再让内容行高
         // 决定盒高。
+        // 2026-07-20：全项目其它 ~13 处同配方在补「亮色主题 brightness-125
+        // 会把身后壁纸乘溢出到白」的 dark: 分流时，这颗胶囊和它的下拉面板
+        // 刻意排除在外——上面那段就是反例：2026-07-19 真机逐像素采样明确
+        // 验证过亮色主题下 brightness-125 同样必要、没有漂白问题，不能凭
+        // 亮色 popover/card 接近纯白的通用推理反过来改掉一个已验证的反例。
         className={
           'group inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[11px] shadow-[0_1px_2px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.4)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-125 transition-colors ' +
           'border-white/15 bg-card/50 text-muted-foreground hover:border-accent/50 hover:bg-card/75 hover:text-foreground ' +

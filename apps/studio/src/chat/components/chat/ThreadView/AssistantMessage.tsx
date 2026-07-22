@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ActionBarPrimitive, MessagePrimitive, useMessage } from '@assistant-ui/react'
+import {
+  ActionBarPrimitive,
+  ErrorPrimitive,
+  MessagePrimitive,
+  useMessage
+} from '@assistant-ui/react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Check, Copy, ThumbsDown, ThumbsUp } from 'lucide-react'
+import { Check, Copy, ThumbsDown, ThumbsUp, TriangleAlert } from 'lucide-react'
 
 import {
   DropdownMenu,
@@ -11,7 +16,7 @@ import {
 } from '@/src/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/src/components/ui/tooltip'
 import { cn } from '@/src/lib/utils'
-import { useI18n } from '../../../i18n'
+import { useI18n, useT } from '../../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../../stores/chat'
 import {
   useImageEditStore,
@@ -521,6 +526,14 @@ export function AssistantMessage(): React.JSX.Element {
             Empty: ThinkingSpinner
           }}
         />
+        {/* Turn-level failure (SDK `error` ChatEvent → setError → this
+            message's `status`). MessagePrimitive.Error is a pure gate —
+            renders children only when `status.reason === 'error'` — so
+            this can sit unconditionally after Parts without its own
+            visibility check. See AssistantErrorBanner. */}
+        <MessagePrimitive.Error>
+          <AssistantErrorBanner />
+        </MessagePrimitive.Error>
         {/* Deliverable file cards: real on-disk files this message's text
             points at, rendered as openable cards once the message settles. */}
         <AssistantDeliverables />
@@ -848,6 +861,30 @@ function AssistantTextRow({ text }: { text: string }): React.JSX.Element {
   )
 }
 
+/**
+ * Turn-level failure card. Reads its text from `ErrorPrimitive.Message`
+ * (assistant-ui's own `useMessageError()`, sourced off the message's
+ * `status.error` — see `setError` in stores/chat.ts), so this component
+ * owns none of the error text itself and can't drift out of sync with
+ * it. Visual language is deliberately borrowed from `ToolPane`'s
+ * `tone="error"` frame (ToolCallCard.tsx) — same border/wash/label
+ * treatment as a failed tool's output pane — so a request-level error
+ * and a tool-level error read as the same "this failed" signal instead
+ * of inventing a second visual vocabulary.
+ */
+function AssistantErrorBanner(): React.JSX.Element {
+  const t = useT()
+  return (
+    <div className="min-w-0 overflow-hidden rounded-apple-md border border-red-500/30 bg-red-500/[0.05] px-3 pb-2 pt-2">
+      <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-red-500/80">
+        <TriangleAlert aria-hidden className="size-[11px]" />
+        <span>{t('assistantErrorTitle')}</span>
+      </div>
+      <ErrorPrimitive.Message className="mt-1.5 block text-[12.5px] leading-relaxed text-foreground/85" />
+    </div>
+  )
+}
+
 /* ─────────────────── Reasoning (thinking) card ─────────────── */
 
 /**
@@ -925,15 +962,23 @@ function ReasoningCard({
         aria-hidden
         className="mt-[7px] flex size-[6px] shrink-0 items-center justify-center"
       >
-        {/* State indicator dot — mirrors the TodoRow status pattern:
-            in-progress = accent breathing (tc-breathe, main.css), done =
-            emerald. Same colours used for active todos / completed todos
-            in the right rail, so the chat reads as a single visual
-            language across surfaces. */}
+        {/* State indicator dot: in-progress = amber breathing (tc-breathe,
+            main.css), done = emerald. Deliberately NOT bg-accent — the
+            user's theme color has uncontrolled luminance and can end up
+            near-invisible against a dark bubble, whereas this dot is the
+            only "is the model still thinking" signal on screen. Amber
+            matches the "live" pulse convention used elsewhere (e.g.
+            LivePreviewEditor's collaborator cursor). */}
         <span
+          // origin-left：这一行整体坐在 FoldRegion 的 motion.div 里，那层为了做
+          // 折叠高度动画必须 overflow:hidden（TurnActivity.tsx）；这颗点又紧贴
+          // 行首（x=0，与裁剪盒左边界重合，右/上/下都还有 gap-3、mt-[7px] 留白）。
+          // tc-breathe 默认从中心放大到 1.45 倍，往左溢出的部分正好越过裁剪盒
+          // 左边界被切掉，肉眼看是「左边被削平」。改成从左边缘往右呼吸就不会
+          // 再越过左边界，不用去动共享的 FoldRegion 或 .tc-breathe 关键帧。
           className={
             'block size-[6px] rounded-full ' +
-            (isStreaming ? 'tc-breathe bg-accent' : 'bg-emerald-500')
+            (isStreaming ? 'tc-breathe origin-left bg-amber-500' : 'bg-emerald-500')
           }
         />
       </span>
