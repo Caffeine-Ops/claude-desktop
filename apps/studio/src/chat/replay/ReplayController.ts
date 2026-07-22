@@ -182,6 +182,7 @@ class ReplayControllerImpl {
       addToolCall: chat.addToolCall,
       updateToolCallResult: chat.updateToolCallResult,
       updateToolCallTasks: chat.updateToolCallTasks,
+      setRetryInfo: chat.setRetryInfo,
       setError: chat.setError,
       endAssistantMessage: chat.endAssistantMessage,
       setUsage: chat.setUsage

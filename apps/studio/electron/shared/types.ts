@@ -118,6 +118,31 @@ export type ChatEvent =
   | { type: 'end'; messageId: string }
   | { type: 'error'; messageId: string; error: string }
   /**
+   * fusion-code's SDK auto-retries transient upstream failures (502/529
+   * gateway errors, rate limits) internally, BEFORE any assistant
+   * content streams — it emits a `system`/`api_retry` message per
+   * attempt instead of surfacing an error. Previously this message hit
+   * `handleSdkMessage`'s `default: break` and was silently dropped, so
+   * the renderer had no signal that anything was happening: the
+   * pre-content loading spinner just sat on its generic sampled verb
+   * (e.g. "整理中…") for the whole multi-attempt retry window with no
+   * indication a network retry was in flight (2026-07-22). Forwarding
+   * this lets `ThinkingSpinner` swap in a concrete "retrying
+   * (attempt/max)" label for as long as the retry is unresolved.
+   */
+  | {
+      type: 'retry'
+      messageId: string
+      /** 1-indexed attempt number, from the SDK's `attempt` field. */
+      attempt: number
+      /** From the SDK's `max_retries` field. */
+      maxRetries: number
+      /** From the SDK's `retry_delay_ms` field, when present. */
+      delayMs?: number
+      /** HTTP status that triggered the retry (e.g. 502), when present. */
+      errorStatus?: number
+    }
+  /**
    * Workflow / Task subagent lifecycle. fusion-code (SDK ≥0.3) emits a
    * family of `system` messages — `task_started` / `task_progress` /
    * `task_updated` / `task_notification` — as Task-tool subagents and

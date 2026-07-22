@@ -19,6 +19,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/src/components/ui/select';
+// P3 迁移（2026-07-21）：卡片本体换 shadcn Switch + Tailwind utility——
+// design-system/ 目录已在 chat/styles/index.css 的 scoped @source 里
+// （2026-07-14 加入），可以放心用。.ds-grid/.library-ds-card 系列 legacy
+// 类整体退役，避免 .ds-grid 的双重定义撞名坑（design-system-flow.css 与
+// new-project-connectors.css 各有一份，此组件实际吃的是后者）。
+import { Switch } from '@/src/components/ui/switch';
+import { cn } from '@/src/lib/utils';
 
 // Sibling Settings section that hosts the design-systems registry.
 // Lifted out of the previous LibrarySection so each surface (functional
@@ -35,6 +42,50 @@ function toggleCraftSlug(current: string[], slug: string, enabled: boolean): str
   if (enabled) next.add(slug);
   else next.delete(slug);
   return Array.from(next);
+}
+
+// swatches 是 daemon 端 pickSwatchRow() 的产物（apps/daemon/src/design-systems.ts），
+// 固定 4 元语义顺序 [bg, support, fg, accent]，长度只会是 0 或 4——不需要在前端
+// 用亮度/饱和度启发式去猜色板角色，直接按位取用即可。
+function hexToAlpha(hex: string, a: number): string {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+// 卡片顶部的迷你预览——用该设计系统自己的色板渲染一个示意小场景，替代旧版
+// 四个色点（.library-ds-swatch）。数据缺失（极少数 DESIGN.md 一个颜色 token
+// 都提取不出来）时不编造色板，退化成中性占位块。
+function DesignSystemMiniPreview({ swatches }: { swatches?: string[] }) {
+  if (!swatches || swatches.length < 4) {
+    return <div className="m-2 h-[104px] rounded-lg bg-muted shadow-[inset_0_0_0_1px_rgba(0,0,0,0.06)]" />;
+  }
+  const [bg, support, fg, accent] = swatches;
+  return (
+    <div
+      className="relative m-2 h-[104px] overflow-hidden rounded-lg shadow-[inset_0_0_0_1px_rgba(0,0,0,0.06)]"
+      style={{ background: bg }}
+    >
+      <div className="absolute left-3 top-2.5 flex gap-1">
+        {[0, 1, 2].map((i) => (
+          <span key={i} className="block h-1 w-1 rounded-full" style={{ background: hexToAlpha(fg, 0.3) }} />
+        ))}
+      </div>
+      <span className="absolute right-3 top-2.5 h-2 w-6 rounded-full" style={{ background: accent }} />
+      <div
+        className="absolute inset-x-3 top-7 bottom-2.5 flex flex-col gap-1.5 rounded-md p-2.5"
+        style={{ background: support }}
+      >
+        <span className="h-1.5 w-3/5 rounded-full" style={{ background: hexToAlpha(fg, 0.85) }} />
+        <span className="h-1 w-4/5 rounded-full" style={{ background: hexToAlpha(fg, 0.28) }} />
+        <span className="mt-auto h-2.5 w-9 rounded-full" style={{ background: accent }} />
+      </div>
+    </div>
+  );
 }
 
 export function DesignSystemsSection({ cfg, setCfg }: Props) {
@@ -409,64 +460,64 @@ export function DesignSystemsSection({ cfg, setCfg }: Props) {
                     <span className="library-group-count">{items.length}</span>
                   </h4>
                 ) : null}
-                <div className="ds-grid">
-                  {items.map((ds) => (
-                    <div
-                      key={ds.id}
-                      ref={(node) => {
-                        if (node) cardRefs.current.set(ds.id, node);
-                        else cardRefs.current.delete(ds.id);
-                      }}
-                      className={`library-ds-card${
-                        disabledDS.has(ds.id) ? ' disabled' : ''
-                      }${
-                        highlightedDesignSystemId === ds.id ? ' highlighted' : ''
-                      }`}
-                    >
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3">
+                  {items.map((ds) => {
+                    const isOff = disabledDS.has(ds.id);
+                    const isHighlighted = highlightedDesignSystemId === ds.id;
+                    return (
                       <div
-                        className="library-ds-card-content"
-                        role="button"
-                        tabIndex={0}
-                        aria-haspopup="dialog"
-                        onClick={() => setPreviewSystem(ds)}
-                        onKeyDown={(e) => {
-                          if (e.key !== 'Enter' && e.key !== ' ') return;
-                          e.preventDefault();
-                          setPreviewSystem(ds);
+                        key={ds.id}
+                        ref={(node) => {
+                          if (node) cardRefs.current.set(ds.id, node);
+                          else cardRefs.current.delete(ds.id);
                         }}
-                      >
-                        {ds.swatches && ds.swatches.length > 0 && (
-                          <div className="library-ds-swatches">
-                            {ds.swatches.slice(0, 4).map((c, i) => (
-                              <span
-                                key={i}
-                                className="library-ds-swatch"
-                                style={{ backgroundColor: c }}
-                              />
-                            ))}
-                          </div>
+                        className={cn(
+                          'relative flex flex-col rounded-xl border bg-card shadow-sm transition-all duration-200',
+                          !isHighlighted && 'border-border',
+                          isOff ? 'opacity-45' : 'hover:-translate-y-0.5 hover:shadow-md',
+                          isHighlighted && 'border-accent bg-accent/5 ring-2 ring-accent/20',
                         )}
-                        <div className="library-ds-title">{ds.title}</div>
-                        <div className="library-ds-summary">{ds.summary}</div>
-                      </div>
-                      <div className="library-ds-toggle-cell">
-                        <label
-                          className="toggle-switch toggle-switch-sm"
-                          title={t('settings.designSystemsShowInHomeGallery')}
+                      >
+                        <div
+                          className="flex flex-1 cursor-pointer flex-col rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                          role="button"
+                          tabIndex={0}
+                          aria-haspopup="dialog"
+                          onClick={() => setPreviewSystem(ds)}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter' && e.key !== ' ') return;
+                            e.preventDefault();
+                            setPreviewSystem(ds);
+                          }}
                         >
-                          <input
-                            type="checkbox"
-                            aria-label={t('settings.designSystemsShowInHomeGallery')}
-                            checked={!disabledDS.has(ds.id)}
-                            onChange={(e) =>
-                              toggleDSDisabled(ds.id, e.target.checked)
-                            }
-                          />
-                          <span className="toggle-slider" />
-                        </label>
+                          <DesignSystemMiniPreview swatches={ds.swatches} />
+                          <div className="flex items-start gap-2.5 px-3.5 pb-3 pt-1">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[13.5px] font-semibold text-foreground">
+                                {ds.title}
+                              </div>
+                              <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">
+                                {ds.summary}
+                              </p>
+                            </div>
+                            <Switch
+                              size="sm"
+                              className="mt-0.5 shrink-0"
+                              checked={!isOff}
+                              // 开关坐在外层 role="button" 卡片内部（点卡片开预览、点开关只切
+                              // 显隐两件事互不干扰）——click 和 keydown 都要挡，否则 Tab 到开关
+                              // 按空格会同时把开关切了又把预览模态弹出来。
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
+                              onCheckedChange={(checked) => toggleDSDisabled(ds.id, checked)}
+                              aria-label={t('settings.designSystemsShowInHomeGallery')}
+                              title={t('settings.designSystemsShowInHomeGallery')}
+                            />
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))}

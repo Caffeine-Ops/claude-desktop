@@ -38,8 +38,10 @@ function DialogOverlay({
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
+      // 开合各自的 duration/ease：与 alert-dialog.tsx 的 AlertDialogOverlay
+      // 同一份数值（理由见那边长注释），两类弹窗的暗幕节奏保持一致。
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 z-50 bg-black/50 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:duration-[240ms] data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:duration-[160ms] data-[state=closed]:ease-in",
         className
       )}
       {...props}
@@ -63,7 +65,13 @@ function DialogContent({
         className={cn(
           // rounded-2xl + 柔和多层投影（替换上游 rounded-lg + shadow-lg 的生硬
           // 单层，2026-07-07 弹窗精修）：暗档黑影自然弱化，轮廓由 border 承担。
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-2xl border bg-background p-6 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.28),0_8px_24px_-12px_rgba(0,0,0,0.14)] duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+          //
+          // 开合动效：与 alert-dialog.tsx 的 AlertDialogContent 同一份配方
+          // （96% 缩放 + 8px slide-in-from-bottom + 开 240ms
+          // easeOutCubic / 合 160ms easeInQuart，关闭不带 slide），CDP 逐帧
+          // 定的数值与推理全见那边长注释——两类弹窗保持同一张脸也保持同一套
+          // 动效手感。
+          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-2xl border bg-background p-6 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.28),0_8px_24px_-12px_rgba(0,0,0,0.14)] outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-96 data-[state=open]:slide-in-from-bottom-2 data-[state=open]:duration-[240ms] data-[state=open]:ease-[cubic-bezier(0.33,1,0.68,1)] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-98 data-[state=closed]:duration-[160ms] data-[state=closed]:ease-[cubic-bezier(0.4,0,1,1)] sm:max-w-lg",
           className
         )}
         {...props}

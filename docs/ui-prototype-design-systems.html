@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>设计系统 · 设置页重设计原型</title>
+<link rel="icon" href="data:,">
+<style>
+/* ============================================================
+   设计系统设置页 · 重设计原型
+   数据：design-systems/ 全部 150 条真实条目（脚本提取自 DESIGN.md）
+   token 来源：packages/design-tokens/tokens.css（Apple 灰底/白卡/
+   品牌绿 hsl(142 76% 36%)/暖黑暗档），不引入体系外颜色。
+   核心概念：卡片即预览 —— 每张卡片用该系统自己的色板渲染微型 UI。
+   ============================================================ */
+:root {
+  color-scheme: light;
+  --bg: #f5f5f7;
+  --fg: #1d1d1f;
+  --card: #ffffff;
+  --muted-fg: #6e6e73;
+  --faint-fg: #a1a1a6;
+  --border: hsl(240 6% 84%);
+  --hairline: hsl(240 6% 88%);
+  --hover: hsl(240 6% 90%);
+  --brand: hsl(142 76% 36%);
+  --brand-fg: #ffffff;
+  --brand-soft: color-mix(in srgb, var(--brand) 10%, transparent);
+  --brand-border: color-mix(in srgb, var(--brand) 32%, transparent);
+  --glass: rgba(245, 245, 247, 0.72);
+  --glass-border: rgba(0, 0, 0, 0.07);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.05);
+  --shadow-card: 0 1px 2px rgba(0,0,0,.04), 0 10px 30px -18px rgba(0,0,0,.18);
+  --shadow-lift: 0 2px 6px rgba(0,0,0,.06), 0 22px 44px -20px rgba(0,0,0,.28);
+  --shadow-modal: 0 24px 80px -24px rgba(0,0,0,.35);
+  --preview-inset: inset 0 0 0 1px rgba(0,0,0,.06);
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  --radius-card: 14px;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1a1917;
+  --fg: #e8e4dc;
+  --card: #222120;
+  --muted-fg: #9a9690;
+  --faint-fg: #6f6b64;
+  --border: #333128;
+  --hairline: #2c2a26;
+  --hover: #2e2c29;
+  --glass: rgba(26, 25, 23, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --shadow-card: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -18px rgba(0,0,0,.6);
+  --shadow-lift: 0 2px 6px rgba(0,0,0,.4), 0 22px 44px -18px rgba(0,0,0,.7);
+  --shadow-modal: 0 24px 80px -24px rgba(0,0,0,.8);
+  --preview-inset: inset 0 0 0 1px rgba(255,255,255,.07);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+}
+button { font-family: inherit; font-size: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input { font-family: inherit; }
+::selection { background: color-mix(in srgb, var(--brand) 24%, transparent); }
+
+/* ── 整体骨架：左导航示意 + 右内容 ─────────────────────────── */
+.shell { display: grid; grid-template-columns: 232px 1fr; height: 100vh; }
+@media (max-width: 860px) { .shell { grid-template-columns: 1fr; } .rail { display: none; } }
+
+/* ── 左侧设置导航（语境示意）──────────────────────────────── */
+.rail {
+  border-right: 1px solid var(--hairline);
+  padding: 20px 12px;
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--card) 34%, var(--bg));
+}
+.rail-back {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 10px; margin-bottom: 14px;
+  color: var(--muted-fg); font-size: 13px;
+  border-radius: 8px; width: 100%;
+  transition: background .15s var(--ease), color .15s var(--ease);
+}
+.rail-back:hover { background: var(--hover); color: var(--fg); }
+.rail-group { margin-bottom: 18px; }
+.rail-group-label {
+  font-size: 11px; font-weight: 600; color: var(--faint-fg);
+  padding: 0 10px 6px; letter-spacing: .02em;
+}
+.rail-item {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; padding: 6.5px 10px; border-radius: 8px;
+  font-size: 13px; color: var(--muted-fg); text-align: left;
+  transition: background .15s var(--ease), color .15s var(--ease);
+}
+.rail-item:hover { background: var(--hover); color: var(--fg); }
+.rail-item.active {
+  background: var(--hover); color: var(--fg); font-weight: 600;
+}
+.rail-item .dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: currentColor; opacity: .45; flex: none;
+}
+.rail-item.active .dot { opacity: 1; }
+
+/* ── 内容区 ────────────────────────────────────────────────── */
+.main { overflow-y: auto; scroll-padding-top: 120px; }
+.page { max-width: 1180px; margin: 0 auto; padding: 44px 44px 96px; }
+@media (max-width: 1024px) { .page { padding: 32px 24px 96px; } }
+
+/* 页头 */
+.page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 10px; }
+.page-title { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+.page-sub { margin-top: 8px; color: var(--muted-fg); font-size: 13.5px; max-width: 560px; }
+.page-stats { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+.stat-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--muted-fg);
+  background: var(--card); border: 1px solid var(--hairline);
+  padding: 4px 10px; border-radius: 999px; box-shadow: var(--shadow-sm);
+}
+.stat-chip strong { color: var(--fg); font-weight: 650; font-variant-numeric: tabular-nums; }
+.stat-chip.hidden-chip { cursor: pointer; transition: border-color .15s var(--ease), color .15s var(--ease); }
+.stat-chip.hidden-chip:hover { border-color: var(--brand-border); color: var(--brand); }
+.stat-chip.hidden-chip.on { background: var(--brand-soft); border-color: var(--brand-border); color: var(--brand); }
+.stat-chip.hidden-chip.on strong { color: var(--brand); }
+
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--brand); color: var(--brand-fg);
+  font-size: 13.5px; font-weight: 600;
+  padding: 9px 16px; border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.12), 0 8px 20px -10px color-mix(in srgb, var(--brand) 55%, transparent);
+  transition: transform .15s var(--ease), box-shadow .15s var(--ease), filter .15s var(--ease);
+  white-space: nowrap; flex: none;
+}
+.btn-primary:hover { filter: brightness(1.06); box-shadow: 0 2px 4px rgba(0,0,0,.14), 0 12px 26px -10px color-mix(in srgb, var(--brand) 65%, transparent); }
+.btn-primary:active { transform: scale(.97); }
+.btn-primary svg { flex: none; }
+
+/* ── sticky 毛玻璃工具栏 ───────────────────────────────────── */
+.toolbar {
+  position: sticky; top: 0; z-index: 20;
+  margin: 22px -12px 6px; padding: 12px 12px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7);
+  backdrop-filter: blur(20px) saturate(1.7);
+  border-bottom: 1px solid var(--glass-border);
+}
+.toolbar-row { display: flex; gap: 10px; align-items: center; }
+.search-wrap { position: relative; flex: 1; max-width: 380px; }
+.search-wrap svg { position: absolute; left: 11px; top: 50%; translate: 0 -50%; color: var(--faint-fg); pointer-events: none; }
+.search-input {
+  width: 100%; padding: 8.5px 30px 8.5px 33px;
+  background: var(--card); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 10px;
+  font-size: 13.5px; outline: none; box-shadow: var(--shadow-sm);
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+}
+.search-input::placeholder { color: var(--faint-fg); }
+.search-input:focus {
+  border-color: color-mix(in srgb, var(--brand) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent);
+}
+.search-clear {
+  position: absolute; right: 6px; top: 50%; translate: 0 -50%;
+  width: 20px; height: 20px; border-radius: 50%;
+  display: none; align-items: center; justify-content: center;
+  color: var(--muted-fg); background: var(--hover);
+}
+.search-clear.show { display: inline-flex; }
+
+/* 分类 pills：横向滚动 + 两端渐隐 */
+.cat-scroller { position: relative; margin-top: 10px; }
+.cat-row {
+  display: flex; gap: 6px; overflow-x: auto; padding: 2px;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 26px), transparent);
+          mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 26px), transparent);
+}
+.cat-row::-webkit-scrollbar { display: none; }
+.cat-pill {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; padding: 5.5px 12px; border-radius: 999px;
+  color: var(--muted-fg); background: var(--card);
+  border: 1px solid var(--hairline); box-shadow: var(--shadow-sm);
+  transition: color .15s var(--ease), border-color .15s var(--ease), background .15s var(--ease);
+  white-space: nowrap;
+}
+.cat-pill:hover { color: var(--fg); border-color: var(--border); }
+.cat-pill.active { background: var(--fg); color: var(--bg); border-color: var(--fg); font-weight: 600; }
+.cat-pill .n { font-size: 11px; opacity: .55; font-variant-numeric: tabular-nums; }
+
+/* ── 分组与网格 ────────────────────────────────────────────── */
+.group { margin-top: 34px; }
+.group-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+.group-title { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+.group-en { font-size: 10.5px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--faint-fg); }
+.group-count { font-size: 12px; color: var(--faint-fg); font-variant-numeric: tabular-nums; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
+.page[data-density="compact"] .grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.page[data-cardstyle="list"] .grid { grid-template-columns: 1fr; gap: 8px; }
+
+/* ── 卡片（共通）──────────────────────────────────────────── */
+.card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: transform .22s var(--ease), box-shadow .22s var(--ease), border-color .22s var(--ease);
+  animation: card-in .45s var(--ease) both;
+  outline: none;
+}
+@keyframes card-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lift); border-color: var(--border); }
+.card:focus-visible { box-shadow: var(--shadow-card), 0 0 0 3px color-mix(in srgb, var(--brand) 30%, transparent); }
+.card.flash { animation: card-flash 1.4s var(--ease); }
+@keyframes card-flash {
+  0%, 60% { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent); }
+  100% { border-color: var(--hairline); }
+}
+html[data-motion="off"] .card,
+html[data-motion="off"] .card * { animation: none !important; transition: none !important; }
+
+/* 关闭态：预览转灰 + 徽标 */
+.card.off .preview, .card.off .strip, .card.off .list-dots { filter: grayscale(1) contrast(.9); opacity: .5; }
+.card.off .card-title { color: var(--muted-fg); }
+.card.off:hover { transform: none; box-shadow: var(--shadow-card); }
+.off-badge {
+  display: none; font-size: 10.5px; font-weight: 600; color: var(--muted-fg);
+  background: var(--hover); border-radius: 999px; padding: 2px 8px; flex: none;
+}
+.card.off .off-badge { display: inline-block; }
+
+/* ── 形态 A：微型预览（默认）─────────────────────────────── */
+.preview {
+  position: relative; height: 128px; margin: 8px 8px 0;
+  border-radius: 9px; overflow: hidden;
+  box-shadow: var(--preview-inset);
+  transition: filter .2s var(--ease), opacity .2s var(--ease);
+}
+.page[data-density="compact"] .preview { height: 104px; }
+.pv-nav { position: absolute; top: 10px; left: 12px; display: flex; gap: 4px; }
+.pv-nav i { width: 5px; height: 5px; border-radius: 50%; display: block; }
+.pv-chip { position: absolute; top: 8px; right: 12px; width: 26px; height: 9px; border-radius: 999px; }
+.pv-panel {
+  position: absolute; left: 12px; top: 28px; bottom: 12px; width: 58%;
+  border-radius: 7px; padding: 10px 11px;
+  display: flex; flex-direction: column; gap: 6px;
+  transition: transform .25s var(--ease);
+}
+.pv-h { height: 8px; border-radius: 4px; width: 62%; }
+.pv-l { height: 5px; border-radius: 3px; }
+.pv-btnrow { margin-top: auto; display: flex; gap: 6px; align-items: center; }
+.pv-btn { width: 38px; height: 13px; border-radius: 6.5px; transition: transform .25s var(--ease), box-shadow .25s var(--ease); }
+.pv-btn2 { width: 26px; height: 13px; border-radius: 6.5px; }
+.pv-side {
+  position: absolute; right: 12px; top: 34px; width: 26%; height: 58px;
+  border-radius: 7px; padding: 8px;
+  display: flex; flex-direction: column; gap: 5px;
+  transition: transform .25s var(--ease);
+}
+.pv-side i { display: block; height: 4px; border-radius: 2px; }
+.pv-side .pv-dot { width: 9px; height: 9px; border-radius: 3px; margin-bottom: 1px; }
+.card:hover .pv-panel { transform: translateY(-2px); }
+.card:hover .pv-side { transform: translateY(-3px); }
+.card:hover .pv-btn { transform: scale(1.08); box-shadow: 0 0 10px var(--pv-glow, transparent); }
+
+.card-meta { padding: 11px 13px 12px; display: flex; align-items: flex-start; gap: 10px; }
+.card-text { flex: 1; min-width: 0; }
+.card-title-row { display: flex; align-items: center; gap: 8px; }
+.card-title { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-sum {
+  margin-top: 3px; font-size: 12px; color: var(--muted-fg); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.page[data-density="compact"] .card-sum { -webkit-line-clamp: 1; }
+
+/* ── 形态 B：色板条 ───────────────────────────────────────── */
+.strip { display: none; height: 54px; margin: 8px 8px 0; border-radius: 9px; overflow: hidden; box-shadow: var(--preview-inset); }
+.strip { grid-auto-flow: column; grid-auto-columns: 1fr; }
+.strip i { display: block; transition: flex .2s var(--ease); }
+.page[data-cardstyle="strip"] .strip { display: grid; }
+.page[data-cardstyle="strip"] .preview { display: none; }
+
+/* ── 形态 C：紧凑列表 ─────────────────────────────────────── */
+.page[data-cardstyle="list"] .preview, .page[data-cardstyle="list"] .strip { display: none; }
+.page[data-cardstyle="list"] .card-meta { padding: 10px 14px; align-items: center; }
+.page[data-cardstyle="list"] .card-sum { -webkit-line-clamp: 1; margin-top: 1px; }
+.list-dots { display: none; gap: 4px; flex: none; margin-right: 2px; }
+.list-dots i { width: 14px; height: 14px; border-radius: 5px; box-shadow: var(--preview-inset); }
+.page[data-cardstyle="list"] .list-dots { display: flex; }
+
+/* ── 开关 ─────────────────────────────────────────────────── */
+.switch { position: relative; width: 36px; height: 21px; flex: none; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.switch .track {
+  position: absolute; inset: 0; border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 16%, var(--bg));
+  transition: background .2s var(--ease);
+}
+.switch input:checked + .track { background: var(--brand); }
+.switch .thumb {
+  position: absolute; top: 2px; left: 2px; width: 17px; height: 17px;
+  border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.25);
+  transition: translate .2s var(--ease);
+}
+.switch input:checked ~ .thumb { translate: 15px 0; }
+.switch input:focus-visible ~ .track { box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent); }
+
+/* ── 空态 ─────────────────────────────────────────────────── */
+.empty { text-align: center; padding: 90px 0 40px; color: var(--muted-fg); }
+.empty .big { font-size: 15px; font-weight: 600; color: var(--fg); margin-bottom: 6px; }
+.empty button { margin-top: 14px; color: var(--brand); font-weight: 600; font-size: 13px; }
+.empty button:hover { text-decoration: underline; }
+
+/* ── 模态（预览 / 添加）───────────────────────────────────── */
+.overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0,0,0,.42);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  display: none; align-items: center; justify-content: center; padding: 32px;
+}
+.overlay.open { display: flex; animation: ov-in .2s ease both; }
+@keyframes ov-in { from { opacity: 0; } }
+.modal {
+  width: 100%; max-width: 860px; max-height: calc(100vh - 64px);
+  background: var(--card); border-radius: 18px;
+  box-shadow: var(--shadow-modal);
+  border: 1px solid var(--glass-border);
+  display: flex; flex-direction: column; overflow: hidden;
+  animation: md-in .24s var(--ease) both;
+}
+@keyframes md-in { from { opacity: 0; transform: scale(.965) translateY(8px); } }
+html[data-motion="off"] .overlay.open, html[data-motion="off"] .modal { animation: none; }
+.modal-head { display: flex; align-items: center; gap: 12px; padding: 18px 20px 14px; }
+.modal-title { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+.modal-cat {
+  font-size: 11px; font-weight: 600; color: var(--muted-fg);
+  border: 1px solid var(--hairline); border-radius: 999px; padding: 3px 9px;
+}
+.modal-close {
+  margin-left: auto; width: 28px; height: 28px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--muted-fg); transition: background .15s var(--ease);
+}
+.modal-close:hover { background: var(--hover); color: var(--fg); }
+.modal-body { overflow-y: auto; padding: 0 20px 20px; }
+
+/* 大预览场景（用该系统色板渲染）*/
+.stage {
+  border-radius: 12px; overflow: hidden; box-shadow: var(--preview-inset);
+  padding: 22px 26px 24px; position: relative;
+}
+.stage-nav { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; }
+.stage-logo { width: 12px; height: 12px; border-radius: 4px; }
+.stage-nav i { height: 6px; width: 34px; border-radius: 3px; display: block; }
+.stage-nav .sp { flex: 1; }
+.stage-pill { width: 54px; height: 20px; border-radius: 999px; }
+.stage-cols { display: flex; gap: 26px; align-items: flex-start; }
+.stage-hero { flex: 1.5; min-width: 0; }
+.stage-kicker { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; opacity: .65; margin-bottom: 10px; }
+.stage-h1 { font-size: 34px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.1; margin-bottom: 12px; overflow-wrap: anywhere; }
+.stage-p { display: flex; flex-direction: column; gap: 7px; margin-bottom: 20px; }
+.stage-p i { height: 6px; border-radius: 3px; display: block; }
+.stage-cta { display: flex; gap: 10px; align-items: center; }
+.stage-btn { font-size: 12.5px; font-weight: 650; padding: 8px 16px; border-radius: 8px; }
+.stage-card { flex: 1; border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 9px; }
+.stage-card .row { display: flex; align-items: center; gap: 8px; }
+.stage-card .av { width: 18px; height: 18px; border-radius: 6px; flex: none; }
+.stage-card i { height: 5px; border-radius: 2.5px; display: block; flex: 1; }
+@media (max-width: 640px) { .stage-cols { flex-direction: column; } .stage-card { width: 100%; } }
+
+/* 色板行（点击复制）*/
+.palette { display: flex; gap: 8px; margin-top: 14px; }
+.palette button {
+  flex: 1; height: 58px; border-radius: 10px;
+  box-shadow: var(--preview-inset);
+  display: flex; align-items: flex-end; padding: 8px 10px;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+  transition: transform .15s var(--ease);
+}
+.palette button:hover { transform: translateY(-2px); }
+.palette button:active { transform: scale(.98); }
+
+.modal-info { display: flex; gap: 18px; margin-top: 16px; flex-wrap: wrap; }
+.info-item { font-size: 12px; color: var(--muted-fg); }
+.info-item b { display: block; font-size: 11px; font-weight: 600; color: var(--faint-fg); margin-bottom: 2px; }
+.info-item code { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg); }
+.modal-foot {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 20px; border-top: 1px solid var(--hairline);
+}
+.modal-foot .hint { font-size: 12.5px; color: var(--muted-fg); }
+.modal-foot .switch { margin-left: auto; }
+.modal-foot .state { font-size: 12.5px; font-weight: 600; }
+
+/* 添加设计系统 表单 */
+.form-modal { max-width: 560px; }
+.form-body { padding: 4px 20px 20px; display: flex; flex-direction: column; gap: 16px; }
+.field-label { font-size: 12px; font-weight: 650; color: var(--muted-fg); margin-bottom: 7px; }
+.seg { display: inline-flex; background: var(--hover); border-radius: 9px; padding: 3px; gap: 2px; }
+.seg button {
+  font-size: 12.5px; font-weight: 550; color: var(--muted-fg);
+  padding: 5.5px 13px; border-radius: 7px;
+  transition: background .15s var(--ease), color .15s var(--ease), box-shadow .15s var(--ease);
+}
+.seg button.active { background: var(--card); color: var(--fg); font-weight: 650; box-shadow: var(--shadow-sm); }
+.seg-hint { margin-top: 7px; font-size: 12px; color: var(--faint-fg); }
+.checks { display: flex; gap: 16px; flex-wrap: wrap; }
+.check { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; cursor: pointer; user-select: none; }
+.check input { accent-color: var(--brand); width: 15px; height: 15px; cursor: pointer; }
+.path-row { display: flex; gap: 8px; }
+.path-input {
+  flex: 1; padding: 9px 12px; font-size: 13px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 10px; outline: none;
+  font-family: var(--font-mono);
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+}
+.path-input::placeholder { color: var(--faint-fg); font-family: var(--font-sans); }
+.path-input:focus {
+  border-color: color-mix(in srgb, var(--brand) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent);
+}
+.btn-primary[disabled] { opacity: .5; cursor: default; pointer-events: none; }
+.import-note {
+  display: none; font-size: 12.5px; color: var(--brand);
+  background: var(--brand-soft); border: 1px solid var(--brand-border);
+  border-radius: 10px; padding: 10px 12px;
+}
+.import-note.show { display: block; }
+
+/* ── toast ────────────────────────────────────────────────── */
+.toast {
+  position: fixed; left: 50%; bottom: 34px; translate: -50% 16px; z-index: 90;
+  background: var(--fg); color: var(--bg);
+  font-size: 12.5px; font-weight: 600;
+  padding: 9px 16px; border-radius: 999px;
+  box-shadow: 0 8px 30px -8px rgba(0,0,0,.4);
+  opacity: 0; pointer-events: none;
+  transition: opacity .2s var(--ease), translate .2s var(--ease);
+}
+.toast.show { opacity: 1; translate: -50% 0; }
+
+/* ── Tweaks 面板 ──────────────────────────────────────────── */
+.tweaks-fab {
+  position: fixed; right: 22px; bottom: 22px; z-index: 80;
+  width: 40px; height: 40px; border-radius: 50%;
+  background: var(--card); color: var(--muted-fg);
+  border: 1px solid var(--border); box-shadow: var(--shadow-card);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: transform .18s var(--ease), color .18s var(--ease), box-shadow .18s var(--ease);
+}
+.tweaks-fab:hover { transform: scale(1.07); color: var(--fg); box-shadow: var(--shadow-lift); }
+.tweaks {
+  position: fixed; right: 22px; bottom: 72px; z-index: 80;
+  width: 250px; padding: 16px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(24px) saturate(1.7);
+  backdrop-filter: blur(24px) saturate(1.7);
+  border: 1px solid var(--glass-border); border-radius: 16px;
+  box-shadow: var(--shadow-modal);
+  display: none; flex-direction: column; gap: 14px;
+}
+.tweaks.open { display: flex; animation: md-in .2s var(--ease) both; }
+.tweaks h3 { font-size: 13px; font-weight: 700; }
+.tweaks .field-label { margin-bottom: 5px; }
+.tweaks .seg { width: 100%; }
+.tweaks .seg button { flex: 1; padding: 5px 4px; font-size: 12px; text-align: center; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <!-- 左侧设置导航（语境示意，仅当前项可交互性示意） -->
+  <nav class="rail" aria-label="设置导航">
+    <button class="rail-back" type="button">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg>
+      返回应用
+    </button>
+    <div class="rail-group">
+      <div class="rail-group-label">通用</div>
+      <button class="rail-item" type="button"><span class="dot"></span>执行模式</button>
+      <button class="rail-item" type="button"><span class="dot"></span>Instructions / Rules</button>
+      <button class="rail-item" type="button"><span class="dot"></span>记忆</button>
+      <button class="rail-item" type="button"><span class="dot"></span>界面语言</button>
+      <button class="rail-item" type="button"><span class="dot"></span>外观</button>
+      <button class="rail-item" type="button"><span class="dot"></span>通知</button>
+    </div>
+    <div class="rail-group">
+      <div class="rail-group-label">工作区</div>
+      <button class="rail-item" type="button"><span class="dot"></span>项目</button>
+      <button class="rail-item" type="button"><span class="dot"></span>自动化</button>
+      <button class="rail-item" type="button"><span class="dot"></span>插件</button>
+    </div>
+    <div class="rail-group">
+      <div class="rail-group-label">扩展与集成</div>
+      <button class="rail-item" type="button"><span class="dot"></span>媒体生成提供商</button>
+      <button class="rail-item" type="button"><span class="dot"></span>技能</button>
+      <button class="rail-item" type="button"><span class="dot"></span>外部 MCP</button>
+      <button class="rail-item" type="button"><span class="dot"></span>连接器</button>
+    </div>
+    <div class="rail-group">
+      <div class="rail-group-label">高级设置</div>
+      <button class="rail-item" type="button"><span class="dot"></span>设计评审团</button>
+      <button class="rail-item" type="button"><span class="dot"></span>宠物</button>
+      <button class="rail-item active" type="button"><span class="dot"></span>设计系统</button>
+      <button class="rail-item" type="button"><span class="dot"></span>隐私</button>
+      <button class="rail-item" type="button"><span class="dot"></span>关于</button>
+    </div>
+  </nav>
+
+  <main class="main" id="main">
+    <div class="page" id="page" data-cardstyle="preview" data-density="comfortable">
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">设计系统</h1>
+          <p class="page-sub">生成页面时可套用的品牌视觉规范。打开的设计系统会出现在主页画廊里，随时可以再关掉。</p>
+          <div class="page-stats" id="stats"></div>
+        </div>
+        <button class="btn-primary" id="addBtn" type="button">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+          添加设计系统
+        </button>
+      </header>
+
+      <div class="toolbar">
+        <div class="toolbar-row">
+          <div class="search-wrap">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="m13.5 13.5-3.2-3.2"/></svg>
+            <input class="search-input" id="search" type="text" placeholder="搜索名称或描述…" autocomplete="off" spellcheck="false">
+            <button class="search-clear" id="searchClear" type="button" aria-label="清除搜索">
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="cat-scroller">
+          <div class="cat-row" id="catRow"></div>
+        </div>
+      </div>
+
+      <div id="content"></div>
+    </div>
+  </main>
+</div>
+
+<!-- 预览模态 -->
+<div class="overlay" id="previewOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pmTitle">
+    <div class="modal-head">
+      <div class="modal-title" id="pmTitle"></div>
+      <span class="modal-cat" id="pmCat"></span>
+      <button class="modal-close" id="pmClose" type="button" aria-label="关闭">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="stage" id="pmStage"></div>
+      <div class="palette" id="pmPalette"></div>
+      <div class="modal-info" id="pmInfo"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="hint">打开后会出现在主页画廊里</span>
+      <label class="switch">
+        <input type="checkbox" id="pmToggle">
+        <span class="track"></span><span class="thumb"></span>
+      </label>
+      <span class="state" id="pmState"></span>
+    </div>
+  </div>
+</div>
+
+<!-- 添加设计系统 模态 -->
+<div class="overlay" id="addOverlay">
+  <div class="modal form-modal" role="dialog" aria-modal="true" aria-labelledby="addTitle">
+    <div class="modal-head">
+      <div class="modal-title" id="addTitle">添加设计系统</div>
+      <button class="modal-close" id="addClose" type="button" aria-label="关闭">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+      </button>
+    </div>
+    <div class="form-body">
+      <div>
+        <div class="field-label">来源</div>
+        <div class="seg" id="srcSeg">
+          <button type="button" class="active" data-v="local">本地项目</button>
+          <button type="button" data-v="github">GitHub 仓库</button>
+        </div>
+      </div>
+      <div>
+        <div class="field-label">导入方式</div>
+        <div class="seg" id="modeSeg">
+          <button type="button" class="active" data-v="hybrid" data-hint="推荐：保留原始结构，同时生成规范化 token，两边都能用。">混合</button>
+          <button type="button" data-v="normalized" data-hint="全部转换成统一 token 格式，便于跨系统比较。">规范化</button>
+          <button type="button" data-v="verbatim" data-hint="原样保留，不做任何转换。">原样</button>
+        </div>
+        <div class="seg-hint" id="modeHint">推荐：保留原始结构，同时生成规范化 token，两边都能用。</div>
+      </div>
+      <div>
+        <div class="field-label">导入时顺带处理</div>
+        <div class="checks">
+          <label class="check"><input type="checkbox"> 提取品牌色</label>
+          <label class="check"><input type="checkbox"> 无障碍基线检查</label>
+        </div>
+      </div>
+      <div>
+        <div class="field-label" id="pathLabel">项目路径</div>
+        <div class="path-row">
+          <input class="path-input" id="pathInput" type="text" placeholder="/path/to/project" spellcheck="false">
+          <button class="btn-primary" id="importBtn" type="button" disabled>导入</button>
+        </div>
+      </div>
+      <div class="import-note" id="importNote">原型演示到此为止——真实应用里会开始解析项目并生成 DESIGN.md。</div>
+    </div>
+  </div>
+</div>
+
+<!-- Tweaks -->
+<button class="tweaks-fab" id="tweaksFab" type="button" aria-label="Tweaks">
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 5h7M12 5h2M2 11h2M7 11h7"/><circle cx="10.5" cy="5" r="1.8"/><circle cx="5.5" cy="11" r="1.8"/></svg>
+</button>
+<div class="tweaks" id="tweaksPanel" role="dialog" aria-label="Tweaks">
+  <h3>Tweaks</h3>
+  <div>
+    <div class="field-label">卡片形态</div>
+    <div class="seg" data-tweak="cardstyle">
+      <button type="button" class="active" data-v="preview">微型预览</button>
+      <button type="button" data-v="strip">色板条</button>
+      <button type="button" data-v="list">列表</button>
+    </div>
+  </div>
+  <div>
+    <div class="field-label">外观</div>
+    <div class="seg" data-tweak="theme">
+      <button type="button" class="active" data-v="light">浅色</button>
+      <button type="button" data-v="dark">深色</button>
+    </div>
+  </div>
+  <div>
+    <div class="field-label">密度</div>
+    <div class="seg" data-tweak="density">
+      <button type="button" class="active" data-v="comfortable">舒适</button>
+      <button type="button" data-v="compact">紧凑</button>
+    </div>
+  </div>
+  <div>
+    <div class="field-label">动效</div>
+    <div class="seg" data-tweak="motion">
+      <button type="button" class="active" data-v="on">开</button>
+      <button type="button" data-v="off">关</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+/* 真实数据：design-systems/ 全部条目（提取自各 DESIGN.md 的标题/摘要/分类/色板） */
+const RAW = [{"id":"agentic","title":"Agentic","summary":"Conversational AI-first interface with minimal controls, clear outcomes, and delegated task flows for agentic workflows.","category":"Themed & Unique","swatches":["#ffffff","#f6f6f1","#111827","#ff5701"]},{"id":"airbnb","title":"Airbnb","summary":"Travel marketplace. Warm coral accent, photography-driven, rounded UI.","category":"E-Commerce & Retail","swatches":["#ff385c","#e00b41","#92174d","#460479"]},{"id":"airtable","title":"Airtable","summary":"Spreadsheet-database hybrid. Colorful, friendly, structured data aesthetic.","category":"Design & Creative","swatches":["#181d26","#1b61c9","#ffffff","#006400"]},{"id":"ant","title":"Ant","summary":"Structured, enterprise-focused design system emphasizing clarity, consistency, and efficiency for data-dense web applications.","category":"Professional & Corporate","swatches":["#ffffff","#8b5cf6","#111827","#1677ff"]},{"id":"apple","title":"Apple","summary":"Consumer electronics. Premium white space, SF Pro, cinematic imagery.","category":"Media & Consumer","swatches":["#000000","#f5f5f7","#1d1d1f","#0071e3"]},{"id":"application","title":"Application","summary":"App dashboard with purple-themed aesthetic, top-bar navigation, card-based layouts, and developer-first workflows.","category":"Professional & Corporate","swatches":["#ffffff","#a855f7","#09090b","#9333ea"]},{"id":"arc","title":"Arc Browser","summary":"\"The browser that browses for you.\" Translucent surfaces, gradient warmth, sidebar-first layout.","category":"Productivity & SaaS","swatches":["#ff7e5f","#feb47b","#7f5af0","#e84393"]},{"id":"artistic","title":"Artistic","summary":"High-contrast, expressive style with creative typography and bold color choices for visually striking interfaces.","category":"Creative & Artistic","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"atelier-zero","title":"Atelier Zero","summary":"A magazine-grade, collage-driven visual system: warm paper canvas, surreal","category":"Editorial · Studio","swatches":["#efe7d2","#ece4cf","#ddd2b6","#f7f1de"]},{"id":"bento","title":"Bento","summary":"Modular grid layout with card-like blocks, clear hierarchy, soft spacing, and subtle visual contrast for organized, scannable interfaces.","category":"Layout & Structure","swatches":["#fff5e6","#80a1c1","#111827","#fad4c0"]},{"id":"binance","title":"Binance.US","summary":"Crypto exchange. Bold yellow accent on monochrome, trading-floor urgency.","category":"Fintech & Crypto","swatches":["#f0b90b","#ffd000","#f8d12f","#d0980b"]},{"id":"bmw","title":"BMW","summary":"Luxury automotive. Dark premium surfaces, precise German engineering aesthetic.","category":"Automotive","swatches":["#ffffff","#1c69d4","#0653b6","#262626"]},{"id":"bmw-m","title":"BMW M","summary":"Motorsport performance sub-brand. Near-black cockpit surfaces, BMW M tricolor accents, sharp engineering geometry.","category":"Automotive","swatches":["#ffffff","#0066b1","#1c69d4","#e22718"]},{"id":"bold","title":"Bold","summary":"Strong visual presence with heavyweight typography, high-contrast colors, and commanding layouts.","category":"Bold & Expressive","swatches":["#111111","#009866","#111827","#0077bc"]},{"id":"brutalism","title":"Brutalism","summary":"Raw, anti-design aesthetic inspired by concrete architecture with unadorned elements, jarring layouts, and functional minimalism.","category":"Bold & Expressive","swatches":["#ffffff","#daa144","#111827","#dd614c"]},{"id":"bugatti","title":"Bugatti","summary":"Hypercar brand. Cinema-black canvas, monochrome austerity, monumental display type.","category":"Automotive","swatches":["#000000","#ffffff","#999999","#0070cc"]},{"id":"cafe","title":"Cafe","summary":"Cozy cafe-inspired interface with warm tones, soft typography, and clean layouts for a relaxed browsing experience.","category":"Creative & Artistic","swatches":["#f9f7f5","#e9e3dd","#3e2b1e","#5d4432"]},{"id":"cal","title":"Cal.com","summary":"Open-source scheduling. Clean neutral UI, developer-oriented simplicity.","category":"Productivity & SaaS","swatches":["#242424","#111111","#ffffff","#0099ff"]},{"id":"canva","title":"Canva","summary":"Visual creation platform. Vivid purple-blue gradient, generous spacing, friendly geometry.","category":"Design & Creative","swatches":["#7d2ae8","#00c4cc","#ff5757","#ffffff"]},{"id":"cisco","title":"Cisco","summary":"Enterprise infrastructure brand. Dark trust surfaces, Cisco Blue signal, technical clarity.","category":"Backend & Data","swatches":["#049fd9","#64bbe3","#005073","#2b5592"]},{"id":"claude","title":"Claude (Anthropic)","summary":"Anthropic's AI assistant. Warm terracotta accent, clean editorial layout.","category":"AI & LLM","swatches":["#141413","#c96442","#d97757","#b53333"]},{"id":"clay","title":"Clay","summary":"Creative agency. Organic shapes, soft gradients, art-directed layout.","category":"Design & Creative","swatches":["#000000","#ffffff","#faf9f7","#84e7a5"]},{"id":"claymorphism","title":"Claymorphism","summary":"Soft, rounded 3D-like shapes mimicking malleable clay with playful, puffy elements and colorful surfaces.","category":"Morphism & Effects","swatches":["#ffffff","#1c398e","#3b82f6","#16a34a"]},{"id":"clean","title":"Clean","summary":"Simplicity-focused design with ample whitespace, legible typography, and a limited color palette to reduce visual clutter.","category":"Modern & Minimal","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"clickhouse","title":"ClickHouse","summary":"Fast analytics database. Yellow-accented, technical documentation style.","category":"Backend & Data","swatches":["#faff69","#166534","#14572f","#f4f692"]},{"id":"cohere","title":"Cohere","summary":"Enterprise AI platform. Vibrant gradients, data-rich dashboard aesthetic.","category":"AI & LLM","swatches":["#000000","#212121","#17171c","#1863dc"]},{"id":"coinbase","title":"Coinbase","summary":"Crypto exchange. Clean blue identity, trust-focused, institutional feel.","category":"Fintech & Crypto","swatches":["#0052ff","#ffffff","#0a0b0d","#eef0f3"]},{"id":"colorful","title":"Colorful","summary":"Vibrant, high-contrast palettes and gradients for engaging, memorable, and modern user experiences.","category":"Bold & Expressive","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"composio","title":"Composio","summary":"Tool integration platform. Modern dark with colorful integration icons.","category":"Backend & Data","swatches":["#0007cd","#00ffff","#0089ff","#0096ff"]},{"id":"contemporary","title":"Contemporary","summary":"Current-era minimalist design with bento grids, dark mode support, and high-performance accessible layouts.","category":"Modern & Minimal","swatches":["#ffffff","#e60076","#111827","#c800df"]},{"id":"corporate","title":"Corporate","summary":"Professional, brand-aligned design with structured grids, minimalist layouts, and consistent enterprise patterns.","category":"Professional & Corporate","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"cosmic","title":"Cosmic","summary":"Futuristic sci-fi aesthetic with dark themes, vibrant neon accents, and immersive spatial elements.","category":"Creative & Artistic","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"creative","title":"Creative","summary":"Playful, character-driven design with expressive typography and bold graphics for landing pages and creative projects.","category":"Creative & Artistic","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"cursor","title":"Cursor","summary":"AI-first code editor. Sleek dark interface, gradient accents.","category":"Developer Tools","swatches":["#26251e","#f2f1ed","#e6e5e0","#ffffff"]},{"id":"dashboard","title":"Dashboard","summary":"Dark-themed cloud-platform aesthetic with modular grids, glass-like panels, and strong data hierarchy for productivity dashboards.","category":"Professional & Corporate","swatches":["#09090b","#0a4a8a","#fafafa","#0c5cab"]},{"id":"default","title":"Neutral Modern","summary":"A clean, product-oriented default. Use when the brief doesn't call for a","category":"Starter","swatches":["#ffffff","#17a34a","#2f6feb","#fafafa"]},{"id":"discord","title":"Discord","summary":"Voice / chat platform. Deep blurple, dark-first surfaces, playful accent moments.","category":"Productivity & SaaS","swatches":["#5865f2","#4752c4","#7289da","#1e1f22"]},{"id":"dithered","title":"Dithered","summary":"Dot-pattern rendering technique that simulates shades with a limited palette for nostalgic, retro, high-contrast visuals.","category":"Retro & Nostalgic","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"doodle","title":"Doodle","summary":"Hand-drawn, sketch-like style with doodles, handwritten fonts, and imperfect lines for a playful, informal feel.","category":"Creative & Artistic","swatches":["#ffffff","#263d5b","#111827","#49b6e5"]},{"id":"dramatic","title":"Dramatic","summary":"High-contrast, theatrical design with bold layouts, immersive visuals, and unconventional compositions that command attention.","category":"Bold & Expressive","swatches":["#09090b","#f43f5e","#fafafa","#8b5cf6"]},{"id":"duolingo","title":"Duolingo","summary":"Language-learning platform. Bright owl green, chunky shadows, gamified joy.","category":"Productivity & SaaS","swatches":["#58cc02","#58a700","#89e219","#dbf8c5"]},{"id":"editorial","title":"Editorial","summary":"Magazine-inspired editorial layout with refined serif typography, structured grids, and elegant reading experiences.","category":"Creative & Artistic","swatches":["#ffffff","#f1f1f1","#111827","#111111"]},{"id":"elegant","title":"Elegant","summary":"Graceful, refined aesthetic with delicate typography, minimal palettes, and polished layouts that exude sophistication.","category":"Professional & Corporate","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"elevenlabs","title":"ElevenLabs","summary":"AI voice platform. Dark cinematic UI, audio-waveform aesthetics.","category":"AI & LLM","swatches":["#ffffff","#f5f5f5","#f5f2ef","#000000"]},{"id":"energetic","title":"Energetic","summary":"Dynamic, vibrant style with thick borders, geometric shapes, high-contrast colors, and expressive typography conveying motion and vitality.","category":"Bold & Expressive","swatches":["#fdba74","#f59e0b","#ea580c","#ea580b"]},{"id":"enterprise","title":"Enterprise","summary":"Clean, high-contrast enterprise design for data-driven workflows with intuitive drag-and-drop patterns and structured layouts.","category":"Professional & Corporate","swatches":["#edeade","#ff5f03","#111827","#072c2c"]},{"id":"expo","title":"Expo","summary":"React Native platform. Dark theme, tight letter-spacing, code-centric.","category":"Developer Tools","swatches":["#000000","#1c2024","#0d74ce","#476cff"]},{"id":"expressive","title":"Expressive","summary":"Vibrant, personality-driven design with bold colors, playful graphics, and dynamic layouts that balance creativity with structure.","category":"Bold & Expressive","swatches":["#ffffff","#2563eb","#111827","#db2777"]},{"id":"fantasy","title":"Fantasy","summary":"Game-inspired fantasy aesthetic with bold, premium visuals, rich color palettes, and immersive thematic elements.","category":"Creative & Artistic","swatches":["#ffffff","#fdc800","#111827","#0250cc"]},{"id":"ferrari","title":"Ferrari","summary":"Luxury automotive. Chiaroscuro editorial, Ferrari Red accents, cinematic black.","category":"Automotive","swatches":["#da291c","#ffffff","#b01e0a","#9d2211"]},{"id":"figma","title":"Figma","summary":"Collaborative design tool. Vibrant multi-color, playful yet professional.","category":"Design & Creative","swatches":["#000000","#ffffff"]},{"id":"flat","title":"Flat","summary":"Two-dimensional minimalist style with vibrant colors, clean typography, and no 3D effects for fast, user-friendly interfaces.","category":"Modern & Minimal","swatches":["#ffffff","#8b5cf6","#111827","#f2673c"]},{"id":"framer","title":"Framer","summary":"Website builder. Bold black and blue, motion-first, design-forward.","category":"Design & Creative","swatches":["#000000","#ffffff","#0099ff","#a6a6a6"]},{"id":"friendly","title":"Friendly","summary":"Approachable, intuitive design with rounded elements, ample whitespace, and soft pastel color palettes.","category":"Creative & Artistic","swatches":["#ffffff","#d9f2d8","#111827","#f2d9dc"]},{"id":"futuristic","title":"Futuristic","summary":"Forward-looking design with tech-inspired typography, modern layouts, and a sleek, innovation-driven aesthetic.","category":"Themed & Unique","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"github","title":"GitHub","summary":"Code-forward platform. Functional density, blue-on-white precision, Primer foundations.","category":"Developer Tools","swatches":["#ffffff","#f6f8fa","#eaeef2","#1f2328"]},{"id":"glassmorphism","title":"Glassmorphism","summary":"Frosted glass effect with translucent layers, subtle blur, and luminous borders for depth and modern elegance.","category":"Morphism & Effects","swatches":["#ffffff","#3a344e","#141414","#1856ff"]},{"id":"gradient","title":"Gradient","summary":"Smooth color transitions and gradient-rich surfaces for modern, playful interfaces with visual depth.","category":"Morphism & Effects","swatches":["#ffffff","#e60076","#111827","#990ffa"]},{"id":"hashicorp","title":"HashiCorp","summary":"Infrastructure automation. Enterprise-clean, black and white.","category":"Backend & Data","swatches":["#000000","#15181e","#0d0e12","#f1f2f3"]},{"id":"hud","title":"HUD Design System","summary":"Fighter jet / helicopter head-up display. Phosphor green on near-black, all-caps data overlays, angular geometry. Zero ambiguity at speed and altitude.","category":"Themed & Unique","swatches":["#0a0a0a","#111316","#1e2328","#00ff41"]},{"id":"huggingface","title":"Hugging Face","summary":"ML community hub. Sunny yellow accent, monospace identity, cheerful and dense.","category":"AI & LLM","swatches":["#ffd21e","#f59e0b","#fff4cc","#ffffff"]},{"id":"ibm","title":"IBM","summary":"Enterprise technology. Carbon design system, structured blue palette.","category":"Media & Consumer","swatches":["#0f62fe","#ffffff","#161616","#262626"]},{"id":"intercom","title":"Intercom","summary":"Customer messaging. Friendly blue palette, conversational UI patterns.","category":"Productivity & SaaS","swatches":["#111111","#ffffff","#faf9f6","#ff5600"]},{"id":"kami","title":"kami (紙 / 纸)","summary":"Editorial paper system: warm parchment canvas, ink-blue accent, serif-led hierarchy. Built for resumes, one-pagers, white papers, portfolios, slide decks — anything that should feel like high-quality print rather than UI. Multilingual by design (EN · zh-CN · ja).","category":"Editorial & Print","swatches":["#1b365d","#2d5a8a","#f5f4ed","#faf9f5"]},{"id":"kraken","title":"Kraken","summary":"Crypto trading. Purple-accented dark UI, data-dense dashboards.","category":"Fintech & Crypto","swatches":["#7132f5","#5741d8","#5b1ecf","#101114"]},{"id":"lamborghini","title":"Lamborghini","summary":"Supercar brand. True black surfaces, gold accents, dramatic uppercase typography.","category":"Automotive","swatches":["#ffc000","#ffffff","#917300","#ffce3e"]},{"id":"levels","title":"Levels","summary":"Conversion-focused design that removes friction and guides users toward action through clarity, trust, and speed.","category":"Layout & Structure","swatches":["#ffffff","#8b5cf6","#111827","#27272a"]},{"id":"linear-app","title":"Linear","summary":"Project management. Ultra-minimal, precise, purple accent.","category":"Productivity & SaaS","swatches":["#010102","#08090a","#0f1011","#191a1b"]},{"id":"lingo","title":"Lingo","summary":"Playful, minimal design with bright colors, rounded shapes, tactile 3D borders, and friendly illustrations for approachable interfaces.","category":"Creative & Artistic","swatches":["#ffffff","#ce82ff","#3c3c3c","#58cc02"]},{"id":"loom","title":"Loom Design System","summary":"Loom async video. Purple primary, friendly surfaces, video-first layout. Clean and professional without being corporate.","category":"Themed & Unique","swatches":["#ffffff","#f7f7f8","#e4e4e7","#625df5"]},{"id":"lovable","title":"Lovable","summary":"AI full-stack builder. Playful gradients, friendly dev aesthetic.","category":"Developer Tools","swatches":["#f7f4ed","#1c1c1c","#fcfbf8","#5f5f5d"]},{"id":"luxury","title":"Luxury","summary":"High-end dark aesthetic with bold headings, monochromatic palette, and premium feel for luxury brand experiences.","category":"Professional & Corporate","swatches":["#000000","#fafafa","#ffffff","#16a34a"]},{"id":"mastercard","title":"Mastercard","summary":"Global payments network. Warm cream canvas, orbital pill shapes, editorial warmth.","category":"Fintech & Crypto","swatches":["#eb001b","#f79e1b","#141413","#cf4500"]},{"id":"material","title":"Material","summary":"Google's Material Design with layered surfaces, dynamic theming, built-in motion, and responsive cross-platform patterns.","category":"Professional & Corporate","swatches":["#ffffff","#c8b3fd","#111827","#6442d6"]},{"id":"meta","title":"Meta (Store)","summary":"Tech retail store. Photography-first, binary light/dark surfaces, Meta Blue CTAs.","category":"E-Commerce & Retail","swatches":["#0064e0","#0143b5","#004bb9","#47a5fa"]},{"id":"minimal","title":"Minimal","summary":"Stripped-back design emphasizing whitespace, clean typography, and restrained color for maximum clarity and focus.","category":"Modern & Minimal","swatches":["#f4f4f1","#312c85","#0c0c09","#16a34a"]},{"id":"minimax","title":"MiniMax","summary":"AI model provider. Bold dark interface with neon accents.","category":"AI & LLM","swatches":["#1456f0","#3daeff","#ea5ec1","#bfdbfe"]},{"id":"mintlify","title":"Mintlify","summary":"Documentation platform. Clean, green-accented, reading-optimized.","category":"Productivity & SaaS","swatches":["#0d0d0d","#ffffff","#18e299","#d4fae8"]},{"id":"miro","title":"Miro","summary":"Visual collaboration. Bright yellow accent, infinite canvas aesthetic.","category":"Design & Creative","swatches":["#1c1c1e","#ffffff","#5b76fe","#2a41b6"]},{"id":"mission-control","title":"Mission Control Design System","summary":"Space/aerospace mission monitoring. Dark command center, amber telemetry, monospace precision. Functional clarity above all else.","category":"Developer Tools","swatches":["#0b1120","#111827","#1a2535","#1e3a5f"]},{"id":"mistral-ai","title":"Mistral AI","summary":"Open-weight LLM provider. French-engineered minimalism, purple-toned.","category":"AI & LLM","swatches":["#fa520f","#fb6424","#ff8105","#ff8a00"]},{"id":"modern","title":"Modern","summary":"Contemporary editorial style with serif typography, minimal palettes, and clean layouts for polished digital products.","category":"Modern & Minimal","swatches":["#553f83","#111111","#ffffff","#16a34a"]},{"id":"mongodb","title":"MongoDB","summary":"Document database. Green leaf branding, developer documentation focus.","category":"Backend & Data","swatches":["#001e2b","#00ed64","#00684a","#006cfa"]},{"id":"mono","title":"Mono","summary":"Monospace-driven, matrix-inspired design with high-contrast elements, compact density, and a hacker-chic aesthetic.","category":"Modern & Minimal","swatches":["#e7e5e4","#00a6f4","#78716b","#37f712"]},{"id":"neobrutalism","title":"Neobrutalism","summary":"Modern take on brutalism with bold borders, vivid accent colors, and raw, high-contrast layouts on warm surfaces.","category":"Bold & Expressive","swatches":["#fbfbf9","#432dd7","#1c293c","#fdc800"]},{"id":"neon","title":"Neon","summary":"Electric neon glow effects with high-contrast color pairings for bold, attention-grabbing interfaces.","category":"Morphism & Effects","swatches":["#ffffff","#00bcff","#111827","#bbf351"]},{"id":"neumorphism","title":"Neumorphism","summary":"Soft, extruded UI elements with inner and outer shadows on monochromatic surfaces for a tactile, embedded look.","category":"Morphism & Effects","swatches":["#e7e5e4","#f1f2f5","#1e2938","#006666"]},{"id":"nike","title":"Nike","summary":"Athletic retail. Monochrome UI, massive uppercase type, full-bleed photography.","category":"E-Commerce & Retail","swatches":["#111111","#000000","#ffffff","#fafafa"]},{"id":"notion","title":"Notion","summary":"All-in-one workspace. Warm minimalism, serif headings, soft surfaces.","category":"Productivity & SaaS","swatches":["#ffffff","#0075de","#213183","#005bab"]},{"id":"nvidia","title":"NVIDIA","summary":"GPU computing. Green-black energy, technical power aesthetic.","category":"Media & Consumer","swatches":["#76b900","#000000","#ffffff","#bff230"]},{"id":"ollama","title":"Ollama","summary":"Run LLMs locally. Terminal-first, monochrome simplicity.","category":"AI & LLM","swatches":["#000000","#262626","#090909","#ffffff"]},{"id":"openai","title":"OpenAI","summary":"Calm, near-monochrome system anchored in deep teal-black with generous white space and editorial typography.","category":"AI & LLM","swatches":["#ffffff","#0d0d0d","#1a1a1a","#fafafa"]},{"id":"opencode-ai","title":"OpenCode","summary":"AI coding platform. Developer-centric dark theme.","category":"AI & LLM","swatches":["#201d1d","#fdfcfc","#9a9898","#302c2c"]},{"id":"pacman","title":"Pacman","summary":"Retro arcade-inspired design with pixel fonts, dotted borders, playful high-contrast colors, and 8-bit game aesthetics.","category":"Themed & Unique","swatches":["#000000","#f4b9b0","#111827","#2a3fe5"]},{"id":"paper","title":"Paper","summary":"Paper-textured, print-inspired design with minimal colors, clean serif/sans typography, and tactile surface qualities.","category":"Retro & Nostalgic","swatches":["#ffffff","#8b5cf6","#111827","#111111"]},{"id":"perplexity","title":"Perplexity AI","summary":"Conversational AI search engine. Deep-dark canvas, sharp typography, single violet accent, dense information hierarchy.","category":"AI & LLM","swatches":["#0f0f10","#19191a","#232325","#2e2e30"]},{"id":"perspective","title":"Perspective","summary":"Spatial depth design with isometric views, vanishing points, and layered elements that guide attention through 3D-like realism.","category":"Layout & Structure","swatches":["#ffffff","#00bd7d","#111827","#16a34a"]},{"id":"pinterest","title":"Pinterest","summary":"Visual discovery. Red accent, masonry grid, image-first.","category":"Media & Consumer","swatches":["#e60023","#103c25","#0b2819","#211922"]},{"id":"playstation","title":"PlayStation","summary":"Gaming console retail. Three-surface channel layout, quiet-authority display type, cyan hover-scale.","category":"Media & Consumer","swatches":["#0070cc","#000000","#1eaedb","#ffffff"]},{"id":"posthog","title":"PostHog","summary":"Product analytics. Playful hedgehog branding, developer-friendly dark UI.","category":"Backend & Data","swatches":["#4d4f46","#23251d","#f54e00","#f7a501"]},{"id":"premium","title":"Premium","summary":"Apple-inspired premium aesthetic with precise spacing, modern typography, and a refined, polished visual language.","category":"Professional & Corporate","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"professional","title":"Professional","summary":"Polished, business-ready design with modern typography, structured layouts, and a trustworthy visual identity.","category":"Professional & Corporate","swatches":["#ffffff","#000000","#111827","#fece14"]},{"id":"publication","title":"Publication","summary":"Print-inspired visual language for books, magazines, and reports with editorial grids and expressive typography.","category":"Creative & Artistic","swatches":["#ffffff","#0a1829","#a855f7","#16a34a"]},{"id":"raycast","title":"Raycast","summary":"Productivity launcher. Sleek dark chrome, vibrant gradient accents.","category":"Developer Tools","swatches":["#07080a","#ffffff","#ff6363","#55b3ff"]},{"id":"refined","title":"Refined","summary":"Carefully curated, modern minimal style with elegant serif typography and understated, sophisticated palettes.","category":"Modern & Minimal","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"renault","title":"Renault","summary":"French automotive. Vibrant aurora gradients, NouvelR typography, bold energy.","category":"Automotive","swatches":["#efdf00","#000000","#ffffff","#f8eb4c"]},{"id":"replicate","title":"Replicate","summary":"Run ML models via API. Clean white canvas, code-forward.","category":"AI & LLM","swatches":["#202020","#ea2804","#dd4425","#2b9a66"]},{"id":"resend","title":"Resend","summary":"Email API. Minimal dark theme, monospace accents.","category":"Productivity & SaaS","swatches":["#000000","#f0f0f0","#ffffff","#ff5900"]},{"id":"retro","title":"Retro","summary":"Throwback design with vintage-inspired typography, high-contrast retro palettes, and nostalgic visual elements.","category":"Retro & Nostalgic","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"revolut","title":"Revolut","summary":"Digital banking. Sleek dark interface, gradient cards, fintech precision.","category":"Fintech & Crypto","swatches":["#191c1f","#ffffff","#f4f4f4","#494fdf"]},{"id":"runwayml","title":"Runway","summary":"AI video generation. Cinematic dark UI, media-rich layout.","category":"AI & LLM","swatches":["#000000","#030303","#1a1a1a","#ffffff"]},{"id":"sanity","title":"Sanity","summary":"Headless CMS. Red accent, content-first editorial layout.","category":"Backend & Data","swatches":["#0b0b0b","#000000","#f36458","#0052ef"]},{"id":"sentry","title":"Sentry","summary":"Error monitoring. Dark dashboard, data-dense, pink-purple accent.","category":"Backend & Data","swatches":["#1f1633","#150f23","#362d59","#6a5fc1"]},{"id":"shadcn","title":"Shadcn","summary":"Shadcn/ui-inspired design with minimal, clean components, monochrome palette, and utility-first patterns.","category":"Modern & Minimal","swatches":["#ffffff","#111111","#111827","#000000"]},{"id":"shopify","title":"Shopify","summary":"E-commerce platform. Dark-first cinematic, neon green accent, ultra-light type.","category":"E-Commerce & Retail","swatches":["#ffffff","#000000","#36f4a4","#c1fbd4"]},{"id":"simple","title":"Simple","summary":"Straightforward, no-frills design with clean typography, neutral colors, and intuitive layouts that stay out of the way.","category":"Modern & Minimal","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"skeumorphism","title":"Skeumorphism","summary":"Real-world mimicry with textured surfaces, 3D effects, and familiar physical metaphors for intuitive digital interfaces.","category":"Morphism & Effects","swatches":["#ffffff","#f08321","#111827","#fa3c00"]},{"id":"slack","title":"Slack","summary":"Workplace communication platform. Aubergine-primary, multi-accent logo palette, light surfaces with dark sidebar, warm and approachable.","category":"Productivity & SaaS","swatches":["#4a154b","#350d36","#611f69","#36c5f0"]},{"id":"sleek","title":"Sleek","summary":"Modern minimalist aesthetic with clean lines, intentional color palette, subtle interactions, and consistent spacing.","category":"Modern & Minimal","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"spacex","title":"SpaceX","summary":"Space technology. Stark black and white, full-bleed imagery, futuristic.","category":"Media & Consumer","swatches":["#000000","#f0f0fa"]},{"id":"spacious","title":"Spacious","summary":"Generous whitespace, consistent padding, and grid-based layouts for clean, readable, and breathing interfaces.","category":"Layout & Structure","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"spotify","title":"Spotify","summary":"Music streaming. Vibrant green on dark, bold type, album-art-driven.","category":"Media & Consumer","swatches":["#1ed760","#121212","#181818","#1f1f1f"]},{"id":"starbucks","title":"Starbucks","summary":"Global coffee retail brand. Four-tier green system, warm cream canvas, full-pill buttons.","category":"E-Commerce & Retail","swatches":["#006241","#00754a","#1e3932","#2b5148"]},{"id":"storytelling","title":"Storytelling","summary":"Narrative-driven design using visuals, copy, and interaction to guide users through engaging, emotionally resonant journeys.","category":"Creative & Artistic","swatches":["#ffffff","#8b5cf6","#111827","#3b82f6"]},{"id":"stripe","title":"Stripe","summary":"Payment infrastructure. Signature purple gradients, weight-300 elegance.","category":"Fintech & Crypto","swatches":["#533afd","#061b31","#ffffff","#1c1e54"]},{"id":"supabase","title":"Supabase","summary":"Open-source Firebase alternative. Dark emerald theme, code-first.","category":"Backend & Data","swatches":["#3ecf8e","#00c573","#0f0f0f","#171717"]},{"id":"superhuman","title":"Superhuman","summary":"Fast email client. Premium dark UI, keyboard-first, purple glow.","category":"Developer Tools","swatches":["#1b1938","#cbb7fb","#292827","#714cb6"]},{"id":"tesla","title":"Tesla","summary":"Electric automotive. Radical subtraction, full-viewport photography, near-zero UI.","category":"Automotive","swatches":["#3e6ae1","#ffffff","#f4f4f4","#171a20"]},{"id":"tetris","title":"Tetris","summary":"Classic block-game inspired design with playful colors, bold display fonts, and compact, high-energy layouts.","category":"Themed & Unique","swatches":["#dfe7ff","#7107e7","#1c398e","#1c202b"]},{"id":"theverge","title":"The Verge","summary":"Tech editorial media. Acid-mint and ultraviolet accents, Manuka display, rave-flyer story tiles.","category":"Media & Consumer","swatches":["#3cffd0","#5200ff","#309875","#3860be"]},{"id":"together-ai","title":"Together AI","summary":"Open-source AI infrastructure. Technical, blueprint-style design.","category":"AI & LLM","swatches":["#ef2cc1","#fc4c02","#010120","#bdbbff"]},{"id":"totality-festival","title":"Totality Festival","summary":"A cosmic-premium, glassmorphic dark system that captures the visceral awe of a solar eclipse — obsidian surfaces, amber \"corona\" highlights, and cyan atmospheric accents.","category":"Themed & Unique","swatches":["#121318","#d0c6ab","#e3e1e9","#ffd700"]},{"id":"trading-terminal","title":"Trading Terminal Design System","summary":"Bloomberg-style financial trading terminal. Dark-only, data-dense, cyan/coral buy/sell signals. Everything readable at a glance from two meters away.","category":"Themed & Unique","swatches":["#0d0d0d","#141414","#1a1a1a","#2a2a2a"]},{"id":"uber","title":"Uber","summary":"Mobility platform. Bold black and white, tight type, urban energy.","category":"Media & Consumer","swatches":["#000000","#ffffff","#e2e2e2","#f3f3f3"]},{"id":"urdu","title":"Urdu Modern (Indus Script System)","summary":"Urdu-first digital experiences with native RTL support,Nastaliq typography, and bilingual harmony.","category":"Editorial / Personal / Publication","swatches":["#0f595e","#f4f1ea","#c05621","#1a202c"]},{"id":"vercel","title":"Vercel","summary":"Frontend deployment. Black and white precision, Geist font.","category":"Developer Tools","swatches":["#171717","#ffffff","#000000","#ff5b4f"]},{"id":"vibrant","title":"Vibrant","summary":"Lively, colorful design with bold playful typography, warm accents, and dynamic visual energy.","category":"Bold & Expressive","swatches":["#ffffff","#eaae87","#2f281d","#7c61d4"]},{"id":"vintage","title":"Vintage","summary":"1950s-1990s nostalgia with skeuomorphic touches, grainy textures, retro color palettes, and pixel-style typography.","category":"Retro & Nostalgic","swatches":["#c0c0c0","#000000","#008080","#16a34a"]},{"id":"vodafone","title":"Vodafone","summary":"Global telecom brand. Monumental uppercase display, Vodafone Red chapter bands.","category":"Media & Consumer","swatches":["#e60000","#ffffff","#3860be","#ac1811"]},{"id":"voltagent","title":"VoltAgent","summary":"AI agent framework. Void-black canvas, emerald accent, terminal-native.","category":"AI & LLM","swatches":["#00d992","#2fd6a1","#10b981","#818cf8"]},{"id":"warm-editorial","title":"Warm Editorial","summary":"A serif-led magazine aesthetic. Terracotta accent on warm off-white paper —","category":"Starter","swatches":["#ffffff","#faf7f2","#1c1a17","#c0512f"]},{"id":"warp","title":"Warp","summary":"Modern terminal. Dark IDE-like interface, block-based command UI.","category":"Developer Tools","swatches":["#faf9f6","#353534","#868584","#afaeac"]},{"id":"webex","title":"Webex","summary":"Collaboration platform. Momentum typography, blue action system, multi-user accent spectrum.","category":"Productivity & SaaS","swatches":["#1170cf","#0353a8","#063a75","#64b4fa"]},{"id":"webflow","title":"Webflow","summary":"Visual web builder. Blue-accented, polished marketing site aesthetic.","category":"Design & Creative","swatches":["#080808","#146ef5","#3b89ff","#006acc"]},{"id":"wechat","title":"WeChat Design System","summary":"Brand visual language for WeChat Mini Programs, official accounts, and open ecosystem extensions.","category":"Social & Messaging","swatches":["#07c160","#10b160","#059050","#95ec69"]},{"id":"wired","title":"WIRED","summary":"Tech magazine. Paper-white broadsheet density, custom serif display, mono kickers, ink-blue links.","category":"Media & Consumer","swatches":["#000000","#1a1a1a","#ffffff","#057dbc"]},{"id":"wise","title":"Wise","summary":"Money transfer. Bright green accent, friendly and clear.","category":"Fintech & Crypto","swatches":["#0e0f0c","#9fe870","#163300","#e2f6d5"]},{"id":"x-ai","title":"xAI","summary":"Elon Musk's AI lab. Stark monochrome, futuristic minimalism.","category":"AI & LLM","swatches":["#ffffff","#1f2228","#000000"]},{"id":"xiaohongshu","title":"Xiaohongshu","summary":"Lifestyle UGC social platform. Singular brand red, generous radius, content-first.","category":"Media & Consumer","swatches":["#ff2442","#ff2e4d","#fdbc5f","#ffffff"]},{"id":"zapier","title":"Zapier","summary":"Automation platform. Warm orange, friendly illustration-driven.","category":"Productivity & SaaS","swatches":["#201515","#fffefb","#fffdf9","#ff4f00"]}];
+
+/* 分类中文名 + 显示顺序（未列出的排在最后，按原名） */
+const CAT_META = [
+  ['Themed & Unique', '主题与创意'],
+  ['AI & LLM', 'AI 与大模型'],
+  ['Productivity & SaaS', '效率与 SaaS'],
+  ['Developer Tools', '开发者工具'],
+  ['Backend & Data', '后端与数据'],
+  ['Design & Creative', '设计工具'],
+  ['Creative & Artistic', '艺术表达'],
+  ['E-Commerce & Retail', '电商零售'],
+  ['Media & Consumer', '媒体与消费'],
+  ['Professional & Corporate', '商务企业'],
+  ['Fintech & Crypto', '金融与加密'],
+  ['Modern & Minimal', '现代极简'],
+  ['Bold & Expressive', '大胆表现'],
+  ['Morphism & Effects', '拟态与特效'],
+  ['Layout & Structure', '版式结构'],
+  ['Retro & Nostalgic', '复古怀旧'],
+  ['Automotive', '汽车'],
+  ['Social & Messaging', '社交通讯'],
+  ['Editorial & Print', '编辑与印刷'],
+  ['Editorial · Studio', '编辑 · 工作室'],
+  ['Editorial / Personal / Publication', '编辑 · 个人出版'],
+  ['Starter', '入门基础'],
+];
+const CAT_ZH = new Map(CAT_META);
+const CAT_ORDER = new Map(CAT_META.map(([en], i) => [en, i]));
+
+/* ── 色板工具 ── */
+function hexRgb(h) {
+  const n = parseInt(h.slice(1), 16);
+  return [n >> 16 & 255, n >> 8 & 255, n & 255];
+}
+function lum(h) {
+  const [r, g, b] = hexRgb(h).map((v) => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function alpha(h, a) {
+  const [r, g, b] = hexRgb(h);
+  return `rgba(${r},${g},${b},${a})`;
+}
+function sat(h) {
+  const [r, g, b] = hexRgb(h);
+  return (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+}
+/* 每条数据推断出稳定的四色角色：底 / 面 / 墨 / 强调。
+   原则：swatches[0]（各系统的 surface）永远当底——深色系统必须保持深色气质，
+   不做「最浅色当底」的重排（HUD 那类 near-black + 荧光绿会被翻成刺眼绿底）。
+   墨 = 其余颜色里与底对比最大者（不够就退中性色）；强调 = 其余里最饱和者。 */
+function roles(sw) {
+  const s = sw && sw.length ? [...new Set(sw)] : [];
+  if (s.length === 0) {
+    return { bg: '#e8e8ec', panel: 'rgba(0,0,0,.06)', ink: '#3a3a40', accent: '#6e6e78', panelSolid: null };
+  }
+  const bg = s[0];
+  const rest = s.slice(1);
+  // 先抢强调色（最饱和者）——否则唯一的品牌彩色会被墨色占走，强调只剩灰
+  let accent = null, bestS = -1;
+  for (const c of rest) {
+    // 几乎与底同色的候选不要（白底配白强调等于隐形）
+    if (sat(c) > bestS && (sat(c) > 0.12 || Math.abs(lum(c) - lum(bg)) > 0.12)) {
+      bestS = sat(c); accent = c;
+    }
+  }
+  const rem = rest.filter((c) => c !== accent);
+  let ink = null, best = -1;
+  for (const c of rem) {
+    const d = Math.abs(lum(c) - lum(bg));
+    if (d > best) { best = d; ink = c; }
+  }
+  if (best < 0.25) {
+    // 深色系统优先沿用强调色当墨（HUD/终端类「荧光字」正是其身份）；浅色系统退中性
+    if (lum(bg) < 0.5 && accent && Math.abs(lum(accent) - lum(bg)) > 0.3) ink = accent;
+    else ink = lum(bg) > 0.5 ? '#1d1d1f' : '#f5f5f7';
+  }
+  if (!accent) accent = ink;
+  const rem2 = rem.filter((c) => c !== ink);
+  let panelSolid = rem2[0] ?? null;
+  if (panelSolid && Math.abs(lum(panelSolid) - lum(bg)) < 0.03) panelSolid = null;
+  return { bg, ink, accent, panel: panelSolid ?? alpha(ink, 0.07), panelSolid };
+}
+/* 面板内元素的墨色：实色面板相对面板亮度取黑/白，衍生半透明面板沿用整体墨色 */
+function panelInk(r) {
+  if (r.panelSolid) return lum(r.panelSolid) > 0.45 ? '#000000' : '#ffffff';
+  return r.ink;
+}
+const DATA = RAW.map((d) => ({ ...d, roles: roles(d.swatches) }));
+
+/* ── 状态 ── */
+const disabled = new Set();       // 已关闭（隐藏）的 id
+let search = '';
+let activeCat = 'All';
+let onlyHidden = false;
+let previewId = null;
+
+const $ = (id) => document.getElementById(id);
+const content = $('content');
+
+/* ── 渲染：统计 chips ── */
+function renderStats() {
+  const cats = new Set(DATA.map((d) => d.category)).size;
+  const h = disabled.size;
+  $('stats').innerHTML = `
+    <span class="stat-chip">已安装 <strong>${DATA.length}</strong></span>
+    <span class="stat-chip"><strong>${cats}</strong> 个分类</span>
+    ${h > 0 ? `<span class="stat-chip hidden-chip${onlyHidden ? ' on' : ''}" id="hiddenChip" role="button" tabindex="0">已隐藏 <strong>${h}</strong>${onlyHidden ? ' · 正在只看这些' : ''}</span>` : ''}
+  `;
+  const chip = $('hiddenChip');
+  if (chip) chip.addEventListener('click', () => {
+    onlyHidden = !onlyHidden;
+    if (onlyHidden) { search = ''; $('search').value = ''; activeCat = 'All'; renderCats(); }
+    renderAll();
+  });
+}
+
+/* ── 渲染：分类 pills ── */
+function renderCats() {
+  const counts = new Map();
+  for (const d of DATA) counts.set(d.category, (counts.get(d.category) ?? 0) + 1);
+  const cats = [...counts.keys()].sort(
+    (a, b) => (CAT_ORDER.get(a) ?? 99) - (CAT_ORDER.get(b) ?? 99) || a.localeCompare(b),
+  );
+  const row = $('catRow');
+  row.innerHTML = [
+    `<button type="button" class="cat-pill${activeCat === 'All' ? ' active' : ''}" data-cat="All">全部 <span class="n">${DATA.length}</span></button>`,
+    ...cats.map((c) =>
+      `<button type="button" class="cat-pill${activeCat === c ? ' active' : ''}" data-cat="${c}">${CAT_ZH.get(c) ?? c} <span class="n">${counts.get(c)}</span></button>`),
+  ].join('');
+  row.querySelectorAll('.cat-pill').forEach((b) => b.addEventListener('click', () => {
+    activeCat = b.dataset.cat;
+    renderCats(); renderList();
+  }));
+}
+
+/* ── 过滤 ── */
+function filtered() {
+  const q = search.toLowerCase();
+  return DATA.filter((d) => {
+    if (onlyHidden && !disabled.has(d.id)) return false;
+    if (activeCat !== 'All' && d.category !== activeCat) return false;
+    if (q && !d.title.toLowerCase().includes(q) && !d.summary.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+/* ── 渲染：卡片列表 ── */
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+
+function cardHtml(d, i) {
+  const r = d.roles;
+  const pi = panelInk(r);
+  const off = disabled.has(d.id);
+  const delay = Math.min(i * 24, 360);
+  const dots = (d.swatches.length ? d.swatches : [r.bg, r.panel, r.ink, r.accent])
+    .map((c) => `<i style="background:${c}"></i>`).join('');
+  return `
+  <article class="card${off ? ' off' : ''}" data-id="${d.id}" tabindex="0" role="button"
+           aria-label="${esc(d.title)}" style="animation-delay:${delay}ms; --pv-glow:${alpha(r.accent, 0.45)}">
+    <div class="preview" style="background:${r.bg}">
+      <div class="pv-nav">
+        <i style="background:${alpha(r.ink, 0.3)}"></i><i style="background:${alpha(r.ink, 0.3)}"></i><i style="background:${alpha(r.ink, 0.3)}"></i>
+      </div>
+      <div class="pv-chip" style="background:${r.accent}"></div>
+      <div class="pv-panel" style="background:${r.panel}; box-shadow: 0 4px 14px ${alpha('#000000', lum(r.bg) > 0.5 ? 0.07 : 0.3)}">
+        <div class="pv-h" style="background:${alpha(pi, 0.85)}"></div>
+        <div class="pv-l" style="background:${alpha(pi, 0.3)}; width:88%"></div>
+        <div class="pv-l" style="background:${alpha(pi, 0.3)}; width:64%"></div>
+        <div class="pv-btnrow">
+          <div class="pv-btn" style="background:${r.accent}"></div>
+          <div class="pv-btn2" style="background:${alpha(pi, 0.16)}"></div>
+        </div>
+      </div>
+      <div class="pv-side" style="background:${alpha(r.ink, 0.09)}">
+        <span class="pv-dot" style="background:${r.accent}"></span>
+        <i style="background:${alpha(r.ink, 0.4)}; width:80%"></i>
+        <i style="background:${alpha(r.ink, 0.22)}; width:55%"></i>
+      </div>
+    </div>
+    <div class="strip">${dots}</div>
+    <div class="card-meta">
+      <span class="list-dots">${dots}</span>
+      <div class="card-text">
+        <div class="card-title-row">
+          <span class="card-title">${esc(d.title)}</span>
+          <span class="off-badge">已隐藏</span>
+        </div>
+        <div class="card-sum">${esc(d.summary)}</div>
+      </div>
+      <label class="switch" title="在主页画廊显示">
+        <input type="checkbox" ${off ? '' : 'checked'} aria-label="在主页画廊显示 ${esc(d.title)}">
+        <span class="track"></span><span class="thumb"></span>
+      </label>
+    </div>
+  </article>`;
+}
+
+function renderList() {
+  const items = filtered();
+  if (items.length === 0) {
+    content.innerHTML = `
+      <div class="empty">
+        <div class="big">没有匹配的设计系统</div>
+        <div>换个关键词，或者清掉当前筛选试试。</div>
+        <button type="button" id="clearFilters">清除全部筛选</button>
+      </div>`;
+    $('clearFilters').addEventListener('click', () => {
+      search = ''; $('search').value = ''; activeCat = 'All'; onlyHidden = false;
+      renderAll();
+    });
+    updateSearchClear();
+    return;
+  }
+  // 按分类分组（保持 pills 同一顺序）
+  const groups = new Map();
+  for (const d of items) {
+    if (!groups.has(d.category)) groups.set(d.category, []);
+    groups.get(d.category).push(d);
+  }
+  const cats = [...groups.keys()].sort(
+    (a, b) => (CAT_ORDER.get(a) ?? 99) - (CAT_ORDER.get(b) ?? 99) || a.localeCompare(b),
+  );
+  let idx = 0;
+  content.innerHTML = cats.map((c) => {
+    const list = groups.get(c);
+    const head = activeCat === 'All'
+      ? `<div class="group-head">
+           <span class="group-title">${CAT_ZH.get(c) ?? c}</span>
+           <span class="group-en">${esc(c)}</span>
+           <span class="group-count">${list.length}</span>
+         </div>`
+      : '';
+    return `<section class="group">${head}<div class="grid">${list.map((d) => cardHtml(d, idx++)).join('')}</div></section>`;
+  }).join('');
+
+  // 事件：开关（阻断冒泡）与打开预览
+  content.querySelectorAll('.card').forEach((card) => {
+    const id = card.dataset.id;
+    const toggle = card.querySelector('.switch input');
+    toggle.addEventListener('click', (e) => e.stopPropagation());
+    toggle.addEventListener('change', () => setEnabled(id, toggle.checked));
+    card.addEventListener('click', () => openPreview(id));
+    card.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.target.closest('.switch')) return;
+      e.preventDefault(); openPreview(id);
+    });
+  });
+}
+
+function setEnabled(id, enabled) {
+  const wasOnlyHidden = onlyHidden;
+  if (enabled) disabled.delete(id); else disabled.add(id);
+  if (disabled.size === 0) onlyHidden = false;
+  renderStats();
+  const card = content.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
+  if (card && !(wasOnlyHidden && enabled)) {
+    card.classList.toggle('off', !enabled);
+    // 预览模态里的开关也走这条路——卡片上的 checkbox 必须跟着写回，否则两处状态分家
+    card.querySelector('.switch input').checked = enabled;
+  } else {
+    renderList(); // 「只看已隐藏」下重新打开 → 条目应离开列表
+  }
+  const d = DATA.find((x) => x.id === id);
+  showToast(enabled ? `「${d.title}」已在主页画廊显示` : `已隐藏「${d.title}」`);
+}
+
+function renderAll() { renderStats(); renderCats(); renderList(); }
+
+/* ── 搜索 ── */
+function updateSearchClear() { $('searchClear').classList.toggle('show', search.length > 0); }
+$('search').addEventListener('input', (e) => {
+  search = e.target.value.trim();
+  if (search && onlyHidden) { onlyHidden = false; renderStats(); }
+  updateSearchClear(); renderList();
+});
+$('searchClear').addEventListener('click', () => {
+  search = ''; $('search').value = ''; updateSearchClear(); renderList(); $('search').focus();
+});
+
+/* ── 预览模态 ── */
+function openPreview(id) {
+  const d = DATA.find((x) => x.id === id);
+  if (!d) return;
+  previewId = id;
+  const r = d.roles;
+  const pi = panelInk(r);
+  $('pmTitle').textContent = d.title;
+  $('pmCat').textContent = CAT_ZH.get(d.category) ?? d.category;
+  $('pmStage').style.background = r.bg;
+  $('pmStage').innerHTML = `
+    <div class="stage-nav">
+      <span class="stage-logo" style="background:${r.accent}"></span>
+      <i style="background:${alpha(r.ink, 0.45)}"></i>
+      <i style="background:${alpha(r.ink, 0.25)}"></i>
+      <i style="background:${alpha(r.ink, 0.25)}"></i>
+      <span class="sp"></span>
+      <span class="stage-pill" style="background:${r.accent}"></span>
+    </div>
+    <div class="stage-cols">
+      <div class="stage-hero">
+        <div class="stage-kicker" style="color:${r.ink}">Design System</div>
+        <div class="stage-h1" style="color:${r.ink}">${esc(d.title)}</div>
+        <div class="stage-p">
+          <i style="background:${alpha(r.ink, 0.3)}; width:92%"></i>
+          <i style="background:${alpha(r.ink, 0.3)}; width:78%"></i>
+          <i style="background:${alpha(r.ink, 0.18)}; width:55%"></i>
+        </div>
+        <div class="stage-cta">
+          <span class="stage-btn" style="background:${r.accent}; color:${lum(r.accent) > 0.45 ? '#111' : '#fff'}">主操作</span>
+          <span class="stage-btn" style="color:${r.ink}; box-shadow: inset 0 0 0 1.5px ${alpha(r.ink, 0.35)}">次操作</span>
+        </div>
+      </div>
+      <div class="stage-card" style="background:${r.panel}; box-shadow: 0 10px 30px ${alpha('#000000', lum(r.bg) > 0.5 ? 0.08 : 0.35)}">
+        <div class="row"><span class="av" style="background:${r.accent}"></span><i style="background:${alpha(pi, 0.6)}"></i></div>
+        <i style="background:${alpha(pi, 0.3)}"></i>
+        <i style="background:${alpha(pi, 0.3)}; width:82%"></i>
+        <i style="background:${alpha(pi, 0.18)}; width:60%"></i>
+      </div>
+    </div>`;
+  $('pmPalette').innerHTML = (d.swatches.length ? d.swatches : [r.bg, r.panel, r.ink, r.accent])
+    .map((c) => `<button type="button" style="background:${c}; color:${lum(c) > 0.45 ? 'rgba(0,0,0,.75)' : 'rgba(255,255,255,.9)'}" data-hex="${c}">${c}</button>`)
+    .join('');
+  $('pmPalette').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    navigator.clipboard?.writeText(b.dataset.hex).catch(() => {});
+    showToast(`已复制 ${b.dataset.hex}`);
+  }));
+  $('pmInfo').innerHTML = `
+    <span class="info-item"><b>分类</b>${esc(d.category)}</span>
+    <span class="info-item"><b>标识</b><code>${esc(d.id)}</code></span>
+    <span class="info-item"><b>来源</b>内置库</span>`;
+  syncPreviewToggle();
+  $('previewOverlay').classList.add('open');
+}
+function syncPreviewToggle() {
+  const off = disabled.has(previewId);
+  $('pmToggle').checked = !off;
+  $('pmState').textContent = off ? '已隐藏' : '已显示';
+  $('pmState').style.color = off ? 'var(--muted-fg)' : 'var(--brand)';
+}
+$('pmToggle').addEventListener('change', (e) => {
+  setEnabled(previewId, e.target.checked);
+  syncPreviewToggle();
+});
+$('pmClose').addEventListener('click', () => $('previewOverlay').classList.remove('open'));
+$('previewOverlay').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) $('previewOverlay').classList.remove('open');
+});
+
+/* ── 添加模态 ── */
+$('addBtn').addEventListener('click', () => $('addOverlay').classList.add('open'));
+$('addClose').addEventListener('click', () => $('addOverlay').classList.remove('open'));
+$('addOverlay').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) $('addOverlay').classList.remove('open');
+});
+function segBind(seg, onPick) {
+  seg.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    seg.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+    onPick(b);
+  }));
+}
+segBind($('srcSeg'), (b) => {
+  const gh = b.dataset.v === 'github';
+  $('pathLabel').textContent = gh ? '仓库地址' : '项目路径';
+  $('pathInput').placeholder = gh ? 'https://github.com/owner/repo' : '/path/to/project';
+});
+segBind($('modeSeg'), (b) => { $('modeHint').textContent = b.dataset.hint; });
+$('pathInput').addEventListener('input', (e) => {
+  $('importBtn').disabled = e.target.value.trim().length === 0;
+  $('importNote').classList.remove('show');
+});
+$('importBtn').addEventListener('click', () => {
+  const btn = $('importBtn');
+  btn.disabled = true; btn.textContent = '解析中…';
+  setTimeout(() => {
+    btn.textContent = '导入'; btn.disabled = $('pathInput').value.trim().length === 0;
+    $('importNote').classList.add('show');
+  }, 900);
+});
+
+/* ── Tweaks ── */
+$('tweaksFab').addEventListener('click', () => $('tweaksPanel').classList.toggle('open'));
+document.querySelectorAll('.tweaks .seg').forEach((seg) => {
+  segBind(seg, (b) => {
+    const k = seg.dataset.tweak, v = b.dataset.v;
+    if (k === 'theme') document.documentElement.dataset.theme = v;
+    else if (k === 'motion') document.documentElement.dataset.motion = v;
+    else $('page').dataset[k] = v;
+  });
+});
+
+/* ── Esc 关闭最上层弹层 ── */
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  for (const id of ['previewOverlay', 'addOverlay']) {
+    const el = $(id);
+    if (el.classList.contains('open')) { el.classList.remove('open'); return; }
+  }
+  $('tweaksPanel').classList.remove('open');
+});
+
+/* ── toast ── */
+let toastTimer = 0;
+function showToast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+renderAll();
+</script>
+</body>
+</html>

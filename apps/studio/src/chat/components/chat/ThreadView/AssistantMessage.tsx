@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ActionBarPrimitive, MessagePrimitive, useMessage } from '@assistant-ui/react'
+import {
+  ActionBarPrimitive,
+  ErrorPrimitive,
+  MessagePrimitive,
+  useMessage
+} from '@assistant-ui/react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Check, Copy, ThumbsDown, ThumbsUp } from 'lucide-react'
+import { Check, Copy, ThumbsDown, ThumbsUp, TriangleAlert } from 'lucide-react'
 
 import {
   DropdownMenu,
@@ -11,7 +16,7 @@ import {
 } from '@/src/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/src/components/ui/tooltip'
 import { cn } from '@/src/lib/utils'
-import { useI18n } from '../../../i18n'
+import { useI18n, useT } from '../../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../../stores/chat'
 import {
   useImageEditStore,
@@ -521,6 +526,14 @@ export function AssistantMessage(): React.JSX.Element {
             Empty: ThinkingSpinner
           }}
         />
+        {/* Turn-level failure (SDK `error` ChatEvent → setError → this
+            message's `status`). MessagePrimitive.Error is a pure gate —
+            renders children only when `status.reason === 'error'` — so
+            this can sit unconditionally after Parts without its own
+            visibility check. See AssistantErrorBanner. */}
+        <MessagePrimitive.Error>
+          <AssistantErrorBanner />
+        </MessagePrimitive.Error>
         {/* Deliverable file cards: real on-disk files this message's text
             points at, rendered as openable cards once the message settles. */}
         <AssistantDeliverables />
@@ -844,6 +857,30 @@ function AssistantTextRow({ text }: { text: string }): React.JSX.Element {
       <div className="min-w-0 flex-1">
         <AssistantMarkdown text={text} />
       </div>
+    </div>
+  )
+}
+
+/**
+ * Turn-level failure card. Reads its text from `ErrorPrimitive.Message`
+ * (assistant-ui's own `useMessageError()`, sourced off the message's
+ * `status.error` — see `setError` in stores/chat.ts), so this component
+ * owns none of the error text itself and can't drift out of sync with
+ * it. Visual language is deliberately borrowed from `ToolPane`'s
+ * `tone="error"` frame (ToolCallCard.tsx) — same border/wash/label
+ * treatment as a failed tool's output pane — so a request-level error
+ * and a tool-level error read as the same "this failed" signal instead
+ * of inventing a second visual vocabulary.
+ */
+function AssistantErrorBanner(): React.JSX.Element {
+  const t = useT()
+  return (
+    <div className="min-w-0 overflow-hidden rounded-apple-md border border-red-500/30 bg-red-500/[0.05] px-3 pb-2 pt-2">
+      <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-red-500/80">
+        <TriangleAlert aria-hidden className="size-[11px]" />
+        <span>{t('assistantErrorTitle')}</span>
+      </div>
+      <ErrorPrimitive.Message className="mt-1.5 block text-[12.5px] leading-relaxed text-foreground/85" />
     </div>
   )
 }

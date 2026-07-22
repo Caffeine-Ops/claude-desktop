@@ -15,6 +15,15 @@ import type {
 } from '../../types';
 
 export type SettingsSection =
+  // 账号（2026-07-21）：sub2api 真实账户资料——头像/用户名/角色/状态/
+  // 余额/并发/注册时间。面板组件 AccountSection.tsx，经 window.chatApi
+  // 的 ACCOUNT_GET_PROFILE / ACCOUNT_UPDATE_PROFILE 两个 IPC 读写，不吃
+  // cfg/setCfg（账户数据不是 AppConfig 草稿的一部分）。
+  | 'account'
+  // 使用记录（2026-07-21）：对接 sub2api /api/v1/usage* 的统计卡片/图表/
+  // 明细表，面板组件 UsageSection.tsx。原是账户菜单里的全屏 overlay
+  // （UsageScreen.tsx），用户要求改成设置页普通一节，overlay 版已删除。
+  | 'usage'
   | 'execution'
   | 'instructions'
   | 'media'

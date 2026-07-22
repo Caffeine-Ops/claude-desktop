@@ -57,6 +57,10 @@ export interface ChatEventActions {
     sid: string,
     ev: Extract<ChatEvent, { type: 'task_update' }>
   ) => void
+  setRetryInfo: (
+    sid: string,
+    ev: Extract<ChatEvent, { type: 'retry' }> | null
+  ) => void
   setError: (sid: string, messageId: string, error: string) => void
   endAssistantMessage: (sid: string) => void
   setUsage: (
@@ -251,6 +255,13 @@ export function applyChatEventToStore(
       // Task card's sub-task list. Routed by toolUseId/taskId inside
       // the store, independent of any active assistant turn.
       actions.updateToolCallTasks(sid, event)
+      break
+    case 'retry':
+      // SDK transport-level auto-retry (502/529/rate-limit), fired
+      // before any assistant content streams. Each attempt overwrites
+      // the previous snapshot; 'start'/'end' clear it (see setRetryInfo
+      // callers in chat.ts) so it can't outlive the pre-content gap.
+      actions.setRetryInfo(sid, event)
       break
     case 'usage':
       actions.setUsage(sid, {

@@ -227,6 +227,7 @@
     "react-dom": "19.2.5",
     "react-markdown": "^10.1.0",
     "react-zoom-pan-pinch": "^4.0.3",
+    "recharts": "^3.10.0",
     "rehype-highlight": "^7.0.2",
     "rxjs": "^7.8.2",
     "tailwind-merge": "^3.6.0",

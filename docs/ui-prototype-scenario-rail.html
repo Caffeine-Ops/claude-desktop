@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-variant="anchor">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>场景栏 · 单行收纳交互原型</title>
+<style>
+/* ============================================================
+   设计 token
+   ============================================================ */
+:root{
+  color-scheme: light;
+  --bg:#f6f6f7;
+  --surface:#ffffff;          /* composer 卡片 */
+  --surface-2:#fbfbfc;        /* app 模拟窗底色（rail 所在面） */
+  --ink:#1b1b1f;
+  --ink-2:#55555e;
+  --ink-3:#9494a0;
+  --line:#e7e7ea;
+  --line-2:#d9d9de;
+  --chip-bg:#f1f1f3;
+  --chip-bg-hover:#e8e8ec;
+  --chip-ink:#26262b;
+  --lead-bg:#1e1e23;          /* 选中技能深色 chip */
+  --lead-ink:#fafafa;
+  --lead-x:rgba(255,255,255,.55);
+  --brand:#189a4a;
+  --brand-soft:color-mix(in oklab, var(--brand) 14%, transparent);
+  --glass-bg:rgba(255,255,255,.8);
+  --glass-border:rgba(27,27,31,.08);
+  --glass-shadow:0 24px 64px -20px rgba(27,27,31,.28), 0 4px 14px rgba(27,27,31,.06);
+  --dur:260ms;
+  --ease-move:cubic-bezier(.22,1,.36,1);   /* 位移/高度：有力的减速 */
+  --ease-fade:cubic-bezier(.33,1,.68,1);   /* 透明度：easeOutCubic，避免头段冲顶 */
+  --radius-chip:11px;
+}
+[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#141416;
+  --surface:#1d1d21;
+  --surface-2:#19191d;
+  --ink:#f0f0f2;
+  --ink-2:#b9b9c2;
+  --ink-3:#7a7a85;
+  --line:#2b2b31;
+  --line-2:#3a3a42;
+  --chip-bg:#26262b;
+  --chip-bg-hover:#2f2f36;
+  --chip-ink:#e8e8ec;
+  --lead-bg:#f2f2f4;          /* 暗色档反转，保持「最重的一枚」 */
+  --lead-ink:#161619;
+  --lead-x:rgba(22,22,25,.45);
+  --glass-bg:rgba(29,29,34,.74);
+  --glass-border:rgba(255,255,255,.1);
+  --glass-shadow:0 24px 64px -16px rgba(0,0,0,.6), 0 4px 14px rgba(0,0,0,.3);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:"PingFang SC","SF Pro Text","Helvetica Neue","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.no-anim *, .no-anim *::before, .no-anim *::after{transition:none!important;animation:none!important}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{transition-duration:1ms!important;animation-duration:1ms!important}
+}
+
+/* ============================================================
+   舞台与 app 模拟窗
+   ============================================================ */
+.caption{
+  position:fixed;top:16px;left:20px;z-index:80;
+  font-size:12px;color:var(--ink-3);letter-spacing:.02em;user-select:none;
+}
+.stage{
+  position:relative;max-width:920px;margin:0 auto;
+  min-height:100vh;padding:56px 24px 44px;
+  display:flex;flex-direction:column;justify-content:center;
+}
+.app-mock{
+  position:relative;display:flex;flex-direction:column;
+  height:min(74vh,700px);
+  background:var(--surface-2);
+  border:1px solid var(--line);border-radius:24px;overflow:hidden;
+  box-shadow:0 8px 40px -12px rgba(27,27,31,.08);
+}
+/* 空态问候区。两团品牌色系光斑让展开层的毛玻璃有「可感知的背景」 */
+.mock-chat{
+  position:relative;flex:1;overflow:hidden;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+}
+.mock-chat::before{
+  content:"";position:absolute;left:6%;top:-8%;width:460px;height:340px;
+  background:radial-gradient(closest-side, color-mix(in oklab, var(--brand) 15%, transparent), transparent 72%);
+  filter:blur(8px);
+}
+.mock-chat::after{
+  content:"";position:absolute;right:2%;top:14%;width:380px;height:300px;
+  background:radial-gradient(closest-side, color-mix(in oklab, var(--brand) 7%, var(--ink-3) 6%), transparent 70%);
+  opacity:.5;filter:blur(10px);
+}
+.mock-chat h1{margin:0;font-size:22px;font-weight:600;letter-spacing:.01em;z-index:1}
+.mock-chat p{margin:0;font-size:13.5px;color:var(--ink-3);text-wrap:pretty;z-index:1}
+
+/* ============================================================
+   场景栏：恒定 38px 占位槽 + 底边锚定的展开面板
+   .rail-slot 的高度永远不变 —— 这是「下方 input 不动」的结构保证
+   ============================================================ */
+.rail-slot{position:relative;height:38px;margin:0 22px 12px;z-index:30}
+.rail-panel{position:absolute;left:0;right:0;bottom:0}
+
+/* 方案 A 展开时的毛玻璃底：画在 ::before 上（负 inset 出血），
+   不参与布局，纯 opacity 淡入，几何零抖动 */
+.rail-panel::before{
+  content:"";position:absolute;inset:-14px -16px -12px;border-radius:18px;z-index:0;
+  background:var(--glass-bg);
+  -webkit-backdrop-filter:blur(28px) saturate(150%);
+  backdrop-filter:blur(28px) saturate(150%);
+  border:1px solid var(--glass-border);
+  box-shadow:var(--glass-shadow);
+  opacity:0;pointer-events:none;
+  transition:opacity var(--dur) var(--ease-fade);
+}
+[data-variant="anchor"] .rail-panel.expanded::before{opacity:1}
+
+/* 高度裁剪层：收起=38px 只露首行；展开=内容全高。
+   因为面板 bottom 锚定，高度增长全部向上，首行位置感稳定 */
+.rail-clip{
+  position:relative;z-index:1;height:38px;overflow:hidden;
+  transition:height var(--dur) var(--ease-move);
+}
+.rail-chips{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+
+/* ---------- chip ---------- */
+.chip{
+  display:inline-flex;align-items:center;gap:7px;flex:none;
+  height:38px;padding:0 14px;border:none;border-radius:var(--radius-chip);
+  background:var(--chip-bg);color:var(--chip-ink);
+  font-size:14px;font-family:inherit;line-height:1;
+  cursor:pointer;white-space:nowrap;user-select:none;
+  transition:background .15s ease, transform .12s ease, box-shadow .3s ease;
+}
+.chip:hover{background:var(--chip-bg-hover)}
+.chip:active{transform:scale(.96)}
+.chip-arrow{color:var(--brand);flex:none}
+.chip.chosen{background:var(--brand-soft);box-shadow:inset 0 0 0 1.5px color-mix(in oklab, var(--brand) 45%, transparent)}
+@keyframes chipIn{from{opacity:0;transform:translateY(10px) scale(.94)}}
+
+.collapse-chip{background:transparent;border:1.5px dashed var(--line-2);color:var(--ink-2)}
+.collapse-chip:hover{border-color:var(--ink-3);background:var(--chip-bg)}
+.collapse-chip svg{color:var(--ink-3)}
+[data-variant="scroll"] .collapse-chip,
+[data-variant="float"] .collapse-chip{display:none}
+
+/* ---------- 选中技能（深色 lead chip + 分隔线） ---------- */
+.skill-lead{
+  display:inline-flex;align-items:center;gap:8px;flex:none;
+  height:38px;padding:0 10px 0 14px;border-radius:var(--radius-chip);
+  background:var(--lead-bg);color:var(--lead-ink);font-size:14px;user-select:none;
+}
+.skill-lead .tbl{color:#5fd68f}
+[data-theme="dark"] .skill-lead .tbl{color:var(--brand)}
+.lead-x{
+  display:inline-flex;padding:3px;margin-left:2px;border:none;border-radius:6px;
+  background:transparent;color:var(--lead-x);cursor:pointer;
+  transition:background .15s, color .15s;
+}
+.lead-x:hover{background:rgba(127,127,127,.18);color:currentColor}
+.lead-divider{width:1px;height:22px;flex:none;background:var(--line-2);margin:0 4px;align-self:center}
+
+/* ---------- 「+N 更多」拨杆：吸附行尾，压在渐隐上 ---------- */
+.more-pill{
+  position:absolute;right:0;bottom:0;z-index:3;height:38px;
+  display:flex;align-items:center;padding:0 0 0 52px;border:none;cursor:pointer;
+  background:linear-gradient(90deg, transparent, var(--surface-2) 42px);
+  font-family:inherit;
+  transition:opacity calc(var(--dur)*.55) var(--ease-fade);
+}
+.pill-chip{
+  display:inline-flex;align-items:center;gap:6px;height:38px;padding:0 13px;
+  border-radius:var(--radius-chip);border:1.5px dashed var(--line-2);
+  background:var(--surface-2);color:var(--ink-2);font-size:13.5px;
+  transition:border-color .15s, color .15s, background .15s;
+}
+.more-pill:hover .pill-chip{border-color:var(--ink-3);color:var(--ink);background:var(--chip-bg)}
+.pill-count{color:var(--brand);font-weight:600}
+.pill-chev{transition:transform .22s var(--ease-move);color:var(--ink-3)}
+.more-pill.open .pill-chev{transform:rotate(180deg)}
+[data-variant="anchor"] .rail-panel.expanded .more-pill{opacity:0;pointer-events:none}
+[data-variant="float"] .more-pill.open .pill-count{display:none}
+[data-variant="scroll"] .more-pill{display:none}
+
+/* ---------- 方案 C：悬浮卡片 ---------- */
+.float-card{
+  display:none;position:absolute;left:-16px;right:-16px;bottom:calc(100% + 12px);z-index:4;
+  padding:14px;border-radius:18px;
+  background:var(--glass-bg);
+  -webkit-backdrop-filter:blur(28px) saturate(150%);
+  backdrop-filter:blur(28px) saturate(150%);
+  border:1px solid var(--glass-border);box-shadow:var(--glass-shadow);
+  opacity:0;transform:translateY(10px) scale(.98);transform-origin:50% 100%;
+  pointer-events:none;
+  transition:opacity var(--dur) var(--ease-fade), transform var(--dur) var(--ease-move);
+}
+[data-variant="float"] .float-card{display:flex}
+.rail-panel.card-open .float-card{opacity:1;transform:none;pointer-events:auto}
+.card-chips{display:flex;flex-wrap:wrap;gap:8px}
+
+/* ---------- 方案 B：横向滑动 ---------- */
+[data-variant="scroll"] .rail-chips{
+  flex-wrap:nowrap;overflow-x:auto;padding-right:8px;
+  scrollbar-width:none;cursor:grab;
+}
+[data-variant="scroll"] .rail-chips:active{cursor:grabbing}
+.rail-chips::-webkit-scrollbar{display:none}
+.edge-fade{
+  position:absolute;top:0;bottom:0;width:46px;z-index:2;display:none;
+  pointer-events:none;opacity:0;transition:opacity .18s ease;
+}
+[data-variant="scroll"] .edge-fade{display:block}
+.edge-fade.left{left:0;background:linear-gradient(90deg, var(--surface-2), transparent)}
+.edge-fade.right{right:0;background:linear-gradient(-90deg, var(--surface-2), transparent)}
+.rail-panel.can-left .edge-fade.left{opacity:1}
+.rail-panel.can-right .edge-fade.right{opacity:1}
+
+/* ============================================================
+   composer（模拟输入框，位置恒定的「被保护对象」）
+   ============================================================ */
+.composer{
+  position:relative;z-index:20;margin:0 22px 20px;
+  background:var(--surface);border:1px solid var(--line);border-radius:20px;
+  padding:14px 16px 12px;
+  box-shadow:0 1px 2px rgba(27,27,31,.04);
+}
+.composer-chips{display:flex;gap:6px;margin-bottom:8px;min-height:26px}
+.mini-chip{
+  display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;
+  border-radius:8px;background:var(--chip-bg);font-size:12.5px;color:var(--ink-2);
+}
+.mini-chip svg{color:var(--brand)}
+.composer-input{
+  min-height:46px;font-size:14.5px;line-height:1.6;color:var(--ink);
+  outline:none;caret-color:var(--brand);
+}
+.composer-input:empty::before{content:attr(data-placeholder);color:var(--ink-3)}
+.composer-bar{display:flex;align-items:center;justify-content:space-between;margin-top:10px}
+.bar-left{display:flex;gap:8px}
+.icon-ph{
+  width:28px;height:28px;border-radius:8px;border:1px dashed var(--line-2);
+  display:grid;place-items:center;color:var(--ink-3);font-size:13px;user-select:none;
+}
+.bar-right{display:flex;align-items:center}
+.model-ph{
+  font-size:12px;color:var(--ink-3);margin-right:10px;padding:4px 8px;
+  border:1px dashed var(--line-2);border-radius:7px;user-select:none;
+}
+.send-btn{
+  width:32px;height:32px;border:none;border-radius:50%;
+  background:var(--brand);color:#fff;display:grid;place-items:center;cursor:pointer;
+  transition:transform .12s ease, filter .15s ease;
+}
+.send-btn:hover{filter:brightness(1.07)}
+.send-btn:active{transform:scale(.92)}
+.send-btn.pulse{animation:sendPulse .3s var(--ease-move)}
+@keyframes sendPulse{40%{transform:scale(1.14)}}
+
+/* ---------- 输入框上缘参考线 ---------- */
+.guide{
+  position:absolute;left:14px;right:14px;z-index:70;pointer-events:none;
+  border-top:1.5px dashed color-mix(in oklab, var(--brand) 55%, transparent);
+}
+.guide span{
+  position:absolute;right:0;top:-26px;
+  font-size:11px;color:var(--brand);
+  background:color-mix(in oklab, var(--brand) 10%, var(--surface));
+  border:1px solid color-mix(in oklab, var(--brand) 25%, transparent);
+  padding:3px 8px;border-radius:6px;white-space:nowrap;
+}
+
+/* ============================================================
+   Tweaks 面板
+   ============================================================ */
+.tweaks{position:fixed;right:20px;bottom:20px;z-index:100;font-size:13px}
+.tweaks-toggle{
+  border:none;border-radius:999px;padding:9px 16px;cursor:pointer;
+  background:var(--lead-bg);color:var(--lead-ink);font-family:inherit;font-size:13px;
+  box-shadow:0 6px 24px -8px rgba(0,0,0,.35);
+}
+.tweaks-panel{
+  position:absolute;right:0;bottom:46px;width:272px;padding:16px;
+  border-radius:16px;background:var(--glass-bg);
+  -webkit-backdrop-filter:blur(28px) saturate(150%);
+  backdrop-filter:blur(28px) saturate(150%);
+  border:1px solid var(--glass-border);box-shadow:var(--glass-shadow);
+  display:none;flex-direction:column;gap:14px;
+}
+.tweaks.open .tweaks-panel{display:flex}
+.tw-title{font-size:11px;font-weight:600;letter-spacing:.1em;color:var(--ink-3);text-transform:uppercase}
+.tw-group{display:flex;flex-direction:column;gap:9px}
+.tw-radio{display:flex;align-items:flex-start;gap:8px;cursor:pointer;color:var(--ink-2);line-height:1.45}
+.tw-radio input{margin-top:3px;accent-color:var(--brand)}
+.tw-radio b{display:block;color:var(--ink);font-weight:600;font-size:13px}
+.tw-radio small{font-size:12px}
+.tw-row{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--ink-2);cursor:pointer}
+.tw-row input[type="range"]{width:110px;accent-color:var(--brand)}
+.tw-row input[type="checkbox"]{accent-color:var(--brand)}
+.tw-val{font-variant-numeric:tabular-nums;color:var(--ink-3);font-size:12px;min-width:44px;text-align:right}
+</style>
+</head>
+<body>
+
+<div class="caption">场景栏单行收纳 · 展开不推挤输入框 · 右下角 Tweaks 切换 3 种方案</div>
+
+<main class="stage" id="stage">
+  <div class="app-mock">
+
+    <div class="mock-chat">
+      <h1>今天想处理什么表格？</h1>
+      <p>从下方选择一个场景快速开始，或直接描述你的任务</p>
+    </div>
+
+    <!-- 占位槽：高度恒定 38px，展开一律向上，绝不推挤 composer -->
+    <div class="rail-slot">
+      <div class="rail-panel" id="railPanel">
+
+        <!-- 方案 C：悬浮卡片（脱离文档流，浮在行上方） -->
+        <div class="float-card" id="floatCard" role="menu" aria-label="全部场景">
+          <div class="card-chips" id="cardChips"></div>
+        </div>
+
+        <!-- 方案 A：高度裁剪层（底边锚定，向上生长） -->
+        <div class="rail-clip" id="railClip">
+          <div class="rail-chips" id="railChips"></div>
+        </div>
+
+        <div class="edge-fade left"></div>
+        <div class="edge-fade right"></div>
+
+        <button class="more-pill" id="morePill" type="button"
+                aria-expanded="false" aria-controls="railChips">
+          <span class="pill-chip">
+            <span class="pill-count" id="pillCount">+0</span>
+            <span id="pillText">更多</span>
+            <svg class="pill-chev" viewBox="0 0 24 24" width="13" height="13" fill="none"
+                 stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 14 6-6 6 6"/>
+            </svg>
+          </span>
+        </button>
+
+      </div>
+    </div>
+
+    <!-- composer：位置恒定的「被保护对象」 -->
+    <div class="composer" id="composer">
+      <div class="composer-chips" id="composerChips">
+        <span class="mini-chip" id="composerSkill">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round">
+            <rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/>
+            <path d="M3.5 10h17M9.5 10v9.5"/>
+          </svg>
+          处理表格
+        </span>
+      </div>
+      <div class="composer-input" id="composerInput" contenteditable="true"
+           data-placeholder="描述你的任务，或从上方挑一个场景…"></div>
+      <div class="composer-bar">
+        <div class="bar-left">
+          <span class="icon-ph" title="附件占位">＋</span>
+          <span class="icon-ph" title="图标占位">▢</span>
+        </div>
+        <div class="bar-right">
+          <span class="model-ph">模型选择 ▾</span>
+          <button class="send-btn" id="sendBtn" type="button" aria-label="发送">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+                 stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 19V5M5 12l7-7 7 7"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="guide" id="guide"><span>输入框上缘 · 展开时保持不动</span></div>
+</main>
+
+<!-- Tweaks -->
+<div class="tweaks" id="tweaks">
+  <button class="tweaks-toggle" id="tweaksToggle" type="button" aria-expanded="false">Tweaks</button>
+  <div class="tweaks-panel">
+    <div class="tw-title">交互方案</div>
+    <div class="tw-group" id="variantGroup">
+      <label class="tw-radio"><input type="radio" name="variant" value="anchor" checked>
+        <span><b>原地向上展开（推荐）</b><small>底边锚定，首行原位生长出全部场景</small></span></label>
+      <label class="tw-radio"><input type="radio" name="variant" value="float">
+        <span><b>悬浮卡片</b><small>全部场景以独立浮层弹出在行上方</small></span></label>
+      <label class="tw-radio"><input type="radio" name="variant" value="scroll">
+        <span><b>横向滑动</b><small>永远单行，滚轮 / 拖拽横向浏览</small></span></label>
+    </div>
+    <div class="tw-title">参数</div>
+    <label class="tw-row">动画时长
+      <span><input type="range" id="durRange" min="140" max="480" step="20" value="260">
+      <span class="tw-val" id="durVal">260ms</span></span></label>
+    <label class="tw-row">输入框参考线 <input type="checkbox" id="guideCheck" checked></label>
+    <label class="tw-row">深色模式 <input type="checkbox" id="darkCheck"></label>
+  </div>
+</div>
+
+<script>
+/* ============================================================ */
+const LABELS = [
+  'Excel 数据清洗','销售数据透视','发票台账整理','可视化表格','智能分析',
+  '表格生成PPT','表格美化','会计统计','财务预算表','库存统计',
+  '考勤统计','进度跟踪表','数据对比分析','排班表'
+];
+
+const $ = id => document.getElementById(id);
+const root = document.documentElement;
+const panel = $('railPanel'), clip = $('railClip'), railChips = $('railChips');
+const cardChips = $('cardChips'), pill = $('morePill');
+const pillCount = $('pillCount'), pillText = $('pillText');
+const composer = $('composer'), input = $('composerInput');
+const guide = $('guide'), stage = $('stage');
+
+const state = { variant:'anchor', expanded:false, dur:260 };
+
+/* ---------- SVG 片段 ---------- */
+const ARROW = `<svg class="chip-arrow" viewBox="0 0 24 24" width="13" height="13" fill="none"
+  stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M7 7l10 10"/><path d="M17 8v9H8"/></svg>`;
+const CHEV_DOWN = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+  stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+  <path d="m6 10 6 6 6-6"/></svg>`;
+const X_ICON = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none"
+  stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+const TBL_ICON = `<svg class="tbl" viewBox="0 0 24 24" width="14" height="14" fill="none"
+  stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+  <rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M9.5 10v9.5"/></svg>`;
+
+const chipHTML = label =>
+  `<button class="chip" type="button" data-label="${label}">${ARROW}<span>${label}</span></button>`;
+
+/* ---------- 渲染 ---------- */
+function renderRail(){
+  railChips.innerHTML =
+    `<span class="skill-lead">${TBL_ICON}处理表格
+       <button class="lead-x" type="button" aria-label="移除技能">${X_ICON}</button></span>
+     <i class="lead-divider" aria-hidden="true"></i>` +
+    LABELS.map(chipHTML).join('') +
+    `<button class="chip collapse-chip" type="button"><span>收起</span>${CHEV_DOWN}</button>`;
+}
+function renderCard(){ cardChips.innerHTML = LABELS.map(chipHTML).join(''); }
+
+/* ---------- 计数：收起态下被折叠的 chip 数 ---------- */
+function scenarioChips(container){
+  return [...container.querySelectorAll('.chip:not(.collapse-chip)')];
+}
+function updateCount(){
+  if (state.variant === 'scroll') return;
+  const hidden = scenarioChips(railChips).filter(c => c.offsetTop > 6).length;
+  pillCount.textContent = '+' + hidden;
+  pill.style.display = hidden ? '' : 'none';
+}
+
+/* ---------- 展开 / 收起 ---------- */
+function staggerIn(chips){
+  chips.forEach((c, i) => {
+    c.style.animation = 'none';
+    void c.offsetWidth; /* 强制 reflow，保证重复展开也重播动画 */
+    c.style.animation = `chipIn ${state.dur}ms var(--ease-fade) ${Math.min(i*13, 200)}ms backwards`;
+  });
+}
+function expand(){
+  if (state.expanded || state.variant === 'scroll') return;
+  state.expanded = true;
+  panel.classList.add('expanded');
+  pill.classList.add('open');
+  pill.setAttribute('aria-expanded', 'true');
+  if (state.variant === 'anchor'){
+    staggerIn([...railChips.querySelectorAll('.chip')].filter(c => c.offsetTop > 6));
+    clip.style.height = railChips.offsetHeight + 'px';
+  } else { /* float */
+    panel.classList.add('card-open');
+    staggerIn([...cardChips.querySelectorAll('.chip')]);
+    pillText.textContent = '收起';
+  }
+}
+function collapse(){
+  if (!state.expanded) return;
+  state.expanded = false;
+  panel.classList.remove('expanded', 'card-open');
+  pill.classList.remove('open');
+  pill.setAttribute('aria-expanded', 'false');
+  pillText.textContent = '更多';
+  clip.style.height = '';
+  setTimeout(() => {
+    railChips.querySelectorAll('.chip').forEach(c => c.style.animation = '');
+    cardChips.querySelectorAll('.chip').forEach(c => c.style.animation = '');
+  }, state.dur);
+}
+
+/* ---------- 选择场景：填充 composer 并收起 ---------- */
+function chooseScenario(chip){
+  const label = chip.dataset.label;
+  input.textContent = `帮我做「${label}」，数据我稍后发给你。`;
+  const r = document.createRange();
+  r.selectNodeContents(input); r.collapse(false);
+  const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  input.focus();
+  chip.classList.add('chosen');
+  setTimeout(() => chip.classList.remove('chosen'), 650);
+  collapse();
+}
+
+/* ---------- 事件 ---------- */
+let dragMoved = false;
+
+panel.addEventListener('click', e => {
+  if (e.target.closest('.lead-x')){ removeLead(); return; }
+  const chip = e.target.closest('.chip');
+  if (!chip || dragMoved) return;
+  if (chip.classList.contains('collapse-chip')){ collapse(); return; }
+  chooseScenario(chip);
+});
+pill.addEventListener('click', () => state.expanded ? collapse() : expand());
+
+document.addEventListener('click', e => {
+  if (state.expanded && !e.target.closest('.rail-panel')) collapse();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') collapse();
+});
+
+function removeLead(){
+  railChips.querySelector('.skill-lead')?.remove();
+  railChips.querySelector('.lead-divider')?.remove();
+  $('composerSkill')?.remove();
+  state.expanded && state.variant === 'anchor'
+    ? clip.style.height = railChips.offsetHeight + 'px'
+    : updateCount();
+}
+
+/* 发送模拟：回车或点按钮 → 脉冲 + 清空 */
+function fakeSend(){
+  const btn = $('sendBtn');
+  btn.classList.remove('pulse'); void btn.offsetWidth; btn.classList.add('pulse');
+  input.textContent = '';
+}
+$('sendBtn').addEventListener('click', fakeSend);
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); fakeSend(); }
+});
+
+/* ---------- 方案 B：滚轮转横向 + 拖拽 + 边缘渐隐 ---------- */
+railChips.addEventListener('wheel', e => {
+  if (state.variant !== 'scroll') return;
+  if (Math.abs(e.deltaY) > Math.abs(e.deltaX)){
+    e.preventDefault();
+    railChips.scrollLeft += e.deltaY;
+  }
+}, { passive:false });
+
+function updateEdges(){
+  if (state.variant !== 'scroll'){ panel.classList.remove('can-left','can-right'); return; }
+  panel.classList.toggle('can-left', railChips.scrollLeft > 4);
+  panel.classList.toggle('can-right',
+    railChips.scrollLeft < railChips.scrollWidth - railChips.clientWidth - 4);
+}
+railChips.addEventListener('scroll', updateEdges);
+
+let dragging = false, dragStartX = 0, startScroll = 0;
+railChips.addEventListener('pointerdown', e => {
+  if (state.variant !== 'scroll') return;
+  dragging = true; dragMoved = false;
+  dragStartX = e.clientX; startScroll = railChips.scrollLeft;
+  railChips.setPointerCapture(e.pointerId);
+});
+railChips.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - dragStartX;
+  if (Math.abs(dx) > 5) dragMoved = true;
+  railChips.scrollLeft = startScroll - dx;
+});
+['pointerup','pointercancel'].forEach(ev => railChips.addEventListener(ev, () => {
+  dragging = false;
+  setTimeout(() => dragMoved = false, 0); /* 让 click 先于复位判定 */
+}));
+
+/* ---------- 参考线 ---------- */
+function placeGuide(){
+  const c = composer.getBoundingClientRect();
+  const s = stage.getBoundingClientRect();
+  guide.style.top = (c.top - s.top - 1) + 'px';
+}
+
+/* ---------- Tweaks ---------- */
+function setVariant(v){
+  root.classList.add('no-anim');
+  collapse();
+  state.variant = v;
+  root.dataset.variant = v;
+  railChips.scrollLeft = 0;
+  requestAnimationFrame(() => {
+    root.classList.remove('no-anim');
+    updateCount(); updateEdges(); placeGuide();
+  });
+}
+$('variantGroup').addEventListener('change', e => setVariant(e.target.value));
+
+$('durRange').addEventListener('input', e => {
+  state.dur = +e.target.value;
+  root.style.setProperty('--dur', state.dur + 'ms');
+  $('durVal').textContent = state.dur + 'ms';
+});
+$('guideCheck').addEventListener('change', e => {
+  guide.style.display = e.target.checked ? '' : 'none';
+});
+$('darkCheck').addEventListener('change', e => {
+  root.classList.add('no-anim');
+  if (e.target.checked) root.dataset.theme = 'dark';
+  else delete root.dataset.theme;
+  requestAnimationFrame(() => root.classList.remove('no-anim'));
+});
+const tweaks = $('tweaks');
+$('tweaksToggle').addEventListener('click', () => {
+  const open = tweaks.classList.toggle('open');
+  $('tweaksToggle').setAttribute('aria-expanded', open);
+});
+
+/* ---------- init ---------- */
+renderRail();
+renderCard();
+updateCount();
+updateEdges();
+placeGuide();
+
+window.addEventListener('resize', () => {
+  if (state.expanded && state.variant === 'anchor')
+    clip.style.height = railChips.offsetHeight + 'px';
+  else updateCount();
+  updateEdges(); placeGuide();
+});
+
+/* 便于自动化验证 */
+window.demo = { setVariant, expand, collapse, state };
+</script>
+</body>
+</html>

@@ -91,6 +91,15 @@ interface PerSessionState {
    */
   turnHasText: boolean
   /**
+   * Live snapshot of the SDK's transport-level auto-retry (`retry`
+   * ChatEvent — see its doc comment in shared/types.ts), or null when no
+   * retry is in flight. Only ever set before real content starts
+   * streaming, so `ThinkingSpinner` — which only mounts in that same
+   * pre-content gap — is the sole reader. Reset on both turn start and
+   * turn end so it can't leak into the next turn.
+   */
+  retryInfo: Extract<ChatEvent, { type: 'retry' }> | null
+  /**
    * Per-session accumulated usage, reported at the end of each turn.
    * `contextTokens` is the full prompt size fed into the model for
    * the latest turn (input + cache_read + cache_create) — i.e. the
@@ -114,6 +123,7 @@ const EMPTY_SLOT: PerSessionState = {
   turnStartedAt: null,
   turnVerb: null,
   turnHasText: false,
+  retryInfo: null,
   usage: null
 }
 
@@ -185,6 +195,7 @@ interface ChatState {
   turnStartedAt: number | null
   turnVerb: string | null
   turnHasText: boolean
+  retryInfo: Extract<ChatEvent, { type: 'retry' }> | null
 
   // User input ─────────────────────────────────────────────────────────
   /**
@@ -240,6 +251,14 @@ interface ChatState {
   updateToolCallTasks: (
     sessionId: string,
     ev: Extract<ChatEvent, { type: 'task_update' }>
+  ) => void
+  /**
+   * Record (or clear) the SDK's transport-level retry snapshot for the
+   * pre-content loading spinner. See `retryInfo` on `PerSessionState`.
+   */
+  setRetryInfo: (
+    sessionId: string,
+    ev: Extract<ChatEvent, { type: 'retry' }> | null
   ) => void
   setError: (sessionId: string, messageId: string, error: string) => void
   endAssistantMessage: (sessionId: string) => void
@@ -383,7 +402,8 @@ function updateSlot(
       streaming: next.streaming,
       turnStartedAt: next.turnStartedAt,
       turnVerb: next.turnVerb,
-      turnHasText: next.turnHasText
+      turnHasText: next.turnHasText,
+      retryInfo: next.retryInfo
     }
   }
   return { perSession }
@@ -395,7 +415,8 @@ function mirrorFromSlot(slot: PerSessionState): Partial<ChatState> {
     streaming: slot.streaming,
     turnStartedAt: slot.turnStartedAt,
     turnVerb: slot.turnVerb,
-    turnHasText: slot.turnHasText
+    turnHasText: slot.turnHasText,
+    retryInfo: slot.retryInfo
   }
 }
 
@@ -410,6 +431,7 @@ export const useChatStore = create<ChatState>((set) => ({
   turnStartedAt: null,
   turnVerb: null,
   turnHasText: false,
+  retryInfo: null,
 
   appendUserMessage: (sessionId, content) => {
     // Guard: an empty content array would crash assistant-ui's
@@ -454,7 +476,8 @@ export const useChatStore = create<ChatState>((set) => ({
           streaming: true,
           turnStartedAt: Date.now(),
           turnVerb: sampleSpinnerVerb(),
-          turnHasText: false
+          turnHasText: false,
+          retryInfo: null
         }
       })
       return patch ?? {}
@@ -827,30 +850,47 @@ export const useChatStore = create<ChatState>((set) => ({
     })
   },
 
+  setRetryInfo: (sessionId, ev) => {
+    set((s) => {
+      const patch = updateSlot(s, sessionId, (slot) =>
+        slot.retryInfo === ev ? slot : { ...slot, retryInfo: ev }
+      )
+      return patch ?? {}
+    })
+  },
+
   setError: (sessionId, messageId, error) => {
     set((s) => {
-      const errorText = `⚠️ ${error}`
+      // assistant-ui's native error channel: a message-level `status`
+      // field, not a content part. Re-delivery of the same failure (e.g.
+      // the SDK's own `assistant_error` plus a separately-failed `result`
+      // for the same underlying gateway error) overwrites this single
+      // field in place instead of stacking a second near-identical text
+      // bubble — previously `setError` pushed a new `{type:'text', text:
+      // '⚠️ ...'}` part every call, so two error signals for one failure
+      // rendered as two plain-text rows (2026-07-22). Rendered via
+      // `MessagePrimitive.Error` + `ErrorPrimitive.Message` in
+      // AssistantErrorBanner, which gets its own styled card instead of
+      // blending into the normal reply text.
+      const status: NonNullable<ThreadMessageLike['status']> = {
+        type: 'incomplete',
+        reason: 'error',
+        error
+      }
       const patch = updateSlot(s, sessionId, (slot) => {
         const existing = slot.messages.find((m) => m.id === messageId)
         if (!existing) {
           const newMessage = {
             id: messageId,
             role: 'assistant',
-            content: [{ type: 'text', text: errorText }]
+            content: [],
+            status
           } as unknown as ThreadMessageLike
           return { ...slot, messages: [...slot.messages, newMessage] }
         }
-        const messages = slot.messages.map((m) => {
-          if (m.id !== messageId) return m
-          const parts = [
-            ...((m.content as unknown) as ContentPart[]),
-            { type: 'text', text: `\n\n${errorText}` }
-          ]
-          return {
-            ...m,
-            content: parts as unknown as ThreadMessageLike['content']
-          }
-        })
+        const messages = slot.messages.map((m) =>
+          m.id === messageId ? { ...m, status } : m
+        )
         return { ...slot, messages }
       })
       return patch ?? {}
@@ -901,7 +941,8 @@ export const useChatStore = create<ChatState>((set) => ({
           streaming: false,
           turnStartedAt: null,
           turnVerb: null,
-          turnHasText: false
+          turnHasText: false,
+          retryInfo: null
         }
       })
       return patch ?? {}
@@ -968,6 +1009,7 @@ export const useChatStore = create<ChatState>((set) => ({
               turnStartedAt: null,
               turnVerb: null,
               turnHasText: false,
+              retryInfo: null,
               usage: null
             }
       return {

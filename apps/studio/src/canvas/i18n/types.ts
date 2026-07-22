@@ -569,6 +569,8 @@ export interface Dict {
   // Memory (auto-extracted personalization saved as on-disk markdown)
   'settings.memory': string;
   'settings.memoryHint': string;
+  'settings.instructions': string;
+  'settings.instructionsHint': string;
   'settings.customInstructionsTitle': string;
   'settings.customInstructionsHint': string;
   'settings.customInstructionsPlaceholder': string;

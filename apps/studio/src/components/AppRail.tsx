@@ -43,6 +43,16 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import type { AuthUser } from '@desktop-shared/ipc-channels'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '@/src/components/ui/alert-dialog'
 import { Button } from '@/src/components/ui/button'
 import { RailProjectList } from '@/src/components/RailProjectList'
 import { RailSessionList } from '@/src/components/RailSessionList'
@@ -339,20 +349,24 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   const setUpgradeOpen = useUpgradeStore((s) => s.setOpen)
   const openUpgrade = () => setUpgradeOpen(true)
 
-  // 复制登录邮箱（账户菜单用户名区的复制钮）。copied 驱动图标短暂变勾
+  // 复制登录手机号（账户菜单用户名区的复制钮）。copied 驱动图标短暂变勾
   // 作成功反馈；按钮不是 menu item，点击不关菜单。
   const [copied, setCopied] = useState(false)
-  const copyEmail = () => {
-    const email = authUser?.email
-    if (!email) return
+  const copyPhone = () => {
+    const phone = authUser?.phone
+    if (!phone) return
     void navigator.clipboard
-      .writeText(email)
+      .writeText(phone)
       .then(() => {
         setCopied(true)
         setTimeout(() => setCopied(false), 1500)
       })
       .catch(() => {})
   }
+
+  // 退出登录二次确认：菜单项只开确认框，真正的 chatApi.logout() 挪到
+  // AlertDialogAction 里，避免误触菜单直接把人登出。
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
 
   // 手动检查更新：哑触发——dispatch 同 document 事件桥（机制同
   // od:cli-backend-changed），UpdateReadyToast 统一接手：invoke + 快照判定 +
@@ -646,6 +660,7 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
           // 菜单 trigger，头像首字母走品牌绿 tint（绿只给「身份/CTA/选中」
           // 点位的用色纪律）。右侧齿轮是「点这里能展开」的显式提示；点行
           // 任意处都开同一个向上弹出的账户菜单。
+          <>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -665,9 +680,17 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
                 // 注释踩过的同一条纪律）。
                 className="h-11 w-full justify-start gap-2.5 px-2.5 hover:bg-sidebar-accent/70 focus-visible:ring-0 data-[state=open]:bg-sidebar-accent/70"
               >
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                  {(authUser?.name ?? identity.user).charAt(0).toUpperCase()}
-                </span>
+                {authUser?.avatarUrl ? (
+                  <img
+                    src={authUser.avatarUrl}
+                    alt=""
+                    className="size-7 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                    {(authUser?.name ?? identity.user).charAt(0).toUpperCase()}
+                  </span>
+                )}
                 <span className="flex min-w-0 flex-1 flex-col items-start leading-tight">
                   <span className="max-w-full truncate text-[12.5px] font-medium text-sidebar-foreground">
                     {authUser?.name ?? identity.user}
@@ -721,7 +744,7 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
               className="w-[256px] rounded-[14px] border border-white/15 bg-popover/55 p-[5px] shadow-[0_16px_50px_rgba(0,0,0,.14),0_2px_8px_rgba(0,0,0,.06),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-2xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125"
             >
               {/* 用户名区：名字行（复制钮贴名字，copied 短暂变勾，非 menu
-                * item 点击不关菜单）+ 邮箱副行（浏览器直开无 authUser 时不
+                * item 点击不关菜单）+ 手机号副行（浏览器直开无 authUser 时不
                 * 渲染，不摆假数据）。 */}
               <div className="flex flex-col gap-px px-[9px] pb-[5px] pt-2">
                 <span className="flex items-center gap-1">
@@ -731,8 +754,8 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    aria-label="复制邮箱"
-                    onClick={copyEmail}
+                    aria-label="复制手机号"
+                    onClick={copyPhone}
                     className="size-5 shrink-0 text-muted-foreground/70 hover:text-foreground"
                   >
                     {copied ? (
@@ -742,9 +765,9 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
                     )}
                   </Button>
                 </span>
-                {authUser?.email ? (
+                {authUser?.phone ? (
                   <span className="truncate text-[11.5px] text-muted-foreground">
-                    {authUser.email}
+                    {authUser.phone}
                   </span>
                 ) : null}
               </div>
@@ -787,6 +810,10 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
                   <Settings strokeWidth={1.75} />
                   设置
                 </DropdownMenuItem>
+                {/* 使用记录（2026-07-21）：原全屏 overlay 已改成设置页「使用
+                  * 记录」一节（通用组，账号下面），走 设置 → 使用记录 到达，
+                  * 不再单独占账户菜单一行——同「账号」等其它设置节的既有
+                  * 处理方式一致，见 UsageSection.tsx。 */}
                 {/* 外观行：非 menu item（点 seg 切主题不关菜单），行内
                   * 浅色/深色两段切换（AppearanceSeg）。 */}
                 <div className="flex items-center justify-between py-1 pl-2.5 pr-[7px]">
@@ -816,13 +843,15 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
                 </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator className="mx-2 bg-border/70" />
-              {/* 退出登录：真实登出。main 删 auth.json + 广播 signedOut →
-                * AuthGate 立起登录墙。普通墨色（2026-07-07 对齐目标设计，
-                * 不再用 destructive 红）。 */}
+              {/* 退出登录：菜单项只开二次确认框（走公共 AlertDialog），真正
+                * 登出挪到确认框的 AlertDialogAction 里，避免误触菜单直接把
+                * 人登出。main 删 auth.json + 广播 signedOut → AuthGate 立起
+                * 登录墙。这个菜单项本身仍是普通墨色（列表里的一个入口，跟
+                * 其它菜单项同一套样式）——警告色只用在下方确认框真正会
+                * 触发登出的那个按钮上，见 AlertDialog 内 AlertDialogAction
+                * 的注释。 */}
               <DropdownMenuItem
-                onSelect={() => {
-                  void window.chatApi?.logout?.()
-                }}
+                onSelect={() => setLogoutConfirmOpen(true)}
                 className="gap-2.5 rounded-[9px] px-2.5 py-[7px] text-[13px]"
               >
                 <LogOut strokeWidth={1.75} />
@@ -830,6 +859,37 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {/* 退出登录确认框：与 RailSessionList 删除会话同款 AlertDialog
+            * 精修档（大标题 / 副文 / 右下双按钮 + 毛玻璃 className），全 app
+            * 共用这一份视觉规格，此处照抄不再另起一套。确认按钮 2026-07-07
+            * 定稿时刻意用默认样式而非 destructive 红（当时判断退出不算破坏性
+            * 操作、能再登回来）——2026-07-22 用户明确反馈这里该用警告色：
+            * 主按钮跟登录页的品牌绿撞色，容易和「确认继续」这类中性操作混在
+            * 一起，退出会打断当前工作状态，需要一个视觉停顿。className 直接
+            * 照抄 RailSessionList 删除会话的 destructive 渐变按钮，同一套
+            * 「警告态」视觉在全 app 只有一种样子，不新开一套朴素红。 */}
+          <AlertDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen}>
+            <AlertDialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 sm:max-w-[440px]">
+              <AlertDialogHeader>
+                <AlertDialogTitle className="text-[19px]">退出登录？</AlertDialogTitle>
+                <AlertDialogDescription className="text-[13px] leading-relaxed">
+                  退出后需要重新登录才能继续使用。
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>取消</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-[linear-gradient(135deg,hsl(var(--destructive)),color-mix(in_srgb,hsl(var(--destructive))_82%,#000))] text-white shadow-[0_1px_2px_rgba(0,0,0,0.14),inset_0_1px_0_rgba(255,255,255,0.16)] hover:opacity-95 focus-visible:ring-destructive/20"
+                  onClick={() => {
+                    void window.chatApi?.logout?.()
+                  }}
+                >
+                  退出登录
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          </>
         )}
       </div>
     </nav>

@@ -10,20 +10,22 @@ import { broadcastUpdaterState, setQuitting } from '../tabRegistry'
 const { autoUpdater } = electronUpdaterPkg
 
 /**
- * 自动更新服务：GitHub 主源 + 自建服务器 generic 源自动兜底。
+ * 自动更新服务：自建服务器 generic 源为主 + GitHub 兜底。
  *
  * electron-updater 一次只认一个 feed，没有「多源」概念。我们在 check 阶段
  * 手动做有序 fallback：按 FEEDS 顺序逐个 setFeedURL + checkForUpdates()，
- * 某个源连不上（网络超时 / DNS 失败，国内访问 GitHub 常见）就静默切下一个，
- * 全部耗尽才落 error 态。第一个「连得上」的源（不管有没有新版）即停在它上，
- * 后续 autoDownload 的下载也走这个源。
+ * 某个源连不上（网络超时 / DNS 失败 / VPS 故障）就静默切下一个，全部耗尽才
+ * 落 error 态。第一个「连得上」的源（不管有没有新版）即停在它上，后续
+ * autoDownload 的下载也走这个源。
  *
- * 两个源：
+ * 两个源（按 fallback 顺序）：
+ *  - self-hosted：我们自己 VPS 上放 latest-*.yml + 安装包的目录 URL
+ *    （SELF_HOSTED_FEED_URL）。国内用户访问它比 GitHub 稳定快得多，设为主源；
+ *    留空则该源被 usableFeeds() 过滤掉，行为退化成纯 GitHub——没配 URL 时
+ *    一切照旧，不会因为空 URL 去连而报错。
  *  - github：electron-builder 打进 Resources 的 app-update.yml 同一套
  *    owner/repo（package.json build.publish），公开仓匿名可读，不带 token。
- *  - self-hosted：我们自己 VPS 上放 latest-*.yml + 安装包的目录 URL
- *    （SELF_HOSTED_FEED_URL）。留空则该源被 usableFeeds() 过滤掉，行为
- *    退化成纯 GitHub——没配 URL 时一切照旧，不会因为空 URL 去连而报错。
+ *    自建源挂了（域名/证书过期、VPS 宕机、nginx 配置错）时的兜底。
  *  CI 把发给 GitHub Release 的同一批产物 rsync 到 VPS 目录，两边逐字节一致。
  *
  * 策略（不因多源而变）：
@@ -33,8 +35,10 @@ const { autoUpdater } = electronUpdaterPkg
  *    下次启动就是新版（electron-updater 默认行为，显式写出防止误改）。
  *  - 启动后延迟 15s 首查（让 daemon spawn / 首帧渲染先走完，别跟冷启动抢
  *    网络与 CPU），此后每 10min 复查一次（2026-07-21 用户从 3h 调到
- *    10min，要更快感知新版本）。GitHub 匿名 API 限额 60 次/小时/IP，10min
- *    间隔=6 次/小时，还在余量内；同一 IP 下多个用户共享配额时需留意。
+ *    10min，要更快感知新版本）。自建源正常时 GitHub 每轮都不会被打到，
+ *    只有自建源连不上才会退到 GitHub——匿名 API 限额 60 次/小时/IP 基本
+ *    打不到；若自建源长期故障导致每轮都兜底到 GitHub，10min 间隔=6 次/
+ *    小时，仍在余量内，同一 IP 下多个用户共享配额时需留意。
  *
  * 状态是单份 module state：main 是唯一事实源，每次迁移全量推给所有
  * renderer（UPDATER_STATE_CHANGED），renderer 只做整体替换不自己拼装。
@@ -49,8 +53,8 @@ const CHECK_INTERVAL_MS = 10 * 60 * 1000
  * 'https://updates.你的域名.com/'。electron-updater 会去 `<url>latest-mac.yml`
  * 读清单、再按清单里的文件名到同目录下载安装包，所以清单和安装包必须同目录。
  *
- * 留空 = 禁用自建兜底，只走 GitHub（usableFeeds 会过滤掉空 URL 的源）。
- * 也可用 env.json 里的 SELF_HOSTED_UPDATE_URL 覆盖，免改源码换源。
+ * 留空 = 该源不可用，直接退化成 GitHub 单源（usableFeeds 会过滤掉空 URL
+ * 的源）。也可用 env.json 里的 SELF_HOSTED_UPDATE_URL 覆盖，免改源码换源。
  */
 const SELF_HOSTED_FEED_URL = process.env.SELF_HOSTED_UPDATE_URL ?? ''
 
@@ -59,13 +63,13 @@ type UpdateFeed =
   | { name: 'self-hosted'; config: { provider: 'generic'; url: string } }
 
 /**
- * 源列表即 fallback 顺序：GitHub 优先，自建服务器兜底。owner/repo 与
+ * 源列表即 fallback 顺序：自建服务器优先，GitHub 兜底。owner/repo 与
  * package.json build.publish 及打进去的 app-update.yml 保持一致（改仓库名
  * 要三处一起改）。
  */
 const FEEDS: UpdateFeed[] = [
-  { name: 'github', config: { provider: 'github', owner: 'Caffeine-Ops', repo: 'claude-desktop-releases' } },
-  { name: 'self-hosted', config: { provider: 'generic', url: SELF_HOSTED_FEED_URL } }
+  { name: 'self-hosted', config: { provider: 'generic', url: SELF_HOSTED_FEED_URL } },
+  { name: 'github', config: { provider: 'github', owner: 'Caffeine-Ops', repo: 'claude-desktop-releases' } }
 ]
 
 /** 过滤掉不可用的源（当前只有「自建 URL 为空」一种）。 */
@@ -125,9 +129,10 @@ function applyFeed(feed: UpdateFeed): void {
  * 抑制 'error' 事件避免中途闪错；轮到最后一个源前放开抑制，让它的失败
  * 正常落 error 态。
  *
- * 只在 check 阶段做 fallback：这覆盖最有价值的场景（GitHub 整个连不上）。
- * 下载阶段的失败（sha512、断流）不跨源重来，落 error 由用户手动重试——
- * 重试会重新走这里、重新选源。
+ * 只在 check 阶段做 fallback：这覆盖最有价值的场景（自建源整个连不上，比如
+ * 域名/证书过期、VPS 宕机、nginx 配置错），退回 GitHub 兜底。下载阶段的失败
+ * （sha512、断流）不跨源重来，落 error 由用户手动重试——重试会重新走这里、
+ * 重新选源。
  */
 async function checkAllFeeds(): Promise<void> {
   const feeds = usableFeeds()

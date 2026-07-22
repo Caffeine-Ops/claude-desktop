@@ -16,7 +16,9 @@
 
 /* 变量作用域同时覆盖登录页与订阅页（UpgradeScreen 复用同一套科技感
  * token，2026-07-06 订阅页落地时扩展）——新增消费者时在两个选择器组
- * 各加一行即可。 */
+ * 各加一行即可。（2026-07-21：使用记录页一度以 UsageScreen overlay 形式
+ * 复用过这套 token，改嫁设置页 UsageSection.tsx 后已退回 shadcn 语义
+ * token，这里的扩展随之撤销。） */
 .login-screen,
 .upgrade-screen {
   /* ── 亮档 ── */

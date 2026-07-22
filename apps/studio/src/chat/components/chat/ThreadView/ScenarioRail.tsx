@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { AnimatePresence, motion, type Variants } from 'motion/react'
 import { useAuiState } from '@assistant-ui/react'
 
-import { useT } from '../../../i18n'
+import { useT, useTFormat } from '../../../i18n'
 import {
   findSkillChipSpec,
   findSkillChipSpecInText
@@ -120,6 +120,50 @@ const PROMPTS_BY_SKILL: Record<string, readonly ScenarioPrompt[]> = {
     {
       label: '发票台账整理',
       text: '把【发票信息】批量整理成 Excel 台账，包含日期、金额、税率、销售方，最后输出汇总合计。'
+    },
+    {
+      label: '可视化表格',
+      text: '把【Excel 文件】里的数据做成图表：自动挑选合适的图表类型（柱状/折线/饼图），配好标题、图例和数据标签。'
+    },
+    {
+      label: '智能分析',
+      text: '帮我分析【Excel 文件】：找出关键趋势、异常波动和相关性，用一页摘要给出结论和建议。'
+    },
+    {
+      label: '表格生成PPT',
+      text: '把【Excel 文件】里的数据整理成一套汇报 PPT：关键指标做成图表页，最后一页给出结论与建议。'
+    },
+    {
+      label: '表格美化',
+      text: '帮我美化【Excel 文件】的排版：统一字体、配色、边框和列宽，重点数据用条件格式高亮，不改动数据本身。'
+    },
+    {
+      label: '会计统计',
+      text: '基于【记账明细文件】做会计统计：按科目汇总收支，生成月度损益表和往来账龄分析。'
+    },
+    {
+      label: '财务预算表',
+      text: '帮我做一份【部门/项目】年度预算表：按科目列支出计划，自动汇总总额与分月分布。'
+    },
+    {
+      label: '库存统计',
+      text: '基于【库存明细文件】统计出入库：按商品汇总期初、入库、出库、期末结存，标出库存预警项。'
+    },
+    {
+      label: '考勤统计',
+      text: '基于【考勤记录文件】统计出勤：按人员汇总出勤、迟到、请假天数，生成月度考勤汇总表。'
+    },
+    {
+      label: '进度跟踪表',
+      text: '帮我做一份【项目名称】进度跟踪表：任务、负责人、起止时间、完成率，用条件格式标出延期项。'
+    },
+    {
+      label: '数据对比分析',
+      text: '基于【Excel 文件】做多期对比：把本期和上期数据放在一起，算出差值和增长率，标出变动最大的项。'
+    },
+    {
+      label: '排班表',
+      text: '帮我做一份【团队/门店】排班表：覆盖一整月，自动避开同一人连续排班冲突，统计每人总班次。'
     }
   ],
   imagegen: [
@@ -323,6 +367,28 @@ function FillArrowIcon({
   )
 }
 
+/** 展开/收起推荐 prompt 行的尾置箭头：朝下=可展开，展开后翻转朝上=可
+ *  收起——用旋转而不是换图标，状态切换时是一次连续的转动而非跳变。 */
+function ExpandChevronIcon({ expanded }: { expanded: boolean }): React.JSX.Element {
+  return (
+    <svg
+      width={11}
+      height={11}
+      viewBox="0 0 18 18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="shrink-0 transition-transform duration-200"
+      style={{ transform: expanded ? 'rotate(180deg)' : 'none' }}
+    >
+      <path d="M4.5 6.75 9 11.25l4.5-4.5" />
+    </svg>
+  )
+}
+
 /**
  * 分类 tab 的滑动高亮：不再靠 className 硬切 bg-foreground（那样切 tab
  * 背景是瞬间跳变），改成一个带 layoutId 的绝对定位块——只有当前选中的
@@ -375,6 +441,11 @@ const CHIP_VARIANTS: Variants = {
 const CHIP_HOVER = { scale: 1.035, transition: { type: 'spring', stiffness: 480, damping: 28 } } as const
 const CHIP_TAP = { scale: 0.965, transition: { type: 'spring', stiffness: 520, damping: 30 } } as const
 
+/** 推荐 prompt 超过这个数量才折叠——数量少的技能（proposal-writer 3 条、
+ *  remotion 2 条等）永远全展开，折叠交互只在场景多的技能（如 spreadsheets）
+ *  上出现，不给简单技能徒增一次多余的点击。 */
+const COLLAPSED_PROMPT_COUNT = 6
+
 interface ScenarioRailProps {
   /**
    * 选定技能：整 input 重置为该技能的 slash chip（resetWithSlashCommand）。
@@ -396,7 +467,12 @@ export function ScenarioRail({
   restoreDraft
 }: ScenarioRailProps): React.JSX.Element {
   const t = useT()
+  const tFormat = useTFormat()
   const [catId, setCatId] = useState<CategoryId>('daily')
+  // 展开态存的是「哪个技能被展开过」而不是一个裸 boolean：与 activeSpec.match
+  // 比较自动实现按技能重置——切到另一个技能推荐行默认回到折叠态，不用额外
+  // 布线；同一技能内退出再进入则记得上次的展开选择（同会话内的临时偏好）。
+  const [expandedPromptSkill, setExpandedPromptSkill] = useState<string | null>(null)
 
   // 每个分类 tab 一份独立草稿（PM doc 快照）：切走时 stash 当前输入、切到的
   // tab 有存货就原样恢复、没有就清空——三个 tab 各自是一张独立的「工作台」。
@@ -422,6 +498,15 @@ export function ScenarioRail({
   const activeSpec = findSkillChipSpecInText(composerText)
   const activePrompts = activeSpec ? PROMPTS_BY_SKILL[bareSkillName(activeSpec.match)] : undefined
   const bodyAfterChip = activeSpec ? composerText.slice(activeSpec.match.length).trim() : ''
+
+  // 折叠态派生：数量不超阈值时 visiblePrompts === activePrompts（toggle 不
+  // 渲染，见下方 JSX）；超阈值且未展开则只切前 COLLAPSED_PROMPT_COUNT 条。
+  const promptsExpanded = activeSpec != null && expandedPromptSkill === activeSpec.match
+  const hiddenPromptCount = activePrompts ? activePrompts.length - COLLAPSED_PROMPT_COUNT : 0
+  const visiblePrompts =
+    activePrompts && !promptsExpanded && hiddenPromptCount > 0
+      ? activePrompts.slice(0, COLLAPSED_PROMPT_COUNT)
+      : activePrompts
 
   const category = CATEGORIES.find((c) => c.id === catId) ?? CATEGORIES[0]!
   // 命中了技能但没配推荐 prompt（用户手敲了别的命令）→ 同样维持技能行。
@@ -496,7 +581,10 @@ export function ScenarioRail({
                 whileHover={CHIP_HOVER}
                 whileTap={CHIP_TAP}
                 className="group flex items-center gap-1.5 rounded-[10px] bg-foreground px-3 py-[7px] text-[13.5px] font-semibold text-background shadow-sm"
-                onClick={() => restoreDraft(null)}
+                onClick={() => {
+                  setExpandedPromptSkill(null)
+                  restoreDraft(null)
+                }}
               >
                 <SkillChipIcon src={activeSpec.image} size={15} />
                 {activeSpec.label ?? activeSpec.match.slice(1)}
@@ -519,7 +607,7 @@ export function ScenarioRail({
                 className="h-[18px] w-px bg-border"
                 aria-hidden="true"
               />
-              {activePrompts.map((p) => (
+              {visiblePrompts!.map((p) => (
                 <motion.button
                   key={p.label}
                   type="button"
@@ -533,6 +621,26 @@ export function ScenarioRail({
                   {p.label}
                 </motion.button>
               ))}
+              {/* 折叠/展开 toggle：只在超过 COLLAPSED_PROMPT_COUNT 时出现。故意
+                  不用内容 chip 那套柔底样式（无底色 + 虚线描边），一眼区分「这
+                  是行为控制」而不是又一条可以直接填正文的 prompt。 */}
+              {hiddenPromptCount > 0 && (
+                <motion.button
+                  type="button"
+                  variants={CHIP_VARIANTS}
+                  whileHover={CHIP_HOVER}
+                  whileTap={CHIP_TAP}
+                  className="flex items-center gap-1 rounded-[10px] border border-dashed border-border px-[13px] py-2 text-[13.5px] font-medium text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
+                  onClick={() =>
+                    setExpandedPromptSkill(promptsExpanded ? null : (activeSpec?.match ?? null))
+                  }
+                >
+                  {promptsExpanded
+                    ? t('scenarioPromptCollapse')
+                    : tFormat('scenarioPromptMore', { count: hiddenPromptCount })}
+                  <ExpandChevronIcon expanded={promptsExpanded} />
+                </motion.button>
+              )}
             </>
           ) : (
             category.items.map((item) => {

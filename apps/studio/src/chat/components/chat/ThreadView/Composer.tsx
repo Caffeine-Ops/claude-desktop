@@ -12,6 +12,7 @@ import { useComposerSend } from '@assistant-ui/core/react'
 import { AnimatePresence, motion } from 'motion/react'
 
 import type { SessionMeta } from '@desktop-shared/types'
+import type { ModelListEntry } from '@desktop-shared/ipc-channels'
 import { useI18n, useT } from '../../../i18n'
 import { useChatStore, useTeamMemberTasks, useTurnActivity } from '../../../stores/chat'
 import { isReplaySessionId } from '../../../replay/replayStore'
@@ -1163,7 +1164,7 @@ function SkillPickerButton({
  * 只缓存成功结果；失败不写缓存（下次实例照常重试），也不吞错误（open 时的
  * fetch 兜底仍会把 error 显示出来）。
  */
-let modelCache: string[] | null = null
+let modelCache: ModelListEntry[] | null = null
 let modelPrefetch: Promise<void> | null = null
 
 function prefetchModels(): void {
@@ -1242,15 +1243,20 @@ function normalizeModelId(id: string): { family: string; is1m: boolean } {
 }
 
 /**
- * 取模型元数据（按归一化家族查）。1m 变体在家族 meta 上叠加 name 加「· 1M」。
- * 未知家族走 fallback（id 原样当名）。
+ * 取模型元数据。`apiDisplayName`（listModels 返回的 `display_name`，后端自己
+ * 的人类可读名）优先于本地 `MODEL_META` 猜测表——后端认识的模型本来就比这张
+ * 写死的小表多（新模型家族、非 claude 系列），不该硬凑成裸 id 或猜错的名字。
+ * 'auto' 是纯前端 UI 概念（并非真实模型），不管后端给不给这个 id 带
+ * display_name 都固定显示本地的 "Auto"。1m 变体仍按归一化家族叠加「· 1M」
+ * 后缀，不管 name 最终来自 API 还是本地表。未知家族且无 API 名时走 fallback
+ * （id 原样当名）。
  */
-function modelMetaOf(id: string): ModelMeta {
+function modelMetaOf(id: string, apiDisplayName?: string): ModelMeta {
   const { family, is1m } = normalizeModelId(id)
-  const base = MODEL_META[family]
-  if (!base) {
-    return { name: id }
-  }
+  const localBase = MODEL_META[family]
+  if (localBase?.auto) return localBase
+  const trimmedApiName = apiDisplayName?.trim()
+  const base = trimmedApiName ? { name: trimmedApiName } : (localBase ?? { name: id })
   if (is1m && !base.auto) {
     return { ...base, name: `${base.name} · 1M` }
   }
@@ -1291,7 +1297,7 @@ function ComposerModelChip({
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   // 初值取共享缓存：命中则首帧就有列表，点开零 loading。
-  const [models, setModels] = useState<string[] | null>(() => modelCache)
+  const [models, setModels] = useState<ModelListEntry[] | null>(() => modelCache)
   const [listError, setListError] = useState<string | null>(null)
   const [pending, setPending] = useState<string | null>(null)
   // 二级面板当前展开哪个维度；null = 只显示一级摘要面板。
@@ -1397,7 +1403,7 @@ function ComposerModelChip({
             const changed =
               prev === null ||
               prev.length !== next.length ||
-              prev.some((id, i) => id !== next[i])
+              prev.some((m, i) => m.id !== next[i]?.id || m.displayName !== next[i]?.displayName)
             if (!changed) return prev
             // 列表变了：先 null 一帧走骨架屏，微任务后填新列表。
             queueMicrotask(() => {
@@ -1490,18 +1496,23 @@ function ComposerModelChip({
     })
   }
 
-  // chip 上显示当前模型的友好名（未知 id 原样）。
-  const currentMeta = current ? modelMetaOf(current) : null
-  const modelLabel = currentMeta?.name ?? current ?? '模型'
   // 菜单分两组：auto 挡（default）单列顶部，具名模型在下，虚线分隔。
   const list = models ?? []
-  const autoIds = list.filter((id) => modelMetaOf(id).auto)
-  const namedIds = list.filter((id) => !modelMetaOf(id).auto)
+  // chip 上显示当前模型的友好名（未知 id 原样）。current 可能是 system init
+  // 报的完整 id，跟菜单条目做归一化匹配找出它的 display_name（同 renderRow
+  // 的选中判断复用 sameModel，而不是要求字符串完全相等）。
+  const currentEntry = current
+    ? (list.find((m) => m.id === current) ?? list.find((m) => sameModel(m.id, current)))
+    : undefined
+  const currentMeta = current ? modelMetaOf(current, currentEntry?.displayName) : null
+  const modelLabel = currentMeta?.name ?? current ?? '模型'
+  const autoIds = list.filter((m) => modelMetaOf(m.id, m.displayName).auto).map((m) => m.id)
+  const namedIds = list.filter((m) => !modelMetaOf(m.id, m.displayName).auto).map((m) => m.id)
 
   const renderRow = (id: string): React.JSX.Element => {
     // 归一化比较：current（完整 id）与菜单行 id（短别名）指同一模型才打勾。
     const selected = sameModel(id, current)
-    const meta = modelMetaOf(id)
+    const meta = modelMetaOf(id, list.find((m) => m.id === id)?.displayName)
     return (
       <button
         key={id}

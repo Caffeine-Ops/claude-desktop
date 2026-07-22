@@ -2241,6 +2241,8 @@ export const en: Dict = {
   // Memory (auto-extracted personalization saved as on-disk markdown)
   'settings.memory': 'Memory',
   'settings.memoryHint': 'Saved facts and context for future chats',
+  'settings.instructions': 'Global rules',
+  'settings.instructionsHint': 'Fixed instructions the assistant follows every chat',
   'settings.customInstructionsTitle': 'Global rules',
   'settings.customInstructionsHint': 'Fixed instructions OpenDesign should follow in every chat. Save facts, preferences, and project context as memories.',
   'settings.customInstructionsPlaceholder': 'e.g. "Always use TypeScript. Prefer functional components. Keep responses concise."',

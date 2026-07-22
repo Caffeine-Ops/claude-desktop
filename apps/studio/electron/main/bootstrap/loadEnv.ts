@@ -24,24 +24,67 @@ import { fileURLToPath } from 'node:url'
 const TAG = '[loadEnv]'
 
 /**
- * Keys this module actually injected from env.json (i.e. keys NOT already
- * present in the shell env). Lets consumers tell an "ambient leak from
- * env.json" apart from "the user deliberately exported this in their
- * shell" — the latter we must respect, the former we may strip for a
- * specific child process.
+ * Keys this module (or {@link applyRemoteEnvConfig}) actually injected —
+ * i.e. keys NOT already present in the shell env. Lets consumers tell an
+ * "ambient leak from env.json / sub2api" apart from "the user deliberately
+ * exported this in their shell" — the latter we must respect, the former we
+ * may strip for a specific child process.
  *
- * Concretely: env.json carries a csdn gateway (ANTHROPIC_BASE_URL +
- * ANTHROPIC_DEFAULT_*_MODEL=gpt-5.4) meant ONLY for the bundled
- * fusion-code backend. When the user picks "System claude", the engine
- * strips the env.json-injected ANTHROPIC_* keys so vanilla claude falls
- * back to its own ~/.claude login instead of being hijacked onto csdn.
- * A key the user exported themselves stays put (it's not in this set).
+ * Concretely: env.json (and its live sub2api replacement, see below) carry
+ * a csdn gateway (ANTHROPIC_BASE_URL + ANTHROPIC_DEFAULT_*_MODEL) meant
+ * ONLY for the bundled fusion-code backend. When the user picks "System
+ * claude", the engine strips these injected ANTHROPIC_* keys so vanilla
+ * claude falls back to its own ~/.claude login instead of being hijacked
+ * onto csdn. A key the user exported themselves stays put (it's not in
+ * this set — see {@link shellOwnedKeys}).
  */
 const injectedKeys = new Set<string>()
+
+/**
+ * Snapshot of every key that existed in `process.env` BEFORE this module
+ * touched anything — i.e. genuinely exported by the user's shell. Captured
+ * once, at the top of {@link loadEnvFromFile}'s call site (module load),
+ * so it stays valid as the one authority `applyRemoteEnvConfig` consults to
+ * decide "shell wins" — independent of whichever keys env.json happened to
+ * carry (loadEnvFromFile's own hasOwnProperty check only covers ITS keys).
+ */
+let shellOwnedKeys: ReadonlySet<string> = new Set()
 
 /** Keys injected from env.json (not pre-existing in the shell). */
 export function envJsonInjectedKeys(): ReadonlySet<string> {
   return injectedKeys
+}
+
+/**
+ * Applies the per-user client environment config fetched from sub2api's
+ * `GET /api/v1/keys/client-config` (see clientEnvConfigService.ts) on top
+ * of `process.env`, replacing whatever env.json hardcoded (a single shared
+ * ANTHROPIC_AUTH_TOKEN/OPENAI_API_KEY/GEMINI_API_KEY baked into every
+ * shipped build) with values scoped to the signed-in user.
+ *
+ * Same "shell always wins" rule as env.json: a key the user genuinely
+ * exported in their OWN shell (present in {@link shellOwnedKeys}) is left
+ * alone — this lets a developer `export ANTHROPIC_BASE_URL=...` locally
+ * without a background config fetch silently clobbering it. Every other
+ * key is overwritten unconditionally (remote is fresher than env.json's
+ * baked-in placeholder) and folded into {@link injectedKeys}, so
+ * `systemBackendEnv()` strips it under "System claude" exactly like an
+ * env.json key — these are still csdn-gateway credentials, not the user's
+ * own Anthropic login.
+ *
+ * Returns the keys actually applied (for logging) — callers don't need to
+ * know which ones were skipped as shell-owned.
+ */
+export function applyRemoteEnvConfig(config: Record<string, string>): string[] {
+  const applied: string[] = []
+  for (const [key, value] of Object.entries(config)) {
+    if (typeof value !== 'string') continue
+    if (shellOwnedKeys.has(key)) continue
+    process.env[key] = value
+    injectedKeys.add(key)
+    applied.push(key)
+  }
+  return applied
 }
 
 function candidatePaths(): string[] {
@@ -117,4 +160,5 @@ function extractEnvMap(parsed: unknown): Record<string, unknown> | null {
   return env as Record<string, unknown>
 }
 
+shellOwnedKeys = new Set(Object.keys(process.env))
 loadEnvFromFile()

@@ -87,6 +87,7 @@ import {
   type PptSourcePreviewPayload,
   type PptSourcePreviewResult,
   type PptSourceSlide,
+  type ModelListEntry,
   type ModelListResult,
   type ModelSetPayload,
   type WorkspaceKnownListResult,
@@ -99,9 +100,22 @@ import {
   type AppearancePrefs,
   type ShellMenuActionPayload,
   type UpdaterState,
+  type AccountProfileResult,
+  type AccountUpdatePayload,
+  type AccountUpdateResult,
   type AuthLoginPayload,
   type AuthLoginResult,
-  type AuthState
+  type AuthSendSmsCodeResult,
+  type AuthState,
+  type UsageQueryFilters,
+  type UsageListQuery,
+  type UsageExportCsvPayload,
+  type UsageExportCsvResult,
+  type UsageFilterOptionsResult,
+  type UsageStatsResult,
+  type UsageModelsResult,
+  type UsageSnapshotResult,
+  type UsageListResult
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
 import { resolveBundledSkillsPluginDir } from '../core/skillsDir'
@@ -192,11 +206,25 @@ import {
 } from '../services/backgroundThemes'
 import { mimeForImagePath } from '../../shared/imageMime'
 import { EMBEDDABLE_IMAGE_EXTS, type ProposalMetricRecord } from '../../shared/proposal'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
 import { checkForUpdates, getUpdaterState, installUpdate } from '../services/appUpdater'
-import { getAuthState, login, logout } from '../services/authService'
+import {
+  getAccountProfile,
+  getAuthState,
+  login,
+  logout,
+  sendSmsCode,
+  updateAccountProfile
+} from '../services/authService'
 import { DAEMON_PORT } from '../services/openDesignServices'
+import {
+  getUsageFilterOptions,
+  getUsageList,
+  getUsageModels,
+  getUsageSnapshot,
+  getUsageStats
+} from '../services/usageService'
 import type { ChatEngine } from '../core/engine'
 import { listFileSuggestions } from '../core/fileSuggestions'
 import {
@@ -225,6 +253,7 @@ import {
   listTabs,
   MAX_TABS,
   activateTab,
+  recycleAllEnginesRuntimes,
   syncShellBackgroundToTheme
 } from '../tabRegistry'
 import type {
@@ -252,16 +281,20 @@ import {
  * Settings-page switch (bundled ↔ system) invalidates immediately instead
  * of serving the other backend's list for up to a TTL.
  */
-let modelListCache: { key: string; models: string[]; at: number } | null = null
+let modelListCache: { key: string; models: ModelListEntry[]; at: number } | null = null
 const MODEL_LIST_TTL_MS = 5 * 60 * 1000
 
 /**
  * Fallback for the system-claude backend BEFORE its CLI is live (lazy spawn):
  * the stable alias set claude accepts for --model / setModel. Once a runtime
- * is up, the real `supportedModels` control-request list replaces this (and
- * only THAT gets cached, so the upgrade happens on the next dropdown open).
+ * is up, the real `supportedModels` control-request list (which also carries
+ * a `displayName` per entry) replaces this — and only THAT gets cached, so
+ * the upgrade happens on the next dropdown open. No displayName here; the
+ * frontend's local id→name table covers these well-known aliases.
  */
-const SYSTEM_CLAUDE_MODEL_ALIASES = ['default', 'opus', 'sonnet', 'haiku', 'sonnet[1m]']
+const SYSTEM_CLAUDE_MODEL_ALIASES: ModelListEntry[] = ['default', 'opus', 'sonnet', 'haiku', 'sonnet[1m]'].map(
+  (id) => ({ id })
+)
 
 /**
  * Resolve the ChatEngine for the window that sent this IPC event.
@@ -301,39 +334,6 @@ function embeddableExtFor(bytes: Buffer): string {
     throw new Error('出图 API 返回了无法嵌入 Word 的图片格式（webp/未知），请重试或更换模型')
   }
   return ext
-}
-
-/**
- * Recycle every open tab's live runtimes so the next turn re-spawns
- * under the freshly-saved `cliBackend`. Shared by BOTH backend-set
- * paths:
- *
- *   - CLI_BACKEND_SET (engine-bound, fired from a tab's own settings),
- *   - SETTINGS_CLI_BACKEND_SET (engine-free overlay path).
- *
- * The overlay path has no engine reference at all, and even the
- * engine-bound path only knows the SENDER's engine — but a backend flip
- * is a global app setting, so EVERY tab's engine must recycle, not just
- * the one that happened to send the IPC. We iterate all tabs (web tabs
- * have no engine → skipped) and let each engine decide which of its
- * runtimes are safe to recycle (in-flight turns are preserved inside
- * restartRuntimesForBackendChange). Best-effort: one engine throwing
- * must not block the rest, and the setting is already persisted, so a
- * failed recycle just degrades to the old "restart to apply" behavior
- * for that one tab rather than losing the change.
- */
-async function recycleAllEnginesForBackendChange(): Promise<void> {
-  const engines = getAllTabs()
-    .map((ctx) => ctx.engine)
-    .filter((e): e is ChatEngine => e !== null)
-  await Promise.all(
-    engines.map((eng) =>
-      eng.restartRuntimesForBackendChange().catch((err) => {
-        console.warn('[cli-backend] runtime recycle failed for a tab:', err)
-        return 0
-      })
-    )
-  )
 }
 
 /**
@@ -533,8 +533,17 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.UPDATER_CHECK)
   ipcMain.removeHandler(IPC_CHANNELS.UPDATER_INSTALL)
   ipcMain.removeHandler(IPC_CHANNELS.AUTH_GET_STATE)
+  ipcMain.removeHandler(IPC_CHANNELS.AUTH_SEND_SMS_CODE)
   ipcMain.removeHandler(IPC_CHANNELS.AUTH_LOGIN)
   ipcMain.removeHandler(IPC_CHANNELS.AUTH_LOGOUT)
+  ipcMain.removeHandler(IPC_CHANNELS.ACCOUNT_GET_PROFILE)
+  ipcMain.removeHandler(IPC_CHANNELS.ACCOUNT_UPDATE_PROFILE)
+  ipcMain.removeHandler(IPC_CHANNELS.USAGE_FILTER_OPTIONS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.USAGE_STATS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.USAGE_MODELS_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.USAGE_SNAPSHOT_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.USAGE_LIST_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.USAGE_EXPORT_CSV)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_TRIGGER_MENU_ACTION)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_SWITCH_REQUEST)
@@ -1629,12 +1638,18 @@ export function registerIpcHandlers(): void {
           headers: token ? { Authorization: `Bearer ${token}` } : {}
         })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const body = (await res.json()) as { data?: Array<{ id?: unknown }> }
+        const body = (await res.json()) as {
+          data?: Array<{ id?: unknown; display_name?: unknown }>
+        }
         const NON_CHAT_RE = /image|audio|realtime|embedding|whisper|tts/i
         const models = (Array.isArray(body.data) ? body.data : [])
-          .map((m) => (typeof m.id === 'string' ? m.id : ''))
-          .filter((id) => id && !NON_CHAT_RE.test(id))
-          .sort()
+          .map((m) => ({
+            id: typeof m.id === 'string' ? m.id : '',
+            displayName:
+              typeof m.display_name === 'string' && m.display_name ? m.display_name : undefined
+          }))
+          .filter((m) => m.id && !NON_CHAT_RE.test(m.id))
+          .sort((a, b) => a.id.localeCompare(b.id))
         modelListCache = { key: cliBackend, models, at: now }
         return { ok: true, models }
       } catch (err) {
@@ -2059,7 +2074,7 @@ export function registerIpcHandlers(): void {
       // tab's live runtimes so the next turn cold-starts on the new
       // backend. In-flight turns keep their current backend (see
       // ChatEngine.restartRuntimesForBackendChange).
-      await recycleAllEnginesForBackendChange()
+      await recycleAllEnginesRuntimes()
       const eng = resolveEngine(event)
       const detection = await eng.refreshSystemClaudeDetection()
       let bundledPath: string | null = null
@@ -2218,16 +2233,27 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(
+    IPC_CHANNELS.AUTH_SEND_SMS_CODE,
+    async (_event, phone: string): Promise<AuthSendSmsCodeResult> => {
+      // 结构防御：preload 只透传，恶意/异常 payload 在此归一成失败结论。
+      if (typeof phone !== 'string') {
+        return { ok: false, error: '请输入手机号' }
+      }
+      return sendSmsCode(phone)
+    }
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.AUTH_LOGIN,
     async (_event, payload: AuthLoginPayload): Promise<AuthLoginResult> => {
       // 结构防御：preload 只透传，恶意/异常 payload 在此归一成失败结论
       // 而不是让 authService 对 undefined 调 .trim() 抛栈。
       if (
         !payload ||
-        typeof payload.email !== 'string' ||
-        typeof payload.password !== 'string'
+        typeof payload.phone !== 'string' ||
+        typeof payload.code !== 'string'
       ) {
-        return { ok: false, error: '请输入邮箱和密码' }
+        return { ok: false, error: '请输入手机号和验证码' }
       }
       return login(payload)
     }
@@ -2236,6 +2262,92 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async (): Promise<void> => {
     logout()
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.ACCOUNT_GET_PROFILE,
+    async (): Promise<AccountProfileResult> => {
+      return getAccountProfile()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.ACCOUNT_UPDATE_PROFILE,
+    async (_event, payload: AccountUpdatePayload): Promise<AccountUpdateResult> => {
+      if (!payload || typeof payload !== 'object') {
+        return { ok: false, error: '请求参数有误' }
+      }
+      return updateAccountProfile(payload)
+    }
+  )
+
+  // ── 使用记录页（对接 sub2api /api/v1/usage*，逻辑在 usageService.ts）──
+  // 结构防御同 AUTH_LOGIN：preload 只透传，异常 payload 在此归一成失败
+  // 结论，不让 service 层对 undefined 字段解引用炸栈。
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_FILTER_OPTIONS_GET,
+    async (): Promise<UsageFilterOptionsResult> => {
+      return getUsageFilterOptions()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_STATS_GET,
+    async (_event, filters: UsageQueryFilters): Promise<UsageStatsResult> => {
+      if (!isUsageQueryFilters(filters)) return { ok: false, error: '请求参数有误' }
+      return getUsageStats(filters)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_MODELS_GET,
+    async (_event, filters: UsageQueryFilters): Promise<UsageModelsResult> => {
+      if (!isUsageQueryFilters(filters)) return { ok: false, error: '请求参数有误' }
+      return getUsageModels(filters)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_SNAPSHOT_GET,
+    async (
+      _event,
+      filters: UsageQueryFilters,
+      granularity: unknown
+    ): Promise<UsageSnapshotResult> => {
+      if (!isUsageQueryFilters(filters)) return { ok: false, error: '请求参数有误' }
+      return getUsageSnapshot(filters, granularity === 'hour' ? 'hour' : 'day')
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_LIST_GET,
+    async (_event, query: UsageListQuery): Promise<UsageListResult> => {
+      if (!isUsageListQuery(query)) return { ok: false, error: '请求参数有误' }
+      return getUsageList(query)
+    }
+  )
+
+  // Engine-free 落盘：渲染层已拼好 CSV 文本（含 BOM），main 只弹原生保存框
+  // 写盘——同 PROPOSAL_EXPORT「渲染层生成内容 + main 管保存框与写盘」的分工。
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_EXPORT_CSV,
+    async (event, payload: UsageExportCsvPayload): Promise<UsageExportCsvResult> => {
+      const csv = typeof payload?.csv === 'string' ? payload.csv : ''
+      const defaultFilename =
+        typeof payload?.defaultFilename === 'string' && payload.defaultFilename
+          ? payload.defaultFilename
+          : 'usage.csv'
+      if (!csv) return { path: null }
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { path: null }
+      const r = await dialog.showSaveDialog(win, {
+        defaultPath: defaultFilename,
+        filters: [{ name: 'CSV', extensions: ['csv'] }]
+      })
+      if (r.canceled || !r.filePath) return { path: null }
+      await writeFile(r.filePath, csv, 'utf8')
+      return { path: r.filePath }
+    }
+  )
 
   // Shell tab-strip settings menu → active chat tab. The shell renderer
   // can't reach the chat renderer's stores directly, so it fires this and
@@ -2370,7 +2482,7 @@ export function registerIpcHandlers(): void {
   // The settings overlay isn't bound to any tab (no ChatEngine), so unlike
   // CLI_BACKEND_GET/SET these resolve the global app setting + run detection
   // directly via cliDetect. On SET we still recycle every tab's runtimes
-  // (via recycleAllEnginesForBackendChange) so the flip applies on the next
+  // (via recycleAllEnginesRuntimes) so the flip applies on the next
   // turn — `backend` is only read at spawn time, so a reused runtime would
   // otherwise keep the old backend until an app restart.
   ipcMain.handle(
@@ -2411,7 +2523,7 @@ export function registerIpcHandlers(): void {
       updateAppSettings({ cliBackend: mode })
       // Same as CLI_BACKEND_SET: apply immediately by recycling live
       // runtimes across all tabs (the overlay has no engine of its own).
-      await recycleAllEnginesForBackendChange()
+      await recycleAllEnginesRuntimes()
       const info = await detectSystemClaude()
       let bundledPath: string | null = null
       try {
@@ -3125,6 +3237,35 @@ function isValidPermissionMode(value: unknown): value is UiPermissionMode {
   return (
     typeof value === 'string' &&
     (VALID_PERMISSION_MODES as readonly string[]).includes(value)
+  )
+}
+
+/** USAGE_STATS_GET / USAGE_MODELS_GET / USAGE_SNAPSHOT_GET 的 payload 结构防御。 */
+function isUsageQueryFilters(value: unknown): value is UsageQueryFilters {
+  if (!value || typeof value !== 'object') return false
+  const f = value as Record<string, unknown>
+  return (
+    typeof f.startDate === 'string' &&
+    typeof f.endDate === 'string' &&
+    typeof f.timezone === 'string' &&
+    (f.apiKeyId === undefined || typeof f.apiKeyId === 'number') &&
+    (f.groupId === undefined || typeof f.groupId === 'number') &&
+    (f.model === undefined || typeof f.model === 'string') &&
+    (f.requestType === undefined || typeof f.requestType === 'string') &&
+    (f.billingType === undefined || typeof f.billingType === 'number') &&
+    (f.billingMode === undefined || typeof f.billingMode === 'string')
+  )
+}
+
+/** USAGE_LIST_GET 的 payload 结构防御——UsageQueryFilters 加分页/排序字段。 */
+function isUsageListQuery(value: unknown): value is UsageListQuery {
+  if (!isUsageQueryFilters(value)) return false
+  const f = value as unknown as Record<string, unknown>
+  return (
+    typeof f.page === 'number' &&
+    typeof f.pageSize === 'number' &&
+    (f.sortBy === undefined || typeof f.sortBy === 'string') &&
+    (f.sortOrder === undefined || f.sortOrder === 'asc' || f.sortOrder === 'desc')
   )
 }
 
