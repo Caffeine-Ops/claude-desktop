@@ -1,0 +1,72 @@
+name: Rollback release
+
+# 开发者应急手段：某个已发布版本有 bug，用它把「还没升级的用户」挡在坏版本外——
+# 让自建源 VPS 的更新清单假装最新版还是上一个好版本，同时把坏版本在 GitHub
+# Release 上标记为 prerelease（让 GitHub 那条兜底线的判定也跳过它）。
+#
+# 不处理「已经装上坏版本的用户」的强制降级——那需要提前在每个已发布版本里就打开
+# autoUpdater.allowDowngrade，属于另一个决策，见
+# docs/superpowers/specs/2026-07-23-release-rollback-workflow-design.md。
+#
+# 两个版本号都要手动填，不做自动判定「哪个是最新/哪个是坏的」——避免时序上的
+# 误判（比如回滚当天又有新版本发布）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: '回滚到这个版本号（例如 v0.0.37），必须是已经成功发布过的 tag'
+        required: true
+        type: string
+      bad_version:
+        description: '下架这个坏版本号（例如 v0.0.38），会被标记为 GitHub prerelease'
+        required: true
+        type: string
+
+env:
+  RELEASES_REPO: Caffeine-Ops/claude-desktop-releases
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    name: Rollback to ${{ github.event.inputs.target_version }}
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="${{ inputs.target_version }}"
+          BAD="${{ inputs.bad_version }}"
+
+          echo "校验 target_version=${TARGET} 的 Release 是否存在且完整..."
+          if ! gh release view "$TARGET" --repo "$RELEASES_REPO" --json assets,isPrerelease > target_release.json; then
+            echo "::error::target_version ${TARGET} 对应的 Release 不存在"
+            exit 1
+          fi
+
+          ASSET_NAMES=$(python3 -c "import json; d=json.load(open('target_release.json')); print(' '.join(a['name'] for a in d['assets']))")
+          for f in latest-mac.yml latest.yml; do
+            case " $ASSET_NAMES " in
+              *" $f "*) ;;
+              *) echo "::error::target_version ${TARGET} 的 Release 里缺少 $f，发布不完整，拒绝回滚"; exit 1 ;;
+            esac
+          done
+
+          IS_PRERELEASE=$(python3 -c "import json; print(json.load(open('target_release.json'))['isPrerelease'])")
+          if [ "$IS_PRERELEASE" = "True" ]; then
+            echo "::error::target_version ${TARGET} 本身已经是 prerelease，回滚后 GitHub 线仍找不到最新稳定版，请确认版本号有没有填错"
+            exit 1
+          fi
+
+          echo "校验 bad_version=${BAD} 的 Release 是否存在..."
+          if ! gh release view "$BAD" --repo "$RELEASES_REPO" > /dev/null; then
+            echo "::error::bad_version ${BAD} 对应的 Release 不存在"
+            exit 1
+          fi
+
+          echo "前置校验通过：target_version=${TARGET}，bad_version=${BAD}"
