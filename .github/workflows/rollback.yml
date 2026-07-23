@@ -121,6 +121,7 @@ jobs:
         shell: bash
         env:
           UPDATE_URL: ${{ vars.SELF_HOSTED_UPDATE_URL }}
+          TARGET_VERSION: ${{ inputs.target_version }}
         run: |
           set -euo pipefail
           if [ -z "$UPDATE_URL" ]; then
@@ -130,8 +131,7 @@ jobs:
           python3 -m pip install --quiet pyyaml
           curl -fsSL "${UPDATE_URL%/}/latest-mac.yml" -o verify-latest-mac.yml
           ACTUAL=$(python3 -c "import yaml; print(yaml.safe_load(open('verify-latest-mac.yml'))['version'])")
-          EXPECTED="${{ inputs.target_version }}"
-          EXPECTED="${EXPECTED#v}"
+          EXPECTED="${TARGET_VERSION#v}"
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "::error::验证失败：VPS 上 latest-mac.yml 的 version=${ACTUAL}，期望 ${EXPECTED}"
             exit 1
@@ -139,5 +139,9 @@ jobs:
           echo "验证通过：VPS 清单 version=${ACTUAL}"
       - name: Summary
         shell: bash
+        env:
+          TARGET: ${{ inputs.target_version }}
+          BAD: ${{ inputs.bad_version }}
         run: |
-          echo "已回滚：VPS 清单 → ${{ inputs.target_version }}，GitHub ${{ inputs.bad_version }} → prerelease" >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          echo "已回滚：VPS 清单 → ${TARGET}，GitHub ${BAD} → prerelease" >> "$GITHUB_STEP_SUMMARY"
