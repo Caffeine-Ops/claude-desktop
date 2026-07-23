@@ -399,17 +399,27 @@ EOF
 
 ---
 
-### Task 5: 新增仓库 Variable + 验证生效 step + Summary
+### Task 5: 新增仓库 Variable（选填）+ 验证生效 step（可优雅跳过）+ Summary
+
+**2026-07-23 执行期间的变更**：实施过程中发现 `SELF_HOSTED_UPDATE_URL` 这个
+公网地址目前谁都不掌握——VPS 不是本项目开发者本人部署的，本地 `env.json`
+和已安装的旧版本 App 里都没有这个字段（该功能上线晚于本地这些副本的构建
+时间）。已确认这不是本任务的阻塞项：这个值只喂给「验证生效」这一步，跟
+Task 1-4 已经实现的回滚机制本身（VPS 换清单 + GitHub 标 prerelease）完全
+无关。因此把原方案的「新增 Variable 是必需前提」改为「新增 Variable 是可选
+增强」：**没配置这个仓库 Variable 时，验证 step 打印一句提醒后直接跳过（退出
+码 0，不挡流水线），不是 `exit 1` 硬失败**。等以后从知道这个地址的人（比如
+当初配置自建源的协作者）那里拿到值，随时去 GitHub 网页补一个仓库 Variable，
+不需要再改一次工作流代码。
 
 **Files:**
 - Modify: `.github/workflows/rollback.yml`（追加两个 step：验证 + summary）
-- 手动操作：GitHub 网页 Settings → Secrets and variables → Actions →
-  Variables 标签页，新增一个仓库 Variable
 
 **Interfaces:**
-- Consumes：`vars.SELF_HOSTED_UPDATE_URL`（新增的仓库 Variable，值就是
+- Consumes：`vars.SELF_HOSTED_UPDATE_URL`（可选的仓库 Variable，值应该是
   `appUpdater.ts` 里 `SELF_HOSTED_FEED_URL` 对应的那个公网地址，例如
-  `https://updates.你的域名.com/`）；Task 3 覆盖后的 VPS 状态。
+  `https://updates.你的域名.com/`；未配置时视为「没有」，不是错误）；Task 3
+  覆盖后的 VPS 状态。
 - Produces：无（这是只读校验 + 收尾）。
 
 **这个 Variable 为什么是新增的、之前设计里说「不新增密钥」是否矛盾**：这个 URL
@@ -421,9 +431,10 @@ EOF
 「怎么连上 VPS 写文件」用的内部路径/主机名，没有一个是「客户端怎么从公网读」
 的地址。
 
-- [ ] **Step 1: 在 GitHub 网页新增仓库 Variable**
+- [ ] **Step 1（可选，随时后补，不阻塞本任务）：在 GitHub 网页新增仓库 Variable**
 
-打开 `https://github.com/Caffeine-Ops/claude-desktop/settings/variables/actions`，
+等拿到公网地址后，打开
+`https://github.com/Caffeine-Ops/claude-desktop/settings/variables/actions`，
 点 **New repository variable**：
 - Name: `SELF_HOSTED_UPDATE_URL`
 - Value: 与 `env.json` 里 `SELF_HOSTED_UPDATE_URL` 字段相同的那个公网地址
@@ -440,8 +451,8 @@ EOF
         run: |
           set -euo pipefail
           if [ -z "$UPDATE_URL" ]; then
-            echo "::error::仓库变量 SELF_HOSTED_UPDATE_URL 未配置，无法验证 VPS 清单是否生效"
-            exit 1
+            echo "::warning::仓库变量 SELF_HOSTED_UPDATE_URL 未配置，跳过「VPS 清单是否生效」的自动验证——VPS 那半的 rsync 已经执行，只是没有自动确认；需要的话去 Settings → Secrets and variables → Actions → Variables 补一个同名变量，之后触发就会自动验证"
+            exit 0
           fi
           python3 -m pip install --quiet pyyaml
           curl -fsSL "${UPDATE_URL%/}/latest-mac.yml" -o verify-latest-mac.yml
@@ -460,6 +471,11 @@ EOF
           echo "已回滚：VPS 清单 → ${{ inputs.target_version }}，GitHub ${{ inputs.bad_version }} → prerelease" >> "$GITHUB_STEP_SUMMARY"
 ```
 
+注意与原方案的唯一差异：`UPDATE_URL` 为空时是 `::warning::` + `exit 0`（跳过，
+流水线继续），不是 `::error::` + `exit 1`（硬失败）——变量配置了之后，验证逻辑
+（curl 拿清单、解析 version、跟 `target_version` 比对、不一致就 `exit 1`）
+完全不变。
+
 - [ ] **Step 3: 校验 YAML 语法**
 
 ```bash
@@ -468,20 +484,21 @@ actionlint .github/workflows/rollback.yml
 
 Expected: 退出码 0。
 
-- [ ] **Step 4: 本地跑同款验证逻辑（针对当前真实生产状态，只读）**
+- [ ] **Step 4: 本地验证「跳过分支」的逻辑（这是当前唯一能测的分支，因为
+  变量还没配置）**
 
 ```bash
-# 把下面的 URL 换成你在 Step 1 里填的那个真实值：
-UPDATE_URL="<你的 SELF_HOSTED_UPDATE_URL>"
-curl -fsSL "${UPDATE_URL%/}/latest-mac.yml" -o /tmp/verify-latest-mac.yml
-python3 -c "
-import yaml
-print(yaml.safe_load(open('/tmp/verify-latest-mac.yml'))['version'])
-"
+# 模拟 UPDATE_URL 为空时的分支逻辑：
+UPDATE_URL=""
+if [ -z "$UPDATE_URL" ]; then
+  echo "::warning::仓库变量 SELF_HOSTED_UPDATE_URL 未配置，跳过「VPS 清单是否生效」的自动验证——VPS 那半的 rsync 已经执行，只是没有自动确认；需要的话去 Settings → Secrets and variables → Actions → Variables 补一个同名变量，之后触发就会自动验证"
+  echo "would exit 0 (跳过，不挡流水线)"
+fi
 ```
 
-Expected：打印出当前生产环境真实的最新版本号（此刻应该是 `0.0.38`，因为还没有
-真的触发过回滚）——证明这段 curl + 解析逻辑本身是通的。
+Expected：打印警告文案，确认这条路径不会 `exit 1`。「变量配置后」的真实 curl
+验证分支留到以后拿到地址、真正配置了 Variable 之后，在 Task 6 端到端触发时
+一并验证（不在本任务里空跑一个假地址）。
 
 - [ ] **Step 5: Commit**
 
@@ -492,6 +509,8 @@ feat(ci): 回滚工作流新增验证生效 step + summary
 
 回滚后重新读一次 VPS 上的 latest-mac.yml，断言 version 字段确实变成了
 target_version，避免 rsync 表面成功但内容没生效时误报「回滚成功」。
+仓库 Variable SELF_HOSTED_UPDATE_URL 未配置时优雅跳过（警告+exit 0），
+不阻塞回滚机制本身——该地址目前无人掌握，后补即可。
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 EOF
@@ -526,21 +545,29 @@ git push -u origin HEAD
 
 - [ ] **Step 2: 确认运行结果**
 
+**2026-07-23 更新**：`SELF_HOSTED_UPDATE_URL` 这个仓库 Variable 目前还没配置
+（VPS 不是本项目开发者部署的，地址暂时无人掌握——见 Task 5 的变更说明）。所以
+「Verify VPS manifest was actually updated」这一步这次会走**跳过分支**（打印
+`::warning::` 后 `exit 0`），Actions 运行页面上这一步仍然是绿色的"成功"，
+只是日志里会看到那句"跳过验证"的警告，不代表回滚没生效——VPS 那半的
+rsync（上一个 step）该做的事已经做了，只是没有自动读回来确认。
+
 在 Actions 运行页面确认：
-- 6 个 step 全部绿勾，无失败
+- 6 个 step 全部绿勾，无失败（含「Verify VPS manifest」这步——绿勾+警告日志
+  是预期状态，不是异常）
 - Summary 里显示「已回滚：VPS 清单 → v0.0.37，GitHub v0.0.38 → prerelease」
-
-```bash
-curl -fsSL "<你的 SELF_HOSTED_UPDATE_URL 去掉结尾斜杠>/latest-mac.yml" | python3 -c "import sys, yaml; print(yaml.safe_load(sys.stdin)['version'])"
-```
-
-Expected：打印 `0.0.37`。
 
 ```bash
 gh release view v0.0.38 --repo Caffeine-Ops/claude-desktop-releases --json isPrerelease
 ```
 
-Expected：`{"isPrerelease":true}`。
+Expected：`{"isPrerelease":true}`——这条走 GitHub API，跟 VPS 地址无关，能独立
+验证 GitHub 那一半确实生效。
+
+VPS 那一半这次没法自动/独立验证，只能相信 rsync step 自身日志里那句「已将
+latest-mac.yml / latest.yml 覆盖到 …」没有报错退出。等以后从掌握 VPS 信息的人
+那里拿到 `SELF_HOSTED_UPDATE_URL`（或者能直接 SSH 上去看一眼），再补一次真正
+的 curl 验证也不迟——不影响这次先把回滚机制本身端到端跑通确认。
 
 - [ ] **Step 3: 复原——把测试造成的状态改回真实情况**
 
@@ -568,16 +595,19 @@ gh release edit v0.0.36 --repo Caffeine-Ops/claude-desktop-releases --prerelease
 ```
 
 ```bash
-# 4. 最终确认生产状态完全复原：
-curl -fsSL "<你的 SELF_HOSTED_UPDATE_URL 去掉结尾斜杠>/latest-mac.yml" | python3 -c "import sys, yaml; print(yaml.safe_load(sys.stdin)['version'])"
+# 4. 最终确认生产状态完全复原（GitHub 那一半可独立验证）：
 gh release view v0.0.38 --repo Caffeine-Ops/claude-desktop-releases --json isPrerelease
 gh release view v0.0.36 --repo Caffeine-Ops/claude-desktop-releases --json isPrerelease
 gh release view v0.0.37 --repo Caffeine-Ops/claude-desktop-releases --json isPrerelease
 ```
 
-Expected：VPS 清单 `version` 打印 `0.0.38`；v0.0.38 的 `isPrerelease` 为
-`false`；v0.0.36 的 `isPrerelease` 为 `false`；v0.0.37（本来就不是 prerelease，
-这次测试没碰它）的 `isPrerelease` 仍为 `false`。
+Expected：v0.0.38 的 `isPrerelease` 为 `false`；v0.0.36 的 `isPrerelease` 为
+`false`；v0.0.37（本来就不是 prerelease，这次测试没碰它）的 `isPrerelease`
+仍为 `false`。
+
+VPS 清单是否也确实复原成 `0.0.38`——同 Step 2，这次没法独立 curl 验证，只能
+信「正向」那次触发的 rsync step 日志没报错。等拿到 `SELF_HOSTED_UPDATE_URL`
+后可以补一次 `curl "<地址>/latest-mac.yml"` 确认 version 字段是 `0.0.38`。
 
 - [ ] **Step 4: 合并分支**
 
