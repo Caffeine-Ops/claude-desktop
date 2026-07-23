@@ -70,3 +70,15 @@ jobs:
           fi
 
           echo "前置校验通过：target_version=${TARGET}，bad_version=${BAD}"
+      - name: Download target_version's manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p rollback-staging
+          gh release download "${{ inputs.target_version }}" \
+            --repo "$RELEASES_REPO" \
+            --pattern "latest*.yml" \
+            --dir rollback-staging \
+            --clobber
+          echo "=== 下载到的清单 ==="
+          ls -la rollback-staging
