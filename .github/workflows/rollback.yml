@@ -117,3 +117,27 @@ jobs:
           set -euo pipefail
           gh release edit "$BAD" --repo "$RELEASES_REPO" --prerelease
           echo "${BAD} 已标记为 prerelease，GitHub 兜底线不再把它当最新稳定版。"
+      - name: Verify VPS manifest was actually updated
+        shell: bash
+        env:
+          UPDATE_URL: ${{ vars.SELF_HOSTED_UPDATE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "$UPDATE_URL" ]; then
+            echo "::warning::仓库变量 SELF_HOSTED_UPDATE_URL 未配置，跳过「VPS 清单是否生效」的自动验证——VPS 那半的 rsync 已经执行，只是没有自动确认；需要的话去 Settings → Secrets and variables → Actions → Variables 补一个同名变量，之后触发就会自动验证"
+            exit 0
+          fi
+          python3 -m pip install --quiet pyyaml
+          curl -fsSL "${UPDATE_URL%/}/latest-mac.yml" -o verify-latest-mac.yml
+          ACTUAL=$(python3 -c "import yaml; print(yaml.safe_load(open('verify-latest-mac.yml'))['version'])")
+          EXPECTED="${{ inputs.target_version }}"
+          EXPECTED="${EXPECTED#v}"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::验证失败：VPS 上 latest-mac.yml 的 version=${ACTUAL}，期望 ${EXPECTED}"
+            exit 1
+          fi
+          echo "验证通过：VPS 清单 version=${ACTUAL}"
+      - name: Summary
+        shell: bash
+        run: |
+          echo "已回滚：VPS 清单 → ${{ inputs.target_version }}，GitHub ${{ inputs.bad_version }} → prerelease" >> "$GITHUB_STEP_SUMMARY"
