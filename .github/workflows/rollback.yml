@@ -38,11 +38,11 @@ jobs:
     steps:
       - name: Validate inputs
         shell: bash
+        env:
+          TARGET: ${{ inputs.target_version }}
+          BAD: ${{ inputs.bad_version }}
         run: |
           set -euo pipefail
-          TARGET="${{ inputs.target_version }}"
-          BAD="${{ inputs.bad_version }}"
-
           echo "校验 target_version=${TARGET} 的 Release 是否存在且完整..."
           if ! gh release view "$TARGET" --repo "$RELEASES_REPO" --json assets,isPrerelease > target_release.json; then
             echo "::error::target_version ${TARGET} 对应的 Release 不存在"
