@@ -72,10 +72,12 @@ jobs:
           echo "前置校验通过：target_version=${TARGET}，bad_version=${BAD}"
       - name: Download target_version's manifest
         shell: bash
+        env:
+          TARGET: ${{ inputs.target_version }}
         run: |
           set -euo pipefail
           mkdir -p rollback-staging
-          gh release download "${{ inputs.target_version }}" \
+          gh release download "$TARGET" \
             --repo "$RELEASES_REPO" \
             --pattern "latest*.yml" \
             --dir rollback-staging \
@@ -109,7 +111,9 @@ jobs:
           echo "已将 latest-mac.yml / latest.yml 覆盖到 ${SSH_HOST}:${DEPLOY_PATH}/"
       - name: Mark bad_version as prerelease
         shell: bash
+        env:
+          BAD: ${{ inputs.bad_version }}
         run: |
           set -euo pipefail
-          gh release edit "${{ inputs.bad_version }}" --repo "$RELEASES_REPO" --prerelease
-          echo "${{ inputs.bad_version }} 已标记为 prerelease，GitHub 兜底线不再把它当最新稳定版。"
+          gh release edit "$BAD" --repo "$RELEASES_REPO" --prerelease
+          echo "${BAD} 已标记为 prerelease，GitHub 兜底线不再把它当最新稳定版。"
