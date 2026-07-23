@@ -82,3 +82,28 @@ jobs:
             --clobber
           echo "=== 下载到的清单 ==="
           ls -la rollback-staging
+      - name: Sync manifest to self-hosted update server
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SELFHOST_SSH_HOST }}
+          SSH_USER: ${{ secrets.SELFHOST_SSH_USER }}
+          SSH_KEY: ${{ secrets.SELFHOST_SSH_KEY }}
+          SSH_PORT: ${{ secrets.SELFHOST_SSH_PORT }}
+          DEPLOY_PATH: ${{ secrets.SELFHOST_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_HOST}" ]; then
+            echo "::error::SELFHOST_SSH_HOST 未配置，无法回滚自建源——本次回滚只完成了 GitHub 那一半，请检查 secrets 后重跑"
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "${SSH_KEY}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          PORT="${SSH_PORT:-22}"
+          # 只覆盖这两个清单文件，不带 --delete、不动 VPS 上其余已保留的历史安装包。
+          rsync -avz \
+            -e "ssh -i ~/.ssh/deploy_key -p ${PORT} -o StrictHostKeyChecking=accept-new" \
+            rollback-staging/latest-mac.yml rollback-staging/latest.yml \
+            "${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}/"
+          rm -f ~/.ssh/deploy_key
+          echo "已将 latest-mac.yml / latest.yml 覆盖到 ${SSH_HOST}:${DEPLOY_PATH}/"
