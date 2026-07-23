@@ -107,3 +107,9 @@ jobs:
             "${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}/"
           rm -f ~/.ssh/deploy_key
           echo "已将 latest-mac.yml / latest.yml 覆盖到 ${SSH_HOST}:${DEPLOY_PATH}/"
+      - name: Mark bad_version as prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit "${{ inputs.bad_version }}" --repo "$RELEASES_REPO" --prerelease
+          echo "${{ inputs.bad_version }} 已标记为 prerelease，GitHub 兜底线不再把它当最新稳定版。"
