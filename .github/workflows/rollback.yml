@@ -43,6 +43,10 @@ jobs:
           BAD: ${{ inputs.bad_version }}
         run: |
           set -euo pipefail
+          if [ "$TARGET" = "$BAD" ]; then
+            echo "::error::target_version 与 bad_version 不能相同（都填了 ${TARGET}）——回滚会把同一个版本先 rsync 成\"最新\"、又标成 prerelease，产生自相矛盾的生产状态"
+            exit 1
+          fi
           echo "校验 target_version=${TARGET} 的 Release 是否存在且完整..."
           if ! gh release view "$TARGET" --repo "$RELEASES_REPO" --json assets,isPrerelease > target_release.json; then
             echo "::error::target_version ${TARGET} 对应的 Release 不存在"
