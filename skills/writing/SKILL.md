@@ -106,7 +106,7 @@ description: >
 | 改写 | `workflows/rewrite.md` | 用户给一篇已有稿要「改写 / 换个说法 / 换体裁重写」 |
 | 只润色 | `workflows/polish-only.md` | 用户给成稿只要「润色 / 去 AI 味」，不重新策划创作 |
 | 续写 | `workflows/resume-writing.md` | 已有前几节初稿，换窗口 / 隔天继续往下写 |
-| 连载 | `workflows/serialize.md` | 长内容拆成多期连载、需跨期人物与伏笔一致 |
+| 一稿多平台 | `workflows/serialize.md` | 一篇成稿要发到多个平台（公众号 / 小红书 / 知乎…），按各平台 `PLATFORM_RULES` 改造，每平台独立文件 |
 | 批量起标题 | `workflows/batch-titles.md` | 一篇成稿要一批候选标题供挑选 |
 
 ---
