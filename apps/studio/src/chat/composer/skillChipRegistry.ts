@@ -110,6 +110,22 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     label: '制作视频',
     description: '用 React 生成动画短视频'
   },
+  // writing — 写作。namespaced + 裸名双注册，理由同 ppt-master。
+  // 与 proposal-writer（写方案）的分工：那个写商业方案/售前文档、有方案模式
+  // 的双栏工作台并走客户端拦截；这个是通用内容写作（文案/小说/文章），是普通
+  // skill，命令原样发给 CLI 不拦截。图标也刻意不同，两者会同时出现在斜杠菜单。
+  {
+    match: '/claude-desktop:writing',
+    image: '/skill-icons/writing.png',
+    label: '写作',
+    description: '公众号文案、小说、文章的创作与改写'
+  },
+  {
+    match: '/writing',
+    image: '/skill-icons/writing.png',
+    label: '写作',
+    description: '公众号文案、小说、文章的创作与改写'
+  },
   // proposal-writer — 写方案。namespaced + 裸名双注册，理由同 ppt-master。
   // 注意：这个命令不会发给 fusion-code——FusionRuntimeProvider.onNew 会拦截它、
   // 激活方案模式（见 matchProposalSlash）。chip 只是让斜杠菜单里它长得像个产品功能。
