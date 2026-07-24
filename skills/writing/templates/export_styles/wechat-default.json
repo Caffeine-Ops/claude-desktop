@@ -1,0 +1,12 @@
+{
+  "name": "公众号默认",
+  "body": "font-size:16px;line-height:1.75;color:#333333;letter-spacing:0.5px;margin:0 0 1.2em 0;",
+  "h1": "font-size:22px;font-weight:bold;color:#1a1a1a;margin:1.6em 0 0.8em 0;line-height:1.4;",
+  "h2": "font-size:19px;font-weight:bold;color:#1a1a1a;margin:1.5em 0 0.7em 0;line-height:1.4;border-left:4px solid #07C160;padding-left:10px;",
+  "h3": "font-size:17px;font-weight:bold;color:#333333;margin:1.3em 0 0.6em 0;line-height:1.4;",
+  "quote": "font-size:15px;color:#666666;border-left:3px solid #dddddd;padding:0.6em 0 0.6em 1em;margin:1.2em 0;background:#fafafa;",
+  "strong": "font-weight:bold;color:#07C160;",
+  "em": "font-style:italic;color:#666666;",
+  "li": "font-size:16px;line-height:1.75;color:#333333;margin:0.4em 0;",
+  "hr": "border:none;border-top:1px solid #eeeeee;margin:2em 0;"
+}
