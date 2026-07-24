@@ -12,7 +12,7 @@
 - genre: short-story
 - sub: 悬疑推理
 
-> `genre` 三选一：`short-story`（短篇小说）| `wechat`（微信文案）| `article`（文章）。
+> `genre` 三选一：`short-story`（短篇小说）| `wechat`（微信文案）| `article`（文章）。**注意 `short-story` 对应的手册目录名是 `story`，不是 `short-story`**（下面的 `references/genres/story/...` 路径同理），别按字段值原样去找目录。
 > `sub` = 题材/场景名，取自对应体裁手册的题材表：`references/genres/story/_index.md`（悬疑推理/言情情感/科幻奇幻/都市脑洞/治愈温情/轻松搞笑）、`references/genres/wechat/_index.md`、`references/genres/article/_index.md`。
 
 ## 目标
@@ -73,8 +73,8 @@
 
 ## 平台格式
 - platform: 公众号
-- paragraph_max: 4
-- subhead_every: 0
+- paragraph_max: 150
+- subhead_every: 500
 
 > `platform` 决定段落长度与小标题密度，取值对齐 `readability_check.py` 的 `PLATFORM_RULES`：`公众号` | `朋友圈` | `小红书` | `知乎` | `通用`。
-> `paragraph_max` 单段最大句数（整数）；`subhead_every` 每隔几段要一个小标题（整数，`0` 表示不要求）。
+> `paragraph_max` 单段最大**字数**（整数，非句数/段数）；`subhead_every` 每隔多少**字**要一个小标题（整数，非段数，`0` 表示该平台不要求）。**两个字段单位都是字符数，与 `readability_check.py` 的 `PLATFORM_RULES` 逐字对齐（spec-lock 会原样覆盖脚本默认值，单位不一致会导致检查全红或形同虚设）**：`公众号` 150/500、`朋友圈` 80/0、`小红书` 100/0、`知乎` 300/800、`通用` 300/0。
