@@ -60,3 +60,14 @@ def test_overrides_take_precedence():
 def test_unknown_platform_falls_back_to_generic():
     result = rc.check("随便写点东西。", platform="不存在的平台")
     assert isinstance(result.stats["正文字数"], float)
+
+
+def test_code_block_interior_not_flagged_as_long_paragraph():
+    # 代码块内部的行（比如注释很长的一行代码）不该被当成正文段落核对
+    # paragraph_max——旧实现只跳过了 ``` 分隔符本身那一行，围栏内部的行
+    # 只要不是以 ```/>/|/-/* 开头就会被误判成「段落过长」。
+    # 重复 25 次是为了让 char_count（剥空白后）确实超过公众号的 150 上限
+    # ——重复次数太少时空格会被 char_count 剥掉，字数不够，测不出这条 bug。
+    text = "正常段落。\n```python\n" + ("x = 1  # 长注释" * 25) + "\n```\n结尾段落。"
+    result = rc.check(text, platform="公众号")
+    assert not any(p.rule == "段落过长" for p in result.problems)

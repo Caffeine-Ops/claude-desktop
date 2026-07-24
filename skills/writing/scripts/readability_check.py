@@ -57,11 +57,21 @@ def check(text: str, platform: str, overrides: dict[str, int] | None = None) -> 
 
     problems: list[wu.Hit] = []
 
-    # 段落上限：行号按原文（未剥 Markdown）算，用户要能直接跳过去改
+    # 段落上限：行号按原文（未剥 Markdown）算，用户要能直接跳过去改。
+    # 围栏代码块（```）内部的行要整体跳过，不只是分隔符那一行本身——
+    # 否则代码里一行不以 ```/>/|/-/* 开头的内容（比如 `x = 1  # 注释`）
+    # 会被当成正文段落去核对 paragraph_max，误报「段落过长」。
+    # in_fence 状态维护逻辑与 writing_utils.strip_markdown 保持一致。
     para_max = rules["paragraph_max"]
+    in_fence = False
     for idx, line in enumerate(text.splitlines(), start=1):
+        if wu._FENCE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
         stripped = line.strip()
-        if not stripped or _HEADING.match(line) or stripped.startswith(("```", ">", "|", "-", "*")):
+        if not stripped or _HEADING.match(line) or stripped.startswith((">", "|", "-", "*")):
             continue
         length = wu.char_count(stripped)
         if length > para_max:
