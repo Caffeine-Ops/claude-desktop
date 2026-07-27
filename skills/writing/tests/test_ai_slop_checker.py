@@ -83,6 +83,12 @@ def test_grade_levels():
     assert checker.grade(hit_bookish) == "🟡"
 
 
+def test_grade_ai_pattern_falls_back_to_red():
+    # AI 句式（如反转对举句）不在分级表里，回落必须是 🔴（硬伤）
+    hit_pattern = checker.wu.Hit(line=1, col=1, text="不是A而是B", rule="反转对举句")
+    assert checker.grade(hit_pattern) == "🔴"
+
+
 def test_empty_text_does_not_crash():
     report = checker.score_text("")
     assert report.total >= 0

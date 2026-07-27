@@ -66,3 +66,21 @@ def test_affected_drafts_lists_all_when_voice_changes(tmp_path):
 def test_impact_map_covers_known_sections():
     for section in ("文风锁定", "禁用清单", "人物档案", "平台格式"):
         assert section in us.IMPACT_MAP
+
+
+def test_set_field_preserves_pipe_layout(tmp_path):
+    # 人物档案/伏笔表是竖线记录，改字段要保留竖线排版，
+    # 不能重写成 `- 张明: …` 冒号格式（破坏人读的对齐、且逼调用方传整串）
+    p = tmp_path / "spec_lock.md"
+    p.write_text("## 人物档案\n- 张明 | want:找到妹妹 | need:原谅自己\n", encoding="utf-8")
+    us.set_field(p, "人物档案", "张明", "want:救出妹妹 | need:放下愧疚")
+    content = p.read_text(encoding="utf-8")
+    assert "- 张明 | want:救出妹妹 | need:放下愧疚" in content
+    assert "- 张明: " not in content
+
+
+def test_set_field_keeps_colon_for_simple_kv(tmp_path):
+    # 简单键值记录仍用冒号，别被竖线逻辑带偏
+    p = _spec_file(tmp_path)
+    us.set_field(p, "文风锁定", "voice", "市井烟火")
+    assert "- voice: 市井烟火" in p.read_text(encoding="utf-8")

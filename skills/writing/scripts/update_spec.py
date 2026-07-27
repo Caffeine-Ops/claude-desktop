@@ -65,10 +65,16 @@ def set_field(spec_path: Path, section: str, key: str, value: str) -> None:
             continue
         # 用 writing_utils 的同一个切分器，别在这里自己 split(":")——
         # 人物档案/伏笔表是竖线记录，按冒号切会认错键（见 split_data_line 注释）
-        parsed = wu.split_data_line(stripped[2:])
+        body = stripped[2:]
+        parsed = wu.split_data_line(body)
         if parsed and parsed[0] == key:
             indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
-            lines[i] = f"{indent}- {key}: {value}"
+            # 保留原记录的分隔符：竖线记录（人物档案/伏笔表）用 " | "，简单键值用 ": "。
+            # 一律用冒号重写会毁掉人物档案/伏笔表的竖线对齐（人读排版），
+            # 判定口径与 split_data_line 一致：竖线在冒号之前即为竖线记录。
+            pipe, colon = body.find("|"), body.find(":")
+            sep = " | " if (pipe >= 0 and (colon < 0 or pipe < colon)) else ": "
+            lines[i] = f"{indent}- {key}{sep}{value}"
             spec_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
             return
 

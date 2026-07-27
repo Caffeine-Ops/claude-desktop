@@ -43,6 +43,21 @@ if "%BASE%"=="" (
   exit /b 1
 )
 
+REM py3.14+ 命中时告警：PyMuPDF/Pillow/numpy 可能无 cp314 wheel，pip 退化源码
+REM 编译会极慢甚至失败（与 ensure-python.sh 第 63-70 行逐行对应）。app 自带
+REM runtime 钉 3.12 不会命中。%BASE% 不加引号，与下面建 venv 处一致（BASE 可能
+REM 是 "py -3.12"）；用 chr(46) 拼小数点，避开 for /f 单引号命令里嵌单引号的坑。
+set "PYVER="
+for /f "delims=" %%v in ('%BASE% -c "import sys;print(str(sys.version_info[0])+chr(46)+str(sys.version_info[1]))" 2^>nul') do set "PYVER=%%v"
+set "PY_TOO_NEW="
+if "%PYVER%"=="3.14" set "PY_TOO_NEW=1"
+if "%PYVER%"=="3.15" set "PY_TOO_NEW=1"
+if "%PYVER%"=="3.16" set "PY_TOO_NEW=1"
+if "%PYVER%"=="3.17" set "PY_TOO_NEW=1"
+if "%PYVER%"=="3.18" set "PY_TOO_NEW=1"
+if "%PYVER%"=="3.19" set "PY_TOO_NEW=1"
+if defined PY_TOO_NEW echo [writing] 警告：base 解释器是 Python %PYVER%，部分依赖可能无预编译 wheel，pip 会退化源码编译（慢/可能失败）。建议改用 Python 3.12。
+
 REM 3. 建 venv + pip install
 if not exist "%VENV_PY%" (
   echo [writing] 用 %BASE% 建 venv -^> %WRITING_VENV_DIR%

@@ -63,6 +63,10 @@ def check(text: str, platform: str, overrides: dict[str, int] | None = None) -> 
     # 会被当成正文段落去核对 paragraph_max，误报「段落过长」。
     # in_fence 状态维护逻辑与 writing_utils.strip_markdown 保持一致。
     para_max = rules["paragraph_max"]
+    # 「最长段落」统计只算被本循环真正检查的段落（跳过标题/列表/引用/表格行），
+    # 与「段落过长」判定同源——否则统计把跳过的超长列表行也算进去，会出现
+    # 「统计报 400 字却不报段落过长」的自相矛盾报告。
+    max_para = 0
     in_fence = False
     for idx, line in enumerate(text.splitlines(), start=1):
         if wu._FENCE.match(line):
@@ -74,6 +78,7 @@ def check(text: str, platform: str, overrides: dict[str, int] | None = None) -> 
         if not stripped or _HEADING.match(line) or stripped.startswith((">", "|", "-", "*")):
             continue
         length = wu.char_count(stripped)
+        max_para = max(max_para, length)
         if length > para_max:
             problems.append(
                 wu.Hit(line=idx, col=1, text=f"{length} 字（上限 {para_max}）", rule="段落过长")
@@ -110,7 +115,7 @@ def check(text: str, platform: str, overrides: dict[str, int] | None = None) -> 
             "正文字数": float(total_chars),
             "段落数": float(len(paragraphs)),
             "小标题数": float(heading_count),
-            "最长段落": float(max((wu.char_count(p) for p in paragraphs), default=0)),
+            "最长段落": float(max_para),
         },
     )
 

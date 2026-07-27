@@ -17,6 +17,15 @@ def test_platform_rules_cover_wechat():
     assert rules["subhead_every"] == 500
 
 
+def test_longest_paragraph_stat_matches_checked_paragraphs():
+    # 超长列表行被「段落过长」检查故意跳过；「最长段落」统计也不该把它算进去，
+    # 否则报告自相矛盾：统计说 400 字，却不报超长
+    text = "正常一段话。\n- " + ("字" * 400) + "\n又一段话。"
+    result = rc.check(text, platform="公众号")
+    assert not any(p.rule == "段落过长" for p in result.problems)
+    assert result.stats["最长段落"] < 150
+
+
 def test_long_paragraph_flagged_with_line_number():
     text = "短段落。\n" + ("很长的一段" * 40) + "\n又一个短段落。"
     result = rc.check(text, platform="公众号")

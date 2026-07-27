@@ -45,8 +45,9 @@ PASS_THRESHOLD = 35.0
 _NUMBER = re.compile(r"\d+(?:\.\d+)?%?")
 _DE = re.compile("的")
 
-# 命中分级：套话与 AI 句式是硬伤，书面腔是建议改。
-_GRADE_BY_RULE_PREFIX = {"套话": "🔴", "书面腔": "🟡"}
+# 命中分级：按规则名精确查表（不是前缀匹配）。套话＝🔴、书面腔＝🟡；
+# 表外的规则名（AI 句式各名，如「反转对举句」）回落 🔴——都是硬伤。
+_GRADE_BY_RULE = {"套话": "🔴", "书面腔": "🟡"}
 
 
 @dataclass
@@ -83,8 +84,8 @@ def _load_patterns() -> list[tuple[re.Pattern, str]]:
 
 
 def grade(hit: wu.Hit) -> str:
-    """命中分级：🔴 必须改 / 🟡 建议改 / 🟢 可选。"""
-    return _GRADE_BY_RULE_PREFIX.get(hit.rule, "🔴" if hit.rule != "书面腔" else "🟡")
+    """命中分级：🔴 必须改 / 🟡 建议改 / 🟢 可选。表外规则（AI 句式）回落 🔴。"""
+    return _GRADE_BY_RULE.get(hit.rule, "🔴")
 
 
 def score_text(text: str, extra_banned: list[str] | None = None) -> Report:
