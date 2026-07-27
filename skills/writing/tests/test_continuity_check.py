@@ -77,6 +77,25 @@ def test_ordinary_words_do_not_trigger_name_check(tmp_path):
     assert not any(p.rule == "档案外人名" for p in result.problems)
 
 
+def test_word_fragment_flanked_by_hanzi_not_flagged(tmp_path):
+    # 「李子」夹在「些…回」中间（两侧都是汉字），是普通词的碎片而非人名。
+    # 没有边界闸时，滑窗会把它当成「李芸」的手滑报出来 —— 正是要堵的假警报。
+    text = "他买了些李子回家。张明和李芸在等他。"
+    result = cc.check(text, _spec(tmp_path))
+    assert not any(
+        p.rule == "档案外人名" and "李子" in p.text for p in result.problems
+    )
+
+
+def test_suspected_typo_at_delimiter_boundary_still_reported(tmp_path):
+    # 真手滑通常出现在句首、对话引号旁、标点边 —— 至少一侧挨着非汉字。
+    # 「李芝」两侧都是引号，边界闸放行，必须照报不误。
+    text = "「李芝」，他低声喊道。张明和李芸都听见了。"
+    result = cc.check(text, _spec(tmp_path))
+    problems = [p for p in result.problems if p.rule == "档案外人名"]
+    assert any("李芝" in p.text for p in problems)
+
+
 def test_clean_text_passes(tmp_path):
     text = "张明打开抽屉，钥匙还在。李芸站在窗台边，烟头掉在地上。"
     spec = _spec(tmp_path)
