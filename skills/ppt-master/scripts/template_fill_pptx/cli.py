@@ -168,6 +168,14 @@ def main(argv: list[str] | None = None) -> int:
                 transition=args.transition,
                 transition_duration=args.transition_duration,
             )
+            # This exact phrasing is a load-bearing contract, not just log
+            # output: apps/studio/src/chat/stores/chat.ts's useExportedPptx
+            # matches it verbatim (TEMPLATE_FILL_EXPORT_RE) to detect a
+            # finished export and light up 「预览幻灯片」with it — this
+            # workflow never writes svg_output/, so this line is the ONLY
+            # signal the desktop app has. Same discipline as preview_open.py's
+            # "live preview ready:" line and confirm_wait.py's timeout
+            # message — changing this wording silently breaks that preview.
             print(f"Template-filled PPTX -> {output_path}", file=sys.stderr)
             return 0
     except RuntimeError as exc:

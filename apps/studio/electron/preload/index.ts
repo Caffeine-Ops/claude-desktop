@@ -86,6 +86,7 @@ import {
   type ConfirmUiWriteResultResult,
   type PptPreviewListSlidesPayload,
   type PptPreviewListSlidesResult,
+  type PptListBuiltinTemplatesResult,
   type PptPreviewReadSlidePayload,
   type PptPreviewReadSlideResult,
   type PptPreviewSaveAllPayload,
@@ -401,6 +402,12 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PPT_PREVIEW_LIST_SLIDES,
       payload
     ) as Promise<PptPreviewListSlidesResult>
+  },
+
+  listBuiltinTemplates(): Promise<PptListBuiltinTemplatesResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PPT_LIST_BUILTIN_TEMPLATES
+    ) as Promise<PptListBuiltinTemplatesResult>
   },
 
   readPptPreviewSlide(

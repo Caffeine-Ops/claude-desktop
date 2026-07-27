@@ -173,6 +173,15 @@ export const IPC_CHANNELS = {
    */
   PPT_PREVIEW_LIST_SLIDES: 'ppt-preview:list-slides',
   /**
+   * Renderer → main. Lists the ppt-master skill's built-in template library
+   * (templates/brands|layouts|decks, each driven by its own `*_index.json`)
+   * with a resolved absolute preview path per entry (`01_cover.svg` for
+   * layout/deck; brand entries have no page-level preview). Feeds the
+   * composer's template-picker popover (templatePlaceholderPlugin.ts /
+   * TemplateGalleryPopover.tsx) — static skill data, no payload needed.
+   */
+  PPT_LIST_BUILTIN_TEMPLATES: 'ppt-templates:list-builtin',
+  /**
    * Renderer → main. Reads one slide's raw SVG bytes off disk — replaces the
    * old svg_editor Flask server's GET /api/slide/<name>. Deliberately returns
    * the UNTRANSFORMED file: icon inlining, temp-id assignment, and asset-href
@@ -1559,6 +1568,39 @@ export type PptPreviewSaveAllResult = {
   error?: string
 }
 
+/* ───────────────────────── ppt-master built-in template gallery ───────────────── */
+
+/** Which of the three template-library kinds an entry belongs to (SKILL.md Step 3). */
+export type BuiltinTemplateKind = 'brand' | 'layout' | 'deck'
+
+/**
+ * One entry from `templates/{brands,layouts,decks}/*_index.json`, resolved
+ * with absolute filesystem paths so the renderer never has to guess
+ * SKILL_DIR. `dirAbsPath` is the exact string the composer's template
+ * picker writes into a `mention` chip's value (bare, no `@` prefix) — it's
+ * the literal directory path SKILL.md Step 3 expects to see in the user's
+ * message. `previewAbsPath` is that directory's `01_cover.svg` when present
+ * (always true for layout/deck by convention); brand entries have no
+ * page-level preview and stay `null` — the popover falls back to a
+ * `primaryColor` swatch for those.
+ */
+export type BuiltinTemplateEntry = {
+  kind: BuiltinTemplateKind
+  id: string
+  label: string
+  summary: string
+  primaryColor?: string
+  previewAbsPath: string | null
+  dirAbsPath: string
+}
+
+/** Result of PPT_LIST_BUILTIN_TEMPLATES. */
+export type PptListBuiltinTemplatesResult = {
+  ok: boolean
+  templates: BuiltinTemplateEntry[]
+  error?: string
+}
+
 /* ───────────────────────── ppt-master source pptx preview ─────────────────────── */
 
 /** Payload for PPT_SOURCE_PREVIEW. `pptxPath` is the absolute path to a
@@ -1572,13 +1614,33 @@ export type PptSourcePreviewPayload = { pptxPath: string }
 export type PptSourceSlide = { name: string; content: string }
 
 /**
+ * template-fill 填充计划（`<project>/analysis/fill_plan.json`）里本地预览用得上的
+ * 最小切片：`slides` 的**顺序即成品页序**，每项的 `source_slide` 是它克隆自源 deck
+ * 的第几页（1-based）。
+ *
+ * 它是成品预览做元素级标注的关键一环：pptx_to_svg 产出的 `<g id="shape-N">` 里的 N
+ * 与 template-fill 的 `slot_id`（`s{源页:02d}_sh{N}`）同源——两边都取自 OOXML 的
+ * `p:cNvPr/@id`（`pptx_to_svg/shape_walker.py` 与 `template_fill_pptx/ooxml.py`）。
+ * 于是「成品第 P 页上点中的那个元素」可以精确还原成 AI 认识的 slot_id：
+ *   slot_id = `s{slides[P-1].source_slide:02d}_sh{N}`
+ * 实测 16/16 页、fill_plan 里的替换目标 100% 能在成品 SVG 中定位到。
+ */
+export type PptFillPlanSlide = { source_slide: number }
+export type PptFillPlan = { slides: PptFillPlanSlide[] }
+
+/**
  * Result of PPT_SOURCE_PREVIEW. `outDir` is the pptx_to_svg.py output root
- * (contains `svg-flat/` and `assets/` as siblings) — the base directory
+ * (contains `svg/` and `assets/` as siblings) — the base directory
  * `rewriteAssetHrefs(content, outDir)` needs to resolve each slide's
  * relative asset hrefs into `pptasset://` URLs.
+ *
+ * `fillPlan` 只在这个 .pptx 看起来是某个 template-fill 项目的导出物时才有值（main
+ * 侧顺着 `<项目>/exports/x.pptx` 上溯两级去试读 `analysis/fill_plan.json`，读不到就
+ * 省略）——顺带返回而不是另开一条 IPC，因为它和 slides 永远同生共死：没有预览就没有
+ * 可标注的东西，有预览时前端总是紧接着就要这份映射。
  */
 export type PptSourcePreviewResult =
-  | { ok: true; outDir: string; slides: PptSourceSlide[] }
+  | { ok: true; outDir: string; slides: PptSourceSlide[]; fillPlan?: PptFillPlan }
   | { ok: false; error: string }
 
 /* ───────────────────────── Model switching ─────────────────────── */
@@ -2828,6 +2890,13 @@ export interface ChatApi {
   listPptPreviewSlides(
     payload: PptPreviewListSlidesPayload
   ): Promise<PptPreviewListSlidesResult>
+
+  /**
+   * List the ppt-master skill's built-in template library (brand/layout/
+   * deck), each entry carrying a resolved absolute preview path. Feeds the
+   * composer's template-picker popover. See PPT_LIST_BUILTIN_TEMPLATES.
+   */
+  listBuiltinTemplates(): Promise<PptListBuiltinTemplatesResult>
 
   /**
    * Read one slide's raw SVG source. See PPT_PREVIEW_READ_SLIDE.

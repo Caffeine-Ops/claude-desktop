@@ -139,6 +139,9 @@ export const MESSAGES: Record<Lang, Record<string, string>> = {
     custom: 'Custom',
     custom_placeholder: 'Type your own…',
     recommended: 'Recommended',
+    locked_badge: 'Set by template',
+    locked_hint:
+      'The template already fixes this. Say so in chat if you really want a different one.',
     placeholder_audience: 'Who is this deck for?',
     placeholder_pages: 'e.g. 12-15',
     hex_override: 'Custom HEX override:',
@@ -224,6 +227,8 @@ export const MESSAGES: Record<Lang, Record<string, string>> = {
     custom: '自定义',
     custom_placeholder: '输入自定义内容…',
     recommended: '推荐',
+    locked_badge: '模板已定',
+    locked_hint: '这项由模板决定；确实想换，直接在聊天里说一声。',
     placeholder_audience: '这份演示文稿面向谁？',
     placeholder_pages: '如：12-15',
     hex_override: '自定义色值覆盖：',
@@ -395,6 +400,70 @@ export function recOrFirst(
   const r = recId(rec, field)
   if (r != null && r !== '') return r
   return firstId(list)
+}
+
+// ---- template-locked anchors -----------------------------------------------
+
+/**
+ * 模板锁定的锚点字段。
+ *
+ * 用户给了 `kind: deck` 模板时，画布格式和视觉风格这类锚点已经是既定事实
+ * （SKILL.md 的 deck 分派规则：「Strategist locks all segments; Eight
+ * Confirmations narrows to deck-content fields」）。此前页面无条件把这些字段
+ * 摆成一排可选 chip，等于邀请用户去改一个改了也不作数的东西 —— 而且省略
+ * `recommend.*` 并不能让字段消失，只会让 `recOrFirst` 退化到目录第一项，
+ * 反倒把最贴模板的推荐值弄丢（2026-07-27：用户指定招商银行模板后仍被问
+ * 「风格基调」，根因就在这里）。
+ *
+ * 所以锁定要显式声明。`recommendations.json` 顶层的 `locked` 块列出哪些锚点
+ * 由模板决定，值同时充当来源说明：
+ *
+ *   "locked": {
+ *     "canvas": "招商银行模板",                        // 字符串 = 来源
+ *     "visual_style": { "zh": "招商银行模板", "en": "CMB deck template" },
+ *     "mode": true                                     // true = 锁定但不署来源
+ *   }
+ *
+ * 被锁字段仍照常 seed（值取自 `recommend.*`）并照常写进 result.json —— 下游
+ * spec_lock 拿到的字段集合不变，变的只是这一项在页面上从可选控件换成只读行。
+ * 只读而非隐藏是刻意的：模板替用户定了什么，用户有权看见；藏起来只会让人以为
+ * 系统压根没考虑过这一项，回头又在聊天里重问一遍。
+ */
+export function isFieldLocked(rec: Recommendations | null, field: string): boolean {
+  const locked = rec && rec.locked
+  if (!locked || typeof locked !== 'object') return false
+  const v = (locked as Record<string, unknown>)[field]
+  if (v == null || v === false || v === '') return false
+  // Fail-safe：锁定但没写 `recommend.<field>` 时不认这把锁。那种情况下值会
+  // 由 recOrFirst 退化成目录第一项 —— 把用户钉死在一个谁也没选过的默认值上，
+  // 比多问一句糟得多。退回可选控件，最坏也只是回到没有锁定机制时的行为。
+  const picked = recId(rec, field)
+  return picked != null && picked !== ''
+}
+
+/** 锁定来源的展示文案；`locked.<field>` 写成 `true` 时返回空串（只标锁定）。 */
+export function lockedSource(rec: Recommendations | null, field: string, lang: Lang): string {
+  const locked = rec && rec.locked
+  if (!locked || typeof locked !== 'object') return ''
+  const v = (locked as Record<string, unknown>)[field]
+  if (v == null || typeof v === 'boolean') return ''
+  if (typeof v === 'string') return v
+  if (typeof v === 'object') {
+    const o = v as Record<string, string>
+    return o[lang] || o.zh || o.en || ''
+  }
+  return ''
+}
+
+/** 目录 id → 本地化 label；不在目录里的自定义值原样回显。 */
+export function optionLabelById(
+  list: CatalogOption[] | undefined,
+  id: string | undefined,
+  lang: Lang
+): string {
+  if (!id) return ''
+  const o = flattenCatalog(list).find((x) => x.id === id)
+  return o ? optionLabel(o, lang) : id
 }
 
 /** Flatten a flat-or-grouped catalog list to its option array. */

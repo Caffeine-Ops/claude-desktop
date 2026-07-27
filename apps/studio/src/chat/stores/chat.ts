@@ -1624,15 +1624,32 @@ function previewResultText(result: unknown): string {
   return ''
 }
 
+/** Remove shell backslash-newline line continuations (`\` + newline) so a
+ *  command whose arguments wrap across lines — very common in AI-generated
+ *  Bash calls, e.g. `$PPT_PY "confirm_wait.py" \` + newline + `  "<project>"
+ *  --stage tier1` — parses the same as its single-line equivalent, mirroring
+ *  what the shell itself does before executing it. Load-bearing for
+ *  CONFIRM_WAIT_ARG_RE / LEGACY_SERVER_ARG_RE: both require `\s+` to sit
+ *  directly before the argument, and a bare `\` sitting in that whitespace
+ *  (from the line wrap) stops `\s+` short and makes the alternation capture
+ *  the stray backslash itself instead of the real path — resolveCommandPath
+ *  then fails on that garbage and the 「问题」/「预览幻灯片」tab silently
+ *  never lights up, even though confirm_wait.py is genuinely running and
+ *  blocking (caught from a real transcript with exactly this line-wrapped
+ *  form). */
+function stripLineContinuations(cmd: string): string {
+  return cmd.replace(/\\\r?\n/g, '')
+}
+
 /** Pull the running command string out of a Bash tool-call part. */
 function previewCommandText(part: ContentPart): string {
   const args = part.args
   if (args && typeof args === 'object') {
     const cmd = (args as Record<string, unknown>).command
-    if (typeof cmd === 'string' && cmd.length > 0) return cmd
+    if (typeof cmd === 'string' && cmd.length > 0) return stripLineContinuations(cmd)
   }
   // Falls back to the still-streaming raw JSON before args is parsed.
-  return typeof part.argsText === 'string' ? part.argsText : ''
+  return typeof part.argsText === 'string' ? stripLineContinuations(part.argsText) : ''
 }
 
 /** Which ppt-master surface is active + the project it's for. `confirm` →
@@ -1773,6 +1790,63 @@ export function useSourcePptx(): { path: string } | null {
       if (!first) return null
       const match = SOURCE_PPTX_RE.exec(messageText(first.content))
       return match ? { path: match[0] } : null
+    })
+  )
+}
+
+/* ───────────────── ppt-master template-fill export detection ──────────────── */
+
+// The apply subcommand of template_fill_pptx — covers the plain script
+// invocation, the package's own cli.py called directly, and a quoted script
+// path (same lesson as CONFIRM_WAIT_ARG_RE: the AI routinely quotes the
+// script path token itself, not just its arguments).
+const TEMPLATE_FILL_APPLY_RE = /template_fill_pptx(?:\.py|[/\\]cli\.py)?["']?\s+apply\b/
+// template_fill_pptx/cli.py's own success line (verbatim — see the
+// load-bearing-contract comment on that print call). The output path is
+// `_timestamped_pptx_path(...)`, i.e. an ABSOLUTE path with an auto-appended
+// timestamp — it does NOT equal the `-o` argument the command was given, so
+// it has to be read from this result line, not parsed out of the command.
+// `.+` is greedy to end-of-line so a path containing spaces/CJK still
+// captures whole. Printed to stderr, but Bash tool results merge
+// stdout+stderr (see CONFIRM_WAIT_TIMEOUT_RE above), so it's visible here.
+const TEMPLATE_FILL_EXPORT_RE = /Template-filled PPTX ->\s*(.+\.pptx)\s*$/m
+
+export type ExportedPptx = { path: string }
+
+/**
+ * The most recent template-fill `apply` this session has successfully
+ * exported, or null. Same scan-and-override shape as usePreviewServer: every
+ * Bash tool-call is checked in transcript order, a later successful export
+ * overriding an earlier one (re-running apply after fixing an issue makes the
+ * newest file win). A command match with no result yet, or a result with no
+ * success line (a failed apply — non-zero exit, no "Template-filled PPTX ->"
+ * line), is skipped WITHOUT clearing a prior success — the earlier exported
+ * file is still on disk and still the right thing to preview.
+ *
+ * Deliberately does not know or care whether a live-preview session started
+ * afterward — that's SlidesWorkspace's rendering-priority concern (it only
+ * shows this behind a `!showSlidesTab` guard), not this hook's. Keeping the
+ * two concerns apart matches usePreviewServer/useSourcePptx already living
+ * side by side without cross-referencing each other.
+ */
+export function useExportedPptx(): ExportedPptx | null {
+  return useChatStore(
+    useShallow((s): ExportedPptx | null => {
+      let result: ExportedPptx | null = null
+      for (const m of s.messages) {
+        if (!Array.isArray(m.content)) continue
+        for (const p of (m.content as unknown) as ContentPart[]) {
+          if (p.type !== 'tool-call' || p.toolName !== 'Bash') continue
+          const command = previewCommandText(p)
+          if (!TEMPLATE_FILL_APPLY_RE.test(command)) continue
+          if (p.result === undefined) continue
+          const match = TEMPLATE_FILL_EXPORT_RE.exec(previewResultText(p.result))
+          if (!match) continue
+          const path = match[1].trim()
+          if (isAbsolutePosix(path)) result = { path }
+        }
+      }
+      return result
     })
   )
 }
