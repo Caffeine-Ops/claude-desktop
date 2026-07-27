@@ -58,6 +58,16 @@ bun run build:mac    # 只打 Electron 壳：verify:fusion + build:icons + prebu
 
 包内脚本约定（apps/studio）：`dev` = 整个桌面应用；`dev:next`/`build:next` = Next 前端独立入口（main 的 spawnStudioDev 调 `dev:next`，root 的 `prebuild:resources` 调 `build:next`）；刻意没有裸 `build`。改完代码以 `bun run typecheck` 为准——**没有单元测试、没有 ESLint**，类型检查是唯一的自动化防线。
 
+## 内置写作技能
+
+`skills/writing/` 是对标 ppt-master 的工程化写作技能（微信文案 / 短篇小说 /
+文章）。四角色串行流水线，`spec_lock.md` 是写作契约、**写手每写一节前必须
+重读**（抗长文上下文漂移，与 ppt-master 每页重读 spec_lock 同源）。质检靠
+`scripts/` 下的 Python 脚本量化（AI 味五维打分 / 平台合规 / 小说连贯性），
+不靠模型自评。改资源库（`references/voices|structures|genres`）后必须跑
+`scripts/validate_library.py`——新增手册漏登记进 `_index.md` 会静默失效。
+设计与实施记录见 `docs/superpowers/specs/2026-07-24-writing-skill-design.md`。
+
 ## 约定
 
 - 注释密度很高，且专门解释「为什么这样而不是那样」。沿用这个风格——改不变量时把理由写进注释，别只写做了什么。
