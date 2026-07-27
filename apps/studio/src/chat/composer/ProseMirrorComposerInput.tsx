@@ -29,6 +29,9 @@ import {
   createFilePlaceholderPlugin,
   filePlaceholderKey
 } from './filePlaceholderPlugin'
+import { createTemplatePlaceholderPlugin, templatePlaceholderKey } from './templatePlaceholderPlugin'
+import { TemplateGalleryPopover } from '../components/chat/ThreadView/TemplateGalleryPopover'
+import type { BuiltinTemplateEntry } from '@desktop-shared/ipc-channels'
 import { SkillChipIcon } from '../components/chat/SkillChipIcon'
 import {
   createSuggestionPlugin,
@@ -203,6 +206,38 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
     input.click()
   }, [])
 
+  // --- 模版占位 tag（templatePlaceholderPlugin）---------------------------
+  // 点「【选择模版】」这类占位 → 记下它的 doc 区间 + 点击时的 pill 位置 →
+  // 打开 TemplateGalleryPopover；选完在 onTemplatePicked 里做原位替换。
+  //
+  // 同一个 popover 还服务第二个入口——点击【已插入】的模版 chip 来换选
+  // （chipNodeView 的 onTemplateChipClick，见下方 nodeViews）。两个入口用
+  // 各自独立的 pending ref，且互斥清空：谁最后触发谁生效，避免一次取消后的
+  // 陈旧 ref 污染下一次交互（例如 A 打开占位选择器后 Escape 取消，紧接着
+  // 点了一个已有 chip——如果不清空，onTemplatePicked 会先看到 A 的陈旧
+  // pending 而不是刚点的 chip）。
+  const pendingTemplatePlaceholderRef = useRef<{ from: number; to: number } | null>(null)
+  const pendingTemplateChipRef = useRef<{ pos: number } | null>(null)
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
+  const [templatePickerAnchor, setTemplatePickerAnchor] = useState<DOMRect | null>(null)
+  const onPickPlaceholderTemplate = useCallback(
+    (from: number, to: number, _placeholderText: string, anchor: DOMRect) => {
+      pendingTemplateChipRef.current = null
+      pendingTemplatePlaceholderRef.current = { from, to }
+      setTemplatePickerAnchor(anchor)
+      setTemplatePickerOpen(true)
+    },
+    []
+  )
+  // 点击已插入的模版 chip 来换选（chipNodeView 的 templateKind 分支）：
+  // pos 是 mousedown 那一刻 getPos() 精确捕获的 atom 起始位置。
+  const onEditTemplateChip = useCallback((pos: number, anchor: DOMRect) => {
+    pendingTemplatePlaceholderRef.current = null
+    pendingTemplateChipRef.current = { pos }
+    setTemplatePickerAnchor(anchor)
+    setTemplatePickerOpen(true)
+  }, [])
+
   // --- mount the editor once -----------------------------------------
   useLayoutEffect(() => {
     const host = editorHostRef.current
@@ -322,6 +357,7 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
       doc: parseText(composerText),
       plugins: [
         createFilePlaceholderPlugin(onPickPlaceholderFile),
+        createTemplatePlaceholderPlugin(onPickPlaceholderTemplate),
         history(),
         navKeymap,
         keymap(baseKeymap),
@@ -333,7 +369,7 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
       state,
       nodeViews: {
         slash: createChipNodeView('slash'),
-        mention: createChipNodeView('mention')
+        mention: createChipNodeView('mention', { onTemplateChipClick: onEditTemplateChip })
       },
       attributes: {
         // `focus:outline-none` kills the browser's default focus ring
@@ -511,6 +547,81 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
     [appendAtomAtEnd]
   )
 
+  // 模版占位 tag 的选择器回调：把选中内置模版的 chip【原位替换】进占位区间
+  // ——流程完全对标 onPlaceholderFilePicked，唯一的实质差异是 mention 的
+  // value 从 `fileMentionValue(path)`（`@"path"`，供 fusion-code 的
+  // extractAtMentionedFiles 读取文件内容）换成 `entry.dirAbsPath` 裸路径
+  // （不带 `@` 前缀）。
+  //
+  // 为什么不走真正的 `@` mention 语义：ppt-master SKILL.md Step 3 只要求
+  // 用户消息里出现一个显式目录路径字面量就会触发模版分发，不需要、也不
+  // 应该让 fusion-code 把这个目录当"要读内容的附件"去处理（`@` 前缀会被
+  // 其 extractAtMentionedFiles 正则命中，对目录路径的行为不可控）。裸路径
+  // 不含 `@`/`/` 开头 token，`serializeDoc` 现有的 mention 分支
+  // （`line += inline.attrs.value`）已经把它原样吐进最终文本——不需要新增
+  // node 类型，也不需要碰三端共享的 packages/composer。
+  //
+  // 代价：parseText 的 TOKEN_RE 只认 `/`、`@` 开头的 token，纯路径文本在
+  // 外部 composer.text 重新解析成 doc 的回退路径下不会被识别回 chip 样式
+  // （消息内容不受影响，只是掉了 chip 视觉）——已知的 v1 取舍。
+  const onTemplatePicked = useCallback(
+    (entry: BuiltinTemplateEntry) => {
+      setTemplatePickerOpen(false)
+      const view = viewRef.current
+      if (!view) return
+
+      // 换选已插入 chip 的分支：pos 是 mousedown 那一刻精确捕获的 atom
+      // 位置，不经过占位 decoration 查找（那套查找是给「【选择模版】」
+      // 文本占位用的；已插入的 chip 是 atom 叶子节点，不会命中那个正则）。
+      // 按位置重新 nodeAt 求证一次（防御性——popover 开着期间 doc 理论上
+      // 不会变，但求证零成本），原子替换，不追加、不动其它内容。
+      const chipPending = pendingTemplateChipRef.current
+      pendingTemplateChipRef.current = null
+      if (chipPending) {
+        const node = view.state.doc.nodeAt(chipPending.pos)
+        if (node && node.type.name === 'mention') {
+          const atom = composerSchema.nodes.mention!.create({ value: entry.dirAbsPath })
+          const tr = view.state.tr.replaceWith(chipPending.pos, chipPending.pos + node.nodeSize, atom)
+          tr.setSelection(
+            TextSelection.create(tr.doc, Math.min(chipPending.pos + 1, tr.doc.content.size - 1))
+          )
+          view.dispatch(tr.scrollIntoView())
+          view.focus()
+        }
+        return
+      }
+
+      const pending = pendingTemplatePlaceholderRef.current
+      pendingTemplatePlaceholderRef.current = null
+      const decoSet = templatePlaceholderKey.getState(view.state)
+      const spans = (list: readonly { from: number; to: number }[] | undefined) =>
+        (list ?? []).filter((d) => d.from < d.to)
+      const target =
+        (pending ? spans(decoSet?.find(pending.from, pending.to))[0] : undefined) ??
+        spans(decoSet?.find())[0]
+      if (!target) {
+        appendAtomAtEnd('mention', entry.dirAbsPath)
+        return
+      }
+      const atom = composerSchema.nodes.mention!.create({ value: entry.dirAbsPath })
+      const $from = view.state.doc.resolve(target.from)
+      const before = $from.parent.textBetween(0, $from.parentOffset).slice(-1)
+      const afterStart = target.to
+      const $to = view.state.doc.resolve(afterStart)
+      const after = $to.parent.textBetween($to.parentOffset, $to.parent.content.size).slice(0, 1)
+      const content = [
+        ...(before && !/\s/.test(before) ? [composerSchema.text(' ')] : []),
+        atom,
+        ...(after && !/\s/.test(after) ? [composerSchema.text(' ')] : [])
+      ]
+      const tr = view.state.tr.replaceWith(target.from, target.to, content)
+      tr.setSelection(TextSelection.create(tr.doc, Math.min(target.from + 1, tr.doc.content.size - 1)))
+      view.dispatch(tr.scrollIntoView())
+      view.focus()
+    },
+    [appendAtomAtEnd]
+  )
+
   // SkillPickerPopover 的入口：拿到用户选的技能 value 后，在编辑器末尾插入
   // 同一个 slash 原子节点（跟手动打 `/` 挑同一项时 insertSuggestion 产出的
   // 节点一模一样），而不是插入裸文本——这样才会渲染成彩色图标 chip，且
@@ -596,6 +707,14 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
         aria-hidden="true"
         tabIndex={-1}
         onChange={(e) => onPlaceholderFilePicked(e.target.files)}
+      />
+      {/* 模版占位 tag 的选择器（templatePlaceholderPlugin）：点占位 → 打开
+          这个 popover（带缩略图预览） → 选中原位替换成 mention chip。 */}
+      <TemplateGalleryPopover
+        open={templatePickerOpen}
+        anchorRect={templatePickerAnchor}
+        onPick={onTemplatePicked}
+        onClose={() => setTemplatePickerOpen(false)}
       />
       {suggestion && items.length > 0 && (
         <SuggestionPopover

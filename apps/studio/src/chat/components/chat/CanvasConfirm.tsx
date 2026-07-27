@@ -17,10 +17,12 @@ import {
   groupLabel,
   imageStrategyCandidates,
   imageStrategySelectedIndex,
+  isFieldLocked,
   isGrouped,
   isPptCanvas,
   hexOr,
   localized,
+  lockedSource,
   makeT,
   mergeConfirmedAnchors,
   needsGeneratedImagesForUsage,
@@ -29,6 +31,7 @@ import {
   normalizeTypographyForSubmit,
   optionDesc,
   optionLabel,
+  optionLabelById,
   previewFontStack,
   recId,
   recOrFirst,
@@ -716,6 +719,13 @@ export function CanvasConfirm({
 
   const showAnchors = stage === 1 || stage === 'all'
   const showRealization = stage === 2 || stage === 'all'
+  // 模板锁定的锚点：deck 模板已经决定了这些，页面渲染成只读行而不是可选控件
+  // （契约与理由见 helpers 的 isFieldLocked）。值本身照常 seed、照常提交 ——
+  // 锁定只改这一项的呈现，不改 result.json 的字段集合。
+  const lockedCanvas = isFieldLocked(rec, 'canvas')
+  const lockedDelivery = isFieldLocked(rec, 'delivery_purpose')
+  const lockedMode = isFieldLocked(rec, 'mode')
+  const lockedVisual = isFieldLocked(rec, 'visual_style')
   // Wizard-flavored labels ("Next · Realization" / "Confirm & generate") so the
   // button names the step it leads to, not just the verb.
   const primaryLabel = stage === 1 ? uiT('btn_next_rich') : uiT('btn_confirm_rich')
@@ -762,20 +772,28 @@ export function CanvasConfirm({
         {showAnchors && (
           <>
             <Section num={next()} title={t('sec_canvas')} note={uiT('note_canvas')}>
-              <CanvasField
-                list={cat.canvas}
-                recommendedId={recOrFirst(rec, 'canvas', cat.canvas)}
-                value={state.canvas}
-                onChange={(v) => {
-                  const tp = state.typography || { name: '', heading: {}, body: {} }
-                  const body_size = tp.body_size || defaultBodySizeForCanvas(cat, v, state.delivery_purpose)
-                  patch({ canvas: v, typography: { ...tp, body_size } })
-                }}
-                allowCustom
-                previewsDir={previewsDir}
-                lang={lang}
-                t={t}
-              />
+              {lockedCanvas ? (
+                <LockedField
+                  value={optionLabelById(cat.canvas, state.canvas, lang)}
+                  source={lockedSource(rec, 'canvas', lang)}
+                  t={t}
+                />
+              ) : (
+                <CanvasField
+                  list={cat.canvas}
+                  recommendedId={recOrFirst(rec, 'canvas', cat.canvas)}
+                  value={state.canvas}
+                  onChange={(v) => {
+                    const tp = state.typography || { name: '', heading: {}, body: {} }
+                    const body_size = tp.body_size || defaultBodySizeForCanvas(cat, v, state.delivery_purpose)
+                    patch({ canvas: v, typography: { ...tp, body_size } })
+                  }}
+                  allowCustom
+                  previewsDir={previewsDir}
+                  lang={lang}
+                  t={t}
+                />
+              )}
             </Section>
 
             <Section num={next()} title={t('sec_audience')} note={uiT('note_audience')}>
@@ -793,40 +811,64 @@ export function CanvasConfirm({
               </SubField>
               {isPptCanvas(cat, state.canvas) && (
                 <SubField label={t('delivery_purpose')}>
-                  <EnumField
-                    list={cat.delivery_purpose}
-                    recommendedId={recOrFirst(rec, 'delivery_purpose', cat.delivery_purpose)}
-                    value={state.delivery_purpose}
-                    onChange={(v) => patch({ delivery_purpose: v })}
-                    lang={lang}
-                    t={t}
-                  />
+                  {lockedDelivery ? (
+                    <LockedField
+                      value={optionLabelById(cat.delivery_purpose, state.delivery_purpose, lang)}
+                      source={lockedSource(rec, 'delivery_purpose', lang)}
+                      t={t}
+                    />
+                  ) : (
+                    <EnumField
+                      list={cat.delivery_purpose}
+                      recommendedId={recOrFirst(rec, 'delivery_purpose', cat.delivery_purpose)}
+                      value={state.delivery_purpose}
+                      onChange={(v) => patch({ delivery_purpose: v })}
+                      lang={lang}
+                      t={t}
+                    />
+                  )}
                 </SubField>
               )}
             </Section>
 
             <Section num={next()} title={t('sec_style')}>
               <SubLabel>{t('sub_mode')}</SubLabel>
-              <EnumField
-                list={cat.modes}
-                recommendedId={recOrFirst(rec, 'mode', cat.modes)}
-                value={state.mode}
-                onChange={(v) => patch({ mode: v })}
-                allowCustom
-                lang={lang}
-                t={t}
-              />
-              <SubField label={t('sub_visual')}>
-                <VisualStyleField
-                  list={cat.visual_styles}
-                  recommendedId={recOrFirst(rec, 'visual_style', cat.visual_styles)}
-                  value={state.visual_style}
-                  onChange={(v) => patch({ visual_style: v })}
-                  spectrum={rec.visual_style_spectrum}
-                  previewsDir={previewsDir}
+              {lockedMode ? (
+                <LockedField
+                  value={optionLabelById(cat.modes, state.mode, lang)}
+                  source={lockedSource(rec, 'mode', lang)}
+                  t={t}
+                />
+              ) : (
+                <EnumField
+                  list={cat.modes}
+                  recommendedId={recOrFirst(rec, 'mode', cat.modes)}
+                  value={state.mode}
+                  onChange={(v) => patch({ mode: v })}
+                  allowCustom
                   lang={lang}
                   t={t}
                 />
+              )}
+              <SubField label={t('sub_visual')}>
+                {lockedVisual ? (
+                  <LockedField
+                    value={optionLabelById(cat.visual_styles, state.visual_style, lang)}
+                    source={lockedSource(rec, 'visual_style', lang)}
+                    t={t}
+                  />
+                ) : (
+                  <VisualStyleField
+                    list={cat.visual_styles}
+                    recommendedId={recOrFirst(rec, 'visual_style', cat.visual_styles)}
+                    value={state.visual_style}
+                    onChange={(v) => patch({ visual_style: v })}
+                    spectrum={rec.visual_style_spectrum}
+                    previewsDir={previewsDir}
+                    lang={lang}
+                    t={t}
+                  />
+                )}
               </SubField>
             </Section>
           </>
@@ -1172,6 +1214,50 @@ function SubField({ label, children }: { label: string; children: React.ReactNod
 
 function SubLabel({ children }: { children: React.ReactNode }): React.JSX.Element {
   return <div className="mb-1.5 text-[12px] font-medium text-muted-foreground">{children}</div>
+}
+
+/**
+ * 只读锚点行 —— 模板已把这一项定死时，顶替可选控件出现（触发条件与契约见
+ * helpers 的 `isFieldLocked` 头注释）。
+ *
+ * 视觉上刻意与可选 chip 拉开：虚线边 + muted 底 + 锁图标，一眼看出「这是结论，
+ * 不是选项」。文案只说来源，不说「不可更改」—— 用户始终可以在聊天里推翻它，
+ * 这层意思放在 title 里，不占版面。
+ */
+function LockedField({
+  value,
+  source,
+  t
+}: {
+  value: string
+  source: string
+  t: (k: string) => string
+}): React.JSX.Element {
+  return (
+    <div
+      title={t('locked_hint')}
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-dashed border-border bg-muted/40 px-3 py-2.5"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="size-3.5 shrink-0 text-muted-foreground"
+      >
+        <rect x="4" y="10.5" width="16" height="10" rx="2" />
+        <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
+      </svg>
+      <span className="text-[13px] font-medium text-foreground">{value || '—'}</span>
+      <span className="text-[11px] text-muted-foreground">
+        {t('locked_badge')}
+        {source ? ` · ${source}` : ''}
+      </span>
+    </div>
+  )
 }
 
 /* ───────────────── enum field (chips) ───────────────── */

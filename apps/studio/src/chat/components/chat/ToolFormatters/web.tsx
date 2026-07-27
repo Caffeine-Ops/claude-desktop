@@ -4,6 +4,7 @@ import type { Lang } from '../../../i18n'
 import { AssistantMarkdown } from '../AssistantMarkdown'
 import { extractText, getNumberArg, getStringArg } from '../toolHelpers'
 import { isObj, pick } from './helpers'
+import { ClampedBlock } from './sharedComponents'
 import type { FormatterCtx, FriendlyView } from './types'
 
 export function formatWebFetch({
@@ -40,9 +41,11 @@ export function formatWebFetch({
       ? {
           label: pick(lang, '回答', 'Response'),
           content: (
-            <pre className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-words font-sans text-[12px] leading-relaxed text-foreground/85">
-              {resultText}
-            </pre>
+            <ClampedBlock max="max-h-80">
+              <pre className="max-w-full whitespace-pre-wrap break-words font-sans text-[12px] leading-relaxed text-foreground/85">
+                {resultText}
+              </pre>
+            </ClampedBlock>
           ),
           copyText: resultText
         }
@@ -137,7 +140,7 @@ export function formatWebSearch({
           ? pick(lang, `搜索结果 · ${links.length} 个来源`, `Results · ${links.length} sources`)
           : pick(lang, '搜索结果', 'Results'),
       content: (
-        <div className="max-h-96 space-y-2 overflow-y-auto">
+        <ClampedBlock max="max-h-96" innerClassName="space-y-2">
           {links.length > 0 && (
             <ol className="space-y-0.5">
               {links.map((l, i) => (
@@ -185,11 +188,13 @@ export function formatWebSearch({
               </span>
               {pick(lang, '查看原始输出', 'Raw output')}
             </summary>
-            <pre className="mt-1 max-h-60 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-foreground/75">
-              {raw}
-            </pre>
+            <ClampedBlock max="max-h-60" className="mt-1">
+              <pre className="max-w-full whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-foreground/75">
+                {raw}
+              </pre>
+            </ClampedBlock>
           </details>
-        </div>
+        </ClampedBlock>
       ),
       copyText: raw
     }

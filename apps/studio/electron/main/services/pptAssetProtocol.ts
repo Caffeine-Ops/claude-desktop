@@ -1,6 +1,7 @@
 /**
  * `pptasset://` 自定义协议 —— 让渲染进程加载 ppt-master 项目产物（svg_output/ 的
- * SVG 引用的图片/媒体、templates/icons/ 的图标源文件）而不必经 IPC 逐个搬字节。
+ * SVG 引用的图片/媒体、templates/icons/ 的图标源文件、templates/{brands,layouts,
+ * decks}/ 模版库的 01_cover.svg 预览）而不必经 IPC 逐个搬字节。
  *
  * 与 kbasset:// / proposalasset:// 的关键区别：那两个各守一个**固定**根目录
  * （KB 镜像目录、`<userData>/proposal-drafts`），pptasset 服务的却是**任意会话的
@@ -22,13 +23,18 @@ import { registerLocalAssetProtocol } from './localAssetProtocol'
 
 const ALLOWED_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg|mp4|webm|mp3|wav|m4a)$/i
 
-// ppt-master 产物只会出现在这四类目录之一：项目内的 images/ assets/ svg_output/，
-// 或技能自带的 templates/icons/ 图标库（跨项目共享，不在任何项目目录之下）。
+// ppt-master 产物只会出现在这七类目录之一：项目内的 images/ assets/ svg_output/，
+// 或技能自带的 templates/icons/ 图标库、templates/{brands,layouts,decks}/ 模版库
+// 的预览素材（01_cover.svg 等，供 composer 模版选择器的缩略图）——后四类都跨
+// 项目共享，不在任何项目目录之下。
 const ALLOWED_SEGMENTS = [
   `${sep}images${sep}`,
   `${sep}assets${sep}`,
   `${sep}svg_output${sep}`,
-  `${sep}templates${sep}icons${sep}`
+  `${sep}templates${sep}icons${sep}`,
+  `${sep}templates${sep}brands${sep}`,
+  `${sep}templates${sep}layouts${sep}`,
+  `${sep}templates${sep}decks${sep}`
 ]
 
 /** pptasset:// 的授权判定：扩展名 + 目录片段双重白名单。见文件头注释的取舍说明。 */

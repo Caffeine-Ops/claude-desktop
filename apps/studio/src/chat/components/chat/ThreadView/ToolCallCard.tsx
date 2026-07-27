@@ -12,6 +12,7 @@ import { usePermissionForToolUseId } from '../../../stores/permissions'
 import { useWorkflowScriptPanelStore } from '../../../stores/workflowScript'
 import { extractText, safeStringify } from '../toolHelpers'
 import { friendlyToolView } from '../ToolFormatters'
+import { ClampedBlock } from '../ToolFormatters/sharedComponents'
 import { PermissionWaitAnchor } from '../../permissions/PermissionFloatCard'
 import { escapeHtml, languageFromPath } from './codeViewUtils'
 import { detectImageGen, ImageGenToolCard } from './ImageGenCard'
@@ -757,25 +758,21 @@ function JsonView({
     )
   }
   const looksJson = /^[\s]*[\{\[]/.test(text)
-  return (
-    // `whitespace-pre` (no wrap) + `overflow-x-auto` so long lines
-    // scroll horizontally inside the pane instead of forcing the
-    // column wider. `max-w-full` + parent `min-w-0` (set on ToolPane)
-    // is what keeps the chat column from bursting and stealing
-    // pixels from the right rail on narrow windows. Vertical
-    // scrolling is opt-in via `maxHeight` for paths where we want
-    // to cap a giant tool result.
-    <pre
-      className={
-        'max-w-full overflow-x-auto whitespace-pre font-mono text-[11.5px] leading-snug text-foreground/85 ' +
-        (maxHeight
-          ? 'max-h-80 overflow-y-auto pb-5 [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%-28px),transparent_100%)]'
-          : '')
-      }
-    >
+  // `whitespace-pre` (no wrap) + `overflow-x-auto` so long lines
+  // scroll horizontally inside the pane instead of forcing the
+  // column wider. `max-w-full` + parent `min-w-0` (set on ToolPane)
+  // is what keeps the chat column from bursting and stealing
+  // pixels from the right rail on narrow windows.
+  const body = (
+    <pre className="max-w-full overflow-x-auto whitespace-pre font-mono text-[11.5px] leading-snug text-foreground/85">
       {looksJson ? highlightJson(text) : text}
     </pre>
   )
+  // Capping a giant tool result is opt-in via `maxHeight` — and the cap
+  // truncates + offers "expand", it never opens a vertical scroller of its
+  // own (why: ClampedBlock's header comment — every nested vertical scroller
+  // in the message flow steals wheel gestures from the chat viewport).
+  return maxHeight ? <ClampedBlock max="max-h-80">{body}</ClampedBlock> : body
 }
 
 function highlightJson(src: string): React.ReactNode[] {
@@ -997,12 +994,14 @@ function CodeFileView({
   }
 
   return (
-    // Vertical scroll + fade-out mask lives on the outer div so both
-    // the line-number gutter and the code column share the exact same
-    // viewport. `pb-6` leaves enough breathing room that the last line
-    // of code stays fully legible once the user scrolls to the bottom —
-    // only the trailing padding gets eaten by the mask.
-    <div className="max-h-80 overflow-auto rounded-sm bg-card/20 pb-6 [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%-32px),transparent_100%)]">
+    // The height cap + fade-out mask live on the outer block so both the
+    // line-number gutter and the code column share the exact same viewport.
+    // `pb-6` leaves enough breathing room that the last line of code stays
+    // fully legible — only the trailing padding gets eaten by the mask.
+    // ClampedBlock truncates and offers "expand" instead of scrolling: a
+    // vertical scroller here would swallow wheel gestures meant for the chat
+    // viewport (see its header comment).
+    <ClampedBlock max="max-h-80" innerClassName="rounded-sm bg-card/20 pb-6">
       <div className="flex font-mono text-[11.5px] leading-[1.55]">
         <pre
           aria-hidden
@@ -1018,7 +1017,7 @@ function CodeFileView({
           dangerouslySetInnerHTML={{ __html: html }}
         />
       </div>
-    </div>
+    </ClampedBlock>
   )
   // `code` is only used for clipboard parity; suppressed here since
   // ToolPane's CopyButton uses the outer extractText() value.

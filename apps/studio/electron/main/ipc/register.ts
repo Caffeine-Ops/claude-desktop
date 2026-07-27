@@ -80,11 +80,16 @@ import {
   type PptPreviewListSlidesPayload,
   type PptPreviewListSlidesResult,
   type PptPreviewSlideEntry,
+  type BuiltinTemplateKind,
+  type BuiltinTemplateEntry,
+  type PptListBuiltinTemplatesResult,
   type PptPreviewReadSlidePayload,
   type PptPreviewReadSlideResult,
   type PptPreviewSaveAllPayload,
   type PptPreviewSaveAllResult,
   type PptSourcePreviewPayload,
+  type PptFillPlan,
+  type PptFillPlanSlide,
   type PptSourcePreviewResult,
   type PptSourceSlide,
   type ModelListEntry,
@@ -500,6 +505,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.CONFIRM_UI_READ)
   ipcMain.removeHandler(IPC_CHANNELS.CONFIRM_UI_WRITE_RESULT)
   ipcMain.removeHandler(IPC_CHANNELS.PPT_PREVIEW_LIST_SLIDES)
+  ipcMain.removeHandler(IPC_CHANNELS.PPT_LIST_BUILTIN_TEMPLATES)
   ipcMain.removeHandler(IPC_CHANNELS.PPT_PREVIEW_READ_SLIDE)
   ipcMain.removeHandler(IPC_CHANNELS.PPT_PREVIEW_SAVE_ALL)
   ipcMain.removeHandler(IPC_CHANNELS.PPT_SOURCE_PREVIEW)
@@ -1351,6 +1357,51 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // List the ppt-master skill's built-in template library (brands/layouts/
+  // decks) for the composer's template-picker popover. Static skill data —
+  // no payload, no project context. Each `*_index.json` is read independently
+  // so one kind's missing/corrupt index doesn't blank out the other two.
+  ipcMain.handle(
+    IPC_CHANNELS.PPT_LIST_BUILTIN_TEMPLATES,
+    async (): Promise<PptListBuiltinTemplatesResult> => {
+      const skillsRoot = resolveBundledSkillsPluginDir()
+      if (!skillsRoot) return { ok: false, templates: [], error: 'ppt-master skill not found.' }
+      const templatesRoot = join(skillsRoot, 'ppt-master', 'templates')
+      const KIND_DIRS: [BuiltinTemplateKind, string][] = [
+        ['brand', 'brands'],
+        ['layout', 'layouts'],
+        ['deck', 'decks']
+      ]
+      const templates: BuiltinTemplateEntry[] = []
+      for (const [kind, dirName] of KIND_DIRS) {
+        const indexPath = join(templatesRoot, dirName, `${dirName}_index.json`)
+        try {
+          const index = JSON.parse(readFileSync(indexPath, 'utf-8')) as Record<
+            string,
+            { summary: string; primary_color?: string }
+          >
+          for (const [id, meta] of Object.entries(index)) {
+            const dirAbsPath = join(templatesRoot, dirName, id)
+            const coverPath = join(dirAbsPath, '01_cover.svg')
+            templates.push({
+              kind,
+              id,
+              label: id,
+              summary: meta.summary,
+              primaryColor: meta.primary_color,
+              previewAbsPath: existsSync(coverPath) ? coverPath : null,
+              dirAbsPath
+            })
+          }
+        } catch {
+          // This kind's index is missing/corrupt — skip it rather than
+          // failing the whole list; the other two kinds still show.
+        }
+      }
+      return { ok: true, templates }
+    }
+  )
+
   // Read one slide's raw SVG bytes — the native replacement for the old
   // svg_editor Flask server's GET /api/slide/<name>. Deliberately returns the
   // UNTRANSFORMED file: icon inlining / temp-id assignment / asset-href
@@ -1472,12 +1523,16 @@ export function registerIpcHandlers(): void {
   )
 
   // Convert a SOURCE .pptx (handed to the session, not a ppt-master project)
-  // to per-slide SVG via the skill's offline pptx_to_svg.py, so 「预览幻灯片」
-  // can show the original deck immediately. Blocks for the duration of the
-  // conversion (a local, CPU-bound OOXML→SVG parse — no LibreOffice/network
-  // — typically finishes in well under the timeout below) rather than
-  // returning an intermediate "converting" state to poll: simpler, and the
-  // renderer already shows a loading state for the length of this promise.
+  // — or, since template-fill's exported deck is also just a .pptx on disk,
+  // its FINISHED output too (see stores/chat.ts useExportedPptx / renderer's
+  // SourceDeckViewer variant="exported") — to per-slide SVG via the skill's
+  // offline pptx_to_svg.py, so 「预览幻灯片」can show it immediately. Blocks
+  // for the duration of the conversion (a local, CPU-bound OOXML→SVG parse —
+  // no LibreOffice/network) rather than returning an intermediate
+  // "converting" state to poll: simpler, and the renderer already shows a
+  // loading state for the length of this promise. Timeout sized for large
+  // real decks, not just quick ones — a 46.8MB/37-page template-fill export
+  // was clocked pressing right up against the old 30s budget.
   ipcMain.handle(
     IPC_CHANNELS.PPT_SOURCE_PREVIEW,
     async (_event, payload: PptSourcePreviewPayload): Promise<PptSourcePreviewResult> => {
@@ -1520,12 +1575,27 @@ export function registerIpcHandlers(): void {
         .digest('hex')
         .slice(0, 16)
       const outDir = join(app.getPath('userData'), 'ppt-source-preview', hash)
-      const flatDir = join(outDir, 'svg-flat')
+      // 自包含整页 SVG 落在 `svg/` —— 这是 pptx_to_svg.py 在 `--inheritance-mode
+      // flat`（就是下面 spawn 传的那个）下的输出位置；`svg-flat/` 只有 `both`
+      // 模式才产出，而那模式还要多写一份 layered 版，纯预览用不上。
+      //
+      // 2026-07-27：这里原本写死读 `svg-flat/`，跟传进去的 flat 模式对不上，于是
+      // 转换每次都成功、readSlides 每次都读空目录 →「Conversion produced no
+      // slides.」。更隐蔽的是缓存命中判定走的也是同一个 readSlides：恒空 ⇒ 永远
+      // cache miss，每次打开预览都白重转一遍整份 deck。实测 5 个历史缓存条目全部
+      // 只有 svg/（16/33/13/37/13 页都转出来了）、无一有 svg-flat/ —— 这条预览
+      // 链路从引入起一次都没成功过。
+      const slidesDir = join(outDir, 'svg')
 
       const readSlides = (): PptSourceSlide[] => {
         let names: string[]
         try {
-          names = readdirSync(flatDir).filter((n) => n.toLowerCase().endsWith('.svg'))
+          // 只认 slide_*.svg：flat 模式下 svg/ 里就只有整页，但 layered/both 会往
+          // 同一个目录写 master/layout 的分层 SVG——万一模式改了，前缀这道闸挡住
+          // 母版被当成幻灯片混进预览。
+          names = readdirSync(slidesDir).filter(
+            (n) => n.toLowerCase().endsWith('.svg') && n.toLowerCase().startsWith('slide')
+          )
         } catch {
           return []
         }
@@ -1533,7 +1603,7 @@ export function registerIpcHandlers(): void {
         const slides: PptSourceSlide[] = []
         for (const name of names) {
           try {
-            slides.push({ name, content: readFileSync(join(flatDir, name), 'utf-8') })
+            slides.push({ name, content: readFileSync(join(slidesDir, name), 'utf-8') })
           } catch {
             // Skip an unreadable file rather than failing the whole preview.
           }
@@ -1541,9 +1611,32 @@ export function registerIpcHandlers(): void {
         return slides
       }
 
+      // template-fill 的成品长在 `<项目>/exports/xxx.pptx`，填充计划在同项目的
+      // `analysis/fill_plan.json`——上溯两级去试读即可。读不到（用户随手拖进来的
+      // 源 deck、别的工作流的产物、老项目没这个文件）就省略字段，前端据此退回纯
+      // 只读预览，不报错：这是「有则更好」的增强，不是预览的前置条件。
+      const readFillPlan = (): PptFillPlan | undefined => {
+        try {
+          const planPath = join(dirname(dirname(pptxPath)), 'analysis', 'fill_plan.json')
+          const parsed: unknown = JSON.parse(readFileSync(planPath, 'utf-8'))
+          if (!parsed || typeof parsed !== 'object') return undefined
+          const slides = (parsed as { slides?: unknown }).slides
+          if (!Array.isArray(slides)) return undefined
+          const mapped: PptFillPlanSlide[] = []
+          for (const s of slides) {
+            const n = s && typeof s === 'object' ? (s as { source_slide?: unknown }).source_slide : undefined
+            // 顺序即成品页序，所以缺失项也要占位——否则后面所有页的映射整体错位。
+            mapped.push({ source_slide: typeof n === 'number' && n > 0 ? n : 0 })
+          }
+          return { slides: mapped }
+        } catch {
+          return undefined
+        }
+      }
+
       const cached = readSlides()
       if (cached.length > 0) {
-        return { ok: true, outDir, slides: cached }
+        return { ok: true, outDir, slides: cached, fillPlan: readFillPlan() }
       }
 
       try {
@@ -1552,7 +1645,7 @@ export function registerIpcHandlers(): void {
           const child = spawn(
             venvPython,
             [scriptPath, pptxPath, '-o', outDir, '--inheritance-mode', 'flat'],
-            { timeout: 30_000 }
+            { timeout: 120_000 }
           )
           let stderr = ''
           child.stderr?.on('data', (d: Buffer) => {
@@ -1573,7 +1666,7 @@ export function registerIpcHandlers(): void {
       if (slides.length === 0) {
         return { ok: false, error: 'Conversion produced no slides.' }
       }
-      return { ok: true, outDir, slides }
+      return { ok: true, outDir, slides, fillPlan: readFillPlan() }
     }
   )
 

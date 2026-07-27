@@ -1,7 +1,7 @@
 import { AssistantMarkdown } from '../AssistantMarkdown'
 import { extractText, getNumberArg, getStringArg } from '../toolHelpers'
 import { basename, isObj, pick, unescapeJsonString } from './helpers'
-import { DiffView } from './sharedComponents'
+import { ClampedBlock, DiffView } from './sharedComponents'
 import type { FormatterCtx, FriendlyView, ToolPaneSpec } from './types'
 
 export function formatRead({
@@ -50,9 +50,11 @@ export function formatRead({
     outputPane = {
       label: pick(lang, '错误', 'Error'),
       content: (
-        <pre className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-snug text-red-400/90">
-          {resultText.replace(/<\/?tool_use_error>/g, '').trim()}
-        </pre>
+        <ClampedBlock max="max-h-80">
+          <pre className="max-w-full whitespace-pre-wrap break-words font-mono text-[11.5px] leading-snug text-red-400/90">
+            {resultText.replace(/<\/?tool_use_error>/g, '').trim()}
+          </pre>
+        </ClampedBlock>
       ),
       copyText: resultText
     }
@@ -61,9 +63,9 @@ export function formatRead({
     outputPane = {
       label: pick(lang, '内容', 'Content'),
       content: (
-        <div className="max-h-96 max-w-full overflow-auto px-1 py-1">
+        <ClampedBlock max="max-h-96" innerClassName="px-1 py-1">
           <AssistantMarkdown text={plain} />
-        </div>
+        </ClampedBlock>
       ),
       copyText: plain
     }
@@ -180,9 +182,11 @@ export function formatWrite({
             ? pick(lang, `内容（${codeLanguage}）`, `Content (${codeLanguage})`)
             : pick(lang, '内容', 'Content'),
           content: (
-            <pre className="max-h-80 max-w-full overflow-auto whitespace-pre font-mono text-[11.5px] leading-snug text-foreground/85">
-              {content}
-            </pre>
+            <ClampedBlock max="max-h-80">
+              <pre className="max-w-full whitespace-pre font-mono text-[11.5px] leading-snug text-foreground/85">
+                {content}
+              </pre>
+            </ClampedBlock>
           ),
           copyText: content
         }

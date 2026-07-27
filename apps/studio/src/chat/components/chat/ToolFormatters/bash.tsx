@@ -3,6 +3,7 @@ import React from 'react'
 import type { Lang } from '../../../i18n'
 import { extractText, getStringArg } from '../toolHelpers'
 import { isObj, pick } from './helpers'
+import { ClampedBlock } from './sharedComponents'
 import type { FormatterCtx, FriendlyView } from './types'
 
 /* ──────────────────────── formatters ─────────────────────── */
@@ -163,9 +164,11 @@ export function formatBash({ args, result, lang }: FormatterCtx): FriendlyView |
               : {
                   label: pick(lang, '输出', 'Response'),
                   content: (
-                    <pre className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-snug text-foreground/85">
-                      {trimmed}
-                    </pre>
+                    <ClampedBlock max="max-h-80">
+                      <pre className="max-w-full whitespace-pre-wrap break-words font-mono text-[11.5px] leading-snug text-foreground/85">
+                        {trimmed}
+                      </pre>
+                    </ClampedBlock>
                   ),
                   copyText: trimmed
                 }
@@ -195,9 +198,11 @@ function RawOutputDetails({
         </span>
         {label}
       </summary>
-      <pre className="mt-1 max-h-60 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-foreground/75">
-        {raw}
-      </pre>
+      <ClampedBlock max="max-h-60" className="mt-1">
+        <pre className="max-w-full whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-foreground/75">
+          {raw}
+        </pre>
+      </ClampedBlock>
     </details>
   )
 }

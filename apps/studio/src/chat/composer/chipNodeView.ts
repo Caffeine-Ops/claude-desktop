@@ -70,6 +70,20 @@ function isPreviewableImage(name: string): boolean {
 }
 
 /**
+ * 判定一个 mention 的裸路径是不是 TemplateGalleryPopover 写进去的内置模版
+ * 引用（`templatePlaceholderPlugin`/`onTemplatePicked` 的产物）——同
+ * `pptAssetProtocol.ts` ALLOWED_SEGMENTS 的三个目录片段，渲染侧没有
+ * node:path，直接认 `/` 前提（mentionPath 在本文件其它地方也是这个前提）。
+ * 命中后 chip 主体可点：重开 TemplateGalleryPopover 换选另一个模版。
+ */
+function templateKindFromPath(path: string): 'brand' | 'layout' | 'deck' | null {
+  if (path.includes('/templates/brands/')) return 'brand'
+  if (path.includes('/templates/layouts/')) return 'layout'
+  if (path.includes('/templates/decks/')) return 'deck'
+  return null
+}
+
+/**
  * 用户主动点 chip（或其 hover 预览）打开右栏面板——与 ComposerAttachmentChip
  * 的 openPreview 同一套分流：右栏能开就开对应面板（图片→ImageEditPanel、
  * 表格→SpreadsheetPreviewPanel），右栏被 slides/proposal 分栏占用（或不是
@@ -317,8 +331,18 @@ function buildImgIcon(src: string, size = 14): HTMLImageElement {
 /**
  * NodeView factory shared by both atom types. `variant` selects the
  * palette + icon; the raw value comes from `node.attrs.value`.
+ *
+ * `opts.onTemplateChipClick`（mention 专属，2026-07-22）：当这个 mention 的
+ * 裸路径落在 ppt-master 内置模版目录下（`templateKindFromPath` 命中）时，
+ * chip 主体可点——回调把 `getPos()` 精确捕获的位置 + chip 的
+ * `getBoundingClientRect()` 交给上层，上层重开 TemplateGalleryPopover 让
+ * 用户换选另一个模版，选中后原子替换这个位置的节点（见
+ * ProseMirrorComposerInput.tsx 的 onEditTemplateChip/onTemplatePicked）。
  */
-export function createChipNodeView(variant: 'slash' | 'mention') {
+export function createChipNodeView(
+  variant: 'slash' | 'mention',
+  opts?: { onTemplateChipClick?: (pos: number, anchor: DOMRect) => void }
+) {
   return (node: PMNode, view: EditorView, getPos: () => number | undefined): NodeView => {
     const raw = (node.attrs.value as string) ?? ''
 
@@ -337,6 +361,10 @@ export function createChipNodeView(variant: 'slash' | 'mention') {
     // 扩展名。三者缺一则不挂预览，chip 行为与从前一致。
     const isImageMention =
       variant === 'mention' && mentionPath.startsWith('/') && isPreviewableImage(mentionBase)
+    // 内置模版 chip：value 是裸目录路径（无 `@` 前缀），不是文件 mention，
+    // 但仍走 mention 渲染分支——按目录片段识别，命中后走「点击换选」而不是
+    // 「点击开预览面板」。
+    const templateKind = variant === 'mention' ? templateKindFromPath(mentionPath) : null
 
     const dom = document.createElement('span')
     dom.setAttribute(variant === 'slash' ? 'data-pm-slash' : 'data-pm-mention', node.attrs.value as string)
@@ -465,6 +493,16 @@ export function createChipNodeView(variant: 'slash' | 'mention') {
           e.preventDefault()
           e.stopPropagation()
           openFileForClick(mentionBase, mentionPath)
+        })
+      } else if (templateKind && opts?.onTemplateChipClick) {
+        dom.style.cursor = 'pointer'
+        dom.addEventListener('mousedown', (e) => {
+          if (iconSlot.contains(e.target as Node)) return // × 区让给删除
+          e.preventDefault()
+          e.stopPropagation()
+          const pos = getPos()
+          if (pos === undefined) return
+          opts.onTemplateChipClick!(pos, dom.getBoundingClientRect())
         })
       }
     } else {
