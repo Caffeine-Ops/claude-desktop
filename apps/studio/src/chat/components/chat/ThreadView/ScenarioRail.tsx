@@ -203,6 +203,30 @@ const PROMPTS_BY_SKILL: Record<string, readonly ScenarioPrompt[]> = {
       text: '把【这组数据】做成一段动态图表短视频，逐项展示增长趋势。'
     }
   ],
+  writing: [
+    {
+      label: '公众号文案',
+      text: '帮我写一篇公众号文案，主题是【主题】，目标读者是【读者画像】，希望读者读完【去做什么】。'
+    },
+    {
+      label: '短篇小说',
+      text: '帮我写一篇短篇小说，题材是【悬疑/言情/科幻/脑洞/治愈/搞笑】，核心设定是【一句话设定】，我希望读者读完的感觉是【意难平/反转震撼/爽感/治愈/细思极恐】。'
+    },
+    {
+      label: '文章',
+      text: '帮我写一篇文章，主题是【主题】，我的核心观点是【一句话观点】，发在【平台】给【读者】看。'
+    },
+    {
+      // 改写走 workflows/rewrite.md：只说「改一下」会先诊断再改，
+      // 说了具体方向则直接按方向改。这条 prompt 刻意留白让用户二选一。
+      label: '改写这段文字',
+      text: '帮我改写下面这段文字：\n\n【粘贴原文】\n\n【可选：说明想改的方向，比如更口语、压到 800 字、换成小红书风格；不说就先给我诊断】'
+    },
+    {
+      label: '学我的文风',
+      text: '读一下【我的往期文章文件或目录】，分析我的写作风格，生成一份文风档案，以后写东西都按这个风格来。'
+    }
+  ],
   // ── 代码开发场景（伪命令，见 lib/scenarioSlash.ts）────────────────
   'daily-dev': [
     {
@@ -333,6 +357,7 @@ const CATEGORIES: readonly ScenarioCategory[] = [
       </svg>
     ),
     items: [
+      { kind: 'skill', value: '/claude-desktop:writing' },
       { kind: 'skill', value: '/claude-desktop:imagegen' },
       { kind: 'skill', value: '/claude-desktop:remotion' },
       { kind: 'skill', value: '/claude-desktop:ppt-master' }

@@ -1,0 +1,15 @@
+# writing skill 依赖
+# 质检三脚本（ai_slop_checker / readability_check / continuity_check）只用标准库，
+# 不在此列。以下仅供素材解析与导出使用。
+
+# 测试
+pytest>=8.0
+
+# source_to_md：PDF / Word / 网页解析
+pymupdf>=1.24
+python-docx>=1.1
+requests>=2.31
+beautifulsoup4>=4.12
+
+# export.py：导出 Word
+# （python-docx 已在上面）
