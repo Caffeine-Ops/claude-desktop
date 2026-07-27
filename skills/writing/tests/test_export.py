@@ -67,3 +67,27 @@ def test_md_to_plain_strips_markup():
     assert "**" not in plain
     assert "很重要" in plain
     assert "一条" in plain
+
+
+def test_asterisk_as_multiplication_not_italicized():
+    # 「长*宽*高」里的星号是乘号 —— 收尾星号后紧跟汉字，不能被当斜体吞掉
+    plain = export.md_to_plain("面积是 长*宽*高 的乘积")
+    assert "长*宽*高" in plain
+    html = export.md_to_wechat_html("面积是 长*宽*高 的乘积", STYLE)
+    assert "<em" not in html
+
+
+def test_real_italic_still_rendered():
+    # 收尾星号后跟标点/结尾的，仍是正常斜体（现有用法不能被误伤）
+    html = export.md_to_wechat_html("这里*有点意思*。", STYLE)
+    assert '<em style="font-style:italic;">有点意思</em>' in html
+
+
+def test_h4_to_h6_headings_not_leaked():
+    # 4–6 级标题不能把 #### 原样漏进读者可见输出
+    html = export.md_to_wechat_html("#### 四级标题", STYLE)
+    assert "####" not in html
+    assert "四级标题" in html
+    plain = export.md_to_plain("##### 五级标题")
+    assert "#" not in plain
+    assert "五级标题" in plain

@@ -42,9 +42,18 @@ def _check_dir(lib_dir: Path, kind: str, problems: list[str]) -> None:
         problems.append(f"{rel}/ 缺少 _index.md（索引缺失，模型无从选择）")
     else:
         listed = set(_LINK.findall(index.read_text(encoding="utf-8")))
+        sibling_set = set(siblings)
+        # 正向：同级文件必须都登记进索引（漏登记 → 永不被选中）
         for name in siblings:
             if name not in listed:
                 problems.append(f"{rel}/_index.md 索引里没有列出 {name}（该文件将永远不会被选中）")
+        # 反向：索引链到的同级文件必须真实存在（断链 → 模型被指去读一个不存在的文件，
+        # 正是本脚本 docstring 声称要防的静默失败）。带 `/` 的是跨目录链接，不在本目录校验范围。
+        for name in sorted(listed):
+            if "/" in name or name == "_index.md":
+                continue
+            if name not in sibling_set:
+                problems.append(f"{rel}/_index.md 索引链到 {name}，但该文件不存在（断链，模型会被指去读一个不存在的文件）")
 
     required = REQUIRED_SECTIONS.get(kind, [])
     for name in siblings:

@@ -46,3 +46,13 @@ def test_missing_index_file_reported(tmp_path):
     (lib / "references" / "voices" / "_index.md").unlink()
     problems = vl.validate(lib)
     assert any("_index.md" in p for p in problems)
+
+
+def test_dangling_index_link_reported(tmp_path):
+    # 索引里链了一个已删/改名的文件（断链）—— 校验必须报出来，
+    # 否则 SKILL.md 会让模型去读一个不存在的文件（脚本自己声称要防的静默失败）
+    lib = _make_lib(tmp_path)
+    idx = lib / "references" / "voices" / "_index.md"
+    idx.write_text(idx.read_text(encoding="utf-8") + "\n- [幽灵手册](./ghost.md)\n", encoding="utf-8")
+    problems = vl.validate(lib)
+    assert any("ghost.md" in p for p in problems)

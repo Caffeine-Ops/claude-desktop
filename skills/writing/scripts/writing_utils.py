@@ -82,7 +82,11 @@ def strip_markdown(text: str) -> str:
         if in_fence:
             continue
         stripped = line.strip()
-        if stripped.startswith("#"):
+        # 只剥「真标题」——标准 Markdown 要求 # 后带空格（`# 标题`）。
+        # 不能用 startswith("#")：小红书/朋友圈的话题标签 `#职场 #成长`（# 后无空格）
+        # 是正文，剥掉会把这些字漏出 char_count，让 readability 误报「字数不足」。
+        # 与 readability_check._HEADING 的口径（#{1,6}\s）保持一致。
+        if re.match(r"#{1,6}\s", stripped):
             continue
         if stripped.startswith(">"):
             stripped = stripped.lstrip("> ").strip()

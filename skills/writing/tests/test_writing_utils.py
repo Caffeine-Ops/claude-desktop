@@ -36,6 +36,19 @@ def test_strip_markdown_removes_headings_and_fences():
     assert wu.strip_markdown(text) == "正文一\n引用内容\n正文二"
 
 
+def test_strip_markdown_keeps_hashtag_lines():
+    # 小红书/朋友圈的话题标签（# 后无空格）是正文，不是标题，不能被剥掉、
+    # 否则这些字不计入 char_count，会误报「字数不足」
+    assert wu.strip_markdown("#职场 #成长") == "#职场 #成长"
+    assert wu.char_count(wu.strip_markdown("#职场 #成长")) > 0
+
+
+def test_strip_markdown_only_strips_heading_with_space():
+    # 标准 Markdown 标题要求 # 后带空格；带空格的照常剥，不带的保留
+    assert wu.strip_markdown("# 标题\n正文") == "正文"
+    assert wu.strip_markdown("### 三级\n正文") == "正文"
+
+
 def test_cv_uniform_lower_than_varied():
     uniform = [20, 21, 20, 19, 20]
     varied = [4, 38, 12, 51, 7]

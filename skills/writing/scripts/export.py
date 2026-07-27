@@ -23,12 +23,18 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent.parent
 STYLES_DIR = SKILL_DIR / "templates" / "export_styles"
 
-_HEADING = re.compile(r"^(#{1,3})\s+(.*)$")
+# #{1,6}：h1–h6 全收。只匹配 1–3 会让 #### 原样漏进读者可见输出，
+# 且与 strip_markdown / readability 的 #{1,6} 口径不一致。
+_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _QUOTE = re.compile(r"^>\s?(.*)$")
 _LIST_ITEM = re.compile(r"^[-*]\s+(.*)$")
 _HR = re.compile(r"^\s*(-{3,}|\*{3,})\s*$")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
-_ITALIC = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
+# 收尾星号后不能紧跟「词字」（汉字/字母/数字）——这一条把「长*宽*高」这种
+# 用星号当乘号/脚注的写法排除掉（它的收尾 * 后跟着汉字），避免被当斜体吞掉星号；
+# 正常斜体的收尾 * 后面是标点/空格/行尾（如「*有点意思*。」），照常识别。
+# 内容不含 *（[^*]+?）以免跨过下一个星号误配。
+_ITALIC = re.compile(r"(?<!\*)\*(?!\*)([^*]+?)\*(?![\w*])")
 
 
 def load_style(name: str) -> dict[str, str]:
@@ -69,7 +75,9 @@ def md_to_wechat_html(markdown: str, style: dict[str, str]) -> str:
         m = _HEADING.match(line)
         if m:
             close_list()
-            level = len(m.group(1))
+            # 样式表只到 h3；4–6 级钳到 h3 渲染——公众号正文极少用到 h4+，
+            # 用 h3 样式呈现远好过让 #### 泄漏，也不会 KeyError。
+            level = min(len(m.group(1)), 3)
             tag = f"h{level}"
             out.append(f'<{tag} style="{style[tag]}">{_inline(m.group(2), style)}</{tag}>')
             continue
