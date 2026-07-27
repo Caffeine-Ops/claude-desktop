@@ -285,7 +285,7 @@ export function LoginScreen({
       <div className="relative flex h-full">
         {/* ── 左：品牌面（窄窗降级隐藏，登录表单永远可用）── */}
         <aside className="hidden w-[44%] flex-col border-r border-[color:var(--lg-pane-border)] bg-[radial-gradient(ellipse_80%_60%_at_50%_46%,var(--lg-pane-glow),transparent_70%)] px-12 pb-9 pt-[60px] transition-colors duration-300 md:flex">
-          {/* 顶部字标：真实应用图标（public/app-icon.png，256px 源）。PNG 按
+          {/* 顶部字标：真实应用图标（public/app-icon.png，512px 源，与打包 resources/icon.png 同图）。PNG 按
             * macOS 图标规范四周有 ~10% 透明内边距，36px 呈现视觉 ~29px，与
             * 原 30px 字母方块等大；-ml/-my 负边距吐掉内边距占位，保持行高
             * 与左对齐线不动。发光走 --lg-mark-glow（drop-shadow 贴 alpha）。 */}
