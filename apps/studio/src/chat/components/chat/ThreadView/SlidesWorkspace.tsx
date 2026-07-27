@@ -4,6 +4,7 @@ import {
   useChatStore,
   useEditingSvgFile,
   useStreamingAskArgsText,
+  useExportedPptx,
   usePreviewServer,
   useSourcePptx,
   useWrittenFiles,
@@ -153,6 +154,18 @@ export function SlidesWorkspace(): React.JSX.Element {
   // viewer already covers the "show something" need).
   const sourcePptxHook = useSourcePptx()
   const sourcePptx = isReplay ? null : sourcePptxHook
+  // The .pptx template-fill's `apply` step most recently exported this
+  // session, if any (see useExportedPptx in stores/chat.ts). template-fill
+  // clones the source deck and rewrites text directly in OOXML — it never
+  // produces svg_output/ pages, so showSlidesTab (which depends on
+  // preview_open.py) never goes true for that workflow and 预览幻灯片 would
+  // otherwise stay empty for the whole session. Reuses the exact same
+  // SourceDeckViewer + PPT_SOURCE_PREVIEW pipeline as sourcePptx above, just
+  // pointed at the EXPORTED file instead of the source one (see the tab body
+  // below, `variant="exported"`). Replay zeroed for the same reason as
+  // sourcePptx/liveServer: no real disk file to read from a recorded session.
+  const exportedPptxHook = useExportedPptx()
+  const exportedPptx = isReplay ? null : exportedPptxHook
   // Every file this session has written via Write. Drives the auto-focus on each
   // new write (which needs to see EVERY write, including .svg deck pages, to
   // route them to the right tab). See useWrittenFiles in stores/chat.
@@ -202,7 +215,9 @@ export function SlidesWorkspace(): React.JSX.Element {
   // has this message) lands straight on 预览幻灯片 with the source preview,
   // not a flash of 大纲 first. A brand-new session's message lands a tick
   // after mount instead — the auto-focus effect below catches that case.
-  const [tab, setTab] = useState<CanvasTab>(() => (sourcePptx ? 'slides' : 'outline'))
+  const [tab, setTab] = useState<CanvasTab>(() =>
+    sourcePptx || exportedPptx ? 'slides' : 'outline'
+  )
 
   // Auto-focus 问题 the moment a questionnaire OR the confirm server appears.
   // The confirm Eight-Confirmations page now renders NATIVELY in the 问题 tab
@@ -228,18 +243,22 @@ export function SlidesWorkspace(): React.JSX.Element {
     if (wantsImagesTab) setTab('images')
   }, [wantsImagesTab, wantsQuestionsTab])
 
-  // Auto-focus 预览幻灯片 for either phase that wants it (unless 问题/图片 is
-  // commanding focus): a live-preview session starting (showSlidesTab), OR —
-  // while there's no live session yet — a detected source .pptx (the
-  // "先打开预览" affordance: SourceDeckViewer shows the original deck the
-  // instant it's known, without waiting for the AI's first svg_output/
-  // write). `sourcePptx` is stable for the whole session once set (see its
-  // hook), so this only actually MOVES focus once, at whichever transition
-  // happens first — it doesn't keep yanking the user back after that.
+  // Auto-focus 预览幻灯片 for any phase that wants it (unless 问题/图片 is
+  // commanding focus): a live-preview session starting (showSlidesTab), a
+  // detected source .pptx (the "先打开预览" affordance: SourceDeckViewer
+  // shows the original deck the instant it's known, without waiting for the
+  // AI's first svg_output/ write), OR a template-fill `apply` landing its
+  // export (exportedPptx — the ONLY way that workflow's output ever becomes
+  // visible, since it never touches svg_output/ at all). `sourcePptx` is
+  // stable for the whole session once set, so it only ever moves focus once.
+  // `exportedPptx`, however, can advance a SECOND time within the same
+  // session (a fix-and-reapply produces a new timestamped file) — each
+  // landing is worth re-grabbing focus for, so it stays in the dep array
+  // rather than being captured once like sourcePptx.
   useEffect(() => {
     if (wantsQuestionsTab || wantsImagesTab) return
-    if (showSlidesTab || sourcePptx) setTab('slides')
-  }, [showSlidesTab, sourcePptx, wantsQuestionsTab, wantsImagesTab])
+    if (showSlidesTab || sourcePptx || exportedPptx) setTab('slides')
+  }, [showSlidesTab, sourcePptx, exportedPptx, wantsQuestionsTab, wantsImagesTab])
 
   // AI 开始修改一张 deck 页（svg_output/ 下的 .svg 有 Edit/Write in flight）
   // → 抢焦点到 预览幻灯片：用户停在 文件/大纲 tab 时也立刻被带去看跳页 +
@@ -497,6 +516,18 @@ export function SlidesWorkspace(): React.JSX.Element {
           projectDir={server.projectDir}
           onProjectGoneChange={setProjectGone}
         />
+      ) : tab === 'slides' && !showSlidesTab && exportedPptx ? (
+        // Template-fill export phase: a template-fill `apply` has landed a
+        // finished .pptx — no svg_output/ ever gets written for this
+        // workflow, so this is the ONLY way its output is ever visible in
+        // 预览幻灯片. Same PPT_SOURCE_PREVIEW pipeline as the source-preview
+        // branch below, pointed at the EXPORTED file instead; outranks it
+        // (a finished export is more relevant than the pre-edit original)
+        // but still yields to a live-preview session (!showSlidesTab guard,
+        // same as source). `key` by path — apply's output filename carries a
+        // fresh timestamp every run, so a fix-and-reapply naturally remounts
+        // and reconverts instead of showing a stale cached preview.
+        <SourceDeckViewer key={exportedPptx.path} pptxPath={exportedPptx.path} variant="exported" />
       ) : tab === 'slides' && !showSlidesTab && sourcePptx ? (
         // Source-preview phase: no live-preview session yet (the AI hasn't
         // written any svg_output/ pages), but the user handed ppt-master an

@@ -25,6 +25,7 @@ import {
 } from '../../../stores/filePreview'
 import { ThinkingSpinner } from '../ThinkingSpinner'
 import { AssistantMarkdown } from '../AssistantMarkdown'
+import { ClampedBlock } from '../ToolFormatters/sharedComponents'
 import { ToolCallCard } from './ToolCallCard'
 import {
   FoldRegion,
@@ -722,7 +723,10 @@ function ProposalRevisionReview(): React.JSX.Element | null {
             </span>
           </div>
           {/* 原文流 = equal + delete。被删片段打红删除线，其余保持原文的弱化色。 */}
-          <div className="max-h-24 overflow-auto whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-[12px] leading-[1.6] text-muted-foreground">
+          <ClampedBlock
+            max="max-h-24"
+            innerClassName="whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-[12px] leading-[1.6] text-muted-foreground"
+          >
             {segments.map((seg, idx) =>
               seg.op === 'insert' ? null : seg.op === 'delete' ? (
                 <span
@@ -735,7 +739,7 @@ function ProposalRevisionReview(): React.JSX.Element | null {
                 <span key={idx}>{seg.text}</span>
               )
             )}
-          </div>
+          </ClampedBlock>
         </div>
         <div>
           <div className="mb-0.5 flex items-center gap-1.5 text-[11px] font-medium text-accent">
@@ -746,7 +750,10 @@ function ProposalRevisionReview(): React.JSX.Element | null {
             </span>
           </div>
           {/* 改写后流 = equal + insert。新增片段打绿高亮，其余保持成稿常规色。 */}
-          <div className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border-l-2 border-accent bg-accent/5 py-1 pl-2 pr-1 text-[12px] leading-[1.6] text-foreground">
+          <ClampedBlock
+            max="max-h-48"
+            innerClassName="whitespace-pre-wrap break-words rounded border-l-2 border-accent bg-accent/5 py-1 pl-2 pr-1 text-[12px] leading-[1.6] text-foreground"
+          >
             {segments.map((seg, idx) =>
               seg.op === 'delete' ? null : seg.op === 'insert' ? (
                 <span
@@ -759,7 +766,7 @@ function ProposalRevisionReview(): React.JSX.Element | null {
                 <span key={idx}>{seg.text}</span>
               )
             )}
-          </div>
+          </ClampedBlock>
         </div>
       </div>
 

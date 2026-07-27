@@ -3,7 +3,9 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useDrag } from '@use-gesture/react'
 import { useComposerRuntime } from '@assistant-ui/react'
 import { create } from 'zustand'
-import { TransformWrapper, TransformComponent, useControls } from 'react-zoom-pan-pinch'
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch'
+// 缩放参数与右下角控件与成品预览（SourceDeckViewer）共用一份，见该文件头注释。
+import { PPT_STAGE_ZOOM_PROPS, ZoomControls } from './PptStageZoom'
 
 import { Button } from '@/src/components/ui/button'
 import { Textarea } from '@/src/components/ui/textarea'
@@ -1780,24 +1782,12 @@ export function LivePreviewEditor({
           >
             {content ? (
               <TransformWrapper
-                minScale={0.25}
-                maxScale={4}
-                initialScale={1}
-                centerOnInit
+                {...PPT_STAGE_ZOOM_PROPS}
                 // Left-drag pans ONLY while space is held (Figma/PS
                 // convention) — otherwise it must stay free for marquee
                 // select (useDrag above), which is disabled in lockstep via
                 // its own `enabled: !spacePanning`.
                 panning={{ disabled: !spacePanning, velocityDisabled: true }}
-                doubleClick={{ disabled: true }}
-                // step 0.12 felt fine for a discrete mouse wheel but way too
-                // fast on a trackpad — a two-finger swipe fires dozens of
-                // wheel events per gesture, so the same per-event step
-                // compounds into a much bigger jump. The library has no
-                // separate trackpad sensitivity knob, so lowering step is the
-                // only lever; 0.04 keeps mouse-wheel zoom usable (just needs
-                // a couple more notches) while taming trackpad swipes.
-                wheel={{ step: 0.04 }}
                 // The selection/hover/marquee overlay boxes are computed from
                 // getBoundingClientRect() (screen space) — correct after a
                 // zoom/pan for free, but only once React re-renders them. The
@@ -2278,25 +2268,6 @@ export function LivePreviewEditor({
  * API from context, there's no other way to reach zoomIn/zoomOut/reset from
  * outside the library's own tree.
  */
-function ZoomControls(): React.JSX.Element {
-  const { zoomIn, zoomOut, resetTransform } = useControls()
-  const btnClass =
-    'grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground'
-  return (
-    <div className="absolute bottom-3 right-3 z-10 flex items-center gap-0.5 rounded-lg border border-border/60 bg-background/95 p-1 shadow-sm backdrop-blur-sm">
-      <button type="button" title="缩小" className={btnClass} onClick={() => zoomOut()}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14" /></svg>
-      </button>
-      <button type="button" title="还原" className={btnClass} onClick={() => resetTransform()}>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="2" /></svg>
-      </button>
-      <button type="button" title="放大" className={btnClass} onClick={() => zoomIn()}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
-      </button>
-    </div>
-  )
-}
-
 /**
  * HighlightOverlay
  * ----------------

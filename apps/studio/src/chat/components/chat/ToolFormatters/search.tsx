@@ -3,6 +3,7 @@ import React from 'react'
 import type { Lang } from '../../../i18n'
 import { extractText, getStringArg } from '../toolHelpers'
 import { basename, isObj, pick } from './helpers'
+import { ClampedBlock } from './sharedComponents'
 import type { FormatterCtx, FriendlyView } from './types'
 
 export function formatGrep({
@@ -66,13 +67,15 @@ export function formatGrep({
           `Files (${files.length})`
         ),
         content: (
-          <ul className="max-h-80 space-y-0.5 overflow-auto font-mono text-[11.5px] text-foreground/85">
-            {files.map((f, i) => (
-              <li key={i} className="truncate" title={f}>
-                {f}
-              </li>
-            ))}
-          </ul>
+          <ClampedBlock max="max-h-80">
+            <ul className="space-y-0.5 font-mono text-[11.5px] text-foreground/85">
+              {files.map((f, i) => (
+                <li key={i} className="truncate" title={f}>
+                  {f}
+                </li>
+              ))}
+            </ul>
+          </ClampedBlock>
         ),
         copyText: files.join('\n')
       }
@@ -94,18 +97,20 @@ export function formatGrep({
       output: {
         label: pick(lang, `共 ${total} 处`, `${total} matches`),
         content: (
-          <ul className="max-h-80 space-y-0.5 overflow-auto font-mono text-[11.5px] text-foreground/85">
-            {rows.map((r, i) => (
-              <li key={i} className="flex gap-3">
-                <span className="w-10 shrink-0 text-right tabular-nums text-brand">
-                  {r.count}
-                </span>
-                <span className="min-w-0 flex-1 truncate" title={r.file}>
-                  {r.file}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <ClampedBlock max="max-h-80">
+            <ul className="space-y-0.5 font-mono text-[11.5px] text-foreground/85">
+              {rows.map((r, i) => (
+                <li key={i} className="flex gap-3">
+                  <span className="w-10 shrink-0 text-right tabular-nums text-brand">
+                    {r.count}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate" title={r.file}>
+                    {r.file}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </ClampedBlock>
         ),
         copyText: resultText
       }
@@ -149,7 +154,10 @@ export function formatGrep({
     output: {
       label: pick(lang, `匹配（${matchCount}）`, `Matches (${matchCount})`),
       content: (
-        <div className="max-h-96 max-w-full space-y-3 overflow-auto pr-1 text-[12px] leading-relaxed">
+        <ClampedBlock
+          max="max-h-96"
+          innerClassName="space-y-3 pr-1 text-[12px] leading-relaxed"
+        >
           {groups.map((group, i) => {
             const md = fileIsMarkdown(group.file)
             return (
@@ -207,7 +215,7 @@ export function formatGrep({
               </div>
             )
           })}
-        </div>
+        </ClampedBlock>
       ),
       copyText: resultText
     }
@@ -465,13 +473,15 @@ export function formatGlob({
               `Files (${files.length})`
             ),
             content: (
-              <ul className="max-h-80 space-y-0.5 overflow-auto font-mono text-[11.5px] text-foreground/85">
-                {files.map((f, i) => (
-                  <li key={i} className="whitespace-pre">
-                    {f}
-                  </li>
-                ))}
-              </ul>
+              <ClampedBlock max="max-h-80">
+                <ul className="space-y-0.5 font-mono text-[11.5px] text-foreground/85">
+                  {files.map((f, i) => (
+                    <li key={i} className="whitespace-pre">
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+              </ClampedBlock>
             ),
             copyText: files.join('\n')
           }

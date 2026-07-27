@@ -105,6 +105,14 @@ const PROMPTS_BY_SKILL: Record<string, readonly ScenarioPrompt[]> = {
     {
       label: '产品介绍页',
       text: '为【产品名称】做一份 10 页以内的产品介绍 PPT，突出核心卖点和客户案例。'
+    },
+    {
+      label: '选用现成模版',
+      text: '帮我用【选择模版】做【PPT主题】的PPT。'
+    },
+    {
+      label: '用我的PPT模版',
+      text: '帮我用【PPT 模版文件】的版式做一份新PPT，内容是【说明主题和要点】，设计风格保持不变。'
     }
   ],
   spreadsheets: [
