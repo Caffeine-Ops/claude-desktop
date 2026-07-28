@@ -80,3 +80,14 @@ scripts/export_his_analysis.py
 # 首页演示区按目录扫描自动上/下架，丢文件即用，不需要入库；README.md 说明
 # 这个目录的用途，继续跟踪。
 apps/studio/demo-replays/*.claudereplay
+
+# 换图标前的原始图标本机备份 (安全副本)：旧图标 git 历史里本就有，备份是冗余，不入库。
+_icon-backup-original-*/
+
+# 出图技能 (gpt-image-2 / draw) 的 prompt 记录残留：生成图标时的一次性草稿，与项目无关。
+garden-gpt-image-2/
+
+# 写作技能图标的中间产物 (raw→keyed→check 三阶段废稿)：代码未引用，正式用的是 writing.png。
+apps/studio/public/skill-icons/writing_raw.png
+apps/studio/public/skill-icons/writing_keyed.png
+apps/studio/public/skill-icons/writing_check.png
