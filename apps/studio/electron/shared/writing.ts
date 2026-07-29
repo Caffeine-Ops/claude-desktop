@@ -49,15 +49,29 @@ export function parseWritingGenre(specLockText: string | null): WritingGenre {
   return v && (GENRES as readonly string[]).includes(v) ? (v as WritingGenre) : 'workplace'
 }
 
-// 大纲节：design_spec.md 里「## 大纲」之下的三级标题。只数这一段之内的，
-// 免得把文档别处的 ### 也算进去。
-const OUTLINE_HEADING = /^##\s+大纲\s*$/m
+// 大纲段落标题。真实模板（skills/writing/templates/design_spec_reference.md）里写的是
+// 「## V. 内容大纲（分节表）」——带罗马数字编号和括号后缀，精确匹配 `## 大纲` 必然落空。
+// 这里放宽成「二级标题里含‘大纲’二字」，只圈段落范围，不管标题剩余部分长什么样。
+const OUTLINE_HEADING = /^##\s+.*大纲/m
+// 只数「## 大纲」到下一个二级标题之间这一段之内的，免得把文档别处的标题/表格也算进去。
 const SECTION_HEADING = /^###\s+\S/gm
+// 大纲表格行：真实模板里节次不是三级标题，而是 markdown 表格的一行——
+// `| 第1节 | 600 | 抛谜面… | 好奇被吊起… |`。行首为 `|`，紧跟「第N节」单元格
+// （容忍「第」与数字、数字与「节」之间有空格——用户手填表格时的常见写法）才算一条真实节次；
+// 表头行 `| 节次 | 字数 | … |` 和分隔行 `|---|---|…` 的首格都不是「第N节」，天然不会被计入，
+// 不需要额外排除逻辑。
+const TABLE_SECTION_ROW = /^\|\s*第\s*\d+\s*节\s*\|/gm
 
 /**
  * design_spec.md 正文 → 大纲节数（用于纸面末尾的「正在写第 N 节 · 共 M 节」）。
  * **解析不到返回 null，不猜数字**：显示一个错的总数比不显示更糟——用户会以为还差两节，
  * 其实已经写完了。null 时 UI 降级成「正在写下一节…」。
+ *
+ * 两种节次形态都认，取**较大值而非相加**：
+ *  - 表格行（`| 第1节 | … |`）——真实模板（design_spec_reference.md）的主路径。
+ *  - `### 第N节` 三级标题——真实模板不这么写，但用户手改 design_spec 时可能这么写，留作兼容。
+ * 两者若同时出现，只可能是同一份大纲被写成了两种形式的重复表达（例如正文用表格、
+ * 附带了一份三级标题目录），相加会让节数直接翻倍；取较大值总是落在「更完整地数了一遍」那个。
  */
 export function parseOutlineTotal(designSpecText: string | null): number | null {
   if (!designSpecText) return null
@@ -67,8 +81,10 @@ export function parseOutlineTotal(designSpecText: string | null): number | null 
   // 大纲段落到下一个二级标题为止
   const nextH2 = /^##\s+/m.exec(rest)
   const segment = nextH2 ? rest.slice(0, nextH2.index) : rest
-  const matches = segment.match(SECTION_HEADING)
-  return matches && matches.length > 0 ? matches.length : null
+  const headingMatches = segment.match(SECTION_HEADING)
+  const tableMatches = segment.match(TABLE_SECTION_ROW)
+  const total = Math.max(headingMatches?.length ?? 0, tableMatches?.length ?? 0)
+  return total > 0 ? total : null
 }
 
 // 文件名前导数字。写手按 SKILL.md「一节一文件，按序命名」产出，实际形态有

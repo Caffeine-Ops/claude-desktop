@@ -47,6 +47,51 @@ describe('parseOutlineTotal', () => {
   it('入参为 null 时返回 null', () => {
     expect(parseOutlineTotal(null)).toBeNull()
   })
+
+  it('认真实模板的表格式大纲（标题带罗马数字编号、节次在表格行里）', () => {
+    const text = [
+      '## V. 内容大纲（分节表）',
+      '',
+      '写手逐节施工的图纸。**每节 800-1200 字**。',
+      '',
+      '| 节次 | 字数 | 本节任务 | 结束时读者感受 |',
+      '|---|---|---|---|',
+      '| 第1节 | 600 | 抛谜面 | 好奇被吊起 |',
+      '| 第2节 | 1000 | 回溯 | 隐约不安 |',
+      '| 第3节 | 700 | 升级 | 情绪被顶起 |',
+      '',
+      '## VI. 人物设定（小说填）',
+      '',
+      '| 人物 | Want | Need |',
+      '|---|---|---|',
+      '| 张明 | 找妹妹 | 原谅自己 |'
+    ].join('\n')
+    expect(parseOutlineTotal(text)).toBe(3)
+  })
+
+  it('表头行与分隔行不算进节数', () => {
+    const text = '## 大纲\n\n| 节次 | 字数 |\n|---|---|\n| 第1节 | 600 |\n'
+    expect(parseOutlineTotal(text)).toBe(1)
+  })
+
+  it('下一个二级标题之后的表格不算进来（人物表不是大纲）', () => {
+    const text = [
+      '## V. 内容大纲',
+      '| 第1节 | 600 |',
+      '## VI. 人物设定',
+      '| 第2节 | 假的 |'
+    ].join('\n')
+    expect(parseOutlineTotal(text)).toBe(1)
+  })
+
+  it('表格式与三级标题式并存时取较大的一个，不相加', () => {
+    const text = '## 大纲\n\n### 第1节 开场\n### 第2节 收束\n\n| 第1节 | 600 |\n'
+    expect(parseOutlineTotal(text)).toBe(2)
+  })
+
+  it('容忍「第 1 节」中间带空格', () => {
+    expect(parseOutlineTotal('## 大纲\n\n| 第 1 节 | 600 |\n| 第 2 节 | 800 |\n')).toBe(2)
+  })
 })
 
 describe('sortSectionNames', () => {
